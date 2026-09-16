@@ -13,6 +13,10 @@ export type TextCapabilityConfig = {
     streaming?: boolean;
     /** Whether the model exposes a user-selectable reasoning/thinking mode. */
     thinking?: boolean;
+    /** Provider-documented total context window. Zero means unknown. */
+    contextWindowTokens?: number;
+    /** Output capacity held back from the window when calculating input pressure. */
+    reservedOutputTokens?: number;
     references: {
         promptMaxChars: number;
         maxImages: number;
@@ -286,6 +290,8 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
 export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = ""): ModelCapabilityConfig {
     const text: TextCapabilityConfig = {
         streaming: true,
+        contextWindowTokens: 0,
+        reservedOutputTokens: 0,
         // 文本模型的视觉能力必须由管理员明确开启，不能根据模型名猜测。
         references: { promptMaxChars: 32000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 },
     };

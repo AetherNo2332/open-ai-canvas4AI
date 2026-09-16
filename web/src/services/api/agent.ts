@@ -91,6 +91,19 @@ export type AgentEvent = {
     localSeq?: number;
 };
 
+export type AgentContextPressure = {
+    estimatedInputTokens: number;
+    contextWindowTokens: number;
+    reservedOutputTokens: number;
+    usableInputTokens: number;
+    pressureRatio: number;
+    sourceBytes: number;
+    promptChars: number;
+    promptLimitChars: number;
+    modelLimitConfigured: boolean;
+    estimate: true;
+};
+
 /** 事件流本身不是 http 封装请求，单独保留状态码供 UI 区分旧后端/失效轮次。 */
 export class AgentStreamError extends Error {
     readonly status: number;
@@ -146,7 +159,7 @@ export async function sendAgentMessage(runId: string, input: CreateAgentRunInput
 }
 
 export function getAgentCapabilities() {
-    return http.get<{ version: number; permissionModes: AgentPermissionMode[]; contextScopes: string[]; skills: boolean; writeTools: boolean; capabilitySetVersion?: string; capabilitySetHash?: string; nodeTypes?: string[] }>("/agent/capabilities", { timeout: 15_000 });
+    return http.get<{ version: number; permissionModes: AgentPermissionMode[]; contextScopes: string[]; skills: boolean; writeTools: boolean; historyPolicy?: "server_compacted"; contextCompaction?: { enabled: boolean; strategy: "structured_checkpoint"; thresholdBytes: number; thresholdHistoryMessages: number; retainedRecentPairs: number }; capabilitySetVersion?: string; capabilitySetHash?: string; nodeTypes?: string[] }>("/agent/capabilities", { timeout: 15_000 });
 }
 
 export function getAgentProfile(options: { projectId?: string; canvasId?: string; scope?: AgentProfileScope } = {}) {

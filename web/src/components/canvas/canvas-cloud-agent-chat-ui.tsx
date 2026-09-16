@@ -12,6 +12,7 @@ import { WorkingGlow } from "@/components/ai/working-indicator";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { Skill } from "@/services/api/skills";
+import type { AgentContextPressure } from "@/services/api/agent";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
 
@@ -360,6 +361,7 @@ export function AgentChatComposer({
     references = [],
     slashSkills,
     includeAssetLibrary,
+    contextPressure,
 }: {
     prompt: string;
     attachments?: CloudAgentChatAttachment[];
@@ -380,6 +382,7 @@ export function AgentChatComposer({
     slashSkills?: Skill[];
     /** 是否在「@」候选里包含素材库资源 */
     includeAssetLibrary?: boolean;
+    contextPressure?: AgentContextPressure;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [slash, setSlash] = useState<{ start: number; query: string } | null>(null);
@@ -643,6 +646,7 @@ export function AgentChatComposer({
                         {left}
                     </div>
                     <div className="agent-composer-submit flex items-center gap-2">
+                        {contextPressure ? <AgentContextPressureIndicator pressure={contextPressure} /> : null}
                         <span className="agent-composer-send-hint">Enter 换行 · ⌘/Ctrl+Enter 发送</span>
                         <motion.button
                             type="button"
@@ -676,6 +680,42 @@ export function AgentChatComposer({
             </div>
             {previewAttachment ? <AgentImagePreview attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} /> : null}
         </div>
+    );
+}
+
+function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPressure }) {
+    const configured = pressure.modelLimitConfigured && pressure.usableInputTokens > 0;
+    const ratio = configured ? Math.max(0, pressure.pressureRatio) : 0;
+    const percent = Math.round(ratio * 100);
+    const progress = Math.min(100, percent);
+    const tone = !configured ? "unknown" : ratio >= 0.9 ? "critical" : ratio >= 0.7 ? "warning" : "normal";
+    const format = (value: number) => value.toLocaleString("zh-CN");
+    const title = (
+        <div className="agent-context-pressure-popover">
+            <div className="agent-context-pressure-title">上下文压力 {configured ? `${percent}%` : "未计算"}</div>
+            {configured ? (
+                <>
+                    <div>输入估算：约 {format(pressure.estimatedInputTokens)} Token</div>
+                    <div>可用输入：{format(pressure.usableInputTokens)} Token</div>
+                    <div>模型窗口：{format(pressure.contextWindowTokens)} Token</div>
+                    <div>预留输出：{format(pressure.reservedOutputTokens)} Token</div>
+                </>
+            ) : <div>管理员尚未填写该模型的上下文窗口 Token，当前不会用字符上限推断模型能力。</div>}
+            <div className="agent-context-pressure-divider" />
+            <div>本轮提示：{format(pressure.promptChars)} / {pressure.promptLimitChars ? format(pressure.promptLimitChars) : "未配置"} 字符</div>
+            <div className="agent-context-pressure-note">Token 为近似值；实际计数以上游模型为准。压缩会保留检查点和最近对话。</div>
+        </div>
+    );
+    return (
+        <Tooltip title={title} placement="top" className="!max-w-72 !p-3">
+            <button type="button" className="agent-context-pressure" data-tone={tone} aria-label={configured ? `上下文压力 ${percent}%` : "上下文窗口未配置"}>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="agent-context-pressure-track" cx="12" cy="12" r="9" />
+                    {configured ? <circle className="agent-context-pressure-value" cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${progress} 100`} /> : <circle className="agent-context-pressure-unknown" cx="12" cy="12" r="9" pathLength="100" strokeDasharray="8 10" />}
+                </svg>
+                <span>{configured ? `${percent}%` : "—"}</span>
+            </button>
+        </Tooltip>
     );
 }
 

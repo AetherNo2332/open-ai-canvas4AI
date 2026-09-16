@@ -364,21 +364,26 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if history == nil {
 			history = cloudAgentLegacyHistory(parentState.Canonical.Messages, parent.Prompt)
 		}
-		text, err := cloudAgentContinuationReply(parent, parentRun)
-		if err != nil {
-			return nil, err
+		// A compacted checkpoint already covers the completed parent turn. Other
+		// runs append the exact prompt/reply pair, including bounded execution
+		// facts, so failures and submitted work remain visible to the next turn.
+		if !parentState.HistoryIncludesCurrent {
+			text, err := cloudAgentContinuationReply(parent, parentRun)
+			if err != nil {
+				return nil, err
+			}
+			history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt}, providerTextMessage{Role: "assistant", Content: text})
 		}
-		// The user's goal survives a failed first model call too. Tool facts are
-		// context, not authorization to replay a write or charge a second time.
-		history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt}, providerTextMessage{Role: "assistant", Content: text})
 	}
-	// Bound prompt growth without silently injecting a huge canvas or transcript.
+	// Semantic compaction normally keeps this well below the hard safety cap.
+	// Keep a final serialized bound for damaged/legacy records without restoring
+	// the old fixed eight-turn product limit.
 	encodedHistory, err := json.Marshal(history)
 	if err != nil {
 		return nil, err
 	}
-	if len(encodedHistory) > 64000 {
-		return nil, BadAuthRequest("对话上下文超过 64KB，请新建对话")
+	if len(encodedHistory) > 192<<10 {
+		return nil, BadAuthRequest("对话上下文超过 192KB 安全上限，请新建对话")
 	}
 	var inheritedAnchor *cloudAgentCreativeAnchor
 	if creativeAnchor.Version > 0 {

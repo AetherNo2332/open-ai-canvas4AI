@@ -14,7 +14,7 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
-import { cancelAgentRun, getAgentCapabilities, getAgentProfile, getAgentRun, createAgentRun, decideAgentApproval, sendAgentMessage, subscribeAgentEvents, updateAgentProfile, type AgentEvent, type AgentPermissionMode, type AgentProfileScope, type AgentProfileView, type AgentReasoningMode, type AgentRun } from "@/services/api/agent";
+import { cancelAgentRun, getAgentCapabilities, getAgentProfile, getAgentRun, createAgentRun, decideAgentApproval, sendAgentMessage, subscribeAgentEvents, updateAgentProfile, type AgentContextPressure, type AgentEvent, type AgentPermissionMode, type AgentProfileScope, type AgentProfileView, type AgentReasoningMode, type AgentRun } from "@/services/api/agent";
 import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { agentApprovalMatchesSettings, agentImageApproval } from "@/lib/canvas/agent-media-approval";
 import type { AgentMediaSettings } from "@/services/api/agent";
@@ -43,6 +43,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     const reducedMotion = useReducedMotion();
     const [view, setView] = useState<AgentPanelView>("chat");
     const [run, setRun] = useState<AgentRun | null>(null);
+    const [contextPressure, setContextPressure] = useState<AgentContextPressure | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">("connecting");
     const [connectionEpoch, setConnectionEpoch] = useState(0);
     const [messages, setMessages] = useState<CloudAgentChatMessage[]>([]);
@@ -104,7 +105,20 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         const preferred = config.textModel || config.model || "";
         return textModels.includes(preferred) ? preferred : (textModels[0] || "");
     }, [config]);
-    const reasoningSupported = Boolean(modelCapabilityConfigFor(config, selectedModel).text?.thinking);
+    const selectedTextCapability = modelCapabilityConfigFor(config, selectedModel).text;
+    const reasoningSupported = Boolean(selectedTextCapability?.thinking);
+    const visibleContextPressure = useMemo<AgentContextPressure>(() => ({
+        estimatedInputTokens: contextPressure?.estimatedInputTokens || 0,
+        contextWindowTokens: contextPressure?.contextWindowTokens || selectedTextCapability?.contextWindowTokens || 0,
+        reservedOutputTokens: contextPressure?.reservedOutputTokens || selectedTextCapability?.reservedOutputTokens || 0,
+        usableInputTokens: contextPressure?.usableInputTokens || Math.max(0, (selectedTextCapability?.contextWindowTokens || 0) - (selectedTextCapability?.reservedOutputTokens || 0)),
+        pressureRatio: contextPressure?.pressureRatio || 0,
+        sourceBytes: contextPressure?.sourceBytes || 0,
+        promptChars: prompt ? [...prompt].length : contextPressure?.promptChars || 0,
+        promptLimitChars: contextPressure?.promptLimitChars || selectedTextCapability?.references.promptMaxChars || 0,
+        modelLimitConfigured: contextPressure?.modelLimitConfigured || Boolean(selectedTextCapability?.contextWindowTokens),
+        estimate: true,
+    }), [contextPressure, prompt, selectedTextCapability]);
     useEffect(() => { if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off"); }, [reasoningSupported, reasoningMode]);
     const installedSkills = useMemo(() => skills.filter((skill) => skill.isAdded), [skills]);
     const enabledSkills = useMemo(() => installedSkills.filter((skill) => selectedSkillIds.includes(skill.skillId)), [installedSkills, selectedSkillIds]);
@@ -231,6 +245,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setBusy(false);
         setConversations([]);
         setRun(null);
+        setContextPressure(null);
         setMessages([]);
         setApproval(null);
         setApprovalSubmitting(false);
@@ -245,6 +260,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                     setActiveConversationId(current.id);
                     setMessages(current.messages);
                     setRun(current.run);
+                    setContextPressure(latestContextPressure(current.run?.events));
                     setPermissionMode(current.permissionMode);
                     setSelectedSkillIds(current.skillIds || []);
                     if (current.model) setModel(current.model);
@@ -313,6 +329,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                 }
                 setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
                 applyAgentEvent(event, setMessages, setRun, setApproval);
+                if (event.type === "context_pressure") setContextPressure(parseContextPressure(event.payload));
                 canvasSyncRef.current?.receive(event);
             },
             {
@@ -509,6 +526,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setApprovalSubmitting(false);
         setActiveConversationId(id);
         setRun(null);
+        setContextPressure(null);
         setMessages([]);
         setPrompt("");
         setApproval(null);
@@ -525,6 +543,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setApprovalSubmitting(false);
         setActiveConversationId(conversation.id);
         setRun(conversation.run);
+        setContextPressure(latestContextPressure(conversation.run?.events));
         setMessages(conversation.messages);
         setPermissionMode(conversation.permissionMode);
         setSelectedSkillIds(conversation.skillIds || []);
@@ -693,6 +712,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                                         references={[...references, ...buildSkillMentionReferences(installedSkills)]}
                                         slashSkills={installedSkills}
                                         includeAssetLibrary={false}
+                                        contextPressure={visibleContextPressure}
                                         left={
                                             <ComposerControls
                                                 reasoningMode={reasoningSupported ? reasoningMode : "off"}
@@ -1163,6 +1183,27 @@ function applyAgentEvent(event: AgentEvent, setMessages: Dispatch<SetStateAction
         return;
     }
     if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendAgentError(current, event.eventId, text || "Agent 执行失败"));
+}
+
+function parseContextPressure(payload: Record<string, unknown>): AgentContextPressure {
+    const number = (key: string) => Number.isFinite(Number(payload[key])) ? Number(payload[key]) : 0;
+    return {
+        estimatedInputTokens: number("estimatedInputTokens"),
+        contextWindowTokens: number("contextWindowTokens"),
+        reservedOutputTokens: number("reservedOutputTokens"),
+        usableInputTokens: number("usableInputTokens"),
+        pressureRatio: Math.max(0, number("pressureRatio")),
+        sourceBytes: number("sourceBytes"),
+        promptChars: number("promptChars"),
+        promptLimitChars: number("promptLimitChars"),
+        modelLimitConfigured: payload.modelLimitConfigured === true,
+        estimate: true,
+    };
+}
+
+function latestContextPressure(events?: AgentEvent[]) {
+    const event = [...(events || [])].reverse().find((item) => item.type === "context_pressure");
+    return event ? parseContextPressure(event.payload) : null;
 }
 function toolDetailRecord(value: unknown): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};

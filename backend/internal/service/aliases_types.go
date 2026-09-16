@@ -6,6 +6,7 @@ type (
 	CloudAgentRequest                      = app.CloudAgentRequest
 	CloudAgentMediaSettings                = app.CloudAgentMediaSettings
 	CloudAgentCapabilitySet                = app.CloudAgentCapabilitySet
+	CloudAgentContextPolicy                = app.CloudAgentContextPolicy
 	AgentProfileRequest                    = app.AgentProfileRequest
 	AgentProfileView                       = app.AgentProfileView
 	APICallLogPage                         = app.APICallLogPage
@@ -321,6 +322,10 @@ type (
 
 func CloudAgentCapabilitySetInfo() CloudAgentCapabilitySet {
 	return app.CloudAgentCapabilitySetInfo()
+}
+
+func CloudAgentContextPolicyInfo() CloudAgentContextPolicy {
+	return app.CloudAgentContextPolicyInfo()
 }
 
 func CloudAgentSupportedToolNames() []string {
