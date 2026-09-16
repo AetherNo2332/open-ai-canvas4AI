@@ -96,12 +96,7 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
 	}
 	pressure := s.cloudAgentContextPressure(task, input.Requests.Canonical, initial.Request.Prompt)
-	state.event(task.ID, "context_pressure", map[string]any{
-		"estimatedInputTokens": pressure.EstimatedInputTokens, "contextWindowTokens": pressure.ContextWindowTokens,
-		"reservedOutputTokens": pressure.ReservedOutputTokens, "usableInputTokens": pressure.UsableInputTokens,
-		"pressureRatio": pressure.PressureRatio, "sourceBytes": pressure.SourceBytes, "promptChars": pressure.PromptChars,
-		"promptLimitChars": pressure.PromptLimitChars, "modelLimitConfigured": pressure.ModelLimitConfigured, "estimate": pressure.Estimate,
-	})
+	state.event(task.ID, "context_pressure", cloudAgentContextPressurePayload(pressure, &state))
 	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
 	if err := cloudAgentSave(run, &state); err != nil {
 		return err
@@ -1092,12 +1087,7 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				state.ContextCompaction.Status = "running"
 			} else {
 				if contextPressure != nil {
-					state.event(run.ID, "context_pressure", map[string]any{
-						"estimatedInputTokens": contextPressure.EstimatedInputTokens, "contextWindowTokens": contextPressure.ContextWindowTokens,
-						"reservedOutputTokens": contextPressure.ReservedOutputTokens, "usableInputTokens": contextPressure.UsableInputTokens,
-						"pressureRatio": contextPressure.PressureRatio, "sourceBytes": contextPressure.SourceBytes, "promptChars": contextPressure.PromptChars,
-						"promptLimitChars": contextPressure.PromptLimitChars, "modelLimitConfigured": contextPressure.ModelLimitConfigured, "estimate": contextPressure.Estimate,
-					})
+					state.event(run.ID, "context_pressure", cloudAgentContextPressurePayload(*contextPressure, state))
 				}
 				state.Step++
 			}

@@ -6,20 +6,47 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/agentcontext"
 	"infinite-canvas/backend/internal/model"
 )
 
 type cloudAgentContextPressure struct {
-	EstimatedInputTokens int     `json:"estimatedInputTokens"`
-	ContextWindowTokens  int     `json:"contextWindowTokens"`
-	ReservedOutputTokens int     `json:"reservedOutputTokens"`
-	UsableInputTokens    int     `json:"usableInputTokens"`
-	PressureRatio        float64 `json:"pressureRatio"`
-	SourceBytes          int     `json:"sourceBytes"`
-	PromptChars          int     `json:"promptChars"`
-	PromptLimitChars     int     `json:"promptLimitChars"`
-	ModelLimitConfigured bool    `json:"modelLimitConfigured"`
-	Estimate             bool    `json:"estimate"`
+	EstimatedInputTokens     int     `json:"estimatedInputTokens"`
+	ContextWindowTokens      int     `json:"contextWindowTokens"`
+	ReservedOutputTokens     int     `json:"reservedOutputTokens"`
+	UsableInputTokens        int     `json:"usableInputTokens"`
+	PressureRatio            float64 `json:"pressureRatio"`
+	SourceBytes              int     `json:"sourceBytes"`
+	PromptChars              int     `json:"promptChars"`
+	PromptLimitChars         int     `json:"promptLimitChars"`
+	ModelLimitConfigured     bool    `json:"modelLimitConfigured"`
+	Estimate                 bool    `json:"estimate"`
+	CompactionSourceBytes    int     `json:"compactionSourceBytes"`
+	CompactionThresholdBytes int     `json:"compactionThresholdBytes"`
+	HistoryMessages          int     `json:"historyMessages"`
+	HistoryMessageThreshold  int     `json:"historyMessageThreshold"`
+	CompactionPressureRatio  float64 `json:"compactionPressureRatio"`
+}
+
+func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state *cloudAgentRuntime) map[string]any {
+	payload := map[string]any{
+		"estimatedInputTokens": pressure.EstimatedInputTokens, "contextWindowTokens": pressure.ContextWindowTokens,
+		"reservedOutputTokens": pressure.ReservedOutputTokens, "usableInputTokens": pressure.UsableInputTokens,
+		"pressureRatio": pressure.PressureRatio, "sourceBytes": pressure.SourceBytes, "promptChars": pressure.PromptChars,
+		"promptLimitChars": pressure.PromptLimitChars, "modelLimitConfigured": pressure.ModelLimitConfigured, "estimate": pressure.Estimate,
+		"compactionThresholdBytes": agentcontext.ThresholdBytes, "historyMessageThreshold": agentcontext.ThresholdHistoryMessages,
+	}
+	if state == nil {
+		return payload
+	}
+	raw, _ := json.Marshal(state.Canonical.Messages)
+	historyMessages := len(state.TextHistory) + 2
+	byteRatio := float64(len(raw)) / float64(agentcontext.ThresholdBytes)
+	messageRatio := float64(historyMessages) / float64(agentcontext.ThresholdHistoryMessages)
+	payload["compactionSourceBytes"] = len(raw)
+	payload["historyMessages"] = historyMessages
+	payload["compactionPressureRatio"] = math.Max(byteRatio, messageRatio)
+	return payload
 }
 
 // estimateCloudAgentTokens is provider-neutral and deliberately conservative

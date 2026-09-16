@@ -102,6 +102,11 @@ export type AgentContextPressure = {
     promptLimitChars: number;
     modelLimitConfigured: boolean;
     estimate: true;
+    compactionSourceBytes: number;
+    compactionThresholdBytes: number;
+    historyMessages: number;
+    historyMessageThreshold: number;
+    compactionPressureRatio: number;
 };
 
 /** 事件流本身不是 http 封装请求，单独保留状态码供 UI 区分旧后端/失效轮次。 */

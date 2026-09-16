@@ -118,6 +118,11 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         promptLimitChars: contextPressure?.promptLimitChars || selectedTextCapability?.references.promptMaxChars || 0,
         modelLimitConfigured: contextPressure?.modelLimitConfigured || Boolean(selectedTextCapability?.contextWindowTokens),
         estimate: true,
+        compactionSourceBytes: contextPressure?.compactionSourceBytes || contextPressure?.sourceBytes || 0,
+        compactionThresholdBytes: contextPressure?.compactionThresholdBytes || 48 * 1024,
+        historyMessages: contextPressure?.historyMessages || 0,
+        historyMessageThreshold: contextPressure?.historyMessageThreshold || 16,
+        compactionPressureRatio: contextPressure?.compactionPressureRatio || ((contextPressure?.sourceBytes || 0) / (48 * 1024)),
     }), [contextPressure, prompt, selectedTextCapability]);
     useEffect(() => { if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off"); }, [reasoningSupported, reasoningMode]);
     const installedSkills = useMemo(() => skills.filter((skill) => skill.isAdded), [skills]);
@@ -1198,6 +1203,11 @@ function parseContextPressure(payload: Record<string, unknown>): AgentContextPre
         promptLimitChars: number("promptLimitChars"),
         modelLimitConfigured: payload.modelLimitConfigured === true,
         estimate: true,
+        compactionSourceBytes: number("compactionSourceBytes") || number("sourceBytes"),
+        compactionThresholdBytes: number("compactionThresholdBytes") || 48 * 1024,
+        historyMessages: number("historyMessages"),
+        historyMessageThreshold: number("historyMessageThreshold") || 16,
+        compactionPressureRatio: Math.max(0, number("compactionPressureRatio") || number("sourceBytes") / (48 * 1024)),
     };
 }
 
