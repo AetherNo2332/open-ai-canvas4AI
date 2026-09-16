@@ -1138,6 +1138,34 @@ function applyAgentEvent(event: AgentEvent, setMessages: Dispatch<SetStateAction
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: text || "Agent 正在整理执行计划" }));
         return;
     }
+    if (event.type === "context_compaction_requested") {
+        const turnCount = Number(payload.turnCount || 0);
+        setMessages((current) => upsertContextCompactionNotice(current, {
+            id: `${event.runId}:context-compaction:${turnCount}`,
+            role: "system",
+            text: "正在压缩历史上下文，并保留用户提示摘要、操作记录、未完成任务、当前工作、设计决策、限制和偏好。",
+            streaming: true,
+            meta: turnCount > 0 ? `正在整理前 ${turnCount} 轮对话` : undefined,
+            detail: { ...payload, eventType: "context_compaction", status: "running" },
+        }));
+        return;
+    }
+    if (event.type === "context_compacted") {
+        const turnCount = Number(payload.compactedTurnCount || 0);
+        const fallback = payload.mode === "fallback";
+        const historyMessages = Number(payload.historyMessages || 0);
+        setMessages((current) => upsertContextCompactionNotice(current, {
+            id: `${event.runId}:context-compaction:${turnCount}`,
+            role: "system",
+            text: fallback
+                ? "模型压缩不可用，已使用服务端保底检查点完成整理，后续工作可以继续。"
+                : "已生成结构化检查点并保留最近对话，后续工作将从压缩后的上下文继续。",
+            streaming: false,
+            meta: `${turnCount > 0 ? `已整理 ${turnCount} 轮对话` : "上下文已整理"}${historyMessages > 0 ? ` · 保留 ${historyMessages} 条上下文消息` : ""}`,
+            detail: { ...payload, eventType: "context_compaction", status: "completed" },
+        }));
+        return;
+    }
     if (event.type === "assistant_delta") {
         setMessages((current) => upsertTextMessage(current, String(payload.messageId || "assistant"), text, true));
         return;
@@ -1292,6 +1320,13 @@ function upsertMediaToolTrace(current: CloudAgentChatMessage[], message: CloudAg
 
 function appendUniqueMessage(current: CloudAgentChatMessage[], message: CloudAgentChatMessage) {
     return current.some((item) => item.id === message.id) ? current : [...current, message];
+}
+function upsertContextCompactionNotice(current: CloudAgentChatMessage[], message: CloudAgentChatMessage) {
+    const index = current.findIndex((item) => item.id === message.id);
+    if (index < 0) return [...current, message];
+    const next = [...current];
+    next[index] = message;
+    return next;
 }
 function upsertTextMessage(current: CloudAgentChatMessage[], id: string, text: string, append: boolean): CloudAgentChatMessage[] {
     const index = current.findIndex((item) => item.id === id);

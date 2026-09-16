@@ -117,6 +117,9 @@ export function AgentChatMessage({
             </div>
         );
     }
+    if (objectField(item.detail, "eventType") === "context_compaction") {
+        return <AgentContextCompactionNotice item={item} theme={theme} />;
+    }
     if (isSystem) {
         return (
             <div className="flex items-start gap-3 text-xs">
@@ -679,6 +682,30 @@ export function AgentChatComposer({
                 </div>
             </div>
             {previewAttachment ? <AgentImagePreview attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} /> : null}
+        </div>
+    );
+}
+
+function AgentContextCompactionNotice({ item, theme }: { item: CloudAgentChatMessage; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+    const running = objectField(item.detail, "status") === "running";
+    const fallback = objectField(item.detail, "mode") === "fallback";
+    return (
+        <div role="status" aria-live="polite" className="flex items-start gap-3">
+            <AgentTimelineMarker
+                theme={theme}
+                tone={running ? "agent" : "muted"}
+                icon={running ? <LoaderCircle className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+            />
+            <div className="min-w-0 flex-1 py-0.5">
+                <div className="flex flex-wrap items-center gap-2 text-[13px] font-medium" style={{ color: theme.node.text }}>
+                    <span>{running ? "正在整理上下文" : "上下文整理完成"}</span>
+                    <span className="rounded-full px-2 py-0.5 text-[var(--fs-label)]" style={{ color: running ? theme.accent.primary : theme.node.muted, background: running ? theme.accent.primarySoft : theme.node.fill }}>
+                        {running ? "压缩中" : fallback ? "保底检查点" : "结构化检查点"}
+                    </span>
+                </div>
+                <div className="mt-0.5 text-xs leading-5" style={{ color: theme.node.muted }}>{item.text}</div>
+                {item.meta ? <div className="mt-0.5 text-[var(--fs-label)] opacity-65" style={{ color: theme.node.muted }}>{item.meta}</div> : null}
+            </div>
         </div>
     );
 }
