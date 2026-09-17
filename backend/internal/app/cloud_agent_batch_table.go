@@ -203,7 +203,7 @@ func prepareCloudAgentBatchTableEdit(repo *repository.Repository, userID, canvas
 	}
 	beforeHash := cloudAgentCanvasHash(doc)
 	if beforeHash != args.SnapshotHash {
-		return nil, creationConflict("画布已变化，本次未写入；请重新读取并重新申请审批")
+		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
 	}
 	node, table, rows, columns, err := batchTableNodeFromDocument(doc, args.NodeID)
 	if err != nil {
@@ -366,7 +366,7 @@ func applyCloudAgentBatchTableMutation(repo *repository.Repository, userID, canv
 			return nil, err
 		}
 	}
-	return map[string]any{"canvasId": canvasID, "nodeId": plan.Preview.Items[0].NodeID, "snapshotHash": cloudAgentCanvasHash(plan.Document), "summary": plan.Preview.Description, "preview": plan.Preview}, nil
+	return map[string]any{"canvasId": canvasID, "nodeId": plan.Preview.Items[0].NodeID, "snapshotHash": cloudAgentCanvasHash(plan.Document), "beforeSnapshotHash": plan.BeforeSnapshotHash, "summary": plan.Preview.Description, "preview": plan.Preview}, nil
 }
 
 func cloudAgentBatchTableReadResult(view any, nodeID string) (map[string]any, error) {
@@ -389,7 +389,9 @@ func cloudAgentBatchTableReadResult(view any, nodeID string) (map[string]any, er
 	rows, _ := table["rows"].([]any)
 	for _, value := range rows {
 		if row, ok := value.(map[string]any); ok {
+			// One name per value: the row ID is published as rowId only.
 			row["rowId"] = row["id"]
+			delete(row, "id")
 		}
 	}
 	return map[string]any{"nodeId": nodeID, "title": node["title"], "snapshotHash": state["snapshotHash"], "batchTable": table}, nil

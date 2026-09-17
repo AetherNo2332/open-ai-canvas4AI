@@ -8,34 +8,118 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-type cloudAgentStructuredProjector func(value any, offset int, precise bool) (any, error)
+// cloudAgentProjectionMode decides how much node content one read injects into
+// the model context. The digest is resent on every step, so it only promises
+// existence and scale; the default canvas read returns one page of compact
+// rows; an explicit node read returns the verbatim row needed to edit.
+type cloudAgentProjectionMode int
+
+const (
+	cloudAgentProjectionIndex cloudAgentProjectionMode = iota
+	cloudAgentProjectionPage
+	cloudAgentProjectionDetail
+)
+
+const (
+	// A page keeps the default read small enough that re-reading is cheap.
+	cloudAgentPageRows = 5
+	// Row IDs exist only in the detail projection: editing already requires the
+	// dedicated read tool, so the digest and pages must not pay for them twice.
+	cloudAgentDetailStoryboardRows = 1
+	cloudAgentDetailBatchRows      = 20
+	// 结构化读取一次能要的最大行数；多行读取按 2000 字符/字段回，单行精读才给 16000。
+	cloudAgentMaxReadRows       = 20
+	cloudAgentMultiRowTextLimit = 2000
+	// Non-structured text keeps its existing per-node limits; the structured
+	// projectors own their row-level text limits.
+	cloudAgentPageTextLimit     = 2000
+	cloudAgentDetailTextLimit   = 16000
+	cloudAgentIndexExcerptRunes = 60
+	cloudAgentListPageNodes     = 40
+)
+
+// cloudAgentStructuredProjector 的 rows 是调用方要求的每页行数（0 = 该模式默认）。
+type cloudAgentStructuredProjector func(value any, offset int, mode cloudAgentProjectionMode, rows int) (any, error)
 
 var cloudAgentStructuredProjectors = map[string]cloudAgentStructuredProjector{
-	"storyboard": func(value any, offset int, precise bool) (any, error) {
+	"storyboard": func(value any, offset int, mode cloudAgentProjectionMode, rows int) (any, error) {
 		storyboard, ok := value.(map[string]any)
 		if !ok {
 			return nil, nil
 		}
-		return cloudAgentStoryboardState(storyboard, offset, precise), nil
+		return cloudAgentStoryboardState(storyboard, offset, mode, rows), nil
 	},
-	"batch_table": func(value any, offset int, precise bool) (any, error) {
+	"batch_table": func(value any, offset int, mode cloudAgentProjectionMode, rows int) (any, error) {
 		table, ok := value.(map[string]any)
 		if !ok {
 			return nil, nil
 		}
-		return cloudAgentBatchTableState(table, offset, precise), nil
+		return cloudAgentBatchTableState(table, offset, mode, rows), nil
 	},
 }
 
-// Viewport autosaves must not invalidate approved content; node edits still do.
+// The canvas document is co-owned: the browser keeps its own bookkeeping on the
+// same record the Agent writes. The Agent snapshot hash therefore covers the
+// content the Agent reads and acts on, not what the UI maintains for itself.
+// Hashing UI bookkeeping made the browser's own post-write save — a measured
+// composer height and node timestamps — look like a concurrent edit, so a write
+// the server had just authorised was rejected by its own next step.
+var (
+	// Top-level keys only the browser writes.
+	cloudAgentCanvasUIKeys = map[string]bool{
+		"viewport": true, "updatedAt": true, "activeChatId": true, "chatSessions": true,
+		"directorScenes": true, "showImageInfo": true, "starterMode": true,
+		"backgroundMode": true, "appearance": true,
+	}
+	// Node fields stamped by the client on save, not authored by the Agent.
+	cloudAgentCanvasUINodeKeys = map[string]bool{"createdAt": true, "updatedAt": true}
+	// Layout the UI measures and rewrites while rendering (composer height).
+	cloudAgentCanvasUIMetadataKeys = map[string]bool{"storyboardComposerHeight": true}
+)
+
 func cloudAgentCanvasHash(doc map[string]any) string {
+	return creationHash(cloudAgentCanvasContent(doc))
+}
+
+// cloudAgentCanvasContent drops browser-owned bookkeeping so the snapshot hash
+// tracks readable and writable content: ids, types, titles, metadata bodies,
+// connections and every other canvas key. Node geometry stays part of the hash,
+// so layout edits still require a re-read.
+func cloudAgentCanvasContent(doc map[string]any) map[string]any {
 	content := make(map[string]any, len(doc))
 	for key, value := range doc {
-		if key != "viewport" && key != "updatedAt" {
-			content[key] = value
+		if cloudAgentCanvasUIKeys[key] {
+			continue
 		}
+		content[key] = value
 	}
-	return creationHash(content)
+	nodes := creationMaps(doc["nodes"])
+	if len(nodes) == 0 {
+		return content
+	}
+	projected := make([]map[string]any, 0, len(nodes))
+	for _, node := range nodes {
+		item := make(map[string]any, len(node))
+		for key, value := range node {
+			if cloudAgentCanvasUINodeKeys[key] {
+				continue
+			}
+			item[key] = value
+		}
+		if meta, ok := item["metadata"].(map[string]any); ok && len(meta) > 0 {
+			clean := make(map[string]any, len(meta))
+			for key, value := range meta {
+				if cloudAgentCanvasUIMetadataKeys[key] {
+					continue
+				}
+				clean[key] = value
+			}
+			item["metadata"] = clean
+		}
+		projected = append(projected, item)
+	}
+	content["nodes"] = projected
+	return content
 }
 
 // Generation does not depend on node positions. Keep the full canvas hash for
@@ -60,18 +144,31 @@ func cloudAgentMediaContentHash(doc map[string]any) string {
 	return cloudAgentCanvasHash(content)
 }
 
-func cloudAgentCanvasState(repo *repository.Repository, userID string, doc map[string]any, offset int, ids []string, storyboardOffset int) (any, error) {
+func cloudAgentCanvasState(repo *repository.Repository, userID string, doc map[string]any, offset int, ids []string, storyboardOffset int, rows ...int) (any, error) {
 	if offset < 0 || storyboardOffset < 0 || len(ids) > 8 {
 		return nil, BadAuthRequest("画布读取分页参数无效")
+	}
+	readRows := 0
+	if len(rows) > 0 {
+		if rows[0] < 0 || rows[0] > cloudAgentMaxReadRows {
+			return nil, BadAuthRequest("每页行数超出限制")
+		}
+		readRows = rows[0]
+	}
+	// An explicit nodeIds read is the verbatim path: it is the only projection
+	// that returns row IDs, which the edit tools require.
+	mode := cloudAgentProjectionPage
+	if len(ids) > 0 {
+		mode = cloudAgentProjectionDetail
 	}
 	all := creationMaps(doc["nodes"])
 	wanted := map[string]bool{}
 	for _, id := range ids {
 		wanted[id] = true
 	}
-	limit := 2000
-	if len(ids) > 0 {
-		limit = 16000
+	limit := cloudAgentPageTextLimit
+	if mode == cloudAgentProjectionDetail {
+		limit = cloudAgentDetailTextLimit
 	}
 	nodes := []any{}
 	included := map[string]bool{}
@@ -86,7 +183,7 @@ func cloudAgentCanvasState(repo *repository.Repository, userID string, doc map[s
 			if index < offset {
 				continue
 			}
-			if len(nodes) == 40 {
+			if len(nodes) == cloudAgentListPageNodes {
 				next = index
 				break
 			}
@@ -123,10 +220,10 @@ func cloudAgentCanvasState(repo *repository.Repository, userID string, doc map[s
 			continue
 		}
 		fields := capability.SummaryFields
-		if len(ids) > 0 {
+		if mode == cloudAgentProjectionDetail {
 			fields = capability.DetailFields
 		}
-		projected, err := cloudAgentProjectNodeFields(node, meta, capability, fields, limit, len(ids) > 0, storyboardOffset)
+		projected, err := cloudAgentProjectNodeFields(node, meta, capability, fields, limit, mode, storyboardOffset, readRows)
 		if err != nil {
 			return nil, err
 		}
@@ -186,12 +283,17 @@ func cloudAgentSafeNumber(value any) (any, bool) {
 	}
 }
 
-// cloudAgentProjectNodeFields is the single projection path for both the
-// initial run summary and canvas_get_state. Capability descriptors decide which
-// fields exist; this function decides how those fields are safely represented.
+// cloudAgentProjectNodeFields is the single projection path for the initial run
+// digest, canvas_get_state and the dedicated read tools. Capability descriptors
+// decide which fields exist; this function decides how those fields are safely
+// represented, and how much of them one projection mode may inject.
 // It deliberately never returns arbitrary metadata, URLs, storage keys or
 // media payloads.
-func cloudAgentProjectNodeFields(node, meta map[string]any, descriptor capability.Descriptor, fields []string, textLimit int, precise bool, structuredOffset int) (map[string]any, error) {
+func cloudAgentProjectNodeFields(node, meta map[string]any, descriptor capability.Descriptor, fields []string, textLimit int, mode cloudAgentProjectionMode, structuredOffset int, readRows ...int) (map[string]any, error) {
+	rows := 0
+	if len(readRows) > 0 {
+		rows = readRows[0]
+	}
 	projected := map[string]any{}
 	for _, key := range fields {
 		if descriptor.ProjectionKind != "" && key == descriptor.ProjectionField {
@@ -203,7 +305,7 @@ func cloudAgentProjectNodeFields(node, meta map[string]any, descriptor capabilit
 			if !ok {
 				continue
 			}
-			structured, err := projector(value, structuredOffset, precise)
+			structured, err := projector(value, structuredOffset, mode, rows)
 			if err != nil {
 				return nil, BadAuthRequest(fmt.Sprintf("节点 %s 的结构化数据无法读取", descriptor.Label))
 			}
@@ -226,7 +328,59 @@ func cloudAgentProjectNodeFields(node, meta map[string]any, descriptor capabilit
 			}
 		}
 	}
+	if mode == cloudAgentProjectionIndex {
+		cloudAgentCollapseIndexPrompt(projected, descriptor, node, meta, fields)
+	} else {
+		cloudAgentDropDuplicateComposerContent(projected)
+	}
 	return projected, nil
+}
+
+// The digest only needs enough prompt text to recognize a generated node: a
+// media prompt and the composer draft are the same string on a prepared draft,
+// so one 60-rune excerpt replaces all of them. Non-generation text nodes keep
+// their normal projection.
+func cloudAgentCollapseIndexPrompt(projected map[string]any, descriptor capability.Descriptor, node, meta map[string]any, fields []string) {
+	if descriptor.GenerationMode == "" {
+		return
+	}
+	excerpt := ""
+	for _, key := range []string{"prompt", "content", "composerContent"} {
+		if key == "content" && descriptor.GenerationMode != "" {
+			continue
+		}
+		if !containsString(fields, key) {
+			continue
+		}
+		value, ok := node[key]
+		if !ok {
+			value, ok = meta[key]
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			excerpt = truncateRunes(text, cloudAgentIndexExcerptRunes)
+			break
+		}
+	}
+	delete(projected, "content")
+	delete(projected, "prompt")
+	delete(projected, "composerContent")
+	delete(projected, "contentTruncated")
+	delete(projected, "promptTruncated")
+	delete(projected, "composerContentTruncated")
+	if excerpt != "" {
+		projected["promptExcerpt"] = excerpt
+	}
+}
+
+// composerContent is the composer's draft copy of prompt. Reporting it only when
+// it actually differs keeps the documented draft/edit distinction without
+// sending the same text twice.
+func cloudAgentDropDuplicateComposerContent(projected map[string]any) {
+	prompt, hasPrompt := projected["prompt"]
+	draft, hasDraft := projected["composerContent"]
+	if hasPrompt && hasDraft && prompt == draft {
+		delete(projected, "composerContent")
+	}
 }
 
 func cloudAgentProjectionValue(node, meta map[string]any, path string) (any, bool) {
@@ -282,11 +436,22 @@ func cloudAgentSafeProjection(value any, textLimit int) (any, bool) {
 
 // Summaries locate a shot; a precise node read returns one full row at a time.
 // Only narrative fields and canvas IDs are exposed, never arbitrary metadata.
-func cloudAgentStoryboardState(storyboard map[string]any, offset int, precise bool) map[string]any {
+func cloudAgentStoryboardState(storyboard map[string]any, offset int, mode cloudAgentProjectionMode, readRows ...int) map[string]any {
 	all := creationMaps(storyboard["rows"])
-	count, textLimit := 20, 200
-	if precise {
-		count, textLimit = 1, 16000
+	if mode == cloudAgentProjectionIndex {
+		return cloudAgentStoryboardIndex(all)
+	}
+	requested := 0
+	if len(readRows) > 0 {
+		requested = readRows[0]
+	}
+	count, textLimit := cloudAgentPageRows, cloudAgentPageTextLimit
+	switch {
+	case mode == cloudAgentProjectionDetail && requested > 1:
+		// 通读：一次多行，字段按 2000 字符回，避免 42 行分镜要 42 次调用。
+		count, textLimit = min(requested, cloudAgentMaxReadRows), cloudAgentMultiRowTextLimit
+	case mode == cloudAgentProjectionDetail:
+		count, textLimit = cloudAgentDetailStoryboardRows, cloudAgentDetailTextLimit
 	}
 	rows := []any{}
 	next := 0
@@ -300,7 +465,7 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, precise bo
 		}
 		item := map[string]any{}
 		fields := []string{"id", "shotNumber", "durationSeconds", "plotDescription", "imageNodeId", "videoNodeId"}
-		if precise {
+		if mode == cloudAgentProjectionDetail {
 			fields = append(fields, "videoMotionPrompt", "imageGenerationPrompt", "dialogue", "narrativeIntent", "viewerPOV", "performanceBlocking", "shotSize", "emotion", "lightingAndAtmosphere", "audioEffects", "camera", "motion", "timeBeats", "mustHave", "optionalDetails", "continuityOut", "negativePrompt")
 		}
 		budget := 24000
@@ -321,8 +486,8 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, precise bo
 			"assetBindings": {"nodeId", "role", "priority"},
 			"characters":    {"characterName", "characterAssetId", "characterVersionId", "characterImageNodeId"},
 		} {
-			values := []any{}
 			entries := creationMaps(row[collection])
+			values := []any{}
 			for _, entry := range entries[:min(len(entries), 16)] {
 				value := map[string]any{}
 				for _, key := range keys {
@@ -334,17 +499,56 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, precise bo
 				}
 				values = append(values, value)
 			}
-			item[collection] = values
-			item[collection+"Truncated"] = len(entries) > 16
+			// An empty collection and a missing key mean the same thing to the
+			// reader, so only the non-empty case is worth model context.
+			if len(values) > 0 {
+				item[collection] = values
+			}
+			if len(entries) > 16 {
+				item[collection+"Truncated"] = true
+			}
+		}
+		// Row IDs are the edit handle. They exist in the detail projection, and
+		// the top-level hint below tells the model where to get them.
+		if mode != cloudAgentProjectionDetail {
+			delete(item, "id")
 		}
 		rows = append(rows, item)
 	}
-	return map[string]any{"rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0}
+	state := map[string]any{"rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0}
+	if mode != cloudAgentProjectionDetail {
+		state["rowIdSource"] = "本页不含 rowId；通读可继续用本工具翻页，需要真实 rowId 时用 canvas_read_storyboard(nodeId, offset, rows=1) 精读"
+	}
+	return state
+}
+
+// The digest promises existence and scale only: how many shots exist, where the
+// numbering starts and ends, and which tool returns the rows themselves.
+func cloudAgentStoryboardIndex(all []map[string]any) map[string]any {
+	summary := map[string]any{"totalRows": len(all)}
+	first, last := "", ""
+	for _, row := range all {
+		number := truncateRunes(stringValue(row["shotNumber"]), 40)
+		if number == "" {
+			continue
+		}
+		if first == "" {
+			first = number
+		}
+		last = number
+	}
+	if first != "" {
+		summary["firstShotNumber"] = first
+		summary["lastShotNumber"] = last
+	}
+	summary["rowFields"] = []string{"shotNumber", "durationSeconds", "plotDescription", "imageNodeId", "videoNodeId"}
+	summary["readRowsWith"] = "通读用 canvas_get_state 分页（每页 5 行）或 canvas_read_storyboard(nodeId, offset, rows=5)；需要某一行的真实 rowId 时用 canvas_read_storyboard(nodeId, offset, rows=1) 精读"
+	return summary
 }
 
 // Batch-table projection exposes only the fields rendered by the component.
 // Result URLs, task IDs, storage keys and arbitrary metadata remain private.
-func cloudAgentBatchTableState(table map[string]any, offset int, precise bool) map[string]any {
+func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgentProjectionMode, readRows ...int) map[string]any {
 	operation := stringValue(table["operation"])
 	if operation != "creative" {
 		operation = "try_on"
@@ -365,12 +569,6 @@ func cloudAgentBatchTableState(table map[string]any, offset int, precise bool) m
 	}
 
 	all := creationMaps(table["rows"])
-	count, textLimit := 20, 240
-	if precise {
-		count, textLimit = 20, 16000
-	}
-	rows := []any{}
-	next := 0
 	ready, enabled, missingPrompt, missingReferences, outputLinked := 0, 0, 0, 0, 0
 	for _, row := range all {
 		rowEnabled, _ := row["enabled"].(bool)
@@ -396,6 +594,34 @@ func cloudAgentBatchTableState(table map[string]any, offset int, precise bool) m
 			outputLinked++
 		}
 	}
+	// The digest reports the plan's shape and readiness without copying any row.
+	if mode == cloudAgentProjectionIndex {
+		return map[string]any{
+			"totalRows": len(all), "operation": operation, "concurrency": concurrency,
+			"referenceColumnCount": len(columns),
+			"generationPreview": map[string]any{
+				"enabledRows": enabled, "readyRows": ready, "missingPromptRows": missingPrompt,
+				"missingReferenceRows": missingReferences, "outputLinkedRows": outputLinked,
+			},
+			"readRowsWith": "canvas_read_batch_table(nodeId, offset)：每页最多20行并返回真实 rowId 与 snapshotHash",
+		}
+	}
+	count, textLimit := cloudAgentPageRows, 240
+	requested := 0
+	if len(readRows) > 0 {
+		requested = readRows[0]
+	}
+	if mode == cloudAgentProjectionDetail {
+		count, textLimit = cloudAgentDetailBatchRows, cloudAgentDetailTextLimit
+	}
+	if requested > 0 {
+		count = min(requested, cloudAgentMaxReadRows)
+		if count > 1 {
+			textLimit = min(textLimit, cloudAgentMultiRowTextLimit)
+		}
+	}
+	rows := []any{}
+	next := 0
 	for index, row := range all {
 		if index < offset {
 			continue
@@ -404,10 +630,13 @@ func cloudAgentBatchTableState(table map[string]any, offset int, precise bool) m
 			next = index
 			break
 		}
-		item := map[string]any{
-			"id":           truncateRunes(stringValue(row["id"]), 120),
-			"enabled":      row["enabled"] == true,
-			"inputNodeIds": cloudAgentBatchInputIDs(row["inputNodeIds"], len(columns)),
+		item := map[string]any{}
+		if mode == cloudAgentProjectionDetail {
+			item["id"] = truncateRunes(stringValue(row["id"]), 120)
+		}
+		item["enabled"] = row["enabled"] == true
+		if inputs := cloudAgentBatchInputIDs(row["inputNodeIds"], len(columns)); len(inputs) > 0 {
+			item["inputNodeIds"] = inputs
 		}
 		prompt := stringValue(row["prompt"])
 		item["prompt"] = truncateRunes(prompt, textLimit)
@@ -419,7 +648,7 @@ func cloudAgentBatchTableState(table map[string]any, offset int, precise bool) m
 		}
 		rows = append(rows, item)
 	}
-	return map[string]any{
+	result := map[string]any{
 		"operation": operation, "concurrency": concurrency, "referenceColumns": columns,
 		"rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0,
 		"generationPreview": map[string]any{
@@ -427,6 +656,10 @@ func cloudAgentBatchTableState(table map[string]any, offset int, precise bool) m
 			"missingReferenceRows": missingReferences, "outputLinkedRows": outputLinked,
 		},
 	}
+	if mode != cloudAgentProjectionDetail {
+		result["rowIdSource"] = "canvas_read_batch_table 返回真实 rowId 与 snapshotHash；本分页结果不含 rowId"
+	}
+	return result
 }
 
 func cloudAgentBatchInputIDs(value any, limit int) []any {

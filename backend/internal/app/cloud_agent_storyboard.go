@@ -47,25 +47,15 @@ func storyboardArgumentError(action string) error {
 	return &cloudAgentArgumentError{BadAuthRequest(fmt.Sprintf("%s分镜工具参数无效：仅允许工具 schema 中声明的字段，请重新读取分镜并按结构化参数重试", action))}
 }
 
+// One shared row-field schema serves both create (rows.items) and edit (patch):
+// every field is a plain string except durationSeconds. The per-field maxLength
+// block used to be serialized twice per request for identical information, and
+// the same 20000-rune limit is enforced by validateCloudAgentStoryboardRow, so
+// the limit is now stated once in the two tool descriptions instead.
 func cloudAgentStoryboardRowSchema() map[string]any {
-	properties := map[string]any{
-		"durationSeconds":       map[string]any{"type": "number", "exclusiveMinimum": 0},
-		"plotDescription":       map[string]any{"type": "string", "maxLength": 20000},
-		"dialogue":              map[string]any{"type": "string", "maxLength": 20000},
-		"videoMotionPrompt":     map[string]any{"type": "string", "maxLength": 20000},
-		"imageGenerationPrompt": map[string]any{"type": "string", "maxLength": 20000},
-		"camera":                map[string]any{"type": "string", "maxLength": 20000},
-		"motion":                map[string]any{"type": "string", "maxLength": 20000},
-		"shotSize":              map[string]any{"type": "string", "maxLength": 20000},
-		"emotion":               map[string]any{"type": "string", "maxLength": 20000},
-		"lightingAndAtmosphere": map[string]any{"type": "string", "maxLength": 20000},
-		"audioEffects":          map[string]any{"type": "string", "maxLength": 20000},
-		"narrativeIntent":       map[string]any{"type": "string", "maxLength": 20000},
-		"viewerPOV":             map[string]any{"type": "string", "maxLength": 20000},
-		"performanceBlocking":   map[string]any{"type": "string", "maxLength": 20000},
-		"timeBeats":             map[string]any{"type": "string", "maxLength": 20000},
-		"continuityOut":         map[string]any{"type": "string", "maxLength": 20000},
-		"negativePrompt":        map[string]any{"type": "string", "maxLength": 20000},
+	properties := map[string]any{"durationSeconds": map[string]any{"type": "number", "exclusiveMinimum": 0}}
+	for _, field := range cloudAgentStoryboardTextFields {
+		properties[field] = map[string]any{"type": "string"}
 	}
 	return map[string]any{"type": "object", "properties": properties, "required": []string{"durationSeconds"}, "additionalProperties": false}
 }
@@ -186,7 +176,7 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 	}
 	beforeHash := cloudAgentCanvasHash(doc)
 	if beforeHash != args.SnapshotHash {
-		return nil, creationConflict("画布已变化，本次未写入；请重新读取并重新申请审批")
+		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
 	}
 	for _, node := range creationMaps(doc["nodes"]) {
 		if stringValue(node["id"]) == args.NodeID {
@@ -245,7 +235,7 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	}
 	beforeHash := cloudAgentCanvasHash(doc)
 	if beforeHash != args.SnapshotHash {
-		return nil, creationConflict("画布已变化，本次未写入；请重新读取并重新申请审批")
+		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
 	}
 	node, storyboard, rows, err := storyboardNodeFromDocument(doc, args.NodeID)
 	if err != nil {
@@ -346,7 +336,7 @@ func applyCloudAgentStoryboardMutation(repo *repository.Repository, userID, canv
 	if len(plan.Preview.Items) > 0 {
 		nodeID = plan.Preview.Items[0].NodeID
 	}
-	return map[string]any{"canvasId": canvasID, "nodeId": nodeID, "snapshotHash": cloudAgentCanvasHash(plan.Document), "summary": plan.Preview.Description, "preview": plan.Preview}, nil
+	return map[string]any{"canvasId": canvasID, "nodeId": nodeID, "snapshotHash": cloudAgentCanvasHash(plan.Document), "beforeSnapshotHash": plan.BeforeSnapshotHash, "summary": plan.Preview.Description, "preview": plan.Preview}, nil
 }
 
 func mapsAsAny(values []map[string]any) []any {
@@ -377,7 +367,9 @@ func cloudAgentStoryboardReadResult(view any, nodeID string) (map[string]any, er
 	rows, _ := storyboard["rows"].([]any)
 	for _, value := range rows {
 		if row, ok := value.(map[string]any); ok {
+			// One name per value: the row ID is published as rowId only.
 			row["rowId"] = row["id"]
+			delete(row, "id")
 		}
 	}
 	return map[string]any{
