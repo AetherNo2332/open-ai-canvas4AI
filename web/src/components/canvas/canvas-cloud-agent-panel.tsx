@@ -15,7 +15,7 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
-import { cancelAgentRun, getAgentCapabilities, getAgentProfile, getAgentRun, createAgentRun, decideAgentApproval, sendAgentInterjection, sendAgentMessage, subscribeAgentEvents, updateAgentProfile, type AgentContextBreakdown, type AgentContextBucket, type AgentContextPressure, type AgentEvent, type AgentPermissionMode, type AgentProfileScope, type AgentProfileView, type AgentReasoningMode, type AgentRun } from "@/services/api/agent";
+import { cancelAgentRun, getAgentCapabilities, getAgentProfile, getAgentRun, createAgentRun, decideAgentApproval, sendAgentInterjection, sendAgentMessage, subscribeAgentEvents, updateAgentProfile, type AgentContextBreakdown, type AgentContextBucket, type AgentContextPressure, type AgentContextTokenUsage, type AgentEvent, type AgentPermissionMode, type AgentProfileScope, type AgentProfileView, type AgentReasoningMode, type AgentRun } from "@/services/api/agent";
 import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { agentApprovalMatchesSettings, agentImageApproval } from "@/lib/canvas/agent-media-approval";
 import type { AgentMediaSettings } from "@/services/api/agent";
@@ -130,6 +130,17 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         historyMessageThreshold: contextPressure?.historyMessageThreshold || 16,
         compactionPressureRatio: contextPressure?.compactionPressureRatio || ((contextPressure?.sourceBytes || 0) / (48 * 1024)),
         breakdown: contextPressure?.breakdown,
+        pressureTokens: contextPressure?.pressureTokens,
+        projectedTokens: contextPressure?.projectedTokens ?? contextPressure?.estimatedInputTokens,
+        tokenSource: contextPressure?.tokenSource ?? "estimate",
+        tokenUsage: contextPressure?.tokenUsage,
+        anchorStep: contextPressure?.anchorStep,
+        anchorDeltaTokens: contextPressure?.anchorDeltaTokens,
+        anchorRejected: contextPressure?.anchorRejected,
+        projectedPressureRatio: contextPressure?.projectedPressureRatio,
+        evictionThresholdBytes: contextPressure?.evictionThresholdBytes,
+        evictionMessageLimit: contextPressure?.evictionMessageLimit,
+        requestHardLimitBytes: contextPressure?.requestHardLimitBytes,
     }), [contextPressure, prompt, selectedTextCapability]);
     useEffect(() => { if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off"); }, [reasoningSupported, reasoningMode]);
     const installedSkills = useMemo(() => skills.filter((skill) => skill.isAdded), [skills]);
@@ -1332,7 +1343,28 @@ function parseContextPressure(payload: Record<string, unknown>): AgentContextPre
         historyMessageThreshold: number("historyMessageThreshold") || 16,
         compactionPressureRatio: Math.max(0, number("compactionPressureRatio") || number("sourceBytes") / (48 * 1024)),
         breakdown: parseContextBreakdown(payload["breakdown"]),
+        // 上游实测锚点与投影：旧后端不返回，缺省时前端按估算显示。
+        pressureTokens: payload.pressureTokens === undefined ? undefined : number("pressureTokens"),
+        projectedTokens: payload.projectedTokens === undefined ? undefined : number("projectedTokens"),
+        tokenSource: payload.tokenSource === "provider" ? "provider" : payload.tokenSource === "estimate" ? "estimate" : undefined,
+        tokenUsage: parseContextTokenUsage(payload["tokenUsage"]),
+        anchorStep: payload.anchorStep === undefined ? undefined : number("anchorStep"),
+        anchorDeltaTokens: payload.anchorDeltaTokens === undefined ? undefined : number("anchorDeltaTokens"),
+        anchorRejected: typeof payload.anchorRejected === "string" ? payload.anchorRejected : undefined,
+        projectedPressureRatio: payload.projectedPressureRatio === undefined ? undefined : Math.max(0, number("projectedPressureRatio")),
+        evictionThresholdBytes: payload.evictionThresholdBytes === undefined ? undefined : number("evictionThresholdBytes"),
+        evictionMessageLimit: payload.evictionMessageLimit === undefined ? undefined : number("evictionMessageLimit"),
+        requestHardLimitBytes: payload.requestHardLimitBytes === undefined ? undefined : number("requestHardLimitBytes"),
     };
+}
+
+/** 上游 usage：缺字段即视为没有，不参与展示。 */
+function parseContextTokenUsage(raw: unknown): AgentContextTokenUsage | undefined {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const source = raw as Record<string, unknown>;
+    const number = (key: string) => (Number.isFinite(Number(source[key])) ? Number(source[key]) : 0);
+    const usage = { inputTokens: number("inputTokens"), cachedInputTokens: number("cachedInputTokens"), uncachedInputTokens: number("uncachedInputTokens"), outputTokens: number("outputTokens") };
+    return usage.inputTokens > 0 ? usage : undefined;
 }
 
 /** 占用分布是展示数据：字段缺失或类型异常时整块隐藏，不影响压力读数。 */
@@ -1353,6 +1385,8 @@ function parseContextBreakdown(raw: unknown): AgentContextBreakdown | undefined 
         envelopeBytes: number("envelopeBytes"),
         buckets,
         systemSegments: segments,
+        tokenScale: source.tokenScale === undefined ? undefined : number("tokenScale"),
+        scaledTotalTokens: source.scaledTotalTokens === undefined ? undefined : number("scaledTotalTokens"),
     };
 }
 
@@ -1364,7 +1398,11 @@ function parseContextBucket(raw: unknown): AgentContextBucket | undefined {
     const bytes = Number(source.bytes);
     const tokens = Number(source.tokens);
     if (!key || !Number.isFinite(bytes) || bytes <= 0) return undefined;
-    return { key, label: label || key, bytes, tokens: Number.isFinite(tokens) ? tokens : 0 };
+    const scaled = Number(source.scaledTokens);
+    return {
+        key, label: label || key, bytes, tokens: Number.isFinite(tokens) ? tokens : 0,
+        scaledTokens: Number.isFinite(scaled) && scaled > 0 ? scaled : undefined,
+    };
 }
 
 function latestContextPressure(events?: AgentEvent[]) {

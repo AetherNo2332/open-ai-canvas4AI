@@ -85,11 +85,76 @@ type cloudAgentRuntime struct {
 	Plan                   []cloudAgentPlanItem         `json:"plan,omitempty"`
 	PendingInterjections   []cloudAgentInterjection     `json:"pendingInterjections,omitempty"`
 	InterjectionIDs        []string                     `json:"interjectionIds,omitempty"`
+	// 最近一次已发出的步骤请求（模型调用）的本地计价，与上游实测用量配成锚点用。
+	// 估算与实测指向同一个 canonical：估算取自任务 input 里实际发出的那份，
+	// 因此"信封一致"是构造保证，不需要额外比对。
+	LastStepTaskID      string `json:"lastStepTaskId,omitempty"`
+	LastStepOperation   string `json:"lastStepOperation,omitempty"`
+	LastStepEstimate    int    `json:"lastStepEstimate,omitempty"`
+	LastStepSourceBytes int    `json:"lastStepSourceBytes,omitempty"`
+	// TokenAnchor 是上一步上游上报的用量（模型自己的分词器计数），上下文压力的权威锚点。
+	TokenAnchor *cloudAgentTokenAnchor `json:"tokenAnchor,omitempty"`
 	// CanvasBatchHashes 记录本批（同一个助手消息内的多次工具调用）已经消费与产出的画布版本：
 	// 首元素是首个写入被校验时看到的版本，末元素是最近一次写入产出的版本。模型是在同一次读取的
 	// 基础上并发提交这批写入的，首个写入必然改变版本，因此同批后续写入需要据此重基。
 	CanvasBatchHashes []string          `json:"canvasBatchHashes,omitempty"`
 	Events            []CloudAgentEvent `json:"events"`
+}
+
+// cloudAgentTokenAnchor 是"上游实测 + 本地估算"的一对读数。
+// 上游用量来自模型自己的分词器（provider 上报），是计费与压力可以采信的权威值；
+// 本地估算记录的是发出同一次请求时的读法，二者的差就是投影后续请求所需的换算基准。
+type cloudAgentTokenAnchor struct {
+	TaskID          string `json:"taskId"`
+	Step            int    `json:"step"`
+	InputTokens     int64  `json:"inputTokens"`
+	CachedTokens    int64  `json:"cachedTokens"`
+	OutputTokens    int64  `json:"outputTokens"`
+	EstimatedTokens int    `json:"estimatedTokens"`
+	SourceBytes     int    `json:"sourceBytes"`
+	Accepted        bool   `json:"accepted"`
+	RejectReason    string `json:"rejectReason,omitempty"`
+}
+
+// cloudAgentAnchorMinRatio / MaxRatio 是采信上游用量的合理区间。
+// 实测与自估差出一个量级时通常意味着换了模型或计量口径（例如上游只报 cached、
+// 或走了不同的协议分支），此时宁可继续用估算，也不要把压力曲线锚到错误基准上。
+const (
+	cloudAgentAnchorMinRatio = 0.5
+	cloudAgentAnchorMaxRatio = 2.0
+)
+
+// recordCloudAgentTokenAnchor 用上一步的上游实测用量给上下文压力定锚。
+// 幂等：同一任务只采信一次；没有实测或比值离谱时记录拒绝原因并保留估算。
+func (s *Service) recordCloudAgentTokenAnchor(state *cloudAgentRuntime) {
+	if s == nil || s.repo == nil || state == nil || state.LastStepTaskID == "" || state.LastStepEstimate <= 0 {
+		return
+	}
+	if state.LastStepOperation != cloudAgentStepOperation {
+		return
+	}
+	if state.TokenAnchor != nil && state.TokenAnchor.TaskID == state.LastStepTaskID {
+		return
+	}
+	log, ok, err := s.repo.APICallLogUsageForTask(state.LastStepTaskID)
+	if err != nil || !ok {
+		return
+	}
+	anchor := &cloudAgentTokenAnchor{
+		TaskID: state.LastStepTaskID, Step: state.Step, InputTokens: log.InputTokens,
+		CachedTokens: log.CachedTokens, OutputTokens: log.OutputTokens,
+		EstimatedTokens: state.LastStepEstimate, SourceBytes: state.LastStepSourceBytes,
+	}
+	ratio := float64(anchor.InputTokens) / float64(anchor.EstimatedTokens)
+	switch {
+	case ratio < cloudAgentAnchorMinRatio:
+		anchor.RejectReason = "上游实测远低于本地估算，可能换了模型或口径"
+	case ratio > cloudAgentAnchorMaxRatio:
+		anchor.RejectReason = "上游实测远高于本地估算，可能换了模型或口径"
+	default:
+		anchor.Accepted = true
+	}
+	state.TokenAnchor = anchor
 }
 
 func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgentState) error {
@@ -110,6 +175,14 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
 	}
 	pressure := s.cloudAgentContextPressure(task, input.Requests.Canonical, initial.Request.Prompt)
+	// 第一步的模型调用就是根任务本身（不经过 enqueueCloudAgentTask）：
+	// 在这里登记任务 id 与本次请求的本地计价，它回来时才能与上游实测配成锚点。
+	state.LastStepTaskID = task.ID
+	// 根任务的操作名是 cloud_agent，但它就是第一步的模型调用：按"步骤"口径登记，
+	// 否则回来配锚点时会被操作名守卫挡掉（实测踩过）。
+	state.LastStepOperation = cloudAgentStepOperation
+	state.LastStepEstimate = pressure.EstimatedInputTokens
+	state.LastStepSourceBytes = pressure.SourceBytes
 	state.event(task.ID, "context_pressure", cloudAgentContextPressurePayload(pressure, &state))
 	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
 	if err := cloudAgentSave(run, &state); err != nil {
@@ -677,6 +750,8 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		return s.failCloudAgent(run, &state, fmt.Sprintf("达到 %d 次模型调用上限，本轮已停止", stepLimit))
 	}
 	cloudAgentDrainInterjections(run.ID, &state)
+	// 上一步的模型调用已经回来，先用它的上游实测用量更新压力锚点，再发下一步。
+	s.recordCloudAgentTokenAnchor(&state)
 	canonical := cloudAgentCanonicalWithPlan(&state)
 	s.attachCloudAgentLessons(&canonical, run.UserID, cloudAgentLessonTaskText(&state))
 	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
@@ -685,7 +760,7 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if len(raw) > cloudAgentRequestHardLimitBytes {
 		return s.failCloudAgent(run, &state, "模型上下文超过 192KB 上限")
 	}
-	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: "cloud_agent_step", Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
+	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: cloudAgentStepOperation, Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
 	return s.enqueueCloudAgentTask(run, &state, req, nil)
 }
 
@@ -695,6 +770,10 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 // messages — so the expensive path only runs after the cheap one had its
 // chance. Judging the whole canonical here made a 36 KiB read look safe at
 // 0.91x while the semantic path was already past its own threshold.
+// cloudAgentStepOperation 是一次"模型调用"任务的操作名；只有它会与上游实测配锚点
+// （压缩任务发的是另一份请求，拿它当锚点会把压力算到错误的信封上）。
+const cloudAgentStepOperation = "cloud_agent_step"
+
 const (
 	cloudAgentEvictionThresholdBytes = 40 << 10
 	cloudAgentEvictionMessageLimit   = 24
@@ -1407,6 +1486,11 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				if contextPressure != nil {
 					state.event(run.ID, "context_pressure", cloudAgentContextPressurePayload(*contextPressure, state))
 				}
+				// 记下发出去这份 canonical 的本地计价：任务回来时用它和上游实测配成锚点。
+				state.LastStepTaskID = task.ID
+				state.LastStepOperation = req.Operation
+				state.LastStepEstimate = contextPressure.EstimatedInputTokens
+				state.LastStepSourceBytes = contextPressure.SourceBytes
 				state.Step++
 			}
 		}

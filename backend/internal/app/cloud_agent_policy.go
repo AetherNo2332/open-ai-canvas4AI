@@ -56,6 +56,8 @@ type cloudAgentContextSegment struct {
 	Label  string `json:"label"`
 	Bytes  int    `json:"bytes"`
 	Tokens int    `json:"tokens"`
+	// ScaledTokens 是按上游实测锚点比例校准后的读数；没有锚点时不填。
+	ScaledTokens int `json:"scaledTokens,omitempty"`
 }
 
 // cloudAgentSegmentRecorder measures each block as the prompt is compiled.
