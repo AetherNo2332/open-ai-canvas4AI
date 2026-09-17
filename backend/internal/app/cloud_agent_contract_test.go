@@ -160,7 +160,10 @@ func TestCloudAgentPolicyPublishesSkillManifestWithoutInliningSkillBody(t *testi
 // 892 tokens on every step of every run, so it is now read through
 // canvas_list_node_types whenever that tool is available.
 func TestCloudAgentPolicyRoutesCapabilityGuideThroughTool(t *testing.T) {
-	text, _, err := compileCloudAgentPolicies(agentTestRequest(), nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	// 工具指针只在会写画布的运行里出现（只读运行不暴露能力卡，改用内联指南）。
+	req := agentTestRequest()
+	req.PermissionMode = "auto"
+	text, _, err := compileCloudAgentPolicies(req, nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,13 +183,30 @@ func TestCloudAgentPolicyRoutesCapabilityGuideThroughTool(t *testing.T) {
 		t.Fatalf("system prompt still inlines the full capability guide: %s", text)
 	}
 	found := false
-	for _, tool := range cloudAgentTools(agentTestRequest()) {
+	for _, tool := range cloudAgentTools(req) {
 		if function, ok := tool["function"].(map[string]any); ok && function["name"] == "canvas_list_node_types" {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatal("routing guide points at a tool that is not exposed")
+	}
+}
+
+// 只读运行不暴露 canvas_list_node_types，因此指南必须退回内联，不能留下悬空指针。
+func TestCloudAgentPolicyKeepsInlineGuideInReadOnlyRun(t *testing.T) {
+	req := agentTestRequest()
+	if req.PermissionMode != "read_only" {
+		t.Fatalf("fixture permission mode = %q, want read_only", req.PermissionMode)
+	}
+	for _, tool := range cloudAgentTools(req) {
+		if function, ok := tool["function"].(map[string]any); ok && function["name"] == "canvas_list_node_types" {
+			t.Fatal("read-only run must not expose the node capability tool")
+		}
+	}
+	_, _, err := compileCloudAgentPolicies(req, nil, `{"totalNodes":0,"includedNodes":0,"nodes":[]}`, cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

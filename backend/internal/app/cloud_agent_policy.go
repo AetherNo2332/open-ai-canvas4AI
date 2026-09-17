@@ -172,9 +172,10 @@ func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, 
 	b.WriteString("\n")
 	recorder.mark(&b, "execution", "执行上下文")
 	// The capability guide is a tool answer, not a system-prompt constant: it is
-	// resent on every step of every run. It stays inline only in the one case
-	// where canvas_list_node_types is unavailable (no canvas context scope).
-	if len(req.ContextScope) == 0 {
+	// resent on every step of every run. It stays inline whenever
+	// canvas_list_node_types is unavailable —没有画布上下文，或只读运行（只读不会创建节点，
+	// 工具本身也不暴露）。否则提示会指向一个不存在的工具。
+	if len(req.ContextScope) == 0 || req.PermissionMode == "read_only" {
 		b.WriteString(cloudAgentCapabilityGuide())
 	} else {
 		b.WriteString("节点能力与选型：需要节点类型、默认尺寸、连接约束、适用场景和维护代价时调用 canvas_list_node_types 获取权威清单，不要凭记忆猜测 nodeType；由你按任务复杂度自主选择，不为形式强制使用任何节点——单画面、一次性说明或快速试验优先轻量节点，多镜头、镜头连续性、逐镜审查/生成或后续维护优先评估分镜脚本，普通文本或 Markdown 不能伪装成结构化分镜。\n")
