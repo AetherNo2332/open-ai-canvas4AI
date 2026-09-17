@@ -1,5 +1,6 @@
 import { Popover } from "antd";
 import { Bell, ChevronDown, ChevronRight, CircleUserRound, History as HistoryIcon, Infinity as InfinityIcon, PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
+import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
@@ -8,12 +9,15 @@ import { Kbd } from "@/components/ui/base/kbd";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { useWorkspaceLogout } from "@/hooks/use-workspace-logout";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
+import { aceternityMotion } from "@/lib/aceternity-motion";
 import { cn } from "@/lib/utils";
 import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
 import { useUserStore, type FeatureAvailability } from "@/stores/use-user-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { WorkspaceAccountCard } from "./workspace-account-card";
-import { WorkspaceWalletModal } from "./workspace-wallet-modal";
+import { WorkspaceSidebarCheckin } from "./workspace-sidebar-checkin";
+import { WorkspaceSidebarStorageMeter } from "./workspace-sidebar-storage-meter";
+import { openWorkspaceWallet } from "@/lib/workspace-wallet";
 
 export type WorkspaceNavItem = {
     id: string;
@@ -60,8 +64,6 @@ function buildNav(features: FeatureAvailability, isAdmin: boolean): { groups: Wo
 function WorkspaceSidebarProfile({ collapsed, user }: { collapsed: boolean; user: NonNullable<ReturnType<typeof useUserStore.getState>["user"]> | null }) {
     const [failed, setFailed] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
-    const [walletOpen, setWalletOpen] = useState(false);
-    const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const avatarUrl = /^https?:\/\//i.test(user?.avatarUrl || "") ? user?.avatarUrl : "";
     const profileName = user?.displayName || user?.username || "未登录";
 
@@ -72,18 +74,21 @@ function WorkspaceSidebarProfile({ collapsed, user }: { collapsed: boolean; user
     }
 
     const avatar = avatarUrl && !failed ? <img src={avatarUrl} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <CircleUserRound aria-hidden />;
-    const content = <WorkspaceAccountCard onNavigate={() => setMenuOpen(false)} onWallet={() => { setMenuOpen(false); setWalletOpen(true); }} />;
+    const content = <WorkspaceAccountCard onNavigate={() => setMenuOpen(false)} onWallet={() => { setMenuOpen(false); openWorkspaceWallet(); }} />;
 
     return (
-        <div className={cn("app-workspace-sidebar-profile-row", collapsed && "is-collapsed")}>
-            <Popover open={menuOpen} onOpenChange={setMenuOpen} trigger="click" placement="topLeft" rootClassName="workspace-account-popover" content={content}>
-                <button type="button" className={cn("app-workspace-sidebar-profile", collapsed && "is-collapsed")} aria-label="打开账户菜单" title={profileName}>
-                    <span className="app-workspace-sidebar-profile-avatar">{avatar}</span>
-                    {!collapsed ? <span className="app-workspace-sidebar-profile-copy"><strong>{profileName}</strong><span>创作工作台</span></span> : null}
-                </button>
-            </Popover>
-            {creditsEnabled ? <WorkspaceWalletModal open={walletOpen} onClose={() => setWalletOpen(false)} /> : null}
-            {!collapsed ? <SystemAnnouncementCenter userId={user.id} className="app-workspace-sidebar-notification" /> : <span className="app-workspace-sidebar-notification-spacer" aria-hidden />}
+        <div className={cn("app-workspace-sidebar-account", collapsed && "is-collapsed")}>
+            <WorkspaceSidebarCheckin collapsed={collapsed} />
+            <WorkspaceSidebarStorageMeter collapsed={collapsed} />
+            <div className={cn("app-workspace-sidebar-profile-row", collapsed && "is-collapsed")}>
+                <Popover open={menuOpen} onOpenChange={setMenuOpen} trigger="click" placement="topLeft" rootClassName="workspace-account-popover" content={content}>
+                    <button type="button" className={cn("app-workspace-sidebar-profile", collapsed && "is-collapsed")} aria-label="打开账户菜单" title={profileName}>
+                        <span className="app-workspace-sidebar-profile-avatar">{avatar}</span>
+                        {!collapsed ? <span className="app-workspace-sidebar-profile-copy"><strong>{profileName}</strong><span>创作工作台</span></span> : null}
+                    </button>
+                </Popover>
+                {!collapsed ? <SystemAnnouncementCenter userId={user.id} className="app-workspace-sidebar-notification" /> : <span className="app-workspace-sidebar-notification-spacer" aria-hidden />}
+            </div>
         </div>
     );
 }
@@ -139,6 +144,7 @@ function NavItem({
     const isActive = activeId === item.id || (item.id === "settings" && activeId.startsWith("settings:"));
     const hasChildren = Boolean(item.children?.length);
     const [isOpen, setIsOpen] = useState(false);
+    const reducedMotion = useReducedMotion();
 
     // 激活分支自动展开（如设置分区子项），保证当前位置可见。
     useEffect(() => {
@@ -172,10 +178,18 @@ function NavItem({
     );
 
     const rowClassName = cn(
-        "app-workspace-nav-link group flex min-h-11 w-full items-center justify-between gap-2 rounded-[var(--r-md)] px-3 py-2 text-[var(--fs-body)] transition-[background-color,color,transform] duration-200 select-none",
+        "app-workspace-nav-link group relative isolate flex min-h-11 w-full items-center justify-between gap-2 rounded-[var(--r-md)] px-3 py-2 text-[var(--fs-body)] transition-[color,transform] duration-200 select-none",
         collapsed && "is-collapsed",
         isActive ? "is-active font-medium" : "text-foreground/62 hover:bg-surface-hover hover:text-foreground",
     );
+    const activePill = isActive ? (
+        <motion.span
+            layoutId="workspace-nav-active-pill"
+            className="app-workspace-nav-active-pill"
+            aria-hidden
+            transition={reducedMotion ? { duration: 0 } : aceternityMotion.spring.dock}
+        />
+    ) : null;
 
     const handleClick = () => {
         if (item.action === "search") {
@@ -211,10 +225,12 @@ function NavItem({
                     onPointerDown={() => preloadWorkspaceRoute(linkTo)}
                     onPointerEnter={() => preloadWorkspaceRoute(linkTo)}
                 >
+                    {activePill}
                     {rowContent}
                 </Link>
             ) : (
                 <button type="button" className={rowClassName} data-nav-id={item.id} style={rowStyle} aria-label={collapsed ? item.title : undefined} title={collapsed ? item.title : undefined} onClick={handleClick} aria-expanded={hasChildren ? isOpen : undefined}>
+                    {activePill}
                     {rowContent}
                 </button>
             )}
@@ -299,6 +315,7 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
         <div className={cn("app-workspace-sidebar-nav flex h-full shrink-0 flex-col", collapsed && "is-collapsed")}>
             <WorkspaceSwitcher collapsed={collapsed} onNavigate={onNavigate} onExpand={onExpand} onCollapse={onCollapse} />
 
+            <LayoutGroup id="workspace-sidebar-nav">
             <div
                 ref={scrollRef}
                 onScroll={handleScroll}
@@ -308,6 +325,7 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
                     <NavGroup key={index} group={group} activeId={activeId} onNavigate={onNavigate} onOpenSearch={onOpenSearch} onLogout={() => void handleLogout()} collapsed={collapsed} />
                 ))}
             </div>
+            </LayoutGroup>
 
             <div className="app-workspace-sidebar-footer shrink-0 px-3 py-3">
                 <WorkspaceSidebarProfile collapsed={collapsed} user={user} />

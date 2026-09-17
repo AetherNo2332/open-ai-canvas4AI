@@ -131,6 +131,50 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 	r.POST("/agent/runs", create)
 	// Each additional message starts a new immutable turn and returns its ID.
 	r.POST("/agent/runs/:id/messages", create)
+	r.POST("/agent/runs/:id/interjections", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		policy, available := loadRuntimePolicy(c, svc)
+		if !available || !enforceRateLimit(c, "tasks:"+user.ID, policy.Request.TaskCreatePerMinute, time.Minute) {
+			return
+		}
+		if _, err = svc.CloudAgentRun(user.ID, c.Param("id")); err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+		var req struct {
+			Text      string `json:"text"`
+			MessageID string `json:"messageId"`
+		}
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if req.Text != "" && (!utf8.ValidString(req.Text) || utf8.RuneCountInString(req.Text) > 4000 || strings.ContainsRune(req.Text, 0)) {
+			fail(c, http.StatusBadRequest, errors.New("text 无效"))
+			return
+		}
+		if req.MessageID != "" && (!utf8.ValidString(req.MessageID) || utf8.RuneCountInString(req.MessageID) > 160) {
+			fail(c, http.StatusBadRequest, errors.New("messageId 无效"))
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			fail(c, http.StatusBadRequest, errors.New("请求必须只包含一个 JSON 对象"))
+			return
+		}
+		pending, err := svc.InterjectCloudAgent(user.ID, c.Param("id"), req.MessageID, req.Text)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"accepted": true, "pending": pending})
+	})
 	r.GET("/agent/runs/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
