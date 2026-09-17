@@ -35,7 +35,11 @@ type CloudAgentRequest struct {
 	// （text.references.maxImages > 0）重新推导并覆盖，客户端传入值一律被忽略；
 	// 必须持久化：工具授权校验每步都从落库状态重建，丢掉这个标记会让模型看得见工具
 	// 却被判为"未获本轮权限授权"。
-	VisionEnabled  bool     `json:"visionEnabled,omitempty"`
+	VisionEnabled bool `json:"visionEnabled,omitempty"`
+	// HasMemories 决定是否暴露 recall_lessons：一条已批准记忆都没有时，这个工具只占
+	// schema 开销、没有任何可召回内容。与 VisionEnabled 同样由服务端在建 run 时推导并持久化，
+	// 工具授权每步从落库状态重建，两处必须看到同一个值。
+	HasMemories    bool     `json:"hasMemories,omitempty"`
 	PermissionMode string   `json:"permissionMode"`
 	SkillIDs       []string `json:"skillIds,omitempty"`
 	ContextScope   []string `json:"contextScope"`
@@ -428,6 +432,8 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	}
 	// 看图能力取决于本轮渠道模型自己的合同，在建 run 时定格，运行期间不再变化。
 	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
+	// 个人记忆是长期积累的，建 run 时定格一次（运行期间不再变化）。
+	req.HasMemories = s.cloudAgentHasMemories(userID)
 	canvasSummary := ""
 	if len(req.ContextScope) != 0 {
 		canvasSummary, err = cloudAgentCanvasSummary(canvas)

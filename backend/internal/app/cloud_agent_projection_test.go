@@ -1321,3 +1321,62 @@ func TestCloudAgentContextPressureRejectsImplausibleAnchor(t *testing.T) {
 		t.Fatal("rejection reason missing")
 	}
 }
+
+// 没有已批准记忆时 recall_lessons 没有任何可召回内容，只占 schema 开销；
+// 只读运行不会创建节点，能力卡也没有用途。两者都由服务端推导并随请求持久化，
+// 工具授权重跑同一张表，所以裁剪对"下发"和"授权"是一致的。
+func TestCloudAgentToolsFollowRunCapabilities(t *testing.T) {
+	names := func(req CloudAgentRequest) map[string]bool {
+		out := map[string]bool{}
+		for _, tool := range cloudAgentTools(req) {
+			if function, ok := tool["function"].(map[string]any); ok {
+				out[stringValue(function["name"])] = true
+			}
+		}
+		return out
+	}
+
+	writeReq := agentTestRequest()
+	writeReq.PermissionMode = "auto"
+	writeReq.ContextScope = []string{"canvas"}
+	writeReq.Budget.MaxGenerationTasks = 1
+
+	withoutMemories := names(writeReq)
+	if withoutMemories["recall_lessons"] {
+		t.Fatal("recall_lessons exposed without any approved memory")
+	}
+	writeReq.HasMemories = true
+	if !names(writeReq)["recall_lessons"] {
+		t.Fatal("recall_lessons missing although the user has approved memories")
+	}
+	if !names(writeReq)["canvas_list_node_types"] {
+		t.Fatal("writable run lost the node capability list")
+	}
+
+	readOnly := agentTestRequest()
+	readOnly.PermissionMode = "read_only"
+	readOnly.ContextScope = []string{"canvas"}
+	readOnlyNames := names(readOnly)
+	if readOnlyNames["canvas_list_node_types"] {
+		t.Fatal("read-only run exposed the node capability list")
+	}
+	for _, write := range []string{"canvas_apply_ops", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "generate_media"} {
+		if readOnlyNames[write] {
+			t.Fatalf("read-only run exposed write tool %s", write)
+		}
+	}
+	if !readOnlyNames["canvas_get_state"] || !readOnlyNames["canvas_read_storyboard"] {
+		t.Fatal("read-only run lost its read tools")
+	}
+
+	// 平台工具全集必须仍然包含条件暴露的工具，否则能力声明会漏项。
+	union := map[string]bool{}
+	for _, name := range CloudAgentSupportedToolNames() {
+		union[name] = true
+	}
+	for _, want := range []string{"recall_lessons", "canvas_inspect_image", "canvas_list_node_types", "generate_media"} {
+		if !union[want] {
+			t.Fatalf("supported tool union lost %s", want)
+		}
+	}
+}
