@@ -19,9 +19,6 @@ import (
 )
 
 func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
-	if input.MaxOutputTokens == 0 {
-		input.MaxOutputTokens = input.TextOptions.MaxOutputTokens
-	}
 	// 浏览器持久化的是协议中立请求；资源水合和模型路由完成后才展开上游协议，
 	// 防止供应商请求体反向污染任务记录，也避免切换模型时复用错误协议。
 	if input.AgentRequests != nil && input.AgentRequests.Canonical != nil {
@@ -61,7 +58,7 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 	}
 	body["model"] = input.Config.Model
 	applyTextThinking(body, input, protocol)
-	applyAgentOutputLimit(body, input.MaxOutputTokens, protocol)
+	applyAgentOutputLimit(body, cloudAgentOutputTokens(input), protocol)
 	normalizeAgentToolChoice(body, input, protocol)
 	result, err := postAgentRequest(ctx, input, path, body, protocol)
 	if protocol == "chat-completion" && isAgentToolChoiceCompatibilityError(err) {
@@ -87,6 +84,15 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 		return nil, err
 	}
 	return result, nil
+}
+
+// cloudAgentOutputTokens 取本次调用的输出上限：优先任务输入里的显式值，
+// 其次 textOptions.maxOutputTokens（画布 Agent 每步都带它，两条上游路径都要用上）。
+func cloudAgentOutputTokens(input canvasGenerationInput) int {
+	if input.MaxOutputTokens > 0 {
+		return input.MaxOutputTokens
+	}
+	return input.TextOptions.MaxOutputTokens
 }
 
 // applyAgentOutputLimit 按协议写入输出上限字段名。
@@ -158,6 +164,7 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 			return nil, errors.New("声明式 Agent 请求体必须是 JSON 对象")
 		}
 		applyTextThinking(body, input, wire)
+		applyAgentOutputLimit(body, cloudAgentOutputTokens(input), wire)
 		normalizeAgentToolChoice(body, input, wire)
 		spec.Body = body
 		if input.StreamText {

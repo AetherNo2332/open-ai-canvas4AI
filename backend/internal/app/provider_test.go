@@ -622,6 +622,11 @@ func TestRunDeclarativeAgentTaskOmitsToolChoiceBeforeThinkingRequest(t *testing.
 		if body["reasoning_effort"] != "medium" {
 			t.Errorf("thinking was not forwarded: %#v", body["reasoning_effort"])
 		}
+		// 声明式渠道同样要有输出上限：这条路径曾经漏掉它，实测画布 Agent 的单步
+		// 输出可以跑到 7188 tok（约 263s），正是要挡掉的那类长尾。
+		if body["max_tokens"] != float64(cloudAgentStepMaxOutputTokens) {
+			t.Errorf("declarative agent request lost the output cap: %#v", body["max_tokens"])
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"完成","tool_calls":[]}}]}`))
 	}))
@@ -644,7 +649,7 @@ func TestRunDeclarativeAgentTaskOmitsToolChoiceBeforeThinkingRequest(t *testing.
 	}
 	result, err := runAgentToolTask(withProtocolRegistry(context.Background(), registry), canvasGenerationInput{
 		Config:      providerConfig{BaseURL: server.URL, APIKey: "key", Model: "thinking-model", InterfaceType: "chat-completion"},
-		TextOptions: canvasTextOptions{Thinking: true},
+		TextOptions: canvasTextOptions{Thinking: true, MaxOutputTokens: cloudAgentStepMaxOutputTokens},
 		AgentRequests: &agentToolRequests{ChatCompletion: map[string]interface{}{
 			"messages": []interface{}{}, "tools": []interface{}{}, "tool_choice": "required",
 		}},
