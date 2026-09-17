@@ -22,18 +22,23 @@ const cloudAgentOperation = "cloud_agent"
 // turns reference the previous run, not a mutable in-memory conversation. This
 // reuses transactional billing, worker leases, cancellation and text replay.
 type CloudAgentRequest struct {
-	ReasoningMode   string   `json:"reasoningMode,omitempty"`
-	ProfileRevision string   `json:"profileRevision,omitempty"`
-	CanvasID        string   `json:"canvasId"`
-	Prompt          string   `json:"prompt"`
-	Model           string   `json:"model,omitempty"`
-	LogicalModelID  string   `json:"logicalModelId,omitempty"`
-	ChannelID       string   `json:"channelId,omitempty"`
-	ChannelModelKey string   `json:"channelModelKey,omitempty"`
-	PermissionMode  string   `json:"permissionMode"`
-	SkillIDs        []string `json:"skillIds,omitempty"`
-	ContextScope    []string `json:"contextScope"`
-	Budget          struct {
+	ReasoningMode   string `json:"reasoningMode,omitempty"`
+	ProfileRevision string `json:"profileRevision,omitempty"`
+	CanvasID        string `json:"canvasId"`
+	Prompt          string `json:"prompt"`
+	Model           string `json:"model,omitempty"`
+	LogicalModelID  string `json:"logicalModelId,omitempty"`
+	ChannelID       string `json:"channelId,omitempty"`
+	ChannelModelKey string `json:"channelModelKey,omitempty"`
+	// VisionEnabled 决定是否给模型暴露看图工具，由服务端在创建 run 时按渠道模型合同
+	// （text.references.maxImages > 0）重新推导并覆盖，客户端传入值一律被忽略；
+	// 必须持久化：工具授权校验每步都从落库状态重建，丢掉这个标记会让模型看得见工具
+	// 却被判为"未获本轮权限授权"。
+	VisionEnabled  bool     `json:"visionEnabled,omitempty"`
+	PermissionMode string   `json:"permissionMode"`
+	SkillIDs       []string `json:"skillIds,omitempty"`
+	ContextScope   []string `json:"contextScope"`
+	Budget         struct {
 		MaxCredits         float64 `json:"maxCredits"`
 		MaxGenerationTasks int     `json:"maxGenerationTasks,omitempty"`
 		MaxVideoSeconds    int     `json:"maxVideoSeconds,omitempty"`
@@ -397,6 +402,8 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
+	// 看图能力取决于本轮渠道模型自己的合同，在建 run 时定格，运行期间不再变化。
+	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
 	canvasSummary := ""
 	if len(req.ContextScope) != 0 {
 		canvasSummary, err = cloudAgentCanvasSummary(canvas)
