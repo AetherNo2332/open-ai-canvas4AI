@@ -97,6 +97,8 @@ export type AgentContextBucket = {
     label: string;
     bytes: number;
     tokens: number;
+    /** 按上游实测锚点比例校准后的读数；没有锚点时后端不返回该字段。 */
+    scaledTokens?: number;
 };
 
 /** 编译出的系统提示内部分段（策略、能力、锚点、画布摘要、偏好等）。 */
@@ -110,6 +112,17 @@ export type AgentContextBreakdown = {
     envelopeBytes: number;
     buckets: AgentContextBucket[];
     systemSegments?: AgentContextSystemSegment[];
+    /** 上游实测 / 本地估算 的比例；用于把构成读数换算到 provider 的尺度。 */
+    tokenScale?: number;
+    scaledTotalTokens?: number;
+};
+
+/** 上游上报的用量：模型自己的分词器计数，是压力与计费的权威值。 */
+export type AgentContextTokenUsage = {
+    inputTokens: number;
+    cachedInputTokens: number;
+    uncachedInputTokens: number;
+    outputTokens: number;
 };
 
 export type AgentContextPressure = {
@@ -130,6 +143,21 @@ export type AgentContextPressure = {
     compactionPressureRatio: number;
     /** 占用分布；旧后端不返回该字段。 */
     breakdown?: AgentContextBreakdown;
+    /** 上一步上游实测的 prompt 规模（provider 自己的分词器）；没有可靠锚点时不返回。 */
+    pressureTokens?: number;
+    /** 下一步请求的预计规模 = 锚点 + 本地估算的有符号增量。 */
+    projectedTokens?: number;
+    /** 读数的来源：provider 锚点，或纯本地估算。 */
+    tokenSource?: "provider" | "estimate";
+    tokenUsage?: AgentContextTokenUsage;
+    anchorStep?: number;
+    anchorDeltaTokens?: number;
+    anchorRejected?: string;
+    /** 用投影值算出的窗口占比；模型未声明窗口时不存在。 */
+    projectedPressureRatio?: number;
+    evictionThresholdBytes?: number;
+    evictionMessageLimit?: number;
+    requestHardLimitBytes?: number;
 };
 
 /** 事件流本身不是 http 封装请求，单独保留状态码供 UI 区分旧后端/失效轮次。 */

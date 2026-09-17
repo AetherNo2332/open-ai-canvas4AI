@@ -832,6 +832,8 @@ function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreak
     const total = breakdown.bucketBytes + breakdown.envelopeBytes || breakdown.totalBytes;
     if (total <= 0) return null;
     const share = (bytes: number) => Math.max(0, Math.min(100, (bytes / total) * 100));
+    const scaled = typeof breakdown.tokenScale === "number" && Math.abs(breakdown.tokenScale - 1) > 0.005;
+    const bucketTokens = (bucket: { tokens: number; scaledTokens?: number }) => (scaled && bucket.scaledTokens ? bucket.scaledTokens : bucket.tokens);
     const stack = [...breakdown.buckets.map((bucket) => ({ ...bucket, percent: share(bucket.bytes) })),
         ...(breakdown.envelopeBytes > 0 ? [{ key: "envelope", label: "协议外壳", bytes: breakdown.envelopeBytes, tokens: 0, percent: share(breakdown.envelopeBytes) }] : [])];
     const segments = breakdown.systemSegments || [];
@@ -847,7 +849,7 @@ function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreak
                     <li key={bucket.key}>
                         <span className="agent-context-breakdown-dot" data-bucket={bucket.key} />
                         <span className="agent-context-breakdown-label">{bucket.label}</span>
-                        <span className="agent-context-breakdown-value">{format(bucket.tokens)} Token · {Math.round(share(bucket.bytes))}%</span>
+                        <span className="agent-context-breakdown-value">{format(bucketTokens(bucket))} Token · {Math.round(share(bucket.bytes))}%</span>
                     </li>
                 ))}
                 <li>
@@ -858,12 +860,12 @@ function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreak
             </ul>
             {segments.length > 0 ? (
                 <div className="agent-context-breakdown-more">
-                    <div className="agent-context-breakdown-more-title">系统提示构成</div>
+                    <div className="agent-context-breakdown-more-title">系统提示构成{scaled ? `（已按上游口径 ×${breakdown.tokenScale!.toFixed(2)}）` : ""}</div>
                     <ul>
                         {segments.map((segment) => (
                             <li key={segment.key}>
                                 <span className="agent-context-breakdown-label">{segment.label}</span>
-                                <span className="agent-context-breakdown-value">{format(segment.tokens)} Token</span>
+                                <span className="agent-context-breakdown-value">{format(bucketTokens(segment))} Token</span>
                             </li>
                         ))}
                     </ul>
@@ -875,10 +877,16 @@ function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreak
 
 function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPressure }) {
     const configured = pressure.modelLimitConfigured && pressure.usableInputTokens > 0;
-    const modelRatio = configured ? Math.max(0, pressure.pressureRatio) : 0;
+    // 有上游实测锚点时用"下一步预计"占窗口的比例；否则退回纯估算。
+    const anchored = pressure.tokenSource === "provider" && typeof pressure.pressureTokens === "number";
+    const projected = pressure.projectedTokens ?? pressure.estimatedInputTokens;
+    const modelRatio = configured
+        ? Math.max(0, pressure.projectedPressureRatio ?? (projected / Math.max(1, pressure.usableInputTokens)))
+        : 0;
     const compactionRatio = Math.max(0, pressure.compactionPressureRatio);
     const ratio = Math.max(modelRatio, compactionRatio);
     const basis = configured && modelRatio >= compactionRatio ? "模型窗口" : "服务端压缩阈值";
+    const formatTokens = (value: number) => value.toLocaleString("zh-CN");
     const percent = Math.round(ratio * 100);
     const progress = Math.min(100, percent);
     const tone = ratio >= 0.9 ? "critical" : ratio >= 0.7 ? "warning" : "normal";
@@ -888,18 +896,37 @@ function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPre
             <div className="agent-context-pressure-title">上下文压力 {percent}%</div>
             <div>当前依据：{basis}</div>
             <div>压缩压力：{Math.round(compactionRatio * 100)}%（{format(pressure.compactionSourceBytes)} / {format(pressure.compactionThresholdBytes)} 字节）</div>
+            {anchored ? (
+                <>
+                    <div>上游实测（第 {pressure.anchorStep ?? "?"} 步）：{formatTokens(pressure.pressureTokens || 0)} Token</div>
+                    <div>下一步预计：{formatTokens(projected)} Token{typeof pressure.anchorDeltaTokens === "number" && pressure.anchorDeltaTokens !== 0 ? `（较锚点 ${pressure.anchorDeltaTokens > 0 ? "+" : ""}${formatTokens(pressure.anchorDeltaTokens)}）` : ""}</div>
+                    {pressure.tokenUsage ? (
+                        <div>其中未缓存 {formatTokens(pressure.tokenUsage.uncachedInputTokens)} · 缓存 {formatTokens(pressure.tokenUsage.cachedInputTokens)} · 输出 {formatTokens(pressure.tokenUsage.outputTokens)}</div>
+                    ) : null}
+                    {pressure.breakdown?.tokenScale && Math.abs(pressure.breakdown.tokenScale - 1) > 0.005 ? (
+                        <div>构成已按上游口径校准 ×{pressure.breakdown.tokenScale.toFixed(2)}</div>
+                    ) : null}
+                </>
+            ) : (
+                <>
+                    <div>输入估算：约 {formatTokens(projected)} Token（暂无上游实测锚点）</div>
+                    {pressure.anchorRejected ? <div>锚点未采信：{pressure.anchorRejected}</div> : null}
+                </>
+            )}
             {configured ? (
                 <>
-                    <div>输入估算：约 {format(pressure.estimatedInputTokens)} Token</div>
-                    <div>可用输入：{format(pressure.usableInputTokens)} Token</div>
-                    <div>模型窗口：{format(pressure.contextWindowTokens)} Token</div>
-                    <div>预留输出：{format(pressure.reservedOutputTokens)} Token</div>
+                    <div>可用输入：{formatTokens(pressure.usableInputTokens)} Token</div>
+                    <div>模型窗口：{formatTokens(pressure.contextWindowTokens)} Token</div>
+                    <div>预留输出：{formatTokens(pressure.reservedOutputTokens)} Token</div>
                 </>
             ) : <div>模型窗口：未配置；当前圆环按服务端压缩压力显示，不用字符上限推断 Token 能力。</div>}
             <div className="agent-context-pressure-divider" />
             <div>本轮提示：{format(pressure.promptChars)} / {pressure.promptLimitChars ? format(pressure.promptLimitChars) : "未配置"} 字符</div>
             <ContextBreakdown breakdown={pressure.breakdown} format={format} />
-            <div className="agent-context-pressure-note">协议外壳指工具选择、缓存键等非内容字段。Token 为近似值；实际计数以上游模型为准。压缩会保留检查点和最近对话。</div>
+            {typeof pressure.evictionThresholdBytes === "number" ? (
+                <div>正文卸载线：{Math.round(pressure.evictionThresholdBytes / 1024)} KiB 或 {pressure.evictionMessageLimit ?? 24} 条会话消息（判据是字节，先于压缩触发）</div>
+            ) : null}
+            <div className="agent-context-pressure-note">协议外壳指工具选择、缓存键等非内容字段。{anchored ? "上限读数来自上游实测，构成仍是估算并按锚点校准。" : "Token 为本地估算；拿到上游实测后会切换为锚点读数。"}压缩会保留检查点和最近对话。</div>
         </div>
     );
     return (

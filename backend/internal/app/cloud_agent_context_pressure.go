@@ -35,9 +35,38 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		"pressureRatio": pressure.PressureRatio, "sourceBytes": pressure.SourceBytes, "promptChars": pressure.PromptChars,
 		"promptLimitChars": pressure.PromptLimitChars, "modelLimitConfigured": pressure.ModelLimitConfigured, "estimate": pressure.Estimate,
 		"compactionThresholdBytes": agentcontext.ThresholdBytes, "historyMessageThreshold": agentcontext.ThresholdHistoryMessages,
+		// 字节判据照旧，但把 token 口径一并暴露，便于前端与文档对齐"哪条线在管事"。
+		"evictionThresholdBytes": cloudAgentEvictionThresholdBytes, "evictionMessageLimit": cloudAgentEvictionMessageLimit,
+		"requestHardLimitBytes": cloudAgentRequestHardLimitBytes,
 	}
 	if state == nil {
 		return payload
+	}
+	// 上游实测锚点：provider 用模型自己的分词器报出的 prompt 规模，是权威读数。
+	// 投影 = 锚点 + 本地估算的有符号增量（对齐 harness 的 pressureTokens / projectedTokens）。
+	tokenSource := "estimate"
+	projectedTokens := pressure.EstimatedInputTokens
+	if anchor := state.TokenAnchor; anchor != nil {
+		payload["anchorStep"] = anchor.Step
+		if anchor.Accepted {
+			payload["pressureTokens"] = anchor.InputTokens
+			payload["tokenUsage"] = map[string]any{
+				"inputTokens": anchor.InputTokens, "cachedInputTokens": anchor.CachedTokens,
+				"uncachedInputTokens": max(0, anchor.InputTokens-anchor.CachedTokens), "outputTokens": anchor.OutputTokens,
+			}
+			delta := pressure.EstimatedInputTokens - anchor.EstimatedTokens
+			projectedTokens = max(0, int(anchor.InputTokens)+delta)
+			payload["anchorDeltaTokens"] = delta
+			payload["tokenScale"] = math.Round(float64(anchor.InputTokens)/float64(anchor.EstimatedTokens)*10000) / 10000
+			tokenSource = "provider"
+		} else if anchor.RejectReason != "" {
+			payload["anchorRejected"] = anchor.RejectReason
+		}
+	}
+	payload["projectedTokens"] = projectedTokens
+	payload["tokenSource"] = tokenSource
+	if scale, ok := payload["tokenScale"].(float64); ok && scale > 0 && pressure.UsableInputTokens > 0 {
+		payload["projectedPressureRatio"] = math.Min(9.99, float64(projectedTokens)/float64(pressure.UsableInputTokens))
 	}
 	raw, _ := json.Marshal(state.Canonical.Messages)
 	historyMessages := len(state.TextHistory) + 2
@@ -61,17 +90,26 @@ func cloudAgentContextBreakdownPayload(state *cloudAgentRuntime) map[string]any 
 	tools, _ := json.Marshal(canonical.Tools)
 	messages, _ := json.Marshal(canonical.Messages)
 	whole, _ := json.Marshal(canonical)
+	// 构成永远由本地估算给出；若已有上游实测锚点，再按锚点比例给出一份"校准读数"，
+	// 让展示口径与 provider 的计数同尺度（harness 用同样的有符号重定价思路）。
+	scale := 1.0
+	if anchor := state.TokenAnchor; anchor != nil && anchor.Accepted && anchor.EstimatedTokens > 0 {
+		scale = float64(anchor.InputTokens) / float64(anchor.EstimatedTokens)
+	}
+	scaled := func(tokens int) int { return int(math.Round(float64(tokens) * scale)) }
 	buckets := []map[string]any{
-		{"key": "system", "label": "系统提示（含画布摘要）", "bytes": len(system), "tokens": estimateCloudAgentTokens(system)},
-		{"key": "tools", "label": "工具 schema", "bytes": len(tools), "tokens": estimateCloudAgentTokens(tools)},
-		{"key": "messages", "label": "会话消息（含工具结果）", "bytes": len(messages), "tokens": estimateCloudAgentTokens(messages)},
+		{"key": "system", "label": "系统提示（含画布摘要）", "bytes": len(system), "tokens": estimateCloudAgentTokens(system), "scaledTokens": scaled(estimateCloudAgentTokens(system))},
+		{"key": "tools", "label": "工具 schema", "bytes": len(tools), "tokens": estimateCloudAgentTokens(tools), "scaledTokens": scaled(estimateCloudAgentTokens(tools))},
+		{"key": "messages", "label": "会话消息（含工具结果）", "bytes": len(messages), "tokens": estimateCloudAgentTokens(messages), "scaledTokens": scaled(estimateCloudAgentTokens(messages))},
 	}
 	bucketBytes := len(system) + len(tools) + len(messages)
 	breakdown := map[string]any{
 		"totalBytes": len(whole), "totalTokens": estimateCloudAgentTokens(whole),
 		"bucketBytes": bucketBytes, "bucketTokens": estimateCloudAgentTokens(system) + estimateCloudAgentTokens(tools) + estimateCloudAgentTokens(messages),
-		"envelopeBytes": max(0, len(whole)-bucketBytes),
-		"buckets":       buckets,
+		"envelopeBytes":     max(0, len(whole)-bucketBytes),
+		"buckets":           buckets,
+		"tokenScale":        math.Round(scale*10000) / 10000,
+		"scaledTotalTokens": scaled(estimateCloudAgentTokens(whole)),
 	}
 	if segments := state.Policy.SystemSegments; len(segments) > 0 {
 		// 分段必须把 system 桶填满：编译之外拼接的块（个人记忆）由
@@ -88,6 +126,9 @@ func cloudAgentContextBreakdownPayload(state *cloudAgentRuntime) map[string]any 
 				Key: "other", Label: "其它（标题与拼接）", Bytes: remainder,
 				Tokens: max(0, estimateCloudAgentTokens(system)-accountedTokens),
 			})
+		}
+		for index := range reported {
+			reported[index].ScaledTokens = scaled(reported[index].Tokens)
 		}
 		breakdown["systemSegments"] = reported
 	}

@@ -1239,3 +1239,85 @@ func TestCloudAgentRunRecordsMemorySegmentInState(t *testing.T) {
 		t.Fatalf("reported segments (%d) do not fill the system bucket (%d)", reported, want)
 	}
 }
+
+// 上游实测锚点：pressureTokens 用 provider 的计数，projectedTokens = 锚点 + 本地估算的有符号增量，
+// 构成按锚点比例校准。这套口径与 deepseek-harness 的 token-meter 一致。
+func TestCloudAgentContextPressureAnchorsOnProviderUsage(t *testing.T) {
+	state := &cloudAgentRuntime{
+		Canonical: canonicalAgentRequest{
+			SystemPrompt: "系统提示", Tools: []map[string]any{{"type": "function"}},
+			Messages: []map[string]any{{"role": "user", "content": "读取画布"}},
+		},
+		Policy: cloudAgentPolicySnapshot{SystemSegments: []cloudAgentContextSegment{{Key: "policy", Label: "系统行为策略", Bytes: 12, Tokens: 4}}},
+		TokenAnchor: &cloudAgentTokenAnchor{
+			TaskID: "task-1", Step: 1, InputTokens: 6000, CachedTokens: 1000, OutputTokens: 200,
+			EstimatedTokens: 5000, SourceBytes: 20000, Accepted: true,
+		},
+	}
+	pressure := cloudAgentContextPressure{
+		EstimatedInputTokens: 5500, SourceBytes: 21000,
+		ContextWindowTokens: 128000, ReservedOutputTokens: 8000, UsableInputTokens: 120000,
+	}
+	payload := cloudAgentContextPressurePayload(pressure, state)
+	if payload["tokenSource"] != "provider" {
+		t.Fatalf("tokenSource = %v, want provider", payload["tokenSource"])
+	}
+	if payload["pressureTokens"] != int64(6000) {
+		t.Fatalf("pressureTokens = %v", payload["pressureTokens"])
+	}
+	if payload["anchorDeltaTokens"] != 500 {
+		t.Fatalf("anchorDeltaTokens = %v, want 500", payload["anchorDeltaTokens"])
+	}
+	if payload["projectedTokens"] != 6500 {
+		t.Fatalf("projectedTokens = %v, want 6500", payload["projectedTokens"])
+	}
+	usage, ok := payload["tokenUsage"].(map[string]any)
+	if !ok || usage["uncachedInputTokens"] != int64(5000) || usage["cachedInputTokens"] != int64(1000) {
+		t.Fatalf("tokenUsage = %v", payload["tokenUsage"])
+	}
+	if scale, _ := payload["tokenScale"].(float64); scale != 1.2 {
+		t.Fatalf("tokenScale = %v, want 1.2", payload["tokenScale"])
+	}
+	if _, ok := payload["projectedPressureRatio"].(float64); !ok {
+		t.Fatalf("projectedPressureRatio missing: %v", payload["projectedPressureRatio"])
+	}
+	// 构成：按锚点比例校准后的读数与原始估算同时给出
+	breakdown := payload["breakdown"].(map[string]any)
+	buckets := breakdown["buckets"].([]map[string]any)
+	for _, bucket := range buckets {
+		raw, _ := bucket["tokens"].(int)
+		scaled, _ := bucket["scaledTokens"].(int)
+		if raw <= 0 || scaled <= 0 || scaled < raw {
+			t.Fatalf("bucket not calibrated: %+v", bucket)
+		}
+	}
+	if scale, _ := breakdown["tokenScale"].(float64); scale != 1.2 {
+		t.Fatalf("breakdown tokenScale = %v, want 1.2", breakdown["tokenScale"])
+	}
+	segments := breakdown["systemSegments"].([]cloudAgentContextSegment)
+	if len(segments) == 0 || segments[0].ScaledTokens == 0 {
+		t.Fatalf("segments not calibrated: %+v", segments)
+	}
+}
+
+// 锚点不可信（与本地估算差出一个量级）时必须拒绝，并如实回报原因——
+// 宁可继续用估算，也不要把压力曲线锚到错误基准上。
+func TestCloudAgentContextPressureRejectsImplausibleAnchor(t *testing.T) {
+	state := &cloudAgentRuntime{
+		Canonical:   canonicalAgentRequest{SystemPrompt: "系统提示", Messages: []map[string]any{{"role": "user", "content": "读取画布"}}},
+		TokenAnchor: &cloudAgentTokenAnchor{TaskID: "task-2", Step: 2, InputTokens: 100, EstimatedTokens: 5000, Accepted: false, RejectReason: "上游实测远低于本地估算，可能换了模型或口径"},
+	}
+	payload := cloudAgentContextPressurePayload(cloudAgentContextPressure{EstimatedInputTokens: 5200}, state)
+	if payload["tokenSource"] != "estimate" {
+		t.Fatalf("tokenSource = %v, want estimate", payload["tokenSource"])
+	}
+	if _, ok := payload["pressureTokens"]; ok {
+		t.Fatal("rejected anchor must not be reported as a measurement")
+	}
+	if payload["projectedTokens"] != 5200 {
+		t.Fatalf("projectedTokens = %v, want the estimate 5200", payload["projectedTokens"])
+	}
+	if payload["anchorRejected"] == "" || payload["anchorRejected"] == nil {
+		t.Fatal("rejection reason missing")
+	}
+}
