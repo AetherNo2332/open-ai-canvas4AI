@@ -381,7 +381,10 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
                         <NumberField label="单个视频上限 MB" value={bytesToMB(profile.references.maxVideoBytes)} min={0} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxVideoBytes: mbToBytes(next) })} />
                     </ReferenceCard>
                     <ReferenceCard title="通用限制" description="所有文本请求共用的基础约束">
-                        <NumberField label="提示词最大字符数" value={profile.references.promptMaxChars} min={1} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ promptMaxChars: next || 1 })} />
+                        <NumberField label="单条提示词最大字符数" value={profile.references.promptMaxChars} min={1} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ promptMaxChars: next || 1 })} />
+                        <NumberField label="模型上下文窗口 Token" value={profile.contextWindowTokens || 0} min={0} max={10_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ contextWindowTokens: next || 0 })} />
+                        <NumberField label="预留输出 Token" value={profile.reservedOutputTokens || 0} min={0} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ reservedOutputTokens: next || 0 })} />
+                        <p className="m-0 text-[var(--fs-tiny)] leading-relaxed text-foreground/48">字符上限只限制本次用户提示；上下文窗口包含系统提示、历史、工具结果和输出。窗口填 0 表示未知，Agent 不会把字符数当成模型 Token 能力。</p>
                     </ReferenceCard>
                 </div>
             </div>
@@ -406,8 +409,13 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
                     <NumberField label="单个视频上限 MB" value={bytesToMB(profile.references.maxVideoBytes)} min={0} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxVideoBytes: mbToBytes(next) })} />
                 </div>
             </CapabilityGroup>
-            <CapabilityGroup title="通用限制" description="所有文本请求共用的基础约束">
-                <NumberField label="提示词最大字符数" value={profile.references.promptMaxChars} min={1} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ promptMaxChars: next || 1 })} />
+            <CapabilityGroup title="上下文与提示词" description="单条提示词按字符限制；完整 Agent 请求按模型 Token 窗口计算压力。">
+                <div className="grid gap-3 sm:grid-cols-3">
+                    <NumberField label="单条提示词最大字符数" value={profile.references.promptMaxChars} min={1} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ promptMaxChars: next || 1 })} />
+                    <NumberField label="模型上下文窗口 Token" value={profile.contextWindowTokens || 0} min={0} max={10_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ contextWindowTokens: next || 0 })} />
+                    <NumberField label="预留输出 Token" value={profile.reservedOutputTokens || 0} min={0} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ reservedOutputTokens: next || 0 })} />
+                </div>
+                <p className="m-0 text-[var(--fs-tiny)] leading-relaxed text-foreground/48">可用输入预算 = 上下文窗口 − 预留输出。窗口为 0 时 UI 会标记能力未知，不用提示词字符上限冒充上下文能力。</p>
             </CapabilityGroup>
         </div>
     );

@@ -12,6 +12,7 @@ import { WorkingGlow } from "@/components/ai/working-indicator";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { Skill } from "@/services/api/skills";
+import type { AgentContextPressure } from "@/services/api/agent";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
 
@@ -115,6 +116,9 @@ export function AgentChatMessage({
                 </details>
             </div>
         );
+    }
+    if (objectField(item.detail, "eventType") === "context_compaction") {
+        return <AgentContextCompactionNotice item={item} theme={theme} />;
     }
     if (isSystem) {
         return (
@@ -360,6 +364,7 @@ export function AgentChatComposer({
     references = [],
     slashSkills,
     includeAssetLibrary,
+    contextPressure,
 }: {
     prompt: string;
     attachments?: CloudAgentChatAttachment[];
@@ -380,6 +385,7 @@ export function AgentChatComposer({
     slashSkills?: Skill[];
     /** 是否在「@」候选里包含素材库资源 */
     includeAssetLibrary?: boolean;
+    contextPressure?: AgentContextPressure;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [slash, setSlash] = useState<{ start: number; query: string } | null>(null);
@@ -643,6 +649,7 @@ export function AgentChatComposer({
                         {left}
                     </div>
                     <div className="agent-composer-submit flex items-center gap-2">
+                        {contextPressure ? <AgentContextPressureIndicator pressure={contextPressure} /> : null}
                         <span className="agent-composer-send-hint">Enter 换行 · ⌘/Ctrl+Enter 发送</span>
                         <motion.button
                             type="button"
@@ -676,6 +683,71 @@ export function AgentChatComposer({
             </div>
             {previewAttachment ? <AgentImagePreview attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} /> : null}
         </div>
+    );
+}
+
+function AgentContextCompactionNotice({ item, theme }: { item: CloudAgentChatMessage; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+    const running = objectField(item.detail, "status") === "running";
+    const fallback = objectField(item.detail, "mode") === "fallback";
+    return (
+        <div role="status" aria-live="polite" className="flex items-start gap-3">
+            <AgentTimelineMarker
+                theme={theme}
+                tone={running ? "agent" : "muted"}
+                icon={running ? <LoaderCircle className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+            />
+            <div className="min-w-0 flex-1 py-0.5">
+                <div className="flex flex-wrap items-center gap-2 text-[13px] font-medium" style={{ color: theme.node.text }}>
+                    <span>{running ? "正在整理上下文" : "上下文整理完成"}</span>
+                    <span className="rounded-full px-2 py-0.5 text-[var(--fs-label)]" style={{ color: running ? theme.accent.primary : theme.node.muted, background: running ? theme.accent.primarySoft : theme.node.fill }}>
+                        {running ? "压缩中" : fallback ? "保底检查点" : "结构化检查点"}
+                    </span>
+                </div>
+                <div className="mt-0.5 text-xs leading-5" style={{ color: theme.node.muted }}>{item.text}</div>
+                {item.meta ? <div className="mt-0.5 text-[var(--fs-label)] opacity-65" style={{ color: theme.node.muted }}>{item.meta}</div> : null}
+            </div>
+        </div>
+    );
+}
+
+function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPressure }) {
+    const configured = pressure.modelLimitConfigured && pressure.usableInputTokens > 0;
+    const modelRatio = configured ? Math.max(0, pressure.pressureRatio) : 0;
+    const compactionRatio = Math.max(0, pressure.compactionPressureRatio);
+    const ratio = Math.max(modelRatio, compactionRatio);
+    const basis = configured && modelRatio >= compactionRatio ? "模型窗口" : "服务端压缩阈值";
+    const percent = Math.round(ratio * 100);
+    const progress = Math.min(100, percent);
+    const tone = ratio >= 0.9 ? "critical" : ratio >= 0.7 ? "warning" : "normal";
+    const format = (value: number) => value.toLocaleString("zh-CN");
+    const title = (
+        <div className="agent-context-pressure-popover">
+            <div className="agent-context-pressure-title">上下文压力 {percent}%</div>
+            <div>当前依据：{basis}</div>
+            <div>压缩压力：{Math.round(compactionRatio * 100)}%（{format(pressure.compactionSourceBytes)} / {format(pressure.compactionThresholdBytes)} 字节）</div>
+            {configured ? (
+                <>
+                    <div>输入估算：约 {format(pressure.estimatedInputTokens)} Token</div>
+                    <div>可用输入：{format(pressure.usableInputTokens)} Token</div>
+                    <div>模型窗口：{format(pressure.contextWindowTokens)} Token</div>
+                    <div>预留输出：{format(pressure.reservedOutputTokens)} Token</div>
+                </>
+            ) : <div>模型窗口：未配置；当前圆环按服务端压缩压力显示，不用字符上限推断 Token 能力。</div>}
+            <div className="agent-context-pressure-divider" />
+            <div>本轮提示：{format(pressure.promptChars)} / {pressure.promptLimitChars ? format(pressure.promptLimitChars) : "未配置"} 字符</div>
+            <div className="agent-context-pressure-note">Token 为近似值；实际计数以上游模型为准。压缩会保留检查点和最近对话。</div>
+        </div>
+    );
+    return (
+        <Tooltip title={title} placement="top" className="!max-w-72 !p-3">
+            <button type="button" className="agent-context-pressure" data-tone={tone} aria-label={`上下文压力 ${percent}%`}>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="agent-context-pressure-track" cx="12" cy="12" r="9" />
+                    <circle className="agent-context-pressure-value" cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${progress} 100`} />
+                </svg>
+                <span>{percent}%</span>
+            </button>
+        </Tooltip>
     );
 }
 

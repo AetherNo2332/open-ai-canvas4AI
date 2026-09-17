@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/agentcontext"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/prompts"
@@ -45,31 +46,39 @@ type cloudAgentApproval struct {
 	Decision  string                    `json:"decision,omitempty"`
 	Reason    string                    `json:"reason,omitempty"`
 }
+type cloudAgentContextCompaction struct {
+	Status      string `json:"status"`
+	SourceBytes int    `json:"sourceBytes"`
+	TurnCount   int    `json:"turnCount"`
+}
 type cloudAgentRuntime struct {
-	Request          CloudAgentRequest         `json:"request"`
-	Policy           cloudAgentPolicySnapshot  `json:"policy"`
-	ParentID         string                    `json:"parentId,omitempty"`
-	Fingerprint      string                    `json:"fingerprint,omitempty"`
-	CreativeAnchor   cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
-	TextHistory      []providerTextMessage     `json:"textHistory,omitempty"`
-	Skills           []cloudAgentSkill         `json:"skills"`
-	SkillReads       map[string]bool           `json:"skillReads,omitempty"`
-	Profile          cloudAgentProfileSnapshot `json:"profile"`
-	ProfileReads     map[string]bool           `json:"profileReads,omitempty"`
-	Canonical        canonicalAgentRequest     `json:"canonical"`
-	ActiveTaskID     string                    `json:"activeTaskId"`
-	ActiveTextDraft  string                    `json:"activeTextDraft,omitempty"`
-	MediaTaskID      string                    `json:"mediaTaskId,omitempty"`
-	TaskIDs          []string                  `json:"taskIds"`
-	Step             int                       `json:"step"`
-	Generations      int                       `json:"generations"`
-	VideoSeconds     int                       `json:"videoSeconds"`
-	Calls            []cloudAgentCall          `json:"calls"`
-	CallIndex        int                       `json:"callIndex"`
-	Approval         *cloudAgentApproval       `json:"approval,omitempty"`
-	Decisions        map[string]string         `json:"decisions"`
-	DecisionSettings map[string]string         `json:"decisionSettings,omitempty"`
-	Events           []CloudAgentEvent         `json:"events"`
+	Request                CloudAgentRequest            `json:"request"`
+	Policy                 cloudAgentPolicySnapshot     `json:"policy"`
+	ParentID               string                       `json:"parentId,omitempty"`
+	Fingerprint            string                       `json:"fingerprint,omitempty"`
+	CreativeAnchor         cloudAgentCreativeAnchor     `json:"creativeAnchor,omitempty"`
+	TextHistory            []providerTextMessage        `json:"textHistory,omitempty"`
+	ContextCheckpoint      *agentcontext.Checkpoint     `json:"contextCheckpoint,omitempty"`
+	ContextCompaction      *cloudAgentContextCompaction `json:"contextCompaction,omitempty"`
+	HistoryIncludesCurrent bool                         `json:"historyIncludesCurrent,omitempty"`
+	Skills                 []cloudAgentSkill            `json:"skills"`
+	SkillReads             map[string]bool              `json:"skillReads,omitempty"`
+	Profile                cloudAgentProfileSnapshot    `json:"profile"`
+	ProfileReads           map[string]bool              `json:"profileReads,omitempty"`
+	Canonical              canonicalAgentRequest        `json:"canonical"`
+	ActiveTaskID           string                       `json:"activeTaskId"`
+	ActiveTextDraft        string                       `json:"activeTextDraft,omitempty"`
+	MediaTaskID            string                       `json:"mediaTaskId,omitempty"`
+	TaskIDs                []string                     `json:"taskIds"`
+	Step                   int                          `json:"step"`
+	Generations            int                          `json:"generations"`
+	VideoSeconds           int                          `json:"videoSeconds"`
+	Calls                  []cloudAgentCall             `json:"calls"`
+	CallIndex              int                          `json:"callIndex"`
+	Approval               *cloudAgentApproval          `json:"approval,omitempty"`
+	Decisions              map[string]string            `json:"decisions"`
+	DecisionSettings       map[string]string            `json:"decisionSettings,omitempty"`
+	Events                 []CloudAgentEvent            `json:"events"`
 }
 
 func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgentState) error {
@@ -86,6 +95,8 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	if len(initial.Skills) > 0 {
 		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
 	}
+	pressure := s.cloudAgentContextPressure(task, input.Requests.Canonical, initial.Request.Prompt)
+	state.event(task.ID, "context_pressure", cloudAgentContextPressurePayload(pressure, &state))
 	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
 	if err := cloudAgentSave(run, &state); err != nil {
 		return err
@@ -166,6 +177,28 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	}
 	if state.ActiveTaskID != "" && state.MediaTaskID != "" {
 		return errors.New("Agent runtime has multiple active tasks")
+	}
+	if state.ContextCompaction != nil {
+		if state.ContextCompaction.Status != "requested" && state.ContextCompaction.Status != "running" {
+			return errors.New("Agent context compaction state is invalid")
+		}
+		if state.ContextCompaction.SourceBytes < 0 || state.ContextCompaction.TurnCount < 0 {
+			return errors.New("Agent context compaction budget is invalid")
+		}
+		if state.ContextCompaction.Status == "requested" && state.ActiveTaskID != "" {
+			return errors.New("Agent context compaction request has an active task")
+		}
+		if state.ContextCompaction.Status == "running" && state.ActiveTaskID == "" {
+			return errors.New("Agent context compaction task is missing")
+		}
+	}
+	if state.HistoryIncludesCurrent && state.ContextCheckpoint == nil {
+		return errors.New("Agent compacted history is missing its checkpoint")
+	}
+	if state.ContextCheckpoint != nil {
+		if _, err := agentcontext.Frame(*state.ContextCheckpoint); err != nil {
+			return errors.New("Agent context checkpoint is invalid")
+		}
 	}
 	if len(state.TaskIDs) == 0 {
 		return errors.New("Agent runtime task history is invalid")
@@ -370,7 +403,7 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 		out.Approval = nil
 	}
 	out.Step = state.Step
-	if stateErr == nil && state.ActiveTaskID != "" && (run.Status == "running" || run.Status == "queued") {
+	if stateErr == nil && state.ActiveTaskID != "" && state.ContextCompaction == nil && (run.Status == "running" || run.Status == "queued") {
 		active, err := s.repo.TaskForUser(task.UserID, state.ActiveTaskID)
 		if err != nil {
 			return nil, err
@@ -485,6 +518,9 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		if err != nil {
 			return err // Transient database failures must not terminate a live task.
 		}
+		if state.ContextCompaction != nil {
+			return s.advanceCloudAgentContextCompaction(run, &state, task)
+		}
 		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
 			// 将已持久化的模型增量转成 Agent 事件；不拆分完整答案伪装成流式。
 			if task.TextDraft != state.ActiveTextDraft {
@@ -555,13 +591,21 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 				state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text, "tool_calls": calls})
 			}
 			if len(calls) == 0 {
-				current.Status = "completed"
+				if needed, sourceBytes, turnCount := cloudAgentContextShouldCompact(&state); needed {
+					state.ContextCompaction = &cloudAgentContextCompaction{Status: "requested", SourceBytes: sourceBytes, TurnCount: turnCount}
+					state.event(run.ID, "context_compaction_requested", map[string]any{"sourceBytes": sourceBytes, "turnCount": turnCount})
+				} else {
+					current.Status = "completed"
+				}
 			}
 			return cloudAgentSave(current, &state)
 		})
 	}
 	if state.CallIndex < len(state.Calls) {
 		return s.advanceCloudAgentTool(run, &state)
+	}
+	if state.ContextCompaction != nil && state.ContextCompaction.Status == "requested" {
+		return s.enqueueCloudAgentContextCompaction(run, &state)
 	}
 	if compactCloudAgentContext(&state.Canonical) {
 		// Evicted read bodies must be obtainable again after compaction.
@@ -957,6 +1001,9 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 		remaining -= order.AmountMicrocredits
 	}
 	if remaining < 0 {
+		if req.Operation == cloudAgentContextCompactionOperation {
+			return s.completeCloudAgentContextFallback(run, state, "本轮预算不足，已使用服务端保底检查点")
+		}
 		return s.failCloudAgent(run, state, "Agent 累计预算已耗尽")
 	}
 	prepare := &creationTaskPreparation{}
@@ -964,6 +1011,9 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 	req.creationPrepare = prepare
 	task, err := s.CreateTask(run.UserID, req)
 	if err != nil {
+		if req.Operation == cloudAgentContextCompactionOperation {
+			return s.completeCloudAgentContextFallback(run, state, "压缩任务无法准入，已使用服务端保底检查点")
+		}
 		if media != nil {
 			return s.cloudAgentMediaError(run, state, "admission", false, false, err)
 		}
@@ -997,6 +1047,13 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 		return err
 	}
 	task.InputJSON = string(raw)
+	var contextPressure *cloudAgentContextPressure
+	if media == nil && req.Operation != cloudAgentContextCompactionOperation {
+		if canonical, ok := canonicalAgentRequestFromInput(input); ok {
+			value := s.cloudAgentContextPressure(task, canonical, state.Request.Prompt)
+			contextPressure = &value
+		}
+	}
 	if prepare.Order != nil {
 		task.BillingOrderID = prepare.Order.ID
 	}
@@ -1026,7 +1083,14 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 			state.event(run.ID, "generation_task_created", map[string]any{"toolName": "generate_media", "taskId": task.ID, "nodeId": media.Args.NodeID, "title": media.Args.Title, "mode": media.Args.Mode, "canvasId": state.Request.CanvasID, "referenceNodeIds": media.Args.ReferenceNodeIDs, "text": "媒体节点与引用连线已创建，生成任务已提交"})
 		} else {
 			state.ActiveTaskID = task.ID
-			state.Step++
+			if state.ContextCompaction != nil && req.Operation == cloudAgentContextCompactionOperation {
+				state.ContextCompaction.Status = "running"
+			} else {
+				if contextPressure != nil {
+					state.event(run.ID, "context_pressure", cloudAgentContextPressurePayload(*contextPressure, state))
+				}
+				state.Step++
+			}
 		}
 		return cloudAgentSave(current, state)
 	})

@@ -1,6 +1,9 @@
 package app
 
-import "infinite-canvas/backend/internal/canvas/capability"
+import (
+	"infinite-canvas/backend/internal/agentcontext"
+	"infinite-canvas/backend/internal/canvas/capability"
+)
 
 // Canvas capabilities are registered once at the canvas domain boundary. Agent
 // tools, creation, media and state projection all consume this registry; there
@@ -11,6 +14,14 @@ type CloudAgentCapabilitySet struct {
 	Version string
 	Hash    string
 	Nodes   []string
+}
+
+type CloudAgentContextPolicy struct {
+	HistoryPolicy            string `json:"historyPolicy"`
+	Strategy                 string `json:"strategy"`
+	ThresholdBytes           int    `json:"thresholdBytes"`
+	ThresholdHistoryMessages int    `json:"thresholdHistoryMessages"`
+	RetainedRecentPairs      int    `json:"retainedRecentPairs"`
 }
 
 const cloudAgentCapabilitySetVersion = capability.SetVersion
@@ -46,4 +57,8 @@ func cloudAgentCapabilitySetHash() string { return canvasCapabilityRegistry.Hash
 
 func CloudAgentCapabilitySetInfo() CloudAgentCapabilitySet {
 	return CloudAgentCapabilitySet{Version: cloudAgentCapabilitySetVersion, Hash: cloudAgentCapabilitySetHash(), Nodes: cloudAgentNodeTypeNames()}
+}
+
+func CloudAgentContextPolicyInfo() CloudAgentContextPolicy {
+	return CloudAgentContextPolicy{HistoryPolicy: "server_compacted", Strategy: "structured_checkpoint", ThresholdBytes: agentcontext.ThresholdBytes, ThresholdHistoryMessages: agentcontext.ThresholdHistoryMessages, RetainedRecentPairs: 2}
 }

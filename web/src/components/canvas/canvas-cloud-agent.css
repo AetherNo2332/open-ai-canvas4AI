@@ -366,6 +366,70 @@
     white-space: nowrap;
 }
 
+.agent-context-pressure {
+    display: inline-flex;
+    height: 28px;
+    align-items: center;
+    gap: 4px;
+    border: 0;
+    border-radius: 999px;
+    padding: 0 5px 0 2px;
+    background: transparent;
+    color: color-mix(in srgb, currentColor 58%, transparent);
+    font-size: var(--fs-tiny);
+    font-variant-numeric: tabular-nums;
+    cursor: help;
+}
+
+.agent-context-pressure:hover,
+.agent-context-pressure:focus-visible {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+    color: color-mix(in srgb, currentColor 78%, transparent);
+    outline: none;
+}
+
+.agent-context-pressure svg {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 auto;
+    transform: rotate(-90deg);
+}
+
+.agent-context-pressure circle {
+    fill: none;
+    stroke-width: 2.4;
+}
+
+.agent-context-pressure-track {
+    stroke: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.agent-context-pressure-value,
+.agent-context-pressure-unknown {
+    stroke: #68b493;
+    stroke-linecap: round;
+}
+
+.agent-context-pressure[data-tone="warning"] .agent-context-pressure-value { stroke: #d6a24a; }
+.agent-context-pressure[data-tone="critical"] .agent-context-pressure-value { stroke: #e66b6b; }
+.agent-context-pressure[data-tone="unknown"] .agent-context-pressure-unknown { stroke: color-mix(in srgb, currentColor 38%, transparent); }
+
+.agent-context-pressure-title {
+    margin-bottom: 5px;
+    font-weight: 650;
+}
+
+.agent-context-pressure-divider {
+    height: 1px;
+    margin: 7px 0;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.agent-context-pressure-note {
+    margin-top: 5px;
+    color: color-mix(in srgb, currentColor 62%, transparent);
+}
+
 /* 面板宽度包含内边距；默认 448px 面板的输入区已不足以同时容纳控制区和快捷键提示。 */
 @container (max-width: 520px) {
     .agent-composer-send-hint {

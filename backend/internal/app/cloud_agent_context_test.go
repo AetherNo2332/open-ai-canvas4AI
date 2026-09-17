@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/agentcontext"
 )
 
 func TestCloudAgentContextCompactionPreservesToolPairsAndWrites(t *testing.T) {
@@ -44,6 +46,70 @@ func TestCloudAgentCanonicalUsesAutomaticToolChoice(t *testing.T) {
 	request := cloudAgentCanonical("system", nil, "读取画布", req)
 	if request.ToolChoice != "auto" {
 		t.Fatalf("cloud agent tool choice = %#v", request.ToolChoice)
+	}
+}
+
+func TestCloudAgentSemanticCompactionKeepsRecentPairs(t *testing.T) {
+	messages := []map[string]any{}
+	for i := 0; i < 8; i++ {
+		messages = append(messages,
+			map[string]any{"role": "user", "content": "用户提示-" + string(rune('A'+i))},
+			map[string]any{"role": "assistant", "content": "规划回复-" + string(rune('A'+i))},
+		)
+	}
+	state := cloudAgentRuntime{TextHistory: make([]providerTextMessage, 14), Canonical: canonicalAgentRequest{Messages: messages}}
+	needed, _, turns := cloudAgentContextShouldCompact(&state)
+	if !needed || turns != 8 {
+		t.Fatalf("semantic compaction not scheduled: needed=%v turns=%d", needed, turns)
+	}
+	recent := cloudAgentRecentConversation(messages, 2)
+	if len(recent) != 4 || recent[0].Content != "用户提示-G" || recent[3].Content != "规划回复-H" {
+		t.Fatalf("recent pairs not retained: %+v", recent)
+	}
+}
+
+func TestCloudAgentFallbackCheckpointMergesPreviousScriptPlan(t *testing.T) {
+	previous := agentcontext.Checkpoint{
+		Version: agentcontext.Version, HistorySummary: "用户要求三幕结构", ScriptDesign: "主角在雨夜车站发现时间循环",
+		PendingTasks: []string{"task-old 运行中"}, Decisions: []string{"采用非线性叙事"}, CompactedTurnCount: 6,
+	}
+	framed, err := agentcontext.Frame(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := cloudAgentRuntime{
+		Request:        CloudAgentRequest{Prompt: "继续设计第三幕", PermissionMode: "read_only"},
+		CreativeAnchor: cloudAgentCreativeAnchor{UserPrompt: "保持冷蓝色调", LockedRequirements: []string{"主角左手伤口必须连续"}},
+		Canonical: canonicalAgentRequest{Messages: []map[string]any{
+			{"role": "user", "content": framed},
+			{"role": "assistant", "content": agentcontext.Acknowledgement},
+			{"role": "user", "content": "第三幕增加一次假胜利"},
+			{"role": "assistant", "content": "假胜利发生在镜头 7"},
+		}},
+		ContextCompaction: &cloudAgentContextCompaction{TurnCount: 7},
+		Decisions:         map[string]string{"ending": "开放结局"},
+	}
+	checkpoint := cloudAgentFallbackCheckpoint(&state)
+	checkpoint.CompactedTurnCount = state.ContextCompaction.TurnCount
+	encoded, _ := json.Marshal(checkpoint)
+	for _, fact := range []string{"雨夜车站", "task-old", "假胜利", "左手伤口", "开放结局"} {
+		if !strings.Contains(string(encoded), fact) {
+			t.Fatalf("fallback checkpoint lost %q: %s", fact, encoded)
+		}
+	}
+	if checkpoint.CompactedTurnCount != 7 {
+		t.Fatalf("turn count = %d", checkpoint.CompactedTurnCount)
+	}
+}
+
+func TestCloudAgentConversationTurnCountIncludesPreviousCheckpoint(t *testing.T) {
+	framed, err := agentcontext.Frame(agentcontext.Checkpoint{Version: 1, CompactedTurnCount: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := []map[string]any{{"role": "user", "content": framed}, {"role": "assistant", "content": agentcontext.Acknowledgement}, {"role": "user", "content": "继续"}}
+	if count := cloudAgentConversationTurnCount(messages); count != 10 {
+		t.Fatalf("turn count = %d", count)
 	}
 }
 

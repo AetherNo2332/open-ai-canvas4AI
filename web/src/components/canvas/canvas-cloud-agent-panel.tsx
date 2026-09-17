@@ -14,7 +14,7 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
-import { cancelAgentRun, getAgentCapabilities, getAgentProfile, getAgentRun, createAgentRun, decideAgentApproval, sendAgentMessage, subscribeAgentEvents, updateAgentProfile, type AgentEvent, type AgentPermissionMode, type AgentProfileScope, type AgentProfileView, type AgentReasoningMode, type AgentRun } from "@/services/api/agent";
+import { cancelAgentRun, getAgentCapabilities, getAgentProfile, getAgentRun, createAgentRun, decideAgentApproval, sendAgentMessage, subscribeAgentEvents, updateAgentProfile, type AgentContextPressure, type AgentEvent, type AgentPermissionMode, type AgentProfileScope, type AgentProfileView, type AgentReasoningMode, type AgentRun } from "@/services/api/agent";
 import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { agentApprovalMatchesSettings, agentImageApproval } from "@/lib/canvas/agent-media-approval";
 import type { AgentMediaSettings } from "@/services/api/agent";
@@ -43,6 +43,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     const reducedMotion = useReducedMotion();
     const [view, setView] = useState<AgentPanelView>("chat");
     const [run, setRun] = useState<AgentRun | null>(null);
+    const [contextPressure, setContextPressure] = useState<AgentContextPressure | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">("connecting");
     const [connectionEpoch, setConnectionEpoch] = useState(0);
     const [messages, setMessages] = useState<CloudAgentChatMessage[]>([]);
@@ -104,7 +105,25 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         const preferred = config.textModel || config.model || "";
         return textModels.includes(preferred) ? preferred : (textModels[0] || "");
     }, [config]);
-    const reasoningSupported = Boolean(modelCapabilityConfigFor(config, selectedModel).text?.thinking);
+    const selectedTextCapability = modelCapabilityConfigFor(config, selectedModel).text;
+    const reasoningSupported = Boolean(selectedTextCapability?.thinking);
+    const visibleContextPressure = useMemo<AgentContextPressure>(() => ({
+        estimatedInputTokens: contextPressure?.estimatedInputTokens || 0,
+        contextWindowTokens: contextPressure?.contextWindowTokens || selectedTextCapability?.contextWindowTokens || 0,
+        reservedOutputTokens: contextPressure?.reservedOutputTokens || selectedTextCapability?.reservedOutputTokens || 0,
+        usableInputTokens: contextPressure?.usableInputTokens || Math.max(0, (selectedTextCapability?.contextWindowTokens || 0) - (selectedTextCapability?.reservedOutputTokens || 0)),
+        pressureRatio: contextPressure?.pressureRatio || 0,
+        sourceBytes: contextPressure?.sourceBytes || 0,
+        promptChars: prompt ? [...prompt].length : contextPressure?.promptChars || 0,
+        promptLimitChars: contextPressure?.promptLimitChars || selectedTextCapability?.references.promptMaxChars || 0,
+        modelLimitConfigured: contextPressure?.modelLimitConfigured || Boolean(selectedTextCapability?.contextWindowTokens),
+        estimate: true,
+        compactionSourceBytes: contextPressure?.compactionSourceBytes || contextPressure?.sourceBytes || 0,
+        compactionThresholdBytes: contextPressure?.compactionThresholdBytes || 48 * 1024,
+        historyMessages: contextPressure?.historyMessages || 0,
+        historyMessageThreshold: contextPressure?.historyMessageThreshold || 16,
+        compactionPressureRatio: contextPressure?.compactionPressureRatio || ((contextPressure?.sourceBytes || 0) / (48 * 1024)),
+    }), [contextPressure, prompt, selectedTextCapability]);
     useEffect(() => { if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off"); }, [reasoningSupported, reasoningMode]);
     const installedSkills = useMemo(() => skills.filter((skill) => skill.isAdded), [skills]);
     const enabledSkills = useMemo(() => installedSkills.filter((skill) => selectedSkillIds.includes(skill.skillId)), [installedSkills, selectedSkillIds]);
@@ -231,6 +250,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setBusy(false);
         setConversations([]);
         setRun(null);
+        setContextPressure(null);
         setMessages([]);
         setApproval(null);
         setApprovalSubmitting(false);
@@ -245,6 +265,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                     setActiveConversationId(current.id);
                     setMessages(current.messages);
                     setRun(current.run);
+                    setContextPressure(latestContextPressure(current.run?.events));
                     setPermissionMode(current.permissionMode);
                     setSelectedSkillIds(current.skillIds || []);
                     if (current.model) setModel(current.model);
@@ -313,6 +334,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                 }
                 setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
                 applyAgentEvent(event, setMessages, setRun, setApproval);
+                if (event.type === "context_pressure") setContextPressure(parseContextPressure(event.payload));
                 canvasSyncRef.current?.receive(event);
             },
             {
@@ -509,6 +531,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setApprovalSubmitting(false);
         setActiveConversationId(id);
         setRun(null);
+        setContextPressure(null);
         setMessages([]);
         setPrompt("");
         setApproval(null);
@@ -525,6 +548,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setApprovalSubmitting(false);
         setActiveConversationId(conversation.id);
         setRun(conversation.run);
+        setContextPressure(latestContextPressure(conversation.run?.events));
         setMessages(conversation.messages);
         setPermissionMode(conversation.permissionMode);
         setSelectedSkillIds(conversation.skillIds || []);
@@ -693,6 +717,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                                         references={[...references, ...buildSkillMentionReferences(installedSkills)]}
                                         slashSkills={installedSkills}
                                         includeAssetLibrary={false}
+                                        contextPressure={visibleContextPressure}
                                         left={
                                             <ComposerControls
                                                 reasoningMode={reasoningSupported ? reasoningMode : "off"}
@@ -1113,6 +1138,34 @@ function applyAgentEvent(event: AgentEvent, setMessages: Dispatch<SetStateAction
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "system", text: text || "Agent 正在整理执行计划" }));
         return;
     }
+    if (event.type === "context_compaction_requested") {
+        const turnCount = Number(payload.turnCount || 0);
+        setMessages((current) => upsertContextCompactionNotice(current, {
+            id: `${event.runId}:context-compaction:${turnCount}`,
+            role: "system",
+            text: "正在压缩历史上下文，并保留用户提示摘要、操作记录、未完成任务、当前工作、设计决策、限制和偏好。",
+            streaming: true,
+            meta: turnCount > 0 ? `正在整理前 ${turnCount} 轮对话` : undefined,
+            detail: { ...payload, eventType: "context_compaction", status: "running" },
+        }));
+        return;
+    }
+    if (event.type === "context_compacted") {
+        const turnCount = Number(payload.compactedTurnCount || 0);
+        const fallback = payload.mode === "fallback";
+        const historyMessages = Number(payload.historyMessages || 0);
+        setMessages((current) => upsertContextCompactionNotice(current, {
+            id: `${event.runId}:context-compaction:${turnCount}`,
+            role: "system",
+            text: fallback
+                ? "模型压缩不可用，已使用服务端保底检查点完成整理，后续工作可以继续。"
+                : "已生成结构化检查点并保留最近对话，后续工作将从压缩后的上下文继续。",
+            streaming: false,
+            meta: `${turnCount > 0 ? `已整理 ${turnCount} 轮对话` : "上下文已整理"}${historyMessages > 0 ? ` · 保留 ${historyMessages} 条上下文消息` : ""}`,
+            detail: { ...payload, eventType: "context_compaction", status: "completed" },
+        }));
+        return;
+    }
     if (event.type === "assistant_delta") {
         setMessages((current) => upsertTextMessage(current, String(payload.messageId || "assistant"), text, true));
         return;
@@ -1163,6 +1216,32 @@ function applyAgentEvent(event: AgentEvent, setMessages: Dispatch<SetStateAction
         return;
     }
     if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendAgentError(current, event.eventId, text || "Agent 执行失败"));
+}
+
+function parseContextPressure(payload: Record<string, unknown>): AgentContextPressure {
+    const number = (key: string) => Number.isFinite(Number(payload[key])) ? Number(payload[key]) : 0;
+    return {
+        estimatedInputTokens: number("estimatedInputTokens"),
+        contextWindowTokens: number("contextWindowTokens"),
+        reservedOutputTokens: number("reservedOutputTokens"),
+        usableInputTokens: number("usableInputTokens"),
+        pressureRatio: Math.max(0, number("pressureRatio")),
+        sourceBytes: number("sourceBytes"),
+        promptChars: number("promptChars"),
+        promptLimitChars: number("promptLimitChars"),
+        modelLimitConfigured: payload.modelLimitConfigured === true,
+        estimate: true,
+        compactionSourceBytes: number("compactionSourceBytes") || number("sourceBytes"),
+        compactionThresholdBytes: number("compactionThresholdBytes") || 48 * 1024,
+        historyMessages: number("historyMessages"),
+        historyMessageThreshold: number("historyMessageThreshold") || 16,
+        compactionPressureRatio: Math.max(0, number("compactionPressureRatio") || number("sourceBytes") / (48 * 1024)),
+    };
+}
+
+function latestContextPressure(events?: AgentEvent[]) {
+    const event = [...(events || [])].reverse().find((item) => item.type === "context_pressure");
+    return event ? parseContextPressure(event.payload) : null;
 }
 function toolDetailRecord(value: unknown): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -1241,6 +1320,13 @@ function upsertMediaToolTrace(current: CloudAgentChatMessage[], message: CloudAg
 
 function appendUniqueMessage(current: CloudAgentChatMessage[], message: CloudAgentChatMessage) {
     return current.some((item) => item.id === message.id) ? current : [...current, message];
+}
+function upsertContextCompactionNotice(current: CloudAgentChatMessage[], message: CloudAgentChatMessage) {
+    const index = current.findIndex((item) => item.id === message.id);
+    if (index < 0) return [...current, message];
+    const next = [...current];
+    next[index] = message;
+    return next;
 }
 function upsertTextMessage(current: CloudAgentChatMessage[], id: string, text: string, append: boolean): CloudAgentChatMessage[] {
     const index = current.findIndex((item) => item.id === id);

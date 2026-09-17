@@ -23,8 +23,14 @@ type ModelCapabilityConfig struct {
 type TextCapabilityConfig struct {
 	// Streaming controls whether this model accepts upstream SSE text responses.
 	// A nil value is treated as true for backwards compatibility with older configs.
-	Streaming  *bool               `json:"streaming,omitempty"`
-	References TextReferenceConfig `json:"references"`
+	Streaming *bool `json:"streaming,omitempty"`
+	// ContextWindowTokens is the provider/model input+output context window.
+	// Zero means unknown and must never be presented as a verified model limit.
+	ContextWindowTokens int `json:"contextWindowTokens,omitempty"`
+	// ReservedOutputTokens is subtracted from the context window when reporting
+	// the input budget available to Agent policies, history and tool messages.
+	ReservedOutputTokens int                 `json:"reservedOutputTokens,omitempty"`
+	References           TextReferenceConfig `json:"references"`
 }
 
 type TextReferenceConfig struct {
@@ -536,6 +542,15 @@ func addInputConstraint(inputs map[string]InputConstraint, name string, min int,
 func validateTextCapabilityConfig(value *TextCapabilityConfig) error {
 	if value.References.PromptMaxChars < 1 || value.References.PromptMaxChars > 1000000 {
 		return BadAuthRequest("提示词最大字符数必须在 1-1000000 之间")
+	}
+	if value.ContextWindowTokens < 0 || value.ContextWindowTokens > 10000000 {
+		return BadAuthRequest("上下文窗口必须在 0-10000000 Token 之间，0 表示未知")
+	}
+	if value.ReservedOutputTokens < 0 || value.ReservedOutputTokens > 1000000 {
+		return BadAuthRequest("预留输出必须在 0-1000000 Token 之间")
+	}
+	if value.ContextWindowTokens > 0 && value.ReservedOutputTokens >= value.ContextWindowTokens {
+		return BadAuthRequest("预留输出 Token 必须小于上下文窗口")
 	}
 	for name, number := range map[string]int{"最大图片引用数": value.References.MaxImages, "最大视频引用数": value.References.MaxVideos} {
 		if number < 0 || number > 100 {
