@@ -686,6 +686,68 @@ func TestCloudAgentCanvasArgumentErrorsReturnToModel(t *testing.T) {
 	}
 }
 
+// 节点类型不支持更新同样是模型能自己修好的参数错误（换节点或改用别的操作），
+// 实测这类错误曾让整轮 failed，而模型其实上一秒刚成功写入过画布。
+func TestCloudAgentUnsupportedNodeUpdateReturnsToModel(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	canvas := model.CanvasProject{ID: "agent-canvas", UserID: "user", Title: "test",
+		PayloadJSON: `{"nodes":[{"id":"locked-1","type":"unknown-type","title":"未知","position":{"x":0,"y":0}}]}`}
+	if err := db.Create(&canvas).Error; err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := json.Marshal(map[string]any{
+		"snapshotHash": cloudAgentCanvasHash(doc),
+		"ops":          []map[string]any{{"type": "update_node", "id": "locked-1", "patch": map[string]any{"title": "改名"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := cloudAgentCall{ID: "write-3"}
+	call.Function.Name = "canvas_apply_ops"
+	call.Function.Arguments = string(arguments)
+	_, err = prepareCloudAgentCanvasMutation(s.repo, "user", canvas.ID, call)
+	var argumentErr *cloudAgentArgumentError
+	if !errors.As(err, &argumentErr) {
+		t.Fatalf("unsupported node update must be recoverable, got %v", err)
+	}
+}
+
+// 编造出来的写操作仍按准入失败终止（既有用例 TestCloudAgentCanvasApprovalAdmissionFailureTerminatesRun
+// 断言了这一点），不能被卷进可恢复分支。
+func TestCloudAgentUnsupportedCanvasOpStaysTerminal(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	canvas := model.CanvasProject{ID: "agent-canvas", UserID: "user", Title: "test", PayloadJSON: `{"nodes":[]}`}
+	if err := db.Create(&canvas).Error; err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := json.Marshal(map[string]any{
+		"snapshotHash": cloudAgentCanvasHash(doc),
+		"ops":          []map[string]any{{"type": "unsupported_canvas_op", "id": "bad-op"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := cloudAgentCall{ID: "write-4"}
+	call.Function.Name = "canvas_apply_ops"
+	call.Function.Arguments = string(arguments)
+	_, err = prepareCloudAgentCanvasMutation(s.repo, "user", canvas.ID, call)
+	var argumentErr *cloudAgentArgumentError
+	if errors.As(err, &argumentErr) {
+		t.Fatalf("unknown op type must stay an admission failure: %v", err)
+	}
+	if !strings.Contains(err.Error(), "不支持的画布写操作") {
+		t.Fatalf("unexpected message: %v", err)
+	}
+}
+
 // 快照过期仍按"可恢复"处理（回到模型重新读取），不能被卷进参数错误分支。
 func TestCloudAgentCanvasSnapshotConflictStaysRecoverable(t *testing.T) {
 	s, db, _, _ := creationTestService(t)

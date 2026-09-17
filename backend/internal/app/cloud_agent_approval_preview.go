@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -73,7 +74,18 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 	}
 	items, err := applyCloudAgentCanvasPlan(doc, args.Ops)
 	if err != nil {
-		return nil, err
+		// 画布写操作的参数错误（漏 patch、节点类型不支持更新、ID 不存在、patch 字段不合法…）
+		// 一律按可恢复处理：当成工具结果回给模型重试。实测审批模式下这类错误会让整轮
+		// failed，模型连一次改错的机会都没有，而它其实每次都能自己改对。
+		// 只有"协议里不存在的写操作"仍按准入失败终止。
+		if errors.Is(err, errCloudAgentUnsupportedCanvasOp) {
+			return nil, BadAuthRequest(err.Error())
+		}
+		var argumentErr *cloudAgentArgumentError
+		if errors.As(err, &argumentErr) {
+			return nil, err
+		}
+		return nil, &cloudAgentArgumentError{err}
 	}
 	return &cloudAgentCanvasMutationPlan{
 		Args:               args,
@@ -84,6 +96,10 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 		Preview:            cloudAgentCanvasApprovalPreview(items),
 	}, nil
 }
+
+// errCloudAgentUnsupportedCanvasOp 表示模型请求了协议里不存在的画布写操作。
+// 它是准入失败（整轮停止），不是可恢复的参数错误。
+var errCloudAgentUnsupportedCanvasOp = errors.New("不支持的画布写操作")
 
 func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloudAgentApprovalPreviewItem, error) {
 	nodes := creationMaps(doc["nodes"])
@@ -156,10 +172,7 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 			})
 		case "update_node":
 			if len(op.Patch) == 0 {
-				// 漏字段是模型照 schema 就能自己修好的参数错误：当成工具结果回给它重试，
-				// 而不是判整轮失败——实测审批模式下模型漏写 patch 时整轮直接 failed，
-				// 用户只在失败提示里看到一句话。未知操作类型仍按准入失败终止。
-				return nil, &cloudAgentArgumentError{BadAuthRequest("更新节点必须提供 patch")}
+				return nil, BadAuthRequest("更新节点必须提供 patch")
 			}
 			if index < 0 {
 				return nil, BadAuthRequest("只能更新现有且受 Agent 支持的节点")
@@ -188,7 +201,9 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 				Summary: fmt.Sprintf("修改%s《%s》的%s", capability.Label, beforeTitle, strings.Join(fields, "、")),
 			})
 		default:
-			return nil, BadAuthRequest("不支持的画布写操作")
+			// 模型编造了协议里不存在的写操作：这是准入失败（整轮停止），
+			// 与"字段用错、重新读一遍就能改好"的参数错误不同。
+			return nil, errCloudAgentUnsupportedCanvasOp
 		}
 	}
 	doc["nodes"] = nodes

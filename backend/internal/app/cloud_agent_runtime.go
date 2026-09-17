@@ -791,9 +791,12 @@ const (
 //
 // 不设上限时上游按"剩余上下文"放行：实测部署是 262144 上下文的思考模型，
 // 解码约 28 tok/s，一次跑满就是几分钟——那一轮 892s 里有 324s 是用户等一个
-// 无限思考的调用直到手动取消。正常步骤的输出远低于此（实测 65–1266 tok），
-// 2048 会误伤长工具参数，4096 只砍掉失控的那一类（实测 3882/4451 tok 的长尾）。
-const cloudAgentStepMaxOutputTokens = 4096
+// 无限思考的调用直到手动取消。
+//
+// 取值依据：实测正常步骤输出 65–3306 tok，但整合四张图那种重规划步骤会顶到 4096
+// 并被截断（截断后要再花一次往返补救），所以留出余量取 6144（最坏单步 ≈ 220s，
+// 仍然是有限上界，而不是靠用户手动取消）。
+const cloudAgentStepMaxOutputTokens = 6144
 
 // compactCloudAgentContext reports whether it changed anything, plus the
 // conversation-message size before and after, for the observability event.
