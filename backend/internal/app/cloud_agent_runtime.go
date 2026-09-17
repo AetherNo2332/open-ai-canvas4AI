@@ -651,13 +651,15 @@ func compactCloudAgentContext(request *canonicalAgentRequest) (bool, int, int) {
 	if request == nil {
 		return false, 0, 0
 	}
+	// 图片先无条件裁剪：它是"上一步看过就够了"的内容，不该等到超阈值才处理。
+	prunedImages := cloudAgentPruneInspectedImages(request)
 	raw, err := json.Marshal(request.Messages)
 	if err != nil {
-		return false, 0, 0
+		return prunedImages, 0, 0
 	}
 	before := len(raw)
 	if before < cloudAgentEvictionThresholdBytes && len(request.Messages) <= cloudAgentEvictionMessageLimit {
-		return false, before, before
+		return prunedImages, before, before
 	}
 	// Retain the latest complete tool turn. Never remove call/result envelopes,
 	// user instructions, call arguments or write receipts to fabricate a summary.
@@ -702,7 +704,7 @@ func compactCloudAgentContext(request *canonicalAgentRequest) (bool, int, int) {
 		changed = true
 	}
 	if !changed {
-		return false, before, before
+		return prunedImages, before, before
 	}
 	if after, err := json.Marshal(request.Messages); err == nil {
 		return true, before, len(after)
@@ -859,7 +861,20 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	} else {
 		payload["text"] = "工具执行成功"
 	}
-	raw, _ := json.Marshal(result)
+	if inspection, ok := result.(cloudAgentImageInspection); ok && err == nil {
+		receipt, _ := json.Marshal(inspection.Receipt)
+		payload["result"] = inspection.Receipt
+		state.event(runID, kind, payload)
+		// tool 角色只接受字符串内容（四种上游图式都是纯文本），因此工具回执照常入历史，
+		// 图片另起一条 user 消息携带，并显式标注为数据而非指令。
+		state.Canonical.Messages = append(state.Canonical.Messages,
+			map[string]any{"role": "tool", "tool_call_id": call.ID, "content": string(receipt)},
+			map[string]any{"role": "user", "content": cloudAgentImageContentParts(inspection)})
+		state.CallIndex++
+		state.Approval = nil
+		return
+	}
+	raw, _ := json.Marshal(cloudAgentModelToolResult(call.Function.Name, result))
 	payload["result"] = result
 	if call.Function.Name == "skill_read_file" && err == nil {
 		// SSE/UI needs the read receipt, not another durable copy of skill text.
@@ -1162,6 +1177,12 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			modelList, modelListErr = s.cloudAgentModelList(intent, verbose)
 		}
 	}
+	// 看图需要读取资源并签发链接，放在事务外完成，避免把网络/文件 IO 塞进 SQLite 写事务。
+	var inspectionResult any
+	var inspectionErr error
+	if allowed && call.Function.Name == "canvas_inspect_image" && state.Request.VisionEnabled {
+		inspectionResult, inspectionErr = s.prepareCloudAgentImageInspection(run.UserID, state.Request.CanvasID, call)
+	}
 	// Skill reads use the domain repository and filesystem, not the checkpoint
 	// transaction's connection. Read first to avoid nesting DB reads on SQLite.
 	var skillResult any
@@ -1185,6 +1206,13 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "model_list":
 			result, toolErr = modelList, modelListErr
+		case call.Function.Name == "canvas_inspect_image":
+			result, toolErr = inspectionResult, inspectionErr
+			if toolErr == nil && inspectionResult != nil {
+				if inspection, ok := inspectionResult.(cloudAgentImageInspection); ok {
+					state.markCanvasAssetInspected(stringValue(inspection.Receipt["nodeId"]))
+				}
+			}
 		case call.Function.Name == "skill_read_file":
 			result, toolErr = skillResult, skillErr
 		default:
