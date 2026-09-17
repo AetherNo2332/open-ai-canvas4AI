@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -264,7 +265,7 @@ func TestCloudAgentEvictionPrecedesSemanticCompaction(t *testing.T) {
 	if needed, _, _ := cloudAgentContextShouldCompact(&state); needed {
 		t.Fatal("semantic compaction must not be requested below its threshold")
 	}
-	evicted, before, after := compactCloudAgentContext(&state.Canonical)
+	evicted, before, after := compactCloudAgentContext(&state.Canonical, nil)
 	if !evicted || after >= before {
 		t.Fatalf("cheap eviction did not fire below the semantic threshold: evicted=%v %d→%d", evicted, before, after)
 	}
@@ -277,7 +278,7 @@ func TestCloudAgentEvictionIgnoresNonMessageBytes(t *testing.T) {
 		SystemPrompt: strings.Repeat("策略", 20000),
 		Messages:     []map[string]any{{"role": "tool", "tool_call_id": "call", "content": `{"content":"正文"}`}},
 	}
-	if evicted, before, after := compactCloudAgentContext(&request); evicted || before != after {
+	if evicted, before, after := compactCloudAgentContext(&request, nil); evicted || before != after {
 		t.Fatalf("non-message bytes triggered eviction: %v %d→%d", evicted, before, after)
 	}
 }
@@ -971,7 +972,7 @@ func TestCloudAgentEvictionKeepsSkillBodies(t *testing.T) {
 		{"role": "tool", "tool_call_id": "call-read", "content": `{"nodes":[],"content":"` + strings.Repeat("画布正文", 4000) + `"}`},
 		{"role": "assistant", "content": "继续"},
 	}}
-	evicted, before, after := compactCloudAgentContext(&request)
+	evicted, before, after := compactCloudAgentContext(&request, nil)
 	if !evicted {
 		t.Fatalf("large re-readable body was not evicted: %d bytes", before)
 	}
@@ -1057,49 +1058,107 @@ func TestCloudAgentImageInspectionContentParts(t *testing.T) {
 	}
 }
 
-// 图片只服务"下一步"，之后立即移出上下文：上游每步都会重新读取图片并按视觉 token 计费。
-func TestCloudAgentPrunesInspectedImagesAfterNextStep(t *testing.T) {
+// 图片在上下文里保留最近 cloudAgentImageRetentionRounds 个工具轮次。
+// 只留一轮时模型永远看不到第二张图：实测它因此反复重看同一张图（4 张图被看 7 次）、
+// 思考螺旋 5.4 万字符、单轮被拖到 892s。移出时的占位符必须带上模型自己写下的观察，
+// 并且不能写成"需要时重新调用"——旧文案被模型当成行动指令。
+func TestCloudAgentKeepsImagesForRecentRounds(t *testing.T) {
 	imageMessage := func(node string) map[string]any {
 		return map[string]any{"role": "user", "content": []any{
-			map[string]any{"type": "text", "text": `{"nodeId":"` + node + `"}`},
+			map[string]any{"type": "text", "text": `素材画面：{"nodeId":"` + node + `","mimeType":"image/png"}`},
 			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.test/" + node}},
 		}}
 	}
-	toolCall := func(id, name string) map[string]any {
-		return map[string]any{"role": "assistant", "content": "", "tool_calls": []any{map[string]any{"id": id, "type": "function", "function": map[string]any{"name": name, "arguments": `{}`}}}}
+	toolCall := func(id string) map[string]any {
+		return map[string]any{"role": "assistant", "content": "", "tool_calls": []any{map[string]any{"id": id, "type": "function", "function": map[string]any{"name": "canvas_inspect_image", "arguments": `{}`}}}}
 	}
-	request := canonicalAgentRequest{Messages: []map[string]any{
-		{"role": "user", "content": "看看这张图"},
-		toolCall("call-inspect", "canvas_inspect_image"),
-		{"role": "tool", "tool_call_id": "call-inspect", "content": `{"nodeId":"image-1"}`},
-		imageMessage("image-1"), // 图片挂在 user 消息上（tool 角色只接受字符串）
-		{"role": "assistant", "content": "看到了"},
-		// 最近一次完整工具轮次（当前这一步）必须保持原样
-		toolCall("call-again", "canvas_inspect_image"),
-		{"role": "tool", "tool_call_id": "call-again", "content": `{"nodeId":"image-2"}`},
-		imageMessage("image-2"),
-	}}
-	if !cloudAgentPruneInspectedImages(&request) {
-		t.Fatal("stale image was not pruned")
+	messages := []map[string]any{{"role": "user", "content": "看看这几张图"}}
+	for round := 1; round <= cloudAgentImageRetentionRounds+2; round++ {
+		node := "image-" + strconv.Itoa(round)
+		id := "call-" + strconv.Itoa(round)
+		messages = append(messages, toolCall(id), map[string]any{"role": "tool", "tool_call_id": id, "content": `{"nodeId":"` + node + `"}`}, imageMessage(node))
 	}
-	old := request.Messages[3]["content"].([]any)
-	if len(old) != 2 || stringValue(old[1].(map[string]any)["type"]) != "text" {
-		t.Fatalf("old image part was not replaced by a note: %+v", old)
+	request := canonicalAgentRequest{Messages: messages}
+	notes := map[string]string{"image-1": "三视图设定稿，赛璐璐平涂，灰底"}
+	if !cloudAgentPruneInspectedImages(&request, notes) {
+		t.Fatal("images older than the retention window were not pruned")
 	}
-	if !strings.Contains(stringValue(old[0].(map[string]any)["text"]), "image-1") {
-		t.Fatal("pruning lost the text receipt")
+	// 每轮 3 条消息（assistant + tool + 图片），第 1 轮从下标 1 开始。
+	imageIndex := func(round int) int { return 3 + (round-1)*3 }
+	for round := 1; round <= 2; round++ {
+		parts := request.Messages[imageIndex(round)]["content"].([]any)
+		if len(parts) != 2 || stringValue(parts[1].(map[string]any)["type"]) != "text" {
+			t.Fatalf("round %d image part was not replaced by a note: %+v", round, parts)
+		}
+		if !strings.Contains(stringValue(parts[0].(map[string]any)["text"]), "image-"+strconv.Itoa(round)) {
+			t.Fatal("pruning lost the text receipt")
+		}
+		note := stringValue(parts[1].(map[string]any)["text"])
+		if strings.Contains(note, "重新调用") {
+			t.Fatalf("eviction note still invites another look: %s", note)
+		}
+		if round == 1 && !strings.Contains(note, "赛璐璐平涂") {
+			t.Fatalf("eviction note dropped the model's own observation: %s", note)
+		}
 	}
-	latest := request.Messages[7]["content"].([]any)
-	if len(latest) != 2 || stringValue(latest[1].(map[string]any)["type"]) != "image_url" {
-		t.Fatalf("the current tool turn must keep its image: %+v", latest)
+	for round := 3; round <= cloudAgentImageRetentionRounds+2; round++ {
+		parts := request.Messages[imageIndex(round)]["content"].([]any)
+		if len(parts) != 2 || stringValue(parts[1].(map[string]any)["type"]) != "image_url" {
+			t.Fatalf("round %d is inside the retention window and must keep its image: %+v", round, parts)
+		}
 	}
 	// tool 回执始终是字符串，不能被改动
 	if _, ok := request.Messages[2]["content"].(string); !ok {
 		t.Fatal("tool receipt must stay a string")
 	}
 	// 幂等
-	if cloudAgentPruneInspectedImages(&request) {
+	if cloudAgentPruneInspectedImages(&request, notes) {
 		t.Fatal("pruning is not idempotent")
+	}
+}
+
+// 模型写进正文的观察要记到锚点上：推理内容不回灌上下文，只有正文留得下来；
+// 记下来之后重复看图时能把它还给模型，下一轮运行也能继承。
+func TestCloudAgentRecordsVisualNoteFromAssistantText(t *testing.T) {
+	state := &cloudAgentRuntime{CreativeAnchor: cloudAgentCreativeAnchor{Version: 1,
+		ReferenceAssets: []cloudAgentReferenceAnchor{{NodeID: "image-1", VisualIdentity: "unknown", RequiresVisualInspection: true}}}}
+	state.markCanvasAssetInspected("image-1")
+	if state.cloudAgentImageInspectionCount("image-1") != 1 || state.PendingVisualNodeID != "image-1" {
+		t.Fatal("inspection was not counted")
+	}
+	state.recordCloudAgentVisualNote("图片1：三视图设定稿，赛璐璐平涂，灰底。")
+	if note := state.cloudAgentVisualNoteFor("image-1"); !strings.Contains(note, "赛璐璐") {
+		t.Fatalf("visual note was not recorded: %q", note)
+	}
+	if state.PendingVisualNodeID != "" {
+		t.Fatal("pending visual node must be cleared once the note is recorded")
+	}
+	if notes := state.cloudAgentVisualNotes(); notes["image-1"] == "" || len(notes) != 1 {
+		t.Fatalf("notes projection is wrong: %+v", notes)
+	}
+	// 空正文不该覆盖已有观察
+	state.PendingVisualNodeID = "image-1"
+	state.recordCloudAgentVisualNote("   ")
+	if note := state.cloudAgentVisualNoteFor("image-1"); !strings.Contains(note, "赛璐璐") {
+		t.Fatalf("blank text must not clear the note: %q", note)
+	}
+}
+
+// 占位符要能认出图片属于哪个节点（nodeId 从服务端自己写的回执里取）。
+func TestCloudAgentImageEvictionNoteResolvesNode(t *testing.T) {
+	message := map[string]any{"role": "user", "content": []any{
+		map[string]any{"type": "text", "text": `上一步 canvas_inspect_image 读取到的画面：{"bytes":12,"nodeId":"image-9","title":"图片"}`},
+		map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.test/image-9"}},
+	}}
+	if got := cloudAgentImageMessageNodeID(message); got != "image-9" {
+		t.Fatalf("node id was not resolved: %q", got)
+	}
+	note := cloudAgentImageEvictionNote(message, map[string]string{"image-9": "灰底三视图"})
+	if !strings.Contains(note, "灰底三视图") || strings.Contains(note, "重新调用") {
+		t.Fatalf("unexpected eviction note: %s", note)
+	}
+	if generic := cloudAgentImageEvictionNote(message, nil); !strings.Contains(generic, "不要重复查看") {
+		t.Fatalf("unexpected generic eviction note: %s", generic)
 	}
 }
 
@@ -1144,6 +1203,36 @@ func TestCloudAgentInspectedAssetSurvivesAnchorRefresh(t *testing.T) {
 	}
 }
 
+// 看图工具的描述要写清"看到后把观察写进正文、不要重复看、确需重看传 refresh"，
+// 旧描述里的"需要再次查看时重新调用本工具"被模型当成行动指令。
+func TestCloudAgentVisionToolDescriptionGuardsRepeatViews(t *testing.T) {
+	req := CloudAgentRequest{VisionEnabled: true, ContextScope: []string{"canvas"}, PermissionMode: "read_only"}
+	var vision map[string]any
+	for _, tool := range cloudAgentTools(req) {
+		if stringValue(tool["function"].(map[string]any)["name"]) == "canvas_inspect_image" {
+			vision, _ = tool["function"].(map[string]any)
+		}
+	}
+	if vision == nil {
+		t.Fatal("vision tool is missing")
+	}
+	description := stringValue(vision["description"])
+	if strings.Contains(description, "需要时再次调用") || strings.Contains(description, "需要再次查看时重新调用") {
+		t.Fatalf("description still invites repeated looks: %s", description)
+	}
+	if !strings.Contains(description, "观察") || !strings.Contains(description, "refresh=true") {
+		t.Fatalf("description must ask for a written observation and document refresh: %s", description)
+	}
+	parameters, _ := vision["parameters"].(map[string]any)
+	properties, _ := parameters["properties"].(map[string]any)
+	if _, ok := properties["refresh"]; !ok {
+		t.Fatalf("refresh parameter is missing: %+v", properties)
+	}
+	if required, _ := parameters["required"].([]string); len(required) != 1 || required[0] != "nodeId" {
+		t.Fatalf("only nodeId may be required: %+v", parameters["required"])
+	}
+}
+
 // 看图必须校验节点确实是就绪的图片素材：非图片与不存在的节点都要拒绝；
 // 合法图片则签发短时下载链接（上游自己取图，Agent 上下文不装 base64）。
 func TestCloudAgentImageInspectionResolvesReadyImageOnly(t *testing.T) {
@@ -1160,20 +1249,20 @@ func TestCloudAgentImageInspectionResolvesReadyImageOnly(t *testing.T) {
 	}
 
 	text := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-text", map[string]any{"nodeId": "shot-1"})
-	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", text); err == nil {
+	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &cloudAgentRuntime{}, text); err == nil {
 		t.Fatal("non-image node was accepted by the vision tool")
 	}
 	missing := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-missing", map[string]any{"nodeId": "nope"})
-	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", missing); err == nil {
+	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &cloudAgentRuntime{}, missing); err == nil {
 		t.Fatal("missing node was accepted by the vision tool")
 	}
 	foreign := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-other-user", map[string]any{"nodeId": "cat"})
-	if _, err := s.prepareCloudAgentImageInspection("other", "agent-canvas", foreign); err == nil {
+	if _, err := s.prepareCloudAgentImageInspection("other", "agent-canvas", &cloudAgentRuntime{}, foreign); err == nil {
 		t.Fatal("cross-user canvas was accepted by the vision tool")
 	}
 
 	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-cat", map[string]any{"nodeId": "cat"})
-	result, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", call)
+	result, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &cloudAgentRuntime{}, call)
 	if err != nil {
 		t.Fatalf("ready image node was rejected: %v", err)
 	}
@@ -1192,6 +1281,39 @@ func TestCloudAgentImageInspectionResolvesReadyImageOnly(t *testing.T) {
 	}
 	if strings.Contains(compactJSON(inspection.Receipt), "must-not-expose") {
 		t.Fatalf("receipt leaked the node's external URL: %+v", inspection.Receipt)
+	}
+
+	// 同一张图反复查看要有护栏：看满 cloudAgentMaxImageInspectionsPerRun 次之后只回执文字、
+	// 不再附图（实测模型因为"看不见图"的怀疑把同一张图看了 3 次，每次都是一次完整模型往返）。
+	state := &cloudAgentRuntime{}
+	for i := 0; i < cloudAgentMaxImageInspectionsPerRun; i++ {
+		outcome, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", state, call)
+		if err != nil {
+			t.Fatalf("inspection %d rejected: %v", i+1, err)
+		}
+		if strings.TrimSpace(outcome.(cloudAgentImageInspection).ImageURL) == "" {
+			t.Fatalf("inspection %d should still attach the image", i+1)
+		}
+		state.markCanvasAssetInspected("cat")
+	}
+	repeat, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", state, call)
+	if err != nil {
+		t.Fatalf("repeat inspection rejected: %v", err)
+	}
+	repeated := repeat.(cloudAgentImageInspection)
+	if strings.TrimSpace(repeated.ImageURL) != "" {
+		t.Fatal("repeat inspection must not attach the image again")
+	}
+	if repeated.Receipt["repeat"] != true || !strings.Contains(stringValue(repeated.Receipt["note"]), "refresh=true") {
+		t.Fatalf("repeat receipt must explain the guard: %+v", repeated.Receipt)
+	}
+	refreshed, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", state,
+		cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-refresh", map[string]any{"nodeId": "cat", "refresh": true}))
+	if err != nil {
+		t.Fatalf("refresh inspection rejected: %v", err)
+	}
+	if strings.TrimSpace(refreshed.(cloudAgentImageInspection).ImageURL) == "" {
+		t.Fatal("refresh=true must attach the image again")
 	}
 }
 
