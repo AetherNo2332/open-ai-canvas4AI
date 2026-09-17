@@ -91,6 +91,27 @@ export type AgentEvent = {
     localSeq?: number;
 };
 
+/** 一个上下文桶：系统提示 / 工具 schema / 会话消息。 */
+export type AgentContextBucket = {
+    key: string;
+    label: string;
+    bytes: number;
+    tokens: number;
+};
+
+/** 编译出的系统提示内部分段（策略、能力、锚点、画布摘要、偏好等）。 */
+export type AgentContextSystemSegment = AgentContextBucket;
+
+export type AgentContextBreakdown = {
+    totalBytes: number;
+    totalTokens: number;
+    bucketBytes: number;
+    bucketTokens: number;
+    envelopeBytes: number;
+    buckets: AgentContextBucket[];
+    systemSegments?: AgentContextSystemSegment[];
+};
+
 export type AgentContextPressure = {
     estimatedInputTokens: number;
     contextWindowTokens: number;
@@ -107,6 +128,8 @@ export type AgentContextPressure = {
     historyMessages: number;
     historyMessageThreshold: number;
     compactionPressureRatio: number;
+    /** 占用分布；旧后端不返回该字段。 */
+    breakdown?: AgentContextBreakdown;
 };
 
 /** 事件流本身不是 http 封装请求，单独保留状态码供 UI 区分旧后端/失效轮次。 */
