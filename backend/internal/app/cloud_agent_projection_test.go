@@ -1194,3 +1194,48 @@ func TestCloudAgentImageInspectionResolvesReadyImageOnly(t *testing.T) {
 		t.Fatalf("receipt leaked the node's external URL: %+v", inspection.Receipt)
 	}
 }
+
+// 创建运行时就该把「个人记忆」登记进随任务持久化的 policy 快照：
+// 只改局部 policy 变量不会生效（state.Policy 是值拷贝），实测会让分段少 104 token。
+func TestCloudAgentRunRecordsMemorySegmentInState(t *testing.T) {
+	s, _, _ := agentMediaFixture(t)
+	run, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := cloudAgentDecode(execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(state.Canonical.SystemPrompt, cloudAgentLessonBlockMarker) {
+		t.Fatal("run canonical lost the personal memory block")
+	}
+	memory := 0
+	for _, segment := range state.Policy.SystemSegments {
+		if segment.Key == "memory" {
+			memory++
+			if segment.Bytes <= 0 || segment.Tokens <= 0 {
+				t.Fatalf("invalid memory segment: %+v", segment)
+			}
+		}
+	}
+	if memory != 1 {
+		t.Fatalf("memory segment recorded %d times in the persisted policy", memory)
+	}
+	breakdown := cloudAgentContextBreakdownPayload(&state)
+	segments, ok := breakdown["systemSegments"].([]cloudAgentContextSegment)
+	if !ok || len(segments) == 0 {
+		t.Fatalf("system segments missing: %+v", breakdown["systemSegments"])
+	}
+	reported := 0
+	for _, segment := range segments {
+		reported += segment.Bytes
+	}
+	if want := len([]byte(state.Canonical.SystemPrompt)); reported != want {
+		t.Fatalf("reported segments (%d) do not fill the system bucket (%d)", reported, want)
+	}
+}
