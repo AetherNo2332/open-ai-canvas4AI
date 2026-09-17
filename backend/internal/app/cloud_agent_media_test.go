@@ -96,7 +96,7 @@ func approveAgentMediaDraft(t *testing.T, s *Service, runID string) {
 
 func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
-	catalog, err := s.cloudAgentModelList(nil)
+	catalog, err := s.cloudAgentModelList(nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,11 +425,11 @@ func TestCloudAgentModelListFiltersActualReferences(t *testing.T) {
 		{`{"mode":"video","referenceNodeIds":[]}`, true},
 		{`{"mode":"video","referenceNodeIds":["hero","cat"]}`, false},
 	} {
-		intent, err := s.cloudAgentModelIntent("user", "agent-canvas", tc.args)
+		intent, _, err := s.cloudAgentModelIntent("user", "agent-canvas", tc.args)
 		if err != nil {
 			t.Fatal(err)
 		}
-		catalog, err := s.cloudAgentModelList(intent)
+		catalog, err := s.cloudAgentModelList(intent, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -442,21 +442,21 @@ func TestCloudAgentModelListFiltersActualReferences(t *testing.T) {
 		}
 	}
 	for _, args := range []string{`{"mode":"video","referenceNodeIds":["hero","hero"]}`, `{"mode":"video","referenceNodeIds":["missing"]}`, `{"referenceNodeIds":["hero"]}`, `{"mode":"audio","referenceNodeIds":["hero"]}`} {
-		if _, err := s.cloudAgentModelIntent("user", "agent-canvas", args); err == nil {
+		if _, _, err := s.cloudAgentModelIntent("user", "agent-canvas", args); err == nil {
 			t.Fatalf("accepted %s", args)
 		}
 	}
-	if _, err := s.cloudAgentModelIntent("other", "agent-canvas", `{"mode":"video"}`); err == nil {
+	if _, _, err := s.cloudAgentModelIntent("other", "agent-canvas", `{"mode":"video"}`); err == nil {
 		t.Fatal("cross-user canvas accepted")
 	}
 	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "video-cm").Update("capability_config_json", mustEncodeModelCapabilityConfig(t, config)).Error; err != nil {
 		t.Fatal(err)
 	}
-	intent, err := s.cloudAgentModelIntent("user", "agent-canvas", `{"mode":"video","referenceNodeIds":["hero","cat"]}`)
+	intent, _, err := s.cloudAgentModelIntent("user", "agent-canvas", `{"mode":"video","referenceNodeIds":["hero","cat"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := s.cloudAgentModelList(intent)
+	catalog, err := s.cloudAgentModelList(intent, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,12 +689,12 @@ func TestCloudAgentStoryboardPrecisionAndPermission(t *testing.T) {
 		map[string]any{"id": "shot-1", "shotNumber": float64(1), "videoMotionPrompt": strings.Repeat("切镜指令", 500), "assetBindings": []any{map[string]any{"nodeId": "hero", "role": "character", "url": "do-not-expose"}}, "private": "do-not-expose"},
 		map[string]any{"id": "shot-2", "videoMotionPrompt": "下一镜头"},
 	}}
-	result := cloudAgentStoryboardState(storyboard, 0, true)
+	result := cloudAgentStoryboardState(storyboard, 0, cloudAgentProjectionDetail)
 	raw, _ := json.Marshal(result)
 	if !strings.Contains(string(raw), strings.Repeat("切镜指令", 500)) || strings.Contains(string(raw), "do-not-expose") || result["nextOffset"] != 1 {
 		t.Fatal("storyboard context missing full prompt, pagination or privacy boundary")
 	}
-	next := cloudAgentStoryboardState(storyboard, 1, true)
+	next := cloudAgentStoryboardState(storyboard, 1, cloudAgentProjectionDetail)
 	if next["hasMore"] != false || next["rows"].([]any)[0].(map[string]any)["id"] != "shot-2" {
 		t.Fatal("storyboard pagination failed")
 	}

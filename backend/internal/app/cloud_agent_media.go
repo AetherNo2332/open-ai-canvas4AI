@@ -12,7 +12,11 @@ import (
 )
 
 // The Agent uses the same public catalog as the composer, never a second routing policy.
-func (s *Service) cloudAgentModelList(intent *ModelRequestIntent) (any, error) {
+// The catalog is a routing aid, not a billing page: name, capability, selection
+// and price label decide the call. Per-model options, profiles, defaults and
+// price tiers are the bulk of the payload, so they are returned only when the
+// model explicitly asks for the full catalog.
+func (s *Service) cloudAgentModelList(intent *ModelRequestIntent, verbose bool) (any, error) {
 	catalog, err := s.ModelCatalog(intent)
 	if err != nil {
 		return nil, err
@@ -20,67 +24,89 @@ func (s *Service) cloudAgentModelList(intent *ModelRequestIntent) (any, error) {
 	items := []map[string]any{}
 	for _, m := range catalog.Models {
 		if m.Available && cloudAgentGenerationModeSupported(normalizeCapability(m.Capability)) {
-			items = append(items, map[string]any{"name": m.Name, "capability": m.Capability, "selection": map[string]any{"logicalModelId": m.ID}, "priceLabel": m.PriceLabel, "priceTiers": m.PriceTiers, "options": m.CapabilitySpec, "profiles": m.CapabilityProfiles, "defaults": m.DefaultOptions})
+			selection := map[string]any{"logicalModelId": m.ID}
+			extras := map[string]any{"priceTiers": m.PriceTiers, "options": m.CapabilitySpec, "profiles": m.CapabilityProfiles, "defaults": m.DefaultOptions}
+			items = append(items, cloudAgentModelCatalogItem(m.Name, m.Capability, selection, m.PriceLabel, verbose, extras))
 		}
 	}
 	for _, channel := range catalog.Channels {
 		for _, m := range channel.Models {
 			if m.Available && cloudAgentGenerationModeSupported(normalizeCapability(m.Capability)) {
-				items = append(items, map[string]any{"name": m.DisplayName, "capability": m.Capability, "selection": map[string]any{"channelId": channel.ID, "channelModelKey": m.ModelKey}, "priceLabel": m.PriceLabel, "priceTiers": m.PriceTiers, "options": m.CapabilityConfig})
+				selection := map[string]any{"channelId": channel.ID, "channelModelKey": m.ModelKey}
+				extras := map[string]any{"priceTiers": m.PriceTiers, "options": m.CapabilityConfig}
+				items = append(items, cloudAgentModelCatalogItem(m.DisplayName, m.Capability, selection, m.PriceLabel, verbose, extras))
 			}
 		}
 	}
-	return map[string]any{"source": catalog.Source, "models": items, "intent": intent}, nil
+	result := map[string]any{"source": catalog.Source, "models": items, "intent": intent}
+	if !verbose && len(items) > 0 {
+		result["catalogHint"] = "默认只返回选型所需的 name/capability/selection/priceLabel；需要 options、profiles、defaults 或 priceTiers 时用 verbose:true 重新查询"
+	}
+	return result, nil
+}
+
+func cloudAgentModelCatalogItem(name, capability string, selection map[string]any, priceLabel string, verbose bool, extras map[string]any) map[string]any {
+	item := map[string]any{"name": name, "capability": capability, "selection": selection, "priceLabel": priceLabel}
+	if !verbose {
+		return item
+	}
+	for key, value := range extras {
+		if value != nil {
+			item[key] = value
+		}
+	}
+	return item
 }
 
 // Resolve actual canvas resources before filtering the shared catalog. Counts
 // supplied by the model must not replace resource ownership/readiness checks.
-func (s *Service) cloudAgentModelIntent(userID, canvasID, arguments string) (*ModelRequestIntent, error) {
+func (s *Service) cloudAgentModelIntent(userID, canvasID, arguments string) (*ModelRequestIntent, bool, error) {
 	var a struct {
 		Mode             string   `json:"mode"`
 		ReferenceNodeIDs []string `json:"referenceNodeIds"`
+		Verbose          bool     `json:"verbose"`
 	}
 	if err := decodeCloudAgentJSONObject(arguments, &a); err != nil {
-		return nil, BadAuthRequest("模型查询参数无效")
+		return nil, false, BadAuthRequest("模型查询参数无效")
 	}
 	if a.Mode == "" && len(a.ReferenceNodeIDs) == 0 {
-		return nil, nil
+		return nil, a.Verbose, nil
 	}
 	if !cloudAgentGenerationModeSupported(a.Mode) || len(a.ReferenceNodeIDs) > 16 {
-		return nil, BadAuthRequest("请指定支持的生成模式，参考节点最多16个")
+		return nil, false, BadAuthRequest("请指定支持的生成模式，参考节点最多16个")
 	}
 	canvas, err := s.repo.CanvasProjectForUser(userID, canvasID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	doc, err := creationDocument(canvas.PayloadJSON)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	nodes, err := creationObjects(doc["nodes"])
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	refs := map[string]any{}
 	seen := map[string]bool{}
 	for _, id := range a.ReferenceNodeIDs {
 		if id == "" || seen[id] || nodes[id] == nil {
-			return nil, BadAuthRequest("参考节点不存在或重复")
+			return nil, false, BadAuthRequest("参考节点不存在或重复")
 		}
 		seen[id] = true
 		ref, field, err := cloudAgentReference(s.repo, userID, nodes[id])
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		list, _ := refs[field].([]any)
 		refs[field] = append(list, ref)
 	}
 	if err := validateCloudAgentMediaReferences(a.Mode, refs); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	refs["mode"] = a.Mode
 	intent := ModelRequestIntentFromTaskInput(refs, "canvas_"+a.Mode, cloudAgentMediaOperation(a.Mode, refs))
-	return &intent, nil
+	return &intent, a.Verbose, nil
 }
 
 type cloudAgentMediaArgs struct {
@@ -215,7 +241,7 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 	}
 	unchanged := args.SnapshotHash != "" && (cloudAgentCanvasHash(doc) == args.SnapshotHash || cloudAgentMediaContentHash(doc) == args.SnapshotHash)
 	if !unchanged {
-		return nil, nil, nil, creationConflict("画布已变化，请重新读取画布并重新审批；未提交生成任务")
+		return nil, nil, nil, cloudAgentSnapshotConflictError("画布已变化，请重新读取画布并重新审批；未提交生成任务")
 	}
 	nodes, err := creationObjects(doc["nodes"])
 	if err != nil {

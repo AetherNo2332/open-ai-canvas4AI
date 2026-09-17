@@ -112,24 +112,52 @@ func TestCloudAgentPolicyPublishesSkillManifestWithoutInliningSkillBody(t *testi
 	}
 }
 
-func TestCloudAgentPolicyPublishesCapabilityRoutingGuide(t *testing.T) {
+// The capability guide is a tool answer: inlining it in the system prompt cost
+// 892 tokens on every step of every run, so it is now read through
+// canvas_list_node_types whenever that tool is available.
+func TestCloudAgentPolicyRoutesCapabilityGuideThroughTool(t *testing.T) {
 	text, _, err := compileCloudAgentPolicies(agentTestRequest(), nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"节点能力速查",
-		"由服务端能力注册表生成",
-		"分镜脚本（script）",
+		"canvas_list_node_types",
+		"不要凭记忆猜测 nodeType",
 		"多镜头",
 		"逐镜审查",
-		"后续维护",
-		"单画面、一次性说明或快速试验优先轻量节点",
 		"普通文本或 Markdown 不能伪装成结构化分镜",
 		"不为形式强制使用任何节点",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("compiled policy omitted capability routing guidance %q: %s", expected, text)
+		}
+	}
+	if strings.Contains(text, "节点能力速查") {
+		t.Fatalf("system prompt still inlines the full capability guide: %s", text)
+	}
+	found := false
+	for _, tool := range cloudAgentTools(agentTestRequest()) {
+		if function, ok := tool["function"].(map[string]any); ok && function["name"] == "canvas_list_node_types" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("routing guide points at a tool that is not exposed")
+	}
+}
+
+// Without a canvas context scope the tool is unavailable, so the guide stays
+// inline instead of disappearing from the prompt.
+func TestCloudAgentPolicyKeepsInlineGuideWithoutTool(t *testing.T) {
+	req := agentTestRequest()
+	req.ContextScope = nil
+	text, _, err := compileCloudAgentPolicies(req, nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"节点能力速查", "由服务端能力注册表生成", "分镜脚本（script）", "后续维护"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("compiled policy omitted inline capability guide %q: %s", expected, text)
 		}
 	}
 }
@@ -178,7 +206,7 @@ func TestCloudAgentProjectionRejectsMissingAdapterAndOpaqueMetadata(t *testing.T
 	node := map[string]any{"id": "n1", "type": "text", "title": "镜头"}
 	meta := map[string]any{"content": "公开正文", "storageKey": "resource:private", "url": "https://private.example/test", "status": "idle"}
 	descriptor, _ := cloudAgentNodeCapabilityForType("text")
-	projected, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, true, 0)
+	projected, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, cloudAgentProjectionDetail, 0)
 	if err != nil || projected["content"] != "公开正文" || projected["storageKey"] != nil || projected["url"] != nil {
 		t.Fatalf("unsafe or incomplete projection: %v, %v", projected, err)
 	}
@@ -186,7 +214,7 @@ func TestCloudAgentProjectionRejectsMissingAdapterAndOpaqueMetadata(t *testing.T
 	descriptor.ProjectionKind = "unregistered-projector"
 	descriptor.DetailFields = []string{"storyboard"}
 	meta["storyboard"] = map[string]any{"rows": []any{}}
-	if _, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, true, 0); err == nil {
+	if _, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, cloudAgentProjectionDetail, 0); err == nil {
 		t.Fatal("unregistered structured projector must fail closed")
 	}
 }
