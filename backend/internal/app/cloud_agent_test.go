@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -648,5 +649,66 @@ func TestCloudAgentCanvasApprovalAdmissionFailureTerminatesRun(t *testing.T) {
 	stateAgain, err := cloudAgentDecode(failedAgain)
 	if err != nil || len(stateAgain.Events) != eventCount {
 		t.Fatalf("terminal run was replayed: err=%v events=%d want=%d", err, len(stateAgain.Events), eventCount)
+	}
+}
+
+// 画布写入的参数错误必须回给模型重试，而不是判整轮失败。
+// 实测审批模式下模型漏写 patch，整轮直接 failed（错误文案只到 run_failed）；
+// 批量创作表与分镜早已按参数错误处理，画布写入这里曾漏掉。
+func TestCloudAgentCanvasArgumentErrorsReturnToModel(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	canvas := model.CanvasProject{ID: "agent-canvas", UserID: "user", Title: "test",
+		PayloadJSON: `{"nodes":[{"id":"cat","type":"image","title":"图片","position":{"x":0,"y":0},"width":520,"height":520,"metadata":{"storageKey":"resource:ref-one","status":"success"}}]}`}
+	if err := db.Create(&canvas).Error; err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := json.Marshal(map[string]any{
+		"snapshotHash": cloudAgentCanvasHash(doc),
+		"ops":          []map[string]any{{"type": "update_node", "id": "cat"}}, // 缺 patch
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := cloudAgentCall{ID: "write-1"}
+	call.Function.Name = "canvas_apply_ops"
+	call.Function.Arguments = string(arguments)
+	_, err = prepareCloudAgentCanvasMutation(s.repo, "user", canvas.ID, call)
+	var argumentErr *cloudAgentArgumentError
+	if !errors.As(err, &argumentErr) {
+		t.Fatalf("malformed canvas op must be an argument error (model retries), got %v", err)
+	}
+	if !strings.Contains(err.Error(), "patch") {
+		t.Fatalf("argument error lost the actionable detail: %v", err)
+	}
+}
+
+// 快照过期仍按"可恢复"处理（回到模型重新读取），不能被卷进参数错误分支。
+func TestCloudAgentCanvasSnapshotConflictStaysRecoverable(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	canvas := model.CanvasProject{ID: "agent-canvas", UserID: "user", Title: "test", PayloadJSON: `{"nodes":[]}`}
+	if err := db.Create(&canvas).Error; err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := json.Marshal(map[string]any{
+		"snapshotHash": "stale-hash",
+		"ops":          []map[string]any{{"type": "add_node", "id": "note-1", "nodeType": "text", "title": "笔记"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := cloudAgentCall{ID: "write-2"}
+	call.Function.Name = "canvas_apply_ops"
+	call.Function.Arguments = string(arguments)
+	_, err = prepareCloudAgentCanvasMutation(s.repo, "user", canvas.ID, call)
+	if !cloudAgentSnapshotConflict(err) {
+		t.Fatalf("stale snapshot must stay a recoverable conflict, got %v", err)
+	}
+	var argumentErr *cloudAgentArgumentError
+	if errors.As(err, &argumentErr) {
+		t.Fatal("stale snapshot must not be reclassified as an argument error")
 	}
 }
