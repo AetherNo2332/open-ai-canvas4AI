@@ -442,6 +442,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	state := cloudAgentState{Version: 1, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	s.attachCloudAgentLessons(&canonical, userID, req.Prompt)
+	cloudAgentRecordMemorySegment(&policy, canonical.SystemPrompt)
 	// 稳定缓存键：个人记忆块属于易变的 system prompt，不能把它带进键里。
 	canonical.PromptCacheKey = cloudAgentPromptCacheKey(req)
 	attachCloudAgentPlan(&canonical, inheritedPlan)

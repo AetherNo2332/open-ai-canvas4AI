@@ -96,16 +96,30 @@ func stripCloudAgentLessonBlock(system string) string {
 	return system
 }
 
-func (s *Service) attachCloudAgentLessons(canonical *canonicalAgentRequest, userID, taskText string) {
+func (s *Service) attachCloudAgentLessons(canonical *canonicalAgentRequest, userID, taskText string) string {
 	if canonical == nil || strings.TrimSpace(userID) == "" {
-		return
+		return ""
 	}
 	if strings.Contains(canonical.SystemPrompt, cloudAgentLessonBlockMarker) {
+		return ""
+	}
+	block := s.cloudAgentLessonsBlock(userID, taskText)
+	if block == "" {
+		return ""
+	}
+	canonical.SystemPrompt += block
+	return block
+}
+
+// cloudAgentRecordMemorySegment 把系统提示里已经存在的个人记忆块登记为分段。
+// 记忆块是在策略编译之后拼接的，编译器录不到它；不登记就会让"系统提示分段"合计
+// 小于 system 桶，弹窗里看起来像少算了一截。
+func cloudAgentRecordMemorySegment(policy *cloudAgentPolicySnapshot, system string) {
+	index := strings.Index(system, cloudAgentLessonBlockMarker)
+	if index < 0 {
 		return
 	}
-	if block := s.cloudAgentLessonsBlock(userID, taskText); block != "" {
-		canonical.SystemPrompt += block
-	}
+	cloudAgentRecordSystemSegment(policy, "memory", "个人记忆", system[index:])
 }
 
 func cloudAgentRememberLesson(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {

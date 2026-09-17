@@ -33,6 +33,23 @@ type cloudAgentPolicySnapshot struct {
 	SystemSegments []cloudAgentContextSegment `json:"systemSegments,omitempty"`
 }
 
+// cloudAgentRecordSystemSegment 登记"编译之后"追加进系统提示的块（当前是个人记忆索引），
+// 让计量器的系统提示分段合计与实际 system 桶一致；同 key 重复调用只保留最新一次，
+// 因此它既能在创建运行登记，也能在每一步幂等补登记。
+func cloudAgentRecordSystemSegment(policy *cloudAgentPolicySnapshot, key, label, text string) {
+	if policy == nil || strings.TrimSpace(text) == "" {
+		return
+	}
+	segment := cloudAgentContextSegment{Key: key, Label: label, Bytes: len(text), Tokens: estimateCloudAgentTokens([]byte(text))}
+	for index := range policy.SystemSegments {
+		if policy.SystemSegments[index].Key == key {
+			policy.SystemSegments[index] = segment
+			return
+		}
+	}
+	policy.SystemSegments = append(policy.SystemSegments, segment)
+}
+
 // cloudAgentContextSegment is one inlined block of the compiled system prompt.
 type cloudAgentContextSegment struct {
 	Key    string `json:"key"`

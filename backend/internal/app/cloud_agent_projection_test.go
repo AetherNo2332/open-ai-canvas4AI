@@ -661,12 +661,77 @@ func TestCloudAgentContextBreakdownMatchesCanonical(t *testing.T) {
 		t.Fatalf("segments lost %d bytes of the compiled prompt", systemBytes-segmentBytes)
 	}
 	segments, ok := breakdown["systemSegments"].([]cloudAgentContextSegment)
-	if !ok || len(segments) != len(policy.SystemSegments) {
+	if !ok {
 		t.Fatalf("system segments missing from breakdown: %+v", breakdown["systemSegments"])
+	}
+	// 上报的分段必须把 system 桶填满：编译分段 + 编译后追加的块 + "其它"零头。
+	reportedBytes := 0
+	seen := map[string]bool{}
+	for _, segment := range segments {
+		if seen[segment.Key] {
+			t.Fatalf("duplicate reported segment key %q", segment.Key)
+		}
+		seen[segment.Key] = true
+		reportedBytes += segment.Bytes
+	}
+	for _, segment := range policy.SystemSegments {
+		if !seen[segment.Key] {
+			t.Fatalf("compiled segment %q missing from the breakdown", segment.Key)
+		}
+	}
+	if reportedBytes != systemBytes {
+		t.Fatalf("reported segments (%d) do not fill the system bucket (%d)", reportedBytes, systemBytes)
 	}
 	// 事件负载必须可 JSON 序列化（SSE 与前端解析的前提）
 	if _, err := json.Marshal(map[string]any{"breakdown": breakdown}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// 个人记忆块是在策略编译之后拼进系统提示的，编译器录不到它；
+// 不登记就会让弹窗里的分段合计小于 system 桶（实测差 104 token）。
+func TestCloudAgentContextBreakdownAccountsForMemoryBlock(t *testing.T) {
+	req := agentTestRequest()
+	system, policy, err := compileCloudAgentPolicies(req, nil, `{"totalNodes":0,"includedNodes":0,"nodes":[]}`, cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := "\n\n## 个人记忆\n\n个人记忆是长期做法库，不是本轮任务。\n本轮还没有已批准记忆。\n"
+	canonical := canonicalAgentRequest{SystemPrompt: system + block, Messages: []map[string]any{{"role": "user", "content": "读取画布"}}}
+	cloudAgentRecordMemorySegment(&policy, canonical.SystemPrompt)
+
+	state := &cloudAgentRuntime{Policy: policy, Canonical: canonical}
+	breakdown := cloudAgentContextBreakdownPayload(state)
+	segments, ok := breakdown["systemSegments"].([]cloudAgentContextSegment)
+	if !ok || len(segments) == 0 {
+		t.Fatalf("system segments missing: %+v", breakdown["systemSegments"])
+	}
+	reportedBytes, sawMemory := 0, false
+	for _, segment := range segments {
+		reportedBytes += segment.Bytes
+		if segment.Key == "memory" {
+			sawMemory = true
+			if segment.Bytes != len(block) || segment.Tokens <= 0 {
+				t.Fatalf("memory segment does not match the appended block: %+v", segment)
+			}
+		}
+	}
+	if !sawMemory {
+		t.Fatalf("memory block was not reported as a segment: %+v", segments)
+	}
+	if want := len([]byte(canonical.SystemPrompt)); reportedBytes != want {
+		t.Fatalf("reported segments (%d) do not fill the system bucket (%d)", reportedBytes, want)
+	}
+	// 重复登记不应产生重复分段（每步都会幂等补登记）。
+	cloudAgentRecordMemorySegment(&policy, canonical.SystemPrompt)
+	count := 0
+	for _, segment := range policy.SystemSegments {
+		if segment.Key == "memory" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("memory segment registered %d times", count)
 	}
 }
 
