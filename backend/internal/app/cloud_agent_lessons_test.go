@@ -536,8 +536,14 @@ func TestRememberLessonBlockedInReadOnlyAndWithoutRealWork(t *testing.T) {
 	if cloudAgentToolAllowed(agentTestRequest(), "remember_lesson") {
 		t.Fatal("只读工具清单不该出现 remember_lesson")
 	}
-	if !cloudAgentToolAllowed(agentTestRequest(), "recall_lessons") {
+	// 查阅记忆是读操作：只在用户确实有已批准记忆时暴露（HasMemories 由建 run 时推导并持久化）。
+	withMemories := agentTestRequest()
+	withMemories.HasMemories = true
+	if !cloudAgentToolAllowed(withMemories, "recall_lessons") {
 		t.Fatal("只读模式仍应能查阅已批准经验")
+	}
+	if cloudAgentToolAllowed(agentTestRequest(), "recall_lessons") {
+		t.Fatal("没有任何已批准记忆时不应暴露 recall_lessons")
 	}
 
 	idle := &cloudAgentRuntime{
