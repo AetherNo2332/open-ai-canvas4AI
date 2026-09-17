@@ -414,6 +414,50 @@
 .agent-context-pressure[data-tone="critical"] .agent-context-pressure-value { stroke: #e66b6b; }
 .agent-context-pressure[data-tone="unknown"] .agent-context-pressure-unknown { stroke: color-mix(in srgb, currentColor 38%, transparent); }
 
+/*
+ * 压力弹窗的内容会随分段增多而变长（上游实测 + 占用分布 + 9 个系统提示分段），
+ * 在窗口偏矮或圆环贴近底部时会被裁掉。这里给它设定高度上限、内部滚动，
+ * 滚动条沿用项目 .thin-scrollbar 的观感，并留出 gutter 避免出现滚动条时抖动。
+ */
+.agent-context-pressure-popover {
+    display: grid;
+    gap: 2px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    max-height: min(70vh, 26rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+    scrollbar-color: rgba(120, 113, 108, 0.45) transparent;
+    scrollbar-width: thin;
+    line-height: 1.55;
+}
+
+.agent-context-pressure-popover::-webkit-scrollbar {
+    width: 4px;
+}
+
+.agent-context-pressure-popover::-webkit-scrollbar-thumb {
+    background: rgba(120, 113, 108, 0.45);
+    border-radius: 999px;
+}
+
+/* 数值列不换行、标签列吃掉剩余宽度并省略：避免"数字被折到第二行"的错位。 */
+.agent-context-pressure-popover .agent-context-breakdown-value {
+    white-space: nowrap;
+}
+
+.agent-context-pressure-popover .agent-context-breakdown-label {
+    flex: 1 1 auto;
+}
+
+.agent-context-pressure-popover .agent-context-breakdown-bar {
+    display: flex;
+    overflow: hidden;
+}
+
 .agent-context-pressure-title {
     margin-bottom: 5px;
     font-weight: 650;
