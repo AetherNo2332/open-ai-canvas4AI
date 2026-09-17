@@ -12,7 +12,7 @@ import { WorkingGlow } from "@/components/ai/working-indicator";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { Skill } from "@/services/api/skills";
-import type { AgentContextPressure } from "@/services/api/agent";
+import type { AgentContextBreakdown, AgentContextPressure } from "@/services/api/agent";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
 
@@ -710,6 +710,56 @@ function AgentContextCompactionNotice({ item, theme }: { item: CloudAgentChatMes
     );
 }
 
+/**
+ * 占用分布的落点：一根堆叠条给"谁占了大头"的直觉，下面按桶列出估算 Token 与
+ * 占比，再展开系统提示的内部分段。数值来自服务端同一步的估算，与圆环同源。
+ */
+function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreakdown; format: (value: number) => string }) {
+    if (!breakdown || breakdown.buckets.length === 0) return null;
+    const total = breakdown.bucketBytes + breakdown.envelopeBytes || breakdown.totalBytes;
+    if (total <= 0) return null;
+    const share = (bytes: number) => Math.max(0, Math.min(100, (bytes / total) * 100));
+    const stack = [...breakdown.buckets.map((bucket) => ({ ...bucket, percent: share(bucket.bytes) })),
+        ...(breakdown.envelopeBytes > 0 ? [{ key: "envelope", label: "协议外壳", bytes: breakdown.envelopeBytes, tokens: 0, percent: share(breakdown.envelopeBytes) }] : [])];
+    const segments = breakdown.systemSegments || [];
+    return (
+        <>
+            <div className="agent-context-pressure-divider" />
+            <div className="agent-context-pressure-title">上下文占用分布</div>
+            <div className="agent-context-breakdown-bar" role="img" aria-label={`上下文占用分布：${stack.map((item) => `${item.label} ${Math.round(item.percent)}%`).join("，")}`}>
+                {stack.map((item) => <span key={item.key} data-bucket={item.key} style={{ width: `${item.percent}%` }} />)}
+            </div>
+            <ul className="agent-context-breakdown-list">
+                {breakdown.buckets.map((bucket) => (
+                    <li key={bucket.key}>
+                        <span className="agent-context-breakdown-dot" data-bucket={bucket.key} />
+                        <span className="agent-context-breakdown-label">{bucket.label}</span>
+                        <span className="agent-context-breakdown-value">{format(bucket.tokens)} Token · {Math.round(share(bucket.bytes))}%</span>
+                    </li>
+                ))}
+                <li>
+                    <span className="agent-context-breakdown-dot" data-bucket="envelope" />
+                    <span className="agent-context-breakdown-label">协议外壳</span>
+                    <span className="agent-context-breakdown-value">{format(breakdown.envelopeBytes)} 字节 · {Math.round(share(breakdown.envelopeBytes))}%</span>
+                </li>
+            </ul>
+            {segments.length > 0 ? (
+                <div className="agent-context-breakdown-more">
+                    <div className="agent-context-breakdown-more-title">系统提示构成</div>
+                    <ul>
+                        {segments.map((segment) => (
+                            <li key={segment.key}>
+                                <span className="agent-context-breakdown-label">{segment.label}</span>
+                                <span className="agent-context-breakdown-value">{format(segment.tokens)} Token</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            ) : null}
+        </>
+    );
+}
+
 function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPressure }) {
     const configured = pressure.modelLimitConfigured && pressure.usableInputTokens > 0;
     const modelRatio = configured ? Math.max(0, pressure.pressureRatio) : 0;
@@ -735,7 +785,8 @@ function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPre
             ) : <div>模型窗口：未配置；当前圆环按服务端压缩压力显示，不用字符上限推断 Token 能力。</div>}
             <div className="agent-context-pressure-divider" />
             <div>本轮提示：{format(pressure.promptChars)} / {pressure.promptLimitChars ? format(pressure.promptLimitChars) : "未配置"} 字符</div>
-            <div className="agent-context-pressure-note">Token 为近似值；实际计数以上游模型为准。压缩会保留检查点和最近对话。</div>
+            <ContextBreakdown breakdown={pressure.breakdown} format={format} />
+            <div className="agent-context-pressure-note">协议外壳指工具选择、缓存键等非内容字段。Token 为近似值；实际计数以上游模型为准。压缩会保留检查点和最近对话。</div>
         </div>
     );
     return (

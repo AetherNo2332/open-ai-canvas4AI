@@ -1432,3 +1432,98 @@
         touch-action: auto;
     }
 }
+
+/*
+ * 上下文占用分布：一根堆叠条 + 按桶明细 + 系统提示内部分段。三个桶用同一
+ * 前景色的阶梯透明度区分，避免引入与 tone（正常/警告/危险）冲突的新色相；
+ * 每行都带文字标签，颜色不承担唯一语义。
+ */
+.agent-context-breakdown-bar {
+    display: flex;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.agent-context-breakdown-bar > span {
+    display: block;
+    height: 100%;
+    transition: width 200ms ease;
+}
+
+.agent-context-breakdown-bar > span + span {
+    box-shadow: inset 1px 0 0 color-mix(in srgb, var(--background) 72%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="system"],
+.agent-context-breakdown-dot[data-bucket="system"] {
+    background: color-mix(in srgb, currentColor 74%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="tools"],
+.agent-context-breakdown-dot[data-bucket="tools"] {
+    background: color-mix(in srgb, currentColor 48%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="messages"],
+.agent-context-breakdown-dot[data-bucket="messages"] {
+    background: color-mix(in srgb, currentColor 28%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="envelope"],
+.agent-context-breakdown-dot[data-bucket="envelope"] {
+    background: color-mix(in srgb, currentColor 13%, transparent);
+}
+
+.agent-context-breakdown-list,
+.agent-context-breakdown-more ul {
+    display: grid;
+    gap: 3px;
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.agent-context-breakdown-list > li,
+.agent-context-breakdown-more li {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+}
+
+.agent-context-breakdown-dot {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+}
+
+.agent-context-breakdown-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-context-breakdown-value {
+    margin-left: auto;
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in srgb, currentColor 72%, transparent);
+}
+
+.agent-context-breakdown-more {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.agent-context-breakdown-more-title {
+    color: color-mix(in srgb, currentColor 62%, transparent);
+}
+
+.agent-context-breakdown-more li {
+    color: color-mix(in srgb, currentColor 76%, transparent);
+}

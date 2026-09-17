@@ -14,7 +14,7 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
-import { cancelAgentRun, getAgentCapabilities, getAgentProfile, getAgentRun, createAgentRun, decideAgentApproval, sendAgentMessage, subscribeAgentEvents, updateAgentProfile, type AgentContextPressure, type AgentEvent, type AgentPermissionMode, type AgentProfileScope, type AgentProfileView, type AgentReasoningMode, type AgentRun } from "@/services/api/agent";
+import { cancelAgentRun, getAgentCapabilities, getAgentProfile, getAgentRun, createAgentRun, decideAgentApproval, sendAgentMessage, subscribeAgentEvents, updateAgentProfile, type AgentContextBreakdown, type AgentContextBucket, type AgentContextPressure, type AgentEvent, type AgentPermissionMode, type AgentProfileScope, type AgentProfileView, type AgentReasoningMode, type AgentRun } from "@/services/api/agent";
 import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { agentApprovalMatchesSettings, agentImageApproval } from "@/lib/canvas/agent-media-approval";
 import type { AgentMediaSettings } from "@/services/api/agent";
@@ -123,6 +123,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         historyMessages: contextPressure?.historyMessages || 0,
         historyMessageThreshold: contextPressure?.historyMessageThreshold || 16,
         compactionPressureRatio: contextPressure?.compactionPressureRatio || ((contextPressure?.sourceBytes || 0) / (48 * 1024)),
+        breakdown: contextPressure?.breakdown,
     }), [contextPressure, prompt, selectedTextCapability]);
     useEffect(() => { if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off"); }, [reasoningSupported, reasoningMode]);
     const installedSkills = useMemo(() => skills.filter((skill) => skill.isAdded), [skills]);
@@ -1236,7 +1237,40 @@ function parseContextPressure(payload: Record<string, unknown>): AgentContextPre
         historyMessages: number("historyMessages"),
         historyMessageThreshold: number("historyMessageThreshold") || 16,
         compactionPressureRatio: Math.max(0, number("compactionPressureRatio") || number("sourceBytes") / (48 * 1024)),
+        breakdown: parseContextBreakdown(payload["breakdown"]),
     };
+}
+
+/** 占用分布是展示数据：字段缺失或类型异常时整块隐藏，不影响压力读数。 */
+function parseContextBreakdown(raw: unknown): AgentContextBreakdown | undefined {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const source = raw as Record<string, unknown>;
+    const buckets = Array.isArray(source.buckets) ? source.buckets.map(parseContextBucket).filter((item): item is AgentContextBucket => Boolean(item)) : [];
+    if (buckets.length === 0) return undefined;
+    const segments = Array.isArray(source.systemSegments)
+        ? source.systemSegments.map(parseContextBucket).filter((item): item is AgentContextBucket => Boolean(item))
+        : undefined;
+    const number = (key: string) => Number.isFinite(Number(source[key])) ? Number(source[key]) : 0;
+    return {
+        totalBytes: number("totalBytes"),
+        totalTokens: number("totalTokens"),
+        bucketBytes: number("bucketBytes"),
+        bucketTokens: number("bucketTokens"),
+        envelopeBytes: number("envelopeBytes"),
+        buckets,
+        systemSegments: segments,
+    };
+}
+
+function parseContextBucket(raw: unknown): AgentContextBucket | undefined {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const source = raw as Record<string, unknown>;
+    const key = typeof source.key === "string" ? source.key : "";
+    const label = typeof source.label === "string" ? source.label : "";
+    const bytes = Number(source.bytes);
+    const tokens = Number(source.tokens);
+    if (!key || !Number.isFinite(bytes) || bytes <= 0) return undefined;
+    return { key, label: label || key, bytes, tokens: Number.isFinite(tokens) ? tokens : 0 };
 }
 
 function latestContextPressure(events?: AgentEvent[]) {
