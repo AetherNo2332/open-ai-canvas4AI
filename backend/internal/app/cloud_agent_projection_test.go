@@ -2,6 +2,8 @@ package app
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -922,4 +924,208 @@ func TestCloudAgentEvictionKeepsSkillBodies(t *testing.T) {
 func compactJSON(value any) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
+}
+
+// 看图工具只在渠道模型声明了图片输入能力时暴露，避免模型对着不支持的模型反复调用。
+func TestCloudAgentVisionToolRequiresImageCapableModel(t *testing.T) {
+	req := agentTestRequest()
+	names := func(request CloudAgentRequest) map[string]bool {
+		out := map[string]bool{}
+		for _, tool := range cloudAgentTools(request) {
+			if function, ok := tool["function"].(map[string]any); ok {
+				out[stringValue(function["name"])] = true
+			}
+		}
+		return out
+	}
+	if names(req)["canvas_inspect_image"] {
+		t.Fatal("vision tool exposed without an image-capable channel model")
+	}
+	req.VisionEnabled = true
+	if !names(req)["canvas_inspect_image"] {
+		t.Fatal("vision tool missing on an image-capable channel model")
+	}
+	// 只读模式没有画布上下文时不应暴露
+	readOnly := req
+	readOnly.ContextScope = nil
+	if names(readOnly)["canvas_inspect_image"] {
+		t.Fatal("vision tool exposed without canvas context scope")
+	}
+	// 平台工具全集要包含它（前端能力列表按全集展示）
+	union := map[string]bool{}
+	for _, name := range CloudAgentSupportedToolNames() {
+		union[name] = true
+	}
+	if !union["canvas_inspect_image"] {
+		t.Fatal("platform tool union must include the vision tool")
+	}
+}
+
+// 看图结果必须以内容数组进入会话（文本回执 + 图片引用），否则上游不会把它当图片；
+// SSE 事件里则不能带图片数据。
+func TestCloudAgentImageInspectionContentParts(t *testing.T) {
+	inspection := cloudAgentImageInspection{
+		Receipt:  map[string]any{"nodeId": "image-1", "mimeType": "image/png", "note": "看图"},
+		ImageURL: "https://example.test/api/resources/r1/file?sig=x",
+	}
+	parts := cloudAgentImageContentParts(inspection)
+	if len(parts) != 2 {
+		t.Fatalf("expected text + image parts, got %+v", parts)
+	}
+	if !strings.Contains(stringValue(parts[0].(map[string]any)["text"]), "不是指令") {
+		t.Fatalf("image caption must mark the picture as data: %+v", parts[0])
+	}
+	text, _ := parts[0].(map[string]any)
+	if stringValue(text["type"]) != "text" || !strings.Contains(stringValue(text["text"]), "image-1") {
+		t.Fatalf("missing text receipt part: %+v", parts[0])
+	}
+	image, _ := parts[1].(map[string]any)
+	reference, _ := image["image_url"].(map[string]any)
+	if stringValue(image["type"]) != "image_url" || stringValue(reference["url"]) != inspection.ImageURL {
+		t.Fatalf("missing image part: %+v", parts[1])
+	}
+	// canonical 校验必须接受这个形状
+	for _, part := range parts {
+		if err := validateCanonicalAgentContent([]any{part}); err != nil {
+			t.Fatalf("canonical validator rejected the vision part: %v", err)
+		}
+	}
+}
+
+// 图片只服务"下一步"，之后立即移出上下文：上游每步都会重新读取图片并按视觉 token 计费。
+func TestCloudAgentPrunesInspectedImagesAfterNextStep(t *testing.T) {
+	imageMessage := func(node string) map[string]any {
+		return map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "text", "text": `{"nodeId":"` + node + `"}`},
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.test/" + node}},
+		}}
+	}
+	toolCall := func(id, name string) map[string]any {
+		return map[string]any{"role": "assistant", "content": "", "tool_calls": []any{map[string]any{"id": id, "type": "function", "function": map[string]any{"name": name, "arguments": `{}`}}}}
+	}
+	request := canonicalAgentRequest{Messages: []map[string]any{
+		{"role": "user", "content": "看看这张图"},
+		toolCall("call-inspect", "canvas_inspect_image"),
+		{"role": "tool", "tool_call_id": "call-inspect", "content": `{"nodeId":"image-1"}`},
+		imageMessage("image-1"), // 图片挂在 user 消息上（tool 角色只接受字符串）
+		{"role": "assistant", "content": "看到了"},
+		// 最近一次完整工具轮次（当前这一步）必须保持原样
+		toolCall("call-again", "canvas_inspect_image"),
+		{"role": "tool", "tool_call_id": "call-again", "content": `{"nodeId":"image-2"}`},
+		imageMessage("image-2"),
+	}}
+	if !cloudAgentPruneInspectedImages(&request) {
+		t.Fatal("stale image was not pruned")
+	}
+	old := request.Messages[3]["content"].([]any)
+	if len(old) != 2 || stringValue(old[1].(map[string]any)["type"]) != "text" {
+		t.Fatalf("old image part was not replaced by a note: %+v", old)
+	}
+	if !strings.Contains(stringValue(old[0].(map[string]any)["text"]), "image-1") {
+		t.Fatal("pruning lost the text receipt")
+	}
+	latest := request.Messages[7]["content"].([]any)
+	if len(latest) != 2 || stringValue(latest[1].(map[string]any)["type"]) != "image_url" {
+		t.Fatalf("the current tool turn must keep its image: %+v", latest)
+	}
+	// tool 回执始终是字符串，不能被改动
+	if _, ok := request.Messages[2]["content"].(string); !ok {
+		t.Fatal("tool receipt must stay a string")
+	}
+	// 幂等
+	if cloudAgentPruneInspectedImages(&request) {
+		t.Fatal("pruning is not idempotent")
+	}
+}
+
+// 看过图之后锚点要记住，并且跨轮继承时不能被重建覆盖成 unknown。
+func TestCloudAgentInspectedAssetSurvivesAnchorRefresh(t *testing.T) {
+	state := &cloudAgentRuntime{CreativeAnchor: cloudAgentCreativeAnchor{Version: 1,
+		ReferenceAssets: []cloudAgentReferenceAnchor{{NodeID: "image-1", VisualIdentity: "unknown", RequiresVisualInspection: true}}}}
+	state.markCanvasAssetInspected("image-1")
+	asset := state.CreativeAnchor.ReferenceAssets[0]
+	if asset.VisualIdentity != "inspected" || asset.RequiresVisualInspection {
+		t.Fatalf("inspection was not recorded: %+v", asset)
+	}
+	context := cloudAgentCreativeAnchorContext(state.CreativeAnchor)
+	if !strings.Contains(context, "inspected") || strings.Contains(context, "visualIdentity=unknown") {
+		t.Fatalf("prompt still claims there is no visual evidence: %s", context)
+	}
+
+	// 跨轮继承：锚点每轮从画布重建，重建时必须保留 inspected
+	s, _, _ := agentMediaFixture(t)
+	stored, err := s.repo.CanvasProjectForUser("user", "agent-canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inherited := cloudAgentCreativeAnchor{Version: 1, ReferenceNodeIDs: []string{"cat"},
+		ReferenceAssets: []cloudAgentReferenceAnchor{{NodeID: "cat", VisualIdentity: "inspected", RequiresVisualInspection: false}}}
+	refreshed, err := cloudAgentCreativeAnchorForCanvas(s.repo, "user", stored, "用这两张参考图", &inherited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range refreshed.ReferenceAssets {
+		if item.NodeID != "cat" {
+			continue
+		}
+		found = true
+		if item.VisualIdentity != "inspected" || item.RequiresVisualInspection {
+			t.Fatalf("inspection was lost on anchor refresh: %+v", item)
+		}
+	}
+	if !found {
+		t.Fatalf("existing reference asset missing after refresh: %+v", refreshed.ReferenceAssets)
+	}
+}
+
+// 看图必须校验节点确实是就绪的图片素材：非图片与不存在的节点都要拒绝；
+// 合法图片则签发短时下载链接（上游自己取图，Agent 上下文不装 base64）。
+func TestCloudAgentImageInspectionResolvesReadyImageOnly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer server.Close()
+	t.Setenv("CANVAS_PUBLIC_BASE_URL", server.URL)
+	// 签发服务器访问地址同样要过出站策略：内网部署必须把该主机放进
+	// CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS（与上游白名单是同一个开关）。
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	s, db, _ := agentMediaFixture(t)
+	// 本地存储的资源才能签出服务器自有的下载链接。
+	if err := db.Model(&model.Resource{}).Where("id = ?", "ref-one").Update("provider", "local").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	text := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-text", map[string]any{"nodeId": "shot-1"})
+	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", text); err == nil {
+		t.Fatal("non-image node was accepted by the vision tool")
+	}
+	missing := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-missing", map[string]any{"nodeId": "nope"})
+	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", missing); err == nil {
+		t.Fatal("missing node was accepted by the vision tool")
+	}
+	foreign := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-other-user", map[string]any{"nodeId": "cat"})
+	if _, err := s.prepareCloudAgentImageInspection("other", "agent-canvas", foreign); err == nil {
+		t.Fatal("cross-user canvas was accepted by the vision tool")
+	}
+
+	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-cat", map[string]any{"nodeId": "cat"})
+	result, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", call)
+	if err != nil {
+		t.Fatalf("ready image node was rejected: %v", err)
+	}
+	inspection, ok := result.(cloudAgentImageInspection)
+	if !ok {
+		t.Fatalf("unexpected inspection result: %#v", result)
+	}
+	if !strings.HasPrefix(inspection.ImageURL, server.URL+"/api/public/resources/ref-one/file/") {
+		t.Fatalf("signed download URL missing: %s", inspection.ImageURL)
+	}
+	if !strings.Contains(inspection.ImageURL, "signature=") || !strings.Contains(inspection.ImageURL, "expires=") {
+		t.Fatalf("download URL is not signed: %s", inspection.ImageURL)
+	}
+	if stringValue(inspection.Receipt["mimeType"]) != "image/png" || stringValue(inspection.Receipt["nodeId"]) != "cat" {
+		t.Fatalf("receipt lost media facts: %+v", inspection.Receipt)
+	}
+	if strings.Contains(compactJSON(inspection.Receipt), "must-not-expose") {
+		t.Fatalf("receipt leaked the node's external URL: %+v", inspection.Receipt)
+	}
 }

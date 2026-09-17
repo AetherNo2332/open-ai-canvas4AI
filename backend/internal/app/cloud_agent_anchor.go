@@ -104,6 +104,14 @@ func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID strin
 			}
 		}
 	}
+	// 已查看过画面的素材要跨轮保留：锚点每轮从画布重建，若不继承，
+	// 下一轮又会声称"没有视觉识别证据"并重复看图。
+	inspected := make(map[string]bool, len(anchor.ReferenceAssets))
+	for _, asset := range anchor.ReferenceAssets {
+		if asset.VisualIdentity == "inspected" {
+			inspected[asset.NodeID] = true
+		}
+	}
 	anchor.ReferenceNodeIDs = nil
 	anchor.ReferenceAssets = nil
 	for _, id := range ids {
@@ -141,6 +149,10 @@ func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID strin
 		if item.Title != "" && item.Title != "生成图片" || item.Prompt != "" && item.Prompt != "生成图片" || len(item.AssetTags) > 0 {
 			item.RequiresVisualInspection = true
 		}
+		if inspected[item.NodeID] {
+			item.VisualIdentity = "inspected"
+			item.RequiresVisualInspection = false
+		}
 		anchor.ReferenceNodeIDs = append(anchor.ReferenceNodeIDs, item.NodeID)
 		anchor.ReferenceAssets = append(anchor.ReferenceAssets, item)
 		if len(anchor.ReferenceAssets) == 16 {
@@ -161,9 +173,16 @@ func cloudAgentCreativeAnchorContext(anchor cloudAgentCreativeAnchor) string {
 	if err != nil {
 		return ""
 	}
+	caveat := "- 已用 canvas_inspect_image 查看过的素材标为 visualIdentity=inspected：可以直接依据你看到的画面工作，不必再声明不确定，也不要反复重复查看同一张图。\n"
+	for _, asset := range anchor.ReferenceAssets {
+		if asset.RequiresVisualInspection {
+			caveat += "- 其余素材 visualIdentity=unknown 表示还没有视觉识别证据：不要把它默认为无关素材，也不要编造其内容；需要识别时调用 canvas_inspect_image 查看，或向用户澄清。\n"
+			break
+		}
+	}
 	return "创作任务锚点（服务端固定事实，优先级高于模型草稿）：\n" +
 		"- referenceNodeIds 是当前画布中真实候选素材的节点 ID；生成媒体时只能通过 referenceNodeIds 建立引用。\n" +
-		"- visualIdentity=unknown 表示文本模型没有视觉识别证据：不要把它默认为无关素材，也不要编造其内容；需要识别时应请求视觉理解或向用户澄清。\n" +
+		caveat +
 		"- Agent 自己生成的故事、角色和镜头属于 draft，除非用户明确批准，不得升级为 locked requirement。\n" +
 		string(encoded)
 }
