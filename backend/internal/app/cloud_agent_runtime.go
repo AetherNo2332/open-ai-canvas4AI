@@ -762,7 +762,7 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	canonical := cloudAgentCanonicalWithPlan(&state)
 	s.attachCloudAgentLessons(&canonical, run.UserID, cloudAgentLessonTaskText(&state))
 	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
-	input := map[string]any{"mode": "text", "prompt": state.Request.Prompt, "agentRequests": map[string]any{"canonical": canonical}, "config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)}, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(state.Policy.ReasoningMode)}}
+	input := map[string]any{"mode": "text", "prompt": state.Request.Prompt, "agentRequests": map[string]any{"canonical": canonical}, "config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)}, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(state.Policy.ReasoningMode), "maxOutputTokens": cloudAgentStepMaxOutputTokens}}
 	raw, _ := json.Marshal(canonical)
 	if len(raw) > cloudAgentRequestHardLimitBytes {
 		return s.failCloudAgent(run, &state, "模型上下文超过 192KB 上限")
@@ -786,6 +786,14 @@ const (
 	cloudAgentEvictionMessageLimit   = 24
 	cloudAgentRequestHardLimitBytes  = 192 << 10
 )
+
+// cloudAgentStepMaxOutputTokens 是单步模型调用的输出上限（思考 + 正文 + 工具调用参数）。
+//
+// 不设上限时上游按"剩余上下文"放行：实测部署是 262144 上下文的思考模型，
+// 解码约 28 tok/s，一次跑满就是几分钟——那一轮 892s 里有 324s 是用户等一个
+// 无限思考的调用直到手动取消。正常步骤的输出远低于此（实测 65–1266 tok），
+// 2048 会误伤长工具参数，4096 只砍掉失控的那一类（实测 3882/4451 tok 的长尾）。
+const cloudAgentStepMaxOutputTokens = 4096
 
 // compactCloudAgentContext reports whether it changed anything, plus the
 // conversation-message size before and after, for the observability event.

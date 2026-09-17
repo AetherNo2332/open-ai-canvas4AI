@@ -19,6 +19,9 @@ import (
 )
 
 func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
+	if input.MaxOutputTokens == 0 {
+		input.MaxOutputTokens = input.TextOptions.MaxOutputTokens
+	}
 	// 浏览器持久化的是协议中立请求；资源水合和模型路由完成后才展开上游协议，
 	// 防止供应商请求体反向污染任务记录，也避免切换模型时复用错误协议。
 	if input.AgentRequests != nil && input.AgentRequests.Canonical != nil {
@@ -58,6 +61,7 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 	}
 	body["model"] = input.Config.Model
 	applyTextThinking(body, input, protocol)
+	applyAgentOutputLimit(body, input.MaxOutputTokens, protocol)
 	normalizeAgentToolChoice(body, input, protocol)
 	result, err := postAgentRequest(ctx, input, path, body, protocol)
 	if protocol == "chat-completion" && isAgentToolChoiceCompatibilityError(err) {
@@ -72,10 +76,46 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 			result, err = postAgentRequest(ctx, input, path, withoutToolChoice, protocol)
 		}
 	}
+	// 少数 OpenAI 兼容上游不认 parallel_tool_calls：回退到不带该字段的单调用行为，
+	// 而不是让整步失败。
+	if err != nil && protocol == "chat-completion" && isAgentParallelToolCallsCompatibilityError(err) {
+		withoutParallel := cloneStringAnyMap(body)
+		delete(withoutParallel, "parallel_tool_calls")
+		result, err = postAgentRequest(ctx, input, path, withoutParallel, protocol)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// applyAgentOutputLimit 按协议写入输出上限字段名。
+func applyAgentOutputLimit(body map[string]interface{}, limit int, protocol string) {
+	if limit <= 0 {
+		return
+	}
+	field := "max_tokens"
+	if protocol == "responses" {
+		field = "max_output_tokens"
+	}
+	applyTextOutputLimit(body, limit, field)
+}
+
+// isAgentParallelToolCallsCompatibilityError 识别上游不认识 parallel_tool_calls 的报错。
+func isAgentParallelToolCallsCompatibilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	var payloadErr providerPayloadError
+	if errors.As(err, &payloadErr) {
+		message += " " + strings.ToLower(payloadErr.raw)
+	}
+	var httpErr providerHTTPError
+	if errors.As(err, &httpErr) {
+		message += " " + strings.ToLower(httpErr.Body)
+	}
+	return strings.Contains(message, "parallel_tool_calls") || strings.Contains(message, "parallel tool calls") || strings.Contains(message, "parallel_tool_call")
 }
 
 func postAgentRequest(ctx context.Context, input canvasGenerationInput, path string, body map[string]interface{}, protocol string) (map[string]interface{}, error) {

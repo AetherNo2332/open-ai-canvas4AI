@@ -3033,3 +3033,82 @@ func TestRunMiniMaxVideoTaskReturnsFailureReason(t *testing.T) {
 		t.Fatalf("runVideoTask() error = %v", err)
 	}
 }
+
+// Agent 请求必须允许并行工具调用、并且带上输出上限：
+//   - 写死 parallel_tool_calls=false 时每个工具调用独占一次模型往返（实测 12 个调用 = 12 次往返，
+//     而模型自己在推理里反复说要"4 张图一次性并行读"）；
+//   - 不设 max_tokens 时上游按剩余上下文放行，思考模型可以无限吐 token（实测单步 324s 只能手动取消）。
+func TestRunAgentToolTaskAllowsParallelCallsAndCapsOutput(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	seen := map[string]interface{}{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		seen = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"完成","tool_calls":[]}}]}`))
+	}))
+	defer server.Close()
+
+	_, err := runAgentToolTask(context.Background(), canvasGenerationInput{
+		Config: providerConfig{BaseURL: server.URL, APIKey: "key", Model: "model"},
+		TextOptions: canvasTextOptions{
+			MaxOutputTokens: cloudAgentStepMaxOutputTokens,
+		},
+		AgentRequests: &agentToolRequests{Canonical: &canonicalAgentRequest{
+			Messages:   []map[string]interface{}{{"role": "user", "content": "读图"}},
+			Tools:      []map[string]interface{}{{"type": "function", "function": map[string]interface{}{"name": "canvas_inspect_image"}}},
+			ToolChoice: "auto",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runAgentToolTask() error = %v", err)
+	}
+	if seen["parallel_tool_calls"] != true {
+		t.Errorf("parallel tool calls must be allowed: %#v", seen["parallel_tool_calls"])
+	}
+	if seen["max_tokens"] != float64(cloudAgentStepMaxOutputTokens) {
+		t.Errorf("output cap missing: %#v", seen["max_tokens"])
+	}
+}
+
+// 上游不认 parallel_tool_calls 时按兼容序列回退，而不是让整步失败。
+func TestRunAgentToolTaskFallsBackWithoutParallelCalls(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	requests := 0
+	sawParallel := []bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		requests++
+		_, hasParallel := body["parallel_tool_calls"]
+		sawParallel = append(sawParallel, hasParallel)
+		if requests == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Unrecognized request argument supplied: parallel_tool_calls"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"完成","tool_calls":[]}}]}`))
+	}))
+	defer server.Close()
+
+	result, err := runAgentToolTask(context.Background(), canvasGenerationInput{
+		Config: providerConfig{BaseURL: server.URL, APIKey: "key", Model: "model"},
+		AgentRequests: &agentToolRequests{Canonical: &canonicalAgentRequest{
+			Messages:   []map[string]interface{}{{"role": "user", "content": "读图"}},
+			Tools:      []map[string]interface{}{{"type": "function", "function": map[string]interface{}{"name": "canvas_inspect_image"}}},
+			ToolChoice: "auto",
+		}},
+	})
+	if err != nil || result["text"] != "完成" {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	if requests != 2 || len(sawParallel) != 2 || !sawParallel[0] || sawParallel[1] {
+		t.Fatalf("compatibility retry did not drop parallel_tool_calls: requests=%d saw=%v", requests, sawParallel)
+	}
+}
