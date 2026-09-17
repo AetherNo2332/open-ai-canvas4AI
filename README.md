@@ -175,13 +175,8 @@ cd backend && go test ./...
 cd docs && bun run types:check
 ```
 
-## 交流与反馈
-
-Issue 反馈、技术讨论和产品升级建议可以在微信交流群中沟通；群内也会不定期组织 AI 学习与培训交流会。
-
-<p align="center">
-  <img src="assets/wx.jpg" alt="影策 微信交流群" width="100%">
-</p>
+## 声明
+本项目仅内部学习研究使用
 
 ## 许可证和上游
 
