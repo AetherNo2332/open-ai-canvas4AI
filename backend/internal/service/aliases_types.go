@@ -9,6 +9,15 @@ type (
 	CloudAgentContextPolicy                = app.CloudAgentContextPolicy
 	AgentProfileRequest                    = app.AgentProfileRequest
 	AgentProfileView                       = app.AgentProfileView
+	AgentLessonView                        = app.AgentLessonView
+	AgentLessonAdminView                   = app.AgentLessonAdminView
+	AgentMemoryRequest                     = app.AgentMemoryRequest
+	AgentMemoryBundle                      = app.AgentMemoryBundle
+	AgentMemoryImportResult                = app.AgentMemoryImportResult
+	AgentMemoryCompactRequest              = app.AgentMemoryCompactRequest
+	AgentMemorySettingRequest              = app.AgentMemorySettingRequest
+	AgentMemoryCompactView                 = app.AgentMemoryCompactView
+	AgentMemoryCompactSummary              = app.AgentMemoryCompactSummary
 	APICallLogPage                         = app.APICallLogPage
 	APICallLogQuery                        = app.APICallLogQuery
 	AccountFileStorageUsage                = app.AccountFileStorageUsage

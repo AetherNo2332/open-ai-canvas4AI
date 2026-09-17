@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -50,6 +51,49 @@ func TestCloudAgentMixedCanvasReadsUnsupportedNodesWithoutGrantingCapabilities(t
 		if len(result["nodes"].([]any)) != want {
 			t.Fatal("nodes silently omitted")
 		}
+	}
+}
+
+// 大画布必须降级而不是拒绝整轮：这里断言我们自己的 index 摘要契约
+// （includedNodes / nodesOmitted / nodeDetailOmitted），预算为 8KB 软预算。
+func TestCloudAgentCanvasSummaryDegradesInsteadOfRejecting(t *testing.T) {
+	nodes := make([]map[string]any, 0, 50)
+	content := strings.Repeat("镜", 600)
+	for index := 0; index < 50; index++ {
+		nodes = append(nodes, map[string]any{
+			"id":    fmt.Sprintf("node-%d", index),
+			"type":  "text",
+			"title": fmt.Sprintf("镜头 %d %s", index, strings.Repeat("标题", 40)),
+			"metadata": map[string]any{
+				"content": content,
+			},
+		})
+	}
+	raw, err := json.Marshal(map[string]any{"nodes": nodes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := cloudAgentCanvasSummary(&model.CanvasProject{Title: "大画布", PayloadJSON: string(raw)})
+	if err != nil {
+		t.Fatalf("large canvas summary rejected: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(summary), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed["totalNodes"] != float64(50) {
+		t.Fatalf("totalNodes=%v", parsed["totalNodes"])
+	}
+	included, _ := parsed["includedNodes"].(float64)
+	omitted, _ := parsed["nodesOmitted"].(float64)
+	if included <= 0 || omitted <= 0 || int(included+omitted) != 50 {
+		t.Fatalf("expected degradation, included=%v omitted=%v", included, omitted)
+	}
+	if _, ok := parsed["scope"]; !ok {
+		t.Fatal("digest must state that it carries no row bodies")
+	}
+	if len(summary) > cloudAgentDigestBudgetBytes+4096 {
+		t.Fatalf("degraded summary still huge: %d", len(summary))
 	}
 }
 

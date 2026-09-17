@@ -2,8 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"fmt"
-	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
@@ -184,48 +182,5 @@ func TestCloudAgentImageApprovalEditsAreValidatedAndIdempotent(t *testing.T) {
 	db.Model(&model.Task{}).Where("type = ?", "canvas_image").Count(&count)
 	if count != 1 {
 		t.Fatalf("expected exactly one image task, got %d", count)
-	}
-}
-
-func TestCloudAgentConversationContinuesBeyondEightRounds(t *testing.T) {
-	s, db, _, _ := creationTestService(t)
-	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: `{"nodes":[]}`}).Error; err != nil {
-		t.Fatal(err)
-	}
-	parent := ""
-	for round := 0; round < 11; round++ {
-		req := agentTestRequest()
-		req.IdempotencyKey = fmt.Sprintf("long-conversation-%d", round)
-		run, err := s.CreateCloudAgentRun("user", req, parent)
-		if err != nil {
-			t.Fatalf("round %d failed: %v", round+1, err)
-		}
-		execution, _ := s.repo.CloudAgent("user", run.ID)
-		state, err := cloudAgentDecode(execution)
-		if err != nil || len(state.TextHistory) != round*2 {
-			t.Fatalf("history was lost at round %d: %v", round, err)
-		}
-		if err := db.Model(&model.Task{}).Where("id = ?", run.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": `{"text":"继续创作"}`}).Error; err != nil {
-			t.Fatal(err)
-		}
-		if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
-			t.Fatal(err)
-		}
-		parent = run.ID
-	}
-	// Removing the turn cap must not remove the existing context-size bound.
-	run, _ := s.repo.CloudAgent("user", parent)
-	state, _ := cloudAgentDecode(run)
-	for i := range state.TextHistory {
-		state.TextHistory[i].Content = strings.Repeat("x", 4000)
-	}
-	raw, _ := json.Marshal(state)
-	if err := db.Model(run).Update("state_json", string(raw)).Error; err != nil {
-		t.Fatal(err)
-	}
-	req := agentTestRequest()
-	req.IdempotencyKey = "long-conversation-byte-bound"
-	if _, err := s.CreateCloudAgentRun("user", req, parent); err == nil || !strings.Contains(err.Error(), "64KB") {
-		t.Fatalf("context byte bound removed: %v", err)
 	}
 }

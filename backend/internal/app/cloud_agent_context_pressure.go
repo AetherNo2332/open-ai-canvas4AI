@@ -74,7 +74,22 @@ func cloudAgentContextBreakdownPayload(state *cloudAgentRuntime) map[string]any 
 		"buckets":       buckets,
 	}
 	if segments := state.Policy.SystemSegments; len(segments) > 0 {
-		breakdown["systemSegments"] = segments
+		// 分段必须把 system 桶填满：编译之外拼接的块（个人记忆）由
+		// cloudAgentRecordMemorySegment 登记，剩余零头（标题、分隔与拼接文本）
+		// 归入"其它"，否则弹窗里的分段合计会小于 system 桶，看起来像少算。
+		reported := append([]cloudAgentContextSegment{}, segments...)
+		accountedBytes, accountedTokens := 0, 0
+		for _, segment := range reported {
+			accountedBytes += segment.Bytes
+			accountedTokens += segment.Tokens
+		}
+		if remainder := len(system) - accountedBytes; remainder > 0 {
+			reported = append(reported, cloudAgentContextSegment{
+				Key: "other", Label: "其它（标题与拼接）", Bytes: remainder,
+				Tokens: max(0, estimateCloudAgentTokens(system)-accountedTokens),
+			})
+		}
+		breakdown["systemSegments"] = reported
 	}
 	return breakdown
 }
