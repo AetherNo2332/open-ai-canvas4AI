@@ -21,7 +21,7 @@ func TestCloudAgentContextCompactionPreservesToolPairsAndWrites(t *testing.T) {
 			map[string]any{"role": "tool", "tool_call_id": i, "content": body})
 	}
 	last, _ := json.Marshal(request.Messages[len(request.Messages)-2:])
-	if evicted, _, _ := compactCloudAgentContext(&request); !evicted {
+	if evicted, _, _ := compactCloudAgentContext(&request, nil); !evicted {
 		t.Fatal("large read bodies not compacted")
 	}
 	if len(request.Messages) != 33 || request.Messages[0]["content"] != "original instructions" || request.Messages[4]["content"] != write {
@@ -36,7 +36,7 @@ func TestCloudAgentContextCompactionPreservesToolPairsAndWrites(t *testing.T) {
 			t.Fatal("tool pair broken")
 		}
 	}
-	if evicted, _, _ := compactCloudAgentContext(&request); evicted {
+	if evicted, _, _ := compactCloudAgentContext(&request, nil); evicted {
 		t.Fatal("compaction is not idempotent")
 	}
 }

@@ -31,8 +31,11 @@ type cloudAgentReferenceAnchor struct {
 	ReferenceReady           bool     `json:"referenceReady"`
 	VisualIdentity           string   `json:"visualIdentity"`
 	RequiresVisualInspection bool     `json:"requiresVisualInspection"`
-	Width                    any      `json:"width,omitempty"`
-	Height                   any      `json:"height,omitempty"`
+	// VisualNote 是模型看过这张图之后自己写下的一句观察。锚点会跨轮继承，
+	// 因此下一轮不必重复看图也能拿到文字观察（推理内容不会回灌上下文）。
+	VisualNote string `json:"visualNote,omitempty"`
+	Width      any    `json:"width,omitempty"`
+	Height     any    `json:"height,omitempty"`
 }
 
 func cloudAgentPromptUsesCanvasReferences(prompt string) bool {

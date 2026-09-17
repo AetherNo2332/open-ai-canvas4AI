@@ -81,10 +81,14 @@ type cloudAgentRuntime struct {
 	ActionNudged           bool                         `json:"actionNudged,omitempty"`
 	EmptyOutputNudged      int                          `json:"emptyOutputNudged,omitempty"`
 	StepSnapshotHash       string                       `json:"stepSnapshotHash,omitempty"`
-	StoryboardTaskID       string                       `json:"storyboardTaskId,omitempty"`
-	Plan                   []cloudAgentPlanItem         `json:"plan,omitempty"`
-	PendingInterjections   []cloudAgentInterjection     `json:"pendingInterjections,omitempty"`
-	InterjectionIDs        []string                     `json:"interjectionIds,omitempty"`
+	// ImageInspectCounts 记录本轮内每张图被查看的次数，用于"同一张图不要反复看"的护栏。
+	ImageInspectCounts map[string]int `json:"imageInspectCounts,omitempty"`
+	// PendingVisualNodeID 是刚看过、还没写观察的那张图；模型下一次输出正文时把观察记到锚点。
+	PendingVisualNodeID  string                   `json:"pendingVisualNodeId,omitempty"`
+	StoryboardTaskID     string                   `json:"storyboardTaskId,omitempty"`
+	Plan                 []cloudAgentPlanItem     `json:"plan,omitempty"`
+	PendingInterjections []cloudAgentInterjection `json:"pendingInterjections,omitempty"`
+	InterjectionIDs      []string                 `json:"interjectionIds,omitempty"`
 	// 最近一次已发出的步骤请求（模型调用）的本地计价，与上游实测用量配成锚点用。
 	// 估算与实测指向同一个 canonical：估算取自任务 input 里实际发出的那份，
 	// 因此"信封一致"是构造保证，不需要额外比对。
@@ -448,7 +452,7 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if run == nil || state == nil {
 		return errors.New("Agent runtime state is missing")
 	}
-	if evicted, _, _ := compactCloudAgentContext(&state.Canonical); evicted {
+	if evicted, _, _ := compactCloudAgentContext(&state.Canonical, state.cloudAgentVisualNotes()); evicted {
 		state.SkillReads = nil
 		state.ProfileReads = nil
 	}
@@ -685,6 +689,9 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			}
 			if result.Text != "" {
 				state.event(run.ID, "assistant_message", map[string]any{"messageId": task.ID, "text": result.Text})
+				// 刚看过图时，模型在正文里写下的那句话就是可复用的视觉证据：
+				// 推理内容不回灌上下文，只有正文留得下来。
+				state.recordCloudAgentVisualNote(result.Text)
 				if len(calls) == 0 {
 					state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text})
 				}
@@ -735,7 +742,7 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if state.ContextCompaction != nil && state.ContextCompaction.Status == "requested" {
 		return s.enqueueCloudAgentContextCompaction(run, &state)
 	}
-	evicted, messagesBefore, messagesAfter := compactCloudAgentContext(&state.Canonical)
+	evicted, messagesBefore, messagesAfter := compactCloudAgentContext(&state.Canonical, state.cloudAgentVisualNotes())
 	if evicted {
 		// Evicted read bodies must be obtainable again after compaction.
 		state.SkillReads = nil
@@ -782,12 +789,13 @@ const (
 
 // compactCloudAgentContext reports whether it changed anything, plus the
 // conversation-message size before and after, for the observability event.
-func compactCloudAgentContext(request *canonicalAgentRequest) (bool, int, int) {
+// notes 是 nodeID → 模型自己写下的观察：图片被移出上下文时用它替代像素。
+func compactCloudAgentContext(request *canonicalAgentRequest, notes map[string]string) (bool, int, int) {
 	if request == nil {
 		return false, 0, 0
 	}
-	// 图片先无条件裁剪：它是"上一步看过就够了"的内容，不该等到超阈值才处理。
-	prunedImages := cloudAgentPruneInspectedImages(request)
+	// 图片先按保留窗口裁剪：它是"看过就够了"的内容，不该等到超阈值才处理。
+	prunedImages := cloudAgentPruneInspectedImages(request, notes)
 	raw, err := json.Marshal(request.Messages)
 	if err != nil {
 		return prunedImages, 0, 0
@@ -1005,8 +1013,12 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		// tool 角色只接受字符串内容（四种上游图式都是纯文本），因此工具回执照常入历史，
 		// 图片另起一条 user 消息携带，并显式标注为数据而非指令。
 		state.Canonical.Messages = append(state.Canonical.Messages,
-			map[string]any{"role": "tool", "tool_call_id": call.ID, "content": string(receipt)},
-			map[string]any{"role": "user", "content": cloudAgentImageContentParts(inspection)})
+			map[string]any{"role": "tool", "tool_call_id": call.ID, "content": string(receipt)})
+		// 重复查看时只回执文字（ImageURL 为空），不再附图。
+		if strings.TrimSpace(inspection.ImageURL) != "" {
+			state.Canonical.Messages = append(state.Canonical.Messages,
+				map[string]any{"role": "user", "content": cloudAgentImageContentParts(inspection)})
+		}
 		state.CallIndex++
 		state.Approval = nil
 		return
@@ -1332,7 +1344,7 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 	var inspectionResult any
 	var inspectionErr error
 	if allowed && call.Function.Name == "canvas_inspect_image" && state.Request.VisionEnabled {
-		inspectionResult, inspectionErr = s.prepareCloudAgentImageInspection(run.UserID, state.Request.CanvasID, call)
+		inspectionResult, inspectionErr = s.prepareCloudAgentImageInspection(run.UserID, state.Request.CanvasID, state, call)
 	}
 	// Skill reads use the domain repository and filesystem, not the checkpoint
 	// transaction's connection. Read first to avoid nesting DB reads on SQLite.
