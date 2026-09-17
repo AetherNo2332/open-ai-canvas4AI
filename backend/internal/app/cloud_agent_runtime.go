@@ -78,7 +78,11 @@ type cloudAgentRuntime struct {
 	Approval               *cloudAgentApproval          `json:"approval,omitempty"`
 	Decisions              map[string]string            `json:"decisions"`
 	DecisionSettings       map[string]string            `json:"decisionSettings,omitempty"`
-	Events                 []CloudAgentEvent            `json:"events"`
+	// CanvasBatchHashes 记录本批（同一个助手消息内的多次工具调用）已经消费与产出的画布版本：
+	// 首元素是首个写入被校验时看到的版本，末元素是最近一次写入产出的版本。模型是在同一次读取的
+	// 基础上并发提交这批写入的，首个写入必然改变版本，因此同批后续写入需要据此重基。
+	CanvasBatchHashes []string          `json:"canvasBatchHashes,omitempty"`
+	Events            []CloudAgentEvent `json:"events"`
 }
 
 func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgentState) error {
@@ -361,7 +365,7 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if run == nil || state == nil {
 		return errors.New("Agent runtime state is missing")
 	}
-	if compactCloudAgentContext(&state.Canonical) {
+	if evicted, _, _ := compactCloudAgentContext(&state.Canonical); evicted {
 		state.SkillReads = nil
 		state.ProfileReads = nil
 	}
@@ -587,6 +591,8 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			state.ActiveTaskID = ""
 			state.Calls = calls
 			state.CallIndex = 0
+			// 新的一批：清空上一批的画布版本记录。
+			state.CanvasBatchHashes = nil
 			if len(calls) > 0 {
 				state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text, "tool_calls": calls})
 			}
@@ -607,27 +613,51 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if state.ContextCompaction != nil && state.ContextCompaction.Status == "requested" {
 		return s.enqueueCloudAgentContextCompaction(run, &state)
 	}
-	if compactCloudAgentContext(&state.Canonical) {
+	evicted, messagesBefore, messagesAfter := compactCloudAgentContext(&state.Canonical)
+	if evicted {
 		// Evicted read bodies must be obtainable again after compaction.
 		state.SkillReads = nil
 		state.ProfileReads = nil
+		state.event(run.ID, "context_evicted", map[string]any{
+			"messagesBytesBefore": messagesBefore, "messagesBytesAfter": messagesAfter,
+			"thresholdBytes": cloudAgentEvictionThresholdBytes, "messageLimit": cloudAgentEvictionMessageLimit,
+			"text": "已移出可重新读取的历史工具正文（不含模型调用），需要时重新读取",
+		})
 	}
 	input := map[string]any{"mode": "text", "prompt": state.Request.Prompt, "agentRequests": map[string]any{"canonical": state.Canonical}, "config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)}, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(state.Policy.ReasoningMode)}}
 	raw, _ := json.Marshal(state.Canonical)
-	if len(raw) > 192<<10 {
+	if len(raw) > cloudAgentRequestHardLimitBytes {
 		return s.failCloudAgent(run, &state, "模型上下文超过 192KB 上限")
 	}
 	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: "cloud_agent_step", Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
 	return s.enqueueCloudAgentTask(run, &state, req, nil)
 }
 
-func compactCloudAgentContext(request *canonicalAgentRequest) bool {
+// The deterministic body eviction is the cheap lever: it removes re-readable
+// bodies with no model call. Its threshold therefore sits below the semantic
+// compaction threshold and both judge the same object — the conversation
+// messages — so the expensive path only runs after the cheap one had its
+// chance. Judging the whole canonical here made a 36 KiB read look safe at
+// 0.91x while the semantic path was already past its own threshold.
+const (
+	cloudAgentEvictionThresholdBytes = 40 << 10
+	cloudAgentEvictionMessageLimit   = 24
+	cloudAgentRequestHardLimitBytes  = 192 << 10
+)
+
+// compactCloudAgentContext reports whether it changed anything, plus the
+// conversation-message size before and after, for the observability event.
+func compactCloudAgentContext(request *canonicalAgentRequest) (bool, int, int) {
 	if request == nil {
-		return false
+		return false, 0, 0
 	}
-	raw, err := json.Marshal(request)
-	if err != nil || (len(raw) < 96<<10 && len(request.Messages) <= 24) {
-		return false
+	raw, err := json.Marshal(request.Messages)
+	if err != nil {
+		return false, 0, 0
+	}
+	before := len(raw)
+	if before < cloudAgentEvictionThresholdBytes && len(request.Messages) <= cloudAgentEvictionMessageLimit {
+		return false, before, before
 	}
 	// Retain the latest complete tool turn. Never remove call/result envelopes,
 	// user instructions, call arguments or write receipts to fabricate a summary.
@@ -635,9 +665,15 @@ func compactCloudAgentContext(request *canonicalAgentRequest) bool {
 	for cut > 0 && stringField(request.Messages[cut], "role") == "tool" {
 		cut--
 	}
+	// 技能正文不可卸载：它是可复用却不可再生的任务剧本，卸掉之后模型只能重新读取，
+	// 形成"读了被吞、再读"的循环（实测一次运行里同一个 SKILL.md 被读了 5 次）。
+	toolNames := cloudAgentToolNamesByCallID(request.Messages)
 	changed := false
 	for _, message := range request.Messages[:max(0, cut)] {
 		if stringField(message, "role") != "tool" {
+			continue
+		}
+		if toolNames[stringField(message, "tool_call_id")] == "skill_read_file" {
 			continue
 		}
 		var result map[string]any
@@ -665,7 +701,13 @@ func compactCloudAgentContext(request *canonicalAgentRequest) bool {
 		message["content"] = string(body)
 		changed = true
 	}
-	return changed
+	if !changed {
+		return false, before, before
+	}
+	if after, err := json.Marshal(request.Messages); err == nil {
+		return true, before, len(after)
+	}
+	return true, before, before
 }
 
 func validateCloudAgentCalls(calls []cloudAgentCall) error {
@@ -836,11 +878,165 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	state.CallIndex++
 	state.Approval = nil
 }
+
+// errCloudAgentSnapshotConflict marks the recoverable "the canvas moved since
+// the model read it" outcome. It is attached only to snapshot checks, so the
+// approval path can hand it back to the model as a tool result while genuine
+// admission failures still stop the run.
+var errCloudAgentSnapshotConflict = errors.New("canvas snapshot conflict")
+
+func cloudAgentSnapshotConflictError(message string) error {
+	return &AppError{Status: 409, Code: 409, Message: message, Cause: errCloudAgentSnapshotConflict}
+}
+
+func cloudAgentSnapshotConflict(err error) bool {
+	return errors.Is(err, errCloudAgentSnapshotConflict)
+}
+
+// cloudAgentToolNamesByCallID 从助手消息的工具调用里还原 callId → 工具名，
+// 用于让上下文治理按工具区分可卸载的正文。
+func cloudAgentToolNamesByCallID(messages []map[string]any) map[string]string {
+	names := make(map[string]string, len(messages))
+	for _, message := range messages {
+		if stringField(message, "role") != "assistant" {
+			continue
+		}
+		raw, ok := message["tool_calls"].([]any)
+		if !ok {
+			continue
+		}
+		for _, item := range raw {
+			call, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			function, _ := call["function"].(map[string]any)
+			id, name := stringValue(call["id"]), stringValue(function["name"])
+			if id != "" && name != "" {
+				names[id] = name
+			}
+		}
+	}
+	return names
+}
+
+// cloudAgentModelToolResult is the single model-facing copy of a tool result.// The approval preview is authored for the human approval card and already
+// reaches the SSE stream through approval_requested, so the durable context
+// keeps only the receipt the model actually needs: what changed, which node and
+// which snapshot. This follows the skill_read_file precedent (receipt on SSE,
+// body withheld from context) in the opposite direction.
+func cloudAgentModelToolResult(toolName string, result any) any {
+	fields, ok := result.(map[string]any)
+	if !ok {
+		return result
+	}
+	preview, hasPreview := fields["preview"]
+	if !hasPreview {
+		return result
+	}
+	receipt := make(map[string]any, len(fields)+2)
+	for key, value := range fields {
+		if key == "preview" {
+			continue
+		}
+		receipt[key] = value
+	}
+	// 审批卡文案是写给人看的（"准备…批准后才会写入画布"）。模型收到的这份工具结果只在写入
+	// 真正发生后才会产生，所以必须给出结果口径，否则模型会以为还在等审批并反复重读重试。
+	if cloudAgentCanvasWriteTool(toolName) {
+		receipt["applied"] = true
+		receipt["outcome"] = "已写入画布；本回执的 snapshotHash 是最新版本，可继续提交同一批的其它写入"
+		if item := cloudAgentReceiptItemSummary(preview); item != "" {
+			receipt["summary"] = item
+		}
+	}
+	receipt["previewOmitted"] = true
+	receipt["previewNote"] = "审批卡明细只发给用户；本回执保留变更条目、nodeId 与 snapshotHash"
+	return receipt
+}
+
+// cloudAgentReceiptItemSummary 取审批预览里面向节点的短句（"修改分镜脚本《…》"），
+// 它描述的是发生了什么，而不是"准备做什么"。
+func cloudAgentReceiptItemSummary(preview any) string {
+	value, ok := preview.(cloudAgentApprovalPreview)
+	if !ok || len(value.Items) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(value.Items[0].Summary)
+}
+
+// cloudAgentCanvasWriteTool 标记"调用返回即表示已落到画布上"的写入工具。
+// generate_media 不在此列：它创建草稿并进入独立审批，回执口径不同。
+func cloudAgentCanvasWriteTool(name string) bool {
+	switch name {
+	case "canvas_apply_ops", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table":
+		return true
+	default:
+		return false
+	}
+}
+
+// cloudAgentRebaseWriteSnapshot 把同一批内后续写入的 snapshotHash 换成该批自己产出的最新版本。
+// 只在模型提交的版本属于本批已出现过的版本时才替换，替换后仍要与当前文档一致才会通过校验，
+// 因此浏览器/其他端的并发改动依旧会被"画布已变化"拒绝。
+func cloudAgentRebaseWriteSnapshot(state *cloudAgentRuntime, call cloudAgentCall) cloudAgentCall {
+	if state == nil || len(state.CanvasBatchHashes) == 0 || !cloudAgentCanvasWriteTool(call.Function.Name) {
+		return call
+	}
+	var args map[string]any
+	if decodeCloudAgentJSONObject(call.Function.Arguments, &args) != nil {
+		return call
+	}
+	requested, _ := args["snapshotHash"].(string)
+	latest := state.CanvasBatchHashes[len(state.CanvasBatchHashes)-1]
+	if requested == "" || requested == latest || latest == "" {
+		return call
+	}
+	known := false
+	for _, hash := range state.CanvasBatchHashes {
+		if hash == requested {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return call
+	}
+	args["snapshotHash"] = latest
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return call
+	}
+	call.Function.Arguments = string(encoded)
+	return call
+}
+
+// recordCanvasBatchHash 在写入成功后登记本批的版本链（写入前的版本 + 写入产出的版本）。
+func (state *cloudAgentRuntime) recordCanvasBatchHash(result any) {
+	fields, ok := result.(map[string]any)
+	if !ok {
+		return
+	}
+	produced, _ := fields["snapshotHash"].(string)
+	if produced == "" {
+		return
+	}
+	if len(state.CanvasBatchHashes) == 0 {
+		if before, _ := fields["beforeSnapshotHash"].(string); before != "" {
+			state.CanvasBatchHashes = append(state.CanvasBatchHashes, before)
+		}
+	}
+	if last := state.CanvasBatchHashes; len(last) == 0 || last[len(last)-1] != produced {
+		state.CanvasBatchHashes = append(state.CanvasBatchHashes, produced)
+	}
+}
 func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
 	if state.CallIndex < 0 || state.CallIndex >= len(state.Calls) {
 		return s.failCloudAgent(run, state, "Agent 工具调用状态无效，本轮已停止")
 	}
 	call := state.Calls[state.CallIndex]
+	// 同一批内的后续写入要基于本批自己产出的版本，否则第二个写入必然被"画布已变化"拒绝。
+	call = cloudAgentRebaseWriteSnapshot(state, call)
 	if state.Approval != nil && state.Approval.Decision == "" {
 		return nil
 	}
@@ -929,6 +1125,14 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 						cloudAgentToolResult(run.ID, state, call, nil, mutationErr)
 						return cloudAgentSave(current, state)
 					}
+					// A stale snapshot is a normal outcome of concurrent editing,
+					// not an admission failure: hand it back as a tool result so the
+					// model re-reads and retries inside this run instead of losing
+					// the whole round. Genuine admission failures still stop the run.
+					if cloudAgentSnapshotConflict(mutationErr) {
+						cloudAgentToolResult(run.ID, state, call, nil, mutationErr)
+						return cloudAgentSave(current, state)
+					}
 					var appErr *AppError
 					if errors.As(mutationErr, &appErr) && appErr != nil {
 						return failCloudAgentAdmission(current, state, run.ID, mutationErr)
@@ -952,10 +1156,10 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 	var modelList any
 	var modelListErr error
 	if allowed && call.Function.Name == "model_list" {
-		intent, e := s.cloudAgentModelIntent(run.UserID, state.Request.CanvasID, call.Function.Arguments)
+		intent, verbose, e := s.cloudAgentModelIntent(run.UserID, state.Request.CanvasID, call.Function.Arguments)
 		modelListErr = e
 		if e == nil {
-			modelList, modelListErr = s.cloudAgentModelList(intent)
+			modelList, modelListErr = s.cloudAgentModelList(intent, verbose)
 		}
 	}
 	// Skill reads use the domain repository and filesystem, not the checkpoint
@@ -985,6 +1189,9 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			result, toolErr = skillResult, skillErr
 		default:
 			result, toolErr = cloudAgentReadTool(repo, run.UserID, state, call)
+		}
+		if toolErr == nil {
+			state.recordCanvasBatchHash(result)
 		}
 		cloudAgentToolResult(run.ID, state, call, result, toolErr)
 		return cloudAgentSave(current, state)

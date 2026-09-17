@@ -46,7 +46,37 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 	payload["compactionSourceBytes"] = len(raw)
 	payload["historyMessages"] = historyMessages
 	payload["compactionPressureRatio"] = math.Max(byteRatio, messageRatio)
+	payload["breakdown"] = cloudAgentContextBreakdownPayload(state)
 	return payload
+}
+
+// cloudAgentContextBreakdownPayload reports what occupies the request that is
+// about to be sent: the three canonical buckets plus the compiled system-prompt
+// segments, in the same estimate the occupancy figure uses. Buckets and the
+// canonical total differ by the envelope (tool choice, cache key), which is
+// reported separately rather than folded into a bucket.
+func cloudAgentContextBreakdownPayload(state *cloudAgentRuntime) map[string]any {
+	canonical := state.Canonical
+	system := []byte(canonical.SystemPrompt)
+	tools, _ := json.Marshal(canonical.Tools)
+	messages, _ := json.Marshal(canonical.Messages)
+	whole, _ := json.Marshal(canonical)
+	buckets := []map[string]any{
+		{"key": "system", "label": "系统提示（含画布摘要）", "bytes": len(system), "tokens": estimateCloudAgentTokens(system)},
+		{"key": "tools", "label": "工具 schema", "bytes": len(tools), "tokens": estimateCloudAgentTokens(tools)},
+		{"key": "messages", "label": "会话消息（含工具结果）", "bytes": len(messages), "tokens": estimateCloudAgentTokens(messages)},
+	}
+	bucketBytes := len(system) + len(tools) + len(messages)
+	breakdown := map[string]any{
+		"totalBytes": len(whole), "totalTokens": estimateCloudAgentTokens(whole),
+		"bucketBytes": bucketBytes, "bucketTokens": estimateCloudAgentTokens(system) + estimateCloudAgentTokens(tools) + estimateCloudAgentTokens(messages),
+		"envelopeBytes": max(0, len(whole)-bucketBytes),
+		"buckets":       buckets,
+	}
+	if segments := state.Policy.SystemSegments; len(segments) > 0 {
+		breakdown["systemSegments"] = segments
+	}
+	return breakdown
 }
 
 // estimateCloudAgentTokens is provider-neutral and deliberately conservative

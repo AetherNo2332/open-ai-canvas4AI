@@ -457,46 +457,91 @@ func cloudAgentLegacyHistory(messages []map[string]interface{}, currentPrompt st
 	return history
 }
 
+// The digest is rebuilt at the start of every run and resent with every step,
+// so it promises existence and scale only. Full bodies are re-readable through
+// canvas_get_state and the dedicated read tools, and that is stated in the
+// payload rather than assumed. The digest is also injected into the system
+// prompt, so it must always degrade instead of failing the run: oversize
+// canvases lose per-node detail and then nodes, never the whole Agent.
+const (
+	cloudAgentDigestBudgetBytes = 8 << 10
+	cloudAgentDigestNodeLimit   = 80
+	cloudAgentDigestMinNodes    = 20
+)
+
+type cloudAgentDigestNode struct {
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Title    string         `json:"title"`
+	Metadata map[string]any `json:"metadata"`
+}
+
 func cloudAgentCanvasSummary(canvas *model.CanvasProject) (string, error) {
 	var payload struct {
-		Nodes []struct {
-			ID       string         `json:"id"`
-			Type     string         `json:"type"`
-			Title    string         `json:"title"`
-			Metadata map[string]any `json:"metadata"`
-		} `json:"nodes"`
+		Nodes []cloudAgentDigestNode `json:"nodes"`
 	}
 	if err := json.Unmarshal([]byte(canvas.PayloadJSON), &payload); err != nil {
 		return "", BadAuthRequest("服务端画布内容无法解析，请先重新同步")
 	}
-	nodes := make([]map[string]any, 0)
-	for index, node := range payload.Nodes {
-		if index == 80 {
-			break
+	// Descending detail: full index projection, then identity only, then a
+	// bounded node list, then counts. The first document that fits the budget
+	// wins; the last one always fits.
+	for _, level := range []struct {
+		nodes  int
+		detail bool
+	}{
+		{cloudAgentDigestNodeLimit, true},
+		{cloudAgentDigestNodeLimit, false},
+		{cloudAgentDigestMinNodes, false},
+		{0, false},
+	} {
+		data, err := cloudAgentDigestJSON(canvas, payload.Nodes, level.nodes, level.detail)
+		if err != nil {
+			return "", err
 		}
-		descriptor, known := cloudAgentNodeCapabilityForType(node.Type)
+		if len(data) <= cloudAgentDigestBudgetBytes || level.nodes == 0 {
+			return string(data), nil
+		}
+	}
+	return "", BadAuthRequest("服务端画布摘要无法生成")
+}
+
+func cloudAgentDigestJSON(canvas *model.CanvasProject, all []cloudAgentDigestNode, limit int, detail bool) ([]byte, error) {
+	included := min(len(all), max(0, limit))
+	nodes := make([]map[string]any, 0, included)
+	for _, node := range all[:included] {
 		item := map[string]any{"id": truncateRunes(node.ID, 100), "type": truncateRunes(node.Type, 40), "title": truncateRunes(node.Title, 300)}
+		descriptor, known := cloudAgentNodeCapabilityForType(node.Type)
 		if !known {
 			item["agentSupported"] = false
 			item["agentUnsupportedReason"] = "仅展示基础信息；当前 Agent 不支持操作此类型节点"
 			nodes = append(nodes, item)
 			continue
 		}
-		projected, err := cloudAgentProjectNodeFields(map[string]any{"title": node.Title}, node.Metadata, descriptor, descriptor.SummaryFields, 600, false, 0)
+		if !detail {
+			nodes = append(nodes, item)
+			continue
+		}
+		projected, err := cloudAgentProjectNodeFields(map[string]any{"title": node.Title}, node.Metadata, descriptor, descriptor.SummaryFields, 600, cloudAgentProjectionIndex, 0)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		for key, value := range projected {
 			item[key] = value
 		}
 		nodes = append(nodes, item)
 	}
-	data, err := json.Marshal(map[string]any{"title": truncateRunes(canvas.Title, 240), "savedAt": canvas.UpdatedAt, "totalNodes": len(payload.Nodes), "includedNodes": len(nodes), "nodes": nodes})
-	if err != nil {
-		return "", err
+	document := map[string]any{
+		"title": truncateRunes(canvas.Title, 240), "savedAt": canvas.UpdatedAt,
+		"totalNodes": len(all), "includedNodes": len(nodes), "nodes": nodes,
+		"scope": "本摘要只说明存在性与规模，不含逐行正文；需要正文时用 canvas_get_state 分页读取，按行编辑前用对应 read 工具读取真实 rowId 与 snapshotHash",
 	}
-	if len(data) > 64000 {
-		return "", BadAuthRequest("画布摘要超过 64KB，请缩小画布后重试")
+	if omitted := len(all) - len(nodes); omitted > 0 {
+		document["nodesOmitted"] = omitted
+		document["nodesOmittedHint"] = "被省略的节点仍然存在且可读；用 canvas_get_state 的 offset 继续分页读取"
 	}
-	return string(data), nil
+	if !detail && len(nodes) > 0 {
+		document["nodeDetailOmitted"] = true
+	}
+	return json.Marshal(document)
 }
