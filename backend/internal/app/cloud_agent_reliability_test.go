@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -88,8 +89,54 @@ func TestCloudAgentReliabilitySchedulerHeadOfLine500(t *testing.T) {
 	}
 }
 
-func TestCloudAgentReliabilityOversizedCheckpoint(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
+// 事件载荷过大不再直接判死：体积逼近上限时阶梯先把老事件降级成回执，
+// 长流程"变淡"而不是"突然死"（实测分镜流程曾两次撞在这里）。
+func TestCloudAgentReliabilityOversizedEventsDegradeInsteadOfFailing(t *testing.T) {
+	s, _, root := reliableAgentRoot(t)
+	run, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := cloudAgentDecode(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		id := fmt.Sprintf("filler-%d", i)
+		state.event(root.ID, "tool_completed", map[string]any{"toolName": "canvas_get_state", "text": strings.Repeat("x", 120000), "callId": id})
+	}
+	if err = s.repo.MutateCloudAgent("user", root.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatalf("阶梯应当把过大状态降级而不是报错: %v", err)
+	}
+	saved, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.StateJSON) > cloudAgentStateHardLimitBytes {
+		t.Fatalf("降级后仍超过硬上限: %d 字节", len(saved.StateJSON))
+	}
+	stored, err := cloudAgentDecode(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("saved=%d 字节 events=%d degradeLevel=%d", len(saved.StateJSON), len(stored.Events), stored.EventDegradeLevel)
+	payload := 0
+	for _, event := range stored.Events {
+		raw, _ := json.Marshal(event)
+		payload += len(raw)
+	}
+	t.Logf("事件合计 %d 字节", payload)
+	if stored.EventDegradeLevel < 3 {
+		t.Fatalf("这么大的状态应当触达 level 3，实际 %d", stored.EventDegradeLevel)
+	}
+	t.Logf("过大事件日志已降级: %d 字节, level=%d, 事件 %d 条", len(saved.StateJSON), stored.EventDegradeLevel, len(stored.Events))
+}
+
+// 单条事件载荷超过校验上限（128KB）时仍然终止本轮——那是真正存不下的情况。
+func TestCloudAgentReliabilityOversizedEventPayloadStillFails(t *testing.T) {
+	s, _, root := reliableAgentRoot(t)
 	run, err := s.repo.CloudAgent("user", root.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -99,33 +146,12 @@ func TestCloudAgentReliabilityOversizedCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 4; i++ {
-		state.event(root.ID, "tool_completed", map[string]any{"text": strings.Repeat("x", 120000)})
+		state.event(root.ID, "tool_completed", map[string]any{"text": strings.Repeat("x", 140000)})
 	}
 	if err = s.repo.MutateCloudAgent("user", root.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	result, _ := json.Marshal(map[string]string{"text": strings.Repeat("a", 31900)})
-	if err = db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(result)}).Error; err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 3; i++ {
-		run, err = s.repo.CloudAgent("user", root.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err = s.advanceCloudAgent(run); err != nil {
-			t.Fatal(err)
-		}
-	}
-	run, err = s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("3 deterministic oversized checkpoint failures: run=%s revision=%d bytes=%d", run.Status, run.Revision, len(run.StateJSON))
-	if run.Status != "failed" || run.CleanupPending || run.FailureMessage == "" {
-		t.Fatalf("failed run did not settle: %+v", run)
+	}); err == nil || !errors.Is(err, errCloudAgentCheckpoint) {
+		t.Fatalf("超大单事件载荷应当以 checkpoint 错误拒绝，实际 %v", err)
 	}
 }
 

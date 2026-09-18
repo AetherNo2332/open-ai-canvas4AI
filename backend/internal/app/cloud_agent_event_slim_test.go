@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // slimFixture 造一份"每一步都带增量、压力、审批"的长会话事件日志。
@@ -11,7 +12,7 @@ func slimFixture(steps int, withPendingStep bool) *cloudAgentRuntime {
 	state := &cloudAgentRuntime{Decisions: map[string]string{}, Events: []CloudAgentEvent{}}
 	emit := func(kind string, payload map[string]any) {
 		state.Events = append(state.Events, CloudAgentEvent{
-			EventID: "run:" + kind, RunID: "run", Seq: len(state.Events) + 1, Type: kind, Payload: payload,
+			EventID: "run:" + kind, RunID: "run", Seq: len(state.Events) + 1, Type: kind, Payload: payload, CreatedAt: time.Now(),
 		})
 	}
 	for step := 0; step < steps; step++ {
@@ -100,8 +101,8 @@ func TestCloudAgentSlimEventHistoryReducesWithoutLosingSemantics(t *testing.T) {
 	if breakdowns != 1 {
 		t.Fatalf("占用分布只应保留最新一条，实际 %d", breakdowns)
 	}
-	if patches != 3 {
-		t.Fatalf("画布增量应保留最近 3 份，实际 %d", patches)
+	if patches != cloudAgentCanvasPatchKeep {
+		t.Fatalf("画布增量应保留最近 %d 份，实际 %d", cloudAgentCanvasPatchKeep, patches)
 	}
 	if decidedArgs > cloudAgentApprovalKeep {
 		t.Fatalf("已决审批的原始参数只应保留最近 %d 条，实际 %d 条", cloudAgentApprovalKeep, decidedArgs)
@@ -119,7 +120,7 @@ func TestCloudAgentSlimEventHistoryReducesWithoutLosingSemantics(t *testing.T) {
 // 媒体审批的原始参数要留给客户端做设置比对，不能被清。
 func TestCloudAgentSlimKeepsMediaApprovalArguments(t *testing.T) {
 	state := &cloudAgentRuntime{Events: []CloudAgentEvent{
-		{RunID: "run", Seq: 1, EventID: "e1", Type: "approval_decided", Payload: map[string]any{
+		{RunID: "run", Seq: 1, EventID: "e1", Type: "approval_decided", CreatedAt: time.Now(), Payload: map[string]any{
 			"approvalId": "a", "toolName": "generate_media", "decision": "approve",
 			"arguments": `{"modelId":"m","durationSeconds":5}`,
 		}},
@@ -149,4 +150,123 @@ func TestCloudAgentSlimKeepsLongRunUnderStateGuard(t *testing.T) {
 		t.Fatalf("瘦身后仍然太大: %d 字节", len(raw))
 	}
 	t.Logf("24 步会话事件日志: 瘦身后 %d 字节", len(raw))
+}
+
+// 旧工具事件只留回执：UI 与压缩事实要用的键必须保住，正文/原始参数可以丢。
+func TestCloudAgentSlimKeepsToolReceiptFacts(t *testing.T) {
+	state := &cloudAgentRuntime{Events: []CloudAgentEvent{}}
+	emit := func(payload map[string]any) {
+		state.Events = append(state.Events, CloudAgentEvent{RunID: "run", Seq: len(state.Events) + 1, EventID: "run", Type: "tool_completed", Payload: payload, CreatedAt: time.Now()})
+	}
+	for i := 0; i < cloudAgentToolEventKeep+3; i++ {
+		emit(map[string]any{
+			"toolName":  "canvas_get_state",
+			"arguments": `{"nodeIds":["n1","n2"]}`,
+			"text":      "工具执行成功",
+			"result":    map[string]any{"nodeId": "n1", "taskId": "t1", "status": "running", "nodes": []any{strings.Repeat("x", 3000)}},
+		})
+	}
+	if !cloudAgentSlimEventHistory(state, false) {
+		t.Fatal("旧工具事件应当被瘦身")
+	}
+	slimmed := state.Events[0].Payload
+	result, ok := slimmed["result"].(map[string]any)
+	if !ok || result["nodeId"] != "n1" || result["taskId"] != "t1" || result["status"] != "running" {
+		t.Fatalf("回执丢了 UI/压缩要用的键: %+v", slimmed["result"])
+	}
+	if _, exists := result["nodes"]; exists {
+		t.Fatal("旧回执不该保留整份节点列表")
+	}
+	if arguments, _ := slimmed["arguments"].(string); arguments != "" {
+		t.Fatalf("旧工具事件的原始参数应清空: %q", arguments)
+	}
+	// 最近几条保持完整
+	last := state.Events[len(state.Events)-1].Payload
+	if result, _ := last["result"].(map[string]any); result == nil {
+		t.Fatal("最新工具回执必须保持完整")
+	}
+}
+
+// 体积逼近上限时按阶梯降级：老事件压成一行回执，但 seq/eventId/type 不动，
+// 并且降级后的状态仍通过运行时校验（长流程"变淡"而不是"突然死"）。
+func TestCloudAgentDegradeEventHistoryKeepsCursorAndPassesValidation(t *testing.T) {
+	// 用真实运行骨架（Request/Policy/Profile/TaskIDs 齐全）承载合成的大事件日志，
+	// 这样"降级后的状态仍通过运行时校验"这条断言才有意义。
+	service, _, root := reliableAgentRoot(t)
+	run, err := service.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := cloudAgentDecode(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &decoded
+	state.Events = slimFixture(70, false).Events
+	for index := range state.Events {
+		state.Events[index].RunID = run.ID
+	}
+	cloudAgentSlimEventHistory(state, false)
+	raw, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	level := cloudAgentEventHistoryDegradeLevel(len(raw))
+	if level == 0 {
+		t.Fatalf("fixture 应当触发降级，实际体积 %d 字节", len(raw))
+	}
+	before := len(raw)
+	payloadBytes := func() int {
+		total := 0
+		for _, event := range state.Events {
+			payload, _ := json.Marshal(event.Payload)
+			total += len(payload)
+		}
+		return total
+	}
+	beforePayload := payloadBytes()
+	if !cloudAgentDegradeEventHistory(state, 3) {
+		t.Fatal("level 3 应当有改动")
+	}
+	after, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// level 3 负责削**载荷**（信封按游标语义必须留），所以断言载荷体积大幅下降，
+	// 而不是断言总字节数——事件条数极多的合成日志里信封会占主导。
+	// 本 fixture 的载荷以 400 字消息体为主（本身已接近不可压），所以只要求
+	// "明显下降"；真实状态（消息+画布差量+工具回执为主）的实测数字见文档。
+	if beforePayload <= 0 || payloadBytes()*100 > beforePayload*70 {
+		t.Fatalf("level 3 载荷削减不足: %d → %d 字节", beforePayload, payloadBytes())
+	}
+	afterPayload := payloadBytes()
+	t.Logf("level 3 载荷: %d → %d 字节（−%.0f%%），整体 %d → %d 字节", beforePayload, afterPayload,
+		(float64(beforePayload-afterPayload)/float64(beforePayload))*100, before, len(after))
+	// 最近的事件保持完整，老的变成一行回执。
+	for _, event := range state.Events[:len(state.Events)-cloudAgentEventFloorKeep] {
+		if event.Type == "reasoning_message" || event.Type == "assistant_delta" {
+			if _, ok := event.Payload["degraded"]; !ok {
+				t.Fatalf("老事件没有被降级: %+v", event.Payload)
+			}
+		}
+	}
+	if _, ok := state.Events[len(state.Events)-1].Payload["degraded"]; ok {
+		t.Fatal("最新事件不该被降级")
+	}
+	for index, event := range state.Events {
+		if event.Seq != index+1 || event.EventID == "" || event.Type == "" || event.RunID != run.ID || event.CreatedAt.IsZero() {
+			t.Fatalf("降级改动了事件骨架: %+v", event)
+		}
+	}
+	if err := validateCloudAgentRuntime(run, state); err != nil {
+		t.Fatalf("降级后校验失败: %v", err)
+	}
+	// 幂等
+	size := cloudAgentEventHistoryBytes(state)
+	if cloudAgentDegradeEventHistory(state, 3) {
+		t.Fatal("level 3 应当幂等")
+	}
+	if cloudAgentEventHistoryBytes(state) != size {
+		t.Fatal("幂等性被破坏")
+	}
 }

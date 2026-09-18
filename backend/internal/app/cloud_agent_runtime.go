@@ -88,6 +88,8 @@ type cloudAgentRuntime struct {
 	ActionNudged           bool                         `json:"actionNudged,omitempty"`
 	EmptyOutputNudged      int                          `json:"emptyOutputNudged,omitempty"`
 	StepSnapshotHash       string                       `json:"stepSnapshotHash,omitempty"`
+	// EventDegradeLevel 记录事件日志已降到哪一级（避免每次保存重复遍历）。
+	EventDegradeLevel int `json:"eventDegradeLevel,omitempty"`
 	// ContextCompactionCount 是本轮已经压过几次：压完仍超阈值时不要无限暂停。
 	ContextCompactionCount int `json:"contextCompactionCount,omitempty"`
 	// ImageInspectCounts 记录本轮内每张图被查看的次数，用于"同一张图不要反复看"的护栏。
@@ -486,7 +488,22 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if err != nil {
 		return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
 	}
-	if len(raw) > 512<<10 {
+	// 体积逼近上限时按级降级事件载荷（只动载荷，不动 seq/eventId），
+	// 让长流程"变淡"而不是"突然死"；只有降到极致仍超限才终止本轮。
+	for level := 0; ; {
+		needed := cloudAgentEventHistoryDegradeLevel(len(raw))
+		if needed <= level {
+			break
+		}
+		if !cloudAgentDegradeEventHistory(state, needed) {
+			break
+		}
+		level = needed
+		if raw, err = json.Marshal(state); err != nil {
+			return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
+		}
+	}
+	if len(raw) > cloudAgentStateHardLimitBytes {
 		return fmt.Errorf("%w: Agent 状态超过 512KB 上限", errCloudAgentCheckpoint)
 	}
 	run.CanvasID, run.ActiveTaskID, run.MediaTaskID = state.Request.CanvasID, state.ActiveTaskID, state.MediaTaskID

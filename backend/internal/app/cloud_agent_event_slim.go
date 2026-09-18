@@ -111,6 +111,31 @@ func cloudAgentSlimEventHistory(state *cloudAgentRuntime, terminal bool) bool {
 		payload["argumentsSlimmed"] = true
 		return true
 	}
+	slimTool := func(payload map[string]any) bool {
+		dropped := false
+		if result, ok := payload["result"].(map[string]any); ok {
+			// 保留 UI 与压缩事实要用到的键（nodeId / taskId / status…），其余丢掉。
+			receipt := map[string]any{}
+			for _, key := range cloudAgentToolReceiptKeys {
+				if value, exists := result[key]; exists {
+					receipt[key] = value
+				}
+			}
+			receipt["slimmed"] = true
+			payload["result"] = receipt
+			dropped = true
+		} else if _, exists := payload["result"]; exists {
+			payload["result"] = map[string]any{"slimmed": true}
+			dropped = true
+		}
+		if text, ok := payload["arguments"].(string); ok && len(text) > 0 {
+			payload["arguments"] = ""
+			dropped = true
+		}
+		return dropped
+	}
+	slimByType("tool_completed", cloudAgentToolEventKeep, slimTool)
+	slimByType("tool_failed", cloudAgentToolEventKeep, slimTool)
 	slimByType("approval_requested", cloudAgentApprovalKeep, slimApproval)
 	slimByType("approval_decided", cloudAgentApprovalKeep, func(payload map[string]any) bool {
 		if stringValue(payload["toolName"]) == "generate_media" {
@@ -130,12 +155,159 @@ func cloudAgentSlimEventHistory(state *cloudAgentRuntime, terminal bool) bool {
 const (
 	// cloudAgentCanvasPatchKeep 是保留完整画布增量的份数：前端画布同步按顺序套用增量，
 	// 丢掉更早的会让重连客户端落到"拉全量画布"的兜底路径（已实现且结果一致）。
+	// 注意：canvasPatch 是**增量**（每步的 before/after 差量），客户端按顺序套用，
+	// 少一份就会漏掉那一步的画布变更（实测 generate_media 的 draft→submit→complete
+	// 三步都必须保留）。所以正常路径不丢增量，只在 level 3 的极端压力下降级。
 	cloudAgentCanvasPatchKeep = 3
 	// cloudAgentPressureKeep 是保留完整占用分布的份数：只有最新一次读数会被弹窗使用。
 	cloudAgentPressureKeep = 1
 	// cloudAgentApprovalKeep 是保留完整审批参数的份数。
 	cloudAgentApprovalKeep = 3
+	// cloudAgentToolEventKeep 是保留完整工具回执的份数：画布状态读取类回执单条 3.7KB，
+	// 而且正文在会话消息里还有一份，旧事件只留"能被 UI 与压缩事实用到的键"。
+	cloudAgentToolEventKeep = 4
 )
+
+// cloudAgentToolReceiptKeys 是工具事件瘦身后仍要保留的键：
+// 前端画布同步/聚焦要用 nodeId/taskId，压缩事实要用 summary/status/phase 等。
+var cloudAgentToolReceiptKeys = []string{
+	"nodeId", "nodeIds", "referenceNodeIds", "taskId", "title", "summary", "status", "phase", "taskSubmitted", "operation",
+}
+
+const (
+	// cloudAgentStateHardLimitBytes 是运行态硬上限：落库前测量，超过就终止本轮。
+	cloudAgentStateHardLimitBytes = 512 << 10
+	// 降级阶梯：越接近上限裁得越狠，但**不杀死本轮**。
+	cloudAgentDegradeLevel2Ratio = 0.6
+	cloudAgentDegradeLevel3Ratio = 0.85
+	// level 3 之外仍保留完整载荷的最近事件：条数与体积双重封顶，
+	// 只按条数会在载荷密集的运行（分镜/审批/整份画布差量）里留下几百 KB。
+	cloudAgentEventFloorKeep  = 120
+	cloudAgentEventFloorBytes = 120 << 10
+	// level 2 起每步思考留痕的截断长度。
+	cloudAgentReasoningMessageLimit = 2000
+)
+
+// cloudAgentEventHistoryDegradeLevel 按已编码体积给出需要的降级等级：0 不降级、2 轻度、3 重度。
+func cloudAgentEventHistoryDegradeLevel(sizeBytes int) int {
+	limit := float64(cloudAgentStateHardLimitBytes)
+	switch {
+	case float64(sizeBytes) >= limit*cloudAgentDegradeLevel3Ratio:
+		return 3
+	case float64(sizeBytes) >= limit*cloudAgentDegradeLevel2Ratio:
+		return 2
+	default:
+		return 0
+	}
+}
+
+// cloudAgentDegradeEventHistory 按等级进一步裁剪事件载荷，**始终保留
+// type/seq/eventId/createdAt**（游标与回放语义不变），只在体积逼近硬上限时生效：
+//
+//	level 2：旧思考留痕截断到 cloudAgentReasoningMessageLimit；旧 canvas_updated 去掉 preview。
+//	level 3：除最近 cloudAgentEventFloorKeep 条外，事件载荷压成一行回执，
+//	         但保留 UI/压缩事实要用的键（工具名、节点、任务、状态、决定…）。
+//
+// 长流程因此是"变淡"而不是"突然死"。
+func cloudAgentDegradeEventHistory(state *cloudAgentRuntime, level int) bool {
+	if state == nil || level < 2 || len(state.Events) == 0 {
+		return false
+	}
+	// 状态级标记：同一等级不重复遍历（事件很多时逐条 marshal 是真开销）。
+	// 等级只会升，新事件都追加在尾部，所以高等级会重新走一遍全部事件。
+	if state.EventDegradeLevel >= level {
+		return false
+	}
+	changed := false
+	// 尾部完整载荷的起点：从最新往前累计，条数与体积任一超限就停。
+	floor, keptBytes := len(state.Events), 0
+	for index := len(state.Events) - 1; index >= 0; index-- {
+		size := len(mustMarshalEvent(state.Events[index]))
+		if len(state.Events)-index > cloudAgentEventFloorKeep || keptBytes+size > cloudAgentEventFloorBytes {
+			break
+		}
+		keptBytes += size
+		floor = index
+	}
+	for index := range state.Events {
+		event := &state.Events[index]
+		if current, ok := event.Payload["degraded"].(int); ok && current >= level {
+			continue
+		}
+		if index >= floor && event.Payload["degraded"] == nil {
+			// 最近的事件保持完整（界面正在用）。
+			continue
+		}
+		switch level {
+		case 2:
+			switch event.Type {
+			case "reasoning_message", "assistant_message":
+				text := stringValue(event.Payload["text"])
+				if len([]rune(text)) > cloudAgentReasoningMessageLimit {
+					event.Payload["text"] = truncateRunes(text, cloudAgentReasoningMessageLimit)
+					event.Payload["degraded"] = 2
+					changed = true
+				}
+			case "canvas_updated":
+				if _, exists := event.Payload["preview"]; exists {
+					delete(event.Payload, "preview")
+					event.Payload["degraded"] = 2
+					changed = true
+				}
+			}
+		case 3:
+			receipt := map[string]any{"degraded": 3}
+			for _, key := range cloudAgentEventReceiptKeys {
+				if value, exists := event.Payload[key]; exists {
+					receipt[key] = value
+				}
+			}
+			if result, ok := event.Payload["result"].(map[string]any); ok {
+				for _, key := range cloudAgentToolReceiptKeys {
+					if value, exists := result[key]; exists {
+						receipt[key] = value
+					}
+				}
+			}
+			if text, ok := receipt["text"].(string); ok && len([]rune(text)) > 200 {
+				receipt["text"] = truncateRunes(text, 200)
+			}
+			// 只在更小时才替换：小载荷收成回执反而更大（信封已在别处封顶）。
+			if len(mustMarshalPayload(receipt)) >= len(mustMarshalPayload(event.Payload)) {
+				continue
+			}
+			event.Payload = receipt
+			changed = true
+		}
+	}
+	if changed {
+		// 记到状态上：同一等级不必每次保存都重新遍历（事件多时逐条 marshal 是真开销）。
+		state.EventDegradeLevel = level
+	}
+	return changed
+}
+
+func mustMarshalEvent(event CloudAgentEvent) []byte {
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+func mustMarshalPayload(payload map[string]any) []byte {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// cloudAgentEventReceiptKeys 是重度降级后仍要保留的键。
+var cloudAgentEventReceiptKeys = []string{
+	"text", "toolName", "callId", "nodeId", "nodeIds", "taskId", "summary", "status", "phase",
+	"decision", "approvalId", "operation", "mode", "turnCount", "basis", "pressureRatio",
+}
 
 // cloudAgentEventHistoryBytes 返回事件日志的编码体积（字节），用于观测与断言。
 func cloudAgentEventHistoryBytes(state *cloudAgentRuntime) int {
