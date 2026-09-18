@@ -82,8 +82,10 @@ func TestCloudAgentFallbackCheckpointMergesPreviousScriptPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := cloudAgentRuntime{
-		Request:        CloudAgentRequest{Prompt: "继续设计第三幕", PermissionMode: "read_only"},
-		CreativeAnchor: cloudAgentCreativeAnchor{UserPrompt: "保持冷蓝色调", LockedRequirements: []string{"主角左手伤口必须连续"}},
+		Request: CloudAgentRequest{Prompt: "继续设计第三幕", PermissionMode: "read_only"},
+		CreativeAnchor: cloudAgentCreativeAnchor{UserPrompt: "保持冷蓝色调", ReferenceAssets: []cloudAgentReferenceAnchor{{
+			NodeID: "image-1", Type: "image", VisualIdentity: "inspected", ReferenceReady: true, VisualNote: "主角左手伤口必须连续",
+		}}},
 		Canonical: canonicalAgentRequest{Messages: []map[string]any{
 			{"role": "user", "content": framed},
 			{"role": "assistant", "content": agentcontext.Acknowledgement},

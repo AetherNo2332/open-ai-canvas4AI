@@ -19,7 +19,7 @@ func TestCloudAgentArgumentErrorCarriesAdvertisedSchema(t *testing.T) {
 	call := cloudAgentCall{ID: "call-1"}
 	call.Function.Name = "canvas_get_state"
 	call.Function.Arguments = `{"canvasId":"c"}`
-	cloudAgentToolResult("run-1", state, call, nil, cloudAgentToolArgumentError(errors.New("unknown field")))
+	cloudAgentToolResult("run-1", state, call, nil, cloudAgentJSONArgumentError(errors.New("unknown field")))
 
 	var payload map[string]any
 	for _, event := range state.Events {

@@ -404,7 +404,13 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if !parentState.HistoryIncludesCurrent {
 			// The user's goal survives a failed first model call too. Tool facts are
 			// context, not authorization to replay a write or charge a second time.
-			history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt}, providerTextMessage{Role: "assistant", Content: text})
+			history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt})
+			for _, message := range parentState.Canonical.Messages {
+				if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+					history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
+				}
+			}
+			history = append(history, providerTextMessage{Role: "assistant", Content: text})
 			if strings.TrimSpace(context) != "" {
 				history = append(history, providerTextMessage{Role: "user", Content: context})
 			}
