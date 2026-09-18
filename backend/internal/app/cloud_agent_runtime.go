@@ -461,6 +461,9 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if run == nil || state == nil {
 		return errors.New("Agent runtime state is missing")
 	}
+	// 事件日志瘦身：删掉重复/已被取代的载荷（不动 seq 与 EventID）。
+	// 它必须在下一次 marshal 之前跑，否则 512KB 守卫会先一步把整轮判死。
+	cloudAgentSlimEventHistory(state, run.Status != "running" && run.Status != "queued")
 	if evicted, before, after := compactCloudAgentContext(&state.Canonical, state.cloudAgentVisualNotes()); evicted {
 		state.SkillReads = nil
 		state.ProfileReads = nil
