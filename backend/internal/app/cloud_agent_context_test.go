@@ -507,3 +507,23 @@ func TestCloudAgentSaveEmitsEvictionEventOnce(t *testing.T) {
 	}
 	_ = db
 }
+
+// 画布 Agent 的任务行一直没有 channel_model_id（实测 82 个 agent 任务全为空），
+// 所以压力必须能从请求里的渠道 + 模型键兜底解析，否则模型窗口占比永远显示不出来。
+func TestCloudAgentPressureResolvesWindowFromRequestWhenTaskLacksChannelModel(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	withConfiguredWindow(t, db, 25000, 0)
+	canonical := canonicalAgentRequest{SystemPrompt: "系统策略", Messages: []map[string]any{{"role": "user", "content": "整理画布"}}}
+
+	pressure := s.cloudAgentContextPressure(&model.Task{ID: "task"}, canonical, "整理画布",
+		CloudAgentRequest{ChannelID: "channel", ChannelModelKey: "text-test"})
+	if !pressure.ModelLimitConfigured || pressure.ContextWindowTokens != 25000 || pressure.UsableInputTokens != 25000 {
+		t.Fatalf("没有从请求兜底解析出模型窗口: %+v", pressure)
+	}
+
+	// 请求里没有渠道/模型键时只能如实报告"没有配置上限"。
+	empty := s.cloudAgentContextPressure(&model.Task{ID: "task"}, canonical, "整理画布", CloudAgentRequest{})
+	if empty.ModelLimitConfigured || empty.ContextWindowTokens != 0 {
+		t.Fatalf("无渠道信息时不该声称有窗口: %+v", empty)
+	}
+}

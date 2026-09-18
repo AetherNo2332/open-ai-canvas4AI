@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -185,7 +186,11 @@ func estimateCloudAgentTokens(value []byte) int {
 	return int(math.Ceil(float64(asciiUnits)/4.0)) + nonASCII
 }
 
-func (s *Service) cloudAgentContextPressure(task *model.Task, canonical canonicalAgentRequest, prompt string) cloudAgentContextPressure {
+// cloudAgentContextPressure 解析"这次请求能用多少输入"。
+// 任务行的 channel_model_id 在画布 Agent 上一直是空的（实测 82 个 agent 任务全为空），
+// 所以必须能从请求里的渠道 + 模型键兜底解析，否则模型窗口占比永远显示不出来、
+// 压缩判据也只能退回字节口径。
+func (s *Service) cloudAgentContextPressure(task *model.Task, canonical canonicalAgentRequest, prompt string, request CloudAgentRequest) cloudAgentContextPressure {
 	raw, _ := json.Marshal(canonical)
 	pressure := cloudAgentContextPressure{
 		EstimatedInputTokens: estimateCloudAgentTokens(raw),
@@ -193,11 +198,14 @@ func (s *Service) cloudAgentContextPressure(task *model.Task, canonical canonica
 		PromptChars:          utf8.RuneCountInString(prompt),
 		Estimate:             true,
 	}
-	if task == nil || task.ChannelModelID == "" {
-		return pressure
+	var channelModel *model.ChannelModel
+	switch {
+	case task != nil && task.ChannelModelID != "":
+		channelModel, _ = s.repo.ChannelModel(task.ChannelModelID)
+	case strings.TrimSpace(request.ChannelID) != "" && strings.TrimSpace(request.ChannelModelKey) != "":
+		channelModel, _ = s.repo.ChannelModelByKeyIncludingDisabled(request.ChannelID, request.ChannelModelKey)
 	}
-	channelModel, err := s.repo.ChannelModel(task.ChannelModelID)
-	if err != nil {
+	if channelModel == nil {
 		return pressure
 	}
 	config, err := normalizedChannelModelCapability(channelModel)

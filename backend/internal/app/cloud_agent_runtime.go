@@ -187,7 +187,7 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	if len(initial.Skills) > 0 {
 		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
 	}
-	pressure := s.cloudAgentContextPressure(task, input.Requests.Canonical, initial.Request.Prompt)
+	pressure := s.cloudAgentContextPressure(task, input.Requests.Canonical, initial.Request.Prompt, initial.Request)
 	// 第一步的模型调用就是根任务本身（不经过 enqueueCloudAgentTask）：
 	// 在这里登记任务 id 与本次请求的本地计价，它回来时才能与上游实测配成锚点。
 	state.LastStepTaskID = task.ID
@@ -1494,7 +1494,7 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 	var contextPressure *cloudAgentContextPressure
 	if media == nil && req.Operation != cloudAgentContextCompactionOperation {
 		if canonical, ok := canonicalAgentRequestFromInput(input); ok {
-			value := s.cloudAgentContextPressure(task, canonical, state.Request.Prompt)
+			value := s.cloudAgentContextPressure(task, canonical, state.Request.Prompt, state.Request)
 			contextPressure = &value
 		}
 	}
