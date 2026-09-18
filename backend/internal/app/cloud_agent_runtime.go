@@ -1055,6 +1055,24 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		}
 		message := cloudAgentSafeToolError(err)
 		detail["error"] = message
+		// 参数错误要把"这一轮实际暴露的契约"回给模型：它看不到 schema 就只会重复同一个错
+		// （实测 canvas_get_state 被塞过 canvasId / limit，模型反复重试直到被 nudge 打断）。
+		var argumentErr *cloudAgentArgumentError
+		if errors.As(err, &argumentErr) {
+			detail["reason"] = "invalid_tool_arguments"
+			for _, tool := range state.Canonical.Tools {
+				function, _ := tool["function"].(map[string]any)
+				if function["name"] == call.Function.Name {
+					detail["parameters"] = function["parameters"]
+					break
+				}
+			}
+			detail["guidance"] = "本次调用未执行，请按 parameters 修正参数后重试，不要重复提交相同的错误参数"
+			if call.Function.Name == "canvas_get_state" {
+				// 这个工具的"什么都不传"就是合法调用，直接给个例子省掉一轮试错。
+				detail["exampleArguments"] = map[string]any{}
+			}
+		}
 		result = detail
 		kind = "tool_failed"
 		payload["text"] = message

@@ -161,7 +161,7 @@ func cloudAgentApplyPlanUpdate(state *cloudAgentRuntime, call cloudAgentCall) (a
 		Items []cloudAgentPlanItem `json:"items"`
 	}
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-		return nil, BadAuthRequest("工具参数必须是只含支持字段的JSON对象")
+		return nil, cloudAgentToolArgumentError(err)
 	}
 	if len(args.Items) > 20 {
 		return nil, BadAuthRequest("待办清单最多 20 项")
@@ -197,7 +197,7 @@ func cloudAgentAskUser(call cloudAgentCall) (any, error) {
 		AllowFreeform *bool `json:"allowFreeform"`
 	}
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-		return nil, BadAuthRequest("工具参数必须是只含支持字段的JSON对象")
+		return nil, cloudAgentToolArgumentError(err)
 	}
 	question := strings.TrimSpace(args.Question)
 	if question == "" {

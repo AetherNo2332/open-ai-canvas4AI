@@ -151,7 +151,7 @@ func cloudAgentRememberLesson(repo *repository.Repository, userID string, state 
 		Source    string                  `json:"source"`
 	}
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-		return nil, BadAuthRequest("工具参数必须是只含支持字段的JSON对象")
+		return nil, cloudAgentToolArgumentError(err)
 	}
 	if _, known := cloudAgentLessonCategoryOf(args.Category); !known {
 		return nil, BadAuthRequest("category 必须是以下之一：" + strings.Join(cloudAgentLessonCategoryKeys(), " / ") +
@@ -664,7 +664,7 @@ func cloudAgentRecallLessons(repo *repository.Repository, userID string, call cl
 		Limit    int    `json:"limit"`
 	}
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-		return nil, BadAuthRequest("工具参数必须是只含支持字段的JSON对象")
+		return nil, cloudAgentToolArgumentError(err)
 	}
 	keyword, category, topic := strings.TrimSpace(args.Keyword), strings.TrimSpace(args.Category), strings.TrimSpace(args.Topic)
 

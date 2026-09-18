@@ -15,6 +15,16 @@ type cloudAgentArgumentError struct{ error }
 
 func (e *cloudAgentArgumentError) Unwrap() error { return e.error }
 
+// cloudAgentToolArgumentError 把"参数不符合 schema"标成可恢复的参数错误。
+// 运行时会把它连同该工具本轮实际暴露的 parameters 一起回给模型，让它照 schema 改，
+// 而不是重复提交同样的错参数（实测 canvas_get_state 被塞过 canvasId / limit 之类的字段）。
+func cloudAgentToolArgumentError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &cloudAgentArgumentError{BadAuthRequest("工具参数必须是只含支持字段的JSON对象")}
+}
+
 func canvasArgumentError() error {
 	return &cloudAgentArgumentError{BadAuthRequest("画布工具参数无效：仅允许一个 JSON 对象；顶层只含 snapshotHash 和 ops，snapshotHash 不得放入 ops。请按工具 schema 修正后重试")}
 }
