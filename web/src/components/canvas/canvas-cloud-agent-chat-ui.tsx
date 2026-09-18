@@ -884,8 +884,10 @@ function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPre
         ? Math.max(0, pressure.projectedPressureRatio ?? (projected / Math.max(1, pressure.usableInputTokens)))
         : 0;
     const compactionRatio = Math.max(0, pressure.compactionPressureRatio);
+    const tokenBasis = pressure.compactionBasis !== "bytes" && configured;
+    const thresholdRatio = pressure.compactionThresholdRatio ?? 0.8;
     const ratio = Math.max(modelRatio, compactionRatio);
-    const basis = configured && modelRatio >= compactionRatio ? "模型窗口" : "服务端压缩阈值";
+    const basis = configured && modelRatio >= compactionRatio ? "模型窗口" : tokenBasis ? "模型上限的 80%" : "服务端压缩阈值";
     const formatTokens = (value: number) => value.toLocaleString("zh-CN");
     const percent = Math.round(ratio * 100);
     const progress = Math.min(100, percent);
@@ -895,7 +897,15 @@ function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPre
         <div className="agent-context-pressure-popover">
             <div className="agent-context-pressure-title">上下文压力 {percent}%</div>
             <div>当前依据：{basis}</div>
-            <div>压缩压力：{Math.round(compactionRatio * 100)}%（{format(pressure.compactionSourceBytes)} / {format(pressure.compactionThresholdBytes)} 字节）</div>
+            {tokenBasis ? (
+                <div>
+                    压缩阈值：{Math.round(thresholdRatio * 100)}% 可用输入 · 当前 {Math.round(compactionRatio * 100)}%
+                    （预计 {formatTokens(pressure.projectedTokens ?? pressure.estimatedInputTokens)} / 可用 {formatTokens(pressure.usableInputTokens)} Token
+                    {pressure.compactionTokenSource === "estimate" ? "，本地估算" : "，上游实测"}）
+                </div>
+            ) : (
+                <div>压缩阈值：{Math.round(thresholdRatio * 100)}%…（未配置模型上限，按字节兜底）{format(pressure.compactionSourceBytes)} / {format(pressure.compactionThresholdBytes)} 字节 · 当前 {Math.round(compactionRatio * 100)}%</div>
+            )}
             {anchored ? (
                 <>
                     <div>上游实测（第 {pressure.anchorStep ?? "?"} 步）：{formatTokens(pressure.pressureTokens || 0)} Token</div>

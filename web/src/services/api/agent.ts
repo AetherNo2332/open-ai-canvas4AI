@@ -78,6 +78,21 @@ export type AgentRun = {
     step?: number;
     activeMessage?: { messageId: string; text: string };
     approval?: AgentApproval;
+    /** 非空表示步进循环正暂停在上下文压缩上（requested/running）。 */
+    contextCompaction?: AgentContextCompactionState;
+};
+
+export type AgentContextCompactionState = {
+    status: "requested" | "running";
+    sourceBytes?: number;
+    turnCount?: number;
+    /** 中途暂停压缩：压完继续本轮，而不是收尾。 */
+    resume?: boolean;
+    /** 触发读数：下一步预计输入 token ÷ 用户配置的可用输入。 */
+    projectedTokens?: number;
+    usableInputTokens?: number;
+    ratio?: number;
+    tokenSource?: "provider" | "estimate";
 };
 
 export type AgentEvent = {
@@ -141,6 +156,12 @@ export type AgentContextPressure = {
     historyMessages: number;
     historyMessageThreshold: number;
     compactionPressureRatio: number;
+    /** 压缩判据：0.8 表示"可用输入的 80%"。 */
+    compactionThresholdRatio?: number;
+    /** 压缩判据的口径：tokens（按模型上限）或 bytes（没配上限时的兜底）。 */
+    compactionBasis?: "tokens" | "bytes";
+    /** 压缩读数的来源：provider 锚点或本地估算。 */
+    compactionTokenSource?: "provider" | "estimate";
     /** 占用分布；旧后端不返回该字段。 */
     breakdown?: AgentContextBreakdown;
     /** 上一步上游实测的 prompt 规模（provider 自己的分词器）；没有可靠锚点时不返回。 */

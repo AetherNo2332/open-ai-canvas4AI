@@ -129,6 +129,9 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         historyMessages: contextPressure?.historyMessages || 0,
         historyMessageThreshold: contextPressure?.historyMessageThreshold || 16,
         compactionPressureRatio: contextPressure?.compactionPressureRatio || ((contextPressure?.sourceBytes || 0) / (48 * 1024)),
+        compactionThresholdRatio: contextPressure?.compactionThresholdRatio ?? 0.8,
+        compactionBasis: contextPressure?.compactionBasis,
+        compactionTokenSource: contextPressure?.compactionTokenSource,
         breakdown: contextPressure?.breakdown,
         pressureTokens: contextPressure?.pressureTokens,
         projectedTokens: contextPressure?.projectedTokens ?? contextPressure?.estimatedInputTokens,
@@ -146,7 +149,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     const installedSkills = useMemo(() => skills.filter((skill) => skill.isAdded), [skills]);
     const enabledSkills = useMemo(() => installedSkills.filter((skill) => selectedSkillIds.includes(skill.skillId)), [installedSkills, selectedSkillIds]);
     const status = run?.status || "idle";
-    const statusLabel = status === "waiting_approval" ? "等待审批" : status === "running" || status === "queued" ? "运行中" : status === "completed" ? "已完成" : status === "failed" ? "异常" : status === "cancelled" ? "已停止" : status === "rejected" ? "已拒绝" : "待命";
+    const compacting = Boolean(run?.contextCompaction);
+    const statusLabel = compacting ? "压缩上下文" : status === "waiting_approval" ? "等待审批" : status === "running" || status === "queued" ? "运行中" : status === "completed" ? "已完成" : status === "failed" ? "异常" : status === "cancelled" ? "已停止" : status === "rejected" ? "已拒绝" : "待命";
     const statusColor = status === "failed" ? "#e66b6b" : status === "rejected" || status === "cancelled" ? theme.node.muted : status === "waiting_approval" ? "#d6a24a" : status === "running" || status === "queued" ? "#69c29b" : theme.node.muted;
 
     useEffect(() => {
@@ -1201,12 +1205,22 @@ function applyAgentEvent(event: AgentEvent, setMessages: Dispatch<SetStateAction
     }
     if (event.type === "context_compaction_requested") {
         const turnCount = Number(payload.turnCount || 0);
+        const ratio = Number(payload.pressureRatio || 0);
+        const projected = Number(payload.projectedTokens || 0);
+        const usable = Number(payload.usableInputTokens || 0);
+        const byTokens = payload.basis === "tokens" && usable > 0;
         setMessages((current) => upsertContextCompactionNotice(current, {
             id: `${event.runId}:context-compaction:${turnCount}`,
             role: "system",
-            text: "正在压缩历史上下文，并保留用户提示摘要、操作记录、未完成任务、当前工作、设计决策、限制和偏好。",
+            // 触发时步进循环是暂停的：文案要说清"暂停 + 为什么 + 压完会继续"。
+            text: byTokens
+                ? `上下文已用到模型上限的 ${Math.round(ratio * 100)}%，已暂停本轮执行并压缩历史（保留用户提示摘要、操作记录、未完成任务、当前工作、设计决策、限制和偏好），压完会从压缩后的上下文继续。`
+                : "上下文已超过服务端压缩阈值，已暂停本轮执行并压缩历史（保留用户提示摘要、操作记录、未完成任务、当前工作、设计决策、限制和偏好），压完会从压缩后的上下文继续。",
             streaming: true,
-            meta: turnCount > 0 ? `正在整理前 ${turnCount} 轮对话` : undefined,
+            meta: [
+                byTokens ? `${projected.toLocaleString("zh-CN")} / ${usable.toLocaleString("zh-CN")} Token · 阈值 ${Math.round(Number(payload.thresholdRatio || 0.8) * 100)}%` : undefined,
+                turnCount > 0 ? `已整理前 ${turnCount} 轮对话` : undefined,
+            ].filter(Boolean).join(" · ") || undefined,
             detail: { ...payload, eventType: "context_compaction", status: "running" },
         }));
         return;
@@ -1342,6 +1356,9 @@ function parseContextPressure(payload: Record<string, unknown>): AgentContextPre
         historyMessages: number("historyMessages"),
         historyMessageThreshold: number("historyMessageThreshold") || 16,
         compactionPressureRatio: Math.max(0, number("compactionPressureRatio") || number("sourceBytes") / (48 * 1024)),
+        compactionThresholdRatio: number("compactionThresholdRatio") || 0.8,
+        compactionBasis: payload.compactionBasis === "bytes" ? "bytes" : "tokens",
+        compactionTokenSource: payload.compactionTokenSource === "estimate" ? "estimate" : "provider",
         breakdown: parseContextBreakdown(payload["breakdown"]),
         // 上游实测锚点与投影：旧后端不返回，缺省时前端按估算显示。
         pressureTokens: payload.pressureTokens === undefined ? undefined : number("pressureTokens"),
