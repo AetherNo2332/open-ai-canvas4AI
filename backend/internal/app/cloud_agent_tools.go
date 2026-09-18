@@ -253,7 +253,22 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"required":             []string{"type", "id"},
 			"additionalProperties": false,
 		}
-		add("canvas_apply_ops", "创建节点或建立引用连线；先读取画布并传 snapshotHash。媒体生成使用 generate_media；每次最多20项，禁止删除、任意 metadata 和媒体 URL。每项都需要 type 和 id：add_node 还需要 nodeType，update_node 还需要按节点能力清单填写 patch，connect_nodes 还需要 fromNodeId 与 toNodeId。连线是实际生成输入关系，不是排版、归档或任意节点关联；来源须 canSource，目标须 canTarget 且接受来源 inputKind，能力以注册表为准。", map[string]any{"snapshotHash": str("最近一次画布读取返回的 snapshotHash"), "ops": map[string]any{"type": "array", "maxItems": 20, "items": opItem}}, "snapshotHash", "ops")
+		add("canvas_apply_ops", "创建节点或建立引用连线；先读取画布并传 snapshotHash。媒体生成使用 generate_media；每次最多20项，禁止删除、任意 metadata 和媒体 URL。每项都需要 type 和 id：add_node 还需要 nodeType（可给 x/y 指定位置；省略坐标时服务端按画布内容自动落位，不会叠在原点），update_node 还需要按节点能力清单填写 patch（可含 x/y 移动节点），connect_nodes 还需要 fromNodeId 与 toNodeId。连线是实际生成输入关系，不是排版、归档或任意节点关联；来源须 canSource，目标须 canTarget 且接受来源 inputKind，能力以注册表为准。批量整理位置用 canvas_arrange_nodes，不要用几十项 update_node 手工算坐标。", map[string]any{"snapshotHash": str("最近一次画布读取返回的 snapshotHash"), "ops": map[string]any{"type": "array", "maxItems": 20, "items": opItem}}, "snapshotHash", "ops")
+		add("canvas_arrange_nodes", "按用户要求整理、归类画布节点位置。先读取画布并传 snapshotHash；只改坐标，不改内容、不建连线、不改层级，不创建或删除节点。mode 省略或 auto：节点之间有引用连线时按依赖分层（输入在左、后续在右），否则按媒体类型分区（文本/图片/视频/音频从上到下）。groups 用于归类：每个分组占一条横向带，label 是给用户看的分组名，mode 可覆盖整组排法；分组只影响位置分带，不会把节点收进背板。nodeIds 省略时整理全部可整理节点（跳过锁定节点、背板等容器、隐藏批次子节点和已归属背板的子节点）。align 用于对齐或等距分布。dryRun 只预演不写入。一次最多整理50个节点；只是想挪动单个节点时用 update_node 的 x/y。", map[string]any{
+			"snapshotHash": str("最近一次画布读取返回的 snapshotHash"),
+			"nodeIds":      map[string]any{"type": "array", "maxItems": cloudAgentArrangeMaxNodes, "items": str("要整理的节点ID；省略则整理全部可整理节点")},
+			"mode":         map[string]any{"type": "string", "enum": []any{"auto", "flow", "byType", "row", "column", "grid"}, "description": "auto=有连线按依赖、否则按媒体类型；flow=按引用依赖分层；byType=按媒体类型分区；row/column/grid=线性或网格"},
+			"groups": map[string]any{"type": "array", "maxItems": cloudAgentArrangeMaxGroups, "items": map[string]any{
+				"type": "object", "properties": map[string]any{
+					"label":   str("分组名，例如“A 场景”"),
+					"nodeIds": map[string]any{"type": "array", "maxItems": cloudAgentArrangeMaxNodes, "items": str("该组的节点ID")},
+					"mode":    map[string]any{"type": "string", "enum": []any{"byType", "flow", "row", "column", "grid"}},
+				}, "required": []string{"nodeIds"}, "additionalProperties": false,
+			}},
+			"align":  map[string]any{"type": "string", "enum": []any{"left", "centerX", "right", "top", "centerY", "bottom", "distributeX", "distributeY"}},
+			"gap":    map[string]any{"type": "number", "minimum": 0, "maximum": cloudAgentArrangeMaxGap, "description": "分组或泳道之间的间距（像素），省略用默认值"},
+			"dryRun": map[string]any{"type": "boolean", "description": "true 时只预演将移动哪些节点，不写入画布"},
+		}, "snapshotHash")
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
 		add("generate_media", "创建或续用未提交媒体草稿及引用连线，独立审批通过后才提交收费任务，auto也不能跳过审批。用户要求生成且参数齐备时应直接调用本工具进入审批，不能只填提示词就结束。先读取画布与按本次素材筛选的模型目录。可复用当前草稿、无任务的空白媒体占位节点，以及已结束且清理完成运行留下的未提交草稿；重新读取快照并重新审批。仍在其他运行审批中的草稿、已绑定任务或已有成品不能覆盖，不得循环换ID绕过限制。sourceNodeId仅文本/镜头提示词节点；图片/视频/音频只放referenceNodeIds，参考顺序对应提示词编号，不接受URL。校验错误须针对错误修正；已提交任务失败把原因告诉用户，不得再次收费生成。", map[string]any{
@@ -307,7 +322,7 @@ func cloudAgentToolAllowed(req CloudAgentRequest, name string) bool {
 	return false
 }
 func cloudAgentWrite(name string) bool {
-	return name == "canvas_apply_ops" || name == "generate_media" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table"
+	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table"
 }
 
 func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, services ...*Service) (any, error) {
@@ -550,16 +565,17 @@ type agentCanvasArgs struct {
 }
 
 type agentCanvasOp struct {
-	Type       string         `json:"type"`
-	ID         string         `json:"id"`
-	NodeType   string         `json:"nodeType"`
-	Title      *string        `json:"title"`
-	Content    *string        `json:"content"`
-	Patch      map[string]any `json:"patch"`
-	X          float64        `json:"x"`
-	Y          float64        `json:"y"`
-	FromNodeID string         `json:"fromNodeId"`
-	ToNodeID   string         `json:"toNodeId"`
+	Type     string         `json:"type"`
+	ID       string         `json:"id"`
+	NodeType string         `json:"nodeType"`
+	Title    *string        `json:"title"`
+	Content  *string        `json:"content"`
+	Patch    map[string]any `json:"patch"`
+	// X/Y 为指针：nil 表示模型没有指定坐标，服务端按画布内容自动落位（不再落到原点重叠）。
+	X          *float64 `json:"x"`
+	Y          *float64 `json:"y"`
+	FromNodeID string   `json:"fromNodeId"`
+	ToNodeID   string   `json:"toNodeId"`
 }
 
 // Explicit node creation and edges only; no generic metadata, media URL or deletion.

@@ -1204,7 +1204,7 @@ func cloudAgentReceiptItemSummary(preview any) string {
 // generate_media 不在此列：它创建草稿并进入独立审批，回执口径不同。
 func cloudAgentCanvasWriteTool(name string) bool {
 	switch name {
-	case "canvas_apply_ops", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table":
+	case "canvas_apply_ops", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table":
 		return true
 	default:
 		return false
@@ -1350,6 +1350,12 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 					if err == nil {
 						preview = batchPlan.Preview
 					}
+				case "canvas_arrange_nodes":
+					arrangePlan, err := prepareCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call)
+					mutationErr = err
+					if err == nil {
+						preview = arrangePlan.Preview
+					}
 				default:
 					canvasPlan, err := prepareCloudAgentCanvasMutation(repo, run.UserID, state.Request.CanvasID, call)
 					mutationErr = err
@@ -1434,6 +1440,8 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			toolErr = BadAuthRequest("工具未获本轮权限授权")
 		case call.Function.Name == "canvas_apply_ops":
 			result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+		case call.Function.Name == "canvas_arrange_nodes":
+			result, toolErr = applyCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "canvas_create_storyboard", call.Function.Name == "canvas_edit_storyboard":
 			result, toolErr = applyCloudAgentStoryboardMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "canvas_edit_batch_table":
