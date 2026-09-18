@@ -5,6 +5,16 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 云端 Agent 同步上游 v1.5.1
+
+上游把云端 Agent 的行为规则收回版本化策略文件（系统行为策略 v6），编译器只向模型投影事实：系统提示里的"本轮执行上下文"是 `permissionMode`、`reasoningMode`、`budget`、`maxToolCalls`、`maxOutputBytes`、`canvasSummary`、`referenceCandidates`、`skills`、`profileLayers` 的 JSON；计划催办、空输出、参数截断统一走带 `agentContextSource` 来源的事实消息，不再拼接散文指令。锚点收敛为"当前请求 + 可观测候选素材"，删除按关键词推断创作授权的 `referenceMode` / `lockedRequirements` / `freelyDecidable`；可纠正的参数错误统一用上游的分类化回执（非对象 / 类型不符 / 未知字段）并附本轮实际 schema；媒体失败改为分层报告生成错误与回写错误且整轮可续跑。本分支的上下文治理（provider 锚点计量、80% 可用输入触发轮内压缩、正文卸载、事件日志瘦身与降级阶梯）、看图能力（`canvas_inspect_image` 与 3 轮图片窗口）和能力卡按运行模式路由继续保留；锚点只跨轮继承视觉事实（`inspected` 与 `visualNote`），不再继承目标与权限。
+
+- [x] `go build ./...`、`go vet ./internal/app` 通过；`go test ./...` 仅剩既有红灯（迁移表用例、hostupdate 用例），云端 Agent 全量用例通过。
+- [x] 前端 `bun run build`（tsc + 类型检查 + vite）通过；`bun test` 1751 通过 / 18 失败，失败集合与合并前基线一致。
+- [ ] 用真实渠道跑一轮多工具任务：确认模型按"本轮执行上下文"事实选择节点与预算，参数写错时按回执里的 schema 自行改正。
+- [ ] 续聊一轮：确认上一轮看过的素材仍标 `visualIdentity=inspected`、带 `visualNote`，且不再重复看图；确认旧目标不会因为锚点继承被复活。
+- [ ] 只读会话确认不暴露 `canvas_list_node_types` 但内联能力速查；可写会话确认相反，且弹出上下文计量器时系统提示分段合计等于 system 桶。
+
 ## 画布 Agent 看图与耗时（2026-09-18）
 
 后端改了六件事：图片保留窗口从 1 个工具轮次放宽到 3 个、同一张图一轮最多附图 2 次（之后只回执文字，`refresh=true` 可强制重看）、模型写进正文的观察记入锚点 `visualNote`、每步请求带 `maxOutputTokens`（6144）、允许上游并行返回多个工具调用、画布写操作的参数错误改为回给模型重试。已在 dev 部署用 API 驱动验证（同画布形态同提示词：优化前 892s 被取消 → 优化后 373s 完成，识图 8→4 次、模型调用 13→6）：
