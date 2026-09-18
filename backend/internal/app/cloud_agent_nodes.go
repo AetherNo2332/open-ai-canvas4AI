@@ -17,11 +17,15 @@ type CloudAgentCapabilitySet struct {
 }
 
 type CloudAgentContextPolicy struct {
-	HistoryPolicy            string `json:"historyPolicy"`
-	Strategy                 string `json:"strategy"`
-	ThresholdBytes           int    `json:"thresholdBytes"`
-	ThresholdHistoryMessages int    `json:"thresholdHistoryMessages"`
-	RetainedRecentPairs      int    `json:"retainedRecentPairs"`
+	HistoryPolicy string `json:"historyPolicy"`
+	Strategy      string `json:"strategy"`
+	// ThresholdRatio 是主判据：下一步预计输入 token（上游实测锚点优先）占
+	// 用户在该渠道模型能力里填的可用输入（contextWindowTokens − reservedOutputTokens）的比例。
+	ThresholdRatio           float64 `json:"thresholdRatio,omitempty"`
+	ThresholdBasis           string  `json:"thresholdBasis,omitempty"`
+	ThresholdBytes           int     `json:"thresholdBytes"`
+	ThresholdHistoryMessages int     `json:"thresholdHistoryMessages"`
+	RetainedRecentPairs      int     `json:"retainedRecentPairs"`
 }
 
 const cloudAgentCapabilitySetVersion = capability.SetVersion
@@ -60,5 +64,6 @@ func CloudAgentCapabilitySetInfo() CloudAgentCapabilitySet {
 }
 
 func CloudAgentContextPolicyInfo() CloudAgentContextPolicy {
-	return CloudAgentContextPolicy{HistoryPolicy: "server_compacted", Strategy: "structured_checkpoint", ThresholdBytes: agentcontext.ThresholdBytes, ThresholdHistoryMessages: agentcontext.ThresholdHistoryMessages, RetainedRecentPairs: 2}
+	// 主判据按模型上限的 token 比例；字节/条数只在没配置上限的渠道兜底。
+	return CloudAgentContextPolicy{HistoryPolicy: "server_compacted", Strategy: "structured_checkpoint", ThresholdRatio: cloudAgentCompactionRatio, ThresholdBasis: "tokens", ThresholdBytes: agentcontext.ThresholdBytes, ThresholdHistoryMessages: agentcontext.ThresholdHistoryMessages, RetainedRecentPairs: 2}
 }

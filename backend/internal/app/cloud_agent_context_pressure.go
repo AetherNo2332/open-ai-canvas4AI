@@ -28,6 +28,18 @@ type cloudAgentContextPressure struct {
 	CompactionPressureRatio  float64 `json:"compactionPressureRatio"`
 }
 
+// cloudAgentProjectedInputTokens 合成"下一步输入 token"的权威读数：
+// provider 锚点（模型自己的分词器读数）+ 本地估算的有符号增量；没有可用锚点时退回纯估算。
+// 压缩触发与压力展示必须共用这一份口径，否则"界面显示 79%、后台却按 82% 压缩"。
+func cloudAgentProjectedInputTokens(pressure cloudAgentContextPressure, state *cloudAgentRuntime) (int, string) {
+	if state == nil || state.TokenAnchor == nil || !state.TokenAnchor.Accepted {
+		return pressure.EstimatedInputTokens, "estimate"
+	}
+	anchor := state.TokenAnchor
+	delta := pressure.EstimatedInputTokens - anchor.EstimatedTokens
+	return max(0, int(anchor.InputTokens)+delta), "provider"
+}
+
 func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state *cloudAgentRuntime) map[string]any {
 	payload := map[string]any{
 		"estimatedInputTokens": pressure.EstimatedInputTokens, "contextWindowTokens": pressure.ContextWindowTokens,
@@ -44,8 +56,7 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 	}
 	// 上游实测锚点：provider 用模型自己的分词器报出的 prompt 规模，是权威读数。
 	// 投影 = 锚点 + 本地估算的有符号增量（对齐 harness 的 pressureTokens / projectedTokens）。
-	tokenSource := "estimate"
-	projectedTokens := pressure.EstimatedInputTokens
+	projectedTokens, tokenSource := cloudAgentProjectedInputTokens(pressure, state)
 	if anchor := state.TokenAnchor; anchor != nil {
 		payload["anchorStep"] = anchor.Step
 		if anchor.Accepted {
@@ -54,8 +65,9 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 				"inputTokens": anchor.InputTokens, "cachedInputTokens": anchor.CachedTokens,
 				"uncachedInputTokens": max(0, anchor.InputTokens-anchor.CachedTokens), "outputTokens": anchor.OutputTokens,
 			}
+			// anchorDeltaTokens 的语义是"本地估算相对锚点那一步的增量"，与 projectedTokens 的分母无关，
+			// 前端拿它解释"较锚点 +N"，不能改成投影减估算。
 			delta := pressure.EstimatedInputTokens - anchor.EstimatedTokens
-			projectedTokens = max(0, int(anchor.InputTokens)+delta)
 			payload["anchorDeltaTokens"] = delta
 			payload["tokenScale"] = math.Round(float64(anchor.InputTokens)/float64(anchor.EstimatedTokens)*10000) / 10000
 			tokenSource = "provider"
@@ -69,12 +81,25 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		payload["projectedPressureRatio"] = math.Min(9.99, float64(projectedTokens)/float64(pressure.UsableInputTokens))
 	}
 	raw, _ := json.Marshal(state.Canonical.Messages)
-	historyMessages := len(state.TextHistory) + 2
+	// 条数口径必须数"当前会话"，不是压缩后残留的 TextHistory：后者最多 7 条，
+	// 让"≥16 条"这条规则永远是死的（实测 38 条消息的会话也照样不触发）。
+	historyMessages := len(state.Canonical.Messages)
 	byteRatio := float64(len(raw)) / float64(agentcontext.ThresholdBytes)
 	messageRatio := float64(historyMessages) / float64(agentcontext.ThresholdHistoryMessages)
 	payload["compactionSourceBytes"] = len(raw)
 	payload["historyMessages"] = historyMessages
-	payload["compactionPressureRatio"] = math.Max(byteRatio, messageRatio)
+	payload["compactionThresholdRatio"] = cloudAgentCompactionRatio
+	payload["compactionTokenSource"] = tokenSource
+	payload["compactionThresholdBytes"] = agentcontext.ThresholdBytes
+	if pressure.UsableInputTokens > 0 {
+		// 主判据：token 利用率（上游实测投影 ÷ 用户配置的可用输入）。
+		// 字节/条数只在没有配置模型上限时兜底，两者不能各说各话。
+		payload["compactionBasis"] = "tokens"
+		payload["compactionPressureRatio"] = math.Min(9.99, float64(projectedTokens)/float64(pressure.UsableInputTokens))
+	} else {
+		payload["compactionBasis"] = "bytes"
+		payload["compactionPressureRatio"] = math.Max(byteRatio, messageRatio)
+	}
 	payload["breakdown"] = cloudAgentContextBreakdownPayload(state)
 	return payload
 }

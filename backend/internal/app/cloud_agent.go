@@ -89,9 +89,11 @@ type CloudAgentRun struct {
 	Events         []CloudAgentEvent   `json:"events,omitempty"`
 	Skills         []cloudAgentSkill   `json:"skills,omitempty"`
 	Approval       *cloudAgentApproval `json:"approval,omitempty"`
-	SpentCredits   float64             `json:"spentCredits"`
-	Step           int                 `json:"step"`
-	ActiveMessage  map[string]string   `json:"activeMessage,omitempty"`
+	// ContextCompaction 非空表示步进循环正暂停在压缩上（requested/running），界面据此提示。
+	ContextCompaction *cloudAgentContextCompaction `json:"contextCompaction,omitempty"`
+	SpentCredits      float64                      `json:"spentCredits"`
+	Step              int                          `json:"step"`
+	ActiveMessage     map[string]string            `json:"activeMessage,omitempty"`
 }
 
 func validateCloudAgentRequest(req *CloudAgentRequest) error {

@@ -50,6 +50,13 @@ type cloudAgentContextCompaction struct {
 	Status      string `json:"status"`
 	SourceBytes int    `json:"sourceBytes"`
 	TurnCount   int    `json:"turnCount"`
+	// Resume 表示这次是"中途暂停压缩"：压完继续本轮的步进，而不是收尾结束本轮。
+	Resume bool `json:"resume,omitempty"`
+	// 触发读数：下一步预计输入 token ÷ 模型可用输入（上游实测锚点优先）。
+	ProjectedTokens   int     `json:"projectedTokens,omitempty"`
+	UsableInputTokens int     `json:"usableInputTokens,omitempty"`
+	Ratio             float64 `json:"ratio,omitempty"`
+	TokenSource       string  `json:"tokenSource,omitempty"`
 }
 type cloudAgentRuntime struct {
 	Request                CloudAgentRequest            `json:"request"`
@@ -81,6 +88,8 @@ type cloudAgentRuntime struct {
 	ActionNudged           bool                         `json:"actionNudged,omitempty"`
 	EmptyOutputNudged      int                          `json:"emptyOutputNudged,omitempty"`
 	StepSnapshotHash       string                       `json:"stepSnapshotHash,omitempty"`
+	// ContextCompactionCount 是本轮已经压过几次：压完仍超阈值时不要无限暂停。
+	ContextCompactionCount int `json:"contextCompactionCount,omitempty"`
 	// ImageInspectCounts 记录本轮内每张图被查看的次数，用于"同一张图不要反复看"的护栏。
 	ImageInspectCounts map[string]int `json:"imageInspectCounts,omitempty"`
 	// PendingVisualNodeID 是刚看过、还没写观察的那张图；模型下一次输出正文时把观察记到锚点。
@@ -452,9 +461,18 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if run == nil || state == nil {
 		return errors.New("Agent runtime state is missing")
 	}
-	if evicted, _, _ := compactCloudAgentContext(&state.Canonical, state.cloudAgentVisualNotes()); evicted {
+	if evicted, before, after := compactCloudAgentContext(&state.Canonical, state.cloudAgentVisualNotes()); evicted {
 		state.SkillReads = nil
 		state.ProfileReads = nil
+		// 治理动作必须留痕：这条路径过去是静默的，实测全库 context_evicted 事件数为 0，
+		// 于是"到底卸载过没有"在运行记录里根本查不到。
+		if run.ID != "" {
+			state.event(run.ID, "context_evicted", map[string]any{
+				"messagesBytesBefore": before, "messagesBytesAfter": after,
+				"thresholdBytes": cloudAgentEvictionThresholdBytes, "messageLimit": cloudAgentEvictionMessageLimit,
+				"text": "已移出可重新读取的历史工具正文（不含模型调用），需要时重新读取",
+			})
+		}
 	}
 	if run.ID != "" {
 		if err := validateCloudAgentRuntime(run, state); err != nil {
@@ -494,6 +512,8 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 		out.Approval = nil
 	}
 	out.Step = state.Step
+	// 压缩期间把压缩态暴露给界面：步进循环是暂停的，用户要能看到"正在压缩"而不是以为卡住了。
+	out.ContextCompaction = state.ContextCompaction
 	if stateErr == nil && state.ActiveTaskID != "" && state.ContextCompaction == nil && (run.Status == "running" || run.Status == "queued") {
 		active, err := s.repo.TaskForUser(task.UserID, state.ActiveTaskID)
 		if err != nil {
@@ -726,9 +746,13 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 						return cloudAgentSave(current, &state)
 					}
 				}
-				if needed, sourceBytes, turnCount := cloudAgentContextShouldCompact(&state); needed {
-					state.ContextCompaction = &cloudAgentContextCompaction{Status: "requested", SourceBytes: sourceBytes, TurnCount: turnCount}
-					state.event(run.ID, "context_compaction_requested", map[string]any{"sourceBytes": sourceBytes, "turnCount": turnCount})
+				if needed, sourceBytes, turnCount, reading, hasReading := cloudAgentCompactionDecision(repo, &state, state.Canonical); needed {
+					state.ContextCompaction = &cloudAgentContextCompaction{
+						Status: "requested", SourceBytes: sourceBytes, TurnCount: turnCount,
+						ProjectedTokens: reading.ProjectedTokens, UsableInputTokens: reading.UsableInputTokens,
+						Ratio: reading.Ratio, TokenSource: reading.TokenSource,
+					}
+					state.event(run.ID, "context_compaction_requested", cloudAgentCompactionEventPayload(reading, hasReading, sourceBytes, turnCount))
 				} else {
 					current.Status = "completed"
 				}
@@ -742,16 +766,11 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if state.ContextCompaction != nil && state.ContextCompaction.Status == "requested" {
 		return s.enqueueCloudAgentContextCompaction(run, &state)
 	}
-	evicted, messagesBefore, messagesAfter := compactCloudAgentContext(&state.Canonical, state.cloudAgentVisualNotes())
-	if evicted {
+	// 正文卸载与它的事件都在 cloudAgentSave 里统一处理（同一次变更只留一条记录）。
+	if evicted, _, _ := compactCloudAgentContext(&state.Canonical, state.cloudAgentVisualNotes()); evicted {
 		// Evicted read bodies must be obtainable again after compaction.
 		state.SkillReads = nil
 		state.ProfileReads = nil
-		state.event(run.ID, "context_evicted", map[string]any{
-			"messagesBytesBefore": messagesBefore, "messagesBytesAfter": messagesAfter,
-			"thresholdBytes": cloudAgentEvictionThresholdBytes, "messageLimit": cloudAgentEvictionMessageLimit,
-			"text": "已移出可重新读取的历史工具正文（不含模型调用），需要时重新读取",
-		})
 	}
 	if stepLimit := cloudAgentStepLimit(state.Request); stepLimit > 0 && state.Step >= stepLimit {
 		return s.failCloudAgent(run, &state, fmt.Sprintf("达到 %d 次模型调用上限，本轮已停止", stepLimit))
@@ -762,6 +781,11 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	canonical := cloudAgentCanonicalWithPlan(&state)
 	s.attachCloudAgentLessons(&canonical, run.UserID, cloudAgentLessonTaskText(&state))
 	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
+	// 上下文利用率达标（默认 80% 用户配置的模型上限，上游实测 token 口径）就先暂停步进：
+	// 把历史压成检查点，压完再用压缩后的上下文继续本轮，而不是带着超高占用再发一次请求。
+	if requested, err := s.cloudAgentRequestCompaction(run, &state, canonical); err != nil || requested {
+		return err
+	}
 	input := map[string]any{"mode": "text", "prompt": state.Request.Prompt, "agentRequests": map[string]any{"canonical": canonical}, "config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)}, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(state.Policy.ReasoningMode), "maxOutputTokens": cloudAgentStepMaxOutputTokens}}
 	raw, _ := json.Marshal(canonical)
 	if len(raw) > cloudAgentRequestHardLimitBytes {

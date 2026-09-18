@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -13,6 +14,18 @@ import (
 
 const cloudAgentContextCompactionOperation = "cloud_agent_context_compaction"
 
+const (
+	// cloudAgentCompactionRatio 是触发压缩的上下文利用率：下一步预计输入 token
+	// （优先上游实测锚点投影）达到"用户在该渠道模型能力里填的可用输入"的比例时，
+	// 暂停步进循环、把历史压成检查点，然后继续。
+	cloudAgentCompactionRatio = 0.8
+	// cloudAgentMaxCompactionsPerRun 限制同一轮最多压几次：压完仍然超阈值时不能无限暂停。
+	cloudAgentMaxCompactionsPerRun = 4
+)
+
+// cloudAgentContextShouldCompact 是"没配模型上下文上限"时的兜底判据。
+// 条数必须数当前会话：历史实现数的是 state.TextHistory（压缩后残留的历史，实测最多 7 条），
+// 于是"≥16 条"这条规则在真实会话里永远不成立——38 条消息的会话也照样不压缩。
 func cloudAgentContextShouldCompact(state *cloudAgentRuntime) (bool, int, int) {
 	if state == nil || state.ContextCompaction != nil {
 		return false, 0, 0
@@ -22,8 +35,115 @@ func cloudAgentContextShouldCompact(state *cloudAgentRuntime) (bool, int, int) {
 		return false, 0, 0
 	}
 	turnCount := cloudAgentConversationTurnCount(state.Canonical.Messages)
-	historyMessages := len(state.TextHistory) + 2
-	return agentcontext.ShouldCompact(historyMessages, len(raw)), len(raw), turnCount
+	return agentcontext.ShouldCompact(len(state.Canonical.Messages), len(raw)), len(raw), turnCount
+}
+
+// cloudAgentPressureReading 是一次压缩判据的读数（token meter 口径）。
+type cloudAgentPressureReading struct {
+	ProjectedTokens   int     `json:"projectedTokens"`
+	UsableInputTokens int     `json:"usableInputTokens"`
+	Ratio             float64 `json:"ratio"`
+	TokenSource       string  `json:"tokenSource"`
+}
+
+// cloudAgentCompactionReading 用 token meter 的口径算"离压缩还有多远"：
+// 上限取用户在该渠道模型能力里填的上下文窗口减去预留输出，当前值优先用上游实测锚点投影。
+// 返回 false 表示这个渠道没有配模型上限（此时只能退回字节/条数兜底）。
+func cloudAgentCompactionReading(repo *repository.Repository, state *cloudAgentRuntime, canonical canonicalAgentRequest) (cloudAgentPressureReading, bool) {
+	if repo == nil || state == nil {
+		return cloudAgentPressureReading{}, false
+	}
+	if strings.TrimSpace(state.Request.ChannelID) == "" || strings.TrimSpace(state.Request.ChannelModelKey) == "" {
+		return cloudAgentPressureReading{}, false
+	}
+	channelModel, err := repo.ChannelModelByKey(state.Request.ChannelID, state.Request.ChannelModelKey)
+	if err != nil || channelModel == nil {
+		return cloudAgentPressureReading{}, false
+	}
+	config, err := normalizedChannelModelCapability(channelModel)
+	if err != nil || config == nil || config.Text == nil {
+		return cloudAgentPressureReading{}, false
+	}
+	usable := config.Text.ContextWindowTokens - config.Text.ReservedOutputTokens
+	if usable <= 0 {
+		return cloudAgentPressureReading{}, false
+	}
+	raw, err := json.Marshal(canonical)
+	if err != nil {
+		return cloudAgentPressureReading{}, false
+	}
+	projected, source := cloudAgentProjectedInputTokens(cloudAgentContextPressure{EstimatedInputTokens: estimateCloudAgentTokens(raw)}, state)
+	return cloudAgentPressureReading{
+		ProjectedTokens:   projected,
+		UsableInputTokens: usable,
+		Ratio:             float64(projected) / float64(usable),
+		TokenSource:       source,
+	}, true
+}
+
+// cloudAgentCompactionDecision 是压缩与否的唯一判据入口：
+// 配了模型上限就按 token 利用率（80%），没配才退回字节/条数兜底——
+// 两条口径不能各说各话，否则界面显示 79% 而后台已经在压。
+func cloudAgentCompactionDecision(repo *repository.Repository, state *cloudAgentRuntime, canonical canonicalAgentRequest) (bool, int, int, cloudAgentPressureReading, bool) {
+	if state == nil || state.ContextCompaction != nil {
+		return false, 0, 0, cloudAgentPressureReading{}, false
+	}
+	raw, err := json.Marshal(canonical.Messages)
+	if err != nil {
+		return false, 0, 0, cloudAgentPressureReading{}, false
+	}
+	turnCount := cloudAgentConversationTurnCount(state.Canonical.Messages)
+	if reading, ok := cloudAgentCompactionReading(repo, state, canonical); ok {
+		return reading.Ratio >= cloudAgentCompactionRatio, len(raw), turnCount, reading, true
+	}
+	needed, sourceBytes, turns := cloudAgentContextShouldCompact(state)
+	return needed, sourceBytes, turns, cloudAgentPressureReading{}, false
+}
+
+// cloudAgentCompactionEventPayload 是 context_compaction_requested 的载荷：
+// 带上触发读数，界面才能说清"到了多少、按哪个口径"。
+func cloudAgentCompactionEventPayload(reading cloudAgentPressureReading, hasReading bool, sourceBytes, turnCount int) map[string]any {
+	payload := map[string]any{"sourceBytes": sourceBytes, "turnCount": turnCount, "reason": "threshold"}
+	if !hasReading {
+		payload["basis"] = "bytes"
+		return payload
+	}
+	payload["basis"] = "tokens"
+	payload["projectedTokens"] = reading.ProjectedTokens
+	payload["usableInputTokens"] = reading.UsableInputTokens
+	payload["thresholdRatio"] = cloudAgentCompactionRatio
+	payload["tokenSource"] = reading.TokenSource
+	payload["pressureRatio"] = math.Round(reading.Ratio*10000) / 10000
+	return payload
+}
+
+// cloudAgentRequestCompaction 在下一步请求达到阈值时【暂停步进循环】：
+// 先把历史压成检查点，压完再用压缩后的上下文继续本轮，而不是带着 80%+ 的上下文再发一次。
+// 返回 true 表示已经请求压缩，调用方应落库并结束这一步。
+func (s *Service) cloudAgentRequestCompaction(run *model.CloudAgentExecution, state *cloudAgentRuntime, canonical canonicalAgentRequest) (bool, error) {
+	if run == nil || state == nil || state.ContextCompaction != nil {
+		return false, nil
+	}
+	// 还有在跑的任务时先不评估：等它回来（校验规则也要求 requested 状态下没有活跃任务）。
+	if state.ActiveTaskID != "" {
+		return false, nil
+	}
+	if state.ContextCompactionCount >= cloudAgentMaxCompactionsPerRun {
+		return false, nil
+	}
+	needed, sourceBytes, turnCount, reading, hasReading := cloudAgentCompactionDecision(s.repo, state, canonical)
+	if !needed {
+		return false, nil
+	}
+	state.ContextCompaction = &cloudAgentContextCompaction{
+		Status: "requested", SourceBytes: sourceBytes, TurnCount: turnCount, Resume: true,
+		ProjectedTokens: reading.ProjectedTokens, UsableInputTokens: reading.UsableInputTokens,
+		Ratio: reading.Ratio, TokenSource: reading.TokenSource,
+	}
+	state.event(run.ID, "context_compaction_requested", cloudAgentCompactionEventPayload(reading, hasReading, sourceBytes, turnCount))
+	return true, s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, state)
+	})
 }
 
 func cloudAgentConversationTurnCount(messages []map[string]any) int {
@@ -271,9 +391,18 @@ func (s *Service) persistCloudAgentContextCheckpoint(run *model.CloudAgentExecut
 		}
 		state.ActiveTaskID = ""
 		state.ActiveTextDraft = ""
+		// 中途暂停压缩：压完继续本轮的步进；收尾压缩才结束本轮。
+		resume := state.ContextCompaction != nil && state.ContextCompaction.Resume
 		state.ContextCompaction = nil
-		current.Status = "completed"
-		payload := map[string]any{"mode": mode, "compactedTurnCount": checkpoint.CompactedTurnCount, "historyMessages": len(history)}
+		if resume {
+			state.ContextCompactionCount++
+			if current.Status != "cancelled" && current.Status != "failed" {
+				current.Status = "running"
+			}
+		} else {
+			current.Status = "completed"
+		}
+		payload := map[string]any{"mode": mode, "compactedTurnCount": checkpoint.CompactedTurnCount, "historyMessages": len(history), "resume": resume}
 		if reason != "" {
 			payload["reason"] = reason
 		}

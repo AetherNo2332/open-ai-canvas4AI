@@ -5,7 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"gorm.io/gorm"
+
 	"infinite-canvas/backend/internal/agentcontext"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func TestCloudAgentContextCompactionPreservesToolPairsAndWrites(t *testing.T) {
@@ -218,4 +222,288 @@ func TestCloudAgentSkillsLoadOnDemandAndPage(t *testing.T) {
 	if _, err := cloudAgentReadTool(nil, "user", &cloudAgentRuntime{Skills: snapshots}, skillFeedbackCall(ids[0], cloudAgentSkillEntryPath), s); err == nil {
 		t.Fatal("mixed skill version")
 	}
+}
+
+// numericEquals 比较事件载荷里的数字：经过 JSON 往返后可能是 float64/int64/int。
+func numericEquals(value any, want float64) bool {
+	switch typed := value.(type) {
+	case float64:
+		return typed == want
+	case int:
+		return float64(typed) == want
+	case int64:
+		return float64(typed) == want
+	default:
+		return false
+	}
+}
+
+// withConfiguredWindow 给测试渠道模型配上"用户填的模型上限"（contextWindowTokens − reservedOutputTokens）。
+func withConfiguredWindow(t *testing.T, db *gorm.DB, contextWindow, reserved int) {
+	t.Helper()
+	config := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
+	config.Text.ContextWindowTokens = contextWindow
+	config.Text.ReservedOutputTokens = reserved
+	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "cm").
+		Update("capability_config_json", mustEncodeModelCapabilityConfig(t, config)).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// anchoredState 造一个"下一步预计输入 token"可控的状态：锚点已采信且本地估算没变，
+// 于是 projectedTokens == anchor.InputTokens，压缩比例就是可控的。
+func anchoredState(t *testing.T, canonical canonicalAgentRequest, anchorInputTokens int) *cloudAgentRuntime {
+	t.Helper()
+	raw, err := json.Marshal(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &cloudAgentRuntime{
+		Request:   CloudAgentRequest{ChannelID: "channel", ChannelModelKey: "text-test"},
+		Canonical: canonical,
+		TokenAnchor: &cloudAgentTokenAnchor{
+			TaskID: "task-anchor", Step: 3, InputTokens: int64(anchorInputTokens),
+			EstimatedTokens: estimateCloudAgentTokens(raw), Accepted: true, SourceBytes: len(raw),
+		},
+	}
+}
+
+// 压缩判据必须按"用户配置的模型上限"的 token 口径：达到 80% 才压，
+// 且上下界都要卡住——低于阈值不能压，高于阈值必须压。
+func TestCloudAgentCompactionTriggersAtConfiguredWindowShare(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	withConfiguredWindow(t, db, 100000, 20000) // 可用输入 80000 → 阈值 64000
+	canonical := canonicalAgentRequest{
+		SystemPrompt: "系统策略", Tools: []map[string]any{{"type": "function"}},
+		Messages: []map[string]any{{"role": "user", "content": "按照画风整理画布"}},
+	}
+
+	below := anchoredState(t, canonical, 63000)
+	needed, _, _, reading, hasReading := cloudAgentCompactionDecision(s.repo, below, canonical)
+	if !hasReading || needed {
+		t.Fatalf("63k/80k 不该触发压缩: needed=%v reading=%+v", needed, reading)
+	}
+	if reading.UsableInputTokens != 80000 || reading.TokenSource != "provider" {
+		t.Fatalf("读数口径不对: %+v", reading)
+	}
+
+	above := anchoredState(t, canonical, 65000)
+	needed, sourceBytes, turnCount, reading, hasReading := cloudAgentCompactionDecision(s.repo, above, canonical)
+	if !hasReading || !needed {
+		t.Fatalf("65k/80k（81%%）必须触发压缩: needed=%v reading=%+v", needed, reading)
+	}
+	if reading.Ratio < cloudAgentCompactionRatio || sourceBytes <= 0 || turnCount != 1 {
+		t.Fatalf("触发读数不完整: ratio=%.3f bytes=%d turns=%d", reading.Ratio, sourceBytes, turnCount)
+	}
+
+	// 没有配置模型上限的渠道只能退回字节/条数兜底，且必须如实报告"没有 token 读数"。
+	withConfiguredWindow(t, db, 0, 0)
+	if _, _, _, _, ok := cloudAgentCompactionDecision(s.repo, above, canonical); ok {
+		t.Fatal("没配上限时不该声称有 token 读数")
+	}
+}
+
+// 兜底规则必须数"当前会话"，不是压缩后残留的 TextHistory——
+// 历史实现数 TextHistory（实测最多 7 条），让"≥16 条"这条规则永远是死的。
+func TestCloudAgentCompactionFallbackCountsLiveConversation(t *testing.T) {
+	s, _, _, _ := creationTestService(t)
+	canonical := canonicalAgentRequest{Messages: []map[string]any{{"role": "user", "content": "开始"}}}
+	for i := 0; i < 20; i++ {
+		canonical.Messages = append(canonical.Messages,
+			map[string]any{"role": "assistant", "content": "继续"},
+			map[string]any{"role": "user", "content": "下一步"})
+	}
+	state := &cloudAgentRuntime{
+		Request:   CloudAgentRequest{ChannelID: "channel", ChannelModelKey: "text-test"},
+		Canonical: canonical,
+		TextHistory: []providerTextMessage{
+			{Role: "user", Content: "<agent-context-checkpoint>{}</agent-context-checkpoint>"},
+			{Role: "assistant", Content: "已载入"},
+		},
+	}
+	needed, _, turnCount, _, hasReading := cloudAgentCompactionDecision(s.repo, state, canonical)
+	if hasReading {
+		t.Fatal("未配置模型上限时不该有 token 读数")
+	}
+	if !needed {
+		t.Fatal("41 条会话消息必须触发兜底压缩（旧实现数 TextHistory 只有 2 条，永远不触发）")
+	}
+	if turnCount != 21 {
+		t.Fatalf("轮数统计不对: %d", turnCount)
+	}
+
+	short := &cloudAgentRuntime{Canonical: canonicalAgentRequest{Messages: canonical.Messages[:4]}, TextHistory: state.TextHistory}
+	if needed, _, _, _, _ := cloudAgentCompactionDecision(s.repo, short, short.Canonical); needed {
+		t.Fatal("短会话不该触发压缩")
+	}
+}
+
+// 达到阈值时要【暂停步进循环】：先把历史压成检查点，压完用 Resume 继续本轮，
+// 而不是把本轮判完成、也不是带着超高占用再发一次请求。
+func TestCloudAgentMidRunCompactionPausesAndResumes(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	withConfiguredWindow(t, db, 100000, 20000)
+	run, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := cloudAgentDecode(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 中途评估发生在模型响应回来之后：那一刻 ActiveTaskID 已被清空。
+	state.ActiveTaskID = ""
+	state.Request.ChannelID = "channel"
+	state.Request.ChannelModelKey = "text-test"
+	state.Canonical = canonicalAgentRequest{
+		SystemPrompt: "系统策略",
+		Messages:     []map[string]any{{"role": "user", "content": "按照画风整理画布"}},
+	}
+	raw, _ := json.Marshal(state.Canonical)
+	state.TokenAnchor = &cloudAgentTokenAnchor{TaskID: "anchor", Step: 4, InputTokens: 70000, EstimatedTokens: estimateCloudAgentTokens(raw), Accepted: true, SourceBytes: len(raw)}
+
+	requested, err := s.cloudAgentRequestCompaction(run, &state, state.Canonical)
+	if err != nil || !requested {
+		t.Fatalf("70k/80k 应请求压缩: requested=%v err=%v", requested, err)
+	}
+	if state.ContextCompaction == nil || !state.ContextCompaction.Resume || state.ContextCompaction.Status != "requested" {
+		t.Fatalf("压缩请求状态不对: %+v", state.ContextCompaction)
+	}
+	persisted, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := cloudAgentDecode(persisted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ContextCompaction == nil || stored.ContextCompaction.Status != "requested" {
+		t.Fatalf("压缩请求没有落库: %+v", stored.ContextCompaction)
+	}
+	found := false
+	for _, event := range stored.Events {
+		if event.Type != "context_compaction_requested" {
+			continue
+		}
+		found = true
+		if event.Payload["basis"] != "tokens" || event.Payload["thresholdRatio"] != cloudAgentCompactionRatio {
+			t.Fatalf("触发事件口径不对: %+v", event.Payload)
+		}
+		if !numericEquals(event.Payload["projectedTokens"], 70000) || !numericEquals(event.Payload["usableInputTokens"], 80000) {
+			t.Fatalf("触发事件缺读数: %+v", event.Payload)
+		}
+	}
+	if !found {
+		t.Fatal("缺少 context_compaction_requested 事件")
+	}
+
+	// 压缩任务成功后：留下检查点、保持运行（不判完成），并允许本轮继续。
+	checkpoint := agentcontext.Checkpoint{Version: agentcontext.Version, HistorySummary: "整理过画风分组", CompactedTurnCount: 1}
+	encoded, _ := json.Marshal(checkpoint)
+	result, _ := json.Marshal(map[string]string{"text": string(encoded)})
+	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).
+		Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(result)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.repo.TaskForUser("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ContextCompaction.Status = "running"
+	state.ActiveTaskID = root.ID
+	// 请求压缩已经推进过 revision，必须重新读一次再落压缩结果。
+	run, err = s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.advanceCloudAgentContextCompaction(run, &state, task); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := cloudAgentDecode(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.ContextCompaction != nil || final.ContextCheckpoint == nil {
+		t.Fatalf("检查点没有留下或压缩态没清掉: compaction=%+v checkpoint=%v", final.ContextCompaction, final.ContextCheckpoint != nil)
+	}
+	if final.ContextCompactionCount != 1 {
+		t.Fatalf("压缩次数没有累加: %d", final.ContextCompactionCount)
+	}
+	if after.Status != "running" {
+		t.Fatalf("中途压缩后本轮必须继续（status=running），实际 %s", after.Status)
+	}
+	resumed := false
+	for _, event := range final.Events {
+		if event.Type == "context_compacted" && event.Payload["resume"] == true {
+			resumed = true
+		}
+	}
+	if !resumed {
+		t.Fatal("context_compacted 事件没有标明 resume")
+	}
+}
+
+// 正文卸载必须留痕：这条路径过去是静默的，实测全库 context_evicted 事件数为 0，
+// 于是"到底卸载过没有"在运行记录里查不到。
+func TestCloudAgentSaveEmitsEvictionEventOnce(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	run, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := cloudAgentDecode(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Canonical.Messages = []map[string]any{{"role": "user", "content": "指令"}}
+	for i := 0; i < 26; i++ {
+		state.Canonical.Messages = append(state.Canonical.Messages,
+			map[string]any{"role": "assistant", "content": "", "tool_calls": []map[string]any{{"id": i}}},
+			map[string]any{"role": "tool", "tool_call_id": i, "content": `{"content":"` + strings.Repeat("x", 700) + `"}`})
+	}
+	save := func() {
+		current, err := s.repo.CloudAgent("user", root.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.repo.MutateCloudAgent("user", root.ID, current.Revision, func(execution *model.CloudAgentExecution, _ *repository.Repository) error {
+			return cloudAgentSave(execution, &state)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save()
+	after, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	countEvicted := func(execution *model.CloudAgentExecution) int {
+		decoded, err := cloudAgentDecode(execution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, event := range decoded.Events {
+			if event.Type == "context_evicted" {
+				count++
+			}
+		}
+		return count
+	}
+	if got := countEvicted(after); got != 1 {
+		t.Fatalf("卸载事件应当只发一次，实际 %d", got)
+	}
+	save()
+	again, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := countEvicted(again); got != 1 {
+		t.Fatalf("重复保存不该重复发事件，实际 %d", got)
+	}
+	_ = db
 }
