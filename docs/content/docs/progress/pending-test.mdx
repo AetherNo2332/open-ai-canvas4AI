@@ -11,9 +11,11 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 - [x] `go build ./...`、`go vet ./internal/app` 通过；`go test ./...` 仅剩既有红灯（迁移表用例、hostupdate 用例），云端 Agent 全量用例通过。
 - [x] 前端 `bun run build`（tsc + 类型检查 + vite）通过；`bun test` 1751 通过 / 18 失败，失败集合与合并前基线一致。
-- [ ] 用真实渠道跑一轮多工具任务：确认模型按"本轮执行上下文"事实选择节点与预算，参数写错时按回执里的 schema 自行改正。
-- [ ] 续聊一轮：确认上一轮看过的素材仍标 `visualIdentity=inspected`、带 `visualNote`，且不再重复看图；确认旧目标不会因为锚点继承被复活。
-- [ ] 只读会话确认不暴露 `canvas_list_node_types` 但内联能力速查；可写会话确认相反，且弹出上下文计量器时系统提示分段合计等于 system 桶。
+- [x] 已部署 dev（`CANVAS_IMAGE_TAG=dev-merge151`，健康检查报 `v1.5.1` / schema 23）。只读与 `auto` 各跑一轮真实渠道运行（`qwen3.6-35b-a3b`）：上游请求里系统提示确为事实 JSON（`budget` / `canvasSummary` / `referenceCandidates` / `profileLayers` / `skills`），`auto` 那轮 `canvas_get_state` 调用成功、第二轮压力事件 `tokenSource=provider`（`tokenScale=0.8554`）说明锚点计量生效，两轮都正常 `completed`。
+- [x] 能力卡路由在真实请求里可对照：只读运行内联速查（system 22,566B / tools 4,873B），`auto` 运行只给指针（system 17,951B / tools 16,538B），系统提示分段（policy / mediaPolicy / capabilities / execution / memory）随事件上报。
+- [ ] 真实渠道复现参数写错：确认模型按回执里的 `parameters` 改正，而不是重复提交同一错误参数（目前只有单测覆盖）。
+- [ ] 续聊一轮：确认上一轮看过的素材仍标 `visualIdentity=inspected`、带 `visualNote` 且不再重复看图，旧目标不会因锚点继承被复活。dev 当前唯一启用的渠道模型 `maxImages=0`，看图工具未暴露，需要接入支持图片输入的模型才能验。
+- [ ] 浏览器端手工过一遍：上下文计量器的分段合计等于 system 桶，且事实 JSON 不影响面板展示。
 
 ## 画布 Agent 看图与耗时（2026-09-18）
 
