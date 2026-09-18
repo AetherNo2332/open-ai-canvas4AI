@@ -1171,9 +1171,15 @@ func TestCloudAgentInspectedAssetSurvivesAnchorRefresh(t *testing.T) {
 	if asset.VisualIdentity != "inspected" || asset.RequiresVisualInspection {
 		t.Fatalf("inspection was not recorded: %+v", asset)
 	}
-	context := cloudAgentCreativeAnchorContext(state.CreativeAnchor)
-	if !strings.Contains(context, "inspected") || strings.Contains(context, "visualIdentity=unknown") {
-		t.Fatalf("prompt still claims there is no visual evidence: %s", context)
+	// 锚点不再以散文形式进系统提示：视觉事实由编译器的 referenceCandidates 投影给模型，
+	// 因此这里断言编译结果里带的是 inspected 与模型自己的观察，而不是 unknown。
+	req := CloudAgentRequest{ContextScope: []string{"canvas"}, PermissionMode: "auto"}
+	system, _, err := compileCloudAgentPolicies(req, nil, "", cloudAgentProfileSnapshot{}, state.CreativeAnchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(system, "inspected") || strings.Contains(system, `"visualIdentity":"unknown"`) {
+		t.Fatalf("prompt still claims there is no visual evidence: %s", system)
 	}
 
 	// 跨轮继承：锚点每轮从画布重建，重建时必须保留 inspected

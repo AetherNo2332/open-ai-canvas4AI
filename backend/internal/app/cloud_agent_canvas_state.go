@@ -568,15 +568,20 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 		columns = defaultCloudAgentBatchReferenceColumns()
 	}
 
+	globalPrompt := strings.TrimSpace(stringValue(table["globalPrompt"]))
 	all := creationMaps(table["rows"])
 	ready, enabled, missingPrompt, missingReferences, outputLinked := 0, 0, 0, 0, 0
 	for _, row := range all {
 		rowEnabled, _ := row["enabled"].(bool)
 		prompt := strings.TrimSpace(stringValue(row["prompt"]))
+		effectivePrompt := globalPrompt
+		if effectivePrompt == "" {
+			effectivePrompt = prompt
+		}
 		inputs := cloudAgentBatchInputIDs(row["inputNodeIds"], len(columns))
 		if rowEnabled {
 			enabled++
-			if prompt == "" {
+			if effectivePrompt == "" {
 				missingPrompt++
 			}
 			minimumInputs := 1
@@ -586,7 +591,7 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 			if len(inputs) < minimumInputs {
 				missingReferences++
 			}
-			if prompt != "" && len(inputs) >= minimumInputs {
+			if effectivePrompt != "" && len(inputs) >= minimumInputs {
 				ready++
 			}
 		}
@@ -648,7 +653,7 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 		}
 		rows = append(rows, item)
 	}
-	result := map[string]any{
+	projected := map[string]any{
 		"operation": operation, "concurrency": concurrency, "referenceColumns": columns,
 		"rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0,
 		"generationPreview": map[string]any{
@@ -656,10 +661,16 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 			"missingReferenceRows": missingReferences, "outputLinkedRows": outputLinked,
 		},
 	}
-	if mode != cloudAgentProjectionDetail {
-		result["rowIdSource"] = "canvas_read_batch_table 返回真实 rowId 与 snapshotHash；本分页结果不含 rowId"
+	if globalPrompt != "" {
+		projected["globalPrompt"] = truncateRunes(globalPrompt, textLimit)
+		if len([]rune(globalPrompt)) > textLimit {
+			projected["globalPromptTruncated"] = true
+		}
 	}
-	return result
+	if mode != cloudAgentProjectionDetail {
+		projected["rowIdSource"] = "canvas_read_batch_table 返回真实 rowId 与 snapshotHash；本分页结果不含 rowId"
+	}
+	return projected
 }
 
 func cloudAgentBatchInputIDs(value any, limit int) []any {

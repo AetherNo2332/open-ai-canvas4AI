@@ -179,7 +179,8 @@ func TestCloudAgentPolicyRoutesCapabilityGuideThroughTool(t *testing.T) {
 			t.Fatalf("compiled policy omitted capability routing guidance %q: %s", expected, text)
 		}
 	}
-	if strings.Contains(text, "节点能力速查") {
+	// 策略文件本身会提到"节点能力速查"，这里只否定内联指南的正文表头。
+	if strings.Contains(text, "节点能力速查（由服务端能力注册表生成") {
 		t.Fatalf("system prompt still inlines the full capability guide: %s", text)
 	}
 	found := false

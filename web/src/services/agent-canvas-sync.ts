@@ -57,7 +57,7 @@ export function createAgentCanvasSync(options: Options) {
                 // 服务端为了控制运行态体积丢掉了这条画布增量：增量链不再完整，
                 // 必须拉全量画布，否则本地会静默漏掉这一步的变更。
                 needsRefresh = true;
-            } else if (!supportsPatches && (event.type === "canvas_updated" || event.type === "generation_task_created" || event.type === "tool_failed" || event.type === "run_failed" || (event.type === "tool_completed" && ["canvas_apply_ops", "generate_media"].includes(String(event.payload.toolName))))) {
+            } else if (event.type === "canvas_updated" || event.type === "canvas_undone" || (!supportsPatches && (event.type === "generation_task_created" || event.type === "tool_failed" || event.type === "run_failed" || (event.type === "tool_completed" && ["canvas_apply_ops", "generate_media"].includes(String(event.payload.toolName)))))) {
                 needsRefresh = true;
             }
             schedule();
