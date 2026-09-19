@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -96,4 +97,178 @@ func TestCloudAgentSlimEventHistoryDegradesOversizedPayload(t *testing.T) {
 	if err := validateCloudAgentRuntime(&model.CloudAgentExecution{ID: "run-1"}, state); err != nil {
 		t.Fatalf("治理后应能通过状态校验：%v", err)
 	}
+}
+
+// 分镜行编辑只下发变化的那几行：整节点 before/after 会把每行正文重复两遍，
+// 一轮 55 次分镜写入就把 canvas_updated 载荷推到 257KB（线上那轮就是因此撞线）。
+func TestCloudAgentStoryboardRowDeltaShrinksPatch(t *testing.T) {
+	body := strings.Repeat("镜头正文", 800) // 单行 ~3.2KB
+	row := func(id string, shot float64, prompt string) map[string]any {
+		return map[string]any{"id": id, "shotNumber": shot, "imageGenerationPrompt": prompt, "plotDescription": body, "dialogue": body}
+	}
+	storyboardNode := func(rows []map[string]any) map[string]any {
+		return map[string]any{
+			"id": "sb-1", "type": "script", "title": "第一幕", "position": map[string]any{"x": 0.0, "y": 0.0}, "width": 920.0, "height": 360.0,
+			"metadata": map[string]any{"status": "idle", "storyboard": map[string]any{"rows": rows, "hasMore": false, "nextOffset": 0}},
+		}
+	}
+	beforeRows := []map[string]any{row("r1", 1, "旧1"), row("r2", 2, "旧2"), row("r3", 3, "旧3")}
+	afterRows := []map[string]any{row("r1", 1, "旧1"), row("r2", 2, "新2"), row("r3", 3, "旧3")}
+	before, after := storyboardNode(beforeRows), storyboardNode(afterRows)
+
+	shrunkBefore, shrunkAfter := cloudAgentShrinkChange(before, after)
+	full, _ := json.Marshal([]map[string]any{{"before": before, "after": after}})
+	shrunk, _ := json.Marshal([]map[string]any{{"before": shrunkBefore, "after": shrunkAfter}})
+	if len(shrunk) >= len(full)/4 {
+		t.Fatalf("行级增量没有明显缩小：%d → %d", len(full), len(shrunk))
+	}
+	rowsBefore := rowsOfNode(t, shrunkBefore)
+	rowsAfter := rowsOfNode(t, shrunkAfter)
+	if len(rowsBefore) != 1 || len(rowsAfter) != 1 || stringValue(rowsAfter[0]["id"]) != "r2" {
+		t.Fatalf("增量行集合不对：before=%+v after=%+v", rowsBefore, rowsAfter)
+	}
+	if _, carried := rowsAfter[0]["dialogue"]; carried {
+		t.Fatalf("未变化的字段不应出现在增量里：%+v", rowsAfter[0])
+	}
+	if rowsAfter[0]["imageGenerationPrompt"] != "新2" || rowsBefore[0]["imageGenerationPrompt"] != "旧2" {
+		t.Fatalf("变化字段缺失：before=%+v after=%+v", rowsBefore[0], rowsAfter[0])
+	}
+
+	// 删除行下发完整旧行；新增行下发完整新行。
+	removedBefore, removedAfter := cloudAgentShrinkChange(storyboardNode(beforeRows), storyboardNode(beforeRows[1:]))
+	removedRows := rowsOfNode(t, removedBefore)
+	if len(removedRows) != 1 || removedRows[0]["dialogue"] == nil {
+		t.Fatalf("删除行必须带完整旧行：%+v", removedRows)
+	}
+	if got := rowsOfNode(t, removedAfter); len(got) != 0 {
+		t.Fatalf("删除行的 after 应为空：%+v", got)
+	}
+
+	// 标题变化（非行变化）仍发完整节点。
+	titleChanged := storyboardNode(afterRows)
+	titleChanged["title"] = "第一幕（改）"
+	if keptBefore, _ := cloudAgentShrinkChange(before, titleChanged); len(rowsOfNode(t, keptBefore)) != 3 {
+		t.Fatalf("非行变化不应被缩成行增量：%+v", keptBefore)
+	}
+}
+
+func rowsOfNode(t *testing.T, node map[string]any) []map[string]any {
+	t.Helper()
+	meta, _ := node["metadata"].(map[string]any)
+	board, ok := cloudAgentStoryboardBoard(meta)
+	if !ok {
+		return nil
+	}
+	return cloudAgentRowsOf(board["rows"])
+}
+
+// 单步净增超过预算时，折叠最旧的画布增量而不是删事件（seq 必须连续）。
+func TestCloudAgentFoldEventPayloadsToBudget(t *testing.T) {
+	state := &cloudAgentRuntime{Request: agentTestRequest(), Decisions: map[string]string{}, TaskIDs: []string{"task-1"}}
+	big := strings.Repeat("行正文", 4000) // 每份补丁 ~36KB
+	for i := 0; i < 3; i++ {
+		state.event("run-1", "canvas_updated", map[string]any{
+			"canvasId": "canvas-1", "text": "修改分镜",
+			"canvasPatch": map[string]any{"canvasId": "canvas-1", "nodes": []any{map[string]any{"after": map[string]any{"id": "sb-1", "metadata": map[string]any{"storyboard": big}}}}},
+		})
+	}
+	rawBefore, _ := json.Marshal(state)
+	if !cloudAgentFoldEventPayloadsToBudget(state, int(float64(len(rawBefore))*0.5)) {
+		t.Fatal("超预算时应折叠最旧的画布增量")
+	}
+	folded := 0
+	for index, event := range state.Events {
+		if event.Payload["canvasPatchSlimmed"] == true {
+			folded++
+			if _, exists := event.Payload["canvasPatch"]; exists {
+				t.Fatalf("折叠后不应还带 canvasPatch：%+v", event.Payload)
+			}
+			if event.Seq != index+1 {
+				t.Fatalf("折叠不得改变事件序号：seq=%d index=%d", event.Seq, index)
+			}
+		}
+	}
+	if folded == 0 {
+		t.Fatal("没有任何事件被折叠")
+	}
+	rawAfter, _ := json.Marshal(state)
+	if len(rawAfter) >= len(rawBefore) {
+		t.Fatalf("折叠后体积未下降：%d → %d", len(rawBefore), len(rawAfter))
+	}
+	// 预算内不应触发任何折叠。
+	budgeted := &cloudAgentRuntime{Request: agentTestRequest(), Decisions: map[string]string{}, TaskIDs: []string{"task-1"}}
+	budgeted.event("run-1", "canvas_updated", map[string]any{"canvasId": "canvas-1", "canvasPatch": map[string]any{"nodes": []any{}}})
+	rawBudgeted, _ := json.Marshal(budgeted)
+	if cloudAgentFoldEventPayloadsToBudget(budgeted, len(rawBudgeted)-1024) {
+		t.Fatal("预算内的增长不应触发折叠")
+	}
+}
+
+// 卸载必须覆盖分镜/批量表读取结果与写回执：线上那轮 99 条消息里 0 个卸载候选，
+// 正是因为正文藏在 storyboard.rows 与 tool_call 参数里，而不是 content/nodes 键上。
+func TestCloudAgentEvictionCoversStoryboardAndBatchTable(t *testing.T) {
+	body := strings.Repeat("镜头正文", 900)
+	rows := make([]any, 0, 40)
+	for index := 0; index < 40; index++ {
+		rows = append(rows, map[string]any{"id": fmt.Sprintf("row-%02d", index), "shotNumber": float64(index + 1), "plotDescription": body, "dialogue": body})
+	}
+	request := canonicalAgentRequest{Messages: []map[string]any{
+		{"role": "user", "content": "读一下分镜"},
+		{"role": "assistant", "content": "", "tool_calls": []any{map[string]any{"id": "call-1", "function": map[string]any{"name": "canvas_read_storyboard", "arguments": "{}"}}}},
+		{"role": "tool", "tool_call_id": "call-1", "content": patchTestJSON(map[string]any{"nodeId": "sb-1", "snapshotHash": "hash-1", "storyboard": map[string]any{"rows": rows, "hasMore": false, "nextOffset": 0}})},
+		{"role": "assistant", "content": "", "tool_calls": []any{map[string]any{"id": "call-2", "function": map[string]any{"name": "canvas_read_batch_table", "arguments": "{}"}}}},
+		{"role": "tool", "tool_call_id": "call-2", "content": patchTestJSON(map[string]any{"nodeId": "bt-1", "batchTable": map[string]any{"operation": "try_on", "rows": rows[:10], "hasMore": true, "nextOffset": 10}})},
+		{"role": "assistant", "content": "读完了"},
+		{"role": "user", "content": "继续"},
+	}}
+	before, _ := json.Marshal(request.Messages)
+	if len(before) < cloudAgentEvictionThresholdBytes {
+		t.Fatalf("测试载荷太小：%d", len(before))
+	}
+	changed, beforeBytes, afterBytes := compactCloudAgentContext(&request, nil)
+	if !changed || afterBytes >= beforeBytes {
+		t.Fatalf("分镜/批量表正文未被卸载：%d → %d", beforeBytes, afterBytes)
+	}
+	storyboard := mustDecodeJSON(t, request.Messages[2]["content"].(string))
+	board, _ := storyboard["storyboard"].(map[string]any)
+	if _, exists := board["rows"]; exists {
+		t.Fatalf("分镜行正文应被移出：%+v", board)
+	}
+	if board["totalRows"] != float64(40) || len(cloudAgentRowsOf(board["shotNumbers"])) != 0 {
+		// shotNumbers 是镜号数组（不是行对象），这里只校验规模与骨架存在
+		if board["totalRows"] != float64(40) {
+			t.Fatalf("应保留规模骨架：%+v", board)
+		}
+	}
+	if numbers, ok := board["shotNumbers"].([]any); !ok || len(numbers) != 40 {
+		t.Fatalf("应保留镜号骨架便于模型判断存在性：%+v", board["shotNumbers"])
+	}
+	if storyboard["snapshotHash"] != "hash-1" || storyboard["contextCompacted"] != true {
+		t.Fatalf("事实字段必须保留：%+v", storyboard)
+	}
+	table := mustDecodeJSON(t, request.Messages[4]["content"].(string))
+	tableBody, _ := table["batchTable"].(map[string]any)
+	if _, exists := tableBody["rows"]; exists {
+		t.Fatalf("批量表行正文应被移出：%+v", tableBody)
+	}
+	if tableBody["totalRows"] != float64(10) || tableBody["operation"] != "try_on" {
+		t.Fatalf("批量表骨架不完整：%+v", tableBody)
+	}
+}
+
+func patchTestJSON(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
+}
+
+func mustDecodeJSON(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		t.Fatalf("解码失败：%v", err)
+	}
+	return value
 }

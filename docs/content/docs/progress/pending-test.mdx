@@ -5,6 +5,16 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 运行态体积治理 Stage 0（几何/分镜行级增量 + 单步增长预算 + 卸载扩容）
+
+`canvas_updated` 改为只下发增量：位置/尺寸变化只发几何字段；分镜行编辑只发变化的那几行（前端按行 id 三方合并，删除行发完整旧行、新增行发完整新行）。单步净增超过 15KB 时折叠最旧的画布增量（`canvasPatchSlimmed` + `requiresRefresh`，客户端拉全量）。正文卸载现在覆盖 `storyboard.rows`、`batchTable.rows` 与旧写回执（保留规模、镜号骨架与快照哈希）。
+
+- [x] 后端 `internal/app` 全量用例、`internal/canvas/...`、`internal/prompts` 通过；前端 `bun run test` 1761 通过 / 18 失败（与基线同集合），`bun run build` 通过。
+- [x] 用线上真实失败那轮的 `state_json` 量化：`canvas_updated` 载荷 241,771 → 21,885 字节（9%），消息 139,914 → 95,903 字节，预计整轮状态 524 KB → ≈260 KB。
+- [x] dev 真实渠道跑写入型负载（逐行补光影，10 次分镜行编辑）：整轮 `completed`，落库状态 **117,358 字节**、`canvas_updated` 10 条合计 **11,801 字节（最大 1,728）**、其中 7 条被增长预算折叠、`context_evicted` 1 次、`degradeLevel=0`。
+- [ ] 浏览器端确认：折叠过的步骤会整屏刷新一次画布（`requiresRefresh`），刷新后位置/行内容与服务端一致，本地未保存编辑不丢。
+- [ ] 连续多轮（20+ 步写入）确认状态体积不再线性增长；Stage 1（事件出表）后再验 50+ 步。
+
 ## 云端 Agent 的节点整理与新增落位
 
 云端 Agent 过去不能移动已有节点，`add_node` 不给坐标就落在原点重叠。现在新增了 `canvas_arrange_nodes` 工具（只改坐标，不改内容、不建连线、不改层级），并把 `add_node` 的缺省落位改为按画布内容自动避让；`update_node` 的 patch 额外支持 `x`/`y` 供模型微调单个节点。整理与前端"自动整理节点"共用同一套泳道/依赖分层常量与算法（服务端实现见 `backend/internal/canvas/layout`），归类只做横向位置分带，不创建或移动背板容器；锁定节点、容器节点、隐藏批次子节点与已归属背板的子节点保持不动。
