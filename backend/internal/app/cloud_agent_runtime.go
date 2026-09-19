@@ -337,7 +337,7 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 			return err
 		}
 		raw, err := json.Marshal(event.Payload)
-		if err != nil || len(raw) > 128<<10 {
+		if err != nil || len(raw) > cloudAgentEventPayloadLimitBytes {
 			return errors.New("Agent runtime event payload is too large")
 		}
 	}
@@ -634,6 +634,9 @@ func (s *Service) advanceCloudAgents() {
 func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) {
 	defer func() {
 		if errors.Is(err, errCloudAgentCheckpoint) {
+			// 具体原因（状态校验失败 / 超过 512KB / 上下文检查点错误）必须留痕：否则线上只能
+			// 看到一句"超过安全限制"，无法定位是哪一类问题。用户可见文案保持不变。
+			log.Printf("agent checkpoint failure %s: %v", run.ID, err)
 			err = s.terminateCloudAgent(run, "Agent 上下文或执行记录超过安全限制，本轮已停止；已有任务结果保留在任务中心")
 		}
 	}()
