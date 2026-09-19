@@ -12,6 +12,16 @@ import (
 
 const maxCloudAgentStoryboardRows = 100
 
+// maxCloudAgentStoryboardBindings 是单行允许的资产绑定数量上限（与前端关联资产列一致）。
+const maxCloudAgentStoryboardBindings = 8
+
+// cloudAgentStoryboardBindingRoles 是前端 StoryboardAssetRole 的同一份枚举。
+var cloudAgentStoryboardBindingRoles = []string{"character", "environment", "wardrobe", "prop", "weapon", "style", "motion", "audio"}
+
+func cloudAgentStoryboardBindingRoleList() []string {
+	return append([]string(nil), cloudAgentStoryboardBindingRoles...)
+}
+
 var cloudAgentStoryboardTextFields = []string{
 	"plotDescription", "dialogue", "videoMotionPrompt", "imageGenerationPrompt", "camera", "motion", "shotSize",
 	"emotion", "lightingAndAtmosphere", "audioEffects", "narrativeIntent", "viewerPOV", "performanceBlocking",
@@ -57,6 +67,21 @@ func cloudAgentStoryboardRowSchema() map[string]any {
 	for _, field := range cloudAgentStoryboardTextFields {
 		properties[field] = map[string]any{"type": "string"}
 	}
+	// 资产绑定是分镜行与画布素材的真实关联（前端"关联资产"列），只允许指向当前画布上
+	// 已就绪的图片/视频/音频节点；角色/场景/服装等语义由 role 表达。
+	properties["assetBindings"] = map[string]any{
+		"type": "array", "maxItems": maxCloudAgentStoryboardBindings,
+		"description": "该镜头引用的画布素材：nodeId 必须是当前画布上已就绪的图片/视频/音频节点；role 表达用途；priority 越大越靠前",
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"nodeId":   map[string]any{"type": "string", "description": "当前画布上已就绪的图片/视频/音频节点ID"},
+				"role":     map[string]any{"type": "string", "enum": cloudAgentStoryboardBindingRoleList()},
+				"priority": map[string]any{"type": "integer", "minimum": 0},
+			},
+			"required": []string{"nodeId", "role"}, "additionalProperties": false,
+		},
+	}
 	return map[string]any{"type": "object", "properties": properties, "required": []string{"durationSeconds"}, "additionalProperties": false}
 }
 
@@ -77,8 +102,13 @@ func validateCloudAgentStoryboardRow(row map[string]any, requireDescription bool
 		return BadAuthRequest("分镜时长必须是大于零的数字")
 	}
 	for key := range row {
-		if key != "durationSeconds" && !cloudAgentStoryboardTextField(key) {
+		if key != "durationSeconds" && key != "assetBindings" && !cloudAgentStoryboardTextField(key) {
 			return BadAuthRequest(fmt.Sprintf("不能通过分镜工具写入字段 %s", key))
+		}
+	}
+	if value, exists := row["assetBindings"]; exists {
+		if err := validateCloudAgentStoryboardBindings(value); err != nil {
+			return err
 		}
 	}
 	for _, key := range cloudAgentStoryboardTextFields {
@@ -193,6 +223,9 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 			"rows": rows, "visibleColumns": []any{"shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"}, "referenceNodeIds": []any{},
 		}},
 	})
+	if err := cloudAgentStoryboardBindingsInDocAny(doc, rows); err != nil {
+		return nil, err
+	}
 	doc["nodes"] = append(creationMaps(doc["nodes"]), node)
 	return &cloudAgentStoryboardMutationPlan{
 		Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
@@ -275,6 +308,10 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 				if !ok || utf8.RuneCountInString(text) > 20000 {
 					return nil, BadAuthRequest(fmt.Sprintf("分镜字段 %s 必须是不超过20000字的文本", key))
 				}
+			} else if key == "assetBindings" {
+				if err := validateCloudAgentStoryboardBindings(value); err != nil {
+					return nil, err
+				}
 			} else {
 				return nil, BadAuthRequest(fmt.Sprintf("不能通过分镜编辑修改字段 %s", key))
 			}
@@ -304,6 +341,9 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	}
 	for i, row := range next {
 		row["shotNumber"] = float64(i + 1)
+	}
+	if err := cloudAgentStoryboardBindingsInDoc(doc, next); err != nil {
+		return nil, err
 	}
 	storyboard["rows"] = mapsAsAny(next)
 	node["metadata"].(map[string]any)["storyboard"] = storyboard
@@ -401,4 +441,71 @@ func cloudAgentStoryboardRowDefaults() map[string]any {
 		row[field] = ""
 	}
 	return row
+}
+
+// validateCloudAgentStoryboardBindings 校验资产绑定的形状（数量、字段、role 枚举、priority）。
+func validateCloudAgentStoryboardBindings(value any) error {
+	items, ok := value.([]any)
+	if !ok {
+		return BadAuthRequest("assetBindings 必须是数组（每项含 nodeId 与 role）")
+	}
+	if len(items) > maxCloudAgentStoryboardBindings {
+		return BadAuthRequest(fmt.Sprintf("单行最多关联 %d 个素材", maxCloudAgentStoryboardBindings))
+	}
+	seen := map[string]bool{}
+	for _, item := range items {
+		binding, ok := item.(map[string]any)
+		if !ok {
+			return BadAuthRequest("assetBindings 每项必须是 {nodeId, role, priority} 对象")
+		}
+		nodeID := strings.TrimSpace(stringValue(binding["nodeId"]))
+		if nodeID == "" {
+			return BadAuthRequest("assetBindings 每项都需要 nodeId")
+		}
+		if seen[nodeID] {
+			return BadAuthRequest("同一行不能重复关联同一个素材节点")
+		}
+		seen[nodeID] = true
+		if role := strings.TrimSpace(stringValue(binding["role"])); !cloudAgentContainsString(cloudAgentStoryboardBindingRoles, role) {
+			return BadAuthRequest("assetBindings 的 role 只能是 character、environment、wardrobe、prop、weapon、style、motion 或 audio")
+		}
+		if priority, exists := binding["priority"]; exists {
+			if _, ok := cloudAgentSafeNumber(priority); !ok {
+				return BadAuthRequest("assetBindings 的 priority 必须是非负整数")
+			}
+		}
+	}
+	return nil
+}
+
+// cloudAgentStoryboardBindingsInDoc 校验绑定指向的节点确实在当前画布上，且是可用于引用的媒体节点。
+// 与 generate_media 的参考素材同口径：只接已就绪的图片/视频/音频节点，不接受任意 URL 或文本节点。
+func cloudAgentStoryboardBindingsInDoc(doc map[string]any, rows []map[string]any) error {
+	return cloudAgentStoryboardBindingsInDocAny(doc, mapsAsAny(rows))
+}
+
+func cloudAgentStoryboardBindingsInDocAny(doc map[string]any, rows []any) error {
+	byID := map[string]map[string]any{}
+	for _, node := range creationMaps(doc["nodes"]) {
+		byID[stringValue(node["id"])] = node
+	}
+	for _, item := range creationMaps(rows) {
+		items, _ := item["assetBindings"].([]any)
+		for _, item := range items {
+			binding, _ := item.(map[string]any)
+			nodeID := strings.TrimSpace(stringValue(binding["nodeId"]))
+			if nodeID == "" {
+				continue
+			}
+			node := byID[nodeID]
+			if node == nil {
+				return BadAuthRequest(fmt.Sprintf("关联素材 %s 不在当前画布上，请先用 canvas_get_state 读取真实节点ID", nodeID))
+			}
+			nodeType := stringValue(node["type"])
+			if nodeType != "image" && nodeType != "video" && nodeType != "audio" {
+				return BadAuthRequest(fmt.Sprintf("节点 %s 是 %s，只能关联图片/视频/音频节点", nodeID, nodeType))
+			}
+		}
+	}
+	return nil
 }

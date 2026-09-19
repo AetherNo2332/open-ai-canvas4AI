@@ -1,10 +1,18 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
 )
+
+// cloudAgentContinuationEventLimit 是续轮读取上一轮事件的上限：收束要覆盖整轮改动，
+// 不能只看默认页（否则长会话的早期改动对新轮不可见）。
+const cloudAgentContinuationEventLimit = 1000
+
+// cloudAgentContinuationChangeLimit 是收束里"上一轮改动"清单的行数上限。
+const cloudAgentContinuationChangeLimit = 12
 
 // cloudAgentContinuationReply 生成「上一轮接着聊」用的两段内容：
 //
@@ -59,13 +67,23 @@ func cloudAgentContinuationContext(run *CloudAgentRun, submitted []string) strin
 		return ""
 	}
 	failed := run.Status == "failed" || strings.TrimSpace(run.FailureMessage) != ""
-	if run.Status == "completed" && !failed && len(submitted) == 0 {
+	// 上一轮改过哪些节点：成功轮也要说清楚，否则新轮无从知道已完成的改动，
+	// 只能凭自己上一轮的结束语猜（实测会重复劳动或宣称重做）。
+	changes := cloudAgentContinuationChanges(run)
+	if run.Status == "completed" && !failed && len(submitted) == 0 && len(changes) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("上一轮已结束（")
 	b.WriteString(firstNonEmpty(run.Status, "unknown"))
 	b.WriteString("）。")
+	if len(changes) > 0 {
+		b.WriteString("\n上一轮对画布的实际改动（服务端按事件记录，不是模型自述，已发生的不要重做）：")
+		for _, change := range changes {
+			b.WriteString("\n- ")
+			b.WriteString(change)
+		}
+	}
 	if failed {
 		reason := strings.TrimSpace(run.FailureMessage)
 		if reason == "" {
@@ -82,4 +100,43 @@ func cloudAgentContinuationContext(run *CloudAgentRun, submitted []string) strin
 		b.WriteString(strings.Join(submitted, ", "))
 	}
 	return b.String()
+}
+
+// cloudAgentContinuationChanges 从上一轮的 canvas_updated 事件里抽出"改了什么"，
+// 只保留操作类型与涉及节点/条数，供新轮判断哪些工作已经完成。
+func cloudAgentContinuationChanges(run *CloudAgentRun) []string {
+	if run == nil {
+		return nil
+	}
+	changes := make([]string, 0, cloudAgentContinuationChangeLimit)
+	for _, event := range run.Events {
+		if event.Type != "canvas_updated" {
+			continue
+		}
+		if len(changes) == cloudAgentContinuationChangeLimit {
+			changes = append(changes, "…（更多改动见运行记录）")
+			break
+		}
+		operation := firstNonEmpty(stringValue(event.Payload["operation"]), "canvas_ops")
+		titles := make([]string, 0, 4)
+		for _, action := range creationMaps(event.Payload["actions"]) {
+			title := strings.TrimSpace(stringValue(action["title"]))
+			if title == "" {
+				continue
+			}
+			titles = append(titles, title)
+			if len(titles) == 4 {
+				break
+			}
+		}
+		summary := operation
+		if len(titles) > 0 {
+			summary += "：" + strings.Join(titles, "、")
+		}
+		if count := len(creationMaps(event.Payload["actions"])); count > len(titles) {
+			summary += fmt.Sprintf("（共 %d 项）", count)
+		}
+		changes = append(changes, summary)
+	}
+	return changes
 }

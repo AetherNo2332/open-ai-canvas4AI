@@ -138,10 +138,17 @@ func TestCloudAgentStoryboardToolsAreScopedAndStructured(t *testing.T) {
 		t.Fatal("create storyboard schema lets the model forge row IDs")
 	}
 	editPatch := functions["canvas_edit_storyboard"]["parameters"].(map[string]any)["properties"].(map[string]any)["patch"].(map[string]any)["properties"].(map[string]any)
-	for _, protected := range []string{"imageNodeId", "videoNodeId", "assetBindings", "status"} {
+	// imageNodeId/videoNodeId/status 仍受保护（由服务端按任务回写维护）。
+	// assetBindings 改为受控可写：用户要的"给分镜关联资产"过去没有工具可用，
+	// 模型只能把 [参考: …] 塞进提示词文本；现在只允许指向当前画布上已就绪的
+	// 图片/视频/音频节点，role 与 priority 都按枚举/数值校验。
+	for _, protected := range []string{"imageNodeId", "videoNodeId", "status"} {
 		if _, exists := editPatch[protected]; exists {
 			t.Fatalf("protected field %s leaked into edit schema", protected)
 		}
+	}
+	if _, exists := editPatch["assetBindings"]; !exists {
+		t.Fatal("assetBindings 应当在分镜编辑 schema 中可写（用户要求的资产关联能力）")
 	}
 	if !cloudAgentWrite("canvas_create_storyboard") || !cloudAgentWrite("canvas_edit_storyboard") {
 		t.Fatal("storyboard mutations are not classified as writes")

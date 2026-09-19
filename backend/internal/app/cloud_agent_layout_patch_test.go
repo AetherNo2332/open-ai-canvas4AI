@@ -272,3 +272,56 @@ func mustDecodeJSON(t *testing.T, raw string) map[string]any {
 	}
 	return value
 }
+
+// 分镜行现在可以关联真实画布素材（此前工具明确禁止，模型只能把 [参考: …] 写进提示词文本）。
+func TestCloudAgentStoryboardAssetBindings(t *testing.T) {
+	doc := map[string]any{"nodes": []map[string]any{
+		{"id": "hero", "type": "image", "title": "女主", "metadata": map[string]any{"status": "success"}},
+		{"id": "video-1", "type": "video", "title": "参考视频", "metadata": map[string]any{"status": "success"}},
+		{"id": "text-1", "type": "text", "title": "剧本", "metadata": map[string]any{"content": "x"}},
+	}}
+	rows := []map[string]any{{"id": "r1", "assetBindings": []any{
+		map[string]any{"nodeId": "hero", "role": "character", "priority": float64(2)},
+		map[string]any{"nodeId": "video-1", "role": "motion"},
+	}}}
+	if err := cloudAgentStoryboardBindingsInDoc(doc, rows); err != nil {
+		t.Fatalf("合法绑定被拒：%v", err)
+	}
+	// 形状校验：role 枚举、重复、数量、字段类型
+	if err := validateCloudAgentStoryboardBindings([]any{map[string]any{"nodeId": "hero", "role": "主角"}}); err == nil {
+		t.Fatal("非法 role 应被拒绝")
+	}
+	if err := validateCloudAgentStoryboardBindings([]any{
+		map[string]any{"nodeId": "hero", "role": "character"},
+		map[string]any{"nodeId": "hero", "role": "prop"},
+	}); err == nil {
+		t.Fatal("同一行重复关联同一节点应被拒绝")
+	}
+	if err := validateCloudAgentStoryboardBindings("hero"); err == nil {
+		t.Fatal("非数组应被拒绝")
+	}
+	// 归属校验：不存在的节点 / 非媒体节点
+	if err := cloudAgentStoryboardBindingsInDoc(doc, []map[string]any{{"id": "r1", "assetBindings": []any{map[string]any{"nodeId": "missing", "role": "character"}}}}); err == nil {
+		t.Fatal("不存在的节点应被拒绝")
+	}
+	if err := cloudAgentStoryboardBindingsInDoc(doc, []map[string]any{{"id": "r1", "assetBindings": []any{map[string]any{"nodeId": "text-1", "role": "character"}}}}); err == nil {
+		t.Fatal("文本节点不能被关联为素材")
+	}
+	// schema 与描述都要暴露这个字段（否则模型看不到能力）
+	schema := cloudAgentStoryboardPatchSchema()
+	if _, ok := schema["properties"].(map[string]any)["assetBindings"]; !ok {
+		t.Fatal("分镜 patch schema 未暴露 assetBindings")
+	}
+	description := ""
+	writeRequest := agentTestRequest()
+	writeRequest.PermissionMode = "auto"
+	for _, tool := range cloudAgentTools(writeRequest) {
+		function, _ := tool["function"].(map[string]any)
+		if function["name"] == "canvas_edit_storyboard" {
+			description = stringValue(function["description"])
+		}
+	}
+	if !strings.Contains(description, "assetBindings") || strings.Contains(description, "不能修改素材绑定") {
+		t.Fatalf("工具描述未更新：%s", description)
+	}
+}

@@ -382,7 +382,9 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err := s.advanceCloudAgentByID(userID, parentID); err != nil {
 			return nil, err
 		}
-		parentRun, err := s.CloudAgentRun(userID, parentID)
+		// 续轮的收束要读上一轮**全部**事件（默认页只有最近 100 条）：
+		// 长会话一旦被截断，新轮就看不到上一轮改过哪些节点，表现为"忘了自己做过什么"。
+		parentRun, err := s.CloudAgentRun(userID, parentID, CloudAgentRunViewOptions{EventLimit: cloudAgentContinuationEventLimit})
 		if err != nil {
 			return nil, err
 		}

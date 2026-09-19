@@ -87,7 +87,14 @@ type cloudAgentRuntime struct {
 	DecisionSettings       map[string]string            `json:"decisionSettings,omitempty"`
 	ActionNudged           bool                         `json:"actionNudged,omitempty"`
 	EmptyOutputNudged      int                          `json:"emptyOutputNudged,omitempty"`
-	StepSnapshotHash       string                       `json:"stepSnapshotHash,omitempty"`
+	// EmptyOutputEscalated 记录"空输出已经升级重试过几次"（关思考 + 放大输出预算）。
+	EmptyOutputEscalated int `json:"emptyOutputEscalated,omitempty"`
+	// ForceThinkingOff 让本步请求强制关闭上游思考：思考模型偶发把整个输出预算花在推理上，
+	// 结果正文与工具调用皆空（实测 output_tokens 正好等于 maxOutputTokens）。
+	ForceThinkingOff bool `json:"forceThinkingOff,omitempty"`
+	// BoostStepOutputBudget 让本步请求使用放大后的输出预算（配合关思考重试）。
+	BoostStepOutputBudget bool   `json:"boostStepOutputBudget,omitempty"`
+	StepSnapshotHash      string `json:"stepSnapshotHash,omitempty"`
 	// EventSeqBase 是尾部缓存之前"已入库"的事件条数：新不变量
 	// events[i].Seq == EventSeqBase + i + 1。事件全量落在 cloud_agent_run_events，
 	// 状态只保留最近 cloudAgentEventTailLimit 条供阅读与摘要使用。
@@ -752,8 +759,14 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		if task.Status != model.TaskStatusSucceeded && cloudAgentTruncatedToolArguments(task) {
 			return s.correctCloudAgentTruncatedCalls(run, &state)
 		}
-		if cloudAgentEmptyModelOutput(task) && state.EmptyOutputNudged < cloudAgentMaxEmptyOutputNudges {
-			return s.correctCloudAgentEmptyOutput(run, &state)
+		if cloudAgentEmptyModelOutput(task) {
+			if state.EmptyOutputNudged < cloudAgentMaxEmptyOutputNudges {
+				return s.correctCloudAgentEmptyOutput(run, &state)
+			}
+			// 催过仍然空：改为"关思考 + 放大输出预算"重试同一步，而不是把整轮判死。
+			if state.EmptyOutputEscalated < cloudAgentMaxEmptyOutputEscalations {
+				return s.correctCloudAgentEmptyOutputEscalation(run, &state)
+			}
 		}
 		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 			if task.Status != model.TaskStatusSucceeded {
@@ -844,7 +857,13 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if requested, err := s.cloudAgentRequestCompaction(run, &state, canonical); err != nil || requested {
 		return err
 	}
-	input := map[string]any{"mode": "text", "prompt": state.Request.Prompt, "agentRequests": map[string]any{"canonical": canonical}, "config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)}, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(state.Policy.ReasoningMode), "maxOutputTokens": cloudAgentStepMaxOutputTokens}}
+	// 空输出升级重试：关思考 + 放大输出预算，避免"思考吃满预算、正文为空"再次发生。
+	stepThinking := cloudAgentReasoningEnabled(state.Policy.ReasoningMode) && !state.ForceThinkingOff
+	stepOutputTokens := cloudAgentStepMaxOutputTokens
+	if state.BoostStepOutputBudget {
+		stepOutputTokens = cloudAgentStepEscalatedMaxOutputTokens
+	}
+	input := map[string]any{"mode": "text", "prompt": state.Request.Prompt, "agentRequests": map[string]any{"canonical": canonical}, "config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)}, "textOptions": map[string]any{"stream": true, "thinking": stepThinking, "maxOutputTokens": stepOutputTokens}}
 	raw, _ := json.Marshal(canonical)
 	if len(raw) > cloudAgentRequestHardLimitBytes {
 		return s.failCloudAgent(run, &state, "模型上下文超过 192KB 上限")
@@ -888,6 +907,11 @@ const (
 // 并被截断（截断后要再花一次往返补救），所以留出余量取 6144（最坏单步 ≈ 220s，
 // 仍然是有限上界，而不是靠用户手动取消）。
 const cloudAgentStepMaxOutputTokens = 6144
+
+// cloudAgentStepEscalatedMaxOutputTokens 是"空输出升级重试"用的输出预算：思考模型在 6144 下
+// 偶发把预算全花在推理上（实测 output_tokens 正好等于 6144、正文为空、连续三次），
+// 这一档同时关思考并放大预算，让同一步有机会产出正文或工具调用。
+const cloudAgentStepEscalatedMaxOutputTokens = 16384
 
 // compactCloudAgentContext reports whether it changed anything, plus the
 // conversation-message size before and after, for the observability event.
@@ -1028,6 +1052,9 @@ func cloudAgentModelFailure(task *model.Task) (string, string) {
 	detail, reason := "模型任务未成功", "model_task_failed"
 	raw := strings.ToLower(task.Error)
 	switch {
+	case strings.Contains(task.Error, "没有返回内容"):
+		// 思考模型的典型失败：整个输出预算被推理吃掉，正文与工具调用皆空。
+		detail, reason = "上游连续返回空内容（通常是思考占满输出预算）；已自动关思考并放大预算重试仍失败，建议换用非思考模型或调小上下文", "model_empty_output"
 	case strings.Contains(raw, "connection reset by peer"):
 		detail, reason = "模型连接被对端或中间网络设备重置", "model_connection_reset"
 	case strings.Contains(raw, "timeout"), strings.Contains(raw, "deadline exceeded"):
