@@ -259,23 +259,18 @@ for (const [id, name, vendor, baseUrl] of [
 add({
   id: "openai-images", providerId: "openai-image", name: "OpenAI Images", vendor: "OpenAI", capability: "image",
   baseUrl: "https://api.openai.com", auth: bearer, params: imageParams, requiresPublicMediaUrls: true,
-  notes: "无参考图走 JSON generations；有参考图或蒙版走 JSON edits，并按官方 images 数组传入多张 image_url。quality 的 1k/2k/4k 映射为 OpenAI low/medium/high。",
+  notes: "无参考图走 JSON generations；有参考图或蒙版走 multipart edits，图片与蒙版分别作为 image / mask 文件部分上传（与旧版内置实现一致）。quality 的 1k/2k/4k 映射为 OpenAI low/medium/high。",
   create: {
     method: "POST",
     path: "/v1/images/generations",
     pathTemplate: conditional(gt(len(ref("request.images")), 0), "/v1/images/edits", "/v1/images/generations"),
     contentType: "application/json",
+    // 有参考图时上游要求 multipart/form-data（官方 edits 就是表单 + 文件部分）。这条路径曾经按
+    // JSON 体发出 images 数组，实测被上游判成"缺 prompt"：表单解析器读不到 JSON 体里的字段。
+    contentTypeTemplate: conditional(gt(len(ref("request.images")), 0), "multipart/form-data", "application/json"),
     body: {
       model: ref("request.model"),
       prompt: ref("request.prompt"),
-      images: omit(conditional(gt(len(ref("request.images")), 0), map(
-        filter(sorted(ref("request.images")), "media", ne(ref("media.role"), "mask")),
-        "media",
-        { image_url: ref("media.value") }
-      ))),
-      mask: omit(conditional(gt(len(filter(ref("request.images"), "media", eq(ref("media.role"), "mask"))), 0), {
-        image_url: first(map(filter(sorted(ref("request.images")), "media", eq(ref("media.role"), "mask")), "media", ref("media.value")))
-      })),
       n: omit(conditional(gt(ref("request.imageCount"), 0), ref("request.imageCount"), 1)),
       size: omit(conditional({ $in: [lower(trim(ref("request.aspectRatio"))), ["", "auto"]] }, null, ref("request.aspectRatio"))),
       quality: omit({
@@ -299,7 +294,12 @@ add({
       response_format: omit(ref("request.providerOptions.openai-image.response_format")),
       style: omit(ref("request.providerOptions.openai-image.style")),
       user: omit(ref("request.providerOptions.openai-image.user"))
-    }
+    },
+    // 只有 edits 分支（有参考图）会带上文件部分；generations 分支这两个表达式求值为空，请求体仍是纯 JSON。
+    files: [
+      { name: "image", source: map(filter(sorted(ref("request.images")), "media", ne(ref("media.role"), "mask")), "media", ref("media.value")) },
+      { name: "mask", source: first(map(filter(sorted(ref("request.images")), "media", eq(ref("media.role"), "mask")), "media", ref("media.value"))) }
+    ]
   },
   response: {
     status: "succeeded",

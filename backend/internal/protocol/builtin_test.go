@@ -514,7 +514,7 @@ func TestImageResponseKeepsBase64AsDataURL(t *testing.T) {
 	}
 }
 
-func TestOpenAIImagesEditUsesJSONImageReferences(t *testing.T) {
+func TestOpenAIImagesEditUsesMultipartImageParts(t *testing.T) {
 	adapter := officialPackageAdapter(t, "openai-images.yingce-plugin", "openai-image")
 	if !adapter.Metadata().RequiresPublicMediaURLs {
 		t.Fatal("OpenAI Images reference inputs must be hydrated as public URLs")
@@ -531,29 +531,58 @@ func TestOpenAIImagesEditUsesJSONImageReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Path != "/v1/images/edits" || spec.ContentType != "application/json" || len(spec.Files) != 0 {
-		t.Fatalf("edit request = path:%q contentType:%q files:%#v", spec.Path, spec.ContentType, spec.Files)
+	// 官方 edits 接口是表单 + 文件部分：参考图必须作为文件上传（旧版内置实现就是这样），
+	// 曾经改成 JSON 体里的 images 数组，实测上游按表单解析后直接报"缺 prompt"。
+	if spec.Path != "/v1/images/edits" || spec.ContentType != "multipart/form-data" {
+		t.Fatalf("edit request = path:%q contentType:%q", spec.Path, spec.ContentType)
+	}
+	if len(spec.Files) != 3 {
+		t.Fatalf("files = %#v", spec.Files)
+	}
+	for index, want := range []struct{ name, url string }{
+		{"image", "https://cdn.example/reference-1.png"},
+		{"image", "https://cdn.example/reference-2.png"},
+		{"mask", "https://cdn.example/mask.png"},
+	} {
+		if spec.Files[index].Name != want.name || spec.Files[index].Reference.URL != want.url {
+			t.Fatalf("files[%d] = %#v, want %s %s", index, spec.Files[index], want.name, want.url)
+		}
 	}
 	body, ok := spec.Body.(map[string]any)
 	if !ok {
 		t.Fatalf("body = %#v", spec.Body)
 	}
-	images, ok := body["images"].([]any)
-	if !ok || len(images) != 2 {
-		t.Fatalf("images = %#v", body["images"])
+	// 表单字段仍走 body，但参考图不再重复塞一份 JSON（否则会被当成多余的 images 表单字段发出去）。
+	if body["prompt"] != "combine both references" || body["model"] != "gpt-image-2.5" {
+		t.Fatalf("form fields = %#v", body)
 	}
-	for index, want := range []string{"https://cdn.example/reference-1.png", "https://cdn.example/reference-2.png"} {
-		image, ok := images[index].(map[string]any)
-		if !ok || image["image_url"] != want {
-			t.Fatalf("images[%d] = %#v, want image_url %q", index, images[index], want)
+	for _, key := range []string{"images", "mask"} {
+		if _, exists := body[key]; exists {
+			t.Fatalf("%s should be uploaded as a file part, not a form field: %#v", key, body[key])
 		}
-	}
-	mask, ok := body["mask"].(map[string]any)
-	if !ok || mask["image_url"] != "https://cdn.example/mask.png" {
-		t.Fatalf("mask = %#v", body["mask"])
 	}
 	if _, exists := body["response_format"]; exists {
 		t.Fatalf("response_format should not be sent by default: %#v", body["response_format"])
+	}
+}
+
+// 没有参考图时仍是纯 JSON generations 请求，文件部分为空 —— 表单契约不能泄漏到文生图路径。
+func TestOpenAIImagesGenerationStaysJSON(t *testing.T) {
+	adapter := officialPackageAdapter(t, "openai-images.yingce-plugin", "openai-image")
+	spec, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{
+		Model:       "gpt-image-2.5",
+		Prompt:      "a still life",
+		AspectRatio: "1024x1024",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Path != "/v1/images/generations" || spec.ContentType != "application/json" || len(spec.Files) != 0 {
+		t.Fatalf("generation request = path:%q contentType:%q files:%#v", spec.Path, spec.ContentType, spec.Files)
+	}
+	body, ok := spec.Body.(map[string]any)
+	if !ok || body["size"] != "1024x1024" {
+		t.Fatalf("size = %#v", spec.Body)
 	}
 }
 

@@ -2368,6 +2368,74 @@ func TestNewAPIChannel1VideoBodyMapsFramesAndReferences(t *testing.T) {
 	}
 }
 
+// 声明式协议的统一字段 aspectRatio 必须按能力配置折算：声明 size 的上游要像素尺寸。
+// 画布默认档是 1:1，内置实现一直在请求边界换算（imageSizeParameter → normalizePixelSize），
+// 插件路径漏了它 —— 实测只认 WIDTHxHEIGHT 的上游（vLLM / OpenAI 兼容）直接 400。
+func TestProtocolRequestConvertsCanvasRatioForSizeParameter(t *testing.T) {
+	pixelProfile := DefaultImageCapabilityConfig("openai-image", "krea-2-turbo")
+	if pixelProfile.Size.Parameter != "size" {
+		t.Fatalf("openai-image 默认尺寸参数 = %q", pixelProfile.Size.Parameter)
+	}
+	tests := []struct {
+		name    string
+		size    string
+		profile *ImageCapabilityConfig
+		want    string
+	}{
+		{name: "比例转像素", size: "1:1", profile: pixelProfile, want: "1024x1024"},
+		{name: "宽幅比例转像素", size: "16:9", profile: pixelProfile, want: "1824x1024"},
+		{name: "像素原样保留", size: "2496x1664", profile: pixelProfile, want: "2496x1664"},
+		{name: "auto 保持 auto", size: "auto", profile: pixelProfile, want: "auto"},
+		{name: "没有能力配置时也按像素折算", size: "1:1", profile: nil, want: "1024x1024"},
+	}
+	for _, item := range tests {
+		t.Run(item.name, func(t *testing.T) {
+			request := protocolRequestFromInput(canvasGenerationInput{
+				Mode:            "image",
+				Config:          providerConfig{Size: item.size},
+				ImageCapability: item.profile,
+			})
+			if request.AspectRatio != item.want {
+				t.Fatalf("aspectRatio = %q, want %q", request.AspectRatio, item.want)
+			}
+			if request.Output.AspectRatio != item.want {
+				t.Fatalf("output.aspectRatio = %q, want %q", request.Output.AspectRatio, item.want)
+			}
+		})
+	}
+}
+
+// 声明 aspect_ratio 的上游由插件模板自己归一（带容差），host 不抢：像素值原样透传，
+// 避免把 1824x1024 折算成 57:32 这种上游不认的比例。
+func TestProtocolRequestLeavesAspectRatioParameterUntouched(t *testing.T) {
+	ratioProfile := DefaultImageCapabilityConfig(string(model.ChannelInterfaceGrokImage), "grok-imagine-image")
+	if ratioProfile.Size.Parameter != "aspect_ratio" {
+		t.Fatalf("grok-image 尺寸参数 = %q", ratioProfile.Size.Parameter)
+	}
+	for _, size := range []string{"1824x1024", "16:9", "1:1", "auto"} {
+		request := protocolRequestFromInput(canvasGenerationInput{
+			Mode:            "image",
+			Config:          providerConfig{Size: size},
+			ImageCapability: ratioProfile,
+		})
+		if request.AspectRatio != size {
+			t.Fatalf("size %q → aspectRatio %q，应原样透传", size, request.AspectRatio)
+		}
+	}
+}
+
+// 视频的比例由自己那条链处理，图片的像素折算不能泄漏过来。
+func TestProtocolRequestKeepsVideoRatioUntouched(t *testing.T) {
+	request := protocolRequestFromInput(canvasGenerationInput{
+		Mode:            "video",
+		Config:          providerConfig{Size: "16:9"},
+		ImageCapability: DefaultImageCapabilityConfig("openai-image", "krea-2-turbo"),
+	})
+	if request.AspectRatio != "16:9" {
+		t.Fatalf("video aspectRatio = %q, want 16:9", request.AspectRatio)
+	}
+}
+
 func TestProtocolRequestPreservesVideoImageIDsAndRoles(t *testing.T) {
 	request := protocolRequestFromInput(canvasGenerationInput{
 		Mode: "video",
