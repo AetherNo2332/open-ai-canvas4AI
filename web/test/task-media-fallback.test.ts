@@ -49,7 +49,10 @@ describe("task cancellation policy", () => {
         expect(page).not.toContain("cancelGenerationTask");
         expect(page).not.toContain('runAction(detailTask.id, "cancel")');
         expect(page).toContain('if (task.status === "queued" || task.status === "running")');
-        expect(page).toContain("任务正在执行，不能删除本机记录");
+        // 9727656b 之后任务中心不再提供本机记录删除（连同"任务正在执行，不能删除本机记录"的守卫一起移除），
+        // 提交后只有重试 / 查询上游两个入口：这里守的是"页面不得再引入取消或本机记录删除"。
+        expect(page).not.toContain("deleteGenerationTask");
+        expect(page).not.toContain("删除本机");
     });
 
     test("batch stop only applies to items still waiting locally", () => {
