@@ -18,6 +18,7 @@ func Models() []any {
 	return []any{
 		&model.CloudAgentExecution{},
 		&model.CloudAgentCanvasMutation{},
+		&model.CloudAgentRunEvent{},
 		&model.AgentProfile{},
 		&model.AgentLesson{},
 		&model.AgentMemorySetting{},

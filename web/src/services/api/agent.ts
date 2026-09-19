@@ -74,6 +74,14 @@ export type AgentRun = {
     updatedAt: string;
     skills?: Array<{ id: string; name: string; version: string; hash: string }>;
     events?: AgentEvent[];
+    /** 事件已全量落库：本次返回的首条事件之前的已入库条数。 */
+    eventSeqBase?: number;
+    /** 该运行累计产生的事件条数（含未随本次返回的更早记录）。 */
+    eventCount?: number;
+    /** 本次返回的最后一条事件序号，可直接作为下次 sinceSeq。 */
+    latestSeq?: number;
+    /** 还有更早的记录未随本次返回（可按 sinceSeq 拉取）。 */
+    eventsTruncated?: boolean;
     spentCredits?: number;
     step?: number;
     activeMessage?: { messageId: string; text: string };
@@ -256,8 +264,12 @@ export function updateAgentProfile(input: { scope: AgentProfileScope; projectId?
     return http.patch<AgentProfileView>("/agent/profile", input, { timeout: 15_000 });
 }
 
-export function getAgentRun(runId: string, signal?: AbortSignal) {
-    return http.get<{ run: AgentRun }>(`/agent/runs/${encodeURIComponent(runId)}`, { signal });
+export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sinceSeq?: number; eventLimit?: number }) {
+    const params = new URLSearchParams();
+    if (options?.sinceSeq) params.set("sinceSeq", String(options.sinceSeq));
+    if (options?.eventLimit) params.set("eventLimit", String(options.eventLimit));
+    const query = params.toString();
+    return http.get<{ run: AgentRun }>(`/agent/runs/${encodeURIComponent(runId)}${query ? `?${query}` : ""}`, { signal });
 }
 
 export function cancelAgentRun(runId: string) {

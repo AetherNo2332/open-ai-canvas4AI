@@ -33,6 +33,7 @@ type Service struct {
 	workerRuntimeMu          sync.Mutex
 	agentSchedulerMu         sync.Mutex
 	agentSchedulerCursor     string
+	agentEventPurgeAt        time.Time
 	agentConflictStreak      map[string]int
 	activeStorageTests       map[string]bool
 	characterTaskMu          sync.Mutex
