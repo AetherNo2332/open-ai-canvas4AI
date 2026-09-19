@@ -1,6 +1,7 @@
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import type { GenerationTaskEffectClaim, GenerationTaskEffectResult, GenerationTaskEffectStore } from "@/services/generation-task-materializer";
+import { createUuid } from "@/lib/client-id";
 
 type EffectRecord = {
     version: 1;
@@ -181,7 +182,7 @@ export function createProviderNeutralGenerationTaskEffectStore(
                     scope,
                     taskId,
                     effectKey,
-                    leaseToken: crypto.randomUUID(),
+                    leaseToken: createUuid(),
                     expiresAt: new Date(current.getTime() + leaseMs).toISOString(),
                     fence: (record?.fence ?? 0) + 1,
                 };

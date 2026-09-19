@@ -4,7 +4,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -134,8 +133,13 @@ func TestCloudAgentReliabilityOversizedEventsDegradeInsteadOfFailing(t *testing.
 	t.Logf("过大事件日志已降级: %d 字节, level=%d, 事件 %d 条", len(saved.StateJSON), stored.EventDegradeLevel, len(stored.Events))
 }
 
-// 单条事件载荷超过校验上限（128KB）时仍然终止本轮——那是真正存不下的情况。
-func TestCloudAgentReliabilityOversizedEventPayloadStillFails(t *testing.T) {
+// 单条事件载荷超过校验上限（128KB）时**降级保存**，而不是终止本轮。
+//
+// 载荷本身仍然存不下（治理后必须低于上限），但"一条事件太胖"不该让整轮报废：
+// 实测线上就是一次整理几十个分镜节点、单条 canvas_updated 带满完整 before/after
+// 顶穿了这条上限，用户看到的是"超过安全限制，本轮已停止"。现在先丢画布增量
+// （客户端改拉全量），再丢其它大字段，仍超限才压成回执。
+func TestCloudAgentReliabilityOversizedEventPayloadDegrades(t *testing.T) {
 	s, _, root := reliableAgentRoot(t)
 	run, err := s.repo.CloudAgent("user", root.ID)
 	if err != nil {
@@ -150,8 +154,22 @@ func TestCloudAgentReliabilityOversizedEventPayloadStillFails(t *testing.T) {
 	}
 	if err = s.repo.MutateCloudAgent("user", root.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
-	}); err == nil || !errors.Is(err, errCloudAgentCheckpoint) {
-		t.Fatalf("超大单事件载荷应当以 checkpoint 错误拒绝，实际 %v", err)
+	}); err != nil {
+		t.Fatalf("超大单事件载荷应当降级保存，实际 %v", err)
+	}
+	stored, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := cloudAgentDecode(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range next.Events {
+		raw, _ := json.Marshal(event.Payload)
+		if len(raw) > cloudAgentEventPayloadLimitBytes {
+			t.Fatalf("治理后仍有超限载荷：%d 字节", len(raw))
+		}
 	}
 }
 

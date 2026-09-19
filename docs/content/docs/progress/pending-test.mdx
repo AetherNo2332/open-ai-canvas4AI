@@ -5,6 +5,16 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 云端 Agent 的节点整理与新增落位
+
+云端 Agent 过去不能移动已有节点，`add_node` 不给坐标就落在原点重叠。现在新增了 `canvas_arrange_nodes` 工具（只改坐标，不改内容、不建连线、不改层级），并把 `add_node` 的缺省落位改为按画布内容自动避让；`update_node` 的 patch 额外支持 `x`/`y` 供模型微调单个节点。整理与前端"自动整理节点"共用同一套泳道/依赖分层常量与算法（服务端实现见 `backend/internal/canvas/layout`），归类只做横向位置分带，不创建或移动背板容器；锁定节点、容器节点、隐藏批次子节点与已归属背板的子节点保持不动。
+
+- [x] 后端 `internal/app` 全量用例通过（含新增整理用例）；`internal/canvas/layout` 与 `internal/canvas/capability` 用例通过；前端 `bun run build`（tsc + vite）通过，`bun test` 1757 通过 / 18 失败（与基线同集合）。
+- [x] 上限与安全：一次最多整理 50 个节点、最多 12 组；坐标绝对值上限 1e6；陈旧 `snapshotHash` 拒绝；`dryRun` 只预演不写库；`read_only` 运行不暴露该工具。
+- [ ] 真实渠道验收：用户说"帮我按场景整理一下" → 一次审批后画布成位置分带，且锁定节点未被动；说"把 A 场景的镜头放一起" → 只形成位置带、不生成背板。
+- [ ] 连续新增多个节点：确认互不重叠、同类节点纵向追加、生成输入排在其目标左侧；与前端"自动整理节点"结果在同一画布上一致。
+- [ ] 浏览器确认审批卡显示"整理"徽标与移动节点明细，确认后画布位置更新、撤销可整批回滚。
+
 ## 云端 Agent 同步上游 v1.5.1
 
 上游把云端 Agent 的行为规则收回版本化策略文件（系统行为策略 v6），编译器只向模型投影事实：系统提示里的"本轮执行上下文"是 `permissionMode`、`reasoningMode`、`budget`、`maxToolCalls`、`maxOutputBytes`、`canvasSummary`、`referenceCandidates`、`skills`、`profileLayers` 的 JSON；计划催办、空输出、参数截断统一走带 `agentContextSource` 来源的事实消息，不再拼接散文指令。锚点收敛为"当前请求 + 可观测候选素材"，删除按关键词推断创作授权的 `referenceMode` / `lockedRequirements` / `freelyDecidable`；可纠正的参数错误统一用上游的分类化回执（非对象 / 类型不符 / 未知字段）并附本轮实际 schema；媒体失败改为分层报告生成错误与回写错误且整轮可续跑。本分支的上下文治理（provider 锚点计量、80% 可用输入触发轮内压缩、正文卸载、事件日志瘦身与降级阶梯）、看图能力（`canvas_inspect_image` 与 3 轮图片窗口）和能力卡按运行模式路由继续保留；锚点只跨轮继承视觉事实（`inspected` 与 `visualNote`），不再继承目标与权限。

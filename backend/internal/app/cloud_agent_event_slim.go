@@ -20,6 +20,11 @@ import "encoding/json"
 //     历史步只留数字；
 //  4. 审批的 arguments/preview：审批卡只在待决时需要；已决的旧审批保留人类可读的
 //     preview 与决定，去掉原始 arguments（媒体审批例外：客户端的设置比对要用它）。
+//
+// cloudAgentEventPayloadLimitBytes 是单条事件载荷的硬上限（与 runtime 校验共用）：
+// 超过它的载荷无法通过状态校验，历史治理必须在保存前把它降下来，而不是让整轮判死。
+const cloudAgentEventPayloadLimitBytes = 128 << 10
+
 func cloudAgentSlimEventHistory(state *cloudAgentRuntime, terminal bool) bool {
 	if state == nil || len(state.Events) == 0 {
 		return false
@@ -53,6 +58,38 @@ func cloudAgentSlimEventHistory(state *cloudAgentRuntime, terminal bool) bool {
 	}
 	trimDeltas("reasoning_delta", "reasoning_message")
 	trimDeltas("assistant_delta", "assistant_message")
+
+	// 0) 单条载荷超过硬上限：先丢画布增量（客户端改为拉全量），再丢其它大字段；
+	//    仍然超限就整条压成回执。任何一步都不让整轮因为"一条事件太胖"而失败。
+	for index := range state.Events {
+		event := &state.Events[index]
+		if len(mustMarshalPayload(event.Payload)) <= cloudAgentEventPayloadLimitBytes {
+			continue
+		}
+		changed = true
+		if _, exists := event.Payload["canvasPatch"]; exists {
+			delete(event.Payload, "canvasPatch")
+			event.Payload["canvasPatchSlimmed"] = true
+			event.Payload["requiresRefresh"] = true
+		}
+		for _, key := range []string{"result", "arguments", "preview", "breakdown", "nodes", "tools"} {
+			delete(event.Payload, key)
+		}
+		if len(mustMarshalPayload(event.Payload)) > cloudAgentEventPayloadLimitBytes {
+			receipt := map[string]any{
+				"requiresRefresh": true,
+				"payloadSlimmed":  true,
+				"eventId":         event.EventID,
+			}
+			if text, ok := event.Payload["text"].(string); ok {
+				receipt["text"] = truncateRunes(text, 600)
+			}
+			if toolName, ok := event.Payload["toolName"].(string); ok {
+				receipt["toolName"] = toolName
+			}
+			event.Payload = receipt
+		}
+	}
 
 	// 2) canvas_updated / 3) context_pressure / 4) 审批：按事件类型保留最近 N 份完整载荷。
 	slimByType := func(eventType string, keep int, drop func(payload map[string]any) bool) {

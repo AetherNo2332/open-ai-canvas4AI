@@ -9,6 +9,7 @@ import { consumeGenerationTaskAgent } from "@/services/project-asset-sync";
 import type { CanvasConnection, CanvasNodeData, ContextMenuState, ViewportTransform } from "@/types/canvas";
 
 import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-executor";
+import { stableDigestHex } from "@/lib/stable-digest";
 
 export type CanvasGenerationContext = { conversationId?: string; messageId?: string; source?: "online" | "local" };
 type CanvasGenerationContinuation = NonNullable<NonNullable<CanvasNodeData["metadata"]>["agentGenerationContinuation"]>;
@@ -203,9 +204,8 @@ export async function consumeCanvasGenerationContinuation(
 }
 
 async function canvasGenerationContinuationId(nodeId: string, context?: CanvasGenerationContext) {
-    const seed = new TextEncoder().encode(`canvas-operation-generation\0${context?.source || ""}\0${context?.conversationId || ""}\0${context?.messageId || ""}\0${nodeId}`);
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", seed));
-    return `agent:${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    const hex = await stableDigestHex(`canvas-operation-generation\0${context?.source || ""}\0${context?.conversationId || ""}\0${context?.messageId || ""}\0${nodeId}`);
+    return `agent:${hex}`;
 }
 
 export function useCanvasOperationHistory({
