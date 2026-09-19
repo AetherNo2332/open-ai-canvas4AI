@@ -225,6 +225,45 @@ const (
 	cloudAgentReasoningMessageLimit = 2000
 )
 
+// cloudAgentStepGrowthBudgetBytes 是单步允许的状态净增上限。
+//
+// 事件 seq 必须与下标对齐（校验与客户端游标都依赖连续性），所以"增长预算"只能通过
+// 折叠载荷实现、不能删事件：超过预算就把最旧的画布增量折叠成"需要刷新"的标记，
+// 客户端遇到 canvasPatchSlimmed 会改为拉全量画布，因此折叠是安全的。
+// 这条预算让"长会话"变成每步小幅增长，而不是某一步突然跳几十 KB 撞上硬上限。
+const cloudAgentStepGrowthBudgetBytes = 15 << 10
+
+// cloudAgentFoldEventPayloadsToBudget 在单步净增超过预算时折叠最旧的画布增量，返回是否改动。
+func cloudAgentFoldEventPayloadsToBudget(state *cloudAgentRuntime, previousBytes int) bool {
+	if state == nil || previousBytes <= 0 {
+		return false
+	}
+	changed := false
+	// 最多折 8 次：512KB 状态下每次重新 marshal 约 1.3ms，最坏 ~10ms，只在超预算时发生。
+	for pass := 0; pass < 8; pass++ {
+		raw, err := json.Marshal(state)
+		if err != nil || len(raw)-previousBytes <= cloudAgentStepGrowthBudgetBytes {
+			break
+		}
+		folded := false
+		for index := range state.Events {
+			event := &state.Events[index]
+			if _, exists := event.Payload["canvasPatch"]; !exists {
+				continue
+			}
+			delete(event.Payload, "canvasPatch")
+			event.Payload["canvasPatchSlimmed"] = true
+			event.Payload["requiresRefresh"] = true
+			folded, changed = true, true
+			break
+		}
+		if !folded {
+			break
+		}
+	}
+	return changed
+}
+
 // cloudAgentEventHistoryDegradeLevel 按已编码体积给出需要的降级等级：0 不降级、2 轻度、3 重度。
 func cloudAgentEventHistoryDegradeLevel(sizeBytes int) int {
 	limit := float64(cloudAgentStateHardLimitBytes)

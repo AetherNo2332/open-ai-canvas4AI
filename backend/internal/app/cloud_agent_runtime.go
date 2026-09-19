@@ -503,6 +503,13 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 			return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
 		}
 	}
+	// 单步增长预算：这一步涨得太猛时就地折叠最旧的画布增量（客户端会改为拉全量），
+	// 避免"某一步突然跳几十 KB"把状态直接顶过硬上限。
+	if cloudAgentFoldEventPayloadsToBudget(state, len(run.StateJSON)) {
+		if raw, err = json.Marshal(state); err != nil {
+			return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
+		}
+	}
 	if len(raw) > cloudAgentStateHardLimitBytes {
 		return fmt.Errorf("%w: Agent 状态超过 512KB 上限", errCloudAgentCheckpoint)
 	}
@@ -882,18 +889,11 @@ func compactCloudAgentContext(request *canonicalAgentRequest, notes map[string]s
 		}
 		// Only omit re-readable bodies. Preserve IDs, errors, generation status,
 		// approvals and all other structured facts verbatim.
-		omitted := false
-		for _, key := range []string{"content", "nodes"} {
-			if _, exists := result[key]; exists {
-				delete(result, key)
-				omitted = true
-			}
-		}
-		if !omitted {
+		if !cloudAgentEvictResultBody(result) {
 			continue
 		}
 		result["contextCompacted"] = true
-		result["guidance"] = "历史读取正文已移出模型上下文；需要时重新读取。保留的历史状态不是当前状态，也不是执行授权，不得据此重复提交生成。"
+		result["guidance"] = cloudAgentEvictionGuidance
 		body, err := json.Marshal(result)
 		if err != nil || len(body) >= len(stringField(message, "content")) {
 			continue

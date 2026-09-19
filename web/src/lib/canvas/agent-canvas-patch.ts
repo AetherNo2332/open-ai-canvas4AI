@@ -39,7 +39,48 @@ function mergeValue(current: unknown, before: unknown, after: unknown): unknown 
         }
         return next;
     }
+    const keyed = mergeKeyedArray(current, before, after);
+    if (keyed !== undefined) return keyed;
     throw new Error("Agent 画布增量与本地内容冲突，需要校准；已保留本地编辑");
+}
+
+function keyedItems(value: unknown) {
+    if (!Array.isArray(value)) return null;
+    const items = new Map<string, Record<string, unknown>>();
+    for (const item of value) {
+        if (!record(item) || typeof item.id !== "string" || !item.id || items.has(item.id)) return null;
+        items.set(item.id, item);
+    }
+    return items;
+}
+
+/**
+ * 以 id 为键的数组按 id 做三方合并。
+ *
+ * 分镜行、批量表任务行这类列表的正文很长，服务端为控制运行态体积只会下发"变化的那几行"；
+ * 元素级合并让稀疏增量合法且安全：本地改过的行仍然按字段合并，服务端没提到的行原样保留。
+ * 只有三边都是"带唯一 id 的数组"时才走这条路径，其余情况返回 undefined 交给原来的严格判定。
+ */
+function mergeKeyedArray(current: unknown, before: unknown, after: unknown): unknown {
+    const currentItems = keyedItems(current);
+    const beforeItems = keyedItems(before);
+    const afterItems = keyedItems(after);
+    if (!currentItems || !beforeItems || !afterItems) return undefined;
+    const merged = new Map<string, unknown>(currentItems);
+    const created: string[] = [];
+    for (const id of afterItems.keys()) {
+        if (!currentItems.has(id) && !beforeItems.has(id)) created.push(id);
+    }
+    for (const id of new Set<string>([...beforeItems.keys(), ...afterItems.keys()])) {
+        const value = mergeValue(merged.get(id) ?? null, beforeItems.get(id) ?? null, afterItems.get(id) ?? null);
+        if (value === null || value === undefined) merged.delete(id);
+        else merged.set(id, value);
+    }
+    // 保持本地顺序，新增行按服务端返回的顺序追加在末尾。
+    const result: unknown[] = [];
+    for (const id of currentItems.keys()) if (merged.has(id)) result.push(merged.get(id));
+    for (const id of created) if (merged.has(id)) result.push(merged.get(id));
+    return result;
 }
 
 function mergeItems<T extends { id: string }>(items: T[], changes: Change<T>[]): T[] {
