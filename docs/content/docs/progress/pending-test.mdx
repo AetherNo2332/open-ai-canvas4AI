@@ -5,6 +5,17 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 后端依赖型用例接入 CI（Postgres / Redis）
+
+后端有 5 个用例此前在本地和 CI 都**静默跳过**：3 个需要 `CANVAS_TEST_POSTGRES_DSN`（`internal/database` 的 `TestPostgresAssetIDMigration`、`internal/canvas` 的 `TestRepairAssetBytesPostgres`、`internal/repository` 的 `TestCanvasRevision/postgres`），2 个需要 `redis-server` 可执行文件（`internal/platform` 的 `TestRuntimeCoordinatorRedisLeasePreservesLongestTTL`、`internal/app` 的 `TestClearAdminRuntimeCacheUsesRedisWhitelist`）。CI 的 Backend job 既没有 `services:` 也没有导出 DSN，runner 镜像也不含 redis，所以这几条路径一直没有真正执行过。
+
+现在 Backend job 起 `postgres:16-alpine` service、导出 `CANVAS_TEST_POSTGRES_DSN`、安装 `redis-server`，并新增「依赖用例不得被跳过」守卫：日志里出现 `--- SKIP` 就直接失败。
+
+- [x] 本地补跑（一次性 Postgres 容器 + 从 redis 镜像取出的 `redis-server`）：5 个用例全部 PASS（`TestPostgresAssetIDMigration` 3.71s、`TestRepairAssetBytesPostgres` 0.42s、`TestCanvasRevision/postgres` 0.74s、`TestRuntimeCoordinatorRedisLeasePreservesLongestTTL` 0.11s、`TestClearAdminRuntimeCacheUsesRedisWhitelist` 0.13s）。
+- [ ] CI 首次跑该守卫确认为绿，并记录 service 健康检查与 `apt-get install redis-server` 带来的耗时增量。
+- [ ] 确认新增的 `Ensure dependency-backed tests were not skipped` 步骤在依赖缺失时**确实**会让 job 失败（可用临时删掉 env 的方式验证一次）。
+- [ ] `TestMeasureDumpPayload`（需 `CLOUD_AGENT_MEASURE_OUT`）按设计保持手动触发，不纳入守卫。
+
 ## Web 基线与 Chrome E2E 红灯清零（18 个失败 → 0）
 
 `bun run test` 的 18 个失败其实只有 3 类根因，其中 3 处是产品实现问题，5 处是断言写的是重构前的实现：

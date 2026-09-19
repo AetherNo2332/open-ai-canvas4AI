@@ -18,16 +18,49 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # 后端有 5 个用例默认会静默跳过：3 个需要 CANVAS_TEST_POSTGRES_DSN，2 个用
+    # exec.LookPath("redis-server") 自起临时实例。只跑 go test ./... 而不备齐这两样，
+    # PostgreSQL 迁移 / 素材字节修复 / Redis 租约与缓存白名单这些路径就永远不会被执行。
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: canvas_test
+          POSTGRES_DB: canvas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CANVAS_TEST_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
           cache: true
+      - name: Install redis-server for integration tests
+        # 用例自己拉起临时 redis-server（unix socket），所以需要的是可执行文件而不是 redis 服务。
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq redis-server
+          sudo systemctl stop redis-server || true
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
       - name: Run Go tests
         run: go test ./...
+      - name: Ensure dependency-backed tests were not skipped
+        run: |
+          go test ./internal/database/ ./internal/canvas/ ./internal/repository/ ./internal/platform/ ./internal/app/ \
+            -run 'TestPostgresAssetIDMigration|TestRepairAssetBytesPostgres|TestCanvasRevision|TestRuntimeCoordinatorRedisLeasePreservesLongestTTL|TestClearAdminRuntimeCacheUsesRedisWhitelist' \
+            -count=1 -v | tee /tmp/dependency-tests.log
+          if grep -q -- "--- SKIP" /tmp/dependency-tests.log; then
+            echo "::error::依赖外部服务的用例被跳过：请检查 CANVAS_TEST_POSTGRES_DSN 与 redis-server"
+            exit 1
+          fi
 
   payment-plugins:
     name: Payment plugin artifacts
