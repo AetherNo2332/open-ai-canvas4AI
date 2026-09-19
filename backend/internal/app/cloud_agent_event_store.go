@@ -51,7 +51,7 @@ func (s *Service) cloudAgentFlushRunEvents(run *model.CloudAgentExecution, state
 	// 裁剪到尾部缓存：只调整内存态，由本次（或下一次）状态保存落库。
 	if len(state.Events) > cloudAgentEventTailLimit {
 		drop := len(state.Events) - cloudAgentEventTailLimit
-		state.Events = append([]CloudAgentEvent(nil), state.Events[drop:]...)
+		state.Events = append(make([]CloudAgentEvent, 0, cloudAgentEventTailLimit), state.Events[drop:]...)
 		state.EventSeqBase += drop
 	}
 	return nil

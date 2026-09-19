@@ -337,7 +337,7 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 		return errors.New("Agent runtime event watermark is invalid")
 	}
 	// 事件全量在 cloud_agent_run_events，状态里只留尾部缓存。
-	if len(state.Events) > cloudAgentEventTailLimit {
+	if len(state.Events) > cloudAgentEventTailSanityLimit {
 		return errors.New("Agent runtime event tail is too large")
 	}
 	for index, event := range state.Events {
@@ -490,6 +490,9 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 			})
 		}
 	}
+	// 已入库的前缀可以安全丢掉（内容在 cloud_agent_run_events 里）；尚未入库的事件先留在状态里，
+	// 由下一次转移开头的 flush 入库后再裁 —— 顺序保证不会丢审计。
+	cloudAgentTrimFlushedEvents(state)
 	if run.ID != "" {
 		if err := validateCloudAgentRuntime(run, state); err != nil {
 			return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
@@ -861,9 +864,12 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 const cloudAgentStepOperation = "cloud_agent_step"
 
 const (
-	// cloudAgentEventTailLimit 是状态里保留的事件条数上限：事件已全量落库，
+	// cloudAgentEventTailLimit 是状态里保留的事件条数"裁剪目标"：事件已全量落库，
 	// 状态只带"最近这么多条"供运行视图首屏、续轮摘要、压缩事实与记忆提取直接读。
 	cloudAgentEventTailLimit = 40
+	// cloudAgentEventTailSanityLimit 是校验用的健全上限（明显高于裁剪目标）：一次转移里会追加
+	// 若干事件，裁剪发生在转移开始时，所以状态里短期超过裁剪目标是正常的；这里只拦真正的异常。
+	cloudAgentEventTailSanityLimit = 256
 	// cloudAgentRunEventPageLimit 是运行详情默认返回的事件条数（尾部缓存之外再从事件表补齐）。
 	cloudAgentRunEventPageLimit = 100
 
@@ -942,6 +948,30 @@ func compactCloudAgentContext(request *canonicalAgentRequest, notes map[string]s
 		return true, before, len(after)
 	}
 	return true, before, before
+}
+
+// cloudAgentTrimFlushedEvents 丢掉状态里"已经入库"的事件前缀并推进序号水位。
+// 只动 Seq <= EventFlushedSeq 的部分，因此不可能丢掉还没写进事件表的记录。
+func cloudAgentTrimFlushedEvents(state *cloudAgentRuntime) {
+	if state == nil {
+		return
+	}
+	// 保留最近 cloudAgentEventTailLimit 条（无论是否已入库），只丢弃"超出目标且已入库"的前缀：
+	// 这样既不会把还没写进事件表的事件丢掉，也不会让状态无谓地留着完整历史。
+	excess := len(state.Events) - cloudAgentEventTailLimit
+	if excess <= 0 {
+		return
+	}
+	drop := 0
+	for drop < excess && state.Events[drop].Seq <= state.EventFlushedSeq {
+		drop++
+	}
+	if drop == 0 {
+		return
+	}
+	// 必须保持非 nil：空切片代表"事件都在表里"，nil 会被校验当成状态损坏。
+	state.Events = append(make([]CloudAgentEvent, 0, len(state.Events)-drop), state.Events[drop:]...)
+	state.EventSeqBase += drop
 }
 
 func validateCloudAgentCalls(calls []cloudAgentCall) error {
