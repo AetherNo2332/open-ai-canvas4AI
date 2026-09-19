@@ -29,6 +29,34 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] 真实渠道复验：给分镜行关联 2 个真实素材节点 → 前端"关联资产"列显示；下一轮确认模型能说出上一轮改过哪些行；连续空输出时先看到 `model_failure_recovered` 事件、随后本轮继续。
 - [ ] 前端"加载更早记录 / 已归档提示"（Stage 1 的 1b 遗留项）。
 
+## OpenAI 兼容图片协议的两处请求合同回归（尺寸折算 + edits multipart）
+
+声明式协议插件（`plugin-packages/openai-images`）把统一字段 `aspectRatio` 原样写进上游 `size`，
+而画布默认档是比例 `1:1`：只认 `WIDTHxHEIGHT` 的上游（OpenAI 官方、vLLM/GPUStack 等）直接 400
+`size must be in format 'WIDTHxHEIGHT'`。带参考图时更严重：编辑路径仍是 `application/json`，
+而上游按表单解析，一律 400 `prompt Field required`。两处都是 v1.2.9 把内置实现换成声明式插件时
+丢掉的请求边界归一 —— v1.2.1~v1.2.8 的内置实现一直会做这两件事（`imageSizeParameter →
+normalizePixelSize`、`edits` 走 multipart + `image`/`mask` 文件部分）。
+
+- [x] host 侧：`protocolRequestSize`（`backend/internal/app/provider_video_options.go`）在声明式协议路径上
+  按能力配置折算尺寸 —— 声明 `size` 的上游拿像素（`1:1 → 1024x1024`），声明 `aspect_ratio` 的
+  （grok/gemini 等，插件模板自带带容差的比例归一）与视频保持原样透传。
+- [x] 插件侧：`openai-images` 的 `create` 增加 `contentTypeTemplate`（有参考图 → `multipart/form-data`）
+  与 `files`（`image` / `mask` 文件部分），并去掉 body 里那份 JSON `images`/`mask`；
+  生成器（`plugin-packages/generate-catalog.mjs`）与打包产物 `openai-images.yingce-plugin` 同步重建。
+- [x] 用例：`internal/app` 新增尺寸折算用例（比例→像素、像素原样、`auto`、无能力配置兜底、
+  `aspect_ratio` 与视频不被改），`internal/protocol` 的插件用例改为断言 multipart + 文件部分，
+  并新增"无参考图仍是纯 JSON generations"。
+- [x] dev 真实渠道 + 真实画布（`dev-imgproto`）：重放用户 07:58 失败的那两条任务输入（`size=1:1`）——
+  文生图 `POST /v1/images/generations` JSON **`size=1024x1024` → 200**；带参考图
+  `POST /v1/images/edits` **`multipart/form-data; boundary=…` `size=1024x1024` → 200**，两个任务都 `succeeded`。
+  修复前同两条路径分别是 400（`size` 格式、缺 `prompt`）。
+- [ ] 浏览器手工复验：画布默认画幅（`1:1`）直接生成 / 带参考图编辑都不再报参数错误。
+- [ ] 兼容性提醒（未验）：曾有第三方 OpenAI 兼容上游只接受 JSON edits（`images` 数组），现在统一按
+  官方 multipart 发送；如遇到这类上游需要单独插件包。
+- [ ] vllm-omni 的蒙版字段名是 `mask_image`（OpenAI 官方是 `mask`）：该渠道用蒙版时需把模型能力的
+  `maskSupported` 关掉，或后续给该协议补一个独立插件，避免"静默忽略蒙版"。
+
 ## 运行事件出表 Stage 1（状态与轮数解耦）
 
 事件从 `state_json` 搬进 `cloud_agent_run_events`（迁移 v24，append-only），状态只保留最近 40 条尾部缓存；运行详情默认返回最近 100 条并给出 `eventSeqBase`/`eventCount`/`latestSeq`/`eventsTruncated`，可用 `sinceSeq` 取增量、`eventLimit` 调页大小；SSE 按游标从事件表增量读。升级前的旧运行由第一次保存整批补齐（不丢审计）；事件默认保留 30 天，画布删除只清归属。
