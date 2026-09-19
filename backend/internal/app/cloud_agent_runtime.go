@@ -88,6 +88,12 @@ type cloudAgentRuntime struct {
 	ActionNudged           bool                         `json:"actionNudged,omitempty"`
 	EmptyOutputNudged      int                          `json:"emptyOutputNudged,omitempty"`
 	StepSnapshotHash       string                       `json:"stepSnapshotHash,omitempty"`
+	// EventSeqBase 是尾部缓存之前"已入库"的事件条数：新不变量
+	// events[i].Seq == EventSeqBase + i + 1。事件全量落在 cloud_agent_run_events，
+	// 状态只保留最近 cloudAgentEventTailLimit 条供阅读与摘要使用。
+	EventSeqBase int `json:"eventSeqBase,omitempty"`
+	// EventFlushedSeq 是已写入事件表的最高 seq（幂等写入的水位）。
+	EventFlushedSeq int `json:"eventFlushedSeq,omitempty"`
 	// EventDegradeLevel 记录事件日志已降到哪一级（避免每次保存重复遍历）。
 	EventDegradeLevel int `json:"eventDegradeLevel,omitempty"`
 	// ContextCompactionCount 是本轮已经压过几次：压完仍超阈值时不要无限暂停。
@@ -206,7 +212,8 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	return s.repo.EnsureCloudAgent(run)
 }
 func (state *cloudAgentRuntime) event(id, kind string, payload map[string]any) {
-	seq := len(state.Events) + 1
+	// 序号连续于"尾部缓存 + 已入库水位"：events[i].Seq == EventSeqBase+i+1 是不变式。
+	seq := state.EventSeqBase + len(state.Events) + 1
 	state.Events = append(state.Events, CloudAgentEvent{EventID: fmt.Sprintf("%s:%d", id, seq), RunID: id, Seq: seq, Type: kind, Payload: payload, CreatedAt: time.Now()})
 }
 func cloudAgentDecode(run *model.CloudAgentExecution) (cloudAgentRuntime, error) {
@@ -326,11 +333,15 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if state.Decisions == nil || state.Events == nil {
 		return errors.New("Agent runtime maps are missing")
 	}
-	if len(state.Events) > 4096 {
-		return errors.New("Agent runtime event history is too large")
+	if state.EventSeqBase < 0 || state.EventFlushedSeq < state.EventSeqBase {
+		return errors.New("Agent runtime event watermark is invalid")
+	}
+	// 事件全量在 cloud_agent_run_events，状态里只留尾部缓存。
+	if len(state.Events) > cloudAgentEventTailLimit {
+		return errors.New("Agent runtime event tail is too large")
 	}
 	for index, event := range state.Events {
-		if event.RunID != run.ID || event.Seq != index+1 || event.EventID == "" || event.Type == "" || event.Payload == nil || event.CreatedAt.IsZero() {
+		if event.RunID != run.ID || event.Seq != state.EventSeqBase+index+1 || event.EventID == "" || event.Type == "" || event.Payload == nil || event.CreatedAt.IsZero() {
 			return errors.New("Agent runtime event history is invalid")
 		}
 		if err := validateCloudAgentID(event.EventID, "事件 ID", 240); err != nil {
@@ -517,7 +528,7 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	run.StateJSON = string(raw)
 	return nil
 }
-func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgentState) (*CloudAgentRun, error) {
+func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgentState, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
 	run, err := s.repo.CloudAgent(task.UserID, task.ID)
 	if err != nil {
 		return nil, err
@@ -533,7 +544,20 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 	out.Status = run.Status
 	out.Revision, out.CleanupPending, out.FailureMessage = run.Revision, run.CleanupPending, run.FailureMessage
 	out.UpdatedAt = run.UpdatedAt
-	out.Events = state.Events
+	view := CloudAgentRunViewOptions{}
+	if len(options) > 0 {
+		view = options[0]
+	}
+	// 事件已全量落库：默认返回最近一页（尾部缓存 + 事件表补齐），sinceSeq 只取增量。
+	out.Events = s.cloudAgentRunEventsForView(task.UserID, run, &state, view.SinceSeq, view.EventLimit)
+	out.EventSeqBase = state.EventSeqBase
+	out.EventCount = s.cloudAgentRunEventCount(task.UserID, run, &state)
+	if len(out.Events) > 0 {
+		out.LatestSeq = out.Events[len(out.Events)-1].Seq
+	}
+	if len(out.Events) < out.EventCount && view.SinceSeq == 0 {
+		out.EventsTruncated = true
+	}
 	out.Approval = state.Approval
 	if cloudAgentRunTerminal(run.Status) {
 		out.Approval = nil
@@ -597,6 +621,7 @@ func (s *Service) advanceCloudAgentByID(userID, id string) error {
 func (s *Service) advanceCloudAgents() {
 	s.agentSchedulerMu.Lock()
 	defer s.agentSchedulerMu.Unlock()
+	s.purgeCloudAgentRunEvents()
 	roots, err := s.repo.CloudAgentRoots()
 	if err != nil {
 		log.Printf("agent recovery: %v", err)
@@ -661,6 +686,9 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		}
 		return s.terminateCloudAgent(run, "Agent 运行状态损坏，本轮已停止")
 	}
+	// 事件全量入库（与状态解耦）：先把上一步产生的事件写进 cloud_agent_run_events，
+	// 再把状态里的事件裁剪到尾部缓存。失败只留痕、不阻断运行 —— 尾巴仍在状态里，下次再试。
+	s.cloudAgentFlushRunEventsLogged(run, &state)
 	if state.ActiveTaskID != "" {
 		task, err := s.repo.TaskForUser(run.UserID, state.ActiveTaskID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -833,6 +861,12 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 const cloudAgentStepOperation = "cloud_agent_step"
 
 const (
+	// cloudAgentEventTailLimit 是状态里保留的事件条数上限：事件已全量落库，
+	// 状态只带"最近这么多条"供运行视图首屏、续轮摘要、压缩事实与记忆提取直接读。
+	cloudAgentEventTailLimit = 40
+	// cloudAgentRunEventPageLimit 是运行详情默认返回的事件条数（尾部缓存之外再从事件表补齐）。
+	cloudAgentRunEventPageLimit = 100
+
 	cloudAgentEvictionThresholdBytes = 40 << 10
 	cloudAgentEvictionMessageLimit   = 24
 	cloudAgentRequestHardLimitBytes  = 192 << 10
@@ -1847,4 +1881,22 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 		return err
 	}
 	return s.finishCloudAgentCleanup(ctx, latest)
+}
+
+// purgeCloudAgentRunEvents 按保留期清理运行事件（默认 30 天）。带时间闸：调度 tick 很密，
+// 没必要每次都查库；清理失败只留痕，不影响调度。
+func (s *Service) purgeCloudAgentRunEvents() {
+	now := time.Now()
+	if !s.agentEventPurgeAt.IsZero() && now.Sub(s.agentEventPurgeAt) < 10*time.Minute {
+		return
+	}
+	s.agentEventPurgeAt = now
+	deleted, err := s.repo.PurgeExpiredCloudAgentRunEvents(now, 500)
+	if err != nil {
+		log.Printf("agent event purge: %v", err)
+		return
+	}
+	if deleted > 0 {
+		log.Printf("agent event purge: removed %d expired events", deleted)
+	}
 }

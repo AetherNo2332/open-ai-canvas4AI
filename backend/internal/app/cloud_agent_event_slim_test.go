@@ -206,6 +206,7 @@ func TestCloudAgentDegradeEventHistoryKeepsCursorAndPassesValidation(t *testing.
 	for index := range state.Events {
 		state.Events[index].RunID = run.ID
 	}
+	// 事件已全量落库：阶梯先降级载荷，再由 flush 把尾巴截到 cloudAgentEventTailLimit。
 	cloudAgentSlimEventHistory(state, false)
 	raw, err := json.Marshal(state)
 	if err != nil {
@@ -253,13 +254,26 @@ func TestCloudAgentDegradeEventHistoryKeepsCursorAndPassesValidation(t *testing.
 	if _, ok := state.Events[len(state.Events)-1].Payload["degraded"]; ok {
 		t.Fatal("最新事件不该被降级")
 	}
+	// 事件骨架的序号不变量：events[i].Seq == EventSeqBase + i + 1（事件全量在表里）。
 	for index, event := range state.Events {
-		if event.Seq != index+1 || event.EventID == "" || event.Type == "" || event.RunID != run.ID || event.CreatedAt.IsZero() {
+		if event.Seq != state.EventSeqBase+index+1 || event.EventID == "" || event.Type == "" || event.RunID != run.ID || event.CreatedAt.IsZero() {
 			t.Fatalf("降级改动了事件骨架: %+v", event)
 		}
 	}
+	// 事件出表：flush 把状态里的事件截到尾部上限，其余进 cloud_agent_run_events。
+	service.cloudAgentFlushRunEventsLogged(run, state)
+	if len(state.Events) > cloudAgentEventTailLimit {
+		t.Fatalf("尾部缓存未被裁剪: %d 条", len(state.Events))
+	}
+	stored, err := service.repo.CloudAgentRunEventCount(run.UserID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == 0 {
+		t.Fatal("事件未写入事件表")
+	}
 	if err := validateCloudAgentRuntime(run, state); err != nil {
-		t.Fatalf("降级后校验失败: %v", err)
+		t.Fatalf("降级 + 出表后校验失败: %v", err)
 	}
 	// 幂等
 	size := cloudAgentEventHistoryBytes(state)

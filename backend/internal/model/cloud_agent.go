@@ -37,3 +37,21 @@ type CloudAgentCanvasMutation struct {
 	CreatedAt          time.Time  `json:"createdAt" gorm:"index"`
 	UndoneAt           *time.Time `json:"undoneAt,omitempty"`
 }
+
+// CloudAgentRunEvent 是运行事件日志的落库形态：append-only、按 (runID, seq) 唯一。
+//
+// 事件过去存在 CloudAgentExecution.StateJSON 的 events 数组里，导致"能跑多少轮"被
+// 运行记录体积决定（写入型会话 22 步就撞 512KiB 上限）。搬到独立表后状态只保留尾部缓存，
+// 运行详情按 seq 分页读取；ExpiresAt 供保留期清理使用。
+type CloudAgentRunEvent struct {
+	ID        uint64    `json:"-" gorm:"primaryKey;autoIncrement"`
+	RunID     string    `json:"runId" gorm:"size:80;not null;uniqueIndex:idx_cloud_agent_run_events_seq,priority:1;index:idx_cloud_agent_run_events_canvas,priority:1"`
+	UserID    string    `json:"-" gorm:"size:36;not null;index"`
+	CanvasID  string    `json:"-" gorm:"size:80;index:idx_cloud_agent_run_events_canvas,priority:2"`
+	Seq       int       `json:"seq" gorm:"not null;uniqueIndex:idx_cloud_agent_run_events_seq,priority:2"`
+	EventID   string    `json:"eventId" gorm:"size:240;not null"`
+	Type      string    `json:"type" gorm:"size:64;not null;index"`
+	Payload   string    `json:"payload" gorm:"type:text;not null"`
+	CreatedAt time.Time `json:"createdAt" gorm:"index"`
+	ExpiresAt time.Time `json:"-" gorm:"index"`
+}

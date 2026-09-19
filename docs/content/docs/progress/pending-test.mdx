@@ -5,6 +5,16 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 运行事件出表 Stage 1（状态与轮数解耦）
+
+事件从 `state_json` 搬进 `cloud_agent_run_events`（迁移 v24，append-only），状态只保留最近 40 条尾部缓存；运行详情默认返回最近 100 条并给出 `eventSeqBase`/`eventCount`/`latestSeq`/`eventsTruncated`，可用 `sinceSeq` 取增量、`eventLimit` 调页大小；SSE 按游标从事件表增量读。升级前的旧运行由第一次保存整批补齐（不丢审计）；事件默认保留 30 天，画布删除只清归属。
+
+- [x] 后端：`internal/app`（含新增 4 个事件表用例）、`internal/repository`、`internal/handler`、`internal/database`、`internal/prompts` 通过；迁移版本升到 24，`database.Models()` 已包含新表。
+- [x] 用例覆盖：批量入库与尾部裁剪、重复 flush 幂等、默认页与跨尾部边界的增量、旧运行（表里为空）回退到 `state_json`、保留期清理只删过期、画布删除只清归属。
+- [ ] dev 真实渠道长跑：确认状态体积不再随步数增长（预期 ≈ canonical + 控制 + 尾部 ≤30KB），运行详情响应 ≤64KB。
+- [ ] 浏览器端：长运行（>100 事件）时确认面板显示"更早的记录已归档"，并能按 `sinceSeq` 往前加载；调试导出仍能取到全量事件。
+- [ ] 升级旧库：`dev`/产线执行 schema 24 迁移后，确认进行中的运行把既有事件补齐入库、且运行详情仍能看到历史。
+
 ## 运行态体积治理 Stage 0（几何/分镜行级增量 + 单步增长预算 + 卸载扩容）
 
 `canvas_updated` 改为只下发增量：位置/尺寸变化只发几何字段；分镜行编辑只发变化的那几行（前端按行 id 三方合并，删除行发完整旧行、新增行发完整新行）。单步净增超过 15KB 时折叠最旧的画布增量（`canvasPatchSlimmed` + `requiresRefresh`，客户端拉全量）。正文卸载现在覆盖 `storyboard.rows`、`batchTable.rows` 与旧写回执（保留规模、镜号骨架与快照哈希）。

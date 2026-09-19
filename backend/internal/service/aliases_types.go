@@ -9,6 +9,7 @@ type (
 	CloudAgentMediaSettings                = app.CloudAgentMediaSettings
 	CloudAgentCapabilitySet                = app.CloudAgentCapabilitySet
 	CloudAgentContextPolicy                = app.CloudAgentContextPolicy
+	CloudAgentRunViewOptions               = app.CloudAgentRunViewOptions
 	AgentProfileRequest                    = app.AgentProfileRequest
 	AgentProfileView                       = app.AgentProfileView
 	AgentLessonView                        = app.AgentLessonView

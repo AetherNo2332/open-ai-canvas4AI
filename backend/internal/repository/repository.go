@@ -1222,6 +1222,10 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 		if err := tx.Model(&model.Task{}).Where("user_id = ? AND project_id = ?", userID, id).Update("project_id", "").Error; err != nil {
 			return err
 		}
+		// 运行事件同样是审计记录：保留内容，只清掉画布归属。
+		if err := tx.Model(&model.CloudAgentRunEvent{}).Where("user_id = ? AND canvas_id = ?", userID, id).Update("canvas_id", "").Error; err != nil {
+			return err
+		}
 		return tx.Delete(&model.CanvasProject{}, "id = ? AND user_id = ?", id, userID).Error
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -181,7 +182,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		run, err := svc.CloudAgentRun(user.ID, c.Param("id"))
+		run, err := svc.CloudAgentRun(user.ID, c.Param("id"), agentRunViewOptions(c))
 		if err != nil {
 			failService(c, err)
 			return
@@ -283,12 +284,16 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		run, err := svc.CloudAgentRun(user.ID, c.Param("id"))
+		after, err := taskTextEventCursor(c)
+		if err != nil {
+			fail(c, 400, err)
+			return
+		}
+		run, err := svc.CloudAgentRun(user.ID, c.Param("id"), service.CloudAgentRunViewOptions{SinceSeq: int(after)})
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		after, err := taskTextEventCursor(c)
 		if err != nil {
 			fail(c, 400, err)
 			return
@@ -331,7 +336,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			case <-c.Request.Context().Done():
 				return
 			case <-ticker.C:
-				run, err = svc.CloudAgentRunIfChanged(user.ID, c.Param("id"), revision)
+				run, err = svc.CloudAgentRunIfChanged(user.ID, c.Param("id"), revision, service.CloudAgentRunViewOptions{SinceSeq: int(after)})
 			}
 		}
 	})
@@ -347,4 +352,16 @@ func writeAgentSSE(c *gin.Context, event string, id int64, value any) {
 	}
 	_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
 	c.Writer.Flush()
+}
+
+// agentRunViewOptions 解析运行详情的分页参数：sinceSeq 只取增量，eventLimit 控制默认页大小。
+func agentRunViewOptions(c *gin.Context) service.CloudAgentRunViewOptions {
+	options := service.CloudAgentRunViewOptions{}
+	if value, err := strconv.Atoi(strings.TrimSpace(c.Query("sinceSeq"))); err == nil && value > 0 {
+		options.SinceSeq = value
+	}
+	if value, err := strconv.Atoi(strings.TrimSpace(c.Query("eventLimit"))); err == nil && value > 0 {
+		options.EventLimit = min(value, 500)
+	}
+	return options
 }

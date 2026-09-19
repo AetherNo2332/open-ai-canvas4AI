@@ -130,3 +130,69 @@ func (r *Repository) MarkCloudAgentCancelled(userID, id string, revision int64) 
 	}
 	return nil
 }
+
+// AppendCloudAgentRunEvents 批量追加运行事件：唯一索引 (run_id, seq) + DO NOTHING，
+// 因此重复写入（重试、升级期补写）天然幂等。
+func (r *Repository) AppendCloudAgentRunEvents(events []model.CloudAgentRunEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	return r.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "run_id"}, {Name: "seq"}}, DoNothing: true}).
+		CreateInBatches(events, 100).Error
+}
+
+// CloudAgentRunEvents 按 seq 升序取事件：afterSeq 之前（含）跳过，limit 封顶。
+func (r *Repository) CloudAgentRunEvents(userID, runID string, afterSeq, limit int) ([]model.CloudAgentRunEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	events := []model.CloudAgentRunEvent{}
+	err := r.db.Where("user_id = ? AND run_id = ? AND seq > ?", userID, runID, afterSeq).
+		Order("seq ASC").Limit(limit).Find(&events).Error
+	return events, err
+}
+
+// CloudAgentRunEventsBefore 取 beforeSeq 之前最近的若干条（升序返回），用于"加载更早的记录"。
+func (r *Repository) CloudAgentRunEventsBefore(userID, runID string, beforeSeq, limit int) ([]model.CloudAgentRunEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	events := []model.CloudAgentRunEvent{}
+	err := r.db.Where("user_id = ? AND run_id = ? AND seq < ?", userID, runID, beforeSeq).
+		Order("seq DESC").Limit(limit).Find(&events).Error
+	if err != nil {
+		return nil, err
+	}
+	for left, right := 0, len(events)-1; left < right; left, right = left+1, right-1 {
+		events[left], events[right] = events[right], events[left]
+	}
+	return events, nil
+}
+
+// CloudAgentRunEventCount 返回该运行已入库的事件条数（运行详情用它告诉客户端还有多少历史）。
+func (r *Repository) CloudAgentRunEventCount(userID, runID string) (int64, error) {
+	var count int64
+	err := r.db.Model(&model.CloudAgentRunEvent{}).Where("user_id = ? AND run_id = ?", userID, runID).Count(&count).Error
+	return count, err
+}
+
+// DeleteCloudAgentRunEvents 清理运行事件（运行删除、画布删除、保留期到期）。
+func (r *Repository) DeleteCloudAgentRunEvents(userID, runID string) error {
+	return r.db.Where("user_id = ? AND run_id = ?", userID, runID).Delete(&model.CloudAgentRunEvent{}).Error
+}
+
+// ClearCloudAgentRunEventCanvasScope 在画布被删除时清掉事件上的画布归属：
+// 事件是审计记录（与任务同口径），保留内容但不再挂住已删除的画布。
+func (r *Repository) ClearCloudAgentRunEventCanvasScope(userID, canvasID string) error {
+	return r.db.Model(&model.CloudAgentRunEvent{}).Where("user_id = ? AND canvas_id = ?", userID, canvasID).
+		Update("canvas_id", "").Error
+}
+
+// PurgeExpiredCloudAgentRunEvents 删除超过保留期的事件，返回删除条数。
+func (r *Repository) PurgeExpiredCloudAgentRunEvents(now time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	query := r.db.Where("expires_at > ? AND expires_at < ?", time.Time{}, now).Limit(limit).Delete(&model.CloudAgentRunEvent{})
+	return query.RowsAffected, query.Error
+}
