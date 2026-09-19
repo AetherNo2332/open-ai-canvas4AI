@@ -5,6 +5,32 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## Web 基线与 Chrome E2E 红灯清零（18 个失败 → 0）
+
+`bun run test` 的 18 个失败其实只有 3 类根因，其中 3 处是产品实现问题，5 处是断言写的是重构前的实现：
+
+- 产品侧：① `client-diagnostics.ts` 用 `typeof window !== "undefined"` 判断"在浏览器里"，而测试环境里 window 存在、`window.location` 不存在 → 每次记录诊断事件都抛 `TypeError`（9 条用例）；② `index.html` 的静态品牌 favicon 是后来回加的（可配置外观特性当初删掉过它：首屏必须品牌中性，favicon 由 `use-appearance-store` 解析出外观后写入）；③ `floating-dock.tsx` 在渲染期直接取 `window.matchMedia`（测试与 `renderToString` 下可能不存在）。
+- 断言侧：`BrandLogo` 现在通过 `useActiveTheme()` 取当前生效主题（画布主题优先，内部仍读 `useThemeStore`）；管理端状态色已移到 `admin-tokens.css`（浅 / 深各一套具体值），`admin-ui.css` 只消费 token；`.agent-tool-row` 的 hover 是上游后加的卡片视觉，改守真正的不变式"行块与 hover 块都不得出现 cursor"；任务中心已不再提供取消已发起任务与本机记录删除，断言改为守当前策略。
+- Chrome E2E 的两个隐藏问题（`bun run test` 转绿后 job 第一次跑到这一步才暴露）：复现台没有后端，外观引导被 Vite 代理变成 502，删掉静态 favicon 后又出现默认 404 → 脚本自起一个**只答 `/api/public/appearance`** 的同源桩（`VITE_API_PROXY_TARGET` 指过去，其余 `/api` 照常 404），`index.html` 用空 `data:,` 图标抑制默认请求（仍品牌中性）；`clickPoint` 只要求相邻两次读数相同，AntD 弹窗约 200ms 入场动画期间控件已经移位，点击落到遮罩（`mask.closable=false`）上完全无效 → 改为要求坐标连续 300ms 不动。
+
+- [x] `bun test` 1779 通过 / 0 失败；`bun run typecheck`、`bun run lint`、`bun run build` 通过。
+- [x] `bun run test:director:e2e`（本地 headless Chromium）58 passed / 0 failed，连续 3 次稳定。
+- [x] CI：PR 与合并后的 `dev` 推送均三个 job 全绿（run 35440082042 / 35441405470）。
+- [ ] 浏览器手工复验：外观页浅 / 深 Logo 上传与外框开关、首屏 favicon（自定义品牌不再闪默认品牌）、更新日志弹窗内边距。
+- [ ] 浏览器手工复验：管理端「画布 Agent 单步」两个字段 + 面板上下文弹窗里单步上限与单步最长的展示（见下一节遗留项）。
+
+## dev 纳入 CI 与既有后端红灯清理
+
+- CI 触发：`quality.yml` 的 `push.branches` 原来只列了 `main`，**直接推 `dev` 的改动完全没有 CI 覆盖** → 补上 `dev`。
+- 迁移工具补登记 `agent_lessons` / `agent_memory_settings`：这两个模型在 `database.Models()` 里有、在 sqlite→postgres 的迁移清单里没有，`TestMigrationListCoversSchemaModels` 因此长期红灯，**实际后果是这两张表的数据在迁移时不会被搬运**。
+- `gofmt` 两个既有未格式化文件（`internal/model/models.go`、`internal/app/channel_model_upstream_rename_test.go`），Backend job 的格式检查因此转绿。
+- 让 Backend job 第一次真正跑起 `go test ./...` 后暴露并修掉一个既有 flake：`TestDeleteGeneratedAssetTaskReferences/cancelled_output` 报 `database table is locked: resource_deletion_jobs` —— 夹具用共享缓存内存库，而删除 outbox 是后台 goroutine，与测试线程的查询落在两条连接上；共享缓存模式下 SQLite 用的是表级锁（`SQLITE_LOCKED`），不受 `_busy_timeout` 约束。两个夹具改用文件库 + WAL + `_busy_timeout`，库文件放在 `os.MkdirTemp` 下（避免 outbox 仍在写库时清理目录报 `directory not empty`），并新增 `TestSQLiteTestDBAllowsConcurrentReadWrite` 守住这个选型。
+
+- [x] `gofmt -l .` 无输出；`go test ./...` 仅剩本机 `umask 0077` 造成的 `internal/hostupdate` 用例（CI 的 umask 0022 下为通过）；删除家族压测 `-count=8 -parallel=8` 全绿。
+- [x] CI（run 35435696123 / 35441405470）：Backend、Web、Payment plugin 三个 job 全绿。
+- [ ] 迁移工具真跑一次 sqlite→postgres 搬库（本次只验证了清单覆盖与用例，没有实际搬运数据）。
+- [ ] 在真实浏览器里确认改动后的 `AppModal flush`、空 favicon 与指针能力探测在 `prefers-reduced-motion`、触屏与窄屏下的表现。
+
 ## 画布 Agent 单步边界可配置（输出上限 + 秒级超时）
 
 单步输出上限从写死的 6144 抬到可配置的 16384（实测 222 步的 P50 为 1187 token、P90 正好等于 6144，15% 的步骤顶到旧上限被截断），并新增单步秒级墙钟；两者都在管理端"画布 Agent 单步"分组里配置（`system_settings.runtime_policy` 的 `task.agentStepMaxOutputTokens` / `task.agentStepTimeoutSeconds`，保存后热更新，无 schema 迁移，旧配置 JSON 缺字段按默认值回填）。上限配 0 表示不限制输出（此时只有墙钟兜底），超时配 0 表示沿用文本任务超时。墙钟到点不再把整轮判死：关思考重试同一步一次，重试仍超时才以 `model_step_timeout` 结束本轮；两个生效值随 `context_pressure` 事件下发，面板弹窗显示"哪条线在管这一步"。
