@@ -136,6 +136,14 @@ describe("canvas resource mention editor", () => {
         expect(chat).toContain("agent-composer-resize-handle");
         expect(chat).toContain("Enter 换行 · ⌘/Ctrl+Enter 发送");
         expect(css).toContain(".agent-composer-prompt-scroll");
-        expect(css).not.toContain(".agent-tool-row:hover");
+        // 工具行本身不可点（真正的交互在 .agent-tool-action-link 等行内按钮上）：行块与 hover 块
+        // 都不得声明 cursor，避免卡片式 hover 把行伪装成可点击。
+        const rowBlock = css.slice(css.indexOf(".agent-tool-row {"), css.indexOf("}", css.indexOf(".agent-tool-row {")));
+        const hoverBlock = css.slice(css.indexOf(".agent-tool-row:hover {"), css.indexOf("}", css.indexOf(".agent-tool-row:hover {")));
+        expect(rowBlock.length).toBeGreaterThan(0);
+        expect(hoverBlock.length).toBeGreaterThan(0);
+        expect(rowBlock).not.toContain("cursor");
+        expect(hoverBlock).not.toContain("cursor");
+        expect(css).toContain(".agent-tool-action-link");
     });
 });

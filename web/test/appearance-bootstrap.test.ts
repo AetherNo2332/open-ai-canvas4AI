@@ -100,7 +100,9 @@ test("appearance management exposes light and dark logo uploads plus the frame s
     expect(pageSource).toContain("深浅模式 Logo 预览");
     expect(pageSource).toContain("登录页视频自动播放");
     expect(pageSource).toContain("authVideoAutoplay");
-    expect(brandSource).toContain("useThemeStore");
+    // 标记跟随"当前生效主题"：画布有独立主题时用画布主题，否则用工作区主题（useActiveTheme 内部读 useThemeStore）。
+    expect(brandSource).toContain("useActiveTheme");
+    expect(brandSource).toContain('theme === "auto" ? currentTheme : theme');
     expect(brandSource).toContain("data-logo-frame-enabled");
     expect(brandSource).toContain("failedSource === source");
     expect(brandSource).toContain('aria-hidden="true"');

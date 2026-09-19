@@ -29,7 +29,7 @@ export function AppChangelogDialog({ open, onClose }: { open: boolean; onClose: 
             footer={null}
             centered
             onCancel={onClose}
-            styles={{ body: { padding: 0 } }}
+            flush
             modalRender={(node) => (
                 <motion.div initial={reducedMotion ? false : { opacity: 0, y: 14, scale: 0.975 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: aceternityMotion.duration.panel, ease: aceternityMotion.easing.enter }}>
                     {node}
