@@ -476,7 +476,9 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	// 稳定缓存键：个人记忆块属于易变的 system prompt，不能把它带进键里。
 	canonical.PromptCacheKey = cloudAgentPromptCacheKey(req)
 	attachCloudAgentPlan(&canonical, inheritedPlan)
-	input := map[string]any{"mode": "text", "prompt": req.Prompt, "textHistory": history, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(policy.ReasoningMode), "maxOutputTokens": cloudAgentStepMaxOutputTokens}, "cloudAgent": state,
+	// 根任务就是第一步模型调用：它的输出上限与后续每一步同源（策略解析结果），
+	// 否则"改配置"只影响第二步之后，第一步仍然按旧值跑。
+	input := map[string]any{"mode": "text", "prompt": req.Prompt, "textHistory": history, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(policy.ReasoningMode), "maxOutputTokens": cloudAgentStepOutputBudget(s.cloudAgentStepLimits(), false)}, "cloudAgent": state,
 		"agentRequests": map[string]any{"canonical": canonical},
 		"config":        map[string]any{"channelId": req.ChannelID, "channelModelKey": req.ChannelModelKey, "model": firstNonEmpty(req.ChannelModelKey, req.Model), "systemPrompt": system}}
 	task, err := s.CreateTask(userID, CreateTaskRequest{ProjectID: req.CanvasID, Type: "canvas_text", Operation: cloudAgentOperation, Prompt: req.Prompt, Model: req.Model, LogicalModelID: req.LogicalModelID, Input: input,

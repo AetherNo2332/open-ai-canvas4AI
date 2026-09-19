@@ -187,6 +187,10 @@ export type AgentContextPressure = {
     evictionThresholdBytes?: number;
     evictionMessageLimit?: number;
     requestHardLimitBytes?: number;
+    /** 本步生效的模型输出上限（token）；后端配成 0（不限制）时不返回。 */
+    stepMaxOutputTokens?: number;
+    /** 本步生效的墙钟（秒）：到点会中止这一步并自动关思考重试。 */
+    stepTimeoutSeconds?: number;
 };
 
 /** 事件流本身不是 http 封装请求，单独保留状态码供 UI 区分旧后端/失效轮次。 */

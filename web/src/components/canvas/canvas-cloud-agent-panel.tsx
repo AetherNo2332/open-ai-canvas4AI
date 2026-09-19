@@ -1336,6 +1336,20 @@ function applyAgentEvent(event: AgentEvent, setMessages: Dispatch<SetStateAction
         }
         return;
     }
+    if (event.type === "model_failure_recovered") {
+        // 自动重试不该只躺在事件流里：用户看到的是"卡了一下又继续"，要能自己解释为什么。
+        const id = event.eventId;
+        setMessages((current) =>
+            appendUniqueMessage(current, {
+                id,
+                role: "tool",
+                title: payload.reason === "step_timeout_retried" ? "单步超时自动重试" : "模型空响应自动重试",
+                text: text || "已关闭思考并重试同一步",
+                detail: { ...payload, eventType: event.type },
+            }),
+        );
+        return;
+    }
     if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendAgentError(current, event.eventId, text || "Agent 执行失败"));
 }
 
@@ -1373,6 +1387,8 @@ function parseContextPressure(payload: Record<string, unknown>): AgentContextPre
         evictionThresholdBytes: payload.evictionThresholdBytes === undefined ? undefined : number("evictionThresholdBytes"),
         evictionMessageLimit: payload.evictionMessageLimit === undefined ? undefined : number("evictionMessageLimit"),
         requestHardLimitBytes: payload.requestHardLimitBytes === undefined ? undefined : number("requestHardLimitBytes"),
+        stepMaxOutputTokens: payload.stepMaxOutputTokens === undefined ? undefined : number("stepMaxOutputTokens"),
+        stepTimeoutSeconds: payload.stepTimeoutSeconds === undefined ? undefined : number("stepTimeoutSeconds"),
     };
 }
 
