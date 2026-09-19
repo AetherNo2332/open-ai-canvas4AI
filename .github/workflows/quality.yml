@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+      # dev 是日常集成分支：这里没有它时，直接推到 dev 的改动完全不会被 CI 覆盖。
+      - dev
 
 permissions:
   contents: read
