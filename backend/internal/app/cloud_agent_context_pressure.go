@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -54,6 +55,14 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 	}
 	if state == nil {
 		return payload
+	}
+	// 单步边界（输出上限与墙钟）也要能一眼看出"哪条线在管这一步"：管理员改了策略、
+	// 或者把上限配成 0（不限制）时，界面与排查都不该靠猜。
+	if state.StepLimits.OutputTokens > 0 {
+		payload["stepMaxOutputTokens"] = state.StepLimits.OutputTokens
+	}
+	if state.StepLimits.Timeout > 0 {
+		payload["stepTimeoutSeconds"] = int(state.StepLimits.Timeout / time.Second)
 	}
 	// 上游实测锚点：provider 用模型自己的分词器报出的 prompt 规模，是权威读数。
 	// 投影 = 锚点 + 本地估算的有符号增量（对齐 harness 的 pressureTokens / projectedTokens）。

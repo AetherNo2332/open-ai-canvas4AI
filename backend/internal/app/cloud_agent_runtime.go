@@ -15,6 +15,7 @@ import (
 	"infinite-canvas/backend/internal/agentcontext"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/prompts"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -89,12 +90,17 @@ type cloudAgentRuntime struct {
 	EmptyOutputNudged      int                          `json:"emptyOutputNudged,omitempty"`
 	// EmptyOutputEscalated 记录"空输出已经升级重试过几次"（关思考 + 放大输出预算）。
 	EmptyOutputEscalated int `json:"emptyOutputEscalated,omitempty"`
+	// StepTimeoutEscalated 记录"单步墙钟到点后已经关思考重试过几次"。
+	StepTimeoutEscalated int `json:"stepTimeoutEscalated,omitempty"`
 	// ForceThinkingOff 让本步请求强制关闭上游思考：思考模型偶发把整个输出预算花在推理上，
 	// 结果正文与工具调用皆空（实测 output_tokens 正好等于 maxOutputTokens）。
 	ForceThinkingOff bool `json:"forceThinkingOff,omitempty"`
 	// BoostStepOutputBudget 让本步请求使用放大后的输出预算（配合关思考重试）。
 	BoostStepOutputBudget bool   `json:"boostStepOutputBudget,omitempty"`
 	StepSnapshotHash      string `json:"stepSnapshotHash,omitempty"`
+	// StepLimits 是本步实际生效的执行边界（管理员策略解析结果），只用于构造请求与展示压力读数，
+	// 因此不进状态 JSON：每次推进都按当时的策略重新解析，改配置无需重发本轮。
+	StepLimits cloudAgentStepLimits `json:"-"`
 	// EventSeqBase 是尾部缓存之前"已入库"的事件条数：新不变量
 	// events[i].Seq == EventSeqBase + i + 1。事件全量落在 cloud_agent_run_events，
 	// 状态只保留最近 cloudAgentEventTailLimit 条供阅读与摘要使用。
@@ -198,7 +204,7 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	canonical := input.Requests.Canonical
 	canonical.SystemPrompt = stripCloudAgentPlanBlock(canonical.SystemPrompt)
 	canonical.Messages = stripCloudAgentRuntimeContext(canonical.Messages)
-	state := cloudAgentRuntime{Request: initial.Request, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}}
+	state := cloudAgentRuntime{Request: initial.Request, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: s.cloudAgentStepLimits()}
 	if len(initial.Skills) > 0 {
 		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
 	}
@@ -699,6 +705,8 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	// 事件全量入库（与状态解耦）：先把上一步产生的事件写进 cloud_agent_run_events，
 	// 再把状态里的事件裁剪到尾部缓存。失败只留痕、不阻断运行 —— 尾巴仍在状态里，下次再试。
 	s.cloudAgentFlushRunEventsLogged(run, &state)
+	// 单步边界每次推进都重新解析：管理员改配置后，正在跑的这一轮下一步就用新值。
+	state.StepLimits = s.cloudAgentStepLimits()
 	if state.ActiveTaskID != "" {
 		task, err := s.repo.TaskForUser(run.UserID, state.ActiveTaskID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -767,6 +775,10 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			if state.EmptyOutputEscalated < cloudAgentMaxEmptyOutputEscalations {
 				return s.correctCloudAgentEmptyOutputEscalation(run, &state)
 			}
+		}
+		// 单步墙钟到点同样是可恢复失败：关思考重试一次，而不是把整轮判死。
+		if cloudAgentStepTimedOut(task) && state.StepTimeoutEscalated < cloudAgentMaxStepTimeoutEscalations {
+			return s.correctCloudAgentStepTimeout(run, &state)
 		}
 		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 			if task.Status != model.TaskStatusSucceeded {
@@ -859,10 +871,7 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	}
 	// 空输出升级重试：关思考 + 放大输出预算，避免"思考吃满预算、正文为空"再次发生。
 	stepThinking := cloudAgentReasoningEnabled(state.Policy.ReasoningMode) && !state.ForceThinkingOff
-	stepOutputTokens := cloudAgentStepMaxOutputTokens
-	if state.BoostStepOutputBudget {
-		stepOutputTokens = cloudAgentStepEscalatedMaxOutputTokens
-	}
+	stepOutputTokens := cloudAgentStepOutputBudget(state.StepLimits, state.BoostStepOutputBudget)
 	input := map[string]any{"mode": "text", "prompt": state.Request.Prompt, "agentRequests": map[string]any{"canonical": canonical}, "config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)}, "textOptions": map[string]any{"stream": true, "thinking": stepThinking, "maxOutputTokens": stepOutputTokens}}
 	raw, _ := json.Marshal(canonical)
 	if len(raw) > cloudAgentRequestHardLimitBytes {
@@ -897,21 +906,58 @@ const (
 	cloudAgentRequestHardLimitBytes  = 192 << 10
 )
 
-// cloudAgentStepMaxOutputTokens 是单步模型调用的输出上限（思考 + 正文 + 工具调用参数）。
+// cloudAgentStepMaxOutputTokens 是单步模型调用的输出上限的出厂默认值，只在策略读取失败时兜底；
+// 生效值来自运行时策略的 AgentStepMaxOutputTokens（管理端可改、可设 0 表示不限制）。
 //
 // 不设上限时上游按"剩余上下文"放行：实测部署是 262144 上下文的思考模型，
 // 解码约 28 tok/s，一次跑满就是几分钟——那一轮 892s 里有 324s 是用户等一个
 // 无限思考的调用直到手动取消。
 //
-// 取值依据：实测正常步骤输出 65–3306 tok，但整合四张图那种重规划步骤会顶到 4096
-// 并被截断（截断后要再花一次往返补救），所以留出余量取 6144（最坏单步 ≈ 220s，
-// 仍然是有限上界，而不是靠用户手动取消）。
-const cloudAgentStepMaxOutputTokens = 6144
+// 取值依据：实测 222 步的 P50 是 1187 tok、P90 正好等于旧上限 6144，且 15% 的步骤
+// 顶到旧上限后被截断（截断要再花一次往返补救，还会退化成"空输出"）。留出余量取 16384：
+// 按实测约 114 tok/s 计，撞限步骤大约 55s → 110s，仍是有界的最坏值。
+const cloudAgentStepMaxOutputTokens = platform.DefaultRuntimeAgentStepOutputTokens
 
-// cloudAgentStepEscalatedMaxOutputTokens 是"空输出升级重试"用的输出预算：思考模型在 6144 下
-// 偶发把预算全花在推理上（实测 output_tokens 正好等于 6144、正文为空、连续三次），
-// 这一档同时关思考并放大预算，让同一步有机会产出正文或工具调用。
-const cloudAgentStepEscalatedMaxOutputTokens = 16384
+// cloudAgentStepBoostFallbackTokens 是"不限制输出"（策略值为 0）时放大重试用的预算：
+// 不限制的本意是"让模型写完"，重试却必须有个上界，否则一次卡住的调用会一直占着单步墙钟。
+const cloudAgentStepBoostFallbackTokens = 32_768
+
+// cloudAgentStepLimits 是一次模型调用实际生效的执行边界。
+type cloudAgentStepLimits struct {
+	// OutputTokens 是本次调用的输出上限；0 表示不限制（只有 Timeout 兜底）。
+	OutputTokens int
+	// Timeout 是单步墙钟：策略给了秒级值时用它，否则沿用文本任务超时。
+	Timeout time.Duration
+}
+
+// cloudAgentStepLimits 解析当前生效的单步边界。策略读取失败时退回出厂默认值：
+// 拿到一个确定的上界，好过让一次调用无限跑下去。
+func (s *Service) cloudAgentStepLimits() cloudAgentStepLimits {
+	policy, err := s.runtimeConcurrencySetting()
+	if err != nil {
+		policy = defaultRuntimePolicy().Task
+	}
+	limits := cloudAgentStepLimits{OutputTokens: policy.AgentStepMaxOutputTokens}
+	if policy.AgentStepTimeoutSeconds > 0 {
+		limits.Timeout = time.Duration(policy.AgentStepTimeoutSeconds) * time.Second
+	} else {
+		limits.Timeout = time.Duration(policy.TextTimeoutMinutes) * time.Minute
+	}
+	return limits
+}
+
+// cloudAgentStepOutputBudget 把生效上限折算成本步请求要带的 maxOutputTokens：
+// 放大档（空输出升级重试）在原值上翻倍并以硬上限封顶；原值为 0（不限制）时用兜底值，
+// 让重试仍然有界。
+func cloudAgentStepOutputBudget(limits cloudAgentStepLimits, boosted bool) int {
+	if !boosted {
+		return limits.OutputTokens
+	}
+	if limits.OutputTokens <= 0 {
+		return cloudAgentStepBoostFallbackTokens
+	}
+	return min(limits.OutputTokens*2, platform.MaxRuntimeAgentStepOutputTokens)
+}
 
 // compactCloudAgentContext reports whether it changed anything, plus the
 // conversation-message size before and after, for the observability event.
@@ -1055,6 +1101,8 @@ func cloudAgentModelFailure(task *model.Task) (string, string) {
 	case strings.Contains(task.Error, "没有返回内容"):
 		// 思考模型的典型失败：整个输出预算被推理吃掉，正文与工具调用皆空。
 		detail, reason = "上游连续返回空内容（通常是思考占满输出预算）；已自动关思考并放大预算重试仍失败，建议换用非思考模型或调小上下文", "model_empty_output"
+	case strings.Contains(task.Error, cloudAgentStepTimeoutError):
+		detail, reason = "单步模型调用超过执行时限仍未返回（长思考或上下文过大时常见）；已自动关思考重试仍超时，可在管理端调大 Agent 单步超时", "model_step_timeout"
 	case strings.Contains(raw, "connection reset by peer"):
 		detail, reason = "模型连接被对端或中间网络设备重置", "model_connection_reset"
 	case strings.Contains(raw, "timeout"), strings.Contains(raw, "deadline exceeded"):

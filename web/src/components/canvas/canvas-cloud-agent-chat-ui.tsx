@@ -889,6 +889,8 @@ function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPre
     const ratio = Math.max(modelRatio, compactionRatio);
     const basis = configured && modelRatio >= compactionRatio ? "模型窗口" : tokenBasis ? "模型上限的 80%" : "服务端压缩阈值";
     const formatTokens = (value: number) => value.toLocaleString("zh-CN");
+    // 秒级墙钟按"分/秒"给人看：这一步的边界是可配置的，读数要能直接对上管理端。
+    const formatDuration = (seconds: number) => (seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`);
     const percent = Math.round(ratio * 100);
     const progress = Math.min(100, percent);
     const tone = ratio >= 0.9 ? "critical" : ratio >= 0.7 ? "warning" : "normal";
@@ -936,6 +938,11 @@ function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPre
             {typeof pressure.evictionThresholdBytes === "number" ? (
                 <div>正文卸载线：{Math.round(pressure.evictionThresholdBytes / 1024)} KiB 或 {pressure.evictionMessageLimit ?? 24} 条会话消息（判据是字节，先于压缩触发）</div>
             ) : null}
+            <div>
+                单步输出上限：{pressure.stepMaxOutputTokens ? `${formatTokens(pressure.stepMaxOutputTokens)} Token` : "本部署未限制（思考与正文都不设输出上限）"}
+                {typeof pressure.stepTimeoutSeconds === "number" ? ` · 单步最长 ${formatDuration(pressure.stepTimeoutSeconds)}` : ""}
+            </div>
+            <div>超时/空输出会自动关思考重试一次，重试仍失败才结束本轮。</div>
             <div className="agent-context-pressure-note">协议外壳指工具选择、缓存键等非内容字段。{anchored ? "上限读数来自上游实测，构成仍是估算并按锚点校准。" : "Token 为本地估算；拿到上游实测后会切换为锚点读数。"}压缩会保留检查点和最近对话。</div>
         </div>
     );
