@@ -91,12 +91,7 @@ func TestCloudAgentInterjectionDroppedWhenNoStepLeft(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	run, state := agentInterjectionState(t, s, root.ID)
 	state.Request.Budget.MaxSteps = 1
-	if err := cloudAgentSave(run, &state); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Save(run).Error; err != nil {
-		t.Fatal(err)
-	}
+	saveAgentStateForTest(t, s, run, &state)
 	if _, err := s.InterjectCloudAgent("user", root.ID, "msg-budget", "改一下方向"); err != nil {
 		t.Fatal(err)
 	}

@@ -399,6 +399,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		}
 		parentState, err := cloudAgentDecode(parentExecution)
 		if err != nil {
+			log.Printf("agent continuation decode %s: %v", parentID, err)
 			return nil, WrapAppError(409, "上一轮 Agent 历史记录不完整，无法继续对话；请新建对话", err)
 		}
 		creativeAnchor = parentState.CreativeAnchor

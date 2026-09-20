@@ -91,21 +91,19 @@ func TestCloudAgentLegacyRunSurvivesTaskInputCompaction(t *testing.T) {
 	if err := db.First(&task, "id = ?", root.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	var execution model.CloudAgentExecution
-	if err := db.First(&execution, "id = ?", root.ID).Error; err != nil {
+	execution, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	var stored map[string]any
-	if err := json.Unmarshal([]byte(execution.StateJSON), &stored); err != nil {
+	current, err := cloudAgentDecode(execution)
+	if err != nil {
 		t.Fatal(err)
 	}
-	delete(stored, "parentId")
-	delete(stored, "fingerprint")
-	delete(stored, "textHistory")
-	encoded, _ := json.Marshal(stored)
-	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).Update("state_json", string(encoded)).Error; err != nil {
-		t.Fatal(err)
-	}
+	writeLegacyAgentBlobForTest(t, db, execution, &current, func(stored map[string]any) {
+		delete(stored, "parentId")
+		delete(stored, "fingerprint")
+		delete(stored, "textHistory")
+	})
 	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
 		"status": model.TaskStatusSucceeded, "input_json": publicTaskInputJSON(task.InputJSON), "result_json": `{"text":"旧轮次回复"}`,
 	}).Error; err != nil {
@@ -163,11 +161,9 @@ func TestCloudAgentTerminalRunWithOlderCapabilityCanContinueOnCurrentContract(t 
 	}
 	parentState.Policy.CapabilitySetVersion = "canvas-capabilities/v1"
 	parentState.Policy.CapabilitySetHash = agentProfileHash("historical capability contract")
-	if err = cloudAgentSave(parentExecution, &parentState); err != nil {
-		t.Fatal(err)
-	}
+	historicalStateJSON := writeLegacyAgentStateForTest(t, db, parentExecution, &parentState)
 	if err = db.Model(&model.CloudAgentExecution{}).Where("id = ?", parent.ID).Updates(map[string]any{
-		"status": "completed", "state_json": parentExecution.StateJSON,
+		"status": "completed",
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -176,8 +172,6 @@ func TestCloudAgentTerminalRunWithOlderCapabilityCanContinueOnCurrentContract(t 
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	historicalStateJSON := parentExecution.StateJSON
-
 	childRequest := agentTestRequest()
 	childRequest.Prompt = "继续操作"
 	childRequest.IdempotencyKey = "current-capability-child"
@@ -232,12 +226,7 @@ func TestCloudAgentActiveRunWithOlderCapabilityIsTerminatedWithoutResume(t *test
 	}
 	state.Policy.CapabilitySetVersion = "canvas-capabilities/v1"
 	state.Policy.CapabilitySetHash = agentProfileHash("historical capability contract")
-	if err = cloudAgentSave(execution, &state); err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Update("state_json", execution.StateJSON).Error; err != nil {
-		t.Fatal(err)
-	}
+	writeLegacyAgentStateForTest(t, db, execution, &state)
 	if err = s.advanceCloudAgentByID("user", run.ID); err != nil {
 		t.Fatal(err)
 	}

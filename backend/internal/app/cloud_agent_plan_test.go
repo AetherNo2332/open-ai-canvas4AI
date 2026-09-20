@@ -52,12 +52,7 @@ func TestCloudAgentInheritedPlanReachesFirstModelRequest(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	run, state := agentInterjectionState(t, s, root.ID)
 	state.Plan = []cloudAgentPlanItem{{ID: "1", Title: "生成镜头2视频", Status: "doing"}}
-	if err := cloudAgentSave(run, &state); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Save(run).Error; err != nil {
-		t.Fatal(err)
-	}
+	saveAgentStateForTest(t, s, run, &state)
 	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
 		"status": model.TaskStatusSucceeded, "result_json": `{"text":"先停在这里"}`,
 	}).Error; err != nil {
@@ -139,12 +134,7 @@ func TestCloudAgentPendingPlanPreventsTextOnlyCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.Plan = []cloudAgentPlanItem{{ID: "1", Title: "生成镜头1", Status: "doing"}}
-	if err := cloudAgentSave(run, &state); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Save(run).Error; err != nil {
-		t.Fatal(err)
-	}
+	saveAgentStateForTest(t, s, run, &state)
 	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
 		"status": model.TaskStatusSucceeded, "result_json": `{"text":"先看到这里"}`,
 	}).Error; err != nil {
