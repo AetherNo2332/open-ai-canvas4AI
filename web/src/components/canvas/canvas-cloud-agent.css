@@ -610,6 +610,114 @@
     display: none;
 }
 
+.agent-context-pressure {
+    display: inline-flex;
+    height: 28px;
+    align-items: center;
+    gap: 4px;
+    border: 0;
+    border-radius: 999px;
+    padding: 0 5px 0 2px;
+    background: transparent;
+    color: color-mix(in srgb, currentColor 58%, transparent);
+    font-size: var(--fs-tiny);
+    font-variant-numeric: tabular-nums;
+    cursor: help;
+}
+
+.agent-context-pressure:hover,
+.agent-context-pressure:focus-visible {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+    color: color-mix(in srgb, currentColor 78%, transparent);
+    outline: none;
+}
+
+.agent-context-pressure svg {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 auto;
+    transform: rotate(-90deg);
+}
+
+.agent-context-pressure circle {
+    fill: none;
+    stroke-width: 2.4;
+}
+
+.agent-context-pressure-track {
+    stroke: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.agent-context-pressure-value,
+.agent-context-pressure-unknown {
+    stroke: #68b493;
+    stroke-linecap: round;
+}
+
+.agent-context-pressure[data-tone="warning"] .agent-context-pressure-value { stroke: #d6a24a; }
+.agent-context-pressure[data-tone="critical"] .agent-context-pressure-value { stroke: #e66b6b; }
+.agent-context-pressure[data-tone="unknown"] .agent-context-pressure-unknown { stroke: color-mix(in srgb, currentColor 38%, transparent); }
+
+/*
+ * 压力弹窗的内容会随分段增多而变长（上游实测 + 占用分布 + 9 个系统提示分段），
+ * 在窗口偏矮或圆环贴近底部时会被裁掉。这里给它设定高度上限、内部滚动，
+ * 滚动条沿用项目 .thin-scrollbar 的观感，并留出 gutter 避免出现滚动条时抖动。
+ */
+.agent-context-pressure-popover {
+    display: grid;
+    gap: 2px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    max-height: min(70vh, 26rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+    scrollbar-color: rgba(120, 113, 108, 0.45) transparent;
+    scrollbar-width: thin;
+    line-height: 1.55;
+}
+
+.agent-context-pressure-popover::-webkit-scrollbar {
+    width: 4px;
+}
+
+.agent-context-pressure-popover::-webkit-scrollbar-thumb {
+    background: rgba(120, 113, 108, 0.45);
+    border-radius: 999px;
+}
+
+/* 数值列不换行、标签列吃掉剩余宽度并省略：避免"数字被折到第二行"的错位。 */
+.agent-context-pressure-popover .agent-context-breakdown-value {
+    white-space: nowrap;
+}
+
+.agent-context-pressure-popover .agent-context-breakdown-label {
+    flex: 1 1 auto;
+}
+
+.agent-context-pressure-popover .agent-context-breakdown-bar {
+    display: flex;
+    overflow: hidden;
+}
+
+.agent-context-pressure-title {
+    margin-bottom: 5px;
+    font-weight: 650;
+}
+
+.agent-context-pressure-divider {
+    height: 1px;
+    margin: 7px 0;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.agent-context-pressure-note {
+    margin-top: 5px;
+    color: color-mix(in srgb, currentColor 62%, transparent);
+}
+
 @container (max-width: 520px) {
     .agent-composer-send-hint .agent-composer-send-hint-full {
         display: none;
@@ -921,6 +1029,7 @@
 .canvas-agent-approval-operation-add_node { background: #dcfce7; color: #166534; }
 .canvas-agent-approval-operation-update_node { background: #dbeafe; color: #1d4ed8; }
 .canvas-agent-approval-operation-connect_nodes { background: #fef3c7; color: #92400e; }
+.canvas-agent-approval-operation-arrange_nodes { background: #ccfbf1; color: #115e59; }
 .canvas-agent-approval-operation-generate_media { background: #f3e8ff; color: #7e22ce; }
 
 .canvas-agent-approval-node,
@@ -1608,4 +1717,114 @@
         cursor: default;
         touch-action: auto;
     }
+}
+
+/*
+ * 上下文占用分布：一根堆叠条 + 按桶明细 + 系统提示内部分段。三个桶用同一
+ * 前景色的阶梯透明度区分，避免引入与 tone（正常/警告/危险）冲突的新色相；
+ * 每行都带文字标签，颜色不承担唯一语义。
+ */
+.agent-context-breakdown-bar {
+    display: flex;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.agent-context-breakdown-bar > span {
+    display: block;
+    height: 100%;
+    transition: width 200ms ease;
+}
+
+.agent-context-breakdown-bar > span + span {
+    box-shadow: inset 1px 0 0 color-mix(in srgb, var(--background) 72%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="system"],
+.agent-context-breakdown-dot[data-bucket="system"] {
+    background: color-mix(in srgb, currentColor 74%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="tools"],
+.agent-context-breakdown-dot[data-bucket="tools"] {
+    background: color-mix(in srgb, currentColor 48%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="messages"],
+.agent-context-breakdown-dot[data-bucket="messages"] {
+    background: color-mix(in srgb, currentColor 28%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="envelope"],
+.agent-context-breakdown-dot[data-bucket="envelope"] {
+    background: color-mix(in srgb, currentColor 13%, transparent);
+}
+
+/* 预算占用条：已用取强调色，未使用保持"空槽"质感（低调 + 斜纹，避免被当成又一个内容桶）。 */
+.agent-context-breakdown-bar > span[data-bucket="used"],
+.agent-context-breakdown-dot[data-bucket="used"] {
+    background: color-mix(in srgb, var(--workspace-accent) 72%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="unused"],
+.agent-context-breakdown-dot[data-bucket="unused"] {
+    background: repeating-linear-gradient(
+        135deg,
+        color-mix(in srgb, currentColor 8%, transparent) 0 3px,
+        color-mix(in srgb, currentColor 3%, transparent) 3px 6px
+    );
+}
+
+.agent-context-breakdown-list,
+.agent-context-breakdown-more ul {
+    display: grid;
+    gap: 3px;
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.agent-context-breakdown-list > li,
+.agent-context-breakdown-more li {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+}
+
+.agent-context-breakdown-dot {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+}
+
+.agent-context-breakdown-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-context-breakdown-value {
+    margin-left: auto;
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in srgb, currentColor 72%, transparent);
+}
+
+.agent-context-breakdown-more {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.agent-context-breakdown-more-title {
+    color: color-mix(in srgb, currentColor 62%, transparent);
+}
+
+.agent-context-breakdown-more li {
+    color: color-mix(in srgb, currentColor 76%, transparent);
 }

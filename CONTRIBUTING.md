@@ -10,6 +10,19 @@
 
 不要提交 `.env`、数据库、数据目录、生成产物、编辑器配置或真实 API/OSS 密钥。新增配置项时只在 `.env.example` 中提供无敏感信息的说明。
 
+### 依赖外部服务的后端用例
+
+后端有 5 个用例默认跳过，必须备齐依赖才会真正执行（CI 的 Backend job 已经提供，并在缺失时直接失败）：
+
+- 3 个 PostgreSQL 用例（`internal/database`、`internal/canvas`、`internal/repository`）需要 `CANVAS_TEST_POSTGRES_DSN` 指向一个可以随意建删 schema 的一次性库：
+  ```bash
+  docker run -d --name canvas-test-pg -p 55432:5432 \
+    -e POSTGRES_PASSWORD=canvas_test -e POSTGRES_DB=canvas_test postgres:16-alpine
+  cd backend && CANVAS_TEST_POSTGRES_DSN="postgres://postgres:canvas_test@127.0.0.1:55432/canvas_test?sslmode=disable" \
+    go test ./internal/database/ ./internal/canvas/ ./internal/repository/ -count=1
+  ```
+- 2 个 Redis 用例（`internal/platform`、`internal/app`）要求 `PATH` 上有 `redis-server` 可执行文件：用例自己拉临时实例（unix socket），不需要额外部署 redis 服务。
+
 ## 提交要求
 
 - 保持改动聚焦，沿用现有目录职责、命名和错误处理风格。

@@ -187,7 +187,9 @@ func protocolRequestFromInput(input canvasGenerationInput) protocol.GenerationRe
 			resolution = declared
 		}
 	}
-	aspectRatio := input.Config.Size
+	// 并集：dev 侧按能力声明解析出画幅（imageSizeParameter），上游侧对 OpenAI 图片接口
+	// 额外做像素尺寸规范化（"1024x1024" → 合法枚举）。两者不冲突，串起来即可。
+	aspectRatio := protocolRequestSize(input)
 	if input.Mode == "image" && strings.TrimSpace(input.Config.InterfaceType) == string(model.ChannelInterfaceOpenAIImage) {
 		aspectRatio = normalizePixelSize(aspectRatio)
 	}

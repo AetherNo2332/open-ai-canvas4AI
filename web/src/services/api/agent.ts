@@ -27,7 +27,7 @@ export type AgentProfileView = {
     layers: AgentProfileLayer[];
 };
 
-export type AgentApprovalPreviewOperation = "add_node" | "update_node" | "connect_nodes" | "generate_media" | "create_storyboard" | "edit_storyboard" | "plan_step";
+export type AgentApprovalPreviewOperation = "add_node" | "update_node" | "connect_nodes" | "arrange_nodes" | "generate_media" | "create_storyboard" | "edit_storyboard" | "plan_step";
 
 export type AgentApprovalPreviewItem = {
     operation: AgentApprovalPreviewOperation;
@@ -74,10 +74,33 @@ export type AgentRun = {
     updatedAt: string;
     skills?: Array<{ id: string; name: string; version: string; hash: string }>;
     events?: AgentEvent[];
+    /** 事件已全量落库：本次返回的首条事件之前的已入库条数。 */
+    eventSeqBase?: number;
+    /** 该运行累计产生的事件条数（含未随本次返回的更早记录）。 */
+    eventCount?: number;
+    /** 本次返回的最后一条事件序号，可直接作为下次 sinceSeq。 */
+    latestSeq?: number;
+    /** 还有更早的记录未随本次返回（可按 sinceSeq 拉取）。 */
+    eventsTruncated?: boolean;
     spentCredits?: number;
     step?: number;
     activeMessage?: { messageId: string; text: string };
     approval?: AgentApproval;
+    /** 非空表示步进循环正暂停在上下文压缩上（requested/running）。 */
+    contextCompaction?: AgentContextCompactionState;
+};
+
+export type AgentContextCompactionState = {
+    status: "requested" | "running";
+    sourceBytes?: number;
+    turnCount?: number;
+    /** 中途暂停压缩：压完继续本轮，而不是收尾。 */
+    resume?: boolean;
+    /** 触发读数：下一步预计输入 token ÷ 用户配置的可用输入。 */
+    projectedTokens?: number;
+    usableInputTokens?: number;
+    ratio?: number;
+    tokenSource?: "provider" | "estimate";
 };
 
 export type AgentEvent = {
@@ -89,6 +112,94 @@ export type AgentEvent = {
     createdAt: string;
     /** Local delivery order for synthetic snapshot events; never used as a resume cursor. */
     localSeq?: number;
+};
+
+/** 一个上下文桶：系统提示 / 工具 schema / 会话消息。 */
+export type AgentContextBucket = {
+    key: string;
+    label: string;
+    bytes: number;
+    tokens: number;
+    /** 按上游实测锚点比例校准后的读数；没有锚点时后端不返回该字段。 */
+    scaledTokens?: number;
+};
+
+/** 编译出的系统提示内部分段（策略、能力、锚点、画布摘要、偏好等）。 */
+export type AgentContextSystemSegment = AgentContextBucket;
+
+export type AgentContextBreakdown = {
+    totalBytes: number;
+    totalTokens: number;
+    bucketBytes: number;
+    bucketTokens: number;
+    envelopeBytes: number;
+    buckets: AgentContextBucket[];
+    systemSegments?: AgentContextSystemSegment[];
+    /** 上游实测 / 本地估算 的比例；用于把构成读数换算到 provider 的尺度。 */
+    tokenScale?: number;
+    scaledTotalTokens?: number;
+};
+
+/** 上游上报的用量：模型自己的分词器计数，是压力与计费的权威值。 */
+export type AgentContextTokenUsage = {
+    inputTokens: number;
+    cachedInputTokens: number;
+    uncachedInputTokens: number;
+    outputTokens: number;
+};
+
+export type AgentContextPressure = {
+    estimatedInputTokens: number;
+    contextWindowTokens: number;
+    reservedOutputTokens: number;
+    usableInputTokens: number;
+    pressureRatio: number;
+    sourceBytes: number;
+    promptChars: number;
+    promptLimitChars: number;
+    modelLimitConfigured: boolean;
+    /**
+     * 工具 schema / 协议包装 / 兜底轮的比例预留（窗口的 4%，夹在 4K–32K）。
+     * 服务端未解析出窗口时不下发这几个字段。
+     */
+    overheadTokens?: number;
+    /** 输入预算 = 窗口 − 输出预留 − overhead，压缩线是它的 85%。 */
+    inputBudgetTokens?: number;
+    /** 预算来源：channel-model（按渠道模型）或 logical-route-intersection（逻辑模型取最小窗口路由）。 */
+    budgetSource?: "channel-model" | "logical-route-intersection";
+    /** 压缩线的整数读数（输入预算的 85%，下取整）；实际判据仍是比例。 */
+    compactAtTokens?: number;
+    estimate: true;
+    compactionSourceBytes: number;
+    compactionThresholdBytes: number;
+    historyMessages: number;
+    historyMessageThreshold: number;
+    compactionPressureRatio: number;
+    /** 压缩判据：0.85 表示"输入预算的 85%"。 */
+    compactionThresholdRatio?: number;
+    /** 压缩判据的口径：tokens（按模型上限）或 bytes（没配上限时的兜底）。 */
+    compactionBasis?: "tokens" | "bytes";
+    /** 压缩读数的来源：provider 锚点或本地估算。 */
+    compactionTokenSource?: "provider" | "estimate";
+    /** 占用分布；旧后端不返回该字段。 */
+    breakdown?: AgentContextBreakdown;
+    /** 上一步上游实测的 prompt 规模（provider 自己的分词器）；没有可靠锚点时不返回。 */
+    pressureTokens?: number;
+    /** 下一步请求的预计规模 = 锚点 + 本地估算的有符号增量。 */
+    projectedTokens?: number;
+    /** 读数的来源：provider 锚点，或纯本地估算。 */
+    tokenSource?: "provider" | "estimate";
+    tokenUsage?: AgentContextTokenUsage;
+    anchorStep?: number;
+    anchorDeltaTokens?: number;
+    anchorRejected?: string;
+    /** 用投影值算出的窗口占比；模型未声明窗口时不存在。 */
+    projectedPressureRatio?: number;
+    requestHardLimitBytes?: number;
+    /** 本步生效的模型输出上限（token）；后端配成 0（不限制）时不返回。 */
+    stepMaxOutputTokens?: number;
+    /** 本步生效的墙钟（秒）：到点会中止这一步并自动关思考重试。 */
+    stepTimeoutSeconds?: number;
 };
 
 /** 事件流本身不是 http 封装请求，单独保留状态码供 UI 区分旧后端/失效轮次。 */
@@ -150,7 +261,7 @@ export function sendAgentInterjection(runId: string, input: { text: string; mess
 }
 
 export function getAgentCapabilities() {
-    return http.get<{ version: number; permissionModes: AgentPermissionMode[]; contextScopes: string[]; skills: boolean; writeTools: boolean; capabilitySetVersion?: string; capabilitySetHash?: string; nodeTypes?: string[] }>("/agent/capabilities", { timeout: 15_000 });
+    return http.get<{ version: number; permissionModes: AgentPermissionMode[]; contextScopes: string[]; skills: boolean; writeTools: boolean; historyPolicy?: "server_compacted"; contextCompaction?: { enabled: boolean; strategy: "structured_checkpoint"; thresholdBytes: number; thresholdHistoryMessages: number; retainedRecentPairs: number }; capabilitySetVersion?: string; capabilitySetHash?: string; nodeTypes?: string[] }>("/agent/capabilities", { timeout: 15_000 });
 }
 
 export function getAgentProfile(options: { projectId?: string; canvasId?: string; scope?: AgentProfileScope } = {}) {
@@ -166,8 +277,12 @@ export function updateAgentProfile(input: { scope: AgentProfileScope; projectId?
     return http.patch<AgentProfileView>("/agent/profile", input, { timeout: 15_000 });
 }
 
-export function getAgentRun(runId: string, signal?: AbortSignal) {
-    return http.get<{ run: AgentRun }>(`/agent/runs/${encodeURIComponent(runId)}`, { signal });
+export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sinceSeq?: number; eventLimit?: number }) {
+    const params = new URLSearchParams();
+    if (options?.sinceSeq) params.set("sinceSeq", String(options.sinceSeq));
+    if (options?.eventLimit) params.set("eventLimit", String(options.eventLimit));
+    const query = params.toString();
+    return http.get<{ run: AgentRun }>(`/agent/runs/${encodeURIComponent(runId)}${query ? `?${query}` : ""}`, { signal });
 }
 
 export function cancelAgentRun(runId: string) {

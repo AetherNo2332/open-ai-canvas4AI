@@ -14,6 +14,7 @@ import { cleanupUnusedMedia, collectMediaStorageKeys, resolveMediaUrl } from "@/
 import { flushGenerationAssetStorageLocks, insertOrReturnGenerationAsset, withGenerationArtifactCommitLock, withGenerationAssetStorageLock } from "@/services/generation-asset-repository";
 import { CANVAS_STORE_KEY, commitPendingCanvasStorePersistenceLocked, pendingCanvasStorePersistence, withCanvasStorePersistenceLock } from "@/stores/canvas/use-canvas-store";
 import { readAllCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
+import { stableDigestHex } from "@/lib/stable-digest";
 
 export type AssetKind = "text" | "image" | "video" | "audio" | "model" | "entity";
 export type { AssetCategory } from "@/lib/asset-category";
@@ -295,8 +296,7 @@ async function normalizePersistedAsset(asset: Asset): Promise<Asset> {
 }
 
 async function generationAssetId(effectKey: string) {
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(effectKey));
-    return `generation_${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    return `generation_${await stableDigestHex(effectKey)}`;
 }
 
 export const useAssetStore = create<AssetStore>()(

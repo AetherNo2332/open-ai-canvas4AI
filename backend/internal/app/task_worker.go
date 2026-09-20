@@ -148,7 +148,7 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		for {
 			select {
 			case <-ticker.C:
-				renewCtx, cancelRenew := context.WithTimeout(ctx, 5*time.Second)
+				renewCtx, cancelRenew := taskLeaseRenewContext(ctx)
 				var err error
 				if globalSlot != nil {
 					err = globalSlot.Renew(renewCtx)
@@ -227,10 +227,16 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		if code, _ := ChannelSlotFailureDetails(err); code != "" {
 			channelSlotFailedBeforeRequest = true
 		}
+		// 我方执行时限到点（单步墙钟或任务超时）不是"租约丢失"：续租可能正好被同一个
+		// 时限打断，此时必须继续走失败收尾，否则任务停在 running 被反复重跑。
+		deadlineExpired := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		select {
 		case leaseErr := <-leaseLost:
-			_ = s.log(task.UserID, task.ID, "warn", "任务租约失效，等待其他 worker 恢复", leaseErr.Error())
-			return leaseErr
+			if !deadlineExpired {
+				_ = s.log(task.UserID, task.ID, "warn", "任务租约失效，等待其他 worker 恢复", leaseErr.Error())
+				return leaseErr
+			}
+			_ = s.log(task.UserID, task.ID, "warn", "任务执行时限到点，按失败收尾（不视为租约丢失）", leaseErr.Error())
 		default:
 		}
 		decryptedInput, decryptErr := s.decryptTaskInputJSON(task.InputJSON)
@@ -251,7 +257,9 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		if newAPIChannel2TaskSyncExpired(*task, err, time.Now()) {
 			err = errors.New("上游任务长时间未同步，已停止自动查询，请确认渠道任务状态后重试。")
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || deadlineExpired {
+			// 合并说明：我们这边的"画布 Agent 单步超时是可恢复事件"分支（cloudAgentModelOperation /
+			// cloudAgentStepTimeoutError）随自研单步治理一起本轮不移植；这里回到上游的统一超时文案。
 			err = errors.New(taskTimeoutMessage(task.Type))
 		}
 		s.noteAgentMemoryCompactTask(*task, nil, err)
@@ -297,6 +305,20 @@ func taskFailureMessage(err error) string {
 	return truncateRunes(err.Error(), 2_000)
 }
 
+// taskLeaseRenewTimeout 是单次续租的写入上限。
+const taskLeaseRenewTimeout = 5 * time.Second
+
+// taskLeaseRenewContext 返回续租用的 context：只继承父 ctx 的值（渠道槽位、追踪信息），
+// 不继承它的取消。续租不能挂在"任务执行时限"上 —— 单步墙钟到点时 ctx 立刻过期，续租被掐断
+// 就会被误判成"租约丢失"，任务留在 running，等 45s 租约过期后被再次领取重跑
+// （实测 30s 单步墙钟 + 大画布：一次调用变成三次上游请求，白烧两次生成）。
+func taskLeaseRenewContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), taskLeaseRenewTimeout)
+}
+
+// taskExecutionTimeout 是"画布 Agent 单步秒级墙钟"的入口：本轮随自研单步治理一起不移植
+// （上游用 taskExecutionTimeoutWithPolicy 统一按任务类型算墙钟），保留函数仅为减少调用点改动。
+// 需要移植时见报告"后续需要逐个移植的我方功能清单"。
 func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) time.Duration {
 	switch {
 	case strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):

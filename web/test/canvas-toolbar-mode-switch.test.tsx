@@ -1,9 +1,37 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Hand, MousePointer2 } from "lucide-react";
 
 import { FloatingDock } from "@/components/ui/aceternity/floating-dock";
 import { CANVAS_MODE_TOOL_ID, defaultToolbarPrefs, migrateToolbarPrefs, resolveToolbarEntries, type ToolContext, type ToolbarHandlers } from "@/lib/canvas/tool-registry";
+
+// bun 的测试环境没有 DOM，而 motion 的 <motion.div> 只按"window 是否存在"判断是否走浏览器分支：
+// 一旦拿到别的用例临时装上的**部分** window（bun 在同一进程里并发跑各测试文件），它就会去调
+// window.addEventListener 直接抛错。渲染断言因此依赖外部用例的时序，这里显式装一个够用的桩，
+// 让这条断言自我闭环：跑单文件与跑全量结果一致。
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+
+function installRenderingWindowStub() {
+    const media = { matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} };
+    Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: {
+            innerWidth: 1024,
+            addEventListener() {},
+            removeEventListener() {},
+            matchMedia: () => media,
+            location: { pathname: "/", origin: "http://localhost" },
+            localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        },
+    });
+}
+
+function restoreRenderingWindowStub() {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+    else Object.defineProperty(globalThis, "window", { configurable: true, value: undefined });
+}
+
+afterEach(restoreRenderingWindowStub);
 
 function createMainContext(canvasTool: "move" | "box-select" = "box-select"): ToolContext {
     return {
@@ -117,6 +145,7 @@ describe("canvas toolbar mode switch", () => {
     });
 
     test("renders the pill switch with an active circular thumb", () => {
+        installRenderingWindowStub();
         const html = renderToStaticMarkup(
             <FloatingDock
                 items={[{

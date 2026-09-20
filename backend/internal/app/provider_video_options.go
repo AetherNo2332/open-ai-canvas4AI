@@ -87,6 +87,23 @@ func imageSizeParameter(profile *ImageCapabilityConfig, value string) (string, s
 	}
 }
 
+// protocolRequestSize 折算声明式协议统一字段 aspectRatio 的值：能力配置声明 size 的上游要像素
+// （画布默认档 1:1 → 1024x1024）。内置图片实现一直在请求边界做这件事（imageSizeParameter →
+// normalizePixelSize），声明式插件路径漏了它 —— 实测只认 WIDTHxHEIGHT 的上游会直接 400。
+//
+// 声明 aspect_ratio 的协议（grok / gemini / jimeng 等）保持原样：它们在自己的请求模板里带着
+// 容差做比例归一（实测把 1824x1024 交给 GCD 会得到 57:32 这种上游不认的比例），host 不抢这件事。
+// 视频的 ratio 也由自己那条链处理。
+func protocolRequestSize(input canvasGenerationInput) string {
+	if input.Mode != "image" {
+		return input.Config.Size
+	}
+	if key, value := imageSizeParameter(input.ImageCapability, input.Config.Size); key == "size" && value != "" {
+		return value
+	}
+	return input.Config.Size
+}
+
 func normalizeImageAspectRatio(value string) string {
 	value = strings.TrimSpace(strings.ToLower(strings.ReplaceAll(value, "×", "x")))
 	if strings.Contains(value, ":") {

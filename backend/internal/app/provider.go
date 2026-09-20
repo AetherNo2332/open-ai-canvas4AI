@@ -25,28 +25,36 @@ import (
 var sseFrameBoundaryPattern = regexp.MustCompile(`\r?\n\r?\n`)
 
 type canvasGenerationInput struct {
-	Mode             string                 `json:"mode"`
-	Prompt           string                 `json:"prompt"`
-	Config           providerConfig         `json:"config"`
-	ReferenceImages  []providerMedia        `json:"referenceImages"`
-	ReferenceVideos  []providerMedia        `json:"referenceVideos"`
-	ReferenceAudios  []providerMedia        `json:"referenceAudios"`
-	TextHistory      []providerTextMessage  `json:"textHistory"`
-	Mask             *providerMedia         `json:"mask"`
-	Metadata         map[string]interface{} `json:"metadata"`
-	AgentRequests    *agentToolRequests     `json:"agentRequests"`
-	TextOptions      canvasTextOptions      `json:"textOptions"`
-	ImageCapability  *ImageCapabilityConfig `json:"-"`
-	StreamText       bool                   `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
-	MaxOutputTokens  int                    `json:"-"`
-	OnTextDelta      func(string)           `json:"-"`
-	OnReasoningDelta func(string)           `json:"-"`
-	VideoCapability  *VideoCapabilityConfig `json:"-"`
+	Mode            string                 `json:"mode"`
+	Prompt          string                 `json:"prompt"`
+	Config          providerConfig         `json:"config"`
+	ReferenceImages []providerMedia        `json:"referenceImages"`
+	ReferenceVideos []providerMedia        `json:"referenceVideos"`
+	ReferenceAudios []providerMedia        `json:"referenceAudios"`
+	TextHistory     []providerTextMessage  `json:"textHistory"`
+	Mask            *providerMedia         `json:"mask"`
+	Metadata        map[string]interface{} `json:"metadata"`
+	AgentRequests   *agentToolRequests     `json:"agentRequests"`
+	TextOptions     canvasTextOptions      `json:"textOptions"`
+	ImageCapability *ImageCapabilityConfig `json:"-"`
+	StreamText      bool                   `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
+	MaxOutputTokens int                    `json:"-"`
+	// CapabilityMaxOutputTokens 是渠道模型能力声明的输出上限（0 = 未声明）。
+	// 它与 MaxOutputTokens / TextOptions.MaxOutputTokens（策略上限）分开存放：
+	// 实际请求取两者中较小的非零值，避免能力值直接吃掉管理端配置的单步预算。
+	CapabilityMaxOutputTokens int                    `json:"-"`
+	OnTextDelta               func(string)           `json:"-"`
+	OnReasoningDelta          func(string)           `json:"-"`
+	VideoCapability           *VideoCapabilityConfig `json:"-"`
 }
 
 type canvasTextOptions struct {
 	Stream   *bool `json:"stream"`
 	Thinking bool  `json:"thinking"`
+	// MaxOutputTokens 是本次调用的输出上限（思考 + 正文 + 工具参数）。
+	// 画布 Agent 的每一步都带上限：不设时上游按"剩余上下文"放行，思考模型可以
+	// 无限吐 token，实测把单步拖到 324s 只能靠用户取消。
+	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
 }
 
 type agentToolRequests struct {
@@ -358,11 +366,12 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		return nil, err
 	}
 	input.Config = config
-	if input.Mode == "text" && input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Text != nil {
-		// The same capability contract drives provider output limits, billing
-		// estimates and Agent context budgeting. Never silently fall back to a
-		// transport-specific fixed token count when the model declares one.
-		input.MaxOutputTokens = input.Config.CapabilityConfig.Text.MaxOutputTokens
+	// 能力声明的输出上限单独记一份：策略上限（管理端/每步预算）与模型物理上限取小值，
+	// 两者都不为 0 时以更小者为准（见 provider_text.go 的 cloudAgentOutputTokens）。
+	// 注意：上游 v1.5.7 在这里把能力值写进 input.MaxOutputTokens，会架空我们的单步策略上限，
+	// 因此合并时保留 dev 侧写法（写 CapabilityMaxOutputTokens，不写 MaxOutputTokens）。
+	if input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Text != nil {
+		input.CapabilityMaxOutputTokens = input.Config.CapabilityConfig.Text.MaxOutputTokens
 	}
 	var textPublisher *taskTextStreamPublisher
 	if input.Mode == "text" && strings.HasPrefix(taskType, "canvas_text") {

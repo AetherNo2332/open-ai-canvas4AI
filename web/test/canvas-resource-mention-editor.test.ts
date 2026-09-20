@@ -142,6 +142,10 @@ describe("canvas resource mention editor", () => {
         expect(css).toContain(".agent-composer-send-hint-full");
         expect(css).toContain(".agent-composer-send-hint-compact");
         expect(css).toContain(".agent-composer-prompt-scroll");
+        // 合并取舍：上游 2682c950「Agent 面板 - 移除 PR #539 提交中的无效 hover 背景」整条删掉了
+        // .agent-tool-row:hover；dev 侧 eb7344f9 曾把它加回来并断言"存在且不得声明 cursor"。
+        // 这里随上游（CSS 已删除 + 上游的负断言），保持两侧自洽；dev 的 hover 边框意图需产品复核。
         expect(css).not.toContain(".agent-tool-row:hover");
+        expect(css).toContain(".agent-tool-action-link");
     });
 });

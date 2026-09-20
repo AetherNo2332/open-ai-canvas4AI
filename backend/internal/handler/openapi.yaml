@@ -325,7 +325,7 @@ paths:
       summary: 读取云端 Agent 能力
       responses:
         "200":
-          description: 信封 data 包含 version、permissionModes、contextScopes、skills、writeTools、billing、maxHistoryPairs、maxSteps、maxHistoryBytes、capabilitySetVersion、capabilitySetHash、nodeTypes、tools；maxHistoryPairs 为跨轮保留的用户对话轮数，maxSteps 为 0 表示无固定模型调用上限，历史仍受 maxHistoryBytes 限制
+          description: 信封 data 包含 version、permissionModes、contextScopes、skills、writeTools、billing、historyPolicy、contextCompaction、maxHistoryPairs、maxHistoryBytes、maxSteps、capabilitySetVersion、capabilitySetHash、nodeTypes、tools；上下文由服务端结构化检查点管理，maxHistoryPairs 为 0 表示不设固定轮数上限，maxSteps 为 0 表示无固定模型调用上限，历史仍受 maxHistoryBytes 限制
   /agent/profile:
     get:
       tags: [agent]
