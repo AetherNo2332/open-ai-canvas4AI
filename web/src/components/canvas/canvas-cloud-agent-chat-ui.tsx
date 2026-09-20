@@ -839,7 +839,7 @@ type ContextBudgetUsage = {
     thresholdRatio: number;
 };
 
-function ContextBreakdown({ breakdown, usage, format }: { breakdown?: AgentContextBreakdown; usage?: ContextBudgetUsage; format: (value: number) => string }) {
+function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreakdown; format: (value: number) => string }) {
     if (!breakdown || breakdown.buckets.length === 0) return null;
     const total = breakdown.bucketBytes + breakdown.envelopeBytes || breakdown.totalBytes;
     if (total <= 0) return null;
@@ -852,7 +852,6 @@ function ContextBreakdown({ breakdown, usage, format }: { breakdown?: AgentConte
     return (
         <>
             <div className="agent-context-pressure-divider" />
-            <ContextBudgetBar usage={usage} format={format} />
             <div className="agent-context-pressure-title">上下文占用分布（本次请求的组成）</div>
             <div className="agent-context-breakdown-bar" role="img" aria-label={`上下文占用分布：${stack.map((item) => `${item.label} ${Math.round(item.percent)}%`).join("，")}`}>
                 {stack.map((item) => <span key={item.key} data-bucket={item.key} style={{ width: `${item.percent}%` }} />)}
@@ -917,7 +916,7 @@ function ContextBudgetBar({ usage, format }: { usage?: ContextBudgetUsage; forma
             <ul className="agent-context-breakdown-list">
                 <li>
                     <span className="agent-context-breakdown-dot" data-bucket="used" />
-                    <span className="agent-context-breakdown-label">已使用（预计下一步输入）</span>
+                    <span className="agent-context-breakdown-label">已使用</span>
                     <span className="agent-context-breakdown-value">{format(usage.projectedTokens)} Token · {percent(usage.projectedTokens)}%</span>
                 </li>
                 <li>
@@ -927,7 +926,7 @@ function ContextBudgetBar({ usage, format }: { usage?: ContextBudgetUsage; forma
                 </li>
             </ul>
             <div className="agent-context-pressure-note">
-                输入预算 {format(budget)} Token（窗口 − 输出预留 − 工具/协议预留）；压缩线 {format(threshold)} Token（{Math.round(usage.thresholdRatio * 100)}%）。
+                已使用 = 预计下一步输入。输入预算 {format(budget)} Token（窗口 − 输出预留 − 工具/协议预留）；压缩线 {format(threshold)} Token（{Math.round(usage.thresholdRatio * 100)}%）。
                 {overBudget ? "当前预计输入已超过输入预算，下一步会先压缩再继续。" : ""}
             </div>
         </>
@@ -1006,8 +1005,10 @@ function AgentContextPressureIndicator({ pressure, runStep }: { pressure: AgentC
             ) : <div>模型窗口：未配置；当前圆环按服务端压缩压力显示，不用字符上限推断 Token 能力。</div>}
             <div className="agent-context-pressure-divider" />
             <div>本轮提示：{format(pressure.promptChars)} / {pressure.promptLimitChars ? format(pressure.promptLimitChars) : "未配置"} 字符</div>
-            <ContextBreakdown
-                breakdown={pressure.breakdown}
+            {/* 预算条与组成条分开：组成回答"这次请求谁占了大头"，预算条回答"离装不下还有多远"。
+                组成数据缺失（例如这一步还没有读数）时，"未使用余量"仍然要看得见。 */}
+            <div className="agent-context-pressure-divider" />
+            <ContextBudgetBar
                 usage={{
                     configured,
                     usableInputTokens: pressure.usableInputTokens ?? 0,
@@ -1017,6 +1018,7 @@ function AgentContextPressureIndicator({ pressure, runStep }: { pressure: AgentC
                 }}
                 format={format}
             />
+            <ContextBreakdown breakdown={pressure.breakdown} format={format} />
             <div>
                 单步输出上限：{pressure.stepMaxOutputTokens ? `${formatTokens(pressure.stepMaxOutputTokens)} Token` : "本部署未限制（思考与正文都不设输出上限）"}
                 {typeof pressure.stepTimeoutSeconds === "number" ? ` · 单步最长 ${formatDuration(pressure.stepTimeoutSeconds)}` : ""}
