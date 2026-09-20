@@ -299,6 +299,12 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 	if err := relocateLegacyCloudAgentMigrations(db); err != nil {
 		return nil, err
 	}
+	// 退役事件表的行搬运与让位搬迁同层：这里覆盖"目标表已经存在"的库
+	// （已经跑过一次新二进制的库、或上游 v28+ 且带着我们旧表的库）。
+	// 全新库与纯上游库在这里匹配不到，是 no-op。
+	if _, _, err := migrateLegacyCloudAgentEventRows(db); err != nil {
+		return nil, err
+	}
 	var applied schemaMigration
 	err := db.First(&applied, "version = ?", 6).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -517,6 +523,12 @@ func MigrateSchema(db *gorm.DB) error {
 			if err := tx.Create(&record).Error; err != nil {
 				return fmt.Errorf("记录数据库迁移 %d：%w", item.version, err)
 			}
+		}
+		// 上游事件表由 v28（agent_execution_journal）在本事务里建出来，因此
+		// "我们 v25 库"这条路径上只有在这里搬运才能看到目标表。
+		// 与 migrationsForDatabase 里那次调用一样：幂等，匹配不到就是 no-op。
+		if _, _, err := migrateLegacyCloudAgentEventRows(tx); err != nil {
+			return err
 		}
 		return RequireSchemaVersion(tx)
 	})
