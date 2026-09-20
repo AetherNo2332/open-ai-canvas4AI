@@ -238,16 +238,20 @@ func (state *cloudAgentRuntime) recordCloudAgentVisualNote(text string) {
 	}
 }
 
-// cloudAgentPruneInspectedImages 在若干步之后把图片移出上下文。
+// cloudAgentPruneInspectedImages 在若干步之后把图片移出上下文，返回 (是否有变化, 移出的图片数)。
 // 上游每一步都会重新读取历史里的图片并按视觉 token 计费，保留整段历史既贵又没有新信息；
 // 但只保留一轮会让模型永远看不到第二张图（见 cloudAgentImageRetentionRounds）。
 // 文本回执与 nodeId 始终保留，模型自己写下的观察会随占位符一起留在上下文里。
-func cloudAgentPruneInspectedImages(request *canonicalAgentRequest, notes map[string]string) bool {
+//
+// 这是**唯一**的轮内上下文裁剪：正文（工具结果里的读取内容）不再卸载 —— 卸载原本是"别把
+// 512KiB 状态顶爆"的副产物，检查点拆分后消息搬出 state_json，这个动机已经不存在；
+// 而按字节改写历史中段既会作废后续的前缀缓存，又会让模型重复读取（详见 http-api.mdx）。
+func cloudAgentPruneInspectedImages(request *canonicalAgentRequest, notes map[string]string) (bool, int) {
 	if request == nil || len(request.Messages) == 0 {
-		return false
+		return false, 0
 	}
 	cut := cloudAgentImagePruneBoundary(request.Messages)
-	changed := false
+	changed, pruned := false, 0
 	for _, message := range request.Messages[:max(0, cut)] {
 		if role := stringField(message, "role"); role == "system" || role == "" {
 			continue
@@ -257,24 +261,24 @@ func cloudAgentPruneInspectedImages(request *canonicalAgentRequest, notes map[st
 			continue
 		}
 		kept := make([]any, 0, len(parts))
-		dropped := false
+		dropped := 0
 		for _, value := range parts {
 			part, _ := value.(map[string]any)
 			switch stringField(part, "type") {
 			case "image_url", "file_url":
-				dropped = true
+				dropped++
 				continue
 			}
 			kept = append(kept, value)
 		}
-		if !dropped {
+		if dropped == 0 {
 			continue
 		}
 		kept = append(kept, map[string]any{"type": "text", "text": cloudAgentImageEvictionNote(message, notes)})
 		message["content"] = kept
-		changed = true
+		changed, pruned = true, pruned+dropped
 	}
-	return changed
+	return changed, pruned
 }
 
 // cloudAgentImagePruneBoundary 返回可以安全裁剪图片的消息下标：

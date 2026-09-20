@@ -249,7 +249,7 @@ func TestCloudAgentDigestExcerptsMediaPrompts(t *testing.T) {
 // The cheap deterministic eviction must be able to fire below the semantic
 // compaction threshold, and it must judge the conversation messages rather
 // than the whole canonical envelope.
-func TestCloudAgentEvictionPrecedesSemanticCompaction(t *testing.T) {
+func TestCloudAgentLargeHistoryBelowCompactionLineIsSentIntact(t *testing.T) {
 	state := cloudAgentRuntime{Canonical: canonicalAgentRequest{Messages: []map[string]any{{"role": "user", "content": "指令"}}}}
 	for i := 0; i < 4; i++ {
 		state.Canonical.Messages = append(state.Canonical.Messages,
@@ -258,28 +258,20 @@ func TestCloudAgentEvictionPrecedesSemanticCompaction(t *testing.T) {
 			map[string]any{"role": "assistant", "content": "继续"})
 	}
 	raw, _ := json.Marshal(state.Canonical.Messages)
-	if len(raw) < cloudAgentEvictionThresholdBytes || len(raw) >= agentcontext.ThresholdBytes {
-		t.Fatalf("fixture must sit between the eviction (%d) and compaction (%d) thresholds, got %d",
-			cloudAgentEvictionThresholdBytes, agentcontext.ThresholdBytes, len(raw))
+	if len(raw) >= agentcontext.ThresholdBytes {
+		t.Fatalf("fixture must sit below the compaction threshold (%d), got %d", agentcontext.ThresholdBytes, len(raw))
 	}
 	if needed, _, _ := cloudAgentContextShouldCompact(&state); needed {
 		t.Fatal("semantic compaction must not be requested below its threshold")
 	}
-	evicted, before, after := compactCloudAgentContext(&state.Canonical, nil)
-	if !evicted || after >= before {
-		t.Fatalf("cheap eviction did not fire below the semantic threshold: evicted=%v %d→%d", evicted, before, after)
+	// 没有卸载机制之后，"文件大但还没到压缩线"的一步就是原样发出去：不改写、不缩小。
+	before, _ := json.Marshal(state.Canonical.Messages)
+	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, nil); changed || pruned != 0 {
+		t.Fatalf("read bodies must not be pruned below the compaction line: changed=%v", changed)
 	}
-}
-
-// A large system prompt or tool schema must not trigger body eviction: those
-// bytes cannot be evicted, and judging them made a 36 KiB read look safe.
-func TestCloudAgentEvictionIgnoresNonMessageBytes(t *testing.T) {
-	request := canonicalAgentRequest{
-		SystemPrompt: strings.Repeat("策略", 20000),
-		Messages:     []map[string]any{{"role": "tool", "tool_call_id": "call", "content": `{"content":"正文"}`}},
-	}
-	if evicted, before, after := compactCloudAgentContext(&request, nil); evicted || before != after {
-		t.Fatalf("non-message bytes triggered eviction: %v %d→%d", evicted, before, after)
+	after, _ := json.Marshal(state.Canonical.Messages)
+	if string(before) != string(after) {
+		t.Fatal("canonical was rewritten below the compaction line")
 	}
 }
 
@@ -961,8 +953,8 @@ func TestCloudAgentStoryboardReadRows(t *testing.T) {
 	}
 }
 
-// 技能正文不可被驱逐：卸载后模型只能重读，实测同一 SKILL.md 在一次运行里被读了 5 次。
-func TestCloudAgentEvictionKeepsSkillBodies(t *testing.T) {
+// 技能正文与画布读取正文都不再被移出上下文：轮内只裁剪图片（超过保留轮次的看图结果）。
+func TestCloudAgentReadBodiesAreNotPruned(t *testing.T) {
 	body := `{"skillId":"s1","path":"SKILL.md","content":"` + strings.Repeat("技能正文", 4000) + `"}`
 	request := canonicalAgentRequest{Messages: []map[string]any{
 		{"role": "user", "content": "用技能改分镜"},
@@ -972,18 +964,19 @@ func TestCloudAgentEvictionKeepsSkillBodies(t *testing.T) {
 		{"role": "tool", "tool_call_id": "call-read", "content": `{"nodes":[],"content":"` + strings.Repeat("画布正文", 4000) + `"}`},
 		{"role": "assistant", "content": "继续"},
 	}}
-	evicted, before, after := compactCloudAgentContext(&request, nil)
-	if !evicted {
-		t.Fatalf("large re-readable body was not evicted: %d bytes", before)
+	before, _ := json.Marshal(request.Messages)
+	if changed, pruned := cloudAgentPruneInspectedImages(&request, nil); changed || pruned != 0 {
+		t.Fatalf("read bodies must not be pruned: changed=%v pruned=%d", changed, pruned)
 	}
-	if after >= before {
-		t.Fatal("eviction did not shrink the messages")
+	after, _ := json.Marshal(request.Messages)
+	if string(before) != string(after) {
+		t.Fatal("read bodies were rewritten")
 	}
 	if !strings.Contains(stringField(request.Messages[2], "content"), "技能正文") {
-		t.Fatal("skill body was evicted; the model would have to re-read it")
+		t.Fatal("skill body disappeared")
 	}
-	if strings.Contains(stringField(request.Messages[4], "content"), "画布正文") {
-		t.Fatal("re-readable canvas body was not evicted")
+	if !strings.Contains(stringField(request.Messages[4], "content"), "画布正文") {
+		t.Fatal("canvas read body disappeared")
 	}
 }
 
@@ -1080,8 +1073,8 @@ func TestCloudAgentKeepsImagesForRecentRounds(t *testing.T) {
 	}
 	request := canonicalAgentRequest{Messages: messages}
 	notes := map[string]string{"image-1": "三视图设定稿，赛璐璐平涂，灰底"}
-	if !cloudAgentPruneInspectedImages(&request, notes) {
-		t.Fatal("images older than the retention window were not pruned")
+	if changed, pruned := cloudAgentPruneInspectedImages(&request, notes); !changed || pruned == 0 {
+		t.Fatalf("images older than the retention window were not pruned: changed=%v pruned=%d", changed, pruned)
 	}
 	// 每轮 3 条消息（assistant + tool + 图片），第 1 轮从下标 1 开始。
 	imageIndex := func(round int) int { return 3 + (round-1)*3 }
@@ -1112,7 +1105,7 @@ func TestCloudAgentKeepsImagesForRecentRounds(t *testing.T) {
 		t.Fatal("tool receipt must stay a string")
 	}
 	// 幂等
-	if cloudAgentPruneInspectedImages(&request, notes) {
+	if changed, pruned := cloudAgentPruneInspectedImages(&request, notes); changed || pruned != 0 {
 		t.Fatal("pruning is not idempotent")
 	}
 }

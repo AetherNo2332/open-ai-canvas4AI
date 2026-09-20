@@ -53,8 +53,7 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		"pressureRatio": pressure.PressureRatio, "sourceBytes": pressure.SourceBytes, "promptChars": pressure.PromptChars,
 		"promptLimitChars": pressure.PromptLimitChars, "modelLimitConfigured": pressure.ModelLimitConfigured, "estimate": pressure.Estimate,
 		"compactionThresholdBytes": agentcontext.ThresholdBytes, "historyMessageThreshold": agentcontext.ThresholdHistoryMessages,
-		// 字节判据照旧，但把 token 口径一并暴露，便于前端与文档对齐"哪条线在管事"。
-		"evictionThresholdBytes": cloudAgentEvictionThresholdBytes, "evictionMessageLimit": cloudAgentEvictionMessageLimit,
+		// 字节判据只在"没声明窗口"时兜底，token 口径才是主判据（前端与文档据此对齐"哪条线在管事"）。
 		"requestHardLimitBytes": cloudAgentRequestHardLimitBytes,
 	}
 	if pressure.OverheadTokens > 0 {

@@ -161,9 +161,9 @@ func rowsOfNode(t *testing.T, node map[string]any) []map[string]any {
 	return cloudAgentRowsOf(board["rows"])
 }
 
-// 卸载必须覆盖分镜/批量表读取结果与写回执：线上那轮 99 条消息里 0 个卸载候选，
-// 正是因为正文藏在 storyboard.rows 与 tool_call 参数里，而不是 content/nodes 键上。
-func TestCloudAgentEvictionCoversStoryboardAndBatchTable(t *testing.T) {
+// 分镜/批量表读到的行正文必须原样保留：卸载机制已删除（它原本是被 512KiB 状态守卫逼出来的），
+// 现在轮内只裁剪图片；正文改写历史中段既作废后续前缀缓存、又会让模型重复读取。
+func TestCloudAgentReadBodiesForStoryboardAndBatchTableSurviveSave(t *testing.T) {
 	body := strings.Repeat("镜头正文", 900)
 	rows := make([]any, 0, 40)
 	for index := 0; index < 40; index++ {
@@ -179,37 +179,25 @@ func TestCloudAgentEvictionCoversStoryboardAndBatchTable(t *testing.T) {
 		{"role": "user", "content": "继续"},
 	}}
 	before, _ := json.Marshal(request.Messages)
-	if len(before) < cloudAgentEvictionThresholdBytes {
-		t.Fatalf("测试载荷太小：%d", len(before))
+	if changed, pruned := cloudAgentPruneInspectedImages(&request, nil); changed || pruned != 0 {
+		t.Fatalf("纯文本历史不该被裁剪：changed=%v pruned=%d", changed, pruned)
 	}
-	changed, beforeBytes, afterBytes := compactCloudAgentContext(&request, nil)
-	if !changed || afterBytes >= beforeBytes {
-		t.Fatalf("分镜/批量表正文未被卸载：%d → %d", beforeBytes, afterBytes)
+	after, _ := json.Marshal(request.Messages)
+	if string(before) != string(after) {
+		t.Fatal("读到的行正文被改写了")
 	}
 	storyboard := mustDecodeJSON(t, request.Messages[2]["content"].(string))
 	board, _ := storyboard["storyboard"].(map[string]any)
-	if _, exists := board["rows"]; exists {
-		t.Fatalf("分镜行正文应被移出：%+v", board)
-	}
-	if board["totalRows"] != float64(40) || len(cloudAgentRowsOf(board["shotNumbers"])) != 0 {
-		// shotNumbers 是镜号数组（不是行对象），这里只校验规模与骨架存在
-		if board["totalRows"] != float64(40) {
-			t.Fatalf("应保留规模骨架：%+v", board)
-		}
-	}
-	if numbers, ok := board["shotNumbers"].([]any); !ok || len(numbers) != 40 {
-		t.Fatalf("应保留镜号骨架便于模型判断存在性：%+v", board["shotNumbers"])
-	}
-	if storyboard["snapshotHash"] != "hash-1" || storyboard["contextCompacted"] != true {
-		t.Fatalf("事实字段必须保留：%+v", storyboard)
+	if len(cloudAgentRowsOf(board["rows"])) != 40 {
+		t.Fatalf("分镜行正文丢失：%+v", board)
 	}
 	table := mustDecodeJSON(t, request.Messages[4]["content"].(string))
 	tableBody, _ := table["batchTable"].(map[string]any)
-	if _, exists := tableBody["rows"]; exists {
-		t.Fatalf("批量表行正文应被移出：%+v", tableBody)
+	if len(cloudAgentRowsOf(tableBody["rows"])) != 10 {
+		t.Fatalf("批量表行正文丢失：%+v", tableBody)
 	}
-	if tableBody["totalRows"] != float64(10) || tableBody["operation"] != "try_on" {
-		t.Fatalf("批量表骨架不完整：%+v", tableBody)
+	if tableBody["operation"] != "try_on" {
+		t.Fatalf("批量表事实字段丢失：%+v", tableBody)
 	}
 }
 

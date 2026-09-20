@@ -139,8 +139,8 @@ func (s *Service) InterjectCloudAgent(userID, id, messageID, text string) (int, 
 
 // cloudAgentDrainInterjections 把待送插话注入本轮对话。
 //
-// 调用点**必须**在 cloudAgentCompactContext 之后、用 canonical 发请求之前 —— 注入早了会被
-// 上下文卸载动到，注入晚了这一步的模型就看不到。返回是否有内容被注入。
+// 调用点**必须**在上下文装配（图片裁剪 + 待办/事实帧拼接）之后、用 canonical 发请求之前 ——
+// 注入早了会被后续装配动到，注入晚了这一步的模型就看不到。返回是否有内容被注入。
 func cloudAgentDrainInterjections(runID string, state *cloudAgentRuntime) bool {
 	if state == nil || len(state.PendingInterjections) == 0 {
 		return false

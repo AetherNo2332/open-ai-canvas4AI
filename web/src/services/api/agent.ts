@@ -195,8 +195,6 @@ export type AgentContextPressure = {
     anchorRejected?: string;
     /** 用投影值算出的窗口占比；模型未声明窗口时不存在。 */
     projectedPressureRatio?: number;
-    evictionThresholdBytes?: number;
-    evictionMessageLimit?: number;
     requestHardLimitBytes?: number;
     /** 本步生效的模型输出上限（token）；后端配成 0（不限制）时不返回。 */
     stepMaxOutputTokens?: number;

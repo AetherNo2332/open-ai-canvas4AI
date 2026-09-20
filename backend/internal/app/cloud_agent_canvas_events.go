@@ -374,3 +374,21 @@ func cloudAgentSameExcept(left, right map[string]any, skip string) bool {
 	}
 	return true
 }
+
+// cloudAgentRowsOf 把任意 JSON 数组形状的行集合收敛成 []map[string]any；非行结构返回 nil。
+func cloudAgentRowsOf(value any) []map[string]any {
+	switch items := value.(type) {
+	case []any:
+		rows := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			if row, ok := item.(map[string]any); ok {
+				rows = append(rows, row)
+			}
+		}
+		return rows
+	case []map[string]any:
+		return items
+	default:
+		return nil
+	}
+}
