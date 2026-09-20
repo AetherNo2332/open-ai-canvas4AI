@@ -9,7 +9,7 @@ export const BATCH_REFERENCE_HANDLE_PREFIX = "batch-reference:";
 export const BATCH_REFERENCE_HANDLE_TOP = 102;
 export const BATCH_REFERENCE_HANDLE_GAP = 40;
 export const MIN_BATCH_REFERENCE_COLUMNS = 1;
-export const MAX_BATCH_REFERENCE_COLUMNS = 6;
+export const MAX_BATCH_REFERENCE_COLUMNS = 10;
 const LEGACY_BATCH_TABLE_WIDTH = 900;
 
 /** 旧默认 900 宽的批量创作表升级到当前默认尺寸，已经手动改过宽度的节点保持原样。 */

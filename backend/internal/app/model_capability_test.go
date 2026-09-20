@@ -413,3 +413,53 @@ func TestValidateVideoTaskRequiresDeclaredMinimumImages(t *testing.T) {
 		t.Fatalf("validateVideoTask() error = %v", err)
 	}
 }
+
+// 0 是"未声明"，不是"默认 16384/128000"：任何 normalize 都不得把它改写成猜测值。
+func TestTextCapabilityZeroMeansUndeclared(t *testing.T) {
+	value := &TextCapabilityConfig{
+		ContextWindowTokens:  0,
+		ReservedOutputTokens: 0,
+		MaxOutputTokens:      0,
+		References:           TextReferenceConfig{PromptMaxChars: 1000},
+	}
+	if err := validateTextCapabilityConfig(value); err != nil {
+		t.Fatalf("0 表示未知/未声明，必须合法: %v", err)
+	}
+	config := ModelCapabilityConfig{Version: 1, Text: value}
+	normalized, err := NormalizeModelCapabilityConfigForModel("text", "chat-completion", "test-model", &config)
+	if err != nil {
+		t.Fatalf("normalize 失败: %v", err)
+	}
+	if normalized == nil || normalized.Text == nil {
+		t.Fatal("normalize 丢掉了 text 能力")
+	}
+	if normalized.Text.ContextWindowTokens != 0 || normalized.Text.ReservedOutputTokens != 0 || normalized.Text.MaxOutputTokens != 0 {
+		t.Fatalf("normalize 把 0 改写成猜测值：%+v", normalized.Text)
+	}
+}
+
+func TestTextCapabilityOutputLimitValidation(t *testing.T) {
+	base := TextCapabilityConfig{ContextWindowTokens: 128000, References: TextReferenceConfig{PromptMaxChars: 1000}}
+	with := func(maxOutput int) *TextCapabilityConfig {
+		value := base
+		value.MaxOutputTokens = maxOutput
+		return &value
+	}
+	if err := validateTextCapabilityConfig(with(16384)); err != nil {
+		t.Fatalf("合法输出上限被拒: %v", err)
+	}
+	if err := validateTextCapabilityConfig(with(0)); err != nil {
+		t.Fatalf("未声明的输出上限必须合法: %v", err)
+	}
+	if err := validateTextCapabilityConfig(with(-1)); err == nil {
+		t.Fatal("负数输出上限应当被拒")
+	}
+	if err := validateTextCapabilityConfig(with(128000)); err == nil {
+		t.Fatal("输出上限不小于上下文窗口时应当被拒")
+	}
+	unknownWindow := with(16384)
+	unknownWindow.ContextWindowTokens = 0
+	if err := validateTextCapabilityConfig(unknownWindow); err != nil {
+		t.Fatalf("窗口未知时不能因窗口关系拒绝输出上限: %v", err)
+	}
+}

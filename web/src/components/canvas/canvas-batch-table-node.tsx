@@ -165,7 +165,7 @@ export function CanvasBatchTableNodeContent({ node, nodes, connections, batch, t
                                             <Minus className="size-3.5" />
                                         </button>
                                     </Tooltip>
-                                    <Tooltip title={referenceColumns.length >= MAX_BATCH_REFERENCE_COLUMNS ? "最多支持 6 组参考图" : `新增参考图 ${referenceColumns.length + 1}`}>
+                                    <Tooltip title={referenceColumns.length >= MAX_BATCH_REFERENCE_COLUMNS ? `最多支持 ${MAX_BATCH_REFERENCE_COLUMNS} 组参考图` : `新增参考图 ${referenceColumns.length + 1}`}>
                                         <button type="button" aria-label={`新增参考图 ${referenceColumns.length + 1}`} className="grid size-5 place-items-center rounded-md transition-colors hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-offset-1 dark:hover:bg-white/10" style={{ color: theme.node.text }} disabled={referenceColumns.length >= MAX_BATCH_REFERENCE_COLUMNS} onClick={onAddReferenceColumn}>
                                             <Plus className="size-3.5" />
                                         </button>

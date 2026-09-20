@@ -15,6 +15,7 @@ import {
     reorderBatchReferenceColumns,
     BATCH_REFERENCE_HANDLE_GAP,
     BATCH_REFERENCE_HANDLE_TOP,
+    MAX_BATCH_REFERENCE_COLUMNS,
     TRY_ON_BATCH_PROMPT,
 } from "@/lib/canvas/canvas-batch-table";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
@@ -168,5 +169,13 @@ describe("batch creation table", () => {
         const table = { operation: "creative" as const, concurrency: 10, globalPrompt: " 全局覆盖 ", rows: [{ id: "row-1", enabled: true, inputNodeIds: ["a"], prompt: "行提示词" }] };
         expect(batchPromptForRow(table, table.rows[0])).toBe("全局覆盖");
         expect(batchPromptForRow({ ...table, globalPrompt: "   " }, table.rows[0])).toBe("行提示词");
+    });
+});
+
+describe("batch reference column contract", () => {
+    // 与后端 `internal/app/cloud_agent_batch_table.go` 的 maxCloudAgentBatchReferences 成对：
+    // 前端能建 10 列，云端 Agent 的入参校验也必须是 10，否则 Agent 读写 7-10 列的表会 400。
+    test("allows the same reference column count as the Agent tool contract", () => {
+        expect(MAX_BATCH_REFERENCE_COLUMNS).toBe(10);
     });
 });

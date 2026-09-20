@@ -86,13 +86,26 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 	return result, nil
 }
 
-// cloudAgentOutputTokens 取本次调用的输出上限：优先任务输入里的显式值，
-// 其次 textOptions.maxOutputTokens（画布 Agent 每步都带它，两条上游路径都要用上）。
+// cloudAgentOutputTokens 取本次调用的输出上限。
+//
+// 三条来源语义不同，必须分层而不是"谁先谁赢"：
+//   - input.MaxOutputTokens / input.TextOptions.MaxOutputTokens 是**策略上限**
+//     （画布 Agent 每步按运行时策略下发；0 表示这一步不限制输出）；
+//   - input.CapabilityMaxOutputTokens 是**模型物理上限**（渠道模型能力里声明的 maxOutputTokens）。
+//
+// 因此取所有非零值中的最小值：策略设 131072、能力 16384 → 16384；策略设 0（不限制）→ 用能力值；
+// 两者都为 0 → 不限制（上游按剩余上下文放行）。
 func cloudAgentOutputTokens(input canvasGenerationInput) int {
-	if input.MaxOutputTokens > 0 {
-		return input.MaxOutputTokens
+	limit := 0
+	for _, candidate := range []int{input.MaxOutputTokens, input.TextOptions.MaxOutputTokens, input.CapabilityMaxOutputTokens} {
+		if candidate <= 0 {
+			continue
+		}
+		if limit == 0 || candidate < limit {
+			limit = candidate
+		}
 	}
-	return input.TextOptions.MaxOutputTokens
+	return limit
 }
 
 // applyAgentOutputLimit 按协议写入输出上限字段名。
