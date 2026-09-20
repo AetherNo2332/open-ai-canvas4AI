@@ -973,7 +973,7 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 						return cloudAgentSave(current, &state)
 					}
 				}
-				if needed, sourceBytes, turnCount, reading, hasReading := cloudAgentCompactionDecision(repo, &state, state.Canonical); needed {
+				if needed, sourceBytes, turnCount, reading, hasReading := cloudAgentCompactionDecision(s, &state, state.Canonical); needed {
 					state.ContextCompaction = &cloudAgentContextCompaction{
 						Status: "requested", SourceBytes: sourceBytes, TurnCount: turnCount,
 						ProjectedTokens: reading.ProjectedTokens, UsableInputTokens: reading.UsableInputTokens,
@@ -1007,8 +1007,11 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	s.recordCloudAgentTokenAnchor(&state)
 	canonical := cloudAgentCanonicalWithPlan(&state)
 	s.attachCloudAgentLessons(&canonical, run.UserID, cloudAgentLessonTaskText(&state))
+	// 任务与账务事实每步从数据库现读回灌：模型据此判断"哪些已经提交过、花了多少、
+	// 有没有回写失败"，而不是靠事件记忆猜（状态里的事件只有一窗）。
+	s.attachCloudAgentTaskFacts(run, &state, &canonical)
 	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
-	// 上下文利用率达标（默认 80% 用户配置的模型上限，上游实测 token 口径）就先暂停步进：
+	// 上下文利用率达标（输入预算的 85%，优先上游实测 token 口径）就先暂停步进：
 	// 把历史压成检查点，压完再用压缩后的上下文继续本轮，而不是带着超高占用再发一次请求。
 	if requested, err := s.cloudAgentRequestCompaction(run, &state, canonical); err != nil || requested {
 		return err

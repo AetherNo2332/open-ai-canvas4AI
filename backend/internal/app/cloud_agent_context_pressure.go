@@ -3,7 +3,6 @@ package app
 import (
 	"encoding/json"
 	"math"
-	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -28,6 +27,11 @@ type cloudAgentContextPressure struct {
 	HistoryMessages          int     `json:"historyMessages"`
 	HistoryMessageThreshold  int     `json:"historyMessageThreshold"`
 	CompactionPressureRatio  float64 `json:"compactionPressureRatio"`
+	// 三个口径字段说明"这条线是按哪个算式算出来的"：overhead 是工具 schema / 协议包装 /
+	// 兜底轮的比例预留，InputBudgetTokens 才是真正可供输入使用的额度。
+	OverheadTokens    int    `json:"overheadTokens,omitempty"`
+	InputBudgetTokens int    `json:"inputBudgetTokens,omitempty"`
+	BudgetSource      string `json:"budgetSource,omitempty"`
 }
 
 // cloudAgentProjectedInputTokens 合成"下一步输入 token"的权威读数：
@@ -52,6 +56,15 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		// 字节判据照旧，但把 token 口径一并暴露，便于前端与文档对齐"哪条线在管事"。
 		"evictionThresholdBytes": cloudAgentEvictionThresholdBytes, "evictionMessageLimit": cloudAgentEvictionMessageLimit,
 		"requestHardLimitBytes": cloudAgentRequestHardLimitBytes,
+	}
+	if pressure.OverheadTokens > 0 {
+		payload["overheadTokens"] = pressure.OverheadTokens
+	}
+	if pressure.InputBudgetTokens > 0 {
+		payload["inputBudgetTokens"] = pressure.InputBudgetTokens
+	}
+	if pressure.BudgetSource != "" {
+		payload["budgetSource"] = pressure.BudgetSource
 	}
 	if state == nil {
 		return payload
@@ -207,28 +220,22 @@ func (s *Service) cloudAgentContextPressure(task *model.Task, canonical canonica
 		PromptChars:          utf8.RuneCountInString(prompt),
 		Estimate:             true,
 	}
-	var channelModel *model.ChannelModel
-	switch {
-	case task != nil && task.ChannelModelID != "":
-		channelModel, _ = s.repo.ChannelModel(task.ChannelModelID)
-	case strings.TrimSpace(request.ChannelID) != "" && strings.TrimSpace(request.ChannelModelKey) != "":
-		channelModel, _ = s.repo.ChannelModelByKeyIncludingDisabled(request.ChannelID, request.ChannelModelKey)
+	// 提示词字符上限只来自渠道模型能力（逻辑模型没有单一渠道模型，保持 0 = 不限制）。
+	if text := s.cloudAgentChannelTextCapability(task, request); text != nil {
+		pressure.PromptLimitChars = text.References.PromptMaxChars
 	}
-	if channelModel == nil {
+	budget, ok := s.cloudAgentContextBudgetForRequest(task, request)
+	if !ok {
 		return pressure
 	}
-	config, err := normalizedChannelModelCapability(channelModel)
-	if err != nil || config == nil || config.Text == nil {
-		return pressure
-	}
-	pressure.PromptLimitChars = config.Text.References.PromptMaxChars
-	pressure.ContextWindowTokens = config.Text.ContextWindowTokens
-	pressure.ReservedOutputTokens = config.Text.ReservedOutputTokens
-	if pressure.ContextWindowTokens <= 0 {
-		return pressure
-	}
+	// 展示口径与压缩判据共用同一份预算（含 overhead），否则会出现"界面 79%、后台按 82% 压缩"。
 	pressure.ModelLimitConfigured = true
-	pressure.UsableInputTokens = pressure.ContextWindowTokens - pressure.ReservedOutputTokens
+	pressure.ContextWindowTokens = budget.ContextWindowTokens
+	pressure.ReservedOutputTokens = budget.ReservedOutputTokens
+	pressure.OverheadTokens = budget.OverheadTokens
+	pressure.InputBudgetTokens = budget.InputBudgetTokens
+	pressure.BudgetSource = budget.Source
+	pressure.UsableInputTokens = budget.InputBudgetTokens
 	if pressure.UsableInputTokens > 0 {
 		pressure.PressureRatio = math.Min(9.99, float64(pressure.EstimatedInputTokens)/float64(pressure.UsableInputTokens))
 	}

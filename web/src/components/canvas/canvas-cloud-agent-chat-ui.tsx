@@ -885,9 +885,9 @@ function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPre
         : 0;
     const compactionRatio = Math.max(0, pressure.compactionPressureRatio);
     const tokenBasis = pressure.compactionBasis !== "bytes" && configured;
-    const thresholdRatio = pressure.compactionThresholdRatio ?? 0.8;
+    const thresholdRatio = pressure.compactionThresholdRatio ?? 0.85;
     const ratio = Math.max(modelRatio, compactionRatio);
-    const basis = configured && modelRatio >= compactionRatio ? "模型窗口" : tokenBasis ? "模型上限的 80%" : "服务端压缩阈值";
+    const basis = configured && modelRatio >= compactionRatio ? "模型窗口" : tokenBasis ? "输入预算的 85%" : "服务端压缩阈值";
     const formatTokens = (value: number) => value.toLocaleString("zh-CN");
     // 秒级墙钟按"分/秒"给人看：这一步的边界是可配置的，读数要能直接对上管理端。
     const formatDuration = (seconds: number) => (seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`);
@@ -930,13 +930,25 @@ function AgentContextPressureIndicator({ pressure }: { pressure: AgentContextPre
                     <div>可用输入：{formatTokens(pressure.usableInputTokens)} Token</div>
                     <div>模型窗口：{formatTokens(pressure.contextWindowTokens)} Token</div>
                     <div>预留输出：{formatTokens(pressure.reservedOutputTokens)} Token</div>
+                    {typeof pressure.overheadTokens === "number" && pressure.overheadTokens > 0 ? (
+                        <div>协议与工具预留：{formatTokens(pressure.overheadTokens)} Token（工具 schema、协议包装与兜底轮，窗口的 4%）</div>
+                    ) : null}
+                    {pressure.budgetSource ? (
+                        <div>
+                            预算来源：
+                            {pressure.budgetSource === "logical-route-intersection"
+                                ? "逻辑模型可用文本路由的最小窗口"
+                                : "渠道模型能力配置"}
+                            {typeof pressure.compactAtTokens === "number" ? ` · 压缩线 ${formatTokens(pressure.compactAtTokens)} Token` : ""}
+                        </div>
+                    ) : null}
                 </>
             ) : <div>模型窗口：未配置；当前圆环按服务端压缩压力显示，不用字符上限推断 Token 能力。</div>}
             <div className="agent-context-pressure-divider" />
             <div>本轮提示：{format(pressure.promptChars)} / {pressure.promptLimitChars ? format(pressure.promptLimitChars) : "未配置"} 字符</div>
             <ContextBreakdown breakdown={pressure.breakdown} format={format} />
             {typeof pressure.evictionThresholdBytes === "number" ? (
-                <div>正文卸载线：{Math.round(pressure.evictionThresholdBytes / 1024)} KiB 或 {pressure.evictionMessageLimit ?? 24} 条会话消息（判据是字节，先于压缩触发）</div>
+                <div>正文卸载线：{Math.round(pressure.evictionThresholdBytes / 1024)} KiB 或 {pressure.evictionMessageLimit ?? 24} 条会话消息（两者任一命中即触发，先于压缩触发）</div>
             ) : null}
             <div>
                 单步输出上限：{pressure.stepMaxOutputTokens ? `${formatTokens(pressure.stepMaxOutputTokens)} Token` : "本部署未限制（思考与正文都不设输出上限）"}
