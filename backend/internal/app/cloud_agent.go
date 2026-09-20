@@ -66,23 +66,35 @@ type cloudAgentState struct {
 }
 
 type CloudAgentRun struct {
-	ID             string              `json:"id"`
-	CanvasID       string              `json:"canvasId"`
-	ParentID       string              `json:"parentId,omitempty"`
-	Status         string              `json:"status"`
-	Revision       int64               `json:"revision"`
-	CleanupPending bool                `json:"cleanupPending,omitempty"`
-	FailureMessage string              `json:"failureMessage,omitempty"`
-	PermissionMode string              `json:"permissionMode"`
-	Model          string              `json:"model"`
-	CreatedAt      time.Time           `json:"createdAt"`
-	UpdatedAt      time.Time           `json:"updatedAt"`
-	Events         []CloudAgentEvent   `json:"events,omitempty"`
-	Skills         []cloudAgentSkill   `json:"skills,omitempty"`
-	Approval       *cloudAgentApproval `json:"approval,omitempty"`
-	SpentCredits   float64             `json:"spentCredits"`
-	Step           int                 `json:"step"`
-	ActiveMessage  map[string]string   `json:"activeMessage,omitempty"`
+	ID             string            `json:"id"`
+	CanvasID       string            `json:"canvasId"`
+	ParentID       string            `json:"parentId,omitempty"`
+	Status         string            `json:"status"`
+	Revision       int64             `json:"revision"`
+	CleanupPending bool              `json:"cleanupPending,omitempty"`
+	FailureMessage string            `json:"failureMessage,omitempty"`
+	PermissionMode string            `json:"permissionMode"`
+	Model          string            `json:"model"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
+	Events         []CloudAgentEvent `json:"events,omitempty"`
+	// 事件已全量落库：EventSeqBase 是返回的首条事件之前的已入库条数，EventCount 是累计条数，
+	// LatestSeq 是本次返回的最后一条序号，EventsTruncated 表示还有更早的记录可按需拉取。
+	EventSeqBase    int                 `json:"eventSeqBase,omitempty"`
+	EventCount      int                 `json:"eventCount,omitempty"`
+	LatestSeq       int                 `json:"latestSeq,omitempty"`
+	EventsTruncated bool                `json:"eventsTruncated,omitempty"`
+	Skills          []cloudAgentSkill   `json:"skills,omitempty"`
+	Approval        *cloudAgentApproval `json:"approval,omitempty"`
+	SpentCredits    float64             `json:"spentCredits"`
+	Step            int                 `json:"step"`
+	ActiveMessage   map[string]string   `json:"activeMessage,omitempty"`
+}
+
+// CloudAgentRunViewOptions 是运行详情的读取选项：sinceSeq 只取增量，eventLimit 控制默认页大小。
+type CloudAgentRunViewOptions struct {
+	SinceSeq   int
+	EventLimit int
 }
 
 func validateCloudAgentRequest(req *CloudAgentRequest) error {
@@ -262,7 +274,7 @@ func cloudAgentRunTerminal(status string) bool {
 	return status == "completed" || status == "failed" || status == "cancelled" || status == "rejected"
 }
 
-func (s *Service) CloudAgentRun(userID, id string) (*CloudAgentRun, error) {
+func (s *Service) CloudAgentRun(userID, id string, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
 	task, state, err := s.cloudAgentTask(userID, id)
 	if err != nil {
 		return nil, err
@@ -279,13 +291,13 @@ func (s *Service) CloudAgentRun(userID, id string) (*CloudAgentRun, error) {
 	} else if lookupErr != nil {
 		return nil, lookupErr
 	}
-	return s.cloudAgentExecutionOutput(task, state)
+	return s.cloudAgentExecutionOutput(task, state, options...)
 }
 
 // CloudAgentRunIfChanged keeps idle event streams on a small indexed read.
 // The persisted revision, not a process-local notification, is authoritative
 // across instances and after missed/disconnected notifications.
-func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64) (*CloudAgentRun, error) {
+func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
 	current, err := s.repo.CloudAgentRevision(userID, id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, kernel.NotFound("Agent 运行不存在")
@@ -296,7 +308,7 @@ func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64) (*Cl
 	if current == revision {
 		return nil, nil
 	}
-	return s.CloudAgentRun(userID, id)
+	return s.CloudAgentRun(userID, id, options...)
 }
 
 // CreateCloudAgentRun validates every capability before admission. The task PK
@@ -359,7 +371,9 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err := s.advanceCloudAgentByID(userID, parentID); err != nil {
 			return nil, err
 		}
-		parentRun, err := s.CloudAgentRun(userID, parentID)
+		// 续轮的收束要读上一轮**全部**事件（默认页只有最近 100 条）：
+		// 长会话一旦被截断，新轮就看不到上一轮改过哪些节点，表现为"忘了自己做过什么"。
+		parentRun, err := s.CloudAgentRun(userID, parentID, CloudAgentRunViewOptions{EventLimit: cloudAgentContinuationEventLimit})
 		if err != nil {
 			return nil, err
 		}

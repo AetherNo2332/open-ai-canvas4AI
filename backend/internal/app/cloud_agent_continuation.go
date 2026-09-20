@@ -6,6 +6,10 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+// cloudAgentContinuationEventLimit 是续轮读取上一轮事件的上限：收束要覆盖整轮改动，
+// 不能只看默认页（默认 100 条，长会话的早期改动对新轮不可见）。
+const cloudAgentContinuationEventLimit = 1000
+
 // cloudAgentContinuationReply 生成「上一轮接着聊」用的两段内容：
 //
 //	reply   —— 上一轮 assistant 实际说过的话（作为 assistant 的历史消息）

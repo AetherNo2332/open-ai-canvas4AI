@@ -80,7 +80,12 @@ type cloudAgentRuntime struct {
 	PendingInterjections   []cloudAgentInterjection                `json:"pendingInterjections,omitempty"`
 	TransientReferences    map[string]cloudAgentTransientReference `json:"transientReferences,omitempty"`
 	InterjectionIDs        []string                                `json:"interjectionIds,omitempty"`
-	Events                 []CloudAgentEvent                       `json:"events"`
+	// EventSeqBase 是本次载入的事件窗口之前"已入库"的条数（只在内存里，不落检查点）：
+	// 不变量是 events[i].Seq == EventSeqBase + i + 1。事件全量在上游的
+	// cloud_agent_event_records，内存只保留最近一窗供摘要、记忆提取与卡死判定使用，
+	// 运行详情仍按 seq 分页读表。
+	EventSeqBase int               `json:"-"`
+	Events       []CloudAgentEvent `json:"events"`
 }
 
 type cloudAgentTransientReference struct {
@@ -115,8 +120,9 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	return s.repo.EnsureCloudAgent(run)
 }
 func (state *cloudAgentRuntime) event(id, kind string, payload map[string]any) {
-	seq := len(state.Events) + 1
-	state.Events = append(state.Events, CloudAgentEvent{EventID: fmt.Sprintf("%s:%d", id, seq), RunID: id, Seq: seq, Type: kind, Payload: payload, CreatedAt: time.Now()})
+	// 序号连续于"事件窗口 + 已入库条数"：events[i].Seq == EventSeqBase+i+1 是不变式。
+	seq := state.EventSeqBase + len(state.Events) + 1
+	state.Events = append(state.Events, CloudAgentEvent{EventID: fmt.Sprintf("%s:%d", id, seq), RunID: id, Seq: seq, Type: kind, Payload: cloudAgentBoundEventPayload(payload), CreatedAt: time.Now()})
 }
 func cloudAgentDecode(run *model.CloudAgentExecution) (cloudAgentRuntime, error) {
 	var state cloudAgentRuntime
@@ -127,55 +133,80 @@ func cloudAgentDecode(run *model.CloudAgentExecution) (cloudAgentRuntime, error)
 		return state, fmt.Errorf("decode Agent runtime state: %w", err)
 	}
 	state.RuntimeRunID = run.ID
-	if run.CheckpointVersion >= 2 {
-		if len(run.Journal) != run.EventCount || len(run.Transcript) != run.MessageCount {
-			return state, errors.New("Agent execution journal is incomplete")
+	if run.CheckpointVersion >= cloudAgentCheckpointVersion {
+		if err := cloudAgentRestoreTranscript(run, &state); err != nil {
+			return state, err
 		}
-		state.Events = make([]CloudAgentEvent, 0, len(run.Journal))
-		state.Canonical.Messages, state.TextHistory = nil, nil
-		for _, record := range run.Journal {
-			expected := len(state.Events) + 1
-			if record.Sequence != expected {
-				return state, errors.New("Agent event sequence is incomplete")
-			}
-			var event CloudAgentEvent
-			if err := json.Unmarshal([]byte(record.EventJSON), &event); err != nil {
-				return state, fmt.Errorf("decode Agent event: %w", err)
-			}
-			if event.Seq != record.Sequence || event.RunID != run.ID || event.EventID != fmt.Sprintf("%s:%d", run.ID, record.Sequence) {
-				return state, errors.New("Agent event identity is invalid")
-			}
-			state.Events = append(state.Events, event)
-		}
-		for _, record := range run.Transcript {
-			switch record.Kind {
-			case "canonical":
-				var message map[string]any
-				if err := json.Unmarshal([]byte(record.MessageJSON), &message); err != nil {
-					return state, fmt.Errorf("decode Agent message: %w", err)
-				}
-				if record.Sequence != len(state.Canonical.Messages)+1 {
-					return state, errors.New("Agent message sequence is incomplete")
-				}
-				state.Canonical.Messages = append(state.Canonical.Messages, message)
-			case "history":
-				var message providerTextMessage
-				if err := json.Unmarshal([]byte(record.MessageJSON), &message); err != nil {
-					return state, fmt.Errorf("decode Agent history: %w", err)
-				}
-				if record.Sequence != len(state.TextHistory)+1 {
-					return state, errors.New("Agent history sequence is incomplete")
-				}
-				state.TextHistory = append(state.TextHistory, message)
-			default:
-				return state, errors.New("Agent message kind is unsupported")
-			}
-		}
+	}
+	if state.Events == nil {
+		state.Events = []CloudAgentEvent{}
 	}
 	if err := validateCloudAgentRuntime(run, &state); err != nil {
 		return state, err
 	}
 	return state, nil
+}
+
+// cloudAgentRestoreTranscript 从消息表与事件窗口重建内存态。
+//
+// 事件全量在上游 cloud_agent_event_records；hydrate 只载入最近一窗
+// （repository.CloudAgentJournalWindow），所以这里校验的是"窗口的一致性"而不是全量：
+//   - 消息按 kind 分别连续 1..n，且条数等于 run.MessageCount；
+//   - 事件窗口的**最后一条** seq 必须等于 run.EventCount —— 否则说明有行没读到
+//     （删一半、写失败），宁可判"记录不完整"也不带着缺口继续跑；
+//   - EventSeqBase = EventCount - len(窗口)，窗口为空时只能是 EventCount==0。
+func cloudAgentRestoreTranscript(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
+	canonical := make([]map[string]any, 0, len(run.Transcript))
+	history := make([]providerTextMessage, 0, len(run.Transcript))
+	for _, record := range run.Transcript {
+		switch record.Kind {
+		case cloudAgentMessageKindCanonical:
+			var message map[string]any
+			if err := json.Unmarshal([]byte(record.MessageJSON), &message); err != nil {
+				return fmt.Errorf("decode Agent message: %w", err)
+			}
+			if record.Sequence != len(canonical)+1 {
+				return errors.New("Agent message sequence is incomplete")
+			}
+			canonical = append(canonical, message)
+		case cloudAgentMessageKindHistory:
+			var message providerTextMessage
+			if err := json.Unmarshal([]byte(record.MessageJSON), &message); err != nil {
+				return fmt.Errorf("decode Agent history: %w", err)
+			}
+			if record.Sequence != len(history)+1 {
+				return errors.New("Agent history sequence is incomplete")
+			}
+			history = append(history, message)
+		default:
+			return errors.New("Agent message kind is unsupported")
+		}
+	}
+	if len(run.Transcript) != run.MessageCount {
+		return fmt.Errorf("Agent execution transcript is incomplete: rows=%d count=%d", len(run.Transcript), run.MessageCount)
+	}
+	events := make([]CloudAgentEvent, 0, len(run.Journal))
+	for _, row := range run.Journal {
+		var event CloudAgentEvent
+		if err := json.Unmarshal([]byte(row.EventJSON), &event); err != nil {
+			return fmt.Errorf("decode Agent event: %w", err)
+		}
+		// 事件身份必须自洽：seq/runId/eventId 任何一处与行不一致，就说明记录被动过。
+		if event.Seq != row.Sequence || event.RunID != run.ID || event.EventID != fmt.Sprintf("%s:%d", run.ID, row.Sequence) {
+			return errors.New("Agent event identity is invalid")
+		}
+		events = append(events, event)
+	}
+	if len(events) > 0 && events[len(events)-1].Seq != run.EventCount {
+		return fmt.Errorf("Agent execution journal is incomplete: lastSeq=%d count=%d", events[len(events)-1].Seq, run.EventCount)
+	}
+	state.EventSeqBase = run.EventCount - len(events)
+	if state.EventSeqBase < 0 {
+		return fmt.Errorf("Agent execution journal watermark is invalid: count=%d rows=%d", run.EventCount, len(events))
+	}
+	state.Canonical.Messages, state.TextHistory = canonical, history
+	state.Events = events
+	return nil
 }
 
 // cloudAgentDecodeForExecution is the only decoder for paths that may resume
@@ -259,15 +290,22 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if state.Decisions == nil || state.Events == nil {
 		return errors.New("Agent runtime maps are missing")
 	}
+	if state.EventSeqBase < 0 {
+		return errors.New("Agent runtime event watermark is invalid")
+	}
+	// 事件全量在上游事件表，内存里只留一窗 + 本次转移新产生的部分。
+	if len(state.Events) > cloudAgentEventWindowSanityLimit {
+		return errors.New("Agent runtime event window is too large")
+	}
 	for index, event := range state.Events {
-		if event.RunID != run.ID || event.Seq != index+1 || event.EventID == "" || event.Type == "" || event.Payload == nil || event.CreatedAt.IsZero() {
+		if event.RunID != run.ID || event.Seq != state.EventSeqBase+index+1 || event.EventID == "" || event.Type == "" || event.Payload == nil || event.CreatedAt.IsZero() {
 			return errors.New("Agent runtime event history is invalid")
 		}
 		if err := validateCloudAgentID(event.EventID, "事件 ID", 240); err != nil {
 			return err
 		}
 		raw, err := json.Marshal(event.Payload)
-		if err != nil || len(raw) > 128<<10 {
+		if err != nil || len(raw) > cloudAgentEventPayloadLimitBytes {
 			return errors.New("Agent runtime event payload is too large")
 		}
 	}
@@ -398,7 +436,7 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 			return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
 		}
 		for index, event := range state.Events {
-			sequence := index + 1
+			sequence := state.EventSeqBase + index + 1
 			if event.Seq != sequence || event.RunID != run.ID || event.EventID != fmt.Sprintf("%s:%d", run.ID, sequence) {
 				return fmt.Errorf("%w: Agent event sequence or identity is invalid", errCloudAgentCheckpoint)
 			}
@@ -412,7 +450,7 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if err != nil {
 		return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
 	}
-	if len(raw) > 512<<10 {
+	if len(raw) > cloudAgentStateHardLimitBytes {
 		return fmt.Errorf("%w: Agent 状态超过 512KB 上限", errCloudAgentCheckpoint)
 	}
 	run.CanvasID, run.ActiveTaskID, run.MediaTaskID = state.Request.CanvasID, state.ActiveTaskID, state.MediaTaskID
@@ -420,6 +458,8 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if run.Title == "" {
 		run.Title = truncateRunes(state.Request.Prompt, 80)
 	}
+	// 事件按"窗口 + 水位"落库：run.Journal 只是内存窗口的映射，写入侧
+	// （MutateCloudAgent）只追加 seq > 旧 EventCount 的行，因此窗口左移不会丢历史。
 	run.Journal = make([]model.CloudAgentEventRecord, 0, len(state.Events))
 	for _, event := range state.Events {
 		body, err := json.Marshal(event)
@@ -434,20 +474,64 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 		if err != nil {
 			return fmt.Errorf("%w: encode Agent message: %v", errCloudAgentCheckpoint, err)
 		}
-		run.Transcript = append(run.Transcript, model.CloudAgentMessageRecord{RunID: run.ID, UserID: run.UserID, Kind: "canonical", Sequence: index + 1, MessageJSON: string(body)})
+		run.Transcript = append(run.Transcript, model.CloudAgentMessageRecord{RunID: run.ID, UserID: run.UserID, Kind: cloudAgentMessageKindCanonical, Sequence: index + 1, MessageJSON: string(body)})
 	}
 	for index, message := range state.TextHistory {
 		body, err := json.Marshal(message)
 		if err != nil {
 			return fmt.Errorf("%w: encode Agent history: %v", errCloudAgentCheckpoint, err)
 		}
-		run.Transcript = append(run.Transcript, model.CloudAgentMessageRecord{RunID: run.ID, UserID: run.UserID, Kind: "history", Sequence: index + 1, MessageJSON: string(body)})
+		run.Transcript = append(run.Transcript, model.CloudAgentMessageRecord{RunID: run.ID, UserID: run.UserID, Kind: cloudAgentMessageKindHistory, Sequence: index + 1, MessageJSON: string(body)})
 	}
-	run.CheckpointVersion, run.EventCount, run.MessageCount = 2, len(run.Journal), len(run.Transcript)
+	run.CheckpointVersion, run.EventCount, run.MessageCount = cloudAgentCheckpointVersion, state.EventSeqBase+len(state.Events), len(run.Transcript)
 	run.StateJSON = string(raw)
 	return nil
 }
-func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgentState) (*CloudAgentRun, error) {
+
+// cloudAgentMessageKindCanonical / cloudAgentMessageKindHistory 是消息表的两种 kind。
+const (
+	cloudAgentMessageKindCanonical = "canonical"
+	cloudAgentMessageKindHistory   = "history"
+)
+
+// cloudAgentBoundEventPayload 给单条事件载荷封顶。
+//
+// 事件不再进检查点，但一条超限载荷仍会撞校验上限（validateCloudAgentRuntime 会判
+// "event payload is too large" 并终止整轮）。这里只保留必要的可读回执并标记
+// requiresRefresh：让前端去拉全量，而不是判死整轮。
+func cloudAgentBoundEventPayload(payload map[string]any) map[string]any {
+	raw, err := json.Marshal(payload)
+	if err != nil || len(raw) <= cloudAgentEventPayloadLimitBytes {
+		return payload
+	}
+	bounded := map[string]any{"requiresRefresh": true, "payloadSlimmedBytes": len(raw)}
+	for _, key := range []string{"canvasId", "operation", "callId", "text"} {
+		if value, ok := payload[key].(string); ok && strings.TrimSpace(value) != "" {
+			bounded[key] = truncateRunes(value, 400)
+		}
+	}
+	if _, ok := bounded["text"]; !ok {
+		bounded["text"] = "这一步的事件载荷过大，明细已省略；画布内容以服务端为准"
+	}
+	return bounded
+}
+
+// cloudAgentCheckpointVersion 是"消息与事件都在表里"的检查点形态版本（定义在 model 里）。
+const cloudAgentCheckpointVersion = model.CloudAgentCheckpointVersion
+
+const (
+	// cloudAgentStateHardLimitBytes 是检查点（只含控制面）的硬上限。
+	cloudAgentStateHardLimitBytes = 512 << 10
+	// cloudAgentEventPayloadLimitBytes 是单条事件载荷的上限。
+	cloudAgentEventPayloadLimitBytes = 128 << 10
+	// cloudAgentEventWindowSanityLimit 是校验用的健全上限：内存里的事件窗口 + 一次转移新产生的事件
+	// 不应超过它，超过就是异常（真正的历史都在事件表里）。
+	cloudAgentEventWindowSanityLimit = 512
+	// cloudAgentRunEventPageLimit 是运行详情默认返回的事件条数（尾部缓存之外再从事件表补齐）。
+	cloudAgentRunEventPageLimit = 100
+)
+
+func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgentState, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
 	run, err := s.repo.CloudAgent(task.UserID, task.ID)
 	if err != nil {
 		return nil, err
@@ -463,7 +547,20 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 	out.Status = run.Status
 	out.Revision, out.CleanupPending, out.FailureMessage = run.Revision, run.CleanupPending, run.FailureMessage
 	out.UpdatedAt = run.UpdatedAt
-	out.Events = state.Events
+	view := CloudAgentRunViewOptions{}
+	if len(options) > 0 {
+		view = options[0]
+	}
+	// 事件已全量落库：默认返回最近一页（尾部窗口 + 事件表补齐），sinceSeq 只取增量。
+	out.Events = s.cloudAgentRunEventsForView(task.UserID, run, &state, view.SinceSeq, view.EventLimit)
+	out.EventSeqBase = state.EventSeqBase
+	out.EventCount = s.cloudAgentRunEventCount(task.UserID, run, &state)
+	if len(out.Events) > 0 {
+		out.LatestSeq = out.Events[len(out.Events)-1].Seq
+	}
+	if len(out.Events) < out.EventCount && view.SinceSeq == 0 {
+		out.EventsTruncated = true
+	}
 	out.Approval = state.Approval
 	if cloudAgentRunTerminal(run.Status) {
 		out.Approval = nil
