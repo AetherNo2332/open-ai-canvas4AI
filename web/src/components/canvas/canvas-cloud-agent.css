@@ -1521,6 +1521,21 @@
     background: color-mix(in srgb, currentColor 13%, transparent);
 }
 
+/* 预算占用条：已用取强调色，未使用保持"空槽"质感（低调 + 斜纹，避免被当成又一个内容桶）。 */
+.agent-context-breakdown-bar > span[data-bucket="used"],
+.agent-context-breakdown-dot[data-bucket="used"] {
+    background: color-mix(in srgb, var(--workspace-accent) 72%, transparent);
+}
+
+.agent-context-breakdown-bar > span[data-bucket="unused"],
+.agent-context-breakdown-dot[data-bucket="unused"] {
+    background: repeating-linear-gradient(
+        135deg,
+        color-mix(in srgb, currentColor 8%, transparent) 0 3px,
+        color-mix(in srgb, currentColor 3%, transparent) 3px 6px
+    );
+}
+
 .agent-context-breakdown-list,
 .agent-context-breakdown-more ul {
     display: grid;

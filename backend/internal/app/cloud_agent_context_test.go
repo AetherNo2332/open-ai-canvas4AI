@@ -12,7 +12,10 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-func TestCloudAgentContextCompactionPreservesToolPairsAndWrites(t *testing.T) {
+// 正文卸载已删除：读进来的正文不再被换成骨架，历史（含配对与写回执）原样保留。
+// 依据：卸载是"别把 512KiB 状态顶爆"的副产物，检查点拆分后消息搬出 state_json；
+// 而按字节改写历史中段会作废其后的前缀缓存、并让模型重复读取（详见 http-api.mdx）。
+func TestCloudAgentContextKeepsReadBodiesIntact(t *testing.T) {
 	request := canonicalAgentRequest{SystemPrompt: "system", PromptCacheKey: "stable", Messages: []map[string]any{{"role": "user", "content": "original instructions"}}}
 	write := `{"taskId":"paid-task","nodeId":"node","taskSubmitted":true,"status":"running"}`
 	for i := 0; i < 16; i++ {
@@ -24,24 +27,27 @@ func TestCloudAgentContextCompactionPreservesToolPairsAndWrites(t *testing.T) {
 			map[string]any{"role": "assistant", "content": "", "tool_calls": []map[string]any{{"id": i}}},
 			map[string]any{"role": "tool", "tool_call_id": i, "content": body})
 	}
-	last, _ := json.Marshal(request.Messages[len(request.Messages)-2:])
-	if evicted, _, _ := compactCloudAgentContext(&request, nil); !evicted {
-		t.Fatal("large read bodies not compacted")
+	before, err := json.Marshal(request.Messages)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(request.Messages) != 33 || request.Messages[0]["content"] != "original instructions" || request.Messages[4]["content"] != write {
-		t.Fatal("instructions or write receipt lost")
+	if changed, pruned := cloudAgentPruneInspectedImages(&request, nil); changed || pruned != 0 {
+		t.Fatalf("纯文本历史不该被裁剪: changed=%v pruned=%d", changed, pruned)
 	}
-	after, _ := json.Marshal(request.Messages[len(request.Messages)-2:])
-	if string(last) != string(after) || request.SystemPrompt != "system" || request.PromptCacheKey != "stable" {
-		t.Fatal("latest turn or cache prefix modified")
+	after, err := json.Marshal(request.Messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("历史正文被改写了")
+	}
+	if len(request.Messages) != 33 || request.Messages[4]["content"] != write {
+		t.Fatal("写回执丢失")
 	}
 	for i := 1; i < len(request.Messages); i += 2 {
 		if request.Messages[i]["role"] != "assistant" || request.Messages[i+1]["role"] != "tool" {
-			t.Fatal("tool pair broken")
+			t.Fatal("工具配对被打断")
 		}
-	}
-	if evicted, _, _ := compactCloudAgentContext(&request, nil); evicted {
-		t.Fatal("compaction is not idempotent")
 	}
 }
 
@@ -457,10 +463,9 @@ func TestCloudAgentMidRunCompactionPausesAndResumes(t *testing.T) {
 	}
 }
 
-// 正文卸载必须留痕：这条路径过去是静默的，实测全库 context_evicted 事件数为 0，
-// 于是"到底卸载过没有"在运行记录里查不到。
-func TestCloudAgentSaveEmitsEvictionEventOnce(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
+// 卸载事件随机制一起删除：保存大历史不该再产生 context_evicted，历史也不该变短。
+func TestCloudAgentSaveKeepsLargeHistoryAndEmitsNoEvictionEvent(t *testing.T) {
+	s, _, root := reliableAgentRoot(t)
 	run, err := s.repo.CloudAgent("user", root.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -475,6 +480,7 @@ func TestCloudAgentSaveEmitsEvictionEventOnce(t *testing.T) {
 			map[string]any{"role": "assistant", "content": "", "tool_calls": []map[string]any{{"id": i}}},
 			map[string]any{"role": "tool", "tool_call_id": i, "content": `{"content":"` + strings.Repeat("x", 700) + `"}`})
 	}
+	beforeBody := stringField(state.Canonical.Messages[2], "content")
 	save := func() {
 		current, err := s.repo.CloudAgent("user", root.ID)
 		if err != nil {
@@ -487,35 +493,25 @@ func TestCloudAgentSaveEmitsEvictionEventOnce(t *testing.T) {
 		}
 	}
 	save()
-	after, err := s.repo.CloudAgent("user", root.ID)
+	persisted, err := s.repo.CloudAgent("user", root.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	countEvicted := func(execution *model.CloudAgentExecution) int {
-		decoded, err := cloudAgentDecode(execution)
-		if err != nil {
-			t.Fatal(err)
-		}
-		count := 0
-		for _, event := range decoded.Events {
-			if event.Type == "context_evicted" {
-				count++
-			}
-		}
-		return count
-	}
-	if got := countEvicted(after); got != 1 {
-		t.Fatalf("卸载事件应当只发一次，实际 %d", got)
-	}
-	save()
-	again, err := s.repo.CloudAgent("user", root.ID)
+	decoded, err := cloudAgentDecode(persisted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := countEvicted(again); got != 1 {
-		t.Fatalf("重复保存不该重复发事件，实际 %d", got)
+	for _, event := range decoded.Events {
+		if event.Type == "context_evicted" {
+			t.Fatalf("卸载机制已删除，不该再落事件: %+v", event.Payload)
+		}
 	}
-	_ = db
+	if len(decoded.Canonical.Messages) != len(state.Canonical.Messages) {
+		t.Fatalf("消息条数变了: %d → %d", len(state.Canonical.Messages), len(decoded.Canonical.Messages))
+	}
+	if stringField(decoded.Canonical.Messages[2], "content") != beforeBody {
+		t.Fatal("历史正文在保存时被改写")
+	}
 }
 
 // 画布 Agent 的任务行一直没有 channel_model_id（实测 82 个 agent 任务全为空），

@@ -317,7 +317,7 @@ func cloudAgentBoundCheckpoint(checkpoint agentcontext.Checkpoint) agentcontext.
 
 // cloudAgentCompleteTurnTail 取会话尾部最近 pairs 轮**完整**对话。
 //
-// 按轮次裁剪时必须成立的不变量（上游同口径，我们保留"正文卸载"作为更便宜的先行手段）：
+// 按轮次裁剪时必须成立的不变量（上游同口径；轮内已不再做正文卸载，这里是压缩唯一的裁剪口径）：
 //   - 绝不以 assistant(tool_calls) 或 tool 回执开头：不制造"有调用没结果"的半截轮次；
 //   - 带工具调用的 assistant 一律不进这里——它的调用参数与结果不在 TextHistory 里，
 //     留下来会让下一轮收到一个永远闭合不了的调用；
@@ -444,6 +444,9 @@ func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecutio
 		}
 		// 消息整体被替换：必须整表重写（条数恰好相同时靠计数比较是发现不了的）。
 		state.messagesDirty = true
+		// 历史被换成检查点，早期读取回执也一起没了：不清"已读过去重"标记，模型再要技能正文
+		// 会被回一句"本轮已请求过该技能路径，请使用历史工具结果"，而那份历史已经不存在。
+		state.SkillReads, state.ProfileReads = nil, nil
 		state.ActiveTaskID = ""
 		state.ActiveTextDraft = ""
 		// 中途暂停压缩：压完继续本轮的步进；收尾压缩才结束本轮。

@@ -558,20 +558,13 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if run == nil || state == nil {
 		return errors.New("Agent runtime state is missing")
 	}
-	// 正文卸载（便宜路径）：不删消息本身，只把"可重新读取的正文"换成骨架；
-	// 它在压缩之前跑，因为它的阈值更低、不需要模型调用。
-	if evicted, before, after := compactCloudAgentContext(&state.Canonical, state.cloudAgentVisualNotes()); evicted {
-		state.SkillReads = nil
-		state.ProfileReads = nil
-		// 治理动作必须留痕：这条路径过去是静默的，实测全库 context_evicted 事件数为 0，
-		// 于是"到底卸载过没有"在运行记录里根本查不到。
-		if run.ID != "" {
-			state.event(run.ID, "context_evicted", map[string]any{
-				"messagesBytesBefore": before, "messagesBytesAfter": after,
-				"thresholdBytes": cloudAgentEvictionThresholdBytes, "messageLimit": cloudAgentEvictionMessageLimit,
-				"text": "已移出可重新读取的历史工具正文（不含模型调用），需要时重新读取",
-			})
-		}
+	// 轮内唯一裁剪 = 图片：超出保留轮次的看图结果换成文字回执（正文一律保留）。
+	// 它必须在压缩判定之前跑：图片是最贵的一类内容，先移出再评估 token 压力才有意义。
+	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, state.cloudAgentVisualNotes()); changed && run.ID != "" {
+		state.event(run.ID, "context_images_pruned", map[string]any{
+			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
+			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",
+		})
 	}
 	if run.ID != "" {
 		if err := validateCloudAgentRuntime(run, state); err != nil {
@@ -993,12 +986,9 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if state.ContextCompaction != nil && state.ContextCompaction.Status == "requested" {
 		return s.enqueueCloudAgentContextCompaction(run, &state)
 	}
-	// 正文卸载与它的事件都在 cloudAgentSave 里统一处理（同一次变更只留一条记录）。
-	if evicted, _, _ := compactCloudAgentContext(&state.Canonical, state.cloudAgentVisualNotes()); evicted {
-		// Evicted read bodies must be obtainable again after compaction.
-		state.SkillReads = nil
-		state.ProfileReads = nil
-	}
+	// 图片裁剪与它的事件在 cloudAgentSave 里统一处理（同一次变更只留一条记录）；
+	// 这里再跑一次是为了"这一步发出去之前"就生效（模型不该再被计费历史图片）。
+	cloudAgentPruneInspectedImages(&state.Canonical, state.cloudAgentVisualNotes())
 	if stepLimit := cloudAgentStepLimit(state.Request); stepLimit > 0 && state.Step >= stepLimit {
 		return s.failCloudAgent(run, &state, fmt.Sprintf("达到 %d 次模型调用上限，本轮已停止", stepLimit))
 	}
@@ -1049,9 +1039,7 @@ const (
 	// cloudAgentRunEventPageLimit 是运行详情默认返回的事件条数（尾部缓存之外再从事件表补齐）。
 	cloudAgentRunEventPageLimit = 100
 
-	cloudAgentEvictionThresholdBytes = 40 << 10
-	cloudAgentEvictionMessageLimit   = 24
-	cloudAgentRequestHardLimitBytes  = 192 << 10
+	cloudAgentRequestHardLimitBytes = 192 << 10
 )
 
 // cloudAgentStepMaxOutputTokens 是单步模型调用的输出上限的出厂默认值，只在策略读取失败时兜底；
@@ -1105,67 +1093,6 @@ func cloudAgentStepOutputBudget(limits cloudAgentStepLimits, boosted bool) int {
 		return cloudAgentStepBoostFallbackTokens
 	}
 	return min(limits.OutputTokens*2, platform.MaxRuntimeAgentStepOutputTokens)
-}
-
-// compactCloudAgentContext reports whether it changed anything, plus the
-// conversation-message size before and after, for the observability event.
-// notes 是 nodeID → 模型自己写下的观察：图片被移出上下文时用它替代像素。
-func compactCloudAgentContext(request *canonicalAgentRequest, notes map[string]string) (bool, int, int) {
-	if request == nil {
-		return false, 0, 0
-	}
-	// 图片先按保留窗口裁剪：它是"看过就够了"的内容，不该等到超阈值才处理。
-	prunedImages := cloudAgentPruneInspectedImages(request, notes)
-	raw, err := json.Marshal(request.Messages)
-	if err != nil {
-		return prunedImages, 0, 0
-	}
-	before := len(raw)
-	if before < cloudAgentEvictionThresholdBytes && len(request.Messages) <= cloudAgentEvictionMessageLimit {
-		return prunedImages, before, before
-	}
-	// Retain the latest complete tool turn. Never remove call/result envelopes,
-	// user instructions, call arguments or write receipts to fabricate a summary.
-	cut := len(request.Messages) - 1
-	for cut > 0 && stringField(request.Messages[cut], "role") == "tool" {
-		cut--
-	}
-	// 技能正文不可卸载：它是可复用却不可再生的任务剧本，卸掉之后模型只能重新读取，
-	// 形成"读了被吞、再读"的循环（实测一次运行里同一个 SKILL.md 被读了 5 次）。
-	toolNames := cloudAgentToolNamesByCallID(request.Messages)
-	changed := false
-	for _, message := range request.Messages[:max(0, cut)] {
-		if stringField(message, "role") != "tool" {
-			continue
-		}
-		if toolNames[stringField(message, "tool_call_id")] == "skill_read_file" {
-			continue
-		}
-		var result map[string]any
-		if json.Unmarshal([]byte(stringField(message, "content")), &result) != nil || result["contextCompacted"] == true {
-			continue
-		}
-		// Only omit re-readable bodies. Preserve IDs, errors, generation status,
-		// approvals and all other structured facts verbatim.
-		if !cloudAgentEvictResultBody(result) {
-			continue
-		}
-		result["contextCompacted"] = true
-		result["guidance"] = cloudAgentEvictionGuidance
-		body, err := json.Marshal(result)
-		if err != nil || len(body) >= len(stringField(message, "content")) {
-			continue
-		}
-		message["content"] = string(body)
-		changed = true
-	}
-	if !changed {
-		return prunedImages, before, before
-	}
-	if after, err := json.Marshal(request.Messages); err == nil {
-		return true, before, len(after)
-	}
-	return true, before, before
 }
 
 func validateCloudAgentCalls(calls []cloudAgentCall) error {
@@ -1394,8 +1321,7 @@ func cloudAgentSnapshotConflict(err error) bool {
 	return errors.Is(err, errCloudAgentSnapshotConflict)
 }
 
-// cloudAgentToolNamesByCallID 从助手消息的工具调用里还原 callId → 工具名，
-// 用于让上下文治理按工具区分可卸载的正文。
+// cloudAgentToolNamesByCallID 从助手消息的工具调用里还原 callId → 工具名。
 func cloudAgentToolNamesByCallID(messages []map[string]any) map[string]string {
 	names := make(map[string]string, len(messages))
 	for _, message := range messages {

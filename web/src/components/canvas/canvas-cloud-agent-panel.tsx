@@ -148,8 +148,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         anchorDeltaTokens: contextPressure?.anchorDeltaTokens,
         anchorRejected: contextPressure?.anchorRejected,
         projectedPressureRatio: contextPressure?.projectedPressureRatio,
-        evictionThresholdBytes: contextPressure?.evictionThresholdBytes,
-        evictionMessageLimit: contextPressure?.evictionMessageLimit,
         requestHardLimitBytes: contextPressure?.requestHardLimitBytes,
     }), [contextPressure, prompt, selectedTextCapability]);
     useEffect(() => { if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off"); }, [reasoningSupported, reasoningMode]);
@@ -790,6 +788,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                                         slashSkills={installedSkills}
                                         includeAssetLibrary={false}
                                         contextPressure={visibleContextPressure}
+                                        runStep={run?.step}
                                         left={
                                             <ComposerControls
                                                 reasoningMode={reasoningSupported ? reasoningMode : "off"}
@@ -1390,8 +1389,6 @@ function parseContextPressure(payload: Record<string, unknown>): AgentContextPre
         anchorDeltaTokens: payload.anchorDeltaTokens === undefined ? undefined : number("anchorDeltaTokens"),
         anchorRejected: typeof payload.anchorRejected === "string" ? payload.anchorRejected : undefined,
         projectedPressureRatio: payload.projectedPressureRatio === undefined ? undefined : Math.max(0, number("projectedPressureRatio")),
-        evictionThresholdBytes: payload.evictionThresholdBytes === undefined ? undefined : number("evictionThresholdBytes"),
-        evictionMessageLimit: payload.evictionMessageLimit === undefined ? undefined : number("evictionMessageLimit"),
         requestHardLimitBytes: payload.requestHardLimitBytes === undefined ? undefined : number("requestHardLimitBytes"),
         stepMaxOutputTokens: payload.stepMaxOutputTokens === undefined ? undefined : number("stepMaxOutputTokens"),
         stepTimeoutSeconds: payload.stepTimeoutSeconds === undefined ? undefined : number("stepTimeoutSeconds"),

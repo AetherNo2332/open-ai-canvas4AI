@@ -5,6 +5,19 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 云端 Agent：删除轮内正文卸载（2026-09-21）
+
+正文卸载（会话消息 ≥40 KiB 或 >24 条时把"可重读取的正文"换成骨架）是"别把 `state_json` 顶到 512 KiB"的副产物；检查点拆分后消息已搬出 `state_json`，动机消失。保留它反而有三笔明确代价：按**字节**改写历史**中段**（provider 前缀缓存以 ~1,056 token 块计费，改中段就作废其后那一段）、被卸正文往往下一步就要用（模型只能重读）、以及"省下的是便宜的缓存命中 token、花掉的是全价的未命中 token"。
+
+- 删除：`cloud_agent_result_eviction.go` 整文件、`compactCloudAgentContext`、`cloudAgentEvictionThresholdBytes` / `cloudAgentEvictionMessageLimit`、`context_evicted` 事件、`context_pressure` 里的 `evictionThresholdBytes` / `evictionMessageLimit`（前端计量弹窗同步去掉"正文卸载线"那行）。
+- 保留并唯一化：轮内裁剪只剩**图片**——`cloudAgentPruneInspectedImages` 现在返回 `(changed, pruned)`，超出保留轮次的看图结果换成文字回执，落 **`context_images_pruned`** 事件（`prunedImages` / `retentionRounds`）。
+- 补强：压缩落检查点（历史被换成检查点）时清空 `SkillReads` / `ProfileReads`。以前这个清空挂在卸载上；不补的话模型再要技能正文会被回"本轮已请求过该技能路径，请使用历史工具结果"，而那份历史已经不存在。
+- 阶梯收敛为两级：图片裁剪 → 语义压缩（token 85%；无窗口退回 48 KiB / 16 条）。修复历史中段的动作一律不做：宁可让压缩从头部整段重写一次。
+
+- [x] 单测：大历史保存后条数与正文逐字不变且不再产生 `context_evicted`；纯文本历史（含 40 KiB+ 分镜/批量表读取与写回执）经裁剪路径后字节完全一致；技能正文与画布正文都保留；低于压缩线时不做任何改写；图片裁剪返回条数且幂等。
+- [ ] dev 真机复验：跑一轮大量读画布/读分镜的会话，确认历史里的读取正文**原样保留**（`cloud_agent_message_records` 里的 tool 消息体量与工具结果一致）、不再出现 `context_evicted`、`context_pressure` 不再带 `evictionThresholdBytes`/`evictionMessageLimit`，并在超出保留轮次看图的会话里看到 `context_images_pruned`。
+- [ ] 命中率复验：同提示词对照删除前后，`Σ(1 − cachedInputTokens/inputTokens)` 的未命中输入应下降（这条是删除的主要动机，需要真实渠道的锚点数据）。
+
 ## 云端 Agent 上下文预算与任务事实帧（P2 / P3）
 
 P2 把「下一步能装多少输入」变成一个**可解释、来源可查**的数：输入预算 = 上下文窗口 − 输出预留 − overhead，压缩线是该预算的 85%。
