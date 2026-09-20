@@ -308,3 +308,15 @@ func TestCloudAgentBatchTableRejectsUnsafeAndStaleEdits(t *testing.T) {
 		t.Fatalf("stale snapshot was not rejected: %v", err)
 	}
 }
+
+// 参考图列上限是**跨语言契约**：前端能建出来的列数，云端 Agent 必须读得动。
+// 与 `web/src/lib/canvas/canvas-batch-table.ts` 的 MAX_BATCH_REFERENCE_COLUMNS 必须一致
+// （前端 10 / 后端 6 会让 Agent 读写 7-10 列的表直接 400）。
+func TestCloudAgentBatchTableReferenceColumnContract(t *testing.T) {
+	if maxCloudAgentBatchReferences != 10 {
+		t.Fatalf("maxCloudAgentBatchReferences = %d，期望 10（须与前端 MAX_BATCH_REFERENCE_COLUMNS 同步）", maxCloudAgentBatchReferences)
+	}
+	if got := cloudAgentBatchConcurrencyAllowed(10); !got {
+		t.Fatal("10 并发是画布支持的档位")
+	}
+}

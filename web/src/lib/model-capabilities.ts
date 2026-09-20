@@ -17,6 +17,8 @@ export type TextCapabilityConfig = {
     contextWindowTokens?: number;
     /** Output capacity held back from the window when calculating input pressure. */
     reservedOutputTokens?: number;
+    /** Provider-declared ceiling for a single call. Zero means undeclared (never guessed). */
+    maxOutputTokens?: number;
     references: {
         promptMaxChars: number;
         maxImages: number;

@@ -29,8 +29,13 @@ type TextCapabilityConfig struct {
 	ContextWindowTokens int `json:"contextWindowTokens,omitempty"`
 	// ReservedOutputTokens is subtracted from the context window when reporting
 	// the input budget available to Agent policies, history and tool messages.
-	ReservedOutputTokens int                 `json:"reservedOutputTokens,omitempty"`
-	References           TextReferenceConfig `json:"references"`
+	ReservedOutputTokens int `json:"reservedOutputTokens,omitempty"`
+	// MaxOutputTokens is the provider-declared ceiling for one call
+	// (thinking + text + tool arguments). Zero means the provider does not
+	// declare one — it must never be rewritten into a guessed default, and it
+	// caps the per-step policy budget rather than replacing it.
+	MaxOutputTokens int                 `json:"maxOutputTokens,omitempty"`
+	References      TextReferenceConfig `json:"references"`
 }
 
 type TextReferenceConfig struct {
@@ -551,6 +556,12 @@ func validateTextCapabilityConfig(value *TextCapabilityConfig) error {
 	}
 	if value.ContextWindowTokens > 0 && value.ReservedOutputTokens >= value.ContextWindowTokens {
 		return BadAuthRequest("预留输出 Token 必须小于上下文窗口")
+	}
+	if value.MaxOutputTokens < 0 || value.MaxOutputTokens > 1000000 {
+		return BadAuthRequest("最大输出 Token 必须在 0-1000000 之间，0 表示未声明")
+	}
+	if value.MaxOutputTokens > 0 && value.ContextWindowTokens > 0 && value.MaxOutputTokens >= value.ContextWindowTokens {
+		return BadAuthRequest("最大输出 Token 必须小于上下文窗口")
 	}
 	for name, number := range map[string]int{"最大图片引用数": value.References.MaxImages, "最大视频引用数": value.References.MaxVideos} {
 		if number < 0 || number > 100 {
