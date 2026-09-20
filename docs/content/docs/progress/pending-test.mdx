@@ -5,6 +5,35 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 合并上游 v1.5.2–v1.5.7 后待复验（云端 Agent 持久化切换）
+
+合并后运行事件的活存储换成上游的 `cloud_agent_event_records`，我们自研的
+`cloud_agent_run_events` 随 v32 退役；事件契约（`event_seq_base` 等视图字段、`?sinceSeq=`/`?eventLimit=`、
+SSE 的 `Last-Event-ID`）已按上游持久化结构重新实现。以下端到端项本轮**没有**做，需要真实环境复验：
+
+- [ ] **迁移三起点**：全新库 / 上游 v31 库 / 我方 v25 等价库（含退役表数据）各跑一次 `migrate-schema up`，
+      确认 `ready:true`；第三种起点额外确认退役事件行被搬进 `cloud_agent_event_records`、
+      `checkpoint_version=2` 的运行能打开（`len(Journal) == event_count`）。单测已覆盖，实库未跑。
+- [ ] **真实旧库搬运**：对一份 `pg_dump` 出来的 v25 库副本执行迁移，核对 21 个 `checkpoint_version=2`
+      的运行全部可读；搬运前后退役表的行数与内容不变。
+- [ ] **事件分页与 SSE 重连**：长跑（>100 事件）会话滚动拉取 `?sinceSeq=`，并用 `Last-Event-ID`
+      断线重连，确认不重不漏、`eventSeqBase` / `latestSeq` / `eventsTruncated` 与前端一致。
+- [ ] **前端计量弹窗**：确认 `context_pressure` 的 `breakdown` / `anchor*` / `inputBudgetTokens` /
+      `budgetSource` / `stepMaxOutputTokens` / `stepTimeoutSeconds` 与弹窗逐字段对齐（本轮只跑后端单测）。
+- [ ] **语义压缩真机**：跑一轮把上下文顶到输入预算 85% 的会话，确认暂停步进 → 压缩 → 继续本轮，
+      事件流里出现 `context_compaction_requested` / `context_compacted`（含 `droppedTurns` / `resume` / `mode`）。
+- [ ] **压缩期取消/失败收尾**：在"正在压缩"时取消本轮，确认检查点落盘、`contextCompaction` 清空、
+      运行状态仍是 `cancelled`（不被复活成 `completed`）。
+- [ ] **看图链路**：在声明了 `text.references.maxImages > 0` 的渠道上让 Agent 调 `canvas_inspect_image`，
+      确认短时链接可被上游取到、同一张图一轮最多看两次、超出保留轮次后出现 `context_images_pruned`、
+      下一轮继承 `visualNote` 且不再重复看图。
+- [ ] **单步边界真机**：把 `agentStepTimeoutSeconds` 配成 30，确认超时后出现
+      `model_failure_recovered`（`reason=step_timeout_retried`）而不是整轮判死。
+- [ ] **上游 CSS 裁决**：`.agent-tool-row:hover` 保持上游的"删除 + 负断言"，需产品复核是否恢复悬停样式。
+- [ ] **事件保留期 TTL**：本轮按决定不实现（要给上游事件表加 `expires_at` 列），需人工确认是否分叉。
+- [ ] 合并前已有的红灯：`TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered`
+      （新增节点落在原点）与合并基线一致，本轮未修。
+
 ## 云端 Agent：删除轮内正文卸载（2026-09-21）
 
 正文卸载（会话消息 ≥40 KiB 或 >24 条时把"可重读取的正文"换成骨架）是"别把 `state_json` 顶到 512 KiB"的副产物；检查点拆分后消息已搬出 `state_json`，动机消失。保留它反而有三笔明确代价：按**字节**改写历史**中段**（provider 前缀缓存以 ~1,056 token 块计费，改中段就作废其后那一段）、被卸正文往往下一步就要用（模型只能重读）、以及"省下的是便宜的缓存命中 token、花掉的是全价的未命中 token"。
