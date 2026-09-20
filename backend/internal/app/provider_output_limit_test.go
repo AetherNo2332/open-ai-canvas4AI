@@ -2,14 +2,11 @@ package app
 
 import (
 	"testing"
-
-	"infinite-canvas/backend/internal/platform"
 )
 
-// cloudAgentStepMaxOutputTokens 是"单步输出的出厂默认上限"，原先是我们在
-// cloud_agent_runtime.go 里导出的常量；该文件本轮整体取上游，这里按同一来源
-// （platform.DefaultRuntimeAgentStepOutputTokens）在测试内重建，供 provider 相关用例引用。
-const cloudAgentStepMaxOutputTokens = platform.DefaultRuntimeAgentStepOutputTokens
+// cloudAgentStepMaxOutputTokens 是"单步输出的出厂默认上限"，定义在
+// cloud_agent_usage_anchor.go（来源 platform.DefaultRuntimeAgentStepOutputTokens），
+// 这里直接引用即可。
 
 // 输出上限必须"分层取小"：策略上限（管理端/每步预算）与模型能力上限语义不同，
 // 谁先谁赢会让能力值悄悄吃掉策略配置（能力 16384 时管理端设 131072 或 0 都失效）。

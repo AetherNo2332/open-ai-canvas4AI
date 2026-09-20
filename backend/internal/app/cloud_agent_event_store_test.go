@@ -27,10 +27,10 @@ func TestCloudAgentEventsPersistWithCheckpointAndPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 事件数特意超过默认页大小，才能同时验证"事件窗口"与"默认页从表里补齐"。
-	state.Events = nil
-	state.EventSeqBase = 0
+	// 注意：创建运行时已经落过事件（context_pressure），journal 是 append-only，
+	// 因此这里只在尾部追加，不重置已入库的序号与内容。
 	total := cloudAgentRunEventPageLimit + 25
-	for index := 0; index < total; index++ {
+	for len(state.Events) < total {
 		state.event(run.ID, "tool_completed", map[string]any{"toolName": "canvas_get_state", "text": strings.Repeat("读", 40)})
 	}
 	if len(state.Events) != total {
@@ -171,18 +171,20 @@ func TestCloudAgentRunEventsFallBackToMemoryWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Events = nil
-	state.EventSeqBase = 0
+	base := state.EventSeqBase
 	for index := 0; index < 5; index++ {
 		state.event(run.ID, "assistant_message", map[string]any{"text": "legacy"})
 	}
+	_ = base
+	// 表里一条都没有：视图只能回退到内存窗口。
 	events := s.cloudAgentRunEventsForView("user", run, &state, 0, 0)
-	if len(events) < 5 || events[len(events)-5].Seq != 1 {
+	if len(events) != len(state.Events) {
 		t.Fatalf("内存窗口回退失败：%+v", events)
 	}
-	delta := s.cloudAgentRunEventsForView("user", run, &state, state.Events[1].Seq, 0)
-	if len(delta) != 3 || delta[0].Seq != 3 {
-		t.Fatalf("内存窗口增量回退失败：%+v", delta)
+	cursor := state.Events[1].Seq
+	delta := s.cloudAgentRunEventsForView("user", run, &state, cursor, 0)
+	if len(delta) != len(state.Events)-2 || delta[0].Seq != cursor+1 {
+		t.Fatalf("内存窗口增量回退失败：cursor=%d %+v", cursor, delta)
 	}
 }
 
@@ -231,11 +233,9 @@ func TestCloudAgentEventWindowKeepsOlderRecordsReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.Events = nil
-	state.EventSeqBase = 0
 	total := repository.CloudAgentJournalWindow * 3
-	for index := 0; index < total; index++ {
-		state.event(run.ID, "tool_completed", map[string]any{"toolName": "canvas_get_state", "step": index + 1})
+	for len(state.Events) < total {
+		state.event(run.ID, "tool_completed", map[string]any{"toolName": "canvas_get_state", "step": len(state.Events) + 1})
 	}
 	if err := s.repo.MutateCloudAgent("user", root.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)

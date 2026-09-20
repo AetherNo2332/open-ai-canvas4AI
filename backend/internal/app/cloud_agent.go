@@ -23,18 +23,27 @@ const cloudAgentOperation = "cloud_agent"
 // turns reference the previous run, not a mutable in-memory conversation. This
 // reuses transactional billing, worker leases, cancellation and text replay.
 type CloudAgentRequest struct {
-	ReasoningMode   string   `json:"reasoningMode,omitempty"`
-	ProfileRevision string   `json:"profileRevision,omitempty"`
-	CanvasID        string   `json:"canvasId"`
-	Prompt          string   `json:"prompt"`
-	Model           string   `json:"model,omitempty"`
-	LogicalModelID  string   `json:"logicalModelId,omitempty"`
-	ChannelID       string   `json:"channelId,omitempty"`
-	ChannelModelKey string   `json:"channelModelKey,omitempty"`
-	PermissionMode  string   `json:"permissionMode"`
-	SkillIDs        []string `json:"skillIds,omitempty"`
-	ContextScope    []string `json:"contextScope"`
-	Budget          struct {
+	ReasoningMode   string `json:"reasoningMode,omitempty"`
+	ProfileRevision string `json:"profileRevision,omitempty"`
+	CanvasID        string `json:"canvasId"`
+	Prompt          string `json:"prompt"`
+	Model           string `json:"model,omitempty"`
+	LogicalModelID  string `json:"logicalModelId,omitempty"`
+	ChannelID       string `json:"channelId,omitempty"`
+	ChannelModelKey string `json:"channelModelKey,omitempty"`
+	// VisionEnabled 决定是否给模型暴露看图工具，由服务端在创建 run 时按渠道模型合同
+	// （text.references.maxImages > 0）重新推导并覆盖，客户端传入值一律被忽略；
+	// 必须持久化：工具授权校验每步都从落库状态重建，丢掉这个标记会让模型看得见工具
+	// 却被判为"未获本轮权限授权"。
+	VisionEnabled bool `json:"visionEnabled,omitempty"`
+	// HasMemories 决定是否暴露 recall_lessons：一条已批准记忆都没有时，这个工具只占
+	// schema 开销、没有任何可召回内容。与 VisionEnabled 同样由服务端在建 run 时推导并持久化，
+	// 工具授权每步从落库状态重建，两处必须看到同一个值。
+	HasMemories    bool     `json:"hasMemories,omitempty"`
+	PermissionMode string   `json:"permissionMode"`
+	SkillIDs       []string `json:"skillIds,omitempty"`
+	ContextScope   []string `json:"contextScope"`
+	Budget         struct {
 		MaxCredits         float64 `json:"maxCredits"`
 		MaxGenerationTasks int     `json:"maxGenerationTasks,omitempty"`
 		MaxVideoSeconds    int     `json:"maxVideoSeconds,omitempty"`
@@ -390,6 +399,8 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err != nil {
 			return nil, WrapAppError(409, "上一轮 Agent 历史记录不完整，无法继续对话；请新建对话", err)
 		}
+		// 跨轮只继承"视觉事实"：已经看过的画面与模型写下的观察（锚点会按当前画布重建）。
+		creativeAnchor = parentState.CreativeAnchor
 		inheritedPlan = parentState.Plan
 		history = parentState.TextHistory
 		if history == nil {
@@ -399,28 +410,43 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err != nil {
 			return nil, err
 		}
-		// The user's goal survives a failed first model call too. Tool facts are
-		// context, not authorization to replay a write or charge a second time.
-		history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt})
-		for _, message := range parentState.Canonical.Messages {
-			if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
-				history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
+		// A compacted checkpoint already covers the completed parent turn. Other
+		// runs append the exact prompt/reply pair plus bounded execution facts, so
+		// failures and submitted work remain visible to the next turn. Cross-turn
+		// history is bounded by the semantic checkpoint, not by a fixed round cap.
+		if !parentState.HistoryIncludesCurrent {
+			// The user's goal survives a failed first model call too. Tool facts are
+			// context, not authorization to replay a write or charge a second time.
+			history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt})
+			for _, message := range parentState.Canonical.Messages {
+				if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+					history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
+				}
+			}
+			history = append(history, providerTextMessage{Role: "assistant", Content: text})
+			if strings.TrimSpace(context) != "" {
+				history = append(history, providerTextMessage{Role: "user", Content: context})
 			}
 		}
-		history = append(history, providerTextMessage{Role: "assistant", Content: text})
-		if strings.TrimSpace(context) != "" {
-			history = append(history, providerTextMessage{Role: "user", Content: context})
-		}
 	}
+	// 分工说明：跨轮历史由上游的 trimCloudAgentTextHistory 兜底（保最近 10 轮 + 64KB 字节闸），
+	// 它是**兜底裁剪**；轮内的语义压缩由我们的 token 线（输入预算的 85%）触发。
+	// 两者判断的对象不同（前者是跨轮 textHistory，后者是轮内 canonical 消息），不会互相打架。
 	history = trimCloudAgentTextHistory(history, cloudAgentHistoryKeepRounds, cloudAgentHistoryMaxBytes)
 	encodedHistory, err := json.Marshal(history)
 	if err != nil {
 		return nil, err
 	}
-	if len(encodedHistory) > cloudAgentHistoryMaxBytes {
-		return nil, BadAuthRequest("对话上下文超过 64KB，请新建对话")
+	// 语义压缩正常情况下让这份历史远低于硬安全上限；这里只给损坏/旧记录留最终序列化边界，
+	// 不恢复过去固定的八轮产品上限。
+	if len(encodedHistory) > 192<<10 {
+		return nil, BadAuthRequest("对话上下文超过 192KB 安全上限，请新建对话")
 	}
-	creativeAnchor, err = cloudAgentCreativeAnchorForCanvas(s.repo, userID, canvas, req.Prompt)
+	var inheritedAnchor *cloudAgentCreativeAnchor
+	if creativeAnchor.Version > 0 {
+		inheritedAnchor = &creativeAnchor
+	}
+	creativeAnchor, err = cloudAgentCreativeAnchorForCanvas(s.repo, userID, canvas, req.Prompt, inheritedAnchor)
 	if err != nil {
 		return nil, err
 	}
@@ -428,6 +454,10 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
+	// 看图能力取决于本轮渠道模型自己的合同，在建 run 时定格，运行期间不再变化。
+	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
+	// 个人记忆是长期积累的，建 run 时定格一次（运行期间不再变化）。
+	req.HasMemories = s.cloudAgentHasMemories(userID)
 	canvasSummary := ""
 	if len(req.ContextScope) != 0 {
 		canvasSummary, err = cloudAgentCanvasSummary(canvas)
@@ -442,6 +472,9 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	state := cloudAgentState{Version: 1, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	s.attachCloudAgentLessons(&canonical, userID, req.Prompt)
+	// 必须登记进 state.Policy（值拷贝）：state 才是随任务持久化、被运行期读取的那份，
+	// 在这里改局部 policy 不会生效（state.Policy 是编译结果的值拷贝）。
+	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
 	canonical.PromptCacheKey = cloudAgentPromptCacheKey(req.CanvasID, canonical.SystemPrompt)
 	attachCloudAgentPlan(&canonical, inheritedPlan)
 	input := map[string]any{"mode": "text", "prompt": req.Prompt, "textHistory": history, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(policy.ReasoningMode)}, "cloudAgent": state,

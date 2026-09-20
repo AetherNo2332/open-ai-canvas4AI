@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/agentcontext"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/prompts"
@@ -47,39 +48,70 @@ type cloudAgentApproval struct {
 	Reason    string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
-	RuntimeRunID           string                                  `json:"-"`
-	Request                CloudAgentRequest                       `json:"request"`
-	Policy                 cloudAgentPolicySnapshot                `json:"policy"`
-	ParentID               string                                  `json:"parentId,omitempty"`
-	Fingerprint            string                                  `json:"fingerprint,omitempty"`
-	CreativeAnchor         cloudAgentCreativeAnchor                `json:"creativeAnchor,omitempty"`
-	TextHistory            []providerTextMessage                   `json:"textHistory,omitempty"`
-	Skills                 []cloudAgentSkill                       `json:"skills"`
-	SkillReads             map[string]bool                         `json:"skillReads,omitempty"`
-	Profile                cloudAgentProfileSnapshot               `json:"profile"`
-	ProfileReads           map[string]bool                         `json:"profileReads,omitempty"`
-	Canonical              canonicalAgentRequest                   `json:"canonical"`
-	ActiveTaskID           string                                  `json:"activeTaskId"`
-	ActiveTextDraft        string                                  `json:"activeTextDraft,omitempty"`
-	MediaTaskID            string                                  `json:"mediaTaskId,omitempty"`
-	TaskIDs                []string                                `json:"taskIds"`
-	Step                   int                                     `json:"step"`
-	Generations            int                                     `json:"generations"`
-	VideoSeconds           int                                     `json:"videoSeconds"`
-	Calls                  []cloudAgentCall                        `json:"calls"`
-	CallIndex              int                                     `json:"callIndex"`
-	Approval               *cloudAgentApproval                     `json:"approval,omitempty"`
-	Decisions              map[string]string                       `json:"decisions"`
-	DecisionSettings       map[string]string                       `json:"decisionSettings,omitempty"`
-	DecisionPreparedHashes map[string]string                       `json:"decisionPreparedHashes,omitempty"`
-	ActionNudged           bool                                    `json:"actionNudged,omitempty"`
-	EmptyOutputNudged      int                                     `json:"emptyOutputNudged,omitempty"`
-	StepSnapshotHash       string                                  `json:"stepSnapshotHash,omitempty"`
-	StoryboardTaskID       string                                  `json:"storyboardTaskId,omitempty"`
-	Plan                   []cloudAgentPlanItem                    `json:"plan,omitempty"`
-	PendingInterjections   []cloudAgentInterjection                `json:"pendingInterjections,omitempty"`
-	TransientReferences    map[string]cloudAgentTransientReference `json:"transientReferences,omitempty"`
-	InterjectionIDs        []string                                `json:"interjectionIds,omitempty"`
+	RuntimeRunID           string                    `json:"-"`
+	Request                CloudAgentRequest         `json:"request"`
+	Policy                 cloudAgentPolicySnapshot  `json:"policy"`
+	ParentID               string                    `json:"parentId,omitempty"`
+	Fingerprint            string                    `json:"fingerprint,omitempty"`
+	CreativeAnchor         cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
+	TextHistory            []providerTextMessage     `json:"textHistory,omitempty"`
+	Skills                 []cloudAgentSkill         `json:"skills"`
+	SkillReads             map[string]bool           `json:"skillReads,omitempty"`
+	Profile                cloudAgentProfileSnapshot `json:"profile"`
+	ProfileReads           map[string]bool           `json:"profileReads,omitempty"`
+	Canonical              canonicalAgentRequest     `json:"canonical"`
+	ActiveTaskID           string                    `json:"activeTaskId"`
+	ActiveTextDraft        string                    `json:"activeTextDraft,omitempty"`
+	MediaTaskID            string                    `json:"mediaTaskId,omitempty"`
+	TaskIDs                []string                  `json:"taskIds"`
+	Step                   int                       `json:"step"`
+	Generations            int                       `json:"generations"`
+	VideoSeconds           int                       `json:"videoSeconds"`
+	Calls                  []cloudAgentCall          `json:"calls"`
+	CallIndex              int                       `json:"callIndex"`
+	Approval               *cloudAgentApproval       `json:"approval,omitempty"`
+	Decisions              map[string]string         `json:"decisions"`
+	DecisionSettings       map[string]string         `json:"decisionSettings,omitempty"`
+	DecisionPreparedHashes map[string]string         `json:"decisionPreparedHashes,omitempty"`
+	ActionNudged           bool                      `json:"actionNudged,omitempty"`
+	EmptyOutputNudged      int                       `json:"emptyOutputNudged,omitempty"`
+	// EmptyOutputEscalated 记录"空输出已经升级重试过几次"（关思考 + 放大输出预算）。
+	EmptyOutputEscalated int `json:"emptyOutputEscalated,omitempty"`
+	// StepTimeoutEscalated 记录"单步墙钟到点后已经关思考重试过几次"。
+	StepTimeoutEscalated int `json:"stepTimeoutEscalated,omitempty"`
+	// ForceThinkingOff 让本步请求强制关闭上游思考：思考模型偶发把整个输出预算花在推理上，
+	// 结果正文与工具调用皆空（实测 output_tokens 正好等于 maxOutputTokens）。
+	ForceThinkingOff bool `json:"forceThinkingOff,omitempty"`
+	// BoostStepOutputBudget 让本步请求使用放大后的输出预算（配合关思考重试）。
+	BoostStepOutputBudget bool   `json:"boostStepOutputBudget,omitempty"`
+	StepSnapshotHash      string `json:"stepSnapshotHash,omitempty"`
+	// StepLimits 是本步实际生效的执行边界（管理员策略解析结果），只用于构造请求与展示压力读数，
+	// 因此不进状态 JSON：每次推进都按当时的策略重新解析，改配置无需重发本轮。
+	StepLimits cloudAgentStepLimits `json:"-"`
+	// ContextCompactionCount 是本轮已经压过几次：压完仍超阈值时不要无限暂停。
+	ContextCompactionCount int `json:"contextCompactionCount,omitempty"`
+	// ContextCheckpoint / ContextCompaction / HistoryIncludesCurrent 是语义压缩的状态面。
+	ContextCheckpoint      *agentcontext.Checkpoint     `json:"contextCheckpoint,omitempty"`
+	ContextCompaction      *cloudAgentContextCompaction `json:"contextCompaction,omitempty"`
+	HistoryIncludesCurrent bool                         `json:"historyIncludesCurrent,omitempty"`
+	// ImageInspectCounts 记录本轮内每张图被查看的次数，用于"同一张图不要反复看"的护栏。
+	ImageInspectCounts map[string]int `json:"imageInspectCounts,omitempty"`
+	// PendingVisualNodeID 是刚看过、还没写观察的那张图；模型下一次输出正文时把观察记到锚点。
+	PendingVisualNodeID  string                                  `json:"pendingVisualNodeId,omitempty"`
+	StoryboardTaskID     string                                  `json:"storyboardTaskId,omitempty"`
+	Plan                 []cloudAgentPlanItem                    `json:"plan,omitempty"`
+	PendingInterjections []cloudAgentInterjection                `json:"pendingInterjections,omitempty"`
+	TransientReferences  map[string]cloudAgentTransientReference `json:"transientReferences,omitempty"`
+	InterjectionIDs      []string                                `json:"interjectionIds,omitempty"`
+	// 最近一次已发出的步骤请求（模型调用）的本地计价，与上游实测用量配成锚点用。
+	// 估算与实测指向同一个 canonical：估算取自任务 input 里实际发出的那份，
+	// 因此"信封一致"是构造保证，不需要额外比对。
+	LastStepTaskID      string `json:"lastStepTaskId,omitempty"`
+	LastStepOperation   string `json:"lastStepOperation,omitempty"`
+	LastStepEstimate    int    `json:"lastStepEstimate,omitempty"`
+	LastStepSourceBytes int    `json:"lastStepSourceBytes,omitempty"`
+	// TokenAnchor 是上一步上游上报的用量（模型自己的分词器计数），上下文压力的权威锚点。
+	TokenAnchor *cloudAgentTokenAnchor `json:"tokenAnchor,omitempty"`
 	// EventSeqBase 是本次载入的事件窗口之前"已入库"的条数（只在内存里，不落检查点）：
 	// 不变量是 events[i].Seq == EventSeqBase + i + 1。事件全量在上游的
 	// cloud_agent_event_records，内存只保留最近一窗供摘要、记忆提取与卡死判定使用，
@@ -109,10 +141,20 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	canonical := input.Requests.Canonical
 	canonical.SystemPrompt = stripCloudAgentPlanBlock(canonical.SystemPrompt)
 	canonical.Messages = stripCloudAgentRuntimeContext(canonical.Messages)
-	state := cloudAgentRuntime{Request: initial.Request, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}}
+	state := cloudAgentRuntime{Request: initial.Request, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: s.cloudAgentStepLimits()}
 	if len(initial.Skills) > 0 {
 		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
 	}
+	pressure := s.cloudAgentContextPressure(input.Requests.Canonical, initial.Request.Prompt, initial.Request)
+	// 第一步的模型调用就是根任务本身（不经过 enqueueCloudAgentTask）：
+	// 在这里登记任务 id 与本次请求的本地计价，它回来时才能与上游实测配成锚点。
+	state.LastStepTaskID = task.ID
+	// 根任务的操作名是 cloud_agent，但它就是第一步的模型调用：按"步骤"口径登记，
+	// 否则回来配锚点时会被操作名守卫挡掉（实测踩过）。
+	state.LastStepOperation = cloudAgentStepOperation
+	state.LastStepEstimate = pressure.EstimatedInputTokens
+	state.LastStepSourceBytes = pressure.SourceBytes
+	state.event(task.ID, "context_pressure", cloudAgentContextPressurePayload(pressure, &state))
 	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
 	if err := cloudAgentSave(run, &state); err != nil {
 		return err
@@ -431,6 +473,14 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if run == nil || state == nil {
 		return errors.New("Agent runtime state is missing")
 	}
+	// 轮内唯一裁剪 = 图片：超出保留轮次的看图结果换成文字回执（正文一律保留）。
+	// 它必须在压缩判定之前跑：图片是最贵的一类内容，先移出再评估 token 压力才有意义。
+	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, state.cloudAgentVisualNotes()); changed && run.ID != "" {
+		state.event(run.ID, "context_images_pruned", map[string]any{
+			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
+			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",
+		})
+	}
 	if run.ID != "" {
 		if err := validateCloudAgentRuntime(run, state); err != nil {
 			return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
@@ -683,6 +733,8 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		}
 		return s.terminateCloudAgent(run, "Agent 运行状态损坏，本轮已停止")
 	}
+	// 单步边界每次推进都重新解析：管理员改配置后，正在跑的这一轮下一步就用新值。
+	state.StepLimits = s.cloudAgentStepLimits()
 	if state.ActiveTaskID != "" {
 		task, err := s.repo.TaskForUser(run.UserID, state.ActiveTaskID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -690,6 +742,9 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		}
 		if err != nil {
 			return err // Transient database failures must not terminate a live task.
+		}
+		if state.ContextCompaction != nil {
+			return s.advanceCloudAgentContextCompaction(run, &state, task)
 		}
 		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
 			// 将已持久化的模型增量转成 Agent 事件；不拆分完整答案伪装成流式。
@@ -740,8 +795,18 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		if task.Status != model.TaskStatusSucceeded && cloudAgentTruncatedToolArguments(task) {
 			return s.correctCloudAgentTruncatedCalls(run, &state)
 		}
-		if cloudAgentEmptyModelOutput(task) && state.EmptyOutputNudged < cloudAgentMaxEmptyOutputNudges {
-			return s.correctCloudAgentEmptyOutput(run, &state)
+		if cloudAgentEmptyModelOutput(task) {
+			if state.EmptyOutputNudged < cloudAgentMaxEmptyOutputNudges {
+				return s.correctCloudAgentEmptyOutput(run, &state)
+			}
+			// 催过仍然空：改为"关思考 + 放大输出预算"重试同一步，而不是把整轮判死。
+			if state.EmptyOutputEscalated < cloudAgentMaxEmptyOutputEscalations {
+				return s.correctCloudAgentEmptyOutputEscalation(run, &state)
+			}
+		}
+		// 单步墙钟到点同样是可恢复失败：关思考重试一次，而不是把整轮判死。
+		if cloudAgentStepTimedOut(task) && state.StepTimeoutEscalated < cloudAgentMaxStepTimeoutEscalations {
+			return s.correctCloudAgentStepTimeout(run, &state)
 		}
 		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 			if task.Status != model.TaskStatusSucceeded {
@@ -758,6 +823,9 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			}
 			if result.Text != "" {
 				state.event(run.ID, "assistant_message", map[string]any{"messageId": task.ID, "text": result.Text})
+				// 刚看过图时，模型在正文里写下的那句话就是可复用的视觉证据：
+				// 推理内容不回灌上下文，只有正文留得下来。
+				state.recordCloudAgentVisualNote(result.Text)
 				if len(calls) == 0 {
 					state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text})
 				}
@@ -795,6 +863,9 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if state.CallIndex < len(state.Calls) {
 		return s.advanceCloudAgentTool(run, &state)
 	}
+	if state.ContextCompaction != nil && state.ContextCompaction.Status == "requested" {
+		return s.enqueueCloudAgentContextCompaction(run, &state)
+	}
 	contextBudget := s.cloudAgentContextBudgetForRequest(state.Request)
 	if compactCloudAgentContext(&state.Canonical, contextBudget) {
 		// Evicted read bodies must be obtainable again after compaction.
@@ -805,6 +876,16 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		return s.failCloudAgent(run, &state, fmt.Sprintf("达到 %d 次模型调用上限，本轮已停止", stepLimit))
 	}
 	cloudAgentDrainInterjections(run.ID, &state)
+	// 上一步的模型调用已经回来，先用它的上游实测用量更新压力锚点，再发下一步。
+	s.recordCloudAgentTokenAnchor(&state)
+	// 轮内唯一裁剪 = 图片：超出保留轮次的看图结果换成文字回执（正文一律保留）。
+	// 它必须在压缩判定之前跑：图片是最贵的一类内容，先移出再评估 token 压力才有意义。
+	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, state.cloudAgentVisualNotes()); changed {
+		state.event(run.ID, "context_images_pruned", map[string]any{
+			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
+			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",
+		})
+	}
 	canonical, contextErr := s.cloudAgentModelContext(run, &state, contextBudget)
 	if contextErr != nil {
 		var appErr *AppError
@@ -814,7 +895,10 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		return contextErr
 	}
 	s.attachCloudAgentLessons(&canonical, run.UserID, cloudAgentLessonTaskText(&state))
-	input := map[string]any{"mode": "text", "prompt": state.Request.Prompt, "agentRequests": map[string]any{"canonical": canonical}, "config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)}, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(state.Policy.ReasoningMode)}}
+	// 空输出升级重试：关思考 + 放大输出预算，避免"思考吃满预算、正文为空"再次发生。
+	stepThinking := cloudAgentReasoningEnabled(state.Policy.ReasoningMode) && !state.ForceThinkingOff
+	stepOutputTokens := cloudAgentStepOutputBudget(state.StepLimits, state.BoostStepOutputBudget)
+	input := map[string]any{"mode": "text", "prompt": state.Request.Prompt, "agentRequests": map[string]any{"canonical": canonical}, "config": map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)}, "textOptions": map[string]any{"stream": true, "thinking": stepThinking, "maxOutputTokens": stepOutputTokens}}
 	tokens, tokenErr := cloudAgentRequestEstimatedTokens(&canonical)
 	if tokenErr != nil {
 		return s.failCloudAgent(run, &state, "模型上下文估算失败，请稍后重试")
@@ -822,7 +906,15 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if tokens > contextBudget.InputBudgetTokens {
 		return s.failCloudAgent(run, &state, cloudAgentContextBudgetMessage(contextBudget))
 	}
-	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: "cloud_agent_step", Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
+	// 上下文利用率达标（输入预算的 85%，优先上游实测 token 口径）就先暂停步进：
+	// 把历史压成检查点，压完再用压缩后的上下文继续本轮，而不是带着超高占用再发一次请求。
+	// 分工：这是轮内的**语义压缩**（触发者是 token 线）；上游的 working_context /
+	// compactCloudAgentContext 是轮内可重读正文的**兜底裁剪**，跨轮 textHistory 由
+	// trimCloudAgentTextHistory 兜底，三者对象不同、不会互相打架。
+	if requested, err := s.cloudAgentRequestCompaction(run, &state, canonical); err != nil || requested {
+		return err
+	}
+	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: cloudAgentStepOperation, Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
 	return s.enqueueCloudAgentTask(run, &state, req, nil)
 }
 
@@ -949,6 +1041,11 @@ func cloudAgentModelFailure(task *model.Task) (string, string) {
 	}
 	raw := strings.ToLower(task.Error)
 	switch {
+	case strings.Contains(task.Error, "没有返回内容"):
+		// 思考模型的典型失败：整个输出预算被推理吃掉，正文与工具调用皆空。
+		detail, reason = "上游连续返回空内容（通常是思考占满输出预算）；已自动关思考并放大预算重试仍失败，建议换用非思考模型或调小上下文", "model_empty_output"
+	case strings.Contains(task.Error, cloudAgentStepTimeoutError):
+		detail, reason = "单步模型调用超过执行时限仍未返回（长思考或上下文过大时常见）；已自动关思考重试仍超时，可在管理端调大 Agent 单步超时", "model_step_timeout"
 	case strings.Contains(raw, "connection reset by peer"):
 		detail, reason = "模型连接被对端或中间网络设备重置", "model_connection_reset"
 	case strings.Contains(raw, "timeout"), strings.Contains(raw, "deadline exceeded"):
@@ -1069,6 +1166,23 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		payload["text"] = message
 	} else {
 		payload["text"] = "工具执行成功"
+	}
+	if inspection, ok := result.(cloudAgentImageInspection); ok && err == nil {
+		receipt, _ := json.Marshal(inspection.Receipt)
+		payload["result"] = inspection.Receipt
+		state.event(runID, kind, payload)
+		// tool 角色只接受字符串内容（四种上游图式都是纯文本），因此工具回执照常入历史，
+		// 图片另起一条 user 消息携带，并显式标注为数据而非指令。
+		state.Canonical.Messages = append(state.Canonical.Messages,
+			map[string]any{"role": "tool", "tool_call_id": call.ID, "content": string(receipt)})
+		// 重复查看时只回执文字（ImageURL 为空），不再附图。
+		if strings.TrimSpace(inspection.ImageURL) != "" {
+			state.Canonical.Messages = append(state.Canonical.Messages,
+				map[string]any{"role": "user", "content": cloudAgentImageContentParts(inspection)})
+		}
+		state.CallIndex++
+		state.Approval = nil
+		return
 	}
 	raw, _ := json.Marshal(result)
 	payload["result"] = result
@@ -1241,6 +1355,12 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			modelList, modelListErr = s.cloudAgentModelList(intent)
 		}
 	}
+	// 看图需要读取资源并签发链接，放在事务外完成，避免把网络/文件 IO 塞进写事务。
+	var inspectionResult any
+	var inspectionErr error
+	if allowed && call.Function.Name == "canvas_inspect_image" && state.Request.VisionEnabled {
+		inspectionResult, inspectionErr = s.prepareCloudAgentImageInspection(run.UserID, state.Request.CanvasID, state, call)
+	}
 	// Skill reads use the domain repository and filesystem, not the checkpoint
 	// transaction's connection. Read first to avoid nesting DB reads on SQLite.
 	var skillResult any
@@ -1265,6 +1385,13 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "model_list":
 			result, toolErr = modelList, modelListErr
+		case call.Function.Name == "canvas_inspect_image":
+			result, toolErr = inspectionResult, inspectionErr
+			if toolErr == nil && inspectionResult != nil {
+				if inspection, ok := inspectionResult.(cloudAgentImageInspection); ok {
+					state.markCanvasAssetInspected(stringValue(inspection.Receipt["nodeId"]))
+				}
+			}
 		case call.Function.Name == "skill_read_file", call.Function.Name == "image_annotation_render":
 			result, toolErr = skillResult, skillErr
 		default:
@@ -1375,6 +1502,15 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 		return err
 	}
 	task.InputJSON = string(raw)
+	// 压力读数只对"模型调用"这一步有意义：媒体任务发的是另一份请求（另一套信封），
+	// 压缩任务同理由 enqueueCloudAgentContextCompaction 自己记账。
+	var contextPressure *cloudAgentContextPressure
+	if media == nil && req.Operation != cloudAgentContextCompactionOperation {
+		if canonical, ok := canonicalAgentRequestFromInput(input); ok {
+			value := s.cloudAgentContextPressure(canonical, state.Request.Prompt, state.Request)
+			contextPressure = &value
+		}
+	}
 	if prepare.Order != nil {
 		task.BillingOrderID = prepare.Order.ID
 	}
@@ -1420,7 +1556,21 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 			state.event(run.ID, "generation_task_created", map[string]any{"toolName": "generate_media", "taskId": task.ID, "nodeId": media.Args.NodeID, "title": media.Args.Title, "mode": media.Args.Mode, "canvasId": state.Request.CanvasID, "referenceNodeIds": media.Args.ReferenceNodeIDs, "text": "媒体节点与引用连线已创建，生成任务已提交"})
 		} else {
 			state.ActiveTaskID = task.ID
-			state.Step++
+			if state.ContextCompaction != nil && req.Operation == cloudAgentContextCompactionOperation {
+				state.ContextCompaction.Status = "running"
+			} else {
+				if contextPressure != nil {
+					state.event(run.ID, "context_pressure", cloudAgentContextPressurePayload(*contextPressure, state))
+				}
+				// 记下发出去这份 canonical 的本地计价：任务回来时用它和上游实测配成锚点。
+				state.LastStepTaskID = task.ID
+				state.LastStepOperation = req.Operation
+				if contextPressure != nil {
+					state.LastStepEstimate = contextPressure.EstimatedInputTokens
+					state.LastStepSourceBytes = contextPressure.SourceBytes
+				}
+				state.Step++
+			}
 		}
 		return cloudAgentSave(current, state)
 	})

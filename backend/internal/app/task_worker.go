@@ -137,7 +137,7 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), taskExecutionTimeoutWithPolicy(task.Type, policy.Task))
+	ctx, cancel := context.WithTimeout(context.Background(), taskExecutionTimeout(task, policy.Task))
 	defer cancel()
 	leaseDone := make(chan struct{})
 	leaseLost := make(chan error, 1)
@@ -258,9 +258,13 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 			err = errors.New("上游任务长时间未同步，已停止自动查询，请确认渠道任务状态后重试。")
 		}
 		if errors.Is(err, context.DeadlineExceeded) || deadlineExpired {
-			// 合并说明：我们这边的"画布 Agent 单步超时是可恢复事件"分支（cloudAgentModelOperation /
-			// cloudAgentStepTimeoutError）随自研单步治理一起本轮不移植；这里回到上游的统一超时文案。
-			err = errors.New(taskTimeoutMessage(task.Type))
+			// 画布 Agent 的单步超时是可恢复事件（运行期会关思考重试同一步），
+			// 因此必须与"任务执行超时"区分开，否则只能整轮判死。
+			if cloudAgentModelOperation(task) {
+				err = errors.New(cloudAgentStepTimeoutError + "，已中止这一步")
+			} else {
+				err = errors.New(taskTimeoutMessage(task.Type))
+			}
 		}
 		s.noteAgentMemoryCompactTask(*task, nil, err)
 		return terminal.handleExecutionFailure(task, err, providerSucceeded, channelSlotFailedBeforeRequest)
@@ -316,9 +320,21 @@ func taskLeaseRenewContext(ctx context.Context) (context.Context, context.Cancel
 	return context.WithTimeout(context.WithoutCancel(ctx), taskLeaseRenewTimeout)
 }
 
-// taskExecutionTimeout 是"画布 Agent 单步秒级墙钟"的入口：本轮随自研单步治理一起不移植
-// （上游用 taskExecutionTimeoutWithPolicy 统一按任务类型算墙钟），保留函数仅为减少调用点改动。
-// 需要移植时见报告"后续需要逐个移植的我方功能清单"。
+// taskExecutionTimeout 解析一次任务的执行墙钟：画布 Agent 的单步调用可以配秒级超时
+// （AgentStepTimeoutSeconds），没配时沿用文本任务超时。秒级粒度是必要的——一轮里每一步
+// 都是几分钟级的调用，分钟粒度改不动"某一步卡住"的体验。
+// 超时的表现是任务错误里带 cloudAgentStepTimeoutError 标记，运行期据此关思考重试同一步，
+// 而不是把整轮判死（见 cloud_agent_step_timeout.go）。
+func taskExecutionTimeout(task *model.Task, policy RuntimeTaskPolicy) time.Duration {
+	if task != nil && cloudAgentModelOperation(task) && policy.AgentStepTimeoutSeconds > 0 {
+		return time.Duration(policy.AgentStepTimeoutSeconds) * time.Second
+	}
+	if task == nil {
+		return time.Duration(policy.DefaultTimeoutMinutes) * time.Minute
+	}
+	return taskExecutionTimeoutWithPolicy(task.Type, policy)
+}
+
 func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) time.Duration {
 	switch {
 	case strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):

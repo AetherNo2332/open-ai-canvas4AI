@@ -15,9 +15,9 @@ func TestStuckCloudAgentIsTerminated(t *testing.T) {
 	}
 	run, state := agentMediaRun(t, s, a, "request_approval", "stuck-idle")
 	state.ActiveTaskID, state.MediaTaskID, state.StoryboardTaskID = "", "", ""
-	if len(state.Events) == 0 {
-		state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
-	}
+	// 追加一条 10 分钟前的旧事件，让这一轮看起来卡住。
+	// 不能改已落库事件的内容：journal 是 append-only，改动会（正确地）被写路径拒绝。
+	state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
 	state.Events[len(state.Events)-1].CreatedAt = time.Now().Add(-10 * time.Minute)
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
@@ -77,9 +77,8 @@ func TestStuckDetectionSkipsRunsWithLiveWork(t *testing.T) {
 	}
 	state.ActiveTaskID = live.ID
 	state.TaskIDs = append(state.TaskIDs, live.ID)
-	if len(state.Events) == 0 {
-		state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
-	}
+	// 追加一条 10 分钟前的旧事件（journal 是 append-only，不能改写已落库事件的内容）。
+	state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
 	state.Events[len(state.Events)-1].CreatedAt = time.Now().Add(-10 * time.Minute)
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
@@ -105,9 +104,8 @@ func TestStuckDetectionTreatsTerminalTaskAsIdle(t *testing.T) {
 	}
 	state.ActiveTaskID, state.MediaTaskID = "", ""
 	state.StoryboardTaskID = dead.ID
-	if len(state.Events) == 0 {
-		state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
-	}
+	// 追加一条 10 分钟前的旧事件（journal 是 append-only，不能改写已落库事件的内容）。
+	state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
 	state.Events[len(state.Events)-1].CreatedAt = time.Now().Add(-10 * time.Minute)
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
