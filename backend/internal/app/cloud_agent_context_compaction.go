@@ -405,6 +405,28 @@ func (s *Service) completeCloudAgentContextFallback(run *model.CloudAgentExecuti
 }
 
 func (s *Service) persistCloudAgentContextCheckpoint(run *model.CloudAgentExecution, state *cloudAgentRuntime, checkpoint agentcontext.Checkpoint, mode, reason string) error {
+	return s.writeCloudAgentContextCheckpoint(run, state, checkpoint, mode, reason, false)
+}
+
+// finalizeCloudAgentInterruptedCompaction 收拾"停在压缩上"的终态轮次。
+//
+// 压缩是「暂停步进 → 压完继续」的中途动作：本轮在压缩期间被取消（或已经失败）时，
+// 调度器不会再推进这一轮，于是 ContextCompaction 会永远挂在 requested/running 上
+// （界面一直显示"正在压缩"），那份检查点也永远落不了盘。这里按服务端保底检查点收口。
+func (s *Service) finalizeCloudAgentInterruptedCompaction(run *model.CloudAgentExecution, state *cloudAgentRuntime, reason string) error {
+	if run == nil || state == nil || state.ContextCompaction == nil {
+		return nil
+	}
+	checkpoint := cloudAgentFallbackCheckpoint(state)
+	checkpoint.CompactedTurnCount = state.ContextCompaction.TurnCount
+	return s.writeCloudAgentContextCheckpoint(run, state, checkpoint, "fallback", reason, true)
+}
+
+// writeCloudAgentContextCheckpoint 是落检查点的唯一实现。
+//
+// keepTerminal=true 用于「本轮已经是终态」的收尾：只落检查点、历史与事件，不改运行状态
+// （否则一次失败轮的收尾会把 failed 写成 completed，等于凭空复活一轮）。
+func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecution, state *cloudAgentRuntime, checkpoint agentcontext.Checkpoint, mode, reason string, keepTerminal bool) error {
 	checkpoint = cloudAgentBoundCheckpoint(checkpoint)
 	turnsBefore := cloudAgentConversationTurnCount(state.Canonical.Messages)
 	recent := cloudAgentCompleteTurnTail(state.Canonical.Messages, 2)
@@ -432,7 +454,7 @@ func (s *Service) persistCloudAgentContextCheckpoint(run *model.CloudAgentExecut
 			if current.Status != "cancelled" && current.Status != "failed" {
 				current.Status = "running"
 			}
-		} else {
+		} else if !keepTerminal {
 			current.Status = "completed"
 		}
 		turnsAfter := cloudAgentConversationTurnCount(state.Canonical.Messages)
