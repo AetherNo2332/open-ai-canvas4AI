@@ -97,13 +97,7 @@ func TestCloudAgentContinuationUsesNewGoalAndPreservesDeliveredCorrection(t *tes
 	oldPrompt := state.Request.Prompt
 	state.PendingInterjections = []cloudAgentInterjection{{ID: "correction", Text: "不用参考图了，只保留文字分析"}}
 	cloudAgentDrainInterjections(root.ID, &state)
-	if err := cloudAgentSave(run, &state); err != nil {
-		t.Fatal(err)
-	}
-	run.Status = "completed"
-	if err := db.Save(run).Error; err != nil {
-		t.Fatal(err)
-	}
+	saveAgentStateForTest(t, s, run, &state, func(current *model.CloudAgentExecution) { current.Status = "completed" })
 	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": `{"text":"已按要求停止生成"}`}).Error; err != nil {
 		t.Fatal(err)
 	}

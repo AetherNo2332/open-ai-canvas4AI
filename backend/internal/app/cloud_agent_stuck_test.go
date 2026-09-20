@@ -15,9 +15,9 @@ func TestStuckCloudAgentIsTerminated(t *testing.T) {
 	}
 	run, state := agentMediaRun(t, s, a, "request_approval", "stuck-idle")
 	state.ActiveTaskID, state.MediaTaskID, state.StoryboardTaskID = "", "", ""
-	if len(state.Events) == 0 {
-		state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
-	}
+	// 事件是只读行：要模拟"很久没有新事件"，得追加一条**新的**并记在十分钟前；
+	// 改内存里已有事件的时间戳不会落库（那些行早就写过了）。
+	state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
 	state.Events[len(state.Events)-1].CreatedAt = time.Now().Add(-10 * time.Minute)
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
@@ -77,9 +77,9 @@ func TestStuckDetectionSkipsRunsWithLiveWork(t *testing.T) {
 	}
 	state.ActiveTaskID = live.ID
 	state.TaskIDs = append(state.TaskIDs, live.ID)
-	if len(state.Events) == 0 {
-		state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
-	}
+	// 事件是只读行：要模拟"很久没有新事件"，得追加一条**新的**并记在十分钟前；
+	// 改内存里已有事件的时间戳不会落库（那些行早就写过了）。
+	state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
 	state.Events[len(state.Events)-1].CreatedAt = time.Now().Add(-10 * time.Minute)
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
@@ -105,9 +105,9 @@ func TestStuckDetectionTreatsTerminalTaskAsIdle(t *testing.T) {
 	}
 	state.ActiveTaskID, state.MediaTaskID = "", ""
 	state.StoryboardTaskID = dead.ID
-	if len(state.Events) == 0 {
-		state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
-	}
+	// 事件是只读行：要模拟"很久没有新事件"，得追加一条**新的**并记在十分钟前；
+	// 改内存里已有事件的时间戳不会落库（那些行早就写过了）。
+	state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
 	state.Events[len(state.Events)-1].CreatedAt = time.Now().Add(-10 * time.Minute)
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)

@@ -5,6 +5,22 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 云端 Agent 检查点拆分（P1：消息与事件搬出 state_json）
+
+`state_json` 一直同时承载"控制面 + 会话消息 + 事件尾部"，于是"能跑多少轮"被记录体积决定（写入型会话 22 步撞 512KiB 上限）。P1 把消息与事件彻底搬出去：
+
+- 新增 `cloud_agent_message_records`（`canonical` 会话消息 / `history` 跨轮历史，主键 `(run_id, kind, sequence)`）与 `checkpoint_version/message_count/event_count` 三列；迁移 v25，`CurrentSchemaVersion = 25`。
+- `cloudAgentSave` 只序列化控制面（消息/历史/事件全部置空），消息与事件挂在 run 上由 `MutateCloudAgent` / `EnsureCloudAgent` 在**同一个事务**里写入；版本与计数由持久化层回填，避免"计数写了、行没写"。
+- 解码：`checkpoint_version >= 2` 时从消息表重建会话（按 kind 校验序号连续、行数必须等于 `message_count`），事件只载入最近一窗（40 条，`EventSeqBase = event_count − len(window)`）；旧运行（版本 < 2）照旧从 blob 读，**下一次保存时懒升级**，不需要回填作业。
+- 删除只为体积存在的机制：`cloud_agent_event_slim.go`（398 行瘦身/降级阶梯）、`EventFlushedSeq`、`EventDegradeLevel`、`cloudAgentTrimFlushedEvents`、`cloudAgentFoldEventPayloadsToBudget`。单条事件载荷在产生时就封顶（超过 128KiB 压成"需要刷新"回执），不再有"整轮判死"。
+- 文档：`backend-database.mdx` 同步到结构版本 25 与三张表的分工。
+
+- [x] `go test ./...` 全绿（带 `CANVAS_TEST_POSTGRES_DSN` 与 `redis-server`，含 P1 新增/改写的用例：检查点里不再有消息与事件、事件按窗口重建 + 分页、旧检查点懒升级、超大事件载荷封顶、创建时回填计数）。
+- [x] 反例/一致性：行数与 `message_count` 不一致、`lastSeq != event_count`、消息序号不连续时一律判"记录不完整"（`Agent execution transcript/journal is incomplete`），不再带着缺口继续跑。
+- [ ] dev 真机复验：找一轮既有运行（升级前创建）确认可读、可续聊，并在保存后检查 `cloud_agent_executions.checkpoint_version` 变成 2、`state_json` 里不再出现 `messages/events`，`cloud_agent_message_records` 行数等于 `message_count`。
+- [ ] 长跑复验：20+ 步（含分镜写入）的运行，`octet_length(state_json)` 只随控制面增长（不再随事件/消息线性增长），事件面板分页与"更早记录"仍可读。
+- [ ] 迁移复验：在一份 24 版库上执行 `migrate-schema up`，确认 v25 幂等、旧运行不受影响；再确认旧程序连接新库会被 `CurrentSchemaVersion` 拒绝。
+
 ## 后端依赖型用例接入 CI（Postgres / Redis）
 
 后端有 5 个用例此前在本地和 CI 都**静默跳过**：3 个需要 `CANVAS_TEST_POSTGRES_DSN`（`internal/database` 的 `TestPostgresAssetIDMigration`、`internal/canvas` 的 `TestRepairAssetBytesPostgres`、`internal/repository` 的 `TestCanvasRevision/postgres`），2 个需要 `redis-server` 可执行文件（`internal/platform` 的 `TestRuntimeCoordinatorRedisLeasePreservesLongestTTL`、`internal/app` 的 `TestClearAdminRuntimeCacheUsesRedisWhitelist`）。CI 的 Backend job 既没有 `services:` 也没有导出 DSN，runner 镜像也不含 redis，所以这几条路径一直没有真正执行过。
@@ -15,7 +31,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [x] CI（run 35453946031，PR #21）三个 job 全绿，Backend 7m14s；这 5 个用例在 runner 上**真的执行**并 PASS（`TestPostgresAssetIDMigration` 2.63s、`TestRepairAssetBytesPostgres` 0.35s、`TestCanvasRevision/postgres` 0.57s、Redis 两条各 0.11s）—— 依赖用例的耗时增量在秒级，主要成本是 apt 安装 redis。
 - [x] 反例验证：本地故意撤掉 `CANVAS_TEST_POSTGRES_DSN` 与 `redis-server`，守卫步骤的日志里出现 5 条 `--- SKIP`，即该步骤会 `exit 1`，不会退回静默跳过。
 - [ ] `TestMeasureDumpPayload`（需 `CLOUD_AGENT_MEASURE_OUT`）按设计保持手动触发，不纳入守卫。
-- [ ] 观察一段时间：确认新加的 Postgres service 与 apt 安装没有给 Backend job 带来偶发失败（如 apt 源抖动）。
+- [x] 观察一段时间：确认新加的 Postgres service 与 apt 安装没有给 Backend job 带来偶发失败（如 apt 源抖动）。
 
 ## Web 基线与 Chrome E2E 红灯清零（18 个失败 → 0）
 
@@ -28,7 +44,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [x] `bun test` 1779 通过 / 0 失败；`bun run typecheck`、`bun run lint`、`bun run build` 通过。
 - [x] `bun run test:director:e2e`（本地 headless Chromium）58 passed / 0 failed，连续 3 次稳定。
 - [x] CI：PR 与合并后的 `dev` 推送均三个 job 全绿（run 35440082042 / 35441405470）。
-- [ ] 浏览器手工复验：外观页浅 / 深 Logo 上传与外框开关、首屏 favicon（自定义品牌不再闪默认品牌）、更新日志弹窗内边距。
+- [x] 浏览器手工复验：外观页浅 / 深 Logo 上传与外框开关、首屏 favicon（自定义品牌不再闪默认品牌）、更新日志弹窗内边距。
 - [ ] 浏览器手工复验：管理端「画布 Agent 单步」两个字段 + 面板上下文弹窗里单步上限与单步最长的展示（见下一节遗留项）。
 
 ## dev 纳入 CI 与既有后端红灯清理
@@ -89,7 +105,7 @@ normalizePixelSize`、`edits` 走 multipart + `image`/`mask` 文件部分）。
   文生图 `POST /v1/images/generations` JSON **`size=1024x1024` → 200**；带参考图
   `POST /v1/images/edits` **`multipart/form-data; boundary=…` `size=1024x1024` → 200**，两个任务都 `succeeded`。
   修复前同两条路径分别是 400（`size` 格式、缺 `prompt`）。
-- [ ] 浏览器手工复验：画布默认画幅（`1:1`）直接生成 / 带参考图编辑都不再报参数错误。
+- [x] 浏览器手工复验：画布默认画幅（`1:1`）直接生成 / 带参考图编辑都不再报参数错误。
 - [ ] 兼容性提醒（未验）：曾有第三方 OpenAI 兼容上游只接受 JSON edits（`images` 数组），现在统一按
   官方 multipart 发送；如遇到这类上游需要单独插件包。
 - [ ] vllm-omni 的蒙版字段名是 `mask_image`（OpenAI 官方是 `mask`）：该渠道用蒙版时需把模型能力的
@@ -208,7 +224,7 @@ normalizePixelSize`、`edits` 走 multipart + `image`/`mask` 文件部分）。
 
 PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束、浏览器缩放窗口后的尺寸收敛、短屏滚动和展开态单一调整手柄。尺寸回归测试与 Vite 生产打包通过；真实 Chrome 组件验证（临时数据，未调用生成接口）覆盖图片/视频、参考图、首尾帧控件、明暗主题、窄屏/短屏、鼠标与键盘调整、切换节点重置。完整 `bun run build` 仍被既有 `canvas-cloud-agent-panel.tsx` 中未定义的 `markdownPlainText` 阻断。
 
-- [ ] 点击放大后窗口明显大于节点面板；右下角拖动手柄可同时改宽高，桌面最小约 560×320，小视口优先限制在视口减 24px 内。
+- [x] 点击放大后窗口明显大于节点面板；右下角拖动手柄可同时改宽高，桌面最小约 560×320，小视口优先限制在视口减 24px 内。
 - [ ] 方向键可调整，Shift 加速；切换节点后尺寸恢复默认。
 - [ ] 窗口缩小后弹窗尺寸自动收敛；短屏下可滚动访问编辑区、参数和提交按钮，右下角手柄保持可达。
 - [ ] 展开态仅显示右下角窗口手柄；紧凑面板仍可独立调整输入高度。明暗主题继续跟随当前画布。
@@ -299,7 +315,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 
 - [ ] 对话页不再单独占一行工具条；顶栏中间能看到「镜头时间线」「画布中继续」、新建和历史。
 - [ ] 底部输入框明显变矮；模式切换在录音左侧，能看到「视频 / 图片 / 文本」文字。
-- [ ] 消息区右侧不是浏览器自带宽滚动条，而是细轨道；窄屏仍能切换模式、打开镜头列表和历史。
+- [x] 消息区右侧不是浏览器自带宽滚动条，而是细轨道；窄屏仍能切换模式、打开镜头列表和历史。
 
 ## 对话开始后输入区加宽与圆角底板（2026-09-17）
 
@@ -1374,7 +1390,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 - [ ] 保存一套自定义品牌后点击“恢复影策默认”，确认品牌名称、英文标识、Logo、登录页文案和媒体立即恢复内置值，自定义素材文件仍保留在存储资源中。
 - [ ] 清空浏览器缓存并以慢速网络打开 `/login`、`/register` 和 `/forgot-password`，确认加载阶段不出现内置品牌名、Logo、favicon 或视频封面闪烁。
 - [ ] 更换品牌视频但不上传封面，确认首帧出现前只显示中性深色背景；再配置封面，确认只显示当前自定义封面。
-- [ ] 在存储资源页尝试删除当前浅色 Logo、深色 Logo、视频和封面，确认显示“外观”引用并保留文件；解除绑定后可正常删除。
+- [x] 在存储资源页尝试删除当前浅色 Logo、深色 Logo、视频和封面，确认显示“外观”引用并保留文件；解除绑定后可正常删除。
 - [ ] 将公开配置接口模拟为超时或 5xx，确认 4 秒内结束等待并完整回退内置外观，应用仍可进入。
 
 ## 画布导入同步、素材回收站与历史

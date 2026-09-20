@@ -59,8 +59,9 @@ func TestCloudAgentGeometryOnlyChangeShrinksPatch(t *testing.T) {
 	}
 }
 
-// 兜底：单条事件载荷超过硬上限时降级为"需要刷新"，而不是让整轮失败。
-func TestCloudAgentSlimEventHistoryDegradesOversizedPayload(t *testing.T) {
+// 兜底：单条事件载荷超过硬上限时降级为"需要刷新"（不再进检查点，但仍要过校验），
+// 而不是让整轮判死。
+func TestCloudAgentOversizedEventPayloadDegradesToRefresh(t *testing.T) {
 	huge := strings.Repeat("x", cloudAgentEventPayloadLimitBytes+1024)
 	state := &cloudAgentRuntime{Events: []CloudAgentEvent{{
 		RunID: "run-1", Seq: 1, EventID: "event-1", Type: "canvas_updated",
@@ -70,15 +71,13 @@ func TestCloudAgentSlimEventHistoryDegradesOversizedPayload(t *testing.T) {
 			"canvasPatch": map[string]any{"nodes": []any{map[string]any{"after": map[string]any{"id": "n1", "metadata": map[string]any{"content": huge}}}}},
 		},
 	}}}
-	if !cloudAgentSlimEventHistory(state, false) {
-		t.Fatal("超限载荷未被治理")
-	}
-	payload := state.Events[0].Payload
+	payload := cloudAgentBoundEventPayload(state.Events[0].Payload)
+	state.Events[0].Payload = payload
 	if _, exists := payload["canvasPatch"]; exists {
 		t.Fatalf("超限的 canvasPatch 应被丢弃：%+v", payload)
 	}
-	if payload["canvasPatchSlimmed"] != true || payload["requiresRefresh"] != true {
-		t.Fatalf("应标记需要刷新：%+v", payload)
+	if payload["requiresRefresh"] != true || payload["payloadSlimmedBytes"] == nil {
+		t.Fatalf("应标记需要刷新并记录省略体积：%+v", payload)
 	}
 	raw, _ := json.Marshal(payload)
 	if len(raw) > cloudAgentEventPayloadLimitBytes {
@@ -160,48 +159,6 @@ func rowsOfNode(t *testing.T, node map[string]any) []map[string]any {
 		return nil
 	}
 	return cloudAgentRowsOf(board["rows"])
-}
-
-// 单步净增超过预算时，折叠最旧的画布增量而不是删事件（seq 必须连续）。
-func TestCloudAgentFoldEventPayloadsToBudget(t *testing.T) {
-	state := &cloudAgentRuntime{Request: agentTestRequest(), Decisions: map[string]string{}, TaskIDs: []string{"task-1"}}
-	big := strings.Repeat("行正文", 4000) // 每份补丁 ~36KB
-	for i := 0; i < 3; i++ {
-		state.event("run-1", "canvas_updated", map[string]any{
-			"canvasId": "canvas-1", "text": "修改分镜",
-			"canvasPatch": map[string]any{"canvasId": "canvas-1", "nodes": []any{map[string]any{"after": map[string]any{"id": "sb-1", "metadata": map[string]any{"storyboard": big}}}}},
-		})
-	}
-	rawBefore, _ := json.Marshal(state)
-	if !cloudAgentFoldEventPayloadsToBudget(state, int(float64(len(rawBefore))*0.5)) {
-		t.Fatal("超预算时应折叠最旧的画布增量")
-	}
-	folded := 0
-	for index, event := range state.Events {
-		if event.Payload["canvasPatchSlimmed"] == true {
-			folded++
-			if _, exists := event.Payload["canvasPatch"]; exists {
-				t.Fatalf("折叠后不应还带 canvasPatch：%+v", event.Payload)
-			}
-			if event.Seq != index+1 {
-				t.Fatalf("折叠不得改变事件序号：seq=%d index=%d", event.Seq, index)
-			}
-		}
-	}
-	if folded == 0 {
-		t.Fatal("没有任何事件被折叠")
-	}
-	rawAfter, _ := json.Marshal(state)
-	if len(rawAfter) >= len(rawBefore) {
-		t.Fatalf("折叠后体积未下降：%d → %d", len(rawBefore), len(rawAfter))
-	}
-	// 预算内不应触发任何折叠。
-	budgeted := &cloudAgentRuntime{Request: agentTestRequest(), Decisions: map[string]string{}, TaskIDs: []string{"task-1"}}
-	budgeted.event("run-1", "canvas_updated", map[string]any{"canvasId": "canvas-1", "canvasPatch": map[string]any{"nodes": []any{}}})
-	rawBudgeted, _ := json.Marshal(budgeted)
-	if cloudAgentFoldEventPayloadsToBudget(budgeted, len(rawBudgeted)-1024) {
-		t.Fatal("预算内的增长不应触发折叠")
-	}
 }
 
 // 卸载必须覆盖分镜/批量表读取结果与写回执：线上那轮 99 条消息里 0 个卸载候选，

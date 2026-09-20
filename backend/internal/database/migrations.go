@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 24
+const CurrentSchemaVersion int64 = 25
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -91,6 +91,11 @@ var schemaMigrations = []migration{
 	}},
 	{version: 24, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.CloudAgentRunEvent{})
+	}},
+	// v25 把消息也搬出检查点：StateJSON 只留控制面，会话消息进 cloud_agent_message_records。
+	// 旧运行（CheckpointVersion<2）照旧可读，下一次保存时懒升级，不需要回填作业。
+	{version: 25, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentMessageRecord{}, &model.CloudAgentExecution{})
 	}},
 }
 
