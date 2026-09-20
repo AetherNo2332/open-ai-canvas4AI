@@ -17,10 +17,18 @@ P3 把「任务与账务事实」每步从数据库现读回灌（`kind=task_fac
 
 - [x] 单测：预算算式（overhead 夹取、预留夹到半窗、85% 线与 `compactAtTokens` 的关系、窗口未声明一律拒绝）、路由交集取最小窗口与最小输出并忽略非文本/未声明窗口、渠道模型兜底解析、`context_pressure` / 压缩事件载荷字段、事实帧内容与脱敏、缺失任务不编造状态、窗口外只报条数、`task_facts` 帧不跨步叠加、重拼类运行时消息被剥掉而一次性纠错消息保留、轮次尾部不含半截工具轮。
 - [x] 既有用例按新口径更新：`TestCloudAgentCompactionTriggersAtConfiguredWindowShare`（100000 − 20000 − 4096 = 75904，线在 64518）、`TestCloudAgentMidRunCompactionPausesAndResumes`、`TestCloudAgentPressureResolvesWindowFromRequestWhenTaskLacksChannelModel`。
-- [ ] dev 真机复验：在配置了窗口的渠道上跑一轮，`context_pressure` 的 `inputBudgetTokens` 等于窗口 − 预留 − overhead（与渠道模型配置对上账），`budgetSource` 为 `channel-model`；对逻辑模型则确认取的是最小窗口那条路由。
+- [x] dev 真机复验（`dev-3f8d4c0a`，`qwen3.5-9b` 窗口 64000）：`context_pressure` 给出 `overheadTokens=4096`、`inputBudgetTokens=59904`、`budgetSource=channel-model`、`compactionBasis=tokens`，与渠道模型配置对得上账（64000 − 0 − 4096 = 59904）。
 - [ ] 逻辑模型复验：同一逻辑模型下挂一大一小两个窗口的文本路由，确认装配按小窗口算（预算与压缩线都变小），且不会出现"装配按大窗口、执行落到小窗口被上游拒"。
-- [ ] 未声明窗口复验：把渠道模型的 `contextWindowTokens` 清成 0，确认压力事件不再带预算字段、判据回到 48 KiB / 16 条，界面显示"未配置模型上限"。
-- [ ] 事实帧复验：跑一轮含图片/视频生成的会话，在下一次请求的 canonical（`tasks.input_json.agentRequests.canonical.messages` 尾部）确认 `task_facts` 帧里的任务 ID、上游任务 ID、`phase` 与订单金额和数据库一致；并确认模型不再重复提交已提交过的任务。
+- [ ] 未声明窗口复验：把渠道模型的 `contextWindowTokens` 清成 0，确认压力事件不再带预算字段、判据回到 48 KiB / 16 条，界面显示"未配置模型上限"。**dev 目前只有一个启用的文本渠道模型**（`qwen3.5-9b`，且它声明了窗口），因此这条要在本地实例或新增一个未声明窗口的渠道后复验。
+- [ ] 事实帧复验：跑一轮含图片/视频生成的会话，在下一次请求的 canonical（`tasks.input_json.agentRequests.canonical.messages` 尾部）确认 `task_facts` 帧里的任务 ID、上游任务 ID、`phase` 与订单金额和数据库一致；并确认模型不再重复提交已提交过的任务。**dev 上尚未观察到**：事实帧只在"本轮提交过媒体任务"之后出现，而 dev 唯一启用的文本模型（`qwen3.5-9b`）工具调用很不可靠——试了 6 轮只有 1 轮真正走到 `generate_media` 审批卡（审批通过后媒体任务确实创建了 `ag847923ff…`，但图片模型 `flux.2-klein-9b` 在当前 GPUStack 上返回"模型或模型接口不存在"，任务 failed）；而那次提交之后的下一步任务成功完成时 canonical 会被压缩（实测成功 step 任务的 `input_json` 里 messages 变成 0 条），事后读不到。复验前置条件：① dev 上有一个能可靠调工具的文本模型；② 读取时机必须在 step 任务还是 queued/running 时（脚本 `token-audit/local-only/verify-dev-facts-frame2.sh` 已能抓到 running 任务）。
+
+## 云端 Agent：取消/失败时停在压缩上的轮次收尾
+
+语义压缩是「暂停步进 → 压完继续」的中途动作。本轮若在压缩期间被取消（或已经失败），调度器不会再推进这一轮，于是 `contextCompaction` 会永远挂在 `requested`/`running`（界面一直显示"正在压缩"）、那份检查点也永远落不了盘。现在收尾路径（`CleanupPending` 清理，HTTP 取消与后台调度共用）先把服务端保底检查点落盘并清掉压缩态，再取消压缩子任务；**不改写终态**。
+
+- [x] 单测：取消轮次收尾后状态仍是 `cancelled`、`contextCompaction` 已清空、`contextCheckpoint` 落盘且 `CompactedTurnCount` 保留、事件表恰好一条 `context_compacted`（`mode=fallback`、带 `reason`）；收尾幂等（`CleanupPending` 已清后不重复写）；失败轮收尾后仍是 `failed`（不会被"复活"成 `completed`）；**未停在压缩上的轮次不写压缩事件**；收尾压缩（非中途暂停）仍把本轮判成 `completed`。
+- [ ] dev 真机复验：跑一轮直到出现 `context_compaction_requested`（把渠道窗口调小最容易触发），在压缩期间点"停止"，确认运行详情不再显示"正在压缩"、事件流里出现 `context_compacted`（`mode=fallback`）、且运行状态是 `cancelled`。
+- [x] 「每个 run 最后 2 条事件进不了事件表」这条**已由 P1 修掉**（不再存在水位/flush 两段式写入）：dev `dev-3f8d4c0a` 上最近 8 个运行（含 `completed` 与 `failed`）的 `cloud_agent_executions.event_count`、事件表行数、`max(seq)` 三者完全相等。
 
 ## 云端 Agent 检查点拆分（P1：消息与事件搬出 state_json）
 
