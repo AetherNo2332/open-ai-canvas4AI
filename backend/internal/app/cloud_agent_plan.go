@@ -39,16 +39,35 @@ func isCloudAgentRuntimeContextMessage(message map[string]any) bool {
 	return stringField(message, cloudAgentContextSourceKey) == "runtime"
 }
 
-func stripCloudAgentRuntimeContext(messages []map[string]any) []map[string]any {
-	if len(messages) == 0 || !isCloudAgentRuntimeContextMessage(messages[len(messages)-1]) {
-		return messages
+// cloudAgentReattachedContextKinds 是"每一步都会被服务端按最新状态重新拼上去"的运行时消息种类。
+var cloudAgentReattachedContextKinds = map[cloudAgentRuntimeContextKind]bool{
+	cloudAgentContextPlan:      true,
+	cloudAgentContextTaskFacts: true,
+}
+
+// cloudAgentReattachedContextMessage 判断这条运行时消息是否属于"每步重拼、可以从历史里丢"的一类。
+func cloudAgentReattachedContextMessage(message map[string]any) bool {
+	if !isCloudAgentRuntimeContextMessage(message) {
+		return false
 	}
 	var context cloudAgentRuntimeContext
-	content := strings.TrimPrefix(stringField(messages[len(messages)-1], "content"), cloudAgentRuntimeContextMarker)
-	if json.Unmarshal([]byte(content), &context) != nil || context.Kind != cloudAgentContextPlan {
-		return messages
+	content := strings.TrimPrefix(stringField(message, "content"), cloudAgentRuntimeContextMarker)
+	if json.Unmarshal([]byte(content), &context) != nil {
+		return false
 	}
-	return messages[:len(messages)-1]
+	return cloudAgentReattachedContextKinds[context.Kind]
+}
+
+// stripCloudAgentRuntimeContext 丢掉尾部"每步重拼"的运行时上下文消息（待办清单、任务与账务事实）：
+// 它们每步都会按最新状态重新生成，留在历史里只会越积越多、并让模型把过期状态当现状。
+//
+// 不能顺手丢掉空输出催办 / 输出纠错 / 参数纠错：那三类是**一次性指令**，只存在于会话里，
+// 丢掉就等于重试时模型看不到纠正要求（历史实现只认 plan_state，正是为此）。
+func stripCloudAgentRuntimeContext(messages []map[string]any) []map[string]any {
+	for len(messages) > 0 && cloudAgentReattachedContextMessage(messages[len(messages)-1]) {
+		messages = messages[:len(messages)-1]
+	}
+	return messages
 }
 
 func attachCloudAgentPlan(canonical *canonicalAgentRequest, plan []cloudAgentPlanItem) {

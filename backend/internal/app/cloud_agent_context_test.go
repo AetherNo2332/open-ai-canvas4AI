@@ -270,29 +270,33 @@ func anchoredState(t *testing.T, canonical canonicalAgentRequest, anchorInputTok
 	}
 }
 
-// 压缩判据必须按"用户配置的模型上限"的 token 口径：达到 80% 才压，
-// 且上下界都要卡住——低于阈值不能压，高于阈值必须压。
+// 压缩判据必须按"用户配置的模型上限"的 token 口径：窗口 100000、预留输出 20000、
+// overhead 4096 → 输入预算 75904，压缩线是它的 85%（64518）。上下界都要卡住：
+// 低于阈值不能压，高于阈值必须压。
 func TestCloudAgentCompactionTriggersAtConfiguredWindowShare(t *testing.T) {
 	s, db, _, _ := creationTestService(t)
-	withConfiguredWindow(t, db, 100000, 20000) // 可用输入 80000 → 阈值 64000
+	withConfiguredWindow(t, db, 100000, 20000)
 	canonical := canonicalAgentRequest{
 		SystemPrompt: "系统策略", Tools: []map[string]any{{"type": "function"}},
 		Messages: []map[string]any{{"role": "user", "content": "按照画风整理画布"}},
 	}
 
-	below := anchoredState(t, canonical, 63000)
-	needed, _, _, reading, hasReading := cloudAgentCompactionDecision(s.repo, below, canonical)
+	below := anchoredState(t, canonical, 64518)
+	needed, _, _, reading, hasReading := cloudAgentCompactionDecision(s, below, canonical)
 	if !hasReading || needed {
-		t.Fatalf("63k/80k 不该触发压缩: needed=%v reading=%+v", needed, reading)
+		t.Fatalf("64518/75904 不该触发压缩: needed=%v reading=%+v", needed, reading)
 	}
-	if reading.UsableInputTokens != 80000 || reading.TokenSource != "provider" {
+	if reading.UsableInputTokens != 75904 || reading.OverheadTokens != 4096 || reading.CompactAtTokens != 64518 || reading.TokenSource != "provider" {
 		t.Fatalf("读数口径不对: %+v", reading)
 	}
+	if reading.BudgetSource != "channel-model" {
+		t.Fatalf("预算来源不对: %+v", reading)
+	}
 
-	above := anchoredState(t, canonical, 65000)
-	needed, sourceBytes, turnCount, reading, hasReading := cloudAgentCompactionDecision(s.repo, above, canonical)
+	above := anchoredState(t, canonical, 64519)
+	needed, sourceBytes, turnCount, reading, hasReading := cloudAgentCompactionDecision(s, above, canonical)
 	if !hasReading || !needed {
-		t.Fatalf("65k/80k（81%%）必须触发压缩: needed=%v reading=%+v", needed, reading)
+		t.Fatalf("64519/75904（85%%）必须触发压缩: needed=%v reading=%+v", needed, reading)
 	}
 	if reading.Ratio < cloudAgentCompactionRatio || sourceBytes <= 0 || turnCount != 1 {
 		t.Fatalf("触发读数不完整: ratio=%.3f bytes=%d turns=%d", reading.Ratio, sourceBytes, turnCount)
@@ -300,7 +304,7 @@ func TestCloudAgentCompactionTriggersAtConfiguredWindowShare(t *testing.T) {
 
 	// 没有配置模型上限的渠道只能退回字节/条数兜底，且必须如实报告"没有 token 读数"。
 	withConfiguredWindow(t, db, 0, 0)
-	if _, _, _, _, ok := cloudAgentCompactionDecision(s.repo, above, canonical); ok {
+	if _, _, _, _, ok := cloudAgentCompactionDecision(s, above, canonical); ok {
 		t.Fatal("没配上限时不该声称有 token 读数")
 	}
 }
@@ -323,7 +327,7 @@ func TestCloudAgentCompactionFallbackCountsLiveConversation(t *testing.T) {
 			{Role: "assistant", Content: "已载入"},
 		},
 	}
-	needed, _, turnCount, _, hasReading := cloudAgentCompactionDecision(s.repo, state, canonical)
+	needed, _, turnCount, _, hasReading := cloudAgentCompactionDecision(s, state, canonical)
 	if hasReading {
 		t.Fatal("未配置模型上限时不该有 token 读数")
 	}
@@ -335,7 +339,7 @@ func TestCloudAgentCompactionFallbackCountsLiveConversation(t *testing.T) {
 	}
 
 	short := &cloudAgentRuntime{Canonical: canonicalAgentRequest{Messages: canonical.Messages[:4]}, TextHistory: state.TextHistory}
-	if needed, _, _, _, _ := cloudAgentCompactionDecision(s.repo, short, short.Canonical); needed {
+	if needed, _, _, _, _ := cloudAgentCompactionDecision(s, short, short.Canonical); needed {
 		t.Fatal("短会话不该触发压缩")
 	}
 }
@@ -366,7 +370,7 @@ func TestCloudAgentMidRunCompactionPausesAndResumes(t *testing.T) {
 
 	requested, err := s.cloudAgentRequestCompaction(run, &state, state.Canonical)
 	if err != nil || !requested {
-		t.Fatalf("70k/80k 应请求压缩: requested=%v err=%v", requested, err)
+		t.Fatalf("70000/75904 应请求压缩: requested=%v err=%v", requested, err)
 	}
 	if state.ContextCompaction == nil || !state.ContextCompaction.Resume || state.ContextCompaction.Status != "requested" {
 		t.Fatalf("压缩请求状态不对: %+v", state.ContextCompaction)
@@ -391,8 +395,12 @@ func TestCloudAgentMidRunCompactionPausesAndResumes(t *testing.T) {
 		if event.Payload["basis"] != "tokens" || event.Payload["thresholdRatio"] != cloudAgentCompactionRatio {
 			t.Fatalf("触发事件口径不对: %+v", event.Payload)
 		}
-		if !numericEquals(event.Payload["projectedTokens"], 70000) || !numericEquals(event.Payload["usableInputTokens"], 80000) {
+		// 输入预算 = 窗口 100000 − 预留输出 20000 − overhead 4096 = 75904。
+		if !numericEquals(event.Payload["projectedTokens"], 70000) || !numericEquals(event.Payload["usableInputTokens"], 75904) {
 			t.Fatalf("触发事件缺读数: %+v", event.Payload)
+		}
+		if !numericEquals(event.Payload["compactAtTokens"], 64518) || !numericEquals(event.Payload["overheadTokens"], 4096) || event.Payload["budgetSource"] != "channel-model" {
+			t.Fatalf("触发事件没带上预算口径: %+v", event.Payload)
 		}
 	}
 	if !found {
@@ -519,8 +527,12 @@ func TestCloudAgentPressureResolvesWindowFromRequestWhenTaskLacksChannelModel(t 
 
 	pressure := s.cloudAgentContextPressure(&model.Task{ID: "task"}, canonical, "整理画布",
 		CloudAgentRequest{ChannelID: "channel", ChannelModelKey: "text-test"})
-	if !pressure.ModelLimitConfigured || pressure.ContextWindowTokens != 25000 || pressure.UsableInputTokens != 25000 {
+	// 可用输入 = 窗口 25000 − 预留输出 0 − overhead 4096（窗口的 4% 被抬到下限）= 20904。
+	if !pressure.ModelLimitConfigured || pressure.ContextWindowTokens != 25000 || pressure.UsableInputTokens != 20904 {
 		t.Fatalf("没有从请求兜底解析出模型窗口: %+v", pressure)
+	}
+	if pressure.OverheadTokens != 4096 || pressure.InputBudgetTokens != 20904 || pressure.BudgetSource != "channel-model" {
+		t.Fatalf("预算口径不对: %+v", pressure)
 	}
 
 	// 请求里没有渠道/模型键时只能如实报告"没有配置上限"。

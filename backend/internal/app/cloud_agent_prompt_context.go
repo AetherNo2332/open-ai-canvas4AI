@@ -17,6 +17,7 @@ const (
 	cloudAgentContextEmptyOutput        cloudAgentRuntimeContextKind = "empty_output"
 	cloudAgentContextInvalidOutput      cloudAgentRuntimeContextKind = "invalid_output"
 	cloudAgentContextTruncatedArguments cloudAgentRuntimeContextKind = "truncated_tool_arguments"
+	cloudAgentContextTaskFacts          cloudAgentRuntimeContextKind = "task_facts"
 )
 
 // Only serializable fact fields belong here. Behavioral instructions live in
@@ -30,6 +31,11 @@ type cloudAgentRuntimeContext struct {
 	Detail            string                       `json:"detail,omitempty"`
 	MaxToolCalls      int                          `json:"maxToolCalls,omitempty"`
 	MaxOutputBytes    int                          `json:"maxOutputBytes,omitempty"`
+	// 任务与账务事实：每步从数据库现读，窗口之外只报条数。
+	Tasks          []cloudAgentTaskFactFrame `json:"tasks,omitempty"`
+	OlderTaskCount int                       `json:"olderTaskCount,omitempty"`
+	Authority      string                    `json:"authority,omitempty"`
+	ObservedAt     string                    `json:"observedAt,omitempty"`
 }
 
 func cloudAgentRuntimeMessage(context cloudAgentRuntimeContext) map[string]any {

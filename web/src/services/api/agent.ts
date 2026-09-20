@@ -158,13 +158,24 @@ export type AgentContextPressure = {
     promptChars: number;
     promptLimitChars: number;
     modelLimitConfigured: boolean;
+    /**
+     * 工具 schema / 协议包装 / 兜底轮的比例预留（窗口的 4%，夹在 4K–32K）。
+     * 服务端未解析出窗口时不下发这几个字段。
+     */
+    overheadTokens?: number;
+    /** 输入预算 = 窗口 − 输出预留 − overhead，压缩线是它的 85%。 */
+    inputBudgetTokens?: number;
+    /** 预算来源：channel-model（按渠道模型）或 logical-route-intersection（逻辑模型取最小窗口路由）。 */
+    budgetSource?: "channel-model" | "logical-route-intersection";
+    /** 压缩线的整数读数（输入预算的 85%，下取整）；实际判据仍是比例。 */
+    compactAtTokens?: number;
     estimate: true;
     compactionSourceBytes: number;
     compactionThresholdBytes: number;
     historyMessages: number;
     historyMessageThreshold: number;
     compactionPressureRatio: number;
-    /** 压缩判据：0.8 表示"可用输入的 80%"。 */
+    /** 压缩判据：0.85 表示"输入预算的 85%"。 */
     compactionThresholdRatio?: number;
     /** 压缩判据的口径：tokens（按模型上限）或 bytes（没配上限时的兜底）。 */
     compactionBasis?: "tokens" | "bytes";

@@ -5,6 +5,23 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 云端 Agent 上下文预算与任务事实帧（P2 / P3）
+
+P2 把「下一步能装多少输入」变成一个**可解释、来源可查**的数：输入预算 = 上下文窗口 − 输出预留 − overhead，压缩线是该预算的 85%。
+
+- 新增 `cloud_agent_context_budget.go`：`overheadTokens` 是工具 schema / 协议包装 / 兜底轮的比例预留（窗口的 4%，夹在 4096–32768）；输出预留取「用户填的 `reservedOutputTokens`」与「渠道模型能力声明的 `maxOutputTokens`」中的较大者；预留不小于窗口时夹到半窗，预算不得低于 1024。
+- 预算来源（`budgetSource`）：逻辑模型按**所有可用文本路由的最小窗口与最小输出**取交集（`logical-route-intersection`）；否则按渠道模型解析（`channel-model`，任务行的 `channel_model_id` 在画布 Agent 上一直为空，靠请求里的渠道 + 模型键兜底）。窗口未声明时不下发预算字段，判据退回 48 KiB / 16 条字节口径。
+- `context_pressure` 增加 `overheadTokens` / `inputBudgetTokens` / `budgetSource`，`context_compaction_requested` 另加 `compactAtTokens`；展示口径与压缩判据共用同一份预算（此前界面按「窗口 − 预留」显示、后台按另一份判据压缩）。
+
+P3 把「任务与账务事实」每步从数据库现读回灌（`kind=task_facts` 运行时消息）：最近 32 个任务的 `taskStatus` / `operation` / `submissionOutcome` / `providerTaskId` / `phase` / `nodeId` / 脱敏后的 `error` 与订单事实（`orderId` / `status` / 授权金额 / 预授权 / 扣费上限），更早的只报 `olderTaskCount`，并带 `authority` 说明这只是状态观察、不是重新提交的授权。
+
+- [x] 单测：预算算式（overhead 夹取、预留夹到半窗、85% 线与 `compactAtTokens` 的关系、窗口未声明一律拒绝）、路由交集取最小窗口与最小输出并忽略非文本/未声明窗口、渠道模型兜底解析、`context_pressure` / 压缩事件载荷字段、事实帧内容与脱敏、缺失任务不编造状态、窗口外只报条数、`task_facts` 帧不跨步叠加、重拼类运行时消息被剥掉而一次性纠错消息保留、轮次尾部不含半截工具轮。
+- [x] 既有用例按新口径更新：`TestCloudAgentCompactionTriggersAtConfiguredWindowShare`（100000 − 20000 − 4096 = 75904，线在 64518）、`TestCloudAgentMidRunCompactionPausesAndResumes`、`TestCloudAgentPressureResolvesWindowFromRequestWhenTaskLacksChannelModel`。
+- [ ] dev 真机复验：在配置了窗口的渠道上跑一轮，`context_pressure` 的 `inputBudgetTokens` 等于窗口 − 预留 − overhead（与渠道模型配置对上账），`budgetSource` 为 `channel-model`；对逻辑模型则确认取的是最小窗口那条路由。
+- [ ] 逻辑模型复验：同一逻辑模型下挂一大一小两个窗口的文本路由，确认装配按小窗口算（预算与压缩线都变小），且不会出现"装配按大窗口、执行落到小窗口被上游拒"。
+- [ ] 未声明窗口复验：把渠道模型的 `contextWindowTokens` 清成 0，确认压力事件不再带预算字段、判据回到 48 KiB / 16 条，界面显示"未配置模型上限"。
+- [ ] 事实帧复验：跑一轮含图片/视频生成的会话，在下一次请求的 canonical（`tasks.input_json.agentRequests.canonical.messages` 尾部）确认 `task_facts` 帧里的任务 ID、上游任务 ID、`phase` 与订单金额和数据库一致；并确认模型不再重复提交已提交过的任务。
+
 ## 云端 Agent 检查点拆分（P1：消息与事件搬出 state_json）
 
 `state_json` 一直同时承载"控制面 + 会话消息 + 事件尾部"，于是"能跑多少轮"被记录体积决定（写入型会话 22 步撞 512KiB 上限）。P1 把消息与事件彻底搬出去：
