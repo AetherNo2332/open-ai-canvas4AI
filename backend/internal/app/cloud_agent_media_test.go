@@ -96,7 +96,7 @@ func approveAgentMediaDraft(t *testing.T, s *Service, runID string) {
 
 func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
-	catalog, err := s.cloudAgentModelList(nil)
+	catalog, err := s.cloudAgentModelList("user", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func TestCloudAgentModelListFiltersActualReferences(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		catalog, err := s.cloudAgentModelList(intent)
+		catalog, err := s.cloudAgentModelList("user", intent)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -484,7 +484,7 @@ func TestCloudAgentModelListFiltersActualReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := s.cloudAgentModelList(intent)
+	catalog, err := s.cloudAgentModelList("user", intent)
 	if err != nil {
 		t.Fatal(err)
 	}

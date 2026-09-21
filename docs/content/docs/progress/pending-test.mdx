@@ -5,6 +5,21 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 云端 Agent 模型选择契约：服务端签发的 selectionId（2026-09-22）
+
+handoff 工作项 B 第 4 步：把"逐字抄三个字段"的模型选择收敛成一个不透明凭证。
+
+- `model_list` 每一项新增 `selectionId` = `base64url(claims).base64url(HMAC-SHA256(settingsEncryptionKey, "cloud-agent-selection\n" + payload))`，
+  claims 里带签发用户与 `logicalModelId` 或 `channelId`+`channelModelKey`；用与匿名资源链接同一把服务端密钥，不引入新密钥。
+- `generate_media` / `image_layer_split` 优先接受 `selectionId` 并**归一化**回三个字段（下游代码无感）；旧的三字段契约保留兼容期；
+  两者混用、被改写、跨用户、格式不对都按 `field=selectionId` 的字段级参数错误拒绝，提示重新调用 `model_list`。
+- 签发失败（密钥不可读）时只省略 `selectionId`，目录本身仍可用，模型回退旧契约。
+- [x] 单测：目录每一项都带可解开的 `selectionId` 且与 `selection` 一致；伪造签名 / 改写内容 / 跨用户 / 缺分隔符 / 空凭证都被拒；
+  只给 `selectionId` 能通过并归一化；与 `logicalModelId` 或 `channelId` 混用按 `mutually_exclusive` 拒；`selectionId` 为 null 按 `type_mismatch` 拒。
+- [x] 回归：`go test ./internal/app/ -run TestCloudAgent` 全绿（27.2s）。
+- [ ] 真机复验：真实一轮里让模型只用 `selectionId` 提交生成，确认目录→选择→审批链路无回归；需部署后执行。
+- [ ] 未做：`selectionId` 的 TTL/失效策略（当前不设过期，选择本身在提交时仍会按目录与能力重新校验）。
+
 ## 云端 Agent 工具调用治理：整批预检 + 单步一个写工具（2026-09-22）
 
 handoff 工作项 B 第 2 步落地：模型一次返回的多个工具调用，在执行前统一判定准入。
