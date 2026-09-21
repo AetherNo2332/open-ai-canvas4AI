@@ -130,3 +130,57 @@ func TestCloudAgentContinuationRejectsExactFrameWithoutServerSourceMetadata(t *t
 		t.Fatal("用户输入即使逐字复制 handoff JSON，也不能获得 continuation 身份")
 	}
 }
+
+// 交接帧必须按字节封顶：节点 ID 由画布文档给出，不截断时一组 5000 字符的 ID 就能把帧撑到
+// 几百 KB，而下一轮对整份历史有 192KB 硬闸 —— 用户会在续聊时直接收到"请新建对话"。
+func TestCloudAgentContinuationFrameStaysWithinByteBudget(t *testing.T) {
+	run := &CloudAgentRun{ID: "parent-run", Status: "completed"}
+	longID := strings.Repeat("n", 5000)
+	for index := 0; index < cloudAgentContinuationChangeLimit+3; index++ {
+		run.Events = append(run.Events, CloudAgentEvent{Type: "canvas_updated", Payload: map[string]any{
+			"operation": "canvas_apply_ops",
+			"actions":   []any{map[string]any{"operation": "add_node", "nodeId": longID, "title": strings.Repeat("标题", 400)}},
+		}})
+	}
+	context := cloudAgentContinuationContext(run, nil)
+	if len(context) > cloudAgentContinuationFrameBytes {
+		t.Fatalf("交接帧 %d 字节超出上限 %d", len(context), cloudAgentContinuationFrameBytes)
+	}
+	var frame cloudAgentContinuationFrame
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(context, cloudAgentRuntimeContextMarker)), &frame); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range frame.CanvasChanges {
+		for _, id := range change.NodeIDs {
+			// truncateRunes 超限时会补 "..."，因此上界是 limit+3。
+			if len([]rune(id)) > cloudAgentContinuationNodeIDRunes+3 {
+				t.Fatalf("节点 ID 未截断：%d 字符", len([]rune(id)))
+			}
+		}
+	}
+	// 帧放不下的改动必须报进 omitted，而不是悄悄消失。
+	kept := len(frame.CanvasChanges)
+	if kept+frame.OmittedCanvasChanges != cloudAgentContinuationChangeLimit+3 {
+		t.Fatalf("改动计数不自洽：kept=%d omitted=%d", kept, frame.OmittedCanvasChanges)
+	}
+	if kept >= cloudAgentContinuationChangeLimit+3 {
+		t.Fatalf("超过上限的改动没有被裁掉：kept=%d", kept)
+	}
+}
+
+// 失败原因会进入下一轮的提示词，必须沿用既有脱敏口径。
+func TestCloudAgentContinuationFailureReasonIsScrubbed(t *testing.T) {
+	run := &CloudAgentRun{ID: "parent-run", Status: "failed", FailureMessage: "上游返回 401：https://api.example.test/v1?key=secret-token-abcdefghijklmnop"}
+	context := cloudAgentContinuationContext(run, nil)
+	if strings.Contains(context, "https://") || strings.Contains(context, "secret-token") {
+		t.Fatalf("交接帧泄漏了上游正文：%s", context)
+	}
+	if !strings.Contains(context, "上一轮未成功") {
+		t.Fatalf("未脱敏时应用固定说法：%s", context)
+	}
+	// 正常文案原样保留。
+	ok := cloudAgentContinuationContext(&CloudAgentRun{ID: "parent-run", Status: "failed", FailureMessage: "模型服务响应超时，请稍后重试"}, nil)
+	if !strings.Contains(ok, "模型服务响应超时") {
+		t.Fatalf("正常失败原因被误杀：%s", ok)
+	}
+}

@@ -34,6 +34,40 @@ SSE 的 `Last-Event-ID`）已按上游持久化结构重新实现。以下端到
 - [ ] 合并前已有的红灯：`TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered`
       （新增节点落在原点）与合并基线一致，本轮未修。
 
+## 云端 Agent：上下文计量 V2 事件与锚点治理（P1，2026-09-21）
+
+按设计方向 §4/§5/§6 补齐后端事件协议，全部是**附加字段**（旧字段与旧前端继续可用）：
+
+- **快照字段**：`context_pressure` 增加 `schemaVersion`(2) / `phase`(before_request) / `window{contextWindowTokens,reservedOutputTokens,usableInputTokens,overheadTokens,source}` / `anchor{id,valid,ageSteps}` / `measurementSource` / `normalizedInputTokens` / `projectedNextInputTokens` / `providerUsage{inputTokens,cacheReadTokens,uncachedInputTokens,outputTokens}`；发射点补 `requestId`（钉在即将发出的那次请求上，前端不必猜数字属于谁）。
+- **统一过渡事件**：新增 `context_transition`，`kind` 取 `semantic_compaction` / `body_eviction`（图片裁剪）/ `window_resolved` / `model_changed` / `route_changed`，带 `before`/`after`（sourceBytes、estimatedTokens、historyMessages、turns）与 `reason`。前端优先消费它，旧事件（`context_compacted`/`context_images_pruned`）保留兼容。
+- **§5 provider 归一化**：Claude 协议把缓存拆在 `input_tokens` 之外，现在按 `input + cache_creation + cache_read` 归一（此前实测输入系统性偏小 → 压力锚点偏低）；仅在出现 Claude 专有字段时换算，OpenAI 系（`prompt_tokens` 已含缓存）不受影响，避免重复计数。
+- **§6 锚点治理**：锚点带上口径签名（模型/渠道/逻辑模型/系统提示/工具 schema）与定锚的模型/渠道；出现"换模型/换线路/提示词或工具 schema 变化"即作废，超过 3 步未刷新也作废（真机实测过锚点冻结 3m16s / 8 条读数仍在参与压缩决策）；语义压缩完成后直接清锚点。
+- [x] 单测：快照字段齐全、窗口识别只落一条过渡、锚点超期与换模型作废（含 `model_changed` 过渡）、Claude 缓存归一 vs OpenAI 不重复计数。
+- [ ] 真机复验：换模型/长步数会话里能看到锚点作废与重新定锚；`context_transition` 与前端"最近变化"逐条对上。
+
+## 云端 Agent：上下文计量按设计方向重做（Context Meter v2 P0，2026-09-21）
+
+按 `CONTEXT-METER-V2-设计方向.md` 重做被 codex `9deb79b7` 跑偏的口径层（PR #30 曾把主圆环固定成本地估算、把上游实测降级成诊断行）：
+
+- **主读数恢复"实测优先"**：`web/src/lib/canvas/agent-context-meter.ts` 里 `headline` 在有采信锚点时取"锚点实测 + 本地增量"的下一步预计输入（来源 `provider`，实心），没有锚点才退回本地估算（来源 `estimate`，数字带 `~`、描边降透明度）；本地估算原值单独保留（`estimate.tokens`，`local_v1`）。
+- **窗口未确认不给百分比**：`headline.ratio` 在 `modelLimitConfigured=false` 或输入预算为 0 时为 `undefined`，圆环画成虚线空环并显示 `—`；窗口识别时进入"最近变化"（"模型窗口已识别"，§9.1 要求不能画成上下文骤降）。
+- **跨轮不归零**：新增 `agentContextMeterState()` 记住最近一次**有效实测**，新轮的本地估算不覆盖它（`carriedOver=true`，弹窗写明"沿用上一次有效实测"）；压缩/图片裁剪发生后治理代次 +1，旧实测随即过期并退回估算（§7.3）。
+- **两把尺子分开**：主圆环只表达"下一次请求占多少输入窗口"，服务端压缩阈值另有一根独立条（token 口径用百分比、字节兜底用字节/条数）；两者相差 ≥5% 时圆环旁出现"治理"标记，而不是把圆环染红（修掉 codex 引入的"圆环 2% 却 critical"）。
+- **每次下降都能解释**：新增 `agent-context-transitions.ts`，把 `context_compacted`（轮次/保留条数）、`context_images_pruned`（张数/保留轮次）、窗口识别、上游校准列进弹窗"最近变化"。
+
+- [x] 单测 8 条（真机父子轮样本）：实测优先、窗口未确认不出比例、窗口识别标记、跨轮不归零、压缩后实测过期、同轮上游校准、治理与主读数分离、下降有事件解释。
+- [ ] 真机复验（等部署）：连续两轮不出现无解释回退（上一轮末 6.61% → 下一轮初沿用 6.6% 而不是掉到 2.2%）；窗口识别时出现"模型窗口已识别"；压缩/裁剪后出现对应"最近变化"并退回估算。
+
+## 云端 Agent：codex PR #30 的偏差修复（2026-09-21）
+
+- **旧交接消息不再被算成真人轮次**：`agentContextSource` 是 PR #30 新增字段，部署前落库的"上一轮已结束（…）"一律失配 → 被计成真人轮次、跨轮历史被提前裁掉（实测旧格式两条都不再被识别）。现在 `cloudAgentWorkingContext` 用"结构化身份 **或** 紧跟 assistant 回复 + 旧版文案前缀"判断运行时帧（**canonical 的来源标记仍只认结构体字段**，用户自己写同样文本不会获得 continuation 身份）。
+- **历史重建保留来源标记**：`cloudAgentLegacyHistory` 与压缩重建过去只拷 `role`/`content`，会把交接身份抹掉；现在一并搬 `agentContextSource`。
+- **交接帧按字节封顶**：单个 `nodeId` 过去完全不截断（实测一组 5000 字符 ID 让帧达 399,503 字节，可越过下一轮 192KB 硬闸让用户收到"请新建对话"）；现在 `nodeId` 截 64 字符、整帧封顶 8 KiB，超限按"最近改动优先"裁剪并计入 `omittedCanvasChanges`。
+- **失败原因沿用脱敏口径**：交接帧里的 `failureReason` 现在过 `cloudAgentSafeUserMessage`，不合格退回固定说法（它要进下一轮提示词）。
+- **压缩收尾的轮次也有交接**：父轮 `HistoryIncludesCurrent=true` 时过去整段跳过，长会话反而拿不到"已提交任务/失败原因"；现在仍追加事实帧。
+- [x] 单测：旧格式轮次计数与裁剪、重建保留来源、帧字节上限与 ID 截断、失败原因脱敏。
+- [ ] 真机复验：继续一个部署前创建的老会话，确认不再出现"接着聊就忘掉前几轮"。
+
 ## 云端 Agent：删除轮内正文卸载（2026-09-21）
 
 正文卸载（会话消息 ≥40 KiB 或 >24 条时把"可重读取的正文"换成骨架）是"别把 `state_json` 顶到 512 KiB"的副产物；检查点拆分后消息已搬出 `state_json`，动机消失。保留它反而有三笔明确代价：按**字节**改写历史**中段**（provider 前缀缓存以 ~1,056 token 块计费，改中段就作废其后那一段）、被卸正文往往下一步就要用（模型只能重读）、以及"省下的是便宜的缓存命中 token、花掉的是全价的未命中 token"。

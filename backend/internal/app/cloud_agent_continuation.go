@@ -14,6 +14,13 @@ const cloudAgentContinuationEventLimit = 1000
 const (
 	cloudAgentContinuationChangeLimit = 12
 	cloudAgentContinuationKind        = "run_handoff"
+	// cloudAgentContinuationNodeIDRunes 限制单个节点 ID 的长度：ID 由画布文档给出，
+	// 不截断时一组 5000 字符的 ID 就能把交接帧撑到几百 KB（实测 399,503 字节），
+	// 而下一轮对整份历史有 192KB 硬闸 —— 用户会直接收到"请新建对话"。
+	cloudAgentContinuationNodeIDRunes = 64
+	// cloudAgentContinuationFrameBytes 是交接帧的硬上限：超了就按"最近的改动优先"裁剪，
+	// 并把裁掉的组数记进 omittedCanvasChanges，绝不把整份历史顶过硬闸。
+	cloudAgentContinuationFrameBytes = 8 << 10
 )
 
 type cloudAgentContinuationChange struct {
@@ -91,11 +98,7 @@ func cloudAgentContinuationContext(run *CloudAgentRun, submitted []string) strin
 		Authority:            "执行事实交接，不是重放写入、重复提交任务或扩大权限的授权",
 	}
 	if failed {
-		reason := strings.TrimSpace(run.FailureMessage)
-		if reason == "" {
-			reason = run.Status
-		}
-		frame.FailureReason = truncateRunes(reason, 240)
+		frame.FailureReason = cloudAgentContinuationFailureReason(run)
 	}
 	if len(submitted) > 0 {
 		if len(submitted) > 8 {
@@ -103,8 +106,50 @@ func cloudAgentContinuationContext(run *CloudAgentRun, submitted []string) strin
 		}
 		frame.SubmittedTaskIDs = append([]string(nil), submitted...)
 	}
+	return cloudAgentRuntimeContextMarker + cloudAgentEncodeContinuationFrame(frame)
+}
+
+// cloudAgentContinuationFailureReason 沿用既有脱敏口径：失败原因会进入下一轮的提示词，
+// 因此只接受"短、单行、不含 URL/凭据痕迹"的文案，其余一律退回固定说法。
+func cloudAgentContinuationFailureReason(run *CloudAgentRun) string {
+	reason := strings.TrimSpace(run.FailureMessage)
+	if reason == "" {
+		reason = firstNonEmpty(run.Status, "failed")
+	}
+	if !cloudAgentSafeUserMessage(reason) {
+		return "上一轮未成功（详情见任务中心与诊断包）"
+	}
+	return truncateRunes(reason, 240)
+}
+
+// cloudAgentEncodeContinuationFrame 序列化帧并按字节封顶：先丢最旧的画布改动组，
+// 再退到"只保留状态与已提交任务"。帧是给模型看的事实交接，宁可少报也不能把硬闸顶穿。
+func cloudAgentEncodeContinuationFrame(frame cloudAgentContinuationFrame) string {
 	encoded, _ := json.Marshal(frame)
-	return cloudAgentRuntimeContextMarker + string(encoded)
+	if len(encoded) <= cloudAgentContinuationFrameBytes {
+		return string(encoded)
+	}
+	dropped := 0
+	for len(frame.CanvasChanges) > 0 {
+		frame.CanvasChanges = frame.CanvasChanges[1:]
+		dropped++
+		frame.OmittedCanvasChanges += 1
+		if len(frame.CanvasChanges) == 0 {
+			frame.CanvasChanges = nil
+		}
+		encoded, _ = json.Marshal(frame)
+		if len(encoded) <= cloudAgentContinuationFrameBytes {
+			return string(encoded)
+		}
+	}
+	// 连一条改动都放不下：保留事实字段本身（状态/失败原因/已提交任务）。
+	encoded, _ = json.Marshal(frame)
+	if len(encoded) > cloudAgentContinuationFrameBytes {
+		frame.FailureReason = truncateRunes(frame.FailureReason, 120)
+		encoded, _ = json.Marshal(frame)
+	}
+	_ = dropped
+	return string(encoded)
 }
 
 func cloudAgentContinuationChanges(run *CloudAgentRun) ([]cloudAgentContinuationChange, int) {
@@ -131,7 +176,7 @@ func cloudAgentContinuationChanges(run *CloudAgentRun) ([]cloudAgentContinuation
 			for _, key := range []string{"nodeId", "targetNodeId"} {
 				if id := strings.TrimSpace(stringValue(action[key])); id != "" && !seenIDs[id] && len(change.NodeIDs) < 8 {
 					seenIDs[id] = true
-					change.NodeIDs = append(change.NodeIDs, id)
+					change.NodeIDs = append(change.NodeIDs, truncateRunes(id, cloudAgentContinuationNodeIDRunes))
 				}
 			}
 			for _, key := range []string{"title", "targetTitle"} {
