@@ -42,8 +42,9 @@ SSE 的 `Last-Event-ID`）已按上游持久化结构重新实现。以下端到
 - 每类附 `retryable` 与稳定的 `requiredAction`（`fix_arguments` / `reread_canvas` / `use_advertised_tools` / `ask_user` / `report_to_user`），只作为回执与事件的标注字段进入 `tool_failed`（`result.errorClass` / `result.errorClassLabel` / `result.retryable` / `result.requiredAction` 与载荷顶层 `errorClass`），**不参与任何放行或拒绝判定**。
 - 幻觉工具名的反馈也更具体了：过去一律回"工具未获本轮权限授权"，现在对不在平台工具集里的名字回"模型调用了不存在的工具「X」…请只使用本轮工具表里列出的工具"（handoff 验收项"未知工具归类为 invalid_model_output"）。
 - 前端工具卡失败时优先显示归类标签（"参数不符合契约"/"画布状态已变化"/"模型输出问题"/"超出本轮权限"/"上游故障"），比统一的"执行失败"更能说明下一步该做什么。
-- [x] 单测：10 个归类分支（含 contextScope 为空调画布工具、只读轮发起生成、上游 4xx/5xx、超时）、事件载荷与回执字段、前端标签映射与兜底。
-- [ ] 真机复验：跑一轮故意写错参数/幻觉工具的会话，确认 `tool_failed` 载荷里 `errorClass` 与工具卡标签一致。
+- **缺必填字段的通用判定**：业务校验抛的多是普通 `AppError`（例如"分镜节点ID、分页参数或每页行数无效"），从错误类型看不出"模型漏了字段"。现在用**本轮实际暴露的 schema** 的 `required` 与模型参数比对，命中即按参数契约错误处理：归 `schema_error`、`requiredAction=fix_arguments`、把 schema 与 guidance 回给模型（handoff 要的自纠能力）；只在业务侧确实按参数问题拒绝（400/422）时套用，上游 5xx/网络错误即便同时漏字段也算 `upstream_failure`；已被分类过的参数错误不再套壳，避免覆盖工具更精确的反馈（如"缺少模型选择：必须复制 model_list 的 selection"）。
+- [x] 单测：10 个归类分支（含 contextScope 为空调画布工具、只读轮发起生成、上游 4xx/5xx、超时）、事件载荷与回执字段、缺必填字段归类与 schema 回传、字段齐备不误判、前端标签映射与兜底。
+- [x] 真机复验：让模型故意漏 `nodeId` 调 `canvas_read_storyboard` → `tool_failed` 载荷 = `errorClass=schema_error` / `errorClassLabel=参数不符合契约` / `requiredAction=fix_arguments` / `field=nodeId` / 附 `parameters`（部署 `dev-e4595d99`）；上一版（`dev-c1560763`）同一场景落到兜底 `tool_error`，即本次修真机前后对照。
 - [ ] 未做（handoff 后续步骤）：整批预检与"单步最多一个写工具"、strict schema 探测与本地校验、结构化纠错熔断、`selectionId`、完成闸门 `finish_run`/`completion_blocked`。
 
 ## 云端 Agent：上下文计量 V2 事件与锚点治理（P1，2026-09-21）
