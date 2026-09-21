@@ -34,6 +34,19 @@ handoff 工作项 B 第 3 步：把"同一个工具错三次就熔断"改成按*
 - [ ] 真机复验：让模型连续两次提交同一种非法参数，确认第二步的"只开放修复工具"在真实事件流里可见；需部署后执行。
 - [ ] 未做：前端展示收紧档（`retry.ladder` / `retry.toolScope` 已下发，工具卡暂未单独显示）；"换更强模型"这一档未实现（当前以停止自动重试收尾）。
 
+## 云端 Agent strict function calling 探测与回退（2026-09-22）
+
+handoff 工作项 B 第 2 步的后半：上游支持 strict 时启用按 schema 约束采样，不支持时**自动回退并记住**，本地 schema 预检始终兜底。
+
+- 能力合同新增 `text.strictTools`（文本模型，`*bool`，缺省不下发）；运行期每步按渠道模型能力解析，放进任务信封 `textOptions.strictTools`。
+- 请求组装（内置协议与声明式协议两条路径）给每个函数工具加 `strict: true`；上游报"未知参数 / 不支持 / 非法取值"且文本里出现 strict 时，去掉标记**重发一次**，
+  并把 `channelID|modelKey` 记进进程内拒绝名单，后续请求不再尝试（重启后重新探测一次）。
+- [x] 单测：`strict` 标记的加/去；兼容错误判定（识别三种 strict 报错、**不**把与 strict 无关的 unknown parameter 当 strict 问题）；httptest 上游先 400 再成功 →
+  两次请求且第二次不带 strict、拒绝名单已记录；能力合同声明才下发（nil 与拒绝过的线路都不下发）。
+- [x] 回归：`go test ./internal/app/ -run 'TestCloudAgent|TestProvider|TestRunAgent'` 全绿（29.0s）。
+- [ ] 真机复验：给一个支持 strict 的渠道模型打开 `strictTools`，确认请求体带 strict 且调用成功率变化；不支持的上游确认自动回退不报错。需部署后执行。
+- [ ] 未做：strict 模式下的 schema 规范化（OpenAI strict 要求所有属性都进 `required`，我们的 schema 保留了可选字段——因此**默认不下发** strict，只对确实兼容的线路开启）。
+
 ## 云端 Agent 工具调用治理：整批预检 + 单步一个写工具（2026-09-22）
 
 handoff 工作项 B 第 2 步落地：模型一次返回的多个工具调用，在执行前统一判定准入。
