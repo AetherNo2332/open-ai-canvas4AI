@@ -1599,7 +1599,7 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 		intent, e := s.cloudAgentModelIntent(run.UserID, state.Request.CanvasID, call.Function.Arguments)
 		modelListErr = e
 		if e == nil {
-			modelList, modelListErr = s.cloudAgentModelList(intent)
+			modelList, modelListErr = s.cloudAgentModelList(run.UserID, intent)
 		}
 	}
 	// 看图需要读取资源并签发链接，放在事务外完成，避免把网络/文件 IO 塞进写事务。

@@ -56,7 +56,7 @@ func TestCloudAgentModelSelectionAcceptsOnlyCompleteSelections(t *testing.T) {
 		if err := decodeCloudAgentJSONObject(raw, &args); err != nil {
 			t.Fatal(err)
 		}
-		if err := validateCloudAgentModelSelection(raw, args); err != nil {
+		if err := (&Service{}).validateCloudAgentModelSelection("user", raw, &args); err != nil {
 			t.Fatalf("valid selection rejected: %v", err)
 		}
 	}

@@ -14,7 +14,7 @@ import (
 )
 
 // The Agent uses the same public catalog as the composer, never a second routing policy.
-func (s *Service) cloudAgentModelList(intent *ModelRequestIntent) (any, error) {
+func (s *Service) cloudAgentModelList(userID string, intent *ModelRequestIntent) (any, error) {
 	catalog, err := s.ModelCatalog(intent)
 	if err != nil {
 		return nil, err
@@ -22,13 +22,22 @@ func (s *Service) cloudAgentModelList(intent *ModelRequestIntent) (any, error) {
 	items := []map[string]any{}
 	for _, m := range catalog.Models {
 		if m.Available && cloudAgentGenerationModeSupported(normalizeCapability(m.Capability)) {
-			items = append(items, map[string]any{"name": m.Name, "capability": m.Capability, "selection": map[string]any{"logicalModelId": m.ID}, "priceLabel": m.PriceLabel, "priceTiers": m.PriceTiers, "options": m.CapabilitySpec, "profiles": m.CapabilityProfiles, "defaults": m.DefaultOptions})
+			items = append(items, s.cloudAgentModelListItem(userID, map[string]any{
+				"name": m.Name, "capability": m.Capability,
+				"selection":  map[string]any{"logicalModelId": m.ID},
+				"priceLabel": m.PriceLabel, "priceTiers": m.PriceTiers, "options": m.CapabilitySpec,
+				"profiles": m.CapabilityProfiles, "defaults": m.DefaultOptions,
+			}, cloudAgentSelection{LogicalModelID: m.ID}))
 		}
 	}
 	for _, channel := range catalog.Channels {
 		for _, m := range channel.Models {
 			if m.Available && cloudAgentGenerationModeSupported(normalizeCapability(m.Capability)) {
-				items = append(items, map[string]any{"name": m.DisplayName, "capability": m.Capability, "selection": map[string]any{"channelId": channel.ID, "channelModelKey": m.ModelKey}, "priceLabel": m.PriceLabel, "priceTiers": m.PriceTiers, "options": m.CapabilityConfig})
+				items = append(items, s.cloudAgentModelListItem(userID, map[string]any{
+					"name": m.DisplayName, "capability": m.Capability,
+					"selection":  map[string]any{"channelId": channel.ID, "channelModelKey": m.ModelKey},
+					"priceLabel": m.PriceLabel, "priceTiers": m.PriceTiers, "options": m.CapabilityConfig,
+				}, cloudAgentSelection{ChannelID: channel.ID, ChannelModelKey: m.ModelKey}))
 			}
 		}
 	}
@@ -90,6 +99,7 @@ type cloudAgentMediaArgs struct {
 	DraftRunID            string                   `json:"-"`
 	Mode                  string                   `json:"mode"`
 	Prompt                string                   `json:"prompt"`
+	SelectionID           string                   `json:"selectionId"`
 	LogicalModelID        string                   `json:"logicalModelId"`
 	ChannelID             string                   `json:"channelId"`
 	ChannelModelKey       string                   `json:"channelModelKey"`
@@ -540,7 +550,13 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &a); err != nil {
 		return CreateTaskRequest{}, nil, cloudAgentJSONArgumentError(err)
 	}
-	if err := validateCloudAgentModelSelection(call.Function.Arguments, a); err != nil {
+	// 参数校验必须发生在任何读取/副作用之前，因此这里不假设 run/state 已经就绪：
+	// 只有 selectionId 需要用户身份（签名里绑定了签发用户），其余校验与运行无关。
+	userID := ""
+	if run != nil {
+		userID = run.UserID
+	}
+	if err := s.validateCloudAgentModelSelection(userID, call.Function.Arguments, &a); err != nil {
 		return CreateTaskRequest{}, nil, err
 	}
 	a.Mode = strings.ToLower(strings.TrimSpace(a.Mode))
@@ -784,4 +800,18 @@ func completeCloudAgentMediaNode(repo *repository.Repository, userID, canvasID, 
 		return stringValue(node["id"]), saveCloudAgentDocument(repo, canvas, doc, policy)
 	}
 	return "", &cloudAgentMediaWritebackError{error: creationConflict("目标生成节点不存在，未重建节点；任务记录仍保留在任务中心"), reason: "target_node_missing"}
+}
+
+// cloudAgentModelListItem 给目录项补一个服务端签发的 selectionId。
+// 签发失败（例如密钥不可读）时只省略该字段：目录本身仍可用，模型退回旧的三字段契约。
+func (s *Service) cloudAgentModelListItem(userID string, item map[string]any, selection cloudAgentSelection) map[string]any {
+	if s == nil || userID == "" {
+		return item
+	}
+	token, err := s.issueCloudAgentSelectionID(userID, selection)
+	if err != nil || token == "" {
+		return item
+	}
+	item["selectionId"] = token
+	return item
 }
