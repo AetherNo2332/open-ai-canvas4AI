@@ -1191,6 +1191,21 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		if !ok || detail == nil {
 			detail = map[string]any{}
 		}
+		// 模型漏了必填字段（或参数不是对象）时，即便业务校验抛的是普通 AppError，也按
+		// "参数契约错误"处理：把本轮实际暴露的 schema 回给模型，它才改得对，归类也随之变成
+		// schema_error（handoff 工作项 B：缺必填字段必须能自纠，且不能只算普通工具失败）。
+		// 只在"业务侧确实按参数问题拒绝了"（400/422）时才这么归类：上游 5xx 或网络错误
+		// 即便模型同时漏了字段，也该算上游故障，别把锅扣到参数上。
+		var appErr *AppError
+		var existingArgumentErr *cloudAgentArgumentError
+		if missing := cloudAgentMissingRequiredArguments(state.Canonical.Tools, call); len(missing) > 0 &&
+			!errors.As(err, &existingArgumentErr) &&
+			errors.As(err, &appErr) && appErr != nil && (appErr.Status == 400 || appErr.Status == 422) {
+			err = &cloudAgentFieldArgumentError{
+				error: &cloudAgentArgumentError{err},
+				Field: strings.Join(missing, ","), Issue: "required",
+			}
+		}
 		message := cloudAgentSafeToolError(err)
 		detail["error"] = message
 		var admissionErr *cloudAgentMediaAdmissionError

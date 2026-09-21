@@ -74,3 +74,57 @@ func TestCloudAgentToolResultCarriesErrorClass(t *testing.T) {
 		t.Fatalf("回执里的归类字段不对：%+v", detail)
 	}
 }
+
+// 真机踩到的场景：canvas_read_storyboard 缺 nodeId 时，业务校验抛的是普通 AppError
+// （"分镜节点ID、分页参数或每页行数无效"）。按 schema 的 required 判定后必须归成
+// schema_error，并把 schema 回给模型，而不是落到兜底的 tool_error。
+func TestCloudAgentToolResultClassifiesMissingRequiredArguments(t *testing.T) {
+	schema := []map[string]any{{"type": "function", "function": map[string]any{
+		"name": "canvas_read_storyboard",
+		"parameters": map[string]any{
+			"type":     "object",
+			"required": []any{"nodeId"},
+			"properties": map[string]any{
+				"nodeId": map[string]any{"type": "string"},
+			},
+		},
+	}}}
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{PermissionMode: "read_only", ContextScope: []string{"canvas"}}, Canonical: canonicalAgentRequest{Tools: schema}, Events: []CloudAgentEvent{}}
+	var call cloudAgentCall
+	call.ID = "call-1"
+	call.Function.Name = "canvas_read_storyboard"
+	call.Function.Arguments = `{}`
+	if missing := cloudAgentMissingRequiredArguments(state.Canonical.Tools, call); len(missing) != 1 || missing[0] != "nodeId" {
+		t.Fatalf("必填字段检测 = %v，期望 [nodeId]", missing)
+	}
+	cloudAgentToolResult("run-1", state, call, nil, BadAuthRequest("分镜节点ID、分页参数或每页行数无效"))
+
+	var payload map[string]any
+	for _, event := range state.Events {
+		if event.Type == "tool_failed" {
+			payload = event.Payload
+		}
+	}
+	if payload == nil {
+		t.Fatal("应当记成 tool_failed")
+	}
+	if payload["errorClass"] != cloudAgentToolErrorSchemaError {
+		t.Fatalf("归类 = %v，期望 %s", payload["errorClass"], cloudAgentToolErrorSchemaError)
+	}
+	detail, _ := payload["result"].(map[string]any)
+	if detail["reason"] != "invalid_tool_arguments" || detail["requiredAction"] != "fix_arguments" {
+		t.Fatalf("缺少可自纠的参数错误标注：%+v", detail)
+	}
+	if detail["field"] != "nodeId" {
+		t.Fatalf("field = %v，期望 nodeId", detail["field"])
+	}
+	if _, ok := detail["parameters"].(map[string]any); !ok {
+		t.Fatalf("必须把本轮暴露的 schema 回给模型：%+v", detail["parameters"])
+	}
+	// 必填字段齐备时不误判：参数没问题就不该被当成契约错误。
+	full := call
+	full.Function.Arguments = `{"nodeId":"node-1"}`
+	if missing := cloudAgentMissingRequiredArguments(state.Canonical.Tools, full); len(missing) != 0 {
+		t.Fatalf("字段齐备却报缺字段：%v", missing)
+	}
+}
