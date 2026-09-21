@@ -441,6 +441,11 @@ func (s *Service) finalizeCloudAgentInterruptedCompaction(run *model.CloudAgentE
 func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecution, state *cloudAgentRuntime, checkpoint agentcontext.Checkpoint, mode, reason string, keepTerminal bool) error {
 	checkpoint = cloudAgentBoundCheckpoint(checkpoint)
 	turnsBefore := cloudAgentConversationTurnCount(state.Canonical.Messages)
+	// 压缩前后的读数都要落在 context_transition 里（设计 §3：每次下降都要能解释成
+	// "压缩掉了多少"），因此在改写 canonical 之前先量一份。
+	beforeMessages := len(state.Canonical.Messages)
+	beforeRaw, _ := json.Marshal(state.Canonical.Messages)
+	beforeBytes, beforeTokens := len(beforeRaw), estimateCloudAgentTokens(beforeRaw)
 	recent := cloudAgentCompleteTurnTail(state.Canonical.Messages, 2)
 	history, err := cloudAgentCheckpointHistory(checkpoint, recent)
 	if err != nil {
@@ -459,6 +464,12 @@ func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecutio
 			}
 			state.Canonical.Messages = append(state.Canonical.Messages, entry)
 		}
+		afterMessages := make([]map[string]any, 0, len(history))
+		for _, message := range history {
+			afterMessages = append(afterMessages, map[string]any{"role": message.Role, "content": message.Content})
+		}
+		afterRaw, _ := json.Marshal(afterMessages)
+		afterBytes, afterTokens := len(afterRaw), estimateCloudAgentTokens(afterRaw)
 		// 消息整体被替换：写路径按 kind 逐条 upsert 并删除 sequence 超出新条数的尾部行，
 		// 因此"条数恰好相同但内容全变"也能正确落库。
 		// 历史被换成检查点，早期读取回执也一起没了：不清"已读过去重"标记，模型再要技能正文
@@ -478,6 +489,14 @@ func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecutio
 			current.Status = "completed"
 		}
 		turnsAfter := cloudAgentConversationTurnCount(state.Canonical.Messages)
+		// 压缩换了上下文：上一次上游实测不再代表当前请求（设计 §6 的"语义压缩完成即作废"），
+		// 否则下一步会拿旧锚点投影，把压缩后的压力算小。
+		state.TokenAnchor = nil
+		state.event(run.ID, "context_transition", map[string]any{
+			"kind": "semantic_compaction", "reason": firstNonEmpty(reason, "semantic_compaction"),
+			"before": map[string]any{"sourceBytes": beforeBytes, "estimatedTokens": beforeTokens, "historyMessages": beforeMessages, "turns": turnsBefore},
+			"after":  map[string]any{"sourceBytes": afterBytes, "estimatedTokens": afterTokens, "historyMessages": len(history), "turns": turnsAfter},
+		})
 		payload := map[string]any{
 			"mode": mode, "compactedTurnCount": checkpoint.CompactedTurnCount,
 			"historyMessages": len(history), "resume": resume,

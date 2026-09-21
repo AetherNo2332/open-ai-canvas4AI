@@ -202,3 +202,16 @@ test("真实下降要有事件解释：压缩与图片裁剪都进最近变化�
     assert.equal(transitions[1].kind, "image_prune");
     assert.match(transitions[1].label, /移出 3 张/);
 });
+
+test("统一的 context_transition 优先，旧事件不再重复计数（设计 §4）", () => {
+    const events = [
+        { eventId: "t1", runId: "r", type: "context_transition", seq: 30, payload: { kind: "semantic_compaction", reason: "threshold", before: { historyMessages: 23, sourceBytes: 108_359 }, after: { historyMessages: 6, sourceBytes: 71_364 } } } as never,
+        // 同一次压缩的旧事件：有统一事件时不应再产生第二条。
+        { eventId: "e1", runId: "r", type: "context_compacted", seq: 31, payload: { compactedTurnCount: 23, historyMessages: 6, droppedTurns: 17 } } as never,
+        { eventId: "t2", runId: "r", type: "context_transition", seq: 40, payload: { kind: "window_resolved", reason: "window_resolved", after: { contextWindowTokens: 1_000_000, usableInputTokens: 967_232 } } } as never,
+    ];
+    const transitions = agentContextTransitions(events);
+    assert.equal(transitions.filter((item) => item.kind === "semantic_compaction").length, 1);
+    assert.equal(transitions.filter((item) => item.kind === "window_resolved").length, 1);
+    assert.match(transitions.find((item) => item.kind === "semantic_compaction")!.label, /23 条 → 6 条/);
+});

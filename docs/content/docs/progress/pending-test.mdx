@@ -34,6 +34,17 @@ SSE 的 `Last-Event-ID`）已按上游持久化结构重新实现。以下端到
 - [ ] 合并前已有的红灯：`TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered`
       （新增节点落在原点）与合并基线一致，本轮未修。
 
+## 云端 Agent：上下文计量 V2 事件与锚点治理（P1，2026-09-21）
+
+按设计方向 §4/§5/§6 补齐后端事件协议，全部是**附加字段**（旧字段与旧前端继续可用）：
+
+- **快照字段**：`context_pressure` 增加 `schemaVersion`(2) / `phase`(before_request) / `window{contextWindowTokens,reservedOutputTokens,usableInputTokens,overheadTokens,source}` / `anchor{id,valid,ageSteps}` / `measurementSource` / `normalizedInputTokens` / `projectedNextInputTokens` / `providerUsage{inputTokens,cacheReadTokens,uncachedInputTokens,outputTokens}`；发射点补 `requestId`（钉在即将发出的那次请求上，前端不必猜数字属于谁）。
+- **统一过渡事件**：新增 `context_transition`，`kind` 取 `semantic_compaction` / `body_eviction`（图片裁剪）/ `window_resolved` / `model_changed` / `route_changed`，带 `before`/`after`（sourceBytes、estimatedTokens、historyMessages、turns）与 `reason`。前端优先消费它，旧事件（`context_compacted`/`context_images_pruned`）保留兼容。
+- **§5 provider 归一化**：Claude 协议把缓存拆在 `input_tokens` 之外，现在按 `input + cache_creation + cache_read` 归一（此前实测输入系统性偏小 → 压力锚点偏低）；仅在出现 Claude 专有字段时换算，OpenAI 系（`prompt_tokens` 已含缓存）不受影响，避免重复计数。
+- **§6 锚点治理**：锚点带上口径签名（模型/渠道/逻辑模型/系统提示/工具 schema）与定锚的模型/渠道；出现"换模型/换线路/提示词或工具 schema 变化"即作废，超过 3 步未刷新也作废（真机实测过锚点冻结 3m16s / 8 条读数仍在参与压缩决策）；语义压缩完成后直接清锚点。
+- [x] 单测：快照字段齐全、窗口识别只落一条过渡、锚点超期与换模型作废（含 `model_changed` 过渡）、Claude 缓存归一 vs OpenAI 不重复计数。
+- [ ] 真机复验：换模型/长步数会话里能看到锚点作废与重新定锚；`context_transition` 与前端"最近变化"逐条对上。
+
 ## 云端 Agent：上下文计量按设计方向重做（Context Meter v2 P0，2026-09-21）
 
 按 `CONTEXT-METER-V2-设计方向.md` 重做被 codex `9deb79b7` 跑偏的口径层（PR #30 曾把主圆环固定成本地估算、把上游实测降级成诊断行）：

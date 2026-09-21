@@ -35,9 +35,66 @@ function stringField(payload: Record<string, unknown>, key: string): string {
  * 从 run 事件（时间正序）抽出治理与口径变化。窗口识别与上游校准来自口径层的状态：
  * 它们是"读数换了一把尺子"，不是上下文本身变了（§3 要求这种切换必须断开曲线并标注）。
  */
+const unifiedKinds: Record<string, AgentContextTransitionKind> = {
+    semantic_compaction: "semantic_compaction",
+    body_eviction: "body_eviction",
+    image_prune: "image_prune",
+    window_resolved: "window_resolved",
+    model_changed: "calibration",
+    route_changed: "calibration",
+};
+
+/** 统一的 context_transition（设计 §4）优先：有它就不再按旧事件各解析一套，避免同一次治理算两遍。 */
+function transitionFromUnifiedEvent(event: AgentEvent): AgentContextTransition | undefined {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    const kind = unifiedKinds[stringField(payload, "kind")];
+    if (!kind) return undefined;
+    const text = stringField(payload, "text");
+    const before = (payload.before ?? {}) as Record<string, unknown>;
+    const after = (payload.after ?? {}) as Record<string, unknown>;
+    const label =
+        text ||
+        (() => {
+            switch (kind) {
+                case "semantic_compaction":
+                    return `语义压缩：${integerField(before, "historyMessages") ?? "?"} 条 → ${integerField(after, "historyMessages") ?? "?"} 条`;
+                case "image_prune":
+                    return `图片裁剪：移出 ${integerField(payload, "prunedImages") ?? 0} 张看图结果`;
+                case "body_eviction": {
+                    const bytes = (integerField(before, "sourceBytes") ?? 0) - (integerField(after, "sourceBytes") ?? 0);
+                    return `正文卸载${bytes > 0 ? ` -${bytes.toLocaleString("zh-CN")} bytes` : ""}`;
+                }
+                case "window_resolved":
+                    return `模型窗口已识别：${(integerField(after, "contextWindowTokens") ?? 0).toLocaleString("zh-CN")} Token（读数改用窗口口径，不是上下文变少）`;
+                default:
+                    return stringField(payload, "reason") || "口径变化";
+            }
+        })();
+    const direction = kind === "window_resolved" || kind === "calibration" ? "note" : "down";
+    return { kind, label, direction, seq: event.seq };
+}
+
 export function agentContextTransitions(events: AgentEvent[] | undefined, state?: AgentContextMeterState): AgentContextTransition[] {
+    const list = events ?? [];
+    const unified = list
+        .filter((event) => event.type === "context_transition")
+        .map(transitionFromUnifiedEvent)
+        .filter((item): item is AgentContextTransition => Boolean(item));
+    if (unified.length > 0) {
+        const transitions = [...unified];
+        const reading = state?.reading;
+        if (reading?.calibration && reading.headline.source === "provider" && !reading.headline.carriedOver) {
+            const { measuredTokens, estimateTokens, scale } = reading.calibration;
+            transitions.push({
+                kind: "calibration",
+                label: `上游校准：实测 ${measuredTokens.toLocaleString("zh-CN")} / 本地估算 ${estimateTokens.toLocaleString("zh-CN")} Token${scale && Math.abs(scale - 1) > 0.005 ? `（×${scale.toFixed(2)}）` : ""}`,
+                direction: "note",
+            });
+        }
+        return transitions.slice(-maxTransitions);
+    }
     const transitions: AgentContextTransition[] = [];
-    for (const event of events ?? []) {
+    for (const event of list) {
         const payload = (event.payload ?? {}) as Record<string, unknown>;
         switch (event.type) {
             case "context_compacted": {

@@ -1060,6 +1060,19 @@ func (s *Service) enrichAPICallLogPayload(log *model.ApiCallLog, payload map[str
 		if log.CachedTokens == 0 {
 			log.CachedTokens = firstInt64(usage, "cached_tokens", "cache_read_input_tokens", "prompt_cache_hit_tokens")
 		}
+		// Claude 协议的 usage 把缓存拆在 input_tokens **之外**：input_tokens 只算未命中的那部分，
+		// cache_read / cache_creation 单独上报，因此统一口径（见上下文计量设计：
+		// Claude = input + cache creation + cache read）要把两者加回去，否则实测输入系统性偏小，
+		// 压力锚点与压缩判据都会跟着迟钝。
+		//
+		// 只在这两个 Claude 专有字段出现时才这么换算：OpenAI 系的 prompt_tokens/input_tokens
+		// 本来就包含 cached_tokens（上方 details 分支读的就是它），再加一次就是重复计数。
+		if hasClaudeCacheUsage(usage) {
+			cached := firstInt64(usage, "cache_read_input_tokens")
+			creation := firstInt64(usage, "cache_creation_input_tokens", "cache_creation_tokens")
+			log.CachedTokens = cached
+			log.InputTokens += cached + creation
+		}
 	}
 	if usageMetadata, ok := payload["usageMetadata"].(map[string]any); ok && log.Capability != "video" {
 		inputTokens, inputAvailable := firstInt64Value(usageMetadata, "promptTokenCount")
@@ -1186,6 +1199,20 @@ func providerRequestIDFromPath(path string) string {
 		break
 	}
 	return ""
+}
+
+// hasClaudeCacheUsage 判断这份 usage 是不是 Claude 协议的口径（缓存单列在 input_tokens 之外）。
+// 其它协议（OpenAI 系、Gemini）把缓存算在输入里，不能按同一规则再加一次。
+func hasClaudeCacheUsage(usage map[string]any) bool {
+	if usage == nil {
+		return false
+	}
+	for _, key := range []string{"cache_read_input_tokens", "cache_creation_input_tokens", "cache_creation_tokens"} {
+		if _, ok := usage[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func firstInt64(values map[string]any, keys ...string) int64 {

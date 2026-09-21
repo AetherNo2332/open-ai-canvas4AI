@@ -168,3 +168,24 @@ func TestEnsureChatCompletionStreamUsageRequest(t *testing.T) {
 		t.Fatalf("stream_options = %#v", options)
 	}
 }
+
+// Claude 协议把缓存拆在 input_tokens 之外：input_tokens 只算未命中部分，
+// cache_read / cache_creation 单列。统一输入口径必须是三者之和，否则实测输入偏小、
+// 上下文压力锚点偏低（设计：Claude = input + cache creation + cache read）。
+func TestEnrichAPICallLogNormalizesClaudeCacheUsage(t *testing.T) {
+	log := &model.ApiCallLog{Capability: "text", Path: "/v1/messages"}
+	body := []byte(`{"id":"msg-test","usage":{"input_tokens":12,"output_tokens":7,"cache_read_input_tokens":900,"cache_creation_input_tokens":300}}`)
+	(&Service{}).EnrichAPICallLog(log, body)
+	if !log.UsageAvailable || log.CachedTokens != 900 {
+		t.Fatalf("Claude 缓存读数不对：%#v", log)
+	}
+	if log.InputTokens != 12+900+300 {
+		t.Fatalf("Claude 输入口径 = %d，期望 %d（input + cache read + cache creation）", log.InputTokens, 12+900+300)
+	}
+	// OpenAI 系不能走同一条换算：prompt_tokens 本来就含 cached_tokens。
+	openai := &model.ApiCallLog{Capability: "text", Path: "/v1/chat/completions"}
+	(&Service{}).EnrichAPICallLog(openai, []byte(`{"usage":{"prompt_tokens":23,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":5}}}`))
+	if openai.InputTokens != 23 {
+		t.Fatalf("OpenAI 输入被重复计数：%d，期望 23", openai.InputTokens)
+	}
+}

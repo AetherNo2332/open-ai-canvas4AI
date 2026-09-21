@@ -128,6 +128,9 @@ type cloudAgentRuntime struct {
 	// cloud_agent_event_records，内存只保留最近一窗供摘要、记忆提取与卡死判定使用，
 	// 运行详情仍按 seq 分页读表。
 	EventSeqBase int `json:"-"`
+	// ContextWindowKnown 记录本轮是否已经看到过"模型窗口已确认"的读数：从未知变为已知时
+	// 要落一条 context_transition（界面据此标"模型窗口已识别"，而不是把口径切换画成上下文骤降）。
+	ContextWindowKnown bool `json:"contextWindowKnown,omitempty"`
 	// CanvasBatchHashes 记录本批（同一个助手消息内的多次工具调用）已经消费与产出的画布版本：
 	// 首元素是首个写入被校验时看到的版本，末元素是最近一次写入产出的版本。模型是在同一次读取的
 	// 基础上并发提交这批写入的，首个写入必然改变版本，因此同批后续写入需要据此重基。
@@ -502,6 +505,15 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 		state.event(run.ID, "context_images_pruned", map[string]any{
 			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
 			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",
+		})
+		// 同一件事再落一条统一的过渡事件（设计 §4 的 context_transition）：前端趋势图与
+		// "最近变化"都不必再为每种治理动作各写一套解析。
+		afterRaw, _ := json.Marshal(state.Canonical.Messages)
+		state.event(run.ID, "context_transition", map[string]any{
+			"kind": "body_eviction", "reason": "image_prune",
+			"after":        map[string]any{"sourceBytes": len(afterRaw), "estimatedTokens": estimateCloudAgentTokens(afterRaw), "historyMessages": len(state.Canonical.Messages)},
+			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
+			"text": "图片裁剪：移出超出保留轮次的看图结果",
 		})
 	}
 	if run.ID != "" {
@@ -914,6 +926,15 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		state.event(run.ID, "context_images_pruned", map[string]any{
 			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
 			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",
+		})
+		// 同一件事再落一条统一的过渡事件（设计 §4 的 context_transition）：前端趋势图与
+		// "最近变化"都不必再为每种治理动作各写一套解析。
+		afterRaw, _ := json.Marshal(state.Canonical.Messages)
+		state.event(run.ID, "context_transition", map[string]any{
+			"kind": "body_eviction", "reason": "image_prune",
+			"after":        map[string]any{"sourceBytes": len(afterRaw), "estimatedTokens": estimateCloudAgentTokens(afterRaw), "historyMessages": len(state.Canonical.Messages)},
+			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
+			"text": "图片裁剪：移出超出保留轮次的看图结果",
 		})
 	}
 	canonical, contextErr := s.cloudAgentModelContext(run, &state, contextBudget)
@@ -1726,7 +1747,12 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				state.ContextCompaction.Status = "running"
 			} else {
 				if contextPressure != nil {
-					state.event(run.ID, "context_pressure", cloudAgentContextPressurePayload(*contextPressure, state))
+					// requestId 把读数钉在"即将发出的这次请求"上（设计 §4）：没有它，前端只能猜
+					// 哪个数字属于哪一次调用。
+					payload := cloudAgentContextPressurePayload(*contextPressure, state)
+					payload["requestId"] = task.ID
+					cloudAgentNoteContextWindowResolved(run.ID, state, *contextPressure)
+					state.event(run.ID, "context_pressure", payload)
 				}
 				// 记下发出去这份 canonical 的本地计价：任务回来时用它和上游实测配成锚点。
 				state.LastStepTaskID = task.ID
