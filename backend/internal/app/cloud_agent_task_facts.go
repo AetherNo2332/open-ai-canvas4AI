@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -113,11 +114,14 @@ func cloudAgentTaskDiagnostic(repo *repository.Repository, task *model.Task) map
 	return result
 }
 
+// cloudAgentTaskSubmissionOutcome 描述"这一步到底有没有送到上游"：
+// 有上游任务 ID 才算 accepted；已经跑完的任务必然提交过，只是上游没回传 ID，报 completed；
+// 还在排队/执行的按本地状态说是 queued/submitted，其余只能说 unknown。
 func cloudAgentTaskSubmissionOutcome(task *model.Task) string {
 	if task == nil {
 		return "unavailable"
 	}
-	if task.ProviderRequestID != "" {
+	if strings.TrimSpace(task.ProviderRequestID) != "" {
 		return "accepted"
 	}
 	switch task.Status {
@@ -125,6 +129,8 @@ func cloudAgentTaskSubmissionOutcome(task *model.Task) string {
 		return "queued"
 	case model.TaskStatusRunning:
 		return "submitted"
+	case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled:
+		return "completed"
 	default:
 		return "unknown"
 	}

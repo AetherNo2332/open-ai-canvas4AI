@@ -475,7 +475,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	// 必须登记进 state.Policy（值拷贝）：state 才是随任务持久化、被运行期读取的那份，
 	// 在这里改局部 policy 不会生效（state.Policy 是编译结果的值拷贝）。
 	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
-	canonical.PromptCacheKey = cloudAgentPromptCacheKey(req.CanvasID, canonical.SystemPrompt)
+	canonical.PromptCacheKey = cloudAgentPromptCacheKey(req)
 	attachCloudAgentPlan(&canonical, inheritedPlan)
 	// 根任务就是第一步模型调用：它的输出上限与后续每一步同源（策略解析结果），
 	// 否则"改配置"只影响第二步之后，第一步仍然按旧值跑。
@@ -526,59 +526,90 @@ func cloudAgentLegacyHistory(messages []map[string]interface{}, currentPrompt st
 	return history
 }
 
+type cloudAgentDigestNode struct {
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Title    string         `json:"title"`
+	Metadata map[string]any `json:"metadata"`
+}
+
+// 轮首摘要每次运行都会重建、每一步都会重发，所以它的体积必须由构造保证有界，并且
+// 绝不能因为画布太大而判死整轮（上游原来的 64KB 硬上限就是直接拒绝整轮）。
+// 8KB 是我们自己的软预算：摘要只承诺存在性与规模，正文按需分页读取。
 const (
-	cloudAgentCanvasSummaryMaxNodes    = 80
-	cloudAgentCanvasSummaryBudgetBytes = 60 << 10
+	cloudAgentDigestBudgetBytes = 8 << 10
+	// 逐级降级第一档的节点数上限与上游摘要一致。
+	cloudAgentDigestNodeLimit = 80
+	cloudAgentDigestMinNodes  = 20
 )
 
 func cloudAgentCanvasSummary(canvas *model.CanvasProject) (string, error) {
 	var payload struct {
-		Nodes []struct {
-			ID       string         `json:"id"`
-			Type     string         `json:"type"`
-			Title    string         `json:"title"`
-			Metadata map[string]any `json:"metadata"`
-		} `json:"nodes"`
+		Nodes []cloudAgentDigestNode `json:"nodes"`
 	}
 	if err := json.Unmarshal([]byte(canvas.PayloadJSON), &payload); err != nil {
 		return "", BadAuthRequest("服务端画布内容无法解析，请先重新同步")
 	}
-	nodes := make([]map[string]any, 0)
-	for index, node := range payload.Nodes {
-		if index >= cloudAgentCanvasSummaryMaxNodes {
-			break
-		}
-		descriptor, known := cloudAgentNodeCapabilityForType(node.Type)
-		item := map[string]any{"id": truncateRunes(node.ID, 100), "type": truncateRunes(node.Type, 40), "title": truncateRunes(node.Title, 300)}
-		if known {
-			projected, err := cloudAgentProjectNodeFields(map[string]any{"title": node.Title}, node.Metadata, descriptor, descriptor.SummaryFields, 600, false, 0)
-			if err != nil {
-				return "", err
-			}
-			for key, value := range projected {
-				item[key] = value
-			}
-		} else {
-			item["agentSupported"] = false
-			item["agentUnsupportedReason"] = "仅展示基础信息；当前 Agent 不支持操作此类型节点"
-		}
-		nodes = append(nodes, item)
-		encoded, err := json.Marshal(nodes)
+	// 逐级降级：先丢节点细节，再减少节点数，最后只留计数。第一个落进预算的文档胜出，
+	// 最后一档（只留计数）永远落得进去。
+	for _, level := range []struct {
+		nodes  int
+		detail bool
+	}{
+		{cloudAgentDigestNodeLimit, true},
+		{cloudAgentDigestNodeLimit, false},
+		{cloudAgentDigestMinNodes, false},
+		{0, false},
+	} {
+		data, err := cloudAgentDigestJSON(canvas, payload.Nodes, level.nodes, level.detail)
 		if err != nil {
 			return "", err
 		}
-		if len(encoded) > cloudAgentCanvasSummaryBudgetBytes {
-			nodes = nodes[:len(nodes)-1]
-			break
+		if len(data) <= cloudAgentDigestBudgetBytes || level.nodes == 0 {
+			return string(data), nil
 		}
 	}
-	summary := map[string]any{"title": truncateRunes(canvas.Title, 240), "savedAt": canvas.UpdatedAt, "totalNodes": len(payload.Nodes), "includedNodes": len(nodes), "nodes": nodes}
-	if omitted := len(payload.Nodes) - len(nodes); omitted > 0 {
-		summary["omittedNodes"] = omitted
+	return "", BadAuthRequest("服务端画布摘要无法生成")
+}
+
+func cloudAgentDigestJSON(canvas *model.CanvasProject, all []cloudAgentDigestNode, limit int, detail bool) ([]byte, error) {
+	included := min(len(all), max(0, limit))
+	nodes := make([]map[string]any, 0, included)
+	for _, node := range all[:included] {
+		item := map[string]any{"id": truncateRunes(node.ID, 100), "type": truncateRunes(node.Type, 40), "title": truncateRunes(node.Title, 300)}
+		descriptor, known := cloudAgentNodeCapabilityForType(node.Type)
+		if !known {
+			item["agentSupported"] = false
+			item["agentUnsupportedReason"] = "仅展示基础信息；当前 Agent 不支持操作此类型节点"
+			nodes = append(nodes, item)
+			continue
+		}
+		if !detail {
+			nodes = append(nodes, item)
+			continue
+		}
+		projected, err := cloudAgentProjectNodeFields(map[string]any{"title": node.Title}, node.Metadata, descriptor, descriptor.SummaryFields, 600, cloudAgentProjectionIndex, 0)
+		if err != nil {
+			return nil, err
+		}
+		for key, value := range projected {
+			item[key] = value
+		}
+		nodes = append(nodes, item)
 	}
-	data, err := json.Marshal(summary)
-	if err != nil {
-		return "", err
+	document := map[string]any{
+		"title": truncateRunes(canvas.Title, 240), "savedAt": canvas.UpdatedAt,
+		"totalNodes": len(all), "includedNodes": len(nodes), "nodes": nodes,
+		"scope": "本摘要只说明存在性与规模，不含逐行正文；需要正文时用 canvas_get_state 分页读取，按行编辑前用对应 read 工具读取真实 rowId 与 snapshotHash",
 	}
-	return string(data), nil
+	if omitted := len(all) - len(nodes); omitted > 0 {
+		// 两个键名同时给出：nodesOmitted 是我们的口径，omittedNodes 是上游调用方的口径。
+		document["nodesOmitted"] = omitted
+		document["omittedNodes"] = omitted
+		document["nodesOmittedHint"] = "被省略的节点仍然存在且可读；用 canvas_get_state 的 offset 继续分页读取"
+	}
+	if !detail && len(nodes) > 0 {
+		document["nodeDetailOmitted"] = true
+	}
+	return json.Marshal(document)
 }
