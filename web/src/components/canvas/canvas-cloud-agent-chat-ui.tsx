@@ -14,7 +14,7 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 import type { Skill } from "@/services/api/skills";
 import type { AgentContextBreakdown, AgentContextPressure } from "@/services/api/agent";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
-import { agentToolCategory, agentToolCategoryLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
+import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
 import { agentToolRetry, type AgentToolRetryAttempt } from "@/lib/canvas/agent-tool-retry";
 import { agentContextMeterNeedsGovernanceMarker, agentContextMeterState, type AgentContextMeterState } from "@/lib/canvas/agent-context-meter";
 import type { AgentContextTransition } from "@/lib/canvas/agent-context-transitions";
@@ -1299,10 +1299,13 @@ function agentAttachmentReferences(attachments: CloudAgentChatAttachment[]): Can
 
 function toolCardState(title: string, text: string, detail?: unknown) {
     const status = agentToolStatus(title, text, detail);
+    // 失败时优先显示稳定归类（"参数不符合契约"/"画布状态已变化"/"模型输出问题"…）：
+    // 它比"执行失败"更能说明下一步该做什么（handoff 工作项 B 的分类）。
+    const errorClassLabel = agentToolErrorClassLabel(detail);
     if (status === "completed") return { label: "已完成", color: "#16a34a", softBg: "rgba(22,163,74,.04)", icon: <CheckCircle2 className="size-4" />, isError: false };
-    if (status === "failed") return { label: "执行失败", color: "#dc2626", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
+    if (status === "failed") return { label: errorClassLabel ?? "执行失败", color: "#dc2626", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
     if (status === "noop") return { label: "未生效", color: "#d97706", softBg: "rgba(217,119,6,.04)", icon: <CircleAlert className="size-4" />, isError: false };
-    if (status === "rejected") return { label: "拒绝执行", color: "#dc2626", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
+    if (status === "rejected") return { label: errorClassLabel ?? "拒绝执行", color: "#dc2626", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
     return { label: "处理中", color: "#64748b", softBg: "rgba(100,116,139,.04)", icon: <CircleDot className="size-4" />, isError: false };
 }
 
