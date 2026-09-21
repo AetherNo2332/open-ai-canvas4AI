@@ -34,6 +34,18 @@ SSE 的 `Last-Event-ID`）已按上游持久化结构重新实现。以下端到
 - [ ] 合并前已有的红灯：`TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered`
       （新增节点落在原点）与合并基线一致，本轮未修。
 
+## 云端 Agent：工具失败归类与可行动字段（handoff 工作项 B 第一步，2026-09-21）
+
+按 handoff 文档"推荐实施顺序"的第 1 步（**只加分类与指标、不改执行行为**）落地：
+
+- 新增 `backend/internal/app/cloud_agent_tool_error_class.go`：把工具失败归成五类 —— `invalid_model_output`（模型幻觉出的工具名、在本轮契约之外调用只被 `contextScope` 挡掉的工具）、`schema_error`（缺字段/类型错/未知字段/非法 JSON）、`state_conflict`（画布在读取之后被改动）、`permission_violation`（只读轮发起写入等真实授权边界）、`upstream_failure`（上游 4xx/5xx、超时、媒体上游拒绝），其余落 `tool_error`。
+- 每类附 `retryable` 与稳定的 `requiredAction`（`fix_arguments` / `reread_canvas` / `use_advertised_tools` / `ask_user` / `report_to_user`），只作为回执与事件的标注字段进入 `tool_failed`（`result.errorClass` / `result.errorClassLabel` / `result.retryable` / `result.requiredAction` 与载荷顶层 `errorClass`），**不参与任何放行或拒绝判定**。
+- 幻觉工具名的反馈也更具体了：过去一律回"工具未获本轮权限授权"，现在对不在平台工具集里的名字回"模型调用了不存在的工具「X」…请只使用本轮工具表里列出的工具"（handoff 验收项"未知工具归类为 invalid_model_output"）。
+- 前端工具卡失败时优先显示归类标签（"参数不符合契约"/"画布状态已变化"/"模型输出问题"/"超出本轮权限"/"上游故障"），比统一的"执行失败"更能说明下一步该做什么。
+- [x] 单测：10 个归类分支（含 contextScope 为空调画布工具、只读轮发起生成、上游 4xx/5xx、超时）、事件载荷与回执字段、前端标签映射与兜底。
+- [ ] 真机复验：跑一轮故意写错参数/幻觉工具的会话，确认 `tool_failed` 载荷里 `errorClass` 与工具卡标签一致。
+- [ ] 未做（handoff 后续步骤）：整批预检与"单步最多一个写工具"、strict schema 探测与本地校验、结构化纠错熔断、`selectionId`、完成闸门 `finish_run`/`completion_blocked`。
+
 ## 云端 Agent：上下文计量 V2 事件与锚点治理（P1，2026-09-21）
 
 按设计方向 §4/§5/§6 补齐后端事件协议，全部是**附加字段**（旧字段与旧前端继续可用）：
