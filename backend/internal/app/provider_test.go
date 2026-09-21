@@ -872,6 +872,19 @@ func TestProviderPayloadErrorMessageUsesSafeActionableCategories(t *testing.T) {
 	}{
 		{name: "moderation", raw: "request blocked by content policy: prompt=private", want: "安全审核"},
 		{name: "quota", raw: "insufficient quota for api-key=secret", want: "额度不足"},
+		// 工具配对协议错误的原文里带 "insufficient"，但它是我们组装请求的问题，不是余额
+		// 问题。裸匹配 insufficient 会让用户去查一个完全正常的渠道余额（本部署实测误报过）。
+		{
+			name: "tool pairing protocol error is not a quota problem",
+			raw: `{"error":{"message":"An assistant message with 'tool_calls' must be followed by tool messages ` +
+				`responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)","type":"invalid_request_error"}}`,
+			want: "工具调用与结果不匹配",
+		},
+		{
+			name: "bare tool pairing phrase without the envelope",
+			raw:  "insufficient tool messages following tool_calls message",
+			want: "工具调用与结果不匹配",
+		},
 		{name: "model access", raw: "model not found for tenant secret-id", want: "模型不存在"},
 		{name: "thinking mode rejects forced tool choice", raw: `{"error":{"message":"Thinking mode does not support this tool_choice","request_id":"secret-trace"}}`, want: "不支持强制工具调用"},
 		{name: "reasoning mode rejects forced tool choice", raw: `{"error":{"message":"tool_choice=required is not supported in reasoning mode"}}`, want: "不支持强制工具调用"},
@@ -887,6 +900,28 @@ func TestProviderPayloadErrorMessageUsesSafeActionableCategories(t *testing.T) {
 				t.Fatalf("provider payload detail leaked: %q", message)
 			}
 		})
+	}
+}
+
+// 裸 "insufficient" 不再是额度信号：它出现在工具配对协议错误里（见
+// TestProviderPayloadErrorMessageUsesSafeActionableCategories）。这条用例把"只认结算
+// 语境的稳定词"钉死，避免以后又有人把 insufficient 加回额度类目。
+func TestProviderPayloadErrorCategoryRejectsBareInsufficient(t *testing.T) {
+	for _, raw := range []string{
+		"insufficient",
+		"insufficient tool messages following tool_calls message",
+		"insufficient context window",
+	} {
+		if message, ok := providerPayloadErrorCategory(raw); ok && strings.Contains(message, "额度不足") {
+			t.Fatalf("providerPayloadErrorCategory(%q) = %q, want no quota category", raw, message)
+		}
+	}
+	// 结算语境的稳定词仍然归到额度类目
+	for _, raw := range []string{"insufficient_quota", "insufficient_user_quota", "quota exceeded", "insufficient balance", "Insufficient Balance"} {
+		message, ok := providerPayloadErrorCategory(raw)
+		if !ok || !strings.Contains(message, "额度不足") {
+			t.Fatalf("providerPayloadErrorCategory(%q) = %q, %v; want 额度不足", raw, message, ok)
+		}
 	}
 }
 
@@ -954,6 +989,14 @@ func TestProviderUserFacingErrorMessageClassifiesRejectedRequestBodies(t *testin
 			statusCode: http.StatusBadRequest,
 			body:       `{"error":{"message":"Thinking mode does not support this tool_choice","request_id":"secret"}}`,
 			want:       "不支持强制工具调用",
+		},
+		{
+			// 真实上游原文：一轮里模型发了 4 个 canvas_inspect_image 调用，历史被
+			// 写成了 tool → user(图) → tool …，下一个请求被 DeepSeek 400 拒绝。
+			name:       "tool call/result pairing rejection",
+			statusCode: http.StatusBadRequest,
+			body:       `{"error":{"message":"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)","type":"invalid_request_error","code":"invalid_request_error"}}`,
+			want:       "工具调用与结果不匹配",
 		},
 	}
 	for _, tt := range tests {
