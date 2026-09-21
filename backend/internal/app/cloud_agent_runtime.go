@@ -172,7 +172,12 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	state.LastStepOperation = cloudAgentStepOperation
 	state.LastStepEstimate = pressure.EstimatedInputTokens
 	state.LastStepSourceBytes = pressure.SourceBytes
-	state.event(task.ID, "context_pressure", cloudAgentContextPressurePayload(pressure, &state))
+	// 第一步的模型调用就是根任务本身，requestId 就是它；窗口在这里是"起始状态"而不是
+	// "刚刚识别"，因此只播种标记、不落 window_resolved 过渡（否则每轮开头都会报一次"已识别"）。
+	state.ContextWindowKnown = pressure.ModelLimitConfigured
+	firstPressure := cloudAgentContextPressurePayload(pressure, &state)
+	firstPressure["requestId"] = task.ID
+	state.event(task.ID, "context_pressure", firstPressure)
 	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
 	if err := cloudAgentSave(run, &state); err != nil {
 		return err
