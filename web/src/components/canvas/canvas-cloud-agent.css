@@ -90,10 +90,11 @@
     margin-bottom: var(--space-5);
     border-radius: 50%;
     background:
-        radial-gradient(circle at 32% 24%, var(--color-neutral-0), transparent 36%),
-        radial-gradient(circle at 70% 80%, var(--palette-node-audio), transparent 64%),
+        radial-gradient(circle at 32% 24%, var(--color-neutral-0), transparent 36%), radial-gradient(circle at 70% 80%, var(--palette-node-audio), transparent 64%),
         radial-gradient(circle at 35% 65%, color-mix(in srgb, var(--agent-accent) 65%, var(--color-neutral-0)), var(--agent-accent));
-    box-shadow: inset -4px -6px 14px color-mix(in srgb, var(--agent-accent) 28%, transparent), 0 8px 32px color-mix(in srgb, var(--agent-accent) 14%, transparent);
+    box-shadow:
+        inset -4px -6px 14px color-mix(in srgb, var(--agent-accent) 28%, transparent),
+        0 8px 32px color-mix(in srgb, var(--agent-accent) 14%, transparent);
 }
 
 .agent-welcome-intro h2 {
@@ -133,7 +134,9 @@
     color: var(--agent-caption);
     text-align: left;
     cursor: pointer;
-    transition: background-color 160ms ease, color 160ms ease;
+    transition:
+        background-color 160ms ease,
+        color 160ms ease;
 }
 
 .agent-welcome-actions button:hover:not(:disabled) {
@@ -221,22 +224,39 @@
         gap: var(--space-2);
         padding-inline: var(--space-4);
     }
-    .agent-panel-status { white-space: nowrap; }
-    .agent-conversation { padding-inline: var(--space-4); }
-    .agent-welcome-actions button { padding-inline: var(--space-2); }
+    .agent-panel-status {
+        white-space: nowrap;
+    }
+    .agent-conversation {
+        padding-inline: var(--space-4);
+    }
+    .agent-welcome-actions button {
+        padding-inline: var(--space-2);
+    }
 }
 
 @media (max-width: 639px) {
-    .canvas-agent-panel { border-end-start-radius: 0; border-end-end-radius: 0; }
-    .agent-composer-wrap { padding-bottom: max(var(--space-4), env(safe-area-inset-bottom)); }
+    .canvas-agent-panel {
+        border-end-start-radius: 0;
+        border-end-end-radius: 0;
+    }
+    .agent-composer-wrap {
+        padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+    }
 }
 
 @media (prefers-reduced-transparency: reduce) {
-    .canvas-agent-panel { background: var(--agent-material-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    .canvas-agent-panel {
+        background: var(--agent-material-solid);
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .agent-welcome-actions button { transition: none; }
+    .agent-welcome-actions button {
+        transition: none;
+    }
 }
 
 /* Agent 浮窗高于普通画布层，模型菜单必须叠在对话窗之上；菜单本身与全站二级选择器同一套。 */
@@ -417,7 +437,9 @@
     line-height: 17px;
     overflow-wrap: anywhere;
     text-align: left;
-    transition: background-color 140ms ease, color 140ms ease;
+    transition:
+        background-color 140ms ease,
+        color 140ms ease;
 }
 
 .agent-tool-action-link:not(:disabled) {
@@ -454,7 +476,9 @@
 
 @media (prefers-reduced-motion: reduce) {
     .agent-tool-row,
-    .agent-tool-action-link { transition: none; }
+    .agent-tool-action-link {
+        transition: none;
+    }
 }
 
 .agent-composer-prompt-scroll {
@@ -486,7 +510,9 @@
     height: 3px;
     border-radius: 999px;
     background: color-mix(in srgb, currentColor 20%, transparent);
-    transition: background-color 140ms ease, width 140ms ease;
+    transition:
+        background-color 140ms ease,
+        width 140ms ease;
 }
 
 .agent-composer-resize-handle:hover > span,
@@ -580,7 +606,7 @@
     border: 2px solid var(--background);
     border-radius: 50%;
     background: #57b786;
-    box-shadow: 0 2px 7px rgba(23, 90, 61, .28);
+    box-shadow: 0 2px 7px rgba(23, 90, 61, 0.28);
 }
 
 .canvas-agent-launcher-status.is-pending {
@@ -605,7 +631,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .canvas-agent-launcher { transition: none !important; }
+    .canvas-agent-launcher {
+        transition: none !important;
+    }
 }
 
 .agent-composer-send-hint {
@@ -664,9 +692,118 @@
     stroke-linecap: round;
 }
 
-.agent-context-pressure[data-tone="warning"] .agent-context-pressure-value { stroke: #d6a24a; }
-.agent-context-pressure[data-tone="critical"] .agent-context-pressure-value { stroke: #e66b6b; }
-.agent-context-pressure[data-tone="unknown"] .agent-context-pressure-unknown { stroke: color-mix(in srgb, currentColor 38%, transparent); }
+.agent-context-pressure[data-tone="warning"] .agent-context-pressure-value {
+    stroke: #d6a24a;
+}
+.agent-context-pressure[data-tone="critical"] .agent-context-pressure-value {
+    stroke: #e66b6b;
+}
+.agent-context-pressure[data-tone="unknown"] .agent-context-pressure-unknown {
+    stroke: color-mix(in srgb, currentColor 38%, transparent);
+}
+
+/*
+ * Context Meter v2：主读数与治理读数是两把尺子（设计方向 §2/§3）。
+ * 上游实测用实心；本地估算降低描边不透明度（弧长由内联 strokeDasharray 控制，不能改成虚线，
+ * 否则会把"用了多少"画成"断了几段"），并在数字上加 `~` 前缀与弹窗里的来源标签。
+ * 治理阈值单独一条，不再拿它染圆环的颜色。
+ */
+.agent-context-pressure[data-source="estimate"] .agent-context-pressure-value {
+    stroke-opacity: 0.72;
+}
+.agent-context-pressure[data-source="estimate"] .agent-context-pressure-track {
+    stroke-opacity: 0.6;
+}
+
+.agent-context-pressure-source {
+    margin-left: 6px;
+    border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+    border-radius: 999px;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 400;
+    opacity: 0.8;
+}
+
+.agent-context-pressure-source[data-source="provider"] {
+    border-color: color-mix(in srgb, #68b493 62%, transparent);
+    color: #4f9c7c;
+    opacity: 1;
+}
+
+.agent-context-pressure-subtitle {
+    margin-top: 2px;
+    font-weight: 600;
+    opacity: 0.85;
+}
+
+/* 治理阈值条：阈值刻度画在条上，读数超过阈值时用 warning 色，与主圆环互不干涉。 */
+.agent-context-governance-bar {
+    position: relative;
+    height: 6px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.agent-context-governance-bar [data-bucket="used"] {
+    display: block;
+    height: 100%;
+    background: #68b493;
+}
+
+.agent-context-governance-bar [data-bucket="threshold"] {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    width: 1px;
+    background: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+.agent-context-governance-bar[data-basis="bytes"] [data-bucket="used"] {
+    background: #d6a24a;
+}
+
+/* 最近变化：每一次下降都要能对上"压缩 / 裁剪 / 口径变化"。 */
+.agent-context-transition-list {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.agent-context-transition-list li {
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+}
+
+.agent-context-transition-list li[data-direction="down"] .agent-context-transition-mark {
+    color: #d6a24a;
+}
+.agent-context-transition-list li[data-direction="up"] .agent-context-transition-mark {
+    color: #68b493;
+}
+.agent-context-transition-list li[data-direction="note"] .agent-context-transition-mark {
+    opacity: 0.55;
+}
+
+.agent-context-transition-mark {
+    flex: 0 0 auto;
+    font-size: 9px;
+    line-height: 16px;
+}
+
+/* 圆环旁的"治理"提示：治理阈值更高时说明圆环为什么不是那个数，而不是把圆环染红。 */
+.agent-context-pressure-governance {
+    border-radius: 999px;
+    background: color-mix(in srgb, #d6a24a 22%, transparent);
+    color: #b07f22;
+    padding: 0 5px;
+    font-size: 10px;
+    line-height: 16px;
+}
 
 /*
  * 压力弹窗的内容会随分段增多而变长（上游实测 + 占用分布 + 9 个系统提示分段），
@@ -874,7 +1011,9 @@
     font-size: 17px;
     line-height: 12px;
     transform: translateY(-1px);
-    transition: color 160ms ease, transform 160ms ease;
+    transition:
+        color 160ms ease,
+        transform 160ms ease;
 }
 
 .agent-reasoning-card[open] .agent-reasoning-chevron {
@@ -903,15 +1042,26 @@
 }
 
 @keyframes agent-reasoning-pulse {
-    0%, 100% { opacity: .55; transform: scale(.82); }
-    50% { opacity: 1; transform: scale(1); }
+    0%,
+    100% {
+        opacity: 0.55;
+        transform: scale(0.82);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1);
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {
     .agent-reasoning-card,
-    .agent-reasoning-chevron { transition: none; }
+    .agent-reasoning-chevron {
+        transition: none;
+    }
 
-    .agent-reasoning-status-dot { animation: none; }
+    .agent-reasoning-status-dot {
+        animation: none;
+    }
 }
 
 .agent-working-indicator {
@@ -1036,11 +1186,26 @@
     line-height: 16px;
 }
 
-.canvas-agent-approval-operation-add_node { background: #dcfce7; color: #166534; }
-.canvas-agent-approval-operation-update_node { background: #dbeafe; color: #1d4ed8; }
-.canvas-agent-approval-operation-connect_nodes { background: #fef3c7; color: #92400e; }
-.canvas-agent-approval-operation-arrange_nodes { background: #ccfbf1; color: #115e59; }
-.canvas-agent-approval-operation-generate_media { background: #f3e8ff; color: #7e22ce; }
+.canvas-agent-approval-operation-add_node {
+    background: #dcfce7;
+    color: #166534;
+}
+.canvas-agent-approval-operation-update_node {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+.canvas-agent-approval-operation-connect_nodes {
+    background: #fef3c7;
+    color: #92400e;
+}
+.canvas-agent-approval-operation-arrange_nodes {
+    background: #ccfbf1;
+    color: #115e59;
+}
+.canvas-agent-approval-operation-generate_media {
+    background: #f3e8ff;
+    color: #7e22ce;
+}
 
 .canvas-agent-approval-node,
 .canvas-agent-approval-node-button {
@@ -1166,7 +1331,10 @@
     padding: 0 14px;
     font-size: 13px;
     font-weight: 600;
-    transition: background-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+    transition:
+        background-color 140ms ease,
+        box-shadow 140ms ease,
+        opacity 140ms ease;
 }
 
 .canvas-agent-approval-actions button:focus-visible,
@@ -1205,13 +1373,24 @@
 }
 
 @media (max-width: 420px) {
-    .canvas-agent-approval-badge { display: none; }
-    .canvas-agent-approval-actions button { flex: 1; }
+    .canvas-agent-approval-badge {
+        display: none;
+    }
+    .canvas-agent-approval-actions button {
+        flex: 1;
+    }
 }
 
 @keyframes agent-working-pulse {
-    0%, 100% { transform: scale(0.65); opacity: 0.45; }
-    50% { transform: scale(1); opacity: 1; }
+    0%,
+    100% {
+        transform: scale(0.65);
+        opacity: 0.45;
+    }
+    50% {
+        transform: scale(1);
+        opacity: 1;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1326,7 +1505,9 @@
     font-size: var(--fs-body-lg);
     text-align: left;
     overflow-wrap: anywhere;
-    transition: background-color var(--motion-dur-fast) ease, color var(--motion-dur-fast) ease;
+    transition:
+        background-color var(--motion-dur-fast) ease,
+        color var(--motion-dur-fast) ease;
 }
 
 .canvas-agent-skill-library-tab::before {
@@ -1433,7 +1614,9 @@
     min-width: 0;
     border: 0;
     border-radius: var(--r-2xl);
-    transition: transform var(--motion-state) var(--motion-ease-out), background-color var(--motion-state) ease;
+    transition:
+        transform var(--motion-state) var(--motion-ease-out),
+        background-color var(--motion-state) ease;
 }
 
 .canvas-agent-skill-card:hover,
@@ -1780,11 +1963,7 @@
 
 .agent-context-breakdown-bar > span[data-bucket="unused"],
 .agent-context-breakdown-dot[data-bucket="unused"] {
-    background: repeating-linear-gradient(
-        135deg,
-        color-mix(in srgb, currentColor 8%, transparent) 0 3px,
-        color-mix(in srgb, currentColor 3%, transparent) 3px 6px
-    );
+    background: repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent) 0 3px, color-mix(in srgb, currentColor 3%, transparent) 3px 6px);
 }
 
 .agent-context-breakdown-list,

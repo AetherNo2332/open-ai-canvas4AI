@@ -66,8 +66,9 @@ type agentToolRequests struct {
 }
 
 type providerTextMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role               string `json:"role"`
+	Content            string `json:"content"`
+	AgentContextSource string `json:"agentContextSource,omitempty"`
 }
 
 type providerConfig struct {

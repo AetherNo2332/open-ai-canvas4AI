@@ -5,6 +5,29 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 批量生图、刷新恢复与画布节点一致性
+
+- [x] 专项回归 127 项通过，覆盖同步编辑命令、按节点结果提交、批次汇总、资源槽位、空间索引、相邻媒体逻辑、revision 合并与存储清理；前端类型检查通过。
+- [x] 真实生成消费及持久化模块集成测试：两张成功、三张失败，在结果保存期间新增节点、改名和移动；重新读取模拟浏览器存储后，结果与用户编辑均保留。该测试曾复现“内存有节点、存储缺节点”，修复后通过。
+- [ ] 使用真实登录账号连接两张已有参考图，提示词包含 `@图片1` 和 `@图片2`，批量生成五张并重试失败子图；验证生成、提示词标签和参考图顺序一致，分组父图不冒充输入。
+- [ ] 真实任务两成三败后刷新，检查两张成功图、三个失败节点、父图失败数量和素材 ID；在生成中拖动、改名、新增、删除其他节点，保存后刷新复核。
+- [ ] 模拟预览尚未恢复但已有 storageKey，取消或重新生成批次，确认不会删除成功图片；删除后重新分组的子图不受旧批次清理影响。
+- [ ] 真实大画布在明暗主题下反复平移缩放，覆盖 280/420/720 原预算边界、批次折叠/展开和多选拖拽；确认可见节点不缺失，并记录极端缩小的帧率和内存。纯函数可见性测试不代替渲染性能验收。
+- [ ] 任务发现接口断网、最近任务超过 100 条、切换画布和账号时验证：不能把未知状态标成失败，旧任务不能覆盖新任务，任务中心仍可核对结果。
+- [ ] 验证浏览器真实存储故障、服务端同步失败、跨设备并发编辑及生成后立即关闭页面；本轮没有启动开发服务、访问真实用户数据或调用付费模型。
+- [ ] 历史已丢节点需单独恢复；本次修复不自动重建原位置、连线和提示词。架构与已知限制见 `docs/design/canvas-consistency-repair.mdx`。
+
+## 回收站彻底删除与画布工具引用
+
+- [ ] 素材卡片选择框恢复左上角，徽章为选择框和更多菜单让位；批量操作条取消吸顶覆盖，并与卡片网格保留间距。需在真实登录页面检查多选边框、长列表滚动、窄屏换行和明暗主题；自动浏览器访问被登录页拦截，样式约束测试不代替视觉验收。
+- [x] 新增 `POST /api/assets/batch-delete`，顶层 JSON 数组传入素材 ID；素材页及选择器的批量删除、清空回收站只发一次请求，后端批量事务处理，不按 ID 逐次提交。整批归属检查、事务失败回滚、同批共享资源回收与未选共享资源保留有专项覆盖。
+- [x] `DELETE /api/assets/:id` 明确表示彻底删除，不再依赖服务端素材状态判断是否位于回收站；即使本地已归档但服务端仍暂存为 `confirmed`，也不会受画布、任务或历史快照引用阻塞。事务会移除对应历史资源索引并通过删除 Outbox 释放未被其他素材复用的物理文件；内部普通删除仍保留引用保护。
+- [x] 画布提示词中的工具引用按“工具类型 + 工具 ID”区分，并使用最新提示词原子追加；相同数字 ID 的不同工具不会互相覆盖或把前一个标签回退成编码令牌。后端专项测试、前端工具集成测试和前端类型检查通过。
+- [x] 删除完成后退出用户数据同步队列，再异步刷新素材库与素材选择器分页缓存，避免删除与列表查询互相等待而无法关闭确认弹窗。去掉选择器删除后的重复刷新；刷新失败保留查询错误并记录告警，不误报删除失败。8 项批量删除与工具栏专项测试通过，包含真实 QueryObserver、分页加载与同步队列链路，以及刷新延迟、刷新失败场景（仅模拟 HTTP 响应）。
+- [ ] 在真实素材页及素材选择器中分别确认单条删除、批量删除和清空回收站：删除成功后确认弹窗关闭，列表刷新；限速或模拟列表请求失败时确认弹窗不被卡住，素材选择器外层窗口保持打开。
+- [ ] 在真实素材页分别验证单个彻底删除、选择 100 条后批量删除、清空回收站及过期自动清理；网络面板应显示单个批量 POST，body 为数组。确认后台清理完成后空间释放、原画布或任务中的旧媒体引用按预期失效、其他素材复用的文件仍可访问；失败时不出现部分删除。
+- [ ] 在真实画布快速连续选择两个不同工具，并覆盖相同数字 ID、中文标签、同类型替换和多个运镜工具，确认两个标签均正常显示、保存刷新后不乱码。
+
 ## 合并上游 v1.5.2–v1.5.7 后待复验（云端 Agent 持久化切换）
 
 合并后运行事件的活存储换成上游的 `cloud_agent_event_records`，我们自研的
@@ -33,6 +56,53 @@ SSE 的 `Last-Event-ID`）已按上游持久化结构重新实现。以下端到
 - [ ] **事件保留期 TTL**：本轮按决定不实现（要给上游事件表加 `expires_at` 列），需人工确认是否分叉。
 - [ ] 合并前已有的红灯：`TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered`
       （新增节点落在原点）与合并基线一致，本轮未修。
+
+## 云端 Agent：工具失败归类与可行动字段（handoff 工作项 B 第一步，2026-09-21）
+
+按 handoff 文档"推荐实施顺序"的第 1 步（**只加分类与指标、不改执行行为**）落地：
+
+- 新增 `backend/internal/app/cloud_agent_tool_error_class.go`：把工具失败归成五类 —— `invalid_model_output`（模型幻觉出的工具名、在本轮契约之外调用只被 `contextScope` 挡掉的工具）、`schema_error`（缺字段/类型错/未知字段/非法 JSON）、`state_conflict`（画布在读取之后被改动）、`permission_violation`（只读轮发起写入等真实授权边界）、`upstream_failure`（上游 4xx/5xx、超时、媒体上游拒绝），其余落 `tool_error`。
+- 每类附 `retryable` 与稳定的 `requiredAction`（`fix_arguments` / `reread_canvas` / `use_advertised_tools` / `ask_user` / `report_to_user`），只作为回执与事件的标注字段进入 `tool_failed`（`result.errorClass` / `result.errorClassLabel` / `result.retryable` / `result.requiredAction` 与载荷顶层 `errorClass`），**不参与任何放行或拒绝判定**。
+- 幻觉工具名的反馈也更具体了：过去一律回"工具未获本轮权限授权"，现在对不在平台工具集里的名字回"模型调用了不存在的工具「X」…请只使用本轮工具表里列出的工具"（handoff 验收项"未知工具归类为 invalid_model_output"）。
+- 前端工具卡失败时优先显示归类标签（"参数不符合契约"/"画布状态已变化"/"模型输出问题"/"超出本轮权限"/"上游故障"），比统一的"执行失败"更能说明下一步该做什么。
+- **缺必填字段的通用判定**：业务校验抛的多是普通 `AppError`（例如"分镜节点ID、分页参数或每页行数无效"），从错误类型看不出"模型漏了字段"。现在用**本轮实际暴露的 schema** 的 `required` 与模型参数比对，命中即按参数契约错误处理：归 `schema_error`、`requiredAction=fix_arguments`、把 schema 与 guidance 回给模型（handoff 要的自纠能力）；只在业务侧确实按参数问题拒绝（400/422）时套用，上游 5xx/网络错误即便同时漏字段也算 `upstream_failure`；已被分类过的参数错误不再套壳，避免覆盖工具更精确的反馈（如"缺少模型选择：必须复制 model_list 的 selection"）。
+- [x] 单测：10 个归类分支（含 contextScope 为空调画布工具、只读轮发起生成、上游 4xx/5xx、超时）、事件载荷与回执字段、缺必填字段归类与 schema 回传、字段齐备不误判、前端标签映射与兜底。
+- [x] 真机复验：让模型故意漏 `nodeId` 调 `canvas_read_storyboard` → `tool_failed` 载荷 = `errorClass=schema_error` / `errorClassLabel=参数不符合契约` / `requiredAction=fix_arguments` / `field=nodeId` / 附 `parameters`（部署 `dev-e4595d99`）；上一版（`dev-c1560763`）同一场景落到兜底 `tool_error`，即本次修真机前后对照。
+- [ ] 未做（handoff 后续步骤）：整批预检与"单步最多一个写工具"、strict schema 探测与本地校验、结构化纠错熔断、`selectionId`、完成闸门 `finish_run`/`completion_blocked`。
+
+## 云端 Agent：上下文计量 V2 事件与锚点治理（P1，2026-09-21）
+
+按设计方向 §4/§5/§6 补齐后端事件协议，全部是**附加字段**（旧字段与旧前端继续可用）：
+
+- **快照字段**：`context_pressure` 增加 `schemaVersion`(2) / `phase`(before_request) / `window{contextWindowTokens,reservedOutputTokens,usableInputTokens,overheadTokens,source}` / `anchor{id,valid,ageSteps}` / `measurementSource` / `normalizedInputTokens` / `projectedNextInputTokens` / `providerUsage{inputTokens,cacheReadTokens,uncachedInputTokens,outputTokens}`；发射点补 `requestId`（钉在即将发出的那次请求上，前端不必猜数字属于谁）。
+- **统一过渡事件**：新增 `context_transition`，`kind` 取 `semantic_compaction` / `body_eviction`（图片裁剪）/ `window_resolved` / `model_changed` / `route_changed`，带 `before`/`after`（sourceBytes、estimatedTokens、historyMessages、turns）与 `reason`。前端优先消费它，旧事件（`context_compacted`/`context_images_pruned`）保留兼容。
+- **§5 provider 归一化**：Claude 协议把缓存拆在 `input_tokens` 之外，现在按 `input + cache_creation + cache_read` 归一（此前实测输入系统性偏小 → 压力锚点偏低）；仅在出现 Claude 专有字段时换算，OpenAI 系（`prompt_tokens` 已含缓存）不受影响，避免重复计数。
+- **§6 锚点治理**：锚点带上口径签名（模型/渠道/逻辑模型/系统提示/工具 schema）与定锚的模型/渠道；出现"换模型/换线路/提示词或工具 schema 变化"即作废，超过 3 步未刷新也作废（真机实测过锚点冻结 3m16s / 8 条读数仍在参与压缩决策）；语义压缩完成后直接清锚点。
+- [x] 单测：快照字段齐全、窗口识别只落一条过渡、锚点超期与换模型作废（含 `model_changed` 过渡）、Claude 缓存归一 vs OpenAI 不重复计数。
+- [ ] 真机复验：换模型/长步数会话里能看到锚点作废与重新定锚；`context_transition` 与前端"最近变化"逐条对上。
+
+## 云端 Agent：上下文计量按设计方向重做（Context Meter v2 P0，2026-09-21）
+
+按 `CONTEXT-METER-V2-设计方向.md` 重做被 codex `9deb79b7` 跑偏的口径层（PR #30 曾把主圆环固定成本地估算、把上游实测降级成诊断行）：
+
+- **主读数恢复"实测优先"**：`web/src/lib/canvas/agent-context-meter.ts` 里 `headline` 在有采信锚点时取"锚点实测 + 本地增量"的下一步预计输入（来源 `provider`，实心），没有锚点才退回本地估算（来源 `estimate`，数字带 `~`、描边降透明度）；本地估算原值单独保留（`estimate.tokens`，`local_v1`）。
+- **窗口未确认不给百分比**：`headline.ratio` 在 `modelLimitConfigured=false` 或输入预算为 0 时为 `undefined`，圆环画成虚线空环并显示 `—`；窗口识别时进入"最近变化"（"模型窗口已识别"，§9.1 要求不能画成上下文骤降）。
+- **跨轮不归零**：新增 `agentContextMeterState()` 记住最近一次**有效实测**，新轮的本地估算不覆盖它（`carriedOver=true`，弹窗写明"沿用上一次有效实测"）；压缩/图片裁剪发生后治理代次 +1，旧实测随即过期并退回估算（§7.3）。
+- **两把尺子分开**：主圆环只表达"下一次请求占多少输入窗口"，服务端压缩阈值另有一根独立条（token 口径用百分比、字节兜底用字节/条数）；两者相差 ≥5% 时圆环旁出现"治理"标记，而不是把圆环染红（修掉 codex 引入的"圆环 2% 却 critical"）。
+- **每次下降都能解释**：新增 `agent-context-transitions.ts`，把 `context_compacted`（轮次/保留条数）、`context_images_pruned`（张数/保留轮次）、窗口识别、上游校准列进弹窗"最近变化"。
+
+- [x] 单测 8 条（真机父子轮样本）：实测优先、窗口未确认不出比例、窗口识别标记、跨轮不归零、压缩后实测过期、同轮上游校准、治理与主读数分离、下降有事件解释。
+- [ ] 真机复验（等部署）：连续两轮不出现无解释回退（上一轮末 6.61% → 下一轮初沿用 6.6% 而不是掉到 2.2%）；窗口识别时出现"模型窗口已识别"；压缩/裁剪后出现对应"最近变化"并退回估算。
+
+## 云端 Agent：codex PR #30 的偏差修复（2026-09-21）
+
+- **旧交接消息不再被算成真人轮次**：`agentContextSource` 是 PR #30 新增字段，部署前落库的"上一轮已结束（…）"一律失配 → 被计成真人轮次、跨轮历史被提前裁掉（实测旧格式两条都不再被识别）。现在 `cloudAgentWorkingContext` 用"结构化身份 **或** 紧跟 assistant 回复 + 旧版文案前缀"判断运行时帧（**canonical 的来源标记仍只认结构体字段**，用户自己写同样文本不会获得 continuation 身份）。
+- **历史重建保留来源标记**：`cloudAgentLegacyHistory` 与压缩重建过去只拷 `role`/`content`，会把交接身份抹掉；现在一并搬 `agentContextSource`。
+- **交接帧按字节封顶**：单个 `nodeId` 过去完全不截断（实测一组 5000 字符 ID 让帧达 399,503 字节，可越过下一轮 192KB 硬闸让用户收到"请新建对话"）；现在 `nodeId` 截 64 字符、整帧封顶 8 KiB，超限按"最近改动优先"裁剪并计入 `omittedCanvasChanges`。
+- **失败原因沿用脱敏口径**：交接帧里的 `failureReason` 现在过 `cloudAgentSafeUserMessage`，不合格退回固定说法（它要进下一轮提示词）。
+- **压缩收尾的轮次也有交接**：父轮 `HistoryIncludesCurrent=true` 时过去整段跳过，长会话反而拿不到"已提交任务/失败原因"；现在仍追加事实帧。
+- [x] 单测：旧格式轮次计数与裁剪、重建保留来源、帧字节上限与 ID 截断、失败原因脱敏。
+- [ ] 真机复验：继续一个部署前创建的老会话，确认不再出现"接着聊就忘掉前几轮"。
 
 ## 云端 Agent：删除轮内正文卸载（2026-09-21）
 
@@ -2822,3 +2892,8 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 入口精简与工具草稿复测：移除左侧工具菜单及图片节点提示词模板入口，保留图片风格 / 预设和其他节点模板入口。工具引用列表读取草稿改用空值判断，明确清空时不再从原始生成提示词回读旧标签。风格和预设的选择、替换、连续编辑、标签移除、全文清空及保存重载覆盖有图/空节点两种情况；5 个专项文件共 58 项通过，TypeScript 类型检查通过。实际页面仍需确认普通/放大编辑器均无图片提示词模板入口，以及风格和预设清空后重新聚焦不回填。
 
 主分支提交前复测：前端 `bun run test` 全量 1925 项通过，生产构建、类型检查、UI 退场 lint 通过；构建仍有大分块提示。同步了技能/工具标签结构与多行连接菜单的源码守护断言。后端 `go test ./...` 全量通过，工具、迁移、资源引用、handler 及工具预览权限/项目封面专项通过。本轮未执行真实模型调用、PostgreSQL 实库迁移或登录态浏览器验收，这些项目继续保留待验收。
+## Agent 续轮 handoff 与上下文计量口径
+
+- [x] 后端专项覆盖：结构化 handoff 最多保留 12 组真实画布改动并报告遗漏数；普通用户文本不能通过相似前缀伪装成 continuation；已提交任务保留非重放语义。
+- [x] 前端纯函数测试覆盖：Provider 锚点从 estimate 切换到 provider 时，主圆环和预算条仍使用同一份下一请求本地估算；压缩决策继续保留 Provider 投影。
+- [ ] 发布后用真实多步 Agent 运行验收：圆环不再因首个 Provider 锚点到达而跳变；图片裁剪和语义压缩后的真实下降仍能从对应事件解释；续轮不重复上一轮已落库的画布改动或已提交收费任务。

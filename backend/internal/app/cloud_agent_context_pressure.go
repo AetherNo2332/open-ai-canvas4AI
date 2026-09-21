@@ -56,6 +56,18 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		"compactionThresholdBytes": agentcontext.ThresholdBytes, "historyMessageThreshold": agentcontext.ThresholdHistoryMessages,
 		// 字节判据只在"没声明窗口"时兜底，token 口径才是主判据（前端与文档据此对齐"哪条线在管事"）。
 		"requestHardLimitBytes": cloudAgentRequestHardLimitBytes,
+		// provider usage measures the previous request; the estimate describes
+		// the next request. Consumers must not draw them as one series.
+		"readingScope": "next_request", "estimateMethod": "local_v1",
+		// 快照版本与相位：读数属于"下一次请求发出之前"的测量，消费方不必猜。
+		"schemaVersion": 2, "phase": "before_request",
+	}
+	if pressure.ModelLimitConfigured {
+		payload["window"] = map[string]any{
+			"contextWindowTokens": pressure.ContextWindowTokens, "reservedOutputTokens": pressure.ReservedOutputTokens,
+			"usableInputTokens": pressure.UsableInputTokens, "overheadTokens": pressure.OverheadTokens,
+			"source": firstNonEmpty(pressure.BudgetSource, "channel-model"),
+		}
 	}
 	if pressure.OverheadTokens > 0 {
 		payload["overheadTokens"] = pressure.OverheadTokens
@@ -88,6 +100,12 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 				"inputTokens": anchor.InputTokens, "cachedInputTokens": anchor.CachedTokens,
 				"uncachedInputTokens": max(0, anchor.InputTokens-anchor.CachedTokens), "outputTokens": anchor.OutputTokens,
 			}
+			payload["providerMeasurementScope"] = "previous_request"
+			payload["providerUsage"] = map[string]any{
+				"inputTokens": anchor.InputTokens, "cacheReadTokens": anchor.CachedTokens,
+				"uncachedInputTokens": max(0, anchor.InputTokens-anchor.CachedTokens),
+				"outputTokens":        anchor.OutputTokens,
+			}
 			// anchorDeltaTokens 的语义是"本地估算相对锚点那一步的增量"，与 projectedTokens 的分母无关，
 			// 前端拿它解释"较锚点 +N"，不能改成投影减估算。
 			delta := pressure.EstimatedInputTokens - anchor.EstimatedTokens
@@ -100,6 +118,19 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 	}
 	payload["projectedTokens"] = projectedTokens
 	payload["tokenSource"] = tokenSource
+	// v2 命名（设计 §4）：两种量纲各自命名，前端不需要靠 tokenSource 猜。
+	payload["measurementSource"] = tokenSource
+	if tokenSource == "provider" {
+		payload["normalizedInputTokens"] = state.TokenAnchor.InputTokens
+	} else {
+		payload["normalizedInputTokens"] = pressure.EstimatedInputTokens
+	}
+	payload["projectedNextInputTokens"] = projectedTokens
+	if anchor := state.TokenAnchor; anchor != nil {
+		payload["anchor"] = map[string]any{
+			"id": anchor.TaskID, "valid": anchor.Accepted, "ageSteps": max(0, state.Step-anchor.Step),
+		}
+	}
 	if scale, ok := payload["tokenScale"].(float64); ok && scale > 0 && pressure.UsableInputTokens > 0 {
 		payload["projectedPressureRatio"] = math.Min(9.99, float64(projectedTokens)/float64(pressure.UsableInputTokens))
 	}
@@ -256,4 +287,23 @@ func canonicalAgentRequestFromInput(input map[string]any) (canonicalAgentRequest
 		return canonicalAgentRequest{}, false
 	}
 	return canonical, true
+}
+
+// cloudAgentNoteContextWindowResolved 在"窗口从未确认变为已确认"时落一条 context_transition。
+//
+// 这一步只在读数口径变化时发生（例如早先拿不到模型能力、后来解析到了窗口）：真实上下文没有变小，
+// 界面必须能把它标成"模型窗口已识别"，否则一识别就画成骤降（真机实测 94% → 2.08%）。
+func cloudAgentNoteContextWindowResolved(runID string, state *cloudAgentRuntime, pressure cloudAgentContextPressure) {
+	if state == nil || runID == "" || !pressure.ModelLimitConfigured || state.ContextWindowKnown {
+		return
+	}
+	state.ContextWindowKnown = true
+	state.event(runID, "context_transition", map[string]any{
+		"kind": "window_resolved", "reason": "window_resolved",
+		"after": map[string]any{
+			"contextWindowTokens": pressure.ContextWindowTokens, "usableInputTokens": pressure.UsableInputTokens,
+			"source": firstNonEmpty(pressure.BudgetSource, "channel-model"),
+		},
+		"text": "模型窗口已识别：读数改用窗口口径，这不是上下文变少",
+	})
 }

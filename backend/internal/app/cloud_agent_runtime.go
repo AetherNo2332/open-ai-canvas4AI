@@ -128,6 +128,9 @@ type cloudAgentRuntime struct {
 	// cloud_agent_event_records，内存只保留最近一窗供摘要、记忆提取与卡死判定使用，
 	// 运行详情仍按 seq 分页读表。
 	EventSeqBase int `json:"-"`
+	// ContextWindowKnown 记录本轮是否已经看到过"模型窗口已确认"的读数：从未知变为已知时
+	// 要落一条 context_transition（界面据此标"模型窗口已识别"，而不是把口径切换画成上下文骤降）。
+	ContextWindowKnown bool `json:"contextWindowKnown,omitempty"`
 	// CanvasBatchHashes 记录本批（同一个助手消息内的多次工具调用）已经消费与产出的画布版本：
 	// 首元素是首个写入被校验时看到的版本，末元素是最近一次写入产出的版本。模型是在同一次读取的
 	// 基础上并发提交这批写入的，首个写入必然改变版本，因此同批后续写入需要据此重基。
@@ -169,7 +172,12 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	state.LastStepOperation = cloudAgentStepOperation
 	state.LastStepEstimate = pressure.EstimatedInputTokens
 	state.LastStepSourceBytes = pressure.SourceBytes
-	state.event(task.ID, "context_pressure", cloudAgentContextPressurePayload(pressure, &state))
+	// 第一步的模型调用就是根任务本身，requestId 就是它；窗口在这里是"起始状态"而不是
+	// "刚刚识别"，因此只播种标记、不落 window_resolved 过渡（否则每轮开头都会报一次"已识别"）。
+	state.ContextWindowKnown = pressure.ModelLimitConfigured
+	firstPressure := cloudAgentContextPressurePayload(pressure, &state)
+	firstPressure["requestId"] = task.ID
+	state.event(task.ID, "context_pressure", firstPressure)
 	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
 	if err := cloudAgentSave(run, &state); err != nil {
 		return err
@@ -502,6 +510,15 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 		state.event(run.ID, "context_images_pruned", map[string]any{
 			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
 			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",
+		})
+		// 同一件事再落一条统一的过渡事件（设计 §4 的 context_transition）：前端趋势图与
+		// "最近变化"都不必再为每种治理动作各写一套解析。
+		afterRaw, _ := json.Marshal(state.Canonical.Messages)
+		state.event(run.ID, "context_transition", map[string]any{
+			"kind": "body_eviction", "reason": "image_prune",
+			"after":        map[string]any{"sourceBytes": len(afterRaw), "estimatedTokens": estimateCloudAgentTokens(afterRaw), "historyMessages": len(state.Canonical.Messages)},
+			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
+			"text": "图片裁剪：移出超出保留轮次的看图结果",
 		})
 	}
 	if run.ID != "" {
@@ -915,6 +932,15 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
 			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",
 		})
+		// 同一件事再落一条统一的过渡事件（设计 §4 的 context_transition）：前端趋势图与
+		// "最近变化"都不必再为每种治理动作各写一套解析。
+		afterRaw, _ := json.Marshal(state.Canonical.Messages)
+		state.event(run.ID, "context_transition", map[string]any{
+			"kind": "body_eviction", "reason": "image_prune",
+			"after":        map[string]any{"sourceBytes": len(afterRaw), "estimatedTokens": estimateCloudAgentTokens(afterRaw), "historyMessages": len(state.Canonical.Messages)},
+			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
+			"text": "图片裁剪：移出超出保留轮次的看图结果",
+		})
 	}
 	canonical, contextErr := s.cloudAgentModelContext(run, &state, contextBudget)
 	if contextErr != nil {
@@ -1165,6 +1191,21 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		if !ok || detail == nil {
 			detail = map[string]any{}
 		}
+		// 模型漏了必填字段（或参数不是对象）时，即便业务校验抛的是普通 AppError，也按
+		// "参数契约错误"处理：把本轮实际暴露的 schema 回给模型，它才改得对，归类也随之变成
+		// schema_error（handoff 工作项 B：缺必填字段必须能自纠，且不能只算普通工具失败）。
+		// 只在"业务侧确实按参数问题拒绝了"（400/422）时才这么归类：上游 5xx 或网络错误
+		// 即便模型同时漏了字段，也该算上游故障，别把锅扣到参数上。
+		var appErr *AppError
+		var existingArgumentErr *cloudAgentArgumentError
+		if missing := cloudAgentMissingRequiredArguments(state.Canonical.Tools, call); len(missing) > 0 &&
+			!errors.As(err, &existingArgumentErr) &&
+			errors.As(err, &appErr) && appErr != nil && (appErr.Status == 400 || appErr.Status == 422) {
+			err = &cloudAgentFieldArgumentError{
+				error: &cloudAgentArgumentError{err},
+				Field: strings.Join(missing, ","), Issue: "required",
+			}
+		}
 		message := cloudAgentSafeToolError(err)
 		detail["error"] = message
 		var admissionErr *cloudAgentMediaAdmissionError
@@ -1193,6 +1234,17 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 			if call.Function.Name == "canvas_apply_ops" {
 				detail["exampleArguments"] = map[string]any{"snapshotHash": "<canvas_get_state.snapshotHash>", "ops": []any{map[string]any{"type": "add_node", "id": "<new-node-id>", "nodeType": "text", "content": "<content>"}}}
 			}
+		}
+		// 稳定归类 + 可行动字段（handoff 工作项 B 第一步）：只加标注，不改任何放行/拒绝判定。
+		// allowed 与执行器用的是同一份判定（cloudAgentToolAllowed 是纯函数，结果一致），
+		// 只在失败路径上算一次，成功路径不付这份开销。
+		if class, retryable, requiredAction := cloudAgentToolErrorClass(state.Request, call, err, cloudAgentToolAllowed(state.Request, call.Function.Name)); class != "" {
+			detail["errorClass"], detail["errorClassLabel"] = class, cloudAgentToolErrorLabel(class)
+			detail["retryable"] = retryable
+			if requiredAction != "" {
+				detail["requiredAction"] = requiredAction
+			}
+			payload["errorClass"] = class
 		}
 		result = detail
 		kind = "tool_failed"
@@ -1537,7 +1589,13 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 		var toolErr error
 		switch {
 		case !allowed:
-			toolErr = BadAuthRequest("工具未获本轮权限授权")
+			// 幻觉出来的工具名与"真被权限挡住"要分开反馈：前者模型根本不该发这个调用，
+			// 后者是授权边界问题（handoff 工作项 B 的分类要求）。
+			if !cloudAgentPlatformToolNames()[call.Function.Name] {
+				toolErr = BadAuthRequest("模型调用了不存在的工具「" + truncateRunes(call.Function.Name, 60) + "」，本轮已拒绝；请只使用本轮工具表里列出的工具")
+			} else {
+				toolErr = BadAuthRequest("工具未获本轮权限授权")
+			}
 		case call.Function.Name == "canvas_apply_ops":
 			result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "canvas_arrange_nodes":
@@ -1726,7 +1784,12 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				state.ContextCompaction.Status = "running"
 			} else {
 				if contextPressure != nil {
-					state.event(run.ID, "context_pressure", cloudAgentContextPressurePayload(*contextPressure, state))
+					// requestId 把读数钉在"即将发出的这次请求"上（设计 §4）：没有它，前端只能猜
+					// 哪个数字属于哪一次调用。
+					payload := cloudAgentContextPressurePayload(*contextPressure, state)
+					payload["requestId"] = task.ID
+					cloudAgentNoteContextWindowResolved(run.ID, state, *contextPressure)
+					state.event(run.ID, "context_pressure", payload)
 				}
 				// 记下发出去这份 canonical 的本地计价：任务回来时用它和上游实测配成锚点。
 				state.LastStepTaskID = task.ID
