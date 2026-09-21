@@ -19,9 +19,9 @@ jobs:
     defaults:
       run:
         working-directory: backend
-    # 后端有 5 个用例默认会静默跳过：3 个需要 CANVAS_TEST_POSTGRES_DSN，2 个用
-    # exec.LookPath("redis-server") 自起临时实例。只跑 go test ./... 而不备齐这两样，
-    # PostgreSQL 迁移 / 素材字节修复 / Redis 租约与缓存白名单这些路径就永远不会被执行。
+    # 后端有 5 个用例默认会静默跳过：3 个需要 CANVAS_TEST_POSTGRES_DSN（PostgreSQL 迁移、
+    # 素材字节修复、画布版本历史），2 个用 exec.LookPath("redis-server") 自起临时实例
+    # （Redis 租约、缓存白名单）。只跑 go test ./... 而不备齐这两样，这些路径永远不会被执行。
     services:
       postgres:
         image: postgres:16-alpine
@@ -57,6 +57,11 @@ jobs:
         run: |
           set -o pipefail
           go test -json ./... | tee "$RUNNER_TEMP/go-tests.jsonl"
+      - name: Ensure dependency-backed tests were not skipped
+        shell: bash
+        run: |
+          python3 ../.github/scripts/test_check_dependency_tests.py
+          python3 ../.github/scripts/check-dependency-tests.py "$RUNNER_TEMP/go-tests.jsonl"
       - name: Upload Go test timings
         if: always()
         uses: actions/upload-artifact@v4

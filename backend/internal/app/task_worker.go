@@ -227,8 +227,9 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		if code, _ := ChannelSlotFailureDetails(err); code != "" {
 			channelSlotFailedBeforeRequest = true
 		}
-		// 我方执行时限到点（单步墙钟或任务超时）不是"租约丢失"：续租可能正好被同一个
-		// 时限打断，此时必须继续走失败收尾，否则任务停在 running 被反复重跑。
+		// 续租使用独立 context，真实租约失效必须阻止写入；但我方执行时限到点
+		// （单步墙钟或任务超时）本身不是"租约丢失"：续租可能正好被同一个时限打断，
+		// 此时必须继续走失败收尾，否则任务停在 running 被反复重跑。
 		deadlineExpired := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		select {
 		case leaseErr := <-leaseLost:
@@ -313,11 +314,12 @@ func taskFailureMessage(err error) string {
 const taskLeaseRenewTimeout = 5 * time.Second
 
 // taskLeaseRenewContext 返回续租用的 context：只继承父 ctx 的值（渠道槽位、追踪信息），
-// 不继承它的取消。续租不能挂在"任务执行时限"上 —— 单步墙钟到点时 ctx 立刻过期，续租被掐断
-// 就会被误判成"租约丢失"，任务留在 running，等 45s 租约过期后被再次领取重跑
+// 不继承它的取消。续租必须比"这一条任务的执行时限"活得更久 —— 父 context 一旦到点，派生的
+// 续租 context 会立刻被取消，续租请求带着 context.Canceled 失败并被误判成"租约丢失"，
+// 任务于是停在 running，租约过期后又被其它 worker 重跑
 // （实测 30s 单步墙钟 + 大画布：一次调用变成三次上游请求，白烧两次生成）。
-func taskLeaseRenewContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), taskLeaseRenewTimeout)
+func taskLeaseRenewContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), taskLeaseRenewTimeout)
 }
 
 // taskExecutionTimeout 解析一次任务的执行墙钟：画布 Agent 的单步调用可以配秒级超时

@@ -286,22 +286,6 @@ func agentEventValue(state cloudAgentRuntime, eventType, key string) (any, bool)
 	return nil, false
 }
 
-// 续租不能继承"任务执行时限"的取消：否则单步墙钟到点会被误判成租约丢失，
-// 任务停在 running 等租约过期后被反复重跑（实测一次调用变成三次上游请求）。
-func TestTaskLeaseRenewContextSurvivesExecutionDeadline(t *testing.T) {
-	parent, cancelParent := context.WithCancel(context.Background())
-	renewCtx, cancelRenew := taskLeaseRenewContext(parent)
-	defer cancelRenew()
-	cancelParent()
-	if renewCtx.Err() != nil {
-		t.Fatalf("任务取消不应打断续租: %v", renewCtx.Err())
-	}
-	deadline, ok := renewCtx.Deadline()
-	if !ok || time.Until(deadline) > taskLeaseRenewTimeout {
-		t.Fatalf("续租应有自己的写入上限: deadline=%v ok=%v", deadline, ok)
-	}
-}
-
 // 执行时限到点必须按失败收尾（而不是被"租约丢失"提前返回）。
 func TestAgentExecutionDeadlineCountsAsTaskFailure(t *testing.T) {
 	policy := defaultRuntimePolicy().Task

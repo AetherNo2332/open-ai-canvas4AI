@@ -67,7 +67,12 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 	}
 	beforeHash := cloudAgentCanvasHash(doc)
 	if beforeHash != args.SnapshotHash {
-		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
+		// 上游按字段/原因归类这个错误（模型据此知道是 snapshotHash 过期），我方运行期还要靠
+		// errCloudAgentSnapshotConflict 走"重新读取画布再申请审批"的可恢复分支，因此两层都保留。
+		return nil, &cloudAgentFieldArgumentError{
+			error: &cloudAgentArgumentError{cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")},
+			Field: "snapshotHash", Issue: "stale_snapshot",
+		}
 	}
 	items, err := applyCloudAgentCanvasPlan(doc, args.Ops)
 	if err != nil {
@@ -87,7 +92,7 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 	nodes := creationMaps(doc["nodes"])
 	edges := creationMaps(doc["connections"])
 	items := make([]cloudAgentApprovalPreviewItem, 0, len(ops))
-	for _, op := range ops {
+	for opIndex, op := range ops {
 		title, content := "", ""
 		if op.Title != nil {
 			title = *op.Title
@@ -160,7 +165,7 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 				return nil, BadAuthRequest("连线端点不存在或指向自身")
 			}
 			if err := validateCloudAgentConnection(nodes, op.FromNodeID, op.ToNodeID, edges); err != nil {
-				return nil, err
+				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", cloudAgentSafeToolError(err))
 			}
 			for _, edge := range edges {
 				if stringValue(edge["id"]) == op.ID || (stringValue(edge["fromNodeId"]) == op.FromNodeID && stringValue(edge["toNodeId"]) == op.ToNodeID) {
@@ -180,7 +185,10 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 			})
 		case "update_node":
 			if len(op.Patch) == 0 {
-				return nil, BadAuthRequest("更新节点必须提供 patch")
+				// 漏字段是模型照 schema 就能自己修好的参数错误：当成工具结果回给它重试，
+				// 而不是判整轮失败（用户只在失败提示里看到一句"必须提供 patch"）。
+				// 未知操作类型仍按准入失败终止（cloud_agent_test.go 有用例断言这一行为）。
+				return nil, &cloudAgentArgumentError{BadAuthRequest("更新节点必须提供 patch")}
 			}
 			if index < 0 {
 				return nil, BadAuthRequest("只能更新现有且受 Agent 支持的节点")

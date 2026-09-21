@@ -48,33 +48,36 @@ type cloudAgentApproval struct {
 	Reason    string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
-	RuntimeRunID           string                    `json:"-"`
-	Request                CloudAgentRequest         `json:"request"`
-	Policy                 cloudAgentPolicySnapshot  `json:"policy"`
-	ParentID               string                    `json:"parentId,omitempty"`
-	Fingerprint            string                    `json:"fingerprint,omitempty"`
-	CreativeAnchor         cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
-	TextHistory            []providerTextMessage     `json:"textHistory,omitempty"`
-	Skills                 []cloudAgentSkill         `json:"skills"`
-	SkillReads             map[string]bool           `json:"skillReads,omitempty"`
-	Profile                cloudAgentProfileSnapshot `json:"profile"`
-	ProfileReads           map[string]bool           `json:"profileReads,omitempty"`
-	Canonical              canonicalAgentRequest     `json:"canonical"`
-	ActiveTaskID           string                    `json:"activeTaskId"`
-	ActiveTextDraft        string                    `json:"activeTextDraft,omitempty"`
-	MediaTaskID            string                    `json:"mediaTaskId,omitempty"`
-	TaskIDs                []string                  `json:"taskIds"`
-	Step                   int                       `json:"step"`
-	Generations            int                       `json:"generations"`
-	VideoSeconds           int                       `json:"videoSeconds"`
-	Calls                  []cloudAgentCall          `json:"calls"`
-	CallIndex              int                       `json:"callIndex"`
-	Approval               *cloudAgentApproval       `json:"approval,omitempty"`
-	Decisions              map[string]string         `json:"decisions"`
-	DecisionSettings       map[string]string         `json:"decisionSettings,omitempty"`
-	DecisionPreparedHashes map[string]string         `json:"decisionPreparedHashes,omitempty"`
-	ActionNudged           bool                      `json:"actionNudged,omitempty"`
-	EmptyOutputNudged      int                       `json:"emptyOutputNudged,omitempty"`
+	RuntimeRunID    string                    `json:"-"`
+	Request         CloudAgentRequest         `json:"request"`
+	Policy          cloudAgentPolicySnapshot  `json:"policy"`
+	ParentID        string                    `json:"parentId,omitempty"`
+	Fingerprint     string                    `json:"fingerprint,omitempty"`
+	CreativeAnchor  cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
+	TextHistory     []providerTextMessage     `json:"textHistory,omitempty"`
+	Skills          []cloudAgentSkill         `json:"skills"`
+	SkillReads      map[string]bool           `json:"skillReads,omitempty"`
+	Profile         cloudAgentProfileSnapshot `json:"profile"`
+	ProfileReads    map[string]bool           `json:"profileReads,omitempty"`
+	Canonical       canonicalAgentRequest     `json:"canonical"`
+	ActiveTaskID    string                    `json:"activeTaskId"`
+	ActiveTextDraft string                    `json:"activeTextDraft,omitempty"`
+	MediaTaskID     string                    `json:"mediaTaskId,omitempty"`
+	TaskIDs         []string                  `json:"taskIds"`
+	Step            int                       `json:"step"`
+	Generations     int                       `json:"generations"`
+	VideoSeconds    int                       `json:"videoSeconds"`
+	Calls           []cloudAgentCall          `json:"calls"`
+	CallIndex       int                       `json:"callIndex"`
+	// ToolRepairs 是按工具计数的自动纠错名额（上游侧）：同一次写入连续参数出错时不因中途
+	// 读取而重置，第三次才以 tool_retry_exhausted 终止（见 cloud_agent_tool_repair.go）。
+	ToolRepairs            map[string]cloudAgentToolRepair `json:"toolRepairs,omitempty"`
+	Approval               *cloudAgentApproval             `json:"approval,omitempty"`
+	Decisions              map[string]string               `json:"decisions"`
+	DecisionSettings       map[string]string               `json:"decisionSettings,omitempty"`
+	DecisionPreparedHashes map[string]string               `json:"decisionPreparedHashes,omitempty"`
+	ActionNudged           bool                            `json:"actionNudged,omitempty"`
+	EmptyOutputNudged      int                             `json:"emptyOutputNudged,omitempty"`
 	// EmptyOutputEscalated 记录"空输出已经升级重试过几次"（关思考 + 放大输出预算）。
 	EmptyOutputEscalated int `json:"emptyOutputEscalated,omitempty"`
 	// StepTimeoutEscalated 记录"单步墙钟到点后已经关思考重试过几次"。
@@ -316,6 +319,14 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	}
 	if state.CallIndex < 0 || state.CallIndex > len(state.Calls) || len(state.Calls) > cloudAgentMaxToolCalls {
 		return errors.New("Agent runtime call cursor is invalid")
+	}
+	for toolName, repair := range state.ToolRepairs {
+		if toolName == "" || utf8.RuneCountInString(toolName) > 80 || repair.Attempt < 1 || repair.Attempt > cloudAgentToolAttemptLimit || repair.GroupID == "" {
+			return errors.New("Agent runtime tool repair state is invalid")
+		}
+		if err := validateCloudAgentID(repair.GroupID, "工具纠错组 ID", 240); err != nil {
+			return err
+		}
 	}
 	if state.ActiveTaskID != "" && state.MediaTaskID != "" {
 		return errors.New("Agent runtime has multiple active tasks")
@@ -1131,7 +1142,7 @@ func cloudAgentSafeMediaTaskError(task *model.Task) string {
 	return detail
 }
 
-func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgentCall, result any, err error) {
+func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgentCall, result any, err error) bool {
 	payload := map[string]any{"toolName": call.Function.Name, "callId": call.ID, "arguments": call.Function.Arguments}
 	if call.Function.Name == "skill_read_file" {
 		var args struct {
@@ -1151,7 +1162,7 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	kind := "tool_completed"
 	if err != nil {
 		detail, ok := result.(map[string]any)
-		if !ok {
+		if !ok || detail == nil {
 			detail = map[string]any{}
 		}
 		message := cloudAgentSafeToolError(err)
@@ -1178,6 +1189,9 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 			detail["guidance"] = "本次调用未执行，请按 parameters 修正参数后重试，不要重复提交相同的错误参数"
 			if call.Function.Name == "canvas_get_state" {
 				detail["exampleArguments"] = map[string]any{}
+			}
+			if call.Function.Name == "canvas_apply_ops" {
+				detail["exampleArguments"] = map[string]any{"snapshotHash": "<canvas_get_state.snapshotHash>", "ops": []any{map[string]any{"type": "add_node", "id": "<new-node-id>", "nodeType": "text", "content": "<content>"}}}
 			}
 		}
 		result = detail
@@ -1207,8 +1221,10 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		}
 		state.CallIndex++
 		state.Approval = nil
-		return
+		// 看图是只读成功路径，不占自动纠错名额（那名额只给写/生成类工具的预执行参数错误）。
+		return false
 	}
+	exhausted := cloudAgentTrackToolRepair(runID, state, call, result, err, payload)
 	raw, _ := json.Marshal(cloudAgentModelToolResult(call.Function.Name, result))
 	payload["result"] = result
 	if call.Function.Name == "skill_read_file" && err == nil {
@@ -1227,6 +1243,7 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": string(raw)})
 	state.CallIndex++
 	state.Approval = nil
+	return exhausted
 }
 
 // cloudAgentModelToolResult 是"面向模型的那一份"工具结果。
@@ -1445,7 +1462,7 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 				if mutationErr != nil {
 					var argumentErr *cloudAgentArgumentError
 					if errors.As(mutationErr, &argumentErr) {
-						cloudAgentToolResult(run.ID, state, call, nil, mutationErr)
+						cloudAgentRecordToolResult(current, state, call, nil, mutationErr)
 						return cloudAgentSave(current, state)
 					}
 					// 过期快照是并发编辑的正常结果，不是准入失败：把它作为工具结果交回模型，
@@ -1552,12 +1569,12 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 		if call.Function.Name == "ask_user" && toolErr == nil {
 			payload, _ := result.(map[string]any)
 			state.event(run.ID, "user_question", payload)
-			cloudAgentToolResult(run.ID, state, call, result, nil)
+			cloudAgentRecordToolResult(current, state, call, result, nil)
 			skipRemainingCloudAgentCalls(run.ID, state)
 			current.Status = "completed"
 			return cloudAgentSave(current, state)
 		}
-		cloudAgentToolResult(run.ID, state, call, result, toolErr)
+		cloudAgentRecordToolResult(current, state, call, result, toolErr)
 		return cloudAgentSave(current, state)
 	})
 }
@@ -1746,7 +1763,7 @@ func (s *Service) cloudAgentMediaError(run *model.CloudAgentExecution, state *cl
 			state.event(run.ID, "run_failed", map[string]any{"text": "Agent 媒体调用状态无效，本轮已停止"})
 			return cloudAgentSave(current, state)
 		}
-		cloudAgentToolResult(run.ID, state, state.Calls[state.CallIndex], map[string]any{"phase": phase, "taskSubmitted": submitted}, err)
+		cloudAgentRecordToolResult(current, state, state.Calls[state.CallIndex], map[string]any{"phase": phase, "taskSubmitted": submitted}, err)
 		if submitted {
 			state.MediaTaskID = ""
 		}
