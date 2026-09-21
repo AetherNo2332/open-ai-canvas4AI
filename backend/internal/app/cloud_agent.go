@@ -23,18 +23,27 @@ const cloudAgentOperation = "cloud_agent"
 // turns reference the previous run, not a mutable in-memory conversation. This
 // reuses transactional billing, worker leases, cancellation and text replay.
 type CloudAgentRequest struct {
-	ReasoningMode   string   `json:"reasoningMode,omitempty"`
-	ProfileRevision string   `json:"profileRevision,omitempty"`
-	CanvasID        string   `json:"canvasId"`
-	Prompt          string   `json:"prompt"`
-	Model           string   `json:"model,omitempty"`
-	LogicalModelID  string   `json:"logicalModelId,omitempty"`
-	ChannelID       string   `json:"channelId,omitempty"`
-	ChannelModelKey string   `json:"channelModelKey,omitempty"`
-	PermissionMode  string   `json:"permissionMode"`
-	SkillIDs        []string `json:"skillIds,omitempty"`
-	ContextScope    []string `json:"contextScope"`
-	Budget          struct {
+	ReasoningMode   string `json:"reasoningMode,omitempty"`
+	ProfileRevision string `json:"profileRevision,omitempty"`
+	CanvasID        string `json:"canvasId"`
+	Prompt          string `json:"prompt"`
+	Model           string `json:"model,omitempty"`
+	LogicalModelID  string `json:"logicalModelId,omitempty"`
+	ChannelID       string `json:"channelId,omitempty"`
+	ChannelModelKey string `json:"channelModelKey,omitempty"`
+	// VisionEnabled 决定是否给模型暴露看图工具，由服务端在创建 run 时按渠道模型合同
+	// （text.references.maxImages > 0）重新推导并覆盖，客户端传入值一律被忽略；
+	// 必须持久化：工具授权校验每步都从落库状态重建，丢掉这个标记会让模型看得见工具
+	// 却被判为"未获本轮权限授权"。
+	VisionEnabled bool `json:"visionEnabled,omitempty"`
+	// HasMemories 决定是否暴露 recall_lessons：一条已批准记忆都没有时，这个工具只占
+	// schema 开销、没有任何可召回内容。与 VisionEnabled 同样由服务端在建 run 时推导并持久化，
+	// 工具授权每步从落库状态重建，两处必须看到同一个值。
+	HasMemories    bool     `json:"hasMemories,omitempty"`
+	PermissionMode string   `json:"permissionMode"`
+	SkillIDs       []string `json:"skillIds,omitempty"`
+	ContextScope   []string `json:"contextScope"`
+	Budget         struct {
 		MaxCredits         float64 `json:"maxCredits"`
 		MaxGenerationTasks int     `json:"maxGenerationTasks,omitempty"`
 		MaxVideoSeconds    int     `json:"maxVideoSeconds,omitempty"`
@@ -66,23 +75,35 @@ type cloudAgentState struct {
 }
 
 type CloudAgentRun struct {
-	ID             string              `json:"id"`
-	CanvasID       string              `json:"canvasId"`
-	ParentID       string              `json:"parentId,omitempty"`
-	Status         string              `json:"status"`
-	Revision       int64               `json:"revision"`
-	CleanupPending bool                `json:"cleanupPending,omitempty"`
-	FailureMessage string              `json:"failureMessage,omitempty"`
-	PermissionMode string              `json:"permissionMode"`
-	Model          string              `json:"model"`
-	CreatedAt      time.Time           `json:"createdAt"`
-	UpdatedAt      time.Time           `json:"updatedAt"`
-	Events         []CloudAgentEvent   `json:"events,omitempty"`
-	Skills         []cloudAgentSkill   `json:"skills,omitempty"`
-	Approval       *cloudAgentApproval `json:"approval,omitempty"`
-	SpentCredits   float64             `json:"spentCredits"`
-	Step           int                 `json:"step"`
-	ActiveMessage  map[string]string   `json:"activeMessage,omitempty"`
+	ID             string            `json:"id"`
+	CanvasID       string            `json:"canvasId"`
+	ParentID       string            `json:"parentId,omitempty"`
+	Status         string            `json:"status"`
+	Revision       int64             `json:"revision"`
+	CleanupPending bool              `json:"cleanupPending,omitempty"`
+	FailureMessage string            `json:"failureMessage,omitempty"`
+	PermissionMode string            `json:"permissionMode"`
+	Model          string            `json:"model"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
+	Events         []CloudAgentEvent `json:"events,omitempty"`
+	// 事件已全量落库：EventSeqBase 是返回的首条事件之前的已入库条数，EventCount 是累计条数，
+	// LatestSeq 是本次返回的最后一条序号，EventsTruncated 表示还有更早的记录可按需拉取。
+	EventSeqBase    int                 `json:"eventSeqBase,omitempty"`
+	EventCount      int                 `json:"eventCount,omitempty"`
+	LatestSeq       int                 `json:"latestSeq,omitempty"`
+	EventsTruncated bool                `json:"eventsTruncated,omitempty"`
+	Skills          []cloudAgentSkill   `json:"skills,omitempty"`
+	Approval        *cloudAgentApproval `json:"approval,omitempty"`
+	SpentCredits    float64             `json:"spentCredits"`
+	Step            int                 `json:"step"`
+	ActiveMessage   map[string]string   `json:"activeMessage,omitempty"`
+}
+
+// CloudAgentRunViewOptions 是运行详情的读取选项：sinceSeq 只取增量，eventLimit 控制默认页大小。
+type CloudAgentRunViewOptions struct {
+	SinceSeq   int
+	EventLimit int
 }
 
 func validateCloudAgentRequest(req *CloudAgentRequest) error {
@@ -262,7 +283,7 @@ func cloudAgentRunTerminal(status string) bool {
 	return status == "completed" || status == "failed" || status == "cancelled" || status == "rejected"
 }
 
-func (s *Service) CloudAgentRun(userID, id string) (*CloudAgentRun, error) {
+func (s *Service) CloudAgentRun(userID, id string, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
 	task, state, err := s.cloudAgentTask(userID, id)
 	if err != nil {
 		return nil, err
@@ -279,13 +300,13 @@ func (s *Service) CloudAgentRun(userID, id string) (*CloudAgentRun, error) {
 	} else if lookupErr != nil {
 		return nil, lookupErr
 	}
-	return s.cloudAgentExecutionOutput(task, state)
+	return s.cloudAgentExecutionOutput(task, state, options...)
 }
 
 // CloudAgentRunIfChanged keeps idle event streams on a small indexed read.
 // The persisted revision, not a process-local notification, is authoritative
 // across instances and after missed/disconnected notifications.
-func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64) (*CloudAgentRun, error) {
+func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
 	current, err := s.repo.CloudAgentRevision(userID, id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, kernel.NotFound("Agent 运行不存在")
@@ -296,7 +317,7 @@ func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64) (*Cl
 	if current == revision {
 		return nil, nil
 	}
-	return s.CloudAgentRun(userID, id)
+	return s.CloudAgentRun(userID, id, options...)
 }
 
 // CreateCloudAgentRun validates every capability before admission. The task PK
@@ -359,7 +380,9 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err := s.advanceCloudAgentByID(userID, parentID); err != nil {
 			return nil, err
 		}
-		parentRun, err := s.CloudAgentRun(userID, parentID)
+		// 续轮的收束要读上一轮**全部**事件（默认页只有最近 100 条）：
+		// 长会话一旦被截断，新轮就看不到上一轮改过哪些节点，表现为"忘了自己做过什么"。
+		parentRun, err := s.CloudAgentRun(userID, parentID, CloudAgentRunViewOptions{EventLimit: cloudAgentContinuationEventLimit})
 		if err != nil {
 			return nil, err
 		}
@@ -376,6 +399,8 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err != nil {
 			return nil, WrapAppError(409, "上一轮 Agent 历史记录不完整，无法继续对话；请新建对话", err)
 		}
+		// 跨轮只继承"视觉事实"：已经看过的画面与模型写下的观察（锚点会按当前画布重建）。
+		creativeAnchor = parentState.CreativeAnchor
 		inheritedPlan = parentState.Plan
 		history = parentState.TextHistory
 		if history == nil {
@@ -385,28 +410,43 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err != nil {
 			return nil, err
 		}
-		// The user's goal survives a failed first model call too. Tool facts are
-		// context, not authorization to replay a write or charge a second time.
-		history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt})
-		for _, message := range parentState.Canonical.Messages {
-			if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
-				history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
+		// A compacted checkpoint already covers the completed parent turn. Other
+		// runs append the exact prompt/reply pair plus bounded execution facts, so
+		// failures and submitted work remain visible to the next turn. Cross-turn
+		// history is bounded by the semantic checkpoint, not by a fixed round cap.
+		if !parentState.HistoryIncludesCurrent {
+			// The user's goal survives a failed first model call too. Tool facts are
+			// context, not authorization to replay a write or charge a second time.
+			history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt})
+			for _, message := range parentState.Canonical.Messages {
+				if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+					history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
+				}
+			}
+			history = append(history, providerTextMessage{Role: "assistant", Content: text})
+			if strings.TrimSpace(context) != "" {
+				history = append(history, providerTextMessage{Role: "user", Content: context})
 			}
 		}
-		history = append(history, providerTextMessage{Role: "assistant", Content: text})
-		if strings.TrimSpace(context) != "" {
-			history = append(history, providerTextMessage{Role: "user", Content: context})
-		}
 	}
+	// 分工说明：跨轮历史由上游的 trimCloudAgentTextHistory 兜底（保最近 10 轮 + 64KB 字节闸），
+	// 它是**兜底裁剪**；轮内的语义压缩由我们的 token 线（输入预算的 85%）触发。
+	// 两者判断的对象不同（前者是跨轮 textHistory，后者是轮内 canonical 消息），不会互相打架。
 	history = trimCloudAgentTextHistory(history, cloudAgentHistoryKeepRounds, cloudAgentHistoryMaxBytes)
 	encodedHistory, err := json.Marshal(history)
 	if err != nil {
 		return nil, err
 	}
-	if len(encodedHistory) > cloudAgentHistoryMaxBytes {
-		return nil, BadAuthRequest("对话上下文超过 64KB，请新建对话")
+	// 语义压缩正常情况下让这份历史远低于硬安全上限；这里只给损坏/旧记录留最终序列化边界，
+	// 不恢复过去固定的八轮产品上限。
+	if len(encodedHistory) > 192<<10 {
+		return nil, BadAuthRequest("对话上下文超过 192KB 安全上限，请新建对话")
 	}
-	creativeAnchor, err = cloudAgentCreativeAnchorForCanvas(s.repo, userID, canvas, req.Prompt)
+	var inheritedAnchor *cloudAgentCreativeAnchor
+	if creativeAnchor.Version > 0 {
+		inheritedAnchor = &creativeAnchor
+	}
+	creativeAnchor, err = cloudAgentCreativeAnchorForCanvas(s.repo, userID, canvas, req.Prompt, inheritedAnchor)
 	if err != nil {
 		return nil, err
 	}
@@ -414,6 +454,10 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
+	// 看图能力取决于本轮渠道模型自己的合同，在建 run 时定格，运行期间不再变化。
+	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
+	// 个人记忆是长期积累的，建 run 时定格一次（运行期间不再变化）。
+	req.HasMemories = s.cloudAgentHasMemories(userID)
 	canvasSummary := ""
 	if len(req.ContextScope) != 0 {
 		canvasSummary, err = cloudAgentCanvasSummary(canvas)
@@ -428,9 +472,14 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	state := cloudAgentState{Version: 1, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	s.attachCloudAgentLessons(&canonical, userID, req.Prompt)
-	canonical.PromptCacheKey = cloudAgentPromptCacheKey(req.CanvasID, canonical.SystemPrompt)
+	// 必须登记进 state.Policy（值拷贝）：state 才是随任务持久化、被运行期读取的那份，
+	// 在这里改局部 policy 不会生效（state.Policy 是编译结果的值拷贝）。
+	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
+	canonical.PromptCacheKey = cloudAgentPromptCacheKey(req)
 	attachCloudAgentPlan(&canonical, inheritedPlan)
-	input := map[string]any{"mode": "text", "prompt": req.Prompt, "textHistory": history, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(policy.ReasoningMode)}, "cloudAgent": state,
+	// 根任务就是第一步模型调用：它的输出上限与后续每一步同源（策略解析结果），
+	// 否则"改配置"只影响第二步之后，第一步仍然按旧值跑。
+	input := map[string]any{"mode": "text", "prompt": req.Prompt, "textHistory": history, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(policy.ReasoningMode), "maxOutputTokens": cloudAgentStepOutputBudget(s.cloudAgentStepLimits(), false)}, "cloudAgent": state,
 		"agentRequests": map[string]any{"canonical": canonical},
 		"config":        map[string]any{"channelId": req.ChannelID, "channelModelKey": req.ChannelModelKey, "model": firstNonEmpty(req.ChannelModelKey, req.Model), "systemPrompt": system}}
 	task, err := s.CreateTask(userID, CreateTaskRequest{ProjectID: req.CanvasID, Type: "canvas_text", Operation: cloudAgentOperation, Prompt: req.Prompt, Model: req.Model, LogicalModelID: req.LogicalModelID, Input: input,
@@ -477,59 +526,90 @@ func cloudAgentLegacyHistory(messages []map[string]interface{}, currentPrompt st
 	return history
 }
 
+type cloudAgentDigestNode struct {
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Title    string         `json:"title"`
+	Metadata map[string]any `json:"metadata"`
+}
+
+// 轮首摘要每次运行都会重建、每一步都会重发，所以它的体积必须由构造保证有界，并且
+// 绝不能因为画布太大而判死整轮（上游原来的 64KB 硬上限就是直接拒绝整轮）。
+// 8KB 是我们自己的软预算：摘要只承诺存在性与规模，正文按需分页读取。
 const (
-	cloudAgentCanvasSummaryMaxNodes    = 80
-	cloudAgentCanvasSummaryBudgetBytes = 60 << 10
+	cloudAgentDigestBudgetBytes = 8 << 10
+	// 逐级降级第一档的节点数上限与上游摘要一致。
+	cloudAgentDigestNodeLimit = 80
+	cloudAgentDigestMinNodes  = 20
 )
 
 func cloudAgentCanvasSummary(canvas *model.CanvasProject) (string, error) {
 	var payload struct {
-		Nodes []struct {
-			ID       string         `json:"id"`
-			Type     string         `json:"type"`
-			Title    string         `json:"title"`
-			Metadata map[string]any `json:"metadata"`
-		} `json:"nodes"`
+		Nodes []cloudAgentDigestNode `json:"nodes"`
 	}
 	if err := json.Unmarshal([]byte(canvas.PayloadJSON), &payload); err != nil {
 		return "", BadAuthRequest("服务端画布内容无法解析，请先重新同步")
 	}
-	nodes := make([]map[string]any, 0)
-	for index, node := range payload.Nodes {
-		if index >= cloudAgentCanvasSummaryMaxNodes {
-			break
-		}
-		descriptor, known := cloudAgentNodeCapabilityForType(node.Type)
-		item := map[string]any{"id": truncateRunes(node.ID, 100), "type": truncateRunes(node.Type, 40), "title": truncateRunes(node.Title, 300)}
-		if known {
-			projected, err := cloudAgentProjectNodeFields(map[string]any{"title": node.Title}, node.Metadata, descriptor, descriptor.SummaryFields, 600, false, 0)
-			if err != nil {
-				return "", err
-			}
-			for key, value := range projected {
-				item[key] = value
-			}
-		} else {
-			item["agentSupported"] = false
-			item["agentUnsupportedReason"] = "仅展示基础信息；当前 Agent 不支持操作此类型节点"
-		}
-		nodes = append(nodes, item)
-		encoded, err := json.Marshal(nodes)
+	// 逐级降级：先丢节点细节，再减少节点数，最后只留计数。第一个落进预算的文档胜出，
+	// 最后一档（只留计数）永远落得进去。
+	for _, level := range []struct {
+		nodes  int
+		detail bool
+	}{
+		{cloudAgentDigestNodeLimit, true},
+		{cloudAgentDigestNodeLimit, false},
+		{cloudAgentDigestMinNodes, false},
+		{0, false},
+	} {
+		data, err := cloudAgentDigestJSON(canvas, payload.Nodes, level.nodes, level.detail)
 		if err != nil {
 			return "", err
 		}
-		if len(encoded) > cloudAgentCanvasSummaryBudgetBytes {
-			nodes = nodes[:len(nodes)-1]
-			break
+		if len(data) <= cloudAgentDigestBudgetBytes || level.nodes == 0 {
+			return string(data), nil
 		}
 	}
-	summary := map[string]any{"title": truncateRunes(canvas.Title, 240), "savedAt": canvas.UpdatedAt, "totalNodes": len(payload.Nodes), "includedNodes": len(nodes), "nodes": nodes}
-	if omitted := len(payload.Nodes) - len(nodes); omitted > 0 {
-		summary["omittedNodes"] = omitted
+	return "", BadAuthRequest("服务端画布摘要无法生成")
+}
+
+func cloudAgentDigestJSON(canvas *model.CanvasProject, all []cloudAgentDigestNode, limit int, detail bool) ([]byte, error) {
+	included := min(len(all), max(0, limit))
+	nodes := make([]map[string]any, 0, included)
+	for _, node := range all[:included] {
+		item := map[string]any{"id": truncateRunes(node.ID, 100), "type": truncateRunes(node.Type, 40), "title": truncateRunes(node.Title, 300)}
+		descriptor, known := cloudAgentNodeCapabilityForType(node.Type)
+		if !known {
+			item["agentSupported"] = false
+			item["agentUnsupportedReason"] = "仅展示基础信息；当前 Agent 不支持操作此类型节点"
+			nodes = append(nodes, item)
+			continue
+		}
+		if !detail {
+			nodes = append(nodes, item)
+			continue
+		}
+		projected, err := cloudAgentProjectNodeFields(map[string]any{"title": node.Title}, node.Metadata, descriptor, descriptor.SummaryFields, 600, cloudAgentProjectionIndex, 0)
+		if err != nil {
+			return nil, err
+		}
+		for key, value := range projected {
+			item[key] = value
+		}
+		nodes = append(nodes, item)
 	}
-	data, err := json.Marshal(summary)
-	if err != nil {
-		return "", err
+	document := map[string]any{
+		"title": truncateRunes(canvas.Title, 240), "savedAt": canvas.UpdatedAt,
+		"totalNodes": len(all), "includedNodes": len(nodes), "nodes": nodes,
+		"scope": "本摘要只说明存在性与规模，不含逐行正文；需要正文时用 canvas_get_state 分页读取，按行编辑前用对应 read 工具读取真实 rowId 与 snapshotHash",
 	}
-	return string(data), nil
+	if omitted := len(all) - len(nodes); omitted > 0 {
+		// 两个键名同时给出：nodesOmitted 是我们的口径，omittedNodes 是上游调用方的口径。
+		document["nodesOmitted"] = omitted
+		document["omittedNodes"] = omitted
+		document["nodesOmittedHint"] = "被省略的节点仍然存在且可读；用 canvas_get_state 的 offset 继续分页读取"
+	}
+	if !detail && len(nodes) > 0 {
+		document["nodeDetailOmitted"] = true
+	}
+	return json.Marshal(document)
 }

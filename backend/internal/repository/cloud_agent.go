@@ -38,17 +38,68 @@ func (r *Repository) CloudAgent(userID, id string) (*model.CloudAgentExecution, 
 	return &run, err
 }
 
+// CloudAgentJournalWindow 是 hydrate 时载入的事件窗口条数。
+//
+// 事件全量在上游的 cloud_agent_event_records 里（append-only、按 run_id+sequence 主键），
+// 内存只保留最近这一窗供摘要、记忆提取与卡死判定使用；运行详情与 SSE 仍按 seq 分页读表，
+// 否则长跑 run 每读一次运行详情就要把整份 journal 拉进内存（读放大随轮数线性增长）。
+const CloudAgentJournalWindow = 40
+
 func (r *Repository) hydrateCloudAgent(run *model.CloudAgentExecution) error {
 	if run.CheckpointVersion < 2 {
 		return nil
 	}
-	if err := r.db.Where("run_id = ? AND user_id = ?", run.ID, run.UserID).Order("sequence").Find(&run.Journal).Error; err != nil {
+	// 只取最近一窗事件，再翻回升序；窗口之外的由分页查询按需补。
+	window := []model.CloudAgentEventRecord{}
+	if err := r.db.Where("run_id = ? AND user_id = ?", run.ID, run.UserID).
+		Order("sequence DESC").Limit(CloudAgentJournalWindow).Find(&window).Error; err != nil {
 		return err
+	}
+	run.Journal = make([]model.CloudAgentEventRecord, 0, len(window))
+	for index := len(window) - 1; index >= 0; index-- {
+		run.Journal = append(run.Journal, window[index])
 	}
 	if err := r.db.Where("run_id = ? AND user_id = ?", run.ID, run.UserID).Order("kind, sequence").Find(&run.Transcript).Error; err != nil {
 		return err
 	}
 	return nil
+}
+
+// CloudAgentEventRecords 取 seq > afterSeq 的事件（升序），用于增量拉取与 SSE 断线重连。
+func (r *Repository) CloudAgentEventRecords(userID, runID string, afterSeq, limit int) ([]model.CloudAgentEventRecord, error) {
+	if limit <= 0 {
+		limit = CloudAgentJournalWindow
+	}
+	records := []model.CloudAgentEventRecord{}
+	err := r.db.Where("run_id = ? AND user_id = ? AND sequence > ?", runID, userID, afterSeq).
+		Order("sequence ASC").Limit(limit).Find(&records).Error
+	return records, err
+}
+
+// CloudAgentEventRecordsBefore 取 seq < beforeSeq 的**最近** limit 条（升序返回），
+// 用于"窗口不够、要往前补齐一页"的读路径。
+func (r *Repository) CloudAgentEventRecordsBefore(userID, runID string, beforeSeq, limit int) ([]model.CloudAgentEventRecord, error) {
+	if limit <= 0 {
+		limit = CloudAgentJournalWindow
+	}
+	records := []model.CloudAgentEventRecord{}
+	err := r.db.Where("run_id = ? AND user_id = ? AND sequence < ?", runID, userID, beforeSeq).
+		Order("sequence DESC").Limit(limit).Find(&records).Error
+	if err != nil {
+		return nil, err
+	}
+	for left, right := 0, len(records)-1; left < right; left, right = left+1, right-1 {
+		records[left], records[right] = records[right], records[left]
+	}
+	return records, nil
+}
+
+// CloudAgentEventRecordCount 是该运行已入库的事件条数（不载入正文）。
+func (r *Repository) CloudAgentEventRecordCount(userID, runID string) (int64, error) {
+	var count int64
+	err := r.db.Model(&model.CloudAgentEventRecord{}).
+		Where("run_id = ? AND user_id = ?", runID, userID).Count(&count).Error
+	return count, err
 }
 
 func (r *Repository) CloudAgentForActiveTask(userID, taskID string) (*model.CloudAgentExecution, error) {
@@ -119,13 +170,28 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 		if err = fn(run, New(tx)); err != nil {
 			return err
 		}
-		if run.EventCount < previousEvents || len(run.Journal) != run.EventCount {
+		// journal 是 append-only：水位只能前进，窗口只能右移。
+		if run.EventCount < previousEvents {
 			return fmt.Errorf("cloud Agent journal cannot be truncated")
 		}
+		next := make(map[int]string, len(run.Journal))
+		for _, event := range run.Journal {
+			next[event.Sequence] = event.EventJSON
+		}
+		// 已在库里的行（本次载入窗口内的部分）必须原样保留：事件内容不可改写。
+		// 窗口之外的行不在 next 里，也不会被写路径碰到——它只追加 seq > previousEvents 的行。
 		for sequence, body := range previousEventBodies {
-			if sequence > len(run.Journal) || run.Journal[sequence-1].Sequence != sequence || !sameJSONDocument(run.Journal[sequence-1].EventJSON, body) {
+			updated, ok := next[sequence]
+			if !ok {
 				return fmt.Errorf("cloud Agent journal is append-only")
 			}
+			if !sameJSONDocument(updated, body) {
+				return fmt.Errorf("cloud Agent journal is append-only")
+			}
+		}
+		// 水位与窗口必须自洽：窗口最后一条就是要落库的最后一条。
+		if len(run.Journal) > 0 && run.Journal[len(run.Journal)-1].Sequence != run.EventCount {
+			return fmt.Errorf("cloud Agent journal watermark is inconsistent")
 		}
 		if err = tx.Omit("Journal", "Transcript").Save(run).Error; err != nil {
 			return err

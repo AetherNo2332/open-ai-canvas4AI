@@ -24,11 +24,17 @@ type TextCapabilityConfig struct {
 	// Streaming controls whether this model accepts upstream SSE text responses.
 	// A nil value is treated as true for backwards compatibility with older configs.
 	Streaming *bool `json:"streaming,omitempty"`
-	// ContextWindowTokens is the provider's total input plus output context window.
-	// It is a model contract, not an application transport ceiling.
-	ContextWindowTokens int `json:"contextWindowTokens"`
-	// MaxOutputTokens is the provider's maximum completion/reasoning budget.
-	MaxOutputTokens int                 `json:"maxOutputTokens"`
+	// ContextWindowTokens is the provider/model input+output context window.
+	// Zero means unknown and must never be presented as a verified model limit.
+	ContextWindowTokens int `json:"contextWindowTokens,omitempty"`
+	// ReservedOutputTokens is subtracted from the context window when reporting
+	// the input budget available to Agent policies, history and tool messages.
+	ReservedOutputTokens int `json:"reservedOutputTokens,omitempty"`
+	// MaxOutputTokens is the provider-declared ceiling for one call
+	// (thinking + text + tool arguments). Zero means the provider does not
+	// declare one — it must never be rewritten into a guessed default, and it
+	// caps the per-step policy budget rather than replacing it.
+	MaxOutputTokens int                 `json:"maxOutputTokens,omitempty"`
 	References      TextReferenceConfig `json:"references"`
 }
 
@@ -214,7 +220,9 @@ func legacyImageSizeValues() []string {
 func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *ModelCapabilityConfig {
 	// 文本模型是否支持视觉输入不能从协议或模型名可靠推断，默认关闭，由管理员按真实上游能力开启。
 	streaming := true
-	text := &TextCapabilityConfig{Streaming: &streaming, ContextWindowTokens: 128000, MaxOutputTokens: 16384, References: TextReferenceConfig{PromptMaxChars: 32000}}
+	// 文本能力默认不猜窗口：0 = 未声明/未知（dev 契约）。上游在这里塞 128000/16384，
+	// 会把"未知"冒充成已验证的模型上限，故按 dev 口径清掉。
+	text := &TextCapabilityConfig{Streaming: &streaming, References: TextReferenceConfig{PromptMaxChars: 32000}}
 	video := &VideoCapabilityConfig{
 		References:        VideoReferenceConfig{PromptMaxChars: DefaultVideoPromptMaxChars, MinImages: 0, MaxImages: 9, MaxImageBytes: 30 * 1024 * 1024, MaxVideos: 0, MaxVideoBytes: 0, MaxVideoDuration: 0, MaxAudios: 0, MaxAudioBytes: 0, MaxAudioDuration: 0},
 		Duration:          VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, Default: 6},
@@ -332,12 +340,11 @@ func NormalizeModelCapabilityConfigForModel(capability string, protocol string, 
 			streaming := true
 			text.Streaming = &streaming
 		}
-		if text.ContextWindowTokens == 0 {
-			text.ContextWindowTokens = 128000
-		}
-		if text.MaxOutputTokens == 0 {
-			text.MaxOutputTokens = 16384
-		}
+		// §③ 语义收敛：上游在这里做 `ContextWindowTokens == 0 → 128000`、
+		// `MaxOutputTokens == 0 → 16384` 的静默注入（这两段不带冲突标记，会被自动合进来），
+		// 会同时架空 dev 的"0 = 未知"契约与输出预留算式
+		// （cloudAgentEffectiveOutputReserve = max(reservedOutputTokens, maxOutputTokens)，
+		// 被注入的 16384 会把可用输入预算吃掉一大块）。按 dev 口径一律不注入。
 		value := &ModelCapabilityConfig{Version: 1, Text: &text}
 		if err := validateTextCapabilityConfig(value.Text); err != nil {
 			return nil, err
@@ -545,14 +552,26 @@ func addInputConstraint(inputs map[string]InputConstraint, name string, min int,
 }
 
 func validateTextCapabilityConfig(value *TextCapabilityConfig) error {
-	if value.ContextWindowTokens < 4096 || value.ContextWindowTokens > 10000000 {
-		return BadAuthRequest("文本模型上下文窗口必须在 4096-10000000 Token 之间")
-	}
-	if value.MaxOutputTokens < 256 || value.MaxOutputTokens > 1000000 || value.MaxOutputTokens >= value.ContextWindowTokens {
-		return BadAuthRequest("文本模型最大输出 Token 必须小于上下文窗口且在 256-1000000 之间")
-	}
+	// §③ 语义收敛：上游两条校验（窗口必须 4096–10000000、最大输出必须 256–1000000 且 < 窗口）
+	// 与 dev 的"0 = 未知/未声明"直接矛盾，且它们排在 dev 的校验之前会先把 0 判死。
+	// 这里按 dev 口径只保留下面这一套（0 合法）。
 	if value.References.PromptMaxChars < 1 || value.References.PromptMaxChars > 1000000 {
 		return BadAuthRequest("提示词最大字符数必须在 1-1000000 之间")
+	}
+	if value.ContextWindowTokens < 0 || value.ContextWindowTokens > 10000000 {
+		return BadAuthRequest("上下文窗口必须在 0-10000000 Token 之间，0 表示未知")
+	}
+	if value.ReservedOutputTokens < 0 || value.ReservedOutputTokens > 1000000 {
+		return BadAuthRequest("预留输出必须在 0-1000000 Token 之间")
+	}
+	if value.ContextWindowTokens > 0 && value.ReservedOutputTokens >= value.ContextWindowTokens {
+		return BadAuthRequest("预留输出 Token 必须小于上下文窗口")
+	}
+	if value.MaxOutputTokens < 0 || value.MaxOutputTokens > 1000000 {
+		return BadAuthRequest("最大输出 Token 必须在 0-1000000 之间，0 表示未声明")
+	}
+	if value.MaxOutputTokens > 0 && value.ContextWindowTokens > 0 && value.MaxOutputTokens >= value.ContextWindowTokens {
+		return BadAuthRequest("最大输出 Token 必须小于上下文窗口")
 	}
 	for name, number := range map[string]int{"最大图片引用数": value.References.MaxImages, "最大视频引用数": value.References.MaxVideos} {
 		if number < 0 || number > 100 {

@@ -122,7 +122,10 @@ describe("canvas resource mention editor", () => {
         expect(component).toContain("slash.start + 1 + slash.query.length");
         expect(component).toContain("buildSkillMentionReferences(availableSlashSkills)");
         expect(component).toContain("[/、]([^\\s/、]*)$");
-        expect(source("../src/components/canvas/canvas-cloud-agent-panel.tsx")).toContain("用 / 或 、 引用 Skills");
+        // 输入框提示语已随外观配置搬进 agent-appearance（面板只消费 appearance.inputPlaceholder），
+        // 这里断言"文案在、面板仍用它"，而不是把文案钉在面板源码里。
+        expect(source("../src/lib/canvas/agent-appearance.ts")).toContain("用 / 或 、 引用 Skills");
+        expect(source("../src/components/canvas/canvas-cloud-agent-panel.tsx")).toContain("agentCopy(appearance.inputPlaceholder, appearance.agentName)");
     });
 
     test("skill chips use one colored icon instead of exposing the serialized token", () => {
@@ -142,6 +145,10 @@ describe("canvas resource mention editor", () => {
         expect(css).toContain(".agent-composer-send-hint-full");
         expect(css).toContain(".agent-composer-send-hint-compact");
         expect(css).toContain(".agent-composer-prompt-scroll");
+        // 合并取舍：上游 2682c950「Agent 面板 - 移除 PR #539 提交中的无效 hover 背景」整条删掉了
+        // .agent-tool-row:hover；dev 侧 eb7344f9 曾把它加回来并断言"存在且不得声明 cursor"。
+        // 这里随上游（CSS 已删除 + 上游的负断言），保持两侧自洽；dev 的 hover 边框意图需产品复核。
         expect(css).not.toContain(".agent-tool-row:hover");
+        expect(css).toContain(".agent-tool-action-link");
     });
 });

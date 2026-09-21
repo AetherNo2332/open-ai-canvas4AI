@@ -25,28 +25,36 @@ import (
 var sseFrameBoundaryPattern = regexp.MustCompile(`\r?\n\r?\n`)
 
 type canvasGenerationInput struct {
-	Mode             string                 `json:"mode"`
-	Prompt           string                 `json:"prompt"`
-	Config           providerConfig         `json:"config"`
-	ReferenceImages  []providerMedia        `json:"referenceImages"`
-	ReferenceVideos  []providerMedia        `json:"referenceVideos"`
-	ReferenceAudios  []providerMedia        `json:"referenceAudios"`
-	TextHistory      []providerTextMessage  `json:"textHistory"`
-	Mask             *providerMedia         `json:"mask"`
-	Metadata         map[string]interface{} `json:"metadata"`
-	AgentRequests    *agentToolRequests     `json:"agentRequests"`
-	TextOptions      canvasTextOptions      `json:"textOptions"`
-	ImageCapability  *ImageCapabilityConfig `json:"-"`
-	StreamText       bool                   `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
-	MaxOutputTokens  int                    `json:"-"`
-	OnTextDelta      func(string)           `json:"-"`
-	OnReasoningDelta func(string)           `json:"-"`
-	VideoCapability  *VideoCapabilityConfig `json:"-"`
+	Mode            string                 `json:"mode"`
+	Prompt          string                 `json:"prompt"`
+	Config          providerConfig         `json:"config"`
+	ReferenceImages []providerMedia        `json:"referenceImages"`
+	ReferenceVideos []providerMedia        `json:"referenceVideos"`
+	ReferenceAudios []providerMedia        `json:"referenceAudios"`
+	TextHistory     []providerTextMessage  `json:"textHistory"`
+	Mask            *providerMedia         `json:"mask"`
+	Metadata        map[string]interface{} `json:"metadata"`
+	AgentRequests   *agentToolRequests     `json:"agentRequests"`
+	TextOptions     canvasTextOptions      `json:"textOptions"`
+	ImageCapability *ImageCapabilityConfig `json:"-"`
+	StreamText      bool                   `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
+	MaxOutputTokens int                    `json:"-"`
+	// CapabilityMaxOutputTokens 是渠道模型能力声明的输出上限（0 = 未声明）。
+	// 它与 MaxOutputTokens / TextOptions.MaxOutputTokens（策略上限）分开存放：
+	// 实际请求取两者中较小的非零值，避免能力值直接吃掉管理端配置的单步预算。
+	CapabilityMaxOutputTokens int                    `json:"-"`
+	OnTextDelta               func(string)           `json:"-"`
+	OnReasoningDelta          func(string)           `json:"-"`
+	VideoCapability           *VideoCapabilityConfig `json:"-"`
 }
 
 type canvasTextOptions struct {
 	Stream   *bool `json:"stream"`
 	Thinking bool  `json:"thinking"`
+	// MaxOutputTokens 是本次调用的输出上限（思考 + 正文 + 工具参数）。
+	// 画布 Agent 的每一步都带上限：不设时上游按"剩余上下文"放行，思考模型可以
+	// 无限吐 token，实测把单步拖到 324s 只能靠用户取消。
+	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
 }
 
 type agentToolRequests struct {
@@ -234,6 +242,13 @@ func (e providerHTTPError) Error() string {
 	case 524:
 		return "上游网关超时（524）：模型请求可能仍在服务端执行并产生费用，请勿立即重试，请先到供应商后台核对任务或账单"
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		// 正文里往往写着真正的拒绝原因（例如"上游取不到参考图"、"工具调用与结果不配对"）。
+		// 能归类就返回归类文案：它只返回固定模板，不会把正文（可能含密钥或内部诊断）回传。
+		// 这条路径决定任务错误与运行失败信息，必须与 api 日志里的归类保持一致，
+		// 否则用户看到的是"检查模型和参数"，而真正原因只躺在诊断日志里。
+		if message, ok := providerPayloadErrorCategory(e.Body); ok {
+			return message
+		}
 		return "模型服务拒绝了请求，请检查模型和参数"
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return "模型服务鉴权失败，请检查 API Key 和模型权限"
@@ -297,7 +312,28 @@ func providerPayloadErrorCategory(raw string) (string, bool) {
 		return "输入素材疑似包含真人形象，该模型拒绝生成，请更换为非真人素材或改用其他模型", true
 	case strings.Contains(normalized, "safety"), strings.Contains(normalized, "moderation"), strings.Contains(normalized, "content policy"), strings.Contains(normalized, "blocked"):
 		return "请求内容未通过模型服务安全审核，请调整后重试", true
-	case strings.Contains(normalized, "quota"), strings.Contains(normalized, "insufficient"), strings.Contains(normalized, "balance"), strings.Contains(normalized, "billing"):
+	// 工具调用与工具结果不配对：上游要求 assistant 消息声明的每一个 tool_call_id 都在
+	// 紧随其后的 tool 消息里被回应。这是**我们组装请求**的问题——用户改提示词或查额度
+	// 都没用——所以文案指向反馈而不是"调整输入"。
+	//
+	// 必须排在额度类目之前：DeepSeek 的原文含 "insufficient"，
+	// "An assistant message with 'tool_calls' must be followed by tool messages
+	//  responding to each 'tool_call_id'. (insufficient tool messages following
+	//  tool_calls message)"
+	// 落到额度类目就会把协议错误报成"渠道余额不足"，掩盖真正的原因（历史里的工具
+	// 结果不连续）。本部署实测触发过：一轮里模型发了 4 个 canvas_inspect_image 调用。
+	case strings.Contains(normalized, "must be followed by tool messages"),
+		strings.Contains(normalized, "insufficient tool messages following"):
+		return "会话里的工具调用与结果不匹配，本轮已停止；这不是额度或提示词问题，如反复出现请反馈", true
+	// 上游取不到我们给出的图片链接：链接由 CANVAS_PUBLIC_BASE_URL 拼出，必须"模型上游可达"。
+	// 实测公网模型读局域网地址会返回
+	// "400 .messages[5].image[0]: Failed to download image from http://192.168.x.x/api/public/...",
+	// 归到"检查模型和参数"只会让人去改提示词，改不出结果。
+	case strings.Contains(normalized, "download image"), strings.Contains(normalized, "image download"):
+		return "模型服务无法下载参考图：该图片链接对它不可达。请把 CANVAS_PUBLIC_BASE_URL 配成模型上游可访问的地址（局域网或内网地址对公网模型不可达）", true
+	// 额度类目只认结算语境里的稳定词，**不接受裸 "insufficient"**（原因见上：
+	// "insufficient tool messages" 是协议错误，不是余额问题）。
+	case strings.Contains(normalized, "quota"), strings.Contains(normalized, "balance"), strings.Contains(normalized, "billing"):
 		return "模型服务额度不足，请检查渠道余额或配额", true
 	case strings.Contains(normalized, "model") && (strings.Contains(normalized, "not found") || strings.Contains(normalized, "permission") || strings.Contains(normalized, "access")):
 		return "模型不存在或当前渠道未获得模型权限", true
@@ -358,11 +394,12 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		return nil, err
 	}
 	input.Config = config
-	if input.Mode == "text" && input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Text != nil {
-		// The same capability contract drives provider output limits, billing
-		// estimates and Agent context budgeting. Never silently fall back to a
-		// transport-specific fixed token count when the model declares one.
-		input.MaxOutputTokens = input.Config.CapabilityConfig.Text.MaxOutputTokens
+	// 能力声明的输出上限单独记一份：策略上限（管理端/每步预算）与模型物理上限取小值，
+	// 两者都不为 0 时以更小者为准（见 provider_text.go 的 cloudAgentOutputTokens）。
+	// 注意：上游 v1.5.7 在这里把能力值写进 input.MaxOutputTokens，会架空我们的单步策略上限，
+	// 因此合并时保留 dev 侧写法（写 CapabilityMaxOutputTokens，不写 MaxOutputTokens）。
+	if input.Config.CapabilityConfig != nil && input.Config.CapabilityConfig.Text != nil {
+		input.CapabilityMaxOutputTokens = input.Config.CapabilityConfig.Text.MaxOutputTokens
 	}
 	var textPublisher *taskTextStreamPublisher
 	if input.Mode == "text" && strings.HasPrefix(taskType, "canvas_text") {

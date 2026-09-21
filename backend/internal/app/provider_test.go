@@ -622,6 +622,11 @@ func TestRunDeclarativeAgentTaskOmitsToolChoiceBeforeThinkingRequest(t *testing.
 		if body["reasoning_effort"] != "medium" {
 			t.Errorf("thinking was not forwarded: %#v", body["reasoning_effort"])
 		}
+		// 声明式渠道同样要有输出上限：这条路径曾经漏掉它，实测画布 Agent 的单步
+		// 输出可以跑到 7188 tok（约 263s），正是要挡掉的那类长尾。
+		if body["max_tokens"] != float64(cloudAgentStepMaxOutputTokens) {
+			t.Errorf("declarative agent request lost the output cap: %#v", body["max_tokens"])
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"完成","tool_calls":[]}}]}`))
 	}))
@@ -644,7 +649,7 @@ func TestRunDeclarativeAgentTaskOmitsToolChoiceBeforeThinkingRequest(t *testing.
 	}
 	result, err := runAgentToolTask(withProtocolRegistry(context.Background(), registry), canvasGenerationInput{
 		Config:      providerConfig{BaseURL: server.URL, APIKey: "key", Model: "thinking-model", InterfaceType: "chat-completion"},
-		TextOptions: canvasTextOptions{Thinking: true},
+		TextOptions: canvasTextOptions{Thinking: true, MaxOutputTokens: cloudAgentStepMaxOutputTokens},
 		AgentRequests: &agentToolRequests{ChatCompletion: map[string]interface{}{
 			"messages": []interface{}{}, "tools": []interface{}{}, "tool_choice": "required",
 		}},
@@ -867,6 +872,19 @@ func TestProviderPayloadErrorMessageUsesSafeActionableCategories(t *testing.T) {
 	}{
 		{name: "moderation", raw: "request blocked by content policy: prompt=private", want: "安全审核"},
 		{name: "quota", raw: "insufficient quota for api-key=secret", want: "额度不足"},
+		// 工具配对协议错误的原文里带 "insufficient"，但它是我们组装请求的问题，不是余额
+		// 问题。裸匹配 insufficient 会让用户去查一个完全正常的渠道余额（本部署实测误报过）。
+		{
+			name: "tool pairing protocol error is not a quota problem",
+			raw: `{"error":{"message":"An assistant message with 'tool_calls' must be followed by tool messages ` +
+				`responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)","type":"invalid_request_error"}}`,
+			want: "工具调用与结果不匹配",
+		},
+		{
+			name: "bare tool pairing phrase without the envelope",
+			raw:  "insufficient tool messages following tool_calls message",
+			want: "工具调用与结果不匹配",
+		},
 		{name: "model access", raw: "model not found for tenant secret-id", want: "模型不存在"},
 		{name: "thinking mode rejects forced tool choice", raw: `{"error":{"message":"Thinking mode does not support this tool_choice","request_id":"secret-trace"}}`, want: "不支持强制工具调用"},
 		{name: "reasoning mode rejects forced tool choice", raw: `{"error":{"message":"tool_choice=required is not supported in reasoning mode"}}`, want: "不支持强制工具调用"},
@@ -882,6 +900,28 @@ func TestProviderPayloadErrorMessageUsesSafeActionableCategories(t *testing.T) {
 				t.Fatalf("provider payload detail leaked: %q", message)
 			}
 		})
+	}
+}
+
+// 裸 "insufficient" 不再是额度信号：它出现在工具配对协议错误里（见
+// TestProviderPayloadErrorMessageUsesSafeActionableCategories）。这条用例把"只认结算
+// 语境的稳定词"钉死，避免以后又有人把 insufficient 加回额度类目。
+func TestProviderPayloadErrorCategoryRejectsBareInsufficient(t *testing.T) {
+	for _, raw := range []string{
+		"insufficient",
+		"insufficient tool messages following tool_calls message",
+		"insufficient context window",
+	} {
+		if message, ok := providerPayloadErrorCategory(raw); ok && strings.Contains(message, "额度不足") {
+			t.Fatalf("providerPayloadErrorCategory(%q) = %q, want no quota category", raw, message)
+		}
+	}
+	// 结算语境的稳定词仍然归到额度类目
+	for _, raw := range []string{"insufficient_quota", "insufficient_user_quota", "quota exceeded", "insufficient balance", "Insufficient Balance"} {
+		message, ok := providerPayloadErrorCategory(raw)
+		if !ok || !strings.Contains(message, "额度不足") {
+			t.Fatalf("providerPayloadErrorCategory(%q) = %q, %v; want 额度不足", raw, message, ok)
+		}
 	}
 }
 
@@ -949,6 +989,14 @@ func TestProviderUserFacingErrorMessageClassifiesRejectedRequestBodies(t *testin
 			statusCode: http.StatusBadRequest,
 			body:       `{"error":{"message":"Thinking mode does not support this tool_choice","request_id":"secret"}}`,
 			want:       "不支持强制工具调用",
+		},
+		{
+			// 真实上游原文：一轮里模型发了 4 个 canvas_inspect_image 调用，历史被
+			// 写成了 tool → user(图) → tool …，下一个请求被 DeepSeek 400 拒绝。
+			name:       "tool call/result pairing rejection",
+			statusCode: http.StatusBadRequest,
+			body:       `{"error":{"message":"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)","type":"invalid_request_error","code":"invalid_request_error"}}`,
+			want:       "工具调用与结果不匹配",
 		},
 	}
 	for _, tt := range tests {
@@ -1042,6 +1090,45 @@ func TestProviderPayloadErrorCategoryIgnoresEchoedPortraitWording(t *testing.T) 
 				t.Fatalf("providerPayloadErrorCategory() = %q, want category %q", message, tt.want)
 			}
 		})
+	}
+}
+
+// 公网模型取不到局域网签名图：文案必须指向 CANVAS_PUBLIC_BASE_URL 的可达性，
+// 而不是"检查模型和参数"或额度（实测 DeepSeek 返回的就是这条 400）。
+func TestProviderPayloadErrorCategoryClassifiesImageDownloadFailure(t *testing.T) {
+	raw := `{"error":{"message":"400 .messages[5].image[0]: Failed to download image from http://192.168.90.200:3001/api/public/resources/a.png?expires=1&sig=x"}}`
+	message, ok := providerPayloadErrorCategory(raw)
+	if !ok || !strings.Contains(message, "CANVAS_PUBLIC_BASE_URL") {
+		t.Fatalf("providerPayloadErrorCategory() = %q, ok = %v, want upstream-reachability wording", message, ok)
+	}
+	if strings.Contains(message, "额度") {
+		t.Fatalf("image download failure misclassified as quota: %q", message)
+	}
+	// 反例：正文里只是出现 image 一词的普通失败不得被归到这类目。
+	if message, ok := providerPayloadErrorCategory(`{"error":{"message":"image generation failed: invalid size"}}`); ok && strings.Contains(message, "CANVAS_PUBLIC_BASE_URL") {
+		t.Fatalf("unrelated image failure classified as image download failure: %q", message)
+	}
+}
+
+// 400/422 的正文归类必须一路走到任务错误与运行失败信息：只归类日志、任务错误仍是
+// "请检查模型和参数"的话，用户根本看不到真正原因（实测 dev 上就是这样）。
+func TestProviderHTTPErrorSurfacesClassifiedBadRequestBody(t *testing.T) {
+	download := providerHTTPError{StatusCode: 400, Body: `{"error":{"code":"invalid_request_error","message":".messages[5].image[0]: Failed to download image from http://192.168.90.200:3001/api/public/resources/a.png"}}`}
+	if message := download.Error(); !strings.Contains(message, "CANVAS_PUBLIC_BASE_URL") {
+		t.Fatalf("providerHTTPError.Error() = %q, want upstream-reachability wording", message)
+	}
+	// 正文回显了敏感链接时，错误文案不得把它带出去。
+	if message := download.Error(); strings.Contains(message, "192.168.90.200") || strings.Contains(message, "sig=") {
+		t.Fatalf("classified message leaked request details: %q", message)
+	}
+	pairing := providerHTTPError{StatusCode: 400, Body: `{"error":{"message":"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)"}}`}
+	if message := pairing.Error(); !strings.Contains(message, "工具调用与结果不匹配") {
+		t.Fatalf("providerHTTPError.Error() = %q, want tool pairing wording", message)
+	}
+	// 无法归类时退回固定文案，不把正文当错误信息。
+	unknown := providerHTTPError{StatusCode: 422, Body: `<html>gateway exploded</html>`}
+	if message := unknown.Error(); message != "模型服务拒绝了请求，请检查模型和参数" {
+		t.Fatalf("providerHTTPError.Error() = %q, want generic bad-request wording", message)
 	}
 }
 
@@ -2363,6 +2450,74 @@ func TestNewAPIChannel1VideoBodyMapsFramesAndReferences(t *testing.T) {
 	}
 }
 
+// 声明式协议的统一字段 aspectRatio 必须按能力配置折算：声明 size 的上游要像素尺寸。
+// 画布默认档是 1:1，内置实现一直在请求边界换算（imageSizeParameter → normalizePixelSize），
+// 插件路径漏了它 —— 实测只认 WIDTHxHEIGHT 的上游（vLLM / OpenAI 兼容）直接 400。
+func TestProtocolRequestConvertsCanvasRatioForSizeParameter(t *testing.T) {
+	pixelProfile := DefaultImageCapabilityConfig("openai-image", "krea-2-turbo")
+	if pixelProfile.Size.Parameter != "size" {
+		t.Fatalf("openai-image 默认尺寸参数 = %q", pixelProfile.Size.Parameter)
+	}
+	tests := []struct {
+		name    string
+		size    string
+		profile *ImageCapabilityConfig
+		want    string
+	}{
+		{name: "比例转像素", size: "1:1", profile: pixelProfile, want: "1024x1024"},
+		{name: "宽幅比例转像素", size: "16:9", profile: pixelProfile, want: "1824x1024"},
+		{name: "像素原样保留", size: "2496x1664", profile: pixelProfile, want: "2496x1664"},
+		{name: "auto 保持 auto", size: "auto", profile: pixelProfile, want: "auto"},
+		{name: "没有能力配置时也按像素折算", size: "1:1", profile: nil, want: "1024x1024"},
+	}
+	for _, item := range tests {
+		t.Run(item.name, func(t *testing.T) {
+			request := protocolRequestFromInput(canvasGenerationInput{
+				Mode:            "image",
+				Config:          providerConfig{Size: item.size},
+				ImageCapability: item.profile,
+			})
+			if request.AspectRatio != item.want {
+				t.Fatalf("aspectRatio = %q, want %q", request.AspectRatio, item.want)
+			}
+			if request.Output.AspectRatio != item.want {
+				t.Fatalf("output.aspectRatio = %q, want %q", request.Output.AspectRatio, item.want)
+			}
+		})
+	}
+}
+
+// 声明 aspect_ratio 的上游由插件模板自己归一（带容差），host 不抢：像素值原样透传，
+// 避免把 1824x1024 折算成 57:32 这种上游不认的比例。
+func TestProtocolRequestLeavesAspectRatioParameterUntouched(t *testing.T) {
+	ratioProfile := DefaultImageCapabilityConfig(string(model.ChannelInterfaceGrokImage), "grok-imagine-image")
+	if ratioProfile.Size.Parameter != "aspect_ratio" {
+		t.Fatalf("grok-image 尺寸参数 = %q", ratioProfile.Size.Parameter)
+	}
+	for _, size := range []string{"1824x1024", "16:9", "1:1", "auto"} {
+		request := protocolRequestFromInput(canvasGenerationInput{
+			Mode:            "image",
+			Config:          providerConfig{Size: size},
+			ImageCapability: ratioProfile,
+		})
+		if request.AspectRatio != size {
+			t.Fatalf("size %q → aspectRatio %q，应原样透传", size, request.AspectRatio)
+		}
+	}
+}
+
+// 视频的比例由自己那条链处理，图片的像素折算不能泄漏过来。
+func TestProtocolRequestKeepsVideoRatioUntouched(t *testing.T) {
+	request := protocolRequestFromInput(canvasGenerationInput{
+		Mode:            "video",
+		Config:          providerConfig{Size: "16:9"},
+		ImageCapability: DefaultImageCapabilityConfig("openai-image", "krea-2-turbo"),
+	})
+	if request.AspectRatio != "16:9" {
+		t.Fatalf("video aspectRatio = %q, want 16:9", request.AspectRatio)
+	}
+}
+
 func TestProtocolRequestPreservesVideoImageIDsAndRoles(t *testing.T) {
 	request := protocolRequestFromInput(canvasGenerationInput{
 		Mode: "video",
@@ -3073,5 +3228,84 @@ func TestRunMiniMaxVideoTaskReturnsFailureReason(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "content violates policy") {
 		t.Fatalf("runVideoTask() error = %v", err)
+	}
+}
+
+// Agent 请求必须允许并行工具调用、并且带上输出上限：
+//   - 写死 parallel_tool_calls=false 时每个工具调用独占一次模型往返（实测 12 个调用 = 12 次往返，
+//     而模型自己在推理里反复说要"4 张图一次性并行读"）；
+//   - 不设 max_tokens 时上游按剩余上下文放行，思考模型可以无限吐 token（实测单步 324s 只能手动取消）。
+func TestRunAgentToolTaskAllowsParallelCallsAndCapsOutput(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	seen := map[string]interface{}{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		seen = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"完成","tool_calls":[]}}]}`))
+	}))
+	defer server.Close()
+
+	_, err := runAgentToolTask(context.Background(), canvasGenerationInput{
+		Config: providerConfig{BaseURL: server.URL, APIKey: "key", Model: "model"},
+		TextOptions: canvasTextOptions{
+			MaxOutputTokens: cloudAgentStepMaxOutputTokens,
+		},
+		AgentRequests: &agentToolRequests{Canonical: &canonicalAgentRequest{
+			Messages:   []map[string]interface{}{{"role": "user", "content": "读图"}},
+			Tools:      []map[string]interface{}{{"type": "function", "function": map[string]interface{}{"name": "canvas_inspect_image"}}},
+			ToolChoice: "auto",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("runAgentToolTask() error = %v", err)
+	}
+	if seen["parallel_tool_calls"] != true {
+		t.Errorf("parallel tool calls must be allowed: %#v", seen["parallel_tool_calls"])
+	}
+	if seen["max_tokens"] != float64(cloudAgentStepMaxOutputTokens) {
+		t.Errorf("output cap missing: %#v", seen["max_tokens"])
+	}
+}
+
+// 上游不认 parallel_tool_calls 时按兼容序列回退，而不是让整步失败。
+func TestRunAgentToolTaskFallsBackWithoutParallelCalls(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	requests := 0
+	sawParallel := []bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		requests++
+		_, hasParallel := body["parallel_tool_calls"]
+		sawParallel = append(sawParallel, hasParallel)
+		if requests == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Unrecognized request argument supplied: parallel_tool_calls"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"完成","tool_calls":[]}}]}`))
+	}))
+	defer server.Close()
+
+	result, err := runAgentToolTask(context.Background(), canvasGenerationInput{
+		Config: providerConfig{BaseURL: server.URL, APIKey: "key", Model: "model"},
+		AgentRequests: &agentToolRequests{Canonical: &canonicalAgentRequest{
+			Messages:   []map[string]interface{}{{"role": "user", "content": "读图"}},
+			Tools:      []map[string]interface{}{{"type": "function", "function": map[string]interface{}{"name": "canvas_inspect_image"}}},
+			ToolChoice: "auto",
+		}},
+	})
+	if err != nil || result["text"] != "完成" {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+	if requests != 2 || len(sawParallel) != 2 || !sawParallel[0] || sawParallel[1] {
+		t.Fatalf("compatibility retry did not drop parallel_tool_calls: requests=%d saw=%v", requests, sawParallel)
 	}
 }

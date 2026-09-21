@@ -46,7 +46,10 @@ describe("canvas node generation position mentions", () => {
         const references = buildCanvasResourceReferences(nodes, connections, target.id).filter((reference) => reference.active);
 
         expect(Object.fromEntries(references.map((reference) => [reference.nodeId, reference.label]))).toEqual({
-            character: "图片1", wig: "图片2", voice: "音频1", note: "文本1",
+            character: "图片1",
+            wig: "图片2",
+            voice: "音频1",
+            note: "文本1",
         });
         const context = buildNodeGenerationContext(target.id, nodes, connections, prompt, [], true);
         expect(context.referenceImages.map((reference) => reference.id)).toEqual([character.id, wig.id]);

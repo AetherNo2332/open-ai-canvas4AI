@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 
 const CHROME_CANDIDATES = [
@@ -72,11 +73,39 @@ function freePort() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 外观引导的同源桩：复现台是"同源本地确定性场景"，但外观能力必须问后端，
+ * 没有后端时 Vite 代理会把它变成 502，被判成浏览器问题。这里只答 `/api/public/appearance`，
+ * 其余 /api 请求照常 404 —— 不把未知请求伪装成成功。
+ */
+async function launchAppearanceStub() {
+    const server = createHttpServer((req, res) => {
+        if (req.method === "GET" && String(req.url || "").split("?")[0] === "/api/public/appearance") {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ code: 0, data: { appearance: {} }, msg: "ok" }));
+            return;
+        }
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ code: 404, data: null, msg: "appearance stub: not found" }));
+    });
+    await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+    });
+    return { server, port: server.address().port };
+}
+
+async function stopAppearanceStub(stub) {
+    if (!stub) return;
+    await new Promise((resolve) => stub.server.close(() => resolve()));
+}
+
 /** 启动 Vite DEV，等待 ready 行或 TCP 可连接；超时即抛。 */
-async function launchVite(port) {
+async function launchVite(port, apiProxyTarget) {
     const child = spawn("bunx", ["vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
         cwd: process.cwd(),
         stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, VITE_API_PROXY_TARGET: apiProxyTarget },
     });
     let log = "";
     child.stdout.on("data", (d) => {
@@ -278,14 +307,23 @@ async function connectCdp(cdpPort) {
             if (!hit || (hit !== el && !el.contains(hit))) return null;
             return { x: Math.round(x), y: Math.round(y) };
         })()`);
-        const deadline = Date.now() + 5000;
+        // 目标必须"站稳"再点：AntD 弹窗/抽屉有约 200ms 入场动画，只要求相邻两次读数相同
+        // 会在动画刚开始、坐标还没动的那一拍就下判定，真正派发鼠标事件时控件已经移位 ——
+        // 点击落到遮罩上（mask.closable=false）就完全无效（"留在导演台" 曾这样偶发失败）。
+        const deadline = Date.now() + 8000;
         let previous = null;
+        let stableSince = 0;
         let box = null;
         while (Date.now() < deadline) {
             const next = await readInteractiveBox();
             if (next && previous && next.x === previous.x && next.y === previous.y) {
-                box = next;
-                break;
+                if (!stableSince) stableSince = Date.now();
+                if (Date.now() - stableSince >= 300) {
+                    box = next;
+                    break;
+                }
+            } else {
+                stableSince = 0;
             }
             previous = next;
             await sleep(100);
@@ -378,6 +416,26 @@ async function smokeWorkbench(cdp, baseUrl) {
     if (!opened) throw new Error("A: toggle-workbench not clickable");
     const hasCanvas = await cdp.poll(`(() => { const c = document.querySelector('.director-viewport-shell canvas'); return !!c && c.clientWidth > 0; })()`, "canvas", 40000);
     assert(hasCanvas, "A5 real canvas present in viewport shell");
+
+    // 使用真实产品 dock 验证 Tooltip 的 hover 与键盘触发，不能只验证包装 span 存在。
+    const tooltipButton = 'button[aria-label="移动对象"]';
+    const hoverPoint = await cdp.evaluate(`(() => { const r = document.querySelector(${JSON.stringify(tooltipButton)}).getBoundingClientRect(); return {x:r.x+r.width/2, y:r.y+r.height/2}; })()`);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...hoverPoint });
+    const describedTooltip = `(() => { const b = document.querySelector(${JSON.stringify(tooltipButton)}); const ids = (b?.getAttribute('aria-describedby') || '').split(/\\s+/); return ids.some(id => document.getElementById(id)?.textContent.includes('移动对象')); })()`;
+    assert(await cdp.poll(describedTooltip, "tooltip on hover", 5000), "A5a Tooltip hover describes the actual control");
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    assert(await cdp.poll(`!document.querySelector('[role="tooltip"]')`, "tooltip dismiss", 5000), "A5b Escape dismisses Tooltip");
+    await cdp.evaluate(`document.querySelector(${JSON.stringify(tooltipButton)}).focus()`);
+    for (const modifiers of [8, 0]) {
+        await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
+        await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
+    }
+    assert(await cdp.poll(`document.activeElement === document.querySelector(${JSON.stringify(tooltipButton)}) && (${describedTooltip})`, "tooltip on keyboard focus", 5000), "A5c Tab focus opens Tooltip without an extra wrapper stop");
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await cdp.evaluate("document.activeElement?.blur()");
 
     // P1-A 起 AutoKey/时间轴归属动画模式：默认摆场模式下它们必须不存在。
     const layoutGating = await cdp.evaluate(`(() => ({
@@ -702,10 +760,14 @@ async function main() {
     let vite = null;
     let chrome = null;
     let cdp = null;
+    let appearanceStub = null;
 
     try {
+        appearanceStub = await launchAppearanceStub();
+        console.log(`Starting appearance stub on 127.0.0.1:${appearanceStub.port} ...`);
+
         console.log(`Starting Vite on ${baseUrl} ...`);
-        vite = await launchVite(vitePort);
+        vite = await launchVite(vitePort, `http://127.0.0.1:${appearanceStub.port}`);
         console.log(`      vite pid=${vite.pid}`);
 
         console.log(`Starting Chrome with CDP on 127.0.0.1:${cdpPort} ...`);
@@ -738,6 +800,11 @@ async function main() {
             await stopExact(vite, "vite");
         } catch (error) {
             fail("cleanup: stop vite", String(error?.message || error));
+        }
+        try {
+            await stopAppearanceStub(appearanceStub);
+        } catch (error) {
+            fail("cleanup: stop appearance stub", String(error?.message || error));
         }
         try {
             rmSync(profileDir, { recursive: true, force: true });

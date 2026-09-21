@@ -27,6 +27,52 @@ type cloudAgentPolicySnapshot struct {
 	CompilerVersion      string `json:"compilerVersion"`
 	ProfileRevision      string `json:"profileRevision,omitempty"`
 	ProfileHash          string `json:"profileHash,omitempty"`
+	// SystemSegments records what occupies the compiled system prompt. The
+	// context meter reports it so an operator can see the occupancy split
+	// without re-deriving it from the prompt text.
+	SystemSegments []cloudAgentContextSegment `json:"systemSegments,omitempty"`
+}
+
+// cloudAgentRecordSystemSegment 登记"编译之后"追加进系统提示的块（当前是个人记忆索引），
+// 让计量器的系统提示分段合计与实际 system 桶一致；同 key 重复调用只保留最新一次，
+// 因此它既能在创建运行登记，也能在每一步幂等补登记。
+func cloudAgentRecordSystemSegment(policy *cloudAgentPolicySnapshot, key, label, text string) {
+	if policy == nil || strings.TrimSpace(text) == "" {
+		return
+	}
+	segment := cloudAgentContextSegment{Key: key, Label: label, Bytes: len(text), Tokens: estimateCloudAgentTokens([]byte(text))}
+	for index := range policy.SystemSegments {
+		if policy.SystemSegments[index].Key == key {
+			policy.SystemSegments[index] = segment
+			return
+		}
+	}
+	policy.SystemSegments = append(policy.SystemSegments, segment)
+}
+
+// cloudAgentContextSegment is one inlined block of the compiled system prompt.
+type cloudAgentContextSegment struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Bytes  int    `json:"bytes"`
+	Tokens int    `json:"tokens"`
+	// ScaledTokens 是按上游实测锚点比例校准后的读数；没有锚点时不填。
+	ScaledTokens int `json:"scaledTokens,omitempty"`
+}
+
+// cloudAgentSegmentRecorder measures each block as the prompt is compiled.
+type cloudAgentSegmentRecorder struct {
+	segments []cloudAgentContextSegment
+	last     int
+}
+
+func (r *cloudAgentSegmentRecorder) mark(builder *strings.Builder, key, label string) {
+	end := builder.Len()
+	if size := end - r.last; size > 0 {
+		text := builder.String()[r.last:end]
+		r.segments = append(r.segments, cloudAgentContextSegment{Key: key, Label: label, Bytes: size, Tokens: estimateCloudAgentTokens([]byte(text))})
+	}
+	r.last = end
 }
 
 type cloudAgentProfileSnapshot struct {
@@ -84,6 +130,23 @@ func cloudAgentCapabilityGuide() string {
 	return b.String()
 }
 
+// cloudAgentSkillFileLimit bounds the inlined file list. The list is a routing
+// aid, not a permission: skill_read_file lists the full directory on demand.
+const cloudAgentSkillFileLimit = 60
+
+func cloudAgentSkillManifest(skill cloudAgentSkill) map[string]any {
+	paths := cloudAgentSkillPaths(skill)
+	manifest := map[string]any{"skillId": skill.ID, "name": skill.Name, "version": skill.Version, "hash": skill.Hash, "entryPath": cloudAgentSkillEntryPath}
+	if omitted := len(paths) - cloudAgentSkillFileLimit; omitted > 0 {
+		manifest["files"] = paths[:cloudAgentSkillFileLimit]
+		manifest["filesOmitted"] = omitted
+		manifest["filesHint"] = "清单已截断；用 skill_read_file 传空 path 列出完整文件"
+		return manifest
+	}
+	manifest["files"] = paths
+	return manifest
+}
+
 func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, profile cloudAgentProfileSnapshot, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
 	system, media, err := prompts.LoadAgentPolicies()
 	if err != nil {
@@ -99,11 +162,23 @@ func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, 
 		ProfileRevision: profile.Revision, ProfileHash: profile.Hash,
 	}
 	var b strings.Builder
+	var recorder cloudAgentSegmentRecorder
 	b.WriteString(system.Text)
 	b.WriteString("\n\n")
+	recorder.mark(&b, "policy", "系统行为策略")
 	b.WriteString(media.Text)
 	b.WriteString("\n\n")
-	b.WriteString(cloudAgentCapabilityGuide())
+	recorder.mark(&b, "mediaPolicy", "媒体策略")
+	// The capability guide is a tool answer, not a system-prompt constant: it is
+	// resent on every step of every run. It stays inline whenever
+	// canvas_list_node_types is unavailable —没有画布上下文，或只读运行（只读不会创建节点，
+	// 工具本身也不暴露）。否则提示会指向一个不存在的工具。
+	if len(req.ContextScope) == 0 || req.PermissionMode == "read_only" {
+		b.WriteString(cloudAgentCapabilityGuide())
+	} else {
+		b.WriteString("节点能力与选型：需要节点类型、默认尺寸、连接约束、适用场景和维护代价时调用 canvas_list_node_types 获取权威清单，不要凭记忆猜测 nodeType；由你按任务复杂度自主选择，不为形式强制使用任何节点——单画面、一次性说明或快速试验优先轻量节点，多镜头、镜头连续性、逐镜审查/生成或后续维护优先评估分镜脚本，普通文本或 Markdown 不能伪装成结构化分镜。\n")
+	}
+	recorder.mark(&b, "capabilities", "节点能力与选型")
 	// Behavior belongs to versioned policies; the compiler only projects facts.
 	context := map[string]any{
 		"source": "server_snapshot", "permissionMode": req.PermissionMode,
@@ -121,7 +196,7 @@ func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, 
 	}
 	manifests := make([]map[string]any, 0, len(skills))
 	for _, skill := range skills {
-		manifests = append(manifests, map[string]any{"skillId": skill.ID, "name": skill.Name, "version": skill.Version, "hash": skill.Hash, "entryPath": cloudAgentSkillEntryPath, "files": cloudAgentSkillPaths(skill)})
+		manifests = append(manifests, cloudAgentSkillManifest(skill))
 	}
 	context["skills"] = manifests
 	layers := make([]map[string]any, 0, len(profile.Layers))
@@ -135,6 +210,8 @@ func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, 
 	}
 	b.WriteString("\n\n本轮执行上下文：\n")
 	b.Write(encoded)
+	recorder.mark(&b, "execution", "本轮执行上下文（事实快照）")
+	snapshot.SystemSegments = recorder.segments
 	text := strings.TrimSpace(b.String())
 	if text == "" {
 		return "", cloudAgentPolicySnapshot{}, fmt.Errorf("compiled Agent policy is empty")

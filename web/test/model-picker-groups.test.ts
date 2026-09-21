@@ -1,18 +1,27 @@
 import { expect, test } from "bun:test";
 import { groupModelsForPicker, modelChannelLabel } from "../src/lib/model-picker-groups";
-import { modelCompatibilityError, resolveCompatibleModel } from "../src/lib/model-selection";
+import { groupModelsByDisplayName, modelCompatibilityError, modelGroupReferenceLimits, resolveCompatibleModel } from "../src/lib/model-selection";
 import { modelQuoteRequest, priceTiersForCurrentSelection, priceTierSummaryLabel } from "../src/lib/model-pricing";
 import { systemChannelModelChannels } from "../src/lib/user-session";
 import type { PublicChannelCatalog, PublicChannelModel } from "../src/services/api/logical-models";
 import { defaultConfig, normalizeConfigSnapshot, resolveModelRequestConfig, selectableModelsByCapability } from "../src/stores/use-config-store";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
+import { buildGenerationConfig } from "../src/lib/canvas/canvas-project-generation";
+import { CanvasNodeType } from "../src/types/canvas";
 
 function model(label = "", price = 300000, modelKey = "seedance-2.0", displayName = modelKey === "seedance-2.0" ? "Seedance 2.0" : modelKey): PublicChannelModel {
     return {
-        id: `${modelKey}-${label || "default"}`, modelKey, displayName, channelLabel: label,
+        id: `${modelKey}-${label || "default"}`,
+        modelKey,
+        displayName,
+        channelLabel: label,
         description: label ? `${label}的使用说明` : "",
-        icon: "ByteDance", capability: "video", protocol: "seedance", available: true,
-        pricingMode: "provider", priceLabel: "",
+        icon: "ByteDance",
+        capability: "video",
+        protocol: "seedance",
+        available: true,
+        pricingMode: "provider",
+        priceLabel: "",
         capabilityConfig: defaultModelCapabilityConfig("seedance", "seedance-2.0"),
         priceTiers: [{ id: "tier", selector: {}, resolution: "*", videoSeconds: 0, billingMode: "per_second", unitPriceMicrocredits: price, inputTokenPriceMicrocredits: 0, outputTokenPriceMicrocredits: 0, cachedTokenPriceMicrocredits: 0 }],
     };
@@ -33,7 +42,15 @@ test("same model display name groups all channels and preserves their prices", (
     expect(groups).toHaveLength(1);
     expect(config.channels.map((channel) => channel.modelCosts![0].description)).toEqual(["", "优惠渠道-993的使用说明", "特惠渠道-730的使用说明"]);
     expect(groups.map((group) => [group.label, group.kind, group.models.map((item) => [item.label, item.models])])).toEqual([
-        ["Seedance 2.0", "product", [["正常渠道", ["a::seedance-2.0"]], ["优惠渠道-993", ["b::seedance-2.0"]], ["特惠渠道-730", ["c::seedance-2.0"]]]],
+        [
+            "Seedance 2.0",
+            "product",
+            [
+                ["正常渠道", ["a::seedance-2.0"]],
+                ["优惠渠道-993", ["b::seedance-2.0"]],
+                ["特惠渠道-730", ["c::seedance-2.0"]],
+            ],
+        ],
     ]);
     expect(config.channels.map((channel) => priceTierSummaryLabel(priceTiersForCurrentSelection(channel.modelCosts![0].logicalPriceTiers!, "video", config)))).toEqual(["0.3 积分/秒", "0.3 积分/秒", "0.2 积分/秒"]);
 });
@@ -51,6 +68,16 @@ test("grouping uses display name even when model keys differ, without merging ch
     expect(groups[0].models.map((item) => item.label)).toEqual(["秘塔（满血渠道）", "秘塔（满血渠道）"]);
 });
 
+test("catalog projection keeps promotional tags scoped to each channel model", () => {
+    const channels = systemChannelModelChannels([
+        { id: "a", name: "A", displayName: "A", models: [{ ...model("A", 100_000), tags: [{ text: "限时特价", color: "purple" }] }] },
+        { id: "b", name: "B", displayName: "B", models: [{ ...model("B", 200_000), tags: [{ text: "官方1折", color: "gold" }] }] },
+    ]);
+    const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels } }).config;
+    expect(config.channels[0].modelCosts![0].tags).toEqual([{ text: "限时特价", color: "purple" }]);
+    expect(config.channels[1].modelCosts![0].tags).toEqual([{ text: "官方1折", color: "gold" }]);
+});
+
 test("selection and quote keep the chosen channel even when another channel is cheaper", () => {
     const config = fixture();
     const value = "b::seedance-2.0";
@@ -62,13 +89,58 @@ test("selection and quote keep the chosen channel even when another channel is c
     expect(resolveModelRequestConfig(config, value)).toMatchObject({ channelId: "b", model: "seedance-2.0" });
 });
 
+function sameChannelVariants() {
+    const channels = systemChannelModelChannels([{ id: "comfy", name: "Comfy", displayName: "Comfy", models: [model("高速版", 100_000, "h3-fast", "MiniMax H3"), model("多图一致性", 200_000, "h3-multi", "MiniMax H3")] }]);
+    return normalizeConfigSnapshot({ config: { ...defaultConfig, channels, model: "comfy::h3-multi", videoModel: "comfy::h3-multi" } }).config;
+}
+
+test("same-channel system variants retain explicit model identity through selection, generation and quote", () => {
+    const config = sameChannelVariants();
+    const options = selectableModelsByCapability(config, "video");
+    expect(groupModelsForPicker(config, options)[0].models).toHaveLength(2);
+    expect(groupModelsByDisplayName(config, options).map((group) => group.models)).toEqual(options.map((value) => [value]));
+    for (const value of options) {
+        expect(resolveCompatibleModel(config, value, { capability: "video" })).toBe(value);
+        const generation = buildGenerationConfig(
+            config,
+            {
+                id: "video",
+                type: CanvasNodeType.Video,
+                title: "Video",
+                position: { x: 0, y: 0 },
+                width: 100,
+                height: 100,
+                metadata: { model: value, generationMode: "video" },
+            },
+            "video",
+        );
+        expect(generation.model).toBe(value);
+        expect(resolveModelRequestConfig(generation, generation.model)).toMatchObject({ channelId: "comfy", model: value.split("::")[1] });
+        expect(modelQuoteRequest(config, value, "video")).toMatchObject({ channelId: "comfy", modelKey: value.split("::")[1] });
+    }
+});
+
+test("same-channel system variants do not borrow capabilities or reroute incompatible selections", () => {
+    const config = sameChannelVariants();
+    config.channels[0].modelCosts![0].capabilityConfig!.video!.references.maxImages = 0;
+    config.channels[0].modelCosts![1].capabilityConfig!.video!.references.maxImages = 2;
+    const requirements = { capability: "video" as const, input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 } };
+    expect(modelGroupReferenceLimits(config, "comfy::h3-fast", "video")?.maxImages).toBe(0);
+    expect(modelCompatibilityError(config, "comfy::h3-fast", requirements)).not.toBe("");
+    expect(resolveCompatibleModel(config, "comfy::h3-fast", requirements)).toBe("");
+    expect(resolveCompatibleModel(config, "comfy::h3-multi", requirements)).toBe("comfy::h3-multi");
+});
+
 test("different display names in one channel create distinct first-level groups", () => {
     const config = fixture();
-    const extra = systemChannelModelChannels([{ id: "volc", name: "火山引擎", displayName: "火山引擎", models: [
-        model("Seedance 2 Mini", 300000, "seedance-2-mini", "Seedance 2 Mini"),
-        model("Seedance 2.0 Fast", 300000, "seedance-2-fast", "Seedance 2.0 Fast"),
-        model("Seedance 2.0", 300000, "seedance-2", "Seedance 2.0"),
-    ] }]);
+    const extra = systemChannelModelChannels([
+        {
+            id: "volc",
+            name: "火山引擎",
+            displayName: "火山引擎",
+            models: [model("Seedance 2 Mini", 300000, "seedance-2-mini", "Seedance 2 Mini"), model("Seedance 2.0 Fast", 300000, "seedance-2-fast", "Seedance 2.0 Fast"), model("Seedance 2.0", 300000, "seedance-2", "Seedance 2.0")],
+        },
+    ]);
     const groups = groupModelsForPicker({ ...config, channels: extra }, selectableModelsByCapability({ ...config, channels: extra }, "video"));
     expect(groups).toHaveLength(3);
     expect(groups.map((group) => group.label)).toEqual(["Seedance 2 Mini", "Seedance 2.0 Fast", "Seedance 2.0"]);

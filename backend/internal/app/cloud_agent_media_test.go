@@ -718,12 +718,12 @@ func TestCloudAgentStoryboardPrecisionAndPermission(t *testing.T) {
 		map[string]any{"id": "shot-1", "shotNumber": float64(1), "videoMotionPrompt": strings.Repeat("切镜指令", 500), "assetBindings": []any{map[string]any{"nodeId": "hero", "role": "character", "url": "do-not-expose"}}, "private": "do-not-expose"},
 		map[string]any{"id": "shot-2", "videoMotionPrompt": "下一镜头"},
 	}}
-	result := cloudAgentStoryboardState(storyboard, 0, true)
+	result := cloudAgentStoryboardState(storyboard, 0, cloudAgentProjectionDetail)
 	raw, _ := json.Marshal(result)
 	if !strings.Contains(string(raw), strings.Repeat("切镜指令", 500)) || strings.Contains(string(raw), "do-not-expose") || result["nextOffset"] != 1 {
 		t.Fatal("storyboard context missing full prompt, pagination or privacy boundary")
 	}
-	next := cloudAgentStoryboardState(storyboard, 1, true)
+	next := cloudAgentStoryboardState(storyboard, 1, cloudAgentProjectionDetail)
 	if next["hasMore"] != false || next["rows"].([]any)[0].(map[string]any)["id"] != "shot-2" {
 		t.Fatal("storyboard pagination failed")
 	}

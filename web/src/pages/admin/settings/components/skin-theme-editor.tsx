@@ -3,7 +3,18 @@ import { IconButton, SegmentedControl, Select, Tooltip } from "@/pages/admin/ui/
 import { Check, Copy, LockKeyhole, Moon, Plus, Sparkles, Sun, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { SKIN_COLOR_GROUPS, SKIN_COMPONENT_NUMBER_FIELDS, SKIN_BUTTON_COLOR_FIELDS, getSkinButtonAppearance, skinSwatches, type SkinButtonFill, type SkinComponentTokens, type SkinDefinition, type SkinModeTokens, type SkinThemeMode } from "@/lib/skin-themes";
+import {
+    SKIN_COLOR_GROUPS,
+    SKIN_COMPONENT_NUMBER_FIELDS,
+    SKIN_BUTTON_COLOR_FIELDS,
+    getSkinButtonAppearance,
+    skinSwatches,
+    type SkinButtonFill,
+    type SkinComponentTokens,
+    type SkinDefinition,
+    type SkinModeTokens,
+    type SkinThemeMode,
+} from "@/lib/skin-themes";
 import { cn } from "@/lib/utils";
 import { AdminStatusBadge } from "@/pages/admin/components/admin-ui";
 
@@ -31,9 +42,7 @@ export function SkinThemeEditor({
     if (!selected) return null;
     const editorDisabled = disabled || selected.locked;
     const buttonFill = selected.tokens.buttons[mode];
-    const updateButton = (patch: Partial<SkinButtonFill>) => onChange({ ...selected, tokens: { ...selected.tokens,
-        buttons: { ...selected.tokens.buttons, [mode]: { ...buttonFill, ...patch } },
-    } });
+    const updateButton = (patch: Partial<SkinButtonFill>) => onChange({ ...selected, tokens: { ...selected.tokens, buttons: { ...selected.tokens.buttons, [mode]: { ...buttonFill, ...patch } } } });
 
     const updateIdentity = (patch: Partial<Pick<SkinDefinition, "name" | "description">>) => onChange({ ...selected, ...patch });
     const updateColor = (key: keyof SkinModeTokens, value: string) =>
@@ -169,24 +178,48 @@ export function SkinThemeEditor({
                 <SkinThemePreview theme={selected} mode={mode} />
 
                 <details className="admin-skin-token-group" open>
-                    <summary><span>主按钮填充</span><small>{mode === "light" ? "浅色" : "深色"}模式</small></summary>
+                    <summary>
+                        <span>主按钮填充</span>
+                        <small>{mode === "light" ? "浅色" : "深色"}模式</small>
+                    </summary>
                     <div className="admin-skin-component-grid">
                         <label className="admin-skin-number-field">
                             <span>填充方式</span>
-                            <Select value={buttonFill.mode} disabled={editorDisabled}
-                                options={[{ label: "纯色（使用主操作颜色）", value: "solid" }, { label: "渐变", value: "gradient" }]}
-                                onChange={(value) => updateButton({ mode: value })} />
+                            <Select
+                                value={buttonFill.mode}
+                                disabled={editorDisabled}
+                                options={[
+                                    { label: "纯色（使用主操作颜色）", value: "solid" },
+                                    { label: "渐变", value: "gradient" },
+                                ]}
+                                onChange={(value) => updateButton({ mode: value })}
+                            />
                         </label>
-                        {buttonFill.mode === "gradient" ? <label className="admin-skin-number-field">
-                            <span>渐变角度</span>
-                            <InputNumber aria-label="渐变角度" value={buttonFill.angle} min={0} max={360} precision={0} addonAfter="°" disabled={editorDisabled}
-                                onChange={(value) => { if (typeof value === "number") updateButton({ angle: value }); }} />
-                        </label> : null}
+                        {buttonFill.mode === "gradient" ? (
+                            <label className="admin-skin-number-field">
+                                <span>渐变角度</span>
+                                <InputNumber
+                                    aria-label="渐变角度"
+                                    value={buttonFill.angle}
+                                    min={0}
+                                    max={360}
+                                    precision={0}
+                                    addonAfter="°"
+                                    disabled={editorDisabled}
+                                    onChange={(value) => {
+                                        if (typeof value === "number") updateButton({ angle: value });
+                                    }}
+                                />
+                            </label>
+                        ) : null}
                     </div>
-                    {buttonFill.mode === "gradient" ? <div className="admin-skin-color-grid">
-                        {SKIN_BUTTON_COLOR_FIELDS.map(({ key, label }) => <ColorTokenField key={key} label={label} help="仅影响主按钮，不改变选中态、开关和危险操作" value={buttonFill[key]} disabled={editorDisabled}
-                            onChange={(value) => updateButton({ [key]: value.trim().toLowerCase() })} />)}
-                    </div> : null}
+                    {buttonFill.mode === "gradient" ? (
+                        <div className="admin-skin-color-grid">
+                            {SKIN_BUTTON_COLOR_FIELDS.map(({ key, label }) => (
+                                <ColorTokenField key={key} label={label} help="仅影响主按钮，不改变选中态、开关和危险操作" value={buttonFill[key]} disabled={editorDisabled} onChange={(value) => updateButton({ [key]: value.trim().toLowerCase() })} />
+                            ))}
+                        </div>
+                    ) : null}
                 </details>
 
                 <div className="admin-skin-color-groups">

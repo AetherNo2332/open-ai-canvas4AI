@@ -12,8 +12,10 @@ import { WorkingGlow } from "@/components/ai/working-indicator";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { Skill } from "@/services/api/skills";
+import type { AgentContextBreakdown, AgentContextPressure } from "@/services/api/agent";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
+import { agentToolRetry, type AgentToolRetryAttempt } from "@/lib/canvas/agent-tool-retry";
 
 export type CloudAgentChatAttachment = { id: string; name: string; url: string };
 type CloudAgentOperationImpact = {
@@ -123,6 +125,9 @@ export function AgentChatMessage({
                 </details>
             </div>
         );
+    }
+    if (objectField(item.detail, "eventType") === "context_compaction") {
+        return <AgentContextCompactionNotice item={item} theme={theme} />;
     }
     if (isSystem) {
         return (
@@ -325,6 +330,21 @@ export function AgentToolCard({ title, text, detail, theme, references = [], onF
     const isPlain = !actions.length && !state.isError;
     const conciseError = text.length > 180 ? `${text.slice(0, 180)}…` : text;
     const categoryIcon = category === "read" ? <Eye className="size-3.5" /> : category === "create" ? <Plus className="size-3.5" /> : <Pencil className="size-3.5" />;
+    const retry = agentToolRetry(detail);
+    const attempts = objectField(detail, "retryAttempts");
+    if (retry && Array.isArray(attempts)) {
+        const label = retry.status === "recovered" ? "自动纠正后已恢复" : retry.status === "exhausted" ? "自动纠正未完成" : "自动纠正记录";
+        return (
+            <details data-agent-tool-retry className="min-w-0 flex-1 text-xs leading-5" style={{ color: theme.node.muted }}>
+                <summary className="cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2" style={{ outlineColor: theme.node.muted }}>
+                    {label} · {retry.attempt}/{retry.maxAttempts} 次尝试未通过
+                </summary>
+                <ol className="mt-2 space-y-1 pl-4" aria-label="自动纠正详情">
+                    {(attempts as AgentToolRetryAttempt[]).map((attempt, index) => <li key={attempt.id} className="whitespace-pre-wrap break-words">第 {index + 1} 次：{attempt.text}</li>)}
+                </ol>
+            </details>
+        );
+    }
     return (
         <div data-agent-tool-card className={`agent-tool-row agent-tool-row--${category}${isPlain ? " agent-tool-row--plain" : ""} flex min-w-0 flex-1 items-start gap-2.5 text-left`} style={{ color: theme.node.text }}>
             <span className="agent-tool-status shrink-0" style={{ color: state.color }} aria-hidden="true">{state.icon}</span>
@@ -456,6 +476,8 @@ export function AgentChatComposer({
     references = [],
     slashSkills,
     includeAssetLibrary,
+    contextPressure,
+    runStep,
 }: {
     prompt: string;
     attachments?: CloudAgentChatAttachment[];
@@ -477,6 +499,9 @@ export function AgentChatComposer({
     slashSkills?: Skill[];
     /** 是否在「@」候选里包含素材库资源 */
     includeAssetLibrary?: boolean;
+    contextPressure?: AgentContextPressure;
+    /** 本轮已发出的模型调用次数（run.step），弹窗用它说明"读数属于第几步"。 */
+    runStep?: number;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [slash, setSlash] = useState<{ start: number; query: string } | null>(null);
@@ -739,6 +764,7 @@ export function AgentChatComposer({
                         {left}
                     </div>
                     <div className="agent-composer-submit flex items-center gap-2">
+                        {contextPressure ? <AgentContextPressureIndicator pressure={contextPressure} runStep={runStep} /> : null}
                         {disabled ? null : (
                             <span className="agent-composer-send-hint">
                                 <span className="agent-composer-send-hint-full">{canStop ? "运行中：发送即插话，下一步生效" : "Enter 发送 · Shift+Enter 换行"}</span>
@@ -791,6 +817,244 @@ export function AgentChatComposer({
             </div>
             {previewAttachment ? <AgentImagePreview attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} /> : null}
         </div>
+    );
+}
+
+function AgentContextCompactionNotice({ item, theme }: { item: CloudAgentChatMessage; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+    const running = objectField(item.detail, "status") === "running";
+    const fallback = objectField(item.detail, "mode") === "fallback";
+    return (
+        <div role="status" aria-live="polite" className="flex items-start gap-3">
+            <AgentTimelineMarker
+                theme={theme}
+                tone={running ? "agent" : "muted"}
+                icon={running ? <LoaderCircle className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+            />
+            <div className="min-w-0 flex-1 py-0.5">
+                <div className="flex flex-wrap items-center gap-2 text-[13px] font-medium" style={{ color: theme.node.text }}>
+                    <span>{running ? "正在整理上下文" : "上下文整理完成"}</span>
+                    <span className="rounded-full px-2 py-0.5 text-[var(--fs-label)]" style={{ color: running ? theme.accent.primary : theme.node.muted, background: running ? theme.accent.primarySoft : theme.node.fill }}>
+                        {running ? "压缩中" : fallback ? "保底检查点" : "结构化检查点"}
+                    </span>
+                </div>
+                <div className="mt-0.5 text-xs leading-5" style={{ color: theme.node.muted }}>{item.text}</div>
+                {item.meta ? <div className="mt-0.5 text-[var(--fs-label)] opacity-65" style={{ color: theme.node.muted }}>{item.meta}</div> : null}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * 占用分布的落点：一根堆叠条给"谁占了大头"的直觉，下面按桶列出估算 Token 与
+ * 占比，再展开系统提示的内部分段。数值来自服务端同一步的估算，与圆环同源。
+ */
+type ContextBudgetUsage = {
+    /** 模型窗口是否已配置：没配置时只给组成，不给"未使用"。 */
+    configured: boolean;
+    usableInputTokens: number;
+    projectedTokens: number;
+    compactAtTokens?: number;
+    thresholdRatio: number;
+};
+
+function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreakdown; format: (value: number) => string }) {
+    if (!breakdown || breakdown.buckets.length === 0) return null;
+    const total = breakdown.bucketBytes + breakdown.envelopeBytes || breakdown.totalBytes;
+    if (total <= 0) return null;
+    const share = (bytes: number) => Math.max(0, Math.min(100, (bytes / total) * 100));
+    const scaled = typeof breakdown.tokenScale === "number" && Math.abs(breakdown.tokenScale - 1) > 0.005;
+    const bucketTokens = (bucket: { tokens: number; scaledTokens?: number }) => (scaled && bucket.scaledTokens ? bucket.scaledTokens : bucket.tokens);
+    const stack = [...breakdown.buckets.map((bucket) => ({ ...bucket, percent: share(bucket.bytes) })),
+        ...(breakdown.envelopeBytes > 0 ? [{ key: "envelope", label: "协议外壳", bytes: breakdown.envelopeBytes, tokens: 0, percent: share(breakdown.envelopeBytes) }] : [])];
+    const segments = breakdown.systemSegments || [];
+    return (
+        <>
+            <div className="agent-context-pressure-divider" />
+            <div className="agent-context-pressure-title">上下文占用分布（本次请求的组成）</div>
+            <div className="agent-context-breakdown-bar" role="img" aria-label={`上下文占用分布：${stack.map((item) => `${item.label} ${Math.round(item.percent)}%`).join("，")}`}>
+                {stack.map((item) => <span key={item.key} data-bucket={item.key} style={{ width: `${item.percent}%` }} />)}
+            </div>
+            <ul className="agent-context-breakdown-list">
+                {breakdown.buckets.map((bucket) => (
+                    <li key={bucket.key}>
+                        <span className="agent-context-breakdown-dot" data-bucket={bucket.key} />
+                        <span className="agent-context-breakdown-label">{bucket.label}</span>
+                        <span className="agent-context-breakdown-value">{format(bucketTokens(bucket))} Token · {Math.round(share(bucket.bytes))}%</span>
+                    </li>
+                ))}
+                <li>
+                    <span className="agent-context-breakdown-dot" data-bucket="envelope" />
+                    <span className="agent-context-breakdown-label">协议外壳</span>
+                    <span className="agent-context-breakdown-value">{format(breakdown.envelopeBytes)} 字节 · {Math.round(share(breakdown.envelopeBytes))}%</span>
+                </li>
+            </ul>
+            {segments.length > 0 ? (
+                <div className="agent-context-breakdown-more">
+                    <div className="agent-context-breakdown-more-title">系统提示构成{scaled ? `（已按上游口径 ×${breakdown.tokenScale!.toFixed(2)}）` : ""}</div>
+                    <ul>
+                        {segments.map((segment) => (
+                            <li key={segment.key}>
+                                <span className="agent-context-breakdown-label">{segment.label}</span>
+                                <span className="agent-context-breakdown-value">{format(bucketTokens(segment))} Token</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            ) : null}
+        </>
+    );
+}
+
+/**
+ * 预算占用条：把"已用 / 未使用"按输入预算摆在一根条上，并标出压缩线。
+ * 组成条回答"这次请求里谁占了大头"，预算条回答"离装不下还有多远"——两者是不同问题。
+ */
+function ContextBudgetBar({ usage, format }: { usage?: ContextBudgetUsage; format: (value: number) => string }) {
+    if (!usage || !usage.configured || usage.usableInputTokens <= 0) {
+        return (
+            <>
+                <div className="agent-context-pressure-title">上下文窗口占用</div>
+                <div className="agent-context-pressure-note">未配置模型上限：无法给出未使用余量，判据退回字节/条数兜底。</div>
+            </>
+        );
+    }
+    const budget = usage.usableInputTokens;
+    const used = Math.max(0, Math.min(budget, usage.projectedTokens));
+    const free = Math.max(0, budget - used);
+    const percent = (value: number) => Math.round((value / budget) * 100);
+    const threshold = usage.compactAtTokens ?? Math.round(budget * usage.thresholdRatio);
+    const overBudget = usage.projectedTokens > budget;
+    return (
+        <>
+            <div className="agent-context-pressure-title">上下文窗口占用</div>
+            <div className="agent-context-breakdown-bar" role="img" aria-label={`上下文窗口占用：已用 ${percent(used)}%，未使用 ${percent(free)}%`}>
+                <span data-bucket="used" style={{ width: `${percent(used)}%` }} />
+                <span data-bucket="unused" style={{ width: `${percent(free)}%` }} />
+            </div>
+            <ul className="agent-context-breakdown-list">
+                <li>
+                    <span className="agent-context-breakdown-dot" data-bucket="used" />
+                    <span className="agent-context-breakdown-label">已使用</span>
+                    <span className="agent-context-breakdown-value">{format(usage.projectedTokens)} Token · {percent(usage.projectedTokens)}%</span>
+                </li>
+                <li>
+                    <span className="agent-context-breakdown-dot" data-bucket="unused" />
+                    <span className="agent-context-breakdown-label">未使用</span>
+                    <span className="agent-context-breakdown-value">{format(free)} Token · {percent(free)}%</span>
+                </li>
+            </ul>
+            <div className="agent-context-pressure-note">
+                已使用 = 预计下一步输入。输入预算 {format(budget)} Token（窗口 − 输出预留 − 工具/协议预留）；压缩线 {format(threshold)} Token（{Math.round(usage.thresholdRatio * 100)}%）。
+                {overBudget ? "当前预计输入已超过输入预算，下一步会先压缩再继续。" : ""}
+            </div>
+        </>
+    );
+}
+
+function AgentContextPressureIndicator({ pressure, runStep }: { pressure: AgentContextPressure; runStep?: number }) {
+    const configured = pressure.modelLimitConfigured && pressure.usableInputTokens > 0;
+    // 有上游实测锚点时用"下一步预计"占窗口的比例；否则退回纯估算。
+    const anchored = pressure.tokenSource === "provider" && typeof pressure.pressureTokens === "number";
+    const projected = pressure.projectedTokens ?? pressure.estimatedInputTokens;
+    const modelRatio = configured
+        ? Math.max(0, pressure.projectedPressureRatio ?? (projected / Math.max(1, pressure.usableInputTokens)))
+        : 0;
+    const compactionRatio = Math.max(0, pressure.compactionPressureRatio);
+    const tokenBasis = pressure.compactionBasis !== "bytes" && configured;
+    const thresholdRatio = pressure.compactionThresholdRatio ?? 0.85;
+    const ratio = Math.max(modelRatio, compactionRatio);
+    const basis = configured && modelRatio >= compactionRatio ? "模型窗口" : tokenBasis ? "输入预算的 85%" : "服务端压缩阈值";
+    const formatTokens = (value: number) => value.toLocaleString("zh-CN");
+    // 秒级墙钟按"分/秒"给人看：这一步的边界是可配置的，读数要能直接对上管理端。
+    const formatDuration = (seconds: number) => (seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`);
+    const percent = Math.round(ratio * 100);
+    const progress = Math.min(100, percent);
+    const tone = ratio >= 0.9 ? "critical" : ratio >= 0.7 ? "warning" : "normal";
+    const format = (value: number) => value.toLocaleString("zh-CN");
+    const title = (
+        <div className="agent-context-pressure-popover">
+            <div className="agent-context-pressure-title">上下文压力 {percent}%</div>
+            <div>
+                本轮进度：{typeof runStep === "number" && runStep > 0 ? `第 ${runStep} 步（已发出 ${runStep} 次模型调用）` : "尚未发出模型调用"}
+                {typeof pressure.anchorStep === "number" && pressure.anchorStep > 0 ? ` · 用量锚点取自第 ${pressure.anchorStep} 步` : ""}
+            </div>
+            <div>当前依据：{basis}</div>
+            {tokenBasis ? (
+                <div>
+                    压缩阈值：{Math.round(thresholdRatio * 100)}% 输入预算 · 当前 {Math.round(compactionRatio * 100)}%
+                    （{pressure.compactionTokenSource === "estimate" ? "本地估算" : "上游实测"}）
+                </div>
+            ) : (
+                <div>压缩阈值：{Math.round(thresholdRatio * 100)}%…（未配置模型上限，按字节兜底）{format(pressure.compactionSourceBytes)} / {format(pressure.compactionThresholdBytes)} 字节 · 当前 {Math.round(compactionRatio * 100)}%</div>
+            )}
+            {anchored ? (
+                <>
+                    <div>上游实测（第 {pressure.anchorStep ?? "?"} 步）：{formatTokens(pressure.pressureTokens || 0)} Token</div>
+                    <div>下一步预计：{formatTokens(projected)} Token{typeof pressure.anchorDeltaTokens === "number" && pressure.anchorDeltaTokens !== 0 ? `（较锚点 ${pressure.anchorDeltaTokens > 0 ? "+" : ""}${formatTokens(pressure.anchorDeltaTokens)}）` : ""}</div>
+                    {pressure.tokenUsage ? (
+                        <div>其中未缓存 {formatTokens(pressure.tokenUsage.uncachedInputTokens)} · 缓存 {formatTokens(pressure.tokenUsage.cachedInputTokens)} · 输出 {formatTokens(pressure.tokenUsage.outputTokens)}</div>
+                    ) : null}
+                    {pressure.breakdown?.tokenScale && Math.abs(pressure.breakdown.tokenScale - 1) > 0.005 ? (
+                        <div>构成已按上游口径校准 ×{pressure.breakdown.tokenScale.toFixed(2)}</div>
+                    ) : null}
+                </>
+            ) : (
+                <>
+                    <div>输入估算：约 {formatTokens(projected)} Token（暂无上游实测锚点）</div>
+                    {pressure.anchorRejected ? <div>锚点未采信：{pressure.anchorRejected}</div> : null}
+                </>
+            )}
+            {configured ? (
+                <>
+                    <div>模型窗口：{formatTokens(pressure.contextWindowTokens)} Token</div>
+                    <div>预留输出：{formatTokens(pressure.reservedOutputTokens)} Token</div>
+                    {typeof pressure.overheadTokens === "number" && pressure.overheadTokens > 0 ? (
+                        <div>协议与工具预留：{formatTokens(pressure.overheadTokens)} Token（工具 schema、协议包装与兜底轮，窗口的 4%）</div>
+                    ) : null}
+                    {pressure.budgetSource ? (
+                        <div>
+                            预算来源：
+                            {pressure.budgetSource === "logical-route-intersection"
+                                ? "逻辑模型可用文本路由的最小窗口"
+                                : "渠道模型能力配置"}
+                        </div>
+                    ) : null}
+                </>
+            ) : <div>模型窗口：未配置；当前圆环按服务端压缩压力显示，不用字符上限推断 Token 能力。</div>}
+            <div className="agent-context-pressure-divider" />
+            <div>本轮提示：{format(pressure.promptChars)} / {pressure.promptLimitChars ? format(pressure.promptLimitChars) : "未配置"} 字符</div>
+            {/* 预算条与组成条分开：组成回答"这次请求谁占了大头"，预算条回答"离装不下还有多远"。
+                组成数据缺失（例如这一步还没有读数）时，"未使用余量"仍然要看得见。 */}
+            <div className="agent-context-pressure-divider" />
+            <ContextBudgetBar
+                usage={{
+                    configured,
+                    usableInputTokens: pressure.usableInputTokens ?? 0,
+                    projectedTokens: projected,
+                    compactAtTokens: pressure.compactAtTokens,
+                    thresholdRatio,
+                }}
+                format={format}
+            />
+            <ContextBreakdown breakdown={pressure.breakdown} format={format} />
+            <div>
+                单步输出上限：{pressure.stepMaxOutputTokens ? `${formatTokens(pressure.stepMaxOutputTokens)} Token` : "本部署未限制（思考与正文都不设输出上限）"}
+                {typeof pressure.stepTimeoutSeconds === "number" ? ` · 单步最长 ${formatDuration(pressure.stepTimeoutSeconds)}` : ""}
+            </div>
+            <div>超时/空输出会自动关思考重试一次，重试仍失败才结束本轮。</div>
+            <div className="agent-context-pressure-note">协议外壳指工具选择、缓存键等非内容字段。{anchored ? "上限读数来自上游实测，构成仍是估算并按锚点校准。" : "Token 为本地估算；拿到上游实测后会切换为锚点读数。"}压缩会保留检查点和最近对话。</div>
+        </div>
+    );
+    return (
+        <Tooltip title={title} placement="top" className="!max-w-72 !p-3">
+            <button type="button" className="agent-context-pressure" data-tone={tone} aria-label={`上下文压力 ${percent}%`}>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="agent-context-pressure-track" cx="12" cy="12" r="9" />
+                    <circle className="agent-context-pressure-value" cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${progress} 100`} />
+                </svg>
+                <span>{percent}%</span>
+            </button>
+        </Tooltip>
     );
 }
 

@@ -291,7 +291,7 @@ func TestCloudAgentProjectionRejectsMissingAdapterAndOpaqueMetadata(t *testing.T
 	node := map[string]any{"id": "n1", "type": "text", "title": "镜头"}
 	meta := map[string]any{"content": "公开正文", "storageKey": "resource:private", "url": "https://private.example/test", "status": "idle"}
 	descriptor, _ := cloudAgentNodeCapabilityForType("text")
-	projected, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, true, 0)
+	projected, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, cloudAgentProjectionDetail, 0)
 	if err != nil || projected["content"] != "公开正文" || projected["storageKey"] != nil || projected["url"] != nil {
 		t.Fatalf("unsafe or incomplete projection: %v, %v", projected, err)
 	}
@@ -299,7 +299,7 @@ func TestCloudAgentProjectionRejectsMissingAdapterAndOpaqueMetadata(t *testing.T
 	descriptor.ProjectionKind = "unregistered-projector"
 	descriptor.DetailFields = []string{"storyboard"}
 	meta["storyboard"] = map[string]any{"rows": []any{}}
-	if _, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, true, 0); err == nil {
+	if _, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, cloudAgentProjectionDetail, 0); err == nil {
 		t.Fatal("unregistered structured projector must fail closed")
 	}
 }

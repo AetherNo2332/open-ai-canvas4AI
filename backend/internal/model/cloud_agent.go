@@ -2,6 +2,10 @@ package model
 
 import "time"
 
+// CloudAgentCheckpointVersion 是"消息与事件都搬出检查点"的形态版本：
+// < 它的旧运行把消息与事件一起放在 StateJSON 里，下一次保存时懒升级。
+const CloudAgentCheckpointVersion = 2
+
 // CloudAgentExecution checkpoints orchestration independently of billed tasks.
 type CloudAgentExecution struct {
 	ID                string `gorm:"primaryKey;size:80"`

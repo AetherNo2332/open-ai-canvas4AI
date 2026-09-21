@@ -78,7 +78,7 @@ func TestCloudAgentGenerationDiagnosticsSeparateOutputAndTask(t *testing.T) {
 			}
 			node := map[string]any{"id": "video", "type": "video", "metadata": map[string]any{"status": "loading", "taskId": task.ID}}
 			doc := map[string]any{"nodes": []map[string]any{node}}
-			view, err := cloudAgentCanvasState(s.repo, "user", "agent-canvas", doc, 0, nil, 0)
+			view, err := cloudAgentCanvasState(s.repo, "user", "agent-canvas", doc, 0, nil, 0, 0, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
