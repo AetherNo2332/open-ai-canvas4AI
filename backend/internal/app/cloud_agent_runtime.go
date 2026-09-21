@@ -115,11 +115,19 @@ type cloudAgentRuntime struct {
 	// ImageInspectCounts 记录本轮内每张图被查看的次数，用于"同一张图不要反复看"的护栏。
 	ImageInspectCounts map[string]int `json:"imageInspectCounts,omitempty"`
 	// PendingVisualNodeID 是刚看过、还没写观察的那张图；模型下一次输出正文时把观察记到锚点。
-	PendingVisualNodeID  string                   `json:"pendingVisualNodeId,omitempty"`
-	StoryboardTaskID     string                   `json:"storyboardTaskId,omitempty"`
-	Plan                 []cloudAgentPlanItem     `json:"plan,omitempty"`
-	PendingInterjections []cloudAgentInterjection `json:"pendingInterjections,omitempty"`
-	InterjectionIDs      []string                 `json:"interjectionIds,omitempty"`
+	PendingVisualNodeID string `json:"pendingVisualNodeId,omitempty"`
+	// PendingImageInspections 暂存"本批还有工具结果没入历史"的看图结果，等整批 tool
+	// 结果都入历史后合并成一条 user 图片消息（见 cloudAgentFlushPendingImages）。
+	//
+	// 它必须进检查点，不能标 `json:"-"`：一次 advanceCloudAgent 只执行一个工具调用
+	// （advanceCloudAgentTool 执行完就 return，下一批调用走下一次转移），而每次转移都
+	// 从 StateJSON 重新解码（cloudAgentDecode）。进程内字段在下一个调用到来时必然为空，
+	// 缓冲就白缓冲了。载荷只有回执与签名链接，几十字节级。
+	PendingImageInspections []cloudAgentImageInspection `json:"pendingImageInspections,omitempty"`
+	StoryboardTaskID        string                      `json:"storyboardTaskId,omitempty"`
+	Plan                    []cloudAgentPlanItem        `json:"plan,omitempty"`
+	PendingInterjections    []cloudAgentInterjection    `json:"pendingInterjections,omitempty"`
+	InterjectionIDs         []string                    `json:"interjectionIds,omitempty"`
 	// 最近一次已发出的步骤请求（模型调用）的本地计价，与上游实测用量配成锚点用。
 	// 估算与实测指向同一个 canonical：估算取自任务 input 里实际发出的那份，
 	// 因此"信封一致"是构造保证，不需要额外比对。
@@ -983,6 +991,11 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if state.CallIndex < len(state.Calls) {
 		return s.advanceCloudAgentTool(run, &state)
 	}
+	// 兜底 flush：本批调用都执行完了（无论最后一个调用是不是看图、有没有被中断），
+	// 缓冲里的图片必须在这里合并成一条 user 消息落到全部 tool 结果之后。少了这一步，
+	// "看图不是最后一个调用"的批次会把图片永久丢掉，而对应的 tool 回执已经在历史里。
+	// 幂等：正常路径（最后一个调用就是看图）已经在 cloudAgentToolResult 里 flush 过，这里是空操作。
+	cloudAgentFlushPendingImages(&state)
 	if state.ContextCompaction != nil && state.ContextCompaction.Status == "requested" {
 		return s.enqueueCloudAgentContextCompaction(run, &state)
 	}
@@ -1280,8 +1293,14 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 			map[string]any{"role": "tool", "tool_call_id": call.ID, "content": string(receipt)})
 		// 重复查看时只回执文字（ImageURL 为空），不再附图。
 		if strings.TrimSpace(inspection.ImageURL) != "" {
-			state.Canonical.Messages = append(state.Canonical.Messages,
-				map[string]any{"role": "user", "content": cloudAgentImageContentParts(inspection)})
+			cloudAgentStageImageInspection(state, inspection)
+		}
+		// 一批里可能有多个调用（模型一次发起 parallel tool calls），上游要求
+		// assistant(tool_calls) 之后紧跟每一个 tool_call_id 的 tool 消息，所以图片
+		// 不能插在 tool 结果之间。只有本批最后一个调用执行完，才把整批缓冲合并成
+		// 一条 user 消息追加在全部 tool 结果之后。
+		if state.CallIndex+1 >= len(state.Calls) {
+			cloudAgentFlushPendingImages(state)
 		}
 		state.CallIndex++
 		state.Approval = nil
