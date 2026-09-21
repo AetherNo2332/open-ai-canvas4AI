@@ -3,6 +3,9 @@ name: Quality checks
 on:
   pull_request:
   workflow_call:
+  # 允许手动触发：GitHub 偶发漏发 pull_request 事件时（实测出现过一次），
+  # 可以直接对某个分支派一次完整检查，而不必推一个空提交。
+  workflow_dispatch:
   push:
     branches:
       - main
