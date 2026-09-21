@@ -1093,6 +1093,23 @@ func TestProviderPayloadErrorCategoryIgnoresEchoedPortraitWording(t *testing.T) 
 	}
 }
 
+// 公网模型取不到局域网签名图：文案必须指向 CANVAS_PUBLIC_BASE_URL 的可达性，
+// 而不是"检查模型和参数"或额度（实测 DeepSeek 返回的就是这条 400）。
+func TestProviderPayloadErrorCategoryClassifiesImageDownloadFailure(t *testing.T) {
+	raw := `{"error":{"message":"400 .messages[5].image[0]: Failed to download image from http://192.168.90.200:3001/api/public/resources/a.png?expires=1&sig=x"}}`
+	message, ok := providerPayloadErrorCategory(raw)
+	if !ok || !strings.Contains(message, "CANVAS_PUBLIC_BASE_URL") {
+		t.Fatalf("providerPayloadErrorCategory() = %q, ok = %v, want upstream-reachability wording", message, ok)
+	}
+	if strings.Contains(message, "额度") {
+		t.Fatalf("image download failure misclassified as quota: %q", message)
+	}
+	// 反例：正文里只是出现 image 一词的普通失败不得被归到这类目。
+	if message, ok := providerPayloadErrorCategory(`{"error":{"message":"image generation failed: invalid size"}}`); ok && strings.Contains(message, "CANVAS_PUBLIC_BASE_URL") {
+		t.Fatalf("unrelated image failure classified as image download failure: %q", message)
+	}
+}
+
 // 供应商错误码与安全审核措辞同时出现时，以更具体的错误码为准。
 func TestProviderPayloadErrorCategoryPrefersProviderCodeOverModerationWording(t *testing.T) {
 	raw := `{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation","message":"blocked by content policy"}}`

@@ -187,13 +187,15 @@ func migrateChannelModelLabel(tx *gorm.DB) error {
 //
 // 上游随后把 v32 用给了 channel_model_tags，于是目标再各挪一位。条目按 from 从大到小排列：
 // 先搬走 33，32→33 才有空位；否则会撞上还没搬走的 33 而被跳过。
-var legacyCloudAgentMigrationRelocations = []struct {
+type legacyCloudAgentMigrationRelocation struct {
 	from     int64
 	to       int64
 	name     string
 	apply    func(*gorm.DB) error
 	checksum string
-}{
+}
+
+var legacyCloudAgentMigrationRelocations = []legacyCloudAgentMigrationRelocation{
 	{from: 33, to: 34, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
 	{from: 32, to: 33, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	{from: 25, to: 34, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},

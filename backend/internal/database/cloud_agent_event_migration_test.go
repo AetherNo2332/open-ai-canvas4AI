@@ -10,11 +10,11 @@ import (
 )
 
 // 上游 v1.5.7 起，运行事件的活存储是 cloud_agent_event_records（EventJSON 整条 JSON，
-// 主键 run_id + sequence）。我们自研的 cloud_agent_run_events 随 v32 退役为 no-op：
+// 主键 run_id + sequence）。我们自研的 cloud_agent_run_events 随 v33 退役为 no-op：
 // 表与数据保留、代码不再读写。已有部署（我们 v25）里 checkpoint_version=2 的运行，
 // 事件行全在退役表里，不搬运就会被 cloudAgentDecode 判 "Agent execution journal is incomplete"。
 //
-// 这里覆盖三种起点：全新库 / 上游 v31 库 / 我方 v25 等价库（含退役表数据）。
+// 这里覆盖三种起点：全新库 / 上游库 / 我方 v25 等价库（含退役表数据）。
 func TestLegacyCloudAgentEventRowMigration(t *testing.T) {
 	t.Run("全新库：退役表不存在，搬运是 no-op", func(t *testing.T) {
 		db := openRelocationTestDB(t, "events-fresh")
@@ -33,8 +33,8 @@ func TestLegacyCloudAgentEventRowMigration(t *testing.T) {
 		}
 	})
 
-	t.Run("上游 v31 库：没有退役表，搬运是 no-op 且上游行不被改动", func(t *testing.T) {
-		db := openRelocationTestDB(t, "events-upstream31")
+	t.Run("上游库：没有退役表，搬运是 no-op 且上游行不被改动", func(t *testing.T) {
+		db := openRelocationTestDB(t, "events-upstream")
 		if err := MigrateSchema(db); err != nil {
 			t.Fatalf("migrate upstream v31 db: %v", err)
 		}

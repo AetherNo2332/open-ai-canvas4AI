@@ -8,11 +8,11 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 ## 合并上游 v1.5.2–v1.5.7 后待复验（云端 Agent 持久化切换）
 
 合并后运行事件的活存储换成上游的 `cloud_agent_event_records`，我们自研的
-`cloud_agent_run_events` 随 v32 退役；事件契约（`event_seq_base` 等视图字段、`?sinceSeq=`/`?eventLimit=`、
+`cloud_agent_run_events` 随 v33 退役（上游随后把 v32 用给了 `channel_model_tags`，我方两条 no-op 让位迁移顺延到 33/34）；事件契约（`event_seq_base` 等视图字段、`?sinceSeq=`/`?eventLimit=`、
 SSE 的 `Last-Event-ID`）已按上游持久化结构重新实现。以下端到端项本轮**没有**做，需要真实环境复验：
 
-- [ ] **迁移三起点**：全新库 / 上游 v31 库 / 我方 v25 等价库（含退役表数据）各跑一次 `migrate-schema up`，
-      确认 `ready:true`；第三种起点额外确认退役事件行被搬进 `cloud_agent_event_records`、
+- [ ] **迁移四起点**：全新库 / 上游库 / 我方 v25 等价库（含退役表数据）/ 已跑过上一版合并线二进制（让位记录停在 v32/v33）的库，各跑一次 `migrate-schema up`，
+      确认 `ready:true`；我方库这一支额外确认退役事件行被搬进 `cloud_agent_event_records`、
       `checkpoint_version=2` 的运行能打开（`len(Journal) == event_count`）。单测已覆盖，实库未跑。
 - [ ] **真实旧库搬运**：对一份 `pg_dump` 出来的 v25 库副本执行迁移，核对 21 个 `checkpoint_version=2`
       的运行全部可读；搬运前后退役表的行数与内容不变。

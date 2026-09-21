@@ -318,6 +318,12 @@ func providerPayloadErrorCategory(raw string) (string, bool) {
 	case strings.Contains(normalized, "must be followed by tool messages"),
 		strings.Contains(normalized, "insufficient tool messages following"):
 		return "会话里的工具调用与结果不匹配，本轮已停止；这不是额度或提示词问题，如反复出现请反馈", true
+	// 上游取不到我们给出的图片链接：链接由 CANVAS_PUBLIC_BASE_URL 拼出，必须"模型上游可达"。
+	// 实测公网模型读局域网地址会返回
+	// "400 .messages[5].image[0]: Failed to download image from http://192.168.x.x/api/public/...",
+	// 归到"检查模型和参数"只会让人去改提示词，改不出结果。
+	case strings.Contains(normalized, "download image"), strings.Contains(normalized, "image download"):
+		return "模型服务无法下载参考图：该图片链接对它不可达。请把 CANVAS_PUBLIC_BASE_URL 配成模型上游可访问的地址（局域网或内网地址对公网模型不可达）", true
 	// 额度类目只认结算语境里的稳定词，**不接受裸 "insufficient"**（原因见上：
 	// "insufficient tool messages" 是协议错误，不是余额问题）。
 	case strings.Contains(normalized, "quota"), strings.Contains(normalized, "balance"), strings.Contains(normalized, "billing"):

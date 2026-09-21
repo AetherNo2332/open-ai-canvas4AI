@@ -10,14 +10,19 @@ import (
 	"gorm.io/gorm"
 )
 
-// 合并上游 v1.5.7 时，我们的 cloud_agent_run_events / cloud_agent_transcript 从 v24/v25
-// 让位到 v32/v33（登记为 no-op，表与数据保留）。已经升到我们 v25 的库必须先把自己那两条
-// 记录改写到 32/33，否则 validateMigrationRecord 会拿上游 v24（channel_model_label）比对
-// 并拒绝启动（实测报错：数据库迁移 24 名称不一致：记录为 cloud_agent_run_events，程序期望 channel_model_label）。
+// 我们的 cloud_agent_run_events / cloud_agent_transcript 从 v24/v25（自研时期的原始登记）
+// 让位到 v33/v34（登记为 no-op，表与数据保留）。这条让位线挪过一次：合并上游 v1.5.7 时先落在
+// v32/v33，上游随后把 v32 用给了 channel_model_tags，于是两条各自再挪一位。
 //
-// 覆盖三种起点：全新库 / 上游 v31 库 / 我们 v25 库。
+// 两种库都需要自动搬迁：
+//   - 已升到我们 v25 的库：v24/v25 上是我们的名字与校验和，而 validateMigrationRecord 会拿
+//     上游 v24（channel_model_label）比对并拒绝启动（实测报错：数据库迁移 24 名称不一致：
+//     记录为 cloud_agent_run_events，程序期望 channel_model_label）；
+//   - 已跑过上一版合并线二进制的库：记录停在 v32/v33，而上游 v32 是 channel_model_tags。
+//
+// 覆盖四种起点：全新库 / 上游库 / 我们 v25 库 / 上一版合并线库。
 func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
-	t.Run("全新库：无可搬迁记录，迁移到 33 即可用", func(t *testing.T) {
+	t.Run("全新库：无可搬迁记录，迁移到 34 即可用", func(t *testing.T) {
 		db := openRelocationTestDB(t, "fresh")
 		if err := relocateLegacyCloudAgentMigrations(db); err != nil {
 			t.Fatalf("relocate on fresh db: %v", err)
@@ -28,14 +33,14 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertSchemaReady(t, db)
 	})
 
-	t.Run("上游 v31 库：无可搬迁记录，补到 33", func(t *testing.T) {
-		db := openRelocationTestDB(t, "upstream31")
+	t.Run("上游库：无可搬迁记录，补到 34", func(t *testing.T) {
+		db := openRelocationTestDB(t, "upstream")
 		seedMigrationRecords(t, db, upstreamRecordsThrough(PreviousUpstreamSchemaVersion)...)
 		if err := relocateLegacyCloudAgentMigrations(db); err != nil {
-			t.Fatalf("relocate on upstream v31 db: %v", err)
+			t.Fatalf("relocate on upstream db: %v", err)
 		}
 		if err := MigrateSchema(db); err != nil {
-			t.Fatalf("migrate upstream v31 db: %v", err)
+			t.Fatalf("migrate upstream db: %v", err)
 		}
 		assertSchemaReady(t, db)
 		// 上游段不能被搬迁动过。
@@ -48,7 +53,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		db := openRelocationTestDB(t, "ours25")
 		resetToOurV25Layout(t, db)
 
-		// 不手工调用搬迁：MigrateSchema 必须自己搞定（这就是"三种起点都能跑通"的要求）。
+		// 不手工调用搬迁：MigrateSchema 必须自己搞定（这就是"四种起点都能跑通"的要求）。
 		if err := MigrateSchema(db); err != nil {
 			t.Fatalf("migrate our v25 db: %v", err)
 		}
@@ -66,11 +71,37 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("只有我们 v24 的半升级库：同样能搬迁并补到 33", func(t *testing.T) {
+	t.Run("上一版合并线库：记录停在 v32/v33，搬迁到 33/34 并补上上游 v32", func(t *testing.T) {
+		db := openRelocationTestDB(t, "mergedline")
+		resetToOurMergedLineLayout(t, db)
+
+		if err := MigrateSchema(db); err != nil {
+			t.Fatalf("migrate previous merged-line db: %v", err)
+		}
+		assertRelocated(t, db)
+		for _, want := range append(upstreamCloudAgentVersions(), ourCloudAgentVersions()...) {
+			assertMigrationRecord(t, db, want)
+		}
+		// 关键回归：上游 v32 必须真的被执行成 channel_model_tags，而不是被我们停在 v32 的
+		// 旧记录顶掉（顶掉的表现是启动时报"名称不一致"）。
+		var applied schemaMigration
+		if err := db.First(&applied, "version = ?", int64(32)).Error; err != nil {
+			t.Fatalf("missing upstream v32: %v", err)
+		}
+		if applied.Name != "channel_model_tags" {
+			t.Fatalf("v32 名称 = %s，期望上游的 channel_model_tags", applied.Name)
+		}
+		if err := MigrateSchema(db); err != nil {
+			t.Fatalf("migrate is not idempotent: %v", err)
+		}
+		assertRelocated(t, db)
+	})
+
+	t.Run("只有我们 v24 的半升级库：同样能搬迁并补到 34", func(t *testing.T) {
 		db := openRelocationTestDB(t, "ours24")
 		resetToOurV25Layout(t, db)
 		// 再退回"只升到我们 v24"的状态：删掉 v25 那条。
-		item := legacyCloudAgentMigrationRelocations[1]
+		item := legacyRelocationForFrom(25)
 		if err := db.Where("version = ? AND name = ?", item.from, item.name).Delete(&schemaMigration{}).Error; err != nil {
 			t.Fatalf("drop legacy v25 record: %v", err)
 		}
@@ -83,7 +114,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 	t.Run("搬迁不会误伤同名不同校验和的历史记录", func(t *testing.T) {
 		db := openRelocationTestDB(t, "foreign")
 		seedMigrationRecords(t, db, upstreamRecordsThrough(23)...)
-		item := legacyCloudAgentMigrationRelocations[0]
+		item := legacyRelocationForFrom(24)
 		seedMigrationRecords(t, db, schemaMigration{Version: item.from, Name: item.name, Checksum: "sha256:somebody-elses-history"})
 		if err := relocateLegacyCloudAgentMigrations(db); err != nil {
 			t.Fatalf("relocate: %v", err)
@@ -99,10 +130,10 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 }
 
 // TestLegacyCloudAgentMigrationRelocationPostgres 在真实 Postgres 上做一次端到端：
-// 先把库迁到 33，再把它改造成"我们 v25 库"的样子（v24/v25 是我们的名字，
-// v32/v33 记录不存在），然后要求 MigrateSchema 自己搬迁并回到 ready。
+// 先把库迁到 34，再把它改造成"我们 v25 库"的样子（v24/v25 是我们的名字，
+// 上游 24–32 与让位后的 v33/v34 记录不存在），然后要求 MigrateSchema 自己搬迁并回到 ready。
 //
-// 这条用例覆盖了 SQLite 纯逻辑用例覆盖不到的部分：v24–v31 的 DDL 需要真实表存在，
+// 这条用例覆盖了 SQLite 纯逻辑用例覆盖不到的部分：v24–v32 的 DDL 需要真实表存在，
 // 而搬迁后这些迁移会被真的执行一次。
 func TestLegacyCloudAgentMigrationRelocationPostgres(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("CANVAS_TEST_POSTGRES_DSN"))
@@ -141,25 +172,27 @@ func TestLegacyCloudAgentMigrationRelocationPostgres(t *testing.T) {
 	}
 	assertSchemaReady(t, db)
 
-	// 先把上游 24–31 的记录清掉，模拟"我们 v25 库"（我们的 v24/v25 覆盖了同样的版本号）。
+	// 先把上游 24–32 的记录清掉，模拟"我们 v25 库"（我们的 v24/v25 覆盖了同样的版本号）。
 	if err := db.Where("version >= ? AND version <= ?", int64(24), PreviousUpstreamSchemaVersion).Delete(&schemaMigration{}).Error; err != nil {
 		t.Fatalf("clear upstream records: %v", err)
 	}
 
-	// 逐条记录搬迁前的 applied_at，用来证明 v32/v33 没有被重跑。
+	// 把让位后的两条记录退回原始登记版本 24/25，并逐条记下搬迁前的 applied_at：
+	// 搬迁只改版本号，目标版本不许被重新执行。
 	legacyAppliedAt := map[int64]time.Time{}
-	for _, item := range legacyCloudAgentMigrationRelocations {
+	for _, from := range []int64{24, 25} {
+		legacy := legacyRelocationForFrom(from)
 		var appliedAt time.Time
-		if err := db.Model(&schemaMigration{}).Where("version = ?", item.to).Pluck("applied_at", &appliedAt).Error; err != nil {
+		if err := db.Model(&schemaMigration{}).Where("version = ?", legacy.to).Pluck("applied_at", &appliedAt).Error; err != nil {
 			t.Fatalf("read applied_at: %v", err)
 		}
-		legacyAppliedAt[item.to] = appliedAt
-		if err := db.Where("version = ?", item.to).Delete(&schemaMigration{}).Error; err != nil {
-			t.Fatalf("drop relocated record %d: %v", item.to, err)
+		legacyAppliedAt[legacy.to] = appliedAt
+		if err := db.Where("version = ?", legacy.to).Delete(&schemaMigration{}).Error; err != nil {
+			t.Fatalf("drop relocated record %d: %v", legacy.to, err)
 		}
-		record := schemaMigration{Version: item.from, Name: item.name, Checksum: item.checksum, AppliedAt: appliedAt}
+		record := schemaMigration{Version: legacy.from, Name: legacy.name, Checksum: legacy.checksum, AppliedAt: appliedAt}
 		if err := db.Create(&record).Error; err != nil {
-			t.Fatalf("seed legacy record %d: %v", item.from, err)
+			t.Fatalf("seed legacy record %d: %v", legacy.from, err)
 		}
 	}
 	// 这一步在修复前会报：数据库迁移 24 名称不一致：记录为 cloud_agent_run_events，程序期望 channel_model_label
@@ -171,20 +204,21 @@ func TestLegacyCloudAgentMigrationRelocationPostgres(t *testing.T) {
 	for _, want := range append(upstreamCloudAgentVersions(), ourCloudAgentVersions()...) {
 		assertMigrationRecord(t, db, want)
 	}
-	// v32/v33 是搬迁过来的老记录：applied_at 必须还是搬迁前的值。
-	for _, item := range legacyCloudAgentMigrationRelocations {
+	// v33/v34 是搬迁过来的老记录：applied_at 必须还是搬迁前的值。
+	for _, from := range []int64{24, 25} {
+		legacy := legacyRelocationForFrom(from)
 		var applied schemaMigration
-		if err := db.First(&applied, "version = ?", item.to).Error; err != nil {
-			t.Fatalf("missing relocated record %d: %v", item.to, err)
+		if err := db.First(&applied, "version = ?", legacy.to).Error; err != nil {
+			t.Fatalf("missing relocated record %d: %v", legacy.to, err)
 		}
-		if want := legacyAppliedAt[item.to]; !applied.AppliedAt.Equal(want) {
-			t.Fatalf("v%d 被重新执行了：applied_at = %v，期望沿用 %v", item.to, applied.AppliedAt, want)
+		if want := legacyAppliedAt[legacy.to]; !applied.AppliedAt.Equal(want) {
+			t.Fatalf("v%d 被重新执行了：applied_at = %v，期望沿用 %v", legacy.to, applied.AppliedAt, want)
 		}
 	}
 }
 
-// resetToOurV25Layout 把已经迁到 33 的库改造成"我们 v25 库"的样子：
-// 版本号 24/25 上是我们的两条记录，上游 24–31 与让位后的 32/33 记录都不存在。
+// resetToOurV25Layout 把已经迁到 34 的库改造成"我们 v25 库"的样子：
+// 版本号 24/25 上是我们的两条记录，上游 24–32 与让位后的 33/34 记录都不存在。
 // 表结构保持不动（真实库也是这个形态：表在，只是记录号与上游撞车）。
 func resetToOurV25Layout(t *testing.T, db *gorm.DB) {
 	t.Helper()
@@ -194,13 +228,48 @@ func resetToOurV25Layout(t *testing.T, db *gorm.DB) {
 	if err := db.Where("version >= ?", int64(24)).Delete(&schemaMigration{}).Error; err != nil {
 		t.Fatalf("clear migration records: %v", err)
 	}
-	seedMigrationRecords(t, db, ourCloudAgentVersionsAtLegacyVersions()...)
+	seedMigrationRecords(t, db, ourLegacyRecords()...)
 }
 
-// ourCloudAgentVersionsAtLegacyVersions 返回"我们 v25 库"里那两条记录（版本号仍是 24/25）。
-func ourCloudAgentVersionsAtLegacyVersions() []schemaMigration {
-	records := []schemaMigration{}
+// resetToOurMergedLineLayout 把已经迁到 34 的库改造成"上一版合并线二进制"的样子：
+// 上游 1–31 在位，v32/v33 是我们的两条（上游 v32 channel_model_tags 与 33/34 都不存在）。
+func resetToOurMergedLineLayout(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("bootstrap schema: %v", err)
+	}
+	if err := db.Where("version >= ?", int64(32)).Delete(&schemaMigration{}).Error; err != nil {
+		t.Fatalf("clear merged-line records: %v", err)
+	}
+	seedMigrationRecords(t, db, ourMergedLineRecords()...)
+}
+
+// legacyRelocationForFrom 取"某个历史版本号上那条让位记录"：同一份记录有多个历史落点
+// （自研时期的 24/25 与上一版合并线的 32/33）。
+func legacyRelocationForFrom(from int64) legacyCloudAgentMigrationRelocation {
 	for _, item := range legacyCloudAgentMigrationRelocations {
+		if item.from == from {
+			return item
+		}
+	}
+	panic(fmt.Sprintf("缺少 from=%d 的让位搬迁条目", from))
+}
+
+// ourLegacyRecords 返回"我们 v25 库"里那两条记录（版本号仍是 24/25）。
+func ourLegacyRecords() []schemaMigration {
+	records := []schemaMigration{}
+	for _, from := range []int64{24, 25} {
+		item := legacyRelocationForFrom(from)
+		records = append(records, schemaMigration{Version: item.from, Name: item.name, Checksum: item.checksum})
+	}
+	return records
+}
+
+// ourMergedLineRecords 返回"上一版合并线库"里那两条记录（版本号停在 32/33）。
+func ourMergedLineRecords() []schemaMigration {
+	records := []schemaMigration{}
+	for _, from := range []int64{32, 33} {
+		item := legacyRelocationForFrom(from)
 		records = append(records, schemaMigration{Version: item.from, Name: item.name, Checksum: item.checksum})
 	}
 	return records
@@ -229,7 +298,7 @@ func seedMigrationRecords(t *testing.T, db *gorm.DB, records ...schemaMigration)
 	}
 }
 
-// upstreamRecordsThrough 取 plan 里 1..max 的上游记录（用于模拟"上游 v31 库"）。
+// upstreamRecordsThrough 取 plan 里 1..max 的记录（用于模拟"上游库"）。
 func upstreamRecordsThrough(max int64) []schemaMigration {
 	records := []schemaMigration{}
 	for _, item := range schemaMigrations {
@@ -240,17 +309,7 @@ func upstreamRecordsThrough(max int64) []schemaMigration {
 	return records
 }
 
-// ourRecordsThrough 模拟"我们 v25 库"：1..23 与上游一致，24/25 是我们自己的名字与校验和。
-func ourRecordsThrough(max int64) []schemaMigration {
-	records := upstreamRecordsThrough(23)
-	for _, item := range legacyCloudAgentMigrationRelocations {
-		if item.from <= max {
-			records = append(records, schemaMigration{Version: item.from, Name: item.name, Checksum: item.checksum})
-		}
-	}
-	return records
-}
-
+// upstreamCloudAgentVersions 取上游段（24..PreviousUpstreamSchemaVersion）的记录。
 func upstreamCloudAgentVersions() []schemaMigration {
 	records := []schemaMigration{}
 	for _, item := range schemaMigrations {
@@ -261,10 +320,14 @@ func upstreamCloudAgentVersions() []schemaMigration {
 	return records
 }
 
+// ourCloudAgentVersions 取我们那两条 no-op 迁移的**当前登记版本**（从 plan 现读，不写死数字）。
 func ourCloudAgentVersions() []schemaMigration {
 	records := []schemaMigration{}
-	for _, item := range legacyCloudAgentMigrationRelocations {
-		records = append(records, schemaMigration{Version: item.to, Name: item.name, Checksum: item.checksum})
+	for _, item := range schemaMigrations {
+		if item.name != "cloud_agent_run_events" && item.name != "cloud_agent_transcript" {
+			continue
+		}
+		records = append(records, schemaMigration{Version: item.version, Name: item.name, Checksum: item.checksum})
 	}
 	return records
 }
@@ -291,7 +354,7 @@ func assertMigrationRecord(t *testing.T, db *gorm.DB, want schemaMigration) {
 	}
 }
 
-// assertRelocated 校验：库版本到 33，且 v24/v25 上不再残留我们的名字。
+// assertRelocated 校验：库版本到 34，且所有历史落点上都不再残留我们的名字。
 func assertRelocated(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	assertSchemaReady(t, db)
