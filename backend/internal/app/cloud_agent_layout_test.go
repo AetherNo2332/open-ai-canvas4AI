@@ -234,17 +234,58 @@ func TestCloudAgentArrangeNodesRejectsStaleSnapshotAndTooManyNodes(t *testing.T)
 	}
 }
 
-// 已移除：TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered。
-//
-// 它断言的是"add_node 不带坐标时由服务端按泳道自动落位（且作为生成输入时排到目标左侧）"，
-// 而这段自动排布逻辑在我们这边是写在 applyCloudAgentCanvasPlan / prepareCloudAgentCanvasMutation 里的，
-// 本轮云端 Agent 主链路整体取上游后它随上游实现一起消失（上游的 agentCanvasOp.X/Y 是 float64，
-// 不带"未指定坐标"的语义，默认落在 (0,0)）。
-//
-// 也就是说：下面的 TestCloudAgentArrangeNodes* 覆盖的是**布局工具本身**（我们保留的
-// cloud_agent_layout.go + internal/canvas/layout），而"新增节点自动排布"属于**待移植项**——
-// 移植时还须恢复 agentCanvasOp.X/Y 的指针语义，否则"不传坐标"会被当成"坐标 0"。
-// 详见报告"后续需要逐个移植的我方功能清单"的布局工具一行。
+// 已恢复（本轮移植）：TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered。
+// 它断言"add_node 不带坐标时由服务端按泳道自动落位（作为生成输入时排到目标左侧）"，
+// 与 agentCanvasOp.X/Y 的指针语义一起回到树里（不传坐标 ≠ 坐标 0）。
+func TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered(t *testing.T) {
+	nodes := []map[string]any{
+		layoutNode("text-1", "text", 0, 0),
+		layoutNode("image-1", "image", 0, 400),
+	}
+	_, doc := layoutFixture(t, nodes)
+
+	// 不带坐标：服务端按泳道落位，不能落在 (0,0) 与已有节点重叠。
+	ops := []agentCanvasOp{
+		{Type: "add_node", ID: "text-new", NodeType: "text", Title: stringPtr("新增文本")},
+	}
+	if _, err := applyCloudAgentCanvasPlan(doc, ops); err != nil {
+		t.Fatal(err)
+	}
+	added := nodeByID(t, doc, "text-new")
+	position := positionOf(t, added)
+	if position.X == 0 && position.Y == 0 {
+		t.Fatalf("新增节点落在原点：%+v", position)
+	}
+	if position.X == 0 && position.Y == 400 {
+		t.Fatalf("新增节点与已有图片重叠：%+v", position)
+	}
+
+	// 带连线：新节点作为生成输入时放在目标左侧。
+	ops = []agentCanvasOp{
+		{Type: "add_node", ID: "text-input", NodeType: "text", Title: stringPtr("输入")},
+		{Type: "connect_nodes", ID: "edge-new", FromNodeID: "text-input", ToNodeID: "image-1"},
+	}
+	if _, err := applyCloudAgentCanvasPlan(doc, ops); err != nil {
+		t.Fatal(err)
+	}
+	input := positionOf(t, nodeByID(t, doc, "text-input"))
+	if input.X >= 0 {
+		t.Fatalf("作为生成输入的新节点应排到目标左侧：%+v", input)
+	}
+	if input.Y != 400 {
+		t.Fatalf("新节点应与目标同高：%+v", input)
+	}
+
+	// 显式坐标优先。
+	x, y := 1234.0, 5678.0
+	ops = []agentCanvasOp{{Type: "add_node", ID: "text-fixed", NodeType: "text", X: &x, Y: &y}}
+	if _, err := applyCloudAgentCanvasPlan(doc, ops); err != nil {
+		t.Fatal(err)
+	}
+	if got := positionOf(t, nodeByID(t, doc, "text-fixed")); got != (layout.Position{X: 1234, Y: 5678}) {
+		t.Fatalf("显式坐标未被采用：%+v", got)
+	}
+}
 
 func TestCloudAgentUpdateNodePositionPatch(t *testing.T) {
 	nodes := []map[string]any{layoutNode("text-1", "text", 0, 0)}

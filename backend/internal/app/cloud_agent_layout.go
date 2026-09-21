@@ -13,10 +13,10 @@ import (
 
 // errCloudAgentSnapshotConflict 标记"画布在模型读取之后变了"这一可恢复结果。
 //
-// 合并说明：这个辅助函数原本定义在我们的 cloud_agent_runtime.go 里，而合并决定把云端 Agent
+// 合并说明：这个辅助函数原本定义在我们的 cloud_agent_runtime.go 里，而合并把云端 Agent
 // 主链路整体取上游（上游没有布局工具，改用 cloudAgentMediaAdmissionError 表达媒体准入冲突）。
-// 布局链路不属于媒体准入，这里保留我们自己的 409 语义，避免整理结果被当成普通参数错误。
-// 注意：布局工具当前**没有接进上游的工具表/审批链**，属于"需要后续单独移植"的清单项。
+// 现在它同时服务于布局工具与三条画布写入链路的过期快照判定：画布写入不属于媒体准入，
+// 用同一个 409 语义能让运行期把"画布已变化"作为工具结果交回模型（可恢复），而不是判死整轮。
 var errCloudAgentSnapshotConflict = errors.New("canvas snapshot conflict")
 
 func cloudAgentSnapshotConflictError(message string) error {
