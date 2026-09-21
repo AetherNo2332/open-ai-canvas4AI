@@ -425,7 +425,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 			}
 			history = append(history, providerTextMessage{Role: "assistant", Content: text})
 			if strings.TrimSpace(context) != "" {
-				history = append(history, providerTextMessage{Role: "user", Content: context})
+				history = append(history, providerTextMessage{Role: "user", Content: context, AgentContextSource: "continuation"})
 			}
 		}
 	}
