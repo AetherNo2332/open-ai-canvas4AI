@@ -7,7 +7,8 @@ describe("theme primary button fills", () => {
             expect(getSkinButtonAppearance(DEFAULT_CLASSIC_SKIN, mode)).toEqual({
                 background: "linear-gradient(115deg, #6554df, #386fbc)",
                 hover: "linear-gradient(115deg, #5744cf, #356bbb)",
-                active: "linear-gradient(115deg, #4938b8, #2c5da5)", foreground: "#ffffff",
+                active: "linear-gradient(115deg, #4938b8, #2c5da5)",
+                foreground: "#ffffff",
             });
         }
         expect(DEFAULT_CLASSIC_SKIN.tokens.light.selected).toBe("#e8e8e8");
@@ -21,9 +22,15 @@ describe("theme primary button fills", () => {
         expect(skin.tokens.buttons.dark.angle).toBe(115);
         expect(getSkinButtonAppearance(skin, "light").background).toBe("linear-gradient(45deg, #123456, #386fbc)");
         const values = new Map<string, string>();
-        const doc = { documentElement: { dataset: {}, style: {
-            removeProperty: (key: string) => values.delete(key), setProperty: (key: string, value: string) => values.set(key, value),
-        } } } as unknown as Document;
+        const doc = {
+            documentElement: {
+                dataset: {},
+                style: {
+                    removeProperty: (key: string) => values.delete(key),
+                    setProperty: (key: string, value: string) => values.set(key, value),
+                },
+            },
+        } as unknown as Document;
         applySkinTheme(skin, "light", doc);
         skin.tokens.buttons.light.mode = "solid";
         Object.assign(skin.tokens.light, { primary: "#123456", primaryHover: "#234567", primaryActive: "#345678", primaryForeground: "#ffffff" });
