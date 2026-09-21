@@ -362,6 +362,14 @@ func TestCloudAgentAdmissionAcceptsTokenPricingWithQuotedChargeLimit(t *testing.
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
+	// 本用例守的是"token 计费的 Agent 请求能被准入并把报价钉成硬上限"，与请求信封体积无关。
+	// 但 fixture 的定价是 1 积分/token，于是 10000 积分正好卡在信封边界上：实测上游基线
+	// 9622（输入 5526 + 输出预留 4096）、合并前我方 9913（输入 5817）、合并上游后 10052
+	// （输入 5956，差额正是两侧系统提示的并集）。这里把余额抬到信封之上留出余量；
+	// 信封体积本身由 TestCloudAgentToolSchemaStaysCompact 单独守。
+	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", "user").Update("available_microcredits", 12000).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	run, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
 	if err != nil {
