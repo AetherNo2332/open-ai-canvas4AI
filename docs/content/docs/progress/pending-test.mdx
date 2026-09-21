@@ -5,6 +5,28 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 云端 Agent 工具调用治理：整批预检 + 单步一个写工具（2026-09-22）
+
+handoff 工作项 B 第 2 步落地：模型一次返回的多个工具调用，在执行前统一判定准入。
+
+- 预检结论随检查点持久化（`callAdmissions`），执行侧按结论放行/拒绝；旧检查点缺该字段时按原行为执行。
+- 拒因分四类：`schema_error`（本地 JSON schema 校验：必填/类型/未定义字段/枚举/上下界/数组超限）、
+  `invalid_model_output`（不在本轮工具表内的名字）、`permission_violation`，
+  以及批次策略结论 `single_write_per_step` / `batch_cancelled_after_write_failure` / `duplicate_call`。
+- 参数类拒绝走既有字段级回执（`reason=invalid_tool_arguments`、`field`、`issue`、附 `parameters`、消耗纠错名额）；
+  批次策略拒绝走 `errorClass=call_skipped`（reason `call_skipped`、`requiredAction=resubmit_next_step`、不消耗名额）。
+- [x] 单测：一批两个写调用只执行第一个（第二个 `single_write_per_step`，画布只改一次）；第一个参数不合法时后续三个写调用整批取消
+  （`batch_cancelled_after_write_failure`，画布零改动，只有参数错那条消耗一次纠错名额）；工具表外的名字按 `invalid_model_output` 拒；
+  只读调用不受限制；无预检结论的旧检查点照常执行。
+- [x] schema 校验器单测 16 例（必填/null/类型/整数 vs 小数/未定义字段/枚举/上下界/数组超限/数组元素/嵌套对象/非法 JSON/非对象/空参数），
+  以及 `canvas_apply_ops` 的条件必填（`add_node` 缺 `nodeType`、`update_node` 缺 `patch`、未定义 op 类型、`patch` 未声明键）。
+- [x] 回归：`go test ./internal/app/ -run TestCloudAgent` 全绿（28.7s）。
+- [ ] 真机复验：故意让模型在同一步发两个写入 / 发一个未知 op 类型，确认回执与画布零改动；需部署后执行。
+- [ ] 未做（工作项 B 后续）：provider strict 探测、错误指纹熔断与逐级收紧工具集、`selectionId`、完成闸门。
+
+**行为变化（有意）**：`canvas_apply_ops` 里未知 op 类型过去按准入失败**终止整轮**，现在在预检阶段作为字段级 `schema_error` 交回模型自纠
+（该用例已改写成"真正不可准入的写入仍终止整轮"：连线端点不存在）。理由：错误归类（PR #33）已把 schema 违规定为可自纠。
+
 ## 批量生图、刷新恢复与画布节点一致性
 
 - [x] 专项回归 127 项通过，覆盖同步编辑命令、按节点结果提交、批次汇总、资源槽位、空间索引、相邻媒体逻辑、revision 合并与存储清理；前端类型检查通过。

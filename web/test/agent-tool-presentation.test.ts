@@ -51,6 +51,7 @@ describe("Agent tool error classification", () => {
         expect(agentToolErrorClassLabel({ errorClass: "permission_violation", errorClassLabel: "超出本轮权限" })).toBe("超出本轮权限");
         expect(agentToolErrorClassLabel({ result: { errorClass: "upstream_failure" } })).toBe("上游故障");
         expect(agentToolErrorClassLabel({ errorClass: "invalid_model_output" })).toBe("模型输出问题");
+        expect(agentToolErrorClassLabel({ errorClass: "call_skipped" })).toBe("本步未执行");
         expect(agentToolErrorClassLabel({ errorClass: "unknown_new_class" })).toBe("工具执行失败");
         expect(agentToolErrorClassLabel({ text: "没有归类" })).toBeUndefined();
     });

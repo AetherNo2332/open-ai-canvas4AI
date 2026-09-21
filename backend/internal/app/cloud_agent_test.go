@@ -598,9 +598,12 @@ func TestCloudAgentCanvasApprovalAdmissionFailureTerminatesRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// schema 合法但业务上不可准入：连线端点不存在。未知操作类型如今在预检阶段就被拒
+	// （字段级、可自纠，见 cloud_agent_tool_preflight_test.go），这条用例守的是另一半——
+	// 真正不可准入的写入仍然终止整轮，而不是被当成可重试的参数错误。
 	args, err := json.Marshal(map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc),
-		"ops":          []map[string]any{{"type": "unsupported_canvas_op", "id": "bad-op"}},
+		"ops":          []map[string]any{{"type": "connect_nodes", "id": "bad-edge", "fromNodeId": "missing-a", "toNodeId": "missing-b"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -639,7 +642,7 @@ func TestCloudAgentCanvasApprovalAdmissionFailureTerminatesRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.Status != "failed" || failed.FailureMessage != "不支持的画布写操作" {
+	if failed.Status != "failed" || failed.FailureMessage != "连线端点不存在或指向自身" {
 		t.Fatalf("admission failure did not terminate run: status=%q message=%q", failed.Status, failed.FailureMessage)
 	}
 	if len(state.Events) == 0 || state.Events[len(state.Events)-1].Type != "run_failed" || state.Events[len(state.Events)-1].Payload["reason"] != "tool_admission_failed" {

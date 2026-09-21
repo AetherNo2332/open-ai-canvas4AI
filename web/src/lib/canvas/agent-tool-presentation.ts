@@ -104,6 +104,9 @@ export const AGENT_TOOL_ERROR_CLASS_LABELS: Record<string, string> = {
     permission_violation: "超出本轮权限",
     upstream_failure: "上游故障",
     tool_error: "工具执行失败",
+    // 批次策略结论：这一步已经执行了另一个写入/生成调用（或同批前面的写入未通过校验），
+    // 本次调用没有被执行。它不是模型的参数错，所以单独成类，提示"下一步重新提交"。
+    call_skipped: "本步未执行",
 };
 
 /** 从工具事件载荷里取归类标签：优先用后端给的 label，其次查本地映射。 */

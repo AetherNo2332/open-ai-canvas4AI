@@ -23,6 +23,9 @@ const (
 	cloudAgentToolErrorPermission         = "permission_violation"
 	cloudAgentToolErrorUpstream           = "upstream_failure"
 	cloudAgentToolErrorUnknown            = "tool_error"
+	// cloudAgentToolErrorCallSkipped 是批次策略结论：这次调用没有执行，但不是模型的参数错
+	// （同一步已经执行了另一个写入/生成调用，或同批前面的写入未通过校验）。
+	cloudAgentToolErrorCallSkipped = "call_skipped"
 )
 
 // cloudAgentToolErrorClass 返回 (errorClass, retryable, requiredAction)。
@@ -103,6 +106,8 @@ func cloudAgentToolErrorLabel(class string) string {
 		return "超出本轮权限"
 	case cloudAgentToolErrorUpstream:
 		return "上游故障"
+	case cloudAgentToolErrorCallSkipped:
+		return "本步未执行"
 	default:
 		return "工具执行失败"
 	}

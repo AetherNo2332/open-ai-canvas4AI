@@ -108,12 +108,16 @@ type cloudAgentRuntime struct {
 	// （advanceCloudAgentTool 执行完就 return，下一批调用走下一次转移），而每次转移都
 	// 从 StateJSON 重新解码（cloudAgentDecode）。进程内字段在下一个调用到来时必然为空，
 	// 缓冲就白缓冲了。载荷只有回执与签名链接，几十字节级。
-	PendingImageInspections []cloudAgentImageInspection             `json:"pendingImageInspections,omitempty"`
-	StoryboardTaskID        string                                  `json:"storyboardTaskId,omitempty"`
-	TransientReferences     map[string]cloudAgentTransientReference `json:"transientReferences,omitempty"`
-	Plan                    []cloudAgentPlanItem                    `json:"plan,omitempty"`
-	PendingInterjections    []cloudAgentInterjection                `json:"pendingInterjections,omitempty"`
-	InterjectionIDs         []string                                `json:"interjectionIds,omitempty"`
+	PendingImageInspections []cloudAgentImageInspection `json:"pendingImageInspections,omitempty"`
+	// CallAdmissions 是本批每个调用的预检结论（见 cloud_agent_tool_preflight.go）。
+	// 与 PendingImageInspections 同理必须进检查点：执行是一个调用一次转移，进程内字段
+	// 活不到下一个调用。旧检查点缺这个字段时按"未预检、直接放行"处理。
+	CallAdmissions       []cloudAgentCallAdmission               `json:"callAdmissions,omitempty"`
+	StoryboardTaskID     string                                  `json:"storyboardTaskId,omitempty"`
+	TransientReferences  map[string]cloudAgentTransientReference `json:"transientReferences,omitempty"`
+	Plan                 []cloudAgentPlanItem                    `json:"plan,omitempty"`
+	PendingInterjections []cloudAgentInterjection                `json:"pendingInterjections,omitempty"`
+	InterjectionIDs      []string                                `json:"interjectionIds,omitempty"`
 	// 最近一次已发出的步骤请求（模型调用）的本地计价，与上游实测用量配成锚点用。
 	// 估算与实测指向同一个 canonical：估算取自任务 input 里实际发出的那份，
 	// 因此"信封一致"是构造保证，不需要额外比对。
@@ -877,6 +881,9 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			state.Canonical.ToolChoice = "auto"
 			state.Calls = calls
 			state.CallIndex = 0
+			// 整批预检：在任何业务副作用之前判定每个调用的准入（工具表/权限/参数 schema），
+			// 并把同批写入收敛成一个（见 cloud_agent_tool_preflight.go）。
+			state.CallAdmissions = cloudAgentPreflightBatch(&state, calls)
 			// 新的一批：清空上一批的画布版本记录，并固定本步读取时的画布版本。
 			state.CanvasBatchHashes = nil
 			state.StepSnapshotHash = cloudAgentCaptureStepSnapshotHash(calls)
@@ -1208,6 +1215,24 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		}
 		message := cloudAgentSafeToolError(err)
 		detail["error"] = message
+		// 预检结论：机器可读地说明"为什么这次没执行"。批次策略类结论不是模型的参数错，
+		// 因此单独给 reason=call_skipped 与可重发的 requiredAction，并跳过通用归类。
+		var preflightErr *cloudAgentCallAdmissionError
+		admissionSkip := false
+		if errors.As(err, &preflightErr) {
+			detail["admission"] = preflightErr.Admission
+			if preflightErr.Field != "" {
+				detail["field"] = preflightErr.Field
+			}
+			if cloudAgentAdmissionIsSkip(preflightErr.Admission) {
+				admissionSkip = true
+				detail["reason"] = "call_skipped"
+				detail["retryable"] = true
+				detail["requiredAction"] = "resubmit_next_step"
+				detail["errorClass"], detail["errorClassLabel"] = "call_skipped", cloudAgentToolErrorLabel("call_skipped")
+				payload["errorClass"] = "call_skipped"
+			}
+		}
 		var admissionErr *cloudAgentMediaAdmissionError
 		if errors.As(err, &admissionErr) {
 			detail["reason"], detail["nodeId"] = admissionErr.Reason, admissionErr.NodeID
@@ -1237,8 +1262,9 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		}
 		// 稳定归类 + 可行动字段（handoff 工作项 B 第一步）：只加标注，不改任何放行/拒绝判定。
 		// allowed 与执行器用的是同一份判定（cloudAgentToolAllowed 是纯函数，结果一致），
-		// 只在失败路径上算一次，成功路径不付这份开销。
-		if class, retryable, requiredAction := cloudAgentToolErrorClass(state.Request, call, err, cloudAgentToolAllowed(state.Request, call.Function.Name)); class != "" {
+		// 只在失败路径上算一次，成功路径不付这份开销。call_skipped 已经在上面定过性，
+		// 不要再被通用归类覆盖成"参数错误"。
+		if class, retryable, requiredAction := cloudAgentToolErrorClass(state.Request, call, err, cloudAgentToolAllowed(state.Request, call.Function.Name)); class != "" && !admissionSkip {
 			detail["errorClass"], detail["errorClassLabel"] = class, cloudAgentToolErrorLabel(class)
 			detail["retryable"] = retryable
 			if requiredAction != "" {
@@ -1416,6 +1442,14 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 	}
 	if state.Approval != nil && state.Approval.Decision != "" && state.Approval.CallHash != "" && state.Approval.CallHash != cloudAgentApprovalCallHash(call) {
 		return s.terminateCloudAgent(run, "审批内容与待执行操作不一致，本轮已停止")
+	}
+	// 预检没过就不进任何业务分支：不申请审批、不读画布、不提交任务，只回一条结构化错误。
+	// 这一步必须在写工具的审批分支之前——否则一个参数就不合法的写入会先弹出审批卡。
+	if admission, ok := cloudAgentAdmissionFor(state, state.CallIndex); ok && !admission.Allowed {
+		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			cloudAgentRecordToolResult(current, state, call, nil, cloudAgentAdmissionError(admission))
+			return cloudAgentSave(current, state)
+		})
 	}
 	allowed := cloudAgentToolAllowed(state.Request, call.Function.Name)
 	if allowed && cloudAgentWrite(call.Function.Name) && (state.Request.PermissionMode == "request_approval" || call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split") && state.Approval == nil {
