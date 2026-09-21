@@ -20,6 +20,20 @@ handoff 工作项 B 第 4 步：把"逐字抄三个字段"的模型选择收敛�
 - [ ] 真机复验：真实一轮里让模型只用 `selectionId` 提交生成，确认目录→选择→审批链路无回归；需部署后执行。
 - [ ] 未做：`selectionId` 的 TTL/失效策略（当前不设过期，选择本身在提交时仍会按目录与能力重新校验）。
 
+## 云端 Agent 自动纠错的错误指纹与逐级熔断（2026-09-22）
+
+handoff 工作项 B 第 3 步：把"同一个工具错三次就熔断"改成按**错误指纹**分档。
+
+- 指纹 = 工具 + 字段级 issue + 字段路径 + 参数外形（键与类型，值不参与）→ `creationHash`。
+- 档位：第 1 次正常回执；第 2 次同一个指纹收紧工具集（`state.ToolScope`，下一步只开放出错工具 + 读画布/读目录/读分镜/读批量表/ask_user），
+  预检对集合外的工具回 `invalid_model_output`；第 3 次停止自动重试（`run_failed`、`reason=tool_retry_exhausted`、带 `fingerprint`）。
+- 换了错法（指纹不同）从第一次重新计数；修好后清空收紧与纠错记录；`retry.status` 仍保持 `retrying`/`exhausted`/`recovered` 三种，收紧是附加字段（`ladder=scoped`、`toolScope`）。
+- [x] 单测：指纹区分不同错法（同工具换字段重新计数）、第二次同类错误进入收紧档且状态仍是 `retrying`、收紧后工具表是非空真子集且预检按集合判定
+  （集合外的 `generate_media` 被拒、集合内的 `canvas_apply_ops` 放行）、修好后清空、第三次失败事件带指纹。
+- [x] 回归：`go test ./internal/app/ -run TestCloudAgent` 全绿（26.7s）。
+- [ ] 真机复验：让模型连续两次提交同一种非法参数，确认第二步的"只开放修复工具"在真实事件流里可见；需部署后执行。
+- [ ] 未做：前端展示收紧档（`retry.ladder` / `retry.toolScope` 已下发，工具卡暂未单独显示）；"换更强模型"这一档未实现（当前以停止自动重试收尾）。
+
 ## 云端 Agent 工具调用治理：整批预检 + 单步一个写工具（2026-09-22）
 
 handoff 工作项 B 第 2 步落地：模型一次返回的多个工具调用，在执行前统一判定准入。

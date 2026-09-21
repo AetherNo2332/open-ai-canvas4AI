@@ -100,6 +100,9 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 		switch {
 		case !advertised:
 			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "模型调用了不存在的工具「"+truncateRunes(name, 60)+"」，本步已拒绝；请只使用本轮工具表里列出的工具")
+		case !cloudAgentToolInScope(state, name):
+			// 上一个同类错误的自动纠错进入收紧档：本步只开放修复所需的工具。
+			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "上一步的同类错误尚未修正，本步只开放修复所需的工具（"+strings.Join(state.ToolScope, "、")+"）；请先用它们改正后再继续")
 		case !cloudAgentToolAllowed(state.Request, name):
 			admission = cloudAgentRejectCall(call, cloudAgentAdmissionPermission, "", "工具未获本轮权限授权")
 		case call.ID != "" && seenCalls[call.ID]:
