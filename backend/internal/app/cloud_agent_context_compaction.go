@@ -452,7 +452,12 @@ func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecutio
 		state.HistoryIncludesCurrent = true
 		state.Canonical.Messages = make([]map[string]any, 0, len(history))
 		for _, message := range history {
-			state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": message.Role, "content": message.Content})
+			entry := map[string]any{"role": message.Role, "content": message.Content}
+			// 压缩重建也必须保留来源标记，否则交接身份在压缩后就丢了（旧会话会被多算轮次）。
+			if message.AgentContextSource != "" {
+				entry[cloudAgentContextSourceKey] = message.AgentContextSource
+			}
+			state.Canonical.Messages = append(state.Canonical.Messages, entry)
 		}
 		// 消息整体被替换：写路径按 kind 逐条 upsert 并删除 sequence 超出新条数的尾部行，
 		// 因此"条数恰好相同但内容全变"也能正确落库。

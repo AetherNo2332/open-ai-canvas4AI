@@ -427,6 +427,11 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 			if strings.TrimSpace(context) != "" {
 				history = append(history, providerTextMessage{Role: "user", Content: context, AgentContextSource: "continuation"})
 			}
+		} else if strings.TrimSpace(context) != "" {
+			// 父轮以压缩收尾时（HistoryIncludesCurrent）历史已被换成检查点，里面只有模型写的摘要。
+			// 事实交接（失败原因、已提交任务、真实画布改动）不能因此缺席：长会话恰恰最需要它，
+			// 而"别重复提交收费任务"的依据只在这份帧里。
+			history = append(history, providerTextMessage{Role: "user", Content: context, AgentContextSource: "continuation"})
 		}
 	}
 	// 分工说明：跨轮历史由上游的 trimCloudAgentTextHistory 兜底（保最近 10 轮 + 64KB 字节闸），
@@ -521,7 +526,12 @@ func cloudAgentLegacyHistory(messages []map[string]interface{}, currentPrompt st
 		if !ok || role != []string{"user", "assistant"}[index%2] {
 			return nil
 		}
-		history = append(history, providerTextMessage{Role: role, Content: content})
+		// 来源标记必须一起搬：丢了它，旧会话里的运行时交接消息会被当成真人轮次参与裁剪。
+		message := providerTextMessage{Role: role, Content: content}
+		if source, ok := messages[index][cloudAgentContextSourceKey].(string); ok && source != "" && source != "runtime" {
+			message.AgentContextSource = source
+		}
+		history = append(history, message)
 	}
 	return history
 }
