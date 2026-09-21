@@ -1,6 +1,9 @@
 package app
 
 import (
+	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/platform"
@@ -39,6 +42,55 @@ type cloudAgentTokenAnchor struct {
 	SourceBytes     int    `json:"sourceBytes"`
 	Accepted        bool   `json:"accepted"`
 	RejectReason    string `json:"rejectReason,omitempty"`
+	// Signature / Model / ChannelID 记录"定锚时的口径"：换了模型、路由、系统提示或工具 schema
+	// 之后，旧实测不再可比，必须作废（设计 §6 的锚点治理）。
+	Signature string `json:"signature,omitempty"`
+	Model     string `json:"model,omitempty"`
+	ChannelID string `json:"channelId,omitempty"`
+}
+
+// cloudAgentAnchorMaxAgeSteps 是锚点的最长有效期：超过这么多步没有刷新就作废。
+// 真机实测过"锚点冻结"——`anchorStep` 恒为 4、`pressureTokens` 恒 20,035，而估算从
+// 42,581 涨到 66,105，压缩决策却还在用那个老读数。
+const cloudAgentAnchorMaxAgeSteps = 3
+
+// cloudAgentStepSignature 是"这一步的口径指纹"：模型/渠道/逻辑模型 + 系统提示 + 工具 schema。
+func cloudAgentStepSignature(state *cloudAgentRuntime) string {
+	if state == nil {
+		return ""
+	}
+	tools, _ := json.Marshal(state.Canonical.Tools)
+	return creationHash(strings.Join([]string{
+		state.Request.Model, state.Request.ChannelID, state.Request.ChannelModelKey, state.Request.LogicalModelID,
+		state.Canonical.SystemPrompt, string(tools),
+	}, "\u0000"))
+}
+
+// cloudAgentExpireTokenAnchor 让"口径已变或太久没刷新"的锚点作废。
+// 只标记不删除：读数仍要能显示"这个实测是多少、为什么不再用它"。
+func cloudAgentExpireTokenAnchor(runID string, state *cloudAgentRuntime) {
+	if state == nil || state.TokenAnchor == nil || !state.TokenAnchor.Accepted {
+		return
+	}
+	anchor := state.TokenAnchor
+	if signature := cloudAgentStepSignature(state); anchor.Signature != "" && anchor.Signature != signature {
+		switch {
+		case anchor.Model != "" && anchor.Model != state.Request.Model:
+			anchor.RejectReason = "模型已变化，锚点作废"
+			state.event(runID, "context_transition", map[string]any{"kind": "model_changed", "reason": "anchor_signature_changed", "text": anchor.RejectReason})
+		case anchor.ChannelID != "" && anchor.ChannelID != state.Request.ChannelID:
+			anchor.RejectReason = "供应线路已变化，锚点作废"
+			state.event(runID, "context_transition", map[string]any{"kind": "route_changed", "reason": "anchor_signature_changed", "text": anchor.RejectReason})
+		default:
+			anchor.RejectReason = "系统提示或工具 schema 已变化，锚点作废"
+		}
+		anchor.Accepted = false
+		return
+	}
+	if state.Step-anchor.Step > cloudAgentAnchorMaxAgeSteps {
+		anchor.RejectReason = "锚点超过 " + strconv.Itoa(cloudAgentAnchorMaxAgeSteps) + " 步未刷新，已作废"
+		anchor.Accepted = false
+	}
 }
 
 // cloudAgentAnchorMinRatio / MaxRatio 是采信上游用量的合理区间。
@@ -52,7 +104,12 @@ const (
 // recordCloudAgentTokenAnchor 用上一步的上游实测用量给上下文压力定锚。
 // 幂等：同一任务只采信一次；没有实测或比值离谱时记录拒绝原因并保留估算。
 func (s *Service) recordCloudAgentTokenAnchor(state *cloudAgentRuntime) {
-	if s == nil || s.repo == nil || state == nil || state.LastStepTaskID == "" || state.LastStepEstimate <= 0 {
+	if s == nil || state == nil {
+		return
+	}
+	// 即使这一步拿不到新的实测，也要先把"口径已变/太旧"的锚点作废，不能让压缩决策继续用它。
+	cloudAgentExpireTokenAnchor(state.RuntimeRunID, state)
+	if s.repo == nil || state.LastStepTaskID == "" || state.LastStepEstimate <= 0 {
 		return
 	}
 	if state.LastStepOperation != cloudAgentStepOperation {
@@ -69,6 +126,7 @@ func (s *Service) recordCloudAgentTokenAnchor(state *cloudAgentRuntime) {
 		TaskID: state.LastStepTaskID, Step: state.Step, InputTokens: log.InputTokens,
 		CachedTokens: log.CachedTokens, OutputTokens: log.OutputTokens,
 		EstimatedTokens: state.LastStepEstimate, SourceBytes: state.LastStepSourceBytes,
+		Signature: cloudAgentStepSignature(state), Model: state.Request.Model, ChannelID: state.Request.ChannelID,
 	}
 	ratio := float64(anchor.InputTokens) / float64(anchor.EstimatedTokens)
 	switch {
