@@ -34,8 +34,12 @@ type TextCapabilityConfig struct {
 	// (thinking + text + tool arguments). Zero means the provider does not
 	// declare one — it must never be rewritten into a guessed default, and it
 	// caps the per-step policy budget rather than replacing it.
-	MaxOutputTokens int                 `json:"maxOutputTokens,omitempty"`
-	References      TextReferenceConfig `json:"references"`
+	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
+	// StrictTools 声明该模型/线路支持 strict function calling（上游按 schema 约束采样）。
+	// nil / false 表示不声明：默认**不发** strict 字段，由服务端本地 schema 预检兜底，
+	// 避免把"上游不接受 strict"变成每一次工具调用的失败。
+	StrictTools *bool               `json:"strictTools,omitempty"`
+	References  TextReferenceConfig `json:"references"`
 }
 
 type TextReferenceConfig struct {

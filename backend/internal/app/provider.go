@@ -55,6 +55,9 @@ type canvasTextOptions struct {
 	// 画布 Agent 的每一步都带上限：不设时上游按"剩余上下文"放行，思考模型可以
 	// 无限吐 token，实测把单步拖到 324s 只能靠用户取消。
 	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
+	// StrictTools 让本次 Agent 请求给每个工具带上 strict:true（上游支持时才由调用方置位）。
+	// 上游拒绝 strict 时由 runAgentToolTask 自动回退一次并记住，不把失败暴露给用户。
+	StrictTools bool `json:"strictTools,omitempty"`
 }
 
 type agentToolRequests struct {

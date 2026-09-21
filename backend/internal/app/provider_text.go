@@ -59,8 +59,16 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 	body["model"] = input.Config.Model
 	applyTextThinking(body, input, protocol)
 	applyAgentOutputLimit(body, cloudAgentOutputTokens(input), protocol)
+	applyAgentStrictTools(body, input.TextOptions.StrictTools)
 	normalizeAgentToolChoice(body, input, protocol)
 	result, err := postAgentRequest(ctx, input, path, body, protocol)
+	// 上游不认 strict：去掉标记重发一次，并记住这条线路（下次不再尝试）。
+	if err != nil && input.TextOptions.StrictTools && isAgentStrictToolsCompatibilityError(err) {
+		if withoutStrict := cloneStringAnyMap(body); stripAgentStrictTools(withoutStrict) {
+			cloudAgentRememberStrictToolsRejected(input.Config.ChannelID, input.Config.ChannelModelKey)
+			result, err = postAgentRequest(ctx, input, path, withoutStrict, protocol)
+		}
+	}
 	if protocol == "chat-completion" && isAgentToolChoiceCompatibilityError(err) {
 		if !isAutoAgentToolChoice(body["tool_choice"]) {
 			autoBody := cloneStringAnyMap(body)
@@ -178,6 +186,7 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 		}
 		applyTextThinking(body, input, wire)
 		applyAgentOutputLimit(body, cloudAgentOutputTokens(input), wire)
+		applyAgentStrictTools(body, input.TextOptions.StrictTools)
 		normalizeAgentToolChoice(body, input, wire)
 		spec.Body = body
 		if input.StreamText {
