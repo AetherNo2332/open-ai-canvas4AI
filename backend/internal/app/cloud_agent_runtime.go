@@ -116,8 +116,12 @@ type cloudAgentRuntime struct {
 	// 不变量是 events[i].Seq == EventSeqBase + i + 1。事件全量在上游的
 	// cloud_agent_event_records，内存只保留最近一窗供摘要、记忆提取与卡死判定使用，
 	// 运行详情仍按 seq 分页读表。
-	EventSeqBase int               `json:"-"`
-	Events       []CloudAgentEvent `json:"events"`
+	EventSeqBase int `json:"-"`
+	// CanvasBatchHashes 记录本批（同一个助手消息内的多次工具调用）已经消费与产出的画布版本：
+	// 首元素是首个写入被校验时看到的版本，末元素是最近一次写入产出的版本。模型是在同一次读取的
+	// 基础上并发提交这批写入的，首个写入必然改变版本，因此同批后续写入需要据此重基。
+	CanvasBatchHashes []string          `json:"canvasBatchHashes,omitempty"`
+	Events            []CloudAgentEvent `json:"events"`
 }
 
 type cloudAgentTransientReference struct {
@@ -837,6 +841,8 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			state.Canonical.ToolChoice = "auto"
 			state.Calls = calls
 			state.CallIndex = 0
+			// 新的一批：清空上一批的画布版本记录，并固定本步读取时的画布版本。
+			state.CanvasBatchHashes = nil
 			state.StepSnapshotHash = cloudAgentCaptureStepSnapshotHash(calls)
 			if len(calls) > 0 {
 				state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text, "tool_calls": calls})
@@ -1184,7 +1190,7 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		state.Approval = nil
 		return
 	}
-	raw, _ := json.Marshal(result)
+	raw, _ := json.Marshal(cloudAgentModelToolResult(call.Function.Name, result))
 	payload["result"] = result
 	if call.Function.Name == "skill_read_file" && err == nil {
 		// SSE/UI needs the read receipt, not another durable copy of skill text.
@@ -1203,11 +1209,118 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	state.CallIndex++
 	state.Approval = nil
 }
+
+// cloudAgentModelToolResult 是"面向模型的那一份"工具结果。
+//
+// 审批卡明细是写给人看的，而且已经通过 approval_requested 事件进了 SSE/界面；
+// 进入模型历史的工具结果只保留模型真正需要的东西：发生了什么、哪个节点、哪个快照。
+// 这与 skill_read_file 的先例方向相反但同理（回执进 SSE，正文不进上下文）。
+//
+// 上游新增的 image_text_detect / image_annotation_render / task_get 等工具的返回里
+// 不带 preview，因此原样穿过，不受影响。
+func cloudAgentModelToolResult(toolName string, result any) any {
+	fields, ok := result.(map[string]any)
+	if !ok {
+		return result
+	}
+	preview, hasPreview := fields["preview"]
+	if !hasPreview {
+		return result
+	}
+	receipt := make(map[string]any, len(fields)+2)
+	for key, value := range fields {
+		if key == "preview" {
+			continue
+		}
+		receipt[key] = value
+	}
+	// 审批卡文案是写给人看的（"准备…批准后才会写入画布"）。模型收到的这份工具结果只在写入
+	// 真正发生后才会产生，所以必须给出结果口径，否则模型会以为还在等审批并反复重读重试。
+	if cloudAgentCanvasWriteTool(toolName) {
+		receipt["applied"] = true
+		receipt["outcome"] = "已写入画布；本回执的 snapshotHash 是最新版本，可继续提交同一批的其它写入"
+		if item := cloudAgentReceiptItemSummary(preview); item != "" {
+			receipt["summary"] = item
+		}
+	}
+	receipt["previewOmitted"] = true
+	receipt["previewNote"] = "审批卡明细只发给用户；本回执保留变更条目、nodeId 与 snapshotHash"
+	return receipt
+}
+
+// cloudAgentReceiptItemSummary 取审批预览里面向节点的短句（"修改分镜脚本《…》"），
+// 它描述的是发生了什么，而不是"准备做什么"。
+func cloudAgentReceiptItemSummary(preview any) string {
+	value, ok := preview.(cloudAgentApprovalPreview)
+	if !ok || len(value.Items) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(value.Items[0].Summary)
+}
+
+// cloudAgentRebaseWriteSnapshot 把同一批内后续写入的 snapshotHash 换成该批自己产出的最新版本。
+// 只在模型提交的版本属于本批已出现过的版本时才替换，替换后仍要与当前文档一致才会通过校验，
+// 因此浏览器/其他端的并发改动依旧会被"画布已变化"拒绝。
+func cloudAgentRebaseWriteSnapshot(state *cloudAgentRuntime, call cloudAgentCall) cloudAgentCall {
+	if state == nil || len(state.CanvasBatchHashes) == 0 || !cloudAgentCanvasWriteTool(call.Function.Name) {
+		return call
+	}
+	var args map[string]any
+	if decodeCloudAgentJSONObject(call.Function.Arguments, &args) != nil {
+		return call
+	}
+	requested, _ := args["snapshotHash"].(string)
+	latest := state.CanvasBatchHashes[len(state.CanvasBatchHashes)-1]
+	if requested == "" || requested == latest || latest == "" {
+		return call
+	}
+	known := false
+	for _, hash := range state.CanvasBatchHashes {
+		if hash == requested {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return call
+	}
+	args["snapshotHash"] = latest
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return call
+	}
+	call.Function.Arguments = string(encoded)
+	return call
+}
+
+// recordCanvasBatchHash 在写入成功后登记本批的版本链（写入前的版本 + 写入产出的版本）。
+func (state *cloudAgentRuntime) recordCanvasBatchHash(result any) {
+	fields, ok := result.(map[string]any)
+	if !ok {
+		return
+	}
+	produced, _ := fields["snapshotHash"].(string)
+	if produced == "" {
+		return
+	}
+	if len(state.CanvasBatchHashes) == 0 {
+		if before, _ := fields["beforeSnapshotHash"].(string); before != "" {
+			state.CanvasBatchHashes = append(state.CanvasBatchHashes, before)
+		}
+	}
+	if last := state.CanvasBatchHashes; len(last) == 0 || last[len(last)-1] != produced {
+		state.CanvasBatchHashes = append(state.CanvasBatchHashes, produced)
+	}
+}
+
 func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
 	if state.CallIndex < 0 || state.CallIndex >= len(state.Calls) {
 		return s.failCloudAgent(run, state, "Agent 工具调用状态无效，本轮已停止")
 	}
 	call := state.Calls[state.CallIndex]
+	// 同一批内的后续写入要基于本批自己产出的版本，否则第二个写入必然被"画布已变化"拒绝；
+	// 之后再按本步读取基线把仍然匹配的哈希接到当前画布上（跨轮或模型自己换过的哈希不接）。
+	call = cloudAgentRebaseWriteSnapshot(state, call)
 	call = s.cloudAgentRefreshStepSnapshotHash(run, state, call)
 	state.Calls[state.CallIndex] = call
 	if state.Approval != nil && state.Approval.Decision == "" {
@@ -1297,6 +1410,12 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 					if err == nil {
 						preview = batchPlan.Preview
 					}
+				case "canvas_arrange_nodes":
+					arrangePlan, err := prepareCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call)
+					mutationErr = err
+					if err == nil {
+						preview = arrangePlan.Preview
+					}
 				default:
 					canvasPlan, err := prepareCloudAgentCanvasMutation(repo, run.UserID, state.Request.CanvasID, call)
 					mutationErr = err
@@ -1307,6 +1426,12 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 				if mutationErr != nil {
 					var argumentErr *cloudAgentArgumentError
 					if errors.As(mutationErr, &argumentErr) {
+						cloudAgentToolResult(run.ID, state, call, nil, mutationErr)
+						return cloudAgentSave(current, state)
+					}
+					// 过期快照是并发编辑的正常结果，不是准入失败：把它作为工具结果交回模型，
+					// 让它在本轮内重新读取并重试，而不是丢掉整轮。真正的准入失败仍然终止运行。
+					if cloudAgentSnapshotConflict(mutationErr) {
 						cloudAgentToolResult(run.ID, state, call, nil, mutationErr)
 						return cloudAgentSave(current, state)
 					}
@@ -1379,6 +1504,8 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			toolErr = BadAuthRequest("工具未获本轮权限授权")
 		case call.Function.Name == "canvas_apply_ops":
 			result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+		case call.Function.Name == "canvas_arrange_nodes":
+			result, toolErr = applyCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "canvas_create_storyboard", call.Function.Name == "canvas_edit_storyboard":
 			result, toolErr = applyCloudAgentStoryboardMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "canvas_edit_batch_table":
@@ -1396,6 +1523,9 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			result, toolErr = skillResult, skillErr
 		default:
 			result, toolErr = cloudAgentReadTool(repo, run.UserID, state, call)
+		}
+		if toolErr == nil {
+			state.recordCanvasBatchHash(result)
 		}
 		if call.Function.Name == "plan_update" && toolErr == nil {
 			state.event(run.ID, "plan_updated", map[string]any{"items": state.Plan, "pendingTitles": cloudAgentPendingPlanItems(state.Plan)})
