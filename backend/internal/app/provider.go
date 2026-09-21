@@ -242,6 +242,13 @@ func (e providerHTTPError) Error() string {
 	case 524:
 		return "上游网关超时（524）：模型请求可能仍在服务端执行并产生费用，请勿立即重试，请先到供应商后台核对任务或账单"
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		// 正文里往往写着真正的拒绝原因（例如"上游取不到参考图"、"工具调用与结果不配对"）。
+		// 能归类就返回归类文案：它只返回固定模板，不会把正文（可能含密钥或内部诊断）回传。
+		// 这条路径决定任务错误与运行失败信息，必须与 api 日志里的归类保持一致，
+		// 否则用户看到的是"检查模型和参数"，而真正原因只躺在诊断日志里。
+		if message, ok := providerPayloadErrorCategory(e.Body); ok {
+			return message
+		}
 		return "模型服务拒绝了请求，请检查模型和参数"
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return "模型服务鉴权失败，请检查 API Key 和模型权限"

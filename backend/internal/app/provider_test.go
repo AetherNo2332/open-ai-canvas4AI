@@ -1110,6 +1110,28 @@ func TestProviderPayloadErrorCategoryClassifiesImageDownloadFailure(t *testing.T
 	}
 }
 
+// 400/422 的正文归类必须一路走到任务错误与运行失败信息：只归类日志、任务错误仍是
+// "请检查模型和参数"的话，用户根本看不到真正原因（实测 dev 上就是这样）。
+func TestProviderHTTPErrorSurfacesClassifiedBadRequestBody(t *testing.T) {
+	download := providerHTTPError{StatusCode: 400, Body: `{"error":{"code":"invalid_request_error","message":".messages[5].image[0]: Failed to download image from http://192.168.90.200:3001/api/public/resources/a.png"}}`}
+	if message := download.Error(); !strings.Contains(message, "CANVAS_PUBLIC_BASE_URL") {
+		t.Fatalf("providerHTTPError.Error() = %q, want upstream-reachability wording", message)
+	}
+	// 正文回显了敏感链接时，错误文案不得把它带出去。
+	if message := download.Error(); strings.Contains(message, "192.168.90.200") || strings.Contains(message, "sig=") {
+		t.Fatalf("classified message leaked request details: %q", message)
+	}
+	pairing := providerHTTPError{StatusCode: 400, Body: `{"error":{"message":"An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)"}}`}
+	if message := pairing.Error(); !strings.Contains(message, "工具调用与结果不匹配") {
+		t.Fatalf("providerHTTPError.Error() = %q, want tool pairing wording", message)
+	}
+	// 无法归类时退回固定文案，不把正文当错误信息。
+	unknown := providerHTTPError{StatusCode: 422, Body: `<html>gateway exploded</html>`}
+	if message := unknown.Error(); message != "模型服务拒绝了请求，请检查模型和参数" {
+		t.Fatalf("providerHTTPError.Error() = %q, want generic bad-request wording", message)
+	}
+}
+
 // 供应商错误码与安全审核措辞同时出现时，以更具体的错误码为准。
 func TestProviderPayloadErrorCategoryPrefersProviderCodeOverModerationWording(t *testing.T) {
 	raw := `{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation","message":"blocked by content policy"}}`
