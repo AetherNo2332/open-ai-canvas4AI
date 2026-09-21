@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 )
@@ -105,4 +106,68 @@ func cloudAgentToolErrorLabel(class string) string {
 	default:
 		return "工具执行失败"
 	}
+}
+
+// schemaStringList 读 schema 里的字符串列表：既可能是 JSON 解码出来的 []any，
+// 也可能是 Go 里直接构造的 []string。
+func schemaStringList(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		list := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok && text != "" {
+				list = append(list, text)
+			}
+		}
+		return list
+	default:
+		return nil
+	}
+}
+
+// cloudAgentMissingRequiredArguments 用"本轮实际暴露的 schema"检查必填字段。
+//
+// 为什么需要它：各工具的校验点是业务代码，抛的多是普通 AppError（例如分镜读取参数无效），
+// 从错误类型上看不出"这是模型漏了必填字段"。而模型漏字段恰恰是最常见的工具失败
+// （handoff 工作项 B 的证据里，缺 size / 缺 nodeId 类占大头）。这里按 schema 的 required
+// 直接判定，把这些错误归到参数契约问题，并把 schema 回给模型让它改对。
+//
+// 参数不是 JSON 对象时返回空列表（那种情况由 decodeCloudAgentJSONObject 的既有路径覆盖）。
+func cloudAgentMissingRequiredArguments(tools []map[string]any, call cloudAgentCall) []string {
+	name := strings.TrimSpace(call.Function.Name)
+	if name == "" {
+		return nil
+	}
+	var schema map[string]any
+	for _, tool := range tools {
+		function, _ := tool["function"].(map[string]any)
+		if stringValue(function["name"]) != name {
+			continue
+		}
+		schema, _ = function["parameters"].(map[string]any)
+		break
+	}
+	if schema == nil {
+		return nil
+	}
+	required := schemaStringList(schema["required"])
+	if len(required) == 0 {
+		return nil
+	}
+	arguments := map[string]any{}
+	raw := strings.TrimSpace(call.Function.Arguments)
+	if raw != "" {
+		if json.Unmarshal([]byte(raw), &arguments) != nil {
+			return nil
+		}
+	}
+	missing := make([]string, 0, len(required))
+	for _, key := range required {
+		if _, ok := arguments[key]; !ok {
+			missing = append(missing, key)
+		}
+	}
+	return missing
 }
