@@ -8,11 +8,12 @@ import (
 
 func TestTrimCloudAgentTextHistoryKeepsRecentRounds(t *testing.T) {
 	history := make([]providerTextMessage, 0, 36)
+	handoff := cloudAgentContinuationContext(&CloudAgentRun{ID: "parent", Status: "failed"}, nil)
 	for round := 1; round <= 12; round++ {
 		history = append(history,
 			providerTextMessage{Role: "user", Content: "目标" + strconv.Itoa(round)},
 			providerTextMessage{Role: "assistant", Content: "回复" + strconv.Itoa(round)},
-			providerTextMessage{Role: "user", Content: "上一轮已结束（completed）。本轮只执行当前用户消息，不要回头核对上一轮待办是否完成。"},
+			providerTextMessage{Role: "user", Content: handoff, AgentContextSource: "continuation"},
 		)
 	}
 	trimmed := trimCloudAgentTextHistory(history, 10, cloudAgentHistoryMaxBytes)
@@ -23,7 +24,7 @@ func TestTrimCloudAgentTextHistoryKeepsRecentRounds(t *testing.T) {
 		t.Fatalf("最旧保留轮次不对：%q", trimmed[0].Content)
 	}
 	last := trimmed[len(trimmed)-1]
-	if last.Role != "user" || last.Content != "上一轮已结束（completed）。本轮只执行当前用户消息，不要回头核对上一轮待办是否完成。" {
+	if last.Role != "user" || last.Content != handoff {
 		t.Fatalf("最近一轮摘要应还在：%+v", last)
 	}
 }

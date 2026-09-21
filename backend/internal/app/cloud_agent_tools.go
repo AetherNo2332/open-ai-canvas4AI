@@ -97,8 +97,8 @@ func cloudAgentCanonicalFor(system string, history []providerTextMessage, prompt
 	messages := []map[string]any{}
 	for _, m := range history {
 		message := map[string]any{"role": m.Role, "content": m.Content}
-		if isCloudAgentContinuationMessage(m) {
-			message[cloudAgentContextSourceKey] = "continuation"
+		if m.AgentContextSource != "" {
+			message[cloudAgentContextSourceKey] = m.AgentContextSource
 		}
 		messages = append(messages, message)
 	}

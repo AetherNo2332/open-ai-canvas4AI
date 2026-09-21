@@ -11,11 +11,21 @@ const (
 )
 
 func isCloudAgentContinuationMessage(message providerTextMessage) bool {
-	if message.Role != "user" {
+	if message.Role != "user" || message.AgentContextSource != "continuation" {
 		return false
 	}
 	content := strings.TrimSpace(message.Content)
-	return strings.HasPrefix(content, "上一轮真实执行记录") || strings.HasPrefix(content, "上一轮已结束")
+	if !strings.HasPrefix(content, cloudAgentRuntimeContextMarker) {
+		return false
+	}
+	var frame struct {
+		Source string `json:"source"`
+		Kind   string `json:"kind"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(content, cloudAgentRuntimeContextMarker)), &frame); err != nil {
+		return false
+	}
+	return frame.Source == "server" && frame.Kind == cloudAgentContinuationKind
 }
 
 func cloudAgentHistoryUserInstructionCount(history []providerTextMessage) int {

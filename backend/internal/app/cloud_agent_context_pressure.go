@@ -56,6 +56,9 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		"compactionThresholdBytes": agentcontext.ThresholdBytes, "historyMessageThreshold": agentcontext.ThresholdHistoryMessages,
 		// 字节判据只在"没声明窗口"时兜底，token 口径才是主判据（前端与文档据此对齐"哪条线在管事"）。
 		"requestHardLimitBytes": cloudAgentRequestHardLimitBytes,
+		// provider usage measures the previous request; the estimate describes
+		// the next request. Consumers must not draw them as one series.
+		"readingScope": "next_request", "estimateMethod": "local_v1",
 	}
 	if pressure.OverheadTokens > 0 {
 		payload["overheadTokens"] = pressure.OverheadTokens
@@ -88,6 +91,7 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 				"inputTokens": anchor.InputTokens, "cachedInputTokens": anchor.CachedTokens,
 				"uncachedInputTokens": max(0, anchor.InputTokens-anchor.CachedTokens), "outputTokens": anchor.OutputTokens,
 			}
+			payload["providerMeasurementScope"] = "previous_request"
 			// anchorDeltaTokens 的语义是"本地估算相对锚点那一步的增量"，与 projectedTokens 的分母无关，
 			// 前端拿它解释"较锚点 +N"，不能改成投影减估算。
 			delta := pressure.EstimatedInputTokens - anchor.EstimatedTokens

@@ -157,6 +157,9 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         anchorRejected: contextPressure?.anchorRejected,
         projectedPressureRatio: contextPressure?.projectedPressureRatio,
         requestHardLimitBytes: contextPressure?.requestHardLimitBytes,
+        readingScope: contextPressure?.readingScope,
+        estimateMethod: contextPressure?.estimateMethod,
+        providerMeasurementScope: contextPressure?.providerMeasurementScope,
     }), [contextPressure, prompt, selectedTextCapability]);
     useEffect(() => { if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off"); }, [reasoningSupported, reasoningMode]);
     const installedSkills = useMemo(() => skills.filter((skill) => skill.isAdded), [skills]);
@@ -1412,6 +1415,9 @@ function parseContextPressure(payload: Record<string, unknown>): AgentContextPre
         requestHardLimitBytes: payload.requestHardLimitBytes === undefined ? undefined : number("requestHardLimitBytes"),
         stepMaxOutputTokens: payload.stepMaxOutputTokens === undefined ? undefined : number("stepMaxOutputTokens"),
         stepTimeoutSeconds: payload.stepTimeoutSeconds === undefined ? undefined : number("stepTimeoutSeconds"),
+        readingScope: payload.readingScope === "next_request" ? "next_request" : undefined,
+        estimateMethod: payload.estimateMethod === "local_v1" ? "local_v1" : undefined,
+        providerMeasurementScope: payload.providerMeasurementScope === "previous_request" ? "previous_request" : undefined,
     };
 }
 

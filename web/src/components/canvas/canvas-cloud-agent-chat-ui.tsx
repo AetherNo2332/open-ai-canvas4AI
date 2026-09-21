@@ -16,6 +16,7 @@ import type { AgentContextBreakdown, AgentContextPressure } from "@/services/api
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
 import { agentToolRetry, type AgentToolRetryAttempt } from "@/lib/canvas/agent-tool-retry";
+import { agentContextMeterReading } from "@/lib/canvas/agent-context-meter";
 
 export type CloudAgentChatAttachment = { id: string; name: string; url: string };
 type CloudAgentOperationImpact = {
@@ -934,7 +935,7 @@ function ContextBudgetBar({ usage, format }: { usage?: ContextBudgetUsage; forma
             <ul className="agent-context-breakdown-list">
                 <li>
                     <span className="agent-context-breakdown-dot" data-bucket="used" />
-                    <span className="agent-context-breakdown-label">已使用</span>
+                    <span className="agent-context-breakdown-label">已使用（本地估算）</span>
                     <span className="agent-context-breakdown-value">{format(usage.projectedTokens)} Token · {percent(usage.projectedTokens)}%</span>
                 </li>
                 <li>
@@ -944,7 +945,7 @@ function ContextBudgetBar({ usage, format }: { usage?: ContextBudgetUsage; forma
                 </li>
             </ul>
             <div className="agent-context-pressure-note">
-                已使用 = 预计下一步输入。输入预算 {format(budget)} Token（窗口 − 输出预留 − 工具/协议预留）；压缩线 {format(threshold)} Token（{Math.round(usage.thresholdRatio * 100)}%）。
+                已使用 = 下一步输入的同口径本地估算。输入预算 {format(budget)} Token（窗口 − 输出预留 − 工具/协议预留）；压缩线 {format(threshold)} Token（{Math.round(usage.thresholdRatio * 100)}%）。
                 {overBudget ? "当前预计输入已超过输入预算，下一步会先压缩再继续。" : ""}
             </div>
         </>
@@ -952,28 +953,30 @@ function ContextBudgetBar({ usage, format }: { usage?: ContextBudgetUsage; forma
 }
 
 function AgentContextPressureIndicator({ pressure, runStep }: { pressure: AgentContextPressure; runStep?: number }) {
-    const configured = pressure.modelLimitConfigured && pressure.usableInputTokens > 0;
-    // 有上游实测锚点时用"下一步预计"占窗口的比例；否则退回纯估算。
+    const reading = agentContextMeterReading(pressure);
+    const configured = reading.configured;
     const anchored = pressure.tokenSource === "provider" && typeof pressure.pressureTokens === "number";
-    const projected = pressure.projectedTokens ?? pressure.estimatedInputTokens;
-    const modelRatio = configured
-        ? Math.max(0, pressure.projectedPressureRatio ?? (projected / Math.max(1, pressure.usableInputTokens)))
-        : 0;
-    const compactionRatio = Math.max(0, pressure.compactionPressureRatio);
+    const projected = reading.decisionTokens;
+    const compactionRatio = reading.decisionRatio;
     const tokenBasis = pressure.compactionBasis !== "bytes" && configured;
     const thresholdRatio = pressure.compactionThresholdRatio ?? 0.85;
-    const ratio = Math.max(modelRatio, compactionRatio);
-    const basis = configured && modelRatio >= compactionRatio ? "模型窗口" : tokenBasis ? "输入预算的 85%" : "服务端压缩阈值";
+    // Headline samples always use the same estimator. Provider usage belongs to
+    // the preceding request and remains a separate compaction-decision reading.
+    const ratio = reading.displayRatio;
+    const basis = configured ? "下一请求本地估算（同口径）" : "服务端字节压缩阈值";
     const formatTokens = (value: number) => value.toLocaleString("zh-CN");
     // 秒级墙钟按"分/秒"给人看：这一步的边界是可配置的，读数要能直接对上管理端。
     const formatDuration = (seconds: number) => (seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`);
     const percent = Math.round(ratio * 100);
     const progress = Math.min(100, percent);
-    const tone = ratio >= 0.9 ? "critical" : ratio >= 0.7 ? "warning" : "normal";
+    // Warning colour follows the stricter compaction decision even though the
+    // ring length stays on the stable display scale.
+    const toneRatio = Math.max(ratio, compactionRatio);
+    const tone = toneRatio >= 0.9 ? "critical" : toneRatio >= 0.7 ? "warning" : "normal";
     const format = (value: number) => value.toLocaleString("zh-CN");
     const title = (
         <div className="agent-context-pressure-popover">
-            <div className="agent-context-pressure-title">上下文压力 {percent}%</div>
+            <div className="agent-context-pressure-title">当前请求占用估算 {percent}%</div>
             <div>
                 本轮进度：{typeof runStep === "number" && runStep > 0 ? `第 ${runStep} 步（已发出 ${runStep} 次模型调用）` : "尚未发出模型调用"}
                 {typeof pressure.anchorStep === "number" && pressure.anchorStep > 0 ? ` · 用量锚点取自第 ${pressure.anchorStep} 步` : ""}
@@ -982,15 +985,15 @@ function AgentContextPressureIndicator({ pressure, runStep }: { pressure: AgentC
             {tokenBasis ? (
                 <div>
                     压缩阈值：{Math.round(thresholdRatio * 100)}% 输入预算 · 当前 {Math.round(compactionRatio * 100)}%
-                    （{pressure.compactionTokenSource === "estimate" ? "本地估算" : "上游实测"}）
+                    （{reading.decisionSource === "provider" ? "按上一请求实测投影" : "本地估算"}）
                 </div>
             ) : (
                 <div>压缩阈值：{Math.round(thresholdRatio * 100)}%…（未配置模型上限，按字节兜底）{format(pressure.compactionSourceBytes)} / {format(pressure.compactionThresholdBytes)} 字节 · 当前 {Math.round(compactionRatio * 100)}%</div>
             )}
             {anchored ? (
                 <>
-                    <div>上游实测（第 {pressure.anchorStep ?? "?"} 步）：{formatTokens(pressure.pressureTokens || 0)} Token</div>
-                    <div>下一步预计：{formatTokens(projected)} Token{typeof pressure.anchorDeltaTokens === "number" && pressure.anchorDeltaTokens !== 0 ? `（较锚点 ${pressure.anchorDeltaTokens > 0 ? "+" : ""}${formatTokens(pressure.anchorDeltaTokens)}）` : ""}</div>
+                    <div>上一请求上游实测（第 {pressure.anchorStep ?? "?"} 步）：{formatTokens(pressure.pressureTokens || 0)} Token</div>
+                    <div>压缩决策投影：{formatTokens(projected)} Token{typeof pressure.anchorDeltaTokens === "number" && pressure.anchorDeltaTokens !== 0 ? `（较锚点 ${pressure.anchorDeltaTokens > 0 ? "+" : ""}${formatTokens(pressure.anchorDeltaTokens)}）` : ""}</div>
                     {pressure.tokenUsage ? (
                         <div>其中未缓存 {formatTokens(pressure.tokenUsage.uncachedInputTokens)} · 缓存 {formatTokens(pressure.tokenUsage.cachedInputTokens)} · 输出 {formatTokens(pressure.tokenUsage.outputTokens)}</div>
                     ) : null}
@@ -1030,7 +1033,7 @@ function AgentContextPressureIndicator({ pressure, runStep }: { pressure: AgentC
                 usage={{
                     configured,
                     usableInputTokens: pressure.usableInputTokens ?? 0,
-                    projectedTokens: projected,
+                    projectedTokens: reading.displayTokens,
                     compactAtTokens: pressure.compactAtTokens,
                     thresholdRatio,
                 }}
@@ -1042,12 +1045,12 @@ function AgentContextPressureIndicator({ pressure, runStep }: { pressure: AgentC
                 {typeof pressure.stepTimeoutSeconds === "number" ? ` · 单步最长 ${formatDuration(pressure.stepTimeoutSeconds)}` : ""}
             </div>
             <div>超时/空输出会自动关思考重试一次，重试仍失败才结束本轮。</div>
-            <div className="agent-context-pressure-note">协议外壳指工具选择、缓存键等非内容字段。{anchored ? "上限读数来自上游实测，构成仍是估算并按锚点校准。" : "Token 为本地估算；拿到上游实测后会切换为锚点读数。"}压缩会保留检查点和最近对话。</div>
+            <div className="agent-context-pressure-note">圆环和预算条始终使用下一请求的本地估算，保证跨步骤可比较；上一请求的 Provider 实测只校准压缩决策，不再与估算拼成一条曲线。运行时事实帧会逐步重建，图片裁剪和语义压缩会造成真实回落。</div>
         </div>
     );
     return (
         <Tooltip title={title} placement="top" className="!max-w-72 !p-3">
-            <button type="button" className="agent-context-pressure" data-tone={tone} aria-label={`上下文压力 ${percent}%`}>
+            <button type="button" className="agent-context-pressure" data-tone={tone} aria-label={`当前请求占用估算 ${percent}%`}>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <circle className="agent-context-pressure-track" cx="12" cy="12" r="9" />
                     <circle className="agent-context-pressure-value" cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${progress} 100`} />
