@@ -305,7 +305,22 @@ func providerPayloadErrorCategory(raw string) (string, bool) {
 		return "输入素材疑似包含真人形象，该模型拒绝生成，请更换为非真人素材或改用其他模型", true
 	case strings.Contains(normalized, "safety"), strings.Contains(normalized, "moderation"), strings.Contains(normalized, "content policy"), strings.Contains(normalized, "blocked"):
 		return "请求内容未通过模型服务安全审核，请调整后重试", true
-	case strings.Contains(normalized, "quota"), strings.Contains(normalized, "insufficient"), strings.Contains(normalized, "balance"), strings.Contains(normalized, "billing"):
+	// 工具调用与工具结果不配对：上游要求 assistant 消息声明的每一个 tool_call_id 都在
+	// 紧随其后的 tool 消息里被回应。这是**我们组装请求**的问题——用户改提示词或查额度
+	// 都没用——所以文案指向反馈而不是"调整输入"。
+	//
+	// 必须排在额度类目之前：DeepSeek 的原文含 "insufficient"，
+	// "An assistant message with 'tool_calls' must be followed by tool messages
+	//  responding to each 'tool_call_id'. (insufficient tool messages following
+	//  tool_calls message)"
+	// 落到额度类目就会把协议错误报成"渠道余额不足"，掩盖真正的原因（历史里的工具
+	// 结果不连续）。本部署实测触发过：一轮里模型发了 4 个 canvas_inspect_image 调用。
+	case strings.Contains(normalized, "must be followed by tool messages"),
+		strings.Contains(normalized, "insufficient tool messages following"):
+		return "会话里的工具调用与结果不匹配，本轮已停止；这不是额度或提示词问题，如反复出现请反馈", true
+	// 额度类目只认结算语境里的稳定词，**不接受裸 "insufficient"**（原因见上：
+	// "insufficient tool messages" 是协议错误，不是余额问题）。
+	case strings.Contains(normalized, "quota"), strings.Contains(normalized, "balance"), strings.Contains(normalized, "billing"):
 		return "模型服务额度不足，请检查渠道余额或配额", true
 	case strings.Contains(normalized, "model") && (strings.Contains(normalized, "not found") || strings.Contains(normalized, "permission") || strings.Contains(normalized, "access")):
 		return "模型不存在或当前渠道未获得模型权限", true
