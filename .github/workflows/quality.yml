@@ -56,7 +56,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -json ./... | tee "$RUNNER_TEMP/go-tests.jsonl"
+          # internal/app 的用例数已接近 Go 默认的每包 10 分钟上限（实测 CI 上约 9 分钟），
+          # 加几个用例就会整包超时失败。这里把上限抬到 20 分钟：它只是超时保护，
+          # 不影响用例本身的行为与结果。
+          go test -timeout 20m -json ./... | tee "$RUNNER_TEMP/go-tests.jsonl"
       - name: Ensure dependency-backed tests were not skipped
         shell: bash
         run: |
