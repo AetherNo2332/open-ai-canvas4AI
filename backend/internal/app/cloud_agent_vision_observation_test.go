@@ -256,3 +256,70 @@ func TestCloudAgentVisionStaleImagesBlockPronouns(t *testing.T) {
 		t.Fatalf("pronoun must be attributed for a lone image, recorded=%d", recorded)
 	}
 }
+
+// TestCloudAgentVisionAnchorFollowsLedger 覆盖评审的第三条契约：
+// RequiresVisualInspection 只在观察真正入账后翻 false；附图成功不算，重新附图也不得
+// 把已确认的观察退回"未检视"。换图（签名变化）则必须退回未检视。
+func TestCloudAgentVisionAnchorFollowsLedger(t *testing.T) {
+	state := cloudAgentRuntime{CreativeAnchor: cloudAgentCreativeAnchor{ReferenceAssets: []cloudAgentReferenceAnchor{
+		{NodeID: "upload-1-aaaa", VisualIdentity: "unknown", RequiresVisualInspection: true},
+	}}}
+
+	// 只附图：仍是未检视。
+	state.markCanvasImageAttached("upload-1-aaaa", "sig-one")
+	if asset := state.CreativeAnchor.ReferenceAssets[0]; !asset.RequiresVisualInspection || asset.VisualIdentity != "unknown" {
+		t.Fatalf("attachment must not count as recognition: %+v", asset)
+	}
+
+	// 观察入账后翻成已检视，并把观察抄进锚点。
+	if recorded := state.cloudAgentRecordImageObservations("upload-1-aaaa：银发少年半裸体型三视图。", true); recorded != 1 {
+		t.Fatalf("observation was not recorded, recorded=%d", recorded)
+	}
+	state.cloudAgentSyncVisualAnchor()
+	asset := state.CreativeAnchor.ReferenceAssets[0]
+	if asset.RequiresVisualInspection || asset.VisualIdentity != "inspected" || asset.VisualNote == "" {
+		t.Fatalf("confirmed observation must flip the anchor: %+v", asset)
+	}
+
+	// 同一张图重新附图：不得退回未检视、也不得清空观察。
+	state.markCanvasImageAttached("upload-1-aaaa", "sig-one")
+	asset = state.CreativeAnchor.ReferenceAssets[0]
+	if asset.RequiresVisualInspection || asset.VisualNote == "" {
+		t.Fatalf("re-attaching the same image must keep the confirmed state: %+v", asset)
+	}
+
+	// 节点换成另一张图：退回未检视，旧观察作废。
+	state.markCanvasImageAttached("upload-1-aaaa", "sig-two")
+	asset = state.CreativeAnchor.ReferenceAssets[0]
+	if !asset.RequiresVisualInspection || asset.VisualIdentity != "unknown" || asset.VisualNote != "" {
+		t.Fatalf("a replaced image must fall back to unconfirmed: %+v", asset)
+	}
+}
+
+// TestCloudAgentDescribeImageBatch 覆盖评审的 D1 回执侧契约：
+// 回执必须说出"本批到底附了哪几张"，否则模型只能靠猜来决定还要不要重看。
+func TestCloudAgentDescribeImageBatch(t *testing.T) {
+	state := cloudAgentRuntime{PendingImageInspections: []cloudAgentImageInspection{
+		{Receipt: map[string]any{"nodeId": "upload-1-aaaa", "title": "A"}},
+		{Receipt: map[string]any{"nodeId": "upload-2-bbbb", "title": "B"}},
+	}}
+	receipt := map[string]any{"nodeId": "upload-2-bbbb"}
+	cloudAgentDescribeImageBatch(&state, receipt)
+	batch, ok := receipt["batchImages"].([]map[string]any)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("batch list must name every attached image: %+v", receipt)
+	}
+	note := stringValue(receipt["batchNote"])
+	if !strings.Contains(note, "本批共附上 2 张画面") {
+		t.Fatalf("batch note must state the real count: %s", note)
+	}
+	if !strings.Contains(note, "没有随本请求送出") {
+		t.Fatalf("batch note must warn about images that were not delivered: %s", note)
+	}
+	// 没有附图（全部是重复回执）时不得编造交付出清单。
+	empty := map[string]any{"nodeId": "upload-1-aaaa"}
+	cloudAgentDescribeImageBatch(&cloudAgentRuntime{}, empty)
+	if _, exists := empty["batchImages"]; exists {
+		t.Fatal("a batch without attachments must not claim a delivery list")
+	}
+}

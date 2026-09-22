@@ -913,7 +913,10 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			// 上一批附图的观察就写在这一步的正文里：只有逐句点名 nodeId 的句子才入账，
 			// 且只认"带工具调用"的正文（那是看图后的过程说明，不是候选收尾稿）。
 			// 入账后这些节点在裁剪占位符里就能带上模型自己的观察，不必再重看一遍。
-			if recorded := state.cloudAgentRecordImageObservations(result.Text, len(calls) > 0); recorded > 0 && run.ID != "" {
+			recordedObservations := state.cloudAgentRecordImageObservations(result.Text, len(calls) > 0)
+			// 观察入账后同步锚点：RequiresVisualInspection 只在观察真正落账后才翻 false。
+			state.cloudAgentSyncVisualAnchor()
+			if recorded := recordedObservations; recorded > 0 && run.ID != "" {
 				state.event(run.ID, "context_transition", map[string]any{
 					"kind": "image_observation", "reason": "vision_ledger",
 					"text":         fmt.Sprintf("视觉账本：记下 %d 张图片的观察", recorded),
@@ -1344,6 +1347,17 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		payload["text"] = "工具执行成功"
 	}
 	if inspection, ok := result.(cloudAgentImageInspection); ok && err == nil {
+		// 重复查看时只回执文字（ImageURL 为空），不再附图。
+		staged := strings.TrimSpace(inspection.ImageURL) != ""
+		if staged {
+			cloudAgentStageImageInspection(state, inspection)
+		}
+		lastOfBatch := state.CallIndex+1 >= len(state.Calls)
+		if lastOfBatch {
+			// 本批最后一次看图：把"这一批到底附了哪几张"写进回执，模型不必再靠试探猜。
+			// 必须赶在下面序列化回执之前补上，否则这条说明对模型不可见。
+			cloudAgentDescribeImageBatch(state, inspection.Receipt)
+		}
 		receipt, _ := json.Marshal(inspection.Receipt)
 		payload["result"] = inspection.Receipt
 		state.event(runID, kind, payload)
@@ -1351,15 +1365,11 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		// 图片另起一条 user 消息携带，并显式标注为数据而非指令。
 		state.Canonical.Messages = append(state.Canonical.Messages,
 			map[string]any{"role": "tool", "tool_call_id": call.ID, "content": string(receipt)})
-		// 重复查看时只回执文字（ImageURL 为空），不再附图。
-		if strings.TrimSpace(inspection.ImageURL) != "" {
-			cloudAgentStageImageInspection(state, inspection)
-		}
-		// 一批里可能有多个调用（模型一次发起 parallel tool calls），上游要求
+		// 一批里可能有多个调用（模型一次发起并行 tool calls），上游要求
 		// assistant(tool_calls) 之后紧跟每一个 tool_call_id 的 tool 消息，所以图片
 		// 不能插在 tool 结果之间。只有本批最后一个调用执行完，才把整批缓冲合并成
 		// 一条 user 消息追加在全部 tool 结果之后。
-		if state.CallIndex+1 >= len(state.Calls) {
+		if lastOfBatch {
 			cloudAgentFlushPendingImages(state)
 		}
 		state.CallIndex++
