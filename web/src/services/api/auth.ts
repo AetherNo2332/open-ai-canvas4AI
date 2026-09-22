@@ -375,9 +375,10 @@ export function getAuthSettings() {
     return http.get<{ firstUser: boolean; registrationEnabled: boolean; linuxdoEnabled: boolean; emailEnabled: boolean; emailCodeRequired: boolean }>("/auth/settings");
 }
 
-export function linuxDOLoginURL(next: string) {
+export function linuxDOLoginURL(next: string, acceptedTerms?: boolean) {
     const base = String(apiBaseURL).replace(/\/$/, "");
-    return `${base}/auth/linuxdo/start?next=${encodeURIComponent(next)}`;
+    const termsQuery = acceptedTerms === undefined ? "" : `&acceptedTerms=${acceptedTerms ? "true" : "false"}`;
+    return `${base}/auth/linuxdo/start?next=${encodeURIComponent(next)}${termsQuery}`;
 }
 
 export function getAuthSession() {
@@ -430,7 +431,7 @@ export function resetPassword(input: { email: string; emailCode: string; passwor
     return http.post<{ reset: boolean }>("/auth/password-reset", input);
 }
 
-export function register(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string }) {
+export function register(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string; acceptedTerms: boolean }) {
     return http.post<{ user: LocalUser }>("/auth/register", input);
 }
 

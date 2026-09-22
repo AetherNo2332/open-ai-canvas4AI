@@ -140,7 +140,7 @@ type providerError struct {
 }
 
 // providerPayloadError 在进程内保留上游原始原因，供协议兼容分支做机器判断；
-// 对调用方只暴露归类后的稳定文案。Provider 正文可能包含密钥或内部诊断，
+// 对调用方只暴露经过过滤的错误原因。Provider 正文可能包含密钥或内部诊断，
 // 禁止原样进入用户错误和日志。
 type providerPayloadError struct {
 	raw     string
@@ -242,6 +242,13 @@ func withProviderRequestKind(ctx context.Context, requestKind string) context.Co
 }
 
 func (e providerHTTPError) Error() string {
+	if e.StatusCode == http.StatusBadRequest || e.StatusCode == http.StatusUnprocessableEntity {
+		return providerErrorWithDetail(e.summary(), e.Body)
+	}
+	return appendProviderErrorDetail(e.summary(), e.Body)
+}
+
+func (e providerHTTPError) summary() string {
 	switch e.StatusCode {
 	case 524:
 		return "上游网关超时（524）：模型请求可能仍在服务端执行并产生费用，请勿立即重试，请先到供应商后台核对任务或账单"
@@ -285,14 +292,6 @@ func providerUserFacingErrorMessage(err error) string {
 	}
 	var httpErr providerHTTPError
 	if errors.As(err, &httpErr) {
-		// 仅对上游参数校验类状态码解析正文。其他状态码的正文可能是网关 HTML、
-		// 鉴权诊断或含密钥的内部信息，归类价值低且更容易误判。
-		switch httpErr.StatusCode {
-		case http.StatusBadRequest, http.StatusUnprocessableEntity:
-			if message, ok := providerPayloadErrorCategory(httpErr.Body); ok {
-				return message
-			}
-		}
 		return httpErr.Error()
 	}
 	return "连接模型服务失败，请检查渠道地址和网络"
@@ -356,10 +355,7 @@ func providerPayloadErrorCategory(raw string) (string, bool) {
 }
 
 func providerPayloadErrorMessage(raw string) string {
-	if message, ok := providerPayloadErrorCategory(raw); ok {
-		return message
-	}
-	return "模型服务返回失败，请检查请求内容或渠道配置"
+	return providerErrorWithDetail("模型服务返回失败，请检查请求内容或渠道配置", raw)
 }
 
 func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string, taskProjectID string, taskType string, fallbackPrompt string, rawInput string) (map[string]interface{}, error) {

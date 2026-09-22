@@ -56,6 +56,12 @@ func cloudAgentToolErrorClass(req CloudAgentRequest, call cloudAgentCall, err er
 	}
 	var fieldErr *cloudAgentFieldArgumentError
 	if errors.As(err, &fieldErr) {
+		// 过期快照在两侧的写法不同：我们带 errCloudAgentSnapshotConflict（上面那条已经拦掉），
+		// 上游只给结构化字段（Field/Issue）。两种都要落到同一个归类，否则同一件事会
+		// 一会儿是"画布状态已变化"、一会儿是"参数不符合契约"。
+		if fieldErr.Issue == "stale_snapshot" {
+			return cloudAgentToolErrorStateConflict, true, "reread_canvas"
+		}
 		return cloudAgentToolErrorSchemaError, true, "fix_arguments"
 	}
 	var argumentErr *cloudAgentArgumentError

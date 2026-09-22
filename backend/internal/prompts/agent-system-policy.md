@@ -1,6 +1,6 @@
 ---
 id: cloud-agent-system
-version: 7
+version: 8
 ---
 
 # 影策 Cloud Agent 系统行为策略

@@ -167,7 +167,11 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	canonical := input.Requests.Canonical
 	canonical.SystemPrompt = stripCloudAgentPlanBlock(canonical.SystemPrompt)
 	canonical.Messages = stripCloudAgentRuntimeContext(canonical.Messages)
-	state := cloudAgentRuntime{Request: initial.Request, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: s.cloudAgentStepLimits()}
+	stepLimits, err := s.cloudAgentStepLimits()
+	if err != nil {
+		return err
+	}
+	state := cloudAgentRuntime{Request: initial.Request, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
 	if len(initial.Skills) > 0 {
 		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
 	}
@@ -782,7 +786,10 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		return s.terminateCloudAgent(run, "Agent 运行状态损坏，本轮已停止")
 	}
 	// 单步边界每次推进都重新解析：管理员改配置后，正在跑的这一轮下一步就用新值。
-	state.StepLimits = s.cloudAgentStepLimits()
+	state.StepLimits, err = s.cloudAgentStepLimits()
+	if err != nil {
+		return err
+	}
 	if state.ActiveTaskID != "" {
 		task, err := s.repo.TaskForUser(run.UserID, state.ActiveTaskID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {

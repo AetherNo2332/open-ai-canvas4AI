@@ -51,6 +51,10 @@ type CloudAgentRequest struct {
 		MaxSteps int `json:"maxSteps,omitempty"`
 	} `json:"budget"`
 	IdempotencyKey string `json:"idempotencyKey"`
+	// VisionEnabled 决定是否给模型暴露看图工具，由服务端在创建 run 时按渠道模型合同
+	// （text.references.maxImages > 0）重新推导并覆盖，客户端传入值一律被忽略；
+	// 必须持久化：工具授权校验每步都从落库状态重建，丢掉这个标记会让模型看得见工具
+	// 却被判为"未获本轮权限授权"。
 }
 
 const cloudAgentMaxStepsLimit = 9999
@@ -402,6 +406,9 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		// 跨轮只继承"视觉事实"：已经看过的画面与模型写下的观察（锚点会按当前画布重建）。
 		creativeAnchor = parentState.CreativeAnchor
 		inheritedPlan = parentState.Plan
+		// 视觉事实跨轮继承：这一轮已经看过的画面与模型自己写下的观察随锚点带过来，
+		// 否则新轮会把看过的图重新标成"没有视觉识别证据"并再花一次视觉 token。
+		creativeAnchor = parentState.CreativeAnchor
 		history = parentState.TextHistory
 		if history == nil {
 			history = cloudAgentLegacyHistory(parentState.Canonical.Messages, parent.Prompt)
@@ -484,7 +491,11 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	attachCloudAgentPlan(&canonical, inheritedPlan)
 	// 根任务就是第一步模型调用：它的输出上限与后续每一步同源（策略解析结果），
 	// 否则"改配置"只影响第二步之后，第一步仍然按旧值跑。
-	input := map[string]any{"mode": "text", "prompt": req.Prompt, "textHistory": history, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(policy.ReasoningMode), "maxOutputTokens": cloudAgentStepOutputBudget(s.cloudAgentStepLimits(), false)}, "cloudAgent": state,
+	stepLimits, err := s.cloudAgentStepLimits()
+	if err != nil {
+		return nil, err
+	}
+	input := map[string]any{"mode": "text", "prompt": req.Prompt, "textHistory": history, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(policy.ReasoningMode), "maxOutputTokens": cloudAgentStepOutputBudget(stepLimits, false)}, "cloudAgent": state,
 		"agentRequests": map[string]any{"canonical": canonical},
 		"config":        map[string]any{"channelId": req.ChannelID, "channelModelKey": req.ChannelModelKey, "model": firstNonEmpty(req.ChannelModelKey, req.Model), "systemPrompt": system}}
 	task, err := s.CreateTask(userID, CreateTaskRequest{ProjectID: req.CanvasID, Type: "canvas_text", Operation: cloudAgentOperation, Prompt: req.Prompt, Model: req.Model, LogicalModelID: req.LogicalModelID, Input: input,
