@@ -298,7 +298,7 @@ func TestCloudAgentVisionLimitsAndUnconfirmedState(t *testing.T) {
 		t.Fatal("limit projection mutated durable canonical")
 	}
 	state := cloudAgentRuntime{Request: agentTestRequest(), CreativeAnchor: cloudAgentCreativeAnchor{ReferenceAssets: []cloudAgentReferenceAnchor{{NodeID: "cat", VisualIdentity: "inspected", VisualNote: "无法读取图片"}}}}
-	state.markCanvasImageAttached("cat")
+	state.markCanvasImageAttached("cat", "")
 	asset := state.CreativeAnchor.ReferenceAssets[0]
 	if asset.VisualIdentity != "unknown" || !asset.RequiresVisualInspection || asset.VisualNote != "" {
 		t.Fatal("attachment was treated as recognition")
