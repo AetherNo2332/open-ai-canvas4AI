@@ -12,13 +12,13 @@ import (
 )
 
 // CurrentSchemaVersion 是合并后的期望版本：上游 v1.5.7 段占用 24–31，之后 v32 用给
-// channel_model_tags、v33 用给 oauth_state_accepted_terms，因此我们的
-// cloud_agent_run_events / cloud_agent_transcript 继续让位到 34 / 35（方案 A）。
-const CurrentSchemaVersion int64 = 35
+// channel_model_tags、v33 用给 oauth_state_accepted_terms、v34 用给 task_media_recovery，
+// 因此我们的 cloud_agent_run_events / cloud_agent_transcript 继续让位到 35 / 36（方案 A）。
+const CurrentSchemaVersion int64 = 36
 
 // PreviousUpstreamSchemaVersion 是上游自己跑到的最高版本；我们的两条迁移让位到它之后。
 // 仅供测试与文档引用（搬迁目标版本 = PreviousUpstreamSchemaVersion + 1 / +2）。
-const PreviousUpstreamSchemaVersion int64 = 33
+const PreviousUpstreamSchemaVersion int64 = 34
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -114,9 +114,19 @@ var schemaMigrations = []migration{
 	}},
 	{version: 32, name: "channel_model_tags", checksum: "sha256:channel-model-tags-v32", apply: migrateChannelModelTags},
 	{version: 33, name: "oauth_state_accepted_terms", checksum: "sha256:oauth-state-accepted-terms-v33", apply: migrateOAuthStateAcceptedTerms},
-	// 我们的两条迁移让位到上游段之后（方案 A）：上游已占用 24–33，我们保持相对顺序放到 34 / 35。
-	{version: 34, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
-	{version: 35, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{version: 34, name: "task_media_recovery", checksum: "sha256:task-media-recovery-v34", apply: func(tx *gorm.DB) error {
+		for _, field := range []string{"MediaRecoveryJSON", "MediaStage"} {
+			if !tx.Migrator().HasColumn(&model.Task{}, field) {
+				if err := tx.Migrator().AddColumn(&model.Task{}, field); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}},
+	// 我们的两条迁移让位到上游段之后（方案 A）：上游已占用 24–34，我们保持相对顺序放到 35 / 36。
+	{version: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{version: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
 }
 
 func migrateChannelModelTags(tx *gorm.DB) error {
@@ -205,27 +215,38 @@ type legacyCloudAgentMigrationRelocation struct {
 	checksum string
 }
 
+// legacyCloudAgentMigrationRelocations 的条目顺序即执行顺序，必须是"from 从大到小"：
+// 先腾出高版本号，再把低版本号搬进去，否则目标版本被占用会被跳过（占用检查见下）。
+// 同一个 from 上可能承载不同记录（v33 既可能是合并线的 transcript，也可能是上一版 dev 的
+// run_events），因此匹配必须同时比对 name。
 var legacyCloudAgentMigrationRelocations = []legacyCloudAgentMigrationRelocation{
-	{from: 34, to: 35, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 33, to: 34, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
-	{from: 33, to: 35, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 32, to: 34, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
-	{from: 25, to: 35, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 24, to: 34, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 上一版 dev 库（schema 35：34/35）—— 跑过 PR #41–#44 那版 dev 的库就是这一形态。
+	{from: 35, to: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 34, to: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 上一版 dev 库（33/34）—— 跑过 PR #37–#40 那版 dev 的库。
+	{from: 34, to: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 33, to: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 上一版合并线库（32/33）。
+	{from: 33, to: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 32, to: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 我们 v25 库（24/25）。
+	{from: 25, to: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 24, to: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 }
 
 // noopCloudAgentMigration 是让位后的空迁移：表与数据保留（不做 DROP），但代码不再读写它们，
 // 因此这里既不建表也不改结构。全新库不会再创建这两张表；已有库保持原样。
 func noopCloudAgentMigration(*gorm.DB) error { return nil }
 
-// relocateLegacyCloudAgentMigrations 把库里遗留的让位记录改写到当前登记版本（34/35）。
+// relocateLegacyCloudAgentMigrations 把库里遗留的让位记录改写到当前登记版本（35/36）。
 //
-// 要求：幂等、事务内、对四种起点都能跑通 ——
+// 要求：幂等、事务内、对五种起点都能跑通 ——
 //   - 全新库：schema_migrations 还不存在 / 为空 → 直接返回；
-//   - 上游库：没有这两条 name → 直接返回（upstream 的 v32/v33 由它自己执行）；
-//   - 我们 v25 库：把 24→34、25→35；
-//   - 已跑过合并线临时版本的库：把 32→34、33→35；
-//   - 已跑过上一版 dev 的库：把 33→34、34→35。
+//   - 上游库：没有这两条 name → 直接返回（upstream 的 v32/v33/v34 由它自己执行）；
+//   - 我们 v25 库：把 24→35、25→36；
+//   - 已跑过合并线临时版本的库：把 32→35、33→36；
+//   - 已跑过上一版 dev 的库（33/34）：把 33→35、34→36；
+//   - 已跑过再上一版 dev 的库（34/35）：把 34→35、35→36。
 //
 // 目标版本号若已被占用（理论上不该发生）则跳过，避免主键冲突掩盖真实问题。
 func relocateLegacyCloudAgentMigrations(db *gorm.DB) error {
@@ -326,7 +347,7 @@ func migrateChannelPresentation(tx *gorm.DB) error {
 // migrationsForDatabase 返回本库实际要走的迁移 plan。
 //
 // 进任何校验之前先做一次旧行搬迁：库里的 v24/v25 若还是我们的
-// cloud_agent_run_events / cloud_agent_transcript，要先改写到 v32/v33，
+// cloud_agent_run_events / cloud_agent_transcript，要先改写到 v35/v36，
 // 否则 validateMigrationRecord 会拿上游 v24（channel_model_label）跟我们库里的记录比对并拒绝启动。
 func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 	if err := relocateLegacyCloudAgentMigrations(db); err != nil {

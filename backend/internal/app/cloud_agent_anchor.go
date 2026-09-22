@@ -25,25 +25,17 @@ type cloudAgentReferenceAnchor struct {
 	ReferenceReady           bool     `json:"referenceReady"`
 	VisualIdentity           string   `json:"visualIdentity"`
 	RequiresVisualInspection bool     `json:"requiresVisualInspection"`
-	// VisualNote 是模型看过这张图之后自己写下的一句观察。锚点会跨轮继承，
-	// 因此下一轮不必重复看图也能拿到文字观察（推理内容不会回灌上下文）。
+	// 旧检查点可能含有未经确认的正文摘录，不再自动写入或跨轮继承。
 	VisualNote string `json:"visualNote,omitempty"`
 	Width      any    `json:"width,omitempty"`
 	Height     any    `json:"height,omitempty"`
 }
 
-func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID string, canvas *model.CanvasProject, prompt string, inherited *cloudAgentCreativeAnchor) (cloudAgentCreativeAnchor, error) {
+// cloudAgentCreativeAnchorForCanvas 按当前画布重建候选素材锚点。
+// 不继承旧视觉标记：工具成功和下一段正文都不是识别成功的可靠证据，节点也可能换图。
+// UserPrompt 仍按我们的口径截断：锚点会进检查点，超长提示词会放大每一步的请求体积。
+func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID string, canvas *model.CanvasProject, prompt string, _ *cloudAgentCreativeAnchor) (cloudAgentCreativeAnchor, error) {
 	anchor := cloudAgentCreativeAnchor{Version: 2, UserPrompt: truncateRunes(prompt, 16000)}
-	// 跨轮只继承"视觉事实"：已经看过的画面和模型自己写下的观察。用户目标、权限和旧计划
-	// 都不继承——用户消息才是本轮目标，候选素材按当前画布重建，避免把过期素材带进新轮。
-	inspected := map[string]cloudAgentReferenceAnchor{}
-	if inherited != nil {
-		for _, asset := range inherited.ReferenceAssets {
-			if asset.VisualIdentity == "inspected" {
-				inspected[asset.NodeID] = asset
-			}
-		}
-	}
 
 	doc, err := creationDocument(canvas.PayloadJSON)
 	if err != nil {
@@ -96,13 +88,6 @@ func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID strin
 				item.ReferenceReady = true
 				item.Width, item.Height = ref["width"], ref["height"]
 			}
-		}
-
-		if viewed, ok := inspected[item.NodeID]; ok {
-			// 这一轮之前已经看过画面：直接继承模型自己写下的观察，不重复看图。
-			item.VisualIdentity = "inspected"
-			item.RequiresVisualInspection = false
-			item.VisualNote = viewed.VisualNote
 		}
 		anchor.ReferenceNodeIDs = append(anchor.ReferenceNodeIDs, item.NodeID)
 		anchor.ReferenceAssets = append(anchor.ReferenceAssets, item)
