@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -186,5 +187,50 @@ func TestCloudAgentPendingPlanPreventsTextOnlyCompletion(t *testing.T) {
 	run, state = agentInterjectionState(t, s, root.ID)
 	if run.Status != "completed" || state.Plan[0].Status == "done" {
 		t.Fatalf("应允许结束对话而不伪造计划完成: status=%s plan=%+v", run.Status, state.Plan)
+	}
+}
+
+// 本轮"本批剩余调用"必须逐个拿到回执：ask_user 结束这一轮时，紧随其后的那个调用
+// 之前会被静默丢掉（skip 的起点多算了一位），而 cloudAgentToolResult 已经把游标推进了。
+// 少了回执，落库的这轮 canonical 就自相矛盾——assistant(tool_calls) 里有 tool_call_id 没有对应的 tool 消息。
+func TestCloudAgentAskUserReceiptsEveryRemainingCall(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	_, state := agentInterjectionState(t, s, root.ID)
+	ask := cloudAgentCall{ID: "ask-1"}
+	ask.Function.Name, ask.Function.Arguments = "ask_user", `{"question":"用哪个模型？","options":[{"label":"A"},{"label":"B"}]}`
+	read := cloudAgentCall{ID: "read-1"}
+	read.Function.Name, read.Function.Arguments = "canvas_get_state", `{}`
+	body, err := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{ask, read}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{
+		"status": model.TaskStatusSucceeded, "result_json": string(body),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// 一次转移登记本批调用，之后每个调用各需要一次转移。
+	for range 3 {
+		if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run, state := agentInterjectionState(t, s, root.ID)
+	if run.Status != "completed" {
+		t.Fatalf("ask_user 应当结束本轮：status=%s", run.Status)
+	}
+	if state.CallIndex != len(state.Calls) {
+		t.Fatalf("本批剩余调用没有被逐个收尾：callIndex=%d calls=%d", state.CallIndex, len(state.Calls))
+	}
+	paired := map[string]bool{}
+	for _, message := range state.Canonical.Messages {
+		if stringField(message, "role") == "tool" {
+			paired[stringField(message, "tool_call_id")] = true
+		}
+	}
+	for _, id := range []string{"ask-1", "read-1"} {
+		if !paired[id] {
+			t.Fatalf("tool_call_id %s 没有回执：%+v", id, state.Canonical.Messages)
+		}
 	}
 }
