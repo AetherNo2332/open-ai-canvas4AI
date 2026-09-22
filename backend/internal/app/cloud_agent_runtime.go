@@ -101,7 +101,10 @@ type cloudAgentRuntime struct {
 	// ImageObservations 是本轮的视觉事实账本：节点 ID → 模型为该节点写下的那句话。
 	// 它是图片被裁掉之后模型还能依据什么的唯一来源（裁剪占位符直接引用这里的内容），
 	// 也是"这张图看过、不必再看"的判据 —— 附图次数不是，附图成功也不代表识别成功。
-	ImageObservations map[string]string `json:"imageObservations,omitempty"`
+	ImageObservations map[string]cloudAgentImageObservation `json:"imageObservations,omitempty"`
+	// ImageObservationSignatures 是"附图时这张图的内容指纹"（bytes/width/height 组合）：
+	// 同一个节点 ID 换了图时，用它让旧观察立即失效，不然旧画面事实会一直挂在同一 ID 上。
+	ImageObservationSignatures map[string]string `json:"imageObservationSignatures,omitempty"`
 	// PendingImageObservations 是"刚附图、还等模型写观察"的节点清单；模型下一步的正文
 	// 才会被记为观察。它必须进检查点：一次转移只执行一个工具调用，跨转移会重新解码状态，
 	// 进程内字段必然为空（同 PendingImageInspections）。
@@ -1009,6 +1012,10 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if refErr != nil {
 		return s.failCloudAgent(run, &state, cloudAgentSafeToolError(refErr))
 	}
+	// 装配已经定下"这一次真正随请求发出去的是哪几张"：超出模型图片上限的旧图会被换成文字
+	// 占位（丢的是最旧的）。账本只认这份实际送达集合 —— 否则被丢掉的图也会被当成"模型看过"，
+	// 一次误记会跟着"命中账本就不再附图"固化下来（评审明确要求这条契约）。
+	state.cloudAgentSettleImageDelivery(deliveredImageNodeIDs(canonical))
 	// 空输出升级重试：关思考 + 放大输出预算，避免"思考吃满预算、正文为空"再次发生。
 	stepThinking := cloudAgentReasoningEnabled(state.Policy.ReasoningMode) && !state.ForceThinkingOff
 	stepOutputTokens := cloudAgentStepOutputBudget(state.StepLimits, state.BoostStepOutputBudget)
@@ -1698,7 +1705,7 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			result, toolErr = inspectionResult, inspectionErr
 			if toolErr == nil && inspectionResult != nil {
 				if inspection, ok := inspectionResult.(cloudAgentImageInspection); ok {
-					state.markCanvasImageAttached(stringValue(inspection.Receipt["nodeId"]))
+					state.markCanvasImageAttached(stringValue(inspection.Receipt["nodeId"]), stringValue(inspection.Receipt["contentSignature"]))
 				}
 			}
 		case call.Function.Name == "finish_run":
