@@ -109,6 +109,9 @@ type cloudAgentRuntime struct {
 	// 才会被记为观察。它必须进检查点：一次转移只执行一个工具调用，跨转移会重新解码状态，
 	// 进程内字段必然为空（同 PendingImageInspections）。
 	PendingImageObservations []string `json:"pendingImageObservations,omitempty"`
+	// AgentImagesInContext 是本步请求里实际带图的数量（装配后统计）。它决定"这张图"这类
+	// 指代能否安全归属：上下文里还留着更早的图时，指代可能指着上一张。
+	AgentImagesInContext int `json:"agentImagesInContext,omitempty"`
 	// PendingImageInspections 暂存"本批还有工具结果没入历史"的看图结果，等整批 tool
 	// 结果都入历史后合并成一条 user 图片消息（见 cloudAgentFlushPendingImages）。
 	//
@@ -1015,7 +1018,8 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	// 装配已经定下"这一次真正随请求发出去的是哪几张"：超出模型图片上限的旧图会被换成文字
 	// 占位（丢的是最旧的）。账本只认这份实际送达集合 —— 否则被丢掉的图也会被当成"模型看过"，
 	// 一次误记会跟着"命中账本就不再附图"固化下来（评审明确要求这条契约）。
-	state.cloudAgentSettleImageDelivery(deliveredImageNodeIDs(canonical))
+	deliveredNodes := deliveredImageNodeIDs(canonical)
+	state.cloudAgentSettleImageDelivery(deliveredNodes, len(deliveredNodes))
 	// 空输出升级重试：关思考 + 放大输出预算，避免"思考吃满预算、正文为空"再次发生。
 	stepThinking := cloudAgentReasoningEnabled(state.Policy.ReasoningMode) && !state.ForceThinkingOff
 	stepOutputTokens := cloudAgentStepOutputBudget(state.StepLimits, state.BoostStepOutputBudget)

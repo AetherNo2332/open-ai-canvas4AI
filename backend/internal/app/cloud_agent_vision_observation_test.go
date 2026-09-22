@@ -169,7 +169,7 @@ func TestCloudAgentVisionDeliverySettlesLedger(t *testing.T) {
 		t.Fatalf("expected three queued deliveries, got %+v", state.PendingImageObservations)
 	}
 	// 装配后只有第一张真的随请求发出去（另外两张超出模型单次上限，被换成文字占位）。
-	state.cloudAgentSettleImageDelivery(map[string]bool{"upload-1-aaaa": true})
+	state.cloudAgentSettleImageDelivery(map[string]bool{"upload-1-aaaa": true}, 1)
 	if len(state.PendingImageObservations) != 1 || state.PendingImageObservations[0] != "upload-1-aaaa" {
 		t.Fatalf("dropped images must leave the queue, got %+v", state.PendingImageObservations)
 	}
@@ -221,5 +221,38 @@ func TestCloudAgentVisionObservationInvalidatedByContentChange(t *testing.T) {
 	}
 	if notes := state.cloudAgentImageObservations(); len(notes) != 0 {
 		t.Fatalf("stale observation still feeds the eviction note: %+v", notes)
+	}
+}
+
+// TestCloudAgentVisionNonDeliveryNoteNamesNode 覆盖评审要求的"模型可见的实际交付清单"：
+// 装配期没送出去的图，占位符必须点名 nodeId，否则模型只能把整批都当成没看过而重看。
+func TestCloudAgentVisionNonDeliveryNoteNamesNode(t *testing.T) {
+	note := cloudAgentImageEvictionWithoutDeliveryNote("upload-7-hm7rg")
+	if !strings.Contains(note, "upload-7-hm7rg") {
+		t.Fatalf("eviction placeholder must name the node: %s", note)
+	}
+	if !strings.Contains(note, "未能随本次请求送出") {
+		t.Fatalf("eviction placeholder must state that this image was not delivered: %s", note)
+	}
+	if fallback := cloudAgentImageEvictionWithoutDeliveryNote(""); strings.Contains(fallback, "节点  ") {
+		t.Fatalf("anonymous placeholder must stay grammatical: %s", fallback)
+	}
+}
+
+// TestCloudAgentVisionStaleImagesBlockPronouns 覆盖评审的第 5 条：
+// 即使本批只送达一张图，只要上下文里还留着更早的图，"这张图"就不能归属。
+func TestCloudAgentVisionStaleImagesBlockPronouns(t *testing.T) {
+	state := cloudAgentRuntime{AgentImagesInContext: 3}
+	state.markCanvasImageAttached("upload-1-aaaa", "")
+	if state.cloudAgentSingleImageBatch() {
+		t.Fatal("pronoun attribution must be blocked while older images remain in context")
+	}
+	if recorded := state.cloudAgentRecordImageObservations("这张图是白发蓝校服三视图。", true); recorded != 0 {
+		t.Fatalf("pronoun must not be attributed when context holds older images, recorded=%d", recorded)
+	}
+	state2 := cloudAgentRuntime{AgentImagesInContext: 1}
+	state2.markCanvasImageAttached("upload-1-bbbb", "")
+	if recorded := state2.cloudAgentRecordImageObservations("这张图是白发蓝校服三视图。", true); recorded != 1 {
+		t.Fatalf("pronoun must be attributed for a lone image, recorded=%d", recorded)
 	}
 }
