@@ -737,8 +737,9 @@
     max-height: min(70vh, 26rem);
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding-right: 4px;
-    scrollbar-gutter: stable;
+    /* 滚动条槽左右都留：只在右侧预留（scrollbar-gutter: stable）会让内容盒右侧比左侧窄，
+       整块文字看起来偏左、右边留白更多（实测反馈）。both-edges 下两侧对称，滚动条出现也不跳。 */
+    scrollbar-gutter: stable both-edges;
     scrollbar-color: rgba(120, 113, 108, 0.45) transparent;
     scrollbar-width: thin;
     line-height: 1.55;

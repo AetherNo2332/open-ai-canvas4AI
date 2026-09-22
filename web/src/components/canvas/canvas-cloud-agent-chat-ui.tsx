@@ -943,10 +943,27 @@ function AgentContextCompactionNotice({ item, theme }: { item: CloudAgentChatMes
 }
 
 /**
- * 占用分布的落点：一根堆叠条给"谁占了大头"的直觉，下面按桶列出估算 Token 与
- * 占比，再展开系统提示的内部分段。数值来自服务端同一步的估算，与圆环同源。
+ * 占用分布的落点：一根按**输入窗口**缩放的堆叠条（未使用的部分也画出来），
+ * 下面按桶列出估算 Token 与占窗口的比例。数值来自服务端同一步的读数，与圆环同源。
+ *
+ * 条宽用"占窗口"而不是"占已用"：后者会让 31% 的系统提示看起来占满三分之一条，
+ * 而它其实只占窗口的百分之一 —— 量条的直觉应该是"离装不下还有多远"。
  */
-function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreakdown; format: (value: number) => string }) {
+function ContextBreakdown({
+    breakdown,
+    format,
+    budgetTokens,
+    usedTokens,
+    sourceLabel,
+}: {
+    breakdown?: AgentContextBreakdown;
+    format: (value: number) => string;
+    /** 输入预算（模型窗口 − 输出预留 − overhead）；未知时不画未使用段。 */
+    budgetTokens: number;
+    /** 主读数（下一步预计输入）。 */
+    usedTokens: number;
+    sourceLabel: string;
+}) {
     if (!breakdown || breakdown.buckets.length === 0) return null;
     const total = breakdown.bucketBytes + breakdown.envelopeBytes || breakdown.totalBytes;
     if (total <= 0) return null;
@@ -954,33 +971,35 @@ function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreak
     const scaled = typeof breakdown.tokenScale === "number" && Math.abs(breakdown.tokenScale - 1) > 0.005;
     const bucketTokens = (bucket: { tokens: number; scaledTokens?: number }) => (scaled && bucket.scaledTokens ? bucket.scaledTokens : bucket.tokens);
     const stack = [
-        ...breakdown.buckets.map((bucket) => ({ ...bucket, percent: share(bucket.bytes) })),
+        ...breakdown.buckets.map((bucket) => ({ ...bucket, percent: share(bucket.bytes), tokens: bucketTokens(bucket) })),
         ...(breakdown.envelopeBytes > 0 ? [{ key: "envelope", label: "协议外壳", bytes: breakdown.envelopeBytes, tokens: 0, percent: share(breakdown.envelopeBytes) }] : []),
     ];
+    // 量条以输入预算为满格：各桶按真实占比落宽，剩下的画成"未使用"。
+    const windowed = budgetTokens > 0;
+    const denom = windowed ? Math.max(budgetTokens, usedTokens) : total;
+    const widthOf = (tokens: number) => (windowed ? Math.max(0, Math.min(100, (tokens / denom) * 100)) : share(tokens));
+    const usedSum = stack.reduce((sum, item) => sum + (item.tokens || 0), 0);
+    const freeTokens = windowed ? Math.max(0, budgetTokens - (usedSum || usedTokens)) : 0;
+    const legend = stack.map((item) => ({ ...item, width: windowed ? widthOf(item.tokens) : item.percent }));
+    if (windowed && freeTokens > 0) {
+        legend.push({ key: "unused", label: "未使用", bytes: 0, tokens: freeTokens, percent: widthOf(freeTokens), width: widthOf(freeTokens) });
+    }
     return (
         <>
-            <div className="agent-context-breakdown-bar" role="img" aria-label={`上下文占用分布：${stack.map((item) => `${item.label} ${Math.round(item.percent)}%`).join("，")}`}>
-                {stack.map((item) => (
-                    <span key={item.key} data-bucket={item.key} style={{ width: `${item.percent}%` }} />
+            <div className="agent-context-breakdown-bar" role="img" aria-label={`上下文窗口占用（${sourceLabel}）：${legend.map((item) => `${item.label} ${item.width.toFixed(1)}%`).join("，")}`}>
+                {legend.map((item) => (
+                    <span key={item.key} data-bucket={item.key} style={{ width: `${item.width}%` }} />
                 ))}
             </div>
             <ul className="agent-context-breakdown-list">
-                {breakdown.buckets.map((bucket) => (
-                    <li key={bucket.key}>
-                        <span className="agent-context-breakdown-dot" data-bucket={bucket.key} />
-                        <span className="agent-context-breakdown-label">{bucket.label}</span>
-                        <span className="agent-context-breakdown-value">
-                            {format(bucketTokens(bucket))} Token · {Math.round(share(bucket.bytes))}%
-                        </span>
+                {legend.map((item) => (
+                    <li key={item.key}>
+                        <span className="agent-context-breakdown-dot" data-bucket={item.key} />
+                        <span className="agent-context-breakdown-label">{item.label}</span>
+                        {/* 数值只给紧凑读数（3.9K）：单位与占比由顶部读数与量条表达，省下的宽度留给标签。 */}
+                        <span className="agent-context-breakdown-value">{item.key === "envelope" ? `${format(item.bytes)} 字节` : format(item.tokens)}</span>
                     </li>
                 ))}
-                <li>
-                    <span className="agent-context-breakdown-dot" data-bucket="envelope" />
-                    <span className="agent-context-breakdown-label">协议外壳</span>
-                    <span className="agent-context-breakdown-value">
-                        {format(breakdown.envelopeBytes)} 字节 · {Math.round(share(breakdown.envelopeBytes))}%
-                    </span>
-                </li>
             </ul>
         </>
     );
@@ -1042,7 +1061,7 @@ function AgentContextPressureIndicator({
                 {/* 窗口未确认时不给"剩余"；连请求体积都还没有（本轮尚未读数）就整格不显示，不留第二个破折号。 */}
                 <span className="agent-context-usage-window">{configured ? `剩余 ${usagePrefix}${compact(free)} / ${compact(budget)}` : headline.tokens > 0 ? `${usagePrefix}${compact(headline.tokens)}` : null}</span>
             </div>
-            <ContextBreakdown breakdown={pressure.breakdown} format={compact} />
+            <ContextBreakdown breakdown={pressure.breakdown} format={compact} budgetTokens={budget} usedTokens={headline.tokens} sourceLabel={sourceLabel} />
             <div className="agent-context-pressure-divider" />
             <div>
                 当前进度：{roundLabel}
