@@ -715,96 +715,9 @@
     stroke-opacity: 0.6;
 }
 
-.agent-context-pressure-source {
-    margin-left: 6px;
-    border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
-    border-radius: 999px;
-    padding: 0 6px;
-    font-size: 10px;
-    font-weight: 400;
-    opacity: 0.8;
-}
-
-.agent-context-pressure-source[data-source="provider"] {
-    border-color: color-mix(in srgb, #68b493 62%, transparent);
-    color: #4f9c7c;
-    opacity: 1;
-}
-
-.agent-context-pressure-subtitle {
-    margin-top: 2px;
-    font-weight: 600;
-    opacity: 0.85;
-}
-
 /* 治理阈值条：阈值刻度画在条上，读数超过阈值时用 warning 色，与主圆环互不干涉。 */
-.agent-context-governance-bar {
-    position: relative;
-    height: 6px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: color-mix(in srgb, currentColor 12%, transparent);
-}
-
-.agent-context-governance-bar [data-bucket="used"] {
-    display: block;
-    height: 100%;
-    background: #68b493;
-}
-
-.agent-context-governance-bar [data-bucket="threshold"] {
-    position: absolute;
-    top: -1px;
-    bottom: -1px;
-    width: 1px;
-    background: color-mix(in srgb, currentColor 55%, transparent);
-}
-
-.agent-context-governance-bar[data-basis="bytes"] [data-bucket="used"] {
-    background: #d6a24a;
-}
-
 /* 最近变化：每一次下降都要能对上"压缩 / 裁剪 / 口径变化"。 */
-.agent-context-transition-list {
-    display: grid;
-    gap: 2px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-}
-
-.agent-context-transition-list li {
-    display: flex;
-    gap: 6px;
-    align-items: flex-start;
-}
-
-.agent-context-transition-list li[data-direction="down"] .agent-context-transition-mark {
-    color: #d6a24a;
-}
-.agent-context-transition-list li[data-direction="up"] .agent-context-transition-mark {
-    color: #68b493;
-}
-.agent-context-transition-list li[data-direction="note"] .agent-context-transition-mark {
-    opacity: 0.55;
-}
-
-.agent-context-transition-mark {
-    flex: 0 0 auto;
-    font-size: 9px;
-    line-height: 16px;
-}
-
 /* 圆环旁的"治理"提示：治理阈值更高时说明圆环为什么不是那个数，而不是把圆环染红。 */
-.agent-context-pressure-governance {
-    border-radius: 999px;
-    background: color-mix(in srgb, #d6a24a 22%, transparent);
-    color: #b07f22;
-    padding: 0 5px;
-    font-size: 10px;
-    line-height: 16px;
-}
-
 /*
  * 压力弹窗的内容会随分段增多而变长（上游实测 + 占用分布 + 9 个系统提示分段），
  * 在窗口偏矮或圆环贴近底部时会被裁掉。这里给它设定高度上限、内部滚动，
@@ -858,11 +771,6 @@
     height: 1px;
     margin: 7px 0;
     background: color-mix(in srgb, currentColor 12%, transparent);
-}
-
-.agent-context-pressure-note {
-    margin-top: 5px;
-    color: color-mix(in srgb, currentColor 62%, transparent);
 }
 
 @container (max-width: 520px) {

@@ -17,7 +17,6 @@ import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
 import { agentToolRetry, type AgentToolRetryAttempt } from "@/lib/canvas/agent-tool-retry";
 import { agentContextMeterNeedsGovernanceMarker, agentContextMeterState, type AgentContextMeterState } from "@/lib/canvas/agent-context-meter";
-import type { AgentContextTransition } from "@/lib/canvas/agent-context-transitions";
 
 export type CloudAgentChatAttachment = { id: string; name: string; url: string };
 type CloudAgentOperationImpact = {
@@ -539,8 +538,8 @@ export function AgentChatComposer({
     includeAssetLibrary,
     contextPressure,
     runStep,
+    conversationRound,
     contextMeter,
-    contextTransitions,
 }: {
     prompt: string;
     attachments?: CloudAgentChatAttachment[];
@@ -565,10 +564,10 @@ export function AgentChatComposer({
     contextPressure?: AgentContextPressure;
     /** 本轮已发出的模型调用次数（run.step），弹窗用它说明"读数属于第几步"。 */
     runStep?: number;
+    /** 当前会话的第几轮（= 已发出的用户消息条数）。 */
+    conversationRound?: number;
     /** 口径状态：跨轮保留实测、窗口识别标记（由面板按事件序列推进）。 */
     contextMeter?: AgentContextMeterState;
-    /** 最近变化：压缩 / 图片裁剪 / 窗口识别 / 上游校准。 */
-    contextTransitions?: AgentContextTransition[];
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [slash, setSlash] = useState<{ start: number; query: string } | null>(null);
@@ -828,7 +827,7 @@ export function AgentChatComposer({
                         {left}
                     </div>
                     <div className="agent-composer-submit flex items-center gap-2">
-                        {contextPressure ? <AgentContextPressureIndicator pressure={contextPressure} runStep={runStep} meter={contextMeter} transitions={contextTransitions} /> : null}
+                        {contextPressure ? <AgentContextPressureIndicator pressure={contextPressure} runStep={runStep} round={conversationRound} meter={contextMeter} /> : null}
                         {disabled ? null : (
                             <span className="agent-composer-send-hint">
                                 <span className="agent-composer-send-hint-full">{canStop ? "运行中：发送即插话，下一步生效" : "Enter 发送 · Shift+Enter 换行"}</span>
@@ -916,17 +915,6 @@ function AgentContextCompactionNotice({ item, theme }: { item: CloudAgentChatMes
  * 占用分布的落点：一根堆叠条给"谁占了大头"的直觉，下面按桶列出估算 Token 与
  * 占比，再展开系统提示的内部分段。数值来自服务端同一步的估算，与圆环同源。
  */
-type ContextBudgetUsage = {
-    /** 模型窗口是否已配置：没配置时只给组成，不给"未使用"。 */
-    configured: boolean;
-    usableInputTokens: number;
-    projectedTokens: number;
-    compactAtTokens?: number;
-    thresholdRatio: number;
-    /** 这根条用的是哪把尺子：上游实测（实心）还是本地估算（带 ~）。 */
-    source: "provider" | "estimate";
-};
-
 function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreakdown; format: (value: number) => string }) {
     if (!breakdown || breakdown.buckets.length === 0) return null;
     const total = breakdown.bucketBytes + breakdown.envelopeBytes || breakdown.totalBytes;
@@ -990,67 +978,18 @@ function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreak
  * 口径必须跟着主读数走（设计方向 §2）：上游实测用实心，本地估算带 `~` 并在文案里说明，
  * 不允许用同一条实心条悄悄换口径。
  */
-function ContextBudgetBar({ usage, format }: { usage?: ContextBudgetUsage; format: (value: number) => string }) {
-    if (!usage || !usage.configured || usage.usableInputTokens <= 0) {
-        return (
-            <>
-                <div className="agent-context-pressure-title">模型输入窗口</div>
-                <div className="agent-context-pressure-note">模型窗口尚未确认：不给百分比，只报 Token 数与来源。</div>
-            </>
-        );
-    }
-    const budget = usage.usableInputTokens;
-    const used = Math.max(0, Math.min(budget, usage.projectedTokens));
-    const free = Math.max(0, budget - used);
-    const percent = (value: number) => Math.round((value / budget) * 100);
-    const threshold = usage.compactAtTokens ?? Math.round(budget * usage.thresholdRatio);
-    const overBudget = usage.projectedTokens > budget;
-    const measured = usage.source === "provider";
-    return (
-        <>
-            <div className="agent-context-pressure-title">模型输入窗口</div>
-            <div className="agent-context-breakdown-bar" data-source={usage.source} role="img" aria-label={`模型输入窗口占用：已用 ${percent(used)}%，未使用 ${percent(free)}%（${measured ? "上游实测" : "本地估算"}）`}>
-                <span data-bucket="used" style={{ width: `${percent(used)}%` }} />
-                <span data-bucket="unused" style={{ width: `${percent(free)}%` }} />
-            </div>
-            <ul className="agent-context-breakdown-list">
-                <li>
-                    <span className="agent-context-breakdown-dot" data-bucket="used" />
-                    <span className="agent-context-breakdown-label">已使用（{measured ? "上游实测" : "本地估算"}）</span>
-                    <span className="agent-context-breakdown-value">
-                        {measured ? "" : "~"}
-                        {format(usage.projectedTokens)} Token · {percent(usage.projectedTokens)}%
-                    </span>
-                </li>
-                <li>
-                    <span className="agent-context-breakdown-dot" data-bucket="unused" />
-                    <span className="agent-context-breakdown-label">未使用</span>
-                    <span className="agent-context-breakdown-value">
-                        {format(free)} Token · {percent(free)}%
-                    </span>
-                </li>
-            </ul>
-            <div className="agent-context-pressure-note">
-                {measured ? "已使用 = 上游实测（上一请求）+ 本地增量的下一步预计输入。" : "已使用 = 下一步输入的本地估算（本轮尚未拿到上游实测）。"}
-                输入预算 {format(budget)} Token（窗口 − 输出预留 − 工具/协议预留）；语义压缩线 {format(threshold)} Token（{Math.round(usage.thresholdRatio * 100)}%）。
-                {overBudget ? "当前预计输入已超过输入预算，下一步会先压缩再继续。" : ""}
-            </div>
-        </>
-    );
-}
-
 function AgentContextPressureIndicator({
     pressure,
     runStep,
+    round,
     meter,
-    transitions = [],
 }: {
     pressure: AgentContextPressure;
     runStep?: number;
+    /** 当前会话的第几轮（= 已发出的用户消息条数）。 */
+    round?: number;
     /** 口径状态（面板按事件序列推进）：跨轮保留实测、窗口识别标记都在里面。 */
     meter?: AgentContextMeterState;
-    /** 最近变化：压缩 / 图片裁剪 / 窗口识别 / 上游校准。 */
-    transitions?: AgentContextTransition[];
 }) {
     const state = meter ?? agentContextMeterState(undefined, pressure);
     const reading = state.reading;
@@ -1060,128 +999,42 @@ function AgentContextPressureIndicator({
     // 窗口未确认 → 不给百分比（设计方向 §2）；估算带 `~`，实测实心。
     const percent = typeof headline.ratio === "number" ? Math.round(headline.ratio * 100) : undefined;
     const progress = percent === undefined ? 0 : Math.min(100, percent);
-    // 圆环长度与警告色同口径：治理阈值是另一个问题，用独立的条与标记表达，
-    // 不再出现"圆环 2% 却是红色"这种自相矛盾（设计方向 §2/§8）。
+    // 圆环长度与警告色同口径（设计方向 §2/§8）。
     const tone = percent === undefined ? "unknown" : percent >= 90 ? "critical" : percent >= 70 ? "warning" : "normal";
-    const governanceMarker = agentContextMeterNeedsGovernanceMarker(reading);
-    const governance = reading.governance;
     const sourceLabel = measured ? "上游实测" : "本地估算";
     const format = (value: number) => value.toLocaleString("zh-CN");
-    // 秒级墙钟按"分/秒"给人看：这一步的边界是可配置的，读数要能直接对上管理端。
-    const formatDuration = (seconds: number) => (seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`);
-    const headlineValue = percent === undefined ? `~${format(headline.tokens)} Token` : `${measured ? "" : "~"}${format(headline.tokens)} / ${format(reading.budgetTokens)} Token`;
+    const usagePrefix = measured ? "" : "~";
+    const budget = reading.budgetTokens;
+    const used = Math.max(0, Math.min(budget, headline.tokens));
+    const free = Math.max(0, budget - used);
+    const freePercent = budget > 0 ? Math.round((free / budget) * 100) : undefined;
+    const stepLabel = typeof runStep === "number" && runStep > 0 ? `第 ${runStep} 步` : "尚未发出模型调用";
+    const roundLabel = typeof round === "number" && round > 0 ? `第 ${round} 轮 · ` : "";
     const ariaLabel =
         percent === undefined
-            ? `上下文窗口占用：模型窗口尚未确认，当前按${sourceLabel}约 ${format(headline.tokens)} Token`
-            : `上下文窗口占用 ${percent}%，来源${sourceLabel}${headline.measuredStep ? `（第 ${headline.measuredStep} 步）` : ""}${governanceMarker ? "，服务端治理阈值更高" : ""}`;
+            ? `上下文窗口：模型窗口尚未确认，当前请求约 ${format(headline.tokens)} Token（${sourceLabel}）`
+            : `上下文窗口剩余 ${freePercent}%，已用 ${percent}%（${sourceLabel}）`;
+    // 弹窗只回答三个问题：这次请求的占用分布、窗口还剩多少、Agent 现在在第几轮第几步。
+    // 治理阈值、锚点校准、预算来源等口径细节不再铺在这里（需要时看事件与诊断包）。
     const title = (
         <div className="agent-context-pressure-popover">
-            <div className="agent-context-pressure-title">
-                上下文 {percent === undefined ? "（窗口未确认）" : `${percent}%`}
-                <span className="agent-context-pressure-source" data-source={headline.source}>
-                    {sourceLabel}
-                </span>
-            </div>
-            <div>{headlineValue}</div>
-            <div>
-                下一步预计输入
-                {headline.measuredStep ? ` · 上游实测取自第 ${headline.measuredStep} 步` : " · 暂无上游实测"}
-            </div>
-            {headline.carriedOver ? <div>本轮尚未拿到上游实测，沿用上一次有效实测{headline.rebasedToCurrentBudget ? "（按当前窗口换算）" : ""}；不归零、不静默切换。</div> : null}
-            <div>
-                本轮进度：{typeof runStep === "number" && runStep > 0 ? `第 ${runStep} 步（已发出 ${runStep} 次模型调用）` : "尚未发出模型调用"}
-                {typeof pressure.anchorStep === "number" && pressure.anchorStep > 0 ? ` · 用量锚点取自第 ${pressure.anchorStep} 步` : ""}
-            </div>
-            <div className="agent-context-pressure-divider" />
-            <div className="agent-context-pressure-subtitle">下一步本地估算</div>
-            <div>
-                ~{format(reading.estimate.tokens)} Token（local_v1{typeof reading.estimate.ratio === "number" ? ` · ${Math.round(reading.estimate.ratio * 100)}%` : ""}）
-            </div>
-            {reading.calibration ? (
-                <div>
-                    上游校准：实测 {format(reading.calibration.measuredTokens)} Token vs 本地估算 {format(reading.calibration.estimateTokens)} Token
-                    {reading.calibration.scale && Math.abs(reading.calibration.scale - 1) > 0.005 ? `（×${reading.calibration.scale.toFixed(2)}）` : ""}
-                    {typeof reading.calibration.deltaTokens === "number" && reading.calibration.deltaTokens !== 0 ? ` · 较锚点 ${reading.calibration.deltaTokens > 0 ? "+" : ""}${format(reading.calibration.deltaTokens)}` : ""}
-                </div>
-            ) : pressure.anchorRejected ? (
-                <div>锚点未采信：{pressure.anchorRejected}</div>
-            ) : null}
-            <div className="agent-context-pressure-divider" />
-            {/* 治理阈值是另一个问题：它是"服务端要不要压缩"，不是"下一次请求占多少窗口"。 */}
-            <div className="agent-context-pressure-subtitle">服务端上下文治理</div>
-            <div className="agent-context-governance-bar" data-basis={governance.basis} role="img" aria-label={`服务端治理读数 ${Math.round(governance.ratio * 100)}%，阈值 ${Math.round(governance.thresholdRatio * 100)}%`}>
-                <span data-bucket="used" style={{ width: `${Math.min(100, Math.round(governance.ratio * 100))}%` }} />
-                <span data-bucket="threshold" style={{ left: `${Math.min(100, Math.round(governance.thresholdRatio * 100))}%` }} />
-            </div>
-            {governance.basis === "tokens" ? (
-                <div>
-                    语义压缩阈值：{Math.round(governance.thresholdRatio * 100)}% 输入预算
-                    {governance.compactAtTokens ? `（${format(governance.compactAtTokens)} Token）` : ""} · 当前 {Math.round(governance.ratio * 100)}% （{governance.source === "provider" ? "按上游实测投影" : "本地估算"}）
-                </div>
-            ) : (
-                <div>
-                    未确认模型窗口：判据退回字节/条数兜底 —— {format(governance.sourceBytes)} / {format(governance.thresholdBytes)} 字节 · 历史 {governance.historyMessages} 条（阈值 16）· 当前 {Math.round(governance.ratio * 100)}%
-                </div>
-            )}
-            {governanceMarker ? <div className="agent-context-pressure-note">服务端治理阈值已高于主读数：圆环按主读数上色，治理见上面这根条。</div> : null}
-            {transitions.length ? (
-                <>
-                    <div className="agent-context-pressure-divider" />
-                    <div className="agent-context-pressure-subtitle">最近变化</div>
-                    <ul className="agent-context-transition-list">
-                        {transitions.map((item, index) => (
-                            <li key={`${item.kind}-${item.seq ?? index}`} data-direction={item.direction}>
-                                <span className="agent-context-transition-mark" aria-hidden="true">
-                                    {item.direction === "down" ? "▼" : item.direction === "up" ? "▲" : "●"}
-                                </span>
-                                <span>{item.label}</span>
-                            </li>
-                        ))}
-                    </ul>
-                </>
-            ) : null}
-            <div className="agent-context-pressure-divider" />
-            {configured ? (
-                <>
-                    <div>模型窗口：{format(reading.windowTokens)} Token</div>
-                    <div>预留输出：{format(pressure.reservedOutputTokens ?? 0)} Token</div>
-                    {typeof pressure.overheadTokens === "number" && pressure.overheadTokens > 0 ? <div>协议与工具预留：{format(pressure.overheadTokens)} Token（工具 schema、协议包装与兜底轮，窗口的 4%）</div> : null}
-                    {pressure.budgetSource ? (
-                        <div>
-                            预算来源：
-                            {pressure.budgetSource === "logical-route-intersection" ? "逻辑模型可用文本路由的最小窗口" : "渠道模型能力配置"}
-                        </div>
-                    ) : null}
-                </>
-            ) : (
-                <div>模型窗口：未配置。窗口确认前不显示百分比（避免把字节兜底读数误读成窗口占用）。</div>
-            )}
-            <div className="agent-context-pressure-divider" />
-            <div>
-                本轮提示：{format(pressure.promptChars)} / {pressure.promptLimitChars ? format(pressure.promptLimitChars) : "未配置"} 字符
-            </div>
-            {/* 预算条与组成条分开：组成回答"这次请求谁占了大头"，预算条回答"离装不下还有多远"。
-                组成数据缺失（例如这一步还没有读数）时，"未使用余量"仍然要看得见。 */}
-            <div className="agent-context-pressure-divider" />
-            <ContextBudgetBar
-                usage={{
-                    configured,
-                    usableInputTokens: reading.budgetTokens,
-                    projectedTokens: headline.tokens,
-                    compactAtTokens: governance.compactAtTokens,
-                    thresholdRatio: governance.thresholdRatio,
-                    source: headline.source,
-                }}
-                format={format}
-            />
             <ContextBreakdown breakdown={pressure.breakdown} format={format} />
+            <div className="agent-context-pressure-divider" />
+            <div className="agent-context-pressure-title">上下文窗口剩余</div>
+            {configured ? (
+                <div>
+                    {usagePrefix}
+                    {format(free)} Token
+                    {freePercent === undefined ? "" : `（${freePercent}%）`} · 已用 {usagePrefix}
+                    {format(used)} / {format(budget)} Token（{sourceLabel}）
+                </div>
+            ) : (
+                <div>模型窗口未确认：暂时只给请求体积（{sourceLabel}约 {format(headline.tokens)} Token），不给剩余量。</div>
+            )}
+            <div className="agent-context-pressure-divider" />
             <div>
-                单步输出上限：{pressure.stepMaxOutputTokens ? `${format(pressure.stepMaxOutputTokens)} Token` : "本部署未限制（思考与正文都不设输出上限）"}
-                {typeof pressure.stepTimeoutSeconds === "number" ? ` · 单步最长 ${formatDuration(pressure.stepTimeoutSeconds)}` : ""}
-            </div>
-            <div>超时/空输出会自动关思考重试一次，重试仍失败才结束本轮。</div>
-            <div className="agent-context-pressure-note">
-                主读数与治理阈值是两把尺子：圆环只看"下一次请求占多少输入窗口"（上游实测优先，没有实测才退回本地估算并标 `~`）； 压缩阈值另有独立的条。压缩、图片裁剪与窗口识别都会列在"最近变化"里，读数变化都能对上原因。
+                当前进度：{roundLabel}
+                {stepLabel}
             </div>
         </div>
     );
@@ -1197,11 +1050,6 @@ function AgentContextPressureIndicator({
                     )}
                 </svg>
                 <span>{percent === undefined ? "—" : `${measured ? "" : "~"}${percent}%`}</span>
-                {governanceMarker ? (
-                    <span className="agent-context-pressure-governance" title="服务端治理阈值更高">
-                        治理
-                    </span>
-                ) : null}
             </button>
         </Tooltip>
     );
