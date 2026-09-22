@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/agentcontext"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/prompts"
@@ -104,6 +105,16 @@ type cloudAgentRuntime struct {
 	// 从 StateJSON 重新解码（cloudAgentDecode）。进程内字段在下一个调用到来时必然为空，
 	// 缓冲就白缓冲了。载荷只有回执与签名链接，几十字节级。
 	PendingImageInspections []cloudAgentImageInspection `json:"pendingImageInspections,omitempty"`
+	// 以下三个字段属于"超预算时压缩成检查点后继续本轮"（见 cloud_agent_context_compaction.go）。
+	// ContextCompactionCount 是本轮已经压过几次：压完仍然超阈值时不能无限暂停。
+	ContextCompactionCount int `json:"contextCompactionCount,omitempty"`
+	// ContextCheckpoint 是最近一次落盘的结构化检查点；ContextCompaction 是"正在压缩"的状态面
+	// （requested 已请求 / running 压缩任务已发出），Resume 表示压完继续本轮而不是收尾结束。
+	ContextCheckpoint *agentcontext.Checkpoint     `json:"contextCheckpoint,omitempty"`
+	ContextCompaction *cloudAgentContextCompaction `json:"contextCompaction,omitempty"`
+	// HistoryIncludesCurrent 说明 TextHistory 已经把本轮结果包含在内（压缩换过历史）：
+	// 续轮交接不能把用户要求与回复再追加一遍，否则同一轮会在下一轮里出现两次。
+	HistoryIncludesCurrent bool `json:"historyIncludesCurrent,omitempty"`
 }
 
 type cloudAgentTransientReference struct {
@@ -642,6 +653,11 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		if err != nil {
 			return err // Transient database failures must not terminate a live task.
 		}
+		// 停在压缩上时，这个在跑的任务就是压缩调用：它的结果只用来生成检查点，
+		// 不走"正文/工具调用"那套解析，也不会计入步数。
+		if state.ContextCompaction != nil {
+			return s.advanceCloudAgentContextCompaction(run, &state, task)
+		}
 		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
 			// 将已持久化的模型增量转成 Agent 事件；不拆分完整答案伪装成流式。
 			if task.TextDraft != state.ActiveTextDraft {
@@ -762,6 +778,10 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	// "看图不是最后一个调用"的批次会把图片永久丢掉，而对应的 tool 回执已经在历史里。
 	// 幂等：正常路径（最后一个调用就是看图）已经在 cloudAgentRecordToolResult 里 flush 过。
 	cloudAgentFlushPendingImages(&state)
+	// 已经请求过压缩：这次推进只负责把压缩调用发出去（它不计入步数，见 enqueueCloudAgentTask）。
+	if state.ContextCompaction != nil && state.ContextCompaction.Status == "requested" {
+		return s.enqueueCloudAgentContextCompaction(run, &state)
+	}
 	contextBudget := s.cloudAgentContextBudgetForRequest(state.Request)
 	if compactCloudAgentContext(&state.Canonical, contextBudget) {
 		// Evicted read bodies must be obtainable again after compaction.
@@ -804,6 +824,14 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	tokens, tokenErr := cloudAgentRequestEstimatedTokens(&canonical)
 	if tokenErr != nil {
 		return s.failCloudAgent(run, &state, "模型上下文估算失败，请稍后重试")
+	}
+	// 超预算不再直接判死：先暂停步进、把历史压成结构化检查点，压完用压缩后的上下文继续本轮。
+	// 次数上限（cloudAgentMaxCompactionsPerRun）用完仍超预算时，才回到下面的判死路径。
+	// 分工：这是轮内的**语义压缩**（触发者是 token 线，或没配窗口时的字节/条数兜底）；
+	// compactCloudAgentContext 是轮内可重读正文的**就地卸载**，跨轮 textHistory 由
+	// trimCloudAgentTextHistory 兜底——三者对象不同、不会互相打架。
+	if requested, err := s.cloudAgentRequestCompaction(run, &state, contextBudget, tokens); err != nil || requested {
+		return err
 	}
 	if tokens > contextBudget.InputBudgetTokens {
 		return s.failCloudAgent(run, &state, cloudAgentContextBudgetMessage(contextBudget))
@@ -1491,7 +1519,12 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 			state.event(run.ID, "generation_task_created", map[string]any{"toolName": "generate_media", "taskId": task.ID, "nodeId": media.Args.NodeID, "title": media.Args.Title, "mode": media.Args.Mode, "canvasId": state.Request.CanvasID, "referenceNodeIds": media.Args.ReferenceNodeIDs, "text": "媒体节点与引用连线已创建，生成任务已提交"})
 		} else {
 			state.ActiveTaskID = task.ID
-			state.Step++
+			// 压缩调用不是本轮的一步：压完还要用压缩后的上下文继续步进，步数不该被它占掉。
+			if state.ContextCompaction != nil && req.Operation == cloudAgentContextCompactionOperation {
+				state.ContextCompaction.Status = "running"
+			} else {
+				state.Step++
+			}
 		}
 		return cloudAgentSave(current, state)
 	})

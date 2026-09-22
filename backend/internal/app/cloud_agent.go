@@ -393,15 +393,21 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err != nil {
 			return nil, err
 		}
-		// The user's goal survives a failed first model call too. Tool facts are
-		// context, not authorization to replay a write or charge a second time.
-		history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt})
-		for _, message := range parentState.Canonical.Messages {
-			if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
-				history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
+		// 上一轮以压缩收尾时（HistoryIncludesCurrent）TextHistory 已经被换成检查点，里面
+		// 已经包含本轮的用户要求与回复：不能再追加一遍，否则同一轮在新轮里出现两次。
+		if !parentState.HistoryIncludesCurrent {
+			// The user's goal survives a failed first model call too. Tool facts are
+			// context, not authorization to replay a write or charge a second time.
+			history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt})
+			for _, message := range parentState.Canonical.Messages {
+				if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+					history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
+				}
 			}
+			history = append(history, providerTextMessage{Role: "assistant", Content: text})
 		}
-		history = append(history, providerTextMessage{Role: "assistant", Content: text})
+		// 事实交接帧不能因为压缩而缺席：长会话恰恰最需要它，而且"别重复提交收费任务"的
+		// 依据只在这份帧里（它带的是上一轮真实的工具结果与画布改动）。
 		if strings.TrimSpace(context) != "" {
 			history = append(history, providerTextMessage{Role: "user", Content: context, AgentContextSource: "continuation"})
 		}
