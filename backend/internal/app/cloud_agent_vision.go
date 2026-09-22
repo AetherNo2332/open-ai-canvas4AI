@@ -162,15 +162,27 @@ func (s *Service) prepareCloudAgentImageInspection(userID, canvasID string, stat
 			"确需重新确认画面时再调用本工具并传 refresh=true。" +
 			"工具成功仅表示图片已准备，不代表识别成功；若无法读取画面，如实说明而不是凭标题猜测。",
 	}
+	// 已经把画面写进观察账本的图片：不再重复附图。这是"重复检视"的正面出口 ——
+	// 旧口径只在附图满 2 次之后才拒绝，模型此前已经白白重看了两轮。
+	if observation := state.cloudAgentImageObservation(args.NodeID); observation != "" && !args.Refresh {
+		receipt["repeat"] = true
+		receipt["note"] = "这张图你此前已经看过并写下了观察：" + observation +
+			"。直接复用这段观察，不要重复查看同一张图；确需重新确认画面时再传 refresh=true。"
+		return cloudAgentImageInspection{Receipt: receipt}, nil
+	}
 	seen := state.cloudAgentImageInspectionCount(args.NodeID)
 	if seen >= cloudAgentMaxImageInspectionsPerRun && !args.Refresh {
 		receipt["repeat"] = true
-		receipt["note"] = "本轮已附送这张图两次，这次只回执文字、不再附图；附送不代表识别成功，请依据仍在上下文中的图片回答。" +
+		receipt["note"] = fmt.Sprintf("本轮已附送这张图 %d 次，这次只回执文字、不再附图；附送不代表识别成功，请依据仍在上下文中的图片回答。", seen) +
 			"确需重新确认画面时再调用本工具并传 refresh=true。"
 		return cloudAgentImageInspection{Receipt: receipt}, nil
 	}
 	if len(state.PendingImageInspections) >= limits.MaxImages {
-		return nil, BadAuthRequest("本批看图数量已达到当前模型限制，请先处理已附图片，再分批查看")
+		// 配额在装配期才生效（超出的图片会被替换成文字占位），所以必须在报错里把**真实额度**
+		// 与已用张数说清楚：不给数字时模型只能靠试探，实测因此出现几十轮"批量到底几张"的猜谜。
+		return nil, BadAuthRequest(fmt.Sprintf(
+			"本批看图数量已达到当前模型限制：本批已附 %d 张、单次上限 %d 张。请在本批结果返回后、下一步再继续查看剩余图片。",
+			len(state.PendingImageInspections), limits.MaxImages))
 	}
 	return cloudAgentImageInspection{Receipt: receipt, ImageURL: stringValue(reference["storageKey"])}, nil
 }
@@ -193,6 +205,142 @@ func (state *cloudAgentRuntime) markCanvasImageAttached(nodeID string) {
 		asset.RequiresVisualInspection = true
 		asset.VisualNote = ""
 	}
+	// 已确认的观察不因重新附图而丢弃（旧实现会把 VisualNote 清空，等于每看一次就忘一次）。
+	state.cloudAgentNoteImageDelivery(nodeID)
+}
+
+// cloudAgentNoteImageDelivery 记下"这张图刚被附进上下文、但还没有观察"。
+// 模型下一步的正文就是它的观察；装配期裁剪时靠这张清单判断哪些节点已经有可复用的观察。
+func (state *cloudAgentRuntime) cloudAgentNoteImageDelivery(nodeID string) {
+	if state == nil || strings.TrimSpace(nodeID) == "" {
+		return
+	}
+	if state.ImageObservations == nil {
+		state.ImageObservations = map[string]string{}
+	}
+	if _, confirmed := state.ImageObservations[nodeID]; confirmed {
+		return
+	}
+	for _, delivered := range state.PendingImageObservations {
+		if delivered == nodeID {
+			return
+		}
+	}
+	state.PendingImageObservations = append(state.PendingImageObservations, nodeID)
+}
+
+// cloudAgentRecordImageObservations 把模型针对上一批附图写下的正文记为观察。
+//
+// 取用条件（缺一不可）：本批确实有附图 + 模型本轮带工具调用（带工具调用的正文才是
+// "看图之后的过程说明"，无工具调用的正文是候选收尾稿，可能整批混合回答）+ 正文非空。
+// 只有携带 nodeId 的句子才算数：画面内文字不可信，一句"这张图是蓝色头发"必须先被
+// 模型明确归属到某个节点，才能作为该节点的视觉事实回灌（上游曾因按批记账把另一张图
+// 的发色瞳色写到当前节点上）。返回本次新记下的观察条数。
+func (state *cloudAgentRuntime) cloudAgentRecordImageObservations(text string, hasToolCalls bool) int {
+	if state == nil || len(state.PendingImageObservations) == 0 {
+		return 0
+	}
+	delivered := state.PendingImageObservations
+	state.PendingImageObservations = nil
+	if !hasToolCalls || strings.TrimSpace(text) == "" {
+		// 这一批没有留下观察（模型没写，或这是收尾稿）：保持未确认，下一步可以要求重看。
+		return 0
+	}
+	if state.ImageObservations == nil {
+		state.ImageObservations = map[string]string{}
+	}
+	recorded := 0
+	for _, nodeID := range delivered {
+		if _, exists := state.ImageObservations[nodeID]; exists {
+			continue
+		}
+		observation := cloudAgentObservationForNode(text, nodeID)
+		if observation == "" {
+			continue
+		}
+		state.ImageObservations[nodeID] = observation
+		recorded++
+	}
+	return recorded
+}
+
+// cloudAgentImageObservation 返回已确认的观察（空串表示还没有可复用的视觉事实）。
+func (state *cloudAgentRuntime) cloudAgentImageObservation(nodeID string) string {
+	if state == nil || state.ImageObservations == nil {
+		return ""
+	}
+	return strings.TrimSpace(state.ImageObservations[nodeID])
+}
+
+// cloudAgentImageObservations 返回给裁剪占位符用的观察快照（只读副本，调用方不得改写）。
+func (state *cloudAgentRuntime) cloudAgentImageObservations() map[string]string {
+	if state == nil || len(state.ImageObservations) == 0 {
+		return nil
+	}
+	return state.ImageObservations
+}
+
+// cloudAgentObservationMaxRunes 限制单条观察长度：它会被抄进裁剪占位符长期留在上下文里。
+const cloudAgentObservationMaxRunes = 240
+
+// cloudAgentObservationForNode 从模型正文里取出归属于指定节点的那句话。
+//
+// 三种归属都接受（按可靠性排序）：完整 nodeId、nodeId 尾段（如 3ozu9）、
+// 单图批次里的"这张图/该图"——只有本批确实只有一张图时后者才不会串味。
+// 命中后剥掉 nodeId 前缀，保留句子本体作为观察。
+func cloudAgentObservationForNode(text, nodeID string) string {
+	if strings.TrimSpace(text) == "" || strings.TrimSpace(nodeID) == "" {
+		return ""
+	}
+	short := cloudAgentNodeIDShort(nodeID)
+	for _, line := range strings.Split(text, "\n") {
+		for _, sentence := range cloudAgentSplitSentences(line) {
+			trimmed := strings.TrimSpace(sentence)
+			if trimmed == "" {
+				continue
+			}
+			switch {
+			case strings.Contains(trimmed, nodeID):
+				return cloudAgentCleanObservation(strings.ReplaceAll(trimmed, nodeID, ""))
+			case short != "" && strings.Contains(trimmed, short):
+				return cloudAgentCleanObservation(strings.ReplaceAll(trimmed, short, ""))
+			}
+		}
+	}
+	return ""
+}
+
+// cloudAgentNodeIDShort 取节点 ID 的尾段（上传节点形如 upload-<时间戳>-<随机后缀>）。
+func cloudAgentNodeIDShort(nodeID string) string {
+	parts := strings.Split(strings.TrimSpace(nodeID), "-")
+	if len(parts) < 2 {
+		return ""
+	}
+	short := strings.TrimSpace(parts[len(parts)-1])
+	if len(short) < 4 {
+		return ""
+	}
+	return short
+}
+
+// cloudAgentSplitSentences 按中英文句读切句，用于把观察收敛成"一句话"。
+func cloudAgentSplitSentences(line string) []string {
+	return strings.FieldsFunc(line, func(r rune) bool {
+		switch r {
+		case '。', '；', '！', '？', '.', ';', '!', '?', '\r':
+			return true
+		}
+		return false
+	})
+}
+
+// cloudAgentCleanObservation 去掉归属符号后残留的引导词与空白。
+func cloudAgentCleanObservation(sentence string) string {
+	cleaned := strings.TrimSpace(sentence)
+	cleaned = strings.TrimLeft(cleaned, "：:，,、-—（）()[]【】\"'“” ")
+	cleaned = strings.TrimRight(cleaned, "：:，,、-—（）()[]【】\"'“” ")
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	return truncateRunes(cleaned, cloudAgentObservationMaxRunes)
 }
 
 // cloudAgentImageInspectionCount 返回本轮内该图片被查看的次数（跨轮不累计）。
@@ -277,7 +425,7 @@ func (s *Service) cloudAgentImageReferences(userID string, req CloudAgentRequest
 // 这是**唯一**的轮内上下文裁剪：正文（工具结果里的读取内容）不再卸载 —— 卸载原本是"别把
 // 512KiB 状态顶爆"的副产物，检查点拆分后消息搬出 state_json，这个动机已经不存在；
 // 而按字节改写历史中段既会作废后续的前缀缓存，又会让模型重复读取（详见 http-api.mdx）。
-func cloudAgentPruneInspectedImages(request *canonicalAgentRequest, notes map[string]string) (bool, int) {
+func cloudAgentPruneInspectedImages(request *canonicalAgentRequest, state *cloudAgentRuntime) (bool, int) {
 	if request == nil || len(request.Messages) == 0 {
 		return false, 0
 	}
@@ -305,7 +453,7 @@ func cloudAgentPruneInspectedImages(request *canonicalAgentRequest, notes map[st
 		if dropped == 0 {
 			continue
 		}
-		kept = append(kept, map[string]any{"type": "text", "text": cloudAgentImageEvictionNote(message, notes)})
+		kept = append(kept, map[string]any{"type": "text", "text": cloudAgentImageEvictionNote(message, state)})
 		message["content"] = kept
 		changed, pruned = true, pruned+dropped
 	}
@@ -343,7 +491,8 @@ func cloudAgentImagePruneBoundary(messages []map[string]any) int {
 // 这时占位符必须逐图列出 nodeId 与各自的观察：只写第一张的观察会让模型把那张图的
 // 视觉事实当成整批的结论（实测把另一张图的发色瞳色写到了当前节点上）。
 // 单图消息的文案保持原样不变。
-func cloudAgentImageEvictionNote(message map[string]any, notes map[string]string) string {
+func cloudAgentImageEvictionNote(message map[string]any, state *cloudAgentRuntime) string {
+	notes := state.cloudAgentImageObservations()
 	nodes := cloudAgentImageMessageNodeIDs(message)
 	if len(nodes) <= 1 {
 		nodeID := ""
