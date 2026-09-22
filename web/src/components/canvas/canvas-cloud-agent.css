@@ -707,7 +707,6 @@
     stroke: color-mix(in srgb, currentColor 22%, transparent);
 }
 
-
 /*
  * Context Meter v2：主读数与治理读数是两把尺子（设计方向 §2/§3）。
  * 上游实测用实心；本地估算降低描边不透明度（弧长由内联 strokeDasharray 控制，不能改成虚线，
