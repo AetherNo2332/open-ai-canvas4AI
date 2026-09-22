@@ -180,6 +180,25 @@ func (r *Repository) LatestProviderRequestIDForTask(taskID string) (string, erro
 	return strings.TrimSpace(log.ProviderRequestID), err
 }
 
+// APICallLogUsageForTask 返回一次任务调用里上游上报的用量。
+// 这是模型自己的分词器算出的计数，是上下文压力可以采信的权威锚点；
+// 没有上报（usage_available=false 或输入为 0）时返回 false，调用方退回本地估算。
+func (r *Repository) APICallLogUsageForTask(taskID string) (model.ApiCallLog, bool, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return model.ApiCallLog{}, false, nil
+	}
+	var log model.ApiCallLog
+	err := r.db.Where("task_id = ? AND usage_available = ?", taskID, true).
+		Order("created_at DESC").Limit(1).Find(&log).Error
+	if err != nil {
+		return model.ApiCallLog{}, false, err
+	}
+	if log.ID == "" || log.InputTokens <= 0 {
+		return model.ApiCallLog{}, false, nil
+	}
+	return log, true, nil
+}
+
 func (r *Repository) HasAPICallLogForTask(taskID string) (bool, error) {
 	if strings.TrimSpace(taskID) == "" {
 		return false, nil
