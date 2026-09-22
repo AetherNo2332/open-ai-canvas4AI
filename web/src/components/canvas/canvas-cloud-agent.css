@@ -698,8 +698,13 @@
 .agent-context-pressure[data-tone="critical"] .agent-context-pressure-value {
     stroke: #e66b6b;
 }
-.agent-context-pressure[data-tone="unknown"] .agent-context-pressure-unknown {
-    stroke: color-mix(in srgb, currentColor 38%, transparent);
+/*
+ * 模型窗口未确认时的占位环：画实心细环，不画虚线。
+ * 虚线会被读成"圆环断了几段"（实测反馈：像坏掉/像在加载），而这里要表达的是
+ * "还没有可用的窗口读数"；实心环 + `—` 读数既干净又和 0% 区分得开。
+ */
+.agent-context-pressure-unknown {
+    stroke: color-mix(in srgb, currentColor 22%, transparent);
 }
 
 /*
@@ -715,96 +720,9 @@
     stroke-opacity: 0.6;
 }
 
-.agent-context-pressure-source {
-    margin-left: 6px;
-    border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
-    border-radius: 999px;
-    padding: 0 6px;
-    font-size: 10px;
-    font-weight: 400;
-    opacity: 0.8;
-}
-
-.agent-context-pressure-source[data-source="provider"] {
-    border-color: color-mix(in srgb, #68b493 62%, transparent);
-    color: #4f9c7c;
-    opacity: 1;
-}
-
-.agent-context-pressure-subtitle {
-    margin-top: 2px;
-    font-weight: 600;
-    opacity: 0.85;
-}
-
 /* 治理阈值条：阈值刻度画在条上，读数超过阈值时用 warning 色，与主圆环互不干涉。 */
-.agent-context-governance-bar {
-    position: relative;
-    height: 6px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: color-mix(in srgb, currentColor 12%, transparent);
-}
-
-.agent-context-governance-bar [data-bucket="used"] {
-    display: block;
-    height: 100%;
-    background: #68b493;
-}
-
-.agent-context-governance-bar [data-bucket="threshold"] {
-    position: absolute;
-    top: -1px;
-    bottom: -1px;
-    width: 1px;
-    background: color-mix(in srgb, currentColor 55%, transparent);
-}
-
-.agent-context-governance-bar[data-basis="bytes"] [data-bucket="used"] {
-    background: #d6a24a;
-}
-
 /* 最近变化：每一次下降都要能对上"压缩 / 裁剪 / 口径变化"。 */
-.agent-context-transition-list {
-    display: grid;
-    gap: 2px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-}
-
-.agent-context-transition-list li {
-    display: flex;
-    gap: 6px;
-    align-items: flex-start;
-}
-
-.agent-context-transition-list li[data-direction="down"] .agent-context-transition-mark {
-    color: #d6a24a;
-}
-.agent-context-transition-list li[data-direction="up"] .agent-context-transition-mark {
-    color: #68b493;
-}
-.agent-context-transition-list li[data-direction="note"] .agent-context-transition-mark {
-    opacity: 0.55;
-}
-
-.agent-context-transition-mark {
-    flex: 0 0 auto;
-    font-size: 9px;
-    line-height: 16px;
-}
-
 /* 圆环旁的"治理"提示：治理阈值更高时说明圆环为什么不是那个数，而不是把圆环染红。 */
-.agent-context-pressure-governance {
-    border-radius: 999px;
-    background: color-mix(in srgb, #d6a24a 22%, transparent);
-    color: #b07f22;
-    padding: 0 5px;
-    font-size: 10px;
-    line-height: 16px;
-}
-
 /*
  * 压力弹窗的内容会随分段增多而变长（上游实测 + 占用分布 + 9 个系统提示分段），
  * 在窗口偏矮或圆环贴近底部时会被裁掉。这里给它设定高度上限、内部滚动，
@@ -849,20 +767,31 @@
     overflow: hidden;
 }
 
-.agent-context-pressure-title {
-    margin-bottom: 5px;
-    font-weight: 650;
+/*
+ * 弹窗头：左边"上下文已用 X%"，右边紧凑的"剩余 ~N / M"（对齐 DSH token-meter 的两栏读法）。
+ * 数字用 tabular-nums，避免秒级刷新时左右跳动。
+ */
+.agent-context-usage-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.agent-context-usage-percent {
+    font-weight: 600;
+}
+
+.agent-context-usage-window {
+    flex: 0 0 auto;
+    color: color-mix(in srgb, currentColor 62%, transparent);
 }
 
 .agent-context-pressure-divider {
     height: 1px;
     margin: 7px 0;
     background: color-mix(in srgb, currentColor 12%, transparent);
-}
-
-.agent-context-pressure-note {
-    margin-top: 5px;
-    color: color-mix(in srgb, currentColor 62%, transparent);
 }
 
 @container (max-width: 520px) {
@@ -1966,8 +1895,7 @@
     background: repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent) 0 3px, color-mix(in srgb, currentColor 3%, transparent) 3px 6px);
 }
 
-.agent-context-breakdown-list,
-.agent-context-breakdown-more ul {
+.agent-context-breakdown-list {
     display: grid;
     gap: 3px;
     margin: 6px 0 0;
@@ -1975,8 +1903,7 @@
     list-style: none;
 }
 
-.agent-context-breakdown-list > li,
-.agent-context-breakdown-more li {
+.agent-context-breakdown-list > li {
     display: flex;
     min-width: 0;
     align-items: center;
@@ -2002,18 +1929,4 @@
     flex: 0 0 auto;
     font-variant-numeric: tabular-nums;
     color: color-mix(in srgb, currentColor 72%, transparent);
-}
-
-.agent-context-breakdown-more {
-    margin-top: 7px;
-    padding-top: 6px;
-    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-}
-
-.agent-context-breakdown-more-title {
-    color: color-mix(in srgb, currentColor 62%, transparent);
-}
-
-.agent-context-breakdown-more li {
-    color: color-mix(in srgb, currentColor 76%, transparent);
 }

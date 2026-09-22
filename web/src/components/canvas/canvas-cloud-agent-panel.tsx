@@ -7,7 +7,6 @@ import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-retry";
 import { agentContextMeterState, type AgentContextMeterState } from "@/lib/canvas/agent-context-meter";
-import { agentContextTransitions, type AgentContextTransition } from "@/lib/canvas/agent-context-transitions";
 import { agentPlanVisible, latestAgentPlanItems, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
 import { nanoid } from "nanoid";
 
@@ -99,11 +98,9 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     // 口径状态与"最近变化"：主读数跨轮保留最后一次有效实测（设计方向 §7.5），
     // 压缩/裁剪会让旧实测过期（§7.3）。治理代次用 ref 记录，避免闭包读到旧值。
     const [contextMeter, setContextMeter] = useState<AgentContextMeterState | undefined>(undefined);
-    const [contextTransitions, setContextTransitions] = useState<AgentContextTransition[]>([]);
     const governanceEpochRef = useRef(0);
     const contextMeterRef = useRef<AgentContextMeterState | undefined>(undefined);
     const lastPressureRef = useRef<AgentContextPressure | null>(null);
-    const notedMeterRef = useRef({ windowResolved: false, calibration: "" });
     const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">("connecting");
     const [connectionEpoch, setConnectionEpoch] = useState(0);
     const [messages, setMessages] = useState<CloudAgentChatMessage[]>([]);
@@ -142,6 +139,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     const [pendingHydrated, setPendingHydrated] = useState(false);
     const [planMinimized, setPlanMinimized] = useState(false);
     const planItems = useMemo(() => latestAgentPlanItems(messages), [messages]);
+    // 第几轮 = 当前会话里已发出的用户消息条数（每发一条消息就是一轮）。
+    const conversationRound = useMemo(() => messages.filter((item) => item.role === "user").length, [messages]);
     const planVisible = agentPlanVisible(planItems);
     const pendingQuestion = useMemo(() => pendingAgentQuestion(messages), [messages]);
     const panelLayout = useAgentPanelLayout();
@@ -219,27 +218,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     );
     useEffect(() => {
         contextMeterRef.current = contextMeter;
-    }, [contextMeter]);
-    // 口径类变化（窗口识别、上游校准）也要出现在"最近变化"里：它们是换了尺子，
-    // 不是上下文真的掉了（设计方向 §3）。
-    useEffect(() => {
-        const notes = agentContextTransitions(undefined, contextMeter);
-        if (notes.length === 0) return;
-        setContextTransitions((current) => {
-            let next = current;
-            for (const note of notes) {
-                if (note.kind === "window_resolved") {
-                    if (notedMeterRef.current.windowResolved) continue;
-                    notedMeterRef.current.windowResolved = true;
-                }
-                if (note.kind === "calibration") {
-                    if (notedMeterRef.current.calibration === note.label) continue;
-                    notedMeterRef.current.calibration = note.label;
-                }
-                next = [...next, note].slice(-4);
-            }
-            return next;
-        });
     }, [contextMeter]);
     useEffect(() => {
         if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off");
@@ -401,8 +379,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         contextMeterRef.current = undefined;
         lastPressureRef.current = null;
         governanceEpochRef.current = 0;
-        notedMeterRef.current = { windowResolved: false, calibration: "" };
-        setContextTransitions([]);
         setMessages([]);
         setApproval(null);
         setApprovalSubmitting(false);
@@ -419,7 +395,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                     setRun(current.run);
                     setContextPressure(latestContextPressure(current.run?.events));
                     setContextMeter(contextMeterFromEvents(current.run?.events, current.run?.id));
-                    setContextTransitions(agentContextTransitions(current.run?.events));
                     setPermissionMode(current.permissionMode);
                     setSelectedSkillIds(current.skillIds || []);
                     if (current.model) setModel(current.model);
@@ -497,7 +472,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                     // 压缩/裁剪发生后，之前那次实测不再代表当前上下文（§7.3）：代次 +1，
                     // 主读数退回本地估算并说明原因，直到上游重新报用量。
                     governanceEpochRef.current += 1;
-                    setContextTransitions((current) => [...current, ...agentContextTransitions([event])].slice(-4));
                     if (lastPressureRef.current) {
                         setContextMeter(agentContextMeterState(contextMeterRef.current, lastPressureRef.current, { runId: run.id, governanceEpoch: governanceEpochRef.current }));
                     }
@@ -747,8 +721,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         contextMeterRef.current = undefined;
         lastPressureRef.current = null;
         governanceEpochRef.current = 0;
-        notedMeterRef.current = { windowResolved: false, calibration: "" };
-        setContextTransitions([]);
         setMessages([]);
         setPrompt("");
         setApproval(null);
@@ -767,7 +739,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setRun(conversation.run);
         setContextPressure(latestContextPressure(conversation.run?.events));
         setContextMeter(contextMeterFromEvents(conversation.run?.events, conversation.run?.id));
-        setContextTransitions(agentContextTransitions(conversation.run?.events));
         setMessages(conversation.messages);
         setPermissionMode(conversation.permissionMode);
         setSelectedSkillIds(conversation.skillIds || []);
@@ -951,8 +922,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                                         includeAssetLibrary={false}
                                         contextPressure={visibleContextPressure}
                                         runStep={run?.step}
+                                        conversationRound={conversationRound}
                                         contextMeter={contextMeter}
-                                        contextTransitions={contextTransitions}
                                         left={
                                             <ComposerControls
                                                 reasoningMode={reasoningSupported ? reasoningMode : "off"}
