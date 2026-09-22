@@ -926,11 +926,8 @@ function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreak
         ...breakdown.buckets.map((bucket) => ({ ...bucket, percent: share(bucket.bytes) })),
         ...(breakdown.envelopeBytes > 0 ? [{ key: "envelope", label: "协议外壳", bytes: breakdown.envelopeBytes, tokens: 0, percent: share(breakdown.envelopeBytes) }] : []),
     ];
-    const segments = breakdown.systemSegments || [];
     return (
         <>
-            <div className="agent-context-pressure-divider" />
-            <div className="agent-context-pressure-title">上下文占用分布（本次请求的组成）</div>
             <div className="agent-context-breakdown-bar" role="img" aria-label={`上下文占用分布：${stack.map((item) => `${item.label} ${Math.round(item.percent)}%`).join("，")}`}>
                 {stack.map((item) => (
                     <span key={item.key} data-bucket={item.key} style={{ width: `${item.percent}%` }} />
@@ -954,19 +951,6 @@ function ContextBreakdown({ breakdown, format }: { breakdown?: AgentContextBreak
                     </span>
                 </li>
             </ul>
-            {segments.length > 0 ? (
-                <div className="agent-context-breakdown-more">
-                    <div className="agent-context-breakdown-more-title">系统提示构成{scaled ? `（已按上游口径 ×${breakdown.tokenScale!.toFixed(2)}）` : ""}</div>
-                    <ul>
-                        {segments.map((segment) => (
-                            <li key={segment.key}>
-                                <span className="agent-context-breakdown-label">{segment.label}</span>
-                                <span className="agent-context-breakdown-value">{format(bucketTokens(segment))} Token</span>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            ) : null}
         </>
     );
 }
@@ -1002,35 +986,31 @@ function AgentContextPressureIndicator({
     // 圆环长度与警告色同口径（设计方向 §2/§8）。
     const tone = percent === undefined ? "unknown" : percent >= 90 ? "critical" : percent >= 70 ? "warning" : "normal";
     const sourceLabel = measured ? "上游实测" : "本地估算";
-    const format = (value: number) => value.toLocaleString("zh-CN");
+    // 紧凑读数（383K / 1M）：弹窗里空间有限，精确值留给事件与诊断包。
+    const compact = (value: number) => {
+        const unit = (scaled: number, suffix: string) => {
+            const text = scaled >= 100 ? scaled.toFixed(0) : scaled.toFixed(1);
+            return `${text.replace(/\.0$/, "")}${suffix}`;
+        };
+        if (value >= 1_000_000) return unit(value / 1_000_000, "M");
+        if (value >= 1_000) return unit(value / 1_000, "K");
+        return String(Math.round(value));
+    };
     const usagePrefix = measured ? "" : "~";
     const budget = reading.budgetTokens;
     const used = Math.max(0, Math.min(budget, headline.tokens));
     const free = Math.max(0, budget - used);
-    const freePercent = budget > 0 ? Math.round((free / budget) * 100) : undefined;
     const stepLabel = typeof runStep === "number" && runStep > 0 ? `第 ${runStep} 步` : "尚未发出模型调用";
     const roundLabel = typeof round === "number" && round > 0 ? `第 ${round} 轮 · ` : "";
-    const ariaLabel =
-        percent === undefined
-            ? `上下文窗口：模型窗口尚未确认，当前请求约 ${format(headline.tokens)} Token（${sourceLabel}）`
-            : `上下文窗口剩余 ${freePercent}%，已用 ${percent}%（${sourceLabel}）`;
-    // 弹窗只回答三个问题：这次请求的占用分布、窗口还剩多少、Agent 现在在第几轮第几步。
-    // 治理阈值、锚点校准、预算来源等口径细节不再铺在这里（需要时看事件与诊断包）。
+    const ariaLabel = `上下文占用分布${percent === undefined ? "（模型窗口未确认）" : `，已用 ${percent}%`}；${sourceLabel}`;
+    // 弹窗只回答三个问题：占用分布、窗口剩余、当前进度（第几轮第几步）。
     const title = (
         <div className="agent-context-pressure-popover">
-            <ContextBreakdown breakdown={pressure.breakdown} format={format} />
-            <div className="agent-context-pressure-divider" />
-            <div className="agent-context-pressure-title">上下文窗口剩余</div>
-            {configured ? (
-                <div>
-                    {usagePrefix}
-                    {format(free)} Token
-                    {freePercent === undefined ? "" : `（${freePercent}%）`} · 已用 {usagePrefix}
-                    {format(used)} / {format(budget)} Token（{sourceLabel}）
-                </div>
-            ) : (
-                <div>模型窗口未确认：暂时只给请求体积（{sourceLabel}约 {format(headline.tokens)} Token），不给剩余量。</div>
-            )}
+            <div className="agent-context-usage-head">
+                <span className="agent-context-usage-percent">上下文已用{percent === undefined ? " —" : ` ${percent}%`}</span>
+                <span className="agent-context-usage-window">{configured ? `剩余 ${usagePrefix}${compact(free)} / ${compact(budget)}` : `${usagePrefix}${compact(headline.tokens)}`}</span>
+            </div>
+            <ContextBreakdown breakdown={pressure.breakdown} format={compact} />
             <div className="agent-context-pressure-divider" />
             <div>
                 当前进度：{roundLabel}
@@ -1044,7 +1024,10 @@ function AgentContextPressureIndicator({
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <circle className="agent-context-pressure-track" cx="12" cy="12" r="9" />
                     {percent === undefined ? (
-                        <circle className="agent-context-pressure-unknown" cx="12" cy="12" r="9" pathLength="100" strokeDasharray="3 4" />
+                        <>
+                            <circle className="agent-context-pressure-unknown" cx="12" cy="12" r="9" />
+                            <circle className="agent-context-pressure-idle-dot" cx="12" cy="12" r="1.6" />
+                        </>
                     ) : (
                         <circle className="agent-context-pressure-value" cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${progress} 100`} />
                     )}

@@ -698,8 +698,18 @@
 .agent-context-pressure[data-tone="critical"] .agent-context-pressure-value {
     stroke: #e66b6b;
 }
-.agent-context-pressure[data-tone="unknown"] .agent-context-pressure-unknown {
-    stroke: color-mix(in srgb, currentColor 38%, transparent);
+/*
+ * 模型窗口未确认时的占位环：画实心细环 + 中心小点，不画虚线。
+ * 虚线会被读成"圆环断了几段"（实测反馈：像坏掉/像在加载），而这里要表达的是
+ * "还没有可用的窗口读数"；实心环 + `—` 读数既干净又和 0% 区分得开。
+ */
+.agent-context-pressure-unknown {
+    stroke: color-mix(in srgb, currentColor 22%, transparent);
+}
+
+.agent-context-pressure-idle-dot {
+    fill: color-mix(in srgb, currentColor 30%, transparent);
+    stroke: none;
 }
 
 /*
@@ -762,9 +772,25 @@
     overflow: hidden;
 }
 
-.agent-context-pressure-title {
-    margin-bottom: 5px;
-    font-weight: 650;
+/*
+ * 弹窗头：左边"上下文已用 X%"，右边紧凑的"剩余 ~N / M"（对齐 DSH token-meter 的两栏读法）。
+ * 数字用 tabular-nums，避免秒级刷新时左右跳动。
+ */
+.agent-context-usage-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.agent-context-usage-percent {
+    font-weight: 600;
+}
+
+.agent-context-usage-window {
+    flex: 0 0 auto;
+    color: color-mix(in srgb, currentColor 62%, transparent);
 }
 
 .agent-context-pressure-divider {
@@ -1875,22 +1901,7 @@
 }
 
 .agent-context-breakdown-list,
-.agent-context-breakdown-more ul {
-    display: grid;
-    gap: 3px;
-    margin: 6px 0 0;
-    padding: 0;
-    list-style: none;
-}
-
 .agent-context-breakdown-list > li,
-.agent-context-breakdown-more li {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 6px;
-}
-
 .agent-context-breakdown-dot {
     width: 7px;
     height: 7px;
@@ -1910,18 +1921,4 @@
     flex: 0 0 auto;
     font-variant-numeric: tabular-nums;
     color: color-mix(in srgb, currentColor 72%, transparent);
-}
-
-.agent-context-breakdown-more {
-    margin-top: 7px;
-    padding-top: 6px;
-    border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-}
-
-.agent-context-breakdown-more-title {
-    color: color-mix(in srgb, currentColor 62%, transparent);
-}
-
-.agent-context-breakdown-more li {
-    color: color-mix(in srgb, currentColor 76%, transparent);
 }
