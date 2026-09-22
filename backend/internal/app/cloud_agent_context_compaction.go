@@ -262,18 +262,9 @@ func cloudAgentFallbackCheckpoint(state *cloudAgentRuntime) agentcontext.Checkpo
 	checkpoint.ScriptDesign = truncateRunes(strings.TrimSpace(checkpoint.ScriptDesign+"\n"+state.CreativeAnchor.UserPrompt+"\n"+currentHistory), 10000)
 	checkpoint.CurrentWork = truncateRunes(state.Request.Prompt, 3000)
 	checkpoint.NextStep = "继续当前工作；执行前重新读取画布和任务状态，并优先处理未完成任务。"
-	// 锚点不再携带权限与"可自行决定"清单（用户消息定义目标），这里只把跨轮必须记住的
-	// 视觉事实带进收束摘要：下一轮才不会再声称"没有视觉识别证据"并重复看图。
-	for _, asset := range state.CreativeAnchor.ReferenceAssets {
-		if asset.VisualIdentity != "inspected" {
-			continue
-		}
-		observed := fmt.Sprintf("已查看过画面 %s（%s），无需重复看图", asset.NodeID, asset.Type)
-		if note := strings.TrimSpace(asset.VisualNote); note != "" {
-			observed = fmt.Sprintf("已查看过画面 %s（%s）：%s", asset.NodeID, asset.Type, truncateRunes(note, 600))
-		}
-		checkpoint.Decisions = append(checkpoint.Decisions, observed)
-	}
+	// 视觉事实不跨轮继承（上游 acbb354e 口径）：确认过的画面不写回锚点，旧检查点里的
+	// `inspected` 标记与正文摘录也不再带进收束摘要——普通正文不等于识别成功，节点也可能换图。
+	// 需要画面时由下一轮重新附送真实图片字节（见 cloud_agent_vision.go）。
 	checkpoint.Constraints = append(checkpoint.Constraints, fmt.Sprintf("权限模式：%s；本轮预算上限：%.4f credits", state.Request.PermissionMode, state.Request.Budget.MaxCredits))
 	for _, layer := range state.Profile.Layers {
 		if content := strings.TrimSpace(layer.Content); content != "" {
