@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -214,11 +215,16 @@ func TestCloudAgentArrangeNodesRejectsStaleSnapshotAndTooManyNodes(t *testing.T)
 	s, _ := layoutFixture(t, nodes)
 	policy := mustRuntimePolicy(t, s)
 
+	// 过期快照必须同时满足两条口径：带 errCloudAgentSnapshotConflict（我方运行期据此走
+	// "重新读取再申请审批"的可恢复分支），并归类成字段错误 issue=stale_snapshot（模型据此
+	// 知道是哪个字段过期）。缺任一条都会让这次调用落进准入失败、判死整轮。
+	var staleErr *cloudAgentFieldArgumentError
 	if _, err := applyCloudAgentArrangeNodes(s.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
 		"snapshotHash": "stale-hash",
 		"mode":         "row",
-	}), policy); err == nil || !cloudAgentSnapshotConflict(err) {
-		t.Fatalf("陈旧快照应被拒绝：%v", err)
+	}), policy); err == nil || !cloudAgentSnapshotConflict(err) ||
+		!errors.As(err, &staleErr) || staleErr.Issue != "stale_snapshot" || staleErr.Field != "snapshotHash" {
+		t.Fatalf("陈旧快照应被归类为过期快照：%v", err)
 	}
 
 	many := make([]map[string]any, 0, cloudAgentArrangeMaxNodes+1)
@@ -226,11 +232,15 @@ func TestCloudAgentArrangeNodesRejectsStaleSnapshotAndTooManyNodes(t *testing.T)
 		many = append(many, layoutNode(fmt.Sprintf("text-%d", index), "text", float64(index), 0))
 	}
 	s2, doc2 := layoutFixture(t, many)
+	// 参数契约类错误一律按字段错误归类：模型因此拿到"哪个字段错、怎么改"的可纠正回执，
+	// 而不是被走准入失败分支判死整轮。
+	var countErr *cloudAgentFieldArgumentError
 	if _, err := applyCloudAgentArrangeNodes(s2.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
 		"snapshotHash": creationHash(doc2),
 		"mode":         "row",
-	}), mustRuntimePolicy(t, s2)); err == nil || !strings.Contains(err.Error(), "最多整理") {
-		t.Fatalf("超限应被拒绝：%v", err)
+	}), mustRuntimePolicy(t, s2)); err == nil || !strings.Contains(err.Error(), "最多整理") ||
+		!errors.As(err, &countErr) || countErr.Field != "nodeIds" || countErr.Issue != "item_count" {
+		t.Fatalf("超限应按 nodeIds/item_count 归类：%v", err)
 	}
 }
 

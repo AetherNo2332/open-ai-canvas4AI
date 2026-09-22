@@ -227,17 +227,14 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		if code, _ := ChannelSlotFailureDetails(err); code != "" {
 			channelSlotFailedBeforeRequest = true
 		}
-		// 续租使用独立 context，真实租约失效必须阻止写入；但我方执行时限到点
-		// （单步墙钟或任务超时）本身不是"租约丢失"：续租可能正好被同一个时限打断，
-		// 此时必须继续走失败收尾，否则任务停在 running 被反复重跑。
+		// 续租使用独立 context（taskLeaseRenewContext 用 WithoutCancel + 5s），所以执行时限
+		// 到点不会再打断续租；反过来，执行超时不能覆盖真实租约失效——否则旧 worker 可能在
+		// 新 worker 接管后继续结算或写入终态。
 		deadlineExpired := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		select {
 		case leaseErr := <-leaseLost:
-			if !deadlineExpired {
-				_ = s.log(task.UserID, task.ID, "warn", "任务租约失效，等待其他 worker 恢复", leaseErr.Error())
-				return leaseErr
-			}
-			_ = s.log(task.UserID, task.ID, "warn", "任务执行时限到点，按失败收尾（不视为租约丢失）", leaseErr.Error())
+			_ = s.log(task.UserID, task.ID, "warn", "任务租约失效，等待其他 worker 恢复", leaseErr.Error())
+			return leaseErr
 		default:
 		}
 		decryptedInput, decryptErr := s.decryptTaskInputJSON(task.InputJSON)

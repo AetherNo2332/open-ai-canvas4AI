@@ -134,9 +134,22 @@ func cloudAgentCapabilityGuide() string {
 // aid, not a permission: skill_read_file lists the full directory on demand.
 const cloudAgentSkillFileLimit = 60
 
+// cloudAgentSkillManifestDescription bounds the system prompt: the description
+// is author-supplied public metadata, so it is trimmed and capped before it
+// enters the compiled policy.
+func cloudAgentSkillManifestDescription(description string) string {
+	const maxRunes = 500
+	trimmed := strings.TrimSpace(description)
+	if utf8.RuneCountInString(trimmed) <= maxRunes {
+		return trimmed
+	}
+	runes := []rune(trimmed)
+	return strings.TrimSpace(string(runes[:maxRunes])) + "…"
+}
+
 func cloudAgentSkillManifest(skill cloudAgentSkill) map[string]any {
 	paths := cloudAgentSkillPaths(skill)
-	manifest := map[string]any{"skillId": skill.ID, "name": skill.Name, "version": skill.Version, "hash": skill.Hash, "entryPath": cloudAgentSkillEntryPath}
+	manifest := map[string]any{"skillId": skill.ID, "name": skill.Name, "description": cloudAgentSkillManifestDescription(skill.Description), "version": skill.Version, "hash": skill.Hash, "entryPath": cloudAgentSkillEntryPath}
 	if omitted := len(paths) - cloudAgentSkillFileLimit; omitted > 0 {
 		manifest["files"] = paths[:cloudAgentSkillFileLimit]
 		manifest["filesOmitted"] = omitted

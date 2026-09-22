@@ -25,9 +25,9 @@ func TestCloudAgentStepOutputBudgetFollowsPolicy(t *testing.T) {
 		expectedValue int
 	}{
 		{name: "默认上限", outputTokens: platform.DefaultRuntimeAgentStepOutputTokens, expectedValue: 16_384},
-		{name: "空输出放大档翻倍", outputTokens: platform.DefaultRuntimeAgentStepOutputTokens, boosted: true, expectedValue: 32_768},
+		{name: "空输出重试遵守管理员上限", outputTokens: platform.DefaultRuntimeAgentStepOutputTokens, boosted: true, expectedValue: 16_384},
 		{name: "自定义上限", outputTokens: 32_000, expectedValue: 32_000},
-		{name: "自定义上限放大后封顶", outputTokens: 100_000, boosted: true, expectedValue: platform.MaxRuntimeAgentStepOutputTokens},
+		{name: "自定义上限重试不翻倍", outputTokens: 100_000, boosted: true, expectedValue: 100_000},
 		{name: "不限制时原值即 0", outputTokens: 0, expectedValue: 0},
 		{name: "不限制时放大档必须有界", outputTokens: 0, boosted: true, expectedValue: cloudAgentStepBoostFallbackTokens},
 	}
@@ -74,7 +74,10 @@ func TestCloudAgentStepLimitsFollowAdminPolicy(t *testing.T) {
 	svc := New(repository.New(db), t.TempDir())
 	actor := &model.User{ID: "admin", Role: model.UserRoleAdmin}
 
-	defaults := svc.cloudAgentStepLimits()
+	defaults, err := svc.cloudAgentStepLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if defaults.OutputTokens != platform.DefaultRuntimeAgentStepOutputTokens || defaults.Timeout != 8*time.Minute {
 		t.Fatalf("default step limits = %+v", defaults)
 	}
@@ -85,7 +88,10 @@ func TestCloudAgentStepLimitsFollowAdminPolicy(t *testing.T) {
 	if _, err := svc.UpdateRuntimePolicySetting(actor, policy); err != nil {
 		t.Fatal(err)
 	}
-	updated := svc.cloudAgentStepLimits()
+	updated, err := svc.cloudAgentStepLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if updated.OutputTokens != 32_768 || updated.Timeout != 150*time.Second {
 		t.Fatalf("updated step limits = %+v", updated)
 	}
@@ -97,7 +103,10 @@ func TestCloudAgentStepLimitsFollowAdminPolicy(t *testing.T) {
 	if _, err := svc.UpdateRuntimePolicySetting(actor, policy); err != nil {
 		t.Fatal(err)
 	}
-	unbounded := svc.cloudAgentStepLimits()
+	unbounded, err := svc.cloudAgentStepLimits()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if unbounded.OutputTokens != 0 || unbounded.Timeout != 12*time.Minute {
 		t.Fatalf("unbounded step limits = %+v", unbounded)
 	}

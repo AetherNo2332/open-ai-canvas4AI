@@ -47,7 +47,10 @@ func agentStepMaxOutputTokensDefault() int {
 
 func agentStepTimeoutSecondsDefault() int {
 	value := envInt("CANVAS_AGENT_STEP_TIMEOUT_SECONDS", DefaultRuntimeAgentStepTimeout)
-	return min(value, MaxRuntimeAgentStepTimeoutSeconds)
+	if value <= 0 {
+		return DefaultRuntimeAgentStepTimeout
+	}
+	return min(max(value, MinRuntimeAgentStepTimeoutSeconds), MaxRuntimeAgentStepTimeoutSeconds)
 }
 
 type RuntimeResourcePolicy struct {
