@@ -54,6 +54,10 @@ type cloudAgentCompactionReading struct {
 //
 // 返回 configured=false 表示这次调用问不到真实模型窗口（cloudAgentContextBudgetForRequest
 // 退回了首部默认预算，Source 为 default）：此时 token 线没有意义，调用方改用字节/条数兜底。
+//
+// 注意这条降级的代价：字节/条数兜底与窗口大小无关，所以**渠道没填 contextWindowTokens 时，
+// 大窗口模型会远早于"装不下"就触发压缩**——每次压缩都要多花一次模型调用（额外计费）并把
+// 细节换成摘要。部署时应为画布 Agent 使用的渠道模型/逻辑模型填写真实窗口（见 PR 风险说明）。
 func cloudAgentCompactionReadingFor(budget cloudAgentContextBudget, projectedTokens int) (cloudAgentCompactionReading, bool) {
 	reading := cloudAgentCompactionReading{
 		ProjectedTokens:   projectedTokens,
