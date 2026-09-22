@@ -131,9 +131,8 @@ func cloudAgentApplyPlanUpdate(state *cloudAgentRuntime, call cloudAgentCall) (a
 			args.Items[i].Status = "pending"
 		}
 	}
-	if !slices.Equal(state.Plan, args.Items) {
-		state.ActionNudged = false
-	}
+	// 清单变了就换了阻塞指纹：收尾催办的"同一原因"计数随之重置（见 cloud_agent_completion.go
+	// 的 cloudAgentNoteCompletionBlocked），这里不需要再单独清一个布尔标志。
 	state.Plan = args.Items
 	return map[string]any{"items": args.Items, "pendingTitles": cloudAgentPendingPlanItems(args.Items)}, nil
 }
@@ -184,12 +183,17 @@ func cloudAgentAskUser(call cloudAgentCall) (any, error) {
 	}, nil
 }
 
-// skipRemainingCloudAgentCalls 结束本批剩余调用（ask_user 之后本轮不再继续执行）。
+// skipRemainingCloudAgentCalls 结束本批剩余调用（ask_user / finish_run 之后本轮不再继续执行）。
 // 末尾的 flush 让"本批前面的看图结果"仍能落在全部 tool 结果之后：这批调用到这里已经
 // 完整（每个声明的 tool_call_id 都有回执），但本轮就此结束、不会再走 advanceCloudAgent
 // 的兜底 flush，少了这一步缓冲的图片会被丢掉。
+//
+// 起点是 state.CallIndex 而不是 CallIndex+1：调用方都已经先落过当前调用的回执，
+// 而 cloudAgentToolResult 会把 CallIndex 推进一位（它指向的就是"下一个还没执行的调用"）。
+// 用 +1 会正好漏掉紧跟其后的那个调用，让确定的 tool_call_id 没有回执——本轮虽然已经结束，
+// 但落库的这轮 canonical 会自相矛盾。
 func skipRemainingCloudAgentCalls(runID string, state *cloudAgentRuntime) {
-	for index := state.CallIndex + 1; index < len(state.Calls); index++ {
+	for index := state.CallIndex; index < len(state.Calls); index++ {
 		cloudAgentToolResult(runID, state, state.Calls[index], map[string]any{"skipped": true}, BadAuthRequest("本轮已结束（等待用户决定），该调用未执行"))
 	}
 	cloudAgentFlushPendingImages(state)

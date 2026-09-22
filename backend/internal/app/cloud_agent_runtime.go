@@ -76,7 +76,6 @@ type cloudAgentRuntime struct {
 	Decisions              map[string]string               `json:"decisions"`
 	DecisionSettings       map[string]string               `json:"decisionSettings,omitempty"`
 	DecisionPreparedHashes map[string]string               `json:"decisionPreparedHashes,omitempty"`
-	ActionNudged           bool                            `json:"actionNudged,omitempty"`
 	EmptyOutputNudged      int                             `json:"emptyOutputNudged,omitempty"`
 	// EmptyOutputEscalated 记录"空输出已经升级重试过几次"（关思考 + 放大输出预算）。
 	EmptyOutputEscalated int `json:"emptyOutputEscalated,omitempty"`
@@ -144,6 +143,12 @@ type cloudAgentRuntime struct {
 	// 基础上并发提交这批写入的，首个写入必然改变版本，因此同批后续写入需要据此重基。
 	CanvasBatchHashes []string          `json:"canvasBatchHashes,omitempty"`
 	Events            []CloudAgentEvent `json:"events"`
+	// CompletionNudges 是本轮"候选收尾被闸门拦下"的累计次数，CompletionNudgeAttempt 是
+	// **同一阻塞原因**（指纹）下的次数，CompletionNudgeFingerprint 是当前指纹。
+	// 三者都要进检查点：一次推进是一次转移，进程内字段活不到下一次（工作项 A）。
+	CompletionNudges           int    `json:"completionNudges,omitempty"`
+	CompletionNudgeAttempt     int    `json:"completionNudgeAttempt,omitempty"`
+	CompletionNudgeFingerprint string `json:"completionNudgeFingerprint,omitempty"`
 }
 
 type cloudAgentTransientReference struct {
@@ -876,8 +881,16 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			if result.Reasoning != "" {
 				state.event(run.ID, "reasoning_message", map[string]any{"messageId": task.ID + ":reasoning", "text": truncateRunes(result.Reasoning, 8000)})
 			}
+			// 无工具调用 = 候选收尾：**先过闸门再发布**（工作项 A，见 cloud_agent_completion.go）。
+			// 正文在流式阶段已经到过前端（assistant_delta/assistant_snapshot），所以这里必须显式
+			// 落一个 final 标记，把它收敛成"最终答复"或"过程说明"；否则用户会把中间稿当结论。
+			// 带工具调用的正文只是过程说明（final=false）：它不是本轮答复，后面还有这一步的动作。
+			completion := cloudAgentCompletionBlock{}
+			if len(calls) == 0 {
+				completion = cloudAgentEvaluateCompletion(&state)
+			}
 			if result.Text != "" {
-				state.event(run.ID, "assistant_message", map[string]any{"messageId": task.ID, "text": result.Text})
+				state.event(run.ID, "assistant_message", map[string]any{"messageId": task.ID, "text": result.Text, "final": completion.Final})
 				// 刚看过图时，模型在正文里写下的那句话就是可复用的视觉证据：
 				// 推理内容不回灌上下文，只有正文留得下来。
 				state.recordCloudAgentVisualNote(result.Text)
@@ -902,20 +915,25 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 				state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text, "tool_calls": calls})
 			}
 			if len(calls) == 0 {
-				if len(state.PendingInterjections) > 0 {
-					if !cloudAgentStepBudgetExhausted(&state) {
+				if completion.Final {
+					current.Status = "completed"
+					return cloudAgentSave(current, &state)
+				}
+				// 用户刚插话：下一步它就会进上下文，既不需要催办，也不该计入催办额度。
+				if completion.Interjected && !cloudAgentStepBudgetExhausted(&state) {
+					return cloudAgentSave(current, &state)
+				}
+				if !cloudAgentStepBudgetExhausted(&state) {
+					attempt, exhausted := cloudAgentNoteCompletionBlocked(&state, completion.Fingerprint)
+					if !exhausted {
+						completion.Attempt = attempt
+						cloudAgentCompletionBlockedNudge(run.ID, &state, completion)
 						return cloudAgentSave(current, &state)
 					}
-					cloudAgentDropInterjections(run.ID, "本轮已达到模型调用上限", &state)
+					completion.Attempt = attempt
 				}
-				if !cloudAgentStepBudgetExhausted(&state) && !state.ActionNudged {
-					if pending := cloudAgentPendingPlanItems(state.Plan); len(pending) > 0 {
-						state.ActionNudged = true
-						state.Canonical.Messages = append(state.Canonical.Messages, cloudAgentPlanNudgeMessage(&state, pending[0]))
-						return cloudAgentSave(current, &state)
-					}
-				}
-				current.Status = "completed"
+				// 额度用尽或已经开不起下一步：如实终止，且不把中间稿当最终答复。
+				return cloudAgentFailBlockedCompletion(current, &state, run.ID, completion)
 			}
 			return cloudAgentSave(current, &state)
 		})
@@ -1658,6 +1676,9 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 					state.markCanvasAssetInspected(stringValue(inspection.Receipt["nodeId"]))
 				}
 			}
+		case call.Function.Name == "finish_run":
+			// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
+			result, toolErr = cloudAgentFinishRun(run.ID, state, call)
 		case call.Function.Name == "skill_read_file", call.Function.Name == "image_annotation_render":
 			result, toolErr = skillResult, skillErr
 		default:
@@ -1676,6 +1697,19 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			skipRemainingCloudAgentCalls(run.ID, state)
 			current.Status = "completed"
 			return cloudAgentSave(current, state)
+		}
+		if call.Function.Name == "finish_run" && toolErr == nil {
+			// 闸门通过：summary 就是本轮唯一一次最终答复，本轮就此结束。
+			if cloudAgentFinishRunAccepted(result) {
+				return cloudAgentCompleteByFinishRun(current, state, run.ID, call, result)
+			}
+			// 申请收尾用的次数也已用尽：与"纯文本收尾"走同一条终止路径。
+			if cloudAgentFinishRunExhausted(result) {
+				block := cloudAgentEvaluateCompletion(state)
+				block.Attempt = state.CompletionNudgeAttempt
+				cloudAgentRecordToolResult(current, state, call, result, nil)
+				return cloudAgentFailBlockedCompletion(current, state, run.ID, block)
+			}
 		}
 		cloudAgentRecordToolResult(current, state, call, result, toolErr)
 		return cloudAgentSave(current, state)

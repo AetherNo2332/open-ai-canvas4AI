@@ -373,7 +373,9 @@ export function subscribeAgentEvents(runId: string, onEvent: (event: AgentEvent)
                                     const messageKey = `${run.activeMessage.messageId}\u0000${run.activeMessage.text}`;
                                     if (messageKey !== lastActiveMessageKey) {
                                         lastActiveMessageKey = messageKey;
-                                        emit("assistant_message", run.activeMessage);
+                                        // 快照里的 activeMessage 是**还在流式生成**的草稿，不是本轮最终答复：
+                                        // 显式带 final=false，否则前端会按"缺省即结论"（升级前口径）把它当成最终回复。
+                                        emit("assistant_message", { ...run.activeMessage, final: false });
                                     }
                                 }
                                 const statusPayload = { status: run.status, revision: run.revision, cleanupPending: run.cleanupPending, failureMessage: run.failureMessage, skills: run.skills, spentCredits: run.spentCredits, step: run.step, approval: run.approval };

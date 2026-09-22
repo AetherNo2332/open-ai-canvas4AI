@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -128,23 +129,56 @@ func TestCloudAgentPlanNudgePrefersLatestUserInstruction(t *testing.T) {
 	}
 }
 
-func TestCloudAgentPendingPlanPreventsTextOnlyCompletion(t *testing.T) {
+// 本轮"本批剩余调用"必须逐个拿到回执：ask_user 结束这一轮时，紧随其后的那个调用
+// 之前会被静默丢掉（skip 的起点多算了一位），而 cloudAgentToolResult 已经把游标推进了。
+// 少了回执，落库的这轮 canonical 就自相矛盾——assistant(tool_calls) 里有 tool_call_id 没有对应的 tool 消息。
+func TestCloudAgentAskUserReceiptsEveryRemainingCall(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	run, err := s.repo.CloudAgent("user", root.ID)
+	_, state := agentInterjectionState(t, s, root.ID)
+	ask := cloudAgentCall{ID: "ask-1"}
+	ask.Function.Name, ask.Function.Arguments = "ask_user", `{"question":"用哪个模型？","options":[{"label":"A"},{"label":"B"}]}`
+	read := cloudAgentCall{ID: "read-1"}
+	read.Function.Name, read.Function.Arguments = "canvas_get_state", `{}`
+	body, err := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{ask, read}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
+	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{
+		"status": model.TaskStatusSucceeded, "result_json": string(body),
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	state.Plan = []cloudAgentPlanItem{{ID: "1", Title: "生成镜头1", Status: "doing"}}
-	if err := cloudAgentSave(run, &state); err != nil {
-		t.Fatal(err)
+	// 一次转移登记本批调用，之后每个调用各需要一次转移。
+	for range 3 {
+		if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := db.Save(run).Error; err != nil {
-		t.Fatal(err)
+	run, state := agentInterjectionState(t, s, root.ID)
+	if run.Status != "completed" {
+		t.Fatalf("ask_user 应当结束本轮：status=%s", run.Status)
 	}
+	if state.CallIndex != len(state.Calls) {
+		t.Fatalf("本批剩余调用没有被逐个收尾：callIndex=%d calls=%d", state.CallIndex, len(state.Calls))
+	}
+	paired := map[string]bool{}
+	for _, message := range state.Canonical.Messages {
+		if stringField(message, "role") == "tool" {
+			paired[stringField(message, "tool_call_id")] = true
+		}
+	}
+	for _, id := range []string{"ask-1", "read-1"} {
+		if !paired[id] {
+			t.Fatalf("tool_call_id %s 没有回执：%+v", id, state.Canonical.Messages)
+		}
+	}
+}
+
+// 工作项 A 改造后的口径：清单没对账时不再"催一次就静默收尾"，而是把候选收尾拦下来，
+// 要求模型先按真实结果对账（做完标 done、用户已取消的从清单移除），对账之后才放行收尾。
+func TestCloudAgentPendingPlanMustBeReconciledBeforeCompletion(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	agentWithPendingPlan(t, s, db, root)
 	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
 		"status": model.TaskStatusSucceeded, "result_json": `{"text":"先看到这里"}`,
 	}).Error; err != nil {
@@ -153,7 +187,7 @@ func TestCloudAgentPendingPlanPreventsTextOnlyCompletion(t *testing.T) {
 	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
 		t.Fatal(err)
 	}
-	run, state = agentInterjectionState(t, s, root.ID)
+	run, state := agentInterjectionState(t, s, root.ID)
 	if run.Status != "running" {
 		t.Fatalf("未完成清单时不该收尾，status=%s", run.Status)
 	}
@@ -170,21 +204,23 @@ func TestCloudAgentPendingPlanPreventsTextOnlyCompletion(t *testing.T) {
 	if state.Canonical.ToolChoice != "auto" {
 		t.Fatal("旧计划催办不得强制工具调用")
 	}
-	// An unchanged plan gets one reminder, not an endless loop of paid steps.
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
-		t.Fatal(err)
+	if replies := agentFinalReplies(state); len(replies) != 0 {
+		t.Fatalf("未对账时的正文不是最终答复：%v", replies)
 	}
-	_, state = agentInterjectionState(t, s, root.ID)
-	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": `{"text":"按最新要求停止生成，保留草稿。"}`,
-	}).Error; err != nil {
-		t.Fatal(err)
+
+	// 模型按最新要求对账：这一项已被用户取消 → 从清单移除（清空清单本身就是对账）。
+	run, state = agentSettleStep(t, s, db, root.ID, "", "plan-1", "plan_update", `{"items":[]}`)
+	if len(cloudAgentPendingPlanItems(state.Plan)) != 0 {
+		t.Fatalf("对账后清单不该还有未完成项：%+v", state.Plan)
 	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
-		t.Fatal(err)
+	run, state = agentSettleTextStep(t, s, db, root.ID, "按最新要求停止生成，保留草稿。")
+	if run.Status != "completed" {
+		t.Fatalf("对账之后应当放行收尾：status=%s", run.Status)
 	}
-	run, state = agentInterjectionState(t, s, root.ID)
-	if run.Status != "completed" || state.Plan[0].Status == "done" {
-		t.Fatalf("应允许结束对话而不伪造计划完成: status=%s plan=%+v", run.Status, state.Plan)
+	if len(state.Plan) != 0 {
+		t.Fatalf("不得伪造计划完成：%+v", state.Plan)
+	}
+	if replies := agentFinalReplies(state); len(replies) != 1 || !strings.Contains(replies[0], "保留草稿") {
+		t.Fatalf("对账后只应发布一次最终答复：%v", replies)
 	}
 }

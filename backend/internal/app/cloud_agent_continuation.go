@@ -65,9 +65,16 @@ func cloudAgentContinuationReply(task *model.Task, run *CloudAgentRun) (string, 
 		seen[id] = true
 		submitted = append(submitted, id)
 	}
+	// 上一轮的"答复"以**最终答复**为准（final=true 的 assistant 消息）：工作项 A 之后
+	// 模型边做边说的过程说明也会落 assistant_message（final=false），拿最后一条当答复会
+	// 把中间稿交给下一轮。没有最终答复（失败/被拦下）时退回最后一条正文，保持既有口径。
+	final, anyText := "", ""
 	for _, event := range run.Events {
 		if event.Type == "assistant_message" {
-			text = stringValue(event.Payload["text"])
+			anyText = stringValue(event.Payload["text"])
+			if isFinal, ok := event.Payload["final"].(bool); ok && isFinal {
+				final = anyText
+			}
 		}
 		if event.Type == "generation_task_created" {
 			addSubmitted(stringValue(event.Payload["taskId"]))
@@ -77,6 +84,11 @@ func cloudAgentContinuationReply(task *model.Task, run *CloudAgentRun) (string, 
 				addSubmitted(stringValue(result["taskId"]))
 			}
 		}
+	}
+	if final != "" {
+		text = final
+	} else if anyText != "" {
+		text = anyText
 	}
 	context := cloudAgentContinuationContext(run, submitted)
 	return text, context, nil

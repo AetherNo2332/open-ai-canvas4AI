@@ -60,7 +60,7 @@ import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { applyAgentCanvasPatches, refreshCanvasAfterAgent, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { createAgentCanvasSync } from "@/services/agent-canvas-sync";
 import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/skill-runtime";
-import { AgentChatComposer, AgentChatMessage, AgentPlanBar, AgentQuestionBar, AgentWorkingMessage, type CloudAgentChatMessage, type CloudAgentPlanItem } from "./canvas-cloud-agent-chat-ui";
+import { AgentChatComposer, AgentChatMessage, AgentPlanBar, AgentQuestionBar, AgentWorkingMessage, agentAssistantFinality, agentControlMessage, type CloudAgentChatMessage, type CloudAgentPlanItem } from "./canvas-cloud-agent-chat-ui";
 import { CanvasAgentSkillLibraryModal } from "./canvas-agent-skill-library-modal";
 import { CanvasCloudAgentSettings, agentPermissionLabel, agentPermissionMenuItems, agentPermissionVisual, type AgentContextKey } from "./canvas-cloud-agent-settings";
 import { useAgentPanelLayout } from "./use-agent-panel-layout";
@@ -1642,7 +1642,18 @@ function applyAgentEvent(
         return;
     }
     if (event.type === "assistant_message") {
-        setMessages((current) => upsertTextMessage(current, String(payload.messageId || event.eventId), text, false));
+        // final=false 是过程说明（模型边做边说的一段），不是本轮结论：界面上必须能区分，
+        // 否则用户会把"我已经做完了"的中间稿当成最终答复（工作项 A 的原始症状）。
+        setMessages((current) => upsertTextMessage(current, String(payload.messageId || event.eventId), text, false, agentAssistantFinality(payload)));
+        return;
+    }
+    if (event.type === "completion_blocked") {
+        // 收尾闸门的控制消息：模型想收尾但被拦下了。它是服务端控制行，**不是**用户发言，
+        // 所以走 system 行，不进用户气泡。
+        const attempt = Number(payload.attempt || 0);
+        const maxAttempts = Number(payload.maxAttempts || 0);
+        const id = `completion-blocked-${event.runId}:${event.seq ?? event.eventId}`;
+        setMessages((current) => appendUniqueMessage(current, agentControlMessage(id, text || "这次收尾没通过服务端核对，已要求 Agent 先对账待办清单。", attempt > 0 && maxAttempts > 0 ? `第 ${attempt}/${maxAttempts} 次` : undefined)));
         return;
     }
     if (event.type === "assistant_snapshot") {
@@ -1902,12 +1913,14 @@ function upsertContextCompactionNotice(current: CloudAgentChatMessage[], message
     next[index] = message;
     return next;
 }
-function upsertTextMessage(current: CloudAgentChatMessage[], id: string, text: string, append: boolean): CloudAgentChatMessage[] {
+function upsertTextMessage(current: CloudAgentChatMessage[], id: string, text: string, append: boolean, final?: boolean): CloudAgentChatMessage[] {
     const index = current.findIndex((item) => item.id === id);
-    if (index < 0) return [...current, { id, role: "assistant" as const, text, streaming: append }];
-    if (!append && current[index].text === text && !current[index].streaming) return current;
+    if (index < 0) return [...current, { id, role: "assistant" as const, text, streaming: append, final }];
+    // final 也要参与"没变化"的判断：流式快照先建了气泡，结论事件可能带着同样的正文与
+    // final=false 到来，少了这一项就会把"过程说明"标记吞掉。
+    if (!append && current[index].text === text && !current[index].streaming && current[index].final === final) return current;
     const next = [...current];
-    next[index] = { ...next[index], text: append ? `${next[index].text}${text}` : text, streaming: append };
+    next[index] = { ...next[index], text: append ? `${next[index].text}${text}` : text, streaming: append, final };
     return next;
 }
 

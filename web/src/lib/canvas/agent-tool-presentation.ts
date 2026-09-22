@@ -7,6 +7,11 @@ export const AGENT_TOOL_METADATA: Record<string, { summary: string | ((context: 
     canvas_apply_ops: { summary: ({ pending }) => (pending ? "准备更新画布内容" : "画布内容已保存至服务端"), failureMessage: "更新画布内容失败" },
     model_list: { summary: "已获取可用模型", failureMessage: "获取可用模型失败" },
     generate_media: { summary: ({ pending, detail }) => (pending ? "准备创建媒体节点并生成" : field(detail, "eventType") === "tool_completed" ? "生成结果已回写画布节点" : "媒体节点已创建，生成任务已提交"), failureMessage: "媒体生成未完成" },
+    // 收尾闸门（工作项 A）：被拦下时卡片要说清"这次没结束"，而不是千篇一律的"操作已完成"。
+    finish_run: {
+        summary: ({ pending, detail }) => (pending ? "准备收尾并给出最终答复" : field(field(detail, "result"), "completionBlocked") === true ? "收尾被拦下，继续处理未完成项" : "已收尾并给出最终答复"),
+        failureMessage: "收尾未完成",
+    },
 };
 
 export type AgentToolCategory = "read" | "create" | "operate";

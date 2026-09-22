@@ -160,14 +160,27 @@ func TestCloudAgentRecoveryProducesFactsWithoutChangingGoal(t *testing.T) {
 }
 
 func TestCloudAgentPlanCancellationClearsPendingWithoutCompletingIt(t *testing.T) {
-	state := &cloudAgentRuntime{Plan: []cloudAgentPlanItem{{ID: "1", Title: "旧视频任务", Status: "pending"}}, ActionNudged: true}
+	state := &cloudAgentRuntime{
+		Plan:                       []cloudAgentPlanItem{{ID: "1", Title: "旧视频任务", Status: "pending"}},
+		CompletionNudges:           1,
+		CompletionNudgeAttempt:     1,
+		CompletionNudgeFingerprint: "stale-fingerprint",
+	}
 	call := cloudAgentCall{ID: "cancel-plan"}
 	call.Function.Name = "plan_update"
 	call.Function.Arguments = `{"items":[]}`
 	if _, err := cloudAgentApplyPlanUpdate(state, call); err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Plan) != 0 || len(cloudAgentPendingPlanItems(state.Plan)) != 0 || state.ActionNudged {
-		t.Fatal("取消清单后仍残留旧项或催办状态")
+	if len(state.Plan) != 0 || len(cloudAgentPendingPlanItems(state.Plan)) != 0 {
+		t.Fatal("取消清单后仍残留旧项")
+	}
+	// 把清单清空本身就是对账（用户已取消的工作应当移除），所以闸门随之放行；
+	// 旧指纹也不再适用，下一条阻塞原因会重新计数（工作项 A）。
+	if block := cloudAgentEvaluateCompletion(state); !block.Final {
+		t.Fatalf("取消清单后不该再阻塞收尾：%+v", block)
+	}
+	if attempt, exhausted := cloudAgentNoteCompletionBlocked(state, "new-fingerprint"); attempt != 1 || exhausted {
+		t.Fatalf("换了阻塞原因应重新从第一次计数：attempt=%d exhausted=%v", attempt, exhausted)
 	}
 }
