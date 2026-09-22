@@ -699,7 +699,7 @@
     stroke: #e66b6b;
 }
 /*
- * 模型窗口未确认时的占位环：画实心细环 + 中心小点，不画虚线。
+ * 模型窗口未确认时的占位环：画实心细环，不画虚线。
  * 虚线会被读成"圆环断了几段"（实测反馈：像坏掉/像在加载），而这里要表达的是
  * "还没有可用的窗口读数"；实心环 + `—` 读数既干净又和 0% 区分得开。
  */
@@ -707,10 +707,6 @@
     stroke: color-mix(in srgb, currentColor 22%, transparent);
 }
 
-.agent-context-pressure-idle-dot {
-    fill: color-mix(in srgb, currentColor 30%, transparent);
-    stroke: none;
-}
 
 /*
  * Context Meter v2：主读数与治理读数是两把尺子（设计方向 §2/§3）。
@@ -1900,8 +1896,21 @@
     background: repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent) 0 3px, color-mix(in srgb, currentColor 3%, transparent) 3px 6px);
 }
 
-.agent-context-breakdown-list,
-.agent-context-breakdown-list > li,
+.agent-context-breakdown-list {
+    display: grid;
+    gap: 3px;
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.agent-context-breakdown-list > li {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+}
+
 .agent-context-breakdown-dot {
     width: 7px;
     height: 7px;

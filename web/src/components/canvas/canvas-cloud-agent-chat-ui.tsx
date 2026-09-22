@@ -1008,7 +1008,8 @@ function AgentContextPressureIndicator({
         <div className="agent-context-pressure-popover">
             <div className="agent-context-usage-head">
                 <span className="agent-context-usage-percent">上下文已用{percent === undefined ? " —" : ` ${percent}%`}</span>
-                <span className="agent-context-usage-window">{configured ? `剩余 ${usagePrefix}${compact(free)} / ${compact(budget)}` : `${usagePrefix}${compact(headline.tokens)}`}</span>
+                {/* 窗口未确认时不给"剩余"；连请求体积都还没有（本轮尚未读数）就整格不显示，不留第二个破折号。 */}
+                <span className="agent-context-usage-window">{configured ? `剩余 ${usagePrefix}${compact(free)} / ${compact(budget)}` : headline.tokens > 0 ? `${usagePrefix}${compact(headline.tokens)}` : null}</span>
             </div>
             <ContextBreakdown breakdown={pressure.breakdown} format={compact} />
             <div className="agent-context-pressure-divider" />
@@ -1023,14 +1024,7 @@ function AgentContextPressureIndicator({
             <button type="button" className="agent-context-pressure" data-tone={tone} data-source={headline.source} aria-label={ariaLabel}>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <circle className="agent-context-pressure-track" cx="12" cy="12" r="9" />
-                    {percent === undefined ? (
-                        <>
-                            <circle className="agent-context-pressure-unknown" cx="12" cy="12" r="9" />
-                            <circle className="agent-context-pressure-idle-dot" cx="12" cy="12" r="1.6" />
-                        </>
-                    ) : (
-                        <circle className="agent-context-pressure-value" cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${progress} 100`} />
-                    )}
+                    {percent === undefined ? <circle className="agent-context-pressure-unknown" cx="12" cy="12" r="9" /> : <circle className="agent-context-pressure-value" cx="12" cy="12" r="9" pathLength="100" strokeDasharray={`${progress} 100`} />}
                 </svg>
                 <span>{percent === undefined ? "—" : `${measured ? "" : "~"}${percent}%`}</span>
             </button>
