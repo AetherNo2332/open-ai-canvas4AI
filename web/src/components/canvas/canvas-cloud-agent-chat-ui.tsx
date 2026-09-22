@@ -40,6 +40,11 @@ export type CloudAgentChatMessage = {
     text: string;
     streaming?: boolean;
     reasoning?: boolean;
+    /**
+     * 本轮最终答复（服务端收尾闸门的结论）。false 表示这是"过程说明"——模型边做边说的正文，
+     * 不是结论：运行还在继续，或者这次收尾被闸门拦下了。缺省按 true 处理（老后端没有这个字段）。
+     */
+    final?: boolean;
     planItems?: CloudAgentPlanItem[];
     question?: CloudAgentUserQuestion;
     meta?: string;
@@ -47,6 +52,31 @@ export type CloudAgentChatMessage = {
     attachments?: CloudAgentChatAttachment[];
     interjection?: "sent" | "undelivered";
 };
+
+/**
+ * 助手正文的收尾语义（工作项 A）：final=false 是过程说明，true / 缺省是结论。
+ * 缺省按"结论"处理是为了兼容升级前的后端事件——那时所有正文都按最终正文展示。
+ */
+export function agentAssistantFinality(payload: Record<string, unknown>): boolean {
+    return payload.final !== false;
+}
+
+/** 过程说明标记：让"模型边做边说的一段"与"本轮结论"在视觉上分开。 */
+export function AgentProgressChip({ theme }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+    return (
+        <span className="mb-1 mr-1 inline-flex items-center rounded-full px-1.5 py-[1px] text-[var(--fs-label)] leading-4" style={{ background: `${theme.node.text}14`, color: theme.node.muted }}>
+            过程说明
+        </span>
+    );
+}
+
+/**
+ * 服务端控制消息（例如运行时的收尾闸门 `completion_blocked`）在时间线里的表示：
+ * 它是服务端说明，不是用户发言，所以走 system 行——绝不能渲染成真人 user 气泡。
+ */
+export function agentControlMessage(id: string, text: string, meta?: string): CloudAgentChatMessage {
+    return { id, role: "system", text, meta };
+}
 
 export type CloudAgentQuickAction = { label: string; prompt: string };
 
@@ -187,6 +217,7 @@ export function AgentChatMessage({
                         {item.interjection === "undelivered" ? "插话未送达" : "插话"}
                     </span>
                 ) : null}
+                {item.final === false ? <AgentProgressChip theme={theme} /> : null}
                 {item.role === "assistant" ? (
                     <AIMessageMarkdown className="text-left" isStreaming={isStreaming}>
                         {item.text}

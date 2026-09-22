@@ -107,6 +107,18 @@ describe("Agent SSE recovery", () => {
         expect(result.events.filter((e) => e.seq > 0).map((e) => e.seq)).toEqual([1, 2]);
     });
 
+    it("marks a replayed streaming draft as a non-final assistant message", async () => {
+        // 断线/刷新后由 run_snapshot.activeMessage 补出来的那条正文是**还在流式生成**的草稿，
+        // 不是本轮最终答复。少了 final=false，前端会按"缺省即结论"把它显示成最终回复
+        // （工作项 A：收尾闸门要求界面上把过程说明与结论分开）。
+        globalThis.fetch = (async () => stream(snapshot("running", { activeMessage: { messageId: "task-1", text: "我先读一下画布。" } }))) as typeof fetch;
+        const result = observe();
+        await result.done;
+        const drafts = result.events.filter((e) => e.type === "assistant_message");
+        expect(drafts).toHaveLength(1);
+        expect(drafts[0].payload).toMatchObject({ messageId: "task-1", text: "我先读一下画布。", final: false });
+    });
+
     it("waits for durable cleanup after a terminal status", async () => {
         let requests = 0;
         globalThis.fetch = (async () => stream(snapshot("cancelled", { cleanupPending: ++requests === 1 }))) as typeof fetch;
