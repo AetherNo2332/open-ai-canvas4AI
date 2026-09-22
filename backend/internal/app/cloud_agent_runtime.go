@@ -98,6 +98,14 @@ type cloudAgentRuntime struct {
 	HistoryIncludesCurrent bool                         `json:"historyIncludesCurrent,omitempty"`
 	// ImageInspectCounts 记录本轮内每张图被查看的次数，用于"同一张图不要反复看"的护栏。
 	ImageInspectCounts map[string]int `json:"imageInspectCounts,omitempty"`
+	// ImageObservations 是本轮的视觉事实账本：节点 ID → 模型为该节点写下的那句话。
+	// 它是图片被裁掉之后模型还能依据什么的唯一来源（裁剪占位符直接引用这里的内容），
+	// 也是"这张图看过、不必再看"的判据 —— 附图次数不是，附图成功也不代表识别成功。
+	ImageObservations map[string]string `json:"imageObservations,omitempty"`
+	// PendingImageObservations 是"刚附图、还等模型写观察"的节点清单；模型下一步的正文
+	// 才会被记为观察。它必须进检查点：一次转移只执行一个工具调用，跨转移会重新解码状态，
+	// 进程内字段必然为空（同 PendingImageInspections）。
+	PendingImageObservations []string `json:"pendingImageObservations,omitempty"`
 	// PendingImageInspections 暂存"本批还有工具结果没入历史"的看图结果，等整批 tool
 	// 结果都入历史后合并成一条 user 图片消息（见 cloudAgentFlushPendingImages）。
 	//
@@ -521,8 +529,9 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	}
 	// 轮内唯一裁剪 = 图片：超出保留轮次的看图结果换成文字回执（正文一律保留）。
 	// 它必须在压缩判定之前跑：图片是最贵的一类内容，先移出再评估 token 压力才有意义。
-	// 不传视觉笔记：上游已确认"正文摘录不等于识别成功"，旧笔记不再参与裁剪。
-	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, nil); changed && run.ID != "" {
+	// 传运行态：裁剪占位符要带上模型为这些节点写下的观察，否则模型会把"系统没接上观察"
+	// 读成"我没看过"，从而反复重看同一批图（真机实测 35 张图 140 次看图）。
+	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, state); changed && run.ID != "" {
 		state.event(run.ID, "context_images_pruned", map[string]any{
 			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
 			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",
@@ -895,6 +904,16 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 					state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text})
 				}
 			}
+			// 上一批附图的观察就写在这一步的正文里：只有逐句点名 nodeId 的句子才入账，
+			// 且只认"带工具调用"的正文（那是看图后的过程说明，不是候选收尾稿）。
+			// 入账后这些节点在裁剪占位符里就能带上模型自己的观察，不必再重看一遍。
+			if recorded := state.cloudAgentRecordImageObservations(result.Text, len(calls) > 0); recorded > 0 && run.ID != "" {
+				state.event(run.ID, "context_transition", map[string]any{
+					"kind": "image_observation", "reason": "vision_ledger",
+					"text":         fmt.Sprintf("视觉账本：记下 %d 张图片的观察", recorded),
+					"observations": recorded, "pendingImages": len(state.PendingImageObservations),
+				})
+			}
 			state.ActiveTaskID = ""
 			if len(calls) > 0 || strings.TrimSpace(result.Text) != "" {
 				state.EmptyOutputNudged = 0
@@ -960,7 +979,7 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	s.recordCloudAgentTokenAnchor(&state)
 	// 轮内唯一裁剪 = 图片：超出保留轮次的看图结果换成文字回执（正文一律保留）。
 	// 它必须在压缩判定之前跑：图片是最贵的一类内容，先移出再评估 token 压力才有意义。
-	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, nil); changed {
+	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, &state); changed {
 		state.event(run.ID, "context_images_pruned", map[string]any{
 			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
 			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",

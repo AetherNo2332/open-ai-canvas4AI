@@ -503,8 +503,8 @@ func TestCloudAgentPruneMergedImageMessageKeepsPerImageNotes(t *testing.T) {
 	const imageIndex = 3
 
 	request := canonicalAgentRequest{Messages: messages}
-	notes := map[string]string{"image-a": "灰底三视图，赛璐璐平涂", "image-b": "蓝天海水，写实厚涂"}
-	changed, pruned := cloudAgentPruneInspectedImages(&request, notes)
+	state := cloudAgentRuntime{ImageObservations: map[string]string{"image-a": "灰底三视图，赛璐璐平涂", "image-b": "蓝天海水，写实厚涂"}}
+	changed, pruned := cloudAgentPruneInspectedImages(&request, &state)
 	if !changed || pruned != 2 {
 		t.Fatalf("both images of the merged message must be pruned: changed=%v pruned=%d", changed, pruned)
 	}
@@ -534,7 +534,7 @@ func TestCloudAgentPruneMergedImageMessageKeepsPerImageNotes(t *testing.T) {
 		t.Fatalf("eviction note still invites another look: %s", noteText)
 	}
 	// 幂等
-	if changed, pruned := cloudAgentPruneInspectedImages(&request, notes); changed || pruned != 0 {
+	if changed, pruned := cloudAgentPruneInspectedImages(&request, &state); changed || pruned != 0 {
 		t.Fatal("pruning a merged message is not idempotent")
 	}
 }
