@@ -5,6 +5,22 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 上游终止原因与截断处置（本轮新增，待真机复验）
+
+实现与证据：`docs/design/cloud-agent-stop-reason.md`；对外合同见 `docs/content/docs/backend/http-api.mdx`
+的"每一步模型调用都记终止原因"条目。
+
+- [ ] 同一条运行里每一步都能在事件流里看到 `model_step_stop`，且 `stopReasonKind` 与上游实际结束方式一致：
+      用带工具调用的步与纯正文收尾步各核一次；拿不到原因的步应为 `unknown`，不能是 `stop`。
+- [ ] 真实触发一次 `length`：把管理端"画布 Agent 单步"的输出上限调到较小值（例如 1024）再让它写一段长正文，
+      应看到 `model_failure_recovered` / `reason=truncated_output_escalated`、`TruncatedStepEscalated=1`，
+      且重试那一步的请求 `thinking=false`、`maxOutputTokens` 为放大后的预算。
+- [ ] 连续两次截断时本轮**不能** `completed`：被截断的正文必须是 `final=false` 的过程说明，
+      并落 `completion_blocked` 且 `blockers` 含 `kind=truncated_output`；终止文案要说"截断"，
+      不能出现"先对账待办清单"那句。
+- [ ] 回归：正常结束（无工具调用的完整正文）仍以 `final=true` 发布并 `completed`；带工具调用的步不受影响。
+- [ ] 计费核对：截断重试多花一次模型调用，确认这一次的用量与费用如实计入，不因重试被吞。
+
 ## 看图图片保留窗口 3 → 12 轮（2026-09-22 夜）
 
 一场 5 张图的会话里落 `context_images_pruned` **67 次**、累计裁剪 **99 张**，而 `compactionPressureRatio`

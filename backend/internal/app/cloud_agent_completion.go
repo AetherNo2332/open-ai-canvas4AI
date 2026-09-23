@@ -36,6 +36,9 @@ const (
 	// cloudAgentCompletionBlockedReason 是终止时的 run_failed.reason。
 	// 复用 failed 状态而不是新增 blocked 终态：不动运行状态机与前端状态映射，原因放在 reason。
 	cloudAgentCompletionBlockedReason = "completion_blocked"
+	// cloudAgentCompletionTruncatedKind 是"候选正文被上游输出上限截断"这条阻塞的 kind。
+	// 它与 pending_plan 一样是服务端能确证的事实：这一步的正文确实不完整。
+	cloudAgentCompletionTruncatedKind = "truncated_output"
 )
 
 // cloudAgentCompletionBlocker 是一条机器可读的阻塞原因（kind）+ 给人看的细节（detail）。
@@ -93,6 +96,36 @@ func cloudAgentEvaluateCompletion(state *cloudAgentRuntime) cloudAgentCompletion
 	return block
 }
 
+// cloudAgentBlockTruncatedCompletion 给候选收尾追加"正文被输出上限截断"这条阻塞。
+// 只在这一步确实被截断时生效；正文完整的常规收尾不受影响。
+func cloudAgentBlockTruncatedCompletion(block cloudAgentCompletionBlock, stopKind string) cloudAgentCompletionBlock {
+	if !cloudAgentStopReasonTruncated(stopKind) {
+		return block
+	}
+	for _, existing := range block.Blockers {
+		if existing.Kind == cloudAgentCompletionTruncatedKind {
+			return block
+		}
+	}
+	block.Blockers = append(block.Blockers, cloudAgentCompletionBlocker{Kind: cloudAgentCompletionTruncatedKind})
+	block.Final = false
+	// 截断与"用户刚插话"无关：这条阻塞要走催办计数，不能被当成软阻塞放行。
+	block.Interjected = false
+	block.Fingerprint = cloudAgentCompletionFingerprint(block.Blockers)
+	block.MaxAttempts = cloudAgentCompletionNudgeLimit
+	return block
+}
+
+// cloudAgentCompletionHasBlocker 判断本次阻塞里是否含指定 kind。
+func cloudAgentCompletionHasBlocker(block cloudAgentCompletionBlock, kind string) bool {
+	for _, blocker := range block.Blockers {
+		if blocker.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // cloudAgentCompletionFingerprint 把阻塞原因压成稳定指纹：kind + 首个未完成项标题。
 // 清单真的推进了（标 done 或移除）指纹就会变，于是"换了个新问题"不会被当成重复错误。
 func cloudAgentCompletionFingerprint(blockers []cloudAgentCompletionBlocker) string {
@@ -141,6 +174,8 @@ func cloudAgentCompletionBlockerText(block cloudAgentCompletionBlock) string {
 			parts = append(parts, "待办清单还有未完成的项（"+blocker.Detail+"）")
 		case "pending_interjection":
 			parts = append(parts, "用户刚发来插话，还没送进上下文")
+		case cloudAgentCompletionTruncatedKind:
+			parts = append(parts, "上一步正文被输出上限截断，不是完整答复")
 		default:
 			parts = append(parts, blocker.Kind)
 		}
@@ -165,6 +200,11 @@ func cloudAgentCompletionExhaustedMessage(block cloudAgentCompletionBlock) strin
 	if block.Attempt == 0 {
 		return fmt.Sprintf("本轮已停止：%s。本轮已经没有下一次模型调用的预算，先把结果交回给你；可以继续对话让它接着做。",
 			cloudAgentCompletionBlockerText(block))
+	}
+	// 截断与待办未对账是两种停止原因，不能共用"已要求先对账清单"这句话。
+	if cloudAgentCompletionHasBlocker(block, cloudAgentCompletionTruncatedKind) {
+		return fmt.Sprintf("本轮已停止：%s。已重试 %d 次仍被截断；可以继续对话让它接着写，或在管理端调高单步输出上限。",
+			cloudAgentCompletionBlockerText(block), block.Attempt)
 	}
 	return fmt.Sprintf("本轮已停止：%s。已连续 %d 次要求先对账待办清单（把做完的标为 done、已取消的从清单移除）再收尾，仍未通过；可以继续对话或重新发起。",
 		cloudAgentCompletionBlockerText(block), block.Attempt)

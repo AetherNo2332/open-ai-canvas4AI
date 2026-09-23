@@ -397,6 +397,7 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 			calls = append(calls, map[string]interface{}{"id": firstNonEmptyString(stringField(item, "call_id"), stringField(item, "id")), "type": "function", "function": map[string]interface{}{"name": stringField(item, "name"), "arguments": stringField(item, "arguments")}})
 		}
 		result["toolCalls"] = calls
+		cloudAgentApplyStopReason(result, cloudAgentResponsesStopReason("", payload))
 		return result, nil
 	}
 	if protocol == "claude-api" {
@@ -421,6 +422,7 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 		if result["text"] == "" && len(calls) == 0 {
 			return nil, errors.New("Claude Agent 接口没有返回内容")
 		}
+		cloudAgentApplyStopReason(result, stringField(payload, "stop_reason"))
 		return result, nil
 	}
 	choices := interfaceSlice(payload["choices"])
@@ -440,6 +442,7 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 		calls = append(calls, map[string]interface{}{"id": stringField(item, "id"), "type": "function", "function": map[string]interface{}{"name": stringField(function, "name"), "arguments": stringField(function, "arguments")}})
 	}
 	result["toolCalls"] = calls
+	cloudAgentApplyStopReason(result, stringField(choice, "finish_reason"))
 	return result, nil
 }
 
@@ -476,13 +479,16 @@ type streamingAgentToolCall struct {
 }
 
 type streamingAgentParser struct {
-	protocol      string
-	buffer        string
-	text          strings.Builder
-	reasoning     strings.Builder
-	toolCalls     map[int]*streamingAgentToolCall
-	toolCallByID  map[string]int
-	completed     map[string]interface{}
+	protocol     string
+	buffer       string
+	text         strings.Builder
+	reasoning    strings.Builder
+	toolCalls    map[int]*streamingAgentToolCall
+	toolCallByID map[string]int
+	completed    map[string]interface{}
+	// stopReason 是上游的终止原因原文（OpenAI finish_reason / Claude stop_reason / Responses status）。
+	// 它决定这一步是"说完了"还是"被截断了"，运行时按它分支，不再靠匹配错误字符串倒推。
+	stopReason    string
 	err           error
 	emit          func(string)
 	emitReasoning func(string)
@@ -563,8 +569,16 @@ func (p *streamingAgentParser) consumeResponsesEvent(eventName string, payload m
 		p.appendText(stringField(payload, "delta"))
 	case "response.reasoning.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
 		p.appendReasoning(stringField(payload, "delta"))
-	case "response.completed":
-		p.completed, _ = payload["response"].(map[string]interface{})
+	case "response.completed", "response.incomplete", "response.failed":
+		response, _ := payload["response"].(map[string]interface{})
+		if eventType == "response.completed" {
+			p.completed = response
+		}
+		// 只有 status=completed 才算"说完了"；incomplete 要再读 incomplete_details.reason
+		// 才能分出"输出到顶"与"内容过滤"。
+		if reason := cloudAgentResponsesStopReason(firstNonEmptyString(stringField(response, "status"), eventType), response); reason != "" {
+			p.stopReason = reason
+		}
 	case "response.output_item.added":
 		item, _ := payload["item"].(map[string]interface{})
 		if stringField(item, "type") == "function_call" {
@@ -611,6 +625,11 @@ func (p *streamingAgentParser) consumeChatCompletionEvent(payload map[string]int
 			}
 			current.arguments += stringField(function, "arguments")
 		}
+		// 终止块才带非空 finish_reason（tool_calls/length/stop/…）；前面的 chunk 一律是 null，
+		// 所以每次非空就覆盖，留到流结束时用的就是最后一个有效值。
+		if reason := strings.TrimSpace(stringField(choice, "finish_reason")); reason != "" {
+			p.stopReason = reason
+		}
 	}
 }
 
@@ -644,6 +663,13 @@ func (p *streamingAgentParser) consumeClaudeEvent(payload map[string]interface{}
 		}
 		if stringField(delta, "type") == "input_json_delta" {
 			p.toolCall(index).arguments += stringField(delta, "partial_json")
+		}
+	case "message_delta":
+		// Claude 的终止原因在 message_delta.stop_reason：
+		// max_tokens / tool_use / end_turn / stop_sequence / refusal / pause_turn。
+		delta, _ := payload["delta"].(map[string]interface{})
+		if reason := strings.TrimSpace(stringField(delta, "stop_reason")); reason != "" {
+			p.stopReason = reason
 		}
 	case "error":
 		errValue, _ := payload["error"].(map[string]interface{})
@@ -708,6 +734,10 @@ func (p *streamingAgentParser) result() (map[string]interface{}, error) {
 		if p.reasoning.Len() > 0 {
 			result["reasoning"] = p.reasoning.String()
 		}
+		// 流式拿到过终止块时以它为准（parseAgentToolPayload 只能看到 completed 快照）。
+		if strings.TrimSpace(p.stopReason) != "" {
+			cloudAgentApplyStopReason(result, p.stopReason)
+		}
 		return result, nil
 	}
 	result := map[string]interface{}{"mode": "text", "text": p.text.String(), "toolCalls": []interface{}{}}
@@ -739,6 +769,7 @@ func (p *streamingAgentParser) result() (map[string]interface{}, error) {
 	if p.text.Len() == 0 && len(calls) == 0 {
 		return nil, errors.New("画布 Agent 接口没有返回内容")
 	}
+	cloudAgentApplyStopReason(result, p.stopReason)
 	return result, nil
 }
 

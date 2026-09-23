@@ -105,6 +105,9 @@ type cloudAgentRuntime struct {
 	EmptyOutputNudged      int                             `json:"emptyOutputNudged,omitempty"`
 	// EmptyOutputEscalated 记录"空输出已经升级重试过几次"（关思考 + 放大输出预算）。
 	EmptyOutputEscalated int `json:"emptyOutputEscalated,omitempty"`
+	// TruncatedStepEscalated 记录"输出被输出上限截断后已经升级重试过几次"。
+	// 与空输出、单步超时同一条阶梯：关思考 + 放大输出预算，重发同一步。
+	TruncatedStepEscalated int `json:"truncatedStepEscalated,omitempty"`
 	// StepTimeoutEscalated 记录"单步墙钟到点后已经关思考重试过几次"。
 	StepTimeoutEscalated int `json:"stepTimeoutEscalated,omitempty"`
 	// ForceThinkingOff 让本步请求强制关闭上游思考：思考模型偶发把整个输出预算花在推理上，
@@ -908,6 +911,10 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			Reasoning string           `json:"reasoning"`
 			ToolCalls []cloudAgentCall `json:"toolCalls"`
 			Legacy    []cloudAgentCall `json:"tool_calls"`
+			// StopReason / StopReasonKind 是上游这一步的终止原因（原文 + 内部词表）。
+			// 旧任务结果没有这两个键 → 空串 → 归一化成 unknown，不改变任何既有分支。
+			StopReason     string `json:"stopReason"`
+			StopReasonKind string `json:"stopReasonKind"`
 		}
 		if task.Status == model.TaskStatusSucceeded {
 			if err := json.Unmarshal([]byte(task.ResultJSON), &result); err != nil {
@@ -951,6 +958,24 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 				return cloudAgentSave(current, &state)
 			}
 			calls := result.ToolCalls
+			// 终止原因先归一化再记账：这一步是"说完了""要调工具"还是"被输出上限截断"，
+			// 从上游的权威字段读，不再靠匹配错误字符串倒推（见 cloud_agent_stop_reason.go）。
+			stepStopKind := strings.TrimSpace(result.StopReasonKind)
+			if stepStopKind == "" {
+				stepStopKind = normalizeCloudAgentStopReason(result.StopReason)
+			}
+			if run.ID != "" {
+				state.event(run.ID, "model_step_stop", cloudAgentStopReasonPayload(
+					state.Step, task.ID, result.StopReason, stepStopKind,
+					len(result.Text), len(result.Reasoning), len(calls)))
+			}
+			// 输出被输出上限截断、且这一步没有可执行的工具调用 = 内容不完整：
+			// 复用空输出那条阶梯（关思考 + 放大输出预算）重发同一步一次，不追加催办消息。
+			if cloudAgentStopReasonTruncated(stepStopKind) && len(calls) == 0 &&
+				state.TruncatedStepEscalated < cloudAgentMaxTruncatedStepEscalations {
+				cloudAgentEscalateTruncatedStep(run.ID, &state)
+				return cloudAgentSave(current, &state)
+			}
 			if result.Reasoning != "" {
 				state.event(run.ID, "reasoning_message", map[string]any{"messageId": task.ID + ":reasoning", "text": truncateRunes(result.Reasoning, 8000)})
 			}
@@ -961,6 +986,9 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			completion := cloudAgentCompletionBlock{}
 			if len(calls) == 0 {
 				completion = cloudAgentEvaluateCompletion(&state)
+				// 被截断的正文不是完整答复：不允许它作为本轮最终答复发布，
+				// 否则用户会拿到一段半句话的结论（见 cloud_agent_completion.go）。
+				completion = cloudAgentBlockTruncatedCompletion(completion, stepStopKind)
 			}
 			if result.Text != "" {
 				state.event(run.ID, "assistant_message", map[string]any{"messageId": task.ID, "text": result.Text, "final": completion.Final})
