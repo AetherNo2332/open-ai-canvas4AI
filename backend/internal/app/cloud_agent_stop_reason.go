@@ -128,6 +128,44 @@ func cloudAgentApplyStopReason(result map[string]interface{}, raw string) {
 // 与空输出、单步超时一样只给一次：每一次都关掉思考并放大输出预算，成功与否下一步就知道。
 const cloudAgentMaxTruncatedStepEscalations = 1
 
+// 步骤处置：截断这一步先定处置，再决定要不要产生任何副作用。
+const (
+	// cloudAgentStepDispositionAccept 表示这一步的结果可以照常使用。
+	cloudAgentStepDispositionAccept = "accept"
+	// cloudAgentStepDispositionRetry 表示这一步的结果整步作废，重发同一步。
+	cloudAgentStepDispositionRetry = "retry"
+	// cloudAgentStepDispositionFail 表示重试额度已用尽，如实终止本轮。
+	cloudAgentStepDispositionFail = "fail"
+)
+
+// cloudAgentStepStopDisposition 判定这一步该怎么处置。
+// 只有"输出被截断（length）"会被判成 retry/fail：截断步的正文与工具调用都可能是半截的，
+// 一律不采纳——正文不发布、工具不执行、观察不入账，避免把半截动作当成已完成的一步。
+func cloudAgentStepStopDisposition(state *cloudAgentRuntime, kind string) string {
+	if !cloudAgentStopReasonTruncated(kind) {
+		return cloudAgentStepDispositionAccept
+	}
+	if state != nil && state.TruncatedStepEscalated < cloudAgentMaxTruncatedStepEscalations {
+		return cloudAgentStepDispositionRetry
+	}
+	return cloudAgentStepDispositionFail
+}
+
+// cloudAgentStopReasonTerminalSeen 判断这次调用是否拿到了"生成已终结"的权威信号。
+// unknown 表示上游没给或给不出来——它不等于"正常结束"，只是当下没有证据。
+func cloudAgentStopReasonTerminalSeen(kind string) bool {
+	return kind != cloudAgentStopKindUnknown
+}
+
+// cloudAgentTruncatedStepReason 是截断重试耗尽后 run_failed 的 reason。
+const cloudAgentTruncatedStepReason = "truncated_output"
+
+// cloudAgentTruncatedStepMessage 是截断重试耗尽时给用户的一句人话：要能直接照着做。
+func cloudAgentTruncatedStepMessage() string {
+	return "本轮已停止：上一步模型输出达到输出上限被截断（已关闭思考并放大输出预算重试过一次仍未完整）。" +
+		"已保留本轮已完成的工作，没有按半截结果执行工具或发布答复；可以继续对话让它接着写，或在管理端调高画布 Agent 单步的输出上限。"
+}
+
 // cloudAgentEscalateTruncatedStep 记录一次"输出被截断"的升级重试：关思考 + 放大输出预算，重发同一步。
 // 只改内存态并落事件，**不开新事务**：调用点本身已经在 MutateCloudAgent 的事务里，
 // 在这里再开一次事务会在 SQLite 上自锁（实测 busy_timeout 5s 后报 database is locked）。
@@ -152,13 +190,15 @@ func cloudAgentEscalateTruncatedStep(runID string, state *cloudAgentRuntime) {
 // cloudAgentStopReasonPayload 组装 step 级终止原因事件载荷。
 // 只放枚举、计数与短标识：事件载荷有 128KiB 上限，且这些读数要能在事件流里直接聚合。
 // 长度一律按字节（textBytes/reasoningBytes），与项目其它读数口径一致。
-func cloudAgentStopReasonPayload(step int, taskID, raw, kind string, textBytes, reasoningBytes, toolCalls int) map[string]any {
+func cloudAgentStopReasonPayload(step int, taskID, raw, kind, disposition string, textBytes, reasoningBytes, toolCalls int) map[string]any {
 	return map[string]any{
 		"step":           step,
 		"taskId":         taskID,
 		"stopReason":     raw,
 		"stopReasonKind": kind,
+		"terminalSeen":   cloudAgentStopReasonTerminalSeen(kind),
 		"truncated":      cloudAgentStopReasonTruncated(kind),
+		"disposition":    disposition,
 		"textBytes":      textBytes,
 		"reasoningBytes": reasoningBytes,
 		"toolCalls":      toolCalls,

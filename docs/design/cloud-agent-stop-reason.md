@@ -68,7 +68,12 @@
 
 每一步模型调用结束后落一条，载荷只放枚举、计数与短标识（事件载荷上限 128 KiB）：
 
-`step`、`taskId`、`stopReason`、`stopReasonKind`、`truncated`(bool)、`textBytes`、`reasoningBytes`、`toolCalls`。
+`step`、`taskId`、`stopReason`、`stopReasonKind`、`terminalSeen`(bool)、`truncated`(bool)、
+`disposition`、`textBytes`、`reasoningBytes`、`toolCalls`。
+
+`disposition` 是这一步的处置结论（`accept` / `retry` / `fail`）：先定处置再产生任何副作用，
+所以事件里记的处置与实际行为必然一致。`terminalSeen=false` 表示上游没给出"生成已终结"的权威信号
+（即 `unknown`）——它不等于"正常结束"，只是当下没有证据。
 
 它回答的正是过去读不出来的问题：这一步是"说完了"、"要调工具"，还是"被截断了"，以及这一步产出
 了多少正文——不需要再靠 8003 字符这种副证据反推（那其实是 `reasoning_message` 事件的展示截断：
@@ -76,16 +81,20 @@
 
 ### 2.4 处置
 
-| 终止原因 | 处置 |
-| --- | --- |
-| `length` 且**无**工具调用 | 记事件 → 关思考 + 放大输出预算重试同一步**一次**（`TruncatedStepEscalated`，与空输出、单步超时同一条阶梯，`model_failure_recovered` / `reason=truncated_output_escalated`）→ 重试仍截断时不再重试 |
-| `length` 且有工具调用 | 只记事件：工具参数是否完整由既有的"工具参数不是完整 JSON"路径处理，不额外重试 |
-| 其它取值 | 只记事件，不改控制流 |
+判据只有一条：**这一步的输出是否被输出上限截断（`length`）**。截断步的正文与工具调用都可能是
+半截的，所以整步作废——与"半截动作不许落到画布上"是同一个取舍。
 
-**截断正文不得作为最终答复**：候选收尾走闸门时，若这一步被截断，追加一条
-`truncated_output` 阻塞（`Final=false`），正文降级为过程说明（`final: false`）并以
-`completion_blocked` 说明原因；同一阻塞按既有催办额度计数，用尽则如实终止，
-终止文案专门说明"被截断"而不是复用"待办未对账"那句（`cloudAgentCompletionExhaustedMessage`）。
+| 情形 | `disposition` | 处置 |
+| --- | --- | --- |
+| `length`，第一次 | `retry` | 整步作废：不写 assistant/canonical、不记观察、**不执行任何已解析出的工具调用**；关思考 + 放大输出预算重发同一步一次（`TruncatedStepEscalated` 上限 1） |
+| `length`，重试后仍截断 | `fail` | 如实终止本轮（`run_failed`，`reason=truncated_output`），保留已完成的工作，不发布半截正文 |
+| 其它任何取值 | `accept` | 只记事件，控制流不变 |
+
+`length` 之外一律不走这条阶梯：`context_limit` 是输入预算问题，`pause` / `refusal` 是上游语义，
+关思考或放大输出预算都治不了它们，也不能被误当成截断掩盖过去。
+
+**兜底不放行截断正文**：收尾闸门另有一条 `truncated_output` 阻塞（`Final=false`）。正常流程下截断
+在处置阶段就被拦住了，这条是二次防护——即使将来有人调整处置顺序，半截正文仍进不了最终答复。
 `finish_run` 路径不受影响：它的 summary 来自已解析成功的工具参数，参数完整即内容完整。
 
 ## 3. 验收
@@ -97,8 +106,10 @@
 - Responses 的 `incomplete_details.reason` 区分"输出到顶"与"内容过滤"；
 - 流式解析：OpenAI / Claude / Responses 三协议的终止块都能落到 `stopReasonKind`；
 - 非流式解析：三条分支同样能落到 `stopReasonKind`；
-- 端到端：截断 → `TruncatedStepEscalated=1` + 关思考 + `model_step_stop` 事件 → 重试请求确实关思考
-  → 再次截断时 `status != completed`、正文 `final=false`、存在 `truncated_output` 阻塞；
+- 端到端：截断 → `TruncatedStepEscalated=1` + 关思考 + `model_step_stop`（`disposition=retry`）
+  → 重试请求确实关思考 → 再次截断时本轮 `failed`（`reason=truncated_output`）、`disposition=fail`、
+  终止说明含"截断"且不含"对账"；
+- 截断步**不执行工具**：同一批解析出的工具调用被整步作废（`state.Calls` 为空、无 `tool_completed`）；
 - 回归：正常结束（`stop`）仍然 `completed` 且 `final=true`。
 
 ## 4. 回滚
@@ -108,11 +119,18 @@
 
 ## 5. 未做（后续候选，按证据排序）
 
-1. **看图归因字段**：`canvas_inspect_image` 的调用没有"首看 / 同图重复回执 / 账本复用 / 预算拒绝"
+1. **"拿不到终止信号"仍按可用处理**（评审提出，本轮未采纳）：严格口径是"已支持协议若没有终结信号，
+   就不许把正文当最终答复"，理由是"没有证据"不等于"说完了"。本轮只把它记成
+   `terminalSeen=false` + `stopReasonKind=unknown`，不改变控制流——因为本地取证（`api_call_logs.response_body`）
+   里出现过"末块被 128KiB 取证上限切掉"导致 finish_reason 全为 null 的样本，**无法区分"上游没给"与
+   "我们没记到"**；在 dev 上用固定响应样本量出覆盖面之前就硬拦，可能把部分 OpenAI 兼容上游的正常运行
+   集体判死。等有覆盖率数据后再决定是否升级为阻断。
+2. **看图归因字段**：`canvas_inspect_image` 的调用没有"首看 / 同图重复回执 / 账本复用 / 预算拒绝"
    的落点，一次 140 次看图的运行无法从事件流归因；裁剪事件只报数量，不报被裁的 nodeId 与字节。
-2. **两套 token 估算器并存**：压力/压缩用非 ASCII ×1，请求硬闸与正文卸载用 ×1.5，CJK 场景差 1.5 倍。
-3. **计划推进 vs 心跳不可分**：等值 `plan_update` 仍写 `plan_updated` + `tool_completed`，
+   评审同时指出应把"工具回执"与"实际送达模型的图片集合"分成两个事件（工具给了图 ≠ 模型收到了图）。
+3. **两套 token 估算器并存**：压力/压缩用非 ASCII ×1，请求硬闸与正文卸载用 ×1.5，CJK 场景差 1.5 倍。
+4. **计划推进 vs 心跳不可分**：等值 `plan_update` 仍写 `plan_updated` + `tool_completed`，
    外部看不出"在推进"还是"在重复"。
-4. **`ForceThinkingOff` / `BoostStepOutputBudget` 一旦置位全轮无复位路径**：一次空输出或截断后，
+5. **`ForceThinkingOff` / `BoostStepOutputBudget` 一旦置位全轮无复位路径**：一次空输出或截断后，
    本轮余下所有步骤都关着思考。
-5. **工具失败闭环**：失败指纹有三套口径，且没有"后续是否解决"的关联字段。
+6. **工具失败闭环**：失败指纹有三套口径，且没有"后续是否解决"的关联字段。

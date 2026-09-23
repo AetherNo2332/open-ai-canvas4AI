@@ -259,6 +259,13 @@ func TestCloudAgentTruncatedOutputEscalatesThenNeverPublishes(t *testing.T) {
 	if value, ok := agentEventValue(state, "model_step_stop", "truncated"); !ok || value != true {
 		t.Fatalf("事件里的截断标记 = %v（ok=%v）", value, ok)
 	}
+	if value, ok := agentEventValue(state, "model_step_stop", "disposition"); !ok || value != cloudAgentStepDispositionRetry {
+		t.Fatalf("事件里的处置 = %v（ok=%v）", value, ok)
+	}
+	// 截断步整步作废：正文不得进入历史，也不得发布任何最终答复。
+	if value, ok := agentEventValue(state, "assistant_message", "final"); ok && value == true {
+		t.Fatalf("截断正文被当成了最终答复: %v", value)
+	}
 
 	// 重试那一步：必须真的关掉思考。
 	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
@@ -276,7 +283,7 @@ func TestCloudAgentTruncatedOutputEscalatesThenNeverPublishes(t *testing.T) {
 		t.Fatalf("重试请求没有关思考: %+v", options)
 	}
 
-	// 再截断一次：重试额度用尽，正文只能以过程说明发布。
+	// 再截断一次：重试额度用尽 → 如实终止，绝不把半截正文当答复发布。
 	setStepResult(t, db, retried.ActiveTaskID, map[string]any{
 		"text": "又是半句话", "stopReason": "length", "stopReasonKind": cloudAgentStopKindLength,
 	})
@@ -284,17 +291,50 @@ func TestCloudAgentTruncatedOutputEscalatesThenNeverPublishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	run, state = agentInterjectionState(t, s, root.ID)
-	if run.Status == "completed" {
-		t.Fatal("被截断的正文被当成了本轮最终答复")
+	if run.Status != "failed" {
+		t.Fatalf("重试仍截断应如实终止：status=%s（%s）", run.Status, run.FailureMessage)
+	}
+	if !strings.Contains(run.FailureMessage, "截断") || strings.Contains(run.FailureMessage, "对账") {
+		t.Fatalf("终止说明不对: %s", run.FailureMessage)
 	}
 	if state.TruncatedStepEscalated != 1 {
 		t.Fatalf("截断重试必须只有一次，实际 %d", state.TruncatedStepEscalated)
 	}
-	if value, ok := agentEventValue(state, "assistant_message", "final"); !ok || value != false {
-		t.Fatalf("截断正文必须以过程说明发布: final=%v（ok=%v）", value, ok)
+	if value, ok := agentEventValue(state, "model_step_stop", "disposition"); !ok || value != cloudAgentStepDispositionFail {
+		t.Fatalf("事件里的处置 = %v（ok=%v）", value, ok)
 	}
-	if !agentHasTruncatedCompletionBlocker(state) {
-		t.Fatalf("缺少 %s 阻塞原因: %+v", cloudAgentCompletionTruncatedKind, state.Events)
+}
+
+// 截断步即使解析出了工具调用也不执行：半截动作不许落到画布上。
+func TestCloudAgentTruncatedStepDoesNotExecuteToolCalls(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	setStepResult(t, db, root.ID, map[string]any{
+		"text": "先看一下", "stopReason": "length", "stopReasonKind": cloudAgentStopKindLength,
+		"toolCalls": []map[string]any{{
+			"id": "call-1", "type": "function",
+			"function": map[string]any{"name": "canvas_get_state", "arguments": "{}"},
+		}},
+	})
+	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+		t.Fatal(err)
+	}
+	run, state := agentInterjectionState(t, s, root.ID)
+	if run.Status != "running" {
+		t.Fatalf("截断步应先重试：status=%s（%s）", run.Status, run.FailureMessage)
+	}
+	if value, ok := agentEventValue(state, "model_step_stop", "disposition"); !ok || value != cloudAgentStepDispositionRetry {
+		t.Fatalf("带工具调用的截断步处置 = %v（ok=%v）", value, ok)
+	}
+	if value, ok := agentEventValue(state, "model_step_stop", "toolCalls"); !ok || value != float64(1) {
+		t.Fatalf("事件里的工具调用数 = %v（ok=%v）", value, ok)
+	}
+	if state.CallIndex != 0 || len(state.Calls) != 0 {
+		t.Fatalf("截断步的工具调用不得进入执行队列: calls=%d index=%d", len(state.Calls), state.CallIndex)
+	}
+	for _, event := range state.Events {
+		if event.Type == "tool_completed" {
+			t.Fatalf("截断步执行了工具: %+v", event.Payload)
+		}
 	}
 }
 
@@ -317,20 +357,4 @@ func TestCloudAgentNormalStopStillCompletes(t *testing.T) {
 	if value, ok := agentEventValue(state, "assistant_message", "final"); !ok || value != true {
 		t.Fatalf("最终答复应被发布: final=%v（ok=%v）", value, ok)
 	}
-}
-
-// agentHasTruncatedCompletionBlocker 在事件窗口里找"正文被截断"这条收尾阻塞。
-func agentHasTruncatedCompletionBlocker(state cloudAgentRuntime) bool {
-	for _, event := range state.Events {
-		if event.Type != "completion_blocked" {
-			continue
-		}
-		blockers, _ := event.Payload["blockers"].([]any)
-		for _, value := range blockers {
-			if item, ok := value.(map[string]any); ok && item["kind"] == cloudAgentCompletionTruncatedKind {
-				return true
-			}
-		}
-	}
-	return false
 }

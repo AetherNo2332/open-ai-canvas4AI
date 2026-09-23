@@ -964,16 +964,29 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			if stepStopKind == "" {
 				stepStopKind = normalizeCloudAgentStopReason(result.StopReason)
 			}
+			// 处置先定，再决定要不要产生副作用：截断步的正文与工具调用都可能是半截的，
+			// 因此它不写 assistant/canonical、不记观察，也不执行任何已解析出的工具调用。
+			stepDisposition := cloudAgentStepStopDisposition(&state, stepStopKind)
 			if run.ID != "" {
 				state.event(run.ID, "model_step_stop", cloudAgentStopReasonPayload(
-					state.Step, task.ID, result.StopReason, stepStopKind,
+					state.Step, task.ID, result.StopReason, stepStopKind, stepDisposition,
 					len(result.Text), len(result.Reasoning), len(calls)))
 			}
-			// 输出被输出上限截断、且这一步没有可执行的工具调用 = 内容不完整：
-			// 复用空输出那条阶梯（关思考 + 放大输出预算）重发同一步一次，不追加催办消息。
-			if cloudAgentStopReasonTruncated(stepStopKind) && len(calls) == 0 &&
-				state.TruncatedStepEscalated < cloudAgentMaxTruncatedStepEscalations {
+			if stepDisposition == cloudAgentStepDispositionRetry {
+				// 用空输出那条阶梯（关思考 + 放大输出预算）重发同一步一次，不追加催办消息。
 				cloudAgentEscalateTruncatedStep(run.ID, &state)
+				return cloudAgentSave(current, &state)
+			}
+			if stepDisposition == cloudAgentStepDispositionFail {
+				// 重试仍被截断：不执行半截的工具调用、不发布半截正文，如实终止本轮。
+				message := cloudAgentTruncatedStepMessage()
+				current.Status = "failed"
+				current.FailureMessage = truncateRunes(message, 1000)
+				cloudAgentDropInterjections(run.ID, "本轮已结束："+truncateRunes(message, 120), &state)
+				state.event(run.ID, "run_failed", map[string]any{
+					"text": message, "reason": cloudAgentTruncatedStepReason,
+					"stopReason": result.StopReason, "stopReasonKind": stepStopKind,
+				})
 				return cloudAgentSave(current, &state)
 			}
 			if result.Reasoning != "" {

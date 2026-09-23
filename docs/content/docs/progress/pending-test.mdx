@@ -15,9 +15,11 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] 真实触发一次 `length`：把管理端"画布 Agent 单步"的输出上限调到较小值（例如 1024）再让它写一段长正文，
       应看到 `model_failure_recovered` / `reason=truncated_output_escalated`、`TruncatedStepEscalated=1`，
       且重试那一步的请求 `thinking=false`、`maxOutputTokens` 为放大后的预算。
-- [ ] 连续两次截断时本轮**不能** `completed`：被截断的正文必须是 `final=false` 的过程说明，
-      并落 `completion_blocked` 且 `blockers` 含 `kind=truncated_output`；终止文案要说"截断"，
-      不能出现"先对账待办清单"那句。
+- [ ] 连续两次截断时本轮**不能** `completed`，而是以 `run_failed`（`reason=truncated_output`）如实终止：
+      `model_step_stop` 的 `disposition` 依次为 `retry` → `fail`；半截正文不得进入历史也不得作为答复发布；
+      终止说明要说"截断"，不能出现"先对账待办清单"那句。
+- [ ] 截断步即使解析出了工具调用也不执行：事件里 `toolCalls` 有计数，但不应出现对应的 `tool_completed`，
+      画布上也不应有半截改动。
 - [ ] 回归：正常结束（无工具调用的完整正文）仍以 `final=true` 发布并 `completed`；带工具调用的步不受影响。
 - [ ] 计费核对：截断重试多花一次模型调用，确认这一次的用量与费用如实计入，不因重试被吞。
 
