@@ -1,8 +1,13 @@
 package app
 
 import (
+	"encoding/json"
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 // TestCloudAgentVisionObservationLedger 覆盖 D2/D3：模型为某个节点写下的观察要入账，
@@ -321,5 +326,131 @@ func TestCloudAgentDescribeImageBatch(t *testing.T) {
 	cloudAgentDescribeImageBatch(&cloudAgentRuntime{}, empty)
 	if _, exists := empty["batchImages"]; exists {
 		t.Fatal("a batch without attachments must not claim a delivery list")
+	}
+}
+
+// TestCloudAgentImageInspectionBudgetScalesWithCanvas 覆盖动态预算：
+// 额度必须跟着画布上的图片节点数走，否则大画布一轮必然做不完。
+func TestCloudAgentImageInspectionBudgetScalesWithCanvas(t *testing.T) {
+	for _, tc := range []struct {
+		imageNodes, want int
+	}{
+		{0, cloudAgentMinImageInspectionCallsPerRun},
+		{1, cloudAgentMinImageInspectionCallsPerRun},
+		{5, cloudAgentMinImageInspectionCallsPerRun},
+		{35, 35 + cloudAgentImageInspectionRetryAllowance},
+		{120, cloudAgentMaxImageInspectionCallsPerRun},
+	} {
+		if got := cloudAgentImageInspectionBudget(tc.imageNodes); got != tc.want {
+			t.Errorf("budget(%d) = %d, want %d", tc.imageNodes, got, tc.want)
+		}
+	}
+	if cloudAgentImageInspectionBudget(-3) != cloudAgentMinImageInspectionCallsPerRun {
+		t.Fatal("negative node count must fall back to the minimum budget")
+	}
+	// 35 张图的画布必须能"每张至少看一次"，这是本次改动的核心诉求。
+	if cloudAgentImageInspectionBudget(35) < 35 {
+		t.Fatal("budget must cover every image node at least once")
+	}
+}
+
+// TestCloudAgentInspectedImageNodeCount 覆盖节点计数：只数显式 image 类型。
+func TestCloudAgentInspectedImageNodeCount(t *testing.T) {
+	doc := map[string]any{"nodes": []any{
+		map[string]any{"id": "a", "type": "image"},
+		map[string]any{"id": "b", "type": "text"},
+		map[string]any{"id": "c", "type": "image"},
+		map[string]any{"id": "d"},
+	}}
+	if got := cloudAgentInspectedImageNodeCount(doc); got != 2 {
+		t.Fatalf("image node count = %d, want 2", got)
+	}
+	if got := cloudAgentInspectedImageNodeCount(nil); got != 0 {
+		t.Fatalf("nil document must count zero, got %d", got)
+	}
+}
+
+// TestCloudAgentVisionBudgetFollowsCanvasImageCount 覆盖端到端口径：
+// 同一份运行时状态，在只有 2 个图片节点的画布上会用光 16 次额度，
+// 而在 30 个图片节点的画布上仍有余额 —— 证明额度确实跟着画布规模走。
+func TestCloudAgentVisionBudgetFollowsCanvasImageCount(t *testing.T) {
+	s, db, _ := cloudAgentVisionFixture(t)
+	var project model.CanvasProject
+	if err := db.Where("id = ?", "agent-canvas").First(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(project.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 在 fixture 自己的画布上追加图片节点：保留 cat/hero 的资源引用，只把规模撑到 32 张。
+	nodes := creationMaps(doc["nodes"])
+	nodes = append(nodes, map[string]any{"id": "cat", "type": "image", "title": "cat"}, map[string]any{"id": "hero", "type": "image", "title": "hero"})
+	for index := 0; index < 30; index++ {
+		nodes = append(nodes, map[string]any{"id": "wide-" + strconv.Itoa(index), "type": "image", "title": "wide"})
+	}
+	doc["nodes"] = nodes
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "agent-canvas").Update("payload_json", string(raw)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	state := cloudAgentRuntime{Request: agentTestRequest(), ImageInspectCalls: cloudAgentMinImageInspectionCallsPerRun}
+	state.Request.VisionEnabled = true
+	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-cat", map[string]any{"nodeId": "cat"})
+	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call); err != nil {
+		t.Fatalf("32-node canvas must still have budget left: %v", err)
+	}
+
+	limit := cloudAgentImageInspectionBudget(cloudAgentInspectedImageNodeCount(doc))
+	t.Logf("canvas image nodes = %d, dynamic budget = %d", cloudAgentInspectedImageNodeCount(doc), limit)
+	if limit <= cloudAgentMinImageInspectionCallsPerRun {
+		t.Fatalf("32-node canvas must raise the budget above the minimum, got %d", limit)
+	}
+	state.ImageInspectCalls = limit
+	_, err = s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call)
+	if !errors.Is(err, errCloudAgentImageInspectionBudget) {
+		t.Fatalf("expected budget exhaustion at the dynamic limit, got %v", err)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(limit)) {
+		t.Fatalf("budget error must report the dynamic limit %d, got %v", limit, err)
+	}
+}
+
+// TestCloudAgentVisionReusesConfirmedObservationWithoutBudget 覆盖账本优先：
+// 已有可靠观察的图片直接复用，既不附图、不判读循环，也不消耗额度。
+func TestCloudAgentVisionReusesConfirmedObservationWithoutBudget(t *testing.T) {
+	s, _, _ := cloudAgentVisionFixture(t)
+	state := cloudAgentRuntime{Request: agentTestRequest()}
+	state.Request.VisionEnabled = true
+	state.markCanvasImageAttached("cat", "")
+	if recorded := state.cloudAgentRecordImageObservations("cat：白色短毛猫坐在窗台上。", true); recorded != 1 {
+		t.Fatalf("observation was not recorded, recorded=%d", recorded)
+	}
+	before := state.ImageInspectCalls
+	// 即便模型传 refresh=true，也应当只回执文字并复用观察，而不是重发图片或终止本轮。
+	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-cat", map[string]any{"nodeId": "cat", "refresh": true})
+	result, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection, ok := result.(cloudAgentImageInspection)
+	if !ok {
+		t.Fatalf("unexpected inspection result %T", result)
+	}
+	if strings.TrimSpace(inspection.ImageURL) != "" {
+		t.Fatal("a confirmed observation must not re-attach the image")
+	}
+	if inspection.Receipt["reuseObservation"] != true {
+		t.Fatalf("receipt must mark observation reuse: %+v", inspection.Receipt)
+	}
+	if !strings.Contains(stringValue(inspection.Receipt["note"]), "白色短毛猫") {
+		t.Fatalf("receipt must quote the recorded observation: %+v", inspection.Receipt)
+	}
+	if state.ImageInspectCalls != before {
+		t.Fatalf("observation reuse must not consume the inspection budget: %d -> %d", before, state.ImageInspectCalls)
 	}
 }

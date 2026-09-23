@@ -389,7 +389,8 @@ func TestCloudAgentVisionBlocksSameResourceInSameCanvasRevision(t *testing.T) {
 
 func TestCloudAgentVisionHasPerRunInspectionBudget(t *testing.T) {
 	s, _, _ := cloudAgentVisionFixture(t)
-	state := cloudAgentRuntime{Request: agentTestRequest(), ImageInspectCalls: cloudAgentMaxImageInspectionCallsPerRun - 1}
+	budget := cloudAgentImageInspectionBudget(1)
+	state := cloudAgentRuntime{Request: agentTestRequest(), ImageInspectCalls: budget - 1}
 	state.Request.VisionEnabled = true
 	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-last", map[string]any{"nodeId": "cat", "refresh": true})
 	result, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call)
@@ -397,7 +398,7 @@ func TestCloudAgentVisionHasPerRunInspectionBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.markCanvasImageInspection("cat", strings.TrimSpace(result.(cloudAgentImageInspection).ImageURL) != "", "")
-	if got := state.ImageInspectCalls; got != cloudAgentMaxImageInspectionCallsPerRun {
+	if got := state.ImageInspectCalls; got != budget {
 		t.Fatalf("expected budget to be consumed at the boundary, got %d", got)
 	}
 
