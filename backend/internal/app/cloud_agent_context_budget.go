@@ -39,6 +39,9 @@ type cloudAgentContextBudget struct {
 	CompactAtTokens   int
 	Source            string
 	// Configured 为 false 表示没有解析到任何模型声明的窗口，这份预算是兜底默认值。
+	// 它与上游同名字段的语义一致（上游写得更细）：false 说明上面几个数都来自兜底默认值，
+	// 压力读数据此决定要不要给出窗口占用率——拿默认窗口冒充真实能力（例如给未声明窗口的
+	// 模型算一个"占满 80%"）会误导排查。
 	Configured bool
 }
 
@@ -101,6 +104,9 @@ func cloudAgentContextBudgetFor(contextWindow, maxOutput int, source string) clo
 // cloudAgentContextBudgetForRequest 解析"下一次文本调用真正会用的预算"。
 // 解析不到真实能力时返回兜底默认预算（Configured=false），调用方据此退回字节兜底。
 func (s *Service) cloudAgentContextBudgetForRequest(req CloudAgentRequest) cloudAgentContextBudget {
+	// 保留我方的入口（内部走 cloudAgentResolvedContextBudget）：它多一条"逻辑模型按所有可用
+	// text 路由取窗口/输出交集"的路径与 IncludingDisabled 的渠道模型解析；上游这里是内联版，
+	// 只覆盖渠道模型那一支，取能力字段也没算 effectiveOutputReserve，合并后按我方为准。
 	if budget, ok := s.cloudAgentResolvedContextBudget(req); ok {
 		return budget
 	}

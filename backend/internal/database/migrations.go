@@ -11,14 +11,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// CurrentSchemaVersion 是合并后的期望版本：上游 v1.5.7 段占用 24–31，之后 v32 用给
-// channel_model_tags、v33 用给 oauth_state_accepted_terms、v34 用给 task_media_recovery，
-// 因此我们的 cloud_agent_run_events / cloud_agent_transcript 继续让位到 35 / 36（方案 A）。
-const CurrentSchemaVersion int64 = 36
+// CurrentSchemaVersion 是合并后的期望版本：上游段占用 24–34（channel_model_label … task_media_recovery），
+// 上游随后又把 v35 用给 auth_notifications（认证通知结构），因此我们的
+// cloud_agent_run_events / cloud_agent_transcript 继续让位到 36 / 37（方案 A）。
+const CurrentSchemaVersion int64 = 37
 
 // PreviousUpstreamSchemaVersion 是上游自己跑到的最高版本；我们的两条迁移让位到它之后。
 // 仅供测试与文档引用（搬迁目标版本 = PreviousUpstreamSchemaVersion + 1 / +2）。
-const PreviousUpstreamSchemaVersion int64 = 34
+const PreviousUpstreamSchemaVersion int64 = 35
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -29,6 +29,7 @@ const resourcePlaybackChecksum = "sha256:resource-playback-v6-20260902"
 const assetLibraryFoldersChecksum = "sha256:asset-library-folders-v6-20260902"
 const logicalModelActiveCodeChecksum = "sha256:logical-model-active-code-v8-20260905"
 const creationRuntimeChecksum = "sha256:creation-runtime-v10-20260909"
+const authNotificationsChecksum = "sha256:auth-notifications-v35-20260924"
 
 const postgresSchemaMigrationLockID int64 = 73123910420260830
 
@@ -124,9 +125,10 @@ var schemaMigrations = []migration{
 		}
 		return nil
 	}},
-	// 我们的两条迁移让位到上游段之后（方案 A）：上游已占用 24–34，我们保持相对顺序放到 35 / 36。
-	{version: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
-	{version: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	// 上游把 v35 用给 auth_notifications 之后，我们的两条迁移继续让位到 36 / 37。
+	{version: 35, name: "auth_notifications", checksum: authNotificationsChecksum, apply: migrateSchemaV35},
+	{version: 36, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{version: 37, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
 }
 
 func migrateChannelModelTags(tx *gorm.DB) error {
@@ -196,7 +198,7 @@ func migrateChannelModelLabel(tx *gorm.DB) error {
 // validateMigrationRecord 会以「数据库迁移 24 名称不一致：记录为 cloud_agent_run_events，
 // 程序期望 channel_model_label」拒绝启动。
 //
-// 处置（决定 2 + 3）：两条迁移在上游段之后重新登记为 v34/v35 的 **no-op** 迁移
+// 处置（决定 2 + 3）：两条迁移在上游段之后重新登记为 v36/v37 的 **no-op** 迁移
 // （表与数据保留、不再读写），并把库里两条记录的旧版本号改写过来。
 // name 与 checksum 字符串保持原值，搬迁后 validateMigrationRecord 直接通过。
 //
@@ -220,25 +222,28 @@ type legacyCloudAgentMigrationRelocation struct {
 // 同一个 from 上可能承载不同记录（v33 既可能是合并线的 transcript，也可能是上一版 dev 的
 // run_events），因此匹配必须同时比对 name。
 var legacyCloudAgentMigrationRelocations = []legacyCloudAgentMigrationRelocation{
-	// 上一版 dev 库（schema 35：34/35）—— 跑过 PR #41–#44 那版 dev 的库就是这一形态。
-	{from: 35, to: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 34, to: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
-	// 上一版 dev 库（33/34）—— 跑过 PR #37–#40 那版 dev 的库。
-	{from: 34, to: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 33, to: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 当前 dev 库（35/36）—— 跑过"已对齐上游 v1.5.7"那版 dev 的库就是这一形态。
+	{from: 36, to: 37, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 35, to: 36, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 再上一版 dev 库（34/35）—— 跑过 PR #41–#44 那版 dev 的库。
+	{from: 35, to: 37, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 34, to: 36, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 更早一版 dev 库（33/34）—— 跑过 PR #37–#40 那版 dev 的库。
+	{from: 34, to: 37, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 33, to: 36, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	// 上一版合并线库（32/33）。
-	{from: 33, to: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 32, to: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{from: 33, to: 37, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 32, to: 36, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	// 我们 v25 库（24/25）。
-	{from: 25, to: 36, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 24, to: 35, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{from: 25, to: 37, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 24, to: 36, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 }
 
 // noopCloudAgentMigration 是让位后的空迁移：表与数据保留（不做 DROP），但代码不再读写它们，
 // 因此这里既不建表也不改结构。全新库不会再创建这两张表；已有库保持原样。
 func noopCloudAgentMigration(*gorm.DB) error { return nil }
 
-// relocateLegacyCloudAgentMigrations 把库里遗留的让位记录改写到当前登记版本（35/36）。
+// relocateLegacyCloudAgentMigrations 把库里遗留的让位记录改写到当前登记版本（36/37）。
 //
 // 要求：幂等、事务内、对五种起点都能跑通 ——
 //   - 全新库：schema_migrations 还不存在 / 为空 → 直接返回；
@@ -347,7 +352,7 @@ func migrateChannelPresentation(tx *gorm.DB) error {
 // migrationsForDatabase 返回本库实际要走的迁移 plan。
 //
 // 进任何校验之前先做一次旧行搬迁：库里的 v24/v25 若还是我们的
-// cloud_agent_run_events / cloud_agent_transcript，要先改写到 v35/v36，
+// cloud_agent_run_events / cloud_agent_transcript，要先改写到 v36/v37，
 // 否则 validateMigrationRecord 会拿上游 v24（channel_model_label）跟我们库里的记录比对并拒绝启动。
 func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 	if err := relocateLegacyCloudAgentMigrations(db); err != nil {

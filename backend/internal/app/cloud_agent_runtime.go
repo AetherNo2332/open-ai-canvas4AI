@@ -191,8 +191,16 @@ type cloudAgentRuntime struct {
 	// cloud_agent_event_records，内存只保留最近一窗供摘要、记忆提取与卡死判定使用，
 	// 运行详情仍按 seq 分页读表。
 	EventSeqBase int `json:"-"`
-	// ContextWindowKnown 记录本轮是否已经看到过"模型窗口已确认"的读数：从未知变为已知时
-	// 要落一条 context_transition（界面据此标"模型窗口已识别"，而不是把口径切换画成上下文骤降）。
+	// LastStepSignature / Model / ChannelID 记录"发出去的那份信封"的口径（上游 #601 新增）：
+	// 锚点作废要按实际信封比对，不能拿运行态副本替代；LastStepWindowTokens 是定锚时的窗口，
+	// 窗口变了同一个 token 数含义就不同。
+	LastStepSignature    string `json:"lastStepSignature,omitempty"`
+	LastStepModel        string `json:"lastStepModel,omitempty"`
+	LastStepChannelID    string `json:"lastStepChannelId,omitempty"`
+	LastStepWindowTokens int    `json:"lastStepWindowTokens,omitempty"`
+	// ContextWindowKnown 记录本轮是否已经看到过"模型窗口已确认"的读数：从"未确认"变为
+	// "已确认"时要落一条 context_transition，消费方据此标"模型窗口已识别"，
+	// 而不是把口径切换画成上下文骤降。
 	ContextWindowKnown bool `json:"contextWindowKnown,omitempty"`
 	// CanvasBatchHashes 记录本批（同一个助手消息内的多次工具调用）已经消费与产出的画布版本：
 	// 首元素是首个写入被校验时看到的版本，末元素是最近一次写入产出的版本。模型是在同一次读取的
@@ -218,6 +226,7 @@ type cloudAgentTransientReference struct {
 func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgentState) error {
 	var input struct {
 		TextHistory []providerTextMessage `json:"textHistory"`
+		Config      map[string]any        `json:"config"`
 		Requests    struct {
 			Canonical canonicalAgentRequest `json:"canonical"`
 		} `json:"agentRequests"`
@@ -243,18 +252,27 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "skillIds": skillIDs, "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
 	}
 	pressure := s.cloudAgentContextPressure(input.Requests.Canonical, initial.Request.Prompt, initial.Request)
-	// 第一步的模型调用就是根任务本身（不经过 enqueueCloudAgentTask）：
-	// 在这里登记任务 id 与本次请求的本地计价，它回来时才能与上游实测配成锚点。
+	// 第一步的模型调用就是根任务本身（不经过 enqueueCloudAgentTask）：在这里登记任务 id
+	// 与本次请求的本地计价，它回来时才能与上游实测配成锚点。根任务的操作名是 cloud_agent，
+	// 但它就是第一步的模型调用：按"步骤"口径登记，否则回来配锚点时会被操作名守卫挡掉（实测踩过）。
 	state.LastStepTaskID = task.ID
-	// 根任务的操作名是 cloud_agent，但它就是第一步的模型调用：按"步骤"口径登记，
-	// 否则回来配锚点时会被操作名守卫挡掉（实测踩过）。
 	state.LastStepOperation = cloudAgentStepOperation
 	state.LastStepEstimate = pressure.EstimatedInputTokens
 	state.LastStepSourceBytes = pressure.SourceBytes
+	// 记下发出去这份信封的口径与窗口（上游 #601 的锚点治理）：模型/线路取自任务 input，
+	// 窗口只在真的解析到能力时填，未知就留 0（不拿兜底默认窗口冒充真实能力）。
+	state.LastStepModel = stringValue(input.Config["model"])
+	state.LastStepChannelID = stringValue(input.Config["channelId"])
+	state.LastStepSignature = cloudAgentRequestSignature(&state, input.Requests.Canonical, state.LastStepChannelID, state.LastStepModel)
+	if pressure.ModelLimitConfigured {
+		state.LastStepWindowTokens = pressure.ContextWindowTokens
+	}
 	// 第一步的模型调用就是根任务本身，requestId 就是它；窗口在这里是"起始状态"而不是
 	// "刚刚识别"，因此只播种标记、不落 window_resolved 过渡（否则每轮开头都会报一次"已识别"）。
 	state.ContextWindowKnown = pressure.ModelLimitConfigured
-	firstPressure := cloudAgentContextPressurePayload(pressure, &state)
+	// 占用分布对着"实际要发出去的那份信封"算（上游 #601 的 actual 参数）：准入改写之后的
+	// canonical 才是真实请求，不能拿内存里的运行态副本顶替。
+	firstPressure := cloudAgentContextPressurePayload(pressure, &state, input.Requests.Canonical)
 	firstPressure["requestId"] = task.ID
 	state.event(task.ID, "context_pressure", firstPressure)
 	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
@@ -1138,8 +1156,11 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		return s.failCloudAgent(run, &state, fmt.Sprintf("达到 %d 次模型调用上限，本轮已停止", stepLimit))
 	}
 	cloudAgentDrainInterjections(run.ID, &state)
-	// 上一步的模型调用已经回来，先用它的上游实测用量更新压力锚点，再发下一步。
-	s.recordCloudAgentTokenAnchor(&state)
+	// 上一步的模型调用已经回来，先用它的上游实测用量更新压力锚点，再发下一步：
+	// 下一步的读数与后面的正文裁剪判定都要用到这份锚点。
+	// 按 userId 限定查日志（上游 #601 的口径）：只认"本用户、成功、text 能力"的那条调用，
+	// 否则别人的或失败的同 taskId 记录会把压力锚到错误的信封上。
+	s.recordCloudAgentTokenAnchor(run.UserID, &state)
 	// 轮内唯一裁剪 = 图片：超出保留轮次的看图结果换成文字回执（正文一律保留）。
 	// 它必须在压缩判定之前跑：图片是最贵的一类内容，先移出再评估 token 压力才有意义。
 	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, &state); changed {
@@ -2046,13 +2067,22 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 	}
 	task.InputJSON = string(raw)
 	// 压力读数只对"模型调用"这一步有意义：媒体任务发的是另一份请求（另一套信封），
-	// 压缩任务同理由 enqueueCloudAgentContextCompaction 自己记账。
+	// 把读数挂到那份信封上会误导消费方；压缩任务同理由 enqueueCloudAgentContextCompaction
+	// 自己记账。
 	var contextPressure *cloudAgentContextPressure
+	// requestCanonical 是"实际要发出去的那份信封"（上游 #601 新增）：定锚点、算口径指纹与
+	// 占用分布都要对着它，而不是内存里的运行态副本。
+	var requestCanonical canonicalAgentRequest
 	if media == nil && req.Operation != cloudAgentContextCompactionOperation {
-		if canonical, ok := canonicalAgentRequestFromInput(input); ok {
-			value := s.cloudAgentContextPressure(canonical, state.Request.Prompt, state.Request)
-			contextPressure = &value
+		canonical, ok := canonicalAgentRequestFromInput(input)
+		if !ok {
+			// 上游的硬失败：模型调用这一步必须有可计量的信封，缺了就如实报错，
+			// 不要退回状态副本编一份读数出来。
+			return fmt.Errorf("Agent 模型任务缺少可计量的请求信封")
 		}
+		requestCanonical = canonical
+		value := s.cloudAgentContextPressure(canonical, state.Request.Prompt, state.Request)
+		contextPressure = &value
 	}
 	if prepare.Order != nil {
 		task.BillingOrderID = prepare.Order.ID
@@ -2104,20 +2134,34 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				state.ContextCompaction.Status = "running"
 			} else {
 				if contextPressure != nil {
+					// 口径变化就地作废锚点（上游 #601）：这一步的模型/线路/窗口取自任务 input，
+					// 与定锚时不一致的实测不再可比。我方 recordCloudAgentTokenAnchor 里还会兜一遍
+					// （这一步拿不到新实测时也必须先把过期锚点作废）。
+					config, _ := input["config"].(map[string]any)
+					model, channelID := stringValue(config["model"]), stringValue(config["channelId"])
+					signature := cloudAgentRequestSignature(state, requestCanonical, channelID, model)
+					cloudAgentExpireTokenAnchorForRequest(run.ID, state, contextPressure.ContextWindowTokens, signature, model, channelID)
+					// 个人记忆块是编译之后拼上去的，编译器录不到：每一步幂等补登记一次，
+					// 占用分布的分段合计才能与 system 桶对齐。
+					cloudAgentRecordMemorySegment(&state.Policy, requestCanonical.SystemPrompt)
 					// requestId 把读数钉在"即将发出的这次请求"上（设计 §4）：没有它，前端只能猜
-					// 哪个数字属于哪一次调用。
-					payload := cloudAgentContextPressurePayload(*contextPressure, state)
+					// 哪个数字属于哪一次调用。占用分布对着实际信封（requestCanonical）算。
+					payload := cloudAgentContextPressurePayload(*contextPressure, state, requestCanonical)
 					payload["requestId"] = task.ID
 					cloudAgentNoteContextWindowResolved(run.ID, state, *contextPressure)
 					state.event(run.ID, "context_pressure", payload)
+					state.LastStepEstimate = contextPressure.EstimatedInputTokens
+					state.LastStepSourceBytes = contextPressure.SourceBytes
+					// 上游 #601：把"发出去的那份信封"的口径与窗口一起记账，
+					// 供后面的锚点作废比对（换模型/换线路/换窗口）。
+					state.LastStepSignature = signature
+					state.LastStepModel = model
+					state.LastStepChannelID = channelID
+					state.LastStepWindowTokens = contextPressure.ContextWindowTokens
 				}
 				// 记下发出去这份 canonical 的本地计价：任务回来时用它和上游实测配成锚点。
 				state.LastStepTaskID = task.ID
 				state.LastStepOperation = req.Operation
-				if contextPressure != nil {
-					state.LastStepEstimate = contextPressure.EstimatedInputTokens
-					state.LastStepSourceBytes = contextPressure.SourceBytes
-				}
 				state.Step++
 			}
 		}

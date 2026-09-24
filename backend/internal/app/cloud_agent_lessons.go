@@ -111,17 +111,6 @@ func (s *Service) attachCloudAgentLessons(canonical *canonicalAgentRequest, user
 	return block
 }
 
-// cloudAgentRecordMemorySegment 把系统提示里已经存在的个人记忆块登记为分段。
-// 记忆块是在策略编译之后拼接的，编译器录不到它；不登记就会让"系统提示分段"合计
-// 小于 system 桶，弹窗里看起来像少算了一截。
-func cloudAgentRecordMemorySegment(policy *cloudAgentPolicySnapshot, system string) {
-	index := strings.Index(system, cloudAgentLessonBlockMarker)
-	if index < 0 {
-		return
-	}
-	cloudAgentRecordSystemSegment(policy, "memory", "个人记忆", system[index:])
-}
-
 // cloudAgentHasMemories 报告该用户是否有已批准记忆：没有时 recall_lessons 只占 schema 开销。
 func (s *Service) cloudAgentHasMemories(userID string) bool {
 	if s == nil || s.repo == nil || strings.TrimSpace(userID) == "" {
@@ -138,6 +127,26 @@ func (s *Service) cloudAgentHasMemories(userID string) bool {
 		}
 	}
 	return false
+}
+
+// cloudAgentRecordMemorySegment 把系统提示里已经存在的个人记忆块登记为分段。
+// 记忆块是在策略编译之后拼接的，编译器录不到它；不登记就会让"系统提示分段"合计
+// 小于 system 桶，读数看起来像少算了一截。
+func cloudAgentRecordMemorySegment(policy *cloudAgentPolicySnapshot, system string) {
+	if policy == nil {
+		return
+	}
+	index := strings.Index(system, cloudAgentLessonBlockMarker)
+	if index < 0 {
+		for i := range policy.SystemSegments {
+			if policy.SystemSegments[i].Key == "memory" {
+				policy.SystemSegments = append(policy.SystemSegments[:i], policy.SystemSegments[i+1:]...)
+				break
+			}
+		}
+		return
+	}
+	cloudAgentRecordSystemSegment(policy, "memory", "个人记忆", system[index:])
 }
 
 func cloudAgentRememberLesson(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {

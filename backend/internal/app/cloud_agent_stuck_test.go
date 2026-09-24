@@ -15,8 +15,9 @@ func TestStuckCloudAgentIsTerminated(t *testing.T) {
 	}
 	run, state := agentMediaRun(t, s, a, "request_approval", "stuck-idle")
 	state.ActiveTaskID, state.MediaTaskID, state.StoryboardTaskID = "", "", ""
-	// 追加一条 10 分钟前的旧事件，让这一轮看起来卡住。
-	// 不能改已落库事件的内容：journal 是 append-only，改动会（正确地）被写路径拒绝。
+	// 追加一条 10 分钟前的旧事件，让这一轮看起来卡住。不能改已落库事件的内容：journal 是
+	// append-only（已落库的行不能再改写），所以这里用"追加一条时间戳在十分钟前的新事件"
+	// 表达"最后进展在十分钟前"，而不是回头改上一条已落库的事件。
 	state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
 	state.Events[len(state.Events)-1].CreatedAt = time.Now().Add(-10 * time.Minute)
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
@@ -77,7 +78,8 @@ func TestStuckDetectionSkipsRunsWithLiveWork(t *testing.T) {
 	}
 	state.ActiveTaskID = live.ID
 	state.TaskIDs = append(state.TaskIDs, live.ID)
-	// 追加一条 10 分钟前的旧事件（journal 是 append-only，不能改写已落库事件的内容）。
+	// 追加一条 10 分钟前的旧事件（journal 是 append-only，不能改写已落库事件的内容）：
+	// 只能追加新事件，不能改写已有事件的时间戳。
 	state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
 	state.Events[len(state.Events)-1].CreatedAt = time.Now().Add(-10 * time.Minute)
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
@@ -104,7 +106,8 @@ func TestStuckDetectionTreatsTerminalTaskAsIdle(t *testing.T) {
 	}
 	state.ActiveTaskID, state.MediaTaskID = "", ""
 	state.StoryboardTaskID = dead.ID
-	// 追加一条 10 分钟前的旧事件（journal 是 append-only，不能改写已落库事件的内容）。
+	// 追加一条 10 分钟前的旧事件（journal 是 append-only，不能改写已落库事件的内容）：
+	// 只能追加新事件，不能改写已有事件的时间戳。
 	state.event(run.ID, "assistant_message", map[string]any{"text": "起个头"})
 	state.Events[len(state.Events)-1].CreatedAt = time.Now().Add(-10 * time.Minute)
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {

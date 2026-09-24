@@ -27,15 +27,15 @@ type cloudAgentPolicySnapshot struct {
 	CompilerVersion      string `json:"compilerVersion"`
 	ProfileRevision      string `json:"profileRevision,omitempty"`
 	ProfileHash          string `json:"profileHash,omitempty"`
-	// SystemSegments records what occupies the compiled system prompt. The
-	// context meter reports it so an operator can see the occupancy split
-	// without re-deriving it from the prompt text.
+	// SystemSegments 记录编译出来的系统提示由哪些块组成。压力读数把它摊开上报，
+	// 排查时不必再从提示词正文反推"系统提示里谁是画布摘要、谁是个人记忆"。
 	SystemSegments []cloudAgentContextSegment `json:"systemSegments,omitempty"`
 }
 
 // cloudAgentRecordSystemSegment 登记"编译之后"追加进系统提示的块（当前是个人记忆索引），
 // 让计量器的系统提示分段合计与实际 system 桶一致；同 key 重复调用只保留最新一次，
 // 因此它既能在创建运行登记，也能在每一步幂等补登记。
+// （上游还把同一函数抄了一份到本文件下方，合并后只留这一处，避免重复定义。）
 func cloudAgentRecordSystemSegment(policy *cloudAgentPolicySnapshot, key, label, text string) {
 	if policy == nil || strings.TrimSpace(text) == "" {
 		return
@@ -50,17 +50,19 @@ func cloudAgentRecordSystemSegment(policy *cloudAgentPolicySnapshot, key, label,
 	policy.SystemSegments = append(policy.SystemSegments, segment)
 }
 
-// cloudAgentContextSegment is one inlined block of the compiled system prompt.
+// cloudAgentContextSegment 是系统提示里的一块（编译期按写入顺序量出来的）。
 type cloudAgentContextSegment struct {
 	Key    string `json:"key"`
 	Label  string `json:"label"`
 	Bytes  int    `json:"bytes"`
 	Tokens int    `json:"tokens"`
-	// ScaledTokens 是按上游实测锚点比例校准后的读数；没有锚点时不填。
+	// ScaledTokens 是按上游实测锚点比例校准后的读数；没有锚点时与 Tokens 相同
+	// （编译期只记 Tokens，换算在压力读数里做，所以录制阶段它保持 0）。
 	ScaledTokens int `json:"scaledTokens,omitempty"`
 }
 
-// cloudAgentSegmentRecorder measures each block as the prompt is compiled.
+// cloudAgentSegmentRecorder 在编译系统提示时逐块量尺寸：它只记录"上一次标记之后追加了
+// 多少字节"，因此分段合计与最终 system 正文逐字节一致（含块之间的标题与分隔符）。
 type cloudAgentSegmentRecorder struct {
 	segments []cloudAgentContextSegment
 	last     int
@@ -182,10 +184,11 @@ func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, 
 	b.WriteString(media.Text)
 	b.WriteString("\n\n")
 	recorder.mark(&b, "mediaPolicy", "媒体策略")
-	// The capability guide is a tool answer, not a system-prompt constant: it is
-	// resent on every step of every run. It stays inline whenever
-	// canvas_list_node_types is unavailable —没有画布上下文，或只读运行（只读不会创建节点，
-	// 工具本身也不暴露）。否则提示会指向一个不存在的工具。
+	// 能力指南是一个"工具回执"而不是系统提示常量：它在每一步、每一轮都会被重发。只要
+	// canvas_list_node_types 不可用就内联全文——没有画布上下文，或只读运行（只读不会创建
+	// 节点，工具本身也不暴露）；否则提示会指向一个不存在的工具。
+	// 保留我方的裁剪版（能力指南静态瘦身）：上游此处是无条件内联全文，会让每步都白背一份
+	// 工具清单，而 canvas_list_node_types 在可写画布场景下本来就能按需取权威清单。
 	if len(req.ContextScope) == 0 || req.PermissionMode == "read_only" {
 		b.WriteString(cloudAgentCapabilityGuide())
 	} else {

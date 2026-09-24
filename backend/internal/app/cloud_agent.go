@@ -475,8 +475,12 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	s.attachCloudAgentLessons(&canonical, userID, req.Prompt)
 	// 必须登记进 state.Policy（值拷贝）：state 才是随任务持久化、被运行期读取的那份，
-	// 在这里改局部 policy 不会生效（state.Policy 是编译结果的值拷贝）。
+	// 在这里改局部 policy 不会生效（state.Policy 是编译结果的值拷贝）。登记之后压力读数的
+	// "系统提示分段"才能把 memory 摊开，并与 system 桶合计对齐。
 	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
+	// 保留我方的缓存键签名（cloudAgentPromptCacheKey 已收敛为只吃 req、内部取 system）：
+	// 上游此处写的是双参形式，而 cloud_agent_tools.go 里落盘的是同一函数的一参版本，
+	// 两处必须一致，否则编译不过。
 	canonical.PromptCacheKey = cloudAgentPromptCacheKey(req)
 	attachCloudAgentPlan(&canonical, inheritedPlan)
 	// 根任务就是第一步模型调用：它的输出上限与后续每一步同源（策略解析结果），
