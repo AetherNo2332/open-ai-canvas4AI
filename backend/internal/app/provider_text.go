@@ -397,7 +397,15 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 			calls = append(calls, map[string]interface{}{"id": firstNonEmptyString(stringField(item, "call_id"), stringField(item, "id")), "type": "function", "function": map[string]interface{}{"name": stringField(item, "name"), "arguments": stringField(item, "arguments")}})
 		}
 		result["toolCalls"] = calls
-		cloudAgentApplyStopReason(result, cloudAgentResponsesStopReason("", payload))
+		// failed/cancelled 是这次调用没成功，不是"内容不完整"：按解析错误处理。
+		if cloudAgentResponsesStatusFailed(firstNonEmptyString(stringField(payload, "status"), "")) {
+			return nil, fmt.Errorf("上游返回 %s，这一步没有完成", stringField(payload, "status"))
+		}
+		raw := cloudAgentResponsesStopReason("", payload)
+		cloudAgentApplyStopReason(result, raw)
+		// 非流式响应本身就是终态：terminalEventSeen/streamDoneSeen 都为真，
+		// 只有"原因原文是否非空"需要如实记录。
+		cloudAgentApplyStopFacts(result, true, strings.TrimSpace(raw) != "", true)
 		return result, nil
 	}
 	if protocol == "claude-api" {
@@ -423,6 +431,7 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 			return nil, errors.New("Claude Agent 接口没有返回内容")
 		}
 		cloudAgentApplyStopReason(result, stringField(payload, "stop_reason"))
+		cloudAgentApplyStopFacts(result, true, strings.TrimSpace(stringField(payload, "stop_reason")) != "", true)
 		return result, nil
 	}
 	choices := interfaceSlice(payload["choices"])
@@ -443,6 +452,7 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 	}
 	result["toolCalls"] = calls
 	cloudAgentApplyStopReason(result, stringField(choice, "finish_reason"))
+	cloudAgentApplyStopFacts(result, true, strings.TrimSpace(stringField(choice, "finish_reason")) != "", true)
 	return result, nil
 }
 
@@ -488,10 +498,15 @@ type streamingAgentParser struct {
 	completed    map[string]interface{}
 	// stopReason 是上游的终止原因原文（OpenAI finish_reason / Claude stop_reason / Responses status）。
 	// 它决定这一步是"说完了"还是"被截断了"，运行时按它分支，不再靠匹配错误字符串倒推。
-	stopReason    string
-	err           error
-	emit          func(string)
-	emitReasoning func(string)
+	stopReason string
+	// terminalEventSeen / streamDoneSeen 是**解析事实**：前者表示收到该协议的终态事件，
+	// 后者表示收到该协议的流结束标记（OpenAI `[DONE]`、Claude `message_stop`、Responses 终态事件）。
+	// 它们不能由归一化 kind 反推——上游给了新词时 kind 是 unknown，但终态事件确实收到了。
+	terminalEventSeen bool
+	streamDoneSeen    bool
+	err               error
+	emit              func(string)
+	emitReasoning     func(string)
 }
 
 func newStreamingAgentParser(protocol string, emit func(string)) *streamingAgentParser {
@@ -540,7 +555,12 @@ func (p *streamingAgentParser) consumeFrame(frame string) {
 		}
 	}
 	raw := strings.TrimSpace(strings.Join(dataLines, "\n"))
-	if raw == "" || raw == "[DONE]" {
+	if raw == "[DONE]" {
+		// OpenAI 的流结束标记：它本身不是终止原因，但"流被正常收尾"是独立事实。
+		p.streamDoneSeen = true
+		return
+	}
+	if raw == "" {
 		return
 	}
 	var payload map[string]interface{}
@@ -575,8 +595,16 @@ func (p *streamingAgentParser) consumeResponsesEvent(eventName string, payload m
 			p.completed = response
 		}
 		// 只有 status=completed 才算"说完了"；incomplete 要再读 incomplete_details.reason
-		// 才能分出"输出到顶"与"内容过滤"。
-		if reason := cloudAgentResponsesStopReason(firstNonEmptyString(stringField(response, "status"), eventType), response); reason != "" {
+		// 才能分出"输出到顶"与"内容过滤"。failed/cancelled 是这次调用没成功：按解析错误处理，
+		// 走既有 model_failure 路径，不能让它在运行时被当成"正常结束但没给原因"。
+		status := firstNonEmptyString(stringField(response, "status"), eventType)
+		if cloudAgentResponsesStatusFailed(status) {
+			p.err = fmt.Errorf("上游返回 %s，这一步没有完成", status)
+			return
+		}
+		p.terminalEventSeen = true
+		p.streamDoneSeen = true
+		if reason := cloudAgentResponsesStopReason(status, response); reason != "" {
 			p.stopReason = reason
 		}
 	case "response.output_item.added":
@@ -629,6 +657,7 @@ func (p *streamingAgentParser) consumeChatCompletionEvent(payload map[string]int
 		// 所以每次非空就覆盖，留到流结束时用的就是最后一个有效值。
 		if reason := strings.TrimSpace(stringField(choice, "finish_reason")); reason != "" {
 			p.stopReason = reason
+			p.terminalEventSeen = true
 		}
 	}
 }
@@ -670,7 +699,12 @@ func (p *streamingAgentParser) consumeClaudeEvent(payload map[string]interface{}
 		delta, _ := payload["delta"].(map[string]interface{})
 		if reason := strings.TrimSpace(stringField(delta, "stop_reason")); reason != "" {
 			p.stopReason = reason
+			p.terminalEventSeen = true
 		}
+	case "message_stop":
+		// Claude 的流结束标记。它可能与 stop_reason 同时出现，也可能没有（流被中断），
+		// 所以"收到终态事件"与"流正常收尾"必须分开记。
+		p.streamDoneSeen = true
 	case "error":
 		errValue, _ := payload["error"].(map[string]interface{})
 		p.err = errors.New(defaultString(stringField(errValue, "message"), "Claude 上游返回失败"))
@@ -738,6 +772,7 @@ func (p *streamingAgentParser) result() (map[string]interface{}, error) {
 		if strings.TrimSpace(p.stopReason) != "" {
 			cloudAgentApplyStopReason(result, p.stopReason)
 		}
+		cloudAgentApplyStopFacts(result, p.terminalEventSeen, strings.TrimSpace(p.stopReason) != "", p.streamDoneSeen)
 		return result, nil
 	}
 	result := map[string]interface{}{"mode": "text", "text": p.text.String(), "toolCalls": []interface{}{}}
@@ -770,6 +805,7 @@ func (p *streamingAgentParser) result() (map[string]interface{}, error) {
 		return nil, errors.New("画布 Agent 接口没有返回内容")
 	}
 	cloudAgentApplyStopReason(result, p.stopReason)
+	cloudAgentApplyStopFacts(result, p.terminalEventSeen, strings.TrimSpace(p.stopReason) != "", p.streamDoneSeen)
 	return result, nil
 }
 

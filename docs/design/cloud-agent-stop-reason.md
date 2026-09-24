@@ -68,12 +68,19 @@
 
 每一步模型调用结束后落一条，载荷只放枚举、计数与短标识（事件载荷上限 128 KiB）：
 
-`step`、`taskId`、`stopReason`、`stopReasonKind`、`terminalSeen`(bool)、`truncated`(bool)、
-`disposition`、`textBytes`、`reasoningBytes`、`toolCalls`。
+`step`、`taskId`、`stopReason`、`stopReasonKind`、`terminalEventSeen`、`stopReasonPresent`、
+`streamDoneSeen`、`truncated`、`partialAnswer`、`disposition`、`textBytes`、`reasoningBytes`、`toolCalls`。
 
 `disposition` 是这一步的处置结论（`accept` / `retry` / `fail`）：先定处置再产生任何副作用，
-所以事件里记的处置与实际行为必然一致。`terminalSeen=false` 表示上游没给出"生成已终结"的权威信号
-（即 `unknown`）——它不等于"正常结束"，只是当下没有证据。
+所以事件里记的处置与实际行为必然一致。
+
+后三个布尔是**解析事实**，由 parser 记录，**不从归一化 kind 反推**（评审要求）：
+`terminalEventSeen` 表示确实收到该协议的终态事件（OpenAI 非空 `finish_reason` / Claude
+`message_delta` / Responses 终态事件），`stopReasonPresent` 表示原因原文非空，`streamDoneSeen`
+表示该协议的流结束标记已收到（OpenAI `[DONE]`、Claude `message_stop`、Responses 终态事件；
+非流式请求天然视为已结束）。上游给了一个我们还不认识的新词时 kind 会是 `unknown`，但"收到了终态事件"
+这件事为真——用 kind 反推会把随后要做覆盖率统计做假。
+`partialAnswer` 表示"响应有效但可能不完整"（目前只有 `context_limit`）。
 
 它回答的正是过去读不出来的问题：这一步是"说完了"、"要调工具"，还是"被截断了"，以及这一步产出
 了多少正文——不需要再靠 8003 字符这种副证据反推（那其实是 `reasoning_message` 事件的展示截断：
@@ -81,17 +88,27 @@
 
 ### 2.4 处置
 
-判据只有一条：**这一步的输出是否被输出上限截断（`length`）**。截断步的正文与工具调用都可能是
-半截的，所以整步作废——与"半截动作不许落到画布上"是同一个取舍。
+判据是**这一步的结果能不能被采纳**，按 kind 显式分支（没有"其余一律接受"的兜底）：
 
 | 情形 | `disposition` | 处置 |
 | --- | --- | --- |
+| `stop` / `tool_calls` | `accept` | 照常使用 |
+| `context_limit` | `accept` | 允许发布，但标记 `partialAnswer=true`，并把压缩/预算信号交给**后续请求**；不套用输出截断的重试 |
+| `unknown` | `accept` | 只记事件，控制流不变（见 §5.1：先量覆盖率再决定是否硬拦） |
 | `length`，第一次 | `retry` | 整步作废：不写 assistant/canonical、不记观察、**不执行任何已解析出的工具调用**；关思考 + 放大输出预算重发同一步一次（`TruncatedStepEscalated` 上限 1） |
-| `length`，重试后仍截断 | `fail` | 如实终止本轮（`run_failed`，`reason=truncated_output`），保留已完成的工作，不发布半截正文 |
-| 其它任何取值 | `accept` | 只记事件，控制流不变 |
+| `length`，重试后仍截断 | `fail` | 如实终止本轮（`run_failed`，`reason=truncated_output`） |
+| `pause` | `fail` | 如实终止（`reason=step_stop_pause`）：**不改请求形状**（不动思考/输出预算开关），因为无损续轮要求把暂停的 assistant 消息以原始内容块追加后重发，当前结果契约证明不了这一点 |
+| `content_filter` / `refusal` / `incomplete_unknown` | `fail` | 如实终止（`reason=step_stop_<kind>`）：这些不是"重发就能变好"的失败，也不允许把半截正文当答复发布 |
 
-`length` 之外一律不走这条阶梯：`context_limit` 是输入预算问题，`pause` / `refusal` 是上游语义，
-关思考或放大输出预算都治不了它们，也不能被误当成截断掩盖过去。
+`pause` / `content_filter` / `refusal` / `incomplete_unknown` 与 `length` 是**不同的失败**：前者不装进
+"关思考 + 放大输出预算"那条阶梯，改请求形状既治不了内容过滤，也续不上挂起的回合。
+`context_limit` 与输出截断也不是一回事：官方对它的措辞是 "The response is still valid but was limited
+by context window"，所以允许发布、只做部分答复标记。
+
+**升级开关必须复位**：`length` 升级时把升级前的 `ForceThinkingOff` / `BoostStepOutputBudget` 存进
+`EscalationRestore`（两个 `*bool`，区分"没保存过"与"保存的就是 false"）。下一步若不是"仍在截断重试中"
+（重试被接受，或撞上空输出/超时/参数截断等别的失败），就在**进入其它恢复阶梯之前**复位——
+否则一次截断会让本轮余下所有步骤都关着思考，也会覆盖其它阶梯刚设的开关。
 
 **兜底不放行截断正文**：收尾闸门另有一条 `truncated_output` 阻塞（`Final=false`）。正常流程下截断
 在处置阶段就被拦住了，这条是二次防护——即使将来有人调整处置顺序，半截正文仍进不了最终答复。
@@ -101,15 +118,23 @@
 
 `cd backend && go test ./internal/app/ -run 'StopReason|Truncated|StreamingAgentParser|ParseAgentToolPayload|NormalStop' -count=1`：
 
-- 归一化真值表：各协议取值、大小写与空格、空值与未识别取值；
-- `context_limit` / `pause` / `refusal` / `stop` / `tool_calls` 一律**不**判为截断；
+- 归一化真值表：各协议取值、大小写与空格、空值与未识别取值；`content_filter` 单列、无 reason 的
+  `incomplete` 记为 `incomplete_unknown`（不再猜成输出截断）；
+- `length` 之外的取值一律**不**判为截断；
 - Responses 的 `incomplete_details.reason` 区分"输出到顶"与"内容过滤"；
-- 流式解析：OpenAI / Claude / Responses 三协议的终止块都能落到 `stopReasonKind`；
-- 非流式解析：三条分支同样能落到 `stopReasonKind`；
-- 端到端：截断 → `TruncatedStepEscalated=1` + 关思考 + `model_step_stop`（`disposition=retry`）
+- 流式解析：OpenAI / Claude / Responses 三协议的终止块都能落到 `stopReasonKind`，且
+  `terminalEventSeen`/`stopReasonPresent` 为真；
+- 只有流结束标记（`[DONE]` / `message_stop`）时：`streamDoneSeen=true`、`terminalEventSeen=false`、
+  kind 为 `unknown` —— 三个事实互不代替；
+- 非流式解析：三条分支同样能落到 `stopReasonKind` 与三个事实；
+- 处置真值表：`stop`/`tool_calls`/`context_limit`/`unknown` → `accept`；`length` → `retry`（额度用尽 → `fail`）；
+  `pause`/`content_filter`/`refusal`/`incomplete_unknown` → `fail`；只有 `context_limit` 标 `partialAnswer`；
+- 端到端（截断）：`TruncatedStepEscalated=1` + 关思考 + `model_step_stop`（`disposition=retry`）
   → 重试请求确实关思考 → 再次截断时本轮 `failed`（`reason=truncated_output`）、`disposition=fail`、
   终止说明含"截断"且不含"对账"；
-- 截断步**不执行工具**：同一批解析出的工具调用被整步作废（`state.Calls` 为空、无 `tool_completed`）；
+- 端到端（挂起）：`pause` 步即使解析出工具调用也一并作废——本轮 `failed`、说明含"挂起"、
+  `TruncatedStepEscalated=0`、两个开关未被置位、无 `tool_completed`；
+- 端到端（复位）：截断升级 → 重试成功 → 两个开关复位、`EscalationRestore` 清空、本轮 `completed`；
 - 回归：正常结束（`stop`）仍然 `completed` 且 `final=true`。
 
 ## 4. 回滚
@@ -119,18 +144,21 @@
 
 ## 5. 未做（后续候选，按证据排序）
 
-1. **"拿不到终止信号"仍按可用处理**（评审提出，本轮未采纳）：严格口径是"已支持协议若没有终结信号，
-   就不许把正文当最终答复"，理由是"没有证据"不等于"说完了"。本轮只把它记成
-   `terminalSeen=false` + `stopReasonKind=unknown`，不改变控制流——因为本地取证（`api_call_logs.response_body`）
-   里出现过"末块被 128KiB 取证上限切掉"导致 finish_reason 全为 null 的样本，**无法区分"上游没给"与
-   "我们没记到"**；在 dev 上用固定响应样本量出覆盖面之前就硬拦，可能把部分 OpenAI 兼容上游的正常运行
-   集体判死。等有覆盖率数据后再决定是否升级为阻断。
-2. **看图归因字段**：`canvas_inspect_image` 的调用没有"首看 / 同图重复回执 / 账本复用 / 预算拒绝"
+1. **"拿不到终止信号"仍按可用处理**（评审同意先量覆盖率）：严格口径是"已支持协议若没有终结信号，
+   就不许把正文当最终答复"，理由是"没有证据"不等于"说完了"。本轮把它记成
+   `stopReasonKind=unknown` + `terminalEventSeen=false`/`stopReasonPresent=false`，不改变控制流——
+   因为本地取证（`api_call_logs.response_body`）里出现过"末块被 128KiB 取证上限切掉"导致
+   finish_reason 全为 null 的样本，**无法区分"上游没给"与"我们没记到"**；三个解析事实落地后，
+   先按 provider × 流式/非流式量出覆盖率，再决定是否升级为阻断。已经先硬拦的是四类明确失败：
+   `pause` / `content_filter` / `refusal` / `incomplete_unknown`（见 §2.4）。
+2. **`pause` 的无损续轮**（评审：本轮只做"不发布 + 明确失败"）：正确续轮要把暂停的 assistant 消息
+   以**原始内容块**（如 `server_tool_use`）追加后重发，并保留相同的 tools/beta 头。当前结果契约只有
+   `text`/`reasoning`/`toolCalls`，无法证明原始块能无损往返 → 需要先扩展契约与检查点，再另开小 PR，
+   届时 canonical 必须落原始 assistant 内容块。
+3. **看图归因字段**：`canvas_inspect_image` 的调用没有"首看 / 同图重复回执 / 账本复用 / 预算拒绝"
    的落点，一次 140 次看图的运行无法从事件流归因；裁剪事件只报数量，不报被裁的 nodeId 与字节。
    评审同时指出应把"工具回执"与"实际送达模型的图片集合"分成两个事件（工具给了图 ≠ 模型收到了图）。
-3. **两套 token 估算器并存**：压力/压缩用非 ASCII ×1，请求硬闸与正文卸载用 ×1.5，CJK 场景差 1.5 倍。
-4. **计划推进 vs 心跳不可分**：等值 `plan_update` 仍写 `plan_updated` + `tool_completed`，
+4. **两套 token 估算器并存**：压力/压缩用非 ASCII ×1，请求硬闸与正文卸载用 ×1.5，CJK 场景差 1.5 倍。
+5. **计划推进 vs 心跳不可分**：等值 `plan_update` 仍写 `plan_updated` + `tool_completed`，
    外部看不出"在推进"还是"在重复"。
-5. **`ForceThinkingOff` / `BoostStepOutputBudget` 一旦置位全轮无复位路径**：一次空输出或截断后，
-   本轮余下所有步骤都关着思考。
 6. **工具失败闭环**：失败指纹有三套口径，且没有"后续是否解决"的关联字段。

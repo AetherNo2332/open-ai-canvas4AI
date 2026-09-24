@@ -108,6 +108,9 @@ type cloudAgentRuntime struct {
 	// TruncatedStepEscalated 记录"输出被输出上限截断后已经升级重试过几次"。
 	// 与空输出、单步超时同一条阶梯：关思考 + 放大输出预算，重发同一步。
 	TruncatedStepEscalated int `json:"truncatedStepEscalated,omitempty"`
+	// EscalationRestore 保存"升级之前"的 ForceThinkingOff / BoostStepOutputBudget，
+	// 重试被接受（或撞上别的失败阶梯）后复位，避免一次截断让本轮余下所有步骤都受开关影响。
+	EscalationRestore *cloudAgentEscalationRestore `json:"escalationRestore,omitempty"`
 	// StepTimeoutEscalated 记录"单步墙钟到点后已经关思考重试过几次"。
 	StepTimeoutEscalated int `json:"stepTimeoutEscalated,omitempty"`
 	// ForceThinkingOff 让本步请求强制关闭上游思考：思考模型偶发把整个输出预算花在推理上，
@@ -943,6 +946,11 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			// 旧任务结果没有这两个键 → 空串 → 归一化成 unknown，不改变任何既有分支。
 			StopReason     string `json:"stopReason"`
 			StopReasonKind string `json:"stopReasonKind"`
+			// 三个解析事实由 parser 记录（不从 kind 反推）：是否收到终态事件、原因原文是否非空、
+			// 是否收到该协议的流结束标记。它们用于统计各 provider 的终结信号覆盖率。
+			TerminalEventSeen bool `json:"terminalEventSeen"`
+			StopReasonPresent bool `json:"stopReasonPresent"`
+			StreamDoneSeen    bool `json:"streamDoneSeen"`
 		}
 		if task.Status == model.TaskStatusSucceeded {
 			if err := json.Unmarshal([]byte(task.ResultJSON), &result); err != nil {
@@ -959,6 +967,16 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 				return s.correctCloudAgentOutput(run, &state, "工具调用无效或重复（callId 不能重复、参数必须是 JSON 对象）")
 			}
 			result.ToolCalls = calls
+		}
+		// 升级开关的复位：只有"这一步仍在截断重试中"才保留开关，其余情况（重试被接受、
+		// 或这一步撞上空输出/超时/参数截断等别的失败）先复位到升级前的值，再交给后面的阶梯——
+		// 否则会把那些阶梯刚设的开关又覆盖回去。
+		stepKindForRestore := strings.TrimSpace(result.StopReasonKind)
+		if stepKindForRestore == "" {
+			stepKindForRestore = normalizeCloudAgentStopReason(result.StopReason)
+		}
+		if cloudAgentStepStopDisposition(&state, stepKindForRestore) != cloudAgentStepDispositionRetry {
+			cloudAgentRestoreEscalationSwitches(&state)
 		}
 		if task.Status != model.TaskStatusSucceeded && cloudAgentTruncatedToolArguments(task) {
 			return s.correctCloudAgentTruncatedCalls(run, &state)
@@ -995,24 +1013,31 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 			// 处置先定，再决定要不要产生副作用：截断步的正文与工具调用都可能是半截的，
 			// 因此它不写 assistant/canonical、不记观察，也不执行任何已解析出的工具调用。
 			stepDisposition := cloudAgentStepStopDisposition(&state, stepStopKind)
+			stepFacts := cloudAgentStepStopFacts{
+				TerminalEventSeen: result.TerminalEventSeen,
+				StopReasonPresent: result.StopReasonPresent,
+				StreamDoneSeen:    result.StreamDoneSeen,
+			}
 			if run.ID != "" {
 				state.event(run.ID, "model_step_stop", cloudAgentStopReasonPayload(
-					state.Step, task.ID, result.StopReason, stepStopKind, stepDisposition,
+					state.Step, task.ID, result.StopReason, stepStopKind, stepDisposition, stepFacts,
 					len(result.Text), len(result.Reasoning), len(calls)))
 			}
 			if stepDisposition == cloudAgentStepDispositionRetry {
 				// 用空输出那条阶梯（关思考 + 放大输出预算）重发同一步一次，不追加催办消息。
+				// 只有 length 会走到这里：pause / content_filter / refusal / incomplete_unknown
+				// 都不是"重发就能变好"的失败，改请求形状也续不上挂起的回合。
 				cloudAgentEscalateTruncatedStep(run.ID, &state)
 				return cloudAgentSave(current, &state)
 			}
 			if stepDisposition == cloudAgentStepDispositionFail {
-				// 重试仍被截断：不执行半截的工具调用、不发布半截正文，如实终止本轮。
-				message := cloudAgentTruncatedStepMessage()
+				// 这一步的结果不能采纳：不执行半截的工具调用、不发布半截正文，按 kind 如实终止本轮。
+				message := cloudAgentStepStopFailureMessage(stepStopKind)
 				current.Status = "failed"
 				current.FailureMessage = truncateRunes(message, 1000)
 				cloudAgentDropInterjections(run.ID, "本轮已结束："+truncateRunes(message, 120), &state)
 				state.event(run.ID, "run_failed", map[string]any{
-					"text": message, "reason": cloudAgentTruncatedStepReason,
+					"text": message, "reason": cloudAgentStepStopFailureReason(stepStopKind),
 					"stopReason": result.StopReason, "stopReasonKind": stepStopKind,
 				})
 				return cloudAgentSave(current, &state)

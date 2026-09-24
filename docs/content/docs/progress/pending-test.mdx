@@ -22,6 +22,16 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
       画布上也不应有半截改动。
 - [ ] 回归：正常结束（无工具调用的完整正文）仍以 `final=true` 发布并 `completed`；带工具调用的步不受影响。
 - [ ] 计费核对：截断重试多花一次模型调用，确认这一次的用量与费用如实计入，不因重试被吞。
+- [ ] **终结信号覆盖率**（三个解析事实落地后要量的数）：按 provider × 流式/非流式统计
+      `terminalEventSeen` / `stopReasonPresent` / `streamDoneSeen` 的组合占比。口径提醒：只有
+      `terminalEventSeen=true` 而 kind 为 `unknown` 才是"上游给了我们还不认识的新词"；三个全 false
+      才可能是上游没给或流被中断。量出覆盖率后才能决定是否把"缺终结信号"升级为阻断。
+- [ ] **升级开关复位**：触发一次 `length` 重试后，确认重试成功的那一步之后 `ForceThinkingOff` /
+      `BoostStepOutputBudget` 已复位（下一步请求的 `thinking` 不为 false、`maxOutputTokens` 回到正常值），
+      且检查点里的 `escalationRestore` 已清空。
+- [ ] **四类"不该发布"的终止**（`pause` / `content_filter` / `refusal` / `incomplete_unknown`）：
+      真实触发任一类时本轮应 `run_failed`（`reason=step_stop_<kind>`）、说明与原因对应、
+      `TruncatedStepEscalated` 不增加、两个开关不被置位、无 `tool_completed`。
 
 ## 看图图片保留窗口 3 → 12 轮（2026-09-22 夜）
 
