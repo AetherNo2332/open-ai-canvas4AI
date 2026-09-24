@@ -1,4 +1,4 @@
-import { agentToolRetry } from "./agent-tool-retry";
+import { agentToolRetry, type AgentToolRetry } from "./agent-tool-retry";
 
 export const AGENT_TOOL_METADATA: Record<string, { summary: string | ((context: { pending: boolean; detail?: unknown }) => string); failureMessage: string }> = {
     canvas_list_node_types: { summary: "已读取可用节点类型", failureMessage: "获取可用节点类型失败" },
@@ -96,6 +96,18 @@ export function friendlyAgentToolSummary(toolName: string, text: string, detail?
     const summary = typeof metadata?.summary === "function" ? metadata.summary({ pending, detail }) : metadata?.summary;
     const failure = metadata?.failureMessage;
     return failed ? failure || "操作未完成" : summary || (pending ? "准备执行操作" : "操作已完成");
+}
+
+/** 工具事件的调用名：detail.toolName/name/tool 优先，退化到消息标题。 */
+export function agentToolName(title: string, detail?: unknown): string {
+    return String(field(detail, "toolName") || field(detail, "name") || field(detail, "tool") || title);
+}
+
+/** 自动纠正分组的固定文案（卡片与折叠行共用，避免两处各写一套）。 */
+export function agentToolRetryLabel(retry: AgentToolRetry): string {
+    if (retry.status === "recovered") return "自动纠正后已恢复";
+    if (retry.status === "exhausted") return "自动纠正未完成";
+    return "自动纠正记录";
 }
 
 /**

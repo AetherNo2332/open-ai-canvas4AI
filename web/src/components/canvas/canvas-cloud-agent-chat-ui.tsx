@@ -1,7 +1,7 @@
 import { agentCanvasActions, agentCanvasActionLabel } from "@/lib/canvas/agent-canvas-actions";
 import { Button } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
-import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -42,7 +42,8 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 import type { Skill, SkillPreset } from "@/services/api/skills";
 import type { AgentContextBreakdown, AgentContextPressure } from "@/services/api/agent";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
-import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
+import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
+import { agentOperationFailed, agentOperationLabel } from "@/lib/canvas/agent-operation-feed";
 import { agentToolRetry, type AgentToolRetryAttempt } from "@/lib/canvas/agent-tool-retry";
 import { agentContextMeterNeedsGovernanceMarker, agentContextMeterState, type AgentContextMeterState } from "@/lib/canvas/agent-context-meter";
 
@@ -489,7 +490,7 @@ export function AgentToolCard({
     const retry = agentToolRetry(detail);
     const attempts = objectField(detail, "retryAttempts");
     if (retry && Array.isArray(attempts)) {
-        const label = retry.status === "recovered" ? "自动纠正后已恢复" : retry.status === "exhausted" ? "自动纠正未完成" : "自动纠正记录";
+        const label = agentToolRetryLabel(retry);
         return (
             <details data-agent-tool-retry className="min-w-0 flex-1 text-xs leading-5" style={{ color: theme.node.muted }}>
                 <summary className="cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2" style={{ outlineColor: theme.node.muted }}>
@@ -563,6 +564,61 @@ export function AgentToolCard({
                 ) : null}
             </div>
             {state.label === "已完成" ? <span className="sr-only">已完成</span> : null}
+        </div>
+    );
+}
+
+/**
+ * Agent 的操作记录（连续的 `role === "tool"` 消息）折成一行：只报最新一步，点击展开完整记录。
+ *
+ * 为什么默认收起：一轮运行的十几条工具记录会把正文挤出可视区，用户真正要读的是结论；
+ * 展开状态用「用户覆盖 + 失败时默认展开」两段决定 —— 失败的操作不能被折进一行里看不见，
+ * 但用户手动收起之后就不再自动弹开（跑动中新步骤只会追加，不会重置展开状态）。
+ */
+export function AgentOperationFeed({
+    items,
+    theme,
+    references = [],
+    onFocusNode,
+}: {
+    items: CloudAgentChatMessage[];
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    references?: CanvasResourceReference[];
+    onFocusNode?: (nodeId: string) => void;
+}) {
+    const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
+    const listId = useId();
+    const latest = items[items.length - 1];
+    if (!latest) return null;
+    const latestState = toolCardState(latest.title || "工具执行", latest.text, latest.detail);
+    const latestLabel = agentOperationLabel(latest);
+    const failed = items.some((item) => agentOperationFailed(item));
+    const expanded = userExpanded ?? failed;
+    return (
+        <div className={`agent-operation-feed${expanded ? " is-open" : ""}${failed ? " is-failed" : ""}`} data-agent-operation-feed>
+            <button
+                type="button"
+                className="agent-operation-toggle"
+                aria-expanded={expanded}
+                aria-controls={listId}
+                // aria-label 会顶掉可见文字，所以最新一步必须自己报出来。
+                aria-label={`${expanded ? "收起" : "展开"} ${items.length} 步操作记录，最新一步：${latestLabel}`}
+                onClick={() => setUserExpanded(!expanded)}
+            >
+                <span className="agent-operation-icon" style={{ color: latestState.color }} aria-hidden="true">
+                    {latestState.icon}
+                </span>
+                <span className="agent-operation-latest">{latestLabel}</span>
+                {items.length > 1 ? <span className="agent-operation-count">{items.length} 步</span> : null}
+                <ChevronDown className="agent-operation-chevron" aria-hidden="true" />
+            </button>
+            {expanded ? (
+                <div id={listId} className="agent-operation-list">
+                    {items.map((item) => (
+                        <AgentChatMessage key={item.id} item={item} theme={theme} references={references} onFocusNode={onFocusNode} />
+                    ))}
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -1429,10 +1485,6 @@ function toolCardState(title: string, text: string, detail?: unknown) {
     if (status === "noop") return { label: "未生效", color: "#d97706", softBg: "rgba(217,119,6,.04)", icon: <CircleAlert className="size-4" />, isError: false };
     if (status === "rejected") return { label: errorClassLabel ?? "拒绝执行", color: "#dc2626", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
     return { label: "处理中", color: "#64748b", softBg: "rgba(100,116,139,.04)", icon: <CircleDot className="size-4" />, isError: false };
-}
-
-function agentToolName(title: string, detail?: unknown) {
-    return String(objectField(detail, "toolName") || objectField(detail, "name") || objectField(detail, "tool") || title);
 }
 
 function objectField(value: unknown, key: string) {

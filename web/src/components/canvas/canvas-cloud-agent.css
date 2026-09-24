@@ -608,6 +608,144 @@
     }
 }
 
+/*
+ * 操作记录折叠行：一轮运行动辄十几条工具记录，逐条铺开会把正文挤出可视区。
+ * 默认只报最新一步（配一道横着扫过的流光表示这行仍在推进），点击展开完整记录；
+ * 失败时整行转红并默认展开（见 AgentOperationFeed 的 expanded 判定）。
+ */
+.agent-operation-feed {
+    min-width: 0;
+}
+
+.agent-operation-toggle {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    gap: var(--space-2);
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    padding: 4px var(--space-2) 4px var(--space-1);
+    color: color-mix(in srgb, var(--agent-ink, currentColor) 78%, transparent);
+    font-size: var(--fs-caption);
+    line-height: 18px;
+    text-align: left;
+    cursor: pointer;
+    transition:
+        background-color 140ms ease,
+        color 140ms ease;
+}
+
+.agent-operation-toggle:hover {
+    background: var(--agent-surface-soft, color-mix(in srgb, var(--foreground) 4%, transparent));
+    color: var(--agent-ink, var(--foreground));
+}
+
+.agent-operation-toggle:focus-visible {
+    outline: 2px solid var(--agent-focus-ring, var(--foreground));
+    outline-offset: 1px;
+}
+
+.agent-operation-icon {
+    display: grid;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    place-items: center;
+}
+
+.agent-operation-icon svg {
+    width: 15px;
+    height: 15px;
+}
+
+.agent-operation-latest {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/*
+ * 流光：把文字本身当渐变蒙版，让一道高光扫过。底色与高光都从 --agent-ink 派生——不能用
+ * currentColor，因为开启 background-clip 后 color 是 transparent，会自指成空。
+ */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+    .agent-operation-latest {
+        background-image: linear-gradient(
+            100deg,
+            color-mix(in srgb, var(--agent-operation-ink, var(--agent-ink, currentColor)) 74%, transparent) 0%,
+            color-mix(in srgb, var(--agent-operation-ink, var(--agent-ink, currentColor)) 74%, transparent) 42%,
+            var(--agent-operation-ink, var(--agent-ink, currentColor)) 50%,
+            color-mix(in srgb, var(--agent-operation-ink, var(--agent-ink, currentColor)) 74%, transparent) 58%,
+            color-mix(in srgb, var(--agent-operation-ink, var(--agent-ink, currentColor)) 74%, transparent) 100%
+        );
+        background-position: 100% 0;
+        background-size: 240% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        animation: agent-operation-sheen 3.6s linear infinite;
+    }
+}
+
+/* 失败/被拒的一步：折叠行跟工具卡同一套红，不用主题色盖掉语义。 */
+.agent-operation-feed.is-failed .agent-operation-latest {
+    --agent-operation-ink: #dc2626;
+}
+
+.agent-operation-count {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--agent-surface-soft, color-mix(in srgb, var(--foreground) 6%, transparent));
+    padding: 1px var(--space-2);
+    color: color-mix(in srgb, var(--agent-ink, currentColor) 62%, transparent);
+    font-size: var(--fs-tiny);
+    line-height: 16px;
+    font-variant-numeric: tabular-nums;
+}
+
+.agent-operation-chevron {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+    opacity: 0.55;
+    transition: transform 180ms ease;
+}
+
+.agent-operation-feed.is-open .agent-operation-chevron {
+    transform: rotate(180deg);
+}
+
+.agent-operation-list {
+    margin-top: 2px;
+}
+
+.agent-operation-list > * + * {
+    margin-top: var(--space-1);
+}
+
+@keyframes agent-operation-sheen {
+    from {
+        background-position: 130% 0;
+    }
+    to {
+        background-position: -30% 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .agent-operation-latest {
+        animation: none;
+        background-position: 0% 0;
+    }
+    .agent-operation-toggle,
+    .agent-operation-chevron {
+        transition: none;
+    }
+}
+
 .agent-composer-prompt-scroll {
     min-height: 60px;
     max-height: min(240px, 34vh);
