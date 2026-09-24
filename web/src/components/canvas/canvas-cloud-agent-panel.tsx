@@ -1273,18 +1273,12 @@ function AgentConversation({
         }}>
             {!messages.length ? <AgentWelcome appearance={appearance} nodeCount={nodeCount} onChooseSkill={onChooseSkill} onDraftPrompt={onDraftPrompt} /> : null}
             <div ref={contentRef} className="agent-conversation-messages">
-                {segments.map((segment) =>
+                {segments.map((segment, index) =>
                     segment.kind === "operations" ? (
-                        <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={references} onFocusNode={onFocusNode} />
+                        // 只有"对话末尾那一段 + 还在跑"才流光：历史段落留在静态态，任务完成即停。
+                        <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={references} onFocusNode={onFocusNode} live={busy && index === segments.length - 1} />
                     ) : (
-                        <AgentChatMessage
-                            key={segment.key}
-                            item={segment.item}
-                            theme={theme}
-                            references={references}
-                            onFocusNode={onFocusNode}
-                            isStreaming={busy && !approval && segment.item.streaming === true && segment.item === lastMessage}
-                        />
+                        <AgentChatMessage key={segment.key} item={segment.item} theme={theme} references={references} onFocusNode={onFocusNode} isStreaming={busy && !approval && segment.item.streaming === true && segment.item === lastMessage} />
                     ),
                 )}
                 {approval ? <ApprovalCard key={approval.approvalId} approval={approval} theme={theme} submitting={approvalSubmitting} onFocusNode={onFocusNode} onReasonChange={onApprovalReasonChange} onApprove={onApprove} onReject={onReject} /> : null}

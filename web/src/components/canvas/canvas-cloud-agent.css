@@ -808,6 +808,14 @@
     --agent-tool-accent: color-mix(in srgb, var(--foreground) 62%, transparent);
 }
 
+/*
+ * 看图（canvas_inspect_image）：唯一会把图片字节真交给模型的档位，用主题强调色把它与
+ * "读清单 / 写画布"分开。取色走面板注入的 --agent-accent，不写字面值。
+ */
+.agent-tool-row--vision {
+    --agent-tool-accent: var(--agent-accent, var(--foreground));
+}
+
 .agent-tool-header {
     display: flex;
     min-width: 0;
@@ -904,11 +912,17 @@
 
 /*
  * 操作记录折叠行：一轮运行动辄十几条工具记录，逐条铺开会把正文挤出可视区。
- * 默认只报最新一步（配一道横着扫过的流光表示这行仍在推进），点击展开完整记录；
- * 失败时整行转红并默认展开（见 AgentOperationFeed 的 expanded 判定）。
+ * 默认只报最新一步，点击展开完整记录；失败时整行转红并默认展开（见 AgentOperationFeed）。
+ * 类别徽标复用工具卡的 chip（.agent-tool-category），所以这里要给出 accent 默认值。
  */
 .agent-operation-feed {
+    --agent-tool-accent: color-mix(in srgb, var(--foreground) 62%, transparent);
     min-width: 0;
+}
+
+/* 看图是唯一的"画面"档，给它主题强调色，和清单/写画布区分开（不写字面颜色）。 */
+.agent-operation-feed[data-agent-category="vision"] {
+    --agent-tool-accent: var(--agent-accent, var(--foreground));
 }
 
 .agent-operation-toggle {
@@ -941,19 +955,6 @@
     outline-offset: 1px;
 }
 
-.agent-operation-icon {
-    display: grid;
-    width: 18px;
-    height: 18px;
-    flex: 0 0 auto;
-    place-items: center;
-}
-
-.agent-operation-icon svg {
-    width: 15px;
-    height: 15px;
-}
-
 .agent-operation-latest {
     min-width: 0;
     overflow: hidden;
@@ -964,6 +965,7 @@
 /*
  * 流光：把文字本身当渐变蒙版，让一道高光扫过。底色与高光都从 --agent-ink 派生——不能用
  * currentColor，因为开启 background-clip 后 color 是 transparent，会自指成空。
+ * 动画只挂在 .is-live 上：面板按"末尾段 + 还在跑"下发，任务完成流光立即停。
  */
 @supports ((-webkit-background-clip: text) or (background-clip: text)) {
     .agent-operation-latest {
@@ -980,6 +982,9 @@
         -webkit-background-clip: text;
         background-clip: text;
         color: transparent;
+    }
+
+    .agent-operation-feed.is-live .agent-operation-latest {
         animation: agent-operation-sheen 3.6s linear infinite;
     }
 }
@@ -1020,6 +1025,14 @@
     margin-top: var(--space-1);
 }
 
+/*
+ * 展开后的每一步不再重复状态图标（勾/叉）：状态与错误已经由卡片文字与折叠行颜色表达，
+ * 一列彩色勾只会把"记录"读成"成绩单"。失败那一步的文字仍是红的（AgentToolCard 内联色）。
+ */
+.agent-operation-list .agent-tool-status {
+    display: none;
+}
+
 @keyframes agent-operation-sheen {
     from {
         background-position: 130% 0;
@@ -1030,7 +1043,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .agent-operation-latest {
+    /* 与 .is-live 规则同特异性，否则关不掉动画。 */
+    .agent-operation-feed.is-live .agent-operation-latest {
         animation: none;
         background-position: 0% 0;
     }

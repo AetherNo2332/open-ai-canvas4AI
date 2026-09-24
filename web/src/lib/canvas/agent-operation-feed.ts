@@ -1,4 +1,4 @@
-import { agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary } from "./agent-tool-presentation";
+import { agentToolCategory, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary } from "./agent-tool-presentation";
 import { agentToolRetry } from "./agent-tool-retry";
 
 /**
@@ -54,6 +54,43 @@ export function agentOperationLabel(item: AgentFeedRecord): string {
 export function agentOperationFailed(item: AgentFeedRecord): boolean {
     const status = agentToolStatus(agentToolName(item.title || "工具执行", item.detail), item.text, item.detail);
     return status === "failed" || status === "rejected";
+}
+
+/** 一条操作记录的类别（折叠行徽标用它）：按工具契约判定，不看文案。 */
+export function agentOperationCategory(item: AgentFeedRecord) {
+    return agentToolCategory(agentToolName(item.title || "工具执行", item.detail), item.detail);
+}
+
+/**
+ * 折叠段上报的一句聚合文案。单条语义仍归 `agentOperationLabel`（卡片与折叠行共用，不许改），
+ * 这里只回答"这一段到底看没看画面"：
+ *
+ * 看图片段报「查看了 N 张画面 · 最新《…》」，N 按**真的送出画面的图片**去重计数（复用账本里的
+ * 观察与读循环护栏都没有附图，不计数）；其余段沿用最新一步自己的摘要。
+ */
+export function agentOperationSegmentLabel(items: readonly AgentFeedRecord[]): string {
+    const latest = items[items.length - 1];
+    if (!latest) return "";
+    if (agentOperationCategory(latest) !== "vision") return agentOperationLabel(latest);
+    const viewed = new Set<string>();
+    let latestTitle = "";
+    for (const item of items) {
+        if (agentOperationCategory(item) !== "vision") continue;
+        const result = record(record(item.detail).result);
+        if (result.reuseObservation === true || result.repeat === true) continue;
+        if (typeof result.nodeId === "string" && result.nodeId) {
+            viewed.add(result.nodeId);
+            if (typeof result.title === "string" && result.title) latestTitle = result.title;
+        }
+        for (const value of Array.isArray(result.batchImages) ? result.batchImages : []) {
+            const image = record(value);
+            if (typeof image.nodeId !== "string" || !image.nodeId) continue;
+            viewed.add(image.nodeId);
+            if (typeof image.title === "string" && image.title) latestTitle = image.title;
+        }
+    }
+    if (!viewed.size) return agentOperationLabel(latest);
+    return `查看了 ${viewed.size} 张画面${latestTitle ? ` · 最新《${latestTitle}》` : ""}`;
 }
 
 /**

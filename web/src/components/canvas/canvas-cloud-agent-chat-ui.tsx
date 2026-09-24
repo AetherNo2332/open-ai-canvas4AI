@@ -3,8 +3,8 @@ import { Button } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
-import { motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, ArrowUp, AtSign, Bookmark, CheckCircle2, ChevronDown, ChevronUp, CircleAlert, CircleDot, Clapperboard, Eye, HelpCircle, ImagePlus, Layers3, ListChecks, LoaderCircle, Palette, Pencil, Plus, RotateCcw, Shapes, Share2, ShoppingBag, Sparkles, Square, X, XCircle } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { ArrowLeft, ArrowUp, AtSign, Bookmark, CheckCircle2, ChevronDown, ChevronUp, CircleAlert, CircleDot, Clapperboard, Eye, HelpCircle, ImagePlus, Layers3, List, ListChecks, LoaderCircle, Palette, Pencil, Plus, RotateCcw, Shapes, Share2, ShoppingBag, Sparkles, Square, Wrench, X, XCircle } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
@@ -13,8 +13,8 @@ import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textare
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { Skill, SkillPreset } from "@/services/api/skills";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
-import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
-import { agentOperationFailed, agentOperationLabel } from "@/lib/canvas/agent-operation-feed";
+import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary, type AgentToolCategory } from "@/lib/canvas/agent-tool-presentation";
+import { agentOperationCategory, agentOperationFailed, agentOperationSegmentLabel } from "@/lib/canvas/agent-operation-feed";
 import { agentToolRetry, type AgentToolRetryAttempt } from "@/lib/canvas/agent-tool-retry";
 
 export type CloudAgentChatAttachment = { id: string; name: string; url: string };
@@ -39,6 +39,12 @@ export type CloudAgentChatMessage = {
     text: string;
     streaming?: boolean;
     reasoning?: boolean;
+    /**
+     * 本轮最终答复（服务端收尾闸门的结论）。false 表示这是过程正文——模型边做边说的那一段，
+     * 不是结论：运行还在继续，或者这次收尾被闸门拦下了。缺省按 true 处理（老后端没有这个字段）。
+     * 界面不再为它单独出角标（用户口径），但标记仍如实保存。
+     */
+    final?: boolean;
     planItems?: CloudAgentPlanItem[];
     question?: CloudAgentUserQuestion;
     meta?: string;
@@ -46,6 +52,34 @@ export type CloudAgentChatMessage = {
     attachments?: CloudAgentChatAttachment[];
     interjection?: "sent" | "undelivered";
 };
+
+/**
+ * 助手正文的收尾语义（工作项 A）：final=false 是过程说明，true / 缺省是结论。
+ * 缺省按"结论"处理是为了兼容升级前的后端事件——那时所有正文都按最终正文展示。
+ */
+export function agentAssistantFinality(payload: Record<string, unknown>): boolean {
+    return payload.final !== false;
+}
+
+/**
+ * 服务端控制消息（例如运行时的收尾闸门 `completion_blocked`）在时间线里的表示：
+ * 它是服务端说明，不是用户发言，所以走 system 行——绝不能渲染成真人 user 气泡。
+ */
+export function agentControlMessage(id: string, text: string, meta?: string): CloudAgentChatMessage {
+    return { id, role: "system", text, meta };
+}
+
+/**
+ * 类别的图标语言：三档互不串味 —— 清单用 List（读到存在与规模）、画面用 Eye（图片字节真的
+ * 交给了模型）、写画布用 Pencil / 创建用 Plus；未登记的工具走中性的 Wrench。
+ */
+function agentToolCategoryIcon(category: AgentToolCategory) {
+    if (category === "vision") return <Eye className="size-3.5" />;
+    if (category === "read") return <List className="size-3.5" />;
+    if (category === "create") return <Plus className="size-3.5" />;
+    if (category === "operate") return <Pencil className="size-3.5" />;
+    return <Wrench className="size-3.5" />;
+}
 
 export type CloudAgentQuickAction = { label: string; prompt: string };
 
@@ -174,8 +208,7 @@ export function AgentChatMessage({
     }
     return (
         <div className={`flex items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-            {!isUser ? <AgentTimelineMarker theme={theme} tone="agent" /> : null}
-            <div className={`agent-message-body min-w-0 text-sm leading-6 ${isUser ? "agent-message-user max-w-[82%] px-4 py-3 text-right" : "max-w-[calc(100%-36px)] flex-1 text-left"}`} style={{ color }}>
+            <div className={`agent-message-body min-w-0 text-sm leading-6 ${isUser ? "agent-message-user max-w-[82%] px-4 py-3 text-right" : "max-w-full flex-1 text-left"}`} style={{ color }}>
                 {item.interjection ? (
                     <span
                         className="mb-1 inline-flex items-center rounded-full px-1.5 py-[1px] text-[var(--fs-label)] leading-4"
@@ -419,7 +452,7 @@ export function AgentToolCard({
     const collapsedReadNodeCount = isNodeRead ? Math.max(0, actions.length - visibleActions.length) : 0;
     const isPlain = !actions.length && !state.isError;
     const conciseError = text.length > 180 ? `${text.slice(0, 180)}…` : text;
-    const categoryIcon = category === "read" ? <Eye className="size-3.5" /> : category === "create" ? <Plus className="size-3.5" /> : <Pencil className="size-3.5" />;
+    const categoryIcon = agentToolCategoryIcon(category);
     const retry = agentToolRetry(detail);
     const attempts = objectField(detail, "retryAttempts");
     if (retry && Array.isArray(attempts)) {
@@ -474,7 +507,7 @@ export function AgentToolCard({
                         ))}
                         {isNodeRead && (collapsedReadNodeCount > 0 || readExpanded) ? (
                             <button type="button" className="agent-tool-more" aria-expanded={readExpanded} onClick={() => setReadExpanded((current) => !current)}>
-                                {readExpanded ? `收起其余 ${Math.max(0, actions.length - 1)} 个节点` : `已折叠 ${collapsedReadNodeCount} 个节点，展开查看`}
+                                {readExpanded ? `收起其余 ${Math.max(0, actions.length - 1)} 个节点` : `另有 ${collapsedReadNodeCount} 个节点只是清单（未查看画面），展开查看`}
                             </button>
                         ) : null}
                     </div>
@@ -502,46 +535,67 @@ export function AgentToolCard({
 }
 
 /**
- * Agent 的操作记录（连续的 `role === "tool"` 消息）折成一行：只报最新一步，点击展开完整记录。
+ * Agent 的操作记录（连续的 `role === "tool"` 消息）折成一行：报最新一步，点击展开完整记录。
  *
- * 为什么默认收起：一轮运行的十几条工具记录会把正文挤出可视区，用户真正要读的是结论；
+ * 语义要点：折叠态整段只有这一行可见，所以**类别徽标必须在折叠行上**（清单 / 查看画面 /
+ * 修改画布），否则默认状态看不出刚才到底是读了清单还是真看了画面。
+ *
  * 展开状态用「用户覆盖 + 失败时默认展开」两段决定 —— 失败的操作不能被折进一行里看不见，
- * 但用户手动收起之后就不再自动弹开（跑动中新步骤只会追加，不会重置展开状态）。
+ * 但用户手动收起之后就不再自动弹开（跑动中新步骤只会追加，不会重置状态）。
+ * `live` 由面板按"这一段是不是对话末尾且在跑"给出：只有还在推进时才流光。
  */
 export function AgentOperationFeed({
     items,
     theme,
     references = [],
     onFocusNode,
+    live = false,
 }: {
     items: CloudAgentChatMessage[];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     references?: CanvasResourceReference[];
     onFocusNode?: (nodeId: string) => void;
+    live?: boolean;
 }) {
     const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
+    const reducedMotion = useReducedMotion();
     const listId = useId();
     const latest = items[items.length - 1];
     if (!latest) return null;
-    const latestState = toolCardState(latest.title || "工具执行", latest.text, latest.detail);
-    const latestLabel = agentOperationLabel(latest);
+    const category = agentOperationCategory(latest);
+    const categoryLabel = agentToolCategoryLabel(agentToolName(latest.title || "工具执行", latest.detail), category);
+    const label = agentOperationSegmentLabel(items);
     const failed = items.some((item) => agentOperationFailed(item));
     const expanded = userExpanded ?? failed;
+    const shimmering = live && !failed;
     return (
-        <div className={`agent-operation-feed${expanded ? " is-open" : ""}${failed ? " is-failed" : ""}`} data-agent-operation-feed>
+        <div className={`agent-operation-feed${expanded ? " is-open" : ""}${failed ? " is-failed" : ""}${shimmering ? " is-live" : ""}`} data-agent-operation-feed data-agent-category={category}>
             <button
                 type="button"
                 className="agent-operation-toggle"
                 aria-expanded={expanded}
                 aria-controls={listId}
-                // aria-label 会顶掉可见文字，所以最新一步必须自己报出来。
-                aria-label={`${expanded ? "收起" : "展开"} ${items.length} 步操作记录，最新一步：${latestLabel}`}
+                // aria-label 会顶掉可见文字，所以类别与最新一步必须自己报出来。
+                aria-label={`${expanded ? "收起" : "展开"} ${items.length} 步${categoryLabel}记录，最新一步：${label}`}
                 onClick={() => setUserExpanded(!expanded)}
             >
-                <span className="agent-operation-icon" style={{ color: latestState.color }} aria-hidden="true">
-                    {latestState.icon}
+                <span className="agent-tool-category">
+                    {agentToolCategoryIcon(category)}
+                    <span>{categoryLabel}</span>
                 </span>
-                <span className="agent-operation-latest">{latestLabel}</span>
+                {/* 换步时旧文案高模糊淡出、新文案从下方上浮（先快后慢的非线性曲线）。 */}
+                <AnimatePresence mode="wait" initial={false}>
+                    <motion.span
+                        key={label}
+                        className="agent-operation-latest"
+                        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 12, filter: "blur(6px)" }}
+                        animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, filter: "blur(0px)" }}
+                        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -8, filter: "blur(8px)" }}
+                        transition={reducedMotion ? { duration: 0 } : { duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
+                    >
+                        {label}
+                    </motion.span>
+                </AnimatePresence>
                 {items.length > 1 ? <span className="agent-operation-count">{items.length} 步</span> : null}
                 <ChevronDown className="agent-operation-chevron" aria-hidden="true" />
             </button>
@@ -1171,12 +1225,17 @@ export function AgentPanelTabs<T extends string>({
     );
 }
 
-function AgentTimelineMarker({ theme, tone, icon }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; tone: "agent" | "muted" | "tool" | "approval" | "error"; icon?: ReactNode }) {
-    const color = tone === "error" ? "#ef4444" : tone === "approval" ? "#f97316" : tone === "tool" ? "#4f7cff" : tone === "agent" ? theme.accent.primary : theme.node.muted;
+/**
+ * 时间线标记：图标由调用方给（系统行给 Sparkles、错误与审批给 CircleAlert…），不再有默认
+ * 的模型品牌 glyph —— 那个圆环标志会被读成"这条是模型/OpenAI 出品"，与它实际表达的
+ * "这是谁的一行"无关。
+ */
+function AgentTimelineMarker({ theme, tone, icon }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; tone: "agent" | "muted" | "approval" | "error"; icon: ReactNode }) {
+    const color = tone === "error" ? "#ef4444" : tone === "approval" ? "#f97316" : tone === "agent" ? theme.accent.primary : theme.node.muted;
     return (
         <span className="relative flex w-6 shrink-0 self-stretch justify-center" aria-hidden="true">
             <span className="relative grid size-6 place-items-center rounded-full" style={{ background: tone === "agent" ? theme.accent.primarySoft : theme.node.fill, color }}>
-                {icon || <span className="size-3 opacity-90" style={{ background: color, WebkitMask: "url(/icons/openai.svg) center / contain no-repeat", mask: "url(/icons/openai.svg) center / contain no-repeat" }} />}
+                {icon}
             </span>
         </span>
     );
