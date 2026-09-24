@@ -84,17 +84,23 @@ test("style contract: 正文 / 工具调用 / 模型思考 三档靠位置与明
     expect(icon).toContain("background: transparent");
     expect(icon).not.toContain("border-radius: 50%");
 
-    // ② 工具调用缩进一层并挂左轨（把一连串动作拢成一条活动流）
+    // ② 公共轴：星标与工具左轨压在同一条竖线上，且轴由星标几何推导
+    const axis = block(".agent-conversation-messages");
+    expect(axis).toContain("--agent-axis: 22px");
+    expect(axis).toContain("--agent-gutter-thought: calc(var(--agent-axis) - var(--agent-thought-icon) / 2 - var(--agent-summary-inset))");
+    expect(block(".agent-reasoning-summary")).toContain("padding: 6px var(--agent-summary-inset");
+
+    // ③ 工具调用缩进到轴上并挂左轨（1px 线居中在轴上）
     const feed = block(".agent-operation-feed");
-    expect(feed).toContain("margin-left: var(--agent-gutter-activity");
+    expect(feed).toContain("margin-left: calc(var(--agent-axis, 22px) - 0.5px)");
     expect(feed).toContain("border-left: 1px solid");
     expect(feed).toContain("padding-left: var(--agent-activity-inset");
 
-    // ③ 模型思考与轨同一缩进线，但不带轨（更轻的那一档）
+    // ④ 模型思考与轨同轴，但不带轨（更轻的那一档）
     const reasoning = block(".agent-reasoning");
     expect(reasoning).toContain("margin-left: var(--agent-gutter-thought");
     expect(reasoning).not.toContain("border-left");
 
-    // ④ 窄面板先收外层缩进，别让层级吃掉正文宽度
-    expect(css).toContain(".agent-reasoning,\n    .agent-operation-feed {\n        margin-left: 0;");
+    // ⑤ 窄面板只把轴收细，不让两处错位
+    expect(css).toContain("--agent-axis: 16px");
 });
