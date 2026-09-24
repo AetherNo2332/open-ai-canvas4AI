@@ -91,12 +91,16 @@ type CloudAgentRun struct {
 	CreatedAt      time.Time         `json:"createdAt"`
 	UpdatedAt      time.Time         `json:"updatedAt"`
 	Events         []CloudAgentEvent `json:"events,omitempty"`
-	// 事件已全量落库：EventSeqBase 是返回的首条事件之前的已入库条数，EventCount 是累计条数，
-	// LatestSeq 是本次返回的最后一条序号，EventsTruncated 表示还有更早的记录可按需拉取。
-	EventSeqBase    int                 `json:"eventSeqBase,omitempty"`
-	EventCount      int                 `json:"eventCount,omitempty"`
-	LatestSeq       int                 `json:"latestSeq,omitempty"`
-	EventsTruncated bool                `json:"eventsTruncated,omitempty"`
+	// 事件已全量落库，运行详情只返回一页，因此必须把"这一页在整条日志里的位置"说清楚：
+	// EventSeqBase 是本次返回的首条事件之前已入库的条数（不变量 events[i].seq ==
+	// eventSeqBase + i + 1），EventCount 是该运行累计事件条数，LatestSeq 可直接当作下次
+	// 增量读取的 sinceSeq，EventsTruncated 表示还有更早的记录没随本次返回。
+	// 这四个字段**不用 omitempty**：零值本身是有信息的位置读数（例如首条之前无记录、
+	// 没有更早的记录），省略会让客户端无法区分"为 0"与"服务端没给"。
+	EventSeqBase    int                 `json:"eventSeqBase"`
+	EventCount      int                 `json:"eventCount"`
+	LatestSeq       int                 `json:"latestSeq"`
+	EventsTruncated bool                `json:"eventsTruncated"`
 	Skills          []cloudAgentSkill   `json:"skills,omitempty"`
 	Approval        *cloudAgentApproval `json:"approval,omitempty"`
 	SpentCredits    float64             `json:"spentCredits"`
@@ -104,7 +108,8 @@ type CloudAgentRun struct {
 	ActiveMessage   map[string]string   `json:"activeMessage,omitempty"`
 }
 
-// CloudAgentRunViewOptions 是运行详情的读取选项：sinceSeq 只取增量，eventLimit 控制默认页大小。
+// CloudAgentRunViewOptions 是运行详情的读取选项：SinceSeq 只取该序号之后的增量，
+// EventLimit 覆盖默认页大小。零值即默认视图（尾部一窗）。
 type CloudAgentRunViewOptions struct {
 	SinceSeq   int
 	EventLimit int
@@ -384,8 +389,8 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err := s.advanceCloudAgentByID(userID, parentID); err != nil {
 			return nil, err
 		}
-		// 续轮的收束要读上一轮**全部**事件（默认页只有最近 100 条）：
-		// 长会话一旦被截断，新轮就看不到上一轮改过哪些节点，表现为"忘了自己做过什么"。
+		// 续轮收束要读上一轮**全部**事件（运行详情默认只返回尾部一窗）：长会话一旦被截断，
+		// 新轮就看不到上一轮改过哪些节点、提交过哪些任务，表现为"忘了自己做过什么"。
 		parentRun, err := s.CloudAgentRun(userID, parentID, CloudAgentRunViewOptions{EventLimit: cloudAgentContinuationEventLimit})
 		if err != nil {
 			return nil, err
@@ -417,27 +422,12 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		if err != nil {
 			return nil, err
 		}
-		// A compacted checkpoint already covers the completed parent turn. Other
-		// runs append the exact prompt/reply pair plus bounded execution facts, so
-		// failures and submitted work remain visible to the next turn. Cross-turn
-		// history is bounded by the semantic checkpoint, not by a fixed round cap.
-		if !parentState.HistoryIncludesCurrent {
-			// The user's goal survives a failed first model call too. Tool facts are
-			// context, not authorization to replay a write or charge a second time.
-			history = append(history, providerTextMessage{Role: "user", Content: parent.Prompt})
-			for _, message := range parentState.Canonical.Messages {
-				if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
-					history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
-				}
-			}
-			history = append(history, providerTextMessage{Role: "assistant", Content: text})
-			if strings.TrimSpace(context) != "" {
-				history = append(history, providerTextMessage{Role: "user", Content: context, AgentContextSource: "continuation"})
-			}
-		} else if strings.TrimSpace(context) != "" {
-			// 父轮以压缩收尾时（HistoryIncludesCurrent）历史已被换成检查点，里面只有模型写的摘要。
-			// 事实交接（失败原因、已提交任务、真实画布改动）不能因此缺席：长会话恰恰最需要它，
-			// 而"别重复提交收费任务"的依据只在这份帧里。
+		// 压缩时 TextHistory 与 Canonical 长度相同；压缩后本轮仍可能继续回答或收到插话。
+		// 只补压缩边界之后的内容，不能重复原始要求，也不能丢掉最终回复。
+		history = cloudAgentContinuationHistory(history, parentState, parent.Prompt, text)
+		// 事实交接帧不能因为压缩而缺席：长会话恰恰最需要它，而且"别重复提交收费任务"的
+		// 依据只在这份帧里（它带的是上一轮真实的工具结果与画布改动）。
+		if strings.TrimSpace(context) != "" {
 			history = append(history, providerTextMessage{Role: "user", Content: context, AgentContextSource: "continuation"})
 		}
 	}
@@ -557,6 +547,40 @@ type cloudAgentDigestNode struct {
 // 轮首摘要每次运行都会重建、每一步都会重发，所以它的体积必须由构造保证有界，并且
 // 绝不能因为画布太大而判死整轮（上游原来的 64KB 硬上限就是直接拒绝整轮）。
 // 8KB 是我们自己的软预算：摘要只承诺存在性与规模，正文按需分页读取。
+func cloudAgentContinuationHistory(history []providerTextMessage, state cloudAgentRuntime, prompt, reply string) []providerTextMessage {
+	if !state.HistoryIncludesCurrent {
+		// The user's goal survives a failed first model call too. Tool facts are
+		// context, not authorization to replay a write or charge a second time.
+		history = append(history, providerTextMessage{Role: "user", Content: prompt})
+		for _, message := range state.Canonical.Messages {
+			if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+				history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
+			}
+		}
+		return append(history, providerTextMessage{Role: "assistant", Content: reply})
+	}
+	// TextHistory 是压缩瞬间的 canonical 快照；之后只有 canonical 会追加模型回复。
+	// 终态取消/失败可能没有新回复，不能拿压缩前的最后一条 assistant 伪装成新回复。
+	after := state.Canonical.Messages[len(state.TextHistory):]
+	for _, message := range after {
+		if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+			history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
+		}
+	}
+	if strings.TrimSpace(reply) != "" {
+		for i := len(after) - 1; i >= 0; i-- {
+			message := after[i]
+			if stringField(message, "role") == "assistant" && stringField(message, "content") == reply {
+				if _, hasCalls := message["tool_calls"]; !hasCalls {
+					history = append(history, providerTextMessage{Role: "assistant", Content: reply})
+				}
+				break
+			}
+		}
+	}
+	return history
+}
+
 const (
 	cloudAgentDigestBudgetBytes = 8 << 10
 	// 逐级降级第一档的节点数上限与上游摘要一致。

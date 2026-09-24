@@ -33,7 +33,7 @@ description: 影策后端核心持久化表与状态边界
 | 表 | 用途 | 关键边界 |
 | --- | --- | --- |
 | `schema_migrations` | 保存已成功应用的结构版本、名称、校验和与时间 | 已应用版本的校验和发生变化时拒绝启动；数据库版本高于当前二进制支持版本时拒绝旧程序连接 |
-| `cloud_agent_executions` | 保存 Agent 每轮的控制面检查点、修订号与运行状态 | `(id, user_id)` 归属受服务端校验；状态通过 revision CAS 更新；`checkpoint_version >= 2` 时 `state_json` 只含技能快照、工具调用、审批、活动子任务与计量水位，消息与事件分别在 `cloud_agent_message_records`、`cloud_agent_event_records`；不保存浏览器密钥 |
+| `cloud_agent_executions` | 保存 Agent 每轮的控制面检查点、修订号与运行状态 | `(id, user_id)` 归属受服务端校验；状态通过 revision CAS 更新；`checkpoint_version >= 2` 时 `state_json` 只含技能快照、工具调用、审批、活动子任务、计量水位、最近一次语义压缩检查点与"正在压缩"的压缩态，消息与事件分别在 `cloud_agent_message_records`、`cloud_agent_event_records`；不保存浏览器密钥 |
 | `cloud_agent_message_records` | Agent 会话消息（transcript）：`canonical` 是发给模型的会话消息、`history` 是跨轮历史 | 主键 `(run_id, kind, sequence)`；语义压缩整体重写而不是删几条；行数与 `cloud_agent_executions.message_count` 必须一致，不一致按状态损坏处理 |
 | `cloud_agent_event_records` | Agent 运行事件日志（append-only，上游 v28 引入） | 主键 `(run_id, sequence)` + 插入幂等；事件正文是 `event_json`；运行详情按 `sequence` 分页读取 |
 | `cloud_agent_run_events` | **已退役**（自研，v35 起为 no-op 迁移） | 表与数据保留、不做 DROP、代码不再读写；切换前的历史事件留在这里 |

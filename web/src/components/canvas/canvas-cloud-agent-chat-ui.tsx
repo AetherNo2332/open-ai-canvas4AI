@@ -4,14 +4,42 @@ import { Tooltip } from "@/components/ui/base/tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { motion, useReducedMotion } from "motion/react";
-import { ArrowUp, AtSign, CheckCircle2, ChevronDown, ChevronUp, CircleAlert, CircleDot, Eye, HelpCircle, ImagePlus, ListChecks, LoaderCircle, Pencil, Plus, RotateCcw, Sparkles, Square, X, XCircle } from "lucide-react";
+import {
+    ArrowLeft,
+    ArrowUp,
+    AtSign,
+    Bookmark,
+    CheckCircle2,
+    ChevronDown,
+    ChevronUp,
+    CircleAlert,
+    CircleDot,
+    Clapperboard,
+    Eye,
+    HelpCircle,
+    ImagePlus,
+    Layers3,
+    ListChecks,
+    LoaderCircle,
+    Palette,
+    Pencil,
+    Plus,
+    RotateCcw,
+    Shapes,
+    Share2,
+    ShoppingBag,
+    Sparkles,
+    Square,
+    X,
+    XCircle,
+} from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
 import { WorkingGlow } from "@/components/ai/working-indicator";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import type { Skill } from "@/services/api/skills";
+import type { Skill, SkillPreset } from "@/services/api/skills";
 import type { AgentContextBreakdown, AgentContextPressure } from "@/services/api/agent";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolStatus, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
@@ -132,6 +160,7 @@ export function AgentChatMessage({
 }) {
     const isUser = item.role === "user";
     const isSystem = item.role === "system";
+    const displayedText = useTypewriterText(item.text, item.role === "assistant" && isStreaming);
     const color = item.role === "error" ? "#ef4444" : theme.node.text;
     if (item.reasoning) {
         return (
@@ -219,8 +248,8 @@ export function AgentChatMessage({
                 ) : null}
                 {item.final === false ? <AgentProgressChip theme={theme} /> : null}
                 {item.role === "assistant" ? (
-                    <AIMessageMarkdown className="text-left" isStreaming={isStreaming}>
-                        {item.text}
+                    <AIMessageMarkdown className="text-left" isStreaming={isStreaming} streamingAnimation="none">
+                        {displayedText}
                     </AIMessageMarkdown>
                 ) : (
                     <AgentMessageText text={item.text} references={references} />
@@ -230,6 +259,74 @@ export function AgentChatMessage({
             </div>
         </div>
     );
+}
+
+/**
+ * Agent SSE events contain text chunks. Keep the full text in the message
+ * state, but reveal one code point at a time so a chunk never appears as a
+ * whole block. The loop continues briefly after the stream ends to drain any
+ * text that was buffered by the network.
+ */
+function useTypewriterText(targetText: string, shouldAnimate: boolean) {
+    const targetRef = useRef(targetText);
+    const visibleRef = useRef(shouldAnimate ? "" : targetText);
+    const hasAnimatedRef = useRef(shouldAnimate);
+    const runningRef = useRef(false);
+    const timerRef = useRef<number | null>(null);
+    const [visibleText, setVisibleText] = useState(visibleRef.current);
+
+    targetRef.current = targetText;
+
+    const startLoop = useCallback(() => {
+        if (runningRef.current) return;
+        runningRef.current = true;
+
+        const step = () => {
+            const target = targetRef.current;
+            const targetCharacters = Array.from(target);
+            const visibleCharacters = Array.from(visibleRef.current);
+            const visibleIsPrefix = target.startsWith(visibleRef.current);
+
+            if (!visibleIsPrefix || visibleCharacters.length > targetCharacters.length) {
+                visibleRef.current = "";
+                setVisibleText("");
+            }
+
+            const currentCharacters = Array.from(visibleRef.current);
+            if (currentCharacters.length >= targetCharacters.length) {
+                runningRef.current = false;
+                timerRef.current = null;
+                return;
+            }
+
+            const nextText = targetCharacters.slice(0, currentCharacters.length + 1).join("");
+            visibleRef.current = nextText;
+            setVisibleText(nextText);
+            timerRef.current = window.setTimeout(step, 16);
+        };
+
+        step();
+    }, []);
+
+    useEffect(() => {
+        if (shouldAnimate) hasAnimatedRef.current = true;
+        if (!hasAnimatedRef.current && !shouldAnimate) {
+            visibleRef.current = targetText;
+            setVisibleText(targetText);
+            return;
+        }
+        startLoop();
+    }, [shouldAnimate, startLoop, targetText]);
+
+    useEffect(
+        () => () => {
+            if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+            runningRef.current = false;
+        },
+        [],
+    );
+
+    return visibleText;
 }
 
 function AgentMessageText({ text, references }: { text: string; references: CanvasResourceReference[] }) {
@@ -545,6 +642,156 @@ export function AgentQuestionBar({ question, theme, onAnswer, disabled = false }
                 ))}
             </div>
             <div className="px-3 pb-2 text-[10px] opacity-50">{question.allowFreeform === false ? "请从上面选一项。" : "点一项即可，也可以在下方输入框里自己说明。"}</div>
+        </div>
+    );
+}
+
+/**
+ * 场景起步胶囊：把「我大概想做 X」一步翻译成一组技能。
+ * 两组来源，都不限剧典技能：
+ *  1) 配方组——只读消费 GET /skills/presets（随二进制内置的手工策展配方）
+ *  2) 常用组——用户已装（其中可含已收藏）及自建的技能，按常用度排序（含官方种子库与自定义）
+ * 选择只作用于本会话；缺失的技能会持久安装到当前用户的技能库。
+ * 挂上之后具体用哪张卡由 Agent 在任务里检索判断，胶囊只负责"把对的技能送到手边"。
+ */
+export type AgentSceneBucket = {
+    key: string;
+    label: string;
+    presets: SkillPreset[];
+    skills: Skill[];
+};
+
+/** 场景分类：与 presets.json 的 scene 字段、技能的 tag 字段共用同一套 key。 */
+export const AGENT_SCENE_DEFS: Array<{ key: string; label: string; icon: typeof Sparkles }> = [
+    { key: "frequent", label: "我的常用", icon: Bookmark },
+    { key: "drama", label: "短剧故事", icon: Clapperboard },
+    { key: "ecommerce", label: "广告电商", icon: ShoppingBag },
+    { key: "creative", label: "视觉创意", icon: Palette },
+    { key: "social", label: "传播社媒", icon: Share2 },
+    { key: "others", label: "其他", icon: Shapes },
+];
+
+export function AgentSceneCapsules({
+    buckets,
+    installedIds,
+    theme,
+    disabled = false,
+    onPick,
+    onPickSkill,
+}: {
+    buckets: AgentSceneBucket[];
+    installedIds: Set<string>;
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    disabled?: boolean;
+    onPick: (preset: SkillPreset) => void;
+    onPickSkill: (skill: Skill) => void;
+}) {
+    // 始终只占一排：默认显示场景分类，点某个场景后在同一排内就地切换内容。
+    const [activeKey, setActiveKey] = useState<string | null>(null);
+    const capsuleClass = "agent-scene-capsule shrink-0";
+    const stop = {
+        onMouseDown: (event: { stopPropagation(): void }) => event.stopPropagation(),
+        onPointerDown: (event: { stopPropagation(): void }) => event.stopPropagation(),
+    };
+    const visible = buckets.filter((bucket) => bucket.presets.length + bucket.skills.length > 0);
+    const active = activeKey ? visible.find((bucket) => bucket.key === activeKey) || null : null;
+    if (!visible.length) return null;
+    return (
+        <div className="agent-scene-capsules mx-3 mb-2 min-w-0" style={{ color: theme.node.text }}>
+            <div className="agent-scene-capsules-heading">
+                <Sparkles aria-hidden="true" />
+                <span>{active ? active.label : "技能组合推荐"}</span>
+            </div>
+            <div className="agent-scene-capsules-scroll thin-scrollbar flex gap-2 overflow-x-auto px-1 py-2">
+                {active ? (
+                    <>
+                        <button
+                            type="button"
+                            disabled={disabled}
+                            title="返回全部场景"
+                            className={capsuleClass}
+                            data-scene="back"
+                            {...stop}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                setActiveKey(null);
+                            }}
+                        >
+                            <ArrowLeft aria-hidden="true" />
+                            <span>全部场景</span>
+                        </button>
+                        {active.presets.map((preset) => {
+                            const missing = preset.skillIds.filter((id) => !installedIds.has(id)).length;
+                            return (
+                                <button
+                                    key={preset.presetId}
+                                    type="button"
+                                    disabled={disabled}
+                                    title={preset.rationale}
+                                    className={capsuleClass}
+                                    data-scene={active.key}
+                                    {...stop}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        onPick(preset);
+                                    }}
+                                >
+                                    <Layers3 aria-hidden="true" />
+                                    <span className="agent-scene-capsule-label">{preset.name}</span>
+                                    <span className="agent-scene-capsule-meta">{missing > 0 ? `${preset.skillIds.length} 技能 · ${missing} 待装` : `${preset.skillIds.length} 技能`}</span>
+                                </button>
+                            );
+                        })}
+                        {active.skills.map((skill) => {
+                            const owned = skill.isOwner ? "自建" : skill.isLike ? "已收藏" : installedIds.has(skill.skillId) ? "已装" : "待装";
+                            return (
+                                <button
+                                    key={skill.skillId}
+                                    type="button"
+                                    disabled={disabled}
+                                    title={skill.description}
+                                    className={capsuleClass}
+                                    data-scene={active.key}
+                                    {...stop}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        onPickSkill(skill);
+                                    }}
+                                >
+                                    <Sparkles aria-hidden="true" />
+                                    <span className="agent-scene-capsule-label">{skill.skillName}</span>
+                                    <span className="agent-scene-capsule-meta">{owned}</span>
+                                </button>
+                            );
+                        })}
+                    </>
+                ) : (
+                    visible.map((bucket) => {
+                        const count = bucket.presets.length + bucket.skills.length;
+                        const Icon = AGENT_SCENE_DEFS.find((definition) => definition.key === bucket.key)?.icon || Shapes;
+                        return (
+                            <button
+                                key={bucket.key}
+                                type="button"
+                                disabled={disabled}
+                                title={`查看「${bucket.label}」下的技能组合`}
+                                className={capsuleClass}
+                                data-scene={bucket.key}
+                                {...stop}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    setActiveKey(bucket.key);
+                                }}
+                            >
+                                <Icon aria-hidden="true" />
+                                <span className="agent-scene-capsule-label">{bucket.label}</span>
+                                <span className="agent-scene-capsule-meta">{count} 项</span>
+                            </button>
+                        );
+                    })
+                )}
+            </div>
+            <p className="agent-scene-capsules-note">仅本会话生效 · 缺失技能将加入技能库 · Agent 按任务调用</p>
         </div>
     );
 }

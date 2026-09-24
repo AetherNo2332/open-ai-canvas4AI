@@ -1,3 +1,8 @@
+// Package agentcontext 定义画布 Agent 的**语义检查点**契约：把超预算的会话压缩成一份
+// provider 中立的记忆对象，让下一模型不必读原始历史也能继续工作。
+//
+// 它只做编码、解码与提示词组装，不依赖 HTTP、Web、repository 或 app：压缩的触发、暂停、
+// 恢复与降级由 backend/internal/app 决定，这里只保证"检查点长什么样"是稳定合同。
 package agentcontext
 
 import (
@@ -10,16 +15,25 @@ import (
 )
 
 const (
-	Version                  = 1
+	// Version 是检查点的结构版本：只有同版本的检查点才会被接受，避免旧摘要被新模型
+	// 当成完整事实使用。
+	Version = 1
+	// ThresholdBytes / ThresholdHistoryMessages 是"渠道没有配置模型上下文窗口"时的字节/条数
+	// 兜底线（本项目 V2 上下文计量的口径）。它们必须由这里唯一定义：后端把同一组数字申报给
+	// 界面（见 backend/internal/app/cloud_agent_context_pressure.go），压缩触发与压力展示
+	// 不能各说各话，否则会出现"界面显示还没到线、后台已经开始压"。
 	ThresholdBytes           = 48 << 10
 	ThresholdHistoryMessages = 16
-	MaxCheckpointBytes       = 64 << 10
-	Acknowledgement          = "已载入服务端上下文检查点。后续回答将延续其中的事实、剧本设计、未完成任务、限制与用户偏好；需要当前画布状态时会重新读取。"
+	// MaxCheckpointBytes 是检查点正文的上限：超限一律判为不合格（压缩模型输出不可控，
+	// 必须有一个硬边界，否则"压缩"自身又会变成一次超预算输入）。
+	MaxCheckpointBytes = 64 << 10
+	// Acknowledgement 是检查点入历史后紧跟的 assistant 回执：它让后续消息仍处于
+	// "user → assistant"的正常交替里，不制造半截轮次。
+	Acknowledgement = "已载入服务端上下文检查点。后续回答将延续其中的事实、剧本设计、未完成任务、限制与用户偏好；需要当前画布状态时会重新读取。"
 )
 
-// Checkpoint is the stable, provider-neutral memory contract shared by Agent
-// orchestration and future model/provider adapters. It intentionally lives
-// outside the HTTP and Web layers.
+// Checkpoint 是压缩后的记忆内容。字段刻意保持扁平字符串/字符串数组：它要能被任何模型
+// 生成、被人直接读懂、被服务端逐字段截断，而不是一个需要额外解释的结构。
 type Checkpoint struct {
 	Version            int      `json:"version"`
 	HistorySummary     string   `json:"historySummary"`
@@ -34,6 +48,8 @@ type Checkpoint struct {
 	CompactedTurnCount int      `json:"compactedTurnCount"`
 }
 
+// Source 是喂给压缩模型的原始材料。全部由调用方序列化成 JSON 字符串传入，因此本包
+// 不需要知道会话、事件、创作锚点或偏好快照的具体类型。
 type Source struct {
 	ConversationJSON string
 	OperationsJSON   string
@@ -43,10 +59,24 @@ type Source struct {
 	TurnCount        int
 }
 
-func ShouldCompact(historyMessages, encodedBytes int) bool {
-	return historyMessages >= ThresholdHistoryMessages || encodedBytes >= ThresholdBytes
+// ShouldCompact 是"渠道没有配置模型上下文窗口"时的兜底判据：条数与字节任一到线即压缩。
+//
+// 阈值由调用方传入而不是写死在这里：上游已经有一组跨轮历史闸门常量
+// （cloudAgentHistoryKeepRounds / cloudAgentHistoryMaxBytes），兜底判据必须复用同一组数字，
+// 否则同一份历史会出现"跨轮已经裁掉、轮内却还认为没超"的两套口径。
+//
+// 本项目的画布 Agent 调用点传的是上面那组已申报给界面的兜底线
+// （ThresholdHistoryMessages / ThresholdBytes）：阈值可传入是上游的接口形状，
+// 具体数字仍取"压缩触发与压力展示同一条线"。
+func ShouldCompact(historyMessages, encodedBytes, maxMessages, maxBytes int) bool {
+	if maxMessages <= 0 || maxBytes <= 0 {
+		return false
+	}
+	return historyMessages >= maxMessages || encodedBytes >= maxBytes
 }
 
+// BuildPrompt 组装压缩提示词。会话消息一律标为不可信数据：历史里的工具结果不是新的执行
+// 授权，压缩模型只能摘要，不能据此重发收费任务。
 func BuildPrompt(source Source) string {
 	return `你是画布 Agent 的上下文压缩器。请把以下历史压缩成一个可供后续模型直接继续工作的检查点。
 
@@ -77,6 +107,10 @@ func BuildPrompt(source Source) string {
 ` + source.DecisionsJSON
 }
 
+// Parse 解析压缩模型输出。
+//
+// 严格性是刻意的降级点：模型可能包一层 Markdown 代码块，也可能多写字段或塞进尾巴；
+// 任何不合规都返回错误，让调用方改用服务端保底检查点，而不是把半截 JSON 当记忆用。
 func Parse(raw string) (Checkpoint, error) {
 	var checkpoint Checkpoint
 	raw = strings.TrimSpace(raw)
@@ -109,6 +143,11 @@ func Parse(raw string) (Checkpoint, error) {
 	return checkpoint, nil
 }
 
+// ParseFrame / Frame 是检查点进入会话历史时的信封。
+//
+// 之所以要信封而不是裸 JSON：检查点在历史里以 user 消息出现，必须在文本层面就能被识别出来
+// （轮次计数要把它当成摘要、而不是用户原话），同时用户逐字复制这段文本也拿不到任何权限——
+// 它仍然只是一条普通 user 消息。
 func ParseFrame(raw string) (Checkpoint, error) {
 	const open, close = "<agent-context-checkpoint>", "</agent-context-checkpoint>"
 	raw = strings.TrimSpace(raw)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,6 +25,21 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		capabilities := service.CloudAgentCapabilitySetInfo()
 		ok(c, gin.H{"version": 2, "permissionModes": []string{"read_only", "request_approval", "auto"}, "contextScopes": []string{"canvas"}, "skills": true, "writeTools": true, "billing": "fixed_request", "maxHistoryPairs": 10, "maxHistoryBytes": 64000, "maxSteps": 0, "tools": service.CloudAgentSupportedToolNames(), "capabilitySetVersion": capabilities.Version, "capabilitySetHash": capabilities.Hash, "nodeTypes": capabilities.Nodes})
+	})
+	// Skill usage is derived from the caller's own journal receipts, so it stays
+	// read-only and never exposes another user's runs.
+	r.GET("/agent/skills/usage", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		view, err := svc.CloudAgentSkillUsage(user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
 	})
 	// Profiles are durable preference data, not an authorization surface. The
 	// service validates scope ownership and the compiler injects the effective
@@ -181,7 +197,14 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		run, err := svc.CloudAgentRun(user.ID, c.Param("id"), agentRunViewOptions(c))
+		// 运行详情只返回一页事件，分页参数越界或非法一律拒绝：静默夹取会让客户端
+		// 以为拿到的是它请求的那一页，从而把缺口当成"没有更多记录"。
+		options, err := agentRunViewOptions(c)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		run, err := svc.CloudAgentRun(user.ID, c.Param("id"), options)
 		if err != nil {
 			failService(c, err)
 			return
@@ -283,13 +306,16 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		// 断线重连用同一个游标：Last-Event-ID（或 ?after=）就是事件 seq。
+		// 游标就是事件 seq：先解析它，才能只把 after 之后的增量交给视图，
+		// 断线重连不必重新载入前面已经发过的事件。
+		// Last-Event-ID（或 ?after=）用的就是这个游标。
 		after, err := taskTextEventCursor(c)
 		if err != nil {
 			fail(c, 400, err)
 			return
 		}
-		run, err := svc.CloudAgentRun(user.ID, c.Param("id"), service.CloudAgentRunViewOptions{SinceSeq: int(after)})
+		options := service.CloudAgentRunViewOptions{SinceSeq: int(after)}
+		run, err := svc.CloudAgentRun(user.ID, c.Param("id"), options)
 		if err != nil {
 			failService(c, err)
 			return
@@ -332,7 +358,7 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			case <-c.Request.Context().Done():
 				return
 			case <-ticker.C:
-				run, err = svc.CloudAgentRunIfChanged(user.ID, c.Param("id"), revision, service.CloudAgentRunViewOptions{SinceSeq: int(after)})
+				run, err = svc.CloudAgentRunIfChanged(user.ID, c.Param("id"), revision, options)
 			}
 		}
 	})
@@ -350,14 +376,30 @@ func writeAgentSSE(c *gin.Context, event string, id int64, value any) {
 	c.Writer.Flush()
 }
 
-// agentRunViewOptions 解析运行详情的分页参数：sinceSeq 只取增量，eventLimit 控制默认页大小。
-func agentRunViewOptions(c *gin.Context) service.CloudAgentRunViewOptions {
+// agentRunEventQueryLimit 是 eventLimit 允许的最大值，与 app 侧的增量上限一致：
+// 请求更大的页没有意义（单次响应体积），直接拒绝比静默截断更容易被发现。
+const agentRunEventQueryLimit = 500
+
+func agentRunViewOptions(c *gin.Context) (service.CloudAgentRunViewOptions, error) {
 	options := service.CloudAgentRunViewOptions{}
-	if value, err := strconv.Atoi(strings.TrimSpace(c.Query("sinceSeq"))); err == nil && value > 0 {
-		options.SinceSeq = value
+	for _, item := range []struct {
+		name  string
+		value *int
+		min   int
+		max   int
+	}{
+		{name: "sinceSeq", value: &options.SinceSeq, min: 0, max: math.MaxInt32},
+		{name: "eventLimit", value: &options.EventLimit, min: 1, max: agentRunEventQueryLimit},
+	} {
+		raw := strings.TrimSpace(c.Query(item.name))
+		if raw == "" {
+			continue
+		}
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < item.min || parsed > item.max {
+			return options, fmt.Errorf("%s 必须是 %d–%d 之间的整数", item.name, item.min, item.max)
+		}
+		*item.value = parsed
 	}
-	if value, err := strconv.Atoi(strings.TrimSpace(c.Query("eventLimit"))); err == nil && value > 0 {
-		options.EventLimit = min(value, 500)
-	}
-	return options
+	return options, nil
 }

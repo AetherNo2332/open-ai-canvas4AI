@@ -38,18 +38,20 @@ func (r *Repository) CloudAgent(userID, id string) (*model.CloudAgentExecution, 
 	return &run, err
 }
 
-// CloudAgentJournalWindow 是 hydrate 时载入的事件窗口条数。
+// CloudAgentJournalWindow 是载入执行状态时读取的事件窗口条数。
 //
-// 事件全量在上游的 cloud_agent_event_records 里（append-only、按 run_id+sequence 主键），
-// 内存只保留最近这一窗供摘要、记忆提取与卡死判定使用；运行详情与 SSE 仍按 seq 分页读表，
-// 否则长跑 run 每读一次运行详情就要把整份 journal 拉进内存（读放大随轮数线性增长）。
+// 事件全量在 cloud_agent_event_records（append-only，主键 run_id + sequence），
+// 内存只保留最近这一窗：摘要、卡死判定与个人记忆提取只看最近事件，运行详情与
+// SSE 需要更早的记录时按 seq 分页读表。若在这里全量载入，长跑的 run 每读一次
+// 运行详情（以及调度器每轮扫描的每个活动 run）都要把整份 journal 拉进内存。
 const CloudAgentJournalWindow = 40
 
 func (r *Repository) hydrateCloudAgent(run *model.CloudAgentExecution) error {
 	if run.CheckpointVersion < 2 {
 		return nil
 	}
-	// 只取最近一窗事件，再翻回升序；窗口之外的由分页查询按需补。
+	// 只取最近一窗，再翻回升序：与 EventCount 的尾部对齐（不变量见 app 侧解码）；
+	// 窗口之外的由分页查询按需补。
 	window := []model.CloudAgentEventRecord{}
 	if err := r.db.Where("run_id = ? AND user_id = ?", run.ID, run.UserID).
 		Order("sequence DESC").Limit(CloudAgentJournalWindow).Find(&window).Error; err != nil {
@@ -65,7 +67,8 @@ func (r *Repository) hydrateCloudAgent(run *model.CloudAgentExecution) error {
 	return nil
 }
 
-// CloudAgentEventRecords 取 seq > afterSeq 的事件（升序），用于增量拉取与 SSE 断线重连。
+// CloudAgentEventRecords 取 seq > afterSeq 的事件（升序），keyset 分页走
+// (run_id, sequence) 主键，用于增量拉取与 SSE 断线重连。
 func (r *Repository) CloudAgentEventRecords(userID, runID string, afterSeq, limit int) ([]model.CloudAgentEventRecord, error) {
 	if limit <= 0 {
 		limit = CloudAgentJournalWindow
@@ -77,7 +80,7 @@ func (r *Repository) CloudAgentEventRecords(userID, runID string, afterSeq, limi
 }
 
 // CloudAgentEventRecordsBefore 取 seq < beforeSeq 的**最近** limit 条（升序返回），
-// 用于"窗口不够、要往前补齐一页"的读路径。
+// 供"请求的页比内存窗口更深、要往前补"的读路径使用。
 func (r *Repository) CloudAgentEventRecordsBefore(userID, runID string, beforeSeq, limit int) ([]model.CloudAgentEventRecord, error) {
 	if limit <= 0 {
 		limit = CloudAgentJournalWindow
@@ -94,7 +97,7 @@ func (r *Repository) CloudAgentEventRecordsBefore(userID, runID string, beforeSe
 	return records, nil
 }
 
-// CloudAgentEventRecordCount 是该运行已入库的事件条数（不载入正文）。
+// CloudAgentEventRecordCount 是该运行已入库的事件条数；只做计数，不载入正文。
 func (r *Repository) CloudAgentEventRecordCount(userID, runID string) (int64, error) {
 	var count int64
 	err := r.db.Model(&model.CloudAgentEventRecord{}).
@@ -144,6 +147,31 @@ func (r *Repository) CloudAgentRevision(userID, id string) (int64, error) {
 	return run.Revision, err
 }
 
+// RecentCloudAgentEventsForUser returns the journal rows of the caller's most
+// recent runs, ordered by event time. Runs are resolved first so a fixed
+// event limit cannot cut a run in half; an ongoing run may still add events.
+func (r *Repository) RecentCloudAgentEventsForUser(userID string, runLimit int) ([]model.CloudAgentEventRecord, error) {
+	if runLimit < 1 {
+		return nil, nil
+	}
+	var runIDs []string
+	if err := r.db.Model(&model.CloudAgentExecution{}).
+		Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Limit(runLimit).
+		Pluck("id", &runIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(runIDs) == 0 {
+		return nil, nil
+	}
+	var records []model.CloudAgentEventRecord
+	err := r.db.Where("user_id = ? AND run_id IN ?", userID, runIDs).
+		Order("created_at, sequence").
+		Find(&records).Error
+	return records, err
+}
+
 // Lock before reading: checkpoints, canvas writes and task reservations commit together.
 func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func(*model.CloudAgentExecution, *Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
@@ -170,26 +198,31 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 		if err = fn(run, New(tx)); err != nil {
 			return err
 		}
-		// journal 是 append-only：水位只能前进，窗口只能右移。
 		if run.EventCount < previousEvents {
 			return fmt.Errorf("cloud Agent journal cannot be truncated")
 		}
-		next := make(map[int]string, len(run.Journal))
+		// journal 是 append-only：本次转移之前已经载入的事件不许改写。
+		// 内存里只有最近一窗，窗口右移后更早的行会落在新窗口之外——那些行不在
+		// run.Journal 里，也不会被下面的 Create 循环碰到（只追加 seq > 水位的新行），
+		// 因此只要求它们确实比新窗口更早，而不是要求它们仍在窗口内。
+		current := make(map[int]string, len(run.Journal))
 		for _, event := range run.Journal {
-			next[event.Sequence] = event.EventJSON
+			current[event.Sequence] = event.EventJSON
 		}
-		// 已在库里的行（本次载入窗口内的部分）必须原样保留：事件内容不可改写。
-		// 窗口之外的行不在 next 里，也不会被写路径碰到——它只追加 seq > previousEvents 的行。
 		for sequence, body := range previousEventBodies {
-			updated, ok := next[sequence]
-			if !ok {
-				return fmt.Errorf("cloud Agent journal is append-only")
+			updated, present := current[sequence]
+			if !present {
+				if len(run.Journal) == 0 || sequence >= run.Journal[0].Sequence {
+					return fmt.Errorf("cloud Agent journal is append-only")
+				}
+				continue
 			}
 			if !sameJSONDocument(updated, body) {
 				return fmt.Errorf("cloud Agent journal is append-only")
 			}
 		}
-		// 水位与窗口必须自洽：窗口最后一条就是要落库的最后一条。
+		// 水位与窗口必须自洽：窗口最后一条就是要落库的最后一条，否则说明写入端
+		// 算错了窗口起点，或行被删掉过。
 		if len(run.Journal) > 0 && run.Journal[len(run.Journal)-1].Sequence != run.EventCount {
 			return fmt.Errorf("cloud Agent journal watermark is inconsistent")
 		}

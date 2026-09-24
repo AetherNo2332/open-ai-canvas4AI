@@ -8,7 +8,7 @@ import (
 )
 
 // cloudAgentContinuationEventLimit 是续轮读取上一轮事件的上限：收束要覆盖整轮改动，
-// 不能只看默认页（默认 100 条，长会话的早期改动对新轮不可见）。
+// 不能只看默认页（长会话的早期改动对新轮不可见）。
 const cloudAgentContinuationEventLimit = 1000
 
 const (

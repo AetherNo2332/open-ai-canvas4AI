@@ -23,6 +23,8 @@ type cloudAgentContextFrame struct {
 	Authority      string               `json:"authority"`
 }
 
+var errCloudAgentContextOverBudget = errors.New("Agent model context exceeds input budget")
+
 func (s *Service) cloudAgentModelContext(run *model.CloudAgentExecution, state *cloudAgentRuntime, budget cloudAgentContextBudget) (canonicalAgentRequest, error) {
 	canonical := cloudAgentCanonicalWithPlan(state)
 	// 自动纠错收紧档：只把"修当前这个错误"需要的工具发给模型（不影响落库的完整工具表，
@@ -92,7 +94,7 @@ func fitCloudAgentModelContext(request *canonicalAgentRequest, maxTokens int) er
 			break
 		}
 		if !removed {
-			return BadAuthRequest(fmt.Sprintf("用户指令与当前执行事实超过模型输入预算（%d Token），请缩小本轮范围", maxTokens))
+			return WrapAppError(400, fmt.Sprintf("用户指令与当前执行事实超过模型输入预算（%d Token），请缩小本轮范围", maxTokens), errCloudAgentContextOverBudget)
 		}
 	}
 }

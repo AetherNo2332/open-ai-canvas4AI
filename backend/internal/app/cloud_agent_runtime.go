@@ -231,7 +231,13 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	}
 	state := cloudAgentRuntime{Request: initial.Request, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
 	if len(initial.Skills) > 0 {
-		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
+		// skillIds makes the enablement auditable: usage telemetry can attribute a
+		// run to the skills it actually loaded instead of only counting the total.
+		skillIDs := make([]string, 0, len(initial.Skills))
+		for _, skill := range initial.Skills {
+			skillIDs = append(skillIDs, skill.ID)
+		}
+		state.event(task.ID, "tool_completed", map[string]any{"toolName": "skills_load", "skillIds": skillIDs, "text": fmt.Sprintf("已启用 %d 个技能，正文将按需读取", len(initial.Skills))})
 	}
 	pressure := s.cloudAgentContextPressure(input.Requests.Canonical, initial.Request.Prompt, initial.Request)
 	// 第一步的模型调用就是根任务本身（不经过 enqueueCloudAgentTask）：
@@ -332,6 +338,10 @@ func cloudAgentRestoreTranscript(run *model.CloudAgentExecution, state *cloudAge
 		}
 		events = append(events, event)
 	}
+	// 上游修正（#600）：窗口为空但水位非零 = 有行没读到，不能把"一行都没有"当成空日志。
+	if len(events) == 0 && run.EventCount != 0 {
+		return errors.New("Agent execution journal is incomplete")
+	}
 	if len(events) > 0 && events[len(events)-1].Seq != run.EventCount {
 		return fmt.Errorf("Agent execution journal is incomplete: lastSeq=%d count=%d", events[len(events)-1].Seq, run.EventCount)
 	}
@@ -430,6 +440,9 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if state.ActiveTaskID != "" && state.MediaTaskID != "" {
 		return errors.New("Agent runtime has multiple active tasks")
 	}
+	if state.HistoryIncludesCurrent && len(state.Canonical.Messages) < len(state.TextHistory) {
+		return errors.New("Agent compacted history exceeds canonical transcript")
+	}
 	if len(state.TaskIDs) == 0 {
 		return errors.New("Agent runtime task history is invalid")
 	}
@@ -457,7 +470,8 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if state.EventSeqBase < 0 {
 		return errors.New("Agent runtime event watermark is invalid")
 	}
-	// 事件全量在上游事件表，内存里只留一窗 + 本次转移新产生的部分。
+	// 内存里只有"最近一窗 + 本次转移新产生的部分"，超过健全上限说明窗口没有按
+	// CloudAgentJournalWindow 载入（或序号基准算错），此时不能继续推进。
 	if len(state.Events) > cloudAgentEventWindowSanityLimit {
 		return errors.New("Agent runtime event window is too large")
 	}
@@ -641,8 +655,9 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if run.Title == "" {
 		run.Title = truncateRunes(state.Request.Prompt, 80)
 	}
-	// 事件按"窗口 + 水位"落库：run.Journal 只是内存窗口的映射，写入侧
-	// （MutateCloudAgent）只追加 seq > 旧 EventCount 的行，因此窗口左移不会丢历史。
+	// 事件按"窗口 + 水位"落库：run.Journal 只是内存窗口的映射（窗口之外的历史仍在
+	// 事件表里），写入侧（repository.MutateCloudAgent）只追加 seq > 旧水位的行，
+	// 因此窗口左移不会丢历史。
 	run.Journal = make([]model.CloudAgentEventRecord, 0, len(state.Events))
 	for _, event := range state.Events {
 		body, err := json.Marshal(event)
@@ -666,6 +681,8 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 		}
 		run.Transcript = append(run.Transcript, model.CloudAgentMessageRecord{RunID: run.ID, UserID: run.UserID, Kind: cloudAgentMessageKindHistory, Sequence: index + 1, MessageJSON: string(body)})
 	}
+	// 水位 = 窗口之前已入库的条数 + 本次载入/新增的窗口条数，必须与事件表里的
+	// 最大 seq 一致，否则下一次载入的窗口与水位会对不上。
 	run.CheckpointVersion, run.EventCount, run.MessageCount = cloudAgentCheckpointVersion, state.EventSeqBase+len(state.Events), len(run.Transcript)
 	run.StateJSON = string(raw)
 	return nil
@@ -710,8 +727,10 @@ const (
 	// cloudAgentEventWindowSanityLimit 是校验用的健全上限：内存里的事件窗口 + 一次转移新产生的事件
 	// 不应超过它，超过就是异常（真正的历史都在事件表里）。
 	cloudAgentEventWindowSanityLimit = 512
-	// cloudAgentRunEventPageLimit 是运行详情默认返回的事件条数（尾部缓存之外再从事件表补齐）。
-	cloudAgentRunEventPageLimit = 100
+	// cloudAgentRunEventPageLimit 是运行详情默认返回的事件条数：等于内存里保留的尾部窗口
+	// （repository.CloudAgentJournalWindow），因此默认读取不额外查事件表；要更早的记录由
+	// 客户端用 eventLimit 显式索取。这个数必须与 openapi 的默认页说明保持一致。
+	cloudAgentRunEventPageLimit = repository.CloudAgentJournalWindow
 )
 
 func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgentState, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
@@ -734,14 +753,21 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 	if len(options) > 0 {
 		view = options[0]
 	}
-	// 事件已全量落库：默认返回最近一页（尾部窗口 + 事件表补齐），sinceSeq 只取增量。
+	// 事件已全量落库，运行详情只返回一页：默认是尾部窗口，sinceSeq 只取增量。
+	// 四个位置字段与 events 一起返回，客户端据此判断"是否还有更早的记录"。
 	out.Events = s.cloudAgentRunEventsForView(task.UserID, run, &state, view.SinceSeq, view.EventLimit)
+	// EventSeqBase 必须与真正返回的这一页对齐（eventLimit 把它收窄时也一样），
+	// 不变量 events[i].seq == eventSeqBase + i + 1 才成立。页为空时退回窗口水位：
+	// 那时没有"首条事件"，但仍然要能说明窗口在整条日志里的位置。
 	out.EventSeqBase = state.EventSeqBase
+	if len(out.Events) > 0 {
+		out.EventSeqBase = out.Events[0].Seq - 1
+	}
 	out.EventCount = s.cloudAgentRunEventCount(task.UserID, run, &state)
 	if len(out.Events) > 0 {
 		out.LatestSeq = out.Events[len(out.Events)-1].Seq
 	}
-	if len(out.Events) < out.EventCount && view.SinceSeq == 0 {
+	if view.SinceSeq == 0 && len(out.Events) < out.EventCount {
 		out.EventsTruncated = true
 	}
 	out.Approval = state.Approval
@@ -879,6 +905,8 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		if err != nil {
 			return err // Transient database failures must not terminate a live task.
 		}
+		// 停在压缩上时，这个在跑的任务就是压缩调用：它的结果只用来生成检查点，
+		// 不走"正文/工具调用"那套解析，也不会计入步数。
 		if state.ContextCompaction != nil {
 			return s.advanceCloudAgentContextCompaction(run, &state, task)
 		}
@@ -1071,6 +1099,7 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	// "看图不是最后一个调用"的批次会把图片永久丢掉，而对应的 tool 回执已经在历史里。
 	// 幂等：正常路径（最后一个调用就是看图）已经在 cloudAgentToolResult 里 flush 过，这里是空操作。
 	cloudAgentFlushPendingImages(&state)
+	// 已经请求过压缩：这次推进只负责把压缩调用发出去（它不计入步数，见 enqueueCloudAgentTask）。
 	if state.ContextCompaction != nil && state.ContextCompaction.Status == "requested" {
 		return s.enqueueCloudAgentContextCompaction(run, &state)
 	}
@@ -1105,6 +1134,13 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	}
 	canonical, contextErr := s.cloudAgentModelContext(run, &state, contextBudget)
 	if contextErr != nil {
+		// 真实任务帧与用户要求有时在下一步建模时就超过输入预算；
+		// 它会先于下方常规 token 判据失败，仍需给语义压缩一次机会。
+		if errors.Is(contextErr, errCloudAgentContextOverBudget) {
+			if requested, err := s.cloudAgentRequestCompaction(run, &state, contextBudget, contextBudget.CompactAtTokens); err != nil || requested {
+				return err
+			}
+		}
 		var appErr *AppError
 		if errors.As(contextErr, &appErr) {
 			return s.failCloudAgent(run, &state, appErr.Message)
@@ -1134,16 +1170,16 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 	if tokenErr != nil {
 		return s.failCloudAgent(run, &state, "模型上下文估算失败，请稍后重试")
 	}
+	// 超预算不再直接判死：先暂停步进、把历史压成结构化检查点，压完用压缩后的上下文继续本轮。
+	// 次数上限（cloudAgentMaxCompactionsPerRun）用完仍超预算时，才回到下面的判死路径。
+	// 分工：这是轮内的**语义压缩**（触发者是 token 线，或没配窗口时的字节/条数兜底）；
+	// compactCloudAgentContext 是轮内可重读正文的**就地卸载**，跨轮 textHistory 由
+	// trimCloudAgentTextHistory 兜底——三者对象不同、不会互相打架。
+	if requested, err := s.cloudAgentRequestCompaction(run, &state, contextBudget, tokens); err != nil || requested {
+		return err
+	}
 	if tokens > contextBudget.InputBudgetTokens {
 		return s.failCloudAgent(run, &state, cloudAgentContextBudgetMessage(contextBudget))
-	}
-	// 上下文利用率达标（输入预算的 85%，优先上游实测 token 口径）就先暂停步进：
-	// 把历史压成检查点，压完再用压缩后的上下文继续本轮，而不是带着超高占用再发一次请求。
-	// 分工：这是轮内的**语义压缩**（触发者是 token 线）；上游的 working_context /
-	// compactCloudAgentContext 是轮内可重读正文的**兜底裁剪**，跨轮 textHistory 由
-	// trimCloudAgentTextHistory 兜底，三者对象不同、不会互相打架。
-	if requested, err := s.cloudAgentRequestCompaction(run, &state, canonical); err != nil || requested {
-		return err
 	}
 	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: cloudAgentStepOperation, Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
 	return s.enqueueCloudAgentTask(run, &state, req, nil)
@@ -2038,6 +2074,7 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 			state.event(run.ID, "generation_task_created", map[string]any{"toolName": "generate_media", "taskId": task.ID, "nodeId": media.Args.NodeID, "title": media.Args.Title, "mode": media.Args.Mode, "canvasId": state.Request.CanvasID, "referenceNodeIds": media.Args.ReferenceNodeIDs, "text": "媒体节点与引用连线已创建，生成任务已提交"})
 		} else {
 			state.ActiveTaskID = task.ID
+			// 压缩调用不是本轮的一步：压完还要用压缩后的上下文继续步进，步数不该被它占掉。
 			if state.ContextCompaction != nil && req.Operation == cloudAgentContextCompactionOperation {
 				state.ContextCompaction.Status = "running"
 			} else {

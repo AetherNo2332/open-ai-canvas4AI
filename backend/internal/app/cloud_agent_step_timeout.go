@@ -17,7 +17,8 @@ const cloudAgentStepTimeoutError = "画布 Agent 单步模型调用超时"
 const cloudAgentMaxStepTimeoutEscalations = 1
 
 // cloudAgentModelOperation 判断任务是不是"画布 Agent 的一次模型调用"：根任务（第一步）、
-// 后续每一步、以及上下文压缩调用都属于同一类，都要按单步口径计时。
+// 后续每一步、以及上下文压缩调用都属于同一类，都要按单步口径计时（压缩调用同样可能
+// 卡在长时间无输出上，不能没有墙钟）。
 func cloudAgentModelOperation(task *model.Task) bool {
 	if task == nil {
 		return false
