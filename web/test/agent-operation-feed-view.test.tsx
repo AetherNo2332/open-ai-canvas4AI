@@ -73,3 +73,28 @@ test("style contract: no per-step status ticks, vision tint and shimmer stay tok
     // 类别取色走面板注入的主题 token，不写字面值
     expect(css).toContain("--agent-tool-accent: var(--agent-accent, var(--foreground));");
 });
+
+test("style contract: 正文 / 工具调用 / 模型思考 三档靠位置与明度分层", async () => {
+    const css = await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent.css", import.meta.url)).text();
+    // 同一选择器可能在容器查询里被覆盖，这里把所有命中块拼起来看整体契约。
+    const block = (selector: string) => [...css.matchAll(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\{([^}]*)\\}`, "g"))].map((match) => match[1]).join("\n");
+
+    // ① 星标后面不再有圆底：只留图标本身
+    const icon = block(".agent-reasoning-icon");
+    expect(icon).toContain("background: transparent");
+    expect(icon).not.toContain("border-radius: 50%");
+
+    // ② 工具调用缩进一层并挂左轨（把一连串动作拢成一条活动流）
+    const feed = block(".agent-operation-feed");
+    expect(feed).toContain("margin-left: var(--agent-gutter-activity");
+    expect(feed).toContain("border-left: 1px solid");
+    expect(feed).toContain("padding-left: var(--agent-activity-inset");
+
+    // ③ 模型思考与轨同一缩进线，但不带轨（更轻的那一档）
+    const reasoning = block(".agent-reasoning");
+    expect(reasoning).toContain("margin-left: var(--agent-gutter-thought");
+    expect(reasoning).not.toContain("border-left");
+
+    // ④ 窄面板先收外层缩进，别让层级吃掉正文宽度
+    expect(css).toContain(".agent-reasoning,\n    .agent-operation-feed {\n        margin-left: 0;");
+});

@@ -669,6 +669,11 @@
     .agent-context-panel-foot { display: grid; }
 
     .agent-welcome-actions button { padding-inline: var(--space-2); }
+    /* 窄面板先把"外层缩进"收掉，保留左轨：层级靠轨与字色继续成立，不靠吃掉正文宽度。 */
+    .agent-reasoning,
+    .agent-operation-feed {
+        margin-left: 0;
+    }
 }
 
 @media (max-width: 639px) {
@@ -917,6 +922,10 @@
  */
 .agent-operation-feed {
     --agent-tool-accent: color-mix(in srgb, var(--foreground) 62%, transparent);
+    /* 层级第二档：缩进一层，用一条左轨把"一连串动作"拢成一条活动流。 */
+    margin-left: var(--agent-gutter-activity, 10px);
+    border-left: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+    padding-left: var(--agent-activity-inset, 10px);
     min-width: 0;
 }
 
@@ -935,7 +944,7 @@
     border-radius: 9px;
     background: transparent;
     padding: 4px var(--space-2) 4px var(--space-1);
-    color: color-mix(in srgb, var(--agent-ink, currentColor) 78%, transparent);
+    color: color-mix(in srgb, var(--agent-ink, currentColor) 72%, transparent);
     font-size: var(--fs-caption);
     line-height: 18px;
     text-align: left;
@@ -1264,9 +1273,18 @@
  * 比工具日志更安静、比正文更有层次。使用当前画布主题的 accent，避免
  * 固定紫色的 AI 默认样式，同时把实时状态、摘要内容和展开动作分开。
  */
+/*
+ * 信息层级：正文 / 工具调用 / 模型思考 三段只靠「位置 + 字号 + 对比度」分层，
+ * 不靠圆底图标或品牌 glyph。
+ *
+ *   正文（结论）   贴左边缘、14px、满对比 —— 主角
+ *   工具调用       缩进一层并挂一条左轨（活动流），12px、次对比
+ *   模型思考       与轨同一条缩进线上、但不带轨，12px/11px、最淡 —— 过程里的旁白
+ */
 .agent-reasoning {
     min-width: 0;
-    color: color-mix(in srgb, var(--foreground) 64%, transparent);
+    margin-left: var(--agent-gutter-thought, 10px);
+    color: color-mix(in srgb, var(--foreground) 58%, transparent);
 }
 
 .agent-reasoning-card {
@@ -1291,7 +1309,7 @@
     cursor: pointer;
     list-style: none;
     padding: 6px 4px;
-    color: color-mix(in srgb, var(--foreground) 72%, transparent);
+    color: color-mix(in srgb, var(--foreground) 66%, transparent);
     user-select: none;
 }
 
@@ -1303,16 +1321,17 @@
     background: color-mix(in srgb, var(--agent-reasoning-accent) 4%, transparent);
 }
 
+/* 只留那颗星：圆底是上一版的装饰，去掉后与时间线标记同一种"无底图标"语言。 */
 .agent-reasoning-icon {
     display: grid;
-    width: 25px;
-    height: 25px;
-    flex: 0 0 25px;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
     place-items: center;
     border: 0;
-    border-radius: 50%;
-    background: color-mix(in srgb, var(--agent-reasoning-accent) 10%, transparent);
-    color: var(--agent-reasoning-accent);
+    border-radius: 0;
+    background: transparent;
+    color: color-mix(in srgb, var(--agent-reasoning-accent) 82%, var(--foreground));
 }
 
 .agent-reasoning-copy {
@@ -1326,9 +1345,9 @@
 .agent-reasoning-title {
     min-width: 0;
     overflow: hidden;
-    color: color-mix(in srgb, var(--foreground) 78%, transparent);
+    color: color-mix(in srgb, var(--foreground) 72%, transparent);
     font-size: 12px;
-    font-weight: 650;
+    font-weight: 600;
     line-height: 17px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1337,7 +1356,7 @@
 .agent-reasoning-subtitle {
     min-width: 0;
     overflow: hidden;
-    color: color-mix(in srgb, var(--foreground) 43%, transparent);
+    color: color-mix(in srgb, var(--foreground) 38%, transparent);
     font-size: 11px;
     line-height: 16px;
     text-overflow: ellipsis;
@@ -1398,13 +1417,14 @@
     gap: 0;
     overflow: auto;
     border-top: 0;
-    padding: 4px 10px 10px 38px;
+    /* 25px = 星标列（16px）+ 摘要的 gap（9px）：正文与标题左对齐。 */
+    padding: 4px 10px 10px 25px;
     scrollbar-gutter: stable;
 }
 
 .agent-reasoning-text {
     min-width: 0;
-    color: color-mix(in srgb, var(--foreground) 58%, transparent);
+    color: color-mix(in srgb, var(--foreground) 54%, transparent);
     font-size: 12px;
     line-height: 1.75;
     white-space: pre-wrap;
