@@ -74,7 +74,7 @@ test("style contract: no per-step status ticks, vision tint and shimmer stay tok
     expect(css).toContain("--agent-tool-accent: var(--agent-accent, var(--foreground));");
 });
 
-test("style contract: 正文 / 工具调用 / 模型思考 三档靠位置与明度分层", async () => {
+test("style contract: 正文 / 工具调用 / 模型思考 三档靠公共轴与明度分层", async () => {
     const css = await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent.css", import.meta.url)).text();
     // 同一选择器可能在容器查询里被覆盖，这里把所有命中块拼起来看整体契约。
     const block = (selector: string) => [...css.matchAll(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\{([^}]*)\\}`, "g"))].map((match) => match[1]).join("\n");
@@ -84,23 +84,27 @@ test("style contract: 正文 / 工具调用 / 模型思考 三档靠位置与明
     expect(icon).toContain("background: transparent");
     expect(icon).not.toContain("border-radius: 50%");
 
-    // ② 公共轴：星标与工具左轨压在同一条竖线上，且轴由星标几何推导
+    // ② 公共轴：正文就从这条线开始（列表左内边距 = 轴）
     const axis = block(".agent-conversation-messages");
     expect(axis).toContain("--agent-axis: 22px");
-    expect(axis).toContain("--agent-gutter-thought: calc(var(--agent-axis) - var(--agent-thought-icon) / 2 - var(--agent-summary-inset))");
+    expect(axis).toContain("padding-left: var(--agent-axis)");
+
+    // ③ 过程标记挂在轴上：星标向左挂半格 + 摘要内边距，中心正好落在轴
+    const reasoning = block(".agent-reasoning");
+    expect(reasoning).toContain("margin-left: calc(-1 * (var(--agent-thought-icon, 16px) / 2 + var(--agent-summary-inset, 4px)))");
+    expect(reasoning).not.toContain("border-left");
     expect(block(".agent-reasoning-summary")).toContain("padding: 6px var(--agent-summary-inset");
 
-    // ③ 工具调用缩进到轴上并挂左轨（1px 线居中在轴上）
+    // ④ 工具左轨也压在轴上（1px 线居中），内容落在轨右侧
     const feed = block(".agent-operation-feed");
-    expect(feed).toContain("margin-left: calc(var(--agent-axis, 22px) - 0.5px)");
+    expect(feed).toContain("margin-left: -0.5px");
     expect(feed).toContain("border-left: 1px solid");
     expect(feed).toContain("padding-left: var(--agent-activity-inset");
 
-    // ④ 模型思考与轨同轴，但不带轨（更轻的那一档）
-    const reasoning = block(".agent-reasoning");
-    expect(reasoning).toContain("margin-left: var(--agent-gutter-thought");
-    expect(reasoning).not.toContain("border-left");
+    // ⑤ 时间线标记同样挂半格，中心与星标/左轨同轴
+    expect(block(".agent-timeline-marker")).toContain("width: var(--agent-timeline-marker, 24px)");
+    expect(block(".agent-conversation-messages .agent-timeline-marker")).toContain("margin-left: calc(-1 * (var(--agent-timeline-marker, 24px) / 2))");
 
-    // ⑤ 窄面板只把轴收细，不让两处错位
+    // ⑥ 窄面板只把轴收细，不让三处错位
     expect(css).toContain("--agent-axis: 16px");
 });
