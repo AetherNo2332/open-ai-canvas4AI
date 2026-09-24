@@ -40,6 +40,7 @@ import {
     type AgentRun,
 } from "@/services/api/agent";
 import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
+import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
 import { agentApprovalMatchesSettings, agentImageApproval } from "@/lib/canvas/agent-media-approval";
 import type { AgentMediaSettings } from "@/services/api/agent";
 import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-settings";
@@ -65,6 +66,7 @@ import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/sk
 import {
     AgentChatComposer,
     AgentChatMessage,
+    AgentOperationFeed,
     AgentPlanBar,
     AgentQuestionBar,
     AgentSceneCapsules,
@@ -1362,6 +1364,9 @@ function AgentConversation({
     const contentRef = useRef<HTMLDivElement>(null);
     const followRef = useRef(true);
     const lastUserId = messages.findLast((item) => item.role === "user")?.id;
+    // 连续的工具记录折成一行（只报最新一步），计划/提问载体由输入区上方的固定条渲染。
+    const segments = useMemo(() => buildAgentFeedSegments(messages), [messages]);
+    const lastMessage = messages.at(-1);
 
     // 自己发送时恢复跟随；阅读旧消息时不让流式输出抢走滚动位置。
     useLayoutEffect(() => {
@@ -1395,9 +1400,20 @@ function AgentConversation({
         >
             {!messages.length ? <AgentWelcome appearance={appearance} nodeCount={nodeCount} onChooseSkill={onChooseSkill} onDraftPrompt={onDraftPrompt} /> : null}
             <div ref={contentRef} className="agent-conversation-messages">
-                {messages.map((item) => (
-                    <AgentChatMessage key={item.id} item={item} theme={theme} references={references} onFocusNode={onFocusNode} isStreaming={busy && !approval && item.streaming === true && item === messages.at(-1)} />
-                ))}
+                {segments.map((segment) =>
+                    segment.kind === "operations" ? (
+                        <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={references} onFocusNode={onFocusNode} />
+                    ) : (
+                        <AgentChatMessage
+                            key={segment.key}
+                            item={segment.item}
+                            theme={theme}
+                            references={references}
+                            onFocusNode={onFocusNode}
+                            isStreaming={busy && !approval && segment.item.streaming === true && segment.item === lastMessage}
+                        />
+                    ),
+                )}
                 {approval ? <ApprovalCard key={approval.approvalId} approval={approval} theme={theme} submitting={approvalSubmitting} onFocusNode={onFocusNode} onReasonChange={onApprovalReasonChange} onApprove={onApprove} onReject={onReject} /> : null}
                 {busy && !approval ? <AgentWorkingMessage theme={theme} label="正在处理当前画布" /> : null}
             </div>
