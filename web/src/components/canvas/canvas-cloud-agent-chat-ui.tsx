@@ -1233,7 +1233,7 @@ export function AgentPanelTabs<T extends string>({
 function AgentTimelineMarker({ theme, tone, icon }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; tone: "agent" | "muted" | "approval" | "error"; icon: ReactNode }) {
     const color = tone === "error" ? "#ef4444" : tone === "approval" ? "#f97316" : tone === "agent" ? theme.accent.primary : theme.node.muted;
     return (
-        <span className="relative flex w-6 shrink-0 self-stretch justify-center" aria-hidden="true">
+        <span className="agent-timeline-marker relative" aria-hidden="true">
             <span className="relative grid size-6 place-items-center rounded-full" style={{ background: tone === "agent" ? theme.accent.primarySoft : theme.node.fill, color }}>
                 {icon}
             </span>
