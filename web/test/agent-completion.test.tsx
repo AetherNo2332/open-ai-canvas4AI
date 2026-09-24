@@ -1,21 +1,16 @@
 import { expect, test } from "bun:test";
-import { renderToStaticMarkup } from "react-dom/server";
-import { AgentProgressChip, agentAssistantFinality, agentControlMessage } from "@/components/canvas/canvas-cloud-agent-chat-ui";
+import { agentAssistantFinality, agentControlMessage } from "@/components/canvas/canvas-cloud-agent-chat-ui";
 import { friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
-import { canvasThemes } from "@/lib/canvas-theme";
 
 // 工作项 A：收尾闸门在界面上的语义。
 // 验收点：① 被拦下的候选收尾正文不能显示成最终答复；② 运行时控制消息不能显示成真人 user 消息；
 // ③ 用户能看到"为什么它又继续跑了"。
-test("过程说明与最终答复在界面上分开", () => {
+test("服务端的 final 标记仍按缺省视为结论", () => {
     // 服务端的 final 标记：false = 过程说明（本轮还没收尾，或这次收尾被拦下了）
     expect(agentAssistantFinality({ final: false })).toBe(false);
     expect(agentAssistantFinality({ final: true })).toBe(true);
     // 升级前的后端事件没有这个字段：那时所有正文都按正文展示，缺省必须保持同一口径
     expect(agentAssistantFinality({ text: "旧事件" })).toBe(true);
-
-    const chip = renderToStaticMarkup(<AgentProgressChip theme={canvasThemes.dark} />);
-    expect(chip).toContain("过程说明");
 });
 
 test("运行时控制消息是 system 行，不是用户气泡", () => {
@@ -40,9 +35,13 @@ test("面板把闸门事件接进时间线，并把 final 标记传给渲染层"
     expect(panel).toContain("current[index].final === final");
 });
 
-test("聊天渲染层给非最终正文加过程说明标记", async () => {
+test("时间线不再挂模型品牌 glyph，也不再给非最终正文加过程说明角标", async () => {
     const chat = await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent-chat-ui.tsx", import.meta.url)).text();
-    expect(chat).toContain("item.final === false ? <AgentProgressChip theme={theme} /> : null");
+    // 用户口径：那个圆环标志会被读成"这条是模型出品"，与它实际表达的"这是谁的一行"无关；
+    // "过程说明"角标一并撤掉（final 标记仍由服务端下发，只是不再单独标一个 badge）。
+    expect(chat).not.toContain("icons/openai.svg");
+    expect(chat).not.toContain("AgentProgressChip");
+    expect(chat).not.toContain(">过程说明<");
     // 收尾终止原因（run_failed + completion_blocked）仍走既有的错误行，不另开一套状态展示
     expect(chat).toContain("agentControlMessage");
 });

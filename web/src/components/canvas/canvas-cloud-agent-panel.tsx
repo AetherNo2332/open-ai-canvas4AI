@@ -1400,18 +1400,12 @@ function AgentConversation({
         >
             {!messages.length ? <AgentWelcome appearance={appearance} nodeCount={nodeCount} onChooseSkill={onChooseSkill} onDraftPrompt={onDraftPrompt} /> : null}
             <div ref={contentRef} className="agent-conversation-messages">
-                {segments.map((segment) =>
+                {segments.map((segment, index) =>
                     segment.kind === "operations" ? (
-                        <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={references} onFocusNode={onFocusNode} />
+                        // 只有"对话末尾那一段 + 还在跑"才流光：历史段落留在静态态，任务完成即停。
+                        <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={references} onFocusNode={onFocusNode} live={busy && index === segments.length - 1} />
                     ) : (
-                        <AgentChatMessage
-                            key={segment.key}
-                            item={segment.item}
-                            theme={theme}
-                            references={references}
-                            onFocusNode={onFocusNode}
-                            isStreaming={busy && !approval && segment.item.streaming === true && segment.item === lastMessage}
-                        />
+                        <AgentChatMessage key={segment.key} item={segment.item} theme={theme} references={references} onFocusNode={onFocusNode} isStreaming={busy && !approval && segment.item.streaming === true && segment.item === lastMessage} />
                     ),
                 )}
                 {approval ? <ApprovalCard key={approval.approvalId} approval={approval} theme={theme} submitting={approvalSubmitting} onFocusNode={onFocusNode} onReasonChange={onApprovalReasonChange} onApprove={onApprove} onReject={onReject} /> : null}
@@ -2115,7 +2109,7 @@ function upsertTextMessage(current: CloudAgentChatMessage[], id: string, text: s
     const index = current.findIndex((item) => item.id === id);
     if (index < 0) return [...current, { id, role: "assistant" as const, text, streaming: append, final }];
     // final 也要参与"没变化"的判断：流式快照先建了气泡，结论事件可能带着同样的正文与
-    // final=false 到来，少了这一项就会把"过程说明"标记吞掉。
+    // final=false 到来，少了这一项就会把过程/结论的口径吞掉（界面不再单独出角标，但标记仍如实保存）。
     if (!append && current[index].text === text && !current[index].streaming && current[index].final === final) return current;
     const next = [...current];
     next[index] = { ...next[index], text: append ? `${next[index].text}${text}` : text, streaming: append, final };
