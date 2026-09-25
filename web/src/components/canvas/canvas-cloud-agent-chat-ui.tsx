@@ -39,6 +39,8 @@ export type CloudAgentChatMessage = {
     streaming?: boolean;
     reasoning?: boolean;
     planItems?: CloudAgentPlanItem[];
+    /** 运行已进入终态，但计划项仍未全部完成；用于历史恢复时停止显示 loading。 */
+    planTerminal?: boolean;
     question?: CloudAgentUserQuestion;
     meta?: string;
     detail?: unknown;
@@ -417,87 +419,95 @@ export function AgentToolCard({
     const visibleActions = actions.slice(0, isNodeRead && !readExpanded ? 1 : 8);
     const collapsedReadNodeCount = isNodeRead ? Math.max(0, actions.length - visibleActions.length) : 0;
     const isPlain = !actions.length && !state.isError;
+    const hasDetails = actions.length > 0 || state.isError;
     const conciseError = text.length > 180 ? `${text.slice(0, 180)}…` : text;
     const categoryIcon = category === "read" ? <Eye className="size-3.5" /> : category === "create" ? <Plus className="size-3.5" /> : <Pencil className="size-3.5" />;
-    const retry = agentToolRetry(detail);
-    const attempts = objectField(detail, "retryAttempts");
-    if (retry && Array.isArray(attempts)) {
-        const label = retry.status === "recovered" ? "自动纠正后已恢复" : retry.status === "exhausted" ? "自动纠正未完成" : "自动纠正记录";
-        return (
-            <details data-agent-tool-retry className="min-w-0 flex-1 text-xs leading-5" style={{ color: theme.node.muted }}>
-                <summary className="cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2" style={{ outlineColor: theme.node.muted }}>
-                    {label} · {retry.attempt}/{retry.maxAttempts} 次尝试未通过
-                </summary>
-                <ol className="mt-2 space-y-1 pl-4" aria-label="自动纠正详情">
-                    {(attempts as AgentToolRetryAttempt[]).map((attempt, index) => (
-                        <li key={attempt.id} className="whitespace-pre-wrap break-words">
-                            第 {index + 1} 次：{attempt.text}
-                        </li>
+    const header = (
+        <div className="agent-tool-header">
+            <span className="agent-tool-category">
+                {categoryIcon}
+                <span>{categoryLabel}</span>
+            </span>
+            <span className="agent-tool-summary">{summary}</span>
+            {state.label !== "已完成" ? (
+                <span className="agent-tool-label" style={{ color: state.color }}>
+                    {state.label}
+                </span>
+            ) : null}
+        </div>
+    );
+    const detailBody = (
+        <>
+            {actions.length ? (
+                <div className="agent-tool-action-list">
+                    {visibleActions.map((action) => (
+                        <button
+                            key={`${action.action}-${action.nodeId}`}
+                            type="button"
+                            data-agent-node-id={action.nodeId}
+                            disabled={!onFocusNode}
+                            onClick={() => onFocusNode?.(action.nodeId)}
+                            aria-label={`在画布中定位${action.title}`}
+                            className="agent-tool-action-link"
+                        >
+                            {agentCanvasActionLabel(action)}
+                        </button>
                     ))}
-                </ol>
+                    {isNodeRead && (collapsedReadNodeCount > 0 || readExpanded) ? (
+                        <button type="button" className="agent-tool-more" aria-expanded={readExpanded} onClick={() => setReadExpanded((current) => !current)}>
+                            {readExpanded ? `收起其余 ${Math.max(0, actions.length - 1)} 个节点` : `已折叠 ${collapsedReadNodeCount} 个节点，展开查看`}
+                        </button>
+                    ) : null}
+                </div>
+            ) : null}
+            {state.isError && text && text !== summary ? (
+                <span className="mt-1 block whitespace-pre-wrap break-words" style={{ color: theme.node.muted }}>
+                    {conciseError}
+                </span>
+            ) : null}
+            {state.isError && text.length > 180 ? (
+                <details className="mt-1" style={{ color: theme.node.muted }}>
+                    <summary className="cursor-pointer">查看完整错误详情</summary>
+                    <p className="whitespace-pre-wrap break-words">{text}</p>
+                </details>
+            ) : null}
+            {state.isError && objectField(objectField(detail, "result"), "taskId") ? (
+                <span className="mt-1 block break-all" style={{ color: theme.node.muted }}>
+                    任务 ID：{String(objectField(objectField(detail, "result"), "taskId"))}
+                </span>
+            ) : null}
+        </>
+    );
+    if (hasDetails) {
+        return (
+            <details data-agent-tool-card className={`agent-tool-details agent-tool-row--${category}${isPlain ? " agent-tool-row--plain" : ""}`} style={{ color: theme.node.text }}>
+                <summary className="agent-tool-summary-toggle agent-tool-row flex min-w-0 items-start gap-2.5 text-left">
+                    <span className="agent-tool-status shrink-0" style={{ color: state.color }} aria-hidden="true">
+                        {state.icon}
+                    </span>
+                    <div className="min-w-0 flex-1 break-words text-xs leading-5" style={{ color: state.isError ? state.color : theme.node.muted }}>
+                        {header}
+                    </div>
+                    <ChevronDown className="agent-tool-chevron mt-1 size-3.5 shrink-0" aria-hidden="true" />
+                </summary>
+                <div className="agent-tool-detail-body ml-6 break-words text-xs leading-5" style={{ color: theme.node.muted }}>
+                    {detailBody}
+                </div>
             </details>
         );
     }
     return (
-        <div data-agent-tool-card className={`agent-tool-row agent-tool-row--${category}${isPlain ? " agent-tool-row--plain" : ""} flex min-w-0 flex-1 items-start gap-2.5 text-left`} style={{ color: theme.node.text }}>
+        <div data-agent-tool-card className="agent-tool-row agent-tool-row--plain flex min-w-0 flex-1 items-start gap-2.5 text-left" style={{ color: theme.node.text }}>
             <span className="agent-tool-status shrink-0" style={{ color: state.color }} aria-hidden="true">
                 {state.icon}
             </span>
             <div className="min-w-0 flex-1 break-words text-xs leading-5" style={{ color: state.isError ? state.color : theme.node.muted }}>
-                <div className="agent-tool-header">
-                    <span className="agent-tool-category">
-                        {categoryIcon}
-                        <span>{categoryLabel}</span>
-                    </span>
-                    <span className="agent-tool-summary">{summary}</span>
-                    {state.label !== "已完成" ? (
-                        <span className="agent-tool-label" style={{ color: state.color }}>
-                            {state.label}
-                        </span>
-                    ) : null}
-                </div>
-                {actions.length ? (
-                    <div className="agent-tool-action-list">
-                        {visibleActions.map((action) => (
-                            <button
-                                key={`${action.action}-${action.nodeId}`}
-                                type="button"
-                                data-agent-node-id={action.nodeId}
-                                disabled={!onFocusNode}
-                                onClick={() => onFocusNode?.(action.nodeId)}
-                                aria-label={`在画布中定位${action.title}`}
-                                className="agent-tool-action-link"
-                            >
-                                {agentCanvasActionLabel(action)}
-                            </button>
-                        ))}
-                        {isNodeRead && (collapsedReadNodeCount > 0 || readExpanded) ? (
-                            <button type="button" className="agent-tool-more" aria-expanded={readExpanded} onClick={() => setReadExpanded((current) => !current)}>
-                                {readExpanded ? `收起其余 ${Math.max(0, actions.length - 1)} 个节点` : `已折叠 ${collapsedReadNodeCount} 个节点，展开查看`}
-                            </button>
-                        ) : null}
-                    </div>
-                ) : null}
-                {state.isError && text && text !== summary ? (
-                    <span className="mt-1 block whitespace-pre-wrap break-words" style={{ color: theme.node.muted }}>
-                        {conciseError}
-                    </span>
-                ) : null}
-                {state.isError && text.length > 180 ? (
-                    <details className="mt-1" style={{ color: theme.node.muted }}>
-                        <summary className="cursor-pointer">查看完整错误详情</summary>
-                        <p className="whitespace-pre-wrap break-words">{text}</p>
-                    </details>
-                ) : null}
-                {state.isError && objectField(objectField(detail, "result"), "taskId") ? (
-                    <span className="mt-1 block break-all" style={{ color: theme.node.muted }}>
-                        任务 ID：{String(objectField(objectField(detail, "result"), "taskId"))}
-                    </span>
-                ) : null}
+                {header}
             </div>
             {state.label === "已完成" ? <span className="sr-only">已完成</span> : null}
         </div>
     );
+
 }
 
 export function AgentWorkingMessage({ theme, label = WORKING_TEXT }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; label?: string }) {
@@ -512,7 +522,7 @@ export function AgentWorkingMessage({ theme, label = WORKING_TEXT }: { theme: (t
     );
 }
 
-export function AgentPlanBar({ items, theme, minimized, onToggle }: { items: CloudAgentPlanItem[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; minimized: boolean; onToggle: () => void }) {
+export function AgentPlanBar({ items, theme, minimized, onToggle, terminal = false }: { items: CloudAgentPlanItem[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; minimized: boolean; onToggle: () => void; terminal?: boolean }) {
     const doneCount = items.filter((entry) => entry.status === "done").length;
     const allDone = doneCount === items.length;
     return (
@@ -523,6 +533,7 @@ export function AgentPlanBar({ items, theme, minimized, onToggle }: { items: Clo
                 <span className="text-[11px] tabular-nums opacity-50">
                     {doneCount}/{items.length}
                 </span>
+                {terminal && !allDone ? <span className="shrink-0 text-[10px] opacity-55">本轮已结束，未完成项已停止</span> : null}
                 <span className="min-w-0 flex-1" />
                 <span className="shrink-0 text-[11px] opacity-50">{minimized ? "展开" : "收起"}</span>
                 {minimized ? <ChevronDown className="size-3.5 shrink-0 opacity-50" /> : <ChevronUp className="size-3.5 shrink-0 opacity-50" />}
@@ -532,11 +543,11 @@ export function AgentPlanBar({ items, theme, minimized, onToggle }: { items: Clo
                     {items.map((entry) => {
                         const done = entry.status === "done";
                         const doing = entry.status === "doing";
-                        const Icon = done ? CheckCircle2 : doing ? LoaderCircle : CircleDot;
+                        const Icon = done ? CheckCircle2 : terminal ? CircleAlert : doing ? LoaderCircle : CircleDot;
                         return (
                             <li key={entry.id} className="flex min-w-0 items-start gap-1.5 text-xs">
-                                <Icon className={doing ? "mt-[3px] size-3 shrink-0 animate-spin" : "mt-[3px] size-3 shrink-0"} style={{ color: done ? "#429477" : doing ? theme.accent.primary : theme.node.muted }} />
-                                <span className={done ? "min-w-0 break-words line-through opacity-50" : "min-w-0 break-words"}>{entry.title}</span>
+                                <Icon className={doing && !terminal ? "mt-[3px] size-3 shrink-0 animate-spin" : "mt-[3px] size-3 shrink-0"} style={{ color: done ? "#429477" : terminal ? theme.node.muted : doing ? theme.accent.primary : theme.node.muted }} />
+                                <span className={done ? "min-w-0 break-words line-through opacity-50" : terminal ? "min-w-0 break-words opacity-55" : "min-w-0 break-words"}>{entry.title}</span>
                             </li>
                         );
                     })}

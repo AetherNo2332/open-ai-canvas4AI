@@ -787,6 +787,36 @@
     transition: transform 160ms ease;
 }
 
+/* Tool calls are secondary activity, not chat content. Keep the receipt row
+   scannable and reveal node links / diagnostics only on demand. */
+.agent-tool-details {
+    min-width: 0;
+}
+
+.agent-tool-summary-toggle {
+    display: flex;
+    align-items: flex-start;
+}
+
+.agent-tool-summary-toggle::-webkit-details-marker {
+    display: none;
+}
+
+.agent-tool-chevron {
+    flex: 0 0 auto;
+    color: color-mix(in srgb, currentColor 48%, transparent);
+    transition: transform 160ms ease;
+}
+
+.agent-tool-details[open] .agent-tool-chevron {
+    transform: rotate(180deg);
+}
+
+.agent-tool-detail-body {
+    margin: -1px 0 4px 31px;
+    padding: 0 2px 4px;
+}
+
 /* 没有节点明细的“读取信息 / 操作画布”只保留时间线语义，不再撑成一张空卡片。 */
 .agent-tool-row--plain {
     min-height: 28px;
@@ -899,6 +929,7 @@
 
 @media (prefers-reduced-motion: reduce) {
     .agent-tool-row,
+    .agent-tool-chevron,
     .agent-tool-action-link { transition: none; }
 }
 
