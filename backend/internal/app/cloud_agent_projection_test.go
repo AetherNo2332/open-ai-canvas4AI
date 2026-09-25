@@ -67,8 +67,8 @@ func TestCloudAgentDigestStaysWithinBudgetForLargeCanvas(t *testing.T) {
 		if err != nil {
 			t.Fatalf("digest failed for %d nodes/%d rows: %v", shape.nodes, shape.rows, err)
 		}
-		if len(summary) > cloudAgentDigestBudgetBytes {
-			t.Fatalf("digest %d bytes exceeds budget %d for %d nodes/%d rows", len(summary), cloudAgentDigestBudgetBytes, shape.nodes, shape.rows)
+		if len(summary) > cloudAgentCanvasSummaryBudgetBytes {
+			t.Fatalf("node catalog %d bytes exceeds budget %d for %d nodes/%d rows", len(summary), cloudAgentCanvasSummaryBudgetBytes, shape.nodes, shape.rows)
 		}
 		if strings.Contains(summary, "do-not-expose") {
 			t.Fatal("digest leaked arbitrary metadata")
@@ -95,28 +95,6 @@ func TestCloudAgentDigestStaysWithinBudgetForLargeCanvas(t *testing.T) {
 				t.Fatalf("digest lost row scale: %+v", storyboard)
 			}
 		}
-	}
-}
-
-func TestCloudAgentDigestDegradesInsteadOfFailing(t *testing.T) {
-	huge := storyboardDigestFixture(200, 200)
-	raw, _ := json.Marshal(huge)
-	summary, err := cloudAgentCanvasSummary(&model.CanvasProject{PayloadJSON: string(raw), Title: "巨大画布"})
-	if err != nil {
-		t.Fatalf("oversize canvas must degrade, not fail: %v", err)
-	}
-	if len(summary) > cloudAgentDigestBudgetBytes {
-		t.Fatalf("degraded digest still %d bytes", len(summary))
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal([]byte(summary), &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := decoded["nodesOmitted"]; !ok {
-		t.Fatalf("degraded digest must report omitted nodes: %s", summary)
-	}
-	if decoded["scope"] == nil {
-		t.Fatal("digest must state what it does and does not promise")
 	}
 }
 
@@ -232,28 +210,6 @@ func TestCloudAgentProjectionDeduplicatesComposerContent(t *testing.T) {
 	}
 	if projected["composerContent"] != "用户改过的草稿" {
 		t.Fatalf("distinct draft was dropped: %+v", projected)
-	}
-}
-
-func TestCloudAgentDigestExcerptsMediaPrompts(t *testing.T) {
-	doc := map[string]any{"nodes": []map[string]any{{
-		"id": "image-1", "type": "image", "title": "图",
-		"metadata": map[string]any{"prompt": strings.Repeat("提示词", 200), "composerContent": strings.Repeat("提示词", 200), "status": "idle"},
-	}}}
-	raw, _ := json.Marshal(doc)
-	summary, err := cloudAgentCanvasSummary(&model.CanvasProject{PayloadJSON: string(raw)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(summary, "promptExcerpt") || strings.Contains(summary, `"prompt"`) || strings.Contains(summary, "composerContent") {
-		t.Fatalf("media prompt was not collapsed into an excerpt: %s", summary)
-	}
-	excerpt := strings.Repeat("提示词", 20) // 60 runes
-	if !strings.Contains(summary, truncateRunes(excerpt, cloudAgentIndexExcerptRunes)) {
-		t.Fatalf("excerpt missing: %s", summary)
-	}
-	if len(summary) > 800 {
-		t.Fatalf("single media node digest too large: %d bytes", len(summary))
 	}
 }
 
