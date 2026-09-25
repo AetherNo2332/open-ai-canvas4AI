@@ -1,4 +1,4 @@
-import { App, Button, Input, InputNumber, Progress, Select } from "antd";
+import { App, Button, Input, InputNumber, Progress } from "antd";
 import { Switch } from "@/components/ui/base/switch";
 import { EmptyState } from "@/components/ui/product/empty-state";
 import { FileAudio, FileImage, Film, Grip, Play, RotateCcw, Square, Upload, WandSparkles } from "lucide-react";
@@ -11,6 +11,7 @@ import { useConfigStore, type AiConfig, type RunningHubCapability, type Workflow
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { createUuid } from "@/lib/client-id";
+import { Select } from "@/components/ui/base/select";
 
 type WorkflowProvider = "runninghub";
 type MediaKind = "image" | "video" | "audio";

@@ -586,79 +586,54 @@ func cloudAgentContinuationHistory(history []providerTextMessage, state cloudAge
 }
 
 const (
-	cloudAgentDigestBudgetBytes = 8 << 10
-	// 逐级降级第一档的节点数上限与上游摘要一致。
-	cloudAgentDigestNodeLimit = 80
-	cloudAgentDigestMinNodes  = 20
+	// 目录只回答“画布上有哪些节点”。正文、提示词和结构化表留给 canvas_get_state 按页读取，
+	// 否则几千个节点的 JSON 会在每一次模型调用里重复出现。
+	cloudAgentCanvasSummaryMaxNodes = 120
+	// 单条目录约百字节量级；预算只兜住异常长的 id / 标题，不再为正文预留 60KB。
+	cloudAgentCanvasSummaryBudgetBytes = 24 << 10
 )
 
 func cloudAgentCanvasSummary(canvas *model.CanvasProject) (string, error) {
 	var payload struct {
-		Nodes []cloudAgentDigestNode `json:"nodes"`
+		Nodes []struct {
+			ID    string `json:"id"`
+			Type  string `json:"type"`
+			Title string `json:"title"`
+		} `json:"nodes"`
 	}
 	if err := json.Unmarshal([]byte(canvas.PayloadJSON), &payload); err != nil {
 		return "", BadAuthRequest("服务端画布内容无法解析，请先重新同步")
 	}
-	// 逐级降级：先丢节点细节，再减少节点数，最后只留计数。第一个落进预算的文档胜出，
-	// 最后一档（只留计数）永远落得进去。
-	for _, level := range []struct {
-		nodes  int
-		detail bool
-	}{
-		{cloudAgentDigestNodeLimit, true},
-		{cloudAgentDigestNodeLimit, false},
-		{cloudAgentDigestMinNodes, false},
-		{0, false},
-	} {
-		data, err := cloudAgentDigestJSON(canvas, payload.Nodes, level.nodes, level.detail)
+	nodes := make([]map[string]any, 0)
+	for index, node := range payload.Nodes {
+		if index >= cloudAgentCanvasSummaryMaxNodes {
+			break
+		}
+		item := map[string]any{"id": truncateRunes(node.ID, 100), "type": truncateRunes(node.Type, 40), "title": truncateRunes(node.Title, 80)}
+		if _, known := cloudAgentNodeCapabilityForType(node.Type); !known {
+			item["agentSupported"] = false
+		}
+		nodes = append(nodes, item)
+		encoded, err := json.Marshal(nodes)
 		if err != nil {
 			return "", err
 		}
-		if len(data) <= cloudAgentDigestBudgetBytes || level.nodes == 0 {
-			return string(data), nil
+		if len(encoded) > cloudAgentCanvasSummaryBudgetBytes {
+			nodes = nodes[:len(nodes)-1]
+			break
 		}
 	}
-	return "", BadAuthRequest("服务端画布摘要无法生成")
-}
-
-func cloudAgentDigestJSON(canvas *model.CanvasProject, all []cloudAgentDigestNode, limit int, detail bool) ([]byte, error) {
-	included := min(len(all), max(0, limit))
-	nodes := make([]map[string]any, 0, included)
-	for _, node := range all[:included] {
-		item := map[string]any{"id": truncateRunes(node.ID, 100), "type": truncateRunes(node.Type, 40), "title": truncateRunes(node.Title, 300)}
-		descriptor, known := cloudAgentNodeCapabilityForType(node.Type)
-		if !known {
-			item["agentSupported"] = false
-			item["agentUnsupportedReason"] = "仅展示基础信息；当前 Agent 不支持操作此类型节点"
-			nodes = append(nodes, item)
-			continue
-		}
-		if !detail {
-			nodes = append(nodes, item)
-			continue
-		}
-		projected, err := cloudAgentProjectNodeFields(map[string]any{"title": node.Title}, node.Metadata, descriptor, descriptor.SummaryFields, 600, cloudAgentProjectionIndex, 0)
-		if err != nil {
-			return nil, err
-		}
-		for key, value := range projected {
-			item[key] = value
-		}
-		nodes = append(nodes, item)
+	summary := map[string]any{
+		"kind": "node_catalog", "title": truncateRunes(canvas.Title, 240), "savedAt": canvas.UpdatedAt,
+		"totalNodes": len(payload.Nodes), "includedNodes": len(nodes), "nodes": nodes,
+		"read": "目录不含正文。用 canvas_get_state 按页读取；nodeIds 精读单节点，结构化节点用对应 read 工具。",
 	}
-	document := map[string]any{
-		"title": truncateRunes(canvas.Title, 240), "savedAt": canvas.UpdatedAt,
-		"totalNodes": len(all), "includedNodes": len(nodes), "nodes": nodes,
-		"scope": "本摘要只说明存在性与规模，不含逐行正文；需要正文时用 canvas_get_state 分页读取，按行编辑前用对应 read 工具读取真实 rowId 与 snapshotHash",
+	if omitted := len(payload.Nodes) - len(nodes); omitted > 0 {
+		summary["omittedNodes"] = omitted
 	}
-	if omitted := len(all) - len(nodes); omitted > 0 {
-		// 两个键名同时给出：nodesOmitted 是我们的口径，omittedNodes 是上游调用方的口径。
-		document["nodesOmitted"] = omitted
-		document["omittedNodes"] = omitted
-		document["nodesOmittedHint"] = "被省略的节点仍然存在且可读；用 canvas_get_state 的 offset 继续分页读取"
+	data, err := json.Marshal(summary)
+	if err != nil {
+		return "", err
 	}
-	if !detail && len(nodes) > 0 {
-		document["nodeDetailOmitted"] = true
-	}
-	return json.Marshal(document)
+	return string(data), nil
 }

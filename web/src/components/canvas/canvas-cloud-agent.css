@@ -50,6 +50,347 @@
     font-size: var(--fs-label);
 }
 
+.agent-context-ring {
+    --agent-context-ring-color: var(--agent-accent, currentColor);
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    min-width: 64px;
+    height: 30px;
+    padding: 2px 7px 2px 3px;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--agent-ink) 5%, transparent);
+    color: var(--agent-caption);
+    cursor: pointer;
+    transition:
+        background-color 160ms ease,
+        color 160ms ease;
+}
+
+.agent-context-ring:hover,
+.agent-context-ring[aria-expanded="true"] {
+    background: color-mix(in srgb, var(--agent-ink) 9%, transparent);
+    color: var(--agent-ink);
+}
+
+.agent-context-ring:focus-visible {
+    outline: 2px solid var(--agent-focus-ring);
+    outline-offset: 2px;
+}
+
+.agent-context-ring-visual {
+    position: relative;
+    display: block;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    overflow: hidden;
+    border-radius: 50%;
+    background: conic-gradient(from -90deg, var(--agent-context-ring-color) 0 var(--agent-context-progress), color-mix(in srgb, var(--agent-ink) 11%, transparent) var(--agent-context-progress) 100%);
+}
+
+.agent-context-ring-visual::after {
+    position: absolute;
+    inset: 5px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--agent-surface-raised) 92%, transparent);
+    content: "";
+}
+
+.agent-context-ring-marker {
+    position: absolute;
+    inset: 2px;
+    z-index: 1;
+    border-radius: 50%;
+    transform: rotate(var(--agent-context-marker-angle));
+}
+
+.agent-context-ring-marker::after {
+    position: absolute;
+    top: -1px;
+    left: 50%;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--agent-context-ring-color);
+    content: "";
+    transform: translateX(-50%);
+}
+
+.agent-context-ring.is-watch {
+    --agent-context-ring-color: #d9973b;
+}
+
+.agent-context-ring.is-compress,
+.agent-context-ring.is-compacting {
+    --agent-context-ring-color: #d4534e;
+}
+
+.agent-context-ring.is-compacting .agent-context-ring-visual {
+    animation: agent-context-spin 1.4s linear infinite;
+}
+.agent-context-ring.is-unknown .agent-context-ring-visual,
+.agent-context-ring.is-stale .agent-context-ring-visual {
+    opacity: 0.72;
+}
+
+.agent-context-meter-copy {
+    display: grid;
+    min-width: 0;
+    line-height: 1;
+    text-align: left;
+}
+
+.agent-context-meter-copy strong {
+    color: var(--agent-ink);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+.agent-context-meter-copy small {
+    margin-top: 2px;
+    color: var(--agent-caption);
+    font-size: 9px;
+    white-space: nowrap;
+}
+
+@keyframes agent-context-spin {
+    to {
+        transform: rotate(270deg);
+    }
+}
+
+.agent-context-popover.ant-popover,
+.agent-context-popover .ant-popover-content,
+.agent-context-popover .ant-popover-inner {
+    box-shadow: none;
+}
+
+.agent-context-popover .ant-popover-inner {
+    overflow: hidden;
+    padding: 0;
+    border: 1px solid color-mix(in srgb, var(--agent-ink) 12%, transparent);
+    border-radius: 16px;
+    background: var(--agent-surface-raised, var(--background));
+}
+
+.agent-context-popover .ant-popover-inner-content {
+    padding: 0;
+}
+
+.agent-context-panel {
+    width: min(348px, calc(100vw - 32px));
+    padding: 14px 15px 12px;
+    color: var(--agent-ink, inherit);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.agent-context-eyebrow {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--agent-caption);
+    font-size: 10px;
+    letter-spacing: 0.02em;
+}
+
+.agent-context-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.agent-context-panel-head strong {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    font-variant-numeric: tabular-nums;
+}
+
+.agent-context-phase {
+    flex: none;
+    border-radius: 999px;
+    padding: 3px 8px;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+    font-size: 10px;
+    line-height: 1.2;
+}
+
+.agent-context-phase.is-watch {
+    color: #9a6416;
+}
+.agent-context-phase.is-compress,
+.agent-context-phase.is-compacting {
+    color: #a33b36;
+}
+
+.agent-context-summary {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-top: 12px;
+    color: var(--agent-caption);
+    font-variant-numeric: tabular-nums;
+}
+
+.agent-context-summary strong {
+    color: var(--agent-ink);
+    font-size: 23px;
+    letter-spacing: -0.04em;
+}
+
+.agent-context-summary span {
+    font-size: 13px;
+}
+
+.agent-context-summary em {
+    margin-left: auto;
+    color: var(--agent-caption);
+    font-size: 12px;
+    font-style: normal;
+}
+
+.agent-context-progress-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 13px;
+    color: var(--agent-caption);
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.agent-context-progress-head strong {
+    color: var(--agent-ink);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+.agent-context-progress {
+    position: relative;
+    height: 12px;
+    margin-top: 5px;
+    overflow: visible;
+    border: 0;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 14%);
+    background: color-mix(in srgb, var(--agent-ink, #fff) 24%, var(--agent-surface-raised, #252525));
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%);
+}
+
+.agent-context-progress > span {
+    display: block;
+    height: 100%;
+    min-width: 6px;
+    border-radius: inherit;
+    background: #8b93ff;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--agent-accent, #8b93ff) 58%, white), var(--agent-accent, #8b93ff));
+    transition: width 240ms ease;
+}
+
+.agent-context-progress > i {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 1px;
+    background: color-mix(in srgb, var(--agent-ink) 64%, transparent);
+}
+
+.agent-context-detail {
+    margin: 10px 0 0;
+    color: var(--agent-caption);
+    font-size: 11px;
+    line-height: 1.55;
+}
+
+.agent-context-breakdown {
+    display: grid;
+    gap: 8px;
+    margin: 13px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.agent-context-breakdown li {
+    display: grid;
+    grid-template-columns: 9px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.agent-context-breakdown-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--agent-accent) 62%, var(--agent-ink));
+}
+
+.agent-context-breakdown-label {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--agent-ink);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-context-breakdown-value {
+    min-width: 58px;
+    color: var(--agent-ink);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.agent-context-breakdown li.is-secondary .agent-context-breakdown-dot {
+    background: color-mix(in srgb, var(--agent-ink) 42%, transparent);
+}
+
+.agent-context-breakdown li.is-secondary .agent-context-breakdown-label,
+.agent-context-breakdown li.is-secondary .agent-context-breakdown-value {
+    color: var(--agent-caption);
+}
+
+.agent-context-breakdown li.is-muted .agent-context-breakdown-dot {
+    background: color-mix(in srgb, var(--agent-ink) 24%, transparent);
+}
+
+.agent-context-breakdown li.is-muted .agent-context-breakdown-label,
+.agent-context-breakdown li.is-muted .agent-context-breakdown-value {
+    color: var(--agent-caption);
+}
+
+.agent-context-panel-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 13px;
+    padding-top: 10px;
+    border-top: 1px solid color-mix(in srgb, var(--agent-ink) 9%, transparent);
+    color: var(--agent-caption);
+    font-size: 10px;
+}
+
+.agent-context-note {
+    margin: 6px 0 0;
+    color: var(--agent-caption);
+    font-size: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .agent-context-ring.is-compacting .agent-context-ring-visual {
+        animation: none;
+    }
+    .agent-context-ring-visual,
+    .agent-context-progress > span {
+        transition: none;
+    }
+}
+
 .agent-header-actions .ant-btn {
     color: inherit;
 }
@@ -372,6 +713,18 @@
     .agent-conversation {
         padding-inline: var(--space-4);
     }
+    .agent-context-ring {
+        min-width: 32px;
+        padding-right: 4px;
+        gap: 0;
+    }
+    .agent-context-meter-copy {
+        display: none;
+    }
+    .agent-context-panel-foot {
+        display: grid;
+    }
+
     .agent-welcome-actions button {
         padding-inline: var(--space-2);
     }
@@ -831,15 +1184,47 @@
 }
 
 .agent-composer-toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: end;
+    display: flex;
+    min-width: 0;
+    align-items: center;
     gap: 8px;
 }
 
-.agent-composer-submit {
+.agent-composer-controls {
     min-width: 0;
-    justify-self: end;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+.agent-composer-selection {
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+.agent-composer-selection > .w-full {
+    min-width: 0;
+    max-width: 13rem;
+    flex: 1 1 13rem;
+}
+
+.agent-composer-selection .agent-composer-model-trigger,
+.agent-composer-selection .canvas-model-picker-label {
+    min-width: 0;
+}
+
+.agent-composer-selection > button {
+    flex: 0 0 auto;
+}
+
+.agent-composer-submit {
+    display: flex;
+    min-width: max-content;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: flex-end;
 }
 
 .canvas-agent-launcher {
@@ -850,7 +1235,7 @@
     border: 0;
     border-radius: 999px;
     background: transparent;
-    padding: 7px;
+    padding: 0;
     box-shadow: 0 16px 38px color-mix(in srgb, var(--canvas-agent-launcher-shadow) 64%, transparent);
     cursor: grab;
     touch-action: none;
@@ -860,6 +1245,15 @@
 
 .canvas-agent-launcher.is-dragging {
     cursor: grabbing;
+}
+
+.canvas-agent-launcher > .fluid-orb {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: 1;
+    margin: 0;
+    transform: translate(-50%, -50%);
 }
 
 .canvas-agent-launcher::before {
@@ -937,175 +1331,6 @@
 @media (prefers-reduced-motion: reduce) {
     .canvas-agent-launcher {
         transition: none !important;
-    }
-}
-
-.agent-composer-send-hint {
-    color: color-mix(in srgb, currentColor 52%, transparent);
-    font-size: var(--fs-tiny);
-    line-height: 16px;
-    white-space: nowrap;
-}
-
-/* 面板宽度包含内边距；默认 448px 面板放不下完整快捷键说明，窄态降级为短文案而不是隐藏提示本身。 */
-.agent-composer-send-hint .agent-composer-send-hint-compact {
-    display: none;
-}
-
-.agent-context-pressure {
-    display: inline-flex;
-    height: 28px;
-    align-items: center;
-    gap: 4px;
-    border: 0;
-    border-radius: 999px;
-    padding: 0 5px 0 2px;
-    background: transparent;
-    color: color-mix(in srgb, currentColor 58%, transparent);
-    font-size: var(--fs-tiny);
-    font-variant-numeric: tabular-nums;
-    cursor: help;
-}
-
-.agent-context-pressure:hover,
-.agent-context-pressure:focus-visible {
-    background: color-mix(in srgb, currentColor 7%, transparent);
-    color: color-mix(in srgb, currentColor 78%, transparent);
-    outline: none;
-}
-
-.agent-context-pressure svg {
-    width: 24px;
-    height: 24px;
-    flex: 0 0 auto;
-    transform: rotate(-90deg);
-}
-
-.agent-context-pressure circle {
-    fill: none;
-    stroke-width: 2.4;
-}
-
-.agent-context-pressure-track {
-    stroke: color-mix(in srgb, currentColor 15%, transparent);
-}
-
-.agent-context-pressure-value,
-.agent-context-pressure-unknown {
-    stroke: #68b493;
-    stroke-linecap: round;
-}
-
-.agent-context-pressure[data-tone="warning"] .agent-context-pressure-value {
-    stroke: #d6a24a;
-}
-.agent-context-pressure[data-tone="critical"] .agent-context-pressure-value {
-    stroke: #e66b6b;
-}
-/*
- * 模型窗口未确认时的占位环：画实心细环，不画虚线。
- * 虚线会被读成"圆环断了几段"（实测反馈：像坏掉/像在加载），而这里要表达的是
- * "还没有可用的窗口读数"；实心环 + `—` 读数既干净又和 0% 区分得开。
- */
-.agent-context-pressure-unknown {
-    stroke: color-mix(in srgb, currentColor 22%, transparent);
-}
-
-/*
- * Context Meter v2：主读数与治理读数是两把尺子（设计方向 §2/§3）。
- * 上游实测用实心；本地估算降低描边不透明度（弧长由内联 strokeDasharray 控制，不能改成虚线，
- * 否则会把"用了多少"画成"断了几段"），并在数字上加 `~` 前缀与弹窗里的来源标签。
- * 治理阈值单独一条，不再拿它染圆环的颜色。
- */
-.agent-context-pressure[data-source="estimate"] .agent-context-pressure-value {
-    stroke-opacity: 0.72;
-}
-.agent-context-pressure[data-source="estimate"] .agent-context-pressure-track {
-    stroke-opacity: 0.6;
-}
-
-/* 治理阈值条：阈值刻度画在条上，读数超过阈值时用 warning 色，与主圆环互不干涉。 */
-/* 最近变化：每一次下降都要能对上"压缩 / 裁剪 / 口径变化"。 */
-/* 圆环旁的"治理"提示：治理阈值更高时说明圆环为什么不是那个数，而不是把圆环染红。 */
-/*
- * 压力弹窗的内容会随分段增多而变长（上游实测 + 占用分布 + 9 个系统提示分段），
- * 在窗口偏矮或圆环贴近底部时会被裁掉。这里给它设定高度上限、内部滚动，
- * 滚动条沿用项目 .thin-scrollbar 的观感，并留出 gutter 避免出现滚动条时抖动。
- */
-.agent-context-pressure-popover {
-    display: grid;
-    gap: 2px;
-    width: 100%;
-    max-width: 100%;
-    box-sizing: border-box;
-    max-height: min(70vh, 26rem);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    /* 滚动条槽左右都留：只在右侧预留（scrollbar-gutter: stable）会让内容盒右侧比左侧窄，
-       整块文字看起来偏左、右边留白更多（实测反馈）。both-edges 下两侧对称，滚动条出现也不跳。 */
-    scrollbar-gutter: stable both-edges;
-    scrollbar-color: rgba(120, 113, 108, 0.45) transparent;
-    scrollbar-width: thin;
-    line-height: 1.55;
-}
-
-.agent-context-pressure-popover::-webkit-scrollbar {
-    width: 4px;
-}
-
-.agent-context-pressure-popover::-webkit-scrollbar-thumb {
-    background: rgba(120, 113, 108, 0.45);
-    border-radius: 999px;
-}
-
-/* 数值列不换行、标签列吃掉剩余宽度并省略：避免"数字被折到第二行"的错位。 */
-.agent-context-pressure-popover .agent-context-breakdown-value {
-    white-space: nowrap;
-}
-
-.agent-context-pressure-popover .agent-context-breakdown-label {
-    flex: 1 1 auto;
-}
-
-.agent-context-pressure-popover .agent-context-breakdown-bar {
-    display: flex;
-    overflow: hidden;
-}
-
-/*
- * 弹窗头：左边"上下文已用 X%"，右边紧凑的"剩余 ~N / M"（对齐 DSH token-meter 的两栏读法）。
- * 数字用 tabular-nums，避免秒级刷新时左右跳动。
- */
-.agent-context-usage-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-    font-variant-numeric: tabular-nums;
-}
-
-.agent-context-usage-percent {
-    font-weight: 600;
-}
-
-.agent-context-usage-window {
-    flex: 0 0 auto;
-    color: color-mix(in srgb, currentColor 62%, transparent);
-}
-
-.agent-context-pressure-divider {
-    height: 1px;
-    margin: 7px 0;
-    background: color-mix(in srgb, currentColor 12%, transparent);
-}
-
-@container (max-width: 520px) {
-    .agent-composer-send-hint .agent-composer-send-hint-full {
-        display: none;
-    }
-
-    .agent-composer-send-hint .agent-composer-send-hint-compact {
-        display: inline;
     }
 }
 
@@ -2173,94 +2398,4 @@
         cursor: default;
         touch-action: auto;
     }
-}
-
-/*
- * 上下文占用分布：一根堆叠条 + 按桶明细 + 系统提示内部分段。三个桶用同一
- * 前景色的阶梯透明度区分，避免引入与 tone（正常/警告/危险）冲突的新色相；
- * 每行都带文字标签，颜色不承担唯一语义。
- */
-.agent-context-breakdown-bar {
-    display: flex;
-    height: 8px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: color-mix(in srgb, currentColor 10%, transparent);
-}
-
-.agent-context-breakdown-bar > span {
-    display: block;
-    height: 100%;
-    transition: width 200ms ease;
-}
-
-.agent-context-breakdown-bar > span + span {
-    box-shadow: inset 1px 0 0 color-mix(in srgb, var(--background) 72%, transparent);
-}
-
-.agent-context-breakdown-bar > span[data-bucket="system"],
-.agent-context-breakdown-dot[data-bucket="system"] {
-    background: color-mix(in srgb, currentColor 74%, transparent);
-}
-
-.agent-context-breakdown-bar > span[data-bucket="tools"],
-.agent-context-breakdown-dot[data-bucket="tools"] {
-    background: color-mix(in srgb, currentColor 48%, transparent);
-}
-
-.agent-context-breakdown-bar > span[data-bucket="messages"],
-.agent-context-breakdown-dot[data-bucket="messages"] {
-    background: color-mix(in srgb, currentColor 28%, transparent);
-}
-
-.agent-context-breakdown-bar > span[data-bucket="envelope"],
-.agent-context-breakdown-dot[data-bucket="envelope"] {
-    background: color-mix(in srgb, currentColor 13%, transparent);
-}
-
-/* 预算占用条：已用取强调色，未使用保持"空槽"质感（低调 + 斜纹，避免被当成又一个内容桶）。 */
-.agent-context-breakdown-bar > span[data-bucket="used"],
-.agent-context-breakdown-dot[data-bucket="used"] {
-    background: color-mix(in srgb, var(--workspace-accent) 72%, transparent);
-}
-
-.agent-context-breakdown-bar > span[data-bucket="unused"],
-.agent-context-breakdown-dot[data-bucket="unused"] {
-    background: repeating-linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent) 0 3px, color-mix(in srgb, currentColor 3%, transparent) 3px 6px);
-}
-
-.agent-context-breakdown-list {
-    display: grid;
-    gap: 3px;
-    margin: 6px 0 0;
-    padding: 0;
-    list-style: none;
-}
-
-.agent-context-breakdown-list > li {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 6px;
-}
-
-.agent-context-breakdown-dot {
-    width: 7px;
-    height: 7px;
-    flex: 0 0 auto;
-    border-radius: 999px;
-}
-
-.agent-context-breakdown-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.agent-context-breakdown-value {
-    margin-left: auto;
-    flex: 0 0 auto;
-    font-variant-numeric: tabular-nums;
-    color: color-mix(in srgb, currentColor 72%, transparent);
 }
