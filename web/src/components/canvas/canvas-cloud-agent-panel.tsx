@@ -1099,7 +1099,11 @@ function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onO
             whileTap={reducedMotion || dragging ? undefined : { scale: 0.96 }}
             transition={{ duration: reducedMotion ? 0 : 0.18 }}
         >
-            {live ? <Live2DAvatar url={live2DModelURL(appearance.live2dResourceId, appearance.live2dEntry)} width={width} height={height} reducedMotion={reducedMotion} fallback={<FluidOrb size={60} color="#7164f6" />} /> : <FluidOrb size={60} color="#7164f6" />}
+            {live ? (
+                <Live2DAvatar url={live2DModelURL(appearance.live2dResourceId, appearance.live2dEntry)} width={width} height={height} reducedMotion={reducedMotion} fallback={<FluidOrb size={60} color="#7164f6" />} />
+            ) : (
+                <FluidOrb size={60} color="#7164f6" />
+            )}
             {appearance.launcherLabel ? <span className="canvas-agent-launcher-label">{appearance.launcherLabel}</span> : null}
             <span className={cn("canvas-agent-launcher-status", approvalPending && "is-pending")} style={{ "--canvas-agent-status-color": statusColor } as CSSProperties} />
             {approvalPending ? <span className="canvas-agent-launcher-badge">待审批</span> : null}
@@ -1181,7 +1185,6 @@ function formatContextCount(tokens: number | undefined) {
     return Math.round(tokens).toLocaleString("zh-CN");
 }
 
-
 function formatContextBytes(bytes: number | undefined) {
     if (bytes === undefined) return "—";
     if (bytes >= 1_000_000) return `${Math.round(bytes / 100_000) / 10} MB`;
@@ -1201,13 +1204,7 @@ function AgentContextRing({ view }: { view: AgentContextUsageView }) {
     const usedRatio = view.ratio === undefined ? 0 : Math.max(0, Math.min(1, view.ratio));
     const phaseLabel = CONTEXT_PHASE_LABEL[view.phase];
     const sourceLabel = view.tokenSource === "provider" ? "模型实测校准" : view.estimate ? "本地估算" : "未测量";
-    const usageHeading = view.ratio !== undefined
-        ? `上下文已用 ${percent}`
-        : view.phase === "idle"
-            ? "上下文用量"
-            : view.phase === "unknown"
-                ? "上下文窗口未知"
-                : `上下文${view.label}`;
+    const usageHeading = view.ratio !== undefined ? `上下文已用 ${percent}` : view.phase === "idle" ? "上下文用量" : view.phase === "unknown" ? "上下文窗口未知" : `上下文${view.label}`;
 
     return (
         <Popover
@@ -1218,7 +1215,7 @@ function AgentContextRing({ view }: { view: AgentContextUsageView }) {
             arrow={false}
             overlayClassName="agent-context-popover"
             getPopupContainer={(trigger) => trigger.closest<HTMLElement>(".canvas-agent-panel") ?? document.body}
-            content={(
+            content={
                 <div className="agent-context-panel" data-phase={view.phase}>
                     <span className="agent-context-eyebrow">下一次请求</span>
                     <div className="agent-context-panel-head">
@@ -1243,14 +1240,7 @@ function AgentContextRing({ view }: { view: AgentContextUsageView }) {
                         <span>输入预算占用</span>
                         <strong>{percent}</strong>
                     </div>
-                    <div
-                        className="agent-context-progress"
-                        role="progressbar"
-                        aria-label={`上下文已用 ${percent}`}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={view.ratio === undefined ? undefined : Math.round(view.ratio * 100)}
-                    >
+                    <div className="agent-context-progress" role="progressbar" aria-label={`上下文已用 ${percent}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.ratio === undefined ? undefined : Math.round(view.ratio * 100)}>
                         <span style={{ width: `${usedRatio * 100}%` }} />
                         {marker ? <i style={{ left: `${marker * 100}%` }} aria-hidden="true" /> : null}
                     </div>
@@ -1281,28 +1271,26 @@ function AgentContextRing({ view }: { view: AgentContextUsageView }) {
                         </ul>
                     ) : null}
                     <div className="agent-context-panel-foot">
-                        <span>{sourceLabel}{view.estimate ? " · 不是计费 Token" : " · 预计下次请求"}</span>
+                        <span>
+                            {sourceLabel}
+                            {view.estimate ? " · 不是计费 Token" : " · 预计下次请求"}
+                        </span>
                         {view.compactAtTokens ? <span>压缩线 {formatContextCount(view.compactAtTokens)}</span> : null}
                     </div>
                     {view.lastCompaction ? <p className="agent-context-note">本轮已完成一次上下文压缩，下一次读数会刷新。</p> : null}
                 </div>
-            )}
+            }
         >
-            <button
-                type="button"
-                className={`agent-context-ring is-${view.phase}`}
-                aria-label={`${usageHeading}，${phaseLabel}。点击查看明细`}
-                aria-expanded={open}
-                title="查看上下文用量"
-                onPointerDown={(event) => event.stopPropagation()}
-            >
+            <button type="button" className={`agent-context-ring is-${view.phase}`} aria-label={`${usageHeading}，${phaseLabel}。点击查看明细`} aria-expanded={open} title="查看上下文用量" onPointerDown={(event) => event.stopPropagation()}>
                 <span
                     className="agent-context-ring-visual"
                     aria-hidden="true"
-                    style={{
-                        "--agent-context-progress": `${view.ring * 100}%`,
-                        "--agent-context-marker-angle": `${(marker || 0) * 360}deg`,
-                    } as CSSProperties}
+                    style={
+                        {
+                            "--agent-context-progress": `${view.ring * 100}%`,
+                            "--agent-context-marker-angle": `${(marker || 0) * 360}deg`,
+                        } as CSSProperties
+                    }
                 >
                     {marker ? <span className="agent-context-ring-marker" /> : null}
                 </span>
@@ -1315,7 +1303,23 @@ function AgentContextRing({ view }: { view: AgentContextUsageView }) {
     );
 }
 
-function AgentHistory({ conversations, activeConversationId, theme, onBack, onNew, onOpen, onDelete }: { conversations: CloudAgentConversation[]; activeConversationId: string; theme: CanvasTheme; onBack: () => void; onNew: () => void; onOpen: (conversation: CloudAgentConversation) => void; onDelete: (id: string) => void }) {
+function AgentHistory({
+    conversations,
+    activeConversationId,
+    theme,
+    onBack,
+    onNew,
+    onOpen,
+    onDelete,
+}: {
+    conversations: CloudAgentConversation[];
+    activeConversationId: string;
+    theme: CanvasTheme;
+    onBack: () => void;
+    onNew: () => void;
+    onOpen: (conversation: CloudAgentConversation) => void;
+    onDelete: (id: string) => void;
+}) {
     return (
         <div className="canvas-agent-history-root flex min-h-0 min-w-0 flex-1 flex-col">
             <header data-agent-drag-handle className="agent-panel-header flex shrink-0 items-center gap-2">

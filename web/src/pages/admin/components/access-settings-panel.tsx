@@ -511,11 +511,7 @@ export default function AccessSettingsPanel() {
                     }
                 >
                     <Form layout="vertical" requiredMark={false} disabled={loading || refreshing || savingAgreement}>
-                        <Form.Item
-                            label="协议名称"
-                            extra={`留空时自动跟随品牌名生成，即《${brandName}服务协议》。此处只需填名称本身，书名号由注册页补充。`}
-                            className="admin-access-agreement-title-field"
-                        >
+                        <Form.Item label="协议名称" extra={`留空时自动跟随品牌名生成，即《${brandName}服务协议》。此处只需填名称本身，书名号由注册页补充。`} className="admin-access-agreement-title-field">
                             <Input
                                 value={agreementTitle}
                                 maxLength={60}
@@ -526,11 +522,7 @@ export default function AccessSettingsPanel() {
                                 }}
                             />
                         </Form.Item>
-                        <Form.Item
-                            label="协议条款内容"
-                            extra="支持多段落文本，按空行分段展示；留空时注册页弹窗显示“服务协议内容待补充”。"
-                            className="admin-access-agreement-content-field"
-                        >
+                        <Form.Item label="协议条款内容" extra="支持多段落文本，按空行分段展示；留空时注册页弹窗显示“服务协议内容待补充”。" className="admin-access-agreement-content-field">
                             <Input.TextArea
                                 value={agreementContent}
                                 maxLength={20000}
@@ -548,9 +540,7 @@ export default function AccessSettingsPanel() {
                                 <span>没有准备条款时，可先填入通用模板再按需修改。</span>
                             </div>
                             <div className="admin-access-agreement-template-actions">
-                                <span className="admin-access-agreement-metric">
-                                    {agreementContent.trim() ? `${agreementParagraphsCount} 段 · ${agreementContent.length} 字` : "尚未填写条款"}
-                                </span>
+                                <span className="admin-access-agreement-metric">{agreementContent.trim() ? `${agreementParagraphsCount} 段 · ${agreementContent.length} 字` : "尚未填写条款"}</span>
                                 <Button
                                     size="small"
                                     disabled={savingAgreement || loading || refreshing}

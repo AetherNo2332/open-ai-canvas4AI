@@ -110,5 +110,5 @@ test("shared single-select popup uses a borderless surface instead of a bright f
     expect(select).toContain("data-input-modality={inputModality}");
     expect(globals).toContain(".ant-select.app-unified-select {\n    --unified-select-surface:");
     expect(select).not.toContain("focus-visible:ring");
-    expect(select).not.toContain('setPopoverWidth(width + 2)');
+    expect(select).not.toContain("setPopoverWidth(width + 2)");
 });

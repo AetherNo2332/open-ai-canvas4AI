@@ -46,7 +46,12 @@ export default function RegisterPage() {
         let cancelled = false;
         setSettingsFailed(false);
         void getAuthSettings()
-            .then((value) => { if (!cancelled) { setSettings(value); setMethod(verificationMethods(value, "register")[0] ?? "email"); } })
+            .then((value) => {
+                if (!cancelled) {
+                    setSettings(value);
+                    setMethod(verificationMethods(value, "register")[0] ?? "email");
+                }
+            })
             .catch((error) => {
                 if (cancelled) return;
                 // 这里必须留下失败态：协议标题只能来自后台配置，读不到时不能用品牌名
@@ -221,14 +226,7 @@ export default function RegisterPage() {
                     </Button>
                 </>
             ) : null}
-            <Modal
-                className="workspace-modal workspace-modal-compact auth-agreement-modal"
-                title={agreementTitle}
-                open={agreementOpen}
-                onCancel={() => setAgreementOpen(false)}
-                footer={null}
-                destroyOnHidden
-            >
+            <Modal className="workspace-modal workspace-modal-compact auth-agreement-modal" title={agreementTitle} open={agreementOpen} onCancel={() => setAgreementOpen(false)} footer={null} destroyOnHidden>
                 {agreementParagraphs.length === 0 ? (
                     <div className="auth-agreement-empty">
                         <FileText className="size-3.5 shrink-0" aria-hidden />
