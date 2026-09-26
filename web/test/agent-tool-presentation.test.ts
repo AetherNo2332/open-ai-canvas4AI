@@ -88,8 +88,9 @@ describe("Agent tool presentation", () => {
         expect(friendlyAgentToolSummary("generate_media", "", { eventType: "generation_task_created" })).toBe("媒体节点已创建，生成任务已提交");
         expect(friendlyAgentToolSummary("generate_media", "", { eventType: "tool_completed" })).toBe("生成结果已回写画布节点");
         expect(friendlyAgentToolSummary("generate_media", "", { eventType: "tool_failed" })).toBe("媒体生成未完成");
-        expect(friendlyAgentToolSummary("generate_media", "", { eventType: "tool_failed", result: { phase: "admission", taskSubmitted: false } })).toBe("生成请求未提交");
-        expect(friendlyAgentToolSummary("generate_media", "", { eventType: "tool_failed", result: { phase: "completion", status: "succeeded" } })).toBe("生成成功，画布回写未完成");
+        expect(friendlyAgentToolSummary("generate_media", "", { eventType: "tool_failed", result: { phase: "admission", taskSubmitted: false } })).toBe("参数未通过校验，未提交生成任务");
+        expect(friendlyAgentToolSummary("generate_media", "", { eventType: "tool_failed", result: { phase: "completion", taskSubmitted: true, status: "succeeded" } })).toBe("生成成功，画布回写未完成");
+        expect(friendlyAgentToolSummary("generate_media", "", { eventType: "tool_failed", result: { phase: "completion", taskSubmitted: true, status: "failed" } })).toBe("任务已提交，但生成结果未完成");
     });
     it("uses the failure event even without error keywords", () => {
         const text = "技能未在本轮启用，或参考文件未包含在固定快照中";
