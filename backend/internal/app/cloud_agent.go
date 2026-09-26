@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"math"
+	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -510,6 +511,9 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	input := map[string]any{"mode": "text", "prompt": req.Prompt, "textHistory": history, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(policy.ReasoningMode), "maxOutputTokens": cloudAgentStepOutputBudget(stepLimits, false)}, "cloudAgent": state,
 		"agentRequests": map[string]any{"canonical": canonical},
 		"config":        map[string]any{"channelId": req.ChannelID, "channelModelKey": req.ChannelModelKey, "model": firstNonEmpty(req.ChannelModelKey, req.Model), "systemPrompt": system}}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CANVAS_AGENT_ENGINE")), "pi") {
+		input["agentEngine"] = "pi"
+	}
 	task, err := s.CreateTask(userID, CreateTaskRequest{ProjectID: req.CanvasID, Type: "canvas_text", Operation: cloudAgentOperation, Prompt: req.Prompt, Model: req.Model, LogicalModelID: req.LogicalModelID, Input: input,
 		admission: &taskAdmission{ID: id, MaxCharge: int64(math.Floor(req.Budget.MaxCredits * float64(CreditScale)))}})
 	if err != nil {

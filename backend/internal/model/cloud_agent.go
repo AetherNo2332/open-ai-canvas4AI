@@ -8,9 +8,13 @@ const CloudAgentCheckpointVersion = 2
 
 // CloudAgentExecution checkpoints orchestration independently of billed tasks.
 type CloudAgentExecution struct {
-	ID                string `gorm:"primaryKey;size:80"`
-	UserID            string `gorm:"index;size:36"`
-	Status            string `gorm:"index;size:32"`
+	ID     string `gorm:"primaryKey;size:80"`
+	UserID string `gorm:"index;size:36"`
+	Status string `gorm:"index;size:32"`
+	// Engine is empty for runs created before the external Pi worker was introduced.
+	Engine            string     `gorm:"index;size:24"`
+	LeaseOwner        string     `gorm:"size:80"`
+	LeaseExpiresAt    *time.Time `gorm:"index"`
 	Revision          int64
 	CheckpointVersion int    `gorm:"not null;default:0"`
 	ConversationID    string `gorm:"index;size:80"`

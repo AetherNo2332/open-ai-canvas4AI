@@ -19,7 +19,9 @@ description: 影策后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-当前结构版本为 **40**。上游迁移目前占用 v24–v38：v36 `cloud_agent_gemini_cache` 创建 Gemini 缓存表，v37 `cloud_agent_gemini_cache_identity` 将唯一键限定为 `(user_id, cache_key)`，v38 `prefixed_id_sequence_reconcile` 校准可读 ID 序列。我们已退役的 `cloud_agent_run_events` / `cloud_agent_transcript` 保留为 no-op 登记并顺延到 v39/v40，既有表与数据不删除；历史库的 v24/v25、v32/v33、v33/v34、v34/v35、v35/v36、v36/v37 登记会先按名称与校验和搬迁到 v39/v40，再执行上游迁移。v35 `auth_notifications`、v34 `task_media_recovery`、v33 `oauth_state_accepted_terms` 等迁移内容不变。升级前备份，运行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持 schema 40，回退需恢复匹配的数据库备份并评估备份之后的新写入；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+当前结构版本为 **41**。上游迁移目前占用 v24–v38：v36 `cloud_agent_gemini_cache` 创建 Gemini 缓存表，v37 `cloud_agent_gemini_cache_identity` 将唯一键限定为 `(user_id, cache_key)`，v38 `prefixed_id_sequence_reconcile` 校准可读 ID 序列。我们已退役的 `cloud_agent_run_events` / `cloud_agent_transcript` 保留为 no-op 登记并顺延到 v39/v40，既有表与数据不删除；历史库的 v24/v25、v32/v33、v33/v34、v34/v35、v35/v36、v36/v37 登记会先按名称与校验和搬迁到 v39/v40，再执行上游迁移。v35 `auth_notifications`、v34 `task_media_recovery`、v33 `oauth_state_accepted_terms` 等迁移内容不变。升级前备份，运行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持 schema 41，回退需恢复匹配的数据库备份并评估备份之后的新写入；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+
+v41 `pi_agent_run_leases` 为 `cloud_agent_executions` 增加 `engine`、`lease_owner`、`lease_expires_at`。独立 Pi Worker 的消息沿用 `cloud_agent_message_records`，新增 `kind=pi`；旧 `canonical`、`history` 与事件记录继续可读。Pi 切换尚未完成，迁移结构不代表可以启用 `CANVAS_AGENT_ENGINE=pi`。
 
 ### 生成成功后的作品保存恢复
 

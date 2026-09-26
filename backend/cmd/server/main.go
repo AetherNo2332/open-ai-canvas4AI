@@ -76,6 +76,9 @@ func run(ctx context.Context) error {
 	if err := svc.ValidateRuntime(); err != nil {
 		return err
 	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CANVAS_AGENT_ENGINE")), "pi") && strings.TrimSpace(os.Getenv("CANVAS_AGENT_INTERNAL_TOKEN")) == "" {
+		return errors.New("CANVAS_AGENT_INTERNAL_TOKEN is required when CANVAS_AGENT_ENGINE=pi")
+	}
 	if err := svc.EnsureSystemChannelModels(); err != nil {
 		return err
 	}
@@ -115,6 +118,7 @@ func run(ctx context.Context) error {
 	registerSystemStatusRoutes(api, status)
 	handler.RegisterOAuthCallbackRoutes(r, svc)
 	handler.RegisterCanvasAPI(api, svc)
+	handler.RegisterInternalAgentRoutes(r, svc)
 	r.NoRoute(handler.SystemProxyNoRouteHandler(svc))
 
 	listener, err := net.Listen("tcp", addr)

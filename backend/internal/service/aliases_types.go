@@ -9,6 +9,13 @@ type (
 	CloudAgentRunViewOptions               = app.CloudAgentRunViewOptions
 	CloudAgentMediaSettings                = app.CloudAgentMediaSettings
 	CloudAgentCapabilitySet                = app.CloudAgentCapabilitySet
+	PiAgentSnapshot                        = app.PiAgentSnapshot
+	PiModelStepRequest                     = app.PiModelStepRequest
+	PiModelStepView                        = app.PiModelStepView
+	PiToolBatchRequest                     = app.PiToolBatchRequest
+	PiMessageCheckpoint                    = app.PiMessageCheckpoint
+	PiTurnDecision                         = app.PiTurnDecision
+	PiToolReceipt                          = app.PiToolReceipt
 	AgentProfileRequest                    = app.AgentProfileRequest
 	AgentProfileView                       = app.AgentProfileView
 	AgentLessonView                        = app.AgentLessonView

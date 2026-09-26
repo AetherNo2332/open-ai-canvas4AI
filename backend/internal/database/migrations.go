@@ -13,7 +13,7 @@ import (
 
 // CurrentSchemaVersion follows upstream migrations through v38; the retired
 // Cloud Agent tables stay registered as no-op entries after that upstream range.
-const CurrentSchemaVersion int64 = 40
+const CurrentSchemaVersion int64 = 41
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 38
@@ -135,6 +135,9 @@ var schemaMigrations = []migration{
 	{version: 38, name: "prefixed_id_sequence_reconcile", checksum: prefixedIDSequenceReconcileChecksum, apply: migratePrefixedIDSequenceReconcile},
 	{version: 39, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	{version: 40, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{version: 41, name: "pi_agent_run_leases", checksum: "sha256:pi-agent-run-leases-v41-20260926", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentExecution{})
+	}},
 }
 
 func migratePrefixedIDSequenceReconcile(tx *gorm.DB) error {

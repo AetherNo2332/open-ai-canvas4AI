@@ -102,6 +102,8 @@ type cloudAgentRuntime struct {
 	ActivatedToolCategories []string                  `json:"activatedToolCategories,omitempty"`
 	AdvertisedToolNames     []string                  `json:"advertisedToolNames,omitempty"`
 	ActiveTaskID            string                    `json:"activeTaskId"`
+	PiNoToolTaskID          string                    `json:"piNoToolTaskId,omitempty"`
+	PiNoToolNudge           string                    `json:"piNoToolNudge,omitempty"`
 	ActiveTextDraft         string                    `json:"activeTextDraft,omitempty"`
 	MediaTaskID             string                    `json:"mediaTaskId,omitempty"`
 	TaskIDs                 []string                  `json:"taskIds"`
@@ -243,6 +245,7 @@ type cloudAgentTransientReference struct {
 
 func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgentState) error {
 	var input struct {
+		AgentEngine string                `json:"agentEngine"`
 		TextHistory []providerTextMessage `json:"textHistory"`
 		Config      map[string]any        `json:"config"`
 		Requests    struct {
@@ -304,7 +307,7 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	firstPressure := cloudAgentContextPressurePayload(pressure, &state, input.Requests.Canonical)
 	firstPressure["requestId"] = task.ID
 	state.event(task.ID, "context_pressure", firstPressure)
-	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
+	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Engine: input.AgentEngine, Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
 	if err := cloudAgentSave(run, &state); err != nil {
 		return err
 	}
@@ -349,6 +352,7 @@ func cloudAgentDecode(run *model.CloudAgentExecution) (cloudAgentRuntime, error)
 func cloudAgentRestoreTranscript(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
 	canonical := make([]map[string]any, 0, len(run.Transcript))
 	history := make([]providerTextMessage, 0, len(run.Transcript))
+	piCount := 0
 	for _, record := range run.Transcript {
 		switch record.Kind {
 		case cloudAgentMessageKindCanonical:
@@ -369,6 +373,11 @@ func cloudAgentRestoreTranscript(run *model.CloudAgentExecution, state *cloudAge
 				return errors.New("Agent history sequence is incomplete")
 			}
 			history = append(history, message)
+		case cloudAgentMessageKindPi:
+			if !json.Valid([]byte(record.MessageJSON)) || record.Sequence != piCount+1 {
+				return errors.New("Pi Agent message sequence is incomplete")
+			}
+			piCount++
 		default:
 			return errors.New("Agent message kind is unsupported")
 		}
@@ -728,7 +737,14 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 		}
 		run.Journal = append(run.Journal, model.CloudAgentEventRecord{RunID: run.ID, UserID: run.UserID, Sequence: event.Seq, EventJSON: string(body), CreatedAt: event.CreatedAt})
 	}
-	run.Transcript = make([]model.CloudAgentMessageRecord, 0, len(state.Canonical.Messages)+len(state.TextHistory))
+	piRecords := make([]model.CloudAgentMessageRecord, 0)
+	for _, record := range run.Transcript {
+		if record.Kind == cloudAgentMessageKindPi {
+			piRecords = append(piRecords, record)
+		}
+	}
+	run.Transcript = make([]model.CloudAgentMessageRecord, 0, len(state.Canonical.Messages)+len(state.TextHistory)+len(piRecords))
+	run.Transcript = append(run.Transcript, piRecords...)
 	for index, message := range state.Canonical.Messages {
 		body, err := json.Marshal(message)
 		if err != nil {
@@ -754,6 +770,7 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 const (
 	cloudAgentMessageKindCanonical = "canonical"
 	cloudAgentMessageKindHistory   = "history"
+	cloudAgentMessageKindPi        = "pi"
 )
 
 // cloudAgentBoundEventPayload 给单条事件载荷封顶。

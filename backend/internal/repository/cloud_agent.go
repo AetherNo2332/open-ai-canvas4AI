@@ -125,7 +125,7 @@ func (r *Repository) ActiveCloudAgentsAfter(after string, limit int) ([]model.Cl
 	if limit < 1 || limit > 50 {
 		limit = 50
 	}
-	err := r.db.Where("(status IN ? OR cleanup_pending = ?) AND id > ?", []string{"running", "queued"}, true, after).Order("id").Limit(limit).Find(&runs).Error
+	err := r.db.Where("(status IN ? OR cleanup_pending = ?) AND id > ? AND (engine IS NULL OR engine <> ?)", []string{"running", "queued"}, true, after, "pi").Order("id").Limit(limit).Find(&runs).Error
 	if err == nil {
 		for i := range runs {
 			if err = r.hydrateCloudAgent(&runs[i]); err != nil {
@@ -138,6 +138,45 @@ func (r *Repository) ActiveCloudAgentsAfter(after string, limit int) ([]model.Cl
 
 func (r *Repository) ActiveCloudAgents() ([]model.CloudAgentExecution, error) {
 	return r.ActiveCloudAgentsAfter("", 50)
+}
+
+// ClaimPiAgent leases one externally executed run. The conditional update is
+// also safe on SQLite, where SELECT FOR UPDATE is unavailable.
+func (r *Repository) ClaimPiAgent(owner string, until time.Time) (*model.CloudAgentExecution, error) {
+	var candidates []model.CloudAgentExecution
+	now := time.Now()
+	if err := r.db.Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
+		"pi", []string{"queued", "running", "waiting_approval"}, now).
+		Order("created_at, id").Limit(20).Find(&candidates).Error; err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		updated := r.db.Model(&model.CloudAgentExecution{}).
+			Where("id = ? AND revision = ? AND engine = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
+				candidate.ID, candidate.Revision, "pi", now).
+			Updates(map[string]any{"lease_owner": owner, "lease_expires_at": until, "revision": gorm.Expr("revision + 1")})
+		if updated.Error != nil {
+			return nil, updated.Error
+		}
+		if updated.RowsAffected == 1 {
+			return r.CloudAgent(candidate.UserID, candidate.ID)
+		}
+	}
+	return nil, nil
+}
+
+func (r *Repository) RenewPiAgentLease(userID, id, owner string, until time.Time) (bool, error) {
+	updated := r.db.Model(&model.CloudAgentExecution{}).
+		Where("id = ? AND user_id = ? AND engine = ? AND lease_owner = ? AND lease_expires_at > ?",
+			id, userID, "pi", owner, time.Now()).
+		Updates(map[string]any{"lease_expires_at": until})
+	return updated.RowsAffected == 1, updated.Error
+}
+
+func (r *Repository) ReleasePiAgentLease(userID, id, owner string) error {
+	return r.db.Model(&model.CloudAgentExecution{}).
+		Where("id = ? AND user_id = ? AND engine = ? AND lease_owner = ?", id, userID, "pi", owner).
+		Updates(map[string]any{"lease_owner": "", "lease_expires_at": nil}).Error
 }
 
 // Do not load the transcript, tasks and bills for an unchanged SSE subscription.
@@ -246,7 +285,7 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 				return err
 			}
 		}
-		for _, kind := range []string{"canonical", "history"} {
+		for _, kind := range []string{"canonical", "history", "pi"} {
 			count := 0
 			for _, message := range run.Transcript {
 				if message.Kind == kind {
