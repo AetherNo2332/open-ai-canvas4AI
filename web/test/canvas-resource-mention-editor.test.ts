@@ -140,10 +140,13 @@ describe("canvas resource mention editor", () => {
         expect(component).toContain('chip.style.setProperty("--canvas-skill-mention-color", skillMentionColor(reference))');
         expect(chat).toContain('sendOnEnter={canSubmit ? "both" : false}');
         expect(chat).toContain("agent-composer-resize-handle");
-        expect(chat).toContain("Enter 发送 · Shift+Enter 换行");
-        expect(css).toContain(".agent-composer-send-hint-full");
-        expect(css).toContain(".agent-composer-send-hint-compact");
         expect(css).toContain(".agent-composer-prompt-scroll");
+        // 合并取舍：上游 98f1b31e「云端 Agent - 缩减画布目录上下文并展示实时用量」把发送键左侧的
+        // 「Enter 发送 · Shift+Enter 换行」提示与上下文计量读数一起换成了 submitAccessory 插槽，
+        // 并删掉了 .agent-composer-send-hint*／.agent-context-pressure* 的样式。这里随上游：
+        // 断言改为插槽本身，旧提示的断言连同死代码一并移除。
+        expect(chat).toContain("{submitAccessory}");
+        expect(css).not.toContain(".agent-composer-send-hint");
         // 合并取舍：上游 2682c950「Agent 面板 - 移除 PR #539 提交中的无效 hover 背景」整条删掉了
         // .agent-tool-row:hover；dev 侧 eb7344f9 曾把它加回来并断言"存在且不得声明 cursor"。
         // 这里随上游（CSS 已删除 + 上游的负断言），保持两侧自洽；dev 的 hover 边框意图需产品复核。

@@ -42,6 +42,9 @@ describe("shared action colors and focus feedback", () => {
         const theme = getWorkspaceAntThemeConfig();
         expect(theme.components?.Button?.colorPrimary).toBeUndefined();
         expect(theme.components?.Button?.primaryColor).toBeUndefined();
-        expect(theme.components?.Input?.activeShadow).toBeUndefined();
+        // 合并取舍：上游 8a691f76「统一控件 - 收敛下拉选择与按钮输入交互样式」在工作台密度覆盖里
+        // 显式声明 Input / InputNumber 的 activeShadow: "none"（不再靠继承基座主题）；断言随上游
+        // 改新契约，"工作台输入不出现焦点阴影"的意图不变。
+        expect(theme.components?.Input?.activeShadow).toBe("none");
     });
 });

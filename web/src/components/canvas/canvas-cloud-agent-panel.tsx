@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
-import { Button, Dropdown, Input } from "antd";
+import { Button, Dropdown, Input, Popover } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, MoveDiagonal2, RotateCcw, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
 import { saveAs } from "file-saver";
 import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-retry";
-import { agentContextMeterState, type AgentContextMeterState } from "@/lib/canvas/agent-context-meter";
 import { agentPlanVisible, latestAgentPlanItems, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
+import { emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage, type AgentContextPhase, type AgentContextUsage, type AgentContextUsageView } from "@/lib/canvas/agent-context-usage";
 import { nanoid } from "nanoid";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -28,10 +28,6 @@ import {
     sendAgentMessage,
     subscribeAgentEvents,
     updateAgentProfile,
-    type AgentContextBreakdown,
-    type AgentContextBucket,
-    type AgentContextPressure,
-    type AgentContextTokenUsage,
     type AgentEvent,
     type AgentPermissionMode,
     type AgentProfileScope,
@@ -112,13 +108,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     const reducedMotion = useReducedMotion();
     const [view, setView] = useState<AgentPanelView>("chat");
     const [run, setRun] = useState<AgentRun | null>(null);
-    const [contextPressure, setContextPressure] = useState<AgentContextPressure | null>(null);
-    // 口径状态与"最近变化"：主读数跨轮保留最后一次有效实测（设计方向 §7.5），
-    // 压缩/裁剪会让旧实测过期（§7.3）。治理代次用 ref 记录，避免闭包读到旧值。
-    const [contextMeter, setContextMeter] = useState<AgentContextMeterState | undefined>(undefined);
-    const governanceEpochRef = useRef(0);
-    const contextMeterRef = useRef<AgentContextMeterState | undefined>(undefined);
-    const lastPressureRef = useRef<AgentContextPressure | null>(null);
+    const [contextUsage, setContextUsage] = useState<AgentContextUsage>(() => emptyAgentContextUsage(""));
     const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">("connecting");
     const [connectionEpoch, setConnectionEpoch] = useState(0);
     const [messages, setMessages] = useState<CloudAgentChatMessage[]>([]);
@@ -157,8 +147,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     const [pendingHydrated, setPendingHydrated] = useState(false);
     const [planMinimized, setPlanMinimized] = useState(false);
     const planItems = useMemo(() => latestAgentPlanItems(messages), [messages]);
-    // 第几轮 = 当前会话里已发出的用户消息条数（每发一条消息就是一轮）。
-    const conversationRound = useMemo(() => messages.filter((item) => item.role === "user").length, [messages]);
     const planVisible = agentPlanVisible(planItems);
     const pendingQuestion = useMemo(() => pendingAgentQuestion(messages), [messages]);
     const [scenePresets, setScenePresets] = useState<SkillPreset[]>([]);
@@ -195,51 +183,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     }, [config]);
     const selectedTextCapability = modelCapabilityConfigFor(config, selectedModel).text;
     const reasoningSupported = Boolean(selectedTextCapability?.thinking);
-    const visibleContextPressure = useMemo<AgentContextPressure>(
-        () => ({
-            estimatedInputTokens: contextPressure?.estimatedInputTokens || 0,
-            contextWindowTokens: contextPressure?.contextWindowTokens || selectedTextCapability?.contextWindowTokens || 0,
-            reservedOutputTokens: contextPressure?.reservedOutputTokens || selectedTextCapability?.reservedOutputTokens || 0,
-            // 首个压力事件到达前只能用能力配置猜一个可用输入；服务端给的 inputBudgetTokens
-            // 才是权威口径（还要再减去 overhead），这里不做第二份预算算式，避免两处漂移。
-            usableInputTokens: contextPressure?.usableInputTokens || Math.max(0, (selectedTextCapability?.contextWindowTokens || 0) - (selectedTextCapability?.reservedOutputTokens || 0)),
-            overheadTokens: contextPressure?.overheadTokens,
-            inputBudgetTokens: contextPressure?.inputBudgetTokens,
-            budgetSource: contextPressure?.budgetSource,
-            compactAtTokens: contextPressure?.compactAtTokens,
-            pressureRatio: contextPressure?.pressureRatio || 0,
-            sourceBytes: contextPressure?.sourceBytes || 0,
-            promptChars: prompt ? [...prompt].length : contextPressure?.promptChars || 0,
-            promptLimitChars: contextPressure?.promptLimitChars || selectedTextCapability?.references.promptMaxChars || 0,
-            modelLimitConfigured: contextPressure?.modelLimitConfigured || Boolean(selectedTextCapability?.contextWindowTokens),
-            estimate: true,
-            compactionSourceBytes: contextPressure?.compactionSourceBytes || contextPressure?.sourceBytes || 0,
-            compactionThresholdBytes: contextPressure?.compactionThresholdBytes || 48 * 1024,
-            historyMessages: contextPressure?.historyMessages || 0,
-            historyMessageThreshold: contextPressure?.historyMessageThreshold || 16,
-            compactionPressureRatio: contextPressure?.compactionPressureRatio || (contextPressure?.sourceBytes || 0) / (48 * 1024),
-            compactionThresholdRatio: contextPressure?.compactionThresholdRatio ?? 0.85,
-            compactionBasis: contextPressure?.compactionBasis,
-            compactionTokenSource: contextPressure?.compactionTokenSource,
-            breakdown: contextPressure?.breakdown,
-            pressureTokens: contextPressure?.pressureTokens,
-            projectedTokens: contextPressure?.projectedTokens ?? contextPressure?.estimatedInputTokens,
-            tokenSource: contextPressure?.tokenSource ?? "estimate",
-            tokenUsage: contextPressure?.tokenUsage,
-            anchorStep: contextPressure?.anchorStep,
-            anchorDeltaTokens: contextPressure?.anchorDeltaTokens,
-            anchorRejected: contextPressure?.anchorRejected,
-            projectedPressureRatio: contextPressure?.projectedPressureRatio,
-            requestHardLimitBytes: contextPressure?.requestHardLimitBytes,
-            readingScope: contextPressure?.readingScope,
-            estimateMethod: contextPressure?.estimateMethod,
-            providerMeasurementScope: contextPressure?.providerMeasurementScope,
-        }),
-        [contextPressure, prompt, selectedTextCapability],
-    );
-    useEffect(() => {
-        contextMeterRef.current = contextMeter;
-    }, [contextMeter]);
     useEffect(() => {
         if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off");
     }, [reasoningSupported, reasoningMode]);
@@ -538,11 +481,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setPresetApplyingId("");
         setConversations([]);
         setRun(null);
-        setContextPressure(null);
-        setContextMeter(undefined);
-        contextMeterRef.current = undefined;
-        lastPressureRef.current = null;
-        governanceEpochRef.current = 0;
         setMessages([]);
         setSelectedSkillIds([]);
         setApproval(null);
@@ -558,8 +496,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                     setActiveConversationId(current.id);
                     setMessages(current.messages);
                     setRun(current.run);
-                    setContextPressure(latestContextPressure(current.run?.events));
-                    setContextMeter(contextMeterFromEvents(current.run?.events, current.run?.id));
                     setPermissionMode(current.permissionMode);
                     setSelectedSkillIds(current.skillIds || []);
                     if (current.model) setModel(current.model);
@@ -627,20 +563,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                     lastSeqRef.current = event.seq;
                 }
                 setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
+                setContextUsage((current) => reduceAgentContextUsage(current, event));
                 applyAgentEvent(event, setMessages, setRun, setApproval, setPrompt);
-                if (event.type === "context_pressure") {
-                    const payload = parseContextPressure(event.payload);
-                    lastPressureRef.current = payload;
-                    setContextPressure(payload);
-                    setContextMeter(agentContextMeterState(contextMeterRef.current, payload, { runId: run.id, governanceEpoch: governanceEpochRef.current }));
-                } else if (isContextGovernanceEvent(event.type)) {
-                    // 压缩/裁剪发生后，之前那次实测不再代表当前上下文（§7.3）：代次 +1，
-                    // 主读数退回本地估算并说明原因，直到上游重新报用量。
-                    governanceEpochRef.current += 1;
-                    if (lastPressureRef.current) {
-                        setContextMeter(agentContextMeterState(contextMeterRef.current, lastPressureRef.current, { runId: run.id, governanceEpoch: governanceEpochRef.current }));
-                    }
-                }
                 canvasSyncRef.current?.receive(event);
             },
             {
@@ -761,7 +685,10 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
             setMessages(nextMessages);
             const result = submission.parentRunId ? await sendAgentMessage(submission.parentRunId, request) : await createAgentRun(request);
             accepted = true;
-            if (currentScope.current === scope) setRun(result.run);
+            if (currentScope.current === scope) {
+                setContextUsage(emptyAgentContextUsage(result.run.id));
+                setRun(result.run);
+            }
             await clearCloudAgentPendingSubmission(canvasId, activeConversationId);
             if (currentScope.current === scope) pendingSubmission.current = null;
         } catch (cause) {
@@ -883,11 +810,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setApprovalSubmitting(false);
         setActiveConversationId(id);
         setRun(null);
-        setContextPressure(null);
-        setContextMeter(undefined);
-        contextMeterRef.current = undefined;
-        lastPressureRef.current = null;
-        governanceEpochRef.current = 0;
         setMessages([]);
         setSelectedSkillIds([]);
         setPrompt("");
@@ -907,8 +829,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
         setApprovalSubmitting(false);
         setActiveConversationId(conversation.id);
         setRun(conversation.run);
-        setContextPressure(latestContextPressure(conversation.run?.events));
-        setContextMeter(contextMeterFromEvents(conversation.run?.events, conversation.run?.id));
         setMessages(conversation.messages);
         setPermissionMode(conversation.permissionMode);
         setSelectedSkillIds(conversation.skillIds || []);
@@ -1101,10 +1021,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                                         references={[...references, ...buildSkillMentionReferences(installedSkills)]}
                                         slashSkills={installedSkills}
                                         includeAssetLibrary={false}
-                                        contextPressure={visibleContextPressure}
-                                        runStep={run?.step}
-                                        conversationRound={conversationRound}
-                                        contextMeter={contextMeter}
+                                        submitAccessory={<AgentContextRing view={presentAgentContextUsage(contextUsage)} />}
                                         left={
                                             <ComposerControls
                                                 reasoningMode={reasoningSupported ? reasoningMode : "off"}
@@ -1183,9 +1100,9 @@ function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onO
             transition={{ duration: reducedMotion ? 0 : 0.18 }}
         >
             {live ? (
-                <Live2DAvatar url={live2DModelURL(appearance.live2dResourceId, appearance.live2dEntry)} width={width} height={height} reducedMotion={reducedMotion} fallback={<FluidOrb size={62} color="#7164f6" />} />
+                <Live2DAvatar url={live2DModelURL(appearance.live2dResourceId, appearance.live2dEntry)} width={width} height={height} reducedMotion={reducedMotion} fallback={<FluidOrb size={60} color="#7164f6" />} />
             ) : (
-                <FluidOrb size={62} color="#7164f6" />
+                <FluidOrb size={60} color="#7164f6" />
             )}
             {appearance.launcherLabel ? <span className="canvas-agent-launcher-label">{appearance.launcherLabel}</span> : null}
             <span className={cn("canvas-agent-launcher-status", approvalPending && "is-pending")} style={{ "--canvas-agent-status-color": statusColor } as CSSProperties} />
@@ -1248,6 +1165,141 @@ function AgentHeader({
                 <Button type="text" shape="circle" icon={<X className="size-4" />} onClick={onCollapse} aria-label="收起 Agent" title="收起" />
             </div>
         </header>
+    );
+}
+
+const CONTEXT_PHASE_LABEL: Record<AgentContextPhase, string> = {
+    idle: "尚未测量",
+    unknown: "窗口未知",
+    ok: "上下文充足",
+    watch: "接近压缩",
+    compress: "即将压缩",
+    compacting: "正在压缩",
+    stale: "压缩后待刷新",
+};
+
+function formatContextCount(tokens: number | undefined) {
+    if (tokens === undefined) return "—";
+    if (tokens >= 1_000_000) return `${Math.round(tokens / 100_000) / 10}M`;
+    if (tokens >= 1_000) return `${Math.round(tokens / 100) / 10}K`;
+    return Math.round(tokens).toLocaleString("zh-CN");
+}
+
+function formatContextBytes(bytes: number | undefined) {
+    if (bytes === undefined) return "—";
+    if (bytes >= 1_000_000) return `${Math.round(bytes / 100_000) / 10} MB`;
+    if (bytes >= 1_000) return `${Math.round(bytes / 100) / 10} KB`;
+    return `${Math.round(bytes).toLocaleString("zh-CN")} 字节`;
+}
+
+function AgentContextRing({ view }: { view: AgentContextUsageView }) {
+    const [open, setOpen] = useState(false);
+    const marker = view.compactRatio && view.compactRatio > 0 && view.compactRatio < 1 ? view.compactRatio : undefined;
+    const percent = view.ratio === undefined ? view.label : `${Math.round(view.ratio * 100)}%`;
+    const meterLabel = view.ratio === undefined ? "—" : percent;
+    const used = formatContextCount(view.inputTokens);
+    const budget = formatContextCount(view.usableTokens);
+    const remaining = formatContextCount(view.remainingTokens);
+    const protocolBytes = formatContextBytes(view.protocolBytes);
+    const usedRatio = view.ratio === undefined ? 0 : Math.max(0, Math.min(1, view.ratio));
+    const phaseLabel = CONTEXT_PHASE_LABEL[view.phase];
+    const sourceLabel = view.tokenSource === "provider" ? "模型实测校准" : view.estimate ? "本地估算" : "未测量";
+    const usageHeading = view.ratio !== undefined ? `上下文已用 ${percent}` : view.phase === "idle" ? "上下文用量" : view.phase === "unknown" ? "上下文窗口未知" : `上下文${view.label}`;
+
+    return (
+        <Popover
+            open={open}
+            onOpenChange={setOpen}
+            trigger="click"
+            placement="bottomRight"
+            arrow={false}
+            overlayClassName="agent-context-popover"
+            getPopupContainer={(trigger) => trigger.closest<HTMLElement>(".canvas-agent-panel") ?? document.body}
+            content={
+                <div className="agent-context-panel" data-phase={view.phase}>
+                    <span className="agent-context-eyebrow">下一次请求</span>
+                    <div className="agent-context-panel-head">
+                        <strong>{usageHeading}</strong>
+                        {view.phase !== "ok" ? <span className={`agent-context-phase is-${view.phase}`}>{phaseLabel}</span> : null}
+                    </div>
+                    <div className="agent-context-summary">
+                        {view.remainingTokens !== undefined && view.usableTokens !== undefined ? (
+                            <>
+                                <strong>{used}</strong>
+                                <span>/ {budget} Token</span>
+                                <em>剩余 {remaining}</em>
+                            </>
+                        ) : (
+                            <>
+                                <strong>{used}</strong>
+                                <span>Token</span>
+                            </>
+                        )}
+                    </div>
+                    <div className="agent-context-progress-head">
+                        <span>输入预算占用</span>
+                        <strong>{percent}</strong>
+                    </div>
+                    <div className="agent-context-progress" role="progressbar" aria-label={`上下文已用 ${percent}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.ratio === undefined ? undefined : Math.round(view.ratio * 100)}>
+                        <span style={{ width: `${usedRatio * 100}%` }} />
+                        {marker ? <i style={{ left: `${marker * 100}%` }} aria-hidden="true" /> : null}
+                    </div>
+                    <p className="agent-context-detail">{view.detail}</p>
+                    {view.breakdown.length || view.protocolBytes !== undefined || view.remainingTokens !== undefined ? (
+                        <ul className="agent-context-breakdown">
+                            {view.breakdown.map((item) => (
+                                <li key={item.key}>
+                                    <span className="agent-context-breakdown-dot" aria-hidden="true" />
+                                    <span className="agent-context-breakdown-label">{item.label}</span>
+                                    <span className="agent-context-breakdown-value">{formatContextCount(item.tokens)}</span>
+                                </li>
+                            ))}
+                            {view.protocolBytes !== undefined ? (
+                                <li className="is-secondary">
+                                    <span className="agent-context-breakdown-dot" aria-hidden="true" />
+                                    <span className="agent-context-breakdown-label">协议外壳</span>
+                                    <span className="agent-context-breakdown-value">{protocolBytes}</span>
+                                </li>
+                            ) : null}
+                            {view.remainingTokens !== undefined ? (
+                                <li className="is-muted">
+                                    <span className="agent-context-breakdown-dot" aria-hidden="true" />
+                                    <span className="agent-context-breakdown-label">未使用</span>
+                                    <span className="agent-context-breakdown-value">{remaining}</span>
+                                </li>
+                            ) : null}
+                        </ul>
+                    ) : null}
+                    <div className="agent-context-panel-foot">
+                        <span>
+                            {sourceLabel}
+                            {view.estimate ? " · 不是计费 Token" : " · 预计下次请求"}
+                        </span>
+                        {view.compactAtTokens ? <span>压缩线 {formatContextCount(view.compactAtTokens)}</span> : null}
+                    </div>
+                    {view.lastCompaction ? <p className="agent-context-note">本轮已完成一次上下文压缩，下一次读数会刷新。</p> : null}
+                </div>
+            }
+        >
+            <button type="button" className={`agent-context-ring is-${view.phase}`} aria-label={`${usageHeading}，${phaseLabel}。点击查看明细`} aria-expanded={open} title="查看上下文用量" onPointerDown={(event) => event.stopPropagation()}>
+                <span
+                    className="agent-context-ring-visual"
+                    aria-hidden="true"
+                    style={
+                        {
+                            "--agent-context-progress": `${view.ring * 100}%`,
+                            "--agent-context-marker-angle": `${(marker || 0) * 360}deg`,
+                        } as CSSProperties
+                    }
+                >
+                    {marker ? <span className="agent-context-ring-marker" /> : null}
+                </span>
+                <span className="agent-context-meter-copy">
+                    <strong>{meterLabel}</strong>
+                    <small>上下文</small>
+                </span>
+            </button>
+        </Popover>
     );
 }
 
@@ -1445,14 +1497,15 @@ function ComposerControls({
     const permissionVisual = agentPermissionVisual(permissionMode);
     const PermissionIcon = permissionVisual.icon;
     return (
-        <div className="flex min-w-0 flex-wrap items-center gap-0.5">
+        <div className="agent-composer-selection flex min-w-0 flex-1 flex-nowrap items-center gap-0.5">
             <ModelPicker
                 config={config}
                 value={selectedModel}
                 capability="text"
                 onChange={onModelChange}
                 variant="creation"
-                className="!h-8 !min-w-0 !w-52 !max-w-full !border-0 !bg-transparent !px-1.5 !shadow-none"
+                fullWidth
+                className="agent-composer-model-trigger !h-8 !min-w-0 !w-full !max-w-full !border-0 !bg-transparent !px-1.5 !shadow-none"
                 popoverClassName="agent-model-picker-popover"
                 showSelectedPrice={false}
                 showOptionPrices
@@ -1905,121 +1958,6 @@ function applyAgentEvent(
     if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendAgentError(current, event.eventId, text || "Agent 执行失败"));
 }
 
-function parseContextPressure(payload: Record<string, unknown>): AgentContextPressure {
-    const number = (key: string) => (Number.isFinite(Number(payload[key])) ? Number(payload[key]) : 0);
-    return {
-        estimatedInputTokens: number("estimatedInputTokens"),
-        contextWindowTokens: number("contextWindowTokens"),
-        reservedOutputTokens: number("reservedOutputTokens"),
-        usableInputTokens: number("usableInputTokens"),
-        pressureRatio: Math.max(0, number("pressureRatio")),
-        sourceBytes: number("sourceBytes"),
-        promptChars: number("promptChars"),
-        promptLimitChars: number("promptLimitChars"),
-        modelLimitConfigured: payload.modelLimitConfigured === true,
-        estimate: true,
-        compactionSourceBytes: number("compactionSourceBytes") || number("sourceBytes"),
-        compactionThresholdBytes: number("compactionThresholdBytes") || 48 * 1024,
-        historyMessages: number("historyMessages"),
-        historyMessageThreshold: number("historyMessageThreshold") || 16,
-        compactionPressureRatio: Math.max(0, number("compactionPressureRatio") || number("sourceBytes") / (48 * 1024)),
-        compactionThresholdRatio: number("compactionThresholdRatio") || 0.85,
-        compactionBasis: payload.compactionBasis === "bytes" ? "bytes" : "tokens",
-        compactionTokenSource: payload.compactionTokenSource === "estimate" ? "estimate" : "provider",
-        breakdown: parseContextBreakdown(payload["breakdown"]),
-        // 上游实测锚点与投影：旧后端不返回，缺省时前端按估算显示。
-        pressureTokens: payload.pressureTokens === undefined ? undefined : number("pressureTokens"),
-        projectedTokens: payload.projectedTokens === undefined ? undefined : number("projectedTokens"),
-        tokenSource: payload.tokenSource === "provider" ? "provider" : payload.tokenSource === "estimate" ? "estimate" : undefined,
-        tokenUsage: parseContextTokenUsage(payload["tokenUsage"]),
-        anchorStep: payload.anchorStep === undefined ? undefined : number("anchorStep"),
-        anchorDeltaTokens: payload.anchorDeltaTokens === undefined ? undefined : number("anchorDeltaTokens"),
-        anchorRejected: typeof payload.anchorRejected === "string" ? payload.anchorRejected : undefined,
-        projectedPressureRatio: payload.projectedPressureRatio === undefined ? undefined : Math.max(0, number("projectedPressureRatio")),
-        requestHardLimitBytes: payload.requestHardLimitBytes === undefined ? undefined : number("requestHardLimitBytes"),
-        stepMaxOutputTokens: payload.stepMaxOutputTokens === undefined ? undefined : number("stepMaxOutputTokens"),
-        stepTimeoutSeconds: payload.stepTimeoutSeconds === undefined ? undefined : number("stepTimeoutSeconds"),
-        readingScope: payload.readingScope === "next_request" ? "next_request" : undefined,
-        estimateMethod: payload.estimateMethod === "local_v1" ? "local_v1" : undefined,
-        providerMeasurementScope: payload.providerMeasurementScope === "previous_request" ? "previous_request" : undefined,
-    };
-}
-
-/** 压缩/裁剪类事件：它们让"之前那次实测"过期（设计方向 §7.3）。 */
-function isContextGovernanceEvent(type: string) {
-    return type === "context_compacted" || type === "context_images_pruned" || type === "context_evicted";
-}
-
-/**
- * 按事件顺序重放出口径状态（刷新/切换会话时用）。
- * 顺序很重要：治理事件之后的实测才算"当前有效实测"。
- */
-function contextMeterFromEvents(events: AgentEvent[] | undefined, runId: string | undefined): AgentContextMeterState | undefined {
-    let state: AgentContextMeterState | undefined;
-    let epoch = 0;
-    for (const event of events || []) {
-        if (isContextGovernanceEvent(event.type)) {
-            epoch += 1;
-            continue;
-        }
-        if (event.type !== "context_pressure") continue;
-        state = agentContextMeterState(state, parseContextPressure(event.payload), { runId, governanceEpoch: epoch });
-    }
-    return state;
-}
-
-/** 上游 usage：缺字段即视为没有，不参与展示。 */
-function parseContextTokenUsage(raw: unknown): AgentContextTokenUsage | undefined {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-    const source = raw as Record<string, unknown>;
-    const number = (key: string) => (Number.isFinite(Number(source[key])) ? Number(source[key]) : 0);
-    const usage = { inputTokens: number("inputTokens"), cachedInputTokens: number("cachedInputTokens"), uncachedInputTokens: number("uncachedInputTokens"), outputTokens: number("outputTokens") };
-    return usage.inputTokens > 0 ? usage : undefined;
-}
-
-/** 占用分布是展示数据：字段缺失或类型异常时整块隐藏，不影响压力读数。 */
-function parseContextBreakdown(raw: unknown): AgentContextBreakdown | undefined {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-    const source = raw as Record<string, unknown>;
-    const buckets = Array.isArray(source.buckets) ? source.buckets.map(parseContextBucket).filter((item): item is AgentContextBucket => Boolean(item)) : [];
-    if (buckets.length === 0) return undefined;
-    const segments = Array.isArray(source.systemSegments) ? source.systemSegments.map(parseContextBucket).filter((item): item is AgentContextBucket => Boolean(item)) : undefined;
-    const number = (key: string) => (Number.isFinite(Number(source[key])) ? Number(source[key]) : 0);
-    return {
-        totalBytes: number("totalBytes"),
-        totalTokens: number("totalTokens"),
-        bucketBytes: number("bucketBytes"),
-        bucketTokens: number("bucketTokens"),
-        envelopeBytes: number("envelopeBytes"),
-        buckets,
-        systemSegments: segments,
-        tokenScale: source.tokenScale === undefined ? undefined : number("tokenScale"),
-        scaledTotalTokens: source.scaledTotalTokens === undefined ? undefined : number("scaledTotalTokens"),
-    };
-}
-
-function parseContextBucket(raw: unknown): AgentContextBucket | undefined {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-    const source = raw as Record<string, unknown>;
-    const key = typeof source.key === "string" ? source.key : "";
-    const label = typeof source.label === "string" ? source.label : "";
-    const bytes = Number(source.bytes);
-    const tokens = Number(source.tokens);
-    if (!key || !Number.isFinite(bytes) || bytes <= 0) return undefined;
-    const scaled = Number(source.scaledTokens);
-    return {
-        key,
-        label: label || key,
-        bytes,
-        tokens: Number.isFinite(tokens) ? tokens : 0,
-        scaledTokens: Number.isFinite(scaled) && scaled > 0 ? scaled : undefined,
-    };
-}
-
-function latestContextPressure(events?: AgentEvent[]) {
-    const event = [...(events || [])].reverse().find((item) => item.type === "context_pressure");
-    return event ? parseContextPressure(event.payload) : null;
-}
 function toolDetailRecord(value: unknown): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
