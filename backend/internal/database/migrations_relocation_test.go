@@ -28,7 +28,7 @@ import (
 // 覆盖七种起点：全新库 / 上游库 / 我们 v25 库 / 上一版合并线库 / 上一版 dev 库 / 再上一版 dev 库 /
 // 当前 dev 库（schema 36）。
 func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
-	t.Run("全新库：无可搬迁记录，迁移到 37 即可用", func(t *testing.T) {
+	t.Run("全新库：无可搬迁记录，迁移到 40 即可用", func(t *testing.T) {
 		db := openRelocationTestDB(t, "fresh")
 		if err := relocateLegacyCloudAgentMigrations(db); err != nil {
 			t.Fatalf("relocate on fresh db: %v", err)
@@ -39,7 +39,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertSchemaReady(t, db)
 	})
 
-	t.Run("上游库：无可搬迁记录，补到 37", func(t *testing.T) {
+	t.Run("上游库：无可搬迁记录，补到 40", func(t *testing.T) {
 		db := openRelocationTestDB(t, "upstream")
 		seedMigrationRecords(t, db, upstreamRecordsThrough(PreviousUpstreamSchemaVersion)...)
 		if err := relocateLegacyCloudAgentMigrations(db); err != nil {
@@ -77,7 +77,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("上一版合并线库：记录停在 v32/v33，搬迁到 36/37 并补上上游 v32", func(t *testing.T) {
+	t.Run("上一版合并线库：记录停在 v32/v33，搬迁到 39/40 并补上上游 v32", func(t *testing.T) {
 		db := openRelocationTestDB(t, "mergedline")
 		resetToMergedLineLayout(t, db)
 
@@ -97,7 +97,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("上一版 dev 库：记录停在 v33/v34，搬迁到 36/37 并补上上游 v33", func(t *testing.T) {
+	t.Run("上一版 dev 库：记录停在 v33/v34，搬迁到 39/40 并补上上游 v33", func(t *testing.T) {
 		db := openRelocationTestDB(t, "previousdev")
 		resetToPreviousDevLayout(t, db)
 
@@ -119,7 +119,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("再上一版 dev 库（schema 35）：记录停在 v34/v35，搬迁到 36/37 并补上上游 v34", func(t *testing.T) {
+	t.Run("再上一版 dev 库（schema 35）：记录停在 v34/v35，搬迁到 39/40 并补上上游 v34", func(t *testing.T) {
 		db := openRelocationTestDB(t, "previousdev35")
 		resetToPreviousDev35Layout(t, db)
 
@@ -139,7 +139,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("当前 dev 库（schema 36）：记录停在 v35/v36，搬迁到 36/37 并补上上游 v35", func(t *testing.T) {
+	t.Run("当前 dev 库（schema 36）：记录停在 v35/v36，搬迁到 39/40 并补上上游 v35", func(t *testing.T) {
 		db := openRelocationTestDB(t, "previousdev36")
 		resetToPreviousDev36Layout(t, db)
 
@@ -159,7 +159,22 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("只有我们 v24 的半升级库：同样能搬迁并补到 37", func(t *testing.T) {
+	t.Run("已发布 canary/dev schema 37 库：迁移记录移到 39/40 后补齐上游 36–38", func(t *testing.T) {
+		db := openRelocationTestDB(t, "published37")
+		layout := cloudAgentRelocationLayout{runEvents: 36, transcript: 37}
+		resetToRelocationLayout(t, db, 36, recordsAtLayout(layout))
+		if err := MigrateSchema(db); err != nil {
+			t.Fatalf("migrate published schema 37 db: %v", err)
+		}
+		assertRelocated(t, db)
+		for _, want := range append(upstreamCloudAgentVersions(), ourCloudAgentVersions()...) {
+			assertMigrationRecord(t, db, want)
+		}
+		assertUpstreamMigrationExecuted(t, db, 36, "cloud_agent_gemini_cache")
+		assertUpstreamMigrationExecuted(t, db, 37, "cloud_agent_gemini_cache_identity")
+		assertUpstreamMigrationExecuted(t, db, 38, "prefixed_id_sequence_reconcile")
+	})
+	t.Run("只有我们 v24 的半升级库：同样能搬迁并补到 40", func(t *testing.T) {
 		db := openRelocationTestDB(t, "ours24")
 		resetToOurV25Layout(t, db)
 		// 再退回"只升到我们 v24"的状态：删掉 v25 那条。

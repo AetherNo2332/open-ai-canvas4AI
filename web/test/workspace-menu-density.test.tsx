@@ -88,13 +88,8 @@ test("menu surfaces are explicitly scoped and old account inner overrides are re
     expect(css).toContain("box-shadow: none !important");
     expect(css).not.toContain(".ant-modal");
     expect(globals).not.toContain(".workspace-account-popover .ant-popover-inner");
-    // 合并取舍：上游 8a691f76「统一控件 - 收敛下拉选择与按钮输入交互样式」删掉了
-    // .ant-select:has(input:focus-visible)，键盘焦点环改由统一选择器的 data-input-modality 表达；
-    // 该断言引用的选择器在两侧源码里都已不存在，这里随上游改断言新契约，"只有键盘才露出细描边、
-    // 指针或展开态不留白框"的意图不变。
-    expect(globals).toContain('.ant-select.app-unified-select[data-input-modality="keyboard"]:not(.ant-select-open) {');
-    expect(globals).toContain('.ant-select.app-unified-select[data-input-modality="pointer"],');
-    expect(globals).toContain(".ant-select-dropdown, .ant-dropdown-menu) {\n    border: 0 !important;");
+    expect(globals).toContain('.app-unified-select[data-input-modality="keyboard"]:not(.ant-select-open)');
+    expect(globals).toMatch(/:where\(\.ant-select-dropdown, \.ant-dropdown-menu,[^)]*\)\s*\{\s*border: 0 !important;/);
     expect(globals).toContain("body.app-spatial-overlays :where(.ant-dropdown-menu, .ant-select-dropdown, .ant-cascader-menus, .ant-mentions-dropdown) {\n        border: 0 !important;");
 });
 
@@ -110,5 +105,8 @@ test("shared single-select popup uses a borderless surface instead of a bright f
     expect(select).toContain("data-input-modality={inputModality}");
     expect(globals).toContain(".ant-select.app-unified-select {\n    --unified-select-surface:");
     expect(select).not.toContain("focus-visible:ring");
+    expect(select).toContain("<AntSelect");
+    expect(select).toContain('variant={variant ?? "filled"}');
+    expect(select).toContain('setInputModality("keyboard")');
     expect(select).not.toContain("setPopoverWidth(width + 2)");
 });

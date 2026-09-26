@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -119,6 +120,47 @@ type cloudAgentMediaPlan struct {
 	Args                cloudAgentMediaArgs
 	CallID              string
 	TransientReferences map[string]cloudAgentTransientReference
+	// Prepared is checkpointed separately for auto mode and approval mode.
+	Prepared *cloudAgentPreparedMedia `json:"-"`
+}
+
+func applyCloudAgentResolvedMediaDefaults(req *CreateTaskRequest, plan *cloudAgentMediaPlan, task *model.Task) error {
+	if req == nil || plan == nil || task == nil {
+		return BadAuthRequest("媒体生成准入结果无效，未提交生成任务")
+	}
+	var input map[string]any
+	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+		return err
+	}
+	config, ok := input["config"].(map[string]any)
+	if !ok {
+		return BadAuthRequest("媒体生成未解析出模型配置，未提交生成任务")
+	}
+	plan.Args.Size = stringValue(config["size"])
+	if plan.Args.Mode == "image" {
+		plan.Args.Quality = stringValue(config["quality"])
+	}
+	if plan.Args.Mode == "video" {
+		plan.Args.Quality = stringValue(config["vquality"])
+		if raw := stringValue(config["videoSeconds"]); raw != "" {
+			seconds, err := strconv.Atoi(raw)
+			if err != nil || seconds < 0 {
+				return BadAuthRequest("模型目录返回的默认视频时长无效，未提交生成任务")
+			}
+			plan.Args.Duration = seconds
+		}
+		if raw := stringValue(config["videoGenerateAudio"]); raw != "" {
+			audio, err := strconv.ParseBool(raw)
+			if err != nil {
+				return BadAuthRequest("模型目录返回的默认音频参数无效，未提交生成任务")
+			}
+			plan.Args.VideoGenerateAudio = &audio
+		}
+	}
+	plan.Args.Prepared = nil
+	req.Input = input
+	req.Prompt = stringValue(input["prompt"])
+	return nil
 }
 
 // A resumed draft's incoming edges must describe the new approved inputs,
@@ -550,13 +592,30 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &a); err != nil {
 		return CreateTaskRequest{}, nil, cloudAgentJSONArgumentError(err)
 	}
-	// 参数校验必须发生在任何读取/副作用之前，因此这里不假设 run/state 已经就绪：
-	// 只有 selectionId 需要用户身份（签名里绑定了签发用户），其余校验与运行无关。
+	a.Mode = strings.ToLower(strings.TrimSpace(a.Mode))
+	defaultedModel, err := s.applyCloudAgentProjectDefaultModel(run, state, call.Function.Arguments, &a)
+	if err != nil {
+		return CreateTaskRequest{}, nil, err
+	}
 	userID := ""
 	if run != nil {
 		userID = run.UserID
 	}
-	if err := s.validateCloudAgentModelSelection(userID, call.Function.Arguments, &a); err != nil {
+	selectionArguments := call.Function.Arguments
+	if defaultedModel {
+		selectionFields := map[string]string{}
+		if a.LogicalModelID != "" {
+			selectionFields["logicalModelId"] = a.LogicalModelID
+		} else {
+			selectionFields["channelId"], selectionFields["channelModelKey"] = a.ChannelID, a.ChannelModelKey
+		}
+		encoded, encodeErr := json.Marshal(selectionFields)
+		if encodeErr != nil {
+			return CreateTaskRequest{}, nil, encodeErr
+		}
+		selectionArguments = string(encoded)
+	}
+	if err := s.validateCloudAgentModelSelection(userID, selectionArguments, &a); err != nil {
 		return CreateTaskRequest{}, nil, err
 	}
 	a.Mode = strings.ToLower(strings.TrimSpace(a.Mode))
@@ -564,6 +623,10 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 	if state.Approval != nil && state.Approval.Prepared != nil &&
 		state.Approval.CallHash == cloudAgentApprovalCallHash(call) {
 		a.Prepared = state.Approval.Prepared
+	} else if state.AutoPreparedMedia != nil &&
+		state.AutoPreparedCallHash == cloudAgentApprovalCallHash(call) &&
+		time.Now().Before(state.AutoPreparedMedia.Quote.ExpiresAt) {
+		a.Prepared = state.AutoPreparedMedia
 	}
 	if err := s.fillCloudAgentMediaSnapshotHash(run.UserID, state.Request.CanvasID, &a); err != nil {
 		return CreateTaskRequest{}, nil, err

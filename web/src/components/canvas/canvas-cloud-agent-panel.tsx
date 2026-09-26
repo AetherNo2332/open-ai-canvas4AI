@@ -6,14 +6,13 @@ import { saveAs } from "file-saver";
 import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-retry";
-import { agentPlanVisible, latestAgentPlanItems, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
+import { agentPlanVisible, latestAgentPlanItems, latestAgentPlanTerminal, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
 import { emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage, type AgentContextPhase, type AgentContextUsage, type AgentContextUsageView } from "@/lib/canvas/agent-context-usage";
 import { nanoid } from "nanoid";
 
 import { ModelPicker } from "@/components/model-picker";
 import { FluidOrb } from "@/components/ui/fluid-orb";
 import { cn } from "@/lib/utils";
-import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
@@ -65,6 +64,7 @@ import {
     AgentOperationFeed,
     AgentPlanBar,
     AgentQuestionBar,
+    AgentReasoningFeed,
     AgentSceneCapsules,
     AgentWorkingMessage,
     AGENT_SCENE_DEFS,
@@ -89,6 +89,7 @@ type CloudAgentPanelProps = {
     canvasId: string;
     domainProjectId?: string;
     nodeCount: number;
+    selectedNodeIds: string[];
     references: CanvasResourceReference[];
     open: boolean;
     prefillPrompt?: string;
@@ -99,7 +100,7 @@ type CloudAgentPanelProps = {
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, references, open, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
+export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const theme = canvasThemes[useActiveTheme()];
@@ -147,6 +148,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
     const [pendingHydrated, setPendingHydrated] = useState(false);
     const [planMinimized, setPlanMinimized] = useState(false);
     const planItems = useMemo(() => latestAgentPlanItems(messages), [messages]);
+    const planTerminal = useMemo(() => latestAgentPlanTerminal(messages), [messages]);
     const planVisible = agentPlanVisible(planItems);
     const pendingQuestion = useMemo(() => pendingAgentQuestion(messages), [messages]);
     const [scenePresets, setScenePresets] = useState<SkillPreset[]>([]);
@@ -647,6 +649,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                     skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
                     permissionMode,
                     contextScope,
+                    focusNodeIds: selectedNodeIds.length <= 8 ? selectedNodeIds : [],
                     budget: { maxCredits: positiveNumber(maxCredits), maxGenerationTasks: permissionMode === "read_only" ? 0 : Number(maxGenerationTasks), maxVideoSeconds: permissionMode === "read_only" ? 0 : Number(maxVideoSeconds) },
                 };
                 const fingerprint = JSON.stringify({ scope, parent: run?.id, input });
@@ -995,7 +998,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, re
                                         onApprove={(settings) => void submitApproval("approve", settings)}
                                         onReject={() => void submitApproval("reject")}
                                     />
-                                    {planVisible ? <AgentPlanBar items={planItems} theme={theme} minimized={planMinimized} onToggle={() => setPlanMinimized((value) => !value)} /> : null}
+                                    {planVisible ? <AgentPlanBar items={planItems} theme={theme} minimized={planMinimized} terminal={planTerminal || Boolean(run && ["completed", "failed", "cancelled", "rejected"].includes(run.status))} onToggle={() => setPlanMinimized((value) => !value)} /> : null}
                                     {historyHydrated && !messages.some((message) => message.role === "user" || message.role === "assistant") && !run ? (
                                         <AgentSceneCapsules
                                             buckets={sceneBuckets}
@@ -1456,6 +1459,8 @@ function AgentConversation({
                     segment.kind === "operations" ? (
                         // 只有"对话末尾那一段 + 还在跑"才流光：历史段落留在静态态，任务完成即停。
                         <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={references} onFocusNode={onFocusNode} live={busy && index === segments.length - 1} />
+                    ) : segment.kind === "reasoning" ? (
+                        <AgentReasoningFeed key={segment.key} items={segment.items} theme={theme} />
                     ) : (
                         <AgentChatMessage key={segment.key} item={segment.item} theme={theme} references={references} onFocusNode={onFocusNode} isStreaming={busy && !approval && segment.item.streaming === true && segment.item === lastMessage} />
                     ),
@@ -1468,9 +1473,6 @@ function AgentConversation({
 }
 
 function ComposerControls({
-    reasoningMode,
-    reasoningSupported,
-    onReasoningModeChange,
     config,
     selectedModel,
     permissionMode,
@@ -1481,9 +1483,6 @@ function ComposerControls({
     onSkillsOpenChange,
     selectedSkillCount,
 }: {
-    reasoningMode: AgentReasoningMode;
-    reasoningSupported: boolean;
-    onReasoningModeChange: (value: AgentReasoningMode) => void;
     config: ReturnType<typeof useEffectiveConfig>;
     selectedModel: string;
     permissionMode: AgentPermissionMode;
@@ -1767,6 +1766,11 @@ function applyAgentEvent(
                   }
                 : current,
         );
+        const nextStatus = String(payload.status || "") as AgentRun["status"];
+        const terminal = ["completed", "failed", "cancelled", "rejected"].includes(nextStatus);
+        if (terminal) {
+            setMessages((current) => current.map((message) => message.id === `plan-${event.runId}` && message.planItems?.length ? { ...message, planTerminal: true, streaming: false } : message));
+        }
         if (payload.failureMessage) setMessages((current) => appendAgentError(current, `terminal-${event.runId}`, String(payload.failureMessage)));
         if (snapshotApproval && !snapshotApproval.decision && snapshotApproval.approvalId) {
             setApproval((current) => ({ approvalId: snapshotApproval.approvalId, detail: snapshotApproval, reason: current?.approvalId === snapshotApproval.approvalId ? current.reason : snapshotApproval.reason || "" }));

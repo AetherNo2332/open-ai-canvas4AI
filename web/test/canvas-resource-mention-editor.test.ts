@@ -140,6 +140,8 @@ describe("canvas resource mention editor", () => {
         expect(component).toContain('chip.style.setProperty("--canvas-skill-mention-color", skillMentionColor(reference))');
         expect(chat).toContain('sendOnEnter={canSubmit ? "both" : false}');
         expect(chat).toContain("agent-composer-resize-handle");
+        expect(chat).toContain("Enter 或 ⌘/Ctrl+Enter 发送");
+        expect(chat).toContain('title={canStop ? "插话：Agent 下一次开口时看到它"');
         expect(css).toContain(".agent-composer-prompt-scroll");
         // 合并取舍：上游 98f1b31e「云端 Agent - 缩减画布目录上下文并展示实时用量」把发送键左侧的
         // 「Enter 发送 · Shift+Enter 换行」提示与上下文计量读数一起换成了 submitAccessory 插槽，

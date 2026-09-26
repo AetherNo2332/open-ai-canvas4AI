@@ -382,6 +382,37 @@ func sortedCloudAgentIDs(ids []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+const (
+	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v2"
+)
+
+func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
+	parts := []string{
+		cloudAgentPromptCacheSchemaVersion, cloudAgentToolSchemaVersion, cloudAgentPromptCacheKey(req),
+		policy.SystemPolicyID, fmt.Sprint(policy.SystemPolicyVersion), policy.SystemPolicyHash,
+		policy.MediaPolicyID, fmt.Sprint(policy.MediaPolicyVersion), policy.MediaPolicyHash,
+		policy.CapabilitySetHash, policy.ProfileRevision, policy.ProfileHash,
+		req.ChannelID, req.ChannelModelKey, req.Model, req.LogicalModelID,
+		strings.Join(req.ContextScope, ","), strings.Join(sortedCloudAgentIDs(req.SkillIDs), ","),
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func cloudAgentPromptCacheKeyForRequest(canvasID, identity, system string, tools []map[string]any) string {
+	prefix, err := json.Marshal(struct {
+		System string           `json:"system"`
+		Tools  []map[string]any `json:"tools"`
+	}{System: system, Tools: tools})
+	if err != nil {
+		return cloudAgentPromptCacheKey(CloudAgentRequest{CanvasID: canvasID})
+	}
+	prefixHash := sha256.Sum256(prefix)
+	cacheHash := sha256.Sum256([]byte(identity + "\x00" + fmt.Sprintf("%x", prefixHash[:])))
+	return fmt.Sprintf("cloud-agent:%x", cacheHash[:24])
+}
+
 func cloudAgentTools(req CloudAgentRequest) []map[string]any {
 	return compileCloudAgentTools(req, true)
 }
@@ -428,6 +459,9 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"connectionOffset": map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_009")},
 			"storyboardOffset": map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_010")},
 			"nodeIds":          map[string]any{"type": "array", "maxItems": 8, "items": str(cloudAgentToolText("parameter_011")), "description": cloudAgentToolText("parameter_012")},
+			"focusNodeIds":     map[string]any{"type": "array", "maxItems": 8, "items": str(cloudAgentToolText("parameter_083")), "description": cloudAgentToolText("parameter_084")},
+			"depth":            map[string]any{"type": "integer", "minimum": 0, "maximum": 3, "description": cloudAgentToolText("parameter_085")},
+			"includeRelated":   map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_086")},
 		})
 		add("canvas_read_batch_table", cloudAgentToolText("canvas_read_batch_table"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_013")), "offset": map[string]any{"type": "integer", "minimum": 0}}, "nodeId")
 		add("canvas_read_storyboard", cloudAgentToolText("canvas_read_storyboard"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_014")), "offset": map[string]any{"type": "integer", "minimum": 0}, "rows": map[string]any{"type": "integer", "minimum": 1, "maximum": cloudAgentMaxReadRows, "description": cloudAgentToolText("parameter_015")}}, "nodeId")
@@ -647,8 +681,6 @@ func cloudAgentCanvasWriteTool(name string) bool {
 	}
 }
 
-const cloudAgentMaxCachedReadReplays = 1
-
 // 同参缓存只能拦住“原样重复”的读取。模型也可能不断修改 offset、nodeIds 或
 // profile scope 来绕过缓存，因此本轮还要限制所有只读快照工具的累计调用次数。
 // 该上限高于正常画布分页读取所需次数，但足以在异常循环继续消耗模型额度前止损。
@@ -656,7 +688,16 @@ const cloudAgentMaxReadToolCallsPerRun = 32
 
 func cloudAgentReadToolCacheable(name string) bool {
 	switch name {
-	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard":
+	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "skill_read_file", "model_list":
+		return true
+	default:
+		return false
+	}
+}
+
+func cloudAgentReadToolReadOnly(name string) bool {
+	switch name {
+	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
 		return true
 	default:
 		return false
@@ -667,6 +708,17 @@ func cloudAgentReadCacheKey(call cloudAgentCall) string {
 	arguments := strings.TrimSpace(call.Function.Arguments)
 	var value any
 	if err := json.Unmarshal([]byte(arguments), &value); err == nil {
+		if object, ok := value.(map[string]any); ok {
+			switch call.Function.Name {
+			case "skill_read_file", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table":
+				for _, field := range []string{"offset", "connectionOffset", "storyboardOffset"} {
+					if _, exists := object[field]; !exists {
+						object[field] = float64(0)
+					}
+				}
+			}
+			value = object
+		}
 		if normalized, err := json.Marshal(value); err == nil {
 			arguments = string(normalized)
 		}
@@ -674,60 +726,103 @@ func cloudAgentReadCacheKey(call cloudAgentCall) string {
 	return call.Function.Name + ":" + arguments
 }
 
+func cloudAgentReadCacheKeyForState(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall) string {
+	key := cloudAgentReadCacheKey(call)
+	if state == nil {
+		return key
+	}
+	switch call.Function.Name {
+	case "canvas_get_state", "canvas_read_storyboard":
+		if repo != nil {
+			if canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID); err == nil && canvas != nil {
+				return fmt.Sprintf("%s:canvas-revision:%d", key, canvas.Revision)
+			}
+		}
+	case "skill_read_file":
+		var args struct {
+			SkillID string `json:"skillId"`
+		}
+		if json.Unmarshal([]byte(call.Function.Arguments), &args) == nil {
+			for _, skill := range state.Skills {
+				if skill.ID == args.SkillID {
+					return fmt.Sprintf("%s:skill-version:%s:%s", key, skill.Version, skill.Hash)
+				}
+			}
+		}
+	}
+	return key
+}
+
 func cloudAgentReadToolCached(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, services ...*Service) (any, error) {
-	if !cloudAgentReadToolCacheable(call.Function.Name) {
+	if !cloudAgentReadToolReadOnly(call.Function.Name) {
 		return cloudAgentReadTool(repo, userID, state, call, services...)
 	}
 	if state == nil {
 		return nil, errors.New("Agent 只读工具缺少运行时状态")
 	}
+	if !cloudAgentReadToolCacheable(call.Function.Name) {
+		if state.ReadToolCalls >= cloudAgentMaxReadToolCallsPerRun {
+			return nil, &cloudAgentReadLoopError{ToolName: call.Function.Name, Count: state.ReadToolCalls + 1, Budget: true}
+		}
+		state.ReadToolCalls++
+		return cloudAgentReadTool(repo, userID, state, call, services...)
+	}
+	key := cloudAgentReadCacheKeyForState(repo, userID, state, call)
 	if state.ReadToolCalls >= cloudAgentMaxReadToolCallsPerRun {
 		return nil, &cloudAgentReadLoopError{ToolName: call.Function.Name, Count: state.ReadToolCalls + 1, Budget: true}
 	}
-	state.ReadToolCalls++
-	key := cloudAgentReadCacheKey(call)
 	if state.ToolReadResults != nil {
 		if cached, ok := state.ToolReadResults[key]; ok {
-			if state.ToolReadReplays == nil {
-				state.ToolReadReplays = map[string]int{}
-			}
-			cached.ReplayCount = state.ToolReadReplays[key] + 1
-			state.ToolReadReplays[key] = cached.ReplayCount
-			state.ToolReadResults[key] = cached
-			if cached.ReplayCount > cloudAgentMaxCachedReadReplays {
-				return nil, &cloudAgentReadLoopError{ToolName: call.Function.Name, Count: cached.ReplayCount}
-			}
 			if cached.Error != "" {
-				cachedErr := errors.New(cached.Error)
 				if cached.ArgumentError {
-					return nil, &cloudAgentArgumentError{cachedErr}
+					return nil, &cloudAgentArgumentError{errors.New(cached.Error)}
 				}
-				return nil, cachedErr
+				delete(state.ToolReadResults, key)
+			} else {
+				if state.ToolReadReplays == nil {
+					state.ToolReadReplays = map[string]int{}
+				}
+				cached.ReplayCount = state.ToolReadReplays[key] + 1
+				state.ToolReadReplays[key] = cached.ReplayCount
+				state.ToolReadResults[key] = cached
+				if len(cached.Result) == 0 {
+					return nil, errors.New("缓存的 Agent 只读结果无效")
+				}
+				if !cloudAgentReadResultInContext(state, cached.Result) {
+					var restored any
+					if err := json.Unmarshal(cached.Result, &restored); err != nil {
+						return nil, errors.New("缓存的 Agent 只读结果无效")
+					}
+					return restored, nil
+				}
+				return map[string]any{"cacheReplay": true, "replayCount": cached.ReplayCount, "message": "该只读结果已在当前上下文中，请直接使用已有结果，不要再次读取"}, nil
 			}
-			var result any
-			if len(cached.Result) == 0 || json.Unmarshal(cached.Result, &result) != nil {
-				return nil, errors.New("缓存的 Agent 只读结果无效")
-			}
-			return result, nil
 		}
 	}
 
+	state.ReadToolCalls++
+	state.readCacheExecution = true
 	result, err := cloudAgentReadTool(repo, userID, state, call, services...)
+	state.readCacheExecution = false
+	if err != nil {
+		var argumentErr *cloudAgentArgumentError
+		if errors.As(err, &argumentErr) {
+			if state.ToolReadResults == nil {
+				state.ToolReadResults = map[string]cloudAgentCachedToolResult{}
+			}
+			state.ToolReadResults[key] = cloudAgentCachedToolResult{Error: cloudAgentSafeToolError(err), ArgumentError: true}
+		}
+		return result, err
+	}
+	encoded, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		return result, marshalErr
+	}
 	if state.ToolReadResults == nil {
 		state.ToolReadResults = map[string]cloudAgentCachedToolResult{}
 	}
-	cached := cloudAgentCachedToolResult{}
-	if err != nil {
-		cached.Error = cloudAgentSafeToolError(err)
-		var argumentErr *cloudAgentArgumentError
-		cached.ArgumentError = errors.As(err, &argumentErr)
-	} else if encoded, marshalErr := json.Marshal(result); marshalErr == nil {
-		cached.Result = encoded
-	} else {
-		return result, err
-	}
-	state.ToolReadResults[key] = cached
-	return result, err
+	state.ToolReadResults[key] = cloudAgentCachedToolResult{Result: encoded}
+	return result, nil
 }
 
 func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, services ...*Service) (any, error) {
@@ -782,13 +877,42 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 			Offset           int      `json:"offset"`
 			ConnectionOffset int      `json:"connectionOffset"`
 			NodeIDs          []string `json:"nodeIds"`
+			FocusNodeIDs     []string `json:"focusNodeIds"`
+			Depth            *int     `json:"depth"`
+			IncludeRelated   *bool    `json:"includeRelated"`
 			StoryboardOffset int      `json:"storyboardOffset"`
 		}
 		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
 			return nil, cloudAgentJSONArgumentError(err)
 		}
-		if args.Offset < 0 || args.ConnectionOffset < 0 || args.StoryboardOffset < 0 || len(args.NodeIDs) > 8 {
-			return nil, &cloudAgentArgumentError{BadAuthRequest("画布读取参数无效：offset 和 storyboardOffset 必须是非负整数，nodeIds 最多包含8个节点ID")}
+		depth := 0
+		if args.Depth != nil {
+			depth = *args.Depth
+		}
+		if len(args.FocusNodeIDs) > 0 && args.Depth == nil {
+			depth = 1
+		}
+		if args.Offset < 0 || args.ConnectionOffset < 0 || args.StoryboardOffset < 0 {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("画布读取参数无效：offset、connectionOffset、storyboardOffset 必须是非负整数")}
+		}
+		if len(args.NodeIDs) > 8 || len(args.FocusNodeIDs) > 8 {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("画布读取参数无效：nodeIds 与 focusNodeIds 最多包含8个节点ID")}
+		}
+		if len(args.NodeIDs) > 0 && len(args.FocusNodeIDs) > 0 {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("画布读取参数无效：nodeIds 与 focusNodeIds 互斥")}
+		}
+		if depth < 0 || depth > 3 {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("画布读取参数无效：depth 必须是0到3")}
+		}
+		if len(args.FocusNodeIDs) == 0 && args.Depth != nil {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("画布读取参数无效：depth 只能与 focusNodeIds 一起使用")}
+		}
+		includeRelated := args.IncludeRelated != nil && *args.IncludeRelated
+		if includeRelated && len(args.FocusNodeIDs) == 0 {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("画布读取参数无效：includeRelated 只能与 focusNodeIds 一起使用")}
+		}
+		if includeRelated && args.Depth != nil {
+			return nil, &cloudAgentArgumentError{BadAuthRequest("画布读取参数无效：includeRelated 与 depth 不能同时使用")}
 		}
 		canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID)
 		if err != nil {
@@ -797,6 +921,12 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		doc, err := creationDocument(canvas.PayloadJSON)
 		if err != nil {
 			return nil, err
+		}
+		if len(args.FocusNodeIDs) > 0 {
+			if includeRelated {
+				return cloudAgentCanvasStateWithRelated(repo, userID, state.Request.CanvasID, doc, args.Offset, args.FocusNodeIDs, args.StoryboardOffset, args.ConnectionOffset)
+			}
+			return cloudAgentCanvasStateWithFocus(repo, userID, state.Request.CanvasID, doc, args.Offset, args.FocusNodeIDs, depth, args.StoryboardOffset, args.ConnectionOffset)
 		}
 		return cloudAgentCanvasState(repo, userID, state.Request.CanvasID, doc, args.Offset, args.NodeIDs, args.StoryboardOffset, args.ConnectionOffset)
 	case "canvas_read_storyboard":
@@ -902,6 +1032,16 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 			return nil, cloudAgentJSONArgumentError(err)
 		}
 		return cloudAgentSearchSkills(state.Skills, args.Keyword, args.Limit)
+	case "model_list":
+		if len(services) == 0 || services[0] == nil {
+			return nil, errors.New("Agent 模型目录工具缺少服务上下文")
+		}
+		service := services[0]
+		intent, err := service.cloudAgentModelIntent(userID, state.Request.CanvasID, call.Function.Arguments)
+		if err != nil {
+			return nil, err
+		}
+		return service.cloudAgentModelList(userID, intent)
 	case "skill_read_file":
 		var args struct {
 			SkillID string `json:"skillId"`

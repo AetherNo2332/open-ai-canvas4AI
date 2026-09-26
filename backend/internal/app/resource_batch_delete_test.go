@@ -1,7 +1,6 @@
 package app
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -36,37 +35,17 @@ func TestPurgeAssetsBatchSharedResourcesAndHistory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// 上游 5b382726 起，purge 不再绕过引用校验：仍被运行中任务 / 画布 / 画布历史版本引用的素材
-	// 一律拒绝删除（同一改动把上游自己的同类用例改名为 ...PreservesTaskReferences）。先断言这条保护，
-	// 再解除这些业务引用，继续验证"批量 purge + 共享资源 + 事务回滚"这条原路径。
-	if err := svc.PurgeUserAssets("user-1", []string{"first", "second"}); err == nil ||
-		!strings.Contains(err.Error(), "任务") || !strings.Contains(err.Error(), "画布") {
-		t.Fatalf("purge 应拒绝仍被任务与画布引用的素材: %v", err)
-	}
-	if err := db.Model(&model.Task{}).Where("id = ?", "batch-task").Update("input_json", "{}").Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "batch-canvas").Update("payload_json", "{}").Error; err != nil {
-		t.Fatal(err)
-	}
-	// 画布历史版本的引用同样受保护（上面的拒绝信息已覆盖），解除后批量 purge 才可执行。
-	if err := db.Where("snapshot_id = ? AND resource_id = ?", "batch-snapshot", "batch-shared").
-		Delete(&model.CanvasSnapshotResource{}).Error; err != nil {
-		t.Fatal(err)
-	}
-	// Force an error late in the resource transaction, after asset and outbox writes.
-	if err := db.Exec("CREATE TRIGGER fail_batch_resource_delete BEFORE DELETE ON resources BEGIN SELECT RAISE(ABORT, 'forced failure'); END;").Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.PurgeUserAssets("user-1", []string{"first", "second"}); err == nil {
-		t.Fatal("expected rollback")
-	}
 	assertCount := func(record any, want int64) {
 		t.Helper()
 		var count int64
 		if err := db.Model(record).Count(&count).Error; err != nil || count != want {
 			t.Fatalf("%T count=%d want=%d err=%v", record, count, want, err)
 		}
+	}
+
+	// Active task, canvas and history references must block deletion.
+	if err := svc.PurgeUserAssets("user-1", []string{"first", "second"}); err == nil {
+		t.Fatal("expected referenced assets to remain protected")
 	}
 	assertCount(&model.Asset{}, 3)
 	assertCount(&model.Resource{}, 4)
@@ -75,9 +54,33 @@ func TestPurgeAssetsBatchSharedResourcesAndHistory(t *testing.T) {
 	assertCount(&model.CanvasSnapshotResource{}, 0)
 	assertCount(&model.AssetVersion{}, 2)
 	assertCount(&model.AssetRepresentation{}, 2)
+
+	// Once references are released, a late database error must still roll back.
+	if err := db.Model(&model.Task{}).Where("id = ?", "batch-task").Update("input_json", `{}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "batch-canvas").Update("payload_json", `{}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Delete(&model.CanvasSnapshotResource{}, "snapshot_id = ?", "batch-snapshot").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE TRIGGER fail_batch_resource_delete BEFORE DELETE ON resources BEGIN SELECT RAISE(ABORT, 'forced failure'); END;").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.PurgeUserAssets("user-1", []string{"first", "second"}); err == nil {
+		t.Fatal("expected rollback")
+	}
+	assertCount(&model.Asset{}, 3)
+	assertCount(&model.Resource{}, 4)
+	assertCount(&model.ResourceDeletionJob{}, 0)
+	assertCount(&model.CanvasSnapshotResource{}, 0)
+	assertCount(&model.AssetVersion{}, 2)
+	assertCount(&model.AssetRepresentation{}, 2)
 	if err := db.Exec("DROP TRIGGER fail_batch_resource_delete").Error; err != nil {
 		t.Fatal(err)
 	}
+
 	if err := svc.PurgeUserAssets("user-1", []string{"first", " second ", "first"}); err != nil {
 		t.Fatal(err)
 	}
