@@ -266,6 +266,23 @@ func TestCloudAgentValidation(t *testing.T) {
 	}
 }
 
+func TestCloudAgentValidationNormalizesFocusNodeIDs(t *testing.T) {
+	req := agentTestRequest()
+	req.FocusNodeIDs = []string{" node-1 ", "node-2"}
+	if err := validateCloudAgentRequest(&req); err != nil {
+		t.Fatalf("trimmed focus node IDs should be normalized consistently: %v", err)
+	}
+	if req.FocusNodeIDs[0] != "node-1" {
+		t.Fatalf("focus node ID was validated but not normalized: %#v", req.FocusNodeIDs)
+	}
+
+	req = agentTestRequest()
+	req.FocusNodeIDs = []string{"node-1", " node-1 "}
+	if err := validateCloudAgentRequest(&req); err == nil {
+		t.Fatal("focus node IDs that normalize to the same node must be rejected")
+	}
+}
+
 func TestCloudAgentAdmissionAndContinuation(t *testing.T) {
 	s, db, _, _ := creationTestService(t)
 	canvas := model.CanvasProject{ID: "agent-canvas", UserID: "user", Title: "test", PayloadJSON: `{"nodes":[{"id":"n","type":"text","metadata":{"content":"剧情片段","secret":"do-not-send"}}]}`}
@@ -362,16 +379,16 @@ func TestCloudAgentAdmissionAcceptsTokenPricingWithQuotedChargeLimit(t *testing.
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	// 本用例守的是"token 计费的 Agent 请求能被准入并把报价钉成硬上限"，与请求信封体积无关。
-	// 但 fixture 的定价是 1 积分/token，于是 10000 积分正好卡在信封边界上：实测上游基线
-	// 9622（输入 5526 + 输出预留 4096）、合并前我方 9913（输入 5817）、合并上游后 10052
-	// （输入 5956，差额正是两侧系统提示的并集）。这里把余额抬到信封之上留出余量；
-	// 信封体积本身由 TestCloudAgentToolSchemaStaysCompact 单独守。
-	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", "user").Update("available_microcredits", 12000).Error; err != nil {
+	// 合并取舍：本用例守的是"token 计费的 Agent 请求能被准入并把报价钉成硬上限"。
+	// fork 上一轮靠"把余额抬到信封之上"绕开 1 积分/token 定价与信封体积的巧合；
+	// 上游改为余额拉满并把 MaxCredits 钉成 100000，准入不再由信封体积决定，
+	// 因此撤下 fork 的 12000 写法（信封体积仍由 TestCloudAgentToolSchemaStaysCompact 单独守）。
+	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", "user").Update("available_microcredits", int64(1_000_000_000)).Error; err != nil {
 		t.Fatal(err)
 	}
-
-	run, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
+	request := agentTestRequest()
+	request.Budget.MaxCredits = 100_000
+	run, err := s.CreateCloudAgentRun("user", request, "")
 	if err != nil {
 		t.Fatalf("token-priced Agent request was rejected: %v", err)
 	}

@@ -563,12 +563,12 @@ func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecutio
 		afterRaw, _ := json.Marshal(afterMessages)
 		afterBytes, afterTokens := len(afterRaw), estimateCloudAgentTokens(afterRaw)
 		// 消息整体被替换：写路径按 kind 逐条 upsert 并删除 sequence 超出新条数的尾部行，
-		// 因此"条数恰好相同但内容全变"也能正确落库。
-		// 历史被换成检查点，早期读取回执也一起没了：不清"已读过去重"标记，模型再要技能正文
-		// 会被回一句"本轮已请求过该技能路径，请使用历史工具结果"，而那份历史已经不存在。
-		state.SkillReads, state.ProfileReads = nil, nil
-		state.ActiveTaskID = ""
-		state.ActiveTextDraft = ""
+		// 因此"条数变少/全变"都能正确落库。
+		// 合并取舍：上游 2cedc4c6 把技能读取的"已读去重"并进 ToolReadResults 统一缓存
+		// （压缩后再次请求会由缓存层恢复完整正文），旧的 state.SkillReads 标记机制随上游撤下；
+		// 只有 profile 的旧版读取标记需要清掉，因为它不属于统一结果缓存。
+		state.ProfileReads = nil
+		state.ActiveTaskID, state.ActiveTextDraft = "", ""
 		// 中途暂停压缩（Resume）：压完继续本轮的步进，并记一次次数上限。
 		// 收尾压缩（resume=false）本来就要结束本轮；keepTerminal=true 表示本轮已是终态
 		// （取消/失败的收尾），只落检查点与事件，绝不把 failed/cancelled 改写成 completed。

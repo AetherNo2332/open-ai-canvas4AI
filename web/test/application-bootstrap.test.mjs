@@ -33,7 +33,9 @@ async function prepareEntry(dev, pathname) {
     let entryLoaded;
     const appearanceReady = new Promise((resolve) => (resolveAppearance = resolve));
     const loaded = new Promise((resolve) => (entryLoaded = resolve));
-    runInNewContext(await build.outputs[0].text(), { window: { location: { pathname } }, events, appearanceReady, entryLoaded });
+    const listeners = new Map();
+    runInNewContext(await build.outputs[0].text(), { window: { location: { pathname }, addEventListener: (name, listener) => listeners.set(name, listener) }, events, appearanceReady, entryLoaded });
+    expect(typeof listeners.get("vite:preloadError")).toBe("function");
     return { events, resolveAppearance, loaded };
 }
 
@@ -50,6 +52,10 @@ for (const [dev, pathname] of [
     [true, "/dev/director-repro/"],
     [true, "/dev/director-repro-other"],
 ]) {
+    // 合并取舍：本 fork 有意保留启动闸门 —— main.tsx 先让外观解析落定，再
+    // 载入 application（自上一轮同步 3f525569 起如此）。上游 331609e6 改写成
+    // “外观与应用并行加载”（先 await loaded 再 resolveAppearance），在闸门下
+    // 会永久超时，故恢复为先断言 appearance、放行外观后再等应用载入。
     test(`appearance still blocks normal startup: dev=${dev} path=${pathname}`, async () => {
         const entry = await prepareEntry(dev, pathname);
         expect(entry.events).toEqual(["appearance"]);

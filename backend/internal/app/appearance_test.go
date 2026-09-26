@@ -436,17 +436,17 @@ func TestAppearanceSkinLibrarySupportsEditableCopiesAndProtectsClassic(t *testin
 	legacyCustom.Tokens.Light.DangerHover = ""
 	legacyCustom.Tokens.Light.DangerActive = ""
 	legacyCustom.Tokens.Light.DangerForeground = ""
-	// 合并取舍：上游 1dc1b6f6 起「提交列表里没有 classic 就把它注入到下标 0」，
-	// 原断言取 [0] 会拿到注入的 classic（上游 HEAD 至今因此红）。按 ID 取回被回填的那一项。
+	// 合并取舍：上游 2cedc4c6 已自行修好本用例（不再取 [0]，改为按 ID 取回被回填的那一项并补 ID 断言）。
+	// 与 fork 上一轮的等价修法撞车，按原则 1 取上游版本，不再保留 fork 的 index-0 写法。
 	backfilledThemes := normalizeAppearanceSkinThemes([]AppearanceSkinTheme{legacyCustom})
-	backfilled := backfilledThemes[0]
+	var backfilled AppearanceSkinTheme
 	for _, theme := range backfilledThemes {
 		if theme.ID == legacyCustom.ID {
 			backfilled = theme
 			break
 		}
 	}
-	if backfilled.Tokens.Light.SwitchChecked != "#123456" || backfilled.Tokens.Light.SwitchCheckedHover != "#234567" || backfilled.Tokens.Light.SwitchUnchecked != legacyCustom.Tokens.Light.ControlBorder || backfilled.Tokens.Light.DangerHover != legacyCustom.Tokens.Light.Danger {
+	if backfilled.ID != legacyCustom.ID || backfilled.Tokens.Light.SwitchChecked != "#123456" || backfilled.Tokens.Light.SwitchCheckedHover != "#234567" || backfilled.Tokens.Light.SwitchUnchecked != legacyCustom.Tokens.Light.ControlBorder || backfilled.Tokens.Light.DangerHover != legacyCustom.Tokens.Light.Danger {
 		t.Fatalf("legacy skin state backfill = %#v", backfilled.Tokens.Light)
 	}
 

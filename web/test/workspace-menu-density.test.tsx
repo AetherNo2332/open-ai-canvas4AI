@@ -88,26 +88,29 @@ test("menu surfaces are explicitly scoped and old account inner overrides are re
     expect(css).toContain("box-shadow: none !important");
     expect(css).not.toContain(".ant-modal");
     expect(globals).not.toContain(".workspace-account-popover .ant-popover-inner");
-    // 合并取舍：上游 8a691f76「统一控件 - 收敛下拉选择与按钮输入交互样式」删掉了
-    // .ant-select:has(input:focus-visible)，键盘焦点环改由统一选择器的 data-input-modality 表达；
-    // 该断言引用的选择器在两侧源码里都已不存在，这里随上游改断言新契约，"只有键盘才露出细描边、
-    // 指针或展开态不留白框"的意图不变。
+    // 合并取舍：上游 331609e6「发布回归 - 校准验证合同」把这两条校准成宽容匹配（用 :where(...) 覆盖多选择器
+    // 写法）。dev 侧原来的断言命中全局 .ant-select.app-unified-select 那一条，而工作台作用域里另有一条同名
+    // 规则；globals.css 两侧完全一致、两套断言都能通过，故这里随上游取新契约，并额外保留一条更紧的 pin，
+    // 避免"只有键盘才露出细描边"的全局契约被作用域规则顶替。旧断言里的下拉无描边写法已被上游正则覆盖，
+    // 不再重复保留。
+    expect(globals).toContain('.app-unified-select[data-input-modality="keyboard"]:not(.ant-select-open)');
+    expect(globals).toMatch(/:where\(\.ant-select-dropdown, \.ant-dropdown-menu,[^)]*\)\s*\{\s*border: 0 !important;/);
     expect(globals).toContain('.ant-select.app-unified-select[data-input-modality="keyboard"]:not(.ant-select-open) {');
     expect(globals).toContain('.ant-select.app-unified-select[data-input-modality="pointer"],');
-    expect(globals).toContain(".ant-select-dropdown, .ant-dropdown-menu) {\n    border: 0 !important;");
     expect(globals).toContain("body.app-spatial-overlays :where(.ant-dropdown-menu, .ant-select-dropdown, .ant-cascader-menus, .ant-mentions-dropdown) {\n        border: 0 !important;");
 });
 
 test("shared single-select popup uses a borderless surface instead of a bright focus frame", () => {
     const select = readFileSync(new URL("../src/components/ui/base/select/select.tsx", import.meta.url), "utf8");
-    const globals = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8");
-    // 合并取舍：上游 8a691f76「统一控件 - 收敛下拉选择与按钮输入交互样式」把下拉的描边、表面和焦点
-    // 收敛成 .ant-select.app-unified-select：select.tsx 只负责统一 class 与 data-input-modality，
-    // 视觉规则集中在 globals.css。旧断言的两段 Tailwind 类（rounded-[...] border-0 bg-surface-strong
-    // 与 focus-visible:ring-*）在两侧源码里都已不存在，这里改断言新契约，"无描边表面 + 不出现高亮焦点框"
-    // 的意图不变。
-    expect(select).toContain('className={cn("app-unified-select", `app-unified-select--${appearance}`, className)}');
+    expect(select).toContain("<AntSelect");
+    expect(select).toContain('variant={variant ?? "filled"}');
     expect(select).toContain("data-input-modality={inputModality}");
+    expect(select).toContain('setInputModality("keyboard")');
+    // 合并取舍：上游 331609e6 校准的是「统一控件」的通用契约；dev 侧另外 pin 了统一 class 与 globals.css
+    // 的表面 token，以及"不再出现 Tailwind 焦点环"的负断言。select.tsx / globals.css 两侧完全一致、
+    // 两套断言都能通过，故保留（不删断言），只把重复的 data-input-modality 断言合并成上游那一条。
+    const globals = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8");
+    expect(select).toContain('className={cn("app-unified-select", `app-unified-select--${appearance}`, className)}');
     expect(globals).toContain(".ant-select.app-unified-select {\n    --unified-select-surface:");
     expect(select).not.toContain("focus-visible:ring");
     expect(select).not.toContain("setPopoverWidth(width + 2)");

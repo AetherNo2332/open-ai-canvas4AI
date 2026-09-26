@@ -76,7 +76,11 @@ test("auth scene consumes resolved appearance instead of hardcoded media constan
     expect(source).toContain("appearance.brandName");
     expect(source).toContain("appearance.authHeroTitle");
     expect(source).toContain("appearance.authHeroDescription");
+    // 合并取舍：本 fork 的 auth-scene 自 3f525569 起使用固定契约（不接 useThemeStore，
+    // 直接 theme="dark"）；上游 331609e6 的新断言要求改为读主题 store，与 fork 源码冲突，
+    // 这里按 fork 契约断言固定值，并显式锁住“不再走 useThemeStore”。
     expect(source).toContain('theme="dark"');
+    expect(source).not.toContain("useThemeStore");
     expect(source).not.toContain("让一个故事，");
     expect(source).not.toContain("AUTH_VIDEO_URL");
     expect(source).not.toContain("AUTH_VIDEO_POSTER");

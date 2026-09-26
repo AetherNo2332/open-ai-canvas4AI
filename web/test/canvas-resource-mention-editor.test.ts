@@ -140,11 +140,13 @@ describe("canvas resource mention editor", () => {
         expect(component).toContain('chip.style.setProperty("--canvas-skill-mention-color", skillMentionColor(reference))');
         expect(chat).toContain('sendOnEnter={canSubmit ? "both" : false}');
         expect(chat).toContain("agent-composer-resize-handle");
+        expect(chat).toContain("Enter 或 ⌘/Ctrl+Enter 发送");
+        expect(chat).toContain('title={canStop ? "插话：Agent 下一次开口时看到它"');
         expect(css).toContain(".agent-composer-prompt-scroll");
-        // 合并取舍：上游 98f1b31e「云端 Agent - 缩减画布目录上下文并展示实时用量」把发送键左侧的
-        // 「Enter 发送 · Shift+Enter 换行」提示与上下文计量读数一起换成了 submitAccessory 插槽，
-        // 并删掉了 .agent-composer-send-hint*／.agent-context-pressure* 的样式。这里随上游：
-        // 断言改为插槽本身，旧提示的断言连同死代码一并移除。
+        // 合并取舍：上面两条「Enter 或 ⌘/Ctrl+Enter 发送」是上游 331609e6「发布回归 - 校准验证合同」
+        // 重新 pin 回来的发送键新契约（原来 pin 的可见提示已随上游 98f1b31e 的 submitAccessory 插槽
+        // 一起删掉，语义改由按钮 title 表达）。dev 侧据此把断言改成插槽本身并清理了死代码：两侧互不
+        // 冲突、都能通过，故都保留——可见提示随死代码移除，发送键语义由 title + 插槽共同表达。
         expect(chat).toContain("{submitAccessory}");
         expect(css).not.toContain(".agent-composer-send-hint");
         // 合并取舍：上游 2682c950「Agent 面板 - 移除 PR #539 提交中的无效 hover 背景」整条删掉了

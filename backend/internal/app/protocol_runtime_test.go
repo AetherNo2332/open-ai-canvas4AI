@@ -45,14 +45,10 @@ func TestPluginViewIncludesDocumentationForEveryOfficialProtocol(t *testing.T) {
 		}
 		packageIDs[pkg.Manifest.Metadata.ID] = true
 	}
-	for _, manifest := range bundledPaymentPluginManifests() {
-		if !packageIDs[manifest.Metadata.ID] {
-			bundledCount++
-		}
-	}
-	// 短信渠道与支付一样由宿主内置并直接注册进插件中心，不随官方插件包分发；
-	// 未打进包的同样要计入期望数量，否则新内置一类就误报数量不符。
-	for _, manifest := range bundledSMSPluginManifests() {
+	// 合并取舍：上游把内置支付与短信渠道合成一个 append(...) 循环；fork 侧另有一条
+	// 只数短信的循环。两侧都保留会把未进包的短信插件计两遍（实测 expected 101 / actual 99），
+	// 因此按上游取合并后的单循环，并保留 fork 的说明。
+	for _, manifest := range append(bundledPaymentPluginManifests(), bundledSMSPluginManifests()...) {
 		if !packageIDs[manifest.Metadata.ID] {
 			bundledCount++
 		}

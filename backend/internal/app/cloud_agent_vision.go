@@ -230,7 +230,7 @@ func (s *Service) prepareCloudAgentImageInspection(userID, canvasID string, stat
 	}
 	// 图换了（签名不一致）时账本会作废旧观察，这里的重读是正当的，同样不该判成循环。
 	if state.ImageInspectionReads != nil && state.ImageInspectionReads[cacheKey] > 0 {
-		return nil, &cloudAgentReadLoopError{ToolName: "canvas_inspect_image", Count: state.ImageInspectionReads[cacheKey] + 1}
+		return nil, &cloudAgentReadLoopError{ToolName: "canvas_inspect_image", Count: state.ImageInspectionReads[cacheKey] + 1, ReasonCode: "vision_read_guard"}
 	}
 	receipt := map[string]any{
 		"nodeId":   args.NodeID,
