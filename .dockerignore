@@ -16,6 +16,7 @@ backend/*.db
 backend/cmd/server/server
 .serena
 .local
+backend/.local
 web/.next
 web/dist
 web/node_modules

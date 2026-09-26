@@ -192,6 +192,9 @@ func cloudAgentToolInScope(state *cloudAgentRuntime, name string) bool {
 		if allowed == name {
 			return true
 		}
+		if cloudAgentIsToolCategory(name) && cloudAgentToolCategory(allowed) == name {
+			return true
+		}
 	}
 	return false
 }

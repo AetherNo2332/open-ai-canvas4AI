@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	cloudAgentCompilerVersion  = "cloud-agent-policy-compiler/v4"
+	cloudAgentCompilerVersion  = "cloud-agent-policy-compiler/v5"
 	cloudAgentDefaultReasoning = "off"
 )
 

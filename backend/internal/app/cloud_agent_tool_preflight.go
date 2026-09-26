@@ -69,6 +69,18 @@ func cloudAgentAdvertisedTool(state *cloudAgentRuntime, name string) (map[string
 	if state == nil || name == "" {
 		return nil, false
 	}
+	if state.DisclosureVersion >= cloudAgentToolDisclosureVersion {
+		found := false
+		for _, advertised := range state.AdvertisedToolNames {
+			if advertised == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, false
+		}
+	}
 	for _, tool := range state.Canonical.Tools {
 		function, _ := tool["function"].(map[string]any)
 		if stringField(function, "name") != name {
@@ -89,6 +101,7 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 	writeAdmitted := false
 	writeFailed := false
 	seenCalls := map[string]bool{}
+	categoryAdmitted := false
 	for index, call := range calls {
 		admission := cloudAgentCallAdmission{CallID: call.ID, Allowed: true}
 		name := call.Function.Name
@@ -107,10 +120,15 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 			admission = cloudAgentRejectCall(call, cloudAgentAdmissionPermission, "", "工具未获本轮权限授权")
 		case call.ID != "" && seenCalls[call.ID]:
 			admission = cloudAgentRejectCall(call, cloudAgentAdmissionDuplicateCall, "callId", "同一批里 callId 重复：「"+truncateRunes(call.ID, 60)+"」；本步只执行第一次出现的调用")
+		case cloudAgentIsToolCategory(name) && categoryAdmitted:
+			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "每个模型步只可打开一种工具类型；请在下一步选择其他类型")
 		default:
 			if err := validateCloudAgentToolArguments(schema, call.Function.Arguments); err != nil {
 				admission = cloudAgentRejectArgumentError(call, err)
 			}
+		}
+		if admission.Allowed && cloudAgentIsToolCategory(name) {
+			categoryAdmitted = true
 		}
 		if call.ID != "" {
 			seenCalls[call.ID] = true
