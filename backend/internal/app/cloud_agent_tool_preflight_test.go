@@ -221,6 +221,22 @@ func TestCloudAgentPreflightRejectsToolOutsideThisRun(t *testing.T) {
 	}
 }
 
+func TestCloudAgentPreflightExplainsKnownButUnopenedTool(t *testing.T) {
+	req := categoryTestRequest()
+	all := cloudAgentTools(req)
+	state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: all}, DisclosureVersion: cloudAgentToolDisclosureVersion}
+	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleTools(all, "", nil, nil))
+	admission := cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("ask_user")})[0]
+	if admission.Allowed || admission.Issue != cloudAgentAdmissionInvalidOutput || !strings.Contains(admission.Message, "agent_tools_control") || strings.Contains(admission.Message, "不存在的工具") {
+		t.Fatalf("known child should point to its parent: %+v", admission)
+	}
+	state.Request.PermissionMode = "read_only"
+	admission = cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("canvas_apply_ops")})[0]
+	if admission.Allowed || admission.Issue != cloudAgentAdmissionPermission {
+		t.Fatalf("ineligible child should be a permission error: %+v", admission)
+	}
+}
+
 // 只读工具不受"单步一个写"的限制：一批读调用全部放行。
 func TestCloudAgentPreflightAllowsConcurrentReads(t *testing.T) {
 	s, _, args := agentMediaFixture(t)

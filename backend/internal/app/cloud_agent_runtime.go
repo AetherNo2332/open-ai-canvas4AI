@@ -85,30 +85,31 @@ type cloudAgentApproval struct {
 	Reason    string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
-	RuntimeRunID         string                    `json:"-"`
-	Request              CloudAgentRequest         `json:"request"`
-	Policy               cloudAgentPolicySnapshot  `json:"policy"`
-	ParentID             string                    `json:"parentId,omitempty"`
-	Fingerprint          string                    `json:"fingerprint,omitempty"`
-	CreativeAnchor       cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
-	TextHistory          []providerTextMessage     `json:"textHistory,omitempty"`
-	Skills               []cloudAgentSkill         `json:"skills"`
-	SkillReads           map[string]bool           `json:"skillReads,omitempty"`
-	Profile              cloudAgentProfileSnapshot `json:"profile"`
-	ProfileReads         map[string]bool           `json:"profileReads,omitempty"`
-	Canonical            canonicalAgentRequest     `json:"canonical"`
-	DisclosureVersion    int                       `json:"disclosureVersion,omitempty"`
-	SelectedToolCategory string                    `json:"selectedToolCategory,omitempty"`
-	AdvertisedToolNames  []string                  `json:"advertisedToolNames,omitempty"`
-	ActiveTaskID         string                    `json:"activeTaskId"`
-	ActiveTextDraft      string                    `json:"activeTextDraft,omitempty"`
-	MediaTaskID          string                    `json:"mediaTaskId,omitempty"`
-	TaskIDs              []string                  `json:"taskIds"`
-	Step                 int                       `json:"step"`
-	Generations          int                       `json:"generations"`
-	VideoSeconds         int                       `json:"videoSeconds"`
-	Calls                []cloudAgentCall          `json:"calls"`
-	CallIndex            int                       `json:"callIndex"`
+	RuntimeRunID            string                    `json:"-"`
+	Request                 CloudAgentRequest         `json:"request"`
+	Policy                  cloudAgentPolicySnapshot  `json:"policy"`
+	ParentID                string                    `json:"parentId,omitempty"`
+	Fingerprint             string                    `json:"fingerprint,omitempty"`
+	CreativeAnchor          cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
+	TextHistory             []providerTextMessage     `json:"textHistory,omitempty"`
+	Skills                  []cloudAgentSkill         `json:"skills"`
+	SkillReads              map[string]bool           `json:"skillReads,omitempty"`
+	Profile                 cloudAgentProfileSnapshot `json:"profile"`
+	ProfileReads            map[string]bool           `json:"profileReads,omitempty"`
+	Canonical               canonicalAgentRequest     `json:"canonical"`
+	DisclosureVersion       int                       `json:"disclosureVersion,omitempty"`
+	SelectedToolCategory    string                    `json:"selectedToolCategory,omitempty"`
+	ActivatedToolCategories []string                  `json:"activatedToolCategories,omitempty"`
+	AdvertisedToolNames     []string                  `json:"advertisedToolNames,omitempty"`
+	ActiveTaskID            string                    `json:"activeTaskId"`
+	ActiveTextDraft         string                    `json:"activeTextDraft,omitempty"`
+	MediaTaskID             string                    `json:"mediaTaskId,omitempty"`
+	TaskIDs                 []string                  `json:"taskIds"`
+	Step                    int                       `json:"step"`
+	Generations             int                       `json:"generations"`
+	VideoSeconds            int                       `json:"videoSeconds"`
+	Calls                   []cloudAgentCall          `json:"calls"`
+	CallIndex               int                       `json:"callIndex"`
 	// ToolRepairs is counted per tool so reads do not reset write-argument repairs.
 	ToolRepairs            map[string]cloudAgentToolRepair `json:"toolRepairs,omitempty"`
 	Approval               *cloudAgentApproval             `json:"approval,omitempty"`
@@ -1159,7 +1160,6 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 				state.EmptyOutputNudged = 0
 			}
 			state.Canonical.ToolChoice = "auto"
-			state.SelectedToolCategory = ""
 			state.Calls = calls
 			state.CallIndex = 0
 			// 整批预检：在任何业务副作用之前判定每个调用的准入（工具表/权限/参数 schema），
@@ -2172,15 +2172,11 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 		var toolErr error
 		switch {
 		case !allowed:
-			// 幻觉出来的工具名与"真被权限挡住"要分开反馈：前者模型根本不该发这个调用，
-			// 后者是授权边界问题（handoff 工作项 B 的分类要求）。
-			if !cloudAgentPlatformToolNames()[call.Function.Name] {
-				toolErr = BadAuthRequest("模型调用了不存在的工具「" + truncateRunes(call.Function.Name, 60) + "」，本轮已拒绝；请只使用本轮工具表里列出的工具")
-			} else {
-				toolErr = BadAuthRequest("工具未获本轮权限授权")
-			}
+			_, message := cloudAgentUnadvertisedToolAdmission(state, call.Function.Name)
+			toolErr = BadAuthRequest(message)
 		case call.Function.Name == "agent_tools_control", call.Function.Name == "agent_tools_memory", call.Function.Name == "agent_tools_skills", call.Function.Name == "agent_tools_canvas_read", call.Function.Name == "agent_tools_image", call.Function.Name == "agent_tools_canvas_edit", call.Function.Name == "agent_tools_generation":
 			state.SelectedToolCategory = call.Function.Name
+			state.ActivatedToolCategories = cloudAgentAppendActivatedCategory(state.ActivatedToolCategories, call.Function.Name)
 			result = map[string]any{"category": call.Function.Name, "tools": cloudAgentCategoryChildren(state.Canonical.Tools, call.Function.Name)}
 		case call.Function.Name == "canvas_apply_ops":
 			result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))

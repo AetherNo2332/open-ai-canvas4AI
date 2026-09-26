@@ -28,7 +28,7 @@ var errCloudAgentContextOverBudget = errors.New("Agent model context exceeds inp
 func (s *Service) cloudAgentModelContext(run *model.CloudAgentExecution, state *cloudAgentRuntime, budget cloudAgentContextBudget) (canonicalAgentRequest, error) {
 	canonical := cloudAgentCanonicalWithPlan(state)
 	if state.DisclosureVersion >= cloudAgentToolDisclosureVersion {
-		canonical.Tools = cloudAgentVisibleTools(canonical.Tools, state.SelectedToolCategory, state.Calls, state.ToolScope)
+		canonical.Tools = cloudAgentVisibleToolsForCategories(canonical.Tools, cloudAgentActivatedCategories(state), state.Calls, state.ToolScope)
 	} else if scope := cloudAgentScopedTools(canonical.Tools, state.ToolScope); scope != nil {
 		canonical.Tools = scope
 	}

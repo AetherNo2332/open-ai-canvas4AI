@@ -112,7 +112,8 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 		}
 		switch {
 		case !advertised:
-			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "模型调用了不存在的工具「"+truncateRunes(name, 60)+"」，本步已拒绝；请只使用本轮工具表里列出的工具")
+			issue, message := cloudAgentUnadvertisedToolAdmission(state, name)
+			admission = cloudAgentRejectCall(call, issue, "", message)
 		case !cloudAgentToolInScope(state, name):
 			// 上一个同类错误的自动纠错进入收紧档：本步只开放修复所需的工具。
 			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "上一步的同类错误尚未修正，本步只开放修复所需的工具（"+strings.Join(state.ToolScope, "、")+"）；请先用它们改正后再继续")
@@ -148,6 +149,25 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 		admissions[index] = admission
 	}
 	return admissions
+}
+
+// A known child may be inactive on the current model request; that is different
+// from an invented tool name or a tool excluded by permission/capability.
+func cloudAgentUnadvertisedToolAdmission(state *cloudAgentRuntime, name string) (string, string) {
+	label := "「" + truncateRunes(name, 60) + "」"
+	if !cloudAgentPlatformToolNames()[name] {
+		return cloudAgentAdmissionInvalidOutput, "模型调用了不存在的工具" + label + "，本步已拒绝；请只使用当前工具表里列出的工具"
+	}
+	if state == nil || !cloudAgentToolAllowed(state.Request, name) {
+		return cloudAgentAdmissionPermission, "工具" + label + "未获本轮权限或能力授权"
+	}
+	if !cloudAgentToolInScope(state, name) {
+		return cloudAgentAdmissionInvalidOutput, "工具" + label + "当前不在纠错范围内；请先使用本步开放的修复工具"
+	}
+	if category := cloudAgentToolCategory(name); category != "" {
+		return cloudAgentAdmissionInvalidOutput, "工具" + label + "尚未在本轮打开；请先调用 " + category + "，并在下一模型步使用"
+	}
+	return cloudAgentAdmissionInvalidOutput, "工具" + label + "当前未披露；请只使用当前工具表里列出的工具"
 }
 
 func cloudAgentRejectCall(call cloudAgentCall, issue, field, message string) cloudAgentCallAdmission {

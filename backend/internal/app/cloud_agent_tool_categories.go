@@ -111,9 +111,42 @@ func cloudAgentCategoryCallRecord(calls []cloudAgentCall, category string) strin
 // The existing repair circuit can temporarily replace the category view with
 // its smaller corrective tool set. It never adds a tool outside the catalog.
 func cloudAgentVisibleTools(all []map[string]any, selected string, previous []cloudAgentCall, repairScope []string) []map[string]any {
+	return cloudAgentVisibleToolsForCategories(all, []string{selected}, previous, repairScope)
+}
+
+// Opened categories remain available for the rest of this Agent run. A new run
+// starts with an empty set and therefore advertises only eligible parents.
+func cloudAgentActivatedCategories(state *cloudAgentRuntime) []string {
+	if state == nil {
+		return nil
+	}
+	active := append([]string(nil), state.ActivatedToolCategories...)
+	// Checkpoints created before the persistent set had only the selected field.
+	return cloudAgentAppendActivatedCategory(active, state.SelectedToolCategory)
+}
+
+func cloudAgentAppendActivatedCategory(active []string, category string) []string {
+	if !cloudAgentIsToolCategory(category) {
+		return active
+	}
+	for _, existing := range active {
+		if existing == category {
+			return active
+		}
+	}
+	return append(active, category)
+}
+
+func cloudAgentVisibleToolsForCategories(all []map[string]any, categories []string, previous []cloudAgentCall, repairScope []string) []map[string]any {
 	repairAllowed := map[string]bool{}
 	for _, name := range repairScope {
 		repairAllowed[name] = true
+	}
+	active := map[string]bool{}
+	for _, category := range categories {
+		if cloudAgentIsToolCategory(category) {
+			active[category] = true
+		}
 	}
 	visible := make([]map[string]any, 0, len(all))
 	for _, tool := range all {
@@ -138,13 +171,11 @@ func cloudAgentVisibleTools(all []map[string]any, selected string, previous []cl
 		copyFunction["description"] = stringField(function, "description") + cloudAgentCategoryCallRecord(previous, name)
 		visible = append(visible, map[string]any{"type": "function", "function": copyFunction})
 	}
-	if selected != "" {
-		for _, tool := range all {
-			function, _ := tool["function"].(map[string]any)
-			name := stringField(function, "name")
-			if cloudAgentToolCategory(name) == selected && (len(repairScope) == 0 || repairAllowed[name]) {
-				visible = append(visible, tool)
-			}
+	for _, tool := range all {
+		function, _ := tool["function"].(map[string]any)
+		name := stringField(function, "name")
+		if active[cloudAgentToolCategory(name)] && (len(repairScope) == 0 || repairAllowed[name]) {
+			visible = append(visible, tool)
 		}
 	}
 	return visible

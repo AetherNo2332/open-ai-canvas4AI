@@ -18,7 +18,7 @@ func categoryCall(name string) cloudAgentCall {
 	return call
 }
 
-func TestCloudAgentCategoryDisclosureAndRetraction(t *testing.T) {
+func TestCloudAgentCategoryDisclosureLastsForRun(t *testing.T) {
 	all := cloudAgentTools(categoryTestRequest())
 	for _, name := range cloudAgentToolNames(all) {
 		if !cloudAgentIsToolCategory(name) && cloudAgentToolCategory(name) == "" {
@@ -45,9 +45,22 @@ func TestCloudAgentCategoryDisclosureAndRetraction(t *testing.T) {
 			t.Fatal("previous call missing from parent schema")
 		}
 	}
-	retracted := cloudAgentVisibleTools(all, "", []cloudAgentCall{categoryCall("canvas_get_state")}, nil)
-	if containsToolName(cloudAgentToolNames(retracted), "canvas_get_state") {
-		t.Fatal("child remained advertised after its step")
+	active := []string{"agent_tools_canvas_read"}
+	nextStep := cloudAgentVisibleToolsForCategories(all, active, []cloudAgentCall{categoryCall("canvas_get_state")}, nil)
+	if !containsToolName(cloudAgentToolNames(nextStep), "canvas_get_state") {
+		t.Fatal("opened child was retracted before the run ended")
+	}
+	active = cloudAgentAppendActivatedCategory(active, "agent_tools_control")
+	switched := cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, active, []cloudAgentCall{categoryCall("plan_update")}, nil))
+	if !containsToolName(switched, "canvas_get_state") || !containsToolName(switched, "ask_user") || !containsToolName(switched, "plan_update") || !containsToolName(switched, "finish_run") {
+		t.Fatalf("opening another category lost previously enabled tools: %v", switched)
+	}
+	if len(cloudAgentAppendActivatedCategory(active, "agent_tools_control")) != len(active) {
+		t.Fatal("reopening category duplicated activation")
+	}
+	newRun := cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, nil, nil, nil))
+	if containsToolName(newRun, "canvas_get_state") || containsToolName(newRun, "ask_user") {
+		t.Fatalf("new run inherited child tools: %v", newRun)
 	}
 	callWithPrivateArguments := categoryCall("canvas_get_state")
 	callWithPrivateArguments.Function.Arguments = `{"private":"do-not-copy"}`
@@ -74,6 +87,63 @@ func TestCloudAgentCategoryPreflightUsesWireCatalog(t *testing.T) {
 	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleTools(all, "agent_tools_canvas_read", nil, nil))
 	if !cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("canvas_get_state")})[0].Allowed {
 		t.Fatal("selected child rejected")
+	}
+	state.ActivatedToolCategories = []string{"agent_tools_canvas_read", "agent_tools_canvas_edit", "agent_tools_control"}
+	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, cloudAgentActivatedCategories(state), nil, nil))
+	for _, name := range []string{"canvas_get_state", "canvas_apply_ops", "ask_user", "plan_update", "finish_run"} {
+		if _, ok := cloudAgentAdvertisedTool(state, name); !ok {
+			t.Fatalf("previously opened tool %s was not advertised in a later step", name)
+		}
+	}
+}
+
+func TestCloudAgentOpenedCategoriesPersistAcrossToolExecution(t *testing.T) {
+	s, _, args := agentMediaFixture(t)
+	run, state := agentMediaRun(t, s, args, "auto")
+	state.Calls = nil
+	state.CallIndex = 0
+	state.DisclosureVersion = cloudAgentToolDisclosureVersion
+	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleTools(state.Canonical.Tools, "", nil, nil))
+
+	for _, category := range []string{"agent_tools_control", "agent_tools_canvas_edit"} {
+		var call cloudAgentCall
+		call.ID = "open-" + category
+		call.Function.Name = category
+		call.Function.Arguments = `{}`
+		run, state = writeBatch(t, s, run, &state, []cloudAgentCall{call})
+		if !state.CallAdmissions[0].Allowed {
+			t.Fatalf("parent %s rejected: %+v", category, state.CallAdmissions[0])
+		}
+		if err := s.advanceCloudAgentTool(run, &state); err != nil {
+			t.Fatal(err)
+		}
+		run, state = reloadAgentRun(t, s, run.ID)
+		state.Calls = nil
+		state.CallIndex = 0
+		state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleToolsForCategories(state.Canonical.Tools, cloudAgentActivatedCategories(&state), nil, nil))
+	}
+	for _, name := range []string{"ask_user", "plan_update", "finish_run", "canvas_apply_ops"} {
+		if _, ok := cloudAgentAdvertisedTool(&state, name); !ok {
+			t.Fatalf("opened child %s disappeared in a later model step", name)
+		}
+	}
+	request, err := s.cloudAgentModelContext(run, &state, defaultCloudAgentContextBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"ask_user", "finish_run", "canvas_apply_ops"} {
+		if !containsToolName(cloudAgentToolNames(request.Tools), name) {
+			t.Fatalf("next model request lost %s", name)
+		}
+	}
+	state.ActivatedToolCategories = nil
+	state.SelectedToolCategory = ""
+	request, err = s.cloudAgentModelContext(run, &state, defaultCloudAgentContextBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsToolName(cloudAgentToolNames(request.Tools), "canvas_apply_ops") {
+		t.Fatal("fresh run should start with parent schemas only")
 	}
 }
 
@@ -111,7 +181,7 @@ func TestCloudAgentToolDescriptionsFromMarkdown(t *testing.T) {
 
 func TestCloudAgentDisclosureSurvivesCheckpointAndRepair(t *testing.T) {
 	all := cloudAgentTools(categoryTestRequest())
-	state := cloudAgentRuntime{DisclosureVersion: cloudAgentToolDisclosureVersion, SelectedToolCategory: "agent_tools_canvas_read", AdvertisedToolNames: cloudAgentToolNames(cloudAgentVisibleTools(all, "agent_tools_canvas_read", nil, nil))}
+	state := cloudAgentRuntime{DisclosureVersion: cloudAgentToolDisclosureVersion, ActivatedToolCategories: []string{"agent_tools_canvas_read", "agent_tools_control"}, AdvertisedToolNames: cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, []string{"agent_tools_canvas_read", "agent_tools_control"}, nil, nil))}
 	raw, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
@@ -120,8 +190,12 @@ func TestCloudAgentDisclosureSurvivesCheckpointAndRepair(t *testing.T) {
 	if err := json.Unmarshal(raw, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if restored.SelectedToolCategory != state.SelectedToolCategory || !containsToolName(restored.AdvertisedToolNames, "canvas_get_state") {
+	if len(cloudAgentActivatedCategories(&restored)) != 2 || !containsToolName(restored.AdvertisedToolNames, "canvas_get_state") {
 		t.Fatal("disclosure checkpoint lost")
+	}
+	legacy := cloudAgentRuntime{SelectedToolCategory: "agent_tools_canvas_read"}
+	if !containsToolName(cloudAgentActivatedCategories(&legacy), "agent_tools_canvas_read") {
+		t.Fatal("older checkpoint lost selected category")
 	}
 	repair := cloudAgentVisibleTools(all, "", nil, []string{"canvas_get_state", "ask_user"})
 	for _, name := range cloudAgentToolNames(repair) {
@@ -132,6 +206,10 @@ func TestCloudAgentDisclosureSurvivesCheckpointAndRepair(t *testing.T) {
 	repairOpened := cloudAgentToolNames(cloudAgentVisibleTools(all, "agent_tools_canvas_read", nil, []string{"canvas_get_state", "ask_user"}))
 	if !containsToolName(repairOpened, "canvas_get_state") || containsToolName(repairOpened, "canvas_read_storyboard") {
 		t.Fatalf("repair scope did not limit children: %v", repairOpened)
+	}
+	stickyRepair := cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, restored.ActivatedToolCategories, nil, []string{"canvas_get_state", "ask_user"}))
+	if !containsToolName(stickyRepair, "canvas_get_state") || !containsToolName(stickyRepair, "ask_user") || containsToolName(stickyRepair, "finish_run") {
+		t.Fatalf("repair scope leaked unrelated opened tools: %v", stickyRepair)
 	}
 }
 
