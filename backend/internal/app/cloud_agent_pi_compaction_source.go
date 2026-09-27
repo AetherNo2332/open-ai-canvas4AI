@@ -14,6 +14,7 @@ import (
 type cloudAgentPiCompactionSource struct {
 	Messages           []map[string]any
 	FirstKeptEntryID   string
+	FirstKeptIndex     int
 	ActiveLeafID       string
 	SourceDigest       string
 	SourceBytes        int
@@ -170,6 +171,22 @@ func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry,
 	source.FirstKeptEntryID = cloudAgentPiFirstKeptEntryID(visible)
 	if source.FirstKeptEntryID == "" {
 		return source, fmt.Errorf("Pi compaction could not find a complete-turn retention boundary")
+	}
+	source.FirstKeptIndex = -1
+	if latestCompaction >= 0 && source.FirstKeptEntryID == branch[latestCompaction].ID {
+		// Pi treats the previous compaction entry as a retain-none boundary: the
+		// new summary replaces its summary and only later branch messages survive.
+		source.FirstKeptIndex = 2
+	} else {
+		for index, item := range visible {
+			if item.EntryID == source.FirstKeptEntryID {
+				source.FirstKeptIndex = index
+				break
+			}
+		}
+	}
+	if source.FirstKeptIndex < 0 || source.FirstKeptIndex > len(visible) {
+		return source, fmt.Errorf("Pi compaction retention boundary is not in the projected context")
 	}
 	source.CompactedTurnCount = cloudAgentConversationTurnCount(source.Messages)
 	encoded, err := json.Marshal(source.Messages)

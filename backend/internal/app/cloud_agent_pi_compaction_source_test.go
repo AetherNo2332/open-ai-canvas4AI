@@ -56,8 +56,8 @@ func TestCloudAgentPiCompactionSourceUsesActiveBranchAndCompleteTurnTail(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.FirstKeptEntryID != "user-1" {
-		t.Fatalf("retention boundary = %q, want start of the two latest complete turns", source.FirstKeptEntryID)
+	if source.FirstKeptEntryID != "user-1" || source.FirstKeptIndex != 2 {
+		t.Fatalf("retention boundary = %q at index %d, want start of the two latest complete turns", source.FirstKeptEntryID, source.FirstKeptIndex)
 	}
 	encoded, _ := json.Marshal(source.Messages)
 	for _, want := range []string{"keep turn one", "turn one answer", "keep turn two", "current unanswered request", "canvas state"} {
@@ -105,7 +105,7 @@ func TestCloudAgentPiCompactionSourceReusesStructuredCheckpointAndRejectsBadBoun
 	if strings.Contains(string(encoded), "already summarized") {
 		t.Fatalf("previously compacted history reappeared: %s", encoded)
 	}
-	if source.FirstKeptEntryID != "kept-user" || source.CompactedTurnCount != 4 {
+	if source.FirstKeptEntryID != "kept-user" || source.FirstKeptIndex != 2 || source.CompactedTurnCount != 4 {
 		t.Fatalf("existing structured compaction boundary/count not preserved: %+v", source)
 	}
 
