@@ -370,7 +370,7 @@ func TestPiAgentLeaseAdmission(t *testing.T) {
 
 	expired := time.Now().Add(-time.Second)
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).
-		Update("lease_expires_at", expired).Error; err != nil {
+		Updates(map[string]any{"status": "waiting_approval", "lease_expires_at": expired}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.CloudAgentPiSession{}).Where("id = ?", run.ConversationID).
@@ -381,7 +381,7 @@ func TestPiAgentLeaseAdmission(t *testing.T) {
 		t.Fatal("过期租约被接受")
 	}
 	reclaimed, err := s.ClaimPiAgent("worker-b")
-	if err != nil || reclaimed == nil || reclaimed.PiSessionLeaseEpoch != 2 {
+	if err != nil || reclaimed == nil || reclaimed.PiSessionLeaseEpoch != 2 || reclaimed.Status != "waiting_approval" {
 		t.Fatalf("过期会话未以新 epoch 重新领取: snapshot=%#v error=%v", reclaimed, err)
 	}
 	if _, err := s.PiAgentSnapshot("user", run.ID, "worker-a@1"); err == nil {
