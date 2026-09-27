@@ -981,6 +981,25 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 	config.ChannelModelKey = modelKey
 	config.ProviderModelKey = providerModelKey
 	config.Model = firstNonEmpty(providerModelKey, channelModel.ProviderModelKey, modelKey)
+	// 权威能力必须来自**选中的渠道模型**，而不是请求里的客户端副本：
+	// task_creation.go 已经把客户端的 capabilityConfig 剔除（正确的信任边界），
+	// 这里若不补回，执行路径就会拿到 nil，而 provider.go 的 supportsStream 把
+	// "未声明" 当作 "支持流式" —— 一个显式配置 streaming=false 的渠道模型仍会被发
+	// stream=true，同时模型物理输出上限（CapabilityMaxOutputTokens）也会一起丢掉。
+	//
+	// 边界：只处理**已声明**能力的渠道模型。
+	//   - 声明了但解析/规范化失败 → 失败关闭（与 task_creation.go:414 同一策略），
+	//     否则损坏的配置会被当成"未声明"，正是上面那条 fail-open 的来源；
+	//   - 完全没声明（空 JSON）→ 保持原行为不改写，因为 resolveProviderConfig 同时被
+	//     取消/恢复路径使用，对从未声明能力的旧记录在这里新增失败会把任务卡死，
+	//     而新建任务的入口（task_creation.go）本就拒绝这种记录。
+	if strings.TrimSpace(channelModel.CapabilityConfigJSON) != "" {
+		capabilityConfig, capabilityErr := normalizedChannelModelCapability(channelModel)
+		if capabilityErr != nil {
+			return providerConfig{}, InvalidModelSelection("指定的模型能力配置无效，请联系管理员")
+		}
+		config.CapabilityConfig = capabilityConfig
+	}
 	return config, nil
 }
 
