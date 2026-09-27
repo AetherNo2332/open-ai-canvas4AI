@@ -154,7 +154,7 @@ func (r *Repository) ClaimPiAgent(owner string, until time.Time) (*model.CloudAg
 		updated := r.db.Model(&model.CloudAgentExecution{}).
 			Where("id = ? AND revision = ? AND engine = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
 				candidate.ID, candidate.Revision, "pi", now).
-			Updates(map[string]any{"lease_owner": owner, "lease_expires_at": until, "revision": gorm.Expr("revision + 1")})
+			Updates(map[string]any{"lease_owner": owner, "lease_expires_at": until, "status": gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", "queued", "running"), "revision": gorm.Expr("revision + 1")})
 		if updated.Error != nil {
 			return nil, updated.Error
 		}

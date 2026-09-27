@@ -3,9 +3,8 @@
 ## 工作区基线
 
 - Repo：`D:\13537\open-ai-canvas-canary`
-- Branch / HEAD：`canary` / `645d1011 fix(agent): expose Pi compaction retention index`
-- 本地比 `origin/canary` 多 9 个提交；工作树共 104 项：58 个已跟踪文件修改、45 个未跟踪文件、1 个删除。改动混有此前迁移工作，本日没有清理、暂存或覆盖它们。
-- 当前 Docker 中可见 `canvas-canary-3000-*` 容器；本日只用了独立 `docker run --rm --network none` 测试容器，没有对运行实例执行操作，也没有部署或推送。
+- 上一份记录中的 `645d1011` 和 104 项工作树计数已过期。本轮续接时实际检出分支 `canary`、HEAD `605e4243`，工作树混有此前迁移与 DeepSeek 改动；没有清理或覆盖它们。
+- 本轮使用本机 `canvas-canary-3000` 做验收，仅重建 backend，保留 web、agent 与 SQLite 命名卷；未访问生产环境。
 
 ## 本日实现
 
@@ -45,3 +44,31 @@
 3. 以真实旧 schema/根任务构造兼容 fixture，完成旧 run 导入/续聊与当前 Pi conversation 多轮续聊验收。
 4. 继续迁入插话、视觉观察账本、停止原因与模型失败重试；再移除旧 Go Agent driver 及仅绑定旧实现的测试。
 5. 完成 PostgreSQL、双 worker / 提交窗口崩溃注入、媒体/审批收尾、SSE 续传和真实浏览器验收。此阶段完成前不宣称移植完整。
+
+## 追加：工具披露、真实 UI 调用和本地验收（本轮续接）
+
+### 本轮实现与修复
+
+- Pi 工具披露改成平铺注册：新轮开始时，通过 Pi extension 注册本轮满足权限和能力条件的具体工具；工具类别保留作分组元数据，不再充当母工具。工具调用 hook 检查本轮可见性与当前模型步骤实际获准的调用；Go 继续执行最终权限、用户归属、审批、参数、画布版本及批次预检。每轮重新建注册表。Harness schema 为 `cloud-agent-tools/v3`，当前列出 24 个具体工具；工具描述仍由 Markdown 提供。
+- 模型步骤把上游可用用量指标沿 Go 任务结果传回 Pi；缺少的指标保持未知，不写成 0。计费权威仍是 Go 持久化的账单与 API 调用记录。
+- Canvas bridge 的非成功响应现在会在错误中带上限长、去控制字符的公开 `msg` 字段，帮助区分权限门禁和状态冲突；不会把请求正文或凭证放入错误。
+- 首次浏览器验收暴露了工具批次 403。原因是 Pi run 创建时为 `queued`，worker 领取时只取得 lease，但 `PiToolBatch` 要求 `running`。仓储领取事务现将 `queued` 原子转为 `running`，其他状态（特别是 `waiting_approval`）原样保留；新增租约回归测试。
+
+### 测试和运行证据
+
+- `cd agent && npm test`：**75/75 通过**（包含 TypeScript 编译）。
+- `cd web && bun test`：**2086 通过、17 失败**，共 2103 项 / 270 文件。失败分布在 UI 样式与 DOM 合同、上传占位、提交工作流校验、钱包布局等既存前端测试；本轮没有改 web 产品代码，未把这些失败记为通过。
+- `cd backend && go test ./internal/app -run '^TestPi' -count=1`：通过。另一次完整 `go test ./internal/app -count=1 -json` 返回 84 个失败事件：多数使用已退役 Go Agent loop 的旧 fixture/断言；已核到插件目录数量（99 vs 101）和资源清理断言等非 Pi 项。完整失败清单没有保存为文件，故不把 84 项都归类为迁移问题或都视为旧测试噪声。
+- 修复后本机 `canvas-canary-3000` 的 `/api/health/ready` 为 HTTP 200，`ready=true`，schema `42/42`。构建版本 `v1.5.7.1+7aa9988`；该镜像编译元数据仍是 `commit=unknown`、`buildTime=unknown`。
+- 浏览器端新建对话并实际请求 `canvas_get_state`：`POST /tool-batches` 与工具 `advance` 均返回 200；界面显示完成、画布 0 节点、只读且没有修改，并回显测试标记 `[PI-CANARY-FIXED]`。只读验收截图已在本轮留存于对话中。
+
+### 本地 Compose 操作范围
+
+- 仅重建并重启了 `canvas-canary-3000` 的 backend。`web` 与 `agent` 容器没有重建；SQLite 命名卷 `canvas-canary-3000_backend-data` 保持原挂载并保留数据，没有执行 `down` 或卷操作。
+- 当前分支为 `canary`。本轮 Pi queued→running 修复、回归测试和状态记录已在本地提交，未推送；共享工作树其他迁移和 DeepSeek 修改保持原样、仍未提交。
+
+### 仍未完成 / 未验证
+
+- 旧 Go Agent 驱动和与之绑定的测试仍在仓库中；全量 `internal/app` 测试未通过。需要逐个把旧 loop 业务断言迁成 Pi 协议行为测试，保留真正旧版本数据导入兼容测试，并修复与 Agent 无关的基线失败。
+- 本轮只通过一个配置的测试模型与一个只读画布工具做浏览器端到端验收；并未覆盖全部 24 个工具、真实生产上游渠道、媒体计费/审批路径。
+- PostgreSQL、多账号并发、双 worker 抢占、跨进程故障注入、SSE 断线续传，以及完整历史 session/assistant entry 转换仍需验收。整体 Pi 移植尚未完成。

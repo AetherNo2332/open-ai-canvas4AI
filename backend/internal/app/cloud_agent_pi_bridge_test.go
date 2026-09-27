@@ -324,11 +324,17 @@ func reloadPiRun(t *testing.T, s *Service, runID string) (*model.CloudAgentExecu
 // 否则任何 worker 都能推进别人的运行。
 func TestPiAgentLeaseAdmission(t *testing.T) {
 	s, db, run := piAgentTestFixture(t)
+	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Update("status", "queued").Error; err != nil {
+		t.Fatal(err)
+	}
 
 	// 未被租出的运行可以领取，且领取后租约归属该 worker。
 	claimed, err := s.ClaimPiAgent("worker-a")
 	if err != nil || claimed == nil || claimed.RunID != run.ID {
 		t.Fatalf("租出的 pi 运行未被领取: %v", err)
+	}
+	if claimed.Status != "running" {
+		t.Fatalf("领取 queued 运行后的状态 = %q，期望 running", claimed.Status)
 	}
 	if again, err := s.ClaimPiAgent("worker-a"); err != nil || again != nil {
 		t.Fatalf("重复领取返回了运行: %v", err)
