@@ -11,10 +11,13 @@ import (
 )
 
 // 我们的 cloud_agent_run_events / cloud_agent_transcript 从 v24/v25（自研时期的原始登记）
-// 让位到 v36/v37（登记为 no-op，表与数据保留）。这条让位线挪过三次：合并上游 v1.5.7 时先落在
+// 让位到 v36/v37（登记为 no-op，表与数据保留）。这条让位线挪过四次：合并上游 v1.5.7 时先落在
 // v32/v33，上游随后把 v32 用给了 channel_model_tags，两条各自挪到 v33/v34；上游再把 v33 用给
 // oauth_state_accepted_terms 之后挪到 v34/v35；上游把 v34 用给 task_media_recovery 之后挪到 v35/v36；
-// 上游再把 v35 用给 auth_notifications 之后，挪到现在的 v36/v37。
+// 上游再把 v35 用给 auth_notifications 之后，挪到 v36/v37。
+//
+// 合并上游 v1.5.8–v1.6.0 时上游又把 v39/v40 用给 skill_library_categories / builtin_skill_tombstones，
+// 这次连同其后整块真实迁移（41–45）一起各上移两位：no-op 落到 v41/v42，真实迁移落到 v43–v47。
 //
 // 四种历史库都需要自动搬迁：
 //   - 已升到我们 v25 的库：v24/v25 上是我们的名字与校验和，而 validateMigrationRecord 会拿
@@ -25,10 +28,10 @@ import (
 //   - 已跑过再上一版 dev（schema 35）的库：记录停在 v34/v35，而上游 v34 是 task_media_recovery；
 //   - 已跑过当前 dev（schema 36）的库：记录停在 v35/v36，而上游 v35 是 auth_notifications。
 //
-// 覆盖七种起点：全新库 / 上游库 / 我们 v25 库 / 上一版合并线库 / 上一版 dev 库 / 再上一版 dev 库 /
-// 当前 dev 库（schema 36）。
+// 覆盖八种起点：全新库 / 上游库 / 我们 v25 库 / 上一版合并线库 / 上一版 dev 库 / 再上一版 dev 库 /
+// 当前 dev 库（schema 36）/ 合并前 canary 库（schema 45）。
 func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
-	t.Run("全新库：无可搬迁记录，迁移到 40 即可用", func(t *testing.T) {
+	t.Run("全新库：无可搬迁记录，迁移到 47 即可用", func(t *testing.T) {
 		db := openRelocationTestDB(t, "fresh")
 		if err := relocateLegacyCloudAgentMigrations(db); err != nil {
 			t.Fatalf("relocate on fresh db: %v", err)
@@ -39,7 +42,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertSchemaReady(t, db)
 	})
 
-	t.Run("上游库：无可搬迁记录，补到 40", func(t *testing.T) {
+	t.Run("上游库：无可搬迁记录，补到 47", func(t *testing.T) {
 		db := openRelocationTestDB(t, "upstream")
 		seedMigrationRecords(t, db, upstreamRecordsThrough(PreviousUpstreamSchemaVersion)...)
 		if err := relocateLegacyCloudAgentMigrations(db); err != nil {
@@ -77,7 +80,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("上一版合并线库：记录停在 v32/v33，搬迁到 39/40 并补上上游 v32", func(t *testing.T) {
+	t.Run("上一版合并线库：记录停在 v32/v33，搬迁到 41/42 并补上上游 v32", func(t *testing.T) {
 		db := openRelocationTestDB(t, "mergedline")
 		resetToMergedLineLayout(t, db)
 
@@ -97,7 +100,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("上一版 dev 库：记录停在 v33/v34，搬迁到 39/40 并补上上游 v33", func(t *testing.T) {
+	t.Run("上一版 dev 库：记录停在 v33/v34，搬迁到 41/42 并补上上游 v33", func(t *testing.T) {
 		db := openRelocationTestDB(t, "previousdev")
 		resetToPreviousDevLayout(t, db)
 
@@ -119,7 +122,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("再上一版 dev 库（schema 35）：记录停在 v34/v35，搬迁到 39/40 并补上上游 v34", func(t *testing.T) {
+	t.Run("再上一版 dev 库（schema 35）：记录停在 v34/v35，搬迁到 41/42 并补上上游 v34", func(t *testing.T) {
 		db := openRelocationTestDB(t, "previousdev35")
 		resetToPreviousDev35Layout(t, db)
 
@@ -139,7 +142,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("当前 dev 库（schema 36）：记录停在 v35/v36，搬迁到 39/40 并补上上游 v35", func(t *testing.T) {
+	t.Run("当前 dev 库（schema 36）：记录停在 v35/v36，搬迁到 41/42 并补上上游 v35", func(t *testing.T) {
 		db := openRelocationTestDB(t, "previousdev36")
 		resetToPreviousDev36Layout(t, db)
 
@@ -159,7 +162,7 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertRelocated(t, db)
 	})
 
-	t.Run("已发布 canary/dev schema 37 库：迁移记录移到 39/40 后补齐上游 36–38", func(t *testing.T) {
+	t.Run("已发布 canary/dev schema 37 库：迁移记录移到 41/42 后补齐上游 36–40", func(t *testing.T) {
 		db := openRelocationTestDB(t, "published37")
 		layout := cloudAgentRelocationLayout{runEvents: 36, transcript: 37}
 		resetToRelocationLayout(t, db, 36, recordsAtLayout(layout))
@@ -174,7 +177,26 @@ func TestLegacyCloudAgentMigrationRelocation(t *testing.T) {
 		assertUpstreamMigrationExecuted(t, db, 37, "cloud_agent_gemini_cache_identity")
 		assertUpstreamMigrationExecuted(t, db, 38, "prefixed_id_sequence_reconcile")
 	})
-	t.Run("只有我们 v24 的半升级库：同样能搬迁并补到 40", func(t *testing.T) {
+	t.Run("合并前 canary 库（schema 45）：39–45 七条上移到 41–47，上游 v39/v40 真正落地", func(t *testing.T) {
+		db := openRelocationTestDB(t, "canary45")
+		resetToCurrentCanaryLayout(t, db)
+		if err := MigrateSchema(db); err != nil {
+			t.Fatalf("migrate pre-merge canary db: %v", err)
+		}
+		assertRelocated(t, db)
+		for _, want := range append(upstreamCloudAgentVersions(), ourCloudAgentVersions()...) {
+			assertMigrationRecord(t, db, want)
+		}
+		// 关键回归：上游 v39/v40（技能分类与技能墓碑）必须真的执行，而不是被我们停在
+		// v39/v40 的 no-op 记录顶掉——这是本次合并涉及的所有真实存量库的形态。
+		assertUpstreamMigrationExecuted(t, db, 39, "skill_library_categories")
+		assertUpstreamMigrationExecuted(t, db, 40, "builtin_skill_tombstones")
+		if err := MigrateSchema(db); err != nil {
+			t.Fatalf("migrate is not idempotent: %v", err)
+		}
+		assertRelocated(t, db)
+	})
+	t.Run("只有我们 v24 的半升级库：同样能搬迁并补到 47", func(t *testing.T) {
 		db := openRelocationTestDB(t, "ours24")
 		resetToOurV25Layout(t, db)
 		// 再退回"只升到我们 v24"的状态：删掉 v25 那条。
@@ -330,6 +352,20 @@ func resetToPreviousDev36Layout(t *testing.T, db *gorm.DB) {
 	resetToRelocationLayout(t, db, 35, previousDev36Records())
 }
 
+// resetToCurrentCanaryLayout 把库改造成"合并前 canary（schema 45）"的样子：
+// 上游 1–38 在位，v39–v45 是我们的七条（39/40 为 no-op，41–45 为真实迁移）。
+func resetToCurrentCanaryLayout(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	records := []schemaMigration{}
+	for _, item := range legacyCloudAgentMigrationRelocations {
+		if item.from < 39 || item.from > 45 {
+			continue
+		}
+		records = append(records, schemaMigration{Version: item.from, Name: item.name, Checksum: item.checksum})
+	}
+	resetToRelocationLayout(t, db, 39, records)
+}
+
 // resetToRelocationLayout 清掉 from 起的记录，再写入起点对应的那两条记录。
 func resetToRelocationLayout(t *testing.T, db *gorm.DB, from int64, records []schemaMigration) {
 	t.Helper()
@@ -358,6 +394,8 @@ var cloudAgentRelocationLayouts = []cloudAgentRelocationLayout{
 	{label: "再上一版 dev 库（schema 35）", runEvents: 34, transcript: 35},
 	// 上游把 v35 用给 auth_notifications（认证通知）之后，当前 dev 线落在 35/36。
 	{label: "当前 dev 库（schema 36）", runEvents: 35, transcript: 36},
+	// 上游把 v39/v40 用给技能分类与技能墓碑之后，canary 线（连同真实迁移 41–45）落在 39–45。
+	{label: "合并前 canary 库（schema 45）", runEvents: 39, transcript: 40},
 }
 
 // legacyRelocation 按 (历史版本号, 记录名) 取让位搬迁条目。
