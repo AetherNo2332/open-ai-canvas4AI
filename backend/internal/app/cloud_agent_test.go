@@ -31,14 +31,10 @@ func TestCloudAgentRunSurvivesTaskInputCompaction(t *testing.T) {
 	if err := db.First(&task, "id = ?", root.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "input_json": publicTaskInputJSON(task.InputJSON), "result_json": `{"text":"可信回复"}`,
-	}).Error; err != nil {
+	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Update("input_json", publicTaskInputJSON(task.InputJSON)).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).Update("status", "completed").Error; err != nil {
-		t.Fatal(err)
-	}
+	completePiRunWithAssistantForTest(t, s, root.ID, "可信回复")
 	finished, err := s.CloudAgentRun("user", root.ID)
 	if err != nil || finished.Status != "completed" {
 		t.Fatalf("compacted run became unreadable: %v", err)
@@ -106,7 +102,10 @@ func TestCloudAgentLegacyRunSurvivesTaskInputCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "input_json": publicTaskInputJSON(task.InputJSON), "result_json": `{"text":"旧轮次回复"}`,
+		"operation":   cloudAgentOperation,
+		"status":      model.TaskStatusSucceeded,
+		"input_json":  publicTaskInputJSON(task.InputJSON),
+		"result_json": `{"text":"旧轮次回复"}`,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +392,7 @@ func TestCloudAgentAdmissionAcceptsTokenPricingWithQuotedChargeLimit(t *testing.
 	}
 }
 
-func TestCloudAgentWorkerPersistsRealResponse(t *testing.T) {
+func TestPiModelStepUsesGoWorkerAndPersistsProviderResponse(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	t.Setenv("REDIS_URL", "")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -422,11 +421,31 @@ func TestCloudAgentWorkerPersistsRealResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	claimed, err := s.ClaimPiAgent("worker-a")
+	if err != nil || claimed == nil || claimed.RunID != run.ID {
+		t.Fatalf("Pi run was not claimed: snapshot=%#v error=%v", claimed, err)
+	}
+	leased, state := reloadPiRun(t, s, run.ID)
+	framework, _ := piFirstStepRequest(state)
+	step, err := s.PiModelStep("user", run.ID, leased.LeaseOwner, framework)
+	if err != nil {
+		t.Fatalf("Pi model step was not admitted through Go: %v", err)
+	}
+	if step.TaskID == run.ID {
+		t.Fatal("Pi model work must use its own billed task, not the holding reservation")
+	}
+	var reservation model.Task
+	if err := db.First(&reservation, "id = ?", run.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reservation.Status != model.TaskStatusHolding {
+		t.Fatalf("Pi placeholder became claimable or was overwritten: %s", reservation.Status)
+	}
 	if err := s.ProcessNextTask(); err != nil {
 		t.Fatal(err)
 	}
 	var task model.Task
-	if err := db.First(&task, "id = ?", run.ID).Error; err != nil {
+	if err := db.First(&task, "id = ?", step.TaskID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if task.Status != model.TaskStatusSucceeded || taskResultText(task.ResultJSON) != "测试回复" {

@@ -288,7 +288,9 @@ func TestCloudAgentDecodeRejectsCorruptEventIdentity(t *testing.T) {
 func TestCloudAgentReliabilityCancelReplayInterrupted(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	// Simulate process/request interruption after cancelled checkpoint commits, before child cancellation.
-	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).Update("status", "cancelled").Error; err != nil {
+	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).Updates(map[string]any{
+		"status": "cancelled", "cleanup_pending": true,
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CancelCloudAgent(context.Background(), "user", root.ID); err != nil {
@@ -298,9 +300,27 @@ func TestCloudAgentReliabilityCancelReplayInterrupted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("cancel replay returned success; active child status remains=%s", task.Status)
-	if task.Status != model.TaskStatusCancelled {
-		t.Fatalf("child not cancelled: %s", task.Status)
+	if task.Operation != cloudAgentHoldingOperation || task.Status != model.TaskStatusHolding {
+		t.Fatalf("cancelled Pi holding reservation must remain non-claimable: operation=%s status=%s", task.Operation, task.Status)
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "task_id = ?", root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != model.BillingStatusRefunded {
+		t.Fatalf("cancel replay did not refund the Pi placeholder reservation: %s", order.Status)
+	}
+	var account model.CreditAccount
+	if err := db.First(&account, "user_id = ?", "user").Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.ReservedMicrocredits != 0 {
+		t.Fatalf("cancel replay left reserved credits behind: %d", account.ReservedMicrocredits)
+	}
+	assertReservationInvariant(t, db, "user")
+	claimed, err := s.ClaimPiAgent("worker-after-cancel")
+	if err != nil || claimed != nil {
+		t.Fatalf("cancelled Pi run must not be claimable: snapshot=%#v error=%v", claimed, err)
 	}
 }
 

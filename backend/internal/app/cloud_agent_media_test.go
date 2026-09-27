@@ -371,6 +371,10 @@ func TestCloudAgentMediaChangedCanvasRollsBackAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var totalOrdersBefore int64
+	if err := db.Model(&model.BillingOrder{}).Count(&totalOrdersBefore).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "agent-canvas").Update("payload_json", `{"nodes":[],"connections":[]}`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -383,8 +387,9 @@ func TestCloudAgentMediaChangedCanvasRollsBackAdmission(t *testing.T) {
 	var tasks, orders int64
 	db.Model(&model.Task{}).Where("type = ?", "canvas_video").Count(&tasks)
 	db.Model(&model.BillingOrder{}).Count(&orders)
-	if tasks != 0 || orders != int64(len(ordersBefore)) || len(ordersAfter) != len(ordersBefore) || state.Generations != 0 || state.MediaTaskID != "" || state.CallIndex != 1 {
-		t.Fatal("failed canvas CAS left a media task, charge or consumed budget")
+	if tasks != 0 || orders != totalOrdersBefore || len(ordersAfter) != len(ordersBefore) || state.Generations != 0 || state.MediaTaskID != "" || state.CallIndex != 1 {
+		t.Fatalf("failed canvas CAS left a media task, new order, or consumed budget: tasks=%d orders=%d->%d active=%d->%d state=%+v",
+			tasks, totalOrdersBefore, orders, len(ordersBefore), len(ordersAfter), state)
 	}
 }
 

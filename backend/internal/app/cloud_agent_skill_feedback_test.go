@@ -93,8 +93,8 @@ func TestCloudAgentSkillMissingAndDistinctPaths(t *testing.T) {
 	if state.Events[0].Type != "tool_failed" || state.Events[0].Payload["path"] != "references/missing.md" {
 		t.Fatalf("missing failure context: %+v", state.Events[0])
 	}
-	if _, err := cloudAgentReadTool(nil, "user", &state, call); err == nil || !strings.Contains(err.Error(), "参考文件未包含") {
-		t.Fatalf("missing path validation changed unexpectedly: %v", err)
+	if _, err := cloudAgentReadTool(nil, "user", &state, call); err == nil || !strings.Contains(err.Error(), "已请求过该技能路径") {
+		t.Fatalf("repeated path read must return the cached-read guard: %v", err)
 	}
 	if _, err := cloudAgentReadTool(nil, "user", &state, skillFeedbackCall("disabled", "")); err == nil {
 		t.Fatal("unselected skill accepted")
