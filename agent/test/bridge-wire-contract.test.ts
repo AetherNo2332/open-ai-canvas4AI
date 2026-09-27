@@ -73,7 +73,7 @@ function callFromModel(id: string, name: string): PiToolCall {
 // this test emits that Go does not declare rejects the WHOLE batch with an empty
 // 400 — which used to strand every tool-using run in `running` forever.
 test("startToolBatch emits exactly the keys the Go wire contract declares", async () => {
-  const request = await captureBody((bridge) => bridge.startToolBatch(run, [callFromModel("call_1", "agent_tools_control")], undefined));
+  const request = await captureBody((bridge) => bridge.startToolBatch(run, [callFromModel("call_1", "canvas_get_state")], undefined));
 
   assert.equal(request.method, "POST");
   assert.equal(request.url, "http://backend:8080/internal-agent/runs/run-wire/tool-batches");
@@ -102,13 +102,13 @@ test("startToolBatch forwards thoughtSignature when the upstream provides one", 
 });
 
 /** Run one bridge call against a fixed HTTP status. */
-async function statusError(status: number): Promise<Error> {
+async function statusError(status: number, body = "{}"): Promise<Error> {
   const original = globalThis.fetch;
-  globalThis.fetch = (async () => new Response("{}", { status })) as typeof fetch;
+  globalThis.fetch = (async () => new Response(body, { status, headers: { "Content-Type": "application/json" } })) as typeof fetch;
   try {
     await new CanvasBridge("http://backend:8080", "token", "worker-1").startToolBatch(
       run,
-      [callFromModel("call_3", "agent_tools_control")],
+      [callFromModel("call_3", "canvas_get_state")],
       undefined,
     );
   } catch (error) {
@@ -129,6 +129,12 @@ test("deterministic 4xx responses are fatal, so the run is reported as failed in
     assert.equal(error.name, "FatalWorkerError", `HTTP ${status} must be fatal`);
     assert.match(error.message, new RegExp(`HTTP ${status}`));
   }
+});
+
+test("bridge fatal errors retain only the server's public message for diagnosis", async () => {
+  const error = await statusError(403, JSON.stringify({ code: 403, data: null, msg: "Agent 尚有未完成的模型或工具步骤" }));
+  assert.equal(error.name, "FatalWorkerError");
+  assert.match(error.message, /Agent 尚有未完成的模型或工具步骤/);
 });
 
 test("transient responses stay retryable", async () => {

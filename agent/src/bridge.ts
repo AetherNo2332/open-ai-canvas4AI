@@ -253,7 +253,16 @@ export class CanvasBridge {
       method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal,
     });
     if (!response.ok) {
-      const detail = `Canvas bridge HTTP ${response.status} on ${method} ${path}`;
+      let publicMessage = "";
+      try {
+        const envelope: unknown = await response.clone().json();
+        if (envelope && typeof envelope === "object" && "msg" in envelope && typeof envelope.msg === "string") {
+          publicMessage = envelope.msg.replace(/[\r\n\t]+/g, " ").trim().slice(0, 240);
+        }
+      } catch {
+        // Keep the status and route when the server returns an empty or non-JSON error.
+      }
+      const detail = `Canvas bridge HTTP ${response.status} on ${method} ${path}${publicMessage ? `: ${publicMessage}` : ""}`;
       // 确定性错误必须标成致命：server.ts 只对 FatalWorkerError 调 failRun，
       // 否则运行既不会失败也不会被看门狗回收，只会无限重试。
       if (NON_RETRYABLE_BRIDGE_STATUSES.has(response.status)) throw new FatalWorkerError(detail);
