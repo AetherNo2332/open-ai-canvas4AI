@@ -201,6 +201,10 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 			if task.Status != model.TaskStatusSucceeded {
 				return BadAuthRequest("模型任务尚未成功")
 			}
+			// Context pressure for the next Pi step must use the upstream-reported
+			// usage of this completed step when available. Read through this same
+			// transaction so the usage anchor and assistant checkpoint commit together.
+			s.recordCloudAgentTokenAnchorWithRepository(repo, userID, &state)
 			state.ActiveTaskID = ""
 		}
 		if err := cloudAgentSave(current, &state); err != nil {
@@ -637,7 +641,8 @@ func (s *Service) PiModelStepAck(userID, runID, owner, taskID string) error {
 	if !cloudAgentTaskTerminal(task.Status) {
 		return BadAuthRequest("模型任务尚未结束")
 	}
-	return s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+	return s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
+		s.recordCloudAgentTokenAnchorWithRepository(repo, userID, &state)
 		state.ActiveTaskID = ""
 		return cloudAgentSave(current, &state)
 	})
