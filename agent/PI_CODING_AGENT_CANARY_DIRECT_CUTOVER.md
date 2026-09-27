@@ -15,8 +15,8 @@ Canary 只保留一个 Agent 会话与事件循环：锁定的 `@earendil-works/
 | 事实 | 当前判断 | 对路线的影响 |
 | --- | --- | --- |
 | Go 定时旧调度入口不再启动；`cloud_agent_runtime.go` 仍定义 `advanceCloudAgentByID`、`advanceCloudAgent`、`advanceCloudAgentReadBatch`。当前 `rg` 在 backend/internal 得到 27 个文件、95 处匹配（含注释与定义） | **路由已硬切，旧循环尚未清掉** | 迁移旧循环承担的业务职责和测试断言，再移除旧编排；逐函数去向见 C0 去向表 |
-| Node `runner.ts` 生产使用锁定的 `createAgentSession`，以 Go 持久层返回的 conversation 级 Pi session ID、header 和 entry 树重建 Pi v3 会话；Node 测试现为 56 个 | **会话持久化已有代码与 SQLite 专项测试** | Go 有 owner/conversation 唯一约束、entry 追加、active leaf/revision CAS 与 session lease/epoch；operation ledger 和旧 canonical 历史导入仍缺 |
-| `server.ts` 单 `while` 串行等待一条 run；审批/媒体 pending 会占住执行槽 | **多用户吞吐与唤醒未恢复** | 后续采用有界并发、持久挂起与可恢复唤醒，不能靠无限轮询 |
+| Node `runner.ts` 生产使用锁定的 `createAgentSession`，以 Go 持久层返回的 conversation 级 Pi session ID、header 和 entry 树重建 Pi v3 会话；Node 测试现为 59 个 | **会话持久化已有代码与 SQLite 专项测试** | Go 有 owner/conversation 唯一约束、entry 追加、active leaf/revision CAS 与 session lease/epoch；operation ledger 和旧 canonical 历史导入仍缺 |
+| `server.ts` 已改为有界 worker pool：默认 4 条独立领取循环，可配置 `CANVAS_AGENT_CONCURRENCY`（1–16）；Compose 默认传 4 | **不同 Pi session 可并行执行** | 同一 conversation 仍由 Go session lease/epoch 串行化；审批/媒体 pending 仍占住一个 worker，持久挂起与释放执行槽尚未实现 |
 | Go 合同 v2、`awaiting_first_step`、快照、`holding` 预留、Harness 正文/哈希/策略/schema 身份冻结与首步事务换单均已实现 | **首步账务与快照有 SQLite 专项验收** | 当前定向 Go 测试通过；跨进程、PostgreSQL 与崩溃窗口仍未验证 |
 | `PiModelStep` 曾只核对 system 包含服务端策略、披露工具名称；`harnessHash` 主要挡漂移 | **策略与 schema 身份已闭合** | 现在比对：策略正文身份（快照哈希）、Harness 正文与哈希（Go 复算）、装配后系统提示身份、同名工具**参数结构**。剩余：版本化段落的全量等价、SDK 版本声明 |
 | 内部请求携带 wire/SDK/session 格式版本身份并由 Go 做版本门；Pi v3 entry 树已落 Go 会话表 | **协议版本身份有了，协议合同仍不完整** | 逐端点 JSON Schema、能力协商、统一 operationId/参数哈希/revision 错误 DTO 和完整双侧 fixtures 仍未完成 |
@@ -30,6 +30,14 @@ Canary 只保留一个 Agent 会话与事件循环：锁定的 `@earendil-works/
 - Go：在 `open-ai-canvas-backend-test:sticky-tools` 容器内，`go test ./internal/app ./internal/repository ./internal/database -count=1 -timeout 300s -run 'TestPi|TestCloudAgentHarnessBodyDigest|TestCloudAgentPreflight'` 通过；`internal/app` 用时 155.339s，repository 与 database 也通过。
 - 完整 `internal/app` 测试套件此前一次运行在 600s 超时，卡在 `TestBannerAnnouncementTitleRunsWithEmoji` 的插件文件 `fsync` 路径；不能据此宣称全量 Go 测试通过。
 - 当前 HEAD 仍为 `31157460`，本轮没有推送、部署或检查 3000 容器。定向测试不是跨进程、浏览器或 PostgreSQL 验收。
+
+### 23:24 并发 worker 增量
+
+- `agent/src/worker-pool.ts` 为每个 worker 创建独立身份和 claim loop；`CANVAS_AGENT_CONCURRENCY` 接受 1–16，缺省为 4。Compose 配置解析确认 `agent` 服务的值为 `4`。
+- Node 全套更新为 **59/59 PASS**，包含两条不同 run 同时进入执行段、致命协议/配置错误仍上报 Go 的行为测试。
+- Go `TestSettleBillingOrderIsExactlyOnceUnderConcurrentSettlement` 与 `TestPiSession` 仓储用例通过；验证并发结算闸门和 session 写入 CAS。
+- 此改动只并行不同 worker；审批/媒体 pending 仍会占住一个 worker，尚未实现挂起/唤醒调度，也未做压力或跨进程测量。
+- 代码已提交为 `ebe0bc39`（`feat(agent): run bounded concurrent Pi workers`）；尚未部署或启动容器。
 
 ## 三、账号、会话与运行的持久化模型
 

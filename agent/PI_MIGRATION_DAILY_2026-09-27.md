@@ -211,3 +211,14 @@ worker stderr 为 `server snapshot has tools missing from cloud-agent-tools/v2: 
 - 旧 Go 编排仍未删除：三个主要定义仍在，`backend/internal` 范围 `rg` 命中 27 个文件、95 处（包含注释与定义）。Pi session operation ledger、旧 canonical 对话历史导入、Web 会话列表、PostgreSQL 与跨进程/浏览器验收尚未完成。
 - `server.ts` 仍串行领取和等待；审批/媒体等待会占据 worker。生产 runner 还未把 Go 结构化语义压缩接到 Pi `session_before_compact`，Pi 生命周期探针通过不等于生产压缩接通。
 - 完整 `internal/app` 套件此前运行到 600s 超时，卡在 `TestBannerAnnouncementTitleRunsWithEmoji` 的插件文件 `fsync` 路径；本轮只确认上述定向 Go 用例，不宣称全量套件通过。
+
+---
+
+## 十、并行执行切片（2026-09-27 23:24 Asia/Shanghai）
+
+已将 Pi agent 服务从单一 claim loop 改为有界 worker pool，并提交 `ebe0bc39`（`feat(agent): run bounded concurrent Pi workers`）。每个 worker 使用独立 worker ID 和 Go claim 请求；默认并发 4，可通过 `CANVAS_AGENT_CONCURRENCY` 配置 1–16。Compose 配置解析出 `agent` 服务并确认并发值为 4。
+
+- `node node_modules/typescript/bin/tsc -p tsconfig.json` 通过；Node 全套测试更新为 **59/59 PASS**，覆盖独立 run 并发执行及确定性错误上报。
+- 容器内 Go `TestSettleBillingOrderIsExactlyOnceUnderConcurrentSettlement` 与 `TestPiSession` 仓储用例通过；Compose `config --services` 通过。
+- 不同 conversation 可占用不同 worker 同时执行；同一 conversation 的写入仍由 Go session lease/epoch 串行化。
+- 审批/媒体等待仍会占据单个 worker，未实现持久挂起后释放槽位；没有做压力测试、PostgreSQL 测试、跨进程恢复或实际部署。
