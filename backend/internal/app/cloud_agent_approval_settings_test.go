@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func TestCloudAgentMediaReadHashSurvivesMoveBeforeDraft(t *testing.T) {
@@ -252,6 +253,7 @@ func TestCloudAgentConversationKeepsRecentRounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	parent := ""
+	activeLeaf := ""
 	for round := 0; round < 15; round++ {
 		req := agentTestRequest()
 		req.IdempotencyKey = fmt.Sprintf("long-conversation-%d", round)
@@ -271,16 +273,67 @@ func TestCloudAgentConversationKeepsRecentRounds(t *testing.T) {
 		if len(state.TextHistory) != want {
 			t.Fatalf("history window at round %d: got %d want %d", round, len(state.TextHistory), want)
 		}
-		if err := db.Model(&model.Task{}).Where("id = ?", run.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": `{"text":"继续创作"}`}).Error; err != nil {
+		claimed, err := s.ClaimPiAgent(fmt.Sprintf("history-worker-%d", round))
+		if err != nil || claimed == nil || claimed.RunID != run.ID {
+			t.Fatalf("Pi run %d was not claimed: snapshot=%#v error=%v", round, claimed, err)
+		}
+		leased, err := s.repo.CloudAgent("user", run.ID)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
-			t.Fatal(err)
+		for index, role := range []string{"user", "assistant"} {
+			id := fmt.Sprintf("round-%02d-%s", round, role)
+			messageText := req.Prompt
+			if role == "assistant" {
+				messageText = "继续创作"
+			}
+			message, _ := json.Marshal(map[string]any{"role": role, "content": messageText, "timestamp": round*2 + index + 1})
+			parentEntry := activeLeaf
+			var parentValue any
+			if parentEntry != "" {
+				parentValue = parentEntry
+			}
+			entry, _ := json.Marshal(map[string]any{
+				"type": "message", "id": id, "parentId": parentValue,
+				"timestamp": fmt.Sprintf("2026-09-28T00:%02d:%02dZ", round, index), "message": json.RawMessage(message),
+			})
+			session, _, err := s.repo.CloudAgentPiSession("user", execution.ConversationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision, err := s.PiCheckpointMessageResult("user", run.ID, leased.LeaseOwner, PiMessageCheckpoint{
+				Sequence: index + 1, Message: message, SessionRevision: session.Revision,
+				ActiveLeafID: id, SessionEntries: []json.RawMessage{entry},
+			})
+			if err != nil {
+				t.Fatalf("Pi message checkpoint %s failed: %v", id, err)
+			}
+			activeLeaf = id
+			if revision != session.Revision+1 {
+				t.Fatalf("Pi session revision after %s = %d, want %d", id, revision, session.Revision+1)
+			}
+			leased, err = s.repo.CloudAgent("user", run.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.repo.MutateCloudAgent("user", run.ID, leased.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			current.Status = "completed"
+			return nil
+		}); err != nil {
+			t.Fatalf("complete Pi conversation round %d: %v", round, err)
 		}
 		parent = run.ID
 	}
 	run, _ := s.repo.CloudAgent("user", parent)
 	state, _ := cloudAgentDecode(run)
+	_, entries, err := s.repo.CloudAgentPiSession("user", run.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 30 {
+		t.Fatalf("durable Pi conversation entries = %d, want 30", len(entries))
+	}
 	for i := range state.TextHistory {
 		state.TextHistory[i].Content = strings.Repeat("x", 4000)
 	}
