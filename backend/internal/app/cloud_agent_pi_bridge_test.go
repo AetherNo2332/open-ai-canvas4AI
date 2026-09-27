@@ -101,6 +101,40 @@ func TestPiAgentSnapshotCarriesGoResolvedModelLimits(t *testing.T) {
 	}
 }
 
+func TestPiModelStepFailsBeforeCreatingTaskAtStepBudget(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.Request.Budget.MaxSteps = 1
+		state.Step = 1 // The initial model call consumed the run's only allowed step.
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leased, state := reloadPiRun(t, s, run.ID)
+	request, _ := piFirstStepRequest(state)
+	var tasksBefore, tasksAfter int64
+	if err := db.Model(&model.Task{}).Where("user_id = ?", "user").Count(&tasksBefore).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PiModelStep("user", run.ID, leased.LeaseOwner, request); err == nil {
+		t.Fatal("Pi 模型步骤在预算耗尽后仍被接受")
+	}
+	failed, _ := reloadPiRun(t, s, run.ID)
+	if failed.Status != "failed" || !failed.CleanupPending {
+		t.Fatalf("预算耗尽必须落为可清理的失败终态：status=%q cleanup=%v", failed.Status, failed.CleanupPending)
+	}
+	if err := db.Model(&model.Task{}).Where("user_id = ?", "user").Count(&tasksAfter).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tasksAfter != tasksBefore {
+		t.Fatalf("预算耗尽仍创建了模型任务：%d -> %d", tasksBefore, tasksAfter)
+	}
+}
+
 func TestPiAgentSnapshotCarriesPendingContextCompactionForRestart(t *testing.T) {
 	s, _, leased := piAgentTestLeasedFixture(t)
 	const operationID = "pi-compact-restart"

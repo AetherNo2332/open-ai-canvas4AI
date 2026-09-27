@@ -434,6 +434,13 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	if run.Status != "running" && run.Status != "queued" {
 		return nil, kernel.Forbidden("Agent 当前状态不允许继续请求模型")
 	}
+	if cloudAgentStepBudgetExhausted(&state) {
+		message := fmt.Sprintf("达到 %d 次模型调用上限，本轮已停止", cloudAgentStepLimit(state.Request))
+		if err := s.failCloudAgent(run, &state, message); err != nil {
+			return nil, err
+		}
+		return nil, kernel.Forbidden(message)
+	}
 	if len(request.Canonical.Messages) == 0 || len(request.Canonical.Messages) > 500 || len(request.Canonical.SystemPrompt) > 128<<10 {
 		return nil, BadAuthRequest("Pi 模型上下文无效")
 	}
