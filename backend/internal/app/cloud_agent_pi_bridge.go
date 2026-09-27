@@ -28,32 +28,53 @@ type PiAgentToolSpec struct {
 	Allowed     bool           `json:"allowed"`
 }
 
+type PiPendingContextCompaction struct {
+	OperationID     string `json:"operationId"`
+	SessionRevision int64  `json:"sessionRevision"`
+	ActiveLeafID    string `json:"activeLeafId"`
+	Reason          string `json:"reason"`
+	WillRetry       bool   `json:"willRetry"`
+	TokensBefore    int    `json:"tokensBefore"`
+}
+
 type PiAgentSnapshot struct {
-	RunID                string                `json:"runId"`
-	PiSessionID          string                `json:"piSessionId"`
-	PiSessionRevision    int64                 `json:"piSessionRevision"`
-	PiSessionLeaseEpoch  int64                 `json:"piSessionLeaseEpoch"`
-	PiSessionHeader      json.RawMessage       `json:"piSessionHeader"`
-	PiSessionEntries     []PiAgentSessionEntry `json:"piSessionEntries"`
-	PiActiveLeafID       string                `json:"piActiveLeafId,omitempty"`
-	UserID               string                `json:"userId"`
-	Revision             int64                 `json:"revision"`
-	Status               string                `json:"status"`
-	Request              CloudAgentRequest     `json:"request"`
-	Canonical            canonicalAgentRequest `json:"canonical"`
-	ActiveTask           string                `json:"activeTaskId,omitempty"`
-	LastTaskID           string                `json:"lastTaskId,omitempty"`
-	NoToolTaskID         string                `json:"noToolTaskId,omitempty"`
-	NoToolNudge          string                `json:"noToolNudge,omitempty"`
-	PreviousStepTemplate string                `json:"previousStepTemplate"`
-	Tools                []PiAgentToolSpec     `json:"tools"`
-	PiMessages           []json.RawMessage     `json:"piMessages"`
-	Opened               []string              `json:"openedCategories"`
+	RunID                    string                      `json:"runId"`
+	PiSessionID              string                      `json:"piSessionId"`
+	PiSessionRevision        int64                       `json:"piSessionRevision"`
+	PiSessionLeaseEpoch      int64                       `json:"piSessionLeaseEpoch"`
+	PiSessionHeader          json.RawMessage             `json:"piSessionHeader"`
+	PiSessionEntries         []PiAgentSessionEntry       `json:"piSessionEntries"`
+	PiActiveLeafID           string                      `json:"piActiveLeafId,omitempty"`
+	UserID                   string                      `json:"userId"`
+	Revision                 int64                       `json:"revision"`
+	Status                   string                      `json:"status"`
+	Request                  CloudAgentRequest           `json:"request"`
+	ModelLimits              PiAgentModelLimits          `json:"modelLimits"`
+	Canonical                canonicalAgentRequest       `json:"canonical"`
+	ActiveTask               string                      `json:"activeTaskId,omitempty"`
+	LastTaskID               string                      `json:"lastTaskId,omitempty"`
+	NoToolTaskID             string                      `json:"noToolTaskId,omitempty"`
+	NoToolNudge              string                      `json:"noToolNudge,omitempty"`
+	PendingContextCompaction *PiPendingContextCompaction `json:"pendingContextCompaction,omitempty"`
+	PreviousStepTemplate     string                      `json:"previousStepTemplate"`
+	Tools                    []PiAgentToolSpec           `json:"tools"`
+	PiMessages               []json.RawMessage           `json:"piMessages"`
+	Opened                   []string                    `json:"openedCategories"`
 	// Harness 是首步合同冻结的 Harness 正文（版本 2 运行在首步之后非空）。
 	//
 	// Node 恢复时优先用它而不是重读磁盘文件：运维改了 SYSTEM.md / AGENTS.md 再重启进程，
 	// 在途运行的系统提示不能被静默换成新文件内容。
 	Harness *cloudAgentHarnessSnapshot `json:"harness,omitempty"`
+}
+
+// PiAgentModelLimits mirrors the effective Go-side text capability into Pi's
+// scheduler. Go remains authoritative for request admission and billing; these
+// values keep Pi's automatic compaction threshold close to the route budget.
+type PiAgentModelLimits struct {
+	ContextWindowTokens int    `json:"contextWindowTokens"`
+	MaxOutputTokens     int    `json:"maxOutputTokens"`
+	Configured          bool   `json:"configured"`
+	Source              string `json:"source"`
 }
 
 type PiAgentSessionEntry struct {
@@ -829,6 +850,7 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 	if err != nil {
 		return nil, err
 	}
+	budget := s.cloudAgentContextBudgetForRequest(state.Request)
 	tools := make([]PiAgentToolSpec, 0, len(state.Canonical.Tools))
 	for _, item := range state.Canonical.Tools {
 		function, _ := item["function"].(map[string]any)
@@ -850,11 +872,19 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 	for _, entry := range sessionEntries {
 		entryViews = append(entryViews, PiAgentSessionEntry{RunID: entry.RunID, Entry: json.RawMessage(entry.EntryJSON)})
 	}
+	var pendingCompaction *PiPendingContextCompaction
+	if compaction := state.ContextCompaction; compaction != nil && compaction.PiOperationID != "" {
+		pendingCompaction = &PiPendingContextCompaction{
+			OperationID: compaction.PiOperationID, SessionRevision: compaction.PiSessionRevision,
+			ActiveLeafID: compaction.PiSourceLeafID, Reason: compaction.PiReason,
+			WillRetry: compaction.PiWillRetry, TokensBefore: compaction.PiTokensBefore,
+		}
+	}
 	return &PiAgentSnapshot{
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,
-		Request: state.Request, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
+		Request: state.Request, ModelLimits: PiAgentModelLimits{ContextWindowTokens: budget.ContextWindowTokens, MaxOutputTokens: budget.MaxOutputTokens, Configured: budget.Configured, Source: budget.Source}, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。
 		Harness: cloudAgentFrozenHarness(state.Snapshot),

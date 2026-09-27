@@ -1,49 +1,306 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import type { CanvasBridge, PiCanonical, PiSnapshot, PiToolCall } from "../src/bridge.js";
-import { runCanvasAgent } from "../src/runner.js";
+import type { CanvasModelResult } from "../src/pi-stream.js";
+import type { CanvasToolSpec } from "../src/tool-disclosure.js";
+import { assembleSystemPrompt, canvasModel, runCanvasAgent } from "../src/runner.js";
+import type { PromptParts } from "../src/system-prompt.js";
+import { sessionEntriesFromMessages } from "../src/session-tools.js";
 
-const schema = { type: "object", properties: {}, required: [], additionalProperties: false };
-const initial: PiSnapshot = {
-  runId: "run-1", userId: "user-1", revision: 1, status: "running",
-  request: { prompt: "Inspect", model: "test" },
-  canonical: { systemPrompt: "Canvas assistant", messages: [{ role: "user", content: "Inspect" }],
-    tools: [], toolChoice: "auto" },
-  tools: [
-    { name: "agent_tools_canvas_read", description: "Open read", parameters: schema, allowed: true },
-    { name: "canvas_get_state", description: "Read state", category: "agent_tools_canvas_read", parameters: schema, allowed: true },
-  ],
-};
+const objectSchema = { type: "object", properties: {}, required: [], additionalProperties: false };
+const tools: CanvasToolSpec[] = [
+  { name: "agent_tools_canvas_read", description: "Read the canvas", parameters: objectSchema, allowed: true },
+  { name: "canvas_get_state", category: "agent_tools_canvas_read", description: "Get state", parameters: objectSchema, allowed: true },
+];
 
-test("leased Pi run persists messages and executes a disclosed child in order", async () => {
-  const batches: string[][] = [];
-  const checkpoints: string[] = [];
-  const visible: string[][] = [];
-  let step = 0;
-  let status = "running";
+function promptParts(): PromptParts {
+  return { system: "House style: reply in Chinese.", appendSystem: undefined,
+    context: [{ name: "AGENT_HARNESS.md", text: "Harness rules: never invent ids." }] };
+}
+
+interface FakeState {
+  steps: number;
+  checkpoints: { sequence: number; role: string; taskId?: string; text: string }[];
+  batches: PiToolCall[][];
+  executions: string[];
+  /**
+   * ops 把检查点、批次准入与工具执行按**真实先后**记在同一个数组里。
+   *
+   * 分开的数组只能证明"都发生过"，证明不了顺序；而"assistant 检查点先于批次准入"正是
+   * Go 侧用 ActiveTaskID 校验的顺序合同，必须能在这里断言。
+   */
+  ops: string[];
+  canonical: PiCanonical[];
+  status: string;
+  noToolTurns: string[];
+  contextCompactions: string[];
+}
+
+/** 假 Go Bridge：只保留跨进程合同的可见行为（模型步骤、检查点、批次、回执、终态）。 */
+function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResult>))[], options: {
+  status?: string; failCheckpoint?: boolean; receiptText?: string;
+  pendingContextCompaction?: PiSnapshot["pendingContextCompaction"];
+  piSessionEntries?: PiSnapshot["piSessionEntries"];
+  piActiveLeafId?: string;
+  firstKeptEntryId?: string;
+} = {}): { bridge: CanvasBridge; state: FakeState; snapshot: PiSnapshot } {
+  const state: FakeState = { steps: 0, checkpoints: [], batches: [], executions: [], ops: [],
+    canonical: [], status: options.status || "running", noToolTurns: [], contextCompactions: [] };
+  const pending = [...replies];
+  const snapshot: PiSnapshot = {
+    runId: "run-1", userId: "user-1", revision: 1, status: "running",
+    request: { prompt: "请给主角换一身衣服", model: "canvas-model", channelModelKey: "canvas-model" },
+    modelLimits: { contextWindowTokens: 64_000, maxOutputTokens: 8_192, configured: true, source: "channel-model" },
+    canonical: { systemPrompt: "SERVER POLICY: 影策画布助手。", messages: [{ role: "user", content: "请给主角换一身衣服" }],
+      tools: [], toolChoice: "auto" },
+    tools, piMessages: [],
+  };
+  if (options.pendingContextCompaction) snapshot.pendingContextCompaction = options.pendingContextCompaction;
+  if (options.piSessionEntries) snapshot.piSessionEntries = options.piSessionEntries;
+  if (options.piActiveLeafId) snapshot.piActiveLeafId = options.piActiveLeafId;
   const bridge = {
+    async modelStep(_run: PiSnapshot, canonical: PiCanonical, signal?: AbortSignal, onTextDelta?: (delta: string) => void,
+      harnessHash?: string, harness?: PromptParts) {
+      void onTextDelta;
+      state.steps += 1;
+      state.canonical.push(canonical);
+      const next = pending.shift();
+      if (!next) throw new Error("unexpected extra model step");
+      if (typeof next === "function") return { taskId: `task-${state.steps}`, result: await next() };
+      // 服务端会在首个模型步固化提示合同；这里断言 runner 确实提交了正文与哈希。
+      if (state.steps === 1) {
+        assert.ok(harnessHash, "首个模型步必须带提示合同哈希");
+        assert.ok(harness && assembleSystemPrompt(harness, "SERVER POLICY: 影策画布助手。").includes("Harness rules"));
+      }
+      return { taskId: `task-${state.steps}`, result: next };
+    },
     async checkpoint(_run: PiSnapshot, sequence: number, message: Record<string, unknown>, taskId?: string) {
-      assert.equal(sequence, checkpoints.length + 1);
-      checkpoints.push(`${message.role}:${taskId || ""}`);
+      if (options.failCheckpoint) throw new Error("injected checkpoint failure");
+      const content = message.content;
+      const text = typeof content === "string" ? content
+        : Array.isArray(content) ? content.map((part: any) => part?.text ?? "").join("") : "";
+      state.checkpoints.push({ sequence, role: String(message.role), taskId, text });
+      state.ops.push(`checkpoint:${String(message.role)}`);
+      if (taskId) snapshot.activeTaskId = undefined;
     },
-    async modelStep(_run: PiSnapshot, canonical: PiCanonical) {
-      visible.push(canonical.tools.map((tool) => String((tool.function as Record<string, unknown>).name)));
-      step++;
-      if (step === 1) return { taskId: "task-1", result: { toolCalls: [{ id: "call-1", function: { name: "agent_tools_canvas_read", arguments: "{}" } }] } };
-      if (step === 2) return { taskId: "task-2", result: { toolCalls: [{ id: "call-2", function: { name: "canvas_get_state", arguments: "{}" } }] } };
-      return { taskId: "task-3", result: { text: "Finished" } };
+    async startToolBatch(_run: PiSnapshot, calls: PiToolCall[]) {
+      state.batches.push(calls);
+      state.ops.push("batch");
+      snapshot.activeTaskId = undefined;
+      snapshot.lastTaskId = `task-${state.steps}`;
     },
-    async startToolBatch(_run: PiSnapshot, calls: PiToolCall[]) { batches.push(calls.map((call) => call.function.name)); },
-    async executeTool(_run: PiSnapshot, callId: string) { return { callId, pending: false, result: { ok: true } }; },
-    async noToolTurn() { status = "completed"; return { status }; },
-    async snapshot(run: PiSnapshot) { return { ...run, status }; },
+    async executeTool(_run: PiSnapshot, callId: string) {
+      state.executions.push(callId);
+      state.ops.push(`execute:${callId}`);
+      return { callId, pending: false, result: options.receiptText ?? "已写入画布" };
+    },
+    async snapshot() { return { ...snapshot, status: state.status, activeTaskId: undefined,
+      canonical: { ...snapshot.canonical, messages: [...snapshot.canonical.messages] } }; },
     async renew() {},
+    async noToolTurn(_run: PiSnapshot, taskId: string) {
+      state.noToolTurns.push(taskId);
+      state.status = "completed";
+      snapshot.status = "completed";
+      return { status: "completed" };
+    },
+    async compactContext() { throw new Error("recovery must not start another compaction task"); },
+    async resumeContextCompaction(_run: PiSnapshot, operationId: string) {
+      state.contextCompactions.push(`resume:${operationId}`);
+      return { operationId, status: "succeeded", summary: "<agent-context-checkpoint/>",
+        firstKeptEntryId: options.firstKeptEntryId, tokensBefore: 40_000,
+        details: { protocolVersion: "canvas-pi-compaction/v1", operationId } };
+    },
+    async commitContextCompaction(_run: PiSnapshot, operationId: string, revision: number, entry: Record<string, unknown>) {
+      state.contextCompactions.push(`commit:${operationId}:${revision}`);
+      snapshot.pendingContextCompaction = undefined;
+      snapshot.piSessionRevision = revision + 1;
+      snapshot.piActiveLeafId = String(entry.id || "");
+      return { committed: true, sessionRevision: revision + 1 };
+    },
+    async failRun() {},
   } as unknown as CanvasBridge;
-  await runCanvasAgent(bridge, structuredClone(initial));
-  assert.deepEqual(batches, [["agent_tools_canvas_read"], ["canvas_get_state"]]);
-  assert.ok(visible[0]?.includes("agent_tools_canvas_read"));
-  assert.equal(visible[0]?.includes("canvas_get_state"), false);
-  assert.ok(visible[1]?.includes("canvas_get_state"));
-  assert.ok(checkpoints.includes("assistant:task-1"));
-  assert.ok(checkpoints.includes("assistant:task-3"));
+  return { bridge, state, snapshot };
+}
+
+test("首个 system 由服务端策略与 Harness 正文组成，模型只看到画布工具", async () => {
+  const { bridge, state } = fakeBridge([{ text: "好" }]);
+  await runCanvasAgent(bridge, snapshotFor(), undefined, promptParts());
+  const canonical = state.canonical[0];
+  assert.ok(canonical, "必须发出模型请求");
+  // 系统提示 = 服务端策略 + 仓库 Harness，且策略在前（服务端强制层不可被覆盖）。
+  assert.ok(canonical.systemPrompt.startsWith("SERVER POLICY: 影策画布助手。"), canonical.systemPrompt);
+  assert.ok(canonical.systemPrompt.includes("House style: reply in Chinese."));
+  assert.ok(canonical.systemPrompt.includes("Harness rules: never invent ids."));
+  // 工具声明只含画布工具：不能把 Pi 默认 coding 工具带给上游。
+  const names = canonical.tools.map((tool) => (tool.function as { name: string }).name);
+  assert.deepEqual(names.sort(), ["agent_tools_canvas_read"]);
+  for (const forbidden of ["read", "write", "edit", "bash", "grep", "find", "ls", "powershell"]) {
+    assert.equal(names.includes(forbidden), false, `默认工具 ${forbidden} 不该出现在模型请求里`);
+  }
+  // 用户消息必须是 canonical 里的原话，不能被拼进系统提示。
+  assert.equal(canonical.messages.at(-1)?.content, "请给主角换一身衣服");
+});
+
+test("模型在没有工具调用时收尾：由 Go 判定完成，且助手正文落库一次", async () => {
+  const { bridge, state } = fakeBridge([{ text: "已经换好衣服了" }]);
+  await runCanvasAgent(bridge, snapshotFor(), undefined, promptParts());
+  assert.equal(state.steps, 1);
+  assert.deepEqual(state.noToolTurns, ["task-1"]);
+  const assistant = state.checkpoints.filter((item) => item.role === "assistant");
+  assert.equal(assistant.length, 1);
+  assert.equal(assistant[0]?.taskId, "task-1");
+  assert.match(assistant[0]?.text || "", /已经换好衣服了/);
+});
+
+test("未披露的工具调用整批拒绝：不产生工具批次，也不执行画布副作用", async () => {
+  const { bridge, state } = fakeBridge([
+    { toolCalls: [{ id: "call-1", function: { name: "canvas_apply_ops", arguments: "{}" } }] },
+    { text: "那我换个做法" },
+  ]);
+  await runCanvasAgent(bridge, snapshotFor(), undefined, promptParts());
+  assert.deepEqual(state.batches, []);
+  assert.deepEqual(state.executions, []);
+  // 拒绝必须被模型看到：它应当拿到一条错误工具结果，而不是静默继续。
+  const second = state.canonical[1];
+  assert.ok(second, "拒绝之后仍要有一次模型请求");
+  const toolMessages = second!.messages.filter((message) => message.role === "tool");
+  assert.equal(toolMessages.length, 1);
+});
+
+test("已披露工具的批次准入先于执行，回执进入下一次模型请求", async () => {
+  const { bridge, state } = fakeBridge([
+    { toolCalls: [{ id: "call-1", function: { name: "agent_tools_canvas_read", arguments: "{}" } }] },
+    { text: "读完了" },
+  ], { receiptText: "画布上有 3 个节点" });
+  await runCanvasAgent(bridge, snapshotFor(), undefined, promptParts());
+  assert.equal(state.batches.length, 1);
+  assert.deepEqual(state.executions, ["call-1"]);
+  // 顺序合同：assistant 检查点在批次准入之前（Go 用 ActiveTaskID 校验这一点）。
+  //
+  // 不再断言它"是第一条检查点"：会话引导阶段会先提交 system 与 user 两条消息
+  // （createAgentSession 的初始条目），那是 SDK 会话的正常形状。这里要守的是**先后**，
+  // 不是"一共几条" —— 用 ops 判定，避免把引导检查点误当成契约破坏。
+  const assistantAt = state.ops.indexOf("checkpoint:assistant");
+  const batchAt = state.ops.indexOf("batch");
+  assert.ok(assistantAt >= 0, `必须有 assistant 检查点: ${state.ops.join(" → ")}`);
+  assert.ok(batchAt > assistantAt, `assistant 检查点必须先于批次准入: ${state.ops.join(" → ")}`);
+  const second = state.canonical[1];
+  const toolMessage = second!.messages.find((message) => message.role === "tool");
+  assert.ok(toolMessage, "工具回执必须回到模型上下文");
+  assert.equal(toolMessage.content, "画布上有 3 个节点");
+});
+
+test("模型步骤失败不会被记成一次失败回答", async () => {
+  const { bridge, state } = fakeBridge([() => Promise.reject(new Error("upstream exploded"))]);
+  await runCanvasAgent(bridge, snapshotFor(), undefined, promptParts()).catch(() => undefined);
+  // 引导阶段的 system / user 检查点是会话形状，不是"回答"；这里守的是**没有 assistant 记录**，
+  // 否则一次失败的上游调用会在历史里留下一条看似正常的助手消息。
+  assert.equal(state.checkpoints.some((item) => item.role === "assistant"), false,
+    `失败步骤不得留下 assistant 检查点: ${JSON.stringify(state.checkpoints)}`);
+  assert.deepEqual(state.batches, []);
+});
+
+test("检查点持久化失败必须抛出，不能把破损运行当成功", async () => {
+  const { bridge } = fakeBridge([{ text: "好的" }], { failCheckpoint: true });
+  await assert.rejects(
+    runCanvasAgent(bridge, snapshotFor(), undefined, promptParts()),
+    /injected checkpoint failure/,
+  );
+});
+
+test("worker restart resumes the existing Go compaction before creating another model step", async () => {
+  const messages: Record<string, unknown>[] = [];
+  for (let turn = 0; turn < 8; turn += 1) {
+    messages.push({ role: "user", content: `canvas facts ${turn} `.repeat(1_500), timestamp: turn * 2 + 1 });
+    messages.push({ role: "assistant", content: `Reviewed canvas facts ${turn}. `.repeat(80), timestamp: turn * 2 + 2 });
+  }
+  messages.push({ role: "user", content: "请给主角换一身衣服", timestamp: 99 });
+  const piMessages = messages.map((message) => message.role === "assistant"
+    ? { ...message, content: [{ type: "text", text: message.content }], api: "canvas-bridge", provider: "canvas",
+      model: "canvas-model", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop" }
+    : { ...message, content: [{ type: "text", text: message.content }] });
+  const sessionEntries = sessionEntriesFromMessages("run-1", piMessages) as unknown as Record<string, unknown>[];
+  const entries = sessionEntries.map((entry) => ({ runId: "run-1", entry })) as unknown as PiSnapshot["piSessionEntries"];
+  const activeLeafId = String(sessionEntries.at(-1)?.id);
+  const firstKeptEntryId = String(sessionEntries[1]?.id);
+  const pendingContextCompaction: NonNullable<PiSnapshot["pendingContextCompaction"]> = {
+    operationId: "op-restart", sessionRevision: 8, activeLeafId,
+    reason: "overflow", willRetry: true, tokensBefore: 40_000,
+  };
+  const { bridge, state, snapshot } = fakeBridge([{ text: "压缩恢复后继续完成。" }], {
+    pendingContextCompaction, piSessionEntries: entries, piActiveLeafId: activeLeafId, firstKeptEntryId,
+  });
+  snapshot.canonical.messages = messages;
+  snapshot.piMessages = [{ role: "user", content: messages.at(-1)?.content }];
+  snapshot.piSessionRevision = 8;
+
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.deepEqual(state.contextCompactions, ["resume:op-restart", "commit:op-restart:8"]);
+  assert.equal(state.steps, 1, `exactly one new model step runs after commit; ${JSON.stringify({ ops: state.ops, noToolTurns: state.noToolTurns, status: state.status })}`);
+  assert.deepEqual(state.noToolTurns, ["task-1"]);
+});
+
+test("取消后不再发起模型请求，运行以取消收场", async () => {
+  const controller = new AbortController();
+  const { bridge, state } = fakeBridge([
+    async () => {
+      controller.abort();
+      await new Promise(() => undefined);
+      return { text: "never" };
+    },
+  ]);
+  const run = runCanvasAgent(bridge, snapshotFor(), controller.signal, promptParts());
+  await Promise.race([run, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  assert.equal(state.steps, 1);
+  assert.deepEqual(state.batches, []);
+});
+
+test("生产 runner 不再手写 new Agent 循环（C1 出口）", () => {
+  // 测试运行的是编译产物（dist/test），源码在仓库的 src/：必须往上两级再进 src，
+  // 否则会去找 dist/src/runner.ts —— 那个文件不存在，断言就变成了 ENOENT 而不是内容检查。
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "runner.ts"), "utf8");
+  assert.equal(/new Agent\s*\(/.test(source), false, "runner.ts 不得再手写 new Agent 循环");
+  // 判据只禁"值导入 Agent 类"：`import type { AgentMessage }` 是正常的类型导入。
+  // 旧写法 /pi-agent-core["'][^)]*Agent/ 里的 `[^)]*` 会跨行匹配，一路扫到别处的
+  // AgentSession，把"已经没有手写循环"判成失败 —— 那是判据的缺陷，不是代码的缺陷。
+  assert.equal(
+    /import\s*\{[^}]*\bAgent\b[^}]*\}\s*from\s*["']@earendil-works\/pi-agent-core["']/.test(source),
+    false,
+    "runner.ts 不得值导入 pi-agent-core 的 Agent（类型导入不受限）",
+  );
+  assert.match(source, /createAgentSession/, "生产 runner 必须走 createAgentSession");
+});
+
+function snapshotFor(): PiSnapshot {
+  return {
+    runId: "run-1", userId: "user-1", revision: 1, status: "running",
+    request: { prompt: "请给主角换一身衣服", model: "canvas-model", channelModelKey: "canvas-model" },
+    modelLimits: { contextWindowTokens: 64_000, maxOutputTokens: 8_192, configured: true, source: "channel-model" },
+    canonical: { systemPrompt: "SERVER POLICY: 影策画布助手。", messages: [{ role: "user", content: "请给主角换一身衣服" }],
+      tools: [], toolChoice: "auto" },
+    tools, piMessages: [],
+  };
+}
+
+test("Pi uses the Go-resolved context window and output limit", () => {
+  const snapshot = snapshotFor();
+  snapshot.modelLimits = { contextWindowTokens: 48_000, maxOutputTokens: 6_000, configured: true, source: "channel-model" };
+  const model = canvasModel(snapshot);
+  assert.equal(model.contextWindow, 48_000);
+  assert.equal(model.maxTokens, 6_000);
+});
+
+test("服务端策略是强制层：工作区文件只能追加，不能顶掉策略", () => {
+  const rendered = assembleSystemPrompt({ system: "Workspace rules", appendSystem: "Append note",
+    context: [{ name: "AGENTS.md", text: "repo rules" }] }, "SERVER POLICY");
+  assert.ok(rendered.startsWith("SERVER POLICY"), rendered);
+  assert.ok(rendered.includes("Workspace rules"));
+  assert.ok(rendered.includes("## Workspace AGENTS.md\nrepo rules"));
+  assert.ok(rendered.includes("Append note"));
+  // 策略前缀为空时才允许 SYSTEM.md 单独充当系统提示（本地调试路径）。
+  assert.equal(assembleSystemPrompt({ system: "Only file", context: [] }, ""), "Only file");
 });
