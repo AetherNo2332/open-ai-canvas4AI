@@ -222,3 +222,13 @@ worker stderr 为 `server snapshot has tools missing from cloud-agent-tools/v2: 
 - 容器内 Go `TestSettleBillingOrderIsExactlyOnceUnderConcurrentSettlement` 与 `TestPiSession` 仓储用例通过；Compose `config --services` 通过。
 - 不同 conversation 可占用不同 worker 同时执行；同一 conversation 的写入仍由 Go session lease/epoch 串行化。
 - 审批/媒体等待仍会占据单个 worker，未实现持久挂起后释放槽位；没有做压力测试、PostgreSQL 测试、跨进程恢复或实际部署。
+
+## 十一、Pi 用量锚点恢复（2026-09-27 23:45 Asia/Shanghai）
+
+提交 `cf0b9207 fix(agent): anchor Pi usage at assistant checkpoint`：Go 在 Pi assistant 消息检查点确认成功模型任务时，从同一数据库事务读取当前用户、该 task、成功 text 调用且供应商明确上报的 usage；可采信的 token anchor 与 assistant transcript/Pi session 检查点一并持久化。上下文压力下一步可使用真实输入用量作为估算锚点。没有上游 usage 时继续使用本地估算。Node 上报的 usage 不参与这个权威读数。
+
+- 新增 `cloud_agent_pi_usage_anchor_test.go`：覆盖 Pi 检查点下成功 usage 入锚、下一步压力读取 provider 锚点、usage 不可用时不造锚；复用了原有按用户、状态、能力、渠道校验的锚点逻辑。
+- 容器内定向 Go 用例通过：`TestPiAssistantCheckpointPersistsProviderUsageAnchor`、`TestPiCheckpointCommitsMessageAndConversationEntryAtomically`、`TestCloudAgentTokenAnchorRequiresProviderReportedUsage`、`TestCloudAgentTokenAnchorOnlyUsesOwnedSuccessfulTextCall`；另单独重跑 Pi 新增用量测试通过。
+- 只读复核确认：Pi 生产 runner 尚无 Go 结构化压缩 hook；Go 压缩任务仍只由已停用的旧循环触发。Pi session v3 活动分支映射、摘要 operation 幂等记录、压缩 entry 即时持久化需要先设计并实现，不能把探针通过算作接通。
+- 仍未迁入 Pi 的旧循环责任包括插话投递、视觉观察账本与部分模型失败/截断重试；旧驱动虽不在生产调度中，但仍有 22 个 Go 测试文件依赖，移除前要迁移其业务断言。
+- 此切片没有做 PostgreSQL、进程崩溃/恢复、真实上游模型或浏览器验收；未部署、未推送。当前工作区仍含先前未提交的迁移改动。
