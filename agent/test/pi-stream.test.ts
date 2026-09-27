@@ -22,7 +22,24 @@ test("bridges a billed model result into Pi tool events", async () => {
   assert.deepEqual(types, ["start", "thinking_start", "thinking_delta", "thinking_end", "text_start", "text_delta", "text_end", "toolcall_start", "toolcall_delta", "toolcall_end", "done"]);
   assert.equal(result.stopReason, "toolUse");
   assert.deepEqual(result.content[2], { type: "toolCall", id: "call-1", name: "canvas_get_state", arguments: { offset: 0 } });
-  assert.equal(result.usage.totalTokens, 15);
+  assert.deepEqual(result.usage, {
+    input: 10, output: 5, cacheRead: undefined, cacheWrite: undefined, totalTokens: 15,
+    cost: { input: undefined, output: undefined, cacheRead: undefined, cacheWrite: undefined, total: undefined },
+  });
+});
+
+test("missing provider usage stays unknown instead of becoming zero", async () => {
+  const fn = createCanvasStreamFn(async () => ({ text: "No usage reported" }));
+  const stream = await fn(model, { messages: [] } as never);
+  for await (const _ of stream) { /* drain */ }
+  const result = await stream.result();
+  assert.equal(result.usage.input, undefined);
+  assert.equal(result.usage.output, undefined);
+  assert.equal(result.usage.totalTokens, undefined);
+  assert.equal(result.usage.cost.total, undefined);
+  assert.equal(JSON.stringify(result).includes('"input":0'), false);
+  assert.equal(JSON.stringify(result).includes('"totalTokens":0'), false);
+  assert.equal(JSON.stringify(result).includes('"input":null'), false);
 });
 
 test("truncated model responses do not execute tool calls", async () => {

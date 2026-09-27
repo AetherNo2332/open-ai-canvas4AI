@@ -18,10 +18,24 @@ export type ModelStep = (request: {
   onTextDelta?: (delta: string) => void;
 }) => Promise<CanvasModelResult>;
 
-const emptyUsage: Usage = {
-  input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
+// Canvas uses a Go-managed provider path and does not have Pi's local price
+// table. Start with an empty usage object so missing upstream measurements stay
+// unknown. Undefined slots keep Pi's required Usage shape safe for runtime reads
+// while JSON serialization omits every unreported metric instead of writing 0.
+const unknownUsage = (): Usage => ({
+  input: undefined, output: undefined, cacheRead: undefined, cacheWrite: undefined,
+  totalTokens: undefined,
+  cost: { input: undefined, output: undefined, cacheRead: undefined, cacheWrite: undefined, total: undefined },
+} as unknown as Usage);
+
+function piUsage(usage?: Partial<Usage>): Usage {
+  const unknown = unknownUsage();
+  return {
+    ...unknown,
+    ...usage,
+    cost: { ...unknown.cost, ...usage?.cost },
+  } as Usage;
+}
 
 function stopReason(result: CanvasModelResult): "stop" | "length" | "toolUse" {
   const reason = result.stopReasonKind || result.stopReason || "";
@@ -36,7 +50,7 @@ export function createCanvasStreamFn(step: ModelStep): StreamFn {
     const stream = createAssistantMessageEventStream();
     const partial: AssistantMessage = {
       role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
-      usage: emptyUsage, stopReason: "pending", timestamp: Date.now(),
+      usage: unknownUsage(), stopReason: "pending", timestamp: Date.now(),
     };
     void (async () => {
       stream.push({ type: "start", partial });
@@ -107,7 +121,7 @@ export function createCanvasStreamFn(step: ModelStep): StreamFn {
           partial.content[contentIndex] = toolCall;
           stream.push({ type: "toolcall_end", contentIndex, toolCall, partial });
         }
-        partial.usage = { ...emptyUsage, ...result.usage, cost: { ...emptyUsage.cost, ...result.usage?.cost } };
+        partial.usage = piUsage(result.usage);
         partial.stopReason = stopReason(result);
         partial.rawStopReason = result.stopReason;
         stream.push({ type: "done", reason: partial.stopReason, message: partial });

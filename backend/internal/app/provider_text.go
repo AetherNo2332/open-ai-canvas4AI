@@ -205,7 +205,11 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 			}
 			if strings.Contains(strings.ToLower(mime), "event-stream") {
 				parser.flush()
-				return parser.result()
+				result, resultErr := parser.result()
+				if resultErr == nil {
+					attachProviderPiUsage(result, providerPiUsageFromBody(data, wire))
+				}
+				return result, resultErr
 			}
 			var payload map[string]interface{}
 			if err := json.Unmarshal(data, &payload); err != nil {
@@ -226,6 +230,7 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 	if parsed.Reasoning != "" {
 		result["reasoning"] = parsed.Reasoning
 	}
+	attachProviderPiUsage(result, providerPiUsageFromManifestUsage(parsed.Usage))
 	calls := make([]interface{}, 0, len(parsed.ToolCalls))
 	for _, call := range parsed.ToolCalls {
 		mapped := map[string]interface{}{
@@ -427,6 +432,9 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 		return nil, err
 	}
 	result := map[string]interface{}{"mode": "text", "text": "", "toolCalls": []interface{}{}}
+	if encoded, err := json.Marshal(payload); err == nil {
+		attachProviderPiUsage(result, providerPiUsageFromBody(encoded, protocol))
+	}
 	if protocol == "responses" {
 		result["text"] = firstNonEmptyString(stringField(payload, "output_text"), extractResponseText(payload))
 		if reasoning := extractResponseReasoning(payload); reasoning != "" {
@@ -523,7 +531,11 @@ func postStreamingAgent(ctx context.Context, config providerConfig, path string,
 		return parseAgentToolPayload(payload, protocol)
 	}
 	parser.flush()
-	return parser.result()
+	result, resultErr := parser.result()
+	if resultErr == nil {
+		attachProviderPiUsage(result, providerPiUsageFromBody(data, protocol))
+	}
+	return result, resultErr
 }
 
 type streamingAgentToolCall struct {
@@ -945,7 +957,10 @@ func executeProtocolCreateRequest(ctx context.Context, input canvasGenerationInp
 	if text == "" {
 		return nil, nil, errors.New("流式文本接口没有返回内容")
 	}
-	return data, &protocol.Result{Text: text, Reasoning: stringField(parsed, "reasoning")}, nil
+	return data, &protocol.Result{
+		Text: text, Reasoning: stringField(parsed, "reasoning"),
+		Usage: providerResultUsage(parsed),
+	}, nil
 }
 
 func runLegacyTextTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
@@ -1062,6 +1077,7 @@ func normalizeAgentToolChoice(body map[string]interface{}, input canvasGeneratio
 type providerTextResult struct {
 	Text      string
 	Reasoning string
+	Usage     map[string]any
 }
 
 func providerTextTaskResult(result providerTextResult) map[string]interface{} {
@@ -1069,7 +1085,14 @@ func providerTextTaskResult(result providerTextResult) map[string]interface{} {
 	if strings.TrimSpace(result.Reasoning) != "" {
 		payload["reasoning"] = result.Reasoning
 	}
+	attachProviderPiUsage(payload, providerPiUsageFromManifestUsage(result.Usage))
 	return payload
+}
+
+func attachProviderPiUsage(result map[string]interface{}, usage map[string]any) {
+	if len(usage) > 0 {
+		result["usage"] = usage
+	}
 }
 
 func applyTextOutputLimit(body map[string]interface{}, limit int, field string) {
@@ -1215,7 +1238,7 @@ func requestTextProvider(ctx context.Context, config providerConfig, path string
 	if err != nil {
 		return providerTextResult{}, err
 	}
-	result := providerTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning")}
+	result := providerTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning"), Usage: providerResultUsage(parsed)}
 	if result.Text == "" {
 		return providerTextResult{}, errors.New("文本接口没有返回内容")
 	}
@@ -1233,11 +1256,18 @@ func postStreamingTextResult(ctx context.Context, config providerConfig, path st
 	if err != nil {
 		return providerTextResult{}, err
 	}
-	result := providerTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning")}
+	result := providerTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning"), Usage: providerResultUsage(parsed)}
 	if result.Text == "" {
 		return providerTextResult{}, errors.New("流式文本接口没有返回内容")
 	}
 	return result, nil
+}
+
+func providerResultUsage(result map[string]interface{}) map[string]any {
+	if usage, ok := result["usage"].(map[string]any); ok {
+		return usage
+	}
+	return nil
 }
 
 func extractTextPayload(payload map[string]interface{}, protocol string) string {
