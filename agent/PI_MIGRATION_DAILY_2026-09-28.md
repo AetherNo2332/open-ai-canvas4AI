@@ -81,3 +81,12 @@
 - 修正旧兼容测试：读取与取消测试显式构造 `operation=cloud_agent` 的历史根任务；工具分派 AST 守卫指向现行 `executeCloudAgentToolCall`，并将仅供历史 Go loop 使用的类别分支排除在 Pi 具体工具 schema 集合之外。
 - 定向 Go 验收：`TestCloudAgentToolTableMatchesRuntimeDispatch`、legacy run read/cancel、两项继续对话测试和 15 轮 Pi session 测试共 6 项通过。没有重跑耗时的全量 `internal/app` 套件；之前记录的全包 84 个失败仍未完成逐项分类。
 - 本轮新增提交 `4bb800a6` 将第一版 Pi session 历史测试放入 canary；后续本节提及的 fixture 与守卫修复仍待单独审查和提交。本地分支未推送，未执行 Compose 部署。
+
+## 追加：全量 Go 复测与 Pi 收尾协议验收
+
+- 补齐 `CGO_ENABLED=1` 后重跑 `go test ./internal/app -count=1 -json`，完整用时 440.707 秒：**1805 项通过，73 个唯一测试名失败**（JSON 中 74 条 fail 记录包含包级汇总）。失败并非 CGO 环境缺失。
+- 失败主因是旧测试仍调用已退役的 `advanceCloudAgentByID`，但新建运行以 Pi holding operation/lease 驱动；其中 50 个失败测试输出 `Agent 运行不存在`。另有旧 fixture 违反 Pi first-step checkpoint 状态约束、缺少 continuation model task 等问题。`TestPluginViewIncludesDocumentationForEveryOfficialProtocol` 和 `TestPurgeAssetsBatchSharedResourcesAndHistory` 属于 Agent 以外失败；没有把剩余失败统称为旧基线。
+- 新增真实 Pi 协议收尾测试：`TestPiFinishRunPublishesOneFinalReply` 经 `PiToolBatch → PiToolAdvance` 验证 finish_run 仅发布一次 final；`TestPiFinishRunIsBlockedByPendingPlan` 验证待办未对账时工具回执包含 `completionBlocked`/`reconcile_plan`，运行保持中、只写一次阻塞事件且不发布 final。
+- 新增的两项收尾协议测试通过；完整 `go test ./internal/app -run '^TestPi' -count=1` 也通过，用时 13.940 秒。
+- 前端 agent 定向测试 **48/48**、typecheck 和 build 均通过；完整前端测试 **2086 通过、17 失败**（2103 项 / 270 文件）。17 项尚未逐一确认基线来源，不阻断 agent 专项测试和构建。
+- 此轮未部署、未推送；共享工作区的其他迁移与 DeepSeek 修改仍保持未提交。当前 canary 本地提交包括 `4bb800a6`、`4bca2d8a`、`272c9789`；本节新增测试与记录需单独审查提交。

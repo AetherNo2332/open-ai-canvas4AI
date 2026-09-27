@@ -539,6 +539,116 @@ func TestPiToolBatchReplaySafety(t *testing.T) {
 	}
 }
 
+func TestPiFinishRunPublishesOneFinalReply(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	call := piAgentTestCall("finish-call", "finish_run", `{"summary":"分镜已经完成。"}`)
+	taskID := "pi-finish-model-step"
+	result, err := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{call}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Task{ID: taskID, UserID: "user", ProjectID: run.CanvasID,
+		Type: "canvas_text", Status: model.TaskStatusSucceeded, ResultJSON: string(result)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.LastStepTaskID = taskID
+		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "user", "content": "完成分镜"})
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{Calls: []cloudAgentCall{call}}); err != nil {
+		t.Fatalf("Pi finish_run 批次被拒绝: %v", err)
+	}
+	receipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, call.ID)
+	if err != nil {
+		t.Fatalf("Pi finish_run 执行失败: %v", err)
+	}
+	if receipt.Pending || receipt.IsError || receipt.Terminated {
+		t.Fatalf("finish_run 回执状态异常: %+v", receipt)
+	}
+
+	finished, state := reloadPiRun(t, s, run.ID)
+	if finished.Status != "completed" {
+		t.Fatalf("finish_run 后状态 = %q，期望 completed", finished.Status)
+	}
+	var finalReplies []string
+	for _, event := range state.Events {
+		if event.Type == "assistant_message" && event.Payload["final"] == true {
+			finalReplies = append(finalReplies, stringField(event.Payload, "text"))
+		}
+	}
+	if len(finalReplies) != 1 || finalReplies[0] != "分镜已经完成。" {
+		t.Fatalf("最终答复应且只应发布一次，实际 %+v", finalReplies)
+	}
+}
+
+func TestPiFinishRunIsBlockedByPendingPlan(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	call := piAgentTestCall("blocked-finish-call", "finish_run", `{"summary":"全部完成。"}`)
+	taskID := "pi-blocked-finish-model-step"
+	result, err := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{call}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Task{ID: taskID, UserID: "user", ProjectID: run.CanvasID,
+		Type: "canvas_text", Status: model.TaskStatusSucceeded, ResultJSON: string(result)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.LastStepTaskID = taskID
+		state.Plan = []cloudAgentPlanItem{{ID: "shot-1", Title: "生成镜头一", Status: "doing"}}
+		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "user", "content": "完成分镜"})
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{Calls: []cloudAgentCall{call}}); err != nil {
+		t.Fatalf("Pi finish_run 批次被拒绝: %v", err)
+	}
+	receipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, call.ID)
+	if err != nil {
+		t.Fatalf("Pi finish_run 阻塞判定失败: %v", err)
+	}
+	if receipt.Pending || receipt.IsError || len(receipt.Result) == 0 {
+		t.Fatalf("finish_run 阻塞应返回结构化工具回执: %+v", receipt)
+	}
+	var resultMap map[string]any
+	if err := json.Unmarshal(receipt.Result, &resultMap); err != nil {
+		t.Fatalf("finish_run 回执不是 JSON: %v", err)
+	}
+	if resultMap["completionBlocked"] != true || resultMap["requiredAction"] != "reconcile_plan" {
+		t.Fatalf("待办未对账时未阻止收尾: %s", receipt.Result)
+	}
+	current, state := reloadPiRun(t, s, run.ID)
+	if current.Status != "running" {
+		t.Fatalf("待办未对账应留在运行中，实际 %q", current.Status)
+	}
+	blockedEvents := 0
+	for _, event := range state.Events {
+		if event.Type == "completion_blocked" {
+			blockedEvents++
+		}
+	}
+	if blockedEvents != 1 {
+		t.Fatalf("finish_run 阻塞应写入一次 completion_blocked 事件，实际 %d", blockedEvents)
+	}
+	for _, event := range state.Events {
+		if event.Type == "assistant_message" && event.Payload["final"] == true {
+			t.Fatalf("被待办闸门拦截的 summary 不得作为最终答复发布: %+v", event.Payload)
+		}
+	}
+}
+
 func TestPiToolBatchRejectsCallsAfterUnsupportedStopReason(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
 	const taskID = "pi-refusal-with-tools"
