@@ -150,7 +150,7 @@ test("Pi sends queued Go interjections in the next user message and checkpoints 
 
 test("Pi steers a newly queued Go interjection into the live run before its next model step", async () => {
   const { bridge, state } = fakeBridge([
-    { toolCalls: [{ id: "call-1", function: { name: "agent_tools_canvas_read", arguments: "{}" } }] },
+    { toolCalls: [{ id: "call-1", function: { name: "canvas_get_state", arguments: "{}" } }] },
     { text: "收到，继续保留构图" },
   ], {
     interjectAfterTool: [{ id: "interjection-live", text: "不要改变镜头位置" }],
@@ -174,7 +174,7 @@ test("首个 system 由服务端策略与 Harness 正文组成，模型只看到
   assert.ok(canonical.systemPrompt.includes("Harness rules: never invent ids."));
   // 工具声明只含画布工具：不能把 Pi 默认 coding 工具带给上游。
   const names = canonical.tools.map((tool) => (tool.function as { name: string }).name);
-  assert.deepEqual(names.sort(), ["agent_tools_canvas_read"]);
+  assert.deepEqual(names.sort(), ["canvas_get_state"]);
   for (const forbidden of ["read", "write", "edit", "bash", "grep", "find", "ls", "powershell"]) {
     assert.equal(names.includes(forbidden), false, `默认工具 ${forbidden} 不该出现在模型请求里`);
   }
@@ -210,7 +210,7 @@ test("未披露的工具调用整批拒绝：不产生工具批次，也不执�
 
 test("已披露工具的批次准入先于执行，回执进入下一次模型请求", async () => {
   const { bridge, state } = fakeBridge([
-    { toolCalls: [{ id: "call-1", function: { name: "agent_tools_canvas_read", arguments: "{}" } }] },
+    { toolCalls: [{ id: "call-1", function: { name: "canvas_get_state", arguments: "{}" } }] },
     { text: "读完了" },
   ], { receiptText: "画布上有 3 个节点" });
   await runCanvasAgent(bridge, snapshotFor(), undefined, promptParts());
@@ -330,6 +330,20 @@ test("Pi uses the Go-resolved context window and output limit", () => {
   const model = canvasModel(snapshot);
   assert.equal(model.contextWindow, 48_000);
   assert.equal(model.maxTokens, 6_000);
+});
+
+test("Pi uses a bounded scheduler output when the model only declares its context window", () => {
+  const snapshot = snapshotFor();
+  snapshot.modelLimits = { contextWindowTokens: 32_000, maxOutputTokens: 0, configured: true, source: "channel-model" };
+  const model = canvasModel(snapshot);
+  assert.equal(model.contextWindow, 32_000);
+  assert.equal(model.maxTokens, 16_000);
+});
+
+test("Pi still rejects a snapshot without a valid context window", () => {
+  const snapshot = snapshotFor();
+  snapshot.modelLimits = { contextWindowTokens: 0, maxOutputTokens: 8_192, configured: false, source: "default" };
+  assert.throws(() => canvasModel(snapshot), /missing effective Pi model limits/);
 });
 
 test("服务端策略是强制层：工作区文件只能追加，不能顶掉策略", () => {

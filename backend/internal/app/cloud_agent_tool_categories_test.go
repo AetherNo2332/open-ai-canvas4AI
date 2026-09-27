@@ -7,7 +7,9 @@ import (
 )
 
 func categoryTestRequest() CloudAgentRequest {
-	return CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"skill"}, VisionEnabled: true}
+	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"skill"}, VisionEnabled: true}
+	req.Budget.MaxGenerationTasks = 1
+	return req
 }
 
 func categoryCall(name string) cloudAgentCall {
@@ -18,151 +20,89 @@ func categoryCall(name string) cloudAgentCall {
 	return call
 }
 
-func TestCloudAgentCategoryDisclosureLastsForRun(t *testing.T) {
+func TestCloudAgentRegistersEligibleConcreteToolsFromStart(t *testing.T) {
 	all := cloudAgentTools(categoryTestRequest())
-	for _, name := range cloudAgentToolNames(all) {
-		if !cloudAgentIsToolCategory(name) && cloudAgentToolCategory(name) == "" {
-			t.Fatalf("registered tool has no disclosure category: %s", name)
+	visible := cloudAgentVisibleTools(all, "", nil, nil)
+	names := cloudAgentToolNames(visible)
+	for _, parent := range []string{"agent_tools_control", "agent_tools_memory", "agent_tools_skills", "agent_tools_canvas_read", "agent_tools_image", "agent_tools_canvas_edit", "agent_tools_generation"} {
+		if containsToolName(names, parent) {
+			t.Fatalf("category entry %q must not be model-callable: %v", parent, names)
 		}
 	}
-	root := cloudAgentVisibleTools(all, "", nil, nil)
-	if len(root) != 7 {
-		t.Fatalf("root parent count = %d", len(root))
-	}
-	for _, name := range cloudAgentToolNames(root) {
-		if !cloudAgentIsToolCategory(name) {
-			t.Fatalf("child leaked into root: %s", name)
+	for _, concrete := range []string{"canvas_get_state", "canvas_apply_ops", "plan_update", "generate_media", "skill_search"} {
+		if !containsToolName(names, concrete) {
+			t.Fatalf("eligible concrete tool %q missing at run start: %v", concrete, names)
 		}
 	}
-	selected := cloudAgentVisibleTools(all, "agent_tools_canvas_read", []cloudAgentCall{categoryCall("agent_tools_canvas_read")}, nil)
-	names := cloudAgentToolNames(selected)
-	if !containsToolName(names, "canvas_get_state") || containsToolName(names, "canvas_apply_ops") {
-		t.Fatalf("wrong category selection: %v", names)
-	}
-	for _, tool := range selected {
-		function := tool["function"].(map[string]any)
-		if function["name"] == "agent_tools_canvas_read" && !strings.Contains(function["description"].(string), "agent_tools_canvas_read") {
-			t.Fatal("previous call missing from parent schema")
+	for _, name := range names {
+		if cloudAgentToolCategory(name) == "" {
+			t.Fatalf("registered concrete tool has no classification category: %s", name)
 		}
-	}
-	active := []string{"agent_tools_canvas_read"}
-	nextStep := cloudAgentVisibleToolsForCategories(all, active, []cloudAgentCall{categoryCall("canvas_get_state")}, nil)
-	if !containsToolName(cloudAgentToolNames(nextStep), "canvas_get_state") {
-		t.Fatal("opened child was retracted before the run ended")
-	}
-	active = cloudAgentAppendActivatedCategory(active, "agent_tools_control")
-	switched := cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, active, []cloudAgentCall{categoryCall("plan_update")}, nil))
-	if !containsToolName(switched, "canvas_get_state") || !containsToolName(switched, "ask_user") || !containsToolName(switched, "plan_update") || !containsToolName(switched, "finish_run") {
-		t.Fatalf("opening another category lost previously enabled tools: %v", switched)
-	}
-	if len(cloudAgentAppendActivatedCategory(active, "agent_tools_control")) != len(active) {
-		t.Fatal("reopening category duplicated activation")
-	}
-	newRun := cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, nil, nil, nil))
-	if containsToolName(newRun, "canvas_get_state") || containsToolName(newRun, "ask_user") {
-		t.Fatalf("new run inherited child tools: %v", newRun)
-	}
-	callWithPrivateArguments := categoryCall("canvas_get_state")
-	callWithPrivateArguments.Function.Arguments = `{"private":"do-not-copy"}`
-	record := cloudAgentCategoryCallRecord([]cloudAgentCall{callWithPrivateArguments}, "agent_tools_canvas_read")
-	if !strings.Contains(record, "canvas_get_state") || strings.Contains(record, "do-not-copy") {
-		t.Fatalf("unsafe previous-call record: %q", record)
 	}
 }
 
-func TestCloudAgentCategoryPreflightUsesWireCatalog(t *testing.T) {
+func TestCloudAgentPreflightUsesFlatAdvertisedConcreteCatalog(t *testing.T) {
 	req := categoryTestRequest()
 	all := cloudAgentTools(req)
 	state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: all}, DisclosureVersion: cloudAgentToolDisclosureVersion}
 	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleTools(all, "", nil, nil))
-	if cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("canvas_get_state")})[0].Allowed {
-		t.Fatal("unadvertised child admitted")
-	}
-	if !cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("agent_tools_canvas_read")})[0].Allowed {
-		t.Fatal("parent rejected")
-	}
-	if cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("agent_tools_canvas_read"), categoryCall("agent_tools_generation")})[1].Allowed {
-		t.Fatal("multiple categories admitted")
-	}
-	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleTools(all, "agent_tools_canvas_read", nil, nil))
 	if !cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("canvas_get_state")})[0].Allowed {
-		t.Fatal("selected child rejected")
+		t.Fatal("eligible concrete read tool rejected at run start")
 	}
-	state.ActivatedToolCategories = []string{"agent_tools_canvas_read", "agent_tools_canvas_edit", "agent_tools_control"}
-	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, cloudAgentActivatedCategories(state), nil, nil))
-	for _, name := range []string{"canvas_get_state", "canvas_apply_ops", "ask_user", "plan_update", "finish_run"} {
-		if _, ok := cloudAgentAdvertisedTool(state, name); !ok {
-			t.Fatalf("previously opened tool %s was not advertised in a later step", name)
-		}
+	write := categoryCall("canvas_apply_ops")
+	write.Function.Arguments = `{"snapshotHash":"hash","ops":[]}`
+	if !cloudAgentPreflightBatch(state, []cloudAgentCall{write})[0].Allowed {
+		t.Fatal("eligible concrete write tool rejected at run start")
 	}
-}
-
-func TestCloudAgentOpenedCategoriesPersistAcrossToolExecution(t *testing.T) {
-	s, _, args := agentMediaFixture(t)
-	run, state := agentMediaRun(t, s, args, "auto")
-	state.Calls = nil
-	state.CallIndex = 0
-	state.DisclosureVersion = cloudAgentToolDisclosureVersion
-	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleTools(state.Canonical.Tools, "", nil, nil))
-
-	for _, category := range []string{"agent_tools_control", "agent_tools_canvas_edit"} {
-		var call cloudAgentCall
-		call.ID = "open-" + category
-		call.Function.Name = category
-		call.Function.Arguments = `{}`
-		run, state = writeBatch(t, s, run, &state, []cloudAgentCall{call})
-		if !state.CallAdmissions[0].Allowed {
-			t.Fatalf("parent %s rejected: %+v", category, state.CallAdmissions[0])
-		}
-		if err := s.advanceCloudAgentTool(run, &state); err != nil {
-			t.Fatal(err)
-		}
-		run, state = reloadAgentRun(t, s, run.ID)
-		state.Calls = nil
-		state.CallIndex = 0
-		state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleToolsForCategories(state.Canonical.Tools, cloudAgentActivatedCategories(&state), nil, nil))
+	if cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("agent_tools_canvas_read")})[0].Allowed {
+		t.Fatal("removed category selector admitted")
 	}
-	for _, name := range []string{"ask_user", "plan_update", "finish_run", "canvas_apply_ops"} {
-		if _, ok := cloudAgentAdvertisedTool(&state, name); !ok {
-			t.Fatalf("opened child %s disappeared in a later model step", name)
-		}
+	state.AdvertisedToolNames = []string{"canvas_get_state"}
+	if cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("canvas_apply_ops")})[0].Allowed {
+		t.Fatal("unadvertised write tool admitted")
 	}
-	request, err := s.cloudAgentModelContext(run, &state, defaultCloudAgentContextBudget())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"ask_user", "finish_run", "canvas_apply_ops"} {
-		if !containsToolName(cloudAgentToolNames(request.Tools), name) {
-			t.Fatalf("next model request lost %s", name)
-		}
-	}
-	state.ActivatedToolCategories = nil
-	state.SelectedToolCategory = ""
-	request, err = s.cloudAgentModelContext(run, &state, defaultCloudAgentContextBudget())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if containsToolName(cloudAgentToolNames(request.Tools), "canvas_apply_ops") {
-		t.Fatal("fresh run should start with parent schemas only")
+	// Tool categories no longer consume a model step or block calls from another
+	// category; ordinary permission and single-write rules still apply.
+	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleTools(all, "", nil, nil))
+	plan := categoryCall("plan_update")
+	plan.Function.Arguments = `{"items":[]}`
+	batch := cloudAgentPreflightBatch(state, []cloudAgentCall{plan, categoryCall("canvas_get_state")})
+	if !batch[0].Allowed || !batch[1].Allowed {
+		t.Fatalf("cross-category non-write batch rejected: %+v", batch)
 	}
 }
 
-func TestCloudAgentCategoriesRespectCapabilityAndPermission(t *testing.T) {
-	req := CloudAgentRequest{PermissionMode: "read_only"}
-	root := cloudAgentVisibleTools(cloudAgentTools(req), "", nil, nil)
-	names := cloudAgentToolNames(root)
-	for _, absent := range []string{"agent_tools_skills", "agent_tools_canvas_read", "agent_tools_image", "agent_tools_canvas_edit", "agent_tools_generation"} {
-		if containsToolName(names, absent) {
-			t.Fatalf("ineligible parent %s", absent)
+func TestCloudAgentPreviousStepToolNamesAreRecordedInEveryToolDescription(t *testing.T) {
+	all := cloudAgentTools(categoryTestRequest())
+	private := categoryCall("canvas_get_state")
+	private.Function.Arguments = `{"private":"do-not-copy"}`
+	visible := cloudAgentVisibleTools(all, "", []cloudAgentCall{private, categoryCall("plan_update")}, nil)
+	if len(visible) == 0 {
+		t.Fatal("no eligible tools")
+	}
+	for _, tool := range visible {
+		function := tool["function"].(map[string]any)
+		description := stringField(function, "description")
+		if !strings.Contains(description, "canvas_get_state、plan_update") || strings.Contains(description, "do-not-copy") {
+			t.Fatalf("previous step record missing or leaked arguments for %s: %q", stringField(function, "name"), description)
 		}
 	}
-	req.ContextScope = []string{"canvas"}
-	imageTools := cloudAgentToolNames(cloudAgentVisibleTools(cloudAgentTools(req), "agent_tools_image", nil, nil))
-	if containsToolName(imageTools, "canvas_inspect_image") {
-		t.Fatal("vision tool exposed without vision capability")
+	if names := cloudAgentToolNames(cloudAgentVisibleTools(all, "", nil, nil)); len(names) != len(visible) {
+		t.Fatal("previous-step context should not alter the eligible tool set")
 	}
-	if containsToolName(imageTools, "image_layer_split") {
-		t.Fatal("generation tool exposed in read-only mode")
+}
+
+func TestCloudAgentToolCategoriesRespectCapabilityAndPermission(t *testing.T) {
+	readOnly := CloudAgentRequest{PermissionMode: "read_only", ContextScope: []string{"canvas"}}
+	readTools := cloudAgentToolNames(cloudAgentVisibleTools(cloudAgentTools(readOnly), "", nil, nil))
+	if containsToolName(readTools, "canvas_apply_ops") || containsToolName(readTools, "generate_media") {
+		t.Fatalf("read-only run exposed a write tool: %v", readTools)
+	}
+	noVision := categoryTestRequest()
+	noVision.VisionEnabled = false
+	noVisionTools := cloudAgentToolNames(cloudAgentVisibleTools(cloudAgentTools(noVision), "", nil, nil))
+	if containsToolName(noVisionTools, "canvas_inspect_image") {
+		t.Fatalf("vision-dependent tool exposed without vision capability: %v", noVisionTools)
 	}
 }
 
@@ -179,9 +119,11 @@ func TestCloudAgentToolDescriptionsFromMarkdown(t *testing.T) {
 	}
 }
 
-func TestCloudAgentDisclosureSurvivesCheckpointAndRepair(t *testing.T) {
+func TestCloudAgentFlatDisclosureSurvivesLegacyCheckpointAndRepair(t *testing.T) {
 	all := cloudAgentTools(categoryTestRequest())
-	state := cloudAgentRuntime{DisclosureVersion: cloudAgentToolDisclosureVersion, ActivatedToolCategories: []string{"agent_tools_canvas_read", "agent_tools_control"}, AdvertisedToolNames: cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, []string{"agent_tools_canvas_read", "agent_tools_control"}, nil, nil))}
+	state := cloudAgentRuntime{DisclosureVersion: cloudAgentToolDisclosureVersion,
+		ActivatedToolCategories: []string{"agent_tools_canvas_read", "agent_tools_control"},
+		AdvertisedToolNames:     cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, nil, nil, nil))}
 	raw, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
@@ -191,29 +133,19 @@ func TestCloudAgentDisclosureSurvivesCheckpointAndRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(cloudAgentActivatedCategories(&restored)) != 2 || !containsToolName(restored.AdvertisedToolNames, "canvas_get_state") {
-		t.Fatal("disclosure checkpoint lost")
+		t.Fatal("legacy categories or flat advertised tools were lost in checkpoint")
 	}
 	legacy := cloudAgentRuntime{SelectedToolCategory: "agent_tools_canvas_read"}
 	if !containsToolName(cloudAgentActivatedCategories(&legacy), "agent_tools_canvas_read") {
 		t.Fatal("older checkpoint lost selected category")
 	}
-	repair := cloudAgentVisibleTools(all, "", nil, []string{"canvas_get_state", "ask_user"})
-	for _, name := range cloudAgentToolNames(repair) {
-		if !cloudAgentIsToolCategory(name) {
-			t.Fatalf("repair leaked child without selecting parent: %s", name)
-		}
-	}
-	repairOpened := cloudAgentToolNames(cloudAgentVisibleTools(all, "agent_tools_canvas_read", nil, []string{"canvas_get_state", "ask_user"}))
-	if !containsToolName(repairOpened, "canvas_get_state") || containsToolName(repairOpened, "canvas_read_storyboard") {
-		t.Fatalf("repair scope did not limit children: %v", repairOpened)
-	}
-	stickyRepair := cloudAgentToolNames(cloudAgentVisibleToolsForCategories(all, restored.ActivatedToolCategories, nil, []string{"canvas_get_state", "ask_user"}))
-	if !containsToolName(stickyRepair, "canvas_get_state") || !containsToolName(stickyRepair, "ask_user") || containsToolName(stickyRepair, "finish_run") {
-		t.Fatalf("repair scope leaked unrelated opened tools: %v", stickyRepair)
+	repair := cloudAgentToolNames(cloudAgentVisibleTools(all, "", nil, []string{"canvas_get_state", "ask_user"}))
+	if len(repair) != 2 || !containsToolName(repair, "canvas_get_state") || !containsToolName(repair, "ask_user") {
+		t.Fatalf("repair scope did not narrow concrete tools: %v", repair)
 	}
 }
 
-func TestCloudAgentFirstWireRequestContainsOnlyCategoryFunctions(t *testing.T) {
+func TestCloudAgentFirstWireRequestContainsConcreteFunctions(t *testing.T) {
 	req := categoryTestRequest()
 	canonical := cloudAgentCanonicalFor("policy", nil, "goal", req, true)
 	canonical.Tools = cloudAgentVisibleTools(canonical.Tools, "", nil, nil)
@@ -227,8 +159,8 @@ func TestCloudAgentFirstWireRequestContainsOnlyCategoryFunctions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(raw), "agent_tools_canvas_read") || strings.Contains(string(raw), `"name":"canvas_get_state"`) {
-			t.Fatalf("%s leaked child function in first request: %s", protocol, raw)
+		if !strings.Contains(string(raw), `"name":"canvas_get_state"`) || strings.Contains(string(raw), `"name":"agent_tools_canvas_read"`) {
+			t.Fatalf("%s first request did not expose the flat concrete tool set: %s", protocol, raw)
 		}
 	}
 }

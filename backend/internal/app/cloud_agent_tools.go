@@ -385,7 +385,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v2"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v3"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -590,29 +590,6 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"durationSeconds": map[string]any{"type": "integer", "minimum": 0}, "size": str(cloudAgentToolText("parameter_074")), "quality": str(cloudAgentToolText("parameter_075")), "videoGenerateAudio": map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_076")},
 			"snapshotHash": str(cloudAgentToolText("parameter_077")), "nodeId": str(cloudAgentToolText("parameter_078")), "title": str(cloudAgentToolText("parameter_079")), "sourceNodeId": str(cloudAgentToolText("parameter_080")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_081"))}, "referenceTransientIds": map[string]any{"type": "array", "maxItems": 4, "items": str(cloudAgentToolText("parameter_082"))},
 		}, "mode", "prompt", "nodeId", "title", "referenceNodeIds")
-	}
-	// Parent tools are advertised first; their children remain in the server
-	// catalog and are disclosed only after the corresponding parent is called.
-	if len(cloudAgentCategoryChildren(tools, "agent_tools_control")) > 0 {
-		add("agent_tools_control", cloudAgentToolText("agent_tools_control"), map[string]any{})
-	}
-	if len(cloudAgentCategoryChildren(tools, "agent_tools_memory")) > 0 {
-		add("agent_tools_memory", cloudAgentToolText("agent_tools_memory"), map[string]any{})
-	}
-	if len(cloudAgentCategoryChildren(tools, "agent_tools_skills")) > 0 {
-		add("agent_tools_skills", cloudAgentToolText("agent_tools_skills"), map[string]any{})
-	}
-	if len(cloudAgentCategoryChildren(tools, "agent_tools_canvas_read")) > 0 {
-		add("agent_tools_canvas_read", cloudAgentToolText("agent_tools_canvas_read"), map[string]any{})
-	}
-	if len(cloudAgentCategoryChildren(tools, "agent_tools_image")) > 0 {
-		add("agent_tools_image", cloudAgentToolText("agent_tools_image"), map[string]any{})
-	}
-	if len(cloudAgentCategoryChildren(tools, "agent_tools_canvas_edit")) > 0 {
-		add("agent_tools_canvas_edit", cloudAgentToolText("agent_tools_canvas_edit"), map[string]any{})
-	}
-	if len(cloudAgentCategoryChildren(tools, "agent_tools_generation")) > 0 {
-		add("agent_tools_generation", cloudAgentToolText("agent_tools_generation"), map[string]any{})
 	}
 	return tools
 }

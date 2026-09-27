@@ -22,7 +22,7 @@ import {
 import { CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
-import { SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
+import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
 
 /**
@@ -50,6 +50,8 @@ const CANVAS_PROVIDER_ID = "canvas";
 const CANVAS_API_ID = "canvas-bridge";
 /** 自定义 provider 必须声明 baseUrl；`.invalid` 由 RFC 2606 保留，永远不会被访问。 */
 const CANVAS_BASE_URL = "http://canvas-bridge.invalid/v1";
+/** Pi 需要正数 maxTokens 才能建立模型；真实输出限制仍由 Go 的模型任务链路决定。 */
+const PI_FALLBACK_OUTPUT_TOKENS = 16_384;
 
 /**
  * 模型标识只用于 Pi 的会话记账与缓存键：真实渠道、模型能力、协议与费用全部由 Go 决定
@@ -57,11 +59,17 @@ const CANVAS_BASE_URL = "http://canvas-bridge.invalid/v1";
  */
 export function canvasModel(snapshot: PiSnapshot): Model<any> {
   const name = snapshot.request.channelModelKey || snapshot.request.model || "canvas-model";
-  const { contextWindowTokens, maxOutputTokens } = snapshot.modelLimits;
-  if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens < 1 ||
-      !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
+  const limits = snapshot.modelLimits;
+  const contextWindowTokens = limits?.contextWindowTokens;
+  const declaredMaxOutputTokens = limits?.maxOutputTokens;
+  if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens < 1) {
     throw new FatalWorkerError("Go snapshot is missing effective Pi model limits");
   }
+  // A model may declare its context window without declaring an output ceiling. Keep Pi's
+  // scheduler usable with a conservative placeholder; Go remains authoritative for the request.
+  const maxOutputTokens = Number.isSafeInteger(declaredMaxOutputTokens) && declaredMaxOutputTokens > 0
+    ? declaredMaxOutputTokens
+    : Math.min(PI_FALLBACK_OUTPUT_TOKENS, Math.floor(contextWindowTokens / 2));
   return { id: name, name, provider: CANVAS_PROVIDER_ID, api: CANVAS_API_ID, baseUrl: CANVAS_BASE_URL,
     reasoning: true, input: snapshot.request.visionEnabled ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: contextWindowTokens, maxTokens: maxOutputTokens };
@@ -249,11 +257,18 @@ async function recoverToolResults(
     .filter((item): item is ToolResultMessage => item.role === "toolResult")
     .map((item) => item.toolCallId));
   if (completed.size === calls.length) return;
-  const admissionError = batchAdmissionError(disclosure, calls);
-  if (!admissionError) await bridge.startToolBatch(snapshot, calls, signal);
+  // Legacy category selectors never performed a business operation. Complete
+  // an interrupted v1 selector locally so the restored Pi transcript has a
+  // paired result; do not submit a synthetic call to Go or execute any tool.
+  const executableCalls = calls.filter((call) => !call.function.name.startsWith("agent_tools_"));
+  const admissionError = batchAdmissionError(disclosure, executableCalls);
+  if (!admissionError && executableCalls.length > 0) await bridge.startToolBatch(snapshot, executableCalls, signal);
   for (const call of calls) {
     if (completed.has(call.id)) continue;
-    const receipt = admissionError ? { result: admissionError, isError: true } :
+    const legacyCategory = call.function.name.startsWith("agent_tools_");
+    const receipt = legacyCategory
+      ? { result: "旧版工具分类入口已完成兼容，不执行业务操作。请直接使用当前工具表中的具体工具。" }
+      : admissionError ? { result: admissionError, isError: true } :
       await bridge.executeTool(snapshot, call.id, signal);
     const result: ToolResultMessage = { role: "toolResult", toolCallId: call.id, toolName: call.function.name,
       content: [{ type: "text",
@@ -480,12 +495,10 @@ async function bootstrapSession(
       sessionManager,
       settingsManager,
       resourceLoader,
-      customTools: disclosure.tools() as never,
       // 默认 coding 工具（read/bash/edit/write/ls/grep/find/powershell）一个都不注册。
       noTools: "all",
       tools: disclosure.activeNames(),
     });
-    disclosure.attach(session);
     return { session, sessionManager, cleanup: workspace.cleanup };
   } catch (error) {
     workspace.cleanup();
@@ -640,14 +653,15 @@ export async function runCanvasAgent(
     return { result: receipt.result, isError: receipt.isError,
       terminate: receipt.terminated === true || (name === "finish_run" && !receipt.isError) };
   }, snapshot.previousStepTemplate);
-  for (const name of snapshot.openedCategories || []) disclosure.opened.add(name);
-  if (snapshot.openedCategories?.length) disclosure.refresh();
+  // Old snapshots may still carry openedCategories. They are informational
+  // migration state only; all eligible concrete tools are available each run.
 
   // Provider：Pi 的每次模型请求都翻成 Go 的模型步骤（带上提示合同身份）。
   const streamSimple = createCanvasStreamFn(async ({ messages, signal, onTextDelta }) => {
     await queue.drain();
     if (compactionFailure !== undefined) throw compactionFailure;
     const canonical = toCanonical(messages as Message[], snapshot.canonical.promptCacheKey);
+    canonical.tools = disclosure.decorateCanonicalTools(canonical.tools);
     const step = await bridge.modelStep(snapshot, canonical, signal, onTextDelta, promptContract, parts);
     activeTaskId = latestTaskId = step.taskId;
     return step.result;
@@ -678,7 +692,13 @@ export async function runCanvasAgent(
     },
     onFailure: (error) => { compactionFailure = error; },
   });
-  const boot = await bootstrapSession(snapshot, systemPrompt, resume.entries, streamSimple, disclosure, [compactionExtension]);
+  const toolExtension = createCanvasToolsExtension(disclosure, (callId, toolName) => {
+    if (!disclosure.isVisible(toolName)) return `Tool ${toolName} is not eligible for this run`;
+    if (!admittedCallIds.has(callId)) return batchRejection || `Tool batch does not admit ${toolName}`;
+    return undefined;
+  });
+  const boot = await bootstrapSession(snapshot, systemPrompt, resume.entries, streamSimple, disclosure,
+    [compactionExtension, toolExtension]);
   session = boot.session;
   sessionManager = boot.sessionManager;
   if (resume.activeLeafId !== undefined && resume.activeLeafId !== sessionManager.getLeafId()) {

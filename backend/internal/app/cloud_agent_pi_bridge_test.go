@@ -1026,7 +1026,7 @@ func TestPiToolAdvanceSignalsTerminationInsteadOfPending(t *testing.T) {
 func TestPiFailRunMarksRunFailedWithReason(t *testing.T) {
 	s, _, run := piAgentTestLeasedFixture(t)
 
-	if err := s.PiFailRun("user", run.ID, run.LeaseOwner, "server snapshot has tools missing from cloud-agent-tools/v2"); err != nil {
+	if err := s.PiFailRun("user", run.ID, run.LeaseOwner, "server snapshot has tools missing from cloud-agent-tools/v3"); err != nil {
 		t.Fatalf("上报失败: %v", err)
 	}
 	failed, state := reloadPiRun(t, s, run.ID)

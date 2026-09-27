@@ -229,14 +229,14 @@ func TestCloudAgentPreflightRejectsToolOutsideThisRun(t *testing.T) {
 	}
 }
 
-func TestCloudAgentPreflightExplainsKnownButUnopenedTool(t *testing.T) {
+func TestCloudAgentPreflightExplainsKnownButNotAdvertisedTool(t *testing.T) {
 	req := categoryTestRequest()
 	all := cloudAgentTools(req)
 	state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: all}, DisclosureVersion: cloudAgentToolDisclosureVersion}
-	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleTools(all, "", nil, nil))
+	state.AdvertisedToolNames = []string{"canvas_get_state"}
 	admission := cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("ask_user")})[0]
-	if admission.Allowed || admission.Issue != cloudAgentAdmissionInvalidOutput || !strings.Contains(admission.Message, "agent_tools_control") || strings.Contains(admission.Message, "不存在的工具") {
-		t.Fatalf("known child should point to its parent: %+v", admission)
+	if admission.Allowed || admission.Issue != cloudAgentAdmissionInvalidOutput || !strings.Contains(admission.Message, "当前模型步骤的工具表") || strings.Contains(admission.Message, "不存在的工具") {
+		t.Fatalf("known tool should point to the current tool list: %+v", admission)
 	}
 	state.Request.PermissionMode = "read_only"
 	admission = cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall("canvas_apply_ops")})[0]
