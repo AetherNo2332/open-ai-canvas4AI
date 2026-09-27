@@ -13,7 +13,7 @@ import (
 
 // CurrentSchemaVersion follows upstream migrations through v38; the retired
 // Cloud Agent tables stay registered as no-op entries after that upstream range.
-const CurrentSchemaVersion int64 = 41
+const CurrentSchemaVersion int64 = 42
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 38
@@ -138,6 +138,53 @@ var schemaMigrations = []migration{
 	{version: 41, name: "pi_agent_run_leases", checksum: "sha256:pi-agent-run-leases-v41-20260926", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.CloudAgentExecution{})
 	}},
+	{version: 42, name: "pi_agent_conversation_sessions", checksum: "sha256:pi-agent-conversation-sessions-v42-20260927", apply: migratePiAgentConversationSessions},
+}
+
+func migratePiAgentConversationSessions(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.CloudAgentPiSession{}, &model.CloudAgentPiEntry{}); err != nil {
+		return err
+	}
+	var runs []model.CloudAgentExecution
+	if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "status", "created_at", "updated_at").
+		Where("engine = ?", "pi").Order("created_at, id").Find(&runs).Error; err != nil {
+		return err
+	}
+	for _, run := range runs {
+		conversationID := run.ConversationID
+		if conversationID == "" {
+			conversationID = run.ID
+		}
+		header, err := json.Marshal(map[string]any{
+			"type": "session", "version": 3, "id": conversationID,
+			"timestamp": run.CreatedAt.UTC().Format(time.RFC3339Nano), "cwd": "canvas://" + run.CanvasID,
+		})
+		if err != nil {
+			return err
+		}
+		session := model.CloudAgentPiSession{
+			ID: conversationID, UserID: run.UserID, ConversationID: conversationID, CanvasID: run.CanvasID,
+			FormatVersion: 3, HeaderJSON: string(header), Revision: 1, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
+		}
+		switch run.Status {
+		case "queued", "running", "waiting_approval":
+			session.ActiveRunID = run.ID
+		}
+		if err := tx.Where("id = ?", session.ID).FirstOrCreate(&session).Error; err != nil {
+			return err
+		}
+		if session.UserID != run.UserID || session.CanvasID != run.CanvasID {
+			return fmt.Errorf("Pi session %q has conflicting owner or canvas", conversationID)
+		}
+		active := run.Status == "queued" || run.Status == "running" || run.Status == "waiting_approval"
+		if active && session.ActiveRunID != run.ID {
+			if err := tx.Model(&model.CloudAgentPiSession{}).Where("id = ? AND user_id = ?", session.ID, session.UserID).
+				Updates(map[string]any{"active_run_id": run.ID, "revision": gorm.Expr("revision + 1"), "updated_at": run.UpdatedAt}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func migratePrefixedIDSequenceReconcile(tx *gorm.DB) error {

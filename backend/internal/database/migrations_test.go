@@ -21,6 +21,33 @@ func TestCurrentSchemaVersionMatchesMigrationPlan(t *testing.T) {
 	}
 }
 
+func TestPiConversationSessionMigrationBackfillsActiveRun(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:pi-session-backfill?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.CloudAgentExecution{}); err != nil {
+		t.Fatal(err)
+	}
+	run := model.CloudAgentExecution{
+		ID: "pi-active-run", UserID: "user-1", CanvasID: "canvas-1", ConversationID: "conversation-1",
+		Engine: "pi", Status: "running", Revision: 1, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migratePiAgentConversationSessions(db); err != nil {
+		t.Fatal(err)
+	}
+	var session model.CloudAgentPiSession
+	if err := db.First(&session, "id = ?", run.ConversationID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if session.ActiveRunID != run.ID {
+		t.Fatalf("backfilled active run = %q, want %q", session.ActiveRunID, run.ID)
+	}
+}
+
 func TestMigrateSchemaRecordsAndValidatesVersion(t *testing.T) {
 	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-version?mode=memory&cache=shared"})
 	if err != nil {
@@ -53,6 +80,12 @@ func TestMigrateSchemaRecordsAndValidatesVersion(t *testing.T) {
 	}
 	if !db.Migrator().HasTable(&model.AgentMemorySetting{}) {
 		t.Fatal("schema migration v18 did not create agent memory settings")
+	}
+	if !db.Migrator().HasTable(&model.CloudAgentPiSession{}) || !db.Migrator().HasTable(&model.CloudAgentPiEntry{}) {
+		t.Fatal("schema migration v42 did not create durable Pi conversation session tables")
+	}
+	if !db.Migrator().HasIndex(&model.CloudAgentPiSession{}, "idx_cloud_agent_pi_sessions_owner_conversation") {
+		t.Fatal("schema migration v42 did not create the user-scoped conversation uniqueness index")
 	}
 	if !db.Migrator().HasColumn(&model.PaymentProviderConfig{}, "plugin_version") || !db.Migrator().HasColumn(&model.PaymentOrder{}, "plugin_version") {
 		t.Fatal("schema migration v19 did not add payment plugin version columns")
