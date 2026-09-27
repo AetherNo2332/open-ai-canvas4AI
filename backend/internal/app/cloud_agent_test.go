@@ -165,14 +165,12 @@ func TestCloudAgentTerminalRunWithOlderCapabilityCanContinueOnCurrentContract(t 
 	if err = cloudAgentSave(parentExecution, &parentState); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Model(&model.CloudAgentExecution{}).Where("id = ?", parent.ID).Updates(map[string]any{
-		"status": "completed", "state_json": parentExecution.StateJSON,
-	}).Error; err != nil {
+	if err = db.Model(&model.CloudAgentExecution{}).Where("id = ?", parent.ID).Update("state_json", parentExecution.StateJSON).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Model(&model.Task{}).Where("id = ?", parent.ID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": `{"text":"旧合同下的可信回复"}`,
-	}).Error; err != nil {
+	completePiRunWithAssistantForTest(t, s, parent.ID, "旧合同下的可信回复")
+	parentExecution, err = s.repo.CloudAgent("user", parent.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	historicalStateJSON := parentExecution.StateJSON
@@ -328,9 +326,7 @@ func TestCloudAgentAdmissionAndContinuation(t *testing.T) {
 	if _, err := s.CreateCloudAgentRun("user", next, run.ID); err == nil {
 		t.Fatal("running parent accepted")
 	}
-	if err := db.Model(&model.Task{}).Where("id = ?", run.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": `{"text":"可信回复"}`}).Error; err != nil {
-		t.Fatal(err)
-	}
+	completePiRunWithAssistantForTest(t, s, run.ID, "可信回复")
 	continued, err := s.CreateCloudAgentRun("user", next, run.ID)
 	if err != nil {
 		t.Fatal(err)

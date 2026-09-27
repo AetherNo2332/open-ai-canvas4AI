@@ -273,6 +273,12 @@ func TestCloudAgentConversationKeepsRecentRounds(t *testing.T) {
 		if len(state.TextHistory) != want {
 			t.Fatalf("history window at round %d: got %d want %d", round, len(state.TextHistory), want)
 		}
+		if round > 0 {
+			previousTurn := state.TextHistory[len(state.TextHistory)-2:]
+			if previousTurn[0].Role != "user" || previousTurn[0].Content != req.Prompt || previousTurn[1].Role != "assistant" || previousTurn[1].Content != "继续创作" {
+				t.Fatalf("Pi continuation lost the previous user/assistant turn at round %d: %+v", round, previousTurn)
+			}
+		}
 		claimed, err := s.ClaimPiAgent(fmt.Sprintf("history-worker-%d", round))
 		if err != nil || claimed == nil || claimed.RunID != run.ID {
 			t.Fatalf("Pi run %d was not claimed: snapshot=%#v error=%v", round, claimed, err)
@@ -318,8 +324,14 @@ func TestCloudAgentConversationKeepsRecentRounds(t *testing.T) {
 			}
 		}
 		if err := s.repo.MutateCloudAgent("user", run.ID, leased.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			currentState, err := cloudAgentDecode(current)
+			if err != nil {
+				return err
+			}
+			currentState.Canonical.Messages = append(currentState.Canonical.Messages, map[string]any{"role": "assistant", "content": "继续创作"})
+			currentState.event(run.ID, "assistant_message", map[string]any{"messageId": run.ID + ":final", "text": "继续创作", "final": true})
 			current.Status = "completed"
-			return nil
+			return cloudAgentSave(current, &currentState)
 		}); err != nil {
 			t.Fatalf("complete Pi conversation round %d: %v", round, err)
 		}

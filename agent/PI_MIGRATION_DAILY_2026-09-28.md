@@ -72,3 +72,12 @@
 - 旧 Go Agent 驱动和与之绑定的测试仍在仓库中；全量 `internal/app` 测试未通过。需要逐个把旧 loop 业务断言迁成 Pi 协议行为测试，保留真正旧版本数据导入兼容测试，并修复与 Agent 无关的基线失败。
 - 本轮只通过一个配置的测试模型与一个只读画布工具做浏览器端到端验收；并未覆盖全部 24 个工具、真实生产上游渠道、媒体计费/审批路径。
 - PostgreSQL、多账号并发、双 worker 抢占、跨进程故障注入、SSE 断线续传，以及完整历史 session/assistant entry 转换仍需验收。整体 Pi 移植尚未完成。
+
+## 追加：前端复测与旧 Go 测试夹具迁移（续接）
+
+- 本机 PowerShell 的 `PATH` 未包含 Bun，但已有 Bun 1.3.9 安装在 `C:\Users\13537\.bun\bin\bun.exe`；直接使用该已安装程序，无需下载或另装运行时。
+- 前端 agent 面板相关测试 48/48 通过；`bun run typecheck` 与 `bun run build` 通过。完整 `bun test` 重跑仍为 2086 通过、17 失败（2103 项 / 270 文件）。失败涉及聊天样式、登录媒体样式、图片上传占位、Canvas 快捷键/视频渲染、部署镜像脚本、业务 API 请求约束、钱包布局和 Select 样式。当前未证明这 17 项都属于旧基线，需另行逐项核验；它们没有阻断 agent 定向用例或生产构建。
+- 修正 Pi 续聊测试夹具：不再把 holding 预留任务的 `ResultJSON` 冒充助手答复；改为持久化 assistant final 事件与 canonical 消息。15 轮续聊用例现在校验前一轮的 user/assistant 正文，以及 30 条 Pi session entries。
+- 修正旧兼容测试：读取与取消测试显式构造 `operation=cloud_agent` 的历史根任务；工具分派 AST 守卫指向现行 `executeCloudAgentToolCall`，并将仅供历史 Go loop 使用的类别分支排除在 Pi 具体工具 schema 集合之外。
+- 定向 Go 验收：`TestCloudAgentToolTableMatchesRuntimeDispatch`、legacy run read/cancel、两项继续对话测试和 15 轮 Pi session 测试共 6 项通过。没有重跑耗时的全量 `internal/app` 套件；之前记录的全包 84 个失败仍未完成逐项分类。
+- 本轮新增提交 `4bb800a6` 将第一版 Pi session 历史测试放入 canary；后续本节提及的 fixture 与守卫修复仍待单独审查和提交。本地分支未推送，未执行 Compose 部署。
