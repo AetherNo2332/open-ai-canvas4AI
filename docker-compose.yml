@@ -19,7 +19,6 @@ services:
       CANVAS_ALLOW_PRIVATE_UPSTREAMS: ${CANVAS_ALLOW_PRIVATE_UPSTREAMS:-false}
       CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS:-}
       CANVAS_CORS_ORIGINS: ${CANVAS_CORS_ORIGINS:-http://localhost:3000}
-      CANVAS_AGENT_ENGINE: ${CANVAS_AGENT_ENGINE:-legacy}
       CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:-}
       # 服务器访问地址：Agent 看图与生成参考图都靠它签发上游可取到的短时链接。
       CANVAS_PUBLIC_BASE_URL: ${CANVAS_PUBLIC_BASE_URL:-}
@@ -50,10 +49,27 @@ services:
     environment:
       CANVAS_BACKEND_INTERNAL_URL: http://backend:8080
       CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:-}
+      CANVAS_AGENT_CONCURRENCY: ${CANVAS_AGENT_CONCURRENCY:-4}
+      # Harness 装配目录：SYSTEM.md/APPEND_SYSTEM.md、策略与工具描述、AGENTS/SOUL/TOOLS。
+      # 等价于 Pi 的 PI_CODING_AGENT_DIR。
+      CANVAS_AGENT_HARNESS_DIR: /agent/harness
+      # 宿主带 HTTP(S)_PROXY 时，Node fetch 会把内部调用也送去代理而 fetch failed。
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,agent,web,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+      no_proxy: "localhost,127.0.0.1,::1,backend,agent,web,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS:-}
+    volumes:
+      # agent/harness 由 scripts/sync-harness.mjs 从 backend/ 同步而来，只读挂载。
+      - ./agent/harness:/agent/harness:ro
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    # 独立进程：只通过 /internal-agent 与 backend 通信，不共享容器、不直接持有数据库。
+    # 无对外端口；存活状态由主 Node 进程与 Docker restart policy 管理。
 
 volumes:
   backend-data:
