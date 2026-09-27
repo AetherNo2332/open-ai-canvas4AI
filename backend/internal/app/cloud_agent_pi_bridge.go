@@ -539,11 +539,13 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	if remaining <= 0 {
 		return nil, BadAuthRequest("Agent 累计预算已耗尽")
 	}
+	stepThinking := cloudAgentReasoningEnabled(state.Policy.ReasoningMode) && !state.ForceThinkingOff
+	stepOutputTokens := cloudAgentStepOutputBudget(state.StepLimits, state.BoostStepOutputBudget)
 	input := map[string]any{
 		"mode": "text", "prompt": state.Request.Prompt,
 		"agentRequests": map[string]any{"canonical": request.Canonical},
 		"config":        map[string]any{"channelId": state.Request.ChannelID, "channelModelKey": state.Request.ChannelModelKey, "model": firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)},
-		"textOptions":   map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(state.Policy.ReasoningMode), "maxOutputTokens": cloudAgentStepOutputBudget(state.StepLimits, false)},
+		"textOptions":   map[string]any{"stream": true, "thinking": stepThinking, "maxOutputTokens": stepOutputTokens},
 	}
 	if len(references) > 0 {
 		input["referenceImages"] = references

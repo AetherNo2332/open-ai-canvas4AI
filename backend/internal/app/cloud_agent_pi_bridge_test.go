@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -99,6 +100,65 @@ func TestPiAgentSnapshotCarriesGoResolvedModelLimits(t *testing.T) {
 	if snapshot.ModelLimits.ContextWindowTokens != 64_000 || snapshot.ModelLimits.MaxOutputTokens != 8_192 ||
 		!snapshot.ModelLimits.Configured || snapshot.ModelLimits.Source != "channel-model" {
 		t.Fatalf("Pi model limits did not reflect Go's resolved channel capability: %+v", snapshot.ModelLimits)
+	}
+}
+
+func TestPiModelStepCarriesEscalatedOutputSettings(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	policy := platform.DefaultRuntimePolicy()
+	policy.Task.AgentStepMaxOutputTokens = 0
+	policy.Task.AgentStepTimeoutSeconds = 60
+	policyBytes, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SystemSetting{Key: "runtime_policy", ValueJSON: string(policyBytes)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// The fixture initialized a default policy cache before inserting this override.
+	s.platform = nil
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.Policy.ReasoningMode = "deep"
+		state.ForceThinkingOff = true
+		state.BoostStepOutputBudget = true
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leased, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.PiAgentSnapshot("user", run.ID, leased.LeaseOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, err := s.PiModelStep("user", run.ID, leased.LeaseOwner, PiModelStepRequest{Canonical: snapshot.Canonical})
+	if err != nil {
+		t.Fatalf("升级后的 Pi 模型步骤准入失败: %v", err)
+	}
+	task, err := s.repo.TaskForUser("user", step.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input struct {
+		TextOptions struct {
+			Thinking        bool `json:"thinking"`
+			MaxOutputTokens int  `json:"maxOutputTokens"`
+		} `json:"textOptions"`
+	}
+	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+		t.Fatal(err)
+	}
+	if input.TextOptions.Thinking {
+		t.Fatal("ForceThinkingOff 未应用到 Pi 模型任务")
+	}
+	if input.TextOptions.MaxOutputTokens != cloudAgentStepBoostFallbackTokens {
+		t.Fatalf("Pi 忽略了升级输出预算：got=%d want=%d", input.TextOptions.MaxOutputTokens, cloudAgentStepBoostFallbackTokens)
 	}
 }
 
