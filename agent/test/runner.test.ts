@@ -23,7 +23,7 @@ function promptParts(): PromptParts {
 
 interface FakeState {
   steps: number;
-  checkpoints: { sequence: number; role: string; taskId?: string; text: string }[];
+  checkpoints: { sequence: number; role: string; taskId?: string; text: string; interjectionIds?: string[] }[];
   batches: PiToolCall[][];
   executions: string[];
   /**
@@ -43,6 +43,8 @@ interface FakeState {
 function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResult>))[], options: {
   status?: string; failCheckpoint?: boolean; receiptText?: string;
   pendingContextCompaction?: PiSnapshot["pendingContextCompaction"];
+  pendingInterjections?: PiSnapshot["pendingInterjections"];
+  interjectAfterTool?: PiSnapshot["pendingInterjections"];
   piSessionEntries?: PiSnapshot["piSessionEntries"];
   piActiveLeafId?: string;
   firstKeptEntryId?: string;
@@ -59,6 +61,7 @@ function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResu
     tools, piMessages: [],
   };
   if (options.pendingContextCompaction) snapshot.pendingContextCompaction = options.pendingContextCompaction;
+  if (options.pendingInterjections) snapshot.pendingInterjections = options.pendingInterjections;
   if (options.piSessionEntries) snapshot.piSessionEntries = options.piSessionEntries;
   if (options.piActiveLeafId) snapshot.piActiveLeafId = options.piActiveLeafId;
   const bridge = {
@@ -77,14 +80,19 @@ function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResu
       }
       return { taskId: `task-${state.steps}`, result: next };
     },
-    async checkpoint(_run: PiSnapshot, sequence: number, message: Record<string, unknown>, taskId?: string) {
+    async checkpoint(_run: PiSnapshot, sequence: number, message: Record<string, unknown>, taskId?: string,
+      _signal?: AbortSignal, session?: { interjectionIds?: string[] }) {
       if (options.failCheckpoint) throw new Error("injected checkpoint failure");
       const content = message.content;
       const text = typeof content === "string" ? content
         : Array.isArray(content) ? content.map((part: any) => part?.text ?? "").join("") : "";
-      state.checkpoints.push({ sequence, role: String(message.role), taskId, text });
+      state.checkpoints.push({ sequence, role: String(message.role), taskId, text, interjectionIds: session?.interjectionIds });
       state.ops.push(`checkpoint:${String(message.role)}`);
       if (taskId) snapshot.activeTaskId = undefined;
+      if (session?.interjectionIds?.length) {
+        const delivered = new Set(session.interjectionIds);
+        snapshot.pendingInterjections = (snapshot.pendingInterjections || []).filter(({ id }) => !delivered.has(id));
+      }
     },
     async startToolBatch(_run: PiSnapshot, calls: PiToolCall[]) {
       state.batches.push(calls);
@@ -95,6 +103,7 @@ function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResu
     async executeTool(_run: PiSnapshot, callId: string) {
       state.executions.push(callId);
       state.ops.push(`execute:${callId}`);
+      if (options.interjectAfterTool) snapshot.pendingInterjections = options.interjectAfterTool;
       return { callId, pending: false, result: options.receiptText ?? "已写入画布" };
     },
     async snapshot() { return { ...snapshot, status: state.status, activeTaskId: undefined,
@@ -124,6 +133,35 @@ function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResu
   } as unknown as CanvasBridge;
   return { bridge, state, snapshot };
 }
+
+test("Pi sends queued Go interjections in the next user message and checkpoints their delivery", async () => {
+  const { bridge, state, snapshot } = fakeBridge([{ text: "我会保留当前构图" }], {
+    pendingInterjections: [{ id: "interjection-1", text: "先不要改构图" }],
+  });
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  const request = state.canonical[0];
+  assert.ok(request, "must issue the model request");
+  assert.match(JSON.stringify(request.messages), /【用户插话】先不要改构图/);
+  const delivered = state.checkpoints.find(({ role, interjectionIds }) =>
+    role === "user" && interjectionIds?.includes("interjection-1"));
+  assert.ok(delivered, "the Go delivery id must accompany the durable user checkpoint");
+  assert.match(delivered.text, /【用户插话】先不要改构图/);
+});
+
+test("Pi steers a newly queued Go interjection into the live run before its next model step", async () => {
+  const { bridge, state } = fakeBridge([
+    { toolCalls: [{ id: "call-1", function: { name: "agent_tools_canvas_read", arguments: "{}" } }] },
+    { text: "收到，继续保留构图" },
+  ], {
+    interjectAfterTool: [{ id: "interjection-live", text: "不要改变镜头位置" }],
+  });
+  await runCanvasAgent(bridge, snapshotFor(), undefined, promptParts());
+  assert.equal(state.steps, 2);
+  assert.match(JSON.stringify(state.canonical[1]?.messages), /【用户插话】不要改变镜头位置/);
+  assert.ok(state.checkpoints.some(({ role, interjectionIds }) =>
+    role === "user" && interjectionIds?.includes("interjection-live")),
+  "live steering must be acknowledged by its Pi user checkpoint");
+});
 
 test("首个 system 由服务端策略与 Harness 正文组成，模型只看到画布工具", async () => {
   const { bridge, state } = fakeBridge([{ text: "好" }]);

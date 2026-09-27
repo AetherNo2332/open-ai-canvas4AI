@@ -535,8 +535,47 @@ export async function runCanvasAgent(
   let admittedCallIds = new Set<string>();
   let batchRejection = "";
   let canonicalCount = snapshot.canonical.messages.length;
+  const pendingInterjections = new Map<string, string>();
+  const injectedInterjectionIds = new Set<string>();
+  const syncPendingInterjections = (next: PiSnapshot): void => {
+    for (const item of next.pendingInterjections || []) {
+      if (item.id && typeof item.text === "string") pendingInterjections.set(item.id, item.text);
+    }
+  };
+  const interjectionMessage = (text: string): string => `【用户插话】${text}`;
+  syncPendingInterjections(snapshot);
+  const interjectionIdsForMessage = (message: AgentMessage): string[] => {
+    const content = (message as unknown as { content?: unknown }).content;
+    const text = textContent(content);
+    return [...pendingInterjections]
+      .filter(([id, body]) => injectedInterjectionIds.has(id) && text.includes(interjectionMessage(body)))
+      .map(([id]) => id);
+  };
+  const prependPendingInterjections = (prompt: string): string => {
+    const notes: string[] = [];
+    for (const [id, body] of pendingInterjections) {
+      if (injectedInterjectionIds.has(id)) continue;
+      injectedInterjectionIds.add(id);
+      notes.push(interjectionMessage(body));
+    }
+    if (notes.length === 0) return prompt;
+    return [prompt, ...notes].filter((part) => part.trim() !== "").join("\n\n");
+  };
+  const steerPendingInterjections = async (): Promise<void> => {
+    if (!session?.isStreaming) return;
+    for (const [id, body] of pendingInterjections) {
+      if (injectedInterjectionIds.has(id)) continue;
+      injectedInterjectionIds.add(id);
+      try {
+        await session.steer(interjectionMessage(body), undefined, { source: "interactive" });
+      } catch (error) {
+        injectedInterjectionIds.delete(id);
+        throw error;
+      }
+    }
+  };
 
-  const checkpoint = async (message: AgentMessage, taskId?: string): Promise<void> => {
+  const checkpoint = async (message: AgentMessage, taskId?: string, interjectionIds: string[] = []): Promise<void> => {
     let entries: SessionEntry[];
     let leafId: string;
     if (sessionManager) {
@@ -558,7 +597,7 @@ export async function runCanvasAgent(
       leafId = sessionLeafId;
     }
     const result = await bridge.checkpoint(snapshot, ++sequence, message as unknown as Record<string, unknown>, taskId, shutdown,
-      { revision: sessionRevision, activeLeafId: leafId, entries: entries as unknown as Record<string, unknown>[] });
+      { revision: sessionRevision, activeLeafId: leafId, entries: entries as unknown as Record<string, unknown>[], interjectionIds });
     if (result && typeof result.sessionRevision === "number" && result.sessionRevision > 0) {
       sessionRevision = result.sessionRevision;
       for (const entry of entries) persistedSessionEntryIds.add(entry.id);
@@ -572,6 +611,13 @@ export async function runCanvasAgent(
           ...entries.map((entry) => ({ runId: snapshot.runId, entry: entry as unknown as Record<string, unknown> })),
         ],
       };
+    }
+    for (const id of interjectionIds) {
+      pendingInterjections.delete(id);
+      injectedInterjectionIds.delete(id);
+    }
+    if (interjectionIds.length > 0) {
+      snapshot = { ...snapshot, pendingInterjections: [...pendingInterjections].map(([id, text]) => ({ id, text })) };
     }
   };
 
@@ -589,6 +635,8 @@ export async function runCanvasAgent(
     }
     canonicalCount = refreshed.canonical.messages.length;
     snapshot = refreshed;
+    syncPendingInterjections(refreshed);
+    await steerPendingInterjections();
     return { result: receipt.result, isError: receipt.isError,
       terminate: receipt.terminated === true || (name === "finish_run" && !receipt.isError) };
   }, snapshot.previousStepTemplate);
@@ -663,7 +711,8 @@ export async function runCanvasAgent(
           return;
         }
       }
-      queue.enqueue(async () => { await checkpoint(message as unknown as AgentMessage, taskId); });
+      const interjectionIds = message.role === "user" ? interjectionIdsForMessage(message as unknown as AgentMessage) : [];
+      queue.enqueue(async () => { await checkpoint(message as unknown as AgentMessage, taskId, interjectionIds); });
     });
 
     let abortRequested = false;
@@ -680,12 +729,14 @@ export async function runCanvasAgent(
       void (async () => {
         await bridge.renew(snapshot, shutdown);
         snapshot = await bridge.snapshot(snapshot, shutdown);
+        syncPendingInterjections(snapshot);
         if (isTerminalRunStatus(snapshot.status)) abortSession();
+        else await steerPendingInterjections();
       })().catch(() => abortSession()).finally(() => { leaseCheckRunning = false; });
     }, 15_000);
 
     try {
-      let prompt = resume.prompt;
+      let prompt = prependPendingInterjections(resume.prompt);
       if (pendingContextCompaction) {
         await session.compact();
         if (compactionFailure !== undefined) {
@@ -711,6 +762,7 @@ export async function runCanvasAgent(
           throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
         }
         snapshot = await bridge.snapshot(snapshot, shutdown);
+        syncPendingInterjections(snapshot);
         canonicalCount = snapshot.canonical.messages.length;
         if (listenerFailure !== undefined || isTerminalRunStatus(snapshot.status)) break;
         // 收尾判定：只有"最后一个模型步骤没有工具调用"才轮到 Go 决定完成还是追加提示。
@@ -718,8 +770,10 @@ export async function runCanvasAgent(
         noToolTurnPending = false;
         const decision = await bridge.noToolTurn(snapshot, latestTaskId, shutdown);
         if (isTerminalRunStatus(decision.status)) break;
-        if (decision.nudge) {
-          prompt = decision.nudge;
+        const nextPrompt = prependPendingInterjections(decision.nudge ||
+          (pendingInterjections.size > 0 ? CONTINUATION_PROMPT : ""));
+        if (nextPrompt) {
+          prompt = nextPrompt;
           continue;
         }
         break;

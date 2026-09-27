@@ -46,6 +46,7 @@ export interface PiSnapshot {
   lastTaskId?: string;
   noToolTaskId?: string;
   noToolNudge?: string;
+  pendingInterjections?: Array<{ id: string; text: string; createdAt?: string }>;
   /** A Go-backed compaction whose model task survived a worker restart. */
   pendingContextCompaction?: {
     operationId: string;
@@ -164,11 +165,12 @@ export class CanvasBridge {
   }
 
   async checkpoint(run: PiSnapshot, sequence: number, message: Record<string, unknown>, taskId?: string, signal?: AbortSignal,
-    session?: { revision: number; activeLeafId: string; entries: Record<string, unknown>[] }): Promise<PiCheckpointResult> {
+    session?: { revision: number; activeLeafId: string; entries: Record<string, unknown>[]; interjectionIds?: string[] }): Promise<PiCheckpointResult> {
     return this.request<PiCheckpointResult>("POST", `/runs/${encodeURIComponent(run.runId)}/messages`, {
       sequence, message,
       ...(taskId ? { taskId } : {}),
-      ...(session ? { sessionRevision: session.revision, activeLeafId: session.activeLeafId, sessionEntries: session.entries } : {}),
+      ...(session ? { sessionRevision: session.revision, activeLeafId: session.activeLeafId, sessionEntries: session.entries,
+        ...(session.interjectionIds?.length ? { interjectionIds: session.interjectionIds } : {}) } : {}),
     }, run, signal);
   }
 

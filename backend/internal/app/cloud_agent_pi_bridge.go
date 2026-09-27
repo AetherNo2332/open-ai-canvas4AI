@@ -37,6 +37,12 @@ type PiPendingContextCompaction struct {
 	TokensBefore    int    `json:"tokensBefore"`
 }
 
+type PiPendingInterjection struct {
+	ID        string    `json:"id"`
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type PiAgentSnapshot struct {
 	RunID                    string                      `json:"runId"`
 	PiSessionID              string                      `json:"piSessionId"`
@@ -55,6 +61,7 @@ type PiAgentSnapshot struct {
 	LastTaskID               string                      `json:"lastTaskId,omitempty"`
 	NoToolTaskID             string                      `json:"noToolTaskId,omitempty"`
 	NoToolNudge              string                      `json:"noToolNudge,omitempty"`
+	PendingInterjections     []PiPendingInterjection     `json:"pendingInterjections,omitempty"`
 	PendingContextCompaction *PiPendingContextCompaction `json:"pendingContextCompaction,omitempty"`
 	PreviousStepTemplate     string                      `json:"previousStepTemplate"`
 	Tools                    []PiAgentToolSpec           `json:"tools"`
@@ -112,6 +119,7 @@ type PiMessageCheckpoint struct {
 	Sequence        int               `json:"sequence"`
 	Message         json.RawMessage   `json:"message"`
 	TaskID          string            `json:"taskId,omitempty"`
+	InterjectionIDs []string          `json:"interjectionIds,omitempty"`
 	SessionRevision int64             `json:"sessionRevision,omitempty"`
 	ActiveLeafID    string            `json:"activeLeafId,omitempty"`
 	SessionEntries  []json.RawMessage `json:"sessionEntries,omitempty"`
@@ -149,6 +157,19 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 	}
 	if json.Unmarshal(input.Message, &message) != nil || (message.Role != "user" && message.Role != "assistant" && message.Role != "toolResult" && message.Role != "system") {
 		return 0, BadAuthRequest("Pi 消息类型无效")
+	}
+	if len(input.InterjectionIDs) > cloudAgentInterjectionIDMemory || (len(input.InterjectionIDs) > 0 && message.Role != "user") {
+		return 0, BadAuthRequest("Pi 插话检查点无效")
+	}
+	seenInterjectionIDs := make(map[string]struct{}, len(input.InterjectionIDs))
+	for _, id := range input.InterjectionIDs {
+		if strings.TrimSpace(id) == "" {
+			return 0, BadAuthRequest("Pi 插话检查点无效")
+		}
+		if _, duplicate := seenInterjectionIDs[id]; duplicate {
+			return 0, BadAuthRequest("Pi 插话检查点无效")
+		}
+		seenInterjectionIDs[id] = struct{}{}
 	}
 	var sessionEntries []model.CloudAgentPiEntry
 	for _, raw := range input.SessionEntries {
@@ -193,6 +214,17 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 				if !reflect.DeepEqual(oldValue, newValue) {
 					return kernel.Forbidden("Pi 消息检查点冲突")
 				}
+				if len(input.InterjectionIDs) > 0 {
+					state, err := cloudAgentDecode(current)
+					if err != nil {
+						return err
+					}
+					for _, id := range input.InterjectionIDs {
+						if !containsString(state.InterjectionIDs, id) {
+							return kernel.Forbidden("Pi 插话检查点冲突")
+						}
+					}
+				}
 				if input.SessionRevision > 0 || len(input.SessionEntries) > 0 || input.ActiveLeafID != "" {
 					updatedSessionRevision, err = repo.AppendCloudAgentPiSessionEntries(
 						userID, current.ConversationID, runID, input.SessionRevision, input.ActiveLeafID, sessionEntries,
@@ -227,6 +259,11 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 			// transaction so the usage anchor and assistant checkpoint commit together.
 			s.recordCloudAgentTokenAnchorWithRepository(repo, userID, &state)
 			state.ActiveTaskID = ""
+		}
+		if len(input.InterjectionIDs) > 0 {
+			if err := cloudAgentCommitPiInterjections(runID, &state, input.InterjectionIDs, message.Content); err != nil {
+				return err
+			}
 		}
 		if err := cloudAgentSave(current, &state); err != nil {
 			return err
@@ -493,6 +530,11 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 		// 不把资源 ID 或上游地址写进失败原因。
 		return nil, kernel.BadAuthRequest(cloudAgentSafeToolError(refErr))
 	}
+	// The Go vision ledger tracks images that reached this specific provider envelope,
+	// not merely images present in Pi history. Apply the model's image limit before
+	// settling pending observations, just as the legacy step builder did.
+	deliveredNodes := deliveredImageNodeIDs(request.Canonical)
+	state.cloudAgentSettleImageDelivery(deliveredNodes, len(deliveredNodes))
 	remaining := int64(math.Floor(state.Request.Budget.MaxCredits * float64(CreditScale)))
 	if remaining <= 0 {
 		return nil, BadAuthRequest("Agent 累计预算已耗尽")
@@ -703,6 +745,7 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 		return kernel.Forbidden("Pi 模型步骤未成功")
 	}
 	var modelOutput struct {
+		Text      string           `json:"text"`
 		ToolCalls []cloudAgentCall `json:"toolCalls"`
 		Legacy    []cloudAgentCall `json:"tool_calls"`
 	}
@@ -715,6 +758,15 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	}
 	if !piSameCalls(expected, batch.Calls) {
 		return kernel.Forbidden("Pi 工具批次与模型结果不一致")
+	}
+	recordedObservations := state.cloudAgentRecordImageObservations(modelOutput.Text, len(batch.Calls) > 0)
+	state.cloudAgentSyncVisualAnchor()
+	if recordedObservations > 0 {
+		state.event(runID, "context_transition", map[string]any{
+			"kind": "image_observation", "reason": "vision_ledger",
+			"text":         fmt.Sprintf("视觉账本：记下 %d 张图片的观察", recordedObservations),
+			"observations": recordedObservations, "pendingImages": len(state.PendingImageObservations),
+		})
 	}
 	state.Calls = batch.Calls
 	state.CallIndex = 0
@@ -887,11 +939,15 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 			WillRetry: compaction.PiWillRetry, TokensBefore: compaction.PiTokensBefore,
 		}
 	}
+	pendingInterjections := make([]PiPendingInterjection, 0, len(state.PendingInterjections))
+	for _, item := range state.PendingInterjections {
+		pendingInterjections = append(pendingInterjections, PiPendingInterjection{ID: item.ID, Text: item.Text, CreatedAt: item.CreatedAt})
+	}
 	return &PiAgentSnapshot{
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,
-		Request: state.Request, ModelLimits: PiAgentModelLimits{ContextWindowTokens: budget.ContextWindowTokens, MaxOutputTokens: budget.MaxOutputTokens, Configured: budget.Configured, Source: budget.Source}, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
+		Request: state.Request, ModelLimits: PiAgentModelLimits{ContextWindowTokens: budget.ContextWindowTokens, MaxOutputTokens: budget.MaxOutputTokens, Configured: budget.Configured, Source: budget.Source}, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。
 		Harness: cloudAgentFrozenHarness(state.Snapshot),
@@ -934,6 +990,42 @@ func piAssistantText(content any) string {
 	default:
 		return ""
 	}
+}
+
+// cloudAgentCommitPiInterjections closes the delivery loop only when the Pi user
+// checkpoint and its v3 session entries commit in the same Go transaction. A
+// worker crash before this checkpoint leaves the items pending for the next lease.
+func cloudAgentCommitPiInterjections(runID string, state *cloudAgentRuntime, ids []string, content any) error {
+	if state == nil || len(ids) == 0 {
+		return nil
+	}
+	messageText := piAssistantText(content)
+	requested := make(map[string]cloudAgentInterjection, len(ids))
+	for _, id := range ids {
+		for _, item := range state.PendingInterjections {
+			if item.ID == id {
+				requested[id] = item
+				break
+			}
+		}
+		item, ok := requested[id]
+		if !ok || !strings.Contains(messageText, "【用户插话】"+item.Text) {
+			return kernel.Forbidden("Pi 用户消息与待送插话不匹配")
+		}
+	}
+	remaining := make([]cloudAgentInterjection, 0, len(state.PendingInterjections)-len(requested))
+	for _, item := range state.PendingInterjections {
+		if _, delivered := requested[item.ID]; delivered {
+			state.event(runID, "user_interjection_delivered", map[string]any{"messageId": item.ID, "text": item.Text})
+			cloudAgentRememberInterjectionID(state, item.ID)
+			continue
+		}
+		remaining = append(remaining, item)
+	}
+	state.PendingInterjections = remaining
+	state.CompletionNudgeAttempt, state.CompletionNudges, state.CompletionNudgeFingerprint = 0, 0, ""
+	state.Canonical.ToolChoice = "auto"
+	return nil
 }
 
 // piReasoningText 提取 Pi 的 thinking 块正文（推理内容不进正文，但要保留既有 SSE 事件）。

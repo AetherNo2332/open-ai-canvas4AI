@@ -18,10 +18,11 @@ func piAgentTestFixture(t *testing.T) (*Service, *gorm.DB, *model.CloudAgentExec
 	s, db, _, _ := creationTestService(t)
 	const (
 		userID = "user"
-		runID  = "pi-run-1"
 		owner  = "worker-a"
 	)
 	req := agentTestRequest()
+	req.IdempotencyKey = "pi-test-run"
+	runID := cloudAgentID(userID, req.IdempotencyKey)
 	// read_only 会裁掉所有写工具，协议测试要同时覆盖写入与只读工具。
 	req.PermissionMode = "auto"
 	profile := cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")}
@@ -98,6 +99,77 @@ func TestPiAgentSnapshotCarriesGoResolvedModelLimits(t *testing.T) {
 	if snapshot.ModelLimits.ContextWindowTokens != 64_000 || snapshot.ModelLimits.MaxOutputTokens != 8_192 ||
 		!snapshot.ModelLimits.Configured || snapshot.ModelLimits.Source != "channel-model" {
 		t.Fatalf("Pi model limits did not reflect Go's resolved channel capability: %+v", snapshot.ModelLimits)
+	}
+}
+
+func TestPiInterjectionIsDeliveredWithUserSessionCheckpoint(t *testing.T) {
+	s, _, run := piAgentTestLeasedFixture(t)
+	const messageID = "interjection-1"
+	const interjectionText = "先停一下，保留当前构图"
+	if _, err := s.InterjectCloudAgent("user", run.ID, messageID, interjectionText); err != nil {
+		t.Fatalf("插话入队失败: %v", err)
+	}
+	updated, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.PiAgentSnapshot("user", run.ID, updated.LeaseOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.PendingInterjections) != 1 || snapshot.PendingInterjections[0].ID != messageID {
+		t.Fatalf("Pi snapshot 未暴露待送插话：%+v", snapshot.PendingInterjections)
+	}
+
+	message := json.RawMessage(`{"role":"user","content":[{"type":"text","text":"【用户插话】先停一下，保留当前构图"}],"timestamp":1790550000000}`)
+	entry := json.RawMessage(`{"type":"message","id":"pi-interjection-entry","parentId":null,"timestamp":"2026-09-28T00:00:00Z","message":{"role":"user","content":[{"type":"text","text":"【用户插话】先停一下，保留当前构图"}],"timestamp":1790550000000}}`)
+	if err := s.PiCheckpointMessage("user", run.ID, updated.LeaseOwner, PiMessageCheckpoint{
+		Sequence: 1, Message: message, InterjectionIDs: []string{messageID},
+		SessionRevision: snapshot.PiSessionRevision, ActiveLeafID: "pi-interjection-entry", SessionEntries: []json.RawMessage{entry},
+	}); err != nil {
+		t.Fatalf("插话会话检查点失败: %v", err)
+	}
+	committed, state := reloadPiRun(t, s, run.ID)
+	if len(state.PendingInterjections) != 0 || !containsString(state.InterjectionIDs, messageID) {
+		t.Fatalf("插话检查点没有原子清队：pending=%+v seen=%v", state.PendingInterjections, state.InterjectionIDs)
+	}
+	if !agentHasEvent(*state, "user_interjection_delivered") {
+		t.Fatal("送达检查点未记录 user_interjection_delivered 事件")
+	}
+	session, _, err := s.repo.CloudAgentPiSession("user", run.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Revision != snapshot.PiSessionRevision+1 || session.ActiveLeafID != "pi-interjection-entry" {
+		t.Fatalf("Pi 会话没有和插话一起推进：revision=%d leaf=%q runRevision=%d", session.Revision, session.ActiveLeafID, committed.Revision)
+	}
+	if err := s.PiCheckpointMessage("user", run.ID, updated.LeaseOwner, PiMessageCheckpoint{
+		Sequence: 1, Message: message, InterjectionIDs: []string{messageID},
+		SessionRevision: snapshot.PiSessionRevision, ActiveLeafID: "pi-interjection-entry", SessionEntries: []json.RawMessage{entry},
+	}); err != nil {
+		t.Fatalf("重复插话检查点必须幂等: %v", err)
+	}
+}
+
+func TestPiInterjectionCheckpointRejectsUnmatchedMessage(t *testing.T) {
+	s, _, run := piAgentTestLeasedFixture(t)
+	if _, err := s.InterjectCloudAgent("user", run.ID, "interjection-2", "改成蓝色背景"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.PiCheckpointMessage("user", run.ID, updated.LeaseOwner, PiMessageCheckpoint{
+		Sequence: 1, Message: json.RawMessage(`{"role":"user","content":[{"type":"text","text":"普通用户消息"}]}`),
+		InterjectionIDs: []string{"interjection-2"},
+	})
+	if err == nil {
+		t.Fatal("未包含插话正文的 Pi 用户消息被记为插话送达")
+	}
+	_, state := reloadPiRun(t, s, run.ID)
+	if len(state.PendingInterjections) != 1 || state.PendingInterjections[0].ID != "interjection-2" {
+		t.Fatalf("不匹配的 Pi 消息不应清除插话：%+v", state.PendingInterjections)
 	}
 }
 
