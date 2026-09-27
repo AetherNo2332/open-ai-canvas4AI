@@ -91,6 +91,14 @@ func readOnlyCall(id, name string) cloudAgentCall {
 
 func writeBatch(t *testing.T, s *Service, run *model.CloudAgentExecution, state *cloudAgentRuntime, calls []cloudAgentCall) (*model.CloudAgentExecution, cloudAgentRuntime) {
 	t.Helper()
+	// 这些用例直接对构造出来的运行态做预检：模拟先前模型步打开了每个被测
+	// 子工具所属的母类型，再登记该披露状态下实际可见的工具目录。
+	if state.DisclosureVersion >= cloudAgentToolDisclosureVersion {
+		for _, call := range calls {
+			state.ActivatedToolCategories = cloudAgentAppendActivatedCategory(state.ActivatedToolCategories, cloudAgentToolCategory(call.Function.Name))
+		}
+		state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleToolsForCategories(state.Canonical.Tools, state.ActivatedToolCategories, nil, state.ToolScope))
+	}
 	state.Calls = calls
 	state.CallAdmissions = cloudAgentPreflightBatch(state, calls)
 	return saveBatchState(t, s, run, state)
@@ -113,7 +121,7 @@ func TestCloudAgentBatchExecutesOneWriteAndSkipsTheRest(t *testing.T) {
 		t.Fatalf("同批第二个写入应被跳过：%+v", state.CallAdmissions[1])
 	}
 
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	afterFirst := canvasPayloadJSON(t, s)
@@ -122,7 +130,7 @@ func TestCloudAgentBatchExecutesOneWriteAndSkipsTheRest(t *testing.T) {
 	}
 	run, state = reloadAgentRun(t, s, run.ID)
 
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	payload, detail := lastAgentToolEvent(t, s, run.ID)
@@ -162,7 +170,7 @@ func TestCloudAgentPreflightCancelsRemainingWritesAfterSchemaFailure(t *testing.
 	}
 	before := canvasPayloadJSON(t, s)
 
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	payload, detail := lastAgentToolEvent(t, s, run.ID)
@@ -175,7 +183,7 @@ func TestCloudAgentPreflightCancelsRemainingWritesAfterSchemaFailure(t *testing.
 	run, state = reloadAgentRun(t, s, run.ID)
 
 	for index := 1; index < len(state.Calls); index++ {
-		if err := s.advanceCloudAgentTool(run, &state); err != nil {
+		if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 			t.Fatal(err)
 		}
 		payload, detail = lastAgentToolEvent(t, s, run.ID)
@@ -206,7 +214,7 @@ func TestCloudAgentPreflightRejectsToolOutsideThisRun(t *testing.T) {
 		t.Fatalf("工具表外的调用应被拒：%+v", state.CallAdmissions[0])
 	}
 
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	payload, detail := lastAgentToolEvent(t, s, run.ID)
@@ -251,7 +259,7 @@ func TestCloudAgentPreflightAllowsConcurrentReads(t *testing.T) {
 			t.Fatalf("只读调用 %d 应被放行：%+v", index, admission)
 		}
 	}
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	payload, _ := lastAgentToolEvent(t, s, run.ID)
@@ -270,7 +278,7 @@ func TestCloudAgentWithoutAdmissionsExecutesNormally(t *testing.T) {
 	if len(state.CallAdmissions) != 0 {
 		t.Fatalf("前置条件：本用例不应有预检结论")
 	}
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	_, runtimeState := reloadAgentRun(t, s, run.ID)
@@ -302,7 +310,7 @@ func TestCloudAgentUnknownOperationTypeIsRepairable(t *testing.T) {
 		t.Fatalf("未知操作类型应在预检被拒且指向具体 op：%+v", state.CallAdmissions[0])
 	}
 	before := canvasPayloadJSON(t, s)
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	payload, detail := lastAgentToolEvent(t, s, run.ID)

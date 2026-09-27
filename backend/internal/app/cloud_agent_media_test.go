@@ -61,16 +61,18 @@ func agentMediaRun(t *testing.T, s *Service, a cloudAgentMediaArgs, permission s
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// 建 run 只落占位与快照：运行停在 awaiting_first_step，此时把待处理调用塞进状态会被校验
+	// 拒绝（"首步前不允许有任务历史"）。这些用例检验的是首步**之后**的业务（媒体准入、
+	// 审批、画布回写），所以先走真实的首个模型步把运行合法启动起来 —— 与生产同一入口。
+	run, decoded := startPiAgentFirstStep(t, s, root.ID)
+	state := *decoded
 	state.ActiveTaskID = ""
 	state.Calls = []cloudAgentCall{agentMediaCall(a)}
+	// 分层披露下，运行态里登记的是"本轮下发给模型的工具表"。这些用例直接驱动工具
+	// 执行/预检，需要完整合格目录；等价于"本轮已披露全部合格工具"。
+	if state.DisclosureVersion >= cloudAgentToolDisclosureVersion {
+		state.AdvertisedToolNames = cloudAgentToolNames(state.Canonical.Tools)
+	}
 	if err = s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
 	}); err != nil {
@@ -100,7 +102,9 @@ func approveAgentMediaDraft(t *testing.T, s *Service, runID string) {
 	if err := s.DecideCloudAgentApproval("user", runID, run.Approval.ID, "approve", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", runID); err != nil {
+	// 审批之后仍由生产入口推进这一次调用：`PiToolAdvance` 会走同一个媒体分支
+	// （`advanceCloudAgentMedia`），旧调度入口 `advanceCloudAgentByID` 已不再有根任务可查。
+	if _, err := s.PiToolAdvance("user", runID, "worker-a", "media-call"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -116,7 +120,7 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 		t.Fatalf("wrong catalog: %s", encoded)
 	}
 	run, state := agentMediaRun(t, s, a, "request_approval")
-	if err = s.advanceCloudAgentTool(run, &state); err != nil {
+	if err = s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	var count int64
@@ -131,11 +135,11 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 	if err = s.DecideCloudAgentApproval("user", run.ID, waiting.Approval.ID, "approve", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.advanceCloudAgentByID("user", run.ID); err != nil {
-		t.Fatal(err)
-	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
 	state, _ = cloudAgentDecode(run)
+	if err = s.executeCloudAgentMediaCall(run, &state, state.Calls[state.CallIndex]); err != nil {
+		t.Fatal(err)
+	}
 	if state.MediaTaskID == "" {
 		t.Fatalf("no media task: %s", run.StateJSON)
 	}
@@ -157,7 +161,8 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 	if node == nil || node["type"] != "video" || node["metadata"].(map[string]any)["taskId"] != task.ID || len(creationMaps(doc["connections"])) != 3 {
 		t.Fatalf("no node/edges: %s", canvas.PayloadJSON)
 	}
-	if err = s.advanceCloudAgentByID("user", run.ID); err != nil {
+	run, state = reloadAgentRun(t, s, run.ID)
+	if err = s.executeCloudAgentMediaCall(run, &state, state.Calls[state.CallIndex]); err != nil {
 		t.Fatal(err)
 	}
 	db.Model(&model.Task{}).Where("type = ?", "canvas_video").Count(&count)
@@ -170,7 +175,8 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 	if err = db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": `{"mode":"video","video":{"storageKey":"resource:output"}}`}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = s.advanceCloudAgentByID("user", run.ID); err != nil {
+	run, state = reloadAgentRun(t, s, run.ID)
+	if err = s.executeCloudAgentMediaCall(run, &state, state.Calls[state.CallIndex]); err != nil {
 		t.Fatal(err)
 	}
 	canvas, _ = s.repo.CanvasProjectForUser("user", "agent-canvas")
@@ -556,7 +562,7 @@ func TestCloudAgentMediaDraftReuseLifecycle(t *testing.T) {
 func TestCloudAgentMediaPreviousDraftRequiresNewApproval(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
 	run, state := agentMediaRun(t, s, a, "request_approval")
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CancelCloudAgent(context.Background(), "user", run.ID); err != nil {
@@ -578,7 +584,7 @@ func TestCloudAgentMediaPreviousDraftRequiresNewApproval(t *testing.T) {
 	if next.ID == run.ID {
 		t.Fatal("expected a distinct run")
 	}
-	if err := s.advanceCloudAgentTool(next, &nextState); err != nil {
+	if err := s.executeCloudAgentToolCall(next, &nextState); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := s.CloudAgentRun("user", next.ID)

@@ -31,8 +31,20 @@ type CloudAgentEvent struct {
 	CreatedAt time.Time      `json:"createdAt"`
 }
 type cloudAgentCall struct {
-	ID       string `json:"id"`
-	Function struct {
+	ID string `json:"id"`
+	// Type 是 OpenAI 形态工具调用的 "function" 标记。
+	//
+	// /internal-agent 的请求解码使用 DisallowUnknownFields，而 Node 侧
+	// `PiToolCall` 由 `callsFromAssistant` 构造时**始终**带上 type:"function"。
+	// 结构体缺这个字段会让整个工具批次以空 400 被拒（实测 ~50µs，即在任何业务
+	// 逻辑之前），worker 于是无限重试并持续续租 —— 租约既不过期、看门狗也不会
+	// 触发，运行永远停在 running。这里的字段集必须与 agent/src/bridge.ts 的
+	// PiToolCall 保持一致。
+	Type string `json:"type,omitempty"`
+	// ThoughtSignature 可选：部分上游（Gemini 系）在工具调用上带回推理签名，
+	// Node 会原样转发。
+	ThoughtSignature string `json:"thoughtSignature,omitempty"`
+	Function         struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
@@ -85,33 +97,50 @@ type cloudAgentApproval struct {
 	Reason    string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
-	RuntimeRunID            string                    `json:"-"`
-	Request                 CloudAgentRequest         `json:"request"`
-	Policy                  cloudAgentPolicySnapshot  `json:"policy"`
-	ParentID                string                    `json:"parentId,omitempty"`
-	Fingerprint             string                    `json:"fingerprint,omitempty"`
-	CreativeAnchor          cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
-	TextHistory             []providerTextMessage     `json:"textHistory,omitempty"`
-	Skills                  []cloudAgentSkill         `json:"skills"`
-	SkillReads              map[string]bool           `json:"skillReads,omitempty"`
-	Profile                 cloudAgentProfileSnapshot `json:"profile"`
-	ProfileReads            map[string]bool           `json:"profileReads,omitempty"`
-	Canonical               canonicalAgentRequest     `json:"canonical"`
-	DisclosureVersion       int                       `json:"disclosureVersion,omitempty"`
-	SelectedToolCategory    string                    `json:"selectedToolCategory,omitempty"`
-	ActivatedToolCategories []string                  `json:"activatedToolCategories,omitempty"`
-	AdvertisedToolNames     []string                  `json:"advertisedToolNames,omitempty"`
-	ActiveTaskID            string                    `json:"activeTaskId"`
-	PiNoToolTaskID          string                    `json:"piNoToolTaskId,omitempty"`
-	PiNoToolNudge           string                    `json:"piNoToolNudge,omitempty"`
-	ActiveTextDraft         string                    `json:"activeTextDraft,omitempty"`
-	MediaTaskID             string                    `json:"mediaTaskId,omitempty"`
-	TaskIDs                 []string                  `json:"taskIds"`
-	Step                    int                       `json:"step"`
-	Generations             int                       `json:"generations"`
-	VideoSeconds            int                       `json:"videoSeconds"`
-	Calls                   []cloudAgentCall          `json:"calls"`
-	CallIndex               int                       `json:"callIndex"`
+	RuntimeRunID      string                    `json:"-"`
+	Request           CloudAgentRequest         `json:"request"`
+	Policy            cloudAgentPolicySnapshot  `json:"policy"`
+	ParentID          string                    `json:"parentId,omitempty"`
+	Fingerprint       string                    `json:"fingerprint,omitempty"`
+	CreativeAnchor    cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
+	TextHistory       []providerTextMessage     `json:"textHistory,omitempty"`
+	Skills            []cloudAgentSkill         `json:"skills"`
+	SkillReads        map[string]bool           `json:"skillReads,omitempty"`
+	Profile           cloudAgentProfileSnapshot `json:"profile"`
+	ProfileReads      map[string]bool           `json:"profileReads,omitempty"`
+	Canonical         canonicalAgentRequest     `json:"canonical"`
+	DisclosureVersion int                       `json:"disclosureVersion,omitempty"`
+	// PromptContract 是"运行创建时装配提示所用的 Harness 内容身份"（Node 侧 sha256）。
+	//
+	// 为什么必须固化：Node 在 worker 启动时读一次 Harness，然后把同一个对象用于它领取的
+	// **每一条**运行（`server.ts` 的 `harness` 在 while 循环外）。运维改了
+	// SYSTEM.md/AGENTS.md 再重启，在途运行就会**静默换提示** —— 既违反"首步与后续步同一份
+	// 快照"，也违反"恢复不得重读新版磁盘文件"。工具 schema 早就有等价的漂移检查
+	//（`assertToolSnapshotMatchesSchema`），提示层此前完全没有。
+	PromptContract          string   `json:"promptContract,omitempty"`
+	SelectedToolCategory    string   `json:"selectedToolCategory,omitempty"`
+	ActivatedToolCategories []string `json:"activatedToolCategories,omitempty"`
+	AdvertisedToolNames     []string `json:"advertisedToolNames,omitempty"`
+	// 首步合同（P1.5）：合同版本、阶段、不可变快照与占位任务的持久化位置。
+	// 旧运行的 ContractVersion 为 0，这些字段全部留空，行为与迁移前一致。
+	ContractVersion int `json:"contractVersion,omitempty"`
+	// Phase 只取值 awaiting_first_step（见 cloudAgentPhaseAwaitingFirstStep）。
+	Phase string `json:"phase,omitempty"`
+	// Snapshot 是本轮不可变的提示合同；首个模型步补齐 Harness 正文，之后只比对不重写。
+	Snapshot *cloudAgentContractSnapshot `json:"contractSnapshot,omitempty"`
+	// PlaceholderTaskID 是承载本轮报价预留的占位任务（当前实现里等于运行 ID）。
+	PlaceholderTaskID string           `json:"placeholderTaskId,omitempty"`
+	ActiveTaskID      string           `json:"activeTaskId"`
+	PiNoToolTaskID    string           `json:"piNoToolTaskId,omitempty"`
+	PiNoToolNudge     string           `json:"piNoToolNudge,omitempty"`
+	ActiveTextDraft   string           `json:"activeTextDraft,omitempty"`
+	MediaTaskID       string           `json:"mediaTaskId,omitempty"`
+	TaskIDs           []string         `json:"taskIds"`
+	Step              int              `json:"step"`
+	Generations       int              `json:"generations"`
+	VideoSeconds      int              `json:"videoSeconds"`
+	Calls             []cloudAgentCall `json:"calls"`
+	CallIndex         int              `json:"callIndex"`
 	// ToolRepairs is counted per tool so reads do not reset write-argument repairs.
 	ToolRepairs            map[string]cloudAgentToolRepair `json:"toolRepairs,omitempty"`
 	Approval               *cloudAgentApproval             `json:"approval,omitempty"`
@@ -197,6 +226,9 @@ type cloudAgentRuntime struct {
 	Plan                 []cloudAgentPlanItem                    `json:"plan,omitempty"`
 	PendingInterjections []cloudAgentInterjection                `json:"pendingInterjections,omitempty"`
 	InterjectionIDs      []string                                `json:"interjectionIds,omitempty"`
+	// PiModelStepFingerprint 绑定最近一次模型任务的完整请求，确保丢响应重投复用原任务；
+	// 同一在途任务收到不同请求正文时拒绝，而不是静默复用。
+	PiModelStepFingerprint string `json:"piModelStepFingerprint,omitempty"`
 	// 最近一次已发出的步骤请求（模型调用）的本地计价，与上游实测用量配成锚点用。
 	// 估算与实测指向同一个 canonical：估算取自任务 input 里实际发出的那份，
 	// 因此"信封一致"是构造保证，不需要额外比对。
@@ -503,7 +535,13 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 		return errors.New("Agent compacted history exceeds canonical transcript")
 	}
 	if len(state.TaskIDs) == 0 {
-		return errors.New("Agent runtime task history is invalid")
+		// 只有"等首个模型步"的运行允许空任务历史：建 run 只创建占位任务（不进 TaskIDs），
+		// 真实首步任务在首个 PiModelStep 里才落库。其他任何阶段的空历史都是坏状态。
+		if err := cloudAgentFirstStepWaitError(state); err != nil {
+			return err
+		}
+	} else if cloudAgentAwaitingFirstStep(state) {
+		return errors.New("Agent runtime first-step wait already has task history")
 	}
 	seenTasks := make(map[string]struct{}, len(state.TaskIDs))
 	for _, taskID := range state.TaskIDs {
@@ -812,8 +850,13 @@ const (
 	cloudAgentRunEventPageLimit = repository.CloudAgentJournalWindow
 )
 
-func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgentState, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
-	run, err := s.repo.CloudAgent(task.UserID, task.ID)
+// cloudAgentExecutionOutput 只依赖运行的归属与 ID，不再要求一条根任务行。
+//
+// 迁移背景：阶段 2 之后的新 run 由 Go 直接创建（run + 预授权 + 不可变快照），
+// **不再有根任务**，因此这里不能再从 *model.Task 取身份。旧 run 的调用方传
+// 根任务的 ID 即可，语义完全不变（旧的 runID 就等于根任务 ID）。
+func (s *Service) cloudAgentExecutionOutput(userID string, identity cloudAgentRunIdentity, initial cloudAgentState, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
+	run, err := s.repo.CloudAgent(userID, identity.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -822,9 +865,9 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 		// A terminal failed run must remain readable even if its durable runtime
 		// blob was damaged. Do not invent permissions or approval state; expose
 		// only the identity available from the original task input.
-		state = cloudAgentRuntime{Request: initial.Request, ParentID: initial.ParentID, CreativeAnchor: initial.CreativeAnchor, Skills: initial.Skills, Profile: initial.Profile, TaskIDs: []string{task.ID}, Events: []CloudAgentEvent{}}
+		state = cloudAgentRuntime{Request: initial.Request, ParentID: initial.ParentID, CreativeAnchor: initial.CreativeAnchor, Skills: initial.Skills, Profile: initial.Profile, TaskIDs: []string{identity.ID}, Events: []CloudAgentEvent{}}
 	}
-	out := agentRunOutput(task, initial)
+	out := agentRunOutput(identity, initial)
 	out.Status = run.Status
 	out.Revision, out.CleanupPending, out.FailureMessage = run.Revision, run.CleanupPending, run.FailureMessage
 	out.UpdatedAt = run.UpdatedAt
@@ -834,7 +877,7 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 	}
 	// 事件已全量落库，运行详情只返回一页：默认是尾部窗口，sinceSeq 只取增量。
 	// 四个位置字段与 events 一起返回，客户端据此判断"是否还有更早的记录"。
-	out.Events = s.cloudAgentRunEventsForView(task.UserID, run, &state, view.SinceSeq, view.EventLimit)
+	out.Events = s.cloudAgentRunEventsForView(userID, run, &state, view.SinceSeq, view.EventLimit)
 	// EventSeqBase 必须与真正返回的这一页对齐（eventLimit 把它收窄时也一样），
 	// 不变量 events[i].seq == eventSeqBase + i + 1 才成立。页为空时退回窗口水位：
 	// 那时没有"首条事件"，但仍然要能说明窗口在整条日志里的位置。
@@ -842,7 +885,7 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 	if len(out.Events) > 0 {
 		out.EventSeqBase = out.Events[0].Seq - 1
 	}
-	out.EventCount = s.cloudAgentRunEventCount(task.UserID, run, &state)
+	out.EventCount = s.cloudAgentRunEventCount(userID, run, &state)
 	if len(out.Events) > 0 {
 		out.LatestSeq = out.Events[len(out.Events)-1].Seq
 	}
@@ -855,7 +898,7 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 	}
 	out.Step = state.Step
 	if stateErr == nil && state.ActiveTaskID != "" && (run.Status == "running" || run.Status == "queued") {
-		active, err := s.repo.TaskForUser(task.UserID, state.ActiveTaskID)
+		active, err := s.repo.TaskForUser(userID, state.ActiveTaskID)
 		if err != nil {
 			return nil, err
 		}
@@ -869,7 +912,7 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 		skill.Files = nil
 		out.Skills = append(out.Skills, skill)
 	}
-	orders, err := s.repo.BillingOrdersByTaskIDs(task.UserID, state.TaskIDs)
+	orders, err := s.repo.BillingOrdersByTaskIDs(userID, state.TaskIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -887,6 +930,10 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 }
 
 // Runs one bounded transition at a time; no model HTTP call or approval wait holds a DB lock.
+//
+// 已废弃：Pi 是唯一引擎，运行由 agent/ 的 Node worker 领取并驱动（见
+// cloud_agent_pi_bridge.go）。Go 侧不再有调度入口，这里只保留给历史测试装配；
+// 新代码不得再调用。
 func (s *Service) advanceCloudAgentByID(userID, id string) error {
 	// Do not decode the task input/runtime before checking for an existing
 	// execution. A damaged runtime must be terminally recoverable, not
@@ -914,63 +961,6 @@ func (s *Service) advanceCloudAgentByID(userID, id string) error {
 	}
 	return s.advanceCloudAgent(run)
 }
-func (s *Service) advanceCloudAgents() {
-	s.agentSchedulerMu.Lock()
-	defer s.agentSchedulerMu.Unlock()
-	roots, err := s.repo.CloudAgentRoots()
-	if err != nil {
-		log.Printf("agent recovery: %v", err)
-		return
-	}
-	for _, task := range roots {
-		_, state, e := s.cloudAgentTask(task.UserID, task.ID)
-		if e == nil {
-			e = s.ensureCloudAgentExecution(&task, state)
-		}
-		if e != nil {
-			log.Printf("agent recovery %s: %v", task.ID, e)
-		}
-	}
-	runs, err := s.repo.ActiveCloudAgentsAfter(s.agentSchedulerCursor, 50)
-	if err == nil && len(runs) == 0 && s.agentSchedulerCursor != "" {
-		s.agentSchedulerCursor = ""
-		runs, err = s.repo.ActiveCloudAgentsAfter("", 50)
-	}
-	if err != nil {
-		log.Printf("agent scheduler: %v", err)
-		return
-	}
-	for i := range runs {
-		s.agentSchedulerCursor = runs[i].ID
-		if s.terminateStuckCloudAgent(&runs[i]) {
-			continue
-		}
-		err = s.advanceCloudAgent(&runs[i])
-		if err == nil {
-			s.clearCloudAgentSchedulerConflict(runs[i].ID)
-			continue
-		}
-		if errors.Is(err, repository.ErrCreationConflict) {
-			s.noteCloudAgentSchedulerConflict(runs[i].ID)
-			continue
-		}
-		log.Printf("agent transition %s: %v", runs[i].ID, err)
-	}
-}
-
-// wakeCloudAgentScheduler lets a completed model step resume its Agent without
-// waiting for the periodic recovery scan. The ticker remains authoritative for
-// other workers and missed in-process notifications.
-func (s *Service) wakeCloudAgentScheduler() {
-	if s == nil || s.agentSchedulerWake == nil {
-		return
-	}
-	select {
-	case s.agentSchedulerWake <- struct{}{}:
-	default:
-	}
-}
-
 func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) {
 	defer func() {
 		if errors.Is(err, errCloudAgentCheckpoint) {
@@ -1216,7 +1206,7 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 		if handled, err := s.advanceCloudAgentReadBatch(run, &state); handled {
 			return err
 		}
-		return s.advanceCloudAgentTool(run, &state)
+		return s.executeCloudAgentToolCall(run, &state)
 	}
 	// 兜底 flush：本批调用都执行完了（无论最后一个调用是不是看图、有没有被中断），
 	// 缓冲里的图片必须在这里合并成一条 user 消息落到全部 tool 结果之后。少了这一步，
@@ -1405,6 +1395,11 @@ func (s *Service) failCloudAgent(run *model.CloudAgentExecution, state *cloudAge
 	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		current.Status = "failed"
 		current.FailureMessage = truncateRunes(message, 1000)
+		// 终态必须携带收尾标记：首步之前失败时，本轮还压着一笔占位预留，
+		// 而退它是收尾路径的职责（见 cloudAgentRefundHoldingReservation）。
+		// 只写 failed 会让那笔钱一直冻在账上 —— 没有任何一方会回来退它。
+		// 换单之后的失败再走一次收尾是幂等的：占位订单已退，退款直接 no-op。
+		current.CleanupPending = true
 		cloudAgentDropInterjections(run.ID, "本轮已结束："+truncateRunes(message, 120), state)
 		state.event(run.ID, "run_failed", map[string]any{"text": message})
 		return cloudAgentSave(current, state)
@@ -1909,7 +1904,10 @@ func (s *Service) advanceCloudAgentReadBatch(run *model.CloudAgentExecution, sta
 	return true, err
 }
 
-func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
+// executeCloudAgentToolCall applies one preflighted business tool call. Pi owns
+// the model loop; this function only performs the Go-side operation and records
+// its result. The retired scheduler still calls it until C1 removes that path.
+func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
 	if run == nil || state == nil || (run.Status != "running" && run.Status != "queued") {
 		return nil
 	}
@@ -2152,7 +2150,7 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 		}
 	}
 	if allowed && (call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split") && state.Approval != nil && state.Approval.Decision == "approve" {
-		return s.advanceCloudAgentMedia(run, state, cloudAgentMediaCall(call))
+		return s.executeCloudAgentMediaCall(run, state, cloudAgentMediaCall(call))
 	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
@@ -2271,9 +2269,41 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 				return cloudAgentFailBlockedCompletion(current, state, run.ID, block)
 			}
 		}
+		// 基础设施错误必须让整个事务回滚，不能降级成"工具失败回执"后照常提交：
+		// 画布写入与 recorder 共用本事务，recorder 失败时若仍提交，就会出现
+		// "画布已改 + 失败回执"的不一致状态（Codex 评审指出）。
+		// 只有已知的业务拒绝才作为回执交回模型自纠。
+		if toolErr != nil && !cloudAgentToolErrorIsBusiness(toolErr) {
+			return toolErr
+		}
 		cloudAgentRecordToolResult(current, state, call, result, toolErr)
 		return cloudAgentSave(current, state)
 	})
+}
+
+// cloudAgentToolErrorIsBusiness 判断工具错误是否可以安全地作为"业务回执"交回模型。
+// 业务拒绝（参数不合法、快照冲突、权限/准入类 AppError、读循环纠错）→ true，可入回执；
+// 其余（数据库/存储/事务等基础设施错误）→ false，必须向上返回以回滚事务。
+func cloudAgentToolErrorIsBusiness(err error) bool {
+	if err == nil {
+		return false
+	}
+	var argumentErr *cloudAgentArgumentError
+	if errors.As(err, &argumentErr) {
+		return true
+	}
+	var readLoopErr *cloudAgentReadLoopError
+	if errors.As(err, &readLoopErr) {
+		return true
+	}
+	if cloudAgentSnapshotConflict(err) {
+		return true
+	}
+	var appErr *AppError
+	if errors.As(err, &appErr) && appErr != nil {
+		return true
+	}
+	return false
 }
 
 // image_layer_split deliberately reuses the canonical media admission path.
@@ -2340,6 +2370,15 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 	if err != nil {
 		if media != nil {
 			return s.cloudAgentMediaError(run, state, "admission", false, false, err)
+		}
+		if cloudAgentAwaitingFirstStep(state) {
+			// 首个模型步的准入失败发生在换单之前，占位预留还在账上：终态与退款必须同一个事务，
+			// 否则用户看到"失败"时这一轮的钱还冻着，要等下一次收尾排空才释放。
+			// 换单事务里的失败由 PiModelStep 的同一处理兜底。
+			if failErr := s.failCloudAgentFirstStepAdmission(run, state, err); failErr != nil && !errors.Is(failErr, repository.ErrCreationConflict) {
+				log.Printf("agent first-step admission refund: run=%s %v", run.ID, failErr)
+			}
+			return err
 		}
 		return s.failCloudAgent(run, state, cloudAgentSafeToolError(err))
 	}
@@ -2418,7 +2457,22 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				return err
 			}
 		}
-		if err := createTaskWithStorageQuotaRepository(repo, task, prepare.Order, policy); err != nil {
+		if cloudAgentAwaitingFirstStep(state) {
+			// 首个模型步：把"建 run 时的占位预留"换成"真实首步报价"。
+			//
+			// 占位订单号必须从**本事务里**的占位行读出来，而不是用内存副本：
+			// 副本可能落后于别人已经改过的账，按过期事实退款正是这一步要避免的事。
+			placeholder, err := cloudAgentHoldingTaskFrom(repo, run.UserID, run.ID, state.PlaceholderTaskID)
+			if err != nil {
+				return err
+			}
+			if err := repo.SwapCloudAgentHoldingForFirstStep(task, prepare.Order, placeholder.BillingOrderID, policy.Task.ActiveTaskLimit); err != nil {
+				return err
+			}
+			// 阶段推进与首步任务同事务提交：崩在中间会留下"任务已在队列、运行还在等首步"，
+			// 下一次投递就会再建一遍 —— 那正是重复计费。
+			state.Phase = ""
+		} else if err := createTaskWithStorageQuotaRepository(repo, task, prepare.Order, policy); err != nil {
 			return err
 		}
 		if media != nil && prepared != nil {
@@ -2535,7 +2589,7 @@ func (s *Service) cloudAgentMediaError(run *model.CloudAgentExecution, state *cl
 	})
 }
 
-func (s *Service) advanceCloudAgentMedia(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
+func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
 	if state.MediaTaskID != "" {
 		task, err := s.repo.TaskForUser(run.UserID, state.MediaTaskID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -2668,7 +2722,10 @@ func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, rea
 	if len(reason) > 2000 {
 		return BadAuthRequest("审批理由过长")
 	}
-	if _, _, err := s.cloudAgentTask(userID, id); err != nil {
+	// New Pi runs intentionally have no root model task. Resolve identity through
+	// the shared run reader so approvals work for both new execution rows and
+	// legacy task-backed runs.
+	if _, err := s.CloudAgentRun(userID, id); err != nil {
 		return err
 	}
 	run, err := s.repo.CloudAgent(userID, id)
@@ -2741,18 +2798,15 @@ func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, rea
 	})
 }
 func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error {
-	// Cancellation is a control-plane operation. It must remain available even
-	// when the user-facing runtime blob is damaged, so authenticate/authorize
-	// from the task row first instead of calling CloudAgentRun up front.
-	task, err := s.repo.TaskForUser(userID, id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return kernel.NotFound("Agent 运行不存在")
-		}
+	// 取消是控制面操作：即使运行的用户可见 runtime blob 已损坏也必须可用，
+	// 所以授权先于任何状态解析（也不先走 CloudAgentRun）。
+	//
+	// 但**不能**再以根任务作为唯一授权入口：阶段 2 之后的新 run 由 Go 直接创建、
+	// 没有根任务行，按任务授权会让它们**完全无法取消** —— 用户只能看着它跑完，
+	// 或者等看门狗超时判停。cloudAgentRunRefFor 保留"根任务优先"的旧语义，
+	// 根任务读不到才回退到执行记录；而 repo.CloudAgent 自身已做 user_id 归属校验。
+	if _, err := s.cloudAgentRunRefFor(userID, id); err != nil {
 		return err
-	}
-	if task.Operation != cloudAgentOperation {
-		return kernel.NotFound("Agent 运行不存在")
 	}
 	run, err := s.repo.CloudAgent(userID, id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -2792,12 +2846,39 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 			return nil
 		})
 		if err != nil {
-			return err
+			// 取消必须幂等：UI 双击、客户端重试、网络重发都会走到这里，而并发取消
+			// 必然让其中一方撞上 CAS 冲突。金额侧本来是安全的（预留只释放一次），
+			// 但把冲突当失败会让用户看到一次"取消失败"——而运行其实已经取消了。
+			//
+			// 只在"重新读取确认它确实已是 cancelled"时吞掉冲突；其它来源的冲突
+			// （例如并发推进改动了别的字段）如实报错，不掩盖真实竞态。
+			if !errors.Is(err, repository.ErrCreationConflict) {
+				return err
+			}
+			current, readErr := s.repo.CloudAgent(userID, id)
+			if readErr != nil {
+				return readErr
+			}
+			if current.Status != "cancelled" {
+				return err
+			}
 		}
 	}
 	latest, err := s.repo.CloudAgent(userID, id)
 	if err != nil {
 		return err
 	}
-	return s.finishCloudAgentCleanup(ctx, latest)
+	if err := s.finishCloudAgentCleanup(ctx, latest); err != nil {
+		// 并发取消时两个请求都会走到清理；清理自身也按 run 修订号做 CAS，
+		// 所以后到的一方会拿到冲突。只要确认"清理确实已经做完"
+		//（CleanupPending 已被另一方清掉），就应当视为成功 ——
+		// 否则一次双击/重试会变成用户可见的"取消失败"。
+		if errors.Is(err, repository.ErrCreationConflict) {
+			if current, readErr := s.repo.CloudAgent(userID, id); readErr == nil && !current.CleanupPending {
+				return nil
+			}
+		}
+		return err
+	}
+	return nil
 }
