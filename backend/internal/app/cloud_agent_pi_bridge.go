@@ -266,14 +266,18 @@ type PiTurnDecision struct {
 func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDecision, error) {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
-		return nil, err
+		var terminal bool
+		run, terminal = s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
+		if !terminal {
+			return nil, err
+		}
 	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
 		return nil, err
 	}
-	if run.Status == "completed" {
-		return &PiTurnDecision{Status: "completed"}, nil
+	if cloudAgentRunTerminal(run.Status) {
+		return &PiTurnDecision{Status: run.Status}, nil
 	}
 	if state.PiNoToolTaskID == taskID {
 		status := run.Status
@@ -560,7 +564,11 @@ func piModelStepFingerprint(request PiModelStepRequest) (string, error) {
 func (s *Service) PiFailModelStep(userID, runID, owner, taskID string) error {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
-		return err
+		var terminal bool
+		run, terminal = s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
+		if !terminal {
+			return err
+		}
 	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
@@ -708,7 +716,7 @@ func (s *Service) PiToolAdvance(userID, runID, owner, callID string) (*PiToolRec
 		// 终态转换会清除 session 租约。Pi worker 可能正好在终结后轮询
 		// 工具回执；对已终结的本用户 Pi run 返回终止信号，避免旧租约错误
 		// 让 Node 将整轮判为协议失败。非终态仍必须通过租约 fencing。
-		if terminal, readErr := s.repo.CloudAgent(userID, runID); readErr == nil && terminal.Engine == "pi" && cloudAgentRunTerminal(terminal.Status) {
+		if _, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
 			return &PiToolReceipt{CallID: callID, Terminated: true}, nil
 		}
 		return nil, err
@@ -921,7 +929,11 @@ func taskIDForPiMessage(input PiMessageCheckpoint, runID string) string {
 func (s *Service) PiFailRun(userID, runID, owner, reason string) error {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
-		return err
+		var terminal bool
+		run, terminal = s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
+		if !terminal {
+			return err
+		}
 	}
 	if cloudAgentRunTerminal(run.Status) {
 		return nil
@@ -942,6 +954,23 @@ func (s *Service) PiFailRun(userID, runID, owner, reason string) error {
 		})
 		return cloudAgentSave(current, &state)
 	})
+}
+
+// Terminal transitions release their session lease. These idempotent worker
+// callbacks may already be in flight when that happens; a user-scoped lookup
+// is safe here because the fallback never mutates an active run.
+func (s *Service) piTerminalRunAfterLeaseFailure(userID, runID, owner string) (*model.CloudAgentExecution, bool) {
+	run, err := s.repo.CloudAgent(userID, runID)
+	workerID, expectedEpoch, hasEpoch, ownerErr := parsePiAgentLeaseOwner(owner)
+	if err != nil || ownerErr != nil || run.Engine != "pi" || run.LeaseOwner != workerID || !cloudAgentRunTerminal(run.Status) {
+		return nil, false
+	}
+	conversationID := firstNonEmpty(run.ConversationID, run.ID)
+	session, _, sessionErr := s.repo.CloudAgentPiSession(userID, conversationID)
+	if sessionErr != nil || (hasEpoch && session.LeaseEpoch != expectedEpoch) {
+		return nil, false
+	}
+	return run, true
 }
 
 // piStalledLeasePeriods 是"多久没进展就判定 worker 已死"的租约倍数。留出足够余量，
