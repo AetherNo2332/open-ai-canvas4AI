@@ -362,6 +362,7 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 		Text           string           `json:"text"`
 		ToolCalls      []cloudAgentCall `json:"toolCalls"`
 		StopReasonKind string           `json:"stopReasonKind"`
+		StopReason     string           `json:"stopReason"`
 	}
 	if err := json.Unmarshal([]byte(task.ResultJSON), &result); err != nil {
 		return nil, err
@@ -369,8 +370,36 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 	if len(result.ToolCalls) != 0 {
 		return nil, kernel.Forbidden("Pi 收尾步骤包含工具调用")
 	}
+	stopKind := strings.TrimSpace(result.StopReasonKind)
+	if stopKind == "" {
+		stopKind = cloudAgentStopKindUnknown
+	}
 	decision := &PiTurnDecision{}
 	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		disposition := cloudAgentStepStopDisposition(&state, stopKind)
+		if disposition == cloudAgentStepDispositionRetry {
+			state.PiNoToolTaskID = taskID
+			state.PiNoToolNudge = "上一模型步骤因输出长度限制被截断；本次已关闭思考并使用可用输出预算重试。请完整处理尚未完成的用户请求，不要重复本轮已经成功的画布操作。"
+			cloudAgentEscalateTruncatedStep(runID, &state)
+			decision.Status, decision.Nudge = "continue", state.PiNoToolNudge
+			return cloudAgentSave(current, &state)
+		}
+		if disposition == cloudAgentStepDispositionFail {
+			message := cloudAgentStepStopFailureMessage(stopKind)
+			current.Status = "failed"
+			current.FailureMessage = truncateRunes(message, 1000)
+			state.PiNoToolTaskID = taskID
+			state.PiNoToolNudge = ""
+			cloudAgentDropInterjections(runID, "本轮已结束："+truncateRunes(message, 120), &state)
+			state.event(runID, "model_step_stop", cloudAgentStopReasonPayload(state.Step, taskID,
+				result.StopReason, stopKind, disposition, cloudAgentStepStopFacts{}, len(result.Text), 0, len(result.ToolCalls)))
+			state.event(runID, "run_failed", map[string]any{
+				"text": message, "reason": cloudAgentStepStopFailureReason(stopKind),
+				"stopReason": result.StopReason, "stopReasonKind": stopKind,
+			})
+			decision.Status = "failed"
+			return cloudAgentSave(current, &state)
+		}
 		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text})
 		state.PiNoToolTaskID = taskID
 		completion := cloudAgentEvaluateCompletion(&state)
@@ -747,12 +776,20 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 		return kernel.Forbidden("Pi 模型步骤未成功")
 	}
 	var modelOutput struct {
-		Text      string           `json:"text"`
-		ToolCalls []cloudAgentCall `json:"toolCalls"`
-		Legacy    []cloudAgentCall `json:"tool_calls"`
+		Text           string           `json:"text"`
+		ToolCalls      []cloudAgentCall `json:"toolCalls"`
+		Legacy         []cloudAgentCall `json:"tool_calls"`
+		StopReasonKind string           `json:"stopReasonKind"`
 	}
 	if err := json.Unmarshal([]byte(modelTask.ResultJSON), &modelOutput); err != nil {
 		return err
+	}
+	stopKind := strings.TrimSpace(modelOutput.StopReasonKind)
+	if stopKind == "" {
+		stopKind = cloudAgentStopKindUnknown
+	}
+	if cloudAgentStepStopDisposition(&state, stopKind) != cloudAgentStepDispositionAccept {
+		return kernel.Forbidden("模型终止原因不允许执行工具")
 	}
 	expected := modelOutput.ToolCalls
 	if len(expected) == 0 {

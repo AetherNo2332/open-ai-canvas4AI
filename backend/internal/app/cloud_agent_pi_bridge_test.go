@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -532,6 +533,44 @@ func TestPiToolBatchReplaySafety(t *testing.T) {
 	}
 }
 
+func TestPiToolBatchRejectsCallsAfterUnsupportedStopReason(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	const taskID = "pi-refusal-with-tools"
+	call := piAgentTestCall("call-refusal", "finish_run", `{"summary":"should not finish"}`)
+	result, err := json.Marshal(map[string]any{
+		"text": "partial refusal", "stopReason": "refusal", "stopReasonKind": "refusal",
+		"toolCalls": []cloudAgentCall{call},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Task{ID: taskID, UserID: "user", ProjectID: run.CanvasID, Type: "canvas_text",
+		Status: model.TaskStatusSucceeded, ResultJSON: string(result)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.LastStepTaskID = taskID
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leased, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PiToolBatch("user", run.ID, leased.LeaseOwner, PiToolBatchRequest{Calls: []cloudAgentCall{call}}); err == nil {
+		t.Fatal("拒答终止原因下仍接受了 finish_run 工具调用")
+	}
+	current, state := reloadPiRun(t, s, run.ID)
+	if current.Status != "running" || len(state.Calls) != 0 || state.CallIndex != 0 {
+		t.Fatalf("拒答工具批次改变了运行或工具状态: status=%s calls=%+v index=%d", current.Status, state.Calls, state.CallIndex)
+	}
+}
+
 // 推进顺序：越序 callId 必须拒绝；已记录回执的调用重放必须返回同一回执（恰好一次的可观测保证）。
 func TestPiToolAdvanceOrderAndReceiptReplay(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
@@ -621,6 +660,80 @@ func TestPiNoToolTurnIsIdempotent(t *testing.T) {
 	}
 	if before.Revision != after.Revision {
 		t.Fatalf("收尾判定重放推进了 revision: %d -> %d", before.Revision, after.Revision)
+	}
+}
+
+func TestPiNoToolTurnEscalatesTruncationWithoutPublishingPartialText(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	const taskID = "pi-truncated-step"
+	if err := db.Create(&model.Task{ID: taskID, UserID: "user", ProjectID: run.CanvasID, Type: "canvas_text",
+		Status: model.TaskStatusSucceeded, ResultJSON: `{"text":"未完成的半句","stopReason":"length","stopReasonKind":"length"}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.LastStepTaskID = taskID
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leased, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := s.PiNoToolTurn("user", run.ID, leased.LeaseOwner, taskID)
+	if err != nil {
+		t.Fatalf("Pi 截断重试判定失败: %v", err)
+	}
+	if decision.Status != "continue" || strings.TrimSpace(decision.Nudge) == "" {
+		t.Fatalf("截断步骤应升级预算后续跑: %+v", decision)
+	}
+	_, state := reloadPiRun(t, s, run.ID)
+	if state.TruncatedStepEscalated != 1 || !state.ForceThinkingOff || !state.BoostStepOutputBudget {
+		t.Fatalf("Pi 截断恢复开关未升级: count=%d thinkingOff=%v boosted=%v", state.TruncatedStepEscalated, state.ForceThinkingOff, state.BoostStepOutputBudget)
+	}
+	if strings.Contains(fmt.Sprint(state.Canonical.Messages), "未完成的半句") || agentHasEvent(*state, "assistant_message") {
+		t.Fatal("截断正文不应进入 Go 的最终上下文或助手消息账本")
+	}
+}
+
+func TestPiNoToolTurnFailsRefusalWithoutPublishingPartialText(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	const taskID = "pi-refusal-step"
+	if err := db.Create(&model.Task{ID: taskID, UserID: "user", ProjectID: run.CanvasID, Type: "canvas_text",
+		Status: model.TaskStatusSucceeded, ResultJSON: `{"text":"不可发布的部分正文","stopReason":"refusal","stopReasonKind":"refusal"}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.LastStepTaskID = taskID
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leased, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := s.PiNoToolTurn("user", run.ID, leased.LeaseOwner, taskID)
+	if err != nil {
+		t.Fatalf("Pi 拒答判定失败: %v", err)
+	}
+	if decision.Status != "failed" {
+		t.Fatalf("拒答终止原因应结束本轮: %+v", decision)
+	}
+	_, state := reloadPiRun(t, s, run.ID)
+	if strings.Contains(fmt.Sprint(state.Canonical.Messages), "不可发布的部分正文") || agentHasEvent(*state, "assistant_message") {
+		t.Fatal("拒答正文不应进入 Go 的最终上下文或助手消息账本")
+	}
+	if !agentHasEvent(*state, "run_failed") {
+		t.Fatal("拒答终止没有写入 run_failed")
 	}
 }
 

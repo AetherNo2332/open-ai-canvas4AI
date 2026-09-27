@@ -14,6 +14,8 @@ export type ModelStep = (request: {
   model: Model<any>;
   messages: unknown[];
   signal?: AbortSignal;
+  /** 模型任务的流式草稿；有增量时逐段上报，避免把整段结果当一次 delta。 */
+  onTextDelta?: (delta: string) => void;
 }) => Promise<CanvasModelResult>;
 
 const emptyUsage: Usage = {
@@ -24,6 +26,7 @@ const emptyUsage: Usage = {
 function stopReason(result: CanvasModelResult): "stop" | "length" | "toolUse" {
   const reason = result.stopReasonKind || result.stopReason || "";
   if (reason === "length" || reason === "max_tokens") return "length";
+  if (["pause", "pause_turn", "refusal", "content_filter", "incomplete_unknown"].includes(reason)) return "stop";
   if ((result.toolCalls?.length || 0) > 0) return "toolUse";
   return "stop";
 }
@@ -38,7 +41,27 @@ export function createCanvasStreamFn(step: ModelStep): StreamFn {
     void (async () => {
       stream.push({ type: "start", partial });
       try {
-        const result = await step({ model, messages: context.messages, signal: options?.signal });
+        // 上游已经流出的正文要按增量转发；结果里剩下的尾部在下面按"未发送部分"补齐。
+        let sent = "";
+        const contentIndexForStream = (): number => {
+          for (let index = partial.content.length - 1; index >= 0; index--) {
+            const block = partial.content[index];
+            if (block && block.type === "text") return index;
+          }
+          partial.content.push({ type: "text", text: "" });
+          return partial.content.length - 1;
+        };
+        const pushDelta = (delta: string): void => {
+          if (delta === "") return;
+          const index = contentIndexForStream();
+          const block = partial.content[index];
+          if (block && block.type === "text") block.text += delta;
+          stream.push({ type: "text_delta", contentIndex: index, delta, partial });
+        };
+        const result = await step({
+          model, messages: context.messages, signal: options?.signal,
+          onTextDelta: (delta) => { sent += delta; pushDelta(delta); },
+        });
         if (options?.signal?.aborted) throw new Error("Agent model request aborted");
         if (result.reasoning) {
           const contentIndex = partial.content.length;
@@ -49,14 +72,25 @@ export function createCanvasStreamFn(step: ModelStep): StreamFn {
           stream.push({ type: "thinking_end", contentIndex, content: result.reasoning, partial });
         }
         if (result.text) {
-          const contentIndex = partial.content.length;
-          partial.content.push({ type: "text", text: "" });
-          stream.push({ type: "text_start", contentIndex, partial });
-          partial.content[contentIndex] = { type: "text", text: result.text };
-          stream.push({ type: "text_delta", contentIndex, delta: result.text, partial });
-          stream.push({ type: "text_end", contentIndex, content: result.text, partial });
+          const remainder = result.text.startsWith(sent) ? result.text.slice(sent.length) : result.text;
+          if (sent === "") {
+            const index = contentIndexForStream();
+            stream.push({ type: "text_start", contentIndex: index, partial });
+            const block = partial.content[index];
+            if (block && block.type === "text") block.text = "";
+            pushDelta(remainder);
+          } else if (remainder !== "") {
+            pushDelta(remainder);
+          }
+          for (let index = partial.content.length - 1; index >= 0; index--) {
+            const block = partial.content[index];
+            if (block && block.type === "text") {
+              stream.push({ type: "text_end", contentIndex: index, content: block.text, partial });
+              break;
+            }
+          }
         }
-        for (const call of stopReason(result) === "length" ? [] : result.toolCalls || []) {
+        for (const call of stopReason(result) === "toolUse" ? result.toolCalls || [] : []) {
           const parsed: unknown = JSON.parse(call.function.arguments);
           if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
             throw new Error(`Invalid tool arguments for ${call.function.name}`);
