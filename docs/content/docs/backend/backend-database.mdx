@@ -34,7 +34,7 @@ v41 `pi_agent_run_leases` 为 `cloud_agent_executions` 增加 `engine`、`lease_
 
 v42 `pi_agent_conversation_sessions` 新增 `cloud_agent_pi_sessions` 与 `cloud_agent_pi_entries`：每个 `(user_id, conversation_id)` 对应一个 Pi v3 会话，保存格式版本、header、active leaf、revision、活动 run 与 entry 树。迁移为已有 `engine=pi` 运行回填空会话 header；既有消息 transcript 保留为可读、可续聊输入。新 run 与会话绑定在创建任务/预留事务中完成；Node 每次消息检查点提交新增 entries 和 active leaf，Go 按用户归属、活动 run、entry ID 和 session revision 校验，重复相同 entry 是幂等操作，同 ID 不同正文或过期分支更新会冲突。该迁移只建立持久化合同，不代表 PostgreSQL、双 worker 租约 fencing 或完整跨服务恢复已经通过验收。
 
-合并上游 v1.5.8–v1.6.0 后，上游 v39 `skill_library_categories`（技能库分类与用户技能状态表）与 v40 `builtin_skill_tombstones`（内置技能删除墓碑）占用了 v39/v40；canary 线的七条迁移整体上移两位：`cloud_agent_run_events` / `cloud_agent_transcript` 两条 no-op 落到 v41/v42，`pi_agent_run_leases`、`pi_agent_conversation_sessions`、`pi_agent_owner_scoped_session_ids`、`pi_agent_event_scheduler`、`pi_agent_orchestrator` 落到 v43–v47（name 与 checksum 字符串保持原值，表与数据不变）。让位搬迁表覆盖合并前 canary schema 45 的存量库：39–45 的七条记录自动上移，上游 v39/v40 在其腾出的号位上真实执行（幂等，见 `migrations_relocation_test.go` 的"合并前 canary 库"用例）。
+合并上游 v1.5.8–v1.6.0 后，上游 v39 `skill_library_categories`（技能库分类与用户技能状态表）、v40 `builtin_skill_tombstones`（内置技能删除墓碑）与 v41 `resource_thumbnail`（资源缩略图）占用了 v39–v41；canary 线的七条迁移整体上移三位：`cloud_agent_run_events` / `cloud_agent_transcript` 两条 no-op 落到 v42/v43，`pi_agent_run_leases`、`pi_agent_conversation_sessions`、`pi_agent_owner_scoped_session_ids`、`pi_agent_event_scheduler`、`pi_agent_orchestrator` 落到 v44–v48（name 与 checksum 字符串保持原值，表与数据不变）。让位搬迁表覆盖合并前 canary schema 45 的存量库：39–45 的七条记录自动上移，上游 v39/v40 在其腾出的号位上真实执行（幂等，见 `migrations_relocation_test.go` 的"合并前 canary 库"用例）。
 
 ### 生成成功后的作品保存恢复
 
