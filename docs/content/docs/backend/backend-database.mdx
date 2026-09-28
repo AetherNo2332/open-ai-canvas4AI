@@ -34,6 +34,8 @@ v42 `pi_agent_conversation_sessions` 新增 `cloud_agent_pi_sessions` 与 `cloud
 
 ### 云端 Agent 运行时
 
+Skill 运行模式随 `tasks.input_json.cloudAgent` 与 `cloud_agent_executions.state_json` 的快照 JSON 保存，不新增表或列：新运行的 `skillRuntimeMode=pi-native`，历史缺省按 `legacy-go`。Skill 快照固定 `nativeName`、`versionId`、内容哈希和内部文件元数据；公共 API 清除正文与内部文件元数据。原生读取结果沿用 Pi transcript/session entries，安全启用/读取事件沿用 `cloud_agent_event_records`。冻结版本读取不依赖 `skills.current_version_id`，但每次重查安装与启用状态。
+
 每轮 Agent 存为 `tasks` 中 `operation = cloud_agent` 的 `canvas_text` 任务，任务 `input_json.cloudAgent` 保存版本 1 的已校验请求、父轮 ID、请求指纹和技能快照；历史从服务端父轮结果构造。任务 ID 由用户与幂等键确定，利用现有主键、任务 admission 和积分预留事务防止重复提交重复扣费。Agent 的模型循环、工具调用、审批与子任务的控制面写在 `cloud_agent_executions.state_json`（检查点只放控制面，不再承载会话消息与事件），会话消息按 `(run_id, kind, sequence)` 存在 `cloud_agent_message_records`，运行事件按 `(run_id, sequence)` 存在 `cloud_agent_event_records`；任务 Worker 只负责推进状态，不依赖浏览器连接。公共任务创建与重试接口禁止绕过 Agent admission；删除任务会影响该轮继续对话与回放。
 
 > **合并上游 v1.5.7 的迁移说明（重要）**：我们自研的 `cloud_agent_run_events` 表（v24 引入：事件自带 `type`/`canvas_id`/`expires_at`、按 `seq` 分页、默认保留 30 天）已随合并**退役**——迁移 v36 登记为 no-op，**表与数据保留、不做 DROP、代码不再读写**；运行事件改用上游的 `cloud_agent_event_records`。`cloud_agent_message_records` 的表名与列名两侧一致（`run_id`/`kind`/`sequence`/`user_id`/`message_json`，`kind` 取 `canonical`/`history`），因此**切换前的会话消息仍可读**；切换前的运行事件由 `migrate-schema up` **自动搬运**：当某个 run 在上游事件表里一行都没有、`event_count > 0`、且退役表里存在该 `run_id` 的行时，把退役行按 `seq` 转成 `{"eventId","runId","seq","type","payload","createdAt"}` 形态写入 `cloud_agent_event_records`（主键冲突即跳过，因此幂等、可重复执行）；对全新库与纯上游库匹配不到，是 no-op。搬运后 `len(Journal)` 与 `event_count` 一致，`checkpoint_version = 2` 的运行可以正常解码。库里的 v24/v25（自研时期原始登记）、v32/v33（上一版合并线临时落点）、v33/34、v34/35（前两版 dev 线落点）、v35/36（已对齐上游 v1.5.7 那版 dev 的落点）记录会在 `migrationsForDatabase` 中被自动搬迁到 v36/37（幂等，见下方版本 36/37 说明）。
