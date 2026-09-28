@@ -3,11 +3,39 @@ package app
 import (
 	"context"
 	"errors"
+	"log"
 
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
+
+// DrainPendingPiAgentCleanups 补做"已进入终态、但收尾还没跑"的运行清理。
+//
+// 为什么需要它：HTTP 取消会自己调 finishCloudAgentCleanup，而看门狗（租约停滞、从未领取）
+// 只写终态并置 CleanupPending。没有这个排空入口，被判停的运行就永远不清：子任务不取消、
+// 资源租约不释放、占位预留不退 —— 账上会留着一笔谁也不会再动的冻结额度。
+func (s *Service) DrainPendingPiAgentCleanups() (int, error) {
+	runs, err := s.repo.PendingCloudAgentCleanups(20)
+	if err != nil {
+		return 0, err
+	}
+	done := 0
+	for index := range runs {
+		run := runs[index]
+		if err := s.finishCloudAgentCleanup(context.Background(), &run); err != nil {
+			// CAS 冲突说明另一方正在收尾这一行，让给它；其余错误记录后继续 ——
+			// 一条坏记录不该挡住其他运行的收尾（它们下周还会被再次排空）。
+			if errors.Is(err, repository.ErrCreationConflict) {
+				continue
+			}
+			log.Printf("agent cleanup drain: run=%s %v", run.ID, err)
+			continue
+		}
+		done++
+	}
+	return done, nil
+}
 
 // CleanupPending is the durable hand-off between orchestration and task/canvas
 // cleanup. HTTP cancellation and the background scheduler use the same path.
@@ -66,7 +94,7 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 		}
 	}
 	if mediaID != "" && decodeErr == nil && state.CallIndex < len(state.Calls) {
-		err := s.advanceCloudAgentMedia(run, &state, state.Calls[state.CallIndex])
+		err := s.executeCloudAgentMediaCall(run, &state, state.Calls[state.CallIndex])
 		if err != nil && !errors.Is(err, errCloudAgentCheckpoint) {
 			return err
 		}
@@ -115,6 +143,12 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 		}
 		current.CleanupPending = false
 		current.ActiveTaskID, current.MediaTaskID = "", ""
+		// 占位预留与"清理完成"必须同一个事务提交：先清 CleanupPending 再退款，崩在中间就再也没有
+		// 任何一方会回来退这笔钱。这里刻意不依赖解码后的状态 —— 收尾可能拿不到可解码的
+		// StateJSON，而"解码失败"绝不能等价于"不用退钱"（见 cloudAgentRefundHoldingReservation）。
+		if err := cloudAgentRefundHoldingReservation(repo, run, "Agent 本轮结束，首步占位预留退还"); err != nil {
+			return err
+		}
 		if err := repo.ReleaseCloudAgentResourceLeasesByRun(run.UserID, run.ID); err != nil {
 			return err
 		}

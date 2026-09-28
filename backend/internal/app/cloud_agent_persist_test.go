@@ -61,3 +61,36 @@ func writeLegacyAgentBlobForTest(t *testing.T, db *gorm.DB, run *model.CloudAgen
 	}
 	return string(encoded)
 }
+
+// markAgentRunTerminalForTest 把运行置为终态。旧 Go 驱动（advanceCloudAgentByID）删除后，
+// 测试不能再靠它把上一轮推进到终态；生产里这一步由 agent/ 的 Pi worker 完成。
+// 续聊类用例真正要断言的是"上一轮终结后能否继续"，因此显式构造终态即可。
+func markAgentRunTerminalForTest(t *testing.T, db *gorm.DB, runID, status string) {
+	t.Helper()
+	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", runID).Update("status", status).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// completePiRunWithAssistantForTest creates the durable final-message facts a
+// Pi continuation consumes. A holding task's ResultJSON is only a reservation
+// envelope and must never be used as the assistant reply.
+func completePiRunWithAssistantForTest(t *testing.T, s *Service, runID, reply string) {
+	t.Helper()
+	run, err := s.repo.CloudAgent("user", runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.MutateCloudAgent("user", runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": reply})
+		state.event(runID, "assistant_message", map[string]any{"messageId": runID + ":final", "text": reply, "final": true})
+		current.Status = "completed"
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

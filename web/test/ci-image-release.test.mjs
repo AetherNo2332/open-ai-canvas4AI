@@ -9,6 +9,8 @@ const scripts = fileURLToPath(new URL("../../.github/scripts/", import.meta.url)
 const temporaryDirectories = [];
 const sha = "a".repeat(40);
 const digest = "b".repeat(64);
+const bash = process.platform === "win32" ? path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "bash.exe") : "bash";
+const shellPath = (value) => process.platform === "win32" ? value.replace(/\\/g, "/").replace(/^([A-Za-z]):\//, (_, drive) => `/${drive.toLowerCase()}/`) : value;
 afterEach(() => {
     for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -18,8 +20,13 @@ function fixture(overrides = {}) {
     temporaryDirectories.push(root);
     const bin = path.join(root, "bin");
     const digests = path.join(root, "digests");
+    const scriptDirectory = path.join(root, "scripts");
     mkdirSync(bin);
     mkdirSync(digests);
+    mkdirSync(scriptDirectory);
+    for (const script of ["resolve-image.sh", "promote-image.sh"]) {
+        writeFileSync(path.join(scriptDirectory, script), readFileSync(path.join(scripts, script), "utf8").replace(/\r\n/g, "\n"));
+    }
     writeFileSync(path.join(digests, digest), "");
     writeFileSync(path.join(bin, "docker"), '#!/bin/sh\nif [ "$3" = inspect ]; then\n  if [ -n "$MOCK_ERROR" ]; then printf "%s\\n" "$MOCK_ERROR" >&2; exit 1; fi\n  printf "%s\\n" "$MOCK_DIGEST"\nelse\n  printf "%s\\n" "$@" > "$MOCK_CALL"\nfi\n', {
         mode: 0o755,
@@ -29,26 +36,31 @@ function fixture(overrides = {}) {
     writeFileSync(output, "");
     const env = {
         ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
-        GITHUB_OUTPUT: output,
+        GITHUB_OUTPUT: shellPath(output),
         GITHUB_SHA: sha,
         GITHUB_REF: "refs/heads/main",
         GITHUB_REPOSITORY: "fixture/repo",
         IMAGE: "ghcr.io/fixture/image",
         VERSION_TAG: "1.5.5",
         EXPECTED_DIGESTS: "1",
-        DIGEST_DIR: digests,
+        DIGEST_DIR: shellPath(digests),
         MOCK_DIGEST: `sha256:${digest}`,
         MOCK_ERROR: "",
         MOCK_GH_ERROR: "",
         MOCK_MAIN: sha,
-        MOCK_CALL: path.join(root, "docker-call"),
+        MOCK_CALL: shellPath(path.join(root, "docker-call")),
         ...overrides,
     };
     return {
-        run: (script, ...args) => spawnSync("bash", [path.join(scripts, script), ...args], { env, encoding: "utf8" }),
+        run: (script, ...args) => {
+            const result = spawnSync(bash, ["-c", 'export PATH="$1:$PATH"; shift; exec bash "$@"', "fixture", shellPath(bin), shellPath(path.join(scriptDirectory, script)), ...args], { env, encoding: "utf8" });
+            if (result.error) throw result.error;
+            // Dependency failures must not count as evidence that release scripts fail closed.
+            expect([126, 127]).not.toContain(result.status);
+            return result;
+        },
         output: () => readFileSync(output, "utf8"),
-        call: () => (existsSync(env.MOCK_CALL) ? readFileSync(env.MOCK_CALL, "utf8") : ""),
+        call: () => (existsSync(path.join(root, "docker-call")) ? readFileSync(path.join(root, "docker-call"), "utf8") : ""),
     };
 }
 

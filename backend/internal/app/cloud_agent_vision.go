@@ -931,11 +931,9 @@ func cloudAgentStageImageInspection(state *cloudAgentRuntime, inspection cloudAg
 // cloudAgentFlushPendingImages 把缓冲里的图片合并成一条 user 消息，追加在最后一条
 // tool 结果之后。返回是否真的追加了消息。
 //
-// 幂等：缓冲在追加前就清空，重复调用是空操作。两个调用点共用它：
-//   - 本批最后一个调用执行完（cloudAgentToolResult）——正常路径；
-//   - 本批调用都执行完、开始组装 canonical 之前（advanceCloudAgent）——兜底路径，
-//     覆盖"本批最后一个调用不看图""批次被中断/提前结束"这些情况，
-//     否则缓冲的图片会被永久丢弃（它们对应的 tool 回执已经在历史里了）。
+// 幂等：缓冲在追加前就清空，重复调用是空操作。正常路径在当前批次最后一个调用完成时
+// 调用；提前收尾的调用则由 skipRemainingCloudAgentCalls 补齐批次后 flush，确保缓冲图片
+// 位于全部 tool 结果之后，不会随着本轮结束丢失。
 func cloudAgentFlushPendingImages(state *cloudAgentRuntime) bool {
 	if state == nil || len(state.PendingImageInspections) == 0 {
 		return false

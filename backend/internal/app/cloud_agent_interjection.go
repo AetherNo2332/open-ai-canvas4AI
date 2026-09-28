@@ -18,10 +18,10 @@ import (
 //
 // 设计（2026-09-17 用户拍板）：
 //   - **下一步生效**：不打断正在飞的模型调用 / 工具调用 / 已计费的媒体任务。
-//     模型下一次开口前，插话作为一条 user 消息注入 —— 与既有「催办」同一通路
-//     （见 advanceCloudAgent 里往 Canonical.Messages append role:user 的几处）。
-//   - **等审批时入队**：run.Status == waiting_approval 时调度器本就不推进
-//     （advanceCloudAgent 开头的状态闸），插话自然排在审批结论之后送达，不改审批语义。
+//     模型下一次开口前，Pi worker 将插话作为一条 user 消息检查点，与已有续聊消息共用
+//     `PiCheckpointMessage` / `PiModelStep` 通路。
+//   - **等审批时入队**：run.Status == waiting_approval 时工具推进会等待审批决策；插话
+//     留在运行状态中，审批结论之后再送达，不改审批语义。
 //   - **送不出去要说实话**：步数/预算耗尽时 emit user_interjection_dropped，
 //     绝不静默吞掉，也绝不替用户自动开新一轮（那是新的扣费）。
 const (
@@ -31,8 +31,8 @@ const (
 	// 已送达/已丢弃的插话 id 只记最近这些，用于重试幂等。故意做成**有界**，
 	// 不随运行时长增长（一轮跑几十步也不会把状态撑大）。
 	cloudAgentInterjectionIDMemory = 32
-	// 乐观并发重试次数。调度器每 ~2 秒也会写同一行（advanceCloudAgents），
-	// 用户点一下撞上 CAS 冲突很正常 —— 重读重试，别把"冲突"甩到用户脸上。
+	// 乐观并发重试次数。Pi worker 会并发续租、检查点消息及事件，用户点一下撞上 CAS
+	// 冲突很正常 —— 重读重试，别把"冲突"甩到用户脸上。
 	cloudAgentInterjectionAttempts = 4
 )
 
@@ -99,7 +99,10 @@ func (s *Service) InterjectCloudAgent(userID, id, messageID, text string) (int, 
 	}
 	// 归属校验：不是本人的运行在这里就要 404，不能靠下面的 CAS 兜底
 	// （否则错误形态会变成"冲突"，让人以为重试就好）。
-	if _, _, err := s.cloudAgentTask(userID, id); err != nil {
+	//
+	// 走 cloudAgentRunRefFor 而不是直接 cloudAgentTask：后者要求根任务行存在，
+	// 而阶段 2 之后的新 run 没有根任务，那样插话会一律 404。
+	if _, err := s.cloudAgentRunRefFor(userID, id); err != nil {
 		return 0, err
 	}
 	for attempt := 0; attempt < cloudAgentInterjectionAttempts; attempt++ {
@@ -181,8 +184,7 @@ func cloudAgentDropInterjections(runID, reason string, state *cloudAgentRuntime)
 	return true
 }
 
-// cloudAgentStepBudgetExhausted 当前是否还开得起下一次模型调用（与 advanceCloudAgent 里
-// 步数上限那道闸同一判据：0 表示不限）。
+// cloudAgentStepBudgetExhausted 当前是否还开得起下一次模型调用（0 表示不限）。
 func cloudAgentStepBudgetExhausted(state *cloudAgentRuntime) bool {
 	if state == nil {
 		return true

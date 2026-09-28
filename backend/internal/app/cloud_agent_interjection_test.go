@@ -26,6 +26,7 @@ func agentInterjectionState(t *testing.T, s *Service, id string) (*model.CloudAg
 // 只入队不算数，要能在发给模型的那份 canonical 里找到原文。
 func TestCloudAgentInterjectionReachesNextModelRequest(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
+	agentStartPiModelStep(t, s, root.ID)
 	if _, err := s.InterjectCloudAgent("user", root.ID, "msg-1", "先别生成视频，改成 16:9"); err != nil {
 		t.Fatal(err)
 	}
@@ -38,41 +39,32 @@ func TestCloudAgentInterjectionReachesNextModelRequest(t *testing.T) {
 	}
 	// 让首个模型任务以「没有工具调用」结束 —— 这正是最容易丢插话的形态：
 	// 模型自认为答完了，而同一条路径的默认行为是**收尾本轮**。
-	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": `{"text":"好的"}`,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
-		t.Fatal(err)
-	}
-	run, state = agentInterjectionState(t, s, root.ID)
+	run, state = agentFinishRunForTest(t, s, db, root.ID, "finish-after-interjection", "好的")
 	if run.Status != "running" {
 		t.Fatalf("有未送达插话时不该收尾，实际 status=%s", run.Status)
 	}
 	if len(state.PendingInterjections) != 1 {
 		t.Fatal("插话在收尾闸处被吞掉了")
 	}
-	// 下一拍：游标已空 → 应当先把插话注入，再发新的模型任务。
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
-		t.Fatal(err)
-	}
-	run, state = agentInterjectionState(t, s, root.ID)
+	// Node 的用户消息检查点确认送达后，下一拍请求使用该 Pi 用户消息。
+	agentPiDeliverInterjectionsForTest(t, s, root.ID)
+	run, state = agentStartPiModelStep(t, s, root.ID)
 	if len(state.PendingInterjections) != 0 {
 		t.Fatal("插话已送达却没有出队")
 	}
 	if !agentHasEvent(state, "user_interjection_delivered") {
 		t.Fatal("送达时没有发 user_interjection_delivered 事件")
 	}
-	var delivered bool
-	for _, message := range state.Canonical.Messages {
-		content, _ := message["content"].(string)
-		if strings.Contains(content, "先别生成视频，改成 16:9") && message["role"] == "user" {
-			delivered = true
-		}
+	snapshot, err := s.PiAgentSnapshot("user", root.ID, run.LeaseOwner)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !delivered {
-		t.Fatalf("插话没有进入本轮的对话：%+v", state.Canonical.Messages)
+	found := false
+	for _, message := range snapshot.PiMessages {
+		found = found || strings.Contains(string(message), "先别生成视频，改成 16:9")
+	}
+	if !found {
+		t.Fatalf("插话没有进入持久 Pi 会话: %+v", snapshot.PiMessages)
 	}
 	// 最关键的一条：它必须出现在**真正发给模型**的那份输入里。
 	last := state.TaskIDs[len(state.TaskIDs)-1]
@@ -97,16 +89,16 @@ func TestCloudAgentInterjectionDroppedWhenNoStepLeft(t *testing.T) {
 	if err := db.Save(run).Error; err != nil {
 		t.Fatal(err)
 	}
+	// 先消耗唯一允许的模型步骤。Pi 执行边界应在下一步 admission 时退回插话，
+	// 而不是在还有可用步骤时提前吞掉或丢弃。
+	agentSettleToolStep(t, s, db, root.ID, "plan-before-limit", "plan_update", `{"items":[]}`)
 	if _, err := s.InterjectCloudAgent("user", root.ID, "msg-budget", "改一下方向"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": `{"text":"好的"}`,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
-		t.Fatal(err)
+	run, state = agentInterjectionState(t, s, root.ID)
+	request := PiModelStepRequest{Canonical: canonicalAgentRequest{Messages: []map[string]any{{"role": "user", "content": "【用户插话】改一下方向"}}}}
+	if _, err := s.PiModelStep("user", root.ID, run.LeaseOwner, request); err == nil || !strings.Contains(err.Error(), "模型调用上限") {
+		t.Fatalf("预算耗尽时下一步应被拒绝并退回插话：%v", err)
 	}
 	run, state = agentInterjectionState(t, s, root.ID)
 	if len(state.PendingInterjections) != 0 {

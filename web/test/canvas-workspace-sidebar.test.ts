@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { canvasDockStyle } from "../src/lib/canvas/canvas-aceternity-style";
 import { canvasThemes } from "../src/lib/canvas-theme";
 
-const component = (name: string) => readFileSync(new URL(`../src/components/canvas/${name}`, import.meta.url), "utf8");
+const component = (name: string) => readFileSync(new URL(`../src/components/canvas/${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 test("canvas removes the standalone asset tray while retaining sidebar assets and zoom controls", () => {
     const page = readFileSync(new URL("../src/pages/canvas/project.tsx", import.meta.url), "utf8");

@@ -65,6 +65,7 @@ type ManifestResponse struct {
 type ManifestAgentResponse struct {
 	TextPaths              []string `json:"textPaths,omitempty"`
 	ReasoningPaths         []string `json:"reasoningPaths,omitempty"`
+	Usage                  any      `json:"usage,omitempty"`
 	ToolCallsPath          string   `json:"toolCallsPath,omitempty"`
 	ToolCallIDPaths        []string `json:"toolCallIdPaths,omitempty"`
 	ToolCallNamePaths      []string `json:"toolCallNamePaths,omitempty"`
@@ -486,6 +487,11 @@ func (a manifestAdapter) ParseAgent(_ context.Context, body []byte) (AgentResult
 	}
 	response := a.manifest.AgentResponse
 	result := AgentResult{Text: firstPathValue(payload, response.TextPaths...), Reasoning: firstPathValue(payload, response.ReasoningPaths...)}
+	if response.Usage != nil {
+		if value, err := evaluateManifestValue(response.Usage, map[string]any{"response": payload}); err == nil {
+			result.Usage = manifestObject(value)
+		}
+	}
 	if response.ToolCallsPath == "" {
 		return result, nil
 	}

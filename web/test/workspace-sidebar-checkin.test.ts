@@ -40,4 +40,22 @@ describe("workspace sidebar checkin card", () => {
         expect(block).toContain("color: #12c8a0;");
         expect(block).not.toMatch(/#(?:dbeafe|e8f1ff|eef4ff|e6f0ff|d6e8ff)/i);
     });
+
+    test("shows a yellow canary badge beside the brand name", () => {
+        const sidebar = readFileSync(resolve(import.meta.dir, "../src/components/layout/workspace-sidebar-nav.tsx"), "utf8");
+        const css = readFileSync(resolve(import.meta.dir, "../src/styles/globals.css"), "utf8");
+        const start = css.indexOf(".app-user-workspace .app-workspace-canary-badge {");
+        const end = css.indexOf("}", start);
+        const badge = css.slice(start, end);
+        const brandNameIndex = sidebar.indexOf("{appearance.brandName}");
+        const badgeIndex = sidebar.indexOf("className=\"app-workspace-canary-badge\"");
+
+        expect(brandNameIndex).toBeGreaterThan(-1);
+        expect(badgeIndex).toBeGreaterThan(brandNameIndex);
+        expect(sidebar.slice(brandNameIndex, badgeIndex)).toContain("app-workspace-brand-title-row");
+        expect(sidebar).toContain(">canary</span>");
+        expect(badge).toContain("background: #facc15;");
+        expect(badge).toContain("color: #111;");
+        expect(badge).toContain("font-family: Inter, ui-sans-serif, system-ui, sans-serif;");
+    });
 });

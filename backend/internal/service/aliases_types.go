@@ -14,6 +14,9 @@ type (
 	PiModelStepView                        = app.PiModelStepView
 	PiToolBatchRequest                     = app.PiToolBatchRequest
 	PiMessageCheckpoint                    = app.PiMessageCheckpoint
+	PiContextCompactionStart               = app.PiContextCompactionStart
+	PiContextCompactionView                = app.PiContextCompactionView
+	PiContextCompactionCommit              = app.PiContextCompactionCommit
 	PiTurnDecision                         = app.PiTurnDecision
 	PiToolReceipt                          = app.PiToolReceipt
 	AgentProfileRequest                    = app.AgentProfileRequest

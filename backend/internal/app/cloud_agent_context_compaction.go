@@ -35,6 +35,18 @@ type cloudAgentContextCompaction struct {
 	Status      string `json:"status"`
 	SourceBytes int    `json:"sourceBytes"`
 	TurnCount   int    `json:"turnCount"`
+	// PiOperationID and the source identity make retries resume the same billed
+	// compaction task instead of enqueueing a second summary request.
+	PiOperationID      string `json:"piOperationId,omitempty"`
+	PiTaskID           string `json:"piTaskId,omitempty"`
+	PiSourceDigest     string `json:"piSourceDigest,omitempty"`
+	PiSessionRevision  int64  `json:"piSessionRevision,omitempty"`
+	PiSourceLeafID     string `json:"piSourceLeafId,omitempty"`
+	PiFirstKeptEntryID string `json:"piFirstKeptEntryId,omitempty"`
+	PiFirstKeptIndex   int    `json:"piFirstKeptIndex,omitempty"`
+	PiReason           string `json:"piReason,omitempty"`
+	PiWillRetry        bool   `json:"piWillRetry,omitempty"`
+	PiTokensBefore     int    `json:"piTokensBefore,omitempty"`
 	// Resume 表示这次是"中途暂停压缩"：压完继续本轮的步进，而不是收尾结束本轮。
 	Resume bool `json:"resume,omitempty"`
 	// 触发读数：下一步预计输入 token ÷ 模型可用输入（上游实测锚点优先）。
@@ -464,15 +476,10 @@ func (s *Service) enqueueCloudAgentContextCompaction(run *model.CloudAgentExecut
 	return s.enqueueCloudAgentTask(run, state, req, nil)
 }
 
-// advanceCloudAgentContextCompaction 收压缩任务的结果。任何失败都退到保底检查点：
-// 压缩是"省上下文"的优化，不能因为一次模型调用失败就把整轮搞死。
-func (s *Service) advanceCloudAgentContextCompaction(run *model.CloudAgentExecution, state *cloudAgentRuntime, task *model.Task) error {
-	if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
-		return nil
-	}
+func cloudAgentContextCompactionResult(state *cloudAgentRuntime, task *model.Task) (agentcontext.Checkpoint, string, string) {
 	checkpoint := cloudAgentFallbackCheckpoint(state)
 	mode, reason := "fallback", "压缩模型任务未成功，已使用服务端保底检查点"
-	if task.Status == model.TaskStatusSucceeded {
+	if task != nil && task.Status == model.TaskStatusSucceeded {
 		var result struct {
 			Text string `json:"text"`
 		}
@@ -494,7 +501,7 @@ func (s *Service) advanceCloudAgentContextCompaction(run *model.CloudAgentExecut
 		// 检查点里的轮次数以服务端自己的计数为准，模型写的数字不可信。
 		checkpoint.CompactedTurnCount = state.ContextCompaction.TurnCount
 	}
-	return s.persistCloudAgentContextCheckpoint(run, state, checkpoint, mode, reason)
+	return checkpoint, mode, reason
 }
 
 // completeCloudAgentContextFallback 用服务端保底检查点收口一次压缩（不依赖压缩任务的结果）。
@@ -532,9 +539,17 @@ func (s *Service) finalizeCloudAgentInterruptedCompaction(run *model.CloudAgentE
 // （否则一次失败轮的收尾会把 failed 写成 completed，等于凭空复活一轮）。
 func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecution, state *cloudAgentRuntime, checkpoint agentcontext.Checkpoint, mode, reason string, keepTerminal bool) error {
 	checkpoint = cloudAgentBoundCheckpoint(checkpoint)
+	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return applyCloudAgentContextCheckpoint(run.ID, current, state, checkpoint, mode, reason, keepTerminal)
+	})
+}
+
+// applyCloudAgentContextCheckpoint mutates only the transaction's run and runtime
+// values. Pi's compaction commit calls it in the same transaction as the v3 tree
+// append, so the canonical Go checkpoint can never get ahead of the Pi branch.
+func applyCloudAgentContextCheckpoint(runID string, current *model.CloudAgentExecution, state *cloudAgentRuntime, checkpoint agentcontext.Checkpoint, mode, reason string, keepTerminal bool) error {
+	checkpoint = cloudAgentBoundCheckpoint(checkpoint)
 	turnsBefore := cloudAgentConversationTurnCount(state.Canonical.Messages)
-	// 压缩前后的读数都要落在 context_transition 里（设计 §3：每次下降都要能解释成
-	// "压缩掉了多少"），因此在改写 canonical 之前先量一份。
 	beforeMessages := len(state.Canonical.Messages)
 	beforeRaw, _ := json.Marshal(state.Canonical.Messages)
 	beforeBytes, beforeTokens := len(beforeRaw), estimateCloudAgentTokens(beforeRaw)
@@ -543,68 +558,48 @@ func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecutio
 	if err != nil {
 		return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
 	}
-	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		state.ContextCheckpoint = &checkpoint
-		state.TextHistory = history
-		state.HistoryIncludesCurrent = true
-		state.Canonical.Messages = make([]map[string]any, 0, len(history))
-		for _, message := range history {
-			entry := map[string]any{"role": message.Role, "content": message.Content}
-			// 压缩重建也必须保留来源标记，否则交接身份在压缩后就丢了（旧会话会被多算轮次）。
-			if message.AgentContextSource != "" {
-				entry[cloudAgentContextSourceKey] = message.AgentContextSource
-			}
-			state.Canonical.Messages = append(state.Canonical.Messages, entry)
+	state.ContextCheckpoint = &checkpoint
+	state.TextHistory = history
+	state.HistoryIncludesCurrent = true
+	state.Canonical.Messages = make([]map[string]any, 0, len(history))
+	for _, message := range history {
+		entry := map[string]any{"role": message.Role, "content": message.Content}
+		if message.AgentContextSource != "" {
+			entry[cloudAgentContextSourceKey] = message.AgentContextSource
 		}
-		afterMessages := make([]map[string]any, 0, len(history))
-		for _, message := range history {
-			afterMessages = append(afterMessages, map[string]any{"role": message.Role, "content": message.Content})
+		state.Canonical.Messages = append(state.Canonical.Messages, entry)
+	}
+	afterMessages := make([]map[string]any, 0, len(history))
+	for _, message := range history {
+		afterMessages = append(afterMessages, map[string]any{"role": message.Role, "content": message.Content})
+	}
+	afterRaw, _ := json.Marshal(afterMessages)
+	afterBytes, afterTokens := len(afterRaw), estimateCloudAgentTokens(afterRaw)
+	state.SkillReads, state.ProfileReads = nil, nil
+	state.ActiveTaskID, state.ActiveTextDraft = "", ""
+	resume := state.ContextCompaction != nil && state.ContextCompaction.Resume
+	state.ContextCompaction = nil
+	if resume {
+		state.ContextCompactionCount++
+		if current.Status != "cancelled" && current.Status != "failed" {
+			current.Status = "running"
 		}
-		afterRaw, _ := json.Marshal(afterMessages)
-		afterBytes, afterTokens := len(afterRaw), estimateCloudAgentTokens(afterRaw)
-		// 因此条数变化或内容全变都能正确落库。
-		// 读取去重状态属于历史结果的一部分，检查点压缩后要清掉旧标记；上游统一结果缓存
-		// 会在模型再次请求时恢复仍然有效的只读结果正文。
-		state.SkillReads, state.ProfileReads = nil, nil
-		state.ActiveTaskID, state.ActiveTextDraft = "", ""
-		// 中途暂停压缩（Resume）：压完继续本轮的步进，并记一次次数上限。
-		// 收尾压缩（resume=false）本来就要结束本轮；keepTerminal=true 表示本轮已是终态
-		// （取消/失败的收尾），只落检查点与事件，绝不把 failed/cancelled 改写成 completed。
-		resume := state.ContextCompaction != nil && state.ContextCompaction.Resume
-		state.ContextCompaction = nil
-		if resume {
-			state.ContextCompactionCount++
-			// 中途暂停的轮次在这一步仍是 running（界面显示"正在压缩"）；但终态一律不复活。
-			if current.Status != "cancelled" && current.Status != "failed" {
-				current.Status = "running"
-			}
-		} else if !keepTerminal {
-			current.Status = "completed"
-		}
-		// 压缩换了上下文：上一次上游实测不再代表当前请求（设计 §6 的"语义压缩完成即作废"），
-		// 否则下一步会拿旧锚点投影，把压缩后的压力算小。
-		state.TokenAnchor = nil
-		// 被折进检查点的轮次数 = 压缩前的用户轮次 − 原样保留的最近轮次：
-		// 不能拿"压缩后再数一遍"来做差，检查点自己携带轮次数会把保留的那几轮重复计入。
-		retainedTurns := cloudAgentRetainedTurnCount(recent)
-		droppedTurns := max(0, turnsBefore-retainedTurns)
-		state.event(run.ID, "context_transition", map[string]any{
-			"kind": "semantic_compaction", "reason": firstNonEmpty(reason, "semantic_compaction"),
-			"before": map[string]any{"sourceBytes": beforeBytes, "estimatedTokens": beforeTokens, "historyMessages": beforeMessages, "turns": turnsBefore},
-			// after 的用户轮次就是"原样保留的最近轮次"：检查点那段 user 消息带 checkpoint
-			// 来源标记，既不算用户原话、也不会被数进这里。
-			"after": map[string]any{"sourceBytes": afterBytes, "estimatedTokens": afterTokens, "historyMessages": len(history), "turns": retainedTurns},
-		})
-		payload := map[string]any{
-			"mode": mode, "resume": resume,
-			"compactedTurnCount": checkpoint.CompactedTurnCount,
-			"historyMessages":    len(history),
-			"droppedTurns":       droppedTurns,
-		}
-		if reason != "" {
-			payload["reason"] = reason
-		}
-		state.event(run.ID, "context_compacted", payload)
-		return cloudAgentSave(current, state)
+	} else if !keepTerminal {
+		current.Status = "completed"
+	}
+	state.TokenAnchor = nil
+	retainedTurns := cloudAgentRetainedTurnCount(recent)
+	droppedTurns := max(0, turnsBefore-retainedTurns)
+	state.event(runID, "context_transition", map[string]any{
+		"kind": "semantic_compaction", "reason": firstNonEmpty(reason, "semantic_compaction"),
+		"before": map[string]any{"sourceBytes": beforeBytes, "estimatedTokens": beforeTokens, "historyMessages": beforeMessages, "turns": turnsBefore},
+		"after":  map[string]any{"sourceBytes": afterBytes, "estimatedTokens": afterTokens, "historyMessages": len(history), "turns": retainedTurns},
 	})
+	payload := map[string]any{"mode": mode, "resume": resume, "compactedTurnCount": checkpoint.CompactedTurnCount,
+		"historyMessages": len(history), "droppedTurns": droppedTurns}
+	if reason != "" {
+		payload["reason"] = reason
+	}
+	state.event(runID, "context_compacted", payload)
+	return cloudAgentSave(current, state)
 }

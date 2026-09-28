@@ -14,6 +14,10 @@ import (
 // setStepResult 把某一步模型任务的回执写成指定的上游结果（含终止原因）。
 func setStepResult(t *testing.T, db *gorm.DB, taskID string, result map[string]any) {
 	t.Helper()
+	var task model.Task
+	if err := db.First(&task, "id = ?", taskID).Error; err != nil || task.Operation != cloudAgentStepOperation {
+		t.Fatalf("provider response requires an admitted Pi model task: task=%s operation=%s err=%v", taskID, task.Operation, err)
+	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -244,10 +248,11 @@ func TestCloudAgentTruncatedCompletionBlocker(t *testing.T) {
 // 端到端：输出被截断 → 记事件 + 关思考放大预算重试一次 → 再截断也不冒充最终答复。
 func TestCloudAgentTruncatedOutputEscalatesThenNeverPublishes(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	setStepResult(t, db, root.ID, map[string]any{
+	_, initial := agentStartPiModelStep(t, s, root.ID)
+	setStepResult(t, db, initial.ActiveTaskID, map[string]any{
 		"text": "半句话的结论", "stopReason": "length", "stopReasonKind": cloudAgentStopKindLength,
 	})
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, state := agentInterjectionState(t, s, root.ID)
@@ -277,7 +282,7 @@ func TestCloudAgentTruncatedOutputEscalatesThenNeverPublishes(t *testing.T) {
 	}
 
 	// 重试那一步：必须真的关掉思考。
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	_, retried := agentInterjectionState(t, s, root.ID)
@@ -296,7 +301,7 @@ func TestCloudAgentTruncatedOutputEscalatesThenNeverPublishes(t *testing.T) {
 	setStepResult(t, db, retried.ActiveTaskID, map[string]any{
 		"text": "又是半句话", "stopReason": "length", "stopReasonKind": cloudAgentStopKindLength,
 	})
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, state = agentInterjectionState(t, s, root.ID)
@@ -317,14 +322,15 @@ func TestCloudAgentTruncatedOutputEscalatesThenNeverPublishes(t *testing.T) {
 // 截断步即使解析出了工具调用也不执行：半截动作不许落到画布上。
 func TestCloudAgentTruncatedStepDoesNotExecuteToolCalls(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	setStepResult(t, db, root.ID, map[string]any{
+	_, initial := agentStartPiModelStep(t, s, root.ID)
+	setStepResult(t, db, initial.ActiveTaskID, map[string]any{
 		"text": "先看一下", "stopReason": "length", "stopReasonKind": cloudAgentStopKindLength,
 		"toolCalls": []map[string]any{{
 			"id": "call-1", "type": "function",
 			"function": map[string]any{"name": "canvas_get_state", "arguments": "{}"},
 		}},
 	})
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, state := agentInterjectionState(t, s, root.ID)
@@ -350,10 +356,11 @@ func TestCloudAgentTruncatedStepDoesNotExecuteToolCalls(t *testing.T) {
 // 正常结束不受新闸门影响：该完成的还是要完成，且 final 正文照常发布。
 func TestCloudAgentNormalStopStillCompletes(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	setStepResult(t, db, root.ID, map[string]any{
+	_, initial := agentStartPiModelStep(t, s, root.ID)
+	setStepResult(t, db, initial.ActiveTaskID, map[string]any{
 		"text": "本轮已完成", "stopReason": "stop", "stopReasonKind": cloudAgentStopKindStop,
 	})
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, state := agentInterjectionState(t, s, root.ID)
@@ -453,14 +460,15 @@ func TestCloudAgentStepStopDispositionFollowsStopKind(t *testing.T) {
 // pause：不发布、不执行工具、不改请求形状、如实失败（本轮不做无损续轮）。
 func TestCloudAgentPausedStepFailsWithoutPublishingOrRunningTools(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	setStepResult(t, db, root.ID, map[string]any{
+	_, initial := agentStartPiModelStep(t, s, root.ID)
+	setStepResult(t, db, initial.ActiveTaskID, map[string]any{
 		"text": "先看一下", "stopReason": "pause_turn", "stopReasonKind": cloudAgentStopKindPause,
 		"toolCalls": []map[string]any{{
 			"id": "call-1", "type": "function",
 			"function": map[string]any{"name": "canvas_get_state", "arguments": "{}"},
 		}},
 	})
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, state := agentInterjectionState(t, s, root.ID)
@@ -492,10 +500,11 @@ func TestCloudAgentPausedStepFailsWithoutPublishingOrRunningTools(t *testing.T) 
 // D：升级开关必须在重试被接受后复位，否则一次截断会让本轮余下所有步骤都关着思考。
 func TestCloudAgentEscalationSwitchesRestoredAfterAcceptedRetry(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	setStepResult(t, db, root.ID, map[string]any{
+	_, initial := agentStartPiModelStep(t, s, root.ID)
+	setStepResult(t, db, initial.ActiveTaskID, map[string]any{
 		"text": "半句话的结论", "stopReason": "length", "stopReasonKind": cloudAgentStopKindLength,
 	})
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	_, escalated := agentInterjectionState(t, s, root.ID)
@@ -505,7 +514,7 @@ func TestCloudAgentEscalationSwitchesRestoredAfterAcceptedRetry(t *testing.T) {
 	if escalated.EscalationRestore == nil {
 		t.Fatal("升级时必须保存升级前的开关值")
 	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	_, retried := agentInterjectionState(t, s, root.ID)
@@ -515,7 +524,7 @@ func TestCloudAgentEscalationSwitchesRestoredAfterAcceptedRetry(t *testing.T) {
 	setStepResult(t, db, retried.ActiveTaskID, map[string]any{
 		"text": "本轮已完成", "stopReason": "stop", "stopReasonKind": cloudAgentStopKindStop,
 	})
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, restored := agentInterjectionState(t, s, root.ID)

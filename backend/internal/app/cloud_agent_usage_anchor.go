@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/platform"
+	"infinite-canvas/backend/internal/repository"
 )
 
 // cloudAgentCompactionRatio 是触发语义压缩的上下文利用率：下一步预计输入 token
@@ -164,12 +165,22 @@ const (
 // 幂等：同一任务只采信一次；没有实测或比值离谱时记录拒绝原因并保留估算。
 // userID 用于限定"这条调用确实是本用户跑出来的"（上游 #601 的口径），不能只按 taskId 取。
 func (s *Service) recordCloudAgentTokenAnchor(userID string, state *cloudAgentRuntime) {
+	if s == nil {
+		return
+	}
+	s.recordCloudAgentTokenAnchorWithRepository(s.repo, userID, state)
+}
+
+// recordCloudAgentTokenAnchorWithRepository lets the Pi checkpoint path read usage
+// through its current transaction, so the anchor and assistant checkpoint commit
+// atomically without querying the database through a second connection.
+func (s *Service) recordCloudAgentTokenAnchorWithRepository(repo *repository.Repository, userID string, state *cloudAgentRuntime) {
 	if s == nil || state == nil {
 		return
 	}
 	// 即使这一步拿不到新的实测，也要先把"口径已变/太旧"的锚点作废，不能让压缩决策继续用它。
 	cloudAgentExpireTokenAnchor(state.RuntimeRunID, state)
-	if s.repo == nil || state.LastStepTaskID == "" || state.LastStepEstimate <= 0 || state.LastStepSignature == "" {
+	if repo == nil || state.LastStepTaskID == "" || state.LastStepEstimate <= 0 || state.LastStepSignature == "" {
 		return
 	}
 	// 只有"模型调用"这一步能配锚点：媒体任务发的是另一份请求（另一套信封），
@@ -183,7 +194,7 @@ func (s *Service) recordCloudAgentTokenAnchor(userID string, state *cloudAgentRu
 	// 只认本用户、成功、text 能力且真上报用量（usage_available）的那条调用：
 	// 上游 #601 把这三条限定写进了 SQL（合并时保留上游那个带 userID 的版本，
 	// 删掉我方早期同名的单参版本，Go 不支持按参数个数重载）。
-	log, ok, err := s.repo.APICallLogUsageForTask(userID, state.LastStepTaskID)
+	log, ok, err := repo.APICallLogUsageForTask(userID, state.LastStepTaskID)
 	if err != nil || !ok {
 		return
 	}

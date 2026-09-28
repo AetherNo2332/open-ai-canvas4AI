@@ -409,39 +409,22 @@ func TestCloudAgentVisionHasPerRunInspectionBudget(t *testing.T) {
 }
 
 func TestCloudAgentVisionBudgetStopsRunBeforeAnotherModelStep(t *testing.T) {
-	s, _, _ := cloudAgentVisionFixture(t)
+	s, db, _ := cloudAgentVisionFixture(t)
 	req := agentTestRequest()
 	req.VisionEnabled = true
 	root, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.ActiveTaskID = ""
+	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-blocked", map[string]any{"nodeId": "cat", "refresh": true})
+	run, state := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call})
 	state.ImageInspectCalls = cloudAgentMaxImageInspectionCallsPerRun
-	state.Calls = []cloudAgentCall{cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-blocked", map[string]any{"nodeId": "cat", "refresh": true})}
-	state.CallIndex = 0
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	run, err = s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err = cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := agentPiExecuteCallForTest(t, s, root.ID, call.ID); err != nil {
 		t.Fatal(err)
 	}
 	output, err := s.CloudAgentRun("user", root.ID)

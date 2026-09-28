@@ -50,13 +50,6 @@ func TestPluginViewIncludesDocumentationForEveryOfficialProtocol(t *testing.T) {
 			bundledCount++
 		}
 	}
-	// 短信渠道与支付一样由宿主内置并直接注册进插件中心，不随官方插件包分发；
-	// 未打进包的同样要计入期望数量，否则新内置一类就误报数量不符。
-	for _, manifest := range bundledSMSPluginManifests() {
-		if !packageIDs[manifest.Metadata.ID] {
-			bundledCount++
-		}
-	}
 	if len(plugins) != len(packages)+bundledCount {
 		t.Fatalf("plugin views = %d, official packages plus bundled plugins = %d", len(plugins), len(packages)+bundledCount)
 	}

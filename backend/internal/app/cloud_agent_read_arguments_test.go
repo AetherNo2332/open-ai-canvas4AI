@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -89,49 +90,21 @@ func TestCloudAgentCanvasReadArgumentRepairContinuesRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	load := func() (*model.CloudAgentExecution, *cloudAgentRuntime) {
-		t.Helper()
-		run, err := s.repo.CloudAgent("user", root.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		state, err := cloudAgentDecode(run)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return run, &state
-	}
-	advance := func() {
-		t.Helper()
-		if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
 	for i, args := range []string{`{"limit":40}`, `{}`, `{"nodeIds":["note"]}`} {
-		_, state := load()
-		if state.ActiveTaskID == "" {
-			t.Fatal("model continuation task missing")
-		}
 		call := cloudAgentCall{ID: "read-call"}
+		call.ID = fmt.Sprintf("read-call-%d", i)
 		call.Function.Name, call.Function.Arguments = "canvas_get_state", args
-		body, err := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{call}})
-		if err != nil {
+		_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call})
+		if err := agentPiExecuteCallForTest(t, s, root.ID, call.ID); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{
-			"status": model.TaskStatusSucceeded, "result_json": string(body),
-		}).Error; err != nil {
-			t.Fatal(err)
-		}
-		advance() // Persist model output.
-		advance() // Execute the read and persist the tool result.
-		run, state := load()
+		run, state := agentInterjectionState(t, s, root.ID)
 		if run.Status == "failed" || state.Approval != nil {
 			t.Fatalf("read must not terminate or require approval: %s", run.Status)
 		}
 		last := state.Canonical.Messages[len(state.Canonical.Messages)-1]
 		var result map[string]any
-		if err := json.Unmarshal([]byte(last["content"].(string)), &result); err != nil {
+		if err := json.Unmarshal([]byte(piAssistantText(last["content"])), &result); err != nil {
 			t.Fatal(err)
 		}
 		if i == 0 {
@@ -146,21 +119,13 @@ func TestCloudAgentCanvasReadArgumentRepairContinuesRun(t *testing.T) {
 			if len(properties) != 7 || properties["offset"] == nil || properties["nodeIds"] == nil || properties["focusNodeIds"] == nil || properties["depth"] == nil || properties["includeRelated"] == nil || properties["storyboardOffset"] == nil || properties["connectionOffset"] == nil {
 				t.Fatalf("wrong repair schema: %#v", properties)
 			}
-		} else if result["error"] != nil || result["snapshotHash"] == nil || !strings.Contains(last["content"].(string), "saved content") {
+		} else if result["error"] != nil || result["snapshotHash"] == nil || !strings.Contains(piAssistantText(last["content"]), "saved content") {
 			t.Fatalf("corrected read did not return saved canvas: %#v", result)
 		}
-		advance() // Enqueue the next model step with the persisted feedback.
 	}
-	_, state := load()
-	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": `{"text":"已读取画布"}`,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	advance()
-	run, _ := load()
-	if run.Status != "completed" {
-		t.Fatalf("repaired conversation did not complete: %s", run.Status)
+	final, _ := agentSettleToolStep(t, s, db, root.ID, "finish-read", "finish_run", `{"summary":"已读取画布。"}`)
+	if final.Status != "completed" {
+		t.Fatalf("repaired conversation did not complete: %s", final.Status)
 	}
 	stored, err := s.repo.CanvasProjectForUser("user", canvas.ID)
 	if err != nil || stored.PayloadJSON != canvas.PayloadJSON {
@@ -168,7 +133,8 @@ func TestCloudAgentCanvasReadArgumentRepairContinuesRun(t *testing.T) {
 	}
 	call := cloudAgentCall{ID: "cross-user"}
 	call.Function.Name, call.Function.Arguments = "canvas_get_state", `{}`
-	if _, err := cloudAgentReadTool(s.repo, "other-user", state, call); err == nil {
+	_, finalState := agentInterjectionState(t, s, root.ID)
+	if _, err := cloudAgentReadTool(s.repo, "other-user", &finalState, call); err == nil {
 		t.Fatal("corrected parameters bypassed canvas ownership")
 	} else {
 		var argumentErr *cloudAgentArgumentError

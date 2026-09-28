@@ -11,6 +11,29 @@ import (
 // 不能只看默认页（长会话的早期改动对新轮不可见）。
 const cloudAgentContinuationEventLimit = 1000
 
+// Pi messages do not carry Go's private context-source annotation. Restore it
+// only from a durable delivery event whose ID was committed by the Go hook.
+func cloudAgentIsDeliveredInterjection(message map[string]any, state *cloudAgentRuntime) bool {
+	if state == nil || stringField(message, "role") != "user" {
+		return false
+	}
+	if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+		return true
+	}
+	content := stringField(message, "content")
+	for _, event := range state.Events {
+		if event.Type != "user_interjection_delivered" {
+			continue
+		}
+		id := stringValue(event.Payload["messageId"])
+		text := stringValue(event.Payload["text"])
+		if id != "" && text != "" && containsString(state.InterjectionIDs, id) && content == "【用户插话】"+text {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	cloudAgentContinuationChangeLimit = 12
 	cloudAgentContinuationKind        = "run_handoff"
@@ -52,7 +75,9 @@ type cloudAgentContinuationFrame struct {
 // 只保留状态、失败原因、已提交任务与真实画布改动，不把原始工具流水当成本轮目标。
 func cloudAgentContinuationReply(task *model.Task, run *CloudAgentRun) (string, string, error) {
 	text := ""
-	if task.Status == model.TaskStatusSucceeded {
+	// task 为 nil 表示上一轮是 P1.5 之后的新形态（没有根任务，只有执行记录）；
+	// 上一轮的答复本来就以事件里的最终 assistant 正文为准，这里跳过任务结果即可。
+	if task != nil && task.Status == model.TaskStatusSucceeded {
 		text = taskResultText(task.ResultJSON)
 	}
 	submitted := make([]string, 0)

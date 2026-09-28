@@ -18,6 +18,11 @@ type taskAdmission struct {
 	AgentRunID   string
 	GenerationID string
 	ApprovalID   string
+	// Status 覆盖默认的 queued。Agent 建 run 的占位任务必须是 holding（不可被 worker 领取）；
+	// 真实首步任务与所有常规任务都走默认值，不能通过这个字段绕过队列语义。
+	Status model.TaskStatus
+	// Stage 只在显式给出时覆盖"等待队列调度"，让占位任务在任务中心有一句真话。
+	Stage string
 }
 
 // CreateTask 收敛任务进入系统前的 admission 流程：输入标准化、逻辑模型路由、
@@ -123,6 +128,12 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		task.AgentRunID = req.admission.AgentRunID
 		task.GenerationID = req.admission.GenerationID
 		task.ApprovalID = req.admission.ApprovalID
+		if req.admission.Status != "" {
+			task.Status = req.admission.Status
+		}
+		if strings.TrimSpace(req.admission.Stage) != "" {
+			task.Stage = req.admission.Stage
+		}
 	}
 	if routed != nil {
 		task.LogicalModelID = routed.LogicalModel.ID
@@ -184,6 +195,12 @@ func (s *Service) CreateTask(userID string, req CreateTaskRequest) (*model.Task,
 		return nil, BadAuthRequest("所选模型已停用、归档或配置已更新，请重新选择")
 	}
 	if err != nil {
+		// 幂等准入：Agent 的 admission ID 是确定性任务 ID，worker 在"任务已落库、
+		// 但运行检查点未落库"之间崩溃后必然用同一 ID 重投。此时任务与计费都已存在，
+		// 必须返回既有任务，而不是把它当成准入失败再回写一条假失败工具结果。
+		if existing := s.cloudAgentTaskForAdmissionID(userID, req); existing != nil {
+			return taskForOutput(*existing), nil
+		}
 		return nil, err
 	}
 	s.recordActivity(userID, "task", 1)
@@ -589,4 +606,21 @@ func compactPersistedValue(value interface{}) interface{} {
 	default:
 		return value
 	}
+}
+
+// cloudAgentTaskForAdmissionID 只认 Agent 准入登记的确定性任务 ID：每次重投
+// 都把 ID 归属于同一用户与同一运行。任何一处不匹配都返回 nil，避免把冲突 ID
+// 当成幂等命中而绕过准入校验。
+func (s *Service) cloudAgentTaskForAdmissionID(userID string, req CreateTaskRequest) *model.Task {
+	if req.admission == nil || req.admission.ID == "" || req.admission.AgentRunID == "" {
+		return nil
+	}
+	task, err := s.repo.TaskForUser(userID, req.admission.ID)
+	if err != nil || task == nil {
+		return nil
+	}
+	if task.AgentRunID != req.admission.AgentRunID {
+		return nil
+	}
+	return task
 }

@@ -102,6 +102,24 @@ func (s *Service) createTaskWithinStorageQuota(task *model.Task, billingOrder *m
 	return err
 }
 
+// createCloudAgentRunWithinStorageQuota 是"建 run"的存储配额边界。
+//
+// 占位任务、报价预留与执行记录必须在同一事务里提交，所以配额校验与写入共用同一个
+// storageMu 临界区：先按配额拒绝，再原子落库，任何一半都不会单独存在。
+func (s *Service) createCloudAgentRunWithinStorageQuota(run *model.CloudAgentExecution, task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting) error {
+	s.storageMu.Lock()
+	defer s.storageMu.Unlock()
+	usage, err := s.repo.UserStorageUsage(task.UserID)
+	if err != nil {
+		return err
+	}
+	incomingBytes := int64(len([]byte(task.Prompt)) + len([]byte(task.InputJSON)) + len([]byte(task.Error)))
+	if err := validateTaskStorageQuotaWithPolicy(usage, incomingBytes, policy.Resource); err != nil {
+		return err
+	}
+	return s.repo.CreateCloudAgentHoldingTask(task, billingOrder, run, policy.Task.ActiveTaskLimit)
+}
+
 func createTaskWithStorageQuotaRepository(repo *repository.Repository, task *model.Task, billingOrder *model.BillingOrder, policy RuntimePolicySetting) error {
 	usage, err := repo.UserStorageUsage(task.UserID)
 	if err != nil {

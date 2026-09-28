@@ -24,6 +24,13 @@ type TextCapabilityConfig struct {
 	// Streaming controls whether this model accepts upstream SSE text responses.
 	// A nil value is treated as true for backwards compatibility with older configs.
 	Streaming *bool `json:"streaming,omitempty"`
+	// Thinking 声明该模型暴露用户可选的推理（思考）模式。
+	//
+	// nil 表示**未声明**，界面按"不支持"处理并隐藏推理选项，绝不猜测能力：
+	// 把未声明当成支持会让不支持推理的上游收到 reasoning 字段而报错。
+	// 与前端 `web/src/lib/model-capabilities.ts` 的 `text.thinking`、
+	// 画布面板 `canvas-cloud-agent-panel.tsx` 的 `reasoningSupported` 是同一合同。
+	Thinking *bool `json:"thinking,omitempty"`
 	// ContextWindowTokens is the provider/model input+output context window.
 	// Zero means unknown and must never be presented as a verified model limit.
 	ContextWindowTokens int `json:"contextWindowTokens,omitempty"`

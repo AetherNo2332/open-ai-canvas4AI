@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 )
 
 // 本文件从 dev 的 cloud_agent_projection_test.go 恢复，只保留覆盖本次移植清单的用例：
@@ -351,7 +350,7 @@ func TestCloudAgentSnapshotHashTracksContentNotBrowserBookkeeping(t *testing.T) 
 // A browser autosave between the Agent's write and its next write must not break
 
 func TestCloudAgentApprovedWriteSurvivesBrowserAutosave(t *testing.T) {
-	s, canvas := cloudAgentStoryboardFixture(t)
+	s, db, canvas := cloudAgentStoryboardFixture(t)
 	req := agentTestRequest()
 	req.PermissionMode = "request_approval"
 	req.IdempotencyKey = "storyboard-autosave-race"
@@ -366,28 +365,11 @@ func TestCloudAgentApprovedWriteSurvivesBrowserAutosave(t *testing.T) {
 		"title":        "自动保存竞态分镜",
 		"rows":         []map[string]any{{"durationSeconds": 3.0, "plotDescription": "镜头"}},
 	})
-	run, err := s.repo.CloudAgent("user", root.ID)
-	if err != nil {
+	_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call})
+	if err := agentPiExecuteCallForTest(t, s, root.ID, call.ID); err != nil {
 		t.Fatal(err)
 	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.ActiveTaskID = ""
-	state.Calls = []cloudAgentCall{call}
-	state.CallIndex = 0
-	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		return cloudAgentSave(current, &state)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	run, _ = s.repo.CloudAgent("user", run.ID)
-	state, _ = cloudAgentDecode(run)
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
-		t.Fatal(err)
-	}
-	waiting, err := s.CloudAgentRun("user", run.ID)
+	waiting, err := s.CloudAgentRun("user", root.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,13 +385,13 @@ func TestCloudAgentApprovedWriteSurvivesBrowserAutosave(t *testing.T) {
 	if err := saveCloudAgentDocument(s.repo, stored, browserDoc, mustRuntimePolicy(t, s)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DecideCloudAgentApproval("user", run.ID, waiting.Approval.ID, "approve", "确认创建"); err != nil {
+	if err := s.DecideCloudAgentApproval("user", root.ID, waiting.Approval.ID, "approve", "确认创建"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if err := agentPiExecuteCallForTest(t, s, root.ID, call.ID); err != nil {
 		t.Fatal(err)
 	}
-	final, err := s.CloudAgentRun("user", run.ID)
+	final, err := s.CloudAgentRun("user", root.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +407,7 @@ func TestCloudAgentApprovedWriteSurvivesBrowserAutosave(t *testing.T) {
 // A genuine concurrent content edit is a recoverable tool failure: the model gets
 
 func TestCloudAgentStaleSnapshotIsRecoverableToolFailure(t *testing.T) {
-	s, canvas := cloudAgentStoryboardFixture(t)
+	s, db, canvas := cloudAgentStoryboardFixture(t)
 	req := agentTestRequest()
 	req.PermissionMode = "request_approval"
 	req.IdempotencyKey = "storyboard-stale-snapshot"
@@ -440,25 +422,8 @@ func TestCloudAgentStaleSnapshotIsRecoverableToolFailure(t *testing.T) {
 		"title":        "过期快照分镜",
 		"rows":         []map[string]any{{"durationSeconds": 3.0, "plotDescription": "镜头"}},
 	})
-	run, err := s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.ActiveTaskID = ""
-	state.Calls = []cloudAgentCall{call}
-	state.CallIndex = 0
-	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		return cloudAgentSave(current, &state)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	run, _ = s.repo.CloudAgent("user", run.ID)
-	state, _ = cloudAgentDecode(run)
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	run, _ := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call})
+	if err := agentPiExecuteCallForTest(t, s, root.ID, call.ID); err != nil {
 		t.Fatal(err)
 	}
 	waiting, err := s.CloudAgentRun("user", run.ID)
@@ -478,7 +443,7 @@ func TestCloudAgentStaleSnapshotIsRecoverableToolFailure(t *testing.T) {
 	if err := s.DecideCloudAgentApproval("user", run.ID, waiting.Approval.ID, "approve", "确认创建"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if err := agentPiExecuteCallForTest(t, s, run.ID, call.ID); err != nil {
 		t.Fatal(err)
 	}
 	after, err := s.CloudAgentRun("user", run.ID)
@@ -501,8 +466,8 @@ func TestCloudAgentStaleSnapshotIsRecoverableToolFailure(t *testing.T) {
 
 // The context meter reports what occupies the request: three canonical buckets
 
-func TestCloudAgentSameBatchWritesRebaseSnapshot(t *testing.T) {
-	s, canvas := cloudAgentStoryboardFixture(t)
+func TestCloudAgentSequentialWritesRebaseSnapshot(t *testing.T) {
+	s, db, canvas := cloudAgentStoryboardFixture(t)
 	rows := createCloudAgentStoryboardForTest(t, s, canvas)
 	firstID, secondID := stringValue(rows[0]["id"]), stringValue(rows[1]["id"])
 	req := agentTestRequest()
@@ -514,49 +479,29 @@ func TestCloudAgentSameBatchWritesRebaseSnapshot(t *testing.T) {
 	}
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	seen := cloudAgentCanvasHash(doc)
-	state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Messages: []map[string]any{}}}
-	run, err := s.repo.CloudAgent("user", root.ID)
+	firstCall := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "batch-write-1", map[string]any{
+		"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": firstID,
+		"patch": map[string]any{"dialogue": "第一批第一处"}})
+	_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{firstCall})
+	if err := agentPiExecuteCallForTest(t, s, root.ID, firstCall.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Pi 每步只允许一个写入；第二步读取当前版本，再用新快照提交第二项写入。
+	currentCanvas, err := s.repo.CanvasProjectForUser("user", canvas.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := cloudAgentDecode(run)
+	currentDoc, err := creationDocument(currentCanvas.PayloadJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded.Request = req
-	decoded.ActiveTaskID = ""
-	decoded.Calls = []cloudAgentCall{
-		cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "batch-write-1", map[string]any{
-			"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": firstID,
-			"patch": map[string]any{"dialogue": "第一批第一处"}}),
-		cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "batch-write-2", map[string]any{
-			"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": secondID,
-			"patch": map[string]any{"dialogue": "第一批第二处"}}),
-	}
-	decoded.CallIndex = 0
-	state = &decoded
-	if err := s.repo.MutateCloudAgent("user", root.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		return cloudAgentSave(current, state)
-	}); err != nil {
+	secondCall := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "batch-write-2", map[string]any{
+		"snapshotHash": cloudAgentCanvasHash(currentDoc), "nodeId": "storyboard-1", "action": "update", "rowId": secondID,
+		"patch": map[string]any{"dialogue": "第一批第二处"}})
+	_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{secondCall})
+	if err := agentPiExecuteCallForTest(t, s, root.ID, secondCall.ID); err != nil {
 		t.Fatal(err)
 	}
-
-	advance := func() {
-		t.Helper()
-		current, err := s.repo.CloudAgent("user", root.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		decoded, err := cloudAgentDecode(current)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := s.advanceCloudAgentTool(current, &decoded); err != nil {
-			t.Fatal(err)
-		}
-	}
-	advance() // 第一次写入：成功并产出新版本
-	advance() // 第二次写入：同批，必须重基后成功
 
 	stored, err := s.repo.CanvasProjectForUser("user", canvas.ID)
 	if err != nil {
@@ -576,8 +521,8 @@ func TestCloudAgentSameBatchWritesRebaseSnapshot(t *testing.T) {
 	}
 }
 
-func TestCloudAgentBatchRebaseStillRejectsThirdPartyEdit(t *testing.T) {
-	s, canvas := cloudAgentStoryboardFixture(t)
+func TestCloudAgentSequentialRebaseStillRejectsThirdPartyEdit(t *testing.T) {
+	s, db, canvas := cloudAgentStoryboardFixture(t)
 	rows := createCloudAgentStoryboardForTest(t, s, canvas)
 	firstID, secondID := stringValue(rows[0]["id"]), stringValue(rows[1]["id"])
 	req := agentTestRequest()
@@ -589,43 +534,16 @@ func TestCloudAgentBatchRebaseStillRejectsThirdPartyEdit(t *testing.T) {
 	}
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	seen := cloudAgentCanvasHash(doc)
-	run, _ := s.repo.CloudAgent("user", root.ID)
-	state, err := cloudAgentDecode(run)
-	if err != nil {
+	firstCall := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "third-party-1", map[string]any{
+		"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": firstID,
+		"patch": map[string]any{"dialogue": "Agent 写入"}})
+	secondCall := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "third-party-2", map[string]any{
+		"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": secondID,
+		"patch": map[string]any{"dialogue": "Agent 第二处"}})
+	_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{firstCall})
+	if err := agentPiExecuteCallForTest(t, s, root.ID, firstCall.ID); err != nil {
 		t.Fatal(err)
 	}
-	state.Request = req
-	state.ActiveTaskID = ""
-	state.Calls = []cloudAgentCall{
-		cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "third-party-1", map[string]any{
-			"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": firstID,
-			"patch": map[string]any{"dialogue": "Agent 写入"}}),
-		cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "third-party-2", map[string]any{
-			"snapshotHash": seen, "nodeId": "storyboard-1", "action": "update", "rowId": secondID,
-			"patch": map[string]any{"dialogue": "Agent 第二处"}}),
-	}
-	state.CallIndex = 0
-	if err := s.repo.MutateCloudAgent("user", root.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		return cloudAgentSave(current, &state)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	advance := func() *cloudAgentRuntime {
-		t.Helper()
-		current, err := s.repo.CloudAgent("user", root.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		decoded, err := cloudAgentDecode(current)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := s.advanceCloudAgentTool(current, &decoded); err != nil {
-			t.Fatal(err)
-		}
-		return &decoded
-	}
-	advance()
 	// 第三方并发改动：直接覆盖画布（模拟浏览器保存）
 	stored, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
 	edited, _ := creationDocument(stored.PayloadJSON)
@@ -633,7 +551,10 @@ func TestCloudAgentBatchRebaseStillRejectsThirdPartyEdit(t *testing.T) {
 	if err := saveCloudAgentDocument(s.repo, stored, edited, mustRuntimePolicy(t, s)); err != nil {
 		t.Fatal(err)
 	}
-	advance()
+	_, _ = agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{secondCall})
+	if err := agentPiExecuteCallForTest(t, s, root.ID, secondCall.ID); err != nil {
+		t.Fatal(err)
+	}
 	final, err := s.CloudAgentRun("user", root.ID)
 	if err != nil {
 		t.Fatal(err)
