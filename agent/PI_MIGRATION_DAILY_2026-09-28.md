@@ -90,3 +90,34 @@
 - 新增的两项收尾协议测试通过；完整 `go test ./internal/app -run '^TestPi' -count=1` 也通过，用时 13.940 秒。
 - 前端 agent 定向测试 **48/48**、typecheck 和 build 均通过；完整前端测试 **2086 通过、17 失败**（2103 项 / 270 文件）。17 项尚未逐一确认基线来源，不阻断 agent 专项测试和构建。
 - 此轮未部署、未推送；共享工作区的其他迁移与 DeepSeek 修改仍保持未提交。当前 canary 本地提交包括 `4bb800a6`、`4bca2d8a`、`272c9789`；本节新增测试与记录需单独审查提交。
+
+## 追加：全量 App 回归复测与 3000 本机 canary 部署
+
+### 代码与提交
+
+- 将旧 Go Agent loop 依赖的 app 测试夹具迁成 Pi step、tool receipt、`finish_run` 与 checkpoint 行为；补充模型失败恢复/取消路径断言、媒体目录默认值解析和多路由上下文预算交集测试。
+- 本轮新增提交 `9a5ccc51 fix(agent): complete Pi app regression migration`，包含 18 个 Pi/app 文件；提交使用仓库最近提交的 `Codex Agent <codex@localhost>` 身份，仅通过单次 git 命令指定，没有修改全局 Git 配置。没有推送。
+- 提交后仍有其他迁移与 DeepSeek 工作区改动未提交，保持原状。
+
+### 验证
+
+- `go test ./internal/app -count=1 -timeout 12m`：通过，用时 470.877 秒。
+- 完整 `go test ./... -count=1` 上一轮中除 app 外各 Go 包通过；Windows 上 `internal/hostupdate` 的 POSIX 文件 mode 断言不成立（Windows 报 666、期望 640）。用既有 Linux 测试镜像重跑 `go test ./internal/hostupdate -count=1` 通过，确认该项是平台文件权限差异。CGO=1 与 GCC 已配置，当前不再是缺环境阻塞。
+- web：完整 `bun test` **2107/2107 通过**、typecheck 通过、Vite production build 通过（约 21.87 秒；有现存大 chunk 警告）。
+- Agent：`bun run test` 的 TypeScript build 与 Node tests **77/77 通过**。
+- 三张本机 Docker 镜像 `open-ai-canvas-backend:local`、`open-ai-canvas-agent:local`、`open-ai-canvas-web:local` 全部成功构建。
+
+### 本机 Compose 3000
+
+- 仅更新 Compose 项目 `canvas-canary-3000` 的 backend、agent、web；未触碰 3030/prod、未删除容器/卷。保留原 `canvas-canary-3000_backend-data` 命名卷。
+- backend 停止前将 `/data` 全量复制至 `C:\Users\13537\AppData\Local\Temp\canvas-canary-3000-predeploy-20260928`；SQLite backup API 生成的 `open_ai_canvas.predeploy.sqlite3` 执行 `PRAGMA integrity_check` 返回 `ok`，SHA-256 为 `fc79a73509d3800f4569bd6192c1cd0def9c253bce25ee1d5abb8fafd8c834c1`。备份含本机 canary 数据，留在本机临时目录。
+- Compose 重建后 backend、web 健康，Agent 容器运行；`/api/health/ready` HTTP 200、`ready=true`、schema 42/42、active worker tasks 0。Web `/` HTTP 200。镜像 build metadata 显示版本 `v1.5.7.1+7aa9988`，commit/buildTime 仍为 `unknown`。
+- admin 测试登录、认证 session、`/api/agent/capabilities` 均 HTTP 200；仅验证账号身份、角色和 capabilities，不启动模型请求或付费任务。
+- Computer Use 的 GUI 浏览器验收此前因无法确认目标浏览器 URL 被安全机制拦截。本轮没有改用 Playwright 或其他 UI 自动化绕过；所以本地 API/首页 smoke test 已做，完整 GUI 与画布交互验收仍未完成。
+
+### 剩余迁移验收
+
+- 全量 browser/SSE 断线续传和多账号跨用户 UI 验收仍待完成；此轮无真实上游模型/图片/视频任务，因此供应商 usage、媒体计费与审批链路尚未实测。
+- PostgreSQL、多 worker 跨进程 lease 抢占/故障注入、重放 exactly-once 组合证明，以及历史 Pi session 转换仍未完成。
+- 旧 Go Agent scheduler/driver 仍未移除；必须先替换并验收其业务职责（审批、画布写入、预算/计费、媒体结算、取消、压缩、恢复与清理），不能以新 Pi loop 已运行代替这个退出门槛。
+- 本机 Compose 使用的镜像元数据 commit/buildTime 为 unknown；虽然镜像按当前 canary 工作区构建，仍需补可追溯的镜像标签后再做发布验收。
