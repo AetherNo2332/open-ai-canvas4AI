@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -67,6 +68,26 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 			return
 		}
 		ok(c, gin.H{"run": run})
+	})
+	group.GET("/runs/:id/skills/:nativeName/file", func(c *gin.Context) {
+		parseInt := func(value string, fallback int) int {
+			if value == "" {
+				return fallback
+			}
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return -1
+			}
+			return parsed
+		}
+		page, err := svc.PiSkillFile(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), service.PiSkillFileRequest{
+			NativeName: c.Param("nativeName"), Path: c.Query("path"), Offset: parseInt(c.Query("offset"), 0), Limit: parseInt(c.Query("limit"), 0),
+		})
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, page)
 	})
 	group.POST("/runs/:id/renew", func(c *gin.Context) {
 		if err := svc.RenewPiAgentLease(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c)); err != nil {

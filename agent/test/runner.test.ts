@@ -3,12 +3,13 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { CanvasModelRetry, CanvasRunTerminated, type CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
+import { CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
 import type { CanvasToolSpec } from "../src/tool-disclosure.js";
 import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent } from "../src/runner.js";
 import type { PromptParts } from "../src/system-prompt.js";
 import { sessionEntriesFromMessages } from "../src/session-tools.js";
+import { createHash } from "node:crypto";
 
 const objectSchema = { type: "object", properties: {}, required: [], additionalProperties: false };
 const tools: CanvasToolSpec[] = [
@@ -23,7 +24,7 @@ function promptParts(): PromptParts {
 
 interface FakeState {
   steps: number;
-  checkpoints: { sequence: number; role: string; taskId?: string; text: string; interjectionIds?: string[] }[];
+  checkpoints: { sequence: number; role: string; taskId?: string; text: string; isError?: boolean; interjectionIds?: string[] }[];
   batches: PiToolCall[][];
   executions: string[];
   /**
@@ -86,7 +87,7 @@ function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResu
       const content = message.content;
       const text = typeof content === "string" ? content
         : Array.isArray(content) ? content.map((part: any) => part?.text ?? "").join("") : "";
-      state.checkpoints.push({ sequence, role: String(message.role), taskId, text, interjectionIds: session?.interjectionIds });
+      state.checkpoints.push({ sequence, role: String(message.role), taskId, text, isError: Boolean(message.isError), interjectionIds: session?.interjectionIds });
       state.ops.push(`checkpoint:${String(message.role)}`);
       if (taskId) snapshot.activeTaskId = undefined;
       if (session?.interjectionIds?.length) {
@@ -196,6 +197,137 @@ test("首个 system 由服务端策略与 Harness 正文组成，模型只看到
   }
   // 用户消息必须是 canonical 里的原话，不能被拼进系统提示。
   assert.equal(canonical.messages.at(-1)?.content, "请给主角换一身衣服");
+});
+
+test("native Skill read checkpoints without a canvas tool batch", async () => {
+  const entry = '---\nname: "skill-abc"\ndescription: "For scripts"\n---\n# Body\n';
+  const hash = createHash("sha256").update(entry).digest("hex");
+  const { bridge, state, snapshot } = fakeBridge([
+    async () => {
+      const location = state.canonical[0]!.systemPrompt.match(/<location>([^<]+)<\/location>/)?.[1];
+      assert.ok(location);
+      return { toolCalls: [{ id: "read-1", function: { name: "read", arguments: JSON.stringify({ path: location }) } }] };
+    },
+    { text: "Used Skill" },
+  ]);
+  snapshot.skillRuntimeMode = "pi-native";
+  snapshot.skills = [{ id: "skill-1", nativeName: "skill-abc", displayName: "Scripts", description: "For scripts",
+    versionId: "v1", version: "1", contentHash: "package-hash", entryPath: "SKILL.md", entryContent: entry,
+    files: [{ path: "SKILL.md", sha256: hash, size: Buffer.byteLength(entry), text: true }] }];
+  snapshot.tools = [{ name: "read", category: "native_skill", description: "Read selected Skill text", allowed: true,
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }];
+  authorizeNativeEntry(bridge, snapshot);
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 2);
+  assert.deepEqual(state.batches, []);
+  assert.ok(state.ops.indexOf("checkpoint:assistant") < state.ops.indexOf("checkpoint:toolResult"));
+  assert.match(state.canonical[0]!.systemPrompt, /available_skills/);
+  assert.ok(state.canonical[0]!.tools.some((tool) => (tool.function as { name: string }).name === "read"));
+});
+
+test("native recovery uses the durable Pi branch and pairs pending reads and mixed calls", async (t) => {
+  for (const mode of ["read-only", "mixed", "read-completed", "rejected-read"]) await t.test(mode, async () => {
+  const entry = '---\nname: "skill-abc"\ndescription: "For scripts"\n---\n# Recovered Skill\n';
+  const { bridge, state, snapshot } = fakeBridge([{ text: "恢复后继续" }]);
+  snapshot.skillRuntimeMode = "pi-native";
+  snapshot.skills = [{ id: "skill-1", nativeName: "skill-abc", displayName: "Scripts", description: "For scripts",
+    versionId: "v1", version: "1", contentHash: "package-hash", entryPath: "SKILL.md", entryContent: entry,
+    files: [{ path: "SKILL.md", sha256: createHash("sha256").update(entry).digest("hex"), size: Buffer.byteLength(entry), text: true }] }];
+  snapshot.tools = [{ name: "read", category: "native_skill", description: "Read Skill", allowed: true,
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }];
+  const persisted = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: [
+    ...snapshot.canonical.messages, { role: "assistant", content: "", tool_calls: [{ id: "recover-read", type: "function",
+      function: { name: "read", arguments: JSON.stringify({ path: mode === "rejected-read" ? "C:/private/secret.txt" : join(process.cwd(), "previous-worker", "skills", "skill-abc", "SKILL.md") }) } },
+      ...(mode === "mixed" ? [{ id: "recover-canvas", type: "function", function: { name: "canvas_get_state", arguments: "{}" } }] : [])] },
+    ...(mode === "read-completed" ? [{ role: "tool", name: "read", tool_call_id: "recover-read", content: entry }] : []),
+  ] } }, canvasModel(snapshot));
+  snapshot.piMessages = persisted as unknown as Record<string, unknown>[];
+  snapshot.piSessionEntries = sessionEntriesFromMessages(snapshot.runId, persisted)
+    .map(entry => ({ runId: snapshot.runId, entry: entry as unknown as Record<string, unknown> }));
+  snapshot.piActiveLeafId = String(snapshot.piSessionEntries.at(-1)!.entry.id);
+  snapshot.piSessionRevision = 3;
+  if (mode === "mixed") snapshot.tools.push(tools[1]!);
+  const checkpoint = bridge.checkpoint.bind(bridge);
+  bridge.checkpoint = async (...args) => {
+    await checkpoint(...args);
+    return { saved: true, sessionRevision: (args[5]?.revision || 1) + 1 };
+  };
+  authorizeNativeEntry(bridge, snapshot);
+  snapshot.lastTaskId = "old-task";
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  const result = state.checkpoints.find(({ role }) => role === "toolResult");
+  if (mode === "rejected-read") {
+    assert.equal(result?.isError, true);
+    assert.doesNotMatch(result!.text, /secret.txt|C:\//);
+  } else if (mode === "read-completed") assert.equal(result, undefined);
+  else assert.equal(result?.text, entry);
+  assert.deepEqual(state.executions, mode === "mixed" ? ["recover-canvas"] : []);
+  assert.deepEqual(state.batches.flat().map(call => call.id), mode === "mixed" ? ["recover-canvas"] : []);
+  if (mode !== "rejected-read") assert.match(JSON.stringify(state.canonical[0]?.messages), /Recovered Skill/);
+  assert.deepEqual(state.canonical[0]!.messages.map(message => message.role), mode === "mixed" ? ["user", "assistant", "tool", "tool", "user"] : ["user", "assistant", "tool", "user"]);
+  assert.equal(state.canonical[0]!.messages[2]!.tool_call_id, "recover-read");
+  });
+});
+
+function authorizeNativeEntry(bridge: CanvasBridge, snapshot: PiSnapshot): void {
+  bridge.readSkillFile = async (_run, nativeName, path, offset = 0, limit = 12_000) => {
+    const skill = snapshot.skills!.find(skill => skill.nativeName === nativeName)!;
+    const runes = [...skill.entryContent];
+    return { nativeName, skillId: skill.id, versionId: skill.versionId, contentHash: skill.contentHash,
+      path, isEntry: true, sha256: skill.files[0]!.sha256, offset, limit, content: runes.slice(offset, offset + limit).join(""),
+      totalRunes: runes.length, hasMore: offset + limit < runes.length };
+  };
+}
+
+test("native read HTTP503 escapes Pi tool error conversion for worker retry", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "read-503", function: { name: "read", arguments: JSON.stringify({ path: "unused" }) } }] },
+    { text: "must not continue" },
+  ]);
+  snapshot.skillRuntimeMode = "pi-native";
+  const entry = '---\nname: skill-abc\ndescription: For scripts\n---\nbody';
+  snapshot.skills = [{ id: "skill-1", nativeName: "skill-abc", displayName: "Scripts", description: "For scripts", versionId: "v1", version: "1",
+    contentHash: "package", entryPath: "SKILL.md", entryContent: entry,
+    files: [{ path: "SKILL.md", sha256: createHash("sha256").update(entry).digest("hex"), size: Buffer.byteLength(entry), text: true }] }];
+  snapshot.tools = [{ name: "read", description: "Read Skill", allowed: true,
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }];
+  const modelStep = bridge.modelStep.bind(bridge);
+  bridge.modelStep = async (...args) => {
+    const step = await modelStep(...args);
+    if (step.result.toolCalls) step.result.toolCalls[0]!.function.arguments = JSON.stringify({ path: args[1].systemPrompt.match(/<location>([^<]+)<\/location>/)![1] });
+    return step;
+  };
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response("unavailable", { status: 503 });
+  bridge.readSkillFile = new CanvasBridge("http://backend:8080", "token", "worker").readSkillFile.bind(new CanvasBridge("http://backend:8080", "token", "worker"));
+  try {
+    await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), /HTTP 503/);
+    assert.equal(state.steps, 1);
+    assert.equal(state.checkpoints.filter(item => item.role === "toolResult").length, 0);
+  } finally { globalThis.fetch = original; }
+});
+
+test("in-flight native model recovery rebases returned old-worker calls only for that task", async () => {
+  const oldPath = join(process.cwd(), "previous-worker", "skills", "skill-abc", "SKILL.md");
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "read-old", function: { name: "read", arguments: JSON.stringify({ path: oldPath }) } }] },
+    { text: "continued" },
+  ]);
+  snapshot.skillRuntimeMode = "pi-native";
+  snapshot.activeTaskId = "task-1";
+  const entry = '---\nname: skill-abc\ndescription: For scripts\n---\n# Frozen old task';
+  snapshot.skills = [{ id: "skill-1", nativeName: "skill-abc", displayName: "Scripts", description: "For scripts", versionId: "v1", version: "1", contentHash: "package",
+    entryPath: "SKILL.md", entryContent: entry, files: [{ path: "SKILL.md", sha256: createHash("sha256").update(entry).digest("hex"), size: Buffer.byteLength(entry), text: true }] }];
+  snapshot.tools = [{ name: "read", description: "Read Skill", allowed: true, parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }];
+  authorizeNativeEntry(bridge, snapshot);
+  const modelStep = bridge.modelStep.bind(bridge);
+  bridge.modelStep = async (...args) => {
+    if (state.steps > 0) assert.equal(args[0].activeTaskId, undefined, "acknowledged task must not be resumed twice");
+    return modelStep(...args);
+  };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.checkpoints.find(item => item.role === "toolResult")?.text, entry);
+  assert.equal(state.steps, 2);
 });
 
 test("模型在没有工具调用时收尾：由 Go 判定完成，且助手正文落库一次", async () => {

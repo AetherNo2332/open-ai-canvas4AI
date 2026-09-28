@@ -57,7 +57,7 @@ test("harness 与 backend 源一致（漂移检测）", async () => {
       `${entry.source} 已更新但 agent/harness/${entry.file} 未重新同步；请运行 node scripts/sync-harness.mjs`,
     );
     const synced = await readFile(join(harnessDir, entry.file), "utf8");
-    assert.equal(sha256(synced), entry.sha256, `agent/harness/${entry.file} 与清单哈希不一致`);
+    assert.equal(sha256(synced.replace(/\r\n/g, "\n")), entry.sha256, `agent/harness/${entry.file} 与清单哈希不一致`);
   }
 });
 

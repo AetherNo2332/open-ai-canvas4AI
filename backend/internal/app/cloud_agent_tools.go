@@ -21,13 +21,17 @@ import (
 )
 
 type cloudAgentSkill struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	Version     string            `json:"version"`
-	Hash        string            `json:"hash"`
-	Instruction string            `json:"instruction,omitempty"`
-	Files       map[string]string `json:"files,omitempty"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	Version      string            `json:"version"`
+	Hash         string            `json:"hash"`
+	Instruction  string            `json:"instruction,omitempty"`
+	Files        map[string]string `json:"files,omitempty"`
+	NativeName   string            `json:"nativeName,omitempty"`
+	VersionID    string            `json:"versionId,omitempty"`
+	VersionLabel string            `json:"versionLabel,omitempty"`
+	NativeFiles  []PiSkillFile     `json:"nativeFiles,omitempty"`
 }
 
 const cloudAgentSkillEntryPath = "SKILL.md"
@@ -313,12 +317,13 @@ func (s *Service) cloudAgentSkills(userID string, ids []string) ([]cloudAgentSki
 		if !skill.IsAdded || skill.Status != 1 {
 			return nil, BadAuthRequest("只能使用用户技能库中已安装且启用的技能")
 		}
-		// Skill content is loaded only after the model explicitly calls
-		// skill_read_file; keep the run context to stable metadata and paths.
-		// The description is public metadata (market listing) and lets the
-		// model route between activated skills without reading any body.
-		snapshot := cloudAgentSkill{ID: id, Name: skill.SkillName, Description: skill.Description, Version: skill.VersionID, Hash: skill.ContentHash, Files: map[string]string{cloudAgentSkillEntryPath: ""}}
-		files, err := s.SkillPackageFiles(userID, id)
+		// Keep bodies out of the run state. The package version, file hashes and
+		// allowlist are frozen here; actual content is retrieved on demand.
+		snapshot := cloudAgentSkill{ID: id, Name: skill.SkillName, Description: skill.Description,
+			Version: skill.VersionID, VersionID: skill.VersionID, VersionLabel: skill.Version,
+			NativeName: nativeSkillName(skill.SkillName, id), Hash: skill.ContentHash,
+			Files: map[string]string{cloudAgentSkillEntryPath: ""}}
+		files, err := s.SkillPackageFilesAtVersion(userID, id, skill.VersionID, skill.ContentHash)
 		if err != nil {
 			return nil, err
 		}
@@ -328,10 +333,16 @@ func (s *Service) cloudAgentSkills(userID string, ids []string) ([]cloudAgentSki
 				continue
 			}
 			// Executable/binary packages are never executed; text references are data only.
-			if !strings.HasSuffix(file.Path, ".md") && !strings.HasSuffix(file.Path, ".txt") && !strings.HasSuffix(file.Path, ".json") {
+			if !isNativeSkillTextPath(file.Path) {
 				continue
 			}
 			snapshot.Files[file.Path] = ""
+		}
+		for _, file := range files {
+			if file.Path == cloudAgentSkillEntryPath || isNativeSkillTextPath(file.Path) {
+				snapshot.NativeFiles = append(snapshot.NativeFiles, PiSkillFile{Path: file.Path, SHA256: file.SHA256,
+					Size: file.Size, MimeType: file.MimeType, Text: true})
+			}
 		}
 		// Detect an update during package reads instead of mixing two versions.
 		latest, err := s.SkillDetail(userID, id)
@@ -415,6 +426,35 @@ func cloudAgentPromptCacheKeyForRequest(canvasID, identity, system string, tools
 
 func cloudAgentTools(req CloudAgentRequest) []map[string]any {
 	return compileCloudAgentTools(req, true)
+}
+
+func compileCloudAgentToolsForRuntime(req CloudAgentRequest, includeProfileTool bool, runtimeMode string) []map[string]any {
+	tools := compileCloudAgentTools(req, includeProfileTool)
+	if runtimeMode != cloudAgentSkillRuntimeNative {
+		return tools
+	}
+	filtered := make([]map[string]any, 0, len(tools)+1)
+	for _, tool := range tools {
+		function, _ := tool["function"].(map[string]any)
+		name := stringField(function, "name")
+		if name == "skill_search" || name == "skill_read_file" {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	filtered = append(filtered, nativeSkillReadToolSchema())
+	return filtered
+}
+
+func nativeSkillReadToolSchema() map[string]any {
+	return map[string]any{"type": "function", "function": map[string]any{
+		"name": "read", "description": "Read only the selected Skill's text files; path must be a listed absolute Skill path.",
+		"parameters": map[string]any{"type": "object", "properties": map[string]any{
+			"path":   map[string]any{"type": "string"},
+			"offset": map[string]any{"type": "integer", "minimum": 0},
+			"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": piNativeSkillReadMaxRunes},
+		}, "required": []string{"path"}, "additionalProperties": false},
+	}}
 }
 
 func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []map[string]any {

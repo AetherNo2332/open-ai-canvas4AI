@@ -91,12 +91,25 @@ func cloudAgentSkillUsageFromEvents(events []CloudAgentEvent) *CloudAgentSkillUs
 	}
 
 	for _, event := range events {
-		if event.Type != "tool_completed" && event.Type != "tool_failed" {
+		if event.Type != "tool_completed" && event.Type != "tool_failed" && event.Type != "native_skill_enabled" && event.Type != "native_skill_read" && event.Type != "native_skill_read_failed" {
 			continue
 		}
 		payload := event.Payload
 		name, _ := payload["toolName"].(string)
+		if event.Type == "native_skill_enabled" {
+			name = "native_skill_enabled"
+		} else if event.Type == "native_skill_read" || event.Type == "native_skill_read_failed" {
+			name = "skill_read_file"
+		}
 		switch name {
+		case "native_skill_enabled":
+			id := cloudAgentEventString(payload["skillId"])
+			if id != "" {
+				scannedRuns[event.RunID] = true
+				target := entry(id)
+				target.RunsEnabled++
+				target.SkillName = cloudAgentEventString(payload["skillName"])
+			}
 		case "skills_load":
 			scannedRuns[event.RunID] = true
 			for _, id := range cloudAgentEventStringSlice(payload["skillIds"]) {
@@ -123,7 +136,7 @@ func cloudAgentSkillUsageFromEvents(events []CloudAgentEvent) *CloudAgentSkillUs
 				continue
 			}
 			target := entry(id)
-			if event.Type == "tool_failed" {
+			if event.Type == "tool_failed" || event.Type == "native_skill_read_failed" {
 				target.ReadFailures++
 				continue
 			}

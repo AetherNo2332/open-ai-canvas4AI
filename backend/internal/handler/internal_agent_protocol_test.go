@@ -90,3 +90,16 @@ func TestInternalAgentContextCompactionRoutesAreMounted(t *testing.T) {
 		}
 	}
 }
+
+func TestInternalAgentNativeSkillReadRouteIsMounted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("CANVAS_AGENT_INTERNAL_TOKEN", "wire-test-token")
+	router := gin.New()
+	RegisterInternalAgentRoutes(router, &service.Service{})
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodGet && route.Path == "/internal-agent/runs/:id/skills/:nativeName/file" {
+			return
+		}
+	}
+	t.Fatal("native Skill read route is missing")
+}

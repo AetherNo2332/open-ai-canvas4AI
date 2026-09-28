@@ -65,18 +65,20 @@ func cloudAgentStepLimit(req CloudAgentRequest) int {
 }
 
 type cloudAgentState struct {
-	Version        int                       `json:"version"`
-	Request        CloudAgentRequest         `json:"request"`
-	ParentID       string                    `json:"parentId"`
-	Fingerprint    string                    `json:"fingerprint"`
-	CreativeAnchor cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
-	Plan           []cloudAgentPlanItem      `json:"plan,omitempty"`
-	Skills         []cloudAgentSkill         `json:"skills,omitempty"`
-	Profile        cloudAgentProfileSnapshot `json:"profile"`
-	Policy         cloudAgentPolicySnapshot  `json:"policy"`
+	Version          int                       `json:"version"`
+	SkillRuntimeMode string                    `json:"skillRuntimeMode,omitempty"`
+	Request          CloudAgentRequest         `json:"request"`
+	ParentID         string                    `json:"parentId"`
+	Fingerprint      string                    `json:"fingerprint"`
+	CreativeAnchor   cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
+	Plan             []cloudAgentPlanItem      `json:"plan,omitempty"`
+	Skills           []cloudAgentSkill         `json:"skills,omitempty"`
+	Profile          cloudAgentProfileSnapshot `json:"profile"`
+	Policy           cloudAgentPolicySnapshot  `json:"policy"`
 }
 
 type CloudAgentRun struct {
+	SkillRuntimeMode string           `json:"skillRuntimeMode,omitempty"`
 	ID             string            `json:"id"`
 	CanvasID       string            `json:"canvasId"`
 	ParentID       string            `json:"parentId,omitempty"`
@@ -311,7 +313,7 @@ func (s *Service) cloudAgentTask(userID, id string) (*model.Task, cloudAgentStat
 	if task.ID != cloudAgentID(userID, state.Request.IdempotencyKey) || task.ProjectID != state.Request.CanvasID {
 		return nil, input.Agent, kernel.NotFound("Agent 运行不存在")
 	}
-	input.Agent = cloudAgentState{Version: 1, Request: state.Request, ParentID: state.ParentID, Fingerprint: state.Fingerprint, CreativeAnchor: state.CreativeAnchor, Skills: state.Skills, Profile: state.Profile, Policy: state.Policy}
+	input.Agent = cloudAgentState{Version: 1, SkillRuntimeMode: state.SkillRuntimeMode, Request: state.Request, ParentID: state.ParentID, Fingerprint: state.Fingerprint, CreativeAnchor: state.CreativeAnchor, Skills: state.Skills, Profile: state.Profile, Policy: state.Policy}
 	return task, input.Agent, nil
 }
 
@@ -366,7 +368,7 @@ func (s *Service) cloudAgentRunRefFor(userID, id string) (*cloudAgentRunRef, err
 	return &cloudAgentRunRef{UserID: userID,
 		Identity: cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status,
 			Model: state.Request.Model, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt},
-		State: cloudAgentState{Version: 1, Request: state.Request, ParentID: state.ParentID,
+		State: cloudAgentState{Version: 1, SkillRuntimeMode: state.SkillRuntimeMode, Request: state.Request, ParentID: state.ParentID,
 			Fingerprint: state.Fingerprint, CreativeAnchor: state.CreativeAnchor, Skills: state.Skills,
 			Profile: state.Profile, Policy: state.Policy}}, nil
 }
@@ -582,12 +584,13 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	}
 	// The policy prompt is the stable provider-cache prefix. Canvas contents are
 	// dynamic run data and must not be embedded in that prefix.
-	system, policy, err := compileCloudAgentPolicies(req, skillSnapshots, "", profile, creativeAnchor)
+	system, policy, err := compileCloudAgentPoliciesForRuntime(req, skillSnapshots, "", profile, cloudAgentSkillRuntimeNative, creativeAnchor)
 	if err != nil {
 		return nil, err
 	}
-	state := cloudAgentState{Version: 1, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
+	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
+	canonical.Tools = compileCloudAgentToolsForRuntime(req, len(profile.Layers) > 0, cloudAgentSkillRuntimeNative)
 	// Keep the complete eligible tool catalog in the Go runtime snapshot. Pi
 	// receives only the parent schemas on its first model request, but Go needs
 	// the child schemas to validate a category opened by a later tool call.
@@ -626,7 +629,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	//   - 占位任务：承载本轮报价预留，worker 永不领取。
 	runtime := cloudAgentRuntime{
 		RuntimeRunID: id, Request: req, Policy: policy, ParentID: parentID, Fingerprint: fingerprint,
-		CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
+		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
 		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
 		Plan: inheritedPlan, StepLimits: stepLimits,
 		ContractVersion: cloudAgentContractVersionFirstStep, Phase: cloudAgentPhaseAwaitingFirstStep,
@@ -713,6 +716,12 @@ func (s *Service) newCloudAgentExecution(userID, id, canvasID, parentID string, 
 			run.Title = parent.Title
 		} else {
 			run.ConversationID = parentID
+		}
+	}
+	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
+		for _, skill := range state.Skills {
+			state.event(id, "native_skill_enabled", map[string]any{"skillId": skill.ID, "nativeName": skill.NativeName,
+				"skillName": skill.Name, "version": firstNonEmpty(skill.VersionLabel, skill.Version)})
 		}
 	}
 	if err := cloudAgentSave(run, state); err != nil {

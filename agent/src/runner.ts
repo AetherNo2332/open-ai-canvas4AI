@@ -10,6 +10,7 @@ import {
   SessionManager,
   SettingsManager,
   createAgentSession,
+  buildSessionContext,
   type AgentSession,
   type ExtensionAPI,
   type FileEntry,
@@ -23,6 +24,8 @@ import { CanvasBridge, CanvasModelRetry, CanvasRunTerminated, type PiCanonical, 
 import { createCanvasStreamFn } from "./pi-stream.js";
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
+import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "./native-skills.js";
+import { Unsafe, type TSchema } from "typebox";
 import { createImageContextExtension, createTerminalHistoryExtension, missingImageContent } from "./session-history.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
 
@@ -168,8 +171,9 @@ function callsFromAssistant(message: AssistantMessage): PiToolCall[] {
  * 这不是授权 —— Go 的 `PiToolBatch` 才是权威；这里只是把"模型点名了不该看到的工具"
  * 这一类越权尝试挡在副作用之前，并保持"整批一起准入、整批一起执行"的语义。
  */
-function batchAdmissionError(disclosure: SessionToolDisclosure, calls: PiToolCall[]): string | undefined {
+function batchAdmissionError(disclosure: SessionToolDisclosure, calls: PiToolCall[], nativeRead = false): string | undefined {
   for (const call of calls) {
+    if (nativeRead && call.function.name === "read") continue;
     if (!disclosure.isVisible(call.function.name)) return `Tool ${call.function.name} is not disclosed`;
   }
   return undefined;
@@ -241,6 +245,7 @@ async function recoverToolResults(
   disclosure: SessionToolDisclosure,
   checkpoint: (message: AgentMessage) => Promise<void>,
   signal?: AbortSignal,
+  recoverNativeRead?: (call: PiToolCall) => Promise<{ result: string; isError?: boolean }>,
 ): Promise<void> {
   let assistantIndex = -1;
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -261,14 +266,17 @@ async function recoverToolResults(
   // Legacy category selectors never performed a business operation. Complete
   // an interrupted v1 selector locally so the restored Pi transcript has a
   // paired result; do not submit a synthetic call to Go or execute any tool.
-  const executableCalls = calls.filter((call) => !call.function.name.startsWith("agent_tools_"));
+  const executableCalls = calls.filter((call) => !call.function.name.startsWith("agent_tools_") &&
+    !(recoverNativeRead && call.function.name === "read"));
   const admissionError = batchAdmissionError(disclosure, executableCalls);
   const taskId = snapshot.lastTaskId || "";
   if (!admissionError && executableCalls.length > 0) await bridge.startToolBatch(snapshot, taskId, executableCalls, signal);
   for (const call of calls) {
     if (completed.has(call.id)) continue;
     const legacyCategory = call.function.name.startsWith("agent_tools_");
-    const receipt = legacyCategory
+    const receipt = recoverNativeRead && call.function.name === "read"
+      ? await recoverNativeRead(call)
+      : legacyCategory
       ? { result: "旧版工具分类入口已完成兼容，不执行业务操作。请直接使用当前工具表中的具体工具。" }
       : admissionError ? { result: admissionError, isError: true } :
       await bridge.executeTool(snapshot, taskId, call.id, signal);
@@ -299,8 +307,14 @@ async function resumePoint(
   disclosure: SessionToolDisclosure,
   checkpoint: (message: AgentMessage) => Promise<void>,
   signal?: AbortSignal,
+  recoverNativeRead?: (call: PiToolCall) => Promise<{ result: string; isError?: boolean }>,
 ): Promise<ResumePoint> {
-  const history = fromCanonical(snapshot, model);
+  // Native-only calls are checkpointed in Pi's v3 branch, never appended by
+  // the canvas batch path. Resolve that branch with Pi's compaction semantics.
+  const hasCurrentEntries = snapshot.piSessionEntries?.some(item => item.runId === snapshot.runId);
+  const history = snapshot.skillRuntimeMode === "pi-native" && hasCurrentEntries
+    ? buildSessionContext(snapshot.piSessionEntries!.map(({ entry }) => entry as unknown as SessionEntry), snapshot.piActiveLeafId).messages
+    : fromCanonical(snapshot, model);
   if (snapshot.pendingContextCompaction) {
     // Compaction was started by the previous worker. Do not let normal recovery
     // call PiModelStep while Go's ActiveTaskID belongs to the compaction task.
@@ -314,7 +328,7 @@ async function resumePoint(
       tail?.role === "user" ? history.slice(0, -1) : history);
     return { entries, prompt, activeLeafId: snapshot.pendingContextCompaction.activeLeafId };
   }
-  await recoverToolResults(bridge, snapshot, history, disclosure, checkpoint, signal);
+  await recoverToolResults(bridge, snapshot, history, disclosure, checkpoint, signal, recoverNativeRead);
 
   if (!snapshot.activeTaskId && snapshot.lastTaskId === snapshot.modelFailureTaskId && snapshot.modelFailureNudge) {
     const entries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
@@ -459,8 +473,8 @@ async function bootstrapSession(
   streamSimple: ReturnType<typeof createCanvasStreamFn>,
   disclosure: SessionToolDisclosure,
   extensionFactories: InlineExtension[],
+  workspace: ReturnType<typeof createWorkspace>,
 ): Promise<SessionBootstrap> {
-  const workspace = createWorkspace();
   try {
     const model = canvasModel(snapshot);
     // 不发现任何磁盘模型目录、也不访问模型网络：唯一 provider 是下面的桥。
@@ -482,15 +496,20 @@ async function bootstrapSession(
     const settingsManager = SettingsManager.create(workspace.cwd, workspace.agentDir);
     // Retry admission, billing and escalation are governed by Go's persisted policy.
     settingsManager.setRetryEnabled(false);
+    const nativeMode = snapshot.skillRuntimeMode === "pi-native";
+    const skillsRoot = join(workspace.cwd, "skills");
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspace.cwd, agentDir: workspace.agentDir, settingsManager,
-      // 隔离运行：不加载扩展、技能、模板、主题与任何磁盘上下文文件。
-      // 系统提示的唯一来源是"服务端策略 + 仓库 Harness"，见 system-prompt.ts。
+      // noSkills suppresses host/global discovery; Pi still loads explicit Skill paths.
+      // Only the run's frozen entries may join the server policy and Harness.
       noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+      ...(nativeMode ? { additionalSkillPaths: [skillsRoot] } : {}),
       extensionFactories,
       systemPrompt,
     });
     await resourceLoader.reload();
+    if (nativeMode) verifyNativeSkillDiscovery(snapshot.skills || [], resourceLoader.getSkills());
+    else if (resourceLoader.getSkills().skills.length) throw new FatalWorkerError("Legacy run discovered unexpected Skills");
 
     const sessionFiles: FileEntry[] = [
       ...(snapshot.piSessionHeader ? [snapshot.piSessionHeader as unknown as FileEntry] : []),
@@ -508,7 +527,7 @@ async function bootstrapSession(
       resourceLoader,
       // 默认 coding 工具（read/bash/edit/write/ls/grep/find/powershell）一个都不注册。
       noTools: "all",
-      tools: disclosure.activeNames(),
+      tools: [...disclosure.activeNames(), ...(nativeMode ? ["read"] : [])],
     });
     return { session, sessionManager, cleanup: workspace.cleanup };
   } catch (error) {
@@ -561,6 +580,7 @@ export async function runCanvasAgent(
   let noToolTurnPending = false;
   let admittedCallIds = new Set<string>();
   let batchRejection = "";
+  const resumedNativeCallIds = new Set<string>();
   let canonicalCount = snapshot.canonical.messages.length;
   const pendingInterjections = new Map<string, string>();
   const injectedInterjectionIds = new Set<string>();
@@ -626,6 +646,7 @@ export async function runCanvasAgent(
     }
     const result = await bridge.checkpoint(snapshot, ++sequence, message as unknown as Record<string, unknown>, taskId, shutdown,
       { revision: sessionRevision, activeLeafId: leafId, entries: entries as unknown as Record<string, unknown>[], interjectionIds });
+    if (taskId) snapshot = { ...snapshot, activeTaskId: undefined, lastTaskId: taskId };
     if (result && typeof result.sessionRevision === "number" && result.sessionRevision > 0) {
       sessionRevision = result.sessionRevision;
       for (const entry of entries) persistedSessionEntryIds.add(entry.id);
@@ -649,9 +670,11 @@ export async function runCanvasAgent(
     }
   };
 
-  const disclosure = new SessionToolDisclosure(snapshot.tools, async (_name, _args, callId, signal) => {
+  const disclosure = new SessionToolDisclosure(snapshot.tools.filter((tool) =>
+    !(snapshot.skillRuntimeMode === "pi-native" && tool.name === "read")), async (_name, _args, callId, signal) => {
     // 屏障：assistant 消息（含 tool_calls）必须先落库，Go 才会接受这一批工具调用。
     await queue.drain();
+    if (listenerFailure !== undefined) throw listenerFailure;
     if (!admittedCallIds.has(callId)) throw new Error(batchRejection || "Tool batch was not admitted");
     if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
     const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
@@ -674,6 +697,9 @@ export async function runCanvasAgent(
     return { result: receipt.result, isError: receipt.isError,
       terminate: runTerminated };
   }, snapshot.previousStepTemplate);
+  const nativeMode = snapshot.skillRuntimeMode === "pi-native";
+  const nativeReadSpec = nativeMode ? snapshot.tools.find((tool) => tool.name === "read" && tool.allowed) : undefined;
+  if (nativeMode && !nativeReadSpec) throw new FatalWorkerError("Go did not disclose native Skill read");
   // Old snapshots may still carry openedCategories. They are informational
   // migration state only; all eligible concrete tools are available each run.
 
@@ -681,12 +707,18 @@ export async function runCanvasAgent(
   let modelRetry: PiTurnDecision | undefined;
   const streamSimple = createCanvasStreamFn(async ({ messages, signal, onTextDelta }) => {
     await queue.drain();
+    if (listenerFailure !== undefined) throw listenerFailure;
     if (runTerminated) throw new CanvasRunTerminated(snapshot.status);
     if (compactionFailure !== undefined) throw compactionFailure;
     const canonical = toCanonical(messages as Message[], snapshot.canonical.promptCacheKey);
     canonical.tools = disclosure.decorateCanonicalTools(canonical.tools);
     try {
       const step = await bridge.modelStep(snapshot, canonical, signal, onTextDelta, promptContract, parts);
+      if (nativeMode && snapshot.activeTaskId === step.taskId) {
+        for (const call of step.result.toolCalls || []) {
+          if (call.function.name === "read") resumedNativeCallIds.add(call.id);
+        }
+      }
       activeTaskId = latestTaskId = step.taskId;
       return step.result;
     } catch (error) {
@@ -700,13 +732,33 @@ export async function runCanvasAgent(
   });
 
   let resume: ResumePoint;
+  const workspace = createWorkspace();
+  const nativeSkillsRoot = join(workspace.cwd, "skills");
   try {
-    resume = await resumePoint(bridge, snapshot, model, disclosure, checkpoint, shutdown);
+    if (nativeMode) materializeNativeSkills(snapshot.skills || [], nativeSkillsRoot);
+    resume = await resumePoint(bridge, snapshot, model, disclosure, checkpoint, shutdown, nativeMode ? async (call) => {
+      try {
+        const params = JSON.parse(call.function.arguments) as Record<string, unknown>;
+        if (typeof params.path !== "string") throw new FatalWorkerError("Persisted Skill read requires a path");
+        const path = rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path);
+        return { result: await readNativeSkill(snapshot, nativeSkillsRoot, bridge, path,
+          typeof params.offset === "number" ? params.offset : 0, typeof params.limit === "number" ? params.limit : 12_000, shutdown) };
+      } catch (error) {
+        if (error instanceof FatalWorkerError) return { result: "Skill read rejected; use an enabled Skill file and valid range.", isError: true };
+        throw error;
+      }
+    } : undefined);
+    if (initial.piSessionEntries?.length && stagedRecoveryEntries.length) {
+      const existing = new Set(resume.entries.map(entry => entry.id));
+      resume.entries.push(...stagedRecoveryEntries.filter(entry => !existing.has(entry.id)));
+      resume.activeLeafId = sessionLeafId;
+    }
   } catch (error) {
+    workspace.cleanup();
     if (error instanceof CanvasRunTerminated) return;
     throw error;
   }
-  if (resume.prompt === "") return;
+  if (resume.prompt === "") { workspace.cleanup(); return; }
   const compactionExtension = createCanvasContextCompactionExtension({
     bridge,
     snapshot: () => snapshot,
@@ -730,13 +782,35 @@ export async function runCanvasAgent(
     },
     onFailure: (error) => { compactionFailure = error; },
   });
+  const nativeRead = nativeReadSpec ? {
+    name: "read", label: "read", description: nativeReadSpec.description,
+    parameters: Unsafe<TSchema>(nativeReadSpec.parameters as TSchema), executionMode: "sequential" as const,
+    execute: async (callId: string, params: Record<string, unknown>, signal: AbortSignal | undefined) => {
+      await queue.drain();
+      if (listenerFailure !== undefined) throw listenerFailure;
+      if (typeof params.path !== "string") throw new FatalWorkerError("Native Skill read requires a path");
+      try {
+        const path = resumedNativeCallIds.has(callId)
+          ? rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path) : params.path;
+        const text = await readNativeSkill(snapshot, nativeSkillsRoot, bridge, path,
+          typeof params.offset === "number" ? params.offset : 0, typeof params.limit === "number" ? params.limit : 12_000, signal);
+        return { content: [{ type: "text" as const, text }], details: null };
+      } catch (error) {
+        // Pi converts tool exceptions to model-visible results. Infrastructure
+        // failures must instead leave the call pending for a worker retry.
+        if (!(error instanceof FatalWorkerError)) listenerFailure = error;
+        throw error;
+      }
+    },
+  } : undefined;
   const toolExtension = createCanvasToolsExtension(disclosure, (callId, toolName) => {
     if (!disclosure.isVisible(toolName)) return `Tool ${toolName} is not eligible for this run`;
     if (!admittedCallIds.has(callId)) return batchRejection || `Tool batch does not admit ${toolName}`;
     return undefined;
-  });
+  }, nativeRead);
   const boot = await bootstrapSession(snapshot, systemPrompt, resume.entries, streamSimple, disclosure,
-    [compactionExtension, toolExtension, createTerminalHistoryExtension(snapshot), createImageContextExtension()]);
+    [compactionExtension, toolExtension, createTerminalHistoryExtension(snapshot), createImageContextExtension()],
+    workspace);
   session = boot.session;
   sessionManager = boot.sessionManager;
   if (resume.activeLeafId !== undefined && resume.activeLeafId !== sessionManager.getLeafId()) {
@@ -745,6 +819,7 @@ export async function runCanvasAgent(
   }
   try {
     session.subscribe((event) => {
+      if (listenerFailure !== undefined) return;
       if (runTerminated || isTerminalRunStatus(snapshot.status)) return;
       if (event.type !== "message_end") return;
       const message = event.message;
@@ -756,10 +831,10 @@ export async function runCanvasAgent(
         const calls = callsFromAssistant(message);
         activeToolBatchTaskId = calls.length ? taskId || snapshot.lastTaskId || "" : "";
         noToolTurnPending = calls.length === 0;
-        batchRejection = calls.length ? batchAdmissionError(disclosure, calls) || "" : "";
+        batchRejection = calls.length ? batchAdmissionError(disclosure, calls, nativeMode) || "" : "";
         admittedCallIds = new Set(batchRejection ? [] : calls.map((call) => call.id));
         if (admittedCallIds.size > 0) {
-          const batch = calls.filter((call) => admittedCallIds.has(call.id));
+          const batch = calls.filter((call) => admittedCallIds.has(call.id) && !(nativeMode && call.function.name === "read"));
           disclosure.recordStepCalls(calls.map((call) => call.function.name));
           // 顺序是跨进程合同，不是实现细节：Go 的 `PiToolBatch` 在 `ActiveTaskID` 非空时
           // 拒绝整个批次（"Agent 尚有未完成的模型或工具步骤"），而清掉它的正是这条带 taskId
@@ -767,7 +842,7 @@ export async function runCanvasAgent(
           // 两者同队列，因此顺序就是入队顺序：先检查点，再批次准入。反之每一个工具批次
           // 都会以 403 失败，而 worker 把确定性 4xx 当致命错误 —— 整轮直接退出。
           queue.enqueue(async () => { await checkpoint(message as unknown as AgentMessage, taskId); });
-          queue.enqueue(async () => {
+          if (batch.length) queue.enqueue(async () => {
             if (!taskId) throw new FatalWorkerError("Pi assistant tool call is missing its model task ID");
             await bridge.startToolBatch(snapshot, taskId, batch, shutdown);
           });

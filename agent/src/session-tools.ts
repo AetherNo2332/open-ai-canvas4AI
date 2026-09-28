@@ -105,6 +105,7 @@ export class SessionToolDisclosure {
 export function createCanvasToolsExtension(
   registry: SessionToolDisclosure,
   admissionError: (toolCallId: string, toolName: string) => string | undefined,
+  nativeRead?: SessionToolDefinitionLike,
 ): InlineExtension {
   return {
     name: "canvas-tools",
@@ -117,7 +118,12 @@ export function createCanvasToolsExtension(
             tool.execute(toolCallId, params, signal),
         } as never);
       }
+      if (nativeRead) {
+        pi.registerTool({ ...nativeRead, execute: async (callId: string, params: Record<string, unknown>, signal?: AbortSignal) =>
+          nativeRead.execute(callId, params, signal) } as never);
+      }
       pi.on("tool_call", (event) => {
+        if (nativeRead && event.toolName === nativeRead.name) return;
         if (!registry.isVisible(event.toolName)) {
           return { block: true, terminate: true, reason: `Tool ${event.toolName} is not eligible for this run` };
         }

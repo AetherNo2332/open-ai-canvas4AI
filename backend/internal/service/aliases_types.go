@@ -19,6 +19,9 @@ type (
 	PiContextCompactionCommit              = app.PiContextCompactionCommit
 	PiTurnDecision                         = app.PiTurnDecision
 	PiToolReceipt                          = app.PiToolReceipt
+	PiSkillSnapshot                        = app.PiSkillSnapshot
+	PiSkillReadPage                        = app.PiSkillReadPage
+	PiSkillFileRequest                     = app.PiSkillFileRequest
 	AgentProfileRequest                    = app.AgentProfileRequest
 	AgentProfileView                       = app.AgentProfileView
 	AgentLessonView                        = app.AgentLessonView

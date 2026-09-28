@@ -28,7 +28,46 @@ export interface PiCanonical {
   promptCacheKey?: string;
 }
 
+export interface PiSkillFile {
+  path: string;
+  sha256: string;
+  size: number;
+  mimeType?: string;
+  text: boolean;
+}
+
+export interface PiSkillSnapshot {
+  id: string;
+  nativeName: string;
+  displayName: string;
+  description: string;
+  versionId: string;
+  version: string;
+  contentHash: string;
+  entryPath: string;
+  entryContent: string;
+  files: PiSkillFile[];
+}
+
+export interface PiSkillReadPage {
+  nativeName: string;
+  skillId: string;
+  versionId: string;
+  contentHash: string;
+  path: string;
+  sha256: string;
+  isEntry: boolean;
+  offset: number;
+  limit: number;
+  content: string;
+  hasMore: boolean;
+  totalRunes: number;
+}
+
 export interface PiSnapshot {
+
+  skillRuntimeMode?: "pi-native" | "legacy-go";
+  skills?: PiSkillSnapshot[];
   runId: string;
   piSessionId?: string;
   piSessionRevision?: number;
@@ -147,6 +186,13 @@ export class CanvasBridge {
     return result.run;
   }
 
+  async readSkillFile(run: PiSnapshot, nativeName: string, path: string, offset = 0, limit = 12_000,
+    signal?: AbortSignal): Promise<PiSkillReadPage> {
+    const query = new URLSearchParams({ path, offset: String(offset), limit: String(limit) });
+    return this.request<PiSkillReadPage>("GET",
+      `/runs/${encodeURIComponent(run.runId)}/skills/${encodeURIComponent(nativeName)}/file?${query}`, undefined, run, signal);
+  }
+
   async renew(run: PiSnapshot, signal?: AbortSignal): Promise<void> {
     await this.request("POST", `/runs/${encodeURIComponent(run.runId)}/renew`, {}, run, signal);
   }
@@ -162,7 +208,11 @@ export class CanvasBridge {
     // 正文只在首个模型步被固化（Go 存快照）；之后每一步重发同一份用于校验，
     // 这样"哪一份 Harness 参与了这个运行"在服务端是可核对的事实，而不是 Node 的内存。
     if (harness) body.harness = harness;
-    let step = await this.request<PiModelStepView>("POST", path, body, run, signal);
+    // A claimed native run may still own a billed model task using the previous
+    // worker's generated paths. Resume that task rather than reposting a new prompt.
+    let step = run.skillRuntimeMode === "pi-native" && run.activeTaskId
+      ? await this.request<PiModelStepView>("GET", `${path}/${encodeURIComponent(run.activeTaskId)}`, undefined, run, signal)
+      : await this.request<PiModelStepView>("POST", path, body, run, signal);
     // 模型任务执行期间 textDraft 会持续增长；把新增部分当增量正文上报，
     // 这样 Pi 事件流是真实增量，而不是任务结束后一次性补齐。
     while (step.status === "queued" || step.status === "running") {

@@ -163,6 +163,10 @@ func cloudAgentSkillManifest(skill cloudAgentSkill) map[string]any {
 }
 
 func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, profile cloudAgentProfileSnapshot, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
+	return compileCloudAgentPoliciesForRuntime(req, skills, canvasSummary, profile, cloudAgentSkillRuntimeLegacy, anchors...)
+}
+
+func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, profile cloudAgentProfileSnapshot, skillMode string, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
 	system, media, err := prompts.LoadAgentPolicies()
 	if err != nil {
 		return "", cloudAgentPolicySnapshot{}, err
@@ -216,11 +220,15 @@ func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, 
 		// User intent remains in user messages, never frozen into system context.
 		context["referenceCandidates"] = anchors[0].ReferenceAssets
 	}
-	manifests := make([]map[string]any, 0, len(skills))
-	for _, skill := range skills {
-		manifests = append(manifests, cloudAgentSkillManifest(skill))
+	if skillMode == cloudAgentSkillRuntimeNative {
+		context["skillRuntimeMode"] = cloudAgentSkillRuntimeNative
+	} else {
+		manifests := make([]map[string]any, 0, len(skills))
+		for _, skill := range skills {
+			manifests = append(manifests, cloudAgentSkillManifest(skill))
+		}
+		context["skills"] = manifests
 	}
-	context["skills"] = manifests
 	layers := make([]map[string]any, 0, len(profile.Layers))
 	for _, layer := range profile.Layers {
 		layers = append(layers, map[string]any{"scope": layer.Scope, "revision": layer.Revision, "hash": layer.Hash, "characters": utf8.RuneCountInString(layer.Content)})

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,7 +33,7 @@ func TestAgentToolSchemaArtifactMatchesRuntime(t *testing.T) {
 	req.VisionEnabled = true
 	req.HasMemories = true
 	req.SkillIDs = []string{"schema-artifact-skill"}
-	artifact := agentToolSchemaArtifact{SchemaVersion: cloudAgentToolSchemaVersion, Tools: cloudAgentTools(req)}
+	artifact := agentToolSchemaArtifact{SchemaVersion: cloudAgentToolSchemaVersion, Tools: append(cloudAgentTools(req), nativeSkillReadToolSchema())}
 	encoded, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +53,7 @@ func TestAgentToolSchemaArtifactMatchesRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取共用工具 schema 制品失败（可先运行 WRITE_TOOL_SCHEMA=1 go test ./internal/app -run TestAgentToolSchemaArtifactMatchesRuntime 生成）: %v", err)
 	}
-	if string(stored) != string(encoded) {
+	if strings.ReplaceAll(string(stored), "\r\n", "\n") != string(encoded) {
 		t.Fatalf("agent/harness/TOOL_SCHEMA.json 与运行时工具定义不一致；请运行 WRITE_TOOL_SCHEMA=1 go test ./internal/app -run TestAgentToolSchemaArtifactMatchesRuntime 重新生成")
 	}
 	if artifact.SchemaVersion == "" || len(artifact.Tools) == 0 {

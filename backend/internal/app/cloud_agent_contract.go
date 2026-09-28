@@ -421,7 +421,7 @@ func cloudAgentFreezeFirstStepContract(state *cloudAgentRuntime, harnessHash str
 	}
 	state.Snapshot.HarnessHash = hash
 	state.Snapshot.Harness = parts
-	state.Snapshot.AssembledPromptHash = cloudAgentTextDigest(strings.TrimSpace(assembledPrompt))
+	state.Snapshot.AssembledPromptHash = cloudAgentTextDigest(cloudAgentAssembledPromptIdentity(state, assembledPrompt))
 	// 兼容旧读路径：PromptContract 是迁移前记录提示身份的字段，仍按同一值维护。
 	state.PromptContract = hash
 	return nil
@@ -434,7 +434,7 @@ func cloudAgentVerifyAssembledPrompt(state *cloudAgentRuntime, assembledPrompt s
 	if state.Snapshot == nil || strings.TrimSpace(state.Snapshot.AssembledPromptHash) == "" {
 		return errors.New("Agent runtime first-step contract snapshot is missing")
 	}
-	if cloudAgentTextDigest(strings.TrimSpace(assembledPrompt)) != state.Snapshot.AssembledPromptHash {
+	if cloudAgentTextDigest(cloudAgentAssembledPromptIdentity(state, assembledPrompt)) != state.Snapshot.AssembledPromptHash {
 		return errors.New("Agent runtime system prompt changed after the first model step")
 	}
 	return nil

@@ -49,6 +49,18 @@ test("每个运行请求都携带会话租约 epoch", async () => {
   assert.equal(request.headers["X-Agent-Session-Epoch"], "7");
 });
 
+test("native restart resumes its in-flight model task without reposting changed worker context", async () => {
+  const request = await captureBody(bridge => bridge.modelStep({ ...run, skillRuntimeMode: "pi-native", activeTaskId: "old-task" },
+    { ...run.canonical, systemPrompt: "new worker paths" }), {
+    taskId: "old-task", status: "succeeded", result: { toolCalls: [{ id: "old-read", function: { name: "read", arguments: '{"path":"/tmp/old/skills/skill-abc/SKILL.md"}' } }] },
+  });
+  assert.equal(request.method, "GET");
+  assert.equal(request.url, "http://backend:8080/internal-agent/runs/run-wire/model-steps/old-task");
+  assert.equal(request.headers["Authorization"], "Bearer token");
+  assert.equal(request.headers["X-Agent-Worker-ID"], "worker-1");
+  assert.equal(request.headers["X-Agent-Session-Epoch"], "7");
+});
+
 test("a Go-finalized model failure is a terminal control signal", async () => {
   const original = globalThis.fetch;
   const routes: string[] = [];

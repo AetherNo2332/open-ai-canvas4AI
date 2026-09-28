@@ -98,6 +98,7 @@ type cloudAgentApproval struct {
 }
 type cloudAgentRuntime struct {
 	RuntimeRunID      string                    `json:"-"`
+	SkillRuntimeMode  string                    `json:"skillRuntimeMode,omitempty"`
 	Request           CloudAgentRequest         `json:"request"`
 	Policy            cloudAgentPolicySnapshot  `json:"policy"`
 	ParentID          string                    `json:"parentId,omitempty"`
@@ -297,12 +298,12 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	advertisedNames := cloudAgentToolNames(canonical.Tools)
 	// Rebuild the complete eligible catalog for server-side authorization. The
 	// root task contains only the parent schemas sent to the model.
-	canonical.Tools = compileCloudAgentTools(initial.Request, len(initial.Profile.Layers) > 0)
+	canonical.Tools = compileCloudAgentToolsForRuntime(initial.Request, len(initial.Profile.Layers) > 0, firstNonEmpty(initial.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy))
 	stepLimits, err := s.cloudAgentStepLimits()
 	if err != nil {
 		return err
 	}
-	state := cloudAgentRuntime{Request: initial.Request, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
+	state := cloudAgentRuntime{Request: initial.Request, SkillRuntimeMode: initial.SkillRuntimeMode, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
 	for _, name := range advertisedNames {
 		if cloudAgentIsToolCategory(name) {
 			state.DisclosureVersion = cloudAgentToolDisclosureVersion
@@ -882,6 +883,7 @@ func (s *Service) cloudAgentExecutionOutput(userID string, identity cloudAgentRu
 		out.Approval = nil
 	}
 	out.Step = state.Step
+	out.SkillRuntimeMode = firstNonEmpty(state.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy)
 	if stateErr == nil && state.ActiveTaskID != "" && (run.Status == "running" || run.Status == "queued") {
 		active, err := s.repo.TaskForUser(userID, state.ActiveTaskID)
 		if err != nil {
@@ -895,6 +897,7 @@ func (s *Service) cloudAgentExecutionOutput(userID string, identity cloudAgentRu
 	for _, skill := range state.Skills {
 		skill.Instruction = ""
 		skill.Files = nil
+		skill.NativeFiles = nil
 		out.Skills = append(out.Skills, skill)
 	}
 	orders, err := s.repo.BillingOrdersByTaskIDs(userID, state.TaskIDs)

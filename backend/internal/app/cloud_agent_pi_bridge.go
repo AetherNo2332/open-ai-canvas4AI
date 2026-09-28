@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	"infinite-canvas/backend/internal/skills"
 )
 
 const piAgentLeaseDuration = 45 * time.Second
@@ -73,7 +75,16 @@ type PiAgentSnapshot struct {
 	//
 	// Node 恢复时优先用它而不是重读磁盘文件：运维改了 SYSTEM.md / AGENTS.md 再重启进程，
 	// 在途运行的系统提示不能被静默换成新文件内容。
-	Harness *cloudAgentHarnessSnapshot `json:"harness,omitempty"`
+	Harness          *cloudAgentHarnessSnapshot `json:"harness,omitempty"`
+	SkillRuntimeMode string                     `json:"skillRuntimeMode"`
+	Skills           []PiSkillSnapshot          `json:"skills,omitempty"`
+}
+
+type PiSkillFileRequest struct {
+	NativeName string
+	Path       string
+	Offset     int
+	Limit      int
 }
 
 // PiAgentModelLimits mirrors the effective Go-side text capability into Pi's
@@ -116,6 +127,86 @@ type PiModelStepView struct {
 type PiToolBatchRequest struct {
 	TaskID string           `json:"taskId"`
 	Calls  []cloudAgentCall `json:"calls"`
+}
+
+func (s *Service) PiSkillFile(userID, runID, owner string, request PiSkillFileRequest) (*PiSkillReadPage, error) {
+	run, err := s.piAgentLeasedRun(userID, runID, owner)
+	if err != nil {
+		return nil, err
+	}
+	state, err := cloudAgentDecode(run)
+	if err != nil {
+		return nil, err
+	}
+	if state.SkillRuntimeMode != cloudAgentSkillRuntimeNative {
+		return nil, kernel.Forbidden("该运行使用旧版 Skill 工具")
+	}
+	path, err := normalizeNativeSkillReadPath(request.Path)
+	if err != nil {
+		return nil, err
+	}
+	if request.Offset < 0 || request.Limit < 0 || request.Limit > piNativeSkillReadMaxRunes {
+		return nil, BadAuthRequest("Skill read range is invalid")
+	}
+	var skill *cloudAgentSkill
+	for index := range state.Skills {
+		candidate := &state.Skills[index]
+		if candidate.NativeName == request.NativeName {
+			skill = candidate
+			break
+		}
+	}
+	if skill == nil {
+		return nil, kernel.Forbidden("Skill is not enabled for this run")
+	}
+	if path != cloudAgentSkillEntryPath && !isNativeSkillTextPath(path) {
+		return nil, BadAuthRequest("Only text Skill files can be read")
+	}
+	var listed *PiSkillFile
+	for index := range skill.NativeFiles {
+		if skill.NativeFiles[index].Path == path && skill.NativeFiles[index].Text {
+			listed = &skill.NativeFiles[index]
+			break
+		}
+	}
+	if listed == nil {
+		return nil, kernel.Forbidden("Skill file is not listed for this run")
+	}
+	file, err := s.SkillPackageFileAtVersion(userID, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, path)
+	if err != nil {
+		return nil, err
+	}
+	if file.Binary {
+		return nil, BadAuthRequest("Only text Skill files can be read")
+	}
+	if file.File.SHA256 != listed.SHA256 || file.File.Size != listed.Size {
+		return nil, kernel.Forbidden("Skill file differs from the frozen snapshot")
+	}
+	content := file.Content
+	if path == cloudAgentSkillEntryPath {
+		entrySkill := *skill
+		entrySkill.Instruction = content
+		content, err = normalizePiSkillEntry(entrySkill)
+		if err != nil {
+			return nil, err
+		}
+	}
+	page, err := nativeSkillReadPage(content, request.Offset, request.Limit)
+	if err != nil {
+		return nil, err
+	}
+	page.Path = path
+	page.NativeName, page.SkillID, page.VersionID, page.ContentHash = skill.NativeName, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash
+	page.IsEntry = path == cloudAgentSkillEntryPath
+	if page.IsEntry {
+		page.SHA256, _, err = nativeSkillEntryDigest(cloudAgentSkill{ID: skill.ID, Name: skill.Name, NativeName: skill.NativeName, Description: skill.Description, Instruction: file.Content})
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		page.SHA256 = file.File.SHA256
+	}
+	return &page, nil
 }
 
 type PiMessageCheckpoint struct {
@@ -258,6 +349,30 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 		if err != nil {
 			return err
 		}
+		if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && message.Role == "toolResult" {
+			var result struct {
+				ToolCallID string `json:"toolCallId"`
+				ToolName   string `json:"toolName"`
+				IsError    bool   `json:"isError"`
+			}
+			if json.Unmarshal(input.Message, &result) != nil {
+				return BadAuthRequest("Pi Skill read result is invalid")
+			}
+			if result.ToolName == "read" {
+				skill, path, err := nativeReadCheckpointCall(&state, current.Transcript, result.ToolCallID, !result.IsError)
+				if err != nil {
+					return err
+				}
+				kind := "native_skill_read"
+				payload := map[string]any{"toolName": "read"}
+				if result.IsError { kind = "native_skill_read_failed" }
+				if skill != nil {
+					payload["skillId"], payload["nativeName"], payload["skillName"] = skill.ID, skill.NativeName, skill.Name
+					payload["path"], payload["version"] = path, firstNonEmpty(skill.VersionLabel, skill.Version)
+				}
+				state.event(runID, kind, payload)
+			}
+		}
 		if input.TaskID != "" {
 			if message.Role != "assistant" || state.ActiveTaskID != input.TaskID {
 				return kernel.Forbidden("Pi 模型任务与消息不匹配")
@@ -352,6 +467,68 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 		return 0, err
 	}
 	return updatedSessionRevision, nil
+}
+
+func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.CloudAgentMessageRecord, callID string, requireFile bool) (*cloudAgentSkill, string, error) {
+	if callID == "" {
+		return nil, "", kernel.Forbidden("native Skill read call is missing")
+	}
+	for index := len(transcript) - 1; index >= 0; index-- {
+		record := transcript[index]
+		if record.Kind != cloudAgentMessageKindPi {
+			continue
+		}
+		var message struct {
+			Role       string `json:"role"`
+			ToolCallID string `json:"toolCallId"`
+			Content    []struct {
+				Type      string `json:"type"`
+				ID        string `json:"id"`
+				Name      string `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"content"`
+		}
+		if json.Unmarshal([]byte(record.MessageJSON), &message) != nil {
+			continue
+		}
+		if message.Role == "toolResult" && message.ToolCallID == callID {
+			return nil, "", kernel.Forbidden("native Skill read result was already checkpointed")
+		}
+		if message.Role != "assistant" {
+			continue
+		}
+		for _, block := range message.Content {
+			if block.Type != "toolCall" || block.ID != callID || block.Name != "read" {
+				continue
+			}
+			var arguments struct { Path string `json:"path"` }
+			_ = json.Unmarshal(block.Arguments, &arguments)
+			path := strings.ReplaceAll(arguments.Path, "\\", "/")
+			for skillIndex := range state.Skills {
+				skill := &state.Skills[skillIndex]
+				marker := "/skills/" + skill.NativeName + "/"
+				position := strings.LastIndex(path, marker)
+				if position < 0 {
+					continue
+				}
+				relativePath, err := normalizeNativeSkillReadPath(path[position+len(marker):])
+				if err != nil {
+					if !requireFile { return nil, "", nil }
+					return nil, "", err
+				}
+				for _, file := range skill.NativeFiles {
+					if file.Path == relativePath && file.Text {
+						return skill, relativePath, nil
+					}
+				}
+			}
+			// Rejected reads still need a paired durable result. Never publish an
+			// unvalidated model path (or its error text) in the public event.
+			if !requireFile { return nil, "", nil }
+		}
+		return nil, "", kernel.Forbidden("native Skill read call is not paired with an enabled file")
+	}
+	return nil, "", kernel.Forbidden("native Skill read result has no assistant call")
 }
 
 type PiToolReceipt struct {
@@ -595,7 +772,8 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	for _, tool := range request.Canonical.Tools {
 		function, _ := tool["function"].(map[string]any)
 		name := stringField(function, "name")
-		if !allowed[name] || !cloudAgentToolAllowed(state.Request, name) {
+		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
+		if !allowed[name] || (!nativeRead && !cloudAgentToolAllowed(state.Request, name)) {
 			return nil, kernel.Forbidden("Pi 模型请求包含未披露工具")
 		}
 	}
@@ -870,6 +1048,13 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	if err != nil {
 		return err
 	}
+	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
+		for _, call := range batch.Calls {
+			if call.Function.Name == "read" {
+				return kernel.Forbidden("native Skill read does not use a canvas tool batch")
+			}
+		}
+	}
 	batch.TaskID = strings.TrimSpace(batch.TaskID)
 	if batch.TaskID == "" {
 		return BadAuthRequest("Pi 工具调用批次缺少模型步骤 ID")
@@ -922,6 +1107,13 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	expected := modelOutput.ToolCalls
 	if len(expected) == 0 {
 		expected = modelOutput.Legacy
+	}
+	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
+		canvasCalls := make([]cloudAgentCall, 0, len(expected))
+		for _, call := range expected {
+			if call.Function.Name != "read" { canvasCalls = append(canvasCalls, call) }
+		}
+		expected = canvasCalls
 	}
 	if !piSameCalls(expected, batch.Calls) {
 		return kernel.Forbidden("Pi 工具批次与模型结果不一致")
@@ -1131,9 +1323,10 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		if name == "" || parameters == nil {
 			continue
 		}
+		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
 		tools = append(tools, PiAgentToolSpec{
 			Name: name, Description: stringField(function, "description"), Parameters: parameters,
-			Category: cloudAgentToolCategory(name), Allowed: cloudAgentToolAllowed(state.Request, name),
+			Category: cloudAgentToolCategory(name), Allowed: nativeRead || cloudAgentToolAllowed(state.Request, name),
 		})
 	}
 	session, sessionEntries, err := s.repo.CloudAgentPiSession(run.UserID, firstNonEmpty(run.ConversationID, run.ID))
@@ -1152,6 +1345,22 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 			WillRetry: compaction.PiWillRetry, TokensBefore: compaction.PiTokensBefore,
 		}
 	}
+	var nativeSkills []PiSkillSnapshot
+	mode := firstNonEmpty(state.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy)
+	if mode == cloudAgentSkillRuntimeNative {
+		nativeSkills, err = s.piNativeSkillSnapshots(run.UserID, state.Skills)
+		if err != nil {
+			if skills.IsPermanentFrozenSkillError(err) {
+				message := "本轮固定的技能快照已不可用，请重新选择技能后发起新一轮"
+				if failErr := s.failCloudAgent(run, &state, message); failErr != nil { return nil, failErr }
+				terminal, readErr := s.repo.CloudAgent(run.UserID, run.ID)
+				if readErr != nil { return nil, readErr }
+				if cleanupErr := s.finishCloudAgentCleanup(context.Background(), terminal); cleanupErr != nil { return nil, cleanupErr }
+				return nil, kernel.BadAuthRequest(message)
+			}
+			return nil, err
+		}
+	}
 	pendingInterjections := make([]PiPendingInterjection, 0, len(state.PendingInterjections))
 	for _, item := range state.PendingInterjections {
 		pendingInterjections = append(pendingInterjections, PiPendingInterjection{ID: item.ID, Text: item.Text, CreatedAt: item.CreatedAt})
@@ -1162,9 +1371,40 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,
 		Request: state.Request, ModelLimits: PiAgentModelLimits{ContextWindowTokens: budget.ContextWindowTokens, MaxOutputTokens: budget.MaxOutputTokens, Configured: budget.Configured, Source: budget.Source}, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
+		SkillRuntimeMode: mode, Skills: nativeSkills,
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。
 		Harness: cloudAgentFrozenHarness(state.Snapshot),
 	}, nil
+}
+
+func (s *Service) piNativeSkillSnapshots(userID string, skills []cloudAgentSkill) ([]PiSkillSnapshot, error) {
+	snapshots, err := piSkillSnapshots(skills)
+	if err != nil { return nil, BadAuthRequest("Invalid frozen Skill metadata") }
+	for index, skill := range skills {
+		entry, err := s.SkillPackageFileAtVersion(userID, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, cloudAgentSkillEntryPath)
+		if err != nil {
+			return nil, err
+		}
+		if entry.Binary {
+			return nil, BadAuthRequest("Skill entry file is not text")
+		}
+		snapshot := &snapshots[index]
+		skill.Instruction = entry.Content
+		snapshot.EntryContent, err = normalizePiSkillEntry(skill)
+		if err != nil {
+			return nil, BadAuthRequest("Invalid frozen Skill entry")
+		}
+		for index := range snapshot.Files {
+			if snapshot.Files[index].Path != cloudAgentSkillEntryPath {
+				continue
+			}
+			snapshot.Files[index].SHA256, snapshot.Files[index].Size, err = nativeSkillEntryDigest(skill)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return snapshots, nil
 }
 
 func piAgentMessages(run *model.CloudAgentExecution) []json.RawMessage {
