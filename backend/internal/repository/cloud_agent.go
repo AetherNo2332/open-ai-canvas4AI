@@ -195,7 +195,7 @@ func (r *Repository) ClaimPiAgent(owner string, until time.Time) (*model.CloudAg
 					candidate.ID, candidate.Revision, "pi", now).
 				Updates(map[string]any{
 					"lease_owner": owner, "lease_expires_at": until,
-					"status": gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", "queued", "running"),
+					"status":   gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", "queued", "running"),
 					"revision": gorm.Expr("revision + 1"),
 				})
 			if updated.Error != nil {
@@ -209,7 +209,8 @@ func (r *Repository) ClaimPiAgent(owner string, until time.Time) (*model.CloudAg
 					conversationID, candidate.UserID, candidate.ID, now).
 				Updates(map[string]any{
 					"lease_owner": owner, "lease_expires_at": until,
-					"lease_epoch": gorm.Expr("lease_epoch + 1"), "revision": gorm.Expr("revision + 1"), "updated_at": now,
+					// Lease fencing is independent of the persisted message tree revision.
+					"lease_epoch": gorm.Expr("lease_epoch + 1"), "updated_at": now,
 				})
 			if leased.Error != nil {
 				return leased.Error
@@ -291,7 +292,7 @@ func (r *Repository) ReleasePiAgentLease(userID, id, owner string) error {
 		}
 		return tx.Model(&model.CloudAgentPiSession{}).
 			Where("id = ? AND user_id = ? AND active_run_id = ? AND lease_owner = ?", conversationID, userID, id, owner).
-			Updates(map[string]any{"lease_owner": "", "lease_expires_at": nil, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error
+			Updates(map[string]any{"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now()}).Error
 	})
 }
 

@@ -46,6 +46,8 @@ export interface PiSnapshot {
   lastTaskId?: string;
   noToolTaskId?: string;
   noToolNudge?: string;
+  modelFailureTaskId?: string;
+  modelFailureNudge?: string;
   pendingInterjections?: Array<{ id: string; text: string; createdAt?: string }>;
   /** A Go-backed compaction whose model task survived a worker restart. */
   pendingContextCompaction?: {
@@ -75,6 +77,14 @@ interface PiModelStepView {
   textDraft?: string;
   result?: CanvasModelResult;
   error?: string;
+}
+
+export interface PiTurnDecision { status: string; nudge?: string }
+
+export class CanvasModelRetry extends Error {
+  constructor(readonly decision: PiTurnDecision) {
+    super("Go requested a bounded model retry");
+  }
 }
 
 interface PiCheckpointResult {
@@ -154,7 +164,10 @@ export class CanvasBridge {
     }
     if (onTextDelta && step.textDraft) onTextDelta(step.textDraft);
     if (step.status !== "succeeded" || !step.result) {
-      if (step.status !== "succeeded") await this.request("POST", `${path}/${encodeURIComponent(step.taskId)}/fail`, {}, run, signal);
+      if (step.status !== "succeeded") {
+        const decision = await this.request<PiTurnDecision>("POST", `${path}/${encodeURIComponent(step.taskId)}/fail`, {}, run, signal);
+        if (decision.status === "continue" && decision.nudge) throw new CanvasModelRetry(decision);
+      }
       throw new Error(`Canvas model step ${step.status}`);
     }
     return { taskId: step.taskId, result: step.result };
@@ -209,14 +222,14 @@ export class CanvasBridge {
       { sessionRevision, entry }, run, signal);
   }
 
-  async startToolBatch(run: PiSnapshot, calls: PiToolCall[], signal?: AbortSignal): Promise<void> {
-    await this.request("POST", `/runs/${encodeURIComponent(run.runId)}/tool-batches`, { calls }, run, signal);
+  async startToolBatch(run: PiSnapshot, taskId: string, calls: PiToolCall[], signal?: AbortSignal): Promise<void> {
+    await this.request("POST", `/runs/${encodeURIComponent(run.runId)}/tool-batches`, { taskId, calls }, run, signal);
   }
 
-  async executeTool(run: PiSnapshot, callId: string, signal?: AbortSignal): Promise<PiToolReceipt> {
+  async executeTool(run: PiSnapshot, taskId: string, callId: string, signal?: AbortSignal): Promise<PiToolReceipt> {
     const path = `/runs/${encodeURIComponent(run.runId)}/tool-calls/${encodeURIComponent(callId)}/advance`;
     for (;;) {
-      const receipt = await this.request<PiToolReceipt>("POST", path, {}, run, signal);
+      const receipt = await this.request<PiToolReceipt>("POST", path, { taskId }, run, signal);
       // 终态即返回：拒绝/取消等控制面决策按合同不产生工具结果，
       // 无限轮询会占死 worker 并持续续租。
       if (!receipt.pending || receipt.terminated) return receipt;

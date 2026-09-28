@@ -8,7 +8,10 @@ import (
 	"sync"
 	"testing"
 
+	"gorm.io/gorm"
+
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func agentTestRequest() CloudAgentRequest {
@@ -234,8 +237,10 @@ func TestCloudAgentActiveRunWithOlderCapabilityIsTerminatedWithoutResume(t *test
 	if err = db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Update("state_json", execution.StateJSON).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err = s.advanceCloudAgentByID("user", run.ID); err != nil {
-		t.Fatal(err)
+	claimed, claimErr := s.ClaimPiAgent("old-contract-worker")
+	if claimErr == nil && claimed != nil {
+		request, _ := piFirstStepRequest(&state)
+		_, _ = s.PiModelStep("user", run.ID, "old-contract-worker", request)
 	}
 	execution, err = s.repo.CloudAgent("user", run.ID)
 	if err != nil {
@@ -243,6 +248,9 @@ func TestCloudAgentActiveRunWithOlderCapabilityIsTerminatedWithoutResume(t *test
 	}
 	if execution.Status != "failed" || !strings.Contains(execution.FailureMessage, "旧版执行合同") {
 		t.Fatalf("stale active contract was resumed or failed opaquely: status=%s message=%q", execution.Status, execution.FailureMessage)
+	}
+	if execution.ActiveTaskID != "" {
+		t.Fatalf("旧合同不得创建新模型任务: %s", execution.ActiveTaskID)
 	}
 }
 
@@ -517,27 +525,27 @@ func TestCloudAgentToolLoopPersistsApprovalAndAppliesCanvasWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, initial := agentStartPiModelStep(t, s, root.ID)
 	var rootTask model.Task
-	if err := db.First(&rootTask, "id = ?", root.ID).Error; err != nil {
+	if err := db.First(&rootTask, "id = ?", initial.ActiveTaskID).Error; err != nil {
 		t.Fatal(err)
 	}
 	var rootInput canvasGenerationInput
 	if err := json.Unmarshal([]byte(rootTask.InputJSON), &rootInput); err != nil || !rootInput.TextOptions.Thinking {
 		t.Fatalf("initial task lost thinking option: %v", err)
 	}
-	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(result), "input_json": publicTaskInputJSON(rootTask.InputJSON)}).Error; err != nil {
+	if err := db.Model(&model.Task{}).Where("id = ?", rootTask.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(result), "input_json": publicTaskInputJSON(rootTask.InputJSON)}).Error; err != nil {
 		t.Fatal(err)
 	}
-
 	// The worker transition first records the model response, then executes one
 	// tool per durable transition. This is the recovery boundary after restart.
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	waiting, err := s.CloudAgentRun("user", root.ID)
@@ -550,7 +558,7 @@ func TestCloudAgentToolLoopPersistsApprovalAndAppliesCanvasWrite(t *testing.T) {
 	if err := s.DecideCloudAgentApproval("user", root.ID, waiting.Approval.ID, "approve", "确认写入"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	var stored model.CanvasProject
@@ -576,7 +584,7 @@ func TestCloudAgentToolLoopPersistsApprovalAndAppliesCanvasWrite(t *testing.T) {
 	if !foundTool {
 		t.Fatalf("tool completion event missing: %+v", final.Events)
 	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	execution, err := s.repo.CloudAgent("user", root.ID)
@@ -646,20 +654,20 @@ func TestCloudAgentCanvasApprovalAdmissionFailureTerminatesRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, initial := agentStartPiModelStep(t, s, root.ID)
 	var task model.Task
-	if err := db.First(&task, "id = ?", root.ID).Error; err != nil {
+	if err := db.First(&task, "id = ?", initial.ActiveTaskID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{
 		"status": model.TaskStatusSucceeded, "result_json": string(result), "input_json": publicTaskInputJSON(task.InputJSON),
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	failed, err := s.repo.CloudAgent("user", root.ID)
@@ -677,7 +685,7 @@ func TestCloudAgentCanvasApprovalAdmissionFailureTerminatesRun(t *testing.T) {
 		t.Fatalf("missing admission failure event: %+v", state.Events)
 	}
 	eventCount := len(state.Events)
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	failedAgain, err := s.repo.CloudAgent("user", root.ID)
@@ -687,5 +695,28 @@ func TestCloudAgentCanvasApprovalAdmissionFailureTerminatesRun(t *testing.T) {
 	stateAgain, err := cloudAgentDecode(failedAgain)
 	if err != nil || len(stateAgain.Events) != eventCount {
 		t.Fatalf("terminal run was replayed: err=%v events=%d want=%d", err, len(stateAgain.Events), eventCount)
+	}
+}
+
+// advertiseFullToolCatalogForTest 把运行态里的"本步已下发的工具名"登记为完整合格目录。
+// 这些用例自己构造根任务，模型结果在**第一步**就直接调用具体工具；测试夹具显式登记
+// 与真实首步一致的合格工具目录。
+func advertiseFullToolCatalogForTest(t *testing.T, db *gorm.DB, runID string, req CloudAgentRequest) {
+	t.Helper()
+	repo := repository.New(db)
+	run, err := repo.CloudAgent("user", runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MutateCloudAgent("user", runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.DisclosureVersion = cloudAgentToolDisclosureVersion
+		state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentTools(req))
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

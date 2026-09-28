@@ -770,7 +770,7 @@ func cloudAgentContinuationHistory(history []providerTextMessage, state cloudAge
 		// context, not authorization to replay a write or charge a second time.
 		history = append(history, providerTextMessage{Role: "user", Content: prompt})
 		for _, message := range state.Canonical.Messages {
-			if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+			if cloudAgentIsDeliveredInterjection(message, &state) {
 				history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
 			}
 		}
@@ -780,7 +780,7 @@ func cloudAgentContinuationHistory(history []providerTextMessage, state cloudAge
 	// 终态取消/失败可能没有新回复，不能拿压缩前的最后一条 assistant 伪装成新回复。
 	after := state.Canonical.Messages[len(state.TextHistory):]
 	for _, message := range after {
-		if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+		if cloudAgentIsDeliveredInterjection(message, &state) {
 			history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
 		}
 	}

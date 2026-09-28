@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 )
 
 // 这组用例钉死一条上游请求合同：assistant 消息声明的**每一个** tool_call_id，
@@ -448,7 +447,6 @@ func TestCloudAgentPendingImagesSurviveCheckpointRoundTrip(t *testing.T) {
 	// 本用例只需要"保存/解码"这条路径，不需要真实运行身份：用空 runID 让事件身份与
 	// 下面那个裸 run（ID 为空）一致，从而绕开运行期请求校验（它只在 run 有 ID 时执行）。
 	cloudAgentToolResult("", state, state.Calls[0], cloudAgentPairingInspection("image-a", "https://example.test/a"), nil)
-	cloudAgentToolResult("", state, state.Calls[1], map[string]any{"ok": true}, nil)
 	if len(state.PendingImageInspections) != 1 {
 		t.Fatalf("expected one buffered inspection, got %d", len(state.PendingImageInspections))
 	}
@@ -470,8 +468,11 @@ func TestCloudAgentPendingImagesSurviveCheckpointRoundTrip(t *testing.T) {
 	if decoded.PendingImageInspections[0].ImageURL != "https://example.test/a" {
 		t.Fatalf("buffered image url was lost: %+v", decoded.PendingImageInspections[0])
 	}
-	// 下一个调用的转移里 flush，图片落在已经入历史的两条 tool 结果之后。
-	cloudAgentFlushPendingImages(&decoded)
+	// 下一次非看图工具调用结束本批；真实转移会在最后一个 tool 回执之后 flush。
+	cloudAgentToolResult("", &decoded, decoded.Calls[1], map[string]any{"ok": true}, nil)
+	if len(decoded.PendingImageInspections) != 0 {
+		t.Fatalf("final tool result did not drain the buffered image: %d", len(decoded.PendingImageInspections))
+	}
 	assertCloudAgentToolCallPairing(t, decoded.Canonical.Messages)
 	imageIndexes := cloudAgentImageMessageIndexes(decoded.Canonical.Messages)
 	if len(imageIndexes) != 1 || imageIndexes[0] != len(decoded.Canonical.Messages)-1 {
@@ -588,9 +589,9 @@ func TestCloudAgentImageContentPartsKeepsOneCaptionForBatch(t *testing.T) {
 // messages following tool_calls message）。
 //
 // 覆盖单测覆盖不到的两件事：
-//  1. 一次 advanceCloudAgent 只执行一个工具调用，整批跨越多次转移 —— 缓冲必须真的
+//  1. 一次 PiToolAdvance 只执行一个工具调用，整批跨越多次转移 —— 缓冲必须真的
 //     穿过 StateJSON 的保存/解码；
-//  2. advanceCloudAgent 里"本批调用都执行完、开始组装 canonical"之前的兜底 flush
+//  2. PiModelStep 里"本批调用都执行完、开始组装 canonical"之前的兜底 flush
 //     （本批最后一个调用不是看图，正常路径不会 flush）。
 func TestCloudAgentVisionBatchKeepsToolResultsContiguousEndToEnd(t *testing.T) {
 	t.Setenv("CANVAS_PUBLIC_BASE_URL", "")
@@ -612,34 +613,32 @@ func TestCloudAgentVisionBatchKeepsToolResultsContiguousEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
+	run, state := agentStartPiModelStep(t, s, root.ID)
+	if !state.Request.VisionEnabled {
+		t.Fatal("selected model did not enable vision")
 	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.ActiveTaskID = ""
-	state.Request.VisionEnabled = true
-	state.Calls = []cloudAgentCall{
+	calls := []cloudAgentCall{
 		cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-cat", map[string]any{"nodeId": "cat"}),
 		cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-hero", map[string]any{"nodeId": "hero"}),
 		cloudAgentStoryboardCall(t, "canvas_get_state", "read-state", map[string]any{}),
 	}
-	// 生产里这条 assistant 消息是模型返回工具调用时写入的（cloud_agent_runtime.go
-	// 的 state.Calls = calls 那一步），这里手工补上，好让不变式断言真的覆盖到它。
-	state.Canonical.Messages = append(state.Canonical.Messages,
-		map[string]any{"role": "assistant", "content": "", "tool_calls": state.Calls})
-	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		return cloudAgentSave(current, &state)
-	}); err != nil {
+	// Only the provider response is injected. Pi checkpoints the assistant and
+	// registers the batch before any canvas tool is allowed to execute.
+	body, err := json.Marshal(map[string]any{"toolCalls": calls, "stopReasonKind": cloudAgentStopKindStop})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(body)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
+		t.Fatal(err)
+	}
+	run, state = agentInterjectionState(t, s, root.ID)
 
 	// 逐个推进：一次转移执行一个工具调用。
 	for step := 0; step < len(state.Calls); step++ {
-		if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+		if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 			t.Fatalf("advance %d failed: %v", step, err)
 		}
 		run, err = s.repo.CloudAgent("user", root.ID)
@@ -651,19 +650,25 @@ func TestCloudAgentVisionBatchKeepsToolResultsContiguousEndToEnd(t *testing.T) {
 			t.Fatalf("decode after advance %d failed: %v", step, decodeErr)
 		}
 		// 注意：批内中间态**故意**只有部分 tool 结果（一次转移执行一个调用），此时
-		// state.CallIndex < len(state.Calls)，advanceCloudAgent 直接返回、不会发请求，
+		// state.CallIndex < len(state.Calls)，Pi worker 不会发请求，
 		// 所以不变式只对"整批执行完、真正要发出去的 canonical"成立 —— 下面批次结束处才断言。
 		if step < len(state.Calls)-1 && len(cloudAgentImageMessageIndexes(mid.Canonical.Messages)) != 0 {
 			t.Fatalf("image message appeared before the batch finished (after advance %d): %s",
 				step, cloudAgentDebugMessages(mid.Canonical.Messages))
 		}
-		if step == len(state.Calls)-1 && len(mid.PendingImageInspections) != 2 {
-			t.Fatalf("both buffered inspections must survive the tick boundary, got %d", len(mid.PendingImageInspections))
+		if step == len(state.Calls)-1 {
+			if len(mid.PendingImageInspections) != 0 {
+				t.Fatalf("last tool result must flush both buffered inspections, got %d", len(mid.PendingImageInspections))
+			}
+			indexes := cloudAgentImageMessageIndexes(mid.Canonical.Messages)
+			if len(indexes) != 1 || indexes[0] != len(mid.Canonical.Messages)-1 || cloudAgentMessageImagePartCount(mid.Canonical.Messages[indexes[0]]) != 2 {
+				t.Fatalf("last tool result must checkpoint one trailing image message, got %v%s", indexes, cloudAgentDebugMessages(mid.Canonical.Messages))
+			}
 		}
 	}
 
-	// 第四次推进：本批调用都执行完，兜底 flush 把两张图合并成一条 user 消息。
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	// 第四次推进：兜底 flush 幂等为空，然后为下一轮模型请求做准入。
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatalf("batch-end advance failed: %v", err)
 	}
 	run, err = s.repo.CloudAgent("user", root.ID)

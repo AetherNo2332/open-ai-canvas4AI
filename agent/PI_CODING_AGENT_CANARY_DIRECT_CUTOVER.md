@@ -1,6 +1,6 @@
 # Canary 直接切换 Pi Coding Agent 的移植路线
 
-> 状态：实施中。2026-09-27 23:06（Asia/Shanghai）复核：HEAD 为 `31157460`，本地 `canary` 领先 `origin/canary` 两个提交；大量迁移改动仍未提交。本文跟踪代码和隔离验收，不授权部署、推送或修改正在运行的容器。后续动手前重新核对工作树与本地数据状态。
+> 状态：实施中。原始快照时间为 2026-09-27；2026-09-28 更新：旧 Go Agent 推进循环已删除，当前实现为**所有合格具体工具平铺注册 + Pi `tool_call` hook + Go 执行时复核**，类别只作元数据，本文更早的“母类型/打开类别”措辞均为历史方案，不再代表当前要求。用户已授权更新本机 `canvas-canary-3000` / 3000 做测试；未授权生产部署。最新测试和剩余缺口见 [`PI_MIGRATION_DAILY_2026-09-28.md`](./PI_MIGRATION_DAILY_2026-09-28.md)。
 >
 > 本文取代 [`PI_CODING_AGENT_MIGRATION_ROADMAP.md`](./PI_CODING_AGENT_MIGRATION_ROADMAP.md) 中“先完成全部兼容层，最后才删除旧循环”的**执行顺序**。旧文档仍是能力清单、数据合同和测试矩阵的参考；[`PI_MIGRATION_TODO.md`](./PI_MIGRATION_TODO.md) 与 [`PI_MIGRATION_PHASE_STATUS.md`](./PI_MIGRATION_PHASE_STATUS.md) 是历史进度，不作为当前代码已完成的证明。
 
@@ -87,7 +87,7 @@ Worker 从 Go 公平领取跨用户的就绪 run，同时取得 session 级租�
 
 ### C0 冻结基线和清理清单（不阻塞第一切片）
 
-1. 固定当前工作树标识、公开 `/api/agent` 与 SSE 事件集合、31 项工具清单（7 母类型、24 子工具）、模型信封脱敏样本、账务不变量和已有 7 个 Go 测试失败。用代码而不是旧日结更新表格。
+1. 固定当前工作树标识、公开 `/api/agent` 与 SSE 事件集合、24 项具体工具清单（类别只作元数据）、模型信封脱敏样本和账务不变量。用当前代码与最新测试更新历史基线。
 2. 给旧 `advanceCloudAgent*` 中每一段标去向：**Pi 会话控制**、**Go 业务服务**、**仅旧编排**。尤其核对模型结果/停止原因、usage、上下文预算、插话、视觉账本、媒体回写、审批、完成判定与清理。只移除第三类。
 3. 旧运行处理：旧终态保持只读；旧活动运行在隔离 canary 中排空或显式终结、退款和发终态事件，不把空 engine 历史运行改写为 `pi`。新轮次绝不交给旧代码。
 
@@ -146,7 +146,7 @@ Worker 从 Go 公平领取跨用户的就绪 run，同时取得 session 级租�
 1. 从 Go 删除旧 `advanceCloudAgentByID` / `advanceCloudAgent` 编排与只服务该编排的调度状态。保留或抽出被 Pi bridge 使用的画布、审批、媒体、完成、清理等业务函数。删除纯实现测试时，以同等业务断言的 Pi 路径测试替代，不能简单跳过旧失败。
    **状态：未做。**去向表与测试迁移表已出（见 C0 节），但按"先移业务、再删函数、最后删测试"的顺序，删函数会连带 29 个文件约 110 处调用，必须在同一可编译切片内完成；本机没有 cgo，`go vet` 的类型检查是唯一自动的调用面清单。
 2. 完成并验证工作树中正在施工的 Node `createAgentSession` 接线；以服务端策略和仓库业务 Harness 建 system，只注册当轮合格的 Canvas 工具，关闭默认 coding 工具。`pi-agent-core` 可保留为依赖，但生产不再手写 `new Agent` 循环。当前按 run 临时 `inMemory` 的做法必须在 C3 替换成 §三的 conversation 级恢复。
-   **状态：接线已完成，52 个 Node 用例实跑通过。**`runner.test.ts` 的 C1 判据守住"无 `new Agent(`、无值导入 `pi-agent-core` 的 `Agent`、必须走 `createAgentSession`"。本轮修掉两个真实缺陷：工具批次必须先于批次准入提交 assistant 检查点（否则每批都被 `PiToolBatch` 403）、母类型披露判据要与 Go 权威一致。
+   **历史状态已更新：**当前 Node 使用 `createAgentSession`，所有权限与能力合格的具体 Canvas 工具在本轮开始时注册；模型每次调用由 Pi hook 与 Go 批次准入共同约束。工具批次之前先持久化 assistant 检查点。最新 Agent `bun run test` 为 78/78 通过。
 3. 建立最小自定义 Provider：Pi `streamSimple` 把上下文、工具声明与取消信号送到 Go 内部模型步骤；Go 仍决定实际渠道、模型能力、上游协议和费用。先用固定模型 stub 跑“用户输入 → 模型正文 → 完成”闭环。
    **状态：代码在树，闭环只在 Node 侧 stub 验证过（`runner.test.ts` 9 用例），Node ↔ Go 真实 HTTP 未跑。**
 4. 尚未开放的能力在准入处显式拒绝。Node 异常和 Pi 不可用要让 run 可见地排队或失败，不能产生永远 `running` 的记录。
@@ -178,14 +178,14 @@ Worker 从 Go 公平领取跨用户的就绪 run，同时取得 session 级租�
 
 ### C4 按风险恢复画布与 Harness 能力
 
-1. **只读**：`canvas_list_node_types`、`canvas_get_state`、表格/分镜读取、`model_list`，以及只读母类型披露。先验证租户、画布与能力过滤。
+1. **只读**：`canvas_list_node_types`、`canvas_get_state`、表格/分镜读取、`model_list` 等符合权限/能力的具体工具直接注册；hook 与 Go 在每次调用时验证租户、画布与能力。
 2. **视觉**：`canvas_inspect_image`、OCR、标注、图层；恢复 `resource:` 受控水合、真实图片输入和观察账本。观察只从实际模型看过的图及可归属的正文入账。
-3. **写入**：分镜/批量表编辑、`canvas_apply_ops`、排布、媒体生成。母类型成功后本轮追加合格子工具，下一轮收回；描述来自 Markdown，参数来自版本化 schema。Go 对**整批**先做披露、参数、用户/画布、版本、审批和额度预检，再顺序执行；调用回执与画布版本可对账。
+3. **写入**：分镜/批量表编辑、`canvas_apply_ops`、排布、媒体生成。符合权限/能力的具体工具与只读工具一起平铺注册，下一轮重建 registry；描述来自 Markdown，参数来自版本化 schema。Pi hook 检查运行内注册集合，Go 对**整批**先做披露、参数、用户/画布、版本、审批和额度预检，再顺序执行；调用回执与画布版本可对账。
 4. **控制**：审批通过/拒绝、取消、插话、续聊、计划、技能、记忆和 `finish_run`。等待审批/媒体时持久挂起并释放 worker 槽；有界并发和唤醒替代单 worker 无限轮询。拒绝/取消后无工具结果或下一模型调用。
 
 每恢复一组，Go 准入和公开 Web 状态同时打开；未恢复组继续明确拒绝。子工具必须再过 Go 权限/能力检查，Pi 的 active tool 集合不能充当授权。
 
-**退出证据**：24 子工具与 7 母类型的权限组合通过；只读与写入互不越权；媒体任务结算和画布回写幂等；一个 run 等审批不阻塞另一用户。
+**退出证据**：24 个具体工具的权限、能力、批次准入和服务端复核组合通过；只读与写入互不越权；媒体任务结算和画布回写幂等；一个 run 等审批不阻塞另一用户。
 
 ### C5 恢复原有上下文治理
 

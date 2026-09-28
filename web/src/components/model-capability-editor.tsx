@@ -365,6 +365,9 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
                 <CapabilityGroup title="输出方式" description="控制向上游文本模型请求的响应方式。">
                     <ParameterField label="SSE 流式输出" description="启用后发送 stream=true，并实时推送文本增量；关闭时等待完整 JSON 响应。" supported={profile.streaming !== false} disabled={Boolean(disabled)} onChange={(streaming) => update({ streaming })} />
                 </CapabilityGroup>
+                <CapabilityGroup title="能力声明" description="只声明上游真实具备的能力；未声明的能力在界面上保持关闭，不做猜测。">
+                    <ParameterField label="思考 / 推理模式" description="启用后该模型暴露用户可选的推理（思考）模式，画布 Agent 面板才会显示推理选项。未启用时不发送任何 reasoning 参数。" supported={profile.thinking === true} disabled={Boolean(disabled)} onChange={(thinking) => update({ thinking })} />
+                </CapabilityGroup>
             </div>
         );
     }

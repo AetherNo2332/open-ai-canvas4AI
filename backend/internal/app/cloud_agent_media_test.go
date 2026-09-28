@@ -66,6 +66,9 @@ func agentMediaRun(t *testing.T, s *Service, a cloudAgentMediaArgs, permission s
 	state := *decoded
 	state.ActiveTaskID = ""
 	state.Calls = []cloudAgentCall{agentMediaCall(a)}
+	state.CallIndex = 0
+	state.PiToolBatchTaskID = state.LastStepTaskID
+	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": "", "tool_calls": state.Calls})
 	if state.DisclosureVersion >= cloudAgentToolDisclosureVersion {
 		state.AdvertisedToolNames = cloudAgentToolNames(state.Canonical.Tools)
 	}
@@ -115,7 +118,7 @@ func approveAgentMediaDraft(t *testing.T, s *Service, runID string) {
 	}
 	// 审批之后仍由生产入口推进这一次调用：`PiToolAdvance` 会走同一个媒体分支
 	// （`advanceCloudAgentMedia`），旧调度入口 `advanceCloudAgentByID` 已不再有根任务可查。
-	if _, err := s.PiToolAdvance("user", runID, "worker-a", "media-call"); err != nil {
+	if _, err := s.PiToolAdvance("user", runID, "worker-a", agentPiToolTaskID(t, s, runID), "media-call"); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -204,7 +204,7 @@ func TestPiToolBatchRecordsImageObservations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PiToolBatch("user", run.ID, leased.LeaseOwner, PiToolBatchRequest{Calls: []cloudAgentCall{call}}); err != nil {
+	if err := s.PiToolBatch("user", run.ID, leased.LeaseOwner, PiToolBatchRequest{TaskID: taskID, Calls: []cloudAgentCall{call}}); err != nil {
 		t.Fatalf("Pi 工具批次失败: %v", err)
 	}
 	_, state := reloadPiRun(t, s, run.ID)

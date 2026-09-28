@@ -26,7 +26,7 @@ func TestCloudAgentMediaReadHashSurvivesMoveBeforeDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	run, _ := agentMediaRun(t, s, args, "request_approval")
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if _, err := s.PiToolAdvance("user", run.ID, "worker-a", agentPiToolTaskID(t, s, run.ID), "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := s.CloudAgentRun("user", run.ID)
@@ -41,7 +41,7 @@ func TestCloudAgentMediaApprovalAllowsMovesButRejectsContentChanges(t *testing.T
 		t.Run(change, func(t *testing.T) {
 			s, db, a := agentMediaFixture(t)
 			run, _ := agentMediaRun(t, s, a, "request_approval")
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			if _, err := s.PiToolAdvance("user", run.ID, "worker-a", agentPiToolTaskID(t, s, run.ID), "media-call"); err != nil {
 				t.Fatal(err)
 			}
 			run, _ = s.repo.CloudAgent("user", run.ID)
@@ -84,7 +84,7 @@ func TestCloudAgentMediaApprovalAllowsMovesButRejectsContentChanges(t *testing.T
 			if err := s.DecideCloudAgentApproval("user", run.ID, state.Approval.ID, "approve", ""); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			if _, err := s.PiToolAdvance("user", run.ID, "worker-a", agentPiToolTaskID(t, s, run.ID), "media-call"); err != nil {
 				t.Fatal(err)
 			}
 			var count int64
@@ -114,7 +114,7 @@ func TestCloudAgentMediaApprovalAllowsMovesButRejectsContentChanges(t *testing.T
 func TestCloudAgentMediaApprovalReusesPreparedInputsAfterModelRetry(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
 	run, _ := agentMediaRun(t, s, a, "request_approval")
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if _, err := s.PiToolAdvance("user", run.ID, "worker-a", agentPiToolTaskID(t, s, run.ID), "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
@@ -172,7 +172,7 @@ func TestCloudAgentImageApprovalEditsAreValidatedAndIdempotent(t *testing.T) {
 	a.Size, a.Quality, a.NodeID = "1:1", "2k", "image-shot-1"
 	a.ReferenceNodeIDs = []string{"cat"}
 	run, _ := agentMediaRun(t, s, a, "request_approval")
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if _, err := s.PiToolAdvance("user", run.ID, "worker-a", agentPiToolTaskID(t, s, run.ID), "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
@@ -221,7 +221,7 @@ func TestCloudAgentImageApprovalEditsAreValidatedAndIdempotent(t *testing.T) {
 	if err := s.DecideCloudAgentApproval("user", run.ID, id, "approve", "", &changed); err == nil {
 		t.Fatal("conflicting retry accepted")
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if _, err := s.PiToolAdvance("user", run.ID, "worker-a", agentPiToolTaskID(t, s, run.ID), "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)

@@ -48,10 +48,10 @@ func TestCloudAgentMediaReferencePrompt(t *testing.T) {
 }
 
 func TestCloudAgentMediaMentionsPersistAcrossApproval(t *testing.T) {
-	s, _, args := agentMediaFixture(t)
+	s, db, args := agentMediaFixture(t)
 	args.Prompt = "人物参考 @图片1，使用另一张图的假发。"
-	run, _ := agentMediaRun(t, s, args, "request_approval")
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	run, _ := queuePiMediaToolForTest(t, s, db, args, "request_approval")
+	if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	waiting, err := s.CloudAgentRun("user", run.ID)

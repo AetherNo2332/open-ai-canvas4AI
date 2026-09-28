@@ -128,6 +128,17 @@ describe("Agent SSE recovery", () => {
         expect(result.events.filter((e) => e.type === "run_status").map((e) => e.payload.cleanupPending)).toEqual([true, false]);
     });
 
+    it("forwards compaction changes in snapshots even while status remains running", async () => {
+        const compaction = { status: "running", turnCount: 4, sourceBytes: 10000, resume: true };
+        globalThis.fetch = (async () => stream(snapshot("running", { contextCompaction: compaction }) + snapshot("running") + snapshot("completed"))) as typeof fetch;
+        const result = observe();
+        expect(await result.done).toBeUndefined();
+        const statuses = result.events.filter((e) => e.type === "run_status");
+        expect(statuses.map((e) => e.payload.contextCompaction)).toEqual([compaction, undefined, undefined]);
+        expect(statuses.every((e) => Object.hasOwn(e.payload, "contextCompaction"))).toBe(true);
+        expect(statuses.every((e) => e.seq === 0)).toBe(true);
+    });
+
     it("honors Retry-After rather than immediately retrying 429", async () => {
         let requests = 0;
         globalThis.fetch = (async () => ++requests === 1 ? new Response("", { status: 429, headers: { "retry-after": "60" } }) : stream(snapshot("completed"))) as typeof fetch;

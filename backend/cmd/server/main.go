@@ -76,8 +76,12 @@ func run(ctx context.Context) error {
 	if err := svc.ValidateRuntime(); err != nil {
 		return err
 	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("CANVAS_AGENT_ENGINE")), "pi") && strings.TrimSpace(os.Getenv("CANVAS_AGENT_INTERNAL_TOKEN")) == "" {
-		return errors.New("CANVAS_AGENT_INTERNAL_TOKEN is required when CANVAS_AGENT_ENGINE=pi")
+	// Cloud Agent 运行一律 engine=pi（cloud_agent.go 不再读引擎开关），而 worker 协议只在
+	// CANVAS_AGENT_INTERNAL_TOKEN 存在时挂载（handler.RegisterInternalAgentRoutes）。缺 token
+	// 时新运行会一直停在 queued、没有任何终态，所以这里必须显式可见，而不是靠已删除的
+	// CANVAS_AGENT_ENGINE 开关判断。
+	if strings.TrimSpace(os.Getenv("CANVAS_AGENT_INTERNAL_TOKEN")) == "" {
+		log.Printf("CANVAS_AGENT_INTERNAL_TOKEN is empty: /internal-agent is not mounted and Cloud Agent runs stay queued until a Pi worker is configured")
 	}
 	if err := svc.EnsureSystemChannelModels(); err != nil {
 		return err

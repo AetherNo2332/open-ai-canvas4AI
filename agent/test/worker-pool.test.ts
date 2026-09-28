@@ -11,6 +11,7 @@ function snapshot(runId: string): PiSnapshot {
     revision: 1,
     status: "running",
     request: { prompt: "test" },
+    modelLimits: { contextWindowTokens: 128_000, maxOutputTokens: 16_384, configured: false, source: "default" },
     canonical: { systemPrompt: "", messages: [], tools: [], toolChoice: "auto" },
     tools: [],
   };

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import type { CanvasBridge, PiCanonical, PiSnapshot, PiToolCall } from "../src/bridge.js";
+import { CanvasModelRetry, type CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
 import type { CanvasToolSpec } from "../src/tool-disclosure.js";
 import { assembleSystemPrompt, canvasModel, runCanvasAgent } from "../src/runner.js";
@@ -94,15 +94,15 @@ function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResu
         snapshot.pendingInterjections = (snapshot.pendingInterjections || []).filter(({ id }) => !delivered.has(id));
       }
     },
-    async startToolBatch(_run: PiSnapshot, calls: PiToolCall[]) {
+    async startToolBatch(_run: PiSnapshot, taskId: string, calls: PiToolCall[]) {
       state.batches.push(calls);
-      state.ops.push("batch");
+      state.ops.push(`batch:${taskId}`);
       snapshot.activeTaskId = undefined;
-      snapshot.lastTaskId = `task-${state.steps}`;
+      snapshot.lastTaskId = taskId;
     },
-    async executeTool(_run: PiSnapshot, callId: string) {
+    async executeTool(_run: PiSnapshot, taskId: string, callId: string) {
       state.executions.push(callId);
-      state.ops.push(`execute:${callId}`);
+      state.ops.push(`execute:${taskId}:${callId}`);
       if (options.interjectAfterTool) snapshot.pendingInterjections = options.interjectAfterTool;
       return { callId, pending: false, result: options.receiptText ?? "已写入画布" };
     },
@@ -133,6 +133,22 @@ function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResu
   } as unknown as CanvasBridge;
   return { bridge, state, snapshot };
 }
+
+test("Go model recovery continues through a persisted Pi user message", async () => {
+  const nudge = "上一步模型调用超时；已关闭思考。请重试同一步。";
+  const { bridge, state, snapshot } = fakeBridge([
+    async () => { throw new CanvasModelRetry({ status: "continue", nudge }); },
+    { text: "已完成" },
+  ]);
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 2);
+  assert.equal(state.status, "completed");
+  assert.deepEqual(state.noToolTurns, ["task-2"]);
+  const retry = state.checkpoints.find(({ role, text }) => role === "user" && text === nudge);
+  assert.ok(retry, "recovery prompt must be durable before the second model request");
+  assert.match(JSON.stringify(state.canonical[1]?.messages), /上一步模型调用超时/);
+  assert.equal(state.checkpoints.filter(({ role }) => role === "assistant").length, 1);
+});
 
 test("Pi sends queued Go interjections in the next user message and checkpoints their delivery", async () => {
   const { bridge, state, snapshot } = fakeBridge([{ text: "我会保留当前构图" }], {
@@ -193,6 +209,26 @@ test("模型在没有工具调用时收尾：由 Go 判定完成，且助手正�
   assert.match(assistant[0]?.text || "", /已经换好衣服了/);
 });
 
+test("a blocked finish_run keeps the Pi loop alive for reconciliation", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "finish-blocked", function: { name: "finish_run", arguments: '{"summary":"done"}' } }] },
+    { text: "已按真实结果对账。" },
+  ]);
+  snapshot.tools = [...tools, { name: "finish_run", description: "Finish after reconciling the plan",
+    parameters: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: false },
+    allowed: true }];
+  bridge.executeTool = async (_run, _taskId, callId) => {
+    state.executions.push(callId);
+    state.ops.push(`execute:${_taskId}:${callId}`);
+    return { callId, pending: false, result: { completionBlocked: true, requiredAction: "reconcile_plan" } };
+  };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 2, "a successful blocked receipt must not terminate the Pi loop");
+  assert.deepEqual(state.noToolTurns, ["task-2"]);
+  assert.equal(state.status, "completed");
+  assert.match(JSON.stringify(state.canonical[1]?.messages), /reconcile_plan/);
+});
+
 test("未披露的工具调用整批拒绝：不产生工具批次，也不执行画布副作用", async () => {
   const { bridge, state } = fakeBridge([
     { toolCalls: [{ id: "call-1", function: { name: "canvas_apply_ops", arguments: "{}" } }] },
@@ -222,9 +258,11 @@ test("已披露工具的批次准入先于执行，回执进入下一次模型�
   // （createAgentSession 的初始条目），那是 SDK 会话的正常形状。这里要守的是**先后**，
   // 不是"一共几条" —— 用 ops 判定，避免把引导检查点误当成契约破坏。
   const assistantAt = state.ops.indexOf("checkpoint:assistant");
-  const batchAt = state.ops.indexOf("batch");
+  const batchAt = state.ops.findIndex((op) => op.startsWith("batch:"));
   assert.ok(assistantAt >= 0, `必须有 assistant 检查点: ${state.ops.join(" → ")}`);
   assert.ok(batchAt > assistantAt, `assistant 检查点必须先于批次准入: ${state.ops.join(" → ")}`);
+  assert.ok(state.ops.includes("batch:task-1"), "tool batch must be bound to its model step");
+  assert.ok(state.ops.includes("execute:task-1:call-1"), "tool execution must carry the same model step identity");
   const second = state.canonical[1];
   const toolMessage = second!.messages.find((message) => message.role === "tool");
   assert.ok(toolMessage, "工具回执必须回到模型上下文");
@@ -300,7 +338,11 @@ test("取消后不再发起模型请求，运行以取消收场", async () => {
 test("生产 runner 不再手写 new Agent 循环（C1 出口）", () => {
   // 测试运行的是编译产物（dist/test），源码在仓库的 src/：必须往上两级再进 src，
   // 否则会去找 dist/src/runner.ts —— 那个文件不存在，断言就变成了 ENOENT 而不是内容检查。
-  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "runner.ts"), "utf8");
+  const testDirectory = dirname(fileURLToPath(import.meta.url));
+  const sourcePath = [join(testDirectory, "..", "src", "runner.ts"),
+    join(testDirectory, "..", "..", "src", "runner.ts")].find(existsSync);
+  assert.ok(sourcePath, "runner source must be available from source and compiled tests");
+  const source = readFileSync(sourcePath, "utf8");
   assert.equal(/new Agent\s*\(/.test(source), false, "runner.ts 不得再手写 new Agent 循环");
   // 判据只禁"值导入 Agent 类"：`import type { AgentMessage }` 是正常的类型导入。
   // 旧写法 /pi-agent-core["'][^)]*Agent/ 里的 `[^)]*` 会跨行匹配，一路扫到别处的

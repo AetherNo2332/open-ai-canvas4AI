@@ -4,8 +4,10 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/agentcontext"
@@ -62,7 +64,7 @@ func cloudAgentCompactionEvents(t *testing.T, s *Service, run *model.CloudAgentE
 // 窗口取 8K/2K，压缩线（输入预算的 85%）只有一千多 token，用例不必依赖真实模型。
 func smallWindowCompactionFixture(t *testing.T) (*Service, *gorm.DB, *model.CloudAgentExecution, cloudAgentRuntime, cloudAgentContextBudget) {
 	t.Helper()
-	s, db, root := reliableAgentRoot(t)
+	s, db, root := piAgentTestLeasedFixture(t)
 	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
 	capability.Text.ContextWindowTokens = 8_000
 	capability.Text.MaxOutputTokens = 2_000
@@ -74,7 +76,16 @@ func smallWindowCompactionFixture(t *testing.T) (*Service, *gorm.DB, *model.Clou
 	if budget.Source != "channel-model" {
 		t.Fatalf("渠道模型窗口没有生效: %#v", budget)
 	}
-	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "user", "content": strings.Repeat("剧情前提与人物关系", 300)})
+	state.Canonical.Messages = []map[string]any{
+		{"role": "user", "content": strings.Repeat("剧情前提与人物关系", 300)},
+		{"role": "assistant", "content": "已读取分镜"},
+		{"role": "user", "content": "保持人物伤口连续性"},
+		{"role": "assistant", "content": "已核对连续性"},
+		{"role": "user", "content": "把第 4 行补上光影"},
+		{"role": "assistant", "content": "好的，先看一下现有配色"},
+		{"role": "user", "content": state.Request.Prompt},
+	}
+	seedPiCompactionMessages(t, db, run, state.Canonical.Messages)
 	// 用例直接考"下一步该不该压"：这一步没有在跑的模型任务。
 	state.ActiveTaskID = ""
 	run = saveCloudAgentCompactionState(t, s, run, &state)
@@ -122,334 +133,229 @@ func TestCloudAgentCompactionRequestsWhenTokenLineReached(t *testing.T) {
 
 // 没有配模型上下文窗口时退回字节/条数兜底判据，且兜底判据同样必须"暂停而不是判死"。
 func TestCloudAgentCompactionFallsBackToBytesWithoutModelWindow(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	run, state := decodeCloudAgentCompactionState(t, s, root.ID)
-	// 渠道模型没有能力配置时，预算算式退回首部默认值，Source 变成 default：
-	// 这时 token 线没有意义，只能按字节/条数兜底。
-	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "cm").Update("capability_config_json", "{}").Error; err != nil {
+	s, db, run, state, _ := smallWindowCompactionFixture(t)
+	profile := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
+	profile.Text.ContextWindowTokens, profile.Text.MaxOutputTokens = 0, 0
+	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "cm").Update("capability_config_json", mustEncodeModelCapabilityConfig(t, profile)).Error; err != nil {
 		t.Fatal(err)
 	}
-	state.ActiveTaskID = ""
 	budget := s.cloudAgentContextBudgetForRequest(state.Request)
 	if budget.Source != "default" {
-		t.Fatalf("用例前提是渠道没有配上下文窗口: %#v", budget)
+		t.Fatalf("unknown model window must use the bytes fallback: %+v", budget)
 	}
-	// 20 条用户消息 = 上游跨轮历史闸门（最近 10 轮 × 2）；它们都是 user，无法被就地卸载。
-	for index := 0; index < cloudAgentHistoryKeepRounds*2; index++ {
-		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "user", "content": "第 " + string(rune('A'+index%26)) + " 次要求：继续推进分镜"})
+	for index := len(state.Canonical.Messages); index < cloudAgentHistoryKeepRounds*2; index++ {
+		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "user", "content": "继续推进分镜"})
 	}
-	state.Step = 3
-	run = saveCloudAgentCompactionState(t, s, run, &state)
-
-	// 走真实推进路径：这一步在上游会被"超预算"判死，现在应该只是暂停。
-	if err := s.advanceCloudAgent(run); err != nil {
-		t.Fatalf("推进失败: %v", err)
+	if !cloudAgentContextShouldCompact(len(state.Canonical.Messages), len([]byte(cloudAgentJSON(state.Canonical.Messages)))) {
+		t.Fatal("message-count threshold did not request semantic compaction")
+	}
+	// The Pi hook owns initiation. Unknown windows stay unknown in its snapshot;
+	// the Go endpoint nevertheless provides the original structured compactor.
+	revision, leaf := seedPiCompactionMessages(t, db, run, state.Canonical.Messages)
+	operation, err := s.PiBeginContextCompaction("user", run.ID, run.LeaseOwner,
+		PiContextCompactionStart{SessionRevision: revision, ActiveLeafID: leaf, Reason: "threshold"})
+	if err != nil {
+		t.Fatal(err)
 	}
 	final, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	if final.Status != "running" {
-		t.Fatalf("超预算把本轮判死了: %q（失败信息 %q）", final.Status, final.FailureMessage)
+	if final.Status != "running" || persisted.ContextCompaction == nil || operation.TaskID == "" {
+		t.Fatalf("bytes-triggered Pi compaction did not keep the run active: status=%s operation=%+v", final.Status, operation)
 	}
-	if persisted.ContextCompaction == nil || persisted.ContextCompaction.Status != "requested" {
-		t.Fatalf("兜底判据没有暂停步进: %+v", persisted.ContextCompaction)
-	}
-	if persisted.Step != 3 {
-		t.Fatalf("暂停不该推进步数: step = %d", persisted.Step)
-	}
-	events := cloudAgentCompactionEvents(t, s, final, "context_compaction_requested")
-	if len(events) != 1 || events[0].Payload["basis"] != "bytes" {
-		t.Fatalf("兜底触发事件 = %+v", events)
+	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
+	if err != nil || snapshot.ModelLimits.Configured {
+		t.Fatalf("unknown window was replaced with a fake model limit: snapshot=%+v err=%v", snapshot, err)
 	}
 }
 
 // 压缩结果合法时：历史被换成「检查点 + 回执 + 最近 2 对」，并 Resume 继续本轮的步进。
 func TestCloudAgentCompactionResumesStepLoopWithCheckpoint(t *testing.T) {
-	s, db, run, state, budget := smallWindowCompactionFixture(t)
-	state.Canonical.Messages = append(state.Canonical.Messages,
-		map[string]any{"role": "assistant", "content": "已读取分镜"},
-		map[string]any{"role": "user", "content": "把第 4 行补上光影"},
-		map[string]any{"role": "assistant", "content": "好的，先看一下现有配色"},
-	)
-	lastTaskID, lastEstimate := state.LastStepTaskID, state.LastStepEstimate
-	state.TokenAnchor = &cloudAgentTokenAnchor{TaskID: lastTaskID, Step: state.Step, InputTokens: 10000, EstimatedTokens: lastEstimate, Accepted: true}
+	s, db, run, state, _ := smallWindowCompactionFixture(t)
+	state.TokenAnchor = &cloudAgentTokenAnchor{TaskID: "previous-step", Step: state.Step, InputTokens: 10000, EstimatedTokens: 11000, Accepted: true}
 	run = saveCloudAgentCompactionState(t, s, run, &state)
-	stepBefore := state.Step
-	pressureCount := len(cloudAgentCompactionEvents(t, s, run, "context_pressure"))
-	if requested, err := s.cloudAgentRequestCompaction(run, &state, budget, budget.CompactAtTokens); err != nil || !requested {
-		t.Fatalf("没有触发压缩: %v", err)
+	stepBefore, pressureBefore := state.Step, len(cloudAgentCompactionEvents(t, s, run, "context_pressure"))
+	operation := beginPiCompactionForTest(t, s, run, "threshold")
+	_, pending := decodeCloudAgentCompactionState(t, s, run.ID)
+	if pending.Step != stepBefore || pending.TokenAnchor == nil || !pending.TokenAnchor.Accepted {
+		t.Fatalf("compaction changed model-step accounting: %+v", pending)
 	}
-	run, _ = decodeCloudAgentCompactionState(t, s, run.ID)
-	if err := s.advanceCloudAgent(run); err != nil {
-		t.Fatalf("发起压缩失败: %v", err)
+	if got := len(cloudAgentCompactionEvents(t, s, run, "context_pressure")); got != pressureBefore {
+		t.Fatalf("compaction emitted an ordinary model-step pressure event: %d -> %d", pressureBefore, got)
 	}
-	_, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	if persisted.ContextCompaction == nil || persisted.ContextCompaction.Status != "running" {
-		t.Fatalf("压缩任务发出后状态 = %+v", persisted.ContextCompaction)
+	task, err := s.repo.TaskForUser("user", operation.TaskID)
+	if err != nil || task.Operation != cloudAgentContextCompactionOperation || task.Type != "canvas_text" {
+		t.Fatalf("not a Go model compaction task: task=%+v err=%v", task, err)
 	}
-	if persisted.Step != stepBefore {
-		t.Fatalf("压缩调用占掉了步数: %d → %d", stepBefore, persisted.Step)
-	}
-	if persisted.LastStepTaskID != lastTaskID || persisted.LastStepEstimate != lastEstimate || persisted.TokenAnchor == nil || !persisted.TokenAnchor.Accepted {
-		t.Fatalf("压缩调用不得覆盖普通模型步骤和锚点: last=%s estimate=%d anchor=%+v", persisted.LastStepTaskID, persisted.LastStepEstimate, persisted.TokenAnchor)
-	}
-	if got := len(cloudAgentCompactionEvents(t, s, run, "context_pressure")); got != pressureCount {
-		t.Fatalf("压缩任务不得发普通模型请求读数: %d → %d", pressureCount, got)
-	}
-	task, err := s.repo.TaskForUser("user", persisted.ActiveTaskID)
-	if err != nil {
+	var taskInput map[string]any
+	if err := json.Unmarshal([]byte(task.InputJSON), &taskInput); err != nil {
 		t.Fatal(err)
 	}
-	// 压缩是一次独立模型调用：用同一个渠道，但操作名与步进调用区分开。
-	if task.Operation != cloudAgentContextCompactionOperation || task.Type != "canvas_text" {
-		t.Fatalf("压缩任务 = %s/%s", task.Type, task.Operation)
+	options, _ := taskInput["textOptions"].(map[string]any)
+	if options["stream"] != false || options["thinking"] != false || !strings.Contains(task.Prompt, "scriptDesign") {
+		t.Fatalf("original structured compaction contract was not routed to Go: %+v", taskInput)
 	}
-	// 检查点里的轮次数以服务端自己的计数为准（模型写的数字不可信）。
 	checkpoint := agentcontext.Checkpoint{
 		Version: agentcontext.Version, HistorySummary: "用户要求补齐分镜光影", ScriptDesign: "冷色调 + 左手伤口连续性",
-		CurrentWork: "改写第 4 行", NextStep: "写入节点", PendingTasks: []string{"task-1 仍在运行，先查询"},
-		CompactedTurnCount: 5,
+		CurrentWork: "改写第 4 行", NextStep: "写入节点", PendingTasks: []string{"invented-task"},
+		OperationHistory: []string{"invented-write"}, CompactedTurnCount: 999,
 	}
-	body, err := json.Marshal(checkpoint)
-	if err != nil {
-		t.Fatal(err)
+	body, _ := json.Marshal(checkpoint)
+	result, _ := json.Marshal(map[string]any{"text": string(body)})
+	setPiCompactionTaskResult(t, db, operation.TaskID, model.TaskStatusSucceeded, string(result))
+	ready := queryPiCompactionForTest(t, s, run, operation.OperationID)
+	if ready.Mode != "model" || ready.Fallback {
+		t.Fatalf("valid structured model output was not accepted: %+v", ready)
 	}
-	result, err := json.Marshal(map[string]any{"text": string(body)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(result)}).Error; err != nil {
-		t.Fatal(err)
-	}
-	run, _ = decodeCloudAgentCompactionState(t, s, run.ID)
-
-	if err := s.advanceCloudAgent(run); err != nil {
-		t.Fatalf("收压缩结果失败: %v", err)
-	}
+	commitPiCompactionForTest(t, s, run, ready, "pi-model-compaction")
 	final, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	if final.Status != "running" {
-		t.Fatalf("Resume 应继续本轮，实际状态 = %q", final.Status)
+	if final.Status != "running" || persisted.ContextCompaction != nil || persisted.ContextCompactionCount != 1 || persisted.ActiveTaskID != "" {
+		t.Fatalf("Pi commit did not resume the run: status=%s state=%+v", final.Status, persisted)
 	}
-	if persisted.ContextCompaction != nil {
-		t.Fatalf("压缩态没有收干净: %+v", persisted.ContextCompaction)
+	if persisted.ContextCheckpoint == nil || persisted.ContextCheckpoint.HistorySummary != checkpoint.HistorySummary ||
+		persisted.ContextCheckpoint.CompactedTurnCount != 4 || len(persisted.ContextCheckpoint.PendingTasks) != 0 ||
+		len(persisted.ContextCheckpoint.OperationHistory) != 0 {
+		t.Fatalf("model invented execution facts or turn count survived: %+v", persisted.ContextCheckpoint)
 	}
-	if persisted.ContextCompactionCount != 1 {
-		t.Fatalf("压缩次数 = %d", persisted.ContextCompactionCount)
+	if !persisted.HistoryIncludesCurrent || persisted.TokenAnchor != nil {
+		t.Fatalf("compacted history state is stale: %+v", persisted)
 	}
-	if persisted.ContextCheckpoint == nil || persisted.ContextCheckpoint.HistorySummary != "用户要求补齐分镜光影" {
-		t.Fatalf("检查点 = %+v", persisted.ContextCheckpoint)
-	}
-	if len(persisted.ContextCheckpoint.PendingTasks) != 0 {
-		t.Fatalf("模型虚构的待办任务进入了服务端事实: %+v", persisted.ContextCheckpoint.PendingTasks)
-	}
-	if !persisted.HistoryIncludesCurrent {
-		t.Fatal("压缩换过历史，续轮交接不能再把本轮追加一遍")
-	}
-	if persisted.ActiveTaskID != "" {
-		t.Fatalf("压缩完成后仍挂着活跃任务: %q", persisted.ActiveTaskID)
-	}
-	// 会话被换成「检查点 + 回执 + 最近两对」，旧的 20 条大消息不再进上下文。
 	messages := persisted.Canonical.Messages
-	if len(messages) != 6 {
-		t.Fatalf("压缩后的消息数 = %d: %+v", len(messages), messages)
-	}
-	if !strings.Contains(stringField(messages[0], "content"), "<agent-context-checkpoint>") {
-		t.Fatalf("首条不是检查点: %+v", messages[0])
-	}
-	if stringField(messages[1], "role") != "assistant" || stringField(messages[1], "content") != agentcontext.Acknowledgement {
-		t.Fatalf("检查点后面没有跟回执: %+v", messages[1])
-	}
-	if stringField(messages[len(messages)-1], "content") != "好的，先看一下现有配色" {
-		t.Fatalf("最近对话没有保留: %+v", messages[len(messages)-1])
+	if len(messages) != 7 || !strings.Contains(stringField(messages[0], "content"), "<agent-context-checkpoint>") ||
+		stringField(messages[1], "content") != agentcontext.Acknowledgement ||
+		stringField(messages[len(messages)-1], "content") != state.Request.Prompt {
+		t.Fatalf("checkpoint/recent complete turns/current request were not retained: %+v", messages)
 	}
 	events := cloudAgentCompactionEvents(t, s, final, "context_compacted")
-	if len(events) != 1 {
-		t.Fatalf("context_compacted 事件数 = %d", len(events))
+	if len(events) != 1 || events[0].Payload["mode"] != "model" || events[0].Payload["resume"] != true ||
+		events[0].Payload["droppedTurns"] != float64(1) {
+		t.Fatalf("committed compaction event is incorrect: %+v", events)
 	}
-	payload := events[0].Payload
-	if payload["mode"] != "model" || payload["resume"] != true || payload["historyMessages"] != float64(len(messages)) {
-		t.Fatalf("context_compacted 载荷 = %+v", payload)
-	}
-	if turns, ok := payload["compactedTurnCount"].(float64); !ok || turns <= 0 {
-		t.Fatalf("检查点轮次数 = %+v", payload["compactedTurnCount"])
-	}
-	if dropped, ok := payload["droppedTurns"].(float64); !ok || dropped <= 0 {
-		t.Fatalf("被压掉的轮次数 = %+v", payload["droppedTurns"])
+	// Pi, rather than the retired Go loop, explicitly starts the next model step.
+	request := PiModelStepRequest{Canonical: persisted.Canonical}
+	next, err := s.PiModelStep("user", run.ID, run.LeaseOwner, request)
+	if err != nil || next.TaskID == operation.TaskID {
+		t.Fatalf("next Pi model step was not admitted after commit: next=%+v err=%v", next, err)
 	}
 }
 
 // 压完仍然超阈值时不能无限暂停：同一轮的压缩次数有上限。
 func TestCloudAgentCompactionStopsAtAttemptLimit(t *testing.T) {
-	s, _, run, state, budget := smallWindowCompactionFixture(t)
-	state.ContextCompactionCount = cloudAgentMaxCompactionsPerRun
-	if requested, err := s.cloudAgentRequestCompaction(run, &state, budget, budget.CompactAtTokens*4); err != nil || requested {
-		t.Fatalf("超过次数上限仍然暂停: requested=%v err=%v", requested, err)
-	}
-	if state.ContextCompaction != nil {
-		t.Fatalf("超过次数上限仍然改了状态: %+v", state.ContextCompaction)
-	}
-
-	// 还有一次余额时可以压；压完余额用尽，下一次请求不再暂停。
+	s, db, run, state, _ := smallWindowCompactionFixture(t)
 	state.ContextCompactionCount = cloudAgentMaxCompactionsPerRun - 1
-	requested, err := s.cloudAgentRequestCompaction(run, &state, budget, budget.CompactAtTokens*4)
-	if err != nil || !requested {
-		t.Fatalf("余额内没有压缩: requested=%v err=%v", requested, err)
+	run = saveCloudAgentCompactionState(t, s, run, &state)
+	operation := beginPiCompactionForTest(t, s, run, "threshold")
+	setPiCompactionTaskResult(t, db, operation.TaskID, model.TaskStatusFailed, "{}")
+	ready := queryPiCompactionForTest(t, s, run, operation.OperationID)
+	commitPiCompactionForTest(t, s, run, ready, "last-compaction")
+	_, persisted := reloadPiRun(t, s, run.ID)
+	if persisted.ContextCompactionCount != cloudAgentMaxCompactionsPerRun {
+		t.Fatalf("last allowed commit did not consume the compaction budget: %d", persisted.ContextCompactionCount)
 	}
-	run, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	persisted.ContextCompactionCount = cloudAgentMaxCompactionsPerRun
-	run = saveCloudAgentCompactionState(t, s, run, &persisted, func(current *model.CloudAgentExecution) {
-		current.Status = "running"
-	})
-	requested, err = s.cloudAgentRequestCompaction(run, &persisted, budget, budget.CompactAtTokens*4)
-	if err != nil || requested {
-		t.Fatalf("次数用尽后仍然暂停: requested=%v err=%v", requested, err)
+	var tasksBefore int64
+	db.Model(&model.Task{}).Where("operation = ?", cloudAgentContextCompactionOperation).Count(&tasksBefore)
+	session, _, err := s.repo.CloudAgentPiSession("user", run.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PiBeginContextCompaction("user", run.ID, run.LeaseOwner, PiContextCompactionStart{
+		SessionRevision: session.Revision, ActiveLeafID: session.ActiveLeafID, Reason: "manual",
+	}); err == nil {
+		t.Fatal("Pi admitted a fifth compaction in the same run")
+	}
+	var tasksAfter int64
+	db.Model(&model.Task{}).Where("operation = ?", cloudAgentContextCompactionOperation).Count(&tasksAfter)
+	if tasksAfter != tasksBefore {
+		t.Fatalf("rejected compaction created a billed task: %d -> %d", tasksBefore, tasksAfter)
 	}
 }
 
 // 压缩调用失败时走服务端保底检查点：整轮既不判死，也不会因为压缩失败丢掉上下文。
 func TestCloudAgentCompactionUsesFallbackCheckpointOnModelFailure(t *testing.T) {
-	s, db, run, state, budget := smallWindowCompactionFixture(t)
-	if requested, err := s.cloudAgentRequestCompaction(run, &state, budget, budget.CompactAtTokens); err != nil || !requested {
-		t.Fatalf("没有触发压缩: %v", err)
+	s, db, run, _, _ := smallWindowCompactionFixture(t)
+	operation := beginPiCompactionForTest(t, s, run, "threshold")
+	setPiCompactionTaskResult(t, db, operation.TaskID, model.TaskStatusFailed, "{}")
+	ready := queryPiCompactionForTest(t, s, run, operation.OperationID)
+	if !ready.Fallback || ready.Reason == "" {
+		t.Fatalf("model failure did not retain Go fallback semantics: %+v", ready)
 	}
-	run, _ = decodeCloudAgentCompactionState(t, s, run.ID)
-	if err := s.advanceCloudAgent(run); err != nil {
-		t.Fatalf("发起压缩失败: %v", err)
-	}
-	_, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	if err := db.Model(&model.Task{}).Where("id = ?", persisted.ActiveTaskID).
-		Updates(map[string]any{"status": model.TaskStatusFailed, "error": "上游 500"}).Error; err != nil {
-		t.Fatal(err)
-	}
-	run, _ = decodeCloudAgentCompactionState(t, s, run.ID)
-
-	if err := s.advanceCloudAgent(run); err != nil {
-		t.Fatalf("收压缩结果失败: %v", err)
-	}
+	commitPiCompactionForTest(t, s, run, ready, "pi-fallback")
 	final, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	if final.Status != "running" {
-		t.Fatalf("压缩失败把整轮搞死了: %q（失败信息 %q）", final.Status, final.FailureMessage)
-	}
-	if persisted.ContextCheckpoint == nil {
-		t.Fatal("压缩失败没有落保底检查点")
-	}
-	if persisted.ContextCompaction != nil || persisted.ContextCompactionCount != 1 {
-		t.Fatalf("压缩态 = %+v，次数 = %d", persisted.ContextCompaction, persisted.ContextCompactionCount)
+	if final.Status != "running" || persisted.ContextCheckpoint == nil || persisted.ContextCompaction != nil || persisted.ContextCompactionCount != 1 {
+		t.Fatalf("fallback did not safely resume the run: status=%s state=%+v", final.Status, persisted)
 	}
 	events := cloudAgentCompactionEvents(t, s, final, "context_compacted")
 	if len(events) != 1 || events[0].Payload["mode"] != "fallback" || events[0].Payload["resume"] != true {
-		t.Fatalf("保底检查点事件 = %+v", events)
-	}
-	if events[0].Payload["reason"] == nil {
-		t.Fatalf("保底检查点必须说明原因: %+v", events[0].Payload)
+		t.Fatalf("fallback event not durable: %+v", events)
 	}
 }
 
 // 压缩模型输出不合规（不是 JSON / 版本不对）时同样退到保底检查点。
 func TestCloudAgentCompactionRejectsInvalidModelCheckpoint(t *testing.T) {
-	s, db, run, state, budget := smallWindowCompactionFixture(t)
-	if requested, err := s.cloudAgentRequestCompaction(run, &state, budget, budget.CompactAtTokens); err != nil || !requested {
-		t.Fatalf("没有触发压缩: %v", err)
-	}
-	run, _ = decodeCloudAgentCompactionState(t, s, run.ID)
-	if err := s.advanceCloudAgent(run); err != nil {
-		t.Fatal(err)
-	}
-	_, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	body, err := json.Marshal(map[string]any{"text": `{"version":99,"historySummary":"瞎编"}`})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Model(&model.Task{}).Where("id = ?", persisted.ActiveTaskID).
-		Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(body)}).Error; err != nil {
-		t.Fatal(err)
-	}
-	run, _ = decodeCloudAgentCompactionState(t, s, run.ID)
-	if err := s.advanceCloudAgent(run); err != nil {
-		t.Fatal(err)
-	}
-	final, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	if final.Status != "running" || persisted.ContextCheckpoint == nil {
-		t.Fatalf("不合规输出没有退到保底检查点: status=%q checkpoint=%+v", final.Status, persisted.ContextCheckpoint)
-	}
-	events := cloudAgentCompactionEvents(t, s, final, "context_compacted")
-	if len(events) != 1 || events[0].Payload["mode"] != "fallback" {
-		t.Fatalf("不合规输出的压缩事件 = %+v", events)
+	for _, invalid := range []string{`{"text":"not JSON"}`, `{"text":"{\\"version\\":99,\\"historySummary\\":\\"invented\\"}"}`, "{"} {
+		t.Run(invalid, func(t *testing.T) {
+			s, db, run, _, _ := smallWindowCompactionFixture(t)
+			operation := beginPiCompactionForTest(t, s, run, "threshold")
+			setPiCompactionTaskResult(t, db, operation.TaskID, model.TaskStatusSucceeded, invalid)
+			ready := queryPiCompactionForTest(t, s, run, operation.OperationID)
+			if !ready.Fallback || ready.Reason == "" {
+				t.Fatalf("malformed result bypassed structured fallback: %+v", ready)
+			}
+			commitPiCompactionForTest(t, s, run, ready, "pi-invalid-fallback")
+			final, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
+			if final.Status != "running" || persisted.ContextCheckpoint == nil {
+				t.Fatalf("invalid model checkpoint lost usable history: status=%s state=%+v", final.Status, persisted)
+			}
+		})
 	}
 }
 
 // 压缩期间被取消：收尾要落保底检查点 + context_compacted(mode=fallback)，且终态不被改写。
 func TestCloudAgentCancelledRunFinalizesInterruptedCompaction(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	run, state := decodeCloudAgentCompactionState(t, s, root.ID)
-	state.Canonical.Messages = []map[string]any{
-		{"role": "user", "content": "把分镜里第 1 到第 3 行补上光影"},
-		{"role": "assistant", "content": "已读完分镜，准备写入"},
-	}
-	state.TextHistory = []providerTextMessage{{Role: "user", Content: "上一轮的要求"}, {Role: "assistant", Content: "上一轮的回复"}}
-	state.ContextCompaction = &cloudAgentContextCompaction{Status: "running", Resume: true, TurnCount: 4, SourceBytes: 180000}
-	state.ActiveTaskID = "task-compaction"
-	state.TaskIDs = append(state.TaskIDs, "task-compaction")
-	if err := db.Create(&model.Task{
-		ID: "task-compaction", UserID: "user", ProjectID: state.Request.CanvasID, Type: "canvas_text",
-		Status: model.TaskStatusRunning, Operation: cloudAgentContextCompactionOperation,
-	}).Error; err != nil {
+	s, db, run, _, _ := smallWindowCompactionFixture(t)
+	operation := beginPiCompactionForTest(t, s, run, "threshold")
+	if err := s.CancelCloudAgent(context.Background(), "user", run.ID); err != nil {
 		t.Fatal(err)
 	}
-	run = saveCloudAgentCompactionState(t, s, run, &state, func(current *model.CloudAgentExecution) {
-		current.Status = "cancelled"
-		current.CleanupPending = true
-		current.ActiveTaskID = "task-compaction"
-	})
-
-	if err := s.finishCloudAgentCleanup(context.Background(), run); err != nil {
+	cancelled, _ := decodeCloudAgentCompactionState(t, s, run.ID)
+	if _, err := s.PiContextCompaction("user", run.ID, run.LeaseOwner, operation.OperationID); err == nil {
+		t.Fatal("cancelled run permitted a worker to continue its compaction")
+	}
+	if err := s.finishCloudAgentCleanup(context.Background(), cancelled); err != nil {
 		t.Fatal(err)
 	}
 	final, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	if final.Status != "cancelled" {
-		t.Fatalf("终态被改写: %q", final.Status)
+	if final.Status != "cancelled" || final.CleanupPending || persisted.ContextCompaction != nil ||
+		persisted.ContextCheckpoint == nil || persisted.ContextCheckpoint.CompactedTurnCount != 4 {
+		t.Fatalf("cancelled Pi operation did not retain terminal fallback checkpoint: status=%s state=%+v", final.Status, persisted)
 	}
-	if final.CleanupPending {
-		t.Fatal("收尾没有完成")
+	task, err := s.repo.TaskForUser("user", operation.TaskID)
+	if err != nil || task.Status != model.TaskStatusCancelled {
+		t.Fatalf("cancelled compaction task remains claimable: task=%+v err=%v", task, err)
 	}
-	if persisted.ContextCompaction != nil {
-		t.Fatalf("压缩态没有收干净: %+v", persisted.ContextCompaction)
+	var order model.BillingOrder
+	if err := db.Where("task_id = ?", operation.TaskID).First(&order).Error; err != nil || order.Status != model.BillingStatusRefunded {
+		t.Fatalf("cancelled compaction did not release its reservation: order=%+v err=%v", order, err)
 	}
-	if persisted.ContextCheckpoint == nil {
-		t.Fatal("取消期间没有落保底检查点")
+	var account model.CreditAccount
+	if err := db.Where("user_id = ?", "user").First(&account).Error; err != nil || account.ReservedMicrocredits != 0 {
+		t.Fatalf("cancelled compaction left an account reservation: account=%+v err=%v", account, err)
 	}
-	if persisted.ContextCheckpoint.CompactedTurnCount != 4 {
-		t.Fatalf("检查点轮次数 = %d", persisted.ContextCheckpoint.CompactedTurnCount)
-	}
-	events := cloudAgentCompactionEvents(t, s, final, "context_compacted")
-	if len(events) != 1 {
-		t.Fatalf("context_compacted 事件数 = %d", len(events))
-	}
-	if events[0].Payload["mode"] != "fallback" || events[0].Payload["resume"] != true {
-		t.Fatalf("压缩事件载荷 = %+v", events[0].Payload)
-	}
-	if events[0].Payload["reason"] == nil {
-		t.Fatalf("中断收尾必须说明原因: %+v", events[0].Payload)
-	}
-	// 收尾是幂等的：CleanupPending 已清掉后再跑一次不会重复落事件。
 	if err := s.finishCloudAgentCleanup(context.Background(), final); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(cloudAgentCompactionEvents(t, s, final, "context_compacted")); got != 1 {
-		t.Fatalf("收尾不幂等，事件数 = %d", got)
+	events := cloudAgentCompactionEvents(t, s, final, "context_compacted")
+	if len(events) != 1 || events[0].Payload["mode"] != "fallback" || events[0].Payload["resume"] != true || events[0].Payload["reason"] == nil {
+		t.Fatalf("cancel cleanup repeated or omitted the fallback event: %+v", events)
 	}
 }
 
 // 失败轮同样是终态：中断收尾只能落检查点，不能把 failed 写成 completed。
 func TestCloudAgentFailedRunStaysFailedWhenCompactionFinalized(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	run, state := decodeCloudAgentCompactionState(t, s, root.ID)
-	state.Canonical.Messages = []map[string]any{{"role": "user", "content": "继续"}, {"role": "assistant", "content": "好的"}}
-	state.ContextCompaction = &cloudAgentContextCompaction{Status: "requested", Resume: true, TurnCount: 2}
-	state.ActiveTaskID = ""
-	run = saveCloudAgentCompactionState(t, s, run, &state)
-	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).Update("status", "failed").Error; err != nil {
+	s, db, run, _, _ := smallWindowCompactionFixture(t)
+	beginPiCompactionForTest(t, s, run, "threshold")
+	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Update("status", "failed").Error; err != nil {
 		t.Fatal(err)
 	}
-	run, state = decodeCloudAgentCompactionState(t, s, run.ID)
+	run, state := decodeCloudAgentCompactionState(t, s, run.ID)
 
 	if err := s.finalizeCloudAgentInterruptedCompaction(run, &state, "本轮在压缩期间结束，已使用服务端保底检查点"); err != nil {
 		t.Fatal(err)
@@ -465,7 +371,7 @@ func TestCloudAgentFailedRunStaysFailedWhenCompactionFinalized(t *testing.T) {
 
 // 没有停在压缩上的轮次：收尾不该凭空写一条压缩事件。
 func TestCloudAgentCleanupWithoutPendingCompactionWritesNoCheckpointEvent(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
+	s, db, root := piAgentTestLeasedFixture(t)
 	run, _ := decodeCloudAgentCompactionState(t, s, root.ID)
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).
 		Updates(map[string]any{"status": "cancelled", "cleanup_pending": true}).Error; err != nil {
@@ -522,44 +428,72 @@ func TestCloudAgentModelOperationCoversContextCompaction(t *testing.T) {
 }
 
 func TestCloudAgentCompactionContinuationIncludesFinalReplyWithoutReplayingPrompt(t *testing.T) {
-	s, db, run, state, _ := smallWindowCompactionFixture(t)
-	state.ContextCompaction = &cloudAgentContextCompaction{Status: "requested", Resume: true, TurnCount: 2}
-	run = saveCloudAgentCompactionState(t, s, run, &state)
-	if err := s.persistCloudAgentContextCheckpoint(run, &state, cloudAgentFallbackCheckpoint(&state), "fallback", "test"); err != nil {
+	s, db, run, _, _ := smallWindowCompactionFixture(t)
+	operation := beginPiCompactionForTest(t, s, run, "threshold")
+	setPiCompactionTaskResult(t, db, operation.TaskID, model.TaskStatusFailed, "{}")
+	ready := queryPiCompactionForTest(t, s, run, operation.OperationID)
+	commitPiCompactionForTest(t, s, run, ready, "continuation-compaction")
+	if _, err := s.InterjectCloudAgent("user", run.ID, "compacted-interjection", "保持冷色调"); err != nil {
 		t.Fatal(err)
 	}
-	run, state = decodeCloudAgentCompactionState(t, s, run.ID)
-	state.Canonical.Messages = append(state.Canonical.Messages,
-		map[string]any{"role": "user", "content": "【用户插话】保持冷色调", cloudAgentContextSourceKey: "user_interjection"},
-		map[string]any{"role": "assistant", "content": "镜头已按冷色调调整"},
-	)
-	state.event(run.ID, "assistant_message", map[string]any{"messageId": "final", "text": "镜头已按冷色调调整"})
+	for index, text := range []string{"【用户插话】保持冷色调", "镜头已按冷色调调整"} {
+		role := "user"
+		if index == 1 {
+			role = "assistant"
+		}
+		session, _, err := s.repo.CloudAgentPiSession("user", run.ConversationID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		message, _ := json.Marshal(map[string]any{"role": role, "content": text, "timestamp": 1})
+		id := fmt.Sprintf("continuation-%s", role)
+		entry, _ := json.Marshal(map[string]any{"type": "message", "id": id, "parentId": session.ActiveLeafID,
+			"timestamp": time.Now().UTC().Format(time.RFC3339Nano), "message": json.RawMessage(message)})
+		var interjectionIDs []string
+		if index == 0 {
+			interjectionIDs = []string{"compacted-interjection"}
+		}
+		if _, err := s.PiCheckpointMessageResult("user", run.ID, run.LeaseOwner, PiMessageCheckpoint{
+			Sequence: index + 1, Message: message, SessionRevision: session.Revision, ActiveLeafID: id,
+			SessionEntries: []json.RawMessage{entry}, InterjectionIDs: interjectionIDs,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run, state := decodeCloudAgentCompactionState(t, s, run.ID)
+	persistedSession, persistedEntries, err := s.repo.CloudAgentPiSession("user", run.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := cloudAgentPiActiveBranch(persistedEntries, persistedSession.ActiveLeafID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, err := cloudAgentPiCompactionSourceForBranch(branch, persistedSession.ActiveLeafID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Canonical.Messages = projected.Messages
+	state.event(run.ID, "assistant_message", map[string]any{"messageId": "final", "text": "镜头已按冷色调调整", "final": true})
 	run = saveCloudAgentCompactionState(t, s, run, &state, func(current *model.CloudAgentExecution) {
 		current.Status = "completed"
 	})
-	if err := db.Model(&model.Task{}).Where("id = ?", run.ID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": `{"text":"镜头已按冷色调调整"}`,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
 	req := agentTestRequest()
 	req.Prompt, req.IdempotencyKey = "继续下一镜", "compaction-continuation-final"
 	child, err := s.CreateCloudAgentRun("user", req, run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := s.repo.TaskForUser("user", child.ID)
+	execution, err := s.repo.CloudAgent("user", child.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var input struct {
-		TextHistory []providerTextMessage `json:"textHistory"`
-	}
-	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+	childState, err := cloudAgentDecode(execution)
+	if err != nil {
 		t.Fatal(err)
 	}
 	var replies, originalPrompts, interjections int
-	for _, message := range input.TextHistory {
+	for _, message := range childState.TextHistory {
 		switch message.Content {
 		case "镜头已按冷色调调整":
 			replies++
@@ -569,23 +503,35 @@ func TestCloudAgentCompactionContinuationIncludesFinalReplyWithoutReplayingPromp
 			interjections++
 		}
 	}
-	if replies != 1 || originalPrompts != 0 || interjections != 1 {
-		t.Fatalf("续轮丢回复/重复要求/丢插话: replies=%d original=%d interjections=%d history=%+v", replies, originalPrompts, interjections, input.TextHistory)
+	if replies != 1 || originalPrompts != 1 || interjections != 1 {
+		t.Fatalf("compacted continuation duplicated or lost current instructions: replies=%d original=%d interjections=%d",
+			replies, originalPrompts, interjections)
+	}
+	session, entries, err := s.repo.CloudAgentPiSession("user", execution.ConversationID)
+	if err != nil || session.ID != run.ConversationID || len(entries) != 10 {
+		t.Fatalf("continuation did not reuse its persisted Pi tree: session=%+v entries=%d err=%v", session, len(entries), err)
 	}
 }
 
 func TestCloudAgentCompactionCanRecoverContextFrameBudgetFailure(t *testing.T) {
-	s, _, run, state, _ := smallWindowCompactionFixture(t)
+	s, db, run, state, budget := smallWindowCompactionFixture(t)
 	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{
 		"role": "user", "content": strings.Repeat("新的剧本细节与人物设定", 2000),
 	})
-	run = saveCloudAgentCompactionState(t, s, run, &state)
-	if err := s.advanceCloudAgent(run); err != nil {
-		t.Fatal(err)
+	if err := fitCloudAgentModelContext(&state.Canonical, budget.InputBudgetTokens); err == nil {
+		t.Fatal("fixture must exceed the declared input capacity")
 	}
+	seedPiCompactionMessages(t, db, run, state.Canonical.Messages)
+	operation := beginPiCompactionForTest(t, s, run, "overflow")
+	setPiCompactionTaskResult(t, db, operation.TaskID, model.TaskStatusFailed, "{}")
+	ready := queryPiCompactionForTest(t, s, run, operation.OperationID)
+	commitPiCompactionForTest(t, s, run, ready, "pi-overflow-fallback")
 	final, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	if final.Status != "running" || persisted.ContextCompaction == nil || persisted.ContextCompaction.Status != "requested" {
-		t.Fatalf("上下文帧装不下时应先压缩，而不是直接失败: status=%q compaction=%+v failure=%q", final.Status, persisted.ContextCompaction, final.FailureMessage)
+	if final.Status != "running" || persisted.ContextCompaction != nil || persisted.ContextCheckpoint == nil {
+		t.Fatalf("overflow recovery failed to commit structured history: status=%s state=%+v", final.Status, persisted)
+	}
+	if !strings.Contains(persisted.ContextCheckpoint.HistorySummary, "新的剧本细节与人物设定") {
+		t.Fatalf("fallback lost the overflow request: %+v", persisted.ContextCheckpoint)
 	}
 }
 

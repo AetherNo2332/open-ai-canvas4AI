@@ -121,3 +121,30 @@
 - PostgreSQL、多 worker 跨进程 lease 抢占/故障注入、重放 exactly-once 组合证明，以及历史 Pi session 转换仍未完成。
 - 旧 Go Agent scheduler/driver 仍未移除；必须先替换并验收其业务职责（审批、画布写入、预算/计费、媒体结算、取消、压缩、恢复与清理），不能以新 Pi loop 已运行代替这个退出门槛。
 - 本机 Compose 使用的镜像元数据 commit/buildTime 为 unknown；虽然镜像按当前 canary 工作区构建，仍需补可追溯的镜像标签后再做发布验收。
+
+## 追加：步骤级工具回执修复、品牌 Canary 标记与本地复部署
+
+### 本轮修复与行为
+
+- 修复 provider 重复使用 `tool_call_id` 时跨模型步骤误命中旧回执的问题。Pi 工具批次现在必须携带当前模型 task ID；Go 校验该 ID 与最近模型步骤一致，并将已接收批次绑定到步骤。恢复、推进和错误事件也带步骤 ID，历史回执只从最近一批 assistant tool-call 后读取。相同调用 ID 在另一模型步骤出现时不会复用上一轮结果；为旧的无步骤 ID in-flight 批次保留受控恢复兼容。
+- Pi 工具仍为扁平注册：运行开始即注册快照中通过权限与能力过滤的所有具体工具，类别仅作说明元数据；Pi `tool_call` hook 检查运行内可见性和 Go 对当前模型批次的准入，Go 执行入口再次校验用户、权限、审批、参数、画布版本及幂等回执。每轮建立新的 registry。当前注册 24 项工具。
+- 工作区侧栏品牌名后增加黄色底、黑色字、无衬线字体的 `canary` 标记；测试验证文本位置和样式。
+- 移除旧 Go Agent 推进循环入口 `advanceCloudAgentByID`、`advanceCloudAgent`、`advanceCloudAgentReadBatch` 与旧 Go 上下文压缩推进入口。Go 继续保留画布业务、权限、计费、持久化和供 Pi worker 使用的共享运行时功能。
+
+### 验证和本地 Compose 3000
+
+- Agent `bun run build` 通过；`bun run test` 编译并运行产物测试 **78/78 通过**。另一次 source + dist `bun test` **155 通过、0 失败**。
+- Web `bun run typecheck` 通过；完整 `bun test` **2108 通过、0 失败**，覆盖 271 个文件、11767 项断言。Canary 标记专用测试通过。
+- Go `internal/app` 完整测试 `CGO_ENABLED=1 go test ./internal/app -count=1 -timeout 12m` **通过**，用时 452.941 秒；Pi 定向测试、`internal/handler` 全量测试，以及 `repository`、`protocol`、`service`、`prompts`、`cmd/server`、`database` 包测试通过。CGO/GCC 已在本机可用，之前注释的 `CGO_ENABLED=0` 阻塞已经解除。
+- Compose 生产镜像构建成功。停 backend 前将本地 `canvas-canary-3000` 的 `/data` 复制到 `C:\Users\13537\AppData\Local\Temp\canvas-canary-3000-predeploy-20260928-160316`；SQLite backup 文件 `open_ai_canvas.predeploy.sqlite3` 的 `PRAGMA integrity_check` 为 `ok`，SHA-256 为 `12faedc6743938db3b9c2ce5db980bc5964887bee8877fff43ad1de5a74b7e45`。三个旧 image ID 已分别打上 `predeploy-20260928-160316` 标签供本机回滚；重建只作用于 `canvas-canary-3000` 的 backend、agent、web，数据卷保留，没有执行 `down` 或删除卷。
+- 重建后运行镜像 ID：backend `sha256:b6e6289fdd2cdd2183174604aaf1052e3f0486d255cda198ab22ad8d4e64aa5f`、agent `sha256:955455dda5f3c66c0d024b90f448d04d1e54ab072f6c4908add06b2b93c95545`、web `sha256:984914f942f64cb732153b1a7e4f21b424d41c834be39ee342a978e1ed89e19f`。backend/web 健康，agent 运行；3000 首页 HTTP 200，`/api/health/ready` 返回 `ready=true`、schema `42/42`、active worker tasks `0`。构建元数据版本为 `v1.5.7.1+7aa9988`，commit/buildTime 仍是 `unknown`。
+- 用用户提供的 admin 测试凭据完成登录，输出仅记录角色，不记录密码或会话值：登录/session、`/api/agent/capabilities`（24 工具）与只读 `/api/channels/system` 均 HTTP 200。没有调用模型，不产生上游请求或计费。
+- 在实际 nginx 静态目录找到包含 badge 文案的 `user-layout-BRxOkMUD.js` 与样式 `application-BUMHJZ7k.css`。Computer Use 仍报 `nodeRepl.fetch request failed`，所以没有声称已完成浏览器视觉检查或完整画布交互验收；也没有改用 Playwright 绕过。
+
+### 后续验收门槛
+
+- 用 Computer Use 恢复后做登录后的实际 UI 视觉/交互验收，确认品牌标记位置和各主要 Agent 场景。
+- 以真实上游渠道验证流式正文/推理、厂商 usage、模型停止原因与重试；覆盖看图、媒体生成、审批与结算。当前仅做了无模型 API smoke test，没有产生付费任务。
+- 补 PostgreSQL schema/会话存储、不同账号并行隔离、多 worker lease 抢占、跨进程崩溃恢复、模型步骤/工具写入/计费 exactly-once 组合故障注入，以及 SSE 断线续传。
+- 继续验证旧历史数据导入、历史会话转 Pi entries、旧版本完成记录续聊；补带 commit 与 buildTime 的可追溯容器镜像元数据。
+- 本轮将以 topic branch 提交到 GitHub PR，目标为 `canary`；本地分支含有此前相对 `origin/canary` 的迁移提交。PR 继续遵从用户先前的跳过 CI 要求；提交前后均检查暂存范围，禁止加入 `.env*`、本机数据/备份或认证材料。

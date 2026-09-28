@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -50,8 +50,14 @@ test("每个运行请求都携带会话租约 epoch", async () => {
 });
 
 test("内部 wire identity 与共享制品和锁定的 Pi SDK 版本一致", () => {
-  const shared = JSON.parse(readFileSync(resolve(testDirectory, "../../harness/PI_WIRE_IDENTITY.json"), "utf8"));
-  const packageManifest = JSON.parse(readFileSync(resolve(testDirectory, "../../package.json"), "utf8"));
+  const packagePath = [resolve(testDirectory, "../package.json"), resolve(testDirectory, "../../package.json")]
+    .find(existsSync);
+  assert.ok(packagePath, "agent package manifest must be available from source and compiled tests");
+  const harnessPath = [resolve(testDirectory, "../harness/PI_WIRE_IDENTITY.json"),
+    resolve(testDirectory, "../../harness/PI_WIRE_IDENTITY.json")].find(existsSync);
+  assert.ok(harnessPath, "wire identity artifact must be available from source and compiled tests");
+  const shared = JSON.parse(readFileSync(harnessPath, "utf8"));
+  const packageManifest = JSON.parse(readFileSync(packagePath, "utf8"));
   assert.deepEqual(CANVAS_PI_WIRE_IDENTITY, shared);
   assert.equal(CANVAS_PI_WIRE_IDENTITY.piSdkVersion, packageManifest.dependencies["@earendil-works/pi-coding-agent"]);
 });
@@ -69,16 +75,17 @@ function callFromModel(id: string, name: string): PiToolCall {
 }
 
 // The Go route /internal-agent/runs/:id/tool-batches decodes with
-// DisallowUnknownFields into PiToolBatchRequest{Calls []cloudAgentCall}. Any key
+// DisallowUnknownFields into PiToolBatchRequest{TaskID, Calls}. Any key
 // this test emits that Go does not declare rejects the WHOLE batch with an empty
 // 400 — which used to strand every tool-using run in `running` forever.
 test("startToolBatch emits exactly the keys the Go wire contract declares", async () => {
-  const request = await captureBody((bridge) => bridge.startToolBatch(run, [callFromModel("call_1", "canvas_get_state")], undefined));
+  const request = await captureBody((bridge) => bridge.startToolBatch(run, "task-wire", [callFromModel("call_1", "canvas_get_state")], undefined));
 
   assert.equal(request.method, "POST");
   assert.equal(request.url, "http://backend:8080/internal-agent/runs/run-wire/tool-batches");
-  const body = request.body as { calls: Array<Record<string, unknown>> };
-  assert.deepEqual(Object.keys(body), ["calls"], "top level keys");
+  const body = request.body as { taskId: string; calls: Array<Record<string, unknown>> };
+  assert.deepEqual(Object.keys(body), ["taskId", "calls"], "top level keys");
+  assert.equal(body.taskId, "task-wire");
   const call = body.calls[0]!;
   assert.deepEqual(
     Object.keys(call).sort(),
@@ -89,12 +96,18 @@ test("startToolBatch emits exactly the keys the Go wire contract declares", asyn
   assert.deepEqual(Object.keys(call.function as object).sort(), ["arguments", "name"]);
 });
 
+test("executeTool includes the model task ID that owns the call ID", async () => {
+  const request = await captureBody((bridge) => bridge.executeTool(run, "task-wire", "call_4", undefined));
+  assert.equal(request.method, "POST");
+  assert.deepEqual(request.body, { taskId: "task-wire" });
+});
+
 test("startToolBatch forwards thoughtSignature when the upstream provides one", async () => {
   const withSignature: PiToolCall = {
     ...callFromModel("call_2", "canvas_get_state"),
     thoughtSignature: "sig-abc",
   };
-  const request = await captureBody((bridge) => bridge.startToolBatch(run, [withSignature], undefined));
+  const request = await captureBody((bridge) => bridge.startToolBatch(run, "task-wire", [withSignature], undefined));
   const call = (request.body as { calls: Array<Record<string, unknown>> }).calls[0]!;
   assert.equal(call.thoughtSignature, "sig-abc");
   // Go declares thoughtSignature too, so this key must not be dropped.
@@ -108,6 +121,7 @@ async function statusError(status: number, body = "{}"): Promise<Error> {
   try {
     await new CanvasBridge("http://backend:8080", "token", "worker-1").startToolBatch(
       run,
+      "task-wire",
       [callFromModel("call_3", "canvas_get_state")],
       undefined,
     );

@@ -114,7 +114,8 @@ type PiModelStepView struct {
 }
 
 type PiToolBatchRequest struct {
-	Calls []cloudAgentCall `json:"calls"`
+	TaskID string           `json:"taskId"`
+	Calls  []cloudAgentCall `json:"calls"`
 }
 
 type PiMessageCheckpoint struct {
@@ -601,7 +602,7 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	// 看图结果按参考素材水合：上下文里只有 `resource:<id>`，真实图片字节在**请求期**才进到
 	// referenceImages，不进检查点，也不要求上游能访问部署地址。
 	//
-	// 旧循环一直这么做（见 advanceCloudAgent 里的同一步骤），Pi 路径漏了它。后果是
+	// 迁移前 Go 组装器会先水合请求里的资源引用；Pi 路径曾漏掉它。后果是
 	// provider.go 的 resolveAgentResourcePlaceholders 扫到 canonical 里的 `resource:`
 	// 却在 referenceImages 里找不到白名单条目，直接 BadAuthRequest("模型协议引用了未获准的
 	// 图片") —— 也就是"看过图之后的下一步必然失败"。
@@ -610,7 +611,7 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	// 发请求之前调用（与旧路径同一位置）。
 	references, refErr := s.cloudAgentImageReferences(run.UserID, state.Request, &request.Canonical)
 	if refErr != nil {
-		// 与旧循环同一处理：水合失败按安全文案转成可见错误，由 worker 上报为运行失败，
+		// 水合失败按安全文案转成可见错误，由 worker 上报为运行失败，
 		// 不把资源 ID 或上游地址写进失败原因。
 		return nil, kernel.BadAuthRequest(cloudAgentSafeToolError(refErr))
 	}
@@ -862,8 +863,21 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	if err != nil {
 		return err
 	}
-	if len(state.Calls) > 0 && piSameCalls(state.Calls, batch.Calls) {
+	batch.TaskID = strings.TrimSpace(batch.TaskID)
+	if batch.TaskID == "" {
+		return BadAuthRequest("Pi 工具调用批次缺少模型步骤 ID")
+	}
+	if state.PiToolBatchTaskID == batch.TaskID && piSameCalls(state.Calls, batch.Calls) {
 		return nil
+	}
+	// Rolling upgrades can encounter a batch admitted by the old worker before
+	// PiToolBatchTaskID was added. Its source is unambiguous while LastStepTaskID
+	// still names that same model result; adopt it as an idempotent replay.
+	if state.PiToolBatchTaskID == "" && state.LastStepTaskID == batch.TaskID && len(state.Calls) > 0 && piSameCalls(state.Calls, batch.Calls) {
+		state.PiToolBatchTaskID = batch.TaskID
+		return s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			return cloudAgentSave(current, &state)
+		})
 	}
 	if state.ActiveTaskID != "" || state.CallIndex < len(state.Calls) || run.Status != "running" {
 		return kernel.Forbidden("Agent 尚有未完成的模型或工具步骤")
@@ -872,7 +886,10 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 		return BadAuthRequest("Pi 工具调用批次无效")
 	}
 	// The worker can only submit calls that the billed model step actually emitted.
-	modelTask, err := s.repo.TaskForUser(userID, state.LastStepTaskID)
+	if state.LastStepTaskID != batch.TaskID {
+		return kernel.Forbidden("Pi 工具批次与模型步骤不匹配")
+	}
+	modelTask, err := s.repo.TaskForUser(userID, batch.TaskID)
 	if err != nil {
 		return err
 	}
@@ -912,6 +929,7 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 		})
 	}
 	state.Calls = batch.Calls
+	state.PiToolBatchTaskID = batch.TaskID
 	state.CallIndex = 0
 	state.CallAdmissions = cloudAgentPreflightBatch(&state, batch.Calls)
 	state.CanvasBatchHashes = nil
@@ -938,7 +956,7 @@ func piSameCalls(left, right []cloudAgentCall) bool {
 	return true
 }
 
-func (s *Service) PiToolAdvance(userID, runID, owner, callID string) (*PiToolReceipt, error) {
+func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*PiToolReceipt, error) {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
 		// 终态转换会清除 session 租约。Pi worker 可能正好在终结后轮询
@@ -957,7 +975,14 @@ func (s *Service) PiToolAdvance(userID, runID, owner, callID string) (*PiToolRec
 	if err != nil {
 		return nil, err
 	}
-	if receipt := piToolReceipt(&state, callID); receipt != nil {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || state.PiToolBatchTaskID != taskID {
+		return nil, kernel.Forbidden("Pi 工具调用不属于当前模型步骤")
+	}
+	if !piToolBatchContainsCall(state.Calls, callID) {
+		return nil, kernel.Forbidden("Pi 工具调用顺序或标识无效")
+	}
+	if receipt := piToolReceipt(&state, taskID, callID); receipt != nil {
 		return receipt, nil
 	}
 	if state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].ID != callID {
@@ -983,7 +1008,7 @@ func (s *Service) PiToolAdvance(userID, runID, owner, callID string) (*PiToolRec
 	if err != nil {
 		return nil, err
 	}
-	if receipt := piToolReceipt(&updated, callID); receipt != nil {
+	if receipt := piToolReceipt(&updated, taskID, callID); receipt != nil {
 		return receipt, nil
 	}
 	if cloudAgentRunTerminal(latest.Status) {
@@ -992,8 +1017,15 @@ func (s *Service) PiToolAdvance(userID, runID, owner, callID string) (*PiToolRec
 	return &PiToolReceipt{CallID: callID, Pending: true}, nil
 }
 
-func piToolReceipt(state *cloudAgentRuntime, callID string) *PiToolReceipt {
-	for index := len(state.Canonical.Messages) - 1; index >= 0; index-- {
+func piToolReceipt(state *cloudAgentRuntime, taskID, callID string) *PiToolReceipt {
+	if state.PiToolBatchTaskID != taskID {
+		return nil
+	}
+	batchIndex := piToolAssistantBatchIndex(state.Canonical.Messages, callID)
+	if batchIndex < 0 {
+		return nil
+	}
+	for index := batchIndex + 1; index < len(state.Canonical.Messages); index++ {
 		message := state.Canonical.Messages[index]
 		if stringField(message, "role") != "tool" || stringField(message, "tool_call_id") != callID {
 			continue
@@ -1001,7 +1033,8 @@ func piToolReceipt(state *cloudAgentRuntime, callID string) *PiToolReceipt {
 		receipt := &PiToolReceipt{CallID: callID, Result: json.RawMessage(stringField(message, "content"))}
 		for eventIndex := len(state.Events) - 1; eventIndex >= 0; eventIndex-- {
 			event := state.Events[eventIndex]
-			if stringField(event.Payload, "callId") == callID {
+			eventTaskID := stringField(event.Payload, "taskId")
+			if stringField(event.Payload, "callId") == callID && (eventTaskID == "" || eventTaskID == taskID) {
 				receipt.IsError = event.Type == "tool_failed"
 				break
 			}
@@ -1009,6 +1042,36 @@ func piToolReceipt(state *cloudAgentRuntime, callID string) *PiToolReceipt {
 		return receipt
 	}
 	return nil
+}
+
+func piToolBatchContainsCall(calls []cloudAgentCall, callID string) bool {
+	for _, call := range calls {
+		if call.ID == callID {
+			return true
+		}
+	}
+	return false
+}
+
+func piToolAssistantBatchIndex(messages []map[string]any, callID string) int {
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := messages[index]
+		if stringField(message, "role") != "assistant" {
+			continue
+		}
+		encoded, err := json.Marshal(message["tool_calls"])
+		if err != nil {
+			continue
+		}
+		var calls []cloudAgentCall
+		if json.Unmarshal(encoded, &calls) != nil {
+			continue
+		}
+		if piToolBatchContainsCall(calls, callID) {
+			return index
+		}
+	}
+	return -1
 }
 
 func (s *Service) piAgentLeasedRun(userID, runID, owner string) (*model.CloudAgentExecution, error) {

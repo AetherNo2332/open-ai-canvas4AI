@@ -81,7 +81,7 @@ func startPiAgentFirstStep(t *testing.T, s *Service, runID string) (*model.Cloud
 	return run, state
 }
 
-func TestPiRunSnapshotCarriesFullToolsWhileFirstStepOnlySendsParents(t *testing.T) {
+func TestPiRunSnapshotAndFirstStepExposeEligibleConcreteTools(t *testing.T) {
 	s, _, args := agentMediaFixture(t)
 	run, _ := agentMediaRun(t, s, args, "auto")
 	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
@@ -103,8 +103,8 @@ func TestPiRunSnapshotCarriesFullToolsWhileFirstStepOnlySendsParents(t *testing.
 	_, state := reloadPiRun(t, s, run.ID)
 	first, _ := piFirstStepRequest(state)
 	firstNames := cloudAgentToolNames(first.Canonical.Tools)
-	if !containsToolName(firstNames, "agent_tools_canvas_edit") || containsToolName(firstNames, "canvas_apply_ops") {
-		t.Fatalf("first model request must expose parent types only: %v", firstNames)
+	if !containsToolName(firstNames, "canvas_apply_ops") || containsToolName(firstNames, "agent_tools_canvas_edit") {
+		t.Fatalf("first model request must expose concrete tools without category entries: %v", firstNames)
 	}
 }
 
@@ -117,7 +117,7 @@ func piFirstStepRequest(state *cloudAgentRuntime) (PiModelStepRequest, *cloudAge
 	}
 	canonical := state.Canonical
 	canonical.SystemPrompt = cloudAgentRenderTestPrompt(state.Canonical.SystemPrompt, parts)
-	// 首步只披露母工具：与 PiModelStep 的披露校验同一份算法。
+	// 首步暴露本轮所有合格的具体工具：与 PiModelStep 的披露校验同一份算法。
 	canonical.Tools = cloudAgentVisibleTools(state.Canonical.Tools, "", nil, nil)
 	return PiModelStepRequest{Canonical: canonical, HarnessHash: cloudAgentHarnessBodyDigest(parts), Harness: parts}, parts
 }

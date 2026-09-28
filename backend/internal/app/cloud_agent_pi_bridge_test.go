@@ -517,7 +517,7 @@ func TestPiToolBatchReplaySafety(t *testing.T) {
 	}
 
 	calls := []cloudAgentCall{piAgentTestCall("call-a", "finish_run", `{"summary":"done"}`)}
-	batch := PiToolBatchRequest{Calls: calls}
+	batch := PiToolBatchRequest{TaskID: taskID, Calls: calls}
 	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, batch); err != nil {
 		t.Fatalf("合法批次被拒绝: %v", err)
 	}
@@ -530,7 +530,7 @@ func TestPiToolBatchReplaySafety(t *testing.T) {
 		t.Fatalf("批次重放推进了 revision: %d -> %d", before.Revision, after.Revision)
 	}
 
-	tampered := PiToolBatchRequest{Calls: []cloudAgentCall{piAgentTestCall("call-a", "canvas_delete_node", `{"nodeId":"n1"}`)}}
+	tampered := PiToolBatchRequest{TaskID: taskID, Calls: []cloudAgentCall{piAgentTestCall("call-a", "canvas_delete_node", `{"nodeId":"n1"}`)}}
 	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, tampered); err == nil {
 		t.Fatal("与模型结果不一致的批次被接受")
 	}
@@ -562,10 +562,10 @@ func TestPiFinishRunPublishesOneFinalReply(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{Calls: []cloudAgentCall{call}}); err != nil {
+	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{TaskID: taskID, Calls: []cloudAgentCall{call}}); err != nil {
 		t.Fatalf("Pi finish_run 批次被拒绝: %v", err)
 	}
-	receipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, call.ID)
+	receipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, taskID, call.ID)
 	if err != nil {
 		t.Fatalf("Pi finish_run 执行失败: %v", err)
 	}
@@ -612,10 +612,10 @@ func TestPiFinishRunIsBlockedByPendingPlan(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{Calls: []cloudAgentCall{call}}); err != nil {
+	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{TaskID: taskID, Calls: []cloudAgentCall{call}}); err != nil {
 		t.Fatalf("Pi finish_run 批次被拒绝: %v", err)
 	}
-	receipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, call.ID)
+	receipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, taskID, call.ID)
 	if err != nil {
 		t.Fatalf("Pi finish_run 阻塞判定失败: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestPiToolBatchRejectsCallsAfterUnsupportedStopReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PiToolBatch("user", run.ID, leased.LeaseOwner, PiToolBatchRequest{Calls: []cloudAgentCall{call}}); err == nil {
+	if err := s.PiToolBatch("user", run.ID, leased.LeaseOwner, PiToolBatchRequest{TaskID: taskID, Calls: []cloudAgentCall{call}}); err == nil {
 		t.Fatal("拒答终止原因下仍接受了 finish_run 工具调用")
 	}
 	current, state := reloadPiRun(t, s, run.ID)
@@ -707,31 +707,110 @@ func TestPiToolAdvanceOrderAndReceiptReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{Calls: []cloudAgentCall{
+	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{TaskID: taskID, Calls: []cloudAgentCall{
 		piAgentTestCall("call-1", "canvas_list_node_types", "{}"),
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, "call-unknown"); err == nil {
+	if _, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, taskID, "call-unknown"); err == nil {
 		t.Fatal("未知 callId 被接受")
 	}
 
-	first, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, "call-1")
+	first, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, taskID, "call-1")
 	if err != nil {
 		t.Fatalf("首个工具推进失败: %v", err)
 	}
 	if first.Pending || first.CallID != "call-1" {
 		t.Fatalf("首个回执不完整: %+v", first)
 	}
-	replayed, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, "call-1")
+	replayed, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, taskID, "call-1")
 	if err != nil {
 		t.Fatalf("回执重放失败: %v", err)
 	}
 	if string(replayed.Result) != string(first.Result) {
 		t.Fatalf("重放回执内容不一致: %s vs %s", replayed.Result, first.Result)
 	}
-	if _, err := s.PiToolAdvance("user", run.ID, "worker-b", "call-1"); err == nil {
+	if _, err := s.PiToolAdvance("user", run.ID, "worker-b", taskID, "call-1"); err == nil {
 		t.Fatal("错误 owner 的推进被接受")
+	}
+}
+
+func TestPiToolReceiptsAreScopedToTheirModelStepWhenCallIDsRepeat(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	const firstTaskID = "pi-reused-call-step-1"
+	firstCall := piAgentTestCall("reused-call", "canvas_list_node_types", "{}")
+	firstResult, err := json.Marshal(map[string]any{
+		"toolCalls": []cloudAgentCall{firstCall}, "stopReasonKind": cloudAgentStopKindStop,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Task{ID: firstTaskID, UserID: "user", ProjectID: run.CanvasID, Type: "canvas_text",
+		Status: model.TaskStatusSucceeded, ResultJSON: string(firstResult)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.LastStepTaskID = firstTaskID
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{TaskID: firstTaskID, Calls: []cloudAgentCall{firstCall}}); err != nil {
+		t.Fatalf("首个工具批次失败: %v", err)
+	}
+	firstReceipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, firstTaskID, firstCall.ID)
+	if err != nil || firstReceipt.Pending {
+		t.Fatalf("首个工具执行失败: receipt=%+v err=%v", firstReceipt, err)
+	}
+
+	// 同一 provider 在下一轮复用了 call ID，但请求的是另一个工具和参数。
+	// 第二批的合法回执必须来自第二批执行结果，不能复用第一轮的旧消息。
+	const secondTaskID = "pi-reused-call-step-2"
+	secondCall := piAgentTestCall("reused-call", "canvas_get_state", "{}")
+	secondResult, err := json.Marshal(map[string]any{
+		"toolCalls": []cloudAgentCall{secondCall}, "stopReasonKind": cloudAgentStopKindStop,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Task{ID: secondTaskID, UserID: "user", ProjectID: run.CanvasID, Type: "canvas_text",
+		Status: model.TaskStatusSucceeded, ResultJSON: string(secondResult)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	latest, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.MutateCloudAgent("user", run.ID, latest.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.LastStepTaskID = secondTaskID
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{TaskID: secondTaskID, Calls: []cloudAgentCall{secondCall}}); err != nil {
+		t.Fatalf("第二个工具批次不应被旧批次挡住: %v", err)
+	}
+	if _, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, firstTaskID, secondCall.ID); err == nil {
+		t.Fatal("旧模型步骤仍能推进复用 call ID 的新工具")
+	}
+	secondReceipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, secondTaskID, secondCall.ID)
+	if err != nil || secondReceipt.Pending {
+		t.Fatalf("第二个工具执行失败: receipt=%+v err=%v", secondReceipt, err)
+	}
+	if string(secondReceipt.Result) == string(firstReceipt.Result) {
+		t.Fatalf("复用 call ID 返回了旧步骤回执: first=%s second=%s", firstReceipt.Result, secondReceipt.Result)
+	}
+	replayed, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, secondTaskID, secondCall.ID)
+	if err != nil || string(replayed.Result) != string(secondReceipt.Result) {
+		t.Fatalf("当前模型步骤回执重放不稳定: replay=%+v first=%+v err=%v", replayed, secondReceipt, err)
 	}
 }
 
@@ -1053,21 +1132,21 @@ func TestPiToolAdvanceIsReplaySafeAfterCrash(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{Calls: []cloudAgentCall{
+	if err := s.PiToolBatch("user", run.ID, run.LeaseOwner, PiToolBatchRequest{TaskID: taskID, Calls: []cloudAgentCall{
 		piAgentTestCall("crash-call", "canvas_list_node_types", "{}"),
 	}}); err != nil {
 		t.Fatal(err)
 	}
 
 	// 第一次推进：副作用与回执在同一个 MutateCloudAgent 事务里提交。
-	first, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, "crash-call")
+	first, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, taskID, "crash-call")
 	if err != nil || first.Pending {
 		t.Fatalf("首次推进失败: receipt=%+v err=%v", first, err)
 	}
 	afterFirstRun, afterFirstState := reloadPiRun(t, s, run.ID)
 
 	// 模拟"回执已提交、但 worker 没收到响应"后的重投：必须返回同一回执。
-	replayed, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, "crash-call")
+	replayed, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, taskID, "crash-call")
 	if err != nil {
 		t.Fatalf("重投失败: %v", err)
 	}
@@ -1121,7 +1200,7 @@ func TestPiToolAdvanceSignalsTerminationInsteadOfPending(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		receipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, "term-call")
+		receipt, err := s.PiToolAdvance("user", run.ID, run.LeaseOwner, taskID, "term-call")
 		if err != nil {
 			t.Fatalf("status=%s 推进报错: %v", status, err)
 		}

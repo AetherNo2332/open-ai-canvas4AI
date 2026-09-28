@@ -725,11 +725,6 @@
     .agent-welcome-actions button {
         padding-inline: var(--space-2);
     }
-    /* 窄面板把公共轴收细，星标与左轨仍压在同一条线上，不吃正文宽度。 */
-    .agent-conversation-messages {
-        --agent-axis: 16px;
-        --agent-activity-inset: var(--space-1);
-    }
 }
 
 @media (max-width: 639px) {

@@ -19,7 +19,7 @@ import {
   type SessionCompactFailedEvent,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "./bridge.js";
+import { CanvasBridge, CanvasModelRetry, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
@@ -262,14 +262,15 @@ async function recoverToolResults(
   // paired result; do not submit a synthetic call to Go or execute any tool.
   const executableCalls = calls.filter((call) => !call.function.name.startsWith("agent_tools_"));
   const admissionError = batchAdmissionError(disclosure, executableCalls);
-  if (!admissionError && executableCalls.length > 0) await bridge.startToolBatch(snapshot, executableCalls, signal);
+  const taskId = snapshot.lastTaskId || "";
+  if (!admissionError && executableCalls.length > 0) await bridge.startToolBatch(snapshot, taskId, executableCalls, signal);
   for (const call of calls) {
     if (completed.has(call.id)) continue;
     const legacyCategory = call.function.name.startsWith("agent_tools_");
     const receipt = legacyCategory
       ? { result: "旧版工具分类入口已完成兼容，不执行业务操作。请直接使用当前工具表中的具体工具。" }
       : admissionError ? { result: admissionError, isError: true } :
-      await bridge.executeTool(snapshot, call.id, signal);
+      await bridge.executeTool(snapshot, taskId, call.id, signal);
     const result: ToolResultMessage = { role: "toolResult", toolCallId: call.id, toolName: call.function.name,
       content: [{ type: "text",
         text: typeof receipt.result === "string" ? receipt.result : JSON.stringify(receipt.result) }],
@@ -312,6 +313,12 @@ async function resumePoint(
     return { entries, prompt, activeLeafId: snapshot.pendingContextCompaction.activeLeafId };
   }
   await recoverToolResults(bridge, snapshot, history, disclosure, checkpoint, signal);
+
+  if (!snapshot.activeTaskId && snapshot.lastTaskId === snapshot.modelFailureTaskId && snapshot.modelFailureNudge) {
+    const entries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
+    return { entries: entries.length ? entries : sessionEntriesFromMessages(snapshot.runId, history),
+      prompt: snapshot.modelFailureNudge, activeLeafId: snapshot.piActiveLeafId };
+  }
 
   const storedEntries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
   if (storedEntries.length > 0) {
@@ -471,6 +478,8 @@ async function bootstrapSession(
     if (!resolved) throw new FatalWorkerError("canvas provider model did not resolve");
 
     const settingsManager = SettingsManager.create(workspace.cwd, workspace.agentDir);
+    // Retry admission, billing and escalation are governed by Go's persisted policy.
+    settingsManager.setRetryEnabled(false);
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspace.cwd, agentDir: workspace.agentDir, settingsManager,
       // 隔离运行：不加载扩展、技能、模板、主题与任何磁盘上下文文件。
@@ -543,6 +552,7 @@ export async function runCanvasAgent(
   const persistedSessionEntryIds = new Set((snapshot.piSessionEntries || []).map(({ entry }) => String(entry.id || "")));
   const stagedRecoveryEntries: SessionEntry[] = [];
   let activeTaskId = "";
+  let activeToolBatchTaskId = snapshot.lastTaskId || "";
   let latestTaskId = "";
   let noToolTurnPending = false;
   let admittedCallIds = new Set<string>();
@@ -634,16 +644,17 @@ export async function runCanvasAgent(
     }
   };
 
-  const disclosure = new SessionToolDisclosure(snapshot.tools, async (name, _args, callId, signal) => {
+  const disclosure = new SessionToolDisclosure(snapshot.tools, async (_name, _args, callId, signal) => {
     // 屏障：assistant 消息（含 tool_calls）必须先落库，Go 才会接受这一批工具调用。
     await queue.drain();
     if (!admittedCallIds.has(callId)) throw new Error(batchRejection || "Tool batch was not admitted");
-    const receipt = await bridge.executeTool(snapshot, callId, signal);
+    if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
+    const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
     const refreshed = await bridge.snapshot(snapshot, signal);
     for (const message of refreshed.canonical.messages.slice(canonicalCount)) {
       // 插话里的图片要直接进会话，不能等下一次模型步骤才补（见旧实现的 steer 分支）。
       if (message.role === "user" && hasImagePart(message.content)) {
-        await session?.steer(JSON.stringify(message.content)).catch(() => undefined);
+        session?.agent.steer(canvasUserMessage(message.content));
       }
     }
     canonicalCount = refreshed.canonical.messages.length;
@@ -651,20 +662,26 @@ export async function runCanvasAgent(
     syncPendingInterjections(refreshed);
     await steerPendingInterjections();
     return { result: receipt.result, isError: receipt.isError,
-      terminate: receipt.terminated === true || (name === "finish_run" && !receipt.isError) };
+      terminate: receipt.terminated === true || isTerminalRunStatus(refreshed.status) };
   }, snapshot.previousStepTemplate);
   // Old snapshots may still carry openedCategories. They are informational
   // migration state only; all eligible concrete tools are available each run.
 
   // Provider：Pi 的每次模型请求都翻成 Go 的模型步骤（带上提示合同身份）。
+  let modelRetry: PiTurnDecision | undefined;
   const streamSimple = createCanvasStreamFn(async ({ messages, signal, onTextDelta }) => {
     await queue.drain();
     if (compactionFailure !== undefined) throw compactionFailure;
     const canonical = toCanonical(messages as Message[], snapshot.canonical.promptCacheKey);
     canonical.tools = disclosure.decorateCanonicalTools(canonical.tools);
-    const step = await bridge.modelStep(snapshot, canonical, signal, onTextDelta, promptContract, parts);
-    activeTaskId = latestTaskId = step.taskId;
-    return step.result;
+    try {
+      const step = await bridge.modelStep(snapshot, canonical, signal, onTextDelta, promptContract, parts);
+      activeTaskId = latestTaskId = step.taskId;
+      return step.result;
+    } catch (error) {
+      if (error instanceof CanvasModelRetry) modelRetry = error.decision;
+      throw error;
+    }
   });
 
   const resume = await resumePoint(bridge, snapshot, model, disclosure, checkpoint, shutdown);
@@ -715,6 +732,7 @@ export async function runCanvasAgent(
       if (message.role === "assistant") {
         activeTaskId = "";
         const calls = callsFromAssistant(message);
+        activeToolBatchTaskId = calls.length ? taskId || snapshot.lastTaskId || "" : "";
         noToolTurnPending = calls.length === 0;
         batchRejection = calls.length ? batchAdmissionError(disclosure, calls) || "" : "";
         admittedCallIds = new Set(batchRejection ? [] : calls.map((call) => call.id));
@@ -727,7 +745,10 @@ export async function runCanvasAgent(
           // 两者同队列，因此顺序就是入队顺序：先检查点，再批次准入。反之每一个工具批次
           // 都会以 403 失败，而 worker 把确定性 4xx 当致命错误 —— 整轮直接退出。
           queue.enqueue(async () => { await checkpoint(message as unknown as AgentMessage, taskId); });
-          queue.enqueue(async () => { await bridge.startToolBatch(snapshot, batch, shutdown); });
+          queue.enqueue(async () => {
+            if (!taskId) throw new FatalWorkerError("Pi assistant tool call is missing its model task ID");
+            await bridge.startToolBatch(snapshot, taskId, batch, shutdown);
+          });
           return;
         }
       }
@@ -785,6 +806,11 @@ export async function runCanvasAgent(
         syncPendingInterjections(snapshot);
         canonicalCount = snapshot.canonical.messages.length;
         if (listenerFailure !== undefined || isTerminalRunStatus(snapshot.status)) break;
+        if (modelRetry?.nudge) {
+          prompt = prependPendingInterjections(modelRetry.nudge);
+          modelRetry = undefined;
+          continue;
+        }
         // 收尾判定：只有"最后一个模型步骤没有工具调用"才轮到 Go 决定完成还是追加提示。
         if (!noToolTurnPending || !latestTaskId) break;
         noToolTurnPending = false;

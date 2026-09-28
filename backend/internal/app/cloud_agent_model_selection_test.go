@@ -166,7 +166,7 @@ func TestCloudAgentMediaToolsDeclareExclusiveModelSelection(t *testing.T) {
 func TestCloudAgentMissingModelCreatesNoDraftApprovalOrTask(t *testing.T) {
 	s, db, args := agentMediaFixture(t)
 	args.ChannelID, args.ChannelModelKey = "", ""
-	run, _ := agentMediaRun(t, s, args, "auto")
+	run, _ := queuePiMediaToolForTest(t, s, db, args, "auto")
 	canvas, _ := s.repo.CanvasProjectForUser("user", "agent-canvas")
 	var before int64
 	if err := db.Model(&model.Task{}).Count(&before).Error; err != nil {
@@ -176,7 +176,7 @@ func TestCloudAgentMissingModelCreatesNoDraftApprovalOrTask(t *testing.T) {
 	if err := db.Model(&model.BillingOrder{}).Count(&billingBefore).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)

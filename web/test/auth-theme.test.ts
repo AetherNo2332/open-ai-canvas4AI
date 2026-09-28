@@ -33,9 +33,10 @@ describe("authentication follows the application theme", () => {
         expect(scene).not.toContain("auth-card-dark");
         expect(scene.match(/<main className="([^"]+)"/)?.[1]).not.toContain("text-white");
         expect(scene).toContain("auth-scene-hero");
-        // 上游语义：登录页 Logo 跟随应用主题（<BrandLogo theme={theme}）；我方语义：认证页英雄区是固定的深色影片/海报底，
-        // 品牌标识固定用深色变体 theme="dark"（web/test/appearance-bootstrap.test.ts:79 锁定的我方契约），故取我方语义。
-        expect(scene).toContain('<BrandLogo theme="dark"');
+        // The hero surface uses theme-specific --auth-panel-bg and --foreground,
+        // including when no poster/video exists; its logo must follow that theme.
+        expect(scene).toContain("useThemeStore((state) => state.theme)");
+        expect(scene).toContain("<BrandLogo theme={theme}");
         expect(source("components/layout/app-providers.tsx")).toContain("getAntThemeConfig(dark, appearance.activeSkin)");
     });
 

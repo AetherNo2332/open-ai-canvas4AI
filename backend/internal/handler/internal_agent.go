@@ -178,11 +178,12 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		ok(c, gin.H{"acknowledged": true})
 	})
 	group.POST("/runs/:id/model-steps/:taskId/fail", func(c *gin.Context) {
-		if err := svc.PiFailModelStep(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), c.Param("taskId")); err != nil {
+		decision, err := svc.PiFailModelStepResult(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), c.Param("taskId"))
+		if err != nil {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"failed": true})
+		ok(c, decision)
 	})
 	group.POST("/runs/:id/tool-batches", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
@@ -215,7 +216,17 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		ok(c, gin.H{"failed": true})
 	})
 	group.POST("/runs/:id/tool-calls/:callId/advance", func(c *gin.Context) {
-		receipt, err := svc.PiToolAdvance(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), c.Param("callId"))
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+		var input struct {
+			TaskID string `json:"taskId"`
+		}
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&input) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+			c.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+		receipt, err := svc.PiToolAdvance(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), input.TaskID, c.Param("callId"))
 		if err != nil {
 			failService(c, err)
 			return

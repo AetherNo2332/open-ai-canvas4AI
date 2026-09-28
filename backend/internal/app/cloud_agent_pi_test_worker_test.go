@@ -69,6 +69,12 @@ func agentStartPiModelStep(t *testing.T, s *Service, runID string) (*model.Cloud
 	return agentInterjectionState(t, s, runID)
 }
 
+func agentPiToolTaskID(t *testing.T, s *Service, runID string) string {
+	t.Helper()
+	_, state := agentInterjectionState(t, s, runID)
+	return firstNonEmpty(state.PiToolBatchTaskID, state.LastStepTaskID)
+}
+
 func agentPiCheckpointForTest(t *testing.T, s *Service, runID, taskID string, message map[string]any, interjectionIDs []string) {
 	t.Helper()
 	run, _ := agentInterjectionState(t, s, runID)
@@ -182,7 +188,7 @@ func agentStagePiOutputForTest(t *testing.T, s *Service, db *gorm.DB, runID, tex
 	if len(calls) == 0 {
 		return agentInterjectionState(t, s, runID)
 	}
-	if err := s.PiToolBatch("user", runID, run.LeaseOwner, PiToolBatchRequest{Calls: calls}); err != nil {
+	if err := s.PiToolBatch("user", runID, run.LeaseOwner, PiToolBatchRequest{TaskID: state.ActiveTaskID, Calls: calls}); err != nil {
 		t.Fatalf("Pi tool batch: %v", err)
 	}
 	return agentInterjectionState(t, s, runID)
@@ -190,8 +196,9 @@ func agentStagePiOutputForTest(t *testing.T, s *Service, db *gorm.DB, runID, tex
 
 func agentPiExecuteCallForTest(t *testing.T, s *Service, runID, callID string) error {
 	t.Helper()
-	run, _ := agentInterjectionState(t, s, runID)
-	receipt, err := s.PiToolAdvance("user", runID, run.LeaseOwner, callID)
+	run, state := agentInterjectionState(t, s, runID)
+	taskID := firstNonEmpty(state.PiToolBatchTaskID, state.LastStepTaskID)
+	receipt, err := s.PiToolAdvance("user", runID, run.LeaseOwner, taskID, callID)
 	if err != nil || receipt == nil {
 		return err
 	}
@@ -199,7 +206,7 @@ func agentPiExecuteCallForTest(t *testing.T, s *Service, runID, callID string) e
 		return nil
 	}
 	var call cloudAgentCall
-	run, state := agentInterjectionState(t, s, runID)
+	run, state = agentInterjectionState(t, s, runID)
 	for _, candidate := range state.Calls {
 		if candidate.ID == callID {
 			call = candidate
@@ -263,14 +270,14 @@ func advancePiAgentForTest(t *testing.T, s *Service, runID string) error {
 		}
 		agentPiCheckpointForTest(t, s, runID, task.ID, map[string]any{"role": "assistant", "content": content}, nil)
 		if len(result.ToolCalls) > 0 && cloudAgentStepStopDisposition(&state, result.StopReasonKind) == cloudAgentStepDispositionAccept {
-			return s.PiToolBatch("user", runID, run.LeaseOwner, PiToolBatchRequest{Calls: result.ToolCalls})
+			return s.PiToolBatch("user", runID, run.LeaseOwner, PiToolBatchRequest{TaskID: task.ID, Calls: result.ToolCalls})
 		}
 		_, err = s.PiNoToolTurn("user", runID, run.LeaseOwner, task.ID)
 		return err
 	}
 	if state.CallIndex < len(state.Calls) {
 		call := state.Calls[state.CallIndex]
-		receipt, err := s.PiToolAdvance("user", runID, run.LeaseOwner, call.ID)
+		receipt, err := s.PiToolAdvance("user", runID, run.LeaseOwner, state.PiToolBatchTaskID, call.ID)
 		if err == nil && receipt != nil && !receipt.Pending && !receipt.Terminated {
 			latest, _ := agentInterjectionState(t, s, runID)
 			if !cloudAgentRunTerminal(latest.Status) {
