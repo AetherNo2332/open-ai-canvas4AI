@@ -25,6 +25,7 @@
 - Web `bun run typecheck` 通过；完整 `bun test` 2108/2108 通过，271 个文件、11767 个断言；Vite/Docker 生产构建通过。
 - `CGO_ENABLED=1 go test ./internal/app -count=1 -timeout 12m` 通过，用时 452.941 秒；Pi 定向测试与 `internal/handler` 全量测试通过。当前 CGO/GCC 可用，CGO 环境不是阻塞。
 - 本机 Compose 3000 已更新 backend、agent、web；readiness `ready=true`、schema 42/42，admin/session、capabilities 与只读 system-channel API 均 200。badge 已存在于实际 served JS/CSS。Computer Use GUI 前端服务失败，未完成视觉检查与完整 UI 交互测试。
+- 代码已提交 `8c58d0ca` 至 `codex/pi-agent-migration`，PR [#58](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/58) 指向 `canary`，GitHub 显示 OPEN/CLEAN；按用户要求带 `[skip ci]`，没有 CI 检查运行。
 
 ## 接手顺序
 

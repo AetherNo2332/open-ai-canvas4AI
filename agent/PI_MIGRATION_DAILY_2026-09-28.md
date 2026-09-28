@@ -147,4 +147,4 @@
 - 以真实上游渠道验证流式正文/推理、厂商 usage、模型停止原因与重试；覆盖看图、媒体生成、审批与结算。当前仅做了无模型 API smoke test，没有产生付费任务。
 - 补 PostgreSQL schema/会话存储、不同账号并行隔离、多 worker lease 抢占、跨进程崩溃恢复、模型步骤/工具写入/计费 exactly-once 组合故障注入，以及 SSE 断线续传。
 - 继续验证旧历史数据导入、历史会话转 Pi entries、旧版本完成记录续聊；补带 commit 与 buildTime 的可追溯容器镜像元数据。
-- 本轮将以 topic branch 提交到 GitHub PR，目标为 `canary`；本地分支含有此前相对 `origin/canary` 的迁移提交。PR 继续遵从用户先前的跳过 CI 要求；提交前后均检查暂存范围，禁止加入 `.env*`、本机数据/备份或认证材料。
+- 本轮提交为 `8c58d0ca`，topic branch `codex/pi-agent-migration`，PR [#58](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/58) 目标为 `canary`，GitHub 状态 `OPEN` / mergeable `CLEAN`。提交消息包含 `[skip ci]`，没有启动 CI。PR 包含此前本地迁移提交及本轮的 116 文件增量；未纳入 `.env*`、本机数据/备份或认证材料。

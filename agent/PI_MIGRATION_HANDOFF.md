@@ -240,4 +240,4 @@ cd ../agent && npm test                                        # ~90-100s
 - 已按用户授权仅重建本机 `canvas-canary-3000` 的 backend/agent/web，保留 SQLite 数据卷；重建前备份并验证 `integrity_check=ok`。3000 首页、readiness、管理员登录/session、agent capabilities 和只读渠道接口均成功。没有请求上游模型或产生费用。
 - 侧栏品牌名称后已有黄色底黑字无衬线 `canary` badge，专用前端测试通过，生产构建的实际 nginx JS/CSS 中也能找到标记。Computer Use 本轮不可用，因此 GUI 视觉和完整交互尚未验收；不得声称已验证。
 - 尚需验收真实供应商流与 usage/stop 语义、媒体和审批后结算、PostgreSQL、不同用户并行/隔离、双 worker lease 抢占与跨进程故障恢复、计费与画布副作用 exactly-once、历史消息转换及 SSE 断线续传。实现接近完整不代表这些外部组合已经通过。
-- 本地工作基于 `origin/canary` 创建 topic 分支以便 PR 指向 `canary`；按用户先前指示跳过 CI，提交消息带 `[skip ci]`。继续提交前检查 Git status 和已暂存 diff，禁止加入 `.env*`、本机数据/备份或认证材料。
+- 已提交 `8c58d0ca` 到 `codex/pi-agent-migration`，并打开 PR [#58](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/58) → `canary`。GitHub 当前显示 `OPEN` / mergeable `CLEAN`，检查项为空（按用户先前要求跳过 CI）。工作区没有未提交文件；后续在此分支新增修复时仍须检查 diff，禁止加入 `.env*`、本机数据/备份或认证材料。
