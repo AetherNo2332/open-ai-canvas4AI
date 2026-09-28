@@ -452,6 +452,115 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 	})
 }
 
+// CreateCloudAgentHoldingTask 是"建 run"的唯一写入口：占位任务、报价预留与执行记录
+// 必须一起提交。分两次写会留下两种孤儿状态 —— 运行可见但没有预留（用户看到在跑，账上没记），
+// 或预留已扣但没有运行（钱被冻住，没有任何一方会去退）。
+//
+// 占位任务的状态是 holding（见 model.TaskStatusHolding）：worker 的领取条件只匹配
+// queued/running，所以它永远不会被执行；它唯一的作用是让"这一轮的报价"有一个可退的载体。
+func (r *Repository) CreateCloudAgentHoldingTask(task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
+			return err
+		}
+		if err := enforceActiveTaskLimit(tx, task.UserID, activeTaskLimit); err != nil {
+			return err
+		}
+		if err := reserveBillingOrder(tx, order); err != nil {
+			return err
+		}
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		repo := New(tx)
+		if err := repo.EnsureCloudAgent(run); err != nil {
+			return err
+		}
+		return repo.AttachCloudAgentPiSession(run)
+	})
+}
+
+// SwapCloudAgentHoldingForFirstStep 在**调用方的事务里**把占位预留换成真实首步任务：
+// 退还占位订单 → 预留首步报价 → 落库首步任务行。
+//
+// 它刻意不自开事务：首步任务必须与"运行检查点从 awaiting_first_step 推进到已派发"
+// 同一个事务提交。否则崩溃窗口会重新出现 —— 任务在队列里，而运行还以为自己在等首步，
+// 下一次投递就会再创建一遍（重复计费）。
+func (r *Repository) SwapCloudAgentHoldingForFirstStep(task *model.Task, order *model.BillingOrder, placeholderOrderID string, activeTaskLimit int) error {
+	if err := r.requireActiveLogicalModelForTask(r.db, task); err != nil {
+		return err
+	}
+	if err := enforceActiveTaskLimit(r.db, task.UserID, activeTaskLimit); err != nil {
+		return err
+	}
+	if strings.TrimSpace(placeholderOrderID) != "" {
+		if err := refundBillingOrder(r.db, placeholderOrderID, "Agent 首步占位预留退还"); err != nil {
+			return err
+		}
+	}
+	if err := reserveBillingOrder(r.db, order); err != nil {
+		return err
+	}
+	return r.db.Create(task).Error
+}
+
+// RefundCloudAgentHoldingOrder 在**调用方的事务里**退还占位任务承载的报价预留。
+//
+// 它只做资金动作：占位行是不是本轮的那一条、操作名对不对，由调用方在读出该行时校验
+// （见 app 侧 cloudAgentHoldingTaskFrom）。仓储不认识 Agent 的运行标识，把那条判断放这里
+// 只会让仓储反向依赖业务常量。
+//
+// 幂等：已经被首步换单退过的订单在这里是 no-op（refundBillingOrder 见 status 直接返回），
+// 所以"换单成功后又被清扫补做一次收尾"不会退两次钱。
+// HoldingTaskForRun 按运行标识找它的占位任务（找不到返回 nil, nil）。
+//
+// 为什么按"行 + 操作名"找，而不是让调用方解码 StateJSON 取字段：收尾路径必须能在
+// 状态无法解码时照样退钱。占位行与执行记录由"建 run"同一笔事务写下、操作名独一无二，
+// 它本身就是"这一轮压着一笔预留"的证据，不需要再问状态。
+func (r *Repository) HoldingTaskForRun(userID, runID, operation string) (*model.Task, error) {
+	if strings.TrimSpace(runID) == "" || strings.TrimSpace(operation) == "" {
+		return nil, nil
+	}
+	var task model.Task
+	err := r.db.Where("id = ? AND user_id = ? AND operation = ? AND status = ?",
+		runID, userID, operation, model.TaskStatusHolding).First(&task).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (r *Repository) RefundCloudAgentHoldingOrder(task *model.Task, note string) error {
+	if task == nil {
+		return errors.New("agent holding task is missing")
+	}
+	if strings.TrimSpace(task.BillingOrderID) == "" {
+		// 静默返回会让"占位预授权没有被退"看起来像"已经退过"，钱就留在冻结里没人认领。
+		// 缺订单号只可能是上游写坏了（占位任务必须承载预留），因此必须显式失败。
+		return errors.New("agent holding task has no billing reservation")
+	}
+	return refundBillingOrder(r.db, task.BillingOrderID, note)
+}
+
+// PendingCloudAgentCleanups 返回"已终态但清理未完成"的 Pi 运行，供看门狗补做收尾。
+//
+// 为什么需要它：清扫（租约停滞、从未领取）只把运行写进终态并置 CleanupPending，
+// 真正退预留、取消子任务的是 finishCloudAgentCleanup。此前只有 HTTP 取消会调用它，
+// 于是被看门狗停掉的运行会把占位预留永远冻在账上。
+func (r *Repository) PendingCloudAgentCleanups(limit int) ([]model.CloudAgentExecution, error) {
+	if limit < 1 || limit > 50 {
+		limit = 50
+	}
+	var runs []model.CloudAgentExecution
+	err := r.db.Where("engine = ? AND cleanup_pending = ? AND status IN ?", "pi", true,
+		[]string{"completed", "failed", "cancelled", "rejected"}).
+		Order("updated_at").Limit(limit).Find(&runs).Error
+	return runs, err
+}
+
 func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
@@ -746,6 +855,15 @@ func (r *Repository) MarkBillingUncertain(id string, errorText string) error {
 		Updates(map[string]any{"status": model.BillingStatusUncertain, "error": errorText, "updated_at": time.Now()}).Error
 }
 
+// SettleBillingOrder finalizes a reservation exactly once.
+//
+// Concurrency: the order's conditional state transition is the FIRST write of the
+// transaction and the only settlement gate. Two connections that both observed a
+// non-terminal order can therefore not both proceed: the loser's UPDATE matches no
+// row (RowsAffected == 0) because the winner already committed `settled`. Ordering
+// matters — doing the credit-account update first (as this function used to) is only
+// accidentally safe when the account happens to hold no other reservations, because
+// `reserved_microcredits >= reserved` can still match after a first settlement.
 func (r *Repository) SettleBillingOrder(id string, providerRequestID string) error {
 	var observedUsage *BillingUsage
 	var observedUsageSource string
@@ -767,6 +885,29 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 				return err
 			}
 		}
+
+		// 只读阶段：先把最终金额、usage 与流水文案算完，再做本事务的第一次写入。
+		now := time.Now()
+		orderUpdates := map[string]any{
+			"status":     model.BillingStatusSettled,
+			"settled_at": &now,
+			"updated_at": now,
+		}
+		if providerRequestID != "" {
+			orderUpdates["provider_request_id"] = providerRequestID
+		}
+
+		var (
+			actual        int64
+			refund        int64
+			supplement    int64
+			reserved      int64
+			chargeCapped  bool
+			consumeNote   string
+			accountUpdate map[string]any
+			ledgerDelta   int64 // AvailableDeltaMicrocredits of the consume entry
+		)
+
 		if order.BillingMode == "token" && !zeroPricedTokenOrder(order) {
 			usage, usageSource, err := tokenSettlementUsage(tx, order)
 			if err != nil {
@@ -774,51 +915,23 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 			}
 			observedUsage = usage
 			observedUsageSource = usageSource
-			reserved := order.ReservedAmountMicrocredits
+			reserved = order.ReservedAmountMicrocredits
 			if reserved <= 0 {
 				reserved = order.AmountMicrocredits
 			}
-			actual, err := tokenUsageAmount(order, usage)
+			actual, err = tokenUsageAmount(order, usage)
 			if err != nil {
 				return err
 			}
-			chargeCapped := billingChargeLimitApplies(order) && actual > order.ChargeLimitMicrocredits
+			chargeCapped = billingChargeLimitApplies(order) && actual > order.ChargeLimitMicrocredits
 			if chargeCapped {
 				actual = order.ChargeLimitMicrocredits
 			}
 			observedActual = actual
 			observedActualAvailable = true
-			refund := max(reserved-actual, int64(0))
-			supplement := max(actual-reserved, int64(0))
-			updated := tx.Model(&model.CreditAccount{}).
-				Where("user_id = ? AND reserved_microcredits >= ?", order.UserID, reserved).
-				Updates(map[string]any{
-					"available_microcredits": gorm.Expr("available_microcredits + ?", refund-supplement),
-					"reserved_microcredits":  gorm.Expr("reserved_microcredits - ?", reserved),
-					"version":                gorm.Expr("version + 1"), "updated_at": time.Now(),
-				})
-			if updated.Error != nil {
-				return updated.Error
-			}
-			if updated.RowsAffected != 1 {
-				return errors.New("reserved credit balance is inconsistent")
-			}
-			var account model.CreditAccount
-			if err := tx.First(&account, "user_id = ?", order.UserID).Error; err != nil {
-				return err
-			}
-			now := time.Now()
-			updates := map[string]any{"status": model.BillingStatusSettled, "settled_at": &now, "updated_at": now,
-				"actual_amount_microcredits": actual, "refunded_amount_microcredits": refund,
-				"input_tokens": usage.InputTokens, "output_tokens": usage.OutputTokens, "cached_tokens": usage.CachedTokens,
-				"usage_available": usageSource == billingUsageSourceProvider, "usage_source": usageSource}
-			if providerRequestID != "" {
-				updates["provider_request_id"] = providerRequestID
-			}
-			if err := tx.Model(&order).Updates(updates).Error; err != nil {
-				return err
-			}
-			consumeNote := ""
+			refund = max(reserved-actual, int64(0))
+			supplement = max(actual-reserved, int64(0))
+			ledgerDelta = -supplement
 			if chargeCapped {
 				consumeNote = "Token 实际用量超过 Agent 报价，已按本轮硬上限结算"
 			} else if supplement > 0 {
@@ -827,29 +940,53 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 			if usageSource == billingUsageSourceVideoFormula {
 				consumeNote = strings.TrimSpace("按提交时的视频 Token 公式快照结算；" + consumeNote)
 			}
-			if err := tx.Create(&model.CreditLedgerEntry{ID: newRepositoryID(), UserID: order.UserID, Type: model.CreditLedgerConsume,
-				AmountMicrocredits: -actual, AvailableDeltaMicrocredits: -supplement, ReservedDeltaMicrocredits: -reserved,
-				AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
-				BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene, Note: consumeNote}).Error; err != nil {
-				return err
+			orderUpdates["actual_amount_microcredits"] = actual
+			orderUpdates["refunded_amount_microcredits"] = refund
+			orderUpdates["input_tokens"] = usage.InputTokens
+			orderUpdates["output_tokens"] = usage.OutputTokens
+			orderUpdates["cached_tokens"] = usage.CachedTokens
+			orderUpdates["usage_available"] = usageSource == billingUsageSourceProvider
+			orderUpdates["usage_source"] = usageSource
+			accountUpdate = map[string]any{
+				"available_microcredits": gorm.Expr("available_microcredits + ?", refund-supplement),
+				"reserved_microcredits":  gorm.Expr("reserved_microcredits - ?", reserved),
+				"version":                gorm.Expr("version + 1"),
+				"updated_at":             now,
 			}
-			if refund > 0 {
-				if err := tx.Create(&model.CreditLedgerEntry{ID: newRepositoryID(), UserID: order.UserID, Type: model.CreditLedgerRefund,
-					AmountMicrocredits: refund, AvailableDeltaMicrocredits: refund,
-					AvailableAfterMicrocredits: account.AvailableMicrocredits, ReservedAfterMicrocredits: account.ReservedMicrocredits,
-					BillingOrderID: order.ID, Model: order.Model, ChannelID: order.ChannelID, Scene: order.Scene, Note: "Token 预授权差额退回"}).Error; err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		updated := tx.Model(&model.CreditAccount{}).
-			Where("user_id = ? AND reserved_microcredits >= ?", order.UserID, order.AmountMicrocredits).
-			Updates(map[string]any{
+		} else {
+			// 非 token 计费，以及零价 token 订单：按订单面额结算。
+			actual = order.AmountMicrocredits
+			reserved = order.AmountMicrocredits
+			orderUpdates["actual_amount_microcredits"] = order.AmountMicrocredits
+			accountUpdate = map[string]any{
 				"reserved_microcredits": gorm.Expr("reserved_microcredits - ?", order.AmountMicrocredits),
 				"version":               gorm.Expr("version + 1"),
-				"updated_at":            time.Now(),
-			})
+				"updated_at":            now,
+			}
+		}
+
+		// 唯一闸门：只有把订单从非终态推进到 settled 的连接可以继续。
+		// 条件与原实现的接受集合一致（只拒绝 settled / refunded），避免把未知状态的
+		// 历史订单从"可结算"变成"冲突"。
+		claim := tx.Model(&model.BillingOrder{}).
+			Where("id = ? AND status NOT IN ?", order.ID, []model.BillingStatus{
+				model.BillingStatusSettled, model.BillingStatusRefunded,
+			}).
+			Updates(orderUpdates)
+		if claim.Error != nil {
+			return claim.Error
+		}
+		if claim.RowsAffected != 1 {
+			return settleBillingClaimLost(tx, order.ID)
+		}
+
+		accountQuery := tx.Model(&model.CreditAccount{}).Where("user_id = ?", order.UserID)
+		if order.BillingMode == "token" && !zeroPricedTokenOrder(order) {
+			accountQuery = accountQuery.Where("reserved_microcredits >= ?", reserved)
+		} else {
+			accountQuery = accountQuery.Where("reserved_microcredits >= ?", order.AmountMicrocredits)
+		}
+		updated := accountQuery.Updates(accountUpdate)
 		if updated.Error != nil {
 			return updated.Error
 		}
@@ -860,27 +997,40 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 		if err := tx.First(&account, "user_id = ?", order.UserID).Error; err != nil {
 			return err
 		}
-		now := time.Now()
-		orderUpdates := map[string]any{"status": model.BillingStatusSettled, "actual_amount_microcredits": order.AmountMicrocredits, "settled_at": &now, "updated_at": now}
-		if providerRequestID != "" {
-			orderUpdates["provider_request_id"] = providerRequestID
-		}
-		if err := tx.Model(&order).Updates(orderUpdates).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.CreditLedgerEntry{
+		if err := tx.Create(&model.CreditLedgerEntry{
 			ID:                         newRepositoryID(),
 			UserID:                     order.UserID,
 			Type:                       model.CreditLedgerConsume,
-			AmountMicrocredits:         -order.AmountMicrocredits,
-			ReservedDeltaMicrocredits:  -order.AmountMicrocredits,
+			AmountMicrocredits:         -actual,
+			AvailableDeltaMicrocredits: ledgerDelta,
+			ReservedDeltaMicrocredits:  -reserved,
 			AvailableAfterMicrocredits: account.AvailableMicrocredits,
 			ReservedAfterMicrocredits:  account.ReservedMicrocredits,
 			BillingOrderID:             order.ID,
 			Model:                      order.Model,
 			ChannelID:                  order.ChannelID,
 			Scene:                      order.Scene,
-		}).Error
+			Note:                       consumeNote,
+		}).Error; err != nil {
+			return err
+		}
+		if refund > 0 {
+			return tx.Create(&model.CreditLedgerEntry{
+				ID:                         newRepositoryID(),
+				UserID:                     order.UserID,
+				Type:                       model.CreditLedgerRefund,
+				AmountMicrocredits:         refund,
+				AvailableDeltaMicrocredits: refund,
+				AvailableAfterMicrocredits: account.AvailableMicrocredits,
+				ReservedAfterMicrocredits:  account.ReservedMicrocredits,
+				BillingOrderID:             order.ID,
+				Model:                      order.Model,
+				ChannelID:                  order.ChannelID,
+				Scene:                      order.Scene,
+				Note:                       "Token 预授权差额退回",
+			}).Error
+		}
+		return nil
 	})
 	if err != nil && observedUsage != nil {
 		// 即使账户状态异常导致回滚，也保留结算依据并标明来源，供用户和管理员核对。
@@ -903,6 +1053,24 @@ func (r *Repository) SettleBillingOrder(id string, providerRequestID string) err
 		}
 	}
 	return err
+}
+
+// settleBillingClaimLost resolves a settlement whose conditional order transition
+// matched no row. A concurrent winner is idempotent success; a refunded order keeps
+// its explicit error; anything else is a real conflict that must stay visible.
+func settleBillingClaimLost(tx *gorm.DB, id string) error {
+	var current model.BillingOrder
+	if err := tx.First(&current, "id = ?", id).Error; err != nil {
+		return errors.Join(ErrBillingStateConflict, err)
+	}
+	switch current.Status {
+	case model.BillingStatusSettled:
+		return nil
+	case model.BillingStatusRefunded:
+		return errors.New("billing order already refunded")
+	default:
+		return ErrBillingStateConflict
+	}
 }
 
 // RestoreRefundedBillingOrder compensates a billing order that was refunded
@@ -1037,55 +1205,61 @@ func zeroPricedTokenOrder(order model.BillingOrder) bool {
 
 func (r *Repository) RefundBillingOrder(id string, errorText string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		var order model.BillingOrder
-		if err := tx.First(&order, "id = ?", id).Error; err != nil {
-			return err
-		}
-		if order.Status == model.BillingStatusRefunded {
-			return nil
-		}
-		if order.Status == model.BillingStatusSettled {
-			return errors.New("settled billing order requires a manual refund")
-		}
-		updated := tx.Model(&model.CreditAccount{}).
-			Where("user_id = ? AND reserved_microcredits >= ?", order.UserID, order.AmountMicrocredits).
-			Updates(map[string]any{
-				"available_microcredits": gorm.Expr("available_microcredits + ?", order.AmountMicrocredits),
-				"reserved_microcredits":  gorm.Expr("reserved_microcredits - ?", order.AmountMicrocredits),
-				"version":                gorm.Expr("version + 1"),
-				"updated_at":             time.Now(),
-			})
-		if updated.Error != nil {
-			return updated.Error
-		}
-		if updated.RowsAffected != 1 {
-			return errors.New("reserved credit balance is inconsistent")
-		}
-		var account model.CreditAccount
-		if err := tx.First(&account, "user_id = ?", order.UserID).Error; err != nil {
-			return err
-		}
-		now := time.Now()
-		updates := map[string]any{"status": model.BillingStatusRefunded, "error": errorText, "refunded_amount_microcredits": order.AmountMicrocredits, "refunded_at": &now, "updated_at": now}
-		if err := tx.Model(&order).Updates(updates).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.CreditLedgerEntry{
-			ID:                         newRepositoryID(),
-			UserID:                     order.UserID,
-			Type:                       model.CreditLedgerRefund,
-			AmountMicrocredits:         order.AmountMicrocredits,
-			AvailableDeltaMicrocredits: order.AmountMicrocredits,
-			ReservedDeltaMicrocredits:  -order.AmountMicrocredits,
-			AvailableAfterMicrocredits: account.AvailableMicrocredits,
-			ReservedAfterMicrocredits:  account.ReservedMicrocredits,
-			BillingOrderID:             order.ID,
-			Model:                      order.Model,
-			ChannelID:                  order.ChannelID,
-			Scene:                      order.Scene,
-			Note:                       errorText,
-		}).Error
+		return refundBillingOrder(tx, id, errorText)
 	})
+}
+
+// refundBillingOrder 是可被外层事务复用的退款实现（与 reserveBillingOrder 成对）。
+// 首步换单要在同一个事务里"退占位预留 + 预留新订单"，自己开事务会重新引入崩溃窗口。
+func refundBillingOrder(tx *gorm.DB, id string, errorText string) error {
+	var order model.BillingOrder
+	if err := tx.First(&order, "id = ?", id).Error; err != nil {
+		return err
+	}
+	if order.Status == model.BillingStatusRefunded {
+		return nil
+	}
+	if order.Status == model.BillingStatusSettled {
+		return errors.New("settled billing order requires a manual refund")
+	}
+	updated := tx.Model(&model.CreditAccount{}).
+		Where("user_id = ? AND reserved_microcredits >= ?", order.UserID, order.AmountMicrocredits).
+		Updates(map[string]any{
+			"available_microcredits": gorm.Expr("available_microcredits + ?", order.AmountMicrocredits),
+			"reserved_microcredits":  gorm.Expr("reserved_microcredits - ?", order.AmountMicrocredits),
+			"version":                gorm.Expr("version + 1"),
+			"updated_at":             time.Now(),
+		})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return errors.New("reserved credit balance is inconsistent")
+	}
+	var account model.CreditAccount
+	if err := tx.First(&account, "user_id = ?", order.UserID).Error; err != nil {
+		return err
+	}
+	now := time.Now()
+	updates := map[string]any{"status": model.BillingStatusRefunded, "error": errorText, "refunded_amount_microcredits": order.AmountMicrocredits, "refunded_at": &now, "updated_at": now}
+	if err := tx.Model(&order).Updates(updates).Error; err != nil {
+		return err
+	}
+	return tx.Create(&model.CreditLedgerEntry{
+		ID:                         newRepositoryID(),
+		UserID:                     order.UserID,
+		Type:                       model.CreditLedgerRefund,
+		AmountMicrocredits:         order.AmountMicrocredits,
+		AvailableDeltaMicrocredits: order.AmountMicrocredits,
+		ReservedDeltaMicrocredits:  -order.AmountMicrocredits,
+		AvailableAfterMicrocredits: account.AvailableMicrocredits,
+		ReservedAfterMicrocredits:  account.ReservedMicrocredits,
+		BillingOrderID:             order.ID,
+		Model:                      order.Model,
+		ChannelID:                  order.ChannelID,
+		Scene:                      order.Scene,
+		Note:                       errorText,
+	}).Error
 }
 
 func tokenUsageAmount(order model.BillingOrder, usage *BillingUsage) (int64, error) {

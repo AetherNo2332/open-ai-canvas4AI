@@ -59,6 +59,29 @@ func TestManifestAgentMapsRequestAndResponse(t *testing.T) {
 	}
 }
 
+func TestManifestAgentMapsExplicitUsageFields(t *testing.T) {
+	manifest := []byte(`{
+		"apiVersion":"yingce.plugin/v1",
+		"id":"agent-usage-test","version":"1.0.0","name":"Agent Usage Test","author":"Test","documentation":"# Agent Usage Test",
+		"contributes":{"providers":[{"id":"agent-usage-test","label":"Agent Usage Test","capabilities":["text"],"scopes":["agent"],"create":{"method":"POST","path":"/create"},"agent":{"method":"POST","path":"/messages"},"agentResponse":{"textPaths":["choices.0.message.content"],"usage":{"input":"${response.usage.prompt_tokens}","output":"${response.usage.completion_tokens}","totalTokens":"${response.usage.total_tokens}"}},"response":{}}]}
+	}`)
+	adapter, err := LoadManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := adapter.(AgentAdapter)
+	if !ok {
+		t.Fatal("manifest adapter does not expose AgentAdapter")
+	}
+	result, err := agent.ParseAgent(context.Background(), []byte(`{"choices":[{"message":{"content":"answer"}}],"usage":{"prompt_tokens":13,"completion_tokens":4,"total_tokens":17}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage["input"] != float64(13) || result.Usage["output"] != float64(4) || result.Usage["totalTokens"] != float64(17) {
+		t.Fatalf("agent usage = %#v", result.Usage)
+	}
+}
+
 func TestManifestMapsSynchronousTextResponse(t *testing.T) {
 	manifest := []byte(`{
 		"apiVersion":"yingce.plugin/v1",

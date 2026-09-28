@@ -93,8 +93,8 @@ func TestCloudAgentSkillMissingAndDistinctPaths(t *testing.T) {
 	if state.Events[0].Type != "tool_failed" || state.Events[0].Payload["path"] != "references/missing.md" {
 		t.Fatalf("missing failure context: %+v", state.Events[0])
 	}
-	if _, err := cloudAgentReadTool(nil, "user", &state, call); err == nil || !strings.Contains(err.Error(), "参考文件未包含") {
-		t.Fatalf("missing path validation changed unexpectedly: %v", err)
+	if _, err := cloudAgentReadTool(nil, "user", &state, call); err == nil || !strings.Contains(err.Error(), "已请求过该技能路径") {
+		t.Fatalf("repeated path read must return the cached-read guard: %v", err)
 	}
 	if _, err := cloudAgentReadTool(nil, "user", &state, skillFeedbackCall("disabled", "")); err == nil {
 		t.Fatal("unselected skill accepted")
@@ -124,10 +124,15 @@ func TestCloudAgentFailedModelEmitsSafeReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.Task{}).Where("id = ?", run.ID).Updates(map[string]any{"status": model.TaskStatusFailed, "error": "private-url connection reset by peer"}).Error; err != nil {
+	_, stepState := agentStartPiModelStep(t, s, run.ID)
+	modelTaskID := stepState.ActiveTaskID
+	if modelTaskID == "" || modelTaskID == run.ID {
+		t.Fatalf("Pi model task was not admitted independently of the holding reservation: %q", modelTaskID)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", modelTaskID).Updates(map[string]any{"status": model.TaskStatusFailed, "error": "private-url connection reset by peer"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := s.repo.CloudAgent("user", run.ID)
@@ -139,7 +144,7 @@ func TestCloudAgentFailedModelEmitsSafeReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := state.Events[len(state.Events)-1]
-	if stored.Status != "failed" || event.Type != "run_failed" || event.Payload["reason"] != "model_connection_reset" || event.Payload["taskId"] != run.ID || strings.Contains(event.Payload["text"].(string), "private-url") {
+	if stored.Status != "failed" || event.Type != "run_failed" || event.Payload["reason"] != "model_connection_reset" || event.Payload["taskId"] != modelTaskID || strings.Contains(event.Payload["text"].(string), "private-url") {
 		t.Fatalf("incorrect model failure event: %+v", event)
 	}
 }

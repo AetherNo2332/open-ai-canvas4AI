@@ -18,88 +18,6 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-// agentSettleStep 模拟"模型这一步返回了什么"：把排队中的模型任务标成成功并写入结果，
-// 再推进一次运行。text 非空时按"无工具调用的正文"返回；tool 非空时按一次工具调用返回。
-func agentSettleStep(t *testing.T, s *Service, db *gorm.DB, runID, text, callID, tool, args string) (*model.CloudAgentExecution, cloudAgentRuntime) {
-	t.Helper()
-	_, state := agentInterjectionState(t, s, runID)
-	if state.ActiveTaskID == "" {
-		if err := s.advanceCloudAgentByID("user", runID); err != nil {
-			t.Fatal(err)
-		}
-		_, state = agentInterjectionState(t, s, runID)
-	}
-	if state.ActiveTaskID == "" {
-		t.Fatalf("本轮没有可完成的模型任务（run=%s）", runID)
-	}
-	body := map[string]any{"text": text}
-	if tool != "" {
-		call := cloudAgentCall{ID: callID}
-		call.Function.Name, call.Function.Arguments = tool, args
-		body["toolCalls"] = []cloudAgentCall{call}
-	}
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": string(encoded),
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := s.advanceCloudAgentByID("user", runID); err != nil {
-		t.Fatal(err)
-	}
-	if tool != "" {
-		// 工具的执行是**下一次转移**：一次推进只处理模型结果并登记本批调用。
-		if err := s.advanceCloudAgentByID("user", runID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return agentInterjectionState(t, s, runID)
-}
-
-func agentSettleTextStep(t *testing.T, s *Service, db *gorm.DB, runID, text string) (*model.CloudAgentExecution, cloudAgentRuntime) {
-	t.Helper()
-	return agentSettleStep(t, s, db, runID, text, "", "", "")
-}
-
-func agentSettleToolStep(t *testing.T, s *Service, db *gorm.DB, runID, callID, tool, args string) (*model.CloudAgentExecution, cloudAgentRuntime) {
-	t.Helper()
-	return agentSettleStep(t, s, db, runID, "", callID, tool, args)
-}
-
-// agentSettleBatch 模拟"一次模型输出里带多个工具调用"：逐个执行（执行是每个调用一次转移）。
-func agentSettleBatch(t *testing.T, s *Service, db *gorm.DB, runID string, calls []cloudAgentCall) (*model.CloudAgentExecution, cloudAgentRuntime) {
-	t.Helper()
-	_, state := agentInterjectionState(t, s, runID)
-	if state.ActiveTaskID == "" {
-		if err := s.advanceCloudAgentByID("user", runID); err != nil {
-			t.Fatal(err)
-		}
-		_, state = agentInterjectionState(t, s, runID)
-	}
-	if state.ActiveTaskID == "" {
-		t.Fatalf("本轮没有可完成的模型任务（run=%s）", runID)
-	}
-	encoded, err := json.Marshal(map[string]any{"toolCalls": calls})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": string(encoded),
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	// 一次转移登记本批调用，之后每个调用各需要一次转移。
-	for range len(calls) + 1 {
-		if err := s.advanceCloudAgentByID("user", runID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return agentInterjectionState(t, s, runID)
-}
-
 // agentEventPayloads 取本轮某一类事件的全部载荷（内存窗口即可，本用例都很短）。
 func agentEventPayloads(state cloudAgentRuntime, kind string) []map[string]any {
 	payloads := make([]map[string]any, 0, len(state.Events))
@@ -133,6 +51,15 @@ func agentLastEvent(t *testing.T, state cloudAgentRuntime) CloudAgentEvent {
 	return state.Events[len(state.Events)-1]
 }
 
+func agentFinishRunForTest(t *testing.T, s *Service, db *gorm.DB, runID, callID, summary string) (*model.CloudAgentExecution, cloudAgentRuntime) {
+	t.Helper()
+	arguments, err := json.Marshal(map[string]string{"summary": summary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return agentSettleStep(t, s, db, runID, summary, callID, "finish_run", string(arguments))
+}
+
 // agentWithPendingPlan 造一个"待办清单里还有未完成项"的运行。
 func agentWithPendingPlan(t *testing.T, s *Service, db *gorm.DB, root *CloudAgentRun) (*model.CloudAgentExecution, cloudAgentRuntime) {
 	t.Helper()
@@ -159,7 +86,7 @@ func TestCloudAgentPendingPlanBlocksCandidateCompletion(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	agentWithPendingPlan(t, s, db, root)
 
-	run, state := agentSettleTextStep(t, s, db, root.ID, "镜头已经全部生成完毕，任务完成。")
+	run, state := agentFinishRunForTest(t, s, db, root.ID, "finish-candidate", "镜头已经全部生成完毕，任务完成。")
 
 	if run.Status != "running" {
 		t.Fatalf("待办未对账时不该结束本轮，status=%s", run.Status)
@@ -193,7 +120,7 @@ func TestCloudAgentPendingPlanBlocksCandidateCompletion(t *testing.T) {
 // ③ 闸门通过后只发布一次最终消息，并且本轮就此结束。
 func TestCloudAgentCompletionPublishesOneFinalReply(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	run, state := agentSettleTextStep(t, s, db, root.ID, "分析完成：画布上共有 3 个节点。")
+	run, state := agentFinishRunForTest(t, s, db, root.ID, "finish-complete", "分析完成：画布上共有 3 个节点。")
 
 	if run.Status != "completed" {
 		t.Fatalf("没有阻塞时应当收尾，status=%s", run.Status)
@@ -206,8 +133,12 @@ func TestCloudAgentCompletionPublishesOneFinalReply(t *testing.T) {
 		t.Fatalf("闸门通过时不该有控制事件：%+v", blocked)
 	}
 	// 收尾后不再开新的模型请求。
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	decision, err := s.PiNoToolTurn("user", root.ID, run.LeaseOwner, state.LastStepTaskID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if decision.Status != "completed" {
+		t.Fatalf("收尾重放必须仍为 completed: %+v", decision)
 	}
 	_, state = agentInterjectionState(t, s, root.ID)
 	if replies := agentFinalReplies(state); len(replies) != 1 {
@@ -221,7 +152,7 @@ func TestCloudAgentCompletionNudgeIsBounded(t *testing.T) {
 	agentWithPendingPlan(t, s, db, root)
 
 	for attempt := 1; attempt <= cloudAgentCompletionNudgeLimit; attempt++ {
-		run, state := agentSettleTextStep(t, s, db, root.ID, fmt.Sprintf("第 %d 次声称完成。", attempt))
+		run, state := agentFinishRunForTest(t, s, db, root.ID, fmt.Sprintf("finish-%d", attempt), fmt.Sprintf("第 %d 次声称完成。", attempt))
 		if run.Status != "running" {
 			t.Fatalf("第 %d 次仍应有催办机会，status=%s", attempt, run.Status)
 		}
@@ -230,7 +161,7 @@ func TestCloudAgentCompletionNudgeIsBounded(t *testing.T) {
 		}
 	}
 	// 用尽之后：不再开新的模型调用，而是明确以 completion_blocked 收场。
-	run, state := agentSettleTextStep(t, s, db, root.ID, "我认为已经完成。")
+	run, state := agentFinishRunForTest(t, s, db, root.ID, "finish-exhausted", "我认为已经完成。")
 	if run.Status != "failed" {
 		t.Fatalf("催办用尽后应终止本轮，status=%s", run.Status)
 	}
@@ -252,7 +183,7 @@ func TestCloudAgentCompletionFingerprintResetsAfterPlanProgress(t *testing.T) {
 	agentWithPendingPlan(t, s, db, root)
 
 	for attempt := 1; attempt <= cloudAgentCompletionNudgeLimit; attempt++ {
-		if run, _ := agentSettleTextStep(t, s, db, root.ID, fmt.Sprintf("第 %d 次声称完成。", attempt)); run.Status != "running" {
+		if run, _ := agentFinishRunForTest(t, s, db, root.ID, fmt.Sprintf("fingerprint-%d", attempt), fmt.Sprintf("第 %d 次声称完成。", attempt)); run.Status != "running" {
 			t.Fatalf("第 %d 次不该终止：%s", attempt, run.Status)
 		}
 	}
@@ -275,7 +206,7 @@ func TestCloudAgentCompletionFingerprintResetsAfterPlanProgress(t *testing.T) {
 	if err := db.Save(run).Error; err != nil {
 		t.Fatal(err)
 	}
-	run, state = agentSettleTextStep(t, s, db, root.ID, "镜头1 已完成，继续拼接。")
+	run, state = agentFinishRunForTest(t, s, db, root.ID, "fingerprint-changed", "镜头1 已完成，继续拼接。")
 	if run.Status != "running" {
 		t.Fatalf("阻塞原因变化后应重新给一次机会：status=%s", run.Status)
 	}
@@ -302,7 +233,7 @@ func TestCloudAgentCompletionGateAllowsReconciledPlan(t *testing.T) {
 	if err := db.Save(run).Error; err != nil {
 		t.Fatal(err)
 	}
-	run, state = agentSettleTextStep(t, s, db, root.ID, "镜头1 已生成，本轮完成。")
+	run, state = agentFinishRunForTest(t, s, db, root.ID, "finish-reconciled", "镜头1 已生成，本轮完成。")
 	if run.Status != "completed" {
 		t.Fatalf("已对账的清单应当放行：status=%s", run.Status)
 	}

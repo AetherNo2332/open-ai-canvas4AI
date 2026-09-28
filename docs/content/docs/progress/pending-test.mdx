@@ -5,6 +5,16 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 画布 Pi 原生 Skill（已实现，待真实部署确认）
+
+实现边界见 [原生 Skill 运行时](../backend/agent-native-skills)。Node 全量 94 项及 Web 类型检查/构建已通过；Go 原生 snapshot、撤销授权、冻结读取、内部路由专项已通过。Go 全量与本地 Compose 联调结果仍需收敛。
+
+- [ ] 在本地 Compose `3000` 登录真实画布，选择包技能和单 Markdown 技能，确认请求只含 `skillIds`，看到启用/读取 SSE 和正文结果。
+- [ ] 更新技能后在途读取保持冻结版本；停用/卸载后后续读取和恢复拒绝。
+- [ ] 重启 worker，未闭合原生读取恢复；旧 `legacy-go` 运行仍使用原工具完成。
+- [ ] 无技能运行正常；未匹配描述不强制读取；损坏包、越权文件和跨用户访问明确失败。
+- [ ] 刷新、断线续传及明暗主题下事件正常，不显示临时绝对路径或技能正文；普通生成的 `linked-context` 保持可用。
+
 ## Agent 操作记录折叠成一行（本轮新增，待手工验证）
 
 实现：切分在 `web/src/lib/canvas/agent-operation-feed.ts`，组件是
@@ -3277,3 +3287,27 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 > `go test ./...` 不再是这条阻断点；本 fork 另外还实现了「看图观察账本」（PR #48/#49），
 > 与上游这次的识图预算/只读循环护栏互补：上游用硬上限止损，账本让模型不必重复看图。
 > 识图预算已在本 fork 改成按画布规模动态分配（见上），固定 16 次对小画布仍有效（下限即 16）。
+
+## Pi 迁移本轮新增：上下文路由预算与渠道模型推理声明
+
+- [ ] **逻辑模型路由交集的输入预算**：`cloud_agent_context_budget.go::cloudAgentRouteIntersectionBudget` 原先分别取「最小窗口」与「最小输出预留」，当两者落在不同路由上时会高估小窗口线路的容量（512k/64k 与 1M/16k → 475520，而 512k 线路实际 427520）。已改为逐条路由计算可用输入容量再取最小值。`go test ./internal/app -run TestCloudAgentRouteIntersectionBudget` 新增 4 个用例覆盖交叉组合、未知窗口、顺序无关与无可用路由失败关闭；既有 `TestCloudAgentContextBudgetUsesLogicalRouteSafeIntersection` 保持不变（它的两条路由在窗口与输出上同向，所以从未暴露该缺陷）。**待真实环境验收**：配一条 512k/64k 与一条 1M/16k 的文本路由，确认 `context_pressure` 的 `inputBudgetTokens` 取小值、且落到 512k 路由的请求不再被上游拒绝。
+- [ ] **渠道模型 `thinking` 能力声明**：`TextCapabilityConfig` 新增 `thinking`（缺省 = 未声明，不猜测），管理端「能力声明」新增开关，画布面板原有的 `reasoningSupported` 推导从此真正生效（此前字段在 Go 侧不存在，推理选项对所有模型都隐藏）。`go test ./internal/app -run TestNormalizeTextCapabilityPreservesThinkingMode` 覆盖声明保留、JSON 往返与未声明不落库。**待真实环境验收**：在管理端打开某渠道模型的「思考 / 推理模式」，确认面板出现推理选项且真实上游请求带上推理参数；关闭后确认选项消失且请求不含 reasoning 参数。**前端本轮未做类型检查或构建**（本机没有 bun，`web/node_modules` 未安装），仅用 esbuild 做过 TSX 语法解析，类型正确性待前端 CI 补验。
+
+- [ ] **执行路径重新附上权威渠道模型能力**（HANDOFF P0-3）：`task_creation.go` 已把客户端 `capabilityConfig` 剔除（正确的信任边界），但 `provider.go::resolveProviderConfig` 此前没有把**选中的渠道模型**的能力补回，执行路径因此拿到 nil；而 `provider.go` 的 `supportsStream` 把「未声明」当成「支持流式」，模型物理输出上限（`CapabilityMaxOutputTokens`）也一起丢失。现已在解析出渠道模型后附上权威能力：**已声明**能力的渠道模型一律以 DB 为准，解析/规范化失败则失败关闭；完全未声明（空 JSON）的记录不改写，避免给取消/恢复路径引入新的失败（新建任务入口本就拒绝这类记录）。`go test ./internal/app -run TestResolveProviderConfig` 覆盖「streaming=false 与 maxOutputTokens 被采纳」「损坏配置失败关闭」两个方向，并与既有 `TestResolveProviderConfigMapsSKUToProviderModel`（视频模型、未声明能力）共同保住不回归。**待真实环境验收**：把一个渠道模型配成 `streaming=false`，确认 Agent/文本任务不再发送 `stream=true`；再把 `maxOutputTokens` 配小，确认单步输出被该上限约束。
+
+## Pi 迁移本轮新增：首步合同（占位任务与原子换单）与两处 Node 缺陷
+
+- [ ] **建 run 只落占位与快照，首个 Pi 模型步原子换单**：`CreateCloudAgentRun` 现在在同一事务里提交执行记录、合同快照（策略身份／Harness 正文与哈希／工具 schema 身份／装配提示身份）与一条 `holding` 占位任务及其报价预留；占位任务不进队列（`ClaimNextTask` 只匹配 `queued`/`running`）、不计入活动任务额度、不出现在任务列表。首个 `PiModelStep` 在同一事务里退还占位预留、按 Node 最终信封重新报价并落库真实首步任务，同时把运行从 `awaiting_first_step` 推进；首步准入失败当场写终态并退款。看门狗清扫后由新增的 `DrainPendingPiAgentCleanups` 补做收尾退款 —— 此前只有 HTTP 取消会调 `finishCloudAgentCleanup`，被清扫掉的运行会把预留一直冻在账上。新增用例 `internal/app/cloud_agent_pi_first_step_test.go`；既有的计费不变量与取消用例覆盖"首步前取消"。
+  **已跑通的部分**：宿主 `CGO_ENABLED=0` 且无 C 编译器，`go test` 需走容器（`open-ai-canvas-backend-test:sticky-tools`，Go 1.25 + gcc）：
+  `docker run --rm -v <repo>:/src -w /src/backend open-ai-canvas-backend-test:sticky-tools sh -c "CGO_ENABLED=1 go test ./internal/app -count=1 -timeout 600s -run 'TestPiFirstStep|TestPiCleanupDrain|TestCloudAgentHarnessBodyDigest'"` → 5/5 PASS（真实 SQLite 事务：换单、正文/哈希门、首步准入失败退款、真实未领取清扫 + 收尾排空退款、跨语言哈希向量）。这次跑通还修掉三个真实缺陷：首步准入失败发生在换单之前时不退款、`failCloudAgent` 不置收尾标记导致失败运行永不收尾、收尾退款被"状态不可解码"挡住。
+  **待真实环境验收**：PostgreSQL 一侧；崩溃节点注入（换单事务现在可以注入了）；一次 Node ↔ Go 真实 HTTP 首步，确认换单后账户预留额等于未结订单之和、真实首步只计费一次。**注意**整包直跑会卡在依赖外网的用例（容器无外网），表现为超时而非失败。
+- [ ] **Node 工具批次顺序缺陷**：`agent/src/runner.ts` 曾把工具批次先入队、带 `taskId` 的 assistant 检查点后入队，而 Go 的 `PiToolBatch` 在 `ActiveTaskID` 非空时拒绝整批（清空它的正是那条检查点）。已改为"检查点 → 批次准入"，`agent/test/runner.test.ts` 用调用序列守住先后。
+- [ ] **Node 母类型披露与 Go 权威分叉**：`agent/src/session-tools.ts` 曾要求母类型"至少有一个合格子工具"才披露，而 Go 的 `cloudAgentVisibleToolsForCategories` 把合格目录里的所有母类型无条件下发；某个类别的子工具全被判不合格时 Node 的工具集会比服务端预检少一个入口。已按 Go 对齐。
+- [ ] **Agent 测试套件不再假死**：`agent/package.json` 的 `test` 脚本加 `--test-timeout=20000 --test-force-exit`。SDK 用例（`runner`、`pi-sdk-probe`）结束时会留下活跃句柄，整轮进程不退出，看起来像挂起。`node --test --test-timeout=20000 --test-force-exit "dist/test/*.test.js"` 实测 52/52 通过、8.70s。
+
+## Pi 迁移本轮新增：旧调度入口的真实效果面与 C1 用例迁移配方
+
+- [ ] **C0 去向修正：逐调用执行引擎不是死代码**：`advanceCloudAgentTool` / `advanceCloudAgentMedia` 由 Pi 生产入口 `PiToolAdvance`（`POST /internal-agent/runs/:id/tool-calls/:callId/advance`）调用，是 Pi 路径的逐次工具执行引擎；随旧循环废弃的只有调度层 —— `advanceCloudAgentByID`、`advanceCloudAgent` 与读批次优化。删除清单以这条修正为准，否则会连 Pi 的工具执行一起删掉。
+- [ ] **旧用例迁移配方（已在审批设置文件上跑通）**：夹具先按生产入口起步（`startPiAgentFirstStep`：`ClaimPiAgent` → `PiModelStep`，让运行离开 `awaiting_first_step`），再把驱动从 `advanceCloudAgentByID` 换成 `PiToolAdvance`，断言不动。`cloud_agent_approval_settings_test.go` 的 7 处驱动与 `approveAgentMediaDraft` 已按此迁移。**已跑通的部分**：容器内 `-run 'TestCloudAgentAdmissionIdempotentResubmission|TestCloudAgentMediaApprovalReusesPreparedInputsAfterModelRetry'` → 2/2 PASS（两者原本在 43 个红用例中）。
+- [ ] **剩余阻断点在生产代码，不在测试**：`DecideCloudAgentApproval(userID, id, …)` 经 `cloudAgentTask` 先按**任务 ID** 解析运行（`repository.TaskForUser(id)` 失败即返回 `Agent 运行不存在`），而 v2 运行没有根任务，因此所有"审批 / 取消 / 活动任务查询"按 ID 寻址的入口对 v2 运行一律 404。43 个红用例里媒体、审批、画布、完成度几族都踩在这里（`cloud_agent_media_test.go` 18 处旧驱动 + 3 处审批入口、`cloud_agent_approval_settings_test.go` 5 处审批入口）。修法是让这些入口优先按运行 ID 解析（`repo.CloudAgent`），任务形态只作为旧数据回退。
+- [ ] **需要按 Pi 协议重写的用例**：`TestCloudAgentConversationKeepsRecentRounds` 依赖两处旧约定（"根任务 ID == 运行 ID"、推进一轮 = 追加 2 条历史），必须改成每轮 claim → `PiModelStep` → `PiCheckpointMessage` 才能迁移，不能只换驱动。

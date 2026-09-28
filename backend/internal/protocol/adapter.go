@@ -56,6 +56,7 @@ type AgentResult struct {
 	Text      string
 	Reasoning string
 	ToolCalls []AgentToolCall
+	Usage     map[string]any
 }
 
 type UnavailableAdapter struct {

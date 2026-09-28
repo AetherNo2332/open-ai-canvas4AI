@@ -8,6 +8,7 @@ import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-retry";
 import { agentPlanVisible, latestAgentPlanItems, latestAgentPlanTerminal, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
 import { emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage, type AgentContextPhase, type AgentContextUsage, type AgentContextUsageView } from "@/lib/canvas/agent-context-usage";
+import { reduceAgentRun } from "@/lib/canvas/agent-run-state";
 import { nanoid } from "nanoid";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -15,6 +16,7 @@ import { FluidOrb } from "@/components/ui/fluid-orb";
 import { cn } from "@/lib/utils";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
 import {
     cancelAgentRun,
@@ -58,6 +60,7 @@ import { getActiveUserScope } from "@/lib/user-scope";
 import { applyAgentCanvasPatches, refreshCanvasAfterAgent, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { createAgentCanvasSync } from "@/services/agent-canvas-sync";
 import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/skill-runtime";
+import { nativeSkillEventPresentation } from "@/lib/canvas/agent-tool-presentation";
 import {
     AgentChatComposer,
     AgentChatMessage,
@@ -183,7 +186,15 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         const preferred = config.textModel || config.model || "";
         return textModels.includes(preferred) ? preferred : textModels[0] || "";
     }, [config]);
-    const selectedTextCapability = modelCapabilityConfigFor(config, selectedModel).text;
+    // 能力查询失败（渠道未配置、模型未选中、渠道结构不完整）不能让整个面板崩溃：
+    // 面板是画布提示的入口，这里退化成"不支持推理"而不是抛 ReferenceError。
+    const selectedTextCapability = useMemo(() => {
+        try {
+            return modelCapabilityConfigFor(config, selectedModel).text;
+        } catch {
+            return undefined;
+        }
+    }, [config, selectedModel]);
     const reasoningSupported = Boolean(selectedTextCapability?.thinking);
     useEffect(() => {
         if (!reasoningSupported && reasoningMode !== "off") setReasoningMode("off");
@@ -1028,7 +1039,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                         left={
                                             <ComposerControls
                                                 reasoningMode={reasoningSupported ? reasoningMode : "off"}
-                                                reasoningSupported={reasoningSupported}
                                                 onReasoningModeChange={(value) => {
                                                     if (reasoningSupported) setReasoningMode(value);
                                                 }}
@@ -1482,6 +1492,8 @@ function ComposerControls({
     skillsOpen,
     onSkillsOpenChange,
     selectedSkillCount,
+    reasoningMode,
+    onReasoningModeChange,
 }: {
     config: ReturnType<typeof useEffectiveConfig>;
     selectedModel: string;
@@ -1492,9 +1504,24 @@ function ComposerControls({
     skillsOpen: boolean;
     onSkillsOpenChange: (open: boolean) => void;
     selectedSkillCount: number;
+    // 推理模式由父组件持有状态；本组件只负责渲染选择器并回报变更。
+    // reasoningSupported 刻意不通过 props 传入：本组件在下面自行推导一次，
+    // 查不到能力时退化为"不支持推理"，避免父作用域变量缺失把面板打崩。
+    reasoningMode: AgentReasoningMode;
+    onReasoningModeChange: (mode: AgentReasoningMode) => void;
 }) {
     const permissionVisual = agentPermissionVisual(permissionMode);
     const PermissionIcon = permissionVisual.icon;
+    // 这个子组件拿不到父组件的 reasoningSupported（那是父作用域的局部变量），
+    // 必须自己按当前配置与选中模型推导一次；查不到能力时退化成"不支持推理"，
+    // 不能让整个面板因 ReferenceError 崩掉。
+    const reasoningSupported = useMemo(() => {
+        try {
+            return Boolean(modelCapabilityConfigFor(config, selectedModel).text?.thinking);
+        } catch {
+            return false;
+        }
+    }, [config, selectedModel]);
     return (
         <div className="agent-composer-selection flex min-w-0 flex-1 flex-nowrap items-center gap-0.5">
             <ModelPicker
@@ -1748,24 +1775,14 @@ function applyAgentEvent(
 ) {
     const payload = event.payload || {};
     const text = String(payload.text || payload.summary || payload.message || "");
+    const nativeSkill = nativeSkillEventPresentation(event.type, payload);
+    if (nativeSkill) {
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", ...nativeSkill }));
+        return;
+    }
+    if (["run_status", "context_compaction_requested", "context_compacted"].includes(event.type)) setRun((current) => reduceAgentRun(current, event));
     if (event.type === "run_status") {
         const snapshotApproval = payload.approval && typeof payload.approval === "object" ? (payload.approval as AgentRun["approval"]) : undefined;
-        setRun((current) =>
-            current
-                ? {
-                      ...current,
-                      status: String(payload.status || current.status) as AgentRun["status"],
-                      updatedAt: event.createdAt,
-                      revision: Number(payload.revision || 0),
-                      cleanupPending: Boolean(payload.cleanupPending),
-                      failureMessage: String(payload.failureMessage || ""),
-                      skills: payload.skills as AgentRun["skills"],
-                      spentCredits: Number(payload.spentCredits || 0),
-                      step: Number(payload.step || 0),
-                      approval: snapshotApproval,
-                  }
-                : current,
-        );
         const nextStatus = String(payload.status || "") as AgentRun["status"];
         const terminal = ["completed", "failed", "cancelled", "rejected"].includes(nextStatus);
         if (terminal) {
@@ -1797,7 +1814,7 @@ function applyAgentEvent(
         return;
     }
     if (event.type === "context_compaction_requested") {
-        const turnCount = Number(payload.turnCount || 0);
+        const turnCount = Number(payload.turnCount ?? payload.turns ?? 0);
         const ratio = Number(payload.pressureRatio || 0);
         const projected = Number(payload.projectedTokens || 0);
         const usable = Number(payload.usableInputTokens || 0);

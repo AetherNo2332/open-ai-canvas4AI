@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -59,14 +58,7 @@ func TestCloudAgentInheritedPlanReachesFirstModelRequest(t *testing.T) {
 	if err := db.Save(run).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": `{"text":"先停在这里"}`,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).Update("status", "completed").Error; err != nil {
-		t.Fatal(err)
-	}
+	markAgentRunTerminalForTest(t, db, root.ID, "completed")
 	next := agentTestRequest()
 	next.IdempotencyKey = "agent-plan-inherit-key"
 	next.Prompt = "继续做镜头2"
@@ -74,14 +66,14 @@ func TestCloudAgentInheritedPlanReachesFirstModelRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, childState := agentStartPiModelStep(t, s, child.ID)
 	var task model.Task
-	if err := db.First(&task, "id = ?", child.ID).Error; err != nil {
+	if err := db.First(&task, "id = ?", childState.ActiveTaskID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(task.InputJSON, "plan_state") || !strings.Contains(task.InputJSON, "生成镜头2视频") {
 		t.Fatalf("继承清单没有进入第一拍模型请求: %s", task.InputJSON)
 	}
-	_, childState := agentInterjectionState(t, s, child.ID)
 	if strings.Contains(childState.Canonical.SystemPrompt, "本轮待办清单") {
 		t.Fatal("运行态系统提示不应长期钉死上一轮的清单快照，后续应按当前 Plan 重拼")
 	}
@@ -134,27 +126,11 @@ func TestCloudAgentPlanNudgePrefersLatestUserInstruction(t *testing.T) {
 // 少了回执，落库的这轮 canonical 就自相矛盾——assistant(tool_calls) 里有 tool_call_id 没有对应的 tool 消息。
 func TestCloudAgentAskUserReceiptsEveryRemainingCall(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	_, state := agentInterjectionState(t, s, root.ID)
 	ask := cloudAgentCall{ID: "ask-1"}
 	ask.Function.Name, ask.Function.Arguments = "ask_user", `{"question":"用哪个模型？","options":[{"label":"A"},{"label":"B"}]}`
 	read := cloudAgentCall{ID: "read-1"}
 	read.Function.Name, read.Function.Arguments = "canvas_get_state", `{}`
-	body, err := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{ask, read}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": string(body),
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	// 一次转移登记本批调用，之后每个调用各需要一次转移。
-	for range 3 {
-		if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	run, state := agentInterjectionState(t, s, root.ID)
+	run, state := agentSettleBatch(t, s, db, root.ID, []cloudAgentCall{ask, read})
 	if run.Status != "completed" {
 		t.Fatalf("ask_user 应当结束本轮：status=%s", run.Status)
 	}
@@ -179,15 +155,7 @@ func TestCloudAgentAskUserReceiptsEveryRemainingCall(t *testing.T) {
 func TestCloudAgentPendingPlanMustBeReconciledBeforeCompletion(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	agentWithPendingPlan(t, s, db, root)
-	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{
-		"status": model.TaskStatusSucceeded, "result_json": `{"text":"先看到这里"}`,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
-		t.Fatal(err)
-	}
-	run, state := agentInterjectionState(t, s, root.ID)
+	run, state := agentFinishRunForTest(t, s, db, root.ID, "finish-pending", "先看到这里")
 	if run.Status != "running" {
 		t.Fatalf("未完成清单时不该收尾，status=%s", run.Status)
 	}
@@ -213,7 +181,7 @@ func TestCloudAgentPendingPlanMustBeReconciledBeforeCompletion(t *testing.T) {
 	if len(cloudAgentPendingPlanItems(state.Plan)) != 0 {
 		t.Fatalf("对账后清单不该还有未完成项：%+v", state.Plan)
 	}
-	run, state = agentSettleTextStep(t, s, db, root.ID, "按最新要求停止生成，保留草稿。")
+	run, state = agentFinishRunForTest(t, s, db, root.ID, "finish-after-reconcile", "按最新要求停止生成，保留草稿。")
 	if run.Status != "completed" {
 		t.Fatalf("对账之后应当放行收尾：status=%s", run.Status)
 	}

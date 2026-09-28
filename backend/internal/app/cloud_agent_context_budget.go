@@ -14,7 +14,8 @@ import (
 // 正文里，必须按窗口比例留一份 overhead，否则大窗口模型也用不满容量。
 // 与上游的差别是我们 P2 保留的三项语义：
 //   - 输出预留取"用户填的预留输出"与"能力声明的最大输出"中的较大者（两者都是给输出留的额度）；
-//   - 逻辑模型取**所有可用 text 路由**的最小窗口与最小输出（路由交集），而不是任选一条；
+//   - 逻辑模型取**所有可用 text 路由中最小的可用输入容量**（路由交集），而不是任选一条，
+//     也不是分别取最小窗口与最小输出预留（后者会在交叉组合上高估小窗口路由）；
 //   - 窗口未知（未声明 / 越界）时 Configured=false：界面不能声称"配置了模型上限"，
 //     压缩判据也要退回字节/条数兜底，而不是拿 128k 冒充真实窗口。
 const (
@@ -167,9 +168,17 @@ func (s *Service) cloudAgentChannelTextCapability(request CloudAgentRequest) *Te
 	return config.Text
 }
 
-// cloudAgentRouteIntersectionBudget 取所有可用 text 路由的最小窗口与最小输出预留。
+// cloudAgentRouteIntersectionBudget 取所有可用 text 路由中**最小的可用输入容量**。
+//
+// 逐条路由先算 window - 输出预留 - overhead，再按输入预算取最小值。
+// 不能分别取"最小窗口"与"最小输出预留"：当两者落在不同路由上时，小窗口那条会被高估
+// （512k/64k 与 1M/16k 会得到 512000-16000-20480 = 475520，而 512k 路由实际只有
+// 512000-64000-20480 = 427520）。按被高估的预算装配出的请求，最终落到小窗口路由上
+// 会被上游直接拒绝——这正是"路由交集"要防的事。
 func cloudAgentRouteIntersectionBudget(routes []cachedLogicalRoute) (cloudAgentContextBudget, bool) {
-	window, reserve := 0, 0
+	var budget cloudAgentContextBudget
+	found := false
+	minWindow := 0
 	for _, route := range routes {
 		if normalizeCapability(route.CapabilitySpec.Capability) != "text" {
 			continue
@@ -179,17 +188,19 @@ func cloudAgentRouteIntersectionBudget(routes []cachedLogicalRoute) (cloudAgentC
 		if err != nil || config == nil || config.Text == nil || config.Text.ContextWindowTokens <= 0 {
 			continue
 		}
-		if window == 0 || config.Text.ContextWindowTokens < window {
-			window = config.Text.ContextWindowTokens
+		if minWindow == 0 || config.Text.ContextWindowTokens < minWindow {
+			minWindow = config.Text.ContextWindowTokens
 		}
-		if routeReserve := cloudAgentEffectiveOutputReserve(config.Text); reserve == 0 || routeReserve < reserve {
-			reserve = routeReserve
+		candidate := cloudAgentContextBudgetFor(config.Text.ContextWindowTokens, cloudAgentEffectiveOutputReserve(config.Text), "logical-route-intersection")
+		if !found || candidate.InputBudgetTokens < budget.InputBudgetTokens {
+			budget = candidate
+			found = true
 		}
 	}
-	if window < minCloudAgentContextWindowTokens {
+	if !found || minWindow < minCloudAgentContextWindowTokens {
 		return cloudAgentContextBudget{}, false
 	}
-	return cloudAgentContextBudgetFor(window, reserve, "logical-route-intersection"), true
+	return budget, true
 }
 
 // cloudAgentEstimatedTokens is deliberately conservative for non-ASCII text.

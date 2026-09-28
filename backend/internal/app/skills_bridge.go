@@ -103,8 +103,16 @@ func (s *Service) SkillPackageFiles(userID string, skillID string) ([]SkillPacka
 	return s.skillDomain().SkillPackageFiles(userID, skillID)
 }
 
+func (s *Service) SkillPackageFilesAtVersion(userID, skillID, versionID, contentHash string) ([]SkillPackageFileItem, error) {
+	return s.skillDomain().SkillPackageFilesAtVersion(userID, skillID, versionID, contentHash)
+}
+
 func (s *Service) SkillPackageFile(userID string, skillID string, filePath string) (*SkillPackageFileContent, error) {
 	return s.skillDomain().SkillPackageFile(userID, skillID, filePath)
+}
+
+func (s *Service) SkillPackageFileAtVersion(userID, skillID, versionID, contentHash, filePath string) (*SkillPackageFileContent, error) {
+	return s.skillDomain().SkillPackageFileAtVersion(userID, skillID, versionID, contentHash, filePath)
 }
 
 func (s *Service) SkillPackageRawFile(userID string, skillID string, filePath string) ([]byte, string, string, error) {

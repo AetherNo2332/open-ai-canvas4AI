@@ -10,7 +10,7 @@ import { collectImageStorageKeys } from "../src/services/image-storage";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import { detectVideoAudioTrack, detectVideoAudioTrackFromBlob, detectVideoAudioTrackFromUrl } from "../src/lib/video-poster";
 
-const canvasNodeContentSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node-content.tsx"), "utf8");
+const canvasNodeContentSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node-content.tsx"), "utf8").replace(/\r\n/g, "\n");
 const canvasAudioPlayerSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-audio-player.tsx"), "utf8");
 const canvasMentionSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-resource-mention-textarea.tsx"), "utf8");
 const canvasNodeSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node.tsx"), "utf8");
@@ -80,7 +80,13 @@ describe("large canvas media rendering", () => {
         expect(canvasNodeContentSource).not.toContain("hydrateMediaPreview");
         expect(inactivePreviewSource).toContain("hasPersistedPreview || !nearViewport");
         expect(inactivePreviewSource).toContain("URL.revokeObjectURL(localPreviewUrlRef.current)");
-        expect(inactivePreviewSource).not.toContain("<video");
+        // OSS may allow playback while denying canvas extraction; the fallback
+        // decodes one frame only near the viewport and never starts playback.
+        expect(inactivePreviewSource).toContain("hasPersistedPreview || localPreviewUrl || !nearViewport");
+        expect(inactivePreviewSource).toContain("src={passiveVideoUrl}");
+        expect(inactivePreviewSource).toContain('preload="auto"');
+        expect(inactivePreviewSource).toContain("video.currentTime = Math.min(0.001, video.duration / 2)");
+        expect(inactivePreviewSource).not.toContain("<VideoPlayer");
         expect(inactivePreviewSource).toContain("hydrateCanvasVideoPreview(node, controller.signal)");
         expect(canvasVideoPreviewSource).toContain("captureVideoPoster(source, { signal, maxWidth: 400 })");
         expect(inactivePreviewSource).toContain("hydrated.persisted.then");

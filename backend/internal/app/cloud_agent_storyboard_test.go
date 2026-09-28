@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -21,14 +22,14 @@ func cloudAgentStoryboardCall(t *testing.T, name, callID string, args any) cloud
 	return call
 }
 
-func cloudAgentStoryboardFixture(t *testing.T) (*Service, *model.CanvasProject) {
+func cloudAgentStoryboardFixture(t *testing.T) (*Service, *gorm.DB, *model.CanvasProject) {
 	t.Helper()
 	s, db, _, _ := creationTestService(t)
 	canvas := &model.CanvasProject{ID: "agent-canvas", UserID: "user", Title: "分镜测试", PayloadJSON: `{"nodes":[],"connections":[]}`}
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatal(err)
 	}
-	return s, canvas
+	return s, db, canvas
 }
 
 func createCloudAgentStoryboardForTest(t *testing.T, s *Service, canvas *model.CanvasProject) []map[string]any {
@@ -153,7 +154,7 @@ func TestCloudAgentStoryboardToolsAreScopedAndStructured(t *testing.T) {
 }
 
 func TestCloudAgentCreatesAndReadsStructuredStoryboard(t *testing.T) {
-	s, canvas := cloudAgentStoryboardFixture(t)
+	s, _, canvas := cloudAgentStoryboardFixture(t)
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	call := cloudAgentStoryboardCall(t, "canvas_create_storyboard", "create-preview", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc),
@@ -195,7 +196,7 @@ func TestCloudAgentCreatesAndReadsStructuredStoryboard(t *testing.T) {
 }
 
 func TestCloudAgentStoryboardEditPreservesRowsAndRenumbers(t *testing.T) {
-	s, canvas := cloudAgentStoryboardFixture(t)
+	s, _, canvas := cloudAgentStoryboardFixture(t)
 	initialRows := createCloudAgentStoryboardForTest(t, s, canvas)
 	firstID, secondID := stringValue(initialRows[0]["id"]), stringValue(initialRows[1]["id"])
 	policy, err := s.RuntimePolicy()
@@ -250,7 +251,7 @@ func TestCloudAgentStoryboardEditPreservesRowsAndRenumbers(t *testing.T) {
 }
 
 func TestCloudAgentStoryboardRejectsUnsafeOrStaleMutations(t *testing.T) {
-	s, canvas := cloudAgentStoryboardFixture(t)
+	s, _, canvas := cloudAgentStoryboardFixture(t)
 	rows := createCloudAgentStoryboardForTest(t, s, canvas)
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	hash := cloudAgentCanvasHash(doc)
@@ -309,7 +310,7 @@ func TestCloudAgentStoryboardRejectsUnsafeOrStaleMutations(t *testing.T) {
 }
 
 func TestCloudAgentStoryboardCreateUsesRuntimeApprovalPath(t *testing.T) {
-	s, canvas := cloudAgentStoryboardFixture(t)
+	s, _, canvas := cloudAgentStoryboardFixture(t)
 	req := agentTestRequest()
 	req.PermissionMode = "request_approval"
 	req.IdempotencyKey = "storyboard-approval"
@@ -317,6 +318,7 @@ func TestCloudAgentStoryboardCreateUsesRuntimeApprovalPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	run, initialState := startPiAgentFirstStep(t, s, root.ID)
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	call := cloudAgentStoryboardCall(t, "canvas_create_storyboard", "storyboard-approved-call", map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc),
@@ -324,15 +326,10 @@ func TestCloudAgentStoryboardCreateUsesRuntimeApprovalPath(t *testing.T) {
 		"title":        "待审批分镜",
 		"rows":         []map[string]any{{"durationSeconds": 4.0, "plotDescription": "审批后写入的镜头"}},
 	})
-	run, err := s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
-	}
+	state := *initialState
 	state.ActiveTaskID = ""
+	state.ActivatedToolCategories = cloudAgentAppendActivatedCategory(state.ActivatedToolCategories, "agent_tools_canvas_edit")
+	state.AdvertisedToolNames = cloudAgentToolNames(cloudAgentVisibleToolsForCategories(state.Canonical.Tools, state.ActivatedToolCategories, nil, nil))
 	state.Calls = []cloudAgentCall{call}
 	state.CallIndex = 0
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
@@ -342,7 +339,7 @@ func TestCloudAgentStoryboardCreateUsesRuntimeApprovalPath(t *testing.T) {
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
 	state, _ = cloudAgentDecode(run)
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	waiting, err := s.CloudAgentRun("user", run.ID)
@@ -359,7 +356,8 @@ func TestCloudAgentStoryboardCreateUsesRuntimeApprovalPath(t *testing.T) {
 	if err := s.DecideCloudAgentApproval("user", run.ID, waiting.Approval.ID, "approve", "确认创建"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	run, state = reloadAgentRun(t, s, run.ID)
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	stored, _ = s.repo.CanvasProjectForUser("user", canvas.ID)

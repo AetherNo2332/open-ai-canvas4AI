@@ -5,9 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math"
-	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 const cloudAgentOperation = "cloud_agent"
@@ -64,18 +65,20 @@ func cloudAgentStepLimit(req CloudAgentRequest) int {
 }
 
 type cloudAgentState struct {
-	Version        int                       `json:"version"`
-	Request        CloudAgentRequest         `json:"request"`
-	ParentID       string                    `json:"parentId"`
-	Fingerprint    string                    `json:"fingerprint"`
-	CreativeAnchor cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
-	Plan           []cloudAgentPlanItem      `json:"plan,omitempty"`
-	Skills         []cloudAgentSkill         `json:"skills,omitempty"`
-	Profile        cloudAgentProfileSnapshot `json:"profile"`
-	Policy         cloudAgentPolicySnapshot  `json:"policy"`
+	Version          int                       `json:"version"`
+	SkillRuntimeMode string                    `json:"skillRuntimeMode,omitempty"`
+	Request          CloudAgentRequest         `json:"request"`
+	ParentID         string                    `json:"parentId"`
+	Fingerprint      string                    `json:"fingerprint"`
+	CreativeAnchor   cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
+	Plan             []cloudAgentPlanItem      `json:"plan,omitempty"`
+	Skills           []cloudAgentSkill         `json:"skills,omitempty"`
+	Profile          cloudAgentProfileSnapshot `json:"profile"`
+	Policy           cloudAgentPolicySnapshot  `json:"policy"`
 }
 
 type CloudAgentRun struct {
+	SkillRuntimeMode string           `json:"skillRuntimeMode,omitempty"`
 	ID             string            `json:"id"`
 	CanvasID       string            `json:"canvasId"`
 	ParentID       string            `json:"parentId,omitempty"`
@@ -241,12 +244,33 @@ func cloudAgentFingerprint(req CloudAgentRequest, parent string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func agentRunOutput(task *model.Task, state cloudAgentState) *CloudAgentRun {
+// cloudAgentRunIdentity 是渲染运行视图所需的最小身份字段。
+//
+// 旧 run 的身份来自根任务行；阶段 2 之后的新 run 由 Go 直接创建（run + 预授权 + 不可变快照），
+// **不再有根任务**。视图层不该知道身份来自哪里，所以这里显式收敛成一份身份，
+// 而不是继续传 *model.Task —— 新 run 根本没有任务行可传。
+type cloudAgentRunIdentity struct {
+	ID       string
+	CanvasID string
+	// Status 已经是 run 口径的终态字符串（completed / failed / cancelled / rejected / queued / running）。
+	Status    string
+	Model     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// cloudAgentTaskIdentity 把旧的根任务行映射成同一份身份，保证旧 run 的视图逐字段不变。
+func cloudAgentTaskIdentity(task *model.Task) cloudAgentRunIdentity {
 	status := string(task.Status)
 	if task.Status == model.TaskStatusSucceeded {
 		status = "completed"
 	}
-	return &CloudAgentRun{ID: task.ID, CanvasID: task.ProjectID, ParentID: state.ParentID, Status: status, PermissionMode: state.Request.PermissionMode, Model: task.Model, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt, Skills: state.Skills}
+	return cloudAgentRunIdentity{ID: task.ID, CanvasID: task.ProjectID, Status: status,
+		Model: task.Model, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt}
+}
+
+func agentRunOutput(identity cloudAgentRunIdentity, state cloudAgentState) *CloudAgentRun {
+	return &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model, CreatedAt: identity.CreatedAt, UpdatedAt: identity.UpdatedAt, Skills: state.Skills}
 }
 
 func (s *Service) cloudAgentTask(userID, id string) (*model.Task, cloudAgentState, error) {
@@ -289,8 +313,64 @@ func (s *Service) cloudAgentTask(userID, id string) (*model.Task, cloudAgentStat
 	if task.ID != cloudAgentID(userID, state.Request.IdempotencyKey) || task.ProjectID != state.Request.CanvasID {
 		return nil, input.Agent, kernel.NotFound("Agent 运行不存在")
 	}
-	input.Agent = cloudAgentState{Version: 1, Request: state.Request, ParentID: state.ParentID, Fingerprint: state.Fingerprint, CreativeAnchor: state.CreativeAnchor, Skills: state.Skills, Profile: state.Profile, Policy: state.Policy}
+	input.Agent = cloudAgentState{Version: 1, SkillRuntimeMode: state.SkillRuntimeMode, Request: state.Request, ParentID: state.ParentID, Fingerprint: state.Fingerprint, CreativeAnchor: state.CreativeAnchor, Skills: state.Skills, Profile: state.Profile, Policy: state.Policy}
 	return task, input.Agent, nil
+}
+
+// cloudAgentRunRef 是"读一次运行"的统一结果。
+//
+// LegacyTask 只在"执行记录尚不存在、需要从旧根任务引导"时有值；
+// 阶段 2 之后的新 run（Go 只建 run + 预授权 + 不可变快照，不建根任务）它为 nil。
+type cloudAgentRunRef struct {
+	UserID     string
+	Identity   cloudAgentRunIdentity
+	LegacyTask *model.Task
+	State      cloudAgentState
+}
+
+// cloudAgentRunRefFor 解析一次运行，同时兼容两种形态。
+//
+// 顺序刻意是**旧路径优先**：只要根任务还在，行为与迁移前逐字段一致
+// （含终态损坏 runtime 的只读降级、幂等键校验与 ProjectID 校验）。
+// 只有当根任务路径失败时，才回退到"以执行记录为权威"的读取 ——
+// 那正是阶段 2 之后的新 run 形态。
+//
+// 因此这一步是**严格增量**的：既有可读运行的行为一个都不变，
+// 而此前必然 404 的"没有根任务的 run"开始可读。删除根任务（阶段 2 第 3 步）
+// 只需删掉这里的旧路径分支，不必再动调用方。
+func (s *Service) cloudAgentRunRefFor(userID, id string) (*cloudAgentRunRef, error) {
+	if task, state, err := s.cloudAgentTask(userID, id); err == nil {
+		return &cloudAgentRunRef{UserID: userID, Identity: cloudAgentTaskIdentity(task), LegacyTask: task, State: state}, nil
+	}
+	run, err := s.repo.CloudAgent(userID, id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, kernel.NotFound("Agent 运行不存在")
+		}
+		return nil, err
+	}
+	state, decodeErr := cloudAgentDecode(run)
+	if decodeErr != nil {
+		if cloudAgentRunTerminal(run.Status) {
+			// 与旧路径同一合同：终态仍应可查询，但绝不从损坏的 runtime 伪造
+			// 审批、权限、活动任务或技能内容。
+			return &cloudAgentRunRef{UserID: userID,
+				Identity: cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status,
+					CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt},
+				State: cloudAgentState{Version: 1, Request: CloudAgentRequest{CanvasID: run.CanvasID}}}, nil
+		}
+		return nil, kernel.NotFound("Agent 运行不存在")
+	}
+	// 身份自校验与旧路径同源：运行 ID 由 (userID, 幂等键) 决定，防止越权或错挂。
+	if run.ID != cloudAgentID(userID, state.Request.IdempotencyKey) {
+		return nil, kernel.NotFound("Agent 运行不存在")
+	}
+	return &cloudAgentRunRef{UserID: userID,
+		Identity: cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status,
+			Model: state.Request.Model, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt},
+		State: cloudAgentState{Version: 1, SkillRuntimeMode: state.SkillRuntimeMode, Request: state.Request, ParentID: state.ParentID,
+			Fingerprint: state.Fingerprint, CreativeAnchor: state.CreativeAnchor, Skills: state.Skills,
+			Profile: state.Profile, Policy: state.Policy}}, nil
 }
 
 func cloudAgentTaskTerminal(status model.TaskStatus) bool {
@@ -302,7 +382,7 @@ func cloudAgentRunTerminal(status string) bool {
 }
 
 func (s *Service) CloudAgentRun(userID, id string, options ...CloudAgentRunViewOptions) (*CloudAgentRun, error) {
-	task, state, err := s.cloudAgentTask(userID, id)
+	ref, err := s.cloudAgentRunRefFor(userID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -312,13 +392,17 @@ func (s *Service) CloudAgentRun(userID, id string, options ...CloudAgentRunViewO
 	// read-only, minimal fallback for that case. The ensure path is only for a
 	// legacy root task whose execution row has not been created yet.
 	if _, lookupErr := s.repo.CloudAgent(userID, id); errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-		if err := s.ensureCloudAgentExecution(task, state); err != nil {
+		if ref.LegacyTask == nil {
+			// 没有根任务又没有执行记录：无法引导，也不能凭空造一个运行。
+			return nil, kernel.NotFound("Agent 运行不存在")
+		}
+		if err := s.ensureCloudAgentExecution(ref.LegacyTask, ref.State); err != nil {
 			return nil, err
 		}
 	} else if lookupErr != nil {
 		return nil, lookupErr
 	}
-	return s.cloudAgentExecutionOutput(task, state, options...)
+	return s.cloudAgentExecutionOutput(userID, ref.Identity, ref.State, options...)
 }
 
 // CloudAgentRunIfChanged keeps idle event streams on a small indexed read.
@@ -369,11 +453,14 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	req.ProfileRevision = profile.Revision
 	id := cloudAgentID(userID, req.IdempotencyKey)
 	fingerprint := cloudAgentFingerprint(req, parentID)
-	if existing, state, lookupErr := s.cloudAgentTask(userID, id); lookupErr == nil {
-		if state.Fingerprint == "" || state.Fingerprint != fingerprint {
+	// 幂等判断必须走统一读路径：新形态的运行没有 `cloud_agent` 根任务（只有不可领取的
+	// 占位行，操作名不同），只认旧根任务会在重投时误判成"不存在"，于是再建一次——
+	// 那正好是重复计费。cloudAgentRunRefFor 同时覆盖旧根任务与执行记录两种形态。
+	if ref, lookupErr := s.cloudAgentRunRefFor(userID, id); lookupErr == nil {
+		if ref.State.Fingerprint == "" || ref.State.Fingerprint != fingerprint {
 			return nil, kernel.NewAppError(409, "幂等键已用于不同请求，请使用新的幂等键")
 		}
-		return s.CloudAgentRun(userID, existing.ID)
+		return s.CloudAgentRun(userID, ref.Identity.ID)
 	} else {
 		var appErr *AppError
 		if !errors.As(lookupErr, &appErr) || appErr.Status != 404 {
@@ -384,20 +471,21 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	var creativeAnchor cloudAgentCreativeAnchor
 	var inheritedPlan []cloudAgentPlanItem
 	if parentID != "" {
-		parent, _, parentErr := s.cloudAgentTask(userID, parentID)
+		// 父轮解析也必须走统一读路径：P1.5 之后的新形态运行没有 `cloud_agent` 根任务，
+		// 只认根任务会让"续聊"直接 404。LegacyTask 只在旧形态下非空。
+		parentRef, parentErr := s.cloudAgentRunRefFor(userID, parentID)
 		if parentErr != nil {
 			return nil, parentErr
 		}
-		if parent.ProjectID != req.CanvasID {
+		if parentRef.Identity.CanvasID != req.CanvasID {
 			return nil, kernel.Forbidden("不能跨画布追加 Agent 消息")
 		}
-		if parent.Status == model.TaskStatusQueued || parent.Status == model.TaskStatusRunning {
+		if parentRef.Identity.Status == "queued" || parentRef.Identity.Status == "running" {
 			return nil, kernel.NewAppError(409, "上一轮仍在执行，请等待结束")
 		}
 		superseded := s.cloudAgentParentCanBeSuperseded(userID, parentID)
-		if err := s.advanceCloudAgentByID(userID, parentID); err != nil {
-			return nil, err
-		}
+		// Pi 是唯一引擎：不再由 Go 推进上一轮。续聊要求上一轮已经终结（上方与下方终态
+		// 检查会拒绝仍在跑的上一轮），运行由 agent/ 的 Node worker 独占驱动。
 		// 续轮收束要读上一轮**全部**事件（运行详情默认只返回尾部一窗）：长会话一旦被截断，
 		// 新轮就看不到上一轮改过哪些节点、提交过哪些任务，表现为"忘了自己做过什么"。
 		parentRun, err := s.CloudAgentRun(userID, parentID, CloudAgentRunViewOptions{EventLimit: cloudAgentContinuationEventLimit})
@@ -405,7 +493,20 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 			return nil, err
 		}
 		if superseded {
-			log.Printf("agent run %s cannot resume after a contract change; continuing in a new turn", parentID)
+			// 旧轮使用旧版执行合同，Pi 也无法恢复它：必须在这里显式归档为终态。
+			// 之前依赖已被删除的 Go 调度器在推进时发现合同不匹配才归档，删除后
+			// 这类运行会永远停在 running，既占用"活跃运行"语义也让用户看到卡住的一轮。
+			parentExecution, execErr := s.repo.CloudAgent(userID, parentID)
+			if execErr != nil {
+				return nil, execErr
+			}
+			if !cloudAgentRunTerminal(parentExecution.Status) {
+				if err := s.terminateCloudAgent(parentExecution, "本轮使用旧版执行合同，已归档；请在新一轮继续对话"); err != nil {
+					return nil, err
+				}
+				parentRun.Status = "failed"
+			}
+			log.Printf("agent run %s cannot resume after a contract change; archived and continuing in a new turn", parentID)
 		} else if !cloudAgentRunTerminal(parentRun.Status) || parentRun.CleanupPending {
 			return nil, kernel.NewAppError(409, "上一轮 Agent 尚未结束")
 		}
@@ -418,22 +519,27 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 			return nil, WrapAppError(409, "上一轮 Agent 历史记录不完整，无法继续对话；请新建对话", err)
 		}
 		// 跨轮只继承"视觉事实"：已经看过的画面与模型写下的观察（锚点会按当前画布重建）。
-		creativeAnchor = parentState.CreativeAnchor
-		inheritedPlan = parentState.Plan
 		// 视觉事实跨轮继承：这一轮已经看过的画面与模型自己写下的观察随锚点带过来，
 		// 否则新轮会把看过的图重新标成"没有视觉识别证据"并再花一次视觉 token。
 		creativeAnchor = parentState.CreativeAnchor
+		inheritedPlan = parentState.Plan
+		// 父轮的"原始要求"：旧形态取自根任务正文，新形态取自运行请求 —— 同一份事实，
+		// 两种形态都必须能续聊。
+		parentPrompt := parentState.Request.Prompt
+		if parentRef.LegacyTask != nil && strings.TrimSpace(parentRef.LegacyTask.Prompt) != "" {
+			parentPrompt = parentRef.LegacyTask.Prompt
+		}
 		history = parentState.TextHistory
 		if history == nil {
-			history = cloudAgentLegacyHistory(parentState.Canonical.Messages, parent.Prompt)
+			history = cloudAgentLegacyHistory(parentState.Canonical.Messages, parentPrompt)
 		}
-		text, context, err := cloudAgentContinuationReply(parent, parentRun)
+		text, context, err := cloudAgentContinuationReply(parentRef.LegacyTask, parentRun)
 		if err != nil {
 			return nil, err
 		}
 		// 压缩时 TextHistory 与 Canonical 长度相同；压缩后本轮仍可能继续回答或收到插话。
 		// 只补压缩边界之后的内容，不能重复原始要求，也不能丢掉最终回复。
-		history = cloudAgentContinuationHistory(history, parentState, parent.Prompt, text)
+		history = cloudAgentContinuationHistory(history, parentState, parentPrompt, text)
 		// 事实交接帧不能因为压缩而缺席：长会话恰恰最需要它，而且"别重复提交收费任务"的
 		// 依据只在这份帧里（它带的是上一轮真实的工具结果与画布改动）。
 		if strings.TrimSpace(context) != "" {
@@ -478,13 +584,16 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	}
 	// The policy prompt is the stable provider-cache prefix. Canvas contents are
 	// dynamic run data and must not be embedded in that prefix.
-	system, policy, err := compileCloudAgentPolicies(req, skillSnapshots, "", profile, creativeAnchor)
+	system, policy, err := compileCloudAgentPoliciesForRuntime(req, skillSnapshots, "", profile, cloudAgentSkillRuntimeNative, creativeAnchor)
 	if err != nil {
 		return nil, err
 	}
-	state := cloudAgentState{Version: 1, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
+	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
-	canonical.Tools = cloudAgentVisibleTools(canonical.Tools, "", nil, nil)
+	canonical.Tools = compileCloudAgentToolsForRuntime(req, len(profile.Layers) > 0, cloudAgentSkillRuntimeNative)
+	// Keep the complete eligible tool catalog in the Go runtime snapshot. Pi
+	// receives only the parent schemas on its first model request, but Go needs
+	// the child schemas to validate a category opened by a later tool call.
 	// Keep the catalog out of TextHistory while exposing it as a data message in this run.
 	if strings.TrimSpace(canvasSummary) != "" && len(canonical.Messages) > 0 {
 		catalog := map[string]any{
@@ -511,23 +620,114 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	input := map[string]any{"mode": "text", "prompt": req.Prompt, "textHistory": history, "textOptions": map[string]any{"stream": true, "thinking": cloudAgentReasoningEnabled(policy.ReasoningMode), "maxOutputTokens": cloudAgentStepOutputBudget(stepLimits, false)}, "cloudAgent": state,
 		"agentRequests": map[string]any{"canonical": canonical},
 		"config":        map[string]any{"channelId": req.ChannelID, "channelModelKey": req.ChannelModelKey, "model": firstNonEmpty(req.ChannelModelKey, req.Model), "systemPrompt": system}}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("CANVAS_AGENT_ENGINE")), "pi") {
-		input["agentEngine"] = "pi"
+	// Pi 是唯一引擎：不再有 legacy 开关，也不保留双引擎共存分支。
+	// 根任务仍然携带完整信封（system/canonical/权限/预算），Node worker 领取后独立驱动循环。
+	input["agentEngine"] = "pi"
+	// 首个模型步之前的运行状态（P1.5）。它与旧运行的差别只有三处，且都显式记账：
+	//   - 合同版本与阶段：只有这个阶段允许 TaskIDs 为空，也只有它必须带快照与占位任务；
+	//   - 不可变快照：服务端策略身份 + 工具 schema 身份在这里定型；
+	//   - 占位任务：承载本轮报价预留，worker 永不领取。
+	runtime := cloudAgentRuntime{
+		RuntimeRunID: id, Request: req, Policy: policy, ParentID: parentID, Fingerprint: fingerprint,
+		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
+		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
+		Plan: inheritedPlan, StepLimits: stepLimits,
+		ContractVersion: cloudAgentContractVersionFirstStep, Phase: cloudAgentPhaseAwaitingFirstStep,
+		Snapshot: cloudAgentContractSnapshotFor(canonical.SystemPrompt, canonical.Tools), PlaceholderTaskID: id,
 	}
-	task, err := s.CreateTask(userID, CreateTaskRequest{ProjectID: req.CanvasID, Type: "canvas_text", Operation: cloudAgentOperation, Prompt: req.Prompt, Model: req.Model, LogicalModelID: req.LogicalModelID, Input: input,
-		admission: &taskAdmission{ID: id, MaxCharge: int64(math.Floor(req.Budget.MaxCredits * float64(CreditScale)))}})
+	run, err := s.newCloudAgentExecution(userID, id, req.CanvasID, parentID, &runtime)
+	if err != nil {
+		return nil, err
+	}
+	// 占位任务不执行任何模型调用：它的报价只用于"建 run 就要有预留"这一步，
+	// 真实首步报价由首个 PiModelStep 按 Node 的最终信封重新计算并在同一事务里换单。
+	prepare := &creationTaskPreparation{}
+	task, err := s.CreateTask(userID, CreateTaskRequest{ProjectID: req.CanvasID, Type: "canvas_text", Operation: cloudAgentHoldingOperation, Prompt: req.Prompt, Model: req.Model, LogicalModelID: req.LogicalModelID, Input: input,
+		admission: &taskAdmission{ID: id, AgentRunID: id, MaxCharge: int64(math.Floor(req.Budget.MaxCredits * float64(CreditScale))),
+			Status: model.TaskStatusHolding, Stage: "等待首个模型步提交（本轮报价已预留）"},
+		creationPrepare: prepare})
 	if err != nil {
 		// A concurrent identical request may have won the transaction. Never
 		// replace its result or reserve credits a second time.
-		if existing, stored, readErr := s.cloudAgentTask(userID, id); readErr == nil {
-			if stored.Fingerprint == "" || stored.Fingerprint != fingerprint {
+		if ref, readErr := s.cloudAgentRunRefFor(userID, id); readErr == nil {
+			if ref.State.Fingerprint == "" || ref.State.Fingerprint != fingerprint {
 				return nil, kernel.NewAppError(409, "幂等键已用于不同请求")
 			}
-			return s.CloudAgentRun(userID, existing.ID)
+			return s.CloudAgentRun(userID, ref.Identity.ID)
+		}
+		return nil, err
+	}
+	// creationPrepare 只做准入计算，不落库；密钥保护与序列化仍由这里负责，
+	// 交给仓储的 InputJSON 必须是最终形态。
+	if err = s.protectTaskSecrets(input); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+	task.InputJSON = string(raw)
+	if prepare.Order != nil {
+		task.BillingOrderID = prepare.Order.ID
+	}
+	runtimePolicy, err := s.RuntimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	if err = s.createCloudAgentRunWithinStorageQuota(run, task, prepare.Order, runtimePolicy); err != nil {
+		if errors.Is(err, repository.ErrCreationConflict) {
+			return nil, creationConflict("同一 Agent 对话已有新的活动运行，请刷新对话后继续")
+		}
+		if errors.Is(err, repository.ErrActiveTaskLimit) {
+			return nil, BadAuthRequest(fmt.Sprintf("同时排队或运行的任务最多 %d 个，请等待已有任务完成", runtimePolicy.Task.ActiveTaskLimit))
+		}
+		if errors.Is(err, repository.ErrInsufficientCredits) {
+			return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
+		}
+		if errors.Is(err, repository.ErrLogicalModelUnavailable) {
+			return nil, BadAuthRequest("所选模型已停用、归档或配置已更新，请重新选择")
+		}
+		// 同一事务里可能已经有并发请求提交成功：只有确认幂等键一致才当作命中。
+		if ref, readErr := s.cloudAgentRunRefFor(userID, id); readErr == nil {
+			if ref.State.Fingerprint == "" || ref.State.Fingerprint != fingerprint {
+				return nil, kernel.NewAppError(409, "幂等键已用于不同请求")
+			}
+			return s.CloudAgentRun(userID, ref.Identity.ID)
 		}
 		return nil, err
 	}
 	return s.CloudAgentRun(userID, task.ID)
+}
+
+// newCloudAgentExecution 组装新运行的执行记录。
+//
+// 会话归属必须在插入前定好：EnsureCloudAgent 只会在 ConversationID 为空时去查父轮，
+// 而父轮可能是一轮旧合同运行（执行记录由 Go worker 建），任何一次查不到都会让建 run 失败。
+// 这里按同一语义先把会话与标题从父轮继承下来（父轮在本函数之前已被读过一次）。
+func (s *Service) newCloudAgentExecution(userID, id, canvasID, parentID string, state *cloudAgentRuntime) (*model.CloudAgentExecution, error) {
+	now := time.Now()
+	run := &model.CloudAgentExecution{
+		ID: id, UserID: userID, Status: "queued", Engine: "pi", Revision: 1,
+		CanvasID: canvasID, ParentID: parentID, ConversationID: id, CreatedAt: now, UpdatedAt: now,
+	}
+	if parentID != "" {
+		if parent, err := s.repo.CloudAgent(userID, parentID); err == nil {
+			run.ConversationID = firstNonEmpty(parent.ConversationID, parentID)
+			run.Title = parent.Title
+		} else {
+			run.ConversationID = parentID
+		}
+	}
+	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
+		for _, skill := range state.Skills {
+			state.event(id, "native_skill_enabled", map[string]any{"skillId": skill.ID, "nativeName": skill.NativeName,
+				"skillName": skill.Name, "version": firstNonEmpty(skill.VersionLabel, skill.Version)})
+		}
+	}
+	if err := cloudAgentSave(run, state); err != nil {
+		return nil, err
+	}
+	return run, nil
 }
 
 // 旧运行记录没有单独保存历史；只从模型请求中当前用户消息之前的严格交替前缀恢复。
@@ -579,7 +779,7 @@ func cloudAgentContinuationHistory(history []providerTextMessage, state cloudAge
 		// context, not authorization to replay a write or charge a second time.
 		history = append(history, providerTextMessage{Role: "user", Content: prompt})
 		for _, message := range state.Canonical.Messages {
-			if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+			if cloudAgentIsDeliveredInterjection(message, &state) {
 				history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
 			}
 		}
@@ -589,7 +789,7 @@ func cloudAgentContinuationHistory(history []providerTextMessage, state cloudAge
 	// 终态取消/失败可能没有新回复，不能拿压缩前的最后一条 assistant 伪装成新回复。
 	after := state.Canonical.Messages[len(state.TextHistory):]
 	for _, message := range after {
-		if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+		if cloudAgentIsDeliveredInterjection(message, &state) {
 			history = append(history, providerTextMessage{Role: "user", Content: stringField(message, "content")})
 		}
 	}

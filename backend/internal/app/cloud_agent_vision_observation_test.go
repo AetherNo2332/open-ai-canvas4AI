@@ -229,20 +229,6 @@ func TestCloudAgentVisionObservationInvalidatedByContentChange(t *testing.T) {
 	}
 }
 
-// TestCloudAgentVisionNonDeliveryNoteNamesNode 覆盖评审要求的"模型可见的实际交付清单"：
-// 装配期没送出去的图，占位符必须点名 nodeId，否则模型只能把整批都当成没看过而重看。
-func TestCloudAgentVisionNonDeliveryNoteNamesNode(t *testing.T) {
-	note := cloudAgentImageEvictionWithoutDeliveryNote("upload-7-hm7rg")
-	if !strings.Contains(note, "upload-7-hm7rg") {
-		t.Fatalf("eviction placeholder must name the node: %s", note)
-	}
-	if !strings.Contains(note, "未能随本次请求送出") {
-		t.Fatalf("eviction placeholder must state that this image was not delivered: %s", note)
-	}
-	if fallback := cloudAgentImageEvictionWithoutDeliveryNote(""); strings.Contains(fallback, "节点  ") {
-		t.Fatalf("anonymous placeholder must stay grammatical: %s", fallback)
-	}
-}
 
 // TestCloudAgentVisionStaleImagesBlockPronouns 覆盖评审的第 5 条：
 // 即使本批只送达一张图，只要上下文里还留着更早的图，"这张图"就不能归属。

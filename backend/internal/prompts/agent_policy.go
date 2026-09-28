@@ -34,13 +34,19 @@ func LoadAgentPolicies() (system Policy, media Policy, err error) {
 	if system.ID != "cloud-agent-system" || media.ID != "cloud-agent-media" {
 		return Policy{}, Policy{}, fmt.Errorf("agent policy identities are invalid")
 	}
+	// Harness 装配已交给 agent/ 里的 Node worker（按 pi.dev 约定读
+	// SYSTEM.md / APPEND_SYSTEM.md / AGENTS.md / SOUL.md / TOOLS.md），因此 Go 侧
+	// **不再把 Harness 正文追加进系统提示**（否则同一份文件会出现两次）。
+	//
+	// 但"本轮用的是哪一版 Harness"属于运行合同的一部分：如果不纳入哈希，改动
+	// Harness 后旧运行仍会被判为合同未变并继续续聊，等于丢失合同快照。这里只把
+	// Harness 内容**折进哈希**，不并入 system.Text —— 正文装配权仍归 Node。
 	workspace, err := loadAgentWorkspace(os.Getenv("CANVAS_AGENT_HARNESS_DIR"))
 	if err != nil {
 		return Policy{}, Policy{}, err
 	}
 	if workspace != "" {
-		system.Text += "\n\n" + workspace
-		system.Hash = policyHash(system.ID, system.Version, system.Text)
+		system.Hash = policyHash(system.ID, system.Version, system.Text+"\n\n"+workspace)
 	}
 	return system, media, nil
 }

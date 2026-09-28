@@ -78,7 +78,12 @@ func cloudAgentAdvertisedTool(state *cloudAgentRuntime, name string) (map[string
 			}
 		}
 		if !found {
-			return nil, false
+			// 分层披露要求同时登记"本步下发的工具名"。检查点只有版本号、没有名下
+			// 明细时（旧结构或损坏的检查点）不能据此判定"未下发"：那会把整轮工具
+			// 全部拒掉。退回完整目录判断，授权仍由目录与服务端校验负责。
+			if len(state.AdvertisedToolNames) != 0 {
+				return nil, false
+			}
 		}
 	}
 	for _, tool := range state.Canonical.Tools {
@@ -121,14 +126,14 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 			admission = cloudAgentRejectCall(call, cloudAgentAdmissionPermission, "", "工具未获本轮权限授权")
 		case call.ID != "" && seenCalls[call.ID]:
 			admission = cloudAgentRejectCall(call, cloudAgentAdmissionDuplicateCall, "callId", "同一批里 callId 重复：「"+truncateRunes(call.ID, 60)+"」；本步只执行第一次出现的调用")
-		case cloudAgentIsToolCategory(name) && categoryAdmitted:
+		case state.DisclosureVersion < cloudAgentToolDisclosureVersion && cloudAgentIsToolCategory(name) && categoryAdmitted:
 			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "每个模型步只可打开一种工具类型；请在下一步选择其他类型")
 		default:
 			if err := validateCloudAgentToolArguments(schema, call.Function.Arguments); err != nil {
 				admission = cloudAgentRejectArgumentError(call, err)
 			}
 		}
-		if admission.Allowed && cloudAgentIsToolCategory(name) {
+		if state.DisclosureVersion < cloudAgentToolDisclosureVersion && admission.Allowed && cloudAgentIsToolCategory(name) {
 			categoryAdmitted = true
 		}
 		if call.ID != "" {
@@ -165,6 +170,9 @@ func cloudAgentUnadvertisedToolAdmission(state *cloudAgentRuntime, name string) 
 		return cloudAgentAdmissionInvalidOutput, "工具" + label + "当前不在纠错范围内；请先使用本步开放的修复工具"
 	}
 	if category := cloudAgentToolCategory(name); category != "" {
+		if state != nil && state.DisclosureVersion >= cloudAgentToolDisclosureVersion {
+			return cloudAgentAdmissionInvalidOutput, "工具" + label + "不在当前模型步骤的工具表中；请只使用当前工具表里列出的工具"
+		}
 		return cloudAgentAdmissionInvalidOutput, "工具" + label + "尚未在本轮打开；请先调用 " + category + "，并在下一模型步使用"
 	}
 	return cloudAgentAdmissionInvalidOutput, "工具" + label + "当前未披露；请只使用当前工具表里列出的工具"

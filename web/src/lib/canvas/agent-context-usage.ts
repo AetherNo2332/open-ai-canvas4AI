@@ -64,6 +64,11 @@ export function reduceAgentContextUsage(current: AgentContextUsage, event: Agent
     if (event.type === "context_compacted") {
         return { ...scoped, readingStale: Boolean(scoped.reading), compactionPending: null, lastCompaction: payload };
     }
+    if (event.type === "run_status") {
+        const terminal = ["completed", "failed", "cancelled", "rejected"].includes(String(payload.status || ""));
+        const compaction = terminal ? null : Object.hasOwn(payload, "contextCompaction") ? payload.contextCompaction : scoped.compactionPending;
+        return { ...scoped, compactionPending: compaction && typeof compaction === "object" ? compaction as Record<string, unknown> : null };
+    }
     return scoped;
 }
 

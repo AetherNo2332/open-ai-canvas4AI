@@ -185,8 +185,8 @@ func cloudAgentAskUser(call cloudAgentCall) (any, error) {
 
 // skipRemainingCloudAgentCalls 结束本批剩余调用（ask_user / finish_run 之后本轮不再继续执行）。
 // 末尾的 flush 让"本批前面的看图结果"仍能落在全部 tool 结果之后：这批调用到这里已经
-// 完整（每个声明的 tool_call_id 都有回执），但本轮就此结束、不会再走 advanceCloudAgent
-// 的兜底 flush，少了这一步缓冲的图片会被丢掉。
+// 完整（每个声明的 tool_call_id 都有回执），但本轮就此结束、不会再启动下一模型步骤，
+// 少了这一步缓冲的图片会被丢掉。
 //
 // 起点是 state.CallIndex 而不是 CallIndex+1：调用方都已经先落过当前调用的回执，
 // 而 cloudAgentToolResult 会把 CallIndex 推进一位（它指向的就是"下一个还没执行的调用"）。

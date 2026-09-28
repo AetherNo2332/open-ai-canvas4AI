@@ -61,6 +61,16 @@ export type AgentApproval = {
     reason?: string;
 };
 
+export type AgentRunSkill = {
+    id: string;
+    name: string;
+    version: string;
+    hash: string;
+    nativeName?: string;
+    versionId?: string;
+    versionLabel?: string;
+};
+
 export type AgentRun = {
     id: string;
     canvasId: string;
@@ -72,7 +82,8 @@ export type AgentRun = {
     model?: string;
     createdAt: string;
     updatedAt: string;
-    skills?: Array<{ id: string; name: string; version: string; hash: string }>;
+    skillRuntimeMode?: "pi-native" | "legacy-go";
+    skills?: AgentRunSkill[];
     events?: AgentEvent[];
     /** 事件已全量落库：本次返回的首条事件之前的已入库条数。 */
     eventSeqBase?: number;
@@ -285,7 +296,7 @@ export function subscribeAgentEvents(runId: string, onEvent: (event: AgentEvent)
                                         emit("assistant_message", { ...run.activeMessage, final: false });
                                     }
                                 }
-                                const statusPayload = { status: run.status, revision: run.revision, cleanupPending: run.cleanupPending, failureMessage: run.failureMessage, skills: run.skills, spentCredits: run.spentCredits, step: run.step, approval: run.approval };
+                                const statusPayload = { status: run.status, revision: run.revision, cleanupPending: run.cleanupPending, failureMessage: run.failureMessage, skillRuntimeMode: run.skillRuntimeMode, skills: run.skills, spentCredits: run.spentCredits, step: run.step, approval: run.approval, contextCompaction: run.contextCompaction };
                                 const statusKey = JSON.stringify(statusPayload);
                                 if (statusKey !== lastStatusKey) {
                                     lastStatusKey = statusKey;

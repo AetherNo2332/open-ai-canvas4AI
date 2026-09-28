@@ -682,7 +682,10 @@ func (r *Repository) Tasks(userID string, limit int, projectID string, activeOnl
 		limit = 50
 	}
 	query := r.db.Select("id", "project_id", "type", "status", "stage", "media_stage", "media_recovery_json", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "billing_order_id", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at", "agent_run_id", "generation_id", "approval_id", "authorized_charge_microcredits", "execution_diagnostic_json", "cancellation_source", "cancellation_actor_id", "cancellation_requested_at").
-		Where("user_id = ?", userID)
+		Where("user_id = ?", userID).
+		// 占位行只承载 Agent 建 run 的报价预留：它不是用户可理解的任务（没有产物、没有进度），
+		// 运行本身已经由 /agent/runs 暴露。让 holding 混进任务中心只会多出一条看不懂的条目。
+		Where("status <> ?", model.TaskStatusHolding)
 	if strings.TrimSpace(projectID) != "" {
 		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
 	}

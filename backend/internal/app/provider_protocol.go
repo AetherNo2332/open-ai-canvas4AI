@@ -775,6 +775,11 @@ func finishProtocolResult(ctx context.Context, config providerConfig, mode strin
 		if strings.TrimSpace(result.Reasoning) != "" {
 			output["reasoning"] = result.Reasoning
 		}
+		wire := config.InterfaceType
+		if wire == string(model.ChannelInterfaceOpenAIResponse) {
+			wire = "responses"
+		}
+		attachProviderPiUsage(output, providerPiUsageFromProviderUsage(result.Usage, wire))
 		return output, nil
 	}
 	var references []protocol.MediaReference

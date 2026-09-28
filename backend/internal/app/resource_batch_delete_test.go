@@ -50,8 +50,8 @@ func TestPurgeAssetsBatchSharedResourcesAndHistory(t *testing.T) {
 	assertCount(&model.Asset{}, 3)
 	assertCount(&model.Resource{}, 4)
 	assertCount(&model.ResourceDeletionJob{}, 0)
-	// 画布历史版本那条引用已在上面解除（拒绝信息已覆盖它的保护），所以这里是 0。
-	assertCount(&model.CanvasSnapshotResource{}, 0)
+	// 拒绝删除时引用预检不应产生部分清理；历史引用仍保留，直到显式解除。
+	assertCount(&model.CanvasSnapshotResource{}, 1)
 	assertCount(&model.AssetVersion{}, 2)
 	assertCount(&model.AssetRepresentation{}, 2)
 
@@ -84,13 +84,12 @@ func TestPurgeAssetsBatchSharedResourcesAndHistory(t *testing.T) {
 	if err := svc.PurgeUserAssets("user-1", []string{"first", " second ", "first"}); err != nil {
 		t.Fatal(err)
 	}
-	// 新引用语义（上游 5b382726 的 `ResourceReferenceSnapshotExcludingAssets`）只按"本次删除之外的
-	// 引用"判断保护范围：`keep-shared` 与 `same-object` 仅被本次要删的素材（含它们的未选中版本/表现）
-	// 引用，因此随素材一并移除；只有另一个用户的 `foreign-alias` 留下。
+	// 引用保护按“本次删除之外的引用”判断：`keep-shared` 仍被未选中的素材引用，
+	// `foreign-alias` 与 `same-object` 指向同一物理对象；删除本次素材记录后，两者仍须保留。
 	assertCount(&model.Asset{}, 1)
-	assertCount(&model.Resource{}, 1)
-	// 少了"被其他素材引用"这层保护后，随素材移除的物理对象从一个变成两个，删表也相应多一条。
-	assertCount(&model.ResourceDeletionJob{}, 2)
+	assertCount(&model.Resource{}, 2)
+	// 只有 batch-shared 没有其他引用；same-object 的物理对象仍被 foreign-alias 使用。
+	assertCount(&model.ResourceDeletionJob{}, 1)
 	assertCount(&model.CanvasSnapshotResource{}, 0)
 	assertCount(&model.CanvasSnapshot{}, 1)
 	assertCount(&model.Task{}, 1)
@@ -104,7 +103,7 @@ func TestPurgeAssetsBatchSharedResourcesAndHistory(t *testing.T) {
 	if sharedJob != 1 {
 		t.Fatalf("batch-shared 的物理删除任务数 = %d, want 1", sharedJob)
 	}
-	for _, id := range []string{"foreign-alias"} {
+	for _, id := range []string{"foreign-alias", "keep-shared"} {
 		var resource model.Resource
 		if err := db.First(&resource, "id = ?", id).Error; err != nil {
 			t.Fatalf("shared resource %s lost: %v", id, err)

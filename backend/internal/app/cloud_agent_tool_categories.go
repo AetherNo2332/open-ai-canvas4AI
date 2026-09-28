@@ -2,10 +2,11 @@ package app
 
 import "strings"
 
-const cloudAgentToolDisclosureVersion = 1
+const cloudAgentToolDisclosureVersion = 2
 
-// A category is named after its parent tool. Only one eligible child category
-// is sent on a normal model step; the complete catalog stays server-side.
+// Categories classify concrete tools for policy, telemetry, and UI grouping.
+// They are never model-callable tools: every eligible concrete tool is advertised
+// at the beginning of each Pi model step.
 func cloudAgentToolCategory(name string) string {
 	switch name {
 	case "plan_update", "ask_user", "finish_run", "task_get":
@@ -14,6 +15,8 @@ func cloudAgentToolCategory(name string) string {
 		return "agent_tools_memory"
 	case "skill_search", "skill_read_file":
 		return "agent_tools_skills"
+	case "read":
+		return "native_skill"
 	case "canvas_list_node_types", "canvas_get_state", "canvas_read_batch_table", "canvas_read_storyboard":
 		return "agent_tools_canvas_read"
 	case "image_text_detect", "image_annotation_render", "canvas_inspect_image":
@@ -80,42 +83,15 @@ func cloudAgentCategoryChildren(tools []map[string]any, category string) []strin
 	return names
 }
 
-// The parent schema records only tool names from its own category on the
-// preceding model step. Arguments and results remain in the transcript.
-func cloudAgentCategoryCallRecord(calls []cloudAgentCall, category string) string {
-	names := []string{}
-	seen := map[string]bool{}
-	for _, call := range calls {
-		name := call.Function.Name
-		if name != category && cloudAgentToolCategory(name) != category {
-			continue
-		}
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		if len(names) < 6 {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return ""
-	}
-	record := strings.Join(names, "、")
-	if len(seen) > len(names) {
-		record += "等"
-	}
-	return " " + strings.ReplaceAll(cloudAgentToolText("previous_step_calls"), "{names}", record)
-}
-
-// The existing repair circuit can temporarily replace the category view with
-// its smaller corrective tool set. It never adds a tool outside the catalog.
+// Legacy arguments remain accepted so old checkpoints can be read, but the
+// activated category set no longer controls disclosure. A repair scope may
+// still temporarily narrow the concrete tool set.
 func cloudAgentVisibleTools(all []map[string]any, selected string, previous []cloudAgentCall, repairScope []string) []map[string]any {
 	return cloudAgentVisibleToolsForCategories(all, []string{selected}, previous, repairScope)
 }
 
-// Opened categories remain available for the rest of this Agent run. A new run
-// starts with an empty set and therefore advertises only eligible parents.
+// Read category state from older checkpoints for compatibility. New Pi runs do
+// not use category activation to decide which tools are exposed.
 func cloudAgentActivatedCategories(state *cloudAgentRuntime) []string {
 	if state == nil {
 		return nil
@@ -138,45 +114,52 @@ func cloudAgentAppendActivatedCategory(active []string, category string) []strin
 }
 
 func cloudAgentVisibleToolsForCategories(all []map[string]any, categories []string, previous []cloudAgentCall, repairScope []string) []map[string]any {
+	_ = categories // kept for callers restoring v1 checkpoints
 	repairAllowed := map[string]bool{}
 	for _, name := range repairScope {
 		repairAllowed[name] = true
 	}
-	active := map[string]bool{}
-	for _, category := range categories {
-		if cloudAgentIsToolCategory(category) {
-			active[category] = true
-		}
+	record := ""
+	if names := cloudAgentPreviousStepCallNames(previous); names != "" {
+		record = " " + strings.ReplaceAll(cloudAgentToolText("previous_step_calls"), "{names}", names)
 	}
 	visible := make([]map[string]any, 0, len(all))
 	for _, tool := range all {
 		function, _ := tool["function"].(map[string]any)
 		name := stringField(function, "name")
-		if !cloudAgentIsToolCategory(name) {
+		if name == "" || cloudAgentIsToolCategory(name) || (len(repairScope) > 0 && !repairAllowed[name]) {
 			continue
 		}
-		if len(repairScope) > 0 {
-			allowed := false
-			for _, child := range cloudAgentCategoryChildren(all, name) {
-				if repairAllowed[child] {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				continue
-			}
+		if record == "" {
+			visible = append(visible, tool)
+			continue
 		}
 		copyFunction := cloneStringAnyMap(function)
-		copyFunction["description"] = stringField(function, "description") + cloudAgentCategoryCallRecord(previous, name)
+		copyFunction["description"] = stringField(function, "description") + record
 		visible = append(visible, map[string]any{"type": "function", "function": copyFunction})
 	}
-	for _, tool := range all {
-		function, _ := tool["function"].(map[string]any)
-		name := stringField(function, "name")
-		if active[cloudAgentToolCategory(name)] && (len(repairScope) == 0 || repairAllowed[name]) {
-			visible = append(visible, tool)
+	return visible
+}
+
+func cloudAgentPreviousStepCallNames(calls []cloudAgentCall) string {
+	names := []string{}
+	seen := map[string]bool{}
+	for _, call := range calls {
+		name := call.Function.Name
+		if name == "" || cloudAgentIsToolCategory(name) || seen[name] {
+			continue
+		}
+		seen[name] = true
+		if len(names) < 6 {
+			names = append(names, name)
 		}
 	}
-	return visible
+	if len(names) == 0 {
+		return ""
+	}
+	record := strings.Join(names, "、")
+	if len(seen) > len(names) {
+		record += "等"
+	}
+	return record
 }

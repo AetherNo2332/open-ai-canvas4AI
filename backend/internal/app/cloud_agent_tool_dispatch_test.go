@@ -16,7 +16,7 @@ import (
 // 的工具表里没有它的 schema，运行期的审批/执行分派也没有它的分支，于是模型永远看不到这个工具，
 // 而全套测试仍然全绿。这类退化必须在 CI 立刻变红。
 //
-// 实现方式与取舍：`advanceCloudAgentTool` 的分派是写在事务闭包里的 switch，没有可注入的
+// 实现方式与取舍：`executeCloudAgentToolCall` 的分派是写在事务闭包里的 switch，没有可注入的
 // 分派表，无法用纯行为断言覆盖"这个工具名有没有分支"；因此这里**用 go/ast 读源码**
 // 抽取三条集合，再做集合断言（用户已允许在结构做不到纯断言时退一步做源码级断言）。
 // 读源码的好处是它检查的正是"分派有没有写"，而不会被运行期提前 return 掩盖。
@@ -24,6 +24,15 @@ func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	registered := cloudAgentRegisteredToolNames(t)
 	supported := CloudAgentSupportedToolNames()
 	dispatched := cloudAgentDispatchedToolNames(t)
+	// 旧 Go loop 为兼容历史检查点仍保留类别选择分支；Pi registry 已改为平铺披露，
+	// 这些内部类别入口不再是可见工具，不能参与具体工具表的集合相等断言。
+	modelCallableDispatch := make([]string, 0, len(dispatched))
+	for _, name := range dispatched {
+		if !cloudAgentIsToolCategory(name) {
+			modelCallableDispatch = append(modelCallableDispatch, name)
+		}
+	}
+	dispatched = modelCallableDispatch
 
 	// 1. 平台支持集合里每个名字都能被执行分派处理（读/写两条分派路径都算）。
 	missing := difference(supported, dispatched)
@@ -107,7 +116,7 @@ func cloudAgentCanvasWriteToolNames(t *testing.T) []string {
 }
 
 // cloudAgentDispatchedToolNames 收集运行期两条分派路径覆盖的工具名：
-// advanceCloudAgentTool（含审批预演、主执行 switch 与媒体/看图等特例分支）与
+// executeCloudAgentToolCall（含审批预演、主执行 switch 与媒体/看图等特例分支）与
 // cloudAgentReadTool（默认读取分派）。
 func cloudAgentDispatchedToolNames(t *testing.T) []string {
 	t.Helper()
@@ -116,7 +125,7 @@ func cloudAgentDispatchedToolNames(t *testing.T) []string {
 		file string
 		fn   string
 	}{
-		{"cloud_agent_runtime.go", "advanceCloudAgentTool"},
+		{"cloud_agent_runtime.go", "executeCloudAgentToolCall"},
 		{"cloud_agent_tools.go", "cloudAgentReadTool"},
 	} {
 		file := parseCloudAgentFile(t, target.file)

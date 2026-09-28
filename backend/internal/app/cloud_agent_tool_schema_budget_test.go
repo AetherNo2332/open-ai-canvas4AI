@@ -52,17 +52,15 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 		t.Fatal("canvas_apply_ops 未暴露")
 	}
 
-	// The full catalog is held server-side. Budget the actual model request:
-	// parent tools plus at most one selected category.
+	// The full eligible catalog is sent at run start. Budget its actual request
+	// size rather than estimating from category subsets.
 	_ = raw
-	for _, category := range append([]string{""}, "agent_tools_control", "agent_tools_memory", "agent_tools_skills", "agent_tools_canvas_read", "agent_tools_image", "agent_tools_canvas_edit", "agent_tools_generation") {
-		wire, err := json.Marshal(cloudAgentVisibleTools(tools, category, nil, nil))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Logf("wire schema %q: %d bytes", category, len(wire))
-		if len(wire) > 20000 {
-			t.Fatalf("模型实际接收的工具 schema %q 超出 20000 字节：%d", category, len(wire))
-		}
+	wire, err := json.Marshal(cloudAgentVisibleTools(tools, "", nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("wire schema: %d tools, %d bytes", len(cloudAgentToolNames(tools)), len(wire))
+	if len(wire) > 40000 {
+		t.Fatalf("模型实际接收的完整工具 schema 超出 40000 字节：%d", len(wire))
 	}
 }

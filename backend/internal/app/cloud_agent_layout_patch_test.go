@@ -186,8 +186,9 @@ func TestCloudAgentReadBodiesForStoryboardAndBatchTableSurviveSave(t *testing.T)
 		{"role": "user", "content": "继续"},
 	}}
 	before, _ := json.Marshal(request.Messages)
-	if changed, pruned := cloudAgentPruneInspectedImages(&request, nil); changed || pruned != 0 {
-		t.Fatalf("纯文本历史不该被裁剪：changed=%v pruned=%d", changed, pruned)
+	state := cloudAgentRuntime{Canonical: request}
+	if err := cloudAgentSave(&model.CloudAgentExecution{}, &state); err != nil {
+		t.Fatal(err)
 	}
 	after, _ := json.Marshal(request.Messages)
 	if string(before) != string(after) {

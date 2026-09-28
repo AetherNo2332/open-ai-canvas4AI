@@ -1,9 +1,12 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 func TestValidateImageTaskRejectsOversizedGrokPromptByUTF8Bytes(t *testing.T) {
@@ -461,5 +464,69 @@ func TestTextCapabilityOutputLimitValidation(t *testing.T) {
 	unknownWindow.ContextWindowTokens = 0
 	if err := validateTextCapabilityConfig(unknownWindow); err != nil {
 		t.Fatalf("窗口未知时不能因窗口关系拒绝输出上限: %v", err)
+	}
+}
+
+// TestNormalizeTextCapabilityPreservesThinkingMode pins the contract behind the
+// reasoning-mode selector in the canvas Agent panel.
+//
+// The panel shows the selector only when the channel model declares
+// `text.thinking === true` (`canvas-cloud-agent-panel.tsx` `reasoningSupported`).
+// Before this field existed in Go, the flag was never persisted or returned, so
+// the selector was hidden for every model regardless of real upstream support.
+// The default must stay "undeclared" (nil), never a guessed true: sending
+// reasoning parameters to an upstream that does not support them is a failure.
+func TestNormalizeTextCapabilityPreservesThinkingMode(t *testing.T) {
+	declared := true
+	streaming := true
+	base := func() *ModelCapabilityConfig {
+		return &ModelCapabilityConfig{Version: 1, Text: &TextCapabilityConfig{
+			Streaming:  &streaming,
+			Thinking:   &declared,
+			References: TextReferenceConfig{PromptMaxChars: 32000},
+		}}
+	}
+
+	normalized, err := NormalizeModelCapabilityConfigForModel("text", string(model.ChannelInterfaceChatCompletion), "reasoning-model", base())
+	if err != nil {
+		t.Fatalf("declared thinking mode rejected: %v", err)
+	}
+	if normalized.Text.Thinking == nil || !*normalized.Text.Thinking {
+		t.Fatalf("thinking mode was dropped by normalization: %#v", normalized.Text)
+	}
+
+	// JSON round-trip is what the admin API, the channel-model catalog and the
+	// persisted capability_config_json actually do.
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"thinking":true`) {
+		t.Fatalf("thinking mode missing from persisted JSON: %s", encoded)
+	}
+	var decoded ModelCapabilityConfig
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Text == nil || decoded.Text.Thinking == nil || !*decoded.Text.Thinking {
+		t.Fatalf("thinking mode lost on decode: %#v", decoded.Text)
+	}
+
+	// Undeclared stays undeclared: no guessing, so the panel keeps the selector hidden.
+	undeclared := base()
+	undeclared.Text.Thinking = nil
+	normalizedUndeclared, err := NormalizeModelCapabilityConfigForModel("text", string(model.ChannelInterfaceChatCompletion), "plain-model", undeclared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalizedUndeclared.Text.Thinking != nil {
+		t.Fatalf("undeclared thinking must stay nil, got %#v", *normalizedUndeclared.Text.Thinking)
+	}
+	plain, err := json.Marshal(normalizedUndeclared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), `"thinking"`) {
+		t.Fatalf("undeclared thinking must not be serialized: %s", plain)
 	}
 }
