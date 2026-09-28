@@ -219,6 +219,37 @@ type PiMessageCheckpoint struct {
 	SessionEntries  []json.RawMessage `json:"sessionEntries,omitempty"`
 }
 
+type PiCheckpointMessageOutcome struct {
+	Saved           bool   `json:"saved"`
+	SessionRevision int64  `json:"sessionRevision,omitempty"`
+	Terminated      bool   `json:"terminated,omitempty"`
+	Status          string `json:"status,omitempty"`
+}
+
+// PiCheckpointMessageOutcome makes an in-flight checkpoint harmless when a
+// user cancellation or another terminal transition wins the race. It never
+// writes a new message after terminal state has been committed.
+func (s *Service) PiCheckpointMessageOutcome(userID, runID, owner string, input PiMessageCheckpoint) (PiCheckpointMessageOutcome, error) {
+	activeRun, err := s.piAgentLeasedRun(userID, runID, owner)
+	if err != nil {
+		if run, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
+			return PiCheckpointMessageOutcome{Terminated: true, Status: run.Status}, nil
+		}
+		return PiCheckpointMessageOutcome{}, err
+	}
+	if cloudAgentRunTerminal(activeRun.Status) {
+		return PiCheckpointMessageOutcome{Terminated: true, Status: activeRun.Status}, nil
+	}
+	revision, err := s.PiCheckpointMessageResult(userID, runID, owner, input)
+	if err != nil {
+		if run, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
+			return PiCheckpointMessageOutcome{Terminated: true, Status: run.Status}, nil
+		}
+		return PiCheckpointMessageOutcome{}, err
+	}
+	return PiCheckpointMessageOutcome{Saved: true, SessionRevision: revision}, nil
+}
+
 // PiCheckpointMessage commits an assistant message and its model-task acknowledgement
 // in one database transaction. A retry with the same sequence and body is a no-op.
 func (s *Service) PiCheckpointMessage(userID, runID, owner string, input PiMessageCheckpoint) error {
@@ -678,25 +709,39 @@ func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
 func (s *Service) PiAgentSnapshot(userID, runID, owner string) (*PiAgentSnapshot, error) {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
-		return nil, err
+		var terminal bool
+		run, terminal = s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
+		if !terminal {
+			return nil, err
+		}
 	}
 	return s.piAgentSnapshot(run)
 }
 
 func (s *Service) RenewPiAgentLease(userID, runID, owner string) error {
-	if _, err := s.piAgentLeasedRun(userID, runID, owner); err != nil {
+	run, err := s.piAgentLeasedRun(userID, runID, owner)
+	if err != nil {
+		if _, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
+			return nil
+		}
 		return err
+	}
+	if cloudAgentRunTerminal(run.Status) {
+		return nil
 	}
 	workerID, epoch, _, err := parsePiAgentLeaseOwner(owner)
 	if err != nil {
-		return kernel.Forbidden("Pi Agent 运行租约无效")
+		return kernel.AgentLeaseLost("Pi Agent 运行租约无效")
 	}
 	ok, err := s.repo.RenewPiAgentLease(userID, runID, workerID, epoch, time.Now().Add(piAgentLeaseDuration))
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return kernel.Forbidden("Pi Agent 运行租约已失效")
+		if _, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
+			return nil
+		}
+		return kernel.AgentLeaseLost("Pi Agent 运行租约已失效")
 	}
 	return nil
 }
@@ -704,7 +749,15 @@ func (s *Service) RenewPiAgentLease(userID, runID, owner string) error {
 func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRequest) (*PiModelStepView, error) {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
-		return nil, err
+		var terminal bool
+		run, terminal = s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
+		if !terminal {
+			return nil, err
+		}
+		return &PiModelStepView{Status: run.Status, Error: run.FailureMessage}, nil
+	}
+	if cloudAgentRunTerminal(run.Status) {
+		return &PiModelStepView{Status: run.Status, Error: run.FailureMessage}, nil
 	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
@@ -883,7 +936,13 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 func (s *Service) PiModelStepView(userID, runID, owner, taskID string) (*PiModelStepView, error) {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
+		if terminalRun, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
+			return &PiModelStepView{TaskID: taskID, Status: terminalRun.Status, Error: terminalRun.FailureMessage}, nil
+		}
 		return nil, err
+	}
+	if cloudAgentRunTerminal(run.Status) {
+		return &PiModelStepView{TaskID: taskID, Status: run.Status, Error: run.FailureMessage}, nil
 	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
@@ -896,7 +955,13 @@ func (s *Service) PiModelStepView(userID, runID, owner, taskID string) (*PiModel
 	if err != nil {
 		return nil, err
 	}
-	view := &PiModelStepView{TaskID: task.ID, Status: string(task.Status), TextDraft: task.TextDraft}
+	draft := state.ActiveTextDraft
+	if draft == "" {
+		// Legacy runs persisted the draft on the Task row before the runtime
+		// source became authoritative.
+		draft = task.TextDraft
+	}
+	view := &PiModelStepView{TaskID: task.ID, Status: string(task.Status), TextDraft: draft}
 	if cloudAgentTaskTerminal(task.Status) {
 		view.Result = json.RawMessage(task.ResultJSON)
 		view.Error = task.Error
@@ -1013,7 +1078,13 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 func (s *Service) PiModelStepAck(userID, runID, owner, taskID string) error {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
+		if _, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
+			return nil
+		}
 		return err
+	}
+	if cloudAgentRunTerminal(run.Status) {
+		return nil
 	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
@@ -1042,7 +1113,13 @@ func (s *Service) PiModelStepAck(userID, runID, owner, taskID string) error {
 func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequest) error {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
+		if _, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
+			return nil
+		}
 		return err
+	}
+	if cloudAgentRunTerminal(run.Status) {
+		return nil
 	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
@@ -1283,11 +1360,11 @@ func (s *Service) piAgentLeasedRun(userID, runID, owner string) (*model.CloudAge
 	}
 	workerID, expectedEpoch, hasEpoch, tokenErr := parsePiAgentLeaseOwner(owner)
 	if tokenErr != nil || run.Engine != "pi" || run.LeaseOwner != workerID || run.LeaseExpiresAt == nil || !run.LeaseExpiresAt.After(time.Now()) {
-		return nil, kernel.Forbidden("Pi Agent 运行租约无效")
+		return nil, kernel.AgentLeaseLost("Pi Agent 运行租约无效")
 	}
 	session, _, err := s.repo.CloudAgentPiSession(userID, firstNonEmpty(run.ConversationID, run.ID))
 	if err != nil || session.ActiveRunID != runID || session.LeaseOwner != workerID || session.LeaseExpiresAt == nil || !session.LeaseExpiresAt.After(time.Now()) || (hasEpoch && session.LeaseEpoch != expectedEpoch) {
-		return nil, kernel.Forbidden("Pi Agent 会话租约已失效")
+		return nil, kernel.AgentLeaseLost("Pi Agent 会话租约已失效")
 	}
 	return run, nil
 }

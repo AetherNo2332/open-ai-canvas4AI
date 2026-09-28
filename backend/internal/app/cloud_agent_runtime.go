@@ -889,8 +889,14 @@ func (s *Service) cloudAgentExecutionOutput(userID string, identity cloudAgentRu
 		if err != nil {
 			return nil, err
 		}
-		if active.TextDraft != "" {
-			out.ActiveMessage = map[string]string{"messageId": active.ID, "text": active.TextDraft}
+		draft := state.ActiveTextDraft
+		if draft == "" {
+			// Legacy runs have no runtime draft; keep their task-level replay
+			// value visible while new runs use the CAS-updated runtime source.
+			draft = active.TextDraft
+		}
+		if draft != "" {
+			out.ActiveMessage = map[string]string{"messageId": active.ID, "text": draft}
 		}
 	}
 	out.Skills = make([]cloudAgentSkill, 0, len(state.Skills))
@@ -2038,6 +2044,10 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 			state.event(run.ID, "generation_task_created", map[string]any{"toolName": toolName, "taskId": task.ID, "nodeId": media.Args.NodeID, "title": media.Args.Title, "mode": media.Args.Mode, "canvasId": state.Request.CanvasID, "referenceNodeIds": media.Args.ReferenceNodeIDs, "text": "媒体节点与引用连线已创建，生成任务已提交"})
 		} else {
 			state.ActiveTaskID = task.ID
+			// A model task owns exactly one cumulative draft. Clear the prior
+			// task before the first publisher CAS so snapshots cannot leak text
+			// from the preceding model step.
+			state.ActiveTextDraft = ""
 			// 压缩调用不是本轮的一步：压完还要用压缩后的上下文继续步进，步数不该被它占掉。
 			if state.ContextCompaction != nil && req.Operation == cloudAgentContextCompactionOperation {
 				state.ContextCompaction.Status = "running"
