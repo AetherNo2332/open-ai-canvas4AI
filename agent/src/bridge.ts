@@ -95,10 +95,22 @@ export class CanvasRunTerminated extends Error {
   }
 }
 
+/** The run remains active, but this worker no longer owns its lease. */
+export class CanvasLeaseLost extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CanvasLeaseLost";
+  }
+}
+
 interface PiCheckpointResult {
   saved: boolean;
   sessionRevision?: number;
+  terminated?: boolean;
+  status?: string;
 }
+
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "rejected"]);
 
 export interface PiContextCompactionView {
   operationId: string;
@@ -163,14 +175,28 @@ export class CanvasBridge {
     // 这样"哪一份 Harness 参与了这个运行"在服务端是可核对的事实，而不是 Node 的内存。
     if (harness) body.harness = harness;
     let step = await this.request<PiModelStepView>("POST", path, body, run, signal);
+    if (TERMINAL_RUN_STATUSES.has(step.status)) throw new CanvasRunTerminated(step.status);
+    let sentTextDraft = "";
+    const emitTextDraftDelta = (draft: string | undefined): void => {
+      if (!onTextDelta || !draft) return;
+      // Go exposes a cumulative draft. Only forward the suffix that was not
+      // observed by this model-step call; the final poll may repeat the same
+      // snapshot and must therefore be a no-op.
+      if (sentTextDraft !== "" && !draft.startsWith(sentTextDraft)) return;
+      const delta = draft.slice(sentTextDraft.length);
+      if (delta === "") return;
+      sentTextDraft = draft;
+      onTextDelta(delta);
+    };
     // 模型任务执行期间 textDraft 会持续增长；把新增部分当增量正文上报，
     // 这样 Pi 事件流是真实增量，而不是任务结束后一次性补齐。
     while (step.status === "queued" || step.status === "running") {
-      if (onTextDelta && step.textDraft) onTextDelta(step.textDraft);
+      emitTextDraftDelta(step.textDraft);
       await delay(700, undefined, { signal });
       step = await this.request<PiModelStepView>("GET", `${path}/${encodeURIComponent(step.taskId)}`, undefined, run, signal);
+      if (TERMINAL_RUN_STATUSES.has(step.status)) throw new CanvasRunTerminated(step.status);
     }
-    if (onTextDelta && step.textDraft) onTextDelta(step.textDraft);
+    emitTextDraftDelta(step.textDraft);
     if (step.status !== "succeeded" || !step.result) {
       if (step.status !== "succeeded") {
         const decision = await this.request<PiTurnDecision>("POST", `${path}/${encodeURIComponent(step.taskId)}/fail`, {}, run, signal);
@@ -278,15 +304,29 @@ export class CanvasBridge {
     });
     if (!response.ok) {
       let publicMessage = "";
+      let publicReason = "";
       try {
         const envelope: unknown = await response.clone().json();
         if (envelope && typeof envelope === "object" && "msg" in envelope && typeof envelope.msg === "string") {
           publicMessage = envelope.msg.replace(/[\r\n\t]+/g, " ").trim().slice(0, 240);
         }
+        if (envelope && typeof envelope === "object" && "reason" in envelope && typeof envelope.reason === "string") {
+          publicReason = envelope.reason;
+        }
       } catch {
         // Keep the status and route when the server returns an empty or non-JSON error.
       }
+      const terminalSnapshotPath = run ? `/runs/${encodeURIComponent(run.runId)}` : "";
+      if (response.status === 403 && run && path !== terminalSnapshotPath) {
+        try {
+          const current = await this.request<{ run: PiSnapshot }>("GET", terminalSnapshotPath, undefined, run, signal);
+          if (TERMINAL_RUN_STATUSES.has(current.run.status)) throw new CanvasRunTerminated(current.run.status);
+        } catch (snapshotError) {
+          if (snapshotError instanceof CanvasRunTerminated) throw snapshotError;
+        }
+      }
       const detail = `Canvas bridge HTTP ${response.status} on ${method} ${path}${publicMessage ? `: ${publicMessage}` : ""}`;
+      if (response.status === 403 && publicReason === "agent_lease_lost") throw new CanvasLeaseLost(detail);
       // 确定性错误必须标成致命：server.ts 只对 FatalWorkerError 调 failRun，
       // 否则运行既不会失败也不会被看门狗回收，只会无限重试。
       if (NON_RETRYABLE_BRIDGE_STATUSES.has(response.status)) throw new FatalWorkerError(detail);

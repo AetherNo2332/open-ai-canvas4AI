@@ -59,3 +59,7 @@ func Unauthorized(message string) *AppError {
 func Forbidden(message string) *AppError {
 	return NewAppError(403, message)
 }
+
+func AgentLeaseLost(message string) *AppError {
+	return &AppError{Status: CodeForbidden, Code: CodeForbidden, Reason: ReasonAgentLeaseLost, Message: message}
+}

@@ -40,6 +40,7 @@ const (
 	ReasonInternal               ErrorReason = "internal"
 	ReasonBadGateway             ErrorReason = "bad_gateway"
 	ReasonUpstreamDNSFailed      ErrorReason = "upstream_dns_failed"
+	ReasonAgentLeaseLost         ErrorReason = "agent_lease_lost"
 )
 
 func ReasonForStatus(status int) ErrorReason {

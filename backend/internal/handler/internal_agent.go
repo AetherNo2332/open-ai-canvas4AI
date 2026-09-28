@@ -84,12 +84,12 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 			c.AbortWithStatus(http.StatusBadRequest)
 			return
 		}
-		sessionRevision, err := svc.PiCheckpointMessageResult(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), input)
+		outcome, err := svc.PiCheckpointMessageOutcome(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), input)
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"saved": true, "sessionRevision": sessionRevision})
+		ok(c, outcome)
 	})
 	group.POST("/runs/:id/context-compactions", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)

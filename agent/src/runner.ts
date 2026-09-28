@@ -626,6 +626,11 @@ export async function runCanvasAgent(
     }
     const result = await bridge.checkpoint(snapshot, ++sequence, message as unknown as Record<string, unknown>, taskId, shutdown,
       { revision: sessionRevision, activeLeafId: leafId, entries: entries as unknown as Record<string, unknown>[], interjectionIds });
+    if (result?.terminated) {
+      runTerminated = true;
+      if (result.status) snapshot = { ...snapshot, status: result.status };
+      return;
+    }
     if (result && typeof result.sessionRevision === "number" && result.sessionRevision > 0) {
       sessionRevision = result.sessionRevision;
       for (const entry of entries) persistedSessionEntryIds.add(entry.id);
@@ -728,7 +733,14 @@ export async function runCanvasAgent(
         piSessionEntries: [...(snapshot.piSessionEntries || []), { runId: snapshot.runId, entry }],
       };
     },
-    onFailure: (error) => { compactionFailure = error; },
+    onFailure: (error) => {
+      compactionFailure = error;
+      if (error instanceof CanvasRunTerminated) {
+        runTerminated = true;
+        snapshot = { ...snapshot, status: error.status };
+        void session?.abort().catch(() => undefined);
+      }
+    },
   });
   const toolExtension = createCanvasToolsExtension(disclosure, (callId, toolName) => {
     if (!disclosure.isVisible(toolName)) return `Tool ${toolName} is not eligible for this run`;
@@ -768,6 +780,7 @@ export async function runCanvasAgent(
           // 都会以 403 失败，而 worker 把确定性 4xx 当致命错误 —— 整轮直接退出。
           queue.enqueue(async () => { await checkpoint(message as unknown as AgentMessage, taskId); });
           queue.enqueue(async () => {
+            if (runTerminated || isTerminalRunStatus(snapshot.status)) return;
             if (!taskId) throw new FatalWorkerError("Pi assistant tool call is missing its model task ID");
             await bridge.startToolBatch(snapshot, taskId, batch, shutdown);
           });
@@ -791,11 +804,26 @@ export async function runCanvasAgent(
       leaseCheckRunning = true;
       void (async () => {
         await bridge.renew(snapshot, shutdown);
-        snapshot = await bridge.snapshot(snapshot, shutdown);
-        syncPendingInterjections(snapshot);
-        if (isTerminalRunStatus(snapshot.status)) abortSession();
+        if (runTerminated || shutdown?.aborted) return;
+        const refreshed = await bridge.snapshot(snapshot, shutdown);
+        snapshot = refreshed;
+        syncPendingInterjections(refreshed);
+        if (isTerminalRunStatus(refreshed.status)) {
+          runTerminated = true;
+          abortSession();
+        }
         else await steerPendingInterjections();
-      })().catch(() => abortSession()).finally(() => { leaseCheckRunning = false; });
+      })().catch((error: unknown) => {
+        if (error instanceof CanvasRunTerminated) {
+          runTerminated = true;
+          snapshot = { ...snapshot, status: error.status };
+          abortSession();
+          return;
+        }
+        if (runTerminated || shutdown?.aborted) return;
+        listenerFailure ??= error;
+        abortSession();
+      }).finally(() => { leaseCheckRunning = false; });
     }, 15_000);
 
     try {
@@ -830,7 +858,7 @@ export async function runCanvasAgent(
         });
         await session.waitForIdle();
         await queue.drain();
-        if (runTerminated) break;
+        if (runTerminated || abortRequested || listenerFailure !== undefined) break;
         if (compactionFailure !== undefined && !abortRequested && !shutdown?.aborted) {
           throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
         }
@@ -860,9 +888,12 @@ export async function runCanvasAgent(
       clearInterval(lease);
       shutdown?.removeEventListener("abort", onShutdown);
     }
-    if (listenerFailure !== undefined && !abortRequested) {
+    if (listenerFailure !== undefined && (!abortRequested || !runTerminated)) {
       throw listenerFailure instanceof Error ? listenerFailure : new Error(String(listenerFailure));
     }
+  } catch (error) {
+    if (error instanceof CanvasRunTerminated) return;
+    throw error;
   } finally {
     boot.cleanup();
   }

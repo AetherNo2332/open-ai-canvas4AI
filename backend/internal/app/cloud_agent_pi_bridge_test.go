@@ -104,6 +104,40 @@ func TestPiAgentSnapshotCarriesGoResolvedModelLimits(t *testing.T) {
 	}
 }
 
+func TestPiStreamPublisherUpdatesActiveDraft(t *testing.T) {
+	s, _, run := piAgentTestLeasedFixture(t)
+	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, err := s.PiModelStep("user", run.ID, run.LeaseOwner, PiModelStepRequest{Canonical: snapshot.Canonical})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := newCloudAgentStreamPublisher(s, "user", step.TaskID, "assistant_delta")
+	publisher.Publish("你")
+	publisher.Publish("好")
+	publisher.Close()
+
+	view, err := s.PiModelStepView("user", run.ID, run.LeaseOwner, step.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.TextDraft != "你好" {
+		t.Fatalf("active draft was not persisted in the runtime: %q", view.TextDraft)
+	}
+	reasoning := newCloudAgentStreamPublisher(s, "user", step.TaskID, "reasoning_delta")
+	reasoning.Publish("思考")
+	reasoning.Close()
+	view, err = s.PiModelStepView("user", run.ID, run.LeaseOwner, step.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.TextDraft != "你好" {
+		t.Fatalf("reasoning delta polluted the active draft: %q", view.TextDraft)
+	}
+}
+
 func TestPiModelStepCarriesEscalatedOutputSettings(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
 	policy := platform.DefaultRuntimePolicy()

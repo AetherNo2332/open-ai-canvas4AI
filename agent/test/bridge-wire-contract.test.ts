@@ -62,7 +62,7 @@ test("a Go-finalized model failure is a terminal control signal", async () => {
     const bridge = new CanvasBridge("http://backend:8080", "token", "worker-1");
     await assert.rejects(bridge.modelStep(run, run.canonical), error =>
       error instanceof Error && error.name === "CanvasRunTerminated");
-    assert.equal(routes.length, 2, "failure admission is reported once");
+    assert.equal(routes.length, 1, "a Go-finalized failure needs no second fail admission");
   } finally { globalThis.fetch = original; }
 });
 
@@ -293,4 +293,29 @@ test("没有 Harness 时不发送 harnessHash", async () => {
     bridge.modelStep(run, { systemPrompt: "probe", messages: [], tools: [], toolChoice: "auto" }),
   );
   assert.equal(captured.body.harnessHash, undefined, "未配置 Harness 的部署不应凭空带上字段");
+});
+
+test("modelStep forwards only the unseen suffix of a cumulative text draft", async () => {
+  const original = globalThis.fetch;
+  const responses = [
+    { taskId: "task-draft", status: "running", textDraft: "你" },
+    { taskId: "task-draft", status: "running", textDraft: "你好" },
+    { taskId: "task-draft", status: "succeeded", textDraft: "你好", result: { text: "你好" } },
+  ];
+  globalThis.fetch = (async () => new Response(JSON.stringify({ code: 0, data: responses.shift() }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  })) as typeof fetch;
+  const deltas: string[] = [];
+  try {
+    await new CanvasBridge("http://backend:8080", "token", "worker-1").modelStep(
+      run,
+      { systemPrompt: "probe", messages: [], tools: [], toolChoice: "auto" },
+      undefined,
+      (delta) => deltas.push(delta),
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.deepEqual(deltas, ["你", "好"]);
 });

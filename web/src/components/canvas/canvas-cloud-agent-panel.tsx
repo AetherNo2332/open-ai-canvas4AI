@@ -158,6 +158,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const presetApplyingRef = useRef<string | null>(null);
     const panelLayout = useAgentPanelLayout();
     const lastSeqRef = useRef(0);
+    const lastSeqRunIdRef = useRef<string | null>(null);
     const canvasSyncRef = useRef<ReturnType<typeof createAgentCanvasSync> | null>(null);
     useEffect(() => {
         const sync = createAgentCanvasSync({
@@ -563,7 +564,10 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
 
     useEffect(() => {
         if (!run?.id) return;
-        lastSeqRef.current = 0;
+        if (lastSeqRunIdRef.current !== run.id) {
+            lastSeqRunIdRef.current = run.id;
+            lastSeqRef.current = 0;
+        }
         return subscribeAgentEvents(
             run.id,
             (event) => {
@@ -580,7 +584,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 canvasSyncRef.current?.receive(event);
             },
             {
-                after: 0,
+                after: lastSeqRef.current,
                 onConnectionChange: setConnectionStatus,
                 onError: (cause) => {
                     canvasSyncRef.current?.reconcile();
