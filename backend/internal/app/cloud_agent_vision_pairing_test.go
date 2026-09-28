@@ -480,66 +480,34 @@ func TestCloudAgentPendingImagesSurviveCheckpointRoundTrip(t *testing.T) {
 	}
 }
 
-// 多图合并成一条消息之后，裁剪仍要：移出该消息里的全部图片、保留逐图的文字回执与
-// nodeId、并且占位符要逐图带上各自的观察（只写第一张会把整批的观察算到那张图头上）。
-func TestCloudAgentPruneMergedImageMessageKeepsPerImageNotes(t *testing.T) {
+func TestCloudAgentSavePreservesImagesBeyondOldRetentionWindow(t *testing.T) {
 	imageMessage := map[string]any{"role": "user", "content": cloudAgentImageContentParts(
 		cloudAgentPairingInspection("image-a", "https://example.test/a"),
 		cloudAgentPairingInspection("image-b", "https://example.test/b"),
 	)}
 	messages := []map[string]any{{"role": "user", "content": "看看这两张图"}}
-	// 第一轮就是那个"一批两次看图、合并成一条 user 消息"的回合。
-	messages = append(messages, cloudAgentPairingAssistantMessage("call-0"))
-	messages = append(messages,
-		map[string]any{"role": "tool", "tool_call_id": "call-0", "content": `{"nodeId":"image-a"}`},
-		imageMessage)
-	// 后面再排满保留窗口，把它挤出裁剪边界之外（边界只保留最近
-	// cloudAgentImageRetentionRounds 个工具轮次）。
-	for round := 1; round <= cloudAgentImageRetentionRounds+1; round++ {
+	messages = append(messages, cloudAgentPairingAssistantMessage("call-0"),
+		map[string]any{"role": "tool", "tool_call_id": "call-0", "content": `{"nodeId":"image-a"}`}, imageMessage)
+	for round := 1; round <= 14; round++ {
 		id := "call-" + strconv.Itoa(round)
-		messages = append(messages,
-			cloudAgentPairingAssistantMessage(id),
+		messages = append(messages, cloudAgentPairingAssistantMessage(id),
 			map[string]any{"role": "tool", "tool_call_id": id, "content": `{}`})
 	}
-	const imageIndex = 3
-
-	request := canonicalAgentRequest{Messages: messages}
-	state := cloudAgentRuntime{ImageObservations: map[string]cloudAgentImageObservation{
-		"image-a": {Text: "灰底三视图，赛璐璐平涂"},
-		"image-b": {Text: "蓝天海水，写实厚涂"},
-	}}
-	changed, pruned := cloudAgentPruneInspectedImages(&request, &state)
-	if !changed || pruned != 2 {
-		t.Fatalf("both images of the merged message must be pruned: changed=%v pruned=%d", changed, pruned)
+	state := cloudAgentRuntime{Canonical: canonicalAgentRequest{Messages: messages},
+		ImageObservations: map[string]cloudAgentImageObservation{
+			"image-a": {Text: "灰底三视图，赛璐璐平涂"}, "image-b": {Text: "蓝天海水，写实厚涂"},
+		}}
+	before, _ := json.Marshal(state.Canonical.Messages)
+	run := &model.CloudAgentExecution{}
+	if err := cloudAgentSave(run, &state); err != nil {
+		t.Fatal(err)
 	}
-	prunedMessage := request.Messages[imageIndex]
-	if count := cloudAgentMessageImagePartCount(prunedMessage); count != 0 {
-		t.Fatalf("images survived pruning: %d", count)
+	after, _ := json.Marshal(state.Canonical.Messages)
+	if string(before) != string(after) {
+		t.Fatal("saving a later step removed or rewrote original image content")
 	}
-	parts, _ := prunedMessage["content"].([]any)
-	if len(parts) != 3 {
-		t.Fatalf("expected 2 text receipts + 1 note, got %d parts", len(parts))
-	}
-	// 两条文字回执都在，且各自带自己的 nodeId
-	for index, want := range []string{"image-a", "image-b"} {
-		text, _ := parts[index].(map[string]any)
-		if !strings.Contains(stringValue(text["text"]), want) {
-			t.Fatalf("receipt #%d lost its node id: %+v", index, text)
-		}
-	}
-	note, _ := parts[2].(map[string]any)
-	noteText := stringValue(note["text"])
-	for _, want := range []string{"image-a", "灰底三视图", "image-b", "蓝天海水"} {
-		if !strings.Contains(noteText, want) {
-			t.Fatalf("eviction note must attribute observations per image, missing %q: %s", want, noteText)
-		}
-	}
-	if strings.Contains(noteText, "重新调用") {
-		t.Fatalf("eviction note still invites another look: %s", noteText)
-	}
-	// 幂等
-	if changed, pruned := cloudAgentPruneInspectedImages(&request, &state); changed || pruned != 0 {
-		t.Fatal("pruning a merged message is not idempotent")
+	if cloudAgentMessageImagePartCount(state.Canonical.Messages[3]) != 2 {
+		t.Fatal("both original images must remain present")
 	}
 }
 

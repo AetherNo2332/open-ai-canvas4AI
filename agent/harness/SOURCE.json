@@ -17,7 +17,7 @@
       "file": "TOOL_DESCRIPTIONS.md",
       "source": "backend/internal/app/agent-tool-descriptions.md",
       "stripFrontmatter": false,
-      "sha256": "0f86065382a59d508328c21c88fc853d051223b6ffc9123220f905272dc708fa"
+      "sha256": "d8f20f56a68702cc061b203db3fd3e09d9a49038195a0f20fe7629652a1999dd"
     }
   ]
 }

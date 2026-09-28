@@ -3,10 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { CanvasModelRetry, type CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
+import { CanvasModelRetry, CanvasRunTerminated, type CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
 import type { CanvasToolSpec } from "../src/tool-disclosure.js";
-import { assembleSystemPrompt, canvasModel, runCanvasAgent } from "../src/runner.js";
+import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent } from "../src/runner.js";
 import type { PromptParts } from "../src/system-prompt.js";
 import { sessionEntriesFromMessages } from "../src/session-tools.js";
 
@@ -229,6 +229,78 @@ test("a blocked finish_run keeps the Pi loop alive for reconciliation", async ()
   assert.match(JSON.stringify(state.canonical[1]?.messages), /reconcile_plan/);
 });
 
+test("continuation pairs missing receipts from prior terminal runs without replaying their tools", async () => {
+  const { bridge, state, snapshot } = fakeBridge([{ text: "本轮继续分析。" }]);
+  const history = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: [
+    { role: "user", content: "上一轮要求" },
+    { role: "assistant", content: "", tool_calls: [
+      { id: "old-finish", type: "function", function: { name: "finish_run", arguments: "{}" } },
+      { id: "old-write", type: "function", function: { name: "canvas_apply_ops", arguments: "{}" } },
+    ] },
+    { role: "tool", tool_call_id: "old-write", content: "已有写入回执" },
+    { role: "user", content: "上轮结束后的留言" },
+    { role: "assistant", content: "", tool_calls: [
+      { id: "old-read", type: "function", function: { name: "canvas_inspect_image", arguments: "{}" } },
+    ] },
+  ] } }, canvasModel(snapshot));
+  snapshot.piSessionEntries = sessionEntriesFromMessages("previous-run", history)
+    .map(entry => ({ runId: "previous-run", entry: entry as unknown as Record<string, unknown> }));
+  snapshot.piActiveLeafId = String(snapshot.piSessionEntries.at(-1)?.entry.id);
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  const messages = state.canonical[0]!.messages;
+  const pending = new Set<string>();
+  for (const message of messages) {
+    if (message.role === "tool") {
+      assert.ok(pending.delete(String(message.tool_call_id)), "tool result must belong to the current batch");
+      continue;
+    }
+    assert.equal(pending.size, 0, "a new message must not follow an unresolved historical tool call");
+    for (const call of (message.tool_calls || []) as PiToolCall[]) pending.add(call.id);
+  }
+  assert.equal(pending.size, 0);
+  const repaired = messages.filter(message => ["old-finish", "old-read"].includes(String(message.tool_call_id)));
+  assert.equal(repaired.length, 2);
+  assert.match(String(repaired[0]?.content), /结果未知/);
+  assert.match(String(repaired[1]?.content), /不要.*重新执行/);
+  assert.equal(messages.filter(message => message.tool_call_id === "old-write").length, 1);
+  assert.deepEqual(state.executions, [], "historical calls must never reach Go execution");
+});
+
+for (const status of ["completed", "failed", "cancelled", "rejected"]) {
+  test(`terminal tool receipt (${status}) ends Pi without a released-lease snapshot or checkpoint`, async () => {
+    const { bridge, state, snapshot } = fakeBridge([
+      { toolCalls: [{ id: "terminal-call", function: { name: "canvas_get_state", arguments: "{}" } }] },
+    ]);
+    const checkpoint = bridge.checkpoint.bind(bridge);
+    bridge.checkpoint = async (...args) => {
+      assert.equal(state.status, "running", "terminal lease must not be used to append messages");
+      return checkpoint(...args);
+    };
+    bridge.executeTool = async (_run, _taskId, callId) => {
+      state.executions.push(callId);
+      state.status = status;
+      return { callId, pending: false, terminated: true, isError: status === "failed", result: { terminal: status } };
+    };
+    bridge.snapshot = async () => {
+      assert.equal(state.status, "running", "terminal lease has already been released");
+      return snapshot;
+    };
+    await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+    assert.equal(state.steps, 1);
+    assert.deepEqual(state.executions, ["terminal-call"]);
+    assert.deepEqual(state.noToolTurns, []);
+  });
+}
+
+test("a Go-finalized model failure exits the Pi session without another snapshot", async () => {
+  const { bridge, state, snapshot } = fakeBridge([async () => { throw new CanvasRunTerminated("failed"); }]);
+  bridge.snapshot = async () => { throw new Error("the terminal session lease is released"); };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 1);
+  assert.deepEqual(state.noToolTurns, []);
+  assert.equal(state.checkpoints.filter(message => message.role === "assistant").length, 0);
+});
+
 test("未披露的工具调用整批拒绝：不产生工具批次，也不执行画布副作用", async () => {
   const { bridge, state } = fakeBridge([
     { toolCalls: [{ id: "call-1", function: { name: "canvas_apply_ops", arguments: "{}" } }] },
@@ -318,6 +390,40 @@ test("worker restart resumes the existing Go compaction before creating another 
   assert.deepEqual(state.contextCompactions, ["resume:op-restart", "commit:op-restart:8"]);
   assert.equal(state.steps, 1, `exactly one new model step runs after commit; ${JSON.stringify({ ops: state.ops, noToolTurns: state.noToolTurns, status: state.status })}`);
   assert.deepEqual(state.noToolTurns, ["task-1"]);
+});
+
+test("compaction and restart preserve the original image beyond the retained text boundary", async () => {
+  const image = [{ type: "text", text: '{"nodeId":"hero-original"}' },
+    { type: "image_url", image_url: { url: "resource:original-image", detail: "high" } }];
+  const { bridge, state, snapshot } = fakeBridge([{ text: "原图已保留。" }]);
+  const model = canvasModel(snapshot);
+  const prior = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: [
+    { role: "user", content: image }, { role: "assistant", content: "此前已记录画面。" },
+    { role: "user", content: "上一轮文字" }, { role: "assistant", content: "已处理。" },
+  ] } }, model);
+  const entries = sessionEntriesFromMessages("old-run", prior) as unknown as Record<string, unknown>[];
+  entries.push({ type: "compaction", id: "image-compaction", parentId: entries.at(-1)?.id,
+    timestamp: new Date().toISOString(), summary: "保留文字摘要", firstKeptEntryId: entries[2]?.id,
+    tokensBefore: 40_000 });
+  snapshot.piSessionEntries = entries.map(entry => ({ runId: "old-run", entry }));
+  snapshot.piActiveLeafId = "image-compaction";
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  const restored = state.canonical[0]?.messages.flatMap(message =>
+    Array.isArray(message.content) ? message.content : []);
+  assert.deepEqual(restored, image, "a summary must not replace pixels or alter the original image reference");
+  assert.equal(state.executions.length, 0, "restoring an image must not call an inspection or generation tool");
+});
+
+test("an image newer than the Pi checkpoint is durably imported before the model request", async () => {
+  const image = [{ type: "text", text: '{"nodeId":"new-image"}' },
+    { type: "image_url", image_url: { url: "resource:new-original", detail: "high" } }];
+  const { bridge, state, snapshot } = fakeBridge([{ text: "收到原图。" }]);
+  snapshot.canonical.messages = [{ role: "user", content: image }];
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  const parts = state.canonical[0]?.messages.flatMap(message => Array.isArray(message.content) ? message.content : []);
+  assert.deepEqual(parts, image);
+  assert.ok(state.ops.indexOf("checkpoint:user") < state.ops.indexOf("checkpoint:assistant"));
+  assert.ok(state.checkpoints.some(message => message.role === "user" && message.text.includes("new-image")));
 });
 
 test("取消后不再发起模型请求，运行以取消收场", async () => {

@@ -88,7 +88,7 @@ export class SessionToolDisclosure {
         // Defense in depth if a Pi adapter invokes execute without passing the hook.
         if (!this.isVisible(spec.name)) throw new Error(`Tool ${spec.name} is not eligible for this run`);
         const receipt = await this.executeCanvas(spec.name, params, toolCallId, signal);
-        if (receipt.isError) {
+        if (receipt.isError && !receipt.terminate) {
           throw new Error(typeof receipt.result === "string" ? receipt.result : JSON.stringify(receipt.result));
         }
         return {

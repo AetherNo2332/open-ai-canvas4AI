@@ -615,8 +615,7 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	// 却在 referenceImages 里找不到白名单条目，直接 BadAuthRequest("模型协议引用了未获准的
 	// 图片") —— 也就是"看过图之后的下一步必然失败"。
 	//
-	// 它同时会把超出模型图片上限的旧图换成文字占位，所以必须在装配 canonical 之后、
-	// 发请求之前调用（与旧路径同一位置）。
+	// 容量不足必须拒绝，不能为了满足上限把任何历史图片换成文字。
 	references, refErr := s.cloudAgentImageReferences(run.UserID, state.Request, &request.Canonical)
 	if refErr != nil {
 		// 水合失败按安全文案转成可见错误，由 worker 上报为运行失败，
@@ -624,8 +623,8 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 		return nil, kernel.BadAuthRequest(cloudAgentSafeToolError(refErr))
 	}
 	// The Go vision ledger tracks images that reached this specific provider envelope,
-	// not merely images present in Pi history. Apply the model's image limit before
-	// settling pending observations, just as the legacy step builder did.
+	// not merely images present in Pi history. Check the model's image limit before
+	// settling pending observations; all visual inputs remain intact.
 	deliveredNodes := deliveredImageNodeIDs(request.Canonical)
 	state.cloudAgentSettleImageDelivery(deliveredNodes, len(deliveredNodes))
 	remaining := int64(math.Floor(state.Request.Budget.MaxCredits * float64(CreditScale)))

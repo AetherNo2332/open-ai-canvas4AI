@@ -159,3 +159,13 @@
 - 本机 `canvas-canary-3000` backend 已运行提交 `eae5177bca533afc730530bd84bc1604ca799831` 的镜像。`/api/health/ready` HTTP 200、`ready=true`、schema 43/43、buildTime `2026-09-28T09:40:15Z`；本次遵照用户要求没有保留备份，未触碰生产环境。
 - Playwright Agent 只读端到端验收通过：管理员创建空白 Agent 画布，运行模型 `qwen3.8-27b`，HTTP 200 创建运行，Pi Agent 调用 `canvas_get_state` 一次并完成回答“当前画布共有 0 个节点”，状态 `completed`，无浏览器页面错误。未触发写入或生成。
 - PR #58 当前以 `canary` 为目标，`codex/pi-agent-migration` HEAD 为 `eae5177bca533afc730530bd84bc1604ca799831`，尚未合并；提交带 `[skip ci]`，未运行 CI。完成本地验收后再合并。
+
+## 追加：现场报错、终态恢复与原图保留
+
+- GitHub 当前确认 PR #58 已合并至 canary，合并提交 `e1f6dacab3b738935a6df473f7942785eda0808a`。本次修复从该基线创建 `codex/pi-terminal-history-fix`，未覆盖其他工作。
+- 只读分析发现近期失败的上游信封继承了没有 toolResult 的终态工具调用；另有模型只输出思考、未写正文视觉观察而重复看图触发保护。Go 已结束后 Node 仍发检查点/快照造成租约 403。详细运行 ID、原因和修复边界见 [AGENT_ERROR_REPAIR_2026-09-28.md](./AGENT_ERROR_REPAIR_2026-09-28.md)。
+- Node 在 Go 终态后立即结束；Pi context hook 仅闭合历史未配对工具批次，不伪造执行成功、重放写入或修改历史数据库。当前轮次仍按 Go 权威回执恢复。
+- 用户新增原图保留要求：移除 Go 按轮次删图及模型超限替换旧图；Pi 从 active branch 保留完整原图引用，压缩后恢复视觉输入，检查点之前遗漏的原图引用先持久化。超出模型能力时，在任务计费准入前明确拒绝；视觉观察不能取代原始图片。工具说明、共享 schema artifact 和 API 文档同步更新。
+- 修复前通过新增测试复现工具历史缺口、终态租约回调和三类丢图。修复后 Agent `npm test`（TypeScript build + 真实 Pi SDK）**89/89 通过**。
+- Go 定向验证通过：`CGO_ENABLED=1 CC=C:/msys64/ucrt64/bin/gcc.exe go test ./internal/app -run 'Test(Pi.*(Vision|Image|Compaction)|CloudAgent.*(Vision|Image|ReadBodies|ContextCompaction))|TestAgentToolSchemaArtifactMatchesRuntime' -count=1 -timeout=4m`，用时 11.135 秒。包含压缩签名/租约恢复、图像水合、资源归属和容量超限不创建任务的验收。
+- 重建前只读 SQL 确认活动 Agent 运行数为 0；失败会话 active branch 含 4 张不同的原图，适合用声明支持 9 张图的 Qwen 渠道做只读续聊。部署和现场验收结果后续记录。

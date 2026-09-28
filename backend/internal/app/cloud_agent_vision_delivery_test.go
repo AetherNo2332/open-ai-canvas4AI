@@ -292,8 +292,8 @@ func TestCloudAgentVisionLimitsAndUnconfirmedState(t *testing.T) {
 	}
 	copy := *canonical
 	refs, err := s.cloudAgentImageReferences("user", agentTestRequest(), &copy)
-	if err != nil || len(refs) != 1 || refs[0].StorageKey != "resource:ref-two" {
-		t.Fatalf("did not retain newest image within model limit: %+v %v", refs, err)
+	if err == nil || len(refs) != 0 {
+		t.Fatalf("model limit must reject overflow without discarding images: %+v %v", refs, err)
 	}
 	after, _ := json.Marshal(canonical)
 	if !bytes.Equal(original, after) {

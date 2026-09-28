@@ -654,8 +654,9 @@ func TestCloudAgentReadBodiesAreNotPruned(t *testing.T) {
 		{"role": "assistant", "content": "继续"},
 	}}
 	before, _ := json.Marshal(request.Messages)
-	if changed, pruned := cloudAgentPruneInspectedImages(&request, nil); changed || pruned != 0 {
-		t.Fatalf("read bodies must not be pruned: changed=%v pruned=%d", changed, pruned)
+	state := cloudAgentRuntime{Canonical: request}
+	if err := cloudAgentSave(&model.CloudAgentExecution{}, &state); err != nil {
+		t.Fatal(err)
 	}
 	after, _ := json.Marshal(request.Messages)
 	if string(before) != string(after) {

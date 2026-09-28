@@ -49,6 +49,23 @@ test("每个运行请求都携带会话租约 epoch", async () => {
   assert.equal(request.headers["X-Agent-Session-Epoch"], "7");
 });
 
+test("a Go-finalized model failure is a terminal control signal", async () => {
+  const original = globalThis.fetch;
+  const routes: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    routes.push(String(url));
+    const data = String(url).endsWith("/fail") ? { status: "failed" }
+      : { taskId: "failed-model-task", status: "failed", error: "provider failed" };
+    return new Response(JSON.stringify({ code: 0, data }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const bridge = new CanvasBridge("http://backend:8080", "token", "worker-1");
+    await assert.rejects(bridge.modelStep(run, run.canonical), error =>
+      error instanceof Error && error.name === "CanvasRunTerminated");
+    assert.equal(routes.length, 2, "failure admission is reported once");
+  } finally { globalThis.fetch = original; }
+});
+
 test("内部 wire identity 与共享制品和锁定的 Pi SDK 版本一致", () => {
   const packagePath = [resolve(testDirectory, "../package.json"), resolve(testDirectory, "../../package.json")]
     .find(existsSync);

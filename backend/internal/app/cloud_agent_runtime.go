@@ -722,25 +722,6 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	if run == nil || state == nil {
 		return errors.New("Agent runtime state is missing")
 	}
-	// 轮内唯一裁剪 = 图片：超出保留轮次的看图结果换成文字回执（正文一律保留）。
-	// 它必须在压缩判定之前跑：图片是最贵的一类内容，先移出再评估 token 压力才有意义。
-	// 传运行态：裁剪占位符要带上模型为这些节点写下的观察，否则模型会把"系统没接上观察"
-	// 读成"我没看过"，从而反复重看同一批图（真机实测 35 张图 140 次看图）。
-	if changed, pruned := cloudAgentPruneInspectedImages(&state.Canonical, state); changed && run.ID != "" {
-		state.event(run.ID, "context_images_pruned", map[string]any{
-			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
-			"text": "已把超出保留轮次的看图结果移出模型上下文（保留文字回执与 nodeId）",
-		})
-		// 同一件事再落一条统一的过渡事件（设计 §4 的 context_transition）：前端趋势图与
-		// "最近变化"都不必再为每种治理动作各写一套解析。
-		afterRaw, _ := json.Marshal(state.Canonical.Messages)
-		state.event(run.ID, "context_transition", map[string]any{
-			"kind": "body_eviction", "reason": "image_prune",
-			"after":        map[string]any{"sourceBytes": len(afterRaw), "estimatedTokens": estimateCloudAgentTokens(afterRaw), "historyMessages": len(state.Canonical.Messages)},
-			"prunedImages": pruned, "retentionRounds": cloudAgentImageRetentionRounds,
-			"text": "图片裁剪：移出超出保留轮次的看图结果",
-		})
-	}
 	if run.ID != "" {
 		if err := validateCloudAgentRuntime(run, state); err != nil {
 			return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)

@@ -1,5 +1,7 @@
 # Pi 移植现状与 TODO 清单
 
+> 新增要求：原图持续保留在模型上下文，不能裁剪或用观察摘要替代。文本压缩保留 Go 原方案，Pi active branch 负责补回原始图片引用；模型容量不足明确拒绝。此前 M-07 的“图片裁剪以账本替代”口径已失效。当前报错修复见 [AGENT_ERROR_REPAIR_2026-09-28.md](./AGENT_ERROR_REPAIR_2026-09-28.md)。
+
 > **施工顺序已调整**：canary 先删除旧编排并把生产 runner 接到 Pi Coding Agent，再恢复能力。以 [`PI_CODING_AGENT_CANARY_DIRECT_CUTOVER.md`](./PI_CODING_AGENT_CANARY_DIRECT_CUTOVER.md) 为新路线；本文的阶段编号与“下一步”段落保留为历史清单。当前工作树已出现 `holding` 占位任务与合同 v2 代码，但首步换单、退款和恢复尚不能据此判定完成。
 
 > 初始基线：`canary`，HEAD `7aa99880`；下方早期差异计数是历史快照，当前差异请以 `git status` 为准。

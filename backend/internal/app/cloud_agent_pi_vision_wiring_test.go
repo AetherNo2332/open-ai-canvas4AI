@@ -99,7 +99,7 @@ func TestPiModelStepWiringHydratesImageReferences(t *testing.T) {
 	}
 }
 
-func TestPiModelStepSettlesOnlyImagesKeptInProviderEnvelope(t *testing.T) {
+func TestPiModelStepImageOverflowCreatesNoTaskAndKeepsPendingObservations(t *testing.T) {
 	s, db, root := piAgentTestFixture(t)
 	profile := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
 	if profile == nil || profile.Text == nil {
@@ -149,30 +149,30 @@ func TestPiModelStepSettlesOnlyImagesKeptInProviderEnvelope(t *testing.T) {
 	}
 	request, _ := piFirstStepRequest(state)
 	request.Canonical.Messages = canonical.Messages
-	if _, err := s.PiModelStep("user", run.ID, run.LeaseOwner, request); err != nil {
-		t.Fatalf("Pi 模型步骤准入失败: %v", err)
+	before, _ := json.Marshal(request.Canonical.Messages)
+	var tasksBefore, tasksAfter int64
+	if err := db.Model(&model.Task{}).Count(&tasksBefore).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PiModelStep("user", run.ID, run.LeaseOwner, request); err == nil {
+		t.Fatal("图片超限必须在模型任务准入前拒绝")
 	}
 	_, settled := reloadPiRun(t, s, run.ID)
-	if len(settled.PendingImageObservations) != 1 || settled.PendingImageObservations[0] != "upload-last-bbbb" {
-		t.Fatalf("Pi 视觉账本没有按真正随信封送达的图片结算: %+v", settled.PendingImageObservations)
+	if len(settled.PendingImageObservations) != 2 {
+		t.Fatalf("被拒绝的请求不能伪造图片送达: %+v", settled.PendingImageObservations)
 	}
-	if settled.AgentImagesInContext != 1 {
-		t.Fatalf("视觉账本的上下文图片数=%d，期望 1", settled.AgentImagesInContext)
+	if settled.AgentImagesInContext != state.AgentImagesInContext {
+		t.Fatal("拒绝准入不得修改视觉账本的送达计数")
 	}
-	var task model.Task
-	if err := db.First(&task, "id = ?", settled.LastStepTaskID).Error; err != nil {
+	if err := db.Model(&model.Task{}).Count(&tasksAfter).Error; err != nil {
 		t.Fatal(err)
 	}
-	var taskInput struct {
-		AgentRequests struct {
-			Canonical canonicalAgentRequest `json:"canonical"`
-		} `json:"agentRequests"`
+	if tasksBefore != tasksAfter {
+		t.Fatal("图片超限创建了额外的计费模型任务")
 	}
-	if err := json.Unmarshal([]byte(task.InputJSON), &taskInput); err != nil {
-		t.Fatal(err)
-	}
-	if delivered := deliveredImageNodeIDs(taskInput.AgentRequests.Canonical); !delivered["upload-last-bbbb"] || delivered["upload-first-aaaa"] {
-		t.Fatalf("任务输入的图片集合与 Pi 视觉账本不一致: %+v", delivered)
+	after, _ := json.Marshal(request.Canonical.Messages)
+	if string(before) != string(after) {
+		t.Fatal("拒绝准入时删改了原始图片")
 	}
 }
 
@@ -245,10 +245,8 @@ func TestPiModelStepMustPassReferenceImagesToProvider(t *testing.T) {
 
 // TestPiImageReferencesTrimToModelLimit：超出模型图片上限时必须换成文字占位，
 // 而不是把请求整条拒掉；同时返回的参考只包含真正送达的那几张。
-func TestPiImageReferencesTrimToModelLimit(t *testing.T) {
+func TestPiImageReferencesRejectOverflowWithoutDroppingImages(t *testing.T) {
 	s, db, storageKey := visionReadyService(t, 1)
-	req := agentTestRequest()
-
 	second := "11112222333344445555666677778888"
 	if err := db.Create(&model.Resource{
 		ID: second, UserID: "user", Kind: "image", Status: "ready",
@@ -257,50 +255,16 @@ func TestPiImageReferencesTrimToModelLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	canonical := visionCanonical(storageKey, "resource:"+second)
-
-	refs, err := s.cloudAgentImageReferences("user", req, canonical)
-	if err != nil {
-		t.Fatalf("超限裁剪不应报错: %v", err)
+	before, _ := json.Marshal(canonical)
+	refs, err := s.cloudAgentImageReferences("user", agentTestRequest(), canonical)
+	if err == nil || len(refs) != 0 {
+		t.Fatalf("image overflow must fail before delivery, got references=%d error=%v", len(refs), err)
 	}
-	if len(refs) != 1 {
-		t.Fatalf("送达参考数 = %d，期望 1（模型上限 = 1）", len(refs))
-	}
-	// 被丢掉的那张要留下带 nodeId 说明的文字占位，模型才知道"这一张没送到"。
-	images, notes := 0, 0
-	for _, message := range canonical.Messages {
-		parts, _ := message["content"].([]any)
-		for _, value := range parts {
-			part, _ := value.(map[string]any)
-			switch stringField(part, "type") {
-			case "image_url":
-				images++
-			case "text":
-				if cloudAgentImageEvictionWithoutDeliveryNote("") != "" &&
-					len(stringField(part, "text")) > 0 {
-					notes++
-				}
-			}
-		}
-	}
-	if images != 1 {
-		t.Fatalf("裁剪后仍保留 %d 张图，期望 1", images)
-	}
-	if notes < 2 {
-		t.Fatalf("被丢弃的图片没有留下文字占位（text 段 = %d）", notes)
-	}
-	// 裁剪后仍然必须能通过占位符准入：留下的图有白名单，被丢的图已经变成文字。
-	for index := range refs {
-		refs[index].DataURL = "data:image/png;base64,iVBORw0KGgo="
-	}
-	if _, err := resolveAgentResourcePlaceholders(canvasGenerationInput{
-		Mode: "text", AgentRequests: &agentToolRequests{Canonical: canonical}, ReferenceImages: refs,
-	}, true); err != nil {
-		t.Fatalf("裁剪后的请求仍被占位符准入拒绝: %v", err)
+	after, _ := json.Marshal(canonical)
+	if string(before) != string(after) {
+		t.Fatal("model limit silently removed or replaced image content")
 	}
 }
-
-// TestPiImageReferencesRejectsUnavailableResource：资源不存在/未就绪时必须失败关闭，
-// 不能把一张不可读的图当成"没有图"混过去。
 func TestPiImageReferencesRejectsUnavailableResource(t *testing.T) {
 	s, _, _ := visionReadyService(t, 4)
 	req := agentTestRequest()

@@ -87,6 +87,14 @@ export class CanvasModelRetry extends Error {
   }
 }
 
+/** Go already finalized the run; no further lease-bound callback is legal. */
+export class CanvasRunTerminated extends Error {
+  constructor(readonly status: string) {
+    super(`Canvas run ${status}`);
+    this.name = "CanvasRunTerminated";
+  }
+}
+
 interface PiCheckpointResult {
   saved: boolean;
   sessionRevision?: number;
@@ -167,6 +175,9 @@ export class CanvasBridge {
       if (step.status !== "succeeded") {
         const decision = await this.request<PiTurnDecision>("POST", `${path}/${encodeURIComponent(step.taskId)}/fail`, {}, run, signal);
         if (decision.status === "continue" && decision.nudge) throw new CanvasModelRetry(decision);
+        if (["completed", "failed", "cancelled", "rejected"].includes(decision.status)) {
+          throw new CanvasRunTerminated(decision.status);
+        }
       }
       throw new Error(`Canvas model step ${step.status}`);
     }

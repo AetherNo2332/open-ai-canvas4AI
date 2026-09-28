@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getCurrentSystemPrompt, getCurrentTools,
-  type AssistantMessage, type Message, type Model, type ToolResultMessage } from "@earendil-works/pi-ai";
+  type AssistantMessage, type Message, type Model, type ToolResultMessage, type UserMessage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   DefaultResourceLoader,
@@ -19,10 +19,11 @@ import {
   type SessionCompactFailedEvent,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { CanvasBridge, CanvasModelRetry, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
+import { CanvasBridge, CanvasModelRetry, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
+import { createImageContextExtension, createTerminalHistoryExtension, missingImageContent } from "./session-history.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
 
 /**
@@ -88,8 +89,8 @@ function hasImagePart(content: unknown): boolean {
     (part as Record<string, unknown>).type === "image_url"));
 }
 
-function canvasUserMessage(content: unknown): AgentMessage {
-  const message = { role: "user", content: textContent(content), timestamp: Date.now() } as AgentMessage;
+function canvasUserMessage(content: unknown): UserMessage {
+  const message: UserMessage = { role: "user", content: textContent(content), timestamp: Date.now() };
   if (hasImagePart(content)) (message as unknown as Record<string, unknown>).canvasContent = content;
   return message;
 }
@@ -271,6 +272,7 @@ async function recoverToolResults(
       ? { result: "旧版工具分类入口已完成兼容，不执行业务操作。请直接使用当前工具表中的具体工具。" }
       : admissionError ? { result: admissionError, isError: true } :
       await bridge.executeTool(snapshot, taskId, call.id, signal);
+    if ("terminated" in receipt && receipt.terminated) throw new CanvasRunTerminated("terminated");
     const result: ToolResultMessage = { role: "toolResult", toolCallId: call.id, toolName: call.function.name,
       content: [{ type: "text",
         text: typeof receipt.result === "string" ? receipt.result : JSON.stringify(receipt.result) }],
@@ -533,6 +535,7 @@ export async function runCanvasAgent(
   shutdown?.throwIfAborted();
   let snapshot = initial;
   const model = canvasModel(snapshot);
+  const initialVisualMessages = fromCanonical(snapshot, model);
   // 合同校验必须早于任何恢复副作用：schema 不兼容时不能先写检查点或执行工具。
   if (toolSchema) assertToolSnapshotMatchesSchema(snapshot.tools, toolSchema);
   // 冻结的 Harness 正文优先：恢复时用原快照，重读磁盘会静默换掉在途运行的系统提示。
@@ -544,6 +547,7 @@ export async function runCanvasAgent(
   let sequence = snapshot.piMessages?.length || 0;
   let listenerFailure: unknown;
   let compactionFailure: unknown;
+  let runTerminated = isTerminalRunStatus(snapshot.status);
   let session: AgentSession | undefined;
   let sessionManager: SessionManager | undefined;
   let sessionRevision = snapshot.piSessionRevision || 1;
@@ -599,6 +603,7 @@ export async function runCanvasAgent(
   };
 
   const checkpoint = async (message: AgentMessage, taskId?: string, interjectionIds: string[] = []): Promise<void> => {
+    if (runTerminated || isTerminalRunStatus(snapshot.status)) return;
     let entries: SessionEntry[];
     let leafId: string;
     if (sessionManager) {
@@ -650,6 +655,10 @@ export async function runCanvasAgent(
     if (!admittedCallIds.has(callId)) throw new Error(batchRejection || "Tool batch was not admitted");
     if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
     const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
+    if (receipt.terminated) {
+      runTerminated = true;
+      return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
+    }
     const refreshed = await bridge.snapshot(snapshot, signal);
     for (const message of refreshed.canonical.messages.slice(canonicalCount)) {
       // 插话里的图片要直接进会话，不能等下一次模型步骤才补（见旧实现的 steer 分支）。
@@ -659,10 +668,11 @@ export async function runCanvasAgent(
     }
     canonicalCount = refreshed.canonical.messages.length;
     snapshot = refreshed;
+    runTerminated = isTerminalRunStatus(refreshed.status);
     syncPendingInterjections(refreshed);
     await steerPendingInterjections();
     return { result: receipt.result, isError: receipt.isError,
-      terminate: receipt.terminated === true || isTerminalRunStatus(refreshed.status) };
+      terminate: runTerminated };
   }, snapshot.previousStepTemplate);
   // Old snapshots may still carry openedCategories. They are informational
   // migration state only; all eligible concrete tools are available each run.
@@ -671,6 +681,7 @@ export async function runCanvasAgent(
   let modelRetry: PiTurnDecision | undefined;
   const streamSimple = createCanvasStreamFn(async ({ messages, signal, onTextDelta }) => {
     await queue.drain();
+    if (runTerminated) throw new CanvasRunTerminated(snapshot.status);
     if (compactionFailure !== undefined) throw compactionFailure;
     const canonical = toCanonical(messages as Message[], snapshot.canonical.promptCacheKey);
     canonical.tools = disclosure.decorateCanonicalTools(canonical.tools);
@@ -680,11 +691,21 @@ export async function runCanvasAgent(
       return step.result;
     } catch (error) {
       if (error instanceof CanvasModelRetry) modelRetry = error.decision;
+      if (error instanceof CanvasRunTerminated) {
+        runTerminated = true;
+        snapshot = { ...snapshot, status: error.status };
+      }
       throw error;
     }
   });
 
-  const resume = await resumePoint(bridge, snapshot, model, disclosure, checkpoint, shutdown);
+  let resume: ResumePoint;
+  try {
+    resume = await resumePoint(bridge, snapshot, model, disclosure, checkpoint, shutdown);
+  } catch (error) {
+    if (error instanceof CanvasRunTerminated) return;
+    throw error;
+  }
   if (resume.prompt === "") return;
   const compactionExtension = createCanvasContextCompactionExtension({
     bridge,
@@ -715,7 +736,7 @@ export async function runCanvasAgent(
     return undefined;
   });
   const boot = await bootstrapSession(snapshot, systemPrompt, resume.entries, streamSimple, disclosure,
-    [compactionExtension, toolExtension]);
+    [compactionExtension, toolExtension, createTerminalHistoryExtension(snapshot), createImageContextExtension()]);
   session = boot.session;
   sessionManager = boot.sessionManager;
   if (resume.activeLeafId !== undefined && resume.activeLeafId !== sessionManager.getLeafId()) {
@@ -724,6 +745,7 @@ export async function runCanvasAgent(
   }
   try {
     session.subscribe((event) => {
+      if (runTerminated || isTerminalRunStatus(snapshot.status)) return;
       if (event.type !== "message_end") return;
       const message = event.message;
       if (message.role === "assistant" &&
@@ -765,7 +787,7 @@ export async function runCanvasAgent(
     shutdown?.addEventListener("abort", onShutdown, { once: true });
     let leaseCheckRunning = false;
     const lease = setInterval(() => {
-      if (leaseCheckRunning) return;
+      if (runTerminated || leaseCheckRunning) return;
       leaseCheckRunning = true;
       void (async () => {
         await bridge.renew(snapshot, shutdown);
@@ -787,9 +809,18 @@ export async function runCanvasAgent(
           throw new FatalWorkerError("Pi did not commit the pending Go context compaction");
         }
       }
+      // A crash can leave a Go image message newer than Pi's last checkpoint.
+      // Persist its original references before any new automatic compaction.
+      const imageContent = missingImageContent(initialVisualMessages,
+        sessionManager.getBranch().flatMap(entry => entry.type === "message" ? [entry.message] : []));
+      if (imageContent.length > 0) {
+        const imageMessage = canvasUserMessage(imageContent);
+        sessionManager.appendMessage(imageMessage);
+        await checkpoint(imageMessage);
+      }
       for (;;) {
         await queue.drain();
-        if (listenerFailure !== undefined || isTerminalRunStatus(snapshot.status)) break;
+        if (runTerminated || listenerFailure !== undefined || isTerminalRunStatus(snapshot.status)) break;
         await session.prompt(prompt, { expandPromptTemplates: false }).catch((error: unknown) => {
           if (compactionFailure !== undefined) {
             throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
@@ -799,6 +830,7 @@ export async function runCanvasAgent(
         });
         await session.waitForIdle();
         await queue.drain();
+        if (runTerminated) break;
         if (compactionFailure !== undefined && !abortRequested && !shutdown?.aborted) {
           throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
         }
