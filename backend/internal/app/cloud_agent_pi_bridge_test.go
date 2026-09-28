@@ -373,7 +373,7 @@ func TestPiAgentLeaseAdmission(t *testing.T) {
 		Updates(map[string]any{"status": "waiting_approval", "lease_expires_at": expired}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.CloudAgentPiSession{}).Where("id = ?", run.ConversationID).
+	if err := db.Model(&model.CloudAgentPiSession{}).Where("conversation_id = ? AND user_id = ?", run.ConversationID, run.UserID).
 		Update("lease_expires_at", expired).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestPiCheckpointCommitsMessageAndConversationEntryAtomically(t *testing.T) 
 		}
 	}
 	var persisted int64
-	if err := db.Model(&model.CloudAgentPiEntry{}).Where("session_id = ?", run.ConversationID).Count(&persisted).Error; err != nil || persisted != 0 {
+	if err := db.Model(&model.CloudAgentPiEntry{}).Where("session_id = ? AND user_id = ?", session.ID, run.UserID).Count(&persisted).Error; err != nil || persisted != 0 {
 		t.Fatalf("failed transaction left %d Pi session entries, error %v", persisted, err)
 	}
 

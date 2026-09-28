@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -40,11 +41,103 @@ func TestPiConversationSessionMigrationBackfillsActiveRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	var session model.CloudAgentPiSession
-	if err := db.First(&session, "id = ?", run.ConversationID).Error; err != nil {
+	if err := db.First(&session, "user_id = ? AND conversation_id = ?", run.UserID, run.ConversationID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if session.ActiveRunID != run.ID {
 		t.Fatalf("backfilled active run = %q, want %q", session.ActiveRunID, run.ID)
+	}
+	if session.ID != model.PiSessionStorageID(run.UserID, run.ConversationID) {
+		t.Fatalf("backfilled session ID = %q, want owner-scoped ID", session.ID)
+	}
+}
+
+func TestPiConversationSessionMigrationAllowsCrossOwnerConversationIDReuse(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:pi-session-cross-owner-migration?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.CloudAgentExecution{}); err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Now().UTC()
+	runs := []model.CloudAgentExecution{
+		{ID: "pi-run-user-1", UserID: "user-1", CanvasID: "canvas-1", ConversationID: "shared-conversation", Engine: "pi", Status: "running", Revision: 1, CreatedAt: createdAt, UpdatedAt: createdAt},
+		{ID: "pi-run-user-2", UserID: "user-2", CanvasID: "canvas-2", ConversationID: "shared-conversation", Engine: "pi", Status: "running", Revision: 1, CreatedAt: createdAt, UpdatedAt: createdAt},
+	}
+	if err := db.Create(&runs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migratePiAgentConversationSessions(db); err != nil {
+		t.Fatal(err)
+	}
+	var sessions []model.CloudAgentPiSession
+	if err := db.Where("conversation_id = ?", "shared-conversation").Find(&sessions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != len(runs) {
+		t.Fatalf("migrated sessions = %d, want %d", len(sessions), len(runs))
+	}
+	for _, run := range runs {
+		var session model.CloudAgentPiSession
+		if err := db.First(&session, "user_id = ? AND conversation_id = ?", run.UserID, run.ConversationID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if session.ID != model.PiSessionStorageID(run.UserID, run.ConversationID) || session.ActiveRunID != run.ID {
+			t.Fatalf("migrated session for %s = %+v", run.UserID, session)
+		}
+	}
+}
+
+func TestPiSessionOwnerScopedIDMigrationUpdatesSessionAndEntries(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:pi-session-owner-key-migration?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.CloudAgentPiSession{}, &model.CloudAgentPiEntry{}); err != nil {
+		t.Fatal(err)
+	}
+	legacyID := "shared-conversation"
+	header, err := json.Marshal(map[string]any{"type": "session", "version": 3, "id": legacyID, "cwd": "canvas://canvas-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := model.CloudAgentPiSession{ID: legacyID, UserID: "user-1", ConversationID: legacyID, CanvasID: "canvas-1",
+		FormatVersion: 3, HeaderJSON: string(header), Revision: 2, ActiveRunID: "run-1"}
+	if err := db.Create(&session).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CloudAgentPiEntry{SessionID: legacyID, Sequence: 1, EntryID: "entry-1", UserID: session.UserID,
+		RunID: session.ActiveRunID, EntryJSON: `{"type":"message","id":"entry-1"}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migratePiAgentOwnerScopedSessionIDs(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := migratePiAgentOwnerScopedSessionIDs(db); err != nil {
+		t.Fatalf("idempotent rerun failed: %v", err)
+	}
+	wantID := model.PiSessionStorageID(session.UserID, session.ConversationID)
+	var migrated model.CloudAgentPiSession
+	if err := db.First(&migrated, "user_id = ? AND conversation_id = ?", session.UserID, session.ConversationID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if migrated.ID != wantID || migrated.ActiveRunID != session.ActiveRunID || migrated.Revision != session.Revision {
+		t.Fatalf("migrated session = %+v, want ID %q with state preserved", migrated, wantID)
+	}
+	var headerValue map[string]any
+	if err := json.Unmarshal([]byte(migrated.HeaderJSON), &headerValue); err != nil {
+		t.Fatal(err)
+	}
+	if headerValue["id"] != wantID {
+		t.Fatalf("migrated Pi header ID = %v, want %q", headerValue["id"], wantID)
+	}
+	var entries []model.CloudAgentPiEntry
+	if err := db.Where("session_id = ?", wantID).Find(&entries).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].EntryID != "entry-1" || entries[0].UserID != session.UserID {
+		t.Fatalf("migrated Pi entries = %+v", entries)
 	}
 }
 

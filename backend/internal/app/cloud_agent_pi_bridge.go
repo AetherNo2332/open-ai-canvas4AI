@@ -174,6 +174,14 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 		}
 		seenInterjectionIDs[id] = struct{}{}
 	}
+	var piSessionID string
+	if len(input.SessionEntries) > 0 {
+		session, _, err := s.repo.CloudAgentPiSession(userID, firstNonEmpty(run.ConversationID, run.ID))
+		if err != nil {
+			return 0, err
+		}
+		piSessionID = session.ID
+	}
 	var sessionEntries []model.CloudAgentPiEntry
 	for _, raw := range input.SessionEntries {
 		var identity struct {
@@ -188,7 +196,7 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 			parentID = *identity.ParentID
 		}
 		sessionEntries = append(sessionEntries, model.CloudAgentPiEntry{
-			SessionID: run.ConversationID, EntryID: identity.ID, ParentID: parentID,
+			SessionID: piSessionID, EntryID: identity.ID, ParentID: parentID,
 			UserID: userID, RunID: runID, EntryJSON: string(raw),
 		})
 	}

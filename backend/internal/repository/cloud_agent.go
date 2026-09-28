@@ -205,7 +205,7 @@ func (r *Repository) ClaimPiAgent(owner string, until time.Time) (*model.CloudAg
 				return ErrCreationConflict
 			}
 			leased := tx.Model(&model.CloudAgentPiSession{}).
-				Where("id = ? AND user_id = ? AND active_run_id = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
+				Where("conversation_id = ? AND user_id = ? AND active_run_id = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
 					conversationID, candidate.UserID, candidate.ID, now).
 				Updates(map[string]any{
 					"lease_owner": owner, "lease_expires_at": until,
@@ -254,7 +254,7 @@ func (r *Repository) RenewPiAgentLease(userID, id, owner string, epoch int64, un
 			return nil
 		}
 		sessionQuery := tx.Model(&model.CloudAgentPiSession{}).
-			Where("id = ? AND user_id = ? AND active_run_id = ? AND lease_owner = ? AND lease_expires_at > ?",
+			Where("conversation_id = ? AND user_id = ? AND active_run_id = ? AND lease_owner = ? AND lease_expires_at > ?",
 				conversationID, userID, id, owner, now)
 		if epoch > 0 {
 			sessionQuery = sessionQuery.Where("lease_epoch = ?", epoch)
@@ -291,7 +291,7 @@ func (r *Repository) ReleasePiAgentLease(userID, id, owner string) error {
 			return err
 		}
 		return tx.Model(&model.CloudAgentPiSession{}).
-			Where("id = ? AND user_id = ? AND active_run_id = ? AND lease_owner = ?", conversationID, userID, id, owner).
+			Where("conversation_id = ? AND user_id = ? AND active_run_id = ? AND lease_owner = ?", conversationID, userID, id, owner).
 			Updates(map[string]any{"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now()}).Error
 	})
 }
@@ -415,7 +415,7 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 		}
 		if run.Engine == "pi" && run.ConversationID != "" && isTerminalCloudAgentRunStatus(run.Status) {
 			if err = tx.Model(&model.CloudAgentPiSession{}).
-				Where("id = ? AND user_id = ? AND active_run_id = ?", run.ConversationID, run.UserID, run.ID).
+				Where("conversation_id = ? AND user_id = ? AND active_run_id = ?", run.ConversationID, run.UserID, run.ID).
 				Updates(map[string]any{
 					"active_run_id": "", "lease_owner": "", "lease_expires_at": nil,
 					"revision": gorm.Expr("revision + 1"), "updated_at": time.Now(),

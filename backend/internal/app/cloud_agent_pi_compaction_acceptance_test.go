@@ -18,10 +18,10 @@ import (
 func seedPiCompactionMessages(t *testing.T, db *gorm.DB, run *model.CloudAgentExecution, messages []map[string]any) (int64, string) {
 	t.Helper()
 	var session model.CloudAgentPiSession
-	if err := db.Where("id = ?", run.ConversationID).First(&session).Error; err != nil {
+	if err := db.Where("user_id = ? AND conversation_id = ?", run.UserID, run.ConversationID).First(&session).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Where("session_id = ?", run.ConversationID).Delete(&model.CloudAgentPiEntry{}).Error; err != nil {
+	if err := db.Where("session_id = ? AND user_id = ?", session.ID, run.UserID).Delete(&model.CloudAgentPiEntry{}).Error; err != nil {
 		t.Fatal(err)
 	}
 	parentID := ""
@@ -36,7 +36,7 @@ func seedPiCompactionMessages(t *testing.T, db *gorm.DB, run *model.CloudAgentEx
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := db.Create(&model.CloudAgentPiEntry{SessionID: run.ConversationID, Sequence: index + 1,
+		if err := db.Create(&model.CloudAgentPiEntry{SessionID: session.ID, Sequence: index + 1,
 			EntryID: id, ParentID: parentID, UserID: run.UserID, RunID: run.ID, EntryJSON: string(raw)}).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -242,7 +242,7 @@ func TestPiContextCompactionRejectsSourceIdentityDrift(t *testing.T) {
 				input.Entry, _ = json.Marshal(entry)
 			}
 			if sessionChanges != nil {
-				if err := db.Model(&model.CloudAgentPiSession{}).Where("id = ?", run.ConversationID).Updates(sessionChanges).Error; err != nil {
+				if err := db.Model(&model.CloudAgentPiSession{}).Where("conversation_id = ? AND user_id = ?", run.ConversationID, run.UserID).Updates(sessionChanges).Error; err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -271,7 +271,7 @@ func TestPiContextCompactionRecoversAfterLeaseTakeoverWithoutNewCharge(t *testin
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.CloudAgentPiSession{}).Where("id = ?", run.ConversationID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+	if err := db.Model(&model.CloudAgentPiSession{}).Where("conversation_id = ? AND user_id = ?", run.ConversationID, run.UserID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
 		t.Fatal(err)
 	}
 	recovered, err := s.ClaimPiAgent("worker-recovered")

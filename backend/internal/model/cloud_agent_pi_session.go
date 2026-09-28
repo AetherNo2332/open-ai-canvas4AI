@@ -1,6 +1,20 @@
 package model
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"time"
+)
+
+// PiSessionStorageID makes the internal Pi session key owner-scoped while the
+// public conversation ID remains unchanged. Clients may reuse a conversation
+// ID across accounts; the durable primary key must not turn that into a global
+// uniqueness constraint or let one account collide with another account's tree.
+func PiSessionStorageID(userID, conversationID string) string {
+	identity := userID + "\x00" + conversationID
+	digest := sha256.Sum256([]byte(identity))
+	return "pi_" + hex.EncodeToString(digest[:])
+}
 
 // CloudAgentPiSession is the durable Pi v3 session shared by every run in a conversation.
 // Its owner and canvas are checked on every repository access; the worker token is not an

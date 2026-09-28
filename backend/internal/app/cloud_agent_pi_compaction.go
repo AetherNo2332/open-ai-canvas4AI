@@ -258,7 +258,7 @@ func (s *Service) PiCommitContextCompaction(userID, runID, owner, operationID st
 		}
 		parentID := *entry.ParentID
 		modelEntry := model.CloudAgentPiEntry{
-			SessionID: current.ConversationID, EntryID: entry.ID, ParentID: parentID,
+			SessionID: session.ID, EntryID: entry.ID, ParentID: parentID,
 			UserID: userID, RunID: runID, EntryJSON: string(input.Entry),
 		}
 		updatedRevision, err = repo.AppendCloudAgentPiSessionEntries(userID, current.ConversationID, runID,

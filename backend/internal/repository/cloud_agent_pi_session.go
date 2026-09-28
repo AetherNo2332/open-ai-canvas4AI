@@ -20,26 +20,27 @@ func (r *Repository) AttachCloudAgentPiSession(run *model.CloudAgentExecution) e
 	if run == nil || run.UserID == "" || run.ID == "" {
 		return errors.New("Pi session run identity is incomplete")
 	}
-	sessionID := run.ConversationID
-	if sessionID == "" {
-		sessionID = run.ID
+	conversationID := run.ConversationID
+	if conversationID == "" {
+		conversationID = run.ID
 	}
 	createdAt := run.CreatedAt
 	if createdAt.IsZero() {
 		createdAt = time.Now()
 	}
-	header, err := json.Marshal(map[string]any{
-		"type": "session", "version": cloudAgentPiSessionFormatVersion, "id": sessionID,
-		"timestamp": createdAt.UTC().Format(time.RFC3339Nano), "cwd": "canvas://" + run.CanvasID,
-	})
-	if err != nil {
-		return err
-	}
 	var session model.CloudAgentPiSession
-	err = r.db.First(&session, "id = ? AND user_id = ?", sessionID, run.UserID).Error
+	err := r.db.First(&session, "user_id = ? AND conversation_id = ?", run.UserID, conversationID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		sessionID := model.PiSessionStorageID(run.UserID, conversationID)
+		header, err := json.Marshal(map[string]any{
+			"type": "session", "version": cloudAgentPiSessionFormatVersion, "id": sessionID,
+			"timestamp": createdAt.UTC().Format(time.RFC3339Nano), "cwd": "canvas://" + run.CanvasID,
+		})
+		if err != nil {
+			return err
+		}
 		session = model.CloudAgentPiSession{
-			ID: sessionID, UserID: run.UserID, ConversationID: sessionID, CanvasID: run.CanvasID,
+			ID: sessionID, UserID: run.UserID, ConversationID: conversationID, CanvasID: run.CanvasID,
 			FormatVersion: cloudAgentPiSessionFormatVersion, HeaderJSON: string(header), Revision: 1,
 			ActiveRunID: run.ID, CreatedAt: createdAt, UpdatedAt: time.Now(),
 		}
@@ -50,14 +51,14 @@ func (r *Repository) AttachCloudAgentPiSession(run *model.CloudAgentExecution) e
 		if created.RowsAffected != 0 {
 			return nil
 		}
-		if err := r.db.First(&session, "id = ? AND user_id = ?", sessionID, run.UserID).Error; err != nil {
+		if err := r.db.First(&session, "user_id = ? AND conversation_id = ?", run.UserID, conversationID).Error; err != nil {
 			return err
 		}
 	} else if err != nil {
 		return err
 	}
-	if session.CanvasID != run.CanvasID || session.ConversationID != sessionID {
-		return fmt.Errorf("Pi session %q owner or canvas does not match run", sessionID)
+	if session.CanvasID != run.CanvasID || session.ConversationID != conversationID {
+		return fmt.Errorf("Pi session %q owner or canvas does not match run", conversationID)
 	}
 	if session.FormatVersion != cloudAgentPiSessionFormatVersion {
 		return fmt.Errorf("unsupported Pi session format version %d", session.FormatVersion)
@@ -69,8 +70,8 @@ func (r *Repository) AttachCloudAgentPiSession(run *model.CloudAgentExecution) e
 		return ErrCreationConflict
 	}
 	updated := r.db.Model(&model.CloudAgentPiSession{}).
-		Where("id = ? AND user_id = ? AND canvas_id = ? AND revision = ? AND active_run_id = ?",
-			sessionID, run.UserID, run.CanvasID, session.Revision, session.ActiveRunID).
+		Where("id = ? AND user_id = ? AND conversation_id = ? AND canvas_id = ? AND revision = ? AND active_run_id = ?",
+			session.ID, run.UserID, conversationID, run.CanvasID, session.Revision, session.ActiveRunID).
 		Updates(map[string]any{
 			"active_run_id": run.ID,
 			"revision":      gorm.Expr("revision + 1"),
@@ -86,13 +87,13 @@ func (r *Repository) AttachCloudAgentPiSession(run *model.CloudAgentExecution) e
 }
 
 // CloudAgentPiSession loads a session only in the authenticated user's scope.
-func (r *Repository) CloudAgentPiSession(userID, sessionID string) (*model.CloudAgentPiSession, []model.CloudAgentPiEntry, error) {
+func (r *Repository) CloudAgentPiSession(userID, conversationID string) (*model.CloudAgentPiSession, []model.CloudAgentPiEntry, error) {
 	var session model.CloudAgentPiSession
-	if err := r.db.First(&session, "id = ? AND user_id = ?", sessionID, userID).Error; err != nil {
+	if err := r.db.First(&session, "user_id = ? AND conversation_id = ?", userID, conversationID).Error; err != nil {
 		return nil, nil, err
 	}
 	entries := make([]model.CloudAgentPiEntry, 0)
-	if err := r.db.Where("session_id = ? AND user_id = ?", sessionID, userID).Order("sequence ASC").Find(&entries).Error; err != nil {
+	if err := r.db.Where("session_id = ? AND user_id = ?", session.ID, userID).Order("sequence ASC").Find(&entries).Error; err != nil {
 		return nil, nil, err
 	}
 	return &session, entries, nil
@@ -101,9 +102,9 @@ func (r *Repository) CloudAgentPiSession(userID, sessionID string) (*model.Cloud
 // AppendCloudAgentPiSessionEntries appends a Pi entry batch and advances the active leaf
 // under a session revision check. Identical retries are no-ops; an entry ID reused with a
 // different body or a stale branch update is rejected.
-func (r *Repository) AppendCloudAgentPiSessionEntries(userID, sessionID, runID string, expectedRevision int64, activeLeafID string, entries []model.CloudAgentPiEntry) (int64, error) {
+func (r *Repository) AppendCloudAgentPiSessionEntries(userID, conversationID, runID string, expectedRevision int64, activeLeafID string, entries []model.CloudAgentPiEntry) (int64, error) {
 	var session model.CloudAgentPiSession
-	if err := r.db.First(&session, "id = ? AND user_id = ?", sessionID, userID).Error; err != nil {
+	if err := r.db.First(&session, "user_id = ? AND conversation_id = ?", userID, conversationID).Error; err != nil {
 		return 0, err
 	}
 	if session.FormatVersion != cloudAgentPiSessionFormatVersion || session.ActiveRunID != runID {
@@ -116,7 +117,7 @@ func (r *Repository) AppendCloudAgentPiSessionEntries(userID, sessionID, runID s
 	known := make(map[string]bool, len(entries))
 	available := make(map[string]bool, len(entries))
 	for _, entry := range entries {
-		if entry.EntryID == "" || len(entry.EntryID) > 160 || entry.SessionID != sessionID || entry.UserID != userID || entry.RunID != runID || len(entry.EntryJSON) == 0 || !json.Valid([]byte(entry.EntryJSON)) {
+		if entry.EntryID == "" || len(entry.EntryID) > 160 || entry.SessionID != session.ID || entry.UserID != userID || entry.RunID != runID || len(entry.EntryJSON) == 0 || !json.Valid([]byte(entry.EntryJSON)) {
 			return 0, fmt.Errorf("Pi session entry identity is invalid")
 		}
 		if known[entry.EntryID] {
@@ -124,7 +125,7 @@ func (r *Repository) AppendCloudAgentPiSessionEntries(userID, sessionID, runID s
 		}
 		known[entry.EntryID] = true
 		var existing model.CloudAgentPiEntry
-		err := r.db.First(&existing, "session_id = ? AND user_id = ? AND entry_id = ?", sessionID, userID, entry.EntryID).Error
+		err := r.db.First(&existing, "session_id = ? AND user_id = ? AND entry_id = ?", session.ID, userID, entry.EntryID).Error
 		if err == nil {
 			if !sameJSONDocument(existing.EntryJSON, entry.EntryJSON) {
 				return 0, ErrCreationConflict
@@ -145,7 +146,7 @@ func (r *Repository) AppendCloudAgentPiSessionEntries(userID, sessionID, runID s
 	}
 	var maxSequence int
 	if err := r.db.Model(&model.CloudAgentPiEntry{}).
-		Where("session_id = ? AND user_id = ?", sessionID, userID).
+		Where("session_id = ? AND user_id = ?", session.ID, userID).
 		Select("COALESCE(MAX(sequence), 0)").Scan(&maxSequence).Error; err != nil {
 		return 0, err
 	}
@@ -154,7 +155,7 @@ func (r *Repository) AppendCloudAgentPiSessionEntries(userID, sessionID, runID s
 		if entry.ParentID != "" && !available[entry.ParentID] {
 			var parentCount int64
 			if err := r.db.Model(&model.CloudAgentPiEntry{}).
-				Where("session_id = ? AND user_id = ? AND entry_id = ?", sessionID, userID, entry.ParentID).
+				Where("session_id = ? AND user_id = ? AND entry_id = ?", session.ID, userID, entry.ParentID).
 				Count(&parentCount).Error; err != nil {
 				return 0, err
 			}
@@ -170,7 +171,7 @@ func (r *Repository) AppendCloudAgentPiSessionEntries(userID, sessionID, runID s
 	if activeLeafID != "" && !available[activeLeafID] {
 		var leafCount int64
 		if err := r.db.Model(&model.CloudAgentPiEntry{}).
-			Where("session_id = ? AND user_id = ? AND entry_id = ?", sessionID, userID, activeLeafID).
+			Where("session_id = ? AND user_id = ? AND entry_id = ?", session.ID, userID, activeLeafID).
 			Count(&leafCount).Error; err != nil {
 			return 0, err
 		}
@@ -184,7 +185,7 @@ func (r *Repository) AppendCloudAgentPiSessionEntries(userID, sessionID, runID s
 		}
 	}
 	updated := r.db.Model(&model.CloudAgentPiSession{}).
-		Where("id = ? AND user_id = ? AND revision = ? AND active_run_id = ?", sessionID, userID, expectedRevision, runID).
+		Where("id = ? AND user_id = ? AND conversation_id = ? AND revision = ? AND active_run_id = ?", session.ID, userID, conversationID, expectedRevision, runID).
 		Updates(map[string]any{"active_leaf_id": activeLeafID, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now()})
 	if updated.Error != nil {
 		return 0, updated.Error

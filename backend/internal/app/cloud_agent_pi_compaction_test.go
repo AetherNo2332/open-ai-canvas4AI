@@ -11,6 +11,10 @@ import (
 
 func seedPiCompactionBranch(t *testing.T, db *gorm.DB, run *model.CloudAgentExecution) (int64, string) {
 	t.Helper()
+	var session model.CloudAgentPiSession
+	if err := db.Where("user_id = ? AND conversation_id = ?", run.UserID, run.ConversationID).First(&session).Error; err != nil {
+		t.Fatal(err)
+	}
 	ids := []string{"compact-user-1", "compact-assistant-1", "compact-user-current"}
 	messages := []map[string]any{
 		{"role": "user", "content": "Keep the first request"},
@@ -30,14 +34,14 @@ func seedPiCompactionBranch(t *testing.T, db *gorm.DB, run *model.CloudAgentExec
 		if err != nil {
 			t.Fatal(err)
 		}
-		entries = append(entries, model.CloudAgentPiEntry{SessionID: run.ConversationID, Sequence: index + 1,
+		entries = append(entries, model.CloudAgentPiEntry{SessionID: session.ID, Sequence: index + 1,
 			EntryID: id, UserID: run.UserID, RunID: run.ID, ParentID: parentID, EntryJSON: string(raw)})
 		parentID = id
 	}
 	if err := db.Create(&entries).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.CloudAgentPiSession{}).Where("id = ?", run.ConversationID).
+	if err := db.Model(&model.CloudAgentPiSession{}).Where("id = ? AND user_id = ?", session.ID, run.UserID).
 		Updates(map[string]any{"active_leaf_id": parentID, "revision": 2}).Error; err != nil {
 		t.Fatal(err)
 	}

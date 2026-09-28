@@ -13,7 +13,7 @@ import (
 
 // CurrentSchemaVersion follows upstream migrations through v38; the retired
 // Cloud Agent tables stay registered as no-op entries after that upstream range.
-const CurrentSchemaVersion int64 = 42
+const CurrentSchemaVersion int64 = 43
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 38
@@ -139,6 +139,7 @@ var schemaMigrations = []migration{
 		return tx.AutoMigrate(&model.CloudAgentExecution{})
 	}},
 	{version: 42, name: "pi_agent_conversation_sessions", checksum: "sha256:pi-agent-conversation-sessions-v42-20260927", apply: migratePiAgentConversationSessions},
+	{version: 43, name: "pi_agent_owner_scoped_session_ids", checksum: "sha256:pi-agent-owner-scoped-session-ids-v43-20260928", apply: migratePiAgentOwnerScopedSessionIDs},
 }
 
 func migratePiAgentConversationSessions(tx *gorm.DB) error {
@@ -155,22 +156,23 @@ func migratePiAgentConversationSessions(tx *gorm.DB) error {
 		if conversationID == "" {
 			conversationID = run.ID
 		}
+		sessionID := model.PiSessionStorageID(run.UserID, conversationID)
 		header, err := json.Marshal(map[string]any{
-			"type": "session", "version": 3, "id": conversationID,
+			"type": "session", "version": 3, "id": sessionID,
 			"timestamp": run.CreatedAt.UTC().Format(time.RFC3339Nano), "cwd": "canvas://" + run.CanvasID,
 		})
 		if err != nil {
 			return err
 		}
 		session := model.CloudAgentPiSession{
-			ID: conversationID, UserID: run.UserID, ConversationID: conversationID, CanvasID: run.CanvasID,
+			ID: sessionID, UserID: run.UserID, ConversationID: conversationID, CanvasID: run.CanvasID,
 			FormatVersion: 3, HeaderJSON: string(header), Revision: 1, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
 		}
 		switch run.Status {
 		case "queued", "running", "waiting_approval":
 			session.ActiveRunID = run.ID
 		}
-		if err := tx.Where("id = ?", session.ID).FirstOrCreate(&session).Error; err != nil {
+		if err := tx.Where("user_id = ? AND conversation_id = ?", session.UserID, session.ConversationID).FirstOrCreate(&session).Error; err != nil {
 			return err
 		}
 		if session.UserID != run.UserID || session.CanvasID != run.CanvasID {
@@ -178,10 +180,76 @@ func migratePiAgentConversationSessions(tx *gorm.DB) error {
 		}
 		active := run.Status == "queued" || run.Status == "running" || run.Status == "waiting_approval"
 		if active && session.ActiveRunID != run.ID {
-			if err := tx.Model(&model.CloudAgentPiSession{}).Where("id = ? AND user_id = ?", session.ID, session.UserID).
+			if err := tx.Model(&model.CloudAgentPiSession{}).Where("id = ? AND user_id = ? AND conversation_id = ?", session.ID, session.UserID, session.ConversationID).
 				Updates(map[string]any{"active_run_id": run.ID, "revision": gorm.Expr("revision + 1"), "updated_at": run.UpdatedAt}).Error; err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// migratePiAgentOwnerScopedSessionIDs upgrades sessions created by schema v42,
+// whose primary key was the client-controlled conversation ID. The update keeps
+// the public conversation ID stable while moving the session header and all Pi
+// entries to a deterministic owner-scoped storage key.
+func migratePiAgentOwnerScopedSessionIDs(tx *gorm.DB) error {
+	var sessions []model.CloudAgentPiSession
+	if err := tx.Order("created_at, id").Find(&sessions).Error; err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		nextID := model.PiSessionStorageID(session.UserID, session.ConversationID)
+		if session.ID == nextID {
+			continue
+		}
+		var existing model.CloudAgentPiSession
+		err := tx.First(&existing, "id = ?", nextID).Error
+		if err == nil {
+			return fmt.Errorf("Pi session ID migration collision for owner %q and conversation %q", session.UserID, session.ConversationID)
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var entryCount int64
+		if err := tx.Model(&model.CloudAgentPiEntry{}).Where("session_id = ?", nextID).Count(&entryCount).Error; err != nil {
+			return err
+		}
+		if entryCount != 0 {
+			return fmt.Errorf("Pi session ID migration found orphan entries for target %q", nextID)
+		}
+		var foreignEntryCount int64
+		if err := tx.Model(&model.CloudAgentPiEntry{}).
+			Where("session_id = ? AND user_id <> ?", session.ID, session.UserID).Count(&foreignEntryCount).Error; err != nil {
+			return err
+		}
+		if foreignEntryCount != 0 {
+			return fmt.Errorf("Pi session ID migration found entries owned by another account for %q", session.ID)
+		}
+		var header map[string]any
+		if err := json.Unmarshal([]byte(session.HeaderJSON), &header); err != nil {
+			return fmt.Errorf("decode Pi session header %q: %w", session.ID, err)
+		}
+		if header == nil {
+			return fmt.Errorf("Pi session header %q is not an object", session.ID)
+		}
+		header["id"] = nextID
+		headerJSON, err := json.Marshal(header)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.CloudAgentPiEntry{}).Where("session_id = ?", session.ID).
+			Update("session_id", nextID).Error; err != nil {
+			return fmt.Errorf("move Pi entries for session %q: %w", session.ID, err)
+		}
+		updated := tx.Model(&model.CloudAgentPiSession{}).
+			Where("id = ? AND user_id = ? AND conversation_id = ?", session.ID, session.UserID, session.ConversationID).
+			Updates(map[string]any{"id": nextID, "header_json": string(headerJSON)})
+		if updated.Error != nil {
+			return fmt.Errorf("update Pi session %q: %w", session.ID, updated.Error)
+		}
+		if updated.RowsAffected != 1 {
+			return fmt.Errorf("Pi session %q changed while applying owner-scoped ID migration", session.ID)
 		}
 	}
 	return nil

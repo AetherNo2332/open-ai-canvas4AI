@@ -508,7 +508,7 @@ func TestCloudAgentCompactionContinuationIncludesFinalReplyWithoutReplayingPromp
 			replies, originalPrompts, interjections)
 	}
 	session, entries, err := s.repo.CloudAgentPiSession("user", execution.ConversationID)
-	if err != nil || session.ID != run.ConversationID || len(entries) != 10 {
+	if err != nil || session.ConversationID != run.ConversationID || len(entries) != 10 {
 		t.Fatalf("continuation did not reuse its persisted Pi tree: session=%+v entries=%d err=%v", session, len(entries), err)
 	}
 }

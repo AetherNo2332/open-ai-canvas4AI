@@ -148,3 +148,12 @@
 - 补 PostgreSQL schema/会话存储、不同账号并行隔离、多 worker lease 抢占、跨进程崩溃恢复、模型步骤/工具写入/计费 exactly-once 组合故障注入，以及 SSE 断线续传。
 - 继续验证旧历史数据导入、历史会话转 Pi entries、旧版本完成记录续聊；补带 commit 与 buildTime 的可追溯容器镜像元数据。
 - 本轮提交为 `8c58d0ca`，topic branch `codex/pi-agent-migration`，PR [#58](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/58) 目标为 `canary`，GitHub 状态 `OPEN` / mergeable `CLEAN`。提交消息包含 `[skip ci]`，没有启动 CI。PR 包含此前本地迁移提交及本轮的 116 文件增量；未纳入 `.env*`、本机数据/备份或认证材料。
+
+## 追加：多账号 Pi session 主键隔离
+
+- 回归审计发现 `CloudAgentPiSession.ID` 使用客户端可控的 conversation ID 作全局主键；不同账号重用同一个 ID 时，第二个账号无法建会话。Pi entry 的 session key、租约查询和恢复/终态清理也依赖该 ID。
+- 存储 ID 现由账号 ID 与 conversation ID 的 SHA-256 确定性生成；外部 conversation ID/API 合同保持原值。会话读取、续接、租约和清理以 `(user_id, conversation_id)` 定位，Pi 条目及 Node snapshot 使用可信的内部 session ID。检查点与上下文压缩写入均使用服务端查出的内部 ID。
+- schema 43 新增迁移，将 schema 42 的 session 主键、Pi header ID 和 entry `session_id` 一起改为账号隔离键，并在目标 ID 冲突、孤立条目或无效 header 时中止迁移。新数据库在 schema 42 backfill 时即按账号生成 ID；schema 43 可幂等迁移已应用 v42 的数据库。
+- 增加跨账号复用同一 conversation ID 的 repository 与 migration 回归测试。验证通过：`CGO_ENABLED=1 go test ./internal/repository ./internal/database ./internal/app -count=1 -timeout=15m`（repo、database、app 全量通过；app 用时 453.680s）；`go test ./internal/handler ./internal/protocol ./internal/service -count=1 -timeout=10m` 通过。补充 schema 43 定向迁移重跑测试通过。
+- Canary 品牌标记要求维持为品牌名后紧邻的黄色底、黑色字、无衬线 `canary` 高亮；专用测试 4/4 通过。Web 全量测试 271 个文件、2108 项、11767 条断言通过。Computer Use 再次返回 `nodeRepl.fetch request failed`，未执行其他 UI 自动化；标记的浏览器截图验收仍待工具恢复。
+- 本机 `canvas-canary-3000` 当前数据库 schema 42/42，迁移与后端改动尚待单独备份并部署；未触碰生产环境。
