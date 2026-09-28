@@ -60,6 +60,7 @@ import { getActiveUserScope } from "@/lib/user-scope";
 import { applyAgentCanvasPatches, refreshCanvasAfterAgent, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { createAgentCanvasSync } from "@/services/agent-canvas-sync";
 import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/skill-runtime";
+import { nativeSkillEventPresentation } from "@/lib/canvas/agent-tool-presentation";
 import {
     AgentChatComposer,
     AgentChatMessage,
@@ -1774,6 +1775,11 @@ function applyAgentEvent(
 ) {
     const payload = event.payload || {};
     const text = String(payload.text || payload.summary || payload.message || "");
+    const nativeSkill = nativeSkillEventPresentation(event.type, payload);
+    if (nativeSkill) {
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", ...nativeSkill }));
+        return;
+    }
     if (["run_status", "context_compaction_requested", "context_compacted"].includes(event.type)) setRun((current) => reduceAgentRun(current, event));
     if (event.type === "run_status") {
         const snapshotApproval = payload.approval && typeof payload.approval === "object" ? (payload.approval as AgentRun["approval"]) : undefined;

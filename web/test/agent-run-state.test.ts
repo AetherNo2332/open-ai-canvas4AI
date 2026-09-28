@@ -6,6 +6,13 @@ import type { AgentEvent, AgentRun } from "@/services/api/agent";
 const run: AgentRun = { id: "run", canvasId: "canvas", status: "running", permissionMode: "auto", createdAt: "", updatedAt: "" };
 const event = (type: string, payload: Record<string, unknown>): AgentEvent => ({ runId: "run", eventId: "event", seq: 1, type, payload, createdAt: "now" });
 
+test("reconnect preserves the server-frozen Skill identity and runtime mode", () => {
+    const skills = [{ id: "skill", name: "导演", version: "v1-id", versionId: "v1-id", versionLabel: "1", hash: "frozen-hash", nativeName: "skill-abc" }];
+    const restored = reduceAgentRun(run, event("run_status", { status: "running", skillRuntimeMode: "pi-native", skills }));
+    expect(restored).toMatchObject({ skillRuntimeMode: "pi-native", skills });
+    expect(reduceAgentRun(restored, event("run_status", { status: "running" }))?.skills).toEqual(skills);
+});
+
 test("Pi semantic compaction updates the run title and meter until it completes", () => {
     const requested = event("context_compaction_requested", { kind: "semantic_compaction", turns: 4, sourceBytes: 10000 });
     const active = reduceAgentRun(run, requested);

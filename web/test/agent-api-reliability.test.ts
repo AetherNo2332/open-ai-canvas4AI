@@ -182,6 +182,17 @@ describe("Agent SSE recovery", () => {
 
 describe("Agent admission replay and durable pending records", () => {
     const input: CreateAgentRunInput = { canvasId: "canvas", prompt: "generate", model: "original", idempotencyKey: "stable-key-123" };
+    it("creates and continues Cloud Agent runs with only Skill IDs", async () => {
+        const bodies: unknown[] = [];
+        transport.http.post = async (_path: string, body: unknown) => { bodies.push(body); return { run: { id: "run" } }; };
+        const request = { ...input, skillIds: ["skill-one", "skill-two"] };
+        await api.createAgentRun(request);
+        await api.sendAgentMessage("run", request);
+        expect(bodies).toEqual([request, request]);
+        for (const body of bodies) {
+            expect(Object.keys(body as object).filter((key) => /skill/i.test(key))).toEqual(["skillIds"]);
+        }
+    });
     it("retries with a frozen original body/key and a bounded HTTP timeout", async () => {
         const bodies: unknown[] = [];
         const mutable = { ...input };
