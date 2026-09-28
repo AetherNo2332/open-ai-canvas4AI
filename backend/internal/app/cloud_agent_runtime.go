@@ -129,18 +129,20 @@ type cloudAgentRuntime struct {
 	// Snapshot 是本轮不可变的提示合同；首个模型步补齐 Harness 正文，之后只比对不重写。
 	Snapshot *cloudAgentContractSnapshot `json:"contractSnapshot,omitempty"`
 	// PlaceholderTaskID 是承载本轮报价预留的占位任务（当前实现里等于运行 ID）。
-	PlaceholderTaskID string           `json:"placeholderTaskId,omitempty"`
-	ActiveTaskID      string           `json:"activeTaskId"`
-	PiNoToolTaskID    string           `json:"piNoToolTaskId,omitempty"`
-	PiNoToolNudge     string           `json:"piNoToolNudge,omitempty"`
-	ActiveTextDraft   string           `json:"activeTextDraft,omitempty"`
-	MediaTaskID       string           `json:"mediaTaskId,omitempty"`
-	TaskIDs           []string         `json:"taskIds"`
-	Step              int              `json:"step"`
-	Generations       int              `json:"generations"`
-	VideoSeconds      int              `json:"videoSeconds"`
-	Calls             []cloudAgentCall `json:"calls"`
-	CallIndex         int              `json:"callIndex"`
+	PlaceholderTaskID    string           `json:"placeholderTaskId,omitempty"`
+	ActiveTaskID         string           `json:"activeTaskId"`
+	PiNoToolTaskID       string           `json:"piNoToolTaskId,omitempty"`
+	PiNoToolNudge        string           `json:"piNoToolNudge,omitempty"`
+	PiModelFailureTaskID string           `json:"piModelFailureTaskId,omitempty"`
+	PiModelFailureNudge  string           `json:"piModelFailureNudge,omitempty"`
+	ActiveTextDraft      string           `json:"activeTextDraft,omitempty"`
+	MediaTaskID          string           `json:"mediaTaskId,omitempty"`
+	TaskIDs              []string         `json:"taskIds"`
+	Step                 int              `json:"step"`
+	Generations          int              `json:"generations"`
+	VideoSeconds         int              `json:"videoSeconds"`
+	Calls                []cloudAgentCall `json:"calls"`
+	CallIndex            int              `json:"callIndex"`
 	// ToolRepairs is counted per tool so reads do not reset write-argument repairs.
 	ToolRepairs            map[string]cloudAgentToolRepair `json:"toolRepairs,omitempty"`
 	Approval               *cloudAgentApproval             `json:"approval,omitempty"`
@@ -1656,6 +1658,9 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	state.event(runID, kind, payload)
 	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": string(raw)})
 	state.CallIndex++
+	if state.CallIndex >= len(state.Calls) {
+		cloudAgentFlushPendingImages(state)
+	}
 	state.Approval = nil
 	return exhausted
 }
@@ -2514,6 +2519,9 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 			// 压缩调用不是本轮的一步：压完还要用压缩后的上下文继续步进，步数不该被它占掉。
 			if state.ContextCompaction != nil && req.Operation == cloudAgentContextCompactionOperation {
 				state.ContextCompaction.Status = "running"
+				if state.ContextCompaction.PiOperationID != "" {
+					state.ContextCompaction.PiTaskID = task.ID
+				}
 			} else {
 				if contextPressure != nil {
 					state.AdvertisedToolNames = cloudAgentToolNames(requestCanonical.Tools)
@@ -2799,19 +2807,27 @@ func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, rea
 }
 func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error {
 	// 取消是控制面操作：即使运行的用户可见 runtime blob 已损坏也必须可用，
-	// 所以授权先于任何状态解析（也不先走 CloudAgentRun）。
+	// 所以先用带 user_id 条件的 execution 查询授权，不先解析 runtime。
 	//
 	// 但**不能**再以根任务作为唯一授权入口：阶段 2 之后的新 run 由 Go 直接创建、
 	// 没有根任务行，按任务授权会让它们**完全无法取消** —— 用户只能看着它跑完，
-	// 或者等看门狗超时判停。cloudAgentRunRefFor 保留"根任务优先"的旧语义，
-	// 根任务读不到才回退到执行记录；而 repo.CloudAgent 自身已做 user_id 归属校验。
-	if _, err := s.cloudAgentRunRefFor(userID, id); err != nil {
-		return err
-	}
+	// 或者等看门狗超时判停。repo.CloudAgent 自身按 user_id 归属查询；仅旧版尚无
+	// execution 行时才验证用户拥有的根任务，再通过正常读取路径引导创建 execution。
 	run, err := s.repo.CloudAgent(userID, id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		// Legacy root tasks may not have an execution row yet. The normal read
-		// path validates the signed/deterministic task identity before creating it.
+		// Legacy root tasks may not have an execution row yet. Verify task ownership
+		// and operation before using the normal read path, which validates the
+		// deterministic task identity and creates the execution row.
+		task, taskErr := s.repo.TaskForUser(userID, id)
+		if errors.Is(taskErr, gorm.ErrRecordNotFound) {
+			return kernel.NotFound("Agent 运行不存在")
+		}
+		if taskErr != nil {
+			return taskErr
+		}
+		if task.Operation != cloudAgentOperation {
+			return kernel.NotFound("Agent 运行不存在")
+		}
 		if _, err = s.CloudAgentRun(userID, id); err != nil {
 			return err
 		}

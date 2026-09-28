@@ -48,6 +48,8 @@ func agentMediaCall(a cloudAgentMediaArgs) cloudAgentCall {
 	return call
 }
 
+// Legacy fixtures remain for unrelated business unit tests that are still
+// being migrated; new Pi acceptance tests use agentMediaPiRun below.
 func agentMediaRun(t *testing.T, s *Service, a cloudAgentMediaArgs, permission string, idempotencyKeys ...string) (*model.CloudAgentExecution, cloudAgentRuntime) {
 	t.Helper()
 	req := agentTestRequest()
@@ -55,31 +57,40 @@ func agentMediaRun(t *testing.T, s *Service, a cloudAgentMediaArgs, permission s
 		req.IdempotencyKey = idempotencyKeys[0]
 	}
 	req.PermissionMode = permission
-	req.Budget.MaxGenerationTasks = 2
-	req.Budget.MaxVideoSeconds = 24
+	req.Budget.MaxGenerationTasks, req.Budget.MaxVideoSeconds = 2, 24
 	root, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 建 run 只落占位与快照：运行停在 awaiting_first_step，此时把待处理调用塞进状态会被校验
-	// 拒绝（"首步前不允许有任务历史"）。这些用例检验的是首步**之后**的业务（媒体准入、
-	// 审批、画布回写），所以先走真实的首个模型步把运行合法启动起来 —— 与生产同一入口。
 	run, decoded := startPiAgentFirstStep(t, s, root.ID)
 	state := *decoded
 	state.ActiveTaskID = ""
 	state.Calls = []cloudAgentCall{agentMediaCall(a)}
-	// 分层披露下，运行态里登记的是"本轮下发给模型的工具表"。这些用例直接驱动工具
-	// 执行/预检，需要完整合格目录；等价于"本轮已披露全部合格工具"。
 	if state.DisclosureVersion >= cloudAgentToolDisclosureVersion {
 		state.AdvertisedToolNames = cloudAgentToolNames(state.Canonical.Tools)
 	}
-	if err = s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
 	return run, state
+}
+
+func agentMediaPiRun(t *testing.T, s *Service, db *gorm.DB, a cloudAgentMediaArgs, permission string, idempotencyKeys ...string) (*model.CloudAgentExecution, cloudAgentRuntime) {
+	t.Helper()
+	req := agentTestRequest()
+	if len(idempotencyKeys) > 0 {
+		req.IdempotencyKey = idempotencyKeys[0]
+	}
+	req.PermissionMode = permission
+	req.Budget.MaxGenerationTasks, req.Budget.MaxVideoSeconds = 2, 24
+	root, err := s.CreateCloudAgentRun("user", req, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{agentMediaCall(a)})
 }
 
 func approveAgentMediaDraft(t *testing.T, s *Service, runID string) {
@@ -119,8 +130,8 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 	if !strings.Contains(string(encoded), `"channelModelKey":"seedance-test"`) || strings.Contains(string(encoded), "logicalModelId") {
 		t.Fatalf("wrong catalog: %s", encoded)
 	}
-	run, state := agentMediaRun(t, s, a, "request_approval")
-	if err = s.executeCloudAgentToolCall(run, &state); err != nil {
+	run, state := agentMediaPiRun(t, s, db, a, "request_approval")
+	if err = agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	var count int64
@@ -137,9 +148,11 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
 	state, _ = cloudAgentDecode(run)
-	if err = s.executeCloudAgentMediaCall(run, &state, state.Calls[state.CallIndex]); err != nil {
+	if err = agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
+	run, _ = s.repo.CloudAgent("user", run.ID)
+	state, _ = cloudAgentDecode(run)
 	if state.MediaTaskID == "" {
 		t.Fatalf("no media task: %s", run.StateJSON)
 	}
@@ -162,7 +175,7 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 		t.Fatalf("no node/edges: %s", canvas.PayloadJSON)
 	}
 	run, state = reloadAgentRun(t, s, run.ID)
-	if err = s.executeCloudAgentMediaCall(run, &state, state.Calls[state.CallIndex]); err != nil {
+	if err = agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	db.Model(&model.Task{}).Where("type = ?", "canvas_video").Count(&count)
@@ -176,7 +189,7 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	run, state = reloadAgentRun(t, s, run.ID)
-	if err = s.executeCloudAgentMediaCall(run, &state, state.Calls[state.CallIndex]); err != nil {
+	if err = agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	canvas, _ = s.repo.CanvasProjectForUser("user", "agent-canvas")
@@ -201,7 +214,7 @@ func TestCloudAgentMediaApprovalCreatesNodeReferencesAndResult(t *testing.T) {
 
 func TestCloudAgentMediaReferenceAndSnapshotGuards(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
-	run, state := agentMediaRun(t, s, a, "auto")
+	run, state := agentMediaPiRun(t, s, db, a, "auto")
 	for _, test := range []struct {
 		name   string
 		change func(*cloudAgentMediaArgs)
@@ -250,8 +263,8 @@ func TestCloudAgentImageCreatesReferencedNode(t *testing.T) {
 	a.Mode, a.ChannelModelKey, a.Duration, a.VideoGenerateAudio = "image", "grok-image", 0, nil
 	a.Size, a.Quality, a.NodeID = "1:1", "2k", "image-shot-1"
 	a.ReferenceNodeIDs = []string{"cat"}
-	run, _ := agentMediaRun(t, s, a, "request_approval")
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	run, _ := agentMediaPiRun(t, s, db, a, "request_approval")
+	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	approveAgentMediaDraft(t, s, run.ID)
@@ -300,8 +313,8 @@ func TestCloudAgentMediaRejectAndInvalidModelDoNotCreateTasks(t *testing.T) {
 			if scenario == "invalid-model" {
 				a.ChannelModelKey = "removed-model"
 			}
-			run, _ := agentMediaRun(t, s, a, "request_approval")
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			run, _ := agentMediaPiRun(t, s, db, a, "request_approval")
+			if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 				t.Fatal(err)
 			}
 			run, _ = s.repo.CloudAgent("user", run.ID)
@@ -318,6 +331,12 @@ func TestCloudAgentMediaRejectAndInvalidModelDoNotCreateTasks(t *testing.T) {
 			if scenario == "reject" {
 				decision = "reject"
 			}
+			var modelStepsBefore int64
+			if scenario == "reject" {
+				if err := db.Model(&model.Task{}).Where("operation = ?", "cloud_agent_step").Count(&modelStepsBefore).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := s.DecideCloudAgentApproval("user", run.ID, state.Approval.ID, decision, ""); err != nil {
 				t.Fatal(err)
 			}
@@ -326,7 +345,7 @@ func TestCloudAgentMediaRejectAndInvalidModelDoNotCreateTasks(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 				t.Fatal(err)
 			}
 			run, _ = s.repo.CloudAgent("user", run.ID)
@@ -342,13 +361,15 @@ func TestCloudAgentMediaRejectAndInvalidModelDoNotCreateTasks(t *testing.T) {
 						t.Fatalf("user rejection was reported as execution failure: %+v", event)
 					}
 				}
-				if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+				if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 					t.Fatal(err)
 				}
 				var modelSteps int64
-				db.Model(&model.Task{}).Where("operation = ?", "cloud_agent_step").Count(&modelSteps)
-				if modelSteps != 0 {
-					t.Fatalf("rejected approval triggered %d follow-up model tasks", modelSteps)
+				if err := db.Model(&model.Task{}).Where("operation = ?", "cloud_agent_step").Count(&modelSteps).Error; err != nil {
+					t.Fatal(err)
+				}
+				if modelSteps != modelStepsBefore {
+					t.Fatalf("rejected approval triggered a follow-up model task: %d -> %d", modelStepsBefore, modelSteps)
 				}
 			} else if state.CallIndex != 1 || run.Status == "failed" {
 				t.Fatalf("nonrecoverable approved-tool failure: index=%d status=%s", state.CallIndex, run.Status)
@@ -362,7 +383,7 @@ func TestCloudAgentMediaRejectAndInvalidModelDoNotCreateTasks(t *testing.T) {
 
 func TestCloudAgentMediaChangedCanvasRollsBackAdmission(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
-	run, state := agentMediaRun(t, s, a, "auto")
+	run, state := agentMediaPiRun(t, s, db, a, "auto")
 	req, plan, err := s.prepareCloudAgentMedia(run, &state, agentMediaCall(a))
 	if err != nil {
 		t.Fatal(err)
@@ -400,7 +421,7 @@ func TestCloudAgentMediaFillsMissingSnapshotHash(t *testing.T) {
 	}
 	want := a.SnapshotHash
 	a.SnapshotHash = ""
-	run, state := agentMediaRun(t, s, a, "auto", "fill-missing-snapshot")
+	run, state := agentMediaPiRun(t, s, db, a, "auto", "fill-missing-snapshot")
 	_, plan, err := s.prepareCloudAgentMedia(run, &state, agentMediaCall(a))
 	if err != nil {
 		t.Fatalf("missing snapshotHash should be filled from current canvas: %v", err)
@@ -420,8 +441,8 @@ func TestCloudAgentMediaFillsMissingSnapshotHash(t *testing.T) {
 
 func TestCloudAgentMediaFailedTaskUpdatesNode(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
-	run, _ := agentMediaRun(t, s, a, "request_approval")
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	run, _ := agentMediaPiRun(t, s, db, a, "request_approval")
+	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	approveAgentMediaDraft(t, s, run.ID)
@@ -434,7 +455,7 @@ func TestCloudAgentMediaFailedTaskUpdatesNode(t *testing.T) {
 	if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": model.TaskStatusFailed, "error": "上游拒绝该生成规格"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	canvas, _ := s.repo.CanvasProjectForUser("user", "agent-canvas")
@@ -566,8 +587,8 @@ func TestCloudAgentMediaDraftReuseLifecycle(t *testing.T) {
 
 func TestCloudAgentMediaPreviousDraftRequiresNewApproval(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
-	run, state := agentMediaRun(t, s, a, "request_approval")
-	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
+	run, _ := agentMediaPiRun(t, s, db, a, "request_approval")
+	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CancelCloudAgent(context.Background(), "user", run.ID); err != nil {
@@ -585,11 +606,11 @@ func TestCloudAgentMediaPreviousDraftRequiresNewApproval(t *testing.T) {
 	}
 	a.SnapshotHash = cloudAgentCanvasHash(doc)
 	a.ReferenceNodeIDs = []string{"hero"}
-	next, nextState := agentMediaRun(t, s, a, "request_approval", "resume-draft-next-turn")
+	next, _ := agentMediaPiRun(t, s, db, a, "request_approval", "resume-draft-next-turn")
 	if next.ID == run.ID {
 		t.Fatal("expected a distinct run")
 	}
-	if err := s.executeCloudAgentToolCall(next, &nextState); err != nil {
+	if err := agentPiExecuteCallForTest(t, s, next.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := s.CloudAgentRun("user", next.ID)
@@ -632,12 +653,12 @@ func TestCloudAgentAutoMediaSubmitsWithoutApproval(t *testing.T) {
 	// defaults during admission instead of producing a repair turn.
 	a.Size = ""
 	a.Duration = 0
-	run, _ := agentMediaRun(t, s, a, "auto")
+	run, _ := agentMediaPiRun(t, s, db, a, "auto")
 	var ordersBefore int64
 	if err := db.Model(&model.BillingOrder{}).Count(&ordersBefore).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
@@ -686,7 +707,7 @@ func TestCloudAgentAutoMediaSubmitsWithoutApproval(t *testing.T) {
 	}
 	// Re-entering a submitted call is idempotent and must not reserve/submit a
 	// second generation.
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.Task{}).Where("type = ?", "canvas_video").Count(&tasks).Error; err != nil {
@@ -700,12 +721,12 @@ func TestCloudAgentAutoMediaSubmitsWithoutApproval(t *testing.T) {
 	// approval or a draft task.
 	invalidService, invalidDB, invalidArgs := agentMediaFixture(t)
 	invalidArgs.ChannelModelKey = "removed-model"
-	invalidRun, _ := agentMediaRun(t, invalidService, invalidArgs, "auto")
+	invalidRun, _ := agentMediaPiRun(t, invalidService, invalidDB, invalidArgs, "auto")
 	var invalidOrdersBefore int64
 	if err := invalidDB.Model(&model.BillingOrder{}).Count(&invalidOrdersBefore).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := invalidService.advanceCloudAgentByID("user", invalidRun.ID); err != nil {
+	if err := agentPiExecuteCallForTest(t, invalidService, invalidRun.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	invalidRun, _ = invalidService.repo.CloudAgent("user", invalidRun.ID)
@@ -725,12 +746,12 @@ func TestCloudAgentAutoMediaSubmitsWithoutApproval(t *testing.T) {
 	}
 
 	approvalService, approvalDB, approvalArgs := agentMediaFixture(t)
-	approvalRun, _ := agentMediaRun(t, approvalService, approvalArgs, "request_approval")
+	approvalRun, _ := agentMediaPiRun(t, approvalService, approvalDB, approvalArgs, "request_approval")
 	var approvalOrdersBefore int64
 	if err := approvalDB.Model(&model.BillingOrder{}).Count(&approvalOrdersBefore).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := approvalService.advanceCloudAgentByID("user", approvalRun.ID); err != nil {
+	if err := agentPiExecuteCallForTest(t, approvalService, approvalRun.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	approvalRun, _ = approvalService.repo.CloudAgent("user", approvalRun.ID)
@@ -754,8 +775,8 @@ func TestCloudAgentAutoMediaSubmitsWithoutApproval(t *testing.T) {
 }
 
 func TestCloudAgentMediaPromptCountsUnicodeCharacters(t *testing.T) {
-	s, _, a := agentMediaFixture(t)
-	run, state := agentMediaRun(t, s, a, "auto")
+	s, db, a := agentMediaFixture(t)
+	run, state := agentMediaPiRun(t, s, db, a, "auto")
 	const mentions = "@图片1 @图片2"
 	a.Prompt = strings.Repeat("镜", 16000-len([]rune(mentions))) + mentions
 	if _, _, err := s.prepareCloudAgentMedia(run, &state, agentMediaCall(a)); err != nil {
@@ -768,9 +789,9 @@ func TestCloudAgentMediaPromptCountsUnicodeCharacters(t *testing.T) {
 }
 
 func TestCloudAgentMediaCancellationUpdatesNode(t *testing.T) {
-	s, _, a := agentMediaFixture(t)
-	run, _ := agentMediaRun(t, s, a, "request_approval")
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	s, db, a := agentMediaFixture(t)
+	run, _ := agentMediaPiRun(t, s, db, a, "request_approval")
+	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	approveAgentMediaDraft(t, s, run.ID)

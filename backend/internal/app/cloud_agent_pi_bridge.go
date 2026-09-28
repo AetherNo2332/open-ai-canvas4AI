@@ -61,6 +61,8 @@ type PiAgentSnapshot struct {
 	LastTaskID               string                      `json:"lastTaskId,omitempty"`
 	NoToolTaskID             string                      `json:"noToolTaskId,omitempty"`
 	NoToolNudge              string                      `json:"noToolNudge,omitempty"`
+	ModelFailureTaskID       string                      `json:"modelFailureTaskId,omitempty"`
+	ModelFailureNudge        string                      `json:"modelFailureNudge,omitempty"`
 	PendingInterjections     []PiPendingInterjection     `json:"pendingInterjections,omitempty"`
 	PendingContextCompaction *PiPendingContextCompaction `json:"pendingContextCompaction,omitempty"`
 	PreviousStepTemplate     string                      `json:"previousStepTemplate"`
@@ -199,6 +201,10 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 	}
 	// 推理正文同样有既有 SSE 事件（cloud_agent_runtime.go 的 reasoning_message）。
 	reasoningText := piReasoningText(message.Content)
+	// Billed steps without tools are published by PiNoToolTurn after its completion
+	// gate. Publishing them here first duplicates candidates and leaks rejected or
+	// truncated text before that gate has classified the provider stop reason.
+	publishAssistantText := input.TaskID == ""
 	var updatedSessionRevision int64
 	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 		count := 0
@@ -254,6 +260,36 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 			if task.Status != model.TaskStatusSucceeded {
 				return BadAuthRequest("模型任务尚未成功")
 			}
+			var output struct {
+				Text              string           `json:"text"`
+				Reasoning         string           `json:"reasoning"`
+				ToolCalls         []cloudAgentCall `json:"toolCalls"`
+				LegacyCalls       []cloudAgentCall `json:"tool_calls"`
+				StopReasonKind    string           `json:"stopReasonKind"`
+				StopReason        string           `json:"stopReason"`
+				TerminalEventSeen bool             `json:"terminalEventSeen"`
+				StopReasonPresent bool             `json:"stopReasonPresent"`
+				StreamDoneSeen    bool             `json:"streamDoneSeen"`
+			}
+			if err := json.Unmarshal([]byte(task.ResultJSON), &output); err != nil {
+				return BadAuthRequest("Pi 模型任务结果无效")
+			}
+			stopKind := strings.TrimSpace(output.StopReasonKind)
+			if stopKind == "" {
+				stopKind = normalizeCloudAgentStopReason(output.StopReason)
+			}
+			disposition := cloudAgentStepStopDisposition(&state, stopKind)
+			publishAssistantText = (len(output.ToolCalls) > 0 || len(output.LegacyCalls) > 0) &&
+				disposition == cloudAgentStepDispositionAccept
+			if disposition != cloudAgentStepDispositionRetry {
+				cloudAgentRestoreEscalationSwitches(&state)
+			}
+			if publishAssistantText {
+				state.event(runID, "model_step_stop", cloudAgentStopReasonPayload(state.Step, input.TaskID,
+					output.StopReason, stopKind, disposition, cloudAgentStepStopFacts{
+						TerminalEventSeen: output.TerminalEventSeen, StopReasonPresent: output.StopReasonPresent, StreamDoneSeen: output.StreamDoneSeen,
+					}, len(output.Text), len(output.Reasoning), max(len(output.ToolCalls), len(output.LegacyCalls))))
+			}
 			// Context pressure for the next Pi step must use the upstream-reported
 			// usage of this completed step when available. Read through this same
 			// transaction so the usage anchor and assistant checkpoint commit together.
@@ -281,7 +317,7 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 				})
 				changed = true
 			}
-			if strings.TrimSpace(assistantText) != "" {
+			if publishAssistantText && strings.TrimSpace(assistantText) != "" {
 				state.event(runID, "assistant_message", map[string]any{
 					"messageId": messageID, "text": assistantText, "final": false,
 				})
@@ -359,24 +395,34 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 		return nil, BadAuthRequest("模型步骤尚未成功")
 	}
 	var result struct {
-		Text           string           `json:"text"`
-		ToolCalls      []cloudAgentCall `json:"toolCalls"`
-		StopReasonKind string           `json:"stopReasonKind"`
-		StopReason     string           `json:"stopReason"`
+		Text              string           `json:"text"`
+		Reasoning         string           `json:"reasoning"`
+		ToolCalls         []cloudAgentCall `json:"toolCalls"`
+		LegacyCalls       []cloudAgentCall `json:"tool_calls"`
+		StopReasonKind    string           `json:"stopReasonKind"`
+		StopReason        string           `json:"stopReason"`
+		TerminalEventSeen bool             `json:"terminalEventSeen"`
+		StopReasonPresent bool             `json:"stopReasonPresent"`
+		StreamDoneSeen    bool             `json:"streamDoneSeen"`
 	}
 	if err := json.Unmarshal([]byte(task.ResultJSON), &result); err != nil {
 		return nil, err
 	}
-	if len(result.ToolCalls) != 0 {
-		return nil, kernel.Forbidden("Pi 收尾步骤包含工具调用")
-	}
 	stopKind := strings.TrimSpace(result.StopReasonKind)
 	if stopKind == "" {
-		stopKind = cloudAgentStopKindUnknown
+		stopKind = normalizeCloudAgentStopReason(result.StopReason)
+	}
+	callCount := max(len(result.ToolCalls), len(result.LegacyCalls))
+	if callCount != 0 && cloudAgentStepStopDisposition(&state, stopKind) == cloudAgentStepDispositionAccept {
+		return nil, kernel.Forbidden("Pi 收尾步骤包含工具调用")
 	}
 	decision := &PiTurnDecision{}
 	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		disposition := cloudAgentStepStopDisposition(&state, stopKind)
+		state.event(runID, "model_step_stop", cloudAgentStopReasonPayload(state.Step, taskID,
+			result.StopReason, stopKind, disposition, cloudAgentStepStopFacts{
+				TerminalEventSeen: result.TerminalEventSeen, StopReasonPresent: result.StopReasonPresent, StreamDoneSeen: result.StreamDoneSeen,
+			}, len(result.Text), len(result.Reasoning), callCount))
 		if disposition == cloudAgentStepDispositionRetry {
 			state.PiNoToolTaskID = taskID
 			state.PiNoToolNudge = "上一模型步骤因输出长度限制被截断；本次已关闭思考并使用可用输出预算重试。请完整处理尚未完成的用户请求，不要重复本轮已经成功的画布操作。"
@@ -391,8 +437,6 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 			state.PiNoToolTaskID = taskID
 			state.PiNoToolNudge = ""
 			cloudAgentDropInterjections(runID, "本轮已结束："+truncateRunes(message, 120), &state)
-			state.event(runID, "model_step_stop", cloudAgentStopReasonPayload(state.Step, taskID,
-				result.StopReason, stopKind, disposition, cloudAgentStepStopFacts{}, len(result.Text), 0, len(result.ToolCalls)))
 			state.event(runID, "run_failed", map[string]any{
 				"text": message, "reason": cloudAgentStepStopFailureReason(stopKind),
 				"stopReason": result.StopReason, "stopReasonKind": stopKind,
@@ -479,6 +523,17 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	state, err := cloudAgentDecode(run)
 	if err != nil {
 		return nil, err
+	}
+	if err := validateCloudAgentPolicySnapshot(state.Policy); err != nil {
+		message := "本轮使用旧版执行合同，已归档；请在新一轮继续对话"
+		if cloudAgentAwaitingFirstStep(&state) {
+			if failErr := s.failCloudAgentFirstStepAdmission(run, &state, kernel.Forbidden(message)); failErr != nil {
+				return nil, failErr
+			}
+		} else if failErr := s.failCloudAgent(run, &state, message); failErr != nil {
+			return nil, failErr
+		}
+		return nil, kernel.Forbidden(message)
 	}
 	state.StepLimits, err = s.cloudAgentStepLimits()
 	if err != nil {
@@ -613,6 +668,11 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	}
 	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: cloudAgentStepOperation, Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
 	firstStep := cloudAgentAwaitingFirstStep(&state)
+	// The recovery user entry is already durable in the Pi message tree when a
+	// retry is admitted. Clear one-shot nudges so later steps and restarts do not
+	// replay the same timeout/empty-output instruction.
+	state.PiNoToolTaskID, state.PiNoToolNudge = "", ""
+	state.PiModelFailureNudge = ""
 	if err := s.enqueueCloudAgentTask(run, &state, req, nil); err != nil {
 		// 首步准入失败时运行仍停在 awaiting_first_step，本轮不会有任何模型调用：
 		// 必须当场给出确定终态并退还占位预留，而不是等看门狗超时把它当成"卡住"。
@@ -667,35 +727,47 @@ func piModelStepFingerprint(request PiModelStepRequest) (string, error) {
 }
 
 func (s *Service) PiFailModelStep(userID, runID, owner, taskID string) error {
+	_, err := s.PiFailModelStepResult(userID, runID, owner, taskID)
+	return err
+}
+
+func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*PiTurnDecision, error) {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
 		var terminal bool
 		run, terminal = s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
 		if !terminal {
-			return err
+			return nil, err
 		}
 	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// 任务查询提到最前面：下面两条守卫（"成功任务不得被报失败"与终态幂等）都要用它。
 	task, err := s.repo.TaskForUser(userID, taskID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// 协议不变量，与运行状态无关：已成功的任务永远不能被上报为失败。
 	// 必须排在终态幂等守卫**之前**，否则幂等会把真正的协议违规一起吞掉。
 	if task.Status == model.TaskStatusSucceeded {
-		return kernel.Forbidden("模型任务与当前 Pi 步骤不匹配")
+		return nil, kernel.Forbidden("模型任务与当前 Pi 步骤不匹配")
+	}
+	if state.PiModelFailureTaskID == taskID {
+		status := run.Status
+		if !cloudAgentRunTerminal(status) {
+			status = "continue"
+		}
+		return &PiTurnDecision{Status: status, Nudge: state.PiModelFailureNudge}, nil
 	}
 	if run.Status == "failed" {
 		// 重投：worker 可能在"已经记录失败、但没收到响应"之间崩溃。只有同一失败
 		// 任务的重投才幂等成功；否则 400 会被 Node 当成协议错误并整轮退出。
 		if state.ActiveTaskID == "" || (state.ActiveTaskID == taskID && samePiFailure(run.FailureMessage, task.Error)) {
-			return nil
+			return &PiTurnDecision{Status: run.Status}, nil
 		}
-		return kernel.Forbidden("模型任务与当前 Pi 步骤不匹配")
+		return nil, kernel.Forbidden("模型任务与当前 Pi 步骤不匹配")
 	}
 	if cloudAgentRunTerminal(run.Status) {
 		// 运行已经以 completed / cancelled / rejected 终结，而 worker 的 /fail 仍在途
@@ -704,20 +776,52 @@ func (s *Service) PiFailModelStep(userID, runID, owner, taskID string) error {
 		// 必须返回 nil：bridge 会把确定性 4xx 归类为 FatalWorkerError 并整轮退出，
 		// 对一次已经正确终结的运行回错误，等于把正常收尾变成 worker 报错。
 		// 修复前这里没有守卫，会把 cancelled / rejected / completed 无条件改写成 failed。
-		return nil
+		return &PiTurnDecision{Status: run.Status}, nil
 	}
 	if state.ActiveTaskID != taskID {
-		return kernel.Forbidden("模型任务与当前 Pi 步骤不匹配")
+		return nil, kernel.Forbidden("模型任务与当前 Pi 步骤不匹配")
 	}
 	if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
-		return BadAuthRequest("模型任务没有失败")
+		return nil, BadAuthRequest("模型任务没有失败")
 	}
-	return s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+	decision := &PiTurnDecision{}
+	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		cloudAgentRestoreEscalationSwitches(&state)
+		nudge, reason := "", ""
+		switch {
+		case cloudAgentTruncatedToolArguments(task):
+			nudge = piAssistantText(cloudAgentRuntimeMessage(cloudAgentRuntimeContext{Kind: cloudAgentContextTruncatedArguments})["content"])
+			reason = "truncated_arguments_retried"
+		case cloudAgentEmptyModelOutput(task) && state.EmptyOutputNudged < cloudAgentMaxEmptyOutputNudges:
+			state.EmptyOutputNudged++
+			nudge = piAssistantText(cloudAgentRuntimeMessage(cloudAgentRuntimeContext{Kind: cloudAgentContextEmptyOutput})["content"])
+			reason = "empty_output_retried"
+		case cloudAgentEmptyModelOutput(task) && state.EmptyOutputEscalated < cloudAgentMaxEmptyOutputEscalations:
+			state.EmptyOutputEscalated++
+			state.ForceThinkingOff, state.BoostStepOutputBudget = true, true
+			nudge, reason = "上游连续返回空内容；已关闭思考并放大输出预算。请继续处理原请求并返回有效正文或工具调用。", "empty_output_escalated"
+		case cloudAgentStepTimedOut(task) && state.StepTimeoutEscalated < cloudAgentMaxStepTimeoutEscalations:
+			state.StepTimeoutEscalated++
+			state.ForceThinkingOff, state.BoostStepOutputBudget = true, false
+			nudge, reason = "上一步模型调用超时；已关闭思考。请重试同一步，不要重复已经成功的画布操作。", "step_timeout_retried"
+		}
+		state.PiModelFailureTaskID, state.PiModelFailureNudge = taskID, nudge
+		if nudge != "" {
+			state.ActiveTaskID, state.PiModelStepFingerprint = "", ""
+			state.Calls, state.CallIndex = nil, 0
+			state.event(runID, "model_failure_recovered", map[string]any{"text": nudge, "reason": reason, "taskId": taskID})
+			decision.Status, decision.Nudge = "continue", nudge
+			return cloudAgentSave(current, &state)
+		}
 		current.Status = "failed"
-		current.FailureMessage = truncateRunes(task.Error, 1000)
-		state.event(runID, "run_failed", map[string]any{"text": "模型任务失败", "reason": "model_step_failed", "taskId": taskID})
+		text, reason := cloudAgentModelFailure(task)
+		current.FailureMessage = truncateRunes(text, 1000)
+		cloudAgentDropInterjections(runID, "本轮已结束："+truncateRunes(text, 120), &state)
+		state.event(runID, "run_failed", map[string]any{"text": text, "reason": reason, "taskId": taskID})
+		decision.Status = "failed"
 		return cloudAgentSave(current, &state)
 	})
+	return decision, err
 }
 
 func (s *Service) PiModelStepAck(userID, runID, owner, taskID string) error {
@@ -986,7 +1090,7 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,
-		Request: state.Request, ModelLimits: PiAgentModelLimits{ContextWindowTokens: budget.ContextWindowTokens, MaxOutputTokens: budget.MaxOutputTokens, Configured: budget.Configured, Source: budget.Source}, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
+		Request: state.Request, ModelLimits: PiAgentModelLimits{ContextWindowTokens: budget.ContextWindowTokens, MaxOutputTokens: budget.MaxOutputTokens, Configured: budget.Configured, Source: budget.Source}, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。
 		Harness: cloudAgentFrozenHarness(state.Snapshot),

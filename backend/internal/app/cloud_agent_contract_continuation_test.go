@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -21,11 +20,8 @@ func TestCloudAgentContinuesAfterContractChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 让第一轮结束。
-	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).
-		Updates(map[string]any{"status": model.TaskStatusFailed, "error": "mock failure"}).Error; err != nil {
-		t.Fatal(err)
-	}
+	// 让第一轮通过 Pi 完成门并形成可继承的助手历史。
+	completePiRunWithAssistantForTest(t, s, root.ID, "上一轮的可信结果")
 	// 在该轮快照里制造一次「合同变更」：把能力集哈希改掉。
 	execution, err := s.repo.CloudAgent("user", root.ID)
 	if err != nil {
@@ -53,18 +49,25 @@ func TestCloudAgentContinuesAfterContractChange(t *testing.T) {
 	}
 
 	// 历史必须继承，否则用户等于从零开始。
-	task, err := s.repo.TaskForUser("user", child.ID)
+	childExecution, err := s.repo.CloudAgent("user", child.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var input struct {
-		TextHistory []providerTextMessage `json:"textHistory"`
-	}
-	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+	childState, err := cloudAgentDecode(childExecution)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(input.TextHistory) == 0 {
-		t.Fatal("continuation must inherit conversation history")
+	inheritedAssistant, latestUser := false, ""
+	for _, message := range childState.Canonical.Messages {
+		if stringField(message, "role") == "assistant" && piAssistantText(message["content"]) == "上一轮的可信结果" {
+			inheritedAssistant = true
+		}
+		if stringField(message, "role") == "user" {
+			latestUser = piAssistantText(message["content"])
+		}
+	}
+	if !inheritedAssistant || latestUser != req.Prompt {
+		t.Fatalf("continuation must inherit assistant history and the new prompt: inherited=%v latestUser=%q", inheritedAssistant, latestUser)
 	}
 
 	// 无法续跑的旧轮应被归档为终态，避免调度器反复重试。

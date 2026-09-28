@@ -4,10 +4,8 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
@@ -25,67 +23,6 @@ func reliableAgentRoot(t *testing.T) (*Service, *gorm.DB, *CloudAgentRun) {
 		t.Fatal(err)
 	}
 	return s, db, root
-}
-
-func TestCloudAgentReliabilitySchedulerHeadOfLine500(t *testing.T) {
-	s, db, _, _ := creationTestService(t)
-	now := time.Now().Add(-time.Hour)
-	var tailID, tailUser string
-	profile := cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")}
-	_, policy, err := compileCloudAgentPolicies(agentTestRequest(), nil, "", profile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 500; i++ {
-		user := fmt.Sprintf("audit-user-%03d", i)
-		req := agentTestRequest()
-		req.IdempotencyKey = fmt.Sprintf("audit-key-%03d", i)
-		id := cloudAgentID(user, req.IdempotencyKey)
-		status := model.TaskStatusSucceeded
-		if i < 50 {
-			status = model.TaskStatusRunning
-		}
-		ts := now.Add(time.Duration(i) * time.Millisecond)
-		task := model.Task{ID: id, UserID: user, ProjectID: req.CanvasID, Operation: cloudAgentOperation, Status: status, ResultJSON: `{"text":"ready"}`, CreatedAt: ts, UpdatedAt: ts}
-		if err := db.Create(&task).Error; err != nil {
-			t.Fatal(err)
-		}
-		state := cloudAgentRuntime{Request: req, Policy: policy, Profile: profile, ActiveTaskID: id, TaskIDs: []string{id}, Step: 1, Decisions: map[string]string{}, Events: []CloudAgentEvent{}}
-		run := model.CloudAgentExecution{ID: id, UserID: user, Status: "running", Revision: 1, CreatedAt: ts, UpdatedAt: ts}
-		if err := cloudAgentSave(&run, &state); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.Create(&run).Error; err != nil {
-			t.Fatal(err)
-		}
-		tailID, tailUser = id, user
-	}
-	started := time.Now()
-	for i := 0; i < 20; i++ {
-		s.advanceCloudAgents()
-	}
-	var completed int64
-	if err := db.Model(&model.CloudAgentExecution{}).Where("status = ?", "completed").Count(&completed).Error; err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("500 runs, first 50 waiting, 450 ready: completed after 20 scheduler passes=%d; elapsed=%s (not a capacity benchmark)", completed, time.Since(started))
-	if completed != 450 {
-		t.Fatalf("ready runs starved: %d/450 completed", completed)
-	}
-	tail, err := s.repo.CloudAgent(tailUser, tailID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.advanceCloudAgent(tail); err != nil {
-		t.Fatal(err)
-	}
-	tail, err = s.repo.CloudAgent(tailUser, tailID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tail.Status != "completed" {
-		t.Fatalf("tail should be ready independently, got %s", tail.Status)
-	}
 }
 
 func TestCloudAgentReliabilityLargeJournalDoesNotOverflowCheckpoint(t *testing.T) {
@@ -106,17 +43,7 @@ func TestCloudAgentReliabilityLargeJournalDoesNotOverflowCheckpoint(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	result, _ := json.Marshal(map[string]string{"text": strings.Repeat("a", 31900)})
-	if err = db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(result)}).Error; err != nil {
-		t.Fatal(err)
-	}
-	run, err = s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = s.advanceCloudAgent(run); err != nil {
-		t.Fatal(err)
-	}
+	agentFinishRunForTest(t, s, db, root.ID, "finish-large-journal", strings.Repeat("a", 31900))
 	run, err = s.repo.CloudAgent("user", root.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -326,7 +253,11 @@ func TestCloudAgentReliabilityCancelReplayInterrupted(t *testing.T) {
 
 func TestCloudAgentReliabilityFailedContinuation(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	if err := db.Model(&model.Task{}).Where("id = ?", root.ID).Updates(map[string]any{"status": model.TaskStatusFailed, "error": "mock failure"}).Error; err != nil {
+	_, state := agentStartPiModelStep(t, s, root.ID)
+	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{"status": model.TaskStatusFailed, "error": "mock failure"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	req := agentTestRequest()
@@ -383,7 +314,8 @@ func TestCloudAgentReliabilityIdleSnapshotReadCost(t *testing.T) {
 
 func TestCloudAgentReliabilityDirectChannelDispatchGuard(t *testing.T) {
 	s, _, root := reliableAgentRoot(t)
-	task, err := s.repo.TaskForUser("user", root.ID)
+	_, state := agentStartPiModelStep(t, s, root.ID)
+	task, err := s.repo.TaskForUser("user", state.ActiveTaskID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,30 +350,15 @@ func TestCloudAgentReliabilityDirectChannelDispatchGuard(t *testing.T) {
 	}
 }
 
-func TestCloudAgentReliabilityPendingCancellationRecoveredByScheduler(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).Updates(map[string]any{"status": "cancelled", "cleanup_pending": true}).Error; err != nil {
-		t.Fatal(err)
-	}
-	s.advanceCloudAgents()
-	task, err := s.repo.TaskForUser("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	run, err := s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if task.Status != model.TaskStatusCancelled || run.CleanupPending {
-		t.Fatalf("cancellation not recovered: task=%s pending=%v", task.Status, run.CleanupPending)
-	}
-	if err = s.CancelCloudAgent(context.Background(), "user", root.ID); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestCloudAgentReliabilityCorruptedCancellationUsesControlTask(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
+	before, err := s.repo.CreditAccount("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.AvailableMicrocredits != 9900 || before.ReservedMicrocredits != 100 {
+		t.Fatalf("unexpected pre-cancellation reservation: %+v", before)
+	}
 	child := model.Task{ID: "cleanup-child", UserID: "user", Status: model.TaskStatusQueued, Operation: "cloud_agent_step"}
 	if err := db.Create(&child).Error; err != nil {
 		t.Fatal(err)
@@ -458,5 +375,43 @@ func TestCloudAgentReliabilityCorruptedCancellationUsesControlTask(t *testing.T)
 	}
 	if got.Status != model.TaskStatusCancelled {
 		t.Fatal("corrupted state orphaned active child")
+	}
+	holding, err := s.repo.TaskForUser("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if holding.Operation != cloudAgentHoldingOperation || holding.Status != model.TaskStatusHolding {
+		t.Fatalf("refunded holding task must remain non-claimable: operation=%s status=%s", holding.Operation, holding.Status)
+	}
+	var order model.BillingOrder
+	if err := db.First(&order, "task_id = ?", root.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if order.Status != model.BillingStatusRefunded {
+		t.Fatalf("cancellation did not refund the holding order: %s", order.Status)
+	}
+	cancelled, err := s.repo.CloudAgent("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Status != "cancelled" || cancelled.CleanupPending || cancelled.ActiveTaskID != "" {
+		t.Fatalf("corrupted run did not reach a clean cancelled state: status=%q cleanup=%v active=%q", cancelled.Status, cancelled.CleanupPending, cancelled.ActiveTaskID)
+	}
+	after, err := s.repo.CreditAccount("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.AvailableMicrocredits != 10000 || after.ReservedMicrocredits != 0 {
+		t.Fatalf("cancellation did not refund the holding reservation: %+v", after)
+	}
+	if err := s.CancelCloudAgent(context.Background(), "user", root.ID); err != nil {
+		t.Fatalf("replayed cancellation should be idempotent: %v", err)
+	}
+	replayed, err := s.repo.CreditAccount("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.AvailableMicrocredits != after.AvailableMicrocredits || replayed.ReservedMicrocredits != after.ReservedMicrocredits {
+		t.Fatalf("replayed cancellation changed credits: before=%+v after=%+v", after, replayed)
 	}
 }

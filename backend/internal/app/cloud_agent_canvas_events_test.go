@@ -31,8 +31,8 @@ func TestCloudAgentCanvasPatchesPersistDraftSubmissionAndAllTerminalStates(t *te
 	for _, status := range []model.TaskStatus{model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled} {
 		t.Run(string(status), func(t *testing.T) {
 			s, db, args := agentMediaFixture(t)
-			run, _ := agentMediaRun(t, s, args, "request_approval")
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			run, _ := agentMediaPiRun(t, s, db, args, "request_approval")
+			if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 				t.Fatal(err)
 			}
 			approveAgentMediaDraft(t, s, run.ID)
@@ -57,7 +57,7 @@ func TestCloudAgentCanvasPatchesPersistDraftSubmissionAndAllTerminalStates(t *te
 				if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{"status": status, "result_json": result, "error": "上游拒绝"}).Error; err != nil {
 					t.Fatal(err)
 				}
-				if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+				if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -114,7 +114,7 @@ func TestCloudAgentCanvasPatchesPersistDraftSubmissionAndAllTerminalStates(t *te
 				t.Fatalf("terminal patch lost task identity/state: %+v", changes[0])
 			}
 			// Replaying a checkpoint must not create another charged task or delta.
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 				t.Fatal(err)
 			}
 			var count int64
@@ -183,7 +183,7 @@ func TestCloudAgentCanvasOperationTraceSharesToolCallID(t *testing.T) {
 	}})
 	call.Function.Arguments = string(raw)
 	state.Calls = []cloudAgentCall{call}
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := s.executeCloudAgentToolCall(run, &state); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)
@@ -226,8 +226,8 @@ func TestCloudAgentCanvasOperationTraceSharesToolCallID(t *testing.T) {
 
 func TestCloudAgentMissingCanvasStillCheckpointsMediaFailure(t *testing.T) {
 	s, db, args := agentMediaFixture(t)
-	run, _ := agentMediaRun(t, s, args, "request_approval")
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	run, _ := agentMediaPiRun(t, s, db, args, "request_approval")
+	if err := agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
 		t.Fatal(err)
 	}
 	approveAgentMediaDraft(t, s, run.ID)
@@ -239,7 +239,7 @@ func TestCloudAgentMissingCanvasStillCheckpointsMediaFailure(t *testing.T) {
 	if err := db.Where("id = ?", "agent-canvas").Delete(&model.CanvasProject{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)

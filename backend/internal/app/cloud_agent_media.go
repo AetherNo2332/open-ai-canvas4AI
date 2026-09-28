@@ -107,13 +107,13 @@ type cloudAgentMediaArgs struct {
 	Duration              int                      `json:"durationSeconds"`
 	Size                  string                   `json:"size"`
 	Quality               string                   `json:"quality"`
-	VideoGenerateAudio    *bool                    `json:"videoGenerateAudio"`
+	VideoGenerateAudio    *bool                    `json:"videoGenerateAudio,omitempty"`
 	SnapshotHash          string                   `json:"snapshotHash"`
 	NodeID                string                   `json:"nodeId"`
 	Title                 string                   `json:"title"`
 	SourceNodeID          string                   `json:"sourceNodeId"`
 	ReferenceNodeIDs      []string                 `json:"referenceNodeIds"`
-	ReferenceTransientIDs []string                 `json:"referenceTransientIds"`
+	ReferenceTransientIDs []string                 `json:"referenceTransientIds,omitempty"`
 }
 
 type cloudAgentMediaPlan struct {
@@ -160,6 +160,99 @@ func applyCloudAgentResolvedMediaDefaults(req *CreateTaskRequest, plan *cloudAge
 	plan.Args.Prepared = nil
 	req.Input = input
 	req.Prompt = stringValue(input["prompt"])
+	return nil
+}
+
+func (s *Service) cloudAgentMediaModelDefaults(userID string, a cloudAgentMediaArgs) (map[string]any, error) {
+	if a.Mode != "image" && a.Mode != "video" {
+		return nil, nil
+	}
+	if a.LogicalModelID != "" {
+		models, err := s.PublicLogicalModels(nil)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range models {
+			if item.ID != a.LogicalModelID {
+				continue
+			}
+			if !item.Available || normalizeCapability(item.Capability) != a.Mode {
+				return nil, BadAuthRequest("所选媒体模型当前不可用或能力不匹配")
+			}
+			return item.DefaultOptions, nil
+		}
+		return nil, BadAuthRequest("所选前台模型不存在或已下架")
+	}
+	catalog, err := s.ModelCatalog(nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, channel := range catalog.Channels {
+		if channel.ID != a.ChannelID {
+			continue
+		}
+		for _, item := range channel.Models {
+			if item.ModelKey != a.ChannelModelKey {
+				continue
+			}
+			if !item.Available || normalizeCapability(item.Capability) != a.Mode {
+				return nil, BadAuthRequest("所选渠道媒体模型当前不可用或能力不匹配")
+			}
+			return item.DefaultOptions, nil
+		}
+		return nil, BadAuthRequest("所选渠道模型不存在或已下架")
+	}
+	return nil, BadAuthRequest("所选模型渠道不可用")
+}
+
+func applyCloudAgentMediaCatalogDefaults(a *cloudAgentMediaArgs, defaults map[string]any) error {
+	if a == nil || defaults == nil {
+		return nil
+	}
+	if strings.TrimSpace(a.Size) == "" {
+		a.Size = stringValue(defaults["size"])
+	}
+	if strings.TrimSpace(a.Quality) == "" {
+		key := "quality"
+		if a.Mode == "video" {
+			key = "vquality"
+		}
+		a.Quality = stringValue(defaults[key])
+	}
+	if a.Mode == "video" {
+		if a.Duration == 0 {
+			switch value := defaults["videoSeconds"].(type) {
+			case int:
+				a.Duration = value
+			case int32:
+				a.Duration = int(value)
+			case int64:
+				a.Duration = int(value)
+			case float64:
+				if value != float64(int(value)) {
+					return BadAuthRequest("模型目录返回的默认视频时长无效")
+				}
+				a.Duration = int(value)
+			case json.Number:
+				seconds, err := value.Int64()
+				if err != nil {
+					return BadAuthRequest("模型目录返回的默认视频时长无效")
+				}
+				a.Duration = int(seconds)
+			case string:
+				seconds, err := strconv.Atoi(strings.TrimSpace(value))
+				if err != nil {
+					return BadAuthRequest("模型目录返回的默认视频时长无效")
+				}
+				a.Duration = seconds
+			}
+		}
+		if a.VideoGenerateAudio == nil {
+			if value, ok := defaults["videoGenerateAudio"].(bool); ok {
+				a.VideoGenerateAudio = &value
+			}
+		}
+	}
 	return nil
 }
 
@@ -619,6 +712,13 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 		return CreateTaskRequest{}, nil, err
 	}
 	a.Mode = strings.ToLower(strings.TrimSpace(a.Mode))
+	defaults, err := s.cloudAgentMediaModelDefaults(userID, a)
+	if err != nil {
+		return CreateTaskRequest{}, nil, err
+	}
+	if err := applyCloudAgentMediaCatalogDefaults(&a, defaults); err != nil {
+		return CreateTaskRequest{}, nil, err
+	}
 	a.DraftRunID = run.ID
 	if state.Approval != nil && state.Approval.Prepared != nil &&
 		state.Approval.CallHash == cloudAgentApprovalCallHash(call) {
