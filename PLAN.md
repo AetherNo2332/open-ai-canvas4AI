@@ -24,8 +24,10 @@
 - Agent `bun run build` 通过；`bun run test` 78/78 通过。另一次 source + dist `bun test` 155/155 通过。
 - Web `bun run typecheck` 通过；完整 `bun test` 2108/2108 通过，271 个文件、11767 个断言；Vite/Docker 生产构建通过。
 - `CGO_ENABLED=1 go test ./internal/app -count=1 -timeout 12m` 通过，用时 452.941 秒；Pi 定向测试与 `internal/handler` 全量测试通过。当前 CGO/GCC 可用，CGO 环境不是阻塞。
-- 本机 Compose 3000 已更新 backend、agent、web；readiness `ready=true`、schema 42/42，admin/session、capabilities 与只读 system-channel API 均 200。badge 已存在于实际 served JS/CSS。Computer Use GUI 前端服务失败，未完成视觉检查与完整 UI 交互测试。
-- 代码已提交 `8c58d0ca` 至 `codex/pi-agent-migration`，PR [#58](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/58) 指向 `canary`，GitHub 显示 OPEN/CLEAN；按用户要求带 `[skip ci]`，没有 CI 检查运行。
+- 本机 Compose 3000 的 backend 已部署提交 `eae5177bca533afc730530bd84bc1604ca799831`；`/api/health/ready` HTTP 200、`ready=true`、schema 43/43，buildTime `2026-09-28T09:40:15Z`。仅重建 backend，web/agent 保持运行；未部署到生产。
+- Playwright 管理员 UI 验收通过：品牌名后 canary 黄色底黑字无衬线标记位置与样式正确；Agent 创建画布并以只读权限运行 `qwen3.8-27b`，成功调用 `canvas_get_state` 并完成回答“0 个节点”，无浏览器页面错误。该运行未执行写入或媒体生成。
+- Agent 全量测试 78/78 与 source/dist 测试 155/155 通过；Web 全量测试 271 个文件、2108 项、11767 条断言通过；Go repository/database/app 全量套件及 handler/protocol/service 套件通过。PG、真实媒体生成与费用结算、跨 worker 故障注入和 SSE 断线续传仍需独立验收。
+- 代码已提交 `eae5177bca533afc730530bd84bc1604ca799831` 至 `codex/pi-agent-migration`，PR [#58](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/58) 指向 `canary`，待合并；提交包含 `[skip ci]`，没有 CI 检查运行。
 
 ## 接手顺序
 

@@ -155,5 +155,7 @@
 - 存储 ID 现由账号 ID 与 conversation ID 的 SHA-256 确定性生成；外部 conversation ID/API 合同保持原值。会话读取、续接、租约和清理以 `(user_id, conversation_id)` 定位，Pi 条目及 Node snapshot 使用可信的内部 session ID。检查点与上下文压缩写入均使用服务端查出的内部 ID。
 - schema 43 新增迁移，将 schema 42 的 session 主键、Pi header ID 和 entry `session_id` 一起改为账号隔离键，并在目标 ID 冲突、孤立条目或无效 header 时中止迁移。新数据库在 schema 42 backfill 时即按账号生成 ID；schema 43 可幂等迁移已应用 v42 的数据库。
 - 增加跨账号复用同一 conversation ID 的 repository 与 migration 回归测试。验证通过：`CGO_ENABLED=1 go test ./internal/repository ./internal/database ./internal/app -count=1 -timeout=15m`（repo、database、app 全量通过；app 用时 453.680s）；`go test ./internal/handler ./internal/protocol ./internal/service -count=1 -timeout=10m` 通过。补充 schema 43 定向迁移重跑测试通过。
-- Canary 品牌标记要求维持为品牌名后紧邻的黄色底、黑色字、无衬线 `canary` 高亮；专用测试 4/4 通过。Web 全量测试 271 个文件、2108 项、11767 条断言通过。Computer Use 再次返回 `nodeRepl.fetch request failed`，未执行其他 UI 自动化；标记的浏览器截图验收仍待工具恢复。
-- 本机 `canvas-canary-3000` 当前数据库 schema 42/42，迁移与后端改动尚待单独备份并部署；未触碰生产环境。
+- Canary 品牌标记要求维持为品牌名后紧邻的黄色底、黑色字、无衬线 `canary` 高亮；专用测试 4/4、Web 全量测试 271 个文件/2108 项/11767 条断言通过。Playwright 实际登录验收确认标记可见且样式、位置正确；截图保存在本机临时目录 `C:\Users\13537\AppData\Local\Temp\canvas-canary-brand-ui-acceptance.png`。
+- 本机 `canvas-canary-3000` backend 已运行提交 `eae5177bca533afc730530bd84bc1604ca799831` 的镜像。`/api/health/ready` HTTP 200、`ready=true`、schema 43/43、buildTime `2026-09-28T09:40:15Z`；本次遵照用户要求没有保留备份，未触碰生产环境。
+- Playwright Agent 只读端到端验收通过：管理员创建空白 Agent 画布，运行模型 `qwen3.8-27b`，HTTP 200 创建运行，Pi Agent 调用 `canvas_get_state` 一次并完成回答“当前画布共有 0 个节点”，状态 `completed`，无浏览器页面错误。未触发写入或生成。
+- PR #58 当前以 `canary` 为目标，`codex/pi-agent-migration` HEAD 为 `eae5177bca533afc730530bd84bc1604ca799831`，尚未合并；提交带 `[skip ci]`，未运行 CI。完成本地验收后再合并。
