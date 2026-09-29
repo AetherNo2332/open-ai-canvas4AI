@@ -372,7 +372,7 @@ func (s *Service) visibleSkill(userID string, id string) (*model.Skill, error) {
 	}
 	skill, err := s.repo.Skill(id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, kernel.BadAuthRequest("技能不存在或已删除")
+		return nil, kernel.NotFound("技能不存在或已删除")
 	}
 	if err != nil {
 		return nil, err
