@@ -24,6 +24,8 @@ services:
       CANVAS_PUBLIC_BASE_URL: ${CANVAS_PUBLIC_BASE_URL:-}
       CANVAS_GRAFANA_URL: ${CANVAS_GRAFANA_URL:-http://localhost:3001/d/agent-overview}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      CANVAS_LOG_LEVEL: ${CANVAS_LOG_LEVEL:-info}
+      CANVAS_LOG_FORMAT: ${CANVAS_LOG_FORMAT:-text}
       GIN_MODE: release
     volumes:
       - backend-data:/data
