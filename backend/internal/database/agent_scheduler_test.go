@@ -202,7 +202,7 @@ func TestAgentSchedulerIgnoresUnmatchedAndUnrelatedUpdates(t *testing.T) {
 	}
 }
 
-func TestAgentSchedulerMigration47PreservesHistoricalAgentRows(t *testing.T) {
+func TestAgentSchedulerMigration49PreservesHistoricalAgentRows(t *testing.T) {
 	db, err := Open(Config{Driver: "sqlite", DSN: "file:" + t.Name() + "?mode=memory&cache=shared"})
 	if err != nil {
 		t.Fatal(err)
@@ -224,22 +224,22 @@ func TestAgentSchedulerMigration47PreservesHistoricalAgentRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var migration47 *migration
+	var migration49 *migration
 	for index := range schemaMigrations {
-		if schemaMigrations[index].version == 47 {
-			migration47 = &schemaMigrations[index]
+		if schemaMigrations[index].version == 49 {
+			migration49 = &schemaMigrations[index]
 			break
 		}
 	}
-	if migration47 == nil {
-		t.Fatal("migration 47 is not registered")
+	if migration49 == nil {
+		t.Fatal("migration 49 is not registered")
 	}
-	if err := migration47.apply(db); err != nil {
-		t.Fatalf("apply migration 47: %v", err)
+	if err := migration49.apply(db); err != nil {
+		t.Fatalf("apply migration 49: %v", err)
 	}
 	for _, value := range []any{&model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{}, &model.AgentRuntimeInstance{}} {
 		if !db.Migrator().HasTable(value) {
-			t.Fatalf("migration 47 did not create %T", value)
+			t.Fatalf("migration 49 did not create %T", value)
 		}
 	}
 	var gotRun model.CloudAgentExecution
@@ -256,7 +256,7 @@ func TestAgentSchedulerMigration47PreservesHistoricalAgentRows(t *testing.T) {
 	}
 	if gotRun.Status != run.Status || gotRun.Revision != run.Revision || len(gotEvents) != 1 ||
 		gotEvents[0].EventJSON != oldEvent.EventJSON || len(gotMessages) != 1 || gotMessages[0].MessageJSON != oldMessage.MessageJSON {
-		t.Fatalf("migration 47 changed historical run data: run=%+v events=%+v messages=%+v", gotRun, gotEvents, gotMessages)
+		t.Fatalf("migration 49 changed historical run data: run=%+v events=%+v messages=%+v", gotRun, gotEvents, gotMessages)
 	}
 }
 

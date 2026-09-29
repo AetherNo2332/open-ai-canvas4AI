@@ -11,13 +11,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// CurrentSchemaVersion follows upstream migrations through v41; our Agent
-// migrations register after that upstream range as 42+. When a future upstream
-// sync takes 42+, shift our block up again and extend the relocation table.
-const CurrentSchemaVersion int64 = 48
+// CurrentSchemaVersion follows upstream migrations through v43; our Agent
+// migrations register after that upstream range as 44+. When a future upstream
+// sync takes 44+, shift our block up again and extend the relocation table.
+const CurrentSchemaVersion int64 = 50
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
-const PreviousUpstreamSchemaVersion int64 = 41
+const PreviousUpstreamSchemaVersion int64 = 43
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -35,6 +35,8 @@ const prefixedIDSequenceReconcileChecksum = "sha256:prefixed-id-sequence-reconci
 const skillLibraryCategoriesChecksum = "sha256:skill-library-categories-v39-20260926"
 const builtinSkillTombstonesChecksum = "sha256:builtin-skill-tombstones-v40-20260927"
 const resourceThumbnailChecksum = "sha256:resource-thumbnail-v41-20260927"
+const cloudAgentPiSessionsChecksum = "sha256:cloud-agent-pi-sessions-v42-20260928"
+const topupSaleStrategiesChecksum = "sha256:topup-sale-strategies-v43-20260929"
 
 const postgresSchemaMigrationLockID int64 = 73123910420260830
 
@@ -146,17 +148,23 @@ var schemaMigrations = []migration{
 	{version: 41, name: "resource_thumbnail", checksum: resourceThumbnailChecksum, apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.Resource{})
 	}},
-	{version: 42, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
-	{version: 43, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{version: 44, name: "pi_agent_run_leases", checksum: "sha256:pi-agent-run-leases-v41-20260926", apply: func(tx *gorm.DB) error {
+	{version: 42, name: "cloud_agent_pi_sessions", checksum: cloudAgentPiSessionsChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentPiSession{})
+	}},
+	{version: 43, name: "topup_sale_strategies", checksum: topupSaleStrategiesChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.TopupProduct{}, &model.PaymentOrder{})
+	}},
+	{version: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{version: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{version: 46, name: "pi_agent_run_leases", checksum: "sha256:pi-agent-run-leases-v41-20260926", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.CloudAgentExecution{})
 	}},
-	{version: 45, name: "pi_agent_conversation_sessions", checksum: "sha256:pi-agent-conversation-sessions-v42-20260927", apply: migratePiAgentConversationSessions},
-	{version: 46, name: "pi_agent_owner_scoped_session_ids", checksum: "sha256:pi-agent-owner-scoped-session-ids-v43-20260928", apply: migratePiAgentOwnerScopedSessionIDs},
-	{version: 47, name: "pi_agent_event_scheduler", checksum: "sha256:pi-agent-event-scheduler-v44-20261002", apply: func(tx *gorm.DB) error {
+	{version: 47, name: "pi_agent_conversation_sessions", checksum: "sha256:pi-agent-conversation-sessions-v42-20260927", apply: migratePiAgentConversationSessions},
+	{version: 48, name: "pi_agent_owner_scoped_session_ids", checksum: "sha256:pi-agent-owner-scoped-session-ids-v43-20260928", apply: migratePiAgentOwnerScopedSessionIDs},
+	{version: 49, name: "pi_agent_event_scheduler", checksum: "sha256:pi-agent-event-scheduler-v44-20261002", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.CloudAgentExecution{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{}, &model.AgentRuntimeInstance{})
 	}},
-	{version: 48, name: "pi_agent_orchestrator", checksum: "sha256:pi-agent-orchestrator-v45-20261002", apply: func(tx *gorm.DB) error {
+	{version: 50, name: "pi_agent_orchestrator", checksum: "sha256:pi-agent-orchestrator-v45-20261002", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.AgentRuntimeInstance{})
 	}},
 }
@@ -389,38 +397,38 @@ type legacyCloudAgentMigrationRelocation struct {
 // run_events），因此匹配必须同时比对 name。
 var legacyCloudAgentMigrationRelocations = []legacyCloudAgentMigrationRelocation{
 	// 当前 canary 库（schema 45）：39–45 上坐的是我们的七条（39/40 为 no-op，41–45 为真实
-	// 迁移）。上游 v39/v40 被技能分类与技能墓碑占用后，整块各上移三位，no-op 落到 42/43。
-	{from: 45, to: 48, name: "pi_agent_orchestrator", checksum: "sha256:pi-agent-orchestrator-v45-20261002", apply: func(tx *gorm.DB) error {
+	// 迁移）。上游 v39/v40 被技能分类与技能墓碑占用后，连同上游 v42/v43，Agent 块各上移到 44 起，no-op 落到 44/45。
+	{from: 45, to: 50, name: "pi_agent_orchestrator", checksum: "sha256:pi-agent-orchestrator-v45-20261002", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.AgentRuntimeInstance{})
 	}},
-	{from: 44, to: 47, name: "pi_agent_event_scheduler", checksum: "sha256:pi-agent-event-scheduler-v44-20261002", apply: func(tx *gorm.DB) error {
+	{from: 44, to: 49, name: "pi_agent_event_scheduler", checksum: "sha256:pi-agent-event-scheduler-v44-20261002", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.CloudAgentExecution{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{}, &model.AgentRuntimeInstance{})
 	}},
-	{from: 43, to: 46, name: "pi_agent_owner_scoped_session_ids", checksum: "sha256:pi-agent-owner-scoped-session-ids-v43-20260928", apply: migratePiAgentOwnerScopedSessionIDs},
-	{from: 42, to: 45, name: "pi_agent_conversation_sessions", checksum: "sha256:pi-agent-conversation-sessions-v42-20260927", apply: migratePiAgentConversationSessions},
-	{from: 41, to: 44, name: "pi_agent_run_leases", checksum: "sha256:pi-agent-run-leases-v41-20260926", apply: func(tx *gorm.DB) error {
+	{from: 43, to: 48, name: "pi_agent_owner_scoped_session_ids", checksum: "sha256:pi-agent-owner-scoped-session-ids-v43-20260928", apply: migratePiAgentOwnerScopedSessionIDs},
+	{from: 42, to: 47, name: "pi_agent_conversation_sessions", checksum: "sha256:pi-agent-conversation-sessions-v42-20260927", apply: migratePiAgentConversationSessions},
+	{from: 41, to: 46, name: "pi_agent_run_leases", checksum: "sha256:pi-agent-run-leases-v41-20260926", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.CloudAgentExecution{})
 	}},
-	{from: 40, to: 43, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 39, to: 42, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{from: 40, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 39, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	// Published canary/dev schema 37: run_events at v36 and transcript at v37.
-	{from: 37, to: 43, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 36, to: 42, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{from: 37, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 36, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	// 当前 dev 库（35/36）—— 跑过"已对齐上游 v1.5.7"那版 dev 的库就是这一形态。
-	{from: 36, to: 43, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 35, to: 42, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{from: 36, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 35, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	// 再上一版 dev 库（34/35）—— 跑过 PR #41–#44 那版 dev 的库。
-	{from: 35, to: 43, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 34, to: 42, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{from: 35, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 34, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	// 更早一版 dev 库（33/34）—— 跑过 PR #37–#40 那版 dev 的库。
-	{from: 34, to: 43, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 33, to: 42, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{from: 34, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 33, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	// 上一版合并线库（32/33）。
-	{from: 33, to: 43, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 32, to: 42, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{from: 33, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 32, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 	// 我们 v25 库（24/25）。
-	{from: 25, to: 43, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
-	{from: 24, to: 42, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{from: 25, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 24, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
 }
 
 // noopCloudAgentMigration 是让位后的空迁移：表与数据保留（不做 DROP），但代码不再读写它们，
