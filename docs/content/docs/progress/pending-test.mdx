@@ -3360,3 +3360,28 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 - [ ] **旧用例迁移配方（已在审批设置文件上跑通）**：夹具先按生产入口起步（`startPiAgentFirstStep`：`ClaimPiAgent` → `PiModelStep`，让运行离开 `awaiting_first_step`），再把驱动从 `advanceCloudAgentByID` 换成 `PiToolAdvance`，断言不动。`cloud_agent_approval_settings_test.go` 的 7 处驱动与 `approveAgentMediaDraft` 已按此迁移。**已跑通的部分**：容器内 `-run 'TestCloudAgentAdmissionIdempotentResubmission|TestCloudAgentMediaApprovalReusesPreparedInputsAfterModelRetry'` → 2/2 PASS（两者原本在 43 个红用例中）。
 - [ ] **剩余阻断点在生产代码，不在测试**：`DecideCloudAgentApproval(userID, id, …)` 经 `cloudAgentTask` 先按**任务 ID** 解析运行（`repository.TaskForUser(id)` 失败即返回 `Agent 运行不存在`），而 v2 运行没有根任务，因此所有"审批 / 取消 / 活动任务查询"按 ID 寻址的入口对 v2 运行一律 404。43 个红用例里媒体、审批、画布、完成度几族都踩在这里（`cloud_agent_media_test.go` 18 处旧驱动 + 3 处审批入口、`cloud_agent_approval_settings_test.go` 5 处审批入口）。修法是让这些入口优先按运行 ID 解析（`repo.CloudAgent`），任务形态只作为旧数据回退。
 - [ ] **需要按 Pi 协议重写的用例**：`TestCloudAgentConversationKeepsRecentRounds` 依赖两处旧约定（"根任务 ID == 运行 ID"、推进一轮 = 追加 2 条历史），必须改成每轮 claim → `PiModelStep` → `PiCheckpointMessage` 才能迁移，不能只换驱动。
+
+待登录态页面验收：对「扶颦」精读应返回实际外貌和服装；选择该卡生成时，审批/任务输入应同时包含该版设定与已绑定三视图；故意改动角色版本后旧审批不能提交。声音档案可精读，音频任务在未显式选择音色时采用角色绑定的 voiceKey 与声音指令；跨模型适配及真实音色效果仍需单独验收。此轮不代表生产已部署。
+
+
+## 存储满额生成拦截与 Live2D 开关稳定性（2026-09-30）
+
+- 已修复：图片、视频、音频生成任务在创建、积分预留和上游调用之前检查账号文件容量；容量已满时返回配额错误并提示先清理素材，文本任务不受文件容量限制。普通画布与 Agent 媒体生成共用该 admission 边界。
+- 已修复：Agent 面板开合时保留 Live2D 入口组件和已加载模型，仅隐藏入口并暂停不可见渲染，不再因反复卸载、重建 PIXI/Live2D 上下文而短暂回退默认动态球。
+- 自动验证：后端纯 admission 专项测试通过（CGO 关闭，3 项）；前端 Live2D 生命周期专项测试通过；前端生产构建通过。既有 Agent 位置测试在当前 Windows 环境因 Bun 将磁盘路径解析为 `/E:/...` 而未进入测试逻辑。
+
+仍待真实环境验收：
+
+- [ ] 将测试账号文件容量填满后，从普通画布和 Agent 分别提交图片、视频、音频生成，确认立即显示容量提示、没有创建计费订单、没有调用上游；清理出容量后可恢复生成。
+- [ ] 使用自定义 Live2D 模型连续开合 Agent 面板，确认不出现默认动态球闪回，拖动、窗口缩放和重新进入画布仍正常。
+
+
+## 后台存储资源用户筛选（2026-09-30）
+
+- 已修复：后台存储资源列表的用户筛选不再只接受完整用户 ID；现在支持按用户 ID、用户名、昵称和邮箱进行不区分大小写的模糊匹配，并可与资源类型、状态、存储位置、资源关键词组合使用。
+- API 新增可读性更高的 `user` 查询参数，后端继续兼容旧 `userId` 参数；前端请求同时发送两者，避免滚动升级期间旧后端忽略新参数并错误返回全量资源。
+- 自动验证：后台 UI 回归 17 项通过；前端生产构建通过；后端参数规范化专项通过。SQLite 集成用例已补充四种用户字段匹配，但当前 Windows 本机 CGO/GCC 无法解析生成的对象文件，未在本机实际执行该数据库用例。
+
+仍待真实环境验收：
+
+- [ ] 在管理员后台存储资源页分别输入完整/部分用户名、昵称、邮箱和用户 ID，确认返回同一用户资源；再叠加类型、状态和存储位置筛选，确认分页与清空筛选正常。
