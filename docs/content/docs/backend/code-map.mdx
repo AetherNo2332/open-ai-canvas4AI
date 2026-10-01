@@ -14,6 +14,10 @@ description: 从产品功能快速定位主要代码入口
 
 这是一张入口地图，不罗列所有文件。先找到功能所属层，再沿调用关系阅读。
 
+## Canary 事件调度
+
+`agent/src/event-scheduler.ts` 管理短时调度槽、画布轮转、会话驻留和事件等待；`server.ts` 启动独立异步会话，`bridge.ts` 对接内部事件 SSE。Go `app/agent_scheduler.go` 提供阶段、控制和异步工具编排；`repository/agent_scheduler.go` 管理持久状态及工具租约，`database/agent_events.go` 保证状态与 outbox 同事务，`model/agent_scheduler.go` 分配提交有序事件。部署与验证入口见 [多会话事件调度](./agent-event-scheduler)。
+
 ## 前端页面
 
 Pi 原生技能：`app/cloud_agent_native_skills.go` 负责命名、入口规范化、分页和提示身份，`app/cloud_agent_pi_bridge.go` 负责租约校验、内部读取与检查点；`internal/skills/skill_packages.go` 按冻结版本读取并复核授权和包完整性。Node 的 `agent/src/native-skills.ts` 负责物化、发现校验、受限读取和路径恢复，`runner.ts` 分流原生/历史运行。Web 的 `agent-tool-presentation.ts` 将原生事件映射为安全展示，`canvas-cloud-agent-panel.tsx` 接入真实 SSE。详见 [原生 Skill 运行时](./agent-native-skills)。

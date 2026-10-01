@@ -396,7 +396,9 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 				}
 				kind := "native_skill_read"
 				payload := map[string]any{"toolName": "read"}
-				if result.IsError { kind = "native_skill_read_failed" }
+				if result.IsError {
+					kind = "native_skill_read_failed"
+				}
 				if skill != nil {
 					payload["skillId"], payload["nativeName"], payload["skillName"] = skill.ID, skill.NativeName, skill.Name
 					payload["path"], payload["version"] = path, firstNonEmpty(skill.VersionLabel, skill.Version)
@@ -513,9 +515,9 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 			Role       string `json:"role"`
 			ToolCallID string `json:"toolCallId"`
 			Content    []struct {
-				Type      string `json:"type"`
-				ID        string `json:"id"`
-				Name      string `json:"name"`
+				Type      string          `json:"type"`
+				ID        string          `json:"id"`
+				Name      string          `json:"name"`
 				Arguments json.RawMessage `json:"arguments"`
 			} `json:"content"`
 		}
@@ -532,7 +534,9 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 			if block.Type != "toolCall" || block.ID != callID || block.Name != "read" {
 				continue
 			}
-			var arguments struct { Path string `json:"path"` }
+			var arguments struct {
+				Path string `json:"path"`
+			}
 			_ = json.Unmarshal(block.Arguments, &arguments)
 			path := strings.ReplaceAll(arguments.Path, "\\", "/")
 			for skillIndex := range state.Skills {
@@ -544,7 +548,9 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 				}
 				relativePath, err := normalizeNativeSkillReadPath(path[position+len(marker):])
 				if err != nil {
-					if !requireFile { return nil, "", nil }
+					if !requireFile {
+						return nil, "", nil
+					}
 					return nil, "", err
 				}
 				for _, file := range skill.NativeFiles {
@@ -555,7 +561,9 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 			}
 			// Rejected reads still need a paired durable result. Never publish an
 			// unvalidated model path (or its error text) in the public event.
-			if !requireFile { return nil, "", nil }
+			if !requireFile {
+				return nil, "", nil
+			}
 		}
 		return nil, "", kernel.Forbidden("native Skill read call is not paired with an enabled file")
 	}
@@ -563,10 +571,11 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 }
 
 type PiToolReceipt struct {
-	CallID  string          `json:"callId"`
-	Pending bool            `json:"pending"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	IsError bool            `json:"isError,omitempty"`
+	OperationID string          `json:"operationId,omitempty"`
+	CallID      string          `json:"callId"`
+	Pending     bool            `json:"pending"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	IsError     bool            `json:"isError,omitempty"`
 	// Terminated 表示本轮已进入终态（拒绝/失败/取消/完成），该调用不会有回执。
 	// Node 必须据此结束 Pi 循环，而不是继续轮询 pending —— 拒绝是控制面决策，
 	// 按合同不产生工具结果，也不得产生后续模型请求。
@@ -719,7 +728,7 @@ func (s *Service) PiAgentSnapshot(userID, runID, owner string) (*PiAgentSnapshot
 }
 
 func (s *Service) RenewPiAgentLease(userID, runID, owner string) error {
-	run, err := s.piAgentLeasedRun(userID, runID, owner)
+	run, err := s.piAgentLeaseRow(userID, runID, owner, false)
 	if err != nil {
 		if _, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
 			return nil
@@ -1188,7 +1197,9 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
 		canvasCalls := make([]cloudAgentCall, 0, len(expected))
 		for _, call := range expected {
-			if call.Function.Name != "read" { canvasCalls = append(canvasCalls, call) }
+			if call.Function.Name != "read" {
+				canvasCalls = append(canvasCalls, call)
+			}
 		}
 		expected = canvasCalls
 	}
@@ -1351,7 +1362,14 @@ func piToolAssistantBatchIndex(messages []map[string]any, callID string) int {
 }
 
 func (s *Service) piAgentLeasedRun(userID, runID, owner string) (*model.CloudAgentExecution, error) {
-	run, err := s.repo.CloudAgent(userID, runID)
+	return s.piAgentLeaseRow(userID, runID, owner, true)
+}
+
+func (s *Service) piAgentLeaseRow(userID, runID, owner string, hydrate bool) (*model.CloudAgentExecution, error) {
+	run, err := s.repo.CloudAgentControlRow(userID, runID)
+	if hydrate {
+		run, err = s.repo.CloudAgent(userID, runID)
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, kernel.NotFound("Agent 运行不存在")
 	}
@@ -1362,7 +1380,7 @@ func (s *Service) piAgentLeasedRun(userID, runID, owner string) (*model.CloudAge
 	if tokenErr != nil || run.Engine != "pi" || run.LeaseOwner != workerID || run.LeaseExpiresAt == nil || !run.LeaseExpiresAt.After(time.Now()) {
 		return nil, kernel.AgentLeaseLost("Pi Agent 运行租约无效")
 	}
-	session, _, err := s.repo.CloudAgentPiSession(userID, firstNonEmpty(run.ConversationID, run.ID))
+	session, err := s.repo.CloudAgentPiLease(userID, firstNonEmpty(run.ConversationID, run.ID))
 	if err != nil || session.ActiveRunID != runID || session.LeaseOwner != workerID || session.LeaseExpiresAt == nil || !session.LeaseExpiresAt.After(time.Now()) || (hasEpoch && session.LeaseEpoch != expectedEpoch) {
 		return nil, kernel.AgentLeaseLost("Pi Agent 会话租约已失效")
 	}
@@ -1429,10 +1447,16 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		if err != nil {
 			if skills.IsPermanentFrozenSkillError(err) {
 				message := "本轮固定的技能快照已不可用，请重新选择技能后发起新一轮"
-				if failErr := s.failCloudAgent(run, &state, message); failErr != nil { return nil, failErr }
+				if failErr := s.failCloudAgent(run, &state, message); failErr != nil {
+					return nil, failErr
+				}
 				terminal, readErr := s.repo.CloudAgent(run.UserID, run.ID)
-				if readErr != nil { return nil, readErr }
-				if cleanupErr := s.finishCloudAgentCleanup(context.Background(), terminal); cleanupErr != nil { return nil, cleanupErr }
+				if readErr != nil {
+					return nil, readErr
+				}
+				if cleanupErr := s.finishCloudAgentCleanup(context.Background(), terminal); cleanupErr != nil {
+					return nil, cleanupErr
+				}
 				return nil, kernel.BadAuthRequest(message)
 			}
 			return nil, err
@@ -1456,7 +1480,9 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 
 func (s *Service) piNativeSkillSnapshots(userID string, skills []cloudAgentSkill) ([]PiSkillSnapshot, error) {
 	snapshots, err := piSkillSnapshots(skills)
-	if err != nil { return nil, BadAuthRequest("Invalid frozen Skill metadata") }
+	if err != nil {
+		return nil, BadAuthRequest("Invalid frozen Skill metadata")
+	}
 	for index, skill := range skills {
 		entry, err := s.SkillPackageFileAtVersion(userID, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, cloudAgentSkillEntryPath)
 		if err != nil {

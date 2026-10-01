@@ -5,6 +5,10 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## Canary Agent 调度协议
+
+运行视图增加 `runtimePhase` 与 `waitReason`，区分模型、工具、审批和容量等待。内部协议为 `canvas-pi-wire/v2`，Pi SDK 保持 0.87.1；旧协议返回 426。`GET /internal-agent/events` 为内部 Token 鉴权 SSE，支持递增全局游标续传；`POST /internal-agent/capacity` 保存实例容量，运行 `/phase`、`/control`、`/release` 分别提交阶段、读取轻量控制和按 epoch 释放租约。工具 `/advance` 先保存幂等操作，再返回 pending 与 operationId。公开请求确认仍在持久化成功后返回，幂等键和公开运行 SSE 游标保持原合同。详见 [多会话事件调度](./agent-event-scheduler)。
+
 路径前缀是 `/api`。前后端一起发布，不按 `/api/v1`、`/api/v2` 做路径版本。不兼容变更随版本一起改接口和调用方。
 
 机器可读规范：运行中的 `GET /api/openapi.yaml`，源文件 `backend/internal/handler/openapi.yaml`。前端 TypeScript 仍走 `web/src/services/api` 的 `http`，不从 OpenAPI 生成客户端。

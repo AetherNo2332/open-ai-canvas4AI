@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "canvas-pi-wire/v1",
+  "protocolVersion": "canvas-pi-wire/v2",
   "piSdkVersion": "0.87.1",
   "sessionFormatVersion": "3"
 }

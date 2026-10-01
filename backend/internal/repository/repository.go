@@ -54,6 +54,7 @@ type UserStorageUsage struct {
 }
 
 func New(db *gorm.DB) *Repository {
+	database.InstallAgentEventCallbacks(db)
 	return &Repository{db: db}
 }
 

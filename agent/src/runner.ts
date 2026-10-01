@@ -874,20 +874,30 @@ export async function runCanvasAgent(
     const onShutdown = (): void => abortSession();
     shutdown?.addEventListener("abort", onShutdown, { once: true });
     let leaseCheckRunning = false;
+    let controlRunning = false;
+    const reconcileControl = (): void => {
+      if (runTerminated || controlRunning || shutdown?.aborted) return;
+      controlRunning = true;
+      void (bridge.control ? bridge.control(snapshot, shutdown) : bridge.snapshot(snapshot, shutdown)).then(async (control) => {
+        snapshot = { ...snapshot, ...control };
+        syncPendingInterjections(snapshot);
+        if (isTerminalRunStatus(control.status)) { runTerminated = true; abortSession(); }
+        else await steerPendingInterjections();
+      }).catch((error: unknown) => {
+        if (error instanceof CanvasRunTerminated) { runTerminated = true; abortSession(); return; }
+        if (runTerminated || shutdown?.aborted) return;
+        listenerFailure ??= error; abortSession();
+      }).finally(() => { controlRunning = false; });
+    };
+    const unsubscribeControl = bridge.onControl?.(snapshot.runId, reconcileControl) ?? (() => {});
+    if (typeof bridge.control === "function") reconcileControl();
     const lease = setInterval(() => {
       if (runTerminated || leaseCheckRunning) return;
       leaseCheckRunning = true;
       void (async () => {
         await bridge.renew(snapshot, shutdown);
         if (runTerminated || shutdown?.aborted) return;
-        const refreshed = await bridge.snapshot(snapshot, shutdown);
-        snapshot = refreshed;
-        syncPendingInterjections(refreshed);
-        if (isTerminalRunStatus(refreshed.status)) {
-          runTerminated = true;
-          abortSession();
-        }
-        else await steerPendingInterjections();
+        reconcileControl();
       })().catch((error: unknown) => {
         if (error instanceof CanvasRunTerminated) {
           runTerminated = true;
@@ -961,6 +971,7 @@ export async function runCanvasAgent(
       }
     } finally {
       clearInterval(lease);
+      unsubscribeControl();
       shutdown?.removeEventListener("abort", onShutdown);
     }
     if (listenerFailure !== undefined && (!abortRequested || !runTerminated)) {

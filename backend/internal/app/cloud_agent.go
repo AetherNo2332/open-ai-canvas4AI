@@ -78,19 +78,21 @@ type cloudAgentState struct {
 }
 
 type CloudAgentRun struct {
-	SkillRuntimeMode string           `json:"skillRuntimeMode,omitempty"`
-	ID             string            `json:"id"`
-	CanvasID       string            `json:"canvasId"`
-	ParentID       string            `json:"parentId,omitempty"`
-	Status         string            `json:"status"`
-	Revision       int64             `json:"revision"`
-	CleanupPending bool              `json:"cleanupPending,omitempty"`
-	FailureMessage string            `json:"failureMessage,omitempty"`
-	PermissionMode string            `json:"permissionMode"`
-	Model          string            `json:"model"`
-	CreatedAt      time.Time         `json:"createdAt"`
-	UpdatedAt      time.Time         `json:"updatedAt"`
-	Events         []CloudAgentEvent `json:"events,omitempty"`
+	SkillRuntimeMode string            `json:"skillRuntimeMode,omitempty"`
+	ID               string            `json:"id"`
+	CanvasID         string            `json:"canvasId"`
+	ParentID         string            `json:"parentId,omitempty"`
+	Status           string            `json:"status"`
+	Revision         int64             `json:"revision"`
+	RuntimePhase     string            `json:"runtimePhase"`
+	WaitReason       string            `json:"waitReason,omitempty"`
+	CleanupPending   bool              `json:"cleanupPending,omitempty"`
+	FailureMessage   string            `json:"failureMessage,omitempty"`
+	PermissionMode   string            `json:"permissionMode"`
+	Model            string            `json:"model"`
+	CreatedAt        time.Time         `json:"createdAt"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+	Events           []CloudAgentEvent `json:"events,omitempty"`
 	// 事件已全量落库，运行详情只返回一页，因此必须把"这一页在整条日志里的位置"说清楚：
 	// EventSeqBase 是本次返回的首条事件之前已入库的条数（不变量 events[i].seq ==
 	// eventSeqBase + i + 1），EventCount 是该运行累计事件条数，LatestSeq 可直接当作下次

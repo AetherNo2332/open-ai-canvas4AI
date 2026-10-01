@@ -297,7 +297,7 @@ func TestPiContextCompactionRecoversAfterLeaseTakeoverWithoutNewCharge(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.repo.ReleasePiAgentLease("user", run.ID, run.LeaseOwner); err != nil {
+	if err := s.repo.ReleasePiAgentLease("user", run.ID, run.LeaseOwner, beforeRelease.LeaseEpoch); err != nil {
 		t.Fatal(err)
 	}
 	afterRelease, _, err := s.repo.CloudAgentPiSession("user", run.ConversationID)

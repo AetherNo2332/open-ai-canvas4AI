@@ -5,6 +5,11 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## Canary 3004 隔离验收
+
+自动化验收与回归结果见 docs/reports/event-canary-acceptance.md。3004 仍待用户实际画布 UI 确认：浏览器明暗主题、移动端等待文案与交互未做浏览器自动化，API 验收不能代替 UI 验收。
+
+
 ## 画布 Pi 原生 Skill（已实现，待真实部署确认）
 
 实现边界见 [原生 Skill 运行时](../backend/agent-native-skills)。Node 全量 94 项及 Web 类型检查/构建已通过；Go 原生 snapshot、撤销授权、冻结读取、内部路由专项已通过。Go 全量与本地 Compose 联调结果仍需收敛。

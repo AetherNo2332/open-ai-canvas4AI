@@ -16,6 +16,10 @@ type CloudAgentExecution struct {
 	LeaseOwner        string     `gorm:"size:80"`
 	LeaseExpiresAt    *time.Time `gorm:"index"`
 	Revision          int64
+	RuntimePhase      string `gorm:"size:32;not null;default:ready"`
+	WaitKind          string `gorm:"size:32"`
+	WaitID            string `gorm:"size:240"`
+	WaitReason        string `gorm:"size:160"`
 	CheckpointVersion int    `gorm:"not null;default:0"`
 	ConversationID    string `gorm:"index;size:80"`
 	ParentID          string `gorm:"index;size:80"`

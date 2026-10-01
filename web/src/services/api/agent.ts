@@ -77,6 +77,8 @@ export type AgentRun = {
     status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "rejected";
     permissionMode: AgentPermissionMode;
     revision?: number;
+    runtimePhase?: "ready" | "advancing" | "waiting_model" | "waiting_tool" | "waiting_approval" | "waiting_compaction" | "waiting_resource" | "retry_delay" | "terminal";
+    waitReason?: string;
     cleanupPending?: boolean;
     failureMessage?: string;
     model?: string;

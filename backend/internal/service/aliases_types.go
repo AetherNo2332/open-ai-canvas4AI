@@ -19,6 +19,7 @@ type (
 	PiContextCompactionCommit              = app.PiContextCompactionCommit
 	PiTurnDecision                         = app.PiTurnDecision
 	PiToolReceipt                          = app.PiToolReceipt
+	PiRuntimePhaseRequest                  = app.PiRuntimePhaseRequest
 	PiSkillSnapshot                        = app.PiSkillSnapshot
 	PiSkillReadPage                        = app.PiSkillReadPage
 	PiSkillFileRequest                     = app.PiSkillFileRequest

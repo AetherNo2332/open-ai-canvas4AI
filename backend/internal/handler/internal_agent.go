@@ -8,13 +8,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"infinite-canvas/backend/internal/service"
 )
 
 const (
-	internalAgentWireVersion      = "canvas-pi-wire/v1"
+	internalAgentWireVersion      = "canvas-pi-wire/v2"
 	internalAgentPiSDKVersion     = "0.87.1"
 	internalAgentSessionFormat    = "3"
 	internalAgentProtocolMismatch = "Pi Agent worker protocol version mismatch"
@@ -45,6 +46,95 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 			return
 		}
 		c.Next()
+	})
+	group.GET("/events", func(c *gin.Context) {
+		after, err := strconv.ParseInt(firstAgentCursor(c), 10, 64)
+		if err != nil || after < 0 {
+			c.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("X-Accel-Buffering", "no")
+		c.Writer.WriteHeader(http.StatusOK)
+		c.Writer.Flush()
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		heartbeat := time.NewTicker(25 * time.Second)
+		defer heartbeat.Stop()
+		for {
+			events, err := svc.PiWakeEvents(after)
+			if err != nil {
+				return
+			}
+			for _, event := range events {
+				body, err := json.Marshal(event)
+				if err != nil {
+					return
+				}
+				if _, err = c.Writer.Write([]byte("id: " + strconv.FormatInt(event.Sequence, 10) + "\ndata: " + string(body) + "\n\n")); err != nil {
+					return
+				}
+				after = event.Sequence
+			}
+			if len(events) > 0 {
+				c.Writer.Flush()
+			}
+			select {
+			case <-c.Request.Context().Done():
+				return
+			case <-ticker.C:
+			case <-heartbeat.C:
+				if _, err := c.Writer.Write([]byte(": heartbeat\n\n")); err != nil {
+					return
+				}
+				c.Writer.Flush()
+			}
+		}
+	})
+	group.POST("/capacity", func(c *gin.Context) {
+		var input struct {
+			Owner    string `json:"owner"`
+			Active   int    `json:"active"`
+			Capacity int    `json:"capacity"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+		if err := svc.PiCapacity(input.Owner, input.Active, input.Capacity); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"updated": true})
+	})
+	group.POST("/runs/:id/phase", func(c *gin.Context) {
+		var input service.PiRuntimePhaseRequest
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+		if err := svc.PiRuntimePhase(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), input); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"updated": true})
+	})
+	group.GET("/runs/:id/control", func(c *gin.Context) {
+		control, err := svc.PiControl(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, control)
+	})
+	group.POST("/runs/:id/release", func(c *gin.Context) {
+		if err := svc.PiRelease(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c)); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"released": true})
 	})
 	group.POST("/claim", func(c *gin.Context) {
 		var input struct {
@@ -247,13 +337,23 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 			c.AbortWithStatus(http.StatusBadRequest)
 			return
 		}
-		receipt, err := svc.PiToolAdvance(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), input.TaskID, c.Param("callId"))
+		receipt, err := svc.PiToolAdvanceAsync(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), input.TaskID, c.Param("callId"))
 		if err != nil {
 			failService(c, err)
 			return
 		}
 		ok(c, receipt)
 	})
+}
+
+func firstAgentCursor(c *gin.Context) string {
+	if value := c.GetHeader("Last-Event-ID"); value != "" {
+		return value
+	}
+	if value := c.Query("after"); value != "" {
+		return value
+	}
+	return "0"
 }
 
 func internalAgentOwner(c *gin.Context) string {

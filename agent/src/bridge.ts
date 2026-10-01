@@ -2,6 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { CanvasModelResult } from "./pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "./tool-disclosure.js";
 import type { PromptParts } from "./system-prompt.js";
+import { EventScheduler, RunEvents } from "./event-scheduler.js";
 
 /**
  * 内部协议里的**确定性**客户端错误：同一条请求重发不可能成功。
@@ -15,7 +16,7 @@ import type { PromptParts } from "./system-prompt.js";
 const NON_RETRYABLE_BRIDGE_STATUSES = new Set([400, 401, 403, 404, 405, 406, 410, 413, 414, 415, 422, 426]);
 
 export const CANVAS_PI_WIRE_IDENTITY = {
-  protocolVersion: "canvas-pi-wire/v1",
+  protocolVersion: "canvas-pi-wire/v2",
   piSdkVersion: "0.87.1",
   sessionFormatVersion: "3",
 } as const;
@@ -78,7 +79,7 @@ export interface PiSnapshot {
   userId: string;
   revision: number;
   status: string;
-  request: { prompt: string; model?: string; channelModelKey?: string; visionEnabled?: boolean };
+  request: { prompt: string; canvasId?: string; model?: string; channelModelKey?: string; visionEnabled?: boolean };
   modelLimits: { contextWindowTokens: number; maxOutputTokens: number; configured: boolean; source: string };
   canonical: PiCanonical;
   activeTaskId?: string;
@@ -168,6 +169,7 @@ export interface PiContextCompactionView {
 }
 
 interface PiToolReceipt {
+	operationId?: string;
   callId: string;
   pending: boolean;
   result?: unknown;
@@ -184,13 +186,18 @@ export interface PiToolCall {
 }
 
 export class CanvasBridge {
-  constructor(private readonly baseUrl: string, private readonly token: string, readonly workerId: string) {
+  constructor(private readonly baseUrl: string, private readonly token: string, readonly workerId: string,
+    private readonly scheduler?: EventScheduler, private readonly events?: RunEvents) {
     if (!baseUrl || !token || !workerId) throw new Error("Pi bridge configuration is incomplete");
   }
 
   async claim(signal?: AbortSignal): Promise<PiSnapshot | null> {
     const result = await this.request<{ run: PiSnapshot | null }>("POST", "/claim", { owner: this.workerId }, undefined, signal);
     return result.run;
+  }
+
+  async capacity(active: number, capacity: number, signal?: AbortSignal): Promise<void> {
+    await this.request("POST", "/capacity", { owner: this.workerId, active, capacity }, undefined, signal);
   }
 
   async snapshot(run: PiSnapshot, signal?: AbortSignal): Promise<PiSnapshot> {
@@ -207,6 +214,68 @@ export class CanvasBridge {
 
   async renew(run: PiSnapshot, signal?: AbortSignal): Promise<void> {
     await this.request("POST", `/runs/${encodeURIComponent(run.runId)}/renew`, {}, run, signal);
+  }
+
+  async release(run: PiSnapshot, signal?: AbortSignal): Promise<void> {
+    await this.request("POST", `/runs/${encodeURIComponent(run.runId)}/release`, {}, run, signal);
+  }
+
+  async phase(run: PiSnapshot, phase: string, kind = "", waitId = "", reason = "", signal?: AbortSignal): Promise<void> {
+    if (!this.events) return;
+    await this.request("POST", `/runs/${encodeURIComponent(run.runId)}/phase`, { phase, kind, waitId, reason }, run, signal);
+  }
+
+  async control(run: PiSnapshot, signal?: AbortSignal): Promise<Pick<PiSnapshot,"status"|"pendingInterjections">> {
+    return this.request("GET", `/runs/${encodeURIComponent(run.runId)}/control`, undefined, run, signal);
+  }
+
+  onControl(runId: string, listener: () => void): () => void {
+    return this.events?.subscribe(`control:${runId}`, listener) ?? (() => {});
+  }
+
+  private async wait<T>(run: PiSnapshot, read: () => Promise<T>, pending: (value: T) => boolean, signal?: AbortSignal): Promise<T> {
+    if (this.events) return this.events.wait(run.runId, read, pending, signal);
+    // Recovery-only bridge instances used by SDK probes also avoid tight polling.
+    for (;;) { const value = await read(); if (!pending(value)) return value; await delay(5000, undefined, { signal }); }
+  }
+
+  async consumeEvents(signal: AbortSignal): Promise<void> {
+    if (!this.events) throw new Error("Run event hub is required");
+    let cursor = 0;
+    const recovery = setInterval(() => this.events!.recover(), 5000);
+    try {
+      while (!signal.aborted) {
+        try {
+          const response = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent/events`, {
+            headers: { Authorization: `Bearer ${this.token}`, Accept: "text/event-stream", "Last-Event-ID": String(cursor),
+              "X-Agent-Protocol-Version": CANVAS_PI_WIRE_IDENTITY.protocolVersion,
+              "X-Pi-SDK-Version": CANVAS_PI_WIRE_IDENTITY.piSdkVersion, "X-Pi-Session-Format": CANVAS_PI_WIRE_IDENTITY.sessionFormatVersion }, signal,
+          });
+          if (!response.ok || !response.body) throw new Error(`Agent event stream HTTP ${response.status}`);
+          const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
+          try {
+            for (;;) {
+              const chunk = await reader.read(); if (chunk.done) break;
+              buffer += decoder.decode(chunk.value, { stream: true });
+              let boundary: number;
+              while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+                const frame = buffer.slice(0,boundary); buffer = buffer.slice(boundary+2);
+                const data = frame.split("\n").find((line) => line.startsWith("data: "));
+                if (!data) continue;
+                const event = JSON.parse(data.slice(6)) as { sequence: number; runId?: string; kind: string };
+                if (!Number.isSafeInteger(event.sequence) || event.sequence <= cursor) continue;
+                if (event.runId) {
+                  this.events.wake(event.runId);
+                  if (event.kind === "run_changed") { this.events.wake(`control:${event.runId}`); this.events.wake("dispatch"); }
+                } else this.events.recover();
+                cursor = event.sequence;
+              }
+            }
+          } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+        } catch (error) { if (!signal.aborted) console.error("Agent event stream reconnect:", error instanceof Error ? error.message : String(error)); }
+        if (!signal.aborted) await delay(1000, undefined, { signal }).catch(() => {});
+      }
+    } finally { clearInterval(recovery); }
   }
 
   async modelStep(run: PiSnapshot, canonical: PiCanonical, signal?: AbortSignal,
@@ -240,11 +309,21 @@ export class CanvasBridge {
     };
     // 模型任务执行期间 textDraft 会持续增长；把新增部分当增量正文上报，
     // 这样 Pi 事件流是真实增量，而不是任务结束后一次性补齐。
-    while (step.status === "queued" || step.status === "running") {
-      emitTextDraftDelta(step.textDraft);
-      await delay(700, undefined, { signal });
-      step = await this.request<PiModelStepView>("GET", `${path}/${encodeURIComponent(step.taskId)}`, undefined, run, signal);
-      if (TERMINAL_RUN_STATUSES.has(step.status)) throw new CanvasRunTerminated(step.status);
+    emitTextDraftDelta(step.textDraft);
+    if (step.status === "queued" || step.status === "running") {
+      let waitingStatus=step.status;
+      await this.phase(run,step.status === "queued" ? "waiting_resource" : "waiting_model", "model", step.taskId, step.status === "queued" ? "等待模型请求额度" : "等待模型响应", signal);
+      step = await this.wait(run, async () => {
+        const next = await this.request<PiModelStepView>("GET", `${path}/${encodeURIComponent(step.taskId)}`, undefined, run, signal);
+        if(next.status === "running" && waitingStatus !== "running") {
+          waitingStatus=next.status;
+          await this.phase(run,"waiting_model","model",step.taskId,"等待模型响应",signal);
+        }
+        emitTextDraftDelta(next.textDraft);
+        if (TERMINAL_RUN_STATUSES.has(next.status)) throw new CanvasRunTerminated(next.status);
+        return next;
+      }, (next) => next.status === "queued" || next.status === "running", signal);
+      await this.phase(run, "advancing", "", "", "", signal);
     }
     emitTextDraftDelta(step.textDraft);
     if (step.status !== "succeeded" || !step.result) {
@@ -278,11 +357,10 @@ export class CanvasBridge {
     willRetry: boolean; tokensBefore: number }, signal?: AbortSignal): Promise<PiContextCompactionView> {
     const path = `/runs/${encodeURIComponent(run.runId)}/context-compactions`;
     let operation = await this.request<PiContextCompactionView>("POST", path, request, run, signal);
-    while (operation.status === "queued" || operation.status === "running") {
-      await delay(700, undefined, { signal });
-      operation = await this.request<PiContextCompactionView>("GET",
-        `${path}/${encodeURIComponent(operation.operationId)}`, undefined, run, signal);
-    }
+    await this.phase(run, "waiting_compaction", "compaction", operation.operationId, "压缩上下文", signal);
+    if (operation.status === "queued" || operation.status === "running") operation = await this.wait(run, () => this.request<PiContextCompactionView>("GET",
+      `${path}/${encodeURIComponent(operation.operationId)}`, undefined, run, signal),
+      (next) => next.status === "queued" || next.status === "running", signal);
     if (operation.status !== "succeeded" || !operation.summary || !operation.firstKeptEntryId || !operation.details) {
       throw new FatalWorkerError(`Go context compaction did not return a checkpoint (${operation.status})`);
     }
@@ -292,10 +370,9 @@ export class CanvasBridge {
   async resumeContextCompaction(run: PiSnapshot, operationId: string, signal?: AbortSignal): Promise<PiContextCompactionView> {
     const path = `/runs/${encodeURIComponent(run.runId)}/context-compactions/${encodeURIComponent(operationId)}`;
     let operation = await this.request<PiContextCompactionView>("GET", path, undefined, run, signal);
-    while (operation.status === "queued" || operation.status === "running") {
-      await delay(700, undefined, { signal });
-      operation = await this.request<PiContextCompactionView>("GET", path, undefined, run, signal);
-    }
+    await this.phase(run, "waiting_compaction", "compaction", operation.operationId, "压缩上下文", signal);
+    if (operation.status === "queued" || operation.status === "running") operation = await this.wait(run, () => this.request<PiContextCompactionView>("GET", path, undefined, run, signal),
+      (next) => next.status === "queued" || next.status === "running", signal);
     if (operation.operationId !== operationId || operation.status !== "succeeded" || !operation.summary ||
         !operation.firstKeptEntryId || !operation.details) {
       throw new FatalWorkerError(`Go context compaction could not be resumed (${operation.status})`);
@@ -315,13 +392,11 @@ export class CanvasBridge {
 
   async executeTool(run: PiSnapshot, taskId: string, callId: string, signal?: AbortSignal): Promise<PiToolReceipt> {
     const path = `/runs/${encodeURIComponent(run.runId)}/tool-calls/${encodeURIComponent(callId)}/advance`;
-    for (;;) {
-      const receipt = await this.request<PiToolReceipt>("POST", path, { taskId }, run, signal);
-      // 终态即返回：拒绝/取消等控制面决策按合同不产生工具结果，
-      // 无限轮询会占死 worker 并持续续租。
-      if (!receipt.pending || receipt.terminated) return receipt;
-      await delay(900, undefined, { signal });
-    }
+    const first = await this.request<PiToolReceipt>("POST", path, { taskId }, run, signal);
+    if (!first.pending || first.terminated) return first;
+    await this.phase(run, "waiting_tool", "tool", first.operationId ?? `${taskId}:${callId}`, "等待工具结果", signal);
+    return this.wait(run, () => this.request<PiToolReceipt>("POST", path, { taskId }, run, signal),
+      (receipt) => receipt.pending && !receipt.terminated, signal);
   }
 
   /** 上报无法重试的启动期错误，避免运行静默停在 running。 */
@@ -349,9 +424,12 @@ export class CanvasBridge {
         headers["X-Agent-Session-Epoch"] = String(run.piSessionLeaseEpoch);
       }
     }
-    const response = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent${path}`, {
-      method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal,
+    const send = () => fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent${path}`, {
+      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
     });
+    const response = this.scheduler && run && !path.endsWith("/renew")
+      ? await this.scheduler.step(`${run.userId}:${run.request.canvasId ?? run.runId}`, send, signal) : await send();
     if (!response.ok) {
       let publicMessage = "";
       let publicReason = "";

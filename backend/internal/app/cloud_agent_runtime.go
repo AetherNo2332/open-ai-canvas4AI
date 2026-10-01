@@ -747,6 +747,12 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	}
 	run.CanvasID, run.ActiveTaskID, run.MediaTaskID = state.Request.CanvasID, state.ActiveTaskID, state.MediaTaskID
 	run.ParentID = state.ParentID
+	if run.Status == "waiting_approval" && state.Approval != nil {
+		run.RuntimePhase = "waiting_approval"
+		run.WaitKind = "approval"
+		run.WaitID = state.Approval.ID
+		run.WaitReason = "等待用户审批"
+	}
 	if run.Title == "" {
 		run.Title = truncateRunes(state.Request.Prompt, 80)
 	}
@@ -855,6 +861,7 @@ func (s *Service) cloudAgentExecutionOutput(userID string, identity cloudAgentRu
 	}
 	out := agentRunOutput(identity, initial)
 	out.Status = run.Status
+	out.RuntimePhase, out.WaitReason = run.RuntimePhase, run.WaitReason
 	out.Revision, out.CleanupPending, out.FailureMessage = run.Revision, run.CleanupPending, run.FailureMessage
 	out.UpdatedAt = run.UpdatedAt
 	view := CloudAgentRunViewOptions{}
@@ -2241,6 +2248,7 @@ func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, sta
 }
 
 func (s *Service) DecideCloudAgentApproval(userID, id, approvalID, decision, reason string, mediaSettings ...*CloudAgentMediaSettings) error {
+	defer s.wakeAgentTools()
 	// Resource leases are a protection mechanism only. Expiry cleanup is safe to
 	// run on the control-plane path and never changes the approval decision.
 	if err := s.repo.ReleaseExpiredCloudAgentResourceLeases(time.Now().UTC()); err != nil {

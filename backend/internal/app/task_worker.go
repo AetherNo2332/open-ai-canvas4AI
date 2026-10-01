@@ -52,6 +52,7 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 	s.startProviderCancellationReconciliation(ctx)
 	s.startBillingReviewAudit(ctx)
 	s.startAgentMemoryCompactScheduler()
+	s.startAgentToolOperations()
 	// Pi 是唯一 Agent 循环，由 agent/ 里的独立 Node worker 领取 engine=pi 运行。
 	// 这里不再启动旧 Go 调度扫描，但必须保留一个**看门狗**：worker 崩溃或配置错误时，
 	// 运行会被反复领取却永远不终结，前端表现为"Agent 输出完了却一直运行中"。
