@@ -39,6 +39,8 @@ Go 保留权限、预算、模型任务、审批、画布事务与持久化职�
 
 浏览器来源通过私有 env 文件的 `CANVAS_CORS_ORIGINS` 配置，以逗号分隔完整 origin（协议、主机、端口）。Compose 会读取该覆盖值；默认允许 3004 的 localhost、IPv4/IPv6 回环和局域网入口。通过本机主机名或 Tailscale 地址访问时，应将对应完整 origin 加入该变量。修改后仅重建 backend 服务即可生效；`CANVAS_PUBLIC_BASE_URL` 可独立覆盖资源链接入口。
 
+本机模型渠道还需配置独立的 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS`：只填写主机名或 IP，不能填写协议、路径或端口，默认仅允许模型桩。Compose 从 env 读取该白名单，并将 `host.docker.internal` 与 `CANVAS_LOCAL_HOSTNAME`（默认 canvas-host）映射到宿主机网关。容器内的 localhost/127.0.0.1 指向后端容器；宿主机渠道应填写可访问的宿主机 IP 或 host.docker.internal。来源白名单不会替代上游地址白名单。
+
 ```sh
 scripts/build-event-canary.sh
 docker compose --env-file .local/event-canary.env -f docker-compose.event-canary.yml up -d
