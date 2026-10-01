@@ -52,8 +52,8 @@ services:
       CANVAS_REGISTRATION_ENABLED: "false"
       CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:?required}
       CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: model-stub
-      CANVAS_CORS_ORIGINS: http://localhost:3004,http://127.0.0.1:3004,http://192.168.90.200:3004
-      CANVAS_PUBLIC_BASE_URL: http://192.168.90.200:3004
+      CANVAS_CORS_ORIGINS: ${CANVAS_CORS_ORIGINS:-http://localhost:3004,http://127.0.0.1:3004,http://[::1]:3004,http://192.168.90.200:3004}
+      CANVAS_PUBLIC_BASE_URL: ${CANVAS_PUBLIC_BASE_URL:-http://192.168.90.200:3004}
       CANVAS_SHUTDOWN_TIMEOUT: 30s
     volumes: [event-backend:/data]
     depends_on:

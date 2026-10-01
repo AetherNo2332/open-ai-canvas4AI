@@ -37,6 +37,8 @@ Go 保留权限、预算、模型任务、审批、画布事务与持久化职�
 
 验收渠道只连接 Compose 内的 model-stub；管理员运行时 worker/渠道容量须设置为至少 16，渠道并发也设为 16。默认 stub 对外收费渠道不发请求。模型请求额度受实际渠道自身配置约束，调度改造不会取消资源上限。
 
+浏览器来源通过私有 env 文件的 `CANVAS_CORS_ORIGINS` 配置，以逗号分隔完整 origin（协议、主机、端口）。Compose 会读取该覆盖值；默认允许 3004 的 localhost、IPv4/IPv6 回环和局域网入口。通过本机主机名或 Tailscale 地址访问时，应将对应完整 origin 加入该变量。修改后仅重建 backend 服务即可生效；`CANVAS_PUBLIC_BASE_URL` 可独立覆盖资源链接入口。
+
 ```sh
 scripts/build-event-canary.sh
 docker compose --env-file .local/event-canary.env -f docker-compose.event-canary.yml up -d
