@@ -7,11 +7,11 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 ## Agent（beta）配置界面
 
-待用户确认管理员新入口与旧记忆链接跳转、配置冲突提示、已保存/已应用状态、离线及缩容展示，以及记忆筛选/删除在明暗主题与移动端的体验。自动化证据以隔离验收记录为准，不将源码检查写作浏览器验收。
+待用户确认管理员新入口与旧记忆链接跳转、配置冲突提示、已保存/已应用状态、离线及缩容展示，以及记忆筛选/删除在明暗主题与移动端的体验。Firefox 已实际验证登录、新旧路由、在线状态、390 像素窄屏、配置保存和版本显示；完整明暗主题及非空记忆删除仍待确认。详见 docs/reports/agent-orchestrator-acceptance.md。
 
 ## Canary 3004 隔离验收
 
-自动化验收与回归结果见 docs/reports/event-canary-acceptance.md。3004 仍待用户实际画布 UI 确认：浏览器明暗主题、移动端等待文案与交互未做浏览器自动化，API 验收不能代替 UI 验收。
+最新验收见 docs/reports/agent-orchestrator-acceptance.md，第一阶段记录保留于 docs/reports/event-canary-acceptance.md。16 路请求、审批与重启、SSE、公平准入和热缩容通过；管理员页面已做 Firefox 实际验收，完整画布明暗主题及移动端等待交互仍待用户确认。
 
 
 ## 画布 Pi 原生 Skill（已实现，待真实部署确认）

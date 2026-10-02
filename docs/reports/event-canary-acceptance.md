@@ -1,5 +1,7 @@
 # Canary 3004 事件调度验收记录
 
+本文件保留第一阶段记录。当前 schema 45 / 协议 v3 及统一配置验收见 [Agent Orchestrator 验收](agent-orchestrator-acceptance.md)。
+
 验收日期：2026-10-02（Asia/Shanghai）。源码基线 canary `8ca7b95e`，新增本地调度实现，不推送远程。运行端口 3004；3000、3002、3003 未改动。Pi SDK 0.87.1、会话格式 3、内部协议 v2、数据库 schema 44。
 
 ## 实现和环境
