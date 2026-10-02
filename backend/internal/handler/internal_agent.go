@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/service"
 )
 
 const (
-	internalAgentWireVersion      = "canvas-pi-wire/v2"
+	internalAgentWireVersion      = "canvas-pi-wire/v3"
 	internalAgentPiSDKVersion     = "0.87.1"
 	internalAgentSessionFormat    = "3"
 	internalAgentProtocolMismatch = "Pi Agent worker protocol version mismatch"
@@ -92,17 +93,24 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 			}
 		}
 	})
+	group.GET("/config", func(c *gin.Context) {
+		setting, err := svc.AgentSchedulerConfig()
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"setting": setting})
+	})
 	group.POST("/capacity", func(c *gin.Context) {
 		var input struct {
-			Owner    string `json:"owner"`
-			Active   int    `json:"active"`
-			Capacity int    `json:"capacity"`
+			Owner string `json:"owner"`
+			model.AgentCapacityReport
 		}
 		if err := c.ShouldBindJSON(&input); err != nil {
 			c.AbortWithStatus(http.StatusBadRequest)
 			return
 		}
-		if err := svc.PiCapacity(input.Owner, input.Active, input.Capacity); err != nil {
+		if err := svc.PiCapacityReport(input.Owner, input.AgentCapacityReport); err != nil {
 			failService(c, err)
 			return
 		}

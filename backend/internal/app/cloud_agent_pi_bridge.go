@@ -708,7 +708,11 @@ func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
 	if owner == "" {
 		return nil, BadAuthRequest("Pi worker ID is required")
 	}
-	run, err := s.repo.ClaimPiAgent(owner, time.Now().Add(piAgentLeaseDuration))
+	policy, err := s.AgentSchedulerConfig()
+	if err != nil {
+		return nil, err
+	}
+	run, err := s.repo.ClaimPiAgentConfigured(owner, time.Now().Add(piAgentLeaseDuration), policy)
 	if err != nil || run == nil {
 		return nil, err
 	}
