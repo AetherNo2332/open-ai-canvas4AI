@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { CanvasBridge } from "./bridge.js";
 import type { ToolSchemaArtifact } from "./tool-disclosure.js";
 import { loadHarnessPrompt, runCanvasAgent } from "./runner.js";
-import { parsePiWorkerConcurrency } from "./worker-pool.js";
+import { RuntimeConfigController } from "./runtime-config.js";
 import { EventScheduler, RunEvents, runEventSessions } from "./event-scheduler.js";
 import { FatalWorkerError } from "./tool-disclosure.js";
 
@@ -28,18 +28,36 @@ if (harnessDir) {
   }
 }
 
-const concurrency = parsePiWorkerConcurrency(process.env.CANVAS_AGENT_CONCURRENCY);
-const scheduler = new EventScheduler(concurrency);
+const scheduler = new EventScheduler(4);
 const events = new RunEvents();
 const eventBridge = new CanvasBridge(backend, token, `${hostname()}-${process.pid}-events`, scheduler, events);
+// Fail closed before any claim when the authoritative configuration is unavailable.
+const config=new RuntimeConfigController(await eventBridge.schedulerConfig(controller.signal));
+scheduler.setConcurrency(config.current.dispatchConcurrency);
+let refreshing=false;
+const refresh=async()=>{
+  if(refreshing || controller.signal.aborted)return;
+  refreshing=true;
+  try {
+    if(config.apply(await eventBridge.schedulerConfig(controller.signal))) {
+      scheduler.setConcurrency(config.current.dispatchConcurrency);
+      events.wake("capacity");events.wake("dispatch");
+    }
+  } catch(error) {if(!controller.signal.aborted)console.error("Agent configuration recovery:",error instanceof Error?error.message:String(error));}
+  finally {refreshing=false;}
+};
+const unsubscribeConfig=events.subscribe("config",()=>{void refresh();});
+const configRecovery=setInterval(()=>{void refresh();},5000);
 const eventStream = eventBridge.consumeEvents(controller.signal);
 await runEventSessions({
-  concurrency,
-  maxSessions: Number(process.env.CANVAS_AGENT_MAX_SESSIONS ?? 64),
+  concurrency:config.current.dispatchConcurrency,
+  maxSessions:config.current.maxResidentSessions,
+  getConfig:()=>config.current,
   events,
-  reportCapacity: (active, capacity) => {
-    if(process.env.CANVAS_AGENT_METRICS === "true") console.log(JSON.stringify({type:"scheduler_capacity",residentSessions:active,capacity,schedulerActive:scheduler.active,schedulerPeak:scheduler.peak}));
-    return eventBridge.capacity(active, capacity, controller.signal);
+  reportState: (active,reserved,capacity) => {
+    const report={active,capacity,claimReservations:reserved,dispatchActive:scheduler.active,readyQueued:scheduler.queued,draining:active+reserved>capacity,appliedConfigRevision:config.current.revision};
+    if(process.env.CANVAS_AGENT_METRICS === "true") console.log(JSON.stringify({type:"scheduler_capacity",residentSessions:active,schedulerPeak:scheduler.peak,...report}));
+    return eventBridge.capacityReport(report,controller.signal);
   },
   signal: controller.signal,
   createBridge: (index) => new CanvasBridge(backend, token,
@@ -57,4 +75,5 @@ await runEventSessions({
     console.error(`Pi worker ${workerId} run failed:`, error instanceof Error ? error.message : String(error));
   },
 });
+clearInterval(configRecovery);unsubscribeConfig();
 await eventStream;

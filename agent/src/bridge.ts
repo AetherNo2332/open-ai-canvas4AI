@@ -16,7 +16,7 @@ import { EventScheduler, RunEvents } from "./event-scheduler.js";
 const NON_RETRYABLE_BRIDGE_STATUSES = new Set([400, 401, 403, 404, 405, 406, 410, 413, 414, 415, 422, 426]);
 
 export const CANVAS_PI_WIRE_IDENTITY = {
-  protocolVersion: "canvas-pi-wire/v2",
+  protocolVersion: "canvas-pi-wire/v3",
   piSdkVersion: "0.87.1",
   sessionFormatVersion: "3",
 } as const;
@@ -199,6 +199,13 @@ export class CanvasBridge {
   async capacity(active: number, capacity: number, signal?: AbortSignal): Promise<void> {
     await this.request("POST", "/capacity", { owner: this.workerId, active, capacity }, undefined, signal);
   }
+  async schedulerConfig(signal?:AbortSignal):Promise<import("./runtime-config.js").AgentSchedulerSetting> {
+    const result=await this.request<{setting:import("./runtime-config.js").AgentSchedulerSetting}>("GET","/config",undefined,undefined,signal);
+    return result.setting;
+  }
+  async capacityReport(report:import("./runtime-config.js").CapacityReport,signal?:AbortSignal):Promise<void> {
+    await this.request("POST","/capacity",{owner:this.workerId,...report},undefined,signal);
+  }
 
   async snapshot(run: PiSnapshot, signal?: AbortSignal): Promise<PiSnapshot> {
     const result = await this.request<{ run: PiSnapshot }>("GET", `/runs/${encodeURIComponent(run.runId)}`, undefined, run, signal);
@@ -267,7 +274,10 @@ export class CanvasBridge {
                 if (event.runId) {
                   this.events.wake(event.runId);
                   if (event.kind === "run_changed") { this.events.wake(`control:${event.runId}`); this.events.wake("dispatch"); }
-                } else this.events.recover();
+                } else {
+                  if(event.kind==="scheduler_config_changed")this.events.wake("config");
+                  this.events.recover();
+                }
                 cursor = event.sequence;
               }
             }

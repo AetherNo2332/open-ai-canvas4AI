@@ -9,9 +9,14 @@ export class EventScheduler {
   private projects: string[] = [];
   active = 0;
   peak = 0;
-  constructor(readonly concurrency = 4) {
+  constructor(public concurrency = 4) {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 64) throw new Error("Invalid scheduler concurrency");
   }
+  setConcurrency(value:number):void {
+    if(!Number.isSafeInteger(value)||value<1||value>16)throw new Error("Invalid scheduler concurrency");
+    this.concurrency=value;this.pump();
+  }
+  get queued():number {return [...this.queues.values()].reduce((sum,queue)=>sum+queue.length,0);}
   step<T>(project: string, run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       if (signal?.aborted) { reject(signal.reason); return; }
@@ -87,16 +92,21 @@ export async function runEventSessions<B extends SessionBridge>(options: {
   onError: (runId: string, error: unknown) => void;
   events: RunEvents;
   reportCapacity?: (active: number, capacity: number) => Promise<void>;
+  getConfig?:()=>{dispatchConcurrency:number;maxResidentSessions:number};
+  reportState?:(active:number,reserved:number,capacity:number)=>Promise<void>;
 }): Promise<void> {
   if (!Number.isSafeInteger(options.maxSessions) || options.maxSessions < options.concurrency || options.maxSessions > 64) throw new Error("Invalid resident session limit");
   const active = new Map<string, Promise<void>>();
   const conversations = new Set<string>();
   let reserved = 0;
   let identity = 0;
-  const heartbeat = setInterval(() => { void options.reportCapacity?.(active.size + reserved, options.maxSessions).catch((error) => options.onError("capacity", error)); }, 15000);
-  const loops = Array.from({ length: options.concurrency }, async () => {
+  const config=()=>options.getConfig?.()??{dispatchConcurrency:options.concurrency,maxResidentSessions:options.maxSessions};
+  const report=()=>Promise.all([options.reportCapacity?.(active.size,config().maxResidentSessions),options.reportState?.(active.size,reserved,config().maxResidentSessions)]).catch(error=>options.onError("capacity",error));
+  const heartbeat = setInterval(() => {void report();}, 15000);
+  void options.reportState?.(active.size,reserved,config().maxResidentSessions).catch(error=>options.onError("capacity",error));
+  const loops = Array.from({ length: options.getConfig?16:options.concurrency }, async (_,index) => {
     while (!options.signal.aborted) {
-      if (active.size + reserved >= options.maxSessions) { await options.events.pause("capacity",5000,options.signal); continue; }
+      if (index>=config().dispatchConcurrency || active.size + reserved >= config().maxResidentSessions) { await options.events.pause("capacity",5000,options.signal); continue; }
       reserved += 1;
       const bridge = options.createBridge(identity++);
       let snapshot: PiSnapshot | null = null;
@@ -104,6 +114,11 @@ export async function runEventSessions<B extends SessionBridge>(options: {
       catch (error) { if (!options.signal.aborted) options.onError("claim", error); }
       finally { reserved -= 1; }
       if (!snapshot) { await options.events.pause("dispatch",5000,options.signal); continue; }
+      // A configuration can shrink while a claim request is in flight.
+      if(options.signal.aborted || active.size>=config().maxResidentSessions) {
+        await bridge.release?.(snapshot).catch(error=>options.onError(snapshot!.runId,error));
+        continue;
+      }
       const key = `${snapshot.userId}:${snapshot.request.canvasId ?? ""}:${snapshot.piSessionId ?? snapshot.runId}`;
       if (conversations.has(key)) {
         options.onError(snapshot.runId, new Error("Duplicate active session lease"));

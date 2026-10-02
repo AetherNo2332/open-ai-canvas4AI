@@ -93,7 +93,7 @@ test("内部 wire identity 与共享制品和锁定的 Pi SDK 版本一致", () 
 
 test("所有内部请求都标注独立的 Pi wire、SDK 和 session 格式版本", async () => {
   const request = await captureBody((bridge) => bridge.failRun(run, "probe", undefined));
-  assert.equal(request.headers["X-Agent-Protocol-Version"], "canvas-pi-wire/v2");
+  assert.equal(request.headers["X-Agent-Protocol-Version"], "canvas-pi-wire/v3");
   assert.equal(request.headers["X-Pi-SDK-Version"], "0.87.1");
   assert.equal(request.headers["X-Pi-Session-Format"], "3");
 });
