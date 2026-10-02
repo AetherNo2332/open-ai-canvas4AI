@@ -13,7 +13,7 @@ import (
 
 // CurrentSchemaVersion follows upstream migrations through v38; the retired
 // Cloud Agent tables stay registered as no-op entries after that upstream range.
-const CurrentSchemaVersion int64 = 44
+const CurrentSchemaVersion int64 = 45
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 38
@@ -142,6 +142,9 @@ var schemaMigrations = []migration{
 	{version: 43, name: "pi_agent_owner_scoped_session_ids", checksum: "sha256:pi-agent-owner-scoped-session-ids-v43-20260928", apply: migratePiAgentOwnerScopedSessionIDs},
 	{version: 44, name: "pi_agent_event_scheduler", checksum: "sha256:pi-agent-event-scheduler-v44-20261002", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.CloudAgentExecution{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{}, &model.AgentRuntimeInstance{})
+	}},
+	{version: 45, name: "pi_agent_orchestrator", checksum: "sha256:pi-agent-orchestrator-v45-20261002", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.AgentRuntimeInstance{})
 	}},
 }
 

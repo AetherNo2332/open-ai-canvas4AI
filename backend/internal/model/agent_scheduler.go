@@ -57,8 +57,28 @@ type AgentToolOperation struct {
 }
 
 type AgentRuntimeInstance struct {
-	ID        string `gorm:"primaryKey;size:80"`
-	Active    int
-	Capacity  int
-	UpdatedAt time.Time `gorm:"index"`
+	ID                    string    `gorm:"primaryKey;size:80" json:"instanceId"`
+	Active                int       `json:"resident"`
+	Capacity              int       `json:"capacity"`
+	ClaimReservations     int       `json:"claimReservations"`
+	DispatchActive        int       `json:"dispatchActive"`
+	ReadyQueued           int       `json:"readyQueued"`
+	Draining              bool      `json:"draining"`
+	AppliedConfigRevision int64     `json:"appliedConfigRevision"`
+	UpdatedAt             time.Time `gorm:"index" json:"lastHeartbeatAt"`
+}
+
+type AgentCapacityReport struct {
+	Active                int   `json:"active"`
+	Capacity              int   `json:"capacity"`
+	ClaimReservations     int   `json:"claimReservations"`
+	DispatchActive        int   `json:"dispatchActive"`
+	ReadyQueued           int   `json:"readyQueued"`
+	Draining              bool  `json:"draining"`
+	AppliedConfigRevision int64 `json:"appliedConfigRevision"`
+}
+
+type AgentRuntimeStatus struct {
+	AgentRuntimeInstance
+	Online bool `json:"online"`
 }
