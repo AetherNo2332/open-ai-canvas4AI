@@ -116,12 +116,12 @@ export async function runEventSessions<B extends SessionBridge>(options: {
       finally { reserved -= 1; }
       if (!snapshot) { await options.events.pause("dispatch",5000,options.signal); continue; }
       // A configuration can shrink while a claim request is in flight.
-      const canvasKey=`${snapshot.userId}:${snapshot.request.canvasId??`session:${snapshot.piSessionId??snapshot.runId}`}`;
+      const canvasKey=`${snapshot.userId}:${snapshot.request.canvasId||`session:${snapshot.piSessionId||snapshot.runId}`}`;
       if(options.signal.aborted || active.size>=config().maxResidentSessions || (canvasResidents.get(canvasKey)??0)>=(config().maxResidentPerCanvas??64)) {
         await bridge.release?.(snapshot).catch(error=>options.onError(snapshot!.runId,error));
         continue;
       }
-      const key = `${snapshot.userId}:${snapshot.request.canvasId ?? ""}:${snapshot.piSessionId ?? snapshot.runId}`;
+      const key = `${snapshot.userId}:${snapshot.request.canvasId ?? ""}:${snapshot.piSessionId || snapshot.runId}`;
       if (conversations.has(key)) {
         options.onError(snapshot.runId, new Error("Duplicate active session lease"));
         await bridge.release?.(snapshot, options.signal).catch((error) => options.onError(snapshot!.runId, error));

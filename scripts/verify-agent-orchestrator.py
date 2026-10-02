@@ -32,7 +32,7 @@ def fair_admission():
     event.wait_until(lambda: event.stub("stats")["active"] == 3, 20)
     seconds = time.monotonic() - started
     waiting = [event.run_view(run["id"]) for run in runs]
-    assert sum(run.get("waitKind") == "canvas_capacity" for run in waiting) >= 6, waiting
+    assert sum(run.get("runtimePhase") == "waiting_resource" and run.get("waitReason") == "等待画布会话容量" for run in waiting) >= 6, waiting
     update(maxResidentPerCanvas=16)
     event.wait_until(lambda: event.stub("stats")["active"] == 9)
     event.stub("control", {"block": False})

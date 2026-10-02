@@ -45,3 +45,14 @@ test("canvas quota shrink rechecks pending claims without shrinking process capa
  await tick();quota=1;resolveClaims();await tick();await tick();
  try {assert.equal(entered,1);assert.equal(released,3);}finally{stop.abort();finish();await loop;}
 });
+
+test("empty canvas IDs keep independent sessions in independent admission buckets",async()=>{
+ const stop=new AbortController();let claimed=0;let entered=0;
+ let finish!:()=>void;const running=new Promise<void>(resolve=>finish=resolve);
+ const loop=runEventSessions({concurrency:2,maxSessions:2,events:new RunEvents(),signal:stop.signal,
+  getConfig:()=>({dispatchConcurrency:2,maxResidentSessions:2,maxResidentPerCanvas:1}),
+  createBridge:()=>({claim:async()=>{const n=++claimed;if(n>2)return null;return {runId:`empty-${n}`,userId:"u",piSessionId:`independent-${n}`,request:{canvasId:""}} as PiSnapshot},failRun:async()=>{},release:async()=>{}}),
+  run:async()=>{entered++;await running},onError:()=>{}});
+ await tick();await tick();
+ try{assert.equal(entered,2);}finally{stop.abort();finish();await loop;}
+});
