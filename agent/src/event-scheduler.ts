@@ -92,15 +92,16 @@ export async function runEventSessions<B extends SessionBridge>(options: {
   onError: (runId: string, error: unknown) => void;
   events: RunEvents;
   reportCapacity?: (active: number, capacity: number) => Promise<void>;
-  getConfig?:()=>{dispatchConcurrency:number;maxResidentSessions:number};
+  getConfig?:()=>{dispatchConcurrency:number;maxResidentSessions:number;maxResidentPerCanvas?:number};
   reportState?:(active:number,reserved:number,capacity:number)=>Promise<void>;
 }): Promise<void> {
   if (!Number.isSafeInteger(options.maxSessions) || options.maxSessions < options.concurrency || options.maxSessions > 64) throw new Error("Invalid resident session limit");
   const active = new Map<string, Promise<void>>();
   const conversations = new Set<string>();
+  const canvasResidents=new Map<string,number>();
   let reserved = 0;
   let identity = 0;
-  const config=()=>options.getConfig?.()??{dispatchConcurrency:options.concurrency,maxResidentSessions:options.maxSessions};
+  const config:()=>{dispatchConcurrency:number;maxResidentSessions:number;maxResidentPerCanvas?:number}=()=>options.getConfig?.()??{dispatchConcurrency:options.concurrency,maxResidentSessions:options.maxSessions};
   const report=()=>Promise.all([options.reportCapacity?.(active.size,config().maxResidentSessions),options.reportState?.(active.size,reserved,config().maxResidentSessions)]).catch(error=>options.onError("capacity",error));
   const heartbeat = setInterval(() => {void report();}, 15000);
   void options.reportState?.(active.size,reserved,config().maxResidentSessions).catch(error=>options.onError("capacity",error));
@@ -115,7 +116,8 @@ export async function runEventSessions<B extends SessionBridge>(options: {
       finally { reserved -= 1; }
       if (!snapshot) { await options.events.pause("dispatch",5000,options.signal); continue; }
       // A configuration can shrink while a claim request is in flight.
-      if(options.signal.aborted || active.size>=config().maxResidentSessions) {
+      const canvasKey=`${snapshot.userId}:${snapshot.request.canvasId??`session:${snapshot.piSessionId??snapshot.runId}`}`;
+      if(options.signal.aborted || active.size>=config().maxResidentSessions || (canvasResidents.get(canvasKey)??0)>=(config().maxResidentPerCanvas??64)) {
         await bridge.release?.(snapshot).catch(error=>options.onError(snapshot!.runId,error));
         continue;
       }
@@ -127,10 +129,16 @@ export async function runEventSessions<B extends SessionBridge>(options: {
         continue;
       }
       conversations.add(key);
+      canvasResidents.set(canvasKey,(canvasResidents.get(canvasKey)??0)+1);
       const run = snapshot;
       const task = Promise.resolve().then(() => options.run(bridge, run, options.signal)).catch((error) => {
         if (!options.signal.aborted) options.onError(run.runId, error);
-      }).finally(() => { active.delete(run.runId); conversations.delete(key); options.events.wake("capacity"); });
+      }).finally(() => {
+        active.delete(run.runId); conversations.delete(key);
+        const remaining=(canvasResidents.get(canvasKey)??1)-1;
+        if(remaining)canvasResidents.set(canvasKey,remaining);else canvasResidents.delete(canvasKey);
+        options.events.wake("capacity");
+      });
       active.set(run.runId, task);
     }
   });

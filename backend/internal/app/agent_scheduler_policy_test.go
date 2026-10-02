@@ -7,7 +7,7 @@ import (
 
 func TestAgentSchedulerAdminPolicyAndCapacityDraining(t *testing.T) {
 	s, db, _ := piAgentTestLeasedFixture(t)
-	if err := db.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AdminAuditEvent{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentRuntimeInstance{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AdminAuditEvent{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentRuntimeInstance{}); err != nil {
 		t.Fatal(err)
 	}
 	admin := &model.User{ID: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}

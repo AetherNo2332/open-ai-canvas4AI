@@ -19,3 +19,9 @@ test("admin Agent entry owns config, status and the existing memory panel",async
  expect(page).toContain("listAgentSchedulerStatus");
  expect(page).toContain("updateAgentSchedulerSetting");
 });
+
+test("healthy runtime policy page includes the Agent management link",async()=>{
+ const source=await Bun.file(new URL("../src/pages/admin/settings/runtime-policy-settings-page.tsx",import.meta.url)).text();
+ const normal=source.slice(source.indexOf('const activeTaskLimit ='));
+ expect(normal).toContain('to="/admin/settings/agent"');
+});

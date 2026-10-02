@@ -23,6 +23,14 @@ func (r *Repository) AgentSchedulerSetting(fallback model.AgentSchedulerSetting)
 
 func (r *Repository) SaveAgentSchedulerSetting(p *model.AgentSchedulerSetting, expected int64, audit *model.AdminAuditEvent) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		// Configuration changes and admissions share one linearization point.
+		counter := model.AgentAdmissionCounter{ID: 1}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&counter).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&counter).Where("id = ?", 1).UpdateColumn("value", gorm.Expr("value + 0")).Error; err != nil {
+			return err
+		}
 		initial := model.DefaultAgentSchedulerSetting()
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&initial).Error; err != nil {
 			return err

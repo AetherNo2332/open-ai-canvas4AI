@@ -20,7 +20,7 @@ PostgreSQL 使用事务行锁；SQLite 使用写事务及有界冲突重试。�
 
 新增独立 AgentSchedulerSetting，不改变现有 workerConcurrency 的 Go 集群后台任务含义。默认 dispatchConcurrency=4（范围 1..16），maxResidentSessions=64（范围 1..64 且不小于 dispatchConcurrency），maxResidentPerCanvas=16（范围 1..maxResidentSessions）。模型额度继续沿用 worker/channel 配置，不复制第二套预算。
 
-Go 提供管理员 GET/PUT /api/admin/settings/agent-scheduler，PUT 携带 expectedRevision；冲突返回 409。通过内部 Token 鉴权的 GET /internal-agent/config 返回有效设置与 revision。保存设置、审计记录和 scheduler_config_changed 发件箱事件同一事务。
+Go 提供管理员 GET/PUT /api/admin/settings/agent-scheduler，PUT 携带 expectedRevision；冲突返回 409。通过内部 Token 鉴权的 GET /internal-agent/config 返回有效设置与 revision。保存设置、审计记录和 scheduler_config_changed 发件箱事件同一事务；配置保存与领取共同锁定准入计数器，避免按旧配额的领取越过配置提交。新设置提交前已生效的租约属于既有工作，缩容时排空；Node 对返回的领取请求再检查最新本机驻留和画布上限，超额则安全释放租约。
 
 Node 启动领取前读取配置；无数据库配置时使用服务端默认/部署初始值，数据库保存后优先数据库。首次启动读取失败则不领取新运行；运行中断线保留最后有效设置，通过现有 SSE 和 5 秒恢复扫描补偿。只应用更高 revision；配置广播必须到达所有执行器，不能被 RunEvents 当成单一 runId 唤醒。
 

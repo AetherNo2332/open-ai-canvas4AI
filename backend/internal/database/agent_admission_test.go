@@ -58,7 +58,7 @@ func TestAgentAdmissionFairnessBeyondTwentyAndCanvasCap(t *testing.T) {
 
 func TestAgentSchedulerConfigOptimisticAndAtomic(t *testing.T) {
 	repo, db := openAgentSchedulerRepositoryDB(t)
-	if err := db.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AdminAuditEvent{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AdminAuditEvent{}); err != nil {
 		t.Fatal(err)
 	}
 	p := model.DefaultAgentSchedulerSetting()

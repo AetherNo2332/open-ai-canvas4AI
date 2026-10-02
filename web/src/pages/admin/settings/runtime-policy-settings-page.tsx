@@ -431,6 +431,7 @@ export default function RuntimePolicySettingsPage() {
                 }}
             >
                 <div className="admin-settings-stack admin-runtime-policy">
+                    <p className="text-sm text-foreground/60">Agent 调度、执行器状态与记忆管理请前往<Link to="/admin/settings/agent" className="underline">Agent（beta）</Link>。</p>
                     <div className={cn("admin-runtime-policy-command-bar", dirty && "is-dirty")}>
                         <div className="admin-runtime-policy-command-copy" aria-live="polite">
                             <span className="admin-runtime-policy-command-icon">

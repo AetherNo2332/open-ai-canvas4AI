@@ -258,6 +258,53 @@ func TestAgentAdmissionAuditPostgresExpiredLeaseTakeoverFencesEpoch(t *testing.T
 	}
 }
 
+func TestAgentAdmissionAuditPostgresConfigSaveWaitsForAdmissionCommit(t *testing.T) {
+	db := openAgentAdmissionAuditPostgresDB(t)
+	if err := db.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AdminAuditEvent{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentAdmissionCounter{ID: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	held, release := make(chan struct{}), make(chan struct{})
+	holder := make(chan error, 1)
+	go func() {
+		holder <- db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&model.AgentAdmissionCounter{}).Where("id = ?", 1).UpdateColumn("value", gorm.Expr("value + 0")).Error; err != nil {
+				return err
+			}
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+	saved := make(chan error, 1)
+	go func() {
+		p := model.DefaultAgentSchedulerSetting()
+		saved <- repository.New(db).SaveAgentSchedulerSetting(&p, 0, &model.AdminAuditEvent{ID: "admission-config-audit"})
+	}()
+	select {
+	case err := <-saved:
+		close(release)
+		<-holder
+		t.Fatalf("save overtook uncommitted admission: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	if err := <-holder; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-saved:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("config save remained blocked after admission commit")
+	}
+}
+
 func TestAgentAdmissionAuditPostgresSettingsCASHasOneWinner(t *testing.T) {
 	db := openAgentAdmissionAuditPostgresDB(t)
 	if err := db.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentWakeEvent{}, &model.AgentEventCounter{}, &model.AdminAuditEvent{}); err != nil {

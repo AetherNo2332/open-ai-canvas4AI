@@ -33,3 +33,15 @@ test("resident shrink rechecks claims already in flight and releases excess leas
  assert.equal(entered,1);assert.equal(released,3);
  stop.abort();finish();await loop;
 });
+
+test("canvas quota shrink rechecks pending claims without shrinking process capacity",async()=>{
+ const events=new RunEvents();const stop=new AbortController();let quota=4;let claimed=0;let entered=0;let released=0;
+ let resolveClaims!:()=>void;const claims=new Promise<void>(resolve=>resolveClaims=resolve);
+ let finish!:()=>void;const running=new Promise<void>(resolve=>finish=resolve);
+ const loop=runEventSessions({concurrency:4,maxSessions:4,events,signal:stop.signal,
+  getConfig:()=>({dispatchConcurrency:4,maxResidentSessions:4,maxResidentPerCanvas:quota}),
+  createBridge:()=>({claim:async()=>{const n=++claimed;if(n>4)return null;await claims;return {runId:`c${n}`,userId:"u",piSessionId:`s${n}`,request:{canvasId:"same"}} as PiSnapshot},failRun:async()=>{},release:async()=>{released++}}),
+  run:async()=>{entered++;await running},onError:()=>{}});
+ await tick();quota=1;resolveClaims();await tick();await tick();
+ try {assert.equal(entered,1);assert.equal(released,3);}finally{stop.abort();finish();await loop;}
+});
