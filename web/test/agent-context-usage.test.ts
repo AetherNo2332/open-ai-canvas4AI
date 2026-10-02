@@ -1,9 +1,17 @@
 import { describe, expect, it } from "bun:test";
-import { contextInputTokens, contextPressureRatio, emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage } from "@/lib/canvas/agent-context-usage";
+import { continueAgentContextUsage, contextInputTokens, contextPressureRatio, emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage } from "@/lib/canvas/agent-context-usage";
 
 const event = (runId: string, type: string, payload: Record<string, unknown>, seq = 1) => ({ runId, type, payload, seq });
 
 describe("Agent context usage events", () => {
+    it("retains a session measurement across runs and replaces it with the next reading", () => {
+        const previous = reduceAgentContextUsage(emptyAgentContextUsage("run-1"), event("run-1", "context_pressure", { estimatedInputTokens: 12000 }));
+        const continued = continueAgentContextUsage(previous, "run-2");
+        expect(continued.reading).toEqual(previous.reading);
+        expect(continued.readingSeq).toBe(0);
+        expect(reduceAgentContextUsage(continued, event("run-2", "context_pressure", { estimatedInputTokens: 15000 })).reading).toEqual({ estimatedInputTokens: 15000 });
+        expect(emptyAgentContextUsage("").reading).toBeNull();
+    });
     it("keeps provider's previous measurement separate from projected next request", () => {
         const state = reduceAgentContextUsage(
             emptyAgentContextUsage("run-1"),

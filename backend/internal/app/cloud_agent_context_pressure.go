@@ -310,7 +310,7 @@ func (s *Service) cloudAgentContextPressure(canonical canonicalAgentRequest, pro
 	}
 	pressure.ModelLimitConfigured = true
 	pressure.ContextWindowTokens = budget.ContextWindowTokens
-	pressure.ReservedOutputTokens = budget.MaxOutputTokens
+	pressure.ReservedOutputTokens = budget.ReservedOutputTokens
 	pressure.OverheadTokens = budget.OverheadTokens
 	pressure.InputBudgetTokens = budget.InputBudgetTokens
 	pressure.CompactAtTokens = budget.CompactAtTokens

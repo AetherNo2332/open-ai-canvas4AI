@@ -7,7 +7,7 @@ import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-retry";
 import { agentPlanVisible, latestAgentPlanItems, latestAgentPlanTerminal, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
-import { emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage, type AgentContextPhase, type AgentContextUsage, type AgentContextUsageView } from "@/lib/canvas/agent-context-usage";
+import { continueAgentContextUsage, emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage, type AgentContextPhase, type AgentContextUsage, type AgentContextUsageView } from "@/lib/canvas/agent-context-usage";
 import { reduceAgentRun } from "@/lib/canvas/agent-run-state";
 import { nanoid } from "nanoid";
 
@@ -112,6 +112,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const reducedMotion = useReducedMotion();
     const [view, setView] = useState<AgentPanelView>("chat");
     const [run, setRun] = useState<AgentRun | null>(null);
+    const currentRunIdRef = useRef(run?.id);
+    currentRunIdRef.current = run?.id;
     const [contextUsage, setContextUsage] = useState<AgentContextUsage>(() => emptyAgentContextUsage(""));
     const [connectionStatus, setConnectionStatus] = useState<"connecting" | "connected" | "reconnecting" | "disconnected">("connecting");
     const [connectionEpoch, setConnectionEpoch] = useState(0);
@@ -504,6 +506,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         presetApplyingRef.current = null;
         setPresetApplyingId("");
         setConversations([]);
+        setContextUsage(emptyAgentContextUsage(""));
         setRun(null);
         setMessages([]);
         setSelectedSkillIds([]);
@@ -520,6 +523,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     setActiveConversationId(current.id);
                     setMessages(current.messages);
                     setRun(current.run);
+                    setContextUsage(current.contextUsage || emptyAgentContextUsage(current.run?.id || ""));
                     setPermissionMode(current.permissionMode);
                     setSelectedSkillIds(current.skillIds || []);
                     if (current.model) setModel(current.model);
@@ -555,6 +559,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 title: cloudAgentConversationTitle(messages),
                 messages,
                 run,
+                contextUsage,
                 model: selectedModel || undefined,
                 permissionMode,
                 skillIds: selectedSkillIds,
@@ -563,7 +568,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             };
             return [next, ...current.filter((conversation) => conversation.id !== activeConversationId)];
         });
-    }, [activeConversationId, historyHydrated, messages, permissionMode, run, selectedModel, selectedSkillIds]);
+    }, [activeConversationId, historyHydrated, messages, permissionMode, run, selectedModel, selectedSkillIds, contextUsage]);
 
     useEffect(() => {
         if (!historyHydrated) return;
@@ -575,13 +580,16 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
 
     useEffect(() => {
         if (!run?.id) return;
+        const scope = conversationScope;
+        let active = true;
         if (lastSeqRunIdRef.current !== run.id) {
             lastSeqRunIdRef.current = run.id;
             lastSeqRef.current = 0;
         }
-        return subscribeAgentEvents(
+        const unsubscribe = subscribeAgentEvents(
             run.id,
             (event) => {
+                if (!active || currentScope.current !== scope || currentRunIdRef.current !== run.id || event.runId !== run.id) return;
                 // Only persisted agent events participate in the replay cursor.
                 // Snapshot-derived UI events intentionally use seq=0.
                 if (event.seq > 0) {
@@ -596,8 +604,9 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             },
             {
                 after: lastSeqRef.current,
-                onConnectionChange: setConnectionStatus,
+                onConnectionChange: status => { if (active && currentScope.current === scope && currentRunIdRef.current === run.id) setConnectionStatus(status); },
                 onError: (cause) => {
+                    if (!active || currentScope.current !== scope || currentRunIdRef.current !== run.id) return;
                     canvasSyncRef.current?.reconcile();
                     setMessages((current) => appendAgentError(current, `stream-error-${run.id}`, cause, "Agent 事件流已断开"));
                     // The observation channel failed, not the durable run. Keep
@@ -606,7 +615,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 },
             },
         );
-    }, [run?.id, connectionEpoch]);
+        return () => { active = false; unsubscribe(); };
+    }, [run?.id, connectionEpoch, conversationScope]);
 
     useEffect(() => {
         if (!run?.id || connectionStatus !== "disconnected") return;
@@ -700,6 +710,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     title: cloudAgentConversationTitle(nextMessages),
                     messages: nextMessages,
                     run,
+                    contextUsage,
                     model: selectedModel || undefined,
                     permissionMode,
                     skillIds: selectedSkillIds,
@@ -714,7 +725,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             const result = submission.parentRunId ? await sendAgentMessage(submission.parentRunId, request) : await createAgentRun(request);
             accepted = true;
             if (currentScope.current === scope) {
-                setContextUsage(emptyAgentContextUsage(result.run.id));
+                currentRunIdRef.current = result.run.id;
+                setContextUsage(current => submission.parentRunId ? continueAgentContextUsage(current, result.run.id) : emptyAgentContextUsage(result.run.id));
                 setRun(result.run);
             }
             await clearCloudAgentPendingSubmission(canvasId, activeConversationId);
@@ -837,6 +849,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         approvalRequestRef.current = null;
         setApprovalSubmitting(false);
         setActiveConversationId(id);
+        setContextUsage(emptyAgentContextUsage(""));
         setRun(null);
         setMessages([]);
         setSelectedSkillIds([]);
@@ -856,6 +869,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         approvalRequestRef.current = null;
         setApprovalSubmitting(false);
         setActiveConversationId(conversation.id);
+        setContextUsage(conversation.contextUsage || emptyAgentContextUsage(conversation.run?.id || ""));
         setRun(conversation.run);
         setMessages(conversation.messages);
         setPermissionMode(conversation.permissionMode);

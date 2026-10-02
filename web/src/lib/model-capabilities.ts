@@ -122,10 +122,15 @@ function normalizeCapabilityStrings(values: string[]) {
     return Array.from(new Set(values.map(normalizeCapabilityString)));
 }
 
+export function automaticTextOutputReserve(text: TextCapabilityConfig): number {
+    if ((text.maxOutputTokens || 0) > 0) return text.maxOutputTokens!;
+    return (text.contextWindowTokens || 0) > 0 ? Math.min(32768, Math.max(1, Math.floor(text.contextWindowTokens! / 8))) : 0;
+}
+
 export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): ModelCapabilityConfig {
     return {
         ...config,
-        text: config.text ? { ...config.text, streaming: config.text.streaming !== false } : config.text,
+        text: config.text ? { ...config.text, streaming: config.text.streaming !== false, reservedOutputTokens: automaticTextOutputReserve(config.text) } : config.text,
         image: config.image
             ? {
                   ...config.image,

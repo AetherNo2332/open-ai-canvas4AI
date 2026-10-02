@@ -51,6 +51,11 @@ export function emptyAgentContextUsage(runId: string): AgentContextUsage {
     return { runId, reading: null, readingSeq: 0, readingStale: false, compactionPending: null, lastCompaction: null };
 }
 
+/** Continue the same session with a new run, retaining its last measurement. */
+export function continueAgentContextUsage(current: AgentContextUsage, runId: string): AgentContextUsage {
+    return { ...current, runId, readingSeq: 0, compactionPending: null };
+}
+
 /** Reduces durable Agent events without mixing readings from different runs. */
 export function reduceAgentContextUsage(current: AgentContextUsage, event: AgentContextUsageEvent): AgentContextUsage {
     const scoped = current.runId === event.runId ? current : emptyAgentContextUsage(event.runId);

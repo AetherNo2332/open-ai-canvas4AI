@@ -606,7 +606,7 @@ function snapshotFor(): PiSnapshot {
 
 test("Pi uses the Go-resolved context window and output limit", () => {
   const snapshot = snapshotFor();
-  snapshot.modelLimits = { contextWindowTokens: 48_000, maxOutputTokens: 6_000, configured: true, source: "channel-model" };
+  snapshot.modelLimits = { contextWindowTokens: 48_000, maxOutputTokens: 6_000, reservedOutputTokens: 12_000, configured: true, source: "channel-model" };
   const model = canvasModel(snapshot);
   assert.equal(model.contextWindow, 48_000);
   assert.equal(model.maxTokens, 6_000);

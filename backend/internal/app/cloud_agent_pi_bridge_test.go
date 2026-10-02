@@ -104,6 +104,49 @@ func TestPiAgentSnapshotCarriesGoResolvedModelLimits(t *testing.T) {
 	}
 }
 
+func TestPiAgentOutputReserveIsAutomaticAndPolicyBounded(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	declareTestChannelWindow(t, db, 128_000, 32_768)
+	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ModelLimits.MaxOutputTokens != 16_384 || snapshot.ModelLimits.ReservedOutputTokens != 16_384 {
+		t.Fatalf("policy did not bound the output and reserve: %+v", snapshot.ModelLimits)
+	}
+	step, err := s.PiModelStep("user", run.ID, run.LeaseOwner, PiModelStepRequest{Canonical: snapshot.Canonical})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.repo.TaskForUser("user", step.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input struct {
+		TextOptions struct {
+			MaxOutputTokens int `json:"maxOutputTokens"`
+		} `json:"textOptions"`
+	}
+	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+		t.Fatal(err)
+	}
+	if input.TextOptions.MaxOutputTokens != snapshot.ModelLimits.MaxOutputTokens {
+		t.Fatalf("request limit differs from Pi: %d", input.TextOptions.MaxOutputTokens)
+	}
+}
+
+func TestPiAgentUndeclaredOutputUsesBoundedWindowReserve(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	declareTestChannelWindow(t, db, 32_000, 0)
+	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ModelLimits.MaxOutputTokens != 4_000 || snapshot.ModelLimits.ReservedOutputTokens != 4_000 {
+		t.Fatalf("window-derived output budget mismatch: %+v", snapshot.ModelLimits)
+	}
+}
+
 func TestPiStreamPublisherUpdatesActiveDraft(t *testing.T) {
 	s, _, run := piAgentTestLeasedFixture(t)
 	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
@@ -192,8 +235,9 @@ func TestPiModelStepCarriesEscalatedOutputSettings(t *testing.T) {
 	if input.TextOptions.Thinking {
 		t.Fatal("ForceThinkingOff 未应用到 Pi 模型任务")
 	}
-	if input.TextOptions.MaxOutputTokens != cloudAgentStepBoostFallbackTokens {
-		t.Fatalf("Pi 忽略了升级输出预算：got=%d want=%d", input.TextOptions.MaxOutputTokens, cloudAgentStepBoostFallbackTokens)
+	wantOutput := min(cloudAgentStepBoostFallbackTokens, s.cloudAgentContextBudgetForRequest(snapshot.Request).MaxOutputTokens)
+	if input.TextOptions.MaxOutputTokens != wantOutput {
+		t.Fatalf("Pi 忽略了升级输出预算：got=%d want=%d", input.TextOptions.MaxOutputTokens, wantOutput)
 	}
 }
 

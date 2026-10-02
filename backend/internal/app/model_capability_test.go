@@ -418,6 +418,28 @@ func TestValidateVideoTaskRequiresDeclaredMinimumImages(t *testing.T) {
 }
 
 // 0 是"未声明"，不是"默认 16384/128000"：任何 normalize 都不得把它改写成猜测值。
+func TestTextCapabilityReserveIsDerivedWithoutChangingModelOutput(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
+	profile.Text.ContextWindowTokens = 128_000
+	profile.Text.MaxOutputTokens = 8_192
+	profile.Text.ReservedOutputTokens = 64_000
+	normalized, err := NormalizeModelCapabilityConfig("text", string(model.ChannelInterfaceChatCompletion), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Text.ReservedOutputTokens != 8_192 || normalized.Text.MaxOutputTokens != 8_192 {
+		t.Fatalf("legacy reserve changed the model ceiling: %+v", normalized.Text)
+	}
+	profile.Text.MaxOutputTokens = 0
+	normalized, err = NormalizeModelCapabilityConfig("text", string(model.ChannelInterfaceChatCompletion), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Text.ReservedOutputTokens != 16_000 || normalized.Text.MaxOutputTokens != 0 {
+		t.Fatalf("window fallback must not invent model capability: %+v", normalized.Text)
+	}
+}
+
 func TestTextCapabilityZeroMeansUndeclared(t *testing.T) {
 	value := &TextCapabilityConfig{
 		ContextWindowTokens:  0,

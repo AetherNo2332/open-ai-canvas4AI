@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 )
 
 func TestCloudAgentContextBudgetKeepsModelWindowAndOutputSeparate(t *testing.T) {
@@ -32,7 +31,7 @@ func TestCloudAgentContextBudgetUsesChannelModelCapability(t *testing.T) {
 	}
 
 	budget := s.cloudAgentContextBudgetForRequest(CloudAgentRequest{ChannelID: "channel", ChannelModelKey: "text-test"})
-	if budget.Source != "channel-model" || budget.ContextWindowTokens != 1_000_000 || budget.MaxOutputTokens != 64_000 {
+	if budget.Source != "channel-model" || budget.ContextWindowTokens != 1_000_000 || budget.MaxOutputTokens != cloudAgentStepMaxOutputTokens || budget.ReservedOutputTokens != cloudAgentStepMaxOutputTokens {
 		t.Fatalf("channel capability budget = %#v", budget)
 	}
 	if budget.InputBudgetTokens <= 900_000 {
@@ -49,21 +48,19 @@ func TestCloudAgentContextBudgetUsesLogicalRouteSafeIntersection(t *testing.T) {
 	second.ContextWindowTokens = 512_000
 	second.MaxOutputTokens = 32_000
 
-	s := &Service{
-		repo:            repository.New(nil),
-		routeCatalogTTL: time.Hour,
-		routeCatalog: &routeCatalogSnapshot{LoadedAt: time.Now(), Models: map[string]cachedLogicalModel{
-			"logical-text": {
-				Routes: []cachedLogicalRoute{
-					{CapabilitySpec: CapabilitySpec{Capability: "text"}, ChannelModel: model.ChannelModel{Capability: "text", CapabilityConfigJSON: mustEncodeModelCapabilityConfig(t, &ModelCapabilityConfig{Version: 1, Text: &first})}},
-					{CapabilitySpec: CapabilitySpec{Capability: "text"}, ChannelModel: model.ChannelModel{Capability: "text", CapabilityConfigJSON: mustEncodeModelCapabilityConfig(t, &ModelCapabilityConfig{Version: 1, Text: &second})}},
-				},
+	s, _, _, _ := creationTestService(t)
+	s.routeCatalogTTL = time.Hour
+	s.routeCatalog = &routeCatalogSnapshot{LoadedAt: time.Now(), Models: map[string]cachedLogicalModel{
+		"logical-text": {
+			Routes: []cachedLogicalRoute{
+				{CapabilitySpec: CapabilitySpec{Capability: "text"}, ChannelModel: model.ChannelModel{Capability: "text", CapabilityConfigJSON: mustEncodeModelCapabilityConfig(t, &ModelCapabilityConfig{Version: 1, Text: &first})}},
+				{CapabilitySpec: CapabilitySpec{Capability: "text"}, ChannelModel: model.ChannelModel{Capability: "text", CapabilityConfigJSON: mustEncodeModelCapabilityConfig(t, &ModelCapabilityConfig{Version: 1, Text: &second})}},
 			},
-		}},
-	}
+		},
+	}}
 
 	budget := s.cloudAgentContextBudgetForRequest(CloudAgentRequest{LogicalModelID: "logical-text"})
-	if budget.Source != "logical-route-intersection" || budget.ContextWindowTokens != 512_000 || budget.MaxOutputTokens != 32_000 {
+	if budget.Source != "logical-route-intersection" || budget.ContextWindowTokens != 512_000 || budget.MaxOutputTokens != cloudAgentStepMaxOutputTokens {
 		t.Fatalf("logical route intersection = %#v", budget)
 	}
 }
@@ -94,7 +91,7 @@ func textRouteWithWindow(t *testing.T, window, reservedOutput int) cachedLogical
 		t.Fatal("text capability profile expected")
 	}
 	profile.Text.ContextWindowTokens = window
-	profile.Text.ReservedOutputTokens = reservedOutput
+	profile.Text.MaxOutputTokens = reservedOutput
 	return cachedLogicalRoute{
 		CapabilitySpec: CapabilitySpec{Version: 1, Capability: "text"},
 		ChannelModel: model.ChannelModel{
@@ -133,11 +130,11 @@ func TestCloudAgentRouteIntersectionBudgetUsesPerRouteInputCapacity(t *testing.T
 			budget.InputBudgetTokens, smallestRouteCapacity)
 	}
 	// 预算必须自洽：窗口 - 输出预留 - overhead == 输入预算。
-	if got := budget.ContextWindowTokens - budget.MaxOutputTokens - budget.OverheadTokens; got != budget.InputBudgetTokens {
+	if got := budget.ContextWindowTokens - budget.ReservedOutputTokens - budget.OverheadTokens; got != budget.InputBudgetTokens {
 		t.Fatalf("budget is internally inconsistent: %d-%d-%d = %d, want %d",
 			budget.ContextWindowTokens, budget.MaxOutputTokens, budget.OverheadTokens, got, budget.InputBudgetTokens)
 	}
-	if budget.ContextWindowTokens != 512_000 || budget.MaxOutputTokens != 64_000 {
+	if budget.ContextWindowTokens != 512_000 || budget.ReservedOutputTokens != 64_000 || budget.MaxOutputTokens != 16_000 {
 		t.Fatalf("budget must come from the constraining route, got window=%d reserve=%d",
 			budget.ContextWindowTokens, budget.MaxOutputTokens)
 	}

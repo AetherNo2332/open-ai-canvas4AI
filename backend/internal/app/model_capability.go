@@ -36,8 +36,8 @@ type TextCapabilityConfig struct {
 	// ContextWindowTokens is the provider/model input+output context window.
 	// Zero means unknown and must never be presented as a verified model limit.
 	ContextWindowTokens int `json:"contextWindowTokens,omitempty"`
-	// ReservedOutputTokens is subtracted from the context window when reporting
-	// the input budget available to Agent policies, history and tool messages.
+	// ReservedOutputTokens is derived display metadata; Agent derives the per-step
+	// reserve again from its effective output ceiling and runtime policy.
 	ReservedOutputTokens int `json:"reservedOutputTokens,omitempty"`
 	// MaxOutputTokens is the provider-declared ceiling for one call
 	// (thinking + text + tool arguments). Zero means the provider does not
@@ -353,11 +353,11 @@ func NormalizeModelCapabilityConfigForModel(capability string, protocol string, 
 			streaming := true
 			text.Streaming = &streaming
 		}
-		// §③ 语义收敛：上游在这里做 `ContextWindowTokens == 0 → 128000`、
-		// `MaxOutputTokens == 0 → 16384` 的静默注入（这两段不带冲突标记，会被自动合进来），
-		// 会同时架空 dev 的"0 = 未知"契约与输出预留算式
-		// （cloudAgentEffectiveOutputReserve = max(reservedOutputTokens, maxOutputTokens)，
-		// 被注入的 16384 会把可用输入预算吃掉一大块）。按 dev 口径一律不注入。
+		// Reserve is derived metadata, never an administrator-controlled output ceiling.
+		text.ReservedOutputTokens = text.MaxOutputTokens
+		if text.ReservedOutputTokens <= 0 && text.ContextWindowTokens > 0 {
+			text.ReservedOutputTokens = min(32_768, max(1, text.ContextWindowTokens/8))
+		}
 		value := &ModelCapabilityConfig{Version: 1, Text: &text}
 		if err := validateTextCapabilityConfig(value.Text); err != nil {
 			return nil, err

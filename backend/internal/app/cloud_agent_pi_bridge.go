@@ -91,10 +91,11 @@ type PiSkillFileRequest struct {
 // scheduler. Go remains authoritative for request admission and billing; these
 // values keep Pi's automatic compaction threshold close to the route budget.
 type PiAgentModelLimits struct {
-	ContextWindowTokens int    `json:"contextWindowTokens"`
-	MaxOutputTokens     int    `json:"maxOutputTokens"`
-	Configured          bool   `json:"configured"`
-	Source              string `json:"source"`
+	ContextWindowTokens  int    `json:"contextWindowTokens"`
+	MaxOutputTokens      int    `json:"maxOutputTokens"`
+	ReservedOutputTokens int    `json:"reservedOutputTokens"`
+	Configured           bool   `json:"configured"`
+	Source               string `json:"source"`
 }
 
 type PiAgentSessionEntry struct {
@@ -903,6 +904,10 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	}
 	stepThinking := cloudAgentReasoningEnabled(state.Policy.ReasoningMode) && !state.ForceThinkingOff
 	stepOutputTokens := cloudAgentStepOutputBudget(state.StepLimits, state.BoostStepOutputBudget)
+	modelBudget := s.cloudAgentContextBudgetForRequest(state.Request)
+	if stepOutputTokens <= 0 || stepOutputTokens > modelBudget.MaxOutputTokens {
+		stepOutputTokens = modelBudget.MaxOutputTokens
+	}
 	input := map[string]any{
 		"mode": "text", "prompt": state.Request.Prompt,
 		"agentRequests": map[string]any{"canonical": request.Canonical},
@@ -1440,6 +1445,12 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		return nil, err
 	}
 	budget := s.cloudAgentContextBudgetForRequest(state.Request)
+	// Recovery may impose a smaller request ceiling even when the policy is unlimited.
+	if limits, limitErr := s.cloudAgentStepLimits(); limitErr == nil {
+		if output := cloudAgentStepOutputBudget(limits, state.BoostStepOutputBudget); output > 0 {
+			budget.MaxOutputTokens = min(budget.MaxOutputTokens, output)
+		}
+	}
 	tools := make([]PiAgentToolSpec, 0, len(state.Canonical.Tools))
 	for _, item := range state.Canonical.Tools {
 		function, _ := item["function"].(map[string]any)
@@ -1500,7 +1511,7 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,
-		Request: state.Request, ModelLimits: PiAgentModelLimits{ContextWindowTokens: budget.ContextWindowTokens, MaxOutputTokens: budget.MaxOutputTokens, Configured: budget.Configured, Source: budget.Source}, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
+		Request: state.Request, ModelLimits: PiAgentModelLimits{ContextWindowTokens: budget.ContextWindowTokens, MaxOutputTokens: budget.MaxOutputTokens, ReservedOutputTokens: budget.ReservedOutputTokens, Configured: budget.Configured, Source: budget.Source}, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
 		SkillRuntimeMode: mode, Skills: nativeSkills,
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。

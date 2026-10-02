@@ -80,7 +80,7 @@ export interface PiSnapshot {
   revision: number;
   status: string;
   request: { prompt: string; canvasId?: string; model?: string; channelModelKey?: string; visionEnabled?: boolean };
-  modelLimits: { contextWindowTokens: number; maxOutputTokens: number; configured: boolean; source: string };
+  modelLimits: { contextWindowTokens: number; maxOutputTokens: number; reservedOutputTokens?: number; configured: boolean; source: string };
   canonical: PiCanonical;
   activeTaskId?: string;
   lastTaskId?: string;
