@@ -6,4 +6,4 @@ build() {
 }
 build --build-arg BUILD_COMMIT="$(git rev-parse --short HEAD)" -t "${EVENT_BACKEND_IMAGE:-canvas-event-backend:local}" -f backend/Dockerfile .
 build -t "${EVENT_AGENT_IMAGE:-canvas-event-agent:local}" -f agent/Dockerfile .
-build -t "${EVENT_WEB_IMAGE:-canvas-event-web:local}" -f Dockerfile .
+build --build-arg BUILD_COMMIT="$(git rev-parse --short HEAD)" -t "${EVENT_WEB_IMAGE:-canvas-event-web:local}" -f Dockerfile .

@@ -14,7 +14,6 @@ const AccessSettingsPanel = lazy(() => import("./components/access-settings-pane
 const EmailSettingsPanel = lazy(() => import("./components/email-settings-panel"));
 const FeatureAvailabilityPanel = lazy(() => import("./components/feature-availability-panel"));
 const StorageResourcesPanel = lazy(() => import("./components/storage-resources-panel"));
-const AgentLessonsPanel = lazy(() => import("./components/agent-lessons-panel"));
 
 export function AnalyticsPage() {
     const { references } = useAdminContext();
@@ -126,14 +125,6 @@ export function StorageResourcesPage() {
     return (
         <AdminPageFrame title="存储资源" description="只读查看资源记录、容量分布与文件预览" scroll>
             <StorageResourcesPanel />
-        </AdminPageFrame>
-    );
-}
-
-export function AgentLessonsPage() {
-    return (
-        <AdminPageFrame title="Agent 记忆" description="按用户查看个人记忆；批准仍由用户自己处理" scroll>
-            <AgentLessonsPanel />
         </AdminPageFrame>
     );
 }
