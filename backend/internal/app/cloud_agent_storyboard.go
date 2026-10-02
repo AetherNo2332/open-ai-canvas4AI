@@ -67,12 +67,32 @@ func cloudAgentStoryboardRowSchema() map[string]any {
 		"continuityOut":         map[string]any{"type": "string", "maxLength": 20000},
 		"negativePrompt":        map[string]any{"type": "string", "maxLength": 20000},
 	}
-	return map[string]any{"type": "object", "properties": properties, "required": []string{"durationSeconds"}, "additionalProperties": false}
+	descriptions := map[string]string{
+		"durationSeconds": "镜头时长（秒），新增镜头必填且大于0。",
+		"plotDescription": "静态画面与剧情描述；新增镜头至少填写本字段或 videoMotionPrompt。",
+		"dialogue":        "台词文本；无台词可省略。", "videoMotionPrompt": "给视频模型的完整动态镜头提示词，包含动作和运镜。",
+		"imageGenerationPrompt": "给图片模型的静态关键帧提示词。", "camera": "机位、角度与运镜设计。",
+		"motion": "主体动作概要，与完整视频提示词分开记录。", "shotSize": "景别，如近景、中景、全景。",
+		"emotion": "角色情绪。", "lightingAndAtmosphere": "光线与氛围。", "audioEffects": "音效设计。",
+		"narrativeIntent": "镜头的叙事目的。", "viewerPOV": "观众视角。", "performanceBlocking": "演员走位与表演。",
+		"timeBeats":     "镜头内时间节拍的纯文本，如 0–2秒转身，2–5秒向前走；不是数组。",
+		"continuityOut": "衔接下一镜头所需的状态与连续性。", "negativePrompt": "应避免的画面或动作。",
+	}
+	for key, raw := range properties {
+		raw.(map[string]any)["description"] = descriptions[key]
+	}
+	return map[string]any{"type": "object", "properties": properties, "required": []string{"durationSeconds"}, "additionalProperties": false,
+		"anyOf": []map[string]any{
+			{"properties": map[string]any{"plotDescription": map[string]any{"minLength": 1}}, "required": []string{"plotDescription"}},
+			{"properties": map[string]any{"videoMotionPrompt": map[string]any{"minLength": 1}}, "required": []string{"videoMotionPrompt"}},
+		},
+	}
 }
 
 func cloudAgentStoryboardPatchSchema() map[string]any {
 	schema := cloudAgentStoryboardRowSchema()
 	delete(schema, "required")
+	delete(schema, "anyOf")
 	schema["minProperties"] = 1
 	return schema
 }

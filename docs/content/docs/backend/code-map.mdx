@@ -5,6 +5,12 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## Agent 工具合同
+
+- 工具及字段说明：`backend/internal/app/agent-tool-descriptions.md`；目录编译：`cloud_agent_tools.go`；条件参数合同：`cloud_agent_tool_contracts.go`；零副作用预检：`cloud_agent_tool_schema.go`。
+- Go/Pi 共用制品：`agent/harness/TOOL_SCHEMA.json`；通过 `TestAgentToolSchemaArtifactMatchesRuntime` 生成和检测漂移。Harness 同步脚本：`agent/scripts/sync-harness.mjs`。
+- SHA 摘要接收与写回：`cloud_agent_vision.go`、`cloud_agent_runtime.go`；Pi 图片与摘要投影：`agent/src/session-history.ts`。
+
 ## Agent（beta）调度配置与管理
 
 - 页面与 API：`web/src/pages/admin/settings/agent-settings-page.tsx`、`web/src/services/api/admin-agent-settings.ts`；复用 `agent-lessons-panel.tsx`。

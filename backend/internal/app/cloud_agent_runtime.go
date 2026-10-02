@@ -202,6 +202,9 @@ type cloudAgentRuntime struct {
 	// ImageInspectionReads 以“节点 + 资源 + 画布 revision”为 key，避免同一张图在
 	// 同一版本的画布里反复触发视觉输入。画布内容变化后 key 自然变化，允许重新识别。
 	ImageInspectionReads map[string]int `json:"imageInspectionReads,omitempty"`
+	// Only admitted provider envelopes prove delivery; durable history can contain
+	// images excluded by Pi's model-facing projection.
+	DeliveredImageSHAs map[string]string `json:"deliveredImageSHAs,omitempty"`
 	// ImageInspectCalls 记录本轮所有图片识别工具调用次数（包括只回执文字的重复调用）。
 	// 它与 ImageInspectCounts 一起进检查点，防止模型通过 refresh 或切换节点绕过总预算。
 	ImageInspectCalls int `json:"imageInspectCalls,omitempty"`
@@ -1755,7 +1758,11 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 					}
 					// 两种回执都算一次调用预算：attached=false 表示这次只回执文字、没有附图。
 					attached := strings.TrimSpace(inspection.ImageURL) != ""
-					state.markCanvasImageInspection(stringValue(inspection.Receipt["nodeId"]), attached, stringValue(inspection.Receipt["contentSignature"]))
+					if inspection.Summary != nil {
+						state.cloudAgentRecordImageObservations(stringValue(inspection.Receipt["nodeId"])+"："+stringValue(inspection.Summary["short"]), true)
+					} else {
+						state.markCanvasImageInspection(stringValue(inspection.Receipt["nodeId"]), attached, stringValue(inspection.Receipt["contentSignature"]))
+					}
 					if inspection.CacheKey != "" {
 						if state.ImageInspectionReads == nil {
 							state.ImageInspectionReads = map[string]int{}
@@ -2096,6 +2103,7 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 					state.LastStepModel = model
 					state.LastStepChannelID = channelID
 					state.LastStepWindowTokens = contextPressure.ContextWindowTokens
+					state.cloudAgentRecordImageDeliverySHA(requestCanonical)
 				}
 				// 记下发出去这份 canonical 的本地计价：任务回来时用它和上游实测配成锚点。
 				state.LastStepTaskID = task.ID

@@ -99,7 +99,7 @@ func TestCloudAgentToolArgumentValidationConditionalBranches(t *testing.T) {
 	missingNodeType := `{"snapshotHash":"h","ops":[{"type":"add_node","id":"n1"}]}`
 	err := validateCloudAgentToolArguments(parameters, missingNodeType)
 	var fieldErr *cloudAgentFieldArgumentError
-	if !errors.As(err, &fieldErr) || fieldErr.Field != "ops[0]" || fieldErr.Issue != "invalid_value" {
+	if !errors.As(err, &fieldErr) || fieldErr.Field != "ops[0].nodeType" || fieldErr.Issue != "required" {
 		t.Fatalf("add_node 缺 nodeType 应被条件必填拒绝：%v", err)
 	}
 	missingPatch := `{"snapshotHash":"h","ops":[{"type":"update_node","id":"n1"}]}`

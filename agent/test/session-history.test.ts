@@ -6,6 +6,69 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { PiSnapshot } from "../src/bridge.js";
 import { createImageContextExtension, createTerminalHistoryExtension } from "../src/session-history.js";
 
+test("saved SHA-bound vision summaries replace images even across compaction", async () => {
+  const sha = "a".repeat(64);
+  const image = { role: "user", timestamp: 1, content: "", canvasContent: [
+    { type: "text", text: `画面：${JSON.stringify({ nodeId: "cat", sha256: sha })}` },
+    { type: "image_url", image_url: { url: "resource:cat" } }] } as unknown as AgentMessage;
+  const saved = { role: "toolResult", toolName: "canvas_inspect_image", toolCallId: "save", timestamp: 2,
+    content: [{ type: "text", text: JSON.stringify({ nodeId: "cat", sha256: sha, summarySaved: true, imageAttached: false,
+      visionCache: { short: "white cat", detailed: {} } }) }] } as unknown as AgentMessage;
+  let handler: any;
+  const extension = createImageContextExtension();
+  if (typeof extension === "function") throw new Error("expected image extension");
+  await extension.factory({ on: (_: string, listener: unknown) => { handler = listener; } } as unknown as ExtensionAPI);
+  const context = { sessionManager: { getBranch: () => [{ type: "message", message: image }, { type: "message", message: saved }] } };
+  const before = JSON.stringify(image);
+  const result = handler({ messages: [image, saved] }, context);
+  assert.ok(result);
+  assert.equal(JSON.stringify(result.messages).includes('"type":"image_url"'), false);
+  assert.ok(JSON.stringify(result.messages).includes("white cat"));
+  const compacted = handler({ messages: [{ role: "user", content: "continue", timestamp: 3 }] }, context);
+  assert.equal(JSON.stringify(compacted?.messages || []).includes('"type":"image_url"'), false);
+  assert.ok(JSON.stringify(compacted?.messages || []).includes("white cat"), "compaction must retain the SHA-bound observation");
+  const cacheOnly = handler({ messages: [{ role: "user", content: "continue", timestamp: 3 }] },
+    { sessionManager: { getBranch: () => [{ type: "message", message: saved }] } });
+  assert.ok(JSON.stringify(cacheOnly?.messages || []).includes("white cat"), "a cached-only read must survive compaction without an original image");
+  assert.equal(JSON.stringify(image), before, "durable original must remain intact");
+});
+
+test("image projection sends at most the newest unsummarized image", async () => {
+  const images = ["one", "two"].map((id, i) => ({ role: "user", timestamp: i, content: "", canvasContent: [
+    { type: "text", text: JSON.stringify({ nodeId: id, sha256: id === "one" ? "a".repeat(64) : "b".repeat(64) }) },
+    { type: "image_url", image_url: { url: `resource:${id}` } },
+  ] })) as unknown as AgentMessage[];
+  let handler: any;
+  const extension = createImageContextExtension();
+  if (typeof extension === "function") throw new Error("expected image extension");
+  await extension.factory({ on: (_: string, listener: unknown) => { handler = listener; } } as unknown as ExtensionAPI);
+  const result = handler({ messages: images }, { sessionManager: { getBranch: () => images.map(message => ({ type: "message", message })) } });
+  const parts = result.messages.flatMap((m: any) => m.canvasContent || []);
+  assert.equal(parts.filter((p: any) => p.type === "image_url").length, 1);
+  assert.equal(parts.find((p: any) => p.type === "image_url").image_url.url, "resource:two");
+});
+
+test("old SHA and failed summary receipts cannot hide an updated image", async () => {
+  const image = { role: "user", timestamp: 3, content: "", canvasContent: [
+    { type: "text", text: JSON.stringify({ bytes: 12, nodeId: "cat", sha256: "b".repeat(64) }) },
+    { type: "image_url", image_url: { url: "resource:new" } },
+  ] } as unknown as AgentMessage;
+  const saved = (sha: string, isError: boolean) => ({ role: "toolResult", toolName: "canvas_inspect_image", toolCallId: "save", timestamp: 2, isError,
+    content: [{ type: "text", text: JSON.stringify({ nodeId: "cat", sha256: sha, imageAttached: false,
+      visionCache: { short: "old cat", detailed: {} } }) }] }) as unknown as AgentMessage;
+  let handler: any;
+  const extension = createImageContextExtension();
+  if (typeof extension === "function") throw new Error("expected image extension");
+  await extension.factory({ on: (_: string, listener: unknown) => { handler = listener; } } as unknown as ExtensionAPI);
+  for (const receipt of [saved("a".repeat(64), false), saved("b".repeat(64), true)]) {
+    const source = [receipt, image];
+    const result = handler({ messages: [image] }, { sessionManager: { getBranch: () => source.map(message => ({ type: "message", message })) } });
+    const messages = result?.messages || [image];
+    assert.equal(messages.flatMap((m: any) => m.canvasContent || []).filter((p: any) => p.type === "image_url").length, 1);
+    assert.ok(JSON.stringify(messages).includes("resource:new"));
+  }
+});
+
 test("context repair never substitutes for current-run receipt recovery, even with a reused call ID", async () => {
   const old = { role: "assistant", timestamp: 1, content: [
     { type: "toolCall", id: "reused", name: "canvas_apply_ops", arguments: {} },

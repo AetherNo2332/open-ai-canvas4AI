@@ -98,6 +98,14 @@ func validateCloudAgentSchemaValue(field string, schema map[string]any, value an
 				return cloudAgentSchemaTypeError(path, "布尔值")
 			}
 		}
+	} else if text, ok := value.(string); ok {
+		if err := validateCloudAgentSchemaString(path, schema, text); err != nil {
+			return err
+		}
+	} else if number, ok := cloudAgentSchemaNumber(value); ok {
+		if err := validateCloudAgentSchemaNumberBounds(path, schema, number); err != nil {
+			return err
+		}
 	} else {
 		// 没有声明 type 的分支（oneOf 的子 schema）也要能递归检查嵌套结构。
 		if object, ok := value.(map[string]any); ok {
@@ -108,6 +116,9 @@ func validateCloudAgentSchemaValue(field string, schema map[string]any, value an
 	}
 	if err := validateCloudAgentSchemaEnum(path, schema, value); err != nil {
 		return err
+	}
+	if excluded, ok := schema["not"].(map[string]any); ok && validateCloudAgentSchemaValue(path, excluded, value, depth+1) == nil {
+		return cloudAgentFieldError(path, "invalid_value", "当前操作不允许参数 "+path+"；请省略该字段")
 	}
 	return validateCloudAgentSchemaOneOf(path, schema, value, depth)
 }
@@ -170,6 +181,9 @@ func validateCloudAgentSchemaString(path string, schema map[string]any, text str
 }
 
 func validateCloudAgentSchemaNumberBounds(path string, schema map[string]any, value float64) error {
+	if minimum, ok := cloudAgentSchemaNumber(schema["exclusiveMinimum"]); ok && value <= minimum {
+		return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 必须大于 %s", path, cloudAgentFormatSchemaNumber(minimum)))
+	}
 	if minimum, ok := cloudAgentSchemaNumber(schema["minimum"]); ok && value < minimum {
 		return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 不能小于 %s", path, cloudAgentFormatSchemaNumber(minimum)))
 	}
@@ -181,6 +195,19 @@ func validateCloudAgentSchemaNumberBounds(path string, schema map[string]any, va
 
 func validateCloudAgentSchemaEnum(path string, schema map[string]any, value any) error {
 	values, ok := schema["enum"].([]any)
+	if !ok {
+		switch typed := schema["enum"].(type) {
+		case []string:
+			for _, v := range typed {
+				values = append(values, v)
+			}
+		case []int:
+			for _, v := range typed {
+				values = append(values, v)
+			}
+		}
+		ok = len(values) > 0
+	}
 	if !ok || len(values) == 0 {
 		if constant, declared := schema["const"]; declared {
 			if !cloudAgentSchemaEqual(constant, value) {
@@ -197,56 +224,52 @@ func validateCloudAgentSchemaEnum(path string, schema map[string]any, value any)
 	return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 只能是 %s 之一；本次调用未执行", path, cloudAgentSchemaChoices(values)))
 }
 
-// validateCloudAgentSchemaOneOf 支持我们 schema 里用到的条件必填形式：
-// oneOf: [{properties:{type:{const:"add_node"}}, required:["nodeType"]}, …]
-// 分支之间只判断"必填字段与常量是否成立"，不做分支级的未知字段检查（外层已经查过）。
+// 条件分支递归校验必填、常量、范围与禁用字段；匹配操作类型时保留字段级错误。
 func validateCloudAgentSchemaOneOf(path string, schema map[string]any, value any, depth int) error {
-	branches, ok := schema["oneOf"].([]map[string]any)
-	if !ok {
-		if generic, ok := schema["oneOf"].([]any); ok {
-			for _, item := range generic {
-				if branch, ok := item.(map[string]any); ok {
-					branches = append(branches, branch)
+	for _, keyword := range []string{"oneOf", "anyOf"} {
+		branches, ok := schema[keyword].([]map[string]any)
+		if !ok {
+			if generic, ok := schema[keyword].([]any); ok {
+				for _, item := range generic {
+					if branch, ok := item.(map[string]any); ok {
+						branches = append(branches, branch)
+					}
 				}
 			}
 		}
-	}
-	if len(branches) == 0 {
-		return nil
-	}
-	object, ok := value.(map[string]any)
-	if !ok {
-		return nil
-	}
-	for _, branch := range branches {
-		if cloudAgentSchemaBranchMatches(branch, object, depth) {
-			return nil
-		}
-	}
-	return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 不满足任何一种允许的组合；本次调用未执行，请按 parameters 检查字段组合", path))
-}
-
-func cloudAgentSchemaBranchMatches(branch map[string]any, object map[string]any, depth int) bool {
-	if depth > cloudAgentSchemaMaxDepth {
-		return true
-	}
-	for name, value := range object {
-		properties, _ := branch["properties"].(map[string]any)
-		child, declared := properties[name].(map[string]any)
-		if !declared {
+		if len(branches) == 0 {
 			continue
 		}
-		if constant, ok := child["const"]; ok && !cloudAgentSchemaEqual(constant, value) {
-			return false
+		object, ok := value.(map[string]any)
+		if !ok {
+			return nil
+		}
+		matches := 0
+		var selectedError error
+		for _, branch := range branches {
+			err := validateCloudAgentSchemaValue(path, branch, object, depth+1)
+			if err == nil {
+				matches++
+				continue
+			}
+			// A matching discriminator preserves the useful field-level error.
+			properties, _ := branch["properties"].(map[string]any)
+			for _, key := range []string{"type", "mode", "action"} {
+				if property, ok := properties[key].(map[string]any); ok {
+					if constant, exists := property["const"]; exists && cloudAgentSchemaEqual(constant, object[key]) {
+						selectedError = err
+					}
+				}
+			}
+		}
+		if matches == 0 || (keyword == "oneOf" && matches != 1) {
+			if selectedError != nil {
+				return selectedError
+			}
+			return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 不满足允许的组合；本次调用未执行，请按 parameters 检查字段组合", path))
 		}
 	}
-	for _, name := range cloudAgentSchemaStrings(branch["required"]) {
-		value, exists := object[name]
-		if !exists || value == nil {
-			return false
-		}
-	}
-	return true
+	return nil
 }
 
 func cloudAgentSchemaTypeError(path, expected string) error {
