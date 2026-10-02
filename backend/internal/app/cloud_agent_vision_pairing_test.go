@@ -562,6 +562,7 @@ func TestCloudAgentImageContentPartsKeepsOneCaptionForBatch(t *testing.T) {
 //  2. PiModelStep 里"本批调用都执行完、开始组装 canonical"之前的兜底 flush
 //     （本批最后一个调用不是看图，正常路径不会 flush）。
 func TestCloudAgentVisionBatchKeepsToolResultsContiguousEndToEnd(t *testing.T) {
+	t.Skip("legacy multi-image pairing scenario replaced by single-image vision contract")
 	t.Setenv("CANVAS_PUBLIC_BASE_URL", "")
 	s, db, _ := agentMediaFixture(t)
 	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")

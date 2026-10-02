@@ -21,6 +21,8 @@ type ModelCapabilityConfig struct {
 }
 
 type TextCapabilityConfig struct {
+	// VisionSupported declares whether Agent image inspection is supported.
+	VisionSupported *bool `json:"visionSupported,omitempty"`
 	// Streaming controls whether this model accepts upstream SSE text responses.
 	// A nil value is treated as true for backwards compatibility with older configs.
 	Streaming *bool `json:"streaming,omitempty"`

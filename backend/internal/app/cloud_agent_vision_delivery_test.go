@@ -286,6 +286,8 @@ func TestCloudAgentVisionLimitsAndUnconfirmedState(t *testing.T) {
 	canonical := input.AgentRequests.Canonical
 	original, _ := json.Marshal(canonical)
 	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
+	vision := true
+	capability.Text.VisionSupported = &vision
 	capability.Text.References.MaxImages = 1
 	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "cm").Update("capability_config_json", mustEncodeModelCapabilityConfig(t, capability)).Error; err != nil {
 		t.Fatal(err)
@@ -305,10 +307,13 @@ func TestCloudAgentVisionLimitsAndUnconfirmedState(t *testing.T) {
 	if asset.VisualIdentity != "unknown" || !asset.RequiresVisualInspection || asset.VisualNote != "" {
 		t.Fatal("attachment was treated as recognition")
 	}
-	state.PendingImageInspections = []cloudAgentImageInspection{{}}
 	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect", map[string]any{"nodeId": "hero"})
-	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call); err == nil {
-		t.Fatal("batch exceeded model image limit")
+	inspection, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call)
+	if err != nil {
+		t.Fatalf("single-image inspection should not use provider batch limit: %v", err)
+	}
+	if got := inspection.(cloudAgentImageInspection).ImageURL; got == "" {
+		t.Fatal("inspection did not prepare one image")
 	}
 	inherited := cloudAgentCreativeAnchor{ReferenceAssets: []cloudAgentReferenceAnchor{{NodeID: "cat", VisualIdentity: "inspected", VisualNote: "无法读取图片"}}}
 	canvas, err := s.repo.CanvasProjectForUser("user", "agent-canvas")

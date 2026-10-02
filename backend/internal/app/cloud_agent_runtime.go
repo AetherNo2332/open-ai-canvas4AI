@@ -1745,6 +1745,14 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 			result, toolErr = inspectionResult, inspectionErr
 			if toolErr == nil && inspectionResult != nil {
 				if inspection, ok := inspectionResult.(cloudAgentImageInspection); ok {
+					if inspection.Summary != nil {
+						if writeErr := s.persistCloudAgentVisionCache(repo, run.UserID, state.Request.CanvasID, inspection, policy); writeErr != nil {
+							toolErr = writeErr
+						}
+					}
+					if toolErr != nil {
+						break
+					}
 					// 两种回执都算一次调用预算：attached=false 表示这次只回执文字、没有附图。
 					attached := strings.TrimSpace(inspection.ImageURL) != ""
 					state.markCanvasImageInspection(stringValue(inspection.Receipt["nodeId"]), attached, stringValue(inspection.Receipt["contentSignature"]))
