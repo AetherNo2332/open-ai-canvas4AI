@@ -87,3 +87,26 @@ test("same-name parameter schema drift fails closed regardless of key order", ()
     artifact,
   );
 });
+
+test("older canvas_inspect_image snapshots remain compatible with the optional summary field", () => {
+  const oldParameters = {
+    type: "object",
+    properties: {
+      nodeId: { type: "string" },
+      refresh: { type: "boolean" },
+    },
+    required: ["nodeId"],
+    additionalProperties: false,
+  };
+  const currentParameters = {
+    ...oldParameters,
+    properties: {
+      ...oldParameters.properties,
+      summary: { type: "object" },
+    },
+  };
+  assertToolSnapshotMatchesSchema(
+    [{ name: "canvas_inspect_image", description: "x", parameters: oldParameters, allowed: true }],
+    { schemaVersion: "cloud-agent-tools/v3", tools: [{ type: "function", function: { name: "canvas_inspect_image", parameters: currentParameters } }] },
+  );
+});

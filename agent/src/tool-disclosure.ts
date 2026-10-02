@@ -48,11 +48,44 @@ export function assertToolSnapshotMatchesSchema(specs: CanvasToolSpec[], artifac
   // 只比名字不够：同名工具的**参数定义**漂移同样会让服务端预检与模型看到的 schema 不一致，
   // 表现为难查的准入拒绝。这里做稳定序列化后逐字比较。
   const drifted = specs
-    .filter((spec) => stableJson(spec.parameters) !== stableJson(declared.get(spec.name) ?? {}))
+    .filter((spec) => {
+      const artifactParameters = declared.get(spec.name) ?? {};
+      return stableJson(spec.parameters) !== stableJson(artifactParameters) &&
+        !isCompatibleCanvasInspectImageSchema(spec.name, spec.parameters, artifactParameters);
+    })
     .map((spec) => spec.name);
   if (drifted.length > 0) {
     throw new FatalWorkerError(`server snapshot schema differs from ${artifact.schemaVersion}: ${drifted.slice(0, 5).join(", ")}`);
   }
+}
+
+/**
+ * A running snapshot can outlive a worker deployment. The image summary field
+ * was added as optional, so an older snapshot remains executable with the
+ * current worker and should not strand the run during a rolling upgrade.
+ */
+function isCompatibleCanvasInspectImageSchema(
+  name: string,
+  serverParameters: Record<string, unknown>,
+  artifactParameters: Record<string, unknown>,
+): boolean {
+  if (name !== "canvas_inspect_image") return false;
+  const serverProperties = serverParameters.properties;
+  const artifactProperties = artifactParameters.properties;
+  if (!isRecord(serverProperties) || !isRecord(artifactProperties)) return false;
+  const summary = artifactProperties.summary;
+  if (!isRecord(summary) || summary.type !== "object") return false;
+  const required = artifactParameters.required;
+  if (!Array.isArray(required) || required.includes("summary")) return false;
+  if (Object.prototype.hasOwnProperty.call(serverProperties, "summary")) return false;
+  const { summary: _ignoredServerSummary, ...serverWithoutSummary } = serverProperties;
+  const { summary: _ignoredArtifactSummary, ...artifactWithoutSummary } = artifactProperties;
+  return stableJson({ ...serverParameters, properties: serverWithoutSummary }) ===
+    stableJson({ ...artifactParameters, properties: artifactWithoutSummary });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** 键序无关的稳定序列化：Go 与 Node 的 map/对象键序不保证一致。 */
