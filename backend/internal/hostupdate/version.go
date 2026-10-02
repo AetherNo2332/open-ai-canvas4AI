@@ -82,6 +82,12 @@ func compareParsedVersions(a, b versionPart) int {
 
 func parseVersion(raw string) (versionPart, bool) {
 	value := strings.TrimPrefix(strings.TrimSpace(raw), "v")
+	// The build commit is display metadata and must not affect release ordering.
+	// Keep accepting the old '+' form so an existing installation can upgrade
+	// to the parenthesized format without being treated as an unknown version.
+	if open := strings.LastIndex(value, "("); open >= 0 && strings.HasSuffix(value, ")") {
+		value = value[:open]
+	}
 	value = strings.SplitN(value, "+", 2)[0]
 	parts := strings.SplitN(value, "-", 2)
 	core := strings.Split(parts[0], ".")
