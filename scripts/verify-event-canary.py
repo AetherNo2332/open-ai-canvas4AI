@@ -67,7 +67,7 @@ def verify_parallel():
     time.sleep(16)
     logs=subprocess.check_output(["docker","logs","--since","25s","canvas-event-canary-agent-1"],text=True,stderr=subprocess.DEVNULL)
     metrics=[json.loads(line) for line in logs.splitlines() if line.startswith('{') and 'scheduler_capacity' in line]
-    assert any(item["residentSessions"]>=16 and item["schedulerActive"]<=4 and item["schedulerPeak"]<=4 for item in metrics),metrics
+    assert any(item["residentSessions"]>=16 and item["dispatchActive"]<=4 and item["schedulerPeak"]<=4 for item in metrics),metrics
     resources=subprocess.check_output(["docker","stats","--no-stream","--format","{{json .}}","canvas-event-canary-agent-1","canvas-event-canary-backend-1","canvas-event-canary-postgres-1"],text=True)
     stub("control", {"block": False})
     for run in runs:

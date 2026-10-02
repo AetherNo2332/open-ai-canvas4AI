@@ -5,7 +5,17 @@ description: 独立会话、短时调度槽、持久化唤醒和隔离部署
 
 # Canary 多会话事件调度
 
-基于 canary `8ca7b95e`。Pi SDK 保持 `0.87.1`，会话格式保持 3；内部协议升级为 `canvas-pi-wire/v2`。必须同时发布 Go 和 Agent，旧执行器会收到 HTTP 426，不能混跑。
+基于 canary `8ca7b95e`。Pi SDK 保持 `0.87.1`，会话格式保持 3；内部协议升级为 `canvas-pi-wire/v3`。必须同时发布 Go 和 Agent，旧执行器会收到 HTTP 426，不能混跑。
+
+## Agent（beta）配置与管理
+
+管理员从“平台配置 → Agent（beta）”管理调度配置、执行器状态和用户记忆。旧 `/admin/agent-lessons` 页面跳转到 `/admin/settings/agent#memory`，用户个人记忆的批准权限不变。Go Worker 与渠道并发继续在“资源与策略”配置。
+
+默认每个执行器 4 个短调度槽、64 个驻留会话；同一用户的同一画布跨执行器最多驻留 16 个会话。画布配额与租约在领取事务中校验，成功领取后推进持久化轮转序号，画布内部 FIFO。达到配额仍需等待，等待不占短调度槽。
+
+服务端部署初始值由 `CANVAS_AGENT_CONCURRENCY`、`CANVAS_AGENT_MAX_SESSIONS`、`CANVAS_AGENT_MAX_SESSIONS_PER_CANVAS` 配置；管理员保存后数据库设置优先。`GET/PUT /api/admin/settings/agent-scheduler` 使用 revision 校验避免覆盖写；`GET /api/admin/settings/agent-scheduler/status` 返回脱敏执行器统计。配置保存、审计与发件箱事件同事务提交，执行器通过内部 `/internal-agent/config`、SSE 配置广播及 5 秒恢复扫描应用配置。
+
+缩容不取消已运行步骤或会话；执行器停止新增超额准入并自然排空。页面区分实际驻留和领取预留、在线/离线、缩容状态、已保存版本和已应用版本。心跳超过 45 秒标记离线，状态读取失败不会显示虚假零值。准入计数器是共享串行事务，极高领取频率下可能成为数据库竞争点。
 
 ## 生命周期与容量
 

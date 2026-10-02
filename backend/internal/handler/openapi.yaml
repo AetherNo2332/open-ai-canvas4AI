@@ -26,6 +26,40 @@ tags:
   - name: agent
   - name: admin
 paths:
+  /admin/settings/agent-scheduler:
+    get:
+      tags: [admin]
+      summary: 读取 Agent 调度配置（管理员）
+      responses:
+        '200': {description: "返回 setting：dispatchConcurrency、maxResidentSessions、maxResidentPerCanvas、revision、updatedAt"}
+        '403': {description: 无管理员权限}
+    put:
+      tags: [admin]
+      summary: 保存 Agent 配置并广播热更新事件
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, dispatchConcurrency, maxResidentSessions, maxResidentPerCanvas]
+              properties:
+                expectedRevision: {type: integer, format: int64, minimum: 0}
+                dispatchConcurrency: {type: integer, minimum: 1, maximum: 16}
+                maxResidentSessions: {type: integer, minimum: 1, maximum: 64}
+                maxResidentPerCanvas: {type: integer, minimum: 1, maximum: 64}
+      responses:
+        '200': {description: 已持久化，返回新版 setting；执行器应用状态另行查询}
+        '400': {description: 非法参数或额度关系}
+        '403': {description: 无管理员权限}
+        '409': {description: 配置版本已变更，请刷新}
+  /admin/settings/agent-scheduler/status:
+    get:
+      tags: [admin]
+      summary: 读取脱敏 Agent 执行器运行状态（管理员）
+      responses:
+        '200': {description: "返回 instances：instanceId、resident、capacity、claimReservations、dispatchActive、readyQueued、draining、appliedConfigRevision、lastHeartbeatAt、online"}
+        '403': {description: 无管理员权限}
   /admin/settings/appearance/live2d:
     post:
       tags: [admin]
