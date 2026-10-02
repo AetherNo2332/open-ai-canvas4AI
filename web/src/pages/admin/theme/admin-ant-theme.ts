@@ -1,6 +1,6 @@
 import type { ThemeConfig } from "antd";
 import { theme as antdTheme } from "antd";
-import { getSkinAntOverrides } from "@/lib/skin-themes";
+import { getSkinAntOverrides, normalizeSkinID } from "@/lib/skin-themes";
 
 /** 后台保留独立密度与表面，主操作颜色继承站点皮肤。 */
 export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "classic"): ThemeConfig {
@@ -24,7 +24,7 @@ export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "class
 
     return {
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-        cssVar: { key: `admin-console-${dark ? "dark" : "light"}` },
+        cssVar: { key: `admin-console-${normalizeSkinID(skinID)}-${dark ? "dark" : "light"}` },
         token: {
             fontFamily: 'ui-sans-serif, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif',
             fontSize: 13,
@@ -73,12 +73,15 @@ export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "class
                 colorPrimary: primary,
                 colorPrimaryHover: hover,
                 colorPrimaryActive: active,
-                defaultBg: surface,
-                defaultColor: text,
-                defaultBorderColor: border,
-                defaultHoverBg: surfaceMuted,
-                defaultHoverColor: text,
-                defaultHoverBorderColor: border,
+                defaultBg: skin.controlSurface || surface,
+                defaultColor: skin.text || text,
+                defaultBorderColor: skin.controlBorder || border,
+                defaultHoverBg: skin.controlHover || surfaceMuted,
+                defaultHoverColor: skin.text || text,
+                defaultHoverBorderColor: skin.controlFocus || border,
+                defaultActiveBg: skin.controlActive || surfaceMuted,
+                defaultActiveColor: skin.text || text,
+                defaultActiveBorderColor: skin.controlFocus || border,
                 primaryColor: primaryFg,
             },
             Input: {

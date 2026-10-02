@@ -1,6 +1,6 @@
 /* Admin console tokens. Scoped only to admin roots.
  * Never alias --workspace-*, --user-*, or --skin-* from the product UI.
- * Light/dark follow the page theme class; product skins are ignored. */
+ * Surfaces retain admin density; action accents inherit the site skin. */
 
 :is([data-admin-root], body.admin-overlays, .admin-drawer, .admin-secondary-drawer, .admin-modal-root, .admin-channel-modal-root, .admin-mobile-navigation-menu) {
     --admin-font: ui-sans-serif, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
@@ -36,8 +36,8 @@
     --admin-nav-hover: rgba(17, 17, 17, 0.05);
     --admin-nav-active: #ececec;
     --admin-nav-active-border: transparent;
-    --admin-accent: #111111;
-    --admin-accent-fg: #ffffff;
+    --admin-accent: var(--btn-solid-bg);
+    --admin-accent-fg: var(--btn-solid-fg);
     --admin-focus: rgba(17, 17, 17, 0.28);
     --admin-status-success: #15803d;
     --admin-status-warning: #b45309;
@@ -117,8 +117,8 @@
     --admin-nav-hover: rgba(245, 245, 245, 0.05);
     --admin-nav-active: #222222;
     --admin-nav-active-border: transparent;
-    --admin-accent: #f5f5f5;
-    --admin-accent-fg: #0f0f0f;
+    --admin-accent: var(--btn-solid-bg);
+    --admin-accent-fg: var(--btn-solid-fg);
     --admin-focus: rgba(245, 245, 245, 0.28);
     --admin-status-success: #4ade80;
     --admin-status-warning: #fbbf24;

@@ -1,0 +1,27 @@
+.agent-settings { display: grid; gap: 24px; }
+.agent-settings-nav { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--admin-border); }
+.agent-settings-nav a { padding: 6px 12px; border-radius: var(--admin-radius); color: var(--admin-text-secondary); }
+.agent-settings-nav a:hover { background: var(--admin-row-hover); color: var(--admin-text); }
+.agent-settings-nav a:focus-visible { outline: 2px solid var(--admin-focus); outline-offset: 2px; }
+.agent-settings-section { padding: 20px; border: 1px solid var(--admin-border); border-radius: var(--admin-radius-lg); background: var(--admin-surface); scroll-margin-top: 16px; }
+.agent-settings-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.agent-settings-field { background: var(--admin-surface-2); }
+.agent-settings-field .ant-input-number { width: 100%; }
+.agent-runtime { display: grid; gap: 16px; }
+.agent-runtime-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.agent-runtime-metric { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--admin-border); border-radius: var(--admin-radius); background: var(--admin-surface-2); }
+.agent-runtime-metric > span, .agent-runtime-metric small { color: var(--admin-text-secondary); font-size: 12px; }
+.agent-runtime-metric strong { font-size: 24px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.agent-runtime-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; color: var(--admin-text-muted); font-size: 12px; }
+.agent-runtime-table-wrap { overflow-x: auto; border: 1px solid var(--admin-border); border-radius: var(--admin-radius); }
+.agent-runtime-table { width: 100%; text-align: left; font-size: 13px; border-collapse: collapse; }
+.agent-runtime-table th { background: var(--admin-surface-2); color: var(--admin-text-secondary); font-size: 12px; font-weight: 550; }
+.agent-runtime-table th, .agent-runtime-table td { padding: 12px; white-space: nowrap; }
+.agent-runtime-table td { border-top: 1px solid var(--admin-row-border); }
+.agent-runtime-table tr:hover td { background: var(--admin-row-hover); }
+.agent-runtime-table .is-offline td { color: var(--admin-text-muted); }
+.agent-runtime-table code { font-family: var(--admin-font-mono); font-size: 12px; }
+.agent-runtime-number { font-variant-numeric: tabular-nums; }
+.agent-runtime-empty { padding: 24px; border: 1px dashed var(--admin-border-strong); border-radius: var(--admin-radius); color: var(--admin-text-secondary); text-align: center; }
+@media (max-width: 800px) { .agent-runtime-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .agent-settings-section { padding: 12px; } .agent-runtime-metric { padding: 12px; } }
