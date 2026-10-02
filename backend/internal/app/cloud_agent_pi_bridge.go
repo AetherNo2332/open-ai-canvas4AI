@@ -380,6 +380,9 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 		if err != nil {
 			return err
 		}
+		if message.Role == "toolResult" {
+			piSettleLocallyRejectedTool(current, &state, input.Message)
+		}
 		if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && message.Role == "toolResult" {
 			var result struct {
 				ToolCallID string `json:"toolCallId"`
@@ -500,6 +503,29 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 		return 0, err
 	}
 	return updatedSessionRevision, nil
+}
+
+// Pi validates arguments before invoking the Canvas tool. Its local error must
+// close an already admitted call, but cannot stand in for a successful side
+// effect. Only Go's persisted preflight rejection authorizes this settlement.
+func piSettleLocallyRejectedTool(run *model.CloudAgentExecution, state *cloudAgentRuntime, raw json.RawMessage) {
+	var result struct {
+		ToolCallID string `json:"toolCallId"`
+		ToolName   string `json:"toolName"`
+		IsError    bool   `json:"isError"`
+	}
+	if json.Unmarshal(raw, &result) != nil || !result.IsError || state.PiToolBatchTaskID == "" || state.CallIndex < 0 || state.CallIndex >= len(state.Calls) {
+		return
+	}
+	call := state.Calls[state.CallIndex]
+	if call.ID != result.ToolCallID || call.Function.Name != result.ToolName {
+		return
+	}
+	admission, ok := cloudAgentAdmissionFor(state, state.CallIndex)
+	if !ok || admission.Allowed || admission.CallID != call.ID {
+		return
+	}
+	cloudAgentRecordToolResult(run, state, call, nil, cloudAgentAdmissionError(admission))
 }
 
 func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.CloudAgentMessageRecord, callID string, requireFile bool) (*cloudAgentSkill, string, error) {
