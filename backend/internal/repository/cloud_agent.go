@@ -179,21 +179,27 @@ func (r *Repository) StalledPiAgentRuns(expiredBefore time.Time, limit int) ([]m
 // make the first claim impossible — so these runs stay claimable until they are swept.
 func (r *Repository) UnclaimedPiAgentRuns(createdBefore time.Time, limit int) ([]model.CloudAgentExecution, error) {
 	var runs []model.CloudAgentExecution
+	capacityAlive := false
 	if r.db.Migrator().HasTable(&model.AgentRuntimeInstance{}) {
 		var alive, available int64
 		query := r.db.Model(&model.AgentRuntimeInstance{}).Where("updated_at > ?", time.Now().Add(-45*time.Second))
 		if err := query.Count(&alive).Error; err != nil {
 			return nil, err
 		}
-		if err := query.Where("active < capacity").Count(&available).Error; err != nil {
+		if err := query.Where("active + claim_reservations < capacity").Count(&available).Error; err != nil {
 			return nil, err
 		}
 		if alive > 0 && available == 0 {
 			return runs, nil
 		}
+		capacityAlive = alive > 0
 	}
-	err := r.db.Where("engine = ? AND status IN ? AND lease_expires_at IS NULL AND created_at < ?",
-		"pi", []string{"queued", "running", "waiting_approval"}, createdBefore).
+	query := r.db.Where("engine = ? AND status IN ? AND lease_expires_at IS NULL AND created_at < ?",
+		"pi", []string{"queued", "running", "waiting_approval"}, createdBefore)
+	if capacityAlive {
+		query = query.Where("wait_kind <> ?", "canvas_capacity")
+	}
+	err := query.
 		Order("created_at").Limit(limit).Find(&runs).Error
 	return runs, err
 }
@@ -201,6 +207,13 @@ func (r *Repository) UnclaimedPiAgentRuns(createdBefore time.Time, limit int) ([
 // ClaimPiAgent leases one externally executed run. The conditional update is
 // also safe on SQLite, where SELECT FOR UPDATE is unavailable.
 func (r *Repository) ClaimPiAgent(owner string, until time.Time) (*model.CloudAgentExecution, error) {
+	return r.ClaimPiAgentConfigured(owner, until, model.DefaultAgentSchedulerSetting())
+}
+
+func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p model.AgentSchedulerSetting) (*model.CloudAgentExecution, error) {
+	if r.db.Migrator().HasTable(&model.AgentAdmissionCounter{}) {
+		return r.ClaimPiAgentFair(owner, until, p)
+	}
 	var candidates []model.CloudAgentExecution
 	now := time.Now()
 	if err := r.db.Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",

@@ -29,19 +29,29 @@ func (r *Repository) CloudAgentPiLease(userID, conversationID string) (*model.Cl
 }
 
 func (r *Repository) AgentCapacity(owner string, active, capacity int) error {
+	return r.AgentCapacityReport(owner, model.AgentCapacityReport{Active: active, Capacity: capacity})
+}
+
+func (r *Repository) AgentRuntimeInstances() ([]model.AgentRuntimeInstance, error) {
+	var rows []model.AgentRuntimeInstance
+	err := r.db.Order("updated_at DESC,id").Find(&rows).Error
+	return rows, err
+}
+
+func (r *Repository) AgentCapacityReport(owner string, p model.AgentCapacityReport) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&model.AgentRuntimeInstance{ID: owner, Active: active, Capacity: capacity, UpdatedAt: time.Now()}).Error; err != nil {
+		if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&model.AgentRuntimeInstance{ID: owner, Active: p.Active, Capacity: p.Capacity, ClaimReservations: p.ClaimReservations, DispatchActive: p.DispatchActive, ReadyQueued: p.ReadyQueued, Draining: p.Draining, AppliedConfigRevision: p.AppliedConfigRevision, UpdatedAt: time.Now()}).Error; err != nil {
 			return err
 		}
 		var available int64
-		if err := tx.Model(&model.AgentRuntimeInstance{}).Where("updated_at > ? AND active < capacity", time.Now().Add(-45*time.Second)).Count(&available).Error; err != nil {
+		if err := tx.Model(&model.AgentRuntimeInstance{}).Where("updated_at > ? AND active + claim_reservations < capacity", time.Now().Add(-45*time.Second)).Count(&available).Error; err != nil {
 			return err
 		}
 		phase, kind, reason := "waiting_resource", "capacity", "等待会话运行容量"
 		if available > 0 {
 			phase, kind, reason = "ready", "", ""
 		}
-		return tx.Model(&model.CloudAgentExecution{}).Where("engine = ? AND status = ? AND lease_expires_at IS NULL AND runtime_phase <> ?", "pi", "queued", phase).Updates(map[string]any{"runtime_phase": phase, "wait_kind": kind, "wait_id": "", "wait_reason": reason, "revision": gorm.Expr("revision + 1")}).Error
+		return tx.Model(&model.CloudAgentExecution{}).Where("engine = ? AND status = ? AND lease_expires_at IS NULL AND runtime_phase <> ? AND wait_kind <> ?", "pi", "queued", phase, "canvas_capacity").Updates(map[string]any{"runtime_phase": phase, "wait_kind": kind, "wait_id": "", "wait_reason": reason, "revision": gorm.Expr("revision + 1")}).Error
 	})
 }
 
