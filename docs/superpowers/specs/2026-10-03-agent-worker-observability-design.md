@@ -119,6 +119,20 @@ Web/API -> Backend admission -> Queue -> Agent/Worker
 
 告警初始只使用相对稳定的条件，并要求持续窗口和恢复条件：队列深度持续增长、最老任务超时、busy ratio 饱和且队列增长、任务错误率/重试率异常、成功率下降、P95 超阈值、token 或 cost 突增、Worker 全部不可用。告警消息只包含聚合维度和 Trace 查询入口，不包含用户正文。
 
+## Web 管理员后台运行总览
+
+上述观测数据必须在 Web 管理员后台的“运行总览”中提供一套面向运营人员的聚合视图，不能只依赖 Grafana。页面通过后端管理接口读取聚合指标和最近状态，沿用现有管理员权限、站点外观 token、明暗主题和响应式布局，不把 Prometheus/Tempo/Langfuse 的凭据或内部地址暴露给浏览器。
+
+运行总览至少展示：
+
+- Worker 在线数、忙碌比例、队列深度、最老任务等待时间和吞吐。
+- 任务成功率、失败率、重试率、P50/P95/P99 端到端延迟。
+- 工具成功率、平均/分位步骤数、LLM 调用数和 token 用量。
+- 成本/成功任务、质量评分、用户反馈和当前告警摘要。
+- 最近异常任务列表，包含脱敏的 `task_id`、`run_id`、`trace_id`、状态、原因和 Trace 跳转入口。
+
+页面默认只展示聚合结果；查看单个任务的 Trace、质量详情或原始事件时，必须再次经过管理员权限检查和脱敏策略。没有数据、数据延迟或观测后端不可用时，页面显示明确的“暂无数据/数据延迟/观测不可用”状态，不把缺失读数显示为 0 或健康。
+
 ## 部署与可靠性
 
 - 本地 Compose 提供可选的 Collector、Prometheus、Tempo、Grafana 和 Langfuse profile，不影响默认开发启动。
@@ -145,3 +159,4 @@ Web/API -> Backend admission -> Queue -> Agent/Worker
 4. **质量闭环**：Golden Dataset、确定性检查、Judge 适配、人工反馈和线上抽样。
 5. **运营交付**：Grafana dashboards、告警规则、Runbook、文档、专项测试和本地 Compose 验收。
 
+Web 管理员后台的运行总览与聚合接口属于同一阶段，必须和 Grafana 看板使用相同指标口径，并补充管理员权限、主题、空态、数据延迟和 Trace 跳转验收。
