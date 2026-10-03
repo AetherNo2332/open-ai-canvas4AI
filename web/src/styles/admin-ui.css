@@ -656,6 +656,74 @@
 /* Editable skin library: one document-style workspace, consistent with the other
  * admin settings modules. Theme cards select the active draft; edits stay local
  * until the shared page command bar saves the complete appearance document. */
+
+/* 外观页区块外壳（swiss-design）：直角、发丝线分区、左对齐眉标，不使用卡片阴影。 */
+.admin-swiss-section {
+    display: grid;
+    gap: 0;
+    border-top: 1px solid var(--admin-divider);
+    background: transparent;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.admin-swiss-section-head {
+    display: grid;
+    gap: 6px;
+    padding: 24px 0 16px;
+}
+
+.admin-swiss-section-eyebrow {
+    color: var(--admin-text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.admin-swiss-section-heading {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.admin-swiss-section-heading h2 {
+    color: var(--admin-text-primary);
+    font-size: 20px;
+    font-weight: 300;
+    letter-spacing: -0.01em;
+}
+
+.admin-swiss-section-status {
+    display: inline-flex;
+    align-items: center;
+}
+
+.admin-swiss-section-head > p {
+    max-width: 60ch;
+    color: var(--admin-text-muted);
+    font-size: 13px;
+    line-height: 1.7;
+    text-wrap: pretty;
+}
+
+.admin-swiss-section-body {
+    display: grid;
+    gap: 16px;
+    padding-bottom: 32px;
+}
+
+.admin-swiss-section-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    border-top: 1px solid var(--admin-divider);
+    padding: 16px 0 24px;
+}
+
 .admin-skin-workspace {
     display: grid;
     gap: 18px;
@@ -1166,6 +1234,72 @@
 
 .admin-skin-component-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* 派生颜色只读展示：主色之外的颜色由「主色 + 中性阶」算出，运营无需也不应逐个调整。 */
+.admin-skin-derived-note {
+    margin: 0;
+    border-top: 1px solid var(--admin-divider);
+    padding: 10px 12px;
+    color: var(--admin-text-muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.admin-skin-derived-groups {
+    display: grid;
+    gap: 12px;
+    border-top: 1px solid var(--admin-divider);
+    padding: 12px;
+}
+
+.admin-skin-derived-group {
+    display: grid;
+    gap: 8px;
+}
+
+.admin-skin-derived-group > strong {
+    color: var(--admin-text-secondary);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.admin-skin-derived-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 4px 12px;
+}
+
+.admin-skin-derived-swatch {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+}
+
+.admin-skin-derived-swatch i {
+    width: 12px;
+    height: 12px;
+    border: 1px solid var(--admin-card-border);
+}
+
+.admin-skin-derived-swatch b {
+    overflow: hidden;
+    color: var(--admin-text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.admin-skin-derived-swatch small {
+    color: var(--admin-text-muted);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 10px;
 }
 
 .admin-skin-number-field {

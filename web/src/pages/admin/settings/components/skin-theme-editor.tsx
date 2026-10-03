@@ -1,18 +1,18 @@
 import { Button, Form, Input, InputNumber } from "antd";
-import { IconButton, SegmentedControl, Select, Tooltip } from "@/pages/admin/ui/controls";
+import { IconButton, SegmentedControl, Tooltip } from "@/pages/admin/ui/controls";
 import { Check, Copy, LockKeyhole, Moon, Plus, Sparkles, Sun, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
+    applySkinAccent,
     SKIN_COLOR_GROUPS,
     SKIN_COMPONENT_NUMBER_FIELDS,
-    SKIN_BUTTON_COLOR_FIELDS,
+    SKIN_LOCKED_COMPONENT_KEYS,
+    SKIN_MODE_COLOR_GROUPS,
     getSkinButtonAppearance,
     skinSwatches,
-    type SkinButtonFill,
     type SkinComponentTokens,
     type SkinDefinition,
-    type SkinModeTokens,
     type SkinThemeMode,
 } from "@/lib/skin-themes";
 import { cn } from "@/lib/utils";
@@ -41,15 +41,9 @@ export function SkinThemeEditor({
     const selected = useMemo(() => themes.find((theme) => theme.id === selectedID) || themes[0], [selectedID, themes]);
     if (!selected) return null;
     const editorDisabled = disabled || selected.locked;
-    const buttonFill = selected.tokens.buttons[mode];
-    const updateButton = (patch: Partial<SkinButtonFill>) => onChange({ ...selected, tokens: { ...selected.tokens, buttons: { ...selected.tokens.buttons, [mode]: { ...buttonFill, ...patch } } } });
 
     const updateIdentity = (patch: Partial<Pick<SkinDefinition, "name" | "description">>) => onChange({ ...selected, ...patch });
-    const updateColor = (key: keyof SkinModeTokens, value: string) =>
-        onChange({
-            ...selected,
-            tokens: { ...selected.tokens, [mode]: { ...selected.tokens[mode], [key]: value.trim().toLowerCase() } },
-        });
+    const updateAccent = (value: string) => onChange(applySkinAccent(selected, mode, value));
     const updateComponent = <Key extends keyof SkinComponentTokens>(key: Key, value: SkinComponentTokens[Key]) => onChange({ ...selected, tokens: { ...selected.tokens, components: { ...selected.tokens.components, [key]: value } } });
 
     return (
@@ -128,7 +122,7 @@ export function SkinThemeEditor({
                 {selected.locked ? (
                     <div className="admin-skin-locked-note">
                         <LockKeyhole className="size-4" aria-hidden="true" />
-                        <span>经典黑白采用黑白基础配色与紫蓝渐变主按钮，不能改名、修改或删除。点击“从默认新建”即可复制全部参数后自由调整。</span>
+                        <span>系统默认主题采用瑞士纸感：暖纸墨色、单一品牌红、直角构件。它不能改名、修改或删除；点击“从默认新建”即可复制后只调整品牌主色。</span>
                     </div>
                 ) : null}
 
@@ -179,70 +173,50 @@ export function SkinThemeEditor({
 
                 <details className="admin-skin-token-group" open>
                     <summary>
-                        <span>主按钮填充</span>
-                        <small>{mode === "light" ? "浅色" : "深色"}模式</small>
+                        <span>品牌主色</span>
+                        <small>每模式一个</small>
                     </summary>
-                    <div className="admin-skin-component-grid">
-                        <label className="admin-skin-number-field">
-                            <span>填充方式</span>
-                            <Select
-                                value={buttonFill.mode}
-                                disabled={editorDisabled}
-                                options={[
-                                    { label: "纯色（使用主操作颜色）", value: "solid" },
-                                    { label: "渐变", value: "gradient" },
-                                ]}
-                                onChange={(value) => updateButton({ mode: value })}
-                            />
-                        </label>
-                        {buttonFill.mode === "gradient" ? (
-                            <label className="admin-skin-number-field">
-                                <span>渐变角度</span>
-                                <InputNumber
-                                    aria-label="渐变角度"
-                                    value={buttonFill.angle}
-                                    min={0}
-                                    max={360}
-                                    precision={0}
-                                    addonAfter="°"
-                                    disabled={editorDisabled}
-                                    onChange={(value) => {
-                                        if (typeof value === "number") updateButton({ angle: value });
-                                    }}
-                                />
-                            </label>
-                        ) : null}
+                    <div className="admin-skin-color-grid">
+                        {SKIN_COLOR_GROUPS.flatMap((group) => group.fields).map((field) => (
+                            <ColorTokenField key={field.key} label={field.label} help={field.help} value={selected.tokens[mode][field.key]} disabled={editorDisabled} onChange={updateAccent} />
+                        ))}
                     </div>
-                    {buttonFill.mode === "gradient" ? (
-                        <div className="admin-skin-color-grid">
-                            {SKIN_BUTTON_COLOR_FIELDS.map(({ key, label }) => (
-                                <ColorTokenField key={key} label={label} help="仅影响主按钮，不改变选中态、开关和危险操作" value={buttonFill[key]} disabled={editorDisabled} onChange={(value) => updateButton({ [key]: value.trim().toLowerCase() })} />
-                            ))}
-                        </div>
-                    ) : null}
+                    <p className="admin-skin-derived-note">主按钮固定为实心主色，悬停与按下由主色派生；渐变、第二个强调色与自定义圆角由设计守则锁定。</p>
                 </details>
 
-                <div className="admin-skin-color-groups">
-                    {SKIN_COLOR_GROUPS.map((group, index) => (
-                        <details key={group.key} className="admin-skin-token-group" open={index < 2}>
-                            <summary>
-                                <span>{group.label}</span>
-                                <small>{group.fields.length} 项</small>
-                            </summary>
-                            <div className="admin-skin-color-grid">
-                                {group.fields.map((field) => (
-                                    <ColorTokenField key={field.key} label={field.label} help={field.help} value={selected.tokens[mode][field.key]} disabled={editorDisabled} onChange={(value) => updateColor(field.key, value)} />
-                                ))}
-                            </div>
-                        </details>
-                    ))}
-                </div>
+                <details className="admin-skin-token-group">
+                    <summary>
+                        <span>派生颜色</span>
+                        <small>49 项 · 只读</small>
+                    </summary>
+                    <div className="admin-skin-derived-groups">
+                        {SKIN_MODE_COLOR_GROUPS.map((group) => {
+                            const fields = group.fields.filter((field) => field.key !== "primary");
+                            if (!fields.length) return null;
+                            return (
+                                <div key={group.key} className="admin-skin-derived-group">
+                                    <strong>{group.label}</strong>
+                                    <div className="admin-skin-derived-grid">
+                                        {fields.map((field) => (
+                                            <span key={field.key} className="admin-skin-derived-swatch" title={`${field.label} · ${selected.tokens[mode][field.key]}`}>
+                                                <i style={{ background: selected.tokens[mode][field.key] }} aria-hidden="true" />
+                                                <b>{field.label}</b>
+                                                <small>{selected.tokens[mode][field.key]}</small>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </details>
 
                 <details className="admin-skin-token-group admin-skin-component-group" open>
                     <summary>
-                        <span>控件尺寸、圆角与反馈</span>
-                        <small>17 项</small>
+                        <span>控件尺寸与反馈</span>
+                        <small>直角 · 150ms 已锁定</small>
                     </summary>
+                    <p className="admin-skin-derived-note">圆角、悬停抬升、动效时长与阴影由设计守则锁定，服务端会拒绝任何偏离；下方仅尺寸可调。</p>
                     <div className="admin-skin-component-grid">
                         {SKIN_COMPONENT_NUMBER_FIELDS.map((field) => (
                             <label key={field.key} className="admin-skin-number-field">
@@ -253,7 +227,7 @@ export function SkinThemeEditor({
                                     max={field.max}
                                     step={field.step || 1}
                                     addonAfter={field.suffix || undefined}
-                                    disabled={editorDisabled}
+                                    disabled={editorDisabled || SKIN_LOCKED_COMPONENT_KEYS.includes(field.key)}
                                     onChange={(value) => {
                                         if (typeof value === "number") updateComponent(field.key, value);
                                     }}
@@ -262,16 +236,7 @@ export function SkinThemeEditor({
                         ))}
                         <label className="admin-skin-number-field">
                             <span>阴影风格</span>
-                            <Select
-                                value={selected.tokens.components.shadowStyle}
-                                disabled={editorDisabled}
-                                options={[
-                                    { label: "无阴影", value: "none" },
-                                    { label: "柔和阴影", value: "soft" },
-                                    { label: "强层次阴影", value: "strong" },
-                                ]}
-                                onChange={(value) => updateComponent("shadowStyle", value)}
-                            />
+                            <Input value="无阴影（锁定）" disabled readOnly />
                         </label>
                     </div>
                 </details>

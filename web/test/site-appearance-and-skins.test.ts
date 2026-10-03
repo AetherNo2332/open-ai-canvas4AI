@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applySkinTheme, DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition, getSkinAntOverrides, normalizeSkinDefinition, skinSwatches, SKIN_COLOR_GROUPS, SKIN_COMPONENT_NUMBER_FIELDS } from "../src/lib/skin-themes";
+import { applySkinTheme, DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition, getSkinAntOverrides, normalizeSkinDefinition, skinColorHue, skinSwatches, SKIN_COLOR_GROUPS, SKIN_COMPONENT_NUMBER_FIELDS, SKIN_MODE_COLOR_GROUPS } from "../src/lib/skin-themes";
 import { normalizePublicAppearance } from "../src/stores/use-appearance-store";
 
 describe("site appearance and editable skin library", () => {
@@ -36,7 +36,9 @@ describe("site appearance and editable skin library", () => {
         expect(copy.tokens).not.toBe(DEFAULT_CLASSIC_SKIN.tokens);
         expect(copy.tokens.light).not.toBe(DEFAULT_CLASSIC_SKIN.tokens.light);
         expect(Object.keys(copy.tokens.light)).toHaveLength(50);
-        expect(SKIN_COLOR_GROUPS.flatMap((group) => group.fields)).toHaveLength(50);
+        expect(SKIN_MODE_COLOR_GROUPS.flatMap((group) => group.fields)).toHaveLength(50);
+        // 配置面只剩每模式一个品牌主色，其余色位由派生保证一致。
+        expect(SKIN_COLOR_GROUPS.flatMap((group) => group.fields).map((field) => field.key)).toEqual(["primary"]);
         expect(SKIN_COMPONENT_NUMBER_FIELDS).toHaveLength(16);
     });
 
@@ -84,8 +86,12 @@ describe("site appearance and editable skin library", () => {
         const normalized = normalizeSkinDefinition(legacy);
         expect(normalized.tokens.light.switchChecked).toBe("#123456");
         expect(normalized.tokens.light.switchCheckedHover).toBe("#234567");
-        expect(normalized.tokens.light.dangerHover).toBe("#c0262d");
-        expect(normalized.tokens.light.dangerActive).toBe("#c0262d");
+        // 旧数据自定义的危险色保留，缺失的 hover/active 按同一色相派生，而不是跳回内置信号色。
+        expect(normalized.tokens.light.danger).toBe("#c0262d");
+        expect(normalized.tokens.light.dangerHover).not.toBe("#c0262d");
+        expect(normalized.tokens.light.dangerActive).not.toBe(normalized.tokens.light.dangerHover);
+        const hueGap = Math.abs(skinColorHue(normalized.tokens.light.dangerHover)! - skinColorHue("#c0262d")!);
+        expect(Math.min(hueGap, 360 - hueGap)).toBeLessThanOrEqual(2);
     });
 
     test("theme-card swatches expose every real unique color in frequency order", () => {
@@ -156,7 +162,8 @@ describe("site appearance and editable skin library", () => {
         expect(editorSource).toContain('<div className="admin-skin-color-field">');
         expect(editorSource).not.toContain('<label className="admin-skin-color-field">');
         expect(editorSource).toContain("后台菜单");
-        expect(globalStyles).toContain("--control-switch-checked-bg: #16a34a");
+        // 单一强调色：默认皮肤的开关开启态跟随品牌主色，不再使用独立的绿色。
+        expect(globalStyles).toContain("--control-switch-checked-bg: #c8102e");
         expect(globalStyles).toContain("--plugin-switch-checked-bg: var(--control-switch-checked-bg)");
         expect(globalStyles).toContain("--ant-tooltip-arrow-background-color: var(--popover) !important");
         expect(globalStyles).toContain("--ant-tooltip-overlay-color: var(--popover-foreground) !important");

@@ -49,10 +49,11 @@
     --palette-node-skill: oklch(0.7 0.17 55);          /* 橙色 400 — 技能 */
 
     /* 状态色（用 --palette- 前缀避免循环引用）*/
-    --palette-status-success: #16a34a;
-    --palette-status-error: #dc2626;
-    --palette-status-loading: #2563eb;
-    --palette-status-warning: #d97706;
+    /* 状态色与默认皮肤预设一致：只用于状态本身，不参与品牌强调。 */
+    --palette-status-success: #2f7d4f;
+    --palette-status-error: #c8102e;
+    --palette-status-loading: #1f5fa8;
+    --palette-status-warning: #b26a00;
 
     /* 顶部常驻通知条主题色：按「通知类型」区分底色（类型定义见 lib/announcements/banner-notice）
        两档取值都由白字对比度反推——light 档 ≥ 4.5:1（WCAG AA 正文），dark 档约 8.5:1（压暗避免刺眼）*/
@@ -113,41 +114,41 @@
     --typ-button: 14px;        /* button */
     --typ-nav-link: 14px;      /* nav-link */
 
-    /* --- 4. 圆角（10 档）--- */
-    --r-xs: 4px;
-    --r-sm: 6px;
-    --r-md: 8px;
-    --r-lg: 12px;
-    --r-xl: 14px;
-    --r-2xl: 16px;
-    --r-3xl: 20px;
-    --r-4xl: 24px;
-    --r-tight: 15px;
-    --r-dock-compact: 13px;
-    --r-wide-tight: 22px;
-    --r-5xl: 32px;
+    /* --- 4. 圆角（10 档）--- 瑞士设计守则：构件一律直角，仅状态圆点用 --r-full 例外 */
+    --r-xs: 0;
+    --r-sm: 0;
+    --r-md: 0;
+    --r-lg: 0;
+    --r-xl: 0;
+    --r-2xl: 0;
+    --r-3xl: 0;
+    --r-4xl: 0;
+    --r-tight: 0;
+    --r-dock-compact: 0;
+    --r-wide-tight: 0;
+    --r-5xl: 0;
     --r-full: 9999px;
 
-    /* --- 5. 阴影（含 glow）--- */
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
-    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.06);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.1);
-    --shadow-xl: 0 16px 40px rgba(0, 0, 0, 0.12);
-    --shadow-2xl: 0 24px 60px rgba(0, 0, 0, 0.16);
-    --shadow-glow-sm: 0 0 12px rgba(125, 162, 255, 0.2);
-    --shadow-glow-md: 0 0 24px rgba(125, 162, 255, 0.3);
-    --shadow-glow-lg: 0 0 40px rgba(125, 162, 255, 0.4);
+    /* --- 5. 阴影（含 glow）--- 守则：不使用投影，层级靠发丝线与透明度 */
+    --shadow-xs: none;
+    --shadow-sm: none;
+    --shadow-md: none;
+    --shadow-lg: none;
+    --shadow-xl: none;
+    --shadow-2xl: none;
+    --shadow-glow-sm: none;
+    --shadow-glow-md: none;
+    --shadow-glow-lg: none;
 
     /* --- 5b. 抬升（overlay / card）---
        --shadow-* 在暗色下会翻成白影，浮层用会发光刺眼。以下 token 两个主题都用黑影，
        靠 hairline（内描边）而不是发光来交代层级，浮层与卡片统一引用这里。 */
     /* 亮色下卡片浮在白底上，hairline 要比暗色更实才看得见边界（暗色靠影，亮色靠线）。 */
     --elevation-hairline: inset 0 0 0 1px rgba(17, 17, 17, 0.13);
-    --elevation-card: 0 1px 2px rgba(0, 0, 0, 0.05);
-    --elevation-card-hover: 0 10px 26px rgba(0, 0, 0, 0.1), 0 2px 5px rgba(0, 0, 0, 0.05);
-    --elevation-overlay: 0 24px 60px rgba(0, 0, 0, 0.2), 0 3px 10px rgba(0, 0, 0, 0.09);
-    --elevation-panel: -18px 0 52px rgba(0, 0, 0, 0.16);
+    --elevation-card: none;
+    --elevation-card-hover: none;
+    --elevation-overlay: none;
+    --elevation-panel: none;
     --focus-ring-soft: 0 0 0 3px color-mix(in srgb, var(--ring) 28%, transparent);
 
     /* 卡片表面：亮色需要一点灰底把卡片从白页面里托出来，暗色则是提亮。 */
@@ -213,8 +214,8 @@
     --control-selected-border: rgba(17, 17, 17, 0.18);
     --control-check-bg: #171717;
     --control-check-fg: #ffffff;
-    --control-switch-checked-bg: #16a34a;
-    --control-switch-checked-hover-bg: #15803d;
+    --control-switch-checked-bg: #c8102e;
+    --control-switch-checked-hover-bg: #a90d27;
     --control-switch-checked-handle: #ffffff;
     --control-switch-off-bg: #b8b8b8;
     --control-switch-off-hover-bg: #9f9f9f;
@@ -311,17 +312,17 @@
     --icon-foreground: #3f3f46;
     --icon-muted: #a1a1aa;
     --icon-active: #171717;
-    --control-radius: 6px;
-    --button-radius: 6px;
-    --input-radius: 6px;
-    --card-radius: 12px;
-    --overlay-radius: 12px;
-    --menu-radius: 8px;
-    --checkbox-radius: 4px;
+    --control-radius: 0;
+    --button-radius: 0;
+    --input-radius: 0;
+    --card-radius: 0;
+    --overlay-radius: 0;
+    --menu-radius: 0;
+    --checkbox-radius: 0;
     --control-border-width: 1px;
     --focus-ring-width: 2px;
     --icon-size: 16px;
-    --theme-hover-lift: 1px;
+    --theme-hover-lift: 0px;
 }
 
 /* prefers-reduced-motion 降级（对应 #99 三级降级策略 L1）*/
@@ -682,10 +683,10 @@
 }
 
 :root {
-    --radius: 0.5rem;
-    --motion-instant: 120ms;
-    --motion-state: 180ms;
-    --motion-panel: 240ms;
+    --radius: 0rem;
+    --motion-instant: 150ms;
+    --motion-state: 150ms;
+    --motion-panel: 150ms;
     --ease-aceternity: var(--motion-ease-out);
     --ease-product-enter: cubic-bezier(0.16, 1, 0.3, 1);
     --workspace-canvas: var(--background);
@@ -803,41 +804,42 @@
     --status-loading: var(--palette-status-loading);
     --status-warning: var(--palette-status-warning);
 
-    --border: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: #dc2626;
-    --input: oklch(0.922 0 0);
+    /* 经典皮肤（瑞士纸感）静态语义色：与后台默认皮肤 token 一致，自定义皮肤由运行时覆盖。 */
+    --border: #e3e0da;
+    --ring: #c8102e;
+    --background: #f7f6f3;
+    --foreground: #111111;
+    --card: #ffffff;
+    --card-foreground: #111111;
+    --popover: #ffffff;
+    --popover-foreground: #111111;
+    --primary: #c8102e;
+    --primary-foreground: #ffffff;
+    --secondary: #f1efeb;
+    --secondary-foreground: #111111;
+    --muted: #f1efeb;
+    --muted-foreground: #6f6b66;
+    --accent: #efece6;
+    --accent-foreground: #111111;
+    --destructive: #c8102e;
+    --input: #d6d2cb;
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar: #f7f6f3;
+    --sidebar-foreground: #111111;
     --sidebar-primary: var(--btn-solid-bg);
     --sidebar-primary-foreground: var(--btn-solid-fg);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --sidebar-accent: #efece6;
+    --sidebar-accent-foreground: #111111;
+    --sidebar-border: #e3e0da;
+    --sidebar-ring: #c8102e;
 }
 
 .dark {
-    --background: #0f0f0f;
+    --background: #121212;
     --auth-page-bg: #101010;
     --auth-panel-bg: #181818;
     --auth-card-bg: #1f1f1f;
@@ -847,43 +849,44 @@
        直接复用 --foreground 会得到白底白勾。 */
     --auth-check-bg: #e5e5e5;
     --auth-check-fg: #171717;
-    --foreground: #ffffff;
-    --border: #222222;
-    --ring: oklch(0.556 0 0);
-    --card: #181818;
-    --card-foreground: #ffffff;
-    --popover: #222222;
-    --popover-foreground: #ffffff;
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: #a8a8a8;
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: #ff4d4d;
-    --destructive-hover: #ff6b6b;
-    --destructive-active: #e63939;
+    /* 深色经典皮肤（墨色理性）：与后台 default swiss-ink 口径一致 */
+    --foreground: #f4f2ef;
+    --border: #2f2e2c;
+    --ring: #e05163;
+    --card: #1a1a1a;
+    --card-foreground: #f4f2ef;
+    --popover: #1e1e1e;
+    --popover-foreground: #f4f2ef;
+    --primary: #e05163;
+    --primary-foreground: #240a0f;
+    --secondary: #212121;
+    --secondary-foreground: #f4f2ef;
+    --muted: #212121;
+    --muted-foreground: #a5a09a;
+    --accent: #2a2a2a;
+    --accent-foreground: #f4f2ef;
+    --destructive: #ff7a7a;
+    --destructive-hover: #ff9a9a;
+    --destructive-active: #e06262;
     --destructive-foreground: #2b0808;
-    --palette-status-success: #33d17a;
-    --palette-status-error: #ff4d4d;
-    --palette-status-loading: #60a5fa;
-    --palette-status-warning: #fbbf24;
-    --input: rgba(255, 255, 255, 0.15);
+    --palette-status-success: #4ade80;
+    --palette-status-error: #ff7a7a;
+    --palette-status-loading: #7fb2f0;
+    --palette-status-warning: #f2b35f;
+    --input: #3d3c39;
     --workspace-canvas: var(--background);
     --workspace-page: var(--workspace-canvas);
     --workspace-navigation: var(--workspace-page);
     --workspace-content: var(--workspace-page);
-    --workspace-surface: #181818;
-    --workspace-surface-strong: #2a2a2a; /* composio surface-strong（原 #222222 并入 elevated 语义）*/
-    --workspace-border: #222222;
-    --workspace-border-strong: #333333;
+    --workspace-surface: #1a1a1a;
+    --workspace-surface-strong: #2b2b2b; /* composio surface-strong（原 #222222 并入 elevated 语义）*/
+    --workspace-border: #2f2e2c;
+    --workspace-border-strong: #3d3c39;
     --workspace-grid-line: rgba(255, 255, 255, 0.038);
     --workspace-nav: var(--workspace-navigation);
     --workspace-sidebar: var(--workspace-navigation);
-    --workspace-accent: #f5f5f5;
-    --workspace-accent-soft: rgba(255, 255, 255, 0.09);
+    --workspace-accent: #e05163;
+    --workspace-accent-soft: rgba(224, 81, 99, 0.16);
     --workspace-nav-active-bg: color-mix(in srgb, var(--workspace-accent) 13%, transparent);
     --workspace-nav-active-hover-bg: color-mix(in srgb, var(--workspace-accent) 18%, transparent);
     --chart-1: oklch(0.87 0 0);
@@ -891,14 +894,14 @@
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar: #121212;
+    --sidebar-foreground: #f4f2ef;
     --sidebar-primary: var(--btn-solid-bg);
     --sidebar-primary-foreground: var(--btn-solid-fg);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar-accent: #2a2a2a;
+    --sidebar-accent-foreground: #f4f2ef;
+    --sidebar-border: #2f2e2c;
+    --sidebar-ring: #e05163;
 
     /* --- Semantic 层 dark 覆盖 --- */
     --bg: var(--color-neutral-950);
@@ -1010,19 +1013,19 @@
        组件 token（--node-shadow/--dock-shadow/--panel-shadow/--modal-shadow）均引用
        var(--shadow-*)，此处覆盖自动级联。--cn-spatial-shadow（内联 boxShadow 用）已有
        暗色变体(0.4)，保留不动。 */
-    --shadow-xs: 0 1px 2px rgba(255, 255, 255, 0.04);
-    --shadow-sm: 0 2px 4px rgba(255, 255, 255, 0.05);
-    --shadow-md: 0 4px 12px rgba(255, 255, 255, 0.06);
-    --shadow-lg: 0 8px 24px rgba(255, 255, 255, 0.07);
-    --shadow-xl: 0 16px 40px rgba(255, 255, 255, 0.08);
-    --shadow-2xl: 0 24px 60px rgba(255, 255, 255, 0.1);
+    --shadow-xs: none;
+    --shadow-sm: none;
+    --shadow-md: none;
+    --shadow-lg: none;
+    --shadow-xl: none;
+    --shadow-2xl: none;
 
     /* 抬升 token：暗色下继续用黑影压深，只把 hairline 换成浅色描边。 */
     --elevation-hairline: inset 0 0 0 1px rgba(255, 255, 255, 0.085);
-    --elevation-card: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --elevation-card-hover: 0 12px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.32);
-    --elevation-overlay: 0 28px 72px rgba(0, 0, 0, 0.62), 0 4px 14px rgba(0, 0, 0, 0.4);
-    --elevation-panel: -20px 0 60px rgba(0, 0, 0, 0.56);
+    --elevation-card: none;
+    --elevation-card-hover: none;
+    --elevation-overlay: none;
+    --elevation-panel: none;
 
     --surface-card: rgba(255, 255, 255, 0.035);
     --surface-card-hover: rgba(255, 255, 255, 0.062);
@@ -1073,9 +1076,9 @@
     --control-selected-border: rgba(255, 255, 255, 0.18);
     --control-check-bg: #f5f5f5;
     --control-check-fg: #131313;
-    --control-switch-checked-bg: #22c55e;
-    --control-switch-checked-hover-bg: #4ade80;
-    --control-switch-checked-handle: #071a0f;
+    --control-switch-checked-bg: #e05163;
+    --control-switch-checked-hover-bg: #ef6b7c;
+    --control-switch-checked-handle: #240a0f;
     --control-switch-off-bg: #525252;
     --control-switch-off-hover-bg: #686868;
     --control-switch-off-handle: #f5f5f5;

@@ -61,6 +61,7 @@ assets/prototypes/.*.drawio.bkp
 .playwright-mcp/
 .serena/
 .spec-workflow/
+.superpowers/
 .vscode/
 camera_language_guide.md
 .superdesign

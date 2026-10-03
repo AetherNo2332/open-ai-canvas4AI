@@ -353,10 +353,10 @@ func validateAppearanceSkinThemes(themes []AppearanceSkinTheme, selectedID strin
 		if err := validateAppearanceSkinText(skin.Description, "皮肤主题说明", 100, false); err != nil {
 			return err
 		}
-		if err := validateAppearanceSkinMode(skin.Tokens.Light); err != nil {
+		if err := validateAppearanceSkinMode(skin.Tokens.Light, fmt.Sprintf("主题「%s」的浅色模式", skin.Name)); err != nil {
 			return err
 		}
-		if err := validateAppearanceSkinMode(skin.Tokens.Dark); err != nil {
+		if err := validateAppearanceSkinMode(skin.Tokens.Dark, fmt.Sprintf("主题「%s」的深色模式", skin.Name)); err != nil {
 			return err
 		}
 		if err := validateAppearanceSkinComponents(skin.Tokens.Components); err != nil {
@@ -374,19 +374,89 @@ func validateAppearanceSkinThemes(themes []AppearanceSkinTheme, selectedID strin
 	return nil
 }
 
-func validateAppearanceSkinMode(mode AppearanceSkinModeTokens) error {
+// migrateAppearanceSkinThemes 只在读取路径使用：把历史皮肤静默降级到瑞士约束
+// （直角、无阴影、无悬停抬升、150ms 动效、纯色按钮）。写入路径不做降级，
+// 违规提交由 validateAppearanceSkinThemes 明确拒绝。
+func migrateAppearanceSkinThemes(themes []AppearanceSkinTheme) []AppearanceSkinTheme {
+	for index := range themes {
+		components := &themes[index].Tokens.Components
+		components.ButtonRadius, components.InputRadius, components.CardRadius = 0, 0, 0
+		components.OverlayRadius, components.MenuRadius, components.CheckboxRadius = 0, 0, 0
+		components.HoverLift = 0
+		components.MotionFast, components.MotionNormal = 150, 150
+		components.ShadowStyle = "none"
+		for _, fill := range []*AppearanceSkinButtonFill{&themes[index].Tokens.Buttons.Light, &themes[index].Tokens.Buttons.Dark} {
+			fill.Mode = "solid"
+		}
+	}
+	return themes
+}
+
+func appearanceSkinModeFieldValues(mode AppearanceSkinModeTokens) map[string]string {
+	result := make(map[string]string, len(appearanceSkinModeFieldLabels))
 	value := reflect.ValueOf(mode)
-	for index := 0; index < value.NumField(); index++ {
-		if !appearanceColorPattern.MatchString(value.Field(index).String()) {
-			return BadAuthRequest("皮肤颜色必须使用 6 或 8 位十六进制颜色")
+	fieldType := value.Type()
+	for index := 0; index < fieldType.NumField(); index++ {
+		name := strings.Split(fieldType.Field(index).Tag.Get("json"), ",")[0]
+		result[name] = value.Field(index).String()
+	}
+	return result
+}
+
+func validateAppearanceSkinMode(mode AppearanceSkinModeTokens, label string) error {
+	values := appearanceSkinModeFieldValues(mode)
+	for _, field := range appearanceSkinModeFieldLabels {
+		value := strings.TrimSpace(values[field.name])
+		if value == "" {
+			if field.name == "primary" {
+				return BadAuthRequest(fmt.Sprintf("%s的品牌主色不能为空", label))
+			}
+			return BadAuthRequest(fmt.Sprintf("%s的%s不能为空", label, field.label))
+		}
+		if !appearanceColorPattern.MatchString(value) {
+			return BadAuthRequest(fmt.Sprintf("%s的%s必须使用 6 或 8 位十六进制颜色", label, field.label))
+		}
+	}
+	primary, ok := parseAppearanceSkinColor(values["primary"])
+	if !ok {
+		return BadAuthRequest(label + "的品牌主色必须是有效的十六进制颜色")
+	}
+	foreground, ok := parseAppearanceSkinColor(values["primaryForeground"])
+	if !ok {
+		return BadAuthRequest(label + "的主操作前景必须是有效的十六进制颜色")
+	}
+	if appearanceSkinContrast(primary, foreground) < appearanceSkinMinContrast {
+		return BadAuthRequest(fmt.Sprintf("%s的品牌主色与主按钮文字对比度必须达到 %.1f:1", label, appearanceSkinMinContrast))
+	}
+	primaryHue, hasAccentHue := appearanceSkinHue(primary)
+	if !hasAccentHue {
+		return nil
+	}
+	for _, field := range appearanceSkinModeFieldLabels {
+		if field.name == "primary" {
+			continue
+		}
+		if _, signal := appearanceSkinSignalFields[field.name]; signal {
+			continue
+		}
+		color, ok := parseAppearanceSkinColor(values[field.name])
+		if !ok || appearanceSkinChroma(color) <= appearanceSkinNeutralChroma {
+			continue
+		}
+		hue, ok := appearanceSkinHue(color)
+		if !ok {
+			continue
+		}
+		if appearanceSkinHueDistance(hue, primaryHue) > appearanceSkinMaxHueDistance {
+			return BadAuthRequest(fmt.Sprintf("%s的%s偏离品牌主色色相超过 %d°，皮肤只能有一个强调色相", label, field.label, appearanceSkinMaxHueDistance))
 		}
 	}
 	return nil
 }
 
 func validateAppearanceSkinButtonFill(fill AppearanceSkinButtonFill) error {
-	if fill.Mode != "solid" && fill.Mode != "gradient" {
-		return BadAuthRequest("主按钮填充模式无效")
+	if fill.Mode != "solid" {
+		return BadAuthRequest("主按钮填充必须为纯色（solid），不允许渐变或其他填充方式")
 	}
 	if fill.Angle < 0 || fill.Angle > 360 {
 		return BadAuthRequest("主按钮渐变角度必须在 0 到 360 之间")
@@ -400,13 +470,24 @@ func validateAppearanceSkinButtonFill(fill AppearanceSkinButtonFill) error {
 }
 
 func validateAppearanceSkinComponents(value AppearanceSkinComponentTokens) error {
+	if value.ButtonRadius != 0 || value.InputRadius != 0 || value.CardRadius != 0 || value.OverlayRadius != 0 || value.MenuRadius != 0 || value.CheckboxRadius != 0 {
+		return BadAuthRequest("构件圆角必须为 0：瑞士设计守则要求直角构件")
+	}
+	if value.HoverLift != 0 {
+		return BadAuthRequest("悬停抬升必须为 0：悬停不得改变控件几何尺寸")
+	}
+	if value.MotionFast != 150 || value.MotionNormal != 150 {
+		return BadAuthRequest("动效时长必须固定为 150ms")
+	}
+	if value.ShadowStyle != "none" {
+		return BadAuthRequest("阴影风格必须为 none：瑞士设计守则不使用投影")
+	}
 	for _, candidate := range []struct {
 		value, min, max int
 		label           string
 	}{
-		{value.ButtonRadius, 0, 32, "按钮圆角"}, {value.InputRadius, 0, 32, "输入框圆角"}, {value.CardRadius, 0, 40, "卡片圆角"}, {value.OverlayRadius, 0, 40, "弹层圆角"}, {value.MenuRadius, 0, 32, "菜单圆角"}, {value.CheckboxRadius, 0, 12, "勾选框圆角"},
 		{value.ControlHeight, 30, 48, "控件高度"}, {value.ControlHeightSmall, 24, 40, "小控件高度"}, {value.ControlHeightLarge, 36, 56, "大控件高度"}, {value.BorderWidth, 1, 3, "描边宽度"}, {value.FocusRingWidth, 1, 4, "焦点环宽度"},
-		{value.IconSize, 12, 24, "图标尺寸"}, {value.ButtonFontWeight, 400, 700, "按钮字重"}, {value.HoverLift, 0, 4, "悬停抬升"}, {value.MotionFast, 0, 400, "快速动效时长"}, {value.MotionNormal, 0, 800, "常规动效时长"},
+		{value.IconSize, 12, 24, "图标尺寸"}, {value.ButtonFontWeight, 400, 700, "按钮字重"},
 	} {
 		if candidate.value < candidate.min || candidate.value > candidate.max {
 			return BadAuthRequest(fmt.Sprintf("%s必须在 %d 到 %d 之间", candidate.label, candidate.min, candidate.max))
@@ -414,12 +495,6 @@ func validateAppearanceSkinComponents(value AppearanceSkinComponentTokens) error
 	}
 	if value.ControlHeightSmall > value.ControlHeight || value.ControlHeight > value.ControlHeightLarge {
 		return BadAuthRequest("控件高度须满足小号不大于标准、标准不大于大号")
-	}
-	if value.MotionFast > value.MotionNormal {
-		return BadAuthRequest("快速动效时长不能大于常规动效时长")
-	}
-	if value.ShadowStyle != "none" && value.ShadowStyle != "soft" && value.ShadowStyle != "strong" {
-		return BadAuthRequest("阴影风格无效")
 	}
 	return nil
 }

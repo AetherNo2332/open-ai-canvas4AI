@@ -157,7 +157,7 @@ func TestUpdateAppearancePersistsAuditsAndUsesVersionedPublicAssets(t *testing.T
 		AuthVideoResourceID:       "brand-video",
 		AuthVideoPosterResourceID: "brand-poster",
 		AuthVideoAutoplay:         false,
-		SkinID:                    "studio-indigo",
+		SkinID:                    "swiss-ink",
 		SEOTitle:                  "HIMA Studio - AI 影视工作台",
 		SEODescription:            "面向 Agent、图片、视频、画布与短剧生产的一体化 AI 创作工作台。",
 		SEOKeywords:               "AI 影视,短剧,画布",
@@ -168,7 +168,7 @@ func TestUpdateAppearancePersistsAuditsAndUsesVersionedPublicAssets(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !updated.Configured || updated.BrandName != "HIMA Studio" || updated.BrandSlug != "hima-studio" || updated.Public.BrandSlug != "hima-studio" || updated.AuthHeroTitle != "把灵感，\n变成可见的故事。" || updated.Public.AuthHeroDescription != "从画布开始，持续推进你的创作。" || !updated.Public.LogoConfigured || !updated.Public.DarkLogoConfigured || updated.Public.LogoFrameEnabled || !updated.Public.AuthVideoConfigured || !updated.Public.AuthVideoPosterConfigured || updated.Public.AuthVideoAutoplay || updated.Public.SkinID != "studio-indigo" || updated.Public.SEOTitle != "HIMA Studio - AI 影视工作台" || updated.Public.SEOKeywords != "AI 影视,短剧,画布" || !updated.Public.ICPFilingEnabled || updated.Public.ICPFilingNumber != "蜀ICP备2026000000号-1" {
+	if !updated.Configured || updated.BrandName != "HIMA Studio" || updated.BrandSlug != "hima-studio" || updated.Public.BrandSlug != "hima-studio" || updated.AuthHeroTitle != "把灵感，\n变成可见的故事。" || updated.Public.AuthHeroDescription != "从画布开始，持续推进你的创作。" || !updated.Public.LogoConfigured || !updated.Public.DarkLogoConfigured || updated.Public.LogoFrameEnabled || !updated.Public.AuthVideoConfigured || !updated.Public.AuthVideoPosterConfigured || updated.Public.AuthVideoAutoplay || updated.Public.SkinID != "swiss-ink" || updated.Public.SEOTitle != "HIMA Studio - AI 影视工作台" || updated.Public.SEOKeywords != "AI 影视,短剧,画布" || !updated.Public.ICPFilingEnabled || updated.Public.ICPFilingNumber != "蜀ICP备2026000000号-1" {
 		t.Fatalf("UpdateAppearance() = %#v", updated)
 	}
 	for _, assetURL := range []string{updated.Public.LogoURL, updated.Public.DarkLogoURL, updated.Public.AuthVideoURL, updated.Public.AuthVideoPosterURL} {
@@ -420,11 +420,17 @@ func TestUpdateAppearanceValidatesLoginCopy(t *testing.T) {
 func TestAppearanceSkinLibrarySupportsEditableCopiesAndProtectsClassic(t *testing.T) {
 	svc, _, _, admin := newAppearanceTestService(t)
 	themes := defaultAppearanceSkinThemes()
-	custom := cloneAppearanceSkin(themes[0], "custom-editorial", "片场夜蓝", "自定义控件与明暗色")
-	custom.Tokens.Light.Primary = "#123456"
-	custom.Tokens.Light.PrimaryHover = "#234567"
-	custom.Tokens.Dark.Primary = "#abcdef"
-	custom.Tokens.Components.ButtonRadius = 14
+	custom := cloneAppearanceSkin(themes[0], "custom-editorial", "片场夜蓝", "自定义品牌主色与控件高度")
+	// 自定义主题只能调整品牌主色族：其余语义色与实心按钮填充跟随主色派生。
+	custom.Tokens.Light = applyAppearanceSkinAccent(custom.Tokens.Light, appearanceSkinAccent{
+		primary: "#123456", primaryHover: "#234567", primaryActive: "#1b3f6b", primaryForeground: "#ffffff",
+		switchChecked: "#123456", switchCheckedHover: "#234567", switchCheckedHandle: "#ffffff",
+	})
+	custom.Tokens.Dark = applyAppearanceSkinAccent(custom.Tokens.Dark, appearanceSkinAccent{
+		primary: "#abcdef", primaryHover: "#c2dbf2", primaryActive: "#93b8d9", primaryForeground: "#111111",
+		switchChecked: "#abcdef", switchCheckedHover: "#c2dbf2", switchCheckedHandle: "#111111",
+	})
+	custom.Tokens.Components.ControlHeight = 40
 	themes = append(themes, custom)
 	legacyCustom := custom
 	legacyCustom.Tokens.Light.SwitchChecked = ""
@@ -455,7 +461,7 @@ func TestAppearanceSkinLibrarySupportsEditableCopiesAndProtectsClassic(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Public.ActiveSkin.ID != custom.ID || updated.Public.ActiveSkin.Tokens.Light.Primary != "#123456" || updated.Public.ActiveSkin.Tokens.Components.ButtonRadius != 14 || len(updated.SkinThemes) != len(themes) {
+	if updated.Public.ActiveSkin.ID != custom.ID || updated.Public.ActiveSkin.Tokens.Light.Primary != "#123456" || updated.Public.ActiveSkin.Tokens.Components.ControlHeight != 40 || updated.Public.ActiveSkin.Tokens.Components.ButtonRadius != 0 || len(updated.SkinThemes) != len(themes) {
 		t.Fatalf("custom skin round trip = %#v", updated)
 	}
 

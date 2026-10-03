@@ -32,7 +32,7 @@ const (
 )
 
 const (
-	appearanceSchemaVersion        = 9
+	appearanceSchemaVersion        = 10
 	appearanceLogoMaxBytes   int64 = 5 << 20
 	appearancePosterMaxBytes int64 = 10 << 20
 	appearanceVideoMaxBytes  int64 = 256 << 20
@@ -415,7 +415,8 @@ func (s *Service) readAppearance() (*model.SystemSetting, AppearanceSetting, err
 	if len(value.SkinThemes) == 0 {
 		value.SkinThemes = defaultAppearanceSkinThemes()
 	}
-	value.SkinThemes = normalizeAppearanceSkinThemes(value.SkinThemes)
+	// 读取路径静默降级历史皮肤的渐变、圆角、长动效；写入路径仍然严格拒绝。
+	value.SkinThemes = migrateAppearanceSkinThemes(normalizeAppearanceSkinThemes(value.SkinThemes))
 	value.SEOTitle = normalizeAppearanceSingleLine(value.SEOTitle)
 	value.SEODescription = normalizeAppearanceCopy(value.SEODescription)
 	value.SEOKeywords = normalizeAppearanceSingleLine(value.SEOKeywords)

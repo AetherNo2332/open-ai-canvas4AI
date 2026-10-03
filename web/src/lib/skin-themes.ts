@@ -208,7 +208,220 @@ export type SkinComponentNumberField = {
     step?: number;
 };
 
-export const SKIN_COLOR_GROUPS: readonly SkinColorGroup[] = [
+/** 每个模式的中性阶锚点：页面底色与文字墨色。主色之外的颜色都由锚点和主色算出。 */
+export const SKIN_NEUTRAL_ANCHORS: Record<SkinThemeMode, { canvas: string; foreground: string; accent: string }> = {
+    light: { canvas: "#f7f6f3", foreground: "#111111", accent: "#c8102e" },
+    dark: { canvas: "#121212", foreground: "#f4f2ef", accent: "#e05163" },
+};
+
+export type SkinModeDerivationInput = {
+    primary: string;
+    foreground: string;
+    canvas: string;
+    mode: SkinThemeMode;
+};
+
+type SkinNeutralSlot =
+    | "surface"
+    | "surfaceSubtle"
+    | "surfaceRaised"
+    | "overlay"
+    | "border"
+    | "control"
+    | "controlHover"
+    | "controlActive"
+    | "controlBorder"
+    | "controlDisabledBackground"
+    | "workspaceGrid"
+    | "adminBackground"
+    | "adminSubtle"
+    | "adminStrong"
+    | "authPanel"
+    | "authCard"
+    | "switchUnchecked"
+    | "switchUncheckedHover";
+
+// 中性阶只由「底色 + 墨色」两个锚点按比例混出；浅色模式的高层级表面偏向白，深色模式一律偏向墨色。
+const SKIN_NEUTRAL_STEPS: Record<SkinThemeMode, Record<SkinNeutralSlot, readonly ["white" | "ink", number]>> = {
+    light: {
+        surface: ["white", 0.85],
+        surfaceSubtle: ["ink", 0.045],
+        surfaceRaised: ["ink", 0.095],
+        overlay: ["white", 0.95],
+        border: ["ink", 0.1],
+        control: ["white", 0.9],
+        controlHover: ["ink", 0.035],
+        controlActive: ["ink", 0.075],
+        controlBorder: ["ink", 0.16],
+        controlDisabledBackground: ["ink", 0.03],
+        workspaceGrid: ["ink", 0.05],
+        adminBackground: ["ink", 0.02],
+        adminSubtle: ["white", 0.5],
+        adminStrong: ["ink", 0.075],
+        authPanel: ["ink", 0.035],
+        authCard: ["white", 0.85],
+        switchUnchecked: ["ink", 0.2],
+        switchUncheckedHover: ["ink", 0.3],
+    },
+    dark: {
+        surface: ["ink", 0.05],
+        surfaceSubtle: ["ink", 0.08],
+        surfaceRaised: ["ink", 0.13],
+        overlay: ["ink", 0.07],
+        border: ["ink", 0.16],
+        control: ["ink", 0.03],
+        controlHover: ["ink", 0.06],
+        controlActive: ["ink", 0.1],
+        controlBorder: ["ink", 0.22],
+        controlDisabledBackground: ["ink", 0.05],
+        workspaceGrid: ["ink", 0.07],
+        adminBackground: ["ink", 0],
+        adminSubtle: ["ink", 0.095],
+        adminStrong: ["ink", 0.13],
+        authPanel: ["ink", 0.05],
+        authCard: ["ink", 0.08],
+        switchUnchecked: ["ink", 0.26],
+        switchUncheckedHover: ["ink", 0.34],
+    },
+};
+
+const SKIN_ACCENT_RATIOS: Record<SkinThemeMode, { hover: number; active: number; selected: number; selectedHover: number; selectedActive: number; selectedForeground: number; focus: number; disabledForeground: number; muted: number }> = {
+    light: { hover: 0.16, active: 0.3, selected: 0.88, selectedHover: 0.8, selectedActive: 0.72, selectedForeground: 0.3, focus: 0.12, disabledForeground: 0.55, muted: 0.42 },
+    dark: { hover: 0.16, active: 0.28, selected: 0.86, selectedHover: 0.78, selectedActive: 0.7, selectedForeground: 0.25, focus: 0.1, disabledForeground: 0.55, muted: 0.42 },
+};
+
+// 状态色只用于状态提示，不参与品牌强调，因此按模式固定，是唯一的例外色相。
+const SKIN_SIGNAL_PALETTE: Record<SkinThemeMode, Pick<SkinModeTokens, "success" | "warning" | "danger" | "dangerHover" | "dangerActive" | "dangerForeground" | "info">> = {
+    light: { success: "#2f7d4f", warning: "#b26a00", danger: "#c8102e", dangerHover: "#a90d27", dangerActive: "#8f0b21", dangerForeground: "#ffffff", info: "#1f5fa8" },
+    dark: { success: "#4ade80", warning: "#f2b35f", danger: "#ff7a7a", dangerHover: "#ff9a9a", dangerActive: "#e06262", dangerForeground: "#2b0808", info: "#7fb2f0" },
+};
+
+const SKIN_INK_CANDIDATE = "#111111";
+
+function hexChannels(hex: string) {
+    const value = hex.replace("#", "");
+    return [0, 2, 4].map((index) => parseInt(value.slice(index, index + 2), 16) / 255);
+}
+
+function linearChannel(channel: number) {
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+}
+
+function gammaChannel(channel: number) {
+    return channel <= 0.0031308 ? channel * 12.92 : 1.055 * channel ** (1 / 2.4) - 0.055;
+}
+
+function channelsToHex(channels: readonly number[]) {
+    return `#${channels
+        .map((channel) => Math.round(Math.min(1, Math.max(0, channel)) * 255)
+            .toString(16)
+            .padStart(2, "0"))
+        .join("")}`;
+}
+
+/** 在线性光空间混色：ratio 为 to 的占比。纯函数，便于与服务端校验对齐。 */
+export function mixSkinColors(from: string, to: string, ratio: number): string {
+    const start = hexChannels(from).map(linearChannel);
+    const end = hexChannels(to).map(linearChannel);
+    const weight = Math.min(1, Math.max(0, ratio));
+    return channelsToHex(start.map((channel, index) => gammaChannel(channel * (1 - weight) + end[index] * weight)));
+}
+
+export function skinColorLuminance(hex: string) {
+    const [red, green, blue] = hexChannels(hex).map(linearChannel);
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+/** WCAG 相对对比度，用于挑选主按钮前景并做服务端校验的同一把尺子。 */
+export function skinColorContrast(a: string, b: string) {
+    const [lighter, darker] = [skinColorLuminance(a), skinColorLuminance(b)].sort((left, right) => right - left);
+    return (lighter + 0.05) / (darker + 0.05);
+}
+
+export function skinColorChroma(hex: string) {
+    const channels = hexChannels(hex);
+    return Math.max(...channels) - Math.min(...channels);
+}
+
+/** 返回色相角；接近中性的颜色返回 null，避免把暖灰误判成第二个色相。 */
+export function skinColorHue(hex: string): number | null {
+    const [red, green, blue] = hexChannels(hex);
+    const max = Math.max(red, green, blue);
+    const min = Math.min(red, green, blue);
+    const delta = max - min;
+    if (delta < 0.02 || max === 0) return null;
+    const raw = max === red ? ((green - blue) / delta) % 6 : max === green ? (blue - red) / delta + 2 : (red - green) / delta + 4;
+    return (raw * 60 + 360) % 360;
+}
+
+/** 主按钮前景：在纯白与墨色之间取对比度更高者。 */
+export function pickPrimaryForeground(primary: string) {
+    return skinColorContrast(primary, "#ffffff") >= skinColorContrast(primary, SKIN_INK_CANDIDATE) ? "#ffffff" : SKIN_INK_CANDIDATE;
+}
+
+/**
+ * 由「品牌主色 + 中性阶锚点」派生出该模式全部 50 个语义色位。
+ * 派生结果保留主色单一色相，状态色是唯一例外；调用方不应再单独配置派生色。
+ */
+export function deriveSkinModeTokens({ primary, foreground, canvas, mode }: SkinModeDerivationInput): SkinModeTokens {
+    const steps = SKIN_NEUTRAL_STEPS[mode];
+    const ratios = SKIN_ACCENT_RATIOS[mode];
+    const neutral = (slot: SkinNeutralSlot) => {
+        const [target, ratio] = steps[slot];
+        return mixSkinColors(canvas, target === "white" ? "#ffffff" : foreground, ratio);
+    };
+    const primaryForeground = pickPrimaryForeground(primary);
+    const primaryHover = mixSkinColors(primary, foreground, ratios.hover);
+    const surface = neutral("surface");
+    return {
+        canvas,
+        surface,
+        surfaceSubtle: neutral("surfaceSubtle"),
+        surfaceRaised: neutral("surfaceRaised"),
+        overlay: neutral("overlay"),
+        text: foreground,
+        textMuted: mixSkinColors(foreground, canvas, ratios.muted),
+        border: neutral("border"),
+        control: neutral("control"),
+        controlHover: neutral("controlHover"),
+        controlActive: neutral("controlActive"),
+        controlBorder: neutral("controlBorder"),
+        controlFocus: mixSkinColors(primary, foreground, ratios.focus),
+        controlDisabledBackground: neutral("controlDisabledBackground"),
+        controlDisabledForeground: mixSkinColors(foreground, canvas, ratios.disabledForeground),
+        switchChecked: primary,
+        switchCheckedHover: primaryHover,
+        switchCheckedHandle: primaryForeground,
+        switchUnchecked: neutral("switchUnchecked"),
+        switchUncheckedHover: neutral("switchUncheckedHover"),
+        switchUncheckedHandle: mode === "light" ? neutral("control") : mixSkinColors(foreground, canvas, 0.1),
+        primary,
+        primaryHover,
+        primaryActive: mixSkinColors(primary, foreground, ratios.active),
+        primaryForeground,
+        selected: mixSkinColors(primary, canvas, ratios.selected),
+        selectedHover: mixSkinColors(primary, canvas, ratios.selectedHover),
+        selectedActive: mixSkinColors(primary, canvas, ratios.selectedActive),
+        selectedForeground: mixSkinColors(primary, foreground, ratios.selectedForeground),
+        icon: mixSkinColors(foreground, canvas, mode === "light" ? 0.12 : 0.14),
+        iconMuted: mixSkinColors(foreground, canvas, 0.52),
+        iconActive: mode === "light" ? foreground : "#ffffff",
+        ...SKIN_SIGNAL_PALETTE[mode],
+        workspace: surface,
+        workspaceGrid: neutral("workspaceGrid"),
+        adminBackground: neutral("adminBackground"),
+        adminSurface: mode === "light" ? surface : mixSkinColors(canvas, foreground, 0.06),
+        adminSubtle: neutral("adminSubtle"),
+        adminStrong: neutral("adminStrong"),
+        authBackground: mode === "light" ? canvas : mixSkinColors(canvas, "#000000", 0.15),
+        authPanel: neutral("authPanel"),
+        authCard: neutral("authCard"),
+        authAccent: primary,
+        authMuted: mixSkinColors(foreground, canvas, ratios.muted),
+    };
+}
+
+export const SKIN_MODE_COLOR_GROUPS: readonly SkinColorGroup[] = [
     {
         key: "foundation",
         label: "基础表面与文字",
@@ -285,6 +498,19 @@ export const SKIN_COLOR_GROUPS: readonly SkinColorGroup[] = [
     },
 ] as const;
 
+/** 配置面上唯一可编辑的颜色：每个模式一个品牌主色。 */
+export const SKIN_COLOR_GROUPS: readonly SkinColorGroup[] = [
+    {
+        key: "accent",
+        label: "品牌主色",
+        fields: [{ key: "primary", label: "品牌主色", help: "每模式一个主色，其余 49 个语义色由主色与中性阶派生" }],
+    },
+];
+
+export const SKIN_MODE_COLOR_KEYS = SKIN_MODE_COLOR_GROUPS.flatMap((group) => group.fields.map((field) => field.key));
+
+export const SKIN_MODE_COLOR_FIELDS = SKIN_MODE_COLOR_GROUPS.flatMap((group) => group.fields);
+
 export const SKIN_COMPONENT_NUMBER_FIELDS: readonly SkinComponentNumberField[] = [
     { key: "buttonRadius", label: "按钮圆角", suffix: "px", min: 0, max: 32 },
     { key: "inputRadius", label: "输入框圆角", suffix: "px", min: 0, max: 32 },
@@ -303,6 +529,9 @@ export const SKIN_COMPONENT_NUMBER_FIELDS: readonly SkinComponentNumberField[] =
     { key: "motionFast", label: "快速反馈时长", suffix: "ms", min: 0, max: 400, step: 10 },
     { key: "motionNormal", label: "常规过渡时长", suffix: "ms", min: 0, max: 800, step: 10 },
 ] as const;
+
+/** 设计守则锁定的构件值：服务端会拒绝任何偏离，编辑器只做只读展示。 */
+export const SKIN_LOCKED_COMPONENT_KEYS: readonly (keyof SkinComponentTokens)[] = ["buttonRadius", "inputRadius", "cardRadius", "overlayRadius", "menuRadius", "checkboxRadius", "hoverLift", "motionFast", "motionNormal"];
 
 export const DEFAULT_CLASSIC_SKIN: SkinDefinition = {
     id: "classic",
@@ -544,8 +773,8 @@ export function normalizeSkinDefinition(value: unknown, fallback: SkinDefinition
     const candidate = value as Partial<SkinDefinition>;
     const id = typeof candidate.id === "string" && /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(candidate.id) ? candidate.id : fallback.id;
     const modes = candidate.tokens;
-    const light = normalizeSkinMode(modes?.light, fallback.tokens.light);
-    const dark = normalizeSkinMode(modes?.dark, fallback.tokens.dark);
+    const light = normalizeSkinMode(modes?.light, fallback.tokens.light, "light");
+    const dark = normalizeSkinMode(modes?.dark, fallback.tokens.dark, "dark");
     if (!modes || !light || !dark || !isSkinComponents(modes.components)) return cloneSkinDefinition(fallback);
     return {
         id,
@@ -566,6 +795,32 @@ export function normalizeSkinDefinition(value: unknown, fallback: SkinDefinition
 
 export function cloneSkinDefinition(source: SkinDefinition): SkinDefinition {
     return { ...source, tokens: cloneSkinTokens(source.tokens) };
+}
+
+/** 调整品牌主色：该模式所有派生色位与实心按钮填充一起重算，保证只有一个色相。 */
+export function applySkinAccent(source: SkinDefinition, mode: SkinThemeMode, primary: string): SkinDefinition {
+    const current = source.tokens[mode];
+    const accent = primary.trim().toLowerCase();
+    if (!HEX_COLOR.test(accent)) return cloneSkinDefinition(source);
+    const tokens = deriveSkinModeTokens({ primary: accent, foreground: current.text, canvas: current.canvas, mode });
+    return {
+        ...source,
+        tokens: {
+            ...source.tokens,
+            [mode]: tokens,
+            buttons: { ...source.tokens.buttons, [mode]: solidSkinButtonFill(tokens.primary, tokens.primaryForeground) },
+        },
+    };
+}
+
+/**
+ * 编辑入口的收敛：锁定主题原样返回，自定义主题按当前主色重新派生两个模式，
+ * 使编辑器展示的派生色与服务端校验口径一致，保存时不会被拒绝。
+ */
+export function convergeSkinDefinition(source: SkinDefinition): SkinDefinition {
+    if (source.locked || source.id === "classic") return cloneSkinDefinition(source);
+    const light = applySkinAccent(source, "light", source.tokens.light.primary);
+    return applySkinAccent(light, "dark", source.tokens.dark.primary);
 }
 
 export function createSkinThemeID(existingIDs: Iterable<string>) {
@@ -869,25 +1124,39 @@ function cloneSkinTokens(tokens: SkinTokens): SkinTokens {
 
 function isSkinMode(value: unknown): value is SkinModeTokens {
     if (!value || typeof value !== "object") return false;
-    return SKIN_COLOR_GROUPS.flatMap((group) => group.fields).every((field) => HEX_COLOR.test(String((value as Record<string, unknown>)[field.key] || "")));
+    return SKIN_MODE_COLOR_KEYS.every((key) => HEX_COLOR.test(String((value as Record<string, unknown>)[key] || "")));
 }
 
-function normalizeSkinMode(value: unknown, fallback: SkinModeTokens): SkinModeTokens | null {
+function normalizeSkinMode(value: unknown, fallback: SkinModeTokens, mode: SkinThemeMode): SkinModeTokens | null {
     if (!value || typeof value !== "object") return null;
     const candidate = value as Partial<SkinModeTokens>;
-    const result: SkinModeTokens = {
-        ...fallback,
-        ...candidate,
-        switchChecked: candidate.switchChecked || candidate.primary || fallback.switchChecked,
-        switchCheckedHover: candidate.switchCheckedHover || candidate.primaryHover || fallback.switchCheckedHover,
-        switchCheckedHandle: candidate.switchCheckedHandle || candidate.primaryForeground || fallback.switchCheckedHandle,
-        switchUnchecked: candidate.switchUnchecked || candidate.controlBorder || fallback.switchUnchecked,
-        switchUncheckedHover: candidate.switchUncheckedHover || candidate.controlActive || fallback.switchUncheckedHover,
-        switchUncheckedHandle: candidate.switchUncheckedHandle || candidate.selectedForeground || fallback.switchUncheckedHandle,
-        dangerHover: candidate.dangerHover || candidate.danger || fallback.dangerHover,
-        dangerActive: candidate.dangerActive || candidate.danger || fallback.dangerActive,
-        dangerForeground: candidate.dangerForeground || candidate.primaryForeground || fallback.dangerForeground,
+    const anchors = SKIN_NEUTRAL_ANCHORS[mode];
+    const anchor = (key: keyof SkinModeTokens, fallbackValue: string) => {
+        const raw = candidate[key];
+        return typeof raw === "string" && HEX_COLOR.test(raw.trim()) ? raw.trim().toLowerCase() : fallbackValue;
     };
+    const derived = deriveSkinModeTokens({
+        primary: anchor("primary", HEX_COLOR.test(fallback.primary) ? fallback.primary : anchors.accent),
+        foreground: anchor("text", HEX_COLOR.test(fallback.text) ? fallback.text : anchors.foreground),
+        canvas: anchor("canvas", HEX_COLOR.test(fallback.canvas) ? fallback.canvas : anchors.canvas),
+        mode,
+    });
+    // 旧数据里已有的合法色位保留，缺失或不合法的一律由派生补齐。
+    const result: SkinModeTokens = { ...derived };
+    const stored = (key: keyof SkinModeTokens) => {
+        const raw = candidate[key];
+        return typeof raw === "string" && HEX_COLOR.test(raw.trim());
+    };
+    for (const key of SKIN_MODE_COLOR_KEYS) {
+        if (stored(key)) result[key] = (candidate[key] as string).trim().toLowerCase();
+    }
+    // 旧数据自定义过危险色时，缺失的 hover/active/前景按同一色相派生，避免跳回内置信号色。
+    if (result.danger !== SKIN_SIGNAL_PALETTE[mode].danger) {
+        if (!stored("dangerHover")) result.dangerHover = mixSkinColors(result.danger, result.text, SKIN_ACCENT_RATIOS[mode].hover);
+        if (!stored("dangerActive")) result.dangerActive = mixSkinColors(result.danger, result.text, SKIN_ACCENT_RATIOS[mode].active);
+        if (!stored("dangerForeground")) result.dangerForeground = pickPrimaryForeground(result.danger);
+    }
+    if (!stored("switchCheckedHover") && stored("primaryHover")) result.switchCheckedHover = result.primaryHover;
     return isSkinMode(result) ? result : null;
 }
 
