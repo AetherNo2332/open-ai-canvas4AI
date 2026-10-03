@@ -20,7 +20,7 @@
     --unified-input-addon: color-mix(in srgb, var(--foreground) 4%, transparent);
 }
 
-:where(.ant-input:not(textarea), .ant-input-affix-wrapper, .ant-input-number, .ant-input-number-affix-wrapper, .ant-input-group-wrapper .ant-input-group-addon, .ant-otp-input) {
+:where(.ant-input:not(textarea), .ant-input-affix-wrapper, .ant-input-number, .ant-input-number-affix-wrapper, .ant-input-group-wrapper .ant-input-group-addon, .ant-otp-input):not(.auth-scene *) {
     border-color: transparent !important;
     border-radius: var(--r-lg) !important;
     background: var(--unified-input-surface) !important;
@@ -30,7 +30,7 @@
         color var(--motion-state, 180ms) ease !important;
 }
 
-:where(textarea.ant-input, .ant-input-textarea textarea.ant-input) {
+:where(textarea.ant-input, .ant-input-textarea textarea.ant-input):not(.auth-scene *) {
     border-color: transparent !important;
     border-radius: var(--r-lg) !important;
     background: var(--unified-input-surface) !important;
@@ -42,20 +42,20 @@
     .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-disabled):hover,
     .ant-input-number:not(.ant-input-number-disabled):hover,
     .ant-input-number-affix-wrapper:not(.ant-input-number-affix-wrapper-disabled):hover
-) {
+):not(.auth-scene *) {
     border-color: transparent !important;
     background: var(--unified-input-surface-hover) !important;
     box-shadow: none !important;
 }
 
-:where(.ant-input:focus, .ant-input-focused, .ant-input-affix-wrapper-focused, .ant-input-number-focused, .ant-input-number-affix-wrapper-focused) {
+:where(.ant-input:focus, .ant-input-focused, .ant-input-affix-wrapper-focused, .ant-input-number-focused, .ant-input-number-affix-wrapper-focused):not(.auth-scene *) {
     border-color: transparent !important;
     background: var(--unified-input-surface-focus) !important;
     outline: none !important;
     box-shadow: none !important;
 }
 
-:where(.ant-input-affix-wrapper > .ant-input, .ant-input-number .ant-input-number-input, .ant-input-number-affix-wrapper .ant-input-number-input, .ant-input-search .ant-input) {
+:where(.ant-input-affix-wrapper > .ant-input, .ant-input-number .ant-input-number-input, .ant-input-number-affix-wrapper .ant-input-number-input, .ant-input-search .ant-input):not(.auth-scene *) {
     border: 0 !important;
     border-radius: 0 !important;
     background: transparent !important;
@@ -82,22 +82,22 @@
 }
 
 /* 外壳已经承担视觉时，内部输入不再形成第二层线条。 */
-:where(.ant-input-affix-wrapper .ant-input, .ant-input-group .ant-input, .ant-input-group .ant-input-affix-wrapper, .ant-otp .ant-otp-input-wrapper .ant-input) {
+:where(.ant-input-affix-wrapper .ant-input, .ant-input-group .ant-input, .ant-input-group .ant-input-affix-wrapper, .ant-otp .ant-otp-input-wrapper .ant-input):not(.auth-scene *) {
     border-color: transparent !important;
     background: transparent !important;
     box-shadow: none !important;
 }
 
 /* 错误和警告仍需要可识别的状态，但不再叠加发光描边。 */
-:where(.ant-input-status-error:not(.ant-input-disabled), .ant-input-affix-wrapper-status-error:not(.ant-input-affix-wrapper-disabled), .ant-input-number-status-error:not(.ant-input-number-disabled)) {
+:where(.ant-input-status-error:not(.ant-input-disabled), .ant-input-affix-wrapper-status-error:not(.ant-input-affix-wrapper-disabled), .ant-input-number-status-error:not(.ant-input-number-disabled)):not(.auth-scene *) {
     background: color-mix(in srgb, var(--destructive, #ef4444) 10%, transparent) !important;
 }
 
-:where(.ant-input-status-warning:not(.ant-input-disabled), .ant-input-affix-wrapper-status-warning:not(.ant-input-affix-wrapper-disabled), .ant-input-number-status-warning:not(.ant-input-number-disabled)) {
+:where(.ant-input-status-warning:not(.ant-input-disabled), .ant-input-affix-wrapper-status-warning:not(.ant-input-affix-wrapper-disabled), .ant-input-number-status-warning:not(.ant-input-number-disabled)):not(.auth-scene *) {
     background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent) !important;
 }
 
-:where(.ant-input-disabled, .ant-input-affix-wrapper-disabled, .ant-input-number-disabled, .ant-input-number-affix-wrapper-disabled) {
+:where(.ant-input-disabled, .ant-input-affix-wrapper-disabled, .ant-input-number-disabled, .ant-input-number-affix-wrapper-disabled):not(.auth-scene *) {
     background: color-mix(in srgb, var(--foreground) 4%, transparent) !important;
     color: color-mix(in srgb, var(--foreground) 42%, transparent) !important;
     box-shadow: none !important;
@@ -105,7 +105,7 @@
 
 /* 鼠标点击只改变表面；键盘导航才显示焦点。 */
 :where(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-input-number-affix-wrapper):focus:not(:focus-visible),
-:where(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-input-number-affix-wrapper):focus-visible:not([data-input-modality="keyboard"]) {
+:where(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-input-number-affix-wrapper):focus-visible:not([data-input-modality="keyboard"]):not(.auth-scene *) {
     outline: none !important;
     box-shadow: none !important;
 }
@@ -124,7 +124,7 @@
 }
 
 /* borderless：行内改名和节点标题不需要控件底。 */
-:where(.ant-input-borderless, .ant-input-affix-wrapper-borderless, .ant-input-number-borderless) {
+:where(.ant-input-borderless, .ant-input-affix-wrapper-borderless, .ant-input-number-borderless):not(.auth-scene *) {
     min-height: auto !important;
     border: 0 !important;
     border-radius: 0 !important;

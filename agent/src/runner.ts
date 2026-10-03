@@ -20,8 +20,9 @@ import {
   type SessionCompactFailedEvent,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { CanvasBridge, CanvasModelRetry, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
+import { CanvasBridge, CanvasCompactionNeeded, CanvasModelRetry, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
+import { compactionSettings, serializePreparation, runNativeCompaction } from "./native-compaction.js";
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
 import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "./native-skills.js";
@@ -397,8 +398,9 @@ interface CanvasCompactionHookDependencies {
 }
 
 /**
- * The inline Pi extension is the only compaction adapter. Go creates and signs
- * the checkpoint; a failed Go call cancels Pi's built-in summarizer.
+ * Pi owns semantic summarization and cut selection; Go owns billed model tasks,
+ * authoritative facts and the atomic checkpoint commit. Old operations resume
+ * through their frozen Go compactor until committed.
  */
 export function createCanvasContextCompactionExtension(deps: CanvasCompactionHookDependencies): InlineExtension {
   let activeOperation = deps.pendingCompaction()?.operationId || "";
@@ -413,19 +415,24 @@ export function createCanvasContextCompactionExtension(deps: CanvasCompactionHoo
           if (pending && (pending.sessionRevision !== deps.sessionRevision() || pending.activeLeafId !== deps.activeLeafId())) {
             throw new FatalWorkerError("Persisted Go compaction no longer matches the restored Pi session");
           }
-          const operation = pending
+          let operation = pending
             ? await deps.bridge.resumeContextCompaction(deps.snapshot(), pending.operationId, event.signal)
             : await deps.bridge.compactContext(deps.snapshot(), {
               sessionRevision: deps.sessionRevision(), activeLeafId: deps.activeLeafId(), reason: event.reason,
               willRetry: event.willRetry, tokensBefore: event.preparation.tokensBefore,
+              ...(event.preparation.fileOps ? { preparation: serializePreparation(event.preparation) } : {}),
             }, event.signal);
           if (pending && operation.operationId !== pending.operationId) {
             throw new FatalWorkerError("Go resumed a different context compaction operation");
           }
           activeOperation = operation.operationId;
+          if (operation.nativePreparation && operation.status !== "succeeded") {
+            operation = await runNativeCompaction(deps.bridge, deps.snapshot(), operation, canvasModel(deps.snapshot()), event.signal);
+          }
           return { compaction: {
             summary: operation.summary!, firstKeptEntryId: operation.firstKeptEntryId!,
             tokensBefore: operation.tokensBefore ?? event.preparation.tokensBefore, details: operation.details,
+            usage: operation.usage,
           } };
         } catch (error) {
           const failure = error instanceof Error ? error : new Error(String(error));
@@ -494,6 +501,7 @@ async function bootstrapSession(
     if (!resolved) throw new FatalWorkerError("canvas provider model did not resolve");
 
     const settingsManager = SettingsManager.create(workspace.cwd, workspace.agentDir);
+    settingsManager.applyOverrides({ compaction: compactionSettings(snapshot) });
     // Retry admission, billing and escalation are governed by Go's persisted policy.
     settingsManager.setRetryEnabled(false);
     const nativeMode = snapshot.skillRuntimeMode === "pi-native";
@@ -544,6 +552,34 @@ async function bootstrapSession(
  * 把 Go 的控制面决策（收尾判定、终态、取消）翻成会话动作。任何模型或画布副作用
  * 都必须先拿到 Go 的回执。
  */
+/**
+ * 手动压缩的确定性失败必须变成 FatalWorkerError。
+ *
+ * Pi 在"没有可压缩历史"时抛 `Nothing to compact (session too small)`；同样的状态
+ * 重试一万次也只会得到同一个结果。若按普通错误处理，worker 只释放租约，运行会一直
+ * 停在 running 被反复重领（真实 3000 部署验收复现）。转成 FatalWorkerError 后由
+ * `server.ts` 写入 run 失败原因，界面得到明确终态而不是永久"运行中"。
+ */
+async function compactSessionOrFail(session: AgentSession, reason: string, softFail = false): Promise<boolean> {
+  try {
+    await session.compact();
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const noMaterial = /Nothing to compact|Already compacted/i.test(message);
+    if (softFail && noMaterial) {
+      // preflight 阶段（本轮 prompt 还没进入 Pi 会话）Pi 可能认为没有可压材料：
+      // 交给 session.prompt 的自动压缩（会把本轮消息一并纳入）与 Go 的 PiModelStep
+      // 准入处理，而不是把运行判死或让 worker 反复重领。
+      return false;
+    }
+    if (noMaterial) {
+      throw new FatalWorkerError(`${reason}：当前会话没有可压缩的历史（模型窗口相对系统提示过小）；请改用更大上下文窗口的模型后重试`);
+    }
+    throw error;
+  }
+}
+
 export async function runCanvasAgent(
   bridge: CanvasBridge,
   initial: PiSnapshot,
@@ -572,6 +608,15 @@ export async function runCanvasAgent(
   let sessionRevision = snapshot.piSessionRevision || 1;
   let sessionLeafId = snapshot.piActiveLeafId || "";
   let pendingContextCompaction = snapshot.pendingContextCompaction;
+  const committedCompactionOperations = new Set<string>();
+  const syncCompaction = (): void => {
+    pendingContextCompaction = snapshot.pendingContextCompaction;
+    if (pendingContextCompaction && committedCompactionOperations.has(pendingContextCompaction.operationId)) {
+      pendingContextCompaction = undefined;
+      snapshot = { ...snapshot, pendingContextCompaction: undefined };
+    }
+    session?.settingsManager.applyOverrides({ compaction: compactionSettings(snapshot) });
+  };
   const persistedSessionEntryIds = new Set((snapshot.piSessionEntries || []).map(({ entry }) => String(entry.id || "")));
   const stagedRecoveryEntries: SessionEntry[] = [];
   let activeTaskId = "";
@@ -696,6 +741,7 @@ export async function runCanvasAgent(
     }
     canonicalCount = refreshed.canonical.messages.length;
     snapshot = refreshed;
+    syncCompaction();
     runTerminated = isTerminalRunStatus(refreshed.status);
     syncPendingInterjections(refreshed);
     await steerPendingInterjections();
@@ -710,6 +756,8 @@ export async function runCanvasAgent(
 
   // Provider：Pi 的每次模型请求都翻成 Go 的模型步骤（带上提示合同身份）。
   let modelRetry: PiTurnDecision | undefined;
+  let compactionNeeded = false;
+  let consecutiveCompactions = 0;
   const streamSimple = createCanvasStreamFn(async ({ messages, signal, onTextDelta }) => {
     await queue.drain();
     if (listenerFailure !== undefined) throw listenerFailure;
@@ -718,7 +766,15 @@ export async function runCanvasAgent(
     const canonical = toCanonical(messages as Message[], snapshot.canonical.promptCacheKey);
     canonical.tools = disclosure.decorateCanonicalTools(canonical.tools);
     try {
+      if (pendingContextCompaction) throw new CanvasCompactionNeeded(snapshot.modelLimits);
+      if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
+        const decision = await bridge.modelPreflight(snapshot, canonical, signal, promptContract, parts);
+        if (decision.modelLimits) snapshot = { ...snapshot, modelLimits: decision.modelLimits };
+        syncCompaction();
+        if (decision.decision === "compact") throw new CanvasCompactionNeeded(decision.modelLimits);
+      }
       const step = await bridge.modelStep(snapshot, canonical, signal, onTextDelta, promptContract, parts);
+      consecutiveCompactions = 0;
       if (nativeMode && snapshot.activeTaskId === step.taskId) {
         for (const call of step.result.toolCalls || []) {
           if (call.function.name === "read") resumedNativeCallIds.add(call.id);
@@ -727,6 +783,10 @@ export async function runCanvasAgent(
       activeTaskId = latestTaskId = step.taskId;
       return step.result;
     } catch (error) {
+      if (error instanceof CanvasCompactionNeeded) {
+        compactionNeeded = true;
+        if (error.modelLimits) snapshot = { ...snapshot, modelLimits: error.modelLimits };
+      }
       if (error instanceof CanvasModelRetry) modelRetry = error.decision;
       if (error instanceof CanvasRunTerminated) {
         runTerminated = true;
@@ -773,6 +833,8 @@ export async function runCanvasAgent(
     drain: () => queue.drain(),
     signal: shutdown,
     onCommitted: (entry, revision) => {
+      const operationId = (entry.details as Record<string, unknown> | undefined)?.operationId;
+      if (typeof operationId === "string") committedCompactionOperations.add(operationId);
       sessionRevision = revision;
       sessionLeafId = String(entry.id || "");
       pendingContextCompaction = undefined;
@@ -880,6 +942,7 @@ export async function runCanvasAgent(
       controlRunning = true;
       void (bridge.control ? bridge.control(snapshot, shutdown) : bridge.snapshot(snapshot, shutdown)).then(async (control) => {
         snapshot = { ...snapshot, ...control };
+        syncCompaction();
         syncPendingInterjections(snapshot);
         if (isTerminalRunStatus(control.status)) { runTerminated = true; abortSession(); }
         else await steerPendingInterjections();
@@ -914,7 +977,7 @@ export async function runCanvasAgent(
     try {
       let prompt = prependPendingInterjections(resume.prompt);
       if (pendingContextCompaction) {
-        await session.compact();
+        await compactSessionOrFail(session, "服务端压缩操作无法执行");
         if (compactionFailure !== undefined) {
           throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
         }
@@ -934,23 +997,63 @@ export async function runCanvasAgent(
       for (;;) {
         await queue.drain();
         if (runTerminated || listenerFailure !== undefined || isTerminalRunStatus(snapshot.status)) break;
+        syncCompaction();
+        if (pendingContextCompaction) await compactSessionOrFail(session, "服务端压缩操作无法执行");
+        if (compactionFailure !== undefined) throw compactionFailure;
+        if (pendingContextCompaction) throw new FatalWorkerError("Pi did not commit refreshed context compaction");
+        if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
+          const planned = toCanonical(session.agent.state.messages as Message[], snapshot.canonical.promptCacheKey);
+          // SDK 的 Agent 以空 systemPrompt 初始化，只有首个 run 开始后才物化；
+          // preflight 可能发生在首个 prompt 之前，此时必须回落到会话/装配层的系统提示，
+          // 否则服务端会以"缺少服务端策略"拒绝（真实 3000 部署验收发现的缺口）。
+          planned.systemPrompt = session.agent.state.systemPrompt || session.systemPrompt || systemPrompt;
+          planned.tools = disclosure.decorateCanonicalTools(snapshot.canonical.tools);
+          planned.messages.push({ role: "user", content: prompt });
+          const decision = await bridge.modelPreflight(snapshot, planned, shutdown, promptContract, parts);
+          if (decision.modelLimits) snapshot = { ...snapshot, modelLimits: decision.modelLimits };
+          syncCompaction();
+          if (decision.decision === "compact") {
+            if (++consecutiveCompactions > 2) throw new FatalWorkerError("Context still exceeds admission budget after compaction");
+            const didCompact = await compactSessionOrFail(session, "上下文超过模型窗口", true);
+            if (compactionFailure !== undefined) throw compactionFailure;
+            if (didCompact) continue;
+            // 已压到尖端：把本轮 prompt 纳入会话，让自动压缩与 Go 准入决定下一步。
+          }
+        }
         await session.prompt(prompt, { expandPromptTemplates: false }).catch((error: unknown) => {
           if (compactionFailure !== undefined) {
             throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
           }
           if (abortRequested || shutdown?.aborted || isTerminalRunStatus(snapshot.status)) return;
+          // 流内的模型准入把"需先压缩"转成 CanvasCompactionNeeded。它是控制信号，
+          // 必须在下面的 compactionNeeded 分支里处理；当作普通错误抛出只会让 worker
+          // 释放租约、运行被反复重领（界面永远"运行中"，真实 3000 部署复现）。
+          if (error instanceof CanvasCompactionNeeded) return;
           throw error;
         });
         await session.waitForIdle();
         await queue.drain();
         if (runTerminated || abortRequested || listenerFailure !== undefined) break;
         if (compactionFailure !== undefined && !abortRequested && !shutdown?.aborted) {
-          throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
+          throw compactionFailure;
         }
         snapshot = await bridge.snapshot(snapshot, shutdown);
+        syncCompaction();
         syncPendingInterjections(snapshot);
         canonicalCount = snapshot.canonical.messages.length;
         if (listenerFailure !== undefined || isTerminalRunStatus(snapshot.status)) break;
+        if (compactionNeeded) {
+          compactionNeeded = false;
+          if (++consecutiveCompactions > 2) throw new FatalWorkerError("Context still exceeds admission budget after compaction");
+          // Pi converted the denied request into an error message. Restore the last
+          // durable leaf before manual compaction, outside its streaming loop.
+          if (sessionLeafId) sessionManager.branch(sessionLeafId); else sessionManager.resetLeaf();
+          session.agent.state.messages = buildSessionContext(sessionManager.getBranch()).messages;
+          await compactSessionOrFail(session, "上下文超过模型窗口");
+          if (compactionFailure !== undefined) throw compactionFailure;
+          prompt = CONTINUATION_PROMPT;
+          continue;
+        }
         if (modelRetry?.nudge) {
           prompt = prependPendingInterjections(modelRetry.nudge);
           modelRetry = undefined;

@@ -1,4 +1,4 @@
-import { createAssistantMessageEventStream, type AssistantMessage, type Model, type ToolCall, type Usage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, type AssistantMessage, type Model, type ToolCall, type Usage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 
 export interface CanvasModelResult {
@@ -14,6 +14,8 @@ export type ModelStep = (request: {
   model: Model<any>;
   messages: unknown[];
   signal?: AbortSignal;
+  systemPrompt?: string;
+  maxTokens?: number;
   /** 模型任务的流式草稿；有增量时逐段上报，避免把整段结果当一次 delta。 */
   onTextDelta?: (delta: string) => void;
 }) => Promise<CanvasModelResult>;
@@ -74,6 +76,7 @@ export function createCanvasStreamFn(step: ModelStep): StreamFn {
         };
         const result = await step({
           model, messages: context.messages, signal: options?.signal,
+          systemPrompt: getCurrentSystemPrompt(context.messages), maxTokens: options?.maxTokens,
           onTextDelta: (delta) => { sent += delta; pushDelta(delta); },
         });
         if (options?.signal?.aborted) throw new Error("Agent model request aborted");

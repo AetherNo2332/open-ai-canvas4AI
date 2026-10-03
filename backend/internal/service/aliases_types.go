@@ -3,7 +3,7 @@ package service
 import "infinite-canvas/backend/internal/app"
 
 type (
-	AgentSchedulerUpdate = app.AgentSchedulerUpdate
+	AgentSchedulerUpdate                   = app.AgentSchedulerUpdate
 	PaymentOrderQuery                      = app.PaymentOrderQuery
 	PaymentReconciliationQuery             = app.PaymentReconciliationQuery
 	CloudAgentRequest                      = app.CloudAgentRequest
@@ -18,6 +18,8 @@ type (
 	PiContextCompactionStart               = app.PiContextCompactionStart
 	PiContextCompactionView                = app.PiContextCompactionView
 	PiContextCompactionCommit              = app.PiContextCompactionCommit
+	PiNativeCompactionModelRequest         = app.PiNativeCompactionModelRequest
+	PiNativeCompactionComplete             = app.PiNativeCompactionComplete
 	PiTurnDecision                         = app.PiTurnDecision
 	PiToolReceipt                          = app.PiToolReceipt
 	PiRuntimePhaseRequest                  = app.PiRuntimePhaseRequest

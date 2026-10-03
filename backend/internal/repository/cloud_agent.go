@@ -461,7 +461,7 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 				return err
 			}
 		}
-		for _, kind := range []string{"canonical", "history", "pi"} {
+		for _, kind := range []string{"canonical", "history", "pi", "pi_compaction"} {
 			count := 0
 			for _, message := range run.Transcript {
 				if message.Kind == kind {

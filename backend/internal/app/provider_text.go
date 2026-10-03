@@ -222,6 +222,15 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 	if err != nil {
 		return nil, err
 	}
+	// Known protocols must preserve stop reasons and provider usage for non-stream
+	// requests too. Native compaction cannot accept a truncated summary as complete.
+	if knownWire {
+		var payload map[string]interface{}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return nil, fmt.Errorf("Agent 接口返回格式无效：%w", err)
+		}
+		return parseAgentToolPayload(payload, wire)
+	}
 	parsed, err := adapter.ParseAgent(ctx, body)
 	if err != nil {
 		return nil, err
@@ -1069,6 +1078,13 @@ func applyTextThinking(body map[string]interface{}, input canvasGenerationInput,
 // disagree on forced choices. Normalize before the first network request while
 // preserving required/named choices for non-reasoning structured tasks.
 func normalizeAgentToolChoice(body map[string]interface{}, input canvasGenerationInput, protocol string) {
+	if protocol == "chat-completion" || protocol == "responses" || protocol == "claude-api" {
+		if len(creationMaps(body["tools"])) == 0 {
+			delete(body, "tools")
+			delete(body, "tool_choice")
+			return
+		}
+	}
 	if protocol == "chat-completion" && (input.TextOptions.Thinking || isAutoAgentToolChoice(body["tool_choice"])) {
 		delete(body, "tool_choice")
 	}

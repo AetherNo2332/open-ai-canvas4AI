@@ -17,41 +17,49 @@
                 margin: 0;
                 background: #ffffff;
             }
+            html.dark,
+            html.dark body {
+                background: #0f0f0f;
+            }
+            /* 启动占位只留一条发丝进度线；swiss-design 禁止装饰图形与无阻尼脉冲动画。
+               这里必须用字面色值：皮肤 token 要等应用 CSS 之后才存在。 */
             #root:empty {
-                min-height: 100vh;
+                min-height: 100dvh;
             }
             #root:empty::before {
                 content: "";
                 position: fixed;
-                left: 50%;
-                top: 50%;
-                width: 12px;
-                height: 12px;
-                margin: -6px 0 0 -6px;
-                background: rgba(255, 255, 255, 0.84);
-                border-radius: 999px;
-                box-shadow: 0 0 0 7px rgba(255, 255, 255, 0.08);
-                animation: appearance-bootstrap-pulse 1.8s ease-in-out infinite;
+                top: 0;
+                right: 0;
+                left: 0;
+                height: 2px;
+                background: rgba(17, 17, 17, 0.12);
             }
             #root:empty::after {
                 content: "";
                 position: fixed;
-                left: 50%;
-                top: 50%;
-                width: 82px;
-                height: 82px;
-                margin: -42px 0 0 -42px;
-                border: 1px solid rgba(255, 255, 255, 0.14);
-                border-right-color: transparent;
-                border-radius: 999px;
-                animation: appearance-bootstrap-orbit 2.8s linear infinite;
+                top: 0;
+                left: 0;
+                width: 26%;
+                height: 2px;
+                background: #111111;
+                animation: appearance-bootstrap-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
             }
-            @keyframes appearance-bootstrap-pulse { 0%, 100% { opacity: .62; transform: scale(.82); } 50% { opacity: 1; transform: scale(1.08); } }
-            @keyframes appearance-bootstrap-orbit { to { transform: rotate(360deg); } }
+            html.dark #root:empty::before {
+                background: rgba(255, 255, 255, 0.16);
+            }
+            html.dark #root:empty::after {
+                background: #ffffff;
+            }
+            @keyframes appearance-bootstrap-sweep {
+                0% { transform: translateX(-100%); }
+                100% { transform: translateX(400%); }
+            }
             @media (prefers-reduced-motion: reduce) {
-                #root:empty::before,
                 #root:empty::after {
                     animation: none;
+                    width: 100%;
+                    opacity: 0.3;
                 }
             }
         </style>

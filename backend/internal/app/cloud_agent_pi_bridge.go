@@ -90,13 +90,7 @@ type PiSkillFileRequest struct {
 // PiAgentModelLimits mirrors the effective Go-side text capability into Pi's
 // scheduler. Go remains authoritative for request admission and billing; these
 // values keep Pi's automatic compaction threshold close to the route budget.
-type PiAgentModelLimits struct {
-	ContextWindowTokens  int    `json:"contextWindowTokens"`
-	MaxOutputTokens      int    `json:"maxOutputTokens"`
-	ReservedOutputTokens int    `json:"reservedOutputTokens"`
-	Configured           bool   `json:"configured"`
-	Source               string `json:"source"`
-}
+type PiAgentModelLimits = cloudAgentContextBudget
 
 type PiAgentSessionEntry struct {
 	RunID string          `json:"runId"`
@@ -118,11 +112,14 @@ type PiModelStepRequest struct {
 }
 
 type PiModelStepView struct {
-	TaskID    string          `json:"taskId"`
-	Status    string          `json:"status"`
-	TextDraft string          `json:"textDraft,omitempty"`
-	Result    json.RawMessage `json:"result,omitempty"`
-	Error     string          `json:"error,omitempty"`
+	Decision        string             `json:"decision,omitempty"`
+	ModelLimits     PiAgentModelLimits `json:"modelLimits"`
+	ProjectedTokens int                `json:"projectedTokens,omitempty"`
+	TaskID          string             `json:"taskId"`
+	Status          string             `json:"status"`
+	TextDraft       string             `json:"textDraft,omitempty"`
+	Result          json.RawMessage    `json:"result,omitempty"`
+	Error           string             `json:"error,omitempty"`
 }
 
 type PiToolBatchRequest struct {
@@ -787,6 +784,15 @@ func (s *Service) RenewPiAgentLease(userID, runID, owner string) error {
 }
 
 func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRequest) (*PiModelStepView, error) {
+	return s.piModelStep(userID, runID, owner, request, false)
+}
+
+// Preflight validates the same envelope as admission, without creating a task or order.
+func (s *Service) PiModelPreflight(userID, runID, owner string, request PiModelStepRequest) (*PiModelStepView, error) {
+	return s.piModelStep(userID, runID, owner, request, true)
+}
+
+func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRequest, preflight bool) (*PiModelStepView, error) {
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
 		var terminal bool
@@ -823,6 +829,9 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 		return nil, err
 	}
 	if state.ActiveTaskID != "" {
+		if state.ContextCompaction != nil {
+			return &PiModelStepView{Status: "waiting_compaction", Decision: "compact", ModelLimits: s.cloudAgentContextBudgetForRequest(state.Request)}, nil
+		}
 		if state.PiModelStepFingerprint != "" && state.PiModelStepFingerprint != fingerprint {
 			return nil, kernel.Forbidden("Pi 模型步骤请求与当前在途任务不一致")
 		}
@@ -925,6 +934,11 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 	//
 	// 三条分支的区别只在合同版本：版本 2 的运行按冻结快照核验（首步连正文一起冻结），
 	// 迁移前的运行保持原有"首个哈希胜出"的语义 —— 旧运行没有快照，不能因为升级被拒绝。
+	originalSnapshot, originalPromptContract := state.Snapshot, state.PromptContract
+	if preflight && state.Snapshot != nil {
+		copy := *state.Snapshot
+		state.Snapshot = &copy
+	}
 	switch {
 	case cloudAgentAwaitingFirstStep(&state):
 		if err := cloudAgentFreezeFirstStepContract(&state, request.HarnessHash, request.Harness, request.Canonical.SystemPrompt); err != nil {
@@ -948,6 +962,35 @@ func (s *Service) PiModelStep(userID, runID, owner string, request PiModelStepRe
 				return nil, kernel.Forbidden("本轮运行的提示合同与当前 agent 装配不一致（Harness 已变更），请重新发起对话")
 			}
 		}
+	}
+	if preflight {
+		state.Snapshot, state.PromptContract = originalSnapshot, originalPromptContract
+	}
+	pressure := s.cloudAgentContextPressure(request.Canonical, state.Request.Prompt, state.Request)
+	channelID, modelKey := state.Request.ChannelID, firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)
+	signature := cloudAgentRequestSignature(&state, request.Canonical, channelID, modelKey)
+	cloudAgentExpireTokenAnchorForRequest(run.ID, &state, pressure.ContextWindowTokens, signature, modelKey, channelID)
+	projected, _ := cloudAgentProjectedInputTokens(pressure, &state)
+	encoded, _ := json.Marshal(request.Canonical.Messages)
+	needsCompaction := state.ContextCompaction != nil || (modelBudget.Configured && projected >= modelBudget.CompactAtTokens) ||
+		(!modelBudget.Configured && cloudAgentContextShouldCompact(len(request.Canonical.Messages), len(encoded)))
+	view := &PiModelStepView{Status: "ready", Decision: "model", ModelLimits: modelBudget, ProjectedTokens: projected}
+	if needsCompaction {
+		view.Status, view.Decision = "waiting_compaction", "compact"
+		// This records the decision, not a compaction operation: Pi must first prepare a valid cut.
+		state.PiModelStepFingerprint = ""
+		payload := cloudAgentContextPressurePayload(pressure, &state, request.Canonical)
+		payload["phase"], payload["decision"] = "preflight", "compact"
+		state.event(run.ID, "context_pressure", payload)
+		if err := s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			return cloudAgentSave(current, &state)
+		}); err != nil {
+			return nil, err
+		}
+		return view, nil
+	}
+	if preflight {
+		return view, nil
 	}
 	req := CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_text", Operation: cloudAgentStepOperation, Prompt: state.Request.Prompt, Model: state.Request.Model, LogicalModelID: state.Request.LogicalModelID, Input: input}
 	firstStep := cloudAgentAwaitingFirstStep(&state)
@@ -1511,7 +1554,7 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,
-		Request: state.Request, ModelLimits: PiAgentModelLimits{ContextWindowTokens: budget.ContextWindowTokens, MaxOutputTokens: budget.MaxOutputTokens, ReservedOutputTokens: budget.ReservedOutputTokens, Configured: budget.Configured, Source: budget.Source}, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
+		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
 		SkillRuntimeMode: mode, Skills: nativeSkills,
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。

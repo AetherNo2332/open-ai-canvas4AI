@@ -75,7 +75,8 @@ func (s *Service) PiControl(userID, runID, owner string) (map[string]any, error)
 		return nil, err
 	}
 	var control struct {
-		PendingInterjections []cloudAgentInterjection `json:"pendingInterjections"`
+		PendingInterjections []cloudAgentInterjection     `json:"pendingInterjections"`
+		ContextCompaction    *cloudAgentContextCompaction `json:"contextCompaction"`
 	}
 	if err := json.Unmarshal([]byte(run.StateJSON), &control); err != nil {
 		return nil, err
@@ -84,7 +85,11 @@ func (s *Service) PiControl(userID, runID, owner string) (map[string]any, error)
 	for _, item := range control.PendingInterjections {
 		pending = append(pending, PiPendingInterjection{ID: item.ID, Text: item.Text, CreatedAt: item.CreatedAt})
 	}
-	return map[string]any{"status": run.Status, "pendingInterjections": pending}, nil
+	var compaction *PiPendingContextCompaction
+	if c := control.ContextCompaction; c != nil && c.PiOperationID != "" {
+		compaction = &PiPendingContextCompaction{OperationID: c.PiOperationID, SessionRevision: c.PiSessionRevision, ActiveLeafID: c.PiSourceLeafID, Reason: c.PiReason, WillRetry: c.PiWillRetry, TokensBefore: c.PiTokensBefore}
+	}
+	return map[string]any{"status": run.Status, "pendingInterjections": pending, "pendingContextCompaction": compaction}, nil
 }
 
 func (s *Service) PiRelease(userID, runID, owner string) error {

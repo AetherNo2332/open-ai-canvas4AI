@@ -524,6 +524,92 @@ test("worker restart resumes the existing Go compaction before creating another 
   assert.deepEqual(state.noToolTurns, ["task-1"]);
 });
 
+function compactionHistory() {
+  const seed = {
+    runId: "run-1", userId: "user-1", revision: 1, status: "running",
+    request: { prompt: "Continue this film", model: "model" },
+    modelLimits: { contextWindowTokens: 64000, maxOutputTokens: 8192, configured: true, source: "fixture" },
+    canonical: { systemPrompt: "SERVER POLICY: 影策画布助手。", messages: [], tools: [], toolChoice: "auto" },
+    tools: [],
+  } as PiSnapshot;
+  const model = canvasModel(seed);
+  const canonical = Array.from({ length: 8 }, (_, i) => [
+    { role: "user", content: `story ${i} `.repeat(1500) }, { role: "assistant", content: `answer ${i}` },
+  ]).flat();
+  canonical.push({ role: "user", content: "Continue this film" });
+  seed.canonical.messages = canonical;
+  const messages = fromCanonical(seed, model);
+  const entries = sessionEntriesFromMessages("run-1", messages as unknown as Record<string, unknown>[]);
+  return { canonical, entries, views: entries.map(entry => ({ runId: "run-1", entry: entry as unknown as Record<string, unknown> })) as PiSnapshot["piSessionEntries"],
+    leaf: String(entries.at(-1)!.id), keep: String(entries.at(-1)!.id) };
+}
+
+test("preflight compacts before appending the next prompt and never admits the denied model step", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([{ text: "Done" }], {
+    piSessionEntries: history.views, piActiveLeafId: history.leaf, firstKeptEntryId: history.keep,
+  });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  let checks = 0;
+  const order: string[] = [];
+  let firstPreflightPrompt = "";
+  bridge.modelPreflight = async (_run, canonical) => {
+    if (checks === 0) firstPreflightPrompt = canonical.systemPrompt;
+    order.push("preflight");
+    return { status: "ready", taskId: "", decision: ++checks === 1 ? "compact" : "model" };
+  };
+  bridge.compactContext = async () => {
+    order.push("compact");
+    return { operationId: "preflight-op", status: "succeeded", summary: "<agent-context-checkpoint/>",
+      firstKeptEntryId: history.keep, tokensBefore: 40000,
+      details: { protocolVersion: "canvas-pi-compaction/v1", operationId: "preflight-op" } };
+  };
+  const checkpoint = bridge.checkpoint.bind(bridge);
+  bridge.checkpoint = async (...args) => { order.push(`checkpoint:${args[2].role}`); return checkpoint(...args); };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.ok(order.indexOf("compact") < order.indexOf("checkpoint:user"));
+  assert.equal(state.steps, 1);
+  assert.ok(checks >= 3, "check before prompt and again before the actual provider request");
+  const firstRequest = state.canonical[0];
+  assert.ok(firstRequest);
+  assert.ok(firstRequest.messages.some(message => String(message.content).includes("agent-context-checkpoint")));
+  // 首个 preflight 发生在首个 prompt 之前：SDK 的 Agent.state.systemPrompt 仍是空串，
+  // 必须回落到装配提示，否则真实服务端会以"缺少服务端策略"拒绝整个运行。
+  assert.ok(firstPreflightPrompt.includes("SERVER POLICY: 影策画布助手。"), firstPreflightPrompt || "<empty>");
+});
+
+test("a preflight compaction without compactable history falls through to the prompt", async () => {
+  // 真实部署暴露：本轮 prompt 尚未进入 Pi 会话时 compact() 会抛
+  // "Nothing to compact (session too small)"。preflight 阶段这属于"无材料"：
+  // 必须回落到 session.prompt，让 Pi 的自动压缩（含本轮消息）与 Go 准入决定，
+  // 而不是终态失败、更不能让 worker 释放租约后反复重领。
+  const { bridge, state, snapshot } = fakeBridge([{ text: "Done" }]);
+  let checks = 0;
+  bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: ++checks === 1 ? "compact" : "model" });
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.ok(state.steps >= 1, "模型步必须在本轮真实请求前被准入");
+});
+
+test("a pending operation received through control is committed before any ordinary model request", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([{ text: "Done" }], {
+    piSessionEntries: history.views, piActiveLeafId: history.leaf, firstKeptEntryId: history.keep,
+  });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  const pending = { operationId: "control-op", sessionRevision: 8, activeLeafId: history.leaf,
+    reason: "threshold", willRetry: false, tokensBefore: 40000 };
+  bridge.control = async () => ({ status: "running", pendingContextCompaction: pending });
+  const modelStep = bridge.modelStep.bind(bridge);
+  bridge.modelStep = async (...args) => {
+    assert.deepEqual(state.contextCompactions, ["resume:control-op", "commit:control-op:8"]);
+    return modelStep(...args);
+  };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 1);
+});
+
 test("compaction and restart preserve the original image beyond the retained text boundary", async () => {
   const image = [{ type: "text", text: '{"nodeId":"hero-original"}' },
     { type: "image_url", image_url: { url: "resource:original-image", detail: "high" } }];

@@ -418,12 +418,22 @@ func cloudAgentRestoreTranscript(run *model.CloudAgentExecution, state *cloudAge
 				return errors.New("Pi Agent message sequence is incomplete")
 			}
 			piCount++
+		case cloudAgentMessageKindCompaction:
+			c := state.ContextCompaction
+			if c == nil || c.PiNative == nil || record.Sequence != 1 || len(c.PiNative.Preparation) > 0 ||
+				!json.Valid([]byte(record.MessageJSON)) || cloudAgentTextDigest(record.MessageJSON) != c.PiNative.PreparationDigest {
+				return errors.New("Pi compaction preparation is invalid")
+			}
+			c.PiNative.Preparation = json.RawMessage(record.MessageJSON)
 		default:
 			return errors.New("Agent message kind is unsupported")
 		}
 	}
 	if len(run.Transcript) != run.MessageCount {
 		return fmt.Errorf("Agent execution transcript is incomplete: rows=%d count=%d", len(run.Transcript), run.MessageCount)
+	}
+	if c := state.ContextCompaction; c != nil && c.PiNative != nil && len(c.PiNative.Preparation) == 0 {
+		return errors.New("Pi compaction preparation is missing")
 	}
 	events := make([]CloudAgentEvent, 0, len(run.Journal))
 	for _, row := range run.Journal {
@@ -549,7 +559,12 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 			return err
 		}
 	} else if cloudAgentAwaitingFirstStep(state) {
-		return errors.New("Agent runtime first-step wait already has task history")
+		// 相位表示"首步合同尚未冻结"，不表示"没有任何任务历史"：压缩摘要等内部
+		// 任务可以先落库并占用 ActiveTaskID —— 它们不是本轮的一步。真正禁止的是
+		// **步进**已经推进，那意味着占位预留与任务历史已经对不上账。
+		if state.Step != 0 || state.CallIndex != 0 || len(state.Calls) != 0 {
+			return errors.New("Agent runtime first-step wait has advanced work")
+		}
 	}
 	seenTasks := make(map[string]struct{}, len(state.TaskIDs))
 	for _, taskID := range state.TaskIDs {
@@ -778,6 +793,12 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 	}
 	run.Transcript = make([]model.CloudAgentMessageRecord, 0, len(state.Canonical.Messages)+len(state.TextHistory)+len(piRecords))
 	run.Transcript = append(run.Transcript, piRecords...)
+	if c := state.ContextCompaction; c != nil && c.PiNative != nil {
+		if len(c.PiNative.Preparation) == 0 || cloudAgentTextDigest(string(c.PiNative.Preparation)) != c.PiNative.PreparationDigest {
+			return errors.New("Pi compaction preparation is missing or changed")
+		}
+		run.Transcript = append(run.Transcript, model.CloudAgentMessageRecord{RunID: run.ID, UserID: run.UserID, Kind: cloudAgentMessageKindCompaction, Sequence: 1, MessageJSON: string(c.PiNative.Preparation)})
+	}
 	for index, message := range state.Canonical.Messages {
 		body, err := json.Marshal(message)
 		if err != nil {
@@ -801,9 +822,10 @@ func cloudAgentSave(run *model.CloudAgentExecution, state *cloudAgentRuntime) er
 
 // cloudAgentMessageKindCanonical / cloudAgentMessageKindHistory 是消息表的两种 kind。
 const (
-	cloudAgentMessageKindCanonical = "canonical"
-	cloudAgentMessageKindHistory   = "history"
-	cloudAgentMessageKindPi        = "pi"
+	cloudAgentMessageKindCanonical  = "canonical"
+	cloudAgentMessageKindHistory    = "history"
+	cloudAgentMessageKindPi         = "pi"
+	cloudAgentMessageKindCompaction = "pi_compaction"
 )
 
 // cloudAgentBoundEventPayload 给单条事件载荷封顶。
@@ -2012,7 +2034,11 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				return err
 			}
 		}
-		if cloudAgentAwaitingFirstStep(state) {
+		// 只有真正的首个**模型步**才允许换掉占位预留并推进相位。压缩摘要等内部任务
+		// 也走这条入队路径：若把它们当成首步，占位预留会被消耗、相位被清空，而
+		// 首步合同（AssembledPromptHash）从未冻结——压缩后的续跑随后会以
+		// "first-step contract snapshot is missing" 拒绝（真实 3000 部署验收复现）。
+		if cloudAgentAwaitingFirstStep(state) && req.Operation == cloudAgentStepOperation {
 			// 首个模型步：把"建 run 时的占位预留"换成"真实首步报价"。
 			//
 			// 占位订单号必须从**本事务里**的占位行读出来，而不是用内存副本：
@@ -2075,6 +2101,11 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				state.ContextCompaction.Status = "running"
 				if state.ContextCompaction.PiOperationID != "" {
 					state.ContextCompaction.PiTaskID = task.ID
+					if native := state.ContextCompaction.PiNative; native != nil && native.ActiveCall != "" {
+						call := native.Calls[native.ActiveCall]
+						call.TaskID = task.ID
+						native.Calls[native.ActiveCall] = call
+					}
 				}
 			} else {
 				if contextPressure != nil {

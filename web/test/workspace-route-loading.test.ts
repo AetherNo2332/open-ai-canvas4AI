@@ -74,7 +74,6 @@ describe("workspace route loading", () => {
         expect(detail).toContain("新建画布");
     });
 
-
     test("keeps project asset refresh scoped to the latest user and project", () => {
         const editor = source("../src/pages/projects/detail/editor.tsx");
 
@@ -105,20 +104,22 @@ describe("workspace route loading", () => {
         expect(projectDetail).toContain('import("@/services/user-data-sync")');
         expect(projectDetail).not.toContain('import { createCanvasProjectWithRemoteSync } from "@/services/user-data-sync"');
         expect(workflow).not.toContain('from "@/lib/video-poster"');
-        expect(workflow).toContain('if (playing) return <video');
+        expect(workflow).toContain("if (playing) return <video");
     });
 
-    test("uses a quiet workspace skeleton for initial hydration", () => {
+    test("uses a quiet swiss loading surface for initial hydration", () => {
         const loader = source("../src/components/ui/aceternity/full-screen-loader.tsx");
         const css = source("../src/styles/globals.css");
 
-        expect(loader).toContain("full-screen-loader-scene");
-        expect(loader).toContain("full-screen-loader-guide");
-        expect(loader).toContain("LoadingSignal");
+        expect(loader).toContain("full-screen-loader-panel");
+        expect(loader).toContain("LoadingRule");
+        expect(loader).not.toContain("full-screen-loader-scene");
+        expect(loader).not.toContain("full-screen-loader-orbit");
         expect(loader).not.toContain("YINGCE STUDIO");
         expect(loader).not.toContain("loading-cue");
-        expect(css).toContain("@keyframes loading-signal-spin");
+        expect(css).toContain("@keyframes loading-rule-sweep");
         expect(css).toContain("@media (prefers-reduced-motion: reduce)");
+        expect(css).not.toContain("@keyframes loader-orbit-spin");
         expect(css).not.toContain("@keyframes loading-cue-pulse");
     });
 });
@@ -138,9 +139,9 @@ describe("workspace wallet entry", () => {
         expect(router).not.toContain("WalletPage");
         expect(router).not.toContain("loadWalletPage");
         expect(modules).not.toContain("pages/wallet");
-        expect(host).toContain("pathname !== \"/wallet\"");
+        expect(host).toContain('pathname !== "/wallet"');
         expect(host).toContain("openWorkspaceWallet");
-        expect(palette).toContain('run: () => openWorkspaceWallet()');
+        expect(palette).toContain("run: () => openWorkspaceWallet()");
         expect(palette).not.toContain('"/wallet"');
         expect(canvasTopBar).toContain("openWorkspaceWallet()");
         expect(canvasTopBar).not.toContain('to="/wallet"');

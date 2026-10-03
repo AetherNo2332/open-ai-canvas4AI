@@ -13,6 +13,7 @@ import (
 
 type cloudAgentPiCompactionSource struct {
 	Messages           []map[string]any
+	MessageEntryIDs    []string
 	FirstKeptEntryID   string
 	FirstKeptIndex     int
 	ActiveLeafID       string
@@ -28,6 +29,8 @@ type cloudAgentPiCompactionEntry struct {
 	Message          json.RawMessage `json:"message"`
 	Summary          string          `json:"summary"`
 	FirstKeptEntryID string          `json:"firstKeptEntryId"`
+	TargetID         string          `json:"targetId"`
+	EditReplacement  json.RawMessage `json:"replacement"`
 }
 
 type cloudAgentPiContextMessage struct {
@@ -161,12 +164,48 @@ func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry,
 			}
 		}
 	}
+	// Recovery context edits are append-only. Apply their latest content before
+	// hashing or retaining history so abandoned attempts cannot reappear in Go.
+	edits := map[string]json.RawMessage{}
+	originals := map[string]cloudAgentPiCompactionEntry{}
+	for _, entry := range branch {
+		originals[entry.ID] = entry
+		if entry.Type == "context_edit" {
+			edits[entry.TargetID] = entry.EditReplacement
+		}
+	}
+	projected := make([]cloudAgentPiContextMessage, 0, len(visible))
+	for _, item := range visible {
+		if replacement, ok := edits[item.EntryID]; ok {
+			if string(replacement) == "null" {
+				continue
+			}
+			var edit struct {
+				Content json.RawMessage `json:"content"`
+			}
+			original := originals[item.EntryID]
+			var message map[string]json.RawMessage
+			if json.Unmarshal(replacement, &edit) != nil || len(edit.Content) == 0 || original.Type != "message" || json.Unmarshal(original.Message, &message) != nil {
+				return source, fmt.Errorf("Pi compaction context replacement is invalid")
+			}
+			message["content"] = edit.Content
+			original.Message, _ = json.Marshal(message)
+			updated, visible, err := cloudAgentPiEntryMessage(original)
+			if err != nil || !visible {
+				return source, fmt.Errorf("Pi compaction replacement message is invalid")
+			}
+			item = updated
+		}
+		projected = append(projected, item)
+	}
+	visible = projected
 	if len(visible) == 0 {
 		return source, fmt.Errorf("Pi compaction active branch has no context messages")
 	}
 	source.Messages = make([]map[string]any, 0, len(visible))
 	for _, item := range visible {
 		source.Messages = append(source.Messages, item.Value)
+		source.MessageEntryIDs = append(source.MessageEntryIDs, item.EntryID)
 	}
 	source.FirstKeptEntryID = cloudAgentPiFirstKeptEntryID(visible)
 	if source.FirstKeptEntryID == "" {

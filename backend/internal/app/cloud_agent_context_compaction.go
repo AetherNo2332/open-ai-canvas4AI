@@ -37,16 +37,17 @@ type cloudAgentContextCompaction struct {
 	TurnCount   int    `json:"turnCount"`
 	// PiOperationID and the source identity make retries resume the same billed
 	// compaction task instead of enqueueing a second summary request.
-	PiOperationID      string `json:"piOperationId,omitempty"`
-	PiTaskID           string `json:"piTaskId,omitempty"`
-	PiSourceDigest     string `json:"piSourceDigest,omitempty"`
-	PiSessionRevision  int64  `json:"piSessionRevision,omitempty"`
-	PiSourceLeafID     string `json:"piSourceLeafId,omitempty"`
-	PiFirstKeptEntryID string `json:"piFirstKeptEntryId,omitempty"`
-	PiFirstKeptIndex   int    `json:"piFirstKeptIndex,omitempty"`
-	PiReason           string `json:"piReason,omitempty"`
-	PiWillRetry        bool   `json:"piWillRetry,omitempty"`
-	PiTokensBefore     int    `json:"piTokensBefore,omitempty"`
+	PiOperationID      string                        `json:"piOperationId,omitempty"`
+	PiTaskID           string                        `json:"piTaskId,omitempty"`
+	PiSourceDigest     string                        `json:"piSourceDigest,omitempty"`
+	PiSessionRevision  int64                         `json:"piSessionRevision,omitempty"`
+	PiSourceLeafID     string                        `json:"piSourceLeafId,omitempty"`
+	PiFirstKeptEntryID string                        `json:"piFirstKeptEntryId,omitempty"`
+	PiFirstKeptIndex   int                           `json:"piFirstKeptIndex,omitempty"`
+	PiReason           string                        `json:"piReason,omitempty"`
+	PiWillRetry        bool                          `json:"piWillRetry,omitempty"`
+	PiTokensBefore     int                           `json:"piTokensBefore,omitempty"`
+	PiNative           *cloudAgentPiNativeCompaction `json:"piNative,omitempty"`
 	// Resume 表示这次是"中途暂停压缩"：压完继续本轮的步进，而不是收尾结束本轮。
 	Resume bool `json:"resume,omitempty"`
 	// 触发读数：下一步预计输入 token ÷ 模型可用输入（上游实测锚点优先）。
@@ -548,12 +549,24 @@ func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecutio
 // values. Pi's compaction commit calls it in the same transaction as the v3 tree
 // append, so the canonical Go checkpoint can never get ahead of the Pi branch.
 func applyCloudAgentContextCheckpoint(runID string, current *model.CloudAgentExecution, state *cloudAgentRuntime, checkpoint agentcontext.Checkpoint, mode, reason string, keepTerminal bool) error {
+	nativeSummary := checkpoint.HistorySummary
 	checkpoint = cloudAgentBoundCheckpoint(checkpoint)
+	if mode == "pi-native" {
+		checkpoint.HistorySummary = nativeSummary
+	}
 	turnsBefore := cloudAgentConversationTurnCount(state.Canonical.Messages)
 	beforeMessages := len(state.Canonical.Messages)
 	beforeRaw, _ := json.Marshal(state.Canonical.Messages)
 	beforeBytes, beforeTokens := len(beforeRaw), estimateCloudAgentTokens(beforeRaw)
 	recent := cloudAgentCompleteTurnTail(state.Canonical.Messages, cloudAgentContextKeepPairs)
+	var nativeTail []map[string]any
+	if compaction := state.ContextCompaction; compaction != nil && compaction.PiNative != nil {
+		nativeTail = append(make([]map[string]any, 0), state.Canonical.Messages[compaction.PiFirstKeptIndex:]...)
+		recent = nil
+		for _, message := range nativeTail {
+			recent = append(recent, providerTextMessage{Role: stringField(message, "role"), Content: stringField(message, "content")})
+		}
+	}
 	history, err := cloudAgentCheckpointHistory(checkpoint, recent)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
@@ -569,9 +582,15 @@ func applyCloudAgentContextCheckpoint(runID string, current *model.CloudAgentExe
 		}
 		state.Canonical.Messages = append(state.Canonical.Messages, entry)
 	}
+	if nativeTail != nil {
+		state.Canonical.Messages = append(state.Canonical.Messages[:2], nativeTail...)
+	}
 	afterMessages := make([]map[string]any, 0, len(history))
 	for _, message := range history {
 		afterMessages = append(afterMessages, map[string]any{"role": message.Role, "content": message.Content})
+	}
+	if nativeTail != nil {
+		afterMessages = state.Canonical.Messages
 	}
 	afterRaw, _ := json.Marshal(afterMessages)
 	afterBytes, afterTokens := len(afterRaw), estimateCloudAgentTokens(afterRaw)

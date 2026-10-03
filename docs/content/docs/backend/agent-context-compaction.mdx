@@ -1,0 +1,40 @@
+---
+title: Agent 上下文压缩
+description: Pi 原生摘要、Go 模型桥及可恢复提交合同
+---
+
+# Agent 上下文压缩
+
+新压缩使用锁定 Pi SDK 0.87.1 的 `compact()`。Pi 负责历史切点、消息序列化、旧摘要更新、长轮次前缀摘要和合并；Go 负责渠道、凭据、计费、服务端事实、源版本校验及事务提交。Worker 不直接访问模型上游。升级前已登记的旧压缩仍沿冻结的 Go 结构化摘要路径恢复。
+
+## 预算与上下文
+
+Go snapshot 的 `modelLimits` 提供 `overheadTokens`、`inputBudgetTokens`、`compactAtTokens`、`reservedOutputTokens`、真实请求 `maxOutputTokens` 和独立的 `summaryOutputTokens`。Go 在 `projectedTokens >= compactAtTokens` 时阻止普通模型步骤并要求先压缩；Pi 原生自动压缩保留严格 `projectedTokens > compactAtTokens` 的触发语义。两者共享同一预算线，但等于边界时由 Go 准入层先拦截，不应把两层条件描述成同一个比较符。usage 或估算的具体读数仍取各层投影。窗口未知时只使用标记为未配置的调度预算，不将占位值当作真实模型能力。
+
+最近原文保留量为可用输入预算的四分之一，上限 20,000 token。摘要生成使用独立输出上限 `summaryOutputTokens = max(1, min(8192, maxOutputTokens, inputBudgetTokens / 8))`，在操作开始时冻结。它与上下文窗口预留 `reservedOutputTokens` 含义不同，摘要上限不会反向改变普通模型调用的压缩触发线。原生摘要最长 32 KiB，完整检查点最长 64 KiB；合法但超出摘要预算的结果使用服务端保底。
+
+Pi 将待摘要消息序列化为文本，每条工具结果最多 2,000 字符；图片本身不由摘要模型重新识别。节点视觉 SHA、结构化摘要和真实任务状态仍由画布缓存与 Go 业务层管理。摘要不会成为新的写入、生成或审批授权。
+
+## 内部操作合同
+
+所有接口继承 `/internal-agent` 的内部认证、用户与 run 归属、Pi wire identity 和会话租约 epoch 校验。
+
+| 接口 | 内容 |
+| --- | --- |
+| `POST /runs/:id/context-compactions` | 提交源 revision、active leaf、原因、tokensBefore 和序列化 preparation；Go 校验 Pi 切点，冻结操作和摘要预算，返回 `prepared` |
+| `GET /runs/:id/context-compactions/:operationId` | 恢复冻结 preparation，或读取已验收检查点 |
+| `POST /runs/:id/context-compactions/:operationId/model` | 提交 `history` / `turnPrefix` 子调用、systemPrompt、prompt、maxTokens；同身份同请求复用原任务，不同正文拒绝 |
+| `POST /runs/:id/context-compactions/:operationId/complete` | 验收原生合并摘要与各子调用结果的一致性，绑定 Go 操作与待办事实，返回检查点和真实 usage |
+| `POST /runs/:id/context-compactions/:operationId/commit` | 验证检查点 digest、源版本、切点和 usage，原子追加 Pi entry、更新 Go 运行状态并发布完成事件 |
+
+原生摘要通过空工具集、非流式、关闭思考的 canonical 请求执行。内置 OpenAI Chat Completions、Responses 和 Claude 协议保留停止原因与 usage，截断或工具输出不能作为完整摘要。其它声明式协议若未提供可靠停止原因，摘要保守降级。
+
+## 存储、恢复与失败
+
+运行状态保存压缩操作、源版本、准备摘要值、子调用任务 ID/指纹及验收结果。完整 preparation 存在现有 `cloud_agent_message_records` 的 `kind=pi_compaction` 单条记录中，不计入 512 KiB 控制态正文；读取时校验摘要值，提交后删除临时准备记录，不新增数据表或列。
+
+Worker 重启后使用冻结 preparation 和输出预算重新运行原生编排，已完成的子调用只读取结果。长轮次可能产生历史、前缀两个模型任务，分别计费和保存 usage。旧 Pi `context_edit` 的省略或替换在 Go 投影中同步生效，避免放弃的模型尝试重新进入摘要和保留原文。
+
+模型失败、截断、空摘要或工具输出使用 Go 保底检查点；取消及源版本/租约变化不能强行提交。传输错误保持为错误，不伪装成成功摘要。运行最多允许四次压缩，避免无限压缩循环。
+
+目前已用 SDK 回归、SQLite 事务、本地模拟模型上游和隔离真实模型验证。`qwen3.8-27b` 上普通与拆分轮次都生成了 `pi-native` 摘要：重放不增加上游请求，订单只结清一次，压缩后的真实续跑保留人物、约束与任务身份。浏览器 SSE、PostgreSQL 及生产双 Worker 仍待验收；GPUStack `/v1/models` 未暴露上下文窗口，测试中的 64K/1024 是本地夹具预算，不代表远端容量。Go 与 Pi Worker 需配套升级，不能在有新压缩准备记录时直接回退旧 Go 二进制。

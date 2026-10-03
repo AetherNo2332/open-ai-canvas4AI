@@ -1,5 +1,6 @@
 import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/ibm-plex-sans";
 import { installChunkRecovery } from "@/lib/chunk-recovery";
 import { bootstrapAppearance } from "@/services/appearance-bootstrap";
 import { isIsolatedDirectorRepro } from "@/lib/dev-repro";

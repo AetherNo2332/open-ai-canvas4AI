@@ -107,6 +107,18 @@
 - 主操作、普通选中、Checkbox/Radio、Switch 是不同颜色角色；持久切换使用 `aria-pressed`，`type="primary"` 只表示当前主要命令。尊重 `prefers-reduced-motion`，键盘导航保留 `:focus-visible`。
 - 修改既有页面时直接修改真实组件、样式和路由。不得创建独立 HTML 来代替真实页面验证；只有用户明确要求原型或隔离设计稿时才可生成，并放在临时目录或用户指定位置，不得放入 `web/public/` 或产品构建目录。
 
+### 页面配色、排版与降级页
+
+- 版式规范以工作区 skill `swiss-design`（`.agents/skills/swiss-design`，来源 zeke/swiss-design-skill）为准：12 列 8px 基准栅格、移动优先、IBM Plex Sans、透明度做层级、单一强调色、直角构件、充足留白。此前引用的另一套瑞士规范已废弃，不要再按它实现。
+- 配色以本项目后台「外观 / 主体皮肤」覆盖 skill 自带的 stone / 瑞士红固定色板：页面只消费 `:root` 语义 token——纸张 `--background`、墨色 `--foreground`、发丝线 `--border`、强调 `--primary`、主按钮 `--button-primary-bg` / `-hover-bg` / `-active-bg` / `-fg`、焦点 `--ring`。皮肤由 `web/src/main.tsx` 在挂载应用前经 `web/src/services/appearance-bootstrap.ts` → `web/src/lib/skin-themes.ts` 的 `applySkinTheme` 写入 `:root`，降级页渲染时一定已生效。
+- 层级只用前景色透明度（`color-mix(in oklab, var(--foreground) 70%, transparent)` 一类），不要为层级引入第二个颜色，也不要用 `--muted-foreground` 表达层级。换肤只能改后台皮肤配置：页面私有 CSS 只允许 `var(--token)` 引用，除 `@media print` 的纯黑白外不得出现 `#RRGGBB`、`rgb()`、`oklch()` 字面颜色。
+- 强调色只有一套（皮肤主色 / 主按钮色）。状态色 `--palette-status-error`、`--palette-status-success` 等只用于状态本身（错误图标、错误文案），不得当作装饰强调色。深色模式由 `.dark` / `[data-theme="dark"]` 与皮肤 token 自动翻转，页面不要另写深色配色。
+- 排版：字体 `IBM Plex Sans Variable`（已自托管 `@fontsource-variable/ibm-plex-sans`，不要引 Google Fonts CDN）；标题只用 300 / 400 字重，不用粗体；正文行宽不超过 `60ch`；标题 `text-wrap: balance`、正文 `text-pretty`；省略号用 `…`、引号用弯引号，`...` 与直引号按 bug 处理；数字列用 `tabular-nums`。
+- 布局与构件：12 列栅格非对称占列、移动端单列；区块纵向内边距 64 / 96 / 128px（`--space-16`、`--space-24`、`--space-24` + `--space-8`）；构件一律直角（`border-radius: 0`），仅状态圆点这类图形例外；交互目标不小于 44×44px；整体高度用 `100dvh`。
+- 动效只允许 `transform` 与 `opacity`，时长 150ms，禁止 `transition: all` 与持续动画，必须带 `prefers-reduced-motion` 降级。悬停与聚焦不得改变控件几何尺寸：需要颜色反馈时用伪元素叠层淡入（参考 `web/src/pages/route-error.css` 的主按钮），不要用位移或缩放做悬停反馈。
+- 键盘焦点保留 `:focus-visible`（outline 用 `--ring`），不允许 `outline: none` 而无替代。页面私有样式放在与组件同目录的 `.css` 文件里用 `apply_patch` 维护；新增前先 `rg` 同名选择器，不要改全局 `globals.css` 来服务单个页面。
+- 图标与文字：图形色用 `fill="currentColor"` 配合 CSS `color: var(--token)`，不要保留 `fill="#..."`；与中文标签同行时图标用 `1em` 跟随字号，并按实测做光学校正（参考 `.route-error-icon` 的 `translateY(-0.17em)`）。判断是否对齐看渲染后的墨迹中心而不是行盒中心：截图后逐像素求「图标墨迹中心 − 文字墨迹中心」，目标为 0；`web/test/route-error.test.tsx` 是这类页面的最小回归样例。
+
 ## 7. 本地开发、部署和数据目录
 
 - 先阅读 `.env.example` 和对应 Compose 文件。宿主机后端开发必须使用 Git 忽略的 `.local/project-workbench-debug`，通过 `CANVAS_BACKEND_DATA_DIR` 显式指定；不要把 `backend/data` 当作开发账号数据库。

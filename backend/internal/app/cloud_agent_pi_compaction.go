@@ -16,27 +16,31 @@ import (
 const cloudAgentPiCompactionProtocol = "canvas-pi-compaction/v1"
 
 type PiContextCompactionStart struct {
-	SessionRevision int64  `json:"sessionRevision"`
-	ActiveLeafID    string `json:"activeLeafId"`
-	Reason          string `json:"reason"`
-	WillRetry       bool   `json:"willRetry"`
-	TokensBefore    int    `json:"tokensBefore"`
+	SessionRevision int64           `json:"sessionRevision"`
+	ActiveLeafID    string          `json:"activeLeafId"`
+	Reason          string          `json:"reason"`
+	WillRetry       bool            `json:"willRetry"`
+	TokensBefore    int             `json:"tokensBefore"`
+	Preparation     json.RawMessage `json:"preparation,omitempty"`
 }
 
 type PiContextCompactionView struct {
-	OperationID      string         `json:"operationId"`
-	Status           string         `json:"status"`
-	TaskID           string         `json:"taskId,omitempty"`
-	Summary          string         `json:"summary,omitempty"`
-	FirstKeptEntryID string         `json:"firstKeptEntryId,omitempty"`
-	TokensBefore     int            `json:"tokensBefore,omitempty"`
-	SourceDigest     string         `json:"sourceDigest,omitempty"`
-	CheckpointDigest string         `json:"checkpointDigest,omitempty"`
-	Mode             string         `json:"mode,omitempty"`
-	Reason           string         `json:"reason,omitempty"`
-	Fallback         bool           `json:"fallback,omitempty"`
-	Details          map[string]any `json:"details,omitempty"`
-	SessionRevision  int64          `json:"sessionRevision,omitempty"`
+	OperationID       string          `json:"operationId"`
+	Status            string          `json:"status"`
+	TaskID            string          `json:"taskId,omitempty"`
+	Summary           string          `json:"summary,omitempty"`
+	FirstKeptEntryID  string          `json:"firstKeptEntryId,omitempty"`
+	TokensBefore      int             `json:"tokensBefore,omitempty"`
+	SourceDigest      string          `json:"sourceDigest,omitempty"`
+	CheckpointDigest  string          `json:"checkpointDigest,omitempty"`
+	Mode              string          `json:"mode,omitempty"`
+	Reason            string          `json:"reason,omitempty"`
+	Fallback          bool            `json:"fallback,omitempty"`
+	Details           map[string]any  `json:"details,omitempty"`
+	SessionRevision   int64           `json:"sessionRevision,omitempty"`
+	NativePreparation json.RawMessage `json:"nativePreparation,omitempty"`
+	SummaryMaxTokens  int             `json:"summaryMaxTokens,omitempty"`
+	Usage             json.RawMessage `json:"usage,omitempty"`
 }
 
 type piCompactionEntry struct {
@@ -47,6 +51,7 @@ type piCompactionEntry struct {
 	FirstKeptEntryID string          `json:"firstKeptEntryId"`
 	TokensBefore     int             `json:"tokensBefore"`
 	Details          json.RawMessage `json:"details"`
+	Usage            json.RawMessage `json:"usage,omitempty"`
 }
 
 type piCompactionDetails struct {
@@ -78,6 +83,13 @@ func (s *Service) PiBeginContextCompaction(userID, runID, owner string, input Pi
 	source, err := cloudAgentPiCompactionSourceForBranch(branch, input.ActiveLeafID)
 	if err != nil {
 		return nil, BadAuthRequest("Pi 压缩上下文无效")
+	}
+	var native *cloudAgentPiNativeCompaction
+	if len(input.Preparation) > 0 {
+		native, err = cloudAgentPrepareNativeCompaction(input.Preparation, input.TokensBefore, &source, branch)
+		if err != nil {
+			return nil, BadAuthRequest(err.Error())
+		}
 	}
 	operationID := cloudAgentPiCompactionOperationID(session.ID, runID, input, source.SourceDigest)
 	if existing, ok := cloudAgentPiCompactionEntryForOperation(entries, operationID); ok {
@@ -111,13 +123,22 @@ func (s *Service) PiBeginContextCompaction(userID, runID, owner string, input Pi
 		PiSessionRevision: session.Revision, PiSourceLeafID: session.ActiveLeafID,
 		PiFirstKeptEntryID: source.FirstKeptEntryID, PiFirstKeptIndex: source.FirstKeptIndex,
 		PiReason: input.Reason, PiWillRetry: input.WillRetry, PiTokensBefore: input.TokensBefore,
+		PiNative: native,
 	}
 	state.event(runID, "context_compaction_requested", map[string]any{
 		"kind": "semantic_compaction", "reason": input.Reason, "sourceBytes": source.SourceBytes,
 		"turns": source.CompactedTurnCount, "operationId": operationID, "sourceDigest": source.SourceDigest,
 		"piReason": input.Reason, "willRetry": input.WillRetry,
 	})
-	if err := s.enqueueCloudAgentContextCompaction(run, &state); err != nil {
+	if native != nil {
+		budget := s.cloudAgentContextBudgetForRequest(state.Request)
+		native.MaxTokens = budget.SummaryOutputTokens
+		if err := s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			return cloudAgentSave(current, &state)
+		}); err != nil {
+			return nil, err
+		}
+	} else if err := s.enqueueCloudAgentContextCompaction(run, &state); err != nil {
 		return nil, err
 	}
 	return s.PiContextCompaction(userID, runID, owner, operationID)
@@ -140,8 +161,14 @@ func (s *Service) PiContextCompaction(userID, runID, owner, operationID string) 
 		return nil, err
 	}
 	compaction := state.ContextCompaction
-	if compaction == nil || compaction.PiOperationID != operationID || compaction.PiTaskID == "" {
+	if compaction == nil || compaction.PiOperationID != operationID {
 		return nil, kernel.NotFound("Pi 压缩操作不存在")
+	}
+	if compaction.PiNative != nil {
+		return cloudAgentNativeCompactionView(compaction)
+	}
+	if compaction.PiTaskID == "" {
+		return nil, kernel.NotFound("Pi 压缩任务不存在")
 	}
 	task, err := s.repo.TaskForUser(userID, compaction.PiTaskID)
 	if err != nil {
@@ -214,7 +241,7 @@ func (s *Service) PiCommitContextCompaction(userID, runID, owner, operationID st
 			parentID = *existing.ParentID
 		}
 		if existing.ID != entry.ID || parentID != *entry.ParentID || existing.Summary != entry.Summary ||
-			existing.FirstKeptEntryID != entry.FirstKeptEntryID || existing.TokensBefore != entry.TokensBefore || oldDetails != details {
+			existing.FirstKeptEntryID != entry.FirstKeptEntryID || existing.TokensBefore != entry.TokensBefore || oldDetails != details || !cloudAgentNativeUsageMatches(existing.Usage, entry.Usage) {
 			return 0, kernel.Forbidden("Pi 压缩操作重试内容不一致")
 		}
 		return session.Revision, nil
@@ -234,14 +261,26 @@ func (s *Service) PiCommitContextCompaction(userID, runID, owner, operationID st
 			details.SourceDigest != compaction.PiSourceDigest {
 			return kernel.Forbidden("Pi 压缩条目与服务端源上下文不一致")
 		}
-		task, err := repo.TaskForUser(userID, compaction.PiTaskID)
-		if err != nil {
-			return err
+		var expected agentcontext.Checkpoint
+		var mode, reason string
+		if compaction.PiNative != nil {
+			if compaction.PiNative.Checkpoint == nil {
+				return BadAuthRequest("Pi 原生摘要尚未完成")
+			}
+			expected, mode, reason = *compaction.PiNative.Checkpoint, compaction.PiNative.Mode, compaction.PiNative.Reason
+			if !cloudAgentNativeUsageMatches(entry.Usage, compaction.PiNative.Usage) {
+				return kernel.Forbidden("Pi 摘要 usage 与模型任务记录不一致")
+			}
+		} else {
+			task, err := repo.TaskForUser(userID, compaction.PiTaskID)
+			if err != nil {
+				return err
+			}
+			if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
+				return BadAuthRequest("Pi 压缩任务尚未完成")
+			}
+			expected, mode, reason = cloudAgentContextCompactionResult(&state, task)
 		}
-		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
-			return BadAuthRequest("Pi 压缩任务尚未完成")
-		}
-		expected, mode, reason := cloudAgentContextCompactionResult(&state, task)
 		expectedFrame, err := agentcontext.Frame(expected)
 		if err != nil {
 			return err
@@ -287,6 +326,9 @@ func cloudAgentPiCompactionOperationID(sessionID, runID string, input PiContextC
 	identity := fmt.Sprintf("%s\n%s\n%s\n%d\n%s\n%s\n%t\n%d", cloudAgentPiCompactionProtocol,
 		sessionID, runID, input.SessionRevision, input.ActiveLeafID, sourceDigest, input.WillRetry, input.TokensBefore)
 	identity += "\n" + input.Reason
+	if len(input.Preparation) > 0 {
+		identity += "\n" + cloudAgentTextDigest(string(input.Preparation))
+	}
 	digest := sha256.Sum256([]byte(identity))
 	return "pi-compact-" + hex.EncodeToString(digest[:])
 }

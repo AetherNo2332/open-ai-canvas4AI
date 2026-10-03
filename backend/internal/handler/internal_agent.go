@@ -211,7 +211,7 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		ok(c, outcome)
 	})
 	group.POST("/runs/:id/context-compactions", func(c *gin.Context) {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
 		var input service.PiContextCompactionStart
 		decoder := json.NewDecoder(c.Request.Body)
 		decoder.DisallowUnknownFields()
@@ -250,6 +250,38 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		}
 		ok(c, gin.H{"committed": true, "sessionRevision": revision})
 	})
+	group.POST("/runs/:id/context-compactions/:operationId/model", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+		var input service.PiNativeCompactionModelRequest
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&input) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+			c.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+		view, err := svc.PiNativeContextCompactionModel(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), c.Param("operationId"), input)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
+	group.POST("/runs/:id/context-compactions/:operationId/complete", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		var input service.PiNativeCompactionComplete
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&input) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+			c.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+		view, err := svc.PiFinishNativeContextCompaction(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), c.Param("operationId"), input)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
 	group.POST("/runs/:id/no-tool-turn", func(c *gin.Context) {
 		var input struct {
 			TaskID string `json:"taskId" binding:"required"`
@@ -265,22 +297,32 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		}
 		ok(c, decision)
 	})
-	group.POST("/runs/:id/model-steps", func(c *gin.Context) {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
-		var input service.PiModelStepRequest
-		decoder := json.NewDecoder(c.Request.Body)
-		decoder.DisallowUnknownFields()
-		if decoder.Decode(&input) != nil || decoder.Decode(&struct{}{}) != io.EOF {
-			c.AbortWithStatus(http.StatusBadRequest)
-			return
+	modelAdmission := func(preflight bool) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+			var input service.PiModelStepRequest
+			decoder := json.NewDecoder(c.Request.Body)
+			decoder.DisallowUnknownFields()
+			if decoder.Decode(&input) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+				c.AbortWithStatus(http.StatusBadRequest)
+				return
+			}
+			var step *service.PiModelStepView
+			var err error
+			if preflight {
+				step, err = svc.PiModelPreflight(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), input)
+			} else {
+				step, err = svc.PiModelStep(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), input)
+			}
+			if err != nil {
+				failService(c, err)
+				return
+			}
+			ok(c, step)
 		}
-		step, err := svc.PiModelStep(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), input)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, step)
-	})
+	}
+	group.POST("/runs/:id/model-preflight", modelAdmission(true))
+	group.POST("/runs/:id/model-steps", modelAdmission(false))
 	group.GET("/runs/:id/model-steps/:taskId", func(c *gin.Context) {
 		step, err := svc.PiModelStepView(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c), c.Param("taskId"))
 		if err != nil {

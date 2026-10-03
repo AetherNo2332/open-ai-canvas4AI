@@ -13,21 +13,22 @@ import (
 // cloudAgentContextPressure 是"这次请求还能装多少输入"的读数。
 // 前端弹窗（上下文窗口占用 / 占用分布）与运行诊断直接消费这份结构，不自己再算一遍。
 type cloudAgentContextPressure struct {
-	EstimatedInputTokens     int     `json:"estimatedInputTokens"`
-	ContextWindowTokens      int     `json:"contextWindowTokens"`
-	ReservedOutputTokens     int     `json:"reservedOutputTokens"`
-	UsableInputTokens        int     `json:"usableInputTokens"`
-	PressureRatio            float64 `json:"pressureRatio"`
-	SourceBytes              int     `json:"sourceBytes"`
-	PromptChars              int     `json:"promptChars"`
-	PromptLimitChars         int     `json:"promptLimitChars"`
-	ModelLimitConfigured     bool    `json:"modelLimitConfigured"`
-	Estimate                 bool    `json:"estimate"`
-	CompactionSourceBytes    int     `json:"compactionSourceBytes"`
-	CompactionThresholdBytes int     `json:"compactionThresholdBytes"`
-	HistoryMessages          int     `json:"historyMessages"`
-	HistoryMessageThreshold  int     `json:"historyMessageThreshold"`
-	CompactionPressureRatio  float64 `json:"compactionPressureRatio"`
+	BudgetPlan               cloudAgentContextBudget `json:"budgetPlan"`
+	EstimatedInputTokens     int                     `json:"estimatedInputTokens"`
+	ContextWindowTokens      int                     `json:"contextWindowTokens"`
+	ReservedOutputTokens     int                     `json:"reservedOutputTokens"`
+	UsableInputTokens        int                     `json:"usableInputTokens"`
+	PressureRatio            float64                 `json:"pressureRatio"`
+	SourceBytes              int                     `json:"sourceBytes"`
+	PromptChars              int                     `json:"promptChars"`
+	PromptLimitChars         int                     `json:"promptLimitChars"`
+	ModelLimitConfigured     bool                    `json:"modelLimitConfigured"`
+	Estimate                 bool                    `json:"estimate"`
+	CompactionSourceBytes    int                     `json:"compactionSourceBytes"`
+	CompactionThresholdBytes int                     `json:"compactionThresholdBytes"`
+	HistoryMessages          int                     `json:"historyMessages"`
+	HistoryMessageThreshold  int                     `json:"historyMessageThreshold"`
+	CompactionPressureRatio  float64                 `json:"compactionPressureRatio"`
 	// 三个口径字段说明"这条线是按哪个算式算出来的"：overhead 是工具 schema / 协议包装 /
 	// 兜底轮的比例预留，InputBudgetTokens 才是真正可供输入使用的额度。
 	OverheadTokens    int    `json:"overheadTokens,omitempty"`
@@ -67,7 +68,12 @@ func cloudAgentProjectedInputTokens(pressure cloudAgentContextPressure, state *c
 // 准入改写之后的 canonical 与内存里的运行态副本可能不是同一份。
 func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state *cloudAgentRuntime, actual ...canonicalAgentRequest) map[string]any {
 	payload := map[string]any{
-		"estimatedInputTokens": pressure.EstimatedInputTokens, "sourceBytes": pressure.SourceBytes,
+		"budgetPlan":    pressure.BudgetPlan,
+		"budgetVersion": pressure.BudgetPlan.Version, "budgetDigest": pressure.BudgetPlan.Digest,
+		"compactionReserveTokens": pressure.BudgetPlan.CompactionReserveTokens,
+		"keepRecentTokens":        pressure.BudgetPlan.KeepRecentTokens,
+		"summaryOutputTokens":     pressure.BudgetPlan.SummaryOutputTokens,
+		"estimatedInputTokens":    pressure.EstimatedInputTokens, "sourceBytes": pressure.SourceBytes,
 		"promptChars": pressure.PromptChars, "estimate": pressure.Estimate,
 		// 字节/条数兜底判据永远下发（我方 fork 的前端据此画"哪条线在管事"）：上游只报 token 口径，
 		// 但窗口未声明时判据会退回这三条，读数必须能说明退回了什么。
@@ -295,6 +301,7 @@ func estimateCloudAgentTokens(value []byte) int {
 func (s *Service) cloudAgentContextPressure(canonical canonicalAgentRequest, prompt string, request CloudAgentRequest) cloudAgentContextPressure {
 	raw, _ := json.Marshal(canonical)
 	pressure := cloudAgentContextPressure{
+		BudgetPlan:           s.cloudAgentContextBudgetForRequest(request),
 		EstimatedInputTokens: estimateCloudAgentTokens(raw),
 		SourceBytes:          len(raw),
 		PromptChars:          utf8.RuneCountInString(prompt),

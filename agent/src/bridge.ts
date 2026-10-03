@@ -80,7 +80,9 @@ export interface PiSnapshot {
   revision: number;
   status: string;
   request: { prompt: string; canvasId?: string; model?: string; channelModelKey?: string; visionEnabled?: boolean };
-  modelLimits: { contextWindowTokens: number; maxOutputTokens: number; reservedOutputTokens?: number; configured: boolean; source: string };
+  modelLimits: { contextWindowTokens: number; maxOutputTokens: number; reservedOutputTokens?: number;
+    overheadTokens?: number; inputBudgetTokens?: number; compactAtTokens?: number; configured: boolean; source: string;
+    version?: string; digest?: string; compactionReserveTokens?: number; keepRecentTokens?: number; summaryOutputTokens?: number };
   canonical: PiCanonical;
   activeTaskId?: string;
   lastTaskId?: string;
@@ -112,6 +114,9 @@ export interface PiSnapshot {
 }
 
 interface PiModelStepView {
+  decision?: "model" | "compact";
+  modelLimits?: PiSnapshot["modelLimits"];
+  projectedTokens?: number;
   taskId: string;
   status: string;
   textDraft?: string;
@@ -120,6 +125,10 @@ interface PiModelStepView {
 }
 
 export interface PiTurnDecision { status: string; nudge?: string }
+
+export class CanvasCompactionNeeded extends Error {
+  constructor(readonly modelLimits?: PiSnapshot["modelLimits"]) { super("Go requested context compaction before model admission"); }
+}
 
 export class CanvasModelRetry extends Error {
   constructor(readonly decision: PiTurnDecision) {
@@ -166,6 +175,9 @@ export interface PiContextCompactionView {
   fallback?: boolean;
   details?: Record<string, unknown>;
   sessionRevision?: number;
+  nativePreparation?: Record<string, unknown>;
+  summaryMaxTokens?: number;
+  usage?: import("@earendil-works/pi-ai").Usage;
 }
 
 interface PiToolReceipt {
@@ -232,7 +244,7 @@ export class CanvasBridge {
     await this.request("POST", `/runs/${encodeURIComponent(run.runId)}/phase`, { phase, kind, waitId, reason }, run, signal);
   }
 
-  async control(run: PiSnapshot, signal?: AbortSignal): Promise<Pick<PiSnapshot,"status"|"pendingInterjections">> {
+  async control(run: PiSnapshot, signal?: AbortSignal): Promise<Pick<PiSnapshot,"status"|"pendingInterjections"|"pendingContextCompaction">> {
     return this.request("GET", `/runs/${encodeURIComponent(run.runId)}/control`, undefined, run, signal);
   }
 
@@ -288,6 +300,11 @@ export class CanvasBridge {
     } finally { clearInterval(recovery); }
   }
 
+  async modelPreflight(run: PiSnapshot, canonical: PiCanonical, signal?: AbortSignal, harnessHash?: string,
+    harness?: PromptParts): Promise<PiModelStepView> {
+    return this.request("POST", `/runs/${encodeURIComponent(run.runId)}/model-preflight`, { canonical, harnessHash, harness }, run, signal);
+  }
+
   async modelStep(run: PiSnapshot, canonical: PiCanonical, signal?: AbortSignal,
     onTextDelta?: (delta: string) => void, harnessHash?: string,
     harness?: PromptParts): Promise<{ taskId: string; result: CanvasModelResult }> {
@@ -304,6 +321,7 @@ export class CanvasBridge {
     let step = run.skillRuntimeMode === "pi-native" && run.activeTaskId
       ? await this.request<PiModelStepView>("GET", `${path}/${encodeURIComponent(run.activeTaskId)}`, undefined, run, signal)
       : await this.request<PiModelStepView>("POST", path, body, run, signal);
+    if (step.decision === "compact" || step.status === "waiting_compaction") throw new CanvasCompactionNeeded(step.modelLimits);
     if (TERMINAL_RUN_STATUSES.has(step.status)) throw new CanvasRunTerminated(step.status);
     let sentTextDraft = "";
     const emitTextDraftDelta = (draft: string | undefined): void => {
@@ -364,13 +382,14 @@ export class CanvasBridge {
   }
 
   async compactContext(run: PiSnapshot, request: { sessionRevision: number; activeLeafId: string; reason: string;
-    willRetry: boolean; tokensBefore: number }, signal?: AbortSignal): Promise<PiContextCompactionView> {
+    willRetry: boolean; tokensBefore: number; preparation?: Record<string, unknown> }, signal?: AbortSignal): Promise<PiContextCompactionView> {
     const path = `/runs/${encodeURIComponent(run.runId)}/context-compactions`;
     let operation = await this.request<PiContextCompactionView>("POST", path, request, run, signal);
     await this.phase(run, "waiting_compaction", "compaction", operation.operationId, "压缩上下文", signal);
     if (operation.status === "queued" || operation.status === "running") operation = await this.wait(run, () => this.request<PiContextCompactionView>("GET",
       `${path}/${encodeURIComponent(operation.operationId)}`, undefined, run, signal),
       (next) => next.status === "queued" || next.status === "running", signal);
+    if (operation.nativePreparation && ["prepared", "running"].includes(operation.status)) return operation;
     if (operation.status !== "succeeded" || !operation.summary || !operation.firstKeptEntryId || !operation.details) {
       throw new FatalWorkerError(`Go context compaction did not return a checkpoint (${operation.status})`);
     }
@@ -381,6 +400,7 @@ export class CanvasBridge {
     const path = `/runs/${encodeURIComponent(run.runId)}/context-compactions/${encodeURIComponent(operationId)}`;
     let operation = await this.request<PiContextCompactionView>("GET", path, undefined, run, signal);
     await this.phase(run, "waiting_compaction", "compaction", operation.operationId, "压缩上下文", signal);
+    if (operation.operationId === operationId && operation.nativePreparation && ["prepared", "running"].includes(operation.status)) return operation;
     if (operation.status === "queued" || operation.status === "running") operation = await this.wait(run, () => this.request<PiContextCompactionView>("GET", path, undefined, run, signal),
       (next) => next.status === "queued" || next.status === "running", signal);
     if (operation.operationId !== operationId || operation.status !== "succeeded" || !operation.summary ||
@@ -388,6 +408,21 @@ export class CanvasBridge {
       throw new FatalWorkerError(`Go context compaction could not be resumed (${operation.status})`);
     }
     return operation;
+  }
+
+  async nativeCompactionModel(run: PiSnapshot, operationId: string, input: {
+    callId: string; systemPrompt: string; prompt: string; maxTokens: number;
+  }, signal?: AbortSignal): Promise<{ status: string; result?: import("./pi-stream.js").CanvasModelResult }> {
+    const path = `/runs/${encodeURIComponent(run.runId)}/context-compactions/${encodeURIComponent(operationId)}/model`;
+    return this.wait(run, () => this.request("POST", path, input, run, signal),
+      (view: { status: string }) => view.status === "queued" || view.status === "running", signal);
+  }
+
+  async finishNativeCompaction(run: PiSnapshot, operationId: string, input: {
+    summary?: string; fallback?: boolean; usage?: unknown;
+  }, signal?: AbortSignal): Promise<PiContextCompactionView> {
+    return this.request("POST", `/runs/${encodeURIComponent(run.runId)}/context-compactions/${encodeURIComponent(operationId)}/complete`,
+      input, run, signal);
   }
 
   async commitContextCompaction(run: PiSnapshot, operationId: string, sessionRevision: number,

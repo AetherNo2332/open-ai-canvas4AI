@@ -32,25 +32,43 @@ const (
 )
 
 type cloudAgentContextBudget struct {
-	ContextWindowTokens int
+	Version             string `json:"version"`
+	Digest              string `json:"digest"`
+	ContextWindowTokens int    `json:"contextWindowTokens"`
 	// MaxOutputTokens is the actual request ceiling; the reserve is input-budget metadata.
-	MaxOutputTokens      int
-	ReservedOutputTokens int
-	OverheadTokens       int
-	InputBudgetTokens    int
-	CompactAtTokens      int
-	Source               string
+	MaxOutputTokens         int    `json:"maxOutputTokens"`
+	ReservedOutputTokens    int    `json:"reservedOutputTokens"`
+	OverheadTokens          int    `json:"overheadTokens"`
+	InputBudgetTokens       int    `json:"inputBudgetTokens"`
+	CompactAtTokens         int    `json:"compactAtTokens"`
+	CompactionReserveTokens int    `json:"compactionReserveTokens"`
+	KeepRecentTokens        int    `json:"keepRecentTokens"`
+	SummaryOutputTokens     int    `json:"summaryOutputTokens"`
+	Source                  string `json:"source"`
 	// Configured 为 false 表示没有解析到任何模型声明的窗口，这份预算是兜底默认值。
 	// 它与上游同名字段的语义一致（上游写得更细）：false 说明上面几个数都来自兜底默认值，
 	// 压力读数据此决定要不要给出窗口占用率——拿默认窗口冒充真实能力（例如给未声明窗口的
 	// 模型算一个"占满 80%"）会误导排查。
-	Configured bool
+	Configured bool `json:"configured"`
+}
+
+func (b cloudAgentContextBudget) sealed() cloudAgentContextBudget {
+	b.Version, b.Digest = "canvas-context-budget/v1", ""
+	b.CompactionReserveTokens = b.ContextWindowTokens - b.CompactAtTokens
+	b.KeepRecentTokens = min(20_000, max(1, b.InputBudgetTokens/4))
+	b.SummaryOutputTokens = min(8_192, max(1, b.InputBudgetTokens/8))
+	if b.MaxOutputTokens > 0 {
+		b.SummaryOutputTokens = min(b.SummaryOutputTokens, b.MaxOutputTokens)
+	}
+	raw, _ := json.Marshal(b)
+	b.Digest = cloudAgentTextDigest(string(raw))
+	return b
 }
 
 func defaultCloudAgentContextBudget() cloudAgentContextBudget {
 	budget := cloudAgentContextBudgetFor(defaultCloudAgentContextWindowTokens, defaultCloudAgentMaxOutputTokens, "default")
 	budget.Configured = false
-	return budget
+	return budget.sealed()
 }
 
 // cloudAgentOverheadTokens 是工具 schema / 协议包装与兜底轮的比例预留（窗口的 4%，夹在 4K–32K）。
@@ -93,11 +111,9 @@ func cloudAgentContextBudgetFor(contextWindow, maxOutput int, source string) clo
 	if maxOutput >= contextWindow {
 		maxOutput = contextWindow / 2
 	}
-	overhead := cloudAgentOverheadTokens(contextWindow)
+	maxOutput = min(maxOutput, contextWindow-cloudAgentBudgetMinInputTokens)
+	overhead := min(cloudAgentOverheadTokens(contextWindow), contextWindow-maxOutput-cloudAgentBudgetMinInputTokens)
 	inputBudget := contextWindow - maxOutput - overhead
-	if inputBudget < cloudAgentBudgetMinInputTokens {
-		inputBudget = max(cloudAgentBudgetMinInputTokens, contextWindow/2)
-	}
 	return cloudAgentContextBudget{
 		ContextWindowTokens:  contextWindow,
 		MaxOutputTokens:      maxOutput,
@@ -107,12 +123,15 @@ func cloudAgentContextBudgetFor(contextWindow, maxOutput int, source string) clo
 		CompactAtTokens:      max(cloudAgentBudgetMinInputTokens, inputBudget*cloudAgentCompactionPercent/100),
 		Source:               source,
 		Configured:           configured,
-	}
+	}.sealed()
 }
 
 // cloudAgentContextBudgetForRequest 解析"下一次文本调用真正会用的预算"。
 // 解析不到真实能力时返回兜底默认预算（Configured=false），调用方据此退回字节兜底。
 func (s *Service) cloudAgentContextBudgetForRequest(req CloudAgentRequest) cloudAgentContextBudget {
+	if s == nil || s.repo == nil {
+		return defaultCloudAgentContextBudget()
+	}
 	// 保留我方的入口（内部走 cloudAgentResolvedContextBudget）：它多一条"逻辑模型按所有可用
 	// text 路由取窗口/输出交集"的路径与 IncludingDisabled 的渠道模型解析；上游这里是内联版，
 	// 只覆盖渠道模型那一支，取能力字段也没算 effectiveOutputReserve，合并后按我方为准。
@@ -128,7 +147,7 @@ func (s *Service) cloudAgentContextBudgetForRequest(req CloudAgentRequest) cloud
 		budget = cloudAgentContextBudgetFor(budget.ContextWindowTokens, min(budget.MaxOutputTokens, limits.OutputTokens), "default")
 		budget.Configured = false
 	}
-	return budget
+	return budget.sealed()
 }
 
 // cloudAgentResolvedContextBudget 是"能不能给出真实窗口"的判据入口。
@@ -238,7 +257,7 @@ func cloudAgentRouteIntersectionBudget(routes []cachedLogicalRoute, stepOutput .
 	}
 	// The smallest input budget and smallest output ceiling may belong to different routes.
 	budget.MaxOutputTokens = minOutput
-	return budget, true
+	return budget.sealed(), true
 }
 
 // cloudAgentEstimatedTokens is deliberately conservative for non-ASCII text.

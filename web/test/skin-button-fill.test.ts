@@ -2,22 +2,28 @@ import { describe, expect, test } from "bun:test";
 import { applySkinTheme, DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition, getSkinButtonAppearance, isSkinButtonFill, normalizeSkinDefinition } from "../src/lib/skin-themes";
 
 describe("theme primary button fills", () => {
-    test("classic uses the reference gradient in both modes without changing selection colors", () => {
-        for (const mode of ["light", "dark"] as const) {
-            expect(getSkinButtonAppearance(DEFAULT_CLASSIC_SKIN, mode)).toEqual({
-                background: "linear-gradient(115deg, #6554df, #386fbc)",
-                hover: "linear-gradient(115deg, #5744cf, #356bbb)",
-                active: "linear-gradient(115deg, #4938b8, #2c5da5)",
-                foreground: "#ffffff",
-            });
-        }
-        expect(DEFAULT_CLASSIC_SKIN.tokens.light.selected).toBe("#e8e8e8");
+    test("classic uses the single accent solid fill in both modes without changing selection colors", () => {
+        expect(getSkinButtonAppearance(DEFAULT_CLASSIC_SKIN, "light")).toEqual({
+            background: "#c8102e",
+            hover: "#a90d27",
+            active: "#8f0b21",
+            foreground: "#ffffff",
+        });
+        expect(getSkinButtonAppearance(DEFAULT_CLASSIC_SKIN, "dark")).toEqual({
+            background: "#e05163",
+            hover: "#ef6b7c",
+            active: "#c84456",
+            foreground: "#240a0f",
+        });
+        expect(DEFAULT_CLASSIC_SKIN.tokens.light.selected).toBe("#efece6");
     });
 
     test("copies have independent fills and switching to solid clears every gradient state", () => {
         const skin = duplicateSkinDefinition(DEFAULT_CLASSIC_SKIN, ["classic"]);
+        skin.tokens.buttons.light.mode = "gradient";
         skin.tokens.buttons.light.angle = 45;
         skin.tokens.buttons.light.start = "#123456";
+        skin.tokens.buttons.light.end = "#386fbc";
         expect(DEFAULT_CLASSIC_SKIN.tokens.buttons.light.angle).toBe(115);
         expect(skin.tokens.buttons.dark.angle).toBe(115);
         expect(getSkinButtonAppearance(skin, "light").background).toBe("linear-gradient(45deg, #123456, #386fbc)");
@@ -40,14 +46,15 @@ describe("theme primary button fills", () => {
         expect(values.get("--button-primary-active-bg")).toBe("#345678");
         applySkinTheme(DEFAULT_CLASSIC_SKIN, "dark", doc);
         expect(values.has("--background")).toBe(false);
-        expect(values.get("--button-primary-fg")).toBe("#ffffff");
+        // 深色模式主按钮前景跟随该模式的主色对比度，不再固定白色。
+        expect(values.get("--button-primary-fg")).toBe("#240a0f");
     });
 
-    test("legacy custom themes retain solid actions; legacy classic gains its default gradient", () => {
+    test("legacy themes without a button block fall back to solid actions", () => {
         for (const original of [DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition(DEFAULT_CLASSIC_SKIN, ["classic"])]) {
             const legacy = JSON.parse(JSON.stringify(original));
             delete legacy.tokens.buttons;
-            expect(normalizeSkinDefinition(legacy).tokens.buttons.light.mode).toBe(original.id === "classic" ? "gradient" : "solid");
+            expect(normalizeSkinDefinition(legacy).tokens.buttons.light.mode).toBe("solid");
         }
     });
 

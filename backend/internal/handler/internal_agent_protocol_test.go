@@ -74,9 +74,11 @@ func TestInternalAgentContextCompactionRoutesAreMounted(t *testing.T) {
 	router := gin.New()
 	RegisterInternalAgentRoutes(router, &service.Service{})
 	want := map[string]bool{
-		"POST /internal-agent/runs/:id/context-compactions":                     false,
-		"GET /internal-agent/runs/:id/context-compactions/:operationId":         false,
-		"POST /internal-agent/runs/:id/context-compactions/:operationId/commit": false,
+		"POST /internal-agent/runs/:id/context-compactions":                       false,
+		"GET /internal-agent/runs/:id/context-compactions/:operationId":           false,
+		"POST /internal-agent/runs/:id/context-compactions/:operationId/commit":   false,
+		"POST /internal-agent/runs/:id/context-compactions/:operationId/model":    false,
+		"POST /internal-agent/runs/:id/context-compactions/:operationId/complete": false,
 	}
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path

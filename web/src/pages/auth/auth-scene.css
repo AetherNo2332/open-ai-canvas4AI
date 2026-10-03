@@ -1,0 +1,326 @@
+/* 登录 / 注册 / 找回密码外壳：swiss-design 版式。
+   左列为排版陈述 + 品牌影片（直角媒体块），右列为表单；分区只用发丝线，
+   不做玻璃拟态、圆角卡片或重阴影。配色全部走站点外观 / 主体皮肤 token。 */
+
+.auth-scene {
+    display: flex;
+    /* 工作区全局把 html/body/#root 设为 overflow: hidden，登录页必须自带滚动容器，
+       否则窄屏下超出视口的表单按钮永远无法触达。 */
+    height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    flex-direction: column;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: "IBM Plex Sans Variable", "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+}
+
+.auth-scene-masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-5) var(--space-6);
+    border-bottom: 1px solid var(--border);
+}
+
+.auth-scene-brand {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    color: inherit;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+}
+
+.auth-scene-mark {
+    display: grid;
+    inline-size: var(--space-7, 1.75rem);
+    block-size: var(--space-7, 1.75rem);
+    place-items: center;
+    align-self: center;
+}
+
+.auth-scene-mark-fallback {
+    display: block;
+    inline-size: var(--space-6);
+    block-size: var(--space-6);
+    background: currentColor;
+    mask: url("/logo.svg") center / contain no-repeat;
+    -webkit-mask: url("/logo.svg") center / contain no-repeat;
+}
+
+.auth-scene-return {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: var(--space-2);
+    padding-inline: var(--space-3);
+    color: color-mix(in oklab, var(--foreground) 70%, transparent);
+    font-size: 0.8125rem;
+}
+
+.auth-scene-return:hover {
+    background: color-mix(in oklab, var(--foreground) 6%, transparent);
+    color: var(--foreground);
+}
+
+.auth-scene-body {
+    display: grid;
+    flex: 1;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: var(--space-4);
+    width: 100%;
+    max-width: 1152px;
+    margin-inline: auto;
+    padding: var(--space-16) var(--space-6);
+}
+
+.auth-scene-statement,
+.auth-scene-form {
+    grid-column: 1 / -1;
+}
+
+.auth-scene-eyebrow {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: color-mix(in oklab, var(--foreground) 60%, transparent);
+}
+
+.auth-scene-title {
+    margin: var(--space-6) 0 0;
+    font-size: clamp(1.875rem, 1.4rem + 2vw, 3rem);
+    font-weight: 300;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    white-space: pre-line;
+}
+
+.auth-scene-summary {
+    margin: var(--space-4) 0 0;
+    max-width: 60ch;
+    font-size: 1rem;
+    line-height: 1.625;
+    color: color-mix(in oklab, var(--foreground) 70%, transparent);
+    text-wrap: pretty;
+}
+
+/* 陈述区：品牌影片铺满整块，标题与说明直接叠在影片上。
+   可读性靠一层平铺墨色蒙版保证（不是渐变），文字用中性色原语，不随明暗主题翻转。 */
+.auth-scene-statement {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.auth-scene-statement.is-over-media {
+    min-height: 360px;
+    overflow: hidden;
+}
+
+.auth-scene-media {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+}
+
+.auth-scene-media-source {
+    display: block;
+    inline-size: 100%;
+    block-size: 100%;
+    object-fit: cover;
+}
+
+.auth-scene-media-scrim {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in oklab, var(--color-neutral-950) 62%, transparent);
+}
+
+.auth-scene-statement-copy {
+    position: relative;
+    z-index: 1;
+    align-self: flex-start;
+    padding-block: var(--space-10);
+}
+
+.auth-scene-statement.is-over-media .auth-scene-statement-copy {
+    margin-top: auto;
+    align-self: stretch;
+    padding: var(--space-10) var(--space-8);
+}
+
+.auth-scene-statement.is-over-media :is(.auth-scene-title) {
+    color: var(--color-neutral-0);
+}
+
+.auth-scene-statement.is-over-media .auth-scene-eyebrow {
+    color: color-mix(in oklab, var(--color-neutral-0) 78%, transparent);
+}
+
+.auth-scene-statement.is-over-media .auth-scene-summary {
+    color: color-mix(in oklab, var(--color-neutral-0) 86%, transparent);
+}
+
+.auth-scene-form-inner {
+    width: 100%;
+    max-width: 420px;
+    padding-top: var(--space-6);
+    border-top: 1px solid var(--border);
+}
+
+.auth-scene-form-title {
+    margin: 0 0 var(--space-4);
+    font-size: 1.125rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+}
+
+.auth-scene-tabs.ant-tabs {
+    margin-bottom: var(--space-4);
+}
+
+.auth-scene-tabs .ant-tabs-nav::before {
+    border-bottom-color: var(--border);
+}
+
+.auth-scene-tabs .ant-tabs-tab {
+    padding-block: var(--space-3);
+    font-size: 0.9375rem;
+}
+
+.auth-scene-tabs .ant-tabs-ink-bar {
+    height: 2px;
+    background: var(--foreground);
+}
+
+/* 统一输入框规则已在 unified-inputs.css 中排除 .auth-scene 子树，
+   登录页自己定义直角描边输入，不再与全局规则对抗。 */
+.auth-scene-form-body :where(.ant-input, .ant-input-affix-wrapper, .ant-input-password) {
+    border: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.auth-scene-form-body .ant-input-affix-wrapper > .ant-input {
+    border: 0;
+    background: transparent;
+}
+
+.auth-scene-form-body :where(.ant-input-affix-wrapper:hover, .ant-input:hover) {
+    border-color: color-mix(in oklab, var(--foreground) 35%, transparent);
+}
+
+/* 聚焦只加深描边，不加光晕。 */
+.auth-scene-form-body :where(.ant-input-affix-wrapper-focused, .ant-input:focus, .ant-input-focused) {
+    border-color: var(--foreground);
+    box-shadow: none;
+}
+
+.auth-scene-form-body :where(.ant-segmented) {
+    border-radius: 0;
+}
+
+.auth-scene-form-body :where(.ant-segmented-item) {
+    border-radius: 0;
+}
+
+.auth-scene-form-body :where(.ant-btn) {
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.auth-scene-label {
+    color: color-mix(in oklab, var(--foreground) 70%, transparent);
+    letter-spacing: 0.02em;
+}
+
+.auth-scene-icon {
+    color: color-mix(in oklab, var(--foreground) 55%, transparent);
+}
+
+.auth-scene-link {
+    color: var(--primary);
+}
+
+.auth-scene-link:hover {
+    color: var(--foreground);
+}
+
+.auth-scene-link:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+}
+
+.auth-scene-divider.ant-divider {
+    border-color: var(--border);
+    color: color-mix(in oklab, var(--foreground) 60%, transparent);
+}
+
+.auth-scene-notice {
+    --auth-notice-color: var(--palette-status-warning);
+    border-color: color-mix(in oklab, var(--auth-notice-color) 24%, transparent);
+    border-radius: 0;
+    background: color-mix(in oklab, var(--auth-notice-color) 6%, transparent);
+    color: var(--foreground);
+}
+
+.auth-scene-notice[data-tone="blue"] {
+    --auth-notice-color: var(--palette-status-loading);
+}
+
+.auth-scene-notice > span:first-child {
+    color: var(--auth-notice-color);
+}
+
+.auth-scene-footer {
+    border-top: 1px solid var(--border);
+}
+
+/* Chrome 自动填充会强制浅黄底；用当前皮肤纸张色覆盖，前景仍用墨色。 */
+.auth-scene-form-body input:-webkit-autofill,
+.auth-scene-form-body input:-webkit-autofill:hover,
+.auth-scene-form-body input:-webkit-autofill:focus {
+    box-shadow: 0 0 0 1000px var(--background) inset !important;
+    -webkit-text-fill-color: var(--foreground) !important;
+    caret-color: var(--foreground);
+}
+
+.auth-scene :is(a, button):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+
+@media (min-width: 768px) {
+    .auth-scene-body {
+        gap: var(--space-8);
+        padding: var(--space-24) var(--space-8);
+    }
+
+    .auth-scene-statement {
+        grid-column: 1 / span 7;
+    }
+
+    .auth-scene-form {
+        grid-column: 9 / -1;
+        align-self: start;
+    }
+
+    .auth-scene-form-inner {
+        border-top: 0;
+        padding-top: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .auth-scene * {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
+}

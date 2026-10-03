@@ -450,3 +450,31 @@ func TestCloudAgentHarnessBodyDigestMatchesNodeVector(t *testing.T) {
 		t.Fatal("nil 与空 Harness 必须得到同一个内容身份")
 	}
 }
+
+// 压缩摘要任务不是"首个模型步"：它不能消耗占位预留，也不能把运行从 awaiting_first_step 推走。
+// 否则压缩后的续跑会走"已冻结合同"分支，而合同从未冻结（AssembledPromptHash 为空），
+// 服务端以 403 "Agent runtime first-step contract snapshot is missing" 拒绝（真实 3000 部署复现）。
+func TestContextCompactionTaskKeepsFirstStepReservation(t *testing.T) {
+	s, db, run, state := piFirstStepFixture(t)
+	// 真实流程里 PiBeginContextCompaction 先登记操作，摘要模型调用再入队；
+	// 这里保持同样的前置状态，避免摘要任务走普通步进记账分支。
+	state.ContextCompaction = &cloudAgentContextCompaction{Status: "requested", PiOperationID: "pi-test-op"}
+	if err := s.enqueueCloudAgentContextCompaction(run, state); err != nil {
+		t.Fatalf("压缩任务入队失败: %v", err)
+	}
+	var summary model.Task
+	if err := db.Where("agent_run_id = ? AND operation = ?", run.ID, cloudAgentContextCompactionOperation).First(&summary).Error; err != nil {
+		t.Fatalf("压缩摘要任务未创建: %v", err)
+	}
+	_, after := reloadPiRun(t, s, run.ID)
+	if !cloudAgentAwaitingFirstStep(after) {
+		t.Fatalf("压缩任务推进了首步相位: phase=%q tasks=%v", after.Phase, after.TaskIDs)
+	}
+	placeholder, err := s.repo.TaskForUser("user", run.ID)
+	if err != nil || placeholder.Operation != cloudAgentHoldingOperation || placeholder.Status != model.TaskStatusHolding {
+		t.Fatalf("占位预留被压缩任务消耗: %+v err=%v", placeholder, err)
+	}
+	if after.Snapshot == nil || after.Snapshot.AssembledPromptHash != "" {
+		t.Fatalf("首步前不应出现已冻结合同: %+v", after.Snapshot)
+	}
+}

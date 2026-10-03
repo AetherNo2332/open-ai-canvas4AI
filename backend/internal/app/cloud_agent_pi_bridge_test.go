@@ -104,6 +104,35 @@ func TestPiAgentSnapshotCarriesGoResolvedModelLimits(t *testing.T) {
 	}
 }
 
+func TestPiAgentSnapshotCarriesUnifiedCompactionBudget(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	declareTestChannelWindow(t, db, 64_000, 8_192)
+
+	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget := s.cloudAgentContextBudgetForRequest(snapshot.Request)
+	raw, err := json.Marshal(snapshot.ModelLimits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]int{
+		"overheadTokens":    budget.OverheadTokens,
+		"inputBudgetTokens": budget.InputBudgetTokens,
+		"compactAtTokens":   budget.CompactAtTokens,
+	} {
+		got, ok := wire[key].(float64)
+		if !ok || int(got) != want {
+			t.Fatalf("Pi snapshot %s = %#v, want %d; modelLimits=%s", key, wire[key], want, raw)
+		}
+	}
+}
+
 func TestPiAgentOutputReserveIsAutomaticAndPolicyBounded(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
 	declareTestChannelWindow(t, db, 128_000, 32_768)
