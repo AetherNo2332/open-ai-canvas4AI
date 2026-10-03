@@ -896,6 +896,13 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 	// 图片") —— 也就是"看过图之后的下一步必然失败"。
 	//
 	// 容量不足必须拒绝，不能为了满足上限把任何历史图片换成文字。
+	visionBudget := state.VisionBatchBudget
+	if visionBudget.MaxImages == 0 && visionBudget.MaxCost == 0 {
+		if configured, budgetErr := s.cloudAgentVisionBatchBudget(state.Request); budgetErr == nil {
+			visionBudget = configured
+		}
+	}
+	request.Canonical, _ = projectCloudAgentVisionRequest(request.Canonical, visionBudget, state.DeliveredImageSHAs)
 	references, refErr := s.cloudAgentImageReferences(run.UserID, state.Request, &request.Canonical)
 	if refErr != nil {
 		// 水合失败按安全文案转成可见错误，由 worker 上报为运行失败，
