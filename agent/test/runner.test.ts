@@ -20,6 +20,7 @@ const tools: CanvasToolSpec[] = [
 test("runner uses the current frozen prompt instead of a persisted Pi prompt", () => {
   const source = readFileSync(join(process.cwd(), "src/runner.ts"), "utf8");
   assert.doesNotMatch(source, /session\?\.agent\.state\.systemPrompt \|\| session\?\.systemPrompt \|\| systemPrompt/);
+  assert.doesNotMatch(source, /session\.agent\.state\.systemPrompt \|\| session\.systemPrompt \|\| systemPrompt/);
 });
 
 test("withServerPolicy restores the frozen server policy for a Pi stream canonical request", () => {
