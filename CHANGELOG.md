@@ -88,6 +88,12 @@
 
 ## Unreleased
 
+### v1.5.7.3(fddd765)
+
+- 修复恢复已有 Pi 会话时优先沿用旧系统提示，导致 `Pi session is missing the frozen server policy` 的问题；首步和流式模型准入统一使用当前运行快照冻结的服务端策略提示。
+- 保留 Go 侧服务端策略 fail-closed 校验，并增加恢复提示回退回归测试。
+
+
 ## v1.5.1
 
 - 发布正式版本 `v1.5.1`，提供 `ghcr.io/ddcat-ai/open-ai-canvas-web:1.5.1` 与 `ghcr.io/ddcat-ai/open-ai-canvas-backend:1.5.1` 的 Linux amd64/arm64 镜像，并更新 `latest` 镜像。
