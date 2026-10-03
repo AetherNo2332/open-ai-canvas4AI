@@ -797,7 +797,7 @@ export async function runCanvasAgent(
     if (runTerminated) throw new CanvasRunTerminated(snapshot.status);
     if (compactionFailure !== undefined) throw compactionFailure;
     const canonical = withServerPolicy(toCanonical(messages as Message[], snapshot.canonical.promptCacheKey),
-      snapshot.canonical.systemPrompt, session?.agent.state.systemPrompt || session?.systemPrompt || systemPrompt);
+      snapshot.canonical.systemPrompt, systemPrompt);
     canonical.tools = disclosure.decorateCanonicalTools(canonical.tools);
     try {
       if (pendingContextCompaction) throw new CanvasCompactionNeeded(snapshot.modelLimits);
@@ -1037,7 +1037,7 @@ export async function runCanvasAgent(
         if (pendingContextCompaction) throw new FatalWorkerError("Pi did not commit refreshed context compaction");
         if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
           const planned = withServerPolicy(toCanonical(session.agent.state.messages as Message[], snapshot.canonical.promptCacheKey),
-            snapshot.canonical.systemPrompt, session.agent.state.systemPrompt || session.systemPrompt || systemPrompt);
+            snapshot.canonical.systemPrompt, systemPrompt);
           // SDK 的 Agent 以空 systemPrompt 初始化，只有首个 run 开始后才物化；
           // preflight 可能发生在首个 prompt 之前，此时必须回落到会话/装配层的系统提示，
           // 否则服务端会以"缺少服务端策略"拒绝（真实 3000 部署验收发现的缺口）。

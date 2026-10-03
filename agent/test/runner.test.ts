@@ -17,6 +17,11 @@ const tools: CanvasToolSpec[] = [
   { name: "canvas_get_state", category: "agent_tools_canvas_read", description: "Get state", parameters: objectSchema, allowed: true },
 ];
 
+test("runner uses the current frozen prompt instead of a persisted Pi prompt", () => {
+  const source = readFileSync(join(process.cwd(), "src/runner.ts"), "utf8");
+  assert.doesNotMatch(source, /session\?\.agent\.state\.systemPrompt \|\| session\?\.systemPrompt \|\| systemPrompt/);
+});
+
 test("withServerPolicy restores the frozen server policy for a Pi stream canonical request", () => {
   const canonical: PiCanonical = { systemPrompt: "", messages: [], tools: [], toolChoice: "auto" };
   const restored = withServerPolicy(canonical, "SERVER POLICY: 影策画布助手。", "SERVER POLICY: 影策画布助手。\nHarness rules");
