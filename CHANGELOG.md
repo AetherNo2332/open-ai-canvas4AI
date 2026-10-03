@@ -600,7 +600,7 @@
 - 修复 Agent 会话未展示后端具体失败原因的问题。
 - 修复主页删除最近项目时未显示确认弹窗的问题。
 - 修复 PostgreSQL 用户活跃统计冲突更新时的列歧义问题。
-## v1.5.7.2(55a3b41)
+## v1.5.7.2(1e8c16a)
 
 - 完成 Agent/Worker 观测基础闭环：统一运行、队列、工具、模型调用和上下文压缩事件，加入管理员运行总览聚合接口。
 - 增加可选 OTLP Collector、Prometheus、Tempo、Grafana Compose 观测栈、Grafana 看板和管理员跳转入口。
