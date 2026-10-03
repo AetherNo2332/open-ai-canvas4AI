@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
 import type { CanvasToolSpec } from "../src/tool-disclosure.js";
-import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent } from "../src/runner.js";
+import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent, withServerPolicy } from "../src/runner.js";
 import type { PromptParts } from "../src/system-prompt.js";
 import { sessionEntriesFromMessages } from "../src/session-tools.js";
 import { createHash } from "node:crypto";
@@ -16,6 +16,13 @@ const tools: CanvasToolSpec[] = [
   { name: "agent_tools_canvas_read", description: "Read the canvas", parameters: objectSchema, allowed: true },
   { name: "canvas_get_state", category: "agent_tools_canvas_read", description: "Get state", parameters: objectSchema, allowed: true },
 ];
+
+test("withServerPolicy restores the frozen server policy for a Pi stream canonical request", () => {
+  const canonical: PiCanonical = { systemPrompt: "", messages: [], tools: [], toolChoice: "auto" };
+  const restored = withServerPolicy(canonical, "SERVER POLICY: 影策画布助手。", "SERVER POLICY: 影策画布助手。\nHarness rules");
+  assert.match(restored.systemPrompt, /SERVER POLICY: 影策画布助手。/);
+  assert.match(restored.systemPrompt, /Harness rules/);
+});
 
 function promptParts(): PromptParts {
   return { system: "House style: reply in Chinese.", appendSystem: undefined,
@@ -553,9 +560,9 @@ test("preflight compacts before appending the next prompt and never admits the d
   snapshot.piSessionRevision = 8;
   let checks = 0;
   const order: string[] = [];
-  let firstPreflightPrompt = "";
+  const preflightPrompts: string[] = [];
   bridge.modelPreflight = async (_run, canonical) => {
-    if (checks === 0) firstPreflightPrompt = canonical.systemPrompt;
+    preflightPrompts.push(canonical.systemPrompt);
     order.push("preflight");
     return { status: "ready", taskId: "", decision: ++checks === 1 ? "compact" : "model" };
   };
@@ -576,7 +583,9 @@ test("preflight compacts before appending the next prompt and never admits the d
   assert.ok(firstRequest.messages.some(message => String(message.content).includes("agent-context-checkpoint")));
   // 首个 preflight 发生在首个 prompt 之前：SDK 的 Agent.state.systemPrompt 仍是空串，
   // 必须回落到装配提示，否则真实服务端会以"缺少服务端策略"拒绝整个运行。
-  assert.ok(firstPreflightPrompt.includes("SERVER POLICY: 影策画布助手。"), firstPreflightPrompt || "<empty>");
+  assert.ok(preflightPrompts.length >= 2, "both preflight paths must be exercised");
+  assert.ok(preflightPrompts.every((prompt) => prompt.includes("SERVER POLICY: 影策画布助手。")),
+    JSON.stringify(preflightPrompts));
 });
 
 test("a preflight compaction without compactable history falls through to the prompt", async () => {

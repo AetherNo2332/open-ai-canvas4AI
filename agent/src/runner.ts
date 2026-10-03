@@ -160,6 +160,21 @@ export function toCanonical(messagesIn: readonly Message[], cacheKey?: string): 
     promptCacheKey: cacheKey };
 }
 
+/**
+ * Go 校验的是冻结在运行快照中的服务端策略，而 Pi SDK 在恢复/首次流式
+ * 请求时可能还没有把 system message 物化到 state.messages。两条 preflight
+ * 路径必须在发送前使用同一条回退规则，避免首步有策略、后续流式请求为空。
+ */
+export function withServerPolicy(canonical: PiCanonical, requiredPolicy: string, fallbackPrompt: string): PiCanonical {
+  const required = requiredPolicy.trim();
+  const current = canonical.systemPrompt.trim();
+  if (!required) throw new FatalWorkerError("Go snapshot is missing frozen server policy");
+  if (current.includes(required)) return canonical;
+  const fallback = fallbackPrompt.trim();
+  if (!fallback.includes(required)) throw new FatalWorkerError("Pi session is missing the frozen server policy");
+  return { ...canonical, systemPrompt: fallbackPrompt };
+}
+
 function callsFromAssistant(message: AssistantMessage): PiToolCall[] {
   return message.content.filter((block) => block.type === "toolCall").map((block) => ({
     id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.arguments) },
@@ -781,7 +796,8 @@ export async function runCanvasAgent(
     if (listenerFailure !== undefined) throw listenerFailure;
     if (runTerminated) throw new CanvasRunTerminated(snapshot.status);
     if (compactionFailure !== undefined) throw compactionFailure;
-    const canonical = toCanonical(messages as Message[], snapshot.canonical.promptCacheKey);
+    const canonical = withServerPolicy(toCanonical(messages as Message[], snapshot.canonical.promptCacheKey),
+      snapshot.canonical.systemPrompt, session?.agent.state.systemPrompt || session?.systemPrompt || systemPrompt);
     canonical.tools = disclosure.decorateCanonicalTools(canonical.tools);
     try {
       if (pendingContextCompaction) throw new CanvasCompactionNeeded(snapshot.modelLimits);
@@ -1020,11 +1036,11 @@ export async function runCanvasAgent(
         if (compactionFailure !== undefined) throw compactionFailure;
         if (pendingContextCompaction) throw new FatalWorkerError("Pi did not commit refreshed context compaction");
         if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
-          const planned = toCanonical(session.agent.state.messages as Message[], snapshot.canonical.promptCacheKey);
+          const planned = withServerPolicy(toCanonical(session.agent.state.messages as Message[], snapshot.canonical.promptCacheKey),
+            snapshot.canonical.systemPrompt, session.agent.state.systemPrompt || session.systemPrompt || systemPrompt);
           // SDK 的 Agent 以空 systemPrompt 初始化，只有首个 run 开始后才物化；
           // preflight 可能发生在首个 prompt 之前，此时必须回落到会话/装配层的系统提示，
           // 否则服务端会以"缺少服务端策略"拒绝（真实 3000 部署验收发现的缺口）。
-          planned.systemPrompt = session.agent.state.systemPrompt || session.systemPrompt || systemPrompt;
           planned.tools = disclosure.decorateCanonicalTools(snapshot.canonical.tools);
           planned.messages.push({ role: "user", content: prompt });
           const decision = await bridge.modelPreflight(snapshot, planned, shutdown, promptContract, parts);
