@@ -489,6 +489,39 @@ func TestTextCapabilityOutputLimitValidation(t *testing.T) {
 	}
 }
 
+func TestTextVisionBatchBudgetValidationAndRoundTrip(t *testing.T) {
+	vision := true
+	value := &TextCapabilityConfig{
+		VisionSupported:      &vision,
+		VisionMaxBatchImages: 8,
+		VisionMaxBatchCost:   16,
+		References:           TextReferenceConfig{PromptMaxChars: 1000},
+	}
+	if err := validateTextCapabilityConfig(value); err != nil {
+		t.Fatalf("valid vision batch budget rejected: %v", err)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded TextCapabilityConfig
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.VisionMaxBatchImages != 8 || decoded.VisionMaxBatchCost != 16 {
+		t.Fatalf("vision batch budget lost in round trip: %#v", decoded)
+	}
+	for _, invalid := range []TextCapabilityConfig{
+		{VisionMaxBatchImages: -1, References: TextReferenceConfig{PromptMaxChars: 1000}},
+		{VisionMaxBatchImages: 101, References: TextReferenceConfig{PromptMaxChars: 1000}},
+		{VisionMaxBatchCost: -1, References: TextReferenceConfig{PromptMaxChars: 1000}},
+	} {
+		if err := validateTextCapabilityConfig(&invalid); err == nil {
+			t.Fatalf("invalid vision batch budget accepted: %#v", invalid)
+		}
+	}
+}
+
 // TestNormalizeTextCapabilityPreservesThinkingMode pins the contract behind the
 // reasoning-mode selector in the canvas Agent panel.
 //

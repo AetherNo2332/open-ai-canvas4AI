@@ -218,6 +218,7 @@ type cloudAgentRuntime struct {
 	// 每次调用都从 StateJSON 重新解码（cloudAgentDecode）。进程内字段在下一个调用到来时必然为空，
 	// 缓冲就白缓冲了。载荷只有回执与签名链接，几十字节级。
 	PendingImageInspections []cloudAgentImageInspection `json:"pendingImageInspections,omitempty"`
+	VisionBatchBudget       cloudAgentVisionBatchBudget `json:"visionBatchBudget,omitempty"`
 	// ToolScope 是"自动纠错进入收紧档"时本轮只开放的工具有限集合（见
 	// cloud_agent_tool_repair.go）。为空表示不限制；它在下一步生效、修好后清空，
 	// 与 callAdmissions 同理必须进检查点（一次推进一个调用，跨多次转移）。

@@ -34,6 +34,87 @@ type cloudAgentVisionCache struct {
 	UpdatedAt string         `json:"updatedAt,omitempty"`
 }
 
+type cloudAgentVisionBatchBudget struct {
+	MaxImages int
+	MaxCost   int
+}
+
+func cloudAgentVisionImageCost(inspection cloudAgentImageInspection) int {
+	bytes := int64(0)
+	if raw, ok := inspection.Receipt["bytes"].(int64); ok {
+		bytes = raw
+	} else if raw, ok := inspection.Receipt["bytes"].(float64); ok {
+		bytes = int64(raw)
+	}
+	width := cloudAgentVisionNumber(inspection.Receipt["width"])
+	height := cloudAgentVisionNumber(inspection.Receipt["height"])
+	megapixels := width * height / 1_000_000
+	cost := 1
+	if bytes > 4*1024*1024 || megapixels > 4 {
+		cost = 2
+	}
+	if bytes > 16*1024*1024 || megapixels > 16 {
+		cost = 4
+	}
+	if bytes > 32*1024*1024 || megapixels > 32 {
+		cost = 6
+	}
+	return cost
+}
+
+func cloudAgentVisionNumber(value any) float64 {
+	switch raw := value.(type) {
+	case int:
+		return float64(raw)
+	case int64:
+		return float64(raw)
+	case float64:
+		return raw
+	case float32:
+		return float64(raw)
+	default:
+		return 0
+	}
+}
+
+func planCloudAgentVisionBatches(inspections []cloudAgentImageInspection, budget cloudAgentVisionBatchBudget) [][]cloudAgentImageInspection {
+	maxImages := budget.MaxImages
+	if maxImages <= 0 {
+		maxImages = 4
+	}
+	maxCost := budget.MaxCost
+	if maxCost <= 0 {
+		maxCost = 16
+	}
+	seen := make(map[string]bool, len(inspections))
+	batches := make([][]cloudAgentImageInspection, 0)
+	current := make([]cloudAgentImageInspection, 0, maxImages)
+	cost := 0
+	flush := func() {
+		if len(current) > 0 {
+			batches = append(batches, current)
+			current = make([]cloudAgentImageInspection, 0, maxImages)
+			cost = 0
+		}
+	}
+	for _, inspection := range inspections {
+		nodeID := stringValue(inspection.Receipt["nodeId"])
+		key := nodeID + "\x00" + inspection.ResourceSHA
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		itemCost := cloudAgentVisionImageCost(inspection)
+		if len(current) > 0 && (len(current) >= maxImages || cost+itemCost > maxCost) {
+			flush()
+		}
+		current = append(current, inspection)
+		cost += itemCost
+	}
+	flush()
+	return batches
+}
+
 func decodeCloudAgentVisionCache(node map[string]any) (*cloudAgentVisionCache, bool) {
 	metadata, _ := node["metadata"].(map[string]any)
 	raw, ok := metadata["visionCache"]
@@ -264,6 +345,21 @@ func (s *Service) cloudAgentVisionReferences(req CloudAgentRequest) (TextReferen
 	return config.Text.References, nil
 }
 
+func (s *Service) cloudAgentVisionBatchBudget(req CloudAgentRequest) (cloudAgentVisionBatchBudget, error) {
+	if s == nil || s.repo == nil || req.ChannelID == "" || req.ChannelModelKey == "" {
+		return cloudAgentVisionBatchBudget{}, BadAuthRequest("看图需要指定支持图片输入的渠道模型")
+	}
+	channelModel, err := s.repo.ChannelModelByKey(req.ChannelID, req.ChannelModelKey)
+	if err != nil || channelModel == nil {
+		return cloudAgentVisionBatchBudget{}, BadAuthRequest("看图渠道模型不可用")
+	}
+	config, err := normalizedChannelModelCapability(channelModel)
+	if err != nil || config == nil || config.Text == nil {
+		return cloudAgentVisionBatchBudget{}, BadAuthRequest("当前模型未声明图片输入能力")
+	}
+	return cloudAgentVisionBatchBudget{MaxImages: config.Text.VisionMaxBatchImages, MaxCost: config.Text.VisionMaxBatchCost}, nil
+}
+
 func textVisionSupported(config *TextCapabilityConfig) bool {
 	if config == nil {
 		return false
@@ -282,6 +378,11 @@ func textVisionSupported(config *TextCapabilityConfig) bool {
 // 上游每步都会重新读取图片并按视觉 token 计费，而重复看图并不能得到新信息——实测模型
 // 因为"看不见图"的怀疑反复重看，单轮被拖到 892s。refresh=true 只保留参数兼容性，不能绕过上限。
 func (s *Service) prepareCloudAgentImageInspection(userID, canvasID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {
+	if state != nil {
+		if budget, err := s.cloudAgentVisionBatchBudget(state.Request); err == nil {
+			state.VisionBatchBudget = budget
+		}
+	}
 	var args struct {
 		NodeID  string         `json:"nodeId"`
 		Refresh bool           `json:"refresh"`
@@ -397,12 +498,6 @@ func (s *Service) prepareCloudAgentImageInspection(userID, canvasID string, stat
 			"请依据仍在上下文中的图片回答，不要继续重复调用。", seen)
 		return cloudAgentImageInspection{Receipt: receipt}, nil
 	}
-	if len(state.PendingImageInspections) > 0 {
-		return nil, BadAuthRequest("一次识图轮次最多附带一张真实图片，请先处理当前图片")
-	}
-	// A single inspection call carries at most one image. The old batch limit
-	// was a provider capability leak and allowed parallel calls to assemble a
-	// multi-image request; batching is now governed by the tool protocol.
 	receipt["imageAttached"] = true
 	receipt["imageChanged"] = true
 	receipt["contentSignature"] = cloudAgentObservationSignature(reference)
@@ -999,7 +1094,9 @@ func cloudAgentFlushPendingImages(state *cloudAgentRuntime) bool {
 	}
 	inspections := state.PendingImageInspections
 	state.PendingImageInspections = nil
-	state.Canonical.Messages = append(state.Canonical.Messages,
-		map[string]any{"role": "user", "content": cloudAgentImageContentParts(inspections...)})
+	for _, batch := range planCloudAgentVisionBatches(inspections, state.VisionBatchBudget) {
+		state.Canonical.Messages = append(state.Canonical.Messages,
+			map[string]any{"role": "user", "content": cloudAgentImageContentParts(batch...)})
+	}
 	return true
 }

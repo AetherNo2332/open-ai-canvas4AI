@@ -23,6 +23,10 @@ type ModelCapabilityConfig struct {
 type TextCapabilityConfig struct {
 	// VisionSupported declares whether Agent image inspection is supported.
 	VisionSupported *bool `json:"visionSupported,omitempty"`
+	// VisionMaxBatchImages and VisionMaxBatchCost are optional Agent safeguards.
+	// Zero means unknown; runtime probing chooses a conservative default.
+	VisionMaxBatchImages int `json:"visionMaxBatchImages,omitempty"`
+	VisionMaxBatchCost   int `json:"visionMaxBatchCost,omitempty"`
 	// Streaming controls whether this model accepts upstream SSE text responses.
 	// A nil value is treated as true for backwards compatibility with older configs.
 	Streaming *bool `json:"streaming,omitempty"`
@@ -585,6 +589,12 @@ func validateTextCapabilityConfig(value *TextCapabilityConfig) error {
 	}
 	if value.MaxOutputTokens > 0 && value.ContextWindowTokens > 0 && value.MaxOutputTokens >= value.ContextWindowTokens {
 		return BadAuthRequest("最大输出 Token 必须小于上下文窗口")
+	}
+	if value.VisionMaxBatchImages < 0 || value.VisionMaxBatchImages > 100 {
+		return BadAuthRequest("识图批次图片上限必须在 0-100 之间，0 表示未知")
+	}
+	if value.VisionMaxBatchCost < 0 || value.VisionMaxBatchCost > 10000 {
+		return BadAuthRequest("识图批次视觉成本上限必须在 0-10000 之间，0 表示未知")
 	}
 	for name, number := range map[string]int{"最大图片引用数": value.References.MaxImages, "最大视频引用数": value.References.MaxVideos} {
 		if number < 0 || number > 100 {
