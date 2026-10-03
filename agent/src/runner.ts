@@ -560,6 +560,24 @@ async function bootstrapSession(
  * 停在 running 被反复重领（真实 3000 部署验收复现）。转成 FatalWorkerError 后由
  * `server.ts` 写入 run 失败原因，界面得到明确终态而不是永久"运行中"。
  */
+/**
+ * Go 的投影口径比 Pi 的 token 估算保守得多（中文尤其明显：同一段历史 Go 约 1 token/字，
+ * Pi 约 0.4）。于是会出现"Go 判定超过准入线、Pi 却认为上下文还小、拒绝压缩"的僵局：
+ * Pi 抛 Nothing to compact / Already compacted，运行在"准入拒绝 → 压缩失败"之间打转。
+ *
+ * Go 的判定是权威准入线。这里在 Go 已明确要求压缩时收紧 Pi 的触发线与保留窗口：触发线
+ * 压到准入线的四分之一、原文保留量同样收到四分之一，让这次压缩真正把 Go 口径的投影压到线下。
+ */
+function forceCompactionForAdmission(session: AgentSession, snapshot: PiSnapshot): void {
+  const window = snapshot.modelLimits.contextWindowTokens;
+  if (!Number.isSafeInteger(window) || window < 2) return;
+  const base = compactionSettings(snapshot);
+  const compactAt = snapshot.modelLimits.compactAtTokens ?? Math.floor(window * 0.85);
+  session.settingsManager.applyOverrides({ compaction: { ...base,
+    reserveTokens: Math.max(1, window - Math.max(1, Math.floor(compactAt / 4))),
+    keepRecentTokens: Math.max(1, Math.floor((base.keepRecentTokens ?? 1) / 4)) } });
+}
+
 async function compactSessionOrFail(session: AgentSession, reason: string, softFail = false): Promise<boolean> {
   try {
     await session.compact();
@@ -1014,6 +1032,7 @@ export async function runCanvasAgent(
           syncCompaction();
           if (decision.decision === "compact") {
             if (++consecutiveCompactions > 2) throw new FatalWorkerError("Context still exceeds admission budget after compaction");
+            forceCompactionForAdmission(session, snapshot);
             const didCompact = await compactSessionOrFail(session, "上下文超过模型窗口", true);
             if (compactionFailure !== undefined) throw compactionFailure;
             if (didCompact) continue;
@@ -1045,6 +1064,7 @@ export async function runCanvasAgent(
         if (compactionNeeded) {
           compactionNeeded = false;
           if (++consecutiveCompactions > 2) throw new FatalWorkerError("Context still exceeds admission budget after compaction");
+          forceCompactionForAdmission(session, snapshot);
           // Pi converted the denied request into an error message. Restore the last
           // durable leaf before manual compaction, outside its streaming loop.
           if (sessionLeafId) sessionManager.branch(sessionLeafId); else sessionManager.resetLeaf();
