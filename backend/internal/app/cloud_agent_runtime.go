@@ -15,6 +15,7 @@ import (
 	"infinite-canvas/backend/internal/agentcontext"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/observability"
 	"infinite-canvas/backend/internal/prompts"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -308,6 +309,7 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 		return err
 	}
 	state := cloudAgentRuntime{Request: initial.Request, SkillRuntimeMode: initial.SkillRuntimeMode, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
+	s.RecordObservability(observability.Event{TaskID: task.ID, RunID: task.ID, TraceID: task.ID, Kind: observability.KindTask, Status: observability.StatusRunning, StartedAt: time.Now().UTC(), Model: stringValue(input.Config["model"]), PromptVersion: state.Fingerprint})
 	for _, name := range advertisedNames {
 		if cloudAgentIsToolCategory(name) {
 			state.DisclosureVersion = cloudAgentToolDisclosureVersion
@@ -1047,6 +1049,7 @@ func (s *Service) terminateCloudAgent(run *model.CloudAgentExecution, message st
 }
 
 func (s *Service) failCloudAgent(run *model.CloudAgentExecution, state *cloudAgentRuntime, message string) error {
+	s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTask, Status: observability.StatusFailed, EndedAt: time.Now().UTC(), Reason: message})
 	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		current.Status = "failed"
 		current.FailureMessage = truncateRunes(message, 1000)
@@ -1802,6 +1805,13 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 		default:
 			result, toolErr = cloudAgentReadToolCached(repo, run.UserID, state, call)
 		}
+		toolStatus := observability.StatusCompleted
+		toolReason := ""
+		if toolErr != nil {
+			toolStatus = observability.StatusFailed
+			toolReason = toolErr.Error()
+		}
+		s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTool, ToolType: call.Function.Name, Status: toolStatus, StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC(), Reason: toolReason})
 		if toolErr == nil && cloudAgentWrite(call.Function.Name) {
 			// A successful canvas mutation changes the read model. Do not replay a
 			// pre-mutation canvas snapshot later in the same Agent run.
@@ -1837,7 +1847,11 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 		if call.Function.Name == "finish_run" && toolErr == nil {
 			// 闸门通过：summary 就是本轮唯一一次最终答复，本轮就此结束。
 			if cloudAgentFinishRunAccepted(result) {
-				return cloudAgentCompleteByFinishRun(current, state, run.ID, call, result)
+				err := cloudAgentCompleteByFinishRun(current, state, run.ID, call, result)
+				if err == nil {
+					s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTask, Status: observability.StatusCompleted, EndedAt: time.Now().UTC()})
+				}
+				return err
 			}
 			// 申请收尾用的次数也已用尽：与"纯文本收尾"走同一条终止路径。
 			if cloudAgentFinishRunExhausted(result) {
