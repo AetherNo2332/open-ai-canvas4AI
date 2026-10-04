@@ -460,8 +460,7 @@ func (s *Service) prepareCloudAgentImageInspection(userID, canvasID string, stat
 		}}, nil
 	}
 	// 观察账本是权威：已经有可靠观察的图片直接复用，不再附图、不计读循环、也不花额度。
-	// 这条必须排在上游的读循环护栏之前 —— 否则"重试第三次"会被判成循环而终止整轮，
-	// 而这里恰恰是设计要求模型不要重看的情形。
+	// 它排在下面的重复附图回执之前：模型重看时先被这里接住，连文字引导都不必产生。
 	signature := cloudAgentObservationSignature(reference)
 	metadata, _ := node["metadata"].(map[string]any)
 	if observation := state.cloudAgentImageObservationFor(args.NodeID, signature); observation != "" && metadata["visionCache"] == nil {
@@ -471,13 +470,28 @@ func (s *Service) prepareCloudAgentImageInspection(userID, canvasID string, stat
 				"。直接复用这段观察；refresh 不能绕过重复读取限制。尚未保存结构化摘要时，请绑定原附图回执的 sha256 提交 summary。",
 		}}, nil
 	}
-	// 图换了（签名不一致）时账本会作废旧观察，这里的重读是正当的，同样不该判成循环。
-	if state.ImageInspectionReads != nil && state.ImageInspectionReads[cacheKey] > 0 {
-		return nil, &cloudAgentReadLoopError{ToolName: "canvas_inspect_image", Count: state.ImageInspectionReads[cacheKey] + 1, ReasonCode: "vision_read_guard"}
-	}
 	budget := cloudAgentImageInspectionBudget(cloudAgentInspectedImageNodeCount(doc))
 	if used := state.cloudAgentImageInspectionCalls(); used >= budget {
 		return nil, fmt.Errorf("%w: 已用 %d 次、本轮额度 %d 次", errCloudAgentImageInspectionBudget, used, budget)
+	}
+	// 同一版本、同一素材本轮已经附过一次图：不再附第二遍，但也不把整轮判失败。
+	// 重复申请通常只是模型没写下观察、没提交摘要，或者怀疑自己没看到图；回执用文字把它
+	// 引回"复用已送达的画面 + 补交摘要"。直接停止会丢掉本轮已完成的画布工作，而失败回执
+	// 里同样没有它想要的图，模型只能再犯一次。
+	//
+	// 只有服务端确认这张图确实送达过模型（交付 SHA 一致）时才这样回执；没送达
+	// （例如分批预算把原图挤到了后面的批次）就按未送达处理、允许重新附图，
+	// 否则模型会卡在"看不见图又申请不到新图"的死局。重复附图次数仍受
+	// cloudAgentMaxImageInspectionsPerRun 与上面的本轮识图预算限制。
+	if state.ImageInspectionReads[cacheKey] > 0 && state.DeliveredImageSHAs[args.NodeID] == resourceSHA {
+		return cloudAgentImageInspection{ResourceSHA: resourceSHA, Receipt: map[string]any{
+			"nodeId": args.NodeID, "sha256": resourceSHA,
+			"repeat": true, "imageAttached": false, "imageChanged": false,
+			"note": "这张图（sha256 " + resourceSHA + "）本轮已经附送过一次，不再重复附图：服务端每轮只把原始图片送一次，重复申请拿不到新画面。" +
+				"请用你刚才看到的那次画面继续：先在消息正文里用 nodeId 写出观察（看不清就如实写进 uncertainties，不要凭标题猜），" +
+				"再调用本工具提交 nodeId、sha256=" + resourceSHA + " 与 summary（short 与 detailed）；提交只保存摘要、不附图。" +
+				"除非这张图的 sha256 变化，不要再申请原图。",
+		}}, nil
 	}
 	receipt := map[string]any{
 		"nodeId":   args.NodeID,
