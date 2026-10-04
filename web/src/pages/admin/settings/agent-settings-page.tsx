@@ -5,6 +5,7 @@ import { AdminPageFrame } from "../components/admin-shell";
 import AgentLessonsPanel from "../components/agent-lessons-panel";
 import { RefreshCw, Save } from "lucide-react";
 import { AgentRuntimeStatusView } from "./components/agent-runtime-status";
+import AgentSkillDefaultsSection from "./components/agent-skill-defaults-section";
 import "./agent-settings-page.css";
 import { getAgentSchedulerSetting, listAgentSchedulerStatus, updateAgentSchedulerSetting, type AgentSchedulerDraft, type AgentSchedulerSetting, type AgentRuntimeStatus } from "@/services/api/admin-agent-settings";
 
@@ -65,9 +66,9 @@ export default function AgentSettingsPage() {
         } catch (error) { setConfigError(error instanceof Error ? error.message : "保存失败，调整已保留"); }
         finally { setSaving(false); }
     }
-    return <AdminPageFrame title="Agent（beta）" description="统一管理 Agent 调度、执行器状态与用户记忆" scroll>
+    return <AdminPageFrame title="Agent（beta）" description="统一管理 Agent 调度、默认技能、执行器状态与用户记忆" scroll>
         <div className="agent-settings">
-            <nav className="agent-settings-nav" aria-label="Agent 配置区域"><a href="#config">调度配置</a><a href="#runtime">运行状态</a><a href="#memory">记忆管理</a></nav>
+            <nav className="agent-settings-nav" aria-label="Agent 配置区域"><a href="#config">调度配置</a><a href="#skill-defaults">默认技能</a><a href="#runtime">运行状态</a><a href="#memory">记忆管理</a></nav>
             <section id="config" className="agent-settings-section space-y-4" aria-labelledby="agent-config-heading">
                 <div className="agent-settings-heading"><h2 id="agent-config-heading" className="text-base font-semibold">调度配置</h2><Button icon={<RefreshCw size={14} />} onClick={() => { void loadConfig(); }} disabled={saving}>重新读取配置</Button></div>
                 <p className="text-sm text-foreground/60">配置保存后自动生效；数据库设置优先于部署初始值。模型请求额度由<Link to="/admin/settings/runtime-policy" className="underline">资源与策略</Link>中的 Go Worker 和渠道并发控制。</p>
@@ -85,6 +86,7 @@ export default function AgentSettingsPage() {
                 {statusError ? <Alert type="error" showIcon title={statusError} description="状态读取失败，当前数据可能已过期，请刷新后重试。" /> : null}
                 {instances === undefined ? !statusError && <Skeleton active /> : <AgentRuntimeStatusView instances={instances} revision={setting?.revision} />}
             </section>
+            <section id="skill-defaults" className="agent-settings-section" aria-labelledby="agent-skill-defaults-heading"><AgentSkillDefaultsSection /></section>
             <section id="memory" ref={memory} className="agent-settings-section space-y-3"><h2 className="text-base font-semibold">记忆管理</h2><AgentLessonsPanel /></section>
         </div>
     </AdminPageFrame>;

@@ -7,6 +7,12 @@
 .agent-settings-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .agent-settings-field { background: var(--admin-surface-2); }
 .agent-settings-field .ant-input-number { width: 100%; }
+.agent-skill-defaults-results, .agent-skill-defaults-items { display: grid; gap: var(--space-2); padding: 0; list-style: none; }
+.agent-skill-defaults-results li, .agent-skill-defaults-items li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); }
+.agent-skill-defaults-description { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+.agent-skill-defaults-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.agent-skill-defaults-actions button { min-width: 44px; min-height: 44px; }
+.agent-skill-defaults-totals { font-variant-numeric: tabular-nums; }
 .agent-runtime { display: grid; gap: 16px; }
 .agent-runtime-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .agent-runtime-metric { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--admin-border); border-radius: var(--admin-radius); background: var(--admin-surface-2); }
