@@ -14,7 +14,7 @@ import (
 // CurrentSchemaVersion follows upstream migrations through v43; our Agent
 // migrations register after that upstream range as 44+. When a future upstream
 // sync takes 44+, shift our block up again and extend the relocation table.
-const CurrentSchemaVersion int64 = 50
+const CurrentSchemaVersion int64 = 51
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 43
@@ -37,6 +37,7 @@ const builtinSkillTombstonesChecksum = "sha256:builtin-skill-tombstones-v40-2026
 const resourceThumbnailChecksum = "sha256:resource-thumbnail-v41-20260927"
 const cloudAgentPiSessionsChecksum = "sha256:cloud-agent-pi-sessions-v42-20260928"
 const topupSaleStrategiesChecksum = "sha256:topup-sale-strategies-v43-20260929"
+const agentSkillDefaultsChecksum = "sha256:agent-skill-defaults-v46-20261004"
 
 const postgresSchemaMigrationLockID int64 = 73123910420260830
 
@@ -166,6 +167,9 @@ var schemaMigrations = []migration{
 	}},
 	{version: 50, name: "pi_agent_orchestrator", checksum: "sha256:pi-agent-orchestrator-v45-20261002", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.AgentRuntimeInstance{})
+	}},
+	{version: 51, name: "agent_skill_defaults", checksum: agentSkillDefaultsChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentSkillDefault{}, &model.AgentConversationSkill{})
 	}},
 }
 
