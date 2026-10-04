@@ -22,6 +22,7 @@ export function agentErrorPresentation(cause: unknown, fallback = "Agent 执行�
 
 export function agentSubmissionErrorTitle(cause: unknown, accepted: boolean) {
     if (accepted) return "运行已接收，但本地提交记录清理失败";
+    if (cause instanceof ApiError && cause.reason === "agent_skill_budget_exceeded") return cause.message;
     const status = cause instanceof ApiError ? cause.status : undefined;
     if (status && [400, 401, 403, 404, 422].includes(status)) return "请求已被服务端拒绝";
     if (status) return "服务端已返回错误；重试将核对原请求，不重复创建";

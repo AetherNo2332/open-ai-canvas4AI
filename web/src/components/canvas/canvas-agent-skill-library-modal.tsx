@@ -14,6 +14,7 @@ type CanvasAgentSkillLibraryModalProps = {
     installedSkills: Skill[];
     marketSkills: Skill[];
     selectedSkillIds: string[];
+    globalDefaultSkillIds?: string[];
     categories: SkillCategory[];
     category: string;
     search: string;
@@ -33,6 +34,7 @@ export function CanvasAgentSkillLibraryModal({
     installedSkills,
     marketSkills,
     selectedSkillIds,
+    globalDefaultSkillIds = [],
     categories,
     category,
     search,
@@ -63,7 +65,7 @@ export function CanvasAgentSkillLibraryModal({
     const visibleSkills = useMemo(() => {
         const keyword = search.trim().toLocaleLowerCase("zh-CN");
         const source = tab === "enabled"
-            ? installedSkills.filter((skill) => selectedSkillIds.includes(skill.skillId))
+            ? [...new Map([...installedSkills, ...marketSkills].map(skill => [skill.skillId, skill])).values()].filter((skill) => selectedSkillIds.includes(skill.skillId) || globalDefaultSkillIds.includes(skill.skillId))
             : tab === "installed"
                 ? installedSkills
                 : marketSkills;
@@ -75,7 +77,7 @@ export function CanvasAgentSkillLibraryModal({
                 .toLocaleLowerCase("zh-CN")
                 .includes(keyword);
         });
-    }, [category, installedSkills, marketSkills, search, selectedSkillIds, tab]);
+    }, [category, installedSkills, marketSkills, search, selectedSkillIds, globalDefaultSkillIds, tab]);
 
     useEffect(() => {
         const target = loadMoreRef.current;
@@ -164,8 +166,8 @@ export function CanvasAgentSkillLibraryModal({
                 <div className="canvas-agent-skill-library-content">
                     <header className="canvas-agent-skill-library-header">
                         <h2>技能商店</h2>
-                        <button type="button" className="canvas-agent-skill-library-count" onClick={() => changeTab("enabled")} aria-label={`查看本轮已启用的 ${selectedCount} 个技能，最多 8 个`}>
-                            已启用 <strong>{selectedCount}</strong><span> / 8</span>
+                        <button type="button" className="canvas-agent-skill-library-count" onClick={() => changeTab("enabled")} aria-label={`全局默认 ${globalDefaultSkillIds.length} 个，本会话追加 ${selectedCount} 个`}>
+                            全局默认 <strong>{globalDefaultSkillIds.length}</strong><span> 个 · 本会话追加 </span><strong>{selectedCount}</strong><span> 个</span>
                         </button>
                     </header>
 
@@ -177,7 +179,7 @@ export function CanvasAgentSkillLibraryModal({
                                 theme={theme}
                                 categories={categories}
                                 selected={selectedSkillIds.includes(skill.skillId)}
-                                canSelect={selectedCount < 8 || selectedSkillIds.includes(skill.skillId)}
+                                globalDefault={globalDefaultSkillIds.includes(skill.skillId)}
                                 onToggle={() => onToggle(skill.skillId)}
                                 onInstall={() => onInstall(skill)}
                             />
@@ -202,7 +204,7 @@ export function CanvasAgentSkillLibraryModal({
                         <span>{tab === "enabled" ? `${selectedCount} 个技能将在本轮生效` : tab === "installed" ? `${visibleSkills.length} 个已加入技能` : `已加载 ${marketSkills.length} 个公开技能`}</span>
                         {tab === "market" && hasMore ? (
                             <Button size="small" disabled={loading} loading={loading} onClick={() => void onLoadMore()}>{loading ? "加载中" : "加载更多"}</Button>
-                        ) : <span>{tab === "market" ? "已加载全部" : "最多启用 8 个"}</span>}
+                        ) : <span>{tab === "market" ? "已加载全部" : "容量由运行时校验"}</span>}
                     </footer>
                 </div>
             </section>
@@ -219,12 +221,12 @@ function SkillTab({ active, label, count, onClick }: { active: boolean; label: s
     );
 }
 
-function SkillLibraryCard({ skill, theme, categories, selected, canSelect, onToggle, onInstall }: {
+function SkillLibraryCard({ skill, theme, categories, selected, globalDefault, onToggle, onInstall }: {
     skill: Skill;
     theme: CanvasTheme;
     categories: SkillCategory[];
     selected: boolean;
-    canSelect: boolean;
+    globalDefault: boolean;
     onToggle: () => void;
     onInstall: () => Promise<void>;
 }) {
@@ -268,20 +270,18 @@ function SkillLibraryCard({ skill, theme, categories, selected, canSelect, onTog
                 <div className="canvas-agent-skill-card-title-row">
                     <h3 title={skill.skillName}>{skill.skillName}</h3>
                     <div className="canvas-agent-skill-card-action">
-                        {skill.isAdded ? (
+                        {globalDefault ? <span className="text-xs" title="全局默认技能自动生效，无需安装，不能从会话中移除">全局默认</span> : skill.isAdded ? (
                             <Button
                                 size="small"
                                 type="default"
                                 className={selected ? "is-selected" : ""}
-                                disabled={!canSelect}
                                 aria-pressed={selected}
-                                title={!canSelect ? "本轮最多启用 8 个 Skills" : undefined}
                                 onClick={onToggle}
                             >
                                 {selected ? "已启用" : "使用"}
                             </Button>
                         ) : (
-                            <Button size="small" icon={<Plus className="size-3.5" />} loading={installing} disabled={installing || !canSelect} title={!canSelect ? "本轮最多启用 8 个 Skills" : undefined} onClick={() => void install()}>
+                            <Button size="small" icon={<Plus className="size-3.5" />} loading={installing} disabled={installing} onClick={() => void install()}>
                                 加入
                             </Button>
                         )}

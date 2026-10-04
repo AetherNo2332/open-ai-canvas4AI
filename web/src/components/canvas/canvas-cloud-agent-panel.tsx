@@ -21,6 +21,7 @@ import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/
 import {
     cancelAgentRun,
     getAgentCapabilities,
+    listAgentSkillDefaults,
     getAgentProfile,
     getAgentRun,
     createAgentRun,
@@ -128,6 +129,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const profileRequestRef = useRef(0);
     const [skills, setSkills] = useState<Skill[]>([]);
     const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+    const [globalDefaultSkillIds, setGlobalDefaultSkillIds] = useState<string[]>([]);
     const [marketSkills, setMarketSkills] = useState<Skill[]>([]);
     const [skillSearch, setSkillSearch] = useState("");
     const [debouncedSkillSearch, setDebouncedSkillSearch] = useState("");
@@ -424,7 +426,11 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     useEffect(() => {
         let active = true;
         setSkills([]);
+        setGlobalDefaultSkillIds([]);
         const refresh = () => {
+            void listAgentSkillDefaults()
+                .then(result => { if (active) { setGlobalDefaultSkillIds(result.skills.map(skill => skill.skillId)); setMessages(current => current.filter(message => message.id !== "skill-defaults-load-error")); } })
+                .catch(cause => { if (active) setMessages(current => appendAgentError(current, "skill-defaults-load-error", cause, "默认技能读取失败")); });
             void listAddedSkills()
                 .then((result) => {
                     if (!active) return;
@@ -1094,6 +1100,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 installedSkills={installedSkills}
                 marketSkills={marketSkills}
                 selectedSkillIds={selectedSkillIds}
+                globalDefaultSkillIds={globalDefaultSkillIds}
                 categories={skillCategories}
                 category={skillTag}
                 search={skillSearch}
