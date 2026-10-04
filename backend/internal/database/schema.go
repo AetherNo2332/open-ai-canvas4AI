@@ -31,6 +31,8 @@ func Models() []any {
 		&model.AgentMemorySetting{},
 		&model.AgentSkillDefault{},
 		&model.AgentConversationSkill{},
+		&model.AgentWorkspace{},
+		&model.AgentWorkspaceSkill{},
 		&model.User{},
 		&model.AuthSession{},
 		&model.UserIdentity{},

@@ -98,6 +98,7 @@ type cloudAgentApproval struct {
 	Reason    string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
+	Workspace         *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	RuntimeRunID      string                    `json:"-"`
 	SkillRuntimeMode  string                    `json:"skillRuntimeMode,omitempty"`
 	Request           CloudAgentRequest         `json:"request"`

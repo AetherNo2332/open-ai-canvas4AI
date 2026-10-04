@@ -28,7 +28,9 @@ description: 影策后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-当前代码的 `CurrentSchemaVersion` 为 **51**。v51 `agent_skill_defaults` 新增 `agent_skill_defaults` 与 `agent_conversation_skills`，启动迁移登记与 SQLite → PostgreSQL 搬迁清单均包含两表。默认配置使用 revision CAS 整体替换：`system_settings` 的 `agent_skill_defaults_revision` 保存单调递增修订号，清空列表也不重置；事务先锁定该设置行再检查修订号，跨实例写入串行化。会话表保存最终来源、版本及 hash，与 Run、占位任务和积分预留在同一事务提交，拒绝请求不会修改会话基线。升级前备份数据库，运行迁移及 verify；回退旧代码不会自动降级结构。下文保留历史迁移说明。
+当前代码的 `CurrentSchemaVersion` 为 **52**。v52 `agent_workspaces` 新增 `agent_workspaces` 与 `agent_workspace_skills`，`canvas_id` 唯一，每个画布对应一个 Workspace。文档和技能列表共用 revision，CAS 与技能替换在同一事务提交；SQLite 写事务先取得写锁再读 revision，PostgreSQL 快照读取持有行共享锁。文档最多 64KB，保存 SHA-256（空文档也有标准 hash），新 Run 冻结正文和技能版本；运行中不回读当前配置。模型输入准入包含编译后的上下文和完整技能包的保守 token 预留，超限明确拒绝。
+
+v51 `agent_skill_defaults` 新增 `agent_skill_defaults` 与 `agent_conversation_skills`，启动迁移登记与 SQLite → PostgreSQL 搬迁清单均包含两表。默认配置使用 revision CAS 整体替换：`system_settings` 的 `agent_skill_defaults_revision` 保存单调递增修订号，清空列表也不重置；事务先锁定该设置行再检查修订号，跨实例写入串行化。会话表保存最终来源、版本及 hash，与 Run、占位任务和积分预留在同一事务提交，拒绝请求不会修改会话基线。升级前备份数据库，运行迁移及 verify；回退旧代码不会自动降级结构。下文保留历史迁移说明。
 
 历史 v42 说明（当前版本见上文）：上游迁移当时占用 v24–v38：v36 `cloud_agent_gemini_cache` 创建 Gemini 缓存表，v37 `cloud_agent_gemini_cache_identity` 将唯一键限定为 `(user_id, cache_key)`，v38 `prefixed_id_sequence_reconcile` 校准可读 ID 序列。我们已退役的 `cloud_agent_run_events` / `cloud_agent_transcript` 保留为 no-op 登记并顺延到 v39/v40，既有表与数据不删除；历史库的 v24/v25、v32/v33、v33/v34、v34/v35、v35/v36、v36/v37 登记会先按名称与校验和搬迁到 v39/v40，再执行上游迁移。v35 `auth_notifications`、v34 `task_media_recovery`、v33 `oauth_state_accepted_terms` 等迁移内容不变。升级前备份，运行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持 schema 42，回退需恢复匹配的数据库备份并评估备份之后的新写入；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
 
@@ -158,6 +160,8 @@ docker compose -f docker-compose.deploy.yml up -d backend web
 | --- | --- | --- |
 | `skills` | 保存技能公开元数据、当前版本指针、来源和 GitHub 同步状态 | `instruction` 仅保留入口 `SKILL.md` 的兼容投影；目录文件不展开写入该字段 |
 | `agent_skill_defaults` | 管理员全局默认技能、固定版本、有序 position、enabled 与 revision | `(scope, skill_id)` 唯一；不能引用私有技能，容量只统计启用项；仅影响新会话 |
+| `agent_workspaces` | 画布 Agent 业务文档、SHA-256、共享 revision | `canvas_id` 唯一；用户与画布归属同时检查 |
+| `agent_workspace_skills` | Workspace 技能追加及冻结版本 | `(workspace_id, skill_id)` 主键；仅启用项参与新会话技能并集 |
 | `agent_conversation_skills` | 会话最终技能来源、版本、ContentHash 与顺序 | `(conversation_id, skill_id)` 复合主键；source 为 global/user；已有会话不重读默认，迁移前旧会话不自动补入默认 |
 | `skill_versions` | 保存每次安装、编辑或同步形成的不可变技能版本 | 记录内容哈希、入口路径、规范化 ZIP 的存储键、文件数、总大小和 GitHub commit |
 | `skill_files` | 保存某个版本的文件索引 | `(skill_version_id, path)` 唯一；只保存路径、类型、MIME、大小和 SHA-256，不保存正文 |

@@ -61,7 +61,9 @@ func newRunSkillSelectionService(t *testing.T) (*Service, *gorm.DB) {
 		selectionDataDir = t.TempDir()
 		t.Cleanup(func() { selectionDataDir = "" })
 	}
-	return New(repository.New(db), selectionDataDir), db
+	// Skill selection uses repository/package reads, not startup workers or
+	// installation of unrelated official provider archives.
+	return &Service{repo: repository.New(db), dataDir: selectionDataDir}, db
 }
 
 func databaseModelsForSkillSelection() []any {

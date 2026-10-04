@@ -74,6 +74,10 @@ func AgentSkillDefaultsConflict(currentRevision int64) *AppError {
 	return &AppError{Status: CodeConflict, Code: CodeConflict, Reason: ReasonAgentSkillDefaultsRevisionConflict, Message: "默认技能配置已被其他管理员修改，请刷新后重试", Details: map[string]any{"currentRevision": currentRevision}}
 }
 
+func AgentWorkspaceConflict(currentRevision int64) *AppError {
+	return &AppError{Status: CodeConflict, Code: CodeConflict, Reason: ReasonAgentWorkspaceRevisionConflict, Message: "Workspace 已被其他页面修改，请刷新后重试", Details: map[string]any{"currentRevision": currentRevision}}
+}
+
 // AgentSkillDefaultsInvalid 表示默认技能集合引用了不存在、已禁用或私有的技能，message 含技能 ID。
 func AgentSkillDefaultsInvalid(message string, details map[string]any) *AppError {
 	return &AppError{Status: CodeInvalidArgument, Code: CodeInvalidArgument, Reason: ReasonAgentSkillDefaultsInvalid, Message: message, Details: details}

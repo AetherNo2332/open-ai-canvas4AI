@@ -65,6 +65,7 @@ func cloudAgentStepLimit(req CloudAgentRequest) int {
 }
 
 type cloudAgentState struct {
+	Workspace        *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	Version          int                       `json:"version"`
 	SkillRuntimeMode string                    `json:"skillRuntimeMode,omitempty"`
 	Request          CloudAgentRequest         `json:"request"`
@@ -569,7 +570,11 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
-	skillSnapshots, err := s.resolveRunSkills(userID, s.cloudAgentConversationIDFor(userID, id, parentID), req.SkillIDs, parentID == "")
+	workspace, err := s.FreezeWorkspaceSnapshot(userID, req.CanvasID)
+	if err != nil {
+		return nil, err
+	}
+	skillSnapshots, err := s.resolveRunSkillsWithLayers(userID, s.cloudAgentConversationIDFor(userID, id, parentID), req.SkillIDs, parentID == "", workspace.Skills, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -590,7 +595,9 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
+	system += workspacePrompt(&workspace)
 	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
+	state.Workspace = &workspace
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	canonical.Tools = compileCloudAgentToolsForRuntime(req, len(profile.Layers) > 0, cloudAgentSkillRuntimeNative)
 	// Keep the complete eligible tool catalog in the Go runtime snapshot. Pi
@@ -613,6 +620,25 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
 	canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(req.CanvasID, cloudAgentPromptCacheIdentity(req, policy), canonical.SystemPrompt, canonical.Tools)
 	attachCloudAgentPlan(&canonical, inheritedPlan)
+	if workspace.AgentsMD != "" || len(skillSnapshots) > 0 {
+		projected, err := cloudAgentRequestEstimatedTokens(&canonical)
+		if err != nil {
+			return nil, err
+		}
+		// Native skills load lazily. Reserve their full package bytes as a
+		// conservative token bound rather than silently trimming frozen files.
+		for _, skill := range skillSnapshots {
+			version, err := s.repo.SkillVersion(skill.VersionID)
+			if err != nil {
+				return nil, err
+			}
+			projected += int(version.TotalBytes)
+		}
+		budget := s.cloudAgentContextBudgetForRequest(req)
+		if projected > budget.InputBudgetTokens {
+			return nil, kernel.AgentSkillBudgetExceeded(map[string]any{"budget": "context_tokens", "limit": budget.InputBudgetTokens, "actual": projected})
+		}
+	}
 	// 根任务就是第一步模型调用：它的输出上限与后续每一步同源（策略解析结果），
 	// 否则"改配置"只影响第二步之后，第一步仍然按旧值跑。
 	stepLimits, err := s.cloudAgentStepLimits()
@@ -631,6 +657,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	//   - 不可变快照：服务端策略身份 + 工具 schema 身份在这里定型；
 	//   - 占位任务：承载本轮报价预留，worker 永不领取。
 	runtime := cloudAgentRuntime{
+		Workspace:    &workspace,
 		RuntimeRunID: id, Request: req, Policy: policy, ParentID: parentID, Fingerprint: fingerprint,
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
 		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
