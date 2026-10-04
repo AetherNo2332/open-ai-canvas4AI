@@ -233,6 +233,35 @@ func TestConcurrentRunCreationReservesExactlyOnce(t *testing.T) {
 
 // TestConcurrentCancelReleasesReservationExactlyOnce 覆盖取消的幂等性：
 // 重复取消（包括并发）不得把预留释放两次 —— 那会让账户预留额变成负数或与订单对不上。
+func TestCancelCloudAgentAlreadyCleanedDoesNotReopenCleanup(t *testing.T) {
+	s, db := agentRunFixture(t)
+	created, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CancelCloudAgent(context.Background(), "user", created.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.repo.CloudAgent("user", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.CleanupPending {
+		t.Fatal("first cancellation left pending cleanup")
+	}
+	if err := s.CancelCloudAgent(context.Background(), "user", created.ID); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.repo.CloudAgent("user", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision || after.CleanupPending {
+		t.Fatalf("completed cancellation was reopened: before=%d after=%d pending=%v", before.Revision, after.Revision, after.CleanupPending)
+	}
+	assertReservationInvariant(t, db, "user")
+}
+
 func TestConcurrentCancelReleasesReservationExactlyOnce(t *testing.T) {
 	s, db := agentRunFixture(t)
 

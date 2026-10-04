@@ -2439,10 +2439,10 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 	if err != nil {
 		return err
 	}
-	if run.Status == "completed" || (run.Status == "failed" && !run.CleanupPending) {
+	if run.Status == "completed" || ((run.Status == "failed" || run.Status == "cancelled") && !run.CleanupPending) {
 		return nil
 	}
-	if run.Status != "failed" {
+	if run.Status != "failed" && run.Status != "cancelled" {
 		// Persist intent independently of the transcript. Retrying also repairs
 		// legacy cancelled rows that crashed before cancelling their children.
 		state, decodeErr := cloudAgentDecode(run)
@@ -2488,12 +2488,10 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 		return err
 	}
 	if err := s.finishCloudAgentCleanup(ctx, latest); err != nil {
-		// 并发取消时两个请求都会走到清理；清理自身也按 run 修订号做 CAS，
-		// 所以后到的一方会拿到冲突。只要确认"清理确实已经做完"
-		//（CleanupPending 已被另一方清掉），就应当视为成功 ——
-		// 否则一次双击/重试会变成用户可见的"取消失败"。
+		// A concurrent cleaner may still be finishing. Confirm durable cancellation
+		// intent and acknowledge it; the watchdog retains any pending cleanup.
 		if errors.Is(err, repository.ErrCreationConflict) {
-			if current, readErr := s.repo.CloudAgent(userID, id); readErr == nil && !current.CleanupPending {
+			if current, readErr := s.repo.CloudAgent(userID, id); readErr == nil && current.Status == "cancelled" {
 				return nil
 			}
 		}
