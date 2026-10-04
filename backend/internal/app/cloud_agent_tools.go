@@ -19,9 +19,11 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	"infinite-canvas/backend/internal/skills"
 )
 
 type cloudAgentSkill struct {
+	Source       string            `json:"source,omitempty"`
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
 	Description  string            `json:"description,omitempty"`
@@ -343,6 +345,7 @@ func (s *Service) cloudAgentUserSkillSnapshot(userID, id string) (cloudAgentSkil
 		return cloudAgentSkillSnapshot{}, creationConflict("技能在读取时已更新，请重试")
 	}
 	snapshot := cloudAgentSkill{ID: id, Name: skill.SkillName, Description: skill.Description,
+		Source:  skills.SkillSourceUser,
 		Version: skill.VersionID, VersionID: skill.VersionID, VersionLabel: skill.Version,
 		NativeName: nativeSkillName(skill.SkillName, id), Hash: skill.ContentHash,
 		Files: map[string]string{cloudAgentSkillEntryPath: ""}}

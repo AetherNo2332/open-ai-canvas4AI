@@ -170,7 +170,7 @@ func (s *Service) PiSkillFile(userID, runID, owner string, request PiSkillFileRe
 	if listed == nil {
 		return nil, kernel.Forbidden("Skill file is not listed for this run")
 	}
-	file, err := s.SkillPackageFileAtVersion(userID, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, path)
+	file, err := s.cloudAgentFrozenSkillFile(userID, *skill, path)
 	if err != nil {
 		return nil, err
 	}
@@ -1575,7 +1575,7 @@ func (s *Service) piNativeSkillSnapshots(userID string, skills []cloudAgentSkill
 		return nil, BadAuthRequest("Invalid frozen Skill metadata")
 	}
 	for index, skill := range skills {
-		entry, err := s.SkillPackageFileAtVersion(userID, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, cloudAgentSkillEntryPath)
+		entry, err := s.cloudAgentFrozenSkillFile(userID, skill, cloudAgentSkillEntryPath)
 		if err != nil {
 			return nil, err
 		}

@@ -27,7 +27,7 @@ func newAgentSkillDefaultsService(t *testing.T) (*Service, *gorm.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.UserSkillState{}, &model.AgentSkillDefault{}); err != nil {
+	if err := db.AutoMigrate(&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.UserSkillState{}, &model.AgentSkillDefault{}, &model.SystemSetting{}); err != nil {
 		t.Fatal(err)
 	}
 	return New(repository.New(db), t.TempDir()), db
@@ -35,6 +35,17 @@ func newAgentSkillDefaultsService(t *testing.T) (*Service, *gorm.DB) {
 
 func adminSkillDefaultsActor() *model.User {
 	return &model.User{ID: "admin-1", Username: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+}
+
+func TestReviewAdminSkillDefaultsDuplicateIsInvalid(t *testing.T) {
+	s, db := newAgentSkillDefaultsService(t)
+	seedAgentSkill(t, db, "duplicate", 128, nil)
+	item := AgentSkillDefaultItem{SkillID: "duplicate", SkillVersionID: "duplicate-v1", Enabled: 1}
+	_, err := s.ReplaceAgentSkillDefaults(adminSkillDefaultsActor(), 0, []AgentSkillDefaultItem{item, item})
+	var appErr *kernel.AppError
+	if !errors.As(err, &appErr) || appErr.Reason != "agent_skill_defaults_invalid" {
+		t.Fatalf("duplicate should be a typed invalid input: %v", err)
+	}
 }
 
 func TestAgentSkillDefaultsForUserSummary(t *testing.T) {

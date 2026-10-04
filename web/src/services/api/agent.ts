@@ -68,6 +68,7 @@ export type AgentApproval = {
 export type AgentRunSkill = {
     id: string;
     name: string;
+    source?: "global" | "user";
     version: string;
     hash: string;
     nativeName?: string;

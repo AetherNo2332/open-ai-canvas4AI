@@ -11,7 +11,9 @@ description: 信封、错误码与 OpenAPI
 - `PUT /api/admin/agent/skill-defaults`：管理员提交 `{ revision, items: [{ skillId, skillVersionId, position, enabled }] }` 整体替换，返回新 `{ revision }`。私有、已删除、禁用技能或不属于该技能的版本均拒绝。revision 冲突须重新读取后再编辑。
 - `GET /api/agent/skill-defaults`：普通登录用户可读取 `{ count, skills: [{ skillId, skillName }] }`，仅启用项，按 position 排序，不要求先安装技能。
 
-默认技能只注入新会话，来源、版本和内容 hash 冻结到会话；旧会话不随管理配置改变，用户选择继续追加或覆盖同 ID 的版本。移除固定数量上限后，Run 准入保留总文件 1024、总字节 16 MiB、上下文估计 512 KiB 预算；单文件和单包原有预算保持不变。当前上下文预算是固定字节近似，尚非按模型 token 窗口动态计算。
+默认技能只注入新会话，来源、版本和内容 hash 随成功建 Run 的事务冻结到会话；旧会话不随管理配置改变，被拒绝的请求不修改基线。公共 Run 技能摘要的 `source` 为 `global` 或 `user`；选择器据此显示旧会话的有效默认集合，新会话则读取当前默认摘要，默认技能展示不依赖市场分页或安装。用户可追加新技能，或将同 ID 的全局来源升级为用户来源；已选用户技能即使每轮重复提交 ID 也保持冻结版本，更新该技能版本目前需要新会话。
+
+revision 保存在 `system_settings.agent_skill_defaults_revision` 对应设置行中；清空后仍递增，多个服务实例先锁定该行再执行 CAS。移除固定数量上限后，Run 准入保留总文件 1024、总字节 16 MiB、上下文估计 512 KiB 预算；错误详情携带 `budget`（`files` / `total_bytes` / `context_bytes`）、`limit`、`actual`，聊天展示相应预算与数值。单文件和单包原有预算保持不变。当前上下文预算是固定字节近似，尚非按模型 token 窗口动态计算。
 
 ## Canary Agent 调度协议
 

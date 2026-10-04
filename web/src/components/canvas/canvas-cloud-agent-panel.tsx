@@ -18,6 +18,7 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
+import { effectiveAgentDefaultSkills } from "@/lib/canvas/agent-effective-skill-defaults";
 import {
     cancelAgentRun,
     getAgentCapabilities,
@@ -36,6 +37,7 @@ import {
     type AgentProfileView,
     type AgentReasoningMode,
     type AgentRun,
+    type AgentSkillDefaultsSummary,
 } from "@/services/api/agent";
 import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
@@ -130,7 +132,9 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const profileRequestRef = useRef(0);
     const [skills, setSkills] = useState<Skill[]>([]);
     const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
-    const [globalDefaultSkillIds, setGlobalDefaultSkillIds] = useState<string[]>([]);
+    const [skillDefaults, setSkillDefaults] = useState<AgentSkillDefaultsSummary>({ count: 0, skills: [] });
+    const globalDefaultSkills = useMemo(() => effectiveAgentDefaultSkills(run, skillDefaults), [run, skillDefaults]);
+    const globalDefaultSkillIds = useMemo(() => globalDefaultSkills.map(skill => skill.skillId), [globalDefaultSkills]);
     const [activeSubagents] = useState<AgentSubagentAvatarItem[]>([]);
     const [marketSkills, setMarketSkills] = useState<Skill[]>([]);
     const [skillSearch, setSkillSearch] = useState("");
@@ -427,12 +431,14 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
 
     useEffect(() => {
         let active = true;
+        let requestSequence = 0;
         setSkills([]);
-        setGlobalDefaultSkillIds([]);
+        setSkillDefaults({ count: 0, skills: [] });
         const refresh = () => {
+            const sequence = ++requestSequence;
             void listAgentSkillDefaults()
-                .then(result => { if (active) { setGlobalDefaultSkillIds(result.skills.map(skill => skill.skillId)); setMessages(current => current.filter(message => message.id !== "skill-defaults-load-error")); } })
-                .catch(cause => { if (active) setMessages(current => appendAgentError(current, "skill-defaults-load-error", cause, "默认技能读取失败")); });
+                .then(result => { if (active && sequence === requestSequence) { setSkillDefaults(result); setMessages(current => current.filter(message => message.id !== "skill-defaults-load-error")); } })
+                .catch(cause => { if (active && sequence === requestSequence) setMessages(current => appendAgentError(current, "skill-defaults-load-error", cause, "默认技能读取失败")); });
             void listAddedSkills()
                 .then((result) => {
                     if (!active) return;
@@ -1104,6 +1110,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 marketSkills={marketSkills}
                 selectedSkillIds={selectedSkillIds}
                 globalDefaultSkillIds={globalDefaultSkillIds}
+                globalDefaultSkills={globalDefaultSkills}
                 categories={skillCategories}
                 category={skillTag}
                 search={skillSearch}

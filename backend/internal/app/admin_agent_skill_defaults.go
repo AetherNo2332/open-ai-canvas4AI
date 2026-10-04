@@ -52,16 +52,12 @@ func (s *Service) AdminAgentSkillDefaults(actor *model.User) (*AgentSkillDefault
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
-	rows, err := s.repo.AgentSkillDefaultRows()
+	rows, revision, err := s.repo.AgentSkillDefaultsSnapshot()
 	if err != nil {
 		return nil, err
 	}
 	view := &AgentSkillDefaultsView{Items: make([]AgentSkillDefaultsViewItem, 0, len(rows))}
-	var revision int64
 	for _, row := range rows {
-		if row.Revision > revision {
-			revision = row.Revision
-		}
 		item := AgentSkillDefaultsViewItem{
 			SkillID:        row.SkillID,
 			SkillVersionID: row.SkillVersionID,
@@ -110,7 +106,12 @@ func (s *Service) ReplaceAgentSkillDefaults(actor *model.User, revision int64, i
 	}
 	rows := make([]model.AgentSkillDefault, 0, len(items))
 	enabledFacts := make([]skills.SkillCapacityFacts, 0, len(items))
+	seen := make(map[string]bool, len(items))
 	for _, item := range items {
+		if seen[item.SkillID] {
+			return 0, kernel.AgentSkillDefaultsInvalid("默认技能重复："+item.SkillID, map[string]any{"skillId": item.SkillID})
+		}
+		seen[item.SkillID] = true
 		row, facts, err := s.validateAgentSkillDefaultItem(item)
 		if err != nil {
 			return 0, err
@@ -128,10 +129,8 @@ func (s *Service) ReplaceAgentSkillDefaults(actor *model.User, revision int64, i
 	}); err != nil {
 		return 0, err
 	}
-	// 仓储层的 CAS（读 revision → 删旧 → 写新）在 PostgreSQL READ COMMITTED 下
-	// 不是原子的：两个并发 replace 可能都读到相同 revision 并双双通过。
-	// 后端当前是单 Go 进程部署，进程内互斥即可把"读 revision → 写入"串行化；
-	// 若未来多副本部署，必须改为数据库层 advisory lock，不能依赖本锁。
+	// Repository serializes the durable revision row across processes. This
+	// local lock additionally avoids competing SQLite writers in one service.
 	s.agentSkillDefaultsMu.Lock()
 	defer s.agentSkillDefaultsMu.Unlock()
 	return s.repo.ReplaceAgentSkillDefaults(revision, rows, actor.ID)

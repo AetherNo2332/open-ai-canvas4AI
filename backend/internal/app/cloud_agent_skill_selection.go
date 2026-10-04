@@ -40,7 +40,7 @@ func agentSkillConversationRow(conversationID string, item skills.SkillSelection
 // resolveRunSkills 解析本轮运行实际装配的技能集合并冻结来源。
 //
 // 新会话：全局默认（enabled 行）为最低层，本轮用户选择为最高层，按 skillId 去重后
-// 全量落库（source=global/user），后续轮次以这份记录为基线，管理员再改默认不影响本会话。
+// 由建 run 的事务全量落库（source=global/user），后续轮次以这份记录为基线，管理员再改默认不影响本会话。
 // 既有会话：不重读全局默认，以既有行为基线，只追加/升级本轮新增的用户选择；
 // 迁移前的旧会话没有基线行，行为与现状一致（只有本轮用户选择）。
 // 两种路径最终都逐技能冻结快照并做容量准入，超限返回 400 agent_skill_budget_exceeded。
@@ -91,13 +91,6 @@ func (s *Service) resolveRunSkills(userID, conversationID string, userSkillIDs [
 		if err != nil {
 			return nil, err
 		}
-		rows := make([]model.AgentConversationSkill, 0, len(items))
-		for i, item := range items {
-			rows = append(rows, agentSkillConversationRow(conversationID, item, i))
-		}
-		if err := s.repo.SaveAgentConversationSkills(rows); err != nil {
-			return nil, err
-		}
 		resolved = items
 	} else {
 		baseline, err := s.repo.AgentConversationSkills(conversationID)
@@ -119,6 +112,12 @@ func (s *Service) resolveRunSkills(userID, conversationID string, userSkillIDs [
 				continue
 			}
 			selected[id] = struct{}{}
+			// The browser resubmits all selected IDs on every turn. A previously
+			// chosen user version stays pinned; choosing a global skill can upgrade
+			// its source once, and selecting a new skill appends it.
+			if at, ok := existing[id]; ok && resolved[at].Source == skills.SkillSourceUser {
+				continue
+			}
 			// 用户显式选择的技能升级为 user 来源并跟踪其当前安装版本；
 			// 只影响该技能行，其他默认技能的注入保持不变。
 			detail, err := s.SkillDetail(userID, id)
@@ -139,13 +138,6 @@ func (s *Service) resolveRunSkills(userID, conversationID string, userSkillIDs [
 				resolved = append(resolved, item)
 			}
 		}
-		rows := make([]model.AgentConversationSkill, 0, len(resolved))
-		for i, item := range resolved {
-			rows = append(rows, agentSkillConversationRow(conversationID, item, i))
-		}
-		if err := s.repo.SaveAgentConversationSkills(rows); err != nil {
-			return nil, err
-		}
 	}
 	return s.freezeRunSkillSnapshots(userID, resolved)
 }
@@ -158,7 +150,7 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 	facts := make([]skills.SkillCapacityFacts, 0, len(resolved))
 	for _, item := range resolved {
 		if item.Source == skills.SkillSourceUser {
-			snapshot, err := s.cloudAgentUserSkillSnapshot(userID, item.SkillID)
+			snapshot, err := s.cloudAgentUserSkillSnapshotAtSelection(userID, item)
 			if err != nil {
 				return nil, err
 			}
@@ -176,6 +168,9 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 		if version.ContentHash != item.ContentHash {
 			return nil, kernel.AgentSkillDefaultsInvalid(fmt.Sprintf("默认技能 %s 的内容已更新，请联系管理员重新配置", item.SkillID), map[string]any{"skillId": item.SkillID})
 		}
+		if _, err := s.skillDomain().GlobalSkillPackageFilesAtVersion(item.SkillID, item.VersionID, item.ContentHash); err != nil {
+			return nil, err
+		}
 		files, err := s.repo.SkillFiles(version.ID)
 		if err != nil {
 			return nil, err
@@ -183,6 +178,15 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 		snapshot, err := cloudAgentSkillSnapshotFromFiles(item.SkillID, version, files)
 		if err != nil {
 			return nil, err
+		}
+		entry, err := s.skillDomain().GlobalSkillPackageFileAtVersion(item.SkillID, item.VersionID, item.ContentHash, cloudAgentSkillEntryPath)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.Source = skills.SkillSourceGlobal
+		snapshot.Name, snapshot.Description = skills.SkillEntryMetadata(entry.Content)
+		if snapshot.Name == "" {
+			snapshot.Name = item.SkillID
 		}
 		snapshots = append(snapshots, *snapshot)
 		facts = append(facts, skills.SkillCapacityFacts{SkillID: item.SkillID, FileCount: len(files), TotalBytes: version.TotalBytes, ContextBytes: version.TotalBytes})
@@ -195,4 +199,64 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 		return nil, err
 	}
 	return snapshots, nil
+}
+
+func (s *Service) cloudAgentFrozenSkillFile(userID string, skill cloudAgentSkill, path string) (*SkillPackageFileContent, error) {
+	if skill.Source == skills.SkillSourceGlobal {
+		return s.skillDomain().GlobalSkillPackageFileAtVersion(skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, path)
+	}
+	return s.SkillPackageFileAtVersion(userID, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, path)
+}
+
+func (s *Service) cloudAgentUserSkillSnapshotAtSelection(userID string, item skills.SkillSelectionItem) (cloudAgentSkillSnapshot, error) {
+	// Keep the existing user-library display contract for the installed version;
+	// older pinned versions take their metadata from the frozen entry instead.
+	detail, err := s.SkillDetail(userID, item.SkillID)
+	if err != nil {
+		return cloudAgentSkillSnapshot{}, err
+	}
+	if detail.VersionID == item.VersionID && detail.ContentHash == item.ContentHash {
+		current, err := s.cloudAgentUserSkillSnapshot(userID, item.SkillID)
+		if err != nil {
+			return cloudAgentSkillSnapshot{}, err
+		}
+		if current.skill.VersionID != item.VersionID || current.skill.Hash != item.ContentHash {
+			return cloudAgentSkillSnapshot{}, creationConflict("技能在读取时已更新，请重试")
+		}
+		return current, nil
+	}
+	files, err := s.SkillPackageFilesAtVersion(userID, item.SkillID, item.VersionID, item.ContentHash)
+	if err != nil {
+		return cloudAgentSkillSnapshot{}, err
+	}
+	version, err := s.repo.SkillVersion(item.VersionID)
+	if err != nil {
+		return cloudAgentSkillSnapshot{}, err
+	}
+	modelFiles := make([]model.SkillFile, 0, len(files))
+	for _, file := range files {
+		modelFiles = append(modelFiles, model.SkillFile{Path: file.Path, SHA256: file.SHA256, Size: file.Size, MimeType: file.MimeType})
+	}
+	snapshot, err := cloudAgentSkillSnapshotFromFiles(item.SkillID, version, modelFiles)
+	if err != nil {
+		return cloudAgentSkillSnapshot{}, err
+	}
+	entry, err := s.SkillPackageFileAtVersion(userID, item.SkillID, item.VersionID, item.ContentHash, cloudAgentSkillEntryPath)
+	if err != nil {
+		return cloudAgentSkillSnapshot{}, err
+	}
+	snapshot.Source = skills.SkillSourceUser
+	snapshot.Name, snapshot.Description = skills.SkillEntryMetadata(entry.Content)
+	if snapshot.Name == "" {
+		snapshot.Name = item.SkillID
+	}
+	return cloudAgentSkillSnapshot{skill: *snapshot, fileCount: len(files), totalBytes: version.TotalBytes}, nil
+}
+
+func cloudAgentConversationSkillRows(conversationID string, snapshots []cloudAgentSkill) []model.AgentConversationSkill {
+	rows := make([]model.AgentConversationSkill, 0, len(snapshots))
+	for position, snapshot := range snapshots {
+		rows = append(rows, agentSkillConversationRow(conversationID, skills.SkillSelectionItem{SkillID: snapshot.ID, VersionID: snapshot.VersionID, ContentHash: snapshot.Hash, Source: snapshot.Source}, position))
+	}
+	return rows
 }

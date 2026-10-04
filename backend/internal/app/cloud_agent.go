@@ -677,7 +677,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
-	if err = s.createCloudAgentRunWithinStorageQuota(run, task, prepare.Order, runtimePolicy); err != nil {
+	if err = s.createCloudAgentRunWithinStorageQuota(run, task, prepare.Order, runtimePolicy, cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)); err != nil {
 		if errors.Is(err, repository.ErrCreationConflict) {
 			return nil, creationConflict("同一 Agent 对话已有新的活动运行，请刷新对话后继续")
 		}

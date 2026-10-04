@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"infinite-canvas/backend/internal/kernel"
@@ -11,6 +12,57 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+func TestReviewSkillDefaultsCASAcrossIndependentConnections(t *testing.T) {
+	dsn := filepath.ToSlash(filepath.Join(t.TempDir(), "defaults.db")) + "?_journal_mode=WAL&_busy_timeout=5000"
+	repos := make([]*Repository, 2)
+	for i := range repos {
+		db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = sqlDB.Close() })
+		if err := db.AutoMigrate(&model.AgentSkillDefault{}, &model.SystemSetting{}); err != nil {
+			t.Fatal(err)
+		}
+		repos[i] = New(db)
+	}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, repo := range repos {
+		go func(repo *Repository) {
+			<-start
+			_, err := repo.ReplaceAgentSkillDefaults(0, []model.AgentSkillDefault{{ID: kernel.NewID(), SkillID: kernel.NewID(), Enabled: true}}, "admin")
+			results <- err
+		}(repo)
+	}
+	close(start)
+	successes, conflicts := 0, 0
+	for range repos {
+		err := <-results
+		if err == nil {
+			successes++
+			continue
+		}
+		var appErr *kernel.AppError
+		if errors.As(err, &appErr) && appErr.Reason == kernel.ReasonAgentSkillDefaultsRevisionConflict {
+			conflicts++
+			continue
+		}
+		t.Fatalf("unexpected CAS error: %v", err)
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("CAS: %d successes, %d conflicts", successes, conflicts)
+	}
+	rows, revision, err := repos[0].AgentSkillDefaultsSnapshot()
+	if err != nil || revision != 1 || len(rows) != 1 {
+		t.Fatalf("incoherent snapshot: %v %d %v", rows, revision, err)
+	}
+}
 
 func newAgentSkillDefaultsTestDB(t *testing.T) *Repository {
 	t.Helper()
@@ -23,10 +75,27 @@ func newAgentSkillDefaultsTestDB(t *testing.T) *Repository {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.AgentSkillDefault{}, &model.AgentConversationSkill{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentSkillDefault{}, &model.AgentConversationSkill{}, &model.SystemSetting{}); err != nil {
 		t.Fatal(err)
 	}
 	return New(db)
+}
+
+func TestReviewSkillDefaultsClearPreservesRevision(t *testing.T) {
+	r := newAgentSkillDefaultsTestDB(t)
+	rows := []model.AgentSkillDefault{{ID: "first", SkillID: "skill", SkillVersionID: "v1", Enabled: true}}
+	if _, err := r.ReplaceAgentSkillDefaults(0, rows, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if rev, err := r.ReplaceAgentSkillDefaults(1, nil, "admin"); err != nil || rev != 2 {
+		t.Fatalf("clear: %d %v", rev, err)
+	}
+	if rev, err := r.ReplaceAgentSkillDefaults(2, []model.AgentSkillDefault{{ID: "next", SkillID: "next", SkillVersionID: "v2", Enabled: true}}, "admin"); err != nil || rev != 3 {
+		t.Fatalf("revision must survive empty list: %d %v", rev, err)
+	}
+	if _, err := r.ReplaceAgentSkillDefaults(1, rows, "stale-admin"); err == nil {
+		t.Fatal("stale revision must not become valid again")
+	}
 }
 
 func TestReplaceAgentSkillDefaultsCASChain(t *testing.T) {

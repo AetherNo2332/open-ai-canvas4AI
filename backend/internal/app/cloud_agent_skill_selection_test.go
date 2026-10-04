@@ -71,6 +71,7 @@ func databaseModelsForSkillSelection() []any {
 		&model.CloudAgentExecution{}, &model.CloudAgentEventRecord{}, &model.CloudAgentMessageRecord{},
 		// SkillDetail → skillItems 查询技能作者（users）与作者头像（user_identities）。
 		&model.User{}, &model.UserIdentity{},
+		&model.SystemSetting{},
 	}
 }
 
@@ -207,7 +208,7 @@ func TestResolveRunSkillsNewConversationInjectsDefaults(t *testing.T) {
 	// user 自己的技能，未被设为默认。
 	seedSelectionSkillFor(t, s, db, "user", "own-1", 1024, true, 1)
 
-	snapshots, err := s.resolveRunSkills("user", "conv-new", nil, true)
+	snapshots, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-new", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +225,7 @@ func TestResolveRunSkillsNewConversationInjectsDefaults(t *testing.T) {
 		}
 	}
 	// 用户追加自己的私有技能：并集语义，默认仍在。
-	snapshots, err = s.resolveRunSkills("user", "conv-new2", []string{"own-1"}, true)
+	snapshots, err = resolveAndCommitSelectionForTest(t, s, "user", "conv-new2", []string{"own-1"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +245,7 @@ func TestResolveRunSkillsContinuationKeepsFrozenSet(t *testing.T) {
 		seedDefault(t, db, fmt.Sprintf("k-%d", i), i)
 	}
 	// 第一轮：3 个默认技能。
-	if _, err := s.resolveRunSkills("user", "conv-a", nil, true); err != nil {
+	if _, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-a", nil, true); err != nil {
 		t.Fatal(err)
 	}
 	// 管理员替换默认集合（清空 k-2、新增 k-3）：模拟第二轮创建前发生的变更。
@@ -255,7 +256,7 @@ func TestResolveRunSkillsContinuationKeepsFrozenSet(t *testing.T) {
 	seedDefault(t, db, "k-3", 2)
 
 	// 第二轮（续聊）：技能集与第一轮一致，不含 k-3。
-	if _, err := s.resolveRunSkills("user", "conv-a", nil, false); err != nil {
+	if _, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-a", nil, false); err != nil {
 		t.Fatal(err)
 	}
 	rows := conversationRows(t, db, "conv-a")
@@ -271,10 +272,10 @@ func TestResolveRunSkillsContinuationAppendsUserPick(t *testing.T) {
 	seedSelectionSkillFor(t, s, db, "user", "own-x", 1024, true, 1)
 	seedDefault(t, db, "d-1", 0)
 	seedDefault(t, db, "d-2", 1)
-	if _, err := s.resolveRunSkills("user", "conv-b", nil, true); err != nil {
+	if _, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-b", nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.resolveRunSkills("user", "conv-b", []string{"own-x"}, false); err != nil {
+	if _, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-b", []string{"own-x"}, false); err != nil {
 		t.Fatal(err)
 	}
 	rows := conversationRows(t, db, "conv-b")
@@ -287,7 +288,7 @@ func TestResolveRunSkillsUserPickUpgradesSource(t *testing.T) {
 	s, db := newRunSkillSelectionService(t)
 	seedSelectionSkillFor(t, s, db, "user", "d-1", 1024, false, 1)
 	seedDefault(t, db, "d-1", 0)
-	if _, err := s.resolveRunSkills("user", "conv-c", nil, true); err != nil {
+	if _, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-c", nil, true); err != nil {
 		t.Fatal(err)
 	}
 	rows := conversationRows(t, db, "conv-c")
@@ -295,7 +296,7 @@ func TestResolveRunSkillsUserPickUpgradesSource(t *testing.T) {
 		t.Fatalf("初始来源 = %q, want global", rows[0].Source)
 	}
 	// 用户对同一默认技能显式选择：升级为 user 来源并跟踪其安装版本。
-	if _, err := s.resolveRunSkills("user", "conv-c", []string{"d-1"}, false); err != nil {
+	if _, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-c", []string{"d-1"}, false); err != nil {
 		t.Fatal(err)
 	}
 	rows = conversationRows(t, db, "conv-c")
@@ -309,7 +310,7 @@ func TestResolveRunSkillsDefaultNotInstalledStillLoads(t *testing.T) {
 	// d-1 归属 author-1，user 未安装（无 UserSkillState.Added）。
 	seedSelectionSkill(t, s, db, "d-1", 1024, false, 1)
 	seedDefault(t, db, "d-1", 0)
-	snapshots, err := s.resolveRunSkills("user", "conv-d", nil, true)
+	snapshots, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-d", nil, true)
 	if err != nil {
 		t.Fatalf("未安装的默认技能不应阻塞装配: %v", err)
 	}
@@ -326,7 +327,7 @@ func TestResolveRunSkillsRejectsDisabledDefault(t *testing.T) {
 	if err := db.Model(&model.Skill{}).Where("id = ?", "d-bad").Update("status", 0).Error; err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.resolveRunSkills("user", "conv-e", nil, true)
+	_, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-e", nil, true)
 	if err == nil {
 		t.Fatal("引用禁用技能的默认集合应让建 run 失败")
 	}
@@ -342,7 +343,7 @@ func TestResolveRunSkillsCapacityExceeded(t *testing.T) {
 	seedSelectionSkill(t, s, db, "big-2", 300*1024, false, 1)
 	seedDefault(t, db, "big-1", 0)
 	seedDefault(t, db, "big-2", 1)
-	_, err := s.resolveRunSkills("user", "conv-f", nil, true)
+	_, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-f", nil, true)
 	if err == nil {
 		t.Fatal("超过上下文预算应被拒绝")
 	}
@@ -359,12 +360,12 @@ func TestResolveRunSkillsCrossAccountIsolation(t *testing.T) {
 	s, db := newRunSkillSelectionService(t)
 	seedSelectionSkillFor(t, s, db, "user", "d-1", 1024, false, 1)
 	seedDefault(t, db, "d-1", 0)
-	if _, err := s.resolveRunSkills("user", "conv-user-a", []string{"d-1"}, true); err != nil {
+	if _, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-user-a", []string{"d-1"}, true); err != nil {
 		t.Fatal(err)
 	}
 	// user B 的会话解析不到 user A 的会话行（conversationID 不同，天然隔离）；
 	// 这里验证 user B 的新会话不继承 A 的集合。
-	if _, err := s.resolveRunSkills("user-b", "conv-user-a", nil, true); err != nil {
+	if _, err := resolveAndCommitSelectionForTest(t, s, "user-b", "conv-user-a", nil, true); err != nil {
 		t.Fatalf("user B 会话解析不应读到 user A 的默认注入: %v", err)
 	}
 }
@@ -375,13 +376,22 @@ func TestResolveRunSkillsLegacyConversationNoDefaults(t *testing.T) {
 	seedSelectionSkillFor(t, s, db, "user", "own-legacy", 1024, true, 1)
 	seedDefault(t, db, "d-1", 0)
 	// 迁移前的旧会话：有既有运行但会话技能表没有行，续聊不得注入默认。
-	if _, err := s.resolveRunSkills("user", "conv-legacy", []string{"own-legacy"}, false); err != nil {
+	if _, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-legacy", []string{"own-legacy"}, false); err != nil {
 		t.Fatal(err)
 	}
 	rows := conversationRows(t, db, "conv-legacy")
 	if got := skillIDs(conversationItems(rows)); got != "own-legacy" {
 		t.Fatalf("旧会话被误注入默认技能: %q", got)
 	}
+}
+
+func resolveAndCommitSelectionForTest(t *testing.T, s *Service, userID, conversationID string, ids []string, isNew bool) ([]cloudAgentSkill, error) {
+	t.Helper()
+	snapshots, err := s.resolveRunSkills(userID, conversationID, ids, isNew)
+	if err != nil {
+		return nil, err
+	}
+	return snapshots, s.repo.SaveAgentConversationSkills(cloudAgentConversationSkillRows(conversationID, snapshots))
 }
 
 func TestCloudAgentConversationIDFor(t *testing.T) {
@@ -398,5 +408,163 @@ func TestCloudAgentConversationIDFor(t *testing.T) {
 	}
 	if got := s.cloudAgentConversationIDFor("user", "run-3", "run-missing"); got != "run-missing" {
 		t.Fatalf("父轮缺失时回退 parentID: %q", got)
+	}
+}
+
+func TestReviewGlobalDefaultNativeMaterialization(t *testing.T) {
+	s, db := newRunSkillSelectionService(t)
+	seedSelectionSkill(t, s, db, "native-default", 1024, false, 1)
+	seedDefault(t, db, "native-default", 0)
+	snapshots, err := s.resolveRunSkills("user", "native-conv", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native, err := s.piNativeSkillSnapshots("user", snapshots)
+	if err != nil {
+		t.Fatalf("uninstalled default must materialize for Pi: %v", err)
+	}
+	if len(native) != 1 || !strings.Contains(native[0].Description, "测试技能") {
+		t.Fatalf("frozen entry metadata lost: %+v", native)
+	}
+}
+
+func TestReviewDefaultsRejectPrivateAfterConfiguration(t *testing.T) {
+	s, db := newRunSkillSelectionService(t)
+	seedSelectionSkill(t, s, db, "now-private", 1024, false, 1)
+	seedDefault(t, db, "now-private", 0)
+	if err := db.Model(&model.Skill{}).Where("id = ?", "now-private").Update("is_private", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.resolveRunSkills("user", "private-conv", nil, true); err == nil {
+		t.Fatal("private default must not bypass visibility")
+	}
+}
+
+func TestReviewRejectedRunDoesNotPersistSkillBaseline(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	selectionDataDir = s.dataDir
+	t.Cleanup(func() { selectionDataDir = "" })
+	seedSelectionSkill(t, s, db, "admission-default", 1024, false, 1)
+	seedDefault(t, db, "admission-default", 0)
+	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: `{"nodes":[]}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CreditAccount{}).Where("user_id = ?", "user").Update("available_microcredits", 0).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCloudAgentRun("user", agentTestRequest(), ""); err == nil {
+		t.Fatal("insufficient credits must reject the Run")
+	}
+	var count int64
+	if err := db.Model(&model.AgentConversationSkill{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected Run left %d baseline rows", count)
+	}
+}
+
+func TestReviewRepeatedUserSelectionKeepsFrozenVersion(t *testing.T) {
+	s, db := newRunSkillSelectionService(t)
+	seedSelectionSkillFor(t, s, db, "user", "pinned-user", 1024, false, 1)
+	first, err := s.resolveRunSkills("user", "pinned-conv", []string{"pinned-user"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.SaveAgentConversationSkills([]model.AgentConversationSkill{{ConversationID: "pinned-conv", SkillID: first[0].ID, SkillVersionID: first[0].VersionID, ContentHash: first[0].Hash, Source: "user"}}); err != nil {
+		t.Fatal(err)
+	}
+	var v model.SkillVersion
+	if err := db.First(&v, "id = ?", first[0].VersionID).Error; err != nil {
+		t.Fatal(err)
+	}
+	v.ID = "pinned-user-v2"
+	if err := db.Create(&v).Error; err != nil {
+		t.Fatal(err)
+	}
+	var files []model.SkillFile
+	if err := db.Where("skill_version_id = ?", first[0].VersionID).Find(&files).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := range files {
+		files[i].ID = kernel.NewID()
+		files[i].SkillVersionID = v.ID
+	}
+	if err := db.Create(&files).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Skill{}).Where("id = ?", "pinned-user").Update("current_version_id", v.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.UserSkillState{}).Where("user_id = ? AND skill_id = ?", "user", "pinned-user").Update("installed_version_id", v.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	continued, err := s.resolveRunSkills("user", "pinned-conv", []string{"pinned-user"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if continued[0].VersionID != first[0].VersionID {
+		t.Fatalf("repeated selection drifted %s -> %s", first[0].VersionID, continued[0].VersionID)
+	}
+}
+
+func TestReviewAcceptedRunPersistsTwentyDefaultsAndPiReadsUninstalled(t *testing.T) {
+	s, db := agentRunFixture(t)
+	selectionDataDir = s.dataDir
+	t.Cleanup(func() { selectionDataDir = "" })
+	for i := 0; i < 20; i++ {
+		id := fmt.Sprintf("default-%02d", i)
+		seedSelectionSkill(t, s, db, id, 1024, false, 1)
+		seedDefault(t, db, id, i)
+	}
+	view, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := conversationRows(t, db, view.ID)
+	if len(rows) != 20 || len(view.Skills) != 20 {
+		t.Fatalf("Run and baseline differ: %d/%d", len(view.Skills), len(rows))
+	}
+	for _, row := range rows {
+		if row.Source != "global" {
+			t.Fatalf("invalid source: %+v", row)
+		}
+	}
+	snapshot, err := s.ClaimPiAgent("worker-defaults")
+	if err != nil || snapshot == nil || len(snapshot.Skills) != 20 {
+		t.Fatalf("Pi materialization: %+v %v", snapshot, err)
+	}
+	page, err := s.PiSkillFile("user", view.ID, "worker-defaults", PiSkillFileRequest{NativeName: snapshot.Skills[0].NativeName, Path: "SKILL.md"})
+	if err != nil || !strings.Contains(page.Content, "测试技能 default-00") {
+		t.Fatalf("Pi frozen default read: %+v %v", page, err)
+	}
+}
+
+func TestReviewRejectedContinuationDoesNotAppendSkills(t *testing.T) {
+	s, db := agentRunFixture(t)
+	selectionDataDir = s.dataDir
+	t.Cleanup(func() { selectionDataDir = "" })
+	seedSelectionSkill(t, s, db, "kept-default", 1024, false, 1)
+	seedDefault(t, db, "kept-default", 0)
+	first, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", first.ID).Update("status", "completed").Error; err != nil {
+		t.Fatal(err)
+	}
+	seedSelectionSkillFor(t, s, db, "user", "too-big", 600*1024, false, 1)
+	request := agentTestRequest()
+	request.SkillIDs = []string{"too-big"}
+	request.Prompt = "继续"
+	request.IdempotencyKey = kernel.NewID()
+	_, err = s.CreateCloudAgentRun("user", request, first.ID)
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Reason != "agent_skill_budget_exceeded" {
+		t.Fatalf("expected budget rejection, got %v", err)
+	}
+	rows := conversationRows(t, db, first.ID)
+	if len(rows) != 1 || rows[0].SkillID != "kept-default" || rows[0].Source != "global" {
+		t.Fatalf("rejected continuation changed baseline: %+v", rows)
 	}
 }

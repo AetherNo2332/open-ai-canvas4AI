@@ -28,9 +28,9 @@ description: 影策后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-当前代码的 `CurrentSchemaVersion` 为 **51**。v51 `agent_skills_config` 新增 `agent_skill_defaults` 与 `agent_conversation_skills`，启动迁移登记与 SQLite → PostgreSQL 搬迁清单均包含两表。默认配置使用 revision CAS 整体替换；会话表保存最终来源、版本及 hash。升级前备份数据库，运行迁移及 verify；回退旧代码不会自动降级结构。下文保留历史迁移说明。
+当前代码的 `CurrentSchemaVersion` 为 **51**。v51 `agent_skill_defaults` 新增 `agent_skill_defaults` 与 `agent_conversation_skills`，启动迁移登记与 SQLite → PostgreSQL 搬迁清单均包含两表。默认配置使用 revision CAS 整体替换：`system_settings` 的 `agent_skill_defaults_revision` 保存单调递增修订号，清空列表也不重置；事务先锁定该设置行再检查修订号，跨实例写入串行化。会话表保存最终来源、版本及 hash，与 Run、占位任务和积分预留在同一事务提交，拒绝请求不会修改会话基线。升级前备份数据库，运行迁移及 verify；回退旧代码不会自动降级结构。下文保留历史迁移说明。
 
-当前结构版本为 **42**。上游迁移目前占用 v24–v38：v36 `cloud_agent_gemini_cache` 创建 Gemini 缓存表，v37 `cloud_agent_gemini_cache_identity` 将唯一键限定为 `(user_id, cache_key)`，v38 `prefixed_id_sequence_reconcile` 校准可读 ID 序列。我们已退役的 `cloud_agent_run_events` / `cloud_agent_transcript` 保留为 no-op 登记并顺延到 v39/v40，既有表与数据不删除；历史库的 v24/v25、v32/v33、v33/v34、v34/v35、v35/v36、v36/v37 登记会先按名称与校验和搬迁到 v39/v40，再执行上游迁移。v35 `auth_notifications`、v34 `task_media_recovery`、v33 `oauth_state_accepted_terms` 等迁移内容不变。升级前备份，运行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持 schema 42，回退需恢复匹配的数据库备份并评估备份之后的新写入；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+历史 v42 说明（当前版本见上文）：上游迁移当时占用 v24–v38：v36 `cloud_agent_gemini_cache` 创建 Gemini 缓存表，v37 `cloud_agent_gemini_cache_identity` 将唯一键限定为 `(user_id, cache_key)`，v38 `prefixed_id_sequence_reconcile` 校准可读 ID 序列。我们已退役的 `cloud_agent_run_events` / `cloud_agent_transcript` 保留为 no-op 登记并顺延到 v39/v40，既有表与数据不删除；历史库的 v24/v25、v32/v33、v33/v34、v34/v35、v35/v36、v36/v37 登记会先按名称与校验和搬迁到 v39/v40，再执行上游迁移。v35 `auth_notifications`、v34 `task_media_recovery`、v33 `oauth_state_accepted_terms` 等迁移内容不变。升级前备份，运行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持 schema 42，回退需恢复匹配的数据库备份并评估备份之后的新写入；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
 
 v41 `pi_agent_run_leases` 为 `cloud_agent_executions` 增加 `engine`、`lease_owner`、`lease_expires_at`。独立 Pi Worker 的消息沿用 `cloud_agent_message_records`，新增 `kind=pi`；旧 `canonical`、`history` 与事件记录继续可读。原生压缩另用 `kind=pi_compaction` 保存单条冻结 preparation，控制态只保存其摘要值和子调用任务回执，提交检查点后删除该临时记录；无新增表或列，旧 Go 二进制不能读取有此 kind 的在途记录。Cloud Agent 运行一律使用 `engine=pi`，引擎开关 `CANVAS_AGENT_ENGINE` 已删除；worker 协议由 `CANVAS_AGENT_INTERNAL_TOKEN` 是否配置决定，未配置时 `/internal-agent` 不挂载，运行会停在 `queued` 并在后端启动日志中给出提示。
 
