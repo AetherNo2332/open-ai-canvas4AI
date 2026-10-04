@@ -9,7 +9,7 @@ const cloudAgentToolDisclosureVersion = 2
 // at the beginning of each Pi model step.
 func cloudAgentToolCategory(name string) string {
 	switch name {
-	case "plan_update", "ask_user", "finish_run", "task_get":
+	case "plan_update", "ask_user", "finish_run", "task_get", "delegate_task", "crew_wait", "task_result", "crew_propose":
 		return "agent_tools_control"
 	case "agent_profile_read", "recall_lessons", "remember_lesson":
 		return "agent_tools_memory"

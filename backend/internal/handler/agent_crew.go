@@ -7,6 +7,9 @@ import (
 )
 
 func RegisterAgentCrewRoutes(r *gin.RouterGroup, svc *service.Service) {
+	crewRoutes := r.Group("")
+	crewRoutes.Use(RequireFeature(svc, service.FeatureAgentCrew))
+	r = crewRoutes
 	r.GET("/agent/workspaces/:canvasId/crews", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

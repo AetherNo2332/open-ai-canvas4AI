@@ -98,6 +98,7 @@ type cloudAgentApproval struct {
 	Reason    string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
+	Crew              *CrewMemberRuntime        `json:"crew,omitempty"`
 	Workspace         *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	RuntimeRunID      string                    `json:"-"`
 	SkillRuntimeMode  string                    `json:"skillRuntimeMode,omitempty"`
@@ -371,6 +372,7 @@ func cloudAgentDecode(run *model.CloudAgentExecution) (cloudAgentRuntime, error)
 		return state, fmt.Errorf("decode Agent runtime state: %w", err)
 	}
 	state.RuntimeRunID = run.ID
+	state.Request.crew = state.Crew
 	if run.CheckpointVersion >= cloudAgentCheckpointVersion {
 		if err := cloudAgentRestoreTranscript(run, &state); err != nil {
 			return state, err
@@ -1505,6 +1507,19 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 		})
 	}
 	allowed := cloudAgentToolAllowed(state.Request, call.Function.Name)
+	if allowed && call.Function.Name == "crew_wait" {
+		snapshot, err := s.repo.AgentCrewRunSnapshot(run.UserID, state.Crew.CrewRunID)
+		if err != nil {
+			return err
+		}
+		_, pending, err := crewResults(snapshot)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return nil
+		}
+	}
 	mediaTool := call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split"
 	if allowed && cloudAgentWrite(call.Function.Name) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
 		var plan *cloudAgentMediaPlan
@@ -1759,6 +1774,24 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 		case !allowed:
 			_, message := cloudAgentUnadvertisedToolAdmission(state, call.Function.Name)
 			toolErr = BadAuthRequest(message)
+		case call.Function.Name == "delegate_task", call.Function.Name == "task_result", call.Function.Name == "crew_wait", call.Function.Name == "crew_propose":
+			result, toolErr = executeCrewTool(repo, current, state, call)
+			if toolErr == nil && call.Function.Name == "crew_propose" {
+				current.Status = "waiting_approval"
+				current.RuntimePhase = "waiting_approval"
+				current.WaitKind = "crew_approval"
+				current.WaitID = state.Crew.CrewRunID
+				current.WaitReason = "等待 Crew 统一审批"
+				return cloudAgentSave(current, state)
+			}
+			if toolErr == nil && call.Function.Name == "task_result" {
+				cloudAgentRecordToolResult(current, state, call, result, nil)
+				skipRemainingCloudAgentCalls(run.ID, state)
+				current.Status = "completed"
+				current.CleanupPending = true
+				state.event(run.ID, "run_completed", map[string]any{"summary": "成员任务已提交"})
+				return cloudAgentSave(current, state)
+			}
 		case call.Function.Name == "agent_tools_control", call.Function.Name == "agent_tools_memory", call.Function.Name == "agent_tools_skills", call.Function.Name == "agent_tools_canvas_read", call.Function.Name == "agent_tools_image", call.Function.Name == "agent_tools_canvas_edit", call.Function.Name == "agent_tools_generation":
 			state.SelectedToolCategory = call.Function.Name
 			state.ActivatedToolCategories = cloudAgentAppendActivatedCategory(state.ActivatedToolCategories, call.Function.Name)

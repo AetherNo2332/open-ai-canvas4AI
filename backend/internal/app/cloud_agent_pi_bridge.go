@@ -46,6 +46,7 @@ type PiPendingInterjection struct {
 }
 
 type PiAgentSnapshot struct {
+	Crew                     *CrewMemberRuntime          `json:"crew,omitempty"`
 	RunID                    string                      `json:"runId"`
 	PiSessionID              string                      `json:"piSessionId"`
 	PiSessionRevision        int64                       `json:"piSessionRevision"`
@@ -1558,6 +1559,7 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		pendingInterjections = append(pendingInterjections, PiPendingInterjection{ID: item.ID, Text: item.Text, CreatedAt: item.CreatedAt})
 	}
 	return &PiAgentSnapshot{
+		Crew:  state.Crew,
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,

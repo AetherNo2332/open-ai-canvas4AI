@@ -25,6 +25,7 @@ const cloudAgentOperation = "cloud_agent"
 // turns reference the previous run, not a mutable in-memory conversation. This
 // reuses transactional billing, worker leases, cancellation and text replay.
 type CloudAgentRequest struct {
+	crew            *CrewMemberRuntime
 	ReasoningMode   string `json:"reasoningMode,omitempty"`
 	ProfileRevision string `json:"profileRevision,omitempty"`
 	CanvasID        string `json:"canvasId"`
@@ -65,6 +66,7 @@ func cloudAgentStepLimit(req CloudAgentRequest) int {
 }
 
 type cloudAgentState struct {
+	Crew             *CrewMemberRuntime        `json:"crew,omitempty"`
 	Workspace        *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	Version          int                       `json:"version"`
 	SkillRuntimeMode string                    `json:"skillRuntimeMode,omitempty"`
@@ -429,6 +431,22 @@ func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64, opti
 // is deterministic per user/key. Competing requests may race, but task creation
 // and credit reservation share a transaction: only one can commit.
 func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, parentID string) (*CloudAgentRun, error) {
+	return s.createCloudAgentRunScoped(userID, req, parentID, nil)
+}
+
+type cloudAgentRunScope struct {
+	Workspace      *WorkspaceSnapshot
+	Skills         []cloudAgentSkill
+	Crew           *CrewMemberRuntime
+	ConversationID string
+	ParentID       string
+	Prepared       *repository.CloudAgentAdmission
+}
+
+func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest, parentID string, scope *cloudAgentRunScope) (*CloudAgentRun, error) {
+	if scope != nil {
+		req.crew = scope.Crew
+	}
 	if err := validateCloudAgentRequest(&req); err != nil {
 		return nil, err
 	}
@@ -455,6 +473,12 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	}
 	req.ProfileRevision = profile.Revision
 	id := cloudAgentID(userID, req.IdempotencyKey)
+	conversationID := s.cloudAgentConversationIDFor(userID, id, parentID)
+	linkedParentID := parentID
+	if scope != nil {
+		conversationID = scope.ConversationID
+		linkedParentID = scope.ParentID
+	}
 	fingerprint := cloudAgentFingerprint(req, parentID)
 	// 幂等判断必须走统一读路径：新形态的运行没有 `cloud_agent` 根任务（只有不可领取的
 	// 占位行，操作名不同），只认旧根任务会在重投时误判成"不存在"，于是再建一次——
@@ -570,13 +594,22 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
-	workspace, err := s.FreezeWorkspaceSnapshot(userID, req.CanvasID)
-	if err != nil {
-		return nil, err
-	}
-	skillSnapshots, err := s.resolveRunSkillsWithLayers(userID, s.cloudAgentConversationIDFor(userID, id, parentID), req.SkillIDs, parentID == "", workspace.Skills, nil)
-	if err != nil {
-		return nil, err
+	var workspace WorkspaceSnapshot
+	var skillSnapshots []cloudAgentSkill
+	if scope != nil {
+		if scope.Workspace == nil {
+			return nil, BadAuthRequest("Crew Workspace snapshot missing")
+		}
+		workspace, skillSnapshots = *scope.Workspace, scope.Skills
+	} else {
+		workspace, err = s.FreezeWorkspaceSnapshot(userID, req.CanvasID)
+		if err != nil {
+			return nil, err
+		}
+		skillSnapshots, err = s.resolveRunSkillsWithLayers(userID, conversationID, req.SkillIDs, parentID == "", workspace.Skills, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// 看图能力取决于本轮渠道模型自己的合同，在建 run 时定格，运行期间不再变化。
 	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
@@ -596,7 +629,8 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		return nil, err
 	}
 	system += workspacePrompt(&workspace)
-	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
+	system += crewSystemPrompt(req.crew)
+	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy, Crew: req.crew}
 	state.Workspace = &workspace
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	canonical.Tools = compileCloudAgentToolsForRuntime(req, len(profile.Layers) > 0, cloudAgentSkillRuntimeNative)
@@ -657,15 +691,16 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	//   - 不可变快照：服务端策略身份 + 工具 schema 身份在这里定型；
 	//   - 占位任务：承载本轮报价预留，worker 永不领取。
 	runtime := cloudAgentRuntime{
+		Crew:         req.crew,
 		Workspace:    &workspace,
-		RuntimeRunID: id, Request: req, Policy: policy, ParentID: parentID, Fingerprint: fingerprint,
+		RuntimeRunID: id, Request: req, Policy: policy, ParentID: linkedParentID, Fingerprint: fingerprint,
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
 		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
 		Plan: inheritedPlan, StepLimits: stepLimits,
 		ContractVersion: cloudAgentContractVersionFirstStep, Phase: cloudAgentPhaseAwaitingFirstStep,
 		Snapshot: cloudAgentContractSnapshotFor(canonical.SystemPrompt, canonical.Tools), PlaceholderTaskID: id,
 	}
-	run, err := s.newCloudAgentExecution(userID, id, req.CanvasID, parentID, s.cloudAgentConversationIDFor(userID, id, parentID), &runtime)
+	run, err := s.newCloudAgentExecution(userID, id, req.CanvasID, linkedParentID, conversationID, &runtime)
 	if err != nil {
 		return nil, err
 	}
@@ -703,6 +738,13 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	runtimePolicy, err := s.RuntimePolicy()
 	if err != nil {
 		return nil, err
+	}
+	if scope != nil && scope.Prepared != nil {
+		if req.crew.Role == model.CrewMemberRoleMember {
+			run.Status = "waiting_member"
+		}
+		*scope.Prepared = repository.CloudAgentAdmission{Execution: run, Task: task, Order: prepare.Order, Skills: cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)}
+		return agentRunOutput(cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status, Model: req.Model, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt}, state), nil
 	}
 	if err = s.createCloudAgentRunWithinStorageQuota(run, task, prepare.Order, runtimePolicy, cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)); err != nil {
 		if errors.Is(err, repository.ErrCreationConflict) {

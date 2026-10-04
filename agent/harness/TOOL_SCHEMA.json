@@ -1861,6 +1861,250 @@
         }
       },
       "type": "function"
+    },
+    {
+      "function": {
+        "description": "Delegate one frozen structured task to a Crew member.",
+        "name": "delegate_task",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "artifactIds": {
+              "items": {
+                "description": "Canvas node reference",
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "focusNodeIds": {
+              "items": {
+                "description": "Canvas node reference",
+                "type": "string"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            "instructions": {
+              "description": "Task instructions",
+              "type": "string"
+            },
+            "memberId": {
+              "description": "Authorized member ID",
+              "type": "string"
+            },
+            "taskId": {
+              "description": "Unique task ID",
+              "type": "string"
+            },
+            "title": {
+              "description": "Task title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "memberId",
+            "taskId",
+            "title",
+            "instructions"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Wait for all dispatched members and return only structured results.",
+        "name": "crew_wait",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Aggregate completed member proposals and wait for one user approval. Never submit a canvas write directly.",
+        "name": "crew_propose",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Complete this member task with a structured result. Never return another member's transcript.",
+        "name": "task_result",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "artifactIds": {
+              "items": {
+                "description": "Canvas node reference",
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "errorCode": {
+              "description": "Optional stable error code",
+              "type": "string"
+            },
+            "proposal": {
+              "additionalProperties": false,
+              "properties": {
+                "ops": {
+                  "items": {
+                    "additionalProperties": false,
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "add_node"
+                          }
+                        },
+                        "required": [
+                          "nodeType"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "update_node"
+                          }
+                        },
+                        "required": [
+                          "patch"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "connect_nodes"
+                          }
+                        },
+                        "required": [
+                          "fromNodeId",
+                          "toNodeId"
+                        ]
+                      }
+                    ],
+                    "properties": {
+                      "content": {
+                        "description": "新建节点的文本或提示词；update_node 更新内容必须放在 patch.content",
+                        "type": "string"
+                      },
+                      "fromNodeId": {
+                        "description": "连线来源节点ID",
+                        "type": "string"
+                      },
+                      "id": {
+                        "description": "节点或连线唯一ID",
+                        "type": "string"
+                      },
+                      "nodeType": {
+                        "enum": [
+                          "audio",
+                          "batch-table",
+                          "frame",
+                          "image",
+                          "markdown",
+                          "script",
+                          "text",
+                          "video"
+                        ],
+                        "type": "string"
+                      },
+                      "patch": {
+                        "additionalProperties": false,
+                        "minProperties": 1,
+                        "properties": {
+                          "content": {
+                            "maxLength": 16000,
+                            "type": "string"
+                          },
+                          "title": {
+                            "maxLength": 240,
+                            "type": "string"
+                          },
+                          "x": {
+                            "type": "number"
+                          },
+                          "y": {
+                            "type": "number"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "title": {
+                        "description": "新建节点的标题；update_node 更新标题必须放在 patch.title",
+                        "type": "string"
+                      },
+                      "toNodeId": {
+                        "description": "连线目标节点ID",
+                        "type": "string"
+                      },
+                      "type": {
+                        "description": "必填的操作类型；新增节点必须传 add_node，nodeType 不能代替本字段",
+                        "enum": [
+                          "add_node",
+                          "update_node",
+                          "connect_nodes"
+                        ],
+                        "type": "string"
+                      },
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 20,
+                  "type": "array"
+                },
+                "snapshotHash": {
+                  "description": "canvas_get_state返回的snapshotHash",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "snapshotHash",
+                "ops"
+              ],
+              "type": "object"
+            },
+            "summary": {
+              "description": "Result summary, at most 4000 bytes",
+              "type": "string"
+            },
+            "taskId": {
+              "description": "Frozen task ID",
+              "type": "string"
+            }
+          },
+          "required": [
+            "taskId",
+            "summary"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
     }
   ]
 }

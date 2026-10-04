@@ -24,6 +24,7 @@ import { CanvasBridge, CanvasCompactionNeeded, CanvasModelRetry, CanvasRunTermin
 import { createCanvasStreamFn } from "./pi-stream.js";
 import { compactionSettings, serializePreparation, runNativeCompaction } from "./native-compaction.js";
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
+import { validateCrewEnvelope } from "./crew-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
 import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "./native-skills.js";
 import { Unsafe, type TSchema } from "typebox";
@@ -622,6 +623,8 @@ export async function runCanvasAgent(
 ): Promise<void> {
   shutdown?.throwIfAborted();
   let snapshot = initial;
+  try { validateCrewEnvelope(snapshot.crew, snapshot.tools); }
+  catch (error) { throw new FatalWorkerError(error instanceof Error ? error.message : "Invalid Crew envelope"); }
   const model = canvasModel(snapshot);
   const initialVisualMessages = fromCanonical(snapshot, model);
   // 合同校验必须早于任何恢复副作用：schema 不兼容时不能先写检查点或执行工具。

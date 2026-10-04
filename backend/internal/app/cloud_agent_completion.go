@@ -74,6 +74,9 @@ func cloudAgentCompletionBlockers(state *cloudAgentRuntime) []cloudAgentCompleti
 		return nil
 	}
 	blockers := make([]cloudAgentCompletionBlocker, 0, 2)
+	if state.Crew != nil && (state.Crew.Role == model.CrewMemberRoleMember || !state.Crew.ResultsCollected || state.Crew.ApprovalRequired) {
+		blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "crew_result_required", Detail: "成员须提交 task_result；Coordinator 须先 crew_wait 获取结构化结果"})
+	}
 	if pending := cloudAgentPendingPlanItems(state.Plan); len(pending) > 0 {
 		blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "pending_plan", Detail: pending[0]})
 	}

@@ -1605,6 +1605,85 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /agent/crews/{crewId}/runs:
+    post:
+      tags: [agent]
+      summary: 冻结配置并创建独立成员 Crew Run
+      parameters:
+        - {in: path, name: crewId, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [prompt, idempotencyKey]
+              properties:
+                prompt: {type: string, maxLength: 16000}
+                idempotencyKey: {type: string, maxLength: 120}
+                skillIds: {type: array, items: {type: string}}
+                maxConcurrentMembers: {type: integer, minimum: 0, maximum: 8}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /agent/workspaces/{canvasId}/crew-runs:
+    get:
+      tags: [agent]
+      summary: 当前画布最近 20 个 Crew Run
+      parameters:
+        - {in: path, name: canvasId, required: true, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "404": {$ref: "#/components/responses/Error"}
+  /agent/crew-runs/{runId}:
+    get:
+      tags: [agent]
+      summary: 脱敏的 Crew 运行和成员状态
+      parameters:
+        - {in: path, name: runId, required: true, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "404": {$ref: "#/components/responses/Error"}
+  /agent/crew-runs/{runId}/events:
+    get:
+      tags: [agent]
+      summary: Crew 业务 SSE，快照不推进游标
+      parameters:
+        - {in: path, name: runId, required: true, schema: {type: string}}
+        - {in: query, name: after, schema: {type: integer, minimum: 0}}
+        - {in: header, name: Last-Event-ID, schema: {type: string}}
+      responses:
+        "200":
+          description: crew_event 带递增 id，crew_snapshot 无 id，15 秒 heartbeat
+          content:
+            text/event-stream: {schema: {type: string}}
+        "400": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /agent/crew-runs/{runId}/approvals/{approvalId}:
+    post:
+      tags: [agent]
+      summary: 决定 Crew 聚合提案
+      parameters:
+        - {in: path, name: runId, required: true, schema: {type: string}}
+        - {in: path, name: approvalId, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [decision], properties: {decision: {type: string, enum: [approve, reject]}, reason: {type: string, maxLength: 2000}}}}}}
+      responses: {"200": {$ref: "#/components/responses/Envelope"}, "400": {$ref: "#/components/responses/Error"}, "409": {$ref: "#/components/responses/Error"}}
+  /agent/crew-runs/{runId}/commit:
+    post:
+      tags: [agent]
+      summary: 通过唯一审批边界提交 Crew 提案
+      parameters: [{in: path, name: runId, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [approvalId, expectedSnapshotHash, idempotencyKey], properties: {approvalId: {type: string}, expectedSnapshotHash: {type: string, minLength: 64, maxLength: 64}, idempotencyKey: {type: string, maxLength: 120}}}}}}
+      responses: {"200": {$ref: "#/components/responses/Envelope"}, "400": {$ref: "#/components/responses/Error"}, "409": {$ref: "#/components/responses/Error"}}
+  /agent/crew-runs/{runId}/cancel:
+    post:
+      tags: [agent]
+      summary: 幂等取消 Crew Run 及可取消成员
+      parameters: [{in: path, name: runId, required: true, schema: {type: string}}]
+      responses: {"200": {$ref: "#/components/responses/Envelope"}, "404": {$ref: "#/components/responses/Error"}}
 components:
   parameters:
     AgentRunID:

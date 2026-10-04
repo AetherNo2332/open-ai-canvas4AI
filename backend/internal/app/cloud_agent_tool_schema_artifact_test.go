@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"infinite-canvas/backend/internal/model"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,15 @@ func TestAgentToolSchemaArtifactMatchesRuntime(t *testing.T) {
 	req.HasMemories = true
 	req.SkillIDs = []string{"schema-artifact-skill"}
 	artifact := agentToolSchemaArtifact{SchemaVersion: cloudAgentToolSchemaVersion, Tools: append(cloudAgentTools(req), nativeSkillReadToolSchema())}
+	for _, role := range []model.CrewMemberRole{model.CrewMemberRoleCoordinator, model.CrewMemberRoleMember} {
+		req.crew = &CrewMemberRuntime{Role: role, Permission: model.CrewPermissionPropose}
+		for _, tool := range cloudAgentTools(req) {
+			name := stringField(tool["function"].(map[string]any), "name")
+			if name == "delegate_task" || name == "crew_wait" || name == "task_result" || name == "crew_propose" {
+				artifact.Tools = append(artifact.Tools, tool)
+			}
+		}
+	}
 	encoded, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ import type { CanvasModelResult } from "./pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "./tool-disclosure.js";
 import type { PromptParts } from "./system-prompt.js";
 import { EventScheduler, RunEvents } from "./event-scheduler.js";
+import type { CrewEnvelope } from "./crew-wire.js";
 
 /**
  * 内部协议里的**确定性**客户端错误：同一条请求重发不可能成功。
@@ -66,6 +67,7 @@ export interface PiSkillReadPage {
 }
 
 export interface PiSnapshot {
+	crew?: CrewEnvelope;
 
   skillRuntimeMode?: "pi-native" | "legacy-go";
   skills?: PiSkillSnapshot[];
