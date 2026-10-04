@@ -573,6 +573,73 @@ paths:
           description: 信封 data 含 scannedRuns、searchCalls 与按启用次数降序的 skills；每个技能含 runsEnabled、searchHits、readCalls、readFailures、entryReads、cardReads 与 topCards（最多 5 条最热卡路径）。统计仅覆盖调用方本人最近的运行，且不含任何技能正文
         "401":
           description: 未登录
+  /agent/workspaces/{canvasId}:
+    parameters:
+      - {in: path, name: canvasId, required: true, schema: {type: string}}
+    get:
+      tags: [agent]
+      summary: 读取画布 Workspace（懒创建一对一记录）
+      responses:
+        "200": {description: 信封 data 为 WorkspaceView，含 workspaceId、canvasId、revision、agentsMd、agentsMdHash 和版本化 skills}
+        "401": {description: 未登录}
+        "404": {description: 画布不存在或不属于当前用户}
+    patch:
+      tags: [agent]
+      summary: 使用 revision CAS 更新项目文档，仅影响新 Run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, agentsMd]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                agentsMd: {type: string, description: UTF-8 文档最多 65536 字节；空字符串用于清空}
+      responses:
+        "200": {description: 更新后的 WorkspaceView}
+        "400": {description: 非法 JSON、缺失字段或文档超限}
+        "404": {description: 画布不存在或不属于当前用户}
+        "409": {description: "reason=agent_workspace_revision_conflict，details.currentRevision 为当前 revision"}
+  /agent/workspaces/{canvasId}/skills:
+    parameters:
+      - {in: path, name: canvasId, required: true, schema: {type: string}}
+    get:
+      tags: [agent]
+      summary: 读取 Workspace 技能版本、来源与容量
+      responses:
+        "200": {description: 有序技能数组，含 skillId、skillVersionId、position、enabled、skillName、contentHash、fileCount、totalBytes、source=workspace}
+        "404": {description: 画布不存在或不属于当前用户}
+    put:
+      tags: [agent]
+      summary: CAS 替换 Workspace 技能追加项（清空传空数组）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, skills]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                skills:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [skillId, skillVersionId, position, enabled]
+                    properties:
+                      skillId: {type: string}
+                      skillVersionId: {type: string}
+                      position: {type: integer, minimum: 0}
+                      enabled: {type: boolean}
+      responses:
+        "200": {description: 更新后的 WorkspaceView，文档与技能共用 revision}
+        "400": {description: 非法技能、私有技能、重复排序或容量超限}
+        "404": {description: 画布不存在或不属于当前用户}
+        "409": {description: "reason=agent_workspace_revision_conflict"}
   /agent/profile:
     get:
       tags: [agent]
