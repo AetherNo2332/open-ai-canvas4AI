@@ -39,7 +39,7 @@
 | 修改的 Go 源码按 LF 检查 gofmt | 35 文件、0 未格式化；原 checkout 850 项 CRLF 噪音 |
 | `git diff --check` | 通过 |
 
-未声称分支全绿或可合并；未 push、开 PR、merge、部署、SSH 或操作容器。
+第一阶段没有 push、PR、合并、部署、SSH 或容器变更。后续按用户追加要求执行的远端同步和本地 3000 部署见下文；前端全量 11 项既有失败仍未解决。
 
 ### 失败来源
 
@@ -84,6 +84,8 @@ PostgreSQL 活体多实例测试、真实上游模型调用、浏览器 hover/�
 15. 按 handoff 要求一次 scoped re-review，覆盖 executing-plans 默认不复审。代价：一次额外限定审查。
 16. 保留独立 canary 快照复现的 11 个无关失败。代价：分支全绿/合并门槛未满足。
 17. P2 Workspace、P3–P5 Crew/SSE 留后续；头像来源为空，未声称浏览器验收。代价：当前无实时子智能体数据。
+18. 归档本计划 SDD，保留证据和编译器夹具。代价：忽略目录保留磁盘占用，供复现与回退。
+19. 本地部署用已提交 `2eba9689` 的 Git archive 构建。代价：其他协作者仍在编辑的布局变更未包含在测试镜像；工作区变更完整保留。
 
 ## Deferred minors
 
@@ -107,4 +109,28 @@ bun run lint
 bun run build
 ```
 
-原 SDD 目录计划定向移至 `.superpowers/archive/2026-10-04-agent-skill-defaults-capacity/`，保留 progress.md、RED/GREEN、最终 backend/web/build 日志、两个源码基线和链接器夹具。只移出该计划原路径，其余工作区保留。实际归档状态待补录。
+原 SDD 目录已定向移至 `.superpowers/archive/2026-10-04-agent-skill-defaults-capacity/`，保留 progress.md、RED/GREEN、最终 backend/web/build 日志、两个源码基线和链接器夹具。只移出该计划原路径，其余工作区保留。
+
+## 追加任务：远端 canary 同步、本地 Compose 3000、功能脚本
+
+用户在 2026-10-04/05 要求完成后拉取最新远端 canary、合并并在本地 3000 Compose 测试，随后明确采用脚本快速功能测试。
+
+- `git fetch origin canary` 成功，远端 `0f34f254`；`git merge origin/canary` 返回 Already up to date，当前功能分支已含最新远端。未 push。
+- 旧 3000 为 canary 项目，原结构 50/50、镜像构建 commit unknown。只替换 canary-web/backend；保留 3003 和四个监控容器及原 `canary_backend-data` 卷。
+- 用提交 `2eba9689` 的 Git archive 构建两个独立镜像标签 `agent-skill-defaults-2eba9689`，Compose 预检 images/context/volume/ports 与旧环境所有键值一致。
+- 构建成功后确认 activeWorkerTasks=0，停止后端，用只读卷导出 `pre-v51-2026-10-05.tar.gz`，110516703 字节；备份 SQLite integrity_check=ok，schema=50，users=1，保存 SHA256。
+- 备份 ACL 调整被 automatic approval review 拒绝（权限变更未获授权）；该调整未执行，采用现有目录权限。备份/完整性检查/部署继续成功。
+- Compose up 只重建 backend/web，二者 healthy；`migrate-schema verify` 返回 current=expected=51，ready=true。health 显示 version=`v1.5.7.2(2eba9689)`、commit=`2eba9689`；前端静态资源含同提交号。
+- 18 项 HTTP 功能脚本全部通过：health/ready、实际 commit、v51、两条 OpenAPI 路径、两条匿名访问返回 401、HTML、入口清单和 8 个静态资源。
+- 脚本首次 localhost 请求超时，改用 127.0.0.1；OpenAPI `application/yaml` 的 PowerShell 字节响应需要显式 UTF-8 解码。两个原始失败结果保留，修正后 18/18。
+- 管理员浏览器会话经用户登录；Playwright 脚本验证 **6/6**：初始空列表、加入公开技能保存后回读 revision=1、另一旧 revision 会话被 CAS 拒绝并显示 currentRevision=1、经用户确认清空后 GET 保留 revision=2、再次保存成功 revision=3、最终恢复原空列表且 GET revision=4。没有创建 Run 或调用付费模型。最终截图与 JSON 已保留。
+- 浏览器直接导航用户默认摘要 API 被浏览器 client 拦截，未绕过；该登录 API 未作浏览器直读验收。后端自动测试、匿名 401、管理员 GET/PUT 的真实界面脚本分别提供已验证边界。
+
+部署、备份、原容器 ID、构建日志、脚本和结果均在 `.superpowers/deploy/agent-skill-defaults-3000/`，独立于将归档的 SDD。运行 HTTP 脚本：
+
+```powershell
+Set-Location D:\open-ai-canvas
+./.superpowers/deploy/agent-skill-defaults-3000/quick-functional-tests.ps1
+```
+
+回退需要先停止新后端、恢复 v50 数据备份，然后使用旧镜像 override；**不能只把 v50 镜像指向已迁移 v51 数据库**。旧镜像已另打 pre-agent-skill-defaults-2eba9689 标签；rollback Compose 文件已保留，未实际回退。
