@@ -1,4 +1,5 @@
 import { ArrowUpRight, Clapperboard, Layers3, Sparkles } from "lucide-react";
+import { BrandLogo } from "@/components/brand/brand-logo";
 import { agentCopy, type CanvasAppearance } from "@/lib/canvas/agent-appearance";
 
 type AgentWelcomeProps = {
@@ -12,7 +13,8 @@ export function AgentWelcome({ appearance, nodeCount, onChooseSkill, onDraftProm
     return (
         <section className="agent-welcome" aria-label="开始 Agent 创作">
             <div className="agent-welcome-intro">
-                <span className="agent-welcome-orb" aria-hidden="true" />
+                {/* 品牌 logo 由后台外观配置（logoUrl / darkLogoUrl）下发；未配置时回退内置品牌标。 */}
+                <BrandLogo className="agent-welcome-logo" fallback={<img src="/logo.svg" alt="" aria-hidden="true" className="agent-welcome-logo" draggable={false} />} />
                 <h2>{agentCopy(appearance.welcomeTitle, appearance.agentName)}</h2>
                 <p>{agentCopy(appearance.welcomeDescription, appearance.agentName)}</p>
             </div>
