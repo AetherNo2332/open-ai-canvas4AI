@@ -378,6 +378,7 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
                 <div className="admin-capability-reference-grid is-three">
                     <ReferenceCard title="图片引用" description="文本模型可接收的图片范围">
                         <ParameterField label="支持 Agent 识图" description="开启后运行时按动态批次预算发送图片。" supported={profile.visionSupported === true} disabled={Boolean(disabled)} onChange={(visionSupported) => update({ visionSupported })} />
+                        <NumberField label="最大图片引用" value={profile.references.maxImages} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImages: next || 0 })} />
                         <NumberField label="识图批次安全封顶（张，0=自动）" value={profile.visionMaxBatchImages || 0} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => update({ visionMaxBatchImages: next || 0 })} />
                         <NumberField label="识图批次成本封顶（0=自动）" value={profile.visionMaxBatchCost || 0} min={0} max={10000} disabled={Boolean(disabled)} onChange={(next) => update({ visionMaxBatchCost: next || 0 })} />
                         <NumberField label="单张图片上限 MB" value={bytesToMB(profile.references.maxImageBytes)} min={0} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImageBytes: mbToBytes(next) })} />
@@ -410,6 +411,7 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
             <CapabilityGroup title="图片" description="文本模型可接收的图片参考范围">
                 <div className="grid gap-3 sm:grid-cols-2">
                     <ParameterField label="支持 Agent 识图" description="开启后运行时按动态批次预算发送图片。" supported={profile.visionSupported === true} disabled={Boolean(disabled)} onChange={(visionSupported) => update({ visionSupported })} />
+                    <NumberField label="最大图片引用" value={profile.references.maxImages} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImages: next || 0 })} />
                     <NumberField label="识图批次安全封顶（张，0=自动）" value={profile.visionMaxBatchImages || 0} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => update({ visionMaxBatchImages: next || 0 })} />
                     <NumberField label="识图批次成本封顶（0=自动）" value={profile.visionMaxBatchCost || 0} min={0} max={10000} disabled={Boolean(disabled)} onChange={(next) => update({ visionMaxBatchCost: next || 0 })} />
                     <NumberField label="单张图片上限 MB" value={bytesToMB(profile.references.maxImageBytes)} min={0} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImageBytes: mbToBytes(next) })} />

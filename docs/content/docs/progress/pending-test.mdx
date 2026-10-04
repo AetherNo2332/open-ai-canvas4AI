@@ -5,6 +5,10 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 文本模型最大图片引用
+
+管理端文本模型能力编辑器补回「最大图片引用」（`text.references.maxImages`）输入：Agent 模型预检按该字段拒绝超限图片，此前 6141bd68 重写编辑器时丢失该入口，`visionSupported` 开启后任何附图运行都会在 model-preflight 报「当前模型最多支持 0 张」，而管理员在界面上填的「识图批次安全封顶」只影响看图批次切分、不参与预检。`bun test text-capability-editor` 2/2 通过、`bun run build` 通过。**待真实环境验收**：管理端把涉事渠道模型的「最大图片引用」改为 10 并保存，确认 DB `capability_config_json` 中 `text.references.maxImages=10`，再发起一次带图 Agent 对话确认不再出现 model-preflight 400。
+
 ## Pi 原生上下文摘要
 
 已接入锁定 Pi 0.87.1 的 `compact()`，统一 Go/Pi 压缩触发预算，采用 token 切点、长轮次前缀摘要和旧摘要更新。摘要模型调用仍由 Go 执行并计费，按子调用复用任务；准备信息在独立转录记录保存，结果与服务端事实组成检查点，并与 Pi 会话树原子提交。
