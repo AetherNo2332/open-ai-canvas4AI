@@ -24,6 +24,7 @@ func TestRegisterCanvasAPIExposesOpenAPIAndProjects(t *testing.T) {
 		"GET /api/resources":                  false,
 		"GET /api/skills/presets":             false,
 		"GET /api/agent/skills/usage":         false,
+		"GET /api/agent/skill-defaults":       false,
 		"GET /api/admin/agent/skill-defaults": false,
 		"PUT /api/admin/agent/skill-defaults": false,
 	}

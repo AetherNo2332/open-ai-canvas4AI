@@ -37,6 +37,36 @@ func adminSkillDefaultsActor() *model.User {
 	return &model.User{ID: "admin-1", Username: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
 }
 
+func TestAgentSkillDefaultsForUserSummary(t *testing.T) {
+	svc, db := newAgentSkillDefaultsService(t)
+	for _, id := range []string{"first", "second", "disabled"} {
+		seedAgentSkill(t, db, id, 128, nil)
+	}
+	_, err := svc.ReplaceAgentSkillDefaults(adminSkillDefaultsActor(), 0, []AgentSkillDefaultItem{
+		{SkillID: "second", SkillVersionID: "second-v1", Position: 2, Enabled: 1},
+		{SkillID: "disabled", SkillVersionID: "disabled-v1", Position: 0, Enabled: 0},
+		{SkillID: "first", SkillVersionID: "first-v1", Position: 1, Enabled: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := svc.AgentSkillDefaultsForUser("ordinary-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Count != 2 || len(view.Skills) != 2 || view.Skills[0].SkillID != "first" || view.Skills[1].SkillID != "second" || view.Skills[0].SkillName != "技能-first" {
+		t.Fatalf("unexpected summary: %+v", view)
+	}
+}
+
+func TestAgentSkillDefaultsForUserEmpty(t *testing.T) {
+	svc, _ := newAgentSkillDefaultsService(t)
+	view, err := svc.AgentSkillDefaultsForUser("ordinary-user")
+	if err != nil || view.Count != 0 || view.Skills == nil {
+		t.Fatalf("empty summary must return an empty array: %+v %v", view, err)
+	}
+}
+
 // seedAgentSkill 通过 CreateSkillWithPackage 造一个带版本包的技能；
 // version.TotalBytes 直接决定容量预检与上下文预估的数值。
 func seedAgentSkill(t *testing.T, db *gorm.DB, id string, totalBytes int64, mutate func(*model.Skill)) {

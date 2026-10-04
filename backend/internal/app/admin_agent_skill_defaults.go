@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -178,4 +179,34 @@ func boolToInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+type AgentSkillDefaultsSummary struct {
+	Count  int                             `json:"count"`
+	Skills []AgentSkillDefaultsSummaryItem `json:"skills"`
+}
+
+type AgentSkillDefaultsSummaryItem struct {
+	SkillID   string `json:"skillId"`
+	SkillName string `json:"skillName"`
+}
+
+func (s *Service) AgentSkillDefaultsForUser(userID string) (*AgentSkillDefaultsSummary, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, kernel.BadAuthRequest("用户 ID 不能为空")
+	}
+	rows, err := s.repo.EnabledAgentSkillDefaults()
+	if err != nil {
+		return nil, err
+	}
+	view := &AgentSkillDefaultsSummary{Skills: make([]AgentSkillDefaultsSummaryItem, 0, len(rows))}
+	for _, row := range rows {
+		skill, err := s.repo.Skill(row.SkillID)
+		if err != nil {
+			return nil, err
+		}
+		view.Skills = append(view.Skills, AgentSkillDefaultsSummaryItem{SkillID: row.SkillID, SkillName: skill.Name})
+	}
+	view.Count = len(view.Skills)
+	return view, nil
 }
