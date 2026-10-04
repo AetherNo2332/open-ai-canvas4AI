@@ -4,7 +4,7 @@
 
 ## 已落地的代码
 
-当前报错修复与新增原图保留要求见 [AGENT_ERROR_REPAIR_2026-09-28.md](agent/AGENT_ERROR_REPAIR_2026-09-28.md)。图片不能按轮次或模型容量删掉，不能用摘要替代；文本压缩后从 Pi active branch 恢复原始图片引用，容量不足明确停止。终态不再发租约绑定回调，历史缺失工具结果仅补模型协议投影，不重执行业务操作。
+图片不能按轮次或模型容量删掉，不能用摘要替代；文本压缩后从 Pi active branch 恢复原始图片引用，容量不足明确停止。终态不再发租约绑定回调，历史缺失工具结果仅补模型协议投影，不重执行业务操作。
 
 - `agent/`：Pi 依赖锁、模型结果到 Pi 事件的适配、合格具体工具注册与 `tool_call` hook、Node 领取与租约循环、基础消息检查点和崩溃后工具回执补齐；`agent/Dockerfile` 提供独立镜像。
 - Go `backend/internal/app/cloud_agent_pi_bridge.go` 与 `backend/internal/handler/internal_agent.go`：仅内部 Bearer Token 可访问的领取、快照、续租、模型步骤、Pi 消息、工具批次、工具推进和无工具收尾接口。每次按用户与租约读取运行；工具继续经 Go 既有权限、参数、审批和画布写入路径。
@@ -33,7 +33,7 @@
 
 ## 接手顺序
 
-先读本文件末尾的剩余验收项与 `agent/PI_MIGRATION_DAILY_2026-09-28.md`。新增代码前确认当前 Git 状态与 Pi 单循环边界；对任何不完整能力补协议和持久化测试，再补真实上游、跨账号/worker、PostgreSQL、SSE 及 GUI 验收。
+新增代码前确认当前 Git 状态与 Pi 单循环边界；对任何不完整能力补协议和持久化测试，再补真实上游、跨账号/worker、PostgreSQL、SSE 及 GUI 验收。
 
 ## 经用户确认的完整实施计划
 
