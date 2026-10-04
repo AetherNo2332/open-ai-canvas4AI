@@ -77,7 +77,7 @@ export function CanvasCloudAgentSettings(props: AgentSettingsProps) {
 
     return (
         <div className="canvas-agent-settings flex min-h-0 min-w-0 flex-1 flex-col" style={{ background: theme.node.panel }}>
-            <header data-agent-drag-handle className="agent-panel-header flex shrink-0 items-center gap-2">
+            <header className="agent-panel-header flex shrink-0 items-center gap-2">
                 <Button type="text" shape="circle" icon={<ArrowLeft className="size-4" />} onClick={section === "home" ? props.onBack : goHome} aria-label={section === "home" ? "返回对话" : "返回设置"} />
                 <div className="min-w-0 flex-1"><div className="text-sm font-semibold">{title}</div><div className="mt-0.5 text-[11px] opacity-40">{section === "home" ? "只影响下一次新运行" : sectionSubtitle(section)}</div></div>
                 {section !== "home" ? <span className="rounded-full px-2 py-1 text-[10px] opacity-50" style={{ background: theme.node.fill }}>{section === "skills" ? `${props.selectedSkillIds.length} 已启用` : "当前 Agent"}</span> : null}

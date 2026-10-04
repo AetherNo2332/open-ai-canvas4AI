@@ -4,8 +4,7 @@
  * Drives the real `@earendil-works/pi-coding-agent@0.87.1` `createAgentSession`,
  * `SessionManager`, `ModelRuntime` and `ResourceLoader` against a deterministic
  * Canvas provider stub. Nothing here mocks the SDK: the probe asserts on the
- * public contracts the migration depends on, per
- * `agent/PI_CODING_AGENT_MIGRATION_ROADMAP.md` section 5 (P1).
+ * public contracts the migration depends on.
  *
  * Verified extension points:
  *   1. Provider    — `ModelRuntime.registerProvider(id, { api, streamSimple, models })`
