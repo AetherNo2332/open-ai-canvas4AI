@@ -132,6 +132,26 @@ export type AgentEvent = {
     localSeq?: number;
 };
 
+export const CREW_EVENT_TYPES = [
+    "crew_run_created",
+    "member_run_started",
+    "member_message",
+    "member_run_waiting",
+    "member_run_completed",
+    "member_run_failed",
+    "crew_approval_required",
+    "crew_run_completed",
+] as const;
+
+export type CrewEventType = typeof CREW_EVENT_TYPES[number];
+export type CrewEvent = {
+    type: CrewEventType;
+    crewRunId: string;
+    memberRunId?: string;
+    sequence: number;
+    payload: Record<string, unknown>;
+};
+
 /** 事件流本身不是 http 封装请求，单独保留状态码供 UI 区分旧后端/失效轮次。 */
 export class AgentStreamError extends Error {
     readonly status: number;
