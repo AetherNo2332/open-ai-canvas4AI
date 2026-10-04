@@ -569,7 +569,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
-	skillSnapshots, err := s.cloudAgentSkills(userID, req.SkillIDs)
+	skillSnapshots, err := s.resolveRunSkills(userID, s.cloudAgentConversationIDFor(userID, id, parentID), req.SkillIDs, parentID == "")
 	if err != nil {
 		return nil, err
 	}
@@ -638,7 +638,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		ContractVersion: cloudAgentContractVersionFirstStep, Phase: cloudAgentPhaseAwaitingFirstStep,
 		Snapshot: cloudAgentContractSnapshotFor(canonical.SystemPrompt, canonical.Tools), PlaceholderTaskID: id,
 	}
-	run, err := s.newCloudAgentExecution(userID, id, req.CanvasID, parentID, &runtime)
+	run, err := s.newCloudAgentExecution(userID, id, req.CanvasID, parentID, s.cloudAgentConversationIDFor(userID, id, parentID), &runtime)
 	if err != nil {
 		return nil, err
 	}
@@ -707,18 +707,17 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 // 会话归属必须在插入前定好：EnsureCloudAgent 只会在 ConversationID 为空时去查父轮，
 // 而父轮可能是一轮旧合同运行（执行记录由 Go worker 建），任何一次查不到都会让建 run 失败。
 // 这里按同一语义先把会话与标题从父轮继承下来（父轮在本函数之前已被读过一次）。
-func (s *Service) newCloudAgentExecution(userID, id, canvasID, parentID string, state *cloudAgentRuntime) (*model.CloudAgentExecution, error) {
+func (s *Service) newCloudAgentExecution(userID, id, canvasID, parentID, conversationID string, state *cloudAgentRuntime) (*model.CloudAgentExecution, error) {
 	now := time.Now()
 	run := &model.CloudAgentExecution{
 		ID: id, UserID: userID, Status: "queued", Engine: "pi", Revision: 1,
-		CanvasID: canvasID, ParentID: parentID, ConversationID: id, CreatedAt: now, UpdatedAt: now,
+		CanvasID: canvasID, ParentID: parentID, ConversationID: conversationID, CreatedAt: now, UpdatedAt: now,
 	}
 	if parentID != "" {
+		// 标题仍从父轮继承；会话归属已在建 run 前由 cloudAgentConversationIDFor 解析，
+		// 这里不再重复查询，避免两处口径漂移。
 		if parent, err := s.repo.CloudAgent(userID, parentID); err == nil {
-			run.ConversationID = firstNonEmpty(parent.ConversationID, parentID)
 			run.Title = parent.Title
-		} else {
-			run.ConversationID = parentID
 		}
 	}
 	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
