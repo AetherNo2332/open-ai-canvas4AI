@@ -640,6 +640,155 @@ paths:
         "400": {description: 非法技能、私有技能、重复排序或容量超限}
         "404": {description: 画布不存在或不属于当前用户}
         "409": {description: "reason=agent_workspace_revision_conflict"}
+  /agent/workspaces/{canvasId}/crews:
+    parameters:
+      - {in: path, name: canvasId, required: true, schema: {type: string}}
+    get:
+      tags: [agent]
+      summary: 列出当前用户画布的 Crew
+      responses:
+        "200": {description: 信封 data 为 CrewView 数组，含配置 revision 与成员版本化技能，不含提示词或凭证}
+        "404": {description: 画布不存在或不属于当前用户}
+    post:
+      tags: [agent]
+      summary: 创建 Crew 与成员完整配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, status, members]
+              properties:
+                name: {type: string, description: 最多 120 字节}
+                description: {type: string, description: 最多 4096 字节}
+                status: {type: string, enum: [enabled, disabled]}
+                members: {type: array, maxItems: 16, items: {$ref: "#/components/schemas/CrewMemberInput"}}
+      responses:
+        "200": {description: 创建后的 CrewView，revision=0}
+        "400": {description: 配置非法或启用 Crew 不恰好有一个启用 Coordinator}
+        "404": {description: 画布不存在或不属于当前用户}
+  /agent/crews/{crewId}:
+    parameters:
+      - {in: path, name: crewId, required: true, schema: {type: string}}
+    get:
+      tags: [agent]
+      summary: 读取 Crew 完整配置
+      responses:
+        "200": {description: CrewView，含 workspaceId、canvasId、revision、coordinatorMemberId 与 members}
+        "404": {description: Crew 不存在或不可见}
+    patch:
+      tags: [agent]
+      summary: CAS 更新 Crew，原子切换 Coordinator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, name, status]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                name: {type: string}
+                description: {type: string}
+                status: {type: string, enum: [enabled, disabled]}
+                coordinatorMemberId: {type: string, description: 必须是此 Crew 内已启用成员；同时切换原 Coordinator 为普通成员}
+      responses:
+        "200": {description: 更新后的 CrewView}
+        "400": {description: 配置非法}
+        "404": {description: Crew 不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict，details.currentRevision 为当前 revision"}
+    delete:
+      tags: [agent]
+      summary: 使用 revision 删除 Crew 配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CrewRevision"}
+      responses:
+        "200": {description: 下一 revision，成员与技能在同一事务删除}
+        "404": {description: Crew 不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
+  /agent/crews/{crewId}/members:
+    parameters:
+      - {in: path, name: crewId, required: true, schema: {type: string}}
+    post:
+      tags: [agent]
+      summary: 使用 Crew revision 添加成员，仅影响新 Run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CrewMemberMutation"}
+      responses:
+        "200": {description: 更新后的完整 CrewView}
+        "400": {description: 成员非法、重复排序或破坏 Coordinator 约束}
+        "404": {description: Crew 不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
+  /agent/crew-members/{memberId}:
+    parameters:
+      - {in: path, name: memberId, required: true, schema: {type: string}}
+    patch:
+      tags: [agent]
+      summary: 使用 Crew revision 替换成员配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CrewMemberMutation"}
+      responses:
+        "200": {description: 更新后的完整 CrewView}
+        "400": {description: 非法权限、预算、焦点节点或成员配置}
+        "404": {description: 成员不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
+    delete:
+      tags: [agent]
+      summary: 使用 Crew revision 删除成员
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CrewRevision"}
+      responses:
+        "200": {description: 更新后的完整 CrewView}
+        "400": {description: 不能移除启用 Crew 的唯一 Coordinator}
+        "404": {description: 成员不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
+  /agent/crew-members/{memberId}/skills:
+    parameters:
+      - {in: path, name: memberId, required: true, schema: {type: string}}
+    put:
+      tags: [agent]
+      summary: CAS 替换成员技能，清空传空数组
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, skills]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                skills:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [skillId, skillVersionId, position, enabled]
+                    properties:
+                      skillId: {type: string}
+                      skillVersionId: {type: string}
+                      position: {type: integer, minimum: 0}
+                      enabled: {type: boolean}
+      responses:
+        "200": {description: 完整 CrewView；成员技能包含 contentHash、fileCount、totalBytes、source=crew_member}
+        "400": {description: 未知、私有、禁用、错误版本技能或容量超限}
+        "404": {description: 成员不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
   /agent/profile:
     get:
       tags: [agent]
@@ -1470,6 +1619,57 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    CrewRevision:
+      type: object
+      additionalProperties: false
+      required: [revision]
+      properties:
+        revision: {type: integer, format: int64, minimum: 0}
+    CrewModelConfig:
+      type: object
+      additionalProperties: false
+      required: [model]
+      properties:
+        model: {type: string, maxLength: 200}
+        logicalModelId: {type: string, maxLength: 80}
+        channelId: {type: string, maxLength: 80}
+        channelModelKey: {type: string, maxLength: 200}
+    CrewMemberBudget:
+      type: object
+      additionalProperties: false
+      required: [maxCredits]
+      properties:
+        maxCredits: {type: number, exclusiveMinimum: true, minimum: 0, maximum: 100000}
+        maxSteps: {type: integer, minimum: 0, maximum: 9999, description: 0 表示沿用无固定步数限制}
+        maxGenerationTasks: {type: integer, minimum: 0, maximum: 100}
+        maxVideoSeconds: {type: integer, minimum: 0, maximum: 86400}
+    CrewMemberInput:
+      type: object
+      additionalProperties: false
+      required: [name, role, modelConfig, permissionMode, budget, enabled, position]
+      properties:
+        name: {type: string, description: 非空且最多 120 字节}
+        role: {type: string, enum: [coordinator, member]}
+        modelConfig: {$ref: "#/components/schemas/CrewModelConfig"}
+        permissionMode: {type: string, enum: [read_only, propose]}
+        focusNodeIds: {type: array, maxItems: 8, uniqueItems: true, items: {type: string}, description: 必须来自此画布}
+        budget: {$ref: "#/components/schemas/CrewMemberBudget"}
+        enabled: {type: boolean}
+        position: {type: integer, minimum: 0, maximum: 1024}
+    CrewMemberMutation:
+      type: object
+      additionalProperties: false
+      required: [revision, name, role, modelConfig, permissionMode, budget, enabled, position]
+      properties:
+        revision: {type: integer, format: int64, minimum: 0}
+        name: {type: string}
+        role: {type: string, enum: [coordinator, member]}
+        modelConfig: {$ref: "#/components/schemas/CrewModelConfig"}
+        permissionMode: {type: string, enum: [read_only, propose]}
+        focusNodeIds: {type: array, maxItems: 8, uniqueItems: true, items: {type: string}}
+        budget: {$ref: "#/components/schemas/CrewMemberBudget"}
+        enabled: {type: boolean}
+        position: {type: integer, minimum: 0, maximum: 1024}
     ToolMutation:
       type: object
       required: [type, label, prompt]

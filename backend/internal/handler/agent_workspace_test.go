@@ -42,9 +42,15 @@ func workspaceHTTP(t *testing.T) func(string, string, string, bool) *httptest.Re
 		}
 	}
 	router := gin.New()
-	RegisterAgentWorkspaceRoutes(router.Group("/api"), service.New(repository.New(db), t.TempDir()))
+	svc := service.New(repository.New(db), t.TempDir())
+	RegisterAgentWorkspaceRoutes(router.Group("/api"), svc)
+	RegisterAgentCrewRoutes(router.Group("/api"), svc)
 	return func(method, path, body string, authenticated bool) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "/api/agent/workspaces/"+path, strings.NewReader(body))
+		url := "/api/agent/workspaces/" + path
+		if strings.HasPrefix(path, "/api/") {
+			url = path
+		}
+		r := httptest.NewRequest(method, url, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		if authenticated {
 			r.AddCookie(&http.Cookie{Name: service.SessionCookieName, Value: "workspace-session.token"})
@@ -93,6 +99,8 @@ func TestAgentWorkspaceHTTPRevisionAndOwnership(t *testing.T) {
 		t.Fatalf("missing skills: %d %s", w.Code, w.Body)
 	}
 	for _, body := range []string{`{"revision":2,"skills":null}`, `{"revision":2,"skills":[{"skillId":"missing","skillVersionId":"v","position":0}]}`} {
-		if w := call("PUT", "own/skills", body, true); w.Code != 400 { t.Fatalf("incomplete selection: %d %s",w.Code,w.Body) }
+		if w := call("PUT", "own/skills", body, true); w.Code != 400 {
+			t.Fatalf("incomplete selection: %d %s", w.Code, w.Body)
+		}
 	}
 }

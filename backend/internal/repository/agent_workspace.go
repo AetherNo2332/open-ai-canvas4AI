@@ -53,6 +53,12 @@ func (r *Repository) AgentWorkspaceSnapshot(userID, canvasID string) (*model.Age
 	return &snapshot, nil
 }
 
+func (r *Repository) AgentWorkspaceByID(userID, workspaceID string) (*model.AgentWorkspace, error) {
+	var workspace model.AgentWorkspace
+	err := r.db.Where("id = ? AND user_id = ?", workspaceID, userID).First(&workspace).Error
+	return &workspace, err
+}
+
 func (r *Repository) UpdateAgentWorkspace(userID, canvasID string, expectedRevision int64, agentsMD, agentsMDHash string) (int64, error) {
 	var revision int64
 	err := r.db.Transaction(func(tx *gorm.DB) error {

@@ -14,7 +14,7 @@ import (
 // CurrentSchemaVersion follows upstream migrations through v43; our Agent
 // migrations register after that upstream range as 44+. When a future upstream
 // sync takes 44+, shift our block up again and extend the relocation table.
-const CurrentSchemaVersion int64 = 52
+const CurrentSchemaVersion int64 = 53
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 43
@@ -173,6 +173,9 @@ var schemaMigrations = []migration{
 	}},
 	{version: 52, name: "agent_workspaces", checksum: "sha256:agent-workspaces-v52-20261005", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.AgentWorkspace{}, &model.AgentWorkspaceSkill{})
+	}},
+	{version: 53, name: "agent_crews", checksum: "sha256:agent-crews-v53-20261005", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentCrew{}, &model.AgentCrewMember{}, &model.AgentCrewMemberSkill{})
 	}},
 }
 
