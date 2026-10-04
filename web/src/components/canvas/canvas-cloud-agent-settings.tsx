@@ -52,9 +52,9 @@ type AgentSettingsProps = {
 };
 
 const permissionOptions: Array<{ value: AgentPermissionMode; label: string; description: string; icon: typeof ShieldCheck; color: string }> = [
-    { value: "read_only", label: "只读", description: "只分析和建议", icon: LockKeyhole, color: "#4f7cff" },
-    { value: "request_approval", label: "请求审批", description: "写入和生成前确认", icon: ShieldCheck, color: "#b58336" },
-    { value: "auto", label: "自动执行", description: "预算内执行已授权工具", icon: Sparkles, color: "#429477" },
+    { value: "read_only", label: "只读", description: "只分析和建议", icon: LockKeyhole, color: "var(--primary)" },
+    { value: "request_approval", label: "请求审批", description: "写入和生成前确认", icon: ShieldCheck, color: "var(--palette-status-warning)" },
+    { value: "auto", label: "自动执行", description: "预算内执行已授权工具", icon: Sparkles, color: "var(--palette-status-success)" },
 ];
 
 const contextOptions: Array<{ value: AgentContextKey; label: string; description: string }> = [
@@ -246,7 +246,7 @@ function ProfileWorkspace({ props, theme }: { props: AgentSettingsProps; theme: 
                 <span className="text-[10px] leading-4 opacity-45">保存后只影响下一次新运行。正在运行的 Agent 会固定原快照。</span>
                 <Button type="primary" onClick={() => void save()} loading={props.profileSaving} disabled={disabled || !draft.dirty}>保存</Button>
             </div>
-            {error ? <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "#d66b6b1f", color: "#d66b6b" }}>{error}</div> : null}
+            {error ? <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "color-mix(in srgb, var(--palette-status-error) 12%, transparent)", color: "var(--palette-status-error)" }}>{error}</div> : null}
         </div>
     );
 }
@@ -269,7 +269,7 @@ function profileSummary(view: AgentProfileView | null) {
 function scopeLabel(scope: AgentProfileScope) { return scope === "user" ? "用户偏好" : scope === "project" ? "项目偏好" : "当前画布偏好"; }
 
 function ProfileError({ message, onRetry, theme }: { message: string; onRetry: () => Promise<void>; theme: CanvasTheme }) {
-    return <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "#d6a24a1f", color: theme.node.text }}><div>{message}</div><button type="button" className="mt-2 underline" onClick={() => void onRetry()}>重新读取</button></div>;
+    return <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "color-mix(in srgb, var(--palette-status-warning) 12%, transparent)", color: theme.node.text }}><div>{message}</div><button type="button" className="mt-2 underline" onClick={() => void onRetry()}>重新读取</button></div>;
 }
 
 function SkillRow({ skill, theme, selected, installed, selectable, onToggle, onInstall }: { skill: Skill; theme: CanvasTheme; selected: boolean; installed: boolean; selectable: boolean; onToggle: () => void; onInstall: () => void }) {

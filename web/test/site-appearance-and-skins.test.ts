@@ -4,10 +4,10 @@ import { applySkinTheme, DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition, getSkinA
 import { normalizePublicAppearance } from "../src/stores/use-appearance-store";
 
 describe("site appearance and editable skin library", () => {
-    test("classic preserves foundation tokens and applies only primary button fills", () => {
+    test("classic applies the complete administrator skin just like custom skins", () => {
         expect(DEFAULT_CLASSIC_SKIN.locked).toBe(true);
-        expect(getSkinAntOverrides(DEFAULT_CLASSIC_SKIN, "light")).toEqual({});
-        expect(getSkinAntOverrides(DEFAULT_CLASSIC_SKIN, "dark")).toEqual({});
+        expect(getSkinAntOverrides(DEFAULT_CLASSIC_SKIN, "light")).toMatchObject({ primary: "#c8102e", borderRadius: 0 });
+        expect(getSkinAntOverrides(DEFAULT_CLASSIC_SKIN, "dark")).toMatchObject({ primary: "#e05163", borderRadius: 0 });
 
         const removed: string[] = [];
         const assigned = new Map<string, string>();
@@ -22,9 +22,10 @@ describe("site appearance and editable skin library", () => {
         } as unknown as Document;
         applySkinTheme(DEFAULT_CLASSIC_SKIN, "light", target);
         expect(removed.length).toBeGreaterThan(60);
-        expect(assigned.size).toBe(4);
+        expect(assigned.size).toBeGreaterThan(60);
         expect(assigned.get("--button-primary-bg")).toBe("#c8102e");
-        expect(assigned.has("--background")).toBe(false);
+        expect(assigned.get("--background")).toBe(DEFAULT_CLASSIC_SKIN.tokens.light.canvas);
+        expect(assigned.get("--card-radius")).toBe("0px");
         expect(target.documentElement.dataset.skin).toBe("classic");
     });
 

@@ -1,14 +1,13 @@
 /* Admin console tokens. Scoped only to admin roots.
- * Never alias --workspace-*, --user-*, or --skin-* from the product UI.
- * Surfaces retain admin density; action accents inherit the site skin. */
+ * Retain admin density while surfaces, states and geometry consume the site skin. */
 
 :is([data-admin-root], body.admin-overlays, .admin-drawer, .admin-secondary-drawer, .admin-modal-root, .admin-channel-modal-root, .admin-mobile-navigation-menu) {
     --admin-font: ui-sans-serif, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
     --admin-font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     --admin-space: 8px;
-    --admin-radius-sm: 4px;
-    --admin-radius: 6px;
-    --admin-radius-lg: 8px;
+    --admin-radius-sm: var(--input-radius);
+    --admin-radius: var(--button-radius);
+    --admin-radius-lg: var(--card-radius);
     --admin-control-h: 32px;
     --admin-control-h-sm: 28px;
     --admin-row-h: 36px;
@@ -17,36 +16,36 @@
     --admin-sidebar-width: 208px;
     --admin-sidebar-collapsed: 64px;
     --admin-motion: 120ms ease;
-    --admin-shadow-overlay: 0 16px 40px rgba(15, 23, 42, 0.16);
+    --admin-shadow-overlay: var(--elevation-overlay);
 
-    --admin-canvas: #f7f8fa;
-    --admin-sidebar: #f7f8fa;
-    --admin-surface: #ffffff;
-    --admin-surface-2: #f2f4f7;
-    --admin-surface-3: #ececec;
-    --admin-text: #111111;
-    --admin-text-secondary: #525252;
-    --admin-text-muted: #737373;
-    --admin-text-placeholder: #a3a3a3;
-    --admin-border: rgba(17, 17, 17, 0.1);
-    --admin-border-strong: rgba(17, 17, 17, 0.16);
-    --admin-divider: rgba(17, 17, 17, 0.08);
-    --admin-row-border: rgba(17, 17, 17, 0.06);
-    --admin-row-hover: #f0f0f0;
-    --admin-nav-hover: rgba(17, 17, 17, 0.05);
-    --admin-nav-active: #ececec;
+    --admin-canvas: var(--site-admin-canvas);
+    --admin-sidebar: var(--site-admin-canvas);
+    --admin-surface: var(--site-admin-surface);
+    --admin-surface-2: var(--site-admin-subtle);
+    --admin-surface-3: var(--site-admin-strong);
+    --admin-text: var(--site-text);
+    --admin-text-secondary: var(--site-muted);
+    --admin-text-muted: var(--site-muted);
+    --admin-text-placeholder: var(--control-disabled-fg);
+    --admin-border: var(--site-border);
+    --admin-border-strong: var(--site-control-border);
+    --admin-divider: var(--site-border);
+    --admin-row-border: var(--site-border);
+    --admin-row-hover: var(--surface-hover);
+    --admin-nav-hover: var(--surface-hover);
+    --admin-nav-active: var(--control-selected-bg);
     --admin-nav-active-border: transparent;
     --admin-accent: var(--btn-solid-bg);
     --admin-accent-fg: var(--btn-solid-fg);
-    --admin-focus: rgba(17, 17, 17, 0.28);
-    --admin-status-success: #15803d;
-    --admin-status-warning: #b45309;
-    --admin-status-error: #dc2626;
-    --admin-status-info: #2563eb;
-    --admin-switch-on: #16a34a;
-    --admin-chart-primary: #0f172a;
-    --admin-chart-secondary: #0f766e;
-    --admin-chart-warning: #b45309;
+    --admin-focus: var(--control-focus-ring);
+    --admin-status-success: var(--palette-status-success);
+    --admin-status-warning: var(--palette-status-warning);
+    --admin-status-error: var(--palette-status-error);
+    --admin-status-info: var(--palette-status-loading);
+    --admin-switch-on: var(--control-switch-checked-bg);
+    --admin-chart-primary: var(--primary);
+    --admin-chart-secondary: var(--palette-status-loading);
+    --admin-chart-warning: var(--palette-status-warning);
     --admin-card-shadow: none;
 
     /* Compatibility aliases used by existing admin-ui.css. Independent values, not workspace skins. */
@@ -100,35 +99,35 @@
 
 .dark :is([data-admin-root], .admin-drawer, .admin-secondary-drawer, .admin-modal-root, .admin-channel-modal-root, .admin-mobile-navigation-menu),
 .dark body.admin-overlays {
-    --admin-canvas: #111317;
-    --admin-sidebar: #111317;
-    --admin-surface: #191c21;
-    --admin-surface-2: #23272e;
-    --admin-surface-3: #2a2a2a;
-    --admin-text: #f5f5f5;
-    --admin-text-secondary: #c4c4c4;
-    --admin-text-muted: #8a8a8a;
-    --admin-text-placeholder: #737373;
-    --admin-border: rgba(245, 245, 245, 0.1);
-    --admin-border-strong: rgba(245, 245, 245, 0.16);
-    --admin-divider: rgba(245, 245, 245, 0.08);
-    --admin-row-border: rgba(245, 245, 245, 0.06);
-    --admin-row-hover: #1c1c1c;
-    --admin-nav-hover: rgba(245, 245, 245, 0.05);
-    --admin-nav-active: #222222;
+    --admin-canvas: var(--site-admin-canvas);
+    --admin-sidebar: var(--site-admin-canvas);
+    --admin-surface: var(--site-admin-surface);
+    --admin-surface-2: var(--site-admin-subtle);
+    --admin-surface-3: var(--site-admin-strong);
+    --admin-text: var(--site-text);
+    --admin-text-secondary: var(--site-muted);
+    --admin-text-muted: var(--site-muted);
+    --admin-text-placeholder: var(--control-disabled-fg);
+    --admin-border: var(--site-border);
+    --admin-border-strong: var(--site-control-border);
+    --admin-divider: var(--site-border);
+    --admin-row-border: var(--site-border);
+    --admin-row-hover: var(--surface-hover);
+    --admin-nav-hover: var(--surface-hover);
+    --admin-nav-active: var(--control-selected-bg);
     --admin-nav-active-border: transparent;
     --admin-accent: var(--btn-solid-bg);
     --admin-accent-fg: var(--btn-solid-fg);
-    --admin-focus: rgba(245, 245, 245, 0.28);
-    --admin-status-success: #4ade80;
-    --admin-status-warning: #fbbf24;
-    --admin-status-error: #f87171;
-    --admin-status-info: #60a5fa;
-    --admin-switch-on: #22c55e;
-    --admin-chart-primary: #e8eef6;
-    --admin-chart-secondary: #2dd4bf;
-    --admin-chart-warning: #fbbf24;
-    --admin-shadow-overlay: 0 22px 56px rgba(0, 0, 0, 0.48);
+    --admin-focus: var(--control-focus-ring);
+    --admin-status-success: var(--palette-status-success);
+    --admin-status-warning: var(--palette-status-warning);
+    --admin-status-error: var(--palette-status-error);
+    --admin-status-info: var(--palette-status-loading);
+    --admin-switch-on: var(--control-switch-checked-bg);
+    --admin-chart-primary: var(--primary);
+    --admin-chart-secondary: var(--palette-status-loading);
+    --admin-chart-warning: var(--palette-status-warning);
+    --admin-shadow-overlay: var(--elevation-overlay);
 }
 
 [data-admin-root][data-admin-density="comfortable"] {

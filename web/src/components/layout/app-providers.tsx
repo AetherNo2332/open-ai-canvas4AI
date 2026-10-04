@@ -13,6 +13,7 @@ import { isIsolatedDirectorRepro } from "@/lib/dev-repro";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { applyAppearanceMetadata, useAppearanceStore } from "@/stores/use-appearance-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { useSkinSwitchMotion } from "@/hooks/use-skin-switch-motion";
 
 const ClientRootInit = lazy(() => import("@/components/layout/client-root-init").then((module) => ({ default: module.ClientRootInit })));
 
@@ -23,6 +24,7 @@ function ClientRootBoundary({ children }: { children: ReactNode }) {
 }
 
 export function AppProviders({ children }: { children: ReactNode }) {
+    useSkinSwitchMotion();
     const theme = useActiveTheme();
     const dark = theme === "dark";
     const appearance = useAppearanceStore((state) => state.appearance);

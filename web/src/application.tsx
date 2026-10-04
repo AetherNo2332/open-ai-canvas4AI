@@ -5,6 +5,7 @@ import "./styles/globals.css";
 import "./styles/shared/model-picker.css";
 import "./styles/shared/overlays.css";
 import "./styles/shared/scrollbars.css";
+import "./styles/home-skin.css";
 // 全局自举内置插件注册（editor-shell 等预设以模块副作用注册编辑器插槽）：
 // 冷启动直达编辑器时素材/时间线等插槽不再为空。
 import "@/lib/plugins/builtin";

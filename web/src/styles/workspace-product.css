@@ -275,23 +275,23 @@
     --product-enter: 360ms;
     --product-content-max: 1480px;
     --product-focus-ring: var(--control-focus-ring);
-    --product-accent-blue: #4167bf;
-    --product-accent-green: #287f65;
-    --product-accent-orange: #a46524;
-    --product-accent-pink: #ae4c77;
-    --product-accent-violet: #6b4fc2;
-    --product-accent-cyan: #2f6f8f;
+    --product-accent-blue: var(--primary);
+    --product-accent-green: var(--palette-status-success);
+    --product-accent-orange: var(--palette-status-warning);
+    --product-accent-pink: var(--primary);
+    --product-accent-violet: var(--primary);
+    --product-accent-cyan: var(--palette-status-loading);
 }
 
 .dark .app-user-workspace,
 .dark .app-product-workspace,
 .dark .app-product-overlays {
-    --product-accent-blue: #96b4ff;
-    --product-accent-green: #79cfb1;
-    --product-accent-orange: #edb77c;
-    --product-accent-pink: #efa2c3;
-    --product-accent-violet: #c4b5fd;
-    --product-accent-cyan: #7ec4e0;
+    --product-accent-blue: var(--primary);
+    --product-accent-green: var(--palette-status-success);
+    --product-accent-orange: var(--palette-status-warning);
+    --product-accent-pink: var(--primary);
+    --product-accent-violet: var(--primary);
+    --product-accent-cyan: var(--palette-status-loading);
 }
 .app-product-workspace [data-category="drama"] { --category-accent: var(--product-accent-blue); }
 .app-product-workspace [data-category="ecommerce"] { --category-accent: var(--product-accent-orange); }
@@ -799,7 +799,7 @@
     border-radius: 999px;
     background: var(--user-accent);
     padding: 1px 7px;
-    color: var(--user-accent-foreground, #fff);
+    color: var(--user-accent-foreground, var(--foreground));
     font-size: 10px;
     font-weight: 600;
 }
