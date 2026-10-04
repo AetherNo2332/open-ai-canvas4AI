@@ -395,8 +395,7 @@ export function getAuthSettings() {
             emailCodeRequired: boolean;
             smsBindingAvailable: boolean;
             emailBindingAvailable: boolean;
-            agreementTitle?: string;
-            agreementContent?: string;
+            agreementTitle?: string; agreementContent?: string;
         }
     >("/auth/settings");
 }
