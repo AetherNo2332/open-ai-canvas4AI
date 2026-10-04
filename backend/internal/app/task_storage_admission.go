@@ -27,12 +27,19 @@ func (s *Service) requireStoredFileCapacityForTask(userID string, taskType strin
 	if storedLimit <= 0 {
 		return nil
 	}
-	s.storageMu.Lock()
-	defer s.storageMu.Unlock()
 	storedBytes, err := s.repo.UserStoredFileBytes(userID)
 	if err != nil {
 		return err
 	}
+	// CreateTask 也会在已持有 storageMu 的 Agent 审批与入队事务内被调用
+	// （DecideCloudAgentApproval / enqueueCloudAgentTask 持锁跨 CreateTask，而
+	// sync.Mutex 不可重入）。TryLock 拿不到锁说明处于这类路径：该任务的容量已在
+	// 未持锁的 dry admission 阶段校验过，此处退化为只按已存储字节复核，pending
+	// 计数由持锁方在同一临界区内继续维护。
+	if !s.storageMu.TryLock() {
+		return validateStoredFileCapacity(storedBytes, 0, storedLimit)
+	}
+	defer s.storageMu.Unlock()
 	return validateStoredFileCapacity(storedBytes, s.pendingStorage[userID], storedLimit)
 }
 
