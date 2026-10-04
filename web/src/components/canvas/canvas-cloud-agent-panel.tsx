@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { Button, Dropdown, Input, Popover } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, MoveDiagonal2, RotateCcw, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
 import { saveAs } from "file-saver";
 import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
@@ -84,7 +84,6 @@ import { CanvasAgentSkillLibraryModal } from "./canvas-agent-skill-library-modal
 import { AgentSubagentList, type AgentSubagentAvatarItem } from "./canvas-agent-subagent-list";
 import { CanvasCloudAgentSettings, agentPermissionLabel, agentPermissionMenuItems, agentPermissionVisual, type AgentContextKey } from "./canvas-cloud-agent-settings";
 import { useAgentPanelLayout } from "./use-agent-panel-layout";
-import { useAgentLauncherPosition } from "./use-agent-launcher-position";
 import { AgentWelcome } from "./canvas-agent-welcome";
 import { DEFAULT_CANVAS_APPEARANCE, agentCopy } from "@/lib/canvas/agent-appearance";
 import { live2DModelURL } from "@/services/api/appearance";
@@ -917,34 +916,22 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             <AnimatePresence>
                 {open ? (
                     <motion.aside
-                        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 20, scale: 0.975 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.985 }}
-                        transition={{ duration: reducedMotion ? 0 : 0.26, ease: [0.16, 1, 0.3, 1] }}
-                        className="canvas-agent-panel fixed z-[var(--z-modal-overlay)] flex min-w-0 flex-col overflow-hidden"
+                        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
+                        animate={{ opacity: 1, width: panelLayout.width }}
+                        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
+                        transition={{ duration: reducedMotion ? 0 : 0.42, ease: [0.22, 1, 0.36, 1] }}
+                        className="canvas-agent-panel relative flex min-h-0 min-w-0 shrink flex-col overflow-hidden"
                         style={
-                            { ...panelLayout.style, "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties &
+                            { "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties &
                                 Record<`--${string}`, string>
                         }
                         aria-label="Agent 工作台"
                         data-canvas-no-zoom
                         data-canvas-wheel-scroll
-                        {...panelLayout.pointerHandlers}
                         onWheel={(event) => event.stopPropagation()}
                     >
-                        <div data-agent-resize="north" className="absolute inset-x-5 top-0 z-10 hidden h-2 cursor-n-resize touch-none sm:block" />
-                        <div data-agent-resize="west" className="absolute bottom-5 left-0 top-5 z-10 hidden w-2 cursor-w-resize touch-none sm:block" />
-                        <button
-                            type="button"
-                            aria-label="调整 Agent 面板大小"
-                            title="拖动调整宽高，也可用方向键调整"
-                            data-agent-resize="northwest"
-                            className="agent-panel-resize-corner absolute left-2 top-2 z-10 hidden size-5 cursor-nw-resize touch-none place-items-center rounded-md opacity-60 transition-opacity hover:opacity-100 focus-visible:outline focus-visible:outline-2 sm:grid"
-                            onKeyDown={panelLayout.onResizeKeyDown}
-                            style={{ color: theme.node.muted }}
-                        >
-                            <MoveDiagonal2 className="size-3" aria-hidden="true" />
-                        </button>
+                        {/* 动画只改外层宽度；内容体固定在目标宽度，避免每帧文字重排。 */}
+                        <div className="flex min-h-0 min-w-0 flex-1 flex-col" style={{ width: panelLayout.compact ? "100%" : panelLayout.width }}>
                         <AnimatePresence mode="wait" initial={false}>
                             {view === "settings" ? (
                                 <motion.div key="settings" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
@@ -1022,7 +1009,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                                 .finally(() => setExporting(false));
                                         }}
                                         onSettings={() => setView("settings")}
-                                        onResetLayout={panelLayout.reset}
                                         onCollapse={onCollapse}
                                     />
                                     {run && connectionStatus !== "connected" ? (
@@ -1100,6 +1086,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                 </motion.div>
                             )}
                         </AnimatePresence>
+                        </div>
                     </motion.aside>
                 ) : null}
             </AnimatePresence>
@@ -1141,20 +1128,19 @@ function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onO
         window.addEventListener("resize", resize);
         return () => window.removeEventListener("resize", resize);
     }, []);
-    const height = live ? Math.max(40, Math.min(appearance.avatarHeight, viewport.height - 60, (viewport.width - 40) / 0.75)) : 76;
-    const width = live ? Math.round(height * 0.75) : 76;
-    const { position, dragging, handlers } = useAgentLauncherPosition(onOpen, width, height);
+    const height = live ? Math.max(40, Math.min(appearance.avatarHeight, viewport.height - 60, (viewport.width - 40) / 0.75)) : 64;
+    const width = live ? Math.round(height * 0.75) : 64;
     return (
         <motion.button
             type="button"
             aria-label={`打开${appearance.agentName}`}
-            title={`${approvalPending ? "Agent 等待你的审批" : "打开 Agent 助手"} · 拖动可调整位置，聚焦后可用方向键移动`}
-            className={cn("canvas-agent-launcher fixed z-[var(--z-modal-overlay)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/35", dragging && "is-dragging", live && "canvas-agent-launcher-live2d")}
-            style={{ ...position, width, height, color: theme.node.text, "--canvas-agent-launcher-shadow": theme.spatial.shadow } as CSSProperties}
+            title={approvalPending ? "Agent 等待你的审批" : "打开 Agent 助手"}
+            className="canvas-agent-launcher fixed z-[var(--z-panel-floating)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/35"
+            style={{ right: "var(--canvas-inset-x)", bottom: "var(--canvas-inset-y)", width, height, color: theme.node.text, "--canvas-agent-launcher-shadow": theme.spatial.shadow } as CSSProperties}
             data-canvas-no-zoom
-            {...handlers}
-            whileHover={reducedMotion || dragging ? undefined : { scale: 1.035 }}
-            whileTap={reducedMotion || dragging ? undefined : { scale: 0.96 }}
+            onClick={onOpen}
+            whileHover={reducedMotion ? undefined : { scale: 1.035 }}
+            whileTap={reducedMotion ? undefined : { scale: 0.96 }}
             transition={{ duration: reducedMotion ? 0 : 0.18 }}
         >
             {live ? (
@@ -1178,7 +1164,6 @@ function AgentHeader({
     onNew,
     onHistory,
     onSettings,
-    onResetLayout,
     onCollapse,
     onExport,
     exporting,
@@ -1191,14 +1176,13 @@ function AgentHeader({
     onNew: () => void;
     onHistory: () => void;
     onSettings: () => void;
-    onResetLayout: () => void;
     onCollapse: () => void;
     onExport: () => void;
     exporting: boolean;
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     return (
-        <header data-agent-drag-handle className="agent-panel-header flex shrink-0 items-center gap-3">
+        <header className="agent-panel-header flex shrink-0 items-center gap-3">
             <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="agent-panel-title">
@@ -1215,7 +1199,6 @@ function AgentHeader({
                 </div>
             </div>
             <div className="agent-header-actions flex items-center gap-0.5" style={{ color: theme.node.muted }}>
-                <Button type="text" shape="circle" icon={<RotateCcw className="size-4" />} onClick={onResetLayout} aria-label="恢复 Agent 紧凑窗口" title="恢复默认窗口大小和位置" className="hidden sm:inline-flex" />
                 <Button type="text" shape="circle" icon={<Download className="size-4" />} loading={exporting} onClick={onExport} aria-label="导出 Agent 调试记录" title="导出对话、工具参数、审批和错误（分享前请检查隐私）" />
                 <Button type="text" shape="circle" icon={<MessageSquarePlus className="size-4" />} onClick={onNew} aria-label="新建对话" title="新建对话" />
                 <Button type="text" shape="circle" icon={<History className="size-4" />} onClick={onHistory} aria-label="历史对话" title="历史对话" />
@@ -1380,7 +1363,7 @@ function AgentHistory({
 }) {
     return (
         <div className="canvas-agent-history-root flex min-h-0 min-w-0 flex-1 flex-col">
-            <header data-agent-drag-handle className="agent-panel-header flex shrink-0 items-center gap-2">
+            <header className="agent-panel-header flex shrink-0 items-center gap-2">
                 <Button type="text" shape="circle" icon={<ArrowLeft className="size-4" />} onClick={onBack} aria-label="返回对话" />
                 <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold">历史对话</div>

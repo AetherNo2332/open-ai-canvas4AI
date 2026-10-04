@@ -1,52 +1,22 @@
 import { describe, expect, it } from "bun:test";
-import { changeAgentPanelLayout, clampAgentPanelLayout, defaultAgentPanelLayout, restoreAgentPanelLayout } from "@/lib/canvas/agent-panel-layout";
+import { AGENT_PANEL_MIN_CANVAS_WIDTH, AGENT_PANEL_WIDTH, agentPanelIsCompact, agentPanelWidth } from "@/lib/canvas/agent-panel-layout";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
 import { ApiError } from "@/services/api/request";
 
-const viewport = { width: 1280, height: 800 };
-const start = { left: 816, top: 68, width: 448, height: 720 };
-
 describe("Agent window layout", () => {
-    it("restores the saved size and position", () => {
-        expect(restoreAgentPanelLayout(JSON.stringify(start), viewport)).toEqual(start);
+    it("docks at a fixed width when the viewport is wide enough", () => {
+        expect(agentPanelWidth({ width: 1280, height: 800 })).toBe(AGENT_PANEL_WIDTH);
+        expect(agentPanelIsCompact({ width: 1280, height: 800 })).toBe(false);
     });
-    it("starts within the visible viewport instead of an invisible 840px height", () => {
-        const layout = restoreAgentPanelLayout(null, { width: 1024, height: 650 });
-        expect(layout.height).toBe(626);
-        expect(layout.top).toBe(12);
+    it("shrinks with the viewport only below the dockable threshold", () => {
+        const threshold = AGENT_PANEL_WIDTH + AGENT_PANEL_MIN_CANVAS_WIDTH;
+        expect(agentPanelIsCompact({ width: threshold, height: 800 })).toBe(false);
+        expect(agentPanelIsCompact({ width: threshold - 1, height: 800 })).toBe(true);
+        expect(agentPanelWidth({ width: 700, height: 800 })).toBe(700);
     });
-    it("offers a compact reset without altering a saved window until requested", () => {
-        expect(restoreAgentPanelLayout(JSON.stringify(start), viewport)).toEqual(start);
-        expect(defaultAgentPanelLayout(viewport)).toEqual({ left: 848, top: 148, width: 420, height: 640 });
-    });
-    it("keeps the bottom/right anchor when resizing from top/left", () => {
-        const layout = changeAgentPanelLayout(start, "northwest", -120, 60, viewport);
-        expect(layout).toEqual({ left: 696, top: 128, width: 568, height: 660 });
-        expect(layout.left + layout.width).toBe(start.left + start.width);
-        expect(layout.top + layout.height).toBe(start.top + start.height);
-    });
-    it("resizes one axis at a time on an edge", () => {
-        expect(changeAgentPanelLayout(start, "west", -60, 150, viewport)).toEqual({ ...start, left: 756, width: 508 });
-        expect(changeAgentPanelLayout(start, "north", -60, 150, viewport)).toEqual({ ...start, top: 218, height: 570 });
-    });
-    it("limits resize to viewport and minimum readable size", () => {
-        expect(changeAgentPanelLayout(start, "northwest", -10000, -10000, viewport)).toEqual({ left: 12, top: 12, width: 1252, height: 776 });
-        const small = changeAgentPanelLayout(start, "northwest", 10000, 10000, viewport);
-        expect(small.width).toBe(360);
-        expect(small.height).toBe(420);
-    });
-    it("keeps the title bar reachable when dragging beyond the screen", () => {
-        expect(changeAgentPanelLayout(start, "move", -10000, -10000, viewport)).toEqual({ ...start, left: 12, top: 12 });
-        expect(changeAgentPanelLayout(start, "move", 10000, 10000, viewport)).toEqual({ ...start, left: 820, top: 68 });
-    });
-    it("clamps stale preferences after changing display size", () => {
-        const layout = clampAgentPanelLayout(start, { width: 320, height: 300 });
-        expect(layout).toEqual({ width: 296, height: 276, left: 12, top: 12 });
-    });
-    it("discards malformed, partial and nonnumeric stored preferences", () => {
-        for (const raw of ["invalid json", "null", "{}", '{"width":"448"}', '{"left":12,"top":12,"width":1e999,"height":720}']) {
-            expect(restoreAgentPanelLayout(raw, viewport)).toEqual(restoreAgentPanelLayout(null, viewport));
-        }
+    it("never returns a width wider than the viewport", () => {
+        expect(agentPanelWidth({ width: 320, height: 600 })).toBe(320);
+        expect(agentPanelWidth({ width: 200, height: 600 })).toBe(200);
     });
 });
 

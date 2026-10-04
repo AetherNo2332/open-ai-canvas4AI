@@ -19,9 +19,23 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 ## 画布 Agent 平行窗口
 
-- 已实现：Agent 面板从可拖拽浮窗改为固定在画布右侧的平行窗口（桌面宽 440px，顶栏下方到底部安全区；窄屏退化为全宽贴底），展开/收起改为右侧滑入滑出的非线性缓出动画（`cubic-bezier(0.22, 1, 0.36, 1)`，420ms，reduced-motion 直接显隐）。移除面板拖拽移动、四向缩放、窗口位置/大小偏好存储及对应恢复逻辑，Agent 头像启动器固定在画布右下角，不再可拖拽。子智能体头像列表等功能保持原位。
-- 验证：`bun x tsc --noEmit`、`bun run lint`、`bun run build` 通过；`bun test agent-panel-layout.test.ts agent-model-picker.test.ts agent-panel-presentation.test.tsx` 专项通过；全量 2140/2151，余下 11 项失败在未含本改动的 canary 合并快照同样复现（与本次改动无关）。
-- [ ] 浏览器验收：面板在宽/窄视口下与画布左右并行、展开收起动画顺畅、画布可用区域正确避让；Agent 生成节点后画布聚焦仍避让右侧面板；旧用户 localStorage 中的浮窗偏好残留不再影响布局。
+- 已实现：Agent 面板从可拖拽浮窗改为与画布同层的右侧平行窗口（不再是悬浮覆盖）：面板作为画布编辑器 flex 布局的右侧栏（桌面目标宽 440px，窄视口退化为全宽），打开时画布布局压缩向左让位、收起时画布展开还原；展开/收起动画为宽度 + 透明度的非线性缓出曲线（`cubic-bezier(0.22, 1, 0.36, 1)`，420ms，内容体固定目标宽度避免逐帧重排，reduced-motion 直接显隐）。移除面板拖拽移动、四向缩放、窗口位置/大小偏好存储及对应恢复逻辑，Agent 头像启动器固定在画布右下角，不再可拖拽。「技能组合推荐」场景胶囊改为单色（只用墨色透明度分层，不再按场景使用节点调色板颜色）。子智能体头像列表等功能保持原位。
+- 验证：`bun x tsc --noEmit`、`bun run lint` 通过；`bun test agent-panel-layout.test.ts agent-model-picker.test.ts agent-panel-presentation.test.tsx` 专项通过；全量 2140/2151，余下 11 项失败在未含本改动的 canary 合并快照同样复现（与本次改动无关）。
+- [x] 3003 浏览器验收（工作树镜像 `canvas-home-acceptance-3003-web:working-tree` + `open-ai-canvas-backend:local`，1440×900）：面板与画布同层并行——面板作为 `.canvas-editor-shell` 内与 `<section data-canvas-editor>` 平级的 flex 侧栏（`position: relative`，宽 440px、全高），展开时画布编辑区由 1440px 压缩至 1000px 让位，顶栏右缘随 section 同步移至 1000px（用户报告的"顶栏不移动"问题已修复）；启动器固定画布右下角、拖拽不动且不误触；「技能组合推荐」三颗场景胶囊计算样式均为同一墨色 22% 描边 / 72% 文字（单色）；旧 localStorage 浮窗偏好（`canvas:agent-panel-layout:v1` / `canvas:agent-launcher-position:v1`）注入后刷新不影响新布局。展开/收起的非线性缓出（`cubic-bezier(0.22, 1, 0.36, 1)`，420ms，前段 ~25px/帧 → 尾段 1px/帧 减速）已在滑入形态下逐帧采样验证；同层宽度动画复用同一曲线，未再逐帧采样。窄视口全宽让位未在浏览器复验。
+- [ ] 真实 Agent 运行下验证：Agent 创建节点后画布视口聚焦正确避让右侧面板；窄视口（<1000px）下全宽让位表现。
+
+## Agent 欢迎 logo 与通知悬浮位
+
+- 已实现：Agent 面板欢迎区的红色渐变球替换为品牌 logo——复用 `BrandLogo` 组件消费后台外观配置的 `logoUrl` / `darkLogoUrl`（管理员「设置 → 站点外观」上传浅色 / 深色 Logo），明暗主题自动切换，加载失败保持中性占位；后台未配置时回退内置 `/logo.svg` 品牌标，渐变球样式移除。工作台顶栏（`WorkspaceTopBar`）动作区不再放通知铃铛，改为悬浮在顶栏下方右侧页内区域（`top: 顶栏高 + 16px`、`right: 20px`，`--z-toolbar` 层），画布页顶栏本无铃铛、不受影响。
+- 验证：`bun x tsc --noEmit`、`bun run lint`、`bun test agent-panel-presentation.test.tsx` 通过；3003 浏览器验收：`/create` 顶栏动作区仅剩积分 / 主题 / 账户，悬浮铃铛位于 (right 20px, top 72px=56+16)；画布面板欢迎区渲染 `IMG /logo.svg`（naturalWidth > 0）且渐变球节点不存在。
+- [ ] 后台上传自定义浅色 / 深色 Logo 后，面板欢迎区与明暗主题切换的实际显示效果待验收。
+
+## 画布悬浮件避让与引导卡位置
+
+- 已实现：「先选择创作模型」引导卡（`ModelSetupGuide`）从右下角（会盖住 Agent 启动器）移到顶栏下方右侧悬浮位（`top = 顶栏高 56px + 16px`、`right 20px`），入场动画改为自上淡入。工作台顶栏系统公告铃铛保持原位（曾误移后还原）。画布底部工具坞（`CanvasToolbar`）改为相对屏幕水平居中（`fixed left-1/2`）：与左下角缩放控制条、小地图同一条底线并排，面板开合时不随画布压缩移动；窗口较窄、空间不足时按用户决策接受 Agent 平行窗口直接盖住工具坞右端，不再做缩放条上移或坞体偏移等避让。
+- 验证：`bun x tsc --noEmit`、`bun run lint`、`bun test agent-panel-presentation.test.tsx agent-panel-layout.test.ts` 通过。3003 浏览器验收：`/create` 引导卡实测 top 72px / right 20px；画布页工具坞 1280 / 1440 两档实测中心 640 / 720（= 视口中心），与缩放条同线并排（间距 89 / 169px），面板展开（左缘 840 / 1000）时工具坞位置不变且未被遮挡。
+- [ ] 更窄窗口（< ~1240px）下面板盖住工具坞右端的实际观感待用户确认；小地图展开时与工具坞的同线关系待复核。
+- [ ] 真实 Agent 运行下验证：Agent 创建节点后画布视口聚焦正确避让右侧面板。
 
 ## 首页画布入口
 
