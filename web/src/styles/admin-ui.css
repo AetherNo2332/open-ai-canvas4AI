@@ -8703,6 +8703,12 @@
     align-items: center;
 }
 
+.admin-grafana-icon {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+}
+
 .admin-analytics-toolbar :is(.admin-filter-toggle, .admin-list-toolbar-actions .ant-btn, .admin-analytics-range-picker .ant-picker) {
     min-height: 38px;
 }
@@ -8732,6 +8738,22 @@
     gap: 4px;
     border-radius: var(--admin-radius-lg);
     background: var(--admin-layer-1);
+}
+
+.admin-analytics-agent-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    border-radius: var(--admin-radius-lg);
+    background: var(--admin-layer-1);
+}
+
+@media (max-width: 1080px) {
+    .admin-analytics-agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+    .admin-analytics-agent-grid { grid-template-columns: 1fr; }
 }
 
 .admin-analytics-health-card {
@@ -11458,14 +11480,3 @@ html[data-magicui-theme-vt="active"] .admin-shell * {
 .admin-model-editor-modal .admin-model-editor-form > .ant-tabs > .ant-tabs-body-holder > .ant-tabs-content > .ant-tabs-tabpane {
     min-height: 100%;
 }
-.admin-observability-panel { margin-bottom: 24px; }
-.admin-observability-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0 24px; }
-.admin-observability-card-label { color: var(--foreground-muted, #777); font-size: 12px; }
-.admin-observability-card-value { margin-top: 6px; color: var(--foreground); font-size: 22px; font-variant-numeric: tabular-nums; }
-.admin-observability-failures { border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-.admin-observability-failures h3 { margin: 0 0 12px; font-size: 14px; }
-.admin-observability-failure { display: grid; grid-template-columns: 100px 1fr minmax(120px, 240px); gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 12px; }
-.admin-observability-failure code { overflow: hidden; text-overflow: ellipsis; }
-.admin-observability-state { display: flex; align-items: center; gap: 8px; min-height: 88px; justify-content: center; color: var(--foreground-muted, #777); }
-@media (max-width: 900px) { .admin-observability-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-observability-failure { grid-template-columns: 1fr; gap: 4px; } }
-.admin-observability-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }

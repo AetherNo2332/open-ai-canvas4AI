@@ -32,8 +32,27 @@ func TestCommittedObservabilityProjection(t *testing.T) {
 }
 
 func TestObservabilityRejectsNonAdmin(t *testing.T) {
-	_, err := (&Service{}).AdminObservability(&model.User{Role: "user"}, time.Minute)
+	_, err := (&Service{}).AdminObservability(&model.User{Role: "user"}, time.Minute, AnalyticsQuery{})
 	if err == nil {
 		t.Fatal("non-admin accepted")
+	}
+}
+
+func TestCommittedObservabilityProjectionAppliesAnalyticsFilters(t *testing.T) {
+	now := time.Now().UTC()
+	data := repository.ObservabilityData{
+		Runs: []model.CloudAgentExecution{
+			{ID: "run-1", UserID: "user-1", Status: "failed", CreatedAt: now.Add(-time.Minute), UpdatedAt: now},
+			{ID: "run-2", UserID: "user-2", Status: "failed", CreatedAt: now.Add(-time.Minute), UpdatedAt: now},
+		},
+		Tasks: []model.Task{
+			{ID: "task-1", AgentRunID: "run-1", UserID: "user-1", Type: "agent", Model: "model-a", Status: model.TaskStatusFailed, CreatedAt: now.Add(-time.Minute)},
+			{ID: "task-2", AgentRunID: "run-2", UserID: "user-2", Type: "agent", Model: "model-b", Status: model.TaskStatusFailed, CreatedAt: now.Add(-time.Minute)},
+		},
+	}
+	filtered := filterObservabilityData(data, repository.AnalyticsFilter{From: now.Add(-2 * time.Minute), To: now.Add(time.Minute), UserID: "user-1", Model: "model-a", Capability: "text"})
+	snapshot, _ := buildCommittedObservability(filtered, now, 3*time.Minute)
+	if snapshot.Tasks.Total != 1 || len(snapshot.RecentFailures) != 1 {
+		t.Fatalf("filter leaked unrelated agent data: %+v", snapshot)
 	}
 }

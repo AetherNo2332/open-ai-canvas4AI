@@ -1,4 +1,5 @@
 import { http } from "@/services/api/request";
+import type { AnalyticsFilters } from "./auth";
 
 export type AdminObservabilityOverview = {
     available: boolean;
@@ -17,8 +18,8 @@ export type AdminObservabilityOverview = {
     recentFailures: Array<{ taskId: string; runId: string; traceId: string; status: string; reason: string; at: string }>;
 };
 
-export function getAdminObservabilityOverview(windowSeconds = 900) {
-    return http.get<AdminObservabilityOverview>("/admin/observability/overview", { params: { window: windowSeconds } });
+export function getAdminObservabilityOverview(filters: AnalyticsFilters = {}) {
+    return http.get<AdminObservabilityOverview>("/admin/observability/overview", { params: filters });
 }
 
 export function normalizeGrafanaUrl(raw?: string) {
