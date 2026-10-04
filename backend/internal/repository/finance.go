@@ -458,7 +458,7 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 //
 // 占位任务的状态是 holding（见 model.TaskStatusHolding）：worker 的领取条件只匹配
 // queued/running，所以它永远不会被执行；它唯一的作用是让"这一轮的报价"有一个可退的载体。
-func (r *Repository) CreateCloudAgentHoldingTask(task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int) error {
+func (r *Repository) CreateCloudAgentHoldingTask(task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int, skillRows ...[]model.AgentConversationSkill) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
 			return err
@@ -476,7 +476,15 @@ func (r *Repository) CreateCloudAgentHoldingTask(task *model.Task, order *model.
 		if err := repo.EnsureCloudAgent(run); err != nil {
 			return err
 		}
-		return repo.AttachCloudAgentPiSession(run)
+		if err := repo.AttachCloudAgentPiSession(run); err != nil {
+			return err
+		}
+		for _, rows := range skillRows {
+			if err := repo.SaveAgentConversationSkills(rows); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

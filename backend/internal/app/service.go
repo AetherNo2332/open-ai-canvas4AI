@@ -35,6 +35,7 @@ type Service struct {
 	redeemBatchMu            sync.Mutex
 	storageMu                sync.Mutex
 	storageTestMu            sync.Mutex
+	agentSkillDefaultsMu     sync.Mutex
 	workerRuntimeMu          sync.Mutex
 	taskDispatcherWake       chan struct{}
 	agentToolWake            chan struct{}

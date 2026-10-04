@@ -114,7 +114,7 @@ type skillPackageSnapshot struct {
 	contents map[string][]byte
 }
 
-type skillPackageIntegrityError struct { error }
+type skillPackageIntegrityError struct{ error }
 
 func invalidSkillPackage(format string, args ...any) error {
 	return &skillPackageIntegrityError{fmt.Errorf(format, args...)}
@@ -493,6 +493,34 @@ func (s *Service) SkillPackageFilesAtVersion(userID, skillID, versionID, content
 	if err != nil {
 		return nil, err
 	}
+	return s.skillPackageFilesAtFrozenVersion(skill, versionID, contentHash)
+}
+
+// GlobalSkillPackageFilesAtVersion is for trusted server-frozen default selections,
+// never a replacement for user installation authorization on public HTTP reads.
+func (s *Service) GlobalSkillPackageFilesAtVersion(skillID, versionID, contentHash string) ([]SkillPackageFileItem, error) {
+	skill, err := s.publicSkillForFrozenRead(skillID)
+	if err != nil {
+		return nil, err
+	}
+	return s.skillPackageFilesAtFrozenVersion(skill, versionID, contentHash)
+}
+
+func (s *Service) publicSkillForFrozenRead(skillID string) (*model.Skill, error) {
+	skill, err := s.repo.Skill(skillID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, kernel.AgentSkillDefaultsInvalid("默认技能 "+skillID+" 不存在或已停用", map[string]any{"skillId": skillID})
+	}
+	if err != nil {
+		return nil, err
+	}
+	if skill.IsPrivate {
+		return nil, kernel.AgentSkillDefaultsInvalid("默认技能 "+skillID+" 已变为私有技能", map[string]any{"skillId": skillID})
+	}
+	return skill, nil
+}
+
+func (s *Service) skillPackageFilesAtFrozenVersion(skill *model.Skill, versionID, contentHash string) ([]SkillPackageFileItem, error) {
 	version, err := s.repo.SkillVersion(versionID)
 	if err != nil {
 		return nil, err
@@ -537,6 +565,18 @@ func (s *Service) SkillPackageFileAtVersion(userID, skillID, versionID, contentH
 	if err != nil {
 		return nil, err
 	}
+	return s.skillPackageFileAtFrozenVersion(skill, versionID, contentHash, filePath)
+}
+
+func (s *Service) GlobalSkillPackageFileAtVersion(skillID, versionID, contentHash, filePath string) (*SkillPackageFileContent, error) {
+	skill, err := s.publicSkillForFrozenRead(skillID)
+	if err != nil {
+		return nil, err
+	}
+	return s.skillPackageFileAtFrozenVersion(skill, versionID, contentHash, filePath)
+}
+
+func (s *Service) skillPackageFileAtFrozenVersion(skill *model.Skill, versionID, contentHash, filePath string) (*SkillPackageFileContent, error) {
 	version, err := s.repo.SkillVersion(versionID)
 	if err != nil {
 		return nil, err
@@ -576,9 +616,13 @@ func (s *Service) SkillPackageFileAtVersion(userID, skillID, versionID, contentH
 }
 
 func isFrozenSkillText(content []byte) bool {
-	if !utf8.Valid(content) { return false }
+	if !utf8.Valid(content) {
+		return false
+	}
 	for _, char := range string(content) {
-		if unicode.IsControl(char) && char != '\n' && char != '\r' && char != '\t' { return false }
+		if unicode.IsControl(char) && char != '\n' && char != '\r' && char != '\t' {
+			return false
+		}
 	}
 	return true
 }
@@ -1174,6 +1218,11 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 	metadata.Description = truncateSkillMetadata(metadata.Description, 500)
 	metadata.Version = truncateSkillMetadata(metadata.Version, 64)
 	return metadata
+}
+
+func SkillEntryMetadata(content string) (name, description string) {
+	metadata := parseSkillPackageMetadata([]byte(content))
+	return metadata.Name, metadata.Description
 }
 
 // truncateSkillMetadata keeps the result within the validation limit. The

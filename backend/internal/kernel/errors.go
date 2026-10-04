@@ -63,3 +63,18 @@ func Forbidden(message string) *AppError {
 func AgentLeaseLost(message string) *AppError {
 	return &AppError{Status: CodeForbidden, Code: CodeForbidden, Reason: ReasonAgentLeaseLost, Message: message}
 }
+
+// AgentSkillBudgetExceeded 表示技能集合的文件数/字节数/上下文预算超限，details 携带预算名、上限与实际值。
+func AgentSkillBudgetExceeded(details map[string]any) *AppError {
+	return &AppError{Status: CodeInvalidArgument, Code: CodeInvalidArgument, Reason: ReasonAgentSkillBudgetExceeded, Message: "技能集合超出上下文预算", Details: details}
+}
+
+// AgentSkillDefaultsConflict 表示默认技能保存的 revision CAS 失败，details 携带服务端当前 revision。
+func AgentSkillDefaultsConflict(currentRevision int64) *AppError {
+	return &AppError{Status: CodeConflict, Code: CodeConflict, Reason: ReasonAgentSkillDefaultsRevisionConflict, Message: "默认技能配置已被其他管理员修改，请刷新后重试", Details: map[string]any{"currentRevision": currentRevision}}
+}
+
+// AgentSkillDefaultsInvalid 表示默认技能集合引用了不存在、已禁用或私有的技能，message 含技能 ID。
+func AgentSkillDefaultsInvalid(message string, details map[string]any) *AppError {
+	return &AppError{Status: CodeInvalidArgument, Code: CodeInvalidArgument, Reason: ReasonAgentSkillDefaultsInvalid, Message: message, Details: details}
+}
