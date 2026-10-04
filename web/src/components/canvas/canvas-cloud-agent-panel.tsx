@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Button, Dropdown, Input, Popover } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, MoveDiagonal2, RotateCcw, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
@@ -83,7 +83,7 @@ import { useAgentPanelLayout } from "./use-agent-panel-layout";
 import { useAgentLauncherPosition } from "./use-agent-launcher-position";
 import { AgentWelcome } from "./canvas-agent-welcome";
 import { DEFAULT_CANVAS_APPEARANCE, agentCopy } from "@/lib/canvas/agent-appearance";
-import { live2DModelURL } from "@/services/api/appearance";
+import { appearanceAssetURL, live2DModelURL } from "@/services/api/appearance";
 import { Live2DAvatar } from "./live2d-avatar";
 import "./canvas-cloud-agent.css";
 import { createUuid } from "@/lib/client-id";
@@ -1117,22 +1117,24 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
 
 function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onOpen }: { theme: CanvasTheme; statusColor: string; approvalPending: boolean; reducedMotion: boolean; onOpen: () => void }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
+    const appearanceRevision = useAppearanceStore((state) => state.appearance.revision);
     const live = appearance.avatarType === "live2d" && Boolean(appearance.live2dResourceId && appearance.live2dEntry);
+    const png = appearance.avatarType === "png" && Boolean(appearance.avatarResourceId);
     const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
     useEffect(() => {
         const resize = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
         window.addEventListener("resize", resize);
         return () => window.removeEventListener("resize", resize);
     }, []);
-    const height = live ? Math.max(40, Math.min(appearance.avatarHeight, viewport.height - 60, (viewport.width - 40) / 0.75)) : 76;
-    const width = live ? Math.round(height * 0.75) : 76;
+    const height = live || png ? Math.max(40, Math.min(appearance.avatarHeight, viewport.height - 60, (viewport.width - 40) / 0.75)) : 76;
+    const width = live || png ? Math.round(height * 0.75) : 76;
     const { position, dragging, handlers } = useAgentLauncherPosition(onOpen, width, height);
     return (
         <motion.button
             type="button"
             aria-label={`打开${appearance.agentName}`}
             title={`${approvalPending ? "Agent 等待你的审批" : "打开 Agent 助手"} · 拖动可调整位置，聚焦后可用方向键移动`}
-            className={cn("canvas-agent-launcher fixed z-[var(--z-modal-overlay)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/35", dragging && "is-dragging", live && "canvas-agent-launcher-live2d")}
+            className={cn("canvas-agent-launcher fixed z-[var(--z-modal-overlay)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/35", dragging && "is-dragging", (live || png) && "canvas-agent-launcher-live2d")}
             style={{ ...position, width, height, color: theme.node.text, "--canvas-agent-launcher-shadow": theme.spatial.shadow } as CSSProperties}
             data-canvas-no-zoom
             {...handlers}
@@ -1140,7 +1142,9 @@ function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onO
             whileTap={reducedMotion || dragging ? undefined : { scale: 0.96 }}
             transition={{ duration: reducedMotion ? 0 : 0.18 }}
         >
-            {live ? (
+            {png ? (
+                <AgentPNGAvatar url={appearanceAssetURL("agent-avatar", appearanceRevision)} width={width} height={height} fallback={<FluidOrb size={60} color="#7164f6" />} />
+            ) : live ? (
                 <Live2DAvatar url={live2DModelURL(appearance.live2dResourceId, appearance.live2dEntry)} width={width} height={height} reducedMotion={reducedMotion} fallback={<FluidOrb size={60} color="#7164f6" />} />
             ) : (
                 <FluidOrb size={60} color="#7164f6" />
@@ -1150,6 +1154,13 @@ function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onO
             {approvalPending ? <span className="canvas-agent-launcher-badge">待审批</span> : null}
         </motion.button>
     );
+}
+
+function AgentPNGAvatar({ url, width, height, fallback }: { url: string; width: number; height: number; fallback: ReactNode }) {
+    const [failed, setFailed] = useState(false);
+    useEffect(() => setFailed(false), [url]);
+    if (failed) return <>{fallback}</>;
+    return <img src={url} alt="" aria-hidden="true" draggable={false} width={width} height={height} className="pointer-events-none size-full object-contain" onError={() => setFailed(true)} />;
 }
 
 function AgentHeader({

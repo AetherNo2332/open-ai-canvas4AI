@@ -14,6 +14,7 @@ type CanvasAppearance struct {
 	WelcomeDescription string `json:"welcomeDescription"`
 	InputPlaceholder   string `json:"inputPlaceholder"`
 	AvatarType         string `json:"avatarType"`
+	AvatarResourceID   string `json:"avatarResourceId"`
 	Live2DResourceID   string `json:"live2dResourceId"`
 	Live2DEntry        string `json:"live2dEntry"`
 	AvatarHeight       int    `json:"avatarHeight"`
@@ -48,7 +49,7 @@ func normalizeCanvasAppearance(value CanvasAppearance) (CanvasAppearance, error)
 			return value, BadAuthRequest("助手名称不能包含控制字符")
 		}
 	}
-	if value.AvatarType != "orb" && value.AvatarType != "live2d" {
+	if value.AvatarType != "orb" && value.AvatarType != "png" && value.AvatarType != "live2d" {
 		return value, BadAuthRequest("请选择有效的 Agent 形象类型")
 	}
 	if value.AvatarHeight < 120 || value.AvatarHeight > 360 {
@@ -56,6 +57,9 @@ func normalizeCanvasAppearance(value CanvasAppearance) (CanvasAppearance, error)
 	}
 	if value.AvatarType == "live2d" && value.Live2DResourceID == "" {
 		return value, BadAuthRequest("请先导入 Live2D 模型")
+	}
+	if value.AvatarType == "png" && value.AvatarResourceID == "" {
+		return value, BadAuthRequest("请先上传 PNG 形象")
 	}
 	if value.Live2DResourceID == "" {
 		value.Live2DEntry = ""

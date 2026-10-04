@@ -13,9 +13,10 @@ import { WelcomeSetting } from "@/pages/admin/settings/components/welcome-settin
 import { CanvasAppearanceEditor } from "./components/canvas-appearance-editor";
 import { DEFAULT_CANVAS_APPEARANCE, type CanvasAppearance } from "@/lib/canvas/agent-appearance";
 import { deleteAdminResources } from "@/services/api/admin-storage";
-import { getAdminAppearance, resetAdminAppearance, updateAdminAppearance, uploadAppearanceAsset, type AdminAppearance, type AppearanceAssetSlot } from "@/services/api/appearance";
+import { getAdminAppearance, resetAdminAppearance, updateAdminAppearance, uploadAppearanceAsset, type AdminAppearance } from "@/services/api/appearance";
 import { commitPublicAppearance, DEFAULT_PUBLIC_APPEARANCE } from "@/stores/use-appearance-store";
 
+type AppearanceAssetSlot = Exclude<import("@/services/api/appearance").AppearanceAssetSlot, "agent-avatar">;
 type DraftFiles = Record<AppearanceAssetSlot, File | null>;
 type ResetState = Record<AppearanceAssetSlot, boolean>;
 

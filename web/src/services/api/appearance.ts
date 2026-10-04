@@ -61,7 +61,7 @@ export type AdminAppearance = {
     updatedAt?: string;
 };
 
-export type AppearanceAssetSlot = "logo" | "logo-dark" | "video" | "poster";
+export type AppearanceAssetSlot = "logo" | "logo-dark" | "video" | "poster" | "agent-avatar";
 
 export type AppearanceResource = {
     id: string;
@@ -130,4 +130,10 @@ export async function uploadLive2D(file: File) {
 
 export function live2DModelURL(resourceId: string, entry: string, preview = false) {
     return `${apiBaseURL.replace(/\/$/, "")}/${preview ? "admin/settings" : "public"}/appearance/live2d/${encodeURIComponent(resourceId)}/${entry.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+export function appearanceAssetURL(slot: AppearanceAssetSlot, revision?: string) {
+    const base = apiBaseURL.replace(/\/$/, "");
+    const query = revision ? `?rev=${encodeURIComponent(revision)}` : "";
+    return `${base}/public/appearance/assets/${encodeURIComponent(slot)}${query}`;
 }
