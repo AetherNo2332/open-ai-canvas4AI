@@ -36,8 +36,17 @@ func projectCloudAgentVisionRequest(canonical canonicalAgentRequest, budget clou
 				}
 			}
 			key := stringValue(receipt["nodeId"]) + ":" + stringValue(receipt["sha256"])
-			if summaries[key] != nil || len(delivered) > 0 && delivered[0][stringValue(receipt["nodeId"])] == stringValue(receipt["sha256"]) {
+			if summaries[key] != nil {
 				continue
+			}
+			// 送达账本按节点 ID 记录实际附图的 sha256。变参 delivered 是"零个或一个 map"：
+			// len(delivered) 恒为 1，不能当 map 是否有数据用；且对 nil map 取值返回空串，
+			// 会把"收据缺 sha256"误判成"已送达空 SHA"而把图永久藏住。只有账本里存在
+			// 非空 SHA 且与收据一致时才认定已送达。
+			if len(delivered) > 0 && delivered[0] != nil {
+				if sha := delivered[0][stringValue(receipt["nodeId"])]; sha != "" && sha == stringValue(receipt["sha256"]) {
+					continue
+				}
 			}
 			items = append(items, cloudAgentImageInspection{Receipt: receipt, ResourceSHA: stringValue(receipt["sha256"]), ImageURL: stringValue(image["url"])})
 		}

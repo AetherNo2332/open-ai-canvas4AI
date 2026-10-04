@@ -5,6 +5,12 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+# 待测试
+
+## 视觉批次已送达判定修复
+
+`projectCloudAgentVisionRequest` 的送达判定此前用变参切片长度当 map 判空，且 nil map 取值得到空串与"收据缺 sha256"相等，导致收据没有 sha256 的上下文图片每步都被当作已送达剥离、模型永远看不到原图。现要求账本中存在非空 SHA 且与收据一致才判定送达；带图 Agent 对话中"识图回执缺 SHA 的图片被静默替换成占位文本"的现象应消失。**待真实环境验收**：发起一次带图对话，确认模型步请求确实携带原图、超限图片仍按"图超限必须在模型任务准入前拒绝"被拒。
+
 ## 文本模型最大图片引用
 
 管理端文本模型能力编辑器补回「最大图片引用」（`text.references.maxImages`）输入：Agent 模型预检按该字段拒绝超限图片，此前 6141bd68 重写编辑器时丢失该入口，`visionSupported` 开启后任何附图运行都会在 model-preflight 报「当前模型最多支持 0 张」，而管理员在界面上填的「识图批次安全封顶」只影响看图批次切分、不参与预检。`bun test text-capability-editor` 2/2 通过、`bun run build` 通过。**待真实环境验收**：管理端把涉事渠道模型的「最大图片引用」改为 10 并保存，确认 DB `capability_config_json` 中 `text.references.maxImages=10`，再发起一次带图 Agent 对话确认不再出现 model-preflight 400。
