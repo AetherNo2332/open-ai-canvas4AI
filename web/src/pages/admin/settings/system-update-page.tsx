@@ -217,8 +217,8 @@ export default function SystemUpdatePage() {
                             </dl>
                             {status?.latestRelease ? (
                                 <div className="admin-system-update-notes">
-                                    <div className="flex items-center justify-between gap-3"><h3>更新日志</h3><a href={status.latestRelease.url} target="_blank" rel="noreferrer">查看 Release <ExternalLink className="size-3" /></a></div>
-                                    <pre>{status.latestRelease.body || "本版本未填写更新日志。"}</pre>
+                                    <div className="flex items-center justify-between gap-3"><h3>发行说明</h3><a href={status.latestRelease.url} target="_blank" rel="noreferrer">查看 Release <ExternalLink className="size-3" /></a></div>
+                                    <pre>{status.latestRelease.body || "本版本未填写发行说明。"}</pre>
                                 </div>
                             ) : null}
                         </div>
