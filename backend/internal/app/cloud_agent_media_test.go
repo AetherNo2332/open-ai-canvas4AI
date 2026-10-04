@@ -652,10 +652,11 @@ func TestCloudAgentMediaPreviousDraftRequiresNewApproval(t *testing.T) {
 
 func TestCloudAgentAutoMediaSubmitsWithoutApproval(t *testing.T) {
 	s, db, a := agentMediaFixture(t)
-	// Omitted size and duration should be filled by the selected model's catalog
-	// defaults during admission instead of producing a repair turn.
-	a.Size = ""
-	a.Duration = 0
+	// 68427493 统一工具合同后，generate_media 的 video 分支要求 size（minLength 1）
+	// 与 durationSeconds（>0）显式传入，缺省会在本地 schema 预检进入纠偏重试；
+	// auto 模式的承诺是"参数合法时直接提交、不产生审批轮"，本测试按显式参数验证它。
+	a.Size = "9:16"
+	a.Duration = 5
 	run, _ := agentMediaPiRun(t, s, db, a, "auto")
 	var ordersBefore int64
 	if err := db.Model(&model.BillingOrder{}).Count(&ordersBefore).Error; err != nil {

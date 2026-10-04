@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,10 @@ func (r *recordingRunner) Run(_ context.Context, _ string, args, _ []string, std
 }
 
 func TestSetEnvValuePreservesOtherSettings(t *testing.T) {
+	// Windows 的 chmod 只能翻转只读位，文件权限位恒为 0666，0o640 断言只在 POSIX 上成立。
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 不支持 POSIX 文件权限位，0o640 断言无法成立")
+	}
 	directory := t.TempDir()
 	path := filepath.Join(directory, ".env")
 	if err := os.WriteFile(path, []byte("# keep\nCANVAS_IMAGE_TAG=1.0.0\nPOSTGRES_DB=canvas\n"), 0o640); err != nil {

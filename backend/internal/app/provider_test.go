@@ -689,9 +689,15 @@ func TestRunAgentToolTaskFallsBackToolChoiceForImplicitThinking(t *testing.T) {
 	defer server.Close()
 
 	config := providerConfig{BaseURL: server.URL, APIKey: "key", Model: "thinking-model"}
+	// normalizeAgentToolChoice 会在无 tools 时同时剥掉 tools 与 tool_choice；
+	// 本测试针对的是"required 被上游拒绝后逐级回退"，必须带上 tools 才能进入该路径。
 	result, err := runAgentToolTask(context.Background(), canvasGenerationInput{
-		Config:        config,
-		AgentRequests: &agentToolRequests{ChatCompletion: map[string]interface{}{"messages": []interface{}{}, "tool_choice": "required"}},
+		Config: config,
+		AgentRequests: &agentToolRequests{ChatCompletion: map[string]interface{}{
+			"messages":    []interface{}{},
+			"tools":       []interface{}{map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": "noop"}}},
+			"tool_choice": "required",
+		}},
 	})
 	if err != nil {
 		t.Fatalf("runAgentToolTask() error = %v", err)
