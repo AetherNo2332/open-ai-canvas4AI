@@ -58,7 +58,9 @@ func (s *Service) AdminAgentSkillDefaults(actor *model.User) (*AgentSkillDefault
 	view := &AgentSkillDefaultsView{Items: make([]AgentSkillDefaultsViewItem, 0, len(rows))}
 	var revision int64
 	for _, row := range rows {
-		revision = row.Revision
+		if row.Revision > revision {
+			revision = row.Revision
+		}
 		item := AgentSkillDefaultsViewItem{
 			SkillID:        row.SkillID,
 			SkillVersionID: row.SkillVersionID,
