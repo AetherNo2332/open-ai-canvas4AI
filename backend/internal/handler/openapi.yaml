@@ -513,6 +513,50 @@ paths:
           description: 信封 data 仅包含 welcomeEnabled 布尔值，默认 true；Cache-Control 为 no-store
         "500":
           description: 配置读取失败
+  /admin/agent/skill-defaults:
+    get:
+      tags: [admin]
+      summary: 读取管理员 Agent 默认技能配置
+      responses:
+        "200":
+          description: 信封 data 包含 revision、items（skillId、skillName、skillVersionId、versionLabel、position、enabled、status、fileCount、totalBytes）、totalFiles、totalBytes、contextEstimateBytes；合计仅统计启用项，上下文预估为技能包整体读入的保守上限
+        "401": {description: 未登录}
+        "403": {description: 需要管理员权限}
+    put:
+      tags: [admin]
+      summary: 按 revision CAS 整体替换全局默认技能
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, items]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [skillId, skillVersionId, position, enabled]
+                    properties:
+                      skillId: {type: string}
+                      skillVersionId: {type: string}
+                      position: {type: integer}
+                      enabled: {type: integer, enum: [0, 1]}
+      responses:
+        "200": {description: 信封 data 包含新 revision；配置仅影响新会话}
+        "400": {description: 无效引用 agent_skill_defaults_invalid 或超限 agent_skill_budget_exceeded（details 包含 budget、limit、actual）}
+        "401": {description: 未登录}
+        "403": {description: 需要管理员权限}
+        "409": {description: agent_skill_defaults_revision_conflict，details.currentRevision 为当前修订号}
+  /agent/skill-defaults:
+    get:
+      tags: [agent]
+      summary: 读取全局默认技能摘要（登录即可）
+      responses:
+        "200": {description: 信封 data 为 count 与按 position 排序的 skills，每项只含 skillId、skillName；仅启用项，不含正文或管理员版本详情}
+        "401": {description: 未登录}
   /agent/capabilities:
     get:
       tags: [agent]
