@@ -29,7 +29,7 @@ func RegisterAdminObservabilityRoutes(r *gin.RouterGroup, svc *service.Service) 
 			}
 			window = time.Duration(seconds) * time.Second
 		}
-		result, err := svc.AdminObservability(user, window)
+		result, err := svc.AdminObservability(user, window, analyticsQuery(c))
 		if err != nil {
 			failService(c, err)
 			return

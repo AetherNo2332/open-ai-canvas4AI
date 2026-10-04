@@ -424,8 +424,8 @@
     aspect-ratio: 4 / 5;
     overflow: hidden;
     border-radius: 8px;
-    background: #08090c;
-    color: #fff;
+    background: var(--surface);
+    color: var(--foreground);
 }
 
 .admin-appearance-preview-stage video,
@@ -579,7 +579,7 @@
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
     border-radius: calc(var(--r-md) - 2px);
-    background: #090a0d;
+    background: var(--surface);
     padding: 12px;
 }
 
@@ -589,7 +589,7 @@
     align-items: flex-end;
     gap: 7px;
     border-radius: calc(var(--r-sm) - 1px);
-    background: #111318;
+    background: var(--surface);
     padding: 11px;
 }
 
@@ -7947,7 +7947,7 @@
 .admin-api-log-media-modal-root .ant-modal-body {
     overflow: hidden;
     border-radius: 8px;
-    background: #000;
+    background: var(--surface);
     padding: 0;
 }
 
@@ -8703,6 +8703,12 @@
     align-items: center;
 }
 
+.admin-grafana-icon {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+}
+
 .admin-analytics-toolbar :is(.admin-filter-toggle, .admin-list-toolbar-actions .ant-btn, .admin-analytics-range-picker .ant-picker) {
     min-height: 38px;
 }
@@ -8732,6 +8738,22 @@
     gap: 4px;
     border-radius: var(--admin-radius-lg);
     background: var(--admin-layer-1);
+}
+
+.admin-analytics-agent-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    border-radius: var(--admin-radius-lg);
+    background: var(--admin-layer-1);
+}
+
+@media (max-width: 1080px) {
+    .admin-analytics-agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+    .admin-analytics-agent-grid { grid-template-columns: 1fr; }
 }
 
 .admin-analytics-health-card {
@@ -9880,17 +9902,17 @@
 :root:not(.dark) .admin-model-editor-drawer .ant-drawer-header,
 :root:not(.dark) .admin-model-editor-drawer .ant-drawer-footer {
     border-color: rgba(17, 17, 17, 0.15);
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer .ant-drawer-body,
 :root:not(.dark) .admin-drawer.admin-model-editor-drawer .ant-drawer-footer {
-    background: #f6f6f6;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-section {
     border: 1px solid rgba(17, 17, 17, 0.15);
-    background: #ffffff;
+    background: var(--surface);
     box-shadow: 0 1px 3px rgb(17 17 17 / 0.055);
 }
 
@@ -9901,46 +9923,46 @@
 :root:not(.dark) .admin-price-tier-mode-control .ant-segmented,
 :root:not(.dark) .admin-price-tier-billing-mode .ant-segmented {
     border-color: rgba(17, 17, 17, 0.18);
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-price-tier-card {
     border-color: rgba(17, 17, 17, 0.1);
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-price-tier-panel {
-    background: #f8f8f8;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer .admin-capability-reference-card,
 :root:not(.dark) .admin-model-editor-drawer .admin-capability-protocol-card {
     border-color: rgba(17, 17, 17, 0.18);
-    background: #f7f7f7;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer [role="radio"] {
     border-color: rgba(17, 17, 17, 0.25);
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer [role="radio"]:hover {
     border-color: rgba(17, 17, 17, 0.4);
-    background: #f8fafc;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer [role="radio"][aria-checked="true"] {
     border-color: rgba(17, 17, 17, 0.7);
-    background: #ececec;
+    background: var(--secondary);
     box-shadow: inset 0 0 0 1px rgb(17 17 17 / 0.08);
 }
 
 :root:not(.dark) .admin-model-editor-drawer :is(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select-selector, .ant-segmented) {
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-section-heading h2 {
-    color: #1f1f1f;
+    color: var(--foreground);
 }
 
 :root:not(.dark) .admin-model-editor-drawer .ant-form-item-label > label {
@@ -9950,13 +9972,13 @@
 
 :root:not(.dark) .admin-model-editor-footer-actions {
     border-color: rgba(17, 17, 17, 0.15);
-    background: #ffffff;
+    background: var(--surface);
     box-shadow: 0 6px 20px rgb(17 17 17 / 0.08);
 }
 
 :root:not(.dark) .admin-price-tier-mode-control .ant-segmented-item-selected,
 :root:not(.dark) .admin-price-tier-billing-mode .ant-segmented-item-selected {
-    background: #ececec;
+    background: var(--secondary);
     box-shadow: 0 1px 2px rgb(17 17 17 / 0.08);
 }
 
@@ -11404,7 +11426,7 @@ html[data-magicui-theme-vt="active"] .admin-shell * {
     margin-top: 8px;
     border-radius: 4px;
     padding: 4px 8px;
-    color: #ffffff;
+    color: var(--foreground);
     font-size: var(--fs-micro);
     line-height: 1.4;
 }
@@ -11458,14 +11480,3 @@ html[data-magicui-theme-vt="active"] .admin-shell * {
 .admin-model-editor-modal .admin-model-editor-form > .ant-tabs > .ant-tabs-body-holder > .ant-tabs-content > .ant-tabs-tabpane {
     min-height: 100%;
 }
-.admin-observability-panel { margin-bottom: 24px; }
-.admin-observability-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0 24px; }
-.admin-observability-card-label { color: var(--foreground-muted, #777); font-size: 12px; }
-.admin-observability-card-value { margin-top: 6px; color: var(--foreground); font-size: 22px; font-variant-numeric: tabular-nums; }
-.admin-observability-failures { border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-.admin-observability-failures h3 { margin: 0 0 12px; font-size: 14px; }
-.admin-observability-failure { display: grid; grid-template-columns: 100px 1fr minmax(120px, 240px); gap: 12px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 12px; }
-.admin-observability-failure code { overflow: hidden; text-overflow: ellipsis; }
-.admin-observability-state { display: flex; align-items: center; gap: 8px; min-height: 88px; justify-content: center; color: var(--foreground-muted, #777); }
-@media (max-width: 900px) { .admin-observability-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-observability-failure { grid-template-columns: 1fr; gap: 4px; } }
-.admin-observability-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }

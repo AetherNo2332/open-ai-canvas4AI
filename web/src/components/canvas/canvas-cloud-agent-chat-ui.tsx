@@ -400,12 +400,12 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
     return (
         <div className="agent-status-message flex items-start gap-2">
             <AgentTimelineMarker theme={theme} tone="approval" icon={<CircleAlert className="size-3.5" />} />
-            <div className="agent-pending-tool min-w-0 flex-1 rounded-lg border py-2 pl-3 pr-3" style={{ borderColor: "rgba(249,115,22,.22)", background: "rgba(249,115,22,.05)", color: theme.node.text }}>
+            <div className="agent-pending-tool min-w-0 flex-1 rounded-lg border py-2 pl-3 pr-3" style={{ borderColor: "color-mix(in srgb, var(--palette-status-warning) 22%, transparent)", background: "color-mix(in srgb, var(--palette-status-warning) 5%, transparent)", color: theme.node.text }}>
                 <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold leading-5">
                             <span>需要你的确认</span>
-                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[var(--fs-label)] font-medium" style={{ color: "#f97316", background: "rgba(249,115,22,.1)" }}>
+                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[var(--fs-label)] font-medium" style={{ color: "var(--palette-status-warning)", background: "color-mix(in srgb, var(--palette-status-warning) 10%, transparent)" }}>
                                 等待确认
                             </span>
                         </div>
@@ -440,7 +440,7 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
                         <Button danger size="small" className="!h-8 flex-1" icon={<XCircle className="size-3.5" />} onClick={() => onReject?.()}>
                             暂不执行
                         </Button>
-                        <Button size="small" className="!h-8 flex-1" icon={<CheckCircle2 className="size-3.5" />} style={{ borderColor: "rgba(22,163,74,.42)", color: "#16a34a", background: "transparent" }} onClick={() => onApprove?.()}>
+                        <Button size="small" className="!h-8 flex-1" icon={<CheckCircle2 className="size-3.5" />} style={{ borderColor: "color-mix(in srgb, var(--palette-status-success) 42%, transparent)", color: "var(--palette-status-success)", background: "transparent" }} onClick={() => onApprove?.()}>
                             确认执行
                         </Button>
                     </div>
@@ -456,7 +456,7 @@ function ImpactMetric({ label, value, attention = false, theme }: { label: strin
             <div className="text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
                 {label}
             </div>
-            <div className="mt-0.5 text-sm font-semibold tabular-nums" style={{ color: attention ? "#d97706" : theme.node.text }}>
+            <div className="mt-0.5 text-sm font-semibold tabular-nums" style={{ color: attention ? "var(--palette-status-warning)" : theme.node.text }}>
                 {value}
             </div>
         </div>
@@ -682,7 +682,7 @@ export function AgentPlanBar({ items, theme, minimized, onToggle, terminal = fal
     return (
         <div className="agent-plan-bar mx-3 mb-2 overflow-hidden rounded-xl" style={{ color: theme.node.text }}>
             <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left focus-visible:outline focus-visible:outline-2" aria-expanded={!minimized} onClick={onToggle}>
-                <ListChecks className="size-3.5 shrink-0" style={{ color: allDone ? "#429477" : theme.node.muted }} />
+                <ListChecks className="size-3.5 shrink-0" style={{ color: allDone ? "var(--palette-status-success)" : theme.node.muted }} />
                 <span className="text-xs font-semibold">本轮待办</span>
                 <span className="text-[11px] tabular-nums opacity-50">
                     {doneCount}/{items.length}
@@ -700,7 +700,7 @@ export function AgentPlanBar({ items, theme, minimized, onToggle, terminal = fal
                         const Icon = done ? CheckCircle2 : terminal ? CircleAlert : doing ? LoaderCircle : CircleDot;
                         return (
                             <li key={entry.id} className="flex min-w-0 items-start gap-1.5 text-xs">
-                                <Icon className={doing && !terminal ? "mt-[3px] size-3 shrink-0 animate-spin" : "mt-[3px] size-3 shrink-0"} style={{ color: done ? "#429477" : terminal ? theme.node.muted : doing ? theme.accent.primary : theme.node.muted }} />
+                                <Icon className={doing && !terminal ? "mt-[3px] size-3 shrink-0 animate-spin" : "mt-[3px] size-3 shrink-0"} style={{ color: done ? "var(--palette-status-success)" : terminal ? theme.node.muted : doing ? theme.accent.primary : theme.node.muted }} />
                                 <span className={done ? "min-w-0 break-words line-through opacity-50" : terminal ? "min-w-0 break-words opacity-55" : "min-w-0 break-words"}>{entry.title}</span>
                             </li>
                         );
@@ -1319,7 +1319,7 @@ export function AgentPanelTabs<T extends string>({
  * "这是谁的一行"无关。
  */
 function AgentTimelineMarker({ theme, tone, icon }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; tone: "agent" | "muted" | "approval" | "error"; icon: ReactNode }) {
-    const color = tone === "error" ? "#ef4444" : tone === "approval" ? "#f97316" : tone === "agent" ? theme.accent.primary : theme.node.muted;
+    const color = tone === "error" ? "#ef4444" : tone === "approval" ? "var(--palette-status-warning)" : tone === "agent" ? theme.accent.primary : theme.node.muted;
     return (
         <span className="agent-timeline-marker relative" aria-hidden="true">
             <span className="relative grid size-5 place-items-center rounded-full" style={{ background: tone === "agent" ? theme.accent.primarySoft : theme.node.fill, color }}>
@@ -1374,11 +1374,11 @@ function toolCardState(title: string, text: string, detail?: unknown) {
     // 失败时优先显示稳定归类（"参数不符合契约"/"画布状态已变化"/"模型输出问题"…）：
     // 它比"执行失败"更能说明下一步该做什么（handoff 工作项 B 的分类）。
     const errorClassLabel = agentToolErrorClassLabel(detail);
-    if (status === "completed") return { label: "已完成", color: "#16a34a", softBg: "rgba(22,163,74,.04)", icon: <CheckCircle2 className="size-4" />, isError: false };
-    if (status === "failed") return { label: errorClassLabel ?? "执行失败", color: "#dc2626", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
-    if (status === "noop") return { label: "未生效", color: "#d97706", softBg: "rgba(217,119,6,.04)", icon: <CircleAlert className="size-4" />, isError: false };
-    if (status === "rejected") return { label: errorClassLabel ?? "拒绝执行", color: "#dc2626", softBg: "rgba(220,38,38,.04)", icon: <XCircle className="size-4" />, isError: true };
-    return { label: "处理中", color: "#64748b", softBg: "rgba(100,116,139,.04)", icon: <CircleDot className="size-4" />, isError: false };
+    if (status === "completed") return { label: "已完成", color: "var(--palette-status-success)", softBg: "color-mix(in srgb, var(--palette-status-success) 4%, transparent)", icon: <CheckCircle2 className="size-4" />, isError: false };
+    if (status === "failed") return { label: errorClassLabel ?? "执行失败", color: "var(--palette-status-error)", softBg: "color-mix(in srgb, var(--palette-status-error) 4%, transparent)", icon: <XCircle className="size-4" />, isError: true };
+    if (status === "noop") return { label: "未生效", color: "var(--palette-status-warning)", softBg: "color-mix(in srgb, var(--palette-status-warning) 4%, transparent)", icon: <CircleAlert className="size-4" />, isError: false };
+    if (status === "rejected") return { label: errorClassLabel ?? "拒绝执行", color: "var(--palette-status-error)", softBg: "color-mix(in srgb, var(--palette-status-error) 4%, transparent)", icon: <XCircle className="size-4" />, isError: true };
+    return { label: "处理中", color: "var(--muted-foreground)", softBg: "color-mix(in srgb, var(--muted-foreground) 4%, transparent)", icon: <CircleDot className="size-4" />, isError: false };
 }
 
 function objectField(value: unknown, key: string) {

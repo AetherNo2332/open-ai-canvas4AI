@@ -6,10 +6,10 @@ import { getIsolatedAdminAntTheme } from "../src/pages/admin/theme/admin-ant-the
 
 describe("shared action colors and focus feedback", () => {
     for (const dark of [false, true]) {
-        test(`classic solid tokens remain monochrome beneath the button fill adapter in ${dark ? "dark" : "light"} mode`, () => {
+        test(`classic actions follow the site's palette in ${dark ? "dark" : "light"} mode`, () => {
             const product = getAntThemeConfig(dark, DEFAULT_CLASSIC_SKIN);
             const admin = getIsolatedAdminAntTheme(dark, DEFAULT_CLASSIC_SKIN);
-            expect(product.components?.Button?.colorPrimary).toBe(dark ? "#f5f5f5" : "#171717");
+            expect(product.components?.Button?.colorPrimary).toBe(DEFAULT_CLASSIC_SKIN.tokens[dark ? "dark" : "light"].primary);
             expect(admin.components?.Button?.colorPrimary).toBe(product.components?.Button?.colorPrimary);
             expect(admin.components?.Button?.primaryColor).toBe(product.components?.Button?.primaryColor);
         });

@@ -1,26 +1,27 @@
 import type { ThemeConfig } from "antd";
 import { theme as antdTheme } from "antd";
-import { getSkinAntOverrides, normalizeSkinID } from "@/lib/skin-themes";
+import { getSkinAntOverrides, normalizeSkinID, normalizeSkinDefinition } from "@/lib/skin-themes";
 
 /** 后台保留独立密度与表面，主操作颜色继承站点皮肤。 */
 export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "classic"): ThemeConfig {
     const skin = getSkinAntOverrides(skinID, dark ? "dark" : "light");
-    const text = dark ? "#f5f5f5" : "#111111";
-    const textSecondary = dark ? "#c4c4c4" : "#525252";
-    const canvas = dark ? "#111317" : "#f7f8fa";
-    const surface = dark ? "#191c21" : "#ffffff";
-    const surfaceMuted = dark ? "#23272e" : "#f2f4f7";
-    const border = dark ? "rgba(245, 245, 245, 0.12)" : "rgba(17, 17, 17, 0.12)";
+    const colors = normalizeSkinDefinition(skinID).tokens[dark ? "dark" : "light"];
+    const text = colors.text;
+    const textSecondary = colors.textMuted;
+    const canvas = colors.adminBackground;
+    const surface = colors.adminSurface;
+    const surfaceMuted = colors.adminSubtle;
+    const border = colors.controlBorder;
     const primary = skin.primary || (dark ? "#f5f5f5" : "#171717");
     const primaryFg = skin.primaryForeground || (dark ? "#171717" : "#ffffff");
     const hover = skin.primaryHover || (dark ? "#ffffff" : "#303030");
     const active = skin.primaryActive || (dark ? "#e5e5e5" : "#404040");
-    const danger = dark ? "#f87171" : "#dc2626";
-    const success = dark ? "#4ade80" : "#15803d";
-    const warning = dark ? "#fbbf24" : "#b45309";
-    const info = dark ? "#60a5fa" : "#2563eb";
-    const switchOn = dark ? "#22c55e" : "#16a34a";
-    const switchOff = dark ? "#3f4b5a" : "#cbd5e1";
+    const danger = colors.danger;
+    const success = colors.success;
+    const warning = colors.warning;
+    const info = colors.info;
+    const switchOn = colors.switchChecked;
+    const switchOff = colors.switchUnchecked;
 
     return {
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
@@ -29,9 +30,9 @@ export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "class
             fontFamily: 'ui-sans-serif, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif',
             fontSize: 13,
             fontSizeSM: 12,
-            borderRadius: 6,
-            borderRadiusLG: 8,
-            borderRadiusSM: 4,
+            borderRadius: skin.buttonRadius ?? 0,
+            borderRadiusLG: skin.overlayRadius ?? 0,
+            borderRadiusSM: skin.inputRadius ?? 0,
             controlHeight: 32,
             controlHeightSM: 28,
             controlHeightLG: 36,
@@ -63,7 +64,7 @@ export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "class
         },
         components: {
             Button: {
-                borderRadius: 6,
+                borderRadius: skin.buttonRadius ?? 0,
                 fontWeight: 550,
                 paddingInline: 12,
                 paddingInlineSM: 8,
@@ -85,20 +86,20 @@ export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "class
                 primaryColor: primaryFg,
             },
             Input: {
-                borderRadius: 6,
+                borderRadius: skin.buttonRadius ?? 0,
                 activeShadow: "none",
                 paddingInline: 10,
                 activeBg: surface,
                 hoverBg: surface,
             },
             InputNumber: {
-                borderRadius: 6,
+                borderRadius: skin.buttonRadius ?? 0,
                 activeShadow: "none",
                 activeBg: surface,
                 hoverBg: surface,
             },
             Select: {
-                borderRadius: 6,
+                borderRadius: skin.buttonRadius ?? 0,
                 activeOutlineColor: "transparent",
                 optionPadding: "7px 10px",
                 optionSelectedBg: surfaceMuted,
@@ -136,17 +137,17 @@ export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "class
                 paddingLG: 16,
             },
             Modal: {
-                borderRadiusLG: 8,
+                borderRadiusLG: skin.overlayRadius ?? 0,
                 contentBg: surface,
                 headerBg: surface,
             },
             Tooltip: {
-                borderRadius: 6,
-                colorBgSpotlight: dark ? "#f5f5f5" : "#111111",
-                colorTextLightSolid: dark ? "#0f0f0f" : "#ffffff",
+                borderRadius: skin.buttonRadius ?? 0,
+                colorBgSpotlight: colors.overlay,
+                colorTextLightSolid: colors.text,
             },
             Dropdown: {
-                borderRadiusLG: 8,
+                borderRadiusLG: skin.overlayRadius ?? 0,
                 controlItemBgHover: surfaceMuted,
                 paddingBlock: 4,
             },
@@ -162,7 +163,7 @@ export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "class
                 boxShadowTertiary: "none",
             },
             Message: {
-                borderRadiusLG: 8,
+                borderRadiusLG: skin.overlayRadius ?? 0,
                 contentPadding: "8px 14px",
             },
         },

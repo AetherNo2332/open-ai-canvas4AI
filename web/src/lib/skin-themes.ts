@@ -762,6 +762,7 @@ const MANAGED_VARIABLES = [
     "--theme-hover-lift",
     "--motion-instant",
     "--motion-state",
+    "--skin-motion-state",
     "--elevation-card",
     "--elevation-card-hover",
     "--elevation-overlay",
@@ -904,7 +905,6 @@ export function normalizeSkinID(value: unknown) {
 
 export function getSkinAntOverrides(value: unknown, mode: SkinThemeMode): Partial<SkinAntOverrides> {
     const skin = normalizeSkinDefinition(value);
-    if (skin.id === "classic") return {};
     const color = skin.tokens[mode];
     const component = skin.tokens.components;
     return {
@@ -969,10 +969,8 @@ export function applySkinTheme(skinValue: unknown, mode: SkinThemeMode, targetDo
     const skin = normalizeSkinDefinition(skinValue);
     const root = targetDocument.documentElement;
     for (const property of MANAGED_VARIABLES) root.style.removeProperty(property);
-    if (skin.id !== "classic") {
-        const values = skinCSSVariables(skin, mode);
-        for (const [property, value] of Object.entries(values)) root.style.setProperty(property, value);
-    }
+    const values = skinCSSVariables(skin, mode);
+    for (const [property, value] of Object.entries(values)) root.style.setProperty(property, value);
     for (const [property, value] of Object.entries(skinButtonCSSVariables(skin, mode))) root.style.setProperty(property, value);
     root.dataset.skin = skin.id;
 }
@@ -1013,6 +1011,20 @@ export function skinCSSVariables(skin: SkinDefinition, mode: SkinThemeMode): Rec
     const shadows = skinShadowVariables(component.shadowStyle, mode);
     return {
         "--background": color.canvas,
+        // Stable skin values survive route-local compatibility aliases (especially admin).
+        "--site-canvas": color.canvas,
+        "--site-surface": color.surface,
+        "--site-subtle": color.surfaceSubtle,
+        "--site-raised": color.surfaceRaised,
+        "--site-overlay": color.overlay,
+        "--site-text": color.text,
+        "--site-muted": color.textMuted,
+        "--site-border": color.border,
+        "--site-control-border": color.controlBorder,
+        "--site-admin-canvas": color.adminBackground,
+        "--site-admin-surface": color.adminSurface,
+        "--site-admin-subtle": color.adminSubtle,
+        "--site-admin-strong": color.adminStrong,
         "--foreground": color.text,
         "--card": color.surface,
         "--card-foreground": color.text,
@@ -1102,6 +1114,7 @@ export function skinCSSVariables(skin: SkinDefinition, mode: SkinThemeMode): Rec
         "--theme-hover-lift": `${component.hoverLift}px`,
         "--motion-instant": `${component.motionFast}ms`,
         "--motion-state": `${component.motionNormal}ms`,
+        "--skin-motion-state": `${component.motionNormal}ms`,
         ...shadows,
     };
 }

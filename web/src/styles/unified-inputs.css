@@ -90,11 +90,11 @@
 
 /* 错误和警告仍需要可识别的状态，但不再叠加发光描边。 */
 :where(.ant-input-status-error:not(.ant-input-disabled), .ant-input-affix-wrapper-status-error:not(.ant-input-affix-wrapper-disabled), .ant-input-number-status-error:not(.ant-input-number-disabled)):not(.auth-scene *) {
-    background: color-mix(in srgb, var(--destructive, #ef4444) 10%, transparent) !important;
+    background: color-mix(in srgb, var(--destructive, var(--palette-status-error)) 10%, transparent) !important;
 }
 
 :where(.ant-input-status-warning:not(.ant-input-disabled), .ant-input-affix-wrapper-status-warning:not(.ant-input-affix-wrapper-disabled), .ant-input-number-status-warning:not(.ant-input-number-disabled)):not(.auth-scene *) {
-    background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent) !important;
+    background: color-mix(in srgb, var(--warning, var(--palette-status-warning)) 12%, transparent) !important;
 }
 
 :where(.ant-input-disabled, .ant-input-affix-wrapper-disabled, .ant-input-number-disabled, .ant-input-number-affix-wrapper-disabled):not(.auth-scene *) {

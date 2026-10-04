@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { DEFAULT_CANVAS_COLOR_THEME } from "../src/lib/canvas-theme";
+import { canvasThemes, DEFAULT_CANVAS_COLOR_THEME } from "../src/lib/canvas-theme";
 
 import {
     DEFAULT_CANVAS_BACKGROUND_MODE,
@@ -43,17 +43,17 @@ describe("canvas custom appearance", () => {
         expect(DEFAULT_CANVAS_COLOR_THEME).toBe("dark");
     });
 
-    test("resolves the black preset to a black background and fully opaque black grid", () => {
+    test("resolves the fixed dark preset through the active site skin", () => {
         const appearance = canvasAppearanceForTheme(DEFAULT_CANVAS_COLOR_THEME);
         expect(resolveCanvasAppearance(appearance, "light")).toEqual({
             baseTheme: "dark",
-            background: "#000000",
-            grid: "#000000",
+            background: canvasThemes.dark.canvas.background,
+            grid: canvasThemes.dark.canvas.line,
         });
-        expect(resolveCanvasGridColor(appearance, "light", "dots")).toBe("#000000");
+        expect(resolveCanvasGridColor(appearance, "light", "dots")).toBe(canvasThemes.dark.canvas.dot);
         expect(resolveCanvasAppearance(customCanvasAppearanceFromTheme("dark"), "light")).toEqual({
             baseTheme: "dark",
-            background: "#000000",
+            background: canvasThemes.dark.canvas.background.toUpperCase(),
             grid: "rgba(0,0,0,1)",
         });
     });
@@ -62,7 +62,7 @@ describe("canvas custom appearance", () => {
         const source = await Bun.file(new URL("../src/components/canvas/canvas-appearance-controls.tsx", import.meta.url)).text();
         const fixedThemeSource = source.slice(source.indexOf("const selectFixedTheme"), source.indexOf("const selectCustomTheme"));
         expect(fixedThemeSource).toContain("onBackgroundModeChange(DEFAULT_CANVAS_BACKGROUND_MODE)");
-        expect(resolveCanvasGridColor(canvasAppearanceForTheme("light"), "dark", "dots")).toBe("rgba(0,0,0,.80)");
+        expect(resolveCanvasGridColor(canvasAppearanceForTheme("light"), "dark", "dots")).toBe(canvasThemes.light.canvas.dot);
     });
 
     test("inherits the active fixed theme the first time custom mode is selected", () => {
@@ -71,7 +71,7 @@ describe("canvas custom appearance", () => {
             mode: "custom",
             custom: {
                 baseTheme: "light",
-                backgroundColor: "#F0F0F0",
+                backgroundColor: canvasThemes.light.canvas.background.toUpperCase(),
                 backgroundBrightness: 0,
                 gridColor: "#000000",
                 gridOpacity: 80,
@@ -79,7 +79,7 @@ describe("canvas custom appearance", () => {
         });
 
         const dark = enterCustomCanvasAppearance(canvasAppearanceForTheme("dark"), "dark");
-        expect(dark.custom).toMatchObject({ baseTheme: "dark", backgroundColor: "#000000", backgroundBrightness: 0, gridColor: "#000000", gridOpacity: 100 });
+        expect(dark.custom).toMatchObject({ baseTheme: "dark", backgroundColor: canvasThemes.dark.canvas.background.toUpperCase(), backgroundBrightness: 0, gridColor: "#000000", gridOpacity: 100 });
     });
 
     test("restores a previous custom profile only under the same base theme", () => {
@@ -92,7 +92,7 @@ describe("canvas custom appearance", () => {
         expect(fixedDark.custom).toBeUndefined();
         expect(enterCustomCanvasAppearance(fixedDark, "dark").custom).toMatchObject({
             baseTheme: "dark",
-            backgroundColor: "#000000",
+            backgroundColor: canvasThemes.dark.canvas.background.toUpperCase(),
         });
     });
 

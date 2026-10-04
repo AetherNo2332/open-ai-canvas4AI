@@ -45,7 +45,7 @@ describe("theme primary button fills", () => {
         expect(values.get("--button-primary-hover-bg")).toBe("#234567");
         expect(values.get("--button-primary-active-bg")).toBe("#345678");
         applySkinTheme(DEFAULT_CLASSIC_SKIN, "dark", doc);
-        expect(values.has("--background")).toBe(false);
+        expect(values.get("--background")).toBe(DEFAULT_CLASSIC_SKIN.tokens.dark.canvas);
         // 深色模式主按钮前景跟随该模式的主色对比度，不再固定白色。
         expect(values.get("--button-primary-fg")).toBe("#240a0f");
     });

@@ -6,9 +6,6 @@
 - 目标分支：`canary`
 - 依据版本：`3b2901b7`
 - 状态：设计稿，尚未进入实现
-- 修订：2026-10-04 追加两项 UI/信息架构需求（见文末"补充需求"节）：
-  1. 画布 Agent 面板输入区上方增加"活动子智能体列表"（圆形 SVG 头像 + 悬停展开名称的位移微交互）。
-  2. 管理员"Agent 默认技能"配置收纳进 `/admin/settings/agent`（Agent（beta）页），并移除该页"运行状态"分区。
 
 ## 背景与目标
 
@@ -447,23 +444,3 @@ Crew 页面包含：
 ## 设计决策总结
 
 采用 `CanvasProject = Workspace`，而不是新增独立 Workspace 身份；采用“全局默认 + Workspace + Crew 成员 + 用户追加”的技能并集；采用每个成员独立 Pi Session；采用容量/上下文预算替代固定技能数量限制；采用 Coordinator 汇总后统一审批写画布。这样可以复用当前 canary 的 Pi 持久化、native skills、工具幂等、审批、画布 revision 和观测基础，同时避免共享 session、无限上下文和并发写画布带来的数据风险。
-
-## 补充需求（2026-10-04 追加）
-
-### 需求 A：画布 Agent 面板的活动子智能体列表
-
-位置：画布 Agent 面板中，消息列表底部与输入框顶部之间的横向空条区域（现该处只有输入框的提示词高度拖拽手柄）。
-
-- 活动子智能体列表横向排开在该区域。
-- 每个子智能体显示为圆形 SVG 头像；头像资产可联网获取开源 SVG（如 GitHub avatar 资产、开源图标集）。
-- 鼠标悬浮在头像上时，在头像右侧展开该子智能体的名称；位于右侧的头像向右平移为名称腾出空间；鼠标移走后名称收起、被推移的头像复位。
-- 展开与复位均为**非线性动画**（缓出曲线，非 linear / 非 step）。
-- 微交互遵循 `docs/plans/ui-design-system.mdx`（AGENTS.md 所称 ui-design-system）：只消费三层 token；动效使用既有 `--motion-dur-*` / `--motion-ease-*` token；尊重 `prefers-reduced-motion`（reduce 时直接显隐，不做位移）；键盘可达（`:focus-visible` 触发与 hover 同等的展开）。
-
-第一版数据来源：当前 canary 尚无子智能体运行概念（P3 Crew 才引入 Member Run）。该区域第一版实现为**数据驱动、空态不渲染**的组件：当不存在活动子智能体时不占任何空间，面板外观与现状一致；子智能体数据源接口在 P3 Crew Run 落地时接入，先按最小合同占位。
-
-### 需求 B：技能管理收纳进管理员 Agent（beta）设置页
-
-- 本设计 P0 的"管理员默认技能"配置页不新增独立一级导航，作为分区收纳进 `/admin/settings/agent`（Agent（beta）页），导航描述与页内锚点同步调整。
-- 风格与编排遵循 AGENTS.md 及 ui-design-system 的开发阅读约定：沿用该页现有锚点分区模式（原生锚点 + section）、AdminPageFrame 外壳、既有 token，不复制独立 Modal styles，不新增全局 `.ant-*` 覆盖。
-- **移除 Agent（beta）页的"运行状态"分区**（含执行器状态指标卡、执行器表格与 5 秒轮询）；调度配置与记忆管理分区保留。后端 `/admin/settings/agent-scheduler/status` 接口本身保留（调度能力仍在使用），仅前端不再消费该接口的页面分区。

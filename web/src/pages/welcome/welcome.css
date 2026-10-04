@@ -1,9 +1,9 @@
 .welcome-page {
-    --welcome-black: #080808;
-    --welcome-paper: #f3f2ef;
-    --welcome-muted: #aaa9a6;
-    --welcome-accent: #eee7d7;
-    --welcome-border: #ffffff24;
+    --welcome-black: var(--site-canvas);
+    --welcome-paper: var(--site-text);
+    --welcome-muted: var(--site-surface);
+    --welcome-accent: var(--primary);
+    --welcome-border: color-mix(in srgb, var(--site-text) 14.12%, transparent);
     --welcome-radius: 3px;
     --welcome-header-height: 88px;
     --welcome-content: 1380px;
@@ -22,7 +22,7 @@
 }
 body:has(.welcome-page) {
     margin: 0;
-    background: #080808;
+    background: var(--site-canvas);
 }
 .welcome-page *,
 .welcome-page *::before,
@@ -81,7 +81,7 @@ body:has(.welcome-page) {
     align-items: center;
     gap: 42px;
     padding: 0 var(--welcome-gutter);
-    background: linear-gradient(#080808cc, #08080800);
+    background: linear-gradient(color-mix(in srgb, var(--site-canvas) 80.0%, transparent), color-mix(in srgb, var(--site-canvas) 0.0%, transparent));
 }
 .welcome-brand {
     display: flex;
@@ -196,7 +196,7 @@ body:has(.welcome-page) {
     border-radius: 50%;
 }
 .welcome-icon:hover {
-    background: #ffffff12;
+    background: color-mix(in srgb, var(--site-text) 7.06%, transparent);
 }
 .welcome-icon svg {
     width: 16px;
@@ -240,10 +240,10 @@ body:has(.welcome-page) {
     pointer-events: none;
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, #08080830 0%, transparent 23%, transparent 50%, #08080844 70%, #080808e8 100%);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--site-canvas) 18.82%, transparent) 0%, transparent 23%, transparent 50%, color-mix(in srgb, var(--site-canvas) 26.67%, transparent) 70%, color-mix(in srgb, var(--site-canvas) 90.98%, transparent) 100%);
 }
 .chapter-3 .welcome-stage-shade {
-    background: linear-gradient(180deg, #08080870 0%, #080808c7 28%, transparent 50%, #080808c7 100%);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--site-canvas) 43.92%, transparent) 0%, color-mix(in srgb, var(--site-canvas) 78.04%, transparent) 28%, transparent 50%, color-mix(in srgb, var(--site-canvas) 78.04%, transparent) 100%);
 }
 .welcome-chapter {
     position: absolute;
@@ -328,14 +328,14 @@ body:has(.welcome-page) {
     place-items: center;
     width: 64px;
     height: 64px;
-    border: 1px solid #ffffff70;
+    border: 1px solid color-mix(in srgb, var(--site-text) 43.92%, transparent);
     border-radius: 50%;
     transition:
         background 180ms,
         transform 180ms;
 }
 .welcome-film-link:hover .welcome-play-mark {
-    background: #ffffff20;
+    background: color-mix(in srgb, var(--site-text) 12.55%, transparent);
     transform: scale(1.06);
 }
 .welcome-stage-bottom {
@@ -354,8 +354,8 @@ body:has(.welcome-page) {
     height: 48px;
     padding: 0;
     color: var(--welcome-paper);
-    background: #ffffff18;
-    border: 1px solid #ffffff4d;
+    background: color-mix(in srgb, var(--site-text) 9.41%, transparent);
+    border: 1px solid color-mix(in srgb, var(--site-text) 30.2%, transparent);
     border-radius: 50%;
     backdrop-filter: blur(16px);
     transition:
@@ -364,8 +364,8 @@ body:has(.welcome-page) {
         transform 180ms;
 }
 .welcome-next:hover {
-    background: #ffffff2e;
-    border-color: #ffffff8a;
+    background: color-mix(in srgb, var(--site-text) 18.04%, transparent);
+    border-color: color-mix(in srgb, var(--site-text) 54.12%, transparent);
     transform: translateY(2px);
 }
 .welcome-next:active {
@@ -392,7 +392,7 @@ body:has(.welcome-page) {
     display: block;
     width: 22px;
     height: 1px;
-    background: #ffffff48;
+    background: color-mix(in srgb, var(--site-text) 28.24%, transparent);
     transition:
         background 0.2s,
         height 0.2s;
@@ -461,7 +461,7 @@ body:has(.welcome-page) {
 }
 .welcome-workbench-preview {
     aspect-ratio: 16/9;
-    background: #141414;
+    background: var(--site-surface);
     overflow: hidden;
     border-radius: var(--welcome-radius);
 }
@@ -529,8 +529,8 @@ body:has(.welcome-page) {
     overflow: hidden;
     border: 1px solid var(--welcome-border);
     border-radius: 12px;
-    background: radial-gradient(circle at 12% 0%, #ffffff13, transparent 36%), linear-gradient(135deg, #151515 0%, #0d0d0d 68%);
-    box-shadow: 0 28px 80px #0000005c;
+    background: radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--site-text) 7.45%, transparent), transparent 36%), linear-gradient(135deg, var(--site-surface) 0%, var(--site-canvas) 68%);
+    box-shadow: 0 28px 80px color-mix(in srgb, var(--site-canvas) 36.08%, transparent);
     padding: 32px;
     transform-style: preserve-3d;
 }
@@ -599,10 +599,10 @@ body:has(.welcome-page) {
     width: 42px;
     height: 42px;
     flex: none;
-    border: 1px solid #ffffff24;
+    border: 1px solid color-mix(in srgb, var(--site-text) 14.12%, transparent);
     border-radius: 50%;
     object-fit: cover;
-    background: #1b1b1b;
+    background: var(--site-surface);
 }
 .welcome-contributors-list span {
     min-width: 0;
@@ -615,20 +615,20 @@ body:has(.welcome-page) {
     align-items: flex-start;
     gap: 16px;
     padding: 18px 20px;
-    border: 1px solid #eee7d766;
+    border: 1px solid color-mix(in srgb, var(--primary) 40.0%, transparent);
     border-radius: 10px;
-    background: linear-gradient(120deg, #eee7d712, #ffffff04 62%);
+    background: linear-gradient(120deg, color-mix(in srgb, var(--primary) 7.06%, transparent), color-mix(in srgb, var(--site-text) 1.57%, transparent) 62%);
     box-shadow:
-        inset 0 1px 0 #ffffff12,
-        0 14px 36px #0000002e;
+        inset 0 1px 0 color-mix(in srgb, var(--site-text) 7.06%, transparent),
+        0 14px 36px color-mix(in srgb, var(--site-canvas) 18.04%, transparent);
 }
 .welcome-contributors-list li.is-founder img {
     width: 68px;
     height: 68px;
     border: 2px solid var(--welcome-accent);
     box-shadow:
-        0 0 0 4px #eee7d71c,
-        0 8px 22px #00000055;
+        0 0 0 4px color-mix(in srgb, var(--primary) 10.98%, transparent),
+        0 8px 22px color-mix(in srgb, var(--site-canvas) 33.33%, transparent);
 }
 .welcome-contributor-content {
     flex: 1;
@@ -697,13 +697,13 @@ body:has(.welcome-page) {
     padding: 0;
     max-width: min(1000px, 94%);
     width: 100%;
-    background: #111;
-    color: #f3f2ef;
+    background: var(--site-canvas);
+    color: var(--site-text);
     border-radius: 3px;
     overflow: visible;
 }
 .welcome-film-dialog::backdrop {
-    background: #000d;
+    background: color-mix(in srgb, var(--site-canvas) 86.67%, transparent);
 }
 .welcome-film-dialog video {
     width: 100%;

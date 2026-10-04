@@ -8,28 +8,128 @@ import (
 	"infinite-canvas/backend/internal/observability"
 	"infinite-canvas/backend/internal/repository"
 	"strconv"
+	"strings"
 	"time"
 )
 
-func (s *Service) AdminObservability(actor *model.User, window time.Duration) (observability.Snapshot, error) {
+func (s *Service) AdminObservability(actor *model.User, window time.Duration, query AnalyticsQuery) (observability.Snapshot, error) {
 	if err := s.RequireAdmin(actor); err != nil {
 		return observability.Snapshot{}, err
 	}
 	if window < time.Minute || window > 24*time.Hour {
 		return observability.Snapshot{}, BadAuthRequest("观测窗口必须为 60 到 86400 秒")
 	}
-	return s.committedObservability(window)
+	filter := normalizeAnalyticsFilter(query)
+	if strings.TrimSpace(query.From) == "" && strings.TrimSpace(query.To) == "" {
+		filter.From = time.Now().UTC().Add(-window)
+		filter.To = time.Now().UTC()
+	}
+	return s.committedObservability(filter)
 }
 
-func (s *Service) committedObservability(window time.Duration) (observability.Snapshot, error) {
+func (s *Service) committedObservability(filter repository.AnalyticsFilter) (observability.Snapshot, error) {
 	now := time.Now().UTC()
-	data, err := s.repo.ObservabilityData(now.Add(-window))
+	data, err := s.repo.ObservabilityData(filter.From)
 	if err != nil {
 		return observability.Snapshot{}, err
+	}
+	data = filterObservabilityData(data, filter)
+	window := filter.To.Sub(filter.From)
+	if window <= 0 {
+		window = time.Minute
 	}
 	snapshot, _ := buildCommittedObservability(data, now, window)
 	snapshot.GrafanaURL = configuredGrafanaURL()
 	return snapshot, nil
+}
+
+func filterObservabilityData(data repository.ObservabilityData, filter repository.AnalyticsFilter) repository.ObservabilityData {
+	runIDs := make(map[string]bool)
+	tasks := make([]model.Task, 0, len(data.Tasks))
+	for _, task := range data.Tasks {
+		if task.CreatedAt.Before(filter.From) || !task.CreatedAt.Before(filter.To) {
+			continue
+		}
+		if filter.UserID != "" && task.UserID != filter.UserID {
+			continue
+		}
+		if filter.Model != "" && task.Model != filter.Model {
+			continue
+		}
+		if filter.Capability != "" && capabilityFromTaskType(task.Type) != filter.Capability {
+			continue
+		}
+		tasks = append(tasks, task)
+		if task.AgentRunID != "" {
+			runIDs[task.AgentRunID] = true
+		}
+	}
+	if filter.UserID == "" && filter.Model == "" && filter.Capability == "" && filter.ChannelID == "" {
+		for _, run := range data.Runs {
+			if !run.CreatedAt.Before(filter.From) && run.CreatedAt.Before(filter.To) {
+				runIDs[run.ID] = true
+			}
+		}
+	}
+	logs := make([]model.ApiCallLog, 0, len(data.Logs))
+	channelTaskIDs := make(map[string]bool)
+	if filter.ChannelID != "" {
+		runIDs = make(map[string]bool)
+	}
+	for _, log := range data.Logs {
+		if log.CreatedAt.Before(filter.From) || !log.CreatedAt.Before(filter.To) {
+			continue
+		}
+		if filter.UserID != "" && log.UserID != filter.UserID {
+			continue
+		}
+		if filter.Model != "" && log.Model != filter.Model {
+			continue
+		}
+		if filter.ChannelID != "" && log.ChannelID != filter.ChannelID {
+			continue
+		}
+		if filter.Capability != "" && log.Capability != filter.Capability {
+			continue
+		}
+		task := taskByID(data.Tasks, log.TaskID)
+		if task.AgentRunID != "" {
+			runIDs[task.AgentRunID] = true
+		}
+		logs = append(logs, log)
+		channelTaskIDs[log.TaskID] = true
+	}
+	if filter.ChannelID != "" {
+		channelTasks := make([]model.Task, 0, len(tasks))
+		for _, task := range tasks {
+			if channelTaskIDs[task.ID] {
+				channelTasks = append(channelTasks, task)
+			}
+		}
+		tasks = channelTasks
+	}
+	runs := make([]model.CloudAgentExecution, 0, len(data.Runs))
+	for _, run := range data.Runs {
+		if runIDs[run.ID] && !run.CreatedAt.Before(filter.From) && run.CreatedAt.Before(filter.To) {
+			runs = append(runs, run)
+		}
+	}
+	events := make([]model.CloudAgentEventRecord, 0, len(data.Events))
+	for _, event := range data.Events {
+		if runIDs[event.RunID] && !event.CreatedAt.Before(filter.From) && event.CreatedAt.Before(filter.To) {
+			events = append(events, event)
+		}
+	}
+	return repository.ObservabilityData{Runs: runs, Tasks: tasks, Logs: logs, Events: events, Workers: data.Workers, Truncated: data.Truncated}
+}
+
+func taskByID(tasks []model.Task, id string) model.Task {
+	for _, task := range tasks {
+		if task.ID == id {
+			return task
+		}
+	}
+	return model.Task{}
 }
 
 func observationTraceID(id string) string {
@@ -46,7 +146,7 @@ func buildCommittedObservability(data repository.ObservabilityData, now time.Tim
 	}
 	for _, run := range data.Runs {
 		runByID[run.ID] = run
-		e := observability.Event{TaskID: run.ID, RunID: run.ID, TraceID: observationTraceID(run.ID), SessionID: observationTraceID(run.ConversationID), Kind: observability.KindTask, Status: observability.Status(run.Status), StartedAt: run.CreatedAt, EndedAt: run.UpdatedAt, Key: "run:" + run.ID, ParentRunID: run.ParentID}
+		e := observability.Event{TaskID: run.ID, RunID: run.ID, TraceID: observationTraceID(run.ID), SessionID: observationTraceID(run.ConversationID), Kind: observability.KindTask, Status: observability.Status(run.Status), StartedAt: run.CreatedAt, EndedAt: run.UpdatedAt, Key: "run:" + run.ID, ParentRunID: run.ParentID, Reason: run.FailureMessage}
 		if run.Status == "completed" || run.Status == "failed" || run.Status == "cancelled" || run.Status == "expired" {
 			events = append(events, e)
 		}

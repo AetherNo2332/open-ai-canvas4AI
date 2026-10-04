@@ -102,22 +102,43 @@
 - 画布拖拽、连接、缩放和快捷键要考虑 pointer capture、滚轮冒泡、焦点以及 `data-canvas-no-zoom` / `data-canvas-wheel-scroll` 边界。
 - 节点和对象名称要有可发现的铅笔入口并支持单击编辑；双击或右键不能是唯一入口。图片节点保持原始比例，面板不能长期遮挡主要画布空间。
 - Ant Design 共性主题和控件状态集中在 `web/src/lib/app-theme.ts` / `AppProviders`。自带外壳的产品弹窗用 `AppModal flush`，侧栏用 `AppDrawer`；不要再复制 `padding: 0` 的 Modal styles。内容外壳仍是 `.ant-modal-container`。
-- 第三方覆盖限定在具体组件，不新增全局 `.ant-modal-*`、`.dark .ant-switch-*`、`.ant-checkbox-*` 或 Segmented 状态补丁。新增 CSS 前先搜索同名选择器，回到唯一源规则修改。
-- 遵循 `docs/ui-design-system.md` 及项目三层 token：Primitive → Semantic → Component。inline style 优先引用 `var(--token-name)`，不要散落颜色、圆角、阴影和层级字面值。
-- 主操作、普通选中、Checkbox/Radio、Switch 是不同颜色角色；持久切换使用 `aria-pressed`，`type="primary"` 只表示当前主要命令。尊重 `prefers-reduced-motion`，键盘导航保留 `:focus-visible`。
+- 第三方组件优先通过统一主题适配，不在页面新增全局 `.ant-modal-*`、`.dark .ant-switch-*`、`.ant-checkbox-*` 或 Segmented 状态补丁。跨路由的皮肤与几何约束集中在 `web/src/styles/site-skin.css`；工作台兼容规则集中在 `web/src/styles/home-skin.css`；后台适配集中在 `web/src/pages/admin/theme/`。这些已有共享入口可以维护必要的统一覆盖，页面不得再复制一套。新增 CSS 前先搜索同名选择器，修改唯一源规则。
+- 项目采用三层 token：Primitive → Semantic → Component。设计背景资料见 `docs/plans/ui-design-system.mdx`、`docs/design/site-appearance-and-skins.mdx`；资料与本节冲突时，以本节的前端约定为准。inline style 和 CSS 引用项目已有颜色、圆角、阴影、层级及动效 token。
+- 主操作、普通选中、Checkbox/Radio、Switch 是不同颜色角色；切换按钮使用 `aria-pressed`，Switch/Checkbox/Radio 使用 `aria-checked` 或原生 checked 语义，不能混用。`type="primary"` 只表示当前主要命令。尊重 `prefers-reduced-motion`，键盘导航保留 `:focus-visible`。
 - 修改既有页面时直接修改真实组件、样式和路由。不得创建独立 HTML 来代替真实页面验证；只有用户明确要求原型或隔离设计稿时才可生成，并放在临时目录或用户指定位置，不得放入 `web/public/` 或产品构建目录。
 
-### 页面配色、排版与降级页
+### 前端约定的优先级与适用范围
 
-- 版式规范以工作区 skill `swiss-design`（`.agents/skills/swiss-design`，来源 zeke/swiss-design-skill）为准：12 列 8px 基准栅格、移动优先、IBM Plex Sans、透明度做层级、单一强调色、直角构件、充足留白。此前引用的另一套瑞士规范已废弃，不要再按它实现。
-- 配色以本项目后台「外观 / 主体皮肤」覆盖 skill 自带的 stone / 瑞士红固定色板：页面只消费 `:root` 语义 token——纸张 `--background`、墨色 `--foreground`、发丝线 `--border`、强调 `--primary`、主按钮 `--button-primary-bg` / `-hover-bg` / `-active-bg` / `-fg`、焦点 `--ring`。皮肤由 `web/src/main.tsx` 在挂载应用前经 `web/src/services/appearance-bootstrap.ts` → `web/src/lib/skin-themes.ts` 的 `applySkinTheme` 写入 `:root`，降级页渲染时一定已生效。
-- 层级只用前景色透明度（`color-mix(in oklab, var(--foreground) 70%, transparent)` 一类），不要为层级引入第二个颜色，也不要用 `--muted-foreground` 表达层级。换肤只能改后台皮肤配置：页面私有 CSS 只允许 `var(--token)` 引用，除 `@media print` 的纯黑白外不得出现 `#RRGGBB`、`rgb()`、`oklch()` 字面颜色。
-- 强调色只有一套（皮肤主色 / 主按钮色）。状态色 `--palette-status-error`、`--palette-status-success` 等只用于状态本身（错误图标、错误文案），不得当作装饰强调色。深色模式由 `.dark` / `[data-theme="dark"]` 与皮肤 token 自动翻转，页面不要另写深色配色。
-- 排版：字体 `IBM Plex Sans Variable`（已自托管 `@fontsource-variable/ibm-plex-sans`，不要引 Google Fonts CDN）；标题只用 300 / 400 字重，不用粗体；正文行宽不超过 `60ch`；标题 `text-wrap: balance`、正文 `text-pretty`；省略号用 `…`、引号用弯引号，`...` 与直引号按 bug 处理；数字列用 `tabular-nums`。
-- 布局与构件：12 列栅格非对称占列、移动端单列；区块纵向内边距 64 / 96 / 128px（`--space-16`、`--space-24`、`--space-24` + `--space-8`）；构件一律直角（`border-radius: 0`），仅状态圆点这类图形例外；交互目标不小于 44×44px；整体高度用 `100dvh`。
-- 动效只允许 `transform` 与 `opacity`，时长 150ms，禁止 `transition: all` 与持续动画，必须带 `prefers-reduced-motion` 降级。悬停与聚焦不得改变控件几何尺寸：需要颜色反馈时用伪元素叠层淡入（参考 `web/src/pages/route-error.css` 的主按钮），不要用位移或缩放做悬停反馈。
-- 键盘焦点保留 `:focus-visible`（outline 用 `--ring`），不允许 `outline: none` 而无替代。页面私有样式放在与组件同目录的 `.css` 文件里用 `apply_patch` 维护；新增前先 `rg` 同名选择器，不要改全局 `globals.css` 来服务单个页面。
-- 图标与文字：图形色用 `fill="currentColor"` 配合 CSS `color: var(--token)`，不要保留 `fill="#..."`；与中文标签同行时图标用 `1em` 跟随字号，并按实测做光学校正（参考 `.route-error-icon` 的 `translateY(-0.17em)`）。判断是否对齐看渲染后的墨迹中心而不是行盒中心：截图后逐像素求「图标墨迹中心 − 文字墨迹中心」，目标为 0；`web/test/route-error.test.tsx` 是这类页面的最小回归样例。
+- 用户当前明确要求优先。配色、圆角、阴影和动效参数以管理员后台「站点外观」的当前生效皮肤为唯一配置来源；版式以工作区 skill `swiss-design`（`.agents/skills/swiss-design`，来源 zeke/swiss-design-skill）为准。skin 配置覆盖 skill 自带的 stone / 瑞士红色板、固定圆角和固定动效参数；旧文档、组件默认样式及第三方库默认主题不得反向覆盖。不得把「瑞士设计」解释为无条件写死红色、黑白、0px 圆角或 150ms。
+- 皮肤约定覆盖全部前端路由：工作台、首页、侧栏、顶栏、画布列表与编辑器、后台、认证与欢迎页、错误与降级页，以及挂在 body 的菜单、弹窗、提示和其他 portal。后台可以使用皮肤的后台专用层级色，页面也可以有不同密度，但都必须来自同一份管理员配置。
+- 默认皮肤 `classic` 和自定义皮肤都走完整的 token 应用链路，不得以「默认皮肤」为由跳过配置。皮肤由挂载前的 `appearance-bootstrap.ts` 和 `skin-themes.ts` 的 `applySkinTheme` 写入 `:root`，后续保存、切换皮肤或切换明暗模式也须同步更新 CSS 与 React/Ant Design 主题消费者。
+
+### 配色、圆角与共享主题
+
+- 页面消费 `:root` 语义 token；稳定站点角色使用 `--site-canvas`、`--site-surface`、`--site-text`、`--site-border` 等，后台层级使用 `--site-admin-*` 或对应共享别名。通用角色使用 `--background`、`--foreground`、`--border`、`--primary`、`--ring`；主按钮使用 `--button-primary-bg`、`--button-primary-hover-bg`、`--button-primary-active-bg`、`--button-primary-fg`。页面局部别名不得把这些值替换成固定调色板。
+- 标题与正文层级用前景色透明度，如 `color-mix(in oklab, var(--foreground) 70%, transparent)`；专门的控件、图标、禁用与提示角色使用皮肤对应的语义 token。主按钮、选中、勾选、Switch、危险操作分别消费自己的角色，不把所有状态都涂成主色。状态色只用于相应状态，不作装饰强调色。
+- 新增或修改界面颜色时，不在页面 CSS、JSX inline style、SVG UI 图标中硬编码 `#RRGGBB`、`rgb()`、`oklch()` 色值；在共享皮肤定义中维护配置值。允许由语义 token 派生透明度或渐变。明暗模式由当前皮肤的 light/dark token 处理，禁止在页面另设固定深色配色。
+- 内容颜色属于例外：用户上传图片、视频、作品封面、首页人物原图、色样预览以及用户显式设置的画布背景或绘图颜色应保留内容本色；此例外不适用于它们周围的按钮、边框、面板与浮层。不要为统一皮肤对图片整体染色或强制替换作品自定义颜色。
+- 所有可见 UI 构件及其伪元素的圆角跟随当前皮肤的组件配置：按钮 `--button-radius`、输入 `--input-radius`、卡片 `--card-radius`、浮层 `--overlay-radius`、菜单项 `--menu-radius`、Checkbox `--checkbox-radius`。新组件不得写死 `rounded-full`、像素圆角或强制 `border-radius: 0`；圆角为 0 是有效配置，回退只用 `??` 或显式缺失判断，禁止用 `||` 把 0 替换成默认值。媒体内容中的轮廓与 SVG 图形不作为 UI 构件圆角修改。
+- Ant Design 主题由 `app-theme.ts` 与 `admin-ant-theme.ts` 统一适配，画布界面主题由 `canvas-theme.ts` 适配。修复局部残留色或圆角时先检查 token、主题消费者与 CSS cascade；不得在单个页面重新定义一套站点主题。伪元素、旧的 `!important`、portal 与异步页面都要覆盖到。
+- 首页、工作台顶栏及页面外缘底色使用 `--site-canvas`。全站滚动条轨道、边角和按钮区域也使用 `--site-canvas`，滑块使用皮肤边框等语义色，滚到最顶部不能出现固定黑色或白色带。保留已有隐藏滚动条规则，不能为了改色改变其宽度、可见性或表格 gutter 对齐。
+
+### 版式、交互与动效
+
+- 瑞士版式使用 12 列栅格、8px 基准、移动优先、非对称构图和结构化留白；在 320px 与 1440px 等视口检查布局。窄屏收敛为单列或适当的简化布局，不出现非预期横向溢出；宽表在自己的容器内滚动。
+- 使用自托管 `IBM Plex Sans Variable`（`@fontsource-variable/ibm-plex-sans`），不引 Google Fonts CDN；展示标题用 300 / 400 字重，正文行宽不超过 `60ch`，标题 `text-wrap: balance`，正文 `text-wrap: pretty`，数字列用 `tabular-nums`。面向用户的省略号用 `…`、排版引号用弯引号；代码、API 值、命令和原样输入不作排版替换。
+- 用已有 spacing token 组织布局，64 / 96 / 128px 是展示区建议值，不是所有页面的最低内边距。首页上移、去除空列与多余留白、后台密度及窄屏布局遵循当前任务和可用空间，不能为满足 skill 的固定留白重新拉高页面。交互目标在移动端至少 44×44px；全屏工作区使用 `100dvh`。
+- 普通装饰过渡优先动画 `transform` / `opacity`，禁止 `transition: all`；时长引用对应的 `--motion-*` 或 `--skin-motion-state`。尊重 `prefers-reduced-motion`，关闭非必要动画。悬停与聚焦不改变控件布局或命中区域；颜色反馈可使用伪元素淡入。持续装饰动画必须有用户明确要求，不能自行恢复已删除的滚动图片区。
+- Switch 使用当前皮肤的按钮/输入圆角；当前直角皮肤下轨道与滑块呈长方形。关闭时允许滑块拉长形成拖尾再回缩，滑块状态切换可沿轨道移动；这是 Switch 明确的交互例外，不受普通悬停禁止几何变化的限制。仅由实际切换触发关闭动效，首屏及配置恢复不播放；减少动态效果偏好禁用该动效，颜色和时长仍来自皮肤。
+- 保留键盘 `:focus-visible` 和 `--ring`，不允许移除 outline 而无替代。UI 图标使用 `currentColor` 和皮肤图标角色；与文本同行按字号和实际渲染做光学校正，不机械复制其他图标的位移数值。纯装饰图片使用空 alt、`aria-hidden`，不接收点击或键盘焦点。
+- 页面私有样式放在组件相邻 `.css`；共享主题与路由壳规则放在对应共享入口。新增前先搜索，避免同名规则叠加；不通过不断追加 `globals.css` 或局部 `!important` 来掩盖共享主题问题。
+
+### 首页与平台功能入口
+
+- 当前首页是 `/` 与 `/create` 的 `CreatePage`：正文只保留文案及一个前往 `/canvas` 的「进入画布」入口。不恢复对话输入、创作模式切换、灵感广场/精选灵感、滚动项目封面、标语栏、「01 / 从一个想法开始」或「影策加油站」。修改时保持已去除的空列与留白结果，不重新挂载旧首页的任务恢复或生成副作用。
+- 首页人物使用项目内的透明原图，仅挂载在首页组件。按用户参考比例固定于窗口右下角，随视口缩放，可裁切右侧与底部；滚动不改变锚点，窄屏缩小，不挡主要文案与入口，不引入横向滚动。不能挂入公共布局或 body 让人物出现在画布、资产、设置或后台；导航离开首页时随组件卸载。
+- 功能入口依赖平台实际生效的 `FeatureAvailability`，不是当前用户是否管理员。`shortDramaEnabled === false` 时普通用户和管理员的工作台侧栏、快捷搜索及其他用户侧页面入口都隐藏短剧创作；直达相关路由由 `RequireFeature` 展示暂未开放，不能只藏侧栏。管理员后台管理该功能开关的入口保留。
+- 其他受功能开关控制的入口按其对应 key 执行同样的可用性规则，不把一个开关推断为关闭全部模块。所有入口消费同一配置来源；前端隐藏不替代后端权限与业务校验。
 
 ## 7. 本地开发、部署和数据目录
 
@@ -137,6 +158,9 @@
 - 云端 Agent：前端事件流和审批路径依赖后端 `/api/agent` 接口；在该接口实现后补充后端冒烟、Worker 运行和 SSE 断线重连验证。
 - 文档站：`cd docs && bun run types:check` 或 `bun run build`。
 - UI 变更能浏览器验证时，检查关键路由、明暗主题、滚动、弹窗、空态和核心交互；不能验证时说明替代依据，不把静态阅读或 `git diff` 写成运行验证。
+- 涉及皮肤时，覆盖默认/自定义皮肤、明暗模式、0px/非零圆角、伪元素、body 浮层、后台与画布界面；皮肤保存后检查颜色和圆角是否同步。功能入口验证同时覆盖普通用户和管理员，以及关闭后的快捷搜索与直达路由。首页验证覆盖窄屏、窗口缩放、滚动与人物只在首页出现。
+- 用户指定本机 Compose 端口验收时，使用相应隔离项目、镜像和数据卷，构建真实前端并更新指定服务；检查映射端口、镜像、容器状态和健康接口，最后做真实页面验收。不能用未重建的容器代表最新源码，也不能把该操作推断为允许修改其他端口、SSH 或生产部署。
+- 浏览器权限拒绝时不通过其他浏览器、CDP 或间接执行绕过。可继续完成不依赖浏览器的源码、测试、构建和健康检查，但交付中明确视觉验收未完成及阻断原因。旧版截图或旧的通过记录不能证明本轮 UI 结果。
 - 验证必须针对真实实现：优先专项测试、类型检查、项目 build 或真实路由浏览器验收。独立 HTML、静态仿制页面和脱离应用状态的截图不能作为真实页面通过的证据。
 
 同类失败连续三次时停止盲试，记录现象、已排除项和新假设，再切换路径或请求用户决策。

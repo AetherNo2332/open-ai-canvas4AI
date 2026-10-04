@@ -14,13 +14,11 @@ const AccessSettingsPanel = lazy(() => import("./components/access-settings-pane
 const EmailSettingsPanel = lazy(() => import("./components/email-settings-panel"));
 const FeatureAvailabilityPanel = lazy(() => import("./components/feature-availability-panel"));
 const StorageResourcesPanel = lazy(() => import("./components/storage-resources-panel"));
-const ObservabilityOverviewPanel = lazy(() => import("./components/observability-overview-panel"));
 
 export function AnalyticsPage() {
     const { references } = useAdminContext();
     return (
         <AdminPageFrame title="运行总览" description="请求质量、任务队列与成本 · 趋势按自然日统计" scroll>
-            <ObservabilityOverviewPanel />
             <AnalyticsPanel users={references.users} channels={references.channels} />
         </AdminPageFrame>
     );
