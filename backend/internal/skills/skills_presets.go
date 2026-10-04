@@ -81,8 +81,8 @@ func (s *Service) SkillPresets() ([]SkillPreset, error) {
 		if _, ok := skillPresetScenes[preset.Scene]; !ok {
 			return nil, fmt.Errorf("场景预设 %s 的分类非法: %q", id, preset.Scene)
 		}
-		if len(preset.SkillIDs) == 0 || len(preset.SkillIDs) > 8 {
-			return nil, fmt.Errorf("场景预设 %s 的技能数 %d 超出 1-8（每轮激活上限）", id, len(preset.SkillIDs))
+		if err := validateSkillPresetSkillCount(id, preset.SkillIDs); err != nil {
+			return nil, err
 		}
 		presetSeen := make(map[string]struct{}, len(preset.SkillIDs))
 		for _, skillID := range preset.SkillIDs {
@@ -106,4 +106,11 @@ func (s *Service) SkillPresets() ([]SkillPreset, error) {
 		}
 	}
 	return file.Presets, nil
+}
+
+func validateSkillPresetSkillCount(presetID string, skillIDs []string) error {
+	if len(skillIDs) == 0 {
+		return fmt.Errorf("场景预设 %s 的技能集合不能为空", presetID)
+	}
+	return nil
 }

@@ -16,11 +16,14 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	"infinite-canvas/backend/internal/skills"
 )
 
 type cloudAgentSkill struct {
+	Source       string            `json:"source,omitempty"`
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
 	Description  string            `json:"description,omitempty"`
@@ -310,51 +313,102 @@ func cloudAgentSearchSkills(skills []cloudAgentSkill, keyword string, limit int)
 func (s *Service) cloudAgentSkills(userID string, ids []string) ([]cloudAgentSkill, error) {
 	snapshots := []cloudAgentSkill{}
 	for _, id := range ids {
-		skill, err := s.SkillDetail(userID, id)
+		snapshot, err := s.cloudAgentUserSkillSnapshot(userID, id)
 		if err != nil {
 			return nil, err
 		}
-		if !skill.IsAdded || skill.Status != 1 {
-			return nil, BadAuthRequest("只能使用用户技能库中已安装且启用的技能")
-		}
-		// Keep bodies out of the run state. The package version, file hashes and
-		// allowlist are frozen here; actual content is retrieved on demand.
-		snapshot := cloudAgentSkill{ID: id, Name: skill.SkillName, Description: skill.Description,
-			Version: skill.VersionID, VersionID: skill.VersionID, VersionLabel: skill.Version,
-			NativeName: nativeSkillName(skill.SkillName, id), Hash: skill.ContentHash,
-			Files: map[string]string{cloudAgentSkillEntryPath: ""}}
-		files, err := s.SkillPackageFilesAtVersion(userID, id, skill.VersionID, skill.ContentHash)
-		if err != nil {
-			return nil, err
-		}
-		for _, file := range files {
-			// The entry is listed separately; file bodies are fetched on demand.
-			if file.Path == cloudAgentSkillEntryPath {
-				continue
-			}
-			// Executable/binary packages are never executed; text references are data only.
-			if !isNativeSkillTextPath(file.Path) {
-				continue
-			}
-			snapshot.Files[file.Path] = ""
-		}
-		for _, file := range files {
-			if file.Path == cloudAgentSkillEntryPath || isNativeSkillTextPath(file.Path) {
-				snapshot.NativeFiles = append(snapshot.NativeFiles, PiSkillFile{Path: file.Path, SHA256: file.SHA256,
-					Size: file.Size, MimeType: file.MimeType, Text: true})
-			}
-		}
-		// Detect an update during package reads instead of mixing two versions.
-		latest, err := s.SkillDetail(userID, id)
-		if err != nil {
-			return nil, err
-		}
-		if latest.VersionID != skill.VersionID || latest.ContentHash != skill.ContentHash {
-			return nil, creationConflict("技能在读取时已更新，请重试")
-		}
-		snapshots = append(snapshots, snapshot)
+		snapshots = append(snapshots, snapshot.skill)
 	}
 	return snapshots, nil
+}
+
+// cloudAgentUserSkillSnapshot 冻结单个"用户技能库来源"的技能快照：要求已安装且启用，
+// 版本与内容 hash 在这里定格，正文按需读取。
+func (s *Service) cloudAgentUserSkillSnapshot(userID, id string) (cloudAgentSkillSnapshot, error) {
+	skill, err := s.SkillDetail(userID, id)
+	if err != nil {
+		return cloudAgentSkillSnapshot{}, err
+	}
+	if !skill.IsAdded || skill.Status != 1 {
+		return cloudAgentSkillSnapshot{}, BadAuthRequest("只能使用用户技能库中已安装且启用的技能")
+	}
+	files, err := s.SkillPackageFilesAtVersion(userID, id, skill.VersionID, skill.ContentHash)
+	if err != nil {
+		return cloudAgentSkillSnapshot{}, err
+	}
+	// Detect an update during package reads instead of mixing two versions.
+	latest, err := s.SkillDetail(userID, id)
+	if err != nil {
+		return cloudAgentSkillSnapshot{}, err
+	}
+	if latest.VersionID != skill.VersionID || latest.ContentHash != skill.ContentHash {
+		return cloudAgentSkillSnapshot{}, creationConflict("技能在读取时已更新，请重试")
+	}
+	snapshot := cloudAgentSkill{ID: id, Name: skill.SkillName, Description: skill.Description,
+		Source:  skills.SkillSourceUser,
+		Version: skill.VersionID, VersionID: skill.VersionID, VersionLabel: skill.Version,
+		NativeName: nativeSkillName(skill.SkillName, id), Hash: skill.ContentHash,
+		Files: map[string]string{cloudAgentSkillEntryPath: ""}}
+	for _, file := range files {
+		// The entry is listed separately; file bodies are fetched on demand.
+		if file.Path == cloudAgentSkillEntryPath {
+			continue
+		}
+		// Executable/binary packages are never executed; text references are data only.
+		if !isNativeSkillTextPath(file.Path) {
+			continue
+		}
+		snapshot.Files[file.Path] = ""
+	}
+	for _, file := range files {
+		if file.Path == cloudAgentSkillEntryPath || isNativeSkillTextPath(file.Path) {
+			snapshot.NativeFiles = append(snapshot.NativeFiles, PiSkillFile{Path: file.Path, SHA256: file.SHA256,
+				Size: file.Size, MimeType: file.MimeType, Text: true})
+		}
+	}
+	return cloudAgentSkillSnapshot{skill: snapshot, fileCount: len(files), totalBytes: skill.TotalBytes}, nil
+}
+
+// cloudAgentSkillSnapshot 携带技能快照与容量准入所需的体积事实。
+type cloudAgentSkillSnapshot struct {
+	skill      cloudAgentSkill
+	fileCount  int
+	totalBytes int64
+}
+
+// cloudAgentSkillSnapshotFromFiles 从仓库版本行直接冻结"全局默认来源"的技能快照：
+// 不要求用户安装该技能；文件清单来自 SkillFiles，正文同样按需读取。
+func cloudAgentSkillSnapshotFromFiles(skillID string, version *model.SkillVersion, files []model.SkillFile) (*cloudAgentSkill, error) {
+	name := skillID
+	description := ""
+	entry := ""
+	// SKILL.md 的 frontmatter 提供展示名与描述；缺失时回退技能 ID，
+	// 不让快照装配因元数据不全而失败。
+	for _, file := range files {
+		if file.Path == cloudAgentSkillEntryPath {
+			entry = file.Path
+		}
+	}
+	if entry == "" {
+		return nil, kernel.AgentSkillDefaultsInvalid(fmt.Sprintf("默认技能 %s 的版本缺少 SKILL.md 入口", skillID), map[string]any{"skillId": skillID})
+	}
+	snapshot := &cloudAgentSkill{ID: skillID, Name: name, Description: description,
+		Version: version.VersionLabel, VersionID: version.ID, VersionLabel: version.VersionLabel,
+		NativeName: nativeSkillName(name, skillID), Hash: version.ContentHash,
+		Files: map[string]string{cloudAgentSkillEntryPath: ""}}
+	for _, file := range files {
+		if file.Path == cloudAgentSkillEntryPath || !isNativeSkillTextPath(file.Path) {
+			continue
+		}
+		snapshot.Files[file.Path] = ""
+	}
+	for _, file := range files {
+		if file.Path == cloudAgentSkillEntryPath || isNativeSkillTextPath(file.Path) {
+			snapshot.NativeFiles = append(snapshot.NativeFiles, PiSkillFile{Path: file.Path, SHA256: file.SHA256,
+				Size: file.Size, MimeType: file.MimeType, Text: true})
+		}
+	}
+	return snapshot, nil
 }
 
 func cloudAgentCanonical(system string, history []providerTextMessage, prompt string, req CloudAgentRequest) canonicalAgentRequest {

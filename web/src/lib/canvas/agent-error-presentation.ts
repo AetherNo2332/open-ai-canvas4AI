@@ -3,6 +3,9 @@ import { AgentStreamError } from "@/services/api/agent";
 
 export function agentErrorPresentation(cause: unknown, fallback = "Agent 执行失败") {
     const text = typeof cause === "string" ? cause.trim() : cause instanceof Error ? cause.message : fallback;
+    if (cause instanceof ApiError && cause.reason === "agent_skill_budget_exceeded") {
+        return { title: fallback, text: agentSkillBudgetMessage(cause) };
+    }
     if ((cause instanceof ApiError || cause instanceof AgentStreamError) && cause.status === 404) {
         return {
             title: "Agent 接口或资源不存在",
@@ -22,8 +25,16 @@ export function agentErrorPresentation(cause: unknown, fallback = "Agent 执行�
 
 export function agentSubmissionErrorTitle(cause: unknown, accepted: boolean) {
     if (accepted) return "运行已接收，但本地提交记录清理失败";
+    if (cause instanceof ApiError && cause.reason === "agent_skill_budget_exceeded") return agentSkillBudgetMessage(cause);
     const status = cause instanceof ApiError ? cause.status : undefined;
     if (status && [400, 401, 403, 404, 422].includes(status)) return "请求已被服务端拒绝";
     if (status) return "服务端已返回错误；重试将核对原请求，不重复创建";
     return "未收到服务端确认；重试将核对原请求，不重复创建";
+}
+
+function agentSkillBudgetMessage(cause: ApiError) {
+    const { budget, limit, actual } = cause.details || {};
+    const labels: Record<string, string> = { files: "文件数", total_bytes: "包体积（字节）", context_bytes: "上下文估算（字节）" };
+    if (typeof budget !== "string" || typeof limit !== "number" || typeof actual !== "number") return cause.message;
+    return `${cause.message}：${labels[budget] || budget}，上限 ${limit}，实际 ${actual}`;
 }

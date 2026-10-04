@@ -1,0 +1,337 @@
+# Review package: edb348e6..8d3a6a7d
+
+## Commits
+8d3a6a7d feat(agent): 技能默认配置 - 新增默认技能与会话技能模型、v51 迁移和预算错误码
+
+## Files changed
+ .../internal/database/agent_skills_config_test.go  | 65 ++++++++++++++++++++++
+ backend/internal/database/migrations.go            |  6 +-
+ backend/internal/kernel/agent_skill_errors_test.go | 46 +++++++++++++++
+ backend/internal/kernel/error_codes.go             | 33 ++++++-----
+ backend/internal/kernel/errors.go                  | 15 +++++
+ backend/internal/model/agent_skills_config.go      | 32 +++++++++++
+ 6 files changed, 181 insertions(+), 16 deletions(-)
+
+## Diff
+diff --git a/backend/internal/database/agent_skills_config_test.go b/backend/internal/database/agent_skills_config_test.go
+new file mode 100644
+index 00000000..fd8f925f
+--- /dev/null
++++ b/backend/internal/database/agent_skills_config_test.go
+@@ -0,0 +1,65 @@
++package database
++
++import (
++	"testing"
++
++	"infinite-canvas/backend/internal/model"
++)
++
++func TestMigrateSchemaCreatesAgentSkillConfigTables(t *testing.T) {
++	db, err := Open(Config{Driver: "sqlite", DSN: "file:agent-skill-config-migration?mode=memory&cache=shared"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := MigrateSchema(db); err != nil {
++		t.Fatal(err)
++	}
++	if !db.Migrator().HasTable(&model.AgentSkillDefault{}) || !db.Migrator().HasTable(&model.AgentConversationSkill{}) {
++		t.Fatal("迁移 v51 未创建 agent_skill_defaults / agent_conversation_skills 表")
++	}
++	if !db.Migrator().HasIndex(&model.AgentSkillDefault{}, "idx_agent_skill_defaults_scope_skill") {
++		t.Fatal("迁移 v51 未创建默认技能 (scope, skill_id) 唯一索引")
++	}
++	if !db.Migrator().HasIndex(&model.AgentConversationSkill{}, "idx_agent_conversation_skills_conversation_skill") {
++		t.Fatal("迁移 v51 未创建会话技能 (conversation_id, skill_id) 唯一索引")
++	}
++	if CurrentSchemaVersion != 51 {
++		t.Fatalf("CurrentSchemaVersion = %d, want 51", CurrentSchemaVersion)
++	}
++	if err := RequireSchemaVersion(db); err != nil {
++		t.Fatalf("RequireSchemaVersion 拒绝 v51 结构：%v", err)
++	}
++}
++
++func TestAgentSkillConfigTablesEnforceCompositeUniqueness(t *testing.T) {
++	db, err := Open(Config{Driver: "sqlite", DSN: "file:agent-skill-config-unique?mode=memory&cache=shared"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := MigrateSchema(db); err != nil {
++		t.Fatal(err)
++	}
++	first := model.AgentSkillDefault{ID: "asd-1", Scope: "global", SkillID: "skill-1", SkillVersionID: "sv-1", Enabled: true, Revision: 1}
++	if err := db.Create(&first).Error; err != nil {
++		t.Fatal(err)
++	}
++	duplicate := first
++	duplicate.ID = "asd-2"
++	if err := db.Create(&duplicate).Error; err == nil {
++		t.Fatal("同一 (scope, skill_id) 的重复默认技能行应被唯一索引拒绝")
++	}
++	conversation := model.AgentConversationSkill{ConversationID: "conv-1", SkillID: "skill-1", SkillVersionID: "sv-1", Source: "global"}
++	if err := db.Create(&conversation).Error; err != nil {
++		t.Fatal(err)
++	}
++	duplicateConversation := conversation
++	if err := db.Create(&duplicateConversation).Error; err == nil {
++		t.Fatal("同一 (conversation_id, skill_id) 的重复会话技能行应被唯一索引拒绝")
++	}
++	other := conversation
++	other.SkillID = "skill-2"
++	other.Source = "user"
++	if err := db.Create(&other).Error; err != nil {
++		t.Fatalf("同一会话下的不同技能应可共存：%v", err)
++	}
++}
+diff --git a/backend/internal/database/migrations.go b/backend/internal/database/migrations.go
+index 29442b08..7257c851 100644
+--- a/backend/internal/database/migrations.go
++++ b/backend/internal/database/migrations.go
+@@ -7,21 +7,21 @@ import (
+ 	"time"
+ 
+ 	"infinite-canvas/backend/internal/model"
+ 
+ 	"gorm.io/gorm"
+ )
+ 
+ // CurrentSchemaVersion follows upstream migrations through v43; our Agent
+ // migrations register after that upstream range as 44+. When a future upstream
+ // sync takes 44+, shift our block up again and extend the relocation table.
+-const CurrentSchemaVersion int64 = 50
++const CurrentSchemaVersion int64 = 51
+ 
+ // PreviousUpstreamSchemaVersion is the highest upstream migration version.
+ const PreviousUpstreamSchemaVersion int64 = 43
+ 
+ const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
+ const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
+ const assetTaxonomyCandidateIdentityChecksum = "sha256:asset-taxonomy-candidate-identity-v3-20260831-r1"
+ const resourceUploadKeyChecksum = "sha256:resource-upload-key-v4-20260901"
+ const paymentTopupChecksum = "sha256:payment-topup-v5-20260902"
+ const resourcePlaybackChecksum = "sha256:resource-playback-v6-20260902"
+@@ -30,20 +30,21 @@ const logicalModelActiveCodeChecksum = "sha256:logical-model-active-code-v8-2026
+ const creationRuntimeChecksum = "sha256:creation-runtime-v10-20260909"
+ const authNotificationsChecksum = "sha256:auth-notifications-v35-20260924"
+ const cloudAgentGeminiCacheChecksum = "sha256:cloud-agent-gemini-cache-v36-20260924"
+ const cloudAgentGeminiCacheIdentityChecksum = "sha256:cloud-agent-gemini-cache-identity-v37-20260925"
+ const prefixedIDSequenceReconcileChecksum = "sha256:prefixed-id-sequence-reconcile-v38-20260926"
+ const skillLibraryCategoriesChecksum = "sha256:skill-library-categories-v39-20260926"
+ const builtinSkillTombstonesChecksum = "sha256:builtin-skill-tombstones-v40-20260927"
+ const resourceThumbnailChecksum = "sha256:resource-thumbnail-v41-20260927"
+ const cloudAgentPiSessionsChecksum = "sha256:cloud-agent-pi-sessions-v42-20260928"
+ const topupSaleStrategiesChecksum = "sha256:topup-sale-strategies-v43-20260929"
++const agentSkillDefaultsChecksum = "sha256:agent-skill-defaults-v46-20261004"
+ 
+ const postgresSchemaMigrationLockID int64 = 73123910420260830
+ 
+ type SchemaStatus struct {
+ 	Current  int64 `json:"current"`
+ 	Expected int64 `json:"expected"`
+ 	Ready    bool  `json:"ready"`
+ }
+ 
+ type schemaMigration struct {
+@@ -160,20 +161,23 @@ var schemaMigrations = []migration{
+ 		return tx.AutoMigrate(&model.CloudAgentExecution{})
+ 	}},
+ 	{version: 47, name: "pi_agent_conversation_sessions", checksum: "sha256:pi-agent-conversation-sessions-v42-20260927", apply: migratePiAgentConversationSessions},
+ 	{version: 48, name: "pi_agent_owner_scoped_session_ids", checksum: "sha256:pi-agent-owner-scoped-session-ids-v43-20260928", apply: migratePiAgentOwnerScopedSessionIDs},
+ 	{version: 49, name: "pi_agent_event_scheduler", checksum: "sha256:pi-agent-event-scheduler-v44-20261002", apply: func(tx *gorm.DB) error {
+ 		return tx.AutoMigrate(&model.CloudAgentExecution{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{}, &model.AgentRuntimeInstance{})
+ 	}},
+ 	{version: 50, name: "pi_agent_orchestrator", checksum: "sha256:pi-agent-orchestrator-v45-20261002", apply: func(tx *gorm.DB) error {
+ 		return tx.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.AgentRuntimeInstance{})
+ 	}},
++	{version: 51, name: "agent_skill_defaults", checksum: agentSkillDefaultsChecksum, apply: func(tx *gorm.DB) error {
++		return tx.AutoMigrate(&model.AgentSkillDefault{}, &model.AgentConversationSkill{})
++	}},
+ }
+ 
+ func migratePiAgentConversationSessions(tx *gorm.DB) error {
+ 	if err := tx.AutoMigrate(&model.CloudAgentPiSession{}, &model.CloudAgentPiEntry{}); err != nil {
+ 		return err
+ 	}
+ 	var runs []model.CloudAgentExecution
+ 	if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "status", "created_at", "updated_at").
+ 		Where("engine = ?", "pi").Order("created_at, id").Find(&runs).Error; err != nil {
+ 		return err
+diff --git a/backend/internal/kernel/agent_skill_errors_test.go b/backend/internal/kernel/agent_skill_errors_test.go
+new file mode 100644
+index 00000000..947e55f9
+--- /dev/null
++++ b/backend/internal/kernel/agent_skill_errors_test.go
+@@ -0,0 +1,46 @@
++package kernel
++
++import "testing"
++
++func TestAgentSkillErrorConstructors(t *testing.T) {
++	details := map[string]any{"budget": "context_bytes", "limit": int64(1024), "actual": int64(2048)}
++
++	budget := AgentSkillBudgetExceeded(details)
++	if budget.Status != 400 || budget.Code != CodeInvalidArgument {
++		t.Fatalf("budget Status/Code = %d/%d, want 400/400", budget.Status, budget.Code)
++	}
++	if budget.Reason != ReasonAgentSkillBudgetExceeded {
++		t.Fatalf("budget Reason = %q, want %q", budget.Reason, ReasonAgentSkillBudgetExceeded)
++	}
++	if budget.Message == "" {
++		t.Fatal("budget Message must be user-safe and non-empty")
++	}
++	if budget.Details["limit"] != int64(1024) {
++		t.Fatalf("budget Details not passthrough: %#v", budget.Details)
++	}
++
++	conflict := AgentSkillDefaultsConflict(7)
++	if conflict.Status != CodeConflict || conflict.Code != CodeConflict {
++		t.Fatalf("conflict Status/Code = %d/%d, want 409/409", conflict.Status, conflict.Code)
++	}
++	if conflict.Reason != ReasonAgentSkillDefaultsRevisionConflict {
++		t.Fatalf("conflict Reason = %q, want %q", conflict.Reason, ReasonAgentSkillDefaultsRevisionConflict)
++	}
++	if conflict.Details["currentRevision"] != int64(7) {
++		t.Fatalf("conflict Details[currentRevision] = %#v, want int64(7)", conflict.Details["currentRevision"])
++	}
++
++	invalid := AgentSkillDefaultsInvalid("引用了不存在或已禁用的技能", map[string]any{"skillId": "skill-1"})
++	if invalid.Status != 400 || invalid.Code != CodeInvalidArgument {
++		t.Fatalf("invalid Status/Code = %d/%d, want 400/400", invalid.Status, invalid.Code)
++	}
++	if invalid.Reason != ReasonAgentSkillDefaultsInvalid {
++		t.Fatalf("invalid Reason = %q, want %q", invalid.Reason, ReasonAgentSkillDefaultsInvalid)
++	}
++	if invalid.Message != "引用了不存在或已禁用的技能" {
++		t.Fatalf("invalid Message = %q", invalid.Message)
++	}
++	if invalid.Details["skillId"] != "skill-1" {
++		t.Fatalf("invalid Details not passthrough: %#v", invalid.Details)
++	}
++}
+diff --git a/backend/internal/kernel/error_codes.go b/backend/internal/kernel/error_codes.go
+index 8094a4c7..32db584a 100644
+--- a/backend/internal/kernel/error_codes.go
++++ b/backend/internal/kernel/error_codes.go
+@@ -19,35 +19,38 @@ const (
+ 	CodeQuotaExceeded          = 40301
+ 	CodeIdempotencyConflict    = 40901
+ 	CodeCanvasResourcesMissing = 40902
+ 	CodeRateLimited            = 42901
+ )
+ 
+ // ErrorReason 是稳定机器可读原因，前端应判断 reason 而不是解析 msg。
+ type ErrorReason string
+ 
+ const (
+-	ReasonInvalidArgument        ErrorReason = "invalid_argument"
+-	ReasonUnauthorized           ErrorReason = "unauthorized"
+-	ReasonForbidden              ErrorReason = "forbidden"
+-	ReasonNotFound               ErrorReason = "not_found"
+-	ReasonConflict               ErrorReason = "conflict"
+-	ReasonCanvasResourcesMissing ErrorReason = "canvas_history_resources_missing"
+-	ReasonFailedPrecondition     ErrorReason = "failed_precondition"
+-	ReasonQuotaExceeded          ErrorReason = "quota_exceeded"
+-	ReasonRateLimited            ErrorReason = "rate_limited"
+-	ReasonUnavailable            ErrorReason = "unavailable"
+-	ReasonTimeout                ErrorReason = "timeout"
+-	ReasonInternal               ErrorReason = "internal"
+-	ReasonBadGateway             ErrorReason = "bad_gateway"
+-	ReasonUpstreamDNSFailed      ErrorReason = "upstream_dns_failed"
+-	ReasonAgentLeaseLost         ErrorReason = "agent_lease_lost"
++	ReasonInvalidArgument                    ErrorReason = "invalid_argument"
++	ReasonUnauthorized                       ErrorReason = "unauthorized"
++	ReasonForbidden                          ErrorReason = "forbidden"
++	ReasonNotFound                           ErrorReason = "not_found"
++	ReasonConflict                           ErrorReason = "conflict"
++	ReasonCanvasResourcesMissing             ErrorReason = "canvas_history_resources_missing"
++	ReasonFailedPrecondition                 ErrorReason = "failed_precondition"
++	ReasonQuotaExceeded                      ErrorReason = "quota_exceeded"
++	ReasonRateLimited                        ErrorReason = "rate_limited"
++	ReasonUnavailable                        ErrorReason = "unavailable"
++	ReasonTimeout                            ErrorReason = "timeout"
++	ReasonInternal                           ErrorReason = "internal"
++	ReasonBadGateway                         ErrorReason = "bad_gateway"
++	ReasonUpstreamDNSFailed                  ErrorReason = "upstream_dns_failed"
++	ReasonAgentLeaseLost                     ErrorReason = "agent_lease_lost"
++	ReasonAgentSkillBudgetExceeded           ErrorReason = "agent_skill_budget_exceeded"
++	ReasonAgentSkillDefaultsRevisionConflict ErrorReason = "agent_skill_defaults_revision_conflict"
++	ReasonAgentSkillDefaultsInvalid          ErrorReason = "agent_skill_defaults_invalid"
+ )
+ 
+ func ReasonForStatus(status int) ErrorReason {
+ 	switch status {
+ 	case CodeInvalidArgument:
+ 		return ReasonInvalidArgument
+ 	case CodeUnauthorized:
+ 		return ReasonUnauthorized
+ 	case CodeForbidden:
+ 		return ReasonForbidden
+diff --git a/backend/internal/kernel/errors.go b/backend/internal/kernel/errors.go
+index fb0c543d..b7e5cff9 100644
+--- a/backend/internal/kernel/errors.go
++++ b/backend/internal/kernel/errors.go
+@@ -56,10 +56,25 @@ func Unauthorized(message string) *AppError {
+ 	return NewAppError(401, message)
+ }
+ 
+ func Forbidden(message string) *AppError {
+ 	return NewAppError(403, message)
+ }
+ 
+ func AgentLeaseLost(message string) *AppError {
+ 	return &AppError{Status: CodeForbidden, Code: CodeForbidden, Reason: ReasonAgentLeaseLost, Message: message}
+ }
++
++// AgentSkillBudgetExceeded 表示技能集合的文件数/字节数/上下文预算超限，details 携带预算名、上限与实际值。
++func AgentSkillBudgetExceeded(details map[string]any) *AppError {
++	return &AppError{Status: CodeInvalidArgument, Code: CodeInvalidArgument, Reason: ReasonAgentSkillBudgetExceeded, Message: "技能集合超出上下文预算", Details: details}
++}
++
++// AgentSkillDefaultsConflict 表示默认技能保存的 revision CAS 失败，details 携带服务端当前 revision。
++func AgentSkillDefaultsConflict(currentRevision int64) *AppError {
++	return &AppError{Status: CodeConflict, Code: CodeConflict, Reason: ReasonAgentSkillDefaultsRevisionConflict, Message: "默认技能配置已被其他管理员修改，请刷新后重试", Details: map[string]any{"currentRevision": currentRevision}}
++}
++
++// AgentSkillDefaultsInvalid 表示默认技能集合引用了不存在、已禁用或私有的技能，message 含技能 ID。
++func AgentSkillDefaultsInvalid(message string, details map[string]any) *AppError {
++	return &AppError{Status: CodeInvalidArgument, Code: CodeInvalidArgument, Reason: ReasonAgentSkillDefaultsInvalid, Message: message, Details: details}
++}
+diff --git a/backend/internal/model/agent_skills_config.go b/backend/internal/model/agent_skills_config.go
+new file mode 100644
+index 00000000..d33df00a
+--- /dev/null
++++ b/backend/internal/model/agent_skills_config.go
+@@ -0,0 +1,32 @@
++package model
++
++import "time"
++
++// AgentSkillDefault 是管理员配置的全局默认技能行。管理员后续修改只影响新会话；
++// 已创建会话的技能集合冻结在 agent_conversation_skills。
++type AgentSkillDefault struct {
++	ID             string    `json:"id" gorm:"primaryKey;size:36"`
++	Scope          string    `json:"scope" gorm:"size:16;not null;uniqueIndex:idx_agent_skill_defaults_scope_skill,priority:1"`
++	SkillID        string    `json:"skillId" gorm:"size:36;not null;uniqueIndex:idx_agent_skill_defaults_scope_skill,priority:2;index"`
++	SkillVersionID string    `json:"skillVersionId" gorm:"size:36;index"`
++	Position       int       `json:"position" gorm:"index"`
++	Enabled        bool      `json:"enabled" gorm:"index"`
++	Revision       int64     `json:"revision" gorm:"not null;default:0"`
++	UpdatedBy      string    `json:"updatedBy" gorm:"size:36"`
++	CreatedAt      time.Time `json:"createdAt"`
++	UpdatedAt      time.Time `json:"updatedAt"`
++}
++
++// AgentConversationSkill 冻结一个会话装配过的技能集合：Source 区分 global/user，
++// ContentHash 记录装配时的技能内容指纹，保证后续运行的可复现性。
++// 主键必须是 (conversation_id, skill_id) 复合键：一个会话装配多行技能，
++// 单列主键会让 SQLite 隐式唯一索引挡住同一会话的第二行技能。
++type AgentConversationSkill struct {
++	ConversationID string    `json:"conversationId" gorm:"primaryKey;size:80;uniqueIndex:idx_agent_conversation_skills_conversation_skill,priority:1"`
++	SkillID        string    `json:"skillId" gorm:"primaryKey;size:36;not null;uniqueIndex:idx_agent_conversation_skills_conversation_skill,priority:2;index"`
++	SkillVersionID string    `json:"skillVersionId" gorm:"size:36;index"`
++	ContentHash    string    `json:"contentHash" gorm:"size:64"`
++	Source         string    `json:"source" gorm:"size:16;index"`
++	Position       int       `json:"position" gorm:"index"`
++	CreatedAt      time.Time `json:"createdAt"`
++}

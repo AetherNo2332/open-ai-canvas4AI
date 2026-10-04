@@ -13,6 +13,11 @@ description: 从产品功能快速定位主要代码入口
 
 ## Agent（beta）调度配置与管理
 
+- 默认技能：`backend/internal/model/agent_skills_config.go`、`backend/internal/repository/agent_skill_defaults.go`、`backend/internal/app/admin_agent_skill_defaults.go`；管理路由 `backend/internal/handler/admin_agent_skill_defaults.go`，用户摘要位于 `backend/internal/handler/agent.go`。
+- 会话解析与容量：`backend/internal/app/cloud_agent_skill_selection.go`、`backend/internal/skills/skill_selection.go`；v51 与 Models 登记位于 `backend/internal/database`。
+- 前端管理：`web/src/services/api/admin-skill-defaults.ts`、`web/src/pages/admin/settings/components/agent-skill-defaults-section.tsx`；页面已移除运行状态及其轮询。
+- 子智能体列表：`web/src/components/canvas/canvas-agent-subagent-list.tsx` 与同目录 CSS；让位算法 `web/src/lib/canvas/agent-subagent-layout.ts`，本地开放许可 SVG 在 `web/public/icons/subagents/`；P3 再接 Crew 事件数据。
+
 - 页面与 API：`web/src/pages/admin/settings/agent-settings-page.tsx`、`web/src/services/api/admin-agent-settings.ts`；复用 `agent-lessons-panel.tsx`。
 - Go 配置和公平领取：`internal/app/agent_scheduler_policy.go`、`internal/platform/agent_scheduler_policy.go`、`internal/repository/agent_admission.go`；管理员路由 `internal/handler/agent_scheduler.go`。
 - Node 热更新与驻留准入：`agent/src/runtime-config.ts`、`agent/src/event-scheduler.ts`、`agent/src/server.ts`；Pi SDK 保持 0.87.1。

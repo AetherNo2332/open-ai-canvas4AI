@@ -2,6 +2,10 @@ import { http, apiBaseURL } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser } from "@/services/api/task-text-stream";
 
 export type AgentPermissionMode = "read_only" | "auto" | "request_approval";
+export type AgentSkillDefaultsSummary = { count: number; skills: Array<{ skillId: string; skillName: string }> };
+export function listAgentSkillDefaults() {
+    return http.get<AgentSkillDefaultsSummary>("/agent/skill-defaults");
+}
 export type AgentReasoningMode = "off" | "auto" | "deep";
 export type AgentMediaSettings = {
     logicalModelId?: string;
@@ -64,6 +68,7 @@ export type AgentApproval = {
 export type AgentRunSkill = {
     id: string;
     name: string;
+    source?: "global" | "user";
     version: string;
     hash: string;
     nativeName?: string;

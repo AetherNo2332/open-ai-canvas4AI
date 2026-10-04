@@ -1,0 +1,202 @@
+# Review package: a7b7d859..6c9c3832
+
+## Commits
+6c9c3832 feat(agent): 技能默认配置 - 管理员默认技能查询与保存接口
+
+## Files changed
+ .../internal/handler/admin_agent_skill_defaults.go | 50 ++++++++++++++++++++++
+ .../handler/admin_agent_skill_defaults_test.go     | 33 ++++++++++++++
+ backend/internal/handler/api.go                    |  1 +
+ backend/internal/handler/api_test.go               | 16 ++++---
+ backend/internal/service/aliases_types.go          |  1 +
+ 5 files changed, 94 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/backend/internal/handler/admin_agent_skill_defaults.go b/backend/internal/handler/admin_agent_skill_defaults.go
+new file mode 100644
+index 00000000..633d016f
+--- /dev/null
++++ b/backend/internal/handler/admin_agent_skill_defaults.go
+@@ -0,0 +1,50 @@
++package handler
++
++import (
++	"net/http"
++
++	"infinite-canvas/backend/internal/service"
++
++	"github.com/gin-gonic/gin"
++)
++
++func RegisterAdminAgentSkillDefaultsRoutes(r *gin.RouterGroup, svc *service.Service) {
++	r.GET("/admin/agent/skill-defaults", func(c *gin.Context) {
++		user, err := currentUser(c, svc)
++		if err != nil {
++			failService(c, err)
++			return
++		}
++		view, err := svc.AdminAgentSkillDefaults(user)
++		if err != nil {
++			failService(c, err)
++			return
++		}
++		ok(c, view)
++	})
++	r.PUT("/admin/agent/skill-defaults", func(c *gin.Context) {
++		saveAgentSkillDefaults(c, svc)
++	})
++}
++
++func saveAgentSkillDefaults(c *gin.Context, svc *service.Service) {
++	user, err := currentUser(c, svc)
++	if err != nil {
++		failService(c, err)
++		return
++	}
++	var req struct {
++		Revision int64                           `json:"revision"`
++		Items    []service.AgentSkillDefaultItem `json:"items"`
++	}
++	if err := c.ShouldBindJSON(&req); err != nil {
++		fail(c, http.StatusBadRequest, err)
++		return
++	}
++	revision, err := svc.ReplaceAgentSkillDefaults(user, req.Revision, req.Items)
++	if err != nil {
++		failService(c, err)
++		return
++	}
++	ok(c, gin.H{"revision": revision})
++}
+diff --git a/backend/internal/handler/admin_agent_skill_defaults_test.go b/backend/internal/handler/admin_agent_skill_defaults_test.go
+new file mode 100644
+index 00000000..b06b2f35
+--- /dev/null
++++ b/backend/internal/handler/admin_agent_skill_defaults_test.go
+@@ -0,0 +1,33 @@
++package handler
++
++import (
++	"testing"
++
++	"infinite-canvas/backend/internal/service"
++
++	"github.com/gin-gonic/gin"
++)
++
++func TestAdminAgentSkillDefaultsRoutesAreRegistered(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	router := gin.New()
++	RegisterAdminAgentSkillDefaultsRoutes(router.Group("/api"), &service.Service{})
++	for _, route := range router.Routes() {
++		if route.Method == "GET" && route.Path == "/api/admin/agent/skill-defaults" {
++			return
++		}
++	}
++	t.Fatal("admin agent skill-defaults GET route is not registered")
++}
++
++func TestAdminAgentSkillDefaultsPutRouteIsRegistered(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	router := gin.New()
++	RegisterAdminAgentSkillDefaultsRoutes(router.Group("/api"), &service.Service{})
++	for _, route := range router.Routes() {
++		if route.Method == "PUT" && route.Path == "/api/admin/agent/skill-defaults" {
++			return
++		}
++	}
++	t.Fatal("admin agent skill-defaults PUT route is not registered")
++}
+diff --git a/backend/internal/handler/api.go b/backend/internal/handler/api.go
+index 17582320..ebc8d490 100644
+--- a/backend/internal/handler/api.go
++++ b/backend/internal/handler/api.go
+@@ -14,20 +14,21 @@ func RegisterCanvasAPI(api *gin.RouterGroup, svc *service.Service) {
+ 	RegisterAuthRoutes(api, svc)
+ 	RegisterAppearanceRoutes(api, svc)
+ 	RegisterFeatureAvailabilityRoutes(api, svc)
+ 	RegisterAgentRoutes(api, svc)
+ 	RegisterAgentMemoryRoutes(api, svc)
+ 	RegisterResponseInterceptionRoutes(api, svc)
+ 	RegisterAdminRoutes(api, svc)
+ 	RegisterAgentLessonAdminRoutes(api, svc)
+ 	RegisterAdminAnalyticsRoutes(api, svc)
+ 	RegisterAdminObservabilityRoutes(api, svc)
++	RegisterAdminAgentSkillDefaultsRoutes(api, svc)
+ 	RegisterAdminStorageRoutes(api, svc)
+ 	RegisterAdminUpdateRoutes(api, svc)
+ 	RegisterAdminSystemPerformanceRoutes(api, svc)
+ 	RegisterAnnouncementRoutes(api, svc)
+ 	RegisterFinanceRoutes(api, svc)
+ 	RegisterCreationRoutes(api, svc)
+ 	RegisterPaymentRoutes(api, svc)
+ 	RegisterLibTVRoutes(api, svc)
+ 	RegisterTapNowRoutes(api, svc)
+ 	RegisterChannelModelRoutes(api, svc)
+diff --git a/backend/internal/handler/api_test.go b/backend/internal/handler/api_test.go
+index 96ce7a53..f7bde5c7 100644
+--- a/backend/internal/handler/api_test.go
++++ b/backend/internal/handler/api_test.go
+@@ -10,27 +10,29 @@ import (
+ 
+ 	"github.com/gin-gonic/gin"
+ )
+ 
+ func TestRegisterCanvasAPIExposesOpenAPIAndProjects(t *testing.T) {
+ 	gin.SetMode(gin.TestMode)
+ 	router := gin.New()
+ 	RegisterCanvasAPI(router.Group("/api"), &service.Service{})
+ 
+ 	wanted := map[string]bool{
+-		"GET /api/openapi.yaml":             false,
+-		"GET /api/projects":                 false,
+-		"POST /api/tasks":                   false,
+-		"POST /api/tasks/:id/recover-media": false,
+-		"GET /api/resources":                false,
+-		"GET /api/skills/presets":           false,
+-		"GET /api/agent/skills/usage":       false,
++		"GET /api/openapi.yaml":               false,
++		"GET /api/projects":                   false,
++		"POST /api/tasks":                     false,
++		"POST /api/tasks/:id/recover-media":   false,
++		"GET /api/resources":                  false,
++		"GET /api/skills/presets":             false,
++		"GET /api/agent/skills/usage":         false,
++		"GET /api/admin/agent/skill-defaults": false,
++		"PUT /api/admin/agent/skill-defaults": false,
+ 	}
+ 	for _, route := range router.Routes() {
+ 		key := route.Method + " " + route.Path
+ 		if _, exists := wanted[key]; exists {
+ 			wanted[key] = true
+ 		}
+ 	}
+ 	for route, found := range wanted {
+ 		if !found {
+ 			t.Errorf("route %s is not registered", route)
+diff --git a/backend/internal/service/aliases_types.go b/backend/internal/service/aliases_types.go
+index ce3624e2..e5a50d9d 100644
+--- a/backend/internal/service/aliases_types.go
++++ b/backend/internal/service/aliases_types.go
+@@ -21,20 +21,21 @@ type (
+ 	PiNativeCompactionModelRequest         = app.PiNativeCompactionModelRequest
+ 	PiNativeCompactionComplete             = app.PiNativeCompactionComplete
+ 	PiTurnDecision                         = app.PiTurnDecision
+ 	PiToolReceipt                          = app.PiToolReceipt
+ 	PiRuntimePhaseRequest                  = app.PiRuntimePhaseRequest
+ 	PiSkillSnapshot                        = app.PiSkillSnapshot
+ 	PiSkillReadPage                        = app.PiSkillReadPage
+ 	PiSkillFileRequest                     = app.PiSkillFileRequest
+ 	AgentProfileRequest                    = app.AgentProfileRequest
+ 	AgentProfileView                       = app.AgentProfileView
++	AgentSkillDefaultItem                  = app.AgentSkillDefaultItem
+ 	AgentLessonView                        = app.AgentLessonView
+ 	AgentLessonAdminView                   = app.AgentLessonAdminView
+ 	AgentMemoryRequest                     = app.AgentMemoryRequest
+ 	AgentMemoryBundle                      = app.AgentMemoryBundle
+ 	AgentMemoryImportResult                = app.AgentMemoryImportResult
+ 	AgentMemoryCompactRequest              = app.AgentMemoryCompactRequest
+ 	AgentMemorySettingRequest              = app.AgentMemorySettingRequest
+ 	AgentMemoryCompactView                 = app.AgentMemoryCompactView
+ 	AgentMemoryCompactSummary              = app.AgentMemoryCompactSummary
+ 	APICallLogPage                         = app.APICallLogPage

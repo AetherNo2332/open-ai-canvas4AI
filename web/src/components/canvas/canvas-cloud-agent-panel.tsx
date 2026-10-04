@@ -18,9 +18,11 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
+import { effectiveAgentDefaultSkills } from "@/lib/canvas/agent-effective-skill-defaults";
 import {
     cancelAgentRun,
     getAgentCapabilities,
+    listAgentSkillDefaults,
     getAgentProfile,
     getAgentRun,
     createAgentRun,
@@ -35,6 +37,7 @@ import {
     type AgentProfileView,
     type AgentReasoningMode,
     type AgentRun,
+    type AgentSkillDefaultsSummary,
 } from "@/services/api/agent";
 import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
@@ -78,6 +81,7 @@ import {
     type CloudAgentPlanItem,
 } from "./canvas-cloud-agent-chat-ui";
 import { CanvasAgentSkillLibraryModal } from "./canvas-agent-skill-library-modal";
+import { AgentSubagentList, type AgentSubagentAvatarItem } from "./canvas-agent-subagent-list";
 import { CanvasCloudAgentSettings, agentPermissionLabel, agentPermissionMenuItems, agentPermissionVisual, type AgentContextKey } from "./canvas-cloud-agent-settings";
 import { useAgentPanelLayout } from "./use-agent-panel-layout";
 import { useAgentLauncherPosition } from "./use-agent-launcher-position";
@@ -128,6 +132,10 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const profileRequestRef = useRef(0);
     const [skills, setSkills] = useState<Skill[]>([]);
     const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+    const [skillDefaults, setSkillDefaults] = useState<AgentSkillDefaultsSummary>({ count: 0, skills: [] });
+    const globalDefaultSkills = useMemo(() => effectiveAgentDefaultSkills(run, skillDefaults), [run, skillDefaults]);
+    const globalDefaultSkillIds = useMemo(() => globalDefaultSkills.map(skill => skill.skillId), [globalDefaultSkills]);
+    const [activeSubagents] = useState<AgentSubagentAvatarItem[]>([]);
     const [marketSkills, setMarketSkills] = useState<Skill[]>([]);
     const [skillSearch, setSkillSearch] = useState("");
     const [debouncedSkillSearch, setDebouncedSkillSearch] = useState("");
@@ -423,8 +431,14 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
 
     useEffect(() => {
         let active = true;
+        let requestSequence = 0;
         setSkills([]);
+        setSkillDefaults({ count: 0, skills: [] });
         const refresh = () => {
+            const sequence = ++requestSequence;
+            void listAgentSkillDefaults()
+                .then(result => { if (active && sequence === requestSequence) { setSkillDefaults(result); setMessages(current => current.filter(message => message.id !== "skill-defaults-load-error")); } })
+                .catch(cause => { if (active && sequence === requestSequence) setMessages(current => appendAgentError(current, "skill-defaults-load-error", cause, "默认技能读取失败")); });
             void listAddedSkills()
                 .then((result) => {
                     if (!active) return;
@@ -1037,6 +1051,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                         onApprove={(settings) => void submitApproval("approve", settings)}
                                         onReject={() => void submitApproval("reject")}
                                     />
+                                    {activeSubagents.length > 0 ? <div className="mx-3 mb-2 shrink-0"><AgentSubagentList items={activeSubagents} theme={theme} /></div> : null}
                                     {planVisible ? <AgentPlanBar items={planItems} theme={theme} minimized={planMinimized} terminal={planTerminal || Boolean(run && ["completed", "failed", "cancelled", "rejected"].includes(run.status))} onToggle={() => setPlanMinimized((value) => !value)} /> : null}
                                     {historyHydrated && !messages.some((message) => message.role === "user" || message.role === "assistant") && !run ? (
                                         <AgentSceneCapsules
@@ -1094,6 +1109,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 installedSkills={installedSkills}
                 marketSkills={marketSkills}
                 selectedSkillIds={selectedSkillIds}
+                globalDefaultSkillIds={globalDefaultSkillIds}
+                globalDefaultSkills={globalDefaultSkills}
                 categories={skillCategories}
                 category={skillTag}
                 search={skillSearch}
