@@ -23,24 +23,47 @@ export function AgentSubagentList({ items, theme }: { items: AgentSubagentAvatar
         };
         measure();
         const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-        names.current.slice(0, items.length).forEach(name => { if (name) observer?.observe(name); });
+        names.current.slice(0, items.length).forEach((name) => {
+            if (name) observer?.observe(name);
+        });
         return () => observer?.disconnect();
     }, [items]);
     if (items.length === 0) return null;
-    const offsets = computeSubagentOffsets(items.length, geometry.size, geometry.gap, reducedMotion ? -1 : expanded, index => widths[index] || 0);
+    const offsets = computeSubagentOffsets(items.length, geometry.size, geometry.gap, reducedMotion ? -1 : expanded, (index) => widths[index] || 0);
     const baseWidth = items.length * (geometry.size + geometry.gap) - geometry.gap;
     const extraWidth = !reducedMotion && expanded >= 0 ? (widths[expanded] || 0) + geometry.gap : 0;
-    return <div className="agent-subagent-list" aria-label="活动子智能体" style={{ "--agent-subagent-surface": theme.node.panel, "--agent-subagent-text": theme.node.text } as CSSProperties}>
-        <div ref={row} className="agent-subagent-row" style={{ minWidth: baseWidth + extraWidth }}>
-            {items.map((item, index) => <div key={item.id} className="agent-subagent-item" data-state={item.state} data-expanded={expanded === index} style={{ transform: `translateX(${offsets[index]}px)` }}>
-                <button type="button" className="agent-subagent-avatar grid place-items-center rounded-full" aria-label={item.name} title={`${item.name} · ${stateLabel[item.state]}`} onMouseEnter={() => setHovered(index)} onMouseLeave={() => setHovered(-1)} onFocus={() => setFocused(index)} onBlur={() => setFocused(-1)}>
-                    <img src={item.avatarUrl} className="rounded-full object-cover" alt="" />
-                </button>
-                <span ref={element => { names.current[index] = element; }} className="agent-subagent-name" aria-hidden="true">{item.name}</span>
-            </div>)}
+    return (
+        <div className="agent-subagent-list" aria-label="活动子智能体" style={{ "--agent-subagent-surface": theme.node.panel, "--agent-subagent-text": theme.node.text } as CSSProperties}>
+            <div ref={row} className="agent-subagent-row" style={{ minWidth: baseWidth + extraWidth }}>
+                {items.map((item, index) => (
+                    <div key={item.id} className="agent-subagent-item" data-state={item.state} data-expanded={expanded === index} style={{ transform: `translateX(${offsets[index]}px)` }}>
+                        <button
+                            type="button"
+                            className="agent-subagent-avatar grid place-items-center rounded-full"
+                            aria-label={item.name}
+                            title={`${item.name} · ${stateLabel[item.state]}`}
+                            onMouseEnter={() => setHovered(index)}
+                            onMouseLeave={() => setHovered(-1)}
+                            onFocus={() => setFocused(index)}
+                            onBlur={() => setFocused(-1)}
+                        >
+                            <img src={item.avatarUrl} className="rounded-full object-cover" alt="" />
+                        </button>
+                        <span
+                            ref={(element) => {
+                                names.current[index] = element;
+                            }}
+                            className="agent-subagent-name"
+                            aria-hidden="true"
+                        >
+                            {item.name}
+                        </span>
+                    </div>
+                ))}
+            </div>
+            {reducedMotion && expanded >= 0 ? <span className="agent-subagent-reduced-name">{items[expanded]?.name}</span> : null}
         </div>
-        {reducedMotion && expanded >= 0 ? <span className="agent-subagent-reduced-name">{items[expanded]?.name}</span> : null}
-    </div>;
+    );
 }
 
 const stateLabel = { running: "运行中", waiting: "等待中", done: "已完成", failed: "失败" };

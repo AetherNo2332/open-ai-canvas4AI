@@ -7,8 +7,7 @@
     flex-direction: column;
     background: var(--background);
     color: var(--foreground);
-    font-family: "IBM Plex Sans Variable", "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-        "Noto Sans SC", system-ui, sans-serif;
+    font-family: "IBM Plex Sans Variable", "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
 }
 
 .canvas-refresh-shell-head {

@@ -4,11 +4,17 @@ import { WorkspaceSettingsForm, workspaceDocumentBytes } from "../src/components
 import type { AgentWorkspaceView } from "../src/services/api/agent-workspace";
 
 const view: AgentWorkspaceView = {
-    workspaceId: "workspace", canvasId: "canvas", revision: 7, agentsMd: "项目规则", agentsMdHash: "abc123",
+    workspaceId: "workspace",
+    canvasId: "canvas",
+    revision: 7,
+    agentsMd: "项目规则",
+    agentsMdHash: "abc123",
     skills: [{ skillId: "story", skillVersionId: "v2", skillName: "分镜", contentHash: "def456", fileCount: 1, totalBytes: 10, source: "workspace", position: 0, enabled: true }],
 };
 test("Workspace editor exposes frozen scope, current revision and versioned skill sources", () => {
-    const html = renderToStaticMarkup(<WorkspaceSettingsForm view={view} defaultSkills={[{ skillId: "global", skillName: "导演" }]} availableSkills={[]} saving={false} onSaveDocument={async () => view} onSaveSkills={async () => view} onReload={async () => {}} />);
+    const html = renderToStaticMarkup(
+        <WorkspaceSettingsForm view={view} defaultSkills={[{ skillId: "global", skillName: "导演" }]} availableSkills={[]} saving={false} onSaveDocument={async () => view} onSaveSkills={async () => view} onReload={async () => {}} />,
+    );
     expect(html).toContain('aria-label="Workspace Agents.md"');
     expect(html).toContain("项目规则");
     expect(html).toContain("abc123");

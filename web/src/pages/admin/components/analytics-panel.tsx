@@ -76,10 +76,7 @@ export default function AnalyticsPanel({ users, channels }: Props) {
         setData(null);
         setAgentData(null);
         try {
-            const [analyticsResult, agentResult] = await Promise.allSettled([
-                getAdminAnalytics(filters),
-                getAdminObservabilityOverview(buildObservabilityParams(filters)),
-            ]);
+            const [analyticsResult, agentResult] = await Promise.allSettled([getAdminAnalytics(filters), getAdminObservabilityOverview(buildObservabilityParams(filters))]);
             if (sequence !== requestSequence.current) return;
             if (analyticsResult.status === "rejected") throw analyticsResult.reason;
             setData(analyticsResult.value);
@@ -194,7 +191,7 @@ export default function AnalyticsPanel({ users, channels }: Props) {
         { title: "次数", dataIndex: "count", width: 90 },
         { title: "最近错误", dataIndex: "lastError", ellipsis: true, render: (value) => <Tooltip title={value}>{value || "--"}</Tooltip> },
         { title: "最近发生", dataIndex: "lastSeenAt", width: 170, render: (value) => dayjs(value).format("YYYY-MM-DD HH:mm") },
-        { title: "Trace", dataIndex: "traceId", width: 180, render: (value) => value ? <code title={value}>{value.slice(0, 12)}…</code> : "--" },
+        { title: "Trace", dataIndex: "traceId", width: 180, render: (value) => (value ? <code title={value}>{value.slice(0, 12)}…</code> : "--") },
     ];
 
     const trend = data?.trend || [];
@@ -369,14 +366,59 @@ export default function AnalyticsPanel({ users, channels }: Props) {
             </section>
 
             <section className="admin-analytics-agent-grid" aria-label="Agent 运行状态">
-                <AnalyticsHealthCard icon={<UsersRound className="size-4" />} label="Worker 在线" value={agentData ? formatNumber(agentData.worker.online) : "--"} detail={agentData ? `忙碌 ${formatNumber(agentData.worker.busy)} · 利用率 ${percent(agentData.worker.busyRatio)}` : undefined} tone={agentData?.worker.online ? "success" : "neutral"} />
-                <AnalyticsHealthCard icon={<Workflow className="size-4" />} label="Agent 队列深度" value={agentData ? formatNumber(agentData.queue.depth) : "--"} detail={agentData ? `最老任务 ${formatDuration(agentData.queue.oldestAgeSeconds * 1000)}` : undefined} tone={agentData?.queue.depth ? "warning" : "neutral"} />
-                <AnalyticsHealthCard icon={<Gauge className="size-4" />} label="Agent 成功率" value={agentData ? percent(agentData.tasks.successRate) : "--"} detail={agentData ? `${formatNumber(agentData.tasks.completed)} 个任务完成` : undefined} tone={!agentData ? "neutral" : agentData.tasks.successRate < 90 ? "warning" : "success"} />
-                <AnalyticsHealthCard icon={<AlertTriangle className="size-4" />} label="Agent 失败 / 重试" value={agentData ? `${formatNumber(agentData.tasks.failed)} / ${formatNumber(agentData.tasks.retried)}` : "--"} detail="失败明细已并入深度分析表" tone={agentData?.tasks.failed ? "warning" : "neutral"} />
-                <AnalyticsHealthCard icon={<Clock3 className="size-4" />} label="Agent P95 延迟" value={agentData ? formatDuration(agentData.tasks.p95LatencyMs) : "--"} detail={agentData ? `P50 ${formatDuration(agentData.tasks.p50LatencyMs)}` : undefined} />
-                <AnalyticsHealthCard icon={<Workflow className="size-4" />} label="工具成功率" value={agentData ? percent(agentData.tools.successRate) : "--"} detail={agentData ? `${formatNumber(agentData.tools.calls)} 次调用` : undefined} tone={!agentData ? "neutral" : agentData.tools.successRate < 90 ? "warning" : "success"} />
-                <AnalyticsHealthCard icon={<Gauge className="size-4" />} label="LLM 调用" value={agentData ? formatNumber(agentData.llm.calls) : "--"} detail={agentData ? `输入 ${formatNumber(agentData.llm.inputTokens)} · 输出 ${formatNumber(agentData.llm.outputTokens)}` : undefined} />
-                <AnalyticsHealthCard icon={<BarChart3 className="size-4" />} label="输入 / 输出 Token" value={agentData ? `${formatNumber(agentData.llm.inputTokens)} / ${formatNumber(agentData.llm.outputTokens)}` : "--"} detail={agentData ? `缓存 ${formatNumber(agentData.llm.cachedTokens)}` : undefined} />
+                <AnalyticsHealthCard
+                    icon={<UsersRound className="size-4" />}
+                    label="Worker 在线"
+                    value={agentData ? formatNumber(agentData.worker.online) : "--"}
+                    detail={agentData ? `忙碌 ${formatNumber(agentData.worker.busy)} · 利用率 ${percent(agentData.worker.busyRatio)}` : undefined}
+                    tone={agentData?.worker.online ? "success" : "neutral"}
+                />
+                <AnalyticsHealthCard
+                    icon={<Workflow className="size-4" />}
+                    label="Agent 队列深度"
+                    value={agentData ? formatNumber(agentData.queue.depth) : "--"}
+                    detail={agentData ? `最老任务 ${formatDuration(agentData.queue.oldestAgeSeconds * 1000)}` : undefined}
+                    tone={agentData?.queue.depth ? "warning" : "neutral"}
+                />
+                <AnalyticsHealthCard
+                    icon={<Gauge className="size-4" />}
+                    label="Agent 成功率"
+                    value={agentData ? percent(agentData.tasks.successRate) : "--"}
+                    detail={agentData ? `${formatNumber(agentData.tasks.completed)} 个任务完成` : undefined}
+                    tone={!agentData ? "neutral" : agentData.tasks.successRate < 90 ? "warning" : "success"}
+                />
+                <AnalyticsHealthCard
+                    icon={<AlertTriangle className="size-4" />}
+                    label="Agent 失败 / 重试"
+                    value={agentData ? `${formatNumber(agentData.tasks.failed)} / ${formatNumber(agentData.tasks.retried)}` : "--"}
+                    detail="失败明细已并入深度分析表"
+                    tone={agentData?.tasks.failed ? "warning" : "neutral"}
+                />
+                <AnalyticsHealthCard
+                    icon={<Clock3 className="size-4" />}
+                    label="Agent P95 延迟"
+                    value={agentData ? formatDuration(agentData.tasks.p95LatencyMs) : "--"}
+                    detail={agentData ? `P50 ${formatDuration(agentData.tasks.p50LatencyMs)}` : undefined}
+                />
+                <AnalyticsHealthCard
+                    icon={<Workflow className="size-4" />}
+                    label="工具成功率"
+                    value={agentData ? percent(agentData.tools.successRate) : "--"}
+                    detail={agentData ? `${formatNumber(agentData.tools.calls)} 次调用` : undefined}
+                    tone={!agentData ? "neutral" : agentData.tools.successRate < 90 ? "warning" : "success"}
+                />
+                <AnalyticsHealthCard
+                    icon={<Gauge className="size-4" />}
+                    label="LLM 调用"
+                    value={agentData ? formatNumber(agentData.llm.calls) : "--"}
+                    detail={agentData ? `输入 ${formatNumber(agentData.llm.inputTokens)} · 输出 ${formatNumber(agentData.llm.outputTokens)}` : undefined}
+                />
+                <AnalyticsHealthCard
+                    icon={<BarChart3 className="size-4" />}
+                    label="输入 / 输出 Token"
+                    value={agentData ? `${formatNumber(agentData.llm.inputTokens)} / ${formatNumber(agentData.llm.outputTokens)}` : "--"}
+                    detail={agentData ? `缓存 ${formatNumber(agentData.llm.cachedTokens)}` : undefined}
+                />
             </section>
             {agentLoadError ? <Alert type="warning" showIcon title="Agent 运行状态读取失败" description={agentLoadError} /> : null}
             {agentData?.alerts.length ? <Alert type="warning" showIcon title="Agent 当前告警" description={agentData.alerts.join("、")} /> : null}
@@ -518,7 +560,15 @@ export default function AnalyticsPanel({ users, channels }: Props) {
                             label: `异常定位${failureTotal ? ` (${failureTotal})` : ""}`,
                             children: (
                                 <AdminDataTable
-                                    table={{ rowKey: (row) => row.source === "agent" ? `agent:${row.taskId || row.runId}:${row.lastSeenAt}` : `api:${row.type}:${row.model}`, size: "small", loading, columns: failureColumns, dataSource: pageRows(failureRows, failurePage), pagination: false, scroll: { x: 1080 } }}
+                                    table={{
+                                        rowKey: (row) => (row.source === "agent" ? `agent:${row.taskId || row.runId}:${row.lastSeenAt}` : `api:${row.type}:${row.model}`),
+                                        size: "small",
+                                        loading,
+                                        columns: failureColumns,
+                                        dataSource: pageRows(failureRows, failurePage),
+                                        pagination: false,
+                                        scroll: { x: 1080 },
+                                    }}
                                     empty={<AdminTableEmpty />}
                                     skeletonColumns={5}
                                     footer={<PaginationBar alwaysShow current={failurePage} pageSize={analyticsPageSize} total={failureRows.length} onChange={(page) => setFailurePage(page)} pageSizeOptions={[analyticsPageSize]} />}

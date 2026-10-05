@@ -26,7 +26,10 @@ test("real budget envelope details survive chat presentation", () => {
     expect(title).toContain("1024");
     expect(title).toContain("1025");
     expect(agentErrorPresentation(error).text).toBe(title);
-    for (const [budget, label] of [["total_bytes", "包体积"], ["context_bytes", "上下文估算"]]) {
+    for (const [budget, label] of [
+        ["total_bytes", "包体积"],
+        ["context_bytes", "上下文估算"],
+    ]) {
         const bytesError = new ApiError(error.message, { reason: error.reason, details: { budget, limit: 1024, actual: 1025 } });
         expect(agentErrorPresentation(bytesError).text).toContain(label);
     }

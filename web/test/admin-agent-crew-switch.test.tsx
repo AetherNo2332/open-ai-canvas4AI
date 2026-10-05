@@ -10,7 +10,9 @@ test("Agent beta always exposes the Crew administrator switch even while disable
     const html = renderToStaticMarkup(
         <MemoryRouter initialEntries={["/admin/settings/agent"]}>
             <QueryClientProvider client={new QueryClient()}>
-                <App><AgentSettingsPage /></App>
+                <App>
+                    <AgentSettingsPage />
+                </App>
             </QueryClientProvider>
         </MemoryRouter>,
     );

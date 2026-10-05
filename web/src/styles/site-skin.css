@@ -48,7 +48,21 @@
     html[data-skin] body :is([role="menuitem"], [role="option"], .ant-dropdown-menu-item, .ant-menu-item) {
         border-radius: var(--menu-radius) !important;
     }
-    html[data-skin] body :is(.ant-modal-container, .ant-modal-content, .ant-drawer-content, .ant-popover-container, .ant-popover-inner, .ant-dropdown-menu, .ant-tooltip-container, .ant-tooltip-inner, .ant-message-notice-content, .ant-notification-notice, [role="dialog"]) {
+    html[data-skin]
+        body
+        :is(
+            .ant-modal-container,
+            .ant-modal-content,
+            .ant-drawer-content,
+            .ant-popover-container,
+            .ant-popover-inner,
+            .ant-dropdown-menu,
+            .ant-tooltip-container,
+            .ant-tooltip-inner,
+            .ant-message-notice-content,
+            .ant-notification-notice,
+            [role="dialog"]
+        ) {
         border-radius: var(--overlay-radius) !important;
     }
     html[data-skin] body :is(.ant-checkbox-inner, input[type="checkbox"]) {
@@ -65,7 +79,7 @@
         inset-inline-start: 4px !important;
         width: 22px !important;
         height: 14px !important;
-        transition: inset-inline-start var(--skin-motion-state, 150ms) cubic-bezier(.2, .8, .2, 1) !important;
+        transition: inset-inline-start var(--skin-motion-state, 150ms) cubic-bezier(0.2, 0.8, 0.2, 1) !important;
     }
     html[data-skin] body .ant-switch.ant-switch-checked .ant-switch-handle {
         inset-inline-start: calc(100% - 26px) !important;
@@ -80,25 +94,49 @@
         background: var(--control-switch-checked-handle) !important;
     }
     html[data-skin] body .ant-switch[data-skin-switch-closing]:not(.ant-switch-checked) .ant-switch-handle::before {
-        animation: skin-switch-close var(--skin-motion-state, 150ms) cubic-bezier(.2, .8, .2, 1) !important;
+        animation: skin-switch-close var(--skin-motion-state, 150ms) cubic-bezier(0.2, 0.8, 0.2, 1) !important;
     }
-    html[data-skin] body .ant-switch:dir(rtl) .ant-switch-handle::before { transform-origin: right center !important; }
-    html[data-skin] body .ant-switch.ant-switch-small { min-width: 32px !important; height: 16px !important; }
-    html[data-skin] body .ant-switch.ant-switch-small .ant-switch-handle { top: 3px !important; inset-inline-start: 3px !important; width: 14px !important; height: 10px !important; }
-    html[data-skin] body .ant-switch.ant-switch-small.ant-switch-checked .ant-switch-handle { inset-inline-start: calc(100% - 17px) !important; }
+    html[data-skin] body .ant-switch:dir(rtl) .ant-switch-handle::before {
+        transform-origin: right center !important;
+    }
+    html[data-skin] body .ant-switch.ant-switch-small {
+        min-width: 32px !important;
+        height: 16px !important;
+    }
+    html[data-skin] body .ant-switch.ant-switch-small .ant-switch-handle {
+        top: 3px !important;
+        inset-inline-start: 3px !important;
+        width: 14px !important;
+        height: 10px !important;
+    }
+    html[data-skin] body .ant-switch.ant-switch-small.ant-switch-checked .ant-switch-handle {
+        inset-inline-start: calc(100% - 17px) !important;
+    }
 }
 
 @keyframes skin-switch-close {
-    0% { transform: scaleX(1); }
-    30% { transform: scaleX(1.8); }
-    75% { transform: scaleX(1.15); }
-    100% { transform: scaleX(1); }
+    0% {
+        transform: scaleX(1);
+    }
+    30% {
+        transform: scaleX(1.8);
+    }
+    75% {
+        transform: scaleX(1.15);
+    }
+    100% {
+        transform: scaleX(1);
+    }
 }
 @layer skin-policy {
     @media (prefers-reduced-motion: reduce) {
-        html[data-skin] body .ant-switch .ant-switch-handle { transition: none !important; }
+        html[data-skin] body .ant-switch .ant-switch-handle {
+            transition: none !important;
+        }
         html[data-skin] body .ant-switch .ant-switch-handle::before,
-        html[data-skin] body .ant-switch[data-skin-switch-closing]:not(.ant-switch-checked) .ant-switch-handle::before { animation: none !important; }
+        html[data-skin] body .ant-switch[data-skin-switch-closing]:not(.ant-switch-checked) .ant-switch-handle::before {
+            animation: none !important;
+        }
     }
 }
 
@@ -126,7 +164,9 @@ html[data-skin] {
     --welcome-border: var(--site-border);
     --welcome-radius: var(--card-radius);
 }
-body:has(.welcome-page) { background: var(--site-canvas); }
+body:has(.welcome-page) {
+    background: var(--site-canvas);
+}
 
 /* Tailwind named palettes resolve through site roles instead of framework colors. */
 html[data-skin] {
@@ -175,9 +215,9 @@ html[data-skin] {
     --color-stone-900: var(--site-text);
     --color-stone-950: var(--site-text);
     --color-blue-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
-    --color-blue-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
-    --color-blue-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
-    --color-blue-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-blue-100: color-mix(in srgb, var(--primary) 10%, var(--site-surface));
+    --color-blue-200: color-mix(in srgb, var(--primary) 20%, var(--site-surface));
+    --color-blue-300: color-mix(in srgb, var(--primary) 30%, var(--site-surface));
     --color-blue-400: var(--primary);
     --color-blue-500: var(--primary);
     --color-blue-600: var(--primary);
@@ -186,9 +226,9 @@ html[data-skin] {
     --color-blue-900: var(--primary);
     --color-blue-950: var(--primary);
     --color-indigo-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
-    --color-indigo-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
-    --color-indigo-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
-    --color-indigo-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-indigo-100: color-mix(in srgb, var(--primary) 10%, var(--site-surface));
+    --color-indigo-200: color-mix(in srgb, var(--primary) 20%, var(--site-surface));
+    --color-indigo-300: color-mix(in srgb, var(--primary) 30%, var(--site-surface));
     --color-indigo-400: var(--primary);
     --color-indigo-500: var(--primary);
     --color-indigo-600: var(--primary);
@@ -197,9 +237,9 @@ html[data-skin] {
     --color-indigo-900: var(--primary);
     --color-indigo-950: var(--primary);
     --color-violet-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
-    --color-violet-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
-    --color-violet-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
-    --color-violet-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-violet-100: color-mix(in srgb, var(--primary) 10%, var(--site-surface));
+    --color-violet-200: color-mix(in srgb, var(--primary) 20%, var(--site-surface));
+    --color-violet-300: color-mix(in srgb, var(--primary) 30%, var(--site-surface));
     --color-violet-400: var(--primary);
     --color-violet-500: var(--primary);
     --color-violet-600: var(--primary);
@@ -208,9 +248,9 @@ html[data-skin] {
     --color-violet-900: var(--primary);
     --color-violet-950: var(--primary);
     --color-purple-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
-    --color-purple-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
-    --color-purple-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
-    --color-purple-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-purple-100: color-mix(in srgb, var(--primary) 10%, var(--site-surface));
+    --color-purple-200: color-mix(in srgb, var(--primary) 20%, var(--site-surface));
+    --color-purple-300: color-mix(in srgb, var(--primary) 30%, var(--site-surface));
     --color-purple-400: var(--primary);
     --color-purple-500: var(--primary);
     --color-purple-600: var(--primary);
@@ -219,9 +259,9 @@ html[data-skin] {
     --color-purple-900: var(--primary);
     --color-purple-950: var(--primary);
     --color-pink-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
-    --color-pink-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
-    --color-pink-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
-    --color-pink-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-pink-100: color-mix(in srgb, var(--primary) 10%, var(--site-surface));
+    --color-pink-200: color-mix(in srgb, var(--primary) 20%, var(--site-surface));
+    --color-pink-300: color-mix(in srgb, var(--primary) 30%, var(--site-surface));
     --color-pink-400: var(--primary);
     --color-pink-500: var(--primary);
     --color-pink-600: var(--primary);
@@ -230,9 +270,9 @@ html[data-skin] {
     --color-pink-900: var(--primary);
     --color-pink-950: var(--primary);
     --color-cyan-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
-    --color-cyan-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
-    --color-cyan-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
-    --color-cyan-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-cyan-100: color-mix(in srgb, var(--primary) 10%, var(--site-surface));
+    --color-cyan-200: color-mix(in srgb, var(--primary) 20%, var(--site-surface));
+    --color-cyan-300: color-mix(in srgb, var(--primary) 30%, var(--site-surface));
     --color-cyan-400: var(--primary);
     --color-cyan-500: var(--primary);
     --color-cyan-600: var(--primary);
@@ -241,9 +281,9 @@ html[data-skin] {
     --color-cyan-900: var(--primary);
     --color-cyan-950: var(--primary);
     --color-sky-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
-    --color-sky-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
-    --color-sky-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
-    --color-sky-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-sky-100: color-mix(in srgb, var(--primary) 10%, var(--site-surface));
+    --color-sky-200: color-mix(in srgb, var(--primary) 20%, var(--site-surface));
+    --color-sky-300: color-mix(in srgb, var(--primary) 30%, var(--site-surface));
     --color-sky-400: var(--primary);
     --color-sky-500: var(--primary);
     --color-sky-600: var(--primary);
@@ -252,9 +292,9 @@ html[data-skin] {
     --color-sky-900: var(--primary);
     --color-sky-950: var(--primary);
     --color-teal-50: color-mix(in srgb, var(--palette-status-success) 5%, var(--site-surface));
-    --color-teal-100: color-mix(in srgb, var(--palette-status-success) 10.0%, var(--site-surface));
-    --color-teal-200: color-mix(in srgb, var(--palette-status-success) 20.0%, var(--site-surface));
-    --color-teal-300: color-mix(in srgb, var(--palette-status-success) 30.0%, var(--site-surface));
+    --color-teal-100: color-mix(in srgb, var(--palette-status-success) 10%, var(--site-surface));
+    --color-teal-200: color-mix(in srgb, var(--palette-status-success) 20%, var(--site-surface));
+    --color-teal-300: color-mix(in srgb, var(--palette-status-success) 30%, var(--site-surface));
     --color-teal-400: var(--palette-status-success);
     --color-teal-500: var(--palette-status-success);
     --color-teal-600: var(--palette-status-success);
@@ -263,9 +303,9 @@ html[data-skin] {
     --color-teal-900: var(--palette-status-success);
     --color-teal-950: var(--palette-status-success);
     --color-green-50: color-mix(in srgb, var(--palette-status-success) 5%, var(--site-surface));
-    --color-green-100: color-mix(in srgb, var(--palette-status-success) 10.0%, var(--site-surface));
-    --color-green-200: color-mix(in srgb, var(--palette-status-success) 20.0%, var(--site-surface));
-    --color-green-300: color-mix(in srgb, var(--palette-status-success) 30.0%, var(--site-surface));
+    --color-green-100: color-mix(in srgb, var(--palette-status-success) 10%, var(--site-surface));
+    --color-green-200: color-mix(in srgb, var(--palette-status-success) 20%, var(--site-surface));
+    --color-green-300: color-mix(in srgb, var(--palette-status-success) 30%, var(--site-surface));
     --color-green-400: var(--palette-status-success);
     --color-green-500: var(--palette-status-success);
     --color-green-600: var(--palette-status-success);
@@ -274,9 +314,9 @@ html[data-skin] {
     --color-green-900: var(--palette-status-success);
     --color-green-950: var(--palette-status-success);
     --color-emerald-50: color-mix(in srgb, var(--palette-status-success) 5%, var(--site-surface));
-    --color-emerald-100: color-mix(in srgb, var(--palette-status-success) 10.0%, var(--site-surface));
-    --color-emerald-200: color-mix(in srgb, var(--palette-status-success) 20.0%, var(--site-surface));
-    --color-emerald-300: color-mix(in srgb, var(--palette-status-success) 30.0%, var(--site-surface));
+    --color-emerald-100: color-mix(in srgb, var(--palette-status-success) 10%, var(--site-surface));
+    --color-emerald-200: color-mix(in srgb, var(--palette-status-success) 20%, var(--site-surface));
+    --color-emerald-300: color-mix(in srgb, var(--palette-status-success) 30%, var(--site-surface));
     --color-emerald-400: var(--palette-status-success);
     --color-emerald-500: var(--palette-status-success);
     --color-emerald-600: var(--palette-status-success);
@@ -285,9 +325,9 @@ html[data-skin] {
     --color-emerald-900: var(--palette-status-success);
     --color-emerald-950: var(--palette-status-success);
     --color-lime-50: color-mix(in srgb, var(--palette-status-success) 5%, var(--site-surface));
-    --color-lime-100: color-mix(in srgb, var(--palette-status-success) 10.0%, var(--site-surface));
-    --color-lime-200: color-mix(in srgb, var(--palette-status-success) 20.0%, var(--site-surface));
-    --color-lime-300: color-mix(in srgb, var(--palette-status-success) 30.0%, var(--site-surface));
+    --color-lime-100: color-mix(in srgb, var(--palette-status-success) 10%, var(--site-surface));
+    --color-lime-200: color-mix(in srgb, var(--palette-status-success) 20%, var(--site-surface));
+    --color-lime-300: color-mix(in srgb, var(--palette-status-success) 30%, var(--site-surface));
     --color-lime-400: var(--palette-status-success);
     --color-lime-500: var(--palette-status-success);
     --color-lime-600: var(--palette-status-success);
@@ -296,9 +336,9 @@ html[data-skin] {
     --color-lime-900: var(--palette-status-success);
     --color-lime-950: var(--palette-status-success);
     --color-yellow-50: color-mix(in srgb, var(--palette-status-warning) 5%, var(--site-surface));
-    --color-yellow-100: color-mix(in srgb, var(--palette-status-warning) 10.0%, var(--site-surface));
-    --color-yellow-200: color-mix(in srgb, var(--palette-status-warning) 20.0%, var(--site-surface));
-    --color-yellow-300: color-mix(in srgb, var(--palette-status-warning) 30.0%, var(--site-surface));
+    --color-yellow-100: color-mix(in srgb, var(--palette-status-warning) 10%, var(--site-surface));
+    --color-yellow-200: color-mix(in srgb, var(--palette-status-warning) 20%, var(--site-surface));
+    --color-yellow-300: color-mix(in srgb, var(--palette-status-warning) 30%, var(--site-surface));
     --color-yellow-400: var(--palette-status-warning);
     --color-yellow-500: var(--palette-status-warning);
     --color-yellow-600: var(--palette-status-warning);
@@ -307,9 +347,9 @@ html[data-skin] {
     --color-yellow-900: var(--palette-status-warning);
     --color-yellow-950: var(--palette-status-warning);
     --color-amber-50: color-mix(in srgb, var(--palette-status-warning) 5%, var(--site-surface));
-    --color-amber-100: color-mix(in srgb, var(--palette-status-warning) 10.0%, var(--site-surface));
-    --color-amber-200: color-mix(in srgb, var(--palette-status-warning) 20.0%, var(--site-surface));
-    --color-amber-300: color-mix(in srgb, var(--palette-status-warning) 30.0%, var(--site-surface));
+    --color-amber-100: color-mix(in srgb, var(--palette-status-warning) 10%, var(--site-surface));
+    --color-amber-200: color-mix(in srgb, var(--palette-status-warning) 20%, var(--site-surface));
+    --color-amber-300: color-mix(in srgb, var(--palette-status-warning) 30%, var(--site-surface));
     --color-amber-400: var(--palette-status-warning);
     --color-amber-500: var(--palette-status-warning);
     --color-amber-600: var(--palette-status-warning);
@@ -318,9 +358,9 @@ html[data-skin] {
     --color-amber-900: var(--palette-status-warning);
     --color-amber-950: var(--palette-status-warning);
     --color-orange-50: color-mix(in srgb, var(--palette-status-warning) 5%, var(--site-surface));
-    --color-orange-100: color-mix(in srgb, var(--palette-status-warning) 10.0%, var(--site-surface));
-    --color-orange-200: color-mix(in srgb, var(--palette-status-warning) 20.0%, var(--site-surface));
-    --color-orange-300: color-mix(in srgb, var(--palette-status-warning) 30.0%, var(--site-surface));
+    --color-orange-100: color-mix(in srgb, var(--palette-status-warning) 10%, var(--site-surface));
+    --color-orange-200: color-mix(in srgb, var(--palette-status-warning) 20%, var(--site-surface));
+    --color-orange-300: color-mix(in srgb, var(--palette-status-warning) 30%, var(--site-surface));
     --color-orange-400: var(--palette-status-warning);
     --color-orange-500: var(--palette-status-warning);
     --color-orange-600: var(--palette-status-warning);
@@ -329,9 +369,9 @@ html[data-skin] {
     --color-orange-900: var(--palette-status-warning);
     --color-orange-950: var(--palette-status-warning);
     --color-red-50: color-mix(in srgb, var(--palette-status-error) 5%, var(--site-surface));
-    --color-red-100: color-mix(in srgb, var(--palette-status-error) 10.0%, var(--site-surface));
-    --color-red-200: color-mix(in srgb, var(--palette-status-error) 20.0%, var(--site-surface));
-    --color-red-300: color-mix(in srgb, var(--palette-status-error) 30.0%, var(--site-surface));
+    --color-red-100: color-mix(in srgb, var(--palette-status-error) 10%, var(--site-surface));
+    --color-red-200: color-mix(in srgb, var(--palette-status-error) 20%, var(--site-surface));
+    --color-red-300: color-mix(in srgb, var(--palette-status-error) 30%, var(--site-surface));
     --color-red-400: var(--palette-status-error);
     --color-red-500: var(--palette-status-error);
     --color-red-600: var(--palette-status-error);
@@ -340,9 +380,9 @@ html[data-skin] {
     --color-red-900: var(--palette-status-error);
     --color-red-950: var(--palette-status-error);
     --color-rose-50: color-mix(in srgb, var(--palette-status-error) 5%, var(--site-surface));
-    --color-rose-100: color-mix(in srgb, var(--palette-status-error) 10.0%, var(--site-surface));
-    --color-rose-200: color-mix(in srgb, var(--palette-status-error) 20.0%, var(--site-surface));
-    --color-rose-300: color-mix(in srgb, var(--palette-status-error) 30.0%, var(--site-surface));
+    --color-rose-100: color-mix(in srgb, var(--palette-status-error) 10%, var(--site-surface));
+    --color-rose-200: color-mix(in srgb, var(--palette-status-error) 20%, var(--site-surface));
+    --color-rose-300: color-mix(in srgb, var(--palette-status-error) 30%, var(--site-surface));
     --color-rose-400: var(--palette-status-error);
     --color-rose-500: var(--palette-status-error);
     --color-rose-600: var(--palette-status-error);

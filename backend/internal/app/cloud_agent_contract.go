@@ -57,8 +57,8 @@ type cloudAgentHarnessPart struct {
 // 提交它，Go 固化后通过运行快照回发给任何后续 worker。恢复的 worker 因此不必重读
 // 磁盘上的 Harness 文件 —— 运维改了文件再重启，也不会静默换掉在途运行的系统提示。
 type cloudAgentHarnessSnapshot struct {
-	System       *string                `json:"system,omitempty"`
-	AppendSystem *string                `json:"appendSystem,omitempty"`
+	System       *string `json:"system,omitempty"`
+	AppendSystem *string `json:"appendSystem,omitempty"`
 	// Context 不带 omitempty：Node 侧的 PromptParts.context 是必填数组，省略后会变成
 	// undefined，装配与哈希都会抛错。没有上下文文件时发空数组才是同一份合同。
 	Context []cloudAgentHarnessPart `json:"context"`

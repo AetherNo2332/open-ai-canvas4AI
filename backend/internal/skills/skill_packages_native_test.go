@@ -52,18 +52,30 @@ func TestSkillPackageFileAtVersionDoesNotFallBackToCurrentVersion(t *testing.T) 
 
 func TestFrozenSkillReaderRejectsBinaryBytesWithTextSuffix(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+kernel.NewID()+"?mode=memory&cache=shared"), &gorm.Config{})
-	if err != nil { t.Fatal(err) }
-	if err := db.AutoMigrate(&model.User{}, &model.UserIdentity{}, &model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.UserSkillState{}); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.User{}, &model.UserIdentity{}, &model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.UserSkillState{}); err != nil {
+		t.Fatal(err)
+	}
 	svc := New(repository.New(db), t.TempDir(), nil)
 	for _, suffix := range []string{"md", "txt"} {
 		for _, payload := range []string{"hello\x00world", "hello\xffworld", "hello\x01world", "hello\x7fworld"} {
-			archive, err := archiveFromZip(skillZip(t, map[string]string{"SKILL.md":"---\nname: binary-test\ndescription: test\n---\nBody", "references/a."+suffix:payload}), "")
-			if err != nil { t.Fatal(err) }
-			created, err := svc.createSkillFromArchive("user", archive, SkillInstallRequest{IsPrivate:true}, "zip", "", "", "", "", false)
-			if err != nil { t.Fatal(err) }
+			archive, err := archiveFromZip(skillZip(t, map[string]string{"SKILL.md": "---\nname: binary-test\ndescription: test\n---\nBody", "references/a." + suffix: payload}), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			created, err := svc.createSkillFromArchive("user", archive, SkillInstallRequest{IsPrivate: true}, "zip", "", "", "", "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
 			page, err := svc.SkillPackageFileAtVersion("user", created.SkillID, created.VersionID, created.ContentHash, "references/a."+suffix)
-			if err != nil { t.Fatal(err) }
-			if !page.Binary || page.Content != "" { t.Errorf(".%s binary bytes exposed as text: %q", suffix, page.Content) }
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !page.Binary || page.Content != "" {
+				t.Errorf(".%s binary bytes exposed as text: %q", suffix, page.Content)
+			}
 		}
 	}
 }

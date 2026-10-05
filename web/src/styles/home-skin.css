@@ -90,7 +90,17 @@ body.app-user-overlays.app-user-overlays {
         color: var(--foreground) !important;
     }
 
-    .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar-checkin-offer, .app-workspace-topbar-breadcrumb > span:not(.truncate), .app-workspace-sidebar-profile-avatar, .app-workspace-sidebar-profile-copy > span, .app-workspace-sidebar-storage-icon, .app-workspace-sidebar-brand-button, .app-workspace-nav-link:not(.is-active), .app-workspace-topbar-icon-button) {
+    .app-user-workspace.app-user-workspace
+        :is(
+            .app-workspace-sidebar-checkin-offer,
+            .app-workspace-topbar-breadcrumb > span:not(.truncate),
+            .app-workspace-sidebar-profile-avatar,
+            .app-workspace-sidebar-profile-copy > span,
+            .app-workspace-sidebar-storage-icon,
+            .app-workspace-sidebar-brand-button,
+            .app-workspace-nav-link:not(.is-active),
+            .app-workspace-topbar-icon-button
+        ) {
         color: var(--user-ink-muted) !important;
     }
 
@@ -100,11 +110,6 @@ body.app-user-overlays.app-user-overlays {
 
     .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar-checkin-offer em, .app-workspace-credit-gift) {
         color: var(--primary) !important;
-    }
-
-    .app-user-workspace.app-user-workspace .app-workspace-canary-badge {
-        background: var(--control-selected-bg) !important;
-        color: var(--control-selected-fg) !important;
     }
 
     .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar-checkin-claim, .app-workspace-sidebar-checkin.is-collapsed) {

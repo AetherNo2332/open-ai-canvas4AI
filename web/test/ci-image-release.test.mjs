@@ -10,7 +10,7 @@ const temporaryDirectories = [];
 const sha = "a".repeat(40);
 const digest = "b".repeat(64);
 const bash = process.platform === "win32" ? path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "bash.exe") : "bash";
-const shellPath = (value) => process.platform === "win32" ? value.replace(/\\/g, "/").replace(/^([A-Za-z]):\//, (_, drive) => `/${drive.toLowerCase()}/`) : value;
+const shellPath = (value) => (process.platform === "win32" ? value.replace(/\\/g, "/").replace(/^([A-Za-z]):\//, (_, drive) => `/${drive.toLowerCase()}/`) : value);
 afterEach(() => {
     for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });

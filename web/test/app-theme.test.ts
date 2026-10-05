@@ -42,12 +42,20 @@ describe("shared action colors and focus feedback", () => {
         const skin = duplicateSkinDefinition(DEFAULT_CLASSIC_SKIN, ["classic"]);
         for (const dark of [false, true]) {
             Object.assign(skin.tokens[dark ? "dark" : "light"], {
-                control: "#123456", controlHover: "#234567", controlActive: "#345678",
-                controlBorder: "#456789", controlFocus: "#56789a", text: "#abcdef",
+                control: "#123456",
+                controlHover: "#234567",
+                controlActive: "#345678",
+                controlBorder: "#456789",
+                controlFocus: "#56789a",
+                text: "#abcdef",
             });
             expect(getIsolatedAdminAntTheme(dark, skin).components?.Button).toMatchObject({
-                defaultBg: "#123456", defaultHoverBg: "#234567", defaultActiveBg: "#345678",
-                defaultBorderColor: "#456789", defaultHoverBorderColor: "#56789a", defaultColor: "#abcdef",
+                defaultBg: "#123456",
+                defaultHoverBg: "#234567",
+                defaultActiveBg: "#345678",
+                defaultBorderColor: "#456789",
+                defaultHoverBorderColor: "#56789a",
+                defaultColor: "#abcdef",
             });
         }
     });

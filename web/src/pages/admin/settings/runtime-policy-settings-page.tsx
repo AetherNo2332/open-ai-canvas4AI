@@ -410,7 +410,13 @@ export default function RuntimePolicySettingsPage() {
         return (
             <AdminPageFrame title="资源与策略" description="账号配额、任务调度与请求安全策略" scroll>
                 <div className="admin-settings-stack admin-runtime-policy">
-                    <p className="text-sm text-foreground/60">Agent 调度、执行器状态与记忆管理请前往<Link to="/admin/settings/agent" className="underline">Agent（beta）</Link>。</p>
+                    <p className="text-sm text-foreground/60">
+                        Agent 调度、执行器状态与记忆管理请前往
+                        <Link to="/admin/settings/agent" className="underline">
+                            Agent（beta）
+                        </Link>
+                        。
+                    </p>
                     <div className="admin-runtime-policy-load-error" role="alert">
                         <span className="admin-runtime-policy-load-error-icon">
                             <AlertTriangle className="size-5" aria-hidden="true" />
@@ -447,7 +453,13 @@ export default function RuntimePolicySettingsPage() {
                 }}
             >
                 <div className="admin-settings-stack admin-runtime-policy">
-                    <p className="text-sm text-foreground/60">Agent 调度、执行器状态与记忆管理请前往<Link to="/admin/settings/agent" className="underline">Agent（beta）</Link>。</p>
+                    <p className="text-sm text-foreground/60">
+                        Agent 调度、执行器状态与记忆管理请前往
+                        <Link to="/admin/settings/agent" className="underline">
+                            Agent（beta）
+                        </Link>
+                        。
+                    </p>
                     <div className={cn("admin-runtime-policy-command-bar", dirty && "is-dirty")}>
                         <div className="admin-runtime-policy-command-copy" aria-live="polite">
                             <span className="admin-runtime-policy-command-icon">

@@ -10,8 +10,7 @@ describe("Agent tool presentation", () => {
         expect(JSON.stringify(event)).not.toContain("C:/secret");
     });
     it("projects native Skill events without absolute paths, content or credentials", () => {
-        const event = nativeSkillEventPresentation("native_skill_read", { skillName: "导演", path: "references/a.md", version: "1",
-            content: "PRIVATE_BODY", absolutePath: "C:/worker/skills/entry", token: "PRIVATE_TOKEN" });
+        const event = nativeSkillEventPresentation("native_skill_read", { skillName: "导演", path: "references/a.md", version: "1", content: "PRIVATE_BODY", absolutePath: "C:/worker/skills/entry", token: "PRIVATE_TOKEN" });
         expect(event?.text).toBe("已读取技能文件 · 导演 · references/a.md");
         expect(JSON.stringify(event)).not.toContain("PRIVATE");
         expect(JSON.stringify(event)).not.toContain("C:/worker");
