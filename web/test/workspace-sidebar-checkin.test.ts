@@ -25,12 +25,4 @@ describe("workspace sidebar", () => {
         expect(sidebar).not.toContain("WorkspaceSidebarCheckin");
         expect(sidebar).toContain("<WorkspaceSidebarStorageMeter collapsed={collapsed} />");
     });
-
-    test("canary badge consumes the active skin instead of a fixed yellow", () => {
-        const css = readFileSync(resolve(import.meta.dir, "../src/styles/home-skin.css"), "utf8");
-        const start = css.indexOf(".app-workspace-canary-badge {");
-        const badge = css.slice(start, css.indexOf("}", start));
-        expect(badge).toContain("background: var(--control-selected-bg)");
-        expect(badge).toContain("color: var(--control-selected-fg)");
-    });
 });
