@@ -90,6 +90,7 @@ import { appearanceAssetURL, live2DModelURL } from "@/services/api/appearance";
 import { Live2DAvatar } from "./live2d-avatar";
 import "./canvas-cloud-agent.css";
 import { createUuid } from "@/lib/client-id";
+import { CanvasAgentCrewConsole } from "./canvas-agent-crew-console";
 
 import { listCrewRuns, subscribeCrewEvents, type CrewRunView } from "@/services/api/agent-crew";
 import { crewAvatars, reduceCrewRun } from "@/lib/canvas/crew-run-state";
@@ -111,6 +112,9 @@ type AgentPanelView = "chat" | "history" | "settings";
 
 export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
+    const crewEnabled = useUserStore((state) => state.features.agentCrewEnabled);
+    const [crewMode, setCrewMode] = useState(false);
+    useEffect(() => { setCrewMode(false); }, [canvasId, userId, crewEnabled]);
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const theme = canvasThemes[useActiveTheme()];
     const config = useEffectiveConfig();
@@ -142,9 +146,9 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     useEffect(() => {
         const controller = new AbortController();
         setCrewRun(null);
-        if (userId) void listCrewRuns(canvasId, controller.signal).then(runs => { if (!controller.signal.aborted) setCrewRun(runs[0] ?? null); }).catch(() => undefined);
+        if (userId && crewEnabled) void listCrewRuns(canvasId, controller.signal).then(runs => { if (!controller.signal.aborted) setCrewRun(runs[0] ?? null); }).catch(() => undefined);
         return () => controller.abort();
-    }, [canvasId, userId]);
+    }, [canvasId, userId, crewEnabled]);
     useEffect(() => {
         if (!crewRun) return;
         return subscribeCrewEvents(crewRun.id, item => setCrewRun(current => {
@@ -954,6 +958,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                             {view === "settings" ? (
                                 <motion.div key="settings" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
                                     <CanvasCloudAgentSettings
+                                        key={`${userId}:${canvasId}`}
                                         theme={theme}
                                         config={config}
                                         selectedModel={selectedModel}
@@ -1029,6 +1034,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                         onSettings={() => setView("settings")}
                                         onCollapse={onCollapse}
                                     />
+                                    {crewEnabled ? <div className="flex shrink-0 gap-2 px-4 py-2" aria-label="Agent 运行模式"><Button aria-pressed={!crewMode} onClick={()=>setCrewMode(false)}>Agent</Button><Button aria-pressed={crewMode} onClick={()=>setCrewMode(true)} disabled={running}>Crew 子代理</Button></div>:null}
+                                    {crewMode && crewEnabled ? <CanvasAgentCrewConsole key={`${userId}:${canvasId}`} canvasId={canvasId} theme={theme} skillIds={selectedSkillIds} onConfigure={()=>setView("settings")}/> : <>
                                     {run && connectionStatus !== "connected" ? (
                                         <div role="status" className="flex items-center justify-between gap-2 px-5 py-2 text-xs" style={{ color: theme.node.muted }}>
                                             <span>{connectionStatus === "disconnected" ? "连接已断开，服务端任务可能仍在执行；运行记录已保留" : "正在连接并校准运行状态…"}</span>
@@ -1101,6 +1108,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                             />
                                         }
                                     />
+                                    </>}
                                 </motion.div>
                             )}
                         </AnimatePresence>
