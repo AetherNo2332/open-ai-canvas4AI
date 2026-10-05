@@ -90,7 +90,7 @@ import { appearanceAssetURL, live2DModelURL } from "@/services/api/appearance";
 import { Live2DAvatar } from "./live2d-avatar";
 import "./canvas-cloud-agent.css";
 import { createUuid } from "@/lib/client-id";
-import { CanvasAgentCrewConsole } from "./canvas-agent-crew-console";
+import { getAgentSubagentPolicy, updateAgentSubagentPolicy, type AgentSubagentPolicy } from "@/services/api/agent-subagent";
 
 import { listCrewRuns, subscribeCrewEvents, type CrewRunView } from "@/services/api/agent-crew";
 import { crewAvatars, reduceCrewRun } from "@/lib/canvas/crew-run-state";
@@ -113,8 +113,22 @@ type AgentPanelView = "chat" | "history" | "settings";
 export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const crewEnabled = useUserStore((state) => state.features.agentCrewEnabled);
-    const [crewMode, setCrewMode] = useState(false);
-    useEffect(() => { setCrewMode(false); }, [canvasId, userId, crewEnabled]);
+    const [subagentPolicy, setSubagentPolicy] = useState<AgentSubagentPolicy | null>(null);
+    const [subagentPolicySaving, setSubagentPolicySaving] = useState(false);
+    useEffect(() => {
+        const controller = new AbortController();
+        setSubagentPolicy(null);
+        if (userId) void getAgentSubagentPolicy(canvasId, controller.signal).then(setSubagentPolicy).catch(() => undefined);
+        return () => controller.abort();
+    }, [canvasId, userId]);
+    const toggleSubagents = async () => {
+        if (!subagentPolicy || subagentPolicySaving || running) return;
+        setSubagentPolicySaving(true);
+        try {
+            const next = await updateAgentSubagentPolicy({ canvasId, enabled: !subagentPolicy.enabled, expectedRevision: subagentPolicy.revision });
+            setSubagentPolicy(next);
+        } finally { setSubagentPolicySaving(false); }
+    };
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     const theme = canvasThemes[useActiveTheme()];
     const config = useEffectiveConfig();
@@ -718,6 +732,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(selectedModel) || undefined } : {}),
                     skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
                     permissionMode,
+                    subagentEnabled: subagentPolicy?.enabled === true,
                     contextScope,
                     focusNodeIds: selectedNodeIds.length <= 8 ? selectedNodeIds : [],
                     budget: { maxCredits: positiveNumber(maxCredits), maxGenerationTasks: permissionMode === "read_only" ? 0 : Number(maxGenerationTasks), maxVideoSeconds: permissionMode === "read_only" ? 0 : Number(maxVideoSeconds) },
@@ -1034,8 +1049,12 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                         onSettings={() => setView("settings")}
                                         onCollapse={onCollapse}
                                     />
-                                    {crewEnabled ? <div className="flex shrink-0 gap-2 px-4 py-2" aria-label="Agent 运行模式"><Button aria-pressed={!crewMode} onClick={()=>setCrewMode(false)}>Agent</Button><Button aria-pressed={crewMode} onClick={()=>setCrewMode(true)} disabled={running}>Crew 子代理</Button></div>:null}
-                                    {crewMode && crewEnabled ? <CanvasAgentCrewConsole key={`${userId}:${canvasId}`} canvasId={canvasId} theme={theme} skillIds={selectedSkillIds} onConfigure={()=>setView("settings")}/> : <>
+                                    <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-2" aria-label="Agent 子代理授权">
+                                        <span className="text-xs" style={{ color: theme.node.muted }}>允许父 Agent 自动召唤子代理</span>
+                                        <Button size="small" aria-pressed={subagentPolicy?.enabled === true} onClick={() => void toggleSubagents()} disabled={!subagentPolicy || subagentPolicySaving || running}>
+                                            {subagentPolicy?.enabled ? "已开启" : "未开启"}
+                                        </Button>
+                                    </div>
                                     {run && connectionStatus !== "connected" ? (
                                         <div role="status" className="flex items-center justify-between gap-2 px-5 py-2 text-xs" style={{ color: theme.node.muted }}>
                                             <span>{connectionStatus === "disconnected" ? "连接已断开，服务端任务可能仍在执行；运行记录已保留" : "正在连接并校准运行状态…"}</span>
@@ -1108,7 +1127,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                             />
                                         }
                                     />
-                                    </>}
                                 </motion.div>
                             )}
                         </AnimatePresence>

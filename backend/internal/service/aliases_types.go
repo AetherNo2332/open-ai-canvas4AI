@@ -36,6 +36,8 @@ type (
 	PiSkillFileRequest                     = app.PiSkillFileRequest
 	AgentProfileRequest                    = app.AgentProfileRequest
 	AgentProfileView                       = app.AgentProfileView
+	AgentSubagentPolicyRequest             = app.AgentSubagentPolicyRequest
+	AgentSubagentPolicyView                = app.AgentSubagentPolicyView
 	AgentSkillDefaultItem                  = app.AgentSkillDefaultItem
 	AgentLessonView                        = app.AgentLessonView
 	AgentLessonAdminView                   = app.AgentLessonAdminView
