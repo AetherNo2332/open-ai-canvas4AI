@@ -608,7 +608,7 @@ func TestCloudAgentToolLoopPersistsApprovalAndAppliesCanvasWrite(t *testing.T) {
 func TestCloudAgentNodeTypesExposeExecutableAllowList(t *testing.T) {
 	result := cloudAgentNodeTypes()
 	nodes, ok := result["nodes"].([]map[string]any)
-	if !ok || len(nodes) != 8 {
+	if !ok || len(nodes) != 9 {
 		t.Fatalf("unexpected node registry: %#v", result)
 	}
 	for _, node := range nodes {

@@ -1680,6 +1680,12 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 					if err == nil {
 						preview = batchPlan.Preview
 					}
+				case "canvas_create_character":
+					characterPlan, err := prepareCloudAgentCharacterCreate(repo, run.UserID, state.Request.CanvasID, call)
+					mutationErr = err
+					if err == nil {
+						preview = characterPlan.Preview
+					}
 				case "canvas_arrange_nodes":
 					arrangePlan, err := prepareCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call)
 					mutationErr = err
@@ -1804,6 +1810,8 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 			result, toolErr = applyCloudAgentStoryboardMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "canvas_edit_batch_table":
 			result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+		case call.Function.Name == "canvas_create_character":
+			result, toolErr = applyCloudAgentCharacterCreate(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "canvas_inspect_image":
 			result, toolErr = inspectionResult, inspectionErr
 			if toolErr == nil && inspectionResult != nil {
