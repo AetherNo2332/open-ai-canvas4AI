@@ -504,6 +504,50 @@ test("检查点持久化失败必须抛出，不能把破损运行当成功", as
   );
 });
 
+test("assistant checkpoint failure prevents queued batch admission and tool execution", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "blocked-call", function: { name: "canvas_get_state", arguments: "{}" } }] },
+  ]);
+  const save = bridge.checkpoint.bind(bridge);
+  bridge.checkpoint = async (...args) => {
+    if (args[2].role === "assistant") throw new Error("assistant checkpoint unavailable");
+    return save(...args);
+  };
+  await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), /assistant checkpoint unavailable/);
+  assert.deepEqual(state.batches, [], "failed acknowledgement must stop dependent batch admission");
+  assert.deepEqual(state.executions, []);
+});
+
+test("a retried native run never admits an unresolved historical tool batch", async (t) => {
+  for (const activeTask of [undefined, "task-1"]) await t.test(activeTask ? "in-flight model" : "before model", async () => {
+    const { bridge, state, snapshot } = fakeBridge([{ text: "继续本轮请求" }]);
+    snapshot.skillRuntimeMode = "pi-native";
+    snapshot.activeTaskId = activeTask;
+    snapshot.lastTaskId = activeTask;
+    snapshot.tools = [tools[1]!, { name: "read", description: "Read Skill", allowed: true,
+      parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }];
+    const messages = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: [
+      { role: "user", content: "上一轮请求" },
+      { role: "assistant", content: "", tool_calls: [{ id: "historical-call", type: "function",
+        function: { name: "canvas_get_state", arguments: "{}" } }] },
+      { role: "user", content: "技能准入失败后重新发起的请求" },
+    ] } }, canvasModel(snapshot));
+    snapshot.piSessionEntries = sessionEntriesFromMessages("previous-run", messages).map((entry, index) => ({
+      runId: index === messages.length - 1 ? snapshot.runId : "previous-run",
+      entry: entry as unknown as Record<string, unknown>,
+    }));
+    snapshot.piActiveLeafId = String(snapshot.piSessionEntries.at(-1)!.entry.id);
+    snapshot.piMessages = [messages.at(-1)! as unknown as Record<string, unknown>];
+    bridge.startToolBatch = async () => { throw new Error("Agent 尚有未完成的模型或工具步骤"); };
+    await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+    assert.equal(state.steps, 1, "resume the current request rather than replaying the previous run");
+    assert.deepEqual(state.executions, []);
+    assert.equal(state.checkpoints.some(item => item.role === "toolResult"), false,
+      "unknown historical outcomes must not become durable execution receipts");
+    assert.match(JSON.stringify(state.canonical[0]?.messages), /上一轮已终结/);
+  });
+});
+
 test("worker restart resumes the existing Go compaction before creating another model step", async () => {
   const messages: Record<string, unknown>[] = [];
   for (let turn = 0; turn < 8; turn += 1) {
