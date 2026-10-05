@@ -157,7 +157,9 @@ func normalizePiSkillEntry(skill cloudAgentSkill) (string, error) {
 				body = remaining
 				break
 			}
-			if !hasNewline { break }
+			if !hasNewline {
+				break
+			}
 			rest = remaining
 		}
 	}

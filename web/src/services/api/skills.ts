@@ -58,7 +58,7 @@ export type Skill = {
 };
 
 /** /skills/added 只返回运行时目录需要的引用字段，不携带编辑器和同步详情。 */
-export type AddedSkillReference = Pick<Skill, "skillId" | "skillName" | "description" | "versionId" | "version" | "tag" | "isLike" | "isAdded" | "isOwner">;
+export type AddedSkillReference = Pick<Skill, "skillId" | "skillName" | "description" | "versionId" | "version" | "tag" | "isLike" | "isAdded" | "isOwner" | "isPrivate">;
 
 export type SkillCategory = { value: string; label: string };
 
@@ -225,7 +225,7 @@ function normalizeAddedSkillReference(skill: AddedSkillReference): Skill {
         source: 0,
         tag: skill.tag,
         sortWeight: 0,
-        isPrivate: false,
+        isPrivate: skill.isPrivate,
         likeCount: 0,
         isLike: skill.isLike,
         ownerUid: "",

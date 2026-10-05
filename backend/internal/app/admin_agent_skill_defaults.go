@@ -163,13 +163,13 @@ func (s *Service) validateAgentSkillDefaultItem(item AgentSkillDefaultItem) (mod
 		return model.AgentSkillDefault{}, skills.SkillCapacityFacts{}, kernel.AgentSkillDefaultsInvalid(fmt.Sprintf("版本 %s 不属于技能 %s", item.SkillVersionID, skillID), map[string]any{"skillId": skillID})
 	}
 	return model.AgentSkillDefault{
-		ID:             newID(),
-		SkillID:        skillID,
-		SkillVersionID: item.SkillVersionID,
-		Position:       item.Position,
-		Enabled:        item.Enabled != 0,
-	}, skills.SkillCapacityFacts{SkillID: skillID, FileCount: version.FileCount, TotalBytes: version.TotalBytes,
-		ContextBytes: nativeSkillIndexContextBytes(cloudAgentSkill{ID: skill.ID, Name: skill.Name, Description: skill.Description})}, nil
+			ID:             newID(),
+			SkillID:        skillID,
+			SkillVersionID: item.SkillVersionID,
+			Position:       item.Position,
+			Enabled:        item.Enabled != 0,
+		}, skills.SkillCapacityFacts{SkillID: skillID, FileCount: version.FileCount, TotalBytes: version.TotalBytes,
+			ContextBytes: nativeSkillIndexContextBytes(cloudAgentSkill{ID: skill.ID, Name: skill.Name, Description: skill.Description})}, nil
 }
 
 func boolToInt(value bool) int {

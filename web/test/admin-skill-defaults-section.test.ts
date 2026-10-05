@@ -14,6 +14,7 @@ test("Agent settings exposes the default skill editor and its CAS save contract"
     const editor = await Bun.file(new URL("../src/pages/admin/settings/components/agent-skill-defaults-section.tsx", import.meta.url)).text();
     expect(editor).toContain("updateAdminAgentSkillDefaults");
     expect(editor).toContain("agent_skill_defaults_revision_conflict");
-    expect(editor).toContain("上下文预估");
+    expect(editor).toContain("包体积");
+    expect(editor).toContain("正文按需读取");
     expect(editor).toContain("合计");
 });

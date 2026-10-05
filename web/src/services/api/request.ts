@@ -139,7 +139,7 @@ export const http = {
     post: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("post", url, data, config),
     put: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("put", url, data, config),
     patch: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("patch", url, data, config),
-    delete: <T>(url: string, config?: HttpRequestConfig) => send<T>("delete", url, undefined, config),
+    delete: <T>(url: string, config?: HttpRequestConfig & { data?: unknown }) => send<T>("delete", url, undefined, config),
     async raw<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
         try {
             return await apiClient.request<T>(config);

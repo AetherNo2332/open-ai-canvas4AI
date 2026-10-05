@@ -58,7 +58,7 @@ func TestCloudAgentRunReadsRunWithoutRootTask(t *testing.T) {
 // 只要根任务还在，读取行为与迁移前一致（这条路径也是既有一切真实运行的路径）。
 //
 // 注意夹具差异：`piAgentTestFixture` 造的是"只有执行记录、没有根任务"的**未来形态**
-//（它登记的是另一条 `pi-root-task`，不是 runID 那条根任务），所以那条运行在迁移前
+// （它登记的是另一条 `pi-root-task`，不是 runID 那条根任务），所以那条运行在迁移前
 // 本来就 404。真正要验证旧路径，必须走 `CreateCloudAgentRun` —— 它才会建根任务。
 func TestCloudAgentRunStillReadsLegacyRunWithRootTask(t *testing.T) {
 	s, db, _, _ := creationTestService(t)

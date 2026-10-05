@@ -6,12 +6,14 @@ import { ModelPicker } from "@/components/model-picker";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import AgentMemoryPane from "@/pages/settings/agent-memory-pane";
 import { CanvasAgentWorkspaceSettings } from "./canvas-agent-workspace-settings";
+import { CanvasAgentCrewSettings } from "./canvas-agent-crew-workspace";
+import { useUserStore } from "@/stores/use-user-store";
 import type { AgentPermissionMode, AgentProfileLayer, AgentProfileScope, AgentProfileView, AgentReasoningMode } from "@/services/api/agent";
 import type { Skill } from "@/services/api/skills";
 import type { AiConfig } from "@/stores/use-config-store";
 
 export type AgentContextKey = "canvas" | "resources" | "generation_history" | "skills" | "project";
-type SettingsSection = "home" | "profile" | "memories" | "skills" | "mcp" | "context" | "budget" | "workspace";
+type SettingsSection = "home" | "profile" | "memories" | "skills" | "mcp" | "context" | "budget" | "workspace" | "crew";
 
 type AgentSettingsProps = {
     theme: CanvasTheme;
@@ -26,6 +28,7 @@ type AgentSettingsProps = {
     profileError?: string;
     projectId?: string;
     canvasId: string;
+    onCrewChanged?: () => void;
     onReloadProfile: () => Promise<void>;
     onSaveProfile: (input: { scope: AgentProfileScope; projectId?: string; canvasId?: string; content: string; revision: number }) => Promise<AgentProfileView>;
     contextScope: AgentContextKey[];
@@ -69,10 +72,11 @@ const reasoningOptions: Array<{ value: AgentReasoningMode; label: string; descri
 ];
 
 export function CanvasCloudAgentSettings(props: AgentSettingsProps) {
+    const crewEnabled = useUserStore(state => state.features.agentCrewEnabled);
     const [section, setSection] = useState<SettingsSection>("home");
     const [skillTab, setSkillTab] = useState<"installed" | "market">("installed");
     const { theme } = props;
-    const title = section === "home" ? "Agent 设置" : sectionTitle(section);
+    const title = section === "home" ? "Agent 设置" : section === "crew" ? "Crew 子代理" : sectionTitle(section);
     const goHome = () => setSection("home");
 
     return (
@@ -91,11 +95,13 @@ export function CanvasCloudAgentSettings(props: AgentSettingsProps) {
             {section === "context" ? <ContextWorkspace props={props} theme={theme} /> : null}
             {section === "budget" ? <BudgetWorkspace props={props} theme={theme} /> : null}
             {section === "workspace" ? <CanvasAgentWorkspaceSettings canvasId={props.canvasId} availableSkills={props.installedSkills} /> : null}
+            {section === "crew" ? <CanvasAgentCrewSettings key={props.canvasId} canvasId={props.canvasId} availableSkills={props.installedSkills} onChanged={props.onCrewChanged} /> : null}
         </div>
     );
 }
 
 function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; theme: CanvasTheme; onOpen: (section: SettingsSection) => void }) {
+    const crewEnabled = useUserStore(state => state.features.agentCrewEnabled);
     return (
         <div className="canvas-agent-settings-scroll thin-scrollbar min-h-0 flex-1 space-y-6 overflow-y-auto p-4">
             <section>
@@ -130,6 +136,7 @@ function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; the
                 <div className="space-y-1">
                     <SettingRow theme={theme} icon={<Cpu className="size-4" />} title="上下文" summary={`${props.nodeCount} 个节点 · ${props.contextScope.length} 个范围`} onClick={() => onOpen("context")} />
                     <SettingRow theme={theme} icon={<BookMarked className="size-4" />} title="Workspace 项目规则" summary="Agents.md · 项目技能追加 · 版本快照" onClick={() => onOpen("workspace")} />
+                    {crewEnabled ? <SettingRow theme={theme} icon={<Cpu className="size-4" />} title="Crew 子代理" summary="各画布的 Crew 配置独立管理。" onClick={() => onOpen("crew")} /> : null}
                     <SettingRow theme={theme} icon={<Sparkles className="size-4" />} title="长期偏好" summary={profileSummary(props.profileView)} onClick={() => onOpen("profile")} />
                     <SettingRow theme={theme} icon={<BookMarked className="size-4" />} title="个人记忆" summary="批准、添加、导出导入；只影响你的会话" onClick={() => onOpen("memories")} />
                     <SettingRow theme={theme} icon={<Sparkles className="size-4" />} title="Skills · 用户技能库" summary={`${props.installedSkills.length} 个已安装 · 本轮启用 ${props.selectedSkillIds.length} 个`} onClick={() => onOpen("skills")} />
