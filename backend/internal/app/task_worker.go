@@ -64,6 +64,9 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 				return
 			}
 			if !s.IsDraining() {
+				if err := s.ReconcileDynamicSubagents(ctx); err != nil {
+					log.Printf("subagent reconciliation: %v", err)
+				}
 				if swept, err := s.SweepStalledPiAgentRuns(); err != nil {
 					log.Printf("pi stalled sweep: %v", err)
 				} else if swept > 0 {

@@ -21,6 +21,20 @@ const (
 	SubagentStatusCancelled = "cancelled"
 )
 
+// Terminal children and abandoned families form a durable reconciliation queue.
+func (r *Repository) UnsettledAgentSubagentLinks(userID, parentRunID string) ([]model.AgentSubagentLink, error) {
+	rows := []model.AgentSubagentLink{}
+	query := r.db.Table("agent_subagent_links AS links").Select("links.*").
+		Joins("JOIN cloud_agent_executions AS child ON child.id = links.child_run_id AND child.user_id = links.user_id").
+		Joins("JOIN cloud_agent_executions AS parent ON parent.id = links.parent_run_id AND parent.user_id = links.user_id").
+		Where("links.status IN ? AND (child.status IN ? OR parent.status IN ?)", []string{"queued", "running"}, []string{"completed", "failed", "cancelled", "rejected"}, []string{"completed", "failed", "cancelled", "rejected"})
+	if userID != "" {
+		query = query.Where("links.user_id = ? AND links.parent_run_id = ?", userID, parentRunID)
+	}
+	err := query.Order("links.created_at, links.id").Limit(100).Find(&rows).Error
+	return rows, err
+}
+
 func (r *Repository) CreateAgentSubagentLink(link *model.AgentSubagentLink) error {
 	if link == nil || link.UserID == "" || link.ParentRunID == "" || link.ChildRunID == "" || link.IdempotencyKey == "" {
 		return gorm.ErrInvalidData
@@ -51,20 +65,92 @@ func (r *Repository) AgentSubagentLinkByParent(userID, parentRunID string, statu
 }
 
 func (r *Repository) AppendAgentSubagentMessage(message *model.AgentSubagentMessage) error {
-	if message == nil || message.LinkID == "" || message.IdempotencyKey == "" || message.Sequence < 1 {
+	if message == nil || message.LinkID == "" || message.UserID == "" || message.IdempotencyKey == "" {
 		return gorm.ErrInvalidData
 	}
 	if !json.Valid([]byte(message.PayloadJSON)) {
 		return fmt.Errorf("subagent message payload must be JSON")
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		// Serialize both directions on the Link before allocating a sequence.
+		locked := tx.Model(&model.AgentSubagentLink{}).Where("id = ? AND user_id = ? AND parent_run_id = ? AND child_run_id = ?", message.LinkID, message.UserID, message.ParentRunID, message.ChildRunID).UpdateColumn("updated_at", gorm.Expr("updated_at"))
+		if locked.Error != nil {
+			return locked.Error
+		}
+		if locked.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
 		var existing model.AgentSubagentMessage
 		if err := tx.Where("idempotency_key = ? AND user_id = ?", message.IdempotencyKey, message.UserID).First(&existing).Error; err == nil {
+			if existing.LinkID != message.LinkID || existing.Direction != message.Direction || existing.Kind != message.Kind || !sameJSONDocument(existing.PayloadJSON, message.PayloadJSON) {
+				return ErrCreationConflict
+			}
+			*message = existing
 			return nil
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
+		var sequence int64
+		if err := tx.Model(&model.AgentSubagentMessage{}).Where("link_id = ?", message.LinkID).Select("COALESCE(MAX(sequence), 0)").Scan(&sequence).Error; err != nil {
+			return err
+		}
+		message.Sequence = sequence + 1
 		return tx.Create(message).Error
+	})
+}
+
+func (r *Repository) AcknowledgeAgentSubagentMessage(userID, messageID string) error {
+	return r.db.Model(&model.AgentSubagentMessage{}).Where("id = ? AND user_id = ? AND acknowledged_at IS NULL", messageID, userID).Update("acknowledged_at", time.Now()).Error
+}
+
+func (r *Repository) AgentSubagentMessages(userID, parentRunID string) ([]model.AgentSubagentMessage, error) {
+	rows := []model.AgentSubagentMessage{}
+	err := r.db.Where("user_id = ? AND parent_run_id = ?", userID, parentRunID).Order("created_at, link_id, sequence").Find(&rows).Error
+	return rows, err
+}
+
+// Always lock the parent before the child, including parent-to-child messages,
+// so opposite-direction deliveries cannot deadlock on PostgreSQL.
+func (r *Repository) WithAgentSubagentFamily(userID, parentRunID, childRunID string, fn func(*Repository) error) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		for _, id := range []string{parentRunID, childRunID} {
+			q := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ?", id, userID).UpdateColumn("revision", gorm.Expr("revision"))
+			if q.Error != nil {
+				return q.Error
+			}
+			if q.RowsAffected != 1 {
+				return gorm.ErrRecordNotFound
+			}
+		}
+		return fn(New(tx))
+	})
+}
+
+// The Link, independent session, holding task and credit reservation either all
+// commit or all roll back. A child is never visible to workers without its Link.
+func (r *Repository) CreateDynamicSubagentAdmission(admission CloudAgentAdmission, link *model.AgentSubagentLink, activeTaskLimit, maxChildren, maxConcurrent int) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		locked := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND status IN ?", link.ParentRunID, link.UserID, []string{"queued", "running"}).UpdateColumn("revision", gorm.Expr("revision"))
+		if locked.Error != nil {
+			return locked.Error
+		}
+		if locked.RowsAffected != 1 {
+			return ErrCreationConflict
+		}
+		var total, active int64
+		if err := tx.Model(&model.AgentSubagentLink{}).Where("user_id = ? AND parent_run_id = ?", link.UserID, link.ParentRunID).Count(&total).Error; err != nil {
+			return err
+		}
+		if err := tx.Table("agent_subagent_links AS links").Joins("JOIN cloud_agent_executions AS runs ON runs.id = links.child_run_id AND runs.user_id = links.user_id").Where("links.user_id = ? AND links.parent_run_id = ? AND runs.status IN ?", link.UserID, link.ParentRunID, []string{"queued", "running", "waiting_approval"}).Count(&active).Error; err != nil {
+			return err
+		}
+		if total >= int64(maxChildren) || active >= int64(maxConcurrent) {
+			return ErrTaskStateConflict
+		}
+		if err := createCloudAgentHoldingTask(tx, admission.Task, admission.Order, admission.Execution, activeTaskLimit, admission.Skills); err != nil {
+			return err
+		}
+		return tx.Create(link).Error
 	})
 }
 

@@ -689,39 +689,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"snapshotHash": str(cloudAgentToolText("parameter_077")), "nodeId": str(cloudAgentToolText("parameter_078")), "title": str(cloudAgentToolText("parameter_079")), "sourceNodeId": str(cloudAgentToolText("parameter_080")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_081"))}, "referenceTransientIds": map[string]any{"type": "array", "maxItems": 4, "items": str(cloudAgentToolText("parameter_082"))},
 		}, "mode", "prompt", "nodeId", "title", "referenceNodeIds")
 	}
-	if req.crew != nil {
-		if req.crew.Role == model.CrewMemberRoleCoordinator {
-			add("delegate_task", "Delegate one frozen structured task to a Crew member.", map[string]any{
-				"memberId": str("Authorized member ID"), "taskId": str("Unique task ID"), "title": str("Task title"), "instructions": str("Task instructions"),
-				"artifactIds": map[string]any{"type": "array", "maxItems": 32, "items": str("Canvas node reference")}, "focusNodeIds": map[string]any{"type": "array", "maxItems": 8, "items": str("Canvas node reference")},
-			}, "memberId", "taskId", "title", "instructions")
-			add("crew_wait", "Wait for all dispatched members and return only structured results.", map[string]any{})
-			if req.crew.Permission == model.CrewPermissionPropose {
-				add("crew_propose", "Aggregate completed member proposals and wait for one user approval. Never submit a canvas write directly.", map[string]any{})
-			}
-		} else {
-			var proposalSchema map[string]any
-			for _, tool := range compileCloudAgentTools(CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}}, false) {
-				function := tool["function"].(map[string]any)
-				if stringField(function, "name") == "canvas_apply_ops" {
-					proposalSchema = function["parameters"].(map[string]any)
-				}
-			}
-			add("task_result", "Complete this member task with a structured result. Never return another member's transcript.", map[string]any{
-				"taskId": str("Frozen task ID"), "summary": str("Result summary, at most 4000 bytes"), "artifactIds": map[string]any{"type": "array", "maxItems": 32, "items": str("Canvas node reference")}, "errorCode": str("Optional stable error code"),
-				"proposal": proposalSchema,
-			}, "taskId", "summary")
-			filtered := tools[:0]
-			for _, tool := range tools {
-				name := stringField(tool["function"].(map[string]any), "name")
-				if name != "finish_run" && name != "ask_user" {
-					filtered = append(filtered, tool)
-				}
-			}
-			tools = filtered
-		}
-	}
-	if req.SubagentEnabled && req.crew == nil && req.subagent == nil {
+	if req.SubagentEnabled && req.subagent == nil {
 		add("spawn_subagent", "Create one independent child Agent with a name, role label and concrete objective.", map[string]any{
 			"name":         map[string]any{"type": "string", "maxLength": maxDynamicSubagentNameRunes},
 			"role":         map[string]any{"type": "string", "maxLength": maxDynamicSubagentRoleRunes},
@@ -768,9 +736,6 @@ func CloudAgentSupportedToolNames() []string {
 			names = append(names, name)
 		}
 	}
-	// Crew tools are runtime-scoped and are intentionally omitted from the
-	// ordinary capability list. They are exposed only when a CrewMemberRuntime
-	// is present in the request and are validated by the same compiler path.
 	return names
 }
 

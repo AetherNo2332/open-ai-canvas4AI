@@ -20,11 +20,11 @@ import {
   type SessionCompactFailedEvent,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { CanvasBridge, CanvasCompactionNeeded, CanvasModelRetry, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
+import { CanvasBridge, CanvasCompactionNeeded, CanvasModelRetry, CanvasRunSuspended, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
 import { compactionSettings, serializePreparation, runNativeCompaction } from "./native-compaction.js";
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
-import { validateCrewEnvelope } from "./crew-wire.js";
+import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
 import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "./native-skills.js";
 import { Unsafe, type TSchema } from "typebox";
@@ -316,6 +316,7 @@ async function recoverToolResults(
       : admissionError ? { result: admissionError, isError: true } :
       await bridge.executeTool(snapshot, taskId, call.id, signal);
     if ("terminated" in receipt && receipt.terminated) throw new CanvasRunTerminated("terminated");
+    if ("suspended" in receipt && receipt.suspended) throw new CanvasRunSuspended();
     const result: ToolResultMessage = { role: "toolResult", toolCallId: call.id, toolName: call.function.name,
       content: [{ type: "text",
         text: typeof receipt.result === "string" ? receipt.result : JSON.stringify(receipt.result) }],
@@ -641,8 +642,9 @@ export async function runCanvasAgent(
 ): Promise<void> {
   shutdown?.throwIfAborted();
   let snapshot = initial;
-  try { validateCrewEnvelope(snapshot.crew, snapshot.tools); }
-  catch (error) { throw new FatalWorkerError(error instanceof Error ? error.message : "Invalid Crew envelope"); }
+  let runSuspended = false;
+  try { validateSubagentRuntime(snapshot.subagent, snapshot.runId, snapshot.request.subagentEnabled, snapshot.tools); }
+  catch (error) { throw new FatalWorkerError(error instanceof Error ? error.message : "Invalid subagent runtime"); }
   const model = canvasModel(snapshot);
   const initialVisualMessages = fromCanonical(snapshot, model);
   // 合同校验必须早于任何恢复副作用：schema 不兼容时不能先写检查点或执行工具。
@@ -682,19 +684,20 @@ export async function runCanvasAgent(
   const resumedNativeCallIds = new Set<string>();
   let canonicalCount = snapshot.canonical.messages.length;
   const pendingInterjections = new Map<string, string>();
+  const interjectionSources = new Map<string, string | undefined>();
   const injectedInterjectionIds = new Set<string>();
   const syncPendingInterjections = (next: PiSnapshot): void => {
     for (const item of next.pendingInterjections || []) {
-      if (item.id && typeof item.text === "string") pendingInterjections.set(item.id, item.text);
+      if (item.id && typeof item.text === "string") { pendingInterjections.set(item.id, item.text); interjectionSources.set(item.id, item.source); }
     }
   };
-  const interjectionMessage = (text: string): string => `【用户插话】${text}`;
+  const interjectionMessage = (text: string, id: string): string => formatAgentInterjection(text, interjectionSources.get(id));
   syncPendingInterjections(snapshot);
   const interjectionIdsForMessage = (message: AgentMessage): string[] => {
     const content = (message as unknown as { content?: unknown }).content;
     const text = textContent(content);
     return [...pendingInterjections]
-      .filter(([id, body]) => injectedInterjectionIds.has(id) && text.includes(interjectionMessage(body)))
+      .filter(([id, body]) => injectedInterjectionIds.has(id) && text.includes(interjectionMessage(body, id)))
       .map(([id]) => id);
   };
   const prependPendingInterjections = (prompt: string): string => {
@@ -702,7 +705,7 @@ export async function runCanvasAgent(
     for (const [id, body] of pendingInterjections) {
       if (injectedInterjectionIds.has(id)) continue;
       injectedInterjectionIds.add(id);
-      notes.push(interjectionMessage(body));
+      notes.push(interjectionMessage(body, id));
     }
     if (notes.length === 0) return prompt;
     return [prompt, ...notes].filter((part) => part.trim() !== "").join("\n\n");
@@ -713,7 +716,7 @@ export async function runCanvasAgent(
       if (injectedInterjectionIds.has(id)) continue;
       injectedInterjectionIds.add(id);
       try {
-        await session.steer(interjectionMessage(body), undefined, { source: "interactive" });
+        await session.steer(interjectionMessage(body, id), undefined, { source: "interactive" });
       } catch (error) {
         injectedInterjectionIds.delete(id);
         throw error;
@@ -767,10 +770,11 @@ export async function runCanvasAgent(
     }
     for (const id of interjectionIds) {
       pendingInterjections.delete(id);
+      interjectionSources.delete(id);
       injectedInterjectionIds.delete(id);
     }
     if (interjectionIds.length > 0) {
-      snapshot = { ...snapshot, pendingInterjections: [...pendingInterjections].map(([id, text]) => ({ id, text })) };
+      snapshot = { ...snapshot, pendingInterjections: [...pendingInterjections].map(([id, text]) => ({ id, text, source: interjectionSources.get(id) })) };
     }
   };
 
@@ -782,6 +786,10 @@ export async function runCanvasAgent(
     if (!admittedCallIds.has(callId)) throw new Error(batchRejection || "Tool batch was not admitted");
     if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
     const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
+    if (receipt.suspended) {
+      runSuspended = runTerminated = true;
+      return { result: { suspended: true }, terminate: true };
+    }
     if (receipt.terminated) {
       runTerminated = true;
       return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
@@ -875,6 +883,7 @@ export async function runCanvasAgent(
     }
   } catch (error) {
     workspace.cleanup();
+    if (error instanceof CanvasRunSuspended) { await bridge.release(snapshot, shutdown); return; }
     if (error instanceof CanvasRunTerminated) return;
     throw error;
   }
@@ -1142,5 +1151,6 @@ export async function runCanvasAgent(
     throw error;
   } finally {
     boot.cleanup();
+    if (runSuspended) await bridge.release(snapshot, shutdown);
   }
 }

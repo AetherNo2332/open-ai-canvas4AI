@@ -40,6 +40,7 @@ const (
 type cloudAgentInterjection struct {
 	ID        string    `json:"id"`
 	Text      string    `json:"text"`
+	Source    string    `json:"source,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 

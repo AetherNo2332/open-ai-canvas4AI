@@ -8,7 +8,10 @@ import (
 
 func TestAgentSubagentPolicyPersistsUntilDisabled(t *testing.T) {
 	s, db := workspaceService(t)
-	if err := db.AutoMigrate(&model.AgentSubagentPolicy{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentSubagentPolicy{}, &model.SystemSetting{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SystemSetting{Key: "feature_availability", ValueJSON: `{"agentSubagentsEnabled":true}`}).Error; err != nil {
 		t.Fatal(err)
 	}
 	initial, err := s.AgentSubagentPolicy("user", "workspace-canvas")

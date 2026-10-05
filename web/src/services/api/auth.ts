@@ -395,7 +395,8 @@ export function getAuthSettings() {
             emailCodeRequired: boolean;
             smsBindingAvailable: boolean;
             emailBindingAvailable: boolean;
-            agreementTitle?: string; agreementContent?: string;
+            agreementTitle?: string;
+            agreementContent?: string;
         }
     >("/auth/settings");
 }
@@ -435,7 +436,9 @@ export function getAdminFeatureAvailability() {
 }
 
 export function updateAdminFeatureAvailability(
-    features: Partial<Pick<FeatureAvailability, "welcomeEnabled" | "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers" | "agentCrewEnabled">>,
+    features: Partial<
+        Pick<FeatureAvailability, "welcomeEnabled" | "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers" | "agentSubagentsEnabled">
+    >,
 ) {
     return http.patch<{ features: FeatureAvailability }>("/admin/settings/features", features);
 }

@@ -374,6 +374,22 @@ test("a blocked finish_run keeps the Pi loop alive for reconciliation", async ()
   assert.match(JSON.stringify(state.canonical[1]?.messages), /reconcile_plan/);
 });
 
+test("suspended wait releases residency without a fake tool receipt or another model step", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "wait", function: { name: "wait_subagents", arguments: "{}" } }] },
+    { text: "must not continue" },
+  ]);
+  snapshot.request.subagentEnabled = true;
+  snapshot.tools = [...tools, { name: "wait_subagents", description: "Wait for children", parameters: objectSchema, allowed: true }];
+  let released = 0;
+  bridge.release = async () => { released++; };
+  bridge.executeTool = async (_run, _taskId, callId) => ({ callId, pending: true, suspended: true });
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 1);
+  assert.equal(released, 1);
+  assert.equal(state.checkpoints.filter(message => message.role === "toolResult").length, 0);
+});
+
 test("continuation pairs missing receipts from prior terminal runs without replaying their tools", async () => {
   const { bridge, state, snapshot } = fakeBridge([{ text: "本轮继续分析。" }]);
   const history = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: [

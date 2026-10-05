@@ -25,7 +25,6 @@ const cloudAgentOperation = "cloud_agent"
 // turns reference the previous run, not a mutable in-memory conversation. This
 // reuses transactional billing, worker leases, cancellation and text replay.
 type CloudAgentRequest struct {
-	crew            *CrewMemberRuntime
 	subagent        *SubagentRuntime
 	ReasoningMode   string `json:"reasoningMode,omitempty"`
 	ProfileRevision string `json:"profileRevision,omitempty"`
@@ -69,7 +68,6 @@ func cloudAgentStepLimit(req CloudAgentRequest) int {
 }
 
 type cloudAgentState struct {
-	Crew             *CrewMemberRuntime        `json:"crew,omitempty"`
 	Subagent         *SubagentRuntime          `json:"subagent,omitempty"`
 	Workspace        *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	Version          int                       `json:"version"`
@@ -441,7 +439,6 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 type cloudAgentRunScope struct {
 	Workspace      *WorkspaceSnapshot
 	Skills         []cloudAgentSkill
-	Crew           *CrewMemberRuntime
 	ConversationID string
 	ParentID       string
 	Prepared       *repository.CloudAgentAdmission
@@ -450,7 +447,6 @@ type cloudAgentRunScope struct {
 
 func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest, parentID string, scope *cloudAgentRunScope) (*CloudAgentRun, error) {
 	if scope != nil {
-		req.crew = scope.Crew
 		req.subagent = scope.Subagent
 	}
 	if err := validateCloudAgentRequest(&req); err != nil {
@@ -467,6 +463,9 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		return nil, err
 	}
 	if req.SubagentEnabled {
+		if err := s.RequireFeature(FeatureAgentSubagents); err != nil {
+			return nil, err
+		}
 		consent, consentErr := s.repo.AgentSubagentPolicy(userID, req.CanvasID)
 		if consentErr != nil {
 			return nil, consentErr
@@ -613,7 +612,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	var skillSnapshots []cloudAgentSkill
 	if scope != nil {
 		if scope.Workspace == nil {
-			return nil, BadAuthRequest("Crew Workspace snapshot missing")
+			return nil, BadAuthRequest("Agent Workspace snapshot missing")
 		}
 		workspace, skillSnapshots = *scope.Workspace, scope.Skills
 	} else {
@@ -644,9 +643,8 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		return nil, err
 	}
 	system += workspacePrompt(&workspace)
-	system += crewSystemPrompt(req.crew)
 	system += subagentSystemPrompt(req.subagent)
-	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy, Crew: req.crew, Subagent: req.subagent}
+	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy, Subagent: req.subagent}
 	state.Workspace = &workspace
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	canonical.Tools = compileCloudAgentToolsForRuntime(req, len(profile.Layers) > 0, cloudAgentSkillRuntimeNative)
@@ -704,7 +702,6 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	//   - 不可变快照：服务端策略身份 + 工具 schema 身份在这里定型；
 	//   - 占位任务：承载本轮报价预留，worker 永不领取。
 	runtime := cloudAgentRuntime{
-		Crew:         req.crew,
 		Subagent:     req.subagent,
 		Workspace:    &workspace,
 		RuntimeRunID: id, Request: req, Policy: policy, ParentID: linkedParentID, Fingerprint: fingerprint,
@@ -754,9 +751,6 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		return nil, err
 	}
 	if scope != nil && scope.Prepared != nil {
-		if req.crew != nil && req.crew.Role == model.CrewMemberRoleMember {
-			run.Status = "waiting_member"
-		}
 		*scope.Prepared = repository.CloudAgentAdmission{Execution: run, Task: task, Order: prepare.Order, Skills: cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)}
 		return agentRunOutput(cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status, Model: req.Model, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt}, state), nil
 	}

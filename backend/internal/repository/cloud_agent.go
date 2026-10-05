@@ -227,9 +227,6 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 			conversationID = candidate.ID
 		}
 		err := r.db.Transaction(func(tx *gorm.DB) error {
-			if err := New(tx).lockAgentCrewExecution(candidate.UserID, candidate.ID); err != nil {
-				return err
-			}
 			updated := tx.Model(&model.CloudAgentExecution{}).
 				Where("id = ? AND revision = ? AND engine = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
 					candidate.ID, candidate.Revision, "pi", now).
@@ -258,11 +255,7 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 			if leased.RowsAffected != 1 {
 				return ErrCreationConflict
 			}
-			current, err := New(tx).CloudAgent(candidate.UserID, candidate.ID)
-			if err != nil {
-				return err
-			}
-			return New(tx).projectAgentCrewExecution(current)
+			return nil
 		})
 		if errors.Is(err, ErrCreationConflict) {
 			continue
@@ -386,11 +379,6 @@ func (r *Repository) RecentCloudAgentEventsForUser(userID string, runLimit int) 
 // Lock before reading: checkpoints, canvas writes and task reservations commit together.
 func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func(*model.CloudAgentExecution, *Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if !r.crewMutation {
-			if err := New(tx).lockAgentCrewExecution(userID, id); err != nil {
-				return err
-			}
-		}
 		q := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND revision = ?", id, userID, revision).UpdateColumn("revision", gorm.Expr("revision + 1"))
 		if q.Error != nil {
 			return q.Error
@@ -412,7 +400,6 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 			previousMessages[fmt.Sprintf("%s:%d", message.Kind, message.Sequence)] = message.MessageJSON
 		}
 		callbackRepo := New(tx)
-		callbackRepo.crewMutation = r.crewMutation
 		if err = fn(run, callbackRepo); err != nil {
 			return err
 		}
@@ -495,9 +482,6 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 				}).Error; err != nil {
 				return err
 			}
-		}
-		if !r.crewMutation {
-			return New(tx).projectAgentCrewExecution(run)
 		}
 		return nil
 	})
@@ -585,10 +569,6 @@ func (r *Repository) MarkCloudAgentCancelled(userID, id string, revision int64) 
 
 func (r *Repository) markCloudAgentTerminal(userID, id string, revision int64, status, message string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		repo := New(tx)
-		if err := repo.lockAgentCrewExecution(userID, id); err != nil {
-			return err
-		}
 		updates := map[string]any{"status": status, "cleanup_pending": true, "revision": gorm.Expr("revision + 1")}
 		if message != "" {
 			updates["failure_message"] = message
@@ -600,11 +580,7 @@ func (r *Repository) markCloudAgentTerminal(userID, id string, revision int64, s
 		if result.RowsAffected != 1 {
 			return ErrCreationConflict
 		}
-		var execution model.CloudAgentExecution
-		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&execution).Error; err != nil {
-			return err
-		}
-		return repo.projectAgentCrewExecution(&execution)
+		return nil
 	})
 }
 

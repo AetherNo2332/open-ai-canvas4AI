@@ -83,7 +83,7 @@ func (s *Service) PiControl(userID, runID, owner string) (map[string]any, error)
 	}
 	pending := []PiPendingInterjection{}
 	for _, item := range control.PendingInterjections {
-		pending = append(pending, PiPendingInterjection{ID: item.ID, Text: item.Text, CreatedAt: item.CreatedAt})
+		pending = append(pending, PiPendingInterjection{ID: item.ID, Text: item.Text, Source: item.Source, CreatedAt: item.CreatedAt})
 	}
 	var compaction *PiPendingContextCompaction
 	if c := control.ContextCompaction; c != nil && c.PiOperationID != "" {

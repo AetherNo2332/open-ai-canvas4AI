@@ -40,13 +40,14 @@ type PiPendingContextCompaction struct {
 }
 
 type PiPendingInterjection struct {
+	Source    string    `json:"source,omitempty"`
 	ID        string    `json:"id"`
 	Text      string    `json:"text"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 type PiAgentSnapshot struct {
-	Crew                     *CrewMemberRuntime          `json:"crew,omitempty"`
+	Subagent                 *SubagentRuntime            `json:"subagent,omitempty"`
 	RunID                    string                      `json:"runId"`
 	PiSessionID              string                      `json:"piSessionId"`
 	PiSessionRevision        int64                       `json:"piSessionRevision"`
@@ -596,6 +597,7 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 }
 
 type PiToolReceipt struct {
+	Suspended   bool            `json:"suspended,omitempty"`
 	OperationID string          `json:"operationId,omitempty"`
 	CallID      string          `json:"callId"`
 	Pending     bool            `json:"pending"`
@@ -668,7 +670,7 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 		return nil, kernel.Forbidden("Pi 收尾步骤包含工具调用")
 	}
 	decision := &PiTurnDecision{}
-	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 		disposition := cloudAgentStepStopDisposition(&state, stopKind)
 		state.event(runID, "model_step_stop", cloudAgentStopReasonPayload(state.Step, taskID,
 			result.StopReason, stopKind, disposition, cloudAgentStepStopFacts{
@@ -697,6 +699,9 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 		}
 		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text})
 		state.PiNoToolTaskID = taskID
+		if err := refreshActiveSubagents(repo, current, &state); err != nil {
+			return err
+		}
 		completion := cloudAgentEvaluateCompletion(&state)
 		completion = cloudAgentBlockTruncatedCompletion(completion, result.StopReasonKind)
 		state.event(runID, "assistant_message", map[string]any{"messageId": taskID, "text": result.Text, "final": completion.Final})
@@ -745,6 +750,10 @@ func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
 }
 
 func (s *Service) PiAgentSnapshot(userID, runID, owner string) (*PiAgentSnapshot, error) {
+	// Polling control also drains terminal child reports after a worker crash.
+	if err := s.reconcileDynamicSubagents(context.Background(), userID, runID); err != nil {
+		return nil, err
+	}
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
 		var terminal bool
@@ -1330,6 +1339,9 @@ func piSameCalls(left, right []cloudAgentCall) bool {
 }
 
 func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*PiToolReceipt, error) {
+	if err := s.reconcileDynamicSubagents(context.Background(), userID, runID); err != nil {
+		return nil, err
+	}
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
 		// 终态转换会清除 session 租约。Pi worker 可能正好在终结后轮询
@@ -1386,6 +1398,9 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 	}
 	if cloudAgentRunTerminal(latest.Status) {
 		return &PiToolReceipt{CallID: callID, Terminated: true}, nil
+	}
+	if latest.WaitKind == "subagents" {
+		return &PiToolReceipt{CallID: callID, Pending: true, Suspended: true}, nil
 	}
 	return &PiToolReceipt{CallID: callID, Pending: true}, nil
 }
@@ -1556,11 +1571,11 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 	}
 	pendingInterjections := make([]PiPendingInterjection, 0, len(state.PendingInterjections))
 	for _, item := range state.PendingInterjections {
-		pendingInterjections = append(pendingInterjections, PiPendingInterjection{ID: item.ID, Text: item.Text, CreatedAt: item.CreatedAt})
+		pendingInterjections = append(pendingInterjections, PiPendingInterjection{ID: item.ID, Text: item.Text, Source: item.Source, CreatedAt: item.CreatedAt})
 	}
 	return &PiAgentSnapshot{
-		Crew:  state.Crew,
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
+		Subagent:    state.Subagent,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,
 		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,

@@ -214,7 +214,7 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 }
 
 func (s *Service) cloudAgentFrozenSkillFile(userID string, skill cloudAgentSkill, path string) (*SkillPackageFileContent, error) {
-	if skill.Source == skills.SkillSourceGlobal || skill.Source == skills.SkillSourceWorkspace || skill.Source == skills.SkillSourceCrewMember {
+	if skill.Source == skills.SkillSourceGlobal || skill.Source == skills.SkillSourceWorkspace {
 		return s.skillDomain().GlobalSkillPackageFileAtVersion(skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, path)
 	}
 	return s.SkillPackageFileAtVersion(userID, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, path)

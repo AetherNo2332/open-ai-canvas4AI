@@ -17,7 +17,9 @@ func TestDynamicSubagentToolsAreParentOnlyAndBounded(t *testing.T) {
 		t.Fatal("child must not receive spawn_subagent")
 	}
 	for _, tool := range []string{"finish_run", "ask_user", "canvas_apply_ops", "generate_media"} {
-		if cloudAgentToolAllowed(child, tool) { t.Fatalf("child receives forbidden tool %s", tool) }
+		if cloudAgentToolAllowed(child, tool) {
+			t.Fatalf("child receives forbidden tool %s", tool)
+		}
 	}
 }
 
@@ -31,5 +33,7 @@ func TestDynamicSubagentInputLimits(t *testing.T) {
 	if err := validateSpawnSubagentInput(spawnSubagentInput{Name: "研究员", Role: "资料整理", Objective: "整理事实", MaxSteps: 21}); err == nil {
 		t.Fatal("maxSteps above server limit accepted")
 	}
-	if err := validateSpawnSubagentInput(spawnSubagentInput{Name: "研究员", Role: "资料整理", Objective: "整理事实", Instructions: string(make([]byte, 5000))}); err == nil { t.Fatal("oversized or NUL instructions accepted") }
+	if err := validateSpawnSubagentInput(spawnSubagentInput{Name: "研究员", Role: "资料整理", Objective: "整理事实", Instructions: string(make([]byte, 5000))}); err == nil {
+		t.Fatal("oversized or NUL instructions accepted")
+	}
 }

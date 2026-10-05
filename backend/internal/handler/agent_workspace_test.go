@@ -41,7 +41,7 @@ func workspaceHTTPFixture(t *testing.T) (func(string, string, string, bool) *htt
 		&model.AuthSession{ID: "workspace-session", UserID: "workspace-user", TokenHash: auth.HashToken("token"), ExpiresAt: time.Now().Add(time.Hour)},
 		&model.CanvasProject{ID: "own", UserID: "workspace-user", PayloadJSON: `{"nodes":[]}`},
 		&model.CanvasProject{ID: "foreign", UserID: "other", PayloadJSON: `{"nodes":[]}`},
-		&model.SystemSetting{Key: "feature_availability", ValueJSON: `{"agentCrewEnabled":true}`},
+		&model.SystemSetting{Key: "feature_availability", ValueJSON: `{"agentSubagentsEnabled":true}`},
 	} {
 		if err := db.Create(row).Error; err != nil {
 			t.Fatal(err)
@@ -50,8 +50,6 @@ func workspaceHTTPFixture(t *testing.T) (func(string, string, string, bool) *htt
 	router := gin.New()
 	svc := service.New(repository.New(db), t.TempDir())
 	RegisterAgentWorkspaceRoutes(router.Group("/api"), svc)
-	RegisterAgentCrewRoutes(router.Group("/api"), svc)
-	RegisterAgentCrewRunRoutes(router.Group("/api"), svc)
 	return func(method, path, body string, authenticated bool) *httptest.ResponseRecorder {
 		url := "/api/agent/workspaces/" + path
 		if strings.HasPrefix(path, "/api/") {
