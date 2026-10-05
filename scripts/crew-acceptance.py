@@ -18,6 +18,7 @@ parser.add_argument("--output", required=True)
 parser.add_argument("--channel", default="CHANNEL_000001")
 parser.add_argument("--model", default="deepseek-flash")
 parser.add_argument("--config-only", action="store_true")
+parser.add_argument("--extended", action="store_true", help="Also run real rejection and active cancellation checks")
 args = parser.parse_args()
 if not args.base.startswith(("http://localhost:", "http://127.0.0.1:")):
     raise SystemExit("This runner only accepts a local test instance")
@@ -41,7 +42,10 @@ def call(method, path, body=None, user="admin", expect=200):
     except urllib.error.HTTPError as error:
         response = error
     status = response.code
-    wire = json.load(response)
+    try:
+        wire = json.load(response)
+    except json.JSONDecodeError:
+        raise AssertionError(f"{method} {path}: HTTP {status}, non-JSON response") from None
     if status != expect or expect == 200 and wire.get("code") != 0:
         # Do not print response bodies, prompts, credentials or upstream URLs.
         raise AssertionError(f"{method} {path}: HTTP {status}, code {wire.get('code')}, reason {wire.get('reason')}")
@@ -98,7 +102,16 @@ def wait_approval(run_id):
     raise AssertionError("Real-model run did not reach approval within 300 seconds")
 
 try:
-    health = call("GET", "/health", user=None)
+    readiness_deadline = time.monotonic() + 60
+    while True:
+        try:
+            health = call("GET", "/health", user=None)
+            if health["ready"]:
+                break
+        except (AssertionError, urllib.error.URLError):
+            if time.monotonic() >= readiness_deadline:
+                raise
+        time.sleep(1)
     evidence["build"] = health["build"]
     check("health/schema ready", health["ready"] and health["schema"]["current"] == health["schema"]["expected"])
     canvas = auth["canvasId"]
@@ -152,6 +165,31 @@ try:
             project = call("GET", "/canvas-projects/" + canvas)["project"]
             check("member proposals persisted canvas nodes", len(project["nodes"]) >= 2)
             evidence["final"] = {"status": final["status"], "nodeCount": len(project["nodes"]), "latestSequence": final["latestSequence"]}
+            if args.extended:
+                baseline_nodes = project["nodes"]
+                rejected = call("POST", crew_path + "/runs", {**request, "idempotencyKey": "crew-reject-" + uuid.uuid4().hex})
+                evidence["rejectedRunId"] = rejected["id"]
+                rejected = wait_approval(rejected["id"])
+                approval = rejected["approval"]
+                rejected = call("POST", f"/agent/crew-runs/{rejected['id']}/approvals/{approval['approvalId']}", {"decision": "reject", "reason": "Functional rejection fixture"})
+                check("rejected approval cancels Crew", rejected["status"] == "cancelled")
+                call("POST", f"/agent/crew-runs/{rejected['id']}/commit", {"approvalId": approval["approvalId"], "expectedSnapshotHash": approval["snapshotHash"], "idempotencyKey": "rejected-commit-" + uuid.uuid4().hex}, expect=409)
+                check("rejected proposal cannot change canvas", call("GET", "/canvas-projects/" + canvas)["project"]["nodes"] == baseline_nodes)
+                cancelling = call("POST", crew_path + "/runs", {**request, "idempotencyKey": "crew-cancel-" + uuid.uuid4().hex})
+                evidence["cancelledRunId"] = cancelling["id"]
+                deadline = time.monotonic() + 120
+                while time.monotonic() < deadline:
+                    cancelling = call("GET", "/agent/crew-runs/" + cancelling["id"])
+                    if sum(row["role"] == "member" and row["status"] == "running" for row in cancelling["members"]) == 2:
+                        break
+                    time.sleep(1)
+                check("cancel exercised two active members", sum(row["role"] == "member" and row["status"] == "running" for row in cancelling["members"]) == 2)
+                cancelling = call("POST", f"/agent/crew-runs/{cancelling['id']}/cancel", {})
+                check("cancel terminates all Crew members", cancelling["status"] == "cancelled" and all(row["status"] == "cancelled" for row in cancelling["members"]))
+                time.sleep(3)
+                cancelling = call("GET", "/agent/crew-runs/" + cancelling["id"])
+                check("cancel remains terminal", cancelling["status"] == "cancelled")
+                check("cancel cannot change canvas", call("GET", "/canvas-projects/" + canvas)["project"]["nodes"] == baseline_nodes)
     finally:
         call("PATCH", "/admin/settings/features", {"agentCrewEnabled": before["agentCrewEnabled"]})
 except Exception as error:
