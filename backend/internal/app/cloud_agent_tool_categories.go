@@ -21,7 +21,7 @@ func cloudAgentToolCategory(name string) string {
 		return "agent_tools_canvas_read"
 	case "image_text_detect", "image_annotation_render", "canvas_inspect_image":
 		return "agent_tools_image"
-	case "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_apply_ops", "canvas_arrange_nodes":
+	case "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_apply_ops", "canvas_arrange_nodes", "canvas_create_character":
 		return "agent_tools_canvas_edit"
 	case "model_list", "generate_media", "image_layer_split":
 		return "agent_tools_generation"
