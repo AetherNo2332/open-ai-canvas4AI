@@ -47,3 +47,17 @@
 - 角色是任务标签，不能绕过权限。
 - 所有父子关系走显式 link，不把 `ParentID` 单独当作业务层级。
 - 子代理不能直接写画布；父级聚合和审批仍是唯一提交边界。
+
+## 实现与验收记录
+
+五个切片的源码实现已完成，独立审查的五项问题均已修复。合入 canary 角色卡时解决了运行时分发与版本冲突，并补齐新写工具的子代理禁用合同。
+
+| 切片 | 实现 | 定向验证 |
+| --- | --- | --- |
+| 1 | 持久策略、CAS、归属与 schema 57 | 策略专项；HTTP 归属/空参六路径 RED→GREEN；SQLite/PostgreSQL 迁移 |
+| 2 | 动态父工具、独立会话与原子子运行创建 | Linux 动态生命周期、dispatch/schema 守卫 |
+| 3 | 有序幂等消息、持久等待、结构化回报、恢复和取消 | Linux 生命周期；Go/Node 容量为 1 的挂起等待回归 RED→GREEN |
+| 4 | 持续画布开关、错误/CAS 提示、动态成员状态及消息 | Web 类型检查、头像/布局专项及生产镜像构建 |
+| 5 | 删除旧 Crew 代码/API/表/事件解析器 | schema 57、OpenAPI 128 引用解析、共用工具合同守卫 |
+
+最终 HTTP/live Pi 脚本为 `scripts/dynamic-subagent-acceptance.py`；构建、真实模型链路与最新 CI 结果集中登记在 [PR #66](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/66)。用户指定仅脚本验收，浏览器 DOM/视觉验收保留为未验证边界。

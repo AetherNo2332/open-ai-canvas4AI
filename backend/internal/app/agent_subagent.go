@@ -6,6 +6,8 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 type AgentSubagentPolicyView struct {
@@ -43,6 +45,9 @@ type AgentSubagentMessageView struct {
 
 func (s *Service) ListAgentSubagents(userID, runID string) ([]AgentSubagentView, error) {
 	if _, err := s.repo.CloudAgent(userID, runID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NewAppError(404, "Agent 运行不存在")
+		}
 		return nil, err
 	}
 	return agentSubagentViews(s.repo, userID, runID)
@@ -104,9 +109,12 @@ func (s *Service) AgentSubagentPolicy(userID, canvasID string) (*AgentSubagentPo
 	}
 	canvasID = strings.TrimSpace(canvasID)
 	if canvasID == "" {
-		return nil, repository.ErrTaskStateConflict
+		return nil, BadAuthRequest("画布 ID 不能为空")
 	}
 	if _, err := s.repo.CanvasProjectForUser(userID, canvasID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NewAppError(404, "画布不存在")
+		}
 		return nil, err
 	}
 	row, err := s.repo.AgentSubagentPolicy(userID, canvasID)
@@ -122,9 +130,12 @@ func (s *Service) UpdateAgentSubagentPolicy(userID string, req AgentSubagentPoli
 	}
 	req.CanvasID = strings.TrimSpace(req.CanvasID)
 	if req.CanvasID == "" {
-		return nil, repository.ErrTaskStateConflict
+		return nil, BadAuthRequest("画布 ID 不能为空")
 	}
 	if _, err := s.repo.CanvasProjectForUser(userID, req.CanvasID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NewAppError(404, "画布不存在")
+		}
 		return nil, err
 	}
 	row, err := s.repo.SaveAgentSubagentPolicy(userID, req.CanvasID, req.Enabled, req.ExpectedRevision)

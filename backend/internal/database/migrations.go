@@ -205,7 +205,10 @@ var schemaMigrations = []migration{
 			{&model.AgentSubagentMessage{}, "idx_subagent_message_sequence"},
 		} {
 			if tx.Migrator().HasIndex(index.row, index.name) {
-				if err := tx.Migrator().DropIndex(index.row, index.name); err != nil {
+				// These fixed index names resolve within the active schema/search_path.
+				// GORM's PostgreSQL DropIndex incorrectly qualifies CURRENT_SCHEMA()
+				// as an identifier when the model has no explicit schema.
+				if err := tx.Exec("DROP INDEX IF EXISTS " + index.name).Error; err != nil {
 					return err
 				}
 			}

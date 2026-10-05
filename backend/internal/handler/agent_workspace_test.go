@@ -50,6 +50,7 @@ func workspaceHTTPFixture(t *testing.T) (func(string, string, string, bool) *htt
 	router := gin.New()
 	svc := service.New(repository.New(db), t.TempDir())
 	RegisterAgentWorkspaceRoutes(router.Group("/api"), svc)
+	RegisterAgentRoutes(router.Group("/api"), svc)
 	return func(method, path, body string, authenticated bool) *httptest.ResponseRecorder {
 		url := "/api/agent/workspaces/" + path
 		if strings.HasPrefix(path, "/api/") {
