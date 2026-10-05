@@ -81,7 +81,7 @@ Canvas Agent submit
 ### Slice 4：跨层验证与 Compose 3000 验收
 
 - 后端：Crew handler/service/repository 测试、跨账号隔离、feature gate、幂等、恢复、工具 schema、预算聚合和敏感字段脱敏。
-- 前端：聚焦测试、typecheck、build；记录 canary 基线已有的 11 个失败，不把继承失败归因于 Crew。
+- 前端：聚焦测试、typecheck、build；全量测试以当前分支实跑为准。2026-10-05 重新核实后，历史 11 个过时断言已修订，上一轮全量 2165/2165 通过；不得再把旧失败数当作当前基线。
 - 浏览器：管理员 Agent(beta) 开关、画布 Crew 设置入口、成员编辑、Crew 模式发起、成员事件、审批和画布提交。
 - Compose：使用独立本地项目和持久化目录，在 localhost:3000 构建并检查镜像、`/api/health`、schema、登录后的真实 Crew 流程；不直接改服务器生产容器。
 - 交付：验收记录、已知限制和 PR 前验证清单。
