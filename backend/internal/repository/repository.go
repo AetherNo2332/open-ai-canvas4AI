@@ -40,7 +40,8 @@ var ErrProjectUnitShotsChanged = errors.New("镜头已被修改，请刷新后�
 var ErrCanvasRevisionConflict = errors.New("画布已被更新，请刷新后重试")
 
 type Repository struct {
-	db *gorm.DB
+	crewMutation bool
+	db           *gorm.DB
 }
 
 type UserStorageUsage struct {
@@ -59,7 +60,7 @@ func New(db *gorm.DB) *Repository {
 }
 
 func (r *Repository) WithContext(ctx context.Context) *Repository {
-	return &Repository{db: r.db.WithContext(ctx)}
+	return &Repository{db: r.db.WithContext(ctx), crewMutation: r.crewMutation}
 }
 
 func (r *Repository) Dialect() string {

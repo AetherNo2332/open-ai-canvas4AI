@@ -91,6 +91,9 @@ import { Live2DAvatar } from "./live2d-avatar";
 import "./canvas-cloud-agent.css";
 import { createUuid } from "@/lib/client-id";
 
+import { listCrewRuns, subscribeCrewEvents, type CrewRunView } from "@/services/api/agent-crew";
+import { crewAvatars, reduceCrewRun } from "@/lib/canvas/crew-run-state";
+
 type CloudAgentPanelProps = {
     canvasId: string;
     domainProjectId?: string;
@@ -134,7 +137,22 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const [skillDefaults, setSkillDefaults] = useState<AgentSkillDefaultsSummary>({ count: 0, skills: [] });
     const globalDefaultSkills = useMemo(() => effectiveAgentDefaultSkills(run, skillDefaults), [run, skillDefaults]);
     const globalDefaultSkillIds = useMemo(() => globalDefaultSkills.map(skill => skill.skillId), [globalDefaultSkills]);
-    const [activeSubagents] = useState<AgentSubagentAvatarItem[]>([]);
+    const [crewRun, setCrewRun] = useState<CrewRunView | null>(null);
+    const activeSubagents: AgentSubagentAvatarItem[] = useMemo(() => crewAvatars(crewRun), [crewRun]);
+    useEffect(() => {
+        const controller = new AbortController();
+        setCrewRun(null);
+        if (userId) void listCrewRuns(canvasId, controller.signal).then(runs => { if (!controller.signal.aborted) setCrewRun(runs[0] ?? null); }).catch(() => undefined);
+        return () => controller.abort();
+    }, [canvasId, userId]);
+    useEffect(() => {
+        if (!crewRun) return;
+        return subscribeCrewEvents(crewRun.id, item => setCrewRun(current => {
+            if (!current || current.canvasId !== canvasId || current.id !== crewRun.id) return current;
+            if ("snapshot" in item) return item.snapshot.id === current.id && item.snapshot.revision >= current.revision ? item.snapshot : current;
+            return reduceCrewRun(current, item);
+        }), { after: crewRun.latestSequence });
+    }, [crewRun?.id, canvasId, userId]);
     const [marketSkills, setMarketSkills] = useState<Skill[]>([]);
     const [skillSearch, setSkillSearch] = useState("");
     const [debouncedSkillSearch, setDebouncedSkillSearch] = useState("");

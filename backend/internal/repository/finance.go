@@ -460,32 +460,37 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 // queued/running，所以它永远不会被执行；它唯一的作用是让"这一轮的报价"有一个可退的载体。
 func (r *Repository) CreateCloudAgentHoldingTask(task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int, skillRows ...[]model.AgentConversationSkill) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
-			return err
-		}
-		if err := enforceActiveTaskLimit(tx, task.UserID, activeTaskLimit); err != nil {
-			return err
-		}
-		if err := reserveBillingOrder(tx, order); err != nil {
-			return err
-		}
-		if err := tx.Create(task).Error; err != nil {
-			return err
-		}
-		repo := New(tx)
-		if err := repo.EnsureCloudAgent(run); err != nil {
-			return err
-		}
-		if err := repo.AttachCloudAgentPiSession(run); err != nil {
-			return err
-		}
-		for _, rows := range skillRows {
-			if err := repo.SaveAgentConversationSkills(rows); err != nil {
-				return err
-			}
-		}
-		return nil
+		return createCloudAgentHoldingTask(tx, task, order, run, activeTaskLimit, skillRows...)
 	})
+}
+
+func createCloudAgentHoldingTask(tx *gorm.DB, task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int, skillRows ...[]model.AgentConversationSkill) error {
+	r := New(tx)
+	if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
+		return err
+	}
+	if err := enforceActiveTaskLimit(tx, task.UserID, activeTaskLimit); err != nil {
+		return err
+	}
+	if err := reserveBillingOrder(tx, order); err != nil {
+		return err
+	}
+	if err := tx.Create(task).Error; err != nil {
+		return err
+	}
+	repo := New(tx)
+	if err := repo.EnsureCloudAgent(run); err != nil {
+		return err
+	}
+	if err := repo.AttachCloudAgentPiSession(run); err != nil {
+		return err
+	}
+	for _, rows := range skillRows {
+		if err := repo.SaveAgentConversationSkills(rows); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SwapCloudAgentHoldingForFirstStep 在**调用方的事务里**把占位预留换成真实首步任务：

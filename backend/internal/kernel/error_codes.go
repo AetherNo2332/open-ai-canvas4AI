@@ -44,6 +44,7 @@ const (
 	ReasonAgentSkillBudgetExceeded           ErrorReason = "agent_skill_budget_exceeded"
 	ReasonAgentSkillDefaultsRevisionConflict ErrorReason = "agent_skill_defaults_revision_conflict"
 	ReasonAgentSkillDefaultsInvalid          ErrorReason = "agent_skill_defaults_invalid"
+	ReasonAgentWorkspaceRevisionConflict     ErrorReason = "agent_workspace_revision_conflict"
 )
 
 func ReasonForStatus(status int) ErrorReason {

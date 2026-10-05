@@ -30,6 +30,7 @@ const (
 	FeaturePluginCenter          = platform.FeaturePluginCenter
 	FeatureSystemPlugins         = platform.FeatureSystemPlugins
 	FeatureTimelineTranscription = platform.FeatureTimelineTranscription
+	FeatureAgentCrew             = platform.FeatureAgentCrew
 )
 
 type platformHost struct {

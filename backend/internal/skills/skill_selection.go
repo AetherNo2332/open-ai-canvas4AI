@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	SkillSourceGlobal = "global"
-	SkillSourceUser   = "user"
+	SkillSourceGlobal     = "global"
+	SkillSourceWorkspace  = "workspace"
+	SkillSourceCrewMember = "crew_member"
+	SkillSourceUser       = "user"
 )
 
 // SkillSelectionItem 是一次运行中某个技能被选中时冻结的三元组（版本 + 内容摘要 + 来源层）。
