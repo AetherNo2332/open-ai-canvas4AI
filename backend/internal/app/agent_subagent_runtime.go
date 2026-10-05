@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,6 +144,22 @@ func (s *Service) finishDynamicSubagent(run *model.CloudAgentExecution, state *c
 	return map[string]any{"messageId": message.ID, "accepted": true}, nil
 }
 
+func (s *Service) cancelDynamicSubagents(ctx context.Context, userID, parentRunID string) error {
+	links, err := s.repo.AgentSubagentLinkByParent(userID, parentRunID, []string{repository.SubagentStatusQueued, repository.SubagentStatusRunning})
+	if err != nil {
+		return err
+	}
+	for _, link := range links {
+		if err := s.repo.UpdateAgentSubagentLinkStatus(userID, link.ID, repository.SubagentStatusCancelled); err != nil {
+			return err
+		}
+		if err := s.CancelCloudAgent(ctx, userID, link.ChildRunID); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
 func validateSpawnSubagentInput(input spawnSubagentInput) error {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Role = strings.TrimSpace(input.Role)
@@ -152,6 +169,9 @@ func validateSpawnSubagentInput(input spawnSubagentInput) error {
 	}
 	if len([]rune(input.Name)) > maxDynamicSubagentNameRunes || len([]rune(input.Role)) > maxDynamicSubagentRoleRunes || len([]rune(input.Objective)) > maxDynamicSubagentObjectiveRunes {
 		return BadAuthRequest("子代理名称、角色或目标过长")
+	}
+	if len([]rune(input.Instructions)) > maxDynamicSubagentObjectiveRunes || strings.ContainsRune(input.Instructions, 0) {
+		return BadAuthRequest("子代理指令过长或包含无效字符")
 	}
 	if input.MaxSteps < 0 || input.MaxSteps > 20 {
 		return BadAuthRequest("子代理 maxSteps 必须在 0 到 20 之间")
@@ -180,6 +200,26 @@ func (s *Service) spawnDynamicSubagent(run *model.CloudAgentExecution, state *cl
 		return nil, BadAuthRequest("父 Agent Workspace 快照缺失")
 	}
 	active, err := s.repo.AgentSubagentLinkByParent(run.UserID, run.ID, []string{repository.SubagentStatusQueued, repository.SubagentStatusRunning})
+	if err != nil {
+		return nil, err
+	}
+	for index := range active {
+		child, childErr := s.repo.CloudAgent(run.UserID, active[index].ChildRunID)
+		if childErr != nil {
+			continue
+		}
+		if child.Status == "completed" || child.Status == "failed" || child.Status == "cancelled" {
+			status := repository.SubagentStatusCompleted
+			if child.Status == "failed" {
+				status = repository.SubagentStatusFailed
+			}
+			if child.Status == "cancelled" {
+				status = repository.SubagentStatusCancelled
+			}
+			_ = s.repo.UpdateAgentSubagentLinkStatus(run.UserID, active[index].ID, status)
+		}
+	}
+	active, err = s.repo.AgentSubagentLinkByParent(run.UserID, run.ID, []string{repository.SubagentStatusQueued, repository.SubagentStatusRunning})
 	if err != nil {
 		return nil, err
 	}

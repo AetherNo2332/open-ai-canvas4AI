@@ -38,6 +38,7 @@ type (
 	AgentProfileView                       = app.AgentProfileView
 	AgentSubagentPolicyRequest             = app.AgentSubagentPolicyRequest
 	AgentSubagentPolicyView                = app.AgentSubagentPolicyView
+	AgentSubagentView                       = app.AgentSubagentView
 	AgentSkillDefaultItem                  = app.AgentSkillDefaultItem
 	AgentLessonView                        = app.AgentLessonView
 	AgentLessonAdminView                   = app.AgentLessonAdminView

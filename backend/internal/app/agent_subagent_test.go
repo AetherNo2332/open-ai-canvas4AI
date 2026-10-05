@@ -30,7 +30,7 @@ func TestAgentSubagentPolicyPersistsUntilDisabled(t *testing.T) {
 	if err != nil || disabled.Enabled || disabled.Revision != 2 {
 		t.Fatalf("disable policy: %+v %v", disabled, err)
 	}
-	if _, err = s.AgentSubagentPolicy("other", "workspace-canvas"); err != nil {
-		t.Fatalf("policy isolation read should create separate row: %v", err)
+	if _, err = s.AgentSubagentPolicy("other", "workspace-canvas"); err == nil {
+		t.Fatal("cross-account policy read accepted")
 	}
 }

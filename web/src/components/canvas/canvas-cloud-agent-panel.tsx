@@ -90,10 +90,8 @@ import { appearanceAssetURL, live2DModelURL } from "@/services/api/appearance";
 import { Live2DAvatar } from "./live2d-avatar";
 import "./canvas-cloud-agent.css";
 import { createUuid } from "@/lib/client-id";
-import { getAgentSubagentPolicy, updateAgentSubagentPolicy, type AgentSubagentPolicy } from "@/services/api/agent-subagent";
+import { getAgentSubagentPolicy, listAgentSubagents, updateAgentSubagentPolicy, type AgentSubagentPolicy } from "@/services/api/agent-subagent";
 
-import { listCrewRuns, subscribeCrewEvents, type CrewRunView } from "@/services/api/agent-crew";
-import { crewAvatars, reduceCrewRun } from "@/lib/canvas/crew-run-state";
 
 type CloudAgentPanelProps = {
     canvasId: string;
@@ -112,7 +110,6 @@ type AgentPanelView = "chat" | "history" | "settings";
 
 export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
-    const crewEnabled = useUserStore((state) => state.features.agentCrewEnabled);
     const [subagentPolicy, setSubagentPolicy] = useState<AgentSubagentPolicy | null>(null);
     const [subagentPolicySaving, setSubagentPolicySaving] = useState(false);
     useEffect(() => {
@@ -155,22 +152,16 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const [skillDefaults, setSkillDefaults] = useState<AgentSkillDefaultsSummary>({ count: 0, skills: [] });
     const globalDefaultSkills = useMemo(() => effectiveAgentDefaultSkills(run, skillDefaults), [run, skillDefaults]);
     const globalDefaultSkillIds = useMemo(() => globalDefaultSkills.map(skill => skill.skillId), [globalDefaultSkills]);
-    const [crewRun, setCrewRun] = useState<CrewRunView | null>(null);
-    const activeSubagents: AgentSubagentAvatarItem[] = useMemo(() => crewAvatars(crewRun), [crewRun]);
+    const [dynamicSubagents, setDynamicSubagents] = useState<AgentSubagentAvatarItem[]>([]);
     useEffect(() => {
         const controller = new AbortController();
-        setCrewRun(null);
-        if (userId && crewEnabled) void listCrewRuns(canvasId, controller.signal).then(runs => { if (!controller.signal.aborted) setCrewRun(runs[0] ?? null); }).catch(() => undefined);
+        setDynamicSubagents([]);
+        if (run?.id) void listAgentSubagents(run.id, controller.signal).then(items => {
+            if (!controller.signal.aborted) setDynamicSubagents(items.map(item => ({ id: item.id, name: item.displayName, avatarUrl: "/logo.svg", state: item.status === "completed" ? "done" : item.status === "failed" || item.status === "cancelled" ? "failed" : "running" })));
+        }).catch(() => undefined);
         return () => controller.abort();
-    }, [canvasId, userId, crewEnabled]);
-    useEffect(() => {
-        if (!crewRun) return;
-        return subscribeCrewEvents(crewRun.id, item => setCrewRun(current => {
-            if (!current || current.canvasId !== canvasId || current.id !== crewRun.id) return current;
-            if ("snapshot" in item) return item.snapshot.id === current.id && item.snapshot.revision >= current.revision ? item.snapshot : current;
-            return reduceCrewRun(current, item);
-        }), { after: crewRun.latestSequence });
-    }, [crewRun?.id, canvasId, userId]);
+    }, [run?.id]);
+    const allSubagents = dynamicSubagents;
     const [marketSkills, setMarketSkills] = useState<Skill[]>([]);
     const [skillSearch, setSkillSearch] = useState("");
     const [debouncedSkillSearch, setDebouncedSkillSearch] = useState("");
@@ -1081,7 +1072,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                         onApprove={(settings) => void submitApproval("approve", settings)}
                                         onReject={() => void submitApproval("reject")}
                                     />
-                                    {activeSubagents.length > 0 ? <div className="mx-3 mb-2 shrink-0"><AgentSubagentList items={activeSubagents} theme={theme} /></div> : null}
+                                    {allSubagents.length > 0 ? <div className="mx-3 mb-2 shrink-0"><AgentSubagentList items={allSubagents} theme={theme} /></div> : null}
                                     {planVisible ? <AgentPlanBar items={planItems} theme={theme} minimized={planMinimized} terminal={planTerminal || Boolean(run && ["completed", "failed", "cancelled", "rejected"].includes(run.status))} onToggle={() => setPlanMinimized((value) => !value)} /> : null}
                                     {historyHydrated && !messages.some((message) => message.role === "user" || message.role === "assistant") && !run ? (
                                         <AgentSceneCapsules

@@ -466,6 +466,15 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		}
 		return nil, err
 	}
+	if req.SubagentEnabled {
+		consent, consentErr := s.repo.AgentSubagentPolicy(userID, req.CanvasID)
+		if consentErr != nil {
+			return nil, consentErr
+		}
+		if !consent.Enabled {
+			return nil, kernel.Forbidden("当前画布未开启子代理授权")
+		}
+	}
 	// Resolve and freeze the effective preference document before idempotency
 	// lookup. A retry without an explicit revision must still refer to the same
 	// immutable input; a changed profile therefore cannot silently create a
@@ -745,7 +754,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		return nil, err
 	}
 	if scope != nil && scope.Prepared != nil {
-		if req.crew.Role == model.CrewMemberRoleMember {
+		if req.crew != nil && req.crew.Role == model.CrewMemberRoleMember {
 			run.Status = "waiting_member"
 		}
 		*scope.Prepared = repository.CloudAgentAdmission{Execution: run, Task: task, Order: prepare.Order, Skills: cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)}

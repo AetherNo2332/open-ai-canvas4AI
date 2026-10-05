@@ -53,6 +53,19 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+	r.GET("/agent/runs/:id/subagents", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		view, err := svc.ListAgentSubagents(user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
 	r.GET("/agent/skill-defaults", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

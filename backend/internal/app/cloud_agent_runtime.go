@@ -374,6 +374,7 @@ func cloudAgentDecode(run *model.CloudAgentExecution) (cloudAgentRuntime, error)
 	}
 	state.RuntimeRunID = run.ID
 	state.Request.crew = state.Crew
+	state.Request.subagent = state.Subagent
 	if run.CheckpointVersion >= cloudAgentCheckpointVersion {
 		if err := cloudAgentRestoreTranscript(run, &state); err != nil {
 			return state, err
@@ -2566,6 +2567,9 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 	}
 	latest, err := s.repo.CloudAgent(userID, id)
 	if err != nil {
+		return err
+	}
+	if err := s.cancelDynamicSubagents(ctx, userID, id); err != nil {
 		return err
 	}
 	if err := s.finishCloudAgentCleanup(ctx, latest); err != nil {
