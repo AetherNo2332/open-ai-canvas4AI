@@ -4,7 +4,15 @@ import { CrewMemberEditor, CrewSettings } from "../src/components/canvas/canvas-
 import type { CrewMemberInput } from "../src/services/api/agent-crew";
 import { apiClient } from "../src/services/api/request";
 import { deleteCrew, updateCrew, updateCrewMember, replaceCrewMemberSkills } from "../src/services/api/agent-crew";
+import { CrewMemberSkills } from "../src/components/canvas/canvas-agent-crew-workspace";
+import type { Skill } from "../src/services/api/skills";
 const member: CrewMemberInput = {name:"编剧",role:"member",permissionMode:"propose",enabled:true,position:1,focusNodeIds:[],modelConfig:{model:"test-model"},budget:{maxCredits:10,maxSteps:20,maxGenerationTasks:0,maxVideoSeconds:0}};
+test("Crew skills omit private references rejected by server configuration", () => {
+  const skills=[{skillId:"public",skillName:"公开技能",isPrivate:false},{skillId:"private",skillName:"私有技能",isPrivate:true}] as Skill[];
+  const html=renderToStaticMarkup(<CrewMemberSkills name="编剧" availableSkills={skills} skills={[]} onChange={()=>{}} onSave={async()=>{}} />);
+  expect(html).toContain("公开技能");
+  expect(html).not.toContain("私有技能");
+});
 test("Crew metadata disables writes while another configuration mutation is pending", () => {
   const html = renderToStaticMarkup(<CrewSettings disabled onSave={async()=>{}} onDelete={async()=>{}} />);
   expect(html).toMatch(/aria-label="Crew 名称"[^>]*disabled/);
