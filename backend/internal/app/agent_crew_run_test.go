@@ -212,6 +212,31 @@ func TestCloudAgentSupportedToolNamesExcludeCrewOnlyTools(t *testing.T) {
 	}
 }
 
+func TestCrewToolCapabilityMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		crew *CrewMemberRuntime
+		want map[string]bool
+	}{
+		{"ordinary", nil, map[string]bool{}},
+		{"coordinator", &CrewMemberRuntime{Role: model.CrewMemberRoleCoordinator, Permission: model.CrewPermissionPropose}, map[string]bool{"delegate_task": true, "crew_wait": true, "crew_propose": true}},
+		{"member", &CrewMemberRuntime{Role: model.CrewMemberRoleMember, Permission: model.CrewPermissionPropose}, map[string]bool{"task_result": true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := CloudAgentRequest{PermissionMode: "read_only", ContextScope: []string{"canvas"}, crew: tc.crew}
+			names := map[string]bool{}
+			for _, tool := range cloudAgentTools(req) {
+				names[stringField(tool["function"].(map[string]any), "name")] = true
+			}
+			for _, name := range []string{"delegate_task", "crew_wait", "task_result", "crew_propose"} {
+				if names[name] != tc.want[name] || cloudAgentToolAllowed(req, name) != tc.want[name] {
+					t.Fatalf("tool %s registration/authorization mismatch for %s", name, tc.name)
+				}
+			}
+		})
+	}
+}
+
 func TestCrewRuntimeToolsWaitAndDurableReceipt(t *testing.T) {
 	s, crew, db := crewRunFixture(t)
 	view, err := s.CreateCrewRun("user", crew.ID, CreateCrewRunInput{Prompt: "runtime", IdempotencyKey: "tools"})
