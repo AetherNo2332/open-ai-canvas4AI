@@ -80,7 +80,7 @@ try:
     deadline = time.monotonic() + 480
     cursor, types, last, links = 0, [], None, []
     while time.monotonic() < deadline:
-        run = call("GET", f"/agent/runs/{run_id}?sinceSeq={cursor}&eventLimit=1000")["run"]
+        run = call("GET", f"/agent/runs/{run_id}?sinceSeq={cursor}&eventLimit=500")["run"]
         for event in run.get("events", []):
             if event["seq"] > cursor:
                 types.append(event["type"])

@@ -275,3 +275,42 @@ func TestDynamicSubagentWaitYieldsSingleCanvasCapacity(t *testing.T) {
 		t.Fatalf("waiting parent monopolizes capacity: got=%s expected=%s err=%v", got, child, err)
 	}
 }
+
+func TestDynamicSubagentAsyncWaitSuspension(t *testing.T) {
+	for _, scenario := range []string{"async_receipt", "phase_report"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, db, parent := dynamicSubagentFixture(t)
+			if err := db.AutoMigrate(&model.AgentToolOperation{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}); err != nil {
+				t.Fatal(err)
+			}
+			claimed, err := s.repo.ClaimPiAgentFair("parent-worker", time.Now().Add(time.Minute), model.DefaultAgentSchedulerSetting())
+			if err != nil || claimed == nil || claimed.ID != parent {
+				t.Fatalf("parent claim: %+v %v", claimed, err)
+			}
+			dynamicSpawn(t, s, parent, "async-capacity")
+			dynamicExecute(t, s, parent, dynamicToolCall("wait_subagents", "async-wait", "{}"))
+			session, _, err := s.repo.CloudAgentPiSession("user", claimed.ConversationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := fmt.Sprintf("parent-worker@%d", session.LeaseEpoch)
+			if scenario == "async_receipt" {
+				receipt, err := s.PiToolAdvanceAsync("user", parent, owner, "dynamic-fixture", "async-wait")
+				if err != nil || receipt == nil || !receipt.Pending || !receipt.Suspended {
+					t.Fatalf("async wait must release worker residency: %+v %v", receipt, err)
+				}
+			} else {
+				if err := s.PiRuntimePhase("user", parent, owner, PiRuntimePhaseRequest{Phase: "waiting_tool", Kind: "tool", WaitID: "operation", Reason: "waiting"}); err != nil {
+					t.Fatal(err)
+				}
+				run, err := s.repo.CloudAgent("user", parent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if run.WaitKind != "subagents" || run.WaitID != "async-wait" {
+					t.Fatalf("generic tool phase erased durable dependency: kind=%s id=%s", run.WaitKind, run.WaitID)
+				}
+			}
+		})
+	}
+}
