@@ -46,6 +46,14 @@ Lifecycle script restarts only Compose project `canvas-crew-3000`; no volume del
 ## Regression limits and final deployment
 
 - Remote `canvas4ai/canary` was refreshed after the tests and remains `7e94925e`, already merged.
-- Six model-protocol fixture failures reproduced against a fresh archive of that exact remote baseline: `TestSaveAdminChannelModelRejectsActiveDuplicateKey`, `TestChannelModelLabelSaveAndCatalogPreserveChannelIdentity`, `TestSaveAdminChannelModelCascadesUpstreamKeyToMatchingTiers`, `TestRenamedUpstreamKeyReachesSystemChannelRequests`, `TestSaveAdminChannelModelPersistsAndPublishesIcon`, `TestChannelCostHTTPAuthorizationAndPublicProjection`. All reject an invalid model request protocol; they are inherited and do not become a passing full suite.
-- Initial full app run exceeded the default 10-minute timeout. A new app/handler run uses `-timeout 30m`; its result remains a separate gate until recorded.
-- Final VERSION bump, final Compose image/build metadata verification, and canary PR publication are recorded by the final delivery. Draft PR is appropriate while the inherited full-regression gate is unresolved.
+- Correction: the six model-protocol failures came from omitting `plugin-packages` from the test container. The baseline archive omitted the same packages, so that reproduction did not establish an inherited source defect. With plugins present, these cases passed without a business-source change.
+- Disk-backed temporary SQLite then caused Pi compression tests to exceed their 45-second task lease; observed Linux I/O pressure was approximately 60%. Using tmpfs for temporary SQLite and limiting Go to two CPUs made Crew and all previously failing model/Pi cases pass: app 16.608s, handler 19.538s, repository 0.037s. Evidence: `backend-tmpfs-focused.log` in the ignored execution ledger.
+- Low-resource full app/handler regression runs serially with `go test -p 1 ./internal/app ./internal/handler -timeout 10m -count=1`, complete plugin packages, `GOMAXPROCS=2`, and an executable 2 GiB `/tmp` tmpfs. Final result is recorded below when available. Earlier incomplete-environment and disk-backed timeout runs are not passing full-suite evidence.
+- Local Compose CPU limits: backend 1.5, Pi worker 1.0, web 0.25. Builds run serially from a clean Git archive; no browser or GPU is required for these checks.
+
+### Final script and regression result
+
+- Final images at `128ce678` served version `v1.5.7.3(1065b95)`, schema 55/55 and ready=true. The final `crew-acceptance.py --extended` run completed with **26/26 PASS**, exit 0.
+- Complete handler regression passed in 48.764s. Complete app regression exceeded its 10-minute timeout and exposed one obsolete dispatch-test assertion: it required ordinary Agent capabilities to include Crew-only tools. The guard now compares the union of ordinary/coordinator/member compiled tools; dispatch consistency, ordinary exclusion, Crew role matrix and schema artifact focused checks passed. Business source was unchanged.
+- A serial 150-test batch experiment discovered 1329 app tests. The first batch was intentionally terminated (exit 143) after the user prioritized task efficiency. Neither the timeout nor this interrupted experiment is a passing full app result. PR remains Draft with this gate disclosed.
+- Final delivery updates only test assertions, verification documentation and version metadata relative to the fully exercised runtime. There is no repeated long model run or browser action.

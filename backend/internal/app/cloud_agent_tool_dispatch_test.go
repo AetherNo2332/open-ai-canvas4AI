@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 // 本文件是一致性守卫：工具表（模型看到的契约）与运行期分派必须始终一致。
@@ -23,6 +25,14 @@ import (
 func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	registered := cloudAgentRegisteredToolNames(t)
 	supported := CloudAgentSupportedToolNames()
+	// 普通 Agent 的能力列表排除 Crew 工具；一致性守卫检查普通、协调者和成员的并集。
+	for _, role := range []model.CrewMemberRole{model.CrewMemberRoleCoordinator, model.CrewMemberRoleMember} {
+		req := agentTestRequest()
+		req.crew = &CrewMemberRuntime{Role: role, Permission: model.CrewPermissionPropose}
+		for _, tool := range cloudAgentTools(req) {
+			supported = append(supported, stringField(tool["function"].(map[string]any), "name"))
+		}
+	}
 	dispatched := cloudAgentDispatchedToolNames(t)
 	// 旧 Go loop 为兼容历史检查点仍保留类别选择分支；Pi registry 已改为平铺披露，
 	// 这些内部类别入口不再是可见工具，不能参与具体工具表的集合相等断言。
@@ -47,13 +57,12 @@ func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	if missing := difference(registered, dispatched); len(missing) > 0 {
 		t.Fatalf("工具表注册了但没有分派分支的工具：%s", strings.Join(missing, ", "))
 	}
-	// 工具表全集必须与 CloudAgentSupportedToolNames() 逐一相同（后者从工具表派生，
-	// 这条断言守的是"派生用的请求确实覆盖了所有条件暴露的分支"）。
+	// 工具表全集必须与各角色的编译结果并集逐一相同，覆盖所有条件暴露分支。
 	if missing := difference(registered, supported); len(missing) > 0 {
-		t.Fatalf("CloudAgentSupportedToolNames() 漏掉了工具表里的：%s", strings.Join(missing, ", "))
+		t.Fatalf("各角色能力并集漏掉了工具表里的：%s", strings.Join(missing, ", "))
 	}
 	if missing := difference(supported, registered); len(missing) > 0 {
-		t.Fatalf("CloudAgentSupportedToolNames() 多出了工具表里没有的：%s", strings.Join(missing, ", "))
+		t.Fatalf("各角色能力并集多出了工具表里没有的：%s", strings.Join(missing, ", "))
 	}
 
 	// 3. 被判定为"写画布"的名字 ⊆ 可执行集合，且都在写入分派里。
