@@ -20,7 +20,8 @@ test("consecutive reasoning messages share one collapsed entry", () => {
     expect(segments[0]?.kind === "reasoning" ? segments[0].items : []).toHaveLength(2);
 
     const html = renderToStaticMarkup(<AgentReasoningFeed items={messages.slice(0, 2)} theme={canvasThemes.light} />);
-    expect(html).toContain("2 段 · 点击查看");
+    expect(html).toContain("点击查看");
+    expect(html).not.toContain("2 段");
     expect(html).toContain('class="agent-reasoning-card"');
     expect(html).not.toContain(" open");
 });
@@ -33,42 +34,47 @@ test("operations fold into one line that reports only the latest action", () => 
         expect(html).toContain("已获取可用模型");
         expect(html).not.toContain("已读取画布清单");
         expect(html).not.toContain("agent-operation-list");
-        expect(html).toContain("2 步");
-        expect(html).toContain("读取信息");
+        expect(html).not.toContain("agent-operation-count");
+        expect(html).not.toContain("agent-operation-kind");
+        expect(html).not.toContain(">读取信息<");
     }
 });
 
-test("the folded line names the tier it is reporting", () => {
+test("the folded line keeps the latest operation without a visible category tag", () => {
     const read = renderToStaticMarkup(<AgentOperationFeed items={[steps[0]]} theme={canvasThemes.light} />);
-    expect(read).toContain("读取清单");
+    expect(read).not.toContain(">读取清单<");
     expect(read).toContain('data-agent-category="read"');
     expect(read).not.toContain("操作画布");
-    expect(read).toContain('aria-label="展开 1 步读取清单记录，最新一步：已读取画布清单（未查看画面）"');
-    // 只有一步时不加计数徽标
+    expect(read).toContain('aria-label="展开工具调用记录，最新操作：已读取画布清单（未查看画面）"');
     expect(read).not.toContain('class="agent-operation-count"');
 
     const vision = renderToStaticMarkup(<AgentOperationFeed items={[viewed("n1", "剧照1.png"), viewed("n2", "封面.png")]} theme={canvasThemes.light} />);
-    expect(vision).toContain("查看画面");
+    expect(vision).not.toContain(">查看画面<");
     expect(vision).toContain('data-agent-category="vision"');
     expect(vision).toContain("查看了 2 张画面 · 最新《封面.png》");
     expect(vision).not.toContain("操作已完成");
 
     const operate = renderToStaticMarkup(<AgentOperationFeed items={[step("t9", "canvas_apply_ops", "工具执行成功", { eventType: "canvas_updated" })]} theme={canvasThemes.light} />);
-    expect(operate).toContain("修改画布");
+    expect(operate).not.toContain(">修改画布<");
     expect(operate).toContain('data-agent-category="operate"');
 });
 
-test("a failed step is marked and expanded instead of hidden behind the folded line", () => {
+test("a failed step stays collapsed and reports the error in the single receipt line", () => {
     const failed = [...steps, step("t3", "canvas_apply_ops", "", { eventType: "tool_failed", result: { taskId: "task-1" } })];
     const html = renderToStaticMarkup(<AgentOperationFeed items={failed} theme={canvasThemes.light} />);
     expect(html).toContain("is-failed");
-    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("更新画布内容失败");
-    expect(html).toContain("agent-operation-list");
-    // 展开的完整记录仍然是原样的工具卡（含任务 ID 与历史步骤），失败那步的文字是红的
-    expect(html).toContain("已读取画布清单（未查看画面）");
-    expect(html).toContain("任务 ID：task-1");
-    expect(html).toContain("var(--palette-status-error)");
+    expect(html).not.toContain("agent-operation-list");
+    expect(html).not.toContain("任务 ID：task-1");
+});
+
+test("streaming reasoning is a single accessible collapsed row without leaked summary body", () => {
+    const html = renderToStaticMarkup(<AgentReasoningFeed items={[{ id: "r1", role: "assistant", reasoning: true, streaming: true, text: "先核对素材再安排镜头" }]} theme={canvasThemes.dark} />);
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain("模型正在思考");
+    expect(html).not.toContain("先核对素材再安排镜头");
+    expect(html).not.toContain("<details");
 });
 
 test("the shimmer only runs while the panel says the segment is live", () => {

@@ -42,7 +42,7 @@ export function isAgentOperationRecord(item: AgentFeedRecord): boolean {
     return item.role === "tool" && !isAgentCarrierRecord(item) && record(item.detail).status !== "pending";
 }
 
-/** 连续推理事件共用一条可展开记录，避免每个 SSE chunk/摘要都变成一行。 */
+/** 同一正文之前的推理事件共用一条可展开记录。 */
 export function isAgentReasoningRecord(item: AgentFeedRecord): boolean {
     return item.role === "assistant" && item.reasoning === true;
 }
@@ -56,7 +56,7 @@ export function agentOperationLabel(item: AgentFeedRecord): string {
     return friendlyAgentToolSummary(name, item.text, item.detail, agentToolStatus(name, item.text, item.detail) === "pending");
 }
 
-/** 失败/被拒的操作默认展开：错误不该被折进一行里看不见。 */
+/** 失败/被拒的操作在折叠行保留错误语义。 */
 export function agentOperationFailed(item: AgentFeedRecord): boolean {
     const status = agentToolStatus(agentToolName(item.title || "工具执行", item.detail), item.text, item.detail);
     return status === "failed" || status === "rejected";
@@ -100,28 +100,37 @@ export function agentOperationSegmentLabel(items: readonly AgentFeedRecord[]): s
 }
 
 /**
- * 把消息流切成「操作段」与「单条消息」：连续的非审批工具记录合成一段，其余消息各自成段。
+ * 两次正文之间的思考与非审批工具分别共用一行，交替事件不会创建新入口。
+ * 正文、用户消息、系统提示与审批卡分隔过程组，保留它们的原始展示顺序。
  *
  * 段 key 取段内第一条消息的 id：运行中后续步骤是**追加**进同一段的，key 保持稳定，
  * 展开状态与滚动位置不会因为新步骤到达而被重置。
  */
 export function buildAgentFeedSegments<T extends AgentFeedRecord>(messages: readonly T[]): AgentFeedSegment<T>[] {
     const segments: AgentFeedSegment<T>[] = [];
+    let reasoning: Extract<AgentFeedSegment<T>, { kind: "reasoning" }> | undefined;
+    let operations: Extract<AgentFeedSegment<T>, { kind: "operations" }> | undefined;
     for (const item of messages) {
         if (isAgentCarrierRecord(item)) continue;
         if (isAgentReasoningRecord(item)) {
-            const last = segments[segments.length - 1];
-            if (last?.kind === "reasoning") last.items.push(item);
-            else segments.push({ kind: "reasoning", key: item.id, items: [item] });
+            if (reasoning) reasoning.items.push(item);
+            else {
+                reasoning = { kind: "reasoning", key: item.id, items: [item] };
+                segments.push(reasoning);
+            }
             continue;
         }
         if (isAgentOperationRecord(item)) {
-            const last = segments[segments.length - 1];
-            if (last?.kind === "operations") last.items.push(item);
-            else segments.push({ kind: "operations", key: item.id, items: [item] });
+            if (operations) operations.items.push(item);
+            else {
+                operations = { kind: "operations", key: item.id, items: [item] };
+                segments.push(operations);
+            }
             continue;
         }
         segments.push({ kind: "message", key: item.id, item });
+        reasoning = undefined;
+        operations = undefined;
     }
     return segments;
 }

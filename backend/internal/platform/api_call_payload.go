@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxAPICallPayloadBytes = 128 << 10
@@ -148,8 +149,15 @@ func sanitizeAPICallURL(value string) (string, bool) {
 }
 
 func truncateAPICallPayload(value string) string {
+	originalBytes := len(value)
+	// PostgreSQL text rejects invalid UTF-8 and NUL, including raw SSE payloads.
+	value = strings.ReplaceAll(strings.ToValidUTF8(value, "\uFFFD"), "\x00", "\\u0000")
 	if len(value) <= maxAPICallPayloadBytes {
 		return value
 	}
-	return value[:maxAPICallPayloadBytes] + fmt.Sprintf("\n[报文已截断，原始长度 %d 字节]", len(value))
+	end := maxAPICallPayloadBytes
+	for end > 0 && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return value[:end] + fmt.Sprintf("\n[报文已截断，原始长度 %d 字节]", originalBytes)
 }

@@ -1255,22 +1255,15 @@ function formatContextCount(tokens: number | undefined) {
     return Math.round(tokens).toLocaleString("zh-CN");
 }
 
-function formatContextBytes(bytes: number | undefined) {
-    if (bytes === undefined) return "—";
-    if (bytes >= 1_000_000) return `${Math.round(bytes / 100_000) / 10} MB`;
-    if (bytes >= 1_000) return `${Math.round(bytes / 100) / 10} KB`;
-    return `${Math.round(bytes).toLocaleString("zh-CN")} 字节`;
-}
 
-function AgentContextRing({ view }: { view: AgentContextUsageView }) {
+export function AgentContextRing({ view }: { view: AgentContextUsageView }) {
     const [open, setOpen] = useState(false);
-    const marker = view.compactRatio && view.compactRatio > 0 && view.compactRatio < 1 ? view.compactRatio : undefined;
+    const theme = canvasThemes[useActiveTheme()];
     const percent = view.ratio === undefined ? view.label : `${Math.round(view.ratio * 100)}%`;
     const meterLabel = view.ratio === undefined ? "—" : percent;
     const used = formatContextCount(view.inputTokens);
     const budget = formatContextCount(view.usableTokens);
     const remaining = formatContextCount(view.remainingTokens);
-    const protocolBytes = formatContextBytes(view.protocolBytes);
     const usedRatio = view.ratio === undefined ? 0 : Math.max(0, Math.min(1, view.ratio));
     const phaseLabel = CONTEXT_PHASE_LABEL[view.phase];
     const sourceLabel = view.tokenSource === "provider" ? "模型实测校准" : view.estimate ? "本地估算" : "未测量";
@@ -1281,12 +1274,15 @@ function AgentContextRing({ view }: { view: AgentContextUsageView }) {
             open={open}
             onOpenChange={setOpen}
             trigger="click"
-            placement="bottomRight"
+            placement="topRight"
+            autoAdjustOverflow
+            align={{ overflow: { adjustX: true, adjustY: true, shiftX: true, shiftY: true } }}
             arrow={false}
-            overlayClassName="agent-context-popover"
-            getPopupContainer={(trigger) => trigger.closest<HTMLElement>(".canvas-agent-panel") ?? document.body}
+            classNames={{ root: "agent-context-popover" }}
+            styles={{ root: { "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary } as CSSProperties }}
+            getPopupContainer={() => document.body}
             content={
-                <div className="agent-context-panel" data-phase={view.phase}>
+                <div className="agent-context-panel" data-phase={view.phase} data-canvas-no-zoom data-canvas-wheel-scroll>
                     <span className="agent-context-eyebrow">下一次请求</span>
                     <div className="agent-context-panel-head">
                         <strong>{usageHeading}</strong>
@@ -1312,34 +1308,7 @@ function AgentContextRing({ view }: { view: AgentContextUsageView }) {
                     </div>
                     <div className="agent-context-progress" role="progressbar" aria-label={`上下文已用 ${percent}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.ratio === undefined ? undefined : Math.round(view.ratio * 100)}>
                         <span style={{ width: `${usedRatio * 100}%` }} />
-                        {marker ? <i style={{ left: `${marker * 100}%` }} aria-hidden="true" /> : null}
                     </div>
-                    <p className="agent-context-detail">{view.detail}</p>
-                    {view.breakdown.length || view.protocolBytes !== undefined || view.remainingTokens !== undefined ? (
-                        <ul className="agent-context-breakdown">
-                            {view.breakdown.map((item) => (
-                                <li key={item.key}>
-                                    <span className="agent-context-breakdown-dot" aria-hidden="true" />
-                                    <span className="agent-context-breakdown-label">{item.label}</span>
-                                    <span className="agent-context-breakdown-value">{formatContextCount(item.tokens)}</span>
-                                </li>
-                            ))}
-                            {view.protocolBytes !== undefined ? (
-                                <li className="is-secondary">
-                                    <span className="agent-context-breakdown-dot" aria-hidden="true" />
-                                    <span className="agent-context-breakdown-label">协议外壳</span>
-                                    <span className="agent-context-breakdown-value">{protocolBytes}</span>
-                                </li>
-                            ) : null}
-                            {view.remainingTokens !== undefined ? (
-                                <li className="is-muted">
-                                    <span className="agent-context-breakdown-dot" aria-hidden="true" />
-                                    <span className="agent-context-breakdown-label">未使用</span>
-                                    <span className="agent-context-breakdown-value">{remaining}</span>
-                                </li>
-                            ) : null}
-                        </ul>
-                    ) : null}
                     <div className="agent-context-panel-foot">
                         <span>
                             {sourceLabel}
@@ -1358,11 +1327,9 @@ function AgentContextRing({ view }: { view: AgentContextUsageView }) {
                     style={
                         {
                             "--agent-context-progress": `${view.ring * 100}%`,
-                            "--agent-context-marker-angle": `${(marker || 0) * 360}deg`,
                         } as CSSProperties
                     }
                 >
-                    {marker ? <span className="agent-context-ring-marker" /> : null}
                 </span>
                 <span className="agent-context-meter-copy">
                     <strong>{meterLabel}</strong>
@@ -1486,7 +1453,7 @@ function AgentConversation({
     const contentRef = useRef<HTMLDivElement>(null);
     const followRef = useRef(true);
     const lastUserId = messages.findLast((item) => item.role === "user")?.id;
-    // 连续的工具记录折成一行（只报最新一步），计划/提问载体由输入区上方的固定条渲染。
+    // 正文之间的思考、工具分别共用一行，计划/提问载体由输入区固定条渲染。
     const segments = useMemo(() => buildAgentFeedSegments(messages), [messages]);
     const lastMessage = messages.at(-1);
 
@@ -1522,10 +1489,10 @@ function AgentConversation({
         >
             {!messages.length ? <AgentWelcome appearance={appearance} nodeCount={nodeCount} onChooseSkill={onChooseSkill} onDraftPrompt={onDraftPrompt} /> : null}
             <div ref={contentRef} className="agent-conversation-messages">
-                {segments.map((segment, index) =>
+                {segments.map((segment) =>
                     segment.kind === "operations" ? (
-                        // 只有"对话末尾那一段 + 还在跑"才流光：历史段落留在静态态，任务完成即停。
-                        <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={references} onFocusNode={onFocusNode} live={busy && index === segments.length - 1} />
+                        // 聚合后按最新事件判断当前动作，不按行在列表里的位置判断。
+                        <AgentOperationFeed key={segment.key} items={segment.items} theme={theme} references={references} onFocusNode={onFocusNode} live={busy && segment.items.at(-1) === lastMessage} />
                     ) : segment.kind === "reasoning" ? (
                         <AgentReasoningFeed key={segment.key} items={segment.items} theme={theme} />
                     ) : (

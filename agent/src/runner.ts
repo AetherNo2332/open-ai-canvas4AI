@@ -212,7 +212,11 @@ class CheckpointQueue {
   failure: unknown;
 
   enqueue(task: () => Promise<void>): void {
-    this.chain = this.chain.then(task).catch((error: unknown) => {
+    this.chain = this.chain.then(async () => {
+      // A failed checkpoint invalidates every dependent acknowledgement/batch.
+      // Preserve the first failure for drain(), without issuing more writes.
+      if (this.failure === undefined) await task();
+    }).catch((error: unknown) => {
       this.failure ??= error;
     });
   }
@@ -264,6 +268,9 @@ async function recoverToolResults(
   signal?: AbortSignal,
   recoverNativeRead?: (call: PiToolCall) => Promise<{ result: string; isError?: boolean }>,
 ): Promise<void> {
+  // An unacknowledged billed step must be resumed and checkpointed first.
+  // Its predecessor's transcript is not an executable batch for this task.
+  if (snapshot.activeTaskId) return;
   let assistantIndex = -1;
   for (let index = messages.length - 1; index >= 0; index--) {
     const item = messages[index];
@@ -274,6 +281,17 @@ async function recoverToolResults(
   }
   if (assistantIndex < 0) return;
   const assistant = messages[assistantIndex] as AssistantMessage;
+  if (snapshot.skillRuntimeMode === "pi-native" && snapshot.piSessionEntries?.length) {
+    const currentRunAssistant = snapshot.piSessionEntries.some(({ runId, entry }) => {
+      if (runId !== snapshot.runId || entry.type !== "message") return false;
+      const saved = entry.message as AssistantMessage | undefined;
+      return saved?.role === "assistant" && saved.timestamp === assistant.timestamp &&
+        JSON.stringify(saved.content) === JSON.stringify(assistant.content);
+    });
+    // Historical gaps are repaired only in the model projection by
+    // createTerminalHistoryExtension; never execute them or invent receipts.
+    if (!currentRunAssistant) return;
+  }
   const calls = callsFromAssistant(assistant);
   if (calls.length === 0) return;
   const completed = new Set(messages.slice(assistantIndex + 1)
