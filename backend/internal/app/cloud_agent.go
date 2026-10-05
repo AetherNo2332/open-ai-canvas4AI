@@ -31,7 +31,7 @@ type CloudAgentRequest struct {
 	CanvasID        string `json:"canvasId"`
 	Prompt          string `json:"prompt"`
 	// SubagentEnabled is the frozen per-canvas consent for this turn.
-	SubagentEnabled bool `json:"subagentEnabled,omitempty"`
+	SubagentEnabled bool   `json:"subagentEnabled,omitempty"`
 	Model           string `json:"model,omitempty"`
 	LogicalModelID  string `json:"logicalModelId,omitempty"`
 	ChannelID       string `json:"channelId,omitempty"`
