@@ -15,6 +15,17 @@ test("homepage renders a single canvas entrance without the removed gallery", ()
     expect(markup).not.toContain("从一个想法开始");
 });
 
+for (const route of ["/", "/create"]) {
+    test(`homepage ${route} directs creation to the canvas without a generation composer`, () => {
+        const markup = renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: [route] }, createElement(CreatePage)));
+        expect(markup.match(/<a\b/g)).toHaveLength(1);
+        expect(markup).toContain('href="/canvas"');
+        expect(markup).not.toMatch(/<(input|textarea|form|button)\b/);
+        expect(markup).not.toContain("打开素材库");
+        expect(markup).not.toContain("创作模式");
+    });
+}
+
 test("homepage removes the kicker and keeps the compact upward layout", async () => {
     const source = await Bun.file(new URL("../src/pages/create/index.tsx", import.meta.url)).text();
     const styles = await Bun.file(new URL("../src/pages/create/canvas-home.css", import.meta.url)).text();
