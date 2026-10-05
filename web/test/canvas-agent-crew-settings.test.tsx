@@ -1,10 +1,20 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CrewMemberEditor } from "../src/components/canvas/canvas-agent-crew-settings";
+import { CrewMemberEditor, CrewSettings } from "../src/components/canvas/canvas-agent-crew-settings";
 import type { CrewMemberInput } from "../src/services/api/agent-crew";
 import { apiClient } from "../src/services/api/request";
 import { deleteCrew, updateCrew, updateCrewMember, replaceCrewMemberSkills } from "../src/services/api/agent-crew";
 const member: CrewMemberInput = {name:"编剧",role:"member",permissionMode:"propose",enabled:true,position:1,focusNodeIds:[],modelConfig:{model:"test-model"},budget:{maxCredits:10,maxSteps:20,maxGenerationTasks:0,maxVideoSeconds:0}};
+test("Crew metadata disables writes while another configuration mutation is pending", () => {
+  const html = renderToStaticMarkup(<CrewSettings disabled onSave={async()=>{}} onDelete={async()=>{}} />);
+  expect(html).toMatch(/aria-label="Crew 名称"[^>]*disabled/);
+  expect(html).toMatch(/<button[^>]*disabled[^>]*><span>删除 Crew/);
+});
+test("member editor uses administrator skin geometry", () => {
+  const html = renderToStaticMarkup(<CrewMemberEditor value={member} onChange={()=>{}} />);
+  expect(html).toContain("var(--card-radius)");
+  expect(html).not.toContain("rounded-lg");
+});
 test("member editor exposes name, role, budgets and canvas focus fields", () => {
   const html = renderToStaticMarkup(<CrewMemberEditor value={member} onChange={()=>{}} />);
   for (const label of ["成员名称", "成员角色", "成员权限", "成员模型", "积分预算", "步骤预算", "焦点节点"]) expect(html).toContain(label);

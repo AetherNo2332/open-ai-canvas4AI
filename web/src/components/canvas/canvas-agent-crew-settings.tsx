@@ -2,16 +2,18 @@ import { Button, Input, Select, Switch } from "antd";
 import { useState } from "react";
 import type { CrewMemberInput, CrewView } from "@/services/api/agent-crew";
 
-export function CrewSettings({ crew, onSave, onDelete }: { crew?: CrewView; onSave: (value: {name:string;description:string;status:string;members:CrewMemberInput[]}) => Promise<void>; onDelete?: () => Promise<void> }) {
+export function CrewSettings({ crew, onSave, onDelete, disabled=false }: { crew?: CrewView; disabled?: boolean; onSave: (value: {name:string;description:string;status:string;members:CrewMemberInput[]}) => Promise<void>; onDelete?: () => Promise<void> }) {
   const [name,setName]=useState(crew?.name ?? ""); const [description,setDescription]=useState(crew?.description ?? ""); const [enabled,setEnabled]=useState(crew?.status === "enabled"); const [busy,setBusy]=useState(false); const [error,setError]=useState("");
   const members=crew?.members ?? [];
-  const save=async()=>{setBusy(true);setError("");try{await onSave({name,description,status:enabled?"enabled":"disabled",members:members.map(({id,skills,...member})=>member)});}catch(cause){setError(cause instanceof Error?cause.message:String(cause));}finally{setBusy(false);}};
-  return <section aria-label="Crew 设置" className="agent-crew-settings space-y-3"><header><h3>Crew 子代理</h3><p>配置只影响新 Run；成员使用独立会话和冻结技能快照。</p></header><label>名称<Input aria-label="Crew 名称" value={name} onChange={e=>setName(e.target.value)} disabled={busy}/></label><label>说明<Input.TextArea aria-label="Crew 说明" value={description} onChange={e=>setDescription(e.target.value)} disabled={busy}/></label><label className="flex items-center gap-2">启用<Switch aria-label="启用 Crew" checked={enabled} onChange={setEnabled} disabled={busy}/></label><dl>{members.map(member=><div key={member.name}><dt>{member.name}</dt><dd>{member.role} · {member.permissionMode} · {member.budget.maxSteps} steps</dd></div>)}</dl><div className="flex gap-2"><Button type="primary" onClick={()=>void save()} disabled={busy||!name.trim()}>保存 Crew</Button>{onDelete?<Button danger onClick={()=>void onDelete()} disabled={busy}>删除 Crew</Button>:null}</div>{error?<p role="alert">{error}</p>:null}</section>;
+  const locked=busy||disabled;
+  const action=async(fn:()=>Promise<void>)=>{if(locked)return;setBusy(true);setError("");try{await fn();}catch(cause){setError(cause instanceof Error?cause.message:String(cause));}finally{setBusy(false);}};
+  const save=()=>action(()=>onSave({name,description,status:enabled?"enabled":"disabled",members:members.map(({id,skills,...member})=>member)}));
+  return <section aria-label="Crew 设置" className="agent-crew-settings space-y-3"><header><h3>Crew 子代理</h3><p>配置只影响新 Run；成员使用独立会话和冻结技能快照。</p></header><label>名称<Input aria-label="Crew 名称" value={name} onChange={e=>setName(e.target.value)} disabled={locked}/></label><label>说明<Input.TextArea aria-label="Crew 说明" value={description} onChange={e=>setDescription(e.target.value)} disabled={locked}/></label><label className="flex items-center gap-2">启用<Switch aria-label="启用 Crew" checked={enabled} onChange={setEnabled} disabled={locked}/></label><dl>{members.map(member=><div key={member.name}><dt>{member.name}</dt><dd>{member.role} · {member.permissionMode} · {member.budget.maxSteps} steps</dd></div>)}</dl><div className="flex gap-2"><Button type="primary" onClick={()=>void save()} disabled={locked||!name.trim()}>保存 Crew</Button>{onDelete?<Button danger onClick={()=>void action(onDelete)} disabled={locked}>删除 Crew</Button>:null}</div>{error?<p role="alert">{error}</p>:null}</section>;
 }
 
 export function CrewMemberEditor({ value, onChange }: { value: CrewMemberInput; onChange: (value:CrewMemberInput)=>void }) {
   const budgetFields = [["maxCredits", "积分预算"], ["maxSteps", "步骤预算"], ["maxGenerationTasks", "生成任务预算"], ["maxVideoSeconds", "视频秒数预算"]] as const;
-  return <fieldset aria-label={`成员 ${value.name}`} className="space-y-3 rounded-lg border border-current/10 p-3">
+  return <fieldset aria-label={`成员 ${value.name}`} className="space-y-3 border p-3" style={{borderRadius:"var(--card-radius)",borderColor:"var(--border)"}}>
     <legend>{value.name || "新成员"}</legend>
     <label>成员名称<Input aria-label="成员名称" value={value.name} onChange={e=>onChange({...value,name:e.target.value})}/></label>
     <label className="block">成员角色<Select aria-label="成员角色" value={value.role} options={[{value:"coordinator",label:"Coordinator 协调员"},{value:"member",label:"Member 成员"}]} onChange={role=>onChange({...value,role})}/></label>
