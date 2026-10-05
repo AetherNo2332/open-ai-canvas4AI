@@ -50,14 +50,25 @@ type cloudAgentCharacterCreatePlan struct {
 	Preview         cloudAgentApprovalPreview
 }
 
-// 设定字段只在描述里列出键名以控制工具 schema 体积；解码时 DisallowUnknownFields 会拒绝未声明的键。
 func cloudAgentCharacterCreateSchema() map[string]any {
 	str := func(description string) map[string]any {
 		return map[string]any{"type": "string", "description": description}
 	}
+	// definition 的每个键都显式声明：本包 schema 契约要求 object 必须列出 properties，
+	// 且解码时 DisallowUnknownFields 也会拒绝未声明的键。
+	definitionProperties := map[string]any{}
+	for key, description := range map[string]string{
+		"role": "剧中身份与阵营", "appearance": "年龄感、脸型、发型等外观锚点", "physique": "身高体型",
+		"clothing": "基础服装与配饰", "personality": "性格与神态", "props": "固定随身物",
+		"consistencyPrompt": "不可漂移的一致性锚点短句", "multiViewPrompt": "生成三视图所用提示词",
+		"voiceLanguage": "音色语言", "voiceAge": "音色年龄感", "voiceTimbre": "音色音质",
+	} {
+		definitionProperties[key] = str(description)
+	}
+	definitionProperties["aliases"] = map[string]any{"type": "array", "maxItems": 16, "items": str("别称或称号")}
 	return map[string]any{
 		"nodeId": str("新节点ID"), "name": str("角色名"), "imageNodeId": str("就绪的形象图片节点ID"), "audioNodeId": str("可选，就绪的声音音频节点ID"),
-		"definition": map[string]any{"type": "object", "description": "可选设定：role/appearance/physique/clothing/personality/props/consistencyPrompt/multiViewPrompt/voiceLanguage/voiceAge/voiceTimbre 为字符串，aliases 为字符串数组"},
+		"definition": map[string]any{"type": "object", "description": "可选角色设定；只填有依据的字段，未知项留空", "properties": definitionProperties, "additionalProperties": false},
 		"x":          map[string]any{"type": "number"}, "y": map[string]any{"type": "number"},
 	}
 }
