@@ -530,8 +530,10 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         void loadCloudAgentConversations(canvasId)
             .then(async (document) => {
                 if (!active) return;
-                const current = document.conversations.find((conversation) => conversation.id === document.activeId) || document.conversations[0];
-                setConversations(document.conversations);
+                // 旧会话缓存里可能还存有 native_skill_enabled 工具行；该回执已停止展示，恢复时一并滤掉。
+                const conversations = document.conversations.map(hydratedAgentConversation);
+                const current = conversations.find((conversation) => conversation.id === document.activeId) || conversations[0];
+                setConversations(conversations);
                 if (current) {
                     setActiveConversationId(current.id);
                     setMessages(current.messages);
@@ -1803,6 +1805,9 @@ function applyAgentEvent(
 ) {
     const payload = event.payload || {};
     const text = String(payload.text || payload.summary || payload.message || "");
+    // 默认技能每轮运行都会触发 native_skill_enabled，"已启用技能"行没有增量信息，不再进对话流；
+    // 真实读取（native_skill_read / read_failed）保留。展示函数保留 enabled 分支，让旧缓存消息仍能友好渲染。
+    if (event.type === "native_skill_enabled") return;
     const nativeSkill = nativeSkillEventPresentation(event.type, payload);
     if (nativeSkill) {
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", ...nativeSkill }));
@@ -2005,6 +2010,11 @@ function applyAgentEvent(
         return;
     }
     if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendAgentError(current, event.eventId, text || "Agent 执行失败"));
+}
+
+/** 恢复历史会话时滤掉已停止展示的 native_skill_enabled 工具行，老缓存不再回显"已启用技能"。 */
+function hydratedAgentConversation(conversation: CloudAgentConversation): CloudAgentConversation {
+    return { ...conversation, messages: conversation.messages.filter((message) => !(message.role === "tool" && toolDetailRecord(message.detail).eventType === "native_skill_enabled")) };
 }
 
 function toolDetailRecord(value: unknown): Record<string, unknown> {
