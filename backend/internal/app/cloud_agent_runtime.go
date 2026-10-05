@@ -98,7 +98,8 @@ type cloudAgentApproval struct {
 	Reason    string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
-	Crew              *CrewMemberRuntime        `json:"crew,omitempty"`
+	ActiveSubagents   int                       `json:"activeSubagents,omitempty"`
+	Subagent          *SubagentRuntime          `json:"subagent,omitempty"`
 	Workspace         *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	RuntimeRunID      string                    `json:"-"`
 	SkillRuntimeMode  string                    `json:"skillRuntimeMode,omitempty"`
@@ -372,7 +373,7 @@ func cloudAgentDecode(run *model.CloudAgentExecution) (cloudAgentRuntime, error)
 		return state, fmt.Errorf("decode Agent runtime state: %w", err)
 	}
 	state.RuntimeRunID = run.ID
-	state.Request.crew = state.Crew
+	state.Request.subagent = state.Subagent
 	if run.CheckpointVersion >= cloudAgentCheckpointVersion {
 		if err := cloudAgentRestoreTranscript(run, &state); err != nil {
 			return state, err
@@ -1506,20 +1507,9 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 			return cloudAgentSave(current, state)
 		})
 	}
-	allowed := cloudAgentToolAllowed(state.Request, call.Function.Name)
-	if allowed && call.Function.Name == "crew_wait" {
-		snapshot, err := s.repo.AgentCrewRunSnapshot(run.UserID, state.Crew.CrewRunID)
-		if err != nil {
-			return err
-		}
-		_, pending, err := crewResults(snapshot)
-		if err != nil {
-			return err
-		}
-		if pending {
-			return nil
-		}
-	}
+	allowedRequest := state.Request
+	allowedRequest.subagent = state.Subagent
+	allowed := cloudAgentToolAllowed(allowedRequest, call.Function.Name)
 	mediaTool := call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split"
 	if allowed && cloudAgentWrite(call.Function.Name) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
 		var plan *cloudAgentMediaPlan
@@ -1743,6 +1733,19 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 	if allowed && (call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split") && state.Approval != nil && state.Approval.Decision == "approve" {
 		return s.executeCloudAgentMediaCall(run, state, cloudAgentMediaCall(call))
 	}
+	if allowed && call.Function.Name == "spawn_subagent" {
+		result, spawnErr := s.spawnDynamicSubagent(run, state, call)
+		if spawnErr != nil && !cloudAgentToolErrorIsBusiness(spawnErr) {
+			return spawnErr
+		}
+		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			cloudAgentRecordToolResult(current, state, call, result, spawnErr)
+			if spawnErr == nil {
+				state.event(run.ID, "subagent_spawned", result)
+			}
+			return cloudAgentSave(current, state)
+		})
+	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return s.terminateCloudAgent(run, "Agent 运行策略不可用，本轮已停止")
@@ -1773,146 +1776,193 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
-	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
-		var result any
-		var toolErr error
-		switch {
-		case !allowed:
-			_, message := cloudAgentUnadvertisedToolAdmission(state, call.Function.Name)
-			toolErr = BadAuthRequest(message)
-		case call.Function.Name == "delegate_task", call.Function.Name == "task_result", call.Function.Name == "crew_wait", call.Function.Name == "crew_propose":
-			result, toolErr = executeCrewTool(repo, current, state, call)
-			if toolErr == nil && call.Function.Name == "crew_propose" {
-				current.Status = "waiting_approval"
-				current.RuntimePhase = "waiting_approval"
-				current.WaitKind = "crew_approval"
-				current.WaitID = state.Crew.CrewRunID
-				current.WaitReason = "等待 Crew 统一审批"
+	checkpoint := func(dbRepo *repository.Repository) error {
+		return dbRepo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
+			var result any
+			var toolErr error
+			switch {
+			case !allowed:
+				_, message := cloudAgentUnadvertisedToolAdmission(state, call.Function.Name)
+				toolErr = BadAuthRequest(message)
+			case call.Function.Name == "send_parent_message":
+				result, toolErr = s.deliverParentSubagentMessage(repo, current, state, call)
+			case call.Function.Name == "finish_subagent":
+				result, toolErr = s.finishDynamicSubagent(repo, current, state, call)
+				if toolErr == nil {
+					cloudAgentRecordToolResult(current, state, call, result, nil)
+					skipRemainingCloudAgentCalls(run.ID, state)
+					current.Status = "completed"
+					current.CleanupPending = true
+					state.event(run.ID, "subagent_completed", result.(map[string]any))
+					return cloudAgentSave(current, state)
+				}
+			case call.Function.Name == "message_subagent":
+				result, toolErr = s.sendSubagentInstruction(repo, current, state, call)
+			case call.Function.Name == "wait_subagents":
+				if state.Subagent != nil {
+					toolErr = kernel.Forbidden("子代理不能等待或创建下一级子代理")
+				} else {
+					views, viewErr := agentSubagentViews(repo, current.UserID, current.ID)
+					if viewErr != nil {
+						return viewErr
+					}
+					pending := 0
+					for _, view := range views {
+						if !cloudAgentRunTerminal(view.Status) {
+							pending++
+						}
+					}
+					state.ActiveSubagents = pending
+					if pending > 0 {
+						current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "waiting_tool", "subagents", call.ID, "等待子代理结果"
+						return cloudAgentSave(current, state)
+					}
+					messages, messageErr := repo.AgentSubagentMessages(current.UserID, current.ID)
+					if messageErr != nil {
+						return messageErr
+					}
+					result = map[string]any{"pending": false, "subagents": views, "messages": messages}
+					current.RuntimePhase, current.WaitKind, current.WaitID, current.WaitReason = "running", "", "", ""
+				}
+			case call.Function.Name == "subagent_status":
+				if state.Subagent != nil {
+					toolErr = kernel.Forbidden("子代理不能读取父级子代理状态")
+				} else {
+					result, toolErr = agentSubagentViews(repo, current.UserID, current.ID)
+				}
+			case call.Function.Name == "agent_tools_control", call.Function.Name == "agent_tools_memory", call.Function.Name == "agent_tools_skills", call.Function.Name == "agent_tools_canvas_read", call.Function.Name == "agent_tools_image", call.Function.Name == "agent_tools_canvas_edit", call.Function.Name == "agent_tools_generation":
+				state.SelectedToolCategory = call.Function.Name
+				state.ActivatedToolCategories = cloudAgentAppendActivatedCategory(state.ActivatedToolCategories, call.Function.Name)
+				result = map[string]any{"category": call.Function.Name, "tools": cloudAgentCategoryChildren(state.Canonical.Tools, call.Function.Name)}
+			case call.Function.Name == "canvas_apply_ops":
+				result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "canvas_arrange_nodes":
+				result, toolErr = applyCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "canvas_create_storyboard", call.Function.Name == "canvas_edit_storyboard":
+				result, toolErr = applyCloudAgentStoryboardMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "canvas_edit_batch_table":
+				result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "canvas_create_character":
+				result, toolErr = applyCloudAgentCharacterCreate(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "canvas_inspect_image":
+				result, toolErr = inspectionResult, inspectionErr
+				if toolErr == nil && inspectionResult != nil {
+					if inspection, ok := inspectionResult.(cloudAgentImageInspection); ok {
+						if inspection.Summary != nil {
+							if writeErr := s.persistCloudAgentVisionCache(repo, run.UserID, state.Request.CanvasID, inspection, policy); writeErr != nil {
+								toolErr = writeErr
+							}
+						}
+						if toolErr != nil {
+							break
+						}
+						// 两种回执都算一次调用预算：attached=false 表示这次只回执文字、没有附图。
+						attached := strings.TrimSpace(inspection.ImageURL) != ""
+						if inspection.Summary != nil {
+							state.cloudAgentRecordImageObservations(stringValue(inspection.Receipt["nodeId"])+"："+stringValue(inspection.Summary["short"]), true)
+						} else {
+							state.markCanvasImageInspection(stringValue(inspection.Receipt["nodeId"]), attached, stringValue(inspection.Receipt["contentSignature"]))
+						}
+						if inspection.CacheKey != "" {
+							if state.ImageInspectionReads == nil {
+								state.ImageInspectionReads = map[string]int{}
+							}
+							state.ImageInspectionReads[inspection.CacheKey]++
+						}
+					}
+				}
+			case call.Function.Name == "finish_run":
+				if err := refreshActiveSubagents(repo, current, state); err != nil {
+					return err
+				}
+				// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
+				result, toolErr = cloudAgentFinishRun(run.ID, state, call)
+			case call.Function.Name == "skill_read_file", call.Function.Name == "model_list", call.Function.Name == "image_annotation_render":
+				result, toolErr = skillResult, skillErr
+			default:
+				result, toolErr = cloudAgentReadToolCached(repo, run.UserID, state, call)
+			}
+			toolStatus := observability.StatusCompleted
+			toolReason := ""
+			if toolErr != nil {
+				toolStatus = observability.StatusFailed
+				toolReason = toolErr.Error()
+			}
+			s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTool, ToolType: call.Function.Name, Status: toolStatus, StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC(), Reason: toolReason})
+			if toolErr == nil && cloudAgentWrite(call.Function.Name) {
+				// A successful canvas mutation changes the read model. Do not replay a
+				// pre-mutation canvas snapshot later in the same Agent run.
+				cloudAgentInvalidateReadCache(state)
+			}
+			var readLoopErr *cloudAgentReadLoopError
+			if errors.As(toolErr, &readLoopErr) {
+				cloudAgentRecordToolResult(current, state, call, result, toolErr)
+				current.Status = "failed"
+				current.FailureMessage = truncateRunes(readLoopErr.Error(), 1000)
+				cloudAgentDropInterjections(run.ID, "本轮已结束："+truncateRunes(current.FailureMessage, 120), state)
+				reason := readLoopErr.reasonCode()
+				state.event(run.ID, "run_failed", map[string]any{
+					"text": current.FailureMessage, "reason": reason,
+					"toolName": call.Function.Name, "readCount": readLoopErr.Count,
+				})
 				return cloudAgentSave(current, state)
 			}
-			if toolErr == nil && call.Function.Name == "task_result" {
+			if toolErr == nil {
+				state.recordCanvasBatchHash(result)
+			}
+			if call.Function.Name == "plan_update" && toolErr == nil {
+				state.event(run.ID, "plan_updated", map[string]any{"items": state.Plan, "pendingTitles": cloudAgentPendingPlanItems(state.Plan)})
+			}
+			if call.Function.Name == "ask_user" && toolErr == nil {
+				payload, _ := result.(map[string]any)
+				state.event(run.ID, "user_question", payload)
 				cloudAgentRecordToolResult(current, state, call, result, nil)
 				skipRemainingCloudAgentCalls(run.ID, state)
 				current.Status = "completed"
-				current.CleanupPending = true
-				state.event(run.ID, "run_completed", map[string]any{"summary": "成员任务已提交"})
 				return cloudAgentSave(current, state)
 			}
-		case call.Function.Name == "agent_tools_control", call.Function.Name == "agent_tools_memory", call.Function.Name == "agent_tools_skills", call.Function.Name == "agent_tools_canvas_read", call.Function.Name == "agent_tools_image", call.Function.Name == "agent_tools_canvas_edit", call.Function.Name == "agent_tools_generation":
-			state.SelectedToolCategory = call.Function.Name
-			state.ActivatedToolCategories = cloudAgentAppendActivatedCategory(state.ActivatedToolCategories, call.Function.Name)
-			result = map[string]any{"category": call.Function.Name, "tools": cloudAgentCategoryChildren(state.Canonical.Tools, call.Function.Name)}
-		case call.Function.Name == "canvas_apply_ops":
-			result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-		case call.Function.Name == "canvas_arrange_nodes":
-			result, toolErr = applyCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-		case call.Function.Name == "canvas_create_storyboard", call.Function.Name == "canvas_edit_storyboard":
-			result, toolErr = applyCloudAgentStoryboardMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-		case call.Function.Name == "canvas_edit_batch_table":
-			result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-		case call.Function.Name == "canvas_create_character":
-			result, toolErr = applyCloudAgentCharacterCreate(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-		case call.Function.Name == "canvas_inspect_image":
-			result, toolErr = inspectionResult, inspectionErr
-			if toolErr == nil && inspectionResult != nil {
-				if inspection, ok := inspectionResult.(cloudAgentImageInspection); ok {
-					if inspection.Summary != nil {
-						if writeErr := s.persistCloudAgentVisionCache(repo, run.UserID, state.Request.CanvasID, inspection, policy); writeErr != nil {
-							toolErr = writeErr
-						}
+			if call.Function.Name == "finish_run" && toolErr == nil {
+				// 闸门通过：summary 就是本轮唯一一次最终答复，本轮就此结束。
+				if cloudAgentFinishRunAccepted(result) {
+					err := cloudAgentCompleteByFinishRun(current, state, run.ID, call, result)
+					if err == nil {
+						s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTask, Status: observability.StatusCompleted, EndedAt: time.Now().UTC()})
 					}
-					if toolErr != nil {
-						break
-					}
-					// 两种回执都算一次调用预算：attached=false 表示这次只回执文字、没有附图。
-					attached := strings.TrimSpace(inspection.ImageURL) != ""
-					if inspection.Summary != nil {
-						state.cloudAgentRecordImageObservations(stringValue(inspection.Receipt["nodeId"])+"："+stringValue(inspection.Summary["short"]), true)
-					} else {
-						state.markCanvasImageInspection(stringValue(inspection.Receipt["nodeId"]), attached, stringValue(inspection.Receipt["contentSignature"]))
-					}
-					if inspection.CacheKey != "" {
-						if state.ImageInspectionReads == nil {
-							state.ImageInspectionReads = map[string]int{}
-						}
-						state.ImageInspectionReads[inspection.CacheKey]++
-					}
+					return err
+				}
+				// 申请收尾用的次数也已用尽：与"纯文本收尾"走同一条终止路径。
+				if cloudAgentFinishRunExhausted(result) {
+					block := cloudAgentEvaluateCompletion(state)
+					block.Attempt = state.CompletionNudgeAttempt
+					cloudAgentRecordToolResult(current, state, call, result, nil)
+					return cloudAgentFailBlockedCompletion(current, state, run.ID, block)
 				}
 			}
-		case call.Function.Name == "finish_run":
-			// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
-			result, toolErr = cloudAgentFinishRun(run.ID, state, call)
-		case call.Function.Name == "skill_read_file", call.Function.Name == "model_list", call.Function.Name == "image_annotation_render":
-			result, toolErr = skillResult, skillErr
-		default:
-			result, toolErr = cloudAgentReadToolCached(repo, run.UserID, state, call)
-		}
-		toolStatus := observability.StatusCompleted
-		toolReason := ""
-		if toolErr != nil {
-			toolStatus = observability.StatusFailed
-			toolReason = toolErr.Error()
-		}
-		s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTool, ToolType: call.Function.Name, Status: toolStatus, StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC(), Reason: toolReason})
-		if toolErr == nil && cloudAgentWrite(call.Function.Name) {
-			// A successful canvas mutation changes the read model. Do not replay a
-			// pre-mutation canvas snapshot later in the same Agent run.
-			cloudAgentInvalidateReadCache(state)
-		}
-		var readLoopErr *cloudAgentReadLoopError
-		if errors.As(toolErr, &readLoopErr) {
+			// 基础设施错误必须让整个事务回滚，不能降级成"工具失败回执"后照常提交：
+			// 画布写入与 recorder 共用本事务，recorder 失败时若仍提交，就会出现
+			// "画布已改 + 失败回执"的不一致状态（Codex 评审指出）。
+			// 只有已知的业务拒绝才作为回执交回模型自纠。
+			if toolErr != nil && !cloudAgentToolErrorIsBusiness(toolErr) {
+				return toolErr
+			}
 			cloudAgentRecordToolResult(current, state, call, result, toolErr)
-			current.Status = "failed"
-			current.FailureMessage = truncateRunes(readLoopErr.Error(), 1000)
-			cloudAgentDropInterjections(run.ID, "本轮已结束："+truncateRunes(current.FailureMessage, 120), state)
-			reason := readLoopErr.reasonCode()
-			state.event(run.ID, "run_failed", map[string]any{
-				"text": current.FailureMessage, "reason": reason,
-				"toolName": call.Function.Name, "readCount": readLoopErr.Count,
-			})
 			return cloudAgentSave(current, state)
+		})
+	}
+	if allowed && (call.Function.Name == "send_parent_message" || call.Function.Name == "finish_subagent") && state.Subagent != nil {
+		return s.repo.WithAgentSubagentFamily(run.UserID, state.Subagent.ParentRunID, run.ID, checkpoint)
+	}
+	if allowed && call.Function.Name == "message_subagent" {
+		var target struct {
+			LinkID string `json:"linkId"`
 		}
-		if toolErr == nil {
-			state.recordCanvasBatchHash(result)
-		}
-		if call.Function.Name == "plan_update" && toolErr == nil {
-			state.event(run.ID, "plan_updated", map[string]any{"items": state.Plan, "pendingTitles": cloudAgentPendingPlanItems(state.Plan)})
-		}
-		if call.Function.Name == "ask_user" && toolErr == nil {
-			payload, _ := result.(map[string]any)
-			state.event(run.ID, "user_question", payload)
-			cloudAgentRecordToolResult(current, state, call, result, nil)
-			skipRemainingCloudAgentCalls(run.ID, state)
-			current.Status = "completed"
-			return cloudAgentSave(current, state)
-		}
-		if call.Function.Name == "finish_run" && toolErr == nil {
-			// 闸门通过：summary 就是本轮唯一一次最终答复，本轮就此结束。
-			if cloudAgentFinishRunAccepted(result) {
-				err := cloudAgentCompleteByFinishRun(current, state, run.ID, call, result)
-				if err == nil {
-					s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTask, Status: observability.StatusCompleted, EndedAt: time.Now().UTC()})
-				}
-				return err
-			}
-			// 申请收尾用的次数也已用尽：与"纯文本收尾"走同一条终止路径。
-			if cloudAgentFinishRunExhausted(result) {
-				block := cloudAgentEvaluateCompletion(state)
-				block.Attempt = state.CompletionNudgeAttempt
-				cloudAgentRecordToolResult(current, state, call, result, nil)
-				return cloudAgentFailBlockedCompletion(current, state, run.ID, block)
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &target); err == nil {
+			if link, err := s.repo.AgentSubagentLinkForUser(run.UserID, target.LinkID); err == nil && link.ParentRunID == run.ID {
+				return s.repo.WithAgentSubagentFamily(run.UserID, run.ID, link.ChildRunID, checkpoint)
 			}
 		}
-		// 基础设施错误必须让整个事务回滚，不能降级成"工具失败回执"后照常提交：
-		// 画布写入与 recorder 共用本事务，recorder 失败时若仍提交，就会出现
-		// "画布已改 + 失败回执"的不一致状态（Codex 评审指出）。
-		// 只有已知的业务拒绝才作为回执交回模型自纠。
-		if toolErr != nil && !cloudAgentToolErrorIsBusiness(toolErr) {
-			return toolErr
-		}
-		cloudAgentRecordToolResult(current, state, call, result, toolErr)
-		return cloudAgentSave(current, state)
-	})
+	}
+	return checkpoint(s.repo)
 }
 
 // cloudAgentToolErrorIsBusiness 判断工具错误是否可以安全地作为"业务回执"交回模型。
@@ -2526,6 +2576,9 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 	}
 	latest, err := s.repo.CloudAgent(userID, id)
 	if err != nil {
+		return err
+	}
+	if err := s.cancelDynamicSubagents(ctx, userID, id); err != nil {
 		return err
 	}
 	if err := s.finishCloudAgentCleanup(ctx, latest); err != nil {

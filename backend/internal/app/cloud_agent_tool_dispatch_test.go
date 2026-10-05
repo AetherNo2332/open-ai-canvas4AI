@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"infinite-canvas/backend/internal/model"
 )
 
 // 本文件是一致性守卫：工具表（模型看到的契约）与运行期分派必须始终一致。
@@ -25,10 +23,11 @@ import (
 func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	registered := cloudAgentRegisteredToolNames(t)
 	supported := CloudAgentSupportedToolNames()
-	// 普通 Agent 的能力列表排除 Crew 工具；一致性守卫检查普通、协调者和成员的并集。
-	for _, role := range []model.CrewMemberRole{model.CrewMemberRoleCoordinator, model.CrewMemberRoleMember} {
-		req := agentTestRequest()
-		req.crew = &CrewMemberRuntime{Role: role, Permission: model.CrewPermissionPropose}
+	// Include both dynamic parent and child catalogs in the dispatch contract.
+	for _, req := range []CloudAgentRequest{
+		{SubagentEnabled: true, PermissionMode: "auto", ContextScope: []string{"canvas"}},
+		{PermissionMode: "read_only", ContextScope: []string{"canvas"}, subagent: &SubagentRuntime{Depth: 1}},
+	} {
 		for _, tool := range cloudAgentTools(req) {
 			supported = append(supported, stringField(tool["function"].(map[string]any), "name"))
 		}

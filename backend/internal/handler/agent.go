@@ -18,6 +18,54 @@ import (
 
 // Agent orchestration is durable; the browser stream never drives execution.
 func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
+	r.GET("/agent/subagent-policy", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		canvasID := strings.TrimSpace(c.Query("canvasId"))
+		view, err := svc.AgentSubagentPolicy(user.ID, canvasID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
+	r.PUT("/agent/subagent-policy", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+		var req service.AgentSubagentPolicyRequest
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		view, err := svc.UpdateAgentSubagentPolicy(user.ID, req)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
+	r.GET("/agent/runs/:id/subagents", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		view, err := svc.ListAgentSubagents(user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
 	r.GET("/agent/skill-defaults", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

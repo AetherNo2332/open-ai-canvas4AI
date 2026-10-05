@@ -3,7 +3,7 @@ import type { CanvasModelResult } from "./pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "./tool-disclosure.js";
 import type { PromptParts } from "./system-prompt.js";
 import { EventScheduler, RunEvents } from "./event-scheduler.js";
-import type { CrewEnvelope } from "./crew-wire.js";
+import type { SubagentRuntime } from "./subagent-wire.js";
 
 /**
  * 内部协议里的**确定性**客户端错误：同一条请求重发不可能成功。
@@ -67,7 +67,7 @@ export interface PiSkillReadPage {
 }
 
 export interface PiSnapshot {
-	crew?: CrewEnvelope;
+	subagent?: SubagentRuntime;
 
   skillRuntimeMode?: "pi-native" | "legacy-go";
   skills?: PiSkillSnapshot[];
@@ -81,7 +81,7 @@ export interface PiSnapshot {
   userId: string;
   revision: number;
   status: string;
-  request: { prompt: string; canvasId?: string; model?: string; channelModelKey?: string; visionEnabled?: boolean };
+  request: { prompt: string; canvasId?: string; model?: string; channelModelKey?: string; visionEnabled?: boolean; subagentEnabled?: boolean };
   modelLimits: { contextWindowTokens: number; maxOutputTokens: number; reservedOutputTokens?: number;
     overheadTokens?: number; inputBudgetTokens?: number; compactAtTokens?: number; configured: boolean; source: string;
     version?: string; digest?: string; compactionReserveTokens?: number; keepRecentTokens?: number; summaryOutputTokens?: number };
@@ -92,7 +92,7 @@ export interface PiSnapshot {
   noToolNudge?: string;
   modelFailureTaskId?: string;
   modelFailureNudge?: string;
-  pendingInterjections?: Array<{ id: string; text: string; createdAt?: string }>;
+  pendingInterjections?: Array<{ id: string; text: string; source?: string; createdAt?: string }>;
   /** A Go-backed compaction whose model task survived a worker restart. */
   pendingContextCompaction?: {
     operationId: string;
@@ -146,6 +146,10 @@ export class CanvasRunTerminated extends Error {
   }
 }
 
+export class CanvasRunSuspended extends CanvasRunTerminated {
+  constructor() { super("suspended"); this.name = "CanvasRunSuspended"; }
+}
+
 /** The run remains active, but this worker no longer owns its lease. */
 export class CanvasLeaseLost extends Error {
   constructor(message: string) {
@@ -183,6 +187,7 @@ export interface PiContextCompactionView {
 }
 
 interface PiToolReceipt {
+	suspended?: boolean;
 	operationId?: string;
   callId: string;
   pending: boolean;
@@ -440,10 +445,10 @@ export class CanvasBridge {
   async executeTool(run: PiSnapshot, taskId: string, callId: string, signal?: AbortSignal): Promise<PiToolReceipt> {
     const path = `/runs/${encodeURIComponent(run.runId)}/tool-calls/${encodeURIComponent(callId)}/advance`;
     const first = await this.request<PiToolReceipt>("POST", path, { taskId }, run, signal);
-    if (!first.pending || first.terminated) return first;
+    if (!first.pending || first.terminated || first.suspended) return first;
     await this.phase(run, "waiting_tool", "tool", first.operationId ?? `${taskId}:${callId}`, "等待工具结果", signal);
     return this.wait(run, () => this.request<PiToolReceipt>("POST", path, { taskId }, run, signal),
-      (receipt) => receipt.pending && !receipt.terminated, signal);
+      (receipt) => receipt.pending && !receipt.terminated && !receipt.suspended, signal);
   }
 
   /** 上报无法重试的启动期错误，避免运行静默停在 running。 */
