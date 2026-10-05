@@ -40,8 +40,8 @@ const (
 	// 单包上限 512 文件 / 20MB 的整数倍余量，覆盖一次运行可挂载的技能集合总量。
 	SkillRunMaxFiles      = 1024
 	SkillRunMaxTotalBytes = 16 << 20
-	// 对 spec 的显式近似：按 piNativeSkillReadMaxRunes=12000 rune ≈ 48KB/技能 × 约 10 技能取整。
-	// v1 使用固定运行级上下文预算替代"按当前模型可用输入预算检查"，per-model 预算随 P2 Workspace 计划补齐。
+	// 初始 Skill 索引的固定字节近似预算。按需读取的正文不在这里计量；
+	// 后续实际模型请求由模型上下文准入与压缩检查。
 	SkillRunMaxContextBytes = 512 << 10
 )
 

@@ -9,7 +9,6 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
-	"infinite-canvas/backend/internal/skills"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -35,6 +34,24 @@ func newAgentSkillDefaultsService(t *testing.T) (*Service, *gorm.DB) {
 
 func adminSkillDefaultsActor() *model.User {
 	return &model.User{ID: "admin-1", Username: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+}
+
+func TestAdminAgentSkillDefaultsAdmitsLargePackageWithSmallIndex(t *testing.T) {
+	svc, db := newAgentSkillDefaultsService(t)
+	seedAgentSkill(t, db, "large-index", 2037941, nil)
+	_, err := svc.ReplaceAgentSkillDefaults(adminSkillDefaultsActor(), 0, []AgentSkillDefaultItem{{
+		SkillID: "large-index", SkillVersionID: "large-index-v1", Enabled: 1,
+	}})
+	if err != nil {
+		t.Fatalf("package bytes incorrectly counted as initial context: %v", err)
+	}
+	view, err := svc.AdminAgentSkillDefaults(adminSkillDefaultsActor())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.TotalBytes != 2037941 || view.ContextEstimateBytes <= 0 || view.ContextEstimateBytes > 10000 {
+		t.Fatalf("package and index estimates not separated: %+v", view)
+	}
 }
 
 func TestReviewAdminSkillDefaultsDuplicateIsInvalid(t *testing.T) {
@@ -192,12 +209,10 @@ func TestAdminAgentSkillDefaultsRejectsDisabledSkill(t *testing.T) {
 	}
 }
 
-func TestAdminAgentSkillDefaultsRejectsContextBudgetOverflow(t *testing.T) {
+func TestAdminAgentSkillDefaultsRejectsPackageBudgetOverflow(t *testing.T) {
 	svc, db := newAgentSkillDefaultsService(t)
-	// 两个各占一个完整上下文预算的技能：enabled 集合总量必然超过 SkillRunMaxContextBytes，
-	// 但文件数与整包字节数仍在各自预算内，确保命中的是 context_bytes 这一项。
-	seedAgentSkill(t, db, "skill-cap-1", int64(skills.SkillRunMaxContextBytes), nil)
-	seedAgentSkill(t, db, "skill-cap-2", int64(skills.SkillRunMaxContextBytes), nil)
+	seedAgentSkill(t, db, "skill-cap-1", 8<<20, nil)
+	seedAgentSkill(t, db, "skill-cap-2", (8<<20)+1, nil)
 
 	items := []AgentSkillDefaultItem{
 		{SkillID: "skill-cap-1", SkillVersionID: "skill-cap-1-v1", Position: 0, Enabled: 1},
@@ -206,13 +221,13 @@ func TestAdminAgentSkillDefaultsRejectsContextBudgetOverflow(t *testing.T) {
 	_, err := svc.ReplaceAgentSkillDefaults(adminSkillDefaultsActor(), 0, items)
 	var appErr *kernel.AppError
 	if !errors.As(err, &appErr) {
-		t.Fatalf("超上下文预算应返回 *kernel.AppError，实际：%v", err)
+		t.Fatalf("超包体积预算应返回 *kernel.AppError，实际：%v", err)
 	}
 	if appErr.Reason != kernel.ReasonAgentSkillBudgetExceeded {
 		t.Fatalf("reason = %q, want %q", appErr.Reason, kernel.ReasonAgentSkillBudgetExceeded)
 	}
-	if budget, _ := appErr.Details["budget"].(string); budget != "context_bytes" {
-		t.Fatalf("details.budget = %#v, want \"context_bytes\"", appErr.Details["budget"])
+	if budget, _ := appErr.Details["budget"].(string); budget != "total_bytes" {
+		t.Fatalf("details.budget = %#v, want \"total_bytes\"", appErr.Details["budget"])
 	}
 }
 
@@ -287,8 +302,8 @@ func TestAdminAgentSkillDefaultsSaveAndRoundTrip(t *testing.T) {
 		t.Fatalf("items[1] status/fileCount/totalBytes = %d/%d/%d, want 1/2/1000", second.Status, second.FileCount, second.TotalBytes)
 	}
 	// totals 只统计 enabled 行：skill-b 处于禁用状态，不得计入。
-	if view.TotalFiles != 2 || view.TotalBytes != 1000 || view.ContextEstimateBytes != 1000 {
-		t.Fatalf("totals = %d/%d/%d, want 2/1000/1000", view.TotalFiles, view.TotalBytes, view.ContextEstimateBytes)
+	if view.TotalFiles != 2 || view.TotalBytes != 1000 || view.ContextEstimateBytes <= 0 || view.ContextEstimateBytes > 10000 {
+		t.Fatalf("invalid package/index totals: %d/%d/%d", view.TotalFiles, view.TotalBytes, view.ContextEstimateBytes)
 	}
 
 	next := []AgentSkillDefaultItem{{SkillID: "skill-b", SkillVersionID: "skill-b-v1", Position: 0, Enabled: 1}}
@@ -306,8 +321,8 @@ func TestAdminAgentSkillDefaultsSaveAndRoundTrip(t *testing.T) {
 	if view.Revision != 2 || len(view.Items) != 1 {
 		t.Fatalf("revision/items = %d/%d, want 2/1", view.Revision, len(view.Items))
 	}
-	if view.TotalFiles != 2 || view.TotalBytes != 2000 || view.ContextEstimateBytes != 2000 {
-		t.Fatalf("totals = %d/%d/%d, want 2/2000/2000", view.TotalFiles, view.TotalBytes, view.ContextEstimateBytes)
+	if view.TotalFiles != 2 || view.TotalBytes != 2000 || view.ContextEstimateBytes <= 0 || view.ContextEstimateBytes > 10000 {
+		t.Fatalf("invalid package/index totals: %d/%d/%d", view.TotalFiles, view.TotalBytes, view.ContextEstimateBytes)
 	}
 }
 

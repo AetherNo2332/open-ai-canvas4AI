@@ -659,14 +659,11 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		if err != nil {
 			return nil, err
 		}
-		// Native skills load lazily. Reserve their full package bytes as a
-		// conservative token bound rather than silently trimming frozen files.
+		// Pi adds the Skill index to its initial prompt after this canonical
+		// snapshot. Use index bytes as a conservative token bound; bodies and
+		// references enter later requests only after an on-demand read.
 		for _, skill := range skillSnapshots {
-			version, err := s.repo.SkillVersion(skill.VersionID)
-			if err != nil {
-				return nil, err
-			}
-			projected += int(version.TotalBytes)
+			projected += int(nativeSkillIndexContextBytes(skill))
 		}
 		budget := s.cloudAgentContextBudgetForRequest(req)
 		if projected > budget.InputBudgetTokens {

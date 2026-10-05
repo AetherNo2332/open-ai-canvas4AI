@@ -130,6 +130,16 @@ func normalizePiSkillDescription(description, fallback string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(description, "\r", " "), "\n", " ")
 }
 
+// Pi advertises only escaped name, description and entry location before a
+// read. Reserve room for its XML wrapper and worker-local absolute path; entry
+// bodies and references belong to package limits and model-step admission.
+func nativeSkillIndexContextBytes(skill cloudAgentSkill) int64 {
+	name := firstNonEmpty(skill.NativeName, nativeSkillName(skill.Name, skill.ID))
+	description := normalizePiSkillDescription(skill.Description, skill.Name)
+	location := "skills/" + name + "/" + cloudAgentSkillEntryPath
+	return int64(len(html.EscapeString(name)) + len(html.EscapeString(description)) + len(html.EscapeString(location)) + 1024)
+}
+
 func normalizePiSkillEntry(skill cloudAgentSkill) (string, error) {
 	name := strings.TrimSpace(skill.NativeName)
 	if name == "" {

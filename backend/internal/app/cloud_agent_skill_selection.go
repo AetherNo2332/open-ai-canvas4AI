@@ -167,7 +167,7 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 				return nil, err
 			}
 			snapshots = append(snapshots, snapshot.skill)
-			facts = append(facts, skills.SkillCapacityFacts{SkillID: item.SkillID, FileCount: snapshot.fileCount, TotalBytes: snapshot.totalBytes, ContextBytes: snapshot.totalBytes})
+			facts = append(facts, skills.SkillCapacityFacts{SkillID: item.SkillID, FileCount: snapshot.fileCount, TotalBytes: snapshot.totalBytes, ContextBytes: nativeSkillIndexContextBytes(snapshot.skill)})
 			continue
 		}
 		version, err := s.repo.SkillVersion(item.VersionID)
@@ -201,7 +201,7 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 			snapshot.Name = item.SkillID
 		}
 		snapshots = append(snapshots, *snapshot)
-		facts = append(facts, skills.SkillCapacityFacts{SkillID: item.SkillID, FileCount: len(files), TotalBytes: version.TotalBytes, ContextBytes: version.TotalBytes})
+		facts = append(facts, skills.SkillCapacityFacts{SkillID: item.SkillID, FileCount: len(files), TotalBytes: version.TotalBytes, ContextBytes: nativeSkillIndexContextBytes(*snapshot)})
 	}
 	if err := skills.AdmitSkillCapacity(facts, skills.SkillCapacityBudgets{
 		MaxFiles:        skills.SkillRunMaxFiles,

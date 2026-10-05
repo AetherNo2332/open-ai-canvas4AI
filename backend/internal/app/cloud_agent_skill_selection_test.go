@@ -340,14 +340,16 @@ func TestResolveRunSkillsRejectsDisabledDefault(t *testing.T) {
 
 func TestResolveRunSkillsCapacityExceeded(t *testing.T) {
 	s, db := newRunSkillSelectionService(t)
-	// 两个 300KB 的技能合计 600KB > 512KB 上下文预算。
-	seedSelectionSkill(t, s, db, "big-1", 300*1024, false, 1)
-	seedSelectionSkill(t, s, db, "big-2", 300*1024, false, 1)
+	// Two valid packages exceed the aggregate 16 MiB package limit.
+	seedSelectionSkill(t, s, db, "big-1", 1024, false, 1)
+	seedSelectionSkill(t, s, db, "big-2", 1024, false, 1)
+	rewriteSelectionSkillReferenceForTest(t, db, "big-1", 8<<20)
+	rewriteSelectionSkillReferenceForTest(t, db, "big-2", 8<<20)
 	seedDefault(t, db, "big-1", 0)
 	seedDefault(t, db, "big-2", 1)
 	_, err := resolveAndCommitSelectionForTest(t, s, "user", "conv-f", nil, true)
 	if err == nil {
-		t.Fatal("超过上下文预算应被拒绝")
+		t.Fatal("超过包体积预算应被拒绝")
 	}
 	var appErr *AppError
 	if !errorsAs(err, &appErr) {
@@ -355,6 +357,81 @@ func TestResolveRunSkillsCapacityExceeded(t *testing.T) {
 	}
 	if appErr.Reason != "agent_skill_budget_exceeded" {
 		t.Fatalf("reason = %q, want agent_skill_budget_exceeded", appErr.Reason)
+	}
+	if appErr.Details["budget"] != "total_bytes" {
+		t.Fatalf("wrong budget: %+v", appErr.Details)
+	}
+}
+
+func TestResolveRunSkillsContextBudgetCountsIndexInsteadOfReferences(t *testing.T) {
+	s, db := newRunSkillSelectionService(t)
+	seedSelectionSkill(t, s, db, "large-reference", 1024, false, 1)
+	selectionDataDir = s.dataDir
+	rewriteSelectionSkillReferenceForTest(t, db, "large-reference", 2<<20)
+	seedDefault(t, db, "large-reference", 0)
+
+	snapshots, err := s.resolveRunSkills("user", "conv-large-reference", nil, true)
+	if err != nil {
+		t.Fatalf("large reference file should not consume the initial context budget: %v", err)
+	}
+	if len(snapshots) != 1 || snapshots[0].ID != "large-reference" {
+		t.Fatalf("selected default missing: %+v", snapshots)
+	}
+	for _, source := range []string{skills.SkillSourceUser, skills.SkillSourceWorkspace, skills.SkillSourceCrewMember} {
+		t.Run(source, func(t *testing.T) {
+			owner := "author-1"
+			if source != skills.SkillSourceUser {
+				owner = "user"
+			}
+			selected, err := s.freezeRunSkillSnapshots(owner, []skills.SkillSelectionItem{{
+				SkillID: snapshots[0].ID, VersionID: snapshots[0].VersionID, ContentHash: snapshots[0].Hash, Source: source,
+			}})
+			if err != nil || len(selected) != 1 || selected[0].Source != source {
+				t.Fatalf("large package rejected for %s: %v", source, err)
+			}
+		})
+	}
+}
+
+func TestResolveRunSkillsDoesNotPreloadEntryBodiesIntoContext(t *testing.T) {
+	s, db := newRunSkillSelectionService(t)
+	for i, id := range []string{"entry-1", "entry-2"} {
+		seedSelectionSkill(t, s, db, id, 300<<10, false, 1)
+		seedDefault(t, db, id, i)
+	}
+	selected, err := s.resolveRunSkills("user", "entry-conv", nil, true)
+	if err != nil || len(selected) != 2 {
+		t.Fatalf("on-demand entries counted as initial context: %v", err)
+	}
+	worker, err := s.piNativeSkillSnapshots("user", selected)
+	if err != nil || len(worker) != 2 || len(worker[0].EntryContent) < 300<<10 {
+		t.Fatalf("worker lost the frozen entry: %v", err)
+	}
+}
+
+func rewriteSelectionSkillReferenceForTest(t *testing.T, db *gorm.DB, id string, referenceBytes int) {
+	t.Helper()
+	entry := "---\nname: " + id + "\ndescription: 测试技能 " + id + "\n---\n\n" + strings.Repeat("内容。", 1024/9)
+	contents := map[string][]byte{
+		"SKILL.md": []byte(entry),
+		"refs.md":  []byte(strings.Repeat("r", referenceBytes)),
+	}
+	hash, total := selectionContentHash(contents)
+	versionID := id + "-v1"
+	if err := db.Model(&model.Skill{}).Where("id = ?", id).Updates(map[string]any{"content_hash": hash, "total_bytes": total}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.SkillVersion{}).Where("id = ?", versionID).Updates(map[string]any{"content_hash": hash, "total_bytes": total}).Error; err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(contents["refs.md"])
+	if err := db.Model(&model.SkillFile{}).Where("skill_version_id = ? AND path = ?", versionID, "refs.md").Updates(map[string]any{
+		"size": int64(len(contents["refs.md"])), "sha256": hex.EncodeToString(digest[:]),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSelectionPackageZip(t, id+"/"+versionID+".zip", contents); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -510,6 +587,26 @@ func TestReviewRepeatedUserSelectionKeepsFrozenVersion(t *testing.T) {
 	}
 }
 
+func TestReviewAcceptedRunAdmitsLargeIndexedSkill(t *testing.T) {
+	s, db := agentRunFixture(t)
+	selectionDataDir = s.dataDir
+	t.Cleanup(func() { selectionDataDir = "" })
+	seedSelectionSkill(t, s, db, "large-indexed-run", 1024, false, 1)
+	rewriteSelectionSkillReferenceForTest(t, db, "large-indexed-run", 2<<20)
+	seedDefault(t, db, "large-indexed-run", 0)
+	run, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
+	if err != nil {
+		t.Fatalf("package bytes must not be charged to the model's initial token window: %v", err)
+	}
+	if len(run.Skills) != 1 || run.Skills[0].Source != "global" {
+		t.Fatalf("large skill not frozen in real Run: %+v", run.Skills)
+	}
+	rows := conversationRows(t, db, run.ID)
+	if len(rows) != 1 || rows[0].SkillID != "large-indexed-run" {
+		t.Fatalf("accepted Run did not persist its skill baseline: %+v", rows)
+	}
+}
+
 func TestReviewAcceptedRunPersistsTwentyDefaultsAndPiReadsUninstalled(t *testing.T) {
 	s, db := agentRunFixture(t)
 	selectionDataDir = s.dataDir
@@ -555,9 +652,12 @@ func TestReviewRejectedContinuationDoesNotAppendSkills(t *testing.T) {
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", first.ID).Update("status", "completed").Error; err != nil {
 		t.Fatal(err)
 	}
-	seedSelectionSkillFor(t, s, db, "user", "too-big", 600*1024, false, 1)
+	for _, id := range []string{"too-big-1", "too-big-2"} {
+		seedSelectionSkillFor(t, s, db, "user", id, 1024, false, 1)
+		rewriteSelectionSkillReferenceForTest(t, db, id, 8<<20)
+	}
 	request := agentTestRequest()
-	request.SkillIDs = []string{"too-big"}
+	request.SkillIDs = []string{"too-big-1", "too-big-2"}
 	request.Prompt = "继续"
 	request.IdempotencyKey = kernel.NewID()
 	_, err = s.CreateCloudAgentRun("user", request, first.ID)
