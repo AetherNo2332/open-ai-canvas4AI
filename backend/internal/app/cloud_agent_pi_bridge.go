@@ -1673,14 +1673,14 @@ func cloudAgentCommitPiInterjections(runID string, state *cloudAgentRuntime, ids
 			}
 		}
 		item, ok := requested[id]
-		if !ok || !strings.Contains(messageText, "【用户插话】"+item.Text) {
+		if !ok || !strings.Contains(messageText, cloudAgentInterjectionContent(item)) {
 			return kernel.Forbidden("Pi 用户消息与待送插话不匹配")
 		}
 	}
 	remaining := make([]cloudAgentInterjection, 0, len(state.PendingInterjections)-len(requested))
 	for _, item := range state.PendingInterjections {
 		if _, delivered := requested[item.ID]; delivered {
-			state.event(runID, "user_interjection_delivered", map[string]any{"messageId": item.ID, "text": item.Text})
+			state.event(runID, cloudAgentInterjectionSource(item)+"_delivered", map[string]any{"messageId": item.ID, "text": item.Text})
 			cloudAgentRememberInterjectionID(state, item.ID)
 			continue
 		}
