@@ -7,7 +7,8 @@ test("added skill privacy survives lightweight catalog normalization", async () 
     const original = apiClient.request;
     apiClient.request = (async () => ({
         data: { code: 0, data: { skills: [{ skillId: "private", skillName: "Private", versionId: "v1", isPrivate: true }] }, msg: "ok" },
-        status: 200, headers: {},
+        status: 200,
+        headers: {},
     })) as typeof apiClient.request;
     try {
         await addSkill("private");

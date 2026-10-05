@@ -12,16 +12,18 @@ func cloudAgentUsageEvent(runID, kind, tool string, payload map[string]any) Clou
 }
 
 func TestCloudAgentSkillUsageIncludesNativeEnablementAndReadCheckpoints(t *testing.T) {
-    usage := cloudAgentSkillUsageFromEvents([]CloudAgentEvent{
-        {RunID: "native", Type: "native_skill_enabled", Payload: map[string]any{"skillId": "s1", "skillName": "Native"}},
-        {RunID: "native", Type: "native_skill_read", Payload: map[string]any{"skillId": "s1", "skillName": "Native", "path": "SKILL.md"}},
-        {RunID: "native", Type: "native_skill_read", Payload: map[string]any{"skillId": "s1", "skillName": "Native", "path": "references/a.md"}},
-    })
-    if usage.ScannedRuns != 1 || len(usage.Skills) != 1 { t.Fatalf("missing native usage: %+v", usage) }
-    item := usage.Skills[0]
-    if item.RunsEnabled != 1 || item.ReadCalls != 2 || item.EntryReads != 1 || item.CardReads != 1 || item.SkillName != "Native" || len(item.TopCards) != 1 {
-        t.Fatalf("native usage not attributed: %+v", item)
-    }
+	usage := cloudAgentSkillUsageFromEvents([]CloudAgentEvent{
+		{RunID: "native", Type: "native_skill_enabled", Payload: map[string]any{"skillId": "s1", "skillName": "Native"}},
+		{RunID: "native", Type: "native_skill_read", Payload: map[string]any{"skillId": "s1", "skillName": "Native", "path": "SKILL.md"}},
+		{RunID: "native", Type: "native_skill_read", Payload: map[string]any{"skillId": "s1", "skillName": "Native", "path": "references/a.md"}},
+	})
+	if usage.ScannedRuns != 1 || len(usage.Skills) != 1 {
+		t.Fatalf("missing native usage: %+v", usage)
+	}
+	item := usage.Skills[0]
+	if item.RunsEnabled != 1 || item.ReadCalls != 2 || item.EntryReads != 1 || item.CardReads != 1 || item.SkillName != "Native" || len(item.TopCards) != 1 {
+		t.Fatalf("native usage not attributed: %+v", item)
+	}
 }
 
 func TestCloudAgentSkillUsageAggregatesLoadSearchAndReads(t *testing.T) {
