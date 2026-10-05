@@ -68,7 +68,7 @@ test("a failed step is marked and expanded instead of hidden behind the folded l
     // 展开的完整记录仍然是原样的工具卡（含任务 ID 与历史步骤），失败那步的文字是红的
     expect(html).toContain("已读取画布清单（未查看画面）");
     expect(html).toContain("任务 ID：task-1");
-    expect(html).toContain("#dc2626");
+    expect(html).toContain("var(--palette-status-error)");
 });
 
 test("the shimmer only runs while the panel says the segment is live", () => {
