@@ -23,6 +23,17 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 ## Agent 动态子代理
 
+2026-10-06：五个开发切片均已实现。按画布持久授权与 revision CAS、同事务创建父子 Link/独立会话/任务/计费预留、动态角色与任务、有序幂等消息、结构化完成、终态补发和取消已接入；父等待释放 Pi 驻留名额，容量为 1 时也可推进子运行。子运行固定只读，不能生成媒体、写画布或继续创建子代理。旧 Crew API、固定成员配置、表与事件解析器已删除，schema 为 57。
+
+- [x] Linux 动态子代理生命周期、策略/CAS/归属及迁移专项；共用工具 dispatch/schema 守卫；Node wire/schema/harness 与挂起等待专项；前端类型检查及头像/布局专项通过。独立审查发现的五项问题已修复并定向验证。
+- [ ] 最终三服务镜像构建及本机隔离 Compose 3000 HTTP/live Pi 脚本验收。
+- [ ] PR #66 最新提交的 Agent、Backend、Web CI。
+- [ ] 浏览器 DOM/视觉验收；本轮用户明确要求只用脚本、不操作浏览器。
+
+管理员入口为“Agent（beta）→ 动态子代理平台能力”（`/admin/settings/agent#subagents`），画布入口为“允许父 Agent 自动召唤子代理”。授权从下一轮开始持续生效，直到用户关闭。详见 [实施计划](../../../superpowers/plans/2026-10-06-agent-dynamic-subagents.md)。
+
+### 旧 Crew 历史验证记录（不代表当前实现）
+
 2026-10-05 剩余开发进度：画布配置 CRUD、成员字段和技能、CAS 冲突提示、Agent/Crew 模式、独立任务输入与运行历史、SSE、取消、批准/拒绝和提交已接入源码。普通 Agent 能力列表移除了无条件 Crew 工具；安装技能轻量接口保留私有标记。Linux Crew 专项 app/handler/repository、技能包全量、Agent 源码 149/149、前端全量 2175/2175 通过。本地隔离 Compose 3000 使用 deepseek-flash 的 HTTP/live Pi 脚本 26/26 通过，确认两成员完成、审批提交、拒绝和活跃取消；只读审计确认独立 Pi 会话及任务时间窗重叠；worker 重启恢复和后端审批持久化已通过。成员预算失败产生待审批降级提案且不写画布。用户要求不动浏览器，本轮没有 DOM/视觉/登录流程验收。纠正此前后端判定：六个协议失败来自测试容器遗漏插件包，基线归档也遗漏插件，不能证明继承源码缺陷；补齐插件、使用内存盘临时 SQLite 并限制 CPU 后，Crew 和此前失败的模型/Pi 专项均通过，完整 app/handler 回归结果另行记录。详见仓库 `docs/superpowers/plans/2026-10-05-agent-crew-acceptance.md`；下文历史部署记录保留其原始版本边界。
 管理员入口为“Agent（beta）→ 动态子代理平台能力”（`/admin/settings/agent#subagents`）。平台开关默认关闭；读取失败禁止操作，保存失败保留服务端已保存状态，成功后同步当前用户的功能状态。画布中的“允许父 Agent 自动召唤子代理”是持续生效的授权，直到用户关闭。
 
@@ -3491,5 +3502,5 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 
 - 已加入按画布持久化的“允许父 Agent 自动召唤子代理”开关，下一轮开始生效，关闭前持续有效。
 - 已加入 `AgentSubagentPolicy`、父子 Link/消息模型、revision CAS 和 `/api/agent/subagent-policy` 接口。
-- 已加入前端画布开关与请求冻结字段；动态 spawn 工具、子运行调度、消息唤醒和旧 Crew 清理仍待后续切片完成。
-- 本轮只做前端 typecheck 和后端无测试编译检查；Windows CGO sqlite 测试运行受本机链接器限制，未重复全量测试。
+- 动态 spawn 工具、子运行调度、消息唤醒、SSE 和旧 Crew 清理均已实现；父等待释放驻留容量，并在子任务终态后恢复。
+- 本轮复用既有全量结果，新增链路在 Linux 容器定向验证，Windows 仅做全包编译。最终镜像/HTTP 验收及 CI 状态见本文“Agent 动态子代理”。
