@@ -7,6 +7,7 @@ import { loadAssetsPage, loadCanvasPage, loadCanvasProjectPage, loadCreatePage, 
 import { CanvasRefreshShell } from "@/pages/canvas/canvas-refresh-shell";
 import { AuthScene } from "@/pages/auth/auth-scene";
 import RouteErrorPage from "@/pages/route-error";
+import { agentMemoryRedirect } from "@/lib/agent-admin-route";
 
 const AdminPage = lazy(() => import("@/pages/admin"));
 const AnalyticsPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.AnalyticsPage })));
@@ -17,7 +18,7 @@ const CreditOperationsPage = lazy(() => import("@/pages/admin/admin-route-pages"
 const AccessSettingsPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.AccessSettingsPage })));
 const EmailSettingsPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.EmailSettingsPage })));
 const FeatureAvailabilityPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.FeatureAvailabilityPage })));
-const AgentLessonsPage = lazy(() => import("@/pages/admin/admin-route-pages").then((module) => ({ default: module.AgentLessonsPage })));
+const AgentSettingsPage = lazy(() => import("@/pages/admin/settings/agent-settings-page"));
 const ChannelsPage = lazy(() => import("@/pages/admin/channels/channels-page"));
 const LogicalModelsPage = lazy(() => import("@/pages/admin/logical-models/logical-models-page"));
 const AdminPluginsPage = lazy(() => import("@/pages/admin/plugins/plugins-page"));
@@ -57,6 +58,11 @@ const RequireFeature = lazy(() => import("@/components/auth/require-feature").th
 
 function deferred(element: ReactNode) {
     return <Suspense fallback={<WorkspaceRouteLoader />}>{element}</Suspense>;
+}
+
+function LegacyAgentMemoryRedirect() {
+    const location = useLocation();
+    return <Navigate to={agentMemoryRedirect(location.search)} replace />;
 }
 
 function fullScreenDeferred(element: ReactNode) {
@@ -193,7 +199,8 @@ export const router = createBrowserRouter([
                     { path: "storyboard-prompts", element: <Navigate to="/admin/prompt-templates" replace /> },
                     { path: "announcements", element: <AnnouncementsPage /> },
                     { path: "banner-announcements", element: <BannerAnnouncementsPage /> },
-                    { path: "agent-lessons", element: <AgentLessonsPage /> },
+                    { path: "agent-lessons", element: <LegacyAgentMemoryRedirect /> },
+                    { path: "settings/agent", element: <AgentSettingsPage /> },
                     { path: "resources", element: <StorageResourcesPage /> },
                     { path: "credit-operations", element: <CreditOperationsPage /> },
                     { path: "redemption-codes", element: <RedemptionCodesPage /> },

@@ -17,30 +17,31 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var ErrDailyUploadLimitExceeded = errors.New("daily upload limit exceeded")
+var ErrDailyUploadLimitExceeded = errors.New("今日上传额度已用完，请明天再试")
 
-var ErrTaskProviderRecoveryConflict = errors.New("task provider recovery is already running")
+var ErrTaskProviderRecoveryConflict = errors.New("任务正在恢复中，请稍后查看")
 
-var ErrTaskProviderCancellationConflict = errors.New("task provider cancellation is already claimed")
+var ErrTaskProviderCancellationConflict = errors.New("任务正在取消中，请稍后查看")
 
-var ErrTaskStateConflict = errors.New("task state changed concurrently")
+var ErrTaskStateConflict = errors.New("任务状态已变化，请刷新后重试")
 
-var ErrTextReplayQuotaExceeded = errors.New("text replay quota exceeded")
+var ErrTextReplayQuotaExceeded = errors.New("文本回放额度已用完")
 
-var ErrTextReplayClosed = errors.New("text replay task is closed")
+var ErrTextReplayClosed = errors.New("该文本任务已结束")
 
-var ErrEmailVerificationCodeInvalid = errors.New("email verification code is no longer valid")
+var ErrEmailVerificationCodeInvalid = errors.New("邮箱验证码已失效，请重新获取")
 
-var ErrProjectAssetFolderNotEmpty = errors.New("project asset folder is not empty")
+var ErrProjectAssetFolderNotEmpty = errors.New("资产文件夹不为空，无法删除")
 
-var ErrProjectHasActiveTasks = errors.New("project has active tasks")
+var ErrProjectHasActiveTasks = errors.New("项目中还有进行中的任务，请等待完成后再操作")
 
-var ErrProjectUnitShotsChanged = errors.New("project unit shots changed")
+var ErrProjectUnitShotsChanged = errors.New("镜头已被修改，请刷新后重试")
 
-var ErrCanvasRevisionConflict = errors.New("canvas revision changed")
+var ErrCanvasRevisionConflict = errors.New("画布已被更新，请刷新后重试")
 
 type Repository struct {
-	db *gorm.DB
+	crewMutation bool
+	db           *gorm.DB
 }
 
 type UserStorageUsage struct {
@@ -54,11 +55,12 @@ type UserStorageUsage struct {
 }
 
 func New(db *gorm.DB) *Repository {
+	database.InstallAgentEventCallbacks(db)
 	return &Repository{db: db}
 }
 
 func (r *Repository) WithContext(ctx context.Context) *Repository {
-	return &Repository{db: r.db.WithContext(ctx)}
+	return &Repository{db: r.db.WithContext(ctx), crewMutation: r.crewMutation}
 }
 
 func (r *Repository) Dialect() string {
@@ -282,7 +284,7 @@ func (r *Repository) CreateUserWithEmailVerification(user *model.User, verificat
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return errors.New("email verification code is no longer valid")
+			return errors.New("邮箱验证码已失效，请重新获取")
 		}
 		return tx.Create(user).Error
 	})
@@ -682,7 +684,10 @@ func (r *Repository) Tasks(userID string, limit int, projectID string, activeOnl
 		limit = 50
 	}
 	query := r.db.Select("id", "project_id", "type", "status", "stage", "media_stage", "media_recovery_json", "progress", "prompt", "operation", "provider", "model", "input_json", "result_json", "billing_order_id", "provider_request_id", "provider_cancel_status", "provider_cancel_error", "provider_cancel_attempts", "provider_cancel_requested_at", "provider_cancelled_at", "provider_cancel_next_check_at", "attempts", "started_at", "completed_at", "created_at", "updated_at", "agent_run_id", "generation_id", "approval_id", "authorized_charge_microcredits", "execution_diagnostic_json", "cancellation_source", "cancellation_actor_id", "cancellation_requested_at").
-		Where("user_id = ?", userID)
+		Where("user_id = ?", userID).
+		// 占位行只承载 Agent 建 run 的报价预留：它不是用户可理解的任务（没有产物、没有进度），
+		// 运行本身已经由 /agent/runs 暴露。让 holding 混进任务中心只会多出一条看不懂的条目。
+		Where("status <> ?", model.TaskStatusHolding)
 	if strings.TrimSpace(projectID) != "" {
 		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
 	}
@@ -1008,6 +1013,14 @@ func (r *Repository) SaveResource(resource *model.Resource) error {
 	return r.db.Save(resource).Error
 }
 
+// UpdateResourceThumbnail only updates a still-ready row and cannot resurrect a deleted resource.
+func (r *Repository) UpdateResourceThumbnail(userID string, id string, values map[string]any) (bool, error) {
+	result := r.db.Model(&model.Resource{}).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.ResourceStatusReady).
+		Updates(values)
+	return result.RowsAffected == 1, result.Error
+}
+
 func (r *Repository) ResourceByUploadKey(userID string, uploadKey string) (*model.Resource, error) {
 	var resource model.Resource
 	if err := r.db.First(&resource, "user_id = ? AND upload_key = ?", userID, uploadKey).Error; err != nil {
@@ -1255,6 +1268,9 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 		if err := tx.Model(&model.Task{}).Where("user_id = ? AND project_id = ?", userID, id).Update("project_id", "").Error; err != nil {
 			return err
 		}
+		// 说明：我们自研的 cloud_agent_run_events 已随合并决定退役（表与数据保留、代码不再读写，
+		// 见 internal/database/migrations.go 里的 v32 no-op 迁移），因此不再清它的 canvas_id。
+		// 上游事件表 cloud_agent_event_records 没有 canvas_id 列，无需处理。
 		return tx.Delete(&model.CanvasProject{}, "id = ? AND user_id = ?", id, userID).Error
 	})
 }

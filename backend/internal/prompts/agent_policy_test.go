@@ -10,6 +10,7 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 版本号是策略文件的公开合同：工具披露规则改变时一同更新。
 	if system.ID != "cloud-agent-system" || system.Version != 10 || media.ID != "cloud-agent-media" || media.Version != 4 {
 		t.Fatalf("unexpected policy metadata: system=%+v media=%+v", system, media)
 	}

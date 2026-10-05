@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"infinite-canvas/backend/internal/canvas/layout"
@@ -91,7 +92,7 @@ func TestCloudAgentArrangeNodesLaysOutByLane(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt, _ := result.(map[string]any)
-	// 布局以当前左上角为锚点：已经在锚点上的 text-1 不需要移动，moved 只统计真正变动的节点。
+	// 布局以当前左上角为锚点：已经在锚点上的 text-1 不需要移动，movement 只统计真正变动的节点。
 	if moved, _ := receipt["moved"].(int); moved < 3 {
 		t.Fatalf("整理节点数 = %v，期望至少 3：%+v", receipt["moved"], receipt)
 	}
@@ -127,10 +128,11 @@ func TestCloudAgentArrangeNodesKeepsLockedAndContainers(t *testing.T) {
 	s, doc := layoutFixture(t, nodes)
 	policy := mustRuntimePolicy(t, s)
 
-	if _, err := applyCloudAgentArrangeNodes(s.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
+	result, err := applyCloudAgentArrangeNodes(s.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
 		"snapshotHash": creationHash(doc),
 		"mode":         "byType",
-	}), policy); err != nil {
+	}), policy)
+	if err != nil {
 		t.Fatal(err)
 	}
 	positions := canvasPositions(t, s)
@@ -143,6 +145,7 @@ func TestCloudAgentArrangeNodesKeepsLockedAndContainers(t *testing.T) {
 	if positions["text-2"].Y == 5 && positions["text-2"].X == 5 {
 		t.Fatalf("可整理节点没有移动：%+v", positions)
 	}
+	_ = result
 }
 
 func TestCloudAgentArrangeNodesGroupsMakeBands(t *testing.T) {
@@ -212,13 +215,15 @@ func TestCloudAgentArrangeNodesRejectsStaleSnapshotAndTooManyNodes(t *testing.T)
 	s, _ := layoutFixture(t, nodes)
 	policy := mustRuntimePolicy(t, s)
 
-	// 过期快照按上游的字段错误口径归类（issue=stale_snapshot），运行期据此把它当可纠正的
-	// 工具结果交回模型重新读取，而不是终止整轮。
+	// 过期快照必须同时满足两条口径：带 errCloudAgentSnapshotConflict（我方运行期据此走
+	// "重新读取再申请审批"的可恢复分支），并归类成字段错误 issue=stale_snapshot（模型据此
+	// 知道是哪个字段过期）。缺任一条都会让这次调用落进准入失败、判死整轮。
 	var staleErr *cloudAgentFieldArgumentError
 	if _, err := applyCloudAgentArrangeNodes(s.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
 		"snapshotHash": "stale-hash",
 		"mode":         "row",
-	}), policy); !errors.As(err, &staleErr) || staleErr.Issue != "stale_snapshot" || staleErr.Field != "snapshotHash" {
+	}), policy); err == nil || !cloudAgentSnapshotConflict(err) ||
+		!errors.As(err, &staleErr) || staleErr.Issue != "stale_snapshot" || staleErr.Field != "snapshotHash" {
 		t.Fatalf("陈旧快照应被归类为过期快照：%v", err)
 	}
 
@@ -227,19 +232,21 @@ func TestCloudAgentArrangeNodesRejectsStaleSnapshotAndTooManyNodes(t *testing.T)
 		many = append(many, layoutNode(fmt.Sprintf("text-%d", index), "text", float64(index), 0))
 	}
 	s2, doc2 := layoutFixture(t, many)
-	// 参数契约类错误同样按字段错误归类：模型因此拿到"哪个字段错、怎么改"的可纠正回执，
+	// 参数契约类错误一律按字段错误归类：模型因此拿到"哪个字段错、怎么改"的可纠正回执，
 	// 而不是被走准入失败分支判死整轮。
 	var countErr *cloudAgentFieldArgumentError
 	if _, err := applyCloudAgentArrangeNodes(s2.repo, "user", "layout-canvas", arrangeCall(t, map[string]any{
 		"snapshotHash": creationHash(doc2),
 		"mode":         "row",
-	}), mustRuntimePolicy(t, s2)); !errors.As(err, &countErr) || countErr.Field != "nodeIds" || countErr.Issue != "item_count" {
+	}), mustRuntimePolicy(t, s2)); err == nil || !strings.Contains(err.Error(), "最多整理") ||
+		!errors.As(err, &countErr) || countErr.Field != "nodeIds" || countErr.Issue != "item_count" {
 		t.Fatalf("超限应按 nodeIds/item_count 归类：%v", err)
 	}
 }
 
-// add_node 不带坐标时由服务端按泳道自动落位（作为生成输入时排到目标左侧）：
-// agentCanvasOp.X/Y 的指针语义保证"不传坐标"与"坐标 0"是两件事。
+// 已恢复（本轮移植）：TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered。
+// 它断言"add_node 不带坐标时由服务端按泳道自动落位（作为生成输入时排到目标左侧）"，
+// 与 agentCanvasOp.X/Y 的指针语义一起回到树里（不传坐标 ≠ 坐标 0）。
 func TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered(t *testing.T) {
 	nodes := []map[string]any{
 		layoutNode("text-1", "text", 0, 0),
@@ -329,7 +336,8 @@ func positionOf(t *testing.T, node map[string]any) layout.Position {
 	return layout.Position{X: xf, Y: yf}
 }
 
-// mustRuntimePolicy 读取运行时策略，供整理工具落库时使用。
+// mustRuntimePolicy 是从我们这边沿用下来的测试助手（原先定义在 cloud_agent_projection_test.go，
+// 该文件随自研投影/正文治理一起本轮未移植），这里保留最小实现，供布局用例读取运行时策略。
 func mustRuntimePolicy(t *testing.T, s *Service) RuntimePolicySetting {
 	t.Helper()
 	policy, err := s.RuntimePolicy()

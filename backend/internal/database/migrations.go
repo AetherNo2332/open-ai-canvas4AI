@@ -11,7 +11,13 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 38
+// CurrentSchemaVersion follows upstream migrations through v43; our Agent
+// migrations register after that upstream range as 44+. When a future upstream
+// sync takes 44+, shift our block up again and extend the relocation table.
+const CurrentSchemaVersion int64 = 55
+
+// PreviousUpstreamSchemaVersion is the highest upstream migration version.
+const PreviousUpstreamSchemaVersion int64 = 43
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -26,6 +32,12 @@ const authNotificationsChecksum = "sha256:auth-notifications-v35-20260924"
 const cloudAgentGeminiCacheChecksum = "sha256:cloud-agent-gemini-cache-v36-20260924"
 const cloudAgentGeminiCacheIdentityChecksum = "sha256:cloud-agent-gemini-cache-identity-v37-20260925"
 const prefixedIDSequenceReconcileChecksum = "sha256:prefixed-id-sequence-reconcile-v38-20260926"
+const skillLibraryCategoriesChecksum = "sha256:skill-library-categories-v39-20260926"
+const builtinSkillTombstonesChecksum = "sha256:builtin-skill-tombstones-v40-20260927"
+const resourceThumbnailChecksum = "sha256:resource-thumbnail-v41-20260927"
+const cloudAgentPiSessionsChecksum = "sha256:cloud-agent-pi-sessions-v42-20260928"
+const topupSaleStrategiesChecksum = "sha256:topup-sale-strategies-v43-20260929"
+const agentSkillDefaultsChecksum = "sha256:agent-skill-defaults-v46-20261004"
 
 const postgresSchemaMigrationLockID int64 = 73123910420260830
 
@@ -121,12 +133,169 @@ var schemaMigrations = []migration{
 		}
 		return nil
 	}},
+	// 上游把 v35 用给 auth_notifications 之后，我们的两条迁移继续让位到 36 / 37。
 	{version: 35, name: "auth_notifications", checksum: authNotificationsChecksum, apply: migrateSchemaV35},
 	{version: 36, name: "cloud_agent_gemini_cache", checksum: cloudAgentGeminiCacheChecksum, apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.CloudAgentGeminiCache{})
 	}},
 	{version: 37, name: "cloud_agent_gemini_cache_identity", checksum: cloudAgentGeminiCacheIdentityChecksum, apply: migrateCloudAgentGeminiCacheIdentity},
 	{version: 38, name: "prefixed_id_sequence_reconcile", checksum: prefixedIDSequenceReconcileChecksum, apply: migratePrefixedIDSequenceReconcile},
+	{version: 39, name: "skill_library_categories", checksum: skillLibraryCategoriesChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.SkillLibraryCategory{}, &model.UserSkillState{})
+	}},
+	{version: 40, name: "builtin_skill_tombstones", checksum: builtinSkillTombstonesChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.BuiltinSkillTombstone{})
+	}},
+	{version: 41, name: "resource_thumbnail", checksum: resourceThumbnailChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.Resource{})
+	}},
+	{version: 42, name: "cloud_agent_pi_sessions", checksum: cloudAgentPiSessionsChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentPiSession{})
+	}},
+	{version: 43, name: "topup_sale_strategies", checksum: topupSaleStrategiesChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.TopupProduct{}, &model.PaymentOrder{})
+	}},
+	{version: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	{version: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{version: 46, name: "pi_agent_run_leases", checksum: "sha256:pi-agent-run-leases-v41-20260926", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentExecution{})
+	}},
+	{version: 47, name: "pi_agent_conversation_sessions", checksum: "sha256:pi-agent-conversation-sessions-v42-20260927", apply: migratePiAgentConversationSessions},
+	{version: 48, name: "pi_agent_owner_scoped_session_ids", checksum: "sha256:pi-agent-owner-scoped-session-ids-v43-20260928", apply: migratePiAgentOwnerScopedSessionIDs},
+	{version: 49, name: "pi_agent_event_scheduler", checksum: "sha256:pi-agent-event-scheduler-v44-20261002", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentExecution{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{}, &model.AgentRuntimeInstance{})
+	}},
+	{version: 50, name: "pi_agent_orchestrator", checksum: "sha256:pi-agent-orchestrator-v45-20261002", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.AgentRuntimeInstance{})
+	}},
+	{version: 51, name: "agent_skill_defaults", checksum: agentSkillDefaultsChecksum, apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentSkillDefault{}, &model.AgentConversationSkill{})
+	}},
+	{version: 52, name: "agent_workspaces", checksum: "sha256:agent-workspaces-v52-20261005", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentWorkspace{}, &model.AgentWorkspaceSkill{})
+	}},
+	{version: 53, name: "agent_crews", checksum: "sha256:agent-crews-v53-20261005", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentCrew{}, &model.AgentCrewMember{}, &model.AgentCrewMemberSkill{})
+	}},
+	{version: 54, name: "agent_crew_runs", checksum: "sha256:agent-crew-runs-v54-20261005", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentCrewRun{}, &model.AgentCrewMemberRun{}, &model.AgentCrewMessage{})
+	}},
+	{version: 55, name: "agent_crew_events", checksum: "sha256:agent-crew-events-v55-20261005", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentCrewEvent{})
+	}},
+}
+
+func migratePiAgentConversationSessions(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.CloudAgentPiSession{}, &model.CloudAgentPiEntry{}); err != nil {
+		return err
+	}
+	var runs []model.CloudAgentExecution
+	if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "status", "created_at", "updated_at").
+		Where("engine = ?", "pi").Order("created_at, id").Find(&runs).Error; err != nil {
+		return err
+	}
+	for _, run := range runs {
+		conversationID := run.ConversationID
+		if conversationID == "" {
+			conversationID = run.ID
+		}
+		sessionID := model.PiSessionStorageID(run.UserID, conversationID)
+		header, err := json.Marshal(map[string]any{
+			"type": "session", "version": 3, "id": sessionID,
+			"timestamp": run.CreatedAt.UTC().Format(time.RFC3339Nano), "cwd": "canvas://" + run.CanvasID,
+		})
+		if err != nil {
+			return err
+		}
+		session := model.CloudAgentPiSession{
+			ID: sessionID, UserID: run.UserID, ConversationID: conversationID, CanvasID: run.CanvasID,
+			FormatVersion: 3, HeaderJSON: string(header), Revision: 1, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
+		}
+		switch run.Status {
+		case "queued", "running", "waiting_approval":
+			session.ActiveRunID = run.ID
+		}
+		if err := tx.Where("user_id = ? AND conversation_id = ?", session.UserID, session.ConversationID).FirstOrCreate(&session).Error; err != nil {
+			return err
+		}
+		if session.UserID != run.UserID || session.CanvasID != run.CanvasID {
+			return fmt.Errorf("Pi session %q has conflicting owner or canvas", conversationID)
+		}
+		active := run.Status == "queued" || run.Status == "running" || run.Status == "waiting_approval"
+		if active && session.ActiveRunID != run.ID {
+			if err := tx.Model(&model.CloudAgentPiSession{}).Where("id = ? AND user_id = ? AND conversation_id = ?", session.ID, session.UserID, session.ConversationID).
+				Updates(map[string]any{"active_run_id": run.ID, "revision": gorm.Expr("revision + 1"), "updated_at": run.UpdatedAt}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// migratePiAgentOwnerScopedSessionIDs upgrades sessions created by schema v42,
+// whose primary key was the client-controlled conversation ID. The update keeps
+// the public conversation ID stable while moving the session header and all Pi
+// entries to a deterministic owner-scoped storage key.
+func migratePiAgentOwnerScopedSessionIDs(tx *gorm.DB) error {
+	var sessions []model.CloudAgentPiSession
+	if err := tx.Order("created_at, id").Find(&sessions).Error; err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		nextID := model.PiSessionStorageID(session.UserID, session.ConversationID)
+		if session.ID == nextID {
+			continue
+		}
+		var existing model.CloudAgentPiSession
+		err := tx.First(&existing, "id = ?", nextID).Error
+		if err == nil {
+			return fmt.Errorf("Pi session ID migration collision for owner %q and conversation %q", session.UserID, session.ConversationID)
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var entryCount int64
+		if err := tx.Model(&model.CloudAgentPiEntry{}).Where("session_id = ?", nextID).Count(&entryCount).Error; err != nil {
+			return err
+		}
+		if entryCount != 0 {
+			return fmt.Errorf("Pi session ID migration found orphan entries for target %q", nextID)
+		}
+		var foreignEntryCount int64
+		if err := tx.Model(&model.CloudAgentPiEntry{}).
+			Where("session_id = ? AND user_id <> ?", session.ID, session.UserID).Count(&foreignEntryCount).Error; err != nil {
+			return err
+		}
+		if foreignEntryCount != 0 {
+			return fmt.Errorf("Pi session ID migration found entries owned by another account for %q", session.ID)
+		}
+		var header map[string]any
+		if err := json.Unmarshal([]byte(session.HeaderJSON), &header); err != nil {
+			return fmt.Errorf("decode Pi session header %q: %w", session.ID, err)
+		}
+		if header == nil {
+			return fmt.Errorf("Pi session header %q is not an object", session.ID)
+		}
+		header["id"] = nextID
+		headerJSON, err := json.Marshal(header)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.CloudAgentPiEntry{}).Where("session_id = ?", session.ID).
+			Update("session_id", nextID).Error; err != nil {
+			return fmt.Errorf("move Pi entries for session %q: %w", session.ID, err)
+		}
+		updated := tx.Model(&model.CloudAgentPiSession{}).
+			Where("id = ? AND user_id = ? AND conversation_id = ?", session.ID, session.UserID, session.ConversationID).
+			Updates(map[string]any{"id": nextID, "header_json": string(headerJSON)})
+		if updated.Error != nil {
+			return fmt.Errorf("update Pi session %q: %w", session.ID, updated.Error)
+		}
+		if updated.RowsAffected != 1 {
+			return fmt.Errorf("Pi session %q changed while applying owner-scoped ID migration", session.ID)
+		}
+	}
+	return nil
 }
 
 func migratePrefixedIDSequenceReconcile(tx *gorm.DB) error {
@@ -209,6 +378,124 @@ func migrateChannelModelLabel(tx *gorm.DB) error {
 	return tx.Migrator().AddColumn(&model.ChannelModel{}, "ChannelLabel")
 }
 
+// legacyCloudAgentMigrationRelocations 是我们自研迁移让位到上游段之后的一次性旧行搬迁表。
+//
+// 背景：合并上游 v1.5.7 时，上游已经占用了 v24–v31（channel_model_label … tool_favorites），
+// 而我们的 cloud_agent_run_events / cloud_agent_transcript 原本就登记在 v24/v25，name 与
+// checksum 与上游完全不同。已经升到我们 v25 的库如果直接跑新二进制，
+// validateMigrationRecord 会以「数据库迁移 24 名称不一致：记录为 cloud_agent_run_events，
+// 程序期望 channel_model_label」拒绝启动。
+//
+// 处置（决定 2 + 3）：两条迁移在上游段之后重新登记为 **no-op** 迁移
+// （表与数据保留、不再读写），并把库里两条记录的旧版本号改写过来。
+// name 与 checksum 字符串保持原值，搬迁后 validateMigrationRecord 直接通过。
+// 上游后来把 v39/v40 用给技能分类与技能墓碑，这两条 no-op 与其后整块真实迁移
+// 再各上移两位，落到 v41/v42 起。
+//
+// 表里的 from 有三个来源，因为这条让位线已经挪过两次：
+//   - 24 / 25：我们自研时期的原始登记版本（老库）；
+//   - 32 / 33：合并上游 v1.5.7 时我们临时选的目标版本（跑过那一版二进制的库）；
+//   - 33 / 34：上游拿走 v32（channel_model_tags）之后我们登记的版本（跑过上一版 dev 的库）。
+//
+// 上游随后又把 v33 用给了 oauth_state_accepted_terms，于是目标再各挪一位。条目按 from 从大到小排列：
+// transcript 先从 34 搬到 35，33 上的 run_events 才有空位；否则会撞上还没搬走的 34 而被跳过。
+type legacyCloudAgentMigrationRelocation struct {
+	from     int64
+	to       int64
+	name     string
+	apply    func(*gorm.DB) error
+	checksum string
+}
+
+// legacyCloudAgentMigrationRelocations 的条目顺序即执行顺序，必须是"from 从大到小"：
+// 先腾出高版本号，再把低版本号搬进去，否则目标版本被占用会被跳过（占用检查见下）。
+// 同一个 from 上可能承载不同记录（v33 既可能是合并线的 transcript，也可能是上一版 dev 的
+// run_events），因此匹配必须同时比对 name。
+var legacyCloudAgentMigrationRelocations = []legacyCloudAgentMigrationRelocation{
+	// 当前 canary 库（schema 45）：39–45 上坐的是我们的七条（39/40 为 no-op，41–45 为真实
+	// 迁移）。上游 v39/v40 被技能分类与技能墓碑占用后，连同上游 v42/v43，Agent 块各上移到 44 起，no-op 落到 44/45。
+	{from: 45, to: 50, name: "pi_agent_orchestrator", checksum: "sha256:pi-agent-orchestrator-v45-20261002", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.AgentRuntimeInstance{})
+	}},
+	{from: 44, to: 49, name: "pi_agent_event_scheduler", checksum: "sha256:pi-agent-event-scheduler-v44-20261002", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentExecution{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{}, &model.AgentRuntimeInstance{})
+	}},
+	{from: 43, to: 48, name: "pi_agent_owner_scoped_session_ids", checksum: "sha256:pi-agent-owner-scoped-session-ids-v43-20260928", apply: migratePiAgentOwnerScopedSessionIDs},
+	{from: 42, to: 47, name: "pi_agent_conversation_sessions", checksum: "sha256:pi-agent-conversation-sessions-v42-20260927", apply: migratePiAgentConversationSessions},
+	{from: 41, to: 46, name: "pi_agent_run_leases", checksum: "sha256:pi-agent-run-leases-v41-20260926", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentExecution{})
+	}},
+	{from: 40, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 39, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// Published canary/dev schema 37: run_events at v36 and transcript at v37.
+	{from: 37, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 36, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 当前 dev 库（35/36）—— 跑过"已对齐上游 v1.5.7"那版 dev 的库就是这一形态。
+	{from: 36, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 35, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 再上一版 dev 库（34/35）—— 跑过 PR #41–#44 那版 dev 的库。
+	{from: 35, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 34, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 更早一版 dev 库（33/34）—— 跑过 PR #37–#40 那版 dev 的库。
+	{from: 34, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 33, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 上一版合并线库（32/33）。
+	{from: 33, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 32, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+	// 我们 v25 库（24/25）。
+	{from: 25, to: 45, name: "cloud_agent_transcript", checksum: "sha256:cloud-agent-transcript-v25-20260920", apply: noopCloudAgentMigration},
+	{from: 24, to: 44, name: "cloud_agent_run_events", checksum: "sha256:cloud-agent-run-events-v24-20260919", apply: noopCloudAgentMigration},
+}
+
+// noopCloudAgentMigration 是让位后的空迁移：表与数据保留（不做 DROP），但代码不再读写它们，
+// 因此这里既不建表也不改结构。全新库不会再创建这两张表；已有库保持原样。
+func noopCloudAgentMigration(*gorm.DB) error { return nil }
+
+// relocateLegacyCloudAgentMigrations 把库里遗留的让位记录改写到当前登记版本（39/40）。
+//
+// 要求：幂等、事务内、对五种起点都能跑通 ——
+//   - 全新库：schema_migrations 还不存在 / 为空 → 直接返回；
+//   - 上游库：没有这两条 name → 直接返回（upstream 的 v32/v33/v34 由它自己执行）；
+//   - 我们 v25 库：把 24→35、25→36；
+//   - 已跑过合并线临时版本的库：把 32→35、33→36；
+//   - 已跑过上一版 dev 的库（33/34）：把 33→35、34→36；
+//   - 已跑过再上一版 dev 的库（34/35）：把 34→35、35→36。
+//
+// 目标版本号若已被占用（理论上不该发生）则跳过，避免主键冲突掩盖真实问题。
+func relocateLegacyCloudAgentMigrations(db *gorm.DB) error {
+	if db == nil || !db.Migrator().HasTable(&schemaMigration{}) {
+		return nil
+	}
+	for _, item := range legacyCloudAgentMigrationRelocations {
+		var legacy schemaMigration
+		err := db.First(&legacy, "version = ? AND name = ?", item.from, item.name).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("读取待搬迁迁移记录 %d（%s）：%w", item.from, item.name, err)
+		}
+		if legacy.Checksum != item.checksum {
+			// 同名不同校验和说明这不是我们这一版记录，交给 validateMigrationRecord 报错，
+			// 不要在这里悄悄改写历史。
+			continue
+		}
+		var occupied int64
+		if err := db.Model(&schemaMigration{}).Where("version = ?", item.to).Count(&occupied).Error; err != nil {
+			return fmt.Errorf("检查目标迁移版本 %d：%w", item.to, err)
+		}
+		if occupied > 0 {
+			continue
+		}
+		if err := db.Model(&schemaMigration{}).
+			Where("version = ? AND name = ?", item.from, item.name).
+			Update("version", item.to).Error; err != nil {
+			return fmt.Errorf("搬迁迁移记录 %d → %d（%s）：%w", item.from, item.to, item.name, err)
+		}
+	}
+	return nil
+}
+
 func migrateSchemaV14(tx *gorm.DB) error {
 	if err := tx.AutoMigrate(&model.CloudAgentExecution{}); err != nil {
 		return err
@@ -270,7 +557,21 @@ func migrateChannelPresentation(tx *gorm.DB) error {
 	return nil
 }
 
+// migrationsForDatabase 返回本库实际要走的迁移 plan。
+//
+// 进任何校验之前先做一次旧行搬迁：库里的 v24/v25 若还是我们的
+// cloud_agent_run_events / cloud_agent_transcript，要先改写到 v39/v40，
+// 否则 validateMigrationRecord 会拿上游 v24（channel_model_label）跟我们库里的记录比对并拒绝启动。
 func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
+	if err := relocateLegacyCloudAgentMigrations(db); err != nil {
+		return nil, err
+	}
+	// 退役事件表的行搬运与让位搬迁同层：这里覆盖"目标表已经存在"的库
+	// （已经跑过一次新二进制的库、或上游 v28+ 且带着我们旧表的库）。
+	// 全新库与纯上游库在这里匹配不到，是 no-op。
+	if _, _, err := migrateLegacyCloudAgentEventRows(db); err != nil {
+		return nil, err
+	}
 	var applied schemaMigration
 	err := db.First(&applied, "version = ?", 6).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -489,6 +790,12 @@ func MigrateSchema(db *gorm.DB) error {
 			if err := tx.Create(&record).Error; err != nil {
 				return fmt.Errorf("记录数据库迁移 %d：%w", item.version, err)
 			}
+		}
+		// 上游事件表由 v28（agent_execution_journal）在本事务里建出来，因此
+		// "我们 v25 库"这条路径上只有在这里搬运才能看到目标表。
+		// 与 migrationsForDatabase 里那次调用一样：幂等，匹配不到就是 no-op。
+		if _, _, err := migrateLegacyCloudAgentEventRows(tx); err != nil {
+			return err
 		}
 		return RequireSchemaVersion(tx)
 	})

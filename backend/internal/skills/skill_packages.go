@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/kernel"
@@ -113,6 +114,22 @@ type skillPackageSnapshot struct {
 	contents map[string][]byte
 }
 
+type skillPackageIntegrityError struct{ error }
+
+func invalidSkillPackage(format string, args ...any) error {
+	return &skillPackageIntegrityError{fmt.Errorf(format, args...)}
+}
+
+// Only known authorization, absence and corruption failures make a frozen run
+// unrecoverable. Database/network/permission I/O errors remain retryable.
+func IsPermanentFrozenSkillError(err error) bool {
+	var integrity *skillPackageIntegrityError
+	var app *kernel.AppError
+	return errors.As(err, &integrity) || errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, os.ErrNotExist) ||
+		errors.Is(err, zip.ErrFormat) || errors.Is(err, zip.ErrChecksum) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		(errors.As(err, &app) && !app.Retryable && (app.Status == 400 || app.Status == 403 || app.Status == 404))
+}
+
 type githubSkillSpec struct {
 	Owner  string
 	Repo   string
@@ -134,7 +151,7 @@ func (s *Service) EnsureSkillPackages() error {
 			}
 			// User-installed ZIP/GitHub skills are authoritative in skill_files and
 			// must never be replaced by the legacy instruction column at startup.
-			if skill.Source == skillSourceUser {
+			if skill.Source == skillSourceUser || skill.SourceType == "builtin" {
 				continue
 			}
 			if strings.TrimSpace(skill.Instruction) == "" {
@@ -469,6 +486,63 @@ func (s *Service) SkillPackageFiles(userID string, skillID string) ([]SkillPacka
 	return items, nil
 }
 
+// SkillPackageFilesAtVersion reads an explicitly frozen version. It never
+// consults Skill.CurrentVersionID, so an update cannot change an in-flight run.
+func (s *Service) SkillPackageFilesAtVersion(userID, skillID, versionID, contentHash string) ([]SkillPackageFileItem, error) {
+	skill, err := s.installedSkillForFrozenRead(userID, skillID)
+	if err != nil {
+		return nil, err
+	}
+	return s.skillPackageFilesAtFrozenVersion(skill, versionID, contentHash)
+}
+
+// GlobalSkillPackageFilesAtVersion is for trusted server-frozen default selections,
+// never a replacement for user installation authorization on public HTTP reads.
+func (s *Service) GlobalSkillPackageFilesAtVersion(skillID, versionID, contentHash string) ([]SkillPackageFileItem, error) {
+	skill, err := s.publicSkillForFrozenRead(skillID)
+	if err != nil {
+		return nil, err
+	}
+	return s.skillPackageFilesAtFrozenVersion(skill, versionID, contentHash)
+}
+
+func (s *Service) publicSkillForFrozenRead(skillID string) (*model.Skill, error) {
+	skill, err := s.repo.Skill(skillID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, kernel.AgentSkillDefaultsInvalid("默认技能 "+skillID+" 不存在或已停用", map[string]any{"skillId": skillID})
+	}
+	if err != nil {
+		return nil, err
+	}
+	if skill.IsPrivate {
+		return nil, kernel.AgentSkillDefaultsInvalid("默认技能 "+skillID+" 已变为私有技能", map[string]any{"skillId": skillID})
+	}
+	return skill, nil
+}
+
+func (s *Service) skillPackageFilesAtFrozenVersion(skill *model.Skill, versionID, contentHash string) ([]SkillPackageFileItem, error) {
+	version, err := s.repo.SkillVersion(versionID)
+	if err != nil {
+		return nil, err
+	}
+	if version.SkillID != skill.ID || strings.TrimSpace(contentHash) == "" || version.ContentHash != contentHash {
+		return nil, kernel.BadAuthRequest("技能冻结版本不匹配")
+	}
+	files, err := s.repo.SkillFiles(version.ID)
+	if err != nil {
+		return nil, err
+	}
+	frozen := &model.Skill{ID: skill.ID, ContentHash: version.ContentHash, CurrentVersionID: version.ID, FileCount: version.FileCount, TotalBytes: version.TotalBytes}
+	if err := validateSkillPackageSnapshot(s, frozen, version, files); err != nil {
+		return nil, err
+	}
+	items := make([]SkillPackageFileItem, 0, len(files))
+	for _, file := range files {
+		items = append(items, skillFileItem(file))
+	}
+	return items, nil
+}
+
 func (s *Service) SkillPackageFile(userID string, skillID string, filePath string) (*SkillPackageFileContent, error) {
 	_, file, content, err := s.readSkillPackageSnapshotFile(userID, skillID, filePath)
 	if err != nil {
@@ -482,6 +556,97 @@ func (s *Service) SkillPackageFile(userID string, skillID string, filePath strin
 		return nil, kernel.BadAuthRequest("文件超过 512KB，请下载后查看")
 	}
 	return &SkillPackageFileContent{File: skillFileItem(*file), Content: string(content)}, nil
+}
+
+// SkillPackageFileAtVersion is the content counterpart of
+// SkillPackageFilesAtVersion and performs the same frozen-version checks.
+func (s *Service) SkillPackageFileAtVersion(userID, skillID, versionID, contentHash, filePath string) (*SkillPackageFileContent, error) {
+	skill, err := s.installedSkillForFrozenRead(userID, skillID)
+	if err != nil {
+		return nil, err
+	}
+	return s.skillPackageFileAtFrozenVersion(skill, versionID, contentHash, filePath)
+}
+
+func (s *Service) GlobalSkillPackageFileAtVersion(skillID, versionID, contentHash, filePath string) (*SkillPackageFileContent, error) {
+	skill, err := s.publicSkillForFrozenRead(skillID)
+	if err != nil {
+		return nil, err
+	}
+	return s.skillPackageFileAtFrozenVersion(skill, versionID, contentHash, filePath)
+}
+
+func (s *Service) skillPackageFileAtFrozenVersion(skill *model.Skill, versionID, contentHash, filePath string) (*SkillPackageFileContent, error) {
+	version, err := s.repo.SkillVersion(versionID)
+	if err != nil {
+		return nil, err
+	}
+	if version.SkillID != skill.ID || strings.TrimSpace(contentHash) == "" || version.ContentHash != contentHash {
+		return nil, kernel.BadAuthRequest("技能冻结版本不匹配")
+	}
+	files, err := s.repo.SkillFiles(version.ID)
+	if err != nil {
+		return nil, err
+	}
+	frozen := &model.Skill{ID: skill.ID, ContentHash: version.ContentHash, CurrentVersionID: version.ID, FileCount: version.FileCount, TotalBytes: version.TotalBytes}
+	if err := validateSkillPackageSnapshot(s, frozen, version, files); err != nil {
+		return nil, err
+	}
+	path, err := normalizeSkillPath(filePath)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		if file.Path != path {
+			continue
+		}
+		content, err := s.readSkillArchiveEntry(version, path)
+		if err != nil {
+			return nil, err
+		}
+		if !isPreviewText(file.MimeType, file.Path) || !isFrozenSkillText(content) {
+			return &SkillPackageFileContent{File: skillFileItem(file), Binary: true}, nil
+		}
+		if len(content) > maxSkillPreviewBytes {
+			return nil, kernel.BadAuthRequest("文件超过 512KB，请下载后查看")
+		}
+		return &SkillPackageFileContent{File: skillFileItem(file), Content: string(content)}, nil
+	}
+	return nil, kernel.BadAuthRequest("技能文件不存在")
+}
+
+func isFrozenSkillText(content []byte) bool {
+	if !utf8.Valid(content) {
+		return false
+	}
+	for _, char := range string(content) {
+		if unicode.IsControl(char) && char != '\n' && char != '\r' && char != '\t' {
+			return false
+		}
+	}
+	return true
+}
+
+// Frozen content does not freeze authorization: uninstall/disable applies to
+// subsequent reads and worker restarts without changing the selected version.
+func (s *Service) installedSkillForFrozenRead(userID, skillID string) (*model.Skill, error) {
+	skill, err := s.visibleSkill(userID, skillID)
+	if err != nil {
+		return nil, err
+	}
+	if skill.Status != 1 {
+		return nil, kernel.Forbidden("技能已停用")
+	}
+	if skill.OwnerID != userID {
+		state, err := s.skillState(userID, skillID)
+		if err != nil {
+			return nil, err
+		}
+		if !state.Added {
+			return nil, kernel.Forbidden("技能已从用户技能库移除")
+		}
+	}
+	return skill, nil
 }
 
 func (s *Service) SkillPackageRawFile(userID string, skillID string, filePath string) ([]byte, string, string, error) {
@@ -661,19 +826,19 @@ func (s *Service) syncSkillPackageMetadata(skill *model.Skill, version *model.Sk
 
 func validateSkillPackageSnapshot(s *Service, skill *model.Skill, version *model.SkillVersion, files []model.SkillFile) error {
 	if len(files) == 0 || version.FileCount != len(files) || version.TotalBytes < 0 {
-		return fmt.Errorf("技能 %s 文件元数据不完整", skill.ID)
+		return invalidSkillPackage("技能 %s 文件元数据不完整", skill.ID)
 	}
 	if skill.ContentHash != "" && skill.ContentHash != version.ContentHash {
-		return fmt.Errorf("技能 %s 内容摘要与当前版本不一致", skill.ID)
+		return invalidSkillPackage("技能 %s 内容摘要与当前版本不一致", skill.ID)
 	}
 	if skill.FileCount != 0 && skill.FileCount != len(files) {
-		return fmt.Errorf("技能 %s 文件数量与当前版本不一致", skill.ID)
+		return invalidSkillPackage("技能 %s 文件数量与当前版本不一致", skill.ID)
 	}
 	if skill.TotalBytes != 0 && skill.TotalBytes != version.TotalBytes {
-		return fmt.Errorf("技能 %s 文件大小与当前版本不一致", skill.ID)
+		return invalidSkillPackage("技能 %s 文件大小与当前版本不一致", skill.ID)
 	}
 	if version.PackageKey == "" {
-		return fmt.Errorf("技能 %s 当前版本缺少 ZIP 包", skill.ID)
+		return invalidSkillPackage("技能 %s 当前版本缺少 ZIP 包", skill.ID)
 	}
 	contents, err := readSkillArchiveEntries(s.dataDir, version.PackageKey)
 	if err != nil {
@@ -683,34 +848,34 @@ func validateSkillPackageSnapshot(s *Service, skill *model.Skill, version *model
 	var total int64
 	for _, file := range files {
 		if strings.TrimSpace(file.Path) == "" {
-			return fmt.Errorf("技能 %s 文件清单存在空路径", skill.ID)
+			return invalidSkillPackage("技能 %s 文件清单存在空路径", skill.ID)
 		}
 		if version.EntryPath != "" && version.EntryPath != "SKILL.md" {
-			return fmt.Errorf("技能 %s 当前入口不是 SKILL.md", skill.ID)
+			return invalidSkillPackage("技能 %s 当前入口不是 SKILL.md", skill.ID)
 		}
 		if _, exists := byPath[file.Path]; exists {
-			return fmt.Errorf("技能 %s 文件清单包含重复路径 %s", skill.ID, file.Path)
+			return invalidSkillPackage("技能 %s 文件清单包含重复路径 %s", skill.ID, file.Path)
 		}
 		byPath[file.Path] = file
 		content, ok := contents[file.Path]
 		if !ok {
-			return fmt.Errorf("技能 %s ZIP 缺少数据库文件 %s", skill.ID, file.Path)
+			return invalidSkillPackage("技能 %s ZIP 缺少数据库文件 %s", skill.ID, file.Path)
 		}
 		digest := sha256.Sum256(content)
 		if file.Size != int64(len(content)) || file.SHA256 != hex.EncodeToString(digest[:]) {
-			return fmt.Errorf("技能 %s 文件 %s 元数据与 ZIP 不一致", skill.ID, file.Path)
+			return invalidSkillPackage("技能 %s 文件 %s 元数据与 ZIP 不一致", skill.ID, file.Path)
 		}
 		total += int64(len(content))
 	}
 	if _, ok := byPath["SKILL.md"]; !ok {
-		return fmt.Errorf("技能 %s 文件清单缺少 SKILL.md", skill.ID)
+		return invalidSkillPackage("技能 %s 文件清单缺少 SKILL.md", skill.ID)
 	}
 	if len(contents) != len(files) || total != version.TotalBytes {
-		return fmt.Errorf("技能 %s ZIP 文件数量或大小与版本元数据不一致", skill.ID)
+		return invalidSkillPackage("技能 %s ZIP 文件数量或大小与版本元数据不一致", skill.ID)
 	}
 	hash, _ := contentHashAndSize(contents)
 	if version.ContentHash == "" || hash != version.ContentHash {
-		return fmt.Errorf("技能 %s ZIP 内容摘要与版本元数据不一致", skill.ID)
+		return invalidSkillPackage("技能 %s ZIP 内容摘要与版本元数据不一致", skill.ID)
 	}
 	return nil
 }
@@ -1053,6 +1218,11 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 	metadata.Description = truncateSkillMetadata(metadata.Description, 500)
 	metadata.Version = truncateSkillMetadata(metadata.Version, 64)
 	return metadata
+}
+
+func SkillEntryMetadata(content string) (name, description string) {
+	metadata := parseSkillPackageMetadata([]byte(content))
+	return metadata.Name, metadata.Description
 }
 
 // truncateSkillMetadata keeps the result within the validation limit. The

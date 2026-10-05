@@ -1,9 +1,12 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/model"
 )
 
 func TestValidateImageTaskRejectsOversizedGrokPromptByUTF8Bytes(t *testing.T) {
@@ -411,5 +414,174 @@ func TestValidateVideoTaskRequiresDeclaredMinimumImages(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "至少需要 1 张参考图") {
 		t.Fatalf("validateVideoTask() error = %v", err)
+	}
+}
+
+// 0 是"未声明"，不是"默认 16384/128000"：任何 normalize 都不得把它改写成猜测值。
+func TestTextCapabilityReserveIsDerivedWithoutChangingModelOutput(t *testing.T) {
+	profile := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
+	profile.Text.ContextWindowTokens = 128_000
+	profile.Text.MaxOutputTokens = 8_192
+	profile.Text.ReservedOutputTokens = 64_000
+	normalized, err := NormalizeModelCapabilityConfig("text", string(model.ChannelInterfaceChatCompletion), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Text.ReservedOutputTokens != 8_192 || normalized.Text.MaxOutputTokens != 8_192 {
+		t.Fatalf("legacy reserve changed the model ceiling: %+v", normalized.Text)
+	}
+	profile.Text.MaxOutputTokens = 0
+	normalized, err = NormalizeModelCapabilityConfig("text", string(model.ChannelInterfaceChatCompletion), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Text.ReservedOutputTokens != 16_000 || normalized.Text.MaxOutputTokens != 0 {
+		t.Fatalf("window fallback must not invent model capability: %+v", normalized.Text)
+	}
+}
+
+func TestTextCapabilityZeroMeansUndeclared(t *testing.T) {
+	value := &TextCapabilityConfig{
+		ContextWindowTokens:  0,
+		ReservedOutputTokens: 0,
+		MaxOutputTokens:      0,
+		References:           TextReferenceConfig{PromptMaxChars: 1000},
+	}
+	if err := validateTextCapabilityConfig(value); err != nil {
+		t.Fatalf("0 表示未知/未声明，必须合法: %v", err)
+	}
+	config := ModelCapabilityConfig{Version: 1, Text: value}
+	normalized, err := NormalizeModelCapabilityConfigForModel("text", "chat-completion", "test-model", &config)
+	if err != nil {
+		t.Fatalf("normalize 失败: %v", err)
+	}
+	if normalized == nil || normalized.Text == nil {
+		t.Fatal("normalize 丢掉了 text 能力")
+	}
+	if normalized.Text.ContextWindowTokens != 0 || normalized.Text.ReservedOutputTokens != 0 || normalized.Text.MaxOutputTokens != 0 {
+		t.Fatalf("normalize 把 0 改写成猜测值：%+v", normalized.Text)
+	}
+}
+
+func TestTextCapabilityOutputLimitValidation(t *testing.T) {
+	base := TextCapabilityConfig{ContextWindowTokens: 128000, References: TextReferenceConfig{PromptMaxChars: 1000}}
+	with := func(maxOutput int) *TextCapabilityConfig {
+		value := base
+		value.MaxOutputTokens = maxOutput
+		return &value
+	}
+	if err := validateTextCapabilityConfig(with(16384)); err != nil {
+		t.Fatalf("合法输出上限被拒: %v", err)
+	}
+	if err := validateTextCapabilityConfig(with(0)); err != nil {
+		t.Fatalf("未声明的输出上限必须合法: %v", err)
+	}
+	if err := validateTextCapabilityConfig(with(-1)); err == nil {
+		t.Fatal("负数输出上限应当被拒")
+	}
+	if err := validateTextCapabilityConfig(with(128000)); err == nil {
+		t.Fatal("输出上限不小于上下文窗口时应当被拒")
+	}
+	unknownWindow := with(16384)
+	unknownWindow.ContextWindowTokens = 0
+	if err := validateTextCapabilityConfig(unknownWindow); err != nil {
+		t.Fatalf("窗口未知时不能因窗口关系拒绝输出上限: %v", err)
+	}
+}
+
+func TestTextVisionBatchBudgetValidationAndRoundTrip(t *testing.T) {
+	vision := true
+	value := &TextCapabilityConfig{
+		VisionSupported:      &vision,
+		VisionMaxBatchImages: 8,
+		VisionMaxBatchCost:   16,
+		References:           TextReferenceConfig{PromptMaxChars: 1000},
+	}
+	if err := validateTextCapabilityConfig(value); err != nil {
+		t.Fatalf("valid vision batch budget rejected: %v", err)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded TextCapabilityConfig
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.VisionMaxBatchImages != 8 || decoded.VisionMaxBatchCost != 16 {
+		t.Fatalf("vision batch budget lost in round trip: %#v", decoded)
+	}
+	for _, invalid := range []TextCapabilityConfig{
+		{VisionMaxBatchImages: -1, References: TextReferenceConfig{PromptMaxChars: 1000}},
+		{VisionMaxBatchImages: 101, References: TextReferenceConfig{PromptMaxChars: 1000}},
+		{VisionMaxBatchCost: -1, References: TextReferenceConfig{PromptMaxChars: 1000}},
+	} {
+		if err := validateTextCapabilityConfig(&invalid); err == nil {
+			t.Fatalf("invalid vision batch budget accepted: %#v", invalid)
+		}
+	}
+}
+
+// TestNormalizeTextCapabilityPreservesThinkingMode pins the contract behind the
+// reasoning-mode selector in the canvas Agent panel.
+//
+// The panel shows the selector only when the channel model declares
+// `text.thinking === true` (`canvas-cloud-agent-panel.tsx` `reasoningSupported`).
+// Before this field existed in Go, the flag was never persisted or returned, so
+// the selector was hidden for every model regardless of real upstream support.
+// The default must stay "undeclared" (nil), never a guessed true: sending
+// reasoning parameters to an upstream that does not support them is a failure.
+func TestNormalizeTextCapabilityPreservesThinkingMode(t *testing.T) {
+	declared := true
+	streaming := true
+	base := func() *ModelCapabilityConfig {
+		return &ModelCapabilityConfig{Version: 1, Text: &TextCapabilityConfig{
+			Streaming:  &streaming,
+			Thinking:   &declared,
+			References: TextReferenceConfig{PromptMaxChars: 32000},
+		}}
+	}
+
+	normalized, err := NormalizeModelCapabilityConfigForModel("text", string(model.ChannelInterfaceChatCompletion), "reasoning-model", base())
+	if err != nil {
+		t.Fatalf("declared thinking mode rejected: %v", err)
+	}
+	if normalized.Text.Thinking == nil || !*normalized.Text.Thinking {
+		t.Fatalf("thinking mode was dropped by normalization: %#v", normalized.Text)
+	}
+
+	// JSON round-trip is what the admin API, the channel-model catalog and the
+	// persisted capability_config_json actually do.
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"thinking":true`) {
+		t.Fatalf("thinking mode missing from persisted JSON: %s", encoded)
+	}
+	var decoded ModelCapabilityConfig
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Text == nil || decoded.Text.Thinking == nil || !*decoded.Text.Thinking {
+		t.Fatalf("thinking mode lost on decode: %#v", decoded.Text)
+	}
+
+	// Undeclared stays undeclared: no guessing, so the panel keeps the selector hidden.
+	undeclared := base()
+	undeclared.Text.Thinking = nil
+	normalizedUndeclared, err := NormalizeModelCapabilityConfigForModel("text", string(model.ChannelInterfaceChatCompletion), "plain-model", undeclared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalizedUndeclared.Text.Thinking != nil {
+		t.Fatalf("undeclared thinking must stay nil, got %#v", *normalizedUndeclared.Text.Thinking)
+	}
+	plain, err := json.Marshal(normalizedUndeclared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), `"thinking"`) {
+		t.Fatalf("undeclared thinking must not be serialized: %s", plain)
 	}
 }

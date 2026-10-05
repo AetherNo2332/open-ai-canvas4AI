@@ -5,6 +5,18 @@ description: 在宿主机启动影策前后端开发服务
 
 # 本地开发
 
+## 本地 Compose 与 Pi Worker
+
+画布 Cloud Agent 联调需要 backend、web 和 Pi worker 一起运行。仅启动 `docker-compose.local.yml` 不会添加 worker；叠加基础编排并启用 `pi` profile：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile pi up -d --build
+```
+
+在本地 `.env` 配置随机的 `CANVAS_AGENT_INTERNAL_TOKEN`，backend 与 worker 必须一致；不要把真实值提交到仓库或截图。Web 使用 `http://localhost:3000`，backend 和 worker 的内部协议保留在 Compose 网络。沿用已有部署时使用相同 project name（`-p`）以保留原数据卷，先确认端口与现有容器。模型渠道仍由登录后的后台配置。
+
+原生 Skill 验收需从真实画布提交一轮并观察 `native_skill_enabled` / `native_skill_read` SSE、会话恢复和冻结版本读取；容器 healthy 或首页打开只说明入口可用。
+
 ## Compose 公网资源地址
 
 `docker-compose.yml`、`docker-compose.dev.yml`、`docker-compose.local.yml`、`docker-compose.server.yml` 和 `docker-compose.deploy.yml` 均将 `.env` 中的 `CANVAS_PUBLIC_BASE_URL` 传入后端。使用本地文件存储且上游模型需要读取参考素材时，将它设为上游能访问的 HTTPS 站点根地址（例如 `https://canvas.example.com`，不要附加 `/api`）；存储设置中的公网访问地址优先于该环境变量。

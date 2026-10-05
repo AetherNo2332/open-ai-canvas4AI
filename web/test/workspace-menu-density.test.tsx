@@ -49,7 +49,7 @@ test("real collection toolbar supplies filled selects without changing their lab
 });
 
 test("collection select focus uses a thin keyboard ring, not a persistent pointer outline", () => {
-    const css = readFileSync(new URL("../src/styles/workspace-product.css", import.meta.url), "utf8");
+    const css = readFileSync(new URL("../src/styles/workspace-product.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     const toolbar = readFileSync(new URL("../src/components/layout/collection-toolbar.tsx", import.meta.url), "utf8");
     expect(css).toContain(".collection-toolbar .ant-select {\n        outline: none !important;");
     expect(css).toContain('[data-input-modality="keyboard"] .ant-select:not(.ant-select-disabled):focus-within');
@@ -72,7 +72,7 @@ test("workspace menu tokens are shadow-free and use theme-aware surfaces", () =>
 test("real grid consumes density rather than the old fixed column calculation", () => {
     const page = readFileSync(new URL("../src/pages/assets/index.tsx", import.meta.url), "utf8");
     const css = readFileSync(new URL("../src/styles/workspace-product.css", import.meta.url), "utf8");
-    const globals = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8");
+    const globals = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     expect(page).toContain('"--collection-grid-min-width": `${assetGridCardMinWidth[gridDensity]}px`');
     expect(css).toContain("minmax(min(100%, var(--collection-grid-min-width, 224px)), 1fr)");
     expect(globals).not.toContain("--assets-grid-columns");
@@ -81,7 +81,7 @@ test("real grid consumes density rather than the old fixed column calculation", 
 
 test("menu surfaces are explicitly scoped and old account inner overrides are removed", () => {
     const css = readFileSync(new URL("../src/styles/workspace-menus.css", import.meta.url), "utf8");
-    const globals = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8");
+    const globals = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     expect(css).toContain("@layer utilities");
     expect(css).toContain(".workspace-account-popover .ant-popover-container");
     expect(css).toContain("border: 0 !important");
@@ -95,9 +95,18 @@ test("menu surfaces are explicitly scoped and old account inner overrides are re
 
 test("shared single-select popup uses a borderless surface instead of a bright focus frame", () => {
     const select = readFileSync(new URL("../src/components/ui/base/select/select.tsx", import.meta.url), "utf8");
+    const globals = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+    // 合并取舍：上游 8a691f76「统一控件 - 收敛下拉选择与按钮输入交互样式」把下拉的描边、表面和焦点
+    // 收敛成 .ant-select.app-unified-select：select.tsx 只负责统一 class 与 data-input-modality，
+    // 视觉规则集中在 globals.css。旧断言的两段 Tailwind 类（rounded-[...] border-0 bg-surface-strong
+    // 与 focus-visible:ring-*）在两侧源码里都已不存在，这里改断言新契约，"无描边表面 + 不出现高亮焦点框"
+    // 的意图不变。
+    expect(select).toContain('className={cn("app-unified-select", `app-unified-select--${appearance}`, className)}');
+    expect(select).toContain("data-input-modality={inputModality}");
+    expect(globals).toContain(".ant-select.app-unified-select {\n    --unified-select-surface:");
+    expect(select).not.toContain("focus-visible:ring");
     expect(select).toContain("<AntSelect");
     expect(select).toContain('variant={variant ?? "filled"}');
-    expect(select).toContain("data-input-modality={inputModality}");
     expect(select).toContain('setInputModality("keyboard")');
     expect(select).not.toContain("setPopoverWidth(width + 2)");
 });

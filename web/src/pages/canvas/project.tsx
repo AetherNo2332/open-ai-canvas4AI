@@ -2825,13 +2825,6 @@ function InfiniteCanvasPage() {
                                     />
                                 ) : null}
                             </div>
-
-                            <div className={versions.open ? "hidden" : "contents"}>
-                            <CanvasCloudAgentPanel canvasId={projectId} domainProjectId={currentProject?.projectId} nodeCount={nodes.length} selectedNodeIds={Array.from(selectedNodeIds)} references={agentMentionReferences} prefillPrompt={agentPrefillPrompt} open={assistantOpen} onOpen={openAgent} onCollapse={closeAgent} onFocusNode={(nodeId) => {
-                                if (!nodesRef.current.some((node) => node.id === nodeId)) { message.info("该节点已删除或尚未同步到画布"); return; }
-                                focusCanvasNode(nodeId);
-                            }} />
-                            </div>
                         </div>
 
                         {angleNode?.metadata?.content ? (
@@ -3364,6 +3357,12 @@ function InfiniteCanvasPage() {
                             onInsertFolder={projectAssetScope === "canvas" ? handleProjectFolderInsert : undefined}
                         />
                     </section>
+                    <div className={versions.open ? "hidden" : "contents"}>
+                        <CanvasCloudAgentPanel canvasId={projectId} domainProjectId={currentProject?.projectId} nodeCount={nodes.length} selectedNodeIds={Array.from(selectedNodeIds)} references={agentMentionReferences} prefillPrompt={agentPrefillPrompt} open={assistantOpen} onOpen={openAgent} onCollapse={closeAgent} onFocusNode={(nodeId) => {
+                            if (!nodesRef.current.some((node) => node.id === nodeId)) { message.info("该节点已删除或尚未同步到画布"); return; }
+                            focusCanvasNode(nodeId);
+                        }} />
+                    </div>
                     {versions.preview ? <CanvasVersionPreview key={versions.preview.key} preview={versions.preview} onReturn={versions.returnToCurrent} onShowVersions={versions.show} /> : null}
                     </div>
                 </CanvasOverlayLayerProvider>

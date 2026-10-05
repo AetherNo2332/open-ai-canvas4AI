@@ -184,9 +184,10 @@ func TestRuntimePolicyBackfillsAgentStepLimitsForLegacyJSON(t *testing.T) {
 // 单步墙钟到点不再把整轮判死：关思考重试一次；重试仍超时才失败，且失败原因可读。
 func TestCloudAgentStepTimeoutRetriesThenFailsWithReadableReason(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
-	failStepTask(t, db, root.ID)
+	_, initial := agentStartPiModelStep(t, s, root.ID)
+	failStepTask(t, db, initial.ActiveTaskID)
 
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, state := agentInterjectionState(t, s, root.ID)
@@ -199,9 +200,18 @@ func TestCloudAgentStepTimeoutRetriesThenFailsWithReadableReason(t *testing.T) {
 	if !agentHasEventWithReason(state, "model_failure_recovered", "step_timeout_retried") {
 		t.Fatal("缺少可读的自动重试事件")
 	}
+	// 单步边界来自策略，并且进了压力载荷：界面要能显示"这一条线在管事"。
+	// 注意 StepLimits 是每次推进重算的瞬时字段（不进状态 JSON），可观测的口径就是事件载荷。
+	// 状态是 JSON 往返过的，事件载荷里的数字是 float64。
+	if value, ok := agentEventValue(state, "context_pressure", "stepMaxOutputTokens"); !ok || value != float64(platform.DefaultRuntimeAgentStepOutputTokens) {
+		t.Fatalf("压力事件里的单步输出上限 = %v（ok=%v）", value, ok)
+	}
+	if value, ok := agentEventValue(state, "context_pressure", "stepTimeoutSeconds"); !ok || value != float64(480) {
+		t.Fatalf("压力事件里的单步墙钟 = %v 秒（ok=%v）", value, ok)
+	}
 
 	// 重试那一步：必须真的关掉思考，并且带着生效的输出上限。
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	_, retried := agentInterjectionState(t, s, root.ID)
@@ -222,7 +232,7 @@ func TestCloudAgentStepTimeoutRetriesThenFailsWithReadableReason(t *testing.T) {
 
 	// 重试也超时 → 整轮失败，原因指向可配置的那条线。
 	failStepTask(t, db, retried.ActiveTaskID)
-	if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, state = agentInterjectionState(t, s, root.ID)
@@ -239,6 +249,10 @@ func TestCloudAgentStepTimeoutRetriesThenFailsWithReadableReason(t *testing.T) {
 
 func failStepTask(t *testing.T, db *gorm.DB, taskID string) {
 	t.Helper()
+	var task model.Task
+	if err := db.First(&task, "id = ?", taskID).Error; err != nil || task.Operation != cloudAgentStepOperation {
+		t.Fatalf("timeout requires an admitted Pi model task: task=%s operation=%s err=%v", taskID, task.Operation, err)
+	}
 	if err := db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{
 		"status": model.TaskStatusFailed,
 		"error":  cloudAgentStepTimeoutError + "，已中止这一步",

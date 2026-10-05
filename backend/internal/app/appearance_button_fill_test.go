@@ -66,11 +66,8 @@ func TestAppearanceLegacyButtonFills(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, skin := range migrated {
-		expected := "solid"
-		if skin.ID == "classic" {
-			expected = "gradient"
-		}
-		if skin.Tokens.Buttons.Light.Mode != expected || skin.Tokens.Buttons.Dark.Mode != expected {
+		// 内置皮肤一律实心：单一品牌主色，不再有渐变分支。
+		if skin.Tokens.Buttons.Light.Mode != "solid" || skin.Tokens.Buttons.Dark.Mode != "solid" {
 			t.Fatalf("wrong fill for %s", skin.ID)
 		}
 	}
@@ -106,8 +103,9 @@ func TestAppearanceReadsLegacyButtonFillsByStoredIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Public.ActiveSkin.Tokens.Buttons.Light.Mode != "solid" || loaded.SkinThemes[1].Tokens.Buttons.Light.Mode != "gradient" {
-		t.Fatal("legacy fields inherited another theme's fill")
+	// 缺失 buttons 的旧记录必须按各自身份补成实心，而不是沿用别的主题。
+	if loaded.Public.ActiveSkin.Tokens.Buttons.Light.Mode != "solid" || loaded.SkinThemes[1].Tokens.Buttons.Light.Mode != "solid" {
+		t.Fatal("legacy records were not backfilled with a solid fill")
 	}
 	if err := validateAppearanceSkinThemes(loaded.SkinThemes, custom.ID); err != nil {
 		t.Fatal(err)

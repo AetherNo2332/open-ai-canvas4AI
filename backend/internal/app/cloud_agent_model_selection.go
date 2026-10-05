@@ -10,7 +10,7 @@ import (
 
 // Keep cross-field validation server-side rather than adding provider-specific
 // root schema combinators. The same contract is advertised by both media tools.
-const cloudAgentModelSelectionDescription = "模型选择：复制 model_list 的 selection 到顶层。完全省略模型字段时，仅使用当前项目对应能力的可用默认模型。显式选择必须提供 logicalModelId，或同时提供 channelId 与 channelModelKey，二者互斥。未使用字段省略或传空字符串，不得传 null/空白；无可用默认、混用或不完整均拒绝，不会随机选模。"
+var cloudAgentModelSelectionDescription = cloudAgentToolText("model_selection")
 
 // applyCloudAgentProjectDefaultModel only fills a selection when the Agent did
 // not send any model-selection field at all. An explicitly empty, partial, or
@@ -80,7 +80,7 @@ func cloudAgentModelSelectionProvided(raw string) bool {
 	if err := json.Unmarshal([]byte(raw), &fields); err != nil || fields == nil {
 		return true
 	}
-	for _, field := range []string{"logicalModelId", "channelId", "channelModelKey"} {
+	for _, field := range []string{"selectionId", "logicalModelId", "channelId", "channelModelKey"} {
 		if _, ok := fields[field]; ok {
 			return true
 		}
@@ -101,14 +101,22 @@ func cloudAgentModeLabel(mode string) string {
 	return "图片"
 }
 
-func validateCloudAgentModelSelection(raw string, a cloudAgentMediaArgs) error {
+// validateCloudAgentModelSelection 校验并**归一化**模型选择：优先解开 selectionId，
+// 否则沿用旧的三字段契约。归一化后下游代码只看到三个字段，不需要知道凭证存在。
+func (s *Service) validateCloudAgentModelSelection(userID, raw string, a *cloudAgentMediaArgs) error {
 	// Go's JSON decoder accepts null for string fields; the tool contract does
 	// not. Check presence/type before interpreting the decoded selection.
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
 		return cloudAgentJSONArgumentError(err)
 	}
-	for _, field := range []string{"logicalModelId", "channelId", "channelModelKey"} {
+	if value, exists := fields["selectionId"]; exists {
+		var text *string
+		if err := json.Unmarshal(value, &text); err != nil || text == nil {
+			return cloudAgentFieldError("selectionId", "type_mismatch", "selectionId 必须是字符串，不能为 null")
+		}
+	}
+	for _, field := range []string{"selectionId", "logicalModelId", "channelId", "channelModelKey"} {
 		if value, exists := fields[field]; exists {
 			var text *string
 			if err := json.Unmarshal(value, &text); err != nil || text == nil {
@@ -118,6 +126,17 @@ func validateCloudAgentModelSelection(raw string, a cloudAgentMediaArgs) error {
 				return cloudAgentFieldError(field, "invalid_value", "模型选择字段不能仅包含空白字符")
 			}
 		}
+	}
+	if a.SelectionID != "" {
+		if a.LogicalModelID != "" || a.ChannelID != "" || a.ChannelModelKey != "" {
+			return cloudAgentFieldError("selectionId", "mutually_exclusive", "模型选择冲突：selectionId 与 logicalModelId/channelId/channelModelKey 不得混用，只能给一种")
+		}
+		selection, err := s.resolveCloudAgentSelectionID(userID, a.SelectionID)
+		if err != nil {
+			return err
+		}
+		a.LogicalModelID, a.ChannelID, a.ChannelModelKey = selection.LogicalModelID, selection.ChannelID, selection.ChannelModelKey
+		return nil
 	}
 	switch {
 	case a.LogicalModelID != "" && (a.ChannelID != "" || a.ChannelModelKey != ""):

@@ -1,0 +1,73 @@
+---
+title: Canary 多会话事件调度
+description: 独立会话、短时调度槽、持久化唤醒和隔离部署
+---
+
+# Canary 多会话事件调度
+
+基于 canary `8ca7b95e`。Pi SDK 保持 `0.87.1`，会话格式保持 3；内部协议升级为 `canvas-pi-wire/v3`。必须同时发布 Go 和 Agent，旧执行器会收到 HTTP 426，不能混跑。
+
+## Agent（beta）配置与管理
+
+管理员从“平台配置 → Agent（beta）”管理调度配置、执行器状态和用户记忆。旧 `/admin/agent-lessons` 页面跳转到 `/admin/settings/agent#memory`，用户个人记忆的批准权限不变。Go Worker 与渠道并发继续在“资源与策略”配置。
+
+默认每个执行器 4 个短调度槽、64 个驻留会话；同一用户的同一画布跨执行器最多驻留 16 个会话。画布配额与租约在领取事务中校验，成功领取后推进持久化轮转序号，画布内部 FIFO。达到配额仍需等待，等待不占短调度槽。
+
+服务端部署初始值由 `CANVAS_AGENT_CONCURRENCY`、`CANVAS_AGENT_MAX_SESSIONS`、`CANVAS_AGENT_MAX_SESSIONS_PER_CANVAS` 配置；管理员保存后数据库设置优先。`GET/PUT /api/admin/settings/agent-scheduler` 使用 revision 校验避免覆盖写；`GET /api/admin/settings/agent-scheduler/status` 返回脱敏执行器统计。配置保存、审计与发件箱事件同事务提交，执行器通过内部 `/internal-agent/config`、SSE 配置广播及 5 秒恢复扫描应用配置。
+
+缩容不取消已运行步骤或会话；执行器停止新增超额准入并自然排空。页面区分实际驻留和领取预留、在线/离线、缩容状态、已保存版本和已应用版本。心跳超过 45 秒标记离线，状态读取失败不会显示虚假零值。准入计数器是共享串行事务，极高领取频率下可能成为数据库竞争点。
+
+## 生命周期与容量
+
+Go 保留权限、预算、模型任务、审批、画布事务与持久化职责。Agent 注册表按用户、画布、Pi session 管理独立异步生命周期；runId 表示本轮执行。一个会话只允许一个活动运行，终态立即从驻留注册表清理，再次发送消息时恢复持久化 Pi 历史。
+
+`CANVAS_AGENT_CONCURRENCY=4` 控制短时 HTTP 准入槽，按用户和画布轮转队列。`AgentSession.prompt()` 不在槽内等待。等待模型、工具、审批和 Go 压缩操作时保存阶段与引用、释放槽，并保留会话租约。模型任务并发单独受 Go worker、渠道和运行时策略限制；等待审批不占模型额度。
+
+`CANVAS_AGENT_MAX_SESSIONS=64` 为单进程驻留上限。达到上限时暂停领取，容量释放事件或 5 秒恢复扫描重新唤醒。容量心跳每 15 秒保存，满载实例仍存活时未领取看门狗跳过容量等待；真正失联仍按租约和看门狗处理。容量等候记录显示 `waiting_resource` 和容量原因。
+
+租约有效期 45 秒、每 15 秒续租。执行请求携带 owner 与 session epoch；旧 epoch 不能提交阶段、消息、工具推进、续租或释放。工具执行租约独立于会话租约，完成提交必须匹配 owner 且租约未过期。
+
+## 状态、事件与恢复
+
+业务 status 和 revision 保留。新增 runtimePhase：`ready`、`advancing`、`waiting_model`、`waiting_tool`、`waiting_approval`、`waiting_compaction`、`waiting_resource`、`retry_delay`、`terminal`。waitKind / waitId 保存模型任务、工具操作、审批或压缩操作引用，waitReason 为可展示原因。
+
+运行与任务的状态变更通过 GORM 事务回调同步写入 `agent_wake_events`。生产事务更新单行 `agent_event_counters` 后分配序号；锁保持到提交。后来的事务无法先提交更大的事件序号，因此 SSE 游标不会越过未提交事件。事务回滚同时回滚计数与事件。
+
+内部 `GET /internal-agent/events` 要求内部 Bearer Token、协议/SDK/会话格式请求头；支持 Last-Event-ID 和 `?after=`，返回递增 SSE id 与 JSON `{sequence, runId?, taskId?, kind, revision, createdAt}`。关联任务携带所属 Pi run 的标识和 revision，未关联任务只产生通用提示；跨用户伪关联不暴露运行信息。服务端集中读发件箱（250ms）并发送心跳；Agent 不再对模型、工具、压缩执行 700/900ms 轮询。Agent 每 5 秒唤醒当前等待者补偿丢失通知，平时仅读取相应步骤或轻量控制状态；恢复租约时才读取完整快照。运行详情的头、水位、消息与事件在一致快照内读取，避免并发提交被误判为损坏的历史。
+
+通知只是提示：监听安装在状态读取之前，重复/旧序号被忽略。断线使用已收到序号继续；进程重启从 0 重放并领取未终结运行，任务与回执仍从数据库核对。公共 `/api/agent/runs/:id/events` 继续使用原有运行事件游标，不能使用内部全局序号替代它。
+
+耗时工具先保存 `agent_tool_operations`，再返回 `{pending:true, operationId}`。ID 是 `SHA256(runId + NUL + taskId + NUL + callId)`；重复请求读同一行。Go 独立异步执行，准入与审批事件唤醒工具执行器，5 秒扫描补偿通知缺失。完成与唤醒事件同事务提交，回执复用既有业务记录。保持 assistant 工具调用检查点与模型确认、工具批次准入、工具回执、toolResult 检查点的顺序。
+
+资源写入继续校验用户、画布版本与事务。不承诺未知外部调用结果恰好一次：模型和压缩优先复用已保存任务；无法核对上游已接收但结果未知的请求时仍使用原有异常记录，不能盲目重复计费。
+
+## 隔离部署与回退
+
+`docker-compose.event-canary.yml` 使用独立项目名、PostgreSQL、Redis 和命名数据卷，仅发布 3004。不接触其他 Compose 项目或 3000/3002/3003。先用 `scripts/build-event-canary.sh` 构建三组件，再将随机 POSTGRES_PASSWORD、REDIS_PASSWORD 和 CANVAS_AGENT_INTERNAL_TOKEN 写入本地私有 `.env` 文件，通过 `--env-file` 启动。迁移服务显式执行 schema 44，不删除历史。模型桩镜像可用 EVENT_NODE_IMAGE 指向 Node 22.19 镜像；当前机器默认复用已有 Node 镜像。
+
+验收渠道只连接 Compose 内的 model-stub；管理员运行时 worker/渠道容量须设置为至少 16，渠道并发也设为 16。默认 stub 对外收费渠道不发请求。模型请求额度受实际渠道自身配置约束，调度改造不会取消资源上限。
+
+浏览器来源通过私有 env 文件的 `CANVAS_CORS_ORIGINS` 配置，以逗号分隔完整 origin（协议、主机、端口）。Compose 会读取该覆盖值；默认允许 3004 的 localhost、IPv4/IPv6 回环和局域网入口。通过本机主机名或 Tailscale 地址访问时，应将对应完整 origin 加入该变量。修改后仅重建 backend 服务即可生效；`CANVAS_PUBLIC_BASE_URL` 可独立覆盖资源链接入口。
+
+本机模型渠道还需配置独立的 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS`：只填写主机名或 IP，不能填写协议、路径或端口，默认仅允许模型桩。Compose 从 env 读取该白名单，并将 `host.docker.internal` 与 `CANVAS_LOCAL_HOSTNAME`（默认 canvas-host）映射到宿主机网关。容器内的 localhost/127.0.0.1 指向后端容器；宿主机渠道应填写可访问的宿主机 IP 或 host.docker.internal。来源白名单不会替代上游地址白名单。
+
+```sh
+scripts/build-event-canary.sh
+docker compose --env-file .local/event-canary.env -f docker-compose.event-canary.yml up -d
+python3 scripts/verify-event-canary.py
+```
+
+验收脚本读取本地私有 `.local/test-session.json` 的 cookies、channelId；账号注册、管理员余额和模型渠道配置应只用于隔离实例。结果时间线写入 `.local/acceptance.json`，不提交凭据。
+
+升级前保留 PG dump、旧镜像及数据卷。schema 44 是新增表与字段；旧程序拒绝连接新 schema。回退时停隔离实例、恢复迁移前数据库到隔离卷，再切换配套旧 Go/Agent 镜像。不得将隔离凭据或卷用于生产。
+
+当前机器保留基线镜像 `canvas-event-backend:baseline-8ca7b95`、`canvas-event-agent:baseline-8ca7b95`、`canvas-event-web:baseline-8ca7b95`，以及 `.local/baseline/pre-migration43.dump`。该备份为新建隔离实例的 schema 43 空库基线；不含之后产生的验收数据。schema 44 的当前数据另行备份，不能将它直接交给 schema 43 旧程序。恢复 43 数据之后可叠加 `docker-compose.event-canary.rollback.yml`，并使用保留的基线 Harness。
+
+## 验证入口
+
+- Agent：`cd agent && npm test`，覆盖真实 SDK 消息/工具配对、插话、取消、压缩，以及 4 槽、16 挂起会话、64 上限、重复事件和 SSE 重连。
+- Go：相关 app、repository、database、handler 测试；`TestPiEventScheduler*` 覆盖阶段 fencing、工具持久化与回执恢复、旧 epoch 无写入、容量看门狗。
+- PG：设置独立 `TEST_AGENT_POSTGRES_DSN`，运行 database 的 `TestAgentScheduler*`，覆盖并发提交顺序与回滚。
+- 端到端：验收脚本验证 16 请求同时到达、4 审批不阻塞另外 12 会话、批准/拒绝、Agent 重启时复用在途模型任务、公开 SSE 续传。只验证会话创建成功不能替代模型并发验收。
+
+本次机器上的验收结果见 `docs/reports/event-canary-acceptance.md`；测试覆盖和实际进程中断覆盖分别列出，不把事务重放测试称为所有故障点的进程验收。

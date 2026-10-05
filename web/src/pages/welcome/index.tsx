@@ -6,6 +6,7 @@ import { BrandLogo } from "@/components/brand/brand-logo";
 import { IconButton } from "@/components/ui/base/buttons";
 import { getAntThemeConfig } from "@/lib/app-theme";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
+import { useThemeStore } from "@/stores/use-theme-store";
 
 import { WelcomeContributorsCard } from "./contributors-card";
 import { chapters, getWelcomeLook, showcases, welcomeLooks, type WelcomeLook } from "./story";
@@ -18,6 +19,7 @@ const github = "https://github.com/ddcat-ai/open-ai-canvas";
 export default function WelcomePage() {
     const [look, setLook] = useState(getWelcomeLook);
     const appearance = useAppearanceStore((state) => state.appearance);
+    const mode = useThemeStore((state) => state.theme);
     const restorePickerFocus = useRef(false);
     useEffect(() => {
         if (!restorePickerFocus.current) return;
@@ -39,7 +41,7 @@ export default function WelcomePage() {
         setLook(next);
     };
     return (
-        <ConfigProvider theme={getAntThemeConfig(true, appearance.activeSkin)}>
+        <ConfigProvider theme={getAntThemeConfig(mode === "dark", appearance.activeSkin)}>
             <WelcomeExperience key={look.id} look={look} brandName={appearance.brandName} onLookChange={changeLook} />
         </ConfigProvider>
     );

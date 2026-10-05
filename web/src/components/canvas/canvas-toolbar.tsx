@@ -112,6 +112,7 @@ export function CanvasToolbar({
     }, [settingsOpen]);
 
     const placePanel = (event: ReactMouseEvent<HTMLElement>) => setPanelX(getPanelX(dockRef.current, event.currentTarget));
+
     const runAddAction = (action: () => void) => {
         action();
         setAddOpen(false);
@@ -195,7 +196,7 @@ export function CanvasToolbar({
     const createCommands = useCanvasCreateCommands(ctx, runAddAction);
 
     return (
-        <div ref={rootRef} data-canvas-no-zoom className="pointer-events-none absolute inset-x-[var(--canvas-inset-x)] bottom-[var(--canvas-inset-y)] flex justify-center" style={{ zIndex }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront}>
+        <div ref={rootRef} data-canvas-no-zoom className="pointer-events-none fixed bottom-[var(--canvas-inset-y)] left-1/2 max-w-[calc(100vw-2*var(--canvas-inset-x))] -translate-x-1/2 flex" style={{ zIndex }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront}>
             <AnimatePresence>
                 {addOpen ? (
                     <AddNodeMenu

@@ -3,7 +3,7 @@ package capability
 const (
 	maxAgentNodeTitleRunes   = 240
 	maxAgentNodeContentRunes = 16000
-	// 坐标绝对值上限：与 app 侧整理工具收敛几何值的范围一致。
+	// 坐标绝对值上限：与 app 侧 layout 的收敛范围保持一致。
 	maxAgentNodeCoordLimit = 1e6
 )
 
@@ -43,9 +43,9 @@ func BuiltinRegistry() *Registry {
 		}),
 		{
 			Type: "frame", Version: "1", Label: "背板", DefaultWidth: 760, DefaultHeight: 520,
-			Purpose:       "组织一组相关节点的画布区域。",
-			GoodFor:       []string{"按场景整理节点", "划分工作区域"},
-			NotIdealFor:   []string{"承载结构化镜头数据", "替代具体业务节点"},
+			Purpose:       "在画布上建立可移动、可折叠的视觉分区，用来归组相关节点；背板本身不承载创作正文或生成结果。",
+			GoodFor:       []string{"按场景或镜头组归拢脚本、参考图和生成结果", "按前期策划、制作、交付等阶段划分工作区", "为大型画布建立清晰分区，便于移动或折叠整组内容"},
+			NotIdealFor:   []string{"承载结构化镜头数据（应使用分镜脚本节点）", "存放需要 Agent 单独读写的正文（应使用文本或 Markdown 节点）", "替代具体业务节点或媒体生成节点"},
 			Tradeoffs:     []string{"改善空间组织但不增加内容结构或生成能力"},
 			SummaryFields: []string{"label"}, DetailFields: []string{"label"},
 			CreateMetadata: func(string) map[string]any {
@@ -174,7 +174,7 @@ func editableNodeFields(contentPath, contentLabel, contentDescription string) ma
 }
 
 // positionPatchFields 是坐标字段：模型可以直接指定节点位置（微调），批量整理走 canvas_arrange_nodes。
-// 坐标上限与整理侧的收敛范围一致，避免写进离谱的几何值。
+// 坐标上限与 layout 侧的收敛范围一致，避免写进离谱的几何值。
 func positionPatchFields() map[string]PatchField {
 	return map[string]PatchField{
 		"x": {Path: "position.x", Kind: patchKindNumber, Label: "横坐标", Order: 30, Limit: maxAgentNodeCoordLimit, Description: "画布横坐标（像素）；与 y 一起移动节点，通常用 canvas_arrange_nodes 批量整理"},

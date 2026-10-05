@@ -1,7 +1,27 @@
 import { describe, expect, it } from "bun:test";
-import { AGENT_TOOL_NAMES, agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolStatus, agentVisionFailureSummary, friendlyAgentToolSummary } from "@/lib/canvas/agent-tool-presentation";
+import { AGENT_TOOL_NAMES, agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolStatus, agentVisionFailureSummary, friendlyAgentToolSummary, nativeSkillEventPresentation } from "@/lib/canvas/agent-tool-presentation";
 
 describe("Agent tool presentation", () => {
+    it("presents native read rejection as failure with metadata only", () => {
+        const event = nativeSkillEventPresentation("native_skill_read_failed", { skillName: "导演", path: "SKILL.md", content: "PRIVATE", error: "C:/secret" });
+        expect(event?.text).toBe("技能文件读取失败 · 导演 · SKILL.md");
+        expect(agentToolStatus("read", event?.text || "", event?.detail)).toBe("failed");
+        expect(JSON.stringify(event)).not.toContain("PRIVATE");
+        expect(JSON.stringify(event)).not.toContain("C:/secret");
+    });
+    it("projects native Skill events without absolute paths, content or credentials", () => {
+        const event = nativeSkillEventPresentation("native_skill_read", { skillName: "导演", path: "references/a.md", version: "1",
+            content: "PRIVATE_BODY", absolutePath: "C:/worker/skills/entry", token: "PRIVATE_TOKEN" });
+        expect(event?.text).toBe("已读取技能文件 · 导演 · references/a.md");
+        expect(JSON.stringify(event)).not.toContain("PRIVATE");
+        expect(JSON.stringify(event)).not.toContain("C:/worker");
+        expect(agentToolCategory("read", event?.detail)).toBe("read");
+        expect(agentToolStatus("read", event?.text || "", event?.detail)).toBe("completed");
+        for (const path of ["C:/worker/entry", "/worker/entry", "../other/entry", "references/../entry"]) {
+            expect(nativeSkillEventPresentation("native_skill_read", { skillName: "导演", path })?.text).toBe("已读取技能文件 · 导演");
+        }
+        expect(nativeSkillEventPresentation("native_skill_enabled", { skillName: "导演" })?.text).toBe("已启用技能 · 导演");
+    });
     it("separates read, create, and canvas operation activity", () => {
         expect(agentToolCategory("canvas_get_state", { eventType: "tool_completed" })).toBe("read");
         expect(agentToolCategoryLabel("canvas_get_state", "read")).toBe("读取清单");
@@ -126,6 +146,7 @@ describe("Agent tool error classification", () => {
         expect(agentToolErrorClassLabel({ errorClass: "permission_violation", errorClassLabel: "超出本轮权限" })).toBe("超出本轮权限");
         expect(agentToolErrorClassLabel({ result: { errorClass: "upstream_failure" } })).toBe("上游故障");
         expect(agentToolErrorClassLabel({ errorClass: "invalid_model_output" })).toBe("模型输出问题");
+        expect(agentToolErrorClassLabel({ errorClass: "call_skipped" })).toBe("本步未执行");
         expect(agentToolErrorClassLabel({ errorClass: "unknown_new_class" })).toBe("工具执行失败");
         expect(agentToolErrorClassLabel({ text: "没有归类" })).toBeUndefined();
     });

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/observability"
 	"infinite-canvas/backend/internal/payment"
 	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/prompts"
@@ -32,12 +35,12 @@ type Service struct {
 	redeemBatchMu            sync.Mutex
 	storageMu                sync.Mutex
 	storageTestMu            sync.Mutex
+	agentSkillDefaultsMu     sync.Mutex
 	workerRuntimeMu          sync.Mutex
-	agentSchedulerMu         sync.Mutex
-	agentSchedulerWake       chan struct{}
 	taskDispatcherWake       chan struct{}
+	agentToolWake            chan struct{}
 	geminiCacheLockMu        sync.Mutex
-	agentSchedulerCursor     string
+	agentEventPurgeAt        time.Time
 	agentConflictStreak      map[string]int
 	activeStorageTests       map[string]bool
 	characterTaskMu          sync.Mutex
@@ -78,6 +81,8 @@ type Service struct {
 	auth                     *auth.Service
 	sms                      *sms.Service
 	canvas                   *canvas.Service
+	observability            *observability.Aggregator
+	observabilityExporter    *observability.Exporter
 }
 
 const taskWorkerConcurrency = 3
@@ -117,7 +122,8 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 			paymentRegistry = dynamic
 		}
 	}
-	service := &Service{repo: repo, dataDir: dataDir, activeStorageTests: make(map[string]bool), activeCancels: make(map[string]context.CancelFunc), agentConflictStreak: make(map[string]int), agentSchedulerWake: make(chan struct{}, 1), taskDispatcherWake: make(chan struct{}, 1), coordinator: coordinator, runtimeErr: err, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, paymentRegistry: paymentRegistry, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time), geminiCacheLocks: make(map[string]*geminiCacheKeyLock)}
+	service := &Service{repo: repo, dataDir: dataDir, activeStorageTests: make(map[string]bool), activeCancels: make(map[string]context.CancelFunc), agentConflictStreak: make(map[string]int), taskDispatcherWake: make(chan struct{}, 1), coordinator: coordinator, runtimeErr: err, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, paymentRegistry: paymentRegistry, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time), geminiCacheLocks: make(map[string]*geminiCacheKeyLock), observability: observability.NewAggregator(4096), observabilityExporter: observability.NewConfiguredExporter()}
+	service.agentToolWake = make(chan struct{}, 1)
 	service.taskBillingCoordinator = newTaskBillingCoordinator(service.repo)
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
 	service.taskRouteExecutor = newTaskRouteExecutor(service)
@@ -132,6 +138,40 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 	service.canvas = canvas.New(service.repo, canvasHost{svc: service})
 	service.platform = platform.New(service.repo, coordinator, platformHost{svc: service})
 	return service
+}
+
+func (s *Service) RecordObservability(event observability.Event) {
+	if s == nil {
+		return
+	}
+	if s.observability == nil {
+		s.observability = observability.NewAggregator(4096)
+	}
+	s.observability.Record(event)
+	if s.observabilityExporter != nil {
+		_ = s.observabilityExporter.Emit(event)
+	}
+}
+
+func (s *Service) AdminObservabilitySnapshot(window time.Duration) observability.Snapshot {
+	if s == nil || s.observability == nil {
+		return observability.Snapshot{Available: false, GeneratedAt: time.Now().UTC(), Window: window}
+	}
+	snapshot := s.observability.Snapshot(window)
+	snapshot.GrafanaURL = configuredGrafanaURL()
+	return snapshot
+}
+
+func configuredGrafanaURL() string {
+	raw := strings.TrimSpace(os.Getenv("CANVAS_GRAFANA_URL"))
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+		return ""
+	}
+	return strings.TrimRight(u.String(), "/")
 }
 
 func (s *Service) taskBilling() *taskBillingCoordinator {
@@ -156,7 +196,13 @@ func (s *Service) StartWorker() {
 
 func (s *Service) BeginDrain() { s.backgroundWorkers().BeginDrain() }
 
-func (s *Service) StopWorker(ctx context.Context) error { return s.backgroundWorkers().Stop(ctx) }
+func (s *Service) StopWorker(ctx context.Context) error {
+	err := s.backgroundWorkers().Stop(ctx)
+	if s.observabilityExporter != nil {
+		s.observabilityExporter.Close()
+	}
+	return err
+}
 
 func (s *Service) IsDraining() bool { return s.backgroundWorkers().IsDraining() }
 

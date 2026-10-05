@@ -1,0 +1,98 @@
+name: canvas-event-canary
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: canvas_event_canary
+      POSTGRES_USER: canvas_event_canary
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes: [event-postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U canvas_event_canary -d canvas_event_canary"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+  redis:
+    image: redis:7.4-alpine
+    command: [redis-server, --appendonly, "yes", --requirepass, "${REDIS_PASSWORD:?required}"]
+    volumes: [event-redis:/data]
+    restart: unless-stopped
+  model-stub:
+    image: ${EVENT_NODE_IMAGE:-node:22.19.0-alpine}
+    entrypoint: [node, /fixtures/model-stub.mjs]
+    volumes: [./agent/test/fixtures/model-stub.mjs:/fixtures/model-stub.mjs:ro]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/stats').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+  migrate:
+    image: ${EVENT_BACKEND_IMAGE:-canvas-event-backend:local}
+    entrypoint: [migrate-schema]
+    command: [up]
+    environment:
+      CANVAS_DATABASE_DRIVER: postgres
+      DATABASE_URL: postgres://canvas_event_canary:${POSTGRES_PASSWORD}@postgres:5432/canvas_event_canary?sslmode=disable
+      CANVAS_BACKEND_DATA_DIR: /data
+    volumes: [event-backend:/data]
+    depends_on:
+      postgres: {condition: service_healthy}
+  backend:
+    image: ${EVENT_BACKEND_IMAGE:-canvas-event-backend:local}
+    environment:
+      CANVAS_DATABASE_DRIVER: postgres
+      DATABASE_URL: postgres://canvas_event_canary:${POSTGRES_PASSWORD}@postgres:5432/canvas_event_canary?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CANVAS_AUTO_MIGRATE: "false"
+      CANVAS_BACKEND_DATA_DIR: /data
+      CANVAS_WORKER_CONCURRENCY: "16"
+      CANVAS_CHANNEL_CONCURRENCY: "16"
+      CANVAS_AGENT_CONCURRENCY: ${CANVAS_AGENT_CONCURRENCY:-4}
+      CANVAS_AGENT_MAX_SESSIONS: ${CANVAS_AGENT_MAX_SESSIONS:-64}
+      CANVAS_AGENT_MAX_SESSIONS_PER_CANVAS: ${CANVAS_AGENT_MAX_SESSIONS_PER_CANVAS:-16}
+      CANVAS_REGISTRATION_ENABLED: "false"
+      CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:?required}
+      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS:-model-stub}
+      CANVAS_CORS_ORIGINS: ${CANVAS_CORS_ORIGINS:-http://localhost:3004,http://127.0.0.1:3004,http://[::1]:3004,http://192.168.90.200:3004}
+      CANVAS_PUBLIC_BASE_URL: ${CANVAS_PUBLIC_BASE_URL:-http://192.168.90.200:3004}
+      CANVAS_SHUTDOWN_TIMEOUT: 30s
+    volumes: [event-backend:/data]
+    extra_hosts:
+      - host.docker.internal:host-gateway
+      - ${CANVAS_LOCAL_HOSTNAME:-canvas-host}:host-gateway
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_started}
+    restart: unless-stopped
+    stop_grace_period: 35s
+  agent:
+    image: ${EVENT_AGENT_IMAGE:-canvas-event-agent:local}
+    environment:
+      CANVAS_BACKEND_INTERNAL_URL: http://backend:8080
+      CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:?required}
+      CANVAS_AGENT_METRICS: "true"
+      CANVAS_AGENT_HARNESS_DIR: /agent/harness
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: backend,model-stub,localhost,127.0.0.1
+    volumes: [./agent/harness:/agent/harness:ro]
+    depends_on:
+      backend: {condition: service_healthy}
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, node, -e, "process.kill(1,0)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+  web:
+    image: ${EVENT_WEB_IMAGE:-canvas-event-web:local}
+    ports: ["3004:3000"]
+    depends_on:
+      backend: {condition: service_healthy}
+    restart: unless-stopped
+volumes:
+  event-postgres:
+  event-redis:
+  event-backend:

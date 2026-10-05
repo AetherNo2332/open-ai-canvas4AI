@@ -51,6 +51,11 @@ export function emptyAgentContextUsage(runId: string): AgentContextUsage {
     return { runId, reading: null, readingSeq: 0, readingStale: false, compactionPending: null, lastCompaction: null };
 }
 
+/** Continue the same session with a new run, retaining its last measurement. */
+export function continueAgentContextUsage(current: AgentContextUsage, runId: string): AgentContextUsage {
+    return { ...current, runId, readingSeq: 0, compactionPending: null };
+}
+
 /** Reduces durable Agent events without mixing readings from different runs. */
 export function reduceAgentContextUsage(current: AgentContextUsage, event: AgentContextUsageEvent): AgentContextUsage {
     const scoped = current.runId === event.runId ? current : emptyAgentContextUsage(event.runId);
@@ -64,6 +69,11 @@ export function reduceAgentContextUsage(current: AgentContextUsage, event: Agent
     if (event.type === "context_compacted") {
         return { ...scoped, readingStale: Boolean(scoped.reading), compactionPending: null, lastCompaction: payload };
     }
+    if (event.type === "run_status") {
+        const terminal = ["completed", "failed", "cancelled", "rejected"].includes(String(payload.status || ""));
+        const compaction = terminal ? null : Object.hasOwn(payload, "contextCompaction") ? payload.contextCompaction : scoped.compactionPending;
+        return { ...scoped, compactionPending: compaction && typeof compaction === "object" ? compaction as Record<string, unknown> : null };
+    }
     return scoped;
 }
 
@@ -74,16 +84,16 @@ export function finiteContextNumber(value: unknown): number | undefined {
 /** Returns a ratio only when the backend has a trustworthy configured model budget. */
 export function contextPressureRatio(reading: Record<string, unknown> | null): number | undefined {
     if (!reading || reading.modelLimitConfigured !== true) return undefined;
-    const usable = finiteContextNumber(reading.usableInputTokens);
+    const usable = finiteContextNumber(reading.inputBudgetTokens) ?? finiteContextNumber(reading.usableInputTokens);
     if (!usable || usable <= 0) return undefined;
-    const ratio = reading.tokenSource === "provider"
-        ? finiteContextNumber(reading.projectedPressureRatio)
-        : finiteContextNumber(reading.pressureRatio);
+    const projected = finiteContextNumber(reading.projectedTokens);
+    const ratio = projected !== undefined ? projected / usable : reading.tokenSource === "provider" ? finiteContextNumber(reading.projectedPressureRatio) : finiteContextNumber(reading.pressureRatio);
     return ratio;
 }
 
 export function contextInputTokens(reading: Record<string, unknown> | null): number | undefined {
     if (!reading) return undefined;
+    if (finiteContextNumber(reading.projectedTokens) !== undefined) return finiteContextNumber(reading.projectedTokens);
     if (reading.tokenSource === "provider") {
         return finiteContextNumber(reading.projectedNextInputTokens) ?? finiteContextNumber(reading.estimatedInputTokens);
     }
@@ -113,7 +123,6 @@ function contextBreakdown(reading: Record<string, unknown> | null): AgentContext
     });
 }
 
-
 function contextProtocolBytes(reading: Record<string, unknown> | null): number | undefined {
     if (!reading?.breakdown || typeof reading.breakdown !== "object") return undefined;
     return finiteContextNumber((reading.breakdown as { envelopeBytes?: unknown }).envelopeBytes);
@@ -134,16 +143,14 @@ function formatContextTokens(tokens: number | undefined): string {
 export function presentAgentContextUsage(usage: AgentContextUsage): AgentContextUsageView {
     const reading = usage.reading;
     const inputTokens = contextInputTokens(reading);
-    const usableTokens = finiteContextNumber(reading?.usableInputTokens);
+    const usableTokens = finiteContextNumber(reading?.inputBudgetTokens) ?? finiteContextNumber(reading?.usableInputTokens);
     const compactAtTokens = finiteContextNumber(reading?.compactAtTokens);
     const contextWindowTokens = finiteContextNumber(reading?.contextWindowTokens);
     const ratio = contextPressureRatio(reading);
     const compactRatio = usableTokens && compactAtTokens ? Math.min(1, compactAtTokens / usableTokens) : undefined;
     const tokenSource = reading?.tokenSource === "provider" ? "provider" : reading ? "estimate" : undefined;
     const estimate = tokenSource !== "provider";
-    const remainingTokens = usableTokens !== undefined && inputTokens !== undefined
-        ? Math.max(0, usableTokens - inputTokens)
-        : undefined;
+    const remainingTokens = usableTokens !== undefined && inputTokens !== undefined ? Math.max(0, usableTokens - inputTokens) : undefined;
     const base: AgentContextUsageView = {
         phase: "idle",
         ratio,
@@ -164,22 +171,28 @@ export function presentAgentContextUsage(usage: AgentContextUsage): AgentContext
     };
     if (usage.compactionPending) {
         const basis = usage.compactionPending.basis === "bytes" ? "消息体积已到兜底线" : "已到上下文压缩线";
-        return { ...base, phase: "compacting", ring: 1, label: "压缩中", detail: `${basis}，正在把较早对话收成检查点，最近两轮原样保留。` };
+        return { ...base, phase: "compacting", ring: 1, label: "压缩中", detail: `${basis}，正在把较早对话收成检查点，按预算保留近期上下文。` };
     }
     if (!reading) return base;
     if (usage.readingStale) {
-        return { ...base, phase: "stale", ring: ratio === undefined ? 0 : Math.min(1, ratio / (compactRatio || 0.85)), label: "刚压缩", detail: "上一份读数是压缩前的；下一次模型调用会给出压缩后的占用。" };
+        return { ...base, phase: "stale", ring: ratio === undefined ? 0 : Math.min(1, ratio / (compactRatio || 1)), label: "刚压缩", detail: "上一份读数是压缩前的；下一次模型调用会给出压缩后的占用。" };
     }
     if (ratio === undefined || usableTokens === undefined || usableTokens <= 0) {
         const measured = inputTokens === undefined ? "窗口未知" : `约 ${formatContextTokens(inputTokens)} Token`;
         return { ...base, phase: "unknown", label: measured, detail: "这个模型没有配置可确认的上下文窗口，不能给出占用百分比；对话过长时仍会按条数和体积压缩。" };
     }
-    const line = compactRatio && compactRatio > 0 ? compactRatio : 0.85;
+    const line = compactRatio && compactRatio > 0 ? compactRatio : 1;
     const ring = Math.max(0, Math.min(1, ratio / line));
     const percent = Math.round(ratio * 100);
     const source = estimate ? "本地估算" : "模型实测校准";
-    if (ratio >= line) {
-        return { ...base, phase: "compress", ring: 1, label: `${percent}%`, detail: `已到压缩线（输入预算的 ${Math.round(line * 100)}%）。下一次调用前会暂停，把历史收成检查点后再继续。当前 ${formatContextTokens(inputTokens)} / ${formatContextTokens(usableTokens)}（${source}）。` };
+    if (compactRatio !== undefined && ratio >= line) {
+        return {
+            ...base,
+            phase: "compress",
+            ring: 1,
+            label: `${percent}%`,
+            detail: `已到压缩线（输入预算的 ${Math.round(line * 100)}%）。下一次调用前会暂停，把历史收成检查点后再继续。当前 ${formatContextTokens(inputTokens)} / ${formatContextTokens(usableTokens)}（${source}）。`,
+        };
     }
     if (ring >= 0.72) {
         return { ...base, phase: "watch", ring, label: `${percent}%`, detail: `接近压缩。当前 ${formatContextTokens(inputTokens)} / ${formatContextTokens(usableTokens)}（${source}），到 ${formatContextTokens(compactAtTokens)} 时开始压缩。` };

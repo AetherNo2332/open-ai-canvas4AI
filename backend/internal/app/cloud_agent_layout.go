@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -9,6 +10,22 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
+
+// errCloudAgentSnapshotConflict 标记"画布在模型读取之后变了"这一可恢复结果。
+//
+// 合并说明：这个辅助函数原本定义在我们的 cloud_agent_runtime.go 里，而合并把云端 Agent
+// 主链路整体取上游（上游没有布局工具，改用 cloudAgentMediaAdmissionError 表达媒体准入冲突）。
+// 现在它同时服务于布局工具与三条画布写入链路的过期快照判定：画布写入不属于媒体准入，
+// 用同一个 409 语义能让运行期把"画布已变化"作为工具结果交回模型（可恢复），而不是判死整轮。
+var errCloudAgentSnapshotConflict = errors.New("canvas snapshot conflict")
+
+func cloudAgentSnapshotConflictError(message string) error {
+	return &AppError{Status: 409, Code: 409, Message: message, Cause: errCloudAgentSnapshotConflict}
+}
+
+func cloudAgentSnapshotConflict(err error) bool {
+	return errors.Is(err, errCloudAgentSnapshotConflict)
+}
 
 // 云端 Agent 的节点整理：模型只决定"整理哪些节点 / 怎么归类"，几何一律由服务端算。
 // 一次整理的上限刻意保守：坐标批量改写比内容改写更容易让用户迷失，且审批卡要能一眼看完。
@@ -407,10 +424,11 @@ func prepareCloudAgentArrangeNodes(repo *repository.Repository, userID, canvasID
 	}
 	beforeHash := cloudAgentCanvasHash(doc)
 	if beforeHash != strings.TrimSpace(args.SnapshotHash) {
-		// 与 canvas_apply_ops 同一写法：过期快照是"可纠正的参数错误"，运行期把它当工具结果
-		// 交回模型重新读取，而不是走准入失败分支终止整轮。
+		// 与 canvas_apply_ops 同一写法：过期快照既要按上游口径归类成字段错误（模型据此知道
+		// 是 snapshotHash 过期），又要保留 errCloudAgentSnapshotConflict 让我方运行期走
+		// "重新读取画布再申请审批"的可恢复分支，而不是被当成准入失败判死整轮。
 		return nil, &cloudAgentFieldArgumentError{
-			error: &cloudAgentArgumentError{creationConflict("画布已变化，本次未整理；请重新读取并重新申请审批")},
+			error: &cloudAgentArgumentError{cloudAgentSnapshotConflictError("画布已变化，本次未整理；请重新读取并重新申请审批")},
 			Field: "snapshotHash", Issue: "stale_snapshot",
 		}
 	}

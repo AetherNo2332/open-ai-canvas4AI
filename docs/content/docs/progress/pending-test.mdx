@@ -3,7 +3,327 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## Pi worker 重试恢复与日志截断
+
+- 已实现：原生会话恢复只补当前轮工具回执，在途模型先恢复原任务；历史未回执工具不重放；检查点失败后停止依赖的批次提交；日志按 UTF-8 字符边界截断并处理非法文本/NUL。
+- 本地验证：runner/history/event-scheduler 58 项、bridge wire/usage 20 项及 TypeScript 编译通过；platform Go 测试通过（工作区缓存，CGO 关闭，无数据库实测）。新回归已确认修复前失败、修复后通过。
+- [ ] 真实 PostgreSQL 日志写入、原故障会话的分支/TaskID 对照与技能准入失败后的重试待验收，未部署生产。
+- [ ] 持久化次数预算、退避、实例熔断和基于业务进度的 watchdog 尚未实施，详见 [Pi worker 错误恢复方案](../../../design/agent-worker-recovery.md)。
+
+## Agent 对话折叠与上下文弹窗
+
+正文之间的模型思考与工具调用分别共用一个默认折叠行，交替事件继续追加到原记录；折叠行不显示类别标签、步数或段数。展开思考显示模型返回的摘要，展开工具调用显示图标及操作记录；双向非线性动画使用当前皮肤时长并尊重减少动态效果。
+
+上下文指示器移除压缩线红点，弹窗移除重复说明与分类明细，保留总用量、剩余量和来源信息。浮层挂载到 body，优先向上展开并根据视口调整位置，避免运行中面板裁切和窄屏越界。
+
+- [x] 前端全量 2159 项通过；专项 20 项通过；类型检查、lint 和生产构建通过。
+- [x] 真实画布路由浏览器脚本 15 项通过：交替事件聚合、默认收起、无标签与计数、键盘展开、双向动画中间帧、工具图标、运行态弹窗位置、明暗主题、320px 布局与减少动态效果。
+- [x] 本地 Compose 3000 仅替换 web 镜像为 `open-ai-canvas-web:agent-ui-43e2090a-local`，真实生产构建页面复验 15 项通过（API 转发到隔离测试后端，运行事件模拟）。前端容器健康，后端保持 `6ccbb612`、schema `55/55`，未更新服务器。
+- [ ] 真实模型长会话运行验收。当前浏览器使用隔离后端与模拟运行事件，没有验证真实模型或 Worker 执行。
+
+## Agent Crew 管理开关
+
+管理员入口为“Agent（beta）→ Crew 子代理”（`/admin/settings/agent#crew`）。开关始终显示，通过功能开放接口单独更新 `agentCrewEnabled`，默认关闭；读取失败禁止操作，保存失败保留服务端已保存状态，成功后同步当前用户的功能状态。其他功能开关保持原值。
+
+- [x] 2026-10-05 自动验证：前端全量 2156 项通过，类型检查与 lint 通过。基线 `6ccbb612` 复现的 11 项过时测试已更新为当前皮肤映射和首页画布入口行为断言。
+- [x] Linux 后端真实 HTTP/SQLite 专项通过：管理员开关反复保存、未登录 401、普通用户 403、其他功能字段保持不变；Crew gate、资源归属、严格 revision 与 SSE 游标用例通过。Windows CGO 测试崩溃，后端结果来自 Linux 容器。
+- [x] 本地 Compose 3000 重建后，真实前端连接隔离测试后端的浏览器脚本 14 项通过：读取、键盘开启、刷新持久化、关闭、其他功能字段保留、模拟保存失败后 UI/数据库保持已保存状态、浅色宽屏与 320px 无横向溢出、匿名修改拒绝。脚本等待后端就绪后注册，避免启动竞态。
+- [ ] 使用本地 3000 主数据库的真实管理员账号重复上述操作；本轮没有改动主数据库的 Crew 开关。
+- [ ] 验证全站功能开放页面保存其他开关后，Crew 状态不会被覆盖或从用户状态中丢失。
+- [ ] 深色实际页面验收；开关颜色、圆角使用管理员皮肤。
+- [ ] 配置 Pi worker 后执行真实模型/Crew 运行验收；本轮仅验收管理开关与接口，没有验证真实子代理执行。
+
+当前修复位于本地 `codex/crew-admin-switch`，尚未发布服务器。3000 健康状态为 commit `6ccbb612`、schema `55/55`；前端构建标记 `6ccbb612-local-crew-switch` 区分本地补丁。
+
+## Agent 默认技能与活动子智能体列表
+
+- Native Skill 初始字节准入与模型 token 预检已改为估算技能索引；管理员默认配置、工作区与 Crew 技能预检使用相同口径。
+- 2026-10-05 本地独立 Compose `canvas-skill-index-3003`（`8b95a2b4-skill-index-local` 未提交修复快照）脚本验收 19/19 通过：2,037,941 字节、10 文件的 ZIP 首次手选、默认继承、清空配置后的续聊固定版本、工作区选择均完成 Native Run；索引估算 1,123 字节，模型系统消息未包含入口正文或引用，入口与引用通过 `read` 按需读取。17 MiB 包仍以 `total_bytes` 拒绝；CAS 冲突和清空配置通过。使用本地确定性模型桩，未验证外部供应商或浏览器交互；Crew 来源已覆盖准入单元测试，此次未跑完整 Crew 流程。
+- 新增真实建 Run 回归 `TestReviewAcceptedRunAdmitsLargeIndexedSkill` 已先复现错误再通过。默认配置、技能解析、真实建 Run、工作区与容量专项回归通过；前端、后端、Worker 镜像构建通过。后端全量测试的 `internal/app` 在 300 秒超时，不标记全量通过。验收脚本、报告及日志保存在本机 `.local/skill-index-3003/`（本轮工具工作目录）。
+
+2026-10-04 自动验证（`392426c2`）：后端全量通过，已覆盖真实 20 个未安装默认技能建 Run/Pi 装配读取、容量拒绝不改会话、用户版本冻结、清空 revision 和独立 SQLite 连接 CAS。前端本任务聚焦 16/16、lint、build 通过；全量 2154/2165，余下 11 项在 canary 合入快照 `20689871` 同样复现。以下保留为真实浏览器/部署环境手工验收，PostgreSQL 多实例尚未实测。
+
+- [ ] 管理员保存 20 个默认技能，新会话完整继承；超过 8 个且容量充足时可运行。
+- [ ] 管理员改配置后，既有会话来源、固定版本、hash 与续聊行为不漂移；迁移前旧会话不补默认。
+- [ ] 用户未安装默认技能仍可运行；私有、禁用、删除或版本失效引用明确拒绝。
+- [ ] 文件数、总字节、上下文预算恰好等于上限时通过，超限明确拒绝且显示 budget/limit/actual。
+- [ ] 双管理员并发保存：后者收到含 currentRevision 的冲突，不覆盖前者；验证清空后再保存的 revision 流程。
+- [ ] Agent（beta）默认技能分区搜索、添加、排列、启停、移除、合计、保存与冲突后重载均可用。
+- [ ] 运行状态分区与 5 秒轮询已移除，调度配置和记忆管理保留。
+- [ ] 子智能体头像 hover / Tab 焦点展开名称，右侧让位与复位缓出；长名称、窄屏、明暗皮肤及 reduced-motion 无位移降级。
+- [ ] 无活动子智能体时零占位；当前仅完成组件，P3 Crew / SSE 数据源未接入，不以占位组件宣称多智能体运行已完成。
+
+## 画布 Agent 平行窗口
+
+- 已实现：Agent 面板从可拖拽浮窗改为与画布同层的右侧平行窗口（不再是悬浮覆盖）：面板作为画布编辑器 flex 布局的右侧栏（桌面目标宽 440px，窄视口退化为全宽），打开时画布布局压缩向左让位、收起时画布展开还原；展开/收起动画为宽度 + 透明度的非线性缓出曲线（`cubic-bezier(0.22, 1, 0.36, 1)`，420ms，内容体固定目标宽度避免逐帧重排，reduced-motion 直接显隐）。移除面板拖拽移动、四向缩放、窗口位置/大小偏好存储及对应恢复逻辑，Agent 头像启动器固定在画布右下角，不再可拖拽。「技能组合推荐」场景胶囊改为单色（只用墨色透明度分层，不再按场景使用节点调色板颜色）。子智能体头像列表等功能保持原位。
+- 验证：`bun x tsc --noEmit`、`bun run lint` 通过；`bun test agent-panel-layout.test.ts agent-model-picker.test.ts agent-panel-presentation.test.tsx` 专项通过；全量 2140/2151，余下 11 项失败在未含本改动的 canary 合并快照同样复现（与本次改动无关）。
+- [x] 3003 浏览器验收（工作树镜像 `canvas-home-acceptance-3003-web:working-tree` + `open-ai-canvas-backend:local`，1440×900）：面板与画布同层并行——面板作为 `.canvas-editor-shell` 内与 `<section data-canvas-editor>` 平级的 flex 侧栏（`position: relative`，宽 440px、全高），展开时画布编辑区由 1440px 压缩至 1000px 让位，顶栏右缘随 section 同步移至 1000px（用户报告的"顶栏不移动"问题已修复）；启动器固定画布右下角、拖拽不动且不误触；「技能组合推荐」三颗场景胶囊计算样式均为同一墨色 22% 描边 / 72% 文字（单色）；旧 localStorage 浮窗偏好（`canvas:agent-panel-layout:v1` / `canvas:agent-launcher-position:v1`）注入后刷新不影响新布局。展开/收起的非线性缓出（`cubic-bezier(0.22, 1, 0.36, 1)`，420ms，前段 ~25px/帧 → 尾段 1px/帧 减速）已在滑入形态下逐帧采样验证；同层宽度动画复用同一曲线，未再逐帧采样。窄视口全宽让位未在浏览器复验。
+- [ ] 真实 Agent 运行下验证：Agent 创建节点后画布视口聚焦正确避让右侧面板；窄视口（<1000px）下全宽让位表现。
+
+## Agent 欢迎 logo 与通知悬浮位
+
+- 已实现：Agent 面板欢迎区的红色渐变球替换为品牌 logo——复用 `BrandLogo` 组件消费后台外观配置的 `logoUrl` / `darkLogoUrl`（管理员「设置 → 站点外观」上传浅色 / 深色 Logo），明暗主题自动切换，加载失败保持中性占位；后台未配置时回退内置 `/logo.svg` 品牌标，渐变球样式移除。工作台顶栏（`WorkspaceTopBar`）动作区不再放通知铃铛，改为悬浮在顶栏下方右侧页内区域（`top: 顶栏高 + 16px`、`right: 20px`，`--z-toolbar` 层），画布页顶栏本无铃铛、不受影响。
+- 验证：`bun x tsc --noEmit`、`bun run lint`、`bun test agent-panel-presentation.test.tsx` 通过；3003 浏览器验收：`/create` 顶栏动作区仅剩积分 / 主题 / 账户，悬浮铃铛位于 (right 20px, top 72px=56+16)；画布面板欢迎区渲染 `IMG /logo.svg`（naturalWidth > 0）且渐变球节点不存在。
+- [ ] 后台上传自定义浅色 / 深色 Logo 后，面板欢迎区与明暗主题切换的实际显示效果待验收。
+
+## 画布悬浮件避让与引导卡位置
+
+- 已实现：「先选择创作模型」引导卡（`ModelSetupGuide`）从右下角（会盖住 Agent 启动器）移到顶栏下方右侧悬浮位（`top = 顶栏高 56px + 16px`、`right 20px`），入场动画改为自上淡入。工作台顶栏系统公告铃铛保持原位（曾误移后还原）。画布底部工具坞（`CanvasToolbar`）改为相对屏幕水平居中（`fixed left-1/2`）：与左下角缩放控制条、小地图同一条底线并排，面板开合时不随画布压缩移动；窗口较窄、空间不足时按用户决策接受 Agent 平行窗口直接盖住工具坞右端，不再做缩放条上移或坞体偏移等避让。
+- 验证：`bun x tsc --noEmit`、`bun run lint`、`bun test agent-panel-presentation.test.tsx agent-panel-layout.test.ts` 通过。3003 浏览器验收：`/create` 引导卡实测 top 72px / right 20px；画布页工具坞 1280 / 1440 两档实测中心 640 / 720（= 视口中心），与缩放条同线并排（间距 89 / 169px），面板展开（左缘 840 / 1000）时工具坞位置不变且未被遮挡。
+- [ ] 更窄窗口（< ~1240px）下面板盖住工具坞右端的实际观感待用户确认；小地图展开时与工具坞的同线关系待复核。
+- [ ] 真实 Agent 运行下验证：Agent 创建节点后画布视口聚焦正确避让右侧面板。
+
+## 首页画布入口
+
+- 已实现：`/` 与 `/create` 使用瑞士设计首页，移除对话输入、视频 / 图片 / 文本 / Agent 切换、历史对话入口与精选灵感；仅保留一个「进入画布」链接，前往 `/canvas`，在画布列表中新建或继续作品。首页不再挂载原对话的任务恢复与生成流程。
+- 验证：`bun run typecheck` 通过；真实首页组件服务端渲染确认只有一个 `/canvas` 链接，没有输入框或灵感区。
+- [x] 本机独立 Compose 3003 浏览器验收：`/` 与 `/create` 均渲染新版首页；1440×900 / 320×760、明暗皮肤、键盘焦点与 Enter 导航、窄屏滚动均通过。320px 下发现 12 列网格间隔过宽，已将移动端间隔改为 16px、重建镜像并确认 `scrollWidth === clientWidth`。首页内容区域只有一个画布链接，没有输入框与灵感区。
+- [x] 独立测试账号从首页进入画布列表，新建画布显示已保存，刷新列表后可再次打开。3003 的 web / backend 均 healthy，采用独立数据库卷，仅绑定本机回环地址，未更新原 3000 容器。
+- [x] 首页、侧栏、顶栏与账户浮层统一引用后台皮肤的颜色和圆角 token，去除旧工作区固定色与胶囊圆角覆盖；首页积分图标采用主色。3003 浏览器验证「墨色理性」主色同步后已恢复「瑞士纸感」；浅色 / 深色首页可见元素的计算圆角均为当前配置的 0px，账户浮层同样无残留圆角，320px 无横向溢出。类型检查、生产镜像构建及 19 项工作区回归测试通过。
+- [ ] 长品牌名称仍待验收；本次只验收本机 3003，尚未发布到主服务。
+
+## 全站皮肤与功能入口
+
+- 已实现：默认皮肤和自定义皮肤都完整应用颜色、圆角与状态 token；工作台、后台、认证页、欢迎页、画布编辑器及 body 浮层共享站点配置。工作台 / 后台保留各自密度，取消固定调色板和圆角覆盖；修正 0px 被 `||` 回退成默认圆角的问题。媒体、作品自定义颜色和主题编辑器色样属于内容，不强制改色。
+- 已实现：首页顶部、底部两处标语栏及分隔线已移除；主页底色直接引用当前皮肤的 canvas；侧栏不再挂载「影策加油站」，展开 / 收起模式均无签到领取入口。
+- 已实现：短剧功能关闭时，管理员及普通用户侧栏和快捷搜索均隐藏项目入口；已有路由访问保护保留。
+- 已实现：按最新要求移除首页右侧滚动项目封面展示区及占位图、数据读取与动画；同时清除图片区占用的空列。移除「01 / 从一个想法开始」，首页文案整体保持居中并小幅上移，仅保留一个画布入口。
+- 已实现：工作台顶栏、页面外缘及全站滚动条轨道、边角和按钮区域引用主页皮肤的 canvas 底色。
+- 已实现：首页使用用户提供的透明人物原图，固定于窗口右下角，按参考图比例缩放并略微裁切右侧与底部；滚动时位置不变，窄屏缩小，仅作为不接收点击与键盘焦点的装饰。浅深色背景继续跟随后台皮肤。
+- [ ] 本轮首页布局与顶栏改色仍待浏览器视觉验收：Codex 浏览器已保存权限拒绝访问本机 3003；此前浏览器验收记录对应上一版页面，不作为本轮视觉结果依据。
+- 已实现：后台开关轨道与滑块改为长方形，修正滑块 `::before` 的残留圆角；颜色及圆角继续引用站点皮肤。用户关闭开关时滑块横向拉长形成拖尾，再收回；首屏加载不播放关闭动画，减少动态效果偏好会禁用动画。
+- [x] `bun run typecheck` 通过；11 个相关测试文件共 61 项通过，444 个断言，覆盖默认 / 自定义皮肤、明暗模式、画布外观、导航开关与签到卡片移除。
+- [x] 独立 Compose 3003 构建并更新前端。浏览器检查首页、后台功能配置、资产、技能、历史、插件、画布列表和编辑器，可见元素计算圆角均为当前皮肤的 0px。首页上下栏和加油站不存在，正文仅一个画布入口，明暗底色匹配后台配置，320px 无横向溢出。
+- [x] 关闭短剧后，侧栏与 Ctrl+K 搜索入口消失；直达 `/projects` 显示「短剧创作暂未开放」。随后恢复验收前的开放开关和浅色主题。3003 使用隔离数据库与后端镜像，原 3000 未更新；完整业务操作链未逐项重跑。
+
 # 待测试
+
+# 待测试
+
+## 视觉批次已送达判定修复
+
+`projectCloudAgentVisionRequest` 的送达判定此前用变参切片长度当 map 判空，且 nil map 取值得到空串与"收据缺 sha256"相等，导致收据没有 sha256 的上下文图片每步都被当作已送达剥离、模型永远看不到原图。现要求账本中存在非空 SHA 且与收据一致才判定送达；带图 Agent 对话中"识图回执缺 SHA 的图片被静默替换成占位文本"的现象应消失。**待真实环境验收**：发起一次带图对话，确认模型步请求确实携带原图、超限图片仍按"图超限必须在模型任务准入前拒绝"被拒。
+
+## 文本模型最大图片引用
+
+管理端文本模型能力编辑器补回「最大图片引用」（`text.references.maxImages`）输入：Agent 模型预检按该字段拒绝超限图片，此前 6141bd68 重写编辑器时丢失该入口，`visionSupported` 开启后任何附图运行都会在 model-preflight 报「当前模型最多支持 0 张」，而管理员在界面上填的「识图批次安全封顶」只影响看图批次切分、不参与预检。`bun test text-capability-editor` 2/2 通过、`bun run build` 通过。**待真实环境验收**：管理端把涉事渠道模型的「最大图片引用」改为 10 并保存，确认 DB `capability_config_json` 中 `text.references.maxImages=10`，再发起一次带图 Agent 对话确认不再出现 model-preflight 400。
+
+## 后端统一日志与降噪
+
+- 已实现：新增 `backend/internal/logging`，统一接管 slog、标准库 `log`、GORM 与 Gin 访问日志，级别与格式由 `CANVAS_LOG_LEVEL` / `CANVAS_LOG_FORMAT` 控制。`info` 下不再输出成功的查询类请求、成功 SQL、`[Agent] message_end` 等流式事件及常规画布自动保存；4xx/5xx、慢请求、慢 SQL、SQL 失败和 panic 仍会记录，SQL 不带参数值。
+- [x] `go build ./...`、`go test ./...` 与 `internal/logging` 单元测试通过。
+- [ ] 部署到服务器后观察一段时间的日志量，确认没有遗漏的高频输出；临时切换 `CANVAS_LOG_LEVEL=debug` 验证 Agent 事件与查询请求可以重新看到，再切回 `info`。
+- [ ] 若接入日志采集，验证 `CANVAS_LOG_FORMAT=json` 的字段（`request_id`、`status`、`latency_ms`）可被正确解析。
+
+## 分镜视频预览画幅
+
+- 已调整：分镜制作右侧的视频播放器使用媒体原始比例和完整画面适配，避免共享预览样式的固定 16:9 与 `object-fit: cover` 裁剪竖屏视频。
+- [ ] 真实分镜页面播放已有 9:16、16:9 视频，确认画面完整、控制条可用；切换镜头与历史版本，检查明暗主题和窄屏下的预览区滚动。本次仅核对组件与样式，未完成浏览器验收。
+
+## Pi 原生上下文摘要
+
+已接入锁定 Pi 0.87.1 的 `compact()`，统一 Go/Pi 压缩触发预算，采用 token 切点、长轮次前缀摘要和旧摘要更新。摘要模型调用仍由 Go 执行并计费，按子调用复用任务；准备信息在独立转录记录保存，结果与服务端事实组成检查点，并与 Pi 会话树原子提交。
+
+离线验收已覆盖预算边界、预检准入、未知窗口、持久活动分支绑定、工具调用/结果配对、恢复顺序和 Web 投影；当前 Agent 全量测试 139/139、后端相关包、Web 合约测试与生产构建均通过，5 项 Go overlay、3 项 Node、2 项 Web 原始探针也全部通过。隔离真实模型验收（`qwen3.8-27b`）已完成：普通与拆分轮次都生成 `pi-native` 摘要，重放不增加上游请求、订单只结清一次、压缩后的真实续跑保留人物、约束与任务身份。浏览器 SSE、PostgreSQL、生产双 Worker 及远端真实上下文窗口仍未验收；GPUStack `/v1/models` 不暴露窗口元数据，测试里的 64K/1024 只是本地夹具预算。Go 与 Pi Worker 必须配套更新；新压缩期间的 `pi_compaction` 转录类型不能由旧 Go 二进制读取。
+
+## Agent 工具合同与识图摘要
+
+已补齐媒体、分镜、批量表的条件必填和互斥字段，并同步 Go/Pi schema、字段说明及调用示例。待真实模型确认工具参数纠错、selectionId 复用、快照冲突重读与单步写入。识图待确认读取 → 同 SHA 摘要提交 → 缓存复用、图片更新后重新识图、上下文压缩后保留摘要与多图逐张处理；自动测试不能替代真实模型调用效果验证。
+
+Go 服务与 Pi Worker 必须配套更新。已有运行使用冻结 schema；本次条件分支及 SHA 合同变化不做宽泛兼容放行，更新后需在新运行验收，不自动重放失败运行。
+
+本次 Pi 构建与全套 139 项测试通过；Go 工具与视觉专项通过；后端相关回归（Compaction/ContextBudget/ContextPressure/PiPreflight/PiAgent/Transcript/InternalAgent 协议）通过。
+
+## Agent 输出预算与会话压力计量
+
+预留输出改为自动推算，模型最大输出保持独立配置。待真实模型确认 Pi 输出上限、未知窗口兜底、逻辑路由输入预算、单步策略调整及压缩时机。压力读数按会话保存，待浏览器确认续轮保持读数、新会话清零、切回历史会话恢复，以及切换期间迟到 SSE 不污染当前会话。
+
+## Pi 本地参数拒绝后的恢复
+
+已修复 Pi 校验工具参数后没有结算 Go 已登记批次的问题。真实 LLM 已发出错误 options、收到校验错误并纠正完成；续聊、审批写入、SSE 及独立会话并发通过。待用户在原会话发起新一轮确认；原失败运行不自动重放。详见 docs/reports/agent-local-tool-rejection.md。
+
+## Agent（beta）配置界面
+
+新增在线执行器容量概览、离线历史记录折叠、配置修订号与待应用标记、刷新加载状态。负载汇总仅包含在线执行器，离线记录展示最后心跳快照。待验收明暗模式、自定义站点皮肤下的主/次按钮颜色，以及窄屏横向表格、离线展开、配置保存与记忆管理。
+
+待用户确认管理员新入口与旧记忆链接跳转、配置冲突提示、已保存/已应用状态、离线及缩容展示，以及记忆筛选/删除在明暗主题与移动端的体验。Firefox 已实际验证登录、新旧路由、在线状态、390 像素窄屏、配置保存和版本显示；完整明暗主题及非空记忆删除仍待确认。详见 docs/reports/agent-orchestrator-acceptance.md。
+
+## Canary 3004 隔离验收
+
+最新验收见 docs/reports/agent-orchestrator-acceptance.md，第一阶段记录保留于 docs/reports/event-canary-acceptance.md。16 路请求、审批与重启、SSE、公平准入和热缩容通过；管理员页面已做 Firefox 实际验收，完整画布明暗主题及移动端等待交互仍待用户确认。
+
+
+## 画布 Pi 原生 Skill（已实现，待真实部署确认）
+
+实现边界见 [原生 Skill 运行时](../backend/agent-native-skills)。Node 全量 94 项及 Web 类型检查/构建已通过；Go 原生 snapshot、撤销授权、冻结读取、内部路由专项已通过。Go 全量与本地 Compose 联调结果仍需收敛。
+
+- [ ] 在本地 Compose `3000` 登录真实画布，选择包技能和单 Markdown 技能，确认请求只含 `skillIds`，看到启用/读取 SSE 和正文结果。
+- [ ] 更新技能后在途读取保持冻结版本；停用/卸载后后续读取和恢复拒绝。
+- [ ] 重启 worker，未闭合原生读取恢复；旧 `legacy-go` 运行仍使用原工具完成。
+- [ ] 无技能运行正常；未匹配描述不强制读取；损坏包、越权文件和跨用户访问明确失败。
+- [ ] 刷新、断线续传及明暗主题下事件正常，不显示临时绝对路径或技能正文；普通生成的 `linked-context` 保持可用。
+
+## Agent 操作记录折叠成一行（本轮新增，待手工验证）
+
+实现：切分在 `web/src/lib/canvas/agent-operation-feed.ts`，组件是
+`web/src/components/canvas/canvas-cloud-agent-chat-ui.tsx` 的 `AgentOperationFeed`，
+样式在 `canvas-cloud-agent.css` 的 `.agent-operation-*`。
+
+- [ ] 一轮里跑多步时，对话区只出现**一行**操作记录，行首是**类别徽标**（读取清单 / 查看画面 /
+      修改画布 / 创建节点 / 其他操作），然后是这一段的聚合文案，右侧带"N 步"计数；
+      点击展开完整记录、箭头翻转，再次点击收起。
+- [ ] 展开/收起前后正文与滚动位置不乱跳；运行中新步骤追加进同一段时，展开状态不被重置。
+- [ ] 换步时旧文案**高模糊淡出**、新文案**从下方上浮**（先快后慢），不是硬切。
+- [ ] 失败或被拒的一步：折叠行转红并**默认展开**（含任务 ID 与错误详情）；用户手动收起后不再自动弹开。
+- [ ] 等待用户确认的工具调用（审批卡）仍然单独一行可见，没有被折进操作记录里。
+- [ ] 计划清单（本轮待办）与提问条照常在输入区上方出现；消息流里**不再**出现它们的空卡片
+      （此前 `plan_updated` / `user_question` 载体消息会渲染成"操作画布 / 操作已完成 / 处理中"）。
+- [ ] 流光只扫过折叠行的文案，且**只在运行中**：任务结束（或这一步失败）后流光立即停；
+      `prefers-reduced-motion: reduce` 下静止且可读；深色与浅色主题下对比度按正文标准自查。
+- [ ] 展开后的每一步**不再有状态勾/叉**：状态与错误由文字与颜色表达，失败那一步的文字是红的。
+- [ ] 助手正文行不再有模型品牌圆环图标，也不再出现"过程说明"角标。
+- [ ] 键盘：Tab 到该行有可见焦点环，Enter/Space 可展开；读屏名称包含类别、步数与最新一步。
+
+## Agent「读清单」与「看画面」不再串味（本轮新增，待手工验证）
+
+背景：`canvas_inspect_image`（图片字节真的交给模型）此前显示成"操作画布 · 操作已完成"，
+而只读元数据的 `canvas_get_state` 显示成"读取节点 · 已读取当前画布" + 节点 chip
+"读取了图片节点《…》"——两件事被说反了。本次把语义拆成三档：
+**① 清单（无像素）／② 画面（图片真的送出）／③ 写画布·生成**。
+
+实现：`agent-tool-presentation.ts`（metadata、类别、失败细分、`AGENT_TOOL_NAMES`）、
+`agent-canvas-actions.ts`（chip 动词）、`agent-operation-feed.ts`（`agentOperationSegmentLabel`）、
+`canvas-cloud-agent-chat-ui.tsx`（类别图标与折叠行徽标）。
+
+- [ ] 三档并排不串味：一轮里同时出现"读取清单（未查看画面）""查看画面""修改画布"时，
+      三个徽标、图标（List / Eye / Pencil）与摘要各不相同，没有一档借用另一档的措辞。
+- [ ] 清单档的 chip 是**存在式**：显示"画布上有图片节点《…》"，**不出现**"读取了…图片节点"。
+- [ ] 识图四态文案：普通 → "已附上《…》的画面"；批量 → "已附上 N 张画面"；
+      账本复用 → "复用已记录的观察，未重复看图"；读循环护栏 → "本轮重复查看，只回执文字、未附图"。
+- [ ] 看图的 chip 指向真的送出去的图片："查看了图片节点《…》"；复用时是"复用观察：…"。
+- [ ] 折叠行（默认收起）也能看出档位：徽标 + 聚合文案；识图密集段报
+      "查看了 N 张画面 · 最新《…》"，N 按真的送出画面的图片去重计数（复用/护栏不计）。
+- [ ] 识图失败四类文案各核一次：额度耗尽 →"本轮识图额度已用完（已用 X / 额度 Y）"、
+      读循环 →"同一张图同版本重复读取，已拦下"、批量上限 →"本批图片数已达模型上限（已附 X / 上限 Y），
+      下一步继续"、能力缺失 →"当前渠道模型未声明图片输入能力"；认不出的失败落"查看画面未完成"。
+      注意：额度耗尽通常直接**终止本轮**（后端 `run_failed` + "本轮识图调用已达到安全上限…"），
+      工具卡上不一定能出现带数字的那句。
+- [ ] 未登记的工具（上游将来新增的名字）落在"其他操作"，摘要点名工具本身（"已完成：<工具名>"），
+      不得被读成写画布。
+- [ ] `aria-label` 与可见文案一致：读屏听到"展开 N 步<类别>记录，最新一步：<文案>"。
+- [ ] 深色与浅色主题下三档徽标的对比度都能读（看图的 accent 取主题强调色，不是写死的颜色）。
+
+## 上游终止原因与截断处置（本轮新增，待真机复验）
+
+实现与证据：`docs/design/cloud-agent-stop-reason.md`；对外合同见 `docs/content/docs/backend/http-api.mdx`
+的"每一步模型调用都记终止原因"条目。
+
+- [ ] 同一条运行里每一步都能在事件流里看到 `model_step_stop`，且 `stopReasonKind` 与上游实际结束方式一致：
+      用带工具调用的步与纯正文收尾步各核一次；拿不到原因的步应为 `unknown`，不能是 `stop`。
+- [ ] 真实触发一次 `length`：把管理端"画布 Agent 单步"的输出上限调到较小值（例如 1024）再让它写一段长正文，
+      应看到 `model_failure_recovered` / `reason=truncated_output_escalated`、`TruncatedStepEscalated=1`，
+      且重试那一步的请求 `thinking=false`、`maxOutputTokens` 为放大后的预算。
+- [ ] 连续两次截断时本轮**不能** `completed`，而是以 `run_failed`（`reason=truncated_output`）如实终止：
+      `model_step_stop` 的 `disposition` 依次为 `retry` → `fail`；半截正文不得进入历史也不得作为答复发布；
+      终止说明要说"截断"，不能出现"先对账待办清单"那句。
+- [ ] 截断步即使解析出了工具调用也不执行：事件里 `toolCalls` 有计数，但不应出现对应的 `tool_completed`，
+      画布上也不应有半截改动。
+- [ ] 回归：正常结束（无工具调用的完整正文）仍以 `final=true` 发布并 `completed`；带工具调用的步不受影响。
+- [ ] 计费核对：截断重试多花一次模型调用，确认这一次的用量与费用如实计入，不因重试被吞。
+- [ ] **终结信号覆盖率**（三个解析事实落地后要量的数）：按 provider × 流式/非流式统计
+      `terminalEventSeen` / `stopReasonPresent` / `streamDoneSeen` 的组合占比。口径提醒：只有
+      `terminalEventSeen=true` 而 kind 为 `unknown` 才是"上游给了我们还不认识的新词"；三个全 false
+      才可能是上游没给或流被中断。量出覆盖率后才能决定是否把"缺终结信号"升级为阻断。
+- [ ] **升级开关复位**：触发一次 `length` 重试后，确认重试成功的那一步之后 `ForceThinkingOff` /
+      `BoostStepOutputBudget` 已复位（下一步请求的 `thinking` 不为 false、`maxOutputTokens` 回到正常值），
+      且检查点里的 `escalationRestore` 已清空。
+- [ ] **四类"不该发布"的终止**（`pause` / `content_filter` / `refusal` / `incomplete_unknown`）：
+      真实触发任一类时本轮应 `run_failed`（`reason=step_stop_<kind>`）、说明与原因对应、
+      `TruncatedStepEscalated` 不增加、两个开关不被置位、无 `tool_completed`。
+
+## 看图图片保留窗口 3 → 12 轮（2026-09-22 夜）
+
+一场 5 张图的会话里落 `context_images_pruned` **67 次**、累计裁剪 **99 张**，而 `compactionPressureRatio`
+最高只有 **0.0734**（阈值 0.85）——触发裁剪的是轮次时钟而不是 token 压力：模型为同时持有整批图会不断
+补看，补看又造出新的图片轮次，把旧批次挤出 3 轮窗口。本次**只放宽窗口**（`cloudAgentImageRetentionRounds`
+3 → 12），裁剪机制、占位符文案与 `refresh=true` 口径都不动，先把变量隔离出来。
+
+- [ ] dev 真机复验：同一画布形态 + 一批 5 张图，确认 `context_images_pruned` 次数与 `prunedImages`
+      累计明显下降、`canvas_inspect_image` 调用次数下降（对照：3 轮窗口时 67 次 / 99 张）。
+- [ ] 代价核对：图片停留更久后单步输入 token、视觉计费与单轮墙钟是否仍在可接受范围；
+      `compactionPressureRatio` 是否因此上抬（若逼近 0.85，说明窗口要与压缩策略一起调）。
+- [ ] 归因判定：若放宽后补看次数**不降**，说明主因在"观察不跨轮"（`visualIdentity=unknown` +
+      占位符里的 `refresh=true` 提示），下一步按该方向改，而不是继续放宽窗口。
+
+## 同步上游 6 个提交：迁移号顺延与识图口径改判（2026-09-22 晚）
+
+本次合并 `upstream/main` 的 6 个提交（`af663304` … `65f639aa`），其中两条改变我方行为：
+
+- **迁移号继续顺延（第四次）**：上游把 **v34** 用给 `task_media_recovery`（作品保存恢复），我方两条 no-op 让位迁移
+  从 v34/v35 挪到 **v35/v36**（`CurrentSchemaVersion=36`、`PreviousUpstreamSchemaVersion=34`）。搬迁表新增
+  "再上一版 dev 库（记录停在 v34/v35，即跑过 PR #41–#44 那版 dev 的库）"落点，并明确**必须先腾出高版本号**
+  （先 transcript 35→36，再 run_events 34→35）——顺序反了会被"目标版本已占用"跳过，随后启动时以
+  "数据库迁移 34 名称不一致：记录为 cloud_agent_run_events，程序期望 task_media_recovery" 拒绝启动。
+- **识图链路改判为上游口径**：图片不再走短时签名链接，改为检查点只存 `resource:ID`、worker 在请求期把占位水合成
+  真实图片字节（与生成任务参考图同一套机制），不依赖 `CANVAS_PUBLIC_BASE_URL`；同时**废弃跨轮视觉继承**
+  （`recordCloudAgentVisualNote` / `visualNote` / `inherited` 相关路径），理由是普通正文不等于识别成功、节点可能换图。
+  我方在该链路上只保留自有改动（锚点 `UserPrompt` 截断、`assistant_message` 的 `final`、`strictTools`）。
+
+- [x] 迁移：`TestLegacyCloudAgentMigrationRelocation` 8 个子测试全过（含新增的"再上一版 dev 库（schema 35）"起点），
+  并用**变异测试**确认用例真的能挡住顺序错误：把 35→36 与 34→35 两条对调后，新用例报出上面那条"名称不一致"。
+- [x] 代码：`gofmt -l` 干净、`go build ./...` 与 `go vet ./internal/...`（含测试类型检查）无错；冲突按上述口径解完，
+  自动合并的 `cloud_agent_vision.go` 即上游重写版（我方对该文件本就无改动）。
+- [ ] 真机：把停在 v34/v35 形态的 dev 库升到 v36 并确认启动正常；核对 `schema_migrations` 里
+  v34 = `task_media_recovery`、v35 = `cloud_agent_run_events`、v36 = `cloud_agent_transcript`。
+- [ ] 真机：用声明了图片输入的渠道模型跑一轮看图，确认图片以真实字节送达上游、且不再依赖 `CANVAS_PUBLIC_BASE_URL`
+  （当前 dev 唯一启用模型 `maxImages=0`，看图工具不会暴露，需另配支持图片输入的模型）。
+
+## 云 Agent 收尾闸门与 runtime 催办语义（工作项 A，2026-09-22）
+
+原来的收尾顺序是"先发布、后检查"：模型一旦给出不带工具调用的正文，服务端立刻落 `assistant_message`
+（界面马上渲染成完成气泡），然后再检查待办清单/插话，不通过就追加一条 runtime 催办继续跑。用户看到的是
+**同一轮里两段都像最终回复的正文**（原始取证 `ag92c0983cef842954c6e5e1862b5e8dd5`：先 1298 字符中间稿，
+催办后又落 679 字符最终稿），中间没有任何解释。现在改成"先过闸门、再发布"：
+
+- **候选收尾**：不带工具调用的正文先过闸门；判据只认两类能确证的事实——待办清单还有未对账的项（`pending_plan`）、
+  用户刚插话还没送进上下文（`pending_interjection`）。
+- **通过**：这段正文作为本轮**唯一一次**最终答复发布（`assistant_message` + `final: true`），本轮 `completed`。
+- **未通过**：正文降级为过程说明（`final: false`，内容照旧可见，但界面标"过程说明"），落 `completion_blocked`
+  控制事件（界面渲染为 system 控制行，不是用户气泡也不是最终答复），并把阻塞原因作为 runtime 帧交回模型继续本轮。
+- **显式完成**：新增 `finish_run(summary)` 工具，跑同一份闸门；通过即以 `summary` 发布最终答复并收尾，
+  未通过回 `tool_completed.result.completionBlocked=true` + `blockers` + `requiredAction=reconcile_plan`。
+- **有界**：同一阻塞原因（指纹 = 阻塞种类 + 首个未完成项）最多催办 2 次、本轮累计上限 6 次，用尽后以
+  `run_failed`（`reason=completion_blocked`）结束，不再无限催办；清单真的被推进或用户插话会重置同一原因的计数。
+- 系统行为策略升到 **v9**（新增"收尾与最终答复"一节；`pending_plan` 从"可以不理会、没有工具时可直接结束"改成"必须先对账"）；
+  工具 schema 预算按实测从 26000 抬到 26800（23 个工具 26,135 字节，其中 `finish_run` 610 字节，描述已压缩过一轮）。
+
+- [x] 后端新增/改造用例：候选收尾被拦下（不发布最终答复、落过程说明与控制事件）、闸门通过只发布一次最终答复、
+  催办有界并以 `completion_blocked` 终止、阻塞指纹随清单推进重置、清单对账后放行、`finish_run` 通过与阻塞两条路径、
+  `finish_run` 参数契约（缺 `summary` 走字段级回执）、上一轮交接只取 `final: true`。
+- [x] `go test ./internal/app/`（`TestCloudAgent*` 全绿）、`gofmt` 干净；前端 `bun test` 2040 通过 / 0 失败
+  （新增 6 条：`final` 语义、控制行不是用户气泡、面板接线、渲染层"过程说明"标记、断线重放草稿不被当成最终答复、`finish_run` 工具卡文案）、`bun run typecheck` 通过。
+- [ ] 真机复验（需部署到 3001）：① 造一个多步待办再让它提前收尾，确认界面出现"过程说明"标记 + 控制行，且它继续把清单做完；
+  ② 让模型只写正文不改清单，确认第二次以 `run_failed` / `completion_blocked` 结束，且用户仍能看到过程正文；
+  ③ 真实渠道（`qwen3.6-35b-a3b` 等）是否会被提示词引导到调用 `finish_run`、`summary` 是否稳定成为最终答复；
+  ④ `completion_blocked` 控制行与"过程说明"标记在明暗主题、窄面板下的显示。
+
+## 合并上游 57 个提交后的单步边界与租约口径（2026-09-22）
+
+本次把上游对我们自己 PR 的两处后续修正一并吸收（上游 `979705e3`、`76613eda`），行为与合并前不同：
+
+- **空输出 / 超时的放大重试不再翻倍**：`cloudAgentStepOutputBudget(boosted)` 从 `min(2 × 上限, 131072)` 改成
+  `min(上限, 131072)` —— 放大档只换来"关掉思考"这一次机会，不再突破管理端配的单步输出上限（成本上界可预期）。
+  不限制（策略值 0）时仍用 32768 的兜底值保证重试有界。
+- **单步边界解析改为 fail-closed**：`cloudAgentStepLimits()` 现在返回 `error`，运行时策略读取失败时整步以错误收场，
+  而不是退回出厂默认值（默认值可能比管理员配置更宽）。
+- **执行时限到点不再豁免租约失效**：`processClaimedTask` 里那道"我方执行时限到点就不算租约丢失"的例外被移除；
+  根因修复（续租用 `context.WithoutCancel` + 5s，不再被自己的执行时限打断）保留。真实租约失效一律提前返回，
+  避免旧 worker 在新 worker 接管后继续结算或写终态。
+- [x] `gofmt` / `go vet` 干净；`go test ./... -count=1`（含 Postgres 与 `redis-server` 依赖用例、`umask 0022`）全绿，
+  `internal/app` ok 493s；前端 `bun test` 2034 通过 / 0 失败、`bun run typecheck`、变更文件格式检查通过。
+- [ ] 真机复验这三条口径：把单步输出上限调小逼出空输出/超时，确认重试请求的 `max_output_tokens` **不超过**管理端配置值；
+  在策略读取失败（可临时把 `system_settings` 行改成非法 JSON）时确认整步按错误收场而不是用默认值放行。
+- [ ] 真实租约失效路径：任务执行中让租约过期被另一个 worker 接管，确认旧 worker 不再写终态、也不产生重复计费。
 
 ## 发布回归与资源引用保护
 
@@ -105,6 +425,70 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] 使用真实管理员账号验收实际筛选与分页、CSV 导出、媒体预览下载、请求详情及真实数据权限。浏览器夹具检查不等于后端联调通过。
 - [ ] 复核渠道、模型、用户、运营及其他设置页在公共样式变化后的长内容、固定列、浮层、滚动及不同站点皮肤；本轮并未逐页重做或完成全后台验收。
 
+## 云端 Agent 模型选择契约：服务端签发的 selectionId（2026-09-22）
+
+handoff 工作项 B 第 4 步：把"逐字抄三个字段"的模型选择收敛成一个不透明凭证。
+
+- `model_list` 每一项新增 `selectionId` = `base64url(claims).base64url(HMAC-SHA256(settingsEncryptionKey, "cloud-agent-selection\n" + payload))`，
+  claims 里带签发用户与 `logicalModelId` 或 `channelId`+`channelModelKey`；用与匿名资源链接同一把服务端密钥，不引入新密钥。
+- `generate_media` / `image_layer_split` 优先接受 `selectionId` 并**归一化**回三个字段（下游代码无感）；旧的三字段契约保留兼容期；
+  两者混用、被改写、跨用户、格式不对都按 `field=selectionId` 的字段级参数错误拒绝，提示重新调用 `model_list`。
+- 签发失败（密钥不可读）时只省略 `selectionId`，目录本身仍可用，模型回退旧契约。
+- [x] 单测：目录每一项都带可解开的 `selectionId` 且与 `selection` 一致；伪造签名 / 改写内容 / 跨用户 / 缺分隔符 / 空凭证都被拒；
+  只给 `selectionId` 能通过并归一化；与 `logicalModelId` 或 `channelId` 混用按 `mutually_exclusive` 拒；`selectionId` 为 null 按 `type_mismatch` 拒。
+- [x] 回归：`go test ./internal/app/ -run TestCloudAgent` 全绿（27.2s）。
+- [ ] 真机复验：真实一轮里让模型只用 `selectionId` 提交生成，确认目录→选择→审批链路无回归；需部署后执行。
+- [ ] 未做：`selectionId` 的 TTL/失效策略（当前不设过期，选择本身在提交时仍会按目录与能力重新校验）。
+
+## 云端 Agent 自动纠错的错误指纹与逐级熔断（2026-09-22）
+
+handoff 工作项 B 第 3 步：把"同一个工具错三次就熔断"改成按**错误指纹**分档。
+
+- 指纹 = 工具 + 字段级 issue + 字段路径 + 参数外形（键与类型，值不参与）→ `creationHash`。
+- 档位：第 1 次正常回执；第 2 次同一个指纹收紧工具集（`state.ToolScope`，下一步只开放出错工具 + 读画布/读目录/读分镜/读批量表/ask_user），
+  预检对集合外的工具回 `invalid_model_output`；第 3 次停止自动重试（`run_failed`、`reason=tool_retry_exhausted`、带 `fingerprint`）。
+- 换了错法（指纹不同）从第一次重新计数；修好后清空收紧与纠错记录；`retry.status` 仍保持 `retrying`/`exhausted`/`recovered` 三种，收紧是附加字段（`ladder=scoped`、`toolScope`）。
+- [x] 单测：指纹区分不同错法（同工具换字段重新计数）、第二次同类错误进入收紧档且状态仍是 `retrying`、收紧后工具表是非空真子集且预检按集合判定
+  （集合外的 `generate_media` 被拒、集合内的 `canvas_apply_ops` 放行）、修好后清空、第三次失败事件带指纹。
+- [x] 回归：`go test ./internal/app/ -run TestCloudAgent` 全绿（26.7s）。
+- [ ] 真机复验：让模型连续两次提交同一种非法参数，确认第二步的"只开放修复工具"在真实事件流里可见；需部署后执行。
+- [ ] 未做：前端展示收紧档（`retry.ladder` / `retry.toolScope` 已下发，工具卡暂未单独显示）；"换更强模型"这一档未实现（当前以停止自动重试收尾）。
+
+## 云端 Agent strict function calling 探测与回退（2026-09-22）
+
+handoff 工作项 B 第 2 步的后半：上游支持 strict 时启用按 schema 约束采样，不支持时**自动回退并记住**，本地 schema 预检始终兜底。
+
+- 能力合同新增 `text.strictTools`（文本模型，`*bool`，缺省不下发）；运行期每步按渠道模型能力解析，放进任务信封 `textOptions.strictTools`。
+- 请求组装（内置协议与声明式协议两条路径）给每个函数工具加 `strict: true`；上游报"未知参数 / 不支持 / 非法取值"且文本里出现 strict 时，去掉标记**重发一次**，
+  并把 `channelID|modelKey` 记进进程内拒绝名单，后续请求不再尝试（重启后重新探测一次）。
+- [x] 单测：`strict` 标记的加/去；兼容错误判定（识别三种 strict 报错、**不**把与 strict 无关的 unknown parameter 当 strict 问题）；httptest 上游先 400 再成功 →
+  两次请求且第二次不带 strict、拒绝名单已记录；能力合同声明才下发（nil 与拒绝过的线路都不下发）。
+- [x] 回归：`go test ./internal/app/ -run 'TestCloudAgent|TestProvider|TestRunAgent'` 全绿（29.0s）。
+- [ ] 真机复验：给一个支持 strict 的渠道模型打开 `strictTools`，确认请求体带 strict 且调用成功率变化；不支持的上游确认自动回退不报错。需部署后执行。
+- [ ] 未做：strict 模式下的 schema 规范化（OpenAI strict 要求所有属性都进 `required`，我们的 schema 保留了可选字段——因此**默认不下发** strict，只对确实兼容的线路开启）。
+
+## 云端 Agent 工具调用治理：整批预检 + 单步一个写工具（2026-09-22）
+
+handoff 工作项 B 第 2 步落地：模型一次返回的多个工具调用，在执行前统一判定准入。
+
+- 预检结论随检查点持久化（`callAdmissions`），执行侧按结论放行/拒绝；旧检查点缺该字段时按原行为执行。
+- 拒因分四类：`schema_error`（本地 JSON schema 校验：必填/类型/未定义字段/枚举/上下界/数组超限）、
+  `invalid_model_output`（不在本轮工具表内的名字）、`permission_violation`，
+  以及批次策略结论 `single_write_per_step` / `batch_cancelled_after_write_failure` / `duplicate_call`。
+- 参数类拒绝走既有字段级回执（`reason=invalid_tool_arguments`、`field`、`issue`、附 `parameters`、消耗纠错名额）；
+  批次策略拒绝走 `errorClass=call_skipped`（reason `call_skipped`、`requiredAction=resubmit_next_step`、不消耗名额）。
+- [x] 单测：一批两个写调用只执行第一个（第二个 `single_write_per_step`，画布只改一次）；第一个参数不合法时后续三个写调用整批取消
+  （`batch_cancelled_after_write_failure`，画布零改动，只有参数错那条消耗一次纠错名额）；工具表外的名字按 `invalid_model_output` 拒；
+  只读调用不受限制；无预检结论的旧检查点照常执行。
+- [x] schema 校验器单测 16 例（必填/null/类型/整数 vs 小数/未定义字段/枚举/上下界/数组超限/数组元素/嵌套对象/非法 JSON/非对象/空参数），
+  以及 `canvas_apply_ops` 的条件必填（`add_node` 缺 `nodeType`、`update_node` 缺 `patch`、未定义 op 类型、`patch` 未声明键）。
+- [x] 回归：`go test ./internal/app/ -run TestCloudAgent` 全绿（28.7s）。
+- [ ] 真机复验：故意让模型在同一步发两个写入 / 发一个未知 op 类型，确认回执与画布零改动；需部署后执行。
+- [x] 完成闸门已交付（工作项 A，见本文档顶部"云 Agent 收尾闸门与 runtime 催办语义"一节）；本行原列的其余三项也已交付（PR #38–#40）。
+
+**行为变化（有意）**：`canvas_apply_ops` 里未知 op 类型过去按准入失败**终止整轮**，现在在预检阶段作为字段级 `schema_error` 交回模型自纠
+（该用例已改写成"真正不可准入的写入仍终止整轮"：连线端点不存在）。理由：错误归类（PR #33）已把 schema 违规定为可自纠。
+
 ## 批量生图、刷新恢复与画布节点一致性
 
 - [x] 专项回归 127 项通过，覆盖同步编辑命令、按节点结果提交、批次汇总、资源槽位、空间索引、相邻媒体逻辑、revision 合并与存储清理；前端类型检查通过。
@@ -133,6 +517,282 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - 模型管理入口明确为“自定义排序”，支持搜索选择模型并输入目标位置，保留拖动和上下移动；位置从 1 开始，保存整份顺序，取消放弃草稿。复用已有管理员排序接口、事务与并发冲突检查，前台系统模型选择器沿用保存后的顺序。
 - [x] 前端 8 项排序 / 管理页面专项、类型检查、生产构建与 UI lint 通过；后端现有排序事务、权限、过期快照和跨渠道检查专项通过。前端已部署，入口与排序脚本同构建一致，API 就绪；构建仍提示部分 chunk 大于 500 kB。静态资源核验不替代浏览器交互验收。
 - [ ] 真实浏览器验证跨分页移动、停用模型排序、取消不保存、刷新恢复、前台模型顺序，以及其他管理员同时修改时的冲突提示。
+
+## 合并上游 v1.5.2–v1.5.7 后待复验（云端 Agent 持久化切换）
+
+合并后运行事件的活存储换成上游的 `cloud_agent_event_records`，我们自研的
+`cloud_agent_run_events` 随 v34 退役（上游把 v33 用给了 `oauth_state_accepted_terms` 注册协议同意校验，我方两条 no-op 让位迁移顺延到 34/35）；事件契约（`event_seq_base` 等视图字段、`?sinceSeq=`/`?eventLimit=`、
+SSE 的 `Last-Event-ID`）已按上游持久化结构重新实现。以下端到端项本轮**没有**做，需要真实环境复验：
+
+- [ ] **迁移五起点**：全新库 / 纯上游库 / 我方 v25 等价库（含退役表数据，让位记录停在 v24/v25）/ 已跑过上一版合并线二进制（让位记录停在 v32/v33）/
+      上一版 dev 线（让位记录停在 v33/34，3001 dev 库就是这个形态）的库，各跑一次 `migrate-schema up`，让位记录一律被搬到 34/35，
+      确认 `ready:true`；我方库这一支额外确认退役事件行被搬进 `cloud_agent_event_records`、
+      `checkpoint_version=2` 的运行能打开（`len(Journal) == event_count`）。单测已覆盖，实库未跑。
+- [ ] **真实旧库搬运**：对一份 `pg_dump` 出来的 v25 库副本执行迁移，核对 21 个 `checkpoint_version=2`
+      的运行全部可读；搬运前后退役表的行数与内容不变。
+- [ ] **事件分页与 SSE 重连**：长跑（>100 事件）会话滚动拉取 `?sinceSeq=`，并用 `Last-Event-ID`
+      断线重连，确认不重不漏、`eventSeqBase` / `latestSeq` / `eventsTruncated` 与前端一致。
+- [ ] **前端计量弹窗**：确认 `context_pressure` 的 `breakdown` / `anchor*` / `inputBudgetTokens` /
+      `budgetSource` / `stepMaxOutputTokens` / `stepTimeoutSeconds` 与弹窗逐字段对齐（本轮只跑后端单测）。
+- [ ] **语义压缩真机**：跑一轮把上下文顶到输入预算 85% 的会话，确认暂停步进 → 压缩 → 继续本轮，
+      事件流里出现 `context_compaction_requested` / `context_compacted`（含 `droppedTurns` / `resume` / `mode`）。
+- [ ] **压缩期取消/失败收尾**：在"正在压缩"时取消本轮，确认检查点落盘、`contextCompaction` 清空、
+      运行状态仍是 `cancelled`（不被复活成 `completed`）。
+- [ ] **看图链路**：在声明了 `text.references.maxImages > 0` 的渠道上让 Agent 调 `canvas_inspect_image`，
+      确认短时链接可被上游取到、同一张图一轮最多看两次、超出保留轮次后出现 `context_images_pruned`、
+      下一轮继承 `visualNote` 且不再重复看图。
+- [ ] **单步边界真机**：把 `agentStepTimeoutSeconds` 配成 30，确认超时后出现
+      `model_failure_recovered`（`reason=step_timeout_retried`）而不是整轮判死。
+- [ ] **上游 CSS 裁决**：`.agent-tool-row:hover` 保持上游的"删除 + 负断言"，需产品复核是否恢复悬停样式。
+- [ ] **事件保留期 TTL**：本轮按决定不实现（要给上游事件表加 `expires_at` 列），需人工确认是否分叉。
+- [ ] 合并前已有的红灯：`TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered`
+      （新增节点落在原点）与合并基线一致，本轮未修。
+
+## 云端 Agent：工具失败归类与可行动字段（handoff 工作项 B 第一步，2026-09-21）
+
+按 handoff 文档"推荐实施顺序"的第 1 步（**只加分类与指标、不改执行行为**）落地：
+
+- 新增 `backend/internal/app/cloud_agent_tool_error_class.go`：把工具失败归成五类 —— `invalid_model_output`（模型幻觉出的工具名、在本轮契约之外调用只被 `contextScope` 挡掉的工具）、`schema_error`（缺字段/类型错/未知字段/非法 JSON）、`state_conflict`（画布在读取之后被改动）、`permission_violation`（只读轮发起写入等真实授权边界）、`upstream_failure`（上游 4xx/5xx、超时、媒体上游拒绝），其余落 `tool_error`。
+- 每类附 `retryable` 与稳定的 `requiredAction`（`fix_arguments` / `reread_canvas` / `use_advertised_tools` / `ask_user` / `report_to_user`），只作为回执与事件的标注字段进入 `tool_failed`（`result.errorClass` / `result.errorClassLabel` / `result.retryable` / `result.requiredAction` 与载荷顶层 `errorClass`），**不参与任何放行或拒绝判定**。
+- 幻觉工具名的反馈也更具体了：过去一律回"工具未获本轮权限授权"，现在对不在平台工具集里的名字回"模型调用了不存在的工具「X」…请只使用本轮工具表里列出的工具"（handoff 验收项"未知工具归类为 invalid_model_output"）。
+- 前端工具卡失败时优先显示归类标签（"参数不符合契约"/"画布状态已变化"/"模型输出问题"/"超出本轮权限"/"上游故障"），比统一的"执行失败"更能说明下一步该做什么。
+- **缺必填字段的通用判定**：业务校验抛的多是普通 `AppError`（例如"分镜节点ID、分页参数或每页行数无效"），从错误类型看不出"模型漏了字段"。现在用**本轮实际暴露的 schema** 的 `required` 与模型参数比对，命中即按参数契约错误处理：归 `schema_error`、`requiredAction=fix_arguments`、把 schema 与 guidance 回给模型（handoff 要的自纠能力）；只在业务侧确实按参数问题拒绝（400/422）时套用，上游 5xx/网络错误即便同时漏字段也算 `upstream_failure`；已被分类过的参数错误不再套壳，避免覆盖工具更精确的反馈（如"缺少模型选择：必须复制 model_list 的 selection"）。
+- [x] 单测：10 个归类分支（含 contextScope 为空调画布工具、只读轮发起生成、上游 4xx/5xx、超时）、事件载荷与回执字段、缺必填字段归类与 schema 回传、字段齐备不误判、前端标签映射与兜底。
+- [x] 真机复验：让模型故意漏 `nodeId` 调 `canvas_read_storyboard` → `tool_failed` 载荷 = `errorClass=schema_error` / `errorClassLabel=参数不符合契约` / `requiredAction=fix_arguments` / `field=nodeId` / 附 `parameters`（部署 `dev-e4595d99`）；上一版（`dev-c1560763`）同一场景落到兜底 `tool_error`，即本次修真机前后对照。
+- [x] 均已交付（整批预检与单写 = PR #37、`selectionId` = #38、结构化纠错熔断 = #39、strict 探测 = #40、完成闸门 = 工作项 A 本轮）。
+
+## 云端 Agent：上下文计量 V2 事件与锚点治理（P1，2026-09-21）
+
+按设计方向 §4/§5/§6 补齐后端事件协议，全部是**附加字段**（旧字段与旧前端继续可用）：
+
+- **快照字段**：`context_pressure` 增加 `schemaVersion`(2) / `phase`(before_request) / `window{contextWindowTokens,reservedOutputTokens,usableInputTokens,overheadTokens,source}` / `anchor{id,valid,ageSteps}` / `measurementSource` / `normalizedInputTokens` / `projectedNextInputTokens` / `providerUsage{inputTokens,cacheReadTokens,uncachedInputTokens,outputTokens}`；发射点补 `requestId`（钉在即将发出的那次请求上，前端不必猜数字属于谁）。
+- **统一过渡事件**：新增 `context_transition`，`kind` 取 `semantic_compaction` / `body_eviction`（图片裁剪）/ `window_resolved` / `model_changed` / `route_changed`，带 `before`/`after`（sourceBytes、estimatedTokens、historyMessages、turns）与 `reason`。前端优先消费它，旧事件（`context_compacted`/`context_images_pruned`）保留兼容。
+- **§5 provider 归一化**：Claude 协议把缓存拆在 `input_tokens` 之外，现在按 `input + cache_creation + cache_read` 归一（此前实测输入系统性偏小 → 压力锚点偏低）；仅在出现 Claude 专有字段时换算，OpenAI 系（`prompt_tokens` 已含缓存）不受影响，避免重复计数。
+- **§6 锚点治理**：锚点带上口径签名（模型/渠道/逻辑模型/系统提示/工具 schema）与定锚的模型/渠道；出现"换模型/换线路/提示词或工具 schema 变化"即作废，超过 3 步未刷新也作废（真机实测过锚点冻结 3m16s / 8 条读数仍在参与压缩决策）；语义压缩完成后直接清锚点。
+- [x] 单测：快照字段齐全、窗口识别只落一条过渡、锚点超期与换模型作废（含 `model_changed` 过渡）、Claude 缓存归一 vs OpenAI 不重复计数。
+- [ ] 真机复验：换模型/长步数会话里能看到锚点作废与重新定锚；`context_transition` 与前端"最近变化"逐条对上。
+
+## 云端 Agent：上下文计量按设计方向重做（Context Meter v2 P0，2026-09-21）
+
+按 `CONTEXT-METER-V2-设计方向.md` 重做被 codex `9deb79b7` 跑偏的口径层（PR #30 曾把主圆环固定成本地估算、把上游实测降级成诊断行）：
+
+- **主读数恢复"实测优先"**：`web/src/lib/canvas/agent-context-meter.ts` 里 `headline` 在有采信锚点时取"锚点实测 + 本地增量"的下一步预计输入（来源 `provider`，实心），没有锚点才退回本地估算（来源 `estimate`，数字带 `~`、描边降透明度）；本地估算原值单独保留（`estimate.tokens`，`local_v1`）。
+- **窗口未确认不给百分比**：`headline.ratio` 在 `modelLimitConfigured=false` 或输入预算为 0 时为 `undefined`，圆环画成虚线空环并显示 `—`；窗口识别时进入"最近变化"（"模型窗口已识别"，§9.1 要求不能画成上下文骤降）。
+- **跨轮不归零**：新增 `agentContextMeterState()` 记住最近一次**有效实测**，新轮的本地估算不覆盖它（`carriedOver=true`，弹窗写明"沿用上一次有效实测"）；压缩/图片裁剪发生后治理代次 +1，旧实测随即过期并退回估算（§7.3）。
+- **两把尺子分开**：主圆环只表达"下一次请求占多少输入窗口"，服务端压缩阈值另有一根独立条（token 口径用百分比、字节兜底用字节/条数）；两者相差 ≥5% 时圆环旁出现"治理"标记，而不是把圆环染红（修掉 codex 引入的"圆环 2% 却 critical"）。
+- **每次下降都能解释**：新增 `agent-context-transitions.ts`，把 `context_compacted`（轮次/保留条数）、`context_images_pruned`（张数/保留轮次）、窗口识别、上游校准列进弹窗"最近变化"。
+
+- [x] 单测 8 条（真机父子轮样本）：实测优先、窗口未确认不出比例、窗口识别标记、跨轮不归零、压缩后实测过期、同轮上游校准、治理与主读数分离、下降有事件解释。
+- [ ] 真机复验（等部署）：连续两轮不出现无解释回退（上一轮末 6.61% → 下一轮初沿用 6.6% 而不是掉到 2.2%）；窗口识别时出现"模型窗口已识别"；压缩/裁剪后出现对应"最近变化"并退回估算。
+
+## 云端 Agent：codex PR #30 的偏差修复（2026-09-21）
+
+- **旧交接消息不再被算成真人轮次**：`agentContextSource` 是 PR #30 新增字段，部署前落库的"上一轮已结束（…）"一律失配 → 被计成真人轮次、跨轮历史被提前裁掉（实测旧格式两条都不再被识别）。现在 `cloudAgentWorkingContext` 用"结构化身份 **或** 紧跟 assistant 回复 + 旧版文案前缀"判断运行时帧（**canonical 的来源标记仍只认结构体字段**，用户自己写同样文本不会获得 continuation 身份）。
+- **历史重建保留来源标记**：`cloudAgentLegacyHistory` 与压缩重建过去只拷 `role`/`content`，会把交接身份抹掉；现在一并搬 `agentContextSource`。
+- **交接帧按字节封顶**：单个 `nodeId` 过去完全不截断（实测一组 5000 字符 ID 让帧达 399,503 字节，可越过下一轮 192KB 硬闸让用户收到"请新建对话"）；现在 `nodeId` 截 64 字符、整帧封顶 8 KiB，超限按"最近改动优先"裁剪并计入 `omittedCanvasChanges`。
+- **失败原因沿用脱敏口径**：交接帧里的 `failureReason` 现在过 `cloudAgentSafeUserMessage`，不合格退回固定说法（它要进下一轮提示词）。
+- **压缩收尾的轮次也有交接**：父轮 `HistoryIncludesCurrent=true` 时过去整段跳过，长会话反而拿不到"已提交任务/失败原因"；现在仍追加事实帧。
+- [x] 单测：旧格式轮次计数与裁剪、重建保留来源、帧字节上限与 ID 截断、失败原因脱敏。
+- [ ] 真机复验：继续一个部署前创建的老会话，确认不再出现"接着聊就忘掉前几轮"。
+
+## 云端 Agent：删除轮内正文卸载（2026-09-21）
+
+正文卸载（会话消息 ≥40 KiB 或 >24 条时把"可重读取的正文"换成骨架）是"别把 `state_json` 顶到 512 KiB"的副产物；检查点拆分后消息已搬出 `state_json`，动机消失。保留它反而有三笔明确代价：按**字节**改写历史**中段**（provider 前缀缓存以 ~1,056 token 块计费，改中段就作废其后那一段）、被卸正文往往下一步就要用（模型只能重读）、以及"省下的是便宜的缓存命中 token、花掉的是全价的未命中 token"。
+
+- 删除：`cloud_agent_result_eviction.go` 整文件、`compactCloudAgentContext`、`cloudAgentEvictionThresholdBytes` / `cloudAgentEvictionMessageLimit`、`context_evicted` 事件、`context_pressure` 里的 `evictionThresholdBytes` / `evictionMessageLimit`（前端计量弹窗同步去掉"正文卸载线"那行）。
+- 保留并唯一化：轮内裁剪只剩**图片**——`cloudAgentPruneInspectedImages` 现在返回 `(changed, pruned)`，超出保留轮次的看图结果换成文字回执，落 **`context_images_pruned`** 事件（`prunedImages` / `retentionRounds`）。
+- 补强：压缩落检查点（历史被换成检查点）时清空 `SkillReads` / `ProfileReads`。以前这个清空挂在卸载上；不补的话模型再要技能正文会被回"本轮已请求过该技能路径，请使用历史工具结果"，而那份历史已经不存在。
+- 阶梯收敛为两级：图片裁剪 → 语义压缩（token 85%；无窗口退回 48 KiB / 16 条）。修复历史中段的动作一律不做：宁可让压缩从头部整段重写一次。
+
+- [x] 单测：大历史保存后条数与正文逐字不变且不再产生 `context_evicted`；纯文本历史（含 40 KiB+ 分镜/批量表读取与写回执）经裁剪路径后字节完全一致；技能正文与画布正文都保留；低于压缩线时不做任何改写；图片裁剪返回条数且幂等。
+- [ ] dev 真机复验：跑一轮大量读画布/读分镜的会话，确认历史里的读取正文**原样保留**（`cloud_agent_message_records` 里的 tool 消息体量与工具结果一致）、不再出现 `context_evicted`、`context_pressure` 不再带 `evictionThresholdBytes`/`evictionMessageLimit`，并在超出保留轮次看图的会话里看到 `context_images_pruned`。
+- [ ] 命中率复验：同提示词对照删除前后，`Σ(1 − cachedInputTokens/inputTokens)` 的未命中输入应下降（这条是删除的主要动机，需要真实渠道的锚点数据）。
+
+## 云端 Agent 上下文预算与任务事实帧（P2 / P3）
+
+P2 把「下一步能装多少输入」变成一个**可解释、来源可查**的数：输入预算 = 上下文窗口 − 输出预留 − overhead，压缩线是该预算的 85%。
+
+- 新增 `cloud_agent_context_budget.go`：`overheadTokens` 是工具 schema / 协议包装 / 兜底轮的比例预留（窗口的 4%，夹在 4096–32768）；输出预留取「用户填的 `reservedOutputTokens`」与「渠道模型能力声明的 `maxOutputTokens`」中的较大者；预留不小于窗口时夹到半窗，预算不得低于 1024。
+- 预算来源（`budgetSource`）：逻辑模型按**所有可用文本路由的最小窗口与最小输出**取交集（`logical-route-intersection`）；否则按渠道模型解析（`channel-model`，任务行的 `channel_model_id` 在画布 Agent 上一直为空，靠请求里的渠道 + 模型键兜底）。窗口未声明时不下发预算字段，判据退回 48 KiB / 16 条字节口径。
+- `context_pressure` 增加 `overheadTokens` / `inputBudgetTokens` / `budgetSource`，`context_compaction_requested` 另加 `compactAtTokens`；展示口径与压缩判据共用同一份预算（此前界面按「窗口 − 预留」显示、后台按另一份判据压缩）。
+
+P3 把「任务与账务事实」每步从数据库现读回灌（`kind=task_facts` 运行时消息）：最近 32 个任务的 `taskStatus` / `operation` / `submissionOutcome` / `providerTaskId` / `phase` / `nodeId` / 脱敏后的 `error` 与订单事实（`orderId` / `status` / 授权金额 / 预授权 / 扣费上限），更早的只报 `olderTaskCount`，并带 `authority` 说明这只是状态观察、不是重新提交的授权。
+
+- [x] 单测：预算算式（overhead 夹取、预留夹到半窗、85% 线与 `compactAtTokens` 的关系、窗口未声明一律拒绝）、路由交集取最小窗口与最小输出并忽略非文本/未声明窗口、渠道模型兜底解析、`context_pressure` / 压缩事件载荷字段、事实帧内容与脱敏、缺失任务不编造状态、窗口外只报条数、`task_facts` 帧不跨步叠加、重拼类运行时消息被剥掉而一次性纠错消息保留、轮次尾部不含半截工具轮。
+- [x] 既有用例按新口径更新：`TestCloudAgentCompactionTriggersAtConfiguredWindowShare`（100000 − 20000 − 4096 = 75904，线在 64518）、`TestCloudAgentMidRunCompactionPausesAndResumes`、`TestCloudAgentPressureResolvesWindowFromRequestWhenTaskLacksChannelModel`。
+- [x] dev 真机复验（`dev-3f8d4c0a`，`qwen3.5-9b` 窗口 64000）：`context_pressure` 给出 `overheadTokens=4096`、`inputBudgetTokens=59904`、`budgetSource=channel-model`、`compactionBasis=tokens`，与渠道模型配置对得上账（64000 − 0 − 4096 = 59904）。
+- [ ] 逻辑模型复验：同一逻辑模型下挂一大一小两个窗口的文本路由，确认装配按小窗口算（预算与压缩线都变小），且不会出现"装配按大窗口、执行落到小窗口被上游拒"。
+- [ ] 未声明窗口复验：把渠道模型的 `contextWindowTokens` 清成 0，确认压力事件不再带预算字段、判据回到 48 KiB / 16 条，界面显示"未配置模型上限"。**dev 目前只有一个启用的文本渠道模型**（`qwen3.5-9b`，且它声明了窗口），因此这条要在本地实例或新增一个未声明窗口的渠道后复验。
+- [ ] 事实帧复验：跑一轮含图片/视频生成的会话，在下一次请求的 canonical（`tasks.input_json.agentRequests.canonical.messages` 尾部）确认 `task_facts` 帧里的任务 ID、上游任务 ID、`phase` 与订单金额和数据库一致；并确认模型不再重复提交已提交过的任务。**dev 上尚未观察到**：事实帧只在"本轮提交过媒体任务"之后出现，而 dev 唯一启用的文本模型（`qwen3.5-9b`）工具调用很不可靠——试了 6 轮只有 1 轮真正走到 `generate_media` 审批卡（审批通过后媒体任务确实创建了 `ag847923ff…`，但图片模型 `flux.2-klein-9b` 在当前 GPUStack 上返回"模型或模型接口不存在"，任务 failed）；而那次提交之后的下一步任务成功完成时 canonical 会被压缩（实测成功 step 任务的 `input_json` 里 messages 变成 0 条），事后读不到。复验前置条件：① dev 上有一个能可靠调工具的文本模型；② 读取时机必须在 step 任务还是 queued/running 时（脚本 `token-audit/local-only/verify-dev-facts-frame2.sh` 已能抓到 running 任务）。
+
+## 云端 Agent：取消/失败时停在压缩上的轮次收尾
+
+语义压缩是「暂停步进 → 压完继续」的中途动作。本轮若在压缩期间被取消（或已经失败），调度器不会再推进这一轮，于是 `contextCompaction` 会永远挂在 `requested`/`running`（界面一直显示"正在压缩"）、那份检查点也永远落不了盘。现在收尾路径（`CleanupPending` 清理，HTTP 取消与后台调度共用）先把服务端保底检查点落盘并清掉压缩态，再取消压缩子任务；**不改写终态**。
+
+- [x] 单测：取消轮次收尾后状态仍是 `cancelled`、`contextCompaction` 已清空、`contextCheckpoint` 落盘且 `CompactedTurnCount` 保留、事件表恰好一条 `context_compacted`（`mode=fallback`、带 `reason`）；收尾幂等（`CleanupPending` 已清后不重复写）；失败轮收尾后仍是 `failed`（不会被"复活"成 `completed`）；**未停在压缩上的轮次不写压缩事件**；收尾压缩（非中途暂停）仍把本轮判成 `completed`。
+- [ ] dev 真机复验：跑一轮直到出现 `context_compaction_requested`（把渠道窗口调小最容易触发），在压缩期间点"停止"，确认运行详情不再显示"正在压缩"、事件流里出现 `context_compacted`（`mode=fallback`）、且运行状态是 `cancelled`。
+- [x] 「每个 run 最后 2 条事件进不了事件表」这条**已由 P1 修掉**（不再存在水位/flush 两段式写入）：dev `dev-3f8d4c0a` 上最近 8 个运行（含 `completed` 与 `failed`）的 `cloud_agent_executions.event_count`、事件表行数、`max(seq)` 三者完全相等。
+
+## 云端 Agent 检查点拆分（P1：消息与事件搬出 state_json）
+
+`state_json` 一直同时承载"控制面 + 会话消息 + 事件尾部"，于是"能跑多少轮"被记录体积决定（写入型会话 22 步撞 512KiB 上限）。P1 把消息与事件彻底搬出去：
+
+- 新增 `cloud_agent_message_records`（`canonical` 会话消息 / `history` 跨轮历史，主键 `(run_id, kind, sequence)`）与 `checkpoint_version/message_count/event_count` 三列；迁移 v25，`CurrentSchemaVersion = 25`。
+- `cloudAgentSave` 只序列化控制面（消息/历史/事件全部置空），消息与事件挂在 run 上由 `MutateCloudAgent` / `EnsureCloudAgent` 在**同一个事务**里写入；版本与计数由持久化层回填，避免"计数写了、行没写"。
+- 解码：`checkpoint_version >= 2` 时从消息表重建会话（按 kind 校验序号连续、行数必须等于 `message_count`），事件只载入最近一窗（40 条，`EventSeqBase = event_count − len(window)`）；旧运行（版本 < 2）照旧从 blob 读，**下一次保存时懒升级**，不需要回填作业。
+- 删除只为体积存在的机制：`cloud_agent_event_slim.go`（398 行瘦身/降级阶梯）、`EventFlushedSeq`、`EventDegradeLevel`、`cloudAgentTrimFlushedEvents`、`cloudAgentFoldEventPayloadsToBudget`。单条事件载荷在产生时就封顶（超过 128KiB 压成"需要刷新"回执），不再有"整轮判死"。
+- 文档：`backend-database.mdx` 同步到结构版本 25 与三张表的分工。
+
+- [x] `go test ./...` 全绿（带 `CANVAS_TEST_POSTGRES_DSN` 与 `redis-server`，含 P1 新增/改写的用例：检查点里不再有消息与事件、事件按窗口重建 + 分页、旧检查点懒升级、超大事件载荷封顶、创建时回填计数）。
+- [x] 反例/一致性：行数与 `message_count` 不一致、`lastSeq != event_count`、消息序号不连续时一律判"记录不完整"（`Agent execution transcript/journal is incomplete`），不再带着缺口继续跑。
+- [ ] dev 真机复验：找一轮既有运行（升级前创建）确认可读、可续聊，并在保存后检查 `cloud_agent_executions.checkpoint_version` 变成 2、`state_json` 里不再出现 `messages/events`，`cloud_agent_message_records` 行数等于 `message_count`。
+- [ ] 长跑复验：20+ 步（含分镜写入）的运行，`octet_length(state_json)` 只随控制面增长（不再随事件/消息线性增长），事件面板分页与"更早记录"仍可读。
+- [ ] 迁移复验：在一份 24 版库上执行 `migrate-schema up`，确认 v25 幂等、旧运行不受影响；再确认旧程序连接新库会被 `CurrentSchemaVersion` 拒绝。
+
+## 后端依赖型用例接入 CI（Postgres / Redis）
+
+后端有 5 个用例此前在本地和 CI 都**静默跳过**：3 个需要 `CANVAS_TEST_POSTGRES_DSN`（`internal/database` 的 `TestPostgresAssetIDMigration`、`internal/canvas` 的 `TestRepairAssetBytesPostgres`、`internal/repository` 的 `TestCanvasRevision/postgres`），2 个需要 `redis-server` 可执行文件（`internal/platform` 的 `TestRuntimeCoordinatorRedisLeasePreservesLongestTTL`、`internal/app` 的 `TestClearAdminRuntimeCacheUsesRedisWhitelist`）。CI 的 Backend job 既没有 `services:` 也没有导出 DSN，runner 镜像也不含 redis，所以这几条路径一直没有真正执行过。
+
+现在 Backend job 起 `postgres:16-alpine` service、导出 `CANVAS_TEST_POSTGRES_DSN`、安装 `redis-server`，并新增「依赖用例不得被跳过」守卫：日志里出现 `--- SKIP` 就直接失败。
+
+- [x] 本地补跑（一次性 Postgres 容器 + 从 redis 镜像取出的 `redis-server`）：5 个用例全部 PASS（`TestPostgresAssetIDMigration` 3.71s、`TestRepairAssetBytesPostgres` 0.42s、`TestCanvasRevision/postgres` 0.74s、`TestRuntimeCoordinatorRedisLeasePreservesLongestTTL` 0.11s、`TestClearAdminRuntimeCacheUsesRedisWhitelist` 0.13s）。
+- [x] CI（run 35453946031，PR #21）三个 job 全绿，Backend 7m14s；这 5 个用例在 runner 上**真的执行**并 PASS（`TestPostgresAssetIDMigration` 2.63s、`TestRepairAssetBytesPostgres` 0.35s、`TestCanvasRevision/postgres` 0.57s、Redis 两条各 0.11s）—— 依赖用例的耗时增量在秒级，主要成本是 apt 安装 redis。
+- [x] 反例验证：本地故意撤掉 `CANVAS_TEST_POSTGRES_DSN` 与 `redis-server`，守卫步骤的日志里出现 5 条 `--- SKIP`，即该步骤会 `exit 1`，不会退回静默跳过。
+- [ ] `TestMeasureDumpPayload`（需 `CLOUD_AGENT_MEASURE_OUT`）按设计保持手动触发，不纳入守卫。
+- [x] 观察一段时间：确认新加的 Postgres service 与 apt 安装没有给 Backend job 带来偶发失败（如 apt 源抖动）。
+
+## Web 基线与 Chrome E2E 红灯清零（18 个失败 → 0）
+
+`bun run test` 的 18 个失败其实只有 3 类根因，其中 3 处是产品实现问题，5 处是断言写的是重构前的实现：
+
+- 产品侧：① `client-diagnostics.ts` 用 `typeof window !== "undefined"` 判断"在浏览器里"，而测试环境里 window 存在、`window.location` 不存在 → 每次记录诊断事件都抛 `TypeError`（9 条用例）；② `index.html` 的静态品牌 favicon 是后来回加的（可配置外观特性当初删掉过它：首屏必须品牌中性，favicon 由 `use-appearance-store` 解析出外观后写入）；③ `floating-dock.tsx` 在渲染期直接取 `window.matchMedia`（测试与 `renderToString` 下可能不存在）。
+- 断言侧：`BrandLogo` 现在通过 `useActiveTheme()` 取当前生效主题（画布主题优先，内部仍读 `useThemeStore`）；管理端状态色已移到 `admin-tokens.css`（浅 / 深各一套具体值），`admin-ui.css` 只消费 token；`.agent-tool-row` 的 hover 是上游后加的卡片视觉，改守真正的不变式"行块与 hover 块都不得出现 cursor"；任务中心已不再提供取消已发起任务与本机记录删除，断言改为守当前策略。
+- Chrome E2E 的两个隐藏问题（`bun run test` 转绿后 job 第一次跑到这一步才暴露）：复现台没有后端，外观引导被 Vite 代理变成 502，删掉静态 favicon 后又出现默认 404 → 脚本自起一个**只答 `/api/public/appearance`** 的同源桩（`VITE_API_PROXY_TARGET` 指过去，其余 `/api` 照常 404），`index.html` 用空 `data:,` 图标抑制默认请求（仍品牌中性）；`clickPoint` 只要求相邻两次读数相同，AntD 弹窗约 200ms 入场动画期间控件已经移位，点击落到遮罩（`mask.closable=false`）上完全无效 → 改为要求坐标连续 300ms 不动。
+
+- [x] `bun test` 1779 通过 / 0 失败；`bun run typecheck`、`bun run lint`、`bun run build` 通过。
+- [x] `bun run test:director:e2e`（本地 headless Chromium）58 passed / 0 failed，连续 3 次稳定。
+- [x] CI：PR 与合并后的 `dev` 推送均三个 job 全绿（run 35440082042 / 35441405470）。
+- [x] 浏览器手工复验：外观页浅 / 深 Logo 上传与外框开关、首屏 favicon（自定义品牌不再闪默认品牌）、更新日志弹窗内边距。
+- [ ] 浏览器手工复验：管理端「画布 Agent 单步」两个字段 + 面板上下文弹窗里单步上限与单步最长的展示（见下一节遗留项）。
+
+## dev 纳入 CI 与既有后端红灯清理
+
+- CI 触发：`quality.yml` 的 `push.branches` 原来只列了 `main`，**直接推 `dev` 的改动完全没有 CI 覆盖** → 补上 `dev`。
+- 迁移工具补登记 `agent_lessons` / `agent_memory_settings`：这两个模型在 `database.Models()` 里有、在 sqlite→postgres 的迁移清单里没有，`TestMigrationListCoversSchemaModels` 因此长期红灯，**实际后果是这两张表的数据在迁移时不会被搬运**。
+- `gofmt` 两个既有未格式化文件（`internal/model/models.go`、`internal/app/channel_model_upstream_rename_test.go`），Backend job 的格式检查因此转绿。
+- 让 Backend job 第一次真正跑起 `go test ./...` 后暴露并修掉一个既有 flake：`TestDeleteGeneratedAssetTaskReferences/cancelled_output` 报 `database table is locked: resource_deletion_jobs` —— 夹具用共享缓存内存库，而删除 outbox 是后台 goroutine，与测试线程的查询落在两条连接上；共享缓存模式下 SQLite 用的是表级锁（`SQLITE_LOCKED`），不受 `_busy_timeout` 约束。两个夹具改用文件库 + WAL + `_busy_timeout`，库文件放在 `os.MkdirTemp` 下（避免 outbox 仍在写库时清理目录报 `directory not empty`），并新增 `TestSQLiteTestDBAllowsConcurrentReadWrite` 守住这个选型。
+
+- [x] `gofmt -l .` 无输出；`go test ./...` 仅剩本机 `umask 0077` 造成的 `internal/hostupdate` 用例（CI 的 umask 0022 下为通过）；删除家族压测 `-count=8 -parallel=8` 全绿。
+- [x] CI（run 35435696123 / 35441405470）：Backend、Web、Payment plugin 三个 job 全绿。
+- [ ] 迁移工具真跑一次 sqlite→postgres 搬库（本次只验证了清单覆盖与用例，没有实际搬运数据）。
+- [ ] 在真实浏览器里确认改动后的 `AppModal flush`、空 favicon 与指针能力探测在 `prefers-reduced-motion`、触屏与窄屏下的表现。
+
+## 画布 Agent 单步边界可配置（输出上限 + 秒级超时）
+
+单步输出上限从写死的 6144 抬到可配置的 16384（实测 222 步的 P50 为 1187 token、P90 正好等于 6144，15% 的步骤顶到旧上限被截断），并新增单步秒级墙钟；两者都在管理端"画布 Agent 单步"分组里配置（`system_settings.runtime_policy` 的 `task.agentStepMaxOutputTokens` / `task.agentStepTimeoutSeconds`，保存后热更新，无 schema 迁移，旧配置 JSON 缺字段按默认值回填）。上限配 0 表示不限制输出（此时只有墙钟兜底），超时配 0 表示沿用文本任务超时。墙钟到点不再把整轮判死：关思考重试同一步一次，重试仍超时才以 `model_step_timeout` 结束本轮；两个生效值随 `context_pressure` 事件下发，面板弹窗显示"哪条线在管这一步"。
+
+- [x] 后端：`go build ./...`、`internal/app` 全量用例通过；新增用例覆盖策略解析（默认 / 自定义 / 放大封顶 / 不限制）、秒级超时优先于文本任务超时、管理端改配置后生效值随之变化、越界值被拒、旧配置 JSON 回填、超时后关思考重试并带生效上限、重试仍超时以 `model_step_timeout` 失败、续租不继承执行时限。
+- [x] 前端：`bun run build` 通过；`bun test` 1761 通过 / 18 失败（与基线同集合，无新增失败）。
+- [x] dev 真实渠道（`dev-steplimit2`，qwen3.6-35b-a3b + 真实大画布）：管理端把单步超时改成 30s 后 `context_pressure` 立刻变成 `stepMaxOutputTokens=16384 / stepTimeoutSeconds=30`；用长输出提示词逼出一次真实超时——上游调用在 **29,981ms** 被掐断，任务以可读原因失败（不再整轮判死），随后出现 `model_failure_recovered`（`reason=step_timeout_retried`）并**关思考重试同一步成功**，整轮 `completed`。收尾把策略 DELETE 回系统默认（16384 / 0）。
+- [x] 验证中发现并修掉一个真 bug（与本改动直接相关）：任务续租用的 context 派生自"任务执行时限"，单步墙钟到点时续租一起被打断 → 被误判成"租约丢失"→ 任务停在 `running`，45s 租约过期后被再次领取重跑。实测 30s 墙钟下一次调用变成 **3 次上游请求**（白烧两次生成）。现在续租只继承父 ctx 的值（`context.WithoutCancel` + 5s 自己的上限），并且"我方执行时限到点"不再走租约失效的提前返回，而是继续按失败收尾。
+- [ ] 管理端"画布 Agent 单步"分组：改上限/超时后保存，`context_pressure` 里 `stepMaxOutputTokens`/`stepTimeoutSeconds` 随之变化；把上限设为 0 时弹窗显示"本部署未限制"，且 `context_pressure` 不再带 `stepMaxOutputTokens`。
+- [ ] 前端复验：面板压力弹窗显示单步上限与单步最长；自动重试在会话里显示为"单步超时自动重试"而不是静默。
+- [ ] 16384 上限的长跑复验：确认长上下文步进不再出现"`output_tokens` 正好等于上限且正文为空"，并记录撞限步骤的耗时分布（旧上限 6144 下 15% 的步骤撞限）。
+
+## Agent 三个实际问题的修复（忘上一轮 / 不能关联素材 / 报错）
+
+用户反馈三件事，实测定位后的处理：
+
+- **忘了上一轮做过什么**：两个原因。① 续轮读取上一轮时用了运行详情的默认分页（最近 100 条事件），长会话的早期改动对新轮不可见；② 收束只在上轮失败或有提交任务时才给上下文，成功轮什么都不说。现在续轮按上限 1000 条读取事件，并在收束里附"上一轮对画布的实际改动"（按事件记录、最多 12 条，操作类型 + 节点标题），新轮据此判断哪些工作已完成。
+- **工具不支持关联素材**：`canvas_edit_storyboard` 此前明确禁止写 `assetBindings`，模型只能把 `[参考: …]` 塞进提示词文本，画布上 0 行真实绑定。现在该字段受控可写（只接当前画布已就绪的图片/视频/音频节点，role 走枚举、单行 ≤8 项、不可重复），`imageNodeId`/`videoNodeId`/`status` 仍不可写。
+- **Agent 报错"上游没有返回内容"**：provider 日志显示连续三次调用的 `output_tokens` 正好等于每步上限 6144、响应体 23 字节（空），即思考模型把输出预算全花在推理上。原有机制只做 2 次催办，催完就判死整轮。现在催办用尽后改为**关思考 + 把输出预算放大（默认上限的 2 倍，封顶 131072）重试同一步**，全部用尽才停止，并给出可操作原因。
+
+- [x] 后端 `internal/app` 全量用例通过（含新增的分镜资产绑定用例与既有空输出/续轮用例调整）；其余包仅剩既有红灯。
+- [ ] 真实渠道复验：给分镜行关联 2 个真实素材节点 → 前端"关联资产"列显示；下一轮确认模型能说出上一轮改过哪些行；连续空输出时先看到 `model_failure_recovered` 事件、随后本轮继续。
+- [ ] 前端"加载更早记录 / 已归档提示"（Stage 1 的 1b 遗留项）。
+
+## OpenAI 兼容图片协议的两处请求合同回归（尺寸折算 + edits multipart）
+
+声明式协议插件（`plugin-packages/openai-images`）把统一字段 `aspectRatio` 原样写进上游 `size`，
+而画布默认档是比例 `1:1`：只认 `WIDTHxHEIGHT` 的上游（OpenAI 官方、vLLM/GPUStack 等）直接 400
+`size must be in format 'WIDTHxHEIGHT'`。带参考图时更严重：编辑路径仍是 `application/json`，
+而上游按表单解析，一律 400 `prompt Field required`。两处都是 v1.2.9 把内置实现换成声明式插件时
+丢掉的请求边界归一 —— v1.2.1~v1.2.8 的内置实现一直会做这两件事（`imageSizeParameter →
+normalizePixelSize`、`edits` 走 multipart + `image`/`mask` 文件部分）。
+
+- [x] host 侧：`protocolRequestSize`（`backend/internal/app/provider_video_options.go`）在声明式协议路径上
+  按能力配置折算尺寸 —— 声明 `size` 的上游拿像素（`1:1 → 1024x1024`），声明 `aspect_ratio` 的
+  （grok/gemini 等，插件模板自带带容差的比例归一）与视频保持原样透传。
+- [x] 插件侧：`openai-images` 的 `create` 增加 `contentTypeTemplate`（有参考图 → `multipart/form-data`）
+  与 `files`（`image` / `mask` 文件部分），并去掉 body 里那份 JSON `images`/`mask`；
+  生成器（`plugin-packages/generate-catalog.mjs`）与打包产物 `openai-images.yingce-plugin` 同步重建。
+- [x] 用例：`internal/app` 新增尺寸折算用例（比例→像素、像素原样、`auto`、无能力配置兜底、
+  `aspect_ratio` 与视频不被改），`internal/protocol` 的插件用例改为断言 multipart + 文件部分，
+  并新增"无参考图仍是纯 JSON generations"。
+- [x] dev 真实渠道 + 真实画布（`dev-imgproto`）：重放用户 07:58 失败的那两条任务输入（`size=1:1`）——
+  文生图 `POST /v1/images/generations` JSON **`size=1024x1024` → 200**；带参考图
+  `POST /v1/images/edits` **`multipart/form-data; boundary=…` `size=1024x1024` → 200**，两个任务都 `succeeded`。
+  修复前同两条路径分别是 400（`size` 格式、缺 `prompt`）。
+- [x] 浏览器手工复验：画布默认画幅（`1:1`）直接生成 / 带参考图编辑都不再报参数错误。
+- [ ] 兼容性提醒（未验）：曾有第三方 OpenAI 兼容上游只接受 JSON edits（`images` 数组），现在统一按
+  官方 multipart 发送；如遇到这类上游需要单独插件包。
+- [ ] vllm-omni 的蒙版字段名是 `mask_image`（OpenAI 官方是 `mask`）：该渠道用蒙版时需把模型能力的
+  `maskSupported` 关掉，或后续给该协议补一个独立插件，避免"静默忽略蒙版"。
+
+## 运行事件出表 Stage 1（状态与轮数解耦）
+
+事件从 `state_json` 搬进 `cloud_agent_run_events`（迁移 v24，append-only），状态只保留最近 40 条尾部缓存；运行详情默认返回最近 100 条并给出 `eventSeqBase`/`eventCount`/`latestSeq`/`eventsTruncated`，可用 `sinceSeq` 取增量、`eventLimit` 调页大小；SSE 按游标从事件表增量读。升级前的旧运行由第一次保存整批补齐（不丢审计）；事件默认保留 30 天，画布删除只清归属。
+
+- [x] 后端：`internal/app`（含新增 4 个事件表用例）、`internal/repository`、`internal/handler`、`internal/database`、`internal/prompts` 通过；迁移版本升到 24，`database.Models()` 已包含新表。
+- [x] 用例覆盖：批量入库与尾部裁剪、重复 flush 幂等、默认页与跨尾部边界的增量、旧运行（表里为空）回退到 `state_json`、保留期清理只删过期、画布删除只清归属。
+- [x] dev 真实渠道（18 次模型调用、10 次分镜行编辑的写入型负载）：整轮 `completed`；落库状态 **95,129 字节**（尾部 40 条事件 + canonical 26 条消息），`eventSeqBase=32`、`eventFlushedSeq=70`；事件表 **70 行 / 84,754 字节**（最大单条 4,869），`canvas_updated` 10 条合计 20,973；`context_evicted` 1 次。同类负载在 Stage 0 后是 117KB（事件还在状态里），Stage 1 前是 524KB 撞线。
+- [x] 验证过程中发现并修复两个真 bug：① 一度把"尾部裁剪目标 40"当成校验上限 → 一次转移内追加事件就把正常状态判成损坏（改为校验用 256 的健全上限、裁剪目标仍 40）；② 保存前裁剪一度丢掉全部已入库前缀 → 状态里再也看不到较早事件（改为只丢"超过尾部目标且已入库"的部分，且裁剪后保持非 nil 切片）。
+- [ ] 浏览器端：长运行（>100 事件）时确认面板显示"更早的记录已归档"，并能按 `sinceSeq` 往前加载；调试导出仍能取到全量事件。
+- [ ] 升级旧库：`dev`/产线执行 schema 24 迁移后，确认进行中的运行把既有事件补齐入库、且运行详情仍能看到历史。
+
+## 运行态体积治理 Stage 0（几何/分镜行级增量 + 单步增长预算 + 卸载扩容）
+
+`canvas_updated` 改为只下发增量：位置/尺寸变化只发几何字段；分镜行编辑只发变化的那几行（前端按行 id 三方合并，删除行发完整旧行、新增行发完整新行）。单步净增超过 15KB 时折叠最旧的画布增量（`canvasPatchSlimmed` + `requiresRefresh`，客户端拉全量）。正文卸载现在覆盖 `storyboard.rows`、`batchTable.rows` 与旧写回执（保留规模、镜号骨架与快照哈希）。
+
+- [x] 后端 `internal/app` 全量用例、`internal/canvas/...`、`internal/prompts` 通过；前端 `bun run test` 1761 通过 / 18 失败（与基线同集合），`bun run build` 通过。
+- [x] 用线上真实失败那轮的 `state_json` 量化：`canvas_updated` 载荷 241,771 → 21,885 字节（9%），消息 139,914 → 95,903 字节，预计整轮状态 524 KB → ≈260 KB。
+- [x] dev 真实渠道跑写入型负载（逐行补光影，10 次分镜行编辑）：整轮 `completed`，落库状态 **117,358 字节**、`canvas_updated` 10 条合计 **11,801 字节（最大 1,728）**、其中 7 条被增长预算折叠、`context_evicted` 1 次、`degradeLevel=0`。
+- [ ] 浏览器端确认：折叠过的步骤会整屏刷新一次画布（`requiresRefresh`），刷新后位置/行内容与服务端一致，本地未保存编辑不丢。
+- [ ] 连续多轮（20+ 步写入）确认状态体积不再线性增长；Stage 1（事件出表）后再验 50+ 步。
+
+## 云端 Agent 的节点整理与新增落位
+
+云端 Agent 过去不能移动已有节点，`add_node` 不给坐标就落在原点重叠。现在新增了 `canvas_arrange_nodes` 工具（只改坐标，不改内容、不建连线、不改层级），并把 `add_node` 的缺省落位改为按画布内容自动避让；`update_node` 的 patch 额外支持 `x`/`y` 供模型微调单个节点。整理与前端"自动整理节点"共用同一套泳道/依赖分层常量与算法（服务端实现见 `backend/internal/canvas/layout`），归类只做横向位置分带，不创建或移动背板容器；锁定节点、容器节点、隐藏批次子节点与已归属背板的子节点保持不动。
+
+- [x] 后端 `internal/app` 全量用例通过（含新增整理用例）；`internal/canvas/layout` 与 `internal/canvas/capability` 用例通过；前端 `bun run build`（tsc + vite）通过，`bun test` 1757 通过 / 18 失败（与基线同集合）。
+- [x] 上限与安全：一次最多整理 50 个节点、最多 12 组；坐标绝对值上限 1e6；陈旧 `snapshotHash` 拒绝；`dryRun` 只预演不写库；`read_only` 运行不暴露该工具。
+- [ ] 真实渠道验收：用户说"帮我按场景整理一下" → 一次审批后画布成位置分带，且锁定节点未被动；说"把 A 场景的镜头放一起" → 只形成位置带、不生成背板。
+- [ ] 连续新增多个节点：确认互不重叠、同类节点纵向追加、生成输入排在其目标左侧；与前端"自动整理节点"结果在同一画布上一致。
+- [ ] 浏览器确认审批卡显示"整理"徽标与移动节点明细，确认后画布位置更新、撤销可整批回滚。
+
+## 云端 Agent 同步上游 v1.5.1
+
+上游把云端 Agent 的行为规则收回版本化策略文件（系统行为策略 v6），编译器只向模型投影事实：系统提示里的"本轮执行上下文"是 `permissionMode`、`reasoningMode`、`budget`、`maxToolCalls`、`maxOutputBytes`、`canvasSummary`、`referenceCandidates`、`skills`、`profileLayers` 的 JSON；计划催办、空输出、参数截断统一走带 `agentContextSource` 来源的事实消息，不再拼接散文指令。锚点收敛为"当前请求 + 可观测候选素材"，删除按关键词推断创作授权的 `referenceMode` / `lockedRequirements` / `freelyDecidable`；可纠正的参数错误统一用上游的分类化回执（非对象 / 类型不符 / 未知字段）并附本轮实际 schema；媒体失败改为分层报告生成错误与回写错误且整轮可续跑。本分支的上下文治理（provider 锚点计量、80% 可用输入触发轮内压缩、正文卸载、事件日志瘦身与降级阶梯）、看图能力（`canvas_inspect_image` 与 3 轮图片窗口）和能力卡按运行模式路由继续保留；锚点只跨轮继承视觉事实（`inspected` 与 `visualNote`），不再继承目标与权限。（**2026-09-22 晚已改判**：跨轮视觉继承被上游 `acbb354e` 移除并被我方采纳，锚点不再继承任何视觉标记；见文首「Agent 图片字节交付」。）
+
+- [x] `go build ./...`、`go vet ./internal/app` 通过；`go test ./...` 仅剩既有红灯（迁移表用例、hostupdate 用例），云端 Agent 全量用例通过。
+- [x] 前端 `bun run build`（tsc + 类型检查 + vite）通过；`bun test` 1751 通过 / 18 失败，失败集合与合并前基线一致。
+- [x] 已部署 dev（`CANVAS_IMAGE_TAG=dev-merge151`，健康检查报 `v1.5.1` / schema 23）。只读与 `auto` 各跑一轮真实渠道运行（`qwen3.6-35b-a3b`）：上游请求里系统提示确为事实 JSON（`budget` / `canvasSummary` / `referenceCandidates` / `profileLayers` / `skills`），`auto` 那轮 `canvas_get_state` 调用成功、第二轮压力事件 `tokenSource=provider`（`tokenScale=0.8554`）说明锚点计量生效，两轮都正常 `completed`。
+- [x] 能力卡路由在真实请求里可对照：只读运行内联速查（system 22,566B / tools 4,873B），`auto` 运行只给指针（system 17,951B / tools 16,538B），系统提示分段（policy / mediaPolicy / capabilities / execution / memory）随事件上报。
+- [ ] 真实渠道复现参数写错：确认模型按回执里的 `parameters` 改正，而不是重复提交同一错误参数（目前只有单测覆盖）。
+- [ ] 续聊一轮：确认上一轮看过的素材仍标 `visualIdentity=inspected`、带 `visualNote` 且不再重复看图，旧目标不会因锚点继承被复活。dev 当前唯一启用的渠道模型 `maxImages=0`，看图工具未暴露，需要接入支持图片输入的模型才能验。
+- [ ] 浏览器端手工过一遍：上下文计量器的分段合计等于 system 桶，且事实 JSON 不影响面板展示。
+
+## 画布 Agent 看图与耗时（2026-09-18）
+
+后端改了六件事：图片保留窗口从 1 个工具轮次放宽到 3 个、同一张图一轮最多附图 2 次（之后只回执文字，`refresh=true` 可强制重看）、模型写进正文的观察记入锚点 `visualNote`、每步请求带 `maxOutputTokens`（6144）、允许上游并行返回多个工具调用、画布写操作的参数错误改为回给模型重试。已在 dev 部署用 API 驱动验证（同画布形态同提示词：优化前 892s 被取消 → 优化后 373s 完成，识图 8→4 次、模型调用 13→6）：
+
+- [x] `canvas_inspect_image` 调用次数等于图片数量（4 张图各一次，不再出现 8 次查看）。
+- [x] 上游一个响应里返回 6 个工具调用，同批内逐个执行不产生额外模型往返。
+- [x] 模型漏写 patch / 更新不支持更新的节点时，错误回到模型并由它自己改对，整轮不再直接失败。
+- [ ] 浏览器端手工过一遍：画布更新弹窗里的标题与模型当场写下的观察一致（API 驱动已看产物，UI 展示待确认）。
+- [ ] 画布 Agent 面板上的"推理模式"仍不生效（`reasoningMode=off` 不会真的关闭上游思考），未在本次改动范围内。
+
+完整对比与复现命令见工作区 `token-audit/run-dumps/AB-REPORT.md`。
 
 ## 画布 Agent 配置与 Live2D
 
@@ -218,7 +878,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] 维护者手动填写 `web/src/pages/auth/register.tsx` 中的 `SERVICE_AGREEMENT` 正文并审核后再发布；当前仅显示“服务协议内容待补充。”，不包含正式条款。
 - [ ] 真实浏览器确认《影策服务协议》弹窗、默认未勾选、取消勾选、普通注册限流和窄屏显示。
 - [ ] 在真实 Linux.do 环境验证新用户未同意被拒绝、同意后注册，以及注册关闭时已有用户仍可登录。
-- [ ] 升级前备份，在 PostgreSQL 上验证版本 32→33；前后端一起发布。当前同意标志不提供长期版本化签署留痕。
+- [ ] 升级前备份，在 PostgreSQL 上验证版本 32→33（本 fork 里上游 v33 就是 `oauth_state_accepted_terms`；我方两条 no-op 让位在 34/35，跑过上一版 dev 的库会先做让位搬迁再补 33）；前后端一起发布。当前同意标志不提供长期版本化签署留痕。
 ## 多模态列表与分镜表合并回归
 
 - [x] 合入 PR #549 的图片 / 视频列表分析、动态表格、视频脚本转换和批量生成设置；参考图上限前后端统一为 10。保留本地主分支表格布局、参考图提及、删除列、结果定位、手工行增量同步及单行重新生成。
@@ -495,7 +1155,7 @@ MiniMax Hailuo Video V2 / H3 插件更新至 `2.0.1`，创建和查询均优先�
 
 PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束、浏览器缩放窗口后的尺寸收敛、短屏滚动和展开态单一调整手柄。尺寸回归测试与 Vite 生产打包通过；真实 Chrome 组件验证（临时数据，未调用生成接口）覆盖图片/视频、参考图、首尾帧控件、明暗主题、窄屏/短屏、鼠标与键盘调整、切换节点重置。完整 `bun run build` 仍被既有 `canvas-cloud-agent-panel.tsx` 中未定义的 `markdownPlainText` 阻断。
 
-- [ ] 点击放大后窗口明显大于节点面板；右下角拖动手柄可同时改宽高，桌面最小约 560×320，小视口优先限制在视口减 24px 内。
+- [x] 点击放大后窗口明显大于节点面板；右下角拖动手柄可同时改宽高，桌面最小约 560×320，小视口优先限制在视口减 24px 内。
 - [ ] 方向键可调整，Shift 加速；切换节点后尺寸恢复默认。
 - [ ] 窗口缩小后弹窗尺寸自动收敛；短屏下可滚动访问编辑区、参数和提交按钮，右下角手柄保持可达。
 - [ ] 展开态仅显示右下角窗口手柄；紧凑面板仍可独立调整输入高度。明暗主题继续跟随当前画布。
@@ -586,7 +1246,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 
 - [ ] 对话页不再单独占一行工具条；顶栏中间能看到「镜头时间线」「画布中继续」、新建和历史。
 - [ ] 底部输入框明显变矮；模式切换在录音左侧，能看到「视频 / 图片 / 文本」文字。
-- [ ] 消息区右侧不是浏览器自带宽滚动条，而是细轨道；窄屏仍能切换模式、打开镜头列表和历史。
+- [x] 消息区右侧不是浏览器自带宽滚动条，而是细轨道；窄屏仍能切换模式、打开镜头列表和历史。
 
 ## 对话开始后输入区加宽与圆角底板（2026-09-17）
 
@@ -823,9 +1483,14 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 
 - 已取消前后端最多 8 个技能、生成预算 8 / 120 秒和固定模型循环次数约束；生成数与视频累计秒数默认 0 表示不限，积分、权限、生成审批和供应商实际能力仍强校验。
 - 技能仅保存版本与路径，读取正文按 12000 字符分页；支持总正文超过 128KB 的多技能选择。读取版本变化或跨用户访问拒绝；运行事件只存技能回执。
-- 上下文瘦身只卸载可重新读取的历史正文，保留调用配对、生成回执、用户要求及最近完整工具轮次；不宣称语义摘要或无限上下文。原始字节安全边界仍保留。
-- 已补后端回归：10 个大技能、正文不预存、分页、跨用户拒绝、版本变更拒绝、0 预算可见生成工具、大于 120 秒和正预算约束、上下文配对与生成回执保留。
-- 待真实模型验收：多技能任务中按入口选择引用、跨多页读取和上下文卸载后重读、视频模型支持的长时任务及收费审批；浅蓝用户消息在明暗主题下的交互外观。
+- 上下文先卸载可重新读取的历史正文并保留调用配对与生成回执；卸载判据为会话消息 40KB 或 24 条，低于轮末压缩的 48KB，确保便宜路径先触发。跨轮历史达到 16 条消息或模型消息达到 48KB 后，由后端独立压缩器生成结构化语义检查点，并原样保留最近 2 对用户/助手消息。检查点覆盖用户历史提示、剧本设计与规划、真实操作、未完成任务、当前工作、下一步、决策、限制和用户偏好；输出合同不合格、内部压缩任务失败或预算不足时使用服务端保底检查点。仍保留 192KB 原始字节安全边界，不宣称无限上下文。
+- 轮首画布摘要改为「只给存在性与规模」的索引投影（行数、镜号范围、媒体提示词摘录），并按 8KB 软预算逐级降级替代原 64KB 硬失败；默认画布读取每节点 5 行且不含 rowId，行 ID 只在对应 read 工具与 `nodeIds` 精读中返回。需在真实画布上验收：模型仍能通过 `canvas_list_node_types` 选型、通过 read 工具拿到 rowId 后再编辑，以及大画布（20+ 节点、数百行镜头）下摘要不触发降级告警。
+- 新增画布 Agent 看图能力（`canvas_inspect_image`，按渠道模型的图片输入能力开关）：图片走短时签名链接交给上游，不内联 base64，看一眼之后即移出上下文，素材在锚点里记为已识别并在跨轮继承时保留。待真实运行验收：对支持图片的渠道模型，Agent 能在需要判断素材内容时主动看图并据此改分镜。交付只有"上游自己取链接"一条路径：未配置 `CANVAS_PUBLIC_BASE_URL` 时签发链接即失败并给出可操作错误；地址配了但上游取不到（私有空间签名、证书或内网地址）时表现为上游取图失败，模型应如实说明而不是凭标题猜测，由部署侧修正该地址——服务端不做取图内联兜底，避免链接与内联两条路径各自演化。（**2026-09-22 晚该口径已被上游 `acbb354e` 取代**：改为后端读资源、请求期水合真实图片字节，不再依赖 `CANVAS_PUBLIC_BASE_URL`、也不再跨轮继承观察；见文首「Agent 图片字节交付」与「同步上游 6 个提交」两节。）
+- 上下文计量改为"上游实测锚点 + 有符号增量投影"（对齐 deepseek-harness 的 token-meter 口径）：每步把 provider 上报的 prompt 用量记为锚点，事件给出 `pressureTokens`/`projectedTokens`/`tokenSource`/`tokenUsage`，构成按 `tokenScale` 校准；与本地估算差出一个量级时拒绝锚点并说明原因。待真实运行验收：同一轮里第二步起压力读数应从"估算"切换为"上游实测"，且数值与本步 `api_call_logs.input_tokens` 一致；换模型或换渠道时应看到 `anchorRejected`。
+- 同批多次写入不再自我冲突（服务端记录批内版本链并自动重基，第三方改动仍拒绝）；写入回执改为结果口径（`applied`/`outcome`），消除"以为还在等审批"的重读循环；`canvas_read_storyboard` 增加 `rows`（默认 5 行，`rows=1` 精读）；技能正文不再被轮内卸载。待真实运行验收：导入技能后一次"优化分镜头"运行应能在 5–9 次读取内完成，且不再出现同批第二次写入被拒与 8000 字符级推理空转。
+- Agent 快照哈希改为只覆盖内容（忽略浏览器维护的时间戳、测量高度与顶层界面状态），并为"画布已变化"补可恢复的工具失败路径；上下文计量器小弹窗增加占用分布（三桶 + 系统提示分段）。待浏览器验收：在画布打开的情况下让 Agent 连续写入两次（创建分镜后再加节点）应成功；界面弹窗在明暗主题下显示分布且数值与后端事件一致。
+- 已补后端回归：10 个大技能、正文不预存、分页、跨用户拒绝、版本变更拒绝、0 预算可见生成工具、大于 120 秒和正预算约束、上下文配对与生成回执保留；另补摘要体积不变量、投影模式（index/page/detail）、空脚手架省略、`composerContent` 去重、审批预览回执、驱逐先于压缩、驱逐忽略非消息字节、缓存键稳定性、`model_list` 默认精简等用例。
+- 待真实模型验收：连续 8 轮以上的剧本/分镜规划能生成合法检查点并继续设计；压缩任务会使用当前文本模型并计入同一轮预算，需核对延迟与账单。还需验收多技能任务中按入口选择引用、跨多页读取和上下文卸载后重读、视频模型支持的长时任务及收费审批；浅蓝用户消息在明暗主题下的交互外观。
 
 ## 素材 bytes 数字合同
 
@@ -1661,7 +2326,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 - [ ] 保存一套自定义品牌后点击“恢复影策默认”，确认品牌名称、英文标识、Logo、登录页文案和媒体立即恢复内置值，自定义素材文件仍保留在存储资源中。
 - [ ] 清空浏览器缓存并以慢速网络打开 `/login`、`/register` 和 `/forgot-password`，确认加载阶段不出现内置品牌名、Logo、favicon 或视频封面闪烁。
 - [ ] 更换品牌视频但不上传封面，确认首帧出现前只显示中性深色背景；再配置封面，确认只显示当前自定义封面。
-- [ ] 在存储资源页尝试删除当前浅色 Logo、深色 Logo、视频和封面，确认显示“外观”引用并保留文件；解除绑定后可正常删除。
+- [x] 在存储资源页尝试删除当前浅色 Logo、深色 Logo、视频和封面，确认显示“外观”引用并保留文件；解除绑定后可正常删除。
 - [ ] 将公开配置接口模拟为超时或 5xx，确认 4 秒内结束等待并完整回退内置外观，应用仍可进入。
 
 ## 画布导入同步、素材回收站与历史
@@ -2732,7 +3397,11 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 入口精简与工具草稿复测：移除左侧工具菜单及图片节点提示词模板入口，保留图片风格 / 预设和其他节点模板入口。工具引用列表读取草稿改用空值判断，明确清空时不再从原始生成提示词回读旧标签。风格和预设的选择、替换、连续编辑、标签移除、全文清空及保存重载覆盖有图/空节点两种情况；5 个专项文件共 58 项通过，TypeScript 类型检查通过。实际页面仍需确认普通/放大编辑器均无图片提示词模板入口，以及风格和预设清空后重新聚焦不回填。
 
 主分支提交前复测：前端 `bun run test` 全量 1925 项通过，生产构建、类型检查、UI 退场 lint 通过；构建仍有大分块提示。同步了技能/工具标签结构与多行连接菜单的源码守护断言。后端 `go test ./...` 全量通过，工具、迁移、资源引用、handler 及工具预览权限/项目封面专项通过。本轮未执行真实模型调用、PostgreSQL 实库迁移或登录态浏览器验收，这些项目继续保留待验收。
+## Agent 续轮 handoff 与上下文计量口径
 
+- [x] 后端专项覆盖：结构化 handoff 最多保留 12 组真实画布改动并报告遗漏数；普通用户文本不能通过相似前缀伪装成 continuation；已提交任务保留非重放语义。
+- [x] 前端纯函数测试覆盖：Provider 锚点从 estimate 切换到 provider 时，主圆环和预算条仍使用同一份下一请求本地估算；压缩决策继续保留 Provider 投影。
+- [ ] 发布后用真实多步 Agent 运行验收：圆环不再因首个 Provider 锚点到达而跳变；图片裁剪和语义压缩后的真实下降仍能从对应事件解释；续轮不重复上一轮已落库的画布改动或已提交收费任务。
 ## 画布媒体交互与 Agent 循环止损复测（2026-09-23）
 
 本轮针对画布媒体节点、生成任务状态及云端 Agent 重复读取问题完成实现和复测。代码仍未提交，以下结论基于当前工作区的专项测试与隔离本地浏览器环境，不代表已部署生产。
@@ -2743,7 +3412,8 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 - [x] 图片预览弹窗增加非纯黑加载占位、边框、虚线内框、Spinner、错误态和加载完成淡入；已用 2.5 秒图片响应延迟在浏览器中验证加载态可见。
 - [x] 视频节点无持久化 poster 时主动从 OSS/CDN 视频取首帧；已验证首帧静态预览真实显示，视频资源请求返回 Range `206`，持久化 poster 仍优先使用对象存储地址。
 - [x] 视频播放器不再因未知音轨默认静音；已验证视频解码音频字节持续增加，`muted=false`，播放期间 `paused=false`，音量滑块可操作并从 100% 调至 85%。
-- [x] Agent 只读工具增加同参数缓存、同结果重复回放护栏、跨参数累计 32 次安全上限；识图按画布版本和资源限制重复调用，并受本轮总识图预算约束，超过上限直接结束本轮，避免继续消耗模型调用和 Token。附件事件序列已解析确认事故主要是只读工具循环（`canvas_get_state` 6 次、`canvas_read_storyboard` 2 次、`agent_profile_read` 4 次），不是单一图片识别失败。
+- [x] Agent 只读工具增加同参数缓存、同结果重复回放护栏、跨参数累计 32 次安全上限；识图按画布版本和资源限制重复调用，并受本轮总识图预算约束，超过上限直接结束本轮，避免继续消耗模型调用和 Token。 附件事件序列已解析确认事故主要是只读工具循环（`canvas_get_state` 6 次、`canvas_read_storyboard` 2 次、`agent_profile_read` 4 次），不是单一图片识别失败。
+  - 后续（本 fork，PR #53）：该预算从固定 16 次改为**按画布图片节点数动态分配**（每个图片节点一次可靠识别机会 + 4 次重试余量，下限 16、上限 96）。原因：真机画布实测 35 个图片节点，固定 16 次会让"看一遍再命名"在一轮里结构上做不完，第 17 次调用即被终止。同时把"已有可靠观察的图片直接复用"排在读循环护栏之前——否则模型按提示重试第三次就会被判成循环而终止整轮。
 - [x] Agent 媒体审批快照忽略节点位置和展示性变化；仅移动节点不会使已审批生成失效，提示词、资源、连接、锁定状态和任务状态等真实生成输入变化仍会使审批失效。
 
 自动验证记录：
@@ -2759,3 +3429,58 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 - [ ] 使用真实 Agent 会话完成审批后仅移动节点、再提交生成的端到端验收；后端回归已覆盖该语义，真实模型会话尚未执行。
 - [ ] 对含音轨视频做人工听觉验收；当前隔离视频已由浏览器运行时确认音频解码和音量控制可用。
 - [ ] 修复或单独核对插件视图数量断言后，再执行后端全量测试；本轮不修改与媒体/Agent 无关的插件注册逻辑。
+
+> 我方补充（同步时）：该插件视图数量断言已在 fork 的 dev 上修好——短信渠道与支付一样由宿主内置注册
+> 但不随官方包分发，用例期望数量原先只算了 workflow + payment 两类（PR #47）。因此 fork 侧
+> `go test ./...` 不再是这条阻断点；本 fork 另外还实现了「看图观察账本」（PR #48/#49），
+> 与上游这次的识图预算/只读循环护栏互补：上游用硬上限止损，账本让模型不必重复看图。
+> 识图预算已在本 fork 改成按画布规模动态分配（见上），固定 16 次对小画布仍有效（下限即 16）。
+
+## Pi 迁移本轮新增：上下文路由预算与渠道模型推理声明
+
+- [ ] **逻辑模型路由交集的输入预算**：`cloud_agent_context_budget.go::cloudAgentRouteIntersectionBudget` 原先分别取「最小窗口」与「最小输出预留」，当两者落在不同路由上时会高估小窗口线路的容量（512k/64k 与 1M/16k → 475520，而 512k 线路实际 427520）。已改为逐条路由计算可用输入容量再取最小值。`go test ./internal/app -run TestCloudAgentRouteIntersectionBudget` 新增 4 个用例覆盖交叉组合、未知窗口、顺序无关与无可用路由失败关闭；既有 `TestCloudAgentContextBudgetUsesLogicalRouteSafeIntersection` 保持不变（它的两条路由在窗口与输出上同向，所以从未暴露该缺陷）。**待真实环境验收**：配一条 512k/64k 与一条 1M/16k 的文本路由，确认 `context_pressure` 的 `inputBudgetTokens` 取小值、且落到 512k 路由的请求不再被上游拒绝。
+- [ ] **渠道模型 `thinking` 能力声明**：`TextCapabilityConfig` 新增 `thinking`（缺省 = 未声明，不猜测），管理端「能力声明」新增开关，画布面板原有的 `reasoningSupported` 推导从此真正生效（此前字段在 Go 侧不存在，推理选项对所有模型都隐藏）。`go test ./internal/app -run TestNormalizeTextCapabilityPreservesThinkingMode` 覆盖声明保留、JSON 往返与未声明不落库。**待真实环境验收**：在管理端打开某渠道模型的「思考 / 推理模式」，确认面板出现推理选项且真实上游请求带上推理参数；关闭后确认选项消失且请求不含 reasoning 参数。**前端本轮未做类型检查或构建**（本机没有 bun，`web/node_modules` 未安装），仅用 esbuild 做过 TSX 语法解析，类型正确性待前端 CI 补验。
+
+- [ ] **执行路径重新附上权威渠道模型能力**（HANDOFF P0-3）：`task_creation.go` 已把客户端 `capabilityConfig` 剔除（正确的信任边界），但 `provider.go::resolveProviderConfig` 此前没有把**选中的渠道模型**的能力补回，执行路径因此拿到 nil；而 `provider.go` 的 `supportsStream` 把「未声明」当成「支持流式」，模型物理输出上限（`CapabilityMaxOutputTokens`）也一起丢失。现已在解析出渠道模型后附上权威能力：**已声明**能力的渠道模型一律以 DB 为准，解析/规范化失败则失败关闭；完全未声明（空 JSON）的记录不改写，避免给取消/恢复路径引入新的失败（新建任务入口本就拒绝这类记录）。`go test ./internal/app -run TestResolveProviderConfig` 覆盖「streaming=false 与 maxOutputTokens 被采纳」「损坏配置失败关闭」两个方向，并与既有 `TestResolveProviderConfigMapsSKUToProviderModel`（视频模型、未声明能力）共同保住不回归。**待真实环境验收**：把一个渠道模型配成 `streaming=false`，确认 Agent/文本任务不再发送 `stream=true`；再把 `maxOutputTokens` 配小，确认单步输出被该上限约束。
+
+## Pi 迁移本轮新增：首步合同（占位任务与原子换单）与两处 Node 缺陷
+
+- [ ] **建 run 只落占位与快照，首个 Pi 模型步原子换单**：`CreateCloudAgentRun` 现在在同一事务里提交执行记录、合同快照（策略身份／Harness 正文与哈希／工具 schema 身份／装配提示身份）与一条 `holding` 占位任务及其报价预留；占位任务不进队列（`ClaimNextTask` 只匹配 `queued`/`running`）、不计入活动任务额度、不出现在任务列表。首个 `PiModelStep` 在同一事务里退还占位预留、按 Node 最终信封重新报价并落库真实首步任务，同时把运行从 `awaiting_first_step` 推进；首步准入失败当场写终态并退款。看门狗清扫后由新增的 `DrainPendingPiAgentCleanups` 补做收尾退款 —— 此前只有 HTTP 取消会调 `finishCloudAgentCleanup`，被清扫掉的运行会把预留一直冻在账上。新增用例 `internal/app/cloud_agent_pi_first_step_test.go`；既有的计费不变量与取消用例覆盖"首步前取消"。
+  **已跑通的部分**：宿主 `CGO_ENABLED=0` 且无 C 编译器，`go test` 需走容器（`open-ai-canvas-backend-test:sticky-tools`，Go 1.25 + gcc）：
+  `docker run --rm -v <repo>:/src -w /src/backend open-ai-canvas-backend-test:sticky-tools sh -c "CGO_ENABLED=1 go test ./internal/app -count=1 -timeout 600s -run 'TestPiFirstStep|TestPiCleanupDrain|TestCloudAgentHarnessBodyDigest'"` → 5/5 PASS（真实 SQLite 事务：换单、正文/哈希门、首步准入失败退款、真实未领取清扫 + 收尾排空退款、跨语言哈希向量）。这次跑通还修掉三个真实缺陷：首步准入失败发生在换单之前时不退款、`failCloudAgent` 不置收尾标记导致失败运行永不收尾、收尾退款被"状态不可解码"挡住。
+  **待真实环境验收**：PostgreSQL 一侧；崩溃节点注入（换单事务现在可以注入了）；一次 Node ↔ Go 真实 HTTP 首步，确认换单后账户预留额等于未结订单之和、真实首步只计费一次。**注意**整包直跑会卡在依赖外网的用例（容器无外网），表现为超时而非失败。
+- [ ] **Node 工具批次顺序缺陷**：`agent/src/runner.ts` 曾把工具批次先入队、带 `taskId` 的 assistant 检查点后入队，而 Go 的 `PiToolBatch` 在 `ActiveTaskID` 非空时拒绝整批（清空它的正是那条检查点）。已改为"检查点 → 批次准入"，`agent/test/runner.test.ts` 用调用序列守住先后。
+- [ ] **Node 母类型披露与 Go 权威分叉**：`agent/src/session-tools.ts` 曾要求母类型"至少有一个合格子工具"才披露，而 Go 的 `cloudAgentVisibleToolsForCategories` 把合格目录里的所有母类型无条件下发；某个类别的子工具全被判不合格时 Node 的工具集会比服务端预检少一个入口。已按 Go 对齐。
+- [ ] **Agent 测试套件不再假死**：`agent/package.json` 的 `test` 脚本加 `--test-timeout=20000 --test-force-exit`。SDK 用例（`runner`、`pi-sdk-probe`）结束时会留下活跃句柄，整轮进程不退出，看起来像挂起。`node --test --test-timeout=20000 --test-force-exit "dist/test/*.test.js"` 实测 52/52 通过、8.70s。
+
+## Pi 迁移本轮新增：旧调度入口的真实效果面与 C1 用例迁移配方
+
+- [ ] **C0 去向修正：逐调用执行引擎不是死代码**：`advanceCloudAgentTool` / `advanceCloudAgentMedia` 由 Pi 生产入口 `PiToolAdvance`（`POST /internal-agent/runs/:id/tool-calls/:callId/advance`）调用，是 Pi 路径的逐次工具执行引擎；随旧循环废弃的只有调度层 —— `advanceCloudAgentByID`、`advanceCloudAgent` 与读批次优化。删除清单以这条修正为准，否则会连 Pi 的工具执行一起删掉。
+- [ ] **旧用例迁移配方（已在审批设置文件上跑通）**：夹具先按生产入口起步（`startPiAgentFirstStep`：`ClaimPiAgent` → `PiModelStep`，让运行离开 `awaiting_first_step`），再把驱动从 `advanceCloudAgentByID` 换成 `PiToolAdvance`，断言不动。`cloud_agent_approval_settings_test.go` 的 7 处驱动与 `approveAgentMediaDraft` 已按此迁移。**已跑通的部分**：容器内 `-run 'TestCloudAgentAdmissionIdempotentResubmission|TestCloudAgentMediaApprovalReusesPreparedInputsAfterModelRetry'` → 2/2 PASS（两者原本在 43 个红用例中）。
+- [ ] **剩余阻断点在生产代码，不在测试**：`DecideCloudAgentApproval(userID, id, …)` 经 `cloudAgentTask` 先按**任务 ID** 解析运行（`repository.TaskForUser(id)` 失败即返回 `Agent 运行不存在`），而 v2 运行没有根任务，因此所有"审批 / 取消 / 活动任务查询"按 ID 寻址的入口对 v2 运行一律 404。43 个红用例里媒体、审批、画布、完成度几族都踩在这里（`cloud_agent_media_test.go` 18 处旧驱动 + 3 处审批入口、`cloud_agent_approval_settings_test.go` 5 处审批入口）。修法是让这些入口优先按运行 ID 解析（`repo.CloudAgent`），任务形态只作为旧数据回退。
+- [ ] **需要按 Pi 协议重写的用例**：`TestCloudAgentConversationKeepsRecentRounds` 依赖两处旧约定（"根任务 ID == 运行 ID"、推进一轮 = 追加 2 条历史），必须改成每轮 claim → `PiModelStep` → `PiCheckpointMessage` 才能迁移，不能只换驱动。
+
+待登录态页面验收：对「扶颦」精读应返回实际外貌和服装；选择该卡生成时，审批/任务输入应同时包含该版设定与已绑定三视图；故意改动角色版本后旧审批不能提交。声音档案可精读，音频任务在未显式选择音色时采用角色绑定的 voiceKey 与声音指令；跨模型适配及真实音色效果仍需单独验收。此轮不代表生产已部署。
+
+
+## 存储满额生成拦截与 Live2D 开关稳定性（2026-09-30）
+
+- 已修复：图片、视频、音频生成任务在创建、积分预留和上游调用之前检查账号文件容量；容量已满时返回配额错误并提示先清理素材，文本任务不受文件容量限制。普通画布与 Agent 媒体生成共用该 admission 边界。
+- 已修复：Agent 面板开合时保留 Live2D 入口组件和已加载模型，仅隐藏入口并暂停不可见渲染，不再因反复卸载、重建 PIXI/Live2D 上下文而短暂回退默认动态球。
+- 自动验证：后端纯 admission 专项测试通过（CGO 关闭，3 项）；前端 Live2D 生命周期专项测试通过；前端生产构建通过。既有 Agent 位置测试在当前 Windows 环境因 Bun 将磁盘路径解析为 `/E:/...` 而未进入测试逻辑。
+
+仍待真实环境验收：
+
+- [ ] 将测试账号文件容量填满后，从普通画布和 Agent 分别提交图片、视频、音频生成，确认立即显示容量提示、没有创建计费订单、没有调用上游；清理出容量后可恢复生成。
+- [ ] 使用自定义 Live2D 模型连续开合 Agent 面板，确认不出现默认动态球闪回，拖动、窗口缩放和重新进入画布仍正常。
+
+
+## 后台存储资源用户筛选（2026-09-30）
+
+- 已修复：后台存储资源列表的用户筛选不再只接受完整用户 ID；现在支持按用户 ID、用户名、昵称和邮箱进行不区分大小写的模糊匹配，并可与资源类型、状态、存储位置、资源关键词组合使用。
+- API 新增可读性更高的 `user` 查询参数，后端继续兼容旧 `userId` 参数；前端请求同时发送两者，避免滚动升级期间旧后端忽略新参数并错误返回全量资源。
+- 自动验证：后台 UI 回归 17 项通过；前端生产构建通过；后端参数规范化专项通过。SQLite 集成用例已补充四种用户字段匹配，但当前 Windows 本机 CGO/GCC 无法解析生成的对象文件，未在本机实际执行该数据库用例。
+
+仍待真实环境验收：
+
+- [ ] 在管理员后台存储资源页分别输入完整/部分用户名、昵称、邮箱和用户 ID，确认返回同一用户资源；再叠加类型、状态和存储位置筛选，确认分页与清空筛选正常。

@@ -14,6 +14,7 @@ function installStorageHarness() {
     const originalWindow = (globalThis as { window?: unknown }).window;
     const originalNavigator = (globalThis as { navigator?: unknown }).navigator;
     const originalDocument = (globalThis as { document?: unknown }).document;
+    const originalXHR = (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest;
     const realSetTimeout = globalThis.setTimeout.bind(globalThis);
 
     const defaultValues = new Map<string, unknown>();
@@ -22,6 +23,86 @@ function installStorageHarness() {
     const scheduled: Promise<void>[] = [];
     const hooks: { onSet?: InstanceHook } = {};
     const lockTails = new Map<string, Promise<void>>();
+
+    // 资源展示地址现在由 `/api/resources/access` 合同下发（上游 OSS 直连改造），
+    // 所以 Worker 场景里必须有一个最小 HTTP 桩，否则 axios 会在没有 location 的
+    // Worker 环境里解析相对地址而抛 "cannot be parsed as a URL"。
+    // 这里只实现该合同；其它请求显式失败，避免测试静默放过未预期的网络调用。
+    const installAccessEndpointStub = () => {
+        class StubXMLHttpRequest {
+            method = "GET";
+            url = "";
+            readyState = 0;
+            status = 0;
+            statusText = "";
+            responseText = "";
+            response = "";
+            responseType = "";
+            withCredentials = false;
+            timeout = 0;
+            onload: (() => void) | null = null;
+            onreadystatechange: (() => void) | null = null;
+            onerror: (() => void) | null = null;
+            onabort: (() => void) | null = null;
+            ontimeout: (() => void) | null = null;
+            private headers: Record<string, string> = {};
+
+            open(method: string, url: string) {
+                this.method = method;
+                this.url = url;
+            }
+
+            setRequestHeader(name: string, value: string) {
+                this.headers[name.toLowerCase()] = value;
+            }
+
+            getAllResponseHeaders() {
+                return "content-type: application/json\r\n";
+            }
+
+            getResponseHeader(name: string) {
+                return name.toLowerCase() === "content-type" ? "application/json" : null;
+            }
+
+            send(body?: unknown) {
+                this.readyState = 1;
+                queueMicrotask(() => {
+                    if (!this.url.includes("/resources/access")) {
+                        this.status = 599;
+                        this.statusText = `unexpected network call: ${this.method} ${this.url}`;
+                        this.readyState = 4;
+                        this.responseText = JSON.stringify({ code: -1, msg: this.statusText });
+                        this.response = this.responseText;
+                        this.onreadystatechange?.();
+                        this.onload?.();
+                        return;
+                    }
+                    const payload = JSON.parse(typeof body === "string" ? body : "[]") as Array<{ resourceId: string }>;
+                    const items = payload.map((entry, index) => ({
+                        resourceId: entry.resourceId,
+                        access: {
+                            url: `https://cdn.example.invalid/${entry.resourceId}-${index}.png`,
+                            expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+                        },
+                    }));
+                    this.status = 200;
+                    this.statusText = "OK";
+                    this.readyState = 4;
+                    this.responseText = JSON.stringify({ code: 0, data: { items }, msg: "ok" });
+                    this.response = this.responseType === "json" ? JSON.parse(this.responseText) : this.responseText;
+                    this.onreadystatechange?.();
+                    this.onload?.();
+                });
+            }
+
+            abort() {
+                this.onabort?.();
+            }
+        }
+        Object.defineProperty(globalThis, "XMLHttpRequest", { configurable: true, writable: true, value: StubXMLHttpRequest });
+    };
+
+    installAccessEndpointStub();
 
     const storeValues = (storeName: string) => {
         let values = instanceValues.get(storeName);
@@ -133,6 +214,8 @@ function installStorageHarness() {
             else Object.defineProperty(globalThis, "navigator", { configurable: true, writable: true, value: originalNavigator });
             if (originalDocument === undefined) delete (globalThis as { document?: unknown }).document;
             else Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: originalDocument });
+            if (originalXHR === undefined) delete (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest;
+            else Object.defineProperty(globalThis, "XMLHttpRequest", { configurable: true, writable: true, value: originalXHR });
         },
     };
 }

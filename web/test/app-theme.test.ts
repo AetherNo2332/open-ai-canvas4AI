@@ -6,10 +6,10 @@ import { getIsolatedAdminAntTheme } from "../src/pages/admin/theme/admin-ant-the
 
 describe("shared action colors and focus feedback", () => {
     for (const dark of [false, true]) {
-        test(`classic solid tokens remain monochrome beneath the button fill adapter in ${dark ? "dark" : "light"} mode`, () => {
+        test(`classic actions follow the site's palette in ${dark ? "dark" : "light"} mode`, () => {
             const product = getAntThemeConfig(dark, DEFAULT_CLASSIC_SKIN);
             const admin = getIsolatedAdminAntTheme(dark, DEFAULT_CLASSIC_SKIN);
-            expect(product.components?.Button?.colorPrimary).toBe(dark ? "#f5f5f5" : "#171717");
+            expect(product.components?.Button?.colorPrimary).toBe(DEFAULT_CLASSIC_SKIN.tokens[dark ? "dark" : "light"].primary);
             expect(admin.components?.Button?.colorPrimary).toBe(product.components?.Button?.colorPrimary);
             expect(admin.components?.Button?.primaryColor).toBe(product.components?.Button?.primaryColor);
         });
@@ -38,10 +38,27 @@ describe("shared action colors and focus feedback", () => {
         });
     }
 
+    test("admin secondary buttons follow custom skin control states in both modes", () => {
+        const skin = duplicateSkinDefinition(DEFAULT_CLASSIC_SKIN, ["classic"]);
+        for (const dark of [false, true]) {
+            Object.assign(skin.tokens[dark ? "dark" : "light"], {
+                control: "#123456", controlHover: "#234567", controlActive: "#345678",
+                controlBorder: "#456789", controlFocus: "#56789a", text: "#abcdef",
+            });
+            expect(getIsolatedAdminAntTheme(dark, skin).components?.Button).toMatchObject({
+                defaultBg: "#123456", defaultHoverBg: "#234567", defaultActiveBg: "#345678",
+                defaultBorderColor: "#456789", defaultHoverBorderColor: "#56789a", defaultColor: "#abcdef",
+            });
+        }
+    });
+
     test("workspace density overrides inherit action colors and shadow-free focus", () => {
         const theme = getWorkspaceAntThemeConfig();
         expect(theme.components?.Button?.colorPrimary).toBeUndefined();
         expect(theme.components?.Button?.primaryColor).toBeUndefined();
+        // 合并取舍：上游 8a691f76「统一控件 - 收敛下拉选择与按钮输入交互样式」在工作台密度覆盖里
+        // 显式声明 Input / InputNumber 的 activeShadow: "none"（不再靠继承基座主题）；断言随上游
+        // 改新契约，"工作台输入不出现焦点阴影"的意图不变。
         expect(theme.components?.Input?.activeShadow).toBe("none");
     });
 });

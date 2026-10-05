@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/volcengine/volc-sdk-golang/base"
 
 	"infinite-canvas/backend/internal/model"
 )
@@ -30,8 +33,18 @@ func TestCallArkPrivateAssetAPISignsAndUsesAssetContract(t *testing.T) {
 		if !strings.HasPrefix(request.Header.Get("Authorization"), "HMAC-SHA256") {
 			t.Errorf("missing Volcengine request signature")
 		}
+		raw, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 方舟按收到请求里的真实 Host 重算签名；签名没覆盖 Host 时这里必然不一致。
+		if got, want := request.Header.Get("Authorization"), volcengineV4Authorization(t, request, raw, request.Host, base.Credentials{
+			AccessKeyID: "test-access-key", SecretAccessKey: "test-secret-key", Region: "test-region", Service: "ark",
+		}); got != want {
+			t.Errorf("request signature = %q, want %q", got, want)
+		}
 		var body map[string]interface{}
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(raw, &body); err != nil {
 			t.Fatal(err)
 		}
 		if body["ProjectName"] != "project-test" || body["AssetType"] != "Image" || body["GroupId"] != "group-test" {

@@ -6,15 +6,50 @@ import (
 	"strings"
 	"testing"
 
+	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
 )
+
+func queuePiMediaToolForTest(t *testing.T, s *Service, db *gorm.DB, args cloudAgentMediaArgs, permission string) (*model.CloudAgentExecution, cloudAgentRuntime) {
+	t.Helper()
+	req := agentTestRequest()
+	req.PermissionMode = permission
+	req.Budget.MaxGenerationTasks = 2
+	req.Budget.MaxVideoSeconds = 24
+	root, err := s.CreateCloudAgentRun("user", req, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, state := agentStartPiModelStep(t, s, root.ID)
+	// The SDK accepts an omitted optional array or [], never JSON null.
+	if args.ReferenceTransientIDs == nil {
+		args.ReferenceTransientIDs = []string{}
+	}
+	body, err := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{agentMediaCall(args)}, "stopReasonKind": cloudAgentStopKindStop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{
+		"status": model.TaskStatusSucceeded, "result_json": string(body),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
+		t.Fatal(err)
+	}
+	run, queued := agentInterjectionState(t, s, root.ID)
+	if queued.ActiveTaskID != "" || len(queued.Calls) != 1 || queued.CallIndex != 0 {
+		t.Fatalf("Pi media batch was not queued: active=%s calls=%d index=%d", queued.ActiveTaskID, len(queued.Calls), queued.CallIndex)
+	}
+	return run, queued
+}
 
 func TestCloudAgentMediaCleanupUsesPersistedTaskTarget(t *testing.T) {
 	for _, missingTarget := range []bool{false, true} {
 		t.Run(map[bool]string{false: "known target", true: "unknown target"}[missingTarget], func(t *testing.T) {
 			s, db, args := agentMediaFixture(t)
-			run, _ := agentMediaRun(t, s, args, "request_approval")
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			run, _ := queuePiMediaToolForTest(t, s, db, args, "request_approval")
+			if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 				t.Fatal(err)
 			}
 			approveAgentMediaDraft(t, s, run.ID)
@@ -81,8 +116,8 @@ func TestCloudAgentMediaCompletionKeepsGenerationAndWritebackFailures(t *testing
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s, db, args := agentMediaFixture(t)
-			run, _ := agentMediaRun(t, s, args, "request_approval")
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			run, _ := queuePiMediaToolForTest(t, s, db, args, "request_approval")
+			if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 				t.Fatal(err)
 			}
 			approveAgentMediaDraft(t, s, run.ID)
@@ -127,7 +162,7 @@ func TestCloudAgentMediaCompletionKeepsGenerationAndWritebackFailures(t *testing
 			if err := db.Model(&model.CanvasProject{}).Where("id = ?", canvas.ID).Update("payload_json", string(before)).Error; err != nil {
 				t.Fatal(err)
 			}
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 				t.Fatal(err)
 			}
 			run, state = agentInterjectionState(t, s, run.ID)
@@ -164,7 +199,7 @@ func TestCloudAgentMediaCompletionKeepsGenerationAndWritebackFailures(t *testing
 					t.Fatal("missing or rebound target modified another node")
 				}
 			}
-			if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+			if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 				t.Fatal(err)
 			}
 			var count int64

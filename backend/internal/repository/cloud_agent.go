@@ -2,7 +2,9 @@ package repository
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,9 +33,19 @@ func (r *Repository) EnsureCloudAgent(run *model.CloudAgentExecution) error {
 }
 func (r *Repository) CloudAgent(userID, id string) (*model.CloudAgentExecution, error) {
 	var run model.CloudAgentExecution
-	err := r.db.First(&run, "id = ? AND user_id = ?", id, userID).Error
-	if err == nil {
-		err = r.hydrateCloudAgent(&run)
+	read := func(db *gorm.DB) error {
+		if err := db.First(&run, "id = ? AND user_id = ?", id, userID).Error; err != nil {
+			return err
+		}
+		return (&Repository{db: db}).hydrateCloudAgent(&run)
+	}
+	// Header watermarks and transcript/journal rows must come from one committed
+	// snapshot. Otherwise a concurrent checkpoint can look like corrupt history.
+	var err error
+	if _, inside := r.db.Statement.ConnPool.(gorm.TxCommitter); inside {
+		err = read(r.db)
+	} else {
+		err = r.db.Transaction(read, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	}
 	return &run, err
 }
@@ -50,7 +62,8 @@ func (r *Repository) hydrateCloudAgent(run *model.CloudAgentExecution) error {
 	if run.CheckpointVersion < 2 {
 		return nil
 	}
-	// 只取最近一窗，再翻回升序：与 EventCount 的尾部对齐（不变量见 app 侧解码）。
+	// 只取最近一窗，再翻回升序：与 EventCount 的尾部对齐（不变量见 app 侧解码）；
+	// 窗口之外的由分页查询按需补。
 	window := []model.CloudAgentEventRecord{}
 	if err := r.db.Where("run_id = ? AND user_id = ?", run.ID, run.UserID).
 		Order("sequence DESC").Limit(CloudAgentJournalWindow).Find(&window).Error; err != nil {
@@ -124,7 +137,7 @@ func (r *Repository) ActiveCloudAgentsAfter(after string, limit int) ([]model.Cl
 	if limit < 1 || limit > 50 {
 		limit = 50
 	}
-	err := r.db.Where("(status IN ? OR cleanup_pending = ?) AND id > ?", []string{"running", "queued"}, true, after).Order("id").Limit(limit).Find(&runs).Error
+	err := r.db.Where("(status IN ? OR cleanup_pending = ?) AND id > ? AND (engine IS NULL OR engine <> ?)", []string{"running", "queued"}, true, after, "pi").Order("id").Limit(limit).Find(&runs).Error
 	if err == nil {
 		for i := range runs {
 			if err = r.hydrateCloudAgent(&runs[i]); err != nil {
@@ -137,6 +150,205 @@ func (r *Repository) ActiveCloudAgentsAfter(after string, limit int) ([]model.Cl
 
 func (r *Repository) ActiveCloudAgents() ([]model.CloudAgentExecution, error) {
 	return r.ActiveCloudAgentsAfter("", 50)
+}
+
+// StalledPiAgentRuns returns engine=pi runs that were leased and whose lease expired long
+// ago and that nobody has advanced. Claiming alone never terminates these: a crashed or
+// misconfigured worker keeps re-claiming every lease period and failing before its first
+// request, so the run stays "running" forever and the UI shows "Agent 正在运行" indefinitely.
+//
+// The `lease_expires_at IS NOT NULL` predicate matters: only runs that were actually
+// claimed qualify. A run that no worker ever picked up has a NULL lease and belongs to
+// UnclaimedPiAgentRuns, which uses a much longer threshold and a different failure reason.
+// Without the predicate, a deployment with no agent worker at all would have every new run
+// reported as "worker stalled" after ~4.5 minutes — an inaccurate cause that also destroys
+// the queued semantics.
+func (r *Repository) StalledPiAgentRuns(expiredBefore time.Time, limit int) ([]model.CloudAgentExecution, error) {
+	var runs []model.CloudAgentExecution
+	err := r.db.Where("engine = ? AND status IN ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?",
+		"pi", []string{"queued", "running", "waiting_approval"}, expiredBefore).
+		Order("updated_at").Limit(limit).Find(&runs).Error
+	return runs, err
+}
+
+// UnclaimedPiAgentRuns returns engine=pi runs that no worker has ever leased and that have
+// been waiting longer than the caller's threshold.
+//
+// This is a deployment-availability condition, not a worker crash, so it is reported with
+// its own reason. ClaimPiAgent deliberately still matches NULL leases — removing that would
+// make the first claim impossible — so these runs stay claimable until they are swept.
+func (r *Repository) UnclaimedPiAgentRuns(createdBefore time.Time, limit int) ([]model.CloudAgentExecution, error) {
+	var runs []model.CloudAgentExecution
+	capacityAlive := false
+	if r.db.Migrator().HasTable(&model.AgentRuntimeInstance{}) {
+		var alive, available int64
+		query := r.db.Model(&model.AgentRuntimeInstance{}).Where("updated_at > ?", time.Now().Add(-45*time.Second))
+		if err := query.Count(&alive).Error; err != nil {
+			return nil, err
+		}
+		if err := query.Where("active + claim_reservations < capacity").Count(&available).Error; err != nil {
+			return nil, err
+		}
+		if alive > 0 && available == 0 {
+			return runs, nil
+		}
+		capacityAlive = alive > 0
+	}
+	query := r.db.Where("engine = ? AND status IN ? AND lease_expires_at IS NULL AND created_at < ?",
+		"pi", []string{"queued", "running", "waiting_approval"}, createdBefore)
+	if capacityAlive {
+		query = query.Where("wait_kind <> ?", "canvas_capacity")
+	}
+	err := query.
+		Order("created_at").Limit(limit).Find(&runs).Error
+	return runs, err
+}
+
+// ClaimPiAgent leases one externally executed run. The conditional update is
+// also safe on SQLite, where SELECT FOR UPDATE is unavailable.
+func (r *Repository) ClaimPiAgent(owner string, until time.Time) (*model.CloudAgentExecution, error) {
+	return r.ClaimPiAgentConfigured(owner, until, model.DefaultAgentSchedulerSetting())
+}
+
+func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p model.AgentSchedulerSetting) (*model.CloudAgentExecution, error) {
+	if r.db.Migrator().HasTable(&model.AgentAdmissionCounter{}) {
+		return r.ClaimPiAgentFair(owner, until, p)
+	}
+	var candidates []model.CloudAgentExecution
+	now := time.Now()
+	if err := r.db.Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
+		"pi", []string{"queued", "running", "waiting_approval"}, now).
+		Order("created_at, id").Limit(20).Find(&candidates).Error; err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		conversationID := candidate.ConversationID
+		if conversationID == "" {
+			conversationID = candidate.ID
+		}
+		err := r.db.Transaction(func(tx *gorm.DB) error {
+			if err := New(tx).lockAgentCrewExecution(candidate.UserID, candidate.ID); err != nil {
+				return err
+			}
+			updated := tx.Model(&model.CloudAgentExecution{}).
+				Where("id = ? AND revision = ? AND engine = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
+					candidate.ID, candidate.Revision, "pi", now).
+				Updates(map[string]any{
+					"lease_owner": owner, "lease_expires_at": until,
+					"status":   gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", "queued", "running"),
+					"revision": gorm.Expr("revision + 1"),
+				})
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				return ErrCreationConflict
+			}
+			leased := tx.Model(&model.CloudAgentPiSession{}).
+				Where("conversation_id = ? AND user_id = ? AND active_run_id = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
+					conversationID, candidate.UserID, candidate.ID, now).
+				Updates(map[string]any{
+					"lease_owner": owner, "lease_expires_at": until,
+					// Lease fencing is independent of the persisted message tree revision.
+					"lease_epoch": gorm.Expr("lease_epoch + 1"), "updated_at": now,
+				})
+			if leased.Error != nil {
+				return leased.Error
+			}
+			if leased.RowsAffected != 1 {
+				return ErrCreationConflict
+			}
+			current, err := New(tx).CloudAgent(candidate.UserID, candidate.ID)
+			if err != nil {
+				return err
+			}
+			return New(tx).projectAgentCrewExecution(current)
+		})
+		if errors.Is(err, ErrCreationConflict) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return r.CloudAgent(candidate.UserID, candidate.ID)
+	}
+	return nil, nil
+}
+
+func (r *Repository) RenewPiAgentLease(userID, id, owner string, epoch int64, until time.Time) (bool, error) {
+	run, err := r.CloudAgent(userID, id)
+	if err != nil {
+		return false, err
+	}
+	conversationID := run.ConversationID
+	if conversationID == "" {
+		conversationID = run.ID
+	}
+	renewed := false
+	err = r.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		updated := tx.Model(&model.CloudAgentExecution{}).
+			Where("id = ? AND user_id = ? AND engine = ? AND lease_owner = ? AND lease_expires_at > ?",
+				id, userID, "pi", owner, now).
+			Updates(map[string]any{"lease_expires_at": until})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return nil
+		}
+		sessionQuery := tx.Model(&model.CloudAgentPiSession{}).
+			Where("conversation_id = ? AND user_id = ? AND active_run_id = ? AND lease_owner = ? AND lease_expires_at > ?",
+				conversationID, userID, id, owner, now)
+		if epoch > 0 {
+			sessionQuery = sessionQuery.Where("lease_epoch = ?", epoch)
+		}
+		sessionUpdate := sessionQuery.Updates(map[string]any{"lease_expires_at": until, "updated_at": now})
+		if sessionUpdate.Error != nil {
+			return sessionUpdate.Error
+		}
+		if sessionUpdate.RowsAffected != 1 {
+			return ErrCreationConflict
+		}
+		renewed = true
+		return nil
+	})
+	if errors.Is(err, ErrCreationConflict) {
+		return false, nil
+	}
+	return renewed, err
+}
+
+func (r *Repository) ReleasePiAgentLease(userID, id, owner string, epochs ...int64) error {
+	run, err := r.CloudAgent(userID, id)
+	if err != nil {
+		return err
+	}
+	conversationID := run.ConversationID
+	if conversationID == "" {
+		conversationID = run.ID
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if len(epochs) == 0 {
+			return fmt.Errorf("Pi lease release requires an epoch")
+		}
+		var session model.CloudAgentPiSession
+		if err := tx.Where("conversation_id = ? AND user_id = ? AND active_run_id = ? AND lease_owner = ? AND lease_epoch = ?", conversationID, userID, id, owner, epochs[0]).First(&session).Error; err != nil {
+			return ErrCreationConflict
+		}
+		updated := tx.Model(&model.CloudAgentExecution{}).
+			Where("id = ? AND user_id = ? AND engine = ? AND lease_owner = ? AND revision = ?", id, userID, "pi", owner, run.Revision).
+			Updates(map[string]any{"lease_owner": "", "lease_expires_at": nil})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrCreationConflict
+		}
+		return tx.Model(&model.CloudAgentPiSession{}).
+			Where("conversation_id = ? AND user_id = ? AND active_run_id = ? AND lease_owner = ? AND lease_epoch = ?", conversationID, userID, id, owner, epochs[0]).
+			Updates(map[string]any{"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now()}).Error
+	})
 }
 
 // Do not load the transcript, tasks and bills for an unchanged SSE subscription.
@@ -174,6 +386,11 @@ func (r *Repository) RecentCloudAgentEventsForUser(userID string, runLimit int) 
 // Lock before reading: checkpoints, canvas writes and task reservations commit together.
 func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func(*model.CloudAgentExecution, *Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if !r.crewMutation {
+			if err := New(tx).lockAgentCrewExecution(userID, id); err != nil {
+				return err
+			}
+		}
 		q := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND revision = ?", id, userID, revision).UpdateColumn("revision", gorm.Expr("revision + 1"))
 		if q.Error != nil {
 			return q.Error
@@ -194,8 +411,21 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 		for _, message := range run.Transcript {
 			previousMessages[fmt.Sprintf("%s:%d", message.Kind, message.Sequence)] = message.MessageJSON
 		}
-		if err = fn(run, New(tx)); err != nil {
+		callbackRepo := New(tx)
+		callbackRepo.crewMutation = r.crewMutation
+		if err = fn(run, callbackRepo); err != nil {
 			return err
+		}
+		if isTerminalCloudAgentRunStatus(run.Status) {
+			run.RuntimePhase = "terminal"
+			run.WaitKind = ""
+			run.WaitID = ""
+			run.WaitReason = ""
+		}
+		if run.Status == "waiting_approval" {
+			run.RuntimePhase = "waiting_approval"
+			run.WaitKind = "approval"
+			run.WaitReason = "等待用户审批"
 		}
 		if run.EventCount < previousEvents {
 			return fmt.Errorf("cloud Agent journal cannot be truncated")
@@ -245,7 +475,7 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 				return err
 			}
 		}
-		for _, kind := range []string{"canonical", "history"} {
+		for _, kind := range []string{"canonical", "history", "pi", "pi_compaction"} {
 			count := 0
 			for _, message := range run.Transcript {
 				if message.Kind == kind {
@@ -256,8 +486,30 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 				return err
 			}
 		}
+		if run.Engine == "pi" && run.ConversationID != "" && isTerminalCloudAgentRunStatus(run.Status) {
+			if err = tx.Model(&model.CloudAgentPiSession{}).
+				Where("conversation_id = ? AND user_id = ? AND active_run_id = ?", run.ConversationID, run.UserID, run.ID).
+				Updates(map[string]any{
+					"active_run_id": "", "lease_owner": "", "lease_expires_at": nil,
+					"revision": gorm.Expr("revision + 1"), "updated_at": time.Now(),
+				}).Error; err != nil {
+				return err
+			}
+		}
+		if !r.crewMutation {
+			return New(tx).projectAgentCrewExecution(run)
+		}
 		return nil
 	})
+}
+
+func isTerminalCloudAgentRunStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "cancelled", "rejected":
+		return true
+	default:
+		return false
+	}
 }
 
 // sameJSONDocument compares event records by JSON meaning rather than source
@@ -321,32 +573,39 @@ func (r *Repository) MarkCloudAgentFailed(userID, id string, revision int64, mes
 	if len(message) > 0 {
 		detail = message[0]
 	}
-	result := r.db.Model(&model.CloudAgentExecution{}).
-		Where("id = ? AND user_id = ? AND revision = ? AND status IN ?", id, userID, revision, []string{"queued", "running"}).
-		Updates(map[string]any{"status": "failed", "cleanup_pending": true, "failure_message": detail, "revision": gorm.Expr("revision + 1")})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrCreationConflict
-	}
-	return nil
+	return r.markCloudAgentTerminal(userID, id, revision, "failed", detail)
 }
 
 // MarkCloudAgentCancelled is the corruption-safe cancellation transition. It
 // intentionally does not touch StateJSON: cancellation must still stop the
 // scheduler when the orchestration blob can no longer be decoded.
 func (r *Repository) MarkCloudAgentCancelled(userID, id string, revision int64) error {
-	result := r.db.Model(&model.CloudAgentExecution{}).
-		Where("id = ? AND user_id = ? AND revision = ? AND status IN ?", id, userID, revision, []string{"queued", "running", "waiting_approval"}).
-		Updates(map[string]any{"status": "cancelled", "cleanup_pending": true, "revision": gorm.Expr("revision + 1")})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrCreationConflict
-	}
-	return nil
+	return r.markCloudAgentTerminal(userID, id, revision, "cancelled", "")
+}
+
+func (r *Repository) markCloudAgentTerminal(userID, id string, revision int64, status, message string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		repo := New(tx)
+		if err := repo.lockAgentCrewExecution(userID, id); err != nil {
+			return err
+		}
+		updates := map[string]any{"status": status, "cleanup_pending": true, "revision": gorm.Expr("revision + 1")}
+		if message != "" {
+			updates["failure_message"] = message
+		}
+		result := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND revision = ? AND status IN ?", id, userID, revision, []string{"queued", "running", "waiting_approval", "waiting_member"}).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrCreationConflict
+		}
+		var execution model.CloudAgentExecution
+		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&execution).Error; err != nil {
+			return err
+		}
+		return repo.projectAgentCrewExecution(&execution)
+	})
 }
 
 // GeminiCacheByKey returns an official Gemini CachedContent owned by the user.

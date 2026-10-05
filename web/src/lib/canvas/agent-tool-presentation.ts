@@ -1,7 +1,7 @@
 import { agentToolRetry, type AgentToolRetry } from "./agent-tool-retry";
 
 /**
- * 前端工具清单，口径与后端 `CloudAgentSupportedToolNames()`
+ * 前端工具清单，含后端 `CloudAgentSupportedToolNames()` 和 Pi 原生 read
  * （`backend/internal/app/cloud_agent_tools.go`，从 `compileCloudAgentTools` 派生）逐一对齐。
  *
  * 作用只有一个：让"哪些工具该有类别与文案"这件事可断言。上游合并后工具表若变了，
@@ -28,6 +28,7 @@ export const AGENT_TOOL_NAMES = [
     "image_text_detect",
     "model_list",
     "plan_update",
+    "read",
     "recall_lessons",
     "remember_lesson",
     "skill_read_file",
@@ -75,7 +76,7 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
 /** 画布上"读到清单"的只读工具：无像素，chip 必须是存在式。 */
 const AGENT_CANVAS_READ_TOOLS = new Set(["canvas_get_state", "canvas_list_node_types", "canvas_read_storyboard", "canvas_read_batch_table"]);
 /** 非画布信息的只读工具（模型、任务、技能、偏好）。`skills_load` 是历史事件名，保留兼容。 */
-const AGENT_INFO_READ_TOOLS = new Set(["model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "agent_profile_read"]);
+const AGENT_INFO_READ_TOOLS = new Set(["model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "agent_profile_read", "read", "native_skill_enabled"]);
 const AGENT_VISION_TOOLS = new Set(["canvas_inspect_image"]);
 const AGENT_CREATE_TOOLS = new Set(["generate_media", "canvas_create_storyboard", "image_annotation_render"]);
 const AGENT_OPERATE_TOOLS = new Set(["canvas_apply_ops", "canvas_arrange_nodes", "canvas_edit_storyboard", "canvas_edit_batch_table", "image_layer_split", "image_text_detect"]);
@@ -84,6 +85,19 @@ export type AgentToolCategory = "read" | "vision" | "create" | "operate" | "othe
 
 function record(value: unknown): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+/** Native events expose metadata only, never the Pi tool result or worker path. */
+export function nativeSkillEventPresentation(type: string, payload: unknown) {
+    if (type !== "native_skill_read" && type !== "native_skill_read_failed" && type !== "native_skill_enabled") return undefined;
+    const data = record(payload);
+    const skillName = typeof data.skillName === "string" ? data.skillName : "Skills";
+    const rawPath = typeof data.path === "string" ? data.path : "";
+    const path = rawPath && !/[\\:\u0000]/.test(rawPath) && rawPath.split("/").every((part) => part && part !== "." && part !== "..") ? rawPath : "";
+    const reading = type !== "native_skill_enabled";
+    const title = reading ? "read" : "native_skill_enabled";
+    const text = `${type === "native_skill_read_failed" ? "技能文件读取失败" : reading ? "已读取技能文件" : "已启用技能"} · ${skillName}${reading && path ? ` · ${path}` : ""}`;
+    return { title, text, detail: { eventType: type, toolName: title, skillName, path, version: typeof data.version === "string" ? data.version : "" } };
 }
 
 function toolArguments(detail?: unknown) {
@@ -138,8 +152,8 @@ export function agentToolStatus(title: string, text: string, detail?: unknown): 
     const retry = agentToolRetry(detail);
     if (retry?.status === "retrying") return "retrying";
     if (retry?.status === "recovered") return "completed";
-    if (event === "tool_completed" || event === "generation_task_created" || event === "canvas_updated") return "completed";
-    if (event === "tool_failed") return "failed";
+    if (event === "tool_completed" || event === "generation_task_created" || event === "canvas_updated" || event === "native_skill_read" || event === "native_skill_enabled") return "completed";
+    if (event === "tool_failed" || event === "native_skill_read_failed") return "failed";
     const raw = `${title} ${text} ${field(detail, "error") || ""}`;
     if (field(detail, "status") === "noop" || /未生效|无需|没有找到|没有.*可|已存在/.test(raw)) return "noop";
     if (/拒绝|取消|rejected/i.test(raw)) return "rejected";
@@ -149,6 +163,8 @@ export function agentToolStatus(title: string, text: string, detail?: unknown): 
 }
 
 export function friendlyAgentToolSummary(toolName: string, text: string, detail?: unknown, pending = false) {
+    const native = nativeSkillEventPresentation(String(field(detail, "eventType") || ""), detail);
+    if (native) return native.text;
     const status = agentToolStatus(toolName, text, detail);
     const failed = status === "failed" || status === "rejected";
     const mediaTool = toolName === "generate_media" || toolName === "image_layer_split";
@@ -234,6 +250,9 @@ export const AGENT_TOOL_ERROR_CLASS_LABELS: Record<string, string> = {
     permission_violation: "超出本轮权限",
     upstream_failure: "上游故障",
     tool_error: "工具执行失败",
+    // 批次策略结论：这一步已经执行了另一个写入/生成调用（或同批前面的写入未通过校验），
+    // 本次调用没有被执行。它不是模型的参数错，所以单独成类，提示"下一步重新提交"。
+    call_skipped: "本步未执行",
 };
 
 /** 从工具事件载荷里取归类标签：优先用后端给的 label，其次查本地映射。 */

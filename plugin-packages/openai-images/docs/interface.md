@@ -40,8 +40,6 @@
 | `create.contentType` | `"application/json"` |
 | `create.body.model` | `{"$ref":"request.model"}` |
 | `create.body.prompt` | `{"$ref":"request.prompt"}` |
-| `create.body.images` | `{"$omitEmpty":{"$if":{"condition":{"$gt":[{"$len":{"$ref":"request.images"}},0]},"then":{"$map":{"from":{"$filter":{"from":{"$sortByOrder":{"$ref":"request.images"}},"as":"media","where":{"$ne":[{"$ref":"media.role"},"mask"]}}},"as":"media","in":{"image_url":{"$ref":"media.value"}}}},"else":null}}}` |
-| `create.body.mask` | `{"$omitEmpty":{"$if":{"condition":{"$gt":[{"$len":{"$filter":{"from":{"$ref":"request.images"},"as":"media","where":{"$eq":[{"$ref":"media.role"},"mask"]}}}},0]},"then":{"image_url":{"$first":{"$map":{"from":{"$filter":{"from":{"$sortByOrder":{"$ref":"request.images"}},"as":"media","where":{"$eq":[{"$ref":"media.role"},"mask"]}}},"as":"media","in":{"$ref":"media.value"}}}}},"else":null}}}` |
 | `create.body.n` | `{"$omitEmpty":{"$if":{"condition":{"$gt":[{"$ref":"request.imageCount"},0]},"then":{"$ref":"request.imageCount"},"else":1}}}` |
 | `create.body.size` | `{"$omitEmpty":{"$if":{"condition":{"$in":[{"$lower":{"$trim":{"$ref":"request.aspectRatio"}}},["","auto"]]},"then":null,"else":{"$ref":"request.aspectRatio"}}}}` |
 | `create.body.quality` | `{"$omitEmpty":{"$switch":{"cases":[{"when":{"$in":[{"$lower":{"$trim":{"$ref":"request.quality"}}},["1k"]]},"then":"low"},{"when":{"$in":[{"$lower":{"$trim":{"$ref":"request.quality"}}},["2k"]]},"then":"medium"},{"when":{"$in":[{"$lower":{"$trim":{"$ref":"request.quality"}}},["4k"]]},"then":"high"},{"when":{"$in":[{"$lower":{"$trim":{"$ref":"request.quality"}}},["","auto"]]},"then":null}],"default":{"$ref":"request.quality"}}}}` |
@@ -52,6 +50,10 @@
 | `create.body.response_format` | `{"$omitEmpty":{"$ref":"request.providerOptions.openai-image.response_format"}}` |
 | `create.body.style` | `{"$omitEmpty":{"$ref":"request.providerOptions.openai-image.style"}}` |
 | `create.body.user` | `{"$omitEmpty":{"$ref":"request.providerOptions.openai-image.user"}}` |
+| `create.files[0].name` | `"image"` |
+| `create.files[0].source` | `{"$map":{"from":{"$filter":{"from":{"$sortByOrder":{"$ref":"request.images"}},"as":"media","where":{"$ne":[{"$ref":"media.role"},"mask"]}}},"as":"media","in":{"$ref":"media.value"}}}` |
+| `create.files[1].name` | `"mask"` |
+| `create.files[1].source` | `{"$first":{"$map":{"from":{"$filter":{"from":{"$sortByOrder":{"$ref":"request.images"}},"as":"media","where":{"$eq":[{"$ref":"media.role"},"mask"]}}},"as":"media","in":{"$ref":"media.value"}}}}` |
 
 ## Provider 扩展键
 
@@ -81,7 +83,7 @@
 
 ## 兼容边界
 
-无参考图走 JSON generations；有参考图或蒙版走 JSON edits，并按官方 images 数组传入多张 image_url。quality 的 1k/2k/4k 映射为 OpenAI low/medium/high。
+无参考图走 JSON generations；有参考图或蒙版走 multipart edits，图片与蒙版分别作为 image / mask 文件部分上传（与旧版内置实现一致）。quality 的 1k/2k/4k 映射为 OpenAI low/medium/high。
 
 <!-- YINGCE_MANIFEST_CONTRACT_START -->
 ## Manifest 完整接口定义
@@ -210,117 +212,28 @@
             }
           },
           "contentType": "application/json",
+          "contentTypeTemplate": {
+            "$if": {
+              "condition": {
+                "$gt": [
+                  {
+                    "$len": {
+                      "$ref": "request.images"
+                    }
+                  },
+                  0
+                ]
+              },
+              "then": "multipart/form-data",
+              "else": "application/json"
+            }
+          },
           "body": {
             "model": {
               "$ref": "request.model"
             },
             "prompt": {
               "$ref": "request.prompt"
-            },
-            "images": {
-              "$omitEmpty": {
-                "$if": {
-                  "condition": {
-                    "$gt": [
-                      {
-                        "$len": {
-                          "$ref": "request.images"
-                        }
-                      },
-                      0
-                    ]
-                  },
-                  "then": {
-                    "$map": {
-                      "from": {
-                        "$filter": {
-                          "from": {
-                            "$sortByOrder": {
-                              "$ref": "request.images"
-                            }
-                          },
-                          "as": "media",
-                          "where": {
-                            "$ne": [
-                              {
-                                "$ref": "media.role"
-                              },
-                              "mask"
-                            ]
-                          }
-                        }
-                      },
-                      "as": "media",
-                      "in": {
-                        "image_url": {
-                          "$ref": "media.value"
-                        }
-                      }
-                    }
-                  },
-                  "else": null
-                }
-              }
-            },
-            "mask": {
-              "$omitEmpty": {
-                "$if": {
-                  "condition": {
-                    "$gt": [
-                      {
-                        "$len": {
-                          "$filter": {
-                            "from": {
-                              "$ref": "request.images"
-                            },
-                            "as": "media",
-                            "where": {
-                              "$eq": [
-                                {
-                                  "$ref": "media.role"
-                                },
-                                "mask"
-                              ]
-                            }
-                          }
-                        }
-                      },
-                      0
-                    ]
-                  },
-                  "then": {
-                    "image_url": {
-                      "$first": {
-                        "$map": {
-                          "from": {
-                            "$filter": {
-                              "from": {
-                                "$sortByOrder": {
-                                  "$ref": "request.images"
-                                }
-                              },
-                              "as": "media",
-                              "where": {
-                                "$eq": [
-                                  {
-                                    "$ref": "media.role"
-                                  },
-                                  "mask"
-                                ]
-                              }
-                            }
-                          },
-                          "as": "media",
-                          "in": {
-                            "$ref": "media.value"
-                          }
-                        }
-                      }
-                    }
-                  },
-                  "else": null
-                }
-              }
             },
             "n": {
               "$omitEmpty": {
@@ -503,7 +416,69 @@
                 "$ref": "request.providerOptions.openai-image.user"
               }
             }
-          }
+          },
+          "files": [
+            {
+              "name": "image",
+              "source": {
+                "$map": {
+                  "from": {
+                    "$filter": {
+                      "from": {
+                        "$sortByOrder": {
+                          "$ref": "request.images"
+                        }
+                      },
+                      "as": "media",
+                      "where": {
+                        "$ne": [
+                          {
+                            "$ref": "media.role"
+                          },
+                          "mask"
+                        ]
+                      }
+                    }
+                  },
+                  "as": "media",
+                  "in": {
+                    "$ref": "media.value"
+                  }
+                }
+              }
+            },
+            {
+              "name": "mask",
+              "source": {
+                "$first": {
+                  "$map": {
+                    "from": {
+                      "$filter": {
+                        "from": {
+                          "$sortByOrder": {
+                            "$ref": "request.images"
+                          }
+                        },
+                        "as": "media",
+                        "where": {
+                          "$eq": [
+                            {
+                              "$ref": "media.role"
+                            },
+                            "mask"
+                          ]
+                        }
+                      }
+                    },
+                    "as": "media",
+                    "in": {
+                      "$ref": "media.value"
+                    }
+                  }
+                }
+              }
+            }
+          ]
         },
         "response": {
           "status": "succeeded",

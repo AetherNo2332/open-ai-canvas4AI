@@ -67,7 +67,12 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 	}
 	beforeHash := cloudAgentCanvasHash(doc)
 	if beforeHash != args.SnapshotHash {
-		return nil, &cloudAgentFieldArgumentError{error: &cloudAgentArgumentError{creationConflict("画布已变化，本次未写入；请重新读取并重新申请审批")}, Field: "snapshotHash", Issue: "stale_snapshot"}
+		// 上游按字段/原因归类这个错误（模型据此知道是 snapshotHash 过期），我方运行期还要靠
+		// errCloudAgentSnapshotConflict 走"重新读取画布再申请审批"的可恢复分支，因此两层都保留。
+		return nil, &cloudAgentFieldArgumentError{
+			error: &cloudAgentArgumentError{cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")},
+			Field: "snapshotHash", Issue: "stale_snapshot",
+		}
 	}
 	items, err := applyCloudAgentCanvasPlan(doc, args.Ops)
 	if err != nil {

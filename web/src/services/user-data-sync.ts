@@ -18,6 +18,7 @@ import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store"
 import { repairMissingCanvasAssets, repairMissingCanvasVideoPreviews, collectCanvasMediaAssetIds, rebindInconsistentCanvasAssets, type CanvasAssetRebindResult } from "@/services/canvas-asset-repair";
 import { canvasNodeToAsset } from "@/lib/canvas/canvas-node-asset";
 import { applyAgentCanvasPatch, type AgentCanvasPatch } from "@/lib/canvas/agent-canvas-patch";
+import { stableDigestHex } from "@/lib/stable-digest";
 
 let activeRemoteUserId = "";
 type RemoteUserDataPhase = "inactive" | "hydrating" | "ready" | "failed";
@@ -87,7 +88,8 @@ export async function loadCanvasProjectForEditing(id: string, options: { latest?
         }
         let remote: CanvasProject;
         try {
-            remote = (await getRemoteCanvasProject(id)).project;
+            const knownRemote = verifiedProjects.has(id) ? acknowledgedProjects.get(id) : undefined;
+            remote = (await getRemoteCanvasProject(id, knownRemote)).project;
         } catch (error) {
             if (epoch !== sessionEpoch) throw new Error("账号已切换，请重新打开画布");
             const local = useCanvasStore.getState().openProject(id);
@@ -156,7 +158,8 @@ export async function refreshCanvasAfterAgent(id: string) {
     const epoch = sessionEpoch;
     return withRemoteUserDataSyncExclusive(async () => {
         if (!activeRemoteUserId) throw new Error("请先登录再刷新 Agent 画布结果");
-        const { project } = await getRemoteCanvasProject(id);
+        const knownRemote = verifiedProjects.has(id) ? acknowledgedProjects.get(id) : undefined;
+        const { project } = await getRemoteCanvasProject(id, knownRemote);
         if (epoch !== sessionEpoch) throw new Error("账号已切换");
         const current = useCanvasStore.getState().projects.find((candidate) => candidate.id === id);
         const baseline = acknowledgedProjects.get(id);
@@ -750,6 +753,26 @@ async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: {
             if (pending) syncQueued = true;
         } catch (error) {
             const conflict = error instanceof ApiError && error.reason !== "canvas_history_resources_missing" && (error.status === 409 || error.status === 428);
+            if (conflict) {
+                try {
+                    const { project: remote } = await getRemoteCanvasProject(source.id);
+                    const current = useCanvasStore.getState().openProject(source.id);
+                    if (current && current === useCanvasStore.getState().openProject(source.id) && sameCanvasContent(current, remote)) {
+                        const hash = await canvasContentHash(remote);
+                        if (current === useCanvasStore.getState().openProject(source.id)) {
+                            const reconciled = { ...remote, viewport: current.viewport, remoteContentHash: hash };
+                            acknowledgedProjects.set(source.id, reconciled);
+                            verifiedProjects.add(source.id);
+                            useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => project.id === source.id ? reconciled : project) }));
+                            await flushCanvasStorePersistence();
+                            useSyncProgressStore.getState().setProjectProgress(source.id, { phase: "done", message: "云端内容一致，已自动校准版本" });
+                            continue;
+                        }
+                    }
+                } catch {
+                    // Keep the original conflict and preserve the local draft below.
+                }
+            }
             useSyncProgressStore.getState().setProjectProgress(source.id, {
                 phase: conflict ? "conflict" : "error",
                 message: error instanceof Error ? error.message : "云端同步失败，等待重试",
@@ -859,8 +882,8 @@ async function uploadInlineDataUrl(dataUrl: string, identity: string) {
 }
 
 async function inlineMediaUploadIdentity(dataUrl: string) {
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(dataUrl));
-    return `inline:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    const digest = await stableDigestHex(dataUrl);
+    return `inline:${digest}`;
 }
 
 async function uploadLocalStorageKey(storageKey: string, payload: Record<string, unknown>) {

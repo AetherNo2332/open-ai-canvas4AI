@@ -135,87 +135,79 @@ type AppearanceSkinTheme struct {
 	Tokens      AppearanceSkinTokens `json:"tokens"`
 }
 
+// 瑞士预设：两套主题都只由「中性阶 + 一个品牌主色」构成，直角、实心按钮、
+// 无阴影、无悬停抬升、150ms 动效。系统默认主题沿用 ID classic，
+// 保证已保存的 skinId 与既有数据继续解析。
 func defaultAppearanceSkinThemes() []AppearanceSkinTheme {
-	classic := defaultClassicAppearanceSkin()
-	studio := cloneAppearanceSkin(classic, "studio-indigo", "青瓷工作室", "雾白青瓷 · 珊瑚点睛")
-	studio.Tokens.Light = tintAppearanceSkinMode(studio.Tokens.Light, appearanceSkinPalette{
-		canvas: "#f6f8f9", surface: "#ffffff", subtle: "#edf4f3", raised: "#d7e8e5", overlay: "#ffffff", text: "#142026", muted: "#607079", border: "#d5e0e2",
-		primary: "#087f76", primaryHover: "#076d66", primaryActive: "#095c57", primaryForeground: "#ffffff", selected: "#dff4f0", selectedHover: "#ccebe6", selectedActive: "#b9e3dd", selectedForeground: "#075f59", info: "#dd7a38",
-		switchChecked: "#087f76", switchCheckedHover: "#076d66", switchCheckedHandle: "#ffffff", switchUnchecked: "#a8b7b9", switchUncheckedHover: "#899b9e", switchUncheckedHandle: "#ffffff",
-		success: "#16866f", warning: "#c46722", danger: "#c83f3a", dangerHover: "#ad3532", dangerActive: "#922e2c", dangerForeground: "#ffffff",
-		workspace: "#ffffff", grid: "#e8f2f0", adminBackground: "#eef3f4", adminSurface: "#ffffff", adminSubtle: "#f5f9f9", adminStrong: "#dce9e8", authBackground: "#f6f8f9", authPanel: "#edf4f3", authCard: "#ffffff", authAccent: "#087f76", authMuted: "#607079",
-	})
-	studio.Tokens.Dark = tintAppearanceSkinMode(studio.Tokens.Dark, appearanceSkinPalette{
-		canvas: "#0b1215", surface: "#121d21", subtle: "#142428", raised: "#203a3b", overlay: "#172328", text: "#e7f4f2", muted: "#8ca6a7", border: "#294044",
-		primary: "#43d8c7", primaryHover: "#72eadc", primaryActive: "#2db9aa", primaryForeground: "#052724", selected: "#193735", selectedHover: "#214743", selectedActive: "#28554f", selectedForeground: "#baf5ee", info: "#ff9e57",
-		switchChecked: "#31bfae", switchCheckedHover: "#43d8c7", switchCheckedHandle: "#052724", switchUnchecked: "#3f5559", switchUncheckedHover: "#526a6d", switchUncheckedHandle: "#e7f4f2",
-		success: "#4ade80", warning: "#ffb454", danger: "#ff7875", dangerHover: "#ff9a98", dangerActive: "#df5e5b", dangerForeground: "#2d0808",
-		workspace: "#111d21", grid: "#17292c", adminBackground: "#0c171a", adminSurface: "#132126", adminSubtle: "#192a2e", adminStrong: "#21383a", authBackground: "#061416", authPanel: "#091c20", authCard: "#0d272b", authAccent: "#72eadc", authMuted: "#8db9b4",
-	})
-	studio.Tokens.Components = appearanceSkinComponentPreset(8, 8, 14, 14, 10, 5)
+	return []AppearanceSkinTheme{defaultClassicAppearanceSkin(), defaultSwissInkSkin()}
+}
 
-	warm := cloneAppearanceSkin(classic, "warm-persimmon", "暖柿纸境", "米纸暖棕 · 柿橙强调")
-	warm.Tokens.Light = tintAppearanceSkinMode(warm.Tokens.Light, appearanceSkinPalette{
-		canvas: "#fbf7f2", surface: "#fffdf9", subtle: "#f6ebe3", raised: "#ead2c2", overlay: "#fffdf9", text: "#35261f", muted: "#806b61", border: "#e5d6cb",
-		primary: "#b94f2f", primaryHover: "#9e4128", primaryActive: "#843621", primaryForeground: "#fffaf6", selected: "#f8e0cf", selectedHover: "#f1d1bb", selectedActive: "#e9c1a6", selectedForeground: "#8c3d25", info: "#c58a3b",
-		switchChecked: "#a84a2f", switchCheckedHover: "#bd5b3c", switchCheckedHandle: "#fffaf6", switchUnchecked: "#c7b3a7", switchUncheckedHover: "#aa9182", switchUncheckedHandle: "#fffdf9",
-		success: "#4d7f50", warning: "#bd6819", danger: "#bd3d32", dangerHover: "#a33229", dangerActive: "#892a23", dangerForeground: "#fffaf6",
-		workspace: "#fffdf9", grid: "#f3e9e1", adminBackground: "#f6eee7", adminSurface: "#fffdf9", adminSubtle: "#faf3ed", adminStrong: "#ead8ca", authBackground: "#fbf7f2", authPanel: "#f6ebe3", authCard: "#fffdf9", authAccent: "#b94f2f", authMuted: "#806b61",
-	})
-	warm.Tokens.Dark = tintAppearanceSkinMode(warm.Tokens.Dark, appearanceSkinPalette{
-		canvas: "#1b1210", surface: "#291a16", subtle: "#33211b", raised: "#493027", overlay: "#31201a", text: "#f8e9df", muted: "#b89c8c", border: "#50372e",
-		primary: "#ef8a61", primaryHover: "#ffab83", primaryActive: "#d87350", primaryForeground: "#37140a", selected: "#4b2a20", selectedHover: "#5b3427", selectedActive: "#6b3e2e", selectedForeground: "#ffd9c4", info: "#f0b36c",
-		switchChecked: "#df7752", switchCheckedHover: "#ef8a61", switchCheckedHandle: "#37140a", switchUnchecked: "#65483d", switchUncheckedHover: "#7b5a4c", switchUncheckedHandle: "#f8e9df",
-		success: "#8dcc72", warning: "#f2b35f", danger: "#ff8375", dangerHover: "#ffa094", dangerActive: "#df6a5e", dangerForeground: "#32100b",
-		workspace: "#241714", grid: "#31201b", adminBackground: "#1c1210", adminSurface: "#291b17", adminSubtle: "#35231d", adminStrong: "#493027", authBackground: "#160d0a", authPanel: "#21120e", authCard: "#361f17", authAccent: "#ffc08b", authMuted: "#b99d89",
-	})
-	warm.Tokens.Components = appearanceSkinComponentPreset(10, 10, 16, 18, 12, 5)
+func swissAppearanceSkinComponents() AppearanceSkinComponentTokens {
+	components := appearanceSkinComponentPreset(0, 0, 0, 0, 0, 0)
+	components.HoverLift = 0
+	components.MotionFast = 150
+	components.MotionNormal = 150
+	components.ShadowStyle = "none"
+	return components
+}
 
-	violet := cloneAppearanceSkin(classic, "brand-violet", "霓光紫境", "冷白雾紫 · 夜幕电光")
-	violet.Tokens.Light = tintAppearanceSkinMode(violet.Tokens.Light, appearanceSkinPalette{
-		canvas: "#f8f7fc", surface: "#ffffff", subtle: "#f0eefb", raised: "#dfd9f5", overlay: "#ffffff", text: "#211b35", muted: "#716a86", border: "#ddd8ec",
-		primary: "#6656d9", primaryHover: "#5847c7", primaryActive: "#4939b2", primaryForeground: "#ffffff", selected: "#ebe8ff", selectedHover: "#ded9ff", selectedActive: "#d0c9ff", selectedForeground: "#4f3fb5", info: "#8f61e8",
-		switchChecked: "#6656d9", switchCheckedHover: "#5847c7", switchCheckedHandle: "#ffffff", switchUnchecked: "#b4afc5", switchUncheckedHover: "#9891ae", switchUncheckedHandle: "#ffffff",
-		success: "#2f966e", warning: "#b96f16", danger: "#c73559", dangerHover: "#ac2c4b", dangerActive: "#912640", dangerForeground: "#ffffff",
-		workspace: "#ffffff", grid: "#f0eef8", adminBackground: "#f1f0f7", adminSurface: "#ffffff", adminSubtle: "#f7f6fb", adminStrong: "#e4e0f1", authBackground: "#f8f7fc", authPanel: "#f0eefb", authCard: "#ffffff", authAccent: "#6656d9", authMuted: "#716a86",
-	})
-	violet.Tokens.Dark = tintAppearanceSkinMode(violet.Tokens.Dark, appearanceSkinPalette{
-		canvas: "#0f0c19", surface: "#171321", subtle: "#201a2f", raised: "#302746", overlay: "#1c1734", text: "#f2efff", muted: "#a9a2bd", border: "#39304d",
-		primary: "#9a90ff", primaryHover: "#b5adff", primaryActive: "#8175ed", primaryForeground: "#171126", selected: "#292347", selectedHover: "#352d59", selectedActive: "#40366a", selectedForeground: "#ddd9ff", info: "#c45dff",
-		switchChecked: "#8175ed", switchCheckedHover: "#9a90ff", switchCheckedHandle: "#171126", switchUnchecked: "#504967", switchUncheckedHover: "#665d7f", switchUncheckedHandle: "#f2efff",
-		success: "#5bd6a2", warning: "#ffc46b", danger: "#ff7795", dangerHover: "#ff99ae", dangerActive: "#df607f", dangerForeground: "#310b17",
-		workspace: "#15111f", grid: "#211b30", adminBackground: "#110e1a", adminSurface: "#191524", adminSubtle: "#211b30", adminStrong: "#302746", authBackground: "#0b0812", authPanel: "#120d20", authCard: "#211936", authAccent: "#b4a8ff", authMuted: "#958dad",
-	})
-	violet.Tokens.Components = appearanceSkinComponentPreset(7, 7, 12, 14, 9, 4)
+// appearanceSkinAccent 是每套皮肤、每个模式唯一可配的强调色族。
+type appearanceSkinAccent struct {
+	primary, primaryHover, primaryActive, primaryForeground string
+	switchChecked, switchCheckedHover, switchCheckedHandle  string
+}
 
-	studio.Tokens.Buttons = defaultAppearanceSkinButtons(false)
-	warm.Tokens.Buttons = defaultAppearanceSkinButtons(false)
-	violet.Tokens.Buttons = defaultAppearanceSkinButtons(false)
-	return []AppearanceSkinTheme{classic, studio, warm, violet}
+func applyAppearanceSkinAccent(mode AppearanceSkinModeTokens, accent appearanceSkinAccent) AppearanceSkinModeTokens {
+	mode.Primary, mode.PrimaryHover, mode.PrimaryActive, mode.PrimaryForeground = accent.primary, accent.primaryHover, accent.primaryActive, accent.primaryForeground
+	mode.SwitchChecked, mode.SwitchCheckedHover, mode.SwitchCheckedHandle = accent.switchChecked, accent.switchCheckedHover, accent.switchCheckedHandle
+	mode.AuthAccent = accent.primary
+	return mode
 }
 
 func defaultClassicAppearanceSkin() AppearanceSkinTheme {
 	return AppearanceSkinTheme{
-		ID: "classic", Name: "经典黑白", Description: "项目原始样式 · 不可修改", Locked: true,
+		ID: "classic", Name: "瑞士纸感", Description: "暖纸墨色 · 单一品牌红 · 直角构件", Locked: true,
 		Tokens: AppearanceSkinTokens{
 			Light: AppearanceSkinModeTokens{
-				Canvas: "#ffffff", Surface: "#ffffff", SurfaceSubtle: "#f7f7f7", SurfaceRaised: "#ececec", Overlay: "#ffffff", Text: "#171717", TextMuted: "#737373", Border: "#e5e5e5",
-				Control: "#ffffff", ControlHover: "#f5f5f5", ControlActive: "#ececec", ControlBorder: "#d1d1d1", ControlFocus: "#171717", ControlDisabledBackground: "#f2f2f2", ControlDisabledForeground: "#a3a3a3", SwitchChecked: "#16a34a", SwitchCheckedHover: "#15803d", SwitchCheckedHandle: "#ffffff", SwitchUnchecked: "#b8b8b8", SwitchUncheckedHover: "#9f9f9f", SwitchUncheckedHandle: "#ffffff",
-				Primary: "#171717", PrimaryHover: "#303030", PrimaryActive: "#404040", PrimaryForeground: "#ffffff", Selected: "#e8e8e8", SelectedHover: "#dedede", SelectedActive: "#d5d5d5", SelectedForeground: "#171717",
-				Icon: "#3f3f46", IconMuted: "#a1a1aa", IconActive: "#171717", Success: "#16a34a", Warning: "#d97706", Danger: "#dc2626", DangerHover: "#b91c1c", DangerActive: "#991b1b", DangerForeground: "#ffffff", Info: "#2563eb", Workspace: "#ffffff", WorkspaceGrid: "#f3f3f3",
-				AdminBackground: "#f3f4f6", AdminSurface: "#ffffff", AdminSubtle: "#f7f8fa", AdminStrong: "#eceff3", AuthBackground: "#ffffff", AuthPanel: "#f7f7f7", AuthCard: "#ffffff", AuthAccent: "#2563eb", AuthMuted: "#737373",
+				Canvas: "#f7f6f3", Surface: "#ffffff", SurfaceSubtle: "#f1efeb", SurfaceRaised: "#e7e4de", Overlay: "#ffffff", Text: "#111111", TextMuted: "#6f6b66", Border: "#e3e0da",
+				Control: "#ffffff", ControlHover: "#f4f2ee", ControlActive: "#ebe8e2", ControlBorder: "#d6d2cb", ControlFocus: "#111111", ControlDisabledBackground: "#f2f0ec", ControlDisabledForeground: "#a8a49d",
+				SwitchChecked: "#c8102e", SwitchCheckedHover: "#a90d27", SwitchCheckedHandle: "#ffffff", SwitchUnchecked: "#c3bfb8", SwitchUncheckedHover: "#a9a49c", SwitchUncheckedHandle: "#ffffff",
+				Primary: "#c8102e", PrimaryHover: "#a90d27", PrimaryActive: "#8f0b21", PrimaryForeground: "#ffffff",
+				Selected: "#efece6", SelectedHover: "#e6e2da", SelectedActive: "#ddd8cf", SelectedForeground: "#111111",
+				Icon: "#3d3a36", IconMuted: "#8b8780", IconActive: "#111111", Success: "#2f7d4f", Warning: "#b26a00", Danger: "#c8102e", DangerHover: "#a90d27", DangerActive: "#8f0b21", DangerForeground: "#ffffff", Info: "#1f5fa8", Workspace: "#ffffff", WorkspaceGrid: "#efede9",
+				AdminBackground: "#f4f2ee", AdminSurface: "#ffffff", AdminSubtle: "#f8f6f3", AdminStrong: "#eae7e1", AuthBackground: "#f7f6f3", AuthPanel: "#f1efeb", AuthCard: "#ffffff", AuthAccent: "#c8102e", AuthMuted: "#6f6b66",
 			},
 			Dark: AppearanceSkinModeTokens{
-				Canvas: "#0a0a0a", Surface: "#181818", SurfaceSubtle: "#202020", SurfaceRaised: "#2a2a2a", Overlay: "#1f1f20", Text: "#f5f5f5", TextMuted: "#a3a3a3", Border: "#2d2d2d",
-				Control: "#202020", ControlHover: "#292929", ControlActive: "#333333", ControlBorder: "#4a4a4a", ControlFocus: "#f5f5f5", ControlDisabledBackground: "#252525", ControlDisabledForeground: "#737373", SwitchChecked: "#22c55e", SwitchCheckedHover: "#4ade80", SwitchCheckedHandle: "#071a0f", SwitchUnchecked: "#525252", SwitchUncheckedHover: "#686868", SwitchUncheckedHandle: "#f5f5f5",
-				Primary: "#f5f5f5", PrimaryHover: "#ffffff", PrimaryActive: "#e5e5e5", PrimaryForeground: "#171717", Selected: "#2b2b2b", SelectedHover: "#343434", SelectedActive: "#3d3d3d", SelectedForeground: "#f5f5f5",
-				Icon: "#d4d4d8", IconMuted: "#71717a", IconActive: "#ffffff", Success: "#4ade80", Warning: "#fbbf24", Danger: "#f87171", DangerHover: "#fca5a5", DangerActive: "#ef4444", DangerForeground: "#2b0808", Info: "#60a5fa", Workspace: "#181818", WorkspaceGrid: "#222222",
-				AdminBackground: "#101010", AdminSurface: "#181818", AdminSubtle: "#202020", AdminStrong: "#2a2a2a", AuthBackground: "#08090c", AuthPanel: "#0b0c10", AuthCard: "#121318", AuthAccent: "#93c5fd", AuthMuted: "#8a8b91",
+				Canvas: "#121212", Surface: "#1a1a1a", SurfaceSubtle: "#212121", SurfaceRaised: "#2b2b2b", Overlay: "#1e1e1e", Text: "#f4f2ef", TextMuted: "#a5a09a", Border: "#2f2e2c",
+				Control: "#1f1f1f", ControlHover: "#272727", ControlActive: "#303030", ControlBorder: "#3d3c39", ControlFocus: "#f4f2ef", ControlDisabledBackground: "#242424", ControlDisabledForeground: "#6f6c68",
+				SwitchChecked: "#e05163", SwitchCheckedHover: "#ef6b7c", SwitchCheckedHandle: "#240a0f", SwitchUnchecked: "#4a4946", SwitchUncheckedHover: "#5d5b57", SwitchUncheckedHandle: "#f4f2ef",
+				Primary: "#e05163", PrimaryHover: "#ef6b7c", PrimaryActive: "#c84456", PrimaryForeground: "#240a0f",
+				Selected: "#2a2a2a", SelectedHover: "#333333", SelectedActive: "#3c3c3c", SelectedForeground: "#f4f2ef",
+				Icon: "#d7d4cf", IconMuted: "#8f8b86", IconActive: "#ffffff", Success: "#4ade80", Warning: "#f2b35f", Danger: "#ff7a7a", DangerHover: "#ff9a9a", DangerActive: "#e06262", DangerForeground: "#2b0808", Info: "#7fb2f0", Workspace: "#1a1a1a", WorkspaceGrid: "#242322",
+				AdminBackground: "#141414", AdminSurface: "#1c1c1c", AdminSubtle: "#232323", AdminStrong: "#2c2c2c", AuthBackground: "#101010", AuthPanel: "#181818", AuthCard: "#1f1f1f", AuthAccent: "#ef6b7c", AuthMuted: "#a5a09a",
 			},
-			Components: appearanceSkinComponentPreset(6, 6, 12, 12, 8, 4),
-			Buttons:    defaultAppearanceSkinButtons(true),
+			Components: swissAppearanceSkinComponents(),
+			Buttons:    defaultAppearanceSkinButtons(false),
 		},
 	}
+}
+
+// defaultSwissInkSkin 是同一套中性阶的无彩色变体，强调色退化为墨色。
+func defaultSwissInkSkin() AppearanceSkinTheme {
+	theme := defaultClassicAppearanceSkin()
+	theme.ID = "swiss-ink"
+	theme.Name = "墨色理性"
+	theme.Description = "中性墨阶 · 无彩色强调 · 直角构件"
+	theme.Locked = false
+	theme.Tokens.Light = applyAppearanceSkinAccent(theme.Tokens.Light, appearanceSkinAccent{
+		primary: "#171717", primaryHover: "#303030", primaryActive: "#404040", primaryForeground: "#ffffff",
+		switchChecked: "#171717", switchCheckedHover: "#303030", switchCheckedHandle: "#ffffff",
+	})
+	theme.Tokens.Dark = applyAppearanceSkinAccent(theme.Tokens.Dark, appearanceSkinAccent{
+		primary: "#f5f5f5", primaryHover: "#ffffff", primaryActive: "#e5e5e5", primaryForeground: "#171717",
+		switchChecked: "#f5f5f5", switchCheckedHover: "#ffffff", switchCheckedHandle: "#171717",
+	})
+	return theme
 }
 
 type appearanceSkinPalette struct {
@@ -361,10 +353,10 @@ func validateAppearanceSkinThemes(themes []AppearanceSkinTheme, selectedID strin
 		if err := validateAppearanceSkinText(skin.Description, "皮肤主题说明", 100, false); err != nil {
 			return err
 		}
-		if err := validateAppearanceSkinMode(skin.Tokens.Light); err != nil {
+		if err := validateAppearanceSkinMode(skin.Tokens.Light, fmt.Sprintf("主题「%s」的浅色模式", skin.Name)); err != nil {
 			return err
 		}
-		if err := validateAppearanceSkinMode(skin.Tokens.Dark); err != nil {
+		if err := validateAppearanceSkinMode(skin.Tokens.Dark, fmt.Sprintf("主题「%s」的深色模式", skin.Name)); err != nil {
 			return err
 		}
 		if err := validateAppearanceSkinComponents(skin.Tokens.Components); err != nil {
@@ -382,19 +374,89 @@ func validateAppearanceSkinThemes(themes []AppearanceSkinTheme, selectedID strin
 	return nil
 }
 
-func validateAppearanceSkinMode(mode AppearanceSkinModeTokens) error {
+// migrateAppearanceSkinThemes 只在读取路径使用：把历史皮肤静默降级到瑞士约束
+// （直角、无阴影、无悬停抬升、150ms 动效、纯色按钮）。写入路径不做降级，
+// 违规提交由 validateAppearanceSkinThemes 明确拒绝。
+func migrateAppearanceSkinThemes(themes []AppearanceSkinTheme) []AppearanceSkinTheme {
+	for index := range themes {
+		components := &themes[index].Tokens.Components
+		components.ButtonRadius, components.InputRadius, components.CardRadius = 0, 0, 0
+		components.OverlayRadius, components.MenuRadius, components.CheckboxRadius = 0, 0, 0
+		components.HoverLift = 0
+		components.MotionFast, components.MotionNormal = 150, 150
+		components.ShadowStyle = "none"
+		for _, fill := range []*AppearanceSkinButtonFill{&themes[index].Tokens.Buttons.Light, &themes[index].Tokens.Buttons.Dark} {
+			fill.Mode = "solid"
+		}
+	}
+	return themes
+}
+
+func appearanceSkinModeFieldValues(mode AppearanceSkinModeTokens) map[string]string {
+	result := make(map[string]string, len(appearanceSkinModeFieldLabels))
 	value := reflect.ValueOf(mode)
-	for index := 0; index < value.NumField(); index++ {
-		if !appearanceColorPattern.MatchString(value.Field(index).String()) {
-			return BadAuthRequest("皮肤颜色必须使用 6 或 8 位十六进制颜色")
+	fieldType := value.Type()
+	for index := 0; index < fieldType.NumField(); index++ {
+		name := strings.Split(fieldType.Field(index).Tag.Get("json"), ",")[0]
+		result[name] = value.Field(index).String()
+	}
+	return result
+}
+
+func validateAppearanceSkinMode(mode AppearanceSkinModeTokens, label string) error {
+	values := appearanceSkinModeFieldValues(mode)
+	for _, field := range appearanceSkinModeFieldLabels {
+		value := strings.TrimSpace(values[field.name])
+		if value == "" {
+			if field.name == "primary" {
+				return BadAuthRequest(fmt.Sprintf("%s的品牌主色不能为空", label))
+			}
+			return BadAuthRequest(fmt.Sprintf("%s的%s不能为空", label, field.label))
+		}
+		if !appearanceColorPattern.MatchString(value) {
+			return BadAuthRequest(fmt.Sprintf("%s的%s必须使用 6 或 8 位十六进制颜色", label, field.label))
+		}
+	}
+	primary, ok := parseAppearanceSkinColor(values["primary"])
+	if !ok {
+		return BadAuthRequest(label + "的品牌主色必须是有效的十六进制颜色")
+	}
+	foreground, ok := parseAppearanceSkinColor(values["primaryForeground"])
+	if !ok {
+		return BadAuthRequest(label + "的主操作前景必须是有效的十六进制颜色")
+	}
+	if appearanceSkinContrast(primary, foreground) < appearanceSkinMinContrast {
+		return BadAuthRequest(fmt.Sprintf("%s的品牌主色与主按钮文字对比度必须达到 %.1f:1", label, appearanceSkinMinContrast))
+	}
+	primaryHue, hasAccentHue := appearanceSkinHue(primary)
+	if !hasAccentHue {
+		return nil
+	}
+	for _, field := range appearanceSkinModeFieldLabels {
+		if field.name == "primary" {
+			continue
+		}
+		if _, signal := appearanceSkinSignalFields[field.name]; signal {
+			continue
+		}
+		color, ok := parseAppearanceSkinColor(values[field.name])
+		if !ok || appearanceSkinChroma(color) <= appearanceSkinNeutralChroma {
+			continue
+		}
+		hue, ok := appearanceSkinHue(color)
+		if !ok {
+			continue
+		}
+		if appearanceSkinHueDistance(hue, primaryHue) > appearanceSkinMaxHueDistance {
+			return BadAuthRequest(fmt.Sprintf("%s的%s偏离品牌主色色相超过 %d°，皮肤只能有一个强调色相", label, field.label, appearanceSkinMaxHueDistance))
 		}
 	}
 	return nil
 }
 
 func validateAppearanceSkinButtonFill(fill AppearanceSkinButtonFill) error {
-	if fill.Mode != "solid" && fill.Mode != "gradient" {
-		return BadAuthRequest("主按钮填充模式无效")
+	if fill.Mode != "solid" {
+		return BadAuthRequest("主按钮填充必须为纯色（solid），不允许渐变或其他填充方式")
 	}
 	if fill.Angle < 0 || fill.Angle > 360 {
 		return BadAuthRequest("主按钮渐变角度必须在 0 到 360 之间")
@@ -408,13 +470,24 @@ func validateAppearanceSkinButtonFill(fill AppearanceSkinButtonFill) error {
 }
 
 func validateAppearanceSkinComponents(value AppearanceSkinComponentTokens) error {
+	if value.ButtonRadius != 0 || value.InputRadius != 0 || value.CardRadius != 0 || value.OverlayRadius != 0 || value.MenuRadius != 0 || value.CheckboxRadius != 0 {
+		return BadAuthRequest("构件圆角必须为 0：瑞士设计守则要求直角构件")
+	}
+	if value.HoverLift != 0 {
+		return BadAuthRequest("悬停抬升必须为 0：悬停不得改变控件几何尺寸")
+	}
+	if value.MotionFast != 150 || value.MotionNormal != 150 {
+		return BadAuthRequest("动效时长必须固定为 150ms")
+	}
+	if value.ShadowStyle != "none" {
+		return BadAuthRequest("阴影风格必须为 none：瑞士设计守则不使用投影")
+	}
 	for _, candidate := range []struct {
 		value, min, max int
 		label           string
 	}{
-		{value.ButtonRadius, 0, 32, "按钮圆角"}, {value.InputRadius, 0, 32, "输入框圆角"}, {value.CardRadius, 0, 40, "卡片圆角"}, {value.OverlayRadius, 0, 40, "弹层圆角"}, {value.MenuRadius, 0, 32, "菜单圆角"}, {value.CheckboxRadius, 0, 12, "勾选框圆角"},
 		{value.ControlHeight, 30, 48, "控件高度"}, {value.ControlHeightSmall, 24, 40, "小控件高度"}, {value.ControlHeightLarge, 36, 56, "大控件高度"}, {value.BorderWidth, 1, 3, "描边宽度"}, {value.FocusRingWidth, 1, 4, "焦点环宽度"},
-		{value.IconSize, 12, 24, "图标尺寸"}, {value.ButtonFontWeight, 400, 700, "按钮字重"}, {value.HoverLift, 0, 4, "悬停抬升"}, {value.MotionFast, 0, 400, "快速动效时长"}, {value.MotionNormal, 0, 800, "常规动效时长"},
+		{value.IconSize, 12, 24, "图标尺寸"}, {value.ButtonFontWeight, 400, 700, "按钮字重"},
 	} {
 		if candidate.value < candidate.min || candidate.value > candidate.max {
 			return BadAuthRequest(fmt.Sprintf("%s必须在 %d 到 %d 之间", candidate.label, candidate.min, candidate.max))
@@ -422,12 +495,6 @@ func validateAppearanceSkinComponents(value AppearanceSkinComponentTokens) error
 	}
 	if value.ControlHeightSmall > value.ControlHeight || value.ControlHeight > value.ControlHeightLarge {
 		return BadAuthRequest("控件高度须满足小号不大于标准、标准不大于大号")
-	}
-	if value.MotionFast > value.MotionNormal {
-		return BadAuthRequest("快速动效时长不能大于常规动效时长")
-	}
-	if value.ShadowStyle != "none" && value.ShadowStyle != "soft" && value.ShadowStyle != "strong" {
-		return BadAuthRequest("阴影风格无效")
 	}
 	return nil
 }

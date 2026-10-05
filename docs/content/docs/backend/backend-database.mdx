@@ -5,6 +5,15 @@ description: 影策后端核心持久化表与状态边界
 
 # 后端数据库
 
+## Canary Agent schema 45
+
+迁移 45 新增 `agent_scheduler_settings`（调度槽、驻留上限、画布配额、配置 revision）、`agent_admission_counters`（领取提交顺序）和 `agent_canvas_admissions`（用户/画布最后领取序号）。`agent_runtime_instances` 增加领取预留、槽占用、排队、缩容状态及执行器已应用配置版本。领取租约、画布配额检查和轮转更新同事务；配置、管理员审计与唤醒事件同事务。迁移只新增字段/表，不修改渠道凭据、模型能力、会话或记忆历史。
+
+### Schema 44
+
+新增 cloud_agent_executions 的 runtime_phase/wait_kind/wait_id/wait_reason；agent_event_counters、agent_wake_events、agent_tool_operations、agent_runtime_instances。状态与唤醒事件同事务，计数行锁保证序号提交顺序，工具完成要求 owner 与有效租约。新增表字段保留原有历史，详见 [多会话调度](./agent-event-scheduler)。
+
+
 ## 画布 Agent 外观配置
 
 `system_settings` 的 `appearance` JSON 合同版本 9 新增 `canvas`：助手名称、入口标签、面板标题、欢迎文案、输入提示、`avatarType`（`orb|live2d`）、`avatarHeight`（120–360）、`live2dResourceId` 和服务端确认的 `live2dEntry`。独立于站点品牌；缺失时读取内置画布默认值。不新增数据库结构迁移，不改变全局 schema 版本。
@@ -19,11 +28,23 @@ description: 影策后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-当前结构版本为 38。版本 38 `prefixed_id_sequence_reconcile` 创建（若缺失）并校准 `id_sequences`：`CHANNEL`、`MODEL`、`PTIER`、`ATTEMPT`、`LMODEL`、`REVISION`、`ROUTE` 按对应业务表的最大有效 ID 前移，包含软删除记录，不回退已有序列、不重写业务 ID。分配新 ID 时再次校准并检查冲突；SQLite → PostgreSQL 迁移完成后也校准序列。
+当前代码的 `CurrentSchemaVersion` 为 **55**。v55 新增 `agent_crew_events`，以 `(crew_run_id, sequence)` 为主键，状态变化和业务事件同事务提交。Crew 事件游标独立于普通 Agent journal，SSE 快照不推进游标。
 
-版本 36 `cloud_agent_gemini_cache` 创建 `cloud_agent_gemini_caches`，保存用户范围内的官方 Gemini 缓存元数据；版本 37 `cloud_agent_gemini_cache_identity` 将缓存标识约束修正为 `(user_id, cache_key)`，移除旧的全局 cache_key 唯一索引。版本 35 `auth_notifications` 为认证通知与组合验证补齐 `auth_verifications`、`notification_quotas`、`sms_channels`、`sms_records` 四张表，并为 `users` 增加 `phone`、`email_verified_at`、`phone_verified_at`，为 `email_verification_codes` 增加 `attempts`；同时创建非空手机号唯一索引。版本 34 `task_media_recovery` 为 `tasks` 增加 `media_recovery_json`（text）和 `media_stage`（最长 24 字）。版本 33 `oauth_state_accepted_terms` 为 `o_auth_states` 增加非空布尔列 `accepted_terms`，默认 `false`，不替历史流程补造同意记录。
+v54 新增 `agent_crew_runs`、`agent_crew_member_runs`、`agent_crew_messages`，冻结 Workspace/Crew/预算与成员技能；成员独立会话及 holding 预留同事务准入，任务和结果只通过结构化消息交换。Crew Run 以用户及幂等键唯一，Member Run 以 Crew/成员/attempt 唯一，消息以 Crew/Member Run/task/kind 唯一。
 
-升级前备份，按既有流程执行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持版本 38，回退需恢复匹配的数据库备份，并评估备份之后的新写入；不能只切回旧镜像。关闭自动迁移的生产环境必须运行正式迁移；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+v53 新增 `agent_crews`、`agent_crew_members`、`agent_crew_member_skills`。Crew 配置、成员和技能共用 revision CAS，所有变更在事务内校验完整配置；启用的 Crew 恰好有一名启用的 Coordinator，切换 Coordinator 在一个事务完成。成员排序在 Crew 内唯一，成员技能以 `(member_id, skill_id)` 去重。成员只能配置 `read_only` 或 `propose`，画布写权限留给审批提交边界。配置查询同时验证 Crew、Workspace 和 CanvasProject 的用户归属。
+
+v52 `agent_workspaces` 新增 `agent_workspaces` 与 `agent_workspace_skills`，`canvas_id` 唯一，每个画布对应一个 Workspace。文档和技能列表共用 revision，CAS 与技能替换在同一事务提交；SQLite 写事务先取得写锁再读 revision，PostgreSQL 快照读取持有行共享锁。文档最多 64KB，保存 SHA-256（空文档也有标准 hash），新 Run 冻结正文和技能版本；运行中不回读当前配置。模型输入准入包含编译后的上下文和完整技能包的保守 token 预留，超限明确拒绝。
+
+v51 `agent_skill_defaults` 新增 `agent_skill_defaults` 与 `agent_conversation_skills`，启动迁移登记与 SQLite → PostgreSQL 搬迁清单均包含两表。默认配置使用 revision CAS 整体替换：`system_settings` 的 `agent_skill_defaults_revision` 保存单调递增修订号，清空列表也不重置；事务先锁定该设置行再检查修订号，跨实例写入串行化。会话表保存最终来源、版本及 hash，与 Run、占位任务和积分预留在同一事务提交，拒绝请求不会修改会话基线。升级前备份数据库，运行迁移及 verify；回退旧代码不会自动降级结构。下文保留历史迁移说明。
+
+历史 v42 说明（当前版本见上文）：上游迁移当时占用 v24–v38：v36 `cloud_agent_gemini_cache` 创建 Gemini 缓存表，v37 `cloud_agent_gemini_cache_identity` 将唯一键限定为 `(user_id, cache_key)`，v38 `prefixed_id_sequence_reconcile` 校准可读 ID 序列。我们已退役的 `cloud_agent_run_events` / `cloud_agent_transcript` 保留为 no-op 登记并顺延到 v39/v40，既有表与数据不删除；历史库的 v24/v25、v32/v33、v33/v34、v34/v35、v35/v36、v36/v37 登记会先按名称与校验和搬迁到 v39/v40，再执行上游迁移。v35 `auth_notifications`、v34 `task_media_recovery`、v33 `oauth_state_accepted_terms` 等迁移内容不变。升级前备份，运行 `migrate-schema up` 和 `verify` 后再启动新后端。旧版本二进制不支持 schema 42，回退需恢复匹配的数据库备份并评估备份之后的新写入；手工改表不能更新 `schema_migrations` 的版本与校验和记录。
+
+v41 `pi_agent_run_leases` 为 `cloud_agent_executions` 增加 `engine`、`lease_owner`、`lease_expires_at`。独立 Pi Worker 的消息沿用 `cloud_agent_message_records`，新增 `kind=pi`；旧 `canonical`、`history` 与事件记录继续可读。原生压缩另用 `kind=pi_compaction` 保存单条冻结 preparation，控制态只保存其摘要值和子调用任务回执，提交检查点后删除该临时记录；无新增表或列，旧 Go 二进制不能读取有此 kind 的在途记录。Cloud Agent 运行一律使用 `engine=pi`，引擎开关 `CANVAS_AGENT_ENGINE` 已删除；worker 协议由 `CANVAS_AGENT_INTERNAL_TOKEN` 是否配置决定，未配置时 `/internal-agent` 不挂载，运行会停在 `queued` 并在后端启动日志中给出提示。
+
+v42 `pi_agent_conversation_sessions` 新增 `cloud_agent_pi_sessions` 与 `cloud_agent_pi_entries`：每个 `(user_id, conversation_id)` 对应一个 Pi v3 会话，保存格式版本、header、active leaf、revision、活动 run 与 entry 树。迁移为已有 `engine=pi` 运行回填空会话 header；既有消息 transcript 保留为可读、可续聊输入。新 run 与会话绑定在创建任务/预留事务中完成；Node 每次消息检查点提交新增 entries 和 active leaf，Go 按用户归属、活动 run、entry ID 和 session revision 校验，重复相同 entry 是幂等操作，同 ID 不同正文或过期分支更新会冲突。该迁移只建立持久化合同，不代表 PostgreSQL、双 worker 租约 fencing 或完整跨服务恢复已经通过验收。
+
+合并上游 v1.5.8–v1.6.0 后，上游 v39 `skill_library_categories`（技能库分类与用户技能状态表）、v40 `builtin_skill_tombstones`（内置技能删除墓碑）与 v41 `resource_thumbnail`（资源缩略图）占用了 v39–v41；canary 线的七条迁移上移到 44 起：`cloud_agent_run_events` / `cloud_agent_transcript` 两条 no-op 落到 v44/v45，`pi_agent_run_leases`、`pi_agent_conversation_sessions`、`pi_agent_owner_scoped_session_ids`、`pi_agent_event_scheduler`、`pi_agent_orchestrator` 落到 v44–v48（name 与 checksum 字符串保持原值，表与数据不变）。让位搬迁表覆盖合并前 canary schema 45 的存量库：39–45 的七条记录自动上移，上游 v39/v40 在其腾出的号位上真实执行（幂等，见 `migrations_relocation_test.go` 的"合并前 canary 库"用例）。
 
 ### 生成成功后的作品保存恢复
 
@@ -34,21 +55,30 @@ description: 影策后端核心持久化表与状态边界
 
 ### 云端 Agent 运行时
 
-每轮 Agent 存为 `tasks` 中 `operation = cloud_agent` 的 `canvas_text` 任务，任务 `input_json.cloudAgent` 保存版本 1 的已校验请求、父轮 ID、请求指纹和技能快照；历史从服务端父轮结果构造。任务 ID 由用户与幂等键确定，利用现有主键、任务 admission 和积分预留事务防止重复提交重复扣费。Agent 的模型循环、工具调用、审批、子任务和事件写入 `cloud_agent_executions.state_json`，任务 Worker 只负责推进状态，不依赖浏览器连接。公共任务创建与重试接口禁止绕过 Agent admission；删除任务会影响该轮继续对话与回放。
+Skill 运行模式随 `tasks.input_json.cloudAgent` 与 `cloud_agent_executions.state_json` 的快照 JSON 保存，不新增表或列：新运行的 `skillRuntimeMode=pi-native`，历史缺省按 `legacy-go`。Skill 快照固定 `nativeName`、`versionId`、内容哈希和内部文件元数据；公共 API 清除正文与内部文件元数据。原生读取结果沿用 Pi transcript/session entries，安全启用/读取事件沿用 `cloud_agent_event_records`。冻结版本读取不依赖 `skills.current_version_id`，但每次重查安装与启用状态。
+
+每轮 Agent 存为 `tasks` 中 `operation = cloud_agent` 的 `canvas_text` 任务，任务 `input_json.cloudAgent` 保存版本 1 的已校验请求、父轮 ID、请求指纹和技能快照；历史从服务端父轮结果构造。任务 ID 由用户与幂等键确定，利用现有主键、任务 admission 和积分预留事务防止重复提交重复扣费。Agent 的模型循环、工具调用、审批与子任务的控制面写在 `cloud_agent_executions.state_json`（检查点只放控制面，不再承载会话消息与事件），会话消息按 `(run_id, kind, sequence)` 存在 `cloud_agent_message_records`，运行事件按 `(run_id, sequence)` 存在 `cloud_agent_event_records`；任务 Worker 只负责推进状态，不依赖浏览器连接。公共任务创建与重试接口禁止绕过 Agent admission；删除任务会影响该轮继续对话与回放。
+
+> **合并上游 v1.5.7 的迁移说明（重要）**：我们自研的 `cloud_agent_run_events` 表（v24 引入：事件自带 `type`/`canvas_id`/`expires_at`、按 `seq` 分页、默认保留 30 天）已随合并**退役**——迁移 v36 登记为 no-op，**表与数据保留、不做 DROP、代码不再读写**；运行事件改用上游的 `cloud_agent_event_records`。`cloud_agent_message_records` 的表名与列名两侧一致（`run_id`/`kind`/`sequence`/`user_id`/`message_json`，`kind` 取 `canonical`/`history`），因此**切换前的会话消息仍可读**；切换前的运行事件由 `migrate-schema up` **自动搬运**：当某个 run 在上游事件表里一行都没有、`event_count > 0`、且退役表里存在该 `run_id` 的行时，把退役行按 `seq` 转成 `{"eventId","runId","seq","type","payload","createdAt"}` 形态写入 `cloud_agent_event_records`（主键冲突即跳过，因此幂等、可重复执行）；对全新库与纯上游库匹配不到，是 no-op。搬运后 `len(Journal)` 与 `event_count` 一致，`checkpoint_version = 2` 的运行可以正常解码。库里的 v24/v25（自研时期原始登记）、v32/v33（上一版合并线临时落点）、v33/34、v34/35（前两版 dev 线落点）、v35/36（已对齐上游 v1.5.7 那版 dev 的落点）记录会在 `migrationsForDatabase` 中被自动搬迁到 v36/37（幂等，见下方版本 36/37 说明）。
 
 | 表 | 用途 | 关键边界 |
 | --- | --- | --- |
 | `schema_migrations` | 保存已成功应用的结构版本、名称、校验和与时间 | 已应用版本的校验和发生变化时拒绝启动；数据库版本高于当前二进制支持版本时拒绝旧程序连接 |
-| `cloud_agent_executions` | 保存 Agent 每轮的持久化执行状态、修订号和运行状态 | `(id, user_id)` 归属受服务端校验；状态通过 revision CAS 更新；`state_json` 包含技能快照、工具调用、审批、活动子任务、事件、最近一次语义压缩检查点与"正在压缩"的压缩态，不保存浏览器密钥 |
+| `cloud_agent_executions` | 保存 Agent 每轮的控制面检查点、修订号与运行状态 | `(id, user_id)` 归属受服务端校验；状态通过 revision CAS 更新；`checkpoint_version >= 2` 时 `state_json` 只含技能快照、工具调用、审批、活动子任务、计量水位、最近一次语义压缩检查点与"正在压缩"的压缩态，消息与事件分别在 `cloud_agent_message_records`、`cloud_agent_event_records`；不保存浏览器密钥 |
+| `cloud_agent_message_records` | Agent 会话消息（transcript）：`canonical` 是发给模型的会话消息、`history` 是跨轮历史 | 主键 `(run_id, kind, sequence)`；语义压缩整体重写而不是删几条；行数与 `cloud_agent_executions.message_count` 必须一致，不一致按状态损坏处理 |
+| `cloud_agent_event_records` | Agent 运行事件日志（append-only，上游 v28 引入） | 主键 `(run_id, sequence)` + 插入幂等；事件正文是 `event_json`；运行详情按 `sequence` 分页读取 |
+| `cloud_agent_pi_sessions` | 每个 conversation 的 Pi v3 session header、active leaf、revision 与活动 run | 唯一 `(user_id, conversation_id)`；读取和变更都按用户 scope；同一对话同一时刻仅接受一个活动 run |
+| `cloud_agent_pi_entries` | Pi `SessionManager` append-only entries 与分支父子关系 | 主键 `(session_id, sequence)`，entry ID 在 session 内唯一；同一 ID 不同内容拒绝；每次追加使用 session revision 检查 |
+| `cloud_agent_run_events` | **已退役**（自研，v36 起为 no-op 迁移） | 表与数据保留、不做 DROP、代码不再读写；切换前的历史事件留在这里 |
 | `agent_profiles` | 保存用户、项目和画布层的 Agent 常驻偏好、哈希和独立 revision | `(user_id, scope, project_id, canvas_id)` 唯一；归属由 service 校验，写入使用 revision CAS；正文不能授权新能力 |
 | `agent_lessons` | 用户私有的 Agent 记忆。Agent 写入待审，用户自己批准后才会注入该用户的会话 | 按 `author_user_id` 隔离；写入机械脱敏；`steps_json` 存路线；`hits` 是主动查阅、`injected` 是自动注入；管理员可按用户查看和删除，不能代批 |
 | `agent_memory_settings` | 用户私有的记忆压缩周期、文本模型和最近一次压缩任务状态 | 主键 `user_id`；压缩结果只在 `compact_task_id` 匹配时应用到该用户已批准记忆 |
 
 容器内命令 `migrate-schema up` 应用缺失迁移，`migrate-schema status` 输出当前和期望版本，`migrate-schema verify` 只检查兼容性。`CANVAS_AUTO_MIGRATE=true` 仅用于开发和旧部署兼容；受管生产部署设置为 `false`，并由 Compose 的一次性 `migrate` 服务先完成迁移。后续迁移必须新增版本，不得修改已经发布迁移的实现或校验和。
 
-历史迁移说明：版本 2 为 `schema_migrations.applied_at` 增加 `idx_schema_migrations_applied_at` 索引；版本 3 `asset_taxonomy_candidate_identity` 为资产候选增加规范化名称和来源，收敛资产分类，并为待确认候选建立项目内部分唯一索引；版本 4 `resource_upload_key` 为资源上传幂等补充 `resources.upload_key` 列和用户维度唯一索引；版本 5 `payment_topup` 创建积分充值、支付通知和对账所需结构；版本 6 `resource_playback_variant` 增加资源播放副本状态；版本 7 `asset_library_folders` 增加用户素材自定义分类及 `assets.folder_id`；版本 8 `logical_model_active_code` 将前台模型 code 的唯一约束限定为未归档记录；版本 9 `channel_presentation` 为渠道添加 `public_alias`（默认空字符串）与 `sort_order`（默认 0），为渠道模型添加 `sort_order`（默认 0），不重写既有凭据、价格或能力配置；版本 10 `creation_runtime` 创建创作运行与提交表，并为任务增加可空且唯一的 `creation_submission_id`，旧任务无需伪造提交标识即可继续使用；版本 11 `cloud_agent_runtime` 创建 `cloud_agent_executions`；版本 12 `agent_token_charge_limit` 为账单增加 Agent Token 收费上限；版本 13 `cloud_agent_canvas_mutation` 持久化 Agent 画布变更；版本 14 `cloud_agent_recovery_control` 增加运行恢复控制字段和旧运行回填；版本 15 `agent_profiles` 创建常驻偏好表；版本 16 `agent_lessons` 创建用户记忆表（含分类、路线 JSON、注入/查阅计数）；版本 17 `agent_lessons_owner_index` 为 `(author_user_id, status)` 增加复合索引；版本 18 `agent_memory_settings` 创建按用户隔离的压缩周期与最近一次压缩任务状态；版本 19 `payment_plugin_version` 为已有 `payment_provider_configs` 和 `payment_orders` 补上 `plugin_version`，用于把配置和订单钉在具体插件版本上；版本 20 `banner_announcements` 创建首页常驻滚动通知表；版本 21 `banner_announcement_title_runs` 为通知标题增加样式分段；版本 22 `banner_announcement_notice_type` 增加通知类型底色；版本 23 `canvas_revision_history` 为既有画布回填 `revision = 1` 并新增历史快照与资源引用表。版本 24 `channel_model_label` 为渠道模型增加 `channel_label`（最长 80 字、非空、默认空字符串），不重写模型标识、上游 ID、价格或能力；版本 25 `video_token_formula_snapshot` 为账单增加视频公式用量及用量来源快照。版本 26 `channel_model_description` 为渠道模型增加 `description`（最长 500 字、非空、默认空字符串），供二级选项展示使用说明，不重写身份或价格。版本 27 `channel_credit_cost` 为价格档添加管理员积分成本，并在账单保存执行线路的成本快照；成本不进入普通用户 API。已发布版本的实现和校验和不得修改。
+当前结构版本为 37。版本 2 为 `schema_migrations.applied_at` 增加 `idx_schema_migrations_applied_at` 索引；版本 3 `asset_taxonomy_candidate_identity` 为资产候选增加规范化名称和来源，收敛资产分类，并为待确认候选建立项目内部分唯一索引；版本 4 `resource_upload_key` 为资源上传幂等补充 `resources.upload_key` 列和用户维度唯一索引；版本 5 `payment_topup` 创建积分充值、支付通知和对账所需结构；版本 6 `resource_playback_variant` 增加资源播放副本状态；版本 7 `asset_library_folders` 增加用户素材自定义分类及 `assets.folder_id`；版本 8 `logical_model_active_code` 将前台模型 code 的唯一约束限定为未归档记录；版本 9 `channel_presentation` 为渠道添加 `public_alias`（默认空字符串）与 `sort_order`（默认 0），为渠道模型添加 `sort_order`（默认 0），不重写既有凭据、价格或能力配置；版本 10 `creation_runtime` 创建创作运行与提交表，并为任务增加可空且唯一的 `creation_submission_id`，旧任务无需伪造提交标识即可继续使用；版本 11 `cloud_agent_runtime` 创建 `cloud_agent_executions`；版本 12 `agent_token_charge_limit` 为账单增加 Agent Token 收费上限；版本 13 `cloud_agent_canvas_mutation` 持久化 Agent 画布变更；版本 14 `cloud_agent_recovery_control` 增加运行恢复控制字段和旧运行回填；版本 15 `agent_profiles` 创建常驻偏好表；版本 16 `agent_lessons` 创建用户记忆表（含分类、路线 JSON、注入/查阅计数）；版本 17 `agent_lessons_owner_index` 为 `(author_user_id, status)` 增加复合索引；版本 18 `agent_memory_settings` 创建按用户隔离的压缩周期与最近一次压缩任务状态；版本 19 `payment_plugin_version` 为已有 `payment_provider_configs` 和 `payment_orders` 补上 `plugin_version`，用于把配置和订单钉在具体插件版本上；版本 20 `banner_announcements` 创建首页常驻滚动通知表；版本 21 `banner_announcement_title_runs` 为通知标题增加样式分段；版本 22 `banner_announcement_notice_type` 增加通知类型底色；版本 23 `canvas_revision_history` 为既有画布回填 `revision = 1` 并新增历史快照与资源引用表；版本 24 `channel_model_label` 为渠道模型增加 `channel_label`（最长 80 字、非空、默认空字符串），不重写模型标识、上游 ID、价格或能力；版本 25 `video_token_formula_snapshot` 为账单增加视频公式用量及用量来源快照；版本 26 `channel_model_description` 为渠道模型增加 `description`（最长 500 字、非空、默认空字符串），供二级选项展示使用说明，不重写身份或价格；版本 27 `channel_credit_cost` 为价格档添加管理员积分成本，并在账单保存执行线路的成本快照；成本不进入普通用户 API；版本 28 `agent_execution_journal` 为 Agent 执行、事件、消息以及任务与账单补齐 journal 相关结构；版本 29 `agent_resource_leases` 创建 Agent 资源租约表；版本 30 `builtin_tools` 创建内置工具表；版本 31 `tool_favorites` 创建工具收藏表；版本 32 `channel_model_tags` 为渠道模型增加标签列；版本 33 `oauth_state_accepted_terms` 为 `o_auth_states` 增加非空布尔列 `accepted_terms`（默认 `false`），用于注册时的协议同意校验，保留旧 state 的身份、PKCE、跳转目标及有效期，不替历史流程补造同意记录；版本 34 `task_media_recovery` 为 `tasks` 增加 `media_recovery_json`（text）与 `media_stage`（最长 24 字），支撑作品保存恢复；版本 35 `auth_notifications` 为认证通知与组合验证补齐 `auth_verifications`、`notification_quotas`、`sms_channels`、`sms_records` 四张表，并为 `users` 增加 `phone` 与两个验证时间戳、为 `email_verification_codes` 增加 `attempts`，同时创建非空手机号唯一索引；版本 36 `cloud_agent_run_events` 与版本 37 `cloud_agent_transcript` 是我们自研的两条迁移，合并上游后**登记为 no-op**：上游段现在是 v24–v35（`channel_model_label` … `auth_notifications`），我们这两条让位到 v36/v37；**表与数据保留、不做 DROP，但代码不再读写它们**（运行事件改用上游的 `cloud_agent_event_records`）。关键约束：这两条的 name 与 checksum 保持原值，`migrationsForDatabase` 会在任何名称校验之前把库里遗留的让位记录自动搬迁到 36/37——覆盖五个历史落点：v24/v25（自研时期原始登记）、v32/v33（上一版合并线临时落点）、v33/34（上一版 dev 线的落点，3001 dev 库就是这个形态）、v34/35（再上一版 dev 线的落点，跑过 PR #41–#44 那版 dev 的库）、v35/36（已对齐上游 v1.5.7 那版 dev 的落点，即本轮之前 dev/3000 的形态）；`from` 从大到小处理，且必须先腾出高版本号（先把 transcript 36→37 腾出 36，再把 run_events 35→36；更早的落点同理先搬 transcript 再搬 run_events）——事务内、幂等，对全新库 / 纯上游库 / 我们 v25 库 / 上一版合并线库 / 上一版 dev 库 / 再上一版 dev 库 / 已对齐上游那版 dev 库七种起点都成立；同名但校验和不同的记录一律不动。已发布版本的实现和校验和不得修改。
 
-渠道模型的文本能力 JSON 还可声明 `contextWindowTokens` 与 `maxOutputTokens`。这两个字段是模型能力合同，不是数据库或 Agent checkpoint 的容量配置；旧记录读取时补 128K / 16K 默认值。运行状态、journal 和 transcript 的持久化边界仍由既有 runtime 表及其 512KB checkpoint 校验负责，本阶段没有通过扩大 checkpoint 绕过模型上下文限制。
+渠道模型的文本能力 JSON 还可声明 `streaming`、`thinking`、`contextWindowTokens`、`reservedOutputTokens` 与 `maxOutputTokens`。其中 `thinking` 声明该模型是否暴露用户可选的推理（思考）模式，字段缺省表示**未声明**：画布 Agent 面板据此隐藏推理选项，服务端也不发送任何 reasoning 参数，不把未声明当成支持。这些字段是模型能力合同（后端按 `usable = contextWindowTokens − reservedOutputTokens` 计算输入压力），不是数据库或 Agent checkpoint 的容量配置；三者都可缺省，0 表示未知或未声明，读取时不补 128K / 16K 之类的猜测默认值。运行状态、journal 和 transcript 的持久化边界仍由既有 runtime 表及其 512KB checkpoint 校验负责，本阶段没有通过扩大 checkpoint 绕过模型上下文限制。
 
 历史发布曾使用版本 6 `asset_library_folders`，之后合并引入了上述 6/7 顺序冲突。迁移器仅在该历史记录的名称和校验和均精确匹配时选择历史顺序：保留版本 6 的素材目录记录及时间，在版本 7 应用 `resource_playback_variant`，再继续版本 8。新数据库及已采用“6 播放副本、7 素材目录”的数据库保持原顺序；状态检查与启动校验采用同一套识别规则。未知名称、被改动的校验和或冲突的版本 7 记录仍会拒绝迁移，不通过删除、改名或伪造已应用记录绕过检查。
 
@@ -135,6 +165,17 @@ docker compose -f docker-compose.deploy.yml up -d backend web
 | 表 | 用途 | 关键边界 |
 | --- | --- | --- |
 | `skills` | 保存技能公开元数据、当前版本指针、来源和 GitHub 同步状态 | `instruction` 仅保留入口 `SKILL.md` 的兼容投影；目录文件不展开写入该字段 |
+| `agent_skill_defaults` | 管理员全局默认技能、固定版本、有序 position、enabled 与 revision | `(scope, skill_id)` 唯一；不能引用私有技能，容量只统计启用项；仅影响新会话 |
+| `agent_workspaces` | 画布 Agent 业务文档、SHA-256、共享 revision | `canvas_id` 唯一；用户与画布归属同时检查 |
+| `agent_workspace_skills` | Workspace 技能追加及冻结版本 | `(workspace_id, skill_id)` 主键；仅启用项参与新会话技能并集 |
+| `agent_crews` | Workspace 内的剧组配置、Coordinator、共享 revision | `workspace_id`、`user_id` 索引；启用时仅一个启用 Coordinator |
+| `agent_crew_members` | 成员角色、模型绑定、权限、焦点节点和预算 | `crew_id` 索引；`(crew_id, position)` 唯一 |
+| `agent_crew_member_skills` | 成员技能追加与版本绑定 | `(member_id, skill_id)` 主键；版本索引；不接受私有技能 |
+| `agent_crew_runs` | 冻结配置、预算、准入与聚合状态 | `(user_id, idempotency_key)` 唯一 |
+| `agent_crew_member_runs` | 独立 Agent Run、任务与结果 | `(crew_run_id, member_id, attempt)` 唯一；`agent_run_id` 唯一 |
+| `agent_crew_messages` | 结构化任务/结果及参数 hash | `(crew_run_id, member_run_id, task_id, kind)` 唯一 |
+| `agent_crew_events` | 脱敏业务事件及独立单调序号 | `(crew_run_id, sequence)` 主键；状态与事件同事务 |
+| `agent_conversation_skills` | 会话最终技能来源、版本、ContentHash 与顺序 | `(conversation_id, skill_id)` 复合主键；source 为 global/user；已有会话不重读默认，迁移前旧会话不自动补入默认 |
 | `skill_versions` | 保存每次安装、编辑或同步形成的不可变技能版本 | 记录内容哈希、入口路径、规范化 ZIP 的存储键、文件数、总大小和 GitHub commit |
 | `skill_files` | 保存某个版本的文件索引 | `(skill_version_id, path)` 唯一；只保存路径、类型、MIME、大小和 SHA-256，不保存正文 |
 | `user_skill_states` | 保存用户的加入、收藏、安装版本和自动更新选择 | 技能正文读取仍经过公开性和归属校验，不能通过文件接口绕过私有技能权限 |

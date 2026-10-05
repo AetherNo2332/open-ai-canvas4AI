@@ -7,20 +7,43 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+// cloudAgentContinuationEventLimit 是续轮读取上一轮事件的上限：收束要覆盖整轮改动，
+// 不能只看默认页（长会话的早期改动对新轮不可见）。
+const cloudAgentContinuationEventLimit = 1000
+
+// Pi messages do not carry Go's private context-source annotation. Restore it
+// only from a durable delivery event whose ID was committed by the Go hook.
+func cloudAgentIsDeliveredInterjection(message map[string]any, state *cloudAgentRuntime) bool {
+	if state == nil || stringField(message, "role") != "user" {
+		return false
+	}
+	if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+		return true
+	}
+	content := stringField(message, "content")
+	for _, event := range state.Events {
+		if event.Type != "user_interjection_delivered" {
+			continue
+		}
+		id := stringValue(event.Payload["messageId"])
+		text := stringValue(event.Payload["text"])
+		if id != "" && text != "" && containsString(state.InterjectionIDs, id) && content == "【用户插话】"+text {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	cloudAgentContinuationChangeLimit = 12
 	cloudAgentContinuationKind        = "run_handoff"
 	// cloudAgentContinuationNodeIDRunes 限制单个节点 ID 的长度：ID 由画布文档给出，
 	// 不截断时一组 5000 字符的 ID 就能把交接帧撑到几百 KB（实测 399,503 字节），
-	// 而下一轮对整份历史有 64KB 硬闸 —— 用户会直接收到"请新建对话"。
+	// 而下一轮对整份历史有 192KB 硬闸 —— 用户会直接收到"请新建对话"。
 	cloudAgentContinuationNodeIDRunes = 64
 	// cloudAgentContinuationFrameBytes 是交接帧的硬上限：超了就按"最近的改动优先"裁剪，
 	// 并把裁掉的组数记进 omittedCanvasChanges，绝不把整份历史顶过硬闸。
 	cloudAgentContinuationFrameBytes = 8 << 10
-	// cloudAgentContinuationEventLimit 是续轮读取上一轮事件的上限。运行详情默认只返回尾部
-	// 一窗，而收束要覆盖上一轮**全部**真实改动（画布改动、已提交任务、助手原话），
-	// 被窗口截断就会表现为"新一轮忘了上一轮做过什么"。
-	cloudAgentContinuationEventLimit = 1000
 )
 
 type cloudAgentContinuationChange struct {
@@ -52,7 +75,9 @@ type cloudAgentContinuationFrame struct {
 // 只保留状态、失败原因、已提交任务与真实画布改动，不把原始工具流水当成本轮目标。
 func cloudAgentContinuationReply(task *model.Task, run *CloudAgentRun) (string, string, error) {
 	text := ""
-	if task.Status == model.TaskStatusSucceeded {
+	// task 为 nil 表示上一轮是 P1.5 之后的新形态（没有根任务，只有执行记录）；
+	// 上一轮的答复本来就以事件里的最终 assistant 正文为准，这里跳过任务结果即可。
+	if task != nil && task.Status == model.TaskStatusSucceeded {
 		text = taskResultText(task.ResultJSON)
 	}
 	submitted := make([]string, 0)
@@ -65,9 +90,16 @@ func cloudAgentContinuationReply(task *model.Task, run *CloudAgentRun) (string, 
 		seen[id] = true
 		submitted = append(submitted, id)
 	}
+	// 上一轮的"答复"以**最终答复**为准（final=true 的 assistant 消息）：工作项 A 之后
+	// 模型边做边说的过程说明也会落 assistant_message（final=false），拿最后一条当答复会
+	// 把中间稿交给下一轮。没有最终答复（失败/被拦下）时退回最后一条正文，保持既有口径。
+	final, anyText := "", ""
 	for _, event := range run.Events {
 		if event.Type == "assistant_message" {
-			text = stringValue(event.Payload["text"])
+			anyText = stringValue(event.Payload["text"])
+			if isFinal, ok := event.Payload["final"].(bool); ok && isFinal {
+				final = anyText
+			}
 		}
 		if event.Type == "generation_task_created" {
 			addSubmitted(stringValue(event.Payload["taskId"]))
@@ -77,6 +109,11 @@ func cloudAgentContinuationReply(task *model.Task, run *CloudAgentRun) (string, 
 				addSubmitted(stringValue(result["taskId"]))
 			}
 		}
+	}
+	if final != "" {
+		text = final
+	} else if anyText != "" {
+		text = anyText
 	}
 	context := cloudAgentContinuationContext(run, submitted)
 	return text, context, nil
@@ -129,9 +166,11 @@ func cloudAgentEncodeContinuationFrame(frame cloudAgentContinuationFrame) string
 	if len(encoded) <= cloudAgentContinuationFrameBytes {
 		return string(encoded)
 	}
+	dropped := 0
 	for len(frame.CanvasChanges) > 0 {
 		frame.CanvasChanges = frame.CanvasChanges[1:]
-		frame.OmittedCanvasChanges++
+		dropped++
+		frame.OmittedCanvasChanges += 1
 		if len(frame.CanvasChanges) == 0 {
 			frame.CanvasChanges = nil
 		}
@@ -146,6 +185,7 @@ func cloudAgentEncodeContinuationFrame(frame cloudAgentContinuationFrame) string
 		frame.FailureReason = truncateRunes(frame.FailureReason, 120)
 		encoded, _ = json.Marshal(frame)
 	}
+	_ = dropped
 	return string(encoded)
 }
 

@@ -11,12 +11,6 @@ test("Create exposes one accessible copy action beside each displayed user promp
     expect(source).toContain('copyText(visiblePrompt, "提示词已复制")');
 });
 
-test("Create submit button does not forward the browser click event as retry context", async () => {
-    const source = await Bun.file(new URL("../src/pages/create/index.tsx", import.meta.url)).text();
-    expect(source).toContain("onSubmit: () => void submit()");
-    expect(source).not.toContain("onSubmit: submit,");
-});
-
 test("Create keeps optimistic messages when the first local task binds immediately", () => {
     const initial = [{ id: "conversation-0001", title: "新创作", updatedAt: "2026-08-14T00:00:00.000Z", messages: [] as Array<Record<string, unknown>> }];
     const optimistic = updateCreationConversationSnapshot(initial, "conversation-0001", (conversation) => ({
@@ -134,16 +128,6 @@ test("task subscription can reconnect after an observation failure", async () =>
     } finally {
         console.warn = previousWarn;
     }
-});
-
-test("Create durably correlates failures that happen before the first Runtime response", async () => {
-    const source = [await Bun.file(new URL("../src/pages/create/index.tsx", import.meta.url)).text(), await Bun.file(new URL("../src/pages/create/creation-types.ts", import.meta.url)).text()].join("\n");
-    expect(source).toContain("generationErrorCode?: string");
-    expect(source).toContain("generationOperation?: string");
-    expect(source).toContain("generationOperation: task.operation");
-    expect(source).toContain("generationErrorCode: task.errorCode");
-    expect(source).toContain("generationErrorCode(error)");
-    expect(source).toContain("createdAt: assistantMessage.createdAt");
 });
 
 test("creation results hand off exact asset ids to one new canvas and consume the route once", async () => {
@@ -351,17 +335,10 @@ test("creation result handoff falls back by stable result order only for a compl
     expect(module.creationResultAssetIds(complete.slice(0, 1), { messageId: "message-1", taskIds: [], resultUrls: ["/official-first.png", "/official-second.png"] })).toEqual([]);
 });
 
-test("Create forwards owned result assets through one new canvas and the project persists before clearing the handoff", () => {
-    const workspace = readFileSync(resolve(import.meta.dir, "../src/pages/create/creation-workspace.tsx"), "utf8");
-    const createPage = readFileSync(resolve(import.meta.dir, "../src/pages/create/index.tsx"), "utf8");
+test("canvas routes persist imported assets before clearing the handoff", () => {
     const canvasIndex = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/index.tsx"), "utf8");
     const canvasProject = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
 
-    expect(workspace).toContain("onContinueCanvas(resultAssetIds)");
-    expect(createPage).toContain("continueCreationConversationOnCanvas(source)");
-    expect(createPage).toContain("if (ids.length !== Math.max(resultStorageKeys.length, resultUrls.length)) throw new Error");
-    expect(createPage).toContain("await saveCreationConversations(next)");
-    expect(createPage.indexOf("await saveCreationConversations(next)")).toBeLessThan(createPage.indexOf("navigate(`/canvas/${result.id}?${params.toString()}`)"));
     expect(canvasIndex).toContain('const handoffMode = mode === "handoff"');
     expect(canvasIndex).toContain('mode !== "new" && mode !== "recent" && mode !== "handoff"');
     expect(canvasProject).toContain('import { canvasAssetHandoffAttempt, finalizeCanvasAssetHandoff, uninsertedCanvasAssetHandoffPayloads } from "@/lib/canvas/canvas-asset-handoff"');

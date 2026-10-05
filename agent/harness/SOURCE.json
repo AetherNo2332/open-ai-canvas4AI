@@ -1,0 +1,23 @@
+{
+  "generatedBy": "agent/scripts/sync-harness.mjs",
+  "files": [
+    {
+      "file": "SYSTEM_POLICY.md",
+      "source": "backend/internal/prompts/agent-system-policy.md",
+      "stripFrontmatter": true,
+      "sha256": "92398a614f8fe05dd245225a61706a23b99c02e16e4c813250b172087be4524f"
+    },
+    {
+      "file": "MEDIA_POLICY.md",
+      "source": "backend/internal/prompts/agent-media-policy.md",
+      "stripFrontmatter": true,
+      "sha256": "ea7ccca5bed9dd02ba7c90c126ef0c57f5c390f5f40aabdc9ecce4744fe14fab"
+    },
+    {
+      "file": "TOOL_DESCRIPTIONS.md",
+      "source": "backend/internal/app/agent-tool-descriptions.md",
+      "stripFrontmatter": false,
+      "sha256": "3e4fdb5425f55497328173ddeefa67ae855d76d996376fddb7e29a7dd42003bb"
+    }
+  ]
+}

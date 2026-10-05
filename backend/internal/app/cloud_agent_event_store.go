@@ -6,21 +6,15 @@ import (
 	"log"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 )
 
-const (
-	// cloudAgentRunEventDeltaLimit 是增量读取（sinceSeq）单次返回的条数上限，
-	// 也是 HTTP 上 eventLimit 允许的最大值（越界的请求由 handler 拒绝）。
-	// 内部调用方不受它约束：续轮收束按 cloudAgentContinuationEventLimit 显式取更大的页。
-	cloudAgentRunEventDeltaLimit = 500
-	// cloudAgentRunEventPageLimit 是运行详情默认返回的事件条数：等于内存里的尾部窗口，
-	// 因此默认读取不额外查事件表；要更早的记录由客户端通过 eventLimit 显式索取。
-	cloudAgentRunEventPageLimit = repository.CloudAgentJournalWindow
-	// cloudAgentEventWindowSanityLimit 是内存事件窗口的健全上限（窗口本身加一次转移
-	// 新产生的事件），超过它说明窗口没有按 CloudAgentJournalWindow 载入。
-	cloudAgentEventWindowSanityLimit = 512
-)
+// cloudAgentRunEventDeltaLimit 是增量读取（sinceSeq）单次返回的条数上限，
+// 也是 HTTP 上 eventLimit 允许的最大值（越界的请求由 handler 拒绝）。
+// 内部调用方不受它约束：续轮收束按 cloudAgentContinuationEventLimit 显式取更大的页。
+// cloudAgentRunEventPageLimit 与 cloudAgentEventWindowSanityLimit 仍定义在
+// cloud_agent_runtime.go：上游把这三者放在同一处，本分支的 runtime.go 已持有后两个，
+// 这里不再重复声明。
+const cloudAgentRunEventDeltaLimit = 500
 
 // cloudAgentRunEventsForView 组装运行详情要返回的事件。
 //

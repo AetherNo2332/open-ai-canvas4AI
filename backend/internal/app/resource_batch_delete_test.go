@@ -50,6 +50,7 @@ func TestPurgeAssetsBatchSharedResourcesAndHistory(t *testing.T) {
 	assertCount(&model.Asset{}, 3)
 	assertCount(&model.Resource{}, 4)
 	assertCount(&model.ResourceDeletionJob{}, 0)
+	// 拒绝删除时引用预检不应产生部分清理；历史引用仍保留，直到显式解除。
 	assertCount(&model.CanvasSnapshotResource{}, 1)
 	assertCount(&model.AssetVersion{}, 2)
 	assertCount(&model.AssetRepresentation{}, 2)
@@ -83,8 +84,11 @@ func TestPurgeAssetsBatchSharedResourcesAndHistory(t *testing.T) {
 	if err := svc.PurgeUserAssets("user-1", []string{"first", " second ", "first"}); err != nil {
 		t.Fatal(err)
 	}
+	// 引用保护按“本次删除之外的引用”判断：`keep-shared` 仍被未选中的素材引用，
+	// `foreign-alias` 与 `same-object` 指向同一物理对象；删除本次素材记录后，两者仍须保留。
 	assertCount(&model.Asset{}, 1)
 	assertCount(&model.Resource{}, 2)
+	// 只有 batch-shared 没有其他引用；same-object 的物理对象仍被 foreign-alias 使用。
 	assertCount(&model.ResourceDeletionJob{}, 1)
 	assertCount(&model.CanvasSnapshotResource{}, 0)
 	assertCount(&model.CanvasSnapshot{}, 1)
@@ -92,14 +96,14 @@ func TestPurgeAssetsBatchSharedResourcesAndHistory(t *testing.T) {
 	assertCount(&model.CanvasProject{}, 1)
 	assertCount(&model.AssetVersion{}, 1)
 	assertCount(&model.AssetRepresentation{}, 1)
-	var job model.ResourceDeletionJob
-	if err := db.First(&job).Error; err != nil {
+	var sharedJob int64
+	if err := db.Model(&model.ResourceDeletionJob{}).Where("resource_id = ?", "batch-shared").Count(&sharedJob).Error; err != nil {
 		t.Fatal(err)
 	}
-	if job.ResourceID != "batch-shared" {
-		t.Fatalf("wrong physical object queued: %s", job.ResourceID)
+	if sharedJob != 1 {
+		t.Fatalf("batch-shared 的物理删除任务数 = %d, want 1", sharedJob)
 	}
-	for _, id := range []string{"keep-shared", "foreign-alias"} {
+	for _, id := range []string{"foreign-alias", "keep-shared"} {
 		var resource model.Resource
 		if err := db.First(&resource, "id = ?", id).Error; err != nil {
 			t.Fatalf("shared resource %s lost: %v", id, err)

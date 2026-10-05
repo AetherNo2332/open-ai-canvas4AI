@@ -107,6 +107,18 @@ describe("Agent SSE recovery", () => {
         expect(result.events.filter((e) => e.seq > 0).map((e) => e.seq)).toEqual([1, 2]);
     });
 
+    it("marks a replayed streaming draft as a non-final assistant message", async () => {
+        // 断线/刷新后由 run_snapshot.activeMessage 补出来的那条正文是**还在流式生成**的草稿，
+        // 不是本轮最终答复。少了 final=false，前端会按"缺省即结论"把它显示成最终回复
+        // （工作项 A：收尾闸门要求界面上把过程说明与结论分开）。
+        globalThis.fetch = (async () => stream(snapshot("running", { activeMessage: { messageId: "task-1", text: "我先读一下画布。" } }))) as typeof fetch;
+        const result = observe();
+        await result.done;
+        const drafts = result.events.filter((e) => e.type === "assistant_message");
+        expect(drafts).toHaveLength(1);
+        expect(drafts[0].payload).toMatchObject({ messageId: "task-1", text: "我先读一下画布。", final: false });
+    });
+
     it("waits for durable cleanup after a terminal status", async () => {
         let requests = 0;
         globalThis.fetch = (async () => stream(snapshot("cancelled", { cleanupPending: ++requests === 1 }))) as typeof fetch;
@@ -114,6 +126,17 @@ describe("Agent SSE recovery", () => {
         expect(await result.done).toBeUndefined();
         expect(requests).toBe(2);
         expect(result.events.filter((e) => e.type === "run_status").map((e) => e.payload.cleanupPending)).toEqual([true, false]);
+    });
+
+    it("forwards compaction changes in snapshots even while status remains running", async () => {
+        const compaction = { status: "running", turnCount: 4, sourceBytes: 10000, resume: true };
+        globalThis.fetch = (async () => stream(snapshot("running", { contextCompaction: compaction }) + snapshot("running") + snapshot("completed"))) as typeof fetch;
+        const result = observe();
+        expect(await result.done).toBeUndefined();
+        const statuses = result.events.filter((e) => e.type === "run_status");
+        expect(statuses.map((e) => e.payload.contextCompaction)).toEqual([compaction, undefined, undefined]);
+        expect(statuses.every((e) => Object.hasOwn(e.payload, "contextCompaction"))).toBe(true);
+        expect(statuses.every((e) => e.seq === 0)).toBe(true);
     });
 
     it("honors Retry-After rather than immediately retrying 429", async () => {
@@ -159,6 +182,17 @@ describe("Agent SSE recovery", () => {
 
 describe("Agent admission replay and durable pending records", () => {
     const input: CreateAgentRunInput = { canvasId: "canvas", prompt: "generate", model: "original", idempotencyKey: "stable-key-123" };
+    it("creates and continues Cloud Agent runs with only Skill IDs", async () => {
+        const bodies: unknown[] = [];
+        transport.http.post = async (_path: string, body: unknown) => { bodies.push(body); return { run: { id: "run" } }; };
+        const request = { ...input, skillIds: ["skill-one", "skill-two"] };
+        await api.createAgentRun(request);
+        await api.sendAgentMessage("run", request);
+        expect(bodies).toEqual([request, request]);
+        for (const body of bodies) {
+            expect(Object.keys(body as object).filter((key) => /skill/i.test(key))).toEqual(["skillIds"]);
+        }
+    });
     it("retries with a frozen original body/key and a bounded HTTP timeout", async () => {
         const bodies: unknown[] = [];
         const mutable = { ...input };

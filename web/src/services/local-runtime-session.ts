@@ -262,6 +262,11 @@ export class LocalRuntimeSessionClient {
     }
 
     private async requireKey() {
+        // 本机运行时靠浏览器密钥签名建立会话，签名必须用真 Web Crypto；内网 HTTP 部署
+        // （非安全上下文）下 subtle 不存在，这里给出可读原因，而不是 TypeError。
+        if (!this.cryptoImpl?.subtle) {
+            throw new LocalRuntimeClientError("insecure_context", "本机运行时需要在安全上下文（HTTPS 或 http://localhost）下使用；当前 HTTP 内网地址无法完成签名握手");
+        }
         const existing = await this.keyStore.load();
         if (existing) {
             validateKeyRecord(existing);

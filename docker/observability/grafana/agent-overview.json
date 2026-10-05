@@ -1,0 +1,13 @@
+{
+  "uid": "agent-overview",
+  "title": "Agent Overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "panels": [
+    {"type":"timeseries","title":"Worker / Queue spans","gridPos":{"h":8,"w":12,"x":0,"y":0},"targets":[{"expr":"traces_spanmetrics_calls_total{span_name=~\"worker.claim|queue.wait\"}","legendFormat":"{{span_name}}"}]},
+    {"type":"timeseries","title":"Task Throughput / Errors","gridPos":{"h":8,"w":12,"x":12,"y":0},"targets":[{"expr":"traces_spanmetrics_calls_total{span_name=\"task.lifecycle\"}","legendFormat":"tasks"}]},
+    {"type":"timeseries","title":"LLM / Tool calls","gridPos":{"h":8,"w":12,"x":0,"y":8},"targets":[{"expr":"traces_spanmetrics_calls_total{span_name=~\"llm.call|tool.call\"}","legendFormat":"{{span_name}}"}]},
+    {"type":"timeseries","title":"Task Latency","gridPos":{"h":8,"w":12,"x":12,"y":8},"targets":[{"expr":"traces_spanmetrics_latency_bucket{span_name=\"task.lifecycle\"}","legendFormat":"latency"}]}
+  ]
+}

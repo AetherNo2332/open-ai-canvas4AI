@@ -424,8 +424,8 @@
     aspect-ratio: 4 / 5;
     overflow: hidden;
     border-radius: 8px;
-    background: #08090c;
-    color: #fff;
+    background: var(--surface);
+    color: var(--foreground);
 }
 
 .admin-appearance-preview-stage video,
@@ -579,7 +579,7 @@
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
     border-radius: calc(var(--r-md) - 2px);
-    background: #090a0d;
+    background: var(--surface);
     padding: 12px;
 }
 
@@ -589,7 +589,7 @@
     align-items: flex-end;
     gap: 7px;
     border-radius: calc(var(--r-sm) - 1px);
-    background: #111318;
+    background: var(--surface);
     padding: 11px;
 }
 
@@ -656,6 +656,74 @@
 /* Editable skin library: one document-style workspace, consistent with the other
  * admin settings modules. Theme cards select the active draft; edits stay local
  * until the shared page command bar saves the complete appearance document. */
+
+/* 外观页区块外壳（swiss-design）：直角、发丝线分区、左对齐眉标，不使用卡片阴影。 */
+.admin-swiss-section {
+    display: grid;
+    gap: 0;
+    border-top: 1px solid var(--admin-divider);
+    background: transparent;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.admin-swiss-section-head {
+    display: grid;
+    gap: 6px;
+    padding: 24px 0 16px;
+}
+
+.admin-swiss-section-eyebrow {
+    color: var(--admin-text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.admin-swiss-section-heading {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.admin-swiss-section-heading h2 {
+    color: var(--admin-text-primary);
+    font-size: 20px;
+    font-weight: 300;
+    letter-spacing: -0.01em;
+}
+
+.admin-swiss-section-status {
+    display: inline-flex;
+    align-items: center;
+}
+
+.admin-swiss-section-head > p {
+    max-width: 60ch;
+    color: var(--admin-text-muted);
+    font-size: 13px;
+    line-height: 1.7;
+    text-wrap: pretty;
+}
+
+.admin-swiss-section-body {
+    display: grid;
+    gap: 16px;
+    padding-bottom: 32px;
+}
+
+.admin-swiss-section-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    border-top: 1px solid var(--admin-divider);
+    padding: 16px 0 24px;
+}
+
 .admin-skin-workspace {
     display: grid;
     gap: 18px;
@@ -1166,6 +1234,72 @@
 
 .admin-skin-component-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* 派生颜色只读展示：主色之外的颜色由「主色 + 中性阶」算出，运营无需也不应逐个调整。 */
+.admin-skin-derived-note {
+    margin: 0;
+    border-top: 1px solid var(--admin-divider);
+    padding: 10px 12px;
+    color: var(--admin-text-muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.admin-skin-derived-groups {
+    display: grid;
+    gap: 12px;
+    border-top: 1px solid var(--admin-divider);
+    padding: 12px;
+}
+
+.admin-skin-derived-group {
+    display: grid;
+    gap: 8px;
+}
+
+.admin-skin-derived-group > strong {
+    color: var(--admin-text-secondary);
+    font-size: 10px;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.admin-skin-derived-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 4px 12px;
+}
+
+.admin-skin-derived-swatch {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+}
+
+.admin-skin-derived-swatch i {
+    width: 12px;
+    height: 12px;
+    border: 1px solid var(--admin-card-border);
+}
+
+.admin-skin-derived-swatch b {
+    overflow: hidden;
+    color: var(--admin-text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.admin-skin-derived-swatch small {
+    color: var(--admin-text-muted);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 10px;
 }
 
 .admin-skin-number-field {
@@ -6320,12 +6454,16 @@
     background: color-mix(in srgb, var(--foreground) 3%, var(--admin-layer-1));
 }
 
-:is(.admin-storage-mode-section, .admin-email-delivery-section, .admin-access-registration-section, .admin-access-linuxdo-section, .admin-access-agreement-section, .admin-intercept-policy-section, .admin-third-party-credential-section) > .admin-settings-section-summary h2 {
+:is(.admin-storage-mode-section, .admin-email-delivery-section, .admin-access-registration-section, .admin-access-linuxdo-section, .admin-access-agreement-section, .admin-intercept-policy-section, .admin-third-party-credential-section)
+    > .admin-settings-section-summary
+    h2 {
     font-size: 16px;
     letter-spacing: -0.01em;
 }
 
-:is(.admin-storage-mode-section, .admin-email-delivery-section, .admin-access-registration-section, .admin-access-linuxdo-section, .admin-access-agreement-section, .admin-intercept-policy-section, .admin-third-party-credential-section) > .admin-settings-section-summary p {
+:is(.admin-storage-mode-section, .admin-email-delivery-section, .admin-access-registration-section, .admin-access-linuxdo-section, .admin-access-agreement-section, .admin-intercept-policy-section, .admin-third-party-credential-section)
+    > .admin-settings-section-summary
+    p {
     max-width: 760px;
     margin-top: 5px;
     font-size: 12px;
@@ -7809,7 +7947,7 @@
 .admin-api-log-media-modal-root .ant-modal-body {
     overflow: hidden;
     border-radius: 8px;
-    background: #000;
+    background: var(--surface);
     padding: 0;
 }
 
@@ -8565,6 +8703,12 @@
     align-items: center;
 }
 
+.admin-grafana-icon {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+}
+
 .admin-analytics-toolbar :is(.admin-filter-toggle, .admin-list-toolbar-actions .ant-btn, .admin-analytics-range-picker .ant-picker) {
     min-height: 38px;
 }
@@ -8594,6 +8738,22 @@
     gap: 4px;
     border-radius: var(--admin-radius-lg);
     background: var(--admin-layer-1);
+}
+
+.admin-analytics-agent-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    border-radius: var(--admin-radius-lg);
+    background: var(--admin-layer-1);
+}
+
+@media (max-width: 1080px) {
+    .admin-analytics-agent-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+    .admin-analytics-agent-grid { grid-template-columns: 1fr; }
 }
 
 .admin-analytics-health-card {
@@ -9742,17 +9902,17 @@
 :root:not(.dark) .admin-model-editor-drawer .ant-drawer-header,
 :root:not(.dark) .admin-model-editor-drawer .ant-drawer-footer {
     border-color: rgba(17, 17, 17, 0.15);
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer .ant-drawer-body,
 :root:not(.dark) .admin-drawer.admin-model-editor-drawer .ant-drawer-footer {
-    background: #f6f6f6;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-section {
     border: 1px solid rgba(17, 17, 17, 0.15);
-    background: #ffffff;
+    background: var(--surface);
     box-shadow: 0 1px 3px rgb(17 17 17 / 0.055);
 }
 
@@ -9763,46 +9923,46 @@
 :root:not(.dark) .admin-price-tier-mode-control .ant-segmented,
 :root:not(.dark) .admin-price-tier-billing-mode .ant-segmented {
     border-color: rgba(17, 17, 17, 0.18);
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-price-tier-card {
     border-color: rgba(17, 17, 17, 0.1);
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-price-tier-panel {
-    background: #f8f8f8;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer .admin-capability-reference-card,
 :root:not(.dark) .admin-model-editor-drawer .admin-capability-protocol-card {
     border-color: rgba(17, 17, 17, 0.18);
-    background: #f7f7f7;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer [role="radio"] {
     border-color: rgba(17, 17, 17, 0.25);
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer [role="radio"]:hover {
     border-color: rgba(17, 17, 17, 0.4);
-    background: #f8fafc;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-drawer [role="radio"][aria-checked="true"] {
     border-color: rgba(17, 17, 17, 0.7);
-    background: #ececec;
+    background: var(--secondary);
     box-shadow: inset 0 0 0 1px rgb(17 17 17 / 0.08);
 }
 
 :root:not(.dark) .admin-model-editor-drawer :is(.ant-input, .ant-input-affix-wrapper, .ant-input-number, .ant-select-selector, .ant-segmented) {
-    background: #ffffff;
+    background: var(--surface);
 }
 
 :root:not(.dark) .admin-model-editor-section-heading h2 {
-    color: #1f1f1f;
+    color: var(--foreground);
 }
 
 :root:not(.dark) .admin-model-editor-drawer .ant-form-item-label > label {
@@ -9812,13 +9972,13 @@
 
 :root:not(.dark) .admin-model-editor-footer-actions {
     border-color: rgba(17, 17, 17, 0.15);
-    background: #ffffff;
+    background: var(--surface);
     box-shadow: 0 6px 20px rgb(17 17 17 / 0.08);
 }
 
 :root:not(.dark) .admin-price-tier-mode-control .ant-segmented-item-selected,
 :root:not(.dark) .admin-price-tier-billing-mode .ant-segmented-item-selected {
-    background: #ececec;
+    background: var(--secondary);
     box-shadow: 0 1px 2px rgb(17 17 17 / 0.08);
 }
 
@@ -11266,7 +11426,7 @@ html[data-magicui-theme-vt="active"] .admin-shell * {
     margin-top: 8px;
     border-radius: 4px;
     padding: 4px 8px;
-    color: #ffffff;
+    color: var(--foreground);
     font-size: var(--fs-micro);
     line-height: 1.4;
 }

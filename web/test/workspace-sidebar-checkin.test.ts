@@ -19,25 +19,18 @@ describe("sidebar checkin offer", () => {
     });
 });
 
-describe("workspace sidebar checkin card", () => {
-    test("sits above account storage and uses the claim card colors without a light-blue stage", () => {
+describe("workspace sidebar", () => {
+    test("does not mount the removed checkin card in either sidebar mode", () => {
         const sidebar = readFileSync(resolve(import.meta.dir, "../src/components/layout/workspace-sidebar-nav.tsx"), "utf8");
-        const card = readFileSync(resolve(import.meta.dir, "../src/components/layout/workspace-sidebar-checkin.tsx"), "utf8");
-        const css = readFileSync(resolve(import.meta.dir, "../src/styles/globals.css"), "utf8");
-        const checkinIndex = sidebar.indexOf("<WorkspaceSidebarCheckin collapsed={collapsed} />");
-        const storageIndex = sidebar.indexOf("<WorkspaceSidebarStorageMeter collapsed={collapsed} />");
-        const start = css.indexOf(".app-user-workspace .app-workspace-sidebar-checkin {");
-        const end = css.indexOf(".app-user-workspace .app-workspace-sidebar-storage {", start);
-        const block = css.slice(start, end);
+        expect(sidebar).not.toContain("WorkspaceSidebarCheckin");
+        expect(sidebar).toContain("<WorkspaceSidebarStorageMeter collapsed={collapsed} />");
+    });
 
-        expect(checkinIndex).toBeGreaterThan(-1);
-        expect(storageIndex).toBeGreaterThan(checkinIndex);
-        expect(card).toContain("立即领取");
-        expect(card).toContain("今日可领");
-        expect(card).toContain("checkinCredits()");
-        expect(block).toContain("background: #fff;");
-        expect(block).toContain("background: #171717;");
-        expect(block).toContain("color: #12c8a0;");
-        expect(block).not.toMatch(/#(?:dbeafe|e8f1ff|eef4ff|e6f0ff|d6e8ff)/i);
+    test("canary badge consumes the active skin instead of a fixed yellow", () => {
+        const css = readFileSync(resolve(import.meta.dir, "../src/styles/home-skin.css"), "utf8");
+        const start = css.indexOf(".app-workspace-canary-badge {");
+        const badge = css.slice(start, css.indexOf("}", start));
+        expect(badge).toContain("background: var(--control-selected-bg)");
+        expect(badge).toContain("color: var(--control-selected-fg)");
     });
 });

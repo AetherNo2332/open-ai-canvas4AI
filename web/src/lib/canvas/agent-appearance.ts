@@ -5,7 +5,8 @@ export type CanvasAppearance = {
     welcomeTitle: string;
     welcomeDescription: string;
     inputPlaceholder: string;
-    avatarType: "orb" | "live2d";
+    avatarType: "orb" | "png" | "live2d";
+    avatarResourceId: string;
     live2dResourceId: string;
     live2dEntry: string;
     avatarHeight: number;
@@ -19,6 +20,7 @@ export const DEFAULT_CANVAS_APPEARANCE: CanvasAppearance = {
     welcomeDescription: "从一个想法开始，和{agentName}一起创作。",
     inputPlaceholder: "输入操作指导；用 @ 引用画布节点，用 / 或 、 引用 Skills",
     avatarType: "orb",
+    avatarResourceId: "",
     live2dResourceId: "",
     live2dEntry: "",
     avatarHeight: 220,

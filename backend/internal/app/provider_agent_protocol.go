@@ -156,7 +156,10 @@ func canonicalAgentChatBody(source *canonicalAgentRequest, claude bool) map[stri
 	if named, ok := choice.(map[string]interface{}); ok {
 		choice = map[string]interface{}{"type": "function", "function": map[string]interface{}{"name": named["name"]}}
 	}
-	body := map[string]interface{}{"messages": messages, "tools": tools, "tool_choice": choice, "parallel_tool_calls": false}
+	// 允许多个独立工具调用在同一个响应里返回：实测模型会主动规划"4 张图一次性并行读"，
+	// 而执行侧本来就按 state.Calls 数组逐个执行（同批内不产生模型往返）。写死 false 时
+	// 每个工具调用都独占一次模型往返，等于把 Agent 的步数放大数倍。
+	body := map[string]interface{}{"messages": messages, "tools": tools, "tool_choice": choice, "parallel_tool_calls": true}
 	if !claude && source.PromptCacheKey != "" {
 		body["prompt_cache_key"] = source.PromptCacheKey
 	}
@@ -188,7 +191,7 @@ func canonicalAgentResponsesBody(source *canonicalAgentRequest) map[string]inter
 		converted["type"] = "function"
 		tools = append(tools, converted)
 	}
-	body := map[string]interface{}{"input": messages, "tools": tools, "tool_choice": source.ToolChoice, "parallel_tool_calls": false}
+	body := map[string]interface{}{"input": messages, "tools": tools, "tool_choice": source.ToolChoice, "parallel_tool_calls": true}
 	if source.PromptCacheKey != "" {
 		body["prompt_cache_key"] = source.PromptCacheKey
 	}

@@ -59,9 +59,17 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 	}
 	body["model"] = input.Config.Model
 	applyTextThinking(body, input, protocol)
-	applyAgentOutputLimit(body, agentStepOutputLimit(input), protocol)
+	applyAgentOutputLimit(body, cloudAgentOutputTokens(input), protocol)
+	applyAgentStrictTools(body, input.TextOptions.StrictTools)
 	normalizeAgentToolChoice(body, input, protocol)
 	result, err := postAgentRequest(ctx, input, path, body, protocol)
+	// 上游不认 strict：去掉标记重发一次，并记住这条线路（下次不再尝试）。
+	if err != nil && input.TextOptions.StrictTools && isAgentStrictToolsCompatibilityError(err) {
+		if withoutStrict := cloneStringAnyMap(body); stripAgentStrictTools(withoutStrict) {
+			cloudAgentRememberStrictToolsRejected(input.Config.ChannelID, input.Config.ChannelModelKey)
+			result, err = postAgentRequest(ctx, input, path, withoutStrict, protocol)
+		}
+	}
 	if protocol == "chat-completion" && isAgentToolChoiceCompatibilityError(err) {
 		if !isAutoAgentToolChoice(body["tool_choice"]) {
 			autoBody := cloneStringAnyMap(body)
@@ -74,10 +82,68 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 			result, err = postAgentRequest(ctx, input, path, withoutToolChoice, protocol)
 		}
 	}
+	// 少数 OpenAI 兼容上游不认 parallel_tool_calls：回退到不带该字段的单调用行为，
+	// 而不是让整步失败。
+	if err != nil && protocol == "chat-completion" && isAgentParallelToolCallsCompatibilityError(err) {
+		withoutParallel := cloneStringAnyMap(body)
+		delete(withoutParallel, "parallel_tool_calls")
+		result, err = postAgentRequest(ctx, input, path, withoutParallel, protocol)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// cloudAgentOutputTokens 取本次调用的输出上限。
+//
+// 三条来源语义不同，必须分层而不是"谁先谁赢"：
+//   - input.MaxOutputTokens / input.TextOptions.MaxOutputTokens 是**策略上限**
+//     （画布 Agent 每步按运行时策略下发；0 表示这一步不限制输出）；
+//   - input.CapabilityMaxOutputTokens 是**模型物理上限**（渠道模型能力里声明的 maxOutputTokens）。
+//
+// 因此取所有非零值中的最小值：策略设 131072、能力 16384 → 16384；策略设 0（不限制）→ 用能力值；
+// 两者都为 0 → 不限制（上游按剩余上下文放行）。
+func cloudAgentOutputTokens(input canvasGenerationInput) int {
+	limit := 0
+	for _, candidate := range []int{input.MaxOutputTokens, input.TextOptions.MaxOutputTokens, input.CapabilityMaxOutputTokens} {
+		if candidate <= 0 {
+			continue
+		}
+		if limit == 0 || candidate < limit {
+			limit = candidate
+		}
+	}
+	return limit
+}
+
+// applyAgentOutputLimit 按协议写入输出上限字段名。
+func applyAgentOutputLimit(body map[string]interface{}, limit int, protocol string) {
+	if limit <= 0 {
+		return
+	}
+	field := "max_tokens"
+	if protocol == "responses" {
+		field = "max_output_tokens"
+	}
+	applyTextOutputLimit(body, limit, field)
+}
+
+// isAgentParallelToolCallsCompatibilityError 识别上游不认识 parallel_tool_calls 的报错。
+func isAgentParallelToolCallsCompatibilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	var payloadErr providerPayloadError
+	if errors.As(err, &payloadErr) {
+		message += " " + strings.ToLower(payloadErr.raw)
+	}
+	var httpErr providerHTTPError
+	if errors.As(err, &httpErr) {
+		message += " " + strings.ToLower(httpErr.Body)
+	}
+	return strings.Contains(message, "parallel_tool_calls") || strings.Contains(message, "parallel tool calls") || strings.Contains(message, "parallel_tool_call")
 }
 
 func postAgentRequest(ctx context.Context, input canvasGenerationInput, path string, body map[string]interface{}, protocol string) (map[string]interface{}, error) {
@@ -90,39 +156,6 @@ func postAgentRequest(ctx context.Context, input canvasGenerationInput, path str
 		return nil, err
 	}
 	return parseAgentToolPayload(payload, protocol)
-}
-
-// agentStepOutputLimit 取本次 Agent 调用的输出上限。
-//
-// 两个来源语义相同但通道不同：textOptions.maxOutputTokens 是任务信封里下发的策略值
-// （画布 Agent 每步按运行时策略给，persist 在任务输入里，重启后仍在）；input.MaxOutputTokens
-// 是进程内直传的旧入口（渠道模型能力声明）。都为 0 时不写上限字段，交给上游按剩余上下文放行。
-// 都非零时取较小值：策略上限不该超过模型自己声明的物理上限。
-func agentStepOutputLimit(input canvasGenerationInput) int {
-	limits := []int{input.TextOptions.MaxOutputTokens, input.MaxOutputTokens}
-	limit := 0
-	for _, candidate := range limits {
-		if candidate <= 0 {
-			continue
-		}
-		if limit == 0 || candidate < limit {
-			limit = candidate
-		}
-	}
-	return limit
-}
-
-// applyAgentOutputLimit 按协议写入输出上限字段名：Claude 与 Chat Completions 用 max_tokens，
-// Responses 用 max_output_tokens。
-func applyAgentOutputLimit(body map[string]interface{}, limit int, protocol string) {
-	if limit <= 0 {
-		return
-	}
-	field := "max_tokens"
-	if protocol == "responses" {
-		field = "max_output_tokens"
-	}
-	applyTextOutputLimit(body, limit, field)
 }
 
 func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, adapter protocol.AgentAdapter) (map[string]interface{}, error) {
@@ -153,7 +186,8 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 			return nil, errors.New("声明式 Agent 请求体必须是 JSON 对象")
 		}
 		applyTextThinking(body, input, wire)
-		applyAgentOutputLimit(body, agentStepOutputLimit(input), wire)
+		applyAgentOutputLimit(body, cloudAgentOutputTokens(input), wire)
+		applyAgentStrictTools(body, input.TextOptions.StrictTools)
 		normalizeAgentToolChoice(body, input, wire)
 		spec.Body = body
 		if input.StreamText {
@@ -171,7 +205,11 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 			}
 			if strings.Contains(strings.ToLower(mime), "event-stream") {
 				parser.flush()
-				return parser.result()
+				result, resultErr := parser.result()
+				if resultErr == nil {
+					attachProviderPiUsage(result, providerPiUsageFromBody(data, wire))
+				}
+				return result, resultErr
 			}
 			var payload map[string]interface{}
 			if err := json.Unmarshal(data, &payload); err != nil {
@@ -184,6 +222,15 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 	if err != nil {
 		return nil, err
 	}
+	// Known protocols must preserve stop reasons and provider usage for non-stream
+	// requests too. Native compaction cannot accept a truncated summary as complete.
+	if knownWire {
+		var payload map[string]interface{}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return nil, fmt.Errorf("Agent 接口返回格式无效：%w", err)
+		}
+		return parseAgentToolPayload(payload, wire)
+	}
 	parsed, err := adapter.ParseAgent(ctx, body)
 	if err != nil {
 		return nil, err
@@ -192,6 +239,7 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 	if parsed.Reasoning != "" {
 		result["reasoning"] = parsed.Reasoning
 	}
+	attachProviderPiUsage(result, providerPiUsageFromManifestUsage(parsed.Usage))
 	calls := make([]interface{}, 0, len(parsed.ToolCalls))
 	for _, call := range parsed.ToolCalls {
 		mapped := map[string]interface{}{
@@ -393,6 +441,9 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 		return nil, err
 	}
 	result := map[string]interface{}{"mode": "text", "text": "", "toolCalls": []interface{}{}}
+	if encoded, err := json.Marshal(payload); err == nil {
+		attachProviderPiUsage(result, providerPiUsageFromBody(encoded, protocol))
+	}
 	if protocol == "responses" {
 		result["text"] = firstNonEmptyString(stringField(payload, "output_text"), extractResponseText(payload))
 		if reasoning := extractResponseReasoning(payload); reasoning != "" {
@@ -407,6 +458,15 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 			calls = append(calls, map[string]interface{}{"id": firstNonEmptyString(stringField(item, "call_id"), stringField(item, "id")), "type": "function", "function": map[string]interface{}{"name": stringField(item, "name"), "arguments": stringField(item, "arguments")}})
 		}
 		result["toolCalls"] = calls
+		// failed/cancelled 是这次调用没成功，不是"内容不完整"：按解析错误处理。
+		if cloudAgentResponsesStatusFailed(firstNonEmptyString(stringField(payload, "status"), "")) {
+			return nil, fmt.Errorf("上游返回 %s，这一步没有完成", stringField(payload, "status"))
+		}
+		raw := cloudAgentResponsesStopReason("", payload)
+		cloudAgentApplyStopReason(result, raw)
+		// 非流式响应本身就是终态：terminalEventSeen/streamDoneSeen 都为真，
+		// 只有"原因原文是否非空"需要如实记录。
+		cloudAgentApplyStopFacts(result, true, strings.TrimSpace(raw) != "", true)
 		return result, nil
 	}
 	if protocol == "claude-api" {
@@ -431,6 +491,8 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 		if result["text"] == "" && len(calls) == 0 {
 			return nil, errors.New("Claude Agent 接口没有返回内容")
 		}
+		cloudAgentApplyStopReason(result, stringField(payload, "stop_reason"))
+		cloudAgentApplyStopFacts(result, true, strings.TrimSpace(stringField(payload, "stop_reason")) != "", true)
 		return result, nil
 	}
 	choices := interfaceSlice(payload["choices"])
@@ -450,6 +512,8 @@ func parseAgentToolPayload(payload map[string]interface{}, protocol string) (map
 		calls = append(calls, map[string]interface{}{"id": stringField(item, "id"), "type": "function", "function": map[string]interface{}{"name": stringField(function, "name"), "arguments": stringField(function, "arguments")}})
 	}
 	result["toolCalls"] = calls
+	cloudAgentApplyStopReason(result, stringField(choice, "finish_reason"))
+	cloudAgentApplyStopFacts(result, true, strings.TrimSpace(stringField(choice, "finish_reason")) != "", true)
 	return result, nil
 }
 
@@ -476,7 +540,11 @@ func postStreamingAgent(ctx context.Context, config providerConfig, path string,
 		return parseAgentToolPayload(payload, protocol)
 	}
 	parser.flush()
-	return parser.result()
+	result, resultErr := parser.result()
+	if resultErr == nil {
+		attachProviderPiUsage(result, providerPiUsageFromBody(data, protocol))
+	}
+	return result, resultErr
 }
 
 type streamingAgentToolCall struct {
@@ -486,16 +554,24 @@ type streamingAgentToolCall struct {
 }
 
 type streamingAgentParser struct {
-	protocol      string
-	buffer        string
-	text          strings.Builder
-	reasoning     strings.Builder
-	toolCalls     map[int]*streamingAgentToolCall
-	toolCallByID  map[string]int
-	completed     map[string]interface{}
-	err           error
-	emit          func(string)
-	emitReasoning func(string)
+	protocol     string
+	buffer       string
+	text         strings.Builder
+	reasoning    strings.Builder
+	toolCalls    map[int]*streamingAgentToolCall
+	toolCallByID map[string]int
+	completed    map[string]interface{}
+	// stopReason 是上游的终止原因原文（OpenAI finish_reason / Claude stop_reason / Responses status）。
+	// 它决定这一步是"说完了"还是"被截断了"，运行时按它分支，不再靠匹配错误字符串倒推。
+	stopReason string
+	// terminalEventSeen / streamDoneSeen 是**解析事实**：前者表示收到该协议的终态事件，
+	// 后者表示收到该协议的流结束标记（OpenAI `[DONE]`、Claude `message_stop`、Responses 终态事件）。
+	// 它们不能由归一化 kind 反推——上游给了新词时 kind 是 unknown，但终态事件确实收到了。
+	terminalEventSeen bool
+	streamDoneSeen    bool
+	err               error
+	emit              func(string)
+	emitReasoning     func(string)
 }
 
 func newStreamingAgentParser(protocol string, emit func(string)) *streamingAgentParser {
@@ -544,7 +620,12 @@ func (p *streamingAgentParser) consumeFrame(frame string) {
 		}
 	}
 	raw := strings.TrimSpace(strings.Join(dataLines, "\n"))
-	if raw == "" || raw == "[DONE]" {
+	if raw == "[DONE]" {
+		// OpenAI 的流结束标记：它本身不是终止原因，但"流被正常收尾"是独立事实。
+		p.streamDoneSeen = true
+		return
+	}
+	if raw == "" {
 		return
 	}
 	var payload map[string]interface{}
@@ -573,8 +654,24 @@ func (p *streamingAgentParser) consumeResponsesEvent(eventName string, payload m
 		p.appendText(stringField(payload, "delta"))
 	case "response.reasoning.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
 		p.appendReasoning(stringField(payload, "delta"))
-	case "response.completed":
-		p.completed, _ = payload["response"].(map[string]interface{})
+	case "response.completed", "response.incomplete", "response.failed":
+		response, _ := payload["response"].(map[string]interface{})
+		if eventType == "response.completed" {
+			p.completed = response
+		}
+		// 只有 status=completed 才算"说完了"；incomplete 要再读 incomplete_details.reason
+		// 才能分出"输出到顶"与"内容过滤"。failed/cancelled 是这次调用没成功：按解析错误处理，
+		// 走既有 model_failure 路径，不能让它在运行时被当成"正常结束但没给原因"。
+		status := firstNonEmptyString(stringField(response, "status"), eventType)
+		if cloudAgentResponsesStatusFailed(status) {
+			p.err = fmt.Errorf("上游返回 %s，这一步没有完成", status)
+			return
+		}
+		p.terminalEventSeen = true
+		p.streamDoneSeen = true
+		if reason := cloudAgentResponsesStopReason(status, response); reason != "" {
+			p.stopReason = reason
+		}
 	case "response.output_item.added":
 		item, _ := payload["item"].(map[string]interface{})
 		if stringField(item, "type") == "function_call" {
@@ -621,6 +718,12 @@ func (p *streamingAgentParser) consumeChatCompletionEvent(payload map[string]int
 			}
 			current.arguments += stringField(function, "arguments")
 		}
+		// 终止块才带非空 finish_reason（tool_calls/length/stop/…）；前面的 chunk 一律是 null，
+		// 所以每次非空就覆盖，留到流结束时用的就是最后一个有效值。
+		if reason := strings.TrimSpace(stringField(choice, "finish_reason")); reason != "" {
+			p.stopReason = reason
+			p.terminalEventSeen = true
+		}
 	}
 }
 
@@ -655,6 +758,18 @@ func (p *streamingAgentParser) consumeClaudeEvent(payload map[string]interface{}
 		if stringField(delta, "type") == "input_json_delta" {
 			p.toolCall(index).arguments += stringField(delta, "partial_json")
 		}
+	case "message_delta":
+		// Claude 的终止原因在 message_delta.stop_reason：
+		// max_tokens / tool_use / end_turn / stop_sequence / refusal / pause_turn。
+		delta, _ := payload["delta"].(map[string]interface{})
+		if reason := strings.TrimSpace(stringField(delta, "stop_reason")); reason != "" {
+			p.stopReason = reason
+			p.terminalEventSeen = true
+		}
+	case "message_stop":
+		// Claude 的流结束标记。它可能与 stop_reason 同时出现，也可能没有（流被中断），
+		// 所以"收到终态事件"与"流正常收尾"必须分开记。
+		p.streamDoneSeen = true
 	case "error":
 		errValue, _ := payload["error"].(map[string]interface{})
 		p.err = errors.New(defaultString(stringField(errValue, "message"), "Claude 上游返回失败"))
@@ -718,6 +833,11 @@ func (p *streamingAgentParser) result() (map[string]interface{}, error) {
 		if p.reasoning.Len() > 0 {
 			result["reasoning"] = p.reasoning.String()
 		}
+		// 流式拿到过终止块时以它为准（parseAgentToolPayload 只能看到 completed 快照）。
+		if strings.TrimSpace(p.stopReason) != "" {
+			cloudAgentApplyStopReason(result, p.stopReason)
+		}
+		cloudAgentApplyStopFacts(result, p.terminalEventSeen, strings.TrimSpace(p.stopReason) != "", p.streamDoneSeen)
 		return result, nil
 	}
 	result := map[string]interface{}{"mode": "text", "text": p.text.String(), "toolCalls": []interface{}{}}
@@ -749,6 +869,8 @@ func (p *streamingAgentParser) result() (map[string]interface{}, error) {
 	if p.text.Len() == 0 && len(calls) == 0 {
 		return nil, errors.New("画布 Agent 接口没有返回内容")
 	}
+	cloudAgentApplyStopReason(result, p.stopReason)
+	cloudAgentApplyStopFacts(result, p.terminalEventSeen, strings.TrimSpace(p.stopReason) != "", p.streamDoneSeen)
 	return result, nil
 }
 
@@ -844,7 +966,10 @@ func executeProtocolCreateRequest(ctx context.Context, input canvasGenerationInp
 	if text == "" {
 		return nil, nil, errors.New("流式文本接口没有返回内容")
 	}
-	return data, &protocol.Result{Text: text, Reasoning: stringField(parsed, "reasoning")}, nil
+	return data, &protocol.Result{
+		Text: text, Reasoning: stringField(parsed, "reasoning"),
+		Usage: providerResultUsage(parsed),
+	}, nil
 }
 
 func runLegacyTextTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
@@ -953,6 +1078,13 @@ func applyTextThinking(body map[string]interface{}, input canvasGenerationInput,
 // disagree on forced choices. Normalize before the first network request while
 // preserving required/named choices for non-reasoning structured tasks.
 func normalizeAgentToolChoice(body map[string]interface{}, input canvasGenerationInput, protocol string) {
+	if protocol == "chat-completion" || protocol == "responses" || protocol == "claude-api" {
+		if len(creationMaps(body["tools"])) == 0 {
+			delete(body, "tools")
+			delete(body, "tool_choice")
+			return
+		}
+	}
 	if protocol == "chat-completion" && (input.TextOptions.Thinking || isAutoAgentToolChoice(body["tool_choice"])) {
 		delete(body, "tool_choice")
 	}
@@ -961,6 +1093,7 @@ func normalizeAgentToolChoice(body map[string]interface{}, input canvasGeneratio
 type providerTextResult struct {
 	Text      string
 	Reasoning string
+	Usage     map[string]any
 }
 
 func providerTextTaskResult(result providerTextResult) map[string]interface{} {
@@ -968,7 +1101,14 @@ func providerTextTaskResult(result providerTextResult) map[string]interface{} {
 	if strings.TrimSpace(result.Reasoning) != "" {
 		payload["reasoning"] = result.Reasoning
 	}
+	attachProviderPiUsage(payload, providerPiUsageFromManifestUsage(result.Usage))
 	return payload
+}
+
+func attachProviderPiUsage(result map[string]interface{}, usage map[string]any) {
+	if len(usage) > 0 {
+		result["usage"] = usage
+	}
 }
 
 func applyTextOutputLimit(body map[string]interface{}, limit int, field string) {
@@ -1114,7 +1254,7 @@ func requestTextProvider(ctx context.Context, config providerConfig, path string
 	if err != nil {
 		return providerTextResult{}, err
 	}
-	result := providerTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning")}
+	result := providerTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning"), Usage: providerResultUsage(parsed)}
 	if result.Text == "" {
 		return providerTextResult{}, errors.New("文本接口没有返回内容")
 	}
@@ -1132,11 +1272,18 @@ func postStreamingTextResult(ctx context.Context, config providerConfig, path st
 	if err != nil {
 		return providerTextResult{}, err
 	}
-	result := providerTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning")}
+	result := providerTextResult{Text: stringField(parsed, "text"), Reasoning: stringField(parsed, "reasoning"), Usage: providerResultUsage(parsed)}
 	if result.Text == "" {
 		return providerTextResult{}, errors.New("流式文本接口没有返回内容")
 	}
 	return result, nil
+}
+
+func providerResultUsage(result map[string]interface{}) map[string]any {
+	if usage, ok := result["usage"].(map[string]any); ok {
+		return usage
+	}
+	return nil
 }
 
 func extractTextPayload(payload map[string]interface{}, protocol string) string {

@@ -9,14 +9,22 @@ export type ModelCapabilityConfig = {
 };
 
 export type TextCapabilityConfig = {
+    /** Whether Agent image inspection is supported by this text model. */
+    visionSupported?: boolean;
+    /** Optional Agent batch image ceiling; zero/omitted means runtime probing. */
+    visionMaxBatchImages?: number;
+    /** Optional Agent visual cost ceiling; zero/omitted means runtime probing. */
+    visionMaxBatchCost?: number;
     /** Whether the upstream text endpoint accepts SSE streaming responses. */
     streaming?: boolean;
     /** Whether the model exposes a user-selectable reasoning/thinking mode. */
     thinking?: boolean;
-    /** Total provider input plus output context window, in tokens. */
-    contextWindowTokens: number;
-    /** Provider completion/reasoning output ceiling, in tokens. */
-    maxOutputTokens: number;
+    /** Provider-documented total context window. Zero means unknown. */
+    contextWindowTokens?: number;
+    /** Output capacity held back from the window when calculating input pressure. */
+    reservedOutputTokens?: number;
+    /** Provider-declared ceiling for a single call. Zero means undeclared (never guessed). */
+    maxOutputTokens?: number;
     references: {
         promptMaxChars: number;
         maxImages: number;
@@ -118,17 +126,15 @@ function normalizeCapabilityStrings(values: string[]) {
     return Array.from(new Set(values.map(normalizeCapabilityString)));
 }
 
+export function automaticTextOutputReserve(text: TextCapabilityConfig): number {
+    if ((text.maxOutputTokens || 0) > 0) return text.maxOutputTokens!;
+    return (text.contextWindowTokens || 0) > 0 ? Math.min(32768, Math.max(1, Math.floor(text.contextWindowTokens! / 8))) : 0;
+}
+
 export function normalizeModelCapabilityConfig(config: ModelCapabilityConfig): ModelCapabilityConfig {
     return {
         ...config,
-        text: config.text
-            ? {
-                  ...config.text,
-                  streaming: config.text.streaming !== false,
-                  contextWindowTokens: config.text.contextWindowTokens || 128_000,
-                  maxOutputTokens: config.text.maxOutputTokens || 16_384,
-              }
-            : config.text,
+        text: config.text ? { ...config.text, streaming: config.text.streaming !== false, reservedOutputTokens: automaticTextOutputReserve(config.text) } : config.text,
         image: config.image
             ? {
                   ...config.image,
@@ -296,9 +302,13 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
 
 export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = ""): ModelCapabilityConfig {
     const text: TextCapabilityConfig = {
+        visionSupported: false,
+        visionMaxBatchImages: 0,
+        visionMaxBatchCost: 0,
         streaming: true,
-        contextWindowTokens: 128_000,
-        maxOutputTokens: 16_384,
+        contextWindowTokens: 0,
+        reservedOutputTokens: 0,
+        maxOutputTokens: 0,
         // 文本模型的视觉能力必须由管理员明确开启，不能根据模型名猜测。
         references: { promptMaxChars: 32000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 },
     };

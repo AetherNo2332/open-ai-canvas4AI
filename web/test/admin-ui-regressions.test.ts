@@ -247,7 +247,9 @@ test("admin tables keep requested filters and actions in the intended positions"
     const storageToolbar = sourceSection(storageSource, "toolbar={", "toolbarActiveFilters=");
     expect(storageToolbar).toContain('className="admin-storage-resource-filters"');
     expect(storageToolbar).toContain('placeholder="资源 ID 或对象路径"');
-    expect(storageToolbar).toContain('placeholder="用户"');
+    expect(storageToolbar).toContain('placeholder="用户名 / 昵称 / 邮箱 / 用户 ID"');
+    expect(storageSource).toContain("user: debouncedUserQuery || undefined");
+    expect(storageSource).toContain("userId: debouncedUserQuery || undefined");
     expect(storageToolbar).toContain('aria-label="筛选资源类型"');
     expect(storageToolbar).toContain('aria-label="筛选资源状态"');
     expect(storageToolbar).toContain('aria-label="筛选存储类型"');
@@ -353,7 +355,7 @@ test("banner announcement editor keeps title styles through edit, save and statu
     expect(apiSource).toContain("export type { BannerTitleRun }");
 });
 
-test("admin console tokens and shell stay isolated from the user workspace", async () => {
+test("admin console keeps its scoped shell while consuming the configured site skin", async () => {
     const [tokens, shell, chrome, globals] = await Promise.all([
         Bun.file(new URL("../src/pages/admin/theme/admin-tokens.css", import.meta.url)).text(),
         Bun.file(new URL("../src/pages/admin/components/admin-shell.tsx", import.meta.url)).text(),
@@ -361,8 +363,11 @@ test("admin console tokens and shell stay isolated from the user workspace", asy
         Bun.file(new URL("../src/styles/globals.css", import.meta.url)).text(),
     ]);
 
-    expect(tokens).toContain("--admin-canvas: #f7f8fa;");
-    expect(tokens).toContain("--admin-canvas: #111317;");
+    expect(tokens).toContain("--admin-canvas: var(--site-admin-canvas);");
+    expect(tokens).toContain("--admin-surface: var(--site-admin-surface);");
+    expect(tokens).toContain("--admin-text: var(--site-text);");
+    expect(tokens).not.toContain("--admin-canvas: #f7f8fa;");
+    expect(tokens).not.toContain("--admin-canvas: #111317;");
     expect(tokens).not.toContain("--admin-layer-0: var(--workspace-");
     expect(tokens).not.toContain("--admin-layer-0: var(--skin-admin-");
     expect(shell).toContain("data-admin-root");

@@ -28,7 +28,7 @@ type PatchField struct {
 	Kind  string
 	Label string
 	Order int
-	// Limit > 0 时表示数值字段的绝对值上限（坐标用），避免模型写入离谱的几何值。
+	// Limit > 0 时表示数值字段的绝对值上限（坐标用），避免模型写入离谱的几何。
 	Limit       float64
 	Description string
 	MaxRunes    int

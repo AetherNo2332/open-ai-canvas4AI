@@ -12,3 +12,6 @@ bun.lock
 *.gif
 *.webp
 *.svg
+
+# 第三方压缩产物：格式化会破坏压缩库（Live2D Cubism Core 随部署发布）。
+*.min.js

@@ -13,8 +13,8 @@ describe("workspace credit gift mark", () => {
         expect(topBar).not.toContain("Coins");
         expect(canvas).toContain("<WorkspaceCreditGiftMark className=\"is-compact\" />");
         expect(canvas).not.toContain("Coins");
-        expect(mark).toContain("#FFB34A");
-        expect(mark).toContain("#12B8A8");
+        expect(mark).toContain("<Gift />");
+        expect(mark).not.toContain("stopColor");
         expect(css).toContain(".app-workspace-credit-gift");
         expect(css).toContain("rotate(-8deg)");
     });

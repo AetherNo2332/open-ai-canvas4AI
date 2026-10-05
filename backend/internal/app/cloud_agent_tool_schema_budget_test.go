@@ -52,11 +52,15 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 		t.Fatal("canvas_apply_ops 未暴露")
 	}
 
-	// 体积预算：上游 20 个工具实测 22,777 字节（预算 24000）；本 PR 新增 canvas_arrange_nodes
-	// 并把描述、patch 字段补齐后实测 21 个工具 24,788 字节，因此把预算显式上调到 25000
-	// （约 0.9% 余量）。新增工具或字段时请重新测量并有意识地调整这个数字，而不是让 schema
-	// 悄悄膨胀（它每一步都要发、还在前缀最前面）。
-	if len(raw) > 25000 {
-		t.Fatalf("平台工具 schema 体积 %d 字节超出预算 25000：请压缩描述或显式调整预算", len(raw))
+	// The full eligible catalog is sent at run start. Budget its actual request
+	// size rather than estimating from category subsets.
+	_ = raw
+	wire, err := json.Marshal(cloudAgentVisibleTools(tools, "", nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("wire schema: %d tools, %d bytes", len(cloudAgentToolNames(tools)), len(wire))
+	if len(wire) > 40000 {
+		t.Fatalf("模型实际接收的完整工具 schema 超出 40000 字节：%d", len(wire))
 	}
 }

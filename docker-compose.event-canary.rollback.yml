@@ -1,0 +1,10 @@
+services:
+  migrate:
+    image: canvas-event-backend:baseline-8ca7b95
+  backend:
+    image: canvas-event-backend:baseline-8ca7b95
+  agent:
+    image: canvas-event-agent:baseline-8ca7b95
+    volumes: [./.local/baseline/agent/harness:/agent/harness:ro]
+  web:
+    image: canvas-event-web:baseline-8ca7b95

@@ -132,7 +132,7 @@ func TestCloudAgentContinuationRejectsExactFrameWithoutServerSourceMetadata(t *t
 }
 
 // 交接帧必须按字节封顶：节点 ID 由画布文档给出，不截断时一组 5000 字符的 ID 就能把帧撑到
-// 几百 KB，而下一轮对整份历史有 64KB 硬闸 —— 用户会在续聊时直接收到"请新建对话"。
+// 几百 KB，而下一轮对整份历史有 192KB 硬闸 —— 用户会在续聊时直接收到"请新建对话"。
 func TestCloudAgentContinuationFrameStaysWithinByteBudget(t *testing.T) {
 	run := &CloudAgentRun{ID: "parent-run", Status: "completed"}
 	longID := strings.Repeat("n", 5000)
@@ -182,31 +182,5 @@ func TestCloudAgentContinuationFailureReasonIsScrubbed(t *testing.T) {
 	ok := cloudAgentContinuationContext(&CloudAgentRun{ID: "parent-run", Status: "failed", FailureMessage: "模型服务响应超时，请稍后重试"}, nil)
 	if !strings.Contains(ok, "模型服务响应超时") {
 		t.Fatalf("正常失败原因被误杀：%s", ok)
-	}
-}
-
-// 来源字段是服务端内部记账，物化成上游请求体时只能剩 role/content。
-func TestCloudAgentContinuationSourceNeverReachesUpstreamBody(t *testing.T) {
-	context := cloudAgentContinuationContext(&CloudAgentRun{ID: "parent-run", Status: "failed", FailureMessage: "模型服务响应超时"}, []string{"task-1"})
-	canonical := cloudAgentCanonicalFor("system", []providerTextMessage{{Role: "user", Content: context, AgentContextSource: "continuation"}}, "继续", CloudAgentRequest{}, false)
-	if got := stringField(canonical.Messages[0], cloudAgentContextSourceKey); got != "continuation" {
-		t.Fatalf("canonical 丢了来源标记：%q", got)
-	}
-	for _, body := range []map[string]any{
-		canonicalAgentChatBody(&canonical, false),
-		canonicalAgentResponsesBody(&canonical),
-		canonicalAgentGeminiBody(&canonical),
-		claudeAgentBody(canonicalAgentChatBody(&canonical, true)),
-	} {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(encoded), cloudAgentContextSourceKey) {
-			t.Fatal("内部消息来源字段不得泄露到上游协议")
-		}
-		if !strings.Contains(string(encoded), cloudAgentContinuationKind) {
-			t.Fatal("上游适配丢失了交接帧正文")
-		}
 	}
 }

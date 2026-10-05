@@ -378,6 +378,53 @@ export function AdminRowActions({ primary, actions, visibleActionCount }: { prim
     );
 }
 
+/**
+ * 外观页专用区块外壳（swiss-design）：直角、发丝线、左对齐眉标，不用卡片阴影。
+ * 版式规则见 AGENTS.md「页面配色、排版与降级页」。
+ */
+export function SettingsSection({
+    eyebrow,
+    title,
+    description,
+    status,
+    children,
+    footer,
+    className,
+    contentClassName,
+}: {
+    eyebrow?: string;
+    title: string;
+    description?: string;
+    status?: { label: string; color?: string } | ReactNode;
+    children: ReactNode;
+    footer?: ReactNode;
+    className?: string;
+    contentClassName?: string;
+}) {
+    return (
+        <section className={cn("admin-swiss-section", className)}>
+            <header className="admin-swiss-section-head">
+                {eyebrow ? <span className="admin-swiss-section-eyebrow">{eyebrow}</span> : null}
+                <div className="admin-swiss-section-heading">
+                    <h2>{title}</h2>
+                    {status ? (
+                        <div className="admin-swiss-section-status">
+                            {isStatusConfig(status) ? (
+                                <AdminStatusBadge label={status.label} tone={status.color === "success" ? "success" : status.color === "warning" ? "warning" : status.color === "error" ? "error" : status.color === "blue" ? "info" : "neutral"} />
+                            ) : (
+                                status
+                            )}
+                        </div>
+                    ) : null}
+                </div>
+                {description ? <p>{description}</p> : null}
+            </header>
+            <div className={cn("admin-swiss-section-body", contentClassName)}>{children}</div>
+            {footer ? <div className="admin-swiss-section-foot">{footer}</div> : null}
+        </section>
+    );
+}
+
 export function SettingsSectionCard({
     icon,
     title,

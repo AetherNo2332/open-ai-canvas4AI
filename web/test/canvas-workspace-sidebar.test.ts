@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { canvasDockStyle } from "../src/lib/canvas/canvas-aceternity-style";
 import { canvasThemes } from "../src/lib/canvas-theme";
 
-const component = (name: string) => readFileSync(new URL(`../src/components/canvas/${name}`, import.meta.url), "utf8");
+const component = (name: string) => readFileSync(new URL(`../src/components/canvas/${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 test("canvas removes the standalone asset tray while retaining sidebar assets and zoom controls", () => {
     const page = readFileSync(new URL("../src/pages/canvas/project.tsx", import.meta.url), "utf8");
@@ -93,7 +93,7 @@ test("editor rail and expanded panel share one restrained glass surface without 
     const page = readFileSync(new URL("../src/pages/canvas/project.tsx", import.meta.url), "utf8");
     const panel = component("canvas-workspace-panel.tsx");
     const styles = component("canvas-workspace-panel.css");
-    expect(page).toContain('<InfiniteCanvas');
+    expect(page).toContain("<InfiniteCanvas");
     expect(page).not.toContain("canvas-workspace-backdrop");
     expect(page).toContain("canvas-main-with-workspace");
     expect(styles).toContain(".canvas-main-with-workspace .canvas-editor-shell {\n    z-index: 0;");

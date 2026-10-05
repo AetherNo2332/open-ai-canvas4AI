@@ -77,3 +77,49 @@ test("full Agent refresh removes unchanged nodes but preserves conflicting local
     expect(() => mergeAgentCanvasEditor(previous, incoming, [local, remaining], [])).toThrow("冲突");
     expect(local.title).toBe("Unsaved local title");
 });
+
+// 分镜/批量表这类"以行 id 为键的列表"：服务端为控制体积只下发变化的那几行，
+// 前端必须按 id 做三方合并，未提到的行保持本地值。
+const storyboard = (rows: Array<Record<string, unknown>>): CanvasNodeData => ({ id: "sb-1", title: "分镜", type: CanvasNodeType.Script, position: { x: 0, y: 0 }, width: 920, height: 360, metadata: { status: "idle", storyboard: { rows, nextOffset: 0, hasMore: false } } });
+const row = (id: string, shot: number, patch: Record<string, unknown>) => ({ id, shotNumber: shot, plotDescription: `镜${shot}`, imageGenerationPrompt: `旧提示词${shot}`, ...patch });
+const scriptProject = (rows: Array<Record<string, unknown>>): CanvasProject => ({ ...project, nodes: [storyboard(rows)] });
+
+test("sparse storyboard row deltas merge by row id", () => {
+    const rows = [row("r1", 1, {}), row("r2", 2, {}), row("r3", 3, {})];
+    const before = storyboard([{ id: "r2", imageGenerationPrompt: "旧提示词2" }]);
+    const after = storyboard([{ id: "r2", imageGenerationPrompt: "新提示词2" }]);
+    const result = applyAgentCanvasPatch(scriptProject(rows), { ...patch, nodes: [{ before, after }] });
+    const updated = (result.nodes[0].metadata?.storyboard as { rows: Array<Record<string, unknown>> }).rows;
+    expect(updated.map((item) => item.imageGenerationPrompt)).toEqual(["旧提示词1", "新提示词2", "旧提示词3"]);
+    expect(updated.map((item) => item.plotDescription)).toEqual(["镜1", "镜2", "镜3"]);
+    expect(updated.map((item) => item.id)).toEqual(["r1", "r2", "r3"]);
+});
+
+test("local edits on untouched storyboard fields survive a sparse delta", () => {
+    const rows = [row("r1", 1, {}), { ...row("r2", 2, {}), dialogue: "本地刚写的台词" }];
+    const before = storyboard([{ id: "r2", imageGenerationPrompt: "旧提示词2" }]);
+    const after = storyboard([{ id: "r2", imageGenerationPrompt: "新提示词2" }]);
+    const result = applyAgentCanvasPatch(scriptProject(rows), { ...patch, nodes: [{ before, after }] });
+    const updated = (result.nodes[0].metadata?.storyboard as { rows: Array<Record<string, unknown>> }).rows;
+    const second = updated.find((item) => item.id === "r2") as Record<string, unknown>;
+    expect(second.imageGenerationPrompt).toBe("新提示词2");
+    expect(second.dialogue).toBe("本地刚写的台词");
+});
+
+test("sparse deltas append created rows and drop removed rows", () => {
+    const rows = [row("r1", 1, {}), row("r2", 2, {})];
+    // 协议：删除行下发完整旧行（否则无法与"本地改过"区分），新增行下发完整新行。
+    const before = storyboard([row("r1", 1, {})]);
+    const after = storyboard([{ id: "r3", shotNumber: 3, plotDescription: "镜3" }]);
+    const result = applyAgentCanvasPatch(scriptProject(rows), { ...patch, nodes: [{ before, after }] });
+    const updated = (result.nodes[0].metadata?.storyboard as { rows: Array<Record<string, unknown>> }).rows;
+    expect(updated.map((item) => item.id)).toEqual(["r2", "r3"]);
+    expect(updated[1].plotDescription).toBe("镜3");
+});
+
+test("a row the agent removed but the operator edited is a conflict, never a silent delete", () => {
+    const rows = [row("r1", 1, {}), { ...row("r2", 2, {}), dialogue: "本地新台词" }];
+    const before = storyboard([{ id: "r2", plotDescription: "镜2" }]);
+    const after = storyboard([]);
+    expect(() => applyAgentCanvasPatch(scriptProject(rows), { ...patch, nodes: [{ before, after }] })).toThrow("冲突");
+});

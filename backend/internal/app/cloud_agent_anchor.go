@@ -33,8 +33,9 @@ type cloudAgentReferenceAnchor struct {
 
 // cloudAgentCreativeAnchorForCanvas 按当前画布重建候选素材锚点。
 // 不继承旧视觉标记：工具成功和下一段正文都不是识别成功的可靠证据，节点也可能换图。
+// UserPrompt 仍按我们的口径截断：锚点会进检查点，超长提示词会放大每一步的请求体积。
 func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID string, canvas *model.CanvasProject, prompt string, _ *cloudAgentCreativeAnchor) (cloudAgentCreativeAnchor, error) {
-	anchor := cloudAgentCreativeAnchor{Version: 2, UserPrompt: prompt}
+	anchor := cloudAgentCreativeAnchor{Version: 2, UserPrompt: truncateRunes(prompt, 16000)}
 
 	doc, err := creationDocument(canvas.PayloadJSON)
 	if err != nil {

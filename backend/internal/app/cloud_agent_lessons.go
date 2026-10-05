@@ -96,16 +96,37 @@ func stripCloudAgentLessonBlock(system string) string {
 	return system
 }
 
-func (s *Service) attachCloudAgentLessons(canonical *canonicalAgentRequest, userID, taskText string) {
+func (s *Service) attachCloudAgentLessons(canonical *canonicalAgentRequest, userID, taskText string) string {
 	if canonical == nil || strings.TrimSpace(userID) == "" {
-		return
+		return ""
 	}
 	if strings.Contains(canonical.SystemPrompt, cloudAgentLessonBlockMarker) {
-		return
+		return ""
 	}
-	if block := s.cloudAgentLessonsBlock(userID, taskText); block != "" {
-		canonical.SystemPrompt += block
+	block := s.cloudAgentLessonsBlock(userID, taskText)
+	if block == "" {
+		return ""
 	}
+	canonical.SystemPrompt += block
+	return block
+}
+
+// cloudAgentHasMemories 报告该用户是否有已批准记忆：没有时 recall_lessons 只占 schema 开销。
+func (s *Service) cloudAgentHasMemories(userID string) bool {
+	if s == nil || s.repo == nil || strings.TrimSpace(userID) == "" {
+		return false
+	}
+	counts, err := s.repo.ApprovedAgentLessonCategoryCounts(userID)
+	if err != nil {
+		// 查询失败时宁可多暴露一个工具，也不要让模型失去召回能力。
+		return true
+	}
+	for _, row := range counts {
+		if row.Count > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // cloudAgentRecordMemorySegment 把系统提示里已经存在的个人记忆块登记为分段。

@@ -97,6 +97,9 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]mod
 		return nil, err
 	}
 	if _, err := s.adminSystemChannel(channelID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, NotFound("系统渠道不存在或已删除")
+		}
 		return nil, err
 	}
 	items, err := s.ensureChannelModels(channelID, true)

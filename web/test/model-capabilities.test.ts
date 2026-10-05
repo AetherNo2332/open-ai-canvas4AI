@@ -2,7 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 // Bun 直接执行 TypeScript 测试时需要保留扩展名；生产 tsconfig 不包含 test/。
-import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, normalizeVideoValue } from "../src/lib/model-capabilities.ts";
+import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, normalizeModelCapabilityConfig, normalizeVideoValue } from "../src/lib/model-capabilities.ts";
+
+test("automatic output reserve ignores legacy manual values without inventing a model ceiling", () => {
+    const profile = defaultModelCapabilityConfig();
+    Object.assign(profile.text!, { contextWindowTokens: 128000, maxOutputTokens: 8192, reservedOutputTokens: 64000 });
+    assert.equal(normalizeModelCapabilityConfig(profile).text!.reservedOutputTokens, 8192);
+    profile.text!.maxOutputTokens = 0;
+    const normalized = normalizeModelCapabilityConfig(profile).text!;
+    assert.equal(normalized.reservedOutputTokens, 16000);
+    assert.equal(normalized.maxOutputTokens, 0);
+    profile.text!.contextWindowTokens = 1000000;
+    assert.equal(normalizeModelCapabilityConfig(profile).text!.reservedOutputTokens, 32768);
+    profile.text!.contextWindowTokens = 0;
+    assert.equal(normalizeModelCapabilityConfig(profile).text!.reservedOutputTokens, 0);
+});
 
 test("text multimodal capability is not guessed from a model name", () => {
     for (const model of ["gpt-4o", "gemini-2.5-pro", "doubao-seed"]) {

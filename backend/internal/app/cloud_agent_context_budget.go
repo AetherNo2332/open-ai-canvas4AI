@@ -8,117 +8,256 @@ import (
 	"unicode/utf8"
 )
 
+// 一次模型调用可用的输入预算（token 口径）。
+//
+// 口径来源与上游一致（窗口算式）：工具 schema、协议包装与兜底轮都不体现在 canonical
+// 正文里，必须按窗口比例留一份 overhead，否则大窗口模型也用不满容量。
+// 与上游的差别是我们 P2 保留的三项语义：
+//   - 输出预留自动取本步输出预算，不再读取历史手填的预留值；
+//   - 逻辑模型取**所有可用 text 路由中最小的可用输入容量**（路由交集），而不是任选一条，
+//     也不是分别取最小窗口与最小输出预留（后者会在交叉组合上高估小窗口路由）；
+//   - 窗口未知（未声明 / 越界）时 Configured=false：界面不能声称"配置了模型上限"，
+//     压缩判据也要退回字节/条数兜底，而不是拿 128k 冒充真实窗口。
 const (
 	defaultCloudAgentContextWindowTokens = 128_000
 	defaultCloudAgentMaxOutputTokens     = 16_384
 	minCloudAgentContextWindowTokens     = 4_096
 	maxCloudAgentContextWindowTokens     = 10_000_000
+	// cloudAgentBudgetMinOverheadTokens / MaxOverheadTokens 是 overhead 的夹取区间。
+	cloudAgentBudgetMinOverheadTokens = 4_096
+	cloudAgentBudgetMaxOverheadTokens = 32_768
+	cloudAgentBudgetMinInputTokens    = 1_024
+	// cloudAgentCompactionPercent 是压缩触发线（输入预算的百分比）。
+	cloudAgentCompactionPercent = 85
 )
 
 type cloudAgentContextBudget struct {
-	ContextWindowTokens int
-	MaxOutputTokens     int
-	OverheadTokens      int
-	InputBudgetTokens   int
-	CompactAtTokens     int
-	Source              string
-	// Configured 说明这份预算里的窗口是不是"模型自己声明的值"：false 表示没有解析到
-	// 可用窗口、上面几个数都来自兜底默认值。压力读数据此决定要不要给出窗口占用率——
-	// 拿默认窗口冒充真实能力（例如给未声明窗口的模型算一个"占满 80%"）会误导排查。
-	Configured bool
+	Version             string `json:"version"`
+	Digest              string `json:"digest"`
+	ContextWindowTokens int    `json:"contextWindowTokens"`
+	// MaxOutputTokens is the actual request ceiling; the reserve is input-budget metadata.
+	MaxOutputTokens         int    `json:"maxOutputTokens"`
+	ReservedOutputTokens    int    `json:"reservedOutputTokens"`
+	OverheadTokens          int    `json:"overheadTokens"`
+	InputBudgetTokens       int    `json:"inputBudgetTokens"`
+	CompactAtTokens         int    `json:"compactAtTokens"`
+	CompactionReserveTokens int    `json:"compactionReserveTokens"`
+	KeepRecentTokens        int    `json:"keepRecentTokens"`
+	SummaryOutputTokens     int    `json:"summaryOutputTokens"`
+	Source                  string `json:"source"`
+	// Configured 为 false 表示没有解析到任何模型声明的窗口，这份预算是兜底默认值。
+	// 它与上游同名字段的语义一致（上游写得更细）：false 说明上面几个数都来自兜底默认值，
+	// 压力读数据此决定要不要给出窗口占用率——拿默认窗口冒充真实能力（例如给未声明窗口的
+	// 模型算一个"占满 80%"）会误导排查。
+	Configured bool `json:"configured"`
+}
+
+func (b cloudAgentContextBudget) sealed() cloudAgentContextBudget {
+	b.Version, b.Digest = "canvas-context-budget/v1", ""
+	b.CompactionReserveTokens = b.ContextWindowTokens - b.CompactAtTokens
+	b.KeepRecentTokens = min(20_000, max(1, b.InputBudgetTokens/4))
+	b.SummaryOutputTokens = min(8_192, max(1, b.InputBudgetTokens/8))
+	if b.MaxOutputTokens > 0 {
+		b.SummaryOutputTokens = min(b.SummaryOutputTokens, b.MaxOutputTokens)
+	}
+	raw, _ := json.Marshal(b)
+	b.Digest = cloudAgentTextDigest(string(raw))
+	return b
 }
 
 func defaultCloudAgentContextBudget() cloudAgentContextBudget {
 	budget := cloudAgentContextBudgetFor(defaultCloudAgentContextWindowTokens, defaultCloudAgentMaxOutputTokens, "default")
 	budget.Configured = false
-	return budget
+	return budget.sealed()
 }
 
+// cloudAgentOverheadTokens 是工具 schema / 协议包装与兜底轮的比例预留（窗口的 4%，夹在 4K–32K）。
+func cloudAgentOverheadTokens(contextWindow int) int {
+	if contextWindow <= 0 {
+		return 0
+	}
+	return min(max(contextWindow/25, cloudAgentBudgetMinOverheadTokens), cloudAgentBudgetMaxOverheadTokens)
+}
+
+// cloudAgentEffectiveOutputReserve uses the declared output ceiling, or a bounded
+// window-based request budget when no output ceiling has been declared.
+func cloudAgentEffectiveOutputReserve(text *TextCapabilityConfig) int {
+	if text == nil {
+		return 0
+	}
+	if text.MaxOutputTokens > 0 {
+		return text.MaxOutputTokens
+	}
+	if text.ContextWindowTokens > 0 {
+		return min(32_768, max(1, text.ContextWindowTokens/8))
+	}
+	return defaultCloudAgentMaxOutputTokens
+}
+
+// cloudAgentContextBudgetFor 由窗口与输出预留算出输入预算与压缩触发线。
+//
+// 入参越界（未声明 0、或超出 4K–10M）时退回兜底默认值并把 Configured 置为 false：
+// 上游的单返回值签名要保住（压缩兜底也依赖一个可用的预算），
+// 但"这是默认值而不是真实能力"必须能被界面与判据区分出来。
 func cloudAgentContextBudgetFor(contextWindow, maxOutput int, source string) cloudAgentContextBudget {
 	configured := true
 	if contextWindow < minCloudAgentContextWindowTokens || contextWindow > maxCloudAgentContextWindowTokens {
 		contextWindow, configured = defaultCloudAgentContextWindowTokens, false
 	}
-	if maxOutput < 256 || maxOutput >= contextWindow {
-		maxOutput = min(defaultCloudAgentMaxOutputTokens, contextWindow/4)
+	if maxOutput < 0 {
+		maxOutput = 0
 	}
-	// Tool schemas, provider wrappers and the final recovery turn are part of the
-	// request, but are not represented by the canonical message body alone. Keep
-	// a bounded proportional reserve so a 1M model can still use its capacity.
-	overhead := max(4_096, min(32_768, contextWindow/25))
+	// 输出预留不得吃掉整个窗口：留出至少一半给输入。
+	if maxOutput >= contextWindow {
+		maxOutput = contextWindow / 2
+	}
+	maxOutput = min(maxOutput, contextWindow-cloudAgentBudgetMinInputTokens)
+	overhead := min(cloudAgentOverheadTokens(contextWindow), contextWindow-maxOutput-cloudAgentBudgetMinInputTokens)
 	inputBudget := contextWindow - maxOutput - overhead
-	if inputBudget < 1_024 {
-		inputBudget = max(1_024, contextWindow/2)
-	}
 	return cloudAgentContextBudget{
-		ContextWindowTokens: contextWindow,
-		MaxOutputTokens:     maxOutput,
-		OverheadTokens:      overhead,
-		InputBudgetTokens:   inputBudget,
-		CompactAtTokens:     max(1_024, inputBudget*85/100),
-		Source:              source,
-		Configured:          configured,
-	}
+		ContextWindowTokens:  contextWindow,
+		MaxOutputTokens:      maxOutput,
+		ReservedOutputTokens: maxOutput,
+		OverheadTokens:       overhead,
+		InputBudgetTokens:    inputBudget,
+		CompactAtTokens:      max(cloudAgentBudgetMinInputTokens, inputBudget*cloudAgentCompactionPercent/100),
+		Source:               source,
+		Configured:           configured,
+	}.sealed()
 }
 
-// cloudAgentContextBudgetForRequest resolves the capability contract that will
-// actually execute the next text turn. Logical models use the safe intersection
-// of every eligible text route so route selection cannot choose a smaller window
-// after the context was assembled.
+// cloudAgentContextBudgetForRequest 解析"下一次文本调用真正会用的预算"。
+// 解析不到真实能力时返回兜底默认预算（Configured=false），调用方据此退回字节兜底。
 func (s *Service) cloudAgentContextBudgetForRequest(req CloudAgentRequest) cloudAgentContextBudget {
 	if s == nil || s.repo == nil {
 		return defaultCloudAgentContextBudget()
 	}
-	if req.LogicalModelID != "" {
-		if snapshot, err := s.routeCatalogSnapshot(); err == nil {
-			if cached, ok := snapshot.Models[req.LogicalModelID]; ok {
-				contextWindow, maxOutput := 0, 0
-				for _, route := range cached.Routes {
-					if normalizeCapability(route.CapabilitySpec.Capability) != "text" {
-						continue
-					}
-					capability, err := normalizedChannelModelCapability(&route.ChannelModel)
-					if err != nil || capability == nil || capability.Text == nil {
-						continue
-					}
-					if contextWindow == 0 || capability.Text.ContextWindowTokens < contextWindow {
-						contextWindow = capability.Text.ContextWindowTokens
-					}
-					if maxOutput == 0 || capability.Text.MaxOutputTokens < maxOutput {
-						maxOutput = capability.Text.MaxOutputTokens
-					}
-				}
-				if contextWindow > 0 && maxOutput > 0 {
-					return cloudAgentContextBudgetFor(contextWindow, maxOutput, "logical-route-intersection")
+	// 保留我方的入口（内部走 cloudAgentResolvedContextBudget）：它多一条"逻辑模型按所有可用
+	// text 路由取窗口/输出交集"的路径与 IncludingDisabled 的渠道模型解析；上游这里是内联版，
+	// 只覆盖渠道模型那一支，取能力字段也没算 effectiveOutputReserve，合并后按我方为准。
+	if budget, ok := s.cloudAgentResolvedContextBudget(req); ok {
+		return budget
+	}
+	budget := defaultCloudAgentContextBudget()
+	if text := s.cloudAgentChannelTextCapability(req); text != nil && text.MaxOutputTokens > 0 {
+		budget = cloudAgentContextBudgetFor(budget.ContextWindowTokens, min(budget.MaxOutputTokens, text.MaxOutputTokens), "default")
+		budget.Configured = false
+	}
+	if limits, err := s.cloudAgentStepLimits(); err == nil && limits.OutputTokens > 0 {
+		budget = cloudAgentContextBudgetFor(budget.ContextWindowTokens, min(budget.MaxOutputTokens, limits.OutputTokens), "default")
+		budget.Configured = false
+	}
+	return budget.sealed()
+}
+
+// cloudAgentResolvedContextBudget 是"能不能给出真实窗口"的判据入口。
+//
+//   - 逻辑模型：分别保留最小可用输入容量与最小输出上限。为什么取交集而不是
+//     "随便挑一条"：路由选择发生在上下文装配之后，装配按大窗口做、执行落到小窗口的路由时，
+//     请求会被上游直接拒（或者被悄悄截断）。窗口未知（0）的路由不参与；
+//     一条可用 text 路由都没有时返回 false，让调用方退回字节/条数兜底。
+//   - 渠道模型：任务行的 channel_model_id 在画布 Agent 上一直是空的（实测 82 个 agent 任务全为空），
+//     所以必须能从请求里的渠道 + 模型键兜底解析，否则模型窗口占比永远显示不出来、
+//     压缩判据也只能退回字节口径。
+func (s *Service) cloudAgentResolvedContextBudget(req CloudAgentRequest) (cloudAgentContextBudget, bool) {
+	if s == nil || s.repo == nil {
+		return cloudAgentContextBudget{}, false
+	}
+	limits, err := s.cloudAgentStepLimits()
+	if err != nil {
+		return cloudAgentContextBudget{}, false
+	}
+	if id := strings.TrimSpace(req.LogicalModelID); id != "" {
+		if snapshot, err := s.routeCatalogSnapshot(); err == nil && snapshot != nil {
+			if entry, ok := snapshot.Models[id]; ok {
+				if budget, ok := cloudAgentRouteIntersectionBudget(entry.Routes, limits.OutputTokens); ok {
+					return budget, true
 				}
 			}
 		}
-		return defaultCloudAgentContextBudget()
+		return cloudAgentContextBudget{}, false
 	}
-	if req.ChannelID != "" && req.ChannelModelKey != "" {
-		if capability := s.cloudAgentChannelTextCapability(req); capability != nil {
-			return cloudAgentContextBudgetFor(capability.ContextWindowTokens, capability.MaxOutputTokens, "channel-model")
-		}
+	text := s.cloudAgentChannelTextCapability(req)
+	if text == nil {
+		return cloudAgentContextBudget{}, false
 	}
-	return defaultCloudAgentContextBudget()
+	output := cloudAgentEffectiveOutputReserve(text)
+	if limits.OutputTokens > 0 {
+		output = min(output, limits.OutputTokens)
+	}
+	budget := cloudAgentContextBudgetFor(text.ContextWindowTokens, output, "channel-model")
+	if !budget.Configured {
+		return cloudAgentContextBudget{}, false
+	}
+	return budget, true
 }
 
-// cloudAgentChannelTextCapability resolves the text capability of the channel
-// model this turn will actually run on. Logical models have no single channel
-// model, so they return nil and keep the route-intersection path.
-func (s *Service) cloudAgentChannelTextCapability(req CloudAgentRequest) *TextCapabilityConfig {
-	if s == nil || s.repo == nil || req.ChannelID == "" || req.ChannelModelKey == "" {
+// cloudAgentChannelTextCapability 解析这次调用所属**渠道模型**的文本能力。
+// 逻辑模型没有单一渠道模型，这里返回 nil（走路由交集那条路）。
+func (s *Service) cloudAgentChannelTextCapability(request CloudAgentRequest) *TextCapabilityConfig {
+	if s == nil || s.repo == nil {
 		return nil
 	}
-	channelModel, err := s.repo.ChannelModelByKey(req.ChannelID, req.ChannelModelKey)
-	if err != nil {
+	if strings.TrimSpace(request.ChannelID) == "" || strings.TrimSpace(request.ChannelModelKey) == "" {
 		return nil
 	}
-	capability, err := normalizedChannelModelCapability(channelModel)
-	if err != nil || capability == nil || capability.Text == nil {
+	channelModel, err := s.repo.ChannelModelByKeyIncludingDisabled(request.ChannelID, request.ChannelModelKey)
+	if err != nil || channelModel == nil {
 		return nil
 	}
-	return capability.Text
+	config, err := normalizedChannelModelCapability(channelModel)
+	if err != nil || config == nil || config.Text == nil {
+		return nil
+	}
+	return config.Text
+}
+
+// cloudAgentRouteIntersectionBudget 取所有可用 text 路由中**最小的可用输入容量**。
+//
+// 逐条路由先算 window - 输出预留 - overhead，再按输入预算取最小值。
+// 不能分别取"最小窗口"与"最小输出预留"：当两者落在不同路由上时，小窗口那条会被高估
+// （512k/64k 与 1M/16k 会得到 512000-16000-20480 = 475520，而 512k 路由实际只有
+// 512000-64000-20480 = 427520）。按被高估的预算装配出的请求，最终落到小窗口路由上
+// 会被上游直接拒绝——这正是"路由交集"要防的事。
+func cloudAgentRouteIntersectionBudget(routes []cachedLogicalRoute, stepOutput ...int) (cloudAgentContextBudget, bool) {
+	var budget cloudAgentContextBudget
+	found := false
+	minWindow := 0
+	minOutput := 0
+	for _, route := range routes {
+		if normalizeCapability(route.CapabilitySpec.Capability) != "text" {
+			continue
+		}
+		channelModel := route.ChannelModel
+		config, err := normalizedChannelModelCapability(&channelModel)
+		if err != nil || config == nil || config.Text == nil {
+			continue
+		}
+		output := cloudAgentEffectiveOutputReserve(config.Text)
+		if len(stepOutput) > 0 && stepOutput[0] > 0 {
+			output = min(output, stepOutput[0])
+		}
+		if minOutput == 0 || output < minOutput {
+			minOutput = output
+		}
+		if config.Text.ContextWindowTokens <= 0 {
+			continue
+		}
+		if minWindow == 0 || config.Text.ContextWindowTokens < minWindow {
+			minWindow = config.Text.ContextWindowTokens
+		}
+		candidate := cloudAgentContextBudgetFor(config.Text.ContextWindowTokens, output, "logical-route-intersection")
+		if !found || candidate.InputBudgetTokens < budget.InputBudgetTokens {
+			budget = candidate
+			found = true
+		}
+	}
+	if !found || minWindow < minCloudAgentContextWindowTokens {
+		return cloudAgentContextBudget{}, false
+	}
+	// The smallest input budget and smallest output ceiling may belong to different routes.
+	budget.MaxOutputTokens = minOutput
+	return budget.sealed(), true
 }
 
 // cloudAgentEstimatedTokens is deliberately conservative for non-ASCII text.
@@ -161,9 +300,6 @@ func cloudAgentContextBudgetMessage(budget cloudAgentContextBudget) string {
 func formatTokenCount(value int) string {
 	if value < 1_000 {
 		return strconv.Itoa(value)
-	}
-	if value%1_000 == 0 {
-		return strconv.Itoa(value/1_000) + "K"
 	}
 	return strconv.Itoa(value/1_000) + "K"
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,10 @@ func (r *recordingRunner) Run(_ context.Context, _ string, args, _ []string, std
 }
 
 func TestSetEnvValuePreservesOtherSettings(t *testing.T) {
+	// Windows 的 chmod 只能翻转只读位，文件权限位恒为 0666，0o640 断言只在 POSIX 上成立。
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 不支持 POSIX 文件权限位，0o640 断言无法成立")
+	}
 	directory := t.TempDir()
 	path := filepath.Join(directory, ".env")
 	if err := os.WriteFile(path, []byte("# keep\nCANVAS_IMAGE_TAG=1.0.0\nPOSTGRES_DB=canvas\n"), 0o640); err != nil {
@@ -144,5 +149,45 @@ func TestCheckWritableDirectory(t *testing.T) {
 	}
 	if err := checkWritableDirectory(filepath.Join(directory, "missing")); err == nil {
 		t.Fatal("missing directory was accepted")
+	}
+}
+
+func TestComposeProjectNameUsesInstallDirectory(t *testing.T) {
+	cases := map[string]string{
+		"/opt/yingce":           "yingce",
+		"/srv/Open AI Canvas_2": "openaicanvas_2",
+		"/":                     "open-ai-canvas",
+		"/srv/!!!":              "open-ai-canvas",
+	}
+	for installDir, want := range cases {
+		if got := composeProjectName(installDir); got != want {
+			t.Errorf("composeProjectName(%q) = %q, want %q", installDir, got, want)
+		}
+	}
+}
+
+func TestWriteComposeEnvOverrideReplacesImageRefs(t *testing.T) {
+	installDir := t.TempDir()
+	stateDir := filepath.Join(installDir, "state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(installDir, ".env")
+	if err := os.WriteFile(envPath, []byte("CANVAS_BACKEND_IMAGE=old-backend\nCANVAS_WEB_IMAGE=old-web\nPOSTGRES_DB=canvas\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{config: Config{InstallDir: installDir, EnvFile: ".env", StateDir: stateDir}}
+	path, err := manager.writeComposeEnvOverride(deploymentImages{backend: "new-backend", web: "new-web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := string(data)
+	if !strings.Contains(value, "CANVAS_BACKEND_IMAGE=new-backend\n") || !strings.Contains(value, "CANVAS_WEB_IMAGE=new-web\n") || !strings.Contains(value, "POSTGRES_DB=canvas\n") {
+		t.Fatalf("unexpected override env: %q", value)
 	}
 }

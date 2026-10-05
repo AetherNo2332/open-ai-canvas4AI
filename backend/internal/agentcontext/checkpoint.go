@@ -18,6 +18,12 @@ const (
 	// Version 是检查点的结构版本：只有同版本的检查点才会被接受，避免旧摘要被新模型
 	// 当成完整事实使用。
 	Version = 1
+	// ThresholdBytes / ThresholdHistoryMessages 是"渠道没有配置模型上下文窗口"时的字节/条数
+	// 兜底线（本项目 V2 上下文计量的口径）。它们必须由这里唯一定义：后端把同一组数字申报给
+	// 界面（见 backend/internal/app/cloud_agent_context_pressure.go），压缩触发与压力展示
+	// 不能各说各话，否则会出现"界面显示还没到线、后台已经开始压"。
+	ThresholdBytes           = 48 << 10
+	ThresholdHistoryMessages = 16
 	// MaxCheckpointBytes 是检查点正文的上限：超限一律判为不合格（压缩模型输出不可控，
 	// 必须有一个硬边界，否则"压缩"自身又会变成一次超预算输入）。
 	MaxCheckpointBytes = 64 << 10
@@ -58,6 +64,10 @@ type Source struct {
 // 阈值由调用方传入而不是写死在这里：上游已经有一组跨轮历史闸门常量
 // （cloudAgentHistoryKeepRounds / cloudAgentHistoryMaxBytes），兜底判据必须复用同一组数字，
 // 否则同一份历史会出现"跨轮已经裁掉、轮内却还认为没超"的两套口径。
+//
+// 本项目的画布 Agent 调用点传的是上面那组已申报给界面的兜底线
+// （ThresholdHistoryMessages / ThresholdBytes）：阈值可传入是上游的接口形状，
+// 具体数字仍取"压缩触发与压力展示同一条线"。
 func ShouldCompact(historyMessages, encodedBytes, maxMessages, maxBytes int) bool {
 	if maxMessages <= 0 || maxBytes <= 0 {
 		return false

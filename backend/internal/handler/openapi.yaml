@@ -25,7 +25,42 @@ tags:
   - name: models
   - name: agent
   - name: admin
+  - name: skills
 paths:
+  /admin/settings/agent-scheduler:
+    get:
+      tags: [admin]
+      summary: 读取 Agent 调度配置（管理员）
+      responses:
+        '200': {description: "返回 setting：dispatchConcurrency、maxResidentSessions、maxResidentPerCanvas、revision、updatedAt"}
+        '403': {description: 无管理员权限}
+    put:
+      tags: [admin]
+      summary: 保存 Agent 配置并广播热更新事件
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision, dispatchConcurrency, maxResidentSessions, maxResidentPerCanvas]
+              properties:
+                expectedRevision: {type: integer, format: int64, minimum: 0}
+                dispatchConcurrency: {type: integer, minimum: 1, maximum: 16}
+                maxResidentSessions: {type: integer, minimum: 1, maximum: 64}
+                maxResidentPerCanvas: {type: integer, minimum: 1, maximum: 64}
+      responses:
+        '200': {description: 已持久化，返回新版 setting；执行器应用状态另行查询}
+        '400': {description: 非法参数或额度关系}
+        '403': {description: 无管理员权限}
+        '409': {description: 配置版本已变更，请刷新}
+  /admin/settings/agent-scheduler/status:
+    get:
+      tags: [admin]
+      summary: 读取脱敏 Agent 执行器运行状态（管理员）
+      responses:
+        '200': {description: "返回 instances：instanceId、resident、capacity、claimReservations、dispatchActive、readyQueued、draining、appliedConfigRevision、lastHeartbeatAt、online"}
+        '403': {description: 无管理员权限}
   /admin/settings/appearance/live2d:
     post:
       tags: [admin]
@@ -123,6 +158,79 @@ paths:
         "200":
           description: 标准信封 data 为 presets 数组；预设只引用公开且启用的种子技能
         "500": {$ref: "#/components/responses/Error"}
+  /skills:
+    get:
+      tags: [skills]
+      summary: 列出技能；在个人技能视图按技能库分类筛选
+      parameters:
+        - {in: query, name: scope, schema: {type: string, enum: [public, mine, created, favorites], default: public}}
+        - {in: query, name: libraryCategoryId, description: 用户技能库分类 ID，仅支持 mine 或 created 视图；与 libraryUncategorized 互斥, schema: {type: string}}
+        - {in: query, name: libraryUncategorized, description: 仅列出未归类技能，仅支持 mine 或 created 视图；与 libraryCategoryId 互斥, schema: {type: boolean}}
+      responses:
+        "200": {description: 标准信封 data 为技能列表及分页信息；categories 含共享分类 value、label 和技能广场公开技能 count}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /skills/library-categories:
+    get:
+      tags: [skills]
+      summary: 获取当前用户可见的技能库分类和数量
+      parameters:
+        - {in: query, name: scope, schema: {type: string, enum: [mine, created], default: mine}}
+      responses:
+        "200": {description: 标准信封 data 为 categories、totalCount、uncategorizedCount；分类含 id、name、scope、count}
+        "401": {$ref: "#/components/responses/Error"}
+    post:
+      tags: [skills]
+      summary: 创建个人或平台技能库分类
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 64}
+                scope: {type: string, enum: [personal, platform], default: personal}
+      responses:
+        "200": {description: 标准信封 data.category 为新分类}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /skills/library-categories/{id}:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    delete:
+      tags: [skills]
+      summary: 删除技能库分类并解除相关技能归类，不删除技能
+      responses:
+        "200": {description: "标准信封 data 为 {deleted: true}"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /skills/{id}/library-category:
+    parameters:
+      - {in: path, name: id, required: true, description: 技能 ID, schema: {type: string}}
+    patch:
+      tags: [skills]
+      summary: 为当前用户已加入或自建的技能设置/清除技能库分类
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [categoryId]
+              properties:
+                categoryId: {type: string, description: 个人分类或可见平台分类 ID；空字符串表示取消归类}
+      responses:
+        "200": {description: 标准信封 data.skill 为更新后的技能}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
   /tools/{id}:
     parameters:
       - {in: path, name: id, required: true, schema: {type: integer, format: int64, minimum: 1}}
@@ -405,6 +513,50 @@ paths:
           description: 信封 data 仅包含 welcomeEnabled 布尔值，默认 true；Cache-Control 为 no-store
         "500":
           description: 配置读取失败
+  /admin/agent/skill-defaults:
+    get:
+      tags: [admin]
+      summary: 读取管理员 Agent 默认技能配置
+      responses:
+        "200":
+          description: 信封 data 包含 revision、items（skillId、skillName、skillVersionId、versionLabel、position、enabled、status、fileCount、totalBytes）、totalFiles、totalBytes、contextEstimateBytes；合计仅统计启用项，上下文预估为技能包整体读入的保守上限
+        "401": {description: 未登录}
+        "403": {description: 需要管理员权限}
+    put:
+      tags: [admin]
+      summary: 按 revision CAS 整体替换全局默认技能
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision, items]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [skillId, skillVersionId, position, enabled]
+                    properties:
+                      skillId: {type: string}
+                      skillVersionId: {type: string}
+                      position: {type: integer}
+                      enabled: {type: integer, enum: [0, 1]}
+      responses:
+        "200": {description: 信封 data 包含新 revision；配置仅影响新会话}
+        "400": {description: 无效引用 agent_skill_defaults_invalid 或超限 agent_skill_budget_exceeded（details 包含 budget、limit、actual）}
+        "401": {description: 未登录}
+        "403": {description: 需要管理员权限}
+        "409": {description: agent_skill_defaults_revision_conflict，details.currentRevision 为当前修订号}
+  /agent/skill-defaults:
+    get:
+      tags: [agent]
+      summary: 读取全局默认技能摘要（登录即可）
+      responses:
+        "200": {description: 信封 data 为 count 与按 position 排序的 skills，每项只含 skillId、skillName；仅启用项，不含正文或管理员版本详情}
+        "401": {description: 未登录}
   /agent/capabilities:
     get:
       tags: [agent]
@@ -421,6 +573,222 @@ paths:
           description: 信封 data 含 scannedRuns、searchCalls 与按启用次数降序的 skills；每个技能含 runsEnabled、searchHits、readCalls、readFailures、entryReads、cardReads 与 topCards（最多 5 条最热卡路径）。统计仅覆盖调用方本人最近的运行，且不含任何技能正文
         "401":
           description: 未登录
+  /agent/workspaces/{canvasId}:
+    parameters:
+      - {in: path, name: canvasId, required: true, schema: {type: string}}
+    get:
+      tags: [agent]
+      summary: 读取画布 Workspace（懒创建一对一记录）
+      responses:
+        "200": {description: 信封 data 为 WorkspaceView，含 workspaceId、canvasId、revision、agentsMd、agentsMdHash 和版本化 skills}
+        "401": {description: 未登录}
+        "404": {description: 画布不存在或不属于当前用户}
+    patch:
+      tags: [agent]
+      summary: 使用 revision CAS 更新项目文档，仅影响新 Run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, agentsMd]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                agentsMd: {type: string, description: UTF-8 文档最多 65536 字节；空字符串用于清空}
+      responses:
+        "200": {description: 更新后的 WorkspaceView}
+        "400": {description: 非法 JSON、缺失字段或文档超限}
+        "404": {description: 画布不存在或不属于当前用户}
+        "409": {description: "reason=agent_workspace_revision_conflict，details.currentRevision 为当前 revision"}
+  /agent/workspaces/{canvasId}/skills:
+    parameters:
+      - {in: path, name: canvasId, required: true, schema: {type: string}}
+    get:
+      tags: [agent]
+      summary: 读取 Workspace 技能版本、来源与容量
+      responses:
+        "200": {description: 有序技能数组，含 skillId、skillVersionId、position、enabled、skillName、contentHash、fileCount、totalBytes、source=workspace}
+        "404": {description: 画布不存在或不属于当前用户}
+    put:
+      tags: [agent]
+      summary: CAS 替换 Workspace 技能追加项（清空传空数组）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, skills]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                skills:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [skillId, skillVersionId, position, enabled]
+                    properties:
+                      skillId: {type: string}
+                      skillVersionId: {type: string}
+                      position: {type: integer, minimum: 0}
+                      enabled: {type: boolean}
+      responses:
+        "200": {description: 更新后的 WorkspaceView，文档与技能共用 revision}
+        "400": {description: 非法技能、私有技能、重复排序或容量超限}
+        "404": {description: 画布不存在或不属于当前用户}
+        "409": {description: "reason=agent_workspace_revision_conflict"}
+  /agent/workspaces/{canvasId}/crews:
+    parameters:
+      - {in: path, name: canvasId, required: true, schema: {type: string}}
+    get:
+      tags: [agent]
+      summary: 列出当前用户画布的 Crew
+      responses:
+        "200": {description: 信封 data 为 CrewView 数组，含配置 revision 与成员版本化技能，不含提示词或凭证}
+        "404": {description: 画布不存在或不属于当前用户}
+    post:
+      tags: [agent]
+      summary: 创建 Crew 与成员完整配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, status, members]
+              properties:
+                name: {type: string, description: 最多 120 字节}
+                description: {type: string, description: 最多 4096 字节}
+                status: {type: string, enum: [enabled, disabled]}
+                members: {type: array, maxItems: 16, items: {$ref: "#/components/schemas/CrewMemberInput"}}
+      responses:
+        "200": {description: 创建后的 CrewView，revision=0}
+        "400": {description: 配置非法或启用 Crew 不恰好有一个启用 Coordinator}
+        "404": {description: 画布不存在或不属于当前用户}
+  /agent/crews/{crewId}:
+    parameters:
+      - {in: path, name: crewId, required: true, schema: {type: string}}
+    get:
+      tags: [agent]
+      summary: 读取 Crew 完整配置
+      responses:
+        "200": {description: CrewView，含 workspaceId、canvasId、revision、coordinatorMemberId 与 members}
+        "404": {description: Crew 不存在或不可见}
+    patch:
+      tags: [agent]
+      summary: CAS 更新 Crew，原子切换 Coordinator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, name, status]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                name: {type: string}
+                description: {type: string}
+                status: {type: string, enum: [enabled, disabled]}
+                coordinatorMemberId: {type: string, description: 必须是此 Crew 内已启用成员；同时切换原 Coordinator 为普通成员}
+      responses:
+        "200": {description: 更新后的 CrewView}
+        "400": {description: 配置非法}
+        "404": {description: Crew 不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict，details.currentRevision 为当前 revision"}
+    delete:
+      tags: [agent]
+      summary: 使用 revision 删除 Crew 配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CrewRevision"}
+      responses:
+        "200": {description: 下一 revision，成员与技能在同一事务删除}
+        "404": {description: Crew 不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
+  /agent/crews/{crewId}/members:
+    parameters:
+      - {in: path, name: crewId, required: true, schema: {type: string}}
+    post:
+      tags: [agent]
+      summary: 使用 Crew revision 添加成员，仅影响新 Run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CrewMemberMutation"}
+      responses:
+        "200": {description: 更新后的完整 CrewView}
+        "400": {description: 成员非法、重复排序或破坏 Coordinator 约束}
+        "404": {description: Crew 不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
+  /agent/crew-members/{memberId}:
+    parameters:
+      - {in: path, name: memberId, required: true, schema: {type: string}}
+    patch:
+      tags: [agent]
+      summary: 使用 Crew revision 替换成员配置
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CrewMemberMutation"}
+      responses:
+        "200": {description: 更新后的完整 CrewView}
+        "400": {description: 非法权限、预算、焦点节点或成员配置}
+        "404": {description: 成员不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
+    delete:
+      tags: [agent]
+      summary: 使用 Crew revision 删除成员
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CrewRevision"}
+      responses:
+        "200": {description: 更新后的完整 CrewView}
+        "400": {description: 不能移除启用 Crew 的唯一 Coordinator}
+        "404": {description: 成员不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
+  /agent/crew-members/{memberId}/skills:
+    parameters:
+      - {in: path, name: memberId, required: true, schema: {type: string}}
+    put:
+      tags: [agent]
+      summary: CAS 替换成员技能，清空传空数组
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, skills]
+              properties:
+                revision: {type: integer, format: int64, minimum: 0}
+                skills:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [skillId, skillVersionId, position, enabled]
+                    properties:
+                      skillId: {type: string}
+                      skillVersionId: {type: string}
+                      position: {type: integer, minimum: 0}
+                      enabled: {type: boolean}
+      responses:
+        "200": {description: 完整 CrewView；成员技能包含 contentHash、fileCount、totalBytes、source=crew_member}
+        "400": {description: 未知、私有、禁用、错误版本技能或容量超限}
+        "404": {description: 成员不存在或不可见}
+        "409": {description: "reason=agent_crew_revision_conflict"}
   /agent/profile:
     get:
       tags: [agent]
@@ -1237,6 +1605,85 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /agent/crews/{crewId}/runs:
+    post:
+      tags: [agent]
+      summary: 冻结配置并创建独立成员 Crew Run
+      parameters:
+        - {in: path, name: crewId, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [prompt, idempotencyKey]
+              properties:
+                prompt: {type: string, maxLength: 16000}
+                idempotencyKey: {type: string, maxLength: 120}
+                skillIds: {type: array, items: {type: string}}
+                maxConcurrentMembers: {type: integer, minimum: 0, maximum: 8}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /agent/workspaces/{canvasId}/crew-runs:
+    get:
+      tags: [agent]
+      summary: 当前画布最近 20 个 Crew Run
+      parameters:
+        - {in: path, name: canvasId, required: true, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "404": {$ref: "#/components/responses/Error"}
+  /agent/crew-runs/{runId}:
+    get:
+      tags: [agent]
+      summary: 脱敏的 Crew 运行和成员状态
+      parameters:
+        - {in: path, name: runId, required: true, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "404": {$ref: "#/components/responses/Error"}
+  /agent/crew-runs/{runId}/events:
+    get:
+      tags: [agent]
+      summary: Crew 业务 SSE，快照不推进游标
+      parameters:
+        - {in: path, name: runId, required: true, schema: {type: string}}
+        - {in: query, name: after, schema: {type: integer, minimum: 0}}
+        - {in: header, name: Last-Event-ID, schema: {type: string}}
+      responses:
+        "200":
+          description: crew_event 带递增 id，crew_snapshot 无 id，15 秒 heartbeat
+          content:
+            text/event-stream: {schema: {type: string}}
+        "400": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /agent/crew-runs/{runId}/approvals/{approvalId}:
+    post:
+      tags: [agent]
+      summary: 决定 Crew 聚合提案
+      parameters:
+        - {in: path, name: runId, required: true, schema: {type: string}}
+        - {in: path, name: approvalId, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [decision], properties: {decision: {type: string, enum: [approve, reject]}, reason: {type: string, maxLength: 2000}}}}}}
+      responses: {"200": {$ref: "#/components/responses/Envelope"}, "400": {$ref: "#/components/responses/Error"}, "409": {$ref: "#/components/responses/Error"}}
+  /agent/crew-runs/{runId}/commit:
+    post:
+      tags: [agent]
+      summary: 通过唯一审批边界提交 Crew 提案
+      parameters: [{in: path, name: runId, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [approvalId, expectedSnapshotHash, idempotencyKey], properties: {approvalId: {type: string}, expectedSnapshotHash: {type: string, minLength: 64, maxLength: 64}, idempotencyKey: {type: string, maxLength: 120}}}}}}
+      responses: {"200": {$ref: "#/components/responses/Envelope"}, "400": {$ref: "#/components/responses/Error"}, "409": {$ref: "#/components/responses/Error"}}
+  /agent/crew-runs/{runId}/cancel:
+    post:
+      tags: [agent]
+      summary: 幂等取消 Crew Run 及可取消成员
+      parameters: [{in: path, name: runId, required: true, schema: {type: string}}]
+      responses: {"200": {$ref: "#/components/responses/Envelope"}, "404": {$ref: "#/components/responses/Error"}}
 components:
   parameters:
     AgentRunID:
@@ -1251,6 +1698,57 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    CrewRevision:
+      type: object
+      additionalProperties: false
+      required: [revision]
+      properties:
+        revision: {type: integer, format: int64, minimum: 0}
+    CrewModelConfig:
+      type: object
+      additionalProperties: false
+      required: [model]
+      properties:
+        model: {type: string, maxLength: 200}
+        logicalModelId: {type: string, maxLength: 80}
+        channelId: {type: string, maxLength: 80}
+        channelModelKey: {type: string, maxLength: 200}
+    CrewMemberBudget:
+      type: object
+      additionalProperties: false
+      required: [maxCredits]
+      properties:
+        maxCredits: {type: number, exclusiveMinimum: true, minimum: 0, maximum: 100000}
+        maxSteps: {type: integer, minimum: 0, maximum: 9999, description: 0 表示沿用无固定步数限制}
+        maxGenerationTasks: {type: integer, minimum: 0, maximum: 100}
+        maxVideoSeconds: {type: integer, minimum: 0, maximum: 86400}
+    CrewMemberInput:
+      type: object
+      additionalProperties: false
+      required: [name, role, modelConfig, permissionMode, budget, enabled, position]
+      properties:
+        name: {type: string, description: 非空且最多 120 字节}
+        role: {type: string, enum: [coordinator, member]}
+        modelConfig: {$ref: "#/components/schemas/CrewModelConfig"}
+        permissionMode: {type: string, enum: [read_only, propose]}
+        focusNodeIds: {type: array, maxItems: 8, uniqueItems: true, items: {type: string}, description: 必须来自此画布}
+        budget: {$ref: "#/components/schemas/CrewMemberBudget"}
+        enabled: {type: boolean}
+        position: {type: integer, minimum: 0, maximum: 1024}
+    CrewMemberMutation:
+      type: object
+      additionalProperties: false
+      required: [revision, name, role, modelConfig, permissionMode, budget, enabled, position]
+      properties:
+        revision: {type: integer, format: int64, minimum: 0}
+        name: {type: string}
+        role: {type: string, enum: [coordinator, member]}
+        modelConfig: {$ref: "#/components/schemas/CrewModelConfig"}
+        permissionMode: {type: string, enum: [read_only, propose]}
+        focusNodeIds: {type: array, maxItems: 8, uniqueItems: true, items: {type: string}}
+        budget: {$ref: "#/components/schemas/CrewMemberBudget"}
+        enabled: {type: boolean}
+        position: {type: integer, minimum: 0, maximum: 1024}
     ToolMutation:
       type: object
       required: [type, label, prompt]

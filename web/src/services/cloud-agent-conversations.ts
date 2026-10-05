@@ -2,6 +2,7 @@ import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { getActiveUserScope } from "@/lib/user-scope";
 import type { AgentPermissionMode, AgentRun } from "@/services/api/agent";
+import type { AgentContextUsage } from "@/lib/canvas/agent-context-usage";
 
 export type CloudAgentConversationMessage = {
     id: string;
@@ -24,6 +25,7 @@ export type CloudAgentConversation = {
     title: string;
     messages: CloudAgentConversationMessage[];
     run: AgentRun | null;
+    contextUsage?: AgentContextUsage;
     model?: string;
     permissionMode: AgentPermissionMode;
     skillIds?: string[];

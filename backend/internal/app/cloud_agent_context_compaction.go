@@ -17,6 +17,9 @@ import (
 // 失败也不会让整轮判死。
 const cloudAgentContextCompactionOperation = "cloud_agent_context_compaction"
 
+// cloudAgentCompactionRatio 定义在 cloud_agent_usage_anchor.go、cloudAgentCompactionPercent
+// 定义在 cloud_agent_context_budget.go：压力读数、压缩判据与预算算式共用同一条线
+// （输入预算的 85%），否则会出现"界面显示 84%、后台已经在压"。
 const (
 	// cloudAgentMaxCompactionsPerRun 限制同一轮最多压几次：压完仍然超阈值时不能无限暂停
 	// （检查点已经只剩少量历史，再压也不会更小），用完次数就回到上游的原有判死路径。
@@ -32,41 +35,76 @@ type cloudAgentContextCompaction struct {
 	Status      string `json:"status"`
 	SourceBytes int    `json:"sourceBytes"`
 	TurnCount   int    `json:"turnCount"`
+	// PiOperationID and the source identity make retries resume the same billed
+	// compaction task instead of enqueueing a second summary request.
+	PiOperationID      string                        `json:"piOperationId,omitempty"`
+	PiTaskID           string                        `json:"piTaskId,omitempty"`
+	PiSourceDigest     string                        `json:"piSourceDigest,omitempty"`
+	PiSessionRevision  int64                         `json:"piSessionRevision,omitempty"`
+	PiSourceLeafID     string                        `json:"piSourceLeafId,omitempty"`
+	PiFirstKeptEntryID string                        `json:"piFirstKeptEntryId,omitempty"`
+	PiFirstKeptIndex   int                           `json:"piFirstKeptIndex,omitempty"`
+	PiReason           string                        `json:"piReason,omitempty"`
+	PiWillRetry        bool                          `json:"piWillRetry,omitempty"`
+	PiTokensBefore     int                           `json:"piTokensBefore,omitempty"`
+	PiNative           *cloudAgentPiNativeCompaction `json:"piNative,omitempty"`
 	// Resume 表示这次是"中途暂停压缩"：压完继续本轮的步进，而不是收尾结束本轮。
 	Resume bool `json:"resume,omitempty"`
+	// 触发读数：下一步预计输入 token ÷ 模型可用输入（上游实测锚点优先）。
+	// 这四个字段是本项目 V2 上下文计量落进压缩态的那一份读数：界面与排查据此说清
+	// "按哪个口径压的"，与触发事件里的同名字段一一对应。
+	ProjectedTokens   int     `json:"projectedTokens,omitempty"`
+	UsableInputTokens int     `json:"usableInputTokens,omitempty"`
+	Ratio             float64 `json:"ratio,omitempty"`
+	TokenSource       string  `json:"tokenSource,omitempty"`
 }
 
-// cloudAgentCompactionReading 是这次压缩判据的读数。它只用于触发事件与排查，
-// 不是对外的事件契约（压力读数另有其事件，不在本特性范围内）。
-type cloudAgentCompactionReading struct {
+// cloudAgentPressureReading 是一次压缩判据的读数（token meter 口径）。
+//
+// 上游 #598 另有一个同用途的 cloudAgentCompactionReading 类型；两者字段基本重合，
+// 这里只保留 V2 计量这一份（多出 Ratio / TokenSource / OverheadTokens），上游新增的
+// CompactAtTokens / BudgetSource / PressureRatio 语义以字段形式并进来（PressureRatio 就是
+// 这里的 Ratio），避免同包出现两个近义类型、两处各算一遍。
+type cloudAgentPressureReading struct {
 	ProjectedTokens   int     `json:"projectedTokens"`
 	UsableInputTokens int     `json:"usableInputTokens"`
-	CompactAtTokens   int     `json:"compactAtTokens"`
-	PressureRatio     float64 `json:"pressureRatio"`
-	BudgetSource      string  `json:"budgetSource"`
+	Ratio             float64 `json:"ratio"`
+	TokenSource       string  `json:"tokenSource"`
+	// CompactAtTokens / OverheadTokens / BudgetSource 说明"这条线是按哪个算式算出来的"。
+	CompactAtTokens int    `json:"compactAtTokens,omitempty"`
+	OverheadTokens  int    `json:"overheadTokens,omitempty"`
+	BudgetSource    string `json:"budgetSource,omitempty"`
 }
 
-// cloudAgentCompactionReadingFor 把"下一步预计输入 token"接到上游已有的预算算式上。
+// cloudAgentCompactionReadingFor 把"下一步预计输入 token"接到上游已有的预算算式上，
+// 并标出这个读数的来源（provider 实测锚点 / 本地估算）。
 //
 // 阈值不在这里另定：上游 cloudAgentContextBudgetFor 已经把压缩线算成输入预算的 85%
 // （CompactAtTokens），就地正文卸载用的就是它；语义压缩必须共用同一条线，否则会出现
 // "显示还没到线、后台已经开始压"。
 //
-// 返回 configured=false 表示这次调用问不到真实模型窗口（cloudAgentContextBudgetForRequest
-// 退回了首部默认预算，Source 为 default）：此时 token 线没有意义，调用方改用字节/条数兜底。
+// 返回 configured=false 表示这次调用问不到真实模型窗口（预算退回首部默认预算，Source 为
+// default）：此时 token 线没有意义，调用方改用字节/条数兜底。
 //
 // 注意这条降级的代价：字节/条数兜底与窗口大小无关，所以**渠道没填 contextWindowTokens 时，
 // 大窗口模型会远早于"装不下"就触发压缩**——每次压缩都要多花一次模型调用（额外计费）并把
 // 细节换成摘要。部署时应为画布 Agent 使用的渠道模型/逻辑模型填写真实窗口（见 PR 风险说明）。
-func cloudAgentCompactionReadingFor(budget cloudAgentContextBudget, projectedTokens int) (cloudAgentCompactionReading, bool) {
-	reading := cloudAgentCompactionReading{
+func cloudAgentCompactionReadingFor(budget cloudAgentContextBudget, projectedTokens int, state *cloudAgentRuntime) (cloudAgentPressureReading, bool) {
+	reading := cloudAgentPressureReading{
 		ProjectedTokens:   projectedTokens,
 		UsableInputTokens: budget.InputBudgetTokens,
 		CompactAtTokens:   budget.CompactAtTokens,
+		OverheadTokens:    budget.OverheadTokens,
 		BudgetSource:      budget.Source,
 	}
 	if budget.InputBudgetTokens > 0 {
-		reading.PressureRatio = math.Round(float64(projectedTokens)/float64(budget.InputBudgetTokens)*10000) / 10000
+		reading.Ratio = math.Round(float64(projectedTokens)/float64(budget.InputBudgetTokens)*10000) / 10000
+	}
+	// tokenSource 与压力面板同源：直接复用 cloudAgentProjectedInputTokens 的判据
+	// （有可采信的上游实测锚点即 provider，否则 estimate），这里只取它的口径标签；
+	// 数值仍以调用方传入的 projectedTokens 为准——触发判据必须与调用方看到的读数一致。
+	if _, source := cloudAgentProjectedInputTokens(cloudAgentContextPressure{EstimatedInputTokens: projectedTokens}, state); source != "" {
+		reading.TokenSource = source
 	}
 	if budget.Source == "" || budget.Source == "default" {
 		return reading, false
@@ -75,10 +113,14 @@ func cloudAgentCompactionReadingFor(budget cloudAgentContextBudget, projectedTok
 }
 
 // cloudAgentContextShouldCompact 是"没配模型上下文上限"时的兜底判据：条数与字节任一到线即压缩。
-// 阈值沿用上游既有的跨轮历史闸门（cloudAgentHistoryKeepRounds / cloudAgentHistoryMaxBytes），
-// 不另造一套数字——同一份历史不能出现"跨轮已经裁掉、轮内却还认为没超"的两套口径。
+//
+// 阈值沿用已申报给界面的那一组兜底数字（agentcontext.ThresholdHistoryMessages /
+// ThresholdBytes，见 cloud_agent_context_pressure.go 的 compactionThreshold 读数字段），
+// 而不是另一套窗口相关常量：同一个界面读数不能出现"界面还没到线、后台已经开始压"的两套口径。
+// 条数数的是当前会话（state.Canonical.Messages），不是压缩后残留的 TextHistory——后者实测
+// 最多 7 条，"≥16 条"这条规则在真实会话里永远不成立。
 func cloudAgentContextShouldCompact(historyMessages, encodedBytes int) bool {
-	return agentcontext.ShouldCompact(historyMessages, encodedBytes, cloudAgentHistoryKeepRounds*2, cloudAgentHistoryMaxBytes)
+	return agentcontext.ShouldCompact(historyMessages, encodedBytes, agentcontext.ThresholdHistoryMessages, agentcontext.ThresholdBytes)
 }
 
 // cloudAgentCompactionSourceFacts 量一份"被压材料"的读数（字节数 + 用户轮次）：
@@ -92,8 +134,12 @@ func cloudAgentCompactionSourceFacts(state *cloudAgentRuntime) (int, int) {
 }
 
 // cloudAgentCompactionEventPayload 是 context_compaction_requested 的载荷：
-// 带上触发读数，排查时才能说清"到了多少、按哪个口径"。
-func cloudAgentCompactionEventPayload(reading cloudAgentCompactionReading, hasReading bool, sourceBytes, turnCount int) map[string]any {
+// 带上触发读数，界面与排查才能说清"到了多少、按哪个口径"。
+//
+// 载荷同时带两侧的字段：上游 #598 的 compactAtTokens / pressureRatio / budgetSource
+// 与本项目 V2 计量的 thresholdRatio / tokenSource / overheadTokens。两者是同一份读数的
+// 不同说法（pressureRatio 与 Ratio 同值），前端压力面板两种读法都能拿到，不必二选一。
+func cloudAgentCompactionEventPayload(reading cloudAgentPressureReading, hasReading bool, sourceBytes, turnCount int) map[string]any {
 	payload := map[string]any{"reason": "threshold", "sourceBytes": sourceBytes, "turnCount": turnCount}
 	if !hasReading {
 		payload["basis"] = "bytes"
@@ -103,8 +149,13 @@ func cloudAgentCompactionEventPayload(reading cloudAgentCompactionReading, hasRe
 	payload["projectedTokens"] = reading.ProjectedTokens
 	payload["usableInputTokens"] = reading.UsableInputTokens
 	payload["compactAtTokens"] = reading.CompactAtTokens
-	payload["pressureRatio"] = reading.PressureRatio
+	payload["pressureRatio"] = math.Round(reading.Ratio*10000) / 10000
 	payload["budgetSource"] = reading.BudgetSource
+	payload["thresholdRatio"] = cloudAgentCompactionRatio
+	payload["tokenSource"] = reading.TokenSource
+	if reading.OverheadTokens > 0 {
+		payload["overheadTokens"] = reading.OverheadTokens
+	}
 	return payload
 }
 
@@ -112,7 +163,8 @@ func cloudAgentCompactionEventPayload(reading cloudAgentCompactionReading, hasRe
 // 先把历史压成结构化检查点，压完再用压缩后的上下文继续本轮，而不是带着接近满的上下文
 // 再发一次请求、更不是直接判死。返回 true 表示已请求压缩，调用方应落库并结束这一步。
 //
-// 触发者只有两处：token 线（渠道/逻辑模型配了上下文窗口，取其中较小者）与字节/条数兜底。
+// 触发者只有两处：token 线（渠道/逻辑模型配了上下文窗口，取其中较小者，读数由调用方按
+// 预算算式算好传入）与字节/条数兜底（问不到真实窗口时）。
 func (s *Service) cloudAgentRequestCompaction(run *model.CloudAgentExecution, state *cloudAgentRuntime, budget cloudAgentContextBudget, projectedTokens int) (bool, error) {
 	if run == nil || state == nil || state.ContextCompaction != nil {
 		return false, nil
@@ -125,10 +177,12 @@ func (s *Service) cloudAgentRequestCompaction(run *model.CloudAgentExecution, st
 	if state.ContextCompactionCount >= cloudAgentMaxCompactionsPerRun {
 		return false, nil
 	}
-	reading, hasReading := cloudAgentCompactionReadingFor(budget, projectedTokens)
+	reading, hasReading := cloudAgentCompactionReadingFor(budget, projectedTokens, state)
 	sourceBytes, turnCount := cloudAgentCompactionSourceFacts(state)
 	needed := false
 	if hasReading {
+		// 到线判据用预算算式给出的那条线（CompactAtTokens，与就地正文卸载同一条），
+		// 保证"界面显示的压力比例"与"后台是否开始压"不会互相打架。
 		needed = reading.ProjectedTokens >= reading.CompactAtTokens
 	} else {
 		needed = cloudAgentContextShouldCompact(len(state.Canonical.Messages), sourceBytes)
@@ -136,7 +190,11 @@ func (s *Service) cloudAgentRequestCompaction(run *model.CloudAgentExecution, st
 	if !needed {
 		return false, nil
 	}
-	state.ContextCompaction = &cloudAgentContextCompaction{Status: "requested", SourceBytes: sourceBytes, TurnCount: turnCount, Resume: true}
+	state.ContextCompaction = &cloudAgentContextCompaction{
+		Status: "requested", SourceBytes: sourceBytes, TurnCount: turnCount, Resume: true,
+		ProjectedTokens: reading.ProjectedTokens, UsableInputTokens: reading.UsableInputTokens,
+		Ratio: reading.Ratio, TokenSource: reading.TokenSource,
+	}
 	state.event(run.ID, "context_compaction_requested", cloudAgentCompactionEventPayload(reading, hasReading, sourceBytes, turnCount))
 	return true, s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, state)
@@ -145,6 +203,10 @@ func (s *Service) cloudAgentRequestCompaction(run *model.CloudAgentExecution, st
 
 // cloudAgentConversationTurnCount 数的是"用户轮次"，且不把检查点摘要算成一轮：
 // 摘要是模型写的历史，不是用户原话，把它算进去会让下一轮的轮次口径凭空变大。
+//
+// 判据是条目上的来源标记，而不是"正文里出现过 <agent-context-checkpoint>"：用户完全可能
+// 在提问里引用这个标签，也可能整段粘贴一份检查点正文——那样既会把用户原话错当成摘要，
+// 又会让用户粘贴的 compactedTurnCount 篡改服务端轮次。
 func cloudAgentConversationTurnCount(messages []map[string]any) int {
 	count := 0
 	for _, message := range messages {
@@ -270,14 +332,13 @@ func cloudAgentFallbackCheckpoint(state *cloudAgentRuntime) agentcontext.Checkpo
 	checkpoint.ScriptDesign = truncateRunes(strings.TrimSpace(checkpoint.ScriptDesign+"\n"+state.CreativeAnchor.UserPrompt+"\n"+currentHistory), 10000)
 	checkpoint.CurrentWork = truncateRunes(state.Request.Prompt, 3000)
 	checkpoint.NextStep = "继续当前工作；执行前重新读取画布和任务状态，并优先处理未完成任务。"
-	// 锚点不再携带权限与"可自行决定"清单（用户消息定义目标），这里只把跨步必须记住的
-	// 视觉事实带进摘要：否则压缩后模型会重新声称"没有视觉识别证据"并重复看图。
-	for _, asset := range state.CreativeAnchor.ReferenceAssets {
-		if asset.VisualIdentity != "inspected" {
-			continue
-		}
-		checkpoint.Decisions = append(checkpoint.Decisions, fmt.Sprintf("已查看过画面 %s（%s），无需重复看图", asset.NodeID, asset.Type))
-	}
+	// 视觉事实不跨轮继承（上游 acbb354e 口径）：确认过的画面不写回锚点，旧检查点里的
+	// `inspected` 标记与正文摘录也不再带进收束摘要——普通正文不等于识别成功，节点也可能换图。
+	// 需要画面时由下一轮重新附送真实图片字节（见 cloud_agent_vision.go）。
+	//
+	// 注：上游 #598 的同位置仍会把 `inspected` 的参考画面写进 Decisions（"无需重复看图"）。
+	// 这里按本项目已拍板的口径保留删除：它与"下一轮重新附图"是互相替代的两条路，
+	// 同时启用会让模型在节点换图后仍然声称"我看过这张图"。
 	checkpoint.Constraints = append(checkpoint.Constraints, fmt.Sprintf("权限模式：%s；本轮预算上限：%.4f credits", state.Request.PermissionMode, state.Request.Budget.MaxCredits))
 	for _, layer := range state.Profile.Layers {
 		if content := strings.TrimSpace(layer.Content); content != "" {
@@ -335,11 +396,13 @@ func cloudAgentBoundCheckpoint(checkpoint agentcontext.Checkpoint) agentcontext.
 
 // cloudAgentCompleteTurnTail 取会话尾部最近 pairs 轮**完整**对话。
 //
-// 按轮次裁剪时必须成立的不变量（与上游既有口径一致）：
+// 按轮次裁剪时必须成立的不变量（与上游既有口径一致；轮内已不再做正文卸载，这里是压缩
+// 唯一的裁剪口径）：
 //   - 绝不以 assistant(tool_calls) 或 tool 回执开头：不制造"有调用没结果"的半截轮次；
 //   - 带工具调用的 assistant 一律不进这里——它的调用参数与结果不在纯文本对里，
 //     留下来会让下一轮收到一个永远闭合不了的调用；
-//   - 检查点正文（<agent-context-checkpoint>）不算一轮，避免把摘要当成用户原话。
+//   - 检查点正文（带 checkpoint 来源标记）不算一轮，避免把摘要当成用户原话，
+//     也不把运行时帧/续轮交接帧当成用户要求。
 func cloudAgentCompleteTurnTail(messages []map[string]any, pairs int) []providerTextMessage {
 	complete := make([]providerTextMessage, 0, max(0, pairs)*2)
 	var pending *providerTextMessage
@@ -385,6 +448,11 @@ func cloudAgentRetainedTurnCount(retained []providerTextMessage) int {
 	return count
 }
 
+// cloudAgentRecentConversation 是"只留最近两轮"的语义化别名，保留给既有调用点。
+func cloudAgentRecentConversation(messages []map[string]any, pairs int) []providerTextMessage {
+	return cloudAgentCompleteTurnTail(messages, pairs)
+}
+
 // cloudAgentCheckpointHistory 组装压缩后的历史：检查点 + 回执 + 最近 N 对原文。
 // 回执是必须的——它让检查点这段 user 消息后面紧跟 assistant，历史仍保持正常交替。
 func cloudAgentCheckpointHistory(checkpoint agentcontext.Checkpoint, recent []providerTextMessage) ([]providerTextMessage, error) {
@@ -409,15 +477,10 @@ func (s *Service) enqueueCloudAgentContextCompaction(run *model.CloudAgentExecut
 	return s.enqueueCloudAgentTask(run, state, req, nil)
 }
 
-// advanceCloudAgentContextCompaction 收压缩任务的结果。任何失败都退到保底检查点：
-// 压缩是"省上下文"的优化，不能因为一次模型调用失败就把整轮搞死。
-func (s *Service) advanceCloudAgentContextCompaction(run *model.CloudAgentExecution, state *cloudAgentRuntime, task *model.Task) error {
-	if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
-		return nil
-	}
+func cloudAgentContextCompactionResult(state *cloudAgentRuntime, task *model.Task) (agentcontext.Checkpoint, string, string) {
 	checkpoint := cloudAgentFallbackCheckpoint(state)
 	mode, reason := "fallback", "压缩模型任务未成功，已使用服务端保底检查点"
-	if task.Status == model.TaskStatusSucceeded {
+	if task != nil && task.Status == model.TaskStatusSucceeded {
 		var result struct {
 			Text string `json:"text"`
 		}
@@ -439,7 +502,18 @@ func (s *Service) advanceCloudAgentContextCompaction(run *model.CloudAgentExecut
 		// 检查点里的轮次数以服务端自己的计数为准，模型写的数字不可信。
 		checkpoint.CompactedTurnCount = state.ContextCompaction.TurnCount
 	}
-	return s.persistCloudAgentContextCheckpoint(run, state, checkpoint, mode, reason)
+	return checkpoint, mode, reason
+}
+
+// completeCloudAgentContextFallback 用服务端保底检查点收口一次压缩（不依赖压缩任务的结果）。
+// 它与 finalizeCloudAgentInterruptedCompaction 的区别只是调用场景：这里用于本轮还要继续、
+// 只是这次压缩拿不到模型输出的情形。
+func (s *Service) completeCloudAgentContextFallback(run *model.CloudAgentExecution, state *cloudAgentRuntime, reason string) error {
+	checkpoint := cloudAgentFallbackCheckpoint(state)
+	if state.ContextCompaction != nil {
+		checkpoint.CompactedTurnCount = state.ContextCompaction.TurnCount
+	}
+	return s.persistCloudAgentContextCheckpoint(run, state, checkpoint, "fallback", reason)
 }
 
 func (s *Service) persistCloudAgentContextCheckpoint(run *model.CloudAgentExecution, state *cloudAgentRuntime, checkpoint agentcontext.Checkpoint, mode, reason string) error {
@@ -466,53 +540,85 @@ func (s *Service) finalizeCloudAgentInterruptedCompaction(run *model.CloudAgentE
 // （否则一次失败轮的收尾会把 failed 写成 completed，等于凭空复活一轮）。
 func (s *Service) writeCloudAgentContextCheckpoint(run *model.CloudAgentExecution, state *cloudAgentRuntime, checkpoint agentcontext.Checkpoint, mode, reason string, keepTerminal bool) error {
 	checkpoint = cloudAgentBoundCheckpoint(checkpoint)
+	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return applyCloudAgentContextCheckpoint(run.ID, current, state, checkpoint, mode, reason, keepTerminal)
+	})
+}
+
+// applyCloudAgentContextCheckpoint mutates only the transaction's run and runtime
+// values. Pi's compaction commit calls it in the same transaction as the v3 tree
+// append, so the canonical Go checkpoint can never get ahead of the Pi branch.
+func applyCloudAgentContextCheckpoint(runID string, current *model.CloudAgentExecution, state *cloudAgentRuntime, checkpoint agentcontext.Checkpoint, mode, reason string, keepTerminal bool) error {
+	nativeSummary := checkpoint.HistorySummary
+	checkpoint = cloudAgentBoundCheckpoint(checkpoint)
+	if mode == "pi-native" {
+		checkpoint.HistorySummary = nativeSummary
+	}
 	turnsBefore := cloudAgentConversationTurnCount(state.Canonical.Messages)
+	beforeMessages := len(state.Canonical.Messages)
+	beforeRaw, _ := json.Marshal(state.Canonical.Messages)
+	beforeBytes, beforeTokens := len(beforeRaw), estimateCloudAgentTokens(beforeRaw)
 	recent := cloudAgentCompleteTurnTail(state.Canonical.Messages, cloudAgentContextKeepPairs)
+	var nativeTail []map[string]any
+	if compaction := state.ContextCompaction; compaction != nil && compaction.PiNative != nil {
+		nativeTail = append(make([]map[string]any, 0), state.Canonical.Messages[compaction.PiFirstKeptIndex:]...)
+		recent = nil
+		for _, message := range nativeTail {
+			recent = append(recent, providerTextMessage{Role: stringField(message, "role"), Content: stringField(message, "content")})
+		}
+	}
 	history, err := cloudAgentCheckpointHistory(checkpoint, recent)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errCloudAgentCheckpoint, err)
 	}
-	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		state.ContextCheckpoint = &checkpoint
-		state.TextHistory = history
-		state.HistoryIncludesCurrent = true
-		state.Canonical.Messages = make([]map[string]any, 0, len(history))
-		for _, message := range history {
-			entry := map[string]any{"role": message.Role, "content": message.Content}
-			// 压缩重建也必须保留来源标记，否则交接身份在压缩后就丢了（旧会话会被多算轮次）。
-			if message.AgentContextSource != "" {
-				entry[cloudAgentContextSourceKey] = message.AgentContextSource
-			}
-			state.Canonical.Messages = append(state.Canonical.Messages, entry)
+	state.ContextCheckpoint = &checkpoint
+	state.TextHistory = history
+	state.HistoryIncludesCurrent = true
+	state.Canonical.Messages = make([]map[string]any, 0, len(history))
+	for _, message := range history {
+		entry := map[string]any{"role": message.Role, "content": message.Content}
+		if message.AgentContextSource != "" {
+			entry[cloudAgentContextSourceKey] = message.AgentContextSource
 		}
-		// 消息整体被替换：写路径按 kind 逐条 upsert 并删除 sequence 超出新条数的尾部行，
-		// 因此"条数变少/全变"都能正确落库。
-		// 只读结果由 ToolReadResults 统一缓存；压缩后模型再次请求时，缓存层会恢复完整正文。
-		// 只有 profile 的旧版读取标记需要清掉，因为它不属于统一结果缓存。
-		state.ProfileReads = nil
-		state.ActiveTaskID, state.ActiveTextDraft = "", ""
-		// 中途暂停压缩（Resume）：压完继续本轮的步进，并记一次次数上限。
-		// 收尾压缩（resume=false）本来就要结束本轮；keepTerminal=true 表示本轮已是终态
-		// （取消/失败的收尾），只落检查点与事件，绝不把 failed/cancelled 改写成 completed。
-		resume := state.ContextCompaction != nil && state.ContextCompaction.Resume
-		state.ContextCompaction = nil
-		if resume {
-			state.ContextCompactionCount++
-		} else if !keepTerminal {
-			current.Status = "completed"
+		state.Canonical.Messages = append(state.Canonical.Messages, entry)
+	}
+	if nativeTail != nil {
+		state.Canonical.Messages = append(state.Canonical.Messages[:2], nativeTail...)
+	}
+	afterMessages := make([]map[string]any, 0, len(history))
+	for _, message := range history {
+		afterMessages = append(afterMessages, map[string]any{"role": message.Role, "content": message.Content})
+	}
+	if nativeTail != nil {
+		afterMessages = state.Canonical.Messages
+	}
+	afterRaw, _ := json.Marshal(afterMessages)
+	afterBytes, afterTokens := len(afterRaw), estimateCloudAgentTokens(afterRaw)
+	state.SkillReads, state.ProfileReads = nil, nil
+	state.ActiveTaskID, state.ActiveTextDraft = "", ""
+	resume := state.ContextCompaction != nil && state.ContextCompaction.Resume
+	state.ContextCompaction = nil
+	if resume {
+		state.ContextCompactionCount++
+		if current.Status != "cancelled" && current.Status != "failed" {
+			current.Status = "running"
 		}
-		payload := map[string]any{
-			"mode": mode, "resume": resume,
-			"compactedTurnCount": checkpoint.CompactedTurnCount,
-			"historyMessages":    len(history),
-			// 被折进检查点的轮次数 = 压缩前的用户轮次 − 原样保留的最近轮次：
-			// 不能拿"压缩后再数一遍"来做差，检查点自己携带轮次数会把保留的那几轮重复计入。
-			"droppedTurns": max(0, turnsBefore-cloudAgentRetainedTurnCount(recent)),
-		}
-		if reason != "" {
-			payload["reason"] = reason
-		}
-		state.event(run.ID, "context_compacted", payload)
-		return cloudAgentSave(current, state)
+	} else if !keepTerminal {
+		current.Status = "completed"
+	}
+	state.TokenAnchor = nil
+	retainedTurns := cloudAgentRetainedTurnCount(recent)
+	droppedTurns := max(0, turnsBefore-retainedTurns)
+	state.event(runID, "context_transition", map[string]any{
+		"kind": "semantic_compaction", "reason": firstNonEmpty(reason, "semantic_compaction"),
+		"before": map[string]any{"sourceBytes": beforeBytes, "estimatedTokens": beforeTokens, "historyMessages": beforeMessages, "turns": turnsBefore},
+		"after":  map[string]any{"sourceBytes": afterBytes, "estimatedTokens": afterTokens, "historyMessages": len(history), "turns": retainedTurns},
 	})
+	payload := map[string]any{"mode": mode, "resume": resume, "compactedTurnCount": checkpoint.CompactedTurnCount,
+		"historyMessages": len(history), "droppedTurns": droppedTurns}
+	if reason != "" {
+		payload["reason"] = reason
+	}
+	state.event(runID, "context_compacted", payload)
+	return cloudAgentSave(current, state)
 }

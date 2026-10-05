@@ -6,7 +6,7 @@ import { navigationTools } from "@/constant/navigation-tools";
 import { Kbd } from "@/components/ui/base/kbd";
 import { cn } from "@/lib/utils";
 import { openWorkspaceWallet } from "@/lib/workspace-wallet";
-import { useUserStore } from "@/stores/use-user-store";
+import { useUserStore, type FeatureAvailability } from "@/stores/use-user-store";
 
 type PaletteEntry = {
     id: string;
@@ -16,6 +16,23 @@ type PaletteEntry = {
     run?: () => void;
 };
 
+export function buildWorkspaceCommandEntries(features: FeatureAvailability): PaletteEntry[] {
+    const toolEntry = (slug: string, to?: string): PaletteEntry => {
+        const tool = navigationTools.find((item) => item.slug === slug);
+        return { id: slug, title: tool?.label ?? slug, icon: tool?.icon ?? Home, to };
+    };
+    return [
+        { id: "home", title: "首页", icon: Home, to: "/" },
+        ...(features.shortDramaEnabled ? [toolEntry("projects", "/projects")] : []),
+        toolEntry("canvas", "/canvas"),
+        ...(features.taskCenterEnabled ? [toolEntry("tasks", "/tasks")] : []),
+        toolEntry("assets", "/assets"),
+        toolEntry("skills", "/skills"),
+        ...(features.creditsEnabled ? [{ ...toolEntry("wallet"), run: () => openWorkspaceWallet() }] : []),
+        toolEntry("settings", "/settings"),
+    ];
+}
+
 /** 顶栏搜索 / ⌘K 命令面板：按功能开关过滤当前可用页面入口。 */
 export function WorkspaceCommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
     const navigate = useNavigate();
@@ -24,22 +41,7 @@ export function WorkspaceCommandPalette({ open, onClose }: { open: boolean; onCl
     const [highlight, setHighlight] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    const entries = useMemo<PaletteEntry[]>(() => {
-        const toolEntry = (slug: string, to?: string): PaletteEntry => {
-            const tool = navigationTools.find((item) => item.slug === slug);
-            return { id: slug, title: tool?.label ?? slug, icon: tool?.icon ?? Home, to };
-        };
-        return [
-            { id: "home", title: "首页", icon: Home, to: "/" },
-            toolEntry("projects", "/projects"),
-            toolEntry("canvas", "/canvas"),
-            ...(features.taskCenterEnabled ? [toolEntry("tasks", "/tasks")] : []),
-            toolEntry("assets", "/assets"),
-            toolEntry("skills", "/skills"),
-            ...(features.creditsEnabled ? [{ ...toolEntry("wallet"), run: () => openWorkspaceWallet() }] : []),
-            toolEntry("settings", "/settings"),
-        ];
-    }, [features]);
+    const entries = useMemo(() => buildWorkspaceCommandEntries(features), [features]);
 
     const filtered = useMemo(() => {
         const keyword = query.trim().toLowerCase();

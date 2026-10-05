@@ -3,9 +3,11 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -286,29 +288,34 @@ func TestCloudAgentVisionLimitsAndUnconfirmedState(t *testing.T) {
 	canonical := input.AgentRequests.Canonical
 	original, _ := json.Marshal(canonical)
 	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
+	vision := true
+	capability.Text.VisionSupported = &vision
 	capability.Text.References.MaxImages = 1
 	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "cm").Update("capability_config_json", mustEncodeModelCapabilityConfig(t, capability)).Error; err != nil {
 		t.Fatal(err)
 	}
 	copy := *canonical
 	refs, err := s.cloudAgentImageReferences("user", agentTestRequest(), &copy)
-	if err != nil || len(refs) != 1 || refs[0].StorageKey != "resource:ref-two" {
-		t.Fatalf("did not retain newest image within model limit: %+v %v", refs, err)
+	if err == nil || len(refs) != 0 {
+		t.Fatalf("model limit must reject overflow without discarding images: %+v %v", refs, err)
 	}
 	after, _ := json.Marshal(canonical)
 	if !bytes.Equal(original, after) {
 		t.Fatal("limit projection mutated durable canonical")
 	}
 	state := cloudAgentRuntime{Request: agentTestRequest(), CreativeAnchor: cloudAgentCreativeAnchor{ReferenceAssets: []cloudAgentReferenceAnchor{{NodeID: "cat", VisualIdentity: "inspected", VisualNote: "无法读取图片"}}}}
-	state.markCanvasImageAttached("cat")
+	state.markCanvasImageAttached("cat", "")
 	asset := state.CreativeAnchor.ReferenceAssets[0]
 	if asset.VisualIdentity != "unknown" || !asset.RequiresVisualInspection || asset.VisualNote != "" {
 		t.Fatal("attachment was treated as recognition")
 	}
-	state.PendingImageInspections = []cloudAgentImageInspection{{}}
 	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect", map[string]any{"nodeId": "hero"})
-	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call); err == nil {
-		t.Fatal("batch exceeded model image limit")
+	inspection, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call)
+	if err != nil {
+		t.Fatalf("single-image inspection should not use provider batch limit: %v", err)
+	}
+	if got := inspection.(cloudAgentImageInspection).ImageURL; got == "" {
+		t.Fatal("inspection did not prepare one image")
 	}
 	inherited := cloudAgentCreativeAnchor{ReferenceAssets: []cloudAgentReferenceAnchor{{NodeID: "cat", VisualIdentity: "inspected", VisualNote: "无法读取图片"}}}
 	canvas, err := s.repo.CanvasProjectForUser("user", "agent-canvas")
@@ -336,14 +343,14 @@ func TestCloudAgentVisionRefreshCannotBypassPerImageLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.markCanvasImageInspection("cat", strings.TrimSpace(first.(cloudAgentImageInspection).ImageURL) != "")
+	state.markCanvasImageInspection("cat", strings.TrimSpace(first.(cloudAgentImageInspection).ImageURL) != "", "")
 
 	secondCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-2", map[string]any{"nodeId": "cat"})
 	second, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, secondCall)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.markCanvasImageInspection("cat", strings.TrimSpace(second.(cloudAgentImageInspection).ImageURL) != "")
+	state.markCanvasImageInspection("cat", strings.TrimSpace(second.(cloudAgentImageInspection).ImageURL) != "", "")
 
 	refreshCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-refresh", map[string]any{"nodeId": "cat", "refresh": true})
 	refreshed, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, refreshCall)
@@ -357,13 +364,16 @@ func TestCloudAgentVisionRefreshCannotBypassPerImageLimit(t *testing.T) {
 	if inspection.Receipt["refreshIgnored"] != true || inspection.Receipt["repeat"] != true {
 		t.Fatalf("refresh protection receipt is incomplete: %+v", inspection.Receipt)
 	}
-	state.markCanvasImageInspection("cat", false)
+	state.markCanvasImageInspection("cat", false, "")
 	if got := state.cloudAgentImageInspectionCount("cat"); got != 3 {
 		t.Fatalf("expected all successful inspection calls to count, got %d", got)
 	}
 }
 
-func TestCloudAgentVisionBlocksSameResourceInSameCanvasRevision(t *testing.T) {
+// TestCloudAgentVisionRepeatReadGuidesWithoutAttaching 覆盖"重复识图不终止本轮"：
+// 同一版本、同一素材已经附送、并且服务端确认送达过模型之后，再申请只回文字引导
+// （不带图、不报错），并把回执 SHA 与下一步动作一起交回，让它用已有画面继续。
+func TestCloudAgentVisionRepeatReadGuidesWithoutAttaching(t *testing.T) {
 	s, _, _ := cloudAgentVisionFixture(t)
 	state := cloudAgentRuntime{Request: agentTestRequest()}
 	state.Request.VisionEnabled = true
@@ -374,30 +384,70 @@ func TestCloudAgentVisionBlocksSameResourceInSameCanvasRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	inspection := first.(cloudAgentImageInspection)
-	if inspection.CacheKey == "" {
-		t.Fatal("first inspection did not produce a stable cache key")
+	if inspection.CacheKey == "" || inspection.ImageURL == "" {
+		t.Fatalf("first inspection must attach the real image: %+v", inspection.Receipt)
 	}
 	state.ImageInspectionReads = map[string]int{inspection.CacheKey: 1}
+	state.DeliveredImageSHAs = map[string]string{"cat": inspection.ResourceSHA}
 
-	refreshCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-refresh", map[string]any{"nodeId": "cat", "refresh": true})
-	_, err = s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, refreshCall)
-	var loopErr *cloudAgentReadLoopError
-	if !errors.As(err, &loopErr) {
-		t.Fatalf("refresh should not re-read the same resource in the same revision: %v", err)
+	repeatCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-repeat", map[string]any{"nodeId": "cat", "refresh": true})
+	second, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, repeatCall)
+	if err != nil {
+		t.Fatalf("重复识图必须回执文字引导，而不是把本轮判失败：%v", err)
+	}
+	repeat := second.(cloudAgentImageInspection)
+	if repeat.ImageURL != "" || repeat.Receipt["repeat"] != true || repeat.Receipt["imageAttached"] != false {
+		t.Fatalf("repeat receipt must not attach the image again: %+v", repeat.Receipt)
+	}
+	if stringValue(repeat.Receipt["sha256"]) != inspection.ResourceSHA {
+		t.Fatalf("repeat receipt must hand back the delivered sha: %+v", repeat.Receipt)
+	}
+	note := stringValue(repeat.Receipt["note"])
+	if !strings.Contains(note, "summary") || !strings.Contains(note, inspection.ResourceSHA) {
+		t.Fatalf("repeat receipt must spell out the next action: %s", note)
+	}
+}
+
+// TestCloudAgentVisionRepeatReadAttachesWhenImageNeverDelivered 覆盖恢复路径：
+// 服务端没有这次交付的 SHA（例如分批预算把原图挤到了后面的批次）时，重复申请是正当的，
+// 必须重新附图，否则模型会卡在"看不见图又申请不到新图"的死局。
+func TestCloudAgentVisionRepeatReadAttachesWhenImageNeverDelivered(t *testing.T) {
+	s, _, _ := cloudAgentVisionFixture(t)
+	state := cloudAgentRuntime{Request: agentTestRequest()}
+	state.Request.VisionEnabled = true
+
+	firstCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-1", map[string]any{"nodeId": "cat"})
+	first, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, firstCall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection := first.(cloudAgentImageInspection)
+	state.ImageInspectionReads = map[string]int{inspection.CacheKey: 1}
+	state.markCanvasImageInspection("cat", true, "")
+
+	repeatCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-2", map[string]any{"nodeId": "cat"})
+	second, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, repeatCall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := second.(cloudAgentImageInspection)
+	if retry.ImageURL == "" || retry.Receipt["imageAttached"] != true {
+		t.Fatalf("未送达模型的图片必须允许重新附图：%+v", retry.Receipt)
 	}
 }
 
 func TestCloudAgentVisionHasPerRunInspectionBudget(t *testing.T) {
 	s, _, _ := cloudAgentVisionFixture(t)
-	state := cloudAgentRuntime{Request: agentTestRequest(), ImageInspectCalls: cloudAgentMaxImageInspectionCallsPerRun - 1}
+	budget := cloudAgentImageInspectionBudget(1)
+	state := cloudAgentRuntime{Request: agentTestRequest(), ImageInspectCalls: budget - 1}
 	state.Request.VisionEnabled = true
 	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-last", map[string]any{"nodeId": "cat", "refresh": true})
 	result, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call)
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.markCanvasImageInspection("cat", strings.TrimSpace(result.(cloudAgentImageInspection).ImageURL) != "")
-	if got := state.ImageInspectCalls; got != cloudAgentMaxImageInspectionCallsPerRun {
+	state.markCanvasImageInspection("cat", strings.TrimSpace(result.(cloudAgentImageInspection).ImageURL) != "", "")
+	if got := state.ImageInspectCalls; got != budget {
 		t.Fatalf("expected budget to be consumed at the boundary, got %d", got)
 	}
 
@@ -408,39 +458,22 @@ func TestCloudAgentVisionHasPerRunInspectionBudget(t *testing.T) {
 }
 
 func TestCloudAgentVisionBudgetStopsRunBeforeAnotherModelStep(t *testing.T) {
-	s, _, _ := cloudAgentVisionFixture(t)
+	s, db, _ := cloudAgentVisionFixture(t)
 	req := agentTestRequest()
 	req.VisionEnabled = true
 	root, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state.ActiveTaskID = ""
+	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-blocked", map[string]any{"nodeId": "cat", "refresh": true})
+	run, state := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{call})
 	state.ImageInspectCalls = cloudAgentMaxImageInspectionCallsPerRun
-	state.Calls = []cloudAgentCall{cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-blocked", map[string]any{"nodeId": "cat", "refresh": true})}
-	state.CallIndex = 0
 	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		return cloudAgentSave(current, &state)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	run, err = s.repo.CloudAgent("user", root.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err = cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.advanceCloudAgentTool(run, &state); err != nil {
+	if err := agentPiExecuteCallForTest(t, s, root.ID, call.ID); err != nil {
 		t.Fatal(err)
 	}
 	output, err := s.CloudAgentRun("user", root.ID)
@@ -478,5 +511,99 @@ func TestCloudAgentVisionRejectsMissingFileAndExternalURL(t *testing.T) {
 		if _, err := s.cloudAgentImageReferences("user", agentTestRequest(), &canonical); err == nil {
 			t.Errorf("accepted unapproved image source %q", url)
 		}
+	}
+}
+
+// cloudAgentVisionAdvanceReceipt 执行一次已准入的识图调用并返回模型看到的回执 JSON，
+// 其余动作与 agentPiExecuteCallForTest 一致（回执写回 Pi 检查点），只是把回执留给测试断言。
+func cloudAgentVisionAdvanceReceipt(t *testing.T, s *Service, runID, callID string) map[string]any {
+	t.Helper()
+	run, state := agentInterjectionState(t, s, runID)
+	taskID := firstNonEmpty(state.PiToolBatchTaskID, state.LastStepTaskID)
+	receipt, err := s.PiToolAdvance("user", runID, run.LeaseOwner, taskID, callID)
+	if err != nil {
+		t.Fatalf("Pi tool advance %s: %v", callID, err)
+	}
+	if receipt == nil {
+		t.Fatalf("Pi tool advance %s returned no receipt", callID)
+	}
+	run, state = agentInterjectionState(t, s, runID)
+	var call cloudAgentCall
+	for _, candidate := range state.Calls {
+		if candidate.ID == callID {
+			call = candidate
+			break
+		}
+	}
+	if call.ID != "" && !cloudAgentRunTerminal(run.Status) {
+		agentPiCheckpointToolReceiptForTest(t, s, runID, call, receipt)
+	}
+	var decoded map[string]any
+	if len(receipt.Result) > 0 {
+		if err := json.Unmarshal(receipt.Result, &decoded); err != nil {
+			t.Fatalf("decode %s receipt: %v (%s)", callID, err, string(receipt.Result))
+		}
+	}
+	return decoded
+}
+
+// TestCloudAgentVisionRepeatReadKeepsRunAlive 是用户可见行为的回归：模型在同一批里重复
+// 申请同一张已经送达过的图片时，本轮必须继续（回执带引导），不能把整轮判成 failed。
+func TestCloudAgentVisionRepeatReadKeepsRunAlive(t *testing.T) {
+	s, db, pixels := cloudAgentVisionFixture(t)
+	req := agentTestRequest()
+	req.VisionEnabled = true
+	root, err := s.CreateCloudAgentRun("user", req, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-first", map[string]any{"nodeId": "cat"})
+	repeat := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-repeat", map[string]any{"nodeId": "cat"})
+	run, state := agentStagePiOutputForTest(t, s, db, root.ID, "", []cloudAgentCall{first, repeat})
+	// 预置"这张图上一批已经真的送达模型"：交付 SHA 与资源内容一致，重复申请才走引导分支。
+	state.DeliveredImageSHAs = map[string]string{"cat": fmt.Sprintf("%x", sha256.Sum256(pixels))}
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	firstReceipt := cloudAgentVisionAdvanceReceipt(t, s, root.ID, first.ID)
+	if firstReceipt["imageAttached"] != true || stringValue(firstReceipt["sha256"]) == "" {
+		t.Fatalf("first inspection must attach the real image: %+v", firstReceipt)
+	}
+	repeatReceipt := cloudAgentVisionAdvanceReceipt(t, s, root.ID, repeat.ID)
+	if repeatReceipt["repeat"] != true || repeatReceipt["imageAttached"] != false {
+		t.Fatalf("repeat inspection must be a text-only guidance receipt: %+v", repeatReceipt)
+	}
+	output, err := s.CloudAgentRun("user", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Status == "failed" {
+		t.Fatalf("重复识图不得终止本轮：%s", output.FailureMessage)
+	}
+}
+
+// TestCloudAgentVisionRepeatReadStopsOnlyAtBudget 是成本兜底：重复申请本身只回文字引导，
+// 但本轮识图额度真的用完时仍按预算收尾，避免模型把整轮拖成无界循环。
+func TestCloudAgentVisionRepeatReadStopsOnlyAtBudget(t *testing.T) {
+	s, _, _ := cloudAgentVisionFixture(t)
+	state := cloudAgentRuntime{Request: agentTestRequest()}
+	state.Request.VisionEnabled = true
+
+	firstCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-1", map[string]any{"nodeId": "cat"})
+	first, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, firstCall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection := first.(cloudAgentImageInspection)
+	state.ImageInspectionReads = map[string]int{inspection.CacheKey: 1}
+	state.DeliveredImageSHAs = map[string]string{"cat": inspection.ResourceSHA}
+	state.ImageInspectCalls = cloudAgentMaxImageInspectionCallsPerRun
+
+	repeatCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-repeat", map[string]any{"nodeId": "cat"})
+	if _, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, repeatCall); !errors.Is(err, errCloudAgentImageInspectionBudget) {
+		t.Fatalf("重复识图也要受本轮识图额度兜底：%v", err)
 	}
 }

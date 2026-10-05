@@ -3,6 +3,8 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -340,7 +342,7 @@ func TestCloudAgentProjectionRejectsMissingAdapterAndOpaqueMetadata(t *testing.T
 	node := map[string]any{"id": "n1", "type": "text", "title": "镜头"}
 	meta := map[string]any{"content": "公开正文", "storageKey": "resource:private", "url": "https://private.example/test", "status": "idle"}
 	descriptor, _ := cloudAgentNodeCapabilityForType("text")
-	projected, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, true, 0)
+	projected, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, cloudAgentProjectionDetail, 0)
 	if err != nil || projected["content"] != "公开正文" || projected["storageKey"] != nil || projected["url"] != nil {
 		t.Fatalf("unsafe or incomplete projection: %v, %v", projected, err)
 	}
@@ -348,7 +350,7 @@ func TestCloudAgentProjectionRejectsMissingAdapterAndOpaqueMetadata(t *testing.T
 	descriptor.ProjectionKind = "unregistered-projector"
 	descriptor.DetailFields = []string{"storyboard"}
 	meta["storyboard"] = map[string]any{"rows": []any{}}
-	if _, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, true, 0); err == nil {
+	if _, err := cloudAgentProjectNodeFields(node, meta, descriptor, descriptor.DetailFields, 16000, cloudAgentProjectionDetail, 0); err == nil {
 		t.Fatal("unregistered structured projector must fail closed")
 	}
 }
@@ -401,6 +403,25 @@ func TestCloudAgentDurablePolicySnapshotRejectsMissingOrUnsupportedContracts(t *
 				t.Fatal("corrupted durable policy snapshot was accepted")
 			}
 		})
+	}
+}
+
+func TestCloudAgentHarnessChangeBlocksContinuation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CANVAS_AGENT_HARNESS_DIR", dir)
+	path := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(path, []byte("Project guidance v1"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, snapshot, err := compileCloudAgentPolicies(agentTestRequest(), nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	if err != nil || validateCloudAgentPolicySnapshot(snapshot) != nil {
+		t.Fatalf("initial harness snapshot was rejected: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("Project guidance v2"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCloudAgentPolicySnapshot(snapshot); err == nil {
+		t.Fatal("changed harness instructions must block continuation")
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"gorm.io/gorm"
+
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -40,7 +42,11 @@ func TestCloudAgentContextPressureSeparatesNextRequestEstimateFromPreviousProvid
 }
 
 // 快照字段：读数必须带版本、相位、测量来源、窗口与锚点状态，消费方不该靠字段名猜。
-func TestCloudAgentContextPressurePayloadCarriesSnapshotFields(t *testing.T) {
+//
+// 取舍：两侧都写了这条用例（我方 TestCloudAgentContextPressurePayloadCarriesSnapshotV2Fields、
+// 上游 TestCloudAgentContextPressurePayloadCarriesSnapshotFields）。合并后以我方的对外字段名为准
+// （保留 window 聚合快照），并把上游的平铺字段断言与 tokenSource/tokenScale 断言一并留下。
+func TestCloudAgentContextPressurePayloadCarriesSnapshotV2Fields(t *testing.T) {
 	pressure := cloudAgentContextPressure{
 		EstimatedInputTokens: 20000, UsableInputTokens: 100000, ContextWindowTokens: 128000,
 		ReservedOutputTokens: 16000, OverheadTokens: 5120, InputBudgetTokens: 100000,
@@ -62,6 +68,10 @@ func TestCloudAgentContextPressurePayloadCarriesSnapshotFields(t *testing.T) {
 		payload["inputBudgetTokens"] != 100000 || payload["compactAtTokens"] != 85000 ||
 		payload["budgetSource"] != "channel-model" || payload["modelLimitConfigured"] != true {
 		t.Fatalf("窗口口径字段不齐：%+v", payload)
+	}
+	window, ok := payload["window"].(map[string]any)
+	if !ok || window["contextWindowTokens"] != 128000 || window["usableInputTokens"] != 100000 || window["source"] != "channel-model" {
+		t.Fatalf("window 快照不对：%+v", payload["window"])
 	}
 	anchor, ok := payload["anchor"].(map[string]any)
 	if !ok || anchor["id"] != "task-anchor" || anchor["valid"] != true || anchor["ageSteps"] != 2 {
@@ -108,9 +118,25 @@ func TestCloudAgentContextPressureWithoutWindowDoesNotFakeRatio(t *testing.T) {
 	}
 }
 
+// declareTestChannelWindow 给夹具里的渠道模型显式声明窗口与输出上限。
+//
+// 取舍：我方 fork 的 DefaultModelCapabilityConfigForModel 刻意不再"猜"窗口（0 = 未声明/未知），
+// 而上游 #601 的这两条用例依赖"默认能力里就有 128000/16384"。两侧断言都保留，
+// 但夹具必须显式声明窗口，"按窗口口径算读数"才成立（否则读数按设计就是 modelLimitConfigured=false）。
+func declareTestChannelWindow(t *testing.T, db *gorm.DB, contextWindow, maxOutput int) {
+	t.Helper()
+	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
+	capability.Text.ContextWindowTokens = contextWindow
+	capability.Text.MaxOutputTokens = maxOutput
+	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "cm").Update("capability_config_json", mustEncodeModelCapabilityConfig(t, capability)).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
 // 声明了窗口的渠道模型：窗口/输出预留/overhead/输入预算按同一算式给出，读数才有百分比。
 func TestCloudAgentContextPressureReportsWindowBudgetFromChannelCapability(t *testing.T) {
-	service, _, _, _ := creationTestService(t)
+	service, db, _, _ := creationTestService(t)
+	declareTestChannelWindow(t, db, defaultCloudAgentContextWindowTokens, defaultCloudAgentMaxOutputTokens)
 	canonical := canonicalAgentRequest{
 		SystemPrompt: "系统提示",
 		Messages:     []map[string]interface{}{{"role": "user", "content": "分析剧情"}},
@@ -142,7 +168,7 @@ func TestCloudAgentContextPressureReportsWindowBudgetFromChannelCapability(t *te
 	}
 }
 
-// 窗口从未确认变为已确认：要落且只落一条 context_transition。
+// 窗口从未确认变为已确认：要落且只落一条 context_transition（界面据此标"模型窗口已识别"）。
 func TestCloudAgentNoteContextWindowResolvedEmitsOnce(t *testing.T) {
 	state := &cloudAgentRuntime{}
 	pressure := cloudAgentContextPressure{ModelLimitConfigured: true, ContextWindowTokens: 1000000, UsableInputTokens: 967232, BudgetSource: "channel-model"}
@@ -169,6 +195,7 @@ func TestCloudAgentNoteContextWindowResolvedEmitsOnce(t *testing.T) {
 // 并给出 tokenScale 与投影（锚点 + 本地有符号增量）。
 func TestCloudAgentContextPressureUsesEstimateOnFirstStepThenProviderAnchor(t *testing.T) {
 	service, db, _, _ := creationTestService(t)
+	declareTestChannelWindow(t, db, defaultCloudAgentContextWindowTokens, defaultCloudAgentMaxOutputTokens)
 	request := agentTestRequest()
 	budget := service.cloudAgentContextBudgetForRequest(request)
 	if !budget.Configured {
@@ -228,7 +255,9 @@ func TestCloudAgentTokenAnchorSurvivesWithinMaxAgeAndExpiresAfterwards(t *testin
 	state.TokenAnchor.Signature = cloudAgentStepSignature(state)
 
 	state.Step = 2 + cloudAgentAnchorMaxAgeSteps
-	cloudAgentExpireTokenAnchor("run-1", state, 0)
+	// 取舍：作废入口沿用我方两参签名 cloudAgentExpireTokenAnchor(runID, state)（上游是三参、
+	// 多一个窗口入参），窗口比较改由 ForRequest 显式传入，语义不变。
+	cloudAgentExpireTokenAnchor("run-1", state)
 	if !state.TokenAnchor.Accepted || state.TokenAnchor.RejectReason != "" {
 		t.Fatalf("第 %d 步仍在有效期内，不该作废：%+v", cloudAgentAnchorMaxAgeSteps, state.TokenAnchor)
 	}
@@ -242,7 +271,9 @@ func TestCloudAgentTokenAnchorSurvivesWithinMaxAgeAndExpiresAfterwards(t *testin
 	}
 
 	state.Step++
-	cloudAgentExpireTokenAnchor("run-1", state, 0)
+	// 取舍：作废入口沿用我方两参签名 cloudAgentExpireTokenAnchor(runID, state)（上游是三参、
+	// 多一个窗口入参），窗口比较改由 ForRequest 显式传入，语义不变。
+	cloudAgentExpireTokenAnchor("run-1", state)
 	if state.TokenAnchor.Accepted || !strings.Contains(state.TokenAnchor.RejectReason, "未刷新") {
 		t.Fatalf("超期锚点必须作废：%+v", state.TokenAnchor)
 	}
@@ -259,7 +290,8 @@ func TestCloudAgentTokenAnchorExpiresWhenWindowChanges(t *testing.T) {
 		TokenAnchor: &cloudAgentTokenAnchor{TaskID: "task-1", Step: 1, Accepted: true, InputTokens: 10500, EstimatedTokens: 20000, ContextWindowTokens: 128000},
 	}
 	state.TokenAnchor.Signature = cloudAgentStepSignature(state)
-	cloudAgentExpireTokenAnchor("run-1", state, 256000)
+	// 取舍：窗口比较保留上游能力（我方两参入口不接窗口），按等价语义改用 ForRequest 显式传窗口。
+	cloudAgentExpireTokenAnchorForRequest("run-1", state, 256000, cloudAgentStepSignature(state), state.Request.Model, state.Request.ChannelID)
 	if state.TokenAnchor.Accepted || !strings.Contains(state.TokenAnchor.RejectReason, "窗口已变化") {
 		t.Fatalf("换窗口后锚点必须作废：%+v", state.TokenAnchor)
 	}
@@ -283,7 +315,7 @@ func TestCloudAgentTokenAnchorExpiresWhenWindowChanges(t *testing.T) {
 		TokenAnchor: &cloudAgentTokenAnchor{TaskID: "task-2", Step: 1, Accepted: true, InputTokens: 10500, EstimatedTokens: 20000, ContextWindowTokens: 128000},
 	}
 	unknown.TokenAnchor.Signature = cloudAgentStepSignature(unknown)
-	cloudAgentExpireTokenAnchor("run-1", unknown, 0)
+	cloudAgentExpireTokenAnchor("run-1", unknown)
 	if !unknown.TokenAnchor.Accepted {
 		t.Fatal("窗口未知时不该作废锚点")
 	}
@@ -549,60 +581,30 @@ func TestCloudAgentContextBreakdownScalesBucketsWithAnchor(t *testing.T) {
 // 第一步是估算、第二步换成上游实测锚点。这条用例守的是运行期接线（登记的是哪一步、
 // 哪一次调用、什么时候配锚点），而不是载荷函数本身。
 func TestCloudAgentRuntimeEmitsContextPressurePerStep(t *testing.T) {
-	s, db, _, _ := creationTestService(t)
-	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: `{"nodes":[],"connections":[]}`}).Error; err != nil {
-		t.Fatal(err)
-	}
-	root, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
+	s, db, run := piAgentTestLeasedFixture(t)
+	declareTestChannelWindow(t, db, 128000, 8192)
+	_, state := reloadPiRun(t, s, run.ID)
+	request := PiModelStepRequest{Canonical: state.Canonical}
+	firstTask, err := s.PiModelStep("user", run.ID, run.LeaseOwner, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	load := func() (*model.CloudAgentExecution, cloudAgentRuntime) {
+	pressures := func() []CloudAgentEvent {
 		t.Helper()
-		run, err := s.repo.CloudAgent("user", root.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		state, err := cloudAgentDecode(run)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return run, state
-	}
-	advance := func() {
-		t.Helper()
-		if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	pressures := func(state cloudAgentRuntime) []CloudAgentEvent {
-		events := []CloudAgentEvent{}
-		for _, event := range state.Events {
+		_, current := reloadPiRun(t, s, run.ID)
+		var result []CloudAgentEvent
+		for _, event := range current.Events {
 			if event.Type == "context_pressure" {
-				events = append(events, event)
+				result = append(result, event)
 			}
 		}
-		return events
+		return result
 	}
-
-	// 建运行：第一步的模型调用就是根任务，读数在发出请求之前就落下了。
-	advance()
-	_, state := load()
-	if state.ActiveTaskID != root.ID || state.LastStepTaskID != root.ID || state.LastStepOperation != cloudAgentStepOperation {
-		t.Fatalf("第一步的记账不对：active=%s last=%s op=%s", state.ActiveTaskID, state.LastStepTaskID, state.LastStepOperation)
-	}
-	first := pressures(state)
-	if len(first) != 1 {
-		t.Fatalf("第一步应落一条 context_pressure，实际 %d", len(first))
-	}
-	if first[0].Payload["tokenSource"] != "estimate" || first[0].Payload["measurementSource"] != "estimate" {
-		t.Fatalf("第一步没有实测，必须标估算：%+v", first[0].Payload)
-	}
-	if first[0].Payload["requestId"] != root.ID || first[0].Payload["readingScope"] != "next_request" {
-		t.Fatalf("读数必须钉在本次请求上：%+v", first[0].Payload)
-	}
-	if _, ok := first[0].Payload["breakdown"].(map[string]any); !ok {
-		t.Fatalf("读数必须带占用分布：%+v", first[0].Payload)
+	first := pressures()
+	if len(first) != 1 || first[0].Payload["tokenSource"] != "estimate" ||
+		first[0].Payload["measurementSource"] != "estimate" || first[0].Payload["requestId"] != firstTask.TaskID ||
+		first[0].Payload["readingScope"] != "next_request" {
+		t.Fatalf("Pi first request did not persist estimated pressure: %+v", first)
 	}
 	assertMatchesTask := func(taskID string, event CloudAgentEvent) {
 		t.Helper()
@@ -618,72 +620,99 @@ func TestCloudAgentRuntimeEmitsContextPressurePerStep(t *testing.T) {
 		if !ok {
 			t.Fatalf("task %s missing canonical envelope", taskID)
 		}
-		raw, err := json.Marshal(canonical)
-		if err != nil {
-			t.Fatal(err)
-		}
-		breakdown := event.Payload["breakdown"].(map[string]any)
-		if breakdown["totalBytes"] != float64(len(raw)) || event.Payload["sourceBytes"] != float64(len(raw)) {
-			t.Fatalf("pressure/breakdown not based on actual task envelope: task=%s event=%+v", taskID, event.Payload)
+		raw, _ := json.Marshal(canonical)
+		breakdown, ok := event.Payload["breakdown"].(map[string]any)
+		if !ok || breakdown["totalBytes"] != float64(len(raw)) || event.Payload["sourceBytes"] != float64(len(raw)) {
+			t.Fatalf("pressure not based on admitted task envelope: task=%s payload=%+v", taskID, event.Payload)
 		}
 		buckets := breakdown["buckets"].([]any)
 		messages := buckets[2].(map[string]any)
 		messageBytes, _ := json.Marshal(canonical.Messages)
 		if messages["bytes"] != float64(len(messageBytes)) {
-			t.Fatalf("message bucket not based on task input: %v != %d", messages["bytes"], len(messageBytes))
+			t.Fatalf("message bucket not based on actual model input: %v != %d", messages["bytes"], len(messageBytes))
 		}
 	}
-	assertMatchesTask(root.ID, first[0])
-
-	// 第一步的模型调用回来了，上游上报了用量。
+	assertMatchesTask(firstTask.TaskID, first[0])
 	if err := db.Create(&model.ApiCallLog{
-		ID: "log-root", UserID: "user", TaskID: root.ID, Capability: "text", Model: "text-test",
+		ID: "log-pi-first", UserID: "user", TaskID: firstTask.TaskID, Capability: "text", Model: "text-test",
 		Status: model.ApiCallStatusSucceeded, InputTokens: 10500, CachedTokens: 2000, OutputTokens: 300, UsageAvailable: true,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	// 在任务接缝注入模型输出：一次只读工具调用，让这一轮进入第二步。
-	call := cloudAgentCall{ID: "call-1"}
-	call.Function.Name, call.Function.Arguments = "canvas_get_state", `{}`
-	body, _ := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{call}})
-	if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(body)}).Error; err != nil {
+	if err := db.Model(&model.Task{}).Where("id = ?", firstTask.TaskID).
+		Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": `{"text":"已读取画布"}`}).Error; err != nil {
 		t.Fatal(err)
 	}
-	// 模型结果 → 执行工具 → 记锚点 → 发下一步：推进到第二步的读数落下为止（有界）。
-	for attempt := 0; attempt < 6; attempt++ {
-		advance()
-		if _, current := load(); len(pressures(current)) == 2 {
-			break
-		}
+	if err := s.PiModelStepAck("user", run.ID, run.LeaseOwner, firstTask.TaskID); err != nil {
+		t.Fatal(err)
 	}
-	run, state := load()
-	if run.Status != "running" {
-		t.Fatalf("这一步应当继续（工具已执行、下一步已提交）：status=%s failure=%s", run.Status, run.FailureMessage)
+	_, acknowledged := reloadPiRun(t, s, run.ID)
+	if acknowledged.TokenAnchor == nil || !acknowledged.TokenAnchor.Accepted || acknowledged.TokenAnchor.TaskID != firstTask.TaskID {
+		t.Fatalf("Pi task acknowledgement did not capture provider usage: %+v", acknowledged.TokenAnchor)
 	}
-	if state.TokenAnchor == nil || !state.TokenAnchor.Accepted || state.TokenAnchor.TaskID != root.ID {
-		t.Fatalf("根任务的上游用量必须配成锚点：%+v", state.TokenAnchor)
+	request.Canonical.Messages = append(request.Canonical.Messages, map[string]any{"role": "assistant", "content": "已读取画布"},
+		map[string]any{"role": "user", "content": "继续检查"})
+	nextTask, err := s.PiModelStep("user", run.ID, run.LeaseOwner, request)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if state.LastStepTaskID == root.ID || state.LastStepOperation != cloudAgentStepOperation {
-		t.Fatalf("第二步的记账不对：last=%s op=%s", state.LastStepTaskID, state.LastStepOperation)
-	}
-	second := pressures(state)
-	if len(second) != 2 {
-		t.Fatalf("第二步应再落一条 context_pressure，实际 %d", len(second))
+	second := pressures()
+	if len(second) != 2 || nextTask.TaskID == firstTask.TaskID {
+		t.Fatalf("Pi next request did not create one pressure event: tasks=%+v/%+v events=%+v", firstTask, nextTask, second)
 	}
 	payload := second[1].Payload
-	// 事件是经 JSON 落库再读回来的，数字到这一层都是 float64（消费方也不该假设整型）。
-	if payload["tokenSource"] != "provider" || payload["measurementSource"] != "provider" {
-		t.Fatalf("拿到实测后主读数必须换成 provider：%+v", payload)
+	if payload["tokenSource"] != "provider" || payload["measurementSource"] != "provider" ||
+		payload["normalizedInputTokens"] != float64(10500) || payload["requestId"] != nextTask.TaskID {
+		t.Fatalf("provider anchor and next-request identity are mixed: %+v", payload)
 	}
-	if payload["normalizedInputTokens"] != float64(10500) || payload["requestId"] != state.LastStepTaskID {
-		t.Fatalf("实测值与请求绑定不对：%+v", payload)
-	}
-	assertMatchesTask(state.LastStepTaskID, second[1])
-	if _, exists := payload["tokenScale"]; !exists {
-		t.Fatalf("provider 口径必须带换算比例：%+v", payload)
-	}
+	assertMatchesTask(nextTask.TaskID, second[1])
 	anchor, ok := payload["anchor"].(map[string]any)
-	if !ok || anchor["valid"] != true || anchor["ageSteps"] != float64(0) || anchor["id"] != root.ID {
-		t.Fatalf("anchor 快照不对：%+v", payload["anchor"])
+	if !ok || anchor["valid"] != true || anchor["id"] != firstTask.TaskID {
+		t.Fatalf("provider anchor snapshot is incorrect: %+v", payload["anchor"])
+	}
+}
+
+// 计量用的估算尺子：ASCII 每 4 字节 1 token 向上取整（我方用例）。
+// 上游把这条断言并进了 TestEstimateCloudAgentTokensTreatsCJKConservatively，
+// 这里按"两侧断言都保留"单独留一份，便于按名字定向运行。
+func TestEstimateCloudAgentTokensRoundsASCIIUp(t *testing.T) {
+	if got := estimateCloudAgentTokens([]byte("hello")); got != 2 {
+		t.Fatalf("estimate = %d, want 2", got)
+	}
+}
+
+// 锚点治理（设计 §6）：超过 N 步未刷新就作废；模型/渠道变化也作废。
+// 取舍：本用例来自我方 fork，作废入口按我方两参签名调用；签名/模型/线路优先取
+// LastStep*（"实际发出去的那份信封"的口径，上游 #601 的记账），缺失时退回运行态指纹。
+func TestCloudAgentTokenAnchorExpires(t *testing.T) {
+	fresh := &cloudAgentRuntime{Step: 10, Request: CloudAgentRequest{Model: "m", ChannelID: "c"}, TokenAnchor: &cloudAgentTokenAnchor{Step: 9, Accepted: true, Signature: "sig"}}
+	fresh.TokenAnchor.Signature = cloudAgentStepSignature(fresh)
+	cloudAgentExpireTokenAnchor("run-1", fresh)
+	if !fresh.TokenAnchor.Accepted || fresh.TokenAnchor.RejectReason != "" {
+		t.Fatalf("新鲜锚点不该被作废：%+v", fresh.TokenAnchor)
+	}
+
+	stale := &cloudAgentRuntime{Step: 20, Request: CloudAgentRequest{Model: "m", ChannelID: "c"}, TokenAnchor: &cloudAgentTokenAnchor{Step: 10, Accepted: true}}
+	stale.TokenAnchor.Signature = cloudAgentStepSignature(stale)
+	cloudAgentExpireTokenAnchor("run-1", stale)
+	if stale.TokenAnchor.Accepted || !strings.Contains(stale.TokenAnchor.RejectReason, "未刷新") {
+		t.Fatalf("超期锚点必须作废：%+v", stale.TokenAnchor)
+	}
+
+	changed := &cloudAgentRuntime{Step: 2, Request: CloudAgentRequest{Model: "m2", ChannelID: "c"}, TokenAnchor: &cloudAgentTokenAnchor{Step: 1, Accepted: true, Model: "m", ChannelID: "c"}}
+	before := &cloudAgentRuntime{Step: 1, Request: CloudAgentRequest{Model: "m", ChannelID: "c"}}
+	changed.TokenAnchor.Signature = cloudAgentStepSignature(before)
+	cloudAgentExpireTokenAnchor("run-1", changed)
+	if changed.TokenAnchor.Accepted || !strings.Contains(changed.TokenAnchor.RejectReason, "模型已变化") {
+		t.Fatalf("换模型后锚点必须作废：%+v", changed.TokenAnchor)
+	}
+	kinds := []string{}
+	for _, event := range changed.Events {
+		if event.Type == "context_transition" {
+			kinds = append(kinds, stringValue(event.Payload["kind"]))
+		}
+	}
+	if len(kinds) != 1 || kinds[0] != "model_changed" {
+		t.Fatalf("换模型应落 model_changed 过渡：%v", kinds)
 	}
 }

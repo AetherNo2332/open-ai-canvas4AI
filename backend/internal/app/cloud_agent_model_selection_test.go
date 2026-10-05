@@ -69,7 +69,7 @@ func TestCloudAgentModelSelectionAcceptsOnlyCompleteSelections(t *testing.T) {
 		if err := decodeCloudAgentJSONObject(raw, &args); err != nil {
 			t.Fatal(err)
 		}
-		if err := validateCloudAgentModelSelection(raw, args); err != nil {
+		if err := (&Service{}).validateCloudAgentModelSelection("user", raw, &args); err != nil {
 			t.Fatalf("valid selection rejected: %v", err)
 		}
 	}
@@ -91,7 +91,7 @@ func TestCloudAgentProjectDefaultChannelModelFillsOnlyOmittedSelection(t *testin
 	if err != nil || used {
 		t.Fatalf("explicit empty selection was silently defaulted: used:%v args:%+v err:%v", used, args, err)
 	}
-	if err := validateCloudAgentModelSelection(`{"mode":"video","channelId":"","channelModelKey":""}`, args); err == nil {
+	if err := (&Service{}).validateCloudAgentModelSelection("user", `{"mode":"video","channelId":"","channelModelKey":""}`, &args); err == nil {
 		t.Fatal("explicit empty selection unexpectedly passed validation")
 	}
 }
@@ -151,7 +151,7 @@ func TestCloudAgentMediaToolsDeclareExclusiveModelSelection(t *testing.T) {
 			t.Fatalf("incomplete model selection schema: %#v", parameters)
 		}
 		props := parameters["properties"].(map[string]any)
-		for _, field := range []string{"logicalModelId", "channelId", "channelModelKey"} {
+		for _, field := range []string{"selectionId", "logicalModelId", "channelId", "channelModelKey"} {
 			property := props[field].(map[string]any)
 			if property["type"] != "string" {
 				t.Fatalf("model field contract drift: %s %#v", field, property)
@@ -166,7 +166,7 @@ func TestCloudAgentMediaToolsDeclareExclusiveModelSelection(t *testing.T) {
 func TestCloudAgentMissingModelCreatesNoDraftApprovalOrTask(t *testing.T) {
 	s, db, args := agentMediaFixture(t)
 	args.ChannelID, args.ChannelModelKey = "", ""
-	run, _ := agentMediaRun(t, s, args, "auto")
+	run, _ := queuePiMediaToolForTest(t, s, db, args, "auto")
 	canvas, _ := s.repo.CanvasProjectForUser("user", "agent-canvas")
 	var before int64
 	if err := db.Model(&model.Task{}).Count(&before).Error; err != nil {
@@ -176,7 +176,7 @@ func TestCloudAgentMissingModelCreatesNoDraftApprovalOrTask(t *testing.T) {
 	if err := db.Model(&model.BillingOrder{}).Count(&billingBefore).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.advanceCloudAgentByID("user", run.ID); err != nil {
+	if err := advancePiAgentForTest(t, s, run.ID); err != nil {
 		t.Fatal(err)
 	}
 	run, _ = s.repo.CloudAgent("user", run.ID)

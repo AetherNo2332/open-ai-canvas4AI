@@ -68,7 +68,7 @@ func TestPluginViewIncludesDocumentationForEveryOfficialProtocol(t *testing.T) {
 			continue
 		}
 		expectedSource := PluginOriginOfficial
-		if isSystemPaymentPluginID(plugin.Manifest.ID) {
+		if isSystemPaymentPluginID(plugin.Manifest.ID) || isSystemSMSPluginID(plugin.Manifest.ID) {
 			expectedSource = PluginOriginSystem
 		}
 		if plugin.Source != expectedSource {

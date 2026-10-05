@@ -5,12 +5,13 @@ import { ArrowLeft, BookMarked, Check, ChevronRight, Cpu, Gauge, LockKeyhole, Pl
 import { ModelPicker } from "@/components/model-picker";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import AgentMemoryPane from "@/pages/settings/agent-memory-pane";
+import { CanvasAgentWorkspaceSettings } from "./canvas-agent-workspace-settings";
 import type { AgentPermissionMode, AgentProfileLayer, AgentProfileScope, AgentProfileView, AgentReasoningMode } from "@/services/api/agent";
 import type { Skill } from "@/services/api/skills";
 import type { AiConfig } from "@/stores/use-config-store";
 
 export type AgentContextKey = "canvas" | "resources" | "generation_history" | "skills" | "project";
-type SettingsSection = "home" | "profile" | "memories" | "skills" | "mcp" | "context" | "budget";
+type SettingsSection = "home" | "profile" | "memories" | "skills" | "mcp" | "context" | "budget" | "workspace";
 
 type AgentSettingsProps = {
     theme: CanvasTheme;
@@ -52,9 +53,9 @@ type AgentSettingsProps = {
 };
 
 const permissionOptions: Array<{ value: AgentPermissionMode; label: string; description: string; icon: typeof ShieldCheck; color: string }> = [
-    { value: "read_only", label: "只读", description: "只分析和建议", icon: LockKeyhole, color: "#4f7cff" },
-    { value: "request_approval", label: "请求审批", description: "写入和生成前确认", icon: ShieldCheck, color: "#b58336" },
-    { value: "auto", label: "自动执行", description: "预算内执行已授权工具", icon: Sparkles, color: "#429477" },
+    { value: "read_only", label: "只读", description: "只分析和建议", icon: LockKeyhole, color: "var(--primary)" },
+    { value: "request_approval", label: "请求审批", description: "写入和生成前确认", icon: ShieldCheck, color: "var(--palette-status-warning)" },
+    { value: "auto", label: "自动执行", description: "预算内执行已授权工具", icon: Sparkles, color: "var(--palette-status-success)" },
 ];
 
 const contextOptions: Array<{ value: AgentContextKey; label: string; description: string }> = [
@@ -76,7 +77,7 @@ export function CanvasCloudAgentSettings(props: AgentSettingsProps) {
 
     return (
         <div className="canvas-agent-settings flex min-h-0 min-w-0 flex-1 flex-col" style={{ background: theme.node.panel }}>
-            <header data-agent-drag-handle className="agent-panel-header flex shrink-0 items-center gap-2">
+            <header className="agent-panel-header flex shrink-0 items-center gap-2">
                 <Button type="text" shape="circle" icon={<ArrowLeft className="size-4" />} onClick={section === "home" ? props.onBack : goHome} aria-label={section === "home" ? "返回对话" : "返回设置"} />
                 <div className="min-w-0 flex-1"><div className="text-sm font-semibold">{title}</div><div className="mt-0.5 text-[11px] opacity-40">{section === "home" ? "只影响下一次新运行" : sectionSubtitle(section)}</div></div>
                 {section !== "home" ? <span className="rounded-full px-2 py-1 text-[10px] opacity-50" style={{ background: theme.node.fill }}>{section === "skills" ? `${props.selectedSkillIds.length} 已启用` : "当前 Agent"}</span> : null}
@@ -89,6 +90,7 @@ export function CanvasCloudAgentSettings(props: AgentSettingsProps) {
             {section === "mcp" ? <McpWorkspace theme={theme} /> : null}
             {section === "context" ? <ContextWorkspace props={props} theme={theme} /> : null}
             {section === "budget" ? <BudgetWorkspace props={props} theme={theme} /> : null}
+            {section === "workspace" ? <CanvasAgentWorkspaceSettings canvasId={props.canvasId} availableSkills={props.installedSkills} /> : null}
         </div>
     );
 }
@@ -127,6 +129,7 @@ function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; the
                 <SettingLabel label="能力与范围" />
                 <div className="space-y-1">
                     <SettingRow theme={theme} icon={<Cpu className="size-4" />} title="上下文" summary={`${props.nodeCount} 个节点 · ${props.contextScope.length} 个范围`} onClick={() => onOpen("context")} />
+                    <SettingRow theme={theme} icon={<BookMarked className="size-4" />} title="Workspace 项目规则" summary="Agents.md · 项目技能追加 · 版本快照" onClick={() => onOpen("workspace")} />
                     <SettingRow theme={theme} icon={<Sparkles className="size-4" />} title="长期偏好" summary={profileSummary(props.profileView)} onClick={() => onOpen("profile")} />
                     <SettingRow theme={theme} icon={<BookMarked className="size-4" />} title="个人记忆" summary="批准、添加、导出导入；只影响你的会话" onClick={() => onOpen("memories")} />
                     <SettingRow theme={theme} icon={<Sparkles className="size-4" />} title="Skills · 用户技能库" summary={`${props.installedSkills.length} 个已安装 · 本轮启用 ${props.selectedSkillIds.length} 个`} onClick={() => onOpen("skills")} />
@@ -246,7 +249,7 @@ function ProfileWorkspace({ props, theme }: { props: AgentSettingsProps; theme: 
                 <span className="text-[10px] leading-4 opacity-45">保存后只影响下一次新运行。正在运行的 Agent 会固定原快照。</span>
                 <Button type="primary" onClick={() => void save()} loading={props.profileSaving} disabled={disabled || !draft.dirty}>保存</Button>
             </div>
-            {error ? <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "#d66b6b1f", color: "#d66b6b" }}>{error}</div> : null}
+            {error ? <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "color-mix(in srgb, var(--palette-status-error) 12%, transparent)", color: "var(--palette-status-error)" }}>{error}</div> : null}
         </div>
     );
 }
@@ -269,7 +272,7 @@ function profileSummary(view: AgentProfileView | null) {
 function scopeLabel(scope: AgentProfileScope) { return scope === "user" ? "用户偏好" : scope === "project" ? "项目偏好" : "当前画布偏好"; }
 
 function ProfileError({ message, onRetry, theme }: { message: string; onRetry: () => Promise<void>; theme: CanvasTheme }) {
-    return <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "#d6a24a1f", color: theme.node.text }}><div>{message}</div><button type="button" className="mt-2 underline" onClick={() => void onRetry()}>重新读取</button></div>;
+    return <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "color-mix(in srgb, var(--palette-status-warning) 12%, transparent)", color: theme.node.text }}><div>{message}</div><button type="button" className="mt-2 underline" onClick={() => void onRetry()}>重新读取</button></div>;
 }
 
 function SkillRow({ skill, theme, selected, installed, selectable, onToggle, onInstall }: { skill: Skill; theme: CanvasTheme; selected: boolean; installed: boolean; selectable: boolean; onToggle: () => void; onInstall: () => void }) {
@@ -313,8 +316,8 @@ function SettingRow({ theme, icon, title, summary, onClick }: { theme: CanvasThe
 function TabButton({ active, label, onClick, theme }: { active: boolean; label: string; onClick: () => void; theme: CanvasTheme }) { return <button type="button" aria-pressed={active} className="min-w-0 flex-1 rounded-lg px-2 py-2 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2" style={{ background: active ? theme.toolbar.itemHover : "transparent", color: active ? theme.node.text : theme.node.muted }} onClick={onClick}>{label}</button>; }
 function SettingLabel({ label, hint }: { label: string; hint?: string }) { return <div className="mb-2 flex items-center justify-between text-xs font-semibold"><span>{label}</span>{hint ? <span className="text-[10px] font-normal opacity-40">{hint}</span> : null}</div>; }
 function BudgetInput({ label, hint, value, onChange, theme }: { label: string; hint: string; value: string; onChange: (value: string) => void; theme: CanvasTheme }) { return <label className="block"><span className="flex items-center justify-between text-xs font-medium"><span>{label}</span><span className="text-[10px] opacity-40">{hint}</span></span><Input size="large" value={value} onChange={(event) => onChange(event.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" className="mt-2 !rounded-lg" style={{ background: theme.node.fill }} /></label>; }
-function sectionTitle(section: SettingsSection) { return section === "profile" ? "长期偏好" : section === "memories" ? "个人记忆" : section === "skills" ? "Skills" : section === "mcp" ? "MCP 与工具" : section === "context" ? "上下文" : "预算"; }
-function sectionSubtitle(section: SettingsSection) { return section === "profile" ? "用户、项目和画布的长期行为偏好" : section === "memories" ? "只属于你，批准后才会注入会话" : section === "skills" ? "搜索、安装并选择本轮技能" : section === "mcp" ? "云端工具与连接状态" : section === "context" ? "控制 Agent 能读取的范围" : "控制本轮积分与生成消耗"; }
+function sectionTitle(section: SettingsSection) { return section === "workspace" ? "Workspace 项目规则" : section === "profile" ? "长期偏好" : section === "memories" ? "个人记忆" : section === "skills" ? "Skills" : section === "mcp" ? "MCP 与工具" : section === "context" ? "上下文" : "预算"; }
+function sectionSubtitle(section: SettingsSection) { return section === "workspace" ? "项目文档与技能配置仅影响新 Run" : section === "profile" ? "用户、项目和画布的长期行为偏好" : section === "memories" ? "只属于你，批准后才会注入会话" : section === "skills" ? "搜索、安装并选择本轮技能" : section === "mcp" ? "云端工具与连接状态" : section === "context" ? "控制 Agent 能读取的范围" : "控制本轮积分与生成消耗"; }
 
 export function agentPermissionLabel(mode: AgentPermissionMode) { return permissionOptions.find((option) => option.value === mode)?.label || "请求审批"; }
 export function agentPermissionVisual(mode: AgentPermissionMode) { const option = permissionOptions.find((item) => item.value === mode) || permissionOptions[0]; return { color: option.color, soft: `${option.color}1f`, icon: option.icon }; }

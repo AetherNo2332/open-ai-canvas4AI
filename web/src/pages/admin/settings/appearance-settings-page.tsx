@@ -5,17 +5,18 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type
 import { useBlocker } from "react-router";
 
 import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
-import { AdminStatusBadge, SettingsSectionCard } from "@/pages/admin/components/admin-ui";
+import { AdminStatusBadge, SettingsSection } from "@/pages/admin/components/admin-ui";
 import { cn } from "@/lib/utils";
-import { cloneSkinDefinition, DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition, isSkinButtonFill, normalizeSkinDefinition, type SkinDefinition } from "@/lib/skin-themes";
+import { cloneSkinDefinition, convergeSkinDefinition, DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition, isSkinButtonFill, normalizeSkinDefinition, type SkinDefinition } from "@/lib/skin-themes";
 import { SkinThemeEditor } from "@/pages/admin/settings/components/skin-theme-editor";
 import { WelcomeSetting } from "@/pages/admin/settings/components/welcome-setting";
 import { CanvasAppearanceEditor } from "./components/canvas-appearance-editor";
 import { DEFAULT_CANVAS_APPEARANCE, type CanvasAppearance } from "@/lib/canvas/agent-appearance";
 import { deleteAdminResources } from "@/services/api/admin-storage";
-import { getAdminAppearance, resetAdminAppearance, updateAdminAppearance, uploadAppearanceAsset, type AdminAppearance, type AppearanceAssetSlot } from "@/services/api/appearance";
+import { getAdminAppearance, resetAdminAppearance, updateAdminAppearance, uploadAppearanceAsset, type AdminAppearance } from "@/services/api/appearance";
 import { commitPublicAppearance, DEFAULT_PUBLIC_APPEARANCE } from "@/stores/use-appearance-store";
 
+type AppearanceAssetSlot = Exclude<import("@/services/api/appearance").AppearanceAssetSlot, "agent-avatar">;
 type DraftFiles = Record<AppearanceAssetSlot, File | null>;
 type ResetState = Record<AppearanceAssetSlot, boolean>;
 
@@ -65,7 +66,9 @@ export default function AppearanceSettingsPage() {
 
     const dirty =
         Boolean(setting) &&
-        (JSON.stringify(canvas) !== JSON.stringify(setting?.canvas || DEFAULT_CANVAS_APPEARANCE) || canvasUploading || brandName.trim() !== setting?.brandName ||
+        (JSON.stringify(canvas) !== JSON.stringify(setting?.canvas || DEFAULT_CANVAS_APPEARANCE) ||
+            canvasUploading ||
+            brandName.trim() !== setting?.brandName ||
             brandSlug.trim().toLocaleLowerCase() !== setting?.brandSlug ||
             normalizeDraftCopy(authHeroTitle) !== setting?.authHeroTitle ||
             normalizeDraftCopy(authHeroDescription) !== setting?.authHeroDescription ||
@@ -84,7 +87,7 @@ export default function AppearanceSettingsPage() {
     const blocker = useBlocker(dirty && !saving && !restoring);
 
     const applySetting = useCallback((value: AdminAppearance) => {
-        const themes = value.skinThemes.length ? value.skinThemes.map((theme) => normalizeSkinDefinition(theme)) : [cloneSkinDefinition(DEFAULT_CLASSIC_SKIN)];
+        const themes = value.skinThemes.length ? value.skinThemes.map((theme) => convergeSkinDefinition(normalizeSkinDefinition(theme))) : [cloneSkinDefinition(DEFAULT_CLASSIC_SKIN)];
         const selectedID = themes.some((theme) => theme.id === value.skinId) ? value.skinId : "classic";
         setSetting({ ...value, skinThemes: themes, skinId: selectedID });
         setBrandName(value.brandName);
@@ -399,9 +402,12 @@ export default function AppearanceSettingsPage() {
     const duplicateSkin = (sourceID: string) => {
         if (skinThemes.length >= 16) return;
         const source = skinThemes.find((theme) => theme.id === sourceID) || DEFAULT_CLASSIC_SKIN;
-        const copy = duplicateSkinDefinition(
-            source,
-            skinThemes.map((theme) => theme.id),
+        // 复制后立即收敛：新主题只保留一个品牌主色，派生色与实心按钮与之一致。
+        const copy = convergeSkinDefinition(
+            duplicateSkinDefinition(
+                source,
+                skinThemes.map((theme) => theme.id),
+            ),
         );
         setSkinThemes((current) => [...current, copy]);
         setSkinId(copy.id);
@@ -481,9 +487,9 @@ export default function AppearanceSettingsPage() {
                                 key: "brand",
                                 label: "品牌识别",
                                 children: (
-                                    <SettingsSectionCard
+                                    <SettingsSection
                                         className="admin-appearance-section admin-appearance-brand-section"
-                                        icon={<Palette className="size-4" aria-hidden="true" />}
+                                        eyebrow="BRAND"
                                         title="品牌识别"
                                         description="中文品牌名用于主要界面，英文品牌标识用于英文角标和可安全品牌化的路径建议；不会改动代码包、数据库或部署标识。"
                                         status={status}
@@ -553,7 +559,7 @@ export default function AppearanceSettingsPage() {
                                                 </div>
                                             </div>
                                         </div>
-                                    </SettingsSectionCard>
+                                    </SettingsSection>
                                 ),
                             },
                             {
@@ -561,9 +567,9 @@ export default function AppearanceSettingsPage() {
                                 label: "登录页",
                                 destroyOnHidden: true,
                                 children: (
-                                    <SettingsSectionCard
+                                    <SettingsSection
                                         className="admin-appearance-section admin-appearance-auth-section"
-                                        icon={<MonitorPlay className="size-4" aria-hidden="true" />}
+                                        eyebrow="AUTH"
                                         title="登录页内容与媒体"
                                         description="登录、注册与找回密码共享左侧品牌文案和影片；更换视频会同时取消旧封面，避免品牌串帧。"
                                         status={
@@ -649,32 +655,27 @@ export default function AppearanceSettingsPage() {
                                                 <p>预览与正式登录页使用同一文案和媒体。正式页面会先解析公开配置，再渲染品牌内容。</p>
                                             </div>
                                         </div>
-                                    </SettingsSectionCard>
+                                    </SettingsSection>
                                 ),
                             },
                             {
                                 key: "welcome",
                                 label: "欢迎页",
                                 children: (
-                                    <SettingsSectionCard
-                                        className="admin-appearance-section"
-                                        icon={<Globe2 className="size-4" aria-hidden="true" />}
-                                        title="欢迎页"
-                                        description="控制访客是否可以访问欢迎页，开关修改后立即保存。"
-                                    >
+                                    <SettingsSection className="admin-appearance-section" eyebrow="WELCOME" title="欢迎页" description="控制访客是否可以访问欢迎页，开关修改后立即保存。">
                                         <div className="admin-appearance-section-form">
                                             <WelcomeSetting />
                                         </div>
-                                    </SettingsSectionCard>
+                                    </SettingsSection>
                                 ),
                             },
                             {
                                 key: "seo",
                                 label: "SEO 信息",
                                 children: (
-                                    <SettingsSectionCard
+                                    <SettingsSection
                                         className="admin-appearance-section"
-                                        icon={<Search className="size-4" aria-hidden="true" />}
+                                        eyebrow="SEO"
                                         title="SEO 信息"
                                         description="配置浏览器标题、搜索摘要和关键词；留空时标题与描述会自动跟随当前站点名称。"
                                         status={<AdminStatusBadge label={seoTitle || seoDescription || seoKeywords ? "已自定义" : "自动跟随品牌"} tone={seoTitle || seoDescription || seoKeywords ? "success" : "neutral"} />}
@@ -699,16 +700,16 @@ export default function AppearanceSettingsPage() {
                                                 />
                                             </Form.Item>
                                         </Form>
-                                    </SettingsSectionCard>
+                                    </SettingsSection>
                                 ),
                             },
                             {
                                 key: "footer",
                                 label: "页尾与备案",
                                 children: (
-                                    <SettingsSectionCard
+                                    <SettingsSection
                                         className="admin-appearance-section"
-                                        icon={<Globe2 className="size-4" aria-hidden="true" />}
+                                        eyebrow="FOOTER"
                                         title="首页页尾与备案"
                                         description="配置公开登录首页底部的版权和备案信息；备案号启用后固定链接工信部备案管理系统。"
                                         status={<AdminStatusBadge label={icpFilingEnabled ? "展示备案号" : "未展示备案号"} tone={icpFilingEnabled ? "success" : "neutral"} />}
@@ -740,18 +741,18 @@ export default function AppearanceSettingsPage() {
                                                 </div>
                                             </div>
                                         </div>
-                                    </SettingsSectionCard>
+                                    </SettingsSection>
                                 ),
                             },
                             {
                                 key: "skins",
                                 label: "皮肤主题",
                                 children: (
-                                    <SettingsSectionCard
+                                    <SettingsSection
                                         className="admin-appearance-section"
-                                        icon={<Type className="size-4" aria-hidden="true" />}
+                                        eyebrow="SKIN"
                                         title="皮肤主题"
-                                        description="经典黑白采用黑白底色与紫蓝渐变主按钮；复制后可调整浅色、深色、按钮填充及控件参数，所有修改统一保存。"
+                                        description="默认主题为瑞士纸感：暖纸墨色、单一品牌主色、直角构件。主题只能调整浅色与深色各一个品牌主色，其余语义色、按钮填充、圆角与动效由服务端强制校验。"
                                         status={<AdminStatusBadge label={selectedSkin.name} tone="info" />}
                                     >
                                         <SkinThemeEditor
@@ -764,7 +765,7 @@ export default function AppearanceSettingsPage() {
                                             onDelete={deleteSkin}
                                             onChange={changeSkin}
                                         />
-                                    </SettingsSectionCard>
+                                    </SettingsSection>
                                 ),
                             },
                             { key: "canvas", label: "画布配置", children: <CanvasAppearanceEditor value={canvas} onChange={setCanvas} disabled={saving || refreshing || restoring} onUploading={setCanvasUploading} /> },

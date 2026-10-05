@@ -3,6 +3,9 @@ const RECOVERY_KEY = "canvas:chunk-recovery";
 let recovering = false;
 
 export function installChunkRecovery() {
+    // 入口在无 DOM 的执行环境（测试用的 VM 沙箱、预渲染）里也会跑一次；没有事件订阅能力时
+    // 直接跳过，别让这块兜底把启动打断。
+    if (typeof window.addEventListener !== "function") return;
     window.addEventListener("vite:preloadError", handlePreloadError);
 }
 

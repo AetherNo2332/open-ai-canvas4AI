@@ -63,4 +63,10 @@ func TestShouldCompactUsesHistoryAndSizeBudgets(t *testing.T) {
 	if ShouldCompact(1_000, 1<<20, 0, 0) {
 		t.Fatal("未配置阈值时不应触发压缩")
 	}
+	// 包内默认兜底线（ThresholdHistoryMessages / ThresholdBytes）就是后端字节/条数兜底
+	// 实际传进来的那一组数字，必须同样能在参数化判据上生效。
+	if !ShouldCompact(ThresholdHistoryMessages, 1, ThresholdHistoryMessages, ThresholdBytes) ||
+		!ShouldCompact(1, ThresholdBytes, ThresholdHistoryMessages, ThresholdBytes) {
+		t.Fatal("默认兜底阈值不再触发压缩")
+	}
 }

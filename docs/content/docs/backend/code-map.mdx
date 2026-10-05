@@ -5,6 +5,25 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## Agent 工具合同
+
+- Worker 恢复：`agent/src/runner.ts`（当前轮工具恢复、检查点队列）；`agent/src/session-history.ts`（终结轮次缺失回执的模型投影）；日志截断：`backend/internal/platform/api_call_payload.go`。方案与实施边界见 [Pi worker 错误恢复](../../../design/agent-worker-recovery.md)。
+
+- 工具及字段说明：`backend/internal/app/agent-tool-descriptions.md`；目录编译：`cloud_agent_tools.go`；条件参数合同：`cloud_agent_tool_contracts.go`；零副作用预检：`cloud_agent_tool_schema.go`。
+- Go/Pi 共用制品：`agent/harness/TOOL_SCHEMA.json`；通过 `TestAgentToolSchemaArtifactMatchesRuntime` 生成和检测漂移。Harness 同步脚本：`agent/scripts/sync-harness.mjs`。
+- SHA 摘要接收与写回：`cloud_agent_vision.go`、`cloud_agent_runtime.go`；Pi 图片与摘要投影：`agent/src/session-history.ts`。
+
+## Agent（beta）调度配置与管理
+
+- 默认技能：`backend/internal/model/agent_skills_config.go`、`backend/internal/repository/agent_skill_defaults.go`、`backend/internal/app/admin_agent_skill_defaults.go`；管理路由 `backend/internal/handler/admin_agent_skill_defaults.go`，用户摘要位于 `backend/internal/handler/agent.go`。
+- 会话解析与容量：`backend/internal/app/cloud_agent_skill_selection.go`、`backend/internal/skills/skill_selection.go`；v51 与 Models 登记位于 `backend/internal/database`。
+- 前端管理：`web/src/services/api/admin-skill-defaults.ts`、`web/src/pages/admin/settings/components/agent-skill-defaults-section.tsx`；页面已移除运行状态及其轮询。
+- 子智能体列表：`web/src/components/canvas/canvas-agent-subagent-list.tsx` 与同目录 CSS；让位算法 `web/src/lib/canvas/agent-subagent-layout.ts`，本地开放许可 SVG 在 `web/public/icons/subagents/`；P3 再接 Crew 事件数据。
+
+- 页面与 API：`web/src/pages/admin/settings/agent-settings-page.tsx`、`web/src/services/api/admin-agent-settings.ts`；复用 `agent-lessons-panel.tsx`。
+- Go 配置和公平领取：`internal/app/agent_scheduler_policy.go`、`internal/platform/agent_scheduler_policy.go`、`internal/repository/agent_admission.go`；管理员路由 `internal/handler/agent_scheduler.go`。
+- Node 热更新与驻留准入：`agent/src/runtime-config.ts`、`agent/src/event-scheduler.ts`、`agent/src/server.ts`；Pi SDK 保持 0.87.1。
+
 ## 画布 Agent 配置与 Live2D
 
 - 后台入口：`web/src/pages/admin/settings/appearance-settings-page.tsx` 与 `components/canvas-appearance-editor.tsx`。
@@ -14,7 +33,13 @@ description: 从产品功能快速定位主要代码入口
 
 这是一张入口地图，不罗列所有文件。先找到功能所属层，再沿调用关系阅读。
 
+## Canary 事件调度
+
+`agent/src/event-scheduler.ts` 管理短时调度槽、画布轮转、会话驻留和事件等待；`server.ts` 启动独立异步会话，`bridge.ts` 对接内部事件 SSE。Go `app/agent_scheduler.go` 提供阶段、控制和异步工具编排；`repository/agent_scheduler.go` 管理持久状态及工具租约，`database/agent_events.go` 保证状态与 outbox 同事务，`model/agent_scheduler.go` 分配提交有序事件。部署与验证入口见 [多会话事件调度](./agent-event-scheduler)。
+
 ## 前端页面
+
+Pi 原生技能：`app/cloud_agent_native_skills.go` 负责命名、入口规范化、分页和提示身份，`app/cloud_agent_pi_bridge.go` 负责租约校验、内部读取与检查点；`internal/skills/skill_packages.go` 按冻结版本读取并复核授权和包完整性。Node 的 `agent/src/native-skills.ts` 负责物化、发现校验、受限读取和路径恢复，`runner.ts` 分流原生/历史运行。Web 的 `agent-tool-presentation.ts` 将原生事件映射为安全展示，`canvas-cloud-agent-panel.tsx` 接入真实 SSE。详见 [原生 Skill 运行时](./agent-native-skills)。
 
 云端 Agent：`web/src/components/canvas/canvas-cloud-agent-panel.tsx` 协调对话、Skills 和审批，`canvas-cloud-agent-settings.tsx` 编辑长期偏好与个人记忆，`services/api/agent.ts` 适配运行快照与事件流；画布手工编辑与引用同步共用 `web/src/lib/canvas/canvas-node-prompt.ts`，已有媒体结果只更新 `composerContent` 草稿，不覆盖生成结果和已提交提示词。后端 `handler/agent.go` 负责 HTTP 合同，`app/cloud_agent.go` 负责权限、幂等、可信历史，`app/cloud_agent_profile.go` / `repository/agent_profile.go` 管理用户、项目、画布偏好及 revision CAS，`app/cloud_agent_lessons.go` / `app/cloud_agent_memory_compact.go` / `repository/agent_lesson.go` / `handler/agent_lesson.go` 管理用户私有记忆的写入脱敏、召回注入、用户自审批与压缩优化，`web/src/pages/settings/agent-memory-pane.tsx` 是用户批准/添加/导入导出/压缩入口，`web/src/pages/admin/components/agent-lessons-panel.tsx` 是管理员按用户查看入口，`internal/prompts/agent-*-policy.md` 是随发布物编译、并在文档头声明 ID/版本的行为资源，`app/cloud_agent_policy.go` 编译本轮策略快照，`internal/canvas/capability/` 注册服务端节点能力和字段映射，`app/cloud_agent_canvas_state.go` 投影画布摘要和精读，`app/cloud_agent_runtime.go` 负责持久化模型循环，`app/cloud_agent_tools.go` 根据能力定义生成工具 schema，并从固定技能快照渐进读取 `SKILL.md` / reference，`app/cloud_agent_media.go` 负责收费媒体任务适配，`app/task_creation.go` 执行预算 admission，运行沿用任务 Worker。节点新增需要能力描述符和真实画布实现；新生成模式还需任务适配器，不由偏好或技能 md 授权。协议见 HTTP API 专题，未确认的真实登录态与上游联调见待测试清单。
 
@@ -107,7 +132,7 @@ HTTP 请求 -> handler -> service（稳定导入面 / 别名）-> app（组合�
 | `auth` | 登录注册、OAuth、邮件验证码、LibTV/TapNow 导入 | **已抽出**：`internal/auth` |
 | `canvas` | 画布公开分享、媒体引用守卫、用户画布/素材库同步 | **已抽出**：`internal/canvas` |
 | `assets` | 资源 URL/引用解析、流式交付类型 | **部分抽出**：`internal/assets`；OSS/配额/转码仍在 `app` |
-| `agentcontext` | Agent 上下文检查点的编码、解析与压缩提示词（provider 中立，不含触发与调度） | **已抽出**：`internal/agentcontext`；触发、暂停与恢复在 `app/cloud_agent_context_compaction.go` |
+| `agentcontext` | Agent 上下文检查点编码与解析；旧在途压缩提示词 | **已抽出**：`internal/agentcontext`；原生算法与预算在 `agent/src/native-compaction.ts`，Go 摘要模型桥与恢复在 `app/cloud_agent_pi_native_compaction.go`，事务提交在 `app/cloud_agent_pi_compaction.go` |
 
 组合根原则：`service.New`（委托 `app.New`）组装各域服务；coordinator 不得再持有整个 `*Service` 回灌域包。
 

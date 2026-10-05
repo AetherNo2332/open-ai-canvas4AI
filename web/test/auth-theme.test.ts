@@ -10,13 +10,14 @@ describe("authentication follows the application theme", () => {
         // globals.css 在不同平台上可能是 LF 或 CRLF；先归一化再分段，
         // 否则按字面换行查找 .dark 段会返回 -1，把断言变成永远失败。
         const css = source("styles/globals.css").replace(/\r\n/g, "\n");
-        const dark = css.slice(css.indexOf(".dark {\n    --background:"));
+        const darkStart = css.indexOf(".dark {\n    --background:");
+        const dark = css.slice(darkStart);
         for (const [mode, background, panel, card] of [
-            ["light", "#ffffff", "#f7f7f7", "#ffffff"],
-            ["dark", "#08090c", "#0b0c10", "#121318"],
+            ["light", "#f7f6f3", "#f1efeb", "#ffffff"],
+            ["dark", "#101010", "#181818", "#1f1f1f"],
         ] as const) {
             const variables = skinCSSVariables(DEFAULT_CLASSIC_SKIN, mode);
-            const modeCSS = mode === "dark" ? dark : css.slice(0, css.indexOf(".auth-scene {"));
+            const modeCSS = mode === "dark" ? dark : css.slice(0, darkStart);
             expect(variables["--auth-page-bg"]).toBe(background);
             expect(variables["--auth-panel-bg"]).toBe(panel);
             expect(variables["--auth-card-bg"]).toBe(card);
@@ -32,7 +33,11 @@ describe("authentication follows the application theme", () => {
         expect(scene).not.toContain("getAntThemeConfig");
         expect(scene).not.toContain("auth-card-dark");
         expect(scene.match(/<main className="([^"]+)"/)?.[1]).not.toContain("text-white");
-        expect(scene).toContain("auth-scene-hero");
+        expect(scene).toContain("auth-scene-media");
+        expect(scene).toContain("auth-scene-title");
+        // The statement surface uses skin tokens even when no poster/video exists,
+        // and its logo must follow the resolved theme.
+        expect(scene).toContain("useThemeStore((state) => state.theme)");
         expect(scene).toContain("<BrandLogo theme={theme}");
         expect(source("components/layout/app-providers.tsx")).toContain("getAntThemeConfig(dark, appearance.activeSkin)");
     });
@@ -50,13 +55,12 @@ describe("authentication follows the application theme", () => {
     });
 
     test("focus and autofill keep theme-aware foregrounds and visible focus", () => {
-        const css = source("styles/globals.css");
-        expect(css).not.toContain(".auth-card-dark");
-        expect(css).toContain(".auth-scene-card input:-webkit-autofill");
+        const css = source("pages/auth/auth-scene.css");
+        expect(css).toContain("input:-webkit-autofill");
         expect(css).toContain("-webkit-text-fill-color: var(--foreground) !important");
-        expect(css).toContain("box-shadow: 0 0 0 1000px var(--auth-card-bg) inset !important");
+        expect(css).toContain("box-shadow: 0 0 0 1000px var(--background) inset !important");
         expect(css).toContain(".auth-scene-link:focus-visible");
-        expect(css).toContain("box-shadow: 0 0 0 var(--focus-ring-width) color-mix(in srgb, var(--ring) 18%, transparent)");
+        expect(css).toContain("outline: 2px solid var(--ring)");
     });
 
     test("custom auth palettes are preserved per mode", () => {

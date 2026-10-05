@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { applySkinTheme, DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition, getSkinAntOverrides, normalizeSkinDefinition, skinSwatches, SKIN_COLOR_GROUPS, SKIN_COMPONENT_NUMBER_FIELDS } from "../src/lib/skin-themes";
+import { applySkinTheme, DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition, getSkinAntOverrides, normalizeSkinDefinition, skinColorHue, skinSwatches, SKIN_COLOR_GROUPS, SKIN_COMPONENT_NUMBER_FIELDS, SKIN_MODE_COLOR_GROUPS } from "../src/lib/skin-themes";
 import { normalizePublicAppearance } from "../src/stores/use-appearance-store";
 
 describe("site appearance and editable skin library", () => {
-    test("classic preserves foundation tokens and applies only primary button fills", () => {
+    test("classic applies the complete administrator skin just like custom skins", () => {
         expect(DEFAULT_CLASSIC_SKIN.locked).toBe(true);
-        expect(getSkinAntOverrides(DEFAULT_CLASSIC_SKIN, "light")).toEqual({});
-        expect(getSkinAntOverrides(DEFAULT_CLASSIC_SKIN, "dark")).toEqual({});
+        expect(getSkinAntOverrides(DEFAULT_CLASSIC_SKIN, "light")).toMatchObject({ primary: "#c8102e", borderRadius: 0 });
+        expect(getSkinAntOverrides(DEFAULT_CLASSIC_SKIN, "dark")).toMatchObject({ primary: "#e05163", borderRadius: 0 });
 
         const removed: string[] = [];
         const assigned = new Map<string, string>();
@@ -22,9 +22,10 @@ describe("site appearance and editable skin library", () => {
         } as unknown as Document;
         applySkinTheme(DEFAULT_CLASSIC_SKIN, "light", target);
         expect(removed.length).toBeGreaterThan(60);
-        expect(assigned.size).toBe(4);
-        expect(assigned.get("--button-primary-bg")).toBe("linear-gradient(115deg, #6554df, #386fbc)");
-        expect(assigned.has("--background")).toBe(false);
+        expect(assigned.size).toBeGreaterThan(60);
+        expect(assigned.get("--button-primary-bg")).toBe("#c8102e");
+        expect(assigned.get("--background")).toBe(DEFAULT_CLASSIC_SKIN.tokens.light.canvas);
+        expect(assigned.get("--card-radius")).toBe("0px");
         expect(target.documentElement.dataset.skin).toBe("classic");
     });
 
@@ -36,7 +37,9 @@ describe("site appearance and editable skin library", () => {
         expect(copy.tokens).not.toBe(DEFAULT_CLASSIC_SKIN.tokens);
         expect(copy.tokens.light).not.toBe(DEFAULT_CLASSIC_SKIN.tokens.light);
         expect(Object.keys(copy.tokens.light)).toHaveLength(50);
-        expect(SKIN_COLOR_GROUPS.flatMap((group) => group.fields)).toHaveLength(50);
+        expect(SKIN_MODE_COLOR_GROUPS.flatMap((group) => group.fields)).toHaveLength(50);
+        // 配置面只剩每模式一个品牌主色，其余色位由派生保证一致。
+        expect(SKIN_COLOR_GROUPS.flatMap((group) => group.fields).map((field) => field.key)).toEqual(["primary"]);
         expect(SKIN_COMPONENT_NUMBER_FIELDS).toHaveLength(16);
     });
 
@@ -84,8 +87,12 @@ describe("site appearance and editable skin library", () => {
         const normalized = normalizeSkinDefinition(legacy);
         expect(normalized.tokens.light.switchChecked).toBe("#123456");
         expect(normalized.tokens.light.switchCheckedHover).toBe("#234567");
-        expect(normalized.tokens.light.dangerHover).toBe("#c0262d");
-        expect(normalized.tokens.light.dangerActive).toBe("#c0262d");
+        // 旧数据自定义的危险色保留，缺失的 hover/active 按同一色相派生，而不是跳回内置信号色。
+        expect(normalized.tokens.light.danger).toBe("#c0262d");
+        expect(normalized.tokens.light.dangerHover).not.toBe("#c0262d");
+        expect(normalized.tokens.light.dangerActive).not.toBe(normalized.tokens.light.dangerHover);
+        const hueGap = Math.abs(skinColorHue(normalized.tokens.light.dangerHover)! - skinColorHue("#c0262d")!);
+        expect(Math.min(hueGap, 360 - hueGap)).toBeLessThanOrEqual(2);
     });
 
     test("theme-card swatches expose every real unique color in frequency order", () => {
@@ -131,13 +138,14 @@ describe("site appearance and editable skin library", () => {
     });
 
     test("site UI wires metadata, editable theme actions, and the official ICP destination", async () => {
-        const [storeSource, footerSource, pageSource, editorSource, globalStyles, adminStyles] = await Promise.all([
+        const [storeSource, footerSource, pageSource, editorSource, globalStyles, adminStyles, adminTokens] = await Promise.all([
             Bun.file(new URL("../src/stores/use-appearance-store.ts", import.meta.url)).text(),
             Bun.file(new URL("../src/components/layout/site-compliance-footer.tsx", import.meta.url)).text(),
             Bun.file(new URL("../src/pages/admin/settings/appearance-settings-page.tsx", import.meta.url)).text(),
             Bun.file(new URL("../src/pages/admin/settings/components/skin-theme-editor.tsx", import.meta.url)).text(),
             Bun.file(new URL("../src/styles/globals.css", import.meta.url)).text(),
             Bun.file(new URL("../src/styles/admin-ui.css", import.meta.url)).text(),
+            Bun.file(new URL("../src/pages/admin/theme/admin-tokens.css", import.meta.url)).text(),
         ]);
 
         expect(storeSource).toContain('setMeta(targetDocument, "name", "description"');
@@ -155,12 +163,16 @@ describe("site appearance and editable skin library", () => {
         expect(editorSource).toContain('<div className="admin-skin-color-field">');
         expect(editorSource).not.toContain('<label className="admin-skin-color-field">');
         expect(editorSource).toContain("后台菜单");
-        expect(globalStyles).toContain("--control-switch-checked-bg: #16a34a");
+        // 单一强调色：默认皮肤的开关开启态跟随品牌主色，不再使用独立的绿色。
+        expect(globalStyles).toContain("--control-switch-checked-bg: #c8102e");
         expect(globalStyles).toContain("--plugin-switch-checked-bg: var(--control-switch-checked-bg)");
         expect(globalStyles).toContain("--ant-tooltip-arrow-background-color: var(--popover) !important");
         expect(globalStyles).toContain("--ant-tooltip-overlay-color: var(--popover-foreground) !important");
         expect(globalStyles).toContain(":where(.ant-tooltip-container, .ant-tooltip-inner)");
         expect(globalStyles).toContain("color: var(--popover-foreground) !important");
+        // 管理端状态色定义在 admin-tokens.css（浅 / 深两套具体值），admin-ui.css 只消费 token；
+        // 这里守的是"警告色在两种主题下都有定义、且管理端样式确实在用它"。
+        expect((adminTokens.match(/--admin-status-warning:/g) || []).length).toBeGreaterThanOrEqual(2);
         expect(adminStyles).toContain("var(--admin-status-warning)");
         expect(adminStyles).toContain("border-radius: var(--menu-radius);");
     });

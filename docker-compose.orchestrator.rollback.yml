@@ -1,0 +1,10 @@
+services:
+  migrate:
+    image: canvas-event-backend:pre-orchestrator-dc66570
+  backend:
+    image: canvas-event-backend:pre-orchestrator-dc66570
+  agent:
+    image: canvas-event-agent:pre-orchestrator-dc66570
+    volumes: [./.local/pre-orchestrator/agent/harness:/agent/harness:ro]
+  web:
+    image: canvas-event-web:pre-orchestrator-dc66570

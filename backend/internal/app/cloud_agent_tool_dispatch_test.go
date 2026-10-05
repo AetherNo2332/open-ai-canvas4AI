@@ -11,19 +11,28 @@ import (
 
 // 本文件是一致性守卫：工具表（模型看到的契约）与运行期分派必须始终一致。
 //
-// 一个工具要真正可用必须同时出现在三处：compileCloudAgentTools 里的 add("name", …) 注册、
-// advanceCloudAgentTool / cloudAgentReadTool 的运行期分派、以及 CloudAgentSupportedToolNames()
-// 暴露的平台支持集合。只改其中一两处时，工具对模型不可见、或调用直接落到 default 分支，
-// 而既有测试（包括工具 schema 预算用例与能力注册表契约用例）依然全绿——这类"半注册"退化
-// 必须在 CI 立刻变红，而不是等用户发现工具不生效。
+// 背景：把上游 v1.5.2–v1.5.7 合进来时，布局工具出现过"算法与测试都在、注册与分派全丢"的
+// 半状态——`cloud_agent_layout.go` 里 642 行实现和 6 个用例都是绿的，但 `cloud_agent_tools.go`
+// 的工具表里没有它的 schema，运行期的审批/执行分派也没有它的分支，于是模型永远看不到这个工具，
+// 而全套测试仍然全绿。这类退化必须在 CI 立刻变红。
 //
-// 实现方式与取舍：advanceCloudAgentTool 的分派是写在事务闭包里的 switch，没有可注入的
-// 分派表，纯行为断言覆盖不到"某个工具名有没有分支"（会被运行期提前 return 掩盖）；
-// 因此这里用 go/ast 读源码抽取集合再做集合断言——检查的正是"分派有没有写"。
+// 实现方式与取舍：`executeCloudAgentToolCall` 的分派是写在事务闭包里的 switch，没有可注入的
+// 分派表，无法用纯行为断言覆盖"这个工具名有没有分支"；因此这里**用 go/ast 读源码**
+// 抽取三条集合，再做集合断言（用户已允许在结构做不到纯断言时退一步做源码级断言）。
+// 读源码的好处是它检查的正是"分派有没有写"，而不会被运行期提前 return 掩盖。
 func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	registered := cloudAgentRegisteredToolNames(t)
 	supported := CloudAgentSupportedToolNames()
 	dispatched := cloudAgentDispatchedToolNames(t)
+	// 旧 Go loop 为兼容历史检查点仍保留类别选择分支；Pi registry 已改为平铺披露，
+	// 这些内部类别入口不再是可见工具，不能参与具体工具表的集合相等断言。
+	modelCallableDispatch := make([]string, 0, len(dispatched))
+	for _, name := range dispatched {
+		if !cloudAgentIsToolCategory(name) {
+			modelCallableDispatch = append(modelCallableDispatch, name)
+		}
+	}
+	dispatched = modelCallableDispatch
 
 	// 1. 平台支持集合里每个名字都能被执行分派处理（读/写两条分派路径都算）。
 	missing := difference(supported, dispatched)
@@ -47,15 +56,18 @@ func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 		t.Fatalf("CloudAgentSupportedToolNames() 多出了工具表里没有的：%s", strings.Join(missing, ", "))
 	}
 
-	// 3. cloudAgentWrite 判定为"写操作"的名字必须已注册且有分派分支。
-	// 上游语义下这张名单同时决定审批链（approval 分支按 cloudAgentWrite(...) 判定），
-	// 漏一个就等于该工具绕过用户审批，因此单独守一条。
-	writes := cloudAgentWriteToolNames(t)
-	if extra := difference(writes, registered); len(extra) > 0 {
-		t.Fatalf("被判为写操作但不在工具表里的工具：%s", strings.Join(extra, ", "))
+	// 3. 被判定为"写画布"的名字 ⊆ 可执行集合，且都在写入分派里。
+	canvasWrites := cloudAgentCanvasWriteToolNames(t)
+	if extra := difference(canvasWrites, registered); len(extra) > 0 {
+		t.Fatalf("被判为写画布但不在工具表里的工具：%s", strings.Join(extra, ", "))
 	}
-	if missing := difference(writes, dispatched); len(missing) > 0 {
-		t.Fatalf("被判为写操作但没有分派分支的工具：%s", strings.Join(missing, ", "))
+	if missing := difference(canvasWrites, dispatched); len(missing) > 0 {
+		t.Fatalf("被判为写画布但没有分派分支的工具：%s", strings.Join(missing, ", "))
+	}
+	for _, name := range canvasWrites {
+		if !cloudAgentWrite(name) {
+			t.Fatalf("写画布工具 %s 不在 cloudAgentWrite 名单里，不会进审批链", name)
+		}
 	}
 }
 
@@ -84,28 +96,27 @@ func cloudAgentRegisteredToolNames(t *testing.T) []string {
 	return sortedKeys(names)
 }
 
-// cloudAgentWriteToolNames 收集 cloudAgentWrite 里的工具名字面量。
-// 该函数是 name == "..." 的布尔表达式（不是 switch），因此直接收集函数体里的字符串字面量。
-func cloudAgentWriteToolNames(t *testing.T) []string {
+// cloudAgentCanvasWriteToolNames 收集 cloudAgentCanvasWriteTool 的 case 字面量。
+func cloudAgentCanvasWriteToolNames(t *testing.T) []string {
 	t.Helper()
 	file := parseCloudAgentFile(t, "cloud_agent_tools.go")
 	names := map[string]bool{}
 	ast.Inspect(file, func(node ast.Node) bool {
 		decl, ok := node.(*ast.FuncDecl)
-		if !ok || decl.Name.Name != "cloudAgentWrite" || decl.Body == nil {
+		if !ok || decl.Name.Name != "cloudAgentCanvasWriteTool" || decl.Body == nil {
 			return true
 		}
 		collectStringLiterals(decl.Body, names)
 		return false
 	})
 	if len(names) == 0 {
-		t.Fatal("没有解析到 cloudAgentWrite 的工具名")
+		t.Fatal("没有解析到 cloudAgentCanvasWriteTool 的工具名")
 	}
 	return sortedKeys(names)
 }
 
 // cloudAgentDispatchedToolNames 收集运行期两条分派路径覆盖的工具名：
-// advanceCloudAgentTool（含审批预演、主执行 switch 与媒体/看图等特例分支）与
+// executeCloudAgentToolCall（含审批预演、主执行 switch 与媒体/看图等特例分支）与
 // cloudAgentReadTool（默认读取分派）。
 func cloudAgentDispatchedToolNames(t *testing.T) []string {
 	t.Helper()
@@ -114,7 +125,7 @@ func cloudAgentDispatchedToolNames(t *testing.T) []string {
 		file string
 		fn   string
 	}{
-		{"cloud_agent_runtime.go", "advanceCloudAgentTool"},
+		{"cloud_agent_runtime.go", "executeCloudAgentToolCall"},
 		{"cloud_agent_tools.go", "cloudAgentReadTool"},
 	} {
 		file := parseCloudAgentFile(t, target.file)

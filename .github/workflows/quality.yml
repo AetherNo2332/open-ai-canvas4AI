@@ -3,6 +3,14 @@ name: Quality checks
 on:
   pull_request:
   workflow_call:
+  # 允许手动触发：GitHub 偶发漏发 pull_request 事件时（实测出现过一次），
+  # 可以直接对某个分支派一次完整检查，而不必推一个空提交。
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      # dev 是日常集成分支：这里没有它时，直接推到 dev 的改动完全不会被 CI 覆盖。
+      - dev
 
 permissions:
   contents: read
@@ -51,7 +59,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          go test -json ./... | tee "$RUNNER_TEMP/go-tests.jsonl"
+          # internal/app 的用例数已接近 Go 默认的每包 10 分钟上限（实测 CI 上约 9 分钟），
+          # 加几个用例就会整包超时失败。这里把上限抬到 20 分钟：它只是超时保护，
+          # 不影响用例本身的行为与结果。
+          go test -timeout 20m -json ./... | tee "$RUNNER_TEMP/go-tests.jsonl"
       - name: Ensure dependency-backed tests were not skipped
         shell: bash
         run: |
@@ -64,6 +75,15 @@ jobs:
           name: go-test-timings
           path: ${{ runner.temp }}/go-tests.jsonl
           if-no-files-found: ignore
+      - name: Ensure dependency-backed tests were not skipped
+        run: |
+          go test ./internal/database/ ./internal/canvas/ ./internal/repository/ ./internal/platform/ ./internal/app/ \
+            -run 'TestPostgresAssetIDMigration|TestRepairAssetBytesPostgres|TestCanvasRevision|TestRuntimeCoordinatorRedisLeasePreservesLongestTTL|TestClearAdminRuntimeCacheUsesRedisWhitelist' \
+            -count=1 -v | tee /tmp/dependency-tests.log
+          if grep -q -- "--- SKIP" /tmp/dependency-tests.log; then
+            echo "::error::依赖外部服务的用例被跳过：请检查 CANVAS_TEST_POSTGRES_DSN 与 redis-server"
+            exit 1
+          fi
 
   payment-plugins:
     name: Payment plugin artifacts

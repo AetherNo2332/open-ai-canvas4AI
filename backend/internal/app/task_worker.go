@@ -52,21 +52,41 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 	s.startProviderCancellationReconciliation(ctx)
 	s.startBillingReviewAudit(ctx)
 	s.startAgentMemoryCompactScheduler()
+	s.startAgentToolOperations()
+	// Pi 是唯一 Agent 循环，由 agent/ 里的独立 Node worker 领取 engine=pi 运行。
+	// 这里不再启动旧 Go 调度扫描，但必须保留一个**看门狗**：worker 崩溃或配置错误时，
+	// 运行会被反复领取却永远不终结，前端表现为"Agent 输出完了却一直运行中"。
 	s.runWorkerLoop(func(ctx context.Context) {
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
 		for {
 			if ctx.Err() != nil {
 				return
 			}
 			if !s.IsDraining() {
-				s.advanceCloudAgents()
+				if swept, err := s.SweepStalledPiAgentRuns(); err != nil {
+					log.Printf("pi stalled sweep: %v", err)
+				} else if swept > 0 {
+					log.Printf("pi stalled sweep: terminated %d run(s)", swept)
+				}
+				// 从未被领取的运行是**部署可用性**问题（没起 agent / token 不一致 /
+				// 容器在重建），与 worker 崩溃语义不同，所以用更长阈值与独立原因分开清扫。
+				if swept, err := s.SweepUnclaimedPiAgentRuns(); err != nil {
+					log.Printf("pi unclaimed sweep: %v", err)
+				} else if swept > 0 {
+					log.Printf("pi unclaimed sweep: terminated %d run(s)", swept)
+				}
+				// 清扫只写终态与 CleanupPending；真正的退预留、取消子任务、释放租约
+				// 在这里补做。少了这一步，看门狗停掉的运行会把占位预留冻在账上。
+				if cleaned, err := s.DrainPendingPiAgentCleanups(); err != nil {
+					log.Printf("pi cleanup drain: %v", err)
+				} else if cleaned > 0 {
+					log.Printf("pi cleanup drain: finished %d run(s)", cleaned)
+				}
 			}
 			select {
 			case <-ctx.Done():
 				return
-			case <-s.agentSchedulerWake:
-				continue
 			case <-ticker.C:
 			}
 		}
@@ -149,9 +169,6 @@ func (w *taskWorkerCoordinator) processNextTask() error {
 
 func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot *platform.SlotLease) error {
 	s := w.service
-	if task != nil && task.Operation == cloudAgentStepOperation {
-		defer s.wakeCloudAgentScheduler()
-	}
 	terminal := s.terminalCoordinator()
 	policyCtx, cancelPolicy := context.WithTimeout(context.Background(), 3*time.Second)
 	reader := &Service{repo: s.repo.WithContext(policyCtx)}
@@ -263,8 +280,9 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 		if code, _ := ChannelSlotFailureDetails(err); code != "" {
 			channelSlotFailedBeforeRequest = true
 		}
-		// 续租使用独立 context；执行超时不能覆盖真实租约失效，否则旧 worker
-		// 可能在新 worker 接管后继续结算或写入终态。
+		// 续租使用独立 context（taskLeaseRenewContext 用 WithoutCancel + 5s），所以执行时限
+		// 到点不会再打断续租；反过来，执行超时不能覆盖真实租约失效——否则旧 worker 可能在
+		// 新 worker 接管后继续结算或写入终态。
 		deadlineExpired := errors.Is(ctx.Err(), context.DeadlineExceeded)
 		select {
 		case leaseErr := <-leaseLost:
@@ -342,18 +360,21 @@ func taskFailureMessage(err error) string {
 	return truncateRunes(err.Error(), 2_000)
 }
 
-// taskLeaseRenewContext 给续租单独一份"不继承父 context 取消/时限"的上下文（仅 5 秒上限）。
-//
-// 续租必须比"这一条任务的执行时限"活得更久：父 context 一旦到点，派生的续租 context 会立刻
-// 被取消，续租请求带着 context.Canceled 失败并被误判成"租约失效"，任务于是停在 running，
-// 租约过期后又被其它 worker 重跑（实测一次上游调用被重跑成三次）。
+// taskLeaseRenewTimeout 是单次续租的写入上限。
+const taskLeaseRenewTimeout = 5 * time.Second
+
+// taskLeaseRenewContext 返回续租用的 context：只继承父 ctx 的值（渠道槽位、追踪信息），
+// 不继承它的取消。续租必须比"这一条任务的执行时限"活得更久 —— 父 context 一旦到点，派生的
+// 续租 context 会立刻被取消，续租请求带着 context.Canceled 失败并被误判成"租约丢失"，
+// 任务于是停在 running，租约过期后又被其它 worker 重跑
+// （实测 30s 单步墙钟 + 大画布：一次调用变成三次上游请求，白烧两次生成）。
 func taskLeaseRenewContext(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	return context.WithTimeout(context.WithoutCancel(parent), taskLeaseRenewTimeout)
 }
 
 // taskExecutionTimeout 解析一次任务的执行墙钟：画布 Agent 的单步调用可以配秒级超时
 // （AgentStepTimeoutSeconds），没配时沿用文本任务超时。秒级粒度是必要的——一轮里每一步
-// 都是分钟级的调用，分钟粒度改不动"某一步卡住"的体验。
+// 都是几分钟级的调用，分钟粒度改不动"某一步卡住"的体验。
 // 超时的表现是任务错误里带 cloudAgentStepTimeoutError 标记，运行期据此关思考重试同一步，
 // 而不是把整轮判死（见 cloud_agent_step_timeout.go）。
 func taskExecutionTimeout(task *model.Task, policy RuntimeTaskPolicy) time.Duration {

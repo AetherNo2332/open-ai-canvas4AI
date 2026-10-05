@@ -5,6 +5,7 @@
   "pages": [
     "local-development",
     "canvas-agent-appearance",
+    "agent-native-skills",
     "http-api",
     "code-map",
     "backend-database",

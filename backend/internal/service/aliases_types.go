@@ -3,14 +3,40 @@ package service
 import "infinite-canvas/backend/internal/app"
 
 type (
+	CrewView                               = app.CrewView
+	CrewMemberInput                        = app.CrewMemberInput
+	CrewMemberView                         = app.CrewMemberView
+	CreateCrewInput                        = app.CreateCrewInput
+	UpdateCrewInput                        = app.UpdateCrewInput
+	AgentWorkspaceView                     = app.AgentWorkspaceView
+	AgentWorkspaceSkillView                = app.AgentWorkspaceSkillView
+	SkillSelection                         = app.SkillSelection
+	AgentSchedulerUpdate                   = app.AgentSchedulerUpdate
 	PaymentOrderQuery                      = app.PaymentOrderQuery
 	PaymentReconciliationQuery             = app.PaymentReconciliationQuery
 	CloudAgentRequest                      = app.CloudAgentRequest
 	CloudAgentRunViewOptions               = app.CloudAgentRunViewOptions
 	CloudAgentMediaSettings                = app.CloudAgentMediaSettings
 	CloudAgentCapabilitySet                = app.CloudAgentCapabilitySet
+	PiAgentSnapshot                        = app.PiAgentSnapshot
+	PiModelStepRequest                     = app.PiModelStepRequest
+	PiModelStepView                        = app.PiModelStepView
+	PiToolBatchRequest                     = app.PiToolBatchRequest
+	PiMessageCheckpoint                    = app.PiMessageCheckpoint
+	PiContextCompactionStart               = app.PiContextCompactionStart
+	PiContextCompactionView                = app.PiContextCompactionView
+	PiContextCompactionCommit              = app.PiContextCompactionCommit
+	PiNativeCompactionModelRequest         = app.PiNativeCompactionModelRequest
+	PiNativeCompactionComplete             = app.PiNativeCompactionComplete
+	PiTurnDecision                         = app.PiTurnDecision
+	PiToolReceipt                          = app.PiToolReceipt
+	PiRuntimePhaseRequest                  = app.PiRuntimePhaseRequest
+	PiSkillSnapshot                        = app.PiSkillSnapshot
+	PiSkillReadPage                        = app.PiSkillReadPage
+	PiSkillFileRequest                     = app.PiSkillFileRequest
 	AgentProfileRequest                    = app.AgentProfileRequest
 	AgentProfileView                       = app.AgentProfileView
+	AgentSkillDefaultItem                  = app.AgentSkillDefaultItem
 	AgentLessonView                        = app.AgentLessonView
 	AgentLessonAdminView                   = app.AgentLessonAdminView
 	AgentMemoryRequest                     = app.AgentMemoryRequest
@@ -272,6 +298,10 @@ type (
 	Service                                = app.Service
 	ShotRevisionInput                      = app.ShotRevisionInput
 	SkillCategory                          = app.SkillCategory
+	SkillLibraryCategory                   = app.SkillLibraryCategory
+	SkillLibraryCategoryList               = app.SkillLibraryCategoryList
+	SkillLibraryCategoryMutationRequest    = app.SkillLibraryCategoryMutationRequest
+	SkillLibraryCategoryAssignmentRequest  = app.SkillLibraryCategoryAssignmentRequest
 	SkillEffectiveUser                     = app.SkillEffectiveUser
 	SkillFileSearchResult                  = app.SkillFileSearchResult
 	SkillGitHubInstallRequest              = app.SkillGitHubInstallRequest

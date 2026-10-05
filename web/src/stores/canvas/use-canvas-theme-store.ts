@@ -4,6 +4,7 @@ import type { ThemeName } from "@/stores/use-theme-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useLayoutEffect } from "react";
 import { DEFAULT_CANVAS_COLOR_THEME } from "@/lib/canvas-theme";
+import { useAppearanceStore } from "@/stores/use-appearance-store";
 
 type CanvasThemeStore = { theme: ThemeName; active: boolean; setTheme: (theme: ThemeName) => void };
 
@@ -31,6 +32,8 @@ export function useCanvasThemeScope() {
 }
 
 export function useActiveTheme() {
+    // Refresh palette consumers when an administrator applies a different skin.
+    useAppearanceStore((state) => state.appearance.activeSkin);
     const workspaceTheme = useThemeStore((state) => state.theme);
     const canvasTheme = useCanvasThemeStore((state) => state.theme);
     const active = useCanvasThemeStore((state) => state.active);

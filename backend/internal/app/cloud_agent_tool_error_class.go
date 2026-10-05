@@ -23,6 +23,9 @@ const (
 	cloudAgentToolErrorPermission         = "permission_violation"
 	cloudAgentToolErrorUpstream           = "upstream_failure"
 	cloudAgentToolErrorUnknown            = "tool_error"
+	// cloudAgentToolErrorCallSkipped 是批次策略结论：这次调用没有执行，但不是模型的参数错
+	// （同一步已经执行了另一个写入/生成调用，或同批前面的写入未通过校验）。
+	cloudAgentToolErrorCallSkipped = "call_skipped"
 )
 
 // cloudAgentToolErrorClass 返回 (errorClass, retryable, requiredAction)。
@@ -48,9 +51,14 @@ func cloudAgentToolErrorClass(req CloudAgentRequest, call cloudAgentCall, err er
 		}
 		return cloudAgentToolErrorPermission, false, "ask_user"
 	}
-	// 过期快照在上游是结构化字段错误（Field/Issue），先于通用参数错误判定。
+	if cloudAgentSnapshotConflict(err) {
+		return cloudAgentToolErrorStateConflict, true, "reread_canvas"
+	}
 	var fieldErr *cloudAgentFieldArgumentError
 	if errors.As(err, &fieldErr) {
+		// 过期快照在两侧的写法不同：我们带 errCloudAgentSnapshotConflict（上面那条已经拦掉），
+		// 上游只给结构化字段（Field/Issue）。两种都要落到同一个归类，否则同一件事会
+		// 一会儿是"画布状态已变化"、一会儿是"参数不符合契约"。
 		if fieldErr.Issue == "stale_snapshot" {
 			return cloudAgentToolErrorStateConflict, true, "reread_canvas"
 		}
@@ -104,6 +112,8 @@ func cloudAgentToolErrorLabel(class string) string {
 		return "超出本轮权限"
 	case cloudAgentToolErrorUpstream:
 		return "上游故障"
+	case cloudAgentToolErrorCallSkipped:
+		return "本步未执行"
 	default:
 		return "工具执行失败"
 	}

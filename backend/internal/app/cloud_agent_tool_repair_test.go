@@ -66,7 +66,7 @@ func TestCloudAgentToolRepairSuccessResetsOnlyItsOwnBudget(t *testing.T) {
 	}
 }
 
-// Exercise scheduler checkpoints and real canvas admission, not a second
+// Exercise Pi checkpoints and real canvas admission, not a second
 // implementation of the retry loop. Model outputs are injected at the task seam.
 func TestCloudAgentEmptyCanvasRepairAcrossCheckpoints(t *testing.T) {
 	for _, scenario := range []string{"exhausted", "connection_repaired"} {
@@ -97,19 +97,19 @@ func TestCloudAgentEmptyCanvasRepairAcrossCheckpoints(t *testing.T) {
 				}
 				advance := func() {
 					t.Helper()
-					if err := s.advanceCloudAgentByID("user", root.ID); err != nil {
+					if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 						t.Fatal(err)
 					}
 				}
 				inject := func(id, tool, args string) {
 					t.Helper()
-					_, state := load()
+					_, state := agentStartPiModelStep(t, s, root.ID)
 					if state.ActiveTaskID == "" {
 						t.Fatal("missing continuation model task")
 					}
 					call := cloudAgentCall{ID: id}
 					call.Function.Name, call.Function.Arguments = tool, args
-					body, _ := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{call}})
+					body, _ := json.Marshal(map[string]any{"toolCalls": []cloudAgentCall{call}, "stopReasonKind": cloudAgentStopKindStop})
 					if err := db.Model(&model.Task{}).Where("id = ?", state.ActiveTaskID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": string(body)}).Error; err != nil {
 						t.Fatal(err)
 					}

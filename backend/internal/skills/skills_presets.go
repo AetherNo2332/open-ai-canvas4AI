@@ -81,8 +81,8 @@ func (s *Service) SkillPresets() ([]SkillPreset, error) {
 		if _, ok := skillPresetScenes[preset.Scene]; !ok {
 			return nil, fmt.Errorf("场景预设 %s 的分类非法: %q", id, preset.Scene)
 		}
-		if len(preset.SkillIDs) == 0 || len(preset.SkillIDs) > 8 {
-			return nil, fmt.Errorf("场景预设 %s 的技能数 %d 超出 1-8（每轮激活上限）", id, len(preset.SkillIDs))
+		if err := validateSkillPresetSkillCount(id, preset.SkillIDs); err != nil {
+			return nil, err
 		}
 		presetSeen := make(map[string]struct{}, len(preset.SkillIDs))
 		for _, skillID := range preset.SkillIDs {
@@ -108,24 +108,9 @@ func (s *Service) SkillPresets() ([]SkillPreset, error) {
 	return file.Presets, nil
 }
 
-// builtinSeedSkillIDs 从内置种子清单提取全部 skillId，供预设引用对账。
-func builtinSeedSkillIDs() ([]string, error) {
-	var definitions []builtinSkillDefinition
-	if err := json.Unmarshal(builtinSkillsJSON, &definitions); err != nil {
-		return nil, fmt.Errorf("解析内置技能失败: %w", err)
+func validateSkillPresetSkillCount(presetID string, skillIDs []string) error {
+	if len(skillIDs) == 0 {
+		return fmt.Errorf("场景预设 %s 的技能集合不能为空", presetID)
 	}
-	definitions = append(definitions, builtinImageEditingSkillDefinitions()...)
-	ids := make([]string, 0, len(definitions))
-	for _, definition := range definitions {
-		if definition.Status != skillStatusEnabled || definition.IsPrivate {
-			continue
-		}
-		if id := strings.TrimSpace(definition.SkillID); id != "" {
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) == 0 {
-		return nil, fmt.Errorf("内置种子技能不能为空")
-	}
-	return ids, nil
+	return nil
 }

@@ -32,7 +32,7 @@ func TestCloudAgentToolErrorClass(t *testing.T) {
 		{"只读轮里发起生成", readOnlyRequest, call("generate_media"), BadAuthRequest("工具未获本轮权限授权"), false, cloudAgentToolErrorPermission, false, "ask_user"},
 		{"参数不符合契约", canvasRequest, call("canvas_get_state"), cloudAgentJSONArgumentError(errors.New("unknown field")), true, cloudAgentToolErrorSchemaError, true, "fix_arguments"},
 		{"字段级参数错误", canvasRequest, call("canvas_apply_ops"), cloudAgentFieldError("snapshotHash", "required", "缺 snapshotHash"), true, cloudAgentToolErrorSchemaError, true, "fix_arguments"},
-		{"画布已变化", canvasRequest, call("canvas_apply_ops"), cloudAgentFieldError("snapshotHash", "stale_snapshot", "画布已变化"), true, cloudAgentToolErrorStateConflict, true, "reread_canvas"},
+		{"画布已变化", canvasRequest, call("canvas_apply_ops"), cloudAgentSnapshotConflictError("画布已变化"), true, cloudAgentToolErrorStateConflict, true, "reread_canvas"},
 		{"上游 5xx", canvasRequest, call("task_get"), providerHTTPError{StatusCode: 503}, true, cloudAgentToolErrorUpstream, true, "report_to_user"},
 		{"上游 4xx", canvasRequest, call("task_get"), providerHTTPError{StatusCode: 400}, true, cloudAgentToolErrorUpstream, false, "report_to_user"},
 		{"超时", canvasRequest, call("task_get"), context.DeadlineExceeded, true, cloudAgentToolErrorUpstream, true, "report_to_user"},
@@ -58,7 +58,7 @@ func TestCloudAgentToolResultCarriesErrorClass(t *testing.T) {
 	call.ID = "call-1"
 	call.Function.Name = "canvas_apply_ops"
 	call.Function.Arguments = "{}"
-	cloudAgentToolResult("run-1", state, call, nil, cloudAgentFieldError("snapshotHash", "stale_snapshot", "画布已变化，本次未写入；请重新读取并重新申请审批"))
+	cloudAgentToolResult("run-1", state, call, nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批"))
 
 	var payload map[string]any
 	for _, event := range state.Events {

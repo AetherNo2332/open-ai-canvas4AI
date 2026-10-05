@@ -2,6 +2,10 @@ import { http, apiBaseURL } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser } from "@/services/api/task-text-stream";
 
 export type AgentPermissionMode = "read_only" | "auto" | "request_approval";
+export type AgentSkillDefaultsSummary = { count: number; skills: Array<{ skillId: string; skillName: string }> };
+export function listAgentSkillDefaults() {
+    return http.get<AgentSkillDefaultsSummary>("/agent/skill-defaults");
+}
 export type AgentReasoningMode = "off" | "auto" | "deep";
 export type AgentMediaSettings = {
     logicalModelId?: string;
@@ -61,23 +65,60 @@ export type AgentApproval = {
     reason?: string;
 };
 
+export type AgentRunSkill = {
+    id: string;
+    name: string;
+    source?: "global" | "user";
+    version: string;
+    hash: string;
+    nativeName?: string;
+    versionId?: string;
+    versionLabel?: string;
+};
+
 export type AgentRun = {
     id: string;
     canvasId: string;
     status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "rejected";
     permissionMode: AgentPermissionMode;
     revision?: number;
+    runtimePhase?: "ready" | "advancing" | "waiting_model" | "waiting_tool" | "waiting_approval" | "waiting_compaction" | "waiting_resource" | "retry_delay" | "terminal";
+    waitReason?: string;
     cleanupPending?: boolean;
     failureMessage?: string;
     model?: string;
     createdAt: string;
     updatedAt: string;
-    skills?: Array<{ id: string; name: string; version: string; hash: string }>;
+    skillRuntimeMode?: "pi-native" | "legacy-go";
+    skills?: AgentRunSkill[];
     events?: AgentEvent[];
+    /** 事件已全量落库：本次返回的首条事件之前的已入库条数。 */
+    eventSeqBase?: number;
+    /** 该运行累计产生的事件条数（含未随本次返回的更早记录）。 */
+    eventCount?: number;
+    /** 本次返回的最后一条事件序号，可直接作为下次 sinceSeq。 */
+    latestSeq?: number;
+    /** 还有更早的记录未随本次返回（可按 sinceSeq 拉取）。 */
+    eventsTruncated?: boolean;
     spentCredits?: number;
     step?: number;
     activeMessage?: { messageId: string; text: string };
     approval?: AgentApproval;
+    /** 非空表示步进循环正暂停在上下文压缩上（requested/running）。 */
+    contextCompaction?: AgentContextCompactionState;
+};
+
+export type AgentContextCompactionState = {
+    status: "requested" | "running";
+    sourceBytes?: number;
+    turnCount?: number;
+    /** 中途暂停压缩：压完继续本轮，而不是收尾。 */
+    resume?: boolean;
+    /** 触发读数：下一步预计输入 token ÷ 用户配置的可用输入。 */
+    projectedTokens?: number;
+    usableInputTokens?: number;
+    ratio?: number;
+    tokenSource?: "provider" | "estimate";
 };
 
 export type AgentEvent = {
@@ -89,6 +130,26 @@ export type AgentEvent = {
     createdAt: string;
     /** Local delivery order for synthetic snapshot events; never used as a resume cursor. */
     localSeq?: number;
+};
+
+export const CREW_EVENT_TYPES = [
+    "crew_run_created",
+    "member_run_started",
+    "member_message",
+    "member_run_waiting",
+    "member_run_completed",
+    "member_run_failed",
+    "crew_approval_required",
+    "crew_run_completed",
+] as const;
+
+export type CrewEventType = typeof CREW_EVENT_TYPES[number];
+export type CrewEvent = {
+    type: CrewEventType;
+    crewRunId: string;
+    memberRunId?: string;
+    sequence: number;
+    payload: Record<string, unknown>;
 };
 
 /** 事件流本身不是 http 封装请求，单独保留状态码供 UI 区分旧后端/失效轮次。 */
@@ -151,7 +212,7 @@ export function sendAgentInterjection(runId: string, input: { text: string; mess
 }
 
 export function getAgentCapabilities() {
-    return http.get<{ version: number; permissionModes: AgentPermissionMode[]; contextScopes: string[]; skills: boolean; writeTools: boolean; capabilitySetVersion?: string; capabilitySetHash?: string; nodeTypes?: string[] }>("/agent/capabilities", { timeout: 15_000 });
+    return http.get<{ version: number; permissionModes: AgentPermissionMode[]; contextScopes: string[]; skills: boolean; writeTools: boolean; historyPolicy?: "server_compacted"; contextCompaction?: { enabled: boolean; strategy: "structured_checkpoint"; thresholdBytes: number; thresholdHistoryMessages: number; retainedRecentPairs: number }; capabilitySetVersion?: string; capabilitySetHash?: string; nodeTypes?: string[] }>("/agent/capabilities", { timeout: 15_000 });
 }
 
 export function getAgentProfile(options: { projectId?: string; canvasId?: string; scope?: AgentProfileScope } = {}) {
@@ -167,8 +228,12 @@ export function updateAgentProfile(input: { scope: AgentProfileScope; projectId?
     return http.patch<AgentProfileView>("/agent/profile", input, { timeout: 15_000 });
 }
 
-export function getAgentRun(runId: string, signal?: AbortSignal) {
-    return http.get<{ run: AgentRun }>(`/agent/runs/${encodeURIComponent(runId)}`, { signal });
+export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sinceSeq?: number; eventLimit?: number }) {
+    const params = new URLSearchParams();
+    if (options?.sinceSeq) params.set("sinceSeq", String(options.sinceSeq));
+    if (options?.eventLimit) params.set("eventLimit", String(options.eventLimit));
+    const query = params.toString();
+    return http.get<{ run: AgentRun }>(`/agent/runs/${encodeURIComponent(runId)}${query ? `?${query}` : ""}`, { signal });
 }
 
 export function cancelAgentRun(runId: string) {
@@ -253,10 +318,12 @@ export function subscribeAgentEvents(runId: string, onEvent: (event: AgentEvent)
                                     const messageKey = `${run.activeMessage.messageId}\u0000${run.activeMessage.text}`;
                                     if (messageKey !== lastActiveMessageKey) {
                                         lastActiveMessageKey = messageKey;
-                                        emit("assistant_message", run.activeMessage);
+                                        // 快照里的 activeMessage 是**还在流式生成**的草稿，不是本轮最终答复：
+                                        // 显式带 final=false，否则前端会按"缺省即结论"（升级前口径）把它当成最终回复。
+                                        emit("assistant_message", { ...run.activeMessage, final: false });
                                     }
                                 }
-                                const statusPayload = { status: run.status, revision: run.revision, cleanupPending: run.cleanupPending, failureMessage: run.failureMessage, skills: run.skills, spentCredits: run.spentCredits, step: run.step, approval: run.approval };
+                                const statusPayload = { status: run.status, revision: run.revision, cleanupPending: run.cleanupPending, failureMessage: run.failureMessage, skillRuntimeMode: run.skillRuntimeMode, skills: run.skills, spentCredits: run.spentCredits, step: run.step, approval: run.approval, contextCompaction: run.contextCompaction };
                                 const statusKey = JSON.stringify(statusPayload);
                                 if (statusKey !== lastStatusKey) {
                                     lastStatusKey = statusKey;

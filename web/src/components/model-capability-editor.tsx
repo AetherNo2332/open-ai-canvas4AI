@@ -365,25 +365,22 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
                 <CapabilityGroup title="输出方式" description="控制向上游文本模型请求的响应方式。">
                     <ParameterField label="SSE 流式输出" description="启用后发送 stream=true，并实时推送文本增量；关闭时等待完整 JSON 响应。" supported={profile.streaming !== false} disabled={Boolean(disabled)} onChange={(streaming) => update({ streaming })} />
                 </CapabilityGroup>
+                <CapabilityGroup title="能力声明" description="只声明上游真实具备的能力；未声明的能力在界面上保持关闭，不做猜测。">
+                    <ParameterField label="思考 / 推理模式" description="启用后该模型暴露用户可选的推理（思考）模式，画布 Agent 面板才会显示推理选项。未启用时不发送任何 reasoning 参数。" supported={profile.thinking === true} disabled={Boolean(disabled)} onChange={(thinking) => update({ thinking })} />
+                </CapabilityGroup>
             </div>
         );
     }
 
     if (section === "references") {
-        const contextWindowFields = (
-            <CapabilityGroup title="上下文能力" description="这是上游文本模型的能力合同，决定 Agent 本轮可保留的输入预算；不会改变运行时 checkpoint 的持久化上限。">
-                <div className="grid gap-3 sm:grid-cols-2">
-                    <NumberField label="上下文窗口 Token" value={profile.contextWindowTokens} min={4_096} max={10_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ contextWindowTokens: next || 4_096 })} />
-                    <NumberField label="最大输出 Token" value={profile.maxOutputTokens} min={256} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ maxOutputTokens: next || 256 })} />
-                </div>
-            </CapabilityGroup>
-        );
         return (
             <div className="admin-capability-reference-editor">
-                {contextWindowFields}
                 <div className="admin-capability-reference-grid is-three">
                     <ReferenceCard title="图片引用" description="文本模型可接收的图片范围">
-                        <NumberField label="最大参考图片数" value={profile.references.maxImages} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImages: next || 0 })} />
+                        <ParameterField label="支持 Agent 识图" description="开启后运行时按动态批次预算发送图片。" supported={profile.visionSupported === true} disabled={Boolean(disabled)} onChange={(visionSupported) => update({ visionSupported })} />
+                        <NumberField label="最大图片引用" value={profile.references.maxImages} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImages: next || 0 })} />
+                        <NumberField label="识图批次安全封顶（张，0=自动）" value={profile.visionMaxBatchImages || 0} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => update({ visionMaxBatchImages: next || 0 })} />
+                        <NumberField label="识图批次成本封顶（0=自动）" value={profile.visionMaxBatchCost || 0} min={0} max={10000} disabled={Boolean(disabled)} onChange={(next) => update({ visionMaxBatchCost: next || 0 })} />
                         <NumberField label="单张图片上限 MB" value={bytesToMB(profile.references.maxImageBytes)} min={0} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImageBytes: mbToBytes(next) })} />
                     </ReferenceCard>
                     <ReferenceCard title="视频引用" description="文本模型可接收的视频范围">
@@ -391,7 +388,11 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
                         <NumberField label="单个视频上限 MB" value={bytesToMB(profile.references.maxVideoBytes)} min={0} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxVideoBytes: mbToBytes(next) })} />
                     </ReferenceCard>
                     <ReferenceCard title="通用限制" description="所有文本请求共用的基础约束">
-                        <NumberField label="提示词最大字符数" value={profile.references.promptMaxChars} min={1} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ promptMaxChars: next || 1 })} />
+                        <NumberField label="单条提示词最大字符数" value={profile.references.promptMaxChars} min={1} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ promptMaxChars: next || 1 })} />
+                        <NumberField label="模型上下文窗口 Token" value={profile.contextWindowTokens || 0} min={0} max={10_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ contextWindowTokens: next || 0 })} />
+                        <NumberField label="预留输出 Token（自动）" value={profile.reservedOutputTokens || 0} min={0} max={1_000_000} disabled readOnly />
+                        <NumberField label="模型最大输出 Token" value={profile.maxOutputTokens || 0} min={0} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ maxOutputTokens: next || 0 })} />
+                        <p className="m-0 text-[var(--fs-tiny)] leading-relaxed text-foreground/48">字符上限只限制本次用户提示；上下文窗口包含系统提示、历史、工具结果和输出。窗口填 0 表示未知，Agent 不会把字符数当成模型 Token 能力。</p>
                     </ReferenceCard>
                 </div>
             </div>
@@ -404,15 +405,15 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
                 <div className="text-sm font-medium">文本理解能力</div>
                 <div className="mt-0.5 text-[var(--fs-tiny)] text-foreground/48">默认不假设支持图片或视频，只有明确配置后相关请求才会进入该模型。</div>
             </div>
-            <CapabilityGroup title="上下文能力" description="这是上游文本模型的能力合同，决定 Agent 本轮可保留的输入预算；不会改变运行时 checkpoint 的持久化上限。">
-                <div className="grid gap-3 sm:grid-cols-2">
-                    <NumberField label="上下文窗口 Token" value={profile.contextWindowTokens} min={4_096} max={10_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ contextWindowTokens: next || 4_096 })} />
-                    <NumberField label="最大输出 Token" value={profile.maxOutputTokens} min={256} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ maxOutputTokens: next || 256 })} />
-                </div>
-            </CapabilityGroup>
+            {/* 合并说明：这里原本还留着一组上游的"上下文能力"卡片（min 4096/256、无预留输出），
+                与下面"上下文与提示词"（min 0、0 = 未知、含预留输出）重复。合并采纳的契约是后者，
+                故删掉上游那一组，避免管理端出现两组同名同义字段。 */}
             <CapabilityGroup title="图片" description="文本模型可接收的图片参考范围">
                 <div className="grid gap-3 sm:grid-cols-2">
-                    <NumberField label="最大参考图片数" value={profile.references.maxImages} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImages: next || 0 })} />
+                    <ParameterField label="支持 Agent 识图" description="开启后运行时按动态批次预算发送图片。" supported={profile.visionSupported === true} disabled={Boolean(disabled)} onChange={(visionSupported) => update({ visionSupported })} />
+                    <NumberField label="最大图片引用" value={profile.references.maxImages} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImages: next || 0 })} />
+                    <NumberField label="识图批次安全封顶（张，0=自动）" value={profile.visionMaxBatchImages || 0} min={0} max={100} disabled={Boolean(disabled)} onChange={(next) => update({ visionMaxBatchImages: next || 0 })} />
+                    <NumberField label="识图批次成本封顶（0=自动）" value={profile.visionMaxBatchCost || 0} min={0} max={10000} disabled={Boolean(disabled)} onChange={(next) => update({ visionMaxBatchCost: next || 0 })} />
                     <NumberField label="单张图片上限 MB" value={bytesToMB(profile.references.maxImageBytes)} min={0} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxImageBytes: mbToBytes(next) })} />
                 </div>
             </CapabilityGroup>
@@ -422,8 +423,14 @@ function TextCapabilityEditor({ value, onChange, protocol, disabled, section }: 
                     <NumberField label="单个视频上限 MB" value={bytesToMB(profile.references.maxVideoBytes)} min={0} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ maxVideoBytes: mbToBytes(next) })} />
                 </div>
             </CapabilityGroup>
-            <CapabilityGroup title="通用限制" description="所有文本请求共用的基础约束">
-                <NumberField label="提示词最大字符数" value={profile.references.promptMaxChars} min={1} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ promptMaxChars: next || 1 })} />
+            <CapabilityGroup title="上下文与提示词" description="单条提示词按字符限制；完整 Agent 请求按模型 Token 窗口计算压力。">
+                <div className="grid gap-3 sm:grid-cols-3">
+                    <NumberField label="单条提示词最大字符数" value={profile.references.promptMaxChars} min={1} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => updateReferences({ promptMaxChars: next || 1 })} />
+                    <NumberField label="模型上下文窗口 Token" value={profile.contextWindowTokens || 0} min={0} max={10_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ contextWindowTokens: next || 0 })} />
+                    <NumberField label="预留输出 Token（自动）" value={profile.reservedOutputTokens || 0} min={0} max={1_000_000} disabled readOnly />
+                        <NumberField label="模型最大输出 Token" value={profile.maxOutputTokens || 0} min={0} max={1_000_000} disabled={Boolean(disabled)} onChange={(next) => update({ maxOutputTokens: next || 0 })} />
+                </div>
+                <p className="m-0 text-[var(--fs-tiny)] leading-relaxed text-foreground/48">预留输出根据模型最大输出自动计算；未声明时按窗口的 1/8 推算，最多 32768 Token。Agent 每步再受单步输出策略限制。可用输入预算 = 上下文窗口 − 本步预留输出 − 协议开销。窗口为 0 表示未知。</p>
             </CapabilityGroup>
         </div>
     );
@@ -670,11 +677,11 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     );
 }
 
-function NumberField({ label, value, min, max, disabled, onChange }: { label: string; value?: number; min: number; max?: number; disabled: boolean; onChange: (value: number | null) => void }) {
+function NumberField({ label, value, min, max, disabled, readOnly, onChange }: { label: string; value?: number; min: number; max?: number; disabled: boolean; readOnly?: boolean; onChange?: (value: number | null) => void }) {
     return (
         <label className="admin-capability-number-field block min-w-0">
             <span className="admin-capability-field-label mb-1.5 block text-xs text-foreground/62">{label}</span>
-            <InputNumber className="w-full" disabled={disabled} min={min} max={max} precision={0} value={value} onChange={onChange} />
+            <InputNumber className="w-full" disabled={disabled} readOnly={readOnly} min={min} max={max} precision={0} value={value} onChange={onChange} />
         </label>
     );
 }
