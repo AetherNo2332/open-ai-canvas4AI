@@ -200,6 +200,18 @@ func TestCrewMemberCannotFinishWithoutStructuredResult(t *testing.T) {
 	}
 }
 
+func TestCloudAgentSupportedToolNamesExcludeCrewOnlyTools(t *testing.T) {
+	names := map[string]bool{}
+	for _, name := range CloudAgentSupportedToolNames() {
+		names[name] = true
+	}
+	for _, name := range []string{"delegate_task", "crew_wait", "task_result", "crew_propose"} {
+		if names[name] {
+			t.Fatalf("ordinary supported tool list leaked Crew tool %q", name)
+		}
+	}
+}
+
 func TestCrewRuntimeToolsWaitAndDurableReceipt(t *testing.T) {
 	s, crew, db := crewRunFixture(t)
 	view, err := s.CreateCrewRun("user", crew.ID, CreateCrewRunInput{Prompt: "runtime", IdempotencyKey: "tools"})

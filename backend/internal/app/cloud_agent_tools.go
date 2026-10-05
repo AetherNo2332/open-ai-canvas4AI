@@ -736,7 +736,10 @@ func CloudAgentSupportedToolNames() []string {
 			names = append(names, name)
 		}
 	}
-	return append(names, "delegate_task", "crew_wait", "task_result", "crew_propose")
+	// Crew tools are runtime-scoped and are intentionally omitted from the
+	// ordinary capability list. They are exposed only when a CrewMemberRuntime
+	// is present in the request and are validated by the same compiler path.
+	return names
 }
 
 func cloudAgentPatchSchema() map[string]any {
