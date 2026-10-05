@@ -40,6 +40,16 @@ func (r *Repository) AgentSubagentLinkByIdempotency(userID, key string) (*model.
 	return &link, err
 }
 
+func (r *Repository) AgentSubagentLinkByParent(userID, parentRunID string, statuses []string) ([]model.AgentSubagentLink, error) {
+	var links []model.AgentSubagentLink
+	query := r.db.Where("user_id = ? AND parent_run_id = ?", userID, parentRunID)
+	if len(statuses) > 0 {
+		query = query.Where("status IN ?", statuses)
+	}
+	err := query.Order("created_at asc, id asc").Find(&links).Error
+	return links, err
+}
+
 func (r *Repository) AppendAgentSubagentMessage(message *model.AgentSubagentMessage) error {
 	if message == nil || message.LinkID == "" || message.IdempotencyKey == "" || message.Sequence < 1 {
 		return gorm.ErrInvalidData
@@ -56,6 +66,16 @@ func (r *Repository) AppendAgentSubagentMessage(message *model.AgentSubagentMess
 		}
 		return tx.Create(message).Error
 	})
+}
+
+func (r *Repository) NextAgentSubagentMessageSequence(linkID string) (int64, error) {
+	var max int64
+	err := r.db.Model(&model.AgentSubagentMessage{}).Where("link_id = ?", linkID).Select("COALESCE(MAX(sequence), 0)").Scan(&max).Error
+	return max + 1, err
+}
+
+func (r *Repository) UpdateAgentSubagentLinkStatus(userID, linkID, status string) error {
+	return r.db.Model(&model.AgentSubagentLink{}).Where("id = ? AND user_id = ?", linkID, userID).Updates(map[string]any{"status": status, "updated_at": time.Now()}).Error
 }
 
 func (r *Repository) AgentSubagentPolicy(userID, canvasID string) (*model.AgentSubagentPolicy, error) {

@@ -99,6 +99,7 @@ type cloudAgentApproval struct {
 }
 type cloudAgentRuntime struct {
 	Crew              *CrewMemberRuntime        `json:"crew,omitempty"`
+	Subagent          *SubagentRuntime          `json:"subagent,omitempty"`
 	Workspace         *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	RuntimeRunID      string                    `json:"-"`
 	SkillRuntimeMode  string                    `json:"skillRuntimeMode,omitempty"`
@@ -1506,7 +1507,9 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 			return cloudAgentSave(current, state)
 		})
 	}
-	allowed := cloudAgentToolAllowed(state.Request, call.Function.Name)
+	allowedRequest := state.Request
+	allowedRequest.subagent = state.Subagent
+	allowed := cloudAgentToolAllowed(allowedRequest, call.Function.Name)
 	if allowed && call.Function.Name == "crew_wait" {
 		snapshot, err := s.repo.AgentCrewRunSnapshot(run.UserID, state.Crew.CrewRunID)
 		if err != nil {
@@ -1737,6 +1740,16 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 	if allowed && (call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split") && state.Approval != nil && state.Approval.Decision == "approve" {
 		return s.executeCloudAgentMediaCall(run, state, cloudAgentMediaCall(call))
 	}
+	if allowed && call.Function.Name == "spawn_subagent" {
+		result, spawnErr := s.spawnDynamicSubagent(run, state, call)
+		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			cloudAgentRecordToolResult(current, state, call, result, spawnErr)
+			if spawnErr == nil {
+				state.event(run.ID, "subagent_spawned", result)
+			}
+			return cloudAgentSave(current, state)
+		})
+	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return s.terminateCloudAgent(run, "Agent 运行策略不可用，本轮已停止")
@@ -1783,6 +1796,41 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 				current.WaitID = state.Crew.CrewRunID
 				current.WaitReason = "等待 Crew 统一审批"
 				return cloudAgentSave(current, state)
+			}
+		case call.Function.Name == "send_parent_message":
+			result, toolErr = s.deliverParentSubagentMessage(current, state, call)
+		case call.Function.Name == "finish_subagent":
+			result, toolErr = s.finishDynamicSubagent(current, state, call)
+			if toolErr == nil {
+				cloudAgentRecordToolResult(current, state, call, result, nil)
+				current.Status = "completed"
+				current.CleanupPending = true
+				state.event(run.ID, "subagent_completed", result.(map[string]any))
+				return cloudAgentSave(current, state)
+			}
+		case call.Function.Name == "message_subagent":
+			result, toolErr = s.sendSubagentInstruction(current, state, call)
+		case call.Function.Name == "wait_subagents":
+			if state.Subagent != nil {
+				toolErr = kernel.Forbidden("子代理不能等待或创建下一级子代理")
+			} else {
+				links, linkErr := s.repo.AgentSubagentLinkByParent(current.UserID, current.ID, []string{repository.SubagentStatusQueued, repository.SubagentStatusRunning})
+				if linkErr != nil {
+					toolErr = linkErr
+				} else {
+					result = map[string]any{"pending": len(links) > 0, "count": len(links)}
+				}
+			}
+		case call.Function.Name == "subagent_status":
+			if state.Subagent != nil {
+				toolErr = kernel.Forbidden("子代理不能读取父级子代理状态")
+			} else {
+				links, linkErr := s.repo.AgentSubagentLinkByParent(current.UserID, current.ID, nil)
+				if linkErr != nil {
+					toolErr = linkErr
+				} else {
+					result = links
+				}
 			}
 			if toolErr == nil && call.Function.Name == "task_result" {
 				cloudAgentRecordToolResult(current, state, call, result, nil)

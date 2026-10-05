@@ -26,6 +26,7 @@ const cloudAgentOperation = "cloud_agent"
 // reuses transactional billing, worker leases, cancellation and text replay.
 type CloudAgentRequest struct {
 	crew            *CrewMemberRuntime
+	subagent        *SubagentRuntime
 	ReasoningMode   string `json:"reasoningMode,omitempty"`
 	ProfileRevision string `json:"profileRevision,omitempty"`
 	CanvasID        string `json:"canvasId"`
@@ -69,6 +70,7 @@ func cloudAgentStepLimit(req CloudAgentRequest) int {
 
 type cloudAgentState struct {
 	Crew             *CrewMemberRuntime        `json:"crew,omitempty"`
+	Subagent         *SubagentRuntime          `json:"subagent,omitempty"`
 	Workspace        *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	Version          int                       `json:"version"`
 	SkillRuntimeMode string                    `json:"skillRuntimeMode,omitempty"`
@@ -443,11 +445,13 @@ type cloudAgentRunScope struct {
 	ConversationID string
 	ParentID       string
 	Prepared       *repository.CloudAgentAdmission
+	Subagent       *SubagentRuntime
 }
 
 func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest, parentID string, scope *cloudAgentRunScope) (*CloudAgentRun, error) {
 	if scope != nil {
 		req.crew = scope.Crew
+		req.subagent = scope.Subagent
 	}
 	if err := validateCloudAgentRequest(&req); err != nil {
 		return nil, err
@@ -632,7 +636,8 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	}
 	system += workspacePrompt(&workspace)
 	system += crewSystemPrompt(req.crew)
-	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy, Crew: req.crew}
+	system += subagentSystemPrompt(req.subagent)
+	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy, Crew: req.crew, Subagent: req.subagent}
 	state.Workspace = &workspace
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	canonical.Tools = compileCloudAgentToolsForRuntime(req, len(profile.Layers) > 0, cloudAgentSkillRuntimeNative)
@@ -691,6 +696,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	//   - 占位任务：承载本轮报价预留，worker 永不领取。
 	runtime := cloudAgentRuntime{
 		Crew:         req.crew,
+		Subagent:     req.subagent,
 		Workspace:    &workspace,
 		RuntimeRunID: id, Request: req, Policy: policy, ParentID: linkedParentID, Fingerprint: fingerprint,
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,

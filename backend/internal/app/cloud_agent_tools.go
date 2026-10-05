@@ -721,6 +721,29 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			tools = filtered
 		}
 	}
+	if req.SubagentEnabled && req.crew == nil && req.subagent == nil {
+		add("spawn_subagent", "Create one independent child Agent with a name, role label and concrete objective.", map[string]any{
+			"name": map[string]any{"type": "string", "maxLength": maxDynamicSubagentNameRunes},
+			"role": map[string]any{"type": "string", "maxLength": maxDynamicSubagentRoleRunes},
+			"objective": map[string]any{"type": "string", "maxLength": maxDynamicSubagentObjectiveRunes},
+			"instructions": map[string]any{"type": "string", "maxLength": maxDynamicSubagentObjectiveRunes},
+			"maxSteps": map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
+		}, "name", "role", "objective")
+		add("wait_subagents", "Wait until the parent Agent's active children report a result.", map[string]any{})
+		add("message_subagent", "Send a bounded instruction or clarification to one child Agent.", map[string]any{
+			"linkId": map[string]any{"type": "string"}, "text": map[string]any{"type": "string", "maxLength": 4000},
+		}, "linkId", "text")
+		add("subagent_status", "Read the current status of the parent Agent's children.", map[string]any{})
+	}
+	if req.subagent != nil {
+		add("send_parent_message", "Send a structured progress, question or result message to the parent Agent.", map[string]any{
+			"kind": map[string]any{"type": "string", "enum": []any{"progress", "question", "partial_result", "final_result", "error"}},
+			"text": map[string]any{"type": "string", "maxLength": 4000},
+		}, "kind", "text")
+		add("finish_subagent", "Finish this child Agent task and report the final result to the parent.", map[string]any{
+			"summary": map[string]any{"type": "string", "maxLength": 4000},
+		}, "summary")
+	}
 	return tools
 }
 
