@@ -631,6 +631,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"rowId":        str(cloudAgentToolText("parameter_051")),
 			"patch":        cloudAgentStoryboardPatchSchema(),
 		}, "snapshotHash", "nodeId", "action")
+		add("canvas_create_character", "把画布上就绪的形象图片（可加声音音频）打包成角色卡：写入角色库并在画布放置角色卡节点，按权限审批。已有同名角色卡先复用；definition 只填有依据的设定。", cloudAgentCharacterCreateSchema(), "nodeId", "name", "imageNodeId")
 		add("canvas_edit_batch_table", cloudAgentToolText("canvas_edit_batch_table"), map[string]any{
 			"snapshotHash": str(cloudAgentToolText("parameter_052")),
 			"nodeId":       str(cloudAgentToolText("parameter_053")),
@@ -768,7 +769,7 @@ func cloudAgentToolAllowed(req CloudAgentRequest, name string) bool {
 // cloudAgentWrite 表示"需要审批的写入类工具"：它会改变用户可见状态，因此按权限模式进入
 // 审批链。这里保留上游的 image_layer_split（它同样走媒体审批与计费）。
 func cloudAgentWrite(name string) bool {
-	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table"
+	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character"
 }
 
 // cloudAgentCanvasWriteTool 标记"调用返回即表示已经落到画布上"的写入工具。
@@ -781,7 +782,7 @@ func cloudAgentWrite(name string) bool {
 // generate_media / image_layer_split 创建草稿并进入独立审批，回执口径不同，故不在此列。
 func cloudAgentCanvasWriteTool(name string) bool {
 	switch name {
-	case "canvas_apply_ops", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table":
+	case "canvas_apply_ops", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character":
 		return true
 	default:
 		return false
@@ -1422,8 +1423,8 @@ func validateCloudAgentConnection(nodes []map[string]any, fromID, toID string, e
 	if from == nil || to == nil {
 		return BadAuthRequest("连线端点不存在")
 	}
-	fromCapability, fromKnown := cloudAgentNodeCapabilityForType(stringValue(from["type"]))
-	toCapability, toKnown := cloudAgentNodeCapabilityForType(stringValue(to["type"]))
+	fromCapability, fromKnown := cloudAgentNodeCapabilityForNode(from)
+	toCapability, toKnown := cloudAgentNodeCapabilityForNode(to)
 	if !fromKnown || !toKnown {
 		return BadAuthRequest("连线包含当前 Agent 不支持的节点类型")
 	}
@@ -1500,6 +1501,10 @@ func cloudAgentNodeTypes() map[string]any {
 			"purpose":     capability.Purpose,
 			"defaultSize": map[string]any{"width": capability.DefaultWidth, "height": capability.DefaultHeight},
 			"canUpdate":   capability.CanUpdate,
+		}
+		if variant := capability.Variant; variant != nil {
+			// 变体不能 add_node；画布里按 type+metadata.workflowKind 识别，读取结果以 kind 标出。
+			item["canvasNodeType"], item["workflowKind"], item["creatable"] = variant.BaseType, variant.WorkflowKind, false
 		}
 		if len(capability.GoodFor) > 0 {
 			item["goodFor"] = capability.GoodFor

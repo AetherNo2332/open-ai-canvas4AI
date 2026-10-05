@@ -3,6 +3,15 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 角色卡移植与 Agent 角色卡能力（自上游同步）
+
+从上游 ddcat-ai/open-ai-canvas 同步角色卡域：账号级角色库（`GET/POST /api/characters`、`GET/PATCH /api/characters/:assetId`、representations 与 voice 子资源）与对应 service/repository；画布能力注册表引入 `NodeVariant`（text + `workflowKind=character` 的角色卡变体，可发现、可引用、不能 add_node）；Agent 新增 `canvas_create_character` 工具（审批后打包形象图片/声音为角色资产并放置角色卡节点）；`generate_media` 引用角色卡节点自动附带三视图与设定文字，音频模式自动注入绑定声音（voiceKey/instructions），`canvas_get_state` 精读返回 `character.definition`、representations、`imageReference/audioReference` 就绪状态；角色卡版本变化会拒绝使用过期审批重新提交。前端同步角色库弹窗、角色媒体库、富封面、引用节点/弹窗增强与 `normalizeCharacterImageMentions`（仅有角色卡参考时 `@图片N` 自动映射为 `@角色N`）。影策短剧工作流技能同步 `references/character-cards.md` 与 SKILL.md 角色卡工作流；工具描述文档更新 `canvas_get_state` 并新增 `canvas_create_character`。
+
+- 已知未同步：上游 12125e18 中素材库页面重构、批量创作表增强等非角色卡部分；上游音频参考接入（`referenceAudios` 允许 1–3 段）已随 media admission 放宽移植，但对应音频工作台交互（`b0806745` IndexTTS2 情感参数面板）canary 此前已自带。
+- [x] 2026-10-06 自动验证：后端 `go build ./...` 与 `go test ./...` 全量通过；前端 `tsc --noEmit`、生产构建与 bun test 全量（2177 项）通过。
+- [ ] 真实画布浏览器验收未做：角色卡建卡审批流、三视图引用生成、音频绑定声音注入、明暗主题与窄屏布局待真实页面验收。
+- [ ] 角色卡与 Crew 子代理组合（成员会话内引用角色卡）未验证。
+
 ## Pi worker 重试恢复与日志截断
 
 - 已实现：原生会话恢复只补当前轮工具回执，在途模型先恢复原任务；历史未回执工具不重放；检查点失败后停止依赖的批次提交；日志按 UTF-8 字符边界截断并处理非法文本/NUL。
