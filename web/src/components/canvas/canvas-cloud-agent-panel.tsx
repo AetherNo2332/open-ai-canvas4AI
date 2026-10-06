@@ -89,6 +89,7 @@ import { AgentWelcome } from "./canvas-agent-welcome";
 import { DEFAULT_CANVAS_APPEARANCE, agentCopy } from "@/lib/canvas/agent-appearance";
 import { appearanceAssetURL, live2DModelURL } from "@/services/api/appearance";
 import { Live2DAvatar } from "./live2d-avatar";
+import { createPortal } from "react-dom";
 import "./canvas-cloud-agent.css";
 import { createUuid } from "@/lib/client-id";
 import { getAgentSubagentPolicy, listAgentSubagents, updateAgentSubagentPolicy, type AgentSubagentPolicy, type AgentSubagent } from "@/services/api/agent-subagent";
@@ -100,6 +101,7 @@ type CloudAgentPanelProps = {
     selectedNodeIds: string[];
     references: CanvasResourceReference[];
     open: boolean;
+    floating?: boolean;
     prefillPrompt?: string;
     onOpen: () => void;
     onCollapse: () => void;
@@ -108,7 +110,7 @@ type CloudAgentPanelProps = {
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
+export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, floating = false, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const subagentsAvailable = useUserStore((state) => state.features.agentSubagentsEnabled);
     const [subagentPolicy, setSubagentPolicy] = useState<AgentSubagentPolicy | null>(null);
@@ -1038,7 +1040,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         void saveCloudAgentConversations(canvasId, id === activeConversationId ? null : activeConversationId, next);
     };
 
-    return (
+    const panel = (
         <>
             {!open ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
             <AnimatePresence>
@@ -1049,6 +1051,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                         exit={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
                         transition={{ duration: reducedMotion ? 0 : 0.42, ease: [0.22, 1, 0.36, 1] }}
                         className="canvas-agent-panel relative flex min-h-0 min-w-0 shrink flex-col overflow-hidden"
+                        data-agent-floating={floating || undefined}
                         style={{ "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
                         aria-label="Agent 工作台"
                         data-canvas-no-zoom
@@ -1290,6 +1293,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             />
         </>
     );
+    return floating ? createPortal(panel, document.body) : panel;
 }
 
 function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onOpen }: { theme: CanvasTheme; statusColor: string; approvalPending: boolean; reducedMotion: boolean; onOpen: () => void }) {
