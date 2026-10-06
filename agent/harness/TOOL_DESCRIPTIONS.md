@@ -459,16 +459,16 @@ focusNodeIds 的展开深度，0–3，省略为1；仅与 focusNodeIds 一起�
 
 ## previs_scene_read
 
-读取预演摘要；无 sceneId 返回目录和 canvasSnapshotHash，有则返回场景与 snapshotHash。includeTransforms=true 返回坐标；不返回 URL/storage key。
+读取预演摘要；无 sceneId 返回目录和 canvasSnapshotHash，有则返回场景与 snapshotHash。includeTransforms=true 返回坐标。
 
 ## previs_preview
 
-请求当前预演台生成白模视频；先用 previs_scene_read 确认 sceneId、shotId。
+请求预演台生成白模视频；先用 previs_scene_read 确认 sceneId、shotId。
 
 ## previs_scene_create
 
-创建预演场景；先读 canvasSnapshotHash。
+创建预演场景；先读取 canvasSnapshotHash。
 
 ## previs_apply_patch
 
-审批后应用语义补丁，最多32项；先读 snapshotHash。支持场景、镜头、对象、相机、灯光、动画；角色绑定须匹配画布角色卡，动画时间不超镜头时长。禁止原始 JSON、URL、storage key。
+审批后应用最多32项语义补丁；先读 snapshotHash。支持场景、镜头、对象、相机、灯光、动画；角色绑定须匹配角色卡。禁止原始 JSON、URL、storage key。
