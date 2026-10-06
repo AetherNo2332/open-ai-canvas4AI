@@ -1058,6 +1058,15 @@ func (s *Service) PiModelStepView(userID, runID, owner, taskID string) (*PiModel
 	if err != nil {
 		return nil, err
 	}
+	// Worker 将 failed 查询结果作为终止信号，不一定再调用失败上报。
+	// 因此超时必须在返回任务状态前持久化整轮失败。
+	if cloudAgentTaskTerminal(task.Status) && cloudAgentStepTimedOut(task) {
+		if err := s.failCloudAgentStepTimeout(run, &state, task); err != nil {
+			return nil, err
+		}
+		text, _ := cloudAgentModelFailure(task)
+		return &PiModelStepView{TaskID: task.ID, Status: "failed", Error: text}, nil
+	}
 	draft := state.ActiveTextDraft
 	if draft == "" {
 		// Legacy runs persisted the draft on the Task row before the runtime
@@ -1138,6 +1147,9 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 	if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
 		return nil, BadAuthRequest("模型任务没有失败")
 	}
+	if cloudAgentStepTimedOut(task) {
+		return &PiTurnDecision{Status: "failed"}, s.failCloudAgentStepTimeout(run, &state, task)
+	}
 	decision := &PiTurnDecision{}
 	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		cloudAgentRestoreEscalationSwitches(&state)
@@ -1154,10 +1166,6 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 			state.EmptyOutputEscalated++
 			state.ForceThinkingOff, state.BoostStepOutputBudget = true, true
 			nudge, reason = "上游连续返回空内容；已关闭思考并放大输出预算。请继续处理原请求并返回有效正文或工具调用。", "empty_output_escalated"
-		case cloudAgentStepTimedOut(task) && state.StepTimeoutEscalated < cloudAgentMaxStepTimeoutEscalations:
-			state.StepTimeoutEscalated++
-			state.ForceThinkingOff, state.BoostStepOutputBudget = true, false
-			nudge, reason = "上一步模型调用超时；已关闭思考。请重试同一步，不要重复已经成功的画布操作。", "step_timeout_retried"
 		}
 		state.PiModelFailureTaskID, state.PiModelFailureNudge = taskID, nudge
 		if nudge != "" {

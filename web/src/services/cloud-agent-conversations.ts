@@ -15,6 +15,7 @@ export type CloudAgentConversationMessage = {
     planTerminal?: boolean;
     question?: { question: string; options: Array<{ label: string; detail?: string }>; allowFreeform?: boolean };
     meta?: string;
+    runId?: string;
     detail?: unknown;
     attachments?: Array<{ id: string; name: string; url: string }>;
     interjection?: "sent" | "undelivered";

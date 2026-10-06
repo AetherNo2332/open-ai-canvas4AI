@@ -219,6 +219,9 @@ func (s *Service) piNativeCompactionRun(userID, runID, owner, operationID string
 	if err != nil {
 		return nil, cloudAgentRuntime{}, err
 	}
+	if cloudAgentRunTerminal(run.Status) {
+		return nil, cloudAgentRuntime{}, kernel.Forbidden("Agent 运行已结束")
+	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
 		return nil, state, err
@@ -305,6 +308,10 @@ func (s *Service) PiNativeContextCompactionModel(userID, runID, owner, operation
 		return nil, err
 	}
 	view := &PiNativeCompactionModelView{Status: string(task.Status), TaskID: task.ID}
+	if cloudAgentStepTimedOut(task) {
+		view.Status = "failed"
+		return view, s.failCloudAgentStepTimeout(run, &state, task)
+	}
 	if task.Status == model.TaskStatusSucceeded {
 		if _, err := nativeSummaryText(task); err != nil {
 			view.Status = "failed"
