@@ -161,13 +161,11 @@ type cloudAgentRuntime struct {
 	// EmptyOutputEscalated 记录"空输出已经升级重试过几次"（关思考 + 放大输出预算）。
 	EmptyOutputEscalated int `json:"emptyOutputEscalated,omitempty"`
 	// TruncatedStepEscalated 记录"输出被输出上限截断后已经升级重试过几次"。
-	// 与空输出、单步超时同一条阶梯：关思考 + 放大输出预算，重发同一步。
+	// 空输出恢复会关思考并放大输出预算，重发同一步。
 	TruncatedStepEscalated int `json:"truncatedStepEscalated,omitempty"`
 	// EscalationRestore 保存"升级之前"的 ForceThinkingOff / BoostStepOutputBudget，
 	// 重试被接受（或撞上别的失败阶梯）后复位，避免一次截断让本轮余下所有步骤都受开关影响。
 	EscalationRestore *cloudAgentEscalationRestore `json:"escalationRestore,omitempty"`
-	// StepTimeoutEscalated 记录"单步墙钟到点后已经关思考重试过几次"。
-	StepTimeoutEscalated int `json:"stepTimeoutEscalated,omitempty"`
 	// ForceThinkingOff 让本步请求强制关闭上游思考：思考模型偶发把整个输出预算花在推理上，
 	// 结果正文与工具调用皆空（实测 output_tokens 正好等于 maxOutputTokens）。
 	ForceThinkingOff bool `json:"forceThinkingOff,omitempty"`
@@ -1095,11 +1093,11 @@ func cloudAgentModelFailure(task *model.Task) (string, string) {
 		// 思考模型的典型失败：整个输出预算被推理吃掉，正文与工具调用皆空。
 		detail, reason = "上游连续返回空内容（通常是思考占满输出预算）；已自动关思考并放大预算重试仍失败，建议换用非思考模型或调小上下文", "model_empty_output"
 	case strings.Contains(task.Error, cloudAgentStepTimeoutError):
-		detail, reason = "单步模型调用超过执行时限仍未返回（长思考或上下文过大时常见）；已自动关思考重试仍超时，可在管理端调大 Agent 单步超时", "model_step_timeout"
+		detail, reason = "Agent 超时失败：单步模型调用超过执行时限", "model_step_timeout"
 	case strings.Contains(raw, "connection reset by peer"):
 		detail, reason = "模型连接被对端或中间网络设备重置", "model_connection_reset"
 	case strings.Contains(raw, "timeout"), strings.Contains(raw, "deadline exceeded"):
-		detail, reason = "模型请求超时", "model_request_timeout"
+		detail, reason = "Agent 超时失败：模型请求超时", "model_request_timeout"
 	case strings.Contains(raw, "connection refused"):
 		detail, reason = "无法连接模型服务（连接被拒绝）", "model_connection_refused"
 	}

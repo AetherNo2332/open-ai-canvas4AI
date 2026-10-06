@@ -4,6 +4,29 @@ import { continueAgentContextUsage, contextInputTokens, contextPressureRatio, em
 const event = (runId: string, type: string, payload: Record<string, unknown>, seq = 1) => ({ runId, type, payload, seq });
 
 describe("Agent context usage events", () => {
+    it("shows cache hit rate from the previous provider request, not the projected input", () => {
+        const state = reduceAgentContextUsage(emptyAgentContextUsage("run-1"), event("run-1", "context_pressure", {
+            modelLimitConfigured: true, usableInputTokens: 80_000, projectedTokens: 40_000,
+            providerUsage: { inputTokens: 10_000, cacheReadTokens: 2_500 },
+        }));
+        expect(presentAgentContextUsage(state)).toMatchObject({ inputTokens: 40_000, cacheHitRate: 0.25 });
+        const continued = continueAgentContextUsage(state, "run-2");
+        expect(presentAgentContextUsage(continued).cacheHitRate).toBe(0.25);
+    });
+
+    it("distinguishes zero cache hits from missing or invalid provider usage", () => {
+        const view = (providerUsage?: unknown) => presentAgentContextUsage({
+            ...emptyAgentContextUsage("run-1"), reading: { providerUsage },
+        });
+        expect(view({ inputTokens: 10_000, cacheReadTokens: 0 }).cacheHitRate).toBe(0);
+        expect(view({ inputTokens: 10_000, cacheReadTokens: 10_000 }).cacheHitRate).toBe(1);
+        for (const usage of [undefined, null, {}, { inputTokens: 10_000 }, { inputTokens: 0, cacheReadTokens: 0 },
+            { inputTokens: 10, cacheReadTokens: 11 }, { inputTokens: 10, cacheReadTokens: -1 },
+            { inputTokens: Infinity, cacheReadTokens: 1 }, { inputTokens: 10, cacheReadTokens: "5" }]) {
+            expect(view(usage).cacheHitRate).toBeUndefined();
+        }
+    });
+
     it("retains a session measurement across runs and replaces it with the next reading", () => {
         const previous = reduceAgentContextUsage(emptyAgentContextUsage("run-1"), event("run-1", "context_pressure", { estimatedInputTokens: 12000 }));
         const continued = continueAgentContextUsage(previous, "run-2");
