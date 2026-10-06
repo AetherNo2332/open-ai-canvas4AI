@@ -554,14 +554,14 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		map[string]any{"summary": str(cloudAgentToolText("parameter_007"))},
 		"summary")
 	if len(req.ContextScope) > 0 {
-		add("previs_scene_read", "读取预演摘要；无 sceneId 返回目录和 canvasSnapshotHash，有则返回场景与 snapshotHash。includeTransforms=true 返回坐标；不返回 URL/storage key。", map[string]any{
+		add("previs_scene_read", cloudAgentToolText("previs_scene_read"), map[string]any{
 			"sceneId":           str("可选。省略返回目录；提供则精读该场景"),
 			"shotId":            str("可选。精读特定镜头；需同时提供 sceneId"),
 			"objectIds":         map[string]any{"type": "array", "maxItems": 16, "items": str("可选。精读特定对象 ID")},
 			"includeTransforms": map[string]any{"type": "boolean"},
 		})
 		if req.PermissionMode != "read_only" {
-			add("previs_preview", "请求当前预演台生成白模视频；先用 previs_scene_read 确认 sceneId、shotId。", map[string]any{
+			add("previs_preview", cloudAgentToolText("previs_preview"), map[string]any{
 				"sceneId":  str("导演场景 ID"),
 				"shotId":   str("镜头 ID"),
 				"duration": map[string]any{"type": "number", "minimum": 0.1, "maximum": 60},
@@ -570,8 +570,8 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			}, "sceneId", "shotId")
 		}
 		if req.PermissionMode != "read_only" {
-			add("previs_scene_create", "创建预演场景；先读 canvasSnapshotHash。", cloudAgentPrevisSceneCreateSchema()["properties"].(map[string]any), "canvasSnapshotHash", "sceneId", "title", "templateId")
-			add("previs_apply_patch", "审批后应用语义补丁，最多32项；先读 snapshotHash。支持场景、镜头、对象、相机、灯光、动画；角色绑定须匹配画布角色卡，动画时间不超镜头时长。禁止原始 JSON、URL、storage key。", cloudAgentPrevisApplyPatchSchema()["properties"].(map[string]any), "snapshotHash", "sceneId", "operations")
+			add("previs_scene_create", cloudAgentToolText("previs_scene_create"), cloudAgentPrevisSceneCreateSchema()["properties"].(map[string]any), "canvasSnapshotHash", "sceneId", "title", "templateId")
+			add("previs_apply_patch", cloudAgentToolText("previs_apply_patch"), cloudAgentPrevisApplyPatchSchema()["properties"].(map[string]any), "snapshotHash", "sceneId", "operations")
 		}
 		add("canvas_list_node_types", cloudAgentToolText("canvas_list_node_types"), map[string]any{})
 		add("canvas_get_state", cloudAgentToolText("canvas_get_state"), map[string]any{

@@ -7,6 +7,16 @@ import { assertToolSnapshotMatchesSchema } from "../src/tool-disclosure.js";
 // Exercise Pi's actual validator against the Go-generated schema, rather than
 // recreating a second contract in TypeScript.
 const artifact = JSON.parse(await readFile(new URL("../../harness/TOOL_SCHEMA.json", import.meta.url), "utf8"));
+test("the shared artifact admits all previs tools in server snapshots", () => {
+  const names = ["previs_scene_read", "previs_preview", "previs_scene_create", "previs_apply_patch"];
+  const specs = names.map((name) => {
+    const tool = artifact.tools.find((entry: any) => entry.function.name === name);
+    assert.ok(tool, `missing previs tool ${name}`);
+    return { ...tool.function, allowed: true };
+  });
+  assert.doesNotThrow(() => assertToolSnapshotMatchesSchema(specs, artifact));
+});
+
 const cases: [string, ToolCall["arguments"], boolean][] = [
   ["web_search", { query: "最新影视制作资讯" }, true],
   ["web_search", { query: "" }, false],

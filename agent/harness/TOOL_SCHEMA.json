@@ -163,6 +163,462 @@
     },
     {
       "function": {
+        "description": "读取预演摘要；无 sceneId 返回目录和 canvasSnapshotHash，有则返回场景与 snapshotHash。includeTransforms=true 返回坐标；不返回 URL/storage key。",
+        "name": "previs_scene_read",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "includeTransforms": {
+              "type": "boolean"
+            },
+            "objectIds": {
+              "items": {
+                "description": "可选。精读特定对象 ID",
+                "type": "string"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            "sceneId": {
+              "description": "可选。省略返回目录；提供则精读该场景",
+              "type": "string"
+            },
+            "shotId": {
+              "description": "可选。精读特定镜头；需同时提供 sceneId",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "请求当前预演台生成白模视频；先用 previs_scene_read 确认 sceneId、shotId。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "previs_preview",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "duration": {
+              "maximum": 60,
+              "minimum": 0.1,
+              "type": "number"
+            },
+            "fps": {
+              "maximum": 60,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "output": {
+              "enum": [
+                "clay_video"
+              ],
+              "type": "string"
+            },
+            "sceneId": {
+              "description": "导演场景 ID",
+              "type": "string"
+            },
+            "shotId": {
+              "description": "镜头 ID",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sceneId",
+            "shotId"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "创建预演场景；先读 canvasSnapshotHash。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "previs_scene_create",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "canvasSnapshotHash": {
+              "description": "previs_scene_read 场景目录返回的 canvasSnapshotHash；创建前画布必须未变化",
+              "type": "string"
+            },
+            "sceneId": {
+              "description": "新的稳定场景 ID",
+              "maxLength": 80,
+              "type": "string"
+            },
+            "templateId": {
+              "description": "模板：empty/monologue/dialogue/blocking/product/action_chase/interior/crowd",
+              "enum": [
+                "empty",
+                "monologue",
+                "dialogue",
+                "blocking",
+                "product",
+                "action_chase",
+                "interior",
+                "crowd"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "description": "场景标题",
+              "maxLength": 160,
+              "type": "string"
+            }
+          },
+          "required": [
+            "canvasSnapshotHash",
+            "sceneId",
+            "title",
+            "templateId"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "审批后应用语义补丁，最多32项；先读 snapshotHash。支持场景、镜头、对象、相机、灯光、动画；角色绑定须匹配画布角色卡，动画时间不超镜头时长。禁止原始 JSON、URL、storage key。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "previs_apply_patch",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "operations": {
+              "description": "受限语义操作；不能替换整个场景或写任意 JSON",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "activeShotId": {
+                    "maxLength": 80,
+                    "type": "string"
+                  },
+                  "angle": {
+                    "maximum": 6.29,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "archetype": {
+                    "description": "演员体型原型",
+                    "enum": [
+                      "adult",
+                      "child",
+                      "elderly",
+                      "man",
+                      "woman",
+                      "monster"
+                    ],
+                    "type": "string"
+                  },
+                  "background": {
+                    "maxLength": 32,
+                    "type": "string"
+                  },
+                  "cameraId": {
+                    "maxLength": 80,
+                    "type": "string"
+                  },
+                  "cameraMove": {
+                    "enum": [
+                      "static",
+                      "push_in",
+                      "pull_out",
+                      "pan_left",
+                      "pan_right",
+                      "tilt_up",
+                      "tilt_down",
+                      "orbit_left",
+                      "orbit_right",
+                      "handheld"
+                    ],
+                    "type": "string"
+                  },
+                  "castShadow": {
+                    "type": "boolean"
+                  },
+                  "characterAssetId": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "characterName": {
+                    "maxLength": 160,
+                    "type": "string"
+                  },
+                  "characterVersionId": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "color": {
+                    "description": "十六进制颜色",
+                    "maxLength": 9,
+                    "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+                    "type": "string"
+                  },
+                  "duration": {
+                    "maximum": 60,
+                    "minimum": 0.1,
+                    "type": "number"
+                  },
+                  "easing": {
+                    "enum": [
+                      "step",
+                      "linear",
+                      "smooth"
+                    ],
+                    "type": "string"
+                  },
+                  "environmentIntensity": {
+                    "maximum": 100,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "focalLength": {
+                    "maximum": 300,
+                    "minimum": 1,
+                    "type": "number"
+                  },
+                  "fps": {
+                    "maximum": 60,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "gridVisible": {
+                    "type": "boolean"
+                  },
+                  "id": {
+                    "description": "目标或新建资源 ID",
+                    "maxLength": 80,
+                    "type": "string"
+                  },
+                  "intensity": {
+                    "maximum": 100,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "keyframeId": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "primitive",
+                      "actor"
+                    ],
+                    "type": "string"
+                  },
+                  "lightType": {
+                    "enum": [
+                      "directional",
+                      "point",
+                      "spot",
+                      "ambient"
+                    ],
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 160,
+                    "type": "string"
+                  },
+                  "orientToPath": {
+                    "type": "boolean"
+                  },
+                  "parentId": {
+                    "maxLength": 80,
+                    "type": "string"
+                  },
+                  "pathPoints": {
+                    "items": {
+                      "items": {
+                        "type": "number"
+                      },
+                      "maxItems": 3,
+                      "minItems": 3,
+                      "type": "array"
+                    },
+                    "maxItems": 64,
+                    "minItems": 2,
+                    "type": "array"
+                  },
+                  "pathSpeed": {
+                    "enum": [
+                      "slow",
+                      "walk",
+                      "run"
+                    ],
+                    "type": "string"
+                  },
+                  "penumbra": {
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "pose": {
+                    "description": "演员姿态",
+                    "enum": [
+                      "stand",
+                      "sit",
+                      "walk",
+                      "run",
+                      "wave",
+                      "think",
+                      "fight",
+                      "kick",
+                      "throw",
+                      "push",
+                      "reach",
+                      "arms_crossed",
+                      "phone",
+                      "bow",
+                      "kneel_single",
+                      "kneel_double",
+                      "lean",
+                      "squat",
+                      "hands_hips",
+                      "neutral",
+                      "t_pose"
+                    ],
+                    "type": "string"
+                  },
+                  "position": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "type": "array"
+                  },
+                  "primitive": {
+                    "enum": [
+                      "box",
+                      "sphere",
+                      "cylinder",
+                      "plane",
+                      "character"
+                    ],
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "maxLength": 2000,
+                    "type": "string"
+                  },
+                  "referenceNodeId": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "rotation": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "type": "array"
+                  },
+                  "scale": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "type": "array"
+                  },
+                  "shotSize": {
+                    "enum": [
+                      "extreme_wide",
+                      "wide",
+                      "full",
+                      "medium",
+                      "close_up",
+                      "extreme_close_up"
+                    ],
+                    "type": "string"
+                  },
+                  "startDelay": {
+                    "maximum": 60,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "target": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "type": "array"
+                  },
+                  "time": {
+                    "maximum": 60,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "title": {
+                    "maxLength": 160,
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "scene_update",
+                      "shot_add",
+                      "shot_update",
+                      "shot_remove",
+                      "object_add",
+                      "object_update",
+                      "object_remove",
+                      "object_keyframe_upsert",
+                      "object_keyframe_remove",
+                      "object_motion_path_set",
+                      "object_motion_path_clear",
+                      "camera_add",
+                      "camera_update",
+                      "camera_remove",
+                      "camera_keyframe_upsert",
+                      "camera_keyframe_remove",
+                      "light_add",
+                      "light_update",
+                      "light_remove"
+                    ],
+                    "type": "string"
+                  },
+                  "visible": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "type": "object"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            "sceneId": {
+              "description": "要修改的场景 ID",
+              "maxLength": 80,
+              "type": "string"
+            },
+            "snapshotHash": {
+              "description": "previs_scene_read 聚焦读取返回的场景 snapshotHash；只代表该场景",
+              "type": "string"
+            }
+          },
+          "required": [
+            "snapshotHash",
+            "sceneId",
+            "operations"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
         "description": "列出本轮 Agent 可创建的节点类型、默认尺寸、连接约束、适用场景和维护代价；先读能力卡，再结合镜头数量、连续性和后续维护需求自主选择，不要猜测 nodeType。",
         "name": "canvas_list_node_types",
         "parameters": {
