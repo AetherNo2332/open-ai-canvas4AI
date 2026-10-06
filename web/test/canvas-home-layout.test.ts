@@ -7,7 +7,7 @@ import CreatePage from "../src/pages/create";
 test("homepage renders a single canvas entrance without the removed gallery", () => {
     const markup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(CreatePage)));
     expect(markup.match(/href="\/canvas"/g)).toHaveLength(1);
-    expect(markup).toContain("进入画布");
+    expect(markup).toContain("从上一次离开的地方继续");
     expect(markup.match(/<img /g)).toHaveLength(1);
     expect(markup).toContain('class="canvas-home-character"');
     expect(markup).toContain('aria-hidden="true"');
@@ -20,6 +20,7 @@ for (const route of ["/", "/create"]) {
         const markup = renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: [route] }, createElement(CreatePage)));
         expect(markup.match(/<a\b/g)).toHaveLength(1);
         expect(markup).toContain('href="/canvas"');
+        expect(markup).toContain("从上一次离开的地方继续");
         expect(markup).not.toMatch(/<(input|textarea|form|button)\b/);
         expect(markup).not.toContain("打开素材库");
         expect(markup).not.toContain("创作模式");
