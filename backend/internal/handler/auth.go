@@ -222,6 +222,7 @@ func linuxDOCallbackHandler(svc *service.Service) gin.HandlerFunc {
 
 func RegisterAdminRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerAgentSchedulerAdminRoutes(r, svc)
+	registerAgentWebSearchAdminRoutes(r, svc)
 	r.GET("/admin/users", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

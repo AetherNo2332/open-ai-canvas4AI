@@ -1759,13 +1759,13 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 			return s.failCloudAgent(run, state, cloudAgentImageInspectionBudgetMessage)
 		}
 	}
-	// Skill reads use the domain repository and filesystem, not the checkpoint
-	// transaction's connection. Read first to avoid nesting DB reads on SQLite.
+	// Service-backed reads, including outbound search, run before the checkpoint
+	// transaction to avoid nested DB reads and holding a write lock during HTTP.
 	var skillResult any
 	var skillErr error
-	if allowed && (call.Function.Name == "skill_read_file" || call.Function.Name == "model_list" || call.Function.Name == "image_annotation_render") {
+	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "skill_read_file" || call.Function.Name == "model_list" || call.Function.Name == "image_annotation_render") {
 		state.RuntimeRunID = run.ID
-		if call.Function.Name == "image_annotation_render" {
+		if call.Function.Name == "image_annotation_render" || call.Function.Name == "web_search" {
 			skillResult, skillErr = cloudAgentReadTool(s.repo, run.UserID, state, call, s)
 		} else {
 			// 技能文件和模型目录都是稳定的只读结果。统一走检查点缓存，
@@ -1877,7 +1877,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 				}
 				// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
 				result, toolErr = cloudAgentFinishRun(run.ID, state, call)
-			case call.Function.Name == "skill_read_file", call.Function.Name == "model_list", call.Function.Name == "image_annotation_render":
+			case call.Function.Name == "web_search", call.Function.Name == "skill_read_file", call.Function.Name == "model_list", call.Function.Name == "image_annotation_render":
 				result, toolErr = skillResult, skillErr
 			default:
 				result, toolErr = cloudAgentReadToolCached(repo, run.UserID, state, call)

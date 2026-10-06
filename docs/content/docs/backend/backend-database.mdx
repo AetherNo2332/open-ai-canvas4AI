@@ -135,6 +135,10 @@ docker compose -f docker-compose.deploy.yml up -d backend web
 
 若报告仍有 `unresolved`，需按素材 ID 核查实际文件大小及引用；不要批量填零，也不要把未解决记录删除。工具不访问外部 URL，不下载媒体。应用后让用户重新加载素材库验证；不会要求清空本地存储。若数据库更新失败或检测到并发修改，整批写入事务回滚，`repaired` 为零。已成功提交后的回滚应在隔离数据库恢复备份并核查，再选择性恢复相关记录；不要在恢复写入后直接覆盖整库，以免丢失后续数据。
 
+## Agent 联网搜索配置
+
+`system_settings` 的 `agent_web_search` JSON 保存 `enabled`、`encryptedApiKey` 和单调递增 `revision`。复用既有设置密钥加密，不新增表或 schema 迁移。写入原子比较旧 JSON，冲突返回 409；清空密钥后仍递增 revision。公共响应只投影配置状态和是否已有密钥，运行快照只保存服务端派生的工具可用性，不保存密钥。
+
 ## 平台外观配置
 
 当前外观 JSON 合同版本为 8，主题参数新增 `skinThemes[].tokens.buttons.light/dark`：填充模式、角度、常态/悬停/按下双色和文字色。经典主题默认为紫蓝渐变，其余旧主题缺少此块时保持纯色；公开 `activeSkin` 使用相同结构。无表结构迁移，读取补齐只在内存执行，管理员保存时写回。回退应用版本前保留外观 JSON 备份，旧版本不支持新按钮填充参数。

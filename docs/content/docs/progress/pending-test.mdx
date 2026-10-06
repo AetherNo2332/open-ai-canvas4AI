@@ -3,6 +3,12 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## Tavily 联网搜索
+
+- [ ] 用户在管理员「Agent（beta）」输入真实 Tavily API Key 并开启，使用新父 Agent 和子 Agent 搜索并检查来源引用。
+- [ ] 用户确认设置页明暗主题与窄屏布局；本轮按要求使用脚本，不操作浏览器。
+- [ ] 本地 3000 配置接口、密钥保留/清空、修订号冲突与权限脚本验收。
+
 ## 角色卡移植与 Agent 角色卡能力（自上游同步）
 
 从上游 ddcat-ai/open-ai-canvas 同步角色卡域：账号级角色库（`GET/POST /api/characters`、`GET/PATCH /api/characters/:assetId`、representations 与 voice 子资源）与对应 service/repository；画布能力注册表引入 `NodeVariant`（text + `workflowKind=character` 的角色卡变体，可发现、可引用、不能 add_node）；Agent 新增 `canvas_create_character` 工具（审批后打包形象图片/声音为角色资产并放置角色卡节点）；`generate_media` 引用角色卡节点自动附带三视图与设定文字，音频模式自动注入绑定声音（voiceKey/instructions），`canvas_get_state` 精读返回 `character.definition`、representations、`imageReference/audioReference` 就绪状态；角色卡版本变化会拒绝使用过期审批重新提交。前端同步角色库弹窗、角色媒体库、富封面、引用节点/弹窗增强与 `normalizeCharacterImageMentions`（仅有角色卡参考时 `@图片N` 自动映射为 `@角色N`）。影策短剧工作流技能同步 `references/character-cards.md` 与 SKILL.md 角色卡工作流；工具描述文档更新 `canvas_get_state` 并新增 `canvas_create_character`。

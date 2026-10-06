@@ -32,6 +32,7 @@ func TestAgentToolSchemaArtifactMatchesRuntime(t *testing.T) {
 	req.PermissionMode = "auto"
 	req.VisionEnabled = true
 	req.HasMemories = true
+	req.WebSearchEnabled = true
 	req.SkillIDs = []string{"schema-artifact-skill"}
 	artifact := agentToolSchemaArtifact{SchemaVersion: cloudAgentToolSchemaVersion, Tools: append(cloudAgentTools(req), nativeSkillReadToolSchema())}
 	for _, request := range []CloudAgentRequest{
