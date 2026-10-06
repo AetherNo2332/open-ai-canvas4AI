@@ -955,6 +955,33 @@ export async function runCanvasAgent(
     if (resume.activeLeafId) sessionManager.branch(resume.activeLeafId);
     else sessionManager.resetLeaf();
   }
+  const compactCurrentSession = async (reason: string, softFail = false): Promise<boolean> => {
+    const retainedSettings = session!.settingsManager.getCompactionSettings();
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const compacted = await compactSessionOrFail(session!, reason, softFail);
+          if (compactionFailure !== undefined) throw compactionFailure;
+          return compacted;
+        } catch (error) {
+          // Pi replaces a cancelled extension with "Compaction cancelled".
+          // Preserve the bridge's fatal/lease/transport classification.
+          const failure = compactionFailure ?? error;
+          if (attempt === 0 && !pendingContextCompaction && failure instanceof FatalWorkerError &&
+            failure.message.includes("Pi 保留工具调用缺少结果")) {
+            // Summarize the old incomplete batch instead of retaining it. Go
+            // still validates the new boundary and all current-run receipts.
+            compactionFailure = undefined;
+            session!.settingsManager.applyOverrides({ compaction: { ...retainedSettings, keepRecentTokens: 1 } });
+            continue;
+          }
+          throw failure;
+        }
+      }
+    } finally {
+      session!.settingsManager.applyOverrides({ compaction: retainedSettings });
+    }
+  };
   try {
     session.subscribe((event) => {
       if (listenerFailure !== undefined) return;
@@ -1041,7 +1068,7 @@ export async function runCanvasAgent(
     try {
       let prompt = prependPendingInterjections(resume.prompt);
       if (pendingContextCompaction) {
-        await compactSessionOrFail(session, "服务端压缩操作无法执行");
+        await compactCurrentSession("服务端压缩操作无法执行");
         if (compactionFailure !== undefined) {
           throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
         }
@@ -1062,7 +1089,7 @@ export async function runCanvasAgent(
         await queue.drain();
         if (runTerminated || listenerFailure !== undefined || isTerminalRunStatus(snapshot.status)) break;
         syncCompaction();
-        if (pendingContextCompaction) await compactSessionOrFail(session, "服务端压缩操作无法执行");
+        if (pendingContextCompaction) await compactCurrentSession("服务端压缩操作无法执行");
         if (compactionFailure !== undefined) throw compactionFailure;
         if (pendingContextCompaction) throw new FatalWorkerError("Pi did not commit refreshed context compaction");
         if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
@@ -1079,7 +1106,7 @@ export async function runCanvasAgent(
           if (decision.decision === "compact") {
             if (++consecutiveCompactions > 2) throw new FatalWorkerError("Context still exceeds admission budget after compaction");
             forceCompactionForAdmission(session, snapshot);
-            const didCompact = await compactSessionOrFail(session, "上下文超过模型窗口", true);
+            const didCompact = await compactCurrentSession("上下文超过模型窗口", true);
             if (compactionFailure !== undefined) throw compactionFailure;
             if (didCompact) continue;
             // 已压到尖端：把本轮 prompt 纳入会话，让自动压缩与 Go 准入决定下一步。
@@ -1115,7 +1142,7 @@ export async function runCanvasAgent(
           // durable leaf before manual compaction, outside its streaming loop.
           if (sessionLeafId) sessionManager.branch(sessionLeafId); else sessionManager.resetLeaf();
           session.agent.state.messages = buildSessionContext(sessionManager.getBranch()).messages;
-          await compactSessionOrFail(session, "上下文超过模型窗口");
+          await compactCurrentSession("上下文超过模型窗口");
           if (compactionFailure !== undefined) throw compactionFailure;
           prompt = CONTINUATION_PROMPT;
           continue;

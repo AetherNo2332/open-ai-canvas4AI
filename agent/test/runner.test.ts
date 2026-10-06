@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
-import type { CanvasToolSpec } from "../src/tool-disclosure.js";
+import { FatalWorkerError, type CanvasToolSpec } from "../src/tool-disclosure.js";
 import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent, withServerPolicy } from "../src/runner.js";
 import type { PromptParts } from "../src/system-prompt.js";
 import { sessionEntriesFromMessages } from "../src/session-tools.js";
@@ -664,6 +664,43 @@ test("a preflight compaction without compactable history falls through to the pr
   bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: ++checks === 1 ? "compact" : "model" });
   await runCanvasAgent(bridge, snapshot, undefined, promptParts());
   assert.ok(state.steps >= 1, "模型步必须在本轮真实请求前被准入");
+});
+
+test("preflight compaction preserves a fatal bridge rejection instead of a retryable cancellation", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([{ text: "must not execute" }], {
+    piSessionEntries: history.views, piActiveLeafId: history.leaf,
+  });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: "compact" });
+  const failure = new FatalWorkerError("Canvas bridge HTTP 400: invalid compaction boundary");
+  bridge.compactContext = async () => { throw failure; };
+  await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), error => error === failure);
+  assert.equal(state.steps, 0);
+});
+
+test("compaction retries an unpaired retained historical call once with a smaller retained suffix", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([{ text: "continued after child reports" }], {
+    piSessionEntries: history.views, piActiveLeafId: history.leaf,
+  });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  let checks = 0;
+  let attempts = 0;
+  bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: ++checks === 1 ? "compact" : "model" });
+  bridge.compactContext = async (_run, request) => {
+    if (++attempts === 1) throw new FatalWorkerError("Canvas bridge HTTP 400: Pi 保留工具调用缺少结果");
+    const preparation = request.preparation as { settings: { keepRecentTokens: number } };
+    assert.equal(preparation.settings.keepRecentTokens, 1);
+    return { operationId: "boundary-recovery", status: "succeeded", summary: "<agent-context-checkpoint/>",
+      firstKeptEntryId: history.keep, tokensBefore: 40000, details: { operationId: "boundary-recovery" } };
+  };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(attempts, 2);
+  assert.equal(state.steps, 1);
+  assert.equal(state.status, "completed");
 });
 
 test("a pending operation received through control is committed before any ordinary model request", async () => {
