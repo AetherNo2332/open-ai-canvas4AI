@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Button, Checkbox, Input } from "antd";
+import { Button, Checkbox, Input, Switch } from "antd";
 import { ArrowLeft, BookMarked, Check, ChevronRight, Cpu, Gauge, LockKeyhole, PlugZap, Search, ShieldCheck, Sparkles, Wrench } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -14,6 +14,7 @@ export type AgentContextKey = "canvas" | "resources" | "generation_history" | "s
 type SettingsSection = "home" | "profile" | "memories" | "skills" | "mcp" | "context" | "budget" | "workspace";
 
 type AgentSettingsProps = {
+    subagents?: { enabled: boolean; disabled: boolean; saving: boolean; error: string; onToggle: () => void; onReload: () => void };
     theme: CanvasTheme;
     config: AiConfig;
     selectedModel: string;
@@ -173,6 +174,7 @@ function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; the
                     默认逐项审批。自动模式可修改已授权的画布内容；图片、视频始终先创建草稿，再经独立审批才提交生成任务。
                 </p>
             </section>
+            {props.subagents ? <SubagentAuthorization {...props.subagents} theme={theme} /> : null}
             <section>
                 <SettingLabel label="能力与范围" />
                 <div className="space-y-1">
@@ -186,6 +188,31 @@ function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; the
                 </div>
             </section>
         </div>
+    );
+}
+
+export function SubagentAuthorization({ enabled, disabled, saving, error, theme, onToggle, onReload }: { enabled: boolean; disabled: boolean; saving: boolean; error: string; theme: CanvasTheme; onToggle: () => void; onReload: () => void }) {
+    return (
+        <section aria-label="Agent 子代理授权">
+            <SettingLabel label="子代理协作" hint="按画布保存" />
+            <div className="flex items-center justify-between gap-4 p-3" style={{ background: theme.node.fill, borderRadius: "var(--card-radius)" }}>
+                <label htmlFor="agent-subagent-authorization" className="min-w-0 cursor-pointer text-xs leading-5">
+                    允许 Agent 自动召唤子代理
+                </label>
+                <Switch id="agent-subagent-authorization" aria-label="允许 Agent 自动召唤子代理" checked={enabled} disabled={disabled} loading={saving} onChange={onToggle} />
+            </div>
+            <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>
+                开启后持续生效，直到关闭；Agent 自动命名、分配角色与任务。设置从下一次新运行开始生效。
+            </p>
+            {error ? (
+                <div role="alert" className="mt-2 text-xs" style={{ color: theme.node.text }}>
+                    {error}{" "}
+                    <Button size="small" onClick={onReload} disabled={saving}>
+                        重新加载
+                    </Button>
+                </div>
+            ) : null}
+        </section>
     );
 }
 

@@ -23,7 +23,7 @@
 }
 
 .agent-panel-header {
-    min-height: 68px;
+    min-height: 60px;
     padding: var(--space-3) var(--space-4) var(--space-2) var(--space-5);
 }
 
@@ -309,7 +309,11 @@
     --agent-thought-gap: 9px;
     --agent-summary-inset: 4px;
     min-width: 0;
+    max-width: 60ch;
+    margin-inline: auto;
 }
+
+.agent-message-body { overflow-wrap: anywhere; }
 
 .agent-conversation-messages > * + * {
     margin-top: var(--space-4);

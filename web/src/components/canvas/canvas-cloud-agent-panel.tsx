@@ -82,6 +82,7 @@ import {
 } from "./canvas-cloud-agent-chat-ui";
 import { CanvasAgentSkillLibraryModal } from "./canvas-agent-skill-library-modal";
 import { AgentSubagentList, type AgentSubagentAvatarItem } from "./canvas-agent-subagent-list";
+import { AgentSubagentConversation } from "./canvas-agent-subagent-conversation";
 import { CanvasCloudAgentSettings, agentPermissionLabel, agentPermissionMenuItems, agentPermissionVisual, type AgentContextKey } from "./canvas-cloud-agent-settings";
 import { useAgentPanelLayout } from "./use-agent-panel-layout";
 import { AgentWelcome } from "./canvas-agent-welcome";
@@ -190,17 +191,38 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const globalDefaultSkillIds = useMemo(() => globalDefaultSkills.map((skill) => skill.skillId), [globalDefaultSkills]);
     const [dynamicSubagents, setDynamicSubagents] = useState<AgentSubagentAvatarItem[]>([]);
     const [subagentDetails, setSubagentDetails] = useState<AgentSubagent[]>([]);
+    const [selectedSubagentId, setSelectedSubagentId] = useState<string | null>(null);
+    const subagentScope = `${userId || ""}:${canvasId}:${run?.id || ""}`;
+    const [loadedSubagentScope, setLoadedSubagentScope] = useState("");
+    const selectedSubagent = loadedSubagentScope === subagentScope ? subagentDetails.find((item) => item.id === selectedSubagentId) : undefined;
+    const collaboratorsRef = useRef<HTMLDivElement>(null);
+    const returnSubagentFocus = useRef<string | null>(null);
+    useEffect(() => {
+        if (!selectedSubagentId && returnSubagentFocus.current) {
+            const button = Array.from(collaboratorsRef.current?.querySelectorAll<HTMLButtonElement>("[data-subagent-id]") || []).find((item) => item.dataset.subagentId === returnSubagentFocus.current);
+            button?.focus();
+            returnSubagentFocus.current = null;
+        }
+    }, [selectedSubagentId]);
     const [subagentDetailsError, setSubagentDetailsError] = useState("");
     const subagentListRequestRef = useRef(0);
     const acceptSubagents = (items: AgentSubagent[]) => {
+        setLoadedSubagentScope(subagentScope);
         setSubagentDetails(items);
         setSubagentDetailsError("");
-        setDynamicSubagents(items.map((item) => ({ id: item.id, name: item.displayName, avatarUrl: "/logo.svg", state: item.status === "completed" ? "done" : item.status === "failed" || item.status === "cancelled" ? "failed" : "running" })));
+        setDynamicSubagents(
+            items.map((item) => ({
+                id: item.id,
+                name: item.displayName,
+                state: item.status === "completed" ? "done" : item.status === "failed" || item.status === "cancelled" ? "failed" : item.status === "queued" || item.status.startsWith("waiting") ? "waiting" : "running",
+            })),
+        );
     };
     useEffect(() => {
         const controller = new AbortController();
         const request = ++subagentListRequestRef.current;
         setDynamicSubagents([]);
+        setSelectedSubagentId(null);
         setSubagentDetails([]);
         setSubagentDetailsError("");
         if (run?.id)
@@ -212,8 +234,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     if (!controller.signal.aborted && request === subagentListRequestRef.current) setSubagentDetailsError("子代理记录加载失败");
                 });
         return () => controller.abort();
-    }, [run?.id]);
-    const allSubagents = dynamicSubagents;
+    }, [run?.id, subagentScope]);
+    const allSubagents = loadedSubagentScope === subagentScope ? dynamicSubagents : [];
     const [marketSkills, setMarketSkills] = useState<Skill[]>([]);
     const [skillSearch, setSkillSearch] = useState("");
     const [debouncedSkillSearch, setDebouncedSkillSearch] = useState("");
@@ -1066,6 +1088,18 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                             profileError={profileError}
                                             projectId={domainProjectId}
                                             canvasId={canvasId}
+                                            subagents={
+                                                subagentsAvailable
+                                                    ? {
+                                                          enabled: loadedPolicyScope === policyScope && subagentPolicy?.enabled === true,
+                                                          disabled: !subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicySaving || running,
+                                                          saving: subagentPolicySaving,
+                                                          error: subagentPolicyError,
+                                                          onToggle: () => void toggleSubagents(),
+                                                          onReload: () => setSubagentPolicyReload((value) => value + 1),
+                                                      }
+                                                    : undefined
+                                            }
                                             onReloadProfile={reloadProfile}
                                             onSaveProfile={saveProfile}
                                             onContextToggle={(value) => setContextScope((current) => (current.includes(value) ? current.filter((item) => item !== value) : [...current, value]))}
@@ -1082,6 +1116,16 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                     <motion.div key="history" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
                                         <AgentHistory conversations={conversations} activeConversationId={activeConversationId} theme={theme} onBack={() => setView("chat")} onNew={newConversation} onOpen={openConversation} onDelete={deleteConversation} />
                                     </motion.div>
+                                ) : selectedSubagent ? (
+                                    <AgentSubagentConversation
+                                        key={selectedSubagent.id}
+                                        agent={selectedSubagent}
+                                        theme={theme}
+                                        onBack={() => {
+                                            returnSubagentFocus.current = selectedSubagent.id;
+                                            setSelectedSubagentId(null);
+                                        }}
+                                    />
                                 ) : (
                                     <motion.div key="chat" className="flex min-h-0 flex-1 flex-col" initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
                                         <AgentHeader
@@ -1115,57 +1159,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                             onSettings={() => setView("settings")}
                                             onCollapse={onCollapse}
                                         />
-                                        {subagentsAvailable && (
-                                            <div className="flex shrink-0 flex-col gap-2 px-4 py-2" aria-label="Agent 子代理授权">
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <span className="text-xs" style={{ color: theme.node.muted }}>
-                                                        允许父 Agent 自动召唤子代理
-                                                    </span>
-                                                    <Button
-                                                        size="small"
-                                                        aria-pressed={loadedPolicyScope === policyScope && subagentPolicy?.enabled === true}
-                                                        onClick={() => void toggleSubagents()}
-                                                        disabled={!subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicySaving || running}
-                                                    >
-                                                        {subagentPolicy?.enabled ? "已开启" : "未开启"}
-                                                    </Button>
-                                                </div>
-                                                <span className="text-xs" style={{ color: theme.node.muted }}>
-                                                    开启后持续生效，直到关闭；父 Agent 自动命名、分配角色与任务。
-                                                </span>
-                                                {subagentPolicyError && (
-                                                    <div role="alert" className="text-xs">
-                                                        {subagentPolicyError}{" "}
-                                                        <Button size="small" onClick={() => setSubagentPolicyReload((value) => value + 1)}>
-                                                            重新加载
-                                                        </Button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                        {subagentDetailsError && (
-                                            <div role="alert" className="px-4 py-2 text-xs">
-                                                {subagentDetailsError}
-                                            </div>
-                                        )}
-                                        {subagentDetails.length > 0 && (
-                                            <div className="max-h-48 overflow-y-auto px-4 py-2 text-xs" data-canvas-wheel-scroll aria-label="子代理任务与回报">
-                                                {subagentDetails.map((item) => (
-                                                    <details key={item.id} className="mb-2 border-b pb-2" style={{ borderColor: theme.node.stroke }}>
-                                                        <summary className="cursor-pointer">
-                                                            {item.displayName} · {item.roleLabel} · {item.status === "completed" ? "已完成" : item.status === "failed" ? "失败" : item.status === "cancelled" ? "已取消" : "运行中"}
-                                                        </summary>
-                                                        <p className="mt-2 break-words">目标：{item.objective}</p>
-                                                        {item.failureMessage && <p role="alert">{item.failureMessage}</p>}
-                                                        {(item.messages || []).map((message) => (
-                                                            <p key={message.id} className="mt-2 whitespace-pre-wrap break-words">
-                                                                {message.direction === "parent_to_child" ? "父 Agent" : item.displayName} · {message.kind}：{message.text}
-                                                            </p>
-                                                        ))}
-                                                    </details>
-                                                ))}
-                                            </div>
-                                        )}
                                         {run && connectionStatus !== "connected" ? (
                                             <div role="status" className="flex items-center justify-between gap-2 px-5 py-2 text-xs" style={{ color: theme.node.muted }}>
                                                 <span>{connectionStatus === "disconnected" ? "连接已断开，服务端任务可能仍在执行；运行记录已保留" : "正在连接并校准运行状态…"}</span>
@@ -1192,11 +1185,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                             onApprove={(settings) => void submitApproval("approve", settings)}
                                             onReject={() => void submitApproval("reject")}
                                         />
-                                        {allSubagents.length > 0 ? (
-                                            <div className="mx-3 mb-2 shrink-0">
-                                                <AgentSubagentList items={allSubagents} theme={theme} />
-                                            </div>
-                                        ) : null}
                                         {planVisible ? (
                                             <AgentPlanBar
                                                 items={planItems}
@@ -1205,6 +1193,24 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                                 terminal={planTerminal || Boolean(run && ["completed", "failed", "cancelled", "rejected"].includes(run.status))}
                                                 onToggle={() => setPlanMinimized((value) => !value)}
                                             />
+                                        ) : null}
+                                        {allSubagents.length > 0 ? (
+                                            <div ref={collaboratorsRef} className="shrink-0">
+                                                <AgentSubagentList items={allSubagents} theme={theme} onSelect={setSelectedSubagentId} />
+                                            </div>
+                                        ) : null}
+                                        {subagentDetailsError ? (
+                                            <div role="alert" className="px-4 py-2 text-xs">
+                                                {subagentDetailsError}
+                                            </div>
+                                        ) : null}
+                                        {subagentPolicyError ? (
+                                            <div role="alert" className="flex items-center justify-between gap-2 px-4 py-2 text-xs">
+                                                <span>{subagentPolicyError}</span>
+                                                <Button size="small" onClick={() => setView("settings")}>
+                                                    打开 Agent 设置
+                                                </Button>
+                                            </div>
                                         ) : null}
                                         {historyHydrated && !messages.some((message) => message.role === "user" || message.role === "assistant") && !run ? (
                                             <AgentSceneCapsules
