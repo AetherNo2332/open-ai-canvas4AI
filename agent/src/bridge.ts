@@ -102,7 +102,6 @@ export interface PiSnapshot {
     willRetry: boolean;
     tokensBefore: number;
   };
-  previousStepTemplate?: string;
   tools: CanvasToolSpec[];
   piMessages?: Record<string, unknown>[];
   openedCategories?: string[];

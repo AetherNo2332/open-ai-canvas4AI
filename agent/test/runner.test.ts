@@ -212,6 +212,46 @@ test("首个 system 由服务端策略与 Harness 正文组成，模型只看到
   assert.equal(canonical.messages.at(-1)?.content, "请给主角换一身衣服");
 });
 
+test("tool definitions stay stable across different calls and continuation while receipts remain in messages", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "read-1", function: { name: "canvas_get_state", arguments: "{}" } }] },
+    { toolCalls: [{ id: "plan-2", function: { name: "plan_update", arguments: "{}" } }] },
+    { text: "Done" },
+  ], { receiptText: "Tool completed" });
+  snapshot.tools = [...tools, { name: "plan_update", description: "Update plan", parameters: objectSchema, allowed: true }];
+  const expectedTools = [
+    { type: "function", function: { name: "canvas_get_state", description: "Get state", parameters: objectSchema } },
+    { type: "function", function: { name: "plan_update", description: "Update plan", parameters: objectSchema } },
+  ];
+  snapshot.canonical.tools = expectedTools;
+  const preflights: PiCanonical[] = [];
+  bridge.modelPreflight = async (_run, request) => {
+    preflights.push(request);
+    return { status: "ready", taskId: "", decision: "model" };
+  };
+  // An older backend may still include the removed reminder field in its snapshot.
+  Object.assign(snapshot, { previousStepTemplate: "Previous tools: {names}" });
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 3);
+  assert.ok(preflights.length >= 3);
+  for (const request of [...preflights, ...state.canonical]) {
+    assert.deepEqual(request.tools, expectedTools);
+  }
+  const messages = state.canonical[2]!.messages;
+  assert.deepEqual(messages.filter(m => m.role === "tool").map(m => [m.tool_call_id, m.content]),
+    [["read-1", "Tool completed"], ["plan-2", "Tool completed"]]);
+  assert.deepEqual(messages.filter(m => m.role === "assistant").flatMap(m =>
+    (m.tool_calls as PiToolCall[] || []).map(call => call.function.name)), ["canvas_get_state", "plan_update"]);
+
+  const continued = fakeBridge([{ text: "Continued" }]);
+  continued.snapshot.tools = snapshot.tools;
+  continued.snapshot.canonical.messages = [...messages, { role: "user", content: "Continue" }];
+  await runCanvasAgent(continued.bridge, continued.snapshot, undefined, promptParts());
+  assert.deepEqual(continued.state.canonical[0]!.tools, state.canonical[2]!.tools);
+  assert.deepEqual(continued.state.canonical[0]!.messages.filter(m => m.role === "tool").map(m => m.tool_call_id),
+    ["read-1", "plan-2"]);
+});
+
 test("native Skill read checkpoints without a canvas tool batch", async () => {
   const entry = '---\nname: "skill-abc"\ndescription: "For scripts"\n---\n# Body\n';
   const hash = createHash("sha256").update(entry).digest("hex");
