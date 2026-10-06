@@ -3,9 +3,15 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import CreatePage from "../src/pages/create";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useUserStore } from "../src/stores/use-user-store";
+
+function renderHome(route = "/", client = new QueryClient()) {
+    return renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(MemoryRouter, { initialEntries: [route] }, createElement(CreatePage))));
+}
 
 test("homepage renders a single canvas entrance without the removed gallery", () => {
-    const markup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(CreatePage)));
+    const markup = renderHome();
     expect(markup.match(/href="\/canvas"/g)).toHaveLength(1);
     expect(markup).toContain("从上一次离开的地方继续");
     expect(markup.match(/<img /g)).toHaveLength(1);
@@ -17,7 +23,7 @@ test("homepage renders a single canvas entrance without the removed gallery", ()
 
 for (const route of ["/", "/create"]) {
     test(`homepage ${route} directs creation to the canvas without a generation composer`, () => {
-        const markup = renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: [route] }, createElement(CreatePage)));
+        const markup = renderHome(route);
         expect(markup.match(/<a\b/g)).toHaveLength(1);
         expect(markup).toContain('href="/canvas"');
         expect(markup).toContain("从上一次离开的地方继续");
@@ -26,6 +32,20 @@ for (const route of ["/", "/create"]) {
         expect(markup).not.toContain("创作模式");
     });
 }
+
+test("signed-in homepage continues the cloud canvas even with no local cache", () => {
+    const initial = useUserStore.getInitialState();
+    const previous = { ...initial };
+    const client = new QueryClient();
+    Object.assign(initial, { user: { id: "home-cloud-user" } as NonNullable<typeof previous.user>, hydrated: true });
+    client.setQueryData(["home-latest-canvas", "home-cloud-user"], { projects: [{ id: "cloud-canvas", updatedAt: "2026-10-06T10:00:00Z" }], total: 1 });
+    try {
+        expect(renderHome("/", client)).toContain('href="/canvas/cloud-canvas"');
+    } finally {
+        Object.assign(initial, previous);
+        client.clear();
+    }
+});
 
 test("homepage removes the kicker and keeps the compact upward layout", async () => {
     const source = await Bun.file(new URL("../src/pages/create/index.tsx", import.meta.url)).text();
