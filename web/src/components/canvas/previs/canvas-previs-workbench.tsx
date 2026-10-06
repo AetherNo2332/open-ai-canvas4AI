@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { cameraMoveOptions, poseEditBones, BoneRotationFields, shotSizeOptions, ObjectInspector, LightInspector, ShotInspector } from "./previs-inspectors";
 import { snapPrevisTime, advancePrevisPlayhead, resolvePrevisKeyframeRecord, resolvePrevisObjectTransformEdit, resolvePrevisCameraMoveKeyframes, resolvePrevisCameraAlignment } from "@/lib/canvas/previs/previs-animation-semantics";
 import { interpolatePrevisTransform, touchPrevisScene, createPrevisObject, createPrevisActor, PREVIS_ACTOR_COLORS, resolvePrevisActorColor, createPrevisModel, createPrevisBillboard, createPrevisCamera, createPrevisLight, upsertPrevisBoneKeyframe, removePrevisSceneKeyframe, setPrevisSceneKeyframeEasing, previsPoseLabel, previsBoneLabel, previsActorProfileForArchetype, previsActorArchetypeLabel, uniquePrevisName } from "@/lib/canvas/previs/previs-scene";
@@ -1144,8 +1145,8 @@ export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboa
         "--pd-a-bd-theme": theme.node.activeStroke,
     } as CSSProperties;
 
-    return (
-        <div data-canvas-previs-workbench data-canvas-no-zoom className="previs-desk fixed inset-0 z-[var(--z-toast)] flex min-h-0 min-w-0 flex-col overflow-hidden" style={workbenchThemeStyle}>
+    return createPortal(
+        <div data-canvas-previs-workbench data-canvas-no-zoom className="previs-desk fixed inset-0 z-[var(--z-workbench)] flex min-h-0 min-w-0 flex-col overflow-hidden" style={workbenchThemeStyle}>
             <header className="previs-desk-header thin-scrollbar overflow-x-auto overflow-y-hidden">
                 <button type="button" className="previs-desk-icon-button" aria-label="关闭预演台" title="关闭预演台" onClick={closeWorkbench}><X className="size-4" /></button>
                 <div className="previs-desk-brand">
@@ -1559,7 +1560,8 @@ export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboa
                     {capabilities.timeline ? <PrevisSequencer scene={draft} shot={activeShot} camera={activeCamera} objects={draft.objects} selectedObjectId={selectedObjectId} selectedBone={selectedBone} playhead={playhead} playing={playing} autoKey={autoKey} height={sequencerHeight} visible={sequencerVisible} onPlayToggle={() => setPlaying(!playing)} onPlayheadChange={setPlayhead} onAutoKeyChange={setAutoKey} onHeightChange={setSequencerHeight} onVisibilityChange={setSequencerVisible} onSelectObject={setSelectedObjectId} onSelectBone={setSelectedBone} onRecordKeyframe={recordSelectedKeyframe} onAddShot={addShot} onDeleteKeyframe={deleteKeyframe} onSetKeyframeEasing={setKeyframeEasing} onSelectShot={(id) => { commit((current) => ({ ...current, activeShotId: id })); setPlayhead(0); }} /> : null}
                 </section>
 
-        </div>
+        </div>,
+        document.body,
     );
 }
 

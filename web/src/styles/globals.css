@@ -237,6 +237,7 @@
     --z-toolbar: 30;            /* L4 浮动工具栏（顶栏、dock、zoom）*/
     --z-node-toolbar: 50;       /* L5 节点工具栏（click 触发）*/
     --z-panel: 60;              /* L6 侧边面板（侧栏、素材托盘）*/
+    --z-workbench: 70;          /* 全屏预演台，位于导航之上、Agent 和弹窗之下 */
     --z-panel-floating: 80;     /* L7 浮动面板（助手/agent/活动任务）*/
     --z-modal: 100;             /* L8 对话框 */
     --z-modal-overlay: 110;     /* L9 遮罩 */

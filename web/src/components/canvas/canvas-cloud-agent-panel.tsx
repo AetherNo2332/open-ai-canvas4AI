@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
+import { agentErrorPresentation, agentRunErrorMessage, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
 import { effectiveAgentDefaultSkills } from "@/lib/canvas/agent-effective-skill-defaults";
 import {
     cancelAgentRun,
@@ -89,6 +89,7 @@ import { AgentWelcome } from "./canvas-agent-welcome";
 import { DEFAULT_CANVAS_APPEARANCE, agentCopy } from "@/lib/canvas/agent-appearance";
 import { appearanceAssetURL, live2DModelURL } from "@/services/api/appearance";
 import { Live2DAvatar } from "./live2d-avatar";
+import { createPortal } from "react-dom";
 import "./canvas-cloud-agent.css";
 import { createUuid } from "@/lib/client-id";
 import { getAgentSubagentPolicy, listAgentSubagents, updateAgentSubagentPolicy, type AgentSubagentPolicy, type AgentSubagent } from "@/services/api/agent-subagent";
@@ -100,6 +101,7 @@ type CloudAgentPanelProps = {
     selectedNodeIds: string[];
     references: CanvasResourceReference[];
     open: boolean;
+    floating?: boolean;
     prefillPrompt?: string;
     onOpen: () => void;
     onCollapse: () => void;
@@ -108,7 +110,7 @@ type CloudAgentPanelProps = {
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
+export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, floating = false, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const subagentsAvailable = useUserStore((state) => state.features.agentSubagentsEnabled);
     const [subagentPolicy, setSubagentPolicy] = useState<AgentSubagentPolicy | null>(null);
@@ -1038,7 +1040,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         void saveCloudAgentConversations(canvasId, id === activeConversationId ? null : activeConversationId, next);
     };
 
-    return (
+    const panel = (
         <>
             {!open ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
             <AnimatePresence>
@@ -1049,6 +1051,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                         exit={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
                         transition={{ duration: reducedMotion ? 0 : 0.42, ease: [0.22, 1, 0.36, 1] }}
                         className="canvas-agent-panel relative flex min-h-0 min-w-0 shrink flex-col overflow-hidden"
+                        data-agent-floating={floating || undefined}
                         style={{ "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
                         aria-label="Agent 工作台"
                         data-canvas-no-zoom
@@ -1290,6 +1293,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             />
         </>
     );
+    return floating ? createPortal(panel, document.body) : panel;
 }
 
 function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onOpen }: { theme: CanvasTheme; statusColor: string; approvalPending: boolean; reducedMotion: boolean; onOpen: () => void }) {
@@ -1965,7 +1969,7 @@ function applyAgentEvent(
         if (terminal) {
             setMessages((current) => current.map((message) => (message.id === `plan-${event.runId}` && message.planItems?.length ? { ...message, planTerminal: true, streaming: false } : message)));
         }
-        if (payload.failureMessage) setMessages((current) => appendAgentError(current, `terminal-${event.runId}`, String(payload.failureMessage)));
+        if (payload.failureMessage) setMessages((current) => appendUniqueMessage(current, agentRunErrorMessage(event)));
         if (snapshotApproval && !snapshotApproval.decision && snapshotApproval.approvalId) {
             setApproval((current) => ({ approvalId: snapshotApproval.approvalId, detail: snapshotApproval, reason: current?.approvalId === snapshotApproval.approvalId ? current.reason : snapshotApproval.reason || "" }));
         } else {
@@ -2161,7 +2165,7 @@ function applyAgentEvent(
         );
         return;
     }
-    if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendAgentError(current, event.eventId, text || "Agent 执行失败"));
+    if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendUniqueMessage(current, agentRunErrorMessage(event)));
 }
 
 function toolDetailRecord(value: unknown): Record<string, unknown> {
