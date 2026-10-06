@@ -229,7 +229,6 @@ func TestCloudAgentVisionObservationInvalidatedByContentChange(t *testing.T) {
 	}
 }
 
-
 // TestCloudAgentVisionStaleImagesBlockPronouns 覆盖评审的第 5 条：
 // 即使本批只送达一张图，只要上下文里还留着更早的图，"这张图"就不能归属。
 func TestCloudAgentVisionStaleImagesBlockPronouns(t *testing.T) {

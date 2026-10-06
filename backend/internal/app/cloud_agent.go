@@ -25,11 +25,13 @@ const cloudAgentOperation = "cloud_agent"
 // turns reference the previous run, not a mutable in-memory conversation. This
 // reuses transactional billing, worker leases, cancellation and text replay.
 type CloudAgentRequest struct {
-	crew            *CrewMemberRuntime
+	subagent        *SubagentRuntime
 	ReasoningMode   string `json:"reasoningMode,omitempty"`
 	ProfileRevision string `json:"profileRevision,omitempty"`
 	CanvasID        string `json:"canvasId"`
 	Prompt          string `json:"prompt"`
+	// SubagentEnabled is the frozen per-canvas consent for this turn.
+	SubagentEnabled bool   `json:"subagentEnabled,omitempty"`
 	Model           string `json:"model,omitempty"`
 	LogicalModelID  string `json:"logicalModelId,omitempty"`
 	ChannelID       string `json:"channelId,omitempty"`
@@ -37,12 +39,14 @@ type CloudAgentRequest struct {
 	// VisionEnabled is server-derived from the selected model input contract and persisted for the run.
 	VisionEnabled bool `json:"visionEnabled,omitempty"`
 	// HasMemories is server-derived at run creation and controls whether recall_lessons is exposed.
-	HasMemories    bool     `json:"hasMemories,omitempty"`
-	PermissionMode string   `json:"permissionMode"`
-	SkillIDs       []string `json:"skillIds,omitempty"`
-	ContextScope   []string `json:"contextScope"`
-	FocusNodeIDs   []string `json:"focusNodeIds,omitempty"`
-	Budget         struct {
+	HasMemories bool `json:"hasMemories,omitempty"`
+	// WebSearchEnabled is server-derived; no provider credentials enter the run.
+	WebSearchEnabled bool     `json:"webSearchEnabled,omitempty"`
+	PermissionMode   string   `json:"permissionMode"`
+	SkillIDs         []string `json:"skillIds,omitempty"`
+	ContextScope     []string `json:"contextScope"`
+	FocusNodeIDs     []string `json:"focusNodeIds,omitempty"`
+	Budget           struct {
 		MaxCredits         float64 `json:"maxCredits"`
 		MaxGenerationTasks int     `json:"maxGenerationTasks,omitempty"`
 		MaxVideoSeconds    int     `json:"maxVideoSeconds,omitempty"`
@@ -66,7 +70,7 @@ func cloudAgentStepLimit(req CloudAgentRequest) int {
 }
 
 type cloudAgentState struct {
-	Crew             *CrewMemberRuntime        `json:"crew,omitempty"`
+	Subagent         *SubagentRuntime          `json:"subagent,omitempty"`
 	Workspace        *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	Version          int                       `json:"version"`
 	SkillRuntimeMode string                    `json:"skillRuntimeMode,omitempty"`
@@ -437,15 +441,15 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 type cloudAgentRunScope struct {
 	Workspace      *WorkspaceSnapshot
 	Skills         []cloudAgentSkill
-	Crew           *CrewMemberRuntime
 	ConversationID string
 	ParentID       string
 	Prepared       *repository.CloudAgentAdmission
+	Subagent       *SubagentRuntime
 }
 
 func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest, parentID string, scope *cloudAgentRunScope) (*CloudAgentRun, error) {
 	if scope != nil {
-		req.crew = scope.Crew
+		req.subagent = scope.Subagent
 	}
 	if err := validateCloudAgentRequest(&req); err != nil {
 		return nil, err
@@ -459,6 +463,18 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 			return nil, kernel.NotFound("画布不存在或尚未保存到服务端，请先完成画布同步")
 		}
 		return nil, err
+	}
+	if req.SubagentEnabled {
+		if err := s.RequireFeature(FeatureAgentSubagents); err != nil {
+			return nil, err
+		}
+		consent, consentErr := s.repo.AgentSubagentPolicy(userID, req.CanvasID)
+		if consentErr != nil {
+			return nil, consentErr
+		}
+		if !consent.Enabled {
+			return nil, kernel.Forbidden("当前画布未开启子代理授权")
+		}
 	}
 	// Resolve and freeze the effective preference document before idempotency
 	// lookup. A retry without an explicit revision must still refer to the same
@@ -598,7 +614,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	var skillSnapshots []cloudAgentSkill
 	if scope != nil {
 		if scope.Workspace == nil {
-			return nil, BadAuthRequest("Crew Workspace snapshot missing")
+			return nil, BadAuthRequest("Agent Workspace snapshot missing")
 		}
 		workspace, skillSnapshots = *scope.Workspace, scope.Skills
 	} else {
@@ -615,6 +631,10 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
 	// 个人记忆是长期积累的，建 run 时定格一次（运行期间不再变化）。
 	req.HasMemories = s.cloudAgentHasMemories(userID)
+	req.WebSearchEnabled, err = s.agentWebSearchEnabled()
+	if err != nil {
+		return nil, err
+	}
 	canvasSummary := ""
 	if len(req.ContextScope) != 0 {
 		canvasSummary, err = cloudAgentCanvasSummary(canvas, req.FocusNodeIDs...)
@@ -629,8 +649,8 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		return nil, err
 	}
 	system += workspacePrompt(&workspace)
-	system += crewSystemPrompt(req.crew)
-	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy, Crew: req.crew}
+	system += subagentSystemPrompt(req.subagent)
+	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy, Subagent: req.subagent}
 	state.Workspace = &workspace
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	canonical.Tools = compileCloudAgentToolsForRuntime(req, len(profile.Layers) > 0, cloudAgentSkillRuntimeNative)
@@ -659,14 +679,11 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		if err != nil {
 			return nil, err
 		}
-		// Native skills load lazily. Reserve their full package bytes as a
-		// conservative token bound rather than silently trimming frozen files.
+		// Pi adds the Skill index to its initial prompt after this canonical
+		// snapshot. Use index bytes as a conservative token bound; bodies and
+		// references enter later requests only after an on-demand read.
 		for _, skill := range skillSnapshots {
-			version, err := s.repo.SkillVersion(skill.VersionID)
-			if err != nil {
-				return nil, err
-			}
-			projected += int(version.TotalBytes)
+			projected += int(nativeSkillIndexContextBytes(skill))
 		}
 		budget := s.cloudAgentContextBudgetForRequest(req)
 		if projected > budget.InputBudgetTokens {
@@ -691,7 +708,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	//   - 不可变快照：服务端策略身份 + 工具 schema 身份在这里定型；
 	//   - 占位任务：承载本轮报价预留，worker 永不领取。
 	runtime := cloudAgentRuntime{
-		Crew:         req.crew,
+		Subagent:     req.subagent,
 		Workspace:    &workspace,
 		RuntimeRunID: id, Request: req, Policy: policy, ParentID: linkedParentID, Fingerprint: fingerprint,
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
@@ -740,9 +757,6 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		return nil, err
 	}
 	if scope != nil && scope.Prepared != nil {
-		if req.crew.Role == model.CrewMemberRoleMember {
-			run.Status = "waiting_member"
-		}
 		*scope.Prepared = repository.CloudAgentAdmission{Execution: run, Task: task, Order: prepare.Order, Skills: cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)}
 		return agentRunOutput(cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status, Model: req.Model, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt}, state), nil
 	}
@@ -889,9 +903,13 @@ const (
 func cloudAgentCanvasSummary(canvas *model.CanvasProject, focusNodeIDs ...string) (string, error) {
 	var payload struct {
 		Nodes []struct {
-			ID    string `json:"id"`
-			Type  string `json:"type"`
-			Title string `json:"title"`
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			Title    string `json:"title"`
+			Metadata struct {
+				WorkflowKind     string `json:"workflowKind"`
+				CharacterAssetID string `json:"characterAssetId"`
+			} `json:"metadata"`
 		} `json:"nodes"`
 		Connections []struct {
 			FromNodeID string `json:"fromNodeId"`
@@ -936,9 +954,13 @@ func cloudAgentCanvasSummary(canvas *model.CanvasProject, focusNodeIDs ...string
 		}
 	}
 	candidates := make([]struct {
-		ID    string `json:"id"`
-		Type  string `json:"type"`
-		Title string `json:"title"`
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Title    string `json:"title"`
+		Metadata struct {
+			WorkflowKind     string `json:"workflowKind"`
+			CharacterAssetID string `json:"characterAssetId"`
+		} `json:"metadata"`
 	}, 0, len(payload.Nodes))
 	if len(focus) > 0 {
 		// Always retain explicitly selected nodes before neighbors when a highly
@@ -962,7 +984,10 @@ func cloudAgentCanvasSummary(canvas *model.CanvasProject, focusNodeIDs ...string
 			break
 		}
 		item := map[string]any{"id": truncateRunes(node.ID, 100), "type": truncateRunes(node.Type, 40), "title": truncateRunes(node.Title, 80)}
-		if _, known := cloudAgentNodeCapabilityForType(node.Type); !known {
+		if node.Type == "text" && node.Metadata.WorkflowKind == "character" {
+			item["kind"] = "character"
+		}
+		if _, known := canvasCapabilityRegistry.ResolveNode(node.Type, node.Metadata.WorkflowKind); !known {
 			item["agentSupported"] = false
 		}
 		nodes = append(nodes, item)

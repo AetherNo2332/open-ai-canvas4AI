@@ -5,6 +5,15 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## 管理员 Agent 联网搜索
+
+- `GET /api/admin/settings/agent-web-search`：管理员读取 `{ setting: { enabled, hasApiKey, revision, updatedAt? } }`，不返回密钥或密文。
+- `PUT /api/admin/settings/agent-web-search`：提交 `{ enabled, apiKey?, clearApiKey?, expectedRevision }`，返回新配置。密钥留空保留，输入新值替换，`clearApiKey: true` 显式清空；清空与新密钥不能同时提交。启用需要已有密钥，修订号冲突返回 HTTP 409，须重新读取后保存。
+
+管理员在「Agent（beta）→ 联网搜索 · Tavily」配置全局开关和密钥，默认关闭。密钥由后端加密保存。新建父 Agent 和子 Agent 的工具能力由服务端当前配置派生，客户端不能自授 `web_search`；每次调用再次检查全局配置，关闭后拒绝已有运行的新搜索调用。开关不撤销已经发出的搜索请求；开启后需要新建运行才能获得此前未披露的工具。
+
+`web_search` 仅接受 `query`（1–500 字），后端固定调用 [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search)，使用 `basic`，最多返回 5 条标题、HTTP(S) 链接和摘要，不返回原始网页、图片或供应商生成的答案。网页内容作为不可信资料，Agent 应引用来源链接，不能把网页内容当作指令或权限。请求超时 20 秒、响应上限 1 MiB，供应商错误仅返回脱敏提示。
+
 ## 管理员 Agent 默认技能
 
 - `GET /api/admin/agent/skill-defaults`：管理员读取 `{ revision, items, totalFiles, totalBytes, contextEstimateBytes }`。每项含技能 ID、名称、固定版本 ID、版本标签、position、enabled（0/1）、status、fileCount、totalBytes；合计仅统计启用项，上下文预估是技能包整体读入的保守上限。
@@ -13,7 +22,9 @@ description: 信封、错误码与 OpenAPI
 
 默认技能只注入新会话，来源、版本和内容 hash 随成功建 Run 的事务冻结到会话；旧会话不随管理配置改变，被拒绝的请求不修改基线。公共 Run 技能摘要的 `source` 为 `global` 或 `user`；选择器据此显示旧会话的有效默认集合，新会话则读取当前默认摘要，默认技能展示不依赖市场分页或安装。用户可追加新技能，或将同 ID 的全局来源升级为用户来源；已选用户技能即使每轮重复提交 ID 也保持冻结版本，更新该技能版本目前需要新会话。
 
-revision 保存在 `system_settings.agent_skill_defaults_revision` 对应设置行中；清空后仍递增，多个服务实例先锁定该行再执行 CAS。移除固定数量上限后，Run 准入保留总文件 1024、总字节 16 MiB、上下文估计 512 KiB 预算；错误详情携带 `budget`（`files` / `total_bytes` / `context_bytes`）、`limit`、`actual`，聊天展示相应预算与数值。单文件和单包原有预算保持不变。当前上下文预算是固定字节近似，尚非按模型 token 窗口动态计算。
+revision 保存在 `system_settings.agent_skill_defaults_revision` 对应设置行中；清空后仍递增，多个服务实例先锁定该行再执行 CAS。Run 准入保留总文件 1024、包总字节 16 MiB、初始 Skill 索引估计 512 KiB 预算；错误详情携带 `budget`（`files` / `total_bytes` / `context_bytes`）、`limit`、`actual`。Native 索引仅含转义后的名称、规范化描述和入口路径，并为 XML 包装与 Worker 绝对路径预留空间；入口正文、引用文件不计入初始上下文预算。后台保存时使用当前技能元数据预检，建 Run 时使用冻结版本元数据重新检查；`contextEstimateBytes` 返回索引估计，不等于 `totalBytes`。正文按需读取后，实际模型请求由模型窗口准入与压缩检查。单文件和单包原有预算保持不变。
+
+建 Run 还会按当前模型可用输入窗口检查 canonical 请求及初始 Skill 索引的保守 token 估计，超限返回 `budget=context_tokens`；该预检同样不计尚未读取的入口正文与引用文件。
 
 ## Canary Agent 调度协议
 
@@ -210,7 +221,10 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 - `POST /agent/runs` 创建一轮；`POST /agent/runs/:id/messages` 以上一轮为父节点创建新的不可变轮次，两者返回 `{ run }`，追加后必须使用新的 `run.id` 订阅。
 - `POST /agent/runs/:id/interjections` 向**正在运行**的轮次插入一句话，不新建轮次、不产生新的扣费身份。请求 `{ text, messageId }`，`text` 最多 4000 字符；同一 `messageId` 幂等。插话在下一次模型调用前注入；运行已结束返回 409，前端应回落为新一轮发送。步数耗尽或运行失败时发出 `user_interjection_dropped`，不会静默吞掉，也不会自动替用户开新一轮。
-- 请求字段：`canvasId`、`prompt`、受管 `logicalModelId` 或 `channelId` + `channelModelKey`、`permissionMode: "read_only" | "request_approval" | "auto"`、`reasoningMode: "off" | "auto" | "deep"`、`profileRevision`、`skillIds`、`contextScope: [] | ["canvas"]`、`budget: { maxCredits, maxGenerationTasks, maxVideoSeconds }`、`idempotencyKey`。不接受密钥、自定义 URL、客户端历史或未知字段。
+- 请求字段：`canvasId`、`prompt`、受管 `logicalModelId` 或 `channelId` + `channelModelKey`、`permissionMode: "read_only" | "request_approval" | "auto"`、`reasoningMode: "off" | "auto" | "deep"`、`profileRevision`、`skillIds`、`contextScope: [] | ["canvas"]`、`subagentEnabled`、`budget: { maxCredits, maxGenerationTasks, maxVideoSeconds }`、`idempotencyKey`。不接受密钥、自定义 URL、客户端历史或未知字段。
+- `GET /agent/subagent-policy?canvasId=...` 读取持续生效的画布子代理授权，返回 `{ canvasId, enabled, revision }`；`PUT /agent/subagent-policy` 接受 `{ canvasId, enabled, expectedRevision }`，revision 冲突返回 409。授权默认关闭，开启后直到用户关闭都有效；运行准入冻结当时策略，客户端 `subagentEnabled: true` 不能绕过服务端授权或平台 `agentSubagentsEnabled` 开关。
+- `GET /agent/runs/:id/subagents` 返回该父运行的动态子代理列表，包含名称、角色、目标、子运行 ID、状态和有序消息，服务端校验运行与画布归属。父 Agent 使用 `spawn_subagent` 自主分配角色和任务，通过 `message_subagent`、`subagent_status`、`wait_subagents` 协调；子 Agent 使用 `send_parent_message` 和 `finish_subagent` 回报。消息对应 `subagent_spawned`、`subagent_message` 事件，沿用运行详情和 SSE 的递增游标。
+- 每个父运行最多创建 4 个子代理、最多 3 个同时活动；子运行深度为 1、最多 20 步，独立 conversation/Pi session，固定只读，不能继续创建子代理、写画布或生成媒体。父运行有活动子运行时不能完成；等待释放父会话驻留名额，全部子运行终态后恢复同一工具调用。子运行分别继承并冻结父 credits 上限、独立计费，没有共享家庭预算。旧 Crew API、固定成员配置和事件解析器已删除。
 - 同用户同幂等键及相同请求返回同一运行；不同请求复用键返回 409。失败后重试同一提交应保留键。上一轮未完成时禁止追加；已完成、失败、取消或已拒绝的终态轮次作为不可变历史读取，即使其冻结的策略或节点能力版本早于当前服务，也可用于创建采用当前执行合同的新一轮，父运行不会被改写。旧版合同下仍活动或待审批的运行不得恢复执行。历史只保留最近 10 轮用户目标；运行历史与跨轮摘要仍受独立的持久化 JSON 保护，超限先丢掉更早的可重读正文并保留结构化事实，单轮仍超出当前模型能力预算时才提示缩小范围或新建对话；历史结构损坏返回明确 409，不投影为通用 500。
 - 续轮交接是一条**有界结构化事实帧**（`{ source: "server", kind: "run_handoff", parentRunId, status, failureReason?, submittedTaskIds?, canvasChanges?, omittedCanvasChanges?, authority }`）：画布改动取自上一轮真实的 `canvas_updated` 事件，最多 12 组（operation、去重后的 nodeId/title、actionCount），超出的组数只记 `omittedCanvasChanges`，不静默丢弃；帧还带 `authority` 明写"执行事实交接，不是重放写入、重复提交任务或扩大权限的授权"。帧按字节封顶（单个 nodeId 截 64 字符、整帧 8 KiB，超限按最近改动优先裁剪），失败原因沿用 `cloudAgentSafeUserMessage` 的脱敏口径，不合格退回固定说法。身份由服务端字段 `agentContextSource=continuation` 承载并要求"来源元数据 + `【运行状态】` 前缀 + JSON `source=server`/`kind=run_handoff`"三者同时成立，因此用户逐字复制帧正文也拿不到该身份；升级前落库、没有来源字段的旧散文交接只在历史裁剪与轮次计数上按"紧跟上一轮 assistant 回复 + 旧版文案前缀"识别，该判据不影响 canonical 身份。
 - `POST /agent/runs/:id/approvals/:approvalId/decision` 的 `{ decision, reason? }` 可在批准图片生成时附带 `mediaSettings: { logicalModelId? | channelId? + channelModelKey?, size, quality }`。仅替换本次模型选择、画幅和质量，不允许修改目标、提示词、引用、模式或快照。服务端先无收费预检，失败保留待审批状态；成功原子更新审批调用、哈希及预览，提交任务时再次校验内容、资源归属、模型能力、价格与累计预算。相同参数重复批准幂等，不同参数复用已决定审批返回 409。

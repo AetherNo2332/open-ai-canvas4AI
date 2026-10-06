@@ -74,8 +74,11 @@ func cloudAgentCompletionBlockers(state *cloudAgentRuntime) []cloudAgentCompleti
 		return nil
 	}
 	blockers := make([]cloudAgentCompletionBlocker, 0, 2)
-	if state.Crew != nil && (state.Crew.Role == model.CrewMemberRoleMember || !state.Crew.ResultsCollected || state.Crew.ApprovalRequired) {
-		blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "crew_result_required", Detail: "成员须提交 task_result；Coordinator 须先 crew_wait 获取结构化结果"})
+	if state.Subagent != nil {
+		blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "structured_subagent_result", Detail: "使用 finish_subagent 向父 Agent 提交最终结果"})
+	}
+	if state.ActiveSubagents > 0 {
+		blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "pending_subagents", Detail: "使用 wait_subagents 等待并收集子代理结果"})
 	}
 	if pending := cloudAgentPendingPlanItems(state.Plan); len(pending) > 0 {
 		blockers = append(blockers, cloudAgentCompletionBlocker{Kind: "pending_plan", Detail: pending[0]})
@@ -177,6 +180,8 @@ func cloudAgentCompletionBlockerText(block cloudAgentCompletionBlock) string {
 			parts = append(parts, "待办清单还有未完成的项（"+blocker.Detail+"）")
 		case "pending_interjection":
 			parts = append(parts, "用户刚发来插话，还没送进上下文")
+		case "pending_subagents", "structured_subagent_result":
+			parts = append(parts, blocker.Detail)
 		case cloudAgentCompletionTruncatedKind:
 			parts = append(parts, "上一步正文被输出上限截断，不是完整答复")
 		default:

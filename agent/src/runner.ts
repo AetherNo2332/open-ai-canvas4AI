@@ -20,11 +20,11 @@ import {
   type SessionCompactFailedEvent,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { CanvasBridge, CanvasCompactionNeeded, CanvasModelRetry, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
+import { CanvasBridge, CanvasCompactionNeeded, CanvasModelRetry, CanvasRunSuspended, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
 import { compactionSettings, serializePreparation, runNativeCompaction } from "./native-compaction.js";
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
-import { validateCrewEnvelope } from "./crew-wire.js";
+import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
 import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "./native-skills.js";
 import { Unsafe, type TSchema } from "typebox";
@@ -212,7 +212,11 @@ class CheckpointQueue {
   failure: unknown;
 
   enqueue(task: () => Promise<void>): void {
-    this.chain = this.chain.then(task).catch((error: unknown) => {
+    this.chain = this.chain.then(async () => {
+      // A failed checkpoint invalidates every dependent acknowledgement/batch.
+      // Preserve the first failure for drain(), without issuing more writes.
+      if (this.failure === undefined) await task();
+    }).catch((error: unknown) => {
       this.failure ??= error;
     });
   }
@@ -264,6 +268,9 @@ async function recoverToolResults(
   signal?: AbortSignal,
   recoverNativeRead?: (call: PiToolCall) => Promise<{ result: string; isError?: boolean }>,
 ): Promise<void> {
+  // An unacknowledged billed step must be resumed and checkpointed first.
+  // Its predecessor's transcript is not an executable batch for this task.
+  if (snapshot.activeTaskId) return;
   let assistantIndex = -1;
   for (let index = messages.length - 1; index >= 0; index--) {
     const item = messages[index];
@@ -274,6 +281,17 @@ async function recoverToolResults(
   }
   if (assistantIndex < 0) return;
   const assistant = messages[assistantIndex] as AssistantMessage;
+  if (snapshot.skillRuntimeMode === "pi-native" && snapshot.piSessionEntries?.length) {
+    const currentRunAssistant = snapshot.piSessionEntries.some(({ runId, entry }) => {
+      if (runId !== snapshot.runId || entry.type !== "message") return false;
+      const saved = entry.message as AssistantMessage | undefined;
+      return saved?.role === "assistant" && saved.timestamp === assistant.timestamp &&
+        JSON.stringify(saved.content) === JSON.stringify(assistant.content);
+    });
+    // Historical gaps are repaired only in the model projection by
+    // createTerminalHistoryExtension; never execute them or invent receipts.
+    if (!currentRunAssistant) return;
+  }
   const calls = callsFromAssistant(assistant);
   if (calls.length === 0) return;
   const completed = new Set(messages.slice(assistantIndex + 1)
@@ -298,6 +316,7 @@ async function recoverToolResults(
       : admissionError ? { result: admissionError, isError: true } :
       await bridge.executeTool(snapshot, taskId, call.id, signal);
     if ("terminated" in receipt && receipt.terminated) throw new CanvasRunTerminated("terminated");
+    if ("suspended" in receipt && receipt.suspended) throw new CanvasRunSuspended();
     const result: ToolResultMessage = { role: "toolResult", toolCallId: call.id, toolName: call.function.name,
       content: [{ type: "text",
         text: typeof receipt.result === "string" ? receipt.result : JSON.stringify(receipt.result) }],
@@ -623,8 +642,9 @@ export async function runCanvasAgent(
 ): Promise<void> {
   shutdown?.throwIfAborted();
   let snapshot = initial;
-  try { validateCrewEnvelope(snapshot.crew, snapshot.tools); }
-  catch (error) { throw new FatalWorkerError(error instanceof Error ? error.message : "Invalid Crew envelope"); }
+  let runSuspended = false;
+  try { validateSubagentRuntime(snapshot.subagent, snapshot.runId, snapshot.request.subagentEnabled, snapshot.tools); }
+  catch (error) { throw new FatalWorkerError(error instanceof Error ? error.message : "Invalid subagent runtime"); }
   const model = canvasModel(snapshot);
   const initialVisualMessages = fromCanonical(snapshot, model);
   // 合同校验必须早于任何恢复副作用：schema 不兼容时不能先写检查点或执行工具。
@@ -664,19 +684,20 @@ export async function runCanvasAgent(
   const resumedNativeCallIds = new Set<string>();
   let canonicalCount = snapshot.canonical.messages.length;
   const pendingInterjections = new Map<string, string>();
+  const interjectionSources = new Map<string, string | undefined>();
   const injectedInterjectionIds = new Set<string>();
   const syncPendingInterjections = (next: PiSnapshot): void => {
     for (const item of next.pendingInterjections || []) {
-      if (item.id && typeof item.text === "string") pendingInterjections.set(item.id, item.text);
+      if (item.id && typeof item.text === "string") { pendingInterjections.set(item.id, item.text); interjectionSources.set(item.id, item.source); }
     }
   };
-  const interjectionMessage = (text: string): string => `【用户插话】${text}`;
+  const interjectionMessage = (text: string, id: string): string => formatAgentInterjection(text, interjectionSources.get(id));
   syncPendingInterjections(snapshot);
   const interjectionIdsForMessage = (message: AgentMessage): string[] => {
     const content = (message as unknown as { content?: unknown }).content;
     const text = textContent(content);
     return [...pendingInterjections]
-      .filter(([id, body]) => injectedInterjectionIds.has(id) && text.includes(interjectionMessage(body)))
+      .filter(([id, body]) => injectedInterjectionIds.has(id) && text.includes(interjectionMessage(body, id)))
       .map(([id]) => id);
   };
   const prependPendingInterjections = (prompt: string): string => {
@@ -684,7 +705,7 @@ export async function runCanvasAgent(
     for (const [id, body] of pendingInterjections) {
       if (injectedInterjectionIds.has(id)) continue;
       injectedInterjectionIds.add(id);
-      notes.push(interjectionMessage(body));
+      notes.push(interjectionMessage(body, id));
     }
     if (notes.length === 0) return prompt;
     return [prompt, ...notes].filter((part) => part.trim() !== "").join("\n\n");
@@ -695,7 +716,7 @@ export async function runCanvasAgent(
       if (injectedInterjectionIds.has(id)) continue;
       injectedInterjectionIds.add(id);
       try {
-        await session.steer(interjectionMessage(body), undefined, { source: "interactive" });
+        await session.steer(interjectionMessage(body, id), undefined, { source: "interactive" });
       } catch (error) {
         injectedInterjectionIds.delete(id);
         throw error;
@@ -749,10 +770,11 @@ export async function runCanvasAgent(
     }
     for (const id of interjectionIds) {
       pendingInterjections.delete(id);
+      interjectionSources.delete(id);
       injectedInterjectionIds.delete(id);
     }
     if (interjectionIds.length > 0) {
-      snapshot = { ...snapshot, pendingInterjections: [...pendingInterjections].map(([id, text]) => ({ id, text })) };
+      snapshot = { ...snapshot, pendingInterjections: [...pendingInterjections].map(([id, text]) => ({ id, text, source: interjectionSources.get(id) })) };
     }
   };
 
@@ -764,6 +786,10 @@ export async function runCanvasAgent(
     if (!admittedCallIds.has(callId)) throw new Error(batchRejection || "Tool batch was not admitted");
     if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
     const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
+    if (receipt.suspended) {
+      runSuspended = runTerminated = true;
+      return { result: { suspended: true }, terminate: true };
+    }
     if (receipt.terminated) {
       runTerminated = true;
       return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
@@ -857,6 +883,7 @@ export async function runCanvasAgent(
     }
   } catch (error) {
     workspace.cleanup();
+    if (error instanceof CanvasRunSuspended) { await bridge.release(snapshot, shutdown); return; }
     if (error instanceof CanvasRunTerminated) return;
     throw error;
   }
@@ -928,6 +955,33 @@ export async function runCanvasAgent(
     if (resume.activeLeafId) sessionManager.branch(resume.activeLeafId);
     else sessionManager.resetLeaf();
   }
+  const compactCurrentSession = async (reason: string, softFail = false): Promise<boolean> => {
+    const retainedSettings = session!.settingsManager.getCompactionSettings();
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const compacted = await compactSessionOrFail(session!, reason, softFail);
+          if (compactionFailure !== undefined) throw compactionFailure;
+          return compacted;
+        } catch (error) {
+          // Pi replaces a cancelled extension with "Compaction cancelled".
+          // Preserve the bridge's fatal/lease/transport classification.
+          const failure = compactionFailure ?? error;
+          if (attempt === 0 && !pendingContextCompaction && failure instanceof FatalWorkerError &&
+            failure.message.includes("Pi 保留工具调用缺少结果")) {
+            // Summarize the old incomplete batch instead of retaining it. Go
+            // still validates the new boundary and all current-run receipts.
+            compactionFailure = undefined;
+            session!.settingsManager.applyOverrides({ compaction: { ...retainedSettings, keepRecentTokens: 1 } });
+            continue;
+          }
+          throw failure;
+        }
+      }
+    } finally {
+      session!.settingsManager.applyOverrides({ compaction: retainedSettings });
+    }
+  };
   try {
     session.subscribe((event) => {
       if (listenerFailure !== undefined) return;
@@ -1014,7 +1068,7 @@ export async function runCanvasAgent(
     try {
       let prompt = prependPendingInterjections(resume.prompt);
       if (pendingContextCompaction) {
-        await compactSessionOrFail(session, "服务端压缩操作无法执行");
+        await compactCurrentSession("服务端压缩操作无法执行");
         if (compactionFailure !== undefined) {
           throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
         }
@@ -1035,7 +1089,7 @@ export async function runCanvasAgent(
         await queue.drain();
         if (runTerminated || listenerFailure !== undefined || isTerminalRunStatus(snapshot.status)) break;
         syncCompaction();
-        if (pendingContextCompaction) await compactSessionOrFail(session, "服务端压缩操作无法执行");
+        if (pendingContextCompaction) await compactCurrentSession("服务端压缩操作无法执行");
         if (compactionFailure !== undefined) throw compactionFailure;
         if (pendingContextCompaction) throw new FatalWorkerError("Pi did not commit refreshed context compaction");
         if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
@@ -1052,7 +1106,7 @@ export async function runCanvasAgent(
           if (decision.decision === "compact") {
             if (++consecutiveCompactions > 2) throw new FatalWorkerError("Context still exceeds admission budget after compaction");
             forceCompactionForAdmission(session, snapshot);
-            const didCompact = await compactSessionOrFail(session, "上下文超过模型窗口", true);
+            const didCompact = await compactCurrentSession("上下文超过模型窗口", true);
             if (compactionFailure !== undefined) throw compactionFailure;
             if (didCompact) continue;
             // 已压到尖端：把本轮 prompt 纳入会话，让自动压缩与 Go 准入决定下一步。
@@ -1088,7 +1142,7 @@ export async function runCanvasAgent(
           // durable leaf before manual compaction, outside its streaming loop.
           if (sessionLeafId) sessionManager.branch(sessionLeafId); else sessionManager.resetLeaf();
           session.agent.state.messages = buildSessionContext(sessionManager.getBranch()).messages;
-          await compactSessionOrFail(session, "上下文超过模型窗口");
+          await compactCurrentSession("上下文超过模型窗口");
           if (compactionFailure !== undefined) throw compactionFailure;
           prompt = CONTINUATION_PROMPT;
           continue;
@@ -1124,5 +1178,6 @@ export async function runCanvasAgent(
     throw error;
   } finally {
     boot.cleanup();
+    if (runSuspended) await bridge.release(snapshot, shutdown);
   }
 }

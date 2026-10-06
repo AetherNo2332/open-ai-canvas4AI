@@ -102,7 +102,7 @@ func TestPiModelStepRejectsPromptContractDrift(t *testing.T) {
 }
 
 // TestPiModelStepWithoutHarnessHashKeepsLegacyBehavior：没有 Harness 的部署
-//（未配置 CANVAS_AGENT_HARNESS_DIR）不发这个字段，行为必须与迁移前一致。
+// （未配置 CANVAS_AGENT_HARNESS_DIR）不发这个字段，行为必须与迁移前一致。
 func TestPiModelStepWithoutHarnessHashKeepsLegacyBehavior(t *testing.T) {
 	s, _, run := piAgentTestLeasedFixture(t)
 	_, state := reloadPiRun(t, s, run.ID)

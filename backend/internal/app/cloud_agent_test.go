@@ -510,7 +510,7 @@ func TestCloudAgentToolLoopPersistsApprovalAndAppliesCanvasWrite(t *testing.T) {
 	}
 	callArguments, err := json.Marshal(map[string]any{
 		"snapshotHash": cloudAgentCanvasHash(doc),
-		"ops":          []map[string]any{{"type": "add_node", "id": "agent-note", "nodeType": "text", "title": "Agent note", "content": "由 Agent 写入", "x": 24, "y": 48}},
+		"ops":          []map[string]any{{"type": "add_node", "id": "agent-note", "nodeType": "text", "title": "Agent note", "content": "由 Agent 写入", "x": json.RawMessage("24.0"), "y": json.RawMessage("48.0")}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -608,7 +608,7 @@ func TestCloudAgentToolLoopPersistsApprovalAndAppliesCanvasWrite(t *testing.T) {
 func TestCloudAgentNodeTypesExposeExecutableAllowList(t *testing.T) {
 	result := cloudAgentNodeTypes()
 	nodes, ok := result["nodes"].([]map[string]any)
-	if !ok || len(nodes) != 8 {
+	if !ok || len(nodes) != 9 {
 		t.Fatalf("unexpected node registry: %#v", result)
 	}
 	for _, node := range nodes {

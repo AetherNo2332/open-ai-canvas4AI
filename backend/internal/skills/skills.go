@@ -100,6 +100,7 @@ type AddedSkillReference struct {
 	IsLike      bool   `json:"isLike"`
 	IsAdded     bool   `json:"isAdded"`
 	IsOwner     bool   `json:"isOwner"`
+	IsPrivate   bool   `json:"isPrivate"`
 }
 
 type SkillCategory struct {
@@ -196,7 +197,7 @@ func (s *Service) AddedSkills(userID string) ([]AddedSkillReference, error) {
 		references = append(references, AddedSkillReference{
 			SkillID: item.SkillID, SkillName: item.SkillName, Description: item.Description,
 			VersionID: item.VersionID, Version: item.Version, Tag: item.Tag,
-			IsLike: item.IsLike, IsAdded: item.IsAdded, IsOwner: item.IsOwner,
+			IsLike: item.IsLike, IsAdded: item.IsAdded, IsOwner: item.IsOwner, IsPrivate: item.IsPrivate,
 		})
 	}
 	return references, nil

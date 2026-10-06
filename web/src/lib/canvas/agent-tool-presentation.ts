@@ -9,6 +9,7 @@ import { agentToolRetry, type AgentToolRetry } from "./agent-tool-retry";
  * 绝不能落进"修改画布"（那会把一次读取读成写操作）。
  */
 export const AGENT_TOOL_NAMES = [
+    "web_search",
     "agent_profile_read",
     "ask_user",
     "canvas_apply_ops",
@@ -45,6 +46,7 @@ export type AgentToolMetadataEntry = {
 };
 
 export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
+    web_search: { summary: ({ pending }) => (pending ? "正在联网搜索" : "已完成联网搜索"), failureMessage: "联网搜索失败" },
     canvas_list_node_types: { summary: "已读取可用节点类型", failureMessage: "获取可用节点类型失败" },
     // 清单 ≠ 画面：这个工具只读到节点存在/类型/标题/规模。说成"已读取当前画布"会被读成看过图。
     canvas_get_state: { summary: "已读取画布清单（未查看画面）", failureMessage: "获取画布清单失败" },
@@ -76,7 +78,7 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
 /** 画布上"读到清单"的只读工具：无像素，chip 必须是存在式。 */
 const AGENT_CANVAS_READ_TOOLS = new Set(["canvas_get_state", "canvas_list_node_types", "canvas_read_storyboard", "canvas_read_batch_table"]);
 /** 非画布信息的只读工具（模型、任务、技能、偏好）。`skills_load` 是历史事件名，保留兼容。 */
-const AGENT_INFO_READ_TOOLS = new Set(["model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "agent_profile_read", "read", "native_skill_enabled"]);
+const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "agent_profile_read", "read", "native_skill_enabled"]);
 const AGENT_VISION_TOOLS = new Set(["canvas_inspect_image"]);
 const AGENT_CREATE_TOOLS = new Set(["generate_media", "canvas_create_storyboard", "image_annotation_render"]);
 const AGENT_OPERATE_TOOLS = new Set(["canvas_apply_ops", "canvas_arrange_nodes", "canvas_edit_storyboard", "canvas_edit_batch_table", "image_layer_split", "image_text_detect"]);

@@ -28,11 +28,7 @@ description: 影策后端核心持久化表与状态边界
 
 ## 结构迁移与版本
 
-当前代码的 `CurrentSchemaVersion` 为 **55**。v55 新增 `agent_crew_events`，以 `(crew_run_id, sequence)` 为主键，状态变化和业务事件同事务提交。Crew 事件游标独立于普通 Agent journal，SSE 快照不推进游标。
-
-v54 新增 `agent_crew_runs`、`agent_crew_member_runs`、`agent_crew_messages`，冻结 Workspace/Crew/预算与成员技能；成员独立会话及 holding 预留同事务准入，任务和结果只通过结构化消息交换。Crew Run 以用户及幂等键唯一，Member Run 以 Crew/成员/attempt 唯一，消息以 Crew/Member Run/task/kind 唯一。
-
-v53 新增 `agent_crews`、`agent_crew_members`、`agent_crew_member_skills`。Crew 配置、成员和技能共用 revision CAS，所有变更在事务内校验完整配置；启用的 Crew 恰好有一名启用的 Coordinator，切换 Coordinator 在一个事务完成。成员排序在 Crew 内唯一，成员技能以 `(member_id, skill_id)` 去重。成员只能配置 `read_only` 或 `propose`，画布写权限留给审批提交边界。配置查询同时验证 Crew、Workspace 和 CanvasProject 的用户归属。
+当前代码的 `CurrentSchemaVersion` 为 **57**。v56 新增 `agent_subagent_policies`、`agent_subagent_links` 与 `agent_subagent_messages`：画布授权使用 revision CAS，父运行与每个动态子代理通过显式 Link 关联，消息按 Link 有序且以幂等键去重。v57 是开发期破坏式清理，删除旧手工 Crew 表；旧 Crew API、事件和成员配置不再属于运行时合同。
 
 v52 `agent_workspaces` 新增 `agent_workspaces` 与 `agent_workspace_skills`，`canvas_id` 唯一，每个画布对应一个 Workspace。文档和技能列表共用 revision，CAS 与技能替换在同一事务提交；SQLite 写事务先取得写锁再读 revision，PostgreSQL 快照读取持有行共享锁。文档最多 64KB，保存 SHA-256（空文档也有标准 hash），新 Run 冻结正文和技能版本；运行中不回读当前配置。模型输入准入包含编译后的上下文和完整技能包的保守 token 预留，超限明确拒绝。
 
@@ -139,6 +135,10 @@ docker compose -f docker-compose.deploy.yml up -d backend web
 
 若报告仍有 `unresolved`，需按素材 ID 核查实际文件大小及引用；不要批量填零，也不要把未解决记录删除。工具不访问外部 URL，不下载媒体。应用后让用户重新加载素材库验证；不会要求清空本地存储。若数据库更新失败或检测到并发修改，整批写入事务回滚，`repaired` 为零。已成功提交后的回滚应在隔离数据库恢复备份并核查，再选择性恢复相关记录；不要在恢复写入后直接覆盖整库，以免丢失后续数据。
 
+## Agent 联网搜索配置
+
+`system_settings` 的 `agent_web_search` JSON 保存 `enabled`、`encryptedApiKey` 和单调递增 `revision`。复用既有设置密钥加密，不新增表或 schema 迁移。写入原子比较旧 JSON，冲突返回 409；清空密钥后仍递增 revision。公共响应只投影配置状态和是否已有密钥，运行快照只保存服务端派生的工具可用性，不保存密钥。
+
 ## 平台外观配置
 
 当前外观 JSON 合同版本为 8，主题参数新增 `skinThemes[].tokens.buttons.light/dark`：填充模式、角度、常态/悬停/按下双色和文字色。经典主题默认为紫蓝渐变，其余旧主题缺少此块时保持纯色；公开 `activeSkin` 使用相同结构。无表结构迁移，读取补齐只在内存执行，管理员保存时写回。回退应用版本前保留外观 JSON 备份，旧版本不支持新按钮填充参数。
@@ -168,13 +168,9 @@ docker compose -f docker-compose.deploy.yml up -d backend web
 | `agent_skill_defaults` | 管理员全局默认技能、固定版本、有序 position、enabled 与 revision | `(scope, skill_id)` 唯一；不能引用私有技能，容量只统计启用项；仅影响新会话 |
 | `agent_workspaces` | 画布 Agent 业务文档、SHA-256、共享 revision | `canvas_id` 唯一；用户与画布归属同时检查 |
 | `agent_workspace_skills` | Workspace 技能追加及冻结版本 | `(workspace_id, skill_id)` 主键；仅启用项参与新会话技能并集 |
-| `agent_crews` | Workspace 内的剧组配置、Coordinator、共享 revision | `workspace_id`、`user_id` 索引；启用时仅一个启用 Coordinator |
-| `agent_crew_members` | 成员角色、模型绑定、权限、焦点节点和预算 | `crew_id` 索引；`(crew_id, position)` 唯一 |
-| `agent_crew_member_skills` | 成员技能追加与版本绑定 | `(member_id, skill_id)` 主键；版本索引；不接受私有技能 |
-| `agent_crew_runs` | 冻结配置、预算、准入与聚合状态 | `(user_id, idempotency_key)` 唯一 |
-| `agent_crew_member_runs` | 独立 Agent Run、任务与结果 | `(crew_run_id, member_id, attempt)` 唯一；`agent_run_id` 唯一 |
-| `agent_crew_messages` | 结构化任务/结果及参数 hash | `(crew_run_id, member_run_id, task_id, kind)` 唯一 |
-| `agent_crew_events` | 脱敏业务事件及独立单调序号 | `(crew_run_id, sequence)` 主键；状态与事件同事务 |
+| `agent_subagent_policies` | 画布级持续子代理授权与 revision | `(user_id, canvas_id)` 唯一 |
+| `agent_subagent_links` | 父运行创建的动态名称、角色、目标、预算、上下文快照和子运行状态 | `child_run_id`、`idempotency_key` 各自唯一；Link、独立会话、运行与计费预留同事务创建 |
+| `agent_subagent_messages` | 父子结构化消息、方向、顺序和幂等键 | `idempotency_key`、`(link_id, sequence)` 唯一；同 Link 写锁内分配序号；交付与 ack 同事务 |
 | `agent_conversation_skills` | 会话最终技能来源、版本、ContentHash 与顺序 | `(conversation_id, skill_id)` 复合主键；source 为 global/user；已有会话不重读默认，迁移前旧会话不自动补入默认 |
 | `skill_versions` | 保存每次安装、编辑或同步形成的不可变技能版本 | 记录内容哈希、入口路径、规范化 ZIP 的存储键、文件数、总大小和 GitHub commit |
 | `skill_files` | 保存某个版本的文件索引 | `(skill_version_id, path)` 唯一；只保存路径、类型、MIME、大小和 SHA-256，不保存正文 |

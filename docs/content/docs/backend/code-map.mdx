@@ -7,16 +7,20 @@ description: 从产品功能快速定位主要代码入口
 
 ## Agent 工具合同
 
+- Worker 恢复：`agent/src/runner.ts`（当前轮工具恢复、检查点队列）；`agent/src/session-history.ts`（终结轮次缺失回执的模型投影）；日志截断：`backend/internal/platform/api_call_payload.go`。方案与实施边界见 [Pi worker 错误恢复](../../../design/agent-worker-recovery.md)。
+
 - 工具及字段说明：`backend/internal/app/agent-tool-descriptions.md`；目录编译：`cloud_agent_tools.go`；条件参数合同：`cloud_agent_tool_contracts.go`；零副作用预检：`cloud_agent_tool_schema.go`。
 - Go/Pi 共用制品：`agent/harness/TOOL_SCHEMA.json`；通过 `TestAgentToolSchemaArtifactMatchesRuntime` 生成和检测漂移。Harness 同步脚本：`agent/scripts/sync-harness.mjs`。
 - SHA 摘要接收与写回：`cloud_agent_vision.go`、`cloud_agent_runtime.go`；Pi 图片与摘要投影：`agent/src/session-history.ts`。
 
 ## Agent（beta）调度配置与管理
 
+- 联网搜索：`backend/internal/app/settings_agent_web_search.go`（管理员设置与加密）、`backend/internal/repository/agent_web_search.go`（配置 CAS）、`backend/internal/app/agent_web_search.go`（Tavily 请求与结果限制）、`backend/internal/handler/agent_web_search.go`（管理接口）；前端 `web/src/pages/admin/settings/components/agent-web-search-section.tsx`。工具目录、真实执行与共用 schema 分别在 `cloud_agent_tools.go`、`cloud_agent_runtime.go`、`agent/harness/TOOL_SCHEMA.json`。
+
 - 默认技能：`backend/internal/model/agent_skills_config.go`、`backend/internal/repository/agent_skill_defaults.go`、`backend/internal/app/admin_agent_skill_defaults.go`；管理路由 `backend/internal/handler/admin_agent_skill_defaults.go`，用户摘要位于 `backend/internal/handler/agent.go`。
 - 会话解析与容量：`backend/internal/app/cloud_agent_skill_selection.go`、`backend/internal/skills/skill_selection.go`；v51 与 Models 登记位于 `backend/internal/database`。
 - 前端管理：`web/src/services/api/admin-skill-defaults.ts`、`web/src/pages/admin/settings/components/agent-skill-defaults-section.tsx`；页面已移除运行状态及其轮询。
-- 子智能体列表：`web/src/components/canvas/canvas-agent-subagent-list.tsx` 与同目录 CSS；让位算法 `web/src/lib/canvas/agent-subagent-layout.ts`，本地开放许可 SVG 在 `web/public/icons/subagents/`；P3 再接 Crew 事件数据。
+- 子智能体列表：`web/src/components/canvas/canvas-agent-subagent-list.tsx` 与同目录 CSS；让位算法 `web/src/lib/canvas/agent-subagent-layout.ts`，本地开放许可 SVG 在 `web/public/icons/subagents/`。画布入口由 `canvas-cloud-agent-panel.tsx` 的持续授权开关和父运行子代理状态列表组成。
 
 - 页面与 API：`web/src/pages/admin/settings/agent-settings-page.tsx`、`web/src/services/api/admin-agent-settings.ts`；复用 `agent-lessons-panel.tsx`。
 - Go 配置和公平领取：`internal/app/agent_scheduler_policy.go`、`internal/platform/agent_scheduler_policy.go`、`internal/repository/agent_admission.go`；管理员路由 `internal/handler/agent_scheduler.go`。

@@ -23,6 +23,15 @@ import (
 func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	registered := cloudAgentRegisteredToolNames(t)
 	supported := CloudAgentSupportedToolNames()
+	// Include both dynamic parent and child catalogs in the dispatch contract.
+	for _, req := range []CloudAgentRequest{
+		{SubagentEnabled: true, PermissionMode: "auto", ContextScope: []string{"canvas"}},
+		{PermissionMode: "read_only", ContextScope: []string{"canvas"}, subagent: &SubagentRuntime{Depth: 1}},
+	} {
+		for _, tool := range cloudAgentTools(req) {
+			supported = append(supported, stringField(tool["function"].(map[string]any), "name"))
+		}
+	}
 	dispatched := cloudAgentDispatchedToolNames(t)
 	// 旧 Go loop 为兼容历史检查点仍保留类别选择分支；Pi registry 已改为平铺披露，
 	// 这些内部类别入口不再是可见工具，不能参与具体工具表的集合相等断言。
@@ -47,13 +56,12 @@ func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	if missing := difference(registered, dispatched); len(missing) > 0 {
 		t.Fatalf("工具表注册了但没有分派分支的工具：%s", strings.Join(missing, ", "))
 	}
-	// 工具表全集必须与 CloudAgentSupportedToolNames() 逐一相同（后者从工具表派生，
-	// 这条断言守的是"派生用的请求确实覆盖了所有条件暴露的分支"）。
+	// 工具表全集必须与各角色的编译结果并集逐一相同，覆盖所有条件暴露分支。
 	if missing := difference(registered, supported); len(missing) > 0 {
-		t.Fatalf("CloudAgentSupportedToolNames() 漏掉了工具表里的：%s", strings.Join(missing, ", "))
+		t.Fatalf("各角色能力并集漏掉了工具表里的：%s", strings.Join(missing, ", "))
 	}
 	if missing := difference(supported, registered); len(missing) > 0 {
-		t.Fatalf("CloudAgentSupportedToolNames() 多出了工具表里没有的：%s", strings.Join(missing, ", "))
+		t.Fatalf("各角色能力并集多出了工具表里没有的：%s", strings.Join(missing, ", "))
 	}
 
 	// 3. 被判定为"写画布"的名字 ⊆ 可执行集合，且都在写入分派里。

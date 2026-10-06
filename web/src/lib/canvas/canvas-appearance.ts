@@ -1,4 +1,4 @@
-import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme } from "@/lib/canvas-theme";
+import { canvasThemes, DEFAULT_CANVAS_COLOR_THEME, type CanvasBackgroundMode, type CanvasColorTheme } from "@/lib/canvas-theme";
 import { scopedLocalStorage } from "@/lib/user-scope";
 
 export type CanvasAppearanceMode = CanvasColorTheme | "custom";
@@ -27,7 +27,7 @@ export type ResolvedCanvasAppearance = {
     grid: string;
 };
 
-export const DEFAULT_CANVAS_BACKGROUND_MODE: CanvasBackgroundMode = "dots";
+export const DEFAULT_CANVAS_BACKGROUND_MODE: CanvasBackgroundMode = "blank";
 
 const CANVAS_APPEARANCE_DEFAULT_KEY = "infinite-canvas:canvas-appearance-default";
 const HEX_COLOR_PATTERN = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i;
@@ -47,6 +47,18 @@ export function customCanvasAppearanceFromTheme(theme: CanvasColorTheme): Canvas
             backgroundBrightness: 0,
             gridColor: CUSTOM_GRID_COLOR[theme],
             gridOpacity: CUSTOM_GRID_OPACITY[theme],
+        },
+    };
+}
+
+export function defaultCanvasAppearance(): CanvasAppearance {
+    const appearance = customCanvasAppearanceFromTheme(DEFAULT_CANVAS_COLOR_THEME);
+    return {
+        ...appearance,
+        custom: {
+            ...appearance.custom!,
+            backgroundColor: "#000000",
+            gridColor: canvasThemes[DEFAULT_CANVAS_COLOR_THEME].canvas.line.toUpperCase(),
         },
     };
 }

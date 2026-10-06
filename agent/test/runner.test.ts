@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
-import type { CanvasToolSpec } from "../src/tool-disclosure.js";
+import { FatalWorkerError, type CanvasToolSpec } from "../src/tool-disclosure.js";
 import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent, withServerPolicy } from "../src/runner.js";
 import type { PromptParts } from "../src/system-prompt.js";
 import { sessionEntriesFromMessages } from "../src/session-tools.js";
@@ -374,6 +374,22 @@ test("a blocked finish_run keeps the Pi loop alive for reconciliation", async ()
   assert.match(JSON.stringify(state.canonical[1]?.messages), /reconcile_plan/);
 });
 
+test("suspended wait releases residency without a fake tool receipt or another model step", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "wait", function: { name: "wait_subagents", arguments: "{}" } }] },
+    { text: "must not continue" },
+  ]);
+  snapshot.request.subagentEnabled = true;
+  snapshot.tools = [...tools, { name: "wait_subagents", description: "Wait for children", parameters: objectSchema, allowed: true }];
+  let released = 0;
+  bridge.release = async () => { released++; };
+  bridge.executeTool = async (_run, _taskId, callId) => ({ callId, pending: true, suspended: true });
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 1);
+  assert.equal(released, 1);
+  assert.equal(state.checkpoints.filter(message => message.role === "toolResult").length, 0);
+});
+
 test("continuation pairs missing receipts from prior terminal runs without replaying their tools", async () => {
   const { bridge, state, snapshot } = fakeBridge([{ text: "本轮继续分析。" }]);
   const history = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: [
@@ -504,6 +520,50 @@ test("检查点持久化失败必须抛出，不能把破损运行当成功", as
   );
 });
 
+test("assistant checkpoint failure prevents queued batch admission and tool execution", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "blocked-call", function: { name: "canvas_get_state", arguments: "{}" } }] },
+  ]);
+  const save = bridge.checkpoint.bind(bridge);
+  bridge.checkpoint = async (...args) => {
+    if (args[2].role === "assistant") throw new Error("assistant checkpoint unavailable");
+    return save(...args);
+  };
+  await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), /assistant checkpoint unavailable/);
+  assert.deepEqual(state.batches, [], "failed acknowledgement must stop dependent batch admission");
+  assert.deepEqual(state.executions, []);
+});
+
+test("a retried native run never admits an unresolved historical tool batch", async (t) => {
+  for (const activeTask of [undefined, "task-1"]) await t.test(activeTask ? "in-flight model" : "before model", async () => {
+    const { bridge, state, snapshot } = fakeBridge([{ text: "继续本轮请求" }]);
+    snapshot.skillRuntimeMode = "pi-native";
+    snapshot.activeTaskId = activeTask;
+    snapshot.lastTaskId = activeTask;
+    snapshot.tools = [tools[1]!, { name: "read", description: "Read Skill", allowed: true,
+      parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }];
+    const messages = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: [
+      { role: "user", content: "上一轮请求" },
+      { role: "assistant", content: "", tool_calls: [{ id: "historical-call", type: "function",
+        function: { name: "canvas_get_state", arguments: "{}" } }] },
+      { role: "user", content: "技能准入失败后重新发起的请求" },
+    ] } }, canvasModel(snapshot));
+    snapshot.piSessionEntries = sessionEntriesFromMessages("previous-run", messages).map((entry, index) => ({
+      runId: index === messages.length - 1 ? snapshot.runId : "previous-run",
+      entry: entry as unknown as Record<string, unknown>,
+    }));
+    snapshot.piActiveLeafId = String(snapshot.piSessionEntries.at(-1)!.entry.id);
+    snapshot.piMessages = [messages.at(-1)! as unknown as Record<string, unknown>];
+    bridge.startToolBatch = async () => { throw new Error("Agent 尚有未完成的模型或工具步骤"); };
+    await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+    assert.equal(state.steps, 1, "resume the current request rather than replaying the previous run");
+    assert.deepEqual(state.executions, []);
+    assert.equal(state.checkpoints.some(item => item.role === "toolResult"), false,
+      "unknown historical outcomes must not become durable execution receipts");
+    assert.match(JSON.stringify(state.canonical[0]?.messages), /上一轮已终结/);
+  });
+});
+
 test("worker restart resumes the existing Go compaction before creating another model step", async () => {
   const messages: Record<string, unknown>[] = [];
   for (let turn = 0; turn < 8; turn += 1) {
@@ -604,6 +664,43 @@ test("a preflight compaction without compactable history falls through to the pr
   bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: ++checks === 1 ? "compact" : "model" });
   await runCanvasAgent(bridge, snapshot, undefined, promptParts());
   assert.ok(state.steps >= 1, "模型步必须在本轮真实请求前被准入");
+});
+
+test("preflight compaction preserves a fatal bridge rejection instead of a retryable cancellation", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([{ text: "must not execute" }], {
+    piSessionEntries: history.views, piActiveLeafId: history.leaf,
+  });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: "compact" });
+  const failure = new FatalWorkerError("Canvas bridge HTTP 400: invalid compaction boundary");
+  bridge.compactContext = async () => { throw failure; };
+  await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), error => error === failure);
+  assert.equal(state.steps, 0);
+});
+
+test("compaction retries an unpaired retained historical call once with a smaller retained suffix", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([{ text: "continued after child reports" }], {
+    piSessionEntries: history.views, piActiveLeafId: history.leaf,
+  });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  let checks = 0;
+  let attempts = 0;
+  bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: ++checks === 1 ? "compact" : "model" });
+  bridge.compactContext = async (_run, request) => {
+    if (++attempts === 1) throw new FatalWorkerError("Canvas bridge HTTP 400: Pi 保留工具调用缺少结果");
+    const preparation = request.preparation as { settings: { keepRecentTokens: number } };
+    assert.equal(preparation.settings.keepRecentTokens, 1);
+    return { operationId: "boundary-recovery", status: "succeeded", summary: "<agent-context-checkpoint/>",
+      firstKeptEntryId: history.keep, tokensBefore: 40000, details: { operationId: "boundary-recovery" } };
+  };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(attempts, 2);
+  assert.equal(state.steps, 1);
+  assert.equal(state.status, "completed");
 });
 
 test("a pending operation received through control is committed before any ordinary model request", async () => {

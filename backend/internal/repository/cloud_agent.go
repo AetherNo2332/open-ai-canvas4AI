@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
+	"reflect"
 	"time"
 
 	"gorm.io/gorm"
@@ -227,9 +229,6 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 			conversationID = candidate.ID
 		}
 		err := r.db.Transaction(func(tx *gorm.DB) error {
-			if err := New(tx).lockAgentCrewExecution(candidate.UserID, candidate.ID); err != nil {
-				return err
-			}
 			updated := tx.Model(&model.CloudAgentExecution{}).
 				Where("id = ? AND revision = ? AND engine = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
 					candidate.ID, candidate.Revision, "pi", now).
@@ -258,11 +257,7 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 			if leased.RowsAffected != 1 {
 				return ErrCreationConflict
 			}
-			current, err := New(tx).CloudAgent(candidate.UserID, candidate.ID)
-			if err != nil {
-				return err
-			}
-			return New(tx).projectAgentCrewExecution(current)
+			return nil
 		})
 		if errors.Is(err, ErrCreationConflict) {
 			continue
@@ -386,11 +381,6 @@ func (r *Repository) RecentCloudAgentEventsForUser(userID string, runLimit int) 
 // Lock before reading: checkpoints, canvas writes and task reservations commit together.
 func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func(*model.CloudAgentExecution, *Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if !r.crewMutation {
-			if err := New(tx).lockAgentCrewExecution(userID, id); err != nil {
-				return err
-			}
-		}
 		q := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND revision = ?", id, userID, revision).UpdateColumn("revision", gorm.Expr("revision + 1"))
 		if q.Error != nil {
 			return q.Error
@@ -412,7 +402,6 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 			previousMessages[fmt.Sprintf("%s:%d", message.Kind, message.Sequence)] = message.MessageJSON
 		}
 		callbackRepo := New(tx)
-		callbackRepo.crewMutation = r.crewMutation
 		if err = fn(run, callbackRepo); err != nil {
 			return err
 		}
@@ -496,9 +485,6 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 				return err
 			}
 		}
-		if !r.crewMutation {
-			return New(tx).projectAgentCrewExecution(run)
-		}
 		return nil
 	})
 }
@@ -514,8 +500,9 @@ func isTerminalCloudAgentRunStatus(status string) bool {
 
 // sameJSONDocument compares event records by JSON meaning rather than source
 // bytes. Event payloads may contain json.RawMessage (for example tool arguments),
-// so decode/re-encode can legally normalize whitespace or object key order while
-// preserving the immutable event contract.
+// so decode/re-encode can legally normalize whitespace, object key order, or
+// numeric spellings such as 0.0 and 0 while preserving the immutable event
+// contract.
 func sameJSONDocument(left, right string) bool {
 	decode := func(raw string) (any, error) {
 		decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
@@ -528,16 +515,35 @@ func sameJSONDocument(left, right string) bool {
 		if err := decoder.Decode(&extra); err == nil {
 			return nil, fmt.Errorf("multiple JSON documents")
 		}
-		return value, nil
+		return canonicalJSONValue(value), nil
 	}
 	leftValue, leftErr := decode(left)
 	rightValue, rightErr := decode(right)
 	if leftErr != nil || rightErr != nil {
 		return left == right
 	}
-	leftCanonical, leftErr := json.Marshal(leftValue)
-	rightCanonical, rightErr := json.Marshal(rightValue)
-	return leftErr == nil && rightErr == nil && bytes.Equal(leftCanonical, rightCanonical)
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+type canonicalJSONNumber string
+
+func canonicalJSONValue(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		if rational, ok := new(big.Rat).SetString(typed.String()); ok {
+			return canonicalJSONNumber(rational.RatString())
+		}
+		return canonicalJSONNumber(typed.String())
+	case []any:
+		for index := range typed {
+			typed[index] = canonicalJSONValue(typed[index])
+		}
+	case map[string]any:
+		for key, nested := range typed {
+			typed[key] = canonicalJSONValue(nested)
+		}
+	}
+	return value
 }
 
 func (r *Repository) CreateCloudAgentCanvasMutation(mutation *model.CloudAgentCanvasMutation) error {
@@ -585,10 +591,6 @@ func (r *Repository) MarkCloudAgentCancelled(userID, id string, revision int64) 
 
 func (r *Repository) markCloudAgentTerminal(userID, id string, revision int64, status, message string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		repo := New(tx)
-		if err := repo.lockAgentCrewExecution(userID, id); err != nil {
-			return err
-		}
 		updates := map[string]any{"status": status, "cleanup_pending": true, "revision": gorm.Expr("revision + 1")}
 		if message != "" {
 			updates["failure_message"] = message
@@ -600,11 +602,7 @@ func (r *Repository) markCloudAgentTerminal(userID, id string, revision int64, s
 		if result.RowsAffected != 1 {
 			return ErrCreationConflict
 		}
-		var execution model.CloudAgentExecution
-		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&execution).Error; err != nil {
-			return err
-		}
-		return repo.projectAgentCrewExecution(&execution)
+		return nil
 	})
 }
 

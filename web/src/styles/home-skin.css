@@ -102,11 +102,6 @@ body.app-user-overlays.app-user-overlays {
         color: var(--primary) !important;
     }
 
-    .app-user-workspace.app-user-workspace .app-workspace-canary-badge {
-        background: var(--control-selected-bg) !important;
-        color: var(--control-selected-fg) !important;
-    }
-
     .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar-checkin-claim, .app-workspace-sidebar-checkin.is-collapsed) {
         background: var(--button-primary-bg) !important;
         color: var(--button-primary-fg) !important;

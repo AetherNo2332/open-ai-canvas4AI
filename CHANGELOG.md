@@ -91,6 +91,9 @@
 
 ## Unreleased
 
+- 修复 Pi worker 恢复时可能将历史未回执工具作为当前批次重放的问题；在途模型任务优先沿原任务恢复，检查点失败后停止依赖的工具批次提交。
+- 修复 API 调用日志截断中文导致 PostgreSQL UTF-8 写入失败的问题；补充 worker 错误分类、退避、任务协调及未知副作用处理方案。持久化恢复控制器仍待实施。
+
 ### v1.5.7.3(fddd765)
 
 - 修复恢复已有 Pi 会话时优先沿用旧系统提示，导致 `Pi session is missing the frozen server policy` 的问题；首步和流式模型准入统一使用当前运行快照冻结的服务端策略提示。
@@ -608,3 +611,8 @@
 - 完成 Agent/Worker 观测基础闭环：统一运行、队列、工具、模型调用和上下文压缩事件，加入管理员运行总览聚合接口。
 - 增加可选 OTLP Collector、Prometheus、Tempo、Grafana Compose 观测栈、Grafana 看板和管理员跳转入口。
 - 增加 Golden Dataset 脱敏校验、观测告警运行手册和观测后端不可用时的有界降级。
+
+## v1.5.7.3(63e0fc0)
+
+- 预演台：切换 director 实现为 previs 工作台，接入场景模板、四种模式、路径/机位、预览回写与 Agent 语义工具。
+- 开发阶段不保留 director 字段兼容层；预演场景快照与画布快照分离校验。

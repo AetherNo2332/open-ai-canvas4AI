@@ -530,6 +530,9 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 	str := func(description string) map[string]any {
 		return map[string]any{"type": "string", "description": description}
 	}
+	if req.WebSearchEnabled {
+		add("web_search", cloudAgentToolText("web_search"), map[string]any{"query": map[string]any{"type": "string", "minLength": 1, "maxLength": 500, "description": "要联网查询的问题或关键词"}}, "query")
+	}
 	if includeProfileTool {
 		add("agent_profile_read", cloudAgentToolText("agent_profile_read"), map[string]any{"scope": map[string]any{"type": "string", "enum": []string{"user", "project", "canvas"}}}, "scope")
 	}
@@ -551,6 +554,25 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		map[string]any{"summary": str(cloudAgentToolText("parameter_007"))},
 		"summary")
 	if len(req.ContextScope) > 0 {
+		add("previs_scene_read", "读取预演摘要；无 sceneId 返回目录和 canvasSnapshotHash，有则返回场景与 snapshotHash。includeTransforms=true 返回坐标；不返回 URL/storage key。", map[string]any{
+			"sceneId":           str("可选。省略返回目录；提供则精读该场景"),
+			"shotId":            str("可选。精读特定镜头；需同时提供 sceneId"),
+			"objectIds":         map[string]any{"type": "array", "maxItems": 16, "items": str("可选。精读特定对象 ID")},
+			"includeTransforms": map[string]any{"type": "boolean"},
+		})
+		if req.PermissionMode != "read_only" {
+			add("previs_preview", "请求当前预演台生成白模视频；先用 previs_scene_read 确认 sceneId、shotId。", map[string]any{
+				"sceneId":  str("导演场景 ID"),
+				"shotId":   str("镜头 ID"),
+				"duration": map[string]any{"type": "number", "minimum": 0.1, "maximum": 60},
+				"fps":      map[string]any{"type": "integer", "minimum": 1, "maximum": 60},
+				"output":   map[string]any{"type": "string", "enum": []string{"clay_video"}},
+			}, "sceneId", "shotId")
+		}
+		if req.PermissionMode != "read_only" {
+			add("previs_scene_create", "创建预演场景；先读 canvasSnapshotHash。", cloudAgentPrevisSceneCreateSchema()["properties"].(map[string]any), "canvasSnapshotHash", "sceneId", "title", "templateId")
+			add("previs_apply_patch", "审批后应用语义补丁，最多32项；先读 snapshotHash。支持场景、镜头、对象、相机、灯光、动画；角色绑定须匹配画布角色卡，动画时间不超镜头时长。禁止原始 JSON、URL、storage key。", cloudAgentPrevisApplyPatchSchema()["properties"].(map[string]any), "snapshotHash", "sceneId", "operations")
+		}
 		add("canvas_list_node_types", cloudAgentToolText("canvas_list_node_types"), map[string]any{})
 		add("canvas_get_state", cloudAgentToolText("canvas_get_state"), map[string]any{
 			"offset":           map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_008")},
@@ -631,6 +653,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"rowId":        str(cloudAgentToolText("parameter_051")),
 			"patch":        cloudAgentStoryboardPatchSchema(),
 		}, "snapshotHash", "nodeId", "action")
+		add("canvas_create_character", "把画布上就绪的形象图片（可加声音音频）打包成角色卡：写入角色库并在画布放置角色卡节点，按权限审批。已有同名角色卡先复用；definition 只填有依据的设定。", cloudAgentCharacterCreateSchema(), "nodeId", "name", "imageNodeId")
 		add("canvas_edit_batch_table", cloudAgentToolText("canvas_edit_batch_table"), map[string]any{
 			"snapshotHash": str(cloudAgentToolText("parameter_052")),
 			"nodeId":       str(cloudAgentToolText("parameter_053")),
@@ -689,44 +712,44 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"snapshotHash": str(cloudAgentToolText("parameter_077")), "nodeId": str(cloudAgentToolText("parameter_078")), "title": str(cloudAgentToolText("parameter_079")), "sourceNodeId": str(cloudAgentToolText("parameter_080")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_081"))}, "referenceTransientIds": map[string]any{"type": "array", "maxItems": 4, "items": str(cloudAgentToolText("parameter_082"))},
 		}, "mode", "prompt", "nodeId", "title", "referenceNodeIds")
 	}
-	if req.crew != nil {
-		if req.crew.Role == model.CrewMemberRoleCoordinator {
-			add("delegate_task", "Delegate one frozen structured task to a Crew member.", map[string]any{
-				"memberId": str("Authorized member ID"), "taskId": str("Unique task ID"), "title": str("Task title"), "instructions": str("Task instructions"),
-				"artifactIds": map[string]any{"type": "array", "maxItems": 32, "items": str("Canvas node reference")}, "focusNodeIds": map[string]any{"type": "array", "maxItems": 8, "items": str("Canvas node reference")},
-			}, "memberId", "taskId", "title", "instructions")
-			add("crew_wait", "Wait for all dispatched members and return only structured results.", map[string]any{})
-			if req.crew.Permission == model.CrewPermissionPropose {
-				add("crew_propose", "Aggregate completed member proposals and wait for one user approval. Never submit a canvas write directly.", map[string]any{})
+	if req.SubagentEnabled && req.subagent == nil {
+		add("spawn_subagent", "Create one independent child Agent with a name, role label and concrete objective.", map[string]any{
+			"name":         map[string]any{"type": "string", "maxLength": maxDynamicSubagentNameRunes},
+			"role":         map[string]any{"type": "string", "maxLength": maxDynamicSubagentRoleRunes},
+			"objective":    map[string]any{"type": "string", "maxLength": maxDynamicSubagentObjectiveRunes},
+			"instructions": map[string]any{"type": "string", "maxLength": maxDynamicSubagentObjectiveRunes},
+			"maxSteps":     map[string]any{"type": "integer", "minimum": 0, "maximum": 20},
+		}, "name", "role", "objective")
+		add("wait_subagents", "Wait until the parent Agent's active children report a result.", map[string]any{})
+		add("message_subagent", "Send a bounded instruction or clarification to one child Agent.", map[string]any{
+			"linkId": map[string]any{"type": "string"}, "text": map[string]any{"type": "string", "maxLength": 4000},
+		}, "linkId", "text")
+		add("subagent_status", "Read the current status of the parent Agent's children.", map[string]any{})
+	}
+	if req.subagent != nil {
+		add("send_parent_message", "Send a structured progress, question or result message to the parent Agent.", map[string]any{
+			"kind": map[string]any{"type": "string", "enum": []any{"progress", "question", "partial_result", "final_result", "error"}},
+			"text": map[string]any{"type": "string", "maxLength": 4000},
+		}, "kind", "text")
+		add("finish_subagent", "Finish this child Agent task and report the final result to the parent.", map[string]any{
+			"summary": map[string]any{"type": "string", "maxLength": 4000},
+		}, "summary")
+		filtered := tools[:0]
+		for _, tool := range tools {
+			name := stringField(tool["function"].(map[string]any), "name")
+			if name == "finish_run" || name == "ask_user" || cloudAgentWrite(name) || name == "spawn_subagent" || name == "wait_subagents" || name == "message_subagent" || name == "subagent_status" {
+				continue
 			}
-		} else {
-			var proposalSchema map[string]any
-			for _, tool := range compileCloudAgentTools(CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}}, false) {
-				function := tool["function"].(map[string]any)
-				if stringField(function, "name") == "canvas_apply_ops" {
-					proposalSchema = function["parameters"].(map[string]any)
-				}
-			}
-			add("task_result", "Complete this member task with a structured result. Never return another member's transcript.", map[string]any{
-				"taskId": str("Frozen task ID"), "summary": str("Result summary, at most 4000 bytes"), "artifactIds": map[string]any{"type": "array", "maxItems": 32, "items": str("Canvas node reference")}, "errorCode": str("Optional stable error code"),
-				"proposal": proposalSchema,
-			}, "taskId", "summary")
-			filtered := tools[:0]
-			for _, tool := range tools {
-				name := stringField(tool["function"].(map[string]any), "name")
-				if name != "finish_run" && name != "ask_user" {
-					filtered = append(filtered, tool)
-				}
-			}
-			tools = filtered
+			filtered = append(filtered, tool)
 		}
+		tools = filtered
 	}
 	return tools
 }
 
 func CloudAgentSupportedToolNames() []string {
 	// 平台支持的工具全集：包含只在特定条件下暴露的工具（图片输入能力、已有个人记忆）。
-	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}, VisionEnabled: true, HasMemories: true}
+	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}, VisionEnabled: true, HasMemories: true, WebSearchEnabled: true}
 	req.Budget.MaxGenerationTasks = 1
 	tools := cloudAgentTools(req)
 	names := make([]string, 0, len(tools))
@@ -736,7 +759,7 @@ func CloudAgentSupportedToolNames() []string {
 			names = append(names, name)
 		}
 	}
-	return append(names, "delegate_task", "crew_wait", "task_result", "crew_propose")
+	return names
 }
 
 func cloudAgentPatchSchema() map[string]any {
@@ -768,7 +791,7 @@ func cloudAgentToolAllowed(req CloudAgentRequest, name string) bool {
 // cloudAgentWrite 表示"需要审批的写入类工具"：它会改变用户可见状态，因此按权限模式进入
 // 审批链。这里保留上游的 image_layer_split（它同样走媒体审批与计费）。
 func cloudAgentWrite(name string) bool {
-	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table"
+	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == "previs_scene_create" || name == "previs_apply_patch" || name == "previs_preview"
 }
 
 // cloudAgentCanvasWriteTool 标记"调用返回即表示已经落到画布上"的写入工具。
@@ -781,7 +804,7 @@ func cloudAgentWrite(name string) bool {
 // generate_media / image_layer_split 创建草稿并进入独立审批，回执口径不同，故不在此列。
 func cloudAgentCanvasWriteTool(name string) bool {
 	switch name {
-	case "canvas_apply_ops", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table":
+	case "canvas_apply_ops", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character":
 		return true
 	default:
 		return false
@@ -795,7 +818,7 @@ const cloudAgentMaxReadToolCallsPerRun = 32
 
 func cloudAgentReadToolCacheable(name string) bool {
 	switch name {
-	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "skill_read_file", "model_list":
+	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "skill_read_file", "model_list":
 		return true
 	default:
 		return false
@@ -804,7 +827,7 @@ func cloudAgentReadToolCacheable(name string) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
+	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
 		return true
 	default:
 		return false
@@ -839,7 +862,7 @@ func cloudAgentReadCacheKeyForState(repo *repository.Repository, userID string, 
 		return key
 	}
 	switch call.Function.Name {
-	case "canvas_get_state", "canvas_read_storyboard":
+	case "canvas_get_state", "canvas_read_storyboard", "previs_scene_read":
 		if repo != nil {
 			if canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID); err == nil && canvas != nil {
 				return fmt.Sprintf("%s:canvas-revision:%d", key, canvas.Revision)
@@ -938,6 +961,17 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		service = services[0]
 	}
 	switch call.Function.Name {
+	case "web_search":
+		if service == nil || state == nil || !state.Request.WebSearchEnabled {
+			return nil, kernel.Forbidden("本轮未启用联网搜索")
+		}
+		var args struct {
+			Query string `json:"query"`
+		}
+		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
+			return nil, cloudAgentJSONArgumentError(err)
+		}
+		return service.agentWebSearch(args.Query)
 	case "agent_profile_read":
 		var args struct {
 			Scope string `json:"scope"`
@@ -979,6 +1013,10 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 			return nil, cloudAgentJSONArgumentError(err)
 		}
 		return cloudAgentNodeTypes(), nil
+	case "previs_scene_read":
+		return cloudAgentPrevisSceneRead(repo, userID, state.Request.CanvasID, call)
+	case "previs_preview":
+		return cloudAgentPrevisPreview(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":
 		var args struct {
 			Offset           int      `json:"offset"`
@@ -1422,8 +1460,8 @@ func validateCloudAgentConnection(nodes []map[string]any, fromID, toID string, e
 	if from == nil || to == nil {
 		return BadAuthRequest("连线端点不存在")
 	}
-	fromCapability, fromKnown := cloudAgentNodeCapabilityForType(stringValue(from["type"]))
-	toCapability, toKnown := cloudAgentNodeCapabilityForType(stringValue(to["type"]))
+	fromCapability, fromKnown := cloudAgentNodeCapabilityForNode(from)
+	toCapability, toKnown := cloudAgentNodeCapabilityForNode(to)
 	if !fromKnown || !toKnown {
 		return BadAuthRequest("连线包含当前 Agent 不支持的节点类型")
 	}
@@ -1500,6 +1538,10 @@ func cloudAgentNodeTypes() map[string]any {
 			"purpose":     capability.Purpose,
 			"defaultSize": map[string]any{"width": capability.DefaultWidth, "height": capability.DefaultHeight},
 			"canUpdate":   capability.CanUpdate,
+		}
+		if variant := capability.Variant; variant != nil {
+			// 变体不能 add_node；画布里按 type+metadata.workflowKind 识别，读取结果以 kind 标出。
+			item["canvasNodeType"], item["workflowKind"], item["creatable"] = variant.BaseType, variant.WorkflowKind, false
 		}
 		if len(capability.GoodFor) > 0 {
 			item["goodFor"] = capability.GoodFor

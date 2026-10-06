@@ -83,7 +83,7 @@ func (s *Service) PiControl(userID, runID, owner string) (map[string]any, error)
 	}
 	pending := []PiPendingInterjection{}
 	for _, item := range control.PendingInterjections {
-		pending = append(pending, PiPendingInterjection{ID: item.ID, Text: item.Text, CreatedAt: item.CreatedAt})
+		pending = append(pending, PiPendingInterjection{ID: item.ID, Text: item.Text, Source: item.Source, CreatedAt: item.CreatedAt})
 	}
 	var compaction *PiPendingContextCompaction
 	if c := control.ContextCompaction; c != nil && c.PiOperationID != "" {
@@ -126,6 +126,9 @@ func (s *Service) PiToolAdvanceAsync(userID, runID, owner, taskID, callID string
 	}
 	if state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].ID != callID {
 		return nil, kernel.Forbidden("Invalid Agent tool operation order")
+	}
+	if run.WaitKind == "subagents" && run.WaitID == callID {
+		return &PiToolReceipt{CallID: callID, Pending: true, Suspended: true}, nil
 	}
 	operationID := fmt.Sprintf("ato_%x", sha256.Sum256([]byte(runID+"\x00"+taskID+"\x00"+callID)))
 	operation := model.AgentToolOperation{ID: operationID, UserID: userID, RunID: runID, TaskID: taskID, CallID: callID, Status: "queued"}

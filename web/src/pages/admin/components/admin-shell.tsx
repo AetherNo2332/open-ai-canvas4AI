@@ -94,7 +94,7 @@ const adminNavigation: Array<{ label: string; items: AdminNavigationItem[] }> = 
     {
         label: "平台配置",
         items: [
-            { path: "/admin/settings/agent", label: "Agent（beta）", description: "调度配置、默认技能与记忆管理", icon: <Sparkles className="size-4" /> },
+            { path: "/admin/settings/agent", label: "Agent（beta）", description: "调度配置、动态子代理、默认技能与记忆管理", icon: <Sparkles className="size-4" /> },
             { path: "/admin/plugins", label: "插件管理", description: "平台可用性、上传与卸载", icon: <PlugZap className="size-4" /> },
             { path: "/admin/settings/appearance", label: "站点及外观", description: "品牌、SEO、备案与皮肤", icon: <Palette className="size-4" /> },
             { path: "/admin/settings/features", label: "功能开放", description: "工作台、插件与模型能力", icon: <ToggleLeft className="size-4" /> },
