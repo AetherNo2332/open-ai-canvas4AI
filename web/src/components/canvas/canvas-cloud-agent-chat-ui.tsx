@@ -1,5 +1,5 @@
 import { agentCanvasActions, agentCanvasActionLabel } from "@/lib/canvas/agent-canvas-actions";
-import { Button } from "antd";
+import { Button, Typography } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
@@ -81,6 +81,7 @@ export type CloudAgentChatMessage = {
     planTerminal?: boolean;
     question?: CloudAgentUserQuestion;
     meta?: string;
+    runId?: string;
     detail?: unknown;
     attachments?: CloudAgentChatAttachment[];
     interjection?: "sent" | "undelivered";
@@ -209,6 +210,13 @@ export function AgentChatMessage({
                     {item.meta ? (
                         <div className="mt-1 text-[var(--fs-label)]" style={{ color: theme.node.muted }}>
                             {item.meta}
+                        </div>
+                    ) : null}
+                    {item.runId ? (
+                        <div className="mt-1 break-all text-[var(--fs-label)]">
+                            <Typography.Text style={{ color: theme.node.muted }} copyable={{ text: item.runId, tooltips: ["复制 Run ID", "已复制"], icon: <span aria-label="复制 Run ID">复制</span> }}>
+                                Run ID：<span className="font-mono select-text">{item.runId}</span>
+                            </Typography.Text>
                         </div>
                     ) : null}
                     {onRetry ? (

@@ -1472,7 +1472,9 @@ export function AgentContextRing({ view }: { view: AgentContextUsageView }) {
                             {sourceLabel}
                             {view.estimate ? " · 不是计费 Token" : " · 预计下次请求"}
                         </span>
-                        {view.compactAtTokens ? <span>压缩线 {formatContextCount(view.compactAtTokens)}</span> : null}
+                        <span title={view.cacheHitRate === undefined ? "暂无模型缓存用量数据" : "上一请求的缓存读取 Token ÷ 总输入 Token"}>
+                            缓存命中率 {view.cacheHitRate === undefined ? "暂无数据" : `${Math.round(view.cacheHitRate * 1000) / 10}%`}
+                        </span>
                     </div>
                     {view.lastCompaction ? <p className="agent-context-note">本轮已完成一次上下文压缩，下一次读数会刷新。</p> : null}
                 </div>
@@ -2158,7 +2160,7 @@ function applyAgentEvent(
             appendUniqueMessage(current, {
                 id,
                 role: "tool",
-                title: payload.reason === "step_timeout_retried" ? "单步超时自动重试" : "模型空响应自动重试",
+                title: "模型响应自动重试",
                 text: text || "已关闭思考并重试同一步",
                 detail: { ...payload, eventType: event.type },
             }),

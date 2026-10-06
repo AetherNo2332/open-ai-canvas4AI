@@ -42,6 +42,8 @@ export type AgentContextUsageView = {
     contextWindowTokens?: number;
     protocolBytes?: number;
     tokenSource?: "provider" | "estimate";
+    /** Cache reads / total input tokens of the previous provider request, 0–1. */
+    cacheHitRate?: number;
     estimate: boolean;
     breakdown: AgentContextBreakdownItem[];
     lastCompaction: Record<string, unknown> | null;
@@ -98,6 +100,16 @@ export function contextInputTokens(reading: Record<string, unknown> | null): num
         return finiteContextNumber(reading.projectedNextInputTokens) ?? finiteContextNumber(reading.estimatedInputTokens);
     }
     return finiteContextNumber(reading.estimatedInputTokens);
+}
+
+function contextCacheHitRate(reading: Record<string, unknown> | null): number | undefined {
+    const usage = reading?.providerUsage;
+    if (!usage || typeof usage !== "object") return undefined;
+    const provider = usage as Record<string, unknown>;
+    const input = finiteContextNumber(provider.inputTokens);
+    const cached = finiteContextNumber(provider.cacheReadTokens);
+    if (!input || cached === undefined || cached > input) return undefined;
+    return cached / input;
 }
 
 const BREAKDOWN_LABELS: Record<string, string> = {
@@ -165,6 +177,7 @@ export function presentAgentContextUsage(usage: AgentContextUsage): AgentContext
         contextWindowTokens,
         protocolBytes: contextProtocolBytes(reading),
         tokenSource,
+        cacheHitRate: contextCacheHitRate(reading),
         estimate,
         breakdown: contextBreakdown(reading),
         lastCompaction: usage.lastCompaction,
