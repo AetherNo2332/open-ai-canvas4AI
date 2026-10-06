@@ -809,7 +809,7 @@ export async function runCanvasAgent(
     await steerPendingInterjections();
     return { result: receipt.result, isError: receipt.isError,
       terminate: runTerminated };
-  }, snapshot.previousStepTemplate);
+  });
   const nativeMode = snapshot.skillRuntimeMode === "pi-native";
   const nativeReadSpec = nativeMode ? snapshot.tools.find((tool) => tool.name === "read" && tool.allowed) : undefined;
   if (nativeMode && !nativeReadSpec) throw new FatalWorkerError("Go did not disclose native Skill read");
@@ -827,7 +827,6 @@ export async function runCanvasAgent(
     if (compactionFailure !== undefined) throw compactionFailure;
     const canonical = withServerPolicy(toCanonical(messages as Message[], snapshot.canonical.promptCacheKey),
       snapshot.canonical.systemPrompt, systemPrompt);
-    canonical.tools = disclosure.decorateCanonicalTools(canonical.tools);
     try {
       if (pendingContextCompaction) throw new CanvasCompactionNeeded(snapshot.modelLimits);
       if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
@@ -1000,7 +999,6 @@ export async function runCanvasAgent(
         admittedCallIds = new Set(batchRejection ? [] : calls.map((call) => call.id));
         if (admittedCallIds.size > 0) {
           const batch = calls.filter((call) => admittedCallIds.has(call.id) && !(nativeMode && call.function.name === "read"));
-          disclosure.recordStepCalls(calls.map((call) => call.function.name));
           // 顺序是跨进程合同，不是实现细节：Go 的 `PiToolBatch` 在 `ActiveTaskID` 非空时
           // 拒绝整个批次（"Agent 尚有未完成的模型或工具步骤"），而清掉它的正是这条带 taskId
           // 的 assistant 检查点（`PiCheckpointMessage` 在同一事务里写消息 + 确认模型任务）。
@@ -1098,7 +1096,7 @@ export async function runCanvasAgent(
           // SDK 的 Agent 以空 systemPrompt 初始化，只有首个 run 开始后才物化；
           // preflight 可能发生在首个 prompt 之前，此时必须回落到会话/装配层的系统提示，
           // 否则服务端会以"缺少服务端策略"拒绝（真实 3000 部署验收发现的缺口）。
-          planned.tools = disclosure.decorateCanonicalTools(snapshot.canonical.tools);
+          planned.tools = snapshot.canonical.tools;
           planned.messages.push({ role: "user", content: prompt });
           const decision = await bridge.modelPreflight(snapshot, planned, shutdown, promptContract, parts);
           if (decision.modelLimits) snapshot = { ...snapshot, modelLimits: decision.modelLimits };

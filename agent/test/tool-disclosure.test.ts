@@ -30,19 +30,6 @@ test("all eligible concrete tools are registered from the first step; categories
   assert.deepEqual(called, ["canvas_get_state"]);
 });
 
-test("previous-step concrete call names are written to model-facing tool schema and reset per run", () => {
-  const disclosure = new SessionToolDisclosure(specs, async () => ({ result: {} }), "Previous tools: {names}");
-  const original = [{ type: "function", function: { name: "canvas_get_state", description: "Get state", parameters: objectSchema } }];
-  assert.equal(disclosure.decorateCanonicalTools(original)[0]?.function &&
-    (disclosure.decorateCanonicalTools(original)[0]!.function as Record<string, unknown>).description, "Get state");
-  disclosure.recordStepCalls(["canvas_get_state", "agent_tools_canvas_read", "plan_update"]);
-  const decorated = disclosure.decorateCanonicalTools(original);
-  assert.equal((decorated[0]!.function as Record<string, unknown>).description,
-    "Get state Previous tools: canvas_get_state、plan_update");
-  const newRun = new SessionToolDisclosure(specs, async () => ({ result: {} }), "Previous tools: {names}");
-  assert.equal((newRun.decorateCanonicalTools(original)[0]!.function as Record<string, unknown>).description, "Get state");
-});
-
 test("Pi tool_call hook blocks ineligible names and calls outside the admitted batch", async () => {
   const registry = new SessionToolDisclosure(specs, async () => ({ result: {} }));
   const registered: SessionToolDefinitionLike[] = [];

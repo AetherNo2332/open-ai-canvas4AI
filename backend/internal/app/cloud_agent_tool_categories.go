@@ -1,7 +1,5 @@
 package app
 
-import "strings"
-
 const cloudAgentToolDisclosureVersion = 2
 
 // Categories classify concrete tools for policy, telemetry, and UI grouping.
@@ -115,15 +113,11 @@ func cloudAgentAppendActivatedCategory(active []string, category string) []strin
 	return append(active, category)
 }
 
-func cloudAgentVisibleToolsForCategories(all []map[string]any, categories []string, previous []cloudAgentCall, repairScope []string) []map[string]any {
+func cloudAgentVisibleToolsForCategories(all []map[string]any, categories []string, _ []cloudAgentCall, repairScope []string) []map[string]any {
 	_ = categories // kept for callers restoring v1 checkpoints
 	repairAllowed := map[string]bool{}
 	for _, name := range repairScope {
 		repairAllowed[name] = true
-	}
-	record := ""
-	if names := cloudAgentPreviousStepCallNames(previous); names != "" {
-		record = " " + strings.ReplaceAll(cloudAgentToolText("previous_step_calls"), "{names}", names)
 	}
 	visible := make([]map[string]any, 0, len(all))
 	for _, tool := range all {
@@ -132,36 +126,7 @@ func cloudAgentVisibleToolsForCategories(all []map[string]any, categories []stri
 		if name == "" || cloudAgentIsToolCategory(name) || (len(repairScope) > 0 && !repairAllowed[name]) {
 			continue
 		}
-		if record == "" {
-			visible = append(visible, tool)
-			continue
-		}
-		copyFunction := cloneStringAnyMap(function)
-		copyFunction["description"] = stringField(function, "description") + record
-		visible = append(visible, map[string]any{"type": "function", "function": copyFunction})
+		visible = append(visible, tool)
 	}
 	return visible
-}
-
-func cloudAgentPreviousStepCallNames(calls []cloudAgentCall) string {
-	names := []string{}
-	seen := map[string]bool{}
-	for _, call := range calls {
-		name := call.Function.Name
-		if name == "" || cloudAgentIsToolCategory(name) || seen[name] {
-			continue
-		}
-		seen[name] = true
-		if len(names) < 6 {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return ""
-	}
-	record := strings.Join(names, "、")
-	if len(seen) > len(names) {
-		record += "等"
-	}
-	return record
 }

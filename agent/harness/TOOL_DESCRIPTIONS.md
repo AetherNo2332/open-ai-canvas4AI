@@ -434,10 +434,6 @@ true 只预演不写入
 
 直接复制 model_list 返回的 selectionId；与 logicalModelId、channelId、channelModelKey 互斥。
 
-## previous_step_calls
-
-上一模型步调用过的工具：{names}。这是上下文提示，不代表本步已经执行，也不改变当前可用工具和权限；具体结果以工具回执及当前画布状态为准。
-
 ## parameter_083
 
 当前焦点节点或节点集合的真实节点 ID。

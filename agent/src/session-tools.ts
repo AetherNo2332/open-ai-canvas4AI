@@ -28,14 +28,12 @@ const legacyCategoryPrefix = "agent_tools_";
  * approvals, and canvas versions before executing any operation.
  */
 export class SessionToolDisclosure {
-  readonly previousStepCalls: string[] = [];
   private readonly specs: CanvasToolSpec[];
   private readonly byName: Map<string, CanvasToolSpec>;
 
   constructor(
     specs: CanvasToolSpec[],
     private readonly executeCanvas: ExecuteCanvasTool,
-    private readonly previousStepTemplate = "",
   ) {
     this.specs = specs.filter((spec) => spec.allowed && !spec.name.startsWith(legacyCategoryPrefix));
     this.byName = new Map(this.specs.map((spec) => [spec.name, spec]));
@@ -53,28 +51,6 @@ export class SessionToolDisclosure {
   /** Concrete tool definitions consumed by the Pi extension registration hook. */
   tools(): SessionToolDefinitionLike[] {
     return this.specs.map((spec) => this.makeTool(spec));
-  }
-
-  recordStepCalls(names: string[]): void {
-    const concrete = names.filter((name) => this.byName.has(name));
-    this.previousStepCalls.splice(0, this.previousStepCalls.length, ...[...new Set(concrete)].slice(0, 6));
-  }
-
-  /**
-   * Add the previous step's concrete tool call names to the actual model-facing
-   * function descriptions. This keeps the short-lived context in the schema
-   * sent upstream and naturally resets when a new run creates a new registry.
-   */
-  decorateCanonicalTools(tools: Record<string, unknown>[]): Record<string, unknown>[] {
-    if (!this.previousStepTemplate || this.previousStepCalls.length === 0) return tools;
-    const record = this.previousStepTemplate.replace("{names}", this.previousStepCalls.join("、"));
-    return tools.map((tool) => {
-      const functionSpec = tool.function;
-      if (!functionSpec || typeof functionSpec !== "object") return tool;
-      const fn = functionSpec as Record<string, unknown>;
-      if (typeof fn.name !== "string" || !this.byName.has(fn.name)) return tool;
-      return { ...tool, function: { ...fn, description: `${String(fn.description || "")} ${record}`.trim() } };
-    });
   }
 
   private makeTool(spec: CanvasToolSpec): SessionToolDefinitionLike {
