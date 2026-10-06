@@ -9,8 +9,9 @@ export function compactionSettings(snapshot: PiSnapshot) {
   const limits = snapshot.modelLimits;
   const input = limits.inputBudgetTokens ?? Math.max(1, limits.contextWindowTokens - (limits.reservedOutputTokens ?? limits.maxOutputTokens));
   const trigger = limits.compactAtTokens ?? Math.floor(input * 0.85);
-  // Pi compares with >; Go preflight handles the inclusive boundary.
-  return { enabled: limits.configured, reserveTokens: limits.compactionReserveTokens ?? Math.max(1, limits.contextWindowTokens - trigger),
+  // Go decides when to compact using the same reading as the UI. Pi only prepares
+  // and summarizes after that decision; its message-only estimate must not trigger.
+  return { enabled: false, reserveTokens: limits.compactionReserveTokens ?? Math.max(1, limits.contextWindowTokens - trigger),
     keepRecentTokens: limits.keepRecentTokens ?? Math.max(1, Math.min(20_000, Math.floor(input / 4))) };
 }
 

@@ -97,6 +97,9 @@ type CloudAgentRun struct {
 	FailureMessage   string            `json:"failureMessage,omitempty"`
 	PermissionMode   string            `json:"permissionMode"`
 	Model            string            `json:"model"`
+	ChannelID        string            `json:"channelId,omitempty"`
+	ChannelModelKey  string            `json:"channelModelKey,omitempty"`
+	LogicalModelID   string            `json:"logicalModelId,omitempty"`
 	CreatedAt        time.Time         `json:"createdAt"`
 	UpdatedAt        time.Time         `json:"updatedAt"`
 	Events           []CloudAgentEvent `json:"events,omitempty"`
@@ -279,7 +282,9 @@ func cloudAgentTaskIdentity(task *model.Task) cloudAgentRunIdentity {
 }
 
 func agentRunOutput(identity cloudAgentRunIdentity, state cloudAgentState) *CloudAgentRun {
-	return &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model, CreatedAt: identity.CreatedAt, UpdatedAt: identity.UpdatedAt, Skills: state.Skills}
+	return &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model,
+		ChannelID: state.Request.ChannelID, ChannelModelKey: state.Request.ChannelModelKey, LogicalModelID: state.Request.LogicalModelID,
+		CreatedAt: identity.CreatedAt, UpdatedAt: identity.UpdatedAt, Skills: state.Skills}
 }
 
 func (s *Service) cloudAgentTask(userID, id string) (*model.Task, cloudAgentState, error) {
@@ -513,6 +518,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	var history []providerTextMessage
 	var creativeAnchor cloudAgentCreativeAnchor
 	var inheritedPlan []cloudAgentPlanItem
+	var inheritedUsage *cloudAgentTokenAnchor
 	if parentID != "" {
 		// 父轮解析也必须走统一读路径：P1.5 之后的新形态运行没有 `cloud_agent` 根任务，
 		// 只认根任务会让"续聊"直接 404。LegacyTask 只在旧形态下非空。
@@ -566,6 +572,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		// 否则新轮会把看过的图重新标成"没有视觉识别证据"并再花一次视觉 token。
 		creativeAnchor = parentState.CreativeAnchor
 		inheritedPlan = parentState.Plan
+		inheritedUsage = cloudAgentInheritedTokenAnchor(&parentState, req)
 		// 父轮的"原始要求"：旧形态取自根任务正文，新形态取自运行请求 —— 同一份事实，
 		// 两种形态都必须能续聊。
 		parentPrompt := parentState.Request.Prompt
@@ -714,6 +721,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
 		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
 		Plan: inheritedPlan, StepLimits: stepLimits,
+		TokenAnchor:     inheritedUsage,
 		ContractVersion: cloudAgentContractVersionFirstStep, Phase: cloudAgentPhaseAwaitingFirstStep,
 		Snapshot: cloudAgentContractSnapshotFor(canonical.SystemPrompt, canonical.Tools), PlaceholderTaskID: id,
 	}

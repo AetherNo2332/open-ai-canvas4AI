@@ -243,10 +243,11 @@ type cloudAgentRuntime struct {
 	LastStepTaskID string `json:"lastStepTaskId,omitempty"`
 	// PiToolBatchTaskID binds the admitted call IDs and receipts to the model
 	// step that emitted them. Model providers may reuse call IDs across turns.
-	PiToolBatchTaskID   string `json:"piToolBatchTaskId,omitempty"`
-	LastStepOperation   string `json:"lastStepOperation,omitempty"`
-	LastStepEstimate    int    `json:"lastStepEstimate,omitempty"`
-	LastStepSourceBytes int    `json:"lastStepSourceBytes,omitempty"`
+	PiToolBatchTaskID   string                     `json:"piToolBatchTaskId,omitempty"`
+	LastStepOperation   string                     `json:"lastStepOperation,omitempty"`
+	LastStepEstimate    int                        `json:"lastStepEstimate,omitempty"`
+	LastStepPressure    *cloudAgentContextPressure `json:"lastStepPressure,omitempty"`
+	LastStepSourceBytes int                        `json:"lastStepSourceBytes,omitempty"`
 	// TokenAnchor 是上一步上游上报的用量（模型自己的分词器计数），上下文压力的权威锚点。
 	TokenAnchor *cloudAgentTokenAnchor `json:"tokenAnchor,omitempty"`
 	// EventSeqBase 是本次载入的事件窗口之前"已入库"的条数（只在内存里，不落检查点）：
@@ -334,6 +335,7 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	state.LastStepTaskID = task.ID
 	state.LastStepOperation = cloudAgentStepOperation
 	state.LastStepEstimate = pressure.EstimatedInputTokens
+	state.LastStepPressure = &pressure
 	state.LastStepSourceBytes = pressure.SourceBytes
 	// 记下发出去这份信封的口径与窗口（上游 #601 的锚点治理）：模型/线路取自任务 input，
 	// 窗口只在真的解析到能力时填，未知就留 0（不拿兜底默认窗口冒充真实能力）。
@@ -2264,6 +2266,7 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 					cloudAgentNoteContextWindowResolved(run.ID, state, *contextPressure)
 					state.event(run.ID, "context_pressure", payload)
 					state.LastStepEstimate = contextPressure.EstimatedInputTokens
+					state.LastStepPressure = contextPressure
 					state.LastStepSourceBytes = contextPressure.SourceBytes
 					// 上游 #601：把"发出去的那份信封"的口径与窗口一起记账，
 					// 供后面的锚点作废比对（换模型/换线路/换窗口）。

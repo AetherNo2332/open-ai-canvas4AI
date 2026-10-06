@@ -58,10 +58,22 @@ export function continueAgentContextUsage(current: AgentContextUsage, runId: str
     return { ...current, runId, readingSeq: 0, compactionPending: null };
 }
 
+type AgentContextSelection = { model?: string; channelId?: string; channelModelKey?: string; logicalModelId?: string };
+
+/** A continuation may reuse a reading only for the same known model selector. */
+export function sameAgentContextSelection(previous: AgentContextSelection | null, next: AgentContextSelection): boolean {
+    if (!previous || !(previous.model || previous.channelId || previous.logicalModelId)) return false;
+    return (["model", "channelId", "channelModelKey", "logicalModelId"] as const)
+        .every((key) => (previous[key] || "") === (next[key] || ""));
+}
+
 /** Reduces durable Agent events without mixing readings from different runs. */
 export function reduceAgentContextUsage(current: AgentContextUsage, event: AgentContextUsageEvent): AgentContextUsage {
     const scoped = current.runId === event.runId ? current : emptyAgentContextUsage(event.runId);
     const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+    if (event.type === "context_transition" && ["model_changed", "route_changed"].includes(String(payload.kind))) {
+        return emptyAgentContextUsage(event.runId);
+    }
     if (event.type === "context_pressure") {
         return { ...scoped, reading: payload, readingSeq: event.seq || 0, readingStale: false, compactionPending: null };
     }
@@ -88,16 +100,17 @@ export function contextPressureRatio(reading: Record<string, unknown> | null): n
     if (!reading || reading.modelLimitConfigured !== true) return undefined;
     const usable = finiteContextNumber(reading.inputBudgetTokens) ?? finiteContextNumber(reading.usableInputTokens);
     if (!usable || usable <= 0) return undefined;
-    const projected = finiteContextNumber(reading.projectedTokens);
-    const ratio = projected !== undefined ? projected / usable : reading.tokenSource === "provider" ? finiteContextNumber(reading.projectedPressureRatio) : finiteContextNumber(reading.pressureRatio);
+    const input = contextInputTokens(reading);
+    const ratio = input !== undefined ? input / usable : finiteContextNumber(reading.pressureRatio);
     return ratio;
 }
 
 export function contextInputTokens(reading: Record<string, unknown> | null): number | undefined {
     if (!reading) return undefined;
-    if (finiteContextNumber(reading.projectedTokens) !== undefined) return finiteContextNumber(reading.projectedTokens);
     if (reading.tokenSource === "provider") {
-        return finiteContextNumber(reading.projectedNextInputTokens) ?? finiteContextNumber(reading.estimatedInputTokens);
+        const usage = reading.providerUsage;
+        return finiteContextNumber(usage && typeof usage === "object" ? (usage as Record<string, unknown>).inputTokens : undefined)
+            ?? finiteContextNumber(reading.normalizedInputTokens) ?? finiteContextNumber(reading.pressureTokens);
     }
     return finiteContextNumber(reading.estimatedInputTokens);
 }
@@ -169,7 +182,7 @@ export function presentAgentContextUsage(usage: AgentContextUsage): AgentContext
         compactRatio,
         ring: 0,
         label: "未测量",
-        detail: "发出下一条消息后，这里显示下一次请求离压缩还有多远。",
+        detail: "模型返回用量后，这里显示实测上下文占用；此前采用本地估算。",
         inputTokens,
         remainingTokens,
         usableTokens,
@@ -197,7 +210,7 @@ export function presentAgentContextUsage(usage: AgentContextUsage): AgentContext
     const line = compactRatio && compactRatio > 0 ? compactRatio : 1;
     const ring = Math.max(0, Math.min(1, ratio / line));
     const percent = Math.round(ratio * 100);
-    const source = estimate ? "本地估算" : "模型实测校准";
+    const source = estimate ? "本地估算" : "模型实测";
     if (compactRatio !== undefined && ratio >= line) {
         return {
             ...base,

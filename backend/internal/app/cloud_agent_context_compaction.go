@@ -76,7 +76,7 @@ type cloudAgentPressureReading struct {
 	BudgetSource    string `json:"budgetSource,omitempty"`
 }
 
-// cloudAgentCompactionReadingFor 把"下一步预计输入 token"接到上游已有的预算算式上，
+// cloudAgentCompactionReadingFor 把"最近有效实测，无实测时估算"接到已有预算算式上，
 // 并标出这个读数的来源（provider 实测锚点 / 本地估算）。
 //
 // 阈值不在这里另定：上游 cloudAgentContextBudgetFor 已经把压缩线算成输入预算的 85%
@@ -90,21 +90,17 @@ type cloudAgentPressureReading struct {
 // 大窗口模型会远早于"装不下"就触发压缩**——每次压缩都要多花一次模型调用（额外计费）并把
 // 细节换成摘要。部署时应为画布 Agent 使用的渠道模型/逻辑模型填写真实窗口（见 PR 风险说明）。
 func cloudAgentCompactionReadingFor(budget cloudAgentContextBudget, projectedTokens int, state *cloudAgentRuntime) (cloudAgentPressureReading, bool) {
+	projectedTokens, source := cloudAgentProjectedInputTokens(cloudAgentContextPressure{EstimatedInputTokens: projectedTokens}, state)
 	reading := cloudAgentPressureReading{
 		ProjectedTokens:   projectedTokens,
 		UsableInputTokens: budget.InputBudgetTokens,
 		CompactAtTokens:   budget.CompactAtTokens,
 		OverheadTokens:    budget.OverheadTokens,
 		BudgetSource:      budget.Source,
+		TokenSource:       source,
 	}
 	if budget.InputBudgetTokens > 0 {
 		reading.Ratio = math.Round(float64(projectedTokens)/float64(budget.InputBudgetTokens)*10000) / 10000
-	}
-	// tokenSource 与压力面板同源：直接复用 cloudAgentProjectedInputTokens 的判据
-	// （有可采信的上游实测锚点即 provider，否则 estimate），这里只取它的口径标签；
-	// 数值仍以调用方传入的 projectedTokens 为准——触发判据必须与调用方看到的读数一致。
-	if _, source := cloudAgentProjectedInputTokens(cloudAgentContextPressure{EstimatedInputTokens: projectedTokens}, state); source != "" {
-		reading.TokenSource = source
 	}
 	if budget.Source == "" || budget.Source == "default" {
 		return reading, false

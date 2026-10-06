@@ -983,9 +983,7 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 		state.Snapshot, state.PromptContract = originalSnapshot, originalPromptContract
 	}
 	pressure := s.cloudAgentContextPressure(request.Canonical, state.Request.Prompt, state.Request)
-	channelID, modelKey := state.Request.ChannelID, firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)
-	signature := cloudAgentRequestSignature(&state, request.Canonical, channelID, modelKey)
-	cloudAgentExpireTokenAnchorForRequest(run.ID, &state, pressure.ContextWindowTokens, signature, modelKey, channelID)
+	cloudAgentExpireTokenAnchorForSelection(run.ID, &state)
 	projected, _ := cloudAgentProjectedInputTokens(pressure, &state)
 	encoded, _ := json.Marshal(request.Canonical.Messages)
 	needsCompaction := state.ContextCompaction != nil || (modelBudget.Configured && projected >= modelBudget.CompactAtTokens) ||
