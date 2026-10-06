@@ -8,6 +8,10 @@ import { assertToolSnapshotMatchesSchema } from "../src/tool-disclosure.js";
 // recreating a second contract in TypeScript.
 const artifact = JSON.parse(await readFile(new URL("../../harness/TOOL_SCHEMA.json", import.meta.url), "utf8"));
 const cases: [string, ToolCall["arguments"], boolean][] = [
+  ["web_search", { query: "最新影视制作资讯" }, true],
+  ["web_search", { query: "" }, false],
+  ["web_search", { query: "a".repeat(501) }, false],
+  ["web_search", { query: "news", apiKey: "forbidden-client-key" }, false],
   ["generate_media", { mode: "video", prompt: "cat", nodeId: "n", title: "cat", referenceNodeIds: [], size: "16:9", durationSeconds: 5 }, true],
   ["generate_media", { mode: "video", prompt: "cat", nodeId: "n", title: "cat", referenceNodeIds: [], size: "16:9", durationSeconds: 0 }, false],
   ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "n", action: "append", patch: { durationSeconds: 5, plotDescription: "cat" } }, true],

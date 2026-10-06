@@ -9,6 +9,8 @@ const cloudAgentToolDisclosureVersion = 2
 // at the beginning of each Pi model step.
 func cloudAgentToolCategory(name string) string {
 	switch name {
+	case "web_search":
+		return "agent_tools_web"
 	case "plan_update", "ask_user", "finish_run", "task_get":
 		return "agent_tools_control"
 	case "agent_profile_read", "recall_lessons", "remember_lesson":
@@ -32,7 +34,7 @@ func cloudAgentToolCategory(name string) string {
 
 func cloudAgentIsToolCategory(name string) bool {
 	switch name {
-	case "agent_tools_control", "agent_tools_memory", "agent_tools_skills", "agent_tools_canvas_read", "agent_tools_image", "agent_tools_canvas_edit", "agent_tools_generation":
+	case "agent_tools_web", "agent_tools_control", "agent_tools_memory", "agent_tools_skills", "agent_tools_canvas_read", "agent_tools_image", "agent_tools_canvas_edit", "agent_tools_generation":
 		return true
 	default:
 		return false

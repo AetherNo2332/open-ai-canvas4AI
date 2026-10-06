@@ -6,6 +6,7 @@ import AgentLessonsPanel from "../components/agent-lessons-panel";
 import { RefreshCw, Save } from "lucide-react";
 import AgentSkillDefaultsSection from "./components/agent-skill-defaults-section";
 import AgentSubagentsAvailabilitySection from "./components/agent-subagents-availability-section";
+import AgentWebSearchSection from "./components/agent-web-search-section";
 import "./agent-settings-page.css";
 import { getAgentSchedulerSetting, updateAgentSchedulerSetting, type AgentSchedulerDraft, type AgentSchedulerSetting } from "@/services/api/admin-agent-settings";
 
@@ -78,11 +79,12 @@ export default function AgentSettingsPage() {
         }
     }
     return (
-        <AdminPageFrame title="Agent（beta）" description="统一管理 Agent 调度、动态子代理、默认技能与用户记忆" scroll>
+        <AdminPageFrame title="Agent（beta）" description="统一管理 Agent 调度、动态子代理、联网搜索、默认技能与用户记忆" scroll>
             <div className="agent-settings">
                 <nav className="agent-settings-nav" aria-label="Agent 配置区域">
                     <a href="#config">调度配置</a>
                     <a href="#subagents">动态子代理</a>
+                    <a href="#web-search">联网搜索</a>
                     <a href="#skill-defaults">默认技能</a>
                     <a href="#memory">记忆管理</a>
                 </nav>
@@ -148,6 +150,9 @@ export default function AgentSettingsPage() {
                 </section>
                 <section id="subagents" className="agent-settings-section space-y-4" aria-labelledby="agent-subagents-heading">
                     <AgentSubagentsAvailabilitySection />
+                </section>
+                <section id="web-search" className="agent-settings-section space-y-4" aria-labelledby="agent-web-search-heading">
+                    <AgentWebSearchSection />
                 </section>
                 <section id="skill-defaults" className="agent-settings-section" aria-labelledby="agent-skill-defaults-heading">
                     <AgentSkillDefaultsSection />

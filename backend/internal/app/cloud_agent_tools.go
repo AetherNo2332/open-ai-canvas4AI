@@ -530,6 +530,9 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 	str := func(description string) map[string]any {
 		return map[string]any{"type": "string", "description": description}
 	}
+	if req.WebSearchEnabled {
+		add("web_search", cloudAgentToolText("web_search"), map[string]any{"query": map[string]any{"type": "string", "minLength": 1, "maxLength": 500, "description": "要联网查询的问题或关键词"}}, "query")
+	}
 	if includeProfileTool {
 		add("agent_profile_read", cloudAgentToolText("agent_profile_read"), map[string]any{"scope": map[string]any{"type": "string", "enum": []string{"user", "project", "canvas"}}}, "scope")
 	}
@@ -727,7 +730,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 
 func CloudAgentSupportedToolNames() []string {
 	// 平台支持的工具全集：包含只在特定条件下暴露的工具（图片输入能力、已有个人记忆）。
-	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}, VisionEnabled: true, HasMemories: true}
+	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}, VisionEnabled: true, HasMemories: true, WebSearchEnabled: true}
 	req.Budget.MaxGenerationTasks = 1
 	tools := cloudAgentTools(req)
 	names := make([]string, 0, len(tools))
@@ -805,7 +808,7 @@ func cloudAgentReadToolCacheable(name string) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
+	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
 		return true
 	default:
 		return false
@@ -939,6 +942,17 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		service = services[0]
 	}
 	switch call.Function.Name {
+	case "web_search":
+		if service == nil || state == nil || !state.Request.WebSearchEnabled {
+			return nil, kernel.Forbidden("本轮未启用联网搜索")
+		}
+		var args struct {
+			Query string `json:"query"`
+		}
+		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
+			return nil, cloudAgentJSONArgumentError(err)
+		}
+		return service.agentWebSearch(args.Query)
 	case "agent_profile_read":
 		var args struct {
 			Scope string `json:"scope"`

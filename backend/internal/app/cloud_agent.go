@@ -39,12 +39,14 @@ type CloudAgentRequest struct {
 	// VisionEnabled is server-derived from the selected model input contract and persisted for the run.
 	VisionEnabled bool `json:"visionEnabled,omitempty"`
 	// HasMemories is server-derived at run creation and controls whether recall_lessons is exposed.
-	HasMemories    bool     `json:"hasMemories,omitempty"`
-	PermissionMode string   `json:"permissionMode"`
-	SkillIDs       []string `json:"skillIds,omitempty"`
-	ContextScope   []string `json:"contextScope"`
-	FocusNodeIDs   []string `json:"focusNodeIds,omitempty"`
-	Budget         struct {
+	HasMemories bool `json:"hasMemories,omitempty"`
+	// WebSearchEnabled is server-derived; no provider credentials enter the run.
+	WebSearchEnabled bool     `json:"webSearchEnabled,omitempty"`
+	PermissionMode   string   `json:"permissionMode"`
+	SkillIDs         []string `json:"skillIds,omitempty"`
+	ContextScope     []string `json:"contextScope"`
+	FocusNodeIDs     []string `json:"focusNodeIds,omitempty"`
+	Budget           struct {
 		MaxCredits         float64 `json:"maxCredits"`
 		MaxGenerationTasks int     `json:"maxGenerationTasks,omitempty"`
 		MaxVideoSeconds    int     `json:"maxVideoSeconds,omitempty"`
@@ -629,6 +631,10 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
 	// 个人记忆是长期积累的，建 run 时定格一次（运行期间不再变化）。
 	req.HasMemories = s.cloudAgentHasMemories(userID)
+	req.WebSearchEnabled, err = s.agentWebSearchEnabled()
+	if err != nil {
+		return nil, err
+	}
 	canvasSummary := ""
 	if len(req.ContextScope) != 0 {
 		canvasSummary, err = cloudAgentCanvasSummary(canvas, req.FocusNodeIDs...)

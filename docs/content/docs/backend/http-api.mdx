@@ -5,6 +5,15 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## 管理员 Agent 联网搜索
+
+- `GET /api/admin/settings/agent-web-search`：管理员读取 `{ setting: { enabled, hasApiKey, revision, updatedAt? } }`，不返回密钥或密文。
+- `PUT /api/admin/settings/agent-web-search`：提交 `{ enabled, apiKey?, clearApiKey?, expectedRevision }`，返回新配置。密钥留空保留，输入新值替换，`clearApiKey: true` 显式清空；清空与新密钥不能同时提交。启用需要已有密钥，修订号冲突返回 HTTP 409，须重新读取后保存。
+
+管理员在「Agent（beta）→ 联网搜索 · Tavily」配置全局开关和密钥，默认关闭。密钥由后端加密保存。新建父 Agent 和子 Agent 的工具能力由服务端当前配置派生，客户端不能自授 `web_search`；每次调用再次检查全局配置，关闭后拒绝已有运行的新搜索调用。开关不撤销已经发出的搜索请求；开启后需要新建运行才能获得此前未披露的工具。
+
+`web_search` 仅接受 `query`（1–500 字），后端固定调用 [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search)，使用 `basic`，最多返回 5 条标题、HTTP(S) 链接和摘要，不返回原始网页、图片或供应商生成的答案。网页内容作为不可信资料，Agent 应引用来源链接，不能把网页内容当作指令或权限。请求超时 20 秒、响应上限 1 MiB，供应商错误仅返回脱敏提示。
+
 ## 管理员 Agent 默认技能
 
 - `GET /api/admin/agent/skill-defaults`：管理员读取 `{ revision, items, totalFiles, totalBytes, contextEstimateBytes }`。每项含技能 ID、名称、固定版本 ID、版本标签、position、enabled（0/1）、status、fileCount、totalBytes；合计仅统计启用项，上下文预估是技能包整体读入的保守上限。
