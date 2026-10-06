@@ -38,8 +38,8 @@ afterEach(() => {
 });
 
 describe("canvas custom appearance", () => {
-    test("uses point grid as the default for new canvases", () => {
-        expect(DEFAULT_CANVAS_BACKGROUND_MODE).toBe("dots");
+    test("uses a blank background as the default for new canvases", () => {
+        expect(DEFAULT_CANVAS_BACKGROUND_MODE).toBe("blank");
         expect(DEFAULT_CANVAS_COLOR_THEME).toBe("dark");
     });
 
