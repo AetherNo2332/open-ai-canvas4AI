@@ -2,16 +2,16 @@ package app
 
 import (
 	"encoding/json"
-	"strconv"
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/repository"
 )
 
-// cloudAgentCompactionRatio 是触发语义压缩的上下文利用率：下一步预计输入 token
-// （优先上游实测锚点投影）达到**输入预算**（窗口 − 输出预留 − overhead）的比例时，
+// cloudAgentCompactionRatio 是触发语义压缩的上下文利用率：有效上游输入用量
+// （无实测时采用本地估算）达到**输入预算**（窗口 − 输出预留 − overhead）的比例时，
 // 暂停步进循环、把历史压成检查点，然后继续。触发线取 85%（与上游同口径）。
 const cloudAgentCompactionRatio = 0.85
 
@@ -30,9 +30,8 @@ const cloudAgentStepMaxOutputTokens = platform.DefaultRuntimeAgentStepOutputToke
 // 不限制的本意是"让模型写完"，重试却必须有个上界，否则一次卡住的调用会一直占着单步墙钟。
 const cloudAgentStepBoostFallbackTokens = 32_768
 
-// cloudAgentTokenAnchor 是"上游实测 + 本地估算"的一对读数。
-// 上游用量来自模型自己的分词器（provider 上报），是计费与压力可以采信的权威值；
-// 本地估算记录的是发出同一次请求时的读法，二者的差就是投影后续请求所需的换算基准。
+// cloudAgentTokenAnchor 保存最近的上游实测。估算及签名只用于诊断，
+// 不叠加到实测，也不能因两者差距较大而否定 provider 用量。
 type cloudAgentTokenAnchor struct {
 	TaskID          string `json:"taskId"`
 	Step            int    `json:"step"`
@@ -43,20 +42,27 @@ type cloudAgentTokenAnchor struct {
 	SourceBytes     int    `json:"sourceBytes"`
 	Accepted        bool   `json:"accepted"`
 	RejectReason    string `json:"rejectReason,omitempty"`
-	// Signature / Model / ChannelID 记录"定锚时的口径"：换了模型、线路、系统提示或工具 schema
-	// 之后，旧实测不再可比，必须作废（设计 §6 的锚点治理）。
+	// Model / ChannelID 用于拒绝不同 provider 的旧读数；Signature 保留请求诊断身份。
 	Signature string `json:"signature,omitempty"`
 	Model     string `json:"model,omitempty"`
 	ChannelID string `json:"channelId,omitempty"`
-	// ContextWindowTokens 是定锚时解析到的模型窗口（上游 #601 新增）：窗口是"离满窗还有多远"
-	// 的分母，换了窗口（管理员改了渠道模型能力、或换了路由落点）之后同一个 token 数含义就变了。
+	// ContextWindowTokens 保存实测请求当时的窗口；当前压力分母取当前配置。
 	ContextWindowTokens int `json:"contextWindowTokens,omitempty"`
 }
 
-// cloudAgentAnchorMaxAgeSteps 是锚点的最长有效期：超过这么多步没有刷新就作废。
-// 真机实测过"锚点冻结"——`anchorStep` 恒为 4、`pressureTokens` 恒 20,035，而估算从
-// 42,581 涨到 66,105，压缩决策却还在用那个老读数。
-const cloudAgentAnchorMaxAgeSteps = 3
+// 续轮继承同一模型/渠道的最新用量，独立复制，避免新 run 修改父轮诊断。
+func cloudAgentInheritedTokenAnchor(parent *cloudAgentRuntime, request CloudAgentRequest) *cloudAgentTokenAnchor {
+	if parent == nil || parent.TokenAnchor == nil || !parent.TokenAnchor.Accepted || parent.TokenAnchor.InputTokens <= 0 {
+		return nil
+	}
+	previous := parent.Request
+	if previous.Model != request.Model || previous.ChannelID != request.ChannelID || previous.ChannelModelKey != request.ChannelModelKey || previous.LogicalModelID != request.LogicalModelID {
+		return nil
+	}
+	anchor := *parent.TokenAnchor
+	anchor.Step = 0
+	return &anchor
+}
 
 // cloudAgentRequestSignature 是"某一份具体信封的口径指纹"：模型/渠道/逻辑模型 + 系统提示 +
 // 工具 schema，另加这份信封自己的模型与线路（上游 #601 新增的两个入参）。
@@ -90,13 +96,13 @@ func cloudAgentAnchorWindowTokens(budget cloudAgentContextBudget) int {
 	return budget.ContextWindowTokens
 }
 
-// cloudAgentExpireTokenAnchor 让"口径已变或太久没刷新"的锚点作废（我方的两参入口）。
-// 只标记不删除：读数仍要能显示"这个实测是多少、为什么不再用它"。
-// 比对用的是**实际发出去那份信封**的指纹与模型/线路/窗口（上游 #601 的 LastStep* 记账）；
-// 检查点还没有这些字段时（升级后第一次续跑、或调用方只构造了运行态）退回按运行态算，
-// 避免把"字段缺失"误判成"口径已变"。
+// 换模型或渠道后不再沿用旧 provider 的读数；同一 provider 的实测持续有效。
 func cloudAgentExpireTokenAnchor(runID string, state *cloudAgentRuntime) {
 	if state == nil {
+		return
+	}
+	if state.LastStepModel == "" && state.LastStepChannelID == "" {
+		cloudAgentExpireTokenAnchorForSelection(runID, state)
 		return
 	}
 	signature := state.LastStepSignature
@@ -113,56 +119,40 @@ func cloudAgentExpireTokenAnchor(runID string, state *cloudAgentRuntime) {
 	cloudAgentExpireTokenAnchorForRequest(runID, state, state.LastStepWindowTokens, signature, model, channelID)
 }
 
-// cloudAgentExpireTokenAnchorForRequest 让"口径已变、窗口已变或太久没刷新"的锚点作废。
-// 只标记不删除：读数仍要能显示"这个实测是多少、为什么不再用它"。
-func cloudAgentExpireTokenAnchorForRequest(runID string, state *cloudAgentRuntime, windowTokens int, signature, model, channelID string) {
+// 逻辑模型/自动路由的选择器不是上游模型键。运行内选择器不变，续轮已在继承时
+// 比对完整选择器；实际线路变化由 enqueue 的已解析任务输入重新核验。
+func cloudAgentExpireTokenAnchorForSelection(runID string, state *cloudAgentRuntime) {
+	if state == nil || state.TokenAnchor == nil {
+		return
+	}
+	model, channelID := firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model), state.Request.ChannelID
+	if state.Request.LogicalModelID != "" || channelID == "" {
+		model, channelID = state.TokenAnchor.Model, state.TokenAnchor.ChannelID
+	}
+	cloudAgentExpireTokenAnchorForRequest(runID, state, 0, "", model, channelID)
+}
+
+// 系统提示、工具、窗口和步数变化不删除已知用量。窗口只更新压力的分母。
+func cloudAgentExpireTokenAnchorForRequest(runID string, state *cloudAgentRuntime, _ int, _ string, model, channelID string) {
 	if state == nil || state.TokenAnchor == nil || !state.TokenAnchor.Accepted {
 		return
 	}
 	anchor := state.TokenAnchor
-	if anchor.Signature != "" && anchor.Signature != signature {
-		switch {
-		case anchor.Model != "" && anchor.Model != model:
-			anchor.RejectReason = "模型已变化，锚点作废"
-			state.event(runID, "context_transition", map[string]any{"kind": "model_changed", "reason": "anchor_signature_changed", "text": anchor.RejectReason})
-		case anchor.ChannelID != "" && anchor.ChannelID != channelID:
-			anchor.RejectReason = "供应线路已变化，锚点作废"
-			state.event(runID, "context_transition", map[string]any{"kind": "route_changed", "reason": "anchor_signature_changed", "text": anchor.RejectReason})
-		default:
-			anchor.RejectReason = "系统提示或工具 schema 已变化，锚点作废"
-		}
-		anchor.Accepted = false
+	switch {
+	case anchor.Model != "" && model != "" && anchor.Model != model:
+		anchor.RejectReason = "模型已变化，锚点作废"
+		state.event(runID, "context_transition", map[string]any{"kind": "model_changed", "reason": "anchor_signature_changed", "text": anchor.RejectReason})
+	case anchor.ChannelID != "" && channelID != "" && anchor.ChannelID != channelID:
+		anchor.RejectReason = "供应线路已变化，锚点作废"
+		state.event(runID, "context_transition", map[string]any{"kind": "route_changed", "reason": "anchor_signature_changed", "text": anchor.RejectReason})
+	default:
 		return
 	}
-	// 窗口换了（管理员改了能力、或路由落点变了）：窗口是压力读数的分母，同一个 token 数
-	// 含义已经不同，旧实测不再可比（上游 #601 的窗口治理）。
-	if windowTokens > 0 && anchor.ContextWindowTokens > 0 && windowTokens != anchor.ContextWindowTokens {
-		anchor.RejectReason = "模型窗口已变化，锚点作废"
-		anchor.Accepted = false
-		state.event(runID, "context_transition", map[string]any{
-			"kind": "window_changed", "reason": "anchor_window_changed",
-			"before": map[string]any{"contextWindowTokens": anchor.ContextWindowTokens},
-			"after":  map[string]any{"contextWindowTokens": windowTokens},
-			"text":   anchor.RejectReason,
-		})
-		return
-	}
-	if state.Step-anchor.Step > cloudAgentAnchorMaxAgeSteps {
-		anchor.RejectReason = "锚点超过 " + strconv.Itoa(cloudAgentAnchorMaxAgeSteps) + " 步未刷新，已作废"
-		anchor.Accepted = false
-	}
+	anchor.Accepted = false
 }
 
-// cloudAgentAnchorMinRatio / MaxRatio 是采信上游用量的合理区间。
-// 实测与自估差出一个量级时通常意味着换了模型或计量口径（例如上游只报缓存命中、
-// 或走了不同的协议分支），此时宁可继续用估算，也不要把压力曲线锚到错误基准上。
-const (
-	cloudAgentAnchorMinRatio = 0.5
-	cloudAgentAnchorMaxRatio = 2.0
-)
-
 // recordCloudAgentTokenAnchor 用上一步的上游实测用量给上下文压力定锚。
-// 幂等：同一任务只采信一次；没有实测或比值离谱时记录拒绝原因并保留估算。
+// 幂等：同一任务只采信一次；用量缺失时保留已有实测。
 // userID 用于限定"这条调用确实是本用户跑出来的"（上游 #601 的口径），不能只按 taskId 取。
 func (s *Service) recordCloudAgentTokenAnchor(userID string, state *cloudAgentRuntime) {
 	if s == nil {
@@ -178,9 +168,21 @@ func (s *Service) recordCloudAgentTokenAnchorWithRepository(repo *repository.Rep
 	if s == nil || state == nil {
 		return
 	}
-	// 即使这一步拿不到新的实测，也要先把"口径已变/太旧"的锚点作废，不能让压缩决策继续用它。
+	// 路由回退会改写实际任务输入，即使没有 usage 也必须核验完成时的 provider。
+	if repo != nil && state.LastStepTaskID != "" && state.LastStepOperation == cloudAgentStepOperation {
+		if task, err := repo.TaskForUser(userID, state.LastStepTaskID); err == nil && task.Status == model.TaskStatusSucceeded {
+			var input struct {
+				Config map[string]any `json:"config"`
+			}
+			if json.Unmarshal([]byte(task.InputJSON), &input) == nil {
+				state.LastStepModel = firstNonEmpty(stringValue(input.Config["model"]), state.LastStepModel)
+				state.LastStepChannelID = firstNonEmpty(stringValue(input.Config["channelId"]), state.LastStepChannelID)
+			}
+		}
+	}
+	// 用量必须属于当前 provider。取不到新用量时保留同一 provider 的上次实测。
 	cloudAgentExpireTokenAnchor(state.RuntimeRunID, state)
-	if repo == nil || state.LastStepTaskID == "" || state.LastStepEstimate <= 0 || state.LastStepSignature == "" {
+	if repo == nil || state.LastStepTaskID == "" {
 		return
 	}
 	// 只有"模型调用"这一步能配锚点：媒体任务发的是另一份请求（另一套信封），
@@ -198,28 +200,28 @@ func (s *Service) recordCloudAgentTokenAnchorWithRepository(repo *repository.Rep
 	if err != nil || !ok {
 		return
 	}
-	// A routed model may select another channel after the request was assembled.
-	// Do not project that provider's tokenizer onto a different known route.
-	if log.ChannelID != "" && state.LastStepChannelID != "" && log.ChannelID != state.LastStepChannelID {
-		return
-	}
+	// 成功回退可能改写任务线路；本次成功调用的身份和实测一起成为最新权威。
+	state.LastStepModel = firstNonEmpty(log.Model, state.LastStepModel)
+	state.LastStepChannelID = firstNonEmpty(log.ChannelID, state.LastStepChannelID)
 	anchor := &cloudAgentTokenAnchor{
 		TaskID: state.LastStepTaskID, Step: state.Step, InputTokens: log.InputTokens,
 		CachedTokens: log.CachedTokens, OutputTokens: log.OutputTokens,
 		EstimatedTokens: state.LastStepEstimate, SourceBytes: state.LastStepSourceBytes,
 		Signature: state.LastStepSignature, Model: state.LastStepModel, ChannelID: state.LastStepChannelID,
 		ContextWindowTokens: state.LastStepWindowTokens,
-	}
-	ratio := float64(anchor.InputTokens) / float64(anchor.EstimatedTokens)
-	switch {
-	case ratio < cloudAgentAnchorMinRatio:
-		anchor.RejectReason = "上游实测远低于本地估算，可能换了模型或口径"
-	case ratio > cloudAgentAnchorMaxRatio:
-		anchor.RejectReason = "上游实测远高于本地估算，可能换了模型或口径"
-	default:
-		anchor.Accepted = true
+		Accepted:            true,
 	}
 	state.TokenAnchor = anchor
+	// 完成步骤时立即广播实测，包括最后一步；不等下一次请求前的压力事件。
+	// 使用发送时保存的预算，避免事务内通过另一条数据库连接重新查询渠道配置。
+	pressure := cloudAgentContextPressure{EstimatedInputTokens: state.LastStepEstimate}
+	if state.LastStepPressure != nil {
+		pressure = *state.LastStepPressure
+	}
+	payload := cloudAgentContextPressurePayload(pressure, state)
+	payload["phase"], payload["requestId"] = "after_request", anchor.TaskID
+	payload["providerMeasurementScope"] = "completed_request"
+	state.event(state.RuntimeRunID, "context_pressure", payload)
 }
 
 // cloudAgentStepLimits 是一次模型调用实际生效的执行边界。

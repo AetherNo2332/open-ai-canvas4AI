@@ -9,7 +9,9 @@ description: Pi 原生摘要、Go 模型桥及可恢复提交合同
 
 ## 预算与上下文
 
-Go snapshot 的 `modelLimits` 提供 `overheadTokens`、`inputBudgetTokens`、`compactAtTokens`、`reservedOutputTokens`、真实请求 `maxOutputTokens` 和独立的 `summaryOutputTokens`。Go 在 `projectedTokens >= compactAtTokens` 时阻止普通模型步骤并要求先压缩；Pi 原生自动压缩保留严格 `projectedTokens > compactAtTokens` 的触发语义。两者共享同一预算线，但等于边界时由 Go 准入层先拦截，不应把两层条件描述成同一个比较符。usage 或估算的具体读数仍取各层投影。窗口未知时只使用标记为未配置的调度预算，不将占位值当作真实模型能力。
+Go snapshot 的 `modelLimits` 提供 `overheadTokens`、`inputBudgetTokens`、`compactAtTokens`、`reservedOutputTokens`、真实请求 `maxOutputTokens` 和独立的 `summaryOutputTokens`。有有效上游用量时，前端压力和 Go 压缩判断直接使用最近一次模型请求的输入 Token，不叠加本地增量；尚未取得有效上游用量时才使用本地估算。`projectedTokens` 承载这份共同读数，达到 `compactAtTokens`（输入预算的 85%）时 Go 阻止普通模型步骤并要求先压缩。Pi 的独立自动压缩关闭，继续负责 Go 已要求的原生切分、摘要与提交。窗口未知时按消息数量和字节数兜底，不将调度预算当作真实模型能力。
+
+每个成功模型步骤确认用量后，在同一事务里更新读数并发布 `context_pressure`（`phase=after_request`、`requestId` 指向刚完成的任务、`readingScope=latest_provider_request`）。发送前的压力事件沿用同一份实测。相同模型与渠道的续轮继承最近用量；暂时没有新 usage、系统提示/工具变化、窗口更新或步数增长均不使已知用量退回估算。切换模型、渠道或真正压缩后旧读数不再适用；窗口配置变化只调整压力分母。估算偏差不作为拒绝上游计数的理由。请求准入仍保留独立的体积和预算硬检查，最近实测不代表尚未发送的新内容已经被上游计数。
 
 最近原文保留量为可用输入预算的四分之一，上限 20,000 token。摘要生成使用独立输出上限 `summaryOutputTokens = max(1, min(8192, maxOutputTokens, inputBudgetTokens / 8))`，在操作开始时冻结。它与上下文窗口预留 `reservedOutputTokens` 含义不同，摘要上限不会反向改变普通模型调用的压缩触发线。原生摘要最长 32 KiB，完整检查点最长 64 KiB；合法但超出摘要预算的结果使用服务端保底。
 
@@ -41,6 +43,6 @@ Worker 重启后使用冻结 preparation 和输出预算重新运行原生编排
 
 ## 触发判定归属
 
-普通模型调用的准入线由 Go 判定：只有 Go 能看到最终信封的固定开销（服务端策略、Harness/能力/执行上下文/个人记忆与工具 schema，隔离验收实测约 20.3K tokens），并能对任务与计费做原子准入。Pi 的本地估算只覆盖会话消息，对中文内容会明显低估，因此当 Go 判定需要压缩而 Pi 以"无可压缩材料"拒绝时，Go 会收紧 Pi 的触发线（触发线压到准入线四分之一、原文保留窗口同步收到四分之一）迫使这次压缩执行，而不是等待 Pi 自行同意。
+压缩触发由 Go 判定，前端与 Go 使用同一份有效上游用量或无实测时的本地估算。Pi 的消息估算不再独立决定触发时机。Go 要求压缩而 Pi 以“无可压缩材料”拒绝时，Go 会收紧 Pi 的原文保留窗口，帮助已经决定执行的手动压缩取得合法切点。
 
 让 Pi 自行决定触发、Go 只传达状态的方案暂缓（pending）：若采用，Go 需要发布路由窗口、信封固定开销与压缩策略三项事实，并以"上游拒绝后按失败路径退款"替代现有的原子准入保证。当前实现保留 Go 作为唯一决策点。

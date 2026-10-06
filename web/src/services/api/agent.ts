@@ -87,6 +87,9 @@ export type AgentRun = {
     cleanupPending?: boolean;
     failureMessage?: string;
     model?: string;
+    channelId?: string;
+    channelModelKey?: string;
+    logicalModelId?: string;
     createdAt: string;
     updatedAt: string;
     skillRuntimeMode?: "pi-native" | "legacy-go";
@@ -114,7 +117,7 @@ export type AgentContextCompactionState = {
     turnCount?: number;
     /** 中途暂停压缩：压完继续本轮，而不是收尾。 */
     resume?: boolean;
-    /** 触发读数：下一步预计输入 token ÷ 用户配置的可用输入。 */
+    /** 触发读数：最近有效实测（无实测时估算）÷ 用户配置的可用输入。 */
     projectedTokens?: number;
     usableInputTokens?: number;
     ratio?: number;

@@ -7,7 +7,7 @@ import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
 import { agentToolRetry, mergeAgentToolRetry } from "@/lib/canvas/agent-tool-retry";
 import { agentPlanVisible, latestAgentPlanItems, latestAgentPlanTerminal, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
-import { continueAgentContextUsage, emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage, type AgentContextPhase, type AgentContextUsage, type AgentContextUsageView } from "@/lib/canvas/agent-context-usage";
+import { continueAgentContextUsage, emptyAgentContextUsage, presentAgentContextUsage, reduceAgentContextUsage, sameAgentContextSelection, type AgentContextPhase, type AgentContextUsage, type AgentContextUsageView } from "@/lib/canvas/agent-context-usage";
 import { reduceAgentRun } from "@/lib/canvas/agent-run-state";
 import { nanoid } from "nanoid";
 
@@ -869,7 +869,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             accepted = true;
             if (currentScope.current === scope) {
                 currentRunIdRef.current = result.run.id;
-                setContextUsage((current) => (submission.parentRunId ? continueAgentContextUsage(current, result.run.id) : emptyAgentContextUsage(result.run.id)));
+                setContextUsage((current) => (submission.parentRunId && sameAgentContextSelection(run, request) ? continueAgentContextUsage(current, result.run.id) : emptyAgentContextUsage(result.run.id)));
                 setRun(result.run);
             }
             await clearCloudAgentPendingSubmission(canvasId, activeConversationId);
@@ -1424,7 +1424,7 @@ export function AgentContextRing({ view }: { view: AgentContextUsageView }) {
     const remaining = formatContextCount(view.remainingTokens);
     const usedRatio = view.ratio === undefined ? 0 : Math.max(0, Math.min(1, view.ratio));
     const phaseLabel = CONTEXT_PHASE_LABEL[view.phase];
-    const sourceLabel = view.tokenSource === "provider" ? "模型实测校准" : view.estimate ? "本地估算" : "未测量";
+    const sourceLabel = view.tokenSource === "provider" ? "模型实测" : view.estimate ? "本地估算" : "未测量";
     const usageHeading = view.ratio !== undefined ? `上下文已用 ${percent}` : view.phase === "idle" ? "上下文用量" : view.phase === "unknown" ? "上下文窗口未知" : `上下文${view.label}`;
 
     return (
@@ -1441,7 +1441,7 @@ export function AgentContextRing({ view }: { view: AgentContextUsageView }) {
             getPopupContainer={() => document.body}
             content={
                 <div className="agent-context-panel" data-phase={view.phase} data-canvas-no-zoom data-canvas-wheel-scroll>
-                    <span className="agent-context-eyebrow">下一次请求</span>
+                    <span className="agent-context-eyebrow">{view.tokenSource === "provider" ? "最近模型请求" : "上下文估算"}</span>
                     <div className="agent-context-panel-head">
                         <strong>{usageHeading}</strong>
                         {view.phase !== "ok" ? <span className={`agent-context-phase is-${view.phase}`}>{phaseLabel}</span> : null}
@@ -1470,7 +1470,7 @@ export function AgentContextRing({ view }: { view: AgentContextUsageView }) {
                     <div className="agent-context-panel-foot">
                         <span>
                             {sourceLabel}
-                            {view.estimate ? " · 不是计费 Token" : " · 预计下次请求"}
+                            {view.estimate ? " · 不是计费 Token" : " · 与压缩判断一致"}
                         </span>
                         <span title={view.cacheHitRate === undefined ? "暂无模型缓存用量数据" : "上一请求的缓存读取 Token ÷ 总输入 Token"}>
                             缓存命中率 {view.cacheHitRate === undefined ? "暂无数据" : `${Math.round(view.cacheHitRate * 1000) / 10}%`}

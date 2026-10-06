@@ -11,10 +11,11 @@ const snapshot = { request: { model: "model" }, modelLimits: {
   configured: true, source: "channel-model",
 } } as unknown as PiSnapshot;
 
-test("Pi trigger matches Go and recent history fits small model windows", () => {
+test("Pi leaves triggering to Go while retaining the summary budget", () => {
   const settings = compactionSettings(snapshot);
+  assert.equal(settings.enabled, false, "Go owns the pressure decision; Pi must not independently compact using local estimates");
   assert.equal(shouldCompact(43_955, 64_000, settings), false);
-  assert.equal(shouldCompact(43_956, 64_000, settings), true);
+  assert.equal(shouldCompact(43_956, 64_000, settings), false);
   assert.equal(shouldCompact(43_954, 64_000, settings), false);
   const small = compactionSettings({ ...snapshot, modelLimits: { ...snapshot.modelLimits,
     contextWindowTokens: 8_192, inputBudgetTokens: 4_096, compactAtTokens: 3_481 } });

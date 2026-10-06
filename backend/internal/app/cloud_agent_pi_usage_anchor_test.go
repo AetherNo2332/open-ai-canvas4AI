@@ -105,7 +105,9 @@ func TestPiAssistantCheckpointPersistsProviderUsageAnchor(t *testing.T) {
 			state.TaskIDs = append(state.TaskIDs, taskID)
 			state.LastStepTaskID = taskID
 			state.LastStepOperation = cloudAgentStepOperation
-			state.LastStepEstimate = 10000
+			state.LastStepEstimate = 40 // Provider counters are authoritative even when the heuristic disagrees.
+			state.LastStepPressure = &cloudAgentContextPressure{EstimatedInputTokens: 40, ModelLimitConfigured: true,
+				UsableInputTokens: 100000, InputBudgetTokens: 100000, CompactAtTokens: 85000, ContextWindowTokens: 128000}
 			state.LastStepSourceBytes = 40000
 			state.LastStepSignature = cloudAgentRequestSignature(&state, state.Canonical, "", "text-test")
 			state.LastStepModel = "text-test"
@@ -142,6 +144,21 @@ func TestPiAssistantCheckpointPersistsProviderUsageAnchor(t *testing.T) {
 				pressure := cloudAgentContextPressurePayload(cloudAgentContextPressure{EstimatedInputTokens: 10000}, &persisted)
 				if pressure["tokenSource"] != "provider" {
 					t.Fatalf("next-step pressure should use provider anchor: %+v", pressure)
+				}
+				measuredEvents := 0
+				for _, event := range persisted.Events {
+					if event.Type == "context_pressure" && event.Payload["phase"] == "after_request" {
+						measuredEvents++
+						if event.Payload["requestId"] != taskID || event.Payload["projectedTokens"] != float64(10000) {
+							t.Fatalf("completed step must publish its exact usage: %+v", event.Payload)
+						}
+						if event.Payload["pressureRatio"] != 0.1 || event.Payload["compactionPressureRatio"] != 0.1 || event.Payload["readingScope"] != "latest_provider_request" {
+							t.Fatalf("completion must publish the same budget and measured pressure: %+v", event.Payload)
+						}
+					}
+				}
+				if measuredEvents != 1 {
+					t.Fatalf("even a final assistant step must publish one measured pressure event, got %d", measuredEvents)
 				}
 			} else if persisted.TokenAnchor != nil {
 				t.Fatalf("provider usage was unavailable but Pi checkpoint created an anchor: %+v", persisted.TokenAnchor)
