@@ -4,10 +4,12 @@ import { readFileSync } from "node:fs";
 import { latestEditedCanvasId } from "../src/lib/canvas/canvas-navigation";
 
 test("selects the most recently edited canvas deterministically", () => {
-    expect(latestEditedCanvasId([
-        { id: "older", updatedAt: "2026-10-05T10:00:00.000Z" },
-        { id: "newer", updatedAt: "2026-10-06T10:00:00.000Z" },
-    ])).toBe("newer");
+    expect(
+        latestEditedCanvasId([
+            { id: "older", updatedAt: "2026-10-05T10:00:00.000Z" },
+            { id: "newer", updatedAt: "2026-10-06T10:00:00.000Z" },
+        ]),
+    ).toBe("newer");
 });
 
 test("returns no destination when the user has no canvases", () => {
