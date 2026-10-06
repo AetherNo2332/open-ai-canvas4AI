@@ -61,9 +61,17 @@ func (r *Repository) SetAgentPhase(userID, runID, owner string, epoch int64, pha
 		if err := tx.Where("user_id = ? AND active_run_id = ? AND lease_owner = ? AND lease_epoch = ? AND lease_expires_at > ?", userID, runID, owner, epoch, time.Now()).First(&session).Error; err != nil {
 			return ErrCreationConflict
 		}
+		updates := map[string]any{"runtime_phase": phase, "wait_kind": kind, "wait_id": waitID, "wait_reason": reason, "revision": gorm.Expr("revision + 1")}
+		if phase == "waiting_tool" && kind == "tool" {
+			// The async worker may commit a dependency wait before Node reports its
+			// generic tool phase. Preserve the authoritative wait in the same write.
+			for _, field := range []string{"runtime_phase", "wait_kind", "wait_id", "wait_reason"} {
+				updates[field] = gorm.Expr("CASE WHEN wait_kind = 'subagents' THEN "+field+" ELSE ? END", updates[field])
+			}
+		}
 		updated := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND lease_owner = ? AND lease_expires_at > ? AND status IN ?", runID, userID, owner, time.Now(), []string{"running", "waiting_approval"}).
 			Where("EXISTS (SELECT 1 FROM cloud_agent_pi_sessions WHERE user_id = ? AND active_run_id = ? AND lease_owner = ? AND lease_epoch = ? AND lease_expires_at > ?)", userID, runID, owner, epoch, time.Now()).
-			Updates(map[string]any{"runtime_phase": phase, "wait_kind": kind, "wait_id": waitID, "wait_reason": reason, "revision": gorm.Expr("revision + 1")})
+			Updates(updates)
 		if updated.Error != nil {
 			return updated.Error
 		}

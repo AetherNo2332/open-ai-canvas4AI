@@ -114,6 +114,16 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 			return a < b
 		})
 		for _, candidate := range candidates {
+			// Suspended parents yield residency until their dependencies terminate.
+			if candidate.WaitKind == "subagents" {
+				var pending int64
+				if err := tx.Table("agent_subagent_links AS links").Joins("JOIN cloud_agent_executions AS child ON child.id = links.child_run_id AND child.user_id = links.user_id").Where("links.user_id = ? AND links.parent_run_id = ? AND child.status IN ?", candidate.UserID, candidate.ID, []string{"queued", "running", "waiting_approval"}).Count(&pending).Error; err != nil {
+					return err
+				}
+				if pending > 0 {
+					continue
+				}
+			}
 			key := admissionKey(candidate)
 			if counts[key] >= policy.MaxResidentPerCanvas {
 				if candidate.Status == "queued" && candidate.WaitKind != "canvas_capacity" {
@@ -133,9 +143,6 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 				continue
 			}
 			if err != nil {
-				return err
-			}
-			if err := New(tx).lockAgentCrewExecution(candidate.UserID, candidate.ID); err != nil {
 				return err
 			}
 			result := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", candidate.ID, candidate.Revision, []string{"queued", "running", "waiting_approval"}, now).Updates(map[string]any{"lease_owner": owner, "lease_expires_at": until, "status": gorm.Expr("CASE WHEN status = 'queued' THEN 'running' ELSE status END"), "runtime_phase": "ready", "wait_kind": "", "wait_reason": "", "revision": gorm.Expr("revision + 1")})
@@ -160,13 +167,6 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 				return err
 			}
 			claimed = &candidate
-			current, err := New(tx).CloudAgent(candidate.UserID, candidate.ID)
-			if err != nil {
-				return err
-			}
-			if err := New(tx).projectAgentCrewExecution(current); err != nil {
-				return err
-			}
 			return nil
 		}
 		return nil

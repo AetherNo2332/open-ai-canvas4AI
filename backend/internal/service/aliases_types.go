@@ -3,11 +3,6 @@ package service
 import "infinite-canvas/backend/internal/app"
 
 type (
-	CrewView                               = app.CrewView
-	CrewMemberInput                        = app.CrewMemberInput
-	CrewMemberView                         = app.CrewMemberView
-	CreateCrewInput                        = app.CreateCrewInput
-	UpdateCrewInput                        = app.UpdateCrewInput
 	AgentWorkspaceView                     = app.AgentWorkspaceView
 	AgentWorkspaceSkillView                = app.AgentWorkspaceSkillView
 	SkillSelection                         = app.SkillSelection
@@ -36,6 +31,9 @@ type (
 	PiSkillFileRequest                     = app.PiSkillFileRequest
 	AgentProfileRequest                    = app.AgentProfileRequest
 	AgentProfileView                       = app.AgentProfileView
+	AgentSubagentPolicyRequest             = app.AgentSubagentPolicyRequest
+	AgentSubagentPolicyView                = app.AgentSubagentPolicyView
+	AgentSubagentView                      = app.AgentSubagentView
 	AgentSkillDefaultItem                  = app.AgentSkillDefaultItem
 	AgentLessonView                        = app.AgentLessonView
 	AgentLessonAdminView                   = app.AgentLessonAdminView
