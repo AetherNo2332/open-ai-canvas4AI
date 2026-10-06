@@ -19,11 +19,11 @@ func cloudAgentToolCategory(name string) string {
 		return "agent_tools_skills"
 	case "read":
 		return "native_skill"
-	case "canvas_list_node_types", "canvas_get_state", "canvas_read_batch_table", "canvas_read_storyboard":
+	case "canvas_list_node_types", "canvas_get_state", "canvas_read_batch_table", "canvas_read_storyboard", "previs_scene_read":
 		return "agent_tools_canvas_read"
 	case "image_text_detect", "image_annotation_render", "canvas_inspect_image":
 		return "agent_tools_image"
-	case "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_apply_ops", "canvas_arrange_nodes", "canvas_create_character":
+	case "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_apply_ops", "canvas_arrange_nodes", "canvas_create_character", "previs_scene_create", "previs_apply_patch", "previs_preview":
 		return "agent_tools_canvas_edit"
 	case "model_list", "generate_media", "image_layer_split":
 		return "agent_tools_generation"

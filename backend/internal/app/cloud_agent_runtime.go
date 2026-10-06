@@ -1412,7 +1412,13 @@ func cloudAgentRebaseWriteSnapshot(state *cloudAgentRuntime, call cloudAgentCall
 }
 
 // recordCanvasBatchHash 在写入成功后登记本批的版本链（写入前的版本 + 写入产出的版本）。
-func (state *cloudAgentRuntime) recordCanvasBatchHash(result any) {
+func (state *cloudAgentRuntime) recordCanvasBatchHash(result any, toolName string) {
+	// Previs uses a scene snapshotHash for its own optimistic concurrency. It
+	// must never enter the whole-canvas batch chain used to rebase canvas writes.
+	// Only results from canvas write tools carry the canvas snapshot contract.
+	if state == nil || !cloudAgentCanvasWriteTool(toolName) {
+		return
+	}
 	fields, ok := result.(map[string]any)
 	if !ok {
 		return
@@ -1470,7 +1476,7 @@ func cloudAgentInvalidateReadCache(state *cloudAgentRuntime) {
 	// profile preferences, and the model catalog do not change when a canvas is
 	// edited, so retaining them avoids re-reading large unrelated tool results.
 	for key := range state.ToolReadResults {
-		if strings.HasPrefix(key, "canvas_get_state:") || strings.HasPrefix(key, "canvas_read_storyboard:") {
+		if strings.HasPrefix(key, "canvas_get_state:") || strings.HasPrefix(key, "canvas_read_storyboard:") || strings.HasPrefix(key, "previs_scene_read:") {
 			delete(state.ToolReadResults, key)
 			delete(state.ToolReadReplays, key)
 		}
@@ -1676,6 +1682,21 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 					if err == nil {
 						preview = characterPlan.Preview
 					}
+				case "previs_scene_create":
+					plan, err := prepareCloudAgentPrevisSceneCreate(repo, run.UserID, state.Request.CanvasID, call)
+					mutationErr = err
+					if err == nil {
+						preview = plan.Preview
+					}
+				case "previs_preview":
+					_, mutationErr = cloudAgentPrevisPreview(repo, run.UserID, state.Request.CanvasID, call)
+					preview = cloudAgentApprovalPreview{Kind: "previs_preview", Title: "预演台白膜输出", Description: "批准后由打开的预演台录制、上传并回写画布构图与素材", Items: []cloudAgentApprovalPreviewItem{{Operation: "previs_preview", Summary: "批准后由打开的预演台录制、上传并回写画布"}}}
+				case "previs_apply_patch":
+					plan, err := prepareCloudAgentPrevisApplyPatch(repo, run.UserID, state.Request.CanvasID, call)
+					mutationErr = err
+					if err == nil {
+						preview = plan.Preview
+					}
 				case "canvas_arrange_nodes":
 					arrangePlan, err := prepareCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call)
 					mutationErr = err
@@ -1844,6 +1865,10 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 				result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 			case call.Function.Name == "canvas_create_character":
 				result, toolErr = applyCloudAgentCharacterCreate(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "previs_scene_create", call.Function.Name == "previs_apply_patch":
+				result, toolErr = applyCloudAgentPrevisMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "previs_preview":
+				result, toolErr = cloudAgentPrevisPreview(repo, run.UserID, state.Request.CanvasID, call)
 			case call.Function.Name == "canvas_inspect_image":
 				result, toolErr = inspectionResult, inspectionErr
 				if toolErr == nil && inspectionResult != nil {
@@ -1908,7 +1933,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 				return cloudAgentSave(current, state)
 			}
 			if toolErr == nil {
-				state.recordCanvasBatchHash(result)
+				state.recordCanvasBatchHash(result, call.Function.Name)
 			}
 			if call.Function.Name == "plan_update" && toolErr == nil {
 				state.event(run.ID, "plan_updated", map[string]any{"items": state.Plan, "pendingTitles": cloudAgentPendingPlanItems(state.Plan)})

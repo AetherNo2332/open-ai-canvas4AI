@@ -60,7 +60,9 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("wire schema: %d tools, %d bytes", len(cloudAgentToolNames(tools)), len(wire))
-	if len(wire) > 40000 {
-		t.Fatalf("模型实际接收的完整工具 schema 超出 40000 字节：%d", len(wire))
+	// The four previs tools add the closed scene/animation patch schema (~6KB).
+	// Keep an explicit ceiling on the full catalog rather than removing contracts.
+	if len(wire) > 46000 {
+		t.Fatalf("模型实际接收的完整工具 schema 超出 46000 字节：%d", len(wire))
 	}
 }

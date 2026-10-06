@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
+	"reflect"
 	"time"
 
 	"gorm.io/gorm"
@@ -498,8 +500,9 @@ func isTerminalCloudAgentRunStatus(status string) bool {
 
 // sameJSONDocument compares event records by JSON meaning rather than source
 // bytes. Event payloads may contain json.RawMessage (for example tool arguments),
-// so decode/re-encode can legally normalize whitespace or object key order while
-// preserving the immutable event contract.
+// so decode/re-encode can legally normalize whitespace, object key order, or
+// numeric spellings such as 0.0 and 0 while preserving the immutable event
+// contract.
 func sameJSONDocument(left, right string) bool {
 	decode := func(raw string) (any, error) {
 		decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
@@ -512,16 +515,35 @@ func sameJSONDocument(left, right string) bool {
 		if err := decoder.Decode(&extra); err == nil {
 			return nil, fmt.Errorf("multiple JSON documents")
 		}
-		return value, nil
+		return canonicalJSONValue(value), nil
 	}
 	leftValue, leftErr := decode(left)
 	rightValue, rightErr := decode(right)
 	if leftErr != nil || rightErr != nil {
 		return left == right
 	}
-	leftCanonical, leftErr := json.Marshal(leftValue)
-	rightCanonical, rightErr := json.Marshal(rightValue)
-	return leftErr == nil && rightErr == nil && bytes.Equal(leftCanonical, rightCanonical)
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+type canonicalJSONNumber string
+
+func canonicalJSONValue(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		if rational, ok := new(big.Rat).SetString(typed.String()); ok {
+			return canonicalJSONNumber(rational.RatString())
+		}
+		return canonicalJSONNumber(typed.String())
+	case []any:
+		for index := range typed {
+			typed[index] = canonicalJSONValue(typed[index])
+		}
+	case map[string]any:
+		for key, nested := range typed {
+			typed[key] = canonicalJSONValue(nested)
+		}
+	}
+	return value
 }
 
 func (r *Repository) CreateCloudAgentCanvasMutation(mutation *model.CloudAgentCanvasMutation) error {

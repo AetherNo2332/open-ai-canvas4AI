@@ -69,7 +69,7 @@ var (
 	// Top-level keys only the browser writes.
 	cloudAgentCanvasUIKeys = map[string]bool{
 		"viewport": true, "updatedAt": true, "activeChatId": true, "chatSessions": true,
-		"directorScenes": true, "showImageInfo": true, "starterMode": true,
+		"showImageInfo": true, "starterMode": true,
 		"backgroundMode": true, "appearance": true,
 	}
 	// Node fields stamped by the client on save, not authored by the Agent.

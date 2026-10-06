@@ -554,6 +554,25 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		map[string]any{"summary": str(cloudAgentToolText("parameter_007"))},
 		"summary")
 	if len(req.ContextScope) > 0 {
+		add("previs_scene_read", "读取预演摘要；无 sceneId 返回目录和 canvasSnapshotHash，有则返回场景与 snapshotHash。includeTransforms=true 返回坐标；不返回 URL/storage key。", map[string]any{
+			"sceneId":           str("可选。省略返回目录；提供则精读该场景"),
+			"shotId":            str("可选。精读特定镜头；需同时提供 sceneId"),
+			"objectIds":         map[string]any{"type": "array", "maxItems": 16, "items": str("可选。精读特定对象 ID")},
+			"includeTransforms": map[string]any{"type": "boolean"},
+		})
+		if req.PermissionMode != "read_only" {
+			add("previs_preview", "请求当前预演台生成白模视频；先用 previs_scene_read 确认 sceneId、shotId。", map[string]any{
+				"sceneId":  str("导演场景 ID"),
+				"shotId":   str("镜头 ID"),
+				"duration": map[string]any{"type": "number", "minimum": 0.1, "maximum": 60},
+				"fps":      map[string]any{"type": "integer", "minimum": 1, "maximum": 60},
+				"output":   map[string]any{"type": "string", "enum": []string{"clay_video"}},
+			}, "sceneId", "shotId")
+		}
+		if req.PermissionMode != "read_only" {
+			add("previs_scene_create", "创建预演场景；先读 canvasSnapshotHash。", cloudAgentPrevisSceneCreateSchema()["properties"].(map[string]any), "canvasSnapshotHash", "sceneId", "title", "templateId")
+			add("previs_apply_patch", "审批后应用语义补丁，最多32项；先读 snapshotHash。支持场景、镜头、对象、相机、灯光、动画；角色绑定须匹配画布角色卡，动画时间不超镜头时长。禁止原始 JSON、URL、storage key。", cloudAgentPrevisApplyPatchSchema()["properties"].(map[string]any), "snapshotHash", "sceneId", "operations")
+		}
 		add("canvas_list_node_types", cloudAgentToolText("canvas_list_node_types"), map[string]any{})
 		add("canvas_get_state", cloudAgentToolText("canvas_get_state"), map[string]any{
 			"offset":           map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_008")},
@@ -772,7 +791,7 @@ func cloudAgentToolAllowed(req CloudAgentRequest, name string) bool {
 // cloudAgentWrite 表示"需要审批的写入类工具"：它会改变用户可见状态，因此按权限模式进入
 // 审批链。这里保留上游的 image_layer_split（它同样走媒体审批与计费）。
 func cloudAgentWrite(name string) bool {
-	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character"
+	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == "previs_scene_create" || name == "previs_apply_patch" || name == "previs_preview"
 }
 
 // cloudAgentCanvasWriteTool 标记"调用返回即表示已经落到画布上"的写入工具。
@@ -799,7 +818,7 @@ const cloudAgentMaxReadToolCallsPerRun = 32
 
 func cloudAgentReadToolCacheable(name string) bool {
 	switch name {
-	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "skill_read_file", "model_list":
+	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "skill_read_file", "model_list":
 		return true
 	default:
 		return false
@@ -808,7 +827,7 @@ func cloudAgentReadToolCacheable(name string) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
+	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
 		return true
 	default:
 		return false
@@ -843,7 +862,7 @@ func cloudAgentReadCacheKeyForState(repo *repository.Repository, userID string, 
 		return key
 	}
 	switch call.Function.Name {
-	case "canvas_get_state", "canvas_read_storyboard":
+	case "canvas_get_state", "canvas_read_storyboard", "previs_scene_read":
 		if repo != nil {
 			if canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID); err == nil && canvas != nil {
 				return fmt.Sprintf("%s:canvas-revision:%d", key, canvas.Revision)
@@ -994,6 +1013,10 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 			return nil, cloudAgentJSONArgumentError(err)
 		}
 		return cloudAgentNodeTypes(), nil
+	case "previs_scene_read":
+		return cloudAgentPrevisSceneRead(repo, userID, state.Request.CanvasID, call)
+	case "previs_preview":
+		return cloudAgentPrevisPreview(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":
 		var args struct {
 			Offset           int      `json:"offset"`
