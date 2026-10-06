@@ -1424,11 +1424,18 @@ func (state *cloudAgentRuntime) recordCanvasBatchHash(result any, toolName strin
 		return
 	}
 	produced, _ := fields["snapshotHash"].(string)
+	if toolName == "previs_scene_create" || toolName == "previs_apply_patch" {
+		produced, _ = fields["canvasSnapshotHash"].(string)
+	}
 	if produced == "" {
 		return
 	}
 	if len(state.CanvasBatchHashes) == 0 {
-		if before, _ := fields["beforeSnapshotHash"].(string); before != "" {
+		before, _ := fields["beforeSnapshotHash"].(string)
+		if toolName == "previs_scene_create" || toolName == "previs_apply_patch" {
+			before, _ = fields["beforeCanvasSnapshotHash"].(string)
+		}
+		if before != "" {
 			state.CanvasBatchHashes = append(state.CanvasBatchHashes, before)
 		}
 	}

@@ -611,3 +611,8 @@
 - 完成 Agent/Worker 观测基础闭环：统一运行、队列、工具、模型调用和上下文压缩事件，加入管理员运行总览聚合接口。
 - 增加可选 OTLP Collector、Prometheus、Tempo、Grafana Compose 观测栈、Grafana 看板和管理员跳转入口。
 - 增加 Golden Dataset 脱敏校验、观测告警运行手册和观测后端不可用时的有界降级。
+
+## v1.5.7.3(63e0fc0)
+
+- 预演台：切换 director 实现为 previs 工作台，接入场景模板、四种模式、路径/机位、预览回写与 Agent 语义工具。
+- 开发阶段不保留 director 字段兼容层；预演场景快照与画布快照分离校验。
