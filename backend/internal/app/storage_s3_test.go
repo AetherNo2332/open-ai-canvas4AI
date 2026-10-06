@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"infinite-canvas/backend/internal/storage"
 )
 
 func TestS3ObjectOperationsUsePathStyleSessionTokenAndNoManagedHeaders(t *testing.T) {
@@ -48,7 +50,7 @@ func TestS3ObjectOperationsUsePathStyleSessionTokenAndNoManagedHeaders(t *testin
 	}))
 	defer server.Close()
 
-	setting := ossSettingValue{Provider: s3Provider, Region: "us-east-1", Endpoint: server.URL, Bucket: "bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value", SessionToken: "session-token"}
+	setting := ossSettingValue{Provider: s3Provider, Region: "us-east-1", Endpoint: server.URL, Bucket: "bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value", SessionToken: "session-token", PathStyle: true}
 	etag, err := putS3Object(setting, "prefix/object.txt", "text/plain", 7, bytes.NewReader([]byte("payload")))
 	if err != nil || etag != "etag-value" {
 		t.Fatalf("putS3Object() = %q, %v", etag, err)
@@ -114,6 +116,37 @@ func TestS3EndpointAndDigestsEnforceStorageContract(t *testing.T) {
 	}
 	if storageLocationDigest(base) == storageLocationDigest(moved) {
 		t.Fatal("location change did not create a different digest")
+	}
+}
+
+func TestS3PathStyleSwitchControlsSDKFlag(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	for _, test := range []struct {
+		name      string
+		pathStyle bool
+		want      bool
+	}{
+		{name: "disabled", pathStyle: false, want: false},
+		{name: "forced", pathStyle: true, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client, err := storage.NewS3Client(storage.Settings{
+				Region:          "us-east-1",
+				Endpoint:        server.URL,
+				Bucket:          "bucket",
+				AccessKeyID:     "access-id",
+				AccessKeySecret: "secret-value",
+				PathStyle:       test.pathStyle,
+			}, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := client.Config.S3ForcePathStyle != nil && *client.Config.S3ForcePathStyle; got != test.want {
+				t.Fatalf("S3ForcePathStyle = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
