@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import { agentErrorPresentation, agentRunErrorMessage, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
+import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
 import { effectiveAgentDefaultSkills } from "@/lib/canvas/agent-effective-skill-defaults";
 import {
     cancelAgentRun,
@@ -1969,7 +1969,7 @@ function applyAgentEvent(
         if (terminal) {
             setMessages((current) => current.map((message) => (message.id === `plan-${event.runId}` && message.planItems?.length ? { ...message, planTerminal: true, streaming: false } : message)));
         }
-        if (payload.failureMessage) setMessages((current) => appendUniqueMessage(current, agentRunErrorMessage(event)));
+        if (payload.failureMessage) setMessages((current) => appendAgentError(current, `terminal-${event.runId}`, String(payload.failureMessage)));
         if (snapshotApproval && !snapshotApproval.decision && snapshotApproval.approvalId) {
             setApproval((current) => ({ approvalId: snapshotApproval.approvalId, detail: snapshotApproval, reason: current?.approvalId === snapshotApproval.approvalId ? current.reason : snapshotApproval.reason || "" }));
         } else {
@@ -2165,7 +2165,7 @@ function applyAgentEvent(
         );
         return;
     }
-    if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendUniqueMessage(current, agentRunErrorMessage(event)));
+    if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendAgentError(current, event.eventId, text || "Agent 执行失败"));
 }
 
 function toolDetailRecord(value: unknown): Record<string, unknown> {
