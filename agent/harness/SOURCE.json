@@ -5,13 +5,13 @@
       "file": "SYSTEM_POLICY.md",
       "source": "backend/internal/prompts/agent-system-policy.md",
       "stripFrontmatter": true,
-      "sha256": "61ee45a1f50340c9f682f769e9b1850c499925ca1cc78af34284d19f7ecd2c5d"
+      "sha256": "60717ed2590e1c13175d60f6d55d9400d485d685ee3c1d256f4dbd2e76df933e"
     },
     {
       "file": "MEDIA_POLICY.md",
       "source": "backend/internal/prompts/agent-media-policy.md",
       "stripFrontmatter": true,
-      "sha256": "ea7ccca5bed9dd02ba7c90c126ef0c57f5c390f5f40aabdc9ecce4744fe14fab"
+      "sha256": "530ca1e15febfac136c73b640a886b66b7c6b7f2a8a850413fa09883b0dd1291"
     },
     {
       "file": "TOOL_DESCRIPTIONS.md",
