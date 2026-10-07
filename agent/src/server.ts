@@ -6,7 +6,7 @@ import type { ToolSchemaArtifact } from "./tool-disclosure.js";
 import { loadHarnessPrompt, runCanvasAgent } from "./runner.js";
 import { RuntimeConfigController } from "./runtime-config.js";
 import { EventScheduler, RunEvents, runEventSessions } from "./event-scheduler.js";
-import { FatalWorkerError } from "./tool-disclosure.js";
+import { runLeasedPiSession, workerErrorSummary } from "./worker-runtime.js";
 
 const token = process.env.CANVAS_AGENT_INTERNAL_TOKEN;
 const backend = process.env.CANVAS_BACKEND_INTERNAL_URL || "http://backend:8080";
@@ -63,16 +63,12 @@ await runEventSessions({
   createBridge: (index) => new CanvasBridge(backend, token,
     `${hostname()}-${process.pid}-${index + 1}`.slice(0, 80), scheduler, events),
   run: async (bridge, run, signal) => {
-    try { await runCanvasAgent(bridge, run, signal, harness, toolSchema); }
-    catch (error) {
-      if (error instanceof FatalWorkerError && !signal.aborted) await bridge.failRun(run, error.message).catch(() => {});
-      throw error;
-    }
+    await runLeasedPiSession(bridge, run, signal, (b, r, s) => runCanvasAgent(b, r, s, harness, toolSchema));
   },
   onError: (workerId, error) => {
     // Leave the lease to expire. The next worker reconciles persisted messages
     // and receipts before it sends another model or canvas operation.
-    console.error(`Pi worker ${workerId} run failed:`, error instanceof Error ? error.message : String(error));
+    console.error(`Pi worker ${workerId} run failed:`, workerErrorSummary(error));
   },
 });
 clearInterval(configRecovery);unsubscribeConfig();
