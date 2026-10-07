@@ -34,7 +34,7 @@ export function TaskGridCard({ task, actingId, onOpen, onRetry }: { task: Genera
                     <Tooltip title="查看详情">
                         <IconButton size="sm" variant="ghost" icon={Eye} aria-label="查看详情" onClick={onOpen} />
                     </Tooltip>
-                    {isFailed ? (
+                    {isFailed && task.type !== "previs_render" ? (
                         <Tooltip title={retryDisabled ? "内容审核失败，无法自动重试" : task.canRecoverMedia ? "重试保存，不重新生成" : "重试任务"}>
                             <Button
                                 type="text"

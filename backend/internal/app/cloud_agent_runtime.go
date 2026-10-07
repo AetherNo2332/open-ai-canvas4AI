@@ -88,14 +88,15 @@ func (e *cloudAgentReadLoopError) Error() string {
 }
 
 type cloudAgentApproval struct {
-	Prepared  *cloudAgentPreparedMedia  `json:"prepared,omitempty"`
-	ModelName string                    `json:"modelName,omitempty"`
-	ID        string                    `json:"approvalId"`
-	Call      cloudAgentCall            `json:"call"`
-	CallHash  string                    `json:"callHash,omitempty"`
-	Preview   cloudAgentApprovalPreview `json:"preview"`
-	Decision  string                    `json:"decision,omitempty"`
-	Reason    string                    `json:"reason,omitempty"`
+	PrevisSourceHash string                    `json:"previsSourceHash,omitempty"`
+	Prepared         *cloudAgentPreparedMedia  `json:"prepared,omitempty"`
+	ModelName        string                    `json:"modelName,omitempty"`
+	ID               string                    `json:"approvalId"`
+	Call             cloudAgentCall            `json:"call"`
+	CallHash         string                    `json:"callHash,omitempty"`
+	Preview          cloudAgentApprovalPreview `json:"preview"`
+	Decision         string                    `json:"decision,omitempty"`
+	Reason           string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
 	ActiveSubagents   int                       `json:"activeSubagents,omitempty"`
@@ -587,7 +588,7 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 		return errors.New("Agent runtime active task is not in task history")
 	}
 	if state.MediaTaskID != "" {
-		if !cloudAgentContainsString(state.TaskIDs, state.MediaTaskID) || state.CallIndex >= len(state.Calls) || (state.Calls[state.CallIndex].Function.Name != "generate_media" && state.Calls[state.CallIndex].Function.Name != "image_layer_split") {
+		if !cloudAgentContainsString(state.TaskIDs, state.MediaTaskID) || state.CallIndex >= len(state.Calls) || (state.Calls[state.CallIndex].Function.Name != "generate_media" && state.Calls[state.CallIndex].Function.Name != "image_layer_split" && state.Calls[state.CallIndex].Function.Name != "previs_preview") {
 			return errors.New("Agent runtime media task is not attached to current call")
 		}
 	}
@@ -1637,6 +1638,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 		defer s.storageMu.Unlock()
 		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 			var preview cloudAgentApprovalPreview
+			var previsSourceHash string
 			var preparedMedia *cloudAgentPreparedMedia
 			if plan != nil {
 				if err := createCloudAgentMediaNode(repo, run.UserID, state.Request.CanvasID, plan, nil, policy, cloudAgentCanvasEventRecorder(run.ID, state)); err != nil {
@@ -1696,8 +1698,10 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 						preview = plan.Preview
 					}
 				case "previs_preview":
-					_, mutationErr = cloudAgentPrevisPreview(repo, run.UserID, state.Request.CanvasID, call)
-					preview = cloudAgentApprovalPreview{Kind: "previs_preview", Title: "预演台白膜输出", Description: "批准后由打开的预演台录制、上传并回写画布构图与素材", Items: []cloudAgentApprovalPreviewItem{{Operation: "previs_preview", Summary: "批准后由打开的预演台录制、上传并回写画布"}}}
+					var prepared previsRenderInput
+					prepared, mutationErr = preparePrevisRender(repo, run.UserID, state.Request.CanvasID, call)
+					previsSourceHash = prepared.SourceHash
+					preview = cloudAgentApprovalPreview{Kind: "previs_preview", Title: "导演台白模输出", Description: "批准后服务器生成白模视频和构图帧并回写画布，关闭网页仍会执行", Items: []cloudAgentApprovalPreviewItem{{Operation: "previs_preview", Summary: "后台生成预演并回写画布"}}}
 				case "previs_apply_patch":
 					plan, err := prepareCloudAgentPrevisApplyPatch(repo, run.UserID, state.Request.CanvasID, call)
 					mutationErr = err
@@ -1736,7 +1740,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 					return mutationErr
 				}
 			}
-			state.Approval = &cloudAgentApproval{ID: fmt.Sprintf("%s-%d-%d", run.ID, state.Step, state.CallIndex), Call: call, CallHash: cloudAgentApprovalCallHash(call), Preview: preview, ModelName: modelName, Prepared: preparedMedia}
+			state.Approval = &cloudAgentApproval{ID: fmt.Sprintf("%s-%d-%d", run.ID, state.Step, state.CallIndex), Call: call, CallHash: cloudAgentApprovalCallHash(call), Preview: preview, ModelName: modelName, Prepared: preparedMedia, PrevisSourceHash: previsSourceHash}
 			if preparedMedia != nil {
 				if err := pinCloudAgentPreparedMedia(repo, run.UserID, run.ID, state.Approval.ID, preparedMedia); err != nil {
 					return err
@@ -1777,6 +1781,9 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return s.terminateCloudAgent(run, "Agent 运行策略不可用，本轮已停止")
+	}
+	if allowed && call.Function.Name == "previs_preview" {
+		return s.advanceCloudAgentPrevis(run, state, call, policy)
 	}
 	// 看图的资源与能力校验在写事务外完成；真实图片只在模型任务执行时读取。
 	var inspectionResult any
@@ -2324,6 +2331,13 @@ func (s *Service) cloudAgentMediaError(run *model.CloudAgentExecution, state *cl
 }
 
 func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
+	if call.Function.Name == "previs_preview" {
+		policy, err := s.RuntimePolicy()
+		if err != nil {
+			return err
+		}
+		return s.advanceCloudAgentPrevis(run, state, call, policy)
+	}
 	if state.MediaTaskID != "" {
 		task, err := s.repo.TaskForUser(run.UserID, state.MediaTaskID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -2564,7 +2578,7 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 		return err
 	}
 	if run.Status == "completed" || ((run.Status == "failed" || run.Status == "cancelled") && !run.CleanupPending) {
-		return nil
+		return s.cancelRunPrevis(ctx, userID, id)
 	}
 	if run.Status != "failed" && run.Status != "cancelled" {
 		// Persist intent independently of the transcript. Retrying also repairs
@@ -2609,6 +2623,10 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 	}
 	latest, err := s.repo.CloudAgent(userID, id)
 	if err != nil {
+		return err
+	}
+	// Persist the run stop first so concurrent tool calls cannot enqueue new work.
+	if err := s.cancelRunPrevis(ctx, userID, id); err != nil {
 		return err
 	}
 	if err := s.cancelDynamicSubagents(ctx, userID, id); err != nil {
