@@ -78,6 +78,9 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 	if err != nil {
 		return nil, err
 	}
+	if err := validateCloudAgentConnectionCapacities(repo, doc, args.Ops); err != nil {
+		return nil, err
+	}
 	return &cloudAgentCanvasMutationPlan{
 		Args:               args,
 		Canvas:             canvas,
@@ -89,6 +92,15 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 }
 
 func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloudAgentApprovalPreviewItem, error) {
+	original := doc
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	doc = nil
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
 	nodes := creationMaps(doc["nodes"])
 	edges := creationMaps(doc["connections"])
 	items := make([]cloudAgentApprovalPreviewItem, 0, len(ops))
@@ -164,24 +176,47 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 			if fromIndex < 0 || toIndex < 0 || op.FromNodeID == op.ToNodeID {
 				return nil, BadAuthRequest("连线端点不存在或指向自身")
 			}
-			if err := validateCloudAgentConnection(nodes, op.FromNodeID, op.ToNodeID, edges); err != nil {
+			if err := validateCloudAgentCanvasConnection(nodes, edges, op); err != nil {
 				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", cloudAgentSafeToolError(err))
 			}
 			for _, edge := range edges {
-				if stringValue(edge["id"]) == op.ID || (stringValue(edge["fromNodeId"]) == op.FromNodeID && stringValue(edge["toNodeId"]) == op.ToNodeID) {
+				if stringValue(edge["id"]) == op.ID {
 					return nil, BadAuthRequest("连线重复")
 				}
 			}
 			fromCapability, _ := cloudAgentNodeCapabilityForNode(nodes[fromIndex])
 			toCapability, _ := cloudAgentNodeCapabilityForNode(nodes[toIndex])
+			if fromCapability.Type == "" {
+				fromCapability.Type = stringValue(nodes[fromIndex]["type"])
+				fromCapability.Label = fromCapability.Type
+			}
+			if toCapability.Type == "" {
+				toCapability.Type = stringValue(nodes[toIndex]["type"])
+				toCapability.Label = toCapability.Type
+			}
 			fromTitle := cloudAgentApprovalNodeTitle(nodes[fromIndex], fromCapability.Label)
 			toTitle := cloudAgentApprovalNodeTitle(nodes[toIndex], toCapability.Label)
-			edges = append(edges, map[string]any{"id": op.ID, "fromNodeId": op.FromNodeID, "toNodeId": op.ToNodeID})
+			edge := map[string]any{"id": op.ID, "fromNodeId": op.FromNodeID, "toNodeId": op.ToNodeID}
+			if op.FromHandleID != "" {
+				edge["fromHandleId"] = op.FromHandleID
+			}
+			if op.ToHandleID != "" {
+				edge["toHandleId"] = op.ToHandleID
+			}
+			details := attachCloudAgentConnection(nodes, op)
+			if op.FromHandleID != "" {
+				details = append(details, "来源端口："+op.FromHandleID)
+			}
+			if op.ToHandleID != "" {
+				details = append(details, "目标端口："+op.ToHandleID)
+			}
+			edges = append(edges, edge)
 			items = append(items, cloudAgentApprovalPreviewItem{
 				Operation: "connect_nodes", NodeID: op.FromNodeID, NodeTitle: fromTitle,
 				NodeType: fromCapability.Type, NodeTypeLabel: fromCapability.Label,
 				TargetNodeID: op.ToNodeID, TargetNodeTitle: toTitle, TargetNodeType: toCapability.Type,
-				Summary: fmt.Sprintf("建立《%s》→《%s》的引用连线", fromTitle, toTitle),
+				Details: details,
+				Summary: fmt.Sprintf("建立《%s》→《%s》的连线", fromTitle, toTitle),
 			})
 		case "update_node":
 			if len(op.Patch) == 0 {
@@ -220,8 +255,8 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 			return nil, BadAuthRequest("不支持的画布写操作")
 		}
 	}
-	doc["nodes"] = nodes
-	doc["connections"] = edges
+	original["nodes"] = nodes
+	original["connections"] = edges
 	return items, nil
 }
 

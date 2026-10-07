@@ -196,7 +196,7 @@ describe("异步预演台输出使用最新权威状态", () => {
         expect(hook).toContain("const sourceNode = nodesRef.current.find((item) => item.id === sourceNodeId);");
         expect(hook).toContain("const latestScene = outputProject?.previsScenes.find");
         expect(hook).toContain("mergePrevisOutputPreview(latestScene");
-        expect(hook).toContain("savePrevisScene(mergedScene);");
+        expect(hook).toContain("savePrevisScene(mergedSceneAfterAssets);");
         expect(hook).not.toContain("savePrevisScene({ ...output.scene");
     });
 });

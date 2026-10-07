@@ -468,6 +468,11 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 		toIncluded := included[stringValue(edge["toNodeId"])]
 		if (selectedMode && fromIncluded && toIncluded) || (!selectedMode && (fromIncluded || toIncluded)) {
 			item := map[string]any{"id": edge["id"], "fromNodeId": edge["fromNodeId"], "toNodeId": edge["toNodeId"]}
+			for _, key := range []string{"fromHandleId", "toHandleId", "relation", "storyboardRowId"} {
+				if value := stringValue(edge[key]); value != "" {
+					item[key] = value
+				}
+			}
 			body, _ := json.Marshal(item)
 			if pageBytes+len(body) > cloudAgentReadPageBytes {
 				nextConnection = index

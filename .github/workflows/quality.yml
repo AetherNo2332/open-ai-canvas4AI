@@ -168,4 +168,4 @@ jobs:
       - name: Director P0 Chrome E2E
         run: |
           google-chrome --version || chromium --version
-          bun run test:director:e2e
+          bun run test:previs:e2e

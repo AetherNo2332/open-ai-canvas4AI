@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/canvas/connection"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -665,16 +666,18 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"globalPrompt": str(cloudAgentToolText("parameter_055")),
 		}, "snapshotHash", "nodeId", "action")
 		opProperties := map[string]any{
-			"type":       map[string]any{"type": "string", "enum": []string{"add_node", "update_node", "connect_nodes"}, "description": cloudAgentToolText("parameter_056")},
-			"id":         str(cloudAgentToolText("parameter_057")),
-			"nodeType":   map[string]any{"type": "string", "enum": cloudAgentNodeTypeNames()},
-			"title":      str(cloudAgentToolText("parameter_058")),
-			"content":    str(cloudAgentToolText("parameter_059")),
-			"patch":      cloudAgentPatchSchema(),
-			"fromNodeId": str(cloudAgentToolText("parameter_060")),
-			"toNodeId":   str(cloudAgentToolText("parameter_061")),
-			"x":          map[string]any{"type": "number"},
-			"y":          map[string]any{"type": "number"},
+			"type":         map[string]any{"type": "string", "enum": []string{"add_node", "update_node", "connect_nodes"}, "description": cloudAgentToolText("parameter_056")},
+			"id":           str(cloudAgentToolText("parameter_057")),
+			"nodeType":     map[string]any{"type": "string", "enum": cloudAgentNodeTypeNames()},
+			"title":        str(cloudAgentToolText("parameter_058")),
+			"content":      str(cloudAgentToolText("parameter_059")),
+			"patch":        cloudAgentPatchSchema(),
+			"fromNodeId":   str(cloudAgentToolText("parameter_060")),
+			"toNodeId":     str(cloudAgentToolText("parameter_061")),
+			"fromHandleId": str("可选来源端口：script 支持 row:<真实行ID> 或 storyboard:context"),
+			"toHandleId":   str("可选目标端口：script 支持 row:<真实行ID> 或 storyboard:context；batch-table 支持 batch-reference:<列ID>"),
+			"x":            map[string]any{"type": "number"},
+			"y":            map[string]any{"type": "number"},
 		}
 		opItem := map[string]any{
 			"type":                 "object",
@@ -1406,10 +1409,12 @@ type agentCanvasOp struct {
 	Patch    map[string]any `json:"patch"`
 	// X/Y 为指针：nil 表示模型没有指定坐标，服务端按画布内容自动落位（不再落到原点重叠）。
 	// 指针语义与 canvas/capability/builtin.go 的 positionPatchFields 一致（坐标是可选的数字）。
-	X          *float64 `json:"x"`
-	Y          *float64 `json:"y"`
-	FromNodeID string   `json:"fromNodeId"`
-	ToNodeID   string   `json:"toNodeId"`
+	X            *float64 `json:"x"`
+	Y            *float64 `json:"y"`
+	FromNodeID   string   `json:"fromNodeId"`
+	ToNodeID     string   `json:"toNodeId"`
+	FromHandleID string   `json:"fromHandleId,omitempty"`
+	ToHandleID   string   `json:"toHandleId,omitempty"`
 }
 
 // Explicit node creation and edges only; no generic metadata, media URL or deletion.
@@ -1586,7 +1591,7 @@ func cloudAgentNodeTypes() map[string]any {
 		item["canReference"] = capability.Connection.CanReference
 		types = append(types, item)
 	}
-	return map[string]any{"schemaVersion": 2, "nodes": types, "selectionGuide": []string{
+	return map[string]any{"schemaVersion": 2, "nodes": types, "canvasConnections": connection.Builtins, "connectionHandles": map[string]any{"script": []string{"row:<existing row id>", "storyboard:context"}, "batch-table": []string{"batch-reference:<existing column id>"}}, "selectionGuide": []string{
 		"单个画面、一次性提示词或快速试验通常使用文本/Markdown与媒体节点更轻量。",
 		"多镜头、连续性、逐镜审查、逐镜生成或需要后续维护时，分镜脚本通常更合适。",
 		"媒体节点只承载单个生成目标，不替代多镜头结构；选择媒体节点后还要用 model_list 按生成模式和本次真实参考节点筛选模型。",

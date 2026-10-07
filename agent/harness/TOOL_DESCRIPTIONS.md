@@ -90,7 +90,7 @@
 
 ## canvas_apply_ops
 
-创建空白节点、修改提示词或建立引用连线，不提交生成任务、不产生生成费用；先读取画布并传 snapshotHash。提交媒体生成使用 generate_media。每次最多20项，禁止删除、任意 metadata 和媒体 URL。每项都需要 type 和 id：add_node 还需要 nodeType（可给 x/y 指定位置；省略坐标时服务端按画布内容自动落位，不会叠在原点），update_node 还需要按节点能力清单填写 patch（可含 x/y 移动节点），connect_nodes 还需要 fromNodeId 与 toNodeId。连线是生成输入关系，不会改变已提交任务的输入；来源须 canSource，目标须 canTarget 且接受来源 inputKind，能力以注册表为准。批量整理位置用 canvas_arrange_nodes，不要用几十项 update_node 手工算坐标。
+创建空白节点、修改提示词或建立画布连线，不提交生成任务、不产生生成费用；先读取画布并传 snapshotHash。每次最多20项，禁止删除、任意 metadata 和媒体 URL。add_node 需要 nodeType，可给 x/y；update_node 按节点能力填写 patch；connect_nodes 需要 id、fromNodeId、toNodeId，可给 fromHandleId/toHandleId。连线遵守手动画布的节点类型、输入数量和已配置模型容量规则；canvas_node_types 的 canvasConnections 描述连线能力，生成参考能力仍由 canSource/canTarget 单独限制。script 支持 row:<已有行ID> 和 storyboard:context，batch-table 支持 batch-reference:<列ID>；分镜端口同步关联行资产、上下文或产物。相同端点的不同端口可分别连接，相同端点和端口不能重复。背板、自连线、配置互连和未注册类型拒绝。配置通常使用业务节点→配置节点。连线不会改变已提交生成任务。生成使用 generate_media；批量布局使用 canvas_arrange_nodes。
 
 ## canvas_arrange_nodes
 

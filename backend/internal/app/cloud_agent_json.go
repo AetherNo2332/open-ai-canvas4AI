@@ -54,6 +54,17 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 	for i, rawOp := range envelope.Ops {
 		path := fmt.Sprintf("ops[%d]", i)
 		var op agentCanvasOp
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(rawOp, &fields) == nil {
+			for _, key := range []string{"fromHandleId", "toHandleId"} {
+				if value, exists := fields[key]; exists {
+					var handle *string
+					if json.Unmarshal(value, &handle) != nil || handle == nil {
+						return args, cloudAgentFieldError(path+"."+key, "type_mismatch", "handle 必须是字符串")
+					}
+				}
+			}
+		}
 		if err := decodeCloudAgentJSONObject(string(rawOp), &op); err != nil {
 			field, issue := path, "invalid_value"
 			name := ""
@@ -68,7 +79,7 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 		knownField:
 			for _, typ := range []reflect.Type{reflect.TypeOf(agentCanvasArgs{}), reflect.TypeOf(agentCanvasOp{})} {
 				for j := 0; j < typ.NumField(); j++ {
-					if typ.Field(j).Tag.Get("json") == name {
+					if strings.Split(typ.Field(j).Tag.Get("json"), ",")[0] == name {
 						field += "." + name
 						break knownField
 					}
@@ -77,6 +88,9 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 			return args, cloudAgentFieldError(field, issue, fmt.Sprintf("画布参数 %s 无效：%s", field, cloudAgentSafeToolError(cloudAgentJSONArgumentError(err))))
 		}
 		required := ""
+		if op.Type != "connect_nodes" && (op.FromHandleID != "" || op.ToHandleID != "") {
+			return args, cloudAgentFieldError(path, "unexpected_field", "handle 仅用于 connect_nodes")
+		}
 		switch {
 		case op.Type == "":
 			required = "type"

@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import test from "node:test";
 import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 import { assertToolSnapshotMatchesSchema } from "../src/tool-disclosure.js";
 
 // Exercise Pi's actual validator against the Go-generated schema, rather than
 // recreating a second contract in TypeScript.
-const artifact = JSON.parse(await readFile(new URL("../../harness/TOOL_SCHEMA.json", import.meta.url), "utf8"));
+const sourceArtifact = new URL("../harness/TOOL_SCHEMA.json", import.meta.url);
+const artifactPath = existsSync(sourceArtifact) ? sourceArtifact : new URL("../../harness/TOOL_SCHEMA.json", import.meta.url);
+const artifact = JSON.parse(await readFile(artifactPath, "utf8"));
 test("the shared artifact admits all previs tools in server snapshots", () => {
   const names = ["previs_scene_read", "previs_preview", "previs_scene_create", "previs_apply_patch"];
   const specs = names.map((name) => {
@@ -18,6 +21,9 @@ test("the shared artifact admits all previs tools in server snapshots", () => {
 });
 
 const cases: [string, ToolCall["arguments"], boolean][] = [
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "connect_nodes", id: "e", fromNodeId: "a", toNodeId: "b", toHandleId: "row:r1" }] }, true],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "connect_nodes", id: "e", fromNodeId: "a", toNodeId: "b", toHandleId: "batch-reference:reference-1" }] }, true],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "connect_nodes", id: "e", fromNodeId: "a", toNodeId: "b", toHandleId: {} }] }, false],
   ["web_search", { query: "最新影视制作资讯" }, true],
   ["web_search", { query: "" }, false],
   ["web_search", { query: "a".repeat(501) }, false],
