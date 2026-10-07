@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
+import { CanvasLeaseLost, CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "../src/tool-disclosure.js";
 import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent, withServerPolicy } from "../src/runner.js";
@@ -572,6 +572,38 @@ test("assistant checkpoint failure prevents queued batch admission and tool exec
   await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), /assistant checkpoint unavailable/);
   assert.deepEqual(state.batches, [], "failed acknowledgement must stop dependent batch admission");
   assert.deepEqual(state.executions, []);
+});
+
+for (const [kind, failure] of [
+  ["storage", new Error("Canvas bridge HTTP 500 on /phase")],
+  ["lease", new CanvasLeaseLost("the execution lease changed")],
+  ["fatal", new FatalWorkerError("Canvas bridge HTTP 403 on /tool-batches")],
+] as const) {
+  test(`tool bridge ${kind} failures stop Pi before another model request`, async () => {
+    const { bridge, state, snapshot } = fakeBridge([
+      { toolCalls: [{ id: "infra-call", function: { name: "canvas_get_state", arguments: "{}" } }] },
+      { text: "must not request another model after an infrastructure failure" },
+    ]);
+    const execute = bridge.executeTool.bind(bridge);
+    bridge.executeTool = async (...args) => { await execute(...args); throw failure; };
+    await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), error => error === failure);
+    assert.equal(state.steps, 1);
+    assert.deepEqual(state.executions, ["infra-call"]);
+    assert.deepEqual(state.noToolTurns, []);
+  });
+}
+
+test("a rejected tool receipt remains a recoverable model result", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "rejected-call", function: { name: "canvas_get_state", arguments: "{}" } }] },
+    { text: "the rejected tool did not change the canvas" },
+  ]);
+  const execute = bridge.executeTool.bind(bridge);
+  bridge.executeTool = async (...args) => ({ ...await execute(...args), isError: true,
+    result: { errorClass: "state_conflict", message: "read the current snapshot" } });
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 2);
+  assert.equal(state.status, "completed");
 });
 
 test("a retried native run never admits an unresolved historical tool batch", async (t) => {

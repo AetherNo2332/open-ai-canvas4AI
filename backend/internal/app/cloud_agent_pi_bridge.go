@@ -886,7 +886,9 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 		}
 	}
 	allowed := map[string]bool{}
-	for _, tool := range cloudAgentVisibleToolsForCategories(state.Canonical.Tools, cloudAgentActivatedCategories(&state), nil, state.ToolScope) {
+	// Pi registers the run's eligible catalog once. Repair scope restricts call
+	// admission and execution, while the model request keeps that same catalog.
+	for _, tool := range cloudAgentVisibleToolsForCategories(state.Canonical.Tools, cloudAgentActivatedCategories(&state), nil, nil) {
 		function, _ := tool["function"].(map[string]any)
 		allowed[stringField(function, "name")] = true
 	}

@@ -837,6 +837,9 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 }
 
 func saveCloudAgentDocument(repo *repository.Repository, canvas *model.CanvasProject, doc map[string]any, policy RuntimePolicySetting) error {
+	if err := validateCloudAgentOwnedReferences(repo, canvas.UserID, doc); err != nil {
+		return err
+	}
 	doc["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 	raw, err := json.Marshal(doc)
 	if err != nil {

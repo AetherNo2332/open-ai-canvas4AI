@@ -29,6 +29,12 @@ func cloudAgentObjectChanges(before, after any) []map[string]any {
 			before, after := cloudAgentShrinkChange(old, item)
 			changes = append(changes, map[string]any{"before": before, "after": after})
 		}
+		delete(previous, stringValue(item["id"]))
+	}
+	for _, item := range creationMaps(before) {
+		if previous[stringValue(item["id"])] != nil {
+			changes = append(changes, map[string]any{"before": item, "after": nil})
+		}
 	}
 	return changes
 }
@@ -138,17 +144,32 @@ func emitCloudAgentCanvasChange(repo *repository.Repository, runID string, state
 		return cloudAgentApprovalPreviewItem{}, false
 	}
 	for _, change := range nodes {
-		node := change["after"].(map[string]any)
+		node, _ := change["after"].(map[string]any)
 		action := "updated"
-		if old, _ := change["before"].(map[string]any); old == nil {
+		if node == nil {
+			node, _ = change["before"].(map[string]any)
+			action = "deleted"
+		} else if old, _ := change["before"].(map[string]any); old == nil {
 			action = "created"
 		}
 		entry := map[string]any{"action": action, "nodeId": node["id"], "title": node["title"], "nodeType": node["type"]}
 		previewOperation := "update_node"
 		if action == "created" {
 			previewOperation = "add_node"
+		} else if action == "deleted" {
+			previewOperation = "delete_node"
 		}
 		if preview, ok := findPreview(previewOperation, stringValue(node["id"])); ok {
+			switch preview.Operation {
+			case "duplicate_node":
+				entry["action"] = "duplicated"
+			case "set_parent":
+				entry["action"] = "grouped"
+			case "reorder_rows":
+				entry["action"] = "reordered"
+			case "replace_text":
+				entry["action"] = "edited"
+			}
 			if preview.NodeTitle != "" {
 				entry["title"] = preview.NodeTitle
 			}
@@ -169,9 +190,14 @@ func emitCloudAgentCanvasChange(repo *repository.Repository, runID string, state
 		return err
 	}
 	for _, change := range edges {
-		edge := change["after"].(map[string]any)
+		edge, _ := change["after"].(map[string]any)
+		edgeAction := "referenced"
+		if edge == nil {
+			edge, _ = change["before"].(map[string]any)
+			edgeAction = "disconnected"
+		}
 		if node := byID[stringValue(edge["fromNodeId"])]; node != nil {
-			entry := map[string]any{"action": "referenced", "nodeId": node["id"], "title": node["title"], "nodeType": node["type"], "targetNodeId": edge["toNodeId"]}
+			entry := map[string]any{"action": edgeAction, "nodeId": node["id"], "title": node["title"], "nodeType": node["type"], "targetNodeId": edge["toNodeId"]}
 			if target := byID[stringValue(edge["toNodeId"])]; target != nil {
 				entry["targetTitle"], entry["targetNodeType"] = target["title"], target["type"]
 			}
@@ -188,6 +214,14 @@ func emitCloudAgentCanvasChange(repo *repository.Repository, runID string, state
 		"canvasId": input.CanvasID, "operation": input.Operation, "actions": actions,
 		"canvasPatch": map[string]any{"canvasId": input.CanvasID, "baseRevision": canvas.Revision - 1, "revision": canvas.Revision, "updatedAt": after["updatedAt"], "nodes": nodes, "connections": edges},
 	}
+	patch := payload["canvasPatch"].(map[string]any)
+	for _, kind := range []struct{ key, order, previous string }{{"nodes", "nodeOrder", "previousNodeOrder"}, {"connections", "connectionOrder", "previousConnectionOrder"}} {
+		oldOrder, newOrder := cloudAgentObjectOrder(before[kind.key]), cloudAgentObjectOrder(after[kind.key])
+		if !cloudAgentSameObjectOrder(oldOrder, newOrder) {
+			patch[kind.order] = newOrder
+			patch[kind.previous] = oldOrder
+		}
+	}
 	if input.Preview != nil {
 		payload["preview"] = input.Preview
 		payload["text"] = input.Preview.Description
@@ -201,15 +235,10 @@ func emitCloudAgentCanvasChange(repo *repository.Repository, runID string, state
 
 func cloudAgentPatchCoversDocument(before, after map[string]any) bool {
 	for _, key := range []string{"nodes", "connections"} {
-		old, next := creationMaps(before[key]), creationMaps(after[key])
-		if len(next) < len(old) {
+		// Tombstones encode removals, and explicit baseline/final order arrays
+		// encode sorting. Both collections must be losslessly addressable by ID.
+		if !cloudAgentValidKeyedCollection(before[key]) || !cloudAgentValidKeyedCollection(after[key]) {
 			return false
-		}
-		// The delta merger updates existing items in place and appends new items.
-		for i, item := range old {
-			if item["id"] != next[i]["id"] {
-				return false
-			}
 		}
 	}
 	content := func(doc map[string]any) map[string]any {
@@ -222,6 +251,58 @@ func cloudAgentPatchCoversDocument(before, after map[string]any) bool {
 		return result
 	}
 	return reflect.DeepEqual(content(before), content(after))
+}
+
+func cloudAgentValidKeyedCollection(value any) bool {
+	var items []map[string]any
+	switch list := value.(type) {
+	case nil:
+		return true // Missing legacy collections are empty.
+	case []map[string]any:
+		items = list
+	case []any:
+		for _, raw := range list {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				return false
+			}
+			items = append(items, item)
+		}
+	default:
+		return false
+	}
+	seen := map[string]bool{}
+	for _, item := range items {
+		id, ok := item["id"].(string)
+		if !ok || seen[id] || validateCloudAgentID(id, "画布对象 ID", 160) != nil {
+			return false
+		}
+		seen[id] = true
+	}
+	return true
+}
+
+func cloudAgentRetainedObjectOrderChanged(before, after any) bool {
+	oldOrder, nextOrder := cloudAgentObjectOrder(before), cloudAgentObjectOrder(after)
+	oldIDs, nextIDs := map[string]bool{}, map[string]bool{}
+	for _, id := range oldOrder {
+		oldIDs[id] = true
+	}
+	for _, id := range nextOrder {
+		nextIDs[id] = true
+	}
+	oldRetained, nextRetained := []string{}, []string{}
+	for _, id := range oldOrder {
+		if nextIDs[id] {
+			oldRetained = append(oldRetained, id)
+		}
+	}
+	for _, id := range nextOrder {
+		if oldIDs[id] {
+			nextRetained = append(nextRetained, id)
+		}
+	}
+	return !cloudAgentSameObjectOrder(oldRetained, nextRetained)
 }
 
 // cloudAgentShrinkStoryboardRows 把"只改了几行分镜"的节点变更缩成行级增量。
@@ -249,6 +330,25 @@ func cloudAgentShrinkStoryboardRows(before, after map[string]any) (map[string]an
 	}
 	beforeRows := cloudAgentRowsOf(beforeBoard["rows"])
 	afterRows := cloudAgentRowsOf(afterBoard["rows"])
+	// A sparse row delta does not encode order. Keep the full arrays when an
+	// existing row moves so clients can reconcile content and order separately.
+	if !cloudAgentValidKeyedCollection(beforeBoard["rows"]) || !cloudAgentValidKeyedCollection(afterBoard["rows"]) || cloudAgentRetainedObjectOrderChanged(beforeBoard["rows"], afterBoard["rows"]) {
+		return before, after, false
+	}
+	// Sparse additions append at the tail. Restoring a deleted row at its old
+	// position needs full arrays even if retained rows keep their relative order.
+	existingIDs := map[string]bool{}
+	for _, row := range beforeRows {
+		existingIDs[stringValue(row["id"])] = true
+	}
+	newRowSeen := false
+	for _, row := range afterRows {
+		if !existingIDs[stringValue(row["id"])] {
+			newRowSeen = true
+		} else if newRowSeen {
+			return before, after, false
+		}
+	}
 	if len(beforeRows) == 0 && len(afterRows) == 0 {
 		return before, after, false
 	}

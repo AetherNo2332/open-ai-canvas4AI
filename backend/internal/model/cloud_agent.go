@@ -71,6 +71,7 @@ type CloudAgentCanvasMutation struct {
 	BeforeSnapshotHash string     `json:"beforeSnapshotHash" gorm:"size:64"`
 	AfterSnapshotHash  string     `json:"afterSnapshotHash" gorm:"size:64"`
 	BeforeJSON         string     `json:"-" gorm:"type:text"`
+	AfterJSON          string     `json:"-" gorm:"type:text"`
 	HasSubmittedTask   bool       `json:"hasSubmittedTask"`
 	Status             string     `json:"status" gorm:"index;size:24"`
 	CreatedAt          time.Time  `json:"createdAt" gorm:"index"`

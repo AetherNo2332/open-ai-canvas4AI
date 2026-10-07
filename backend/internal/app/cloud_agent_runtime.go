@@ -1665,6 +1665,24 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 			} else {
 				var mutationErr error
 				switch call.Function.Name {
+				case "canvas_bind_asset":
+					plan, err := prepareCloudAgentAssetBinding(repo, run.UserID, state.Request.CanvasID, call)
+					mutationErr = err
+					if err == nil {
+						preview = plan.Preview
+					}
+				case "canvas_edit_drawing":
+					plan, err := prepareCloudAgentDrawing(repo, run.UserID, state.Request.CanvasID, call)
+					mutationErr = err
+					if err == nil {
+						preview = plan.Preview
+					}
+				case "canvas_undo", "canvas_redo":
+					plan, err := prepareCloudAgentHistory(repo, run.UserID, state.Request.CanvasID, run.ID, call)
+					mutationErr = err
+					if err == nil {
+						preview = plan.Preview
+					}
 				case "canvas_create_storyboard":
 					storyboardPlan, err := prepareCloudAgentStoryboardCreate(repo, run.UserID, state.Request.CanvasID, call)
 					mutationErr = err
@@ -1864,6 +1882,12 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 				result = map[string]any{"category": call.Function.Name, "tools": cloudAgentCategoryChildren(state.Canonical.Tools, call.Function.Name)}
 			case call.Function.Name == "canvas_apply_ops":
 				result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "canvas_bind_asset":
+				result, toolErr = applyCloudAgentAssetBinding(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "canvas_edit_drawing":
+				result, toolErr = applyCloudAgentDrawing(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
+			case call.Function.Name == "canvas_undo", call.Function.Name == "canvas_redo":
+				result, toolErr = applyCloudAgentHistory(repo, run.UserID, state.Request.CanvasID, run.ID, state, call, policy)
 			case call.Function.Name == "canvas_arrange_nodes":
 				result, toolErr = applyCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 			case call.Function.Name == "canvas_create_storyboard", call.Function.Name == "canvas_edit_storyboard":

@@ -677,6 +677,11 @@ export async function runCanvasAgent(
   let compactionFailure: unknown;
   let runTerminated = isTerminalRunStatus(snapshot.status);
   let session: AgentSession | undefined;
+  let abortRequested = false;
+  const abortSession = (): void => {
+    abortRequested = true;
+    void session?.abort().catch(() => undefined);
+  };
   let sessionManager: SessionManager | undefined;
   let sessionRevision = snapshot.piSessionRevision || 1;
   let sessionLeafId = snapshot.piActiveLeafId || "";
@@ -803,31 +808,39 @@ export async function runCanvasAgent(
     await queue.drain();
     if (listenerFailure !== undefined) throw listenerFailure;
     if (!admittedCallIds.has(callId)) throw new Error(batchRejection || "Tool batch was not admitted");
-    if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
-    const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
-    if (receipt.suspended) {
-      runSuspended = runTerminated = true;
-      return { result: { suspended: true }, terminate: true };
-    }
-    if (receipt.terminated) {
-      runTerminated = true;
-      return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
-    }
-    const refreshed = await bridge.snapshot(snapshot, signal);
-    for (const message of refreshed.canonical.messages.slice(canonicalCount)) {
-      // 插话里的图片要直接进会话，不能等下一次模型步骤才补（见旧实现的 steer 分支）。
-      if (message.role === "user" && hasImagePart(message.content)) {
-        session?.agent.steer(canvasUserMessage(message.content));
+    try {
+      if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
+      const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
+      if (receipt.suspended) {
+        runSuspended = runTerminated = true;
+        return { result: { suspended: true }, terminate: true };
       }
+      if (receipt.terminated) {
+        runTerminated = true;
+        return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
+      }
+      const refreshed = await bridge.snapshot(snapshot, signal);
+      for (const message of refreshed.canonical.messages.slice(canonicalCount)) {
+        // 插话里的图片要直接进会话，不能等下一次模型步骤才补（见旧实现的 steer 分支）。
+        if (message.role === "user" && hasImagePart(message.content)) {
+          session?.agent.steer(canvasUserMessage(message.content));
+        }
+      }
+      canonicalCount = refreshed.canonical.messages.length;
+      snapshot = refreshed;
+      syncCompaction();
+      runTerminated = isTerminalRunStatus(refreshed.status);
+      syncPendingInterjections(refreshed);
+      await steerPendingInterjections();
+      return { result: receipt.result, isError: receipt.isError,
+        terminate: runTerminated };
+    } catch (error) {
+      // SDK tool errors are model-visible. Bridge failures must instead exit
+      // this worker so a pending durable call cannot be skipped by a new turn.
+      listenerFailure ??= error;
+      abortSession();
+      throw error;
     }
-    canonicalCount = refreshed.canonical.messages.length;
-    snapshot = refreshed;
-    syncCompaction();
-    runTerminated = isTerminalRunStatus(refreshed.status);
-    syncPendingInterjections(refreshed);
-    await steerPendingInterjections();
-    return { result: receipt.result, isError: receipt.isError,
-      terminate: runTerminated };
   });
   const nativeMode = snapshot.skillRuntimeMode === "pi-native";
   const nativeReadSpec = nativeMode ? snapshot.tools.find((tool) => tool.name === "read" && tool.allowed) : undefined;
@@ -1066,11 +1079,6 @@ export async function runCanvasAgent(
       queue.enqueue(async () => { await checkpoint(message as unknown as AgentMessage, taskId, interjectionIds); });
     });
 
-    let abortRequested = false;
-    const abortSession = (): void => {
-      abortRequested = true;
-      void session?.abort().catch(() => undefined);
-    };
     const onShutdown = (): void => abortSession();
     shutdown?.addEventListener("abort", onShutdown, { once: true });
     let leaseCheckRunning = false;

@@ -143,7 +143,7 @@ func TestCloudAgentMediaImageSourceHasActionableCorrection(t *testing.T) {
 	}
 }
 
-func TestCloudAgentDeletionInvalidatesTheWholeCanvasRevision(t *testing.T) {
+func TestAgentParityDeletionEmitsCompleteCanvasDelta(t *testing.T) {
 	s, _, _ := agentMediaFixture(t)
 	canvas, err := s.repo.CanvasProjectForUser("user", "agent-canvas")
 	if err != nil {
@@ -166,8 +166,23 @@ func TestCloudAgentDeletionInvalidatesTheWholeCanvasRevision(t *testing.T) {
 	if err := emitCloudAgentCanvasChange(s.repo, "run", &state, cloudAgentMutationInput{UserID: "user", CanvasID: canvas.ID, BeforeJSON: previous}); err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Events) != 1 || state.Events[0].Payload["requiresRefresh"] != true || state.Events[0].Payload["canvasPatch"] != nil {
-		t.Fatalf("incomplete delta would acknowledge a deleted node: %+v", state.Events)
+	if len(state.Events) != 1 || state.Events[0].Payload["requiresRefresh"] == true {
+		t.Fatalf("complete deletion delta was replaced by a refresh: %+v", state.Events)
+	}
+	patch, ok := state.Events[0].Payload["canvasPatch"].(map[string]any)
+	if !ok {
+		t.Fatal("missing deletion delta")
+	}
+	deleted, updated := false, false
+	for _, change := range creationMaps(patch["nodes"]) {
+		if change["after"] == nil {
+			deleted = stringValue(change["before"].(map[string]any)["id"]) == stringValue(nodes[0]["id"])
+		} else if next, ok := change["after"].(map[string]any); ok && next["title"] == "Also updated" {
+			updated = true
+		}
+	}
+	if !deleted || !updated || len(cloudAgentStrings(patch["nodeOrder"])) != len(nodes)-1 {
+		t.Fatalf("deletion/update/order delta is incomplete: %+v", patch)
 	}
 }
 
