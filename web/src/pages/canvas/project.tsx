@@ -2575,6 +2575,7 @@ function InfiniteCanvasPage() {
                     <section data-canvas-editor inert={Boolean(versions.preview)} style={{ visibility: versions.preview ? "hidden" : undefined, opacity: versions.preview ? 0 : undefined }} className="relative min-w-0 flex-1 flex flex-col min-h-0 overflow-hidden">
                         {!focusMode ? (
                             <CanvasTopBar
+                                canvasId={projectId}
                                 syncStatus={<CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />}
                                 versionsOpen={versions.open}
                                 onToggleVersions={() => { closeAgent(); setVersionCompareRootId(null); versions.toggle(); }}

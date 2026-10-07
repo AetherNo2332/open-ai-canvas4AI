@@ -16,13 +16,7 @@ import (
 )
 
 func TestExportDiagnosticBundleRedactsSensitiveValues(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:diagnostics-test?mode=memory&cache=shared"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&model.Task{}, &model.TaskLog{}, &model.ApiCallLog{}); err != nil {
-		t.Fatal(err)
-	}
+	svc, db := diagnosticActivityService(t)
 	now := time.Now().UTC()
 	if err := db.Create(&model.Task{
 		ID: "task-1", UserID: "user-1", TraceID: "trace-1", RequestID: "req-1", ProjectID: "project-1", Type: "video_generate",
@@ -37,7 +31,6 @@ func TestExportDiagnosticBundleRedactsSensitiveValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := &Service{repo: repository.New(db)}
 	bundle, err := svc.ExportDiagnosticBundle("user-1", DiagnosticExportRequest{
 		From: now.Add(-2 * time.Minute).Format(time.RFC3339Nano), To: now.Add(time.Minute).Format(time.RFC3339Nano), TaskID: "task-1",
 		Description: "页面报错", ClientEvents: []DiagnosticClientEvent{{ID: "event-1", Message: "cookie=client-secret", TraceID: "trace-1"}},
