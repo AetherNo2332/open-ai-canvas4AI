@@ -5,6 +5,29 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## 用户诊断包
+
+设置页「问题诊断」和画布菜单「导出诊断包」使用同一套接口，不新增日志上传服务。仅登录用户可以导出自己账号的记录。
+
+- `POST /api/diagnostics/preview`：请求 `{ from?, to?, taskId?, projectId?, canvasId?, description?, runtime, clientEvents }`，时间为 RFC3339，默认最近 30 分钟，最长 24 小时。`canvasId` 校验画布归属，任务上下文与画布必须一致；`projectId` 沿用任务记录的历史画布分组语义。任务入口可以读取已删除画布的任务日志。未指定上下文时收集当前账号最近记录。
+- 预览返回 `clientEventLimit`、`taskCount`、`taskLogCount`、`apiCallCount`、`canvasCount`、`canvasChangeCount`、`agentRunCount`、`agentMessageCount`、`agentEventCount`、`estimatedBytes` 和 `willTruncate`；大小是脱敏内容的未压缩估算，导出以实际 ZIP 大小限制为准。
+- `POST /api/diagnostics/export`：相同请求，返回 `application/zip`，保留下载文件名、`X-Diagnostic-Bundle-ID`，`X-Diagnostic-Schema-Version` 与 manifest 的 `schemaVersion` 均为 2。ZIP 超过 10 MiB 时提示缩短范围。
+
+原有 manifest、README、前端事件、后端任务/任务日志/上游调用和运行环境文件继续保留。新增：
+
+| 文件 | 内容与时间语义 |
+| --- | --- |
+| `canvas/current.jsonl` | 导出时的画布 ID、标题、版本、保存时间，不包含画布载荷 |
+| `canvas/history.jsonl` | 时间范围内已保留的历史版本：保存原因、节点/连线数量、内容更新时间 |
+| `canvas/agent-mutations.jsonl` | 时间范围内的 Agent 修改及撤销：Run ID、Step ID、操作、状态、是否提交任务 |
+| `agent/runs.jsonl` | 所选窗口内活跃运行的导出时状态：等待阶段、活动 Task ID、工具批次、调用游标和剩余调用数；损坏检查点标记不可读 |
+| `agent/events.jsonl` | 所选窗口内持久事件序号、类型及白名单错误/步骤/任务信息 |
+| `agent/messages.jsonl` | 所选窗口内 Pi 会话用户/助手文字及工具回执标识；系统提示、推理、工具参数和结果正文不导出 |
+
+画布历史不代表每次鼠标操作，不能据此恢复完整画布。无 Pi 会话条目的旧运行使用有限的会话快照；缺失消息时间时明确标记 `timeScope=active_run_transcript_snapshot`，不将其冒充窗口内精确消息日志。对话文字可能包含业务内容，界面和 README 提醒用户分享前检查；自动过滤常见凭据、URL 用户信息/查询/片段和内嵌媒体。
+
+每次最多 100 个画布、200 条历史版本、200 条 Agent 修改、50 个 Agent 运行、1000 条事件、1000 条 Pi 条目及 500 条旧会话消息，超限保留最近记录并在 manifest/预览中标记截断。每条对话/事件文字最多 4000 字；单条原始消息 JSON 超过 65536 字符时在数据库查询中省略正文，保留带 `payloadOmitted` 的不可读占位，避免内嵌媒体耗尽导出内存。按时间及序号稳定排序。所有持久查询均限定当前用户，前端事件仍按当前账号及所选时间收集。
+
 ## 管理员 Agent 联网搜索
 
 - `GET /api/admin/settings/agent-web-search`：管理员读取 `{ setting: { enabled, hasApiKey, revision, updatedAt? } }`，不返回密钥或密文。
