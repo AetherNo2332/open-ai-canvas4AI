@@ -74,10 +74,10 @@ func (r *Repository) SetPiRecoveryLease(run *model.CloudAgentExecution, owner st
 	return nil
 }
 
-func (r *Repository) WorkerRecoveryRuns(limit int) ([]model.CloudAgentExecution, error) {
+func (r *Repository) WorkerRecoveryRuns(after string, limit int) ([]model.CloudAgentExecution, error) {
 	var runs []model.CloudAgentExecution
 	err := r.db.Where("engine = ? AND status IN ? AND recovery_status IN ?", "pi", []string{"running", "queued"}, []string{"scheduled", "reconciling"}).
-		Order("recovery_started_at,id").Limit(limit).Find(&runs).Error
+		Where("id > ?", after).Order("id").Limit(limit).Find(&runs).Error
 	return runs, err
 }
 
@@ -87,11 +87,12 @@ func (r *Repository) WorkerRecoveryProtectedWait(run model.CloudAgentExecution) 
 	if run.Status == "waiting_approval" || run.WaitKind == "subagents" {
 		return true, nil
 	}
-	if run.RuntimePhase != "waiting_model" && run.RuntimePhase != "waiting_tool" && run.RuntimePhase != "waiting_compaction" {
+	resourceTask := run.RuntimePhase == "waiting_resource" && (run.WaitKind == "model" || run.WaitKind == "tool" || run.WaitKind == "compaction")
+	if !resourceTask && run.RuntimePhase != "waiting_model" && run.RuntimePhase != "waiting_tool" && run.RuntimePhase != "waiting_compaction" {
 		return false, nil
 	}
 	var count int64
-	err := r.db.Model(&model.Task{}).Where("user_id = ? AND id IN ? AND status IN ?", run.UserID, []string{run.ActiveTaskID, run.MediaTaskID}, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusQueued}).Count(&count).Error
+	err := r.db.Model(&model.Task{}).Where("user_id = ? AND id IN ? AND status IN ?", run.UserID, []string{run.ActiveTaskID, run.MediaTaskID, run.WaitID}, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusQueued}).Count(&count).Error
 	return count > 0, err
 }
 

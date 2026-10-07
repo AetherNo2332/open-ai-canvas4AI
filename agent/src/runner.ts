@@ -26,7 +26,7 @@ import { compactionSettings, serializePreparation, runNativeCompaction, prepareN
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
 import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
-import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "./native-skills.js";
+import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected } from "./native-skills.js";
 import { Unsafe, type TSchema } from "typebox";
 import { createImageContextExtension, createTerminalHistoryExtension, missingImageContent } from "./session-history.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
@@ -870,6 +870,10 @@ export async function runCanvasAgent(
       }
       throw error;
     }
+  }, (error) => {
+    if (shutdown?.aborted || error instanceof CanvasContextOverflow || error instanceof CanvasCompactionNeeded ||
+        error instanceof CanvasModelRetry || error instanceof CanvasRunTerminated) return;
+    listenerFailure ??= error;
   });
 
   let resume: ResumePoint;
@@ -880,12 +884,12 @@ export async function runCanvasAgent(
     resume = await resumePoint(bridge, snapshot, model, disclosure, checkpoint, shutdown, nativeMode ? async (call) => {
       try {
         const params = JSON.parse(call.function.arguments) as Record<string, unknown>;
-        if (typeof params.path !== "string") throw new FatalWorkerError("Persisted Skill read requires a path");
+        if (typeof params.path !== "string") throw new NativeSkillReadRejected("Persisted Skill read requires a path");
         const path = rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path);
         return { result: await readNativeSkill(snapshot, nativeSkillsRoot, bridge, path,
           typeof params.offset === "number" ? params.offset : 0, typeof params.limit === "number" ? params.limit : 12_000, shutdown) };
       } catch (error) {
-        if (error instanceof FatalWorkerError) return { result: "Skill read rejected; use an enabled Skill file and valid range.", isError: true };
+        if (error instanceof NativeSkillReadRejected) return { result: "Skill read rejected; use an enabled Skill file and valid range.", isError: true };
         throw error;
       }
     } : undefined);
@@ -950,8 +954,8 @@ export async function runCanvasAgent(
     execute: async (callId: string, params: Record<string, unknown>, signal: AbortSignal | undefined) => {
       await queue.drain();
       if (listenerFailure !== undefined) throw listenerFailure;
-      if (typeof params.path !== "string") throw new FatalWorkerError("Native Skill read requires a path");
       try {
+        if (typeof params.path !== "string") throw new NativeSkillReadRejected("Native Skill read requires a path");
         const path = resumedNativeCallIds.has(callId)
           ? rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path) : params.path;
         const text = await readNativeSkill(snapshot, nativeSkillsRoot, bridge, path,
@@ -960,7 +964,7 @@ export async function runCanvasAgent(
       } catch (error) {
         // Pi converts tool exceptions to model-visible results. Infrastructure
         // failures must instead leave the call pending for a worker retry.
-        if (!(error instanceof FatalWorkerError)) listenerFailure = error;
+        if (!(error instanceof NativeSkillReadRejected)) listenerFailure ??= error;
         throw error;
       }
     },

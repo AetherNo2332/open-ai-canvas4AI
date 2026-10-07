@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { PiSnapshot } from "./bridge.js";
 
-type Step = { run: () => Promise<unknown>; resolve: (value: unknown) => void; reject: (error: unknown) => void; signal?: AbortSignal };
+type Step = { run: () => Promise<unknown>; resolve: (value: unknown) => void; reject: (error: unknown) => void; signal?: AbortSignal; dequeue: () => void };
 
 /** Fair, short-lived admission slots. A model/tool completion promise never enters this queue. */
 export class EventScheduler {
@@ -22,7 +22,19 @@ export class EventScheduler {
       if (signal?.aborted) { reject(signal.reason); return; }
       let queue = this.queues.get(project);
       if (!queue) { queue = []; this.queues.set(project, queue); this.projects.push(project); }
-      queue.push({ run, resolve: resolve as (value: unknown) => void, reject, signal });
+      const item: Step = { run, resolve: resolve as (value: unknown) => void, reject, signal,
+        dequeue: () => signal?.removeEventListener("abort", cancel) };
+      const cancel = () => {
+        const pending = this.queues.get(project);
+        const index = pending?.indexOf(item) ?? -1;
+        if (index < 0) return;
+        pending!.splice(index, 1);
+        if (!pending!.length) { this.queues.delete(project); this.projects = this.projects.filter(value => value !== project); }
+        item.dequeue(); reject(signal!.reason);
+      };
+      queue.push(item);
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
       this.pump();
     });
   }
@@ -31,6 +43,7 @@ export class EventScheduler {
       const project = this.projects.shift()!;
       const queue = this.queues.get(project)!;
       const item = queue.shift()!;
+      item.dequeue();
       if (queue.length) this.projects.push(project); else this.queues.delete(project);
       if (item.signal?.aborted) { item.reject(item.signal.reason); continue; }
       this.active += 1;

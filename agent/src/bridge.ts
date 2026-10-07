@@ -509,9 +509,10 @@ export class CanvasBridge {
         headers["X-Agent-Session-Epoch"] = String(run.piSessionLeaseEpoch);
       }
     }
+    const payload = body === undefined ? undefined : JSON.stringify(body);
     const send = async () => {
       try { return await fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent${path}`, {
-      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+      method, headers, body: payload,
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
       }); } catch (error) {
         if (signal?.aborted) throw error;

@@ -9,7 +9,7 @@ description: 影策后端核心持久化表与状态边界
 
 迁移 58 `agent_worker_recovery` 为 `cloud_agent_executions` 增加恢复次数、同操作次数、故障周期开始时间、下次恢复时间、错误分类、操作/TaskID/CallID、租约 epoch、恢复状态，以及业务进度水位与最后进度时间。均为增量字段，保留原消息、事件和任务/账务事实。需要先迁移，再同时更新 backend 与 agent；旧 backend 拒绝连接 schema 58，回滚应使用升级前备份。
 
-Go 持久化每个无进展周期最多 5 次、10 分钟的恢复预算。领取和续租不能清零；确认的任务结束、消息推进或工具/压缩回执结束故障周期，同一操作的故障次数保留。租约过期且没有业务推进的接管也计数，覆盖 worker 在上报前崩溃。正常模型/工具任务、审批和子 Agent 等待继续使用各自生命周期。耗尽原子写入 `failed`、`run_failed` 和 `cleanup_pending`，现有清理器执行任务与资源收尾；未知结果标记 `needs_review`，不重发副作用。
+Go 持久化每个无进展周期最多 5 次、10 分钟的恢复预算。领取、续租、用户输入和消息重放不能清零；确认的模型任务结束或工具/压缩回执结束故障周期。`recovery_operation_budgets` 按 task/call 保留累计次数，切换 HTTP 路由或交替访问任务不会丢失；无任务的故障归入当前运行周期。租约过期且没有业务推进的接管也计数，覆盖 worker 在上报前崩溃。正常模型/工具任务（包括 `waiting_resource + model` 的排队任务）、审批和子 Agent 等待继续使用各自生命周期。看门狗按 ID 分页扫描，避免长等待挡住后续已耗尽运行。耗尽原子写入 `failed`、`run_failed` 和 `cleanup_pending`，现有清理器执行任务与资源收尾；未知结果标记 `needs_review`，不重发副作用。
 
 ## Canary Agent schema 45
 

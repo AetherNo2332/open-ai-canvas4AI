@@ -30,6 +30,16 @@ func workerRecoveryView(run *model.CloudAgentExecution) *PiWorkerRecoveryView {
 	return &PiWorkerRecoveryView{run.RecoveryStatus, run.RecoveryAttempts, run.NextRecoveryAt}
 }
 
+func recoveryBusinessIdentity(taskID, callID string) string {
+	if callID != "" {
+		return "call:" + callID
+	}
+	if taskID != "" {
+		return "task:" + taskID
+	}
+	return "run"
+}
+
 // Upgrade valid legacy checkpoints through the existing transcript writer.
 // Damaged checkpoints still use the control-only terminal path.
 func (s *Service) mutatePiControl(userID, runID string, revision int64, fn func(*model.CloudAgentExecution, *repository.Repository) error) error {
@@ -142,11 +152,28 @@ func (s *Service) PiWorkerRecovery(userID, runID, owner string, input PiWorkerRe
 		if current.LeaseOwner != worker {
 			return kernel.AgentLeaseLost("恢复上报租约已失效")
 		}
-		if current.RecoveryOperationID != identity {
-			current.RecoveryOperationAttempts = 0
+		budgets := map[string]int{}
+		if current.RecoveryOperationBudgets != "" {
+			if err := json.Unmarshal([]byte(current.RecoveryOperationBudgets), &budgets); err != nil {
+				return err
+			}
 		}
+		if budgets == nil {
+			budgets = map[string]int{}
+		}
+		business := recoveryBusinessIdentity(input.TaskID, input.CallID)
+		// Preserve counters recorded before the per-operation ledger was added.
+		if previous := recoveryBusinessIdentity(current.RecoveryTaskID, current.RecoveryCallID); current.RecoveryOperationID != "" && budgets[previous] < current.RecoveryOperationAttempts {
+			budgets[previous] = current.RecoveryOperationAttempts
+		}
+		budgets[business]++
+		body, err := json.Marshal(budgets)
+		if err != nil {
+			return err
+		}
+		current.RecoveryOperationBudgets = string(body)
 		current.RecoveryAttempts++
-		current.RecoveryOperationAttempts++
+		current.RecoveryOperationAttempts = budgets[business]
 		current.RecoveryLastEpoch = epoch
 		current.RecoveryOperationID = identity
 		current.RecoveryTaskID = input.TaskID
@@ -192,36 +219,43 @@ func (s *Service) PiWorkerRecovery(userID, runID, owner string, input PiWorkerRe
 }
 
 func (s *Service) SweepWorkerRecoveries() (int, error) {
-	runs, err := s.repo.WorkerRecoveryRuns(100)
-	if err != nil {
-		return 0, err
-	}
 	count := 0
 	now := time.Now()
-	for _, run := range runs {
-		if !run.WorkerRecoveryExhausted(now) {
-			continue
-		}
-		protected, err := s.repo.WorkerRecoveryProtectedWait(run)
+	after := ""
+	for {
+		runs, err := s.repo.WorkerRecoveryRuns(after, 100)
 		if err != nil {
 			return count, err
 		}
-		if protected && run.RecoveryAttempts < model.AgentWorkerRecoveryLimit && run.RecoveryOperationAttempts < model.AgentWorkerRecoveryLimit {
-			continue
-		}
-		err = s.mutatePiControl(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-			if cloudAgentRunTerminal(current.Status) || !current.WorkerRecoveryExhausted(time.Now()) {
-				return nil
+		for _, run := range runs {
+			after = run.ID
+			if !run.WorkerRecoveryExhausted(now) {
+				continue
 			}
-			return failWorkerRecovery(current, "pi_worker_recovery_exhausted", "Pi worker 长时间未能恢复，本轮已停止，请重试")
-		})
-		if err == repository.ErrCreationConflict {
-			continue
+			protected, err := s.repo.WorkerRecoveryProtectedWait(run)
+			if err != nil {
+				return count, err
+			}
+			if protected && run.RecoveryAttempts < model.AgentWorkerRecoveryLimit && run.RecoveryOperationAttempts < model.AgentWorkerRecoveryLimit {
+				continue
+			}
+			err = s.mutatePiControl(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+				if cloudAgentRunTerminal(current.Status) || !current.WorkerRecoveryExhausted(time.Now()) {
+					return nil
+				}
+				return failWorkerRecovery(current, "pi_worker_recovery_exhausted", "Pi worker 长时间未能恢复，本轮已停止，请重试")
+			})
+			if err == repository.ErrCreationConflict {
+				continue
+			}
+			if err != nil {
+				return count, err
+			}
+			count++
 		}
-		if err != nil {
-			return count, err
+		if len(runs) < 100 {
+			break
 		}
-		count++
 	}
 	return count, nil
 }

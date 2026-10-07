@@ -7,6 +7,17 @@ import { CANVAS_PI_WIRE_IDENTITY, CanvasBridge, type PiSnapshot, type PiToolCall
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 
+test('request serialization bugs are internal errors and never retryable transport faults',async()=>{
+ const original=globalThis.fetch;let requests=0;
+ const circular:Record<string,unknown>={};circular.self=circular;
+ try{
+  globalThis.fetch=(async()=>{requests++;return new Response('{}')}) as typeof fetch;
+  const bridge=new CanvasBridge('http://backend:8080','token','worker');
+  await assert.rejects(bridge.modelPreflight(run,{...run.canonical,messages:[circular]}),error=>error instanceof TypeError);
+  assert.equal(requests,0);
+ }finally{globalThis.fetch=original}
+});
+
 test('a backend outage pauses new claims across bridge instances until one protocol probe succeeds',async()=>{
  const original=globalThis.fetch;
  const health={nextProbeAt:0};
