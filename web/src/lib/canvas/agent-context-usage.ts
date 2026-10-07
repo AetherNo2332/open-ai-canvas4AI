@@ -14,7 +14,7 @@ export type AgentContextUsageEvent = {
     payload?: Record<string, unknown>;
 };
 
-/** What the ring is telling the user. Compaction, not the raw window, is the decision. */
+/** The input meter and Pi's reported compaction lifecycle are independent. */
 export type AgentContextPhase = "idle" | "unknown" | "ok" | "watch" | "compress" | "compacting" | "stale";
 
 export type AgentContextBreakdownItem = {
@@ -31,7 +31,7 @@ export type AgentContextUsageView = {
     ratio?: number;
     /** Where semantic compaction starts, as a share of the same input budget. */
     compactRatio?: number;
-    /** Ring fill. 1 means "at or past the compaction line", not "window is full". */
+    /** Share of the displayed input budget; compaction state comes from Pi events. */
     ring: number;
     label: string;
     detail: string;
@@ -161,9 +161,7 @@ function formatContextTokens(tokens: number | undefined): string {
 }
 
 /**
- * One view of the compaction mechanism.
- * The ring fills against compactAtTokens (85% of the input budget): full means
- * the next model call is about to pause and compact, not that the window is 100% used.
+ * Display upstream input usage (local fallback) without predicting Pi's own trigger.
  */
 export function presentAgentContextUsage(usage: AgentContextUsage): AgentContextUsageView {
     const reading = usage.reading;
@@ -196,32 +194,21 @@ export function presentAgentContextUsage(usage: AgentContextUsage): AgentContext
         lastCompaction: usage.lastCompaction,
     };
     if (usage.compactionPending) {
-        const basis = usage.compactionPending.basis === "bytes" ? "消息体积已到兜底线" : "已到上下文压缩线";
-        return { ...base, phase: "compacting", ring: 1, label: "压缩中", detail: `${basis}，正在把较早对话收成检查点，按预算保留近期上下文。` };
+        return { ...base, phase: "compacting", ring: ratio === undefined ? 0 : Math.min(1, ratio), label: "压缩中", detail: "Pi 正在压缩上下文，保留近期消息并生成检查点。" };
     }
     if (!reading) return base;
     if (usage.readingStale) {
-        return { ...base, phase: "stale", ring: ratio === undefined ? 0 : Math.min(1, ratio / (compactRatio || 1)), label: "刚压缩", detail: "上一份读数是压缩前的；下一次模型调用会给出压缩后的占用。" };
+        return { ...base, phase: "stale", ring: ratio === undefined ? 0 : Math.min(1, ratio), label: "刚压缩", detail: "上一份读数是压缩前的；下一次模型调用会给出压缩后的占用。" };
     }
     if (ratio === undefined || usableTokens === undefined || usableTokens <= 0) {
         const measured = inputTokens === undefined ? "窗口未知" : `约 ${formatContextTokens(inputTokens)} Token`;
-        return { ...base, phase: "unknown", label: measured, detail: "这个模型没有配置可确认的上下文窗口，不能给出占用百分比；对话过长时仍会按条数和体积压缩。" };
+        return { ...base, phase: "unknown", label: measured, detail: "这个模型没有配置可确认的上下文窗口，不能给出占用百分比；Pi 按后端提供的调度预算管理压缩。" };
     }
-    const line = compactRatio && compactRatio > 0 ? compactRatio : 1;
-    const ring = Math.max(0, Math.min(1, ratio / line));
+    const ring = Math.max(0, Math.min(1, ratio));
     const percent = Math.round(ratio * 100);
     const source = estimate ? "本地估算" : "模型实测";
-    if (compactRatio !== undefined && ratio >= line) {
-        return {
-            ...base,
-            phase: "compress",
-            ring: 1,
-            label: `${percent}%`,
-            detail: `已到压缩线（输入预算的 ${Math.round(line * 100)}%）。下一次调用前会暂停，把历史收成检查点后再继续。当前 ${formatContextTokens(inputTokens)} / ${formatContextTokens(usableTokens)}（${source}）。`,
-        };
-    }
     if (ring >= 0.72) {
-        return { ...base, phase: "watch", ring, label: `${percent}%`, detail: `接近压缩。当前 ${formatContextTokens(inputTokens)} / ${formatContextTokens(usableTokens)}（${source}），到 ${formatContextTokens(compactAtTokens)} 时开始压缩。` };
+        return { ...base, phase: "watch", ring, label: `${percent}%`, detail: `当前 ${formatContextTokens(inputTokens)} / ${formatContextTokens(usableTokens)}（${source}）。是否压缩由 Pi 按自身上下文计量决定。` };
     }
-    return { ...base, phase: "ok", ring, label: `${percent}%`, detail: `当前 ${formatContextTokens(inputTokens)} / ${formatContextTokens(usableTokens)}（${source}）。满格表示到达压缩线，不是窗口已经 100% 用完。` };
+    return { ...base, phase: "ok", ring, label: `${percent}%`, detail: `当前 ${formatContextTokens(inputTokens)} / ${formatContextTokens(usableTokens)}（${source}）。压缩状态由 Pi 上报。` };
 }

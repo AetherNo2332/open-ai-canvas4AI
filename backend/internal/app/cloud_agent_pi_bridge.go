@@ -275,9 +275,11 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 		return 0, BadAuthRequest("Pi 会话版本无效")
 	}
 	var message struct {
-		Role    string `json:"role"`
-		Text    string `json:"text"`
-		Content any    `json:"content"`
+		Role         string `json:"role"`
+		Text         string `json:"text"`
+		Content      any    `json:"content"`
+		StopReason   string `json:"stopReason"`
+		ErrorMessage string `json:"errorMessage"`
 	}
 	if json.Unmarshal(input.Message, &message) != nil || (message.Role != "user" && message.Role != "assistant" && message.Role != "toolResult" && message.Role != "system") {
 		return 0, BadAuthRequest("Pi 消息类型无效")
@@ -378,6 +380,13 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 		state, err := cloudAgentDecode(current)
 		if err != nil {
 			return err
+		}
+		if input.TaskID == "" && message.Role == "assistant" && message.StopReason == "error" && message.ErrorMessage == "context_length_exceeded" {
+			failedTask, err := repo.TaskForUser(userID, state.PiModelFailureTaskID)
+			if err != nil || !piModelTaskContextOverflow(failedTask) || state.ActiveTaskID != failedTask.ID {
+				return kernel.Forbidden("Pi overflow recovery checkpoint has no matching failed task")
+			}
+			state.ActiveTaskID, state.PiModelStepFingerprint = "", ""
 		}
 		if message.Role == "toolResult" {
 			piSettleLocallyRejectedTool(current, &state, input.Message)
@@ -611,6 +620,7 @@ type PiToolReceipt struct {
 type PiTurnDecision struct {
 	Status string `json:"status"`
 	Nudge  string `json:"nudge,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDecision, error) {
@@ -985,22 +995,11 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 	pressure := s.cloudAgentContextPressure(request.Canonical, state.Request.Prompt, state.Request)
 	cloudAgentExpireTokenAnchorForSelection(run.ID, &state)
 	projected, _ := cloudAgentProjectedInputTokens(pressure, &state)
-	encoded, _ := json.Marshal(request.Canonical.Messages)
-	needsCompaction := state.ContextCompaction != nil || (modelBudget.Configured && projected >= modelBudget.CompactAtTokens) ||
-		(!modelBudget.Configured && cloudAgentContextShouldCompact(len(request.Canonical.Messages), len(encoded)))
 	view := &PiModelStepView{Status: "ready", Decision: "model", ModelLimits: modelBudget, ProjectedTokens: projected}
-	if needsCompaction {
+	// Pi owns the trigger. Go only blocks ordinary requests while an existing
+	// persisted compaction operation is being recovered or committed.
+	if state.ContextCompaction != nil {
 		view.Status, view.Decision = "waiting_compaction", "compact"
-		// This records the decision, not a compaction operation: Pi must first prepare a valid cut.
-		state.PiModelStepFingerprint = ""
-		payload := cloudAgentContextPressurePayload(pressure, &state, request.Canonical)
-		payload["phase"], payload["decision"] = "preflight", "compact"
-		state.event(run.ID, "context_pressure", payload)
-		if err := s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-			return cloudAgentSave(current, &state)
-		}); err != nil {
-			return nil, err
-		}
 		return view, nil
 	}
 	if preflight {
@@ -1120,7 +1119,11 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 		if !cloudAgentRunTerminal(status) {
 			status = "continue"
 		}
-		return &PiTurnDecision{Status: status, Nudge: state.PiModelFailureNudge}, nil
+		decision := &PiTurnDecision{Status: status, Nudge: state.PiModelFailureNudge}
+		if status == "continue" && piModelTaskContextOverflow(task) {
+			decision.Reason = "context_overflow"
+		}
+		return decision, nil
 	}
 	if run.Status == "failed" {
 		// 重投：worker 可能在"已经记录失败、但没收到响应"之间崩溃。只有同一失败
@@ -1153,6 +1156,8 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 		cloudAgentRestoreEscalationSwitches(&state)
 		nudge, reason := "", ""
 		switch {
+		case piModelTaskContextOverflow(task):
+			reason = "context_overflow"
 		case cloudAgentTruncatedToolArguments(task):
 			nudge = piAssistantText(cloudAgentRuntimeMessage(cloudAgentRuntimeContext{Kind: cloudAgentContextTruncatedArguments})["content"])
 			reason = "truncated_arguments_retried"
@@ -1166,11 +1171,15 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 			nudge, reason = "上游连续返回空内容；已关闭思考并放大输出预算。请继续处理原请求并返回有效正文或工具调用。", "empty_output_escalated"
 		}
 		state.PiModelFailureTaskID, state.PiModelFailureNudge = taskID, nudge
-		if nudge != "" {
-			state.ActiveTaskID, state.PiModelStepFingerprint = "", ""
+		if nudge != "" || reason == "context_overflow" {
+			// Keep an overflow task resumable until Pi's sanitized error checkpoint
+			// is durable. A crash between /fail and that checkpoint must replay it.
+			if reason != "context_overflow" {
+				state.ActiveTaskID, state.PiModelStepFingerprint = "", ""
+			}
 			state.Calls, state.CallIndex = nil, 0
 			state.event(runID, "model_failure_recovered", map[string]any{"text": nudge, "reason": reason, "taskId": taskID})
-			decision.Status, decision.Nudge = "continue", nudge
+			decision.Status, decision.Nudge, decision.Reason = "continue", nudge, reason
 			return cloudAgentSave(current, &state)
 		}
 		current.Status = "failed"
@@ -1182,6 +1191,24 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 		return cloudAgentSave(current, &state)
 	})
 	return decision, err
+}
+
+// Return a stable internal classification; raw provider errors must not become
+// Pi messages or public lifecycle payloads. Pi owns the compact-and-retry limit.
+func piModelTaskContextOverflow(task *model.Task) bool {
+	if task.Status != model.TaskStatusFailed {
+		return false
+	}
+	text := strings.ToLower(task.Error)
+	if strings.Contains(text, "rate limit") || strings.Contains(text, "tokens per minute") {
+		return false
+	}
+	for _, marker := range []string{"context_length_exceeded", "model_context_window_exceeded", "maximum context length", "context window exceeded", "context window exceeds limit", "prompt is too long", "input is too long", "exceeds the context window", "range of input length should be", "configured context size"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) PiModelStepAck(userID, runID, owner, taskID string) error {

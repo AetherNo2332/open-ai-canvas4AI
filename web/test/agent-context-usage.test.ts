@@ -84,7 +84,7 @@ describe("Agent context usage events", () => {
             tokenSource: "provider", providerUsage: { inputTokens: 85_000, cacheReadTokens: 80_000 },
         }, 2));
         state = reduceAgentContextUsage(state, event("run-2", "run_status", { status: "completed" }, 3));
-        expect(presentAgentContextUsage(state)).toMatchObject({ inputTokens: 85_000, ratio: 0.85, phase: "compress", remainingTokens: 15_000 });
+        expect(presentAgentContextUsage(state)).toMatchObject({ inputTokens: 85_000, ratio: 0.85, phase: "watch", remainingTokens: 15_000 });
         expect(presentAgentContextUsage(state).cacheHitRate).toBeCloseTo(80_000 / 85_000, 5);
     });
 
@@ -113,7 +113,7 @@ describe("Agent context usage events", () => {
         expect(contextPressureRatio(state.reading)).toBe(0.25);
     });
 
-    it("fills the ring against the compaction line, not the raw window", () => {
+    it("fills the ring against the displayed input budget", () => {
         const state = reduceAgentContextUsage(
             emptyAgentContextUsage("run-1"),
             event("run-1", "context_pressure", {
@@ -137,7 +137,7 @@ describe("Agent context usage events", () => {
         );
         const view = presentAgentContextUsage(state);
         expect(view.phase).toBe("ok");
-        expect(view.ring).toBeCloseTo(0.5, 5);
+        expect(view.ring).toBeCloseTo(0.425, 5);
         expect(view.label).toBe("43%");
         expect(view.inputTokens).toBe(42_500);
         expect(view.remainingTokens).toBe(57_500);
@@ -147,7 +147,7 @@ describe("Agent context usage events", () => {
         expect(view.breakdown[0]?.bytes).toBe(12_000);
     });
 
-    it("treats the compaction line as full and surfaces compacting before a stale reading", () => {
+    it("does not infer Pi compaction from the displayed input pressure", () => {
         let state = reduceAgentContextUsage(
             emptyAgentContextUsage("run-1"),
             event("run-1", "context_pressure", {
@@ -158,8 +158,8 @@ describe("Agent context usage events", () => {
                 pressureRatio: 0.9,
             }),
         );
-        expect(presentAgentContextUsage(state).phase).toBe("compress");
-        expect(presentAgentContextUsage(state).ring).toBe(1);
+        expect(presentAgentContextUsage(state).phase).toBe("watch");
+        expect(presentAgentContextUsage(state).ring).toBe(0.9);
         state = reduceAgentContextUsage(state, event("run-1", "context_compaction_requested", { basis: "tokens" }, 2));
         expect(presentAgentContextUsage(state).phase).toBe("compacting");
         state = reduceAgentContextUsage(state, event("run-1", "context_compacted", { mode: "fallback", resume: true }, 3));

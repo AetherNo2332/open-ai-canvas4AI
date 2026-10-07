@@ -125,7 +125,11 @@ interface PiModelStepView {
   error?: string;
 }
 
-export interface PiTurnDecision { status: string; nudge?: string }
+export interface PiTurnDecision { status: string; nudge?: string; reason?: string }
+
+export class CanvasContextOverflow extends Error {
+  constructor() { super("context_length_exceeded"); }
+}
 
 export class CanvasCompactionNeeded extends Error {
   constructor(readonly modelLimits?: PiSnapshot["modelLimits"]) { super("Go requested context compaction before model admission"); }
@@ -328,7 +332,7 @@ export class CanvasBridge {
       ? await this.request<PiModelStepView>("GET", `${path}/${encodeURIComponent(run.activeTaskId)}`, undefined, run, signal)
       : await this.request<PiModelStepView>("POST", path, body, run, signal);
     if (step.decision === "compact" || step.status === "waiting_compaction") throw new CanvasCompactionNeeded(step.modelLimits);
-    if (TERMINAL_RUN_STATUSES.has(step.status)) throw new CanvasRunTerminated(step.status);
+    if (TERMINAL_RUN_STATUSES.has(step.status) && step.status !== "failed") throw new CanvasRunTerminated(step.status);
     let sentTextDraft = "";
     const emitTextDraftDelta = (draft: string | undefined): void => {
       if (!onTextDelta || !draft) return;
@@ -354,7 +358,7 @@ export class CanvasBridge {
           await this.phase(run,"waiting_model","model",step.taskId,"等待模型响应",signal);
         }
         emitTextDraftDelta(next.textDraft);
-        if (TERMINAL_RUN_STATUSES.has(next.status)) throw new CanvasRunTerminated(next.status);
+        if (TERMINAL_RUN_STATUSES.has(next.status) && next.status !== "failed") throw new CanvasRunTerminated(next.status);
         return next;
       }, (next) => next.status === "queued" || next.status === "running", signal);
       await this.phase(run, "advancing", "", "", "", signal);
@@ -363,6 +367,9 @@ export class CanvasBridge {
     if (step.status !== "succeeded" || !step.result) {
       if (step.status !== "succeeded") {
         const decision = await this.request<PiTurnDecision>("POST", `${path}/${encodeURIComponent(step.taskId)}/fail`, {}, run, signal);
+        if (decision.status === "continue" && decision.reason === "context_overflow") {
+          throw new CanvasContextOverflow();
+        }
         if (decision.status === "continue" && decision.nudge) throw new CanvasModelRetry(decision);
         if (["completed", "failed", "cancelled", "rejected"].includes(decision.status)) {
           throw new CanvasRunTerminated(decision.status);

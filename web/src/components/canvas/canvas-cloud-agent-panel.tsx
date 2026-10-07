@@ -1401,7 +1401,7 @@ const CONTEXT_PHASE_LABEL: Record<AgentContextPhase, string> = {
     idle: "尚未测量",
     unknown: "窗口未知",
     ok: "上下文充足",
-    watch: "接近压缩",
+    watch: "用量较高",
     compress: "即将压缩",
     compacting: "正在压缩",
     stale: "压缩后待刷新",
@@ -1470,7 +1470,7 @@ export function AgentContextRing({ view }: { view: AgentContextUsageView }) {
                     <div className="agent-context-panel-foot">
                         <span>
                             {sourceLabel}
-                            {view.estimate ? " · 不是计费 Token" : " · 与压缩判断一致"}
+                            {view.estimate ? " · 不是计费 Token" : " · 最近一次模型输入"}
                         </span>
                         <span title={view.cacheHitRate === undefined ? "暂无模型缓存用量数据" : "上一请求的缓存读取 Token ÷ 总输入 Token"}>
                             缓存命中率 {view.cacheHitRate === undefined ? "暂无数据" : `${Math.round(view.cacheHitRate * 1000) / 10}%`}
