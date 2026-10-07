@@ -507,3 +507,65 @@ func cloudAgentStoryboardRowDefaults() map[string]any {
 	}
 	return row
 }
+
+func validateCloudAgentStoryboardReferences(doc, row map[string]any) error {
+	nodes := map[string]map[string]any{}
+	for _, node := range creationMaps(doc["nodes"]) {
+		nodes[stringValue(node["id"])] = node
+	}
+	for _, character := range creationMaps(row["characters"]) {
+		if strings.TrimSpace(stringValue(character["characterName"])) == "" {
+			return BadAuthRequest("分镜角色名称不能为空")
+		}
+		if id := stringValue(character["characterImageNodeId"]); id != "" {
+			node := nodes[id]
+			if node == nil || (stringValue(node["type"]) != "image" && stringValue(node["type"]) != "drawing") {
+				return BadAuthRequest("分镜角色图片必须引用当前画布内图片或绘图节点")
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, binding := range creationMaps(row["assetBindings"]) {
+		id := stringValue(binding["nodeId"])
+		node := nodes[id]
+		if validateCloudAgentID(id, "资产节点ID", 80) != nil || node == nil || seen[id] {
+			return BadAuthRequest("分镜资产引用必须是当前画布内唯一节点")
+		}
+		seen[id] = true
+		kind := stringValue(node["type"])
+		if kind == "drawing" {
+			kind = "image"
+		}
+		if cloudAgentCharacterNode(node) {
+			kind = "character"
+		}
+		role := stringValue(binding["role"])
+		allowed := false
+		switch role {
+		case "character":
+			allowed = kind == "image" || kind == "character"
+		case "environment", "wardrobe", "prop", "weapon", "style":
+			allowed = kind == "image"
+		case "motion":
+			allowed = kind == "image" || kind == "video"
+		case "audio":
+			allowed = kind == "audio"
+		}
+		if !allowed {
+			return BadAuthRequest("分镜资产类型不符合引用角色")
+		}
+	}
+	return validateCloudAgentStoryboardSourceRange(row)
+}
+
+func validateCloudAgentStoryboardSourceRange(row map[string]any) error {
+	start, hasStart := row["sourceStartMs"].(float64)
+	end, hasEnd := row["sourceEndMs"].(float64)
+	if hasStart && hasEnd && end < start {
+		return BadAuthRequest("分镜来源结束时间不能早于开始时间")
+	}
+	if frame, exists := row["keyframeTimeMs"].(float64); exists && ((hasStart && frame < start) || (hasEnd && frame > end)) {
+		return BadAuthRequest("分镜关键帧时间必须位于来源时间范围内")
+	}
+	return nil
+}

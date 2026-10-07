@@ -748,7 +748,7 @@ test("a window shrink during a tool turn is applied before Pi checks the next re
 test("native overflow recovery persists omission entries before the Go compaction CAS", async () => {
   const history = compactionHistory();
   const { bridge, state, snapshot } = fakeBridge([
-    async () => { throw new Error("context_length_exceeded"); }, { text: "Done" },
+    async () => { throw new CanvasContextOverflow(); }, { text: "Done" },
   ], { piSessionEntries: history.views, piActiveLeafId: history.leaf });
   snapshot.canonical.messages = history.canonical;
   snapshot.piSessionRevision = 8;
