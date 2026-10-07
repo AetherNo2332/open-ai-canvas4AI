@@ -312,7 +312,8 @@ func TestWorkerRecoverySweepDoesNotStarveBehindHundredHealthyWaits(t *testing.T)
 	}
 	earlier := time.Now().Add(-12 * time.Minute)
 	for i := 0; i < 100; i++ {
-		keeper := model.CloudAgentExecution{ID: fmt.Sprintf("healthy-%03d", i), UserID: "user", Engine: "pi", Status: "running", RuntimePhase: "waiting_model", ActiveTaskID: "pi-root-task", RecoveryStatus: "reconciling", RecoveryStartedAt: &earlier, RecoveryAttempts: 1}
+		// Sort before the target in both the old time ordering and the new keyset ordering.
+		keeper := model.CloudAgentExecution{ID: fmt.Sprintf("000-healthy-%03d", i), UserID: "user", Engine: "pi", Status: "running", RuntimePhase: "waiting_model", ActiveTaskID: "pi-root-task", RecoveryStatus: "reconciling", RecoveryStartedAt: &earlier, RecoveryAttempts: 1}
 		if err := db.Create(&keeper).Error; err != nil {
 			t.Fatal(err)
 		}
