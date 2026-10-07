@@ -6,6 +6,7 @@ import { RetryableBridgeError, safeWorkerDetail } from './worker-errors.js';
 interface FailureBridge {
   failRun(run: PiSnapshot, reason: string, signal?: AbortSignal): Promise<void>;
   snapshot?(run: PiSnapshot, signal?: AbortSignal): Promise<PiSnapshot>;
+  reportRecovery?(run: PiSnapshot, error: RetryableBridgeError, signal?: AbortSignal): Promise<void>;
 }
 
 export function workerErrorSummary(error: unknown): string {
@@ -23,8 +24,19 @@ export async function runLeasedPiSession<B extends FailureBridge>(
   try { await execute(bridge, run, signal); }
   catch (error) {
     if (signal.aborted || error instanceof CanvasLeaseLost || error instanceof CanvasRunTerminated) return;
-    // Until recovery is durably acknowledged, leave ownership to expire.
-    if (error instanceof RetryableBridgeError) throw error;
+    if (error instanceof RetryableBridgeError) {
+      if (!bridge.reportRecovery) throw error;
+      const reportSignal=AbortSignal.any([signal,AbortSignal.timeout(15000)]);
+      for(let attempt=0;attempt<3;attempt++){
+        try {await bridge.reportRecovery(run,error,reportSignal);return;}
+        catch(reportError){
+          if(signal.aborted || reportError instanceof CanvasLeaseLost || reportError instanceof CanvasRunTerminated)return;
+          if(!(reportError instanceof RetryableBridgeError) || reportSignal.aborted)break;
+          if(attempt<2)await delay(250*(attempt+1),undefined,{signal:reportSignal}).catch(()=>{});
+        }
+      }
+      throw new FatalWorkerError('Pi worker 恢复上报未确认：后端暂时不可用');
+    }
     const reason = error instanceof FatalWorkerError ? safeWorkerDetail(error.message) : 'Pi worker 内部异常，本轮已停止，请重试';
     const reportSignal = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
     for (let attempt = 0; attempt < 3; attempt++) {

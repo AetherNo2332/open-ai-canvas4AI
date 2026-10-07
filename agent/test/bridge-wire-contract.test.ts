@@ -7,6 +7,26 @@ import { CANVAS_PI_WIRE_IDENTITY, CanvasBridge, type PiSnapshot, type PiToolCall
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 
+test('a backend outage pauses new claims across bridge instances until one protocol probe succeeds',async()=>{
+ const original=globalThis.fetch;
+ const health={nextProbeAt:0};
+ const first=new CanvasBridge('http://backend:8080','token','one',undefined,undefined,health);
+ const second=new CanvasBridge('http://backend:8080','token','two',undefined,undefined,health);
+ let requests=0;
+ try {
+  globalThis.fetch=(async()=>{requests++;return new Response('',{status:503})}) as typeof fetch;
+  await assert.rejects(first.failRun(run,'safe'));
+  assert.equal(await second.claim(),null);
+  assert.equal(requests,1);
+  health.nextProbeAt=Date.now()-1;
+  globalThis.fetch=(async()=>{requests++;return new Response(JSON.stringify({code:0,data:{run:null}}))}) as typeof fetch;
+  assert.equal(await second.claim(),null);
+  assert.equal(health.nextProbeAt,0);
+  await first.claim();
+  assert.equal(requests,3);
+ }finally{globalThis.fetch=original}
+});
+
 test('bridge transport failures are explicitly retryable; malformed successful JSON is fatal', async () => {
   const original = globalThis.fetch;
   const bridge = new CanvasBridge('http://backend:8080', 'token', 'worker-1');

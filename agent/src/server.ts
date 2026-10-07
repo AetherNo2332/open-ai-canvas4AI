@@ -30,7 +30,8 @@ if (harnessDir) {
 
 const scheduler = new EventScheduler(4);
 const events = new RunEvents();
-const eventBridge = new CanvasBridge(backend, token, `${hostname()}-${process.pid}-events`, scheduler, events);
+const availability={nextProbeAt:0};
+const eventBridge = new CanvasBridge(backend, token, `${hostname()}-${process.pid}-events`, scheduler, events,availability);
 // Fail closed before any claim when the authoritative configuration is unavailable.
 const config=new RuntimeConfigController(await eventBridge.schedulerConfig(controller.signal));
 scheduler.setConcurrency(config.current.dispatchConcurrency);
@@ -61,7 +62,7 @@ await runEventSessions({
   },
   signal: controller.signal,
   createBridge: (index) => new CanvasBridge(backend, token,
-    `${hostname()}-${process.pid}-${index + 1}`.slice(0, 80), scheduler, events),
+    `${hostname()}-${process.pid}-${index + 1}`.slice(0, 80), scheduler, events,availability),
   run: async (bridge, run, signal) => {
     await runLeasedPiSession(bridge, run, signal, (b, r, s) => runCanvasAgent(b, r, s, harness, toolSchema));
   },

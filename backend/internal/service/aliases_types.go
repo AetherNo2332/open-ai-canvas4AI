@@ -15,6 +15,7 @@ type (
 	CloudAgentMediaSettings                = app.CloudAgentMediaSettings
 	CloudAgentCapabilitySet                = app.CloudAgentCapabilitySet
 	PiAgentSnapshot                        = app.PiAgentSnapshot
+	PiWorkerRecoveryRequest                = app.PiWorkerRecoveryRequest
 	PiModelStepRequest                     = app.PiModelStepRequest
 	PiModelStepView                        = app.PiModelStepView
 	PiToolBatchRequest                     = app.PiToolBatchRequest
