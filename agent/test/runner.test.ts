@@ -657,6 +657,174 @@ function compactionHistory() {
     leaf: String(entries.at(-1)!.id), keep: String(entries.at(-1)!.id) };
 }
 
+test("Pi automatically compacts with the refreshed model window while Go admits ordinary steps", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([{ text: "Done" }], {
+    piSessionEntries: history.views, piActiveLeafId: history.leaf,
+  });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: "model",
+    modelLimits: { contextWindowTokens: 32000, maxOutputTokens: 4096, configured: true,
+      source: "updated-channel-model", inputBudgetTokens: 23808, compactAtTokens: 20236,
+      compactionReserveTokens: 11764, keepRecentTokens: 5952 } });
+  let compactions = 0;
+  bridge.compactContext = async (_run, request) => {
+    compactions += 1;
+    assert.equal(request.reason, "threshold");
+    const preparation = request.preparation as { firstKeptEntryId: string };
+    return { operationId: "auto-window-op", status: "succeeded", summary: "<agent-context-checkpoint/>",
+      firstKeptEntryId: preparation.firstKeptEntryId, tokensBefore: request.tokensBefore,
+      details: { protocolVersion: "canvas-pi-compaction/v1", operationId: "auto-window-op" } };
+  };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(compactions, 1);
+  assert.deepEqual(state.contextCompactions, ["commit:auto-window-op:8"]);
+  assert.equal(state.steps, 1);
+  assert.equal(state.status, "completed");
+  assert.match(JSON.stringify(state.canonical[0]?.messages), /agent-context-checkpoint/);
+});
+
+test("a window shrink during a tool turn is applied before Pi checks the next request", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "read-window", function: { name: "canvas_get_state", arguments: "{}" } }],
+      usage: { input: 24000, output: 5, totalTokens: 24005 } },
+    { text: "Done" },
+  ], { piSessionEntries: history.views, piActiveLeafId: history.leaf });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  let checks = 0;
+  bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: "model",
+    modelLimits: ++checks <= 1 ? snapshot.modelLimits : {
+      contextWindowTokens: 32000, maxOutputTokens: 4096, configured: true, source: "updated",
+      inputBudgetTokens: 23808, compactAtTokens: 20236, compactionReserveTokens: 11764, keepRecentTokens: 5952,
+    } });
+  bridge.compactContext = async (_run, request) => {
+    const preparation = request.preparation as { firstKeptEntryId: string };
+    return { operationId: "tool-window-op", status: "succeeded", summary: "<agent-context-checkpoint/>",
+      firstKeptEntryId: preparation.firstKeptEntryId, tokensBefore: request.tokensBefore,
+      details: { operationId: "tool-window-op" } };
+  };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 2);
+  assert.ok(JSON.stringify(state.canonical[1]?.messages).includes("agent-context-checkpoint"),
+    `the second request must contain the checkpoint: ${JSON.stringify({ checks, compactions: state.contextCompactions })}`);
+  assert.equal(state.status, "completed");
+});
+
+test("native overflow recovery persists omission entries before the Go compaction CAS", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([
+    async () => { throw new Error("context_length_exceeded"); }, { text: "Done" },
+  ], { piSessionEntries: history.views, piActiveLeafId: history.leaf });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  let durableLeaf = history.leaf;
+  let revision = 8;
+  const messages = new Map<number, string>();
+  const checkpoint = bridge.checkpoint.bind(bridge);
+  bridge.checkpoint = async (...args) => {
+    const [,, message,, , session] = args;
+    const sequence = args[1];
+    if (messages.has(sequence)) assert.equal(JSON.stringify(message), messages.get(sequence));
+    messages.set(sequence, JSON.stringify(message));
+    await checkpoint(...args);
+    durableLeaf = session?.activeLeafId || durableLeaf;
+    return { saved: true, sessionRevision: ++revision };
+  };
+  bridge.compactContext = async (_run, request) => {
+    assert.equal(request.reason, "overflow");
+    assert.equal(request.willRetry, true);
+    assert.equal(request.activeLeafId, durableLeaf);
+    assert.equal(request.sessionRevision, revision);
+    const preparation = request.preparation as { firstKeptEntryId: string };
+    return { operationId: "overflow-op", status: "succeeded", summary: "<agent-context-checkpoint/>",
+      firstKeptEntryId: preparation.firstKeptEntryId, tokensBefore: request.tokensBefore,
+      details: { operationId: "overflow-op" } };
+  };
+  bridge.commitContextCompaction = async (_run, _operation, expectedRevision, entry) => {
+    assert.equal(entry.parentId, durableLeaf);
+    assert.equal(expectedRevision, revision);
+    return { committed: true, sessionRevision: ++revision };
+  };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 2);
+  assert.equal(state.status, "completed");
+  assert.ok(JSON.stringify(state.canonical[1]?.messages).includes("agent-context-checkpoint"));
+});
+
+for (const omitted of [false, true]) {
+  test(`restart recovers a durable overflow ${omitted ? "omission" : "error"} before requesting the model`, async () => {
+    const history = compactionHistory();
+    const failed = {
+      id: "durable-overflow", parentId: history.leaf, type: "message", timestamp: new Date().toISOString(),
+      message: { role: "assistant", content: [], api: "openai-completions", provider: "canvas", model: "canvas-model",
+        timestamp: Date.now(), stopReason: "error", errorMessage: "context_length_exceeded",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } },
+    };
+    const entries = [...history.views!, { runId: "run-1", entry: failed }];
+    if (omitted) entries.push({ runId: "run-1", entry: { id: "durable-omission", parentId: failed.id,
+      type: "context_edit", timestamp: new Date().toISOString(), targetId: failed.id, replacement: null } } as any);
+    const { bridge, state, snapshot } = fakeBridge([{ text: "Done" }], {
+      piSessionEntries: entries as PiSnapshot["piSessionEntries"], piActiveLeafId: String(entries.at(-1)!.entry.id),
+    });
+    snapshot.skillRuntimeMode = "pi-native";
+    snapshot.tools = [{ name: "read", category: "native_skill", description: "Read Skill", allowed: true,
+      parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }];
+    snapshot.canonical.messages = history.canonical;
+    snapshot.piMessages = [failed.message as unknown as Record<string, unknown>];
+    snapshot.piSessionRevision = 8;
+    snapshot.lastTaskId = "failed-task";
+    snapshot.modelFailureTaskId = "failed-task";
+    let compacted = false;
+    bridge.compactContext = async (_run, request) => {
+      assert.equal(request.reason, "overflow");
+      compacted = true;
+      const preparation = request.preparation as { firstKeptEntryId: string };
+      return { operationId: "restart-overflow", status: "succeeded", summary: "<agent-context-checkpoint/>",
+        firstKeptEntryId: preparation.firstKeptEntryId, tokensBefore: request.tokensBefore,
+        details: { operationId: "restart-overflow" } };
+    };
+    const modelStep = bridge.modelStep.bind(bridge);
+    bridge.modelStep = async (...args) => {
+      assert.ok(compacted, "a durable overflow must compact before another model request");
+      return modelStep(...args);
+    };
+    await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+    assert.equal(state.steps, 1);
+    assert.deepEqual(state.noToolTurns, ["task-1"]);
+    assert.equal(state.status, "completed");
+    assert.ok(JSON.stringify(state.canonical[0]?.messages).includes("agent-context-checkpoint"));
+  });
+}
+
+test("automatic compaction retries a rejected historical tool boundary with the native smaller suffix", async () => {
+  const history = compactionHistory();
+  const { bridge, state, snapshot } = fakeBridge([{ text: "Done" }], {
+    piSessionEntries: history.views, piActiveLeafId: history.leaf,
+  });
+  snapshot.canonical.messages = history.canonical;
+  snapshot.piSessionRevision = 8;
+  bridge.modelPreflight = async () => ({ status: "ready", taskId: "", decision: "model",
+    modelLimits: { contextWindowTokens: 32000, maxOutputTokens: 4096, configured: true, source: "fixture",
+      compactAtTokens: 20236, compactionReserveTokens: 11764, keepRecentTokens: 5952 } });
+  let attempts = 0;
+  bridge.compactContext = async (_run, request) => {
+    if (++attempts === 1) throw new FatalWorkerError("Canvas bridge HTTP 400: Pi 保留工具调用缺少结果");
+    const preparation = request.preparation as { firstKeptEntryId: string; settings: { keepRecentTokens: number } };
+    assert.equal(preparation.settings.keepRecentTokens, 1);
+    return { operationId: "auto-boundary", status: "succeeded", summary: "<agent-context-checkpoint/>",
+      firstKeptEntryId: preparation.firstKeptEntryId, tokensBefore: request.tokensBefore,
+      details: { operationId: "auto-boundary" } };
+  };
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(attempts, 2);
+  assert.equal(state.steps, 1);
+  assert.equal(state.status, "completed");
+});
+
 test("preflight compacts before appending the next prompt and never admits the denied model step", async () => {
   const history = compactionHistory();
   const { bridge, state, snapshot } = fakeBridge([{ text: "Done" }], {
@@ -683,13 +851,13 @@ test("preflight compacts before appending the next prompt and never admits the d
   await runCanvasAgent(bridge, snapshot, undefined, promptParts());
   assert.ok(order.indexOf("compact") < order.indexOf("checkpoint:user"));
   assert.equal(state.steps, 1);
-  assert.ok(checks >= 3, "check before prompt and again before the actual provider request");
+  assert.ok(checks >= 2, "check before each prompt attempt");
   const firstRequest = state.canonical[0];
   assert.ok(firstRequest);
   assert.ok(firstRequest.messages.some(message => String(message.content).includes("agent-context-checkpoint")));
   // 首个 preflight 发生在首个 prompt 之前：SDK 的 Agent.state.systemPrompt 仍是空串，
   // 必须回落到装配提示，否则真实服务端会以"缺少服务端策略"拒绝整个运行。
-  assert.ok(preflightPrompts.length >= 2, "both preflight paths must be exercised");
+  assert.ok(preflightPrompts.length >= 2, "both prompt attempts must be exercised");
   assert.ok(preflightPrompts.every((prompt) => prompt.includes("SERVER POLICY: 影策画布助手。")),
     JSON.stringify(preflightPrompts));
 });

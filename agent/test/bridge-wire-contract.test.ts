@@ -74,7 +74,8 @@ test("a Go-finalized model failure is a terminal control signal", async () => {
     const bridge = new CanvasBridge("http://backend:8080", "token", "worker-1");
     await assert.rejects(bridge.modelStep(run, run.canonical), error =>
       error instanceof Error && error.name === "CanvasRunTerminated");
-    assert.equal(routes.length, 1, "a Go-finalized failure needs no second fail admission");
+    assert.equal(routes.length, 2, "Go failure acknowledgement distinguishes recoverable task failure from terminal run failure");
+    assert.ok(routes[1]?.endsWith("/failed-model-task/fail"));
   } finally { globalThis.fetch = original; }
 });
 
