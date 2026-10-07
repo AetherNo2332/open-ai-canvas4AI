@@ -1,6 +1,6 @@
 # 后台预演本地验收（2026-10-08）
 
-本地实现已形成真实后台执行链：`previs_preview → 持久任务 → renderer → MP4/PNG → 资源登记 → 画布事务提交 → Agent回执`。关闭用户网页不会移除执行器。生产192.168.90.200:3000未升级，本报告中的画布和媒体来自隔离测试，不是用户原生产画布的成果。
+本地实现已形成真实后台执行链：`previs_preview → 持久任务 → renderer → MP4/PNG → 资源登记 → 画布事务提交 → Agent回执`。关闭用户网页不会移除执行器。生产3000未升级，本报告中的画布和媒体来自隔离测试，不是用户原生产画布的成果。
 
 工作树：`canary`；分支：`codex/previs-background`；基础版本：`69df3f11`。用户已有的`MEDIA_POLICY.md`和`SYSTEM_POLICY.md`改动保留。技能库中的「影策短剧制作工作流」本地更新为1.3.0；执行和成功闸门由后端合同保证，技能描述不能代替真实资源和节点。
 
@@ -90,3 +90,11 @@ docker compose --env-file .local/previs-test.env -p canvas-previs-verify -f dock
 本地运行取证中的一次固定镜像测试因命令默认工作目录为`/app/renderer`，将测试静态路径解析到不存在目录，出现`viewport_load_timeout`。改为`--workdir /app`复验；这次失败归属测试命令，记录原日志以便复查，不改大载入超时掩盖路径错误。
 
 收尾保留当前本地分支与工作树，不合并或推送；停止的仅为`canvas-previs-verify`，不删除其持久卷。验收报告和实施计划纳入本地Git提交，媒体/日志保留在artifacts中。计划临时记录目录的递归删除被自动审批拒绝，仅返回`blocked by policy`，因此保留该目录，不再尝试删除。
+
+## canary PR集成验证
+
+用户随后授权提交canary PR。发布分支`codex/previs-background-canary`从远端`f4d701ff`建立，只移入原实现与文档两个提交，保留canary已有的连线工具、Pi自主压缩与会话合同。原分支和用户policy改动不受影响。应用的工作树工具面向父仓库，不能读取嵌套仓库的ref，因此本次使用嵌套仓库的Git worktree。
+
+合并后的工具描述在Windows CRLF下为20483字节，超20KiB上限3字节。Agent完整测试先复现161通过/1失败；压缩预演描述并同步来源manifest及共享schema后，LF为19968字节、CRLF为20438字节，Agent162/162通过。前端全量2195/2195、类型检查、生产构建和专用渲染入口构建通过。
+
+本轮PR集成后端预演专项108.889秒通过，资源/HTTP接口专项通过，共享schema漂移检查通过，`go build ./...`退出0；真实三镜和恢复媒体证据来自前述原实现验收，没有将它们记为本轮重新运行。生产升级及完整人工运行场景仍在待测试清单中。
