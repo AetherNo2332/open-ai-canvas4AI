@@ -27,6 +27,50 @@ tags:
   - name: admin
   - name: skills
 paths:
+  /diagnostics/preview:
+    post:
+      tags: [meta]
+      summary: 预览当前账号的诊断包记录数量
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DiagnosticExportRequest"}
+      responses:
+        "200":
+          description: 成功信封的 data 包含任务、画布变动、Agent 对话/事件数量和截断提示
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: {$ref: "#/components/schemas/DiagnosticPreview"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+  /diagnostics/export:
+    post:
+      tags: [meta]
+      summary: 导出包含画布变动和 Agent 对话的脱敏 ZIP
+      description: 仅当前用户的持久记录。包含业务对话文字，分享前需检查；不含媒体、系统提示、工具参数及结果正文。ZIP 上限 10 MiB。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DiagnosticExportRequest"}
+      responses:
+        "200":
+          description: 诊断 ZIP，manifest schemaVersion 为 2
+          headers:
+            X-Diagnostic-Bundle-ID: {schema: {type: string}}
+            X-Diagnostic-Schema-Version: {schema: {type: integer, enum: [2]}}
+            Content-Disposition: {schema: {type: string}}
+          content:
+            application/zip:
+              schema: {type: string, format: binary}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
   /admin/settings/agent-scheduler:
     get:
       tags: [admin]
@@ -1507,6 +1551,41 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    DiagnosticExportRequest:
+      type: object
+      properties:
+        from: {type: string, format: date-time, description: 默认最近 30 分钟，最长 24 小时}
+        to: {type: string, format: date-time}
+        taskId: {type: string, maxLength: 96}
+        projectId: {type: string, maxLength: 96, description: 沿用任务的历史画布分组标识}
+        canvasId: {type: string, maxLength: 96, description: 当前用户所属画布，与任务上下文必须一致}
+        description: {type: string, maxLength: 1000}
+        runtime:
+          type: object
+          properties:
+            appVersion: {type: string}
+            buildCommit: {type: string}
+            browser: {type: string}
+            os: {type: string}
+            timezone: {type: string}
+        clientEvents:
+          type: array
+          description: 保留最近 500 条，字段与浏览器诊断事件一致
+          items: {type: object}
+    DiagnosticPreview:
+      type: object
+      properties:
+        clientEventLimit: {type: integer}
+        taskCount: {type: integer}
+        taskLogCount: {type: integer}
+        apiCallCount: {type: integer}
+        canvasCount: {type: integer}
+        canvasChangeCount: {type: integer}
+        agentRunCount: {type: integer}
+        agentMessageCount: {type: integer}
+        agentEventCount: {type: integer}
+        estimatedBytes: {type: integer, format: int64, description: 未压缩脱敏内容估算}
+        willTruncate: {type: boolean}
     ToolMutation:
       type: object
       required: [type, label, prompt]
