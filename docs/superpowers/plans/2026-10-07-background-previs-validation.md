@@ -8,6 +8,8 @@
 
 测试没有打开用户画布或导演台网页，没有运行Pi模型。Linux无头Chromium运行实际Three.js视口，后端独立探测下载的MP4并登记资源，最后重读持久画布。
 
+测试使用临时SQLite库和隔离本地资源存储；测试结束后临时数据库清理，导出的视频、PNG、画布JSON和日志保留。没有启动供用户登录的常驻验收画布服务，应直接审阅本报告链接的媒体与画布证据。
+
 | 镜头 | Task ID | 视频资源 | 预览资源 | 画布节点 |
 |---|---|---|---|---|
 | 1 / static | ag6c0596913af7ef8e02ccdf3973280905 | 4590e47556b90d0b6790a47f0b790f51 | ec3bb61304fab22fdd5f35b971152240 | ag0a6adafe5497af99e4f1de75edccb497 / ag7c8a9c61af09ba65f55c522aa59bed99 |
@@ -87,4 +89,4 @@ docker compose --env-file .local/previs-test.env -p canvas-previs-verify -f dock
 
 本地运行取证中的一次固定镜像测试因命令默认工作目录为`/app/renderer`，将测试静态路径解析到不存在目录，出现`viewport_load_timeout`。改为`--workdir /app`复验；这次失败归属测试命令，记录原日志以便复查，不改大载入超时掩盖路径错误。
 
-收尾保留当前本地分支与工作树，不合并或推送；停止的仅为`canvas-previs-verify`，不删除其持久卷。计划运行临时目录在证据复制后清理；验收报告和实施计划纳入本地Git提交，媒体/日志保留在artifacts中。
+收尾保留当前本地分支与工作树，不合并或推送；停止的仅为`canvas-previs-verify`，不删除其持久卷。验收报告和实施计划纳入本地Git提交，媒体/日志保留在artifacts中。计划临时记录目录的递归删除被自动审批拒绝，仅返回`blocked by policy`，因此保留该目录，不再尝试删除。
