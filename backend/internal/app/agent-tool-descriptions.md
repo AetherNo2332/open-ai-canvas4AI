@@ -463,7 +463,7 @@ focusNodeIds 的展开深度，0–3，省略为1；仅与 focusNodeIds 一起�
 
 ## previs_preview
 
-生成预演白模视频。
+提交后台白模预演，关页仍执行。真实MP4、构图帧和画布节点均保存才成功；失败读取taskId诊断及产物，排队不算交付。
 
 ## previs_scene_create
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"infinite-canvas/backend/internal/repository"
@@ -227,6 +228,12 @@ func cloudAgentPrevisPreview(repo *repository.Repository, userID, canvasID strin
 	if args.FPS != nil {
 		fps = *args.FPS
 	}
+	if math.IsNaN(duration) || math.IsInf(duration, 0) || duration < 0.1 || duration > 60 || fps < 1 || fps > 60 {
+		return nil, BadAuthRequest("导演镜头的时长或帧率无效，请先修正镜头")
+	}
+	if _, ok := findPrevisSceneCamera(scene, stringValue(shot["cameraId"])); !ok {
+		return nil, BadAuthRequest("导演镜头没有有效摄影机")
+	}
 	requestID := strings.TrimSpace(call.ID)
 	if requestID == "" {
 		requestID = fmt.Sprintf("previs-preview-%s-%s", args.SceneID, args.ShotID)
@@ -242,8 +249,9 @@ func cloudAgentPrevisPreview(repo *repository.Repository, userID, canvasID strin
 		"fps":              fps,
 		"output":           "clay_video",
 		"snapshotHash":     creationHash(scene),
-		"execution":        "browser_previs_viewport",
-		"text":             "已请求预演台在浏览器视口录制白模预演；录制完成后会回写为画布视频节点。",
+		"execution":        "server_previs_renderer",
+		"taskSubmitted":    false,
+		"text":             "预演参数已校验；后台任务尚未提交，不能视为已生成视频。",
 	}, nil
 }
 
