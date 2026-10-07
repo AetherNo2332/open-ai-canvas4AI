@@ -1779,6 +1779,7 @@ func (s *Service) PiFailRun(userID, runID, owner, reason string) error {
 		}
 		current.Status = "failed"
 		current.FailureMessage = message
+		current.CleanupPending = true
 		state.event(runID, "run_failed", map[string]any{
 			"text": "Agent 运行无法继续：" + message, "reason": "pi_worker_fatal",
 		})

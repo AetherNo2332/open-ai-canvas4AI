@@ -3,6 +3,7 @@ import type { CanvasModelResult } from "./pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "./tool-disclosure.js";
 import type { PromptParts } from "./system-prompt.js";
 import { EventScheduler, RunEvents } from "./event-scheduler.js";
+import { RetryableBridgeError, safeWorkerDetail } from "./worker-errors.js";
 import type { SubagentRuntime } from "./subagent-wire.js";
 
 /**
@@ -482,10 +483,15 @@ export class CanvasBridge {
         headers["X-Agent-Session-Epoch"] = String(run.piSessionLeaseEpoch);
       }
     }
-    const send = () => fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent${path}`, {
+    const send = async () => {
+      try { return await fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent${path}`, {
       method, headers, body: body === undefined ? undefined : JSON.stringify(body),
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
-    });
+      }); } catch (error) {
+        if (signal?.aborted) throw error;
+        throw new RetryableBridgeError(`${method} ${path}`);
+      }
+    };
     const response = this.scheduler && run && !path.endsWith("/renew")
       ? await this.scheduler.step(`${run.userId}:${run.request.canvasId ?? run.runId}`, send, signal) : await send();
     if (!response.ok) {
@@ -511,16 +517,27 @@ export class CanvasBridge {
           if (snapshotError instanceof CanvasRunTerminated) throw snapshotError;
         }
       }
-      const detail = `Canvas bridge HTTP ${response.status} on ${method} ${path}${publicMessage ? `: ${publicMessage}` : ""}`;
+      const detail = safeWorkerDetail(`Canvas bridge HTTP ${response.status} on ${method} ${path}${publicMessage ? `: ${publicMessage}` : ""}`);
       if (response.status === 403 && publicReason === "agent_lease_lost") throw new CanvasLeaseLost(detail);
       // 确定性错误必须标成致命：server.ts 只对 FatalWorkerError 调 failRun，
       // 否则运行既不会失败也不会被看门狗回收，只会无限重试。
       if (NON_RETRYABLE_BRIDGE_STATUSES.has(response.status)) throw new FatalWorkerError(detail);
-      throw new Error(detail);
+      if ([408,409,425,429].includes(response.status) || response.status >= 500) {
+        const retryAfter = response.headers.get('Retry-After');
+        const retryAfterMs = retryAfter ? (/^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now())) : undefined;
+        throw new RetryableBridgeError(`${method} ${path}`, response.status, Number.isFinite(retryAfterMs) ? retryAfterMs : undefined);
+      }
+      throw new FatalWorkerError(detail);
     }
-    const envelope: unknown = await response.json();
+    let envelope: unknown;
+    try { envelope = await response.json(); }
+    catch (error) {
+      if (signal?.aborted) throw error;
+      if (error instanceof SyntaxError) throw new FatalWorkerError(`Canvas bridge invalid JSON on ${method} ${path}`);
+      throw new RetryableBridgeError(`${method} ${path}`);
+    }
     if (!envelope || typeof envelope !== "object" || (envelope as any).code !== 0) {
-      throw new Error(`Canvas bridge rejected ${method} ${path}`);
+      throw new FatalWorkerError(`Canvas bridge rejected ${method} ${path}`);
     }
     return (envelope as { data: T }).data;
   }

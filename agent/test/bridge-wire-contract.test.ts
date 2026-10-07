@@ -7,6 +7,17 @@ import { CANVAS_PI_WIRE_IDENTITY, CanvasBridge, type PiSnapshot, type PiToolCall
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 
+test('bridge transport failures are explicitly retryable; malformed successful JSON is fatal', async () => {
+  const original = globalThis.fetch;
+  const bridge = new CanvasBridge('http://backend:8080', 'token', 'worker-1');
+  try {
+    globalThis.fetch = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+    await assert.rejects(bridge.failRun(run, 'safe'), error => error instanceof Error && error.name === 'RetryableBridgeError');
+    globalThis.fetch = (async () => new Response('not-json', {status:200})) as typeof fetch;
+    await assert.rejects(bridge.failRun(run, 'safe'), error => error instanceof Error && error.name === 'FatalWorkerError');
+  } finally { globalThis.fetch = original; }
+});
+
 const run: PiSnapshot = {
   runId: "run-wire",
   piSessionLeaseEpoch: 7,
