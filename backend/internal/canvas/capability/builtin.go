@@ -3,12 +3,13 @@ package capability
 const (
 	maxAgentNodeTitleRunes   = 240
 	maxAgentNodeContentRunes = 16000
+	maxAgentDocumentRunes    = 1 << 20
 	// 坐标绝对值上限：与 app 侧整理工具收敛几何值的范围一致。
 	maxAgentNodeCoordLimit = 1e6
 )
 
 func BuiltinRegistry() *Registry {
-	registry, err := NewRegistry([]Descriptor{
+	descriptors := []Descriptor{
 		{
 			Type: "text", Version: "1", Label: "文本", DefaultWidth: 340, DefaultHeight: 240,
 			Purpose:     "承载普通说明、创意草稿和单段提示词。",
@@ -55,7 +56,7 @@ func BuiltinRegistry() *Registry {
 		},
 		{
 			Type: "batch-table", Version: "1", Label: "批量创作表", DefaultWidth: 1280, DefaultHeight: 560,
-			Purpose:     "面向电商批量换装和创意生图的结构化任务表；每行绑定最多六组画布图片、可用 @参考图1 等位置引用编写独立提示词，也可设置全局提示词覆盖各行，并追踪生成结果。",
+			Purpose:     "面向电商批量换装和创意生图的结构化任务表；每行绑定最多十组画布图片、可用 @参考图1 等位置引用编写独立提示词，也可设置全局提示词覆盖各行，并追踪生成结果。",
 			GoodFor:     []string{"商品与模特批量换装", "同一商品多场景创意图", "多组参考图组合生成", "批量结果追踪与失败重试"},
 			NotIdealFor: []string{"通用数据库或库存管理", "单张图片快速试验", "多镜头叙事连续性"},
 			Tradeoffs:   []string{"参考图必须先作为图片节点进入画布", "批量提交会产生多项生成任务，执行前必须确认模型、数量和费用"},
@@ -99,7 +100,12 @@ func BuiltinRegistry() *Registry {
 				return map[string]any{"status": "idle", "workflowKind": "script", "storyboard": map[string]any{"rows": []any{}, "visibleColumns": []any{"shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"}, "referenceNodeIds": []any{}}}
 			},
 		},
-	})
+	}
+	descriptors = append(descriptors, remainingBuiltinDescriptors()...)
+	for index := range descriptors {
+		completeBuiltinEditableFields(&descriptors[index])
+	}
+	registry, err := NewRegistry(descriptors)
 	if err != nil {
 		panic(err)
 	}
@@ -186,6 +192,11 @@ func editableNodeFields(contentPath, contentLabel, contentDescription string) ma
 		"content": {
 			Path: contentPath, Kind: patchKindString, Label: contentLabel, Order: 20, Description: contentDescription, MaxRunes: maxAgentNodeContentRunes,
 		},
+	}
+	if contentPath == "metadata.content" {
+		field := fields["content"]
+		field.MaxRunes = maxAgentDocumentRunes
+		fields["content"] = field
 	}
 	for key, field := range positionPatchFields() {
 		fields[key] = field

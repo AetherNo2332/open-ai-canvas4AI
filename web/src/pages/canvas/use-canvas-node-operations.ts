@@ -8,9 +8,10 @@ import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, FRAME_HEADER_HEIGHT, g
 import { alignCanvasNodes, layoutCanvasAuto, layoutCanvasFlow, layoutCanvasNodes, nextCanvasVersionLabel, spreadCanvasNodes, type CanvasAlignmentMode } from "@/lib/canvas/canvas-layout";
 import { applyCanvasConnectionPromptSync } from "@/lib/canvas/canvas-resource-references";
 import { createCanvasNode, isHiddenBatchChild, removeCanvasNodes } from "@/lib/canvas/canvas-project-domain";
-import { isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
+import { copyCanvasNodeGraph, isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
+import { loadCanvasDrawingForNode, persistCanvasDrawingEditorSave } from "@/lib/canvas/canvas-drawing-document-sync";
 import { CanvasNodeType, type CanvasConnection, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ContextMenuState, type Position } from "@/types/canvas";
-import { cloneCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
+import { cloneCanvasDrawing, markCanvasDrawingPublished } from "@/lib/canvas/canvas-drawing-storage";
 import { isDrawingEngineAvailable, type CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { useUserStore } from "@/stores/use-user-store";
 import { useEffectiveConfig } from "@/stores/use-config-store";
@@ -102,23 +103,30 @@ export function useCanvasNodeOperations({
         const sourceDrawingId = source.metadata?.drawingId;
         const targetDrawingId = target.metadata?.drawingId;
         if (!projectId || !sourceDrawingId || !targetDrawingId) return;
-        void cloneCanvasDrawing(projectId, sourceDrawingId, targetDrawingId).then((saved) => {
+        void loadCanvasDrawingForNode(projectId, source).then((document) => cloneCanvasDrawing(projectId, sourceDrawingId, targetDrawingId, document)).then(async (saved) => {
             if (!saved) {
                 if (source.metadata?.drawingShapeCount) message.warning("原绘图内容未在本机找到，已创建空白副本");
                 return;
             }
-            // 克隆落盘后提升修订号，确保已经挂载的新卡片重新读取派生预览。
-            commitNodes(nodesRef.current.map((node) => node.id === target.id ? {
-                ...node,
-                metadata: {
-                    ...node.metadata,
-                    drawingEngine: saved.engine,
-                    drawingRevision: saved.revision,
-                    drawingUpdatedAt: saved.updatedAt,
-                    drawingShapeCount: saved.shapeCount,
-                    drawingPageCount: saved.pageCount,
-                },
-            } : node));
+            await persistCanvasDrawingEditorSave({
+                node: target, previous: saved,
+                createSave: async () => ({ snapshot: saved.snapshot, preview: null, render: null }),
+                saveLocal: async () => saved,
+                currentNode: () => nodesRef.current.find((node) => node.id === target.id) || null,
+                markPublished: (document) => markCanvasDrawingPublished(projectId, targetDrawingId, document),
+                onSaved: (document) => commitNodes(nodesRef.current.map((node) => node.id === target.id ? {
+                    ...node,
+                    metadata: {
+                        ...node.metadata,
+                        drawingEngine: document.engine,
+                        drawingRevision: document.revision,
+                        drawingUpdatedAt: document.updatedAt,
+                        drawingShapeCount: document.shapeCount,
+                        drawingPageCount: document.pageCount,
+                        drawingDocument: document,
+                    },
+                } : node)),
+            });
         }).catch(() => message.error(failureMessage));
     }, [commitNodes, message, nodesRef, projectId]);
 
@@ -368,36 +376,17 @@ export function useCanvasNodeOperations({
         const versionRootId = duplicateMode === "variant" && !isFrameNode(source) ? source.metadata?.versionOfNodeId || source.id : undefined;
         const versionLabel = versionRootId ? nextCanvasVersionLabel(versionRootId, nodesRef.current) : undefined;
         const copyTitle = duplicateMode === "copy" ? nextCopiedNodeTitle(source.title, nodesRef.current.map((node) => node.title)) : undefined;
-        const copiedNodes = sources.map((node) => {
-            const metadata = isolateCopiedNodeMetadata(node, idMap);
-            if (node.type === CanvasNodeType.Drawing) {
-                metadata.drawingId = `${idMap.get(node.id)}-document`;
-                metadata.drawingRevision = 0;
-                metadata.drawingUpdatedAt = undefined;
-                metadata.drawingShapeCount = 0;
-                metadata.drawingPageCount = 1;
-            }
-            if (node.id === source.id && versionRootId) {
+        const copied = copyCanvasNodeGraph(nodesRef.current, connectionsRef.current, source.id, idMap, nanoid, copyTitle || `${source.title.replace(/ · [A-Z]$/, "")} · ${versionLabel || "副本"}`);
+        const copiedNodes = copied.nodes.map((node) => {
+            const metadata = node.metadata!;
+            if (metadata.copiedFromNodeId === source.id && versionRootId) {
                 metadata.versionOfNodeId = versionRootId;
                 metadata.versionLabel = versionLabel;
                 metadata.versionPrimary = false;
             }
-            return {
-                ...node,
-                id: idMap.get(node.id)!,
-                title: node.id === source.id ? copyTitle || `${node.title.replace(/ · [A-Z]$/, "")} · ${versionLabel || "副本"}` : node.title,
-                position: { x: node.position.x + 36, y: node.position.y + 36 },
-                parentId: node.parentId ? idMap.get(node.parentId) || node.parentId : undefined,
-                metadata,
-            };
+            return { ...node, metadata };
         });
-        const copiedIds = new Set(sources.map((node) => node.id));
-        const copiedConnections = connectionsRef.current
-            .filter((connection) => copiedIds.has(connection.fromNodeId) && copiedIds.has(connection.toNodeId))
-            .map((connection) => ({ ...connection, id: nanoid(), fromNodeId: idMap.get(connection.fromNodeId)!, toNodeId: idMap.get(connection.toNodeId)! }));
-        if (!isFrameNode(source)) {
-            connectionsRef.current.filter((connection) => connection.toNodeId === source.id && !copiedIds.has(connection.fromNodeId)).forEach((connection) => copiedConnections.push({ ...connection, id: nanoid(), toNodeId: idMap.get(source.id)! }));
-        }
+        const copiedConnections = copied.connections;
         const id = idMap.get(source.id)!;
         const nextNodes = [
             ...nodesRef.current.map((node) => node.id === source.id && versionRootId && !node.metadata?.versionLabel ? { ...node, title: `${node.title} · A`, metadata: { ...node.metadata, versionOfNodeId: versionRootId, versionLabel: "A", versionPrimary: true, generationResultPlacement: "replace-node" as const } } : node),

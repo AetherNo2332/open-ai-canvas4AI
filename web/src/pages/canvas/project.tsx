@@ -173,6 +173,7 @@ import {
 } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
+import { canvasEntityReconciler } from "@/lib/canvas/canvas-entity-reconciliation";
 
 const CanvasPrevisWorkbench = lazy(() => import("@/components/canvas/previs/canvas-previs-workbench").then((module) => ({ default: module.CanvasPrevisWorkbench })));
 const CanvasDrawingEditorModal = lazy(() => import("@/components/canvas/canvas-drawing-editor-modal").then((module) => ({ default: module.CanvasDrawingEditorModal })));
@@ -930,6 +931,27 @@ function InfiniteCanvasPage() {
         finishGenerationRequest,
         bindGenerationTask,
     });
+
+    useEffect(() => {
+        const reconcile = canvasEntityReconciler(nodes, connections);
+        const selection = reconcile.nodeSelection(selectedNodeIdsRef.current);
+        if (selection !== selectedNodeIdsRef.current) {
+            selectedNodeIdsRef.current = selection;
+            setSelectedNodeIds(selection);
+            setNodeImageSettingsOpen(false);
+        }
+        setSelectedConnectionId(reconcile.connectionId);
+        // Remote changes and history restoration bypass the manual delete callback.
+        // Reconcile UI references only: retained drawing/media data is still needed by undo.
+        for (const setter of [setHoveredNodeId, setToolbarNodeId, setDialogNodeId, setTextEditorNodeId, setCharacterReferenceNodeId, setDrawingNodeId, setInfoNodeId, setSubtitleNodeId, setTimelineNodeId, setFrameDialogNodeId, setSegmentDialogNodeId, setCropNodeId, setMaskEditNodeId, setAnnotationNodeId, setAnnotationEditNodeId, setImageEditNodeId, setLayerDecompositionNodeId, setTextEditNodeId, setUpscaleNodeId, setAngleNodeId, setLightingNodeId, setEmotionNodeId, setSuperResolveNodeId, setPreviewNodeId, setRunningNodeId, setScriptEditorNodeId, setArtCritiqueNodeId, setPrevisNodeId, setPanoramaConfigNodeId, setVersionCompareRootId, setArkPrivateAssetUploadNodeId]) setter(reconcile.nodeId);
+        setArtCritiqueStartRequest((current) => current && !reconcile.nodeId(current.nodeId) ? null : current);
+        setScriptScrollTopById((current) => Object.keys(current).every((id) => reconcile.nodeId(id)) ? current : Object.fromEntries(Object.entries(current).filter(([id]) => reconcile.nodeId(id))));
+        setContextMenu((current) => {
+            if (current?.type === "node" && !reconcile.nodeId(current.nodeId)) return null;
+            if (current?.type === "connection" && !reconcile.connectionId(current.connectionId)) return null;
+            return current;
+        });
+    }, [nodes, connections, selectedNodeIdsRef, setAnnotationEditNodeId, setAnnotationNodeId, setAngleNodeId, setCropNodeId, setEmotionNodeId, setFrameDialogNodeId, setImageEditNodeId, setLayerDecompositionNodeId, setLightingNodeId, setMaskEditNodeId, setPanoramaConfigNodeId, setRunningNodeId, setSegmentDialogNodeId, setTextEditNodeId, setUpscaleNodeId]);
 
     const handleNodesDeleted = useCallback(
         (removedIds: Set<string>, nextNodes: CanvasNodeData[], removedNodes: CanvasNodeData[]) => {
@@ -3182,6 +3204,7 @@ function InfiniteCanvasPage() {
                                     node={drawingNode}
                                     projectId={projectId}
                                     open={Boolean(drawingNode)}
+                                    getCurrentNode={() => nodesRef.current.find((node) => node.id === drawingNode.id) || null}
                                     onClose={() => setDrawingNodeId(null)}
                                     onSaved={(nodeId, summary) => {
                                         setNodes((current) =>
@@ -3192,6 +3215,7 @@ function InfiniteCanvasPage() {
                                                           metadata: {
                                                               ...node.metadata,
                                                               drawingEngine: summary.engine,
+                                                              drawingDocument: summary,
                                                               drawingRevision: summary.revision,
                                                               drawingUpdatedAt: summary.updatedAt,
                                                               drawingShapeCount: summary.shapeCount,
@@ -3201,7 +3225,7 @@ function InfiniteCanvasPage() {
                                                     : node,
                                             ),
                                         );
-                                        message.success("绘图已保存");
+                                        message.success("绘图已保存到本地，画布正在同步至服务端");
                                     }}
                                 />
                             </Suspense>

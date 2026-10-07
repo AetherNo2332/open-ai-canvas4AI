@@ -39,7 +39,7 @@ import {
     type AgentRun,
     type AgentSkillDefaultsSummary,
 } from "@/services/api/agent";
-import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
+import { AGENT_APPROVAL_OPERATION_LABELS, agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
 import { agentApprovalMatchesSettings, agentImageApproval } from "@/lib/canvas/agent-media-approval";
 import type { AgentMediaSettings } from "@/services/api/agent";
@@ -1855,22 +1855,7 @@ function ApprovalCard({
 }
 
 function ApprovalPreviewItemView({ item, theme, onFocusNode }: { item: ReturnType<typeof agentApprovalPresentation>["items"][number]; theme: CanvasTheme; onFocusNode?: (nodeId: string) => void }) {
-    const operationLabel =
-        item.operation === "add_node"
-            ? "新增"
-            : item.operation === "update_node"
-              ? "修改"
-              : item.operation === "connect_nodes"
-                ? "连线"
-                : item.operation === "arrange_nodes"
-                  ? "整理"
-                  : item.operation === "create_storyboard"
-                    ? "创建分镜"
-                    : item.operation === "edit_storyboard"
-                      ? "修改分镜"
-                      : item.operation === "plan_step"
-                        ? "计划"
-                        : "生成";
+    const operationLabel = AGENT_APPROVAL_OPERATION_LABELS[item.operation];
     const renderNode = (title: string | undefined, id: string | undefined, typeLabel: string | undefined, role: "source" | "target" | "node") => {
         if (!title) return null;
         const content = (

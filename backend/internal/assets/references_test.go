@@ -9,6 +9,22 @@ func TestPrevisTaskReferencesRetainVideoAndPreviewWithoutCanvas(t *testing.T) {
 	}
 }
 
+func TestAgentParityNativeDrawingResourcesRemainReferenced(t *testing.T) {
+	raw := `{"nodes":[{"id":"d","metadata":{"drawingDocument":{"snapshot":{"files":{"f":{"dataURL":"resource:excal-image"}},"document":{"store":{"asset:a":{"props":{"src":"resource:tl-image"}}}}}},"label":"resource:prose","other":{"src":"resource:unrelated"}}}]}`
+	refs, err := CollectDocumentResourceReferences(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("native drawings must retain exactly their two platform files: %#v", refs)
+	}
+	for _, ref := range refs {
+		if ref.NodeID != "d" {
+			t.Fatal("drawing owner lost")
+		}
+	}
+}
+
 func TestCollectDocumentResourceReferencesIncludesNestedVideoPreview(t *testing.T) {
 	raw := `{"nodes":[{"id":"node-video","metadata":{"videoPreview":{"storageKey":"resource:poster-1","source":{"id":"nested-not-node","url":"/api/resources/poster-2/file"}}}}]}`
 	refs, err := CollectDocumentResourceReferences(raw)

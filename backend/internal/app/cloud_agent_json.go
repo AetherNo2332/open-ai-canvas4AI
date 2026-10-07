@@ -100,10 +100,18 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 			required = "nodeType"
 		case op.Type == "update_node" && len(op.Patch) == 0:
 			required = "patch"
-		case op.Type == "connect_nodes" && op.FromNodeID == "":
+		case (op.Type == "connect_nodes" || op.Type == "update_connection") && op.FromNodeID == "":
 			required = "fromNodeId"
-		case op.Type == "connect_nodes" && op.ToNodeID == "":
+		case (op.Type == "connect_nodes" || op.Type == "update_connection") && op.ToNodeID == "":
 			required = "toNodeId"
+		case op.Type == "duplicate_node" && op.SourceNodeID == "":
+			required = "sourceNodeId"
+		case op.Type == "replace_text" && op.Match == "":
+			required = "match"
+		case op.Type == "reorder_nodes" && len(op.NodeIDs) == 0:
+			required = "nodeIds"
+		case op.Type == "reorder_rows" && len(op.RowIDs) == 0:
+			required = "rowIds"
 		}
 		if required != "" {
 			field := path + "." + required

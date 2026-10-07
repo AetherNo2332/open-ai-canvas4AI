@@ -608,12 +608,30 @@ func TestCloudAgentToolLoopPersistsApprovalAndAppliesCanvasWrite(t *testing.T) {
 func TestCloudAgentNodeTypesExposeExecutableAllowList(t *testing.T) {
 	result := cloudAgentNodeTypes()
 	nodes, ok := result["nodes"].([]map[string]any)
-	if !ok || len(nodes) != 9 {
-		t.Fatalf("unexpected node registry: %#v", result)
+	want := []string{"image", "text", "drawing", "script", "skill", "config", "video", "audio", "frame", "markdown", "svg", "html", "panorama", "compare", "chart", "colorgrade", "media-conversion", "batch-table", "character"}
+	if !ok || len(nodes) != len(want) {
+		t.Fatalf("expected 18 builtin adapters and the character variant, got %d", len(nodes))
 	}
+	seen := map[string]bool{}
 	for _, node := range nodes {
-		if node["type"] == "panorama" {
-			t.Fatal("UI-only node must not be exposed")
+		kind := stringValue(node["type"])
+		if seen[kind] || node["canUpdate"] != true {
+			t.Fatalf("duplicate or non-editable adapter: %s", kind)
+		}
+		seen[kind] = true
+		if kind == "character" {
+			if node["canvasNodeType"] != "text" || node["workflowKind"] != "character" || node["creatable"] != false {
+				t.Fatal("character card must remain a service-created text variant")
+			}
+			continue
+		}
+		if err := validateCreationOps([]CreationCanvasOp{{Type: "add_node", ID: "new", NodeType: kind}}); err != nil {
+			t.Fatalf("discovered builtin has no executable creation adapter: %s: %v", kind, err)
+		}
+	}
+	for _, kind := range want {
+		if !seen[kind] {
+			t.Fatalf("builtin or character adapter omitted from discovery: %s", kind)
 		}
 	}
 }

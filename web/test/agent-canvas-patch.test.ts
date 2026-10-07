@@ -123,3 +123,108 @@ test("a row the agent removed but the operator edited is a conflict, never a sil
     const after = storyboard([]);
     expect(() => applyAgentCanvasPatch(scriptProject(rows), { ...patch, nodes: [{ before, after }] })).toThrow("冲突");
 });
+
+test("server node and connection order applies without losing local content or additions", () => {
+    const second = { ...node, id: "second", metadata: {} };
+    const third = { ...second, id: "local" };
+    const edges = [{ id: "e1", fromNodeId: node.id, toNodeId: second.id }, { id: "e2", fromNodeId: second.id, toNodeId: node.id }];
+    const local = { ...node, title: "本地标题" };
+    const result = applyAgentCanvasPatch({ ...project, nodes: [local, second, third], connections: edges }, {
+        ...patch, nodes: [], connections: [], previousNodeOrder: [node.id, second.id], nodeOrder: [second.id, node.id],
+        previousConnectionOrder: ["e1", "e2"], connectionOrder: ["e2", "e1"],
+    });
+    expect(result.nodes.map((item) => item.id)).toEqual([second.id, node.id, third.id]);
+    expect(result.nodes[1]).toBe(local);
+    expect(result.connections.map((item) => item.id)).toEqual(["e2", "e1"]);
+});
+
+test("full refresh carries order changes and rejects a competing local reorder atomically", () => {
+    const a = { ...node, id: "a", metadata: {} }, b = { ...a, id: "b" }, c = { ...a, id: "c" };
+    const before = { ...project, nodes: [a, b, c] }, after = { ...project, nodes: [c, a, b] };
+    expect(mergeAgentCanvasEditor(before, after, [a, { ...b, title: "local" }, c], []).nodes.map((item) => item.id)).toEqual(["c", "a", "b"]);
+    expect(() => mergeAgentCanvasEditor(before, after, [b, a, c], [])).toThrow("冲突");
+    expect(before.nodes).toEqual([a, b, c]);
+});
+
+test("full row reorder merges untouched local fields and detects competing row order", () => {
+    const rows = [row("r1", 1, {}), row("r2", 2, {}), row("r3", 3, {})];
+    const local = [rows[0], { ...rows[1], dialogue: "本地台词" }, rows[2]];
+    const reorder = { ...patch, nodes: [{ before: storyboard(rows), after: storyboard([rows[2], rows[0], { ...rows[1], imageGenerationPrompt: "新提示词" }]) }] };
+    const result = applyAgentCanvasPatch(scriptProject(local), reorder);
+    const updated = (result.nodes[0].metadata?.storyboard as { rows: Array<Record<string, unknown>> }).rows;
+    expect(updated.map((item) => item.id)).toEqual(["r3", "r1", "r2"]);
+    expect(updated[2]).toMatchObject({ dialogue: "本地台词", imageGenerationPrompt: "新提示词" });
+    expect(() => applyAgentCanvasPatch(scriptProject([local[1], local[0], local[2]]), reorder)).toThrow("冲突");
+});
+
+test("remote deletion removes graph items; duplicate patches and replays preserve local edits", () => {
+    const copy = { ...node, id: "copy", title: "副本", metadata: {} };
+    const edge = { id: "edge", fromNodeId: node.id, toNodeId: copy.id };
+    const changes = { ...patch, nodes: [{ before: node, after: null }, { before: null, after: copy }], connections: [{ before: edge, after: null }] };
+    const result = applyAgentCanvasPatch({ ...project, connections: [edge] }, changes);
+    expect(result.nodes).toEqual([copy]);
+    expect(result.connections).toEqual([]);
+    expect(applyAgentCanvasPatch(result, changes)).toBe(result);
+    expect(() => applyAgentCanvasPatch({ ...project, nodes: [{ ...node, title: "local" }], connections: [edge] }, changes)).toThrow("冲突");
+});
+
+test("deleting a node conflicts with new local references instead of creating a dangling graph", () => {
+    const kept = { ...node, id: "kept", metadata: {} };
+    const deletion = { ...patch, nodes: [{ before: node, after: null }], connections: [] };
+    const localEdge = { id: "local-edge", fromNodeId: node.id, toNodeId: kept.id };
+    expect(() => applyAgentCanvasPatch({ ...project, nodes: [node, kept], connections: [localEdge] }, deletion)).toThrow("冲突");
+    expect(() => applyAgentCanvasPatch({ ...project, nodes: [node, { ...kept, parentId: node.id }] }, deletion)).toThrow("冲突");
+});
+
+test("order patches cannot silently drop added nodes or accept ambiguous baselines", () => {
+    const created = { ...node, id: "new", metadata: {} };
+    expect(() => applyAgentCanvasPatch(project, { ...patch, nodes: [{ before: null, after: created }], previousNodeOrder: [node.id], nodeOrder: [node.id] })).toThrow();
+    expect(() => applyAgentCanvasPatch(project, { ...patch, nodes: [], previousNodeOrder: [node.id], nodeOrder: [node.id, node.id] })).toThrow();
+});
+
+test("server additions preserve a nonconflicting local reorder", () => {
+    const second = { ...node, id: "second", metadata: {} }, added = { ...second, id: "added" };
+    const result = mergeAgentCanvasEditor({ ...project, nodes: [node, second] }, { ...project, nodes: [node, second, added] }, [second, node], []);
+    expect(result.nodes.map((item) => item.id)).toEqual(["second", node.id, "added"]);
+});
+
+test("explicit node order restores deleted nodes at the middle or head and replay keeps that order", () => {
+    const a = { ...node, id: "a", metadata: {} }, b = { ...a, id: "b" }, c = { ...a, id: "c" };
+    const local = { ...a, title: "本地改名" };
+    for (const order of [["a", "b", "c"], ["b", "a", "c"]]) {
+        const restoration: AgentCanvasPatch = { ...patch, nodes: [{ before: null, after: b }], connections: [], previousNodeOrder: ["a", "c"], nodeOrder: order };
+        const result = applyAgentCanvasPatch({ ...project, nodes: [local, c] }, restoration);
+        expect(result.nodes.map((item) => item.id)).toEqual(order);
+        expect(result.nodes.find((item) => item.id === "a")).toBe(local);
+        expect(applyAgentCanvasPatch(result, restoration)).toBe(result);
+    }
+});
+
+test("restoring a node into retained order rejects a concurrent local reorder atomically", () => {
+    const a = { ...node, id: "a", metadata: {} }, b = { ...a, id: "b" }, c = { ...a, id: "c" };
+    const current = { ...project, nodes: [c, a] };
+    const restoration: AgentCanvasPatch = { ...patch, nodes: [{ before: null, after: b }], connections: [], previousNodeOrder: ["a", "c"], nodeOrder: ["a", "b", "c"] };
+    expect(() => applyAgentCanvasPatch(current, restoration)).toThrow("顺序");
+    expect(current.nodes).toEqual([c, a]);
+});
+
+test("full rows restore a deleted middle row while keeping nonconflicting local fields", () => {
+    const a = row("a", 1, {}), b = row("b", 2, {}), c = row("c", 3, {});
+    const localA = { ...a, dialogue: "本地新台词" };
+    const restoration = { ...patch, nodes: [{ before: storyboard([a, c]), after: storyboard([a, b, { ...c, imageGenerationPrompt: "远端新提示词" }]) }] };
+    const result = applyAgentCanvasPatch(scriptProject([localA, c]), restoration);
+    const updated = (result.nodes[0].metadata?.storyboard as { rows: Array<Record<string, unknown>> }).rows;
+    expect(updated.map((item) => item.id)).toEqual(["a", "b", "c"]);
+    expect(updated[0].dialogue).toBe("本地新台词");
+    expect(updated[2].imageGenerationPrompt).toBe("远端新提示词");
+    expect(applyAgentCanvasPatch(result, restoration)).toEqual(result);
+    expect(() => applyAgentCanvasPatch(scriptProject([c, localA]), restoration)).toThrow("顺序");
+});
+
+test("a full row tail append still preserves a nonconflicting local reorder", () => {
+    const a = row("a", 1, {}), b = row("b", 2, {}), c = row("c", 3, {});
+    const result = applyAgentCanvasPatch(scriptProject([c, { ...a, dialogue: "本地台词" }]), { ...patch, nodes: [{ before: storyboard([a, c]), after: storyboard([a, c, b]) }] });
+    const updated = (result.nodes[0].metadata?.storyboard as { rows: Array<Record<string, unknown>> }).rows;
+    expect(updated.map((item) => item.id)).toEqual(["c", "a", "b"]);
+    expect(updated[1].dialogue).toBe("本地台词");
+});

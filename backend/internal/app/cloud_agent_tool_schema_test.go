@@ -106,7 +106,7 @@ func TestCloudAgentToolArgumentValidationConditionalBranches(t *testing.T) {
 	if err := validateCloudAgentToolArguments(parameters, missingPatch); err == nil {
 		t.Fatal("update_node 缺 patch 应被拒绝")
 	}
-	unknownType := `{"snapshotHash":"h","ops":[{"type":"delete_node","id":"n1"}]}`
+	unknownType := `{"snapshotHash":"h","ops":[{"type":"unsupported_op","id":"n1"}]}`
 	if err := validateCloudAgentToolArguments(parameters, unknownType); err == nil {
 		t.Fatal("未定义的 op 类型应被拒绝")
 	}
