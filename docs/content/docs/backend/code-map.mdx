@@ -7,6 +7,8 @@ description: 从产品功能快速定位主要代码入口
 
 ## Agent 工具合同
 
+- 后台导演台预演：`cloud_agent_previs_render.go`（冻结输入、审批与任务回执）、`task_previs_render.go`（执行、资源检查点和原子写回）、`repository/task_previs.go`（租约条件检查点）、`renderer/src`（实际视口、CDP和FFmpeg）。专题见[导演台后台预演](./previs-background)。
+
 - Worker 恢复：`agent/src/runner.ts`（当前轮工具恢复、检查点队列）；`agent/src/session-history.ts`（终结轮次缺失回执的模型投影）；日志截断：`backend/internal/platform/api_call_payload.go`。方案与实施边界见 [Pi worker 错误恢复](../../../design/agent-worker-recovery.md)。
 
 - 工具及字段说明：`backend/internal/app/agent-tool-descriptions.md`；目录编译：`cloud_agent_tools.go`；条件参数合同：`cloud_agent_tool_contracts.go`；零副作用预检：`cloud_agent_tool_schema.go`。

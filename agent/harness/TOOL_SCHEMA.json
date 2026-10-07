@@ -196,7 +196,7 @@
     },
     {
       "function": {
-        "description": "生成预演白模视频。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "后台生成白模MP4及构图帧，关页仍执行；画布落盘才成功，排队非交付。失败读taskId。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "previs_preview",
         "parameters": {
           "additionalProperties": false,

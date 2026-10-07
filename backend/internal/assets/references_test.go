@@ -2,6 +2,13 @@ package assets
 
 import "testing"
 
+func TestPrevisTaskReferencesRetainVideoAndPreviewWithoutCanvas(t *testing.T) {
+	refs, err := CollectDocumentResourceReferences(`{"resourceId":"previs-video","previewResourceId":"previs-preview","outputReady":true}`)
+	if err != nil || len(refs) != 2 {
+		t.Fatalf("both saved task artifacts must remain referenced: %#v %v", refs, err)
+	}
+}
+
 func TestCollectDocumentResourceReferencesIncludesNestedVideoPreview(t *testing.T) {
 	raw := `{"nodes":[{"id":"node-video","metadata":{"videoPreview":{"storageKey":"resource:poster-1","source":{"id":"nested-not-node","url":"/api/resources/poster-2/file"}}}}]}`
 	refs, err := CollectDocumentResourceReferences(raw)

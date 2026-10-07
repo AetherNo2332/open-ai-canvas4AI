@@ -2126,13 +2126,9 @@ function applyAgentEvent(
         setMessages((current) => mergeAgentToolRetry(current, message));
         if (event.type === "tool_failed") return;
     }
-    if (event.type === "tool_completed" && payload.toolName === "previs_preview") {
-        const result = payload.result && typeof payload.result === "object" ? payload.result as Record<string, unknown> : {};
-        window.dispatchEvent(new CustomEvent("previs:preview-requested", { detail: {
-            canvasId: String(result.canvasId || ""), sceneId: String(result.sceneId || ""),
-            shotId: String(result.shotId || ""), previewRequestId: String(result.previewRequestId || ""),
-            duration: Number(result.duration || 0), fps: Number(result.fps || 0),
-        } }));
+    if (event.type === "previs_task_created") {
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", title: "previs_preview", text: text || "后台预演已排队，等待视频与画布节点", detail: { ...payload, eventType: event.type } }));
+        return;
     }
     if (event.type === "tool_completed" && payload.toolName === "canvas_apply_ops" && payload.callId) {
         const id = `canvas-${event.runId}-${payload.callId}`;
