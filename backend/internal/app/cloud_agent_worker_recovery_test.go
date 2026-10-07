@@ -1,13 +1,121 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestWorkerRecoveryReplayedUserCheckpointsCannotResetBudget(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	var started *time.Time
+	for i := 1; i <= 5; i++ {
+		if i > 1 {
+			expireRecoveryLease(t, db, run.ID)
+			if _, err := s.ClaimPiAgent(fmt.Sprintf("replay-worker-%d", i)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		agentPiCheckpointForTest(t, s, run.ID, "", map[string]any{"role": "user", "content": fmt.Sprintf("same logical prompt %d", 0), "timestamp": time.Now().UnixMilli()}, nil)
+		row, _ := s.repo.CloudAgentControlRow("user", run.ID)
+		session, _, _ := s.repo.CloudAgentPiSession("user", run.ConversationID)
+		result, err := s.PiWorkerRecovery("user", run.ID, fmt.Sprintf("%s@%d", row.LeaseOwner, session.LeaseEpoch), PiWorkerRecoveryRequest{Revision: row.Revision, Class: "http_5xx", Operation: "model"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, _ = s.repo.CloudAgentControlRow("user", run.ID)
+		if i == 1 {
+			started = row.RecoveryStartedAt
+		}
+		if result.Attempts != i || row.RecoveryStartedAt == nil || !row.RecoveryStartedAt.Equal(*started) {
+			t.Fatalf("replay reset cycle at %d: %+v", i, result)
+		}
+		if i == 5 && row.Status != "failed" {
+			t.Fatal("replayed prompt evaded finite budget")
+		}
+	}
+}
+
+func TestWorkerRecoveryTaskBudgetSurvivesRouteAndTaskSwitches(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	// Genuine receipts may end a cycle, but cannot erase the same task's cumulative failures.
+	sequence := []struct {
+		task, operation string
+		want            int
+	}{{"pi-root-task", "model", 1}, {"other-task", "control", 1}, {"pi-root-task", "renew", 2}, {"pi-root-task", "checkpoint", 3}, {"pi-root-task", "model", 4}, {"pi-root-task", "model", 5}}
+	for i, step := range sequence {
+		if i > 0 {
+			expireRecoveryLease(t, db, run.ID)
+			if _, err := s.ClaimPiAgent(fmt.Sprintf("switch-worker-%d", i)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		row, _ := s.repo.CloudAgent("user", run.ID)
+		if err := s.repo.MutateCloudAgent("user", run.ID, row.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			state, err := cloudAgentDecode(current)
+			if err != nil {
+				return err
+			}
+			current.ActiveTaskID = step.task
+			state.event(run.ID, "tool_completed", map[string]any{"callId": fmt.Sprintf("receipt-%d", i)})
+			return cloudAgentSave(current, &state)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		// cloudAgentSave synchronizes ActiveTaskID from state; set the current valid in-flight task.
+		if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Update("active_task_id", step.task).Error; err != nil {
+			t.Fatal(err)
+		}
+		row, _ = s.repo.CloudAgentControlRow("user", run.ID)
+		session, _, _ := s.repo.CloudAgentPiSession("user", run.ConversationID)
+		_, err := s.PiWorkerRecovery("user", run.ID, fmt.Sprintf("%s@%d", row.LeaseOwner, session.LeaseEpoch), PiWorkerRecoveryRequest{Revision: row.Revision, Class: "http_5xx", Operation: step.operation, TaskID: step.task})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, _ = s.repo.CloudAgentControlRow("user", run.ID)
+		if row.RecoveryOperationAttempts != step.want {
+			t.Fatalf("same task budget erased at %d: got %d want %d", i, row.RecoveryOperationAttempts, step.want)
+		}
+		if i == len(sequence)-1 && row.Status != "failed" {
+			t.Fatal("same task cumulative budget did not terminate")
+		}
+	}
+}
+
+func TestWorkerRecoveryNewUserInputIsNotAnExecutionReceipt(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	agentPiCheckpointForTest(t, s, run.ID, "", map[string]any{"role": "user", "content": "original prompt"}, nil)
+	started := time.Now().Add(-time.Minute)
+	db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Updates(map[string]any{"recovery_attempts": 3, "recovery_started_at": started})
+	row, _ := s.repo.CloudAgent("user", run.ID)
+	err := s.repo.MutateCloudAgent("user", run.ID, row.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "user", "content": "additional real user input"})
+		return cloudAgentSave(current, &state)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _ = s.repo.CloudAgentControlRow("user", run.ID)
+	if row.RecoveryAttempts != 3 || row.RecoveryStartedAt == nil || !row.RecoveryStartedAt.Equal(started) {
+		t.Fatal("user input erased execution recovery budget")
+	}
+	// Ensure the persisted input survives the control changes.
+	hydrated, _ := s.repo.CloudAgent("user", run.ID)
+	state, _ := cloudAgentDecode(hydrated)
+	body, _ := json.Marshal(state.Canonical.Messages)
+	if !strings.Contains(string(body), "additional real user input") {
+		t.Fatal("user input lost")
+	}
+}
 
 func expireRecoveryLease(t *testing.T, db *gorm.DB, runID string) {
 	t.Helper()
@@ -90,7 +198,7 @@ func TestWorkerRecoveryExhaustionSurvivesRenewedLease(t *testing.T) {
 }
 
 func TestWorkerRecoveryHealthyTaskAndApprovalWaitDoNotSpendCrashBudget(t *testing.T) {
-	for _, phase := range []string{"waiting_model", "waiting_tool", "waiting_approval"} {
+	for _, phase := range []string{"waiting_model", "waiting_tool", "waiting_approval", "waiting_resource"} {
 		t.Run(phase, func(t *testing.T) {
 			s, db, run := piAgentTestLeasedFixture(t)
 			started := time.Now().Add(-11 * time.Minute)
@@ -98,11 +206,15 @@ func TestWorkerRecoveryHealthyTaskAndApprovalWaitDoNotSpendCrashBudget(t *testin
 			if phase == "waiting_approval" {
 				status = phase
 			}
-			if err := db.Model(&model.Task{}).Where("id = ?", "pi-root-task").Update("status", model.TaskStatusRunning).Error; err != nil {
+			taskStatus := model.TaskStatusRunning
+			if phase == "waiting_resource" {
+				taskStatus = model.TaskStatusQueued
+			}
+			if err := db.Model(&model.Task{}).Where("id = ?", "pi-root-task").Update("status", taskStatus).Error; err != nil {
 				t.Fatal(err)
 			}
 			if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Updates(map[string]any{
-				"status": status, "runtime_phase": phase, "active_task_id": "pi-root-task",
+				"status": status, "runtime_phase": phase, "active_task_id": "pi-root-task", "wait_kind": "model",
 				"recovery_status": "reconciling", "recovery_attempts": 4, "recovery_started_at": started,
 			}).Error; err != nil {
 				t.Fatal(err)
@@ -190,5 +302,30 @@ func TestWorkerRecoveryRetryAfterBeyondWindowAndUnknownResultTerminate(t *testin
 				t.Fatal("cleanup stayed pending")
 			}
 		})
+	}
+}
+
+func TestWorkerRecoverySweepDoesNotStarveBehindHundredHealthyWaits(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	if err := db.Model(&model.Task{}).Where("id = ?", "pi-root-task").Update("status", model.TaskStatusRunning).Error; err != nil {
+		t.Fatal(err)
+	}
+	earlier := time.Now().Add(-12 * time.Minute)
+	for i := 0; i < 100; i++ {
+		keeper := model.CloudAgentExecution{ID: fmt.Sprintf("healthy-%03d", i), UserID: "user", Engine: "pi", Status: "running", RuntimePhase: "waiting_model", ActiveTaskID: "pi-root-task", RecoveryStatus: "reconciling", RecoveryStartedAt: &earlier, RecoveryAttempts: 1}
+		if err := db.Create(&keeper).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := time.Now().Add(-11 * time.Minute)
+	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Updates(map[string]any{"recovery_status": "reconciling", "recovery_started_at": target, "recovery_attempts": 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count, err := s.SweepWorkerRecoveries(); err != nil || count != 1 {
+		t.Fatalf("eligible run starved: count=%d err=%v", count, err)
+	}
+	row, _ := s.repo.CloudAgentControlRow("user", run.ID)
+	if row.Status != "failed" {
+		t.Fatal("expired run still active")
 	}
 }

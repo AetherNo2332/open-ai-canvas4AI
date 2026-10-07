@@ -4,6 +4,7 @@ import (
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,6 +30,8 @@ func TestWorkerRecoveryPostgresMigrationControlAndTakeover(t *testing.T) {
 		t.Fatalf("durable takeover: %+v %v", run, err)
 	}
 	if err := repo.MutateCloudAgentControl(run.UserID, id, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		current.RecoveryOperationBudgets = `{"task:original":3,"call:original":2}`
+		current.RecoveryOperationID = "checkpoint:" + strings.Repeat("t", 80) + ":" + strings.Repeat("c", 160)
 		current.Status = "failed"
 		current.CleanupPending = true
 		current.EventCount++
@@ -43,6 +46,9 @@ func TestWorkerRecoveryPostgresMigrationControlAndTakeover(t *testing.T) {
 	terminal, err := repo.CloudAgentControlRow(run.UserID, id)
 	if err != nil || terminal.Status != "failed" || !terminal.CleanupPending {
 		t.Fatalf("terminal control: %+v %v", terminal, err)
+	}
+	if terminal.RecoveryOperationBudgets != `{"task:original":3,"call:original":2}` || len(terminal.RecoveryOperationID) != 252 {
+		t.Fatalf("operation ledger/maximum identity not preserved: %+v", terminal)
 	}
 	session, err := repo.CloudAgentPiLease(run.UserID, id)
 	if err != nil || session.ActiveRunID != "" || session.LeaseOwner != "" {

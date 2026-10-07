@@ -416,13 +416,8 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 			return err
 		}
 		progress := previousActive != "" && run.ActiveTaskID == "" || previousMedia != "" && run.MediaTaskID == ""
-		for _, message := range run.Transcript {
-			key := fmt.Sprintf("%s:%d", message.Kind, message.Sequence)
-			if (message.Kind == "pi" || message.Kind == "canonical") && previousMessages[key] != message.MessageJSON {
-				progress = true
-				break
-			}
-		}
+		// Saving or replaying user/system messages is not acknowledged work.
+		// Model completion clears ActiveTaskID; tools/compaction append receipts.
 		for _, record := range run.Journal {
 			if record.Sequence <= previousEvents {
 				continue
@@ -444,6 +439,18 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 			run.RecoveryStatus = ""
 			if run.RecoveryTaskID == "" && run.RecoveryCallID == "" {
 				run.RecoveryOperationAttempts = 0
+				var budgets map[string]int
+				if run.RecoveryOperationBudgets != "" {
+					if err := json.Unmarshal([]byte(run.RecoveryOperationBudgets), &budgets); err != nil {
+						return err
+					}
+					delete(budgets, "run")
+					body, err := json.Marshal(budgets)
+					if err != nil {
+						return err
+					}
+					run.RecoveryOperationBudgets = string(body)
+				}
 			}
 		}
 		if isTerminalCloudAgentRunStatus(run.Status) {

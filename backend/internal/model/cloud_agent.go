@@ -43,15 +43,17 @@ type CloudAgentExecution struct {
 	RecoveryStartedAt         *time.Time
 	NextRecoveryAt            *time.Time `gorm:"index"`
 	RecoveryClass             string     `gorm:"size:32"`
-	RecoveryOperationID       string     `gorm:"size:240"`
-	RecoveryTaskID            string     `gorm:"size:80"`
-	RecoveryCallID            string     `gorm:"size:160"`
-	LastErrorReason           string     `gorm:"size:80"`
-	RecoveryStatus            string     `gorm:"size:32;index"`
-	RecoveryLastEpoch         int64      `gorm:"not null;default:0"`
-	ProgressVersion           int64      `gorm:"not null;default:0"`
-	LastProgressAt            *time.Time
-	ClaimProgressVersion      int64 `gorm:"not null;default:0"`
+	RecoveryOperationID       string     `gorm:"size:512"`
+	// Task/call counters survive route changes and interleaved operations.
+	RecoveryOperationBudgets string `gorm:"type:text;not null;default:''"`
+	RecoveryTaskID           string `gorm:"size:80"`
+	RecoveryCallID           string `gorm:"size:160"`
+	LastErrorReason          string `gorm:"size:80"`
+	RecoveryStatus           string `gorm:"size:32;index"`
+	RecoveryLastEpoch        int64  `gorm:"not null;default:0"`
+	ProgressVersion          int64  `gorm:"not null;default:0"`
+	LastProgressAt           *time.Time
+	ClaimProgressVersion     int64 `gorm:"not null;default:0"`
 }
 
 // Journal rows are append-only and commit in the same transaction as the run.
