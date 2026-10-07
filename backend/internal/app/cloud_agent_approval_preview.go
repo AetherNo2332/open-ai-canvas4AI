@@ -174,7 +174,7 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 			}
 			fromIndex, toIndex := cloudAgentNodeIndex(nodes, op.FromNodeID), cloudAgentNodeIndex(nodes, op.ToNodeID)
 			if fromIndex < 0 || toIndex < 0 || op.FromNodeID == op.ToNodeID {
-				return nil, BadAuthRequest("连线端点不存在或指向自身")
+				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", "连线端点不存在或指向自身")
 			}
 			if err := validateCloudAgentCanvasConnection(nodes, edges, op); err != nil {
 				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", cloudAgentSafeToolError(err))
