@@ -1533,45 +1533,6 @@
                   }
                 ],
                 "properties": {
-                  "assetBindings": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "nodeId": {
-                          "maxLength": 120,
-                          "type": "string"
-                        },
-                        "priority": {
-                          "maximum": 100,
-                          "minimum": 0,
-                          "multipleOf": 1,
-                          "type": "number"
-                        },
-                        "role": {
-                          "enum": [
-                            "character",
-                            "environment",
-                            "wardrobe",
-                            "prop",
-                            "weapon",
-                            "style",
-                            "motion",
-                            "audio"
-                          ],
-                          "maxLength": 240,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "nodeId",
-                        "role",
-                        "priority"
-                      ],
-                      "type": "object"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
-                  },
                   "audioEffects": {
                     "description": "音效设计。",
                     "maxLength": 20000,
@@ -1581,31 +1542,6 @@
                     "description": "机位、角度与运镜设计。",
                     "maxLength": 20000,
                     "type": "string"
-                  },
-                  "characters": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "characterDescription": {
-                          "maxLength": 20000,
-                          "type": "string"
-                        },
-                        "characterImageNodeId": {
-                          "maxLength": 120,
-                          "type": "string"
-                        },
-                        "characterName": {
-                          "maxLength": 240,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "characterName"
-                      ],
-                      "type": "object"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
                   },
                   "continuityOut": {
                     "description": "衔接下一镜头所需的状态与连续性。",
@@ -1619,8 +1555,7 @@
                   },
                   "durationSeconds": {
                     "description": "镜头时长（秒），新增镜头必填且大于0。",
-                    "maximum": 86400,
-                    "minimum": 5e-324,
+                    "exclusiveMinimum": 0,
                     "type": "number"
                   },
                   "emotion": {
@@ -1633,32 +1568,6 @@
                     "maxLength": 20000,
                     "type": "string"
                   },
-                  "imagePromptTemplateVariables": {
-                    "additionalProperties": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "maxProperties": 100,
-                    "properties": {},
-                    "propertyNames": {
-                      "maxLength": 240,
-                      "minLength": 1,
-                      "not": {
-                        "enum": [
-                          "__proto__",
-                          "constructor",
-                          "prototype"
-                        ]
-                      },
-                      "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                    },
-                    "type": "object"
-                  },
-                  "keyframeTimeMs": {
-                    "maximum": 1000000000000,
-                    "minimum": 0,
-                    "type": "number"
-                  },
                   "lightingAndAtmosphere": {
                     "description": "光线与氛围。",
                     "maxLength": 20000,
@@ -1669,14 +1578,6 @@
                     "maxLength": 20000,
                     "type": "string"
                   },
-                  "mustHave": {
-                    "items": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
-                  },
                   "narrativeIntent": {
                     "description": "镜头的叙事目的。",
                     "maxLength": 20000,
@@ -1686,14 +1587,6 @@
                     "description": "应避免的画面或动作。",
                     "maxLength": 20000,
                     "type": "string"
-                  },
-                  "optionalDetails": {
-                    "items": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
                   },
                   "performanceBlocking": {
                     "description": "演员走位与表演。",
@@ -1710,16 +1603,6 @@
                     "maxLength": 20000,
                     "type": "string"
                   },
-                  "sourceEndMs": {
-                    "maximum": 1000000000000,
-                    "minimum": 0,
-                    "type": "number"
-                  },
-                  "sourceStartMs": {
-                    "maximum": 1000000000000,
-                    "minimum": 0,
-                    "type": "number"
-                  },
                   "timeBeats": {
                     "description": "镜头内时间节拍的纯文本，如 0–2秒转身，2–5秒向前走；不是数组。",
                     "maxLength": 20000,
@@ -1729,27 +1612,6 @@
                     "description": "给视频模型的完整动态镜头提示词，包含动作和运镜。",
                     "maxLength": 20000,
                     "type": "string"
-                  },
-                  "videoPromptTemplateVariables": {
-                    "additionalProperties": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "maxProperties": 100,
-                    "properties": {},
-                    "propertyNames": {
-                      "maxLength": 240,
-                      "minLength": 1,
-                      "not": {
-                        "enum": [
-                          "__proto__",
-                          "constructor",
-                          "prototype"
-                        ]
-                      },
-                      "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                    },
-                    "type": "object"
                   },
                   "viewerPOV": {
                     "description": "观众视角。",
@@ -1829,45 +1691,6 @@
                     }
                   ],
                   "properties": {
-                    "assetBindings": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "nodeId": {
-                            "maxLength": 120,
-                            "type": "string"
-                          },
-                          "priority": {
-                            "maximum": 100,
-                            "minimum": 0,
-                            "multipleOf": 1,
-                            "type": "number"
-                          },
-                          "role": {
-                            "enum": [
-                              "character",
-                              "environment",
-                              "wardrobe",
-                              "prop",
-                              "weapon",
-                              "style",
-                              "motion",
-                              "audio"
-                            ],
-                            "maxLength": 240,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "nodeId",
-                          "role",
-                          "priority"
-                        ],
-                        "type": "object"
-                      },
-                      "maxItems": 100,
-                      "type": "array"
-                    },
                     "audioEffects": {
                       "description": "音效设计。",
                       "maxLength": 20000,
@@ -1877,31 +1700,6 @@
                       "description": "机位、角度与运镜设计。",
                       "maxLength": 20000,
                       "type": "string"
-                    },
-                    "characters": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "characterDescription": {
-                            "maxLength": 20000,
-                            "type": "string"
-                          },
-                          "characterImageNodeId": {
-                            "maxLength": 120,
-                            "type": "string"
-                          },
-                          "characterName": {
-                            "maxLength": 240,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "characterName"
-                        ],
-                        "type": "object"
-                      },
-                      "maxItems": 100,
-                      "type": "array"
                     },
                     "continuityOut": {
                       "description": "衔接下一镜头所需的状态与连续性。",
@@ -1915,8 +1713,7 @@
                     },
                     "durationSeconds": {
                       "description": "镜头时长（秒），新增镜头必填且大于0。",
-                      "maximum": 86400,
-                      "minimum": 5e-324,
+                      "exclusiveMinimum": 0,
                       "type": "number"
                     },
                     "emotion": {
@@ -1929,32 +1726,6 @@
                       "maxLength": 20000,
                       "type": "string"
                     },
-                    "imagePromptTemplateVariables": {
-                      "additionalProperties": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "maxProperties": 100,
-                      "properties": {},
-                      "propertyNames": {
-                        "maxLength": 240,
-                        "minLength": 1,
-                        "not": {
-                          "enum": [
-                            "__proto__",
-                            "constructor",
-                            "prototype"
-                          ]
-                        },
-                        "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                      },
-                      "type": "object"
-                    },
-                    "keyframeTimeMs": {
-                      "maximum": 1000000000000,
-                      "minimum": 0,
-                      "type": "number"
-                    },
                     "lightingAndAtmosphere": {
                       "description": "光线与氛围。",
                       "maxLength": 20000,
@@ -1965,14 +1736,6 @@
                       "maxLength": 20000,
                       "type": "string"
                     },
-                    "mustHave": {
-                      "items": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "maxItems": 100,
-                      "type": "array"
-                    },
                     "narrativeIntent": {
                       "description": "镜头的叙事目的。",
                       "maxLength": 20000,
@@ -1982,14 +1745,6 @@
                       "description": "应避免的画面或动作。",
                       "maxLength": 20000,
                       "type": "string"
-                    },
-                    "optionalDetails": {
-                      "items": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "maxItems": 100,
-                      "type": "array"
                     },
                     "performanceBlocking": {
                       "description": "演员走位与表演。",
@@ -2006,16 +1761,6 @@
                       "maxLength": 20000,
                       "type": "string"
                     },
-                    "sourceEndMs": {
-                      "maximum": 1000000000000,
-                      "minimum": 0,
-                      "type": "number"
-                    },
-                    "sourceStartMs": {
-                      "maximum": 1000000000000,
-                      "minimum": 0,
-                      "type": "number"
-                    },
                     "timeBeats": {
                       "description": "镜头内时间节拍的纯文本，如 0–2秒转身，2–5秒向前走；不是数组。",
                       "maxLength": 20000,
@@ -2025,27 +1770,6 @@
                       "description": "给视频模型的完整动态镜头提示词，包含动作和运镜。",
                       "maxLength": 20000,
                       "type": "string"
-                    },
-                    "videoPromptTemplateVariables": {
-                      "additionalProperties": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "maxProperties": 100,
-                      "properties": {},
-                      "propertyNames": {
-                        "maxLength": 240,
-                        "minLength": 1,
-                        "not": {
-                          "enum": [
-                            "__proto__",
-                            "constructor",
-                            "prototype"
-                          ]
-                        },
-                        "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                      },
-                      "type": "object"
                     },
                     "viewerPOV": {
                       "description": "观众视角。",
@@ -2116,13 +1840,12 @@
                     "additionalProperties": false,
                     "properties": {
                       "nodeId": {
-                        "maxLength": 120,
+                        "maxLength": 80,
                         "type": "string"
                       },
                       "priority": {
                         "maximum": 100,
                         "minimum": 0,
-                        "multipleOf": 1,
                         "type": "number"
                       },
                       "role": {
@@ -2136,7 +1859,6 @@
                           "motion",
                           "audio"
                         ],
-                        "maxLength": 240,
                         "type": "string"
                       }
                     },
@@ -2147,7 +1869,7 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 100,
+                  "maxItems": 32,
                   "type": "array"
                 },
                 "audioEffects": {
@@ -2159,31 +1881,6 @@
                   "description": "机位、角度与运镜设计。",
                   "maxLength": 20000,
                   "type": "string"
-                },
-                "characters": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "characterDescription": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "characterImageNodeId": {
-                        "maxLength": 120,
-                        "type": "string"
-                      },
-                      "characterName": {
-                        "maxLength": 240,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "characterName"
-                    ],
-                    "type": "object"
-                  },
-                  "maxItems": 100,
-                  "type": "array"
                 },
                 "continuityOut": {
                   "description": "衔接下一镜头所需的状态与连续性。",
@@ -2197,8 +1894,7 @@
                 },
                 "durationSeconds": {
                   "description": "镜头时长（秒），新增镜头必填且大于0。",
-                  "maximum": 86400,
-                  "minimum": 5e-324,
+                  "exclusiveMinimum": 0,
                   "type": "number"
                 },
                 "emotion": {
@@ -2211,32 +1907,6 @@
                   "maxLength": 20000,
                   "type": "string"
                 },
-                "imagePromptTemplateVariables": {
-                  "additionalProperties": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "maxProperties": 100,
-                  "properties": {},
-                  "propertyNames": {
-                    "maxLength": 240,
-                    "minLength": 1,
-                    "not": {
-                      "enum": [
-                        "__proto__",
-                        "constructor",
-                        "prototype"
-                      ]
-                    },
-                    "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                  },
-                  "type": "object"
-                },
-                "keyframeTimeMs": {
-                  "maximum": 1000000000000,
-                  "minimum": 0,
-                  "type": "number"
-                },
                 "lightingAndAtmosphere": {
                   "description": "光线与氛围。",
                   "maxLength": 20000,
@@ -2247,14 +1917,6 @@
                   "maxLength": 20000,
                   "type": "string"
                 },
-                "mustHave": {
-                  "items": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "maxItems": 100,
-                  "type": "array"
-                },
                 "narrativeIntent": {
                   "description": "镜头的叙事目的。",
                   "maxLength": 20000,
@@ -2264,14 +1926,6 @@
                   "description": "应避免的画面或动作。",
                   "maxLength": 20000,
                   "type": "string"
-                },
-                "optionalDetails": {
-                  "items": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "maxItems": 100,
-                  "type": "array"
                 },
                 "performanceBlocking": {
                   "description": "演员走位与表演。",
@@ -2288,16 +1942,6 @@
                   "maxLength": 20000,
                   "type": "string"
                 },
-                "sourceEndMs": {
-                  "maximum": 1000000000000,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "sourceStartMs": {
-                  "maximum": 1000000000000,
-                  "minimum": 0,
-                  "type": "number"
-                },
                 "timeBeats": {
                   "description": "镜头内时间节拍的纯文本，如 0–2秒转身，2–5秒向前走；不是数组。",
                   "maxLength": 20000,
@@ -2307,27 +1951,6 @@
                   "description": "给视频模型的完整动态镜头提示词，包含动作和运镜。",
                   "maxLength": 20000,
                   "type": "string"
-                },
-                "videoPromptTemplateVariables": {
-                  "additionalProperties": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "maxProperties": 100,
-                  "properties": {},
-                  "propertyNames": {
-                    "maxLength": 240,
-                    "minLength": 1,
-                    "not": {
-                      "enum": [
-                        "__proto__",
-                        "constructor",
-                        "prototype"
-                      ]
-                    },
-                    "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                  },
-                  "type": "object"
                 },
                 "viewerPOV": {
                   "description": "观众视角。",
