@@ -37,6 +37,21 @@ type CloudAgentExecution struct {
 	StateJSON      string `gorm:"type:text"`
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	// Business progress and recovery budgets are independent of lease heartbeats.
+	RecoveryAttempts          int `gorm:"not null;default:0"`
+	RecoveryOperationAttempts int `gorm:"not null;default:0"`
+	RecoveryStartedAt         *time.Time
+	NextRecoveryAt            *time.Time `gorm:"index"`
+	RecoveryClass             string     `gorm:"size:32"`
+	RecoveryOperationID       string     `gorm:"size:240"`
+	RecoveryTaskID            string     `gorm:"size:80"`
+	RecoveryCallID            string     `gorm:"size:160"`
+	LastErrorReason           string     `gorm:"size:80"`
+	RecoveryStatus            string     `gorm:"size:32;index"`
+	RecoveryLastEpoch         int64      `gorm:"not null;default:0"`
+	ProgressVersion           int64      `gorm:"not null;default:0"`
+	LastProgressAt            *time.Time
+	ClaimProgressVersion      int64 `gorm:"not null;default:0"`
 }
 
 // Journal rows are append-only and commit in the same transaction as the run.

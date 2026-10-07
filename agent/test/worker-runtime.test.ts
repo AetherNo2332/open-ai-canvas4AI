@@ -2,12 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CanvasBridge, CanvasLeaseLost, CanvasRunTerminated, type PiSnapshot } from '../src/bridge.js';
 import { runLeasedPiSession, workerErrorSummary } from '../src/worker-runtime.js';
+import { RetryableBridgeError } from '../src/worker-errors.js';
 
 const run: PiSnapshot = {
   runId:'run-runtime', userId:'user-runtime', revision:1, status:'running', piSessionLeaseEpoch:7,
   request:{prompt:'private'}, canonical:{systemPrompt:'',messages:[],tools:[],toolChoice:'auto'},
   modelLimits:{contextWindowTokens:128000,maxOutputTokens:16384,configured:false,source:'default'},tools:[],
 };
+test('retryable run failures wait for a durable recovery acknowledgement',async()=>{
+  let scheduled=0,failed=0;
+  const error=new RetryableBridgeError('GET /runs/run-runtime',503);
+  await runLeasedPiSession({
+    failRun:async()=>{failed++;},
+    reportRecovery:async(r:PiSnapshot,e:RetryableBridgeError)=>{assert.equal(r.runId,run.runId);assert.equal(e,error);scheduled++;},
+  },run,new AbortController().signal,async()=>{throw error;});
+  assert.equal(scheduled,1);assert.equal(failed,0);
+});
 for (const responseLost of [false,true]) {
   test(`failure reporting recovers from ${responseLost ? 'committed response loss' : 'one 503'} without duplicate terminal mutation`, async () => {
     const original=globalThis.fetch;

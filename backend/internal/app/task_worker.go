@@ -67,6 +67,9 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 				if err := s.ReconcileDynamicSubagents(ctx); err != nil {
 					log.Printf("subagent reconciliation: %v", err)
 				}
+				if _, err := s.SweepWorkerRecoveries(); err != nil {
+					log.Printf("pi recovery sweep: %v", err)
+				}
 				if swept, err := s.SweepStalledPiAgentRuns(); err != nil {
 					log.Printf("pi stalled sweep: %v", err)
 				} else if swept > 0 {
