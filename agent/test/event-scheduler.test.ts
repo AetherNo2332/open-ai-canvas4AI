@@ -19,6 +19,22 @@ function snapshot(runId: string, piSessionId = runId): PiSnapshot {
   } as PiSnapshot;
 }
 
+test("queued reporting aborts immediately and never sends after a slot opens", async () => {
+  const scheduler = new EventScheduler(1);
+  const gate = deferred();
+  const occupied = scheduler.step("busy", () => gate.promise);
+  const abort = new AbortController();
+  let sent = 0;
+  const waiting = scheduler.step("report", async () => { sent++; }, abort.signal);
+  abort.abort(new Error("report deadline"));
+  const result = await Promise.race([waiting.catch(error => error.message), new Promise(resolve => setTimeout(() => resolve("still queued"), 40))]);
+  gate.resolve(); await occupied;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(result, "report deadline");
+  assert.equal(sent, 0);
+  assert.equal(scheduler.queued, 0);
+});
+
 test("EventScheduler bounds concurrent steps and rotates fairly across projects", async () => {
   const scheduler = new EventScheduler(4);
   const release = deferred();

@@ -755,6 +755,16 @@ func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
 	if err != nil || run == nil {
 		return nil, err
 	}
+	protected, err := s.repo.WorkerRecoveryProtectedWait(*run)
+	if err != nil {
+		return nil, err
+	}
+	if run.WorkerRecoveryExhausted(time.Now()) && (!protected || run.RecoveryAttempts >= model.AgentWorkerRecoveryLimit || run.RecoveryOperationAttempts >= model.AgentWorkerRecoveryLimit) {
+		err = s.mutatePiControl(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			return failWorkerRecovery(current, "pi_worker_recovery_exhausted", "Pi worker 连续接管仍无进展，本轮已停止，请重试")
+		})
+		return nil, err
+	}
 	return s.piAgentSnapshot(run)
 }
 
@@ -1757,7 +1767,7 @@ func taskIDForPiMessage(input PiMessageCheckpoint, runID string) string {
 // running，前端表现为"Agent 输出完了却永远显示运行中"——本轮真实踩到这个。
 // 只接受租约持有者上报，且只在本轮尚未终结时生效。
 func (s *Service) PiFailRun(userID, runID, owner, reason string) error {
-	run, err := s.piAgentLeasedRun(userID, runID, owner)
+	run, err := s.piAgentLeaseRow(userID, runID, owner, false)
 	if err != nil {
 		var terminal bool
 		run, terminal = s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
@@ -1772,17 +1782,13 @@ func (s *Service) PiFailRun(userID, runID, owner, reason string) error {
 	if message == "" {
 		message = "Pi worker 无法继续本轮（未提供原因）"
 	}
-	return s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		state, err := cloudAgentDecode(current)
-		if err != nil {
-			return err
-		}
+	return s.mutatePiControl(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		current.Status = "failed"
 		current.FailureMessage = message
-		state.event(runID, "run_failed", map[string]any{
+		current.CleanupPending = true
+		return appendWorkerEvent(current, "run_failed", map[string]any{
 			"text": "Agent 运行无法继续：" + message, "reason": "pi_worker_fatal",
 		})
-		return cloudAgentSave(current, &state)
 	})
 }
 

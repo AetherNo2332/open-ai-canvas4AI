@@ -218,8 +218,8 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 	}
 	var candidates []model.CloudAgentExecution
 	now := time.Now()
-	if err := r.db.Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
-		"pi", []string{"queued", "running", "waiting_approval"}, now).
+	if err := r.db.Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?) AND (next_recovery_at IS NULL OR next_recovery_at <= ?)",
+		"pi", []string{"queued", "running", "waiting_approval"}, now, now).
 		Order("created_at, id").Limit(20).Find(&candidates).Error; err != nil {
 		return nil, err
 	}
@@ -229,14 +229,22 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 			conversationID = candidate.ID
 		}
 		err := r.db.Transaction(func(tx *gorm.DB) error {
+			updates := map[string]any{
+				"lease_owner": owner, "lease_expires_at": until,
+				"status":   gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", "queued", "running"),
+				"revision": gorm.Expr("revision + 1"),
+			}
+			protected, err := New(tx).WorkerRecoveryProtectedWait(candidate)
+			if err != nil {
+				return err
+			}
+			for key, value := range workerRecoveryClaimUpdates(candidate, now, protected) {
+				updates[key] = value
+			}
 			updated := tx.Model(&model.CloudAgentExecution{}).
 				Where("id = ? AND revision = ? AND engine = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
 					candidate.ID, candidate.Revision, "pi", now).
-				Updates(map[string]any{
-					"lease_owner": owner, "lease_expires_at": until,
-					"status":   gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", "queued", "running"),
-					"revision": gorm.Expr("revision + 1"),
-				})
+				Updates(updates)
 			if updated.Error != nil {
 				return updated.Error
 			}
@@ -393,6 +401,7 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 			return err
 		}
 		previousEvents := run.EventCount
+		previousCheckpoint := run.CheckpointVersion
 		previousEventBodies := make(map[int]string, len(run.Journal))
 		for _, event := range run.Journal {
 			previousEventBodies[event.Sequence] = event.EventJSON
@@ -402,8 +411,47 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 			previousMessages[fmt.Sprintf("%s:%d", message.Kind, message.Sequence)] = message.MessageJSON
 		}
 		callbackRepo := New(tx)
+		previousActive, previousMedia := run.ActiveTaskID, run.MediaTaskID
 		if err = fn(run, callbackRepo); err != nil {
 			return err
+		}
+		progress := previousActive != "" && run.ActiveTaskID == "" || previousMedia != "" && run.MediaTaskID == ""
+		// Saving or replaying user/system messages is not acknowledged work.
+		// Model completion clears ActiveTaskID; tools/compaction append receipts.
+		for _, record := range run.Journal {
+			if record.Sequence <= previousEvents {
+				continue
+			}
+			var event struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal([]byte(record.EventJSON), &event) == nil && (event.Type == "tool_completed" || event.Type == "context_compacted") {
+				progress = true
+			}
+		}
+		if run.Engine == "pi" && previousCheckpoint >= model.CloudAgentCheckpointVersion && progress && !isTerminalCloudAgentRunStatus(run.Status) {
+			now := time.Now().UTC()
+			run.ProgressVersion++
+			run.LastProgressAt = &now
+			run.RecoveryAttempts = 0
+			run.RecoveryStartedAt = nil
+			run.NextRecoveryAt = nil
+			run.RecoveryStatus = ""
+			if run.RecoveryTaskID == "" && run.RecoveryCallID == "" {
+				run.RecoveryOperationAttempts = 0
+				var budgets map[string]int
+				if run.RecoveryOperationBudgets != "" {
+					if err := json.Unmarshal([]byte(run.RecoveryOperationBudgets), &budgets); err != nil {
+						return err
+					}
+					delete(budgets, "run")
+					body, err := json.Marshal(budgets)
+					if err != nil {
+						return err
+					}
+					run.RecoveryOperationBudgets = string(body)
+				}
+			}
 		}
 		if isTerminalCloudAgentRunStatus(run.Status) {
 			run.RuntimePhase = "terminal"

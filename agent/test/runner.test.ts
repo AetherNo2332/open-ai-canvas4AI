@@ -3,13 +3,24 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
+import { CanvasModelRetry, CanvasRunTerminated, CanvasContextOverflow, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "../src/tool-disclosure.js";
 import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent, withServerPolicy } from "../src/runner.js";
 import type { PromptParts } from "../src/system-prompt.js";
 import { sessionEntriesFromMessages } from "../src/session-tools.js";
 import { createHash } from "node:crypto";
+import {RetryableBridgeError} from "../src/worker-errors.js";
+
+test("real Pi streaming loop propagates internal, fatal and transport model errors to the leased-session boundary",async()=>{
+ for(const failure of [new TypeError("private model failure"),new FatalWorkerError("invalid protocol"),new RetryableBridgeError("POST /runs/run-1/model-step",503)]){
+  const {bridge,state,snapshot}=fakeBridge([async()=>{throw failure}]);
+  await assert.rejects(runCanvasAgent(bridge,snapshot,undefined,promptParts()),error=>error===failure);
+  assert.equal(state.steps,1);
+  assert.equal(state.status,"running");
+  assert.equal(state.batches.length,0);
+ }
+});
 
 const objectSchema = { type: "object", properties: {}, required: [], additionalProperties: false };
 const tools: CanvasToolSpec[] = [
@@ -332,7 +343,8 @@ function authorizeNativeEntry(bridge: CanvasBridge, snapshot: PiSnapshot): void 
   };
 }
 
-test("native read HTTP503 escapes Pi tool error conversion for worker retry", async () => {
+test("native read infrastructure and protocol failures escape Pi tool error conversion", async (t) => {
+ for (const kind of ["503", "json", "identity", "recovered-identity"]) await t.test(kind, async () => {
   const { bridge, state, snapshot } = fakeBridge([
     { toolCalls: [{ id: "read-503", function: { name: "read", arguments: JSON.stringify({ path: "unused" }) } }] },
     { text: "must not continue" },
@@ -351,13 +363,27 @@ test("native read HTTP503 escapes Pi tool error conversion for worker retry", as
     return step;
   };
   const original = globalThis.fetch;
-  globalThis.fetch = async () => new Response("unavailable", { status: 503 });
-  bridge.readSkillFile = new CanvasBridge("http://backend:8080", "token", "worker").readSkillFile.bind(new CanvasBridge("http://backend:8080", "token", "worker"));
+  globalThis.fetch = async () => kind === "503" ? new Response("unavailable", { status: 503 }) : new Response("invalid json");
+  if (kind.endsWith("identity")) {
+    authorizeNativeEntry(bridge, snapshot);
+    const read = bridge.readSkillFile.bind(bridge);
+    bridge.readSkillFile = async (...args) => ({ ...await read(...args), contentHash: "wrong-frozen-package" });
+    if (kind === "recovered-identity") {
+      const messages = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: [
+        ...snapshot.canonical.messages, { role: "assistant", content: "", tool_calls: [{ id: "read-503", type: "function", function: { name: "read", arguments: JSON.stringify({ path: join(process.cwd(), "previous", "skills", "skill-abc", "SKILL.md") }) } }] },
+      ] } }, canvasModel(snapshot));
+      snapshot.piMessages = messages as unknown as Record<string, unknown>[];
+      snapshot.piSessionEntries = sessionEntriesFromMessages(snapshot.runId, messages).map(entry => ({ runId: snapshot.runId, entry: entry as unknown as Record<string, unknown> }));
+      snapshot.piActiveLeafId = String(snapshot.piSessionEntries.at(-1)!.entry.id);
+      snapshot.piSessionRevision = 3;
+    }
+  } else bridge.readSkillFile = new CanvasBridge("http://backend:8080", "token", "worker").readSkillFile.bind(new CanvasBridge("http://backend:8080", "token", "worker"));
   try {
-    await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), /HTTP 503/);
-    assert.equal(state.steps, 1);
+    await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), kind === "503" ? /HTTP 503/ : /JSON|frozen snapshot/);
+    assert.equal(state.steps, kind === "recovered-identity" ? 0 : 1);
     assert.equal(state.checkpoints.filter(item => item.role === "toolResult").length, 0);
   } finally { globalThis.fetch = original; }
+ });
 });
 
 test("in-flight native model recovery rebases returned old-worker calls only for that task", async () => {
@@ -716,7 +742,7 @@ test("a window shrink during a tool turn is applied before Pi checks the next re
 test("native overflow recovery persists omission entries before the Go compaction CAS", async () => {
   const history = compactionHistory();
   const { bridge, state, snapshot } = fakeBridge([
-    async () => { throw new Error("context_length_exceeded"); }, { text: "Done" },
+    async () => { throw new CanvasContextOverflow(); }, { text: "Done" },
   ], { piSessionEntries: history.views, piActiveLeafId: history.leaf });
   snapshot.canonical.messages = history.canonical;
   snapshot.piSessionRevision = 8;
