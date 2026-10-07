@@ -148,8 +148,15 @@ func TestCloudAgentStoryboardToolsAreScopedAndStructured(t *testing.T) {
 	if _, leaksID := rowProperties["id"]; leaksID {
 		t.Fatal("create storyboard schema lets the model forge row IDs")
 	}
+	editDescription := functions["canvas_edit_storyboard"]["description"].(string)
+	if !strings.Contains(editDescription, "assetBindings") {
+		t.Fatal("storyboard edit tool description does not explain asset linking")
+	}
 	editPatch := functions["canvas_edit_storyboard"]["parameters"].(map[string]any)["properties"].(map[string]any)["patch"].(map[string]any)["properties"].(map[string]any)
-	for _, protected := range []string{"imageNodeId", "videoNodeId", "assetBindings", "status"} {
+	if _, exists := editPatch["assetBindings"]; !exists {
+		t.Fatal("assetBindings should be writable for storyboard asset linking")
+	}
+	for _, protected := range []string{"imageNodeId", "videoNodeId", "status"} {
 		if _, exists := editPatch[protected]; exists {
 			t.Fatalf("protected field %s leaked into edit schema", protected)
 		}

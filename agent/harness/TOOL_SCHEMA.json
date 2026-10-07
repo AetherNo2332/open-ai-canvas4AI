@@ -1369,7 +1369,7 @@
     },
     {
       "function": {
-        "description": "先用 canvas_read_storyboard 获取 nodeId、snapshotHash 与真实 rowId，再编辑一个镜头。append 必须传 patch（含正数 durationSeconds 及剧情或运动描述），不传 rowId；update 必须传 rowId 和部分 patch；remove 只传 rowId，不传 patch。修改台词示例：action=\"update\", rowId=\"读取的ID\", patch={\"dialogue\":\"新的台词\"}。禁止修改素材绑定、任务状态、资源 URL 或 metadata。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "追加、修改或删除分镜脚本中的单个镜头行，也可替换该行的关联资产。必须先用 canvas_read_storyboard 读取最新 snapshotHash 和真实 rowId；append 不传 rowId，update/remove 必须传。patch 允许镜头文本、时长和 assetBindings；assetBindings 只能引用当前画布真实角色卡或媒体资产节点，并填写 nodeId、role、priority。不能修改媒体节点ID、任务状态、资源URL或任意 metadata。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_edit_storyboard",
         "parameters": {
           "additionalProperties": false,
@@ -1548,6 +1548,43 @@
               "additionalProperties": false,
               "minProperties": 1,
               "properties": {
+                "assetBindings": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "nodeId": {
+                        "maxLength": 80,
+                        "type": "string"
+                      },
+                      "priority": {
+                        "maximum": 100,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "role": {
+                        "enum": [
+                          "character",
+                          "environment",
+                          "wardrobe",
+                          "prop",
+                          "weapon",
+                          "style",
+                          "motion",
+                          "audio"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "nodeId",
+                      "role",
+                      "priority"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 32,
+                  "type": "array"
+                },
                 "audioEffects": {
                   "description": "音效设计。",
                   "maxLength": 20000,
