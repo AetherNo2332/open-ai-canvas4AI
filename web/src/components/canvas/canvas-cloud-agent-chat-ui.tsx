@@ -256,17 +256,14 @@ export function AgentChatMessage({
 /**
  * 推理摘要默认只保留一行入口；流式更新不改变用户手动展开的状态。
  */
-export function AgentReasoningFeed({
-    items,
-    theme,
-}: {
-    items: CloudAgentChatMessage[];
-    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
-}) {
+export function AgentReasoningFeed({ items, theme }: { items: CloudAgentChatMessage[]; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     const [expanded, setExpanded] = useState(false);
     const contentId = useId();
     const streaming = items.some((item) => item.streaming);
-    const text = items.map((item) => item.text.trim()).filter(Boolean).join("\n\n");
+    const text = items
+        .map((item) => item.text.trim())
+        .filter(Boolean)
+        .join("\n\n");
     return (
         <div className="agent-reasoning" style={{ "--agent-reasoning-accent": theme.accent.primary } as CSSProperties}>
             <div className={`agent-reasoning-card${expanded ? " is-open" : ""}${streaming ? " is-streaming" : ""}`}>
@@ -291,13 +288,25 @@ export function AgentReasoningFeed({
 function AgentFeedDisclosure({ expanded, id, label, children }: { expanded: boolean; id: string; label: string; children: ReactNode }) {
     const reducedMotion = useReducedMotion();
     const duration = useAppearanceStore((state) => state.appearance.activeSkin.tokens.components.motionNormal) / 1000;
-    return <div className="agent-feed-disclosure" inert={!expanded} aria-hidden={!expanded}>
-        <AnimatePresence initial={false}>
-            {expanded ? <motion.div id={id} role="region" aria-label={label} initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: reducedMotion ? 0 : duration, ease: [0.16, 1, 0.3, 1] }}>
-                {children}
-            </motion.div> : null}
-        </AnimatePresence>
-    </div>;
+    return (
+        <div className="agent-feed-disclosure" inert={!expanded} aria-hidden={!expanded}>
+            <AnimatePresence initial={false}>
+                {expanded ? (
+                    <motion.div
+                        id={id}
+                        role="region"
+                        aria-label={label}
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: reducedMotion ? 0 : duration, ease: [0.16, 1, 0.3, 1] }}
+                    >
+                        {children}
+                    </motion.div>
+                ) : null}
+            </AnimatePresence>
+        </div>
+    );
 }
 
 /**
@@ -420,12 +429,18 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
     return (
         <div className="agent-status-message flex items-start gap-2">
             <AgentTimelineMarker theme={theme} tone="approval" icon={<CircleAlert className="size-3.5" />} />
-            <div className="agent-pending-tool min-w-0 flex-1 rounded-lg border py-2 pl-3 pr-3" style={{ borderColor: "color-mix(in srgb, var(--palette-status-warning) 22%, transparent)", background: "color-mix(in srgb, var(--palette-status-warning) 5%, transparent)", color: theme.node.text }}>
+            <div
+                className="agent-pending-tool min-w-0 flex-1 rounded-lg border py-2 pl-3 pr-3"
+                style={{ borderColor: "color-mix(in srgb, var(--palette-status-warning) 22%, transparent)", background: "color-mix(in srgb, var(--palette-status-warning) 5%, transparent)", color: theme.node.text }}
+            >
                 <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold leading-5">
                             <span>需要你的确认</span>
-                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[var(--fs-label)] font-medium" style={{ color: "var(--palette-status-warning)", background: "color-mix(in srgb, var(--palette-status-warning) 10%, transparent)" }}>
+                            <span
+                                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[var(--fs-label)] font-medium"
+                                style={{ color: "var(--palette-status-warning)", background: "color-mix(in srgb, var(--palette-status-warning) 10%, transparent)" }}
+                            >
                                 等待确认
                             </span>
                         </div>
@@ -460,7 +475,13 @@ export function AgentPendingToolCard({ summary, detail, theme, onReject, onAppro
                         <Button danger size="small" className="!h-8 flex-1" icon={<XCircle className="size-3.5" />} onClick={() => onReject?.()}>
                             暂不执行
                         </Button>
-                        <Button size="small" className="!h-8 flex-1" icon={<CheckCircle2 className="size-3.5" />} style={{ borderColor: "color-mix(in srgb, var(--palette-status-success) 42%, transparent)", color: "var(--palette-status-success)", background: "transparent" }} onClick={() => onApprove?.()}>
+                        <Button
+                            size="small"
+                            className="!h-8 flex-1"
+                            icon={<CheckCircle2 className="size-3.5" />}
+                            style={{ borderColor: "color-mix(in srgb, var(--palette-status-success) 42%, transparent)", color: "var(--palette-status-success)", background: "transparent" }}
+                            onClick={() => onApprove?.()}
+                        >
                             确认执行
                         </Button>
                     </div>
@@ -641,14 +662,7 @@ export function AgentOperationFeed({
     const shimmering = live && !failed;
     return (
         <div className={`agent-operation-feed${expanded ? " is-open" : ""}${failed ? " is-failed" : ""}${shimmering ? " is-live" : ""}`} data-agent-operation-feed data-agent-category={category}>
-            <button
-                type="button"
-                className="agent-operation-toggle"
-                aria-expanded={expanded}
-                aria-controls={listId}
-                aria-label={`${expanded ? "收起" : "展开"}工具调用记录，最新操作：${label}`}
-                onClick={() => setExpanded((current) => !current)}
-            >
+            <button type="button" className="agent-operation-toggle" aria-expanded={expanded} aria-controls={listId} aria-label={`${expanded ? "收起" : "展开"}工具调用记录，最新操作：${label}`} onClick={() => setExpanded((current) => !current)}>
                 {/* 换步时旧文案高模糊淡出、新文案从下方上浮（先快后慢的非线性曲线）。 */}
                 <AnimatePresence mode="wait" initial={false}>
                     <motion.span
@@ -675,14 +689,71 @@ export function AgentOperationFeed({
     );
 }
 
-export function AgentWorkingMessage({ theme, label = WORKING_TEXT }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; label?: string }) {
+function formatAgentElapsed(ms: number) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${hours}小时${minutes}分${seconds}秒`;
+}
+
+export function AgentWorkingMessage({
+    theme,
+    label = WORKING_TEXT,
+    runId,
+    active = true,
+    terminal = false,
+    createdAt,
+    updatedAt,
+}: {
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    label?: string;
+    runId?: string;
+    active?: boolean;
+    terminal?: boolean;
+    createdAt?: string;
+    updatedAt?: string;
+}) {
+    const startedAtRef = useRef<number | null>(null);
+    const endedAtRef = useRef<number | null>(null);
+    const lastRunIdRef = useRef<string | undefined>(runId);
+    const fallbackStart = createdAt ? Date.parse(createdAt) : Number.NaN;
+    const fallbackEnd = updatedAt ? Date.parse(updatedAt) : Number.NaN;
+    const [elapsedMs, setElapsedMs] = useState(() => (Number.isFinite(fallbackEnd) && Number.isFinite(fallbackStart) ? Math.max(0, fallbackEnd - fallbackStart) : 0));
+
+    useEffect(() => {
+        if (lastRunIdRef.current !== runId) {
+            lastRunIdRef.current = runId;
+            startedAtRef.current = null;
+            endedAtRef.current = null;
+            setElapsedMs(0);
+        }
+        if (active && startedAtRef.current === null) {
+            startedAtRef.current = Number.isFinite(fallbackStart) ? fallbackStart : Date.now();
+        }
+        if (!active && terminal && endedAtRef.current === null) {
+            endedAtRef.current = Number.isFinite(fallbackEnd) ? fallbackEnd : Date.now();
+        }
+        const update = () => {
+            const startedAt = startedAtRef.current;
+            if (startedAt === null) return;
+            const end = active ? Date.now() : endedAtRef.current || Date.now();
+            setElapsedMs(Math.max(0, end - startedAt));
+        };
+        update();
+        if (!active) return;
+        const timer = window.setInterval(update, 1000);
+        return () => window.clearInterval(timer);
+    }, [active, fallbackEnd, fallbackStart, runId, terminal]);
+
+    const finished = terminal && !active;
     return (
         <div role="status" aria-live="polite" className="agent-working-indicator" style={{ color: theme.node.muted }}>
-            <span className="agent-working-signal" aria-hidden="true">
+            <span className={`agent-working-signal${finished ? " is-finished" : ""}`} aria-hidden="true">
                 <span />
             </span>
-            <span>{label}</span>
-            <span className="agent-working-caption">实时处理中</span>
+            <span>{finished ? "活动" : label}</span>
+            <span className="agent-working-caption">已处理 {formatAgentElapsed(elapsedMs)}</span>
         </div>
     );
 }
@@ -711,7 +782,10 @@ export function AgentPlanBar({ items, theme, minimized, onToggle, terminal = fal
                         const Icon = done ? CheckCircle2 : terminal ? CircleAlert : doing ? LoaderCircle : CircleDot;
                         return (
                             <li key={entry.id} className="flex min-w-0 items-start gap-1.5 text-xs">
-                                <Icon className={doing && !terminal ? "mt-[3px] size-3 shrink-0 animate-spin" : "mt-[3px] size-3 shrink-0"} style={{ color: done ? "var(--palette-status-success)" : terminal ? theme.node.muted : doing ? theme.accent.primary : theme.node.muted }} />
+                                <Icon
+                                    className={doing && !terminal ? "mt-[3px] size-3 shrink-0 animate-spin" : "mt-[3px] size-3 shrink-0"}
+                                    style={{ color: done ? "var(--palette-status-success)" : terminal ? theme.node.muted : doing ? theme.accent.primary : theme.node.muted }}
+                                />
                                 <span className={done ? "min-w-0 break-words line-through opacity-50" : terminal ? "min-w-0 break-words opacity-55" : "min-w-0 break-words"}>{entry.title}</span>
                             </li>
                         );

@@ -92,11 +92,14 @@ function record(value: unknown): Record<string, unknown> {
 /** Native events expose metadata only, never the Pi tool result or worker path. */
 export function nativeSkillEventPresentation(type: string, payload: unknown) {
     if (type !== "native_skill_read" && type !== "native_skill_read_failed" && type !== "native_skill_enabled") return undefined;
+    // Enabling a Skill is an internal setup step. Keep it out of the chat
+    // timeline so the first visible activity is the worker's actual work.
+    if (type === "native_skill_enabled") return undefined;
     const data = record(payload);
     const skillName = typeof data.skillName === "string" ? data.skillName : "Skills";
     const rawPath = typeof data.path === "string" ? data.path : "";
     const path = rawPath && !/[\\:\u0000]/.test(rawPath) && rawPath.split("/").every((part) => part && part !== "." && part !== "..") ? rawPath : "";
-    const reading = type !== "native_skill_enabled";
+    const reading = true;
     const title = reading ? "read" : "native_skill_enabled";
     const text = `${type === "native_skill_read_failed" ? "技能文件读取失败" : reading ? "已读取技能文件" : "已启用技能"} · ${skillName}${reading && path ? ` · ${path}` : ""}`;
     return { title, text, detail: { eventType: type, toolName: title, skillName, path, version: typeof data.version === "string" ? data.version : "" } };

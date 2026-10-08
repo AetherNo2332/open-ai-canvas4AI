@@ -1179,6 +1179,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                             onFocusNode={onFocusNode}
                                             references={[...references, ...buildSkillMentionReferences(installedSkills)]}
                                             busy={busy || running}
+                                            run={run}
                                             approval={approval}
                                             nodeCount={nodeCount}
                                             approvalSubmitting={approvalSubmitting || connectionStatus !== "connected"}
@@ -1472,9 +1473,7 @@ export function AgentContextRing({ view }: { view: AgentContextUsageView }) {
                             {sourceLabel}
                             {view.estimate ? " · 不是计费 Token" : " · 预计下次请求"}
                         </span>
-                        <span title={view.cacheHitRate === undefined ? "暂无模型缓存用量数据" : "上一请求的缓存读取 Token ÷ 总输入 Token"}>
-                            缓存命中率 {view.cacheHitRate === undefined ? "暂无数据" : `${Math.round(view.cacheHitRate * 1000) / 10}%`}
-                        </span>
+                        <span title={view.cacheHitRate === undefined ? "暂无模型缓存用量数据" : "上一请求的缓存读取 Token ÷ 总输入 Token"}>缓存命中率 {view.cacheHitRate === undefined ? "暂无数据" : `${Math.round(view.cacheHitRate * 1000) / 10}%`}</span>
                     </div>
                     {view.lastCompaction ? <p className="agent-context-note">本轮已完成一次上下文压缩，下一次读数会刷新。</p> : null}
                 </div>
@@ -1583,6 +1582,7 @@ function AgentConversation({
     messages,
     references,
     busy,
+    run,
     approval,
     approvalSubmitting,
     nodeCount,
@@ -1597,6 +1597,7 @@ function AgentConversation({
     messages: CloudAgentChatMessage[];
     references: CanvasResourceReference[];
     busy: boolean;
+    run: AgentRun | null;
     approval: ApprovalState | null;
     approvalSubmitting: boolean;
     nodeCount: number;
@@ -1659,7 +1660,17 @@ function AgentConversation({
                     ),
                 )}
                 {approval ? <ApprovalCard key={approval.approvalId} approval={approval} theme={theme} submitting={approvalSubmitting} onFocusNode={onFocusNode} onReasonChange={onApprovalReasonChange} onApprove={onApprove} onReject={onReject} /> : null}
-                {busy && !approval ? <AgentWorkingMessage theme={theme} label="正在处理当前画布" /> : null}
+                {run && !approval && ["running", "waiting_approval", "completed", "failed", "cancelled", "rejected"].includes(run.status) ? (
+                    <AgentWorkingMessage
+                        theme={theme}
+                        label="正在处理当前画布"
+                        runId={run.id}
+                        active={["running", "waiting_approval"].includes(run.status)}
+                        terminal={["completed", "failed", "cancelled", "rejected"].includes(run.status)}
+                        createdAt={run.createdAt}
+                        updatedAt={run.updatedAt}
+                    />
+                ) : null}
             </div>
         </div>
     );

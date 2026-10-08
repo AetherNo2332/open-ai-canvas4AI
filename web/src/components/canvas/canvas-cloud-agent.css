@@ -278,7 +278,6 @@
     transition: width 240ms ease;
 }
 
-
 .agent-context-panel-foot {
     display: flex;
     justify-content: space-between;
@@ -324,7 +323,9 @@
     margin-inline: auto;
 }
 
-.agent-message-body { overflow-wrap: anywhere; }
+.agent-message-body {
+    overflow-wrap: anywhere;
+}
 
 .agent-conversation-messages > * + * {
     margin-top: var(--space-4);
@@ -1460,6 +1461,16 @@
     border-radius: 50%;
     background: currentColor;
     animation: agent-working-pulse 1.2s ease-in-out infinite;
+}
+
+.agent-working-signal.is-finished {
+    border-color: color-mix(in srgb, var(--palette-status-success) 42%, transparent);
+    color: var(--palette-status-success);
+}
+
+.agent-working-signal.is-finished span {
+    animation: none;
+    opacity: 0.8;
 }
 
 .agent-working-caption {
