@@ -60,7 +60,24 @@ func cloudAgentAttachStoryboardEdge(nodes []map[string]any, edge map[string]any)
 				}
 				meta := cloudAgentNodeMetadata(linked)
 				meta["workflowKind"], meta["shotIndex"], meta["generationMode"] = "shot", row["shotNumber"], "video"
-				patch := map[string]any{"content": prompt}
+				prompt = strings.TrimSpace(prompt)
+				linked["title"] = "镜头 " + fmt.Sprint(row["shotNumber"]) + " · 视频"
+				meta["workflowTitle"] = "镜头 " + fmt.Sprint(row["shotNumber"]) + " 视频"
+				// Keep the last submitted prompt while editing the next generation draft.
+				if _, submitted := meta["prompt"]; !submitted {
+					meta["prompt"] = prompt
+				}
+				if stringValue(meta["videoEditOperation"]) == "" {
+					meta["videoEditOperation"] = "text_to_video"
+				}
+				if variables, ok := row["videoPromptTemplateVariables"].(map[string]any); ok {
+					meta["promptTemplateOperation"] = "storyboard_video"
+					meta["promptTemplateVariables"] = variables
+				} else {
+					delete(meta, "promptTemplateOperation")
+					delete(meta, "promptTemplateVariables")
+				}
+				patch := map[string]any{"content": cloudAgentConnectionComposer(nodes[index], row, nodes, prompt)}
 				if seconds := row["durationSeconds"]; seconds != nil {
 					patch["seconds"] = fmt.Sprint(seconds)
 				}
