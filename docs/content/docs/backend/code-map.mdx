@@ -63,6 +63,7 @@ Pi 原生技能：`app/cloud_agent_native_skills.go` 负责命名、入口规范
 | 技能库 | `web/src/pages/skills/` | `services/api/skills.ts`、`services/skill-runtime.ts`、`components/skills/skill-runtime-picker.tsx` |
 | 画布列表 | `web/src/pages/canvas/index.tsx` | `stores/canvas/use-canvas-store.ts` |
 | 画布编辑器 | `web/src/pages/canvas/project.tsx` | `pages/canvas/canvas-project-*`、`pages/canvas/use-canvas-*`、`components/canvas/`、`lib/canvas/`、`stores/canvas/` |
+| 摄影机与镜头提示词 | `web/src/components/canvas/canvas-camera-control-popover.tsx`、`canvas-node-camera-dialog.tsx` | `lib/canvas/camera-prompt-library.ts` 管型号与提示词编译，`camera-control-wheel.ts` 管滚轮步进与限速，`camera-control-assets.ts` 映射 `public/camera-controls/` 中的本地素材；`pages/canvas/canvas-generation-camera.ts` 管图片/视频组装与重试快照；节点和配置编辑器接入统一面板，图片/视频执行器保存配置 |
 | 公开分享 | `web/src/pages/canvas/shared.tsx` | `components/canvas/infinite-canvas.tsx`、`services/api/canvas-share.ts` |
 | 管理后台 | `web/src/pages/admin/`、`router.tsx` | `admin-context.tsx`、`users/`、`channels/`、`logs/`、`storyboard-prompts/`、`settings/`、`components/agent-lessons-panel.tsx` |
 | 支付 CSV 导出 | `web/src/pages/admin/payments/payments-page.tsx` | `services/api/payments.ts`、`AdminExportButton`；后端 `handler/payment_export.go`、`app/payment_export.go`、`repository/payment_export.go`（共享筛选、只读快照） |

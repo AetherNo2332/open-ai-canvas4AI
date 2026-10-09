@@ -1,0 +1,122 @@
+{
+  "source": "User-supplied app.tapnow.ai.har",
+  "sourceHost": "fe-assets.tapnow.media",
+  "extractedAt": "2026-10-08",
+  "assets": [
+    {
+      "file": "arri-alexa-35.png",
+      "bytes": 31434,
+      "sourcePath": "/assets/arri-alexa-35-hW6-4chH.png"
+    },
+    {
+      "file": "camera-control-bg.png",
+      "bytes": 4096,
+      "sourcePath": "/assets/camera-control-bg-BWXIpVpf.png"
+    },
+    {
+      "file": "sony-venice.png",
+      "bytes": 41604,
+      "sourcePath": "/assets/sony-venice-BgicSddP.png"
+    },
+    {
+      "file": "arri-alexa-65.png",
+      "bytes": 58623,
+      "sourcePath": "/assets/arri-alexa-65-DhfuE5SY.png"
+    },
+    {
+      "file": "red-v-raptor.png",
+      "bytes": 40543,
+      "sourcePath": "/assets/red-v-raptor-DOT1sij6.png"
+    },
+    {
+      "file": "panavision-dxl2.png",
+      "bytes": 40767,
+      "sourcePath": "/assets/panavision-dxl2-nu2CVKjg.png"
+    },
+    {
+      "file": "arricam-lt.png",
+      "bytes": 106821,
+      "sourcePath": "/assets/arricam-lt-DEzXr_FR.png"
+    },
+    {
+      "file": "arriflex-435.png",
+      "bytes": 112729,
+      "sourcePath": "/assets/arriflex-435-DqI5jc3N.png"
+    },
+    {
+      "file": "imax-keighley.png",
+      "bytes": 115850,
+      "sourcePath": "/assets/imax-keighley-Cu9FJnlP.png"
+    },
+    {
+      "file": "imax-film-camera.png",
+      "bytes": 27096,
+      "sourcePath": "/assets/imax-film-camera-Cztb437s.png"
+    },
+    {
+      "file": "zeiss-ultra-prime.png",
+      "bytes": 49083,
+      "sourcePath": "/assets/zeiss-ultra-prime-DdBHzrBr.png"
+    },
+    {
+      "file": "arri-signature-prime.png",
+      "bytes": 41501,
+      "sourcePath": "/assets/arri-signature-prime-ZwjUyRcz.png"
+    },
+    {
+      "file": "canon-k35.png",
+      "bytes": 44045,
+      "sourcePath": "/assets/canon-k35-BhokCUBz.png"
+    },
+    {
+      "file": "cooke-s4.png",
+      "bytes": 42983,
+      "sourcePath": "/assets/cooke-s4-BKM_5Nte.png"
+    },
+    {
+      "file": "cooke-speed-panchro.png",
+      "bytes": 24919,
+      "sourcePath": "/assets/cooke-speed-panchro-jWogQ6i5.png"
+    },
+    {
+      "file": "cooke-sf-18x.png",
+      "bytes": 44009,
+      "sourcePath": "/assets/cooke-sf-18x-BegGlnlc.png"
+    },
+    {
+      "file": "helios.png",
+      "bytes": 49644,
+      "sourcePath": "/assets/helios-CWg35ubk.png"
+    },
+    {
+      "file": "panavision-c-series.png",
+      "bytes": 45659,
+      "sourcePath": "/assets/panavision-c-series-LLl1Xpct.png"
+    },
+    {
+      "file": "panavision-primo.png",
+      "bytes": 50387,
+      "sourcePath": "/assets/panavision-primo-Cui4J6lP.png"
+    },
+    {
+      "file": "hawk-class-x.png",
+      "bytes": 76404,
+      "sourcePath": "/assets/hawk-class-x-CD3GvtF4.png"
+    },
+    {
+      "file": "f1_4.png",
+      "bytes": 49444,
+      "sourcePath": "/assets/f1_4-DoQLC9Jc.png"
+    },
+    {
+      "file": "f4.png",
+      "bytes": 26032,
+      "sourcePath": "/assets/f4-Or-YmP2I.png"
+    },
+    {
+      "file": "f11.png",
+      "bytes": 37040,
+      "sourcePath": "/assets/f11-Bu2Wl3ak.png"
+    }
+  ]
+}

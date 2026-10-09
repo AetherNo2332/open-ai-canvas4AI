@@ -511,11 +511,19 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                             />
                         </>
                     ) : mode === "video" ? (
-                        <CanvasVideoSettingsPopover
-                            config={config}
-                            buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
-                            onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
-                        />
+                        <>
+                            <CanvasCameraControlPopover
+                                cameraControl={node.metadata?.cameraControl}
+                                onCameraControlChange={(options) => onConfigChange(node.id, { cameraControl: options })}
+                                theme={theme}
+                                compact={!expanded}
+                            />
+                            <CanvasVideoSettingsPopover
+                                config={config}
+                                buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
+                                onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
+                            />
+                        </>
                     ) : mode === "audio" ? (
                         <CanvasAudioSettingsPopover
                             config={config}
@@ -683,11 +691,11 @@ function ReferenceToolsPopover({ canAutoMention, autoLinkEnabled, onAutoMention,
                             role="switch"
                             aria-checked={autoLinkEnabled}
                             aria-label={autoLinkEnabled ? "关闭 AutoLink" : "开启 AutoLink"}
-                            className="canvas-reference-autolink-switch relative inline-flex h-5 w-9 items-center rounded-full border transition-colors"
-                            style={{ background: autoLinkEnabled ? `${accent}14` : "transparent", borderColor: autoLinkEnabled ? accent : "color-mix(in srgb, currentColor 22%, transparent)", color: accent }}
+                            className="canvas-reference-autolink-switch relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors"
+                            style={{ padding: 0, background: autoLinkEnabled ? `${accent}14` : "transparent", borderColor: autoLinkEnabled ? accent : "color-mix(in srgb, currentColor 22%, transparent)", color: accent }}
                             onClick={() => onAutoLinkEnabledChange(!autoLinkEnabled)}
                         >
-                            <span className={`size-3.5 rounded-full shadow-sm transition-transform ${autoLinkEnabled ? "translate-x-[18px]" : "translate-x-0.5"}`} style={{ background: autoLinkEnabled ? accent : "currentColor" }} />
+                            <span className={`absolute left-0.5 top-1/2 size-3.5 -translate-y-1/2 rounded-full shadow-sm transition-transform duration-200 ease-out motion-reduce:transition-none ${autoLinkEnabled ? "translate-x-4" : "translate-x-0"}`} style={{ background: autoLinkEnabled ? accent : "currentColor" }} />
                         </button>
                     </div>
                     <button

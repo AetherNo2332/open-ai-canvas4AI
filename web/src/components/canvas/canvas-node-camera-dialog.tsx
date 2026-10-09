@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronUp, ChevronDown, Camera as CameraIcon, RotateCcw, X } from "lucide-react";
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { Tooltip } from "@/components/ui/base/tooltip";
@@ -9,10 +9,13 @@ import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
+import { createCameraWheelStepper } from "@/lib/canvas/camera-control-wheel";
+import { APERTURE_IMAGES, CAMERA_BODY_IMAGES, CAMERA_CONTROL_BACKGROUND, LENS_IMAGES } from "@/lib/canvas/camera-control-assets";
 import {
     APERTURES,
     APERTURE_META,
     CAMERA_PROFILES,
+    DEFAULT_CAMERA_CONTROL,
     FOCAL_LENGTHS,
     FOCAL_LENGTH_META,
     LENS_PROFILES,
@@ -21,14 +24,6 @@ import {
     type CameraProfile,
     type LensProfile,
 } from "@/lib/canvas/camera-prompt-library";
-
-const defaultCameraControl: CameraControlOptions = {
-    enabled: false,
-    camera: "arri_alexa_mini_lf",
-    lens: "arri_signature_prime",
-    focalLength: 50,
-    aperture: 2.8,
-};
 
 /* ── SVG renderers ── */
 
@@ -47,6 +42,7 @@ function CameraBodySvg({ profile, className }: { profile: CameraProfile; classNa
                     <rect x="20" y="42" width="26" height="4" rx="1" fill={accent} opacity="0.6" />
                 </svg>
             );
+        case "arri_alexa_35":
         case "arri_alexa_mini_lf":
             return (
                 <svg viewBox="0 0 72 52" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
@@ -188,7 +184,7 @@ const HoverTip = memo(({ title, description, useCase, children }: HoverTipProps)
     };
 
     return (
-        <div ref={anchorRef} className="relative" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
+        <div ref={anchorRef} className="relative w-full" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
             {children}
             {coords &&
                 createPortal(
@@ -217,6 +213,12 @@ HoverTip.displayName = "HoverTip";
 
 /* ── CardColumn ── */
 
+function CameraArtwork({ src, label, fallback }: { src?: string; label: string; fallback: React.ReactNode }) {
+    const [failed, setFailed] = useState(false);
+    if (!src || failed) return <>{fallback}</>;
+    return <img src={src} alt={label} draggable={false} onError={() => setFailed(true)} className="h-full w-full object-contain" />;
+}
+
 interface CardColumnProps {
     label: string;
     tooltipTitle: string;
@@ -225,30 +227,82 @@ interface CardColumnProps {
     visual: React.ReactNode;
     cornerBadge?: React.ReactNode;
     captionBelow: string;
+    value: string;
+    options: { value: string; label: string }[];
+    onChange: (value: string) => void;
     onPrev: () => void;
     onNext: () => void;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
 }
 
-const CardColumn = memo(({ label, tooltipTitle, tooltipDesc, tooltipUseCase, visual, cornerBadge, captionBelow, onPrev, onNext, theme }: CardColumnProps) => {
+const parameterMotion = {
+    enter: (direction: number) => ({ y: direction * 24, opacity: 0 }),
+    center: { y: 0, opacity: 1 },
+    exit: (direction: number) => ({ y: direction * -24, opacity: 0 }),
+};
+
+const CardColumn = memo(({ label, tooltipTitle, tooltipDesc, tooltipUseCase, visual, cornerBadge, captionBelow, value, options, onChange, onPrev, onNext, theme }: CardColumnProps) => {
+    const columnRef = useRef<HTMLDivElement>(null);
+    const reducedMotion = useReducedMotion();
+    const [direction, setDirection] = useState<1 | -1>(1);
+    const wheelStep = useMemo(createCameraWheelStepper, []);
+    const step = useCallback((nextDirection: 1 | -1) => {
+        setDirection(nextDirection);
+        if (nextDirection < 0) onPrev();
+        else onNext();
+    }, [onPrev, onNext]);
+
+    useEffect(() => {
+        const column = columnRef.current;
+        if (!column) return;
+        const onWheel = (event: WheelEvent) => {
+            const result = wheelStep(event, performance.now());
+            if (!result.consume) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (result.direction !== 0) step(result.direction);
+        };
+        // React 的委托 wheel 监听默认 passive，原生监听才能阻止弹窗同时滚动。
+        column.addEventListener("wheel", onWheel, { passive: false });
+        return () => column.removeEventListener("wheel", onWheel);
+    }, [step, wheelStep]);
+
     return (
-        <div className="flex min-w-0 flex-col items-center gap-1.5">
+        <div ref={columnRef} data-camera-parameter={label} className="flex min-w-0 flex-col items-center gap-1.5">
             <button
                 type="button"
-                onClick={onPrev}
-                className="flex h-5 w-full items-center justify-center rounded-md transition-colors"
+                onClick={() => step(-1)}
+                className="flex h-11 w-full items-center justify-center rounded-md transition-colors sm:h-7"
                 style={{ color: theme.node.faint }}
-                title="上一项"
+                aria-label={`上一个${label}`}
+                title={`上一个${label}`}
             >
                 <ChevronUp className="size-3.5" />
             </button>
             <HoverTip title={tooltipTitle} description={tooltipDesc} useCase={tooltipUseCase}>
                 <div
-                    className="relative flex h-[clamp(116px,14vw,140px)] w-full min-w-0 cursor-help flex-col items-center justify-between rounded-xl border px-2.5 pt-2 pb-2 transition-colors"
+                    className="relative flex h-[clamp(116px,14vw,140px)] w-full min-w-0 cursor-ns-resize flex-col items-center justify-between rounded-xl border px-2.5 pt-2 pb-2 transition-colors"
                     style={{ borderColor: theme.toolbar.border, background: theme.toolbar.itemHover }}
                 >
-                    <span className="text-[11px] font-medium tracking-wide" style={{ color: theme.node.muted }}>{label}</span>
-                    <div className="flex w-full flex-1 items-center justify-center">{visual}</div>
+                    <span className="self-start text-[11px] font-medium tracking-wide" style={{ color: theme.node.muted }}>{label}</span>
+                    <div className="relative w-full flex-1 overflow-hidden">
+                        <img src={CAMERA_CONTROL_BACKGROUND} alt="" aria-hidden="true" draggable={false} className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-20" />
+                        <AnimatePresence initial={false} custom={direction}>
+                            <motion.div
+                                key={value}
+                                data-camera-parameter-value={value}
+                                custom={direction}
+                                variants={parameterMotion}
+                                initial={reducedMotion ? false : "enter"}
+                                animate="center"
+                                exit={reducedMotion ? undefined : "exit"}
+                                transition={{ duration: reducedMotion ? 0 : aceternityMotion.duration.state, ease: aceternityMotion.easing.enter }}
+                                className="absolute inset-0 flex items-center justify-center"
+                            >
+                                {visual}
+                            </motion.div>
+                        </AnimatePresence>
+                    </div>
                     {cornerBadge && (
                         <div className="absolute right-1.5 top-1.5 rounded-md px-1.5 py-0.5 text-[10px] font-medium" style={{ background: "rgba(0,0,0,.5)", color: "rgba(255,255,255,.8)" }}>
                             {cornerBadge}
@@ -258,14 +312,29 @@ const CardColumn = memo(({ label, tooltipTitle, tooltipDesc, tooltipUseCase, vis
             </HoverTip>
             <button
                 type="button"
-                onClick={onNext}
-                className="flex h-5 w-full items-center justify-center rounded-md transition-colors"
+                onClick={() => step(1)}
+                className="flex h-11 w-full items-center justify-center rounded-md transition-colors sm:h-7"
                 style={{ color: theme.node.faint }}
-                title="下一项"
+                aria-label={`下一个${label}`}
+                title={`下一个${label}`}
             >
                 <ChevronDown className="size-3.5" />
             </button>
-            <span className="max-w-full truncate text-center text-[11px] leading-4" style={{ color: theme.node.muted }}>{captionBelow}</span>
+            <select
+                aria-label={label}
+                value={value}
+                onChange={(event) => {
+                    const nextValue = event.target.value;
+                    setDirection(options.findIndex((option) => option.value === nextValue) >= options.findIndex((option) => option.value === value) ? 1 : -1);
+                    onChange(nextValue);
+                }}
+                className="min-h-11 w-full min-w-0 rounded-[var(--r-md)] border px-2 text-xs sm:min-h-9"
+                style={{ color: theme.node.text, background: theme.spatial.elevated, borderColor: theme.toolbar.border }}
+            >
+                {!options.some((option) => option.value === value) && <option value={value}>未识别：{value}</option>}
+                {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <span className="min-h-4 max-w-full text-center text-[11px] leading-4" style={{ color: theme.node.muted }}>{captionBelow}</span>
         </div>
     );
 });
@@ -285,28 +354,23 @@ export function CanvasNodeCameraPanel({
     const theme = canvasThemes[useActiveTheme()];
     const reducedMotion = useReducedMotion();
     const copyText = useCopyText();
+    const previewId = useId();
 
-    const [enabled, setEnabled] = useState(cameraControl?.enabled ?? defaultCameraControl.enabled);
-    const [cameraIdx, setCameraIdx] = useState(() => {
-        const i = CAMERA_PROFILES.findIndex((c) => c.id === cameraControl?.camera);
-        return i >= 0 ? i : 0;
-    });
-    const [lensIdx, setLensIdx] = useState(() => {
-        const i = LENS_PROFILES.findIndex((l) => l.id === cameraControl?.lens);
-        return i >= 0 ? i : 0;
-    });
-    const [focal, setFocal] = useState(cameraControl?.focalLength ?? 50);
-    const [aperture, setAperture] = useState(cameraControl?.aperture ?? 4);
+    const [enabled, setEnabled] = useState(cameraControl?.enabled ?? DEFAULT_CAMERA_CONTROL.enabled);
+    const [cameraId, setCameraId] = useState(cameraControl?.camera ?? DEFAULT_CAMERA_CONTROL.camera);
+    const [lensId, setLensId] = useState(cameraControl?.lens ?? DEFAULT_CAMERA_CONTROL.lens);
+    const [focal, setFocal] = useState(cameraControl?.focalLength ?? DEFAULT_CAMERA_CONTROL.focalLength);
+    const [aperture, setAperture] = useState(cameraControl?.aperture ?? DEFAULT_CAMERA_CONTROL.aperture);
 
-    const currentCamera = CAMERA_PROFILES[cameraIdx];
-    const currentLens = LENS_PROFILES[lensIdx];
+    const currentCamera = CAMERA_PROFILES.find((item) => item.id === cameraId);
+    const currentLens = LENS_PROFILES.find((item) => item.id === lensId);
     const focalMeta = FOCAL_LENGTH_META[focal];
     const apertureMeta = APERTURE_META[aperture];
 
-    const summary = useMemo(() => `${currentCamera.zhName} · ${currentLens.zhName} · ${focal}mm · f/${aperture}`, [currentCamera, currentLens, focal, aperture]);
+    const summary = `${currentCamera?.label ?? cameraId} · ${currentLens?.label ?? lensId} · ${focal}mm · f/${aperture}`;
 
-    const cycleCamera = (dir: 1 | -1) => setCameraIdx((i) => (i + dir + CAMERA_PROFILES.length) % CAMERA_PROFILES.length);
-    const cycleLens = (dir: 1 | -1) => setLensIdx((i) => (i + dir + LENS_PROFILES.length) % LENS_PROFILES.length);
+    const cycleCamera = (dir: 1 | -1) => setCameraId((id) => CAMERA_PROFILES[(CAMERA_PROFILES.findIndex((item) => item.id === id) + dir + CAMERA_PROFILES.length) % CAMERA_PROFILES.length].id);
+    const cycleLens = (dir: 1 | -1) => setLensId((id) => LENS_PROFILES[(LENS_PROFILES.findIndex((item) => item.id === id) + dir + LENS_PROFILES.length) % LENS_PROFILES.length].id);
     const cycleFocal = (dir: 1 | -1) => setFocal((f) => {
         const idx = FOCAL_LENGTHS.indexOf(f as (typeof FOCAL_LENGTHS)[number]);
         const nextIdx = (idx + dir + FOCAL_LENGTHS.length) % FOCAL_LENGTHS.length;
@@ -318,54 +382,54 @@ export function CanvasNodeCameraPanel({
         return APERTURES[nextIdx];
     });
 
-    const buildPrompt = useCallback(() => {
-        if (!enabled) return "";
-        return buildCameraPrompt({
-            cameraId: currentCamera.id,
-            lensId: currentLens.id,
-            focalLengthMm: focal,
-            apertureF: aperture,
-        });
-    }, [enabled, currentCamera, currentLens, focal, aperture]);
+    const preview = useMemo(() => {
+        try {
+            return { text: buildCameraPrompt({ cameraId, lensId, focalLengthMm: focal, apertureF: aperture }), error: "" };
+        } catch (error) {
+            return { text: "", error: error instanceof Error ? error.message : "请选择有效的摄影机参数" };
+        }
+    }, [cameraId, lensId, focal, aperture]);
 
     const handleApply = () => {
-        const options: CameraControlOptions = { enabled, camera: currentCamera.id, lens: currentLens.id, focalLength: focal, aperture };
-        onConfirm(options, buildPrompt());
+        if (enabled && preview.error) return;
+        const options: CameraControlOptions = { enabled, camera: cameraId, lens: lensId, focalLength: focal, aperture };
+        onConfirm(options, enabled ? preview.text : "");
     };
 
     const handleReset = () => {
-        setEnabled(defaultCameraControl.enabled);
-        setCameraIdx(0);
-        setLensIdx(0);
-        setFocal(defaultCameraControl.focalLength);
-        setAperture(defaultCameraControl.aperture);
+        setEnabled(DEFAULT_CAMERA_CONTROL.enabled);
+        setCameraId(DEFAULT_CAMERA_CONTROL.camera);
+        setLensId(DEFAULT_CAMERA_CONTROL.lens);
+        setFocal(DEFAULT_CAMERA_CONTROL.focalLength);
+        setAperture(DEFAULT_CAMERA_CONTROL.aperture);
     };
 
-    const secondaryButtonClass = "flex h-8 items-center gap-1.5 rounded-[var(--dock-item-radius)] px-3 text-[var(--fs-label)] font-medium transition hover:bg-black/5 dark:hover:bg-white/10";
+    const secondaryButtonClass = "flex h-11 items-center gap-1.5 rounded-[var(--dock-item-radius)] px-3 text-[var(--fs-label)] font-medium transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/10 sm:h-8";
 
     return (
         <SpotlightSurface
             data-canvas-no-zoom
+            data-canvas-wheel-scroll
             spotlightColor={theme.toolbar.itemHover}
             initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={reducedMotion ? { duration: 0 } : aceternityMotion.spring.panel}
-            className="w-full overflow-hidden rounded-[var(--r-xl)] border backdrop-blur-2xl"
+            className="max-h-[85dvh] w-full overflow-x-hidden overflow-y-auto rounded-[var(--r-xl)] border backdrop-blur-2xl [&>span]:inset-0"
             style={{ background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.node.text, boxShadow: `0 28px 80px ${theme.spatial.shadow}` }}
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
         >
             <div className="flex items-center justify-between gap-3 border-b px-4 py-3" style={{ borderColor: theme.toolbar.border }}>
                 <div className="min-w-0">
-                    <div className="text-sm font-semibold tracking-tight">摄像机控制</div>
-                    <div className="mt-0.5 truncate text-[11px]" style={{ color: theme.node.muted }}>为当前图片生成设置镜头、焦距与光圈</div>
+                    <div className="text-sm font-semibold tracking-tight">摄影机控制</div>
+                    <div className="mt-0.5 text-[11px]" style={{ color: theme.node.muted }}>选择机身、镜头、焦段与光圈 · 在卡片上滚动滚轮切换参数</div>
                 </div>
                 <button
                     type="button"
-                    className="grid size-7 shrink-0 place-items-center rounded-md transition-colors hover:bg-white/10"
+                    className="grid size-11 shrink-0 place-items-center rounded-md transition-colors hover:bg-white/10 sm:size-8"
                     style={{ color: theme.node.muted }}
                     onClick={onClose}
-                    aria-label="关闭摄像机控制"
+                    aria-label="关闭摄影机控制"
                     title="关闭"
                 >
                     <X className="size-4" />
@@ -375,29 +439,35 @@ export function CanvasNodeCameraPanel({
             {/* 相机、镜头、焦距和光圈均来自已注册枚举，确认时由纯函数再次强校验。 */}
             <div className="grid grid-cols-2 gap-2.5 px-4 py-4 sm:grid-cols-4">
                 <CardColumn
-                    label="相机"
-                    tooltipTitle={`${currentCamera.zhName} · ${currentCamera.label}`}
-                    tooltipDesc={currentCamera.description}
-                    tooltipUseCase={currentCamera.useCase}
-                    visual={<CameraBodySvg profile={currentCamera} className="h-16" />}
-                    captionBelow={currentCamera.zhName}
+                    label="摄影机机身"
+                    tooltipTitle={currentCamera?.label ?? cameraId}
+                    tooltipDesc={currentCamera?.description}
+                    tooltipUseCase={currentCamera?.useCase}
+                    visual={<CameraArtwork src={CAMERA_BODY_IMAGES[cameraId]} label={currentCamera?.label ?? cameraId} fallback={currentCamera ? <CameraBodySvg profile={currentCamera} className="h-16" /> : <CameraIcon className="size-10" />} />}
+                    captionBelow={currentCamera?.zhName ?? "请选择机身"}
+                    value={cameraId}
+                    options={CAMERA_PROFILES.map((item) => ({ value: item.id, label: item.label }))}
+                    onChange={setCameraId}
                     onPrev={() => cycleCamera(-1)}
                     onNext={() => cycleCamera(1)}
                     theme={theme}
                 />
                 <CardColumn
-                    label="镜头"
-                    tooltipTitle={`${currentLens.zhName} · ${currentLens.label}`}
-                    tooltipDesc={currentLens.description}
-                    tooltipUseCase={currentLens.useCase}
-                    visual={<LensBodySvg profile={currentLens} className="h-14" />}
-                    captionBelow={currentLens.zhName}
+                    label="镜头型号"
+                    tooltipTitle={currentLens?.label ?? lensId}
+                    tooltipDesc={currentLens?.description}
+                    tooltipUseCase={currentLens?.useCase}
+                    visual={<CameraArtwork src={LENS_IMAGES[lensId]} label={currentLens?.label ?? lensId} fallback={currentLens ? <LensBodySvg profile={currentLens} className="h-14" /> : <CameraIcon className="size-10" />} />}
+                    captionBelow={currentLens?.zhName ?? "请选择镜头"}
+                    value={lensId}
+                    options={LENS_PROFILES.map((item) => ({ value: item.id, label: item.label }))}
+                    onChange={setLensId}
                     onPrev={() => cycleLens(-1)}
                     onNext={() => cycleLens(1)}
                     theme={theme}
                 />
                 <CardColumn
-                    label="焦距"
+                    label="焦段"
                     tooltipTitle={`${focal}mm · ${focalMeta?.zhName ?? ""}`}
                     tooltipDesc={focalMeta?.description}
                     tooltipUseCase={focalMeta?.useCase}
@@ -409,6 +479,9 @@ export function CanvasNodeCameraPanel({
                     }
                     cornerBadge={focalMeta?.zhName}
                     captionBelow={focalMeta?.zhName ?? ""}
+                    value={String(focal)}
+                    options={FOCAL_LENGTHS.map((value) => ({ value: String(value), label: `${value}mm` }))}
+                    onChange={(value) => setFocal(Number(value))}
                     onPrev={() => cycleFocal(-1)}
                     onNext={() => cycleFocal(1)}
                     theme={theme}
@@ -419,15 +492,20 @@ export function CanvasNodeCameraPanel({
                     tooltipDesc={apertureMeta?.description}
                     tooltipUseCase={apertureMeta?.useCase}
                     visual={
-                        <div className="flex flex-col items-center">
-                            <div className="text-[30px] font-light leading-none">
-                                <span className="text-[18px]" style={{ color: theme.node.faint }}>f/</span>{aperture}
+                        <div className="flex h-full w-full flex-col items-center">
+                            <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+                                <CameraArtwork src={APERTURE_IMAGES[aperture]} label={`f/${aperture} 光圈`} fallback={
+                                    <div className="text-[30px] font-light leading-none"><span className="text-[18px]" style={{ color: theme.node.faint }}>f/</span>{aperture}</div>
+                                } />
                             </div>
-                            <div className="mt-1 text-[10px] tracking-wider" style={{ color: theme.node.faint }}>aperture</div>
+                            <div className="mt-1 text-[10px] tracking-wider" style={{ color: theme.node.faint }}>{APERTURE_IMAGES[aperture] ? `f/${aperture}` : "aperture"}</div>
                         </div>
                     }
                     cornerBadge={apertureMeta?.zhName}
                     captionBelow={apertureMeta?.zhName ?? ""}
+                    value={String(aperture)}
+                    options={APERTURES.map((value) => ({ value: String(value), label: `f/${value}` }))}
+                    onChange={(value) => setAperture(Number(value))}
                     onPrev={() => cycleAperture(-1)}
                     onNext={() => cycleAperture(1)}
                     theme={theme}
@@ -436,8 +514,30 @@ export function CanvasNodeCameraPanel({
 
             {/* 当前有效配置摘要。 */}
             <div className="mx-4 mb-3 rounded-lg border px-3.5 py-2.5" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.itemHover }}>
-                <div className="text-[10px] uppercase tracking-wide" style={{ color: theme.node.faint }}>当前配置</div>
+                <div className="text-[10px] uppercase tracking-wide" style={{ color: theme.node.faint }}>下次生成配置</div>
                 <div className="mt-0.5 text-xs">{summary}</div>
+                <div className="mt-2 text-[11px] leading-5" style={{ color: theme.node.muted }}>
+                    {currentLens?.description}
+                </div>
+            </div>
+
+            <div className="mx-4 mb-4">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <label htmlFor={previewId} className="font-medium">镜头提示词预览</label>
+                    <span style={{ color: theme.node.muted }}>{enabled ? "应用后用于下次图片 / 视频生成" : "已关闭 · 仅预览，不随生成发送"}</span>
+                </div>
+                {preview.error ? <p role="alert" className="mb-2 text-xs">{preview.error}，请重新选择参数。</p> : null}
+                <textarea
+                    id={previewId}
+                    readOnly
+                    value={preview.text}
+                    rows={4}
+                    className="w-full resize-y rounded-[var(--r-md)] border p-3 text-[11px] leading-5"
+                    style={{ background: theme.toolbar.itemHover, borderColor: theme.toolbar.border, color: theme.node.text }}
+                />
+                <p className="mt-2 text-[11px] leading-5" style={{ color: theme.node.muted }}>
+                    这些选择通过提示词引导画面风格，效果取决于生成模型。光圈为风格提示，可独立选择；不会启用真实镜头模拟或后期滤镜。
+                </p>
             </div>
 
             {/* 操作区：重置与复制不产生写入，只有应用会提交生成配置。 */}
@@ -446,38 +546,42 @@ export function CanvasNodeCameraPanel({
                     <RotateCcw className="size-3.5" />重置参数
                 </button>
                 <span className="flex-1" />
-                <Tooltip title="复制当前生成的摄像机提示词">
-                    <button type="button" className={secondaryButtonClass} onClick={() => copyText(buildPrompt(), "摄像机提示词已复制")}>复制提示词</button>
+                <Tooltip title="复制当前预览的摄影机提示词">
+                    <button type="button" className={secondaryButtonClass} disabled={!preview.text} onClick={() => copyText(preview.text, "摄影机提示词已复制")}>复制提示词</button>
                 </Tooltip>
                 {/* 关闭后仍保留参数选择，但提交空提示词，便于用户无损恢复。 */}
-                <div className="flex items-center gap-2" title={enabled ? "当前启用摄像机控制" : "当前关闭摄像机控制"}>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-label="启用摄影机提示词"
+                    aria-checked={enabled}
+                    title={enabled ? "当前启用摄影机提示词" : "当前关闭摄影机提示词"}
+                    onClick={() => setEnabled((v) => !v)}
+                    className="canvas-node-camera-switch inline-flex h-11 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md sm:h-8"
+                    style={{ padding: 0, background: "transparent" }}
+                >
                     <span className="text-xs transition-colors" style={{ color: enabled ? theme.accent.primary : theme.node.muted, fontWeight: enabled ? 600 : 400 }}>
-                        {enabled ? "开启" : "关闭"}
+                        镜头提示词：{enabled ? "开启" : "关闭"}
                     </span>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
-                        onClick={() => setEnabled((v) => !v)}
-                        className="canvas-node-camera-switch relative inline-flex h-5 w-9 cursor-pointer items-center rounded-full border transition-colors"
-                        style={{
-                            background: enabled ? `${theme.node.activeStroke}22` : theme.toolbar.itemHover,
-                            borderColor: enabled ? theme.node.activeStroke : theme.toolbar.border,
-                        }}
+                    <span
+                        aria-hidden="true"
+                        className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors"
+                        style={{ background: enabled ? `${theme.node.activeStroke}22` : theme.toolbar.itemHover, borderColor: enabled ? theme.node.activeStroke : theme.toolbar.border }}
                     >
                         <span
-                            className={`inline-block size-3.5 transform rounded-full shadow-sm transition-transform ${enabled ? "translate-x-[18px]" : "translate-x-0.5"}`}
+                            className={`absolute left-0.5 top-1/2 size-3.5 -translate-y-1/2 rounded-full shadow-sm transition-transform motion-reduce:transition-none ${enabled ? "translate-x-4" : "translate-x-0"}`}
                             style={{ background: enabled ? theme.node.activeStroke : theme.node.muted }}
                         />
-                    </button>
-                </div>
+                    </span>
+                </button>
                 <motion.button
                     type="button"
                     whileHover={reducedMotion ? undefined : { y: -1 }}
                     whileTap={reducedMotion ? undefined : { scale: 0.97 }}
-                    className="canvas-node-camera-apply flex h-7 items-center gap-1.5 rounded-[var(--dock-item-radius)] border px-3.5 text-[var(--fs-label)] font-semibold transition-colors"
+                    className="canvas-node-camera-apply flex h-11 items-center gap-1.5 rounded-[var(--dock-item-radius)] border px-3.5 text-[var(--fs-label)] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:h-8"
                     style={{ borderColor: theme.node.activeStroke, color: theme.node.activeStroke, background: "transparent" }}
                     onClick={handleApply}
+                    disabled={enabled && Boolean(preview.error)}
                 >
                     <CameraIcon className="size-3.5" />应用
                 </motion.button>
