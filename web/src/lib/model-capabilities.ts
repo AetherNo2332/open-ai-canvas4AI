@@ -9,6 +9,8 @@ export type ModelCapabilityConfig = {
 };
 
 export type TextCapabilityConfig = {
+    /** Whether Agent image inspection is supported by this text model. */
+    visionSupported?: boolean;
     /** Whether the upstream text endpoint accepts SSE streaming responses. */
     streaming?: boolean;
     /** Whether the model exposes a user-selectable reasoning/thinking mode. */
@@ -291,6 +293,7 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
 
 export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = ""): ModelCapabilityConfig {
     const text: TextCapabilityConfig = {
+        visionSupported: false,
         streaming: true,
         contextWindowTokens: 0,
         reservedOutputTokens: 0,

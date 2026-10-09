@@ -21,7 +21,6 @@ type CapabilityScopeEditorProps = {
 
 const inputDefinitions: Record<CapabilityKind, Array<{ name: string; label: string; unit: string }>> = {
     text: [
-        { name: "image", label: "参考图片", unit: "张" },
         { name: "video", label: "参考视频", unit: "个" },
     ],
     image: [
@@ -84,7 +83,6 @@ export function capabilitySpecFromChannelModel(item?: ChannelModel): CapabilityS
             version: 1,
             capability,
             inputs: compactInputs({
-                image: { min: 0, max: text.references.maxImages },
                 video: { min: 0, max: text.references.maxVideos },
             }),
             options: {},
