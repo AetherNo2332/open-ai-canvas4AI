@@ -60,6 +60,13 @@ export function peekCachedResourceObjectUrl(storageKey: string) {
     return objectUrls.get(`${userScope}:${resourceId}:file`) || "";
 }
 
+export function scheduleResourceBlobCache(storageKey: string, delayMs = 4_000) {
+    if (!storageKey || typeof window === "undefined") return;
+    window.setTimeout(() => {
+        void getCachedResourceBlob(storageKey).catch(() => null);
+    }, Math.max(0, delayMs));
+}
+
 export async function cacheResourceObjectUrl(storageKey: string) {
     const target = await cacheTarget(storageKey);
     if (!target) return "";

@@ -92,6 +92,7 @@ import {
     replaceCanvasReferenceMentions,
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
+import { buildImageToPrevisAgentPrompt } from "@/lib/canvas/image-to-previs-agent";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay, type PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
@@ -490,14 +491,7 @@ function InfiniteCanvasPage() {
             selectedNodeIdsRef.current = selection;
             setSelectedNodeIds(selection);
         }
-        setAgentPrefillRequest((current) => ({
-            id: (current?.id ?? 0) + 1,
-            text: buildImageToPrevisAgentPrompt(reference),
-            displayText: buildImageToPrevisDisplayText(),
-            canvasReferenceNodeId: reference.nodeId,
-            autoSubmit: true,
-            requiresVision: true,
-        }));
+        setAgentPrefillPrompt(buildImageToPrevisAgentPrompt(reference));
         openAgent();
         setContextMenu(null);
     }, [agentMentionReferences, message, openAgent]);

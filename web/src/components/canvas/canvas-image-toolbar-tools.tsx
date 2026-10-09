@@ -32,6 +32,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import type { NodeToolbarGroup } from "@/lib/canvas/tool-registry";
 
 type ImageNodeActionToolId =
+    | "previs"
     | "copyPrompt"
     | "reversePrompt"
     | "replace"

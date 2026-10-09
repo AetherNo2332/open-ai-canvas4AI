@@ -789,11 +789,9 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const submit = async (override?: string, options?: CloudAgentMessagePresentation & { requiresVision?: boolean }) => {
         const draft = (override ?? prompt).trim();
         const pendingRequest = pendingSubmission.current;
-        const prefilled = prefilledSubmissionRef.current;
         const matchesPending = pendingRequest?.request && pendingRequest.displayText === draft;
-        const matchesPrefill = prefilled?.displayText === draft;
-        const value = matchesPending ? pendingRequest.request!.prompt : matchesPrefill ? prefilled!.text : draft;
-        options = matchesPending ? { ...options, displayText: pendingRequest.displayText, canvasReferenceNodeId: pendingRequest.canvasReferenceNodeId } : matchesPrefill ? prefilled! : options;
+        const value = matchesPending ? pendingRequest.request!.prompt : draft;
+        options = matchesPending ? { ...options, displayText: pendingRequest.displayText, canvasReferenceNodeId: pendingRequest.canvasReferenceNodeId } : options;
         if (running) {
             await interject(value);
             return;
@@ -874,7 +872,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             ]);
             if (currentScope.current !== scope) return;
             setPrompt("");
-            prefilledSubmissionRef.current = null;
             setMessages(nextMessages);
             const result = submission.parentRunId ? await sendAgentMessage(submission.parentRunId, request) : await createAgentRun(request);
             accepted = true;
@@ -907,13 +904,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             if (currentScope.current === scope) setBusy(false);
         }
     };
-
-    useEffect(() => {
-        const pending = pendingAutoSubmit;
-        if (!pending || !historyHydrated || !pendingHydrated || profileLoading || !profileView || profileError || busy || running) return;
-        setPendingAutoSubmit(null);
-        void submit(pending.text, { requiresVision: pending.requiresVision, displayText: pending.displayText, canvasReferenceNodeId: pending.canvasReferenceNodeId });
-    }, [busy, historyHydrated, pendingAutoSubmit, pendingHydrated, profileError, profileLoading, profileView, running]);
 
     const stop = async () => {
         const activeRun = run;
