@@ -9,6 +9,9 @@ const MAX_ENTRY_BYTES = 512 << 10;
 const MAX_PAGE_RUNES = 12_000;
 const digest = (value: string): string => createHash("sha256").update(value).digest("hex");
 
+/** Local, model-correctable input rejection; protocol/identity faults stay fatal. */
+export class NativeSkillReadRejected extends Error {}
+
 function validateSkill(skill: PiSkillSnapshot): void {
   if (!/^skill-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(skill.nativeName) || skill.nativeName.length > 64 ||
       !skill.id || !skill.versionId || !skill.contentHash || skill.entryPath !== "SKILL.md") {
@@ -48,18 +51,18 @@ export function verifyNativeSkillDiscovery(skills: PiSkillSnapshot[], result: Lo
 
 function resolveSkillPath(skills: PiSkillSnapshot[], root: string, input: string): { skill: PiSkillSnapshot; path: string } {
   if (!isAbsolute(input) || input.split(/[\\/]/).some((part) => part === ".." || part === ".")) {
-    throw new FatalWorkerError("Skill read path must be an absolute path inside this run");
+    throw new NativeSkillReadRejected("Skill read path must be an absolute path inside this run");
   }
   const rel = relative(resolve(root), resolve(input));
   const parts = rel.split(sep);
   if (parts.length < 2 || parts.some((part) => !part || part === ".." || part === ".") ||
       !resolve(input).startsWith(resolve(root) + sep)) {
-    throw new FatalWorkerError("Skill read path escapes this run");
+    throw new NativeSkillReadRejected("Skill read path escapes this run");
   }
   const skill = skills.find((item) => item.nativeName === parts[0]);
   const path = parts.slice(1).join("/");
   if (!skill || !skill.files.some((file) => file.path === path && file.text)) {
-    throw new FatalWorkerError("Skill file is not listed for this run");
+    throw new NativeSkillReadRejected("Skill file is not listed for this run");
   }
   return { skill, path };
 }
@@ -67,11 +70,11 @@ function resolveSkillPath(skills: PiSkillSnapshot[], root: string, input: string
 /** A persisted Pi tool call contains the previous worker's absolute location. */
 export function rebaseNativeSkillPath(skills: PiSkillSnapshot[], root: string, previousPath: string): string {
   if (!isAbsolute(previousPath) || previousPath.split(/[\\/]/).some((part) => part === ".." || part === ".")) {
-    throw new FatalWorkerError("Persisted Skill path is invalid");
+    throw new NativeSkillReadRejected("Persisted Skill path is invalid");
   }
   const parts = previousPath.split(/[\\/]/);
   const index = parts.lastIndexOf("skills");
-  if (index < 0 || parts.length < index + 3) throw new FatalWorkerError("Persisted Skill path is not within a Skill");
+  if (index < 0 || parts.length < index + 3) throw new NativeSkillReadRejected("Persisted Skill path is not within a Skill");
   const rebased = join(root, ...parts.slice(index + 1));
   resolveSkillPath(skills, root, rebased);
   return rebased;
@@ -79,9 +82,10 @@ export function rebaseNativeSkillPath(skills: PiSkillSnapshot[], root: string, p
 
 export async function readNativeSkill(run: PiSnapshot, root: string, bridge: CanvasBridge, input: string,
   offset = 0, limit = MAX_PAGE_RUNES, signal?: AbortSignal): Promise<string> {
-  if (run.skillRuntimeMode !== "pi-native" || !Number.isSafeInteger(offset) || offset < 0 ||
+  if (run.skillRuntimeMode !== "pi-native") throw new FatalWorkerError("Native Skill runtime mode is invalid");
+  if (!Number.isSafeInteger(offset) || offset < 0 ||
       !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PAGE_RUNES) {
-    throw new FatalWorkerError("Native Skill read range or runtime mode is invalid");
+    throw new NativeSkillReadRejected("Native Skill read range is invalid");
   }
   const { skill, path } = resolveSkillPath(run.skills || [], root, input);
   const file = skill.files.find((item) => item.path === path)!;

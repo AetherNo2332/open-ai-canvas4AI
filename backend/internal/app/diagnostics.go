@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,8 +17,8 @@ import (
 )
 
 const (
-	diagnosticSchemaVersion    = 1
-	diagnosticRedactionVersion = 1
+	diagnosticSchemaVersion    = 2
+	diagnosticRedactionVersion = 2
 	diagnosticMaxWindow        = 24 * time.Hour
 	diagnosticMaxClientEvents  = 500
 	diagnosticMaxBundleBytes   = 10 << 20
@@ -56,24 +57,31 @@ type DiagnosticExportRequest struct {
 	To           string                  `json:"to"`
 	TaskID       string                  `json:"taskId,omitempty"`
 	ProjectID    string                  `json:"projectId,omitempty"`
+	CanvasID     string                  `json:"canvasId,omitempty"`
 	Description  string                  `json:"description,omitempty"`
 	Runtime      DiagnosticRuntime       `json:"runtime"`
 	ClientEvents []DiagnosticClientEvent `json:"clientEvents"`
 }
 
 type DiagnosticPreview struct {
-	ClientEventLimit int   `json:"clientEventLimit"`
-	TaskCount        int   `json:"taskCount"`
-	TaskLogCount     int   `json:"taskLogCount"`
-	APICallCount     int   `json:"apiCallCount"`
-	EstimatedBytes   int64 `json:"estimatedBytes"`
-	WillTruncate     bool  `json:"willTruncate"`
+	ClientEventLimit  int   `json:"clientEventLimit"`
+	TaskCount         int   `json:"taskCount"`
+	TaskLogCount      int   `json:"taskLogCount"`
+	APICallCount      int   `json:"apiCallCount"`
+	CanvasCount       int   `json:"canvasCount"`
+	CanvasChangeCount int   `json:"canvasChangeCount"`
+	AgentRunCount     int   `json:"agentRunCount"`
+	AgentMessageCount int   `json:"agentMessageCount"`
+	AgentEventCount   int   `json:"agentEventCount"`
+	EstimatedBytes    int64 `json:"estimatedBytes"`
+	WillTruncate      bool  `json:"willTruncate"`
 }
 
 type DiagnosticBundle struct {
-	BundleID string
-	FileName string
-	Data     []byte
+	BundleID      string
+	FileName      string
+	Data          []byte
+	SchemaVersion int
 }
 
 type diagnosticWindow struct {
@@ -86,11 +94,13 @@ type diagnosticCollection struct {
 	Description  string
 	TaskID       string
 	ProjectID    string
+	CanvasID     string
 	Runtime      diagnosticRuntimeRecord
 	ClientEvents []diagnosticClientEventRecord
 	Tasks        []diagnosticTaskRecord
 	TaskLogs     []diagnosticTaskLogRecord
 	APICalls     []diagnosticAPICallRecord
+	Activity     diagnosticActivityRecords
 	Truncated    bool
 }
 
@@ -188,6 +198,7 @@ type diagnosticManifest struct {
 	TimeRange        diagnosticTimeRange `json:"timeRange"`
 	TaskID           string              `json:"taskId,omitempty"`
 	ProjectID        string              `json:"projectId,omitempty"`
+	CanvasID         string              `json:"canvasId,omitempty"`
 	Description      string              `json:"description,omitempty"`
 	RedactionVersion int                 `json:"redactionVersion"`
 	Truncated        bool                `json:"truncated,omitempty"`
@@ -200,10 +211,16 @@ type diagnosticTimeRange struct {
 }
 
 type diagnosticCounts struct {
-	ClientEvents int `json:"clientEvents"`
-	Tasks        int `json:"tasks"`
-	TaskLogs     int `json:"taskLogs"`
-	APICalls     int `json:"upstreamCalls"`
+	ClientEvents    int `json:"clientEvents"`
+	Tasks           int `json:"tasks"`
+	TaskLogs        int `json:"taskLogs"`
+	APICalls        int `json:"upstreamCalls"`
+	Canvases        int `json:"canvases"`
+	CanvasHistory   int `json:"canvasHistory"`
+	CanvasMutations int `json:"canvasMutations"`
+	AgentRuns       int `json:"agentRuns"`
+	AgentMessages   int `json:"agentMessages"`
+	AgentEvents     int `json:"agentEvents"`
 }
 
 func (s *Service) PreviewDiagnosticBundle(userID string, req DiagnosticExportRequest) (*DiagnosticPreview, error) {
@@ -211,10 +228,16 @@ func (s *Service) PreviewDiagnosticBundle(userID string, req DiagnosticExportReq
 	if err != nil {
 		return nil, err
 	}
+	encoded, err := json.Marshal(collection)
+	if err != nil {
+		return nil, err
+	}
 	return &DiagnosticPreview{
 		ClientEventLimit: diagnosticMaxClientEvents,
 		TaskCount:        len(collection.Tasks), TaskLogCount: len(collection.TaskLogs), APICallCount: len(collection.APICalls),
-		EstimatedBytes: int64(2048 + len(collection.ClientEvents)*420 + len(collection.Tasks)*620 + len(collection.TaskLogs)*700 + len(collection.APICalls)*520),
+		CanvasCount: len(collection.Activity.Canvases), CanvasChangeCount: len(collection.Activity.History) + len(collection.Activity.Mutations),
+		AgentRunCount: len(collection.Activity.Runs), AgentMessageCount: len(collection.Activity.Messages), AgentEventCount: len(collection.Activity.Events),
+		EstimatedBytes: int64(2048 + len(encoded)),
 		WillTruncate:   collection.Truncated,
 	}, nil
 }
@@ -229,9 +252,11 @@ func (s *Service) ExportDiagnosticBundle(userID string, req DiagnosticExportRequ
 		SchemaVersion: diagnosticSchemaVersion, BundleID: bundleID, GeneratedAt: time.Now().UTC(),
 		AppVersion: collection.Runtime.AppVersion, BuildCommit: collection.Runtime.BuildCommit,
 		TimeRange: diagnosticTimeRange{From: collection.Window.From, To: collection.Window.To},
-		TaskID:    collection.TaskID, ProjectID: collection.ProjectID, Description: collection.Description,
+		TaskID:    collection.TaskID, ProjectID: collection.ProjectID, CanvasID: collection.CanvasID, Description: collection.Description,
 		RedactionVersion: diagnosticRedactionVersion, Truncated: collection.Truncated,
-		Counts: diagnosticCounts{ClientEvents: len(collection.ClientEvents), Tasks: len(collection.Tasks), TaskLogs: len(collection.TaskLogs), APICalls: len(collection.APICalls)},
+		Counts: diagnosticCounts{ClientEvents: len(collection.ClientEvents), Tasks: len(collection.Tasks), TaskLogs: len(collection.TaskLogs), APICalls: len(collection.APICalls),
+			Canvases: len(collection.Activity.Canvases), CanvasHistory: len(collection.Activity.History), CanvasMutations: len(collection.Activity.Mutations),
+			AgentRuns: len(collection.Activity.Runs), AgentMessages: len(collection.Activity.Messages), AgentEvents: len(collection.Activity.Events)},
 	}
 	brandName, brandSlug := s.appearanceIdentity()
 	data, err := buildDiagnosticZIP(brandName, bundleID, manifest, collection)
@@ -242,7 +267,7 @@ func (s *Service) ExportDiagnosticBundle(userID string, req DiagnosticExportRequ
 		return nil, BadAuthRequest("诊断包超过 10 MB，请缩短时间范围后重试")
 	}
 	fileName := fmt.Sprintf("%s-diagnostics-%s-%s.zip", brandSlug, time.Now().UTC().Format("20060102-150405"), bundleID)
-	return &DiagnosticBundle{BundleID: bundleID, FileName: fileName, Data: data}, nil
+	return &DiagnosticBundle{BundleID: bundleID, FileName: fileName, Data: data, SchemaVersion: diagnosticSchemaVersion}, nil
 }
 
 func (s *Service) collectDiagnosticData(userID string, req DiagnosticExportRequest) (*diagnosticCollection, error) {
@@ -252,7 +277,8 @@ func (s *Service) collectDiagnosticData(userID string, req DiagnosticExportReque
 	}
 	taskID := strings.TrimSpace(req.TaskID)
 	projectID := strings.TrimSpace(req.ProjectID)
-	if len(taskID) > 96 || len(projectID) > 96 {
+	canvasID := strings.TrimSpace(req.CanvasID)
+	if (taskID != "" && sanitizeDiagnosticIdentifier(taskID) == "") || (projectID != "" && sanitizeDiagnosticIdentifier(projectID) == "") || (canvasID != "" && sanitizeDiagnosticIdentifier(canvasID) == "") {
 		return nil, BadAuthRequest("诊断上下文无效")
 	}
 	if taskID != "" {
@@ -269,6 +295,28 @@ func (s *Service) collectDiagnosticData(userID string, req DiagnosticExportReque
 		if projectID == "" {
 			projectID = task.ProjectID
 		}
+		if canvasID != "" && task.ProjectID != canvasID {
+			return nil, BadAuthRequest("任务不属于当前画布")
+		}
+	}
+	if canvasID != "" {
+		if _, err := s.repo.CanvasProjectMetadata(userID, canvasID); errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, BadAuthRequest("画布不存在或无权访问")
+		} else if err != nil {
+			return nil, err
+		}
+		if projectID != "" && projectID != canvasID {
+			return nil, BadAuthRequest("诊断画布与任务上下文不一致")
+		}
+		projectID = canvasID
+	} else if projectID != "" {
+		// Task.projectId historically identifies a canvas; deleted canvases still
+		// retain task logs, so absence here does not invalidate a task export.
+		if _, err := s.repo.CanvasProjectMetadata(userID, projectID); err == nil {
+			canvasID = projectID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
 	}
 	tasks, err := s.repo.DiagnosticTasks(userID, window.From, window.To, taskID, projectID)
 	if err != nil {
@@ -282,6 +330,10 @@ func (s *Service) collectDiagnosticData(userID string, req DiagnosticExportReque
 	if err != nil {
 		return nil, err
 	}
+	activity, err := s.repo.DiagnosticActivity(userID, window.From, window.To, firstNonEmpty(canvasID, projectID))
+	if err != nil {
+		return nil, err
+	}
 	clientEvents := req.ClientEvents
 	truncated := false
 	if len(clientEvents) > diagnosticMaxClientEvents {
@@ -289,7 +341,7 @@ func (s *Service) collectDiagnosticData(userID string, req DiagnosticExportReque
 		truncated = true
 	}
 	collection := &diagnosticCollection{
-		Window: window, Description: redactDiagnosticText(req.Description, diagnosticMaxDescription), TaskID: taskID, ProjectID: projectID, Truncated: truncated,
+		Window: window, Description: redactDiagnosticText(req.Description, diagnosticMaxDescription), TaskID: taskID, ProjectID: projectID, CanvasID: canvasID, Truncated: truncated,
 		Runtime: diagnosticRuntimeRecord{
 			AppVersion: redactDiagnosticText(req.Runtime.AppVersion, 120), BuildCommit: redactDiagnosticText(req.Runtime.BuildCommit, 120),
 			Browser: redactDiagnosticText(req.Runtime.Browser, 240), OS: redactDiagnosticText(req.Runtime.OS, 120), Timezone: redactDiagnosticText(req.Runtime.Timezone, 80),
@@ -307,6 +359,7 @@ func (s *Service) collectDiagnosticData(userID string, req DiagnosticExportReque
 	for _, apiCall := range apiCalls {
 		collection.APICalls = append(collection.APICalls, sanitizeDiagnosticAPICall(apiCall))
 	}
+	collectDiagnosticActivity(activity, collection)
 	return collection, nil
 }
 
@@ -385,6 +438,9 @@ func buildDiagnosticZIP(brandName string, bundleID string, manifest diagnosticMa
 	}
 	newline := string(rune(10))
 	readme := fmt.Sprintf("%s 用户诊断包%s%s诊断编号：%s%s时间范围：%s 至 %s%s%s该文件由用户主动导出，仅包含有限时间范围内的脱敏诊断摘要。%s", brandName, newline, newline, bundleID, newline, collection.Window.From.Format(time.RFC3339), collection.Window.To.Format(time.RFC3339), newline, newline, newline)
+	readme += "包含用户与 Agent 的对话文字，分享前请检查其中的业务内容。凭据自动脱敏；不导出原始媒体、工具参数、工具结果正文、系统提示或完整画布载荷。\n"
+	readme += "canvas/current.jsonl 是导出时的画布元数据；history 是已保留的历史版本摘要，agent-mutations 是 Agent 修改/撤销记录，不代表每一次鼠标操作。\n"
+	readme += "agent/runs.jsonl 是导出时的运行状态；events 和 Pi messages 按所选时间过滤。legacy_transcript 没有消息时间，标记为所选时间内活跃运行的会话快照。条数超限保留最近记录，长文字截断；manifest.truncated 为 true。\n"
 	if err := writeDiagnosticZipFile(archive, "README.txt", []byte(readme)); err != nil {
 		return nil, err
 	}
@@ -399,6 +455,17 @@ func buildDiagnosticZIP(brandName string, bundleID string, manifest diagnosticMa
 	}
 	if err := writeDiagnosticJSONL(archive, "backend/upstream-calls.jsonl", collection.APICalls); err != nil {
 		return nil, err
+	}
+	for _, file := range []struct {
+		name    string
+		records []map[string]any
+	}{
+		{"canvas/current.jsonl", collection.Activity.Canvases}, {"canvas/history.jsonl", collection.Activity.History}, {"canvas/agent-mutations.jsonl", collection.Activity.Mutations},
+		{"agent/runs.jsonl", collection.Activity.Runs}, {"agent/events.jsonl", collection.Activity.Events}, {"agent/messages.jsonl", collection.Activity.Messages},
+	} {
+		if err := writeDiagnosticJSONL(archive, file.name, file.records); err != nil {
+			return nil, err
+		}
 	}
 	runtimeData, err := json.MarshalIndent(collection.Runtime, "", "  ")
 	if err != nil {
@@ -460,42 +527,23 @@ func sanitizeDiagnosticPath(value string) string {
 	return redactDiagnosticText(value, 300)
 }
 
+var diagnosticCredentialPattern = regexp.MustCompile(`(?i)(["']?(?:authorization|cookie|set-cookie|x-goog-api-key|x-canvas-upstream-headers|api[_-]?key|access[_-]?key|secret[_-]?key|password|token|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|(?:bearer\s+)?[^\s,;}\]]+)`)
+var diagnosticHeaderPattern = regexp.MustCompile(`(?im)(\b(?:authorization|cookie|set-cookie)\s*[:=]\s*)[^\r\n]+`)
+var diagnosticBearerPattern = regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]+`)
+var diagnosticKeyPattern = regexp.MustCompile(`\bsk-[a-zA-Z0-9_-]{8,}`)
+var diagnosticMediaPattern = regexp.MustCompile(`(?i)data:[^\s"'<>]+|\b[a-z0-9+/]{256,}={0,2}`)
+
 func redactDiagnosticText(value string, limit int) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
 	}
-	for _, marker := range []string{"authorization", "cookie", "set-cookie", "x-goog-api-key", "x-canvas-upstream-headers", "api_key", "api-key", "apikey", "access_key", "access-key", "secret_key", "secret-key", "password", "token="} {
-		value = redactDiagnosticMarker(value, marker)
-	}
+	value = diagnosticCredentialPattern.ReplaceAllString(value, "${1}[REDACTED]")
+	value = diagnosticHeaderPattern.ReplaceAllString(value, "${1}[REDACTED]")
+	value = diagnosticBearerPattern.ReplaceAllString(value, "Bearer [REDACTED]")
+	value = diagnosticKeyPattern.ReplaceAllString(value, "[REDACTED]")
+	value = diagnosticMediaPattern.ReplaceAllString(value, "[MEDIA OMITTED]")
 	return truncateRunes(redactDiagnosticURLs(value), limit)
-}
-
-func redactDiagnosticMarker(value string, marker string) string {
-	searchFrom := 0
-	for searchFrom < len(value) {
-		lower := strings.ToLower(value)
-		index := strings.Index(lower[searchFrom:], strings.ToLower(marker))
-		if index < 0 {
-			break
-		}
-		index += searchFrom
-		end := index + len(marker)
-		for end < len(value) && isDiagnosticSeparator(value[end]) {
-			end++
-		}
-		valueEnd := end
-		for valueEnd < len(value) && !isDiagnosticValueDelimiter(value[valueEnd]) {
-			valueEnd++
-		}
-		if valueEnd == end {
-			searchFrom = end
-			continue
-		}
-		value = value[:end] + "[REDACTED]" + value[valueEnd:]
-		searchFrom = end + len("[REDACTED]")
-	}
-	return value
 }
 
 func redactDiagnosticURLs(value string) string {
@@ -526,24 +574,13 @@ func redactDiagnosticURLs(value string) string {
 		}
 		parsed.RawQuery = ""
 		parsed.Fragment = ""
+		parsed.User = nil
+		parsed.ForceQuery = false
 		safe := parsed.String()
 		value = value[:start] + safe + value[end:]
 		searchFrom = start + len(safe)
 	}
 	return value
-}
-
-func isDiagnosticSeparator(value byte) bool {
-	return value == ' ' || value == 9 || value == ':' || value == '='
-}
-
-func isDiagnosticValueDelimiter(value byte) bool {
-	switch value {
-	case ' ', 9, 13, 10, ',', ';', '"', 39, '<', '>', '}', ']':
-		return true
-	default:
-		return false
-	}
 }
 
 func isDiagnosticURLDelimiter(value byte) bool {

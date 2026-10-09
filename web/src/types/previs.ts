@@ -154,6 +154,7 @@ export type PrevisShot = {
     cameraMove: PrevisCameraMove;
     prompt: string;
     previewNodeId?: string;
+    clayVideoNodeId?: string;
     depthNodeId?: string;
     normalNodeId?: string;
 };

@@ -16,7 +16,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"infinite-canvas/backend/internal/canvas/connection"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -574,7 +573,16 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			add("previs_scene_create", cloudAgentToolText("previs_scene_create"), cloudAgentPrevisSceneCreateSchema()["properties"].(map[string]any), "canvasSnapshotHash", "sceneId", "title", "templateId")
 			add("previs_apply_patch", cloudAgentToolText("previs_apply_patch"), cloudAgentPrevisApplyPatchSchema()["properties"].(map[string]any), "snapshotHash", "sceneId", "operations")
 		}
-		add("canvas_list_node_types", cloudAgentToolText("canvas_list_node_types"), map[string]any{})
+		add("canvas_list_node_types", "查询可创建节点和可编辑字段。传 nodeType 返回该类型的完整字段 schema；编辑复杂内容前先查字段合同。", map[string]any{"nodeType": str("可选节点类型；空值列出摘要")})
+		add("canvas_list_assets", "搜索当前用户素材库，返回可用于绑定的 assetId、标题和类型，不暴露下载凭证。", map[string]any{"query": str("可选搜索文字"), "kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio", "text"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
+		add("canvas_read_drawing", "分页读取绘图原生元素和素材记录，hasMore=false 才读到末尾；未同步的本地绘图需先由编辑器保存。", map[string]any{"nodeId": str("绘图节点 ID"), "offset": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}, "nodeId")
+		add("canvas_read_content", "分页读取节点可编辑的完整文本。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。", map[string]any{
+			"nodeId": str("当前画布节点 ID"), "field": map[string]any{"type": "string", "enum": []string{"content", "composerContent"}},
+			"offset": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 16000},
+		}, "nodeId")
+		add("canvas_search_nodes", "按标题和正文搜索当前画布节点；返回基础索引和新快照。需要编辑时继续精读目标。", map[string]any{
+			"query": str("搜索文字，大小写不敏感"), "type": str("可选节点类型"), "offset": map[string]any{"type": "integer", "minimum": 0},
+		}, "query")
 		add("canvas_get_state", cloudAgentToolText("canvas_get_state"), map[string]any{
 			"offset":           map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_008")},
 			"connectionOffset": map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_009")},
@@ -632,6 +640,14 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"topic", "category", "situation")
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
+		for _, name := range []string{"canvas_undo", "canvas_redo"} {
+			add(name, "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。", map[string]any{"snapshotHash": str("当前画布快照")}, "snapshotHash")
+		}
+		add("canvas_bind_asset", "用当前用户素材库的 assetId 替换匹配类型节点的内容；先读取画布并查询素材，不接受任意 URL。运行中的生成节点不能替换。", map[string]any{"snapshotHash": str("最新画布快照"), "nodeId": str("目标节点 ID"), "assetId": str("素材库 ID")}, "snapshotHash", "nodeId", "assetId")
+		add("canvas_edit_drawing", "在当前快照上修改原生绘图记录。upsert 提交完整 record，record.id 与 id 相同；remove 删除记录。图片只接受已上传资源 resource:ID。", map[string]any{
+			"snapshotHash": str("最新画布快照"), "nodeId": str("绘图节点 ID"), "engine": map[string]any{"type": "string", "enum": []string{"excalidraw", "tldraw"}},
+			"operations": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "object", "properties": map[string]any{"type": map[string]any{"type": "string", "enum": []string{"upsert", "remove"}}, "id": str("原生记录 ID"), "record": map[string]any{"type": "object", "description": "完整原生元素或文件记录；先读取已有记录了解结构"}}, "required": []string{"type", "id"}, "additionalProperties": false, "oneOf": []map[string]any{{"properties": map[string]any{"type": map[string]any{"const": "upsert"}}, "required": []string{"record"}}, {"properties": map[string]any{"type": map[string]any{"const": "remove"}}, "not": map[string]any{"required": []string{"record"}}}}}},
+		}, "snapshotHash", "nodeId", "engine", "operations")
 		add("image_layer_split", cloudAgentToolText("image_layer_split"), map[string]any{
 			"prompt": str(cloudAgentToolText("parameter_036")), "selectionId": str(cloudAgentToolText("model_selection_id")), "logicalModelId": str(cloudAgentToolText("parameter_037")), "channelId": str(cloudAgentToolText("parameter_038")), "channelModelKey": str(cloudAgentToolText("parameter_039")),
 			"quality": str(cloudAgentToolText("parameter_040")), "snapshotHash": str(cloudAgentToolText("parameter_041")), "nodeId": str(cloudAgentToolText("parameter_042")), "title": str(cloudAgentToolText("parameter_043")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_044"))},
@@ -647,7 +663,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"x":            map[string]any{"type": "number"},
 			"y":            map[string]any{"type": "number"},
 		}, "snapshotHash", "nodeId", "title", "rows")
-		add("canvas_edit_storyboard", "追加、修改或删除分镜脚本中的单个镜头行，也可替换该行的关联资产。必须先用 canvas_read_storyboard 读取最新 snapshotHash 和真实 rowId；append 不传 rowId，update/remove 必须传。patch 允许镜头文本、时长和 assetBindings；assetBindings 只能引用当前画布真实角色卡或媒体资产节点，并填写 nodeId、role、priority。不能修改媒体节点ID、任务状态、资源URL或任意 metadata。", map[string]any{
+		add("canvas_edit_storyboard", cloudAgentToolText("canvas_edit_storyboard"), map[string]any{
 			"snapshotHash": str(cloudAgentToolText("parameter_049")),
 			"nodeId":       str(cloudAgentToolText("parameter_050")),
 			"action":       map[string]any{"type": "string", "enum": []string{"append", "update", "remove"}},
@@ -666,7 +682,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"globalPrompt": str(cloudAgentToolText("parameter_055")),
 		}, "snapshotHash", "nodeId", "action")
 		opProperties := map[string]any{
-			"type":         map[string]any{"type": "string", "enum": []string{"add_node", "update_node", "connect_nodes"}, "description": cloudAgentToolText("parameter_056")},
+			"type":         map[string]any{"type": "string", "enum": []string{"add_node", "update_node", "connect_nodes", "delete_node", "delete_connection", "update_connection", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows"}, "description": "创建、修改、删除、复制节点，维护连线、分组和排序，或精确替换文本"},
 			"id":           str(cloudAgentToolText("parameter_057")),
 			"nodeType":     map[string]any{"type": "string", "enum": cloudAgentNodeTypeNames()},
 			"title":        str(cloudAgentToolText("parameter_058")),
@@ -674,10 +690,15 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"patch":        cloudAgentPatchSchema(),
 			"fromNodeId":   str(cloudAgentToolText("parameter_060")),
 			"toNodeId":     str(cloudAgentToolText("parameter_061")),
-			"fromHandleId": str("可选来源端口：script 支持 row:<真实行ID> 或 storyboard:context"),
-			"toHandleId":   str("可选目标端口：script 支持 row:<真实行ID> 或 storyboard:context；batch-table 支持 batch-reference:<列ID>"),
 			"x":            map[string]any{"type": "number"},
 			"y":            map[string]any{"type": "number"},
+			"sourceNodeId": str("复制来源节点；id 是副本的新 ID"),
+			"parentId":     str("父容器 ID；空字符串表示脱离容器"),
+			"match":        map[string]any{"type": "string", "minLength": 1, "maxLength": 16000},
+			"replacement":  map[string]any{"type": "string", "maxLength": 16000},
+			"nodeIds":      map[string]any{"type": "array", "maxItems": 2048, "items": map[string]any{"type": "string"}},
+			"rowIds":       map[string]any{"type": "array", "maxItems": 2048, "items": map[string]any{"type": "string"}},
+			"fromHandleId": str("可选来源端口"), "toHandleId": str("可选目标端口"),
 		}
 		opItem := map[string]any{
 			"type":                 "object",
@@ -688,6 +709,14 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 				{"properties": map[string]any{"type": map[string]any{"const": "add_node"}}, "required": []string{"nodeType"}},
 				{"properties": map[string]any{"type": map[string]any{"const": "update_node"}}, "required": []string{"patch"}},
 				{"properties": map[string]any{"type": map[string]any{"const": "connect_nodes"}}, "required": []string{"fromNodeId", "toNodeId"}},
+				{"properties": map[string]any{"type": map[string]any{"const": "delete_node"}}},
+				{"properties": map[string]any{"type": map[string]any{"const": "delete_connection"}}},
+				{"properties": map[string]any{"type": map[string]any{"const": "update_connection"}}, "required": []string{"fromNodeId", "toNodeId"}},
+				{"properties": map[string]any{"type": map[string]any{"const": "duplicate_node"}}, "required": []string{"sourceNodeId"}},
+				{"properties": map[string]any{"type": map[string]any{"const": "set_parent"}}, "required": []string{"parentId"}},
+				{"properties": map[string]any{"type": map[string]any{"const": "replace_text"}}, "required": []string{"match", "replacement"}},
+				{"properties": map[string]any{"type": map[string]any{"const": "reorder_nodes"}}, "required": []string{"nodeIds"}},
+				{"properties": map[string]any{"type": map[string]any{"const": "reorder_rows"}}, "required": []string{"rowIds"}},
 			},
 		}
 		add("canvas_apply_ops", cloudAgentToolText("canvas_apply_ops"), map[string]any{"snapshotHash": str(cloudAgentToolText("parameter_062")), "ops": map[string]any{"type": "array", "maxItems": 20, "items": opItem}}, "snapshotHash", "ops")
@@ -767,16 +796,51 @@ func CloudAgentSupportedToolNames() []string {
 
 func cloudAgentPatchSchema() map[string]any {
 	properties := map[string]any{}
+	variants := map[string][]map[string]any{}
+	seen := map[string]map[string]bool{}
 	for _, descriptor := range canvasCapabilityRegistry.List() {
 		if !descriptor.CanUpdate {
 			continue
 		}
 		for key, field := range descriptor.PatchFields {
-			property := map[string]any{"type": field.Kind}
-			if field.Kind == "string" && field.MaxRunes > 0 {
-				property["maxLength"] = field.MaxRunes
+			property := field.JSONSchema()
+			// Rich native contracts are discovered per node type rather than
+			// repeated in every model request. The descriptor still validates
+			// the complete nested contract during preview and execution.
+			if field.Kind == "object" {
+				property = map[string]any{"type": "object", "description": "字段完整合同见 canvas_list_node_types(nodeType)"}
 			}
-			properties[key] = property
+			if field.Kind == "array" {
+				property = map[string]any{"type": "array", "maxItems": field.MaxItems, "items": map[string]any{}, "description": "数组元素合同见 canvas_list_node_types(nodeType)"}
+				if field.MaxItems == 0 {
+					delete(property, "maxItems")
+				}
+			}
+			encoded, _ := json.Marshal(property)
+			if seen[key] == nil {
+				seen[key] = map[string]bool{}
+			}
+			if !seen[key][string(encoded)] {
+				variants[key] = append(variants[key], property)
+				seen[key][string(encoded)] = true
+			}
+		}
+	}
+	for key, values := range variants {
+		if len(values) == 1 {
+			properties[key] = values[0]
+		} else {
+			properties[key] = map[string]any{"anyOf": values}
+			kind := values[0]["type"]
+			same := kind != nil
+			for _, value := range values {
+				if value["type"] != kind {
+					same = false
+				}
+			}
+			if same {
+				properties[key].(map[string]any)["type"] = kind
+			}
 		}
 	}
 	return map[string]any{"type": "object", "minProperties": 1, "properties": properties, "additionalProperties": false}
@@ -794,6 +858,9 @@ func cloudAgentToolAllowed(req CloudAgentRequest, name string) bool {
 // cloudAgentWrite 表示"需要审批的写入类工具"：它会改变用户可见状态，因此按权限模式进入
 // 审批链。这里保留上游的 image_layer_split（它同样走媒体审批与计费）。
 func cloudAgentWrite(name string) bool {
+	if name == "canvas_undo" || name == "canvas_redo" || name == "canvas_edit_drawing" || name == "canvas_bind_asset" {
+		return true
+	}
 	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == "previs_scene_create" || name == "previs_apply_patch" || name == "previs_preview"
 }
 
@@ -807,7 +874,7 @@ func cloudAgentWrite(name string) bool {
 // generate_media / image_layer_split 创建草稿并进入独立审批，回执口径不同，故不在此列。
 func cloudAgentCanvasWriteTool(name string) bool {
 	switch name {
-	case "canvas_apply_ops", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character":
+	case "canvas_apply_ops", "canvas_undo", "canvas_redo", "canvas_edit_drawing", "canvas_bind_asset", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character":
 		return true
 	default:
 		return false
@@ -830,7 +897,7 @@ func cloudAgentReadToolCacheable(name string) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
+	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_content", "canvas_read_drawing", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "previs_scene_read", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
 		return true
 	default:
 		return false
@@ -1012,10 +1079,19 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 	case "remember_lesson":
 		return cloudAgentRememberLesson(repo, userID, state, call)
 	case "canvas_list_node_types":
-		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &struct{}{}); err != nil {
+		var args struct {
+			NodeType string `json:"nodeType"`
+		}
+		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
 			return nil, cloudAgentJSONArgumentError(err)
 		}
-		return cloudAgentNodeTypes(), nil
+		return cloudAgentNodeTypesFiltered(args.NodeType)
+	case "canvas_list_assets":
+		return cloudAgentListAssets(repo, userID, call)
+	case "canvas_read_drawing":
+		return cloudAgentReadDrawing(repo, userID, state.Request.CanvasID, call)
+	case "canvas_read_content", "canvas_search_nodes":
+		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
 	case "previs_scene_read":
 		return cloudAgentPrevisSceneRead(repo, userID, state.Request.CanvasID, call)
 	case "previs_preview":
@@ -1413,8 +1489,14 @@ type agentCanvasOp struct {
 	Y            *float64 `json:"y"`
 	FromNodeID   string   `json:"fromNodeId"`
 	ToNodeID     string   `json:"toNodeId"`
-	FromHandleID string   `json:"fromHandleId,omitempty"`
-	ToHandleID   string   `json:"toHandleId,omitempty"`
+	SourceNodeID string   `json:"sourceNodeId"`
+	ParentID     string   `json:"parentId"`
+	Match        string   `json:"match"`
+	Replacement  string   `json:"replacement"`
+	NodeIDs      []string `json:"nodeIds"`
+	RowIDs       []string `json:"rowIds"`
+	FromHandleID string   `json:"fromHandleId"`
+	ToHandleID   string   `json:"toHandleId"`
 }
 
 // Explicit node creation and edges only; no generic metadata, media URL or deletion.
@@ -1471,25 +1553,20 @@ func validateCloudAgentConnection(nodes []map[string]any, fromID, toID string, e
 		return BadAuthRequest("连线包含当前 Agent 不支持的节点类型")
 	}
 	fromKind := fromCapability.InputKind
-	if fromKind == "" || !fromCapability.Connection.CanSource {
-		return BadAuthRequest(fmt.Sprintf("来源节点类型 %s 不能作为生成输入；引用连线不能用于普通节点关联", fromCapability.Type))
+	if !fromCapability.Connection.CanGraphSource {
+		return BadAuthRequest(fmt.Sprintf("来源节点类型 %s 没有输出连接端口", fromCapability.Type))
 	}
-	if !toCapability.Connection.CanTarget {
-		return BadAuthRequest(fmt.Sprintf("目标节点类型 %s 不能接收生成输入；无需为文档归档建立引用连线", toCapability.Type))
+	if !toCapability.Connection.CanGraphTarget {
+		return BadAuthRequest(fmt.Sprintf("目标节点类型 %s 没有输入连接端口", toCapability.Type))
 	}
 	connections := []map[string]any{}
 	if len(existingConnections) > 0 {
 		connections = existingConnections[0]
 	}
-	for _, edge := range connections {
-		if stringValue(edge["toNodeId"]) == toID && stringValue(edge["fromNodeId"]) == fromID {
-			return BadAuthRequest("连线重复")
-		}
+	if err := cloudAgentManualGraphInputError(nodes, from, to, fromKind, connections); err != nil {
+		return err
 	}
-	if err := toCapability.ValidateConnection(fromKind); err != nil {
-		return BadAuthRequest(err.Error())
-	}
-	if maxInputs := toCapability.Connection.MaxInputCount; maxInputs > 0 {
+	if maxInputs := cloudAgentGraphMaxInputs(toCapability.Type); maxInputs > 0 {
 		inputIDs := map[string]bool{}
 		for _, edge := range connections {
 			if stringValue(edge["toNodeId"]) == toID {
@@ -1563,7 +1640,8 @@ func cloudAgentNodeTypes() map[string]any {
 		if capability.CanUpdate {
 			fields := map[string]any{}
 			for key, field := range capability.PatchFields {
-				definition := map[string]any{"type": field.Kind, "label": field.Label, "displayOrder": field.Order, "maxCharacters": field.MaxRunes}
+				definition := field.JSONSchema()
+				definition["label"], definition["displayOrder"] = field.Label, field.Order
 				if field.Description != "" {
 					definition["description"] = field.Description
 				}
@@ -1571,6 +1649,7 @@ func cloudAgentNodeTypes() map[string]any {
 			}
 			item["updateFields"] = fields
 		}
+		item["operations"] = []string{"delete_node", "duplicate_node", "set_parent", "reorder_nodes"}
 		if capability.InputKind != "" {
 			item["inputKind"] = capability.InputKind
 		}
@@ -1588,10 +1667,12 @@ func cloudAgentNodeTypes() map[string]any {
 		}
 		item["canSource"] = capability.Connection.CanSource
 		item["canTarget"] = capability.Connection.CanTarget
+		item["canGraphSource"] = capability.Connection.CanGraphSource
+		item["canGraphTarget"] = capability.Connection.CanGraphTarget
 		item["canReference"] = capability.Connection.CanReference
 		types = append(types, item)
 	}
-	return map[string]any{"schemaVersion": 2, "nodes": types, "canvasConnections": connection.Builtins, "connectionHandles": map[string]any{"script": []string{"row:<existing row id>", "storyboard:context"}, "batch-table": []string{"batch-reference:<existing column id>"}}, "selectionGuide": []string{
+	return map[string]any{"schemaVersion": 2, "nodes": types, "selectionGuide": []string{
 		"单个画面、一次性提示词或快速试验通常使用文本/Markdown与媒体节点更轻量。",
 		"多镜头、连续性、逐镜审查、逐镜生成或需要后续维护时，分镜脚本通常更合适。",
 		"媒体节点只承载单个生成目标，不替代多镜头结构；选择媒体节点后还要用 model_list 按生成模式和本次真实参考节点筛选模型。",

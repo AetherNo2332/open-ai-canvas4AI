@@ -92,6 +92,7 @@ import {
     replaceCanvasReferenceMentions,
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
+import { buildImageToPrevisAgentPrompt } from "@/lib/canvas/image-to-previs-agent";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay, type PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
@@ -173,6 +174,7 @@ import {
 } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
+import { canvasEntityReconciler } from "@/lib/canvas/canvas-entity-reconciliation";
 
 const CanvasPrevisWorkbench = lazy(() => import("@/components/canvas/previs/canvas-previs-workbench").then((module) => ({ default: module.CanvasPrevisWorkbench })));
 const CanvasDrawingEditorModal = lazy(() => import("@/components/canvas/canvas-drawing-editor-modal").then((module) => ({ default: module.CanvasDrawingEditorModal })));
@@ -477,6 +479,23 @@ function InfiniteCanvasPage() {
         openAgent();
         setContextMenu(null);
     }, [agentMentionReferences, openAgent]);
+
+    const sendImageToPrevisAgent = useCallback((node: CanvasNodeData) => {
+        if (node.type !== CanvasNodeType.Image) return;
+        const reference = agentMentionReferences.find((item) => item.nodeId === node.id && item.kind === "image");
+        if (!reference) {
+            message.warning("这张图片暂时没有可供 Agent 引用的画布资源");
+            return;
+        }
+        if (!selectedNodeIdsRef.current.has(node.id)) {
+            const selection = new Set([node.id]);
+            selectedNodeIdsRef.current = selection;
+            setSelectedNodeIds(selection);
+        }
+        setAgentPrefillPrompt(buildImageToPrevisAgentPrompt(reference));
+        openAgent();
+        setContextMenu(null);
+    }, [agentMentionReferences, message, openAgent]);
     // 修复素材关联仍遵守当前画布版本，不能替用户确认覆盖云端的新内容。
     const confirmForceSaveCanvas = useCallback(() => {
         modal.confirm({
@@ -930,6 +949,27 @@ function InfiniteCanvasPage() {
         finishGenerationRequest,
         bindGenerationTask,
     });
+
+    useEffect(() => {
+        const reconcile = canvasEntityReconciler(nodes, connections);
+        const selection = reconcile.nodeSelection(selectedNodeIdsRef.current);
+        if (selection !== selectedNodeIdsRef.current) {
+            selectedNodeIdsRef.current = selection;
+            setSelectedNodeIds(selection);
+            setNodeImageSettingsOpen(false);
+        }
+        setSelectedConnectionId(reconcile.connectionId);
+        // Remote changes and history restoration bypass the manual delete callback.
+        // Reconcile UI references only: retained drawing/media data is still needed by undo.
+        for (const setter of [setHoveredNodeId, setToolbarNodeId, setDialogNodeId, setTextEditorNodeId, setCharacterReferenceNodeId, setDrawingNodeId, setInfoNodeId, setSubtitleNodeId, setTimelineNodeId, setFrameDialogNodeId, setSegmentDialogNodeId, setCropNodeId, setMaskEditNodeId, setAnnotationNodeId, setAnnotationEditNodeId, setImageEditNodeId, setLayerDecompositionNodeId, setTextEditNodeId, setUpscaleNodeId, setAngleNodeId, setLightingNodeId, setEmotionNodeId, setSuperResolveNodeId, setPreviewNodeId, setRunningNodeId, setScriptEditorNodeId, setArtCritiqueNodeId, setPrevisNodeId, setPanoramaConfigNodeId, setVersionCompareRootId, setArkPrivateAssetUploadNodeId]) setter(reconcile.nodeId);
+        setArtCritiqueStartRequest((current) => current && !reconcile.nodeId(current.nodeId) ? null : current);
+        setScriptScrollTopById((current) => Object.keys(current).every((id) => reconcile.nodeId(id)) ? current : Object.fromEntries(Object.entries(current).filter(([id]) => reconcile.nodeId(id))));
+        setContextMenu((current) => {
+            if (current?.type === "node" && !reconcile.nodeId(current.nodeId)) return null;
+            if (current?.type === "connection" && !reconcile.connectionId(current.connectionId)) return null;
+            return current;
+        });
+    }, [nodes, connections, selectedNodeIdsRef, setAnnotationEditNodeId, setAnnotationNodeId, setAngleNodeId, setCropNodeId, setEmotionNodeId, setFrameDialogNodeId, setImageEditNodeId, setLayerDecompositionNodeId, setLightingNodeId, setMaskEditNodeId, setPanoramaConfigNodeId, setRunningNodeId, setSegmentDialogNodeId, setTextEditNodeId, setUpscaleNodeId]);
 
     const handleNodesDeleted = useCallback(
         (removedIds: Set<string>, nextNodes: CanvasNodeData[], removedNodes: CanvasNodeData[]) => {
@@ -2575,6 +2615,7 @@ function InfiniteCanvasPage() {
                     <section data-canvas-editor inert={Boolean(versions.preview)} style={{ visibility: versions.preview ? "hidden" : undefined, opacity: versions.preview ? 0 : undefined }} className="relative min-w-0 flex-1 flex flex-col min-h-0 overflow-hidden">
                         {!focusMode ? (
                             <CanvasTopBar
+                                canvasId={projectId}
                                 syncStatus={<CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />}
                                 versionsOpen={versions.open}
                                 onToggleVersions={() => { closeAgent(); setVersionCompareRootId(null); versions.toggle(); }}
@@ -2999,6 +3040,7 @@ function InfiniteCanvasPage() {
                                 setLightingNodeId((current) => (current === node.id ? null : node.id));
                             }}
                             onPanorama={openPanoramaConfig}
+                            onPrevis={sendImageToPrevisAgent}
                             onViewImage={(node) => setPreviewNodeId(node.id)}
                             onExtractVideoFrames={openVideoFrameExtractor}
                             onExtractAudioFromVideo={(node) => void extractAudioFromVideo(node)}
@@ -3181,6 +3223,7 @@ function InfiniteCanvasPage() {
                                     node={drawingNode}
                                     projectId={projectId}
                                     open={Boolean(drawingNode)}
+                                    getCurrentNode={() => nodesRef.current.find((node) => node.id === drawingNode.id) || null}
                                     onClose={() => setDrawingNodeId(null)}
                                     onSaved={(nodeId, summary) => {
                                         setNodes((current) =>
@@ -3191,6 +3234,7 @@ function InfiniteCanvasPage() {
                                                           metadata: {
                                                               ...node.metadata,
                                                               drawingEngine: summary.engine,
+                                                              drawingDocument: summary,
                                                               drawingRevision: summary.revision,
                                                               drawingUpdatedAt: summary.updatedAt,
                                                               drawingShapeCount: summary.shapeCount,
@@ -3200,7 +3244,7 @@ function InfiniteCanvasPage() {
                                                     : node,
                                             ),
                                         );
-                                        message.success("绘图已保存");
+                                        message.success("绘图已保存到本地，画布正在同步至服务端");
                                     }}
                                 />
                             </Suspense>
