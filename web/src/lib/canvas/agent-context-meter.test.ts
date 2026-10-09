@@ -38,3 +38,18 @@ test("unconfigured models keep the byte fallback as the headline", () => {
     assert.equal(reading.displayRatio, 0.75);
     assert.equal(reading.decisionSource, "bytes");
 });
+
+test("headline keeps the conversation watermark while exposing the smaller current request", () => {
+    const reading = agentContextMeterReading({
+        ...base,
+        estimatedInputTokens: 22_125,
+        displayInputTokens: 66_105,
+        displaySourceBytes: 222_253,
+        displayPressureRatio: 0.66105,
+        projectedTokens: 22_125,
+        tokenSource: "estimate",
+    });
+    assert.equal(reading.currentTokens, 22_125);
+    assert.equal(reading.displayTokens, 66_105);
+    assert.equal(reading.displayRatio, 0.66105);
+});

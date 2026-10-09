@@ -30,3 +30,34 @@ func TestCloudAgentContextPressureSeparatesNextRequestEstimateFromPreviousProvid
 		t.Fatalf("estimate/projected readings were mixed: %+v", payload)
 	}
 }
+
+func TestCloudAgentContextMeterKeepsConversationHighWaterAcrossRunBoundary(t *testing.T) {
+	state := &cloudAgentRuntime{
+		ContextMeterHighWaterTokens: 66105,
+		ContextMeterHighWaterBytes:  222253,
+	}
+	payload := cloudAgentContextPressurePayload(cloudAgentContextPressure{
+		EstimatedInputTokens: 22125,
+		SourceBytes:          73477,
+		UsableInputTokens:    967232,
+	}, state)
+	if payload["estimatedInputTokens"] != 22125 {
+		t.Fatalf("current request estimate changed: %+v", payload)
+	}
+	if payload["displayInputTokens"] != 66105 || payload["displaySourceBytes"] != 222253 {
+		t.Fatalf("conversation watermark retreated at run boundary: %+v", payload)
+	}
+
+	state.ContextMeterResetPending = true
+	reset := cloudAgentContextPressurePayload(cloudAgentContextPressure{
+		EstimatedInputTokens: 18000,
+		SourceBytes:          60000,
+		UsableInputTokens:    967232,
+	}, state)
+	if reset["displayInputTokens"] != 18000 || reset["displaySourceBytes"] != 60000 {
+		t.Fatalf("semantic compaction did not reset watermark: %+v", reset)
+	}
+	if reset["displayResetReason"] != "semantic_compaction" || state.ContextMeterResetPending {
+		t.Fatalf("watermark reset was not explicit and one-shot: %+v state=%+v", reset, state)
+	}
+}
