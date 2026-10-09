@@ -132,16 +132,23 @@ func TestCloudAgentStoryboardToolsAreScopedAndStructured(t *testing.T) {
 			t.Fatalf("missing storyboard tool %s", name)
 		}
 	}
+	editDescription := functions["canvas_edit_storyboard"]["description"].(string)
+	if !strings.Contains(editDescription, "assetBindings") {
+		t.Fatal("storyboard edit tool description does not explain asset linking")
+	}
 	createRows := functions["canvas_create_storyboard"]["parameters"].(map[string]any)["properties"].(map[string]any)["rows"].(map[string]any)
 	rowProperties := createRows["items"].(map[string]any)["properties"].(map[string]any)
 	if _, leaksID := rowProperties["id"]; leaksID {
 		t.Fatal("create storyboard schema lets the model forge row IDs")
 	}
 	editPatch := functions["canvas_edit_storyboard"]["parameters"].(map[string]any)["properties"].(map[string]any)["patch"].(map[string]any)["properties"].(map[string]any)
-	for _, protected := range []string{"imageNodeId", "videoNodeId", "assetBindings", "status"} {
+	for _, protected := range []string{"imageNodeId", "videoNodeId", "status"} {
 		if _, exists := editPatch[protected]; exists {
 			t.Fatalf("protected field %s leaked into edit schema", protected)
 		}
+	}
+	if _, exists := editPatch["assetBindings"]; !exists {
+		t.Fatal("assetBindings should be writable for storyboard asset linking")
 	}
 	if !cloudAgentWrite("canvas_create_storyboard") || !cloudAgentWrite("canvas_edit_storyboard") {
 		t.Fatal("storyboard mutations are not classified as writes")
@@ -149,6 +156,49 @@ func TestCloudAgentStoryboardToolsAreScopedAndStructured(t *testing.T) {
 	supported := strings.Join(CloudAgentSupportedToolNames(), ",")
 	if !strings.Contains(supported, "canvas_create_storyboard") || !strings.Contains(supported, "canvas_edit_storyboard") {
 		t.Fatalf("supported tool list is stale: %s", supported)
+	}
+}
+
+func TestCloudAgentStoryboardCanLinkCharacterCardAsset(t *testing.T) {
+	s, canvas := cloudAgentStoryboardFixture(t)
+	rows := createCloudAgentStoryboardForTest(t, s, canvas)
+	rowID := stringValue(rows[0]["id"])
+	character := map[string]any{
+		"id": "character-card-1", "type": "text", "title": "林默",
+		"metadata": map[string]any{"workflowKind": "character", "characterAssetId": "character-asset-1"},
+	}
+	doc, _ := creationDocument(canvas.PayloadJSON)
+	doc["nodes"] = append(creationMaps(doc["nodes"]), character)
+	before := canvas.PayloadJSON
+	raw, _ := json.Marshal(doc)
+	canvas.PayloadJSON = string(raw)
+	if err := saveCreationCanvasWithHistory(s.repo, canvas, before); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ = creationDocument(canvas.PayloadJSON)
+	call := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "link-character", map[string]any{
+		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "update", "rowId": rowID,
+		"patch": map[string]any{"assetBindings": []map[string]any{{"nodeId": "character-card-1", "role": "character", "priority": 100}}},
+	})
+	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, call, policy); err != nil {
+		t.Fatalf("character card asset link rejected: %v", err)
+	}
+	stored, err := s.repo.CanvasProjectForUser("user", canvas.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkedDoc, _ := creationDocument(stored.PayloadJSON)
+	_, _, linkedRows, err := storyboardNodeFromDocument(linkedDoc, "storyboard-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := creationMaps(linkedRows[0]["assetBindings"])
+	if len(bindings) != 1 || stringValue(bindings[0]["nodeId"]) != "character-card-1" || stringValue(bindings[0]["role"]) != "character" {
+		t.Fatalf("character card binding was not persisted: %+v", bindings)
 	}
 }
 

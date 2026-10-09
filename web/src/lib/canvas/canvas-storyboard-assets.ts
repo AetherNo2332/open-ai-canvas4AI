@@ -55,7 +55,7 @@ export function normalizeStoryboardAssetBindings(bindings: StoryboardAssetBindin
 }
 
 function storyboardAssetType(node: CanvasNodeData): StoryboardAssetCatalogItem["type"] | null {
-    if (node.metadata?.workflowKind === "character" && node.metadata.characterAssetId && node.metadata.characterVersionId) return "character";
+    if (node.metadata?.workflowKind === "character" && node.metadata.characterAssetId) return "character";
     if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Drawing) return "image";
     if (node.type === CanvasNodeType.Video) return "video";
     if (node.type === CanvasNodeType.Audio) return "audio";

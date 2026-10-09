@@ -73,8 +73,73 @@ func cloudAgentStoryboardRowSchema() map[string]any {
 func cloudAgentStoryboardPatchSchema() map[string]any {
 	schema := cloudAgentStoryboardRowSchema()
 	delete(schema, "required")
+	properties := schema["properties"].(map[string]any)
+	properties["assetBindings"] = map[string]any{
+		"type": "array", "maxItems": 32,
+		"items": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"nodeId":   map[string]any{"type": "string", "maxLength": 80},
+				"role":     map[string]any{"type": "string", "enum": []string{"character", "environment", "wardrobe", "prop", "weapon", "style", "motion", "audio"}},
+				"priority": map[string]any{"type": "number", "minimum": 0, "maximum": 100},
+			},
+			"required": []string{"nodeId", "role", "priority"}, "additionalProperties": false,
+		},
+	}
 	schema["minProperties"] = 1
 	return schema
+}
+
+var cloudAgentStoryboardAssetRoles = map[string]bool{
+	"character": true, "environment": true, "wardrobe": true, "prop": true,
+	"weapon": true, "style": true, "motion": true, "audio": true,
+}
+
+func validateCloudAgentStoryboardAssetBindings(value any, nodes []map[string]any) ([]any, error) {
+	entries, ok := value.([]any)
+	if !ok || len(entries) > 32 {
+		return nil, BadAuthRequest("分镜资产绑定必须是最多32项的数组")
+	}
+	nodeByID := map[string]map[string]any{}
+	for _, node := range nodes {
+		nodeByID[stringValue(node["id"])] = node
+	}
+	seen := map[string]bool{}
+	normalized := make([]any, 0, len(entries))
+	for _, raw := range entries {
+		binding, ok := raw.(map[string]any)
+		if !ok {
+			return nil, BadAuthRequest("分镜资产绑定格式无效")
+		}
+		nodeID := strings.TrimSpace(stringValue(binding["nodeId"]))
+		role := strings.TrimSpace(stringValue(binding["role"]))
+		priority, ok := binding["priority"].(float64)
+		if nodeID == "" || !cloudAgentStoryboardAssetRoles[role] || !ok || priority < 0 || priority > 100 {
+			return nil, BadAuthRequest("分镜资产绑定需要有效的 nodeId、role 和 0 到 100 的 priority")
+		}
+		if seen[nodeID] {
+			return nil, BadAuthRequest("分镜资产绑定不能重复引用同一节点")
+		}
+		node, exists := nodeByID[nodeID]
+		if !exists {
+			return nil, BadAuthRequest("分镜资产绑定引用了当前画布不存在的节点")
+		}
+		metadata, _ := node["metadata"].(map[string]any)
+		workflowKind := stringValue(metadata["workflowKind"])
+		characterAssetID := strings.TrimSpace(stringValue(metadata["characterAssetId"]))
+		nodeType := stringValue(node["type"])
+		isCharacterCard := workflowKind == "character" && characterAssetID != ""
+		isMediaAsset := nodeType == "image" || nodeType == "drawing" || nodeType == "video" || nodeType == "audio"
+		if !isCharacterCard && !isMediaAsset {
+			return nil, BadAuthRequest("分镜资产绑定只能引用角色卡或媒体资产节点")
+		}
+		if role == "character" && !isCharacterCard {
+			return nil, BadAuthRequest("角色绑定必须引用角色卡节点")
+		}
+		seen[nodeID] = true
+		normalized = append(normalized, map[string]any{"nodeId": nodeID, "role": role, "priority": priority})
+	}
+	return normalized, nil
 }
 
 func validateCloudAgentStoryboardRow(row map[string]any, requireDescription bool) error {
@@ -280,6 +345,12 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 				if duration, ok := value.(float64); !ok || duration <= 0 {
 					return nil, BadAuthRequest("分镜时长必须是大于零的数字")
 				}
+			} else if key == "assetBindings" {
+				normalized, err := validateCloudAgentStoryboardAssetBindings(value, creationMaps(doc["nodes"]))
+				if err != nil {
+					return nil, err
+				}
+				value = normalized
 			} else if cloudAgentStoryboardTextField(key) {
 				text, ok := value.(string)
 				if !ok || utf8.RuneCountInString(text) > 20000 {
@@ -296,7 +367,13 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 			if len(rows) >= maxCloudAgentStoryboardRows {
 				return nil, BadAuthRequest("单个分镜表最多100个镜头")
 			}
-			if err := validateCloudAgentStoryboardRow(patch, true); err != nil {
+			rowValidation := make(map[string]any, len(patch))
+			for key, value := range patch {
+				if key != "assetBindings" {
+					rowValidation[key] = value
+				}
+			}
+			if err := validateCloudAgentStoryboardRow(rowValidation, true); err != nil {
 				return nil, err
 			}
 			row := cloudAgentStoryboardRowDefaults()

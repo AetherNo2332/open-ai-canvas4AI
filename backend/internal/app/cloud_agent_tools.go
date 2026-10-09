@@ -235,7 +235,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"x":            map[string]any{"type": "number"},
 			"y":            map[string]any{"type": "number"},
 		}, "snapshotHash", "nodeId", "title", "rows")
-		add("canvas_edit_storyboard", "追加、修改或删除分镜脚本中的单个镜头行。必须先用 canvas_read_storyboard 读取最新 snapshotHash 和真实 rowId；append 不传 rowId，update/remove 必须传。patch 只允许镜头文本与时长，不能修改素材绑定、媒体节点ID、任务状态、资源URL或任意 metadata。", map[string]any{
+		add("canvas_edit_storyboard", "追加、修改或删除分镜脚本中的单个镜头行，也可替换该行的关联资产。必须先用 canvas_read_storyboard 读取最新 snapshotHash 和真实 rowId；append 不传 rowId，update/remove 必须传。patch 允许镜头文本、时长和 assetBindings；assetBindings 只能引用当前画布真实角色卡或媒体资产节点，并填写 nodeId、role、priority。不能修改媒体节点ID、任务状态、资源URL或任意 metadata。", map[string]any{
 			"snapshotHash": str("最近一次分镜读取返回的 snapshotHash"),
 			"nodeId":       str("真实分镜脚本节点ID"),
 			"action":       map[string]any{"type": "string", "enum": []string{"append", "update", "remove"}},
