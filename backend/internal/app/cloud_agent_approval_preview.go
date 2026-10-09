@@ -126,7 +126,7 @@ func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) (
 	nodes := creationMaps(doc["nodes"])
 	edges := creationMaps(doc["connections"])
 	items := make([]cloudAgentApprovalPreviewItem, 0, len(ops))
-	for opIndex, op := range ops {
+	for _, op := range ops {
 		title, content := "", ""
 		if op.Title != nil {
 			title = *op.Title
