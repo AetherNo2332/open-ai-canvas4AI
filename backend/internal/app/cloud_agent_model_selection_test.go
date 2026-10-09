@@ -90,7 +90,7 @@ func TestCloudAgentMediaToolsDeclareExclusiveModelSelection(t *testing.T) {
 			t.Fatalf("incomplete model selection schema: %#v", parameters)
 		}
 		props := parameters["properties"].(map[string]any)
-		for _, field := range []string{"logicalModelId", "channelId", "channelModelKey"} {
+		for _, field := range []string{"selectionId", "logicalModelId", "channelId", "channelModelKey"} {
 			property := props[field].(map[string]any)
 			if property["type"] != "string" {
 				t.Fatalf("model field contract drift: %s %#v", field, property)

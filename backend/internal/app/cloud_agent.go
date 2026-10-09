@@ -473,6 +473,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	}
 	state := cloudAgentState{Version: 1, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
+	canonical.Tools = cloudAgentVisibleTools(canonical.Tools, "", nil, nil)
 	s.attachCloudAgentLessons(&canonical, userID, req.Prompt)
 	// 必须登记进 state.Policy（值拷贝）：state 才是随任务持久化、被运行期读取的那份，
 	// 在这里改局部 policy 不会生效（state.Policy 是编译结果的值拷贝）。登记之后压力读数的

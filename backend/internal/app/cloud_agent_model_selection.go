@@ -7,7 +7,7 @@ import (
 
 // Keep cross-field validation server-side rather than adding provider-specific
 // root schema combinators. The same contract is advertised by both media tools.
-const cloudAgentModelSelectionDescription = "模型选择必填：优先原样复制 model_list 返回的 selectionId（服务端签发的一次性凭证，不要修改其中任何字符）。兼容期也接受把 selection 展开成顶层字段：非空 logicalModelId，或同时提供非空 channelId 和 channelModelKey。selectionId 与展开字段互斥，未使用的选择字段省略或传空字符串，不得传 null 或仅含空白的字符串。缺失、混用、被改写或不完整均在提交前拒绝，不会自动选择或切换模型。"
+var cloudAgentModelSelectionDescription = cloudAgentToolText("model_selection")
 
 // validateCloudAgentModelSelection 校验并**归一化**模型选择：优先解开 selectionId，
 // 否则沿用旧的三字段契约。归一化后下游代码只看到三个字段，不需要知道凭证存在。

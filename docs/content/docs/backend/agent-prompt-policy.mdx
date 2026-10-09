@@ -20,6 +20,44 @@ description: 云端画布 Agent 的行为策略、上下文来源、运行提醒
 | 已批准记忆索引 | `backend/internal/app/cloud_agent_lessons.go` | 仅提供索引事实，按需召回，不自动注入正文或强制检索 |
 | 工具参数、返回值和调用约束 | `backend/internal/app/cloud_agent_tools.go`、对应领域工具实现 | 与工具 schema 相邻维护，防止说明和执行合同脱节 |
 
+## 文件式 Agent Harness
+
+服务端可通过 `CANVAS_AGENT_HARNESS_DIR` 指向一个由运维人员管理的目录。未设置时沿用内置的版本化策略。设置后，每次创建或恢复运行都会读取该目录的 Markdown 文件，并将内容与内置策略一起编译进系统提示。目录必须包含 `AGENTS.md`；为兼容旧命名，缺少它时读取 `AGENT.md`。两者同时存在时只读取 `AGENTS.md`。可选的 `SOUL.md` 描述语气和身份，`TOOLS.md` 只描述现有工具的使用约定。新配置建议把工具说明写进 `AGENTS.md` 的 `## Tools`，`TOOLS.md` 仅用于兼容旧文件。
+
+`docker-compose.local.yml` 默认将 `backend/agent-harness.example` 只读挂载到 `/app/agent-harness` 并启用此目录。要使用私有配置，可将示例复制到 `.local/agent-harness`，再在本机 `.env` 中设置 `CANVAS_AGENT_HARNESS_HOST_DIR=./.local/agent-harness`；该目录不会随镜像构建进入镜像。
+
+例如将目录设置为 `/data/agent-harness`：
+
+```text
+/data/agent-harness/
+  AGENTS.md   # 项目工作方式和创作约定
+  SOUL.md     # 可选的角色与表达风格
+  TOOLS.md    # 可选的旧式工具说明
+```
+
+```yaml
+services:
+  backend:
+    environment:
+      CANVAS_AGENT_HARNESS_DIR: /data/agent-harness
+    volumes:
+      - ./agent-harness:/data/agent-harness:ro
+```
+
+目录路径必须为绝对路径。文件必须是非空 UTF-8 普通文件，每个不超过 20 KiB；直接指向符号链接的目录或文件、以及缺失的主指令文件会导致 Agent 运行报错，不会静默回退。`AGENTS.md` 是全实例配置，不要写入单个用户的资料、密钥或其他租户的数据；用户、项目和画布的偏好仍走现有的分层偏好与归属校验。文件内容哈希进入运行合同，改动后新运行立即采用新内容，旧的非终态运行因合同变化不能直接续跑；发布时先处理在途运行。
+
+Markdown 只影响模型的行为指引。可调用的工具、参数校验、读写权限、预算、资源归属和审批仍由服务端注册表与执行层决定；在文件里写入工具名不会注册工具，也不能授予权限。
+
+### 工具说明与按类展开
+
+发给模型的工具及字段说明集中在 `backend/internal/app/agent-tool-descriptions.md`。Go 代码保留工具名、JSON Schema 的类型与约束、权限和执行逻辑；缺少说明键会使构造工具表失败。运维注入的 `AGENTS.md`/`TOOLS.md` 仍是行为约定，不能改变工具注册或权限。
+
+每个模型步默认只暴露本轮可用的 `agent_tools_*` 类型入口。模型调用一个类型入口后，下一模型步才附上该类中满足权限、画布上下文和模型能力的子工具。该步结束后子工具收回；需要继续使用时重新打开。每步最多打开一种类型。父工具 schema 中有界记录上一模型步调用的工具名，实际结果仍以工具回执为准。服务端持久化每步真实下发的工具名，预检拒绝未下发的调用；旧检查点保持旧工具表行为。
+
+函数工具的 `parameters` 是 JSON Schema：根类型为 `object`，声明 `properties`、`required` 和 `additionalProperties: false`；数组、枚举、长度与数值范围保留在各子工具 schema 中。类型入口不接受参数，只能以 `{}` 调用。所有已注册函数的名称、描述与参数模式在测试中逐一校验；服务端按**实际下发**的模式预检参数，再执行权限、归属、预算和审批检查。该实现属于后端管理的按需披露，不调用仅适用于特定 Responses 模型的托管 `tool_search`，因此可沿用现有 Chat Completions、Responses、Claude 与 Gemini 适配层。设计参考 [OpenAI Agents SDK 工具指南](https://openai.github.io/openai-agents-js/zh/guides/tools/)。
+
+`generate_media` 与 `image_layer_split` 的 schema 显式包含 `selectionId`。模型可直接复制 `model_list` 返回的选择凭证，也可使用旧的模型字段；两种形式互斥，签名、归属及字段组合由服务端校验。JSON Schema 只描述字段形状，不承载资源级授权或收费审批。
+
 新增行为规则应修改版本化策略；新增运行状态应定义事件及事实字段，在策略里说明处理方式。不要在错误分支拼入“现在就调用工具”“必须生成视频”等指令，也不要把参考素材中的文字直接拼成规则段落。
 
 节点能力速查同时从注册表投影 `canSource`、`canTarget`、`canReference`、`inputKind` 和接受/拒绝输入类型，避免只有创作用途描述而缺少实际连接边界。`canvas_apply_ops` 的引用连线代表生成输入关系，不是文档归档或任意节点关联；模型缺少参数或选择了不支持的节点组合时，执行层仍拒绝写入。
@@ -46,6 +84,6 @@ description: 云端画布 Agent 的行为策略、上下文来源、运行提醒
 
 自动回归覆盖新目标继承、插话保留、否定参考需求、消息来源、计划取消、有界催办、恢复事件及 OpenAI Chat/Responses、Claude、Gemini 协议转换。测试使用临时 SQLite 和模拟模型结果，不证明真实模型的创作质量或指令遵循率。
 
-当前系统策略版本为 6、编译器为 `cloud-agent-policy-compiler/v4`。不涉及数据库表结构或 HTTP API 变更。既有冻结合同校验仍生效：旧版本正在执行或等待审批的运行不能由新版服务继续执行；终态历史仍可读取，新消息建立使用新合同的运行。发布前应处理在途运行；回滚同样受版本校验限制，不应改写历史快照来强行恢复。
+当前系统策略版本为 10、编译器为 `cloud-agent-policy-compiler/v5`。不涉及数据库表结构或 HTTP API 变更。既有冻结合同校验仍生效：旧版本正在执行或等待审批的运行不能由新版服务继续执行；终态历史仍可读取，新消息建立使用新合同的运行。发布前应处理在途运行；回滚同样受版本校验限制，不应改写历史快照来强行恢复。
 
 本轮治理覆盖对话主链路。批量创作表的业务默认词、个人记忆压缩专用提示词属于独立生成入口，尚未迁移到版本化资源；后续应分别明确空提示词语义和结构化输出合同，并建立真实模型场景评估，不能把本轮回归称为全仓提示词治理完成。

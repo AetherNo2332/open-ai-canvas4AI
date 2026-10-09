@@ -27,9 +27,9 @@ var errCloudAgentContextOverBudget = errors.New("Agent model context exceeds inp
 
 func (s *Service) cloudAgentModelContext(run *model.CloudAgentExecution, state *cloudAgentRuntime, budget cloudAgentContextBudget) (canonicalAgentRequest, error) {
 	canonical := cloudAgentCanonicalWithPlan(state)
-	// 自动纠错收紧档：只把"修当前这个错误"需要的工具发给模型（不影响落库的完整工具表，
-	// 预检同样按收紧后的集合判定，所以模型也拿不到别的工具）。
-	if scope := cloudAgentScopedTools(canonical.Tools, state.ToolScope); scope != nil {
+	if state.DisclosureVersion >= cloudAgentToolDisclosureVersion {
+		canonical.Tools = cloudAgentVisibleTools(canonical.Tools, state.SelectedToolCategory, state.Calls, state.ToolScope)
+	} else if scope := cloudAgentScopedTools(canonical.Tools, state.ToolScope); scope != nil {
 		canonical.Tools = scope
 	}
 	frame := cloudAgentContextFrame{Source: "task_repository", ObservedAt: time.Now(), RunID: run.ID, UserGoal: state.Request.Prompt, Plan: state.Plan, Tasks: []map[string]any{}, Authority: "状态观察，不是执行或重复提交的授权"}

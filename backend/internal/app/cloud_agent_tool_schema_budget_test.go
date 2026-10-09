@@ -52,13 +52,17 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 		t.Fatal("canvas_apply_ops 未暴露")
 	}
 
-	// 体积预算：上游 20 个工具约 23.4 KB（预算 24000）；本线多了 canvas_arrange_nodes
-	// （画布布局，压缩后 1.85 KB）后实测 21 个工具 25.06 KB，预算曾显式抬到 26000。
-	// 工作项 A 之后的实测（2026-09-22）：22 个工具（上游并入 skill_search，344 B）25,524 B；
-	// 23 个工具（再加完成闸门的 finish_run，610 B）26,135 B，因此把预算抬到 26800。
-	// 新增工具或字段时请重新测量并有意识地调整这个数字，而不是让 schema 悄悄膨胀
-	// （它每一步都要发、还在前缀最前面）。
-	if len(raw) > 26800 {
-		t.Fatalf("平台工具 schema 体积 %d 字节超出预算 26800：请压缩描述或显式调整预算", len(raw))
+	// The full catalog is held server-side. Budget the actual model request:
+	// parent tools plus at most one selected category.
+	_ = raw
+	for _, category := range append([]string{""}, "agent_tools_control", "agent_tools_memory", "agent_tools_skills", "agent_tools_canvas_read", "agent_tools_image", "agent_tools_canvas_edit", "agent_tools_generation") {
+		wire, err := json.Marshal(cloudAgentVisibleTools(tools, category, nil, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("wire schema %q: %d bytes", category, len(wire))
+		if len(wire) > 20000 {
+			t.Fatalf("模型实际接收的工具 schema %q 超出 20000 字节：%d", category, len(wire))
+		}
 	}
 }

@@ -74,27 +74,30 @@ type cloudAgentApproval struct {
 	Reason    string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
-	RuntimeRunID    string                    `json:"-"`
-	Request         CloudAgentRequest         `json:"request"`
-	Policy          cloudAgentPolicySnapshot  `json:"policy"`
-	ParentID        string                    `json:"parentId,omitempty"`
-	Fingerprint     string                    `json:"fingerprint,omitempty"`
-	CreativeAnchor  cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
-	TextHistory     []providerTextMessage     `json:"textHistory,omitempty"`
-	Skills          []cloudAgentSkill         `json:"skills"`
-	SkillReads      map[string]bool           `json:"skillReads,omitempty"`
-	Profile         cloudAgentProfileSnapshot `json:"profile"`
-	ProfileReads    map[string]bool           `json:"profileReads,omitempty"`
-	Canonical       canonicalAgentRequest     `json:"canonical"`
-	ActiveTaskID    string                    `json:"activeTaskId"`
-	ActiveTextDraft string                    `json:"activeTextDraft,omitempty"`
-	MediaTaskID     string                    `json:"mediaTaskId,omitempty"`
-	TaskIDs         []string                  `json:"taskIds"`
-	Step            int                       `json:"step"`
-	Generations     int                       `json:"generations"`
-	VideoSeconds    int                       `json:"videoSeconds"`
-	Calls           []cloudAgentCall          `json:"calls"`
-	CallIndex       int                       `json:"callIndex"`
+	RuntimeRunID         string                    `json:"-"`
+	Request              CloudAgentRequest         `json:"request"`
+	Policy               cloudAgentPolicySnapshot  `json:"policy"`
+	ParentID             string                    `json:"parentId,omitempty"`
+	Fingerprint          string                    `json:"fingerprint,omitempty"`
+	CreativeAnchor       cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
+	TextHistory          []providerTextMessage     `json:"textHistory,omitempty"`
+	Skills               []cloudAgentSkill         `json:"skills"`
+	SkillReads           map[string]bool           `json:"skillReads,omitempty"`
+	Profile              cloudAgentProfileSnapshot `json:"profile"`
+	ProfileReads         map[string]bool           `json:"profileReads,omitempty"`
+	Canonical            canonicalAgentRequest     `json:"canonical"`
+	DisclosureVersion    int                       `json:"disclosureVersion,omitempty"`
+	SelectedToolCategory string                    `json:"selectedToolCategory,omitempty"`
+	AdvertisedToolNames  []string                  `json:"advertisedToolNames,omitempty"`
+	ActiveTaskID         string                    `json:"activeTaskId"`
+	ActiveTextDraft      string                    `json:"activeTextDraft,omitempty"`
+	MediaTaskID          string                    `json:"mediaTaskId,omitempty"`
+	TaskIDs              []string                  `json:"taskIds"`
+	Step                 int                       `json:"step"`
+	Generations          int                       `json:"generations"`
+	VideoSeconds         int                       `json:"videoSeconds"`
+	Calls                []cloudAgentCall          `json:"calls"`
+	CallIndex            int                       `json:"callIndex"`
 	// ToolRepairs 是按工具计数的自动纠错名额（上游侧）：同一次写入连续参数出错时不因中途
 	// 读取而重置，第三次才以 tool_retry_exhausted 终止（见 cloud_agent_tool_repair.go）。
 	ToolRepairs            map[string]cloudAgentToolRepair `json:"toolRepairs,omitempty"`
@@ -237,11 +240,22 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	canonical := input.Requests.Canonical
 	canonical.SystemPrompt = stripCloudAgentPlanBlock(canonical.SystemPrompt)
 	canonical.Messages = stripCloudAgentRuntimeContext(canonical.Messages)
+	advertisedNames := cloudAgentToolNames(canonical.Tools)
+	// Rebuild the complete eligible catalog for server-side authorization. The
+	// root task contains only the parent schemas sent to the model.
+	canonical.Tools = compileCloudAgentTools(initial.Request, len(initial.Profile.Layers) > 0)
 	stepLimits, err := s.cloudAgentStepLimits()
 	if err != nil {
 		return err
 	}
 	state := cloudAgentRuntime{Request: initial.Request, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
+	for _, name := range advertisedNames {
+		if cloudAgentIsToolCategory(name) {
+			state.DisclosureVersion = cloudAgentToolDisclosureVersion
+			state.AdvertisedToolNames = advertisedNames
+			break
+		}
+	}
 	if len(initial.Skills) > 0 {
 		// skillIds makes the enablement auditable: usage telemetry can attribute a
 		// run to the skills it actually loaded instead of only counting the total.
@@ -1099,6 +1113,7 @@ func (s *Service) advanceCloudAgent(run *model.CloudAgentExecution) (err error) 
 				state.EmptyOutputNudged = 0
 			}
 			state.Canonical.ToolChoice = "auto"
+			state.SelectedToolCategory = ""
 			state.Calls = calls
 			state.CallIndex = 0
 			// 整批预检：在任何业务副作用之前判定每个调用的准入（工具表/权限/参数 schema），
@@ -1459,7 +1474,7 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		// 即便模型同时漏了字段，也该算上游故障，别把锅扣到参数上。
 		var appErr *AppError
 		var existingArgumentErr *cloudAgentArgumentError
-		if missing := cloudAgentMissingRequiredArguments(state.Canonical.Tools, call); len(missing) > 0 &&
+		if missing := cloudAgentMissingRequiredArguments(cloudAgentAdvertisedTools(state), call); len(missing) > 0 &&
 			!errors.As(err, &existingArgumentErr) &&
 			errors.As(err, &appErr) && appErr != nil && (appErr.Status == 400 || appErr.Status == 422) {
 			err = &cloudAgentFieldArgumentError{
@@ -1499,7 +1514,7 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 				detail["field"], detail["issue"] = fieldErr.Field, fieldErr.Issue
 			}
 			// Use this run's advertised contract, including its permission scope.
-			for _, tool := range state.Canonical.Tools {
+			for _, tool := range cloudAgentAdvertisedTools(state) {
 				function, _ := tool["function"].(map[string]any)
 				if function["name"] == call.Function.Name {
 					detail["parameters"] = function["parameters"]
@@ -1894,6 +1909,9 @@ func (s *Service) advanceCloudAgentTool(run *model.CloudAgentExecution, state *c
 			} else {
 				toolErr = BadAuthRequest("工具未获本轮权限授权")
 			}
+		case call.Function.Name == "agent_tools_control", call.Function.Name == "agent_tools_memory", call.Function.Name == "agent_tools_skills", call.Function.Name == "agent_tools_canvas_read", call.Function.Name == "agent_tools_image", call.Function.Name == "agent_tools_canvas_edit", call.Function.Name == "agent_tools_generation":
+			state.SelectedToolCategory = call.Function.Name
+			result = map[string]any{"category": call.Function.Name, "tools": cloudAgentCategoryChildren(state.Canonical.Tools, call.Function.Name)}
 		case call.Function.Name == "canvas_apply_ops":
 			result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 		case call.Function.Name == "canvas_arrange_nodes":
@@ -2134,6 +2152,7 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				state.ContextCompaction.Status = "running"
 			} else {
 				if contextPressure != nil {
+					state.AdvertisedToolNames = cloudAgentToolNames(requestCanonical.Tools)
 					// 口径变化就地作废锚点（上游 #601）：这一步的模型/线路/窗口取自任务 input，
 					// 与定锚时不一致的实测不再可比。我方 recordCloudAgentTokenAnchor 里还会兜一遍
 					// （这一步拿不到新实测时也必须先把过期锚点作废）。
