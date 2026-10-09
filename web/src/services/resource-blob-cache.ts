@@ -62,9 +62,12 @@ export function peekCachedResourceObjectUrl(storageKey: string) {
 
 export function scheduleResourceBlobCache(storageKey: string, delayMs = 4_000) {
     if (!storageKey || typeof window === "undefined") return;
-    window.setTimeout(() => {
-        void getCachedResourceBlob(storageKey).catch(() => null);
-    }, Math.max(0, delayMs));
+    window.setTimeout(
+        () => {
+            void getCachedResourceBlob(storageKey).catch(() => null);
+        },
+        Math.max(0, delayMs),
+    );
 }
 
 export async function cacheResourceObjectUrl(storageKey: string) {

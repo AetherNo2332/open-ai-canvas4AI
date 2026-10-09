@@ -59,34 +59,55 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
     canvas_list_node_types: { summary: "已读取可用节点类型", failureMessage: "获取可用节点类型失败" },
     // 清单 ≠ 画面：这个工具只读到节点存在/类型/标题/规模。说成"已读取当前画布"会被读成看过图。
     canvas_get_state: { summary: "已读取画布清单（未查看画面）", failureMessage: "获取画布清单失败" },
-    canvas_read_content: { summary: ({ pending, detail }) => {
-        if (pending) return "正在读取节点正文";
-        const result = record(field(detail, "result"));
-        const { offset, nextOffset, totalCharacters, hasMore } = result;
-        if (![offset, nextOffset, totalCharacters].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) || typeof hasMore !== "boolean" || Number(offset) > Number(nextOffset) || Number(nextOffset) > Number(totalCharacters)) return "已读取正文片段（完整性未确认）";
-        if (offset === 0 && nextOffset === totalCharacters && !hasMore) return `已完整读取正文（${totalCharacters} 字符）`;
-        return `已读取正文片段（${offset}–${nextOffset} / ${totalCharacters} 字符，${hasMore ? "尚有后续" : "已到末尾"}）`;
-    }, failureMessage: "读取节点正文失败" },
-    canvas_search_nodes: { summary: ({ pending }) => pending ? "正在搜索画布节点" : "已搜索画布节点（未查看画面）", failureMessage: "搜索画布节点失败" },
-    canvas_read_drawing: { summary: ({ pending, detail }) => {
-        if (pending) return "正在读取绘图原生记录";
-        const { offset, nextOffset, totalRecords, hasMore } = record(field(detail, "result"));
-        const recordIds = toolArguments(detail).recordIds;
-        if (Array.isArray(recordIds) && recordIds.length) return `已读取指定绘图记录（${Array.isArray(record(field(detail, "result")).records) ? (record(field(detail, "result")).records as unknown[]).length : totalRecords ?? "未知"} 条）`;
-        if (![offset, nextOffset, totalRecords].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) || typeof hasMore !== "boolean" || Number(offset) > Number(nextOffset) || Number(nextOffset) > Number(totalRecords)) return "已读取绘图记录片段（完整性未确认）";
-        if (offset === 0 && nextOffset === totalRecords && !hasMore) return `已完整读取绘图记录（${totalRecords} 条）`;
-        return `已读取绘图记录片段（${offset}–${nextOffset} / ${totalRecords}，${hasMore ? "尚有后续" : "已到末尾"}）`;
-    }, failureMessage: "读取绘图原生记录失败" },
-    canvas_edit_drawing: { summary: ({ pending }) => pending ? "准备修改绘图原生内容" : "绘图内容已保存至服务端", failureMessage: "修改绘图内容失败" },
-    canvas_list_assets: { summary: ({ pending, detail }) => {
-        if (pending) return "正在查询素材库";
-        const result = record(field(detail, "result"));
-        return `已查询素材库（本页 ${Array.isArray(result.assets) ? result.assets.length : 0} 项${result.hasMore === true ? "，尚有后续" : ""}）`;
-    }, failureMessage: "查询素材库失败" },
-    canvas_bind_asset: { summary: ({ pending }) => pending ? "准备替换节点素材" : "节点素材已替换并保存至服务端", failureMessage: "替换节点素材失败" },
-    canvas_undo: { summary: ({ pending }) => pending ? "准备撤销画布操作" : "已撤销画布操作并保存至服务端", failureMessage: "撤销画布操作失败" },
-    canvas_redo: { summary: ({ pending }) => pending ? "准备重做画布操作" : "已重做画布操作并保存至服务端", failureMessage: "重做画布操作失败" },
-    canvas_create_character: { summary: ({ pending }) => pending ? "准备创建角色卡" : "角色卡已创建并保存至角色库和画布", failureMessage: "创建角色卡失败" },
+    canvas_read_content: {
+        summary: ({ pending, detail }) => {
+            if (pending) return "正在读取节点正文";
+            const result = record(field(detail, "result"));
+            const { offset, nextOffset, totalCharacters, hasMore } = result;
+            if (
+                ![offset, nextOffset, totalCharacters].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) ||
+                typeof hasMore !== "boolean" ||
+                Number(offset) > Number(nextOffset) ||
+                Number(nextOffset) > Number(totalCharacters)
+            )
+                return "已读取正文片段（完整性未确认）";
+            if (offset === 0 && nextOffset === totalCharacters && !hasMore) return `已完整读取正文（${totalCharacters} 字符）`;
+            return `已读取正文片段（${offset}–${nextOffset} / ${totalCharacters} 字符，${hasMore ? "尚有后续" : "已到末尾"}）`;
+        },
+        failureMessage: "读取节点正文失败",
+    },
+    canvas_search_nodes: { summary: ({ pending }) => (pending ? "正在搜索画布节点" : "已搜索画布节点（未查看画面）"), failureMessage: "搜索画布节点失败" },
+    canvas_read_drawing: {
+        summary: ({ pending, detail }) => {
+            if (pending) return "正在读取绘图原生记录";
+            const { offset, nextOffset, totalRecords, hasMore } = record(field(detail, "result"));
+            const recordIds = toolArguments(detail).recordIds;
+            if (Array.isArray(recordIds) && recordIds.length) return `已读取指定绘图记录（${Array.isArray(record(field(detail, "result")).records) ? (record(field(detail, "result")).records as unknown[]).length : (totalRecords ?? "未知")} 条）`;
+            if (
+                ![offset, nextOffset, totalRecords].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) ||
+                typeof hasMore !== "boolean" ||
+                Number(offset) > Number(nextOffset) ||
+                Number(nextOffset) > Number(totalRecords)
+            )
+                return "已读取绘图记录片段（完整性未确认）";
+            if (offset === 0 && nextOffset === totalRecords && !hasMore) return `已完整读取绘图记录（${totalRecords} 条）`;
+            return `已读取绘图记录片段（${offset}–${nextOffset} / ${totalRecords}，${hasMore ? "尚有后续" : "已到末尾"}）`;
+        },
+        failureMessage: "读取绘图原生记录失败",
+    },
+    canvas_edit_drawing: { summary: ({ pending }) => (pending ? "准备修改绘图原生内容" : "绘图内容已保存至服务端"), failureMessage: "修改绘图内容失败" },
+    canvas_list_assets: {
+        summary: ({ pending, detail }) => {
+            if (pending) return "正在查询素材库";
+            const result = record(field(detail, "result"));
+            return `已查询素材库（本页 ${Array.isArray(result.assets) ? result.assets.length : 0} 项${result.hasMore === true ? "，尚有后续" : ""}）`;
+        },
+        failureMessage: "查询素材库失败",
+    },
+    canvas_bind_asset: { summary: ({ pending }) => (pending ? "准备替换节点素材" : "节点素材已替换并保存至服务端"), failureMessage: "替换节点素材失败" },
+    canvas_undo: { summary: ({ pending }) => (pending ? "准备撤销画布操作" : "已撤销画布操作并保存至服务端"), failureMessage: "撤销画布操作失败" },
+    canvas_redo: { summary: ({ pending }) => (pending ? "准备重做画布操作" : "已重做画布操作并保存至服务端"), failureMessage: "重做画布操作失败" },
+    canvas_create_character: { summary: ({ pending }) => (pending ? "准备创建角色卡" : "角色卡已创建并保存至角色库和画布"), failureMessage: "创建角色卡失败" },
     task_get: { summary: "已查询任务状态", failureMessage: "查询任务状态失败" },
     canvas_apply_ops: { summary: ({ pending }) => (pending ? "准备更新画布内容" : "画布内容已保存至服务端"), failureMessage: "更新画布内容失败" },
     model_list: { summary: "已获取可用模型", failureMessage: "获取可用模型失败" },

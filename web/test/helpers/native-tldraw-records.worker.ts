@@ -14,10 +14,20 @@ self.onmessage = async () => {
         const restored = store.getStoreSnapshot().store;
         const rejected: string[] = [];
         for (const invalid of fixture.invalidCases.filter((item: { nativeRejects: boolean }) => item.nativeRejects)) {
-            try { loadSnapshot(createTLStore(), native(invalid.records) as never); } catch { rejected.push(invalid.name); }
+            try {
+                loadSnapshot(createTLStore(), native(invalid.records) as never);
+            } catch {
+                rejected.push(invalid.name);
+            }
         }
         let corruptPathRejected = false;
-        try { b64Vecs.decodePoints("a"); } catch { corruptPathRejected = true; }
+        try {
+            b64Vecs.decodePoints("a");
+        } catch {
+            corruptPathRejected = true;
+        }
         self.postMessage({ restored, rejected, corruptPathRejected, expectedRejections: fixture.invalidCases.filter((item: { nativeRejects: boolean }) => item.nativeRejects).length });
-    } catch (error) { self.postMessage({ error: String(error) }); }
+    } catch (error) {
+        self.postMessage({ error: String(error) });
+    }
 };
