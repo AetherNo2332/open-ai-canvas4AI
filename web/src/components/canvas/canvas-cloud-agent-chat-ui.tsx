@@ -84,6 +84,7 @@ export type CloudAgentChatMessage = {
     runId?: string;
     detail?: unknown;
     attachments?: CloudAgentChatAttachment[];
+    canvasReferenceNodeId?: string;
     interjection?: "sent" | "undelivered";
 };
 

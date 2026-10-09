@@ -79,6 +79,7 @@ type ImageToolHandlers = {
     onAngle: (node: CanvasNodeData) => void;
     onLighting: (node: CanvasNodeData) => void;
     onPanorama: (node: CanvasNodeData) => void;
+    onPrevis: (node: CanvasNodeData) => void;
     onViewImage: (node: CanvasNodeData) => void;
     onCopyPrompt: (node: CanvasNodeData) => void;
     onReversePrompt: (node: CanvasNodeData) => void;
@@ -114,6 +115,16 @@ function nineGridRun(node: CanvasNodeData, handlers: ImageToolHandlers, tool: Im
 }
 
 const imageToolDefinitions: ImageToolDefinition[] = [
+    {
+        id: "previs",
+        label: "生成预演台",
+        icon: () => <Layers3 className="size-3.5" />,
+        group: "primary",
+        order: 20,
+        section: "3D 预演",
+        description: "让 Agent 识别当前图片并复现为可编辑的 3D 预演台",
+        run: (node, handlers) => handlers.onPrevis(node),
+    },
     {
         id: "copyPrompt",
         section: "生成信息",

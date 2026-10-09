@@ -477,6 +477,30 @@ function InfiniteCanvasPage() {
         openAgent();
         setContextMenu(null);
     }, [agentMentionReferences, openAgent]);
+
+    const sendImageToPrevisAgent = useCallback((node: CanvasNodeData) => {
+        if (node.type !== CanvasNodeType.Image) return;
+        const reference = agentMentionReferences.find((item) => item.nodeId === node.id && item.kind === "image");
+        if (!reference) {
+            message.warning("这张图片暂时没有可供 Agent 引用的画布资源");
+            return;
+        }
+        if (!selectedNodeIdsRef.current.has(node.id)) {
+            const selection = new Set([node.id]);
+            selectedNodeIdsRef.current = selection;
+            setSelectedNodeIds(selection);
+        }
+        setAgentPrefillRequest((current) => ({
+            id: (current?.id ?? 0) + 1,
+            text: buildImageToPrevisAgentPrompt(reference),
+            displayText: buildImageToPrevisDisplayText(),
+            canvasReferenceNodeId: reference.nodeId,
+            autoSubmit: true,
+            requiresVision: true,
+        }));
+        openAgent();
+        setContextMenu(null);
+    }, [agentMentionReferences, message, openAgent]);
     // 修复素材关联仍遵守当前画布版本，不能替用户确认覆盖云端的新内容。
     const confirmForceSaveCanvas = useCallback(() => {
         modal.confirm({
@@ -2999,6 +3023,7 @@ function InfiniteCanvasPage() {
                                 setLightingNodeId((current) => (current === node.id ? null : node.id));
                             }}
                             onPanorama={openPanoramaConfig}
+                            onPrevis={sendImageToPrevisAgent}
                             onViewImage={(node) => setPreviewNodeId(node.id)}
                             onExtractVideoFrames={openVideoFrameExtractor}
                             onExtractAudioFromVideo={(node) => void extractAudioFromVideo(node)}

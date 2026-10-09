@@ -54,8 +54,10 @@ import {
     saveCloudAgentPendingSubmission,
     type CloudAgentConversation,
     type CloudAgentPendingSubmission,
+    type CloudAgentMessagePresentation,
 } from "@/services/cloud-agent-conversations";
 import { logicalModelIDForConfig, modelOptionName, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { selectImageInspectionModel } from "@/lib/canvas/image-to-previs-agent";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -653,7 +655,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     const pending = await loadCloudAgentPendingSubmission(canvasId, current.id);
                     if (!active) return;
                     pendingSubmission.current = pending;
-                    if (pending?.request) setPrompt(pending.request.prompt);
+                    if (pending?.request) setPrompt(pending.displayText || pending.request.prompt);
                 } else {
                     setActiveConversationId(nanoid());
                     pendingSubmission.current = null;
@@ -720,7 +722,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     if (event.seq > lastSeqRef.current + 1) canvasSyncRef.current?.reconcile();
                     lastSeqRef.current = event.seq;
                 }
-                setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
+                setMessages((current) => current.some((item) => item.id === `stream-error-${run.id}`) ? current.filter((item) => item.id !== `stream-error-${run.id}`) : current);
                 setContextUsage((current) => reduceAgentContextUsage(current, event));
                 applyAgentEvent(event, setMessages, setRun, setApproval, setPrompt);
                 if (event.type.startsWith("subagent_") || ["run_completed", "run_failed", "run_cancelled"].includes(event.type)) {
@@ -784,8 +786,14 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         }
     };
 
-    const submit = async (override?: string) => {
-        const value = (override ?? prompt).trim();
+    const submit = async (override?: string, options?: CloudAgentMessagePresentation & { requiresVision?: boolean }) => {
+        const draft = (override ?? prompt).trim();
+        const pendingRequest = pendingSubmission.current;
+        const prefilled = prefilledSubmissionRef.current;
+        const matchesPending = pendingRequest?.request && pendingRequest.displayText === draft;
+        const matchesPrefill = prefilled?.displayText === draft;
+        const value = matchesPending ? pendingRequest.request!.prompt : matchesPrefill ? prefilled!.text : draft;
+        options = matchesPending ? { ...options, displayText: pendingRequest.displayText, canvasReferenceNodeId: pendingRequest.canvasReferenceNodeId } : matchesPrefill ? prefilled! : options;
         if (running) {
             await interject(value);
             return;
@@ -800,6 +808,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         setBusy(true);
         let accepted = false;
         try {
+            const effectiveModel = options?.requiresVision ? selectImageInspectionModel(config, selectedModel) : selectedModel;
+            if (options?.requiresVision && !effectiveModel) throw new Error("当前没有配置支持图片输入的文本模型，请在模型能力设置中为一个文本模型开启图片输入后重试");
             const pending = pendingSubmission.current;
             // An ambiguous previous POST owns its body/key until reconciled.
             // Editing model settings or prompt must not silently create a new charge.
@@ -813,16 +823,16 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 if (selectedSkillIds.length && !capabilities.skills) throw new Error("当前后端尚未接入技能库");
                 await saveRemoteUserDataNow();
                 if (currentScope.current !== scope) return;
-                const agentConfig = { ...config, model: selectedModel };
-                const requestConfig = resolveModelRequestConfig(agentConfig, selectedModel);
+                const agentConfig = { ...config, model: effectiveModel };
+                const requestConfig = resolveModelRequestConfig(agentConfig, effectiveModel);
                 const logicalModelId = logicalModelIDForConfig(agentConfig);
                 const input = {
                     canvasId,
                     prompt: value,
                     reasoningMode: reasoningSupported ? reasoningMode : "off",
                     profileRevision: profileView.revision,
-                    model: modelOptionName(selectedModel) || undefined,
-                    ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(selectedModel) || undefined } : {}),
+                    model: modelOptionName(effectiveModel) || undefined,
+                    ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(effectiveModel) || undefined } : {}),
                     skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
                     permissionMode,
                     subagentEnabled: subagentsAvailable && subagentPolicy?.enabled === true,
@@ -864,6 +874,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             ]);
             if (currentScope.current !== scope) return;
             setPrompt("");
+            prefilledSubmissionRef.current = null;
             setMessages(nextMessages);
             const result = submission.parentRunId ? await sendAgentMessage(submission.parentRunId, request) : await createAgentRun(request);
             accepted = true;
@@ -896,6 +907,13 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             if (currentScope.current === scope) setBusy(false);
         }
     };
+
+    useEffect(() => {
+        const pending = pendingAutoSubmit;
+        if (!pending || !historyHydrated || !pendingHydrated || profileLoading || !profileView || profileError || busy || running) return;
+        setPendingAutoSubmit(null);
+        void submit(pending.text, { requiresVision: pending.requiresVision, displayText: pending.displayText, canvasReferenceNodeId: pending.canvasReferenceNodeId });
+    }, [busy, historyHydrated, pendingAutoSubmit, pendingHydrated, profileError, profileLoading, profileView, running]);
 
     const stop = async () => {
         const activeRun = run;
@@ -1026,7 +1044,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 if (currentScope.current === `${canvasId}:${conversation.id}`) {
                     pendingSubmission.current = pending;
                     setPendingHydrated(true);
-                    if (pending?.request) setPrompt(pending.request.prompt);
+                    if (pending?.request) setPrompt(pending.displayText || pending.request.prompt);
                 }
             })
             .catch((cause) => {
