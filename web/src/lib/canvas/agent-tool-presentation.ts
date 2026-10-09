@@ -18,6 +18,15 @@ export const AGENT_TOOL_NAMES = [
     "canvas_edit_batch_table",
     "canvas_edit_storyboard",
     "canvas_get_state",
+    "canvas_read_content",
+    "canvas_search_nodes",
+    "canvas_read_drawing",
+    "canvas_edit_drawing",
+    "canvas_list_assets",
+    "canvas_bind_asset",
+    "canvas_undo",
+    "canvas_redo",
+    "canvas_create_character",
     "canvas_inspect_image",
     "canvas_list_node_types",
     "canvas_read_batch_table",
@@ -50,6 +59,34 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
     canvas_list_node_types: { summary: "已读取可用节点类型", failureMessage: "获取可用节点类型失败" },
     // 清单 ≠ 画面：这个工具只读到节点存在/类型/标题/规模。说成"已读取当前画布"会被读成看过图。
     canvas_get_state: { summary: "已读取画布清单（未查看画面）", failureMessage: "获取画布清单失败" },
+    canvas_read_content: { summary: ({ pending, detail }) => {
+        if (pending) return "正在读取节点正文";
+        const result = record(field(detail, "result"));
+        const { offset, nextOffset, totalCharacters, hasMore } = result;
+        if (![offset, nextOffset, totalCharacters].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) || typeof hasMore !== "boolean" || Number(offset) > Number(nextOffset) || Number(nextOffset) > Number(totalCharacters)) return "已读取正文片段（完整性未确认）";
+        if (offset === 0 && nextOffset === totalCharacters && !hasMore) return `已完整读取正文（${totalCharacters} 字符）`;
+        return `已读取正文片段（${offset}–${nextOffset} / ${totalCharacters} 字符，${hasMore ? "尚有后续" : "已到末尾"}）`;
+    }, failureMessage: "读取节点正文失败" },
+    canvas_search_nodes: { summary: ({ pending }) => pending ? "正在搜索画布节点" : "已搜索画布节点（未查看画面）", failureMessage: "搜索画布节点失败" },
+    canvas_read_drawing: { summary: ({ pending, detail }) => {
+        if (pending) return "正在读取绘图原生记录";
+        const { offset, nextOffset, totalRecords, hasMore } = record(field(detail, "result"));
+        const recordIds = toolArguments(detail).recordIds;
+        if (Array.isArray(recordIds) && recordIds.length) return `已读取指定绘图记录（${Array.isArray(record(field(detail, "result")).records) ? (record(field(detail, "result")).records as unknown[]).length : totalRecords ?? "未知"} 条）`;
+        if (![offset, nextOffset, totalRecords].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) || typeof hasMore !== "boolean" || Number(offset) > Number(nextOffset) || Number(nextOffset) > Number(totalRecords)) return "已读取绘图记录片段（完整性未确认）";
+        if (offset === 0 && nextOffset === totalRecords && !hasMore) return `已完整读取绘图记录（${totalRecords} 条）`;
+        return `已读取绘图记录片段（${offset}–${nextOffset} / ${totalRecords}，${hasMore ? "尚有后续" : "已到末尾"}）`;
+    }, failureMessage: "读取绘图原生记录失败" },
+    canvas_edit_drawing: { summary: ({ pending }) => pending ? "准备修改绘图原生内容" : "绘图内容已保存至服务端", failureMessage: "修改绘图内容失败" },
+    canvas_list_assets: { summary: ({ pending, detail }) => {
+        if (pending) return "正在查询素材库";
+        const result = record(field(detail, "result"));
+        return `已查询素材库（本页 ${Array.isArray(result.assets) ? result.assets.length : 0} 项${result.hasMore === true ? "，尚有后续" : ""}）`;
+    }, failureMessage: "查询素材库失败" },
+    canvas_bind_asset: { summary: ({ pending }) => pending ? "准备替换节点素材" : "节点素材已替换并保存至服务端", failureMessage: "替换节点素材失败" },
+    canvas_undo: { summary: ({ pending }) => pending ? "准备撤销画布操作" : "已撤销画布操作并保存至服务端", failureMessage: "撤销画布操作失败" },
+    canvas_redo: { summary: ({ pending }) => pending ? "准备重做画布操作" : "已重做画布操作并保存至服务端", failureMessage: "重做画布操作失败" },
+    canvas_create_character: { summary: ({ pending }) => pending ? "准备创建角色卡" : "角色卡已创建并保存至角色库和画布", failureMessage: "创建角色卡失败" },
     task_get: { summary: "已查询任务状态", failureMessage: "查询任务状态失败" },
     canvas_apply_ops: { summary: ({ pending }) => (pending ? "准备更新画布内容" : "画布内容已保存至服务端"), failureMessage: "更新画布内容失败" },
     model_list: { summary: "已获取可用模型", failureMessage: "获取可用模型失败" },
@@ -76,12 +113,12 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
 };
 
 /** 画布上"读到清单"的只读工具：无像素，chip 必须是存在式。 */
-const AGENT_CANVAS_READ_TOOLS = new Set(["canvas_get_state", "canvas_list_node_types", "canvas_read_storyboard", "canvas_read_batch_table"]);
+const AGENT_CANVAS_READ_TOOLS = new Set(["canvas_get_state", "canvas_list_node_types", "canvas_read_storyboard", "canvas_read_batch_table", "canvas_read_content", "canvas_search_nodes", "canvas_read_drawing"]);
 /** 非画布信息的只读工具（模型、任务、技能、偏好）。`skills_load` 是历史事件名，保留兼容。 */
-const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "agent_profile_read", "read", "native_skill_enabled"]);
+const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "agent_profile_read", "read", "native_skill_enabled", "canvas_list_assets"]);
 const AGENT_VISION_TOOLS = new Set(["canvas_inspect_image"]);
-const AGENT_CREATE_TOOLS = new Set(["generate_media", "canvas_create_storyboard", "image_annotation_render"]);
-const AGENT_OPERATE_TOOLS = new Set(["canvas_apply_ops", "canvas_arrange_nodes", "canvas_edit_storyboard", "canvas_edit_batch_table", "image_layer_split", "image_text_detect"]);
+const AGENT_CREATE_TOOLS = new Set(["generate_media", "canvas_create_storyboard", "image_annotation_render", "canvas_create_character"]);
+const AGENT_OPERATE_TOOLS = new Set(["canvas_apply_ops", "canvas_arrange_nodes", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_edit_drawing", "canvas_bind_asset", "canvas_undo", "canvas_redo", "image_layer_split", "image_text_detect"]);
 
 export type AgentToolCategory = "read" | "vision" | "create" | "operate" | "other";
 
@@ -126,9 +163,9 @@ export function agentToolCategory(toolName: string, detail?: unknown): AgentTool
     if (AGENT_CREATE_TOOLS.has(toolName)) return "create";
     if (toolName === "canvas_apply_ops") {
         const actions = record(detail).actions;
-        if (Array.isArray(actions) && actions.some((item) => record(item).action === "created" || record(item).action === "generating")) return "create";
+        if (Array.isArray(actions) && actions.some((item) => ["created", "duplicated", "generating"].includes(String(record(item).action)))) return "create";
         const ops = toolArguments(detail).ops;
-        if (Array.isArray(ops) && ops.some((item) => record(item).type === "add_node")) return "create";
+        if (Array.isArray(ops) && ops.some((item) => ["add_node", "duplicate_node"].includes(String(record(item).type)))) return "create";
         return "operate";
     }
     if (AGENT_OPERATE_TOOLS.has(toolName)) return "operate";
@@ -137,7 +174,7 @@ export function agentToolCategory(toolName: string, detail?: unknown): AgentTool
 
 export function agentToolCategoryLabel(toolName: string, category: AgentToolCategory): string {
     if (category === "vision") return "查看画面";
-    if (category === "read") return AGENT_CANVAS_READ_TOOLS.has(toolName) ? "读取清单" : "读取信息";
+    if (category === "read") return toolName === "canvas_read_content" ? "读取正文" : toolName === "canvas_read_drawing" ? "读取绘图" : toolName === "canvas_search_nodes" ? "搜索节点" : AGENT_CANVAS_READ_TOOLS.has(toolName) ? "读取清单" : "读取信息";
     if (category === "create") return "创建节点";
     if (category === "operate") return "修改画布";
     return "其他操作";

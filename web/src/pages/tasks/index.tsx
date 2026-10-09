@@ -14,7 +14,7 @@ import { formatTaskKind, generationTaskStatusLabel, mediaDeliverySummary, operat
 import { buildVideoOperationPrompt } from "@/lib/prompts";
 import { backendProviderConfig, logicalModelIDForConfig } from "@/services/api/generation-task";
 
-import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryFailedVideoProviderTask, queryGenerationTask, retryGenerationTask, recoverGenerationTaskMedia, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
+import { createGenerationTask, formatTaskLog, listGenerationTasks, listTaskLogs, queryFailedVideoProviderTask, queryGenerationTask, retryGenerationTask, recoverGenerationTaskMedia, recoverPrevisWriteback, type CreateTaskInput, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -303,6 +303,7 @@ export default function TasksPage() {
         setActingId(id);
         try {
             const currentTask = await queryGenerationTask(id);
+            if (currentTask.type === "previs_render") {await openTaskDetail(currentTask); return;}
             const savingMedia = Boolean(currentTask.mediaStage);
             const next = currentTask.status === "queued" || currentTask.status === "running" || currentTask.status === "succeeded"
                 ? currentTask
@@ -317,6 +318,16 @@ export default function TasksPage() {
         } finally {
             setActingId("");
         }
+    };
+
+    const repairPrevis = async (task: GenerationTask, mode: "link" | "independent") => {
+        setActingId(task.id);
+        try {
+            await recoverPrevisWriteback(task.id, mode);
+            await loadTasks(false);
+            message.success("已提交只回写恢复，采用原视频，不重新渲染");
+        } catch (error) {message.error(error instanceof Error ? error.message : "恢复失败");}
+        finally {setActingId("");}
     };
 
     const queryProviderTask = async (task: GenerationTask) => {
@@ -500,6 +511,10 @@ export default function TasksPage() {
                             {detailTask.providerCancelRequestedAt ? <InfoItem label="请求取消时间" value={formatDate(detailTask.providerCancelRequestedAt)} /> : null}
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
+                            {detailTask.type === "previs_render" && detailTask.status === "failed" && (parseTaskInput(detailTask.resultJson)?.outputReady === true || parseTaskInput(detailTask.resultJson)?.rendererOutputReady === true) ? <>
+                                <Button loading={actingId === detailTask.id} onClick={() => void repairPrevis(detailTask, "link")}>只回写原镜头</Button>
+                                <Button loading={actingId === detailTask.id} onClick={() => void repairPrevis(detailTask, "independent")}>保留为独立旧版本</Button>
+                            </> : null}
                             {detailTask.canRecoverMedia ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void runAction(detailTask.id)}>重试保存</Button> : null}
                             {canQueryProviderTask(detailTask) ? <Button icon={<RefreshCw className="size-4" />} loading={actingId === detailTask.id} onClick={() => void queryProviderTask(detailTask)}>手动查询任务</Button> : null}
                             {isTaskFailed(detailTask) ? <Button icon={<Bug className="size-4" />} onClick={() => navigate(`/settings?section=diagnostics&taskId=${encodeURIComponent(detailTask.id)}${detailTask.projectId ? `&projectId=${encodeURIComponent(detailTask.projectId)}` : ""}`)}>导出诊断包</Button> : null}
@@ -568,7 +583,7 @@ function TaskResultMedia({ value, taskType }: { value?: string; taskType: string
             <Typography.Text strong>生成结果</Typography.Text>
             <div className="mt-2 grid max-h-[360px] grid-cols-2 gap-2 overflow-auto rounded-lg bg-stone-950 p-2 md:grid-cols-3">
                 {urls.map((url, index) => {
-                    const isVideo = isVideoResult(url, taskType);
+                    const isVideo = taskType === "previs_render" ? index === 0 : isVideoResult(url, taskType);
                     return (
                         <MediaPreview
                             key={`${url}-${index}`}
@@ -593,6 +608,10 @@ function resultMediaUrls(value?: string) {
         parsed = JSON.parse(value);
     } catch {
         parsed = value;
+    }
+    const previs = asRecord(parsed);
+    if (previs && typeof previs.resourceId === "string" && typeof previs.sceneId === "string") {
+        return [previs.resourceId, previs.previewResourceId].filter((id): id is string => typeof id === "string" && /^[A-Za-z0-9_-]+$/.test(id)).map((id) => `/api/resources/${encodeURIComponent(id)}/file`);
     }
     const urls: string[] = [];
     const visit = (item: unknown, key = "") => {

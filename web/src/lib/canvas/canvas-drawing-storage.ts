@@ -35,8 +35,17 @@ export type CanvasDrawingRender = CanvasDrawingRenderDraft & {
 const drawingStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_documents" });
 const drawingPreviewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_previews" });
 const drawingRenderStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_generation_renders" });
+const drawingPublicationStore = localforage.createInstance({ name: "infinite-canvas", storeName: "drawing_publications" });
 const INITIAL_DRAWING_RENDER_MAX_DIMENSION = 2048;
 const INITIAL_DRAWING_RENDER_PADDING = 24;
+const drawingWrites = new Map<string, Promise<unknown>>();
+
+function withDrawingWrite<T>(key: string, write: () => Promise<T>): Promise<T> {
+    const pending = (drawingWrites.get(key) || Promise.resolve()).catch(() => {}).then(write);
+    drawingWrites.set(key, pending);
+    void pending.finally(() => { if (drawingWrites.get(key) === pending) drawingWrites.delete(key); }).catch(() => {});
+    return pending;
+}
 
 type LegacyCanvasDrawingSnapshot = Omit<CanvasDrawingSnapshot, "version" | "engine"> & { version: 1 };
 
@@ -59,30 +68,56 @@ export async function saveCanvasDrawing(
     preview?: Blob | null,
     render?: CanvasDrawingRenderDraft | null,
 ) {
-    const summary = summarizeCanvasDrawing(engine, snapshot);
-    const revision = (previous?.revision || 0) + 1;
-    const updatedAt = new Date().toISOString();
-    const next: CanvasDrawingSnapshot = {
-        version: 2,
-        engine,
-        snapshot,
-        revision,
-        updatedAt,
-        shapeCount: summary.shapeCount,
-        pageCount: Math.min(summary.pageCount, 1),
-    };
-    await drawingStore.setItem(drawingKey(projectId, drawingId), next);
-    if (preview) await drawingPreviewStore.setItem(drawingKey(projectId, drawingId), preview);
-    else if (preview === null) await drawingPreviewStore.removeItem(drawingKey(projectId, drawingId));
-    if (render) {
-        await drawingRenderStore.setItem<CanvasDrawingRender>(drawingKey(projectId, drawingId), {
-            ...render,
-            version: 1,
+    const key = drawingKey(projectId, drawingId);
+    return withDrawingWrite(key, async () => {
+        const summary = summarizeCanvasDrawing(engine, snapshot);
+        const current = await loadCanvasDrawing(projectId, drawingId);
+        const revision = Math.max(previous?.revision || 0, current?.revision || 0) + 1;
+        const updatedAt = new Date().toISOString();
+        const next: CanvasDrawingSnapshot = {
+            version: 2,
+            engine,
+            snapshot,
             revision,
             updatedAt,
-        });
-    } else if (render === null) await drawingRenderStore.removeItem(drawingKey(projectId, drawingId));
-    return next;
+            shapeCount: summary.shapeCount,
+            pageCount: summary.pageCount,
+        };
+        await drawingStore.setItem(key, next);
+        await drawingPublicationStore.removeItem(key);
+        if (preview) await drawingPreviewStore.setItem(key, preview);
+        else if (preview === null) await drawingPreviewStore.removeItem(key);
+        if (render) await drawingRenderStore.setItem<CanvasDrawingRender>(key, { ...render, version: 1, revision, updatedAt });
+        else if (render === null) await drawingRenderStore.removeItem(key);
+        return next;
+    });
+}
+
+export async function restoreCanvasDrawingDocument(projectId: string, drawingId: string, document: CanvasDrawingSnapshot) {
+    const key = drawingKey(projectId, drawingId);
+    return withDrawingWrite(key, async () => {
+        const current = await loadCanvasDrawing(projectId, drawingId);
+        const published = current && await isCanvasDrawingPublished(projectId, drawingId, current);
+        if (current && !published && (current.revision > document.revision || current.revision === document.revision && current.updatedAt >= document.updatedAt)) return current;
+        await drawingStore.setItem(key, document);
+        await drawingPublicationStore.setItem(key, { revision: document.revision, updatedAt: document.updatedAt });
+        await Promise.all([drawingPreviewStore.removeItem(key), drawingRenderStore.removeItem(key)]);
+        return document;
+    });
+}
+
+export async function isCanvasDrawingPublished(projectId: string, drawingId: string, document: CanvasDrawingSnapshot) {
+    const published = await drawingPublicationStore.getItem<{ revision: number; updatedAt: string }>(drawingKey(projectId, drawingId));
+    return published?.revision === document.revision && published?.updatedAt === document.updatedAt;
+}
+
+export async function markCanvasDrawingPublished(projectId: string, drawingId: string, document: CanvasDrawingSnapshot) {
+    const key = drawingKey(projectId, drawingId);
+    return withDrawingWrite(key, async () => {
+        const current = await loadCanvasDrawing(projectId, drawingId);
+        if (current?.revision !== document.revision || current.updatedAt !== document.updatedAt) return;
+        await drawingPublicationStore.setItem(key, { revision: document.revision, updatedAt: document.updatedAt });
+    });
 }
 
 export async function createCanvasDrawingFromImage(
@@ -134,12 +169,13 @@ export async function removeCanvasDrawing(projectId: string, drawingId: string) 
         drawingStore.removeItem(drawingKey(projectId, drawingId)),
         drawingPreviewStore.removeItem(drawingKey(projectId, drawingId)),
         drawingRenderStore.removeItem(drawingKey(projectId, drawingId)),
+        drawingPublicationStore.removeItem(drawingKey(projectId, drawingId)),
     ]);
 }
 
-export async function cloneCanvasDrawing(projectId: string, sourceDrawingId: string, targetDrawingId: string) {
+export async function cloneCanvasDrawing(projectId: string, sourceDrawingId: string, targetDrawingId: string, sourceDocument?: CanvasDrawingSnapshot | null) {
     const [source, preview, render] = await Promise.all([
-        loadCanvasDrawing(projectId, sourceDrawingId),
+        sourceDocument || loadCanvasDrawing(projectId, sourceDrawingId),
         loadCanvasDrawingPreview(projectId, sourceDrawingId),
         loadCanvasDrawingRender(projectId, sourceDrawingId),
     ]);

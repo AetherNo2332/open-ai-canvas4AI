@@ -79,12 +79,37 @@ func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	}
 }
 
-// cloudAgentRegisteredToolNames 收集 compileCloudAgentTools 里所有 add("name", …) 的名字全集。
+// cloudAgentRegisteredToolNames 收集 add("name", …)，以及字面量 []string
+// 的 range 中实际传给 add(name, …) 的注册名。无 add 调用的循环不构成注册。
 func cloudAgentRegisteredToolNames(t *testing.T) []string {
 	t.Helper()
 	file := parseCloudAgentFile(t, "cloud_agent_tools.go")
 	names := map[string]bool{}
 	ast.Inspect(file, func(node ast.Node) bool {
+		if loop, ok := node.(*ast.RangeStmt); ok {
+			value, valueOK := loop.Value.(*ast.Ident)
+			list, listOK := loop.X.(*ast.CompositeLit)
+			if valueOK && listOK {
+				array, arrayOK := list.Type.(*ast.ArrayType)
+				if arrayOK {
+					elt, eltOK := array.Elt.(*ast.Ident)
+					if eltOK && elt.Name == "string" {
+						ast.Inspect(loop.Body, func(item ast.Node) bool {
+							call, ok := item.(*ast.CallExpr)
+							if !ok || len(call.Args) == 0 {
+								return true
+							}
+							callee, calleeOK := call.Fun.(*ast.Ident)
+							arg, argOK := call.Args[0].(*ast.Ident)
+							if calleeOK && callee.Name == "add" && argOK && arg.Name == value.Name {
+								collectStringLiteralsOf(list.Elts, names)
+							}
+							return true
+						})
+					}
+				}
+			}
+		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true

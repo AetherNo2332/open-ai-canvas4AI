@@ -42,6 +42,9 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if task.MediaRecoveryJSON != "" {
 		return nil, BadAuthRequest("作品已生成，请使用重试保存，不要重复生成")
 	}
+	if task.Type == model.TaskTypePrevisRender {
+		return nil, BadAuthRequest("预演重做需新任务；已保存产物请使用只回写恢复")
+	}
 	if task.CreationSubmissionID != nil {
 		return nil, creationConflict("智能创作重做需要新的报价批准，请回到创作会话继续")
 	}

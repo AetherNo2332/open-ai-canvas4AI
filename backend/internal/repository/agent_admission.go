@@ -84,7 +84,10 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 		}
 		now := time.Now()
 		var candidates []model.CloudAgentExecution
-		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind").Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", "pi", []string{"queued", "running", "waiting_approval"}, now).Order("created_at,id").Find(&candidates).Error; err != nil {
+		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind",
+			"lease_owner", "lease_expires_at", "recovery_status", "recovery_attempts", "recovery_started_at", "progress_version", "claim_progress_version",
+			"runtime_phase", "wait_reason", "active_task_id", "media_task_id").
+			Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?) AND (next_recovery_at IS NULL OR next_recovery_at <= ?)", "pi", []string{"queued", "running", "waiting_approval"}, now, now).Order("created_at,id").Find(&candidates).Error; err != nil {
 			return err
 		}
 		var live []model.CloudAgentExecution
@@ -145,7 +148,15 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 			if err != nil {
 				return err
 			}
-			result := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", candidate.ID, candidate.Revision, []string{"queued", "running", "waiting_approval"}, now).Updates(map[string]any{"lease_owner": owner, "lease_expires_at": until, "status": gorm.Expr("CASE WHEN status = 'queued' THEN 'running' ELSE status END"), "runtime_phase": "ready", "wait_kind": "", "wait_reason": "", "revision": gorm.Expr("revision + 1")})
+			updates := map[string]any{"lease_owner": owner, "lease_expires_at": until, "status": gorm.Expr("CASE WHEN status = 'queued' THEN 'running' ELSE status END"), "runtime_phase": "ready", "wait_kind": "", "wait_reason": "", "revision": gorm.Expr("revision + 1")}
+			protected, err := New(tx).WorkerRecoveryProtectedWait(candidate)
+			if err != nil {
+				return err
+			}
+			for field, value := range workerRecoveryClaimUpdates(candidate, now, protected) {
+				updates[field] = value
+			}
+			result := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", candidate.ID, candidate.Revision, []string{"queued", "running", "waiting_approval"}, now).Updates(updates)
 			if result.Error != nil {
 				return result.Error
 			}

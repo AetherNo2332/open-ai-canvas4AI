@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { PiSnapshot } from "./bridge.js";
-import { FatalWorkerError } from "./tool-disclosure.js";
+import { runLeasedPiSession } from "./worker-runtime.js";
 
 export interface PiWorkerBridge {
   readonly workerId: string;
@@ -50,14 +50,7 @@ export async function runPiWorkerPool(options: PiWorkerPoolOptions): Promise<voi
       try {
         const run = await bridge.claim(signal);
         if (run) {
-          try {
-            await options.run(bridge, run, signal);
-          } catch (error) {
-            if (error instanceof FatalWorkerError && !signal.aborted) {
-              await bridge.failRun(run, error.message).catch(() => undefined);
-            }
-            throw error;
-          }
+          await runLeasedPiSession(bridge, run, signal, options.run);
           continue;
         }
         await sleep(options.idleDelayMs ?? 1000, signal);

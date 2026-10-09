@@ -1,3 +1,5 @@
+import { createPortal } from "react-dom";
+import { cameraMoveTransform } from "@/lib/canvas/previs/previs-render";
 import { cameraMoveOptions, poseEditBones, BoneRotationFields, shotSizeOptions, ObjectInspector, LightInspector, ShotInspector } from "./previs-inspectors";
 import { snapPrevisTime, advancePrevisPlayhead, resolvePrevisKeyframeRecord, resolvePrevisObjectTransformEdit, resolvePrevisCameraMoveKeyframes, resolvePrevisCameraAlignment } from "@/lib/canvas/previs/previs-animation-semantics";
 import {
@@ -1278,8 +1280,8 @@ export function CanvasPrevisWorkbench({
         "--pd-a-bd-theme": theme.node.activeStroke,
     } as CSSProperties;
 
-    return (
-        <div data-canvas-previs-workbench data-canvas-no-zoom className="previs-desk fixed inset-0 z-[var(--z-toast)] flex min-h-0 min-w-0 flex-col overflow-hidden" style={workbenchThemeStyle}>
+    return createPortal(
+        <div data-canvas-previs-workbench data-canvas-no-zoom className="previs-desk fixed inset-0 z-[var(--z-workbench)] flex min-h-0 min-w-0 flex-col overflow-hidden" style={workbenchThemeStyle}>
             <header className="previs-desk-header thin-scrollbar overflow-x-auto overflow-y-hidden">
                 <button type="button" className="previs-desk-icon-button" aria-label="关闭预演台" title="关闭预演台" onClick={closeWorkbench}>
                     <X className="size-4" />
@@ -1927,7 +1929,8 @@ export function CanvasPrevisWorkbench({
                     />
                 </section>
             ) : null}
-        </div>
+        </div>,
+        document.body,
     );
 }
 
@@ -1939,21 +1942,3 @@ const PREVIS_RENDER_MODE_LABELS: Array<{ label: string; value: PrevisRenderMode 
     { label: "深度", value: "depth" },
     { label: "法线", value: "normal" },
 ];
-
-function cameraMoveTransform(transform: PrevisTransform, move: PrevisCameraMove): PrevisTransform {
-    const [x, y, z] = transform.position;
-    const offsets: Record<PrevisCameraMove, PrevisVec3> = {
-        static: [0, 0, 0],
-        push_in: [0, 0, -2],
-        pull_out: [0, 0, 2],
-        pan_left: [-2, 0, 0],
-        pan_right: [2, 0, 0],
-        tilt_up: [0, 1.5, 0],
-        tilt_down: [0, -1.2, 0],
-        orbit_left: [-2.5, 0, -1.5],
-        orbit_right: [2.5, 0, -1.5],
-        handheld: [0.18, 0.08, -0.15],
-    };
-    const offset = offsets[move];
-    return { ...transform, position: [x + offset[0], y + offset[1], z + offset[2]] };
-}

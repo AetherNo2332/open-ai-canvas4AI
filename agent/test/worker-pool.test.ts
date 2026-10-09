@@ -21,6 +21,27 @@ function bridge(workerId: string, claim: PiWorkerBridge["claim"], failRun: PiWor
   return { workerId, claim, failRun };
 }
 
+for (const failure of [new Error('private prompt: secret'), new TypeError('private credential: secret'), 'private body']) {
+  test(`unclassified ${failure instanceof Error ? failure.name : 'throw'} terminates its leased run without exposing raw content`, async () => {
+    const controller = new AbortController();
+    let reported = '';
+    let claimed = false;
+    await runPiWorkerPool({
+      concurrency: 1, signal: controller.signal,
+      createBridge: () => bridge('worker-internal', async () => {
+        if (claimed) return null;
+        claimed = true;
+        return snapshot('internal-run');
+      }, async (run, reason) => { assert.equal(run.runId, 'internal-run'); reported = reason; }),
+      run: async () => { throw failure; },
+      onError: () => { controller.abort(); },
+      sleep: async () => { controller.abort(); },
+    });
+    assert.ok(reported, 'an internal error must reach the backend failure endpoint');
+    assert.doesNotMatch(reported, /private|secret|credential/);
+  });
+}
+
 test("worker concurrency is bounded and defaults to four isolated claim loops", () => {
   assert.equal(parsePiWorkerConcurrency(undefined), 4);
   assert.equal(parsePiWorkerConcurrency("2"), 2);

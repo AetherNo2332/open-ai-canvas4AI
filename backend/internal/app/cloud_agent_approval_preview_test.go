@@ -96,7 +96,7 @@ func TestCloudAgentCanvasApprovalPreviewTreatsMissingPatchAsArgumentError(t *tes
 		t.Fatalf("漏 patch 应当是可恢复的参数错误，实际：%v", err)
 	}
 
-	_, err = applyCloudAgentCanvasPlan(doc, []agentCanvasOp{{Type: "delete_node", ID: "image-1"}})
+	_, err = applyCloudAgentCanvasPlan(doc, []agentCanvasOp{{Type: "unsupported_op", ID: "image-1"}})
 	if err == nil {
 		t.Fatal("未知画布写操作必须仍然报错")
 	}

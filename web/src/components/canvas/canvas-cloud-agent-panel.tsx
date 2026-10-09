@@ -39,7 +39,7 @@ import {
     type AgentRun,
     type AgentSkillDefaultsSummary,
 } from "@/services/api/agent";
-import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
+import { AGENT_APPROVAL_OPERATION_LABELS, agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
 import { agentApprovalMatchesSettings, agentImageApproval } from "@/lib/canvas/agent-media-approval";
 import type { AgentMediaSettings } from "@/services/api/agent";
@@ -1863,22 +1863,7 @@ function ApprovalCard({
 }
 
 function ApprovalPreviewItemView({ item, theme, onFocusNode }: { item: ReturnType<typeof agentApprovalPresentation>["items"][number]; theme: CanvasTheme; onFocusNode?: (nodeId: string) => void }) {
-    const operationLabel =
-        item.operation === "add_node"
-            ? "新增"
-            : item.operation === "update_node"
-              ? "修改"
-              : item.operation === "connect_nodes"
-                ? "连线"
-                : item.operation === "arrange_nodes"
-                  ? "整理"
-                  : item.operation === "create_storyboard"
-                    ? "创建分镜"
-                    : item.operation === "edit_storyboard"
-                      ? "修改分镜"
-                      : item.operation === "plan_step"
-                        ? "计划"
-                        : "生成";
+    const operationLabel = AGENT_APPROVAL_OPERATION_LABELS[item.operation];
     const renderNode = (title: string | undefined, id: string | undefined, typeLabel: string | undefined, role: "source" | "target" | "node") => {
         if (!title) return null;
         const content = (
@@ -2134,13 +2119,9 @@ function applyAgentEvent(
         setMessages((current) => mergeAgentToolRetry(current, message));
         if (event.type === "tool_failed") return;
     }
-    if (event.type === "tool_completed" && payload.toolName === "previs_preview") {
-        const result = payload.result && typeof payload.result === "object" ? payload.result as Record<string, unknown> : {};
-        window.dispatchEvent(new CustomEvent("previs:preview-requested", { detail: {
-            canvasId: String(result.canvasId || ""), sceneId: String(result.sceneId || ""),
-            shotId: String(result.shotId || ""), previewRequestId: String(result.previewRequestId || ""),
-            duration: Number(result.duration || 0), fps: Number(result.fps || 0),
-        } }));
+    if (event.type === "previs_task_created") {
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", title: "previs_preview", text: text || "后台预演已排队，等待视频与画布节点", detail: { ...payload, eventType: event.type } }));
+        return;
     }
     if (event.type === "tool_completed" && payload.toolName === "canvas_apply_ops" && payload.callId) {
         const id = `canvas-${event.runId}-${payload.callId}`;

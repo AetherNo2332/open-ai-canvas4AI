@@ -1,4 +1,5 @@
 import type { CanvasColorGrade } from "@/lib/canvas/canvas-color-grade";
+import type { CanvasDrawingSnapshot } from "@/lib/canvas/canvas-drawing-storage";
 import type { MediaConversionNodeState } from "@/lib/media-conversion/contracts";
 import type { AssetCategory } from "@/lib/asset-category";
 import type { PortraitTextureSettings } from "@/lib/canvas/canvas-portrait-texture";
@@ -462,6 +463,7 @@ export type CanvasNodeMetadata = {
     };
     drawingId?: string;
     drawingEngine?: "tldraw" | "excalidraw";
+    drawingDocument?: CanvasDrawingSnapshot;
     drawingRevision?: number;
     drawingUpdatedAt?: string;
     drawingPreviewStorageKey?: string;
