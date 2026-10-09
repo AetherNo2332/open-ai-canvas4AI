@@ -1366,7 +1366,17 @@
                     "type": "string"
                   },
                   "record": {
-                    "description": "完整原生元素或文件记录；先读取已有记录了解结构",
+                    "additionalProperties": true,
+                    "description": "完整原生元素或文件记录；先读取已有记录了解结构；引擎原生字段由绘图校验器验证",
+                    "properties": {
+                      "id": {
+                        "description": "原生记录 ID，必须与操作 id 一致",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
                     "type": "object"
                   },
                   "type": {

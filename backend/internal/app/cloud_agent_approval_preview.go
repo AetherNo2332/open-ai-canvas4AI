@@ -199,10 +199,10 @@ func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) (
 			}
 			fromIndex, toIndex := cloudAgentNodeIndex(nodes, op.FromNodeID), cloudAgentNodeIndex(nodes, op.ToNodeID)
 			if fromIndex < 0 || toIndex < 0 || op.FromNodeID == op.ToNodeID {
-				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", "连线端点不存在或指向自身")
+				return nil, BadAuthRequest("连线端点不存在或指向自身")
 			}
 			if err := validateCloudAgentConnection(nodes, op.FromNodeID, op.ToNodeID, edges); err != nil {
-				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", cloudAgentSafeToolError(err))
+				return nil, err
 			}
 			for _, edge := range edges {
 				if stringValue(edge["id"]) == op.ID || (stringValue(edge["fromNodeId"]) == op.FromNodeID && stringValue(edge["toNodeId"]) == op.ToNodeID && stringValue(edge["fromHandleId"]) == op.FromHandleID && stringValue(edge["toHandleId"]) == op.ToHandleID) {
