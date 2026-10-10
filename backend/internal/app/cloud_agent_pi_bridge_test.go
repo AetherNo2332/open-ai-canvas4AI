@@ -1372,6 +1372,9 @@ func TestPiFailRunMarksRunFailedWithReason(t *testing.T) {
 	if failed.Status != "failed" {
 		t.Fatalf("状态 = %q，期望 failed", failed.Status)
 	}
+	if !failed.CleanupPending {
+		t.Fatal("worker failure must atomically schedule terminal cleanup")
+	}
 	if !strings.Contains(failed.FailureMessage, "tools missing") {
 		t.Fatalf("失败原因未落库: %q", failed.FailureMessage)
 	}

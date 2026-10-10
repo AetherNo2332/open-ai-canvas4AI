@@ -1,0 +1,1622 @@
+[
+  {
+    "from": "image",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "audio",
+    "allowed": false
+  },
+  {
+    "from": "image",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "image",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "media-conversion",
+    "allowed": true
+  },
+  {
+    "from": "image",
+    "to": "batch-table",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "audio",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "text",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "text",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "text",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "drawing",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "audio",
+    "allowed": false
+  },
+  {
+    "from": "drawing",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "drawing",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "drawing",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "drawing",
+    "to": "batch-table",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "audio",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "script",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "script",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "script",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "skill",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "audio",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "skill",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "skill",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "skill",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "config",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "config",
+    "allowed": false
+  },
+  {
+    "from": "config",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "audio",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "config",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "config",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "config",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "video",
+    "to": "image",
+    "allowed": false
+  },
+  {
+    "from": "video",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "config",
+    "allowed": false
+  },
+  {
+    "from": "video",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "audio",
+    "allowed": false
+  },
+  {
+    "from": "video",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "video",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "media-conversion",
+    "allowed": true
+  },
+  {
+    "from": "video",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "audio",
+    "to": "image",
+    "allowed": false
+  },
+  {
+    "from": "audio",
+    "to": "text",
+    "allowed": false
+  },
+  {
+    "from": "audio",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "script",
+    "allowed": false
+  },
+  {
+    "from": "audio",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "config",
+    "allowed": false
+  },
+  {
+    "from": "audio",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "audio",
+    "allowed": false
+  },
+  {
+    "from": "audio",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "audio",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "audio",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "audio",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "image",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "text",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "drawing",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "script",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "skill",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "config",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "video",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "audio",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "markdown",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "svg",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "html",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "panorama",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "compare",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "chart",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "colorgrade",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "frame",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "markdown",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "audio",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "markdown",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "markdown",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "markdown",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "svg",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "audio",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "svg",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "svg",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "svg",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "html",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "audio",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "html",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "html",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "html",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "panorama",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "audio",
+    "allowed": false
+  },
+  {
+    "from": "panorama",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "panorama",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "panorama",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "panorama",
+    "to": "batch-table",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "audio",
+    "allowed": false
+  },
+  {
+    "from": "compare",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "compare",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "compare",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "compare",
+    "to": "batch-table",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "audio",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "chart",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "chart",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "chart",
+    "to": "batch-table",
+    "allowed": false
+  },
+  {
+    "from": "colorgrade",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "audio",
+    "allowed": false
+  },
+  {
+    "from": "colorgrade",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "colorgrade",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "colorgrade",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "colorgrade",
+    "to": "batch-table",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "audio",
+    "allowed": false
+  },
+  {
+    "from": "media-conversion",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "media-conversion",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "media-conversion",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "media-conversion",
+    "to": "batch-table",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "image",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "text",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "drawing",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "script",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "skill",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "config",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "video",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "audio",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "frame",
+    "allowed": false
+  },
+  {
+    "from": "batch-table",
+    "to": "markdown",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "svg",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "html",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "panorama",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "compare",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "chart",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "colorgrade",
+    "allowed": true
+  },
+  {
+    "from": "batch-table",
+    "to": "media-conversion",
+    "allowed": false
+  },
+  {
+    "from": "batch-table",
+    "to": "batch-table",
+    "allowed": false
+  }
+]

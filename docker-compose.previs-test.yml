@@ -1,0 +1,46 @@
+services:
+  previs-renderer:
+    init: true
+    image: ${PREVIS_TEST_IMAGE:-canvas-previs-renderer:local}
+    environment:
+      PREVIS_RENDERER_TOKEN: ${CANVAS_PREVIS_RENDERER_TOKEN:?请使用测试专用密钥}
+    volumes:
+      - previs-test-jobs:/data
+      - ./renderer/src:/app/renderer/src:ro
+      - ./renderer/test:/app/renderer/test:ro
+    networks: [previs-test]
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 256
+    shm_size: 256m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+  backend-tests:
+    image: canvas-previs-go-tests:local
+    environment:
+      CANVAS_PREVIS_RENDERER_URL: http://previs-renderer:8081
+      CANVAS_PREVIS_RENDERER_TOKEN: ${CANVAS_PREVIS_RENDERER_TOKEN:?请使用测试专用密钥}
+      PREVIS_REAL_BACKEND: "1"
+      PREVIS_E2E_OUTPUT: /evidence
+      GOPROXY: "off"
+    volumes:
+      - ./backend:/src
+      - ./.local/previs-evidence:/evidence
+      - previs-test-go-mod:/go/pkg/mod
+      - previs-test-go-cache:/root/.cache/go-build
+    networks: [previs-test]
+    depends_on:
+      previs-renderer:
+        condition: service_healthy
+    command: ["go", "test", "./internal/app", "-run", "TestBackgroundPrevisReal", "-count=1", "-v", "-timeout=8m"]
+networks:
+  previs-test:
+    internal: true
+volumes:
+  previs-test-jobs:
+  previs-test-go-mod:
+    external: true
+    name: canvas-crew-go-mod
+  previs-test-go-cache:
+    external: true
+    name: canvas-canary-go-test-cache

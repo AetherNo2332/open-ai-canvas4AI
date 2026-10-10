@@ -26,7 +26,7 @@ import {
 import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
 import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
-import { generationFailureMetadata, unchangedModeratedPrompt } from "@/lib/generation-error";
+import { CONTENT_MODERATION_ERROR_CODE, generationFailureMetadata, isContentModerationError, unchangedModeratedPrompt } from "@/lib/generation-error";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
@@ -36,6 +36,7 @@ import { resolveImageUrl } from "@/services/image-storage";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
+import { buildCanvasVisualGenerationPrompt, canvasCameraControlSnapshot, taskCameraControlSnapshot } from "./canvas-generation-camera";
 
 type UseCanvasGenerationRetryOptions = {
     projectId: string;
@@ -133,13 +134,18 @@ export function useCanvasGenerationRetry({
             }
 
             const retryPromptSource = sourceNode.metadata?.composerContent || sourceNode.metadata?.prompt || node.metadata?.prompt || "";
-            const retryContextPrompt = retryMode === "image" && sourceNode.metadata?.portraitTexture ? buildPortraitTexturePrompt(retryPromptSource, sourceNode.metadata.portraitTexture) : retryPromptSource;
             if (unchangedModeratedPrompt(node.metadata, retryPromptSource)) {
                 message.warning("该提示词未通过内容审核，请先修改提示词再重新生成");
                 return;
             }
+            const hasEditablePrompt = typeof sourceNode.metadata?.composerContent === "string" && sourceNode.metadata.composerContent.length > 0;
             let rawContext: Awaited<ReturnType<typeof hydrateNodeGenerationContext>> | null;
             try {
+                // Only an editable draft can safely receive camera direction;
+                // legacy prompt fields may already contain the compiled text.
+                const retryContextPrompt = hasEditablePrompt
+                    ? buildCanvasVisualGenerationPrompt(retryPromptSource, retryMode, sourceNode.metadata)
+                    : retryMode === "image" && sourceNode.metadata?.portraitTexture ? buildPortraitTexturePrompt(retryPromptSource, sourceNode.metadata.portraitTexture) : retryPromptSource;
                 const promptOnly = retryMode === "video";
                 const baseContext = buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, retryContextPrompt, assets, promptOnly);
                 rawContext =
@@ -168,11 +174,25 @@ export function useCanvasGenerationRetry({
                     return;
                 }
             }
+            const usesSavedImagePrompt = !context?.characterReferences.length && Boolean(savedImageMetadata?.prompt);
             const prompt = (context?.characterReferences.length ? context.prompt : savedImageMetadata?.prompt || context?.prompt || "").trim();
             if (!prompt) {
                 message.warning("找不到提示词，无法重试");
                 return;
             }
+            if (usesSavedImagePrompt && (
+                node.metadata?.generationErrorCode === CONTENT_MODERATION_ERROR_CODE ||
+                isContentModerationError(node.metadata?.errorDetails) ||
+                isContentModerationError(sourceTask?.error)
+            )) {
+                message.warning("原任务提示词未通过审核，请修改后点击生成提交新任务");
+                return;
+            }
+            // Keep the panel's next-generation draft intact. Only the new task
+            // records the camera selection that actually produced its prompt.
+            const cameraMetadata = usesSavedImagePrompt || !hasEditablePrompt
+                ? taskCameraControlSnapshot(sourceTask?.inputJson)
+                : canvasCameraControlSnapshot(sourceNode.metadata);
             let mediaPrompt = prompt;
             let styleMetadata = {};
             if (node.type === CanvasNodeType.Image) {
@@ -322,6 +342,7 @@ export function useCanvasGenerationRetry({
                             resolvedCharacterVoices: context?.resolvedCharacterVoices || [],
                             promptTemplateOperation: node.metadata?.promptTemplateOperation,
                             promptTemplateVariables: node.metadata?.promptTemplateVariables,
+                            ...cameraMetadata,
                             ...videoGenerationMetadata,
                             ...styleMetadata,
                             ...skillMetadata,
@@ -423,6 +444,7 @@ export function useCanvasGenerationRetry({
                         resolvedCharacterVersions: context?.resolvedCharacterVersions || [],
                         promptTemplateOperation: node.metadata?.promptTemplateOperation,
                         promptTemplateVariables: node.metadata?.promptTemplateVariables,
+                        ...cameraMetadata,
                         ...styleMetadata,
                         ...skillMetadata,
                     },

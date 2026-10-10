@@ -7,8 +7,6 @@ import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-p
 import { buildGenerationConfig, isGenerationCanceled } from "@/lib/canvas/canvas-project-generation";
 import { canvasGenerationPromptMetadata, canvasGenerationRequestFingerprint, runCanvasGenerationSubmissionOnce } from "@/lib/canvas/canvas-generation-submission";
 import { isGenerationTaskCapacityError } from "@/lib/canvas/canvas-generation-batch";
-import { buildPortraitTexturePrompt } from "@/lib/canvas/canvas-portrait-texture";
-import { buildCameraPrompt } from "@/lib/canvas/camera-prompt-library";
 import { buildTextRewritePrompt } from "@/lib/prompts";
 import { resolveCanvasStyleExecution } from "@/lib/canvas/canvas-style-execution";
 import { generationErrorMessage, generationFailureMetadata } from "@/lib/generation-error";
@@ -24,6 +22,7 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
+import { buildCanvasVisualGenerationPrompt } from "./canvas-generation-camera";
 
 type UseCanvasGenerationExecutorOptions = {
     projectId: string;
@@ -136,12 +135,6 @@ export function useCanvasGenerationExecutor({
 
                     const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
                     const editingTextNode = mode === "text" && Boolean(sourceTextContent);
-                    let generationPrompt = mode === "image" && sourceNode?.metadata?.portraitTexture ? buildPortraitTexturePrompt(prompt, sourceNode.metadata.portraitTexture) : prompt;
-                    if (mode === "image" && sourceNode?.metadata?.cameraControl?.enabled) {
-                        const cameraControl = sourceNode.metadata.cameraControl;
-                        const cameraPrompt = buildCameraPrompt({ cameraId: cameraControl.camera, lensId: cameraControl.lens, focalLengthMm: cameraControl.focalLength, apertureF: cameraControl.aperture });
-                        generationPrompt = `${generationPrompt}\n${cameraPrompt}`;
-                    }
                     const isPreparingEmptyImage = mode === "image" && sourceNode?.type === CanvasNodeType.Image && !sourceNode.metadata?.content;
 
                     let rawGenerationContext: Awaited<ReturnType<typeof hydrateNodeGenerationContext>>;
@@ -151,6 +144,7 @@ export function useCanvasGenerationExecutor({
                     // 普通视频协议只保留输入框文本（显式 @文本 引用仍会展开为真实内容）；声明式工作流还要保留连接媒体。
                     const promptOnly = mode === "video" && !usesWorkflowProvider;
                     try {
+                        const generationPrompt = buildCanvasVisualGenerationPrompt(prompt, mode, sourceNode?.metadata);
                         const baseContext = buildNodeGenerationContext(
                             nodeId,
                             nodesRef.current,

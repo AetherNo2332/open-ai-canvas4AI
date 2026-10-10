@@ -9,6 +9,7 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { generationInputMentionLabel, normalizeGenerationNodeMentionTokens, type NodeGenerationInput } from "./canvas-node-generation";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
+import { CanvasCameraControlPopover } from "./canvas-camera-control-popover";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import type { CanvasGenerationMode, CanvasNodeMetadata, CanvasWorkspaceMode } from "@/types/canvas";
 
@@ -178,6 +179,9 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                     <div className="truncate text-[var(--fs-label)] opacity-55">{simpleMode ? "已连接素材会自动带入" : workflowVideoReferenceMode ? "已连接媒体会按工作流字段顺序自动带入" : "@ 引用已连接素材或已激活技能，发送前自动组装"}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                    {onMetadataChange && (!generationMode || generationMode === "image" || generationMode === "video") ? (
+                        <CanvasCameraControlPopover cameraControl={metadata?.cameraControl} onCameraControlChange={(cameraControl) => onMetadataChange({ cameraControl })} theme={theme} compact />
+                    ) : null}
                     {simpleMode ? null : <CanvasPresetPicker mode={generationMode || "image"} skillReferences={skillReferences} open={presetOpen} onOpenChange={setPresetOpen} onSelect={insertPreset} />}
                     <Button size="small" type="text" className="!h-7 !w-7 !min-w-7 !p-0" icon={<X className="size-3.5" />} onClick={onClose} />
                 </div>

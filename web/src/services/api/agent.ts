@@ -31,7 +31,28 @@ export type AgentProfileView = {
     layers: AgentProfileLayer[];
 };
 
-export type AgentApprovalPreviewOperation = "add_node" | "update_node" | "connect_nodes" | "arrange_nodes" | "generate_media" | "create_storyboard" | "edit_storyboard" | "plan_step";
+export type AgentApprovalPreviewOperation =
+    | "add_node"
+    | "update_node"
+    | "delete_node"
+    | "duplicate_node"
+    | "connect_nodes"
+    | "delete_connection"
+    | "update_connection"
+    | "set_parent"
+    | "replace_text"
+    | "reorder_nodes"
+    | "reorder_rows"
+    | "arrange_nodes"
+    | "generate_media"
+    | "create_storyboard"
+    | "edit_storyboard"
+    | "edit_drawing"
+    | "bind_asset"
+    | "canvas_undo"
+    | "canvas_redo"
+    | "create_character"
+    | "plan_step";
 
 export type AgentApprovalPreviewItem = {
     operation: AgentApprovalPreviewOperation;

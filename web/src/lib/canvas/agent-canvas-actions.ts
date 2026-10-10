@@ -44,8 +44,20 @@ export function agentCanvasActions(toolName: string, detail: unknown, references
             const ids = payload.referenceNodeIds || args.referenceNodeIds;
             if (Array.isArray(ids)) for (const id of ids) add(id, undefined, undefined, "referenced");
         }
-    } else if (toolName === "canvas_get_state" && !failed && Array.isArray(result.nodes)) {
+    } else if (["canvas_get_state", "canvas_search_nodes"].includes(toolName) && !failed && Array.isArray(result.nodes)) {
         for (const value of result.nodes) { const node = agentRecord(value); add(node.id, node.title, node.type, "read"); }
+    } else if (toolName === "canvas_read_content" && !failed) {
+        const complete = result.offset === 0 && typeof result.totalCharacters === "number" && Number.isSafeInteger(result.totalCharacters) && result.totalCharacters >= 0 && result.nextOffset === result.totalCharacters && result.hasMore === false;
+        add(result.nodeId, undefined, undefined, complete ? "content_read" : "content_read_partial");
+    } else if (toolName === "canvas_read_drawing" && !failed) {
+        const complete = !(Array.isArray(args.recordIds) && args.recordIds.length) && result.offset === 0 && typeof result.totalRecords === "number" && Number.isSafeInteger(result.totalRecords) && result.totalRecords >= 0 && result.nextOffset === result.totalRecords && result.hasMore === false;
+        add(result.nodeId, undefined, "drawing", complete ? "drawing_read" : "drawing_read_partial");
+    } else if (toolName === "canvas_edit_drawing" && !failed) {
+        add(result.nodeId || args.nodeId, undefined, "drawing", "edited");
+    } else if (toolName === "canvas_bind_asset" && !failed) {
+        add(result.nodeId || args.nodeId, undefined, undefined, "bound");
+    } else if (toolName === "canvas_create_character" && !failed) {
+        add(result.nodeId || args.nodeId, args.name, "character", "created");
     } else if (toolName === "canvas_inspect_image" && !failed) {
         // 看图回执：reuseObservation 是复用账本里的观察（没有再附图）、repeat 是读循环护栏
         // （只回执文字）。两者都没有把画面送出去，所以不能报成"查看了…画面"。
@@ -60,20 +72,28 @@ export function agentCanvasActions(toolName: string, detail: unknown, references
             if (op.type === "connect_nodes") {
                 add(op.fromNodeId, undefined, undefined, "referenced");
                 add(op.toNodeId, undefined, undefined, "updated");
-            } else add(op.id, op.title, op.nodeType, op.type === "add_node" ? "created" : "updated");
+            } else if (op.type === "reorder_nodes" && Array.isArray(op.nodeIds)) {
+                for (const id of op.nodeIds) add(id, undefined, undefined, "reordered");
+            } else {
+                const action = ({ add_node: "created", delete_node: "deleted", duplicate_node: "duplicated", delete_connection: "disconnected", update_connection: "reconnected", set_parent: "grouped", replace_text: "edited", reorder_rows: "reordered" } as Record<string, string>)[String(op.type)] || "updated";
+                add(op.id, op.title, op.nodeType, action);
+            }
         }
     }
     return actions;
 }
 
 export function agentCanvasActionLabel(action: AgentCanvasAction) {
-    const kind = ({ image: "图片", video: "视频", audio: "音频", text: "文本", markdown: "Markdown", script: "分镜" } as Record<string, string>)[action.nodeType] || "";
-    if (action.action === "referenced" && action.targetTitle) {
-        const targetKind = ({ image: "图片", video: "视频", audio: "音频", text: "文本", markdown: "Markdown", script: "分镜" } as Record<string, string>)[action.targetNodeType || ""] || "";
-        return `建立引用：${kind}节点《${action.title}》 → ${targetKind}节点《${action.targetTitle}》`;
+    const kinds: Record<string, string> = { image: "图片", video: "视频", audio: "音频", text: "文本", markdown: "Markdown", script: "分镜", drawing: "绘图", frame: "画框", "batch-table": "批量表", config: "配置", svg: "SVG", html: "HTML", panorama: "全景", compare: "对比", chart: "图表", "color-grade": "调色", "media-conversion": "媒体转换", character: "角色卡" };
+    const kind = kinds[action.nodeType] || "";
+    if (action.action === "bound") return `替换了${kind}节点《${action.title}》的素材`;
+    if (["referenced", "disconnected", "reconnected"].includes(action.action) && action.targetTitle) {
+        const targetKind = kinds[action.targetNodeType || ""] || "";
+        const verb = ({ referenced: "建立引用：", disconnected: "断开引用：", reconnected: "重连引用：" } as Record<string, string>)[action.action];
+        return `${verb}${kind}节点《${action.title}》 → ${targetKind}节点《${action.targetTitle}》`;
     }
     // read 的动词必须是"存在式"：canvas_get_state 只读到清单，说成"读取了图片节点"会被读成看过画面。
-    const verb = ({ created: "创建了", updated: "更新了", referenced: "引用了", read: "画布上有", viewed: "查看了", reused: "复用观察：", generating: "已提交生成：", generated: "已生成", failed: "生成未完成：" } as Record<string, string>)[action.action] || "定位";
+    const verb = ({ created: "创建了", updated: "更新了", deleted: "删除了", duplicated: "复制了", disconnected: "断开引用：", reconnected: "重连引用：", grouped: "调整归属：", reordered: "调整顺序：", edited: "编辑了", content_read: "完整读取了正文：", content_read_partial: "读取了部分正文：", drawing_read: "完整读取了原生记录：", drawing_read_partial: "读取了部分原生记录：", referenced: "引用了", read: "画布上有", viewed: "查看了", reused: "复用观察：", generating: "已提交生成：", generated: "已生成", failed: "生成未完成：" } as Record<string, string>)[action.action] || "定位";
     const fieldText = action.fields?.length ? `（修改：${action.fields.join("、")}）` : "";
     const titleText = action.resultTitle ? `，名称改为《${action.resultTitle}》` : "";
     return `${verb}${kind}节点《${action.title}》${fieldText}${titleText}`;

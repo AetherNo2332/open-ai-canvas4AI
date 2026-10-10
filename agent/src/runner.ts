@@ -26,7 +26,7 @@ import { compactionSettings, serializePreparation, runNativeCompaction, prepareN
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
 import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
-import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "./native-skills.js";
+import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected } from "./native-skills.js";
 import { Unsafe, type TSchema } from "typebox";
 import { createImageContextExtension, createTerminalHistoryExtension, missingImageContent } from "./session-history.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
@@ -677,6 +677,11 @@ export async function runCanvasAgent(
   let compactionFailure: unknown;
   let runTerminated = isTerminalRunStatus(snapshot.status);
   let session: AgentSession | undefined;
+  let abortRequested = false;
+  const abortSession = (): void => {
+    abortRequested = true;
+    void session?.abort().catch(() => undefined);
+  };
   let sessionManager: SessionManager | undefined;
   let sessionRevision = snapshot.piSessionRevision || 1;
   let sessionLeafId = snapshot.piActiveLeafId || "";
@@ -803,31 +808,39 @@ export async function runCanvasAgent(
     await queue.drain();
     if (listenerFailure !== undefined) throw listenerFailure;
     if (!admittedCallIds.has(callId)) throw new Error(batchRejection || "Tool batch was not admitted");
-    if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
-    const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
-    if (receipt.suspended) {
-      runSuspended = runTerminated = true;
-      return { result: { suspended: true }, terminate: true };
-    }
-    if (receipt.terminated) {
-      runTerminated = true;
-      return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
-    }
-    const refreshed = await bridge.snapshot(snapshot, signal);
-    for (const message of refreshed.canonical.messages.slice(canonicalCount)) {
-      // 插话里的图片要直接进会话，不能等下一次模型步骤才补（见旧实现的 steer 分支）。
-      if (message.role === "user" && hasImagePart(message.content)) {
-        session?.agent.steer(canvasUserMessage(message.content));
+    try {
+      if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
+      const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
+      if (receipt.suspended) {
+        runSuspended = runTerminated = true;
+        return { result: { suspended: true }, terminate: true };
       }
+      if (receipt.terminated) {
+        runTerminated = true;
+        return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
+      }
+      const refreshed = await bridge.snapshot(snapshot, signal);
+      for (const message of refreshed.canonical.messages.slice(canonicalCount)) {
+        // 插话里的图片要直接进会话，不能等下一次模型步骤才补（见旧实现的 steer 分支）。
+        if (message.role === "user" && hasImagePart(message.content)) {
+          session?.agent.steer(canvasUserMessage(message.content));
+        }
+      }
+      canonicalCount = refreshed.canonical.messages.length;
+      snapshot = refreshed;
+      syncCompaction();
+      runTerminated = isTerminalRunStatus(refreshed.status);
+      syncPendingInterjections(refreshed);
+      await steerPendingInterjections();
+      return { result: receipt.result, isError: receipt.isError,
+        terminate: runTerminated };
+    } catch (error) {
+      // SDK tool errors are model-visible. Bridge failures must instead exit
+      // this worker so a pending durable call cannot be skipped by a new turn.
+      listenerFailure ??= error;
+      abortSession();
+      throw error;
     }
-    canonicalCount = refreshed.canonical.messages.length;
-    snapshot = refreshed;
-    syncCompaction();
-    runTerminated = isTerminalRunStatus(refreshed.status);
-    syncPendingInterjections(refreshed);
-    await steerPendingInterjections();
-    return { result: receipt.result, isError: receipt.isError,
-      terminate: runTerminated };
   });
   const nativeMode = snapshot.skillRuntimeMode === "pi-native";
   const nativeReadSpec = nativeMode ? snapshot.tools.find((tool) => tool.name === "read" && tool.allowed) : undefined;
@@ -870,6 +883,10 @@ export async function runCanvasAgent(
       }
       throw error;
     }
+  }, (error) => {
+    if (shutdown?.aborted || error instanceof CanvasContextOverflow || error instanceof CanvasCompactionNeeded ||
+        error instanceof CanvasModelRetry || error instanceof CanvasRunTerminated) return;
+    listenerFailure ??= error;
   });
 
   let resume: ResumePoint;
@@ -880,12 +897,12 @@ export async function runCanvasAgent(
     resume = await resumePoint(bridge, snapshot, model, disclosure, checkpoint, shutdown, nativeMode ? async (call) => {
       try {
         const params = JSON.parse(call.function.arguments) as Record<string, unknown>;
-        if (typeof params.path !== "string") throw new FatalWorkerError("Persisted Skill read requires a path");
+        if (typeof params.path !== "string") throw new NativeSkillReadRejected("Persisted Skill read requires a path");
         const path = rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path);
         return { result: await readNativeSkill(snapshot, nativeSkillsRoot, bridge, path,
           typeof params.offset === "number" ? params.offset : 0, typeof params.limit === "number" ? params.limit : 12_000, shutdown) };
       } catch (error) {
-        if (error instanceof FatalWorkerError) return { result: "Skill read rejected; use an enabled Skill file and valid range.", isError: true };
+        if (error instanceof NativeSkillReadRejected) return { result: "Skill read rejected; use an enabled Skill file and valid range.", isError: true };
         throw error;
       }
     } : undefined);
@@ -950,8 +967,8 @@ export async function runCanvasAgent(
     execute: async (callId: string, params: Record<string, unknown>, signal: AbortSignal | undefined) => {
       await queue.drain();
       if (listenerFailure !== undefined) throw listenerFailure;
-      if (typeof params.path !== "string") throw new FatalWorkerError("Native Skill read requires a path");
       try {
+        if (typeof params.path !== "string") throw new NativeSkillReadRejected("Native Skill read requires a path");
         const path = resumedNativeCallIds.has(callId)
           ? rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path) : params.path;
         const text = await readNativeSkill(snapshot, nativeSkillsRoot, bridge, path,
@@ -960,7 +977,7 @@ export async function runCanvasAgent(
       } catch (error) {
         // Pi converts tool exceptions to model-visible results. Infrastructure
         // failures must instead leave the call pending for a worker retry.
-        if (!(error instanceof FatalWorkerError)) listenerFailure = error;
+        if (!(error instanceof NativeSkillReadRejected)) listenerFailure ??= error;
         throw error;
       }
     },
@@ -1066,11 +1083,6 @@ export async function runCanvasAgent(
       queue.enqueue(async () => { await checkpoint(message as unknown as AgentMessage, taskId, interjectionIds); });
     });
 
-    let abortRequested = false;
-    const abortSession = (): void => {
-      abortRequested = true;
-      void session?.abort().catch(() => undefined);
-    };
     const onShutdown = (): void => abortSession();
     shutdown?.addEventListener("abort", onShutdown, { once: true });
     let leaseCheckRunning = false;

@@ -14,6 +14,7 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
+import { canvasCameraControlSnapshot } from "./canvas-generation-camera";
 
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -63,7 +64,8 @@ export async function executeImageGeneration({
     // 已有图片生成新结果并保留旧版本；参考图只来自入边，避免把旧结果误当成自身输入。
     const referenceImages = generationContext.referenceImages;
     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-    const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
+    const cameraMetadata = canvasCameraControlSnapshot(sourceNode?.metadata);
+    const generationMetadata = { ...buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages), ...cameraMetadata };
     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
     const imageDefaults = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
     // 生成中占位框按设置比例显示，避免 16:9 任务显示成默认 340x240。
@@ -201,6 +203,7 @@ export async function executeImageGeneration({
                             resolvedCharacterVersions: generationContext.resolvedCharacterVersions,
                             promptTemplateOperation: sourceNode?.metadata?.promptTemplateOperation,
                             promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables,
+                            ...cameraMetadata,
                             ...styleMetadata,
                             ...skillMetadata,
                         },
