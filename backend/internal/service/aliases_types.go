@@ -3,11 +3,7 @@ package service
 import "infinite-canvas/backend/internal/app"
 
 type (
-	CrewView                               = app.CrewView
-	CrewMemberInput                        = app.CrewMemberInput
-	CrewMemberView                         = app.CrewMemberView
-	CreateCrewInput                        = app.CreateCrewInput
-	UpdateCrewInput                        = app.UpdateCrewInput
+	AgentWebSearchSettingRequest           = app.AgentWebSearchSettingRequest
 	AgentWorkspaceView                     = app.AgentWorkspaceView
 	AgentWorkspaceSkillView                = app.AgentWorkspaceSkillView
 	SkillSelection                         = app.SkillSelection
@@ -19,6 +15,7 @@ type (
 	CloudAgentMediaSettings                = app.CloudAgentMediaSettings
 	CloudAgentCapabilitySet                = app.CloudAgentCapabilitySet
 	PiAgentSnapshot                        = app.PiAgentSnapshot
+	PiWorkerRecoveryRequest                = app.PiWorkerRecoveryRequest
 	PiModelStepRequest                     = app.PiModelStepRequest
 	PiModelStepView                        = app.PiModelStepView
 	PiToolBatchRequest                     = app.PiToolBatchRequest
@@ -36,6 +33,9 @@ type (
 	PiSkillFileRequest                     = app.PiSkillFileRequest
 	AgentProfileRequest                    = app.AgentProfileRequest
 	AgentProfileView                       = app.AgentProfileView
+	AgentSubagentPolicyRequest             = app.AgentSubagentPolicyRequest
+	AgentSubagentPolicyView                = app.AgentSubagentPolicyView
+	AgentSubagentView                      = app.AgentSubagentView
 	AgentSkillDefaultItem                  = app.AgentSkillDefaultItem
 	AgentLessonView                        = app.AgentLessonView
 	AgentLessonAdminView                   = app.AgentLessonAdminView
@@ -132,7 +132,9 @@ type (
 	ChannelOrderItem                       = app.ChannelOrderItem
 	ChannelOrderRequest                    = app.ChannelOrderRequest
 	ChannelRequest                         = app.ChannelRequest
+	CharacterAssetSummary                  = app.CharacterAssetSummary
 	CharacterCardSummary                   = app.CharacterCardSummary
+	CharacterListPage                      = app.CharacterListPage
 	CharacterRepresentationInput           = app.CharacterRepresentationInput
 	CharacterRepresentationSummary         = app.CharacterRepresentationSummary
 	CharacterVoiceSummary                  = app.CharacterVoiceSummary
@@ -144,6 +146,7 @@ type (
 	CreateAssetCandidatesRequest           = app.CreateAssetCandidatesRequest
 	CreateAssetFolderRequest               = app.CreateAssetFolderRequest
 	CreateAssetVersionRequest              = app.CreateAssetVersionRequest
+	CreateCharacterRequest                 = app.CreateCharacterRequest
 	CreatePaymentOrderRequest              = app.CreatePaymentOrderRequest
 	CreateProjectAssetFolderRequest        = app.CreateProjectAssetFolderRequest
 	CreateProjectCharacterRequest          = app.CreateProjectCharacterRequest

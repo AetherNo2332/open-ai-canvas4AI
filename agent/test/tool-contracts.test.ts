@@ -7,7 +7,34 @@ import { assertToolSnapshotMatchesSchema } from "../src/tool-disclosure.js";
 // Exercise Pi's actual validator against the Go-generated schema, rather than
 // recreating a second contract in TypeScript.
 const artifact = JSON.parse(await readFile(new URL("../../harness/TOOL_SCHEMA.json", import.meta.url), "utf8"));
+test("the shared artifact admits all previs tools in server snapshots", () => {
+  const names = ["previs_scene_read", "previs_preview", "previs_scene_create", "previs_apply_patch"];
+  const specs = names.map((name) => {
+    const tool = artifact.tools.find((entry: any) => entry.function.name === name);
+    assert.ok(tool, `missing previs tool ${name}`);
+    return { ...tool.function, allowed: true };
+  });
+  assert.doesNotThrow(() => assertToolSnapshotMatchesSchema(specs, artifact));
+});
+
 const cases: [string, ToolCall["arguments"], boolean][] = [
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "connect_nodes", id: "e", fromNodeId: "a", toNodeId: "b", toHandleId: "row:r1" }] }, true],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "connect_nodes", id: "e", fromNodeId: "a", toNodeId: "b", toHandleId: "batch-reference:reference-1" }] }, true],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "connect_nodes", id: "e", fromNodeId: "a", toNodeId: "b", toHandleId: {} }] }, false],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "delete_node", id: "n" }] }, true],
+  ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "duplicate_node", id: "new", sourceNodeId: "n" }] }, true],
+  ["canvas_read_content", { nodeId: "n", field: "content", offset: 0, limit: 16000 }, true],
+  ["canvas_read_content", { nodeId: "n", field: "content", offset: -1 }, false],
+  ["canvas_edit_drawing", { snapshotHash: "h", nodeId: "n", engine: "tldraw", operations: [{ type: "upsert", id: "shape:n", record: { id: "shape:n" } }] }, true],
+  ["canvas_edit_drawing", { snapshotHash: "h", nodeId: "n", engine: "tldraw", operations: [{ type: "upsert", id: "shape:n" }] }, false],
+  ["canvas_edit_drawing", { snapshotHash: "h", nodeId: "n", engine: "tldraw", operations: [{ type: "remove", id: "shape:n", record: {} }] }, false],
+  ["canvas_bind_asset", { snapshotHash: "h", nodeId: "n", assetId: "a" }, true],
+  ["canvas_undo", { snapshotHash: "h" }, true],
+  ["canvas_redo", { snapshotHash: "h", taskId: "forbidden" }, false],
+  ["web_search", { query: "最新影视制作资讯" }, true],
+  ["web_search", { query: "" }, false],
+  ["web_search", { query: "a".repeat(501) }, false],
+  ["web_search", { query: "news", apiKey: "forbidden-client-key" }, false],
   ["generate_media", { mode: "video", prompt: "cat", nodeId: "n", title: "cat", referenceNodeIds: [], size: "16:9", durationSeconds: 5 }, true],
   ["generate_media", { mode: "video", prompt: "cat", nodeId: "n", title: "cat", referenceNodeIds: [], size: "16:9", durationSeconds: 0 }, false],
   ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "n", action: "append", patch: { durationSeconds: 5, plotDescription: "cat" } }, true],

@@ -82,9 +82,12 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 		if err != nil {
 			return err
 		}
-		now := time.Now()
+		now := time.Now().UTC()
 		var candidates []model.CloudAgentExecution
-		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind").Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", "pi", []string{"queued", "running", "waiting_approval"}, now).Order("created_at,id").Find(&candidates).Error; err != nil {
+		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind",
+			"lease_owner", "lease_expires_at", "recovery_status", "recovery_attempts", "recovery_started_at", "progress_version", "claim_progress_version",
+			"runtime_phase", "wait_reason", "active_task_id", "media_task_id").
+			Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?) AND (next_recovery_at IS NULL OR next_recovery_at <= ?)", "pi", []string{"queued", "running", "waiting_approval"}, now, now).Order("created_at,id").Find(&candidates).Error; err != nil {
 			return err
 		}
 		var live []model.CloudAgentExecution
@@ -114,6 +117,16 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 			return a < b
 		})
 		for _, candidate := range candidates {
+			// Suspended parents yield residency until their dependencies terminate.
+			if candidate.WaitKind == "subagents" {
+				var pending int64
+				if err := tx.Table("agent_subagent_links AS links").Joins("JOIN cloud_agent_executions AS child ON child.id = links.child_run_id AND child.user_id = links.user_id").Where("links.user_id = ? AND links.parent_run_id = ? AND child.status IN ?", candidate.UserID, candidate.ID, []string{"queued", "running", "waiting_approval"}).Count(&pending).Error; err != nil {
+					return err
+				}
+				if pending > 0 {
+					continue
+				}
+			}
 			key := admissionKey(candidate)
 			if counts[key] >= policy.MaxResidentPerCanvas {
 				if candidate.Status == "queued" && candidate.WaitKind != "canvas_capacity" {
@@ -135,10 +148,15 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 			if err != nil {
 				return err
 			}
-			if err := New(tx).lockAgentCrewExecution(candidate.UserID, candidate.ID); err != nil {
+			updates := map[string]any{"lease_owner": owner, "lease_expires_at": until, "status": gorm.Expr("CASE WHEN status = 'queued' THEN 'running' ELSE status END"), "runtime_phase": "ready", "wait_kind": "", "wait_reason": "", "revision": gorm.Expr("revision + 1")}
+			protected, err := New(tx).WorkerRecoveryProtectedWait(candidate)
+			if err != nil {
 				return err
 			}
-			result := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", candidate.ID, candidate.Revision, []string{"queued", "running", "waiting_approval"}, now).Updates(map[string]any{"lease_owner": owner, "lease_expires_at": until, "status": gorm.Expr("CASE WHEN status = 'queued' THEN 'running' ELSE status END"), "runtime_phase": "ready", "wait_kind": "", "wait_reason": "", "revision": gorm.Expr("revision + 1")})
+			for field, value := range workerRecoveryClaimUpdates(candidate, now, protected) {
+				updates[field] = value
+			}
+			result := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", candidate.ID, candidate.Revision, []string{"queued", "running", "waiting_approval"}, now).Updates(updates)
 			if result.Error != nil {
 				return result.Error
 			}
@@ -160,13 +178,6 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 				return err
 			}
 			claimed = &candidate
-			current, err := New(tx).CloudAgent(candidate.UserID, candidate.ID)
-			if err != nil {
-				return err
-			}
-			if err := New(tx).projectAgentCrewExecution(current); err != nil {
-				return err
-			}
 			return nil
 		}
 		return nil

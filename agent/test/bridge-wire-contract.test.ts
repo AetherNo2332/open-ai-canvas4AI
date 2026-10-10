@@ -7,6 +7,48 @@ import { CANVAS_PI_WIRE_IDENTITY, CanvasBridge, type PiSnapshot, type PiToolCall
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 
+test('request serialization bugs are internal errors and never retryable transport faults',async()=>{
+ const original=globalThis.fetch;let requests=0;
+ const circular:Record<string,unknown>={};circular.self=circular;
+ try{
+  globalThis.fetch=(async()=>{requests++;return new Response('{}')}) as typeof fetch;
+  const bridge=new CanvasBridge('http://backend:8080','token','worker');
+  await assert.rejects(bridge.modelPreflight(run,{...run.canonical,messages:[circular]}),error=>error instanceof TypeError);
+  assert.equal(requests,0);
+ }finally{globalThis.fetch=original}
+});
+
+test('a backend outage pauses new claims across bridge instances until one protocol probe succeeds',async()=>{
+ const original=globalThis.fetch;
+ const health={nextProbeAt:0};
+ const first=new CanvasBridge('http://backend:8080','token','one',undefined,undefined,health);
+ const second=new CanvasBridge('http://backend:8080','token','two',undefined,undefined,health);
+ let requests=0;
+ try {
+  globalThis.fetch=(async()=>{requests++;return new Response('',{status:503})}) as typeof fetch;
+  await assert.rejects(first.failRun(run,'safe'));
+  assert.equal(await second.claim(),null);
+  assert.equal(requests,1);
+  health.nextProbeAt=Date.now()-1;
+  globalThis.fetch=(async()=>{requests++;return new Response(JSON.stringify({code:0,data:{run:null}}))}) as typeof fetch;
+  assert.equal(await second.claim(),null);
+  assert.equal(health.nextProbeAt,0);
+  await first.claim();
+  assert.equal(requests,3);
+ }finally{globalThis.fetch=original}
+});
+
+test('bridge transport failures are explicitly retryable; malformed successful JSON is fatal', async () => {
+  const original = globalThis.fetch;
+  const bridge = new CanvasBridge('http://backend:8080', 'token', 'worker-1');
+  try {
+    globalThis.fetch = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+    await assert.rejects(bridge.failRun(run, 'safe'), error => error instanceof Error && error.name === 'RetryableBridgeError');
+    globalThis.fetch = (async () => new Response('not-json', {status:200})) as typeof fetch;
+    await assert.rejects(bridge.failRun(run, 'safe'), error => error instanceof Error && error.name === 'FatalWorkerError');
+  } finally { globalThis.fetch = original; }
+});
+
 const run: PiSnapshot = {
   runId: "run-wire",
   piSessionLeaseEpoch: 7,
@@ -74,7 +116,8 @@ test("a Go-finalized model failure is a terminal control signal", async () => {
     const bridge = new CanvasBridge("http://backend:8080", "token", "worker-1");
     await assert.rejects(bridge.modelStep(run, run.canonical), error =>
       error instanceof Error && error.name === "CanvasRunTerminated");
-    assert.equal(routes.length, 1, "a Go-finalized failure needs no second fail admission");
+    assert.equal(routes.length, 2, "Go failure acknowledgement distinguishes recoverable task failure from terminal run failure");
+    assert.ok(routes[1]?.endsWith("/failed-model-task/fail"));
   } finally { globalThis.fetch = original; }
 });
 

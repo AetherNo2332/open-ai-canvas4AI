@@ -71,7 +71,7 @@ export function TaskListRow({
                         </i>
                     </div>
                 ) : null}
-                {isFailed ? (
+                {isFailed && task.type !== "previs_render" ? (
                     <p className="task-record-error" title={task.error ? generationErrorMessage(task.error) : undefined}>
                         {taskAttentionReason(task)}
                     </p>

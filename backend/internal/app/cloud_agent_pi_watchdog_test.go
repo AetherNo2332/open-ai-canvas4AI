@@ -14,7 +14,7 @@ func TestSweepStalledPiAgentRunsTerminatesAbandonedRun(t *testing.T) {
 	s, db, run := piAgentTestFixture(t)
 
 	// 租约远早于"停滞阈值"（6 × 45s）之前过期。
-	stale := time.Now().Add(-(piStalledLeasePeriods + 1) * piAgentLeaseDuration)
+	stale := time.Now().UTC().Add(-(piStalledLeasePeriods + 1) * piAgentLeaseDuration)
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).
 		Updates(map[string]any{"lease_expires_at": stale, "status": "running"}).Error; err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestSweepStalledPiAgentRunsTerminatesAbandonedRun(t *testing.T) {
 func TestSweepStalledPiAgentRunsLeavesActiveRunAlone(t *testing.T) {
 	s, db, run := piAgentTestFixture(t)
 
-	fresh := time.Now().Add(piAgentLeaseDuration)
+	fresh := time.Now().UTC().Add(piAgentLeaseDuration)
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).
 		Updates(map[string]any{"lease_expires_at": fresh, "status": "running"}).Error; err != nil {
 		t.Fatal(err)

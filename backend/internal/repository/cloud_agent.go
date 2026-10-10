@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
+	"reflect"
 	"time"
 
 	"gorm.io/gorm"
@@ -215,9 +217,11 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 		return r.ClaimPiAgentFair(owner, until, p)
 	}
 	var candidates []model.CloudAgentExecution
-	now := time.Now()
-	if err := r.db.Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
-		"pi", []string{"queued", "running", "waiting_approval"}, now).
+	// SQLite 把 time.Time 按写入方的时区偏移序列化成文本再比较：混用本地时区参数会把
+	// 未来租约误判成已过期（同刻 UTC 文本的日期位更小）。租约/恢复列的比较参数必须统一 UTC。
+	now := time.Now().UTC()
+	if err := r.db.Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?) AND (next_recovery_at IS NULL OR next_recovery_at <= ?)",
+		"pi", []string{"queued", "running", "waiting_approval"}, now, now).
 		Order("created_at, id").Limit(20).Find(&candidates).Error; err != nil {
 		return nil, err
 	}
@@ -227,17 +231,22 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 			conversationID = candidate.ID
 		}
 		err := r.db.Transaction(func(tx *gorm.DB) error {
-			if err := New(tx).lockAgentCrewExecution(candidate.UserID, candidate.ID); err != nil {
+			updates := map[string]any{
+				"lease_owner": owner, "lease_expires_at": until,
+				"status":   gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", "queued", "running"),
+				"revision": gorm.Expr("revision + 1"),
+			}
+			protected, err := New(tx).WorkerRecoveryProtectedWait(candidate)
+			if err != nil {
 				return err
+			}
+			for key, value := range workerRecoveryClaimUpdates(candidate, now, protected) {
+				updates[key] = value
 			}
 			updated := tx.Model(&model.CloudAgentExecution{}).
 				Where("id = ? AND revision = ? AND engine = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)",
 					candidate.ID, candidate.Revision, "pi", now).
-				Updates(map[string]any{
-					"lease_owner": owner, "lease_expires_at": until,
-					"status":   gorm.Expr("CASE WHEN status = ? THEN ? ELSE status END", "queued", "running"),
-					"revision": gorm.Expr("revision + 1"),
-				})
+				Updates(updates)
 			if updated.Error != nil {
 				return updated.Error
 			}
@@ -258,11 +267,7 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 			if leased.RowsAffected != 1 {
 				return ErrCreationConflict
 			}
-			current, err := New(tx).CloudAgent(candidate.UserID, candidate.ID)
-			if err != nil {
-				return err
-			}
-			return New(tx).projectAgentCrewExecution(current)
+			return nil
 		})
 		if errors.Is(err, ErrCreationConflict) {
 			continue
@@ -286,7 +291,7 @@ func (r *Repository) RenewPiAgentLease(userID, id, owner string, epoch int64, un
 	}
 	renewed := false
 	err = r.db.Transaction(func(tx *gorm.DB) error {
-		now := time.Now()
+		now := time.Now().UTC()
 		updated := tx.Model(&model.CloudAgentExecution{}).
 			Where("id = ? AND user_id = ? AND engine = ? AND lease_owner = ? AND lease_expires_at > ?",
 				id, userID, "pi", owner, now).
@@ -386,11 +391,6 @@ func (r *Repository) RecentCloudAgentEventsForUser(userID string, runLimit int) 
 // Lock before reading: checkpoints, canvas writes and task reservations commit together.
 func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func(*model.CloudAgentExecution, *Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if !r.crewMutation {
-			if err := New(tx).lockAgentCrewExecution(userID, id); err != nil {
-				return err
-			}
-		}
 		q := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND revision = ?", id, userID, revision).UpdateColumn("revision", gorm.Expr("revision + 1"))
 		if q.Error != nil {
 			return q.Error
@@ -403,6 +403,7 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 			return err
 		}
 		previousEvents := run.EventCount
+		previousCheckpoint := run.CheckpointVersion
 		previousEventBodies := make(map[int]string, len(run.Journal))
 		for _, event := range run.Journal {
 			previousEventBodies[event.Sequence] = event.EventJSON
@@ -412,9 +413,47 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 			previousMessages[fmt.Sprintf("%s:%d", message.Kind, message.Sequence)] = message.MessageJSON
 		}
 		callbackRepo := New(tx)
-		callbackRepo.crewMutation = r.crewMutation
+		previousActive, previousMedia := run.ActiveTaskID, run.MediaTaskID
 		if err = fn(run, callbackRepo); err != nil {
 			return err
+		}
+		progress := previousActive != "" && run.ActiveTaskID == "" || previousMedia != "" && run.MediaTaskID == ""
+		// Saving or replaying user/system messages is not acknowledged work.
+		// Model completion clears ActiveTaskID; tools/compaction append receipts.
+		for _, record := range run.Journal {
+			if record.Sequence <= previousEvents {
+				continue
+			}
+			var event struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal([]byte(record.EventJSON), &event) == nil && (event.Type == "tool_completed" || event.Type == "context_compacted") {
+				progress = true
+			}
+		}
+		if run.Engine == "pi" && previousCheckpoint >= model.CloudAgentCheckpointVersion && progress && !isTerminalCloudAgentRunStatus(run.Status) {
+			now := time.Now().UTC()
+			run.ProgressVersion++
+			run.LastProgressAt = &now
+			run.RecoveryAttempts = 0
+			run.RecoveryStartedAt = nil
+			run.NextRecoveryAt = nil
+			run.RecoveryStatus = ""
+			if run.RecoveryTaskID == "" && run.RecoveryCallID == "" {
+				run.RecoveryOperationAttempts = 0
+				var budgets map[string]int
+				if run.RecoveryOperationBudgets != "" {
+					if err := json.Unmarshal([]byte(run.RecoveryOperationBudgets), &budgets); err != nil {
+						return err
+					}
+					delete(budgets, "run")
+					body, err := json.Marshal(budgets)
+					if err != nil {
+						return err
+					}
+					run.RecoveryOperationBudgets = string(body)
+				}
+			}
 		}
 		if isTerminalCloudAgentRunStatus(run.Status) {
 			run.RuntimePhase = "terminal"
@@ -496,9 +535,6 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 				return err
 			}
 		}
-		if !r.crewMutation {
-			return New(tx).projectAgentCrewExecution(run)
-		}
 		return nil
 	})
 }
@@ -514,8 +550,9 @@ func isTerminalCloudAgentRunStatus(status string) bool {
 
 // sameJSONDocument compares event records by JSON meaning rather than source
 // bytes. Event payloads may contain json.RawMessage (for example tool arguments),
-// so decode/re-encode can legally normalize whitespace or object key order while
-// preserving the immutable event contract.
+// so decode/re-encode can legally normalize whitespace, object key order, or
+// numeric spellings such as 0.0 and 0 while preserving the immutable event
+// contract.
 func sameJSONDocument(left, right string) bool {
 	decode := func(raw string) (any, error) {
 		decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
@@ -528,20 +565,48 @@ func sameJSONDocument(left, right string) bool {
 		if err := decoder.Decode(&extra); err == nil {
 			return nil, fmt.Errorf("multiple JSON documents")
 		}
-		return value, nil
+		return canonicalJSONValue(value), nil
 	}
 	leftValue, leftErr := decode(left)
 	rightValue, rightErr := decode(right)
 	if leftErr != nil || rightErr != nil {
 		return left == right
 	}
-	leftCanonical, leftErr := json.Marshal(leftValue)
-	rightCanonical, rightErr := json.Marshal(rightValue)
-	return leftErr == nil && rightErr == nil && bytes.Equal(leftCanonical, rightCanonical)
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+type canonicalJSONNumber string
+
+func canonicalJSONValue(value any) any {
+	switch typed := value.(type) {
+	case json.Number:
+		if rational, ok := new(big.Rat).SetString(typed.String()); ok {
+			return canonicalJSONNumber(rational.RatString())
+		}
+		return canonicalJSONNumber(typed.String())
+	case []any:
+		for index := range typed {
+			typed[index] = canonicalJSONValue(typed[index])
+		}
+	case map[string]any:
+		for key, nested := range typed {
+			typed[key] = canonicalJSONValue(nested)
+		}
+	}
+	return value
 }
 
 func (r *Repository) CreateCloudAgentCanvasMutation(mutation *model.CloudAgentCanvasMutation) error {
-	return r.db.Create(mutation).Error
+	// A new edit creates a branch. Clear abandoned redos and insert the edit
+	// together, including callers outside the usual Agent checkpoint transaction.
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.CloudAgentCanvasMutation{}).
+			Where("user_id = ? AND run_id = ? AND canvas_id = ? AND status = ?", mutation.UserID, mutation.RunID, mutation.CanvasID, "undone").
+			Update("status", "discarded").Error; err != nil {
+			return err
+		}
+		return tx.Create(mutation).Error
+	})
 }
 
 func (r *Repository) LatestCloudAgentCanvasMutation(userID, runID string) (*model.CloudAgentCanvasMutation, error) {
@@ -551,10 +616,39 @@ func (r *Repository) LatestCloudAgentCanvasMutation(userID, runID string) (*mode
 	return &mutation, err
 }
 
+// Include unavailable snapshots and task submissions so callers cannot skip
+// an irreversible operation to undo an earlier edit.
+func (r *Repository) CloudAgentCanvasMutationForUndo(userID, runID, canvasID string) (*model.CloudAgentCanvasMutation, error) {
+	var mutation model.CloudAgentCanvasMutation
+	err := r.db.Where("user_id = ? AND run_id = ? AND canvas_id = ? AND status IN ?", userID, runID, canvasID, []string{"applied", "not_undoable"}).
+		Order("created_at DESC, id DESC").First(&mutation).Error
+	return &mutation, err
+}
+
+// Undo timestamps form the redo stack. Older creation time breaks an equal
+// timestamp in the order needed to replay an earlier edit before a later one.
+func (r *Repository) CloudAgentCanvasMutationForRedo(userID, runID, canvasID string) (*model.CloudAgentCanvasMutation, error) {
+	var mutation model.CloudAgentCanvasMutation
+	err := r.db.Where("user_id = ? AND run_id = ? AND canvas_id = ? AND status = ?", userID, runID, canvasID, "undone").
+		Order("undone_at DESC, created_at ASC, id ASC").First(&mutation).Error
+	return &mutation, err
+}
+
 func (r *Repository) MarkCloudAgentCanvasMutationUndone(userID, runID, mutationID string, undoneAt time.Time) error {
 	result := r.db.Model(&model.CloudAgentCanvasMutation{}).
 		Where("id = ? AND user_id = ? AND run_id = ? AND status = ?", mutationID, userID, runID, "applied").
 		Updates(map[string]any{"status": "undone", "undone_at": undoneAt})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrCreationConflict
+	}
+	return nil
+}
+
+func (r *Repository) MarkCloudAgentCanvasMutationReapplied(userID, runID, mutationID string) error {
+	result := r.db.Model(&model.CloudAgentCanvasMutation{}).Where("id = ? AND user_id = ? AND run_id = ? AND status = ?", mutationID, userID, runID, "undone").Updates(map[string]any{"status": "applied", "undone_at": nil})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -585,10 +679,6 @@ func (r *Repository) MarkCloudAgentCancelled(userID, id string, revision int64) 
 
 func (r *Repository) markCloudAgentTerminal(userID, id string, revision int64, status, message string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		repo := New(tx)
-		if err := repo.lockAgentCrewExecution(userID, id); err != nil {
-			return err
-		}
 		updates := map[string]any{"status": status, "cleanup_pending": true, "revision": gorm.Expr("revision + 1")}
 		if message != "" {
 			updates["failure_message"] = message
@@ -600,11 +690,7 @@ func (r *Repository) markCloudAgentTerminal(userID, id string, revision int64, s
 		if result.RowsAffected != 1 {
 			return ErrCreationConflict
 		}
-		var execution model.CloudAgentExecution
-		if err := tx.Where("id = ? AND user_id = ?", id, userID).First(&execution).Error; err != nil {
-			return err
-		}
-		return repo.projectAgentCrewExecution(&execution)
+		return nil
 	})
 }
 

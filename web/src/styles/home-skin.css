@@ -55,6 +55,10 @@ body.app-user-overlays.app-user-overlays {
         border-radius: var(--input-radius) !important;
     }
 
+    .app-user-workspace.app-user-workspace .canvas-generation-spinner {
+        border-radius: 50% !important;
+    }
+
     .app-user-workspace.app-user-workspace :is(button, .canvas-home-entry) {
         border-radius: var(--button-radius) !important;
     }

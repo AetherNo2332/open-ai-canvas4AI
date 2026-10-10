@@ -23,6 +23,7 @@ let remote = new Map<string, CanvasProject>();
 let requests: Array<{ method: string; id: string; project?: CanvasProject }> = [];
 let beforePut: (() => Promise<void>) | undefined;
 let deleteFailureId: string | undefined;
+let mediaUploads: Array<{ id: string; kind: string; bytes: number }> = [];
 
 function canvas(id = "canvas"): CanvasProject {
     return {
@@ -54,6 +55,7 @@ beforeEach(async () => {
     autoSave = undefined;
     beforePut = undefined;
     deleteFailureId = undefined;
+    mediaUploads = [];
     remote = new Map([
         ["canvas", canvas()],
         ["other", canvas("other")],
@@ -79,11 +81,18 @@ beforeEach(async () => {
     apiClient.defaults.adapter = async (config) => {
         const method = config.method || "get";
         const id = String(config.url).split("/").at(-1)!;
-        const body = config.data ? JSON.parse(config.data) : undefined;
+        const body = typeof config.data === "string" ? JSON.parse(config.data) : undefined;
         requests.push({ method, id, project: body?.project });
         let data: unknown;
         let status = 200;
-        if (id === "snapshot") data = { projects: structuredClone([...remote.values()]), assets: [] };
+        if (id === "resources" && method === "post") {
+            const form = config.data as FormData;
+            const file = form.get("file") as Blob;
+            const resourceId = `uploaded-${mediaUploads.length + 1}`;
+            const kind = String(form.get("kind"));
+            mediaUploads.push({ id: resourceId, kind, bytes: file.size });
+            data = { resource: { id: resourceId, userId: scope, kind, status: "ready", provider: "local", endpoint: "", bucket: "", objectKey: resourceId, publicUrl: "", mimeType: file.type, size: file.size, createdAt: "2026-10-05T00:00:00Z", updatedAt: "2026-10-05T00:00:00Z" } };
+        } else if (id === "snapshot") data = { projects: structuredClone([...remote.values()]), assets: [] };
         else if (method === "delete") {
             if (id === deleteFailureId) status = 403;
             else {
@@ -108,14 +117,16 @@ beforeEach(async () => {
             await beforePut?.();
             const project = body.project as CanvasProject;
             const current = remote.get(id);
-            if (project.revision !== (current?.revision ?? 0)) status = 409;
+            if (String(config.url).startsWith("/assets/")) data = { asset: body.asset };
+            else if (new TextEncoder().encode(JSON.stringify(project)).byteLength > 4 << 20) status = 400;
+            else if (project.revision !== (current?.revision ?? 0)) status = 409;
             else {
                 const saved = { ...structuredClone(project), revision: project.revision! + 1 };
                 remote.set(id, saved);
                 data = { project: saved };
             }
         } else data = { project: structuredClone(remote.get(id)) };
-        return { config, status, statusText: "", headers: {}, data: { code: status === 200 ? 0 : status, data, msg: status === 409 ? "版本冲突" : "ok" } };
+        return { config, status, statusText: "", headers: {}, data: { code: status === 200 ? 0 : status, data, msg: status === 409 ? "版本冲突" : status === 400 ? "画布数据超过 4MB，请先把媒体文件保存到资源存储" : "ok" } };
     };
     useCanvasStore.setState({ projects: [] });
     useAssetStore.setState({ assets: [] });
@@ -131,6 +142,45 @@ afterEach(async () => {
     localforage.setItem = originalSet;
     if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
     else Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+});
+
+test("saving a large inline preview uploads it without replacing the video's resource", async () => {
+    const preview = `data:image/png;base64,${"AAAA".repeat((4 << 20) / 4)}`;
+    const nodes = [{ ...canvas().nodes[0], type: CanvasNodeType.Video, metadata: {
+        content: "/api/resources/video-original/file", storageKey: "resource:video-original",
+        previewContent: preview,
+        videoPreview: { content: "data:image/png;base64,AQID" },
+    } }];
+    useCanvasStore.getState().updateProject("canvas", { nodes });
+
+    await saveRemoteUserDataNow("canvas");
+
+    const saved = remote.get("canvas")!;
+    expect(saved.nodes[0].metadata).toMatchObject({
+        content: "/api/resources/video-original/file", storageKey: "resource:video-original",
+        previewContent: "/api/resources/uploaded-2/file",
+        videoPreview: { content: "/api/resources/uploaded-1/file", storageKey: "resource:uploaded-1" },
+    });
+    expect(new TextEncoder().encode(JSON.stringify(saved)).byteLength).toBeLessThan(4 << 20);
+    expect(mediaUploads.map(({ kind, bytes }) => ({ kind, bytes }))).toEqual([
+        { kind: "image", bytes: 3 }, { kind: "image", bytes: 3 << 20 },
+    ]);
+    expect(useCanvasStore.getState().openProject("canvas")!.nodes[0].metadata?.previewContent).toBe(preview);
+});
+
+test("inline preview-only content is uploaded independently and reused across nodes", async () => {
+    const nodes = ["first", "second"].map((id) => ({ ...canvas().nodes[0], id, type: CanvasNodeType.Text, metadata: {
+        content: "正文必须保留", previewContent: "data:image/png;base64,AQID",
+    } }));
+    useCanvasStore.getState().updateProject("canvas", { nodes });
+
+    await saveRemoteUserDataNow("canvas");
+
+    expect(remote.get("canvas")!.nodes.map((node) => node.metadata)).toEqual([
+        { content: "正文必须保留", previewContent: "/api/resources/uploaded-1/file" },
+        { content: "正文必须保留", previewContent: "/api/resources/uploaded-1/file" },
+    ]);
+    expect(mediaUploads).toHaveLength(1);
 });
 
 test("deletion skips editing and invalid MIME assets, including an uncached canvas", async () => {

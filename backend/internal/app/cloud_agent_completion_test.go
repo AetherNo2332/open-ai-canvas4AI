@@ -460,3 +460,73 @@ func TestCloudAgentCompletionReceiptsEveryRemainingCall(t *testing.T) {
 		}
 	}
 }
+
+// G3e：候选答复引用了本轮从未出现过的节点 ID 才是虚报；引用真实回执里出现过的 ID 一律放行。
+func TestCloudAgentCompletionBlocksFabricatedNodeClaims(t *testing.T) {
+	const realNodeID = "ag0123456789abcdef0123456789abcdef"
+	state := &cloudAgentRuntime{Events: []CloudAgentEvent{{Type: "tool_completed", Payload: map[string]any{
+		"toolName": "previs_scene_create",
+		"result":   map[string]any{"nodeId": realNodeID, "shotId": "shot-1"},
+	}}}}
+	// 应放行：引用的就是回执里的 nodeId。
+	if block := cloudAgentBlockUnverifiedNodeClaims(state, cloudAgentCompletionBlock{Final: true}, "已创建预演台工作站节点 "+realNodeID+"，可以直接打开。"); !block.Final {
+		t.Fatalf("verified node id must pass: %#v", block.Blockers)
+	}
+	// 应放行：正文没引用任何节点 ID（不可判定，保守放行）。
+	if block := cloudAgentBlockUnverifiedNodeClaims(state, cloudAgentCompletionBlock{Final: true}, "已创建预演台节点，可以直接打开。"); !block.Final {
+		t.Fatalf("claim without node id must pass: %#v", block.Blockers)
+	}
+	// 应放行：提到了不存在 ID，但不是交付措辞（只是在讨论/提醒）。
+	if block := cloudAgentBlockUnverifiedNodeClaims(state, cloudAgentCompletionBlock{Final: true}, "画布上还有一个旧节点 agffffffffffffffffffffffffffffffff，需要你确认是否删除。"); !block.Final {
+		t.Fatalf("non-delivery mention must pass: %#v", block.Blockers)
+	}
+	// 应拦截：宣称已创建节点，但 ID 本轮从未出现过。
+	block := cloudAgentBlockUnverifiedNodeClaims(state, cloudAgentCompletionBlock{Final: true}, "已创建导演台节点 agffffffffffffffffffffffffffffffff，点击即可进入预演台。")
+	if block.Final || !cloudAgentCompletionHasBlocker(block, cloudAgentCompletionNodeClaimKind) {
+		t.Fatalf("fabricated node claim must be blocked: %#v", block)
+	}
+	if block.Interjected {
+		t.Fatal("node claim blocker must not be treated as a soft interjection")
+	}
+	if !strings.Contains(cloudAgentCompletionBlockerText(block), "从未出现过") {
+		t.Fatalf("unexpected blocker text: %s", cloudAgentCompletionBlockerText(block))
+	}
+}
+
+// G3e：画布增量事件里的 nodeId 同样算"真实出现过"，据此放行。
+func TestCloudAgentCompletionTrustsCanvasEventNodeIDs(t *testing.T) {
+	state := &cloudAgentRuntime{Events: []CloudAgentEvent{{Type: "canvas_updated", Payload: map[string]any{
+		"actions": []any{map[string]any{"nodeId": "previs-hero-scene"}},
+	}}}}
+	if block := cloudAgentBlockUnverifiedNodeClaims(state, cloudAgentCompletionBlock{Final: true}, "已创建预演台工作站节点 previs-hero-scene，可直接打开编辑。"); !block.Final {
+		t.Fatalf("canvas event node id must be trusted: %#v", block.Blockers)
+	}
+}
+
+// G3e：finish_run 这条路径也要过同一道闸，且催办指令是"核对回执"而不是"对账清单"。
+func TestCloudAgentFinishRunBlocksFabricatedNodeClaim(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+
+	run, state := agentSettleToolStep(t, s, db, root.ID, "finish-fabricated", "finish_run", `{"summary":"已创建导演台节点 agffffffffffffffffffffffffffffffff，可直接打开。"}`)
+
+	if run.Status != "running" {
+		t.Fatalf("虚报节点时 finish_run 不该结束本轮：status=%s", run.Status)
+	}
+	completed := agentEventPayloads(state, "tool_completed")
+	if len(completed) != 1 {
+		t.Fatalf("finish_run 应返回一条结构化回执：%+v", completed)
+	}
+	result, _ := completed[0]["result"].(map[string]any)
+	if result["completionBlocked"] != true {
+		t.Fatalf("回执要说明被闸门拦下：%+v", completed[0])
+	}
+	if !strings.Contains(fmt.Sprint(result["blockers"]), cloudAgentCompletionNodeClaimKind) {
+		t.Fatalf("回执要带机器可读的阻塞原因：%+v", result)
+	}
+	if result["requiredAction"] != "verify_node_receipts" {
+		t.Fatalf("催办指令应是核对节点回执：%+v", result)
+	}
+	if blocked := agentEventPayloads(state, "completion_blocked"); len(blocked) != 1 {
+		t.Fatalf("应落一条 completion_blocked 控制事件：%+v", blocked)
+	}
+}

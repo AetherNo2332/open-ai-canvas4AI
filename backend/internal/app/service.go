@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -27,6 +28,7 @@ import (
 )
 
 type Service struct {
+	agentWebSearchHTTPClient *http.Client
 	repo                     *repository.Repository
 	dataDir                  string
 	cancelMu                 sync.Mutex

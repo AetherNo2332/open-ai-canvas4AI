@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"infinite-canvas/backend/internal/canvas/capability"
@@ -69,7 +70,7 @@ var (
 	// Top-level keys only the browser writes.
 	cloudAgentCanvasUIKeys = map[string]bool{
 		"viewport": true, "updatedAt": true, "activeChatId": true, "chatSessions": true,
-		"directorScenes": true, "showImageInfo": true, "starterMode": true,
+		"showImageInfo": true, "starterMode": true,
 		"backgroundMode": true, "appearance": true,
 	}
 	// Node fields stamped by the client on save, not authored by the Agent.
@@ -332,7 +333,7 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 		if status, ok := meta["status"].(string); ok {
 			item["status"] = truncateRunes(status, 40)
 		}
-		capability, known := cloudAgentNodeCapabilityForType(stringValue(node["type"]))
+		capability, known := cloudAgentNodeCapabilityForNode(node)
 		if !known {
 			// Read visibility is not permission to mutate or use a node as a media reference.
 			item["agentSupported"] = false
@@ -347,6 +348,10 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			included[id] = true
 			continue
 		}
+		if capability.Variant != nil {
+			// 变体节点（如角色卡）底层 type 仍是 text，用 kind 标明真实能力，避免当普通文本处理。
+			item["kind"] = capability.Type
+		}
 		fields := capability.SummaryFields
 		projectMode := mode
 		textLimit := cloudAgentPageTextLimit
@@ -354,6 +359,7 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			fields = capability.DetailFields
 			projectMode = cloudAgentProjectionDetail
 			textLimit = cloudAgentDetailTextLimit
+			item["editable"] = cloudAgentEditableNodeProjection(node, capability, textLimit)
 		}
 		projected, err := cloudAgentProjectNodeFields(node, meta, capability, fields, textLimit, projectMode, storyboardOffset, readRows)
 		if err != nil {
@@ -361,6 +367,35 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 		}
 		for key, value := range projected {
 			item[key] = value
+		}
+		if cloudAgentCharacterNode(node) {
+			if repo == nil {
+				item["character"] = map[string]any{"available": false, "issue": "角色资产读取服务不可用"}
+			} else {
+				canvas, canvasErr := repo.CanvasProjectForUser(userID, canvasID)
+				if canvasErr != nil {
+					return nil, canvasErr
+				}
+				character, characterErr := cloudAgentResolveCharacter(repo, userID, canvas.ProjectID, node)
+				if characterErr != nil {
+					item["character"] = map[string]any{"available": false, "issue": cloudAgentSafeToolError(characterErr)}
+				} else {
+					characterView := character.read(precise)
+					if precise {
+						_, referenceErr := cloudAgentCharacterImageReference(repo, userID, id, character)
+						characterView["imageReference"] = map[string]any{"ready": referenceErr == nil}
+						if referenceErr != nil {
+							characterView["imageReference"].(map[string]any)["issue"] = cloudAgentSafeToolError(referenceErr)
+						}
+						_, audioErr := cloudAgentCharacterAudioReference(repo, userID, id, character)
+						characterView["audioReference"] = map[string]any{"ready": audioErr == nil}
+						if audioErr != nil {
+							characterView["audioReference"].(map[string]any)["issue"] = cloudAgentSafeToolError(audioErr)
+						}
+					}
+					item["character"] = characterView
+				}
+			}
 		}
 		if capability.GenerationMode != "" {
 			generation := map[string]any{"taskStatus": "not_submitted"}
@@ -392,7 +427,8 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			}
 			item["generationDraft"] = draft
 		}
-		if capability.Connection.CanReference {
+		// 角色卡的引用可用性在 character.imageReference/audioReference 中给出。
+		if capability.Connection.CanReference && !cloudAgentCharacterNode(node) {
 			ref, _, err := cloudAgentReference(repo, userID, node)
 			outputReference := map[string]any{"ready": err == nil}
 			item["outputReference"] = outputReference
@@ -434,6 +470,11 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 		toIncluded := included[stringValue(edge["toNodeId"])]
 		if (selectedMode && fromIncluded && toIncluded) || (!selectedMode && (fromIncluded || toIncluded)) {
 			item := map[string]any{"id": edge["id"], "fromNodeId": edge["fromNodeId"], "toNodeId": edge["toNodeId"]}
+			for _, key := range []string{"fromHandleId", "toHandleId", "relation", "storyboardRowId"} {
+				if value := stringValue(edge[key]); value != "" {
+					item[key] = value
+				}
+			}
 			body, _ := json.Marshal(item)
 			if pageBytes+len(body) > cloudAgentReadPageBytes {
 				nextConnection = index
@@ -689,6 +730,31 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, mode cloud
 				item[collection+"Truncated"] = true
 			}
 		}
+		if mode == cloudAgentProjectionDetail {
+			fields := capability.StoryboardRowFields()
+			extra := map[string]capability.PatchField{}
+			for _, key := range []string{"mustHave", "optionalDetails", "characters", "assetBindings", "imagePromptTemplateVariables", "videoPromptTemplateVariables", "sourceStartMs", "sourceEndMs", "keyframeTimeMs"} {
+				extra[key] = fields[key]
+			}
+			projected := cloudAgentRowFieldProjection(row, extra, textLimit, 8000)
+			if characters, ok := projected["characters"].([]any); ok {
+				originals := creationMaps(row["characters"])
+				for index, value := range characters {
+					if index >= len(originals) {
+						break
+					}
+					character := value.(map[string]any)
+					for _, key := range []string{"characterAssetId", "characterVersionId"} {
+						if id, ok := originals[index][key].(string); ok {
+							character[key] = truncateRunes(id, 120)
+						}
+					}
+				}
+			}
+			for key, value := range projected {
+				item[key] = value
+			}
+		}
 		// rowId 是编辑句柄：它只出现在逐字档，分页档由下面的提示告诉模型去哪里取。
 		if mode != cloudAgentProjectionDetail {
 			delete(item, "id")
@@ -737,7 +803,7 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 		concurrency = value
 	}
 	columns := []any{}
-	for index, column := range creationMaps(table["referenceColumns"])[:min(len(creationMaps(table["referenceColumns"])), 6)] {
+	for index, column := range creationMaps(table["referenceColumns"])[:min(len(creationMaps(table["referenceColumns"])), maxCloudAgentBatchReferences)] {
 		id, label := truncateRunes(stringValue(column["id"]), 120), truncateRunes(stringValue(column["label"]), 120)
 		if id != "" && label != "" {
 			columns = append(columns, map[string]any{"id": id, "label": label, "mentionToken": fmt.Sprintf("@参考图%d", index+1)})
@@ -831,6 +897,13 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 		if outputNodeID := truncateRunes(stringValue(row["outputNodeId"]), 120); outputNodeID != "" {
 			item["outputNodeId"] = outputNodeID
 		}
+		if mode == cloudAgentProjectionDetail {
+			fields := capability.BatchRowFields()
+			extra := map[string]capability.PatchField{"textNodeIds": fields["textNodeIds"], "cells": fields["cells"]}
+			for key, value := range cloudAgentRowFieldProjection(row, extra, textLimit, 8000) {
+				item[key] = value
+			}
+		}
 		rows = append(rows, item)
 	}
 	projected := map[string]any{
@@ -840,6 +913,18 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 			"enabledRows": enabled, "readyRows": ready, "missingPromptRows": missingPrompt,
 			"missingReferenceRows": missingReferences, "outputLinkedRows": outputLinked,
 		},
+	}
+	if mode == cloudAgentProjectionDetail {
+		columns := []any{}
+		for _, column := range creationMaps(table["textColumns"])[:min(len(creationMaps(table["textColumns"])), 100)] {
+			id, label := truncateRunes(stringValue(column["id"]), 120), truncateRunes(stringValue(column["label"]), 120)
+			if id != "" && label != "" {
+				columns = append(columns, map[string]any{"id": id, "label": label, "type": "text"})
+			}
+		}
+		if len(columns) > 0 {
+			projected["textColumns"] = columns
+		}
 	}
 	if globalPrompt != "" {
 		projected["globalPrompt"] = truncateRunes(globalPrompt, textLimit)
@@ -854,8 +939,8 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 }
 
 func cloudAgentBatchInputIDs(value any, limit int) []any {
-	if limit <= 0 || limit > 6 {
-		limit = 6
+	if limit <= 0 || limit > maxCloudAgentBatchReferences {
+		limit = maxCloudAgentBatchReferences
 	}
 	items, _ := value.([]any)
 	out := make([]any, 0, min(len(items), limit))
@@ -869,6 +954,65 @@ func cloudAgentBatchInputIDs(value any, limit int) []any {
 		out = append(out, id)
 	}
 	return out
+}
+
+func cloudAgentRowFieldProjection(row map[string]any, fields map[string]capability.PatchField, textLimit, budget int) map[string]any {
+	paths := map[string]capability.PatchField{}
+	for key, field := range fields {
+		field.Path = key
+		paths[key] = field
+	}
+	values, flags := (capability.Descriptor{PatchFields: paths}).EditableValues(row, textLimit)
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value, cut := cloudAgentBoundRowValue(key, values[key], &budget)
+		values[key] = value
+		if cut || flags[key] {
+			values[key+"Truncated"] = true
+		}
+	}
+	return values
+}
+
+func cloudAgentBoundRowValue(key string, value any, budget *int) (any, bool) {
+	switch typed := value.(type) {
+	case string:
+		if key == "nodeId" || strings.HasSuffix(key, "NodeId") || strings.HasSuffix(key, "NodeIds") || key == "role" {
+			return typed, false
+		}
+		text := truncateRunes(typed, max(*budget, 0))
+		*budget -= len([]rune(text))
+		return text, text != typed
+	case []any:
+		values := make([]any, len(typed))
+		cut := false
+		for index, item := range typed {
+			safe, truncated := cloudAgentBoundRowValue(key, item, budget)
+			values[index] = safe
+			cut = cut || truncated
+		}
+		return values, cut
+	case map[string]any:
+		values := map[string]any{}
+		cut := false
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			safe, truncated := cloudAgentBoundRowValue(key, typed[key], budget)
+			values[key] = safe
+			cut = cut || truncated
+		}
+		return values, cut
+	default:
+		return value, false
+	}
 }
 
 func cloudAgentInteger(value any) (int, bool) {

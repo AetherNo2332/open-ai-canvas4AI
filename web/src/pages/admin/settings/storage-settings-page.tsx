@@ -609,8 +609,8 @@ export default function StorageSettingsPage() {
                                             ) : null}
                                         </div>
                                         {draftMode === "s3" ? (
-                                            <Form.Item name="pathStyle" label="Path Style" valuePropName="checked" extra="开启后强制使用 path-style；关闭时由后端按 Endpoint 自动选择。">
-                                                <Switch checkedChildren="强制" unCheckedChildren="自动" />
+                                            <Form.Item name="pathStyle" label="Path Style" valuePropName="checked" extra="关闭时使用 S3 SDK 默认寻址；开启后强制使用 path-style。">
+                                                <Switch checkedChildren="强制" unCheckedChildren="关闭" />
                                             </Form.Item>
                                         ) : null}
                                     </div>

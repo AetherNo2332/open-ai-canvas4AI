@@ -14,6 +14,7 @@ import { CanvasNodeType, type CanvasNodeData, type CanvasNodeTypeId, type Positi
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
 import { getNodeDefinition, getNodeMinSize, shouldKeepAspectRatio } from "@/lib/canvas/node-registry";
+import { isPrevisWorkstationNode } from "@/lib/canvas/previs/previs-node";
 import { CanvasNodeContent, CanvasNodeImageInfo, CanvasNodeProducedModel } from "./canvas-node-content";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -62,7 +63,7 @@ type CanvasNodeProps = {
     onViewImage?: (node: CanvasNodeData) => void;
     onReplaceMedia?: (node: CanvasNodeData) => void;
     onOpenTextEditor?: (node: CanvasNodeData) => void;
-    onOpenDirector?: (node: CanvasNodeData) => void;
+    onOpenPrevis?: (node: CanvasNodeData) => void;
     onOpenDrawing?: (node: CanvasNodeData) => void;
     onMediaPlayRequest?: (nodeId: string) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
@@ -110,7 +111,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onOpenVersions,
     onViewImage,
     onOpenTextEditor,
-    onOpenDirector,
+    onOpenPrevis,
     onOpenDrawing,
     onMediaPlayRequest,
     onContextMenu,
@@ -339,9 +340,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onViewImage?.(data);
                         return;
                     }
-                    if (data.metadata?.directorSceneId) {
+                    if (isPrevisWorkstationNode(data)) {
                         event.stopPropagation();
-                        onOpenDirector?.(data);
+                        onOpenPrevis?.(data);
                         return;
                     }
                     if (data.type === CanvasNodeType.Drawing) {
@@ -547,7 +548,7 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.onViewImage === next.onViewImage &&
         previous.onReplaceMedia === next.onReplaceMedia &&
         previous.onOpenTextEditor === next.onOpenTextEditor &&
-        previous.onOpenDirector === next.onOpenDirector &&
+        previous.onOpenPrevis === next.onOpenPrevis &&
         previous.onOpenDrawing === next.onOpenDrawing &&
         previous.onContextMenu === next.onContextMenu
     );

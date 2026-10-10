@@ -12,6 +12,39 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func TestPiNativeCompactionTimeoutTerminatesRun(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	revision, leaf := seedPiCompactionBranch(t, db, run)
+	preparation := json.RawMessage(`{"firstKeptEntryId":"compact-assistant-1","tokensBefore":24000,"isSplitTurn":false,"messagesToSummarize":[{"role":"user","content":"Keep the first request"}],"turnPrefixMessages":[],"fileOps":{"read":[],"written":[],"edited":[]},"settings":{"enabled":true,"reserveTokens":10000,"keepRecentTokens":1000}}`)
+	op, err := s.PiBeginContextCompaction("user", run.ID, run.LeaseOwner, PiContextCompactionStart{
+		SessionRevision: revision, ActiveLeafID: leaf, Reason: "threshold", TokensBefore: 24000, Preparation: preparation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := PiNativeCompactionModelRequest{CallID: "history", SystemPrompt: "You are a context summarization assistant.", Prompt: "Summarize this history", MaxTokens: 2000}
+	call, err := s.PiNativeContextCompactionModel("user", run.ID, run.LeaseOwner, op.OperationID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Task{}).Where("id = ?", call.TaskID).Updates(map[string]any{
+		"status": model.TaskStatusFailed, "error": cloudAgentStepTimeoutError,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	view, err := s.PiNativeContextCompactionModel("user", run.ID, run.LeaseOwner, op.OperationID, input)
+	if err != nil || view.Status != "failed" {
+		t.Fatalf("native timeout response: view=%+v err=%v", view, err)
+	}
+	failed, state := agentInterjectionState(t, s, run.ID)
+	if failed.Status != "failed" || !failed.CleanupPending || !agentHasEventWithReason(state, "run_failed", "model_step_timeout") {
+		t.Fatalf("native summary timeout must terminate Agent: status=%s cleanup=%v", failed.Status, failed.CleanupPending)
+	}
+	if _, err := s.PiNativeContextCompactionModel("user", run.ID, run.LeaseOwner, op.OperationID, input); err == nil {
+		t.Fatal("terminal Agent allowed another compaction call")
+	}
+}
+
 func TestPiNativeCompactionReusesBilledCallAndAcceptsNativeBoundary(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
 	revision, leaf := seedPiCompactionBranch(t, db, run)

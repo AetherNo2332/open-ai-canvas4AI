@@ -65,6 +65,11 @@ jobs:
             arch: multi
             platforms: linux/amd64,linux/arm64
             runner: ubuntu-24.04
+          - image: open-ai-canvas-agent
+            dockerfile: agent/Dockerfile
+            arch: multi
+            platforms: linux/amd64,linux/arm64
+            runner: ubuntu-24.04
           - image: open-ai-canvas-backend
             dockerfile: backend/Dockerfile
             arch: amd64
@@ -79,6 +84,8 @@ jobs:
       IMAGE: ghcr.io/${{ needs.prepare.outputs.owner }}/${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.image == 'open-ai-canvas-agent'
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -114,7 +121,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
       - name: Record image digest
         env:
-          DIGEST: ${{ steps.existing.outputs.digest || steps.build.outputs.digest }}
+          DIGEST: ${{ steps.build.outputs.digest || steps.existing.outputs.digest }}
         shell: bash
         run: |
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid image digest" >&2; exit 1; }
@@ -138,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [open-ai-canvas-web, open-ai-canvas-backend]
+        image: [open-ai-canvas-web, open-ai-canvas-backend, open-ai-canvas-agent]
     # 不同提交可并行编译，但同一镜像的可变标签更新必须串行。
     concurrency:
       group: image-tags-${{ matrix.image }}-${{ github.ref }}

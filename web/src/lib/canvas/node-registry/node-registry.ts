@@ -1,5 +1,6 @@
 import type { CanvasNodeData, CanvasNodeTypeId } from "@/types/canvas";
 import type { PluginCanvasNodeContribution } from "@/lib/plugins/plugin-types";
+import { connectionTraits } from "../connection-traits";
 
 import { canvasNodeDefinitionFromPlugin, type CanvasNodeDefinition } from "./node-definition";
 
@@ -27,7 +28,10 @@ export function registerNodeDefinitions(defs: CanvasNodeDefinition[], ownerId = 
 
 /** Registers schema-driven canvas nodes from the unified plugin manifest. */
 export function registerPluginCanvasNodes(pluginId: string, nodes: PluginCanvasNodeContribution[]) {
-    registerNodeDefinitions(nodes.map((node) => canvasNodeDefinitionFromPlugin(pluginId, node)), pluginId);
+    registerNodeDefinitions(
+        nodes.map((node) => canvasNodeDefinitionFromPlugin(pluginId, node)),
+        pluginId,
+    );
 }
 
 /**
@@ -95,11 +99,14 @@ export function getNodeResourceKind(node: CanvasNodeData) {
 
 /** 该节点作为生成节点时的生成模式，不产生生成行为返回 null */
 export function getNodeGenerationMode(node: CanvasNodeData) {
+    const trait = connectionTraits[node.type];
+    if (trait) return trait.metadataMode ? node.metadata?.generationMode || trait.mode || null : trait.mode || null;
     return definitions.get(node.type)?.generationMode?.(node) ?? null;
 }
 
 /** 该节点作为上游输入被计数时的类别，不参与计数返回 undefined */
 export function getNodeInputKind(type: CanvasNodeTypeId) {
+    if (connectionTraits[type]) return connectionTraits[type].inputKind;
     return definitions.get(type)?.inputKind;
 }
 
@@ -108,11 +115,13 @@ export function getNodeAcceptedInputKind(type: CanvasNodeTypeId) {
 }
 
 export function getNodeAcceptedInputKinds(type: CanvasNodeTypeId) {
+    if (connectionTraits[type]) return connectionTraits[type].acceptedInputKinds || [];
     const accepted = definitions.get(type)?.acceptsInputKind;
     if (!accepted) return [];
     return Array.isArray(accepted) ? accepted : [accepted];
 }
 
 export function getNodeMaxInputCount(type: CanvasNodeTypeId) {
+    if (connectionTraits[type]) return connectionTraits[type].maxInputCount;
     return definitions.get(type)?.maxInputCount;
 }

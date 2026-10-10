@@ -1,75 +1,95 @@
 .agent-subagent-list {
-    overflow-x: auto;
-    padding: var(--space-1);
+    min-width: 0;
+    padding: var(--space-2) var(--space-4);
     color: var(--agent-subagent-text);
+}
+.agent-subagent-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--fs-label);
+    color: color-mix(in srgb, var(--agent-subagent-text) 55%, transparent);
+}
+.agent-subagent-count {
+    margin-left: var(--space-1);
+    font-variant-numeric: tabular-nums;
 }
 .agent-subagent-row {
     display: flex;
     gap: var(--space-2);
-    align-items: center;
+    overflow-x: auto;
+    padding-block: var(--space-1);
+    overscroll-behavior: contain;
 }
 .agent-subagent-item {
-    position: relative;
-    flex: 0 0 44px;
-    transition: transform var(--motion-dur-base) var(--motion-ease-out);
+    flex: 0 0 64px;
+    min-width: 0;
+}
+.agent-subagent-button {
+    display: flex;
+    width: 100%;
+    min-height: 44px;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border: 0;
+    border-radius: var(--button-radius);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+.agent-subagent-button:hover {
+    background: color-mix(in srgb, var(--agent-subagent-text) 6%, transparent);
+}
+.agent-subagent-button:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
 }
 .agent-subagent-avatar {
-    width: 44px;
-    height: 44px;
-    padding: var(--space-2);
-    border: 2px solid var(--border);
-    background: var(--agent-subagent-surface);
-    cursor: default;
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid color-mix(in srgb, var(--agent-subagent-text) 12%, transparent);
+    border-radius: var(--button-radius);
+    background: color-mix(in srgb, var(--agent-subagent-text) 4%, var(--agent-subagent-surface));
 }
-.agent-subagent-avatar img {
-    width: 100%;
-    height: 100%;
+.agent-subagent-status {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    width: 9px;
+    height: 9px;
+    border: 2px solid var(--agent-subagent-surface);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--agent-subagent-text) 45%, var(--agent-subagent-surface));
 }
-.dark .agent-subagent-avatar img,
-[data-theme="dark"] .agent-subagent-avatar img {
-    filter: invert(1);
+.agent-subagent-item[data-state="running"] .agent-subagent-status {
+    background: var(--palette-status-success);
 }
-.agent-subagent-item[data-state="running"] .agent-subagent-avatar {
-    border-color: var(--primary);
+.agent-subagent-item[data-state="waiting"] .agent-subagent-status {
+    background: var(--palette-status-warning);
 }
-.agent-subagent-item[data-state="failed"] .agent-subagent-avatar {
-    border-color: var(--palette-status-error);
-}
-.agent-subagent-item[data-state="done"] .agent-subagent-avatar {
-    border-color: var(--palette-status-success);
-}
-.agent-subagent-avatar:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
+.agent-subagent-item[data-state="failed"] .agent-subagent-status {
+    background: var(--palette-status-error);
 }
 .agent-subagent-name {
-    position: absolute;
-    top: 50%;
-    left: calc(100% + var(--space-2));
-    white-space: nowrap;
-    pointer-events: none;
-    opacity: 0;
-    transform: translate(-4px, -50%);
-    transition:
-        opacity var(--motion-dur-fast) var(--motion-ease-out),
-        transform var(--motion-dur-base) var(--motion-ease-out);
-}
-.agent-subagent-item[data-expanded="true"] .agent-subagent-name {
-    opacity: 1;
-    transform: translate(0, -50%);
-}
-.agent-subagent-reduced-name {
     display: block;
-    margin-top: var(--space-1);
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     font-size: var(--fs-label);
+    line-height: 1.4;
 }
-@media (prefers-reduced-motion: reduce) {
-    .agent-subagent-item,
-    .agent-subagent-name {
-        transition: none;
-        transform: none !important;
-    }
-    .agent-subagent-name {
-        display: none;
-    }
+.agent-subagent-number {
+    position: absolute;
+    top: -3px;
+    left: -3px;
+    font-size: 9px;
+    background: var(--agent-subagent-surface);
+    font-variant-numeric: tabular-nums;
 }

@@ -99,7 +99,7 @@ func TestPiFailModelStepRejectsSucceededTaskEvenOnTerminalRun(t *testing.T) {
 func TestSweepStalledPiAgentRunsSetsCleanupPending(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
 
-	stale := time.Now().Add(-(piStalledLeasePeriods + 1) * piAgentLeaseDuration)
+	stale := time.Now().UTC().Add(-(piStalledLeasePeriods + 1) * piAgentLeaseDuration)
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).
 		Updates(map[string]any{"lease_expires_at": stale, "status": "running"}).Error; err != nil {
 		t.Fatal(err)

@@ -1,0 +1,69 @@
+name: canvas-agent-parity
+services:
+  model-stub:
+    image: canvas-agent-parity-stub:working
+    build:
+      context: .
+      dockerfile: tools/agent-parity-stub.Dockerfile
+    restart: unless-stopped
+  backend:
+    image: canvas-agent-parity-backend:working
+    build:
+      context: .
+      dockerfile: tools/agent-parity-backend.Dockerfile
+      args:
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GO_BUILDER_IMAGE: ${PARITY_GO_BUILDER_IMAGE:-golang:1.25-bookworm}
+        BUILD_COMMIT: ${PARITY_BUILD_COMMIT:-working-tree}
+        BUILD_TIME: ${PARITY_BUILD_TIME:-unknown}
+    environment:
+      CANVAS_BACKEND_ADDR: :8080
+      CANVAS_BACKEND_DATA_DIR: /data
+      CANVAS_DATABASE_DRIVER: sqlite
+      CANVAS_REGISTRATION_ENABLED: "true"
+      CANVAS_AGENT_INTERNAL_TOKEN: ${PARITY_INTERNAL_TOKEN:?Set an isolated test token}
+      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: model-stub
+      CANVAS_CORS_ORIGINS: http://localhost:3040,http://127.0.0.1:3040
+      CANVAS_PUBLIC_BASE_URL: http://web:3000
+      CANVAS_AGENT_CONCURRENCY: "2"
+      CANVAS_SHUTDOWN_TIMEOUT: 10s
+      GIN_MODE: release
+    volumes:
+      - parity-backend:/data
+    depends_on:
+      model-stub: {condition: service_started}
+    restart: unless-stopped
+    stop_grace_period: 15s
+  agent:
+    image: canvas-agent-parity-agent:working
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    environment:
+      CANVAS_BACKEND_INTERNAL_URL: http://backend:8080
+      CANVAS_AGENT_INTERNAL_TOKEN: ${PARITY_INTERNAL_TOKEN:?Set an isolated test token}
+      CANVAS_AGENT_HARNESS_DIR: /agent/harness
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: backend,model-stub,localhost,127.0.0.1
+    volumes:
+      - ./agent/harness:/agent/harness:ro
+    depends_on:
+      backend: {condition: service_started}
+    restart: unless-stopped
+    stop_grace_period: 15s
+  web:
+    image: canvas-agent-parity-web:working
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_COMMIT: ${PARITY_BUILD_COMMIT:-working-tree}
+        BUILD_TIME: ${PARITY_BUILD_TIME:-unknown}
+    ports:
+      - "127.0.0.1:3040:3000"
+    depends_on:
+      backend: {condition: service_started}
+    restart: unless-stopped
+volumes:
+  parity-backend:

@@ -808,6 +808,8 @@ function collectLocalMediaKeys(value: unknown, set = new Set<string>()): string[
         const inline = inlineMediaDataUrl(record);
         if (inline) set.add(`${inline.length}:${inline.slice(0, 64)}:${inline.slice(-64)}`);
     }
+    const preview = inlineMediaDataUrl({ content: record.previewContent });
+    if (preview) set.add(`${preview.length}:${preview.slice(0, 64)}:${preview.slice(-64)}`);
     for (const child of Object.values(record)) {
         collectLocalMediaKeys(child, set);
     }
@@ -825,6 +827,13 @@ async function ensureRemoteResourceReferences<T>(value: T, uploaded = new Map<st
     const next: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value)) {
         next[key] = await ensureRemoteResourceReferences(child, uploaded, onUploaded);
+    }
+
+    // 预览可能是视频封面，不能与主媒体共用 storageKey，也不能覆盖正文。
+    const preview = inlineMediaDataUrl({ content: next.previewContent });
+    if (preview) {
+        const reference = await ensureRemoteResourceReferences({ content: preview }, uploaded, onUploaded);
+        next.previewContent = reference.content;
     }
 
     const storageKey = typeof next.storageKey === "string" ? next.storageKey : "";

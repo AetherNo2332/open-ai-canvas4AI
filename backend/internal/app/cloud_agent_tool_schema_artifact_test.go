@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"infinite-canvas/backend/internal/model"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,13 +32,16 @@ func TestAgentToolSchemaArtifactMatchesRuntime(t *testing.T) {
 	req.PermissionMode = "auto"
 	req.VisionEnabled = true
 	req.HasMemories = true
+	req.WebSearchEnabled = true
 	req.SkillIDs = []string{"schema-artifact-skill"}
 	artifact := agentToolSchemaArtifact{SchemaVersion: cloudAgentToolSchemaVersion, Tools: append(cloudAgentTools(req), nativeSkillReadToolSchema())}
-	for _, role := range []model.CrewMemberRole{model.CrewMemberRoleCoordinator, model.CrewMemberRoleMember} {
-		req.crew = &CrewMemberRuntime{Role: role, Permission: model.CrewPermissionPropose}
-		for _, tool := range cloudAgentTools(req) {
+	for _, request := range []CloudAgentRequest{
+		{SubagentEnabled: true, PermissionMode: "read_only", ContextScope: []string{"canvas"}},
+		{PermissionMode: "read_only", ContextScope: []string{"canvas"}, subagent: &SubagentRuntime{Depth: 1}},
+	} {
+		for _, tool := range cloudAgentTools(request) {
 			name := stringField(tool["function"].(map[string]any), "name")
-			if name == "delegate_task" || name == "crew_wait" || name == "task_result" || name == "crew_propose" {
+			if strings.Contains(name, "subagent") || name == "send_parent_message" {
 				artifact.Tools = append(artifact.Tools, tool)
 			}
 		}

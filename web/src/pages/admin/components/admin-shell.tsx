@@ -94,7 +94,7 @@ const adminNavigation: Array<{ label: string; items: AdminNavigationItem[] }> = 
     {
         label: "平台配置",
         items: [
-            { path: "/admin/settings/agent", label: "Agent（beta）", description: "调度配置、Crew 子代理、默认技能与记忆管理", icon: <Sparkles className="size-4" /> },
+            { path: "/admin/settings/agent", label: "Agent（beta）", description: "调度配置、动态子代理、默认技能与记忆管理", icon: <Sparkles className="size-4" /> },
             { path: "/admin/plugins", label: "插件管理", description: "平台可用性、上传与卸载", icon: <PlugZap className="size-4" /> },
             { path: "/admin/settings/appearance", label: "站点及外观", description: "品牌、SEO、备案与皮肤", icon: <Palette className="size-4" /> },
             { path: "/admin/settings/features", label: "功能开放", description: "工作台、插件与模型能力", icon: <ToggleLeft className="size-4" /> },
@@ -158,7 +158,7 @@ function AdminShellLayout() {
                 <main id="admin-root" data-admin-root data-admin-density={density} className="admin-shell flex h-full min-h-0 overflow-hidden">
                     <aside className={cn("admin-sidebar hidden shrink-0 flex-col overflow-hidden lg:flex", collapsed && "is-collapsed")}>
                         <div className="admin-sidebar-identity shrink-0">
-                            <AdminTooltip title={collapsed ? "查看更新日志" : undefined} placement="right">
+                            <AdminTooltip title={collapsed ? "查看发行说明" : undefined} placement="right">
                                 <AppChangelogButton
                                     className={cn("admin-sidebar-brand-button", collapsed && "is-collapsed")}
                                     icon={<BrandLogoFrame className="admin-sidebar-brand-mark grid shrink-0 place-items-center bg-foreground text-background" logoClassName="size-5 object-contain" alt="" fallback={<InfinityIcon className="size-4" />} />}

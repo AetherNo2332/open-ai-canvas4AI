@@ -31,7 +31,7 @@ func TestPiPreflightBudgetIdentityAndDigest(t *testing.T) {
 	}
 }
 
-func TestPiPreflightInclusiveAdmissionWithoutBilling(t *testing.T) {
+func TestPiPreflightLeavesCompactionDecisionToPiWithoutBilling(t *testing.T) {
 	for _, delta := range []int{-1, 0, 1} {
 		t.Run(string(rune('b'+delta)), func(t *testing.T) {
 			s, db, run := piAgentTestLeasedFixture(t)
@@ -49,18 +49,8 @@ func TestPiPreflightInclusiveAdmissionWithoutBilling(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := "model"
-			if delta >= 0 {
-				want = "compact"
-			}
-			if decision.Decision != want {
-				t.Fatalf("decision=%s want=%s", decision.Decision, want)
-			}
-			if delta >= 0 {
-				step, err := s.PiModelStep("user", run.ID, run.LeaseOwner, PiModelStepRequest{Canonical: state.Canonical})
-				if err != nil || step.Decision != "compact" || step.TaskID != "" {
-					t.Fatalf("ordinary admission bypassed gate: %+v %v", step, err)
-				}
+			if decision.Decision != "model" || decision.ModelLimits.ContextWindowTokens != 64000 {
+				t.Fatalf("Go must return configured limits without imposing its measured compression threshold: %+v", decision)
 			}
 			var tasks, orders int64
 			db.Model(&model.Task{}).Where("operation = ?", cloudAgentStepOperation).Count(&tasks)
@@ -72,7 +62,7 @@ func TestPiPreflightInclusiveAdmissionWithoutBilling(t *testing.T) {
 	}
 }
 
-func TestPiPreflightRejectsSchemaAndExpiresStaleAnchor(t *testing.T) {
+func TestPiPreflightRejectsSchemaWithoutUsingProviderReadingToTriggerCompaction(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
 	declareTestChannelWindow(t, db, 64000, 8192)
 	_, state := reloadPiRun(t, s, run.ID)

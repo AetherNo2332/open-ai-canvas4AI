@@ -3,6 +3,133 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 云端 Agent 镜像发布与生产部署
+
+2026-10-05 本地验证（工作树，未合入）：`agent/Dockerfile` 改为 BUILDPLATFORM 编译 + 按目标架构安装生产依赖并内置 `agent/harness`；`publish-images.yml` 构建矩阵加入 `open-ai-canvas-agent`（amd64/arm64）；`quality.yml` 新增 agent 双架构 npm 测试；`docker-compose.deploy.yml` 新增 `pi` profile 的 agent 服务；`install-server-image.sh` 写入并固定 `CANVAS_AGENT_IMAGE` digest。已验证：三个 YAML 语法解析、`docker compose config` 三种场景渲染（profile 关闭 / digest 固定 / 未配 `CANVAS_AGENT_IMAGE` 时的 tag 回退）、`bash -n`。amd64 镜像本地构建与容器启动验证受网络与运行环境影响，保留以下云端/真机验收：
+
+- [ ] CI 上 agent 镜像双架构构建成功，GHCR 出现 `open-ai-canvas-agent` 的 sha/version manifest。
+- [ ] 生产服务器 `pi` profile 启动 agent 容器：配置 `CANVAS_AGENT_INTERNAL_TOKEN` 后 Worker 领取 Cloud Agent 运行并正常出事件流。
+- [ ] host-updater 在线更新在启用 `pi` profile 的部署上正常切换 agent 镜像 digest（更新器代码仍只管理 backend/web，agent 镜像由 `.env` 回退链或安装器维护）。
+## 发行说明补齐与文案统一
+
+- 根据 `canvas4ai/main` 的 `f4d701ff` 与 `canvas4ai/canary` 的 `f1d8ee00` 核对 62 个相关已合入提交，补齐 8 个近期版本段，标明 canary 专属与两分支共同内容；将末尾的预演和观测条目归位，已合入的 Worker 修复不再列为开发中，冻结策略恢复条目的正式版本按源提交纠正为 v1.5.7.2。
+- 按钮默认标签、弹窗标题、辅助技术标签、悬停提示、后台入口及 README 链接统一为“发行说明”，保留 `CHANGELOG.md` 作为现有构建和发布流程的数据来源。
+- [x] 本机 3030 Web 构建与更新通过；真实页面确认账户菜单、弹窗标题与 8 个近期版本段，标注 canary 专属/两分支共同更新，滚动无横向溢出，关闭重开回到首段，浏览器错误日志为 0。后端、Agent 容器保持原身份，健康接口 schema 58/58。
+
+## 摄影机与镜头提示词面板
+
+已扩展为 26 款机身与 27 款镜头，四项参数支持直接选择、滚轮及按钮循环切换、方向滑动与淡入淡出动画、提示词预览、复制、重置及显式启用。用户提供 HAR 中的 23 张 PNG 已提取并按型号本地映射，没有图片的选项或加载失败时使用 SVG 图示。图片、视频及配置节点均提供入口，节点保存可编辑选择，任务保存提交配置，重试避免重复叠加镜头描述。首次打开与重置统一为关闭状态、ARRI ALEXA 35、Cooke S7/i、35mm、f/2.8。2026-10-08 已部署本机 3030 的 Web 镜像，后端、Agent 容器及数据卷保留；schema 58 健康。
+
+- [x] 基础专项 32 项、滚轮与素材新增 9 项通过；TypeScript、专项 ESLint 与 Vite 构建通过，构建提示部分 chunk 超过 500 kB。静态审查后保留原有重试素材规则，镜头控制只编译确定的原始草稿。
+- [x] 真实 3030 登录态画布脚本验证图片/视频/配置参数持久化及原始草稿分离（11 项）；浏览器关闭/开启后读取后台保存值与源代码编译结果分别通过（各 4 项）。未提交真实模型请求。
+- [x] 明暗主题与 390px 窄屏：四列转两列、弹窗滚动、键盘选择、提示词复制；修改后取消、应用后重新打开和重置行为符合预期。修复通用按钮内边距挤窄开关滑轨，以及装饰层引起的 1px 横向溢出；窄屏滑轨 36px、点击高度 44px，滑块在滑轨内，底部应用按钮可达。
+- [x] 四项参数各自向上/向下滚轮共 8 项通过；浏览器捕捉到旧值与新值的位移、透明度变化，结束后只保留当前值。卡片外滚轮可正常滚动面板且不改变参数；所有 23 张图片均由 3030 本地静态路径提供。
+- [ ] 真实图片/视频生成：开启后请求只追加一次预览内容，关闭后不追加；生成结果、批次子节点、刷新后的参数保持一致。
+- [ ] 失败重试：沿用现有图片提示词缓存与角色引用规则；需要重新组装提示词时镜头描述只追加一次，实际提交的提示词与配置、参考素材对应，节点上保存的下次生成选择不被重试覆盖。
+- [ ] 历史配置：原有型号仍可选，未知型号明确报错且启用时无法应用，不静默改为其他选项。
+- 范围边界：模型仅接收提示词风格描述；未实现光学仿真、滤镜处理、Agent 后端镜头编译或分享页配置回放。真实模型生成、真实任务重试与未知历史配置的浏览器验收仍待完成。HAR 素材来源与再发布说明见 `web/public/camera-controls/README.md`。
+
+## 智能引用 AutoLink 开关布局
+
+- [x] 修复通用按钮内边距挤压滑块并导致开启时越界的问题：轨道固定 36px，滑块独立定位、保持 14px，切换保留 200ms 动画并遵循减少动态效果设置。
+- [x] 两项布局回归检查、TypeScript 与专项 ESLint 通过；2026-10-08 仅更新本机 3030 Web，浏览器检查鼠标、空格及回车切换、正常窗口与 390px 窄屏两端位置均在轨道内，后端和 Agent 容器保留。
+
+## 视频生成节点加载圈
+
+生成中的媒体节点加载指示器增加专用皮肤例外，保持圆形轨迹，避免工作区统一输入圆角覆盖旋转边框。
+
+- [x] 专项回归先失败再通过；画布媒体与节点标题相关 32 项测试、TypeScript 检查和生产构建通过。
+- [x] 本地 3030 仅更新前端镜像，容器健康，构建产物包含圆形覆盖规则；后端、Agent 与外部数据卷保留。
+- [ ] 真实页面视觉确认：默认与自定义皮肤、明暗模式、0px 与非零输入圆角下，视频生成节点的加载轨迹均保持圆形。浏览器工具因本机工具目录缺失未能启动。
+
+## Pi worker 异常返回与有限恢复
+
+内部异常、确定性协议故障和原生 Skill 冻结身份损坏进入共享失败边界；暂时故障由 Go 保存最多 5 次、10 分钟的恢复周期以及 task/call 累计次数。失败与清理标记原子提交，运行页面继续使用既有 GET/SSE 失败合同。
+
+- [x] 本机 3030 Compose 使用隔离数据副本和脚本模型夹具：普通异常、真实 SDK TypeError、协议 Fatal、短暂/持续 503、失败上报丢失响应、agent 重启和未上报进程退出均进入预期状态。持续真实模型故障约 25 秒失败；反复进程退出约 236 秒失败。未重复创建模型任务或画布修改，数据库审计确认清理完成并释放会话。
+- [x] 前端失败状态 GET/SSE 专项 30/30、生产构建通过；失败运行 SSE 只有一条 `run_failed`。未操作浏览器。
+- [x] 双实例脚本使用受控模型响应，证明 epoch 1 → 2 接管后，旧回调返回 `403 agent_lease_lost` 且当前运行仍在进行；放行响应后，同一新实例完成，模型任务与上游调用均只有一笔。长等待中同实例又取得 epoch 3，复用原健康任务完成。终态、SSE 与数据库清理通过；原 3030 镜像、Harness 和数据卷已恢复，健康接口确认 schema 57，故障注入挂载已移除。脚本编码、启动等待和租约断言的调试记录单独保留。
+- [ ] 用户页面视觉验收、真实渠道故障演练及生产迁移验收；原诊断包中工具批次 403 的完整触发过程尚未复现。
+## Agent 画布连线、工具技能与镜像发布
+
+- 已实现：连线复用手动节点限制，支持真实分镜行和批量表参考列端口；新增内置 `canvas-tools-guide` 技能及按需参考文件。
+- 已验证：3030 隔离 Compose 的合法连线落地和非法批次原子拒绝；技能入库与冻结版本读取通过，Agent 完整 162 项测试通过。
+- 待确认：真实模型使用指南后的操作成功率、人工体验；CI 全量检查与镜像发布结果以实际工作流记录为准。
+
+## 诊断包的画布变动与 Agent 对话
+
+沿用设置页的 ZIP 导出，新增画布历史/Agent 修改记录及 Agent 状态、事件、对话文件；画布菜单可带当前画布进入同一诊断页。页面说明包内含业务对话文字，并显示新增记录数量及截断提示。
+
+- [ ] 导出最近 15 分钟/30 分钟/1 小时/24 小时，核对保存版本、Agent 修改/撤销、用户和助手文字、工具事件与 manifest 统计。
+- [ ] 复现工具批次冲突后检查 `agent/runs.jsonl` 的活动任务、工具批次、调用游标与 `agent/events.jsonl` 的失败顺序；不自动重跑 Agent。
+- [ ] 明暗主题、窄屏、空记录及截断提示的真实浏览器验收。自动验证结果记录在交付中；本次不部署生产环境。
+- [ ] PostgreSQL 下核对新增只读查询的排序、时间窗口及正文大小限制；本次数据库回归使用 SQLite。
+## Agent 上游用量展示与 Pi 自主压缩
+
+前端占用量和占用率采用最近有效上游输入 Token，有实测时不加本地增量；相同模型/渠道的续轮保留实测，每步完成立即发布读数，包括末步。未取得有效上游用量时采用本地估算，切换模型/渠道及压缩后重新测量。Pi 使用自己的原生计量决定压缩，模型窗口与压缩设置随后端预算同步。Go 不以展示压力触发压缩，保留持久化操作恢复、摘要任务和事务提交；前端只根据压缩事件显示状态。
+
+- [x] 2026-10-07 自动验证：Agent 162 项通过；Linux Go 压缩、预检、失败恢复及用量锚专项通过；前端上下文用量 17 项与类型检查、生产构建通过。覆盖 Pi 原生严格边界、工具步骤间窗口更新、溢出错误和省略条目持久化后的 worker 重启恢复；Go 不按展示阈值触发压缩。
+- [x] 本地 3030 Compose 脚本真实渠道连续四轮通过：第一轮实测 23754、第二轮请求前仍为 23754，第二轮完成更新为 30340；专用测试模型配置从 64000 改为 32000 后，Pi 发布 `threshold` 开始事件和 `pi-native` 完成事件，随后继续模型请求。实际事件回放到前端用量函数，实测值原样显示、压缩状态跟随事件。使用新增测试账号、模型配置和空画布，未操作浏览器或服务器。
+- [ ] 同一会话续轮、刷新及 SSE 重连：首步不回退到估算；新会话与切换模型不继承无关读数。
+- [x] 原生压缩条目 `tokensBefore=30376`，与展示输入 30340 分离（含输出 36）；压缩后继续完成。真实请求事件收到 32000 窗口，SDK 实例回归验证当前模型窗口与 reserve 同时更新。测试窗口为保守的专用夹具配置，不代表上游真实最大窗口；本轮没有验证压缩后所有请求都低于该窗口。
+- [x] 真实运行末步发布 `after_request` 实测；首轮无 usage 时采用本地估算。未配置窗口不显示虚构百分比由前端回归覆盖。
+- [x] 更新到包含重启恢复修复的 3030 worker 后，第五轮真实续聊完成，保持 32000 配置并发布上游用量；未重建数据卷。
+
+## Agent 工具描述缓存稳定性
+
+移除 Pi worker 与 Go 工具目录中按模型步骤追加“上一轮调用工具名”的逻辑，以及桥接快照的 `previousStepTemplate` 字段。工具定义保留固定用途、参数和使用条件；历史调用事实仍由会话中的工具调用消息和工具回执承载，不另行重复注入提醒。工具准入、权限和修复 scope 的筛选继续生效。系统策略更新为 v12，并同步 Harness。
+
+- [x] Pi 多步回归覆盖不同工具交替调用、模型预检、续聊，以及历史调用与回执保留；原逻辑下失败，移除动态描述后通过。
+- [x] Go 工具目录回归覆盖上一轮调用名单变化而工具定义不变，及既有工具准入与能力/权限筛选。测试使用 `CGO_ENABLED=0`；本机默认 CGO 的 gcc 链接失败，数据库集成测试未验证。
+- [ ] 真实渠道运行缓存命中率对照：固定模型、渠道和工具合同，按完整逐步骤 `usage` 的输入 token 加权比较；本地测试通过不代表已部署或保证某个命中率。
+
+## 导演台后台预演
+
+- [x] 2026-10-08 自动验证：真实Linux无头Chromium离线演员、体块和运动机位生成H264视频，探测尺寸、时长、帧数和起末帧变化；重启对账、取消竞态、旧owner拒写、产物确认释放容量及本任务进程清理，12项Node专项通过。
+- [x] 自动验证：Go持久提交、冻结输入、原子写回、无关修改合并、目标变化保留资源、失败恢复再次请求、取消和旧租约拒写、Pi失败隔离、配额及租约过期后的资源引用专项通过；前端全量2189项、Agent全量157项、类型检查及生产前端构建通过。
+- [x] Linux隔离Compose真实三镜：没有用户网页和Pi模型，三个MP4及构图帧均为360×640、4帧、500ms，持久保存6个资源和6个画布节点；第三镜执行期间将Pi置为失败并清理，预演仍成功，Pi保持失败。
+- [x] 真实回写冲突恢复：冻结输入后改目标机位，渲染并保存资源后报告冲突；还原目标再只回写，使用同一视频和预览资源，renderAttempts仍为1，保留原失败历史。
+- [ ] 完整人工H/C/P验收：审批关闭页面后重开、重复决定、插话与暂停可见反馈；真实Pi进程终止、模型超时/压缩失败/预算耗尽；实际5分钟无进展超时。当前覆盖相应状态和协议测试，不能替代这些运行场景。
+- [ ] 用户验收：任务中心原视频、诊断和两种只回写恢复操作，明暗主题；画布重新打开后可播放，正常手工导演台导出不回归。
+- [ ] 生产3000升级尚未授权或执行；CPU/内存性能与在途任务回退边界需部署前复盘。
+
+## Agent 上下文缓存命中率
+
+- [x] 2026-10-07 自动验证：上下文用量、环形指示和运行状态相关 15 项专项测试通过；覆盖实测分母、0% 与未知值区分及无效数据处理。
+- [ ] 上下文详情底部的“压缩线”数字已替换为缓存命中率；使用上一模型请求的缓存读取 Token / 总输入 Token，百分比最多保留一位小数。
+- [ ] 无有效模型用量时显示“暂无数据”；实测缓存读取为 0 时显示 0%。检查明暗主题及重新打开对话后的显示。
+
+## Agent 单步超时终止与 Run ID
+
+- [x] 2026-10-06 自动验证：Linux Go 超时终止与失败上报专项通过；前端 41 项专项测试及类型检查通过。前端全量 2181 项通过，1 项已有预演台源码断言失败（`director-template-mode-wiring.test.ts:199`）。
+- [x] 2026-10-07 最终回归：Linux Go 普通模型超时、Worker 超时任务查询、失败上报、Go 摘要和 Native 摘要相关专项全部通过，失败重投不复活运行或重复记录失败事件。
+- [ ] 后端全量验证：本地 Linux 测试触及 `go test` 默认 10 分钟总执行上限，未完成全量验证。
+- [ ] 服务器部署后设置短单步超时，确认慢模型请求到点后出现“Agent 超时失败”，本轮状态变为失败且不自动重试。
+- [ ] 失败卡片的 Run ID 可复制；重新打开对话后仍显示同一 ID。
+- [ ] 上下文摘要模型超时同样停止本轮；确认取消、子任务清理与占位预留释放完成。
+
+## Tavily 联网搜索
+
+- [ ] 用户在管理员「Agent（beta）」输入真实 Tavily API Key 并开启，使用新父 Agent 和子 Agent 搜索并检查来源引用。
+- [ ] 用户确认设置页明暗主题与窄屏布局；本轮按要求使用脚本，不操作浏览器。
+- [ ] 本地 3000 配置接口、密钥保留/清空、修订号冲突与权限脚本验收。
+
+## Agent 系统策略技能引导（policy v11）
+
+`backend/internal/prompts/agent-system-policy.md` 版本 10 → 11：工作法技能条目拆为两条，要求每轮开始处理任务时先在本轮启用的技能中寻找与任务要求适配的技能——技能名称或描述与任务目标匹配时优先按该技能执行，不先按默认做法做到一半再补技能；没有适配技能或技能与任务无关时按默认工作法处理，不为用技能而用技能。选用技能后仍先读 `SKILL.md` 再只读入口明确引用的必要文件；「技能是任务剧本」「工具冒充禁止」「不伪造结果」等既有约束保留。`agent/harness/SYSTEM_POLICY.md` 与 SOURCE.json 经 `sync-harness.mjs` 重新同步。
+
+- [x] 2026-10-06 自动验证：后端 `go test ./internal/prompts/...` 通过，app 包 Policy/Skill/CloudAgent 相关用例通过；agent `npm test` 149/149 通过（含 harness 与 backend 源漂移检测）。
+- [ ] 真实运行行为验收未做：启用技能的会话中确认模型首轮主动匹配技能并读取 SKILL.md，无适配技能时不强行使用技能。
+
+## 角色卡移植与 Agent 角色卡能力（自上游同步）
+
+从上游 ddcat-ai/open-ai-canvas 同步角色卡域：账号级角色库（`GET/POST /api/characters`、`GET/PATCH /api/characters/:assetId`、representations 与 voice 子资源）与对应 service/repository；画布能力注册表引入 `NodeVariant`（text + `workflowKind=character` 的角色卡变体，可发现、可引用、不能 add_node）；Agent 新增 `canvas_create_character` 工具（审批后打包形象图片/声音为角色资产并放置角色卡节点）；`generate_media` 引用角色卡节点自动附带三视图与设定文字，音频模式自动注入绑定声音（voiceKey/instructions），`canvas_get_state` 精读返回 `character.definition`、representations、`imageReference/audioReference` 就绪状态；角色卡版本变化会拒绝使用过期审批重新提交。前端同步角色库弹窗、角色媒体库、富封面、引用节点/弹窗增强与 `normalizeCharacterImageMentions`（仅有角色卡参考时 `@图片N` 自动映射为 `@角色N`）。影策短剧工作流技能同步 `references/character-cards.md` 与 SKILL.md 角色卡工作流；工具描述文档更新 `canvas_get_state` 并新增 `canvas_create_character`。
+
+- 已知未同步：上游 12125e18 中素材库页面重构、批量创作表增强等非角色卡部分；上游音频参考接入（`referenceAudios` 允许 1–3 段）已随 media admission 放宽移植，但对应音频工作台交互（`b0806745` IndexTTS2 情感参数面板）canary 此前已自带。
+- [x] 2026-10-06 自动验证：后端 `go build ./...` 与 `go test ./...` 全量通过；前端 `tsc --noEmit`、生产构建与 bun test 全量（2177 项）通过。
+- [ ] 真实画布浏览器验收未做：角色卡建卡审批流、三视图引用生成、音频绑定声音注入、明暗主题与窄屏布局待真实页面验收。
+- [ ] 角色卡与 Crew 子代理组合（成员会话内引用角色卡）未验证。
+
 ## Pi worker 重试恢复与日志截断
 
 - 已实现：原生会话恢复只补当前轮工具回执，在途模型先恢复原任务；历史未回执工具不重放；检查点失败后停止依赖的批次提交；日志按 UTF-8 字符边界截断并处理非法文本/NUL。
@@ -21,9 +148,32 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [x] 本地 Compose 3000 仅替换 web 镜像为 `open-ai-canvas-web:agent-ui-43e2090a-local`，真实生产构建页面复验 15 项通过（API 转发到隔离测试后端，运行事件模拟）。前端容器健康，后端保持 `6ccbb612`、schema `55/55`，未更新服务器。
 - [ ] 真实模型长会话运行验收。当前浏览器使用隔离后端与模拟运行事件，没有验证真实模型或 Worker 执行。
 
-## Agent Crew 管理开关
+## Agent 动态子代理
 
-管理员入口为“Agent（beta）→ Crew 子代理”（`/admin/settings/agent#crew`）。开关始终显示，通过功能开放接口单独更新 `agentCrewEnabled`，默认关闭；读取失败禁止操作，保存失败保留服务端已保存状态，成功后同步当前用户的功能状态。其他功能开关保持原值。
+### 对话布局与协作代理入口
+
+画布 Agent 对话移除了顶部授权区和常驻子代理回报列表。协作代理条放在本轮待办下方，使用 34px 线性图标、中性边框、简短名称和右下状态点（绿：运行中；黄：等待；红：失败或取消；灰：已完成）。点击头像在面板内查看子代理目标、角色、父子回报和只读会话；活跃会话订阅 SSE，返回后继续查看父 Agent 对话。详情首次读取最近 500 条运行事件，发生截断时明确提示。
+
+持续授权开关移至“画布 Agent → 设置 → 子代理协作”，沿用画布级 revision CAS、运行中禁用和读取/保存错误提示。正文限制阅读行宽，用户长消息改为左对齐。
+
+- [x] 头像点击、图标区分、状态语义、消息快照去重、回报与错误显示、授权 Switch 的脚本定向回归及类型检查通过。
+- [ ] 真实画布视觉验收（明暗主题、窄屏、键盘返回与实时子会话）；本轮按用户要求不操作浏览器，不更新服务器或本地 Compose。
+
+### 动态子代理开发验收
+
+2026-10-06：五个开发切片均已实现。按画布持久授权与 revision CAS、同事务创建父子 Link/独立会话/任务/计费预留、动态角色与任务、有序幂等消息、结构化完成、终态补发和取消已接入；父等待释放 Pi 驻留名额，容量为 1 时也可推进子运行。子运行固定只读，不能生成媒体、写画布或继续创建子代理。旧 Crew API、固定成员配置、表与事件解析器已删除，schema 为 57。
+
+- [x] Linux 动态子代理生命周期、策略/CAS/归属及迁移专项；共用工具 dispatch/schema 守卫；Node wire/schema/harness 与挂起等待专项；前端类型检查及头像/布局专项通过。独立审查发现的五项问题已修复并定向验证。
+- 最终集成验收使用 `scripts/dynamic-subagent-acceptance.py`（仅 HTTP/live Pi），覆盖真实两子代理、驻留容量为 1、持续授权及关闭后拒绝。镜像、脚本结果与最新 Agent/Backend/Web CI 统一记录在 [PR #66 验证区](https://github.com/AetherNo2332/open-ai-canvas4AI/pull/66)，不重复既有本地全量套件。
+- 合入 canary 角色卡后已补充子代理禁止创建角色卡的 Node 回归。HTTP 跨账号/缺失对象返回 404、空画布 ID 返回 400 的六路径回归 RED→GREEN；PostgreSQL schema 57 删除索引使用当前 search_path，两个 CI 失败的迁移用例在临时 PostgreSQL 中定向通过。
+- [ ] 浏览器 DOM/视觉验收；本轮用户明确要求只用脚本、不操作浏览器。
+
+管理员入口为“Agent（beta）→ 动态子代理平台能力”（`/admin/settings/agent#subagents`），画布入口为“Agent 设置 → 子代理协作 → 允许 Agent 自动召唤子代理”。授权从下一轮开始持续生效，直到用户关闭。详见 [实施计划](../../../superpowers/plans/2026-10-06-agent-dynamic-subagents.md)。
+
+### 旧 Crew 历史验证记录（不代表当前实现）
+
+2026-10-05 剩余开发进度：画布配置 CRUD、成员字段和技能、CAS 冲突提示、Agent/Crew 模式、独立任务输入与运行历史、SSE、取消、批准/拒绝和提交已接入源码。普通 Agent 能力列表移除了无条件 Crew 工具；安装技能轻量接口保留私有标记。Linux Crew 专项 app/handler/repository、技能包全量、Agent 源码 149/149、前端全量 2175/2175 通过。本地隔离 Compose 3000 使用 deepseek-flash 的 HTTP/live Pi 脚本 26/26 通过，确认两成员完成、审批提交、拒绝和活跃取消；只读审计确认独立 Pi 会话及任务时间窗重叠；worker 重启恢复和后端审批持久化已通过。成员预算失败产生待审批降级提案且不写画布。用户要求不动浏览器，本轮没有 DOM/视觉/登录流程验收。纠正此前后端判定：六个协议失败来自测试容器遗漏插件包，基线归档也遗漏插件，不能证明继承源码缺陷；补齐插件、使用内存盘临时 SQLite 并限制 CPU 后，Crew 和此前失败的模型/Pi 专项均通过，完整 app/handler 回归结果另行记录。详见仓库 `docs/superpowers/plans/2026-10-05-agent-crew-acceptance.md`；下文历史部署记录保留其原始版本边界。
+管理员入口为“Agent（beta）→ 动态子代理平台能力”（`/admin/settings/agent#subagents`）。平台开关默认关闭；读取失败禁止操作，保存失败保留服务端已保存状态，成功后同步当前用户的功能状态。画布中的“允许父 Agent 自动召唤子代理”是持续生效的授权，直到用户关闭。
 
 - [x] 2026-10-05 自动验证：前端全量 2156 项通过，类型检查与 lint 通过。基线 `6ccbb612` 复现的 11 项过时测试已更新为当前皮肤映射和首页画布入口行为断言。
 - [x] Linux 后端真实 HTTP/SQLite 专项通过：管理员开关反复保存、未登录 401、普通用户 403、其他功能字段保持不变；Crew gate、资源归属、严格 revision 与 SSE 游标用例通过。Windows CGO 测试崩溃，后端结果来自 Linux 容器。
@@ -36,6 +186,8 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 当前修复位于本地 `codex/crew-admin-switch`，尚未发布服务器。3000 健康状态为 commit `6ccbb612`、schema `55/55`；前端构建标记 `6ccbb612-local-crew-switch` 区分本地补丁。
 
 ## Agent 默认技能与活动子智能体列表
+
+2026-10-06 开发期已切换为动态子代理：删除手工 Crew 配置、成员编辑、Crew API 和运行状态；父 Agent 自主创建角色和任务，子代理通过结构化消息回报。服务端持久化画布策略、父子 Link 和有序消息，限制每个父运行最多 4 个子代理、最多 3 个并发、每个子代理最多 20 步。前端类型检查和后端动态子代理定向编译/测试已通过；最终集成验收证据见本文“Agent 动态子代理”的 PR 验证区。
 
 - Native Skill 初始字节准入与模型 token 预检已改为估算技能索引；管理员默认配置、工作区与 Crew 技能预检使用相同口径。
 - 2026-10-05 本地独立 Compose `canvas-skill-index-3003`（`8b95a2b4-skill-index-local` 未提交修复快照）脚本验收 19/19 通过：2,037,941 字节、10 文件的 ZIP 首次手选、默认继承、清空配置后的续聊固定版本、工作区选择均完成 Native Run；索引估算 1,123 字节，模型系统消息未包含入口正文或引用，入口与引用通过 `read` 按需读取。17 MiB 包仍以 `total_bytes` 拒绝；CAS 冲突和清空配置通过。使用本地确定性模型桩，未验证外部供应商或浏览器交互；Crew 来源已覆盖准入单元测试，此次未跑完整 Crew 流程。
@@ -51,7 +203,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] Agent（beta）默认技能分区搜索、添加、排列、启停、移除、合计、保存与冲突后重载均可用。
 - [ ] 运行状态分区与 5 秒轮询已移除，调度配置和记忆管理保留。
 - [ ] 子智能体头像 hover / Tab 焦点展开名称，右侧让位与复位缓出；长名称、窄屏、明暗皮肤及 reduced-motion 无位移降级。
-- [ ] 无活动子智能体时零占位；当前仅完成组件，P3 Crew / SSE 数据源未接入，不以占位组件宣称多智能体运行已完成。
+- [ ] 无活动子智能体时零占位；Crew / SSE 数据源已接入运行卡片，真实浏览器和模型多智能体运行验收待完成。
 
 ## 画布 Agent 平行窗口
 
@@ -3484,3 +3636,48 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 仍待真实环境验收：
 
 - [ ] 在管理员后台存储资源页分别输入完整/部分用户名、昵称、邮箱和用户 ID，确认返回同一用户资源；再叠加类型、状态和存储位置筛选，确认分页与清空筛选正常。
+## 动态子代理开发切片（2026-10-06）
+
+- 已加入按画布持久化的“允许父 Agent 自动召唤子代理”开关，下一轮开始生效，关闭前持续有效。
+- 已加入 `AgentSubagentPolicy`、父子 Link/消息模型、revision CAS 和 `/api/agent/subagent-policy` 接口。
+- 动态 spawn 工具、子运行调度、消息唤醒、SSE 和旧 Crew 清理均已实现；父等待释放驻留容量，并在子任务终态后恢复。
+- 本轮复用既有全量结果，新增链路在 Linux 容器定向验证，Windows 仅做全包编译。最终镜像/HTTP 验收及 CI 状态见本文“Agent 动态子代理”。
+
+## 导演台（预演台）Agent 工作站绑定与后台回写语义（2026-10-10）
+
+- 移植上游 dd52588a：`previs_scene_create` 增加可选 `nodeId`/`nodeTitle`，创建场景时放置或修复唯一的 `video` 工作站节点（520×340，`workflowKind:"shot"` + `previsSceneId`/`previsShotId` 等），绑定非视频节点、多工作站、ID 已占用等冲突一律拒绝；补丁对无工作站的旧场景自愈；回执补 `nodeId`/`shotId`。
+- 移植上游 c0a9250c：图片工具栏「生成预演台」入口（自动选用支持看图的文本模型并提交复现指令）、对话内节点卡片「此图」引用、`characterName` 单独出现不再要求角色卡绑定。
+- 服务端后台回写对齐浏览器产物链语义：白模视频产物写 `workflowKind:"reference_video"`、构图帧写 `reference_set` 并带 `assetTags`；定位不到场景工作站时写回显式失败（`previs_workstation_missing`），不再静默产出「只有 previsSceneId」的裸节点。
+- 存量脏数据懒迁移：写路径（场景创建/补丁、服务端渲染回写）幂等修复旧版回写留下的死卡片节点——组内最早的 `video` 节点就地提升为工作站（保留既有媒体），其余缺 `workflowKind` 的 `video`/`image` 节点降级为产物节点并重指 `previewNodeId`/`clayVideoNodeId`；只增字段、不删节点，只读路径不改文档。
+- 前端渲染优先级修正：工作站判定统一收敛为 `workflowKind==="shot"`（新增 `isPrevisWorkstationNode` / `canvasNodeHasCustomContent`），产物节点继续走视频/图片渲染器，消除「PREVIS / 3D · 可编辑」点击无反应的死卡片。
+- 虚报通道收口：previs 写工具回执改用提交后口径（不再复用审批前文案），工具描述/系统策略/影策技能同步「场景写入≠节点出现」「已请求≠已导出」，收尾闸门新增「最终答复引用了本轮从未出现过的节点 ID」拦截（保守判定：不可判定一律放行，只拦可证伪的虚报）。
+- 制品链同步：`agent/harness/TOOL_SCHEMA.json`、`TOOL_DESCRIPTIONS.md`、`SYSTEM_POLICY.md` 与 `SOURCE.json` 哈希链按 backend 源文件重新生成。
+
+自动化验证（本机 Windows / Go 1.27 / bun 1.3.9 / Node 26）：
+
+- [x] `go test ./internal/app -run 'TestCloudAgentPrevis'`：上游工作站三例 + 新增懒迁移幂等、写路径（补丁）修复用例全通过。
+- [x] `go test ./internal/app -run 'TestBackgroundPrevis'`：新增「无工作站 fail-loud」「旧脏数据回写自愈并补齐产物语义」用例全通过。
+- [x] `go test ./internal/app -run 'TestAgentToolSchemaArtifactMatchesRuntime'`：共用工具 schema 制品与运行时一致。
+- [x] `node --test agent/test/harness-sync.test.ts`：harness 正文与清单哈希一致。
+- [x] `bun test`：web 全量 2274 例通过（含新增 `web/test/previs-workstation-node-gate.test.ts`）。
+- [x] 既有失败与本改动无关（在基线 232aef19 干净 worktree 复现）：`TestCloudAgentEmptyCanvasRepairAcrossCheckpoints/connection_repaired`（repair budget lost across checkpoint）、`TestWorkerRecoveryIsDurableFencedAndIdempotent`（early claim）；`TestAgentParityDatabaseHistoryDoesNotCrossTaskOrUnavailableBarrier` 在全量串跑中偶发失败、单跑通过。
+
+对真实环境的验收（待执行）：
+
+- [ ] 本地 compose 真实 agent 回路（backend + web + Pi worker agent 容器 + 真实模型渠道）跑六场景：① 建场景→画布出现可打开工作站；② 无工作站旧场景补丁自愈；③ 离开画布期间后台渲染→回来产物可见且卡片可打开；④ 图片→预演台全链路（看图模型复现）；⑤ 虚报回归（最终答复措辞、nodeId 引用、闸门打回）；⑥ 存量死卡片文档迁移后卡片可打开或降级为产物节点。
+- [x] 容器内真实 renderer 写回链路（2026-10-11 复验）：`docker tag canvas-previs-renderer:verify-final canvas-previs-renderer:local` 后 `docker compose -f docker-compose.previs-test.yml -p previs-parity-check up --abort-on-container-exit --exit-code-from backend-tests`（测试专用随机 token），`TestBackgroundPrevisRealThreeShots`（3 镜真实 mp4/png 回写）与 `TestBackgroundPrevisRealWritebackRecovery` 全 PASS；证据在 `.local/previs-evidence/`。收尾 `down -v`，外部卷 `canvas-crew-go-mod`、`canvas-canary-go-test-cache` 未受损。
+- [ ] computer use 轨：真实浏览器 + 已登录会话执行场景③⑤，留存截图 + SSE 日志 + 画布文档快照三件套。
+## 预演台收尾：既有失败修复、纯读迁移入口与 D6 结论（2026-10-10 第二轮）
+
+- 已修复：`TestCloudAgentEmptyCanvasRepairAcrossCheckpoints/connection_repaired`。根因是 10 月 10 日 334a96de 为保「端点不存在→准入终止」语义，把 `connect_nodes` 的错误分类整体回退成普通 `BadAuthRequest`，连带丢了 36f6280d 恢复的规则错误字段包装；而 10 月 7 日 6fa28875 已把夹具改成自环边，两条既有测试在同一错误点上预期相反。现拆开判定：端点不存在（依赖画布状态）保持准入终止（`tool_admission_failed`），自环边（仅凭参数可判定）与连线规则违规（端口/手工连线规则/最大输入）归字段级参数错误进入修复预算。
+- 已修复：`TestWorkerRecoveryIsDurableFencedAndIdempotent`，以及全量串跑暴露的同域问题（`TestPiAgentLeaseAdmission`、`TestSweepStalledPiAgentRuns*`、`TestPiEventScheduler*`、`TestPiContextCompactionRecoversAfterLeaseTakeoverWithoutNewCharge`、`TestAgentParityRuntimePhasePreservesStorageErrorAndLeaseLoss`）。根因是 SQLite 把 time.Time 按写入方时区偏移序列化成文本再做比较：恢复调度写 UTC（`Z` 结尾）、认领/相位/清扫查询传本地时区参数（+08:00），同刻时间的日期/小时位不同导致未来租约被误判为已过期、恢复围栏失效。租约/恢复列（`lease_expires_at`/`next_recovery_at`）的写入与比较参数已统一 UTC：认领（含公平路径）、续租、`SetAgentPhase`、停滞清扫阈值、测试辅助 `expireRecoveryLease` 与审计/调度器测试种子；`AgentToolOperation` 与任务/资源租约域保持自洽本地时区不动，`created_at` 域仍为 GORM 本地时间，`SweepUnclaimedPiAgentRuns` 的阈值保持本地时区以免引入新的混合。CI（TZ=UTC）与 PostgreSQL 部署不受影响。
+- 已实现（D3/场景⑥收尾）：`previs_scene_read` 成为纯读画布的显式迁移入口。只被预演读过的画布不会再走到任何写路径修复，现在可写轮次（auto/request_approval）在读取时做一次幂等修复并按画布 revision CAS 写回，回执带 `legacyRepair`（repaired/pending/workstations 索引）；read_only 轮次只报告 `pending`，绝不隐式改文档。
+- D6 结论（自动化可证部分）：fork 前端已无 `previs:preview-requested` 派发方（agent 预演只走 `server_previs_renderer` 后台任务），工作台监听是无派发方的保留路径，agent 链路上双渲染结构性不存在。新增 `TestBackgroundPrevisReRenderRepointsShotToLatestServerWrite` 守住服务器权威语义：同镜头两次服务端渲染，镜头指针重指最新任务产物、旧产物保留为历史、无重复节点。浏览器在场时的展示刷新行为归入下方 computer use 轨实测。
+- 自动化验证（本机 Windows / Go 1.27 / bun 1.3.9 / Node 26）：
+  - [x] `go test ./internal/app -count=1 -run 'TestCloudAgentEmptyCanvasRepairAcrossCheckpoints|TestWorkerRecovery'`：两例既有失败修复，恢复家族全绿。
+  - [x] `go test ./internal/app -count=1 -run 'TestCloudAgentPrevis|TestBackgroundPrevis'`：新增读修复幂等、read_only 待修复、重渲重指三例通过。
+  - [x] `go test ./internal/database ./internal/repository -count=1`：审计种子改 UTC 后全绿。
+  - [x] `cd web; bun run typecheck`；`bun test`：2274 pass / 0 fail。
+  - [x] `node --test agent/test/harness-sync.test.ts`：4 pass（本轮未改工具 schema 与描述，制品无漂移）。
+  - [x] `go test ./internal/app -count=1 -timeout 30m`：除 `TestAgentParityDatabaseHistoryDoesNotCrossTaskOrUnavailableBarrier` 在全量串跑中偶发失败（单跑通过，为上一轮已记录的既有偶发）外全绿；`go test` 其余 backend 包（含 `internal/database`/`internal/repository`）全部通过。
+  - [x] `cd web; bun run build`：前端生产构建通过（既有 chunk 体积告警，非错误）。

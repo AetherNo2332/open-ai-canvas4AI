@@ -40,26 +40,20 @@ type cloudAgentContextPressure struct {
 	CompactAtTokens int `json:"compactAtTokens,omitempty"`
 }
 
-// cloudAgentProjectedInputTokens 合成"下一步输入 token"的权威读数：
-// provider 锚点（模型自己的分词器读数）+ 本地估算的有符号增量；没有可用锚点时退回纯估算。
-// 压缩触发与压力展示必须共用这一份口径，否则"界面显示 79%、后台却按 82% 压缩"。
-// 增量带符号是刻意的（上游 #601）：上下文被裁剪（图片移出、正文卸载）后本地估算会变小，
-// 投影也必须跟着变小，否则读数只会单调上涨。
+// 压力展示与压缩触发直接使用最近的有效上游输入用量；没有实测时才估算。
+// 新增消息的本地估算不叠加到实测上，避免把预测标成模型实测。
 func cloudAgentProjectedInputTokens(pressure cloudAgentContextPressure, state *cloudAgentRuntime) (int, string) {
-	if state == nil || state.TokenAnchor == nil || !state.TokenAnchor.Accepted {
+	if state == nil || state.TokenAnchor == nil || !state.TokenAnchor.Accepted || state.TokenAnchor.InputTokens <= 0 {
 		return pressure.EstimatedInputTokens, "estimate"
 	}
-	anchor := state.TokenAnchor
-	delta := pressure.EstimatedInputTokens - anchor.EstimatedTokens
-	return max(0, int(anchor.InputTokens)+delta), "provider"
+	return int(state.TokenAnchor.InputTokens), "provider"
 }
 
 // cloudAgentContextPressurePayload 把读数摊成事件载荷。
 //
 // 两条硬规则（消费方不必猜）：
-//  1. 两个量纲各自命名、互不覆盖：本地估算描述**下一次**请求（readingScope=next_request /
-//     estimateMethod=local_v1），上游实测量的是**上一次**请求（providerMeasurementScope=
-//     previous_request），两者不能画成同一条曲线。
+//  1. 主读数、比例与压缩判据采用最近有效上游实测，无实测时采用本地估算；
+//     estimatedInputTokens 独立保留下一次请求的估算，不叠加到实测。
 //  2. 没有解析到模型自己声明的窗口时不下发窗口字段与占用率：宁可不给百分比，
 //     也不要拿兜底默认窗口编一个看起来很像真的"已占用 80%"（与我方文档"窗口未声明（0）时
 //     不下发这几个字段"一致）。
@@ -126,11 +120,11 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 		payload["stepTimeoutSeconds"] = int(state.StepLimits.Timeout / time.Second)
 	}
 	// 上游实测锚点：provider 用模型自己的分词器报出的 prompt 规模，是权威读数。
-	// 投影 = 锚点 + 本地估算的有符号增量（对齐前端 pressureTokens / projectedTokens）。
+	// 主读数与压缩判据直接使用实测；本地估算仅留作诊断。
 	projectedTokens, tokenSource := cloudAgentProjectedInputTokens(pressure, state)
 	if anchor := state.TokenAnchor; anchor != nil {
 		payload["anchorStep"] = anchor.Step
-		if anchor.Accepted {
+		if tokenSource == "provider" {
 			payload["pressureTokens"] = anchor.InputTokens
 			payload["tokenUsage"] = map[string]any{
 				"inputTokens": anchor.InputTokens, "cachedInputTokens": anchor.CachedTokens,
@@ -156,10 +150,12 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 	}
 	payload["projectedTokens"] = projectedTokens
 	payload["tokenSource"] = tokenSource
+	payload["estimate"] = tokenSource != "provider"
 	// v2 命名（设计 §4）：两种量纲各自命名，前端不需要靠 tokenSource 猜。
 	payload["measurementSource"] = tokenSource
 	if tokenSource == "provider" {
 		payload["normalizedInputTokens"] = state.TokenAnchor.InputTokens
+		payload["readingScope"] = "latest_provider_request"
 	} else {
 		payload["normalizedInputTokens"] = pressure.EstimatedInputTokens
 	}
@@ -169,8 +165,9 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 			"id": anchor.TaskID, "valid": anchor.Accepted, "ageSteps": max(0, state.Step-anchor.Step),
 		}
 	}
-	if scale, ok := payload["tokenScale"].(float64); ok && scale > 0 && pressure.UsableInputTokens > 0 {
-		payload["projectedPressureRatio"] = math.Min(9.99, float64(projectedTokens)/float64(pressure.UsableInputTokens))
+	if pressure.ModelLimitConfigured && pressure.UsableInputTokens > 0 {
+		ratio := math.Min(9.99, float64(projectedTokens)/float64(pressure.UsableInputTokens))
+		payload["pressureRatio"], payload["projectedPressureRatio"] = ratio, ratio
 	}
 	raw, _ := json.Marshal(state.Canonical.Messages)
 	// 条数口径必须数"当前会话"，不是压缩后残留的 TextHistory：后者最多 7 条，
@@ -184,7 +181,7 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 	payload["compactionTokenSource"] = tokenSource
 	payload["compactionThresholdBytes"] = agentcontext.ThresholdBytes
 	if pressure.UsableInputTokens > 0 {
-		// 主判据：token 利用率（上游实测投影 ÷ 本次请求真实可用的输入预算）。
+		// 主判据：权威输入用量 ÷ 当前输入预算。
 		// 字节/条数只在没有配置模型上限时兜底，两者不能各说各话。
 		payload["compactionBasis"] = "tokens"
 		payload["compactionPressureRatio"] = math.Min(9.99, float64(projectedTokens)/float64(pressure.UsableInputTokens))
@@ -268,9 +265,7 @@ func cloudAgentContextBreakdownPayload(state *cloudAgentRuntime, actual ...canon
 //
 // 它与同文件的 cloudAgentEstimatedTokens 不是同一把尺子，也不要合并：后者是
 // **请求准入**的判据（非 ASCII 按 1.5 token/字符，宁可高估也不能把装不下的请求放出去），
-// 这里是**读数与锚点**的基准——锚点的采信区间（0.5×–2×）与 tokenScale 都是照着这把尺子
-// 标定的，换尺子等于把标定作废。它只是压力展示，既不是计费 token 数，
-// 也不能替代上游 tokenizer。
+// 这里仅用于无上游用量时的压力读数和构成诊断，不能否定或修改上游实测。
 func estimateCloudAgentTokens(value []byte) int {
 	if len(value) == 0 {
 		return 0

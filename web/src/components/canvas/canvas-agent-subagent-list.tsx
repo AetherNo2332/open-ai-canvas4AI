@@ -1,68 +1,47 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { useReducedMotion } from "motion/react";
+import type { CSSProperties } from "react";
+import { Aperture, BookOpen, Compass, Feather, Film, FlaskConical, Focus, Gem, Layers, Lightbulb, Orbit, PenTool, ScanSearch, Telescope, WandSparkles, Waypoints } from "lucide-react";
 import type { CanvasTheme } from "@/lib/canvas-theme";
-import { computeSubagentOffsets } from "@/lib/canvas/agent-subagent-layout";
 import "./canvas-agent-subagent-list.css";
 
-export type AgentSubagentAvatarItem = { id: string; name: string; avatarUrl: string; state: "running" | "waiting" | "done" | "failed" };
+export type AgentSubagentAvatarItem = { id: string; name: string; state: "running" | "waiting" | "done" | "failed" };
 
-export function AgentSubagentList({ items, theme }: { items: AgentSubagentAvatarItem[]; theme: CanvasTheme }) {
-    const reducedMotion = useReducedMotion();
-    const [hovered, setHovered] = useState(-1);
-    const [focused, setFocused] = useState(-1);
-    const [widths, setWidths] = useState<number[]>([]);
-    const names = useRef<Array<HTMLSpanElement | null>>([]);
-    const row = useRef<HTMLDivElement>(null);
-    const [geometry, setGeometry] = useState({ size: 44, gap: 8 });
-    const expanded = hovered >= 0 ? hovered : focused;
-    useLayoutEffect(() => {
-        const measure = () => {
-            setWidths(items.map((_, index) => names.current[index]?.scrollWidth || 0));
-            const button = row.current?.querySelector("button");
-            if (button && row.current) setGeometry({ size: button.offsetWidth, gap: Number.parseFloat(getComputedStyle(row.current).gap) || 0 });
-        };
-        measure();
-        const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-        names.current.slice(0, items.length).forEach((name) => {
-            if (name) observer?.observe(name);
-        });
-        return () => observer?.disconnect();
-    }, [items]);
+const icons = [Compass, Feather, ScanSearch, Aperture, BookOpen, Film, Lightbulb, Layers, PenTool, Telescope, FlaskConical, Focus, Orbit, Waypoints, Gem, WandSparkles];
+
+export function AgentSubagentList({ items, theme, onSelect }: { items: AgentSubagentAvatarItem[]; theme: CanvasTheme; onSelect: (id: string) => void }) {
     if (items.length === 0) return null;
-    const offsets = computeSubagentOffsets(items.length, geometry.size, geometry.gap, reducedMotion ? -1 : expanded, (index) => widths[index] || 0);
-    const baseWidth = items.length * (geometry.size + geometry.gap) - geometry.gap;
-    const extraWidth = !reducedMotion && expanded >= 0 ? (widths[expanded] || 0) + geometry.gap : 0;
     return (
-        <div className="agent-subagent-list" aria-label="活动子智能体" style={{ "--agent-subagent-surface": theme.node.panel, "--agent-subagent-text": theme.node.text } as CSSProperties}>
-            <div ref={row} className="agent-subagent-row" style={{ minWidth: baseWidth + extraWidth }}>
-                {items.map((item, index) => (
-                    <div key={item.id} className="agent-subagent-item" data-state={item.state} data-expanded={expanded === index} style={{ transform: `translateX(${offsets[index]}px)` }}>
-                        <button
-                            type="button"
-                            className="agent-subagent-avatar grid place-items-center rounded-full"
-                            aria-label={item.name}
-                            title={`${item.name} · ${stateLabel[item.state]}`}
-                            onMouseEnter={() => setHovered(index)}
-                            onMouseLeave={() => setHovered(-1)}
-                            onFocus={() => setFocused(index)}
-                            onBlur={() => setFocused(-1)}
-                        >
-                            <img src={item.avatarUrl} className="rounded-full object-cover" alt="" />
-                        </button>
-                        <span
-                            ref={(element) => {
-                                names.current[index] = element;
-                            }}
-                            className="agent-subagent-name"
-                            aria-hidden="true"
-                        >
-                            {item.name}
-                        </span>
-                    </div>
-                ))}
+        <section className="agent-subagent-list" aria-label="协作代理" style={{ "--agent-subagent-surface": theme.node.panel, "--agent-subagent-text": theme.node.text } as CSSProperties}>
+            <div className="agent-subagent-heading">
+                <span>
+                    协作代理 <span className="agent-subagent-count">{items.length}</span>
+                </span>
+                <span>点击查看会话</span>
             </div>
-            {reducedMotion && expanded >= 0 ? <span className="agent-subagent-reduced-name">{items[expanded]?.name}</span> : null}
-        </div>
+            <div className="agent-subagent-row" data-canvas-wheel-scroll>
+                {items.map((item, index) => {
+                    const Icon = icons[index % icons.length];
+                    return (
+                        <div key={item.id} className="agent-subagent-item" data-state={item.state}>
+                            <button
+                                type="button"
+                                className="agent-subagent-button"
+                                data-subagent-id={item.id}
+                                aria-label={`查看${item.name}的会话 · ${stateLabel[item.state]}`}
+                                title={`${item.name} · ${stateLabel[item.state]}`}
+                                onClick={() => onSelect(item.id)}
+                            >
+                                <span className="agent-subagent-avatar">
+                                    <Icon size={18} strokeWidth={1.6} aria-hidden="true" />
+                                    {index >= icons.length ? <span className="agent-subagent-number">{index + 1}</span> : null}
+                                    <span className="agent-subagent-status" aria-hidden="true" />
+                                </span>
+                                <span className="agent-subagent-name">{item.name}</span>
+                            </button>
+                        </div>
+                    );
+                })}
+            </div>
+        </section>
     );
 }
 

@@ -7,7 +7,9 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-const cloudAgentMutationSnapshotLimit = 1 << 20
+// Match the persisted canvas size ceiling so ordinary drawing/content edits
+// remain undoable. Both snapshots are bounded, never arbitrary model blobs.
+const cloudAgentMutationSnapshotLimit = 8 << 20
 
 type cloudAgentMutationInput struct {
 	RunID              string
@@ -53,6 +55,13 @@ func recordCloudAgentCanvasMutation(repo *repository.Repository, input cloudAgen
 	}
 	if len(input.BeforeJSON) <= cloudAgentMutationSnapshotLimit {
 		mutation.BeforeJSON = input.BeforeJSON
+		canvas, err := repo.CanvasProjectForUser(input.UserID, input.CanvasID)
+		if err != nil {
+			return err
+		}
+		if len(canvas.PayloadJSON) <= cloudAgentMutationSnapshotLimit {
+			mutation.AfterJSON = canvas.PayloadJSON
+		}
 	} else {
 		mutation.Status = "not_undoable"
 	}

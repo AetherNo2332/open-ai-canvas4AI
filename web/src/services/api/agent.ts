@@ -31,7 +31,28 @@ export type AgentProfileView = {
     layers: AgentProfileLayer[];
 };
 
-export type AgentApprovalPreviewOperation = "add_node" | "update_node" | "connect_nodes" | "arrange_nodes" | "generate_media" | "create_storyboard" | "edit_storyboard" | "plan_step";
+export type AgentApprovalPreviewOperation =
+    | "add_node"
+    | "update_node"
+    | "delete_node"
+    | "duplicate_node"
+    | "connect_nodes"
+    | "delete_connection"
+    | "update_connection"
+    | "set_parent"
+    | "replace_text"
+    | "reorder_nodes"
+    | "reorder_rows"
+    | "arrange_nodes"
+    | "generate_media"
+    | "create_storyboard"
+    | "edit_storyboard"
+    | "edit_drawing"
+    | "bind_asset"
+    | "canvas_undo"
+    | "canvas_redo"
+    | "create_character"
+    | "plan_step";
 
 export type AgentApprovalPreviewItem = {
     operation: AgentApprovalPreviewOperation;
@@ -87,6 +108,9 @@ export type AgentRun = {
     cleanupPending?: boolean;
     failureMessage?: string;
     model?: string;
+    channelId?: string;
+    channelModelKey?: string;
+    logicalModelId?: string;
     createdAt: string;
     updatedAt: string;
     skillRuntimeMode?: "pi-native" | "legacy-go";
@@ -114,7 +138,7 @@ export type AgentContextCompactionState = {
     turnCount?: number;
     /** 中途暂停压缩：压完继续本轮，而不是收尾。 */
     resume?: boolean;
-    /** 触发读数：下一步预计输入 token ÷ 用户配置的可用输入。 */
+    /** 触发读数：最近有效实测（无实测时估算）÷ 用户配置的可用输入。 */
     projectedTokens?: number;
     usableInputTokens?: number;
     ratio?: number;
@@ -130,26 +154,6 @@ export type AgentEvent = {
     createdAt: string;
     /** Local delivery order for synthetic snapshot events; never used as a resume cursor. */
     localSeq?: number;
-};
-
-export const CREW_EVENT_TYPES = [
-    "crew_run_created",
-    "member_run_started",
-    "member_message",
-    "member_run_waiting",
-    "member_run_completed",
-    "member_run_failed",
-    "crew_approval_required",
-    "crew_run_completed",
-] as const;
-
-export type CrewEventType = typeof CREW_EVENT_TYPES[number];
-export type CrewEvent = {
-    type: CrewEventType;
-    crewRunId: string;
-    memberRunId?: string;
-    sequence: number;
-    payload: Record<string, unknown>;
 };
 
 /** 事件流本身不是 http 封装请求，单独保留状态码供 UI 区分旧后端/失效轮次。 */
@@ -212,7 +216,18 @@ export function sendAgentInterjection(runId: string, input: { text: string; mess
 }
 
 export function getAgentCapabilities() {
-    return http.get<{ version: number; permissionModes: AgentPermissionMode[]; contextScopes: string[]; skills: boolean; writeTools: boolean; historyPolicy?: "server_compacted"; contextCompaction?: { enabled: boolean; strategy: "structured_checkpoint"; thresholdBytes: number; thresholdHistoryMessages: number; retainedRecentPairs: number }; capabilitySetVersion?: string; capabilitySetHash?: string; nodeTypes?: string[] }>("/agent/capabilities", { timeout: 15_000 });
+    return http.get<{
+        version: number;
+        permissionModes: AgentPermissionMode[];
+        contextScopes: string[];
+        skills: boolean;
+        writeTools: boolean;
+        historyPolicy?: "server_compacted";
+        contextCompaction?: { enabled: boolean; strategy: "structured_checkpoint"; thresholdBytes: number; thresholdHistoryMessages: number; retainedRecentPairs: number };
+        capabilitySetVersion?: string;
+        capabilitySetHash?: string;
+        nodeTypes?: string[];
+    }>("/agent/capabilities", { timeout: 15_000 });
 }
 
 export function getAgentProfile(options: { projectId?: string; canvasId?: string; scope?: AgentProfileScope } = {}) {
@@ -248,10 +263,14 @@ export async function decideAgentApproval(runId: string, approvalId: string, dec
     return http.post<{ accepted: boolean }>(`/agent/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision`, { decision, reason: reason?.trim() || undefined, ...(mediaSettings ? { mediaSettings } : {}) }, { signal });
 }
 
-export function subscribeAgentEvents(runId: string, onEvent: (event: AgentEvent) => void, options: { after?: number; onError?: (error: unknown) => void; onConnectionChange?: (status: "connecting" | "connected" | "reconnecting" | "disconnected") => void; timeoutMs?: number } = {}) {
+export function subscribeAgentEvents(
+    runId: string,
+    onEvent: (event: AgentEvent) => void,
+    options: { after?: number; onError?: (error: unknown) => void; onConnectionChange?: (status: "connecting" | "connected" | "reconnecting" | "disconnected") => void; timeoutMs?: number } = {},
+) {
     const controller = new AbortController();
     let localSeq = 0;
-    let cursor = Number.isSafeInteger(options.after) && (options.after as number) > 0 ? options.after as number : 0;
+    let cursor = Number.isSafeInteger(options.after) && (options.after as number) > 0 ? (options.after as number) : 0;
     let lastActiveMessageKey = "";
     let lastStatusKey = "";
     const emit = (type: string, payload: Record<string, unknown>) => {
@@ -267,11 +286,18 @@ export function subscribeAgentEvents(runId: string, onEvent: (event: AgentEvent)
             const abortAttempt = () => attempt.abort();
             controller.signal.addEventListener("abort", abortAttempt, { once: true });
             let watchdog: ReturnType<typeof setTimeout>;
-            const touch = () => { clearTimeout(watchdog); watchdog = setTimeout(abortAttempt, options.timeoutMs ?? 45_000); };
+            const touch = () => {
+                clearTimeout(watchdog);
+                watchdog = setTimeout(abortAttempt, options.timeoutMs ?? 45_000);
+            };
             touch();
             options.onConnectionChange?.(failures ? "reconnecting" : "connecting");
             try {
-                const response = await fetch(`${String(apiBaseURL).replace(/\/+$/, "")}/agent/runs/${encodeURIComponent(runId)}/events?after=${cursor}`, { credentials: "include", signal: attempt.signal, headers: { Accept: "text/event-stream", "Last-Event-ID": String(cursor) } });
+                const response = await fetch(`${String(apiBaseURL).replace(/\/+$/, "")}/agent/runs/${encodeURIComponent(runId)}/events?after=${cursor}`, {
+                    credentials: "include",
+                    signal: attempt.signal,
+                    headers: { Accept: "text/event-stream", "Last-Event-ID": String(cursor) },
+                });
                 if (!response.ok) {
                     const error = new AgentStreamError(response.status);
                     const header = response.headers.get("retry-after");
@@ -296,42 +322,60 @@ export function subscribeAgentEvents(runId: string, onEvent: (event: AgentEvent)
                 const parser = createTaskTextStreamParser();
                 const connectedAt = Date.now();
                 touch();
-                const cancelReader = () => { void reader.cancel().catch(() => undefined); };
+                const cancelReader = () => {
+                    void reader.cancel().catch(() => undefined);
+                };
                 attempt.signal.addEventListener("abort", cancelReader, { once: true });
                 try {
                     while (!controller.signal.aborted && !attempt.signal.aborted) {
                         const { value, done } = await reader.read();
                         if (value?.length) touch();
-                        consumeTaskTextStream(parser, decoder.decode(value, { stream: !done }), (item) => {
-                            if (item.event === "agent_event") {
-                                const event = item.data as AgentEvent;
-                                if (event.runId !== runId || !Number.isSafeInteger(event.seq) || event.seq <= cursor) return;
-                                cursor = event.seq;
-                                failures = 0;
-                                options.onConnectionChange?.("connected");
-                                onEvent({ ...event, localSeq: ++localSeq });
-                            } else if (item.event === "run_snapshot") {
-                                const run = item.data as AgentRun;
-                                if (run.id !== runId) return;
-                                options.onConnectionChange?.("connected");
-                                if (run.activeMessage) {
-                                    const messageKey = `${run.activeMessage.messageId}\u0000${run.activeMessage.text}`;
-                                    if (messageKey !== lastActiveMessageKey) {
-                                        lastActiveMessageKey = messageKey;
-                                        // 快照里的 activeMessage 是**还在流式生成**的草稿，不是本轮最终答复：
-                                        // 显式带 final=false，否则前端会按"缺省即结论"（升级前口径）把它当成最终回复。
-                                        emit("assistant_message", { ...run.activeMessage, final: false });
+                        consumeTaskTextStream(
+                            parser,
+                            decoder.decode(value, { stream: !done }),
+                            (item) => {
+                                if (item.event === "agent_event") {
+                                    const event = item.data as AgentEvent;
+                                    if (event.runId !== runId || !Number.isSafeInteger(event.seq) || event.seq <= cursor) return;
+                                    cursor = event.seq;
+                                    failures = 0;
+                                    options.onConnectionChange?.("connected");
+                                    onEvent({ ...event, localSeq: ++localSeq });
+                                } else if (item.event === "run_snapshot") {
+                                    const run = item.data as AgentRun;
+                                    if (run.id !== runId) return;
+                                    options.onConnectionChange?.("connected");
+                                    if (run.activeMessage) {
+                                        const messageKey = `${run.activeMessage.messageId}\u0000${run.activeMessage.text}`;
+                                        if (messageKey !== lastActiveMessageKey) {
+                                            lastActiveMessageKey = messageKey;
+                                            // 快照里的 activeMessage 是**还在流式生成**的草稿，不是本轮最终答复：
+                                            // 显式带 final=false，否则前端会按"缺省即结论"（升级前口径）把它当成最终回复。
+                                            emit("assistant_message", { ...run.activeMessage, final: false });
+                                        }
                                     }
-                                }
-                                const statusPayload = { status: run.status, revision: run.revision, cleanupPending: run.cleanupPending, failureMessage: run.failureMessage, skillRuntimeMode: run.skillRuntimeMode, skills: run.skills, spentCredits: run.spentCredits, step: run.step, approval: run.approval, contextCompaction: run.contextCompaction };
-                                const statusKey = JSON.stringify(statusPayload);
-                                if (statusKey !== lastStatusKey) {
-                                    lastStatusKey = statusKey;
-                                    emit("run_status", statusPayload);
-                                }
-                                terminal = !run.cleanupPending && ["completed", "failed", "cancelled", "rejected"].includes(run.status);
-                            } else if (item.event === "error") throw new Error("Agent 状态读取失败");
-                        }, done);
+                                    const statusPayload = {
+                                        status: run.status,
+                                        revision: run.revision,
+                                        cleanupPending: run.cleanupPending,
+                                        failureMessage: run.failureMessage,
+                                        skillRuntimeMode: run.skillRuntimeMode,
+                                        skills: run.skills,
+                                        spentCredits: run.spentCredits,
+                                        step: run.step,
+                                        approval: run.approval,
+                                        contextCompaction: run.contextCompaction,
+                                    };
+                                    const statusKey = JSON.stringify(statusPayload);
+                                    if (statusKey !== lastStatusKey) {
+                                        lastStatusKey = statusKey;
+                                        emit("run_status", statusPayload);
+                                    }
+                                    terminal = !run.cleanupPending && ["completed", "failed", "cancelled", "rejected"].includes(run.status);
+                                } else if (item.event === "error") throw new Error("Agent 状态读取失败");
+                            },
+                            done,
+                        );
                         // A repeated initial snapshot is not a healthy connection.
                         // Sustained heartbeat traffic or advancing events reset the budget.
                         if (Date.now() - connectedAt >= 30_000 && value?.length) failures = 0;
@@ -358,7 +402,11 @@ export function subscribeAgentEvents(runId: string, onEvent: (event: AgentEvent)
             }
             options.onConnectionChange?.("reconnecting");
             await new Promise<void>((resolve) => {
-                const finish = () => { clearTimeout(timer); controller.signal.removeEventListener("abort", finish); resolve(); };
+                const finish = () => {
+                    clearTimeout(timer);
+                    controller.signal.removeEventListener("abort", finish);
+                    resolve();
+                };
                 const backoff = Math.min(1000 * 2 ** failures, 15000) * (0.75 + Math.random() * 0.5);
                 const timer = setTimeout(finish, Math.max(backoff, Math.min(retryAfterMs, 300_000)));
                 controller.signal.addEventListener("abort", finish, { once: true });

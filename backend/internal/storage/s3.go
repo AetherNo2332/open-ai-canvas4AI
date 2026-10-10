@@ -66,7 +66,7 @@ func NewS3Client(setting Settings, timeout time.Duration) (*awss3.S3, error) {
 		WithEndpoint(endpoint.String()).
 		WithCredentials(credentials.NewStaticCredentials(setting.AccessKeyID, setting.AccessKeySecret, setting.SessionToken)).
 		WithHTTPClient(httpClient).
-		WithS3ForcePathStyle(setting.PathStyle || !StandardAWSS3Endpoint(endpoint.String())).
+		WithS3ForcePathStyle(setting.PathStyle).
 		WithDisableSSL(endpoint.Scheme == "http")
 	sess, err := session.NewSession(config)
 	if err != nil {
