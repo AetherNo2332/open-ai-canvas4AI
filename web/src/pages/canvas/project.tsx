@@ -93,6 +93,7 @@ import {
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
 import { buildImageToPrevisAgentPrompt } from "@/lib/canvas/image-to-previs-agent";
+import { isPrevisWorkstationNode } from "@/lib/canvas/previs/previs-node";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay, type PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
@@ -2390,7 +2391,7 @@ function InfiniteCanvasPage() {
                     />
                 );
             }
-            if (contentNode.metadata?.previsSceneId) {
+            if (isPrevisWorkstationNode(contentNode)) {
                 return (
                     <CanvasPrevisNodePanel
                         node={contentNode}
@@ -2926,7 +2927,7 @@ function InfiniteCanvasPage() {
                         dialogNode.type !== CanvasNodeType.Drawing &&
                         dialogNode.type !== CanvasNodeType.Panorama &&
                         !(dialogNode.metadata?.workflowKind === "character" && dialogNode.metadata.characterAssetId) &&
-                        !dialogNode.metadata?.previsSceneId &&
+                        !isPrevisWorkstationNode(dialogNode) &&
                         !selectionBox &&
                         !isCanvasNodeMoving ? (
                             <CanvasNodePanelOverlay

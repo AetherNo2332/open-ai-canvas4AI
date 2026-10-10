@@ -7,6 +7,7 @@ import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { createPrevisSceneFromTemplate, type PrevisTemplateId } from "@/lib/canvas/previs/previs-templates";
 import { mergePrevisOutputPreview, upsertPrevisSceneById } from "@/lib/canvas/previs/previs-session";
+import { isPrevisWorkstationNode } from "@/lib/canvas/previs/previs-node";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
@@ -110,7 +111,7 @@ export function useCanvasPrevis({
 
     const openPrevisWorkbench = useCallback((nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);
-        if (!node || node.metadata?.workflowKind !== "shot") return;
+        if (!node || !isPrevisWorkstationNode(node)) return;
         if (shouldUpgradePrevisNodeSize(node)) {
             const upgradedNodes = nodesRef.current.map((item) => item.id === nodeId ? { ...item, width: PREVIS_NODE_SIZE.width, height: PREVIS_NODE_SIZE.height } : item);
             nodesRef.current = upgradedNodes;
