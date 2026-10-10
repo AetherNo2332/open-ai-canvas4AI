@@ -3665,7 +3665,7 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 对真实环境的验收（待执行）：
 
 - [ ] 本地 compose 真实 agent 回路（backend + web + Pi worker agent 容器 + 真实模型渠道）跑六场景：① 建场景→画布出现可打开工作站；② 无工作站旧场景补丁自愈；③ 离开画布期间后台渲染→回来产物可见且卡片可打开；④ 图片→预演台全链路（看图模型复现）；⑤ 虚报回归（最终答复措辞、nodeId 引用、闸门打回）；⑥ 存量死卡片文档迁移后卡片可打开或降级为产物节点。
-- [ ] 容器内真实 renderer 写回链路：`docker compose -f docker-compose.previs-test.yml up`（`PREVIS_REAL_BACKEND=1`，本机已有 `canvas-previs-renderer:local` 与 `canvas-previs-go-tests:local` 镜像）。
+- [x] 容器内真实 renderer 写回链路（2026-10-11 复验）：`docker tag canvas-previs-renderer:verify-final canvas-previs-renderer:local` 后 `docker compose -f docker-compose.previs-test.yml -p previs-parity-check up --abort-on-container-exit --exit-code-from backend-tests`（测试专用随机 token），`TestBackgroundPrevisRealThreeShots`（3 镜真实 mp4/png 回写）与 `TestBackgroundPrevisRealWritebackRecovery` 全 PASS；证据在 `.local/previs-evidence/`。收尾 `down -v`，外部卷 `canvas-crew-go-mod`、`canvas-canary-go-test-cache` 未受损。
 - [ ] computer use 轨：真实浏览器 + 已登录会话执行场景③⑤，留存截图 + SSE 日志 + 画布文档快照三件套。
 ## 预演台收尾：既有失败修复、纯读迁移入口与 D6 结论（2026-10-10 第二轮）
 
@@ -3680,3 +3680,4 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
   - [x] `cd web; bun run typecheck`；`bun test`：2274 pass / 0 fail。
   - [x] `node --test agent/test/harness-sync.test.ts`：4 pass（本轮未改工具 schema 与描述，制品无漂移）。
   - [x] `go test ./internal/app -count=1 -timeout 30m`：除 `TestAgentParityDatabaseHistoryDoesNotCrossTaskOrUnavailableBarrier` 在全量串跑中偶发失败（单跑通过，为上一轮已记录的既有偶发）外全绿；`go test` 其余 backend 包（含 `internal/database`/`internal/repository`）全部通过。
+  - [x] `cd web; bun run build`：前端生产构建通过（既有 chunk 体积告警，非错误）。
