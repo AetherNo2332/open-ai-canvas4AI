@@ -492,14 +492,7 @@ export function CanvasNodeCameraPanel({
                     tooltipDesc={apertureMeta?.description}
                     tooltipUseCase={apertureMeta?.useCase}
                     visual={
-                        <div className="flex h-full w-full flex-col items-center">
-                            <div className="flex min-h-0 w-full flex-1 items-center justify-center">
-                                <CameraArtwork src={APERTURE_IMAGES[aperture]} label={`f/${aperture} 光圈`} fallback={
-                                    <div className="text-[30px] font-light leading-none"><span className="text-[18px]" style={{ color: theme.node.faint }}>f/</span>{aperture}</div>
-                                } />
-                            </div>
-                            <div className="mt-1 text-[10px] tracking-wider" style={{ color: theme.node.faint }}>{APERTURE_IMAGES[aperture] ? `f/${aperture}` : "aperture"}</div>
-                        </div>
+<div className="text-[40px] font-light leading-none">f/{aperture}</div>
                     }
                     cornerBadge={apertureMeta?.zhName}
                     captionBelow={apertureMeta?.zhName ?? ""}
