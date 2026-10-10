@@ -3642,3 +3642,28 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 - 已加入 `AgentSubagentPolicy`、父子 Link/消息模型、revision CAS 和 `/api/agent/subagent-policy` 接口。
 - 动态 spawn 工具、子运行调度、消息唤醒、SSE 和旧 Crew 清理均已实现；父等待释放驻留容量，并在子任务终态后恢复。
 - 本轮复用既有全量结果，新增链路在 Linux 容器定向验证，Windows 仅做全包编译。最终镜像/HTTP 验收及 CI 状态见本文“Agent 动态子代理”。
+
+## 导演台（预演台）Agent 工作站绑定与后台回写语义（2026-10-10）
+
+- 移植上游 dd52588a：`previs_scene_create` 增加可选 `nodeId`/`nodeTitle`，创建场景时放置或修复唯一的 `video` 工作站节点（520×340，`workflowKind:"shot"` + `previsSceneId`/`previsShotId` 等），绑定非视频节点、多工作站、ID 已占用等冲突一律拒绝；补丁对无工作站的旧场景自愈；回执补 `nodeId`/`shotId`。
+- 移植上游 c0a9250c：图片工具栏「生成预演台」入口（自动选用支持看图的文本模型并提交复现指令）、对话内节点卡片「此图」引用、`characterName` 单独出现不再要求角色卡绑定。
+- 服务端后台回写对齐浏览器产物链语义：白模视频产物写 `workflowKind:"reference_video"`、构图帧写 `reference_set` 并带 `assetTags`；定位不到场景工作站时写回显式失败（`previs_workstation_missing`），不再静默产出「只有 previsSceneId」的裸节点。
+- 存量脏数据懒迁移：写路径（场景创建/补丁、服务端渲染回写）幂等修复旧版回写留下的死卡片节点——组内最早的 `video` 节点就地提升为工作站（保留既有媒体），其余缺 `workflowKind` 的 `video`/`image` 节点降级为产物节点并重指 `previewNodeId`/`clayVideoNodeId`；只增字段、不删节点，只读路径不改文档。
+- 前端渲染优先级修正：工作站判定统一收敛为 `workflowKind==="shot"`（新增 `isPrevisWorkstationNode` / `canvasNodeHasCustomContent`），产物节点继续走视频/图片渲染器，消除「PREVIS / 3D · 可编辑」点击无反应的死卡片。
+- 虚报通道收口：previs 写工具回执改用提交后口径（不再复用审批前文案），工具描述/系统策略/影策技能同步「场景写入≠节点出现」「已请求≠已导出」，收尾闸门新增「最终答复引用了本轮从未出现过的节点 ID」拦截（保守判定：不可判定一律放行，只拦可证伪的虚报）。
+- 制品链同步：`agent/harness/TOOL_SCHEMA.json`、`TOOL_DESCRIPTIONS.md`、`SYSTEM_POLICY.md` 与 `SOURCE.json` 哈希链按 backend 源文件重新生成。
+
+自动化验证（本机 Windows / Go 1.27 / bun 1.3.9 / Node 26）：
+
+- [x] `go test ./internal/app -run 'TestCloudAgentPrevis'`：上游工作站三例 + 新增懒迁移幂等、写路径（补丁）修复用例全通过。
+- [x] `go test ./internal/app -run 'TestBackgroundPrevis'`：新增「无工作站 fail-loud」「旧脏数据回写自愈并补齐产物语义」用例全通过。
+- [x] `go test ./internal/app -run 'TestAgentToolSchemaArtifactMatchesRuntime'`：共用工具 schema 制品与运行时一致。
+- [x] `node --test agent/test/harness-sync.test.ts`：harness 正文与清单哈希一致。
+- [x] `bun test`：web 全量 2274 例通过（含新增 `web/test/previs-workstation-node-gate.test.ts`）。
+- [x] 既有失败与本改动无关（在基线 232aef19 干净 worktree 复现）：`TestCloudAgentEmptyCanvasRepairAcrossCheckpoints/connection_repaired`（repair budget lost across checkpoint）、`TestWorkerRecoveryIsDurableFencedAndIdempotent`（early claim）；`TestAgentParityDatabaseHistoryDoesNotCrossTaskOrUnavailableBarrier` 在全量串跑中偶发失败、单跑通过。
+
+对真实环境的验收（待执行）：
+
+- [ ] 本地 compose 真实 agent 回路（backend + web + Pi worker agent 容器 + 真实模型渠道）跑六场景：① 建场景→画布出现可打开工作站；② 无工作站旧场景补丁自愈；③ 离开画布期间后台渲染→回来产物可见且卡片可打开；④ 图片→预演台全链路（看图模型复现）；⑤ 虚报回归（最终答复措辞、nodeId 引用、闸门打回）；⑥ 存量死卡片文档迁移后卡片可打开或降级为产物节点。
+- [ ] 容器内真实 renderer 写回链路：`docker compose -f docker-compose.previs-test.yml up`（`PREVIS_REAL_BACKEND=1`，本机已有 `canvas-previs-renderer:local` 与 `canvas-previs-go-tests:local` 镜像）。
+- [ ] computer use 轨：真实浏览器 + 已登录会话执行场景③⑤，留存截图 + SSE 日志 + 画布文档快照三件套。
