@@ -197,7 +197,7 @@ func TestBackgroundPrevisRealThreeShots(t *testing.T) {
 	}
 	canvas, _ = s.repo.CanvasProjectForUser(run.UserID, run.CanvasID)
 	doc = mustCreationDocument(t, canvas.PayloadJSON)
-	if len(creationMaps(doc["nodes"])) != 6 {
+	if len(creationMaps(doc["nodes"])) != 7 {
 		t.Fatal("missing delivered nodes")
 	}
 	if outputDir != "" {
@@ -232,7 +232,7 @@ func TestBackgroundPrevisRealWritebackRecovery(t *testing.T) {
 		t.Fatalf("failed output facts missing: %s %s", source.Status, source.Error)
 	}
 	canvas, _ = s.repo.CanvasProjectForUser(run.UserID, input.CanvasID)
-	if len(creationMaps(mustCreationDocument(t, canvas.PayloadJSON)["nodes"])) != 0 {
+	if len(creationMaps(mustCreationDocument(t, canvas.PayloadJSON)["nodes"])) != 1 {
 		t.Fatal("conflict wrote successful nodes")
 	}
 	canvas.PayloadJSON = originalPayload
@@ -260,7 +260,7 @@ func TestBackgroundPrevisRealWritebackRecovery(t *testing.T) {
 		t.Fatal("repair overwrote failed history")
 	}
 	canvas, _ = s.repo.CanvasProjectForUser(run.UserID, input.CanvasID)
-	if len(creationMaps(mustCreationDocument(t, canvas.PayloadJSON)["nodes"])) != 2 {
+	if len(creationMaps(mustCreationDocument(t, canvas.PayloadJSON)["nodes"])) != 3 {
 		t.Fatal("recovery delivery missing")
 	}
 	if dir := os.Getenv("PREVIS_E2E_OUTPUT"); dir != "" {
@@ -334,7 +334,7 @@ func TestBackgroundPrevisWritebackMergesUnrelatedEditAndReplaysReceipt(t *testin
 	result := storedPrevis(t, s, task, input)
 	canvas, _ := s.repo.CanvasProjectForUser(task.UserID, input.CanvasID)
 	doc := mustCreationDocument(t, canvas.PayloadJSON)
-	doc["nodes"] = []any{map[string]any{"id": "manual", "type": "text", "content": "keep me"}}
+	doc["nodes"] = append(creationMaps(doc["nodes"]), map[string]any{"id": "manual", "type": "text", "content": "keep me"})
 	creationMaps(doc["previsScenes"])[0]["activeShotId"] = "other"
 	raw, _ := json.Marshal(doc)
 	canvas.PayloadJSON = string(raw)
@@ -350,7 +350,7 @@ func TestBackgroundPrevisWritebackMergesUnrelatedEditAndReplaysReceipt(t *testin
 	}
 	canvas, _ = s.repo.CanvasProjectForUser(task.UserID, input.CanvasID)
 	doc = mustCreationDocument(t, canvas.PayloadJSON)
-	if len(creationMaps(doc["nodes"])) != 3 {
+	if len(creationMaps(doc["nodes"])) != 4 {
 		t.Fatal(canvas.PayloadJSON)
 	}
 	run, state := reloadPiRun(t, s, run.ID)
@@ -363,6 +363,104 @@ func TestBackgroundPrevisWritebackMergesUnrelatedEditAndReplaysReceipt(t *testin
 	}
 }
 
+func TestBackgroundPrevisWritebackFailsLoudWithoutWorkstation(t *testing.T) {
+	s, _, task, input := submittedPrevis(t)
+	result := storedPrevis(t, s, task, input)
+	canvas, _ := s.repo.CanvasProjectForUser(task.UserID, input.CanvasID)
+	doc := mustCreationDocument(t, canvas.PayloadJSON)
+	// 工作站被删掉（存量脏数据且组内没有可提升的 video）：写回必须显式失败，不得静默造裸节点。
+	doc["nodes"] = []any{}
+	raw, _ := json.Marshal(doc)
+	canvas.PayloadJSON = string(raw)
+	if err := s.repo.UpsertCanvasProject(canvas); err != nil {
+		t.Fatal(err)
+	}
+	err := s.commitPrevisOutput(task, input, result)
+	if err == nil || !strings.Contains(err.Error(), "previs_workstation_missing") {
+		t.Fatalf("missing workstation must fail loud, got %v", err)
+	}
+	stored, _ := s.repo.Task(task.ID)
+	if stored.Status == model.TaskStatusSucceeded {
+		t.Fatal("fail-loud writeback reported success")
+	}
+	persisted, _ := s.repo.CanvasProjectForUser(task.UserID, input.CanvasID)
+	if len(creationMaps(mustCreationDocument(t, persisted.PayloadJSON)["nodes"])) != 0 {
+		t.Fatal("fail-loud writeback still wrote bare nodes")
+	}
+}
+
+func TestBackgroundPrevisWritebackRepairsLegacyDirtyNodes(t *testing.T) {
+	s, _, task, input := submittedPrevis(t)
+	result := storedPrevis(t, s, task, input)
+	canvas, _ := s.repo.CanvasProjectForUser(task.UserID, input.CanvasID)
+	doc := mustCreationDocument(t, canvas.PayloadJSON)
+	// 旧版回写形态：只有 previsSceneId、没有 workflowKind 的 video/image 产物节点，且场景无工作站。
+	// 画布保存会校验素材归属，所以脏节点引用真实资源，与生产回写的节点数据一致。
+	legacyVideoResource, _, err := s.storeResource(task.UserID, "media", "legacy.mp4", "video/mp4", 1000, 640, 360, 500, strings.NewReader(strings.Repeat("v", 1000)), nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyImageResource, _, err := s.storeResource(task.UserID, "image", "legacy.png", "image/png", 1000, 640, 360, 0, strings.NewReader(strings.Repeat("p", 1000)), nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc["nodes"] = []any{
+		map[string]any{"id": "legacy-video", "type": "video", "title": "白模预演", "metadata": map[string]any{"content": resourceFileURL(legacyVideoResource.ID), "storageKey": "resource:" + legacyVideoResource.ID, "status": "success", "previsSceneId": input.SceneID, "previsShotId": input.ShotID, "previsRepairTaskId": "old-task"}},
+		map[string]any{"id": "legacy-image", "type": "image", "title": "预演构图帧", "metadata": map[string]any{"content": resourceFileURL(legacyImageResource.ID), "storageKey": "resource:" + legacyImageResource.ID, "status": "success", "previsSceneId": input.SceneID, "previsShotId": input.ShotID, "previsRepairTaskId": "old-task"}},
+	}
+	raw, _ := json.Marshal(doc)
+	canvas.PayloadJSON = string(raw)
+	if err := s.repo.UpsertCanvasProject(canvas); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.commitPrevisOutput(task, input, result); err != nil {
+		t.Fatal(err)
+	}
+	canvas, _ = s.repo.CanvasProjectForUser(task.UserID, input.CanvasID)
+	doc = mustCreationDocument(t, canvas.PayloadJSON)
+	nodes := creationMaps(doc["nodes"])
+	if len(nodes) != 4 {
+		t.Fatalf("unexpected node count after repair: %d %s", len(nodes), canvas.PayloadJSON)
+	}
+	byID := map[string]map[string]any{}
+	workstations, products, bare := 0, 0, 0
+	for _, node := range nodes {
+		metadata, _ := node["metadata"].(map[string]any)
+		byID[stringValue(node["id"])] = node
+		switch stringValue(metadata["workflowKind"]) {
+		case "shot":
+			workstations++
+		case "reference_video", "reference_set":
+			products++
+		default:
+			if stringValue(metadata["previsSceneId"]) != "" {
+				bare++
+			}
+		}
+	}
+	if workstations != 1 || products != 3 || bare != 0 {
+		t.Fatalf("repair left nodes inconsistent: workstations=%d products=%d bare=%d", workstations, products, bare)
+	}
+	videoMetadata, _ := byID["legacy-video"]["metadata"].(map[string]any)
+	if stringValue(videoMetadata["workflowKind"]) != "shot" || stringValue(videoMetadata["storageKey"]) != "resource:"+legacyVideoResource.ID || stringValue(videoMetadata["previsPreviewNodeId"]) != "legacy-image" {
+		t.Fatalf("legacy video was not promoted and relinked in place: %#v", videoMetadata)
+	}
+	completed, _ := s.repo.Task(task.ID)
+	var stored previsRenderResult
+	if err := json.Unmarshal([]byte(completed.ResultJSON), &stored); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{stored.VideoNodeID: "reference_video", stored.PreviewNodeID: "reference_set"} {
+		metadata, _ := byID[id]["metadata"].(map[string]any)
+		if stringValue(metadata["workflowKind"]) != want {
+			t.Fatalf("fresh writeback product %s lost its product semantics: %#v", id, metadata)
+		}
+	}
+	shot, ok := findPrevisShot(creationMaps(doc["previsScenes"])[0], input.ShotID)
+	if !ok || stringValue(shot["previewNodeId"]) != stored.PreviewNodeID || stringValue(shot["clayVideoNodeId"]) != stored.VideoNodeID {
+		t.Fatalf("shot link was not relinked to the delivered products: %#v", shot)
+	}
+}
 func TestBackgroundPrevisConflictRetainsOutputAndRepairKeepsHistory(t *testing.T) {
 	s, _, task, input := submittedPrevis(t)
 	result := storedPrevis(t, s, task, input)
@@ -418,7 +516,7 @@ func TestBackgroundPrevisCancelledOrOldLeaseCannotWrite(t *testing.T) {
 				t.Fatal("stale executor wrote output")
 			}
 			canvas, _ := s.repo.CanvasProjectForUser(task.UserID, input.CanvasID)
-			if len(creationMaps(mustCreationDocument(t, canvas.PayloadJSON)["nodes"])) != 0 {
+			if len(creationMaps(mustCreationDocument(t, canvas.PayloadJSON)["nodes"])) != 1 {
 				t.Fatal("late canvas nodes")
 			}
 		})
@@ -453,7 +551,7 @@ func TestBackgroundPrevisInvalidTargetsKeepSavedArtifacts(t *testing.T) {
 				}
 				want = "missing_resource"
 			case "payload_limit":
-				doc["nodes"] = []any{map[string]any{"id": "large", "type": "text", "metadata": map[string]any{"content": strings.Repeat("x", 4<<20)}}}
+				doc["nodes"] = append(creationMaps(doc["nodes"]), map[string]any{"id": "large", "type": "text", "metadata": map[string]any{"content": strings.Repeat("x", 4<<20)}})
 				want = "payload_too_large"
 			}
 			if failure != "bad_canvas" {

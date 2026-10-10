@@ -591,6 +591,7 @@ func (s *Service) commitPrevisOutput(task *model.Task, input previsRenderInput, 
 			if readErr != nil {
 				return fmt.Errorf("invalid_canvas")
 			}
+			cloudAgentPrevisRepairLegacyNodes(doc)
 			scene, exists := findPrevisScene(creationMaps(doc["previsScenes"]), input.SceneID)
 			if result.Linked && (!exists || previsRenderSourceHash(scene, input.ShotID) != input.SourceHash) {
 				return fmt.Errorf("target_changed")

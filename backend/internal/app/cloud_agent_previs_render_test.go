@@ -25,7 +25,13 @@ func backgroundPrevisFixture(t *testing.T, permission string) (*Service, *model.
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(map[string]any{"nodes": []any{}, "connections": []any{}, "previsScenes": []any{scene}})
+	// 场景创建即绑定工作站（预演台修复计划 G1）：回写前置检查要求工作站真实存在，
+	// fixture 走生产代码放置工作站，而不是手写一个「裸」场景。
+	doc := map[string]any{"nodes": []any{}, "connections": []any{}, "previsScenes": []any{scene}}
+	if _, _, _, err := cloudAgentPrevisEnsureWorkstationNode(doc, scene, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(doc)
 	canvas, err := s.repo.CanvasProjectForUser(run.UserID, run.CanvasID)
 	if err != nil {
 		t.Fatal(err)

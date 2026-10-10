@@ -914,6 +914,165 @@ func cloudAgentPrevisEnsureWorkstationNode(doc map[string]any, scene map[string]
 	return stringValue(bound["id"]), shotID, created, nil
 }
 
+// --- 存量脏数据懒迁移（预演台修复计划 G2） ---
+
+// cloudAgentPrevisRepairLegacyNodes 幂等修复旧版服务端回写留下的“死卡片”节点。
+//
+// 背景：旧版回写给产物节点写了 previsSceneId、没写 workflowKind，画布于是把它们渲染成预演台
+// 工作台卡，而打开守卫只认 workflowKind==="shot"，点击全静默。这里按场景分组补齐语义：
+//   - 场景已有工作站（video + workflowKind=shot）：保持不动；
+//   - 场景没有工作站：把组内最早的 video 节点提升为工作站，保留其既有媒体，允许卡片直接带白模预览；
+//   - 其余缺 workflowKind 的 video/image 节点按浏览器产物链降级为 reference_video / reference_set；
+//   - 工作站缺预览指针时按产物节点回指，让卡片能显示构图。
+//
+// 只补字段、不删节点、不覆盖既有值；无可修复内容时零改动。返回 true 表示文档已修改。
+// 它是**写路径**的修复（场景创建/补丁与服务端渲染回写），只读路径不隐式改文档。
+func cloudAgentPrevisRepairLegacyNodes(doc map[string]any) bool {
+	nodes := creationMaps(doc["nodes"])
+	if len(nodes) == 0 {
+		return false
+	}
+	repaired := false
+	for _, scene := range creationMaps(doc["previsScenes"]) {
+		if sceneID := stringValue(scene["id"]); sceneID != "" && cloudAgentPrevisRepairLegacyScene(nodes, scene, sceneID) {
+			repaired = true
+		}
+	}
+	return repaired
+}
+
+func cloudAgentPrevisRepairLegacyScene(nodes []map[string]any, scene map[string]any, sceneID string) bool {
+	group := make([]map[string]any, 0, len(nodes))
+	for _, node := range nodes {
+		metadata, _ := node["metadata"].(map[string]any)
+		if stringValue(metadata["previsSceneId"]) == sceneID {
+			group = append(group, node)
+		}
+	}
+	if len(group) == 0 {
+		return false
+	}
+	shotID, shotTitle, shotIndex, err := cloudAgentPrevisActiveShot(scene)
+	if err != nil {
+		// 场景没有可绑定的镜头时无法判定该挂什么语义：宁可不动，也不猜。
+		return false
+	}
+	var workstation, legacyVideo, legacyImage map[string]any
+	for _, node := range group {
+		metadata, _ := node["metadata"].(map[string]any)
+		nodeType := stringValue(node["type"])
+		if nodeType == "video" && stringValue(metadata["workflowKind"]) == "shot" {
+			workstation = node
+			continue
+		}
+		if stringValue(metadata["workflowKind"]) != "" {
+			continue
+		}
+		switch nodeType {
+		case "video":
+			if legacyVideo == nil {
+				legacyVideo = node
+			}
+		case "image":
+			if legacyImage == nil {
+				legacyImage = node
+			}
+		}
+	}
+	changed := false
+	if workstation == nil && legacyVideo != nil {
+		workstation = cloudAgentPrevisPromoteWorkstation(legacyVideo, sceneID, shotID, shotTitle, shotIndex)
+		legacyVideo = nil
+		changed = true
+	}
+	if legacyVideo != nil {
+		cloudAgentPrevisTagLegacyProduct(legacyVideo, "reference_video", "预演台白膜", shotTitle, sceneID, shotID)
+		changed = true
+	}
+	if legacyImage != nil {
+		cloudAgentPrevisTagLegacyProduct(legacyImage, "reference_set", "预演台构图", shotTitle, sceneID, shotID)
+		changed = true
+	}
+	if workstation != nil && cloudAgentPrevisRelinkWorkstation(workstation, scene, shotID, legacyImage, legacyVideo) {
+		changed = true
+	}
+	return changed
+}
+
+// cloudAgentPrevisPromoteWorkstation 把一个旧产物 video 节点就地提升为工作站：保留媒体内容，
+// 只补工作台身份字段。这样历史脏数据里的白模视频不会被丢弃，卡片也能直接带预览。
+func cloudAgentPrevisPromoteWorkstation(node map[string]any, sceneID, shotID, shotTitle string, shotIndex int) map[string]any {
+	metadata := cloudAgentPrevisNodeMetadata(node)
+	metadata["workflowKind"] = "shot"
+	metadata["workflowTitle"] = shotTitle
+	metadata["shotIndex"] = float64(shotIndex)
+	metadata["generationMode"] = "video"
+	metadata["videoEditOperation"] = "text_to_video"
+	metadata["previsSceneId"] = sceneID
+	metadata["previsShotId"] = shotID
+	if _, exists := metadata["status"]; !exists {
+		metadata["status"] = "idle"
+	}
+	if _, exists := metadata["composerContent"]; !exists {
+		metadata["composerContent"] = ""
+	}
+	if strings.TrimSpace(stringValue(node["title"])) == "" {
+		node["title"] = shotTitle
+	}
+	return node
+}
+
+func cloudAgentPrevisTagLegacyProduct(node map[string]any, workflowKind, tag, shotTitle, sceneID, shotID string) {
+	metadata := cloudAgentPrevisNodeMetadata(node)
+	metadata["workflowKind"] = workflowKind
+	if _, exists := metadata["assetTags"]; !exists {
+		metadata["assetTags"] = []any{tag, "镜头:" + shotTitle}
+	}
+	if _, exists := metadata["status"]; !exists {
+		metadata["status"] = "success"
+	}
+	if _, exists := metadata["previsSceneId"]; !exists {
+		metadata["previsSceneId"] = sceneID
+	}
+	if _, exists := metadata["previsShotId"]; !exists {
+		metadata["previsShotId"] = shotID
+	}
+}
+
+// cloudAgentPrevisRelinkWorkstation 把工作站缺的预览/白模指针补上，并同步镜头链路，
+// 让旧卡片与浏览器回写产物走同一套读取优先级。已有值一律不覆盖。
+func cloudAgentPrevisRelinkWorkstation(workstation map[string]any, scene map[string]any, shotID string, image, video map[string]any) bool {
+	metadata := cloudAgentPrevisNodeMetadata(workstation)
+	changed := false
+	if image != nil && stringValue(metadata["previsPreviewNodeId"]) == "" {
+		metadata["previsPreviewNodeId"] = stringValue(image["id"])
+		changed = true
+	}
+	if video != nil && stringValue(metadata["previsClayVideoNodeId"]) == "" {
+		metadata["previsClayVideoNodeId"] = stringValue(video["id"])
+		changed = true
+	}
+	if shot, ok := findPrevisShot(scene, shotID); ok {
+		if previewID := stringValue(metadata["previsPreviewNodeId"]); previewID != "" && stringValue(shot["previewNodeId"]) == "" {
+			shot["previewNodeId"] = previewID
+			changed = true
+		}
+		if clayID := stringValue(metadata["previsClayVideoNodeId"]); clayID != "" && stringValue(shot["clayVideoNodeId"]) == "" {
+			shot["clayVideoNodeId"] = clayID
+			changed = true
+		}
+	}
+	return changed
+}
+
+func cloudAgentPrevisNodeMetadata(node map[string]any) map[string]any {
+	metadata, _ := node["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+		node["metadata"] = metadata
+	}
+	return metadata
+}
 func prepareCloudAgentPrevisSceneCreate(repo *repository.Repository, userID, canvasID string, call cloudAgentCall) (*cloudAgentPrevisMutationPlan, error) {
 	var args cloudAgentPrevisSceneCreateArgs
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
@@ -943,6 +1102,7 @@ func prepareCloudAgentPrevisSceneCreate(repo *repository.Repository, userID, can
 	if beforeHash != args.CanvasSnapshotHash {
 		return nil, &cloudAgentFieldArgumentError{error: &cloudAgentArgumentError{creationConflict("画布已变化，本次未创建场景；请重新读取场景目录")}, Field: "canvasSnapshotHash", Issue: "stale_snapshot"}
 	}
+	cloudAgentPrevisRepairLegacyNodes(doc)
 	scenes := creationMaps(doc["previsScenes"])
 	if len(scenes) >= cloudAgentPrevisMaxScenes {
 		return nil, BadAuthRequest("当前画布的预演场景数量已达到限制")
@@ -995,6 +1155,7 @@ func prepareCloudAgentPrevisApplyPatch(repo *repository.Repository, userID, canv
 	if sceneSnapshotHash != args.SnapshotHash {
 		return nil, &cloudAgentFieldArgumentError{error: &cloudAgentArgumentError{creationConflict("预演场景已变化，本次未写入；请重新读取并重新申请审批")}, Field: "snapshotHash", Issue: "stale_snapshot"}
 	}
+	cloudAgentPrevisRepairLegacyNodes(doc)
 	items := make([]cloudAgentApprovalPreviewItem, 0, len(args.Operations))
 	for index, operation := range args.Operations {
 		if err := cloudAgentPrevisValidateCharacterBindingInCanvas(doc, operation); err != nil {
