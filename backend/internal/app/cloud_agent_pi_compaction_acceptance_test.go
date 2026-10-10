@@ -268,10 +268,10 @@ func TestPiContextCompactionRecoversAfterLeaseTakeoverWithoutNewCharge(t *testin
 	if err := db.Model(&model.BillingOrder{}).Where("user_id = ?", run.UserID).Count(&ordersBefore).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).Update("lease_expires_at", time.Now().UTC().Add(-time.Minute)).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.CloudAgentPiSession{}).Where("conversation_id = ? AND user_id = ?", run.ConversationID, run.UserID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+	if err := db.Model(&model.CloudAgentPiSession{}).Where("conversation_id = ? AND user_id = ?", run.ConversationID, run.UserID).Update("lease_expires_at", time.Now().UTC().Add(-time.Minute)).Error; err != nil {
 		t.Fatal(err)
 	}
 	recovered, err := s.ClaimPiAgent("worker-recovered")

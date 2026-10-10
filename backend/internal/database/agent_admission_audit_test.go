@@ -86,7 +86,8 @@ func TestAgentAdmissionAuditSQLiteRollbackAndExpiredLeaseFencing(t *testing.T) {
 		t.Fatal("could not prepare Agent admission tables")
 	}
 	suffix := fmt.Sprintf("audit-sqlite-%d", time.Now().UnixNano())
-	expired := time.Now().Add(-time.Minute)
+	// 租约列由生产认领路径以 UTC 写入，种子必须同为 UTC，避免混合时区的文本比较误判。
+	expired := time.Now().UTC().Add(-time.Minute)
 	seedAuditRun(t, db, suffix, suffix+"-user", "canvas", &expired, 8)
 	if err := db.Exec(`CREATE TRIGGER reject_agent_admission BEFORE INSERT ON agent_canvas_admissions BEGIN SELECT RAISE(ABORT, 'audit forced rollback'); END`).Error; err != nil {
 		t.Fatal("could not install forced rollback trigger")
@@ -242,7 +243,7 @@ func TestAgentAdmissionAuditPostgresExpiredLeaseTakeoverFencesEpoch(t *testing.T
 		t.Fatal("could not prepare Agent admission tables")
 	}
 	suffix := agentAdmissionAuditID()
-	expired := time.Now().Add(-time.Minute)
+	expired := time.Now().UTC().Add(-time.Minute)
 	seedAuditRun(t, db, suffix, suffix+"u", "canvas", &expired, 8)
 	p := model.DefaultAgentSchedulerSetting()
 	run, err := repository.New(db).ClaimPiAgentFair(suffix+"-new", time.Now().Add(time.Minute), p)

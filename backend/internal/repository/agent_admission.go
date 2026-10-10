@@ -82,7 +82,7 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 		if err != nil {
 			return err
 		}
-		now := time.Now()
+		now := time.Now().UTC()
 		var candidates []model.CloudAgentExecution
 		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind",
 			"lease_owner", "lease_expires_at", "recovery_status", "recovery_attempts", "recovery_started_at", "progress_version", "claim_progress_version",

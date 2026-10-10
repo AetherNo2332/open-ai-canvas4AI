@@ -119,7 +119,8 @@ func TestWorkerRecoveryNewUserInputIsNotAnExecutionReceipt(t *testing.T) {
 
 func expireRecoveryLease(t *testing.T, db *gorm.DB, runID string) {
 	t.Helper()
-	stale := time.Now().Add(-time.Second)
+	// 与生产认领路径一致：租约/恢复列的 SQL 比较参数必须 UTC（见 repository 认领查询注释）。
+	stale := time.Now().UTC().Add(-time.Second)
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", runID).Updates(map[string]any{"lease_expires_at": stale, "next_recovery_at": stale}).Error; err != nil {
 		t.Fatal(err)
 	}

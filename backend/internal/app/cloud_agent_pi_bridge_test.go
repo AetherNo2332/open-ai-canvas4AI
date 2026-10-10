@@ -475,7 +475,7 @@ func TestPiAgentLeaseAdmission(t *testing.T) {
 		t.Fatalf("兼容直接调用的有效续租失败: %v", err)
 	}
 
-	expired := time.Now().Add(-time.Second)
+	expired := time.Now().UTC().Add(-time.Second)
 	if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", run.ID).
 		Updates(map[string]any{"status": "waiting_approval", "lease_expires_at": expired}).Error; err != nil {
 		t.Fatal(err)

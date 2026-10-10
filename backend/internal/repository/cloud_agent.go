@@ -217,7 +217,9 @@ func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p mod
 		return r.ClaimPiAgentFair(owner, until, p)
 	}
 	var candidates []model.CloudAgentExecution
-	now := time.Now()
+	// SQLite 把 time.Time 按写入方的时区偏移序列化成文本再比较：混用本地时区参数会把
+	// 未来租约误判成已过期（同刻 UTC 文本的日期位更小）。租约/恢复列的比较参数必须统一 UTC。
+	now := time.Now().UTC()
 	if err := r.db.Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?) AND (next_recovery_at IS NULL OR next_recovery_at <= ?)",
 		"pi", []string{"queued", "running", "waiting_approval"}, now, now).
 		Order("created_at, id").Limit(20).Find(&candidates).Error; err != nil {
@@ -289,7 +291,7 @@ func (r *Repository) RenewPiAgentLease(userID, id, owner string, epoch int64, un
 	}
 	renewed := false
 	err = r.db.Transaction(func(tx *gorm.DB) error {
-		now := time.Now()
+		now := time.Now().UTC()
 		updated := tx.Model(&model.CloudAgentExecution{}).
 			Where("id = ? AND user_id = ? AND engine = ? AND lease_owner = ? AND lease_expires_at > ?",
 				id, userID, "pi", owner, now).

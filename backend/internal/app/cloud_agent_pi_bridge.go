@@ -752,7 +752,7 @@ func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	run, err := s.repo.ClaimPiAgentConfigured(owner, time.Now().Add(piAgentLeaseDuration), policy)
+	run, err := s.repo.ClaimPiAgentConfigured(owner, time.Now().UTC().Add(piAgentLeaseDuration), policy)
 	if err != nil || run == nil {
 		return nil, err
 	}
@@ -800,7 +800,7 @@ func (s *Service) RenewPiAgentLease(userID, runID, owner string) error {
 	if err != nil {
 		return kernel.AgentLeaseLost("Pi Agent 运行租约无效")
 	}
-	ok, err := s.repo.RenewPiAgentLease(userID, runID, workerID, epoch, time.Now().Add(piAgentLeaseDuration))
+	ok, err := s.repo.RenewPiAgentLease(userID, runID, workerID, epoch, time.Now().UTC().Add(piAgentLeaseDuration))
 	if err != nil {
 		return err
 	}
@@ -1841,7 +1841,7 @@ const piUnclaimedRunTimeout = 30 * time.Minute
 // 系统级动作：不要求租约归属，但只处理租约已过期远超一个周期的运行，避免与活跃
 // worker 竞争。已终态的运行会被忽略（幂等）。
 func (s *Service) SweepStalledPiAgentRuns() (int, error) {
-	cutoff := time.Now().Add(-piStalledLeasePeriods * piAgentLeaseDuration)
+	cutoff := time.Now().UTC().Add(-piStalledLeasePeriods * piAgentLeaseDuration)
 	runs, err := s.repo.StalledPiAgentRuns(cutoff, 50)
 	if err != nil {
 		return 0, err
@@ -1855,6 +1855,8 @@ func (s *Service) SweepStalledPiAgentRuns() (int, error) {
 // 与 SweepStalledPiAgentRuns 的区别只有两点：阈值更长、失败原因不同。原因必须不同，
 // 否则运维无法区分"agent 服务没起来"与"agent 服务跑挂了"。
 func (s *Service) SweepUnclaimedPiAgentRuns() (int, error) {
+	// created_at 由 GORM 自动填充（本地时区序列化），阈值参数必须同为本地时区，
+	// 否则 SQLite 文本比较会把混合时区的时间判错（与租约列的 UTC 约定分域）。
 	cutoff := time.Now().Add(-piUnclaimedRunTimeout)
 	runs, err := s.repo.UnclaimedPiAgentRuns(cutoff, 50)
 	if err != nil {
