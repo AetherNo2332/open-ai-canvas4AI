@@ -2,6 +2,36 @@ import { describe, expect, it } from "bun:test";
 import { AGENT_TOOL_NAMES, agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolStatus, agentVisionFailureSummary, friendlyAgentToolSummary, nativeSkillEventPresentation } from "@/lib/canvas/agent-tool-presentation";
 
 describe("Agent tool presentation", () => {
+    it("reports content paging as partial unless the entire text was returned", () => {
+        expect(agentToolCategory("canvas_read_content")).toBe("read");
+        expect(agentToolCategory("canvas_search_nodes")).toBe("read");
+        expect(friendlyAgentToolSummary("canvas_read_content", "", { result: { offset: 0, nextOffset: 8000, totalCharacters: 12000, hasMore: true } })).toBe("已读取正文片段（0–8000 / 12000 字符，尚有后续）");
+        expect(friendlyAgentToolSummary("canvas_read_content", "", { result: { offset: 8000, nextOffset: 12000, totalCharacters: 12000, hasMore: false } })).toBe("已读取正文片段（8000–12000 / 12000 字符，已到末尾）");
+        expect(friendlyAgentToolSummary("canvas_read_content", "", { result: { offset: 0, nextOffset: 12000, totalCharacters: 12000, hasMore: false } })).toBe("已完整读取正文（12000 字符）");
+        expect(friendlyAgentToolSummary("canvas_read_content", "", { result: { hasMore: false } })).toBe("已读取正文片段（完整性未确认）");
+        expect(friendlyAgentToolSummary("canvas_search_nodes", "", { result: { nodes: [{ id: "n" }] } })).toBe("已搜索画布节点（未查看画面）");
+        expect(agentToolCategory("canvas_apply_ops", { actions: [{ action: "duplicated" }] })).toBe("create");
+    });
+    it("labels native drawing reads and edits without treating the last page as complete", () => {
+        expect(agentToolCategory("canvas_read_drawing")).toBe("read");
+        expect(agentToolCategory("canvas_edit_drawing")).toBe("operate");
+        expect(friendlyAgentToolSummary("canvas_read_drawing", "", { result: { totalRecords: 4, offset: 2, nextOffset: 4, hasMore: false } })).toBe("已读取绘图记录片段（2–4 / 4，已到末尾）");
+        expect(friendlyAgentToolSummary("canvas_read_drawing", "", { result: { totalRecords: 4, offset: 0, nextOffset: 4, hasMore: false } })).toBe("已完整读取绘图记录（4 条）");
+        expect(friendlyAgentToolSummary("canvas_edit_drawing", "", { eventType: "tool_completed" })).toBe("绘图内容已保存至服务端");
+        expect(friendlyAgentToolSummary("canvas_read_drawing", "", { arguments: { recordIds: ["a"] }, result: { totalRecords: 1, offset: 0, nextOffset: 1, hasMore: false } })).toBe("已读取指定绘图记录（1 条）");
+    });
+    it("classifies asset lookup/binding, history and character creation accurately", () => {
+        expect(agentToolCategory("canvas_list_assets")).toBe("read");
+        expect(agentToolCategory("canvas_bind_asset")).toBe("operate");
+        expect(agentToolCategory("canvas_undo")).toBe("operate");
+        expect(agentToolCategory("canvas_redo")).toBe("operate");
+        expect(agentToolCategory("canvas_create_character")).toBe("create");
+        expect(friendlyAgentToolSummary("canvas_list_assets", "", { result: { assets: [{ assetId: "a" }], hasMore: true } })).toBe("已查询素材库（本页 1 项，尚有后续）");
+        expect(friendlyAgentToolSummary("canvas_bind_asset", "", { eventType: "tool_completed" })).toBe("节点素材已替换并保存至服务端");
+        expect(friendlyAgentToolSummary("canvas_undo", "", { eventType: "tool_completed" })).toBe("已撤销画布操作并保存至服务端");
+        expect(friendlyAgentToolSummary("canvas_redo", "", { eventType: "tool_completed" })).toBe("已重做画布操作并保存至服务端");
+        expect(friendlyAgentToolSummary("canvas_create_character", "", { eventType: "tool_completed" })).toBe("角色卡已创建并保存至角色库和画布");
+    });
     it("presents native read rejection as failure with metadata only", () => {
         const event = nativeSkillEventPresentation("native_skill_read_failed", { skillName: "导演", path: "SKILL.md", content: "PRIVATE", error: "C:/secret" });
         expect(event?.text).toBe("技能文件读取失败 · 导演 · SKILL.md");

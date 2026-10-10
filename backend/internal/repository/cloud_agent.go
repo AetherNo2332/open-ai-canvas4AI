@@ -595,7 +595,16 @@ func canonicalJSONValue(value any) any {
 }
 
 func (r *Repository) CreateCloudAgentCanvasMutation(mutation *model.CloudAgentCanvasMutation) error {
-	return r.db.Create(mutation).Error
+	// A new edit creates a branch. Clear abandoned redos and insert the edit
+	// together, including callers outside the usual Agent checkpoint transaction.
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.CloudAgentCanvasMutation{}).
+			Where("user_id = ? AND run_id = ? AND canvas_id = ? AND status = ?", mutation.UserID, mutation.RunID, mutation.CanvasID, "undone").
+			Update("status", "discarded").Error; err != nil {
+			return err
+		}
+		return tx.Create(mutation).Error
+	})
 }
 
 func (r *Repository) LatestCloudAgentCanvasMutation(userID, runID string) (*model.CloudAgentCanvasMutation, error) {
@@ -605,10 +614,39 @@ func (r *Repository) LatestCloudAgentCanvasMutation(userID, runID string) (*mode
 	return &mutation, err
 }
 
+// Include unavailable snapshots and task submissions so callers cannot skip
+// an irreversible operation to undo an earlier edit.
+func (r *Repository) CloudAgentCanvasMutationForUndo(userID, runID, canvasID string) (*model.CloudAgentCanvasMutation, error) {
+	var mutation model.CloudAgentCanvasMutation
+	err := r.db.Where("user_id = ? AND run_id = ? AND canvas_id = ? AND status IN ?", userID, runID, canvasID, []string{"applied", "not_undoable"}).
+		Order("created_at DESC, id DESC").First(&mutation).Error
+	return &mutation, err
+}
+
+// Undo timestamps form the redo stack. Older creation time breaks an equal
+// timestamp in the order needed to replay an earlier edit before a later one.
+func (r *Repository) CloudAgentCanvasMutationForRedo(userID, runID, canvasID string) (*model.CloudAgentCanvasMutation, error) {
+	var mutation model.CloudAgentCanvasMutation
+	err := r.db.Where("user_id = ? AND run_id = ? AND canvas_id = ? AND status = ?", userID, runID, canvasID, "undone").
+		Order("undone_at DESC, created_at ASC, id ASC").First(&mutation).Error
+	return &mutation, err
+}
+
 func (r *Repository) MarkCloudAgentCanvasMutationUndone(userID, runID, mutationID string, undoneAt time.Time) error {
 	result := r.db.Model(&model.CloudAgentCanvasMutation{}).
 		Where("id = ? AND user_id = ? AND run_id = ? AND status = ?", mutationID, userID, runID, "applied").
 		Updates(map[string]any{"status": "undone", "undone_at": undoneAt})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrCreationConflict
+	}
+	return nil
+}
+
+func (r *Repository) MarkCloudAgentCanvasMutationReapplied(userID, runID, mutationID string) error {
+	result := r.db.Model(&model.CloudAgentCanvasMutation{}).Where("id = ? AND user_id = ? AND run_id = ? AND status = ?", mutationID, userID, runID, "undone").Updates(map[string]any{"status": "applied", "undone_at": nil})
 	if result.Error != nil {
 		return result.Error
 	}

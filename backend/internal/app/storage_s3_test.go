@@ -76,22 +76,33 @@ func TestSignedS3ObjectURLUsesSDKPresignAndSessionToken(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
-	value, err := signedS3ObjectURL(ossSettingValue{
-		Provider: s3Provider, Region: "us-east-1", Endpoint: server.URL, Bucket: "bucket",
-		AccessKeyID: "access-id", AccessKeySecret: "secret-value", SessionToken: "session-token",
-	}, "folder/object.png", time.Now().Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := url.Parse(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Path != "/bucket/folder/object.png" || parsed.Query().Get("X-Amz-Security-Token") != "session-token" || parsed.Query().Get("X-Amz-Signature") == "" {
-		t.Fatalf("presigned URL = %q", value)
-	}
-	if strings.Contains(value, "secret-value") {
-		t.Fatal("presigned URL leaked secret key")
+	endpoint, _ := url.Parse(server.URL)
+	for _, pathStyle := range []bool{true, false} {
+		name := "virtual-host"
+		wantHost, wantPath := "bucket."+endpoint.Host, "/folder/object.png"
+		if pathStyle {
+			name = "path-style"
+			wantHost, wantPath = endpoint.Host, "/bucket/folder/object.png"
+		}
+		t.Run(name, func(t *testing.T) {
+			value, err := signedS3ObjectURL(ossSettingValue{
+				Provider: s3Provider, Region: "us-east-1", Endpoint: server.URL, Bucket: "bucket", PathStyle: pathStyle,
+				AccessKeyID: "access-id", AccessKeySecret: "secret-value", SessionToken: "session-token",
+			}, "folder/object.png", time.Now().Add(time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := url.Parse(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.Host != wantHost || parsed.Path != wantPath || parsed.Query().Get("X-Amz-Security-Token") != "session-token" || parsed.Query().Get("X-Amz-Signature") == "" {
+				t.Fatalf("presigned URL = %q", value)
+			}
+			if strings.Contains(value, "secret-value") {
+				t.Fatal("presigned URL leaked secret key")
+			}
+		})
 	}
 }
 

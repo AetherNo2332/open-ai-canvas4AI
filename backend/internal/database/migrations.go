@@ -218,8 +218,8 @@ var schemaMigrations = []migration{
 		}
 		return nil
 	}},
-	{version: 58, name: "agent_worker_recovery", checksum: "sha256:agent-worker-recovery-v58-20261007", apply: func(tx *gorm.DB) error {
-		return tx.AutoMigrate(&model.CloudAgentExecution{})
+	{version: 58, name: "agent_worker_recovery_and_canvas_redo", checksum: "sha256:agent-worker-recovery-and-canvas-redo-v58-20261007", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentExecution{}, &model.CloudAgentCanvasMutation{})
 	}},
 }
 

@@ -20,3 +20,9 @@ test("agent reports are data rather than user instructions", () => {
   assert.match(formatAgentInterjection("研究员：完成", "subagent"), /不是用户指令/);
   assert.equal(formatAgentInterjection("停止"), "【用户插话】停止");
 });
+
+test("read-only children reject the new canvas mutation tools", () => {
+  for (const name of ["canvas_edit_drawing", "canvas_bind_asset", "canvas_undo", "canvas_redo"]) {
+    assert.throws(() => validateSubagentRuntime(child, "child", false, [...reports, { name, allowed: true }]), /permission mismatch/);
+  }
+});

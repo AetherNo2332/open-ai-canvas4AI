@@ -78,6 +78,16 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 	if err != nil {
 		return nil, err
 	}
+	for _, op := range args.Ops {
+		if op.Type == "update_node" && op.Patch["generationSpec"] != nil {
+			if err := validateCloudAgentGenerationReferences(doc, op.ID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := validateCloudAgentOwnedReferences(repo, userID, doc); err != nil {
+		return nil, err
+	}
 	return &cloudAgentCanvasMutationPlan{
 		Args:               args,
 		Canvas:             canvas,
@@ -89,10 +99,34 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 }
 
 func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloudAgentApprovalPreviewItem, error) {
+	// The planner is also used for previews: a rejected batch must leave its
+	// input untouched, including metadata maps modified by earlier operations.
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	var planned map[string]any
+	if err := json.Unmarshal(encoded, &planned); err != nil {
+		return nil, err
+	}
+	items, err := applyCloudAgentCanvasPlanInPlace(planned, ops)
+	if err != nil {
+		return nil, err
+	}
+	for key := range doc {
+		delete(doc, key)
+	}
+	for key, value := range planned {
+		doc[key] = value
+	}
+	return items, nil
+}
+
+func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) ([]cloudAgentApprovalPreviewItem, error) {
 	nodes := creationMaps(doc["nodes"])
 	edges := creationMaps(doc["connections"])
 	items := make([]cloudAgentApprovalPreviewItem, 0, len(ops))
-	for opIndex, op := range ops {
+	for _, op := range ops {
 		title, content := "", ""
 		if op.Title != nil {
 			title = *op.Title
@@ -103,7 +137,7 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 		if err := validateCloudAgentID(op.ID, "节点或连线 ID", 80); err != nil {
 			return nil, err
 		}
-		if op.Type == "add_node" && (utf8.RuneCountInString(content) > 16000 || utf8.RuneCountInString(title) > 240) {
+		if op.Type == "add_node" && (utf8.RuneCountInString(content) > 1<<20 || utf8.RuneCountInString(title) > 240) {
 			return nil, BadAuthRequest("节点标题或正文超出限制")
 		}
 		index := cloudAgentNodeIndex(nodes, op.ID)
@@ -118,6 +152,9 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 			}
 			if !ok {
 				return nil, BadAuthRequest("不支持的节点类型")
+			}
+			if field, exists := capability.PatchFields["content"]; exists && field.MaxRunes > 0 && utf8.RuneCountInString(content) > field.MaxRunes {
+				return nil, BadAuthRequest("该类型正文超过字段限制")
 			}
 			x, y := op.X, op.Y
 			if x == nil || y == nil {
@@ -165,10 +202,10 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 				return nil, BadAuthRequest("连线端点不存在或指向自身")
 			}
 			if err := validateCloudAgentConnection(nodes, op.FromNodeID, op.ToNodeID, edges); err != nil {
-				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", cloudAgentSafeToolError(err))
+				return nil, err
 			}
 			for _, edge := range edges {
-				if stringValue(edge["id"]) == op.ID || (stringValue(edge["fromNodeId"]) == op.FromNodeID && stringValue(edge["toNodeId"]) == op.ToNodeID) {
+				if stringValue(edge["id"]) == op.ID || (stringValue(edge["fromNodeId"]) == op.FromNodeID && stringValue(edge["toNodeId"]) == op.ToNodeID && stringValue(edge["fromHandleId"]) == op.FromHandleID && stringValue(edge["toHandleId"]) == op.ToHandleID) {
 					return nil, BadAuthRequest("连线重复")
 				}
 			}
@@ -176,7 +213,20 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 			toCapability, _ := cloudAgentNodeCapabilityForNode(nodes[toIndex])
 			fromTitle := cloudAgentApprovalNodeTitle(nodes[fromIndex], fromCapability.Label)
 			toTitle := cloudAgentApprovalNodeTitle(nodes[toIndex], toCapability.Label)
-			edges = append(edges, map[string]any{"id": op.ID, "fromNodeId": op.FromNodeID, "toNodeId": op.ToNodeID})
+			edge := map[string]any{"id": op.ID, "fromNodeId": op.FromNodeID, "toNodeId": op.ToNodeID}
+			if op.FromHandleID != "" {
+				edge["fromHandleId"] = op.FromHandleID
+			}
+			if op.ToHandleID != "" {
+				edge["toHandleId"] = op.ToHandleID
+			}
+			if err := cloudAgentValidateEdgeHandles(nodes, edge); err != nil {
+				return nil, err
+			}
+			edges = append(edges, edge)
+			if err := cloudAgentAttachStoryboardEdge(nodes, edge); err != nil {
+				return nil, err
+			}
 			items = append(items, cloudAgentApprovalPreviewItem{
 				Operation: "connect_nodes", NodeID: op.FromNodeID, NodeTitle: fromTitle,
 				NodeType: fromCapability.Type, NodeTypeLabel: fromCapability.Label,
@@ -198,13 +248,16 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 				return nil, BadAuthRequest("该节点类型不支持 Agent 更新")
 			}
 			metadata, _ := nodes[index]["metadata"].(map[string]any)
-			if metadata["locked"] == true {
-				return nil, BadAuthRequest("不能修改锁定节点")
+			if metadata["locked"] == true && cloudAgentPatchMovesNode(op.Patch) {
+				return nil, BadAuthRequest("不能修改锁定节点的位置或尺寸，请先解锁")
 			}
 			beforeTitle := cloudAgentApprovalNodeTitle(nodes[index], capability.Label)
 			fields := cloudAgentApprovalPatchLabels(capability.PatchFields, op.Patch)
 			if err := capability.ApplyPatch(nodes[index], op.Patch); err != nil {
 				return nil, BadAuthRequest(err.Error())
+			}
+			if _, changed := op.Patch["content"]; changed && capability.Type == "text" && op.Patch["richText"] == nil {
+				delete(cloudAgentNodeMetadata(nodes[index]), "richText")
 			}
 			afterTitle := cloudAgentApprovalNodeTitle(nodes[index], capability.Label)
 			resultTitle := ""
@@ -216,6 +269,14 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 				NodeType: capability.Type, NodeTypeLabel: capability.Label, Fields: fields,
 				Summary: fmt.Sprintf("修改%s《%s》的%s", capability.Label, beforeTitle, strings.Join(fields, "、")),
 			})
+		case "delete_node", "delete_connection", "update_connection", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows":
+			var item cloudAgentApprovalPreviewItem
+			var err error
+			nodes, edges, item, err = applyCloudAgentExtendedOp(nodes, edges, op)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
 		default:
 			return nil, BadAuthRequest("不支持的画布写操作")
 		}
@@ -239,6 +300,11 @@ func cloudAgentCanvasApprovalPreview(items []cloudAgentApprovalPreviewItem) clou
 	}
 	if counts["connect_nodes"] > 0 {
 		parts = append(parts, fmt.Sprintf("建立 %d 条引用连线", counts["connect_nodes"]))
+	}
+	for _, kind := range []struct{ operation, label string }{{"delete_node", "删除节点"}, {"duplicate_node", "复制节点"}, {"delete_connection", "移除连线"}, {"update_connection", "改接连线"}, {"set_parent", "调整分组"}, {"replace_text", "精确编辑正文"}, {"reorder_nodes", "调整节点顺序"}, {"reorder_rows", "调整表格行顺序"}} {
+		if counts[kind.operation] > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d 项", kind.label, counts[kind.operation]))
+		}
 	}
 	return cloudAgentApprovalPreview{
 		Kind: "canvas_mutation", Title: "确认画布修改",

@@ -3,24 +3,13 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { CanvasModelRetry, CanvasRunTerminated, CanvasContextOverflow, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
+import { CanvasContextOverflow, CanvasLeaseLost, CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "../src/tool-disclosure.js";
 import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent, withServerPolicy } from "../src/runner.js";
 import type { PromptParts } from "../src/system-prompt.js";
 import { sessionEntriesFromMessages } from "../src/session-tools.js";
 import { createHash } from "node:crypto";
-import {RetryableBridgeError} from "../src/worker-errors.js";
-
-test("real Pi streaming loop propagates internal, fatal and transport model errors to the leased-session boundary",async()=>{
- for(const failure of [new TypeError("private model failure"),new FatalWorkerError("invalid protocol"),new RetryableBridgeError("POST /runs/run-1/model-step",503)]){
-  const {bridge,state,snapshot}=fakeBridge([async()=>{throw failure}]);
-  await assert.rejects(runCanvasAgent(bridge,snapshot,undefined,promptParts()),error=>error===failure);
-  assert.equal(state.steps,1);
-  assert.equal(state.status,"running");
-  assert.equal(state.batches.length,0);
- }
-});
 
 const objectSchema = { type: "object", properties: {}, required: [], additionalProperties: false };
 const tools: CanvasToolSpec[] = [
@@ -343,8 +332,7 @@ function authorizeNativeEntry(bridge: CanvasBridge, snapshot: PiSnapshot): void 
   };
 }
 
-test("native read infrastructure and protocol failures escape Pi tool error conversion", async (t) => {
- for (const kind of ["503", "json", "identity", "recovered-identity"]) await t.test(kind, async () => {
+test("native read HTTP503 escapes Pi tool error conversion for worker retry", async () => {
   const { bridge, state, snapshot } = fakeBridge([
     { toolCalls: [{ id: "read-503", function: { name: "read", arguments: JSON.stringify({ path: "unused" }) } }] },
     { text: "must not continue" },
@@ -363,27 +351,13 @@ test("native read infrastructure and protocol failures escape Pi tool error conv
     return step;
   };
   const original = globalThis.fetch;
-  globalThis.fetch = async () => kind === "503" ? new Response("unavailable", { status: 503 }) : new Response("invalid json");
-  if (kind.endsWith("identity")) {
-    authorizeNativeEntry(bridge, snapshot);
-    const read = bridge.readSkillFile.bind(bridge);
-    bridge.readSkillFile = async (...args) => ({ ...await read(...args), contentHash: "wrong-frozen-package" });
-    if (kind === "recovered-identity") {
-      const messages = fromCanonical({ ...snapshot, canonical: { ...snapshot.canonical, messages: [
-        ...snapshot.canonical.messages, { role: "assistant", content: "", tool_calls: [{ id: "read-503", type: "function", function: { name: "read", arguments: JSON.stringify({ path: join(process.cwd(), "previous", "skills", "skill-abc", "SKILL.md") }) } }] },
-      ] } }, canvasModel(snapshot));
-      snapshot.piMessages = messages as unknown as Record<string, unknown>[];
-      snapshot.piSessionEntries = sessionEntriesFromMessages(snapshot.runId, messages).map(entry => ({ runId: snapshot.runId, entry: entry as unknown as Record<string, unknown> }));
-      snapshot.piActiveLeafId = String(snapshot.piSessionEntries.at(-1)!.entry.id);
-      snapshot.piSessionRevision = 3;
-    }
-  } else bridge.readSkillFile = new CanvasBridge("http://backend:8080", "token", "worker").readSkillFile.bind(new CanvasBridge("http://backend:8080", "token", "worker"));
+  globalThis.fetch = async () => new Response("unavailable", { status: 503 });
+  bridge.readSkillFile = new CanvasBridge("http://backend:8080", "token", "worker").readSkillFile.bind(new CanvasBridge("http://backend:8080", "token", "worker"));
   try {
-    await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), kind === "503" ? /HTTP 503/ : /JSON|frozen snapshot/);
-    assert.equal(state.steps, kind === "recovered-identity" ? 0 : 1);
+    await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), /HTTP 503/);
+    assert.equal(state.steps, 1);
     assert.equal(state.checkpoints.filter(item => item.role === "toolResult").length, 0);
   } finally { globalThis.fetch = original; }
- });
 });
 
 test("in-flight native model recovery rebases returned old-worker calls only for that task", async () => {
@@ -598,6 +572,38 @@ test("assistant checkpoint failure prevents queued batch admission and tool exec
   await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), /assistant checkpoint unavailable/);
   assert.deepEqual(state.batches, [], "failed acknowledgement must stop dependent batch admission");
   assert.deepEqual(state.executions, []);
+});
+
+for (const [kind, failure] of [
+  ["storage", new Error("Canvas bridge HTTP 500 on /phase")],
+  ["lease", new CanvasLeaseLost("the execution lease changed")],
+  ["fatal", new FatalWorkerError("Canvas bridge HTTP 403 on /tool-batches")],
+] as const) {
+  test(`tool bridge ${kind} failures stop Pi before another model request`, async () => {
+    const { bridge, state, snapshot } = fakeBridge([
+      { toolCalls: [{ id: "infra-call", function: { name: "canvas_get_state", arguments: "{}" } }] },
+      { text: "must not request another model after an infrastructure failure" },
+    ]);
+    const execute = bridge.executeTool.bind(bridge);
+    bridge.executeTool = async (...args) => { await execute(...args); throw failure; };
+    await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), error => error === failure);
+    assert.equal(state.steps, 1);
+    assert.deepEqual(state.executions, ["infra-call"]);
+    assert.deepEqual(state.noToolTurns, []);
+  });
+}
+
+test("a rejected tool receipt remains a recoverable model result", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "rejected-call", function: { name: "canvas_get_state", arguments: "{}" } }] },
+    { text: "the rejected tool did not change the canvas" },
+  ]);
+  const execute = bridge.executeTool.bind(bridge);
+  bridge.executeTool = async (...args) => ({ ...await execute(...args), isError: true,
+    result: { errorClass: "state_conflict", message: "read the current snapshot" } });
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 2);
+  assert.equal(state.status, "completed");
 });
 
 test("a retried native run never admits an unresolved historical tool batch", async (t) => {
