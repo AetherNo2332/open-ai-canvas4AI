@@ -3667,3 +3667,16 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 - [ ] 本地 compose 真实 agent 回路（backend + web + Pi worker agent 容器 + 真实模型渠道）跑六场景：① 建场景→画布出现可打开工作站；② 无工作站旧场景补丁自愈；③ 离开画布期间后台渲染→回来产物可见且卡片可打开；④ 图片→预演台全链路（看图模型复现）；⑤ 虚报回归（最终答复措辞、nodeId 引用、闸门打回）；⑥ 存量死卡片文档迁移后卡片可打开或降级为产物节点。
 - [ ] 容器内真实 renderer 写回链路：`docker compose -f docker-compose.previs-test.yml up`（`PREVIS_REAL_BACKEND=1`，本机已有 `canvas-previs-renderer:local` 与 `canvas-previs-go-tests:local` 镜像）。
 - [ ] computer use 轨：真实浏览器 + 已登录会话执行场景③⑤，留存截图 + SSE 日志 + 画布文档快照三件套。
+## 预演台收尾：既有失败修复、纯读迁移入口与 D6 结论（2026-10-10 第二轮）
+
+- 已修复：`TestCloudAgentEmptyCanvasRepairAcrossCheckpoints/connection_repaired`。根因是 10 月 10 日 334a96de 为保「端点不存在→准入终止」语义，把 `connect_nodes` 的错误分类整体回退成普通 `BadAuthRequest`，连带丢了 36f6280d 恢复的规则错误字段包装；而 10 月 7 日 6fa28875 已把夹具改成自环边，两条既有测试在同一错误点上预期相反。现拆开判定：端点不存在（依赖画布状态）保持准入终止（`tool_admission_failed`），自环边（仅凭参数可判定）与连线规则违规（端口/手工连线规则/最大输入）归字段级参数错误进入修复预算。
+- 已修复：`TestWorkerRecoveryIsDurableFencedAndIdempotent`，以及全量串跑暴露的同域问题（`TestPiAgentLeaseAdmission`、`TestSweepStalledPiAgentRuns*`、`TestPiEventScheduler*`、`TestPiContextCompactionRecoversAfterLeaseTakeoverWithoutNewCharge`、`TestAgentParityRuntimePhasePreservesStorageErrorAndLeaseLoss`）。根因是 SQLite 把 time.Time 按写入方时区偏移序列化成文本再做比较：恢复调度写 UTC（`Z` 结尾）、认领/相位/清扫查询传本地时区参数（+08:00），同刻时间的日期/小时位不同导致未来租约被误判为已过期、恢复围栏失效。租约/恢复列（`lease_expires_at`/`next_recovery_at`）的写入与比较参数已统一 UTC：认领（含公平路径）、续租、`SetAgentPhase`、停滞清扫阈值、测试辅助 `expireRecoveryLease` 与审计/调度器测试种子；`AgentToolOperation` 与任务/资源租约域保持自洽本地时区不动，`created_at` 域仍为 GORM 本地时间，`SweepUnclaimedPiAgentRuns` 的阈值保持本地时区以免引入新的混合。CI（TZ=UTC）与 PostgreSQL 部署不受影响。
+- 已实现（D3/场景⑥收尾）：`previs_scene_read` 成为纯读画布的显式迁移入口。只被预演读过的画布不会再走到任何写路径修复，现在可写轮次（auto/request_approval）在读取时做一次幂等修复并按画布 revision CAS 写回，回执带 `legacyRepair`（repaired/pending/workstations 索引）；read_only 轮次只报告 `pending`，绝不隐式改文档。
+- D6 结论（自动化可证部分）：fork 前端已无 `previs:preview-requested` 派发方（agent 预演只走 `server_previs_renderer` 后台任务），工作台监听是无派发方的保留路径，agent 链路上双渲染结构性不存在。新增 `TestBackgroundPrevisReRenderRepointsShotToLatestServerWrite` 守住服务器权威语义：同镜头两次服务端渲染，镜头指针重指最新任务产物、旧产物保留为历史、无重复节点。浏览器在场时的展示刷新行为归入下方 computer use 轨实测。
+- 自动化验证（本机 Windows / Go 1.27 / bun 1.3.9 / Node 26）：
+  - [x] `go test ./internal/app -count=1 -run 'TestCloudAgentEmptyCanvasRepairAcrossCheckpoints|TestWorkerRecovery'`：两例既有失败修复，恢复家族全绿。
+  - [x] `go test ./internal/app -count=1 -run 'TestCloudAgentPrevis|TestBackgroundPrevis'`：新增读修复幂等、read_only 待修复、重渲重指三例通过。
+  - [x] `go test ./internal/database ./internal/repository -count=1`：审计种子改 UTC 后全绿。
+  - [x] `cd web; bun run typecheck`；`bun test`：2274 pass / 0 fail。
+  - [x] `node --test agent/test/harness-sync.test.ts`：4 pass（本轮未改工具 schema 与描述，制品无漂移）。
+  - [x] `go test ./internal/app -count=1 -timeout 30m`：除 `TestAgentParityDatabaseHistoryDoesNotCrossTaskOrUnavailableBarrier` 在全量串跑中偶发失败（单跑通过，为上一轮已记录的既有偶发）外全绿；`go test` 其余 backend 包（含 `internal/database`/`internal/repository`）全部通过。
