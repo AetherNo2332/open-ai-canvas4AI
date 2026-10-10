@@ -15,7 +15,7 @@ import (
 
 func TestCloudAgentMixedCanvasReadsUnsupportedNodesWithoutGrantingCapabilities(t *testing.T) {
 	nodes := []map[string]any{{"id": "text", "type": "text", "metadata": map[string]any{"content": "readable"}}}
-	for _, kind := range []string{"ai-art-critique", "config", "drawing", "future-plugin"} {
+	for _, kind := range []string{"ai-art-critique", "future-plugin"} {
 		nodes = append(nodes, map[string]any{"id": kind, "type": kind, "title": "插件节点", "position": map[string]any{"x": 10.0, "y": 20.0}, "metadata": map[string]any{"content": "PRIVATE_SENTINEL", "apiKey": "PRIVATE_SENTINEL"}})
 		if _, supported := cloudAgentNodeCapabilityForType(kind); supported {
 			t.Fatalf("unsupported type gained write capability: %s", kind)
@@ -28,6 +28,17 @@ func TestCloudAgentMixedCanvasReadsUnsupportedNodesWithoutGrantingCapabilities(t
 		}
 		if err := validateCloudAgentConnection(nodes, kind, "text"); err == nil {
 			t.Fatalf("unsupported connection accepted: %s", kind)
+		}
+	}
+	// Config and drawing are now builtin adapters; their arbitrary metadata is
+	// still excluded from both catalog and precise read projections.
+	for _, kind := range []string{"config", "drawing"} {
+		nodes = append(nodes, map[string]any{"id": kind, "type": kind, "metadata": map[string]any{"apiKey": "PRIVATE_SENTINEL"}})
+		if descriptor, supported := cloudAgentNodeCapabilityForType(kind); !supported || !descriptor.CanUpdate {
+			t.Fatalf("builtin adapter is missing create/update capability: %s", kind)
+		}
+		if err := validateCreationOps([]CreationCanvasOp{{Type: "add_node", ID: "new", NodeType: kind}}); err != nil {
+			t.Fatalf("builtin creation rejected: %s: %v", kind, err)
 		}
 	}
 	doc := map[string]any{"nodes": nodes, "connections": []map[string]any{{"id": "edge", "fromNodeId": "drawing", "toNodeId": "text"}}}

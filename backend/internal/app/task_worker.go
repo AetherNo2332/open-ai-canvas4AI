@@ -67,6 +67,9 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 				if err := s.ReconcileDynamicSubagents(ctx); err != nil {
 					log.Printf("subagent reconciliation: %v", err)
 				}
+				if _, err := s.SweepWorkerRecoveries(); err != nil {
+					log.Printf("pi recovery sweep: %v", err)
+				}
 				if swept, err := s.SweepStalledPiAgentRuns(); err != nil {
 					log.Printf("pi stalled sweep: %v", err)
 				} else if swept > 0 {
@@ -227,6 +230,9 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 	}
 	if task.Type == model.TaskTypeTimelineRender {
 		return w.processTimelineRender(task, ctx)
+	}
+	if task.Type == model.TaskTypePrevisRender {
+		return w.processPrevisRender(task, ctx)
 	}
 	if task.MediaRecoveryJSON != "" {
 		result, recoveryErr := s.resumeTaskMedia(ctx, task)
@@ -390,6 +396,8 @@ func taskExecutionTimeout(task *model.Task, policy RuntimeTaskPolicy) time.Durat
 
 func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) time.Duration {
 	switch {
+	case taskType == model.TaskTypePrevisRender:
+		return 30 * time.Minute
 	case strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):
 		return max(time.Duration(policy.VideoTimeoutMinutes)*time.Minute, 5*time.Minute)
 	case strings.HasPrefix(taskType, "canvas_image"):

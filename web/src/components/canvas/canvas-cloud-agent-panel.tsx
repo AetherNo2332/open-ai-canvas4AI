@@ -39,7 +39,7 @@ import {
     type AgentRun,
     type AgentSkillDefaultsSummary,
 } from "@/services/api/agent";
-import { agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
+import { AGENT_APPROVAL_OPERATION_LABELS, agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
 import { agentApprovalMatchesSettings, agentImageApproval } from "@/lib/canvas/agent-media-approval";
 import type { AgentMediaSettings } from "@/services/api/agent";
@@ -54,8 +54,10 @@ import {
     saveCloudAgentPendingSubmission,
     type CloudAgentConversation,
     type CloudAgentPendingSubmission,
+    type CloudAgentMessagePresentation,
 } from "@/services/cloud-agent-conversations";
 import { logicalModelIDForConfig, modelOptionName, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { selectImageInspectionModel } from "@/lib/canvas/image-to-previs-agent";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -653,7 +655,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     const pending = await loadCloudAgentPendingSubmission(canvasId, current.id);
                     if (!active) return;
                     pendingSubmission.current = pending;
-                    if (pending?.request) setPrompt(pending.request.prompt);
+                    if (pending?.request) setPrompt(pending.displayText || pending.request.prompt);
                 } else {
                     setActiveConversationId(nanoid());
                     pendingSubmission.current = null;
@@ -720,7 +722,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     if (event.seq > lastSeqRef.current + 1) canvasSyncRef.current?.reconcile();
                     lastSeqRef.current = event.seq;
                 }
-                setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
+                setMessages((current) => current.some((item) => item.id === `stream-error-${run.id}`) ? current.filter((item) => item.id !== `stream-error-${run.id}`) : current);
                 setContextUsage((current) => reduceAgentContextUsage(current, event));
                 applyAgentEvent(event, setMessages, setRun, setApproval, setPrompt);
                 if (event.type.startsWith("subagent_") || ["run_completed", "run_failed", "run_cancelled"].includes(event.type)) {
@@ -784,8 +786,12 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         }
     };
 
-    const submit = async (override?: string) => {
-        const value = (override ?? prompt).trim();
+    const submit = async (override?: string, options?: CloudAgentMessagePresentation & { requiresVision?: boolean }) => {
+        const draft = (override ?? prompt).trim();
+        const pendingRequest = pendingSubmission.current;
+        const matchesPending = pendingRequest?.request && pendingRequest.displayText === draft;
+        const value = matchesPending ? pendingRequest.request!.prompt : draft;
+        options = matchesPending ? { ...options, displayText: pendingRequest.displayText, canvasReferenceNodeId: pendingRequest.canvasReferenceNodeId } : options;
         if (running) {
             await interject(value);
             return;
@@ -800,6 +806,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         setBusy(true);
         let accepted = false;
         try {
+            const effectiveModel = options?.requiresVision ? selectImageInspectionModel(config, selectedModel) : selectedModel;
+            if (options?.requiresVision && !effectiveModel) throw new Error("当前没有配置支持图片输入的文本模型，请在模型能力设置中为一个文本模型开启图片输入后重试");
             const pending = pendingSubmission.current;
             // An ambiguous previous POST owns its body/key until reconciled.
             // Editing model settings or prompt must not silently create a new charge.
@@ -813,16 +821,16 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 if (selectedSkillIds.length && !capabilities.skills) throw new Error("当前后端尚未接入技能库");
                 await saveRemoteUserDataNow();
                 if (currentScope.current !== scope) return;
-                const agentConfig = { ...config, model: selectedModel };
-                const requestConfig = resolveModelRequestConfig(agentConfig, selectedModel);
+                const agentConfig = { ...config, model: effectiveModel };
+                const requestConfig = resolveModelRequestConfig(agentConfig, effectiveModel);
                 const logicalModelId = logicalModelIDForConfig(agentConfig);
                 const input = {
                     canvasId,
                     prompt: value,
                     reasoningMode: reasoningSupported ? reasoningMode : "off",
                     profileRevision: profileView.revision,
-                    model: modelOptionName(selectedModel) || undefined,
-                    ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(selectedModel) || undefined } : {}),
+                    model: modelOptionName(effectiveModel) || undefined,
+                    ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(effectiveModel) || undefined } : {}),
                     skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
                     permissionMode,
                     subagentEnabled: subagentsAvailable && subagentPolicy?.enabled === true,
@@ -1026,7 +1034,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 if (currentScope.current === `${canvasId}:${conversation.id}`) {
                     pendingSubmission.current = pending;
                     setPendingHydrated(true);
-                    if (pending?.request) setPrompt(pending.request.prompt);
+                    if (pending?.request) setPrompt(pending.displayText || pending.request.prompt);
                 }
             })
             .catch((cause) => {
@@ -1855,22 +1863,7 @@ function ApprovalCard({
 }
 
 function ApprovalPreviewItemView({ item, theme, onFocusNode }: { item: ReturnType<typeof agentApprovalPresentation>["items"][number]; theme: CanvasTheme; onFocusNode?: (nodeId: string) => void }) {
-    const operationLabel =
-        item.operation === "add_node"
-            ? "新增"
-            : item.operation === "update_node"
-              ? "修改"
-              : item.operation === "connect_nodes"
-                ? "连线"
-                : item.operation === "arrange_nodes"
-                  ? "整理"
-                  : item.operation === "create_storyboard"
-                    ? "创建分镜"
-                    : item.operation === "edit_storyboard"
-                      ? "修改分镜"
-                      : item.operation === "plan_step"
-                        ? "计划"
-                        : "生成";
+    const operationLabel = AGENT_APPROVAL_OPERATION_LABELS[item.operation];
     const renderNode = (title: string | undefined, id: string | undefined, typeLabel: string | undefined, role: "source" | "target" | "node") => {
         if (!title) return null;
         const content = (
@@ -2126,13 +2119,9 @@ function applyAgentEvent(
         setMessages((current) => mergeAgentToolRetry(current, message));
         if (event.type === "tool_failed") return;
     }
-    if (event.type === "tool_completed" && payload.toolName === "previs_preview") {
-        const result = payload.result && typeof payload.result === "object" ? payload.result as Record<string, unknown> : {};
-        window.dispatchEvent(new CustomEvent("previs:preview-requested", { detail: {
-            canvasId: String(result.canvasId || ""), sceneId: String(result.sceneId || ""),
-            shotId: String(result.shotId || ""), previewRequestId: String(result.previewRequestId || ""),
-            duration: Number(result.duration || 0), fps: Number(result.fps || 0),
-        } }));
+    if (event.type === "previs_task_created") {
+        setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", title: "previs_preview", text: text || "后台预演已排队，等待视频与画布节点", detail: { ...payload, eventType: event.type } }));
+        return;
     }
     if (event.type === "tool_completed" && payload.toolName === "canvas_apply_ops" && payload.callId) {
         const id = `canvas-${event.runId}-${payload.callId}`;

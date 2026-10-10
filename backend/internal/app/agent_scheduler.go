@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 	"log"
 	"time"
 )
@@ -50,7 +51,10 @@ func (s *Service) PiRuntimePhase(userID, runID, owner string, input PiRuntimePha
 		return err
 	}
 	if err := s.repo.SetAgentPhase(userID, runID, workerID, epoch, input.Phase, input.Kind, input.WaitID, input.Reason); err != nil {
-		return kernel.AgentLeaseLost("Agent runtime phase lease conflict")
+		if errors.Is(err, repository.ErrCreationConflict) {
+			return kernel.AgentLeaseLost("Agent runtime phase lease conflict")
+		}
+		return err
 	}
 	return nil
 }

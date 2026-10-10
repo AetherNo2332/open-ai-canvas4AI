@@ -83,4 +83,40 @@ describe("Agent approval presentation", () => {
         expect(view.items).toHaveLength(0);
         expect(view.description).toContain("无法识别");
     });
+
+    it("keeps all structural and precise editing operations in a server preview", () => {
+        const operations = ["delete_node", "delete_connection", "update_connection", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows"];
+        const view = agentApprovalPresentation({ preview: { kind: "canvas_mutation", title: "确认修改", description: "批准后写入", items: operations.map((operation) => ({ operation, summary: `确认 ${operation}` })) } });
+        expect(view.source).toBe("server");
+        expect(view.items.map((item) => item.operation)).toEqual(operations);
+    });
+
+    it("describes legacy destructive/editing operations without exposing content", () => {
+        const view = agentApprovalPresentation({ toolName: "canvas_apply_ops", arguments: { ops: [
+            { type: "delete_node", id: "node" }, { type: "duplicate_node", id: "copy", sourceNodeId: "node" },
+            { type: "replace_text", id: "text", match: "private prompt", replacement: "private replacement" },
+            { type: "delete_connection", id: "edge" }, { type: "update_connection", id: "edge", fromNodeId: "a", toNodeId: "b" },
+            { type: "set_parent", id: "copy", parentId: "" }, { type: "reorder_nodes", nodeIds: ["a", "b"] }, { type: "reorder_rows", id: "table", rowIds: ["r2", "r1"] },
+        ] } });
+        expect(view.items).toHaveLength(8);
+        expect(view.items.map((item) => item.summary).join(" ")).toMatch(/删除.*复制.*精确替换.*断开.*重连.*脱离.*顺序/s);
+        expect(JSON.stringify(view)).not.toContain("private");
+    });
+    it("preserves native drawing edit previews without leaking shape text", () => {
+        const view = agentApprovalPresentation({ preview: { kind: "canvas_mutation", title: "确认绘图修改", description: "批准后写入", items: [{ operation: "edit_drawing", nodeId: "drawing", summary: "修改绘图的 2 个原生图形" }] } });
+        expect(view.source).toBe("server");
+        expect(view.items[0].operation).toBe("edit_drawing");
+        const fallback = agentApprovalPresentation({ toolName: "canvas_edit_drawing", arguments: { nodeId: "drawing", operations: [{ type: "upsert", id: "shape", record: { text: "private" } }] } });
+        expect(fallback.items[0].summary).toContain("绘图");
+        expect(JSON.stringify(fallback)).not.toContain("private");
+    });
+    it("retains asset binding, history and character approval operations", () => {
+        const operations = ["bind_asset", "canvas_undo", "canvas_redo", "create_character"];
+        const view = agentApprovalPresentation({ preview: { kind: "canvas_mutation", title: "确认操作", description: "批准后写入", items: operations.map((operation) => ({ operation, summary: "确认操作" })) } });
+        expect(view.source).toBe("server");
+        expect(view.items.map((item) => item.operation)).toEqual(operations);
+        const fallback = agentApprovalPresentation({ toolName: "canvas_bind_asset", arguments: { nodeId: "node", assetId: "asset", private: "private" } });
+        expect(fallback.items[0].operation).toBe("bind_asset");
+        expect(JSON.stringify(fallback)).not.toContain("private");
+    });
 });

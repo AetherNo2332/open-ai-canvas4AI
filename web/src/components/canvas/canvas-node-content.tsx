@@ -11,6 +11,7 @@ import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { canvasTextFontSize } from "@/lib/canvas/canvas-text-scale";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
+import { loadCanvasDrawingForNode } from "@/lib/canvas/canvas-drawing-document-sync";
 import { canvasNodeVideoPreviewReference } from "@/lib/canvas/canvas-media-preview";
 import { producedModelLabel } from "@/lib/canvas/produced-model";
 import { useConfigStore } from "@/stores/use-config-store";
@@ -174,8 +175,8 @@ const nodeContentRenderers: Partial<Record<string, (props: CanvasNodeContentProp
 };
 
 function DrawingContent({ node, theme, drawingProjectId }: CanvasNodeContentProps) {
-    const shapeCount = node.metadata?.drawingShapeCount || 0;
-    const pageCount = node.metadata?.drawingPageCount || 1;
+    const shapeCount = node.metadata?.drawingDocument?.shapeCount ?? node.metadata?.drawingShapeCount ?? 0;
+    const pageCount = node.metadata?.drawingDocument?.pageCount ?? node.metadata?.drawingPageCount ?? 1;
     const [previewUrl, setPreviewUrl] = useState(node.metadata?.drawingPreviewUrl || "");
 
     useEffect(() => {
@@ -185,7 +186,7 @@ function DrawingContent({ node, theme, drawingProjectId }: CanvasNodeContentProp
         if (!drawingProjectId || !drawingId) return;
         let active = true;
         let objectUrl = "";
-        void loadCanvasDrawingPreview(drawingProjectId, drawingId)
+        void loadCanvasDrawingForNode(drawingProjectId, node).then(() => loadCanvasDrawingPreview(drawingProjectId, drawingId))
             .then((preview) => {
                 if (!active) return;
                 if (!preview) {
@@ -200,7 +201,7 @@ function DrawingContent({ node, theme, drawingProjectId }: CanvasNodeContentProp
             active = false;
             if (objectUrl) URL.revokeObjectURL(objectUrl);
         };
-    }, [drawingProjectId, node.metadata?.drawingId, node.metadata?.drawingPreviewUrl, node.metadata?.drawingRevision]);
+    }, [drawingProjectId, node.metadata?.drawingId, node.metadata?.drawingPreviewUrl, node.metadata?.drawingRevision, node.metadata?.drawingDocument]);
 
     return (
         <div className="relative h-full w-full overflow-hidden" style={{ background: theme.node.panel, color: theme.node.text }}>
@@ -249,7 +250,7 @@ function LoadingContent({ node, theme, onOpenTaskDetails }: Pick<CanvasNodeConte
     const elapsed = useTaskElapsed(node.metadata?.taskCreatedAt);
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-2.5 px-5 text-center" style={{ color: theme.node.activeStroke }}>
-            {submissionUncertain ? <AlertCircle className="size-10" /> : <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />}
+            {submissionUncertain ? <AlertCircle className="size-10" /> : <div className="canvas-generation-spinner size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />}
             <span className="text-[var(--fs-tiny)] font-semibold">{stageLabel}</span>
             {taskId ? (
                 <div className="flex w-full max-w-[210px] flex-col items-center gap-1.5">

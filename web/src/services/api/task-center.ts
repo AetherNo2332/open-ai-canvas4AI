@@ -288,6 +288,10 @@ export function recoverGenerationTaskMedia(id: string) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover-media`);
 }
 
+export function recoverPrevisWriteback(id: string, mode: "link" | "independent") {
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover-previs-writeback`, {mode});
+}
+
 export function cancelGenerationTask(id: string) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/cancel`).then((task) => {
         window.dispatchEvent(new CustomEvent("canvas:task-cancelled", { detail: { task } }));

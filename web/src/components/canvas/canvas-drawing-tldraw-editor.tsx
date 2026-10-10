@@ -7,7 +7,6 @@ import type { CanvasDrawingEditorHandle, CanvasDrawingEditorProps } from "@/comp
 import { resolveTldrawLicenseKey } from "@/lib/canvas/canvas-drawing-engine";
 import { useUserStore } from "@/stores/use-user-store";
 
-const SINGLE_PAGE_OPTIONS = { maxPages: 1 } as const;
 const DRAWING_RENDER_MAX_DIMENSION = 2048;
 const DRAWING_RENDER_PADDING = 24;
 
@@ -48,14 +47,12 @@ export const CanvasDrawingTldrawEditor = forwardRef<CanvasDrawingEditorHandle, C
             store={store}
             locale="zh-cn"
             colorScheme={colorScheme}
-            options={SINGLE_PAGE_OPTIONS}
             licenseKey={resolveTldrawLicenseKey(tldrawLicenseKey)}
             onMount={(editor) => {
                 editorRef.current = editor;
-                // 绘图节点只保留单页，避免预览和生成引用出现页选择歧义。
-                const [primaryPage, ...extraPages] = editor.getPages();
+                // Keep every native page; the preview represents the selected page.
+                const [primaryPage] = editor.getPages();
                 if (primaryPage) editor.setCurrentPage(primaryPage.id);
-                extraPages.forEach((page) => editor.deletePage(page.id));
                 editor.setCurrentTool("draw");
                 onReady();
                 return () => {

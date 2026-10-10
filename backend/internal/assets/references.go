@@ -113,7 +113,11 @@ func walkReferenceDocument(value any, parentKey, path, nodeID string, references
 			child := item[key]
 			childPath := joinReferencePath(path, key)
 			if text, ok := child.(string); ok {
-				if resourceID := resourceIDForField(key, text); resourceID != "" {
+				resourceID := resourceIDForField(key, text)
+				if resourceID == "" && strings.Contains(childPath, ".drawingDocument.") && (key == "dataURL" || key == "src") {
+					resourceID = ResourceID(text)
+				}
+				if resourceID != "" {
 					*references = append(*references, DocumentResourceReference{
 						ResourceID: resourceID, Path: childPath, NodeID: currentNodeID, ReferenceType: key,
 					})
@@ -168,7 +172,7 @@ func isCanvasCollectionPath(path string) bool {
 
 func isBareResourceIDField(field string) bool {
 	switch field {
-	case "resourceId", "resourceIds", "sampleResourceId", "referenceResourceId", "referenceResourceIds":
+	case "resourceId", "resourceIds", "sampleResourceId", "previewResourceId", "referenceResourceId", "referenceResourceIds":
 		return true
 	default:
 		return false

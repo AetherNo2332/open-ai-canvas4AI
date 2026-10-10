@@ -3,6 +3,7 @@ import { Grid, Html, Line, OrbitControls, TransformControls } from "@react-three
 import { Component, forwardRef, memo, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { AnimationClip, AnimationMixer, Camera, Color, Matrix4, Euler, EquirectangularReflectionMapping, Group, LoopOnce, LoopRepeat, Mesh, MeshBasicMaterial, MeshDepthMaterial, MeshNormalMaterial, MOUSE, Object3D, OrthographicCamera, PerspectiveCamera, Plane, Quaternion, Raycaster, Scene, SkeletonHelper, SRGBColorSpace, Texture, TextureLoader, TOUCH, Vector2, Vector3, WebGLRenderer } from "three";
 import { GLTFLoader, SkeletonUtils } from "three-stdlib";
+import { previsRenderReadiness, type PrevisRenderState } from "@/lib/canvas/previs/previs-render";
 
 import { applyClaySceneMaterials } from "@/lib/canvas/previs/previs-clay-materials";
 import { createPrevisTransaction, installPrevisTerminalListeners } from "@/lib/canvas/previs/previs-gesture-transaction";
@@ -22,6 +23,7 @@ import { captureFrame, recordCanvas } from "./previs-viewport-capture";
 export type PrevisOrbitControls = ComponentRef<typeof OrbitControls>;
 
 export type PrevisViewportHandle = {
+    readRenderState: () => PrevisRenderState;
     capture: (mode: PrevisRenderMode) => Promise<Blob>;
     recordVideo: (duration: number, fps: number) => Promise<Blob>;
     readCameraTransform: () => PrevisTransform | null;
@@ -111,6 +113,7 @@ export const PrevisViewport = forwardRef<PrevisViewportHandle, PrevisViewportPro
     captureRef.current = capture;
     // 加载失败的对象 id -> 该对象自己的 retry；Canvas 内部无法呈现可操作提示，统一提到 DOM 层。
     const [failedLoads, setFailedLoads] = useState<PrevisFailedLoads>({});
+    const loadSignals = useRef<Record<string, string>>({});
     const onCaptureContext = useCallback((context: CaptureContext) => {
         captureContext.current = context;
         dispatchCapture("register");
@@ -133,6 +136,7 @@ export const PrevisViewport = forwardRef<PrevisViewportHandle, PrevisViewportPro
         setRetryKey((value) => value + 1);
     }, [releaseCapture]);
     const onLoadStateChange = useCallback((id: string, signal: PrevisLoadSignal, retryLoad: () => void) => {
+        loadSignals.current[id] = signal;
         setFailedLoads((current) => upsertPrevisFailedLoad(current, id, signal, retryLoad));
     }, []);
     // 稳定引用：否则新的监听 effect 会在每次父级 render 时摘除重装。
@@ -156,6 +160,10 @@ export const PrevisViewport = forwardRef<PrevisViewportHandle, PrevisViewportPro
     const [navigation, setNavigation] = useState<Pick<PrevisViewportHandle, "focusSelected" | "frameScene" | "resetCamera" | "zoom"> | null>(null);
     const handleNavigationReady = useCallback((next: Pick<PrevisViewportHandle, "focusSelected" | "frameScene" | "resetCamera" | "zoom">) => { navigationRef.current = next; setNavigation(next); }, []);
     useImperativeHandle(ref, () => ({
+        readRenderState: () => {
+            const state = previsRenderReadiness(props.scene, Boolean(usableContext()), loadSignals.current);
+            return captureRef.current.contextLost ? { ...state, ready: false, error: "webgl_context_lost" } : state;
+        },
         capture: (mode) => captureFrame(usableContext(), mode),
         recordVideo: (duration, fps) => recordCanvas(usableContext(), duration, fps),
         readCameraTransform: () => {
@@ -645,7 +653,7 @@ function PrevisSceneContent({ scene, selectedObjectId, selectedBone, transformMo
                 下面的 OrbitControls，这里不对它做任何写入。 */}
             <PrevisShotCameraSync camera={camCamera} framing={camFraming} />
             <PrevisOrthoCameraSync camera={orthoCamera} framing={orthoFraming} aspect={size.width / Math.max(size.height, 1)} />
-            <PrevisEnvironmentView environment={scene.environment} fallbackColor={scene.background} />
+            <PrevisEnvironmentView environment={scene.environment} fallbackColor={scene.background} onLoadStateChange={onLoadStateChange} />
             <ambientLight intensity={scene.environmentIntensity * 0.35} />
             {scene.lights.map((light) => <PrevisLightView key={light.id} light={light} />)}
             {scene.gridVisible ? <Grid position={[0, 0, 0]} infiniteGrid fadeDistance={40} fadeStrength={5} cellSize={0.5} sectionSize={5} cellColor="#8f99a3" sectionColor="#626d77" /> : null}
@@ -710,7 +718,7 @@ function PrevisSceneContent({ scene, selectedObjectId, selectedBone, transformMo
     );
 }
 
-function PrevisEnvironmentView({ environment, fallbackColor }: { environment?: PrevisEnvironment; fallbackColor: string }) {
+function PrevisEnvironmentView({ environment, fallbackColor, onLoadStateChange }: { environment?: PrevisEnvironment; fallbackColor: string; onLoadStateChange: PrevisCanvasSurfaceProps["onLoadStateChange"] }) {
     const { scene } = useThree();
     const textureRef = useRef<Texture | null>(null);
     useEffect(() => {
@@ -718,6 +726,7 @@ function PrevisEnvironmentView({ environment, fallbackColor }: { environment?: P
         const activeEnvironment = environment;
         const url = activeEnvironment?.mode === "panorama" ? activeEnvironment.url : undefined;
         if (!url) return;
+        onLoadStateChange("environment", "loading", () => undefined);
         const loader = new TextureLoader();
         let disposed = false;
         loader.load(url, (texture) => {
@@ -728,8 +737,12 @@ function PrevisEnvironmentView({ environment, fallbackColor }: { environment?: P
             texture.rotation = activeEnvironment?.rotationY || 0;
             textureRef.current = texture;
             scene.background = texture;
+            onLoadStateChange("environment", "ready", () => undefined);
         }, undefined, () => {
-            if (!disposed) scene.background = new Color(fallbackColor);
+            if (!disposed) {
+                scene.background = new Color(fallbackColor);
+                onLoadStateChange("environment", "error", () => undefined);
+            }
         });
         return () => {
             disposed = true;
@@ -737,7 +750,7 @@ function PrevisEnvironmentView({ environment, fallbackColor }: { environment?: P
             textureRef.current?.dispose();
             textureRef.current = null;
         };
-    }, [environment?.mode, environment?.rotationY, environment?.url, fallbackColor, scene]);
+    }, [environment?.mode, environment?.rotationY, environment?.url, fallbackColor, scene, onLoadStateChange]);
     return null;
 }
 
@@ -1212,7 +1225,7 @@ function PrevisObjectVisual({ object, selected, selectedBone, playhead, onSelect
     const actorColor = resolvePrevisActorColor(object.color);
 if (object.kind === "actor" && object.url === PREVIS_DEFAULT_ACTOR_URL && !object.assetId) return <PrevisClayActor archetype={object.archetype || "adult"} actorProfile={object.actorProfile} color={actorColor} pose={object.pose || "stand"} boneOverrides={object.boneOverrides} selected={selected} />;
     if ((object.kind === "model" || object.kind === "actor" || object.primitive === "character") && (object.url || object.primitive === "character")) return <PrevisModel object={object} selected={selected} selectedBone={selectedBone} playhead={playhead} onSelectBone={onSelectBone} onBoneTransform={onBoneTransform} onActorRigReady={onActorRigReady} onLoadStateChange={onLoadStateChange} />;
-    if (object.kind === "billboard" && object.url) return <PrevisBillboard object={object} selected={selected} />;
+    if (object.kind === "billboard" && object.url) return <PrevisBillboard object={object} selected={selected} onLoadStateChange={onLoadStateChange} />;
     const material = <meshStandardMaterial color={selected ? "#ffcc00" : object.color} roughness={0.68} metalness={0.05} emissive={selected ? "#ffaa00" : "#000000"} emissiveIntensity={selected ? 0.4 : 0} />;
     return (
         <mesh castShadow={object.castShadow} receiveShadow={object.receiveShadow}>
@@ -1228,7 +1241,7 @@ function PrevisModel({ object, selected, selectedBone, playhead, onSelectBone, o
     const loadRef = useRef(load);
     loadRef.current = load;
     const loadGeneration = load.generation;
-    const modelUrl = object.kind === "actor" || object.primitive === "character" ? PREVIS_DEFAULT_ACTOR_URL : object.url;
+    const modelUrl = object.url || (object.kind === "actor" || object.primitive === "character" ? PREVIS_DEFAULT_ACTOR_URL : undefined);
     // 展示身份 = generation + 解析输入。render 阶段用它屏蔽旧资源，
     // 因此 prop/retry 变化的第一次 render 就已卸下上一代 model，随后 cleanup 才 dispose。
     const identity = previsLoadIdentity({ generation: loadGeneration, url: modelUrl, storageKey: object.storageKey, kind: object.kind });
@@ -1552,7 +1565,7 @@ function BoneController({ bone, selected, dimmed, onSelect }: { bone: Object3D |
     </group>;
 }
 
-function PrevisBillboard({ object, selected }: { object: PrevisObject; selected: boolean }) {
+function PrevisBillboard({ object, selected, onLoadStateChange }: { object: PrevisObject; selected: boolean; onLoadStateChange: PrevisCanvasSurfaceProps["onLoadStateChange"] }) {
     // 展示状态带 url 身份：只有与当前 object.url 匹配才交给 material，
     // 这样换 URL 的第一次 render 就卸下旧纹理，随后 cleanup 才 dispose。
     const [loaded, setLoaded] = useState<{ identity: string; value: Texture } | null>(null);
@@ -1562,6 +1575,7 @@ function PrevisBillboard({ object, selected }: { object: PrevisObject; selected:
         let active = true;
         let owned: Texture | null = null;
         setLoaded(null);
+        onLoadStateChange(object.id, "loading", () => undefined);
         const loader = new TextureLoader();
         loader.crossOrigin = "anonymous";
         loader.load(object.url!, (next) => {
@@ -1572,13 +1586,19 @@ function PrevisBillboard({ object, selected }: { object: PrevisObject; selected:
             }
             owned = next;
             setLoaded({ identity, value: next });
-        }, undefined, () => active && setLoaded(null));
+            onLoadStateChange(object.id, "ready", () => undefined);
+        }, undefined, () => {
+            if (active) {
+                setLoaded(null);
+                onLoadStateChange(object.id, "error", () => undefined);
+            }
+        });
         return () => {
             active = false;
             owned?.dispose();
             owned = null;
         };
-    }, [identity, object.url]);
+    }, [identity, object.url, object.id, onLoadStateChange]);
     return (
         <mesh castShadow={object.castShadow}>
             <planeGeometry args={[1.6, 0.9]} />

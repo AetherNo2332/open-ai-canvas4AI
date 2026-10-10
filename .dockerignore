@@ -21,6 +21,7 @@ backend/server
 backend/.local
 web/.next
 web/dist
+renderer/.local
 web/node_modules
 agent/node_modules
 agent/dist

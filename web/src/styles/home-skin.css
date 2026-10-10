@@ -55,6 +55,10 @@ body.app-user-overlays.app-user-overlays {
         border-radius: var(--input-radius) !important;
     }
 
+    .app-user-workspace.app-user-workspace .canvas-generation-spinner {
+        border-radius: 50% !important;
+    }
+
     .app-user-workspace.app-user-workspace :is(button, .canvas-home-entry) {
         border-radius: var(--button-radius) !important;
     }
@@ -100,11 +104,6 @@ body.app-user-overlays.app-user-overlays {
 
     .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar-checkin-offer em, .app-workspace-credit-gift) {
         color: var(--primary) !important;
-    }
-
-    .app-user-workspace.app-user-workspace .app-workspace-canary-badge {
-        background: var(--control-selected-bg) !important;
-        color: var(--control-selected-fg) !important;
     }
 
     .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar-checkin-claim, .app-workspace-sidebar-checkin.is-collapsed) {

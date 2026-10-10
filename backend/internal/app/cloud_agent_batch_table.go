@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/canvas/capability"
+
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -49,13 +51,13 @@ func defaultCloudAgentBatchReferenceColumns() []any {
 }
 
 func cloudAgentBatchTablePatchSchema() map[string]any {
+	properties := map[string]any{}
+	for key, field := range capability.BatchRowFields() {
+		properties[key] = field.JSONSchema()
+	}
 	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"enabled":      map[string]any{"type": "boolean"},
-			"inputNodeIds": map[string]any{"type": "array", "maxItems": maxCloudAgentBatchReferences, "items": map[string]any{"type": "string"}},
-			"prompt":       map[string]any{"type": "string", "maxLength": maxCloudAgentBatchPromptRunes},
-		},
+		"type":                 "object",
+		"properties":           properties,
 		"additionalProperties": false,
 	}
 }
@@ -217,9 +219,6 @@ func prepareCloudAgentBatchTableEdit(repo *repository.Repository, userID, canvas
 		return nil, err
 	}
 	metadata := node["metadata"].(map[string]any)
-	if metadata["locked"] == true {
-		return nil, BadAuthRequest("不能修改锁定的批量创作表")
-	}
 	index := -1
 	for i, row := range rows {
 		if stringValue(row["id"]) == args.RowID {
@@ -238,7 +237,7 @@ func prepareCloudAgentBatchTableEdit(repo *repository.Repository, userID, canvas
 		if args.Action == "update" && len(args.Patch) == 0 {
 			return nil, BadAuthRequest("修改批量创作行必须提供 patch")
 		}
-		patch, labels, err := validateCloudAgentBatchRowPatch(doc, args.Patch, len(columns))
+		patch, labels, err := validateCloudAgentBatchRowPatch(doc, args.Patch, len(columns), table)
 		if err != nil {
 			return nil, err
 		}
@@ -351,9 +350,14 @@ func prepareCloudAgentBatchTableEdit(repo *repository.Repository, userID, canvas
 	return &cloudAgentBatchTableMutationPlan{Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash, Preview: preview}, nil
 }
 
-func validateCloudAgentBatchRowPatch(doc map[string]any, input map[string]any, maxInputs int) (map[string]any, []string, error) {
+func validateCloudAgentBatchRowPatch(doc map[string]any, input map[string]any, maxInputs int, tables ...map[string]any) (map[string]any, []string, error) {
 	patch := map[string]any{}
 	labels := []string{}
+	if len(input) > 0 {
+		if err := capability.ValidateEditableFields(capability.BatchRowFields(), input); err != nil {
+			return nil, nil, BadAuthRequest(err.Error())
+		}
+	}
 	for key, value := range input {
 		switch key {
 		case "enabled":
@@ -380,6 +384,19 @@ func validateCloudAgentBatchRowPatch(doc map[string]any, input map[string]any, m
 				values[index] = id
 			}
 			patch[key], labels = values, append(labels, "参考图片")
+		case "textNodeIds":
+			ids, err := cloudAgentBatchTextNodeIDs(doc, value)
+			if err != nil {
+				return nil, nil, err
+			}
+			patch[key], labels = ids, append(labels, "参考文本")
+		case "cells":
+			if len(tables) > 0 {
+				if err := validateCloudAgentBatchCells(tables[0], value.(map[string]any)); err != nil {
+					return nil, nil, err
+				}
+			}
+			patch[key], labels = value, append(labels, "文本单元格")
 		default:
 			return nil, nil, BadAuthRequest(fmt.Sprintf("不能通过批量创作表工具修改字段 %s", key))
 		}
@@ -390,6 +407,47 @@ func validateCloudAgentBatchRowPatch(doc map[string]any, input map[string]any, m
 
 func cloudAgentBatchConcurrencyAllowed(value int) bool {
 	return value == 1 || value == 5 || value == 10
+}
+
+func cloudAgentBatchTextNodeIDs(doc map[string]any, value any) ([]any, error) {
+	items, ok := value.([]any)
+	if !ok {
+		return nil, BadAuthRequest("textNodeIds 必须是文本节点ID数组")
+	}
+	nodes := map[string]map[string]any{}
+	for _, node := range creationMaps(doc["nodes"]) {
+		nodes[stringValue(node["id"])] = node
+	}
+	seen := map[string]bool{}
+	ids := make([]any, 0, len(items))
+	for _, item := range items {
+		id, ok := item.(string)
+		node := nodes[id]
+		if !ok || validateCloudAgentID(id, "文本节点ID", 80) != nil || seen[id] || node == nil || stringValue(node["type"]) != "text" || cloudAgentCharacterNode(node) {
+			return nil, BadAuthRequest("批量创作行只能引用当前画布内唯一的普通文本节点")
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func validateCloudAgentBatchCells(table, cells map[string]any) error {
+	allowed := map[string]bool{}
+	for _, column := range creationMaps(table["textColumns"]) {
+		allowed[stringValue(column["id"])] = true
+	}
+	for _, column := range creationMaps(table["referenceColumns"]) {
+		if stringValue(column["type"]) == "text" {
+			allowed[stringValue(column["id"])] = true
+		}
+	}
+	for key := range cells {
+		if !allowed[key] {
+			return BadAuthRequest("文本单元格必须对应当前批量创作表的文本列")
+		}
+	}
+	return nil
 }
 
 func applyCloudAgentBatchTableMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {

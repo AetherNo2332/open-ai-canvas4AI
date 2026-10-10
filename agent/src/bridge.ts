@@ -3,6 +3,7 @@ import type { CanvasModelResult } from "./pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "./tool-disclosure.js";
 import type { PromptParts } from "./system-prompt.js";
 import { EventScheduler, RunEvents } from "./event-scheduler.js";
+import { RetryableBridgeError, safeWorkerDetail } from "./worker-errors.js";
 import type { SubagentRuntime } from "./subagent-wire.js";
 
 /**
@@ -209,12 +210,16 @@ export interface PiToolCall {
 
 export class CanvasBridge {
   constructor(private readonly baseUrl: string, private readonly token: string, readonly workerId: string,
-    private readonly scheduler?: EventScheduler, private readonly events?: RunEvents) {
+    private readonly scheduler?: EventScheduler, private readonly events?: RunEvents,
+    private readonly availability: {nextProbeAt:number} = {nextProbeAt:0}) {
     if (!baseUrl || !token || !workerId) throw new Error("Pi bridge configuration is incomplete");
   }
 
   async claim(signal?: AbortSignal): Promise<PiSnapshot | null> {
+    if(this.availability.nextProbeAt>Date.now())return null;
+    if(this.availability.nextProbeAt)this.availability.nextProbeAt=Date.now()+5000;
     const result = await this.request<{ run: PiSnapshot | null }>("POST", "/claim", { owner: this.workerId }, undefined, signal);
+    this.availability.nextProbeAt=0;
     return result.run;
   }
 
@@ -462,11 +467,33 @@ export class CanvasBridge {
     await this.request("POST", `/runs/${encodeURIComponent(run.runId)}/fail`, { reason }, run, signal);
   }
 
+  async reportRecovery(run: PiSnapshot, error: RetryableBridgeError, signal?: AbortSignal): Promise<void> {
+    // Read authoritative state after an ambiguous response; never resend the
+    // failed model/tool operation itself.
+    const current = await this.snapshot(run, signal);
+    if (TERMINAL_RUN_STATUSES.has(current.status)) throw new CanvasRunTerminated(current.status);
+    const route = error.operation.split('?')[0]!;
+    const operation = route.includes('/tool-') ? 'tool' : route.includes('/model-') ? 'model'
+      : route.includes('/checkpoint') || route.includes('/messages') ? 'checkpoint'
+      : route.includes('/compaction') ? 'compaction' : route.endsWith('/control') ? 'control'
+      : route.endsWith('/phase') ? 'phase' : route.endsWith('/renew') ? 'renew' : 'snapshot';
+    const call = route.match(/\/tool-calls\/([^/]+)\//)?.[1];
+    const faultClass = error.httpStatus === 409 || error.httpStatus === 425 ? 'conflict' : error.httpStatus === 429 ? 'rate_limited'
+      : error.httpStatus === 408 ? 'timeout' : error.httpStatus ? 'http_5xx' : 'network';
+    await this.request('POST', `/runs/${encodeURIComponent(run.runId)}/recovery`, {
+      revision: current.revision, class: faultClass, operation,
+      taskId: current.activeTaskId || (operation === 'tool' ? current.lastTaskId : undefined),
+      callId: call ? decodeURIComponent(call) : undefined,
+      httpStatus: error.httpStatus, retryAfterMs: Math.min(86400000,Math.max(0,error.retryAfterMs ?? 0)),
+    }, run, signal);
+  }
+
   async noToolTurn(run: PiSnapshot, taskId: string, signal?: AbortSignal): Promise<{ status: string; nudge?: string }> {
     return this.request("POST", `/runs/${encodeURIComponent(run.runId)}/no-tool-turn`, { taskId }, run, signal);
   }
 
   private async request<T>(method: string, path: string, body?: unknown, run?: PiSnapshot, signal?: AbortSignal): Promise<T> {
+    const operation=`${method} ${path.split('?')[0]}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
       Accept: "application/json",
@@ -482,10 +509,17 @@ export class CanvasBridge {
         headers["X-Agent-Session-Epoch"] = String(run.piSessionLeaseEpoch);
       }
     }
-    const send = () => fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent${path}`, {
-      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+    const payload = body === undefined ? undefined : JSON.stringify(body);
+    const send = async () => {
+      try { return await fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent${path}`, {
+      method, headers, body: payload,
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
-    });
+      }); } catch (error) {
+        if (signal?.aborted) throw error;
+        this.availability.nextProbeAt=Date.now()+5000;
+        throw new RetryableBridgeError(operation);
+      }
+    };
     const response = this.scheduler && run && !path.endsWith("/renew")
       ? await this.scheduler.step(`${run.userId}:${run.request.canvasId ?? run.runId}`, send, signal) : await send();
     if (!response.ok) {
@@ -511,16 +545,32 @@ export class CanvasBridge {
           if (snapshotError instanceof CanvasRunTerminated) throw snapshotError;
         }
       }
-      const detail = `Canvas bridge HTTP ${response.status} on ${method} ${path}${publicMessage ? `: ${publicMessage}` : ""}`;
+      const detail = safeWorkerDetail(`Canvas bridge HTTP ${response.status} on ${operation}${publicMessage ? `: ${publicMessage}` : ""}`);
       if (response.status === 403 && publicReason === "agent_lease_lost") throw new CanvasLeaseLost(detail);
       // 确定性错误必须标成致命：server.ts 只对 FatalWorkerError 调 failRun，
       // 否则运行既不会失败也不会被看门狗回收，只会无限重试。
-      if (NON_RETRYABLE_BRIDGE_STATUSES.has(response.status)) throw new FatalWorkerError(detail);
-      throw new Error(detail);
+      if (NON_RETRYABLE_BRIDGE_STATUSES.has(response.status)) {
+        if(!run && [401,403].includes(response.status))this.availability.nextProbeAt=Date.now()+15000;
+        throw new FatalWorkerError(detail);
+      }
+      if ([408,409,425,429].includes(response.status) || response.status >= 500) {
+        const retryAfter = response.headers.get('Retry-After');
+        const retryAfterMs = retryAfter ? (/^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now())) : undefined;
+        if(response.status>=500 || response.status===429)this.availability.nextProbeAt=Date.now()+Math.max(5000,Number.isFinite(retryAfterMs)?Math.min(retryAfterMs!,30000):0);
+        throw new RetryableBridgeError(operation, response.status, Number.isFinite(retryAfterMs) ? retryAfterMs : undefined);
+      }
+      throw new FatalWorkerError(detail);
     }
-    const envelope: unknown = await response.json();
+    let envelope: unknown;
+    try { envelope = await response.json(); }
+    catch (error) {
+      if (signal?.aborted) throw error;
+      if (error instanceof SyntaxError) throw new FatalWorkerError(`Canvas bridge invalid JSON on ${operation}`);
+      this.availability.nextProbeAt=Date.now()+5000;
+      throw new RetryableBridgeError(operation);
+    }
     if (!envelope || typeof envelope !== "object" || (envelope as any).code !== 0) {
-      throw new Error(`Canvas bridge rejected ${method} ${path}`);
+      throw new FatalWorkerError(`Canvas bridge rejected ${operation}`);
     }
     return (envelope as { data: T }).data;
   }

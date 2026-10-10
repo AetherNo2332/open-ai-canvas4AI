@@ -8,7 +8,7 @@ export const statusLabel: Record<TaskStatus, string> = {
     cancelled: "已取消",
 };
 
-type GenerationTaskDisplayTarget = Pick<GenerationTask, "status" | "stage" | "mediaStage" | "progress" | "providerRequestId" | "providerCancelStatus">;
+type GenerationTaskDisplayTarget = Pick<GenerationTask, "status" | "stage" | "mediaStage" | "progress" | "providerRequestId" | "providerCancelStatus"> & { type?: string };
 
 const cancellablePreSubmissionStages = new Set(["queued", "等待队列调度", "后端接管任务", "正在准备创作"]);
 
@@ -21,6 +21,7 @@ const cancellablePreSubmissionStages = new Set(["queued", "等待队列调度", 
  */
 export function canCancelGenerationTask(task: GenerationTaskDisplayTarget) {
     if (task.status !== "queued" && task.status !== "running") return false;
+    if (task.type === "previs_render") return true;
     if (task.providerRequestId || task.providerCancelStatus || task.mediaStage) return false;
     const stage = (task.stage || "").trim().toLowerCase();
     // Unknown running stages are treated as already submitted. A provider may
@@ -96,6 +97,7 @@ export const operationOptions = [
 export const operationLabelByValue = new Map(operationOptions.map((item) => [item.value, item.label]));
 
 export const taskTypeLabel: Record<string, string> = {
+    previs_render: "白模预演",
     canvas_image: "画布生图",
     canvas_video: "画布视频",
     canvas_audio: "画布音频",

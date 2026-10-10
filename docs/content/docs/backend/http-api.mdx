@@ -5,6 +5,31 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## Pi worker 错误与有限恢复
+
+`POST /internal-agent/runs/:id/recovery` 使用现有内部 Token、协议版本、用户、worker owner 与 session epoch 请求头。提交 `revision`、`class`（network/http_5xx/timeout/rate_limited/conflict/result_unknown）、`operation`（snapshot/control/checkpoint/model/tool/phase/renew/compaction），可附 `taskId`、`callId`、`httpStatus`、`retryAfterMs`。拒绝未知字段、超大请求、旧 revision 和过期 epoch；同 run/epoch/操作/分类重报幂等。返回 `status`、`attempts` 和可选 `nextRecoveryAt`；终态以新运行快照为准。
+
+worker 仅在传输边界分类暂时故障。恢复前读取 Go 的权威快照，沿原任务/回执继续，不重发原工具或模型操作。Go 决定 1/2/4/8/16 秒退避并抖动，最大 30 秒；429 尊重 Retry-After，超过剩余 10 分钟窗口即终止。后端整体不可达或鉴权失败时共享暂停新领取，并按间隔探测协议恢复。
+
+普通内部异常通过现有 `/fail` 结束本轮并安排清理；错误上报最多 3 次、总时限 15 秒，排队请求取消后立即退出且不会延迟发送。SDK 错误流仍将原始异常传递到共享边界；JSON 序列化错误不归为网络故障。原生 Skill 只把本地路径/范围拒绝作为可修正的工具结果，协议或冻结身份损坏直接失败。已提交但响应丢失先核对终态，取消和租约丢失立即退出。上报未确认时只记录安全分类，不宣称成功；后端持续不可达期间无法实时更新页面。公开 GET/SSE 仍沿用 `failureMessage` 和 `run_failed`，不增加公开请求参数。
+
+## 用户诊断包
+
+设置页「问题诊断」和画布菜单「导出诊断包」使用同一套接口，不新增日志上传服务。仅登录用户可以导出自己账号的记录。
+
+- `POST /api/diagnostics/preview`：请求 `{ from?, to?, taskId?, projectId?, canvasId?, description?, runtime, clientEvents }`，时间为 RFC3339，默认最近 30 分钟，最长 24 小时。`canvasId` 校验画布归属，任务上下文与画布必须一致；`projectId` 沿用任务记录的历史画布分组语义。任务入口可以读取已删除画布的任务日志。未指定上下文时收集当前账号最近记录。
+
+- `POST /api/diagnostics/export`：请求同预览，返回 ZIP；响应头包含 `X-Canvas-Diagnostics-Schema: 2`。包内保留原有任务、前端事件、上游调用和环境文件，并增加画布/Agent 活动文件。
+
+| 文件 | 内容 |
+| --- | --- |
+| `canvas/history.jsonl` | 画布版本摘要和变动记录 |
+| `agent/activity.jsonl` | Agent 修改、撤销、运行、工具批次和持久事件 |
+| `agent/messages.jsonl` | 所选窗口内 Pi 会话用户/助手文字及工具回执标识；系统提示、推理、工具参数和结果正文不导出 |
+
+画布历史不代表每次鼠标操作，不能据此恢复完整画布。无 Pi 会话条目的旧运行使用有限的会话快照；缺失消息时间时明确标记 `timeScope=active_run_transcript_snapshot`，不将其冒充窗口内精确消息日志。对话文字可能包含业务内容，界面和 README 提醒用户分享前检查；自动过滤常见凭据、URL 用户信息/查询/片段和内嵌媒体。
+
+每次最多 100 个画布、200 条历史版本、200 条 Agent 修改、50 个 Agent 运行、1000 条事件、1000 条 Pi 条目及 500 条旧会话消息，超限保留最近记录并在 manifest/预览中标记截断。每条对话/事件文字最多 4000 字；单条原始消息 JSON 超过 65536 字符时在数据库查询中省略正文，保留带 `payloadOmitted` 的不可读占位，避免内嵌媒体耗尽导出内存。按时间及序号稳定排序。所有持久查询均限定当前用户，前端事件仍按当前账号及所选时间收集。
 ## 管理员 Agent 联网搜索
 
 - `GET /api/admin/settings/agent-web-search`：管理员读取 `{ setting: { enabled, hasApiKey, revision, updatedAt? } }`，不返回密钥或密文。

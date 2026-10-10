@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/canvas/capability"
+
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -48,24 +50,9 @@ func storyboardArgumentError(action string) error {
 }
 
 func cloudAgentStoryboardRowSchema() map[string]any {
-	properties := map[string]any{
-		"durationSeconds":       map[string]any{"type": "number", "exclusiveMinimum": 0},
-		"plotDescription":       map[string]any{"type": "string", "maxLength": 20000},
-		"dialogue":              map[string]any{"type": "string", "maxLength": 20000},
-		"videoMotionPrompt":     map[string]any{"type": "string", "maxLength": 20000},
-		"imageGenerationPrompt": map[string]any{"type": "string", "maxLength": 20000},
-		"camera":                map[string]any{"type": "string", "maxLength": 20000},
-		"motion":                map[string]any{"type": "string", "maxLength": 20000},
-		"shotSize":              map[string]any{"type": "string", "maxLength": 20000},
-		"emotion":               map[string]any{"type": "string", "maxLength": 20000},
-		"lightingAndAtmosphere": map[string]any{"type": "string", "maxLength": 20000},
-		"audioEffects":          map[string]any{"type": "string", "maxLength": 20000},
-		"narrativeIntent":       map[string]any{"type": "string", "maxLength": 20000},
-		"viewerPOV":             map[string]any{"type": "string", "maxLength": 20000},
-		"performanceBlocking":   map[string]any{"type": "string", "maxLength": 20000},
-		"timeBeats":             map[string]any{"type": "string", "maxLength": 20000},
-		"continuityOut":         map[string]any{"type": "string", "maxLength": 20000},
-		"negativePrompt":        map[string]any{"type": "string", "maxLength": 20000},
+	properties := map[string]any{}
+	for key, field := range capability.StoryboardRowFields() {
+		properties[key] = field.JSONSchema()
 	}
 	descriptions := map[string]string{
 		"durationSeconds": "镜头时长（秒），新增镜头必填且大于0。",
@@ -79,7 +66,9 @@ func cloudAgentStoryboardRowSchema() map[string]any {
 		"continuityOut": "衔接下一镜头所需的状态与连续性。", "negativePrompt": "应避免的画面或动作。",
 	}
 	for key, raw := range properties {
-		raw.(map[string]any)["description"] = descriptions[key]
+		if description, exists := descriptions[key]; exists {
+			raw.(map[string]any)["description"] = description
+		}
 	}
 	return map[string]any{"type": "object", "properties": properties, "required": []string{"durationSeconds"}, "additionalProperties": false,
 		"anyOf": []map[string]any{
@@ -93,73 +82,8 @@ func cloudAgentStoryboardPatchSchema() map[string]any {
 	schema := cloudAgentStoryboardRowSchema()
 	delete(schema, "required")
 	delete(schema, "anyOf")
-	properties := schema["properties"].(map[string]any)
-	properties["assetBindings"] = map[string]any{
-		"type": "array", "maxItems": 32,
-		"items": map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"nodeId":   map[string]any{"type": "string", "maxLength": 80},
-				"role":     map[string]any{"type": "string", "enum": []string{"character", "environment", "wardrobe", "prop", "weapon", "style", "motion", "audio"}},
-				"priority": map[string]any{"type": "number", "minimum": 0, "maximum": 100},
-			},
-			"required": []string{"nodeId", "role", "priority"}, "additionalProperties": false,
-		},
-	}
 	schema["minProperties"] = 1
 	return schema
-}
-
-var cloudAgentStoryboardAssetRoles = map[string]bool{
-	"character": true, "environment": true, "wardrobe": true, "prop": true,
-	"weapon": true, "style": true, "motion": true, "audio": true,
-}
-
-func validateCloudAgentStoryboardAssetBindings(value any, nodes []map[string]any) ([]any, error) {
-	entries, ok := value.([]any)
-	if !ok || len(entries) > 32 {
-		return nil, BadAuthRequest("分镜资产绑定必须是最多32项的数组")
-	}
-	nodeByID := map[string]map[string]any{}
-	for _, node := range nodes {
-		nodeByID[stringValue(node["id"])] = node
-	}
-	seen := map[string]bool{}
-	normalized := make([]any, 0, len(entries))
-	for _, raw := range entries {
-		binding, ok := raw.(map[string]any)
-		if !ok {
-			return nil, BadAuthRequest("分镜资产绑定格式无效")
-		}
-		nodeID := strings.TrimSpace(stringValue(binding["nodeId"]))
-		role := strings.TrimSpace(stringValue(binding["role"]))
-		priority, ok := binding["priority"].(float64)
-		if nodeID == "" || !cloudAgentStoryboardAssetRoles[role] || !ok || priority < 0 || priority > 100 {
-			return nil, BadAuthRequest("分镜资产绑定需要有效的 nodeId、role 和 0 到 100 的 priority")
-		}
-		if seen[nodeID] {
-			return nil, BadAuthRequest("分镜资产绑定不能重复引用同一节点")
-		}
-		node, exists := nodeByID[nodeID]
-		if !exists {
-			return nil, BadAuthRequest("分镜资产绑定引用了当前画布不存在的节点")
-		}
-		metadata, _ := node["metadata"].(map[string]any)
-		workflowKind := stringValue(metadata["workflowKind"])
-		characterAssetID := strings.TrimSpace(stringValue(metadata["characterAssetId"]))
-		nodeType := stringValue(node["type"])
-		isCharacterCard := workflowKind == "character" && characterAssetID != ""
-		isMediaAsset := nodeType == "image" || nodeType == "drawing" || nodeType == "video" || nodeType == "audio"
-		if !isCharacterCard && !isMediaAsset {
-			return nil, BadAuthRequest("分镜资产绑定只能引用角色卡或媒体资产节点")
-		}
-		if role == "character" && !isCharacterCard {
-			return nil, BadAuthRequest("角色绑定必须引用角色卡节点")
-		}
-		seen[nodeID] = true
-		normalized = append(normalized, map[string]any{"nodeId": nodeID, "role": role, "priority": priority})
-	}
-	return normalized, nil
 }
 
 func validateCloudAgentStoryboardRow(row map[string]any, requireDescription bool) error {
@@ -171,18 +95,8 @@ func validateCloudAgentStoryboardRow(row map[string]any, requireDescription bool
 	} else if value, ok := duration.(float64); !ok || value <= 0 {
 		return BadAuthRequest("分镜时长必须是大于零的数字")
 	}
-	for key := range row {
-		if key != "durationSeconds" && !cloudAgentStoryboardTextField(key) {
-			return BadAuthRequest(fmt.Sprintf("不能通过分镜工具写入字段 %s", key))
-		}
-	}
-	for _, key := range cloudAgentStoryboardTextFields {
-		if value, exists := row[key]; exists {
-			text, ok := value.(string)
-			if !ok || utf8.RuneCountInString(text) > 20000 {
-				return BadAuthRequest(fmt.Sprintf("分镜字段 %s 必须是不超过20000字的文本", key))
-			}
-		}
+	if err := capability.ValidateEditableFields(capability.StoryboardRowFields(), row); err != nil {
+		return BadAuthRequest(err.Error())
 	}
 	if requireDescription {
 		plot := strings.TrimSpace(stringValue(row["plotDescription"]))
@@ -282,6 +196,11 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 	if err != nil {
 		return nil, err
 	}
+	for _, row := range args.Rows {
+		if err := validateCloudAgentStoryboardReferences(doc, row); err != nil {
+			return nil, err
+		}
+	}
 	node := creationAddedNode(CreationCanvasOp{
 		Type: "add_node", ID: args.NodeID, NodeType: "script", Title: args.Title, X: &args.X, Y: &args.Y,
 		Metadata: map[string]any{"storyboard": map[string]any{
@@ -360,25 +279,13 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 			return nil, BadAuthRequest("分镜操作需要 patch")
 		}
 		patch := map[string]any{}
+		if err := capability.ValidateEditableFields(capability.StoryboardRowFields(), args.Patch); err != nil {
+			return nil, BadAuthRequest(err.Error())
+		}
+		if err := validateCloudAgentStoryboardReferences(doc, args.Patch); err != nil {
+			return nil, err
+		}
 		for key, value := range args.Patch {
-			if key == "durationSeconds" {
-				if duration, ok := value.(float64); !ok || duration <= 0 {
-					return nil, BadAuthRequest("分镜时长必须是大于零的数字")
-				}
-			} else if key == "assetBindings" {
-				normalized, err := validateCloudAgentStoryboardAssetBindings(value, creationMaps(doc["nodes"]))
-				if err != nil {
-					return nil, err
-				}
-				value = normalized
-			} else if cloudAgentStoryboardTextField(key) {
-				text, ok := value.(string)
-				if !ok || utf8.RuneCountInString(text) > 20000 {
-					return nil, BadAuthRequest(fmt.Sprintf("分镜字段 %s 必须是不超过20000字的文本", key))
-				}
-			} else {
-				return nil, BadAuthRequest(fmt.Sprintf("不能通过分镜编辑修改字段 %s", key))
-			}
 			patch[key] = value
 			fields = append(fields, key)
 		}
@@ -387,13 +294,7 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 			if len(rows) >= maxCloudAgentStoryboardRows {
 				return nil, BadAuthRequest("单个分镜表最多100个镜头")
 			}
-			rowValidation := make(map[string]any, len(patch))
-			for key, value := range patch {
-				if key != "assetBindings" {
-					rowValidation[key] = value
-				}
-			}
-			if err := validateCloudAgentStoryboardRow(rowValidation, true); err != nil {
+			if err := validateCloudAgentStoryboardRow(patch, true); err != nil {
 				return nil, err
 			}
 			row := cloudAgentStoryboardRowDefaults()
@@ -404,6 +305,16 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 			row["shotNumber"] = float64(len(rows) + 1)
 			next = append(next, row)
 		} else {
+			candidate := map[string]any{}
+			for key, value := range next[index] {
+				candidate[key] = value
+			}
+			for key, value := range patch {
+				candidate[key] = value
+			}
+			if err := validateCloudAgentStoryboardSourceRange(candidate); err != nil {
+				return nil, err
+			}
 			for key, value := range patch {
 				next[index][key] = value
 			}
@@ -506,4 +417,66 @@ func cloudAgentStoryboardRowDefaults() map[string]any {
 		row[field] = ""
 	}
 	return row
+}
+
+func validateCloudAgentStoryboardReferences(doc, row map[string]any) error {
+	nodes := map[string]map[string]any{}
+	for _, node := range creationMaps(doc["nodes"]) {
+		nodes[stringValue(node["id"])] = node
+	}
+	for _, character := range creationMaps(row["characters"]) {
+		if strings.TrimSpace(stringValue(character["characterName"])) == "" {
+			return BadAuthRequest("分镜角色名称不能为空")
+		}
+		if id := stringValue(character["characterImageNodeId"]); id != "" {
+			node := nodes[id]
+			if node == nil || (stringValue(node["type"]) != "image" && stringValue(node["type"]) != "drawing") {
+				return BadAuthRequest("分镜角色图片必须引用当前画布内图片或绘图节点")
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, binding := range creationMaps(row["assetBindings"]) {
+		id := stringValue(binding["nodeId"])
+		node := nodes[id]
+		if validateCloudAgentID(id, "资产节点ID", 80) != nil || node == nil || seen[id] {
+			return BadAuthRequest("分镜资产引用必须是当前画布内唯一节点")
+		}
+		seen[id] = true
+		kind := stringValue(node["type"])
+		if kind == "drawing" {
+			kind = "image"
+		}
+		if cloudAgentCharacterNode(node) {
+			kind = "character"
+		}
+		role := stringValue(binding["role"])
+		allowed := false
+		switch role {
+		case "character":
+			allowed = kind == "image" || kind == "character"
+		case "environment", "wardrobe", "prop", "weapon", "style":
+			allowed = kind == "image"
+		case "motion":
+			allowed = kind == "image" || kind == "video"
+		case "audio":
+			allowed = kind == "audio"
+		}
+		if !allowed {
+			return BadAuthRequest("分镜资产类型不符合引用角色")
+		}
+	}
+	return validateCloudAgentStoryboardSourceRange(row)
+}
+
+func validateCloudAgentStoryboardSourceRange(row map[string]any) error {
+	start, hasStart := row["sourceStartMs"].(float64)
+	end, hasEnd := row["sourceEndMs"].(float64)
+	if hasStart && hasEnd && end < start {
+		return BadAuthRequest("分镜来源结束时间不能早于开始时间")
+	}
+	if frame, exists := row["keyframeTimeMs"].(float64); exists && ((hasStart && frame < start) || (hasEnd && frame > end)) {
+		return BadAuthRequest("分镜关键帧时间必须位于来源时间范围内")
+	}
+	return nil
 }
