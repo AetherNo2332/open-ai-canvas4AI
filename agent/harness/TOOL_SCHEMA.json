@@ -196,7 +196,7 @@
     },
     {
       "function": {
-        "description": "生成预演白模视频。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "提交后台白模渲染任务。必须用返回的 taskId 核验任务终态和画布写回；节点真实出现后才能称已交付，“已请求”不是“已导出”。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "previs_preview",
         "parameters": {
           "additionalProperties": false,
@@ -237,13 +237,23 @@
     },
     {
       "function": {
-        "description": "创建预演场景。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "创建预演场景，并在画布上创建或绑定可打开预演台的 video 工作站节点；回执返回 nodeId。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "previs_scene_create",
         "parameters": {
           "additionalProperties": false,
           "properties": {
             "canvasSnapshotHash": {
               "description": "previs_scene_read 场景目录返回的 canvasSnapshotHash；创建前画布必须未变化",
+              "type": "string"
+            },
+            "nodeId": {
+              "description": "可选的预演视频工作站节点 ID；省略时由 sceneId 派生稳定 ID",
+              "maxLength": 80,
+              "type": "string"
+            },
+            "nodeTitle": {
+              "description": "可选的预演视频工作站节点标题",
+              "maxLength": 160,
               "type": "string"
             },
             "sceneId": {
@@ -284,7 +294,7 @@
     },
     {
       "function": {
-        "description": "审批后应用预演语义补丁；先读 snapshotHash，最多32项。禁止原始 JSON、URL、storage key。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "审批后应用预演语义补丁；先读 snapshotHash，最多32项。旧场景没有工作站时会在补丁时自动补齐。回执返回 nodeId。禁止原始 JSON、URL、storage key。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "previs_apply_patch",
         "parameters": {
           "additionalProperties": false,
