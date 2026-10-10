@@ -79,6 +79,10 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 			return err
 		}
 		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
+			// Pi failure does not revoke an already-authorized local render.
+			if task.Type == model.TaskTypePrevisRender && run.Status != "cancelled" {
+				continue
+			}
 			source := model.TaskCancellationParentFailed
 			if run.Status == "cancelled" {
 				source = model.TaskCancellationParentCancelled
@@ -91,6 +95,11 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 					return err
 				}
 			}
+		}
+	}
+	if mediaID != "" {
+		if media, err := s.repo.TaskForUser(run.UserID, mediaID); err == nil && media.Type == model.TaskTypePrevisRender {
+			mediaID = ""
 		}
 	}
 	if mediaID != "" && decodeErr == nil && state.CallIndex < len(state.Calls) {

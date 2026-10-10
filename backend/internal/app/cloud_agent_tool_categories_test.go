@@ -72,23 +72,26 @@ func TestCloudAgentPreflightUsesFlatAdvertisedConcreteCatalog(t *testing.T) {
 	}
 }
 
-func TestCloudAgentPreviousStepToolNamesAreRecordedInEveryToolDescription(t *testing.T) {
+func TestCloudAgentPreviousStepCallsDoNotChangeToolDefinitions(t *testing.T) {
 	all := cloudAgentTools(categoryTestRequest())
 	private := categoryCall("canvas_get_state")
 	private.Function.Arguments = `{"private":"do-not-copy"}`
-	visible := cloudAgentVisibleTools(all, "", []cloudAgentCall{private, categoryCall("plan_update")}, nil)
-	if len(visible) == 0 {
+	baseline := cloudAgentVisibleTools(all, "", nil, nil)
+	if len(baseline) == 0 {
 		t.Fatal("no eligible tools")
 	}
-	for _, tool := range visible {
-		function := tool["function"].(map[string]any)
-		description := stringField(function, "description")
-		if !strings.Contains(description, "canvas_get_state、plan_update") || strings.Contains(description, "do-not-copy") {
-			t.Fatalf("previous step record missing or leaked arguments for %s: %q", stringField(function, "name"), description)
-		}
+	want, err := json.Marshal(baseline)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if names := cloudAgentToolNames(cloudAgentVisibleTools(all, "", nil, nil)); len(names) != len(visible) {
-		t.Fatal("previous-step context should not alter the eligible tool set")
+	for _, previous := range [][]cloudAgentCall{{private, categoryCall("plan_update")}, {categoryCall("plan_update")}, nil} {
+		got, err := json.Marshal(cloudAgentVisibleTools(all, "", previous, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(want) {
+			t.Fatal("previous calls changed model-facing tool definitions")
+		}
 	}
 }
 

@@ -1,16 +1,24 @@
-import { compact, type SessionBeforeCompactEvent } from "@earendil-works/pi-coding-agent";
+import { compact, type SessionBeforeCompactEvent, type SessionEntry, type CompactionSettings } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
 import type { CanvasBridge, PiContextCompactionView, PiSnapshot } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
 
 type Preparation = SessionBeforeCompactEvent["preparation"];
 
+// 0.87.1 exports compact() but not its preparation helper. Resolve the locked
+// SDK implementation for boundary recovery instead of duplicating its algorithm.
+export async function prepareNativeCompaction(entries: SessionEntry[], settings: CompactionSettings): Promise<Preparation | undefined> {
+  const module = await import(new URL("core/compaction/compaction.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href);
+  return module.prepareCompaction(entries, settings) as Preparation | undefined;
+}
+
 export function compactionSettings(snapshot: PiSnapshot) {
   const limits = snapshot.modelLimits;
   const input = limits.inputBudgetTokens ?? Math.max(1, limits.contextWindowTokens - (limits.reservedOutputTokens ?? limits.maxOutputTokens));
   const trigger = limits.compactAtTokens ?? Math.floor(input * 0.85);
-  // Pi compares with >; Go preflight handles the inclusive boundary.
-  return { enabled: limits.configured, reserveTokens: limits.compactionReserveTokens ?? Math.max(1, limits.contextWindowTokens - trigger),
+  // Pi owns triggering and context accounting. Go supplies the effective window
+  // and reserve, including its scheduling fallback when capability is unknown.
+  return { enabled: true, reserveTokens: limits.compactionReserveTokens ?? Math.max(1, limits.contextWindowTokens - trigger),
     keepRecentTokens: limits.keepRecentTokens ?? Math.max(1, Math.min(20_000, Math.floor(input / 4))) };
 }
 

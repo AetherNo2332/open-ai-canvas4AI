@@ -14,7 +14,7 @@ import (
 // CurrentSchemaVersion follows upstream migrations through v43; our Agent
 // migrations register after that upstream range as 44+. When a future upstream
 // sync takes 44+, shift our block up again and extend the relocation table.
-const CurrentSchemaVersion int64 = 55
+const CurrentSchemaVersion int64 = 58
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 43
@@ -175,13 +175,51 @@ var schemaMigrations = []migration{
 		return tx.AutoMigrate(&model.AgentWorkspace{}, &model.AgentWorkspaceSkill{})
 	}},
 	{version: 53, name: "agent_crews", checksum: "sha256:agent-crews-v53-20261005", apply: func(tx *gorm.DB) error {
-		return tx.AutoMigrate(&model.AgentCrew{}, &model.AgentCrewMember{}, &model.AgentCrewMemberSkill{})
+		return nil
 	}},
 	{version: 54, name: "agent_crew_runs", checksum: "sha256:agent-crew-runs-v54-20261005", apply: func(tx *gorm.DB) error {
-		return tx.AutoMigrate(&model.AgentCrewRun{}, &model.AgentCrewMemberRun{}, &model.AgentCrewMessage{})
+		return nil
 	}},
 	{version: 55, name: "agent_crew_events", checksum: "sha256:agent-crew-events-v55-20261005", apply: func(tx *gorm.DB) error {
-		return tx.AutoMigrate(&model.AgentCrewEvent{})
+		return nil
+	}},
+	{version: 56, name: "agent_dynamic_subagents", checksum: "sha256:agent-dynamic-subagents-v56-20261006", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.AgentSubagentPolicy{}, &model.AgentSubagentLink{}, &model.AgentSubagentMessage{})
+	}},
+	{version: 57, name: "remove_legacy_agent_crews", checksum: "sha256:remove-legacy-agent-crews-v57-20261006", apply: func(tx *gorm.DB) error {
+		// Development is a clean break: manually configured Crew data is no longer
+		// part of the runtime contract and is intentionally removed.
+		for _, table := range []string{"agent_crew_events", "agent_crew_messages", "agent_crew_member_runs", "agent_crew_runs", "agent_crew_member_skills", "agent_crew_members", "agent_crews"} {
+			if tx.Migrator().HasTable(table) {
+				if err := tx.Migrator().DropTable(table); err != nil {
+					return err
+				}
+			}
+		}
+		// Enforce unique consent and per-Link sequence also on development v56 DBs.
+		for _, index := range []struct {
+			row  any
+			name string
+		}{
+			{&model.AgentSubagentPolicy{}, "idx_agent_subagent_policy_owner_canvas"},
+			{&model.AgentSubagentMessage{}, "idx_subagent_message_sequence"},
+		} {
+			if tx.Migrator().HasIndex(index.row, index.name) {
+				// These fixed index names resolve within the active schema/search_path.
+				// GORM's PostgreSQL DropIndex incorrectly qualifies CURRENT_SCHEMA()
+				// as an identifier when the model has no explicit schema.
+				if err := tx.Exec("DROP INDEX IF EXISTS " + index.name).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Migrator().CreateIndex(index.row, index.name); err != nil {
+				return err
+			}
+		}
+		return nil
+	}},
+	{version: 58, name: "agent_worker_recovery_and_canvas_redo", checksum: "sha256:agent-worker-recovery-and-canvas-redo-v58-20261007", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CloudAgentExecution{}, &model.CloudAgentCanvasMutation{})
 	}},
 }
 

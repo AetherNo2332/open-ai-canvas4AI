@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"infinite-canvas/backend/internal/storage"
 )
 
 func TestS3ObjectOperationsUsePathStyleSessionTokenAndNoManagedHeaders(t *testing.T) {
@@ -48,7 +50,7 @@ func TestS3ObjectOperationsUsePathStyleSessionTokenAndNoManagedHeaders(t *testin
 	}))
 	defer server.Close()
 
-	setting := ossSettingValue{Provider: s3Provider, Region: "us-east-1", Endpoint: server.URL, Bucket: "bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value", SessionToken: "session-token"}
+	setting := ossSettingValue{Provider: s3Provider, Region: "us-east-1", Endpoint: server.URL, Bucket: "bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value", SessionToken: "session-token", PathStyle: true}
 	etag, err := putS3Object(setting, "prefix/object.txt", "text/plain", 7, bytes.NewReader([]byte("payload")))
 	if err != nil || etag != "etag-value" {
 		t.Fatalf("putS3Object() = %q, %v", etag, err)
@@ -74,22 +76,33 @@ func TestSignedS3ObjectURLUsesSDKPresignAndSessionToken(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
-	value, err := signedS3ObjectURL(ossSettingValue{
-		Provider: s3Provider, Region: "us-east-1", Endpoint: server.URL, Bucket: "bucket",
-		AccessKeyID: "access-id", AccessKeySecret: "secret-value", SessionToken: "session-token",
-	}, "folder/object.png", time.Now().Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := url.Parse(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if parsed.Path != "/bucket/folder/object.png" || parsed.Query().Get("X-Amz-Security-Token") != "session-token" || parsed.Query().Get("X-Amz-Signature") == "" {
-		t.Fatalf("presigned URL = %q", value)
-	}
-	if strings.Contains(value, "secret-value") {
-		t.Fatal("presigned URL leaked secret key")
+	endpoint, _ := url.Parse(server.URL)
+	for _, pathStyle := range []bool{true, false} {
+		name := "virtual-host"
+		wantHost, wantPath := "bucket."+endpoint.Host, "/folder/object.png"
+		if pathStyle {
+			name = "path-style"
+			wantHost, wantPath = endpoint.Host, "/bucket/folder/object.png"
+		}
+		t.Run(name, func(t *testing.T) {
+			value, err := signedS3ObjectURL(ossSettingValue{
+				Provider: s3Provider, Region: "us-east-1", Endpoint: server.URL, Bucket: "bucket", PathStyle: pathStyle,
+				AccessKeyID: "access-id", AccessKeySecret: "secret-value", SessionToken: "session-token",
+			}, "folder/object.png", time.Now().Add(time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := url.Parse(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.Host != wantHost || parsed.Path != wantPath || parsed.Query().Get("X-Amz-Security-Token") != "session-token" || parsed.Query().Get("X-Amz-Signature") == "" {
+				t.Fatalf("presigned URL = %q", value)
+			}
+			if strings.Contains(value, "secret-value") {
+				t.Fatal("presigned URL leaked secret key")
+			}
+		})
 	}
 }
 
@@ -114,6 +127,37 @@ func TestS3EndpointAndDigestsEnforceStorageContract(t *testing.T) {
 	}
 	if storageLocationDigest(base) == storageLocationDigest(moved) {
 		t.Fatal("location change did not create a different digest")
+	}
+}
+
+func TestS3PathStyleSwitchControlsSDKFlag(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	for _, test := range []struct {
+		name      string
+		pathStyle bool
+		want      bool
+	}{
+		{name: "disabled", pathStyle: false, want: false},
+		{name: "forced", pathStyle: true, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client, err := storage.NewS3Client(storage.Settings{
+				Region:          "us-east-1",
+				Endpoint:        server.URL,
+				Bucket:          "bucket",
+				AccessKeyID:     "access-id",
+				AccessKeySecret: "secret-value",
+				PathStyle:       test.pathStyle,
+			}, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := client.Config.S3ForcePathStyle != nil && *client.Config.S3ForcePathStyle; got != test.want {
+				t.Fatalf("S3ForcePathStyle = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

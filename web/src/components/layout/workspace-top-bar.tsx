@@ -1,3 +1,4 @@
+import { GithubOutlined } from "@ant-design/icons";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Link, useLocation } from "react-router";
 
@@ -54,6 +55,16 @@ export function WorkspaceTopBar({ sidebarOpen, onToggleSidebar }: { sidebarOpen:
                     <strong>{balance}</strong>
                 </button> : null}
                 {user ? <SystemAnnouncementCenter userId={user.id} className="app-workspace-topbar-icon-button" autoOpen /> : null}
+                <a
+                    href="https://github.com/AetherNo2332/open-ai-canvas4AI/tree/main"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="app-workspace-topbar-icon-button"
+                    aria-label="打开 GitHub 仓库"
+                    title="GitHub 仓库"
+                >
+                    <GithubOutlined />
+                </a>
                 <AnimatedThemeToggler className="app-workspace-topbar-icon-button" theme={theme} onThemeChange={setTheme} aria-label="切换主题" />
                 <WorkspaceAccountMenu />
             </div>

@@ -47,7 +47,7 @@ function stopReason(result: CanvasModelResult): "stop" | "length" | "toolUse" {
   return "stop";
 }
 
-export function createCanvasStreamFn(step: ModelStep): StreamFn {
+export function createCanvasStreamFn(step: ModelStep, onFailure?: (error: unknown) => void): StreamFn {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
     const partial: AssistantMessage = {
@@ -130,6 +130,9 @@ export function createCanvasStreamFn(step: ModelStep): StreamFn {
         stream.push({ type: "done", reason: partial.stopReason, message: partial });
         stream.end(partial);
       } catch (error) {
+        // The SDK consumes error streams normally. Preserve the original error
+        // for the leased-session boundary rather than losing it in a message.
+        onFailure?.(error);
         partial.stopReason = options?.signal?.aborted ? "aborted" : "error";
         partial.errorMessage = error instanceof Error ? error.message : String(error);
         stream.push({ type: "error", reason: partial.stopReason, error: partial });

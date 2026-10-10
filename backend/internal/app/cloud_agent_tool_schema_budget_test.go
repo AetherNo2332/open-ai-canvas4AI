@@ -23,6 +23,12 @@ func platformToolSchema(t *testing.T) ([]map[string]any, []byte) {
 func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 	tools, raw := platformToolSchema(t)
 	t.Logf("platform tool schema: %d tools, %d bytes", len(tools), len(raw))
+	for _, tool := range tools {
+		encoded, _ := json.Marshal(tool)
+		if len(encoded) > 2000 {
+			t.Logf("%v: %d bytes", tool["function"].(map[string]any)["name"], len(encoded))
+		}
+	}
 
 	// 条件必填不是 type 枚举能表达的约束，压缩描述不能删掉协议语义。
 	found := false
@@ -41,7 +47,8 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 			{"properties": map[string]any{"type": map[string]any{"const": "update_node"}}, "required": []string{"patch"}},
 			{"properties": map[string]any{"type": map[string]any{"const": "connect_nodes"}}, "required": []string{"fromNodeId", "toNodeId"}},
 		}
-		if !reflect.DeepEqual(opItem["oneOf"], want) {
+		branches, ok := opItem["oneOf"].([]map[string]any)
+		if !ok || len(branches) != 11 || !reflect.DeepEqual(branches[:3], want) {
 			t.Fatalf("操作类型条件必填约束丢失: %#v", opItem["oneOf"])
 		}
 		if props, ok := opItem["properties"].(map[string]any); !ok || len(props) == 0 {
@@ -60,7 +67,10 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("wire schema: %d tools, %d bytes", len(cloudAgentToolNames(tools)), len(wire))
-	if len(wire) > 40000 {
-		t.Fatalf("模型实际接收的完整工具 schema 超出 40000 字节：%d", len(wire))
+	// Core CRUD, native drawing, asset binding, history and structured rows add
+	// bounded contracts. Deep node patches are discovered on demand; pin the
+	// complete catalog size rather than embedding every native schema per step.
+	if len(wire) > 64000 {
+		t.Fatalf("模型实际接收的完整工具 schema 超出 64000 字节：%d", len(wire))
 	}
 }

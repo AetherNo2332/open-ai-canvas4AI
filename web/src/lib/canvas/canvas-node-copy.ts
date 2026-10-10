@@ -1,5 +1,6 @@
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
-import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type StoryboardRow } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type StoryboardRow } from "@/types/canvas";
+import { getFrameChildren, isFrameNode } from "@/lib/canvas/canvas-frame";
 
 const COPY_TITLE_SUFFIX = /^(.*)_copy(\d+)$/i;
 
@@ -60,6 +61,7 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     delete metadata.versionOfNodeId;
     delete metadata.versionLabel;
     delete metadata.versionPrimary;
+    for (const key of Object.keys(metadata)) if (key.startsWith("generationApplied") || key.startsWith("generationPersistence")) delete (metadata as Record<string, unknown>)[key];
 
     metadata.copiedFromNodeId = node.id;
     if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) {
@@ -72,9 +74,9 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
         .filter((nodeId): nodeId is string => Boolean(nodeId));
     metadata.videoStartFrameNodeId = remapReferenceId(node.metadata?.videoStartFrameNodeId, idMap);
     metadata.videoEndFrameNodeId = remapReferenceId(node.metadata?.videoEndFrameNodeId, idMap);
-    metadata.directorPreviewNodeId = remapOwnedNodeId(node.metadata?.directorPreviewNodeId, idMap);
-    metadata.directorDepthNodeId = remapOwnedNodeId(node.metadata?.directorDepthNodeId, idMap);
-    metadata.directorNormalNodeId = remapOwnedNodeId(node.metadata?.directorNormalNodeId, idMap);
+    metadata.previsPreviewNodeId = remapOwnedNodeId(node.metadata?.previsPreviewNodeId, idMap);
+    metadata.previsDepthNodeId = remapOwnedNodeId(node.metadata?.previsDepthNodeId, idMap);
+    metadata.previsNormalNodeId = remapOwnedNodeId(node.metadata?.previsNormalNodeId, idMap);
 
     const characterViewNodeIds = node.metadata?.characterViewNodeIds;
     const copiedCharacterViewNodeIds = characterViewNodeIds ? {
@@ -97,4 +99,38 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
         referenceNodeIds: remapReferenceIds(node.metadata.storyboard.referenceNodeIds, idMap) || [],
     } : undefined;
     return metadata;
+}
+
+export function copyCanvasNodeGraph(nodes: CanvasNodeData[], connections: CanvasConnection[], sourceId: string, idMap: ReadonlyMap<string, string>, connectionId: () => string, title?: string) {
+    const source = nodes.find((node) => node.id === sourceId);
+    if (!source) throw new Error("复制来源节点不存在");
+    const sources = isFrameNode(source) ? [source, ...getFrameChildren(source.id, nodes)] : [source];
+    const copiedIds = new Set(sources.map((node) => node.id));
+    const copiedMap = new Map([...idMap].filter(([id]) => copiedIds.has(id)));
+    const copiedNodes = sources.map((node) => {
+        const id = copiedMap.get(node.id);
+        if (!id || nodes.some((item) => item.id === id)) throw new Error("复制节点 ID 缺失或重复");
+        const metadata = isolateCopiedNodeMetadata(node, copiedMap);
+        if (node.type === CanvasNodeType.Drawing) {
+            metadata.drawingId = `${id}-document`;
+            metadata.drawingRevision = 0;
+            metadata.drawingUpdatedAt = undefined;
+            metadata.drawingShapeCount = 0;
+            metadata.drawingPageCount = 1;
+            if (metadata.drawingDocument) {
+                metadata.drawingDocument = { ...structuredClone(metadata.drawingDocument), revision: 1, updatedAt: new Date().toISOString() };
+                metadata.drawingEngine = metadata.drawingDocument.engine;
+                metadata.drawingRevision = metadata.drawingDocument.revision;
+                metadata.drawingUpdatedAt = metadata.drawingDocument.updatedAt;
+                metadata.drawingShapeCount = metadata.drawingDocument.shapeCount;
+                metadata.drawingPageCount = metadata.drawingDocument.pageCount;
+            }
+        }
+        return { ...node, id, title: node.id === source.id ? title ?? nextCopiedNodeTitle(source.title, nodes.map((item) => item.title)) : node.title, position: { x: node.position.x + 36, y: node.position.y + 36 }, parentId: node.parentId ? copiedMap.get(node.parentId) || node.parentId : undefined, metadata };
+    });
+    const copiedConnections = connections.filter((edge) => copiedIds.has(edge.fromNodeId) && copiedIds.has(edge.toNodeId)).map((edge) => ({ ...edge, id: connectionId(), fromNodeId: copiedMap.get(edge.fromNodeId)!, toNodeId: copiedMap.get(edge.toNodeId)! }));
+    if (!isFrameNode(source)) {
+        for (const edge of connections.filter((edge) => edge.toNodeId === source.id && !copiedIds.has(edge.fromNodeId))) copiedConnections.push({ ...edge, id: connectionId(), toNodeId: copiedMap.get(source.id)! });
+    }
+    return { nodes: copiedNodes, connections: copiedConnections };
 }

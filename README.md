@@ -151,7 +151,7 @@ curl -fsSL https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/main/script
   | sudo env CANVAS_IMAGE_TAG=v1.5.7.1 bash
 ```
 
-脚本会先按指定 Release 拉取镜像，再解析并写入 `CANVAS_BACKEND_IMAGE`、`CANVAS_WEB_IMAGE` 的 GHCR digest；生产 Compose 不接受缺失 digest 的默认镜像或 `latest`。更新流程、数据库迁移、备份和回退说明见[系统更新文档](docs/content/docs/backend/system-update.mdx)。
+脚本会先按指定 Release 拉取镜像，再解析并写入 `CANVAS_BACKEND_IMAGE`、`CANVAS_WEB_IMAGE`、`CANVAS_AGENT_IMAGE` 的 GHCR digest；生产 Compose 不接受缺失 digest 的默认镜像或 `latest`。云端 Agent 的 Pi worker 以 `pi` profile 提供，启用时需在 `.env` 配置 `CANVAS_AGENT_INTERNAL_TOKEN` 并追加 `COMPOSE_PROFILES=pi`。更新流程、数据库迁移、备份和回退说明见[系统更新文档](docs/content/docs/backend/system-update.mdx)。
 
 ## 安全边界
 
@@ -176,7 +176,7 @@ curl -fsSL https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/main/script
 - [画布操作手册](docs/content/docs/canvas/canvas-node-manual.mdx)
 - [插件系统](docs/content/docs/plugins/plugin-system.mdx)
 - [待办与待测试](docs/content/docs/progress/todo.mdx) · [待测试清单](docs/content/docs/progress/pending-test.mdx)
-- [更新日志](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [上游声明](NOTICE)
+- [发行说明](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [上游声明](NOTICE)
 
 ### 验证命令
 

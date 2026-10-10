@@ -7,7 +7,7 @@
  * - 策略文件去掉 YAML frontmatter（id/version 是给 Go 读的元数据，不进提示正文）；
  * - 生成 SOURCE.json 记录每个文件的来源路径与 sha256，便于核对是否漂移。
  *
- * 用法：node scripts/sync-harness.mjs
+ * 用法：node scripts/sync-harness.mjs [--tool-descriptions-only]
  */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -34,8 +34,11 @@ function stripFrontmatter(raw) {
 }
 
 await mkdir(outDir, { recursive: true });
-const manifest = [];
-for (const source of SOURCES) {
+const toolsOnly = process.argv.includes("--tool-descriptions-only");
+const sources = toolsOnly ? SOURCES.filter(source => source.to === "TOOL_DESCRIPTIONS.md") : SOURCES;
+const previous = toolsOnly ? JSON.parse(await readFile(join(outDir, "SOURCE.json"), "utf8")) : { files: [] };
+const manifest = previous.files.filter(item => !sources.some(source => source.to === item.file));
+for (const source of sources) {
   const raw = await readFile(join(repo, source.from), "utf8");
   const text = source.stripFrontmatter ? stripFrontmatter(raw) : raw.replace(/\r\n/g, "\n").trim();
   if (text === "") throw new Error(`${source.from} is empty`);

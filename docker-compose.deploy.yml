@@ -85,6 +85,34 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # 云端 Agent 的 Pi worker（profile pi）：独立进程，只通过 /internal-agent 与 backend
+  # 通信，不直接持有数据库，无对外端口。镜像随 publish-images.yml 一并发布；
+  # 默认按 CANVAS_IMAGE_TAG 解析，可用 CANVAS_AGENT_IMAGE 覆盖为具体 digest。
+  agent:
+    profiles: ["pi"]
+    image: ${CANVAS_AGENT_IMAGE:-${CANVAS_IMAGE_REPOSITORY:-ghcr.io/ddcat-ai/open-ai-canvas}-agent:${CANVAS_IMAGE_TAG:-latest}}
+    environment:
+      CANVAS_BACKEND_INTERNAL_URL: http://backend:8080
+      CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:?请先配置 CANVAS_AGENT_INTERNAL_TOKEN（需与 backend 一致）}
+      CANVAS_AGENT_CONCURRENCY: ${CANVAS_AGENT_CONCURRENCY:-4}
+      CANVAS_AGENT_HARNESS_DIR: /agent/harness
+      # 宿主带 HTTP(S)_PROXY 时，Node fetch 会把内部调用也送去代理而 fetch failed。
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,agent,web,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+      no_proxy: "localhost,127.0.0.1,::1,backend,agent,web,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, node, -e, "process.kill(1,0)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
 volumes:
   backend-data:
   postgres-data:

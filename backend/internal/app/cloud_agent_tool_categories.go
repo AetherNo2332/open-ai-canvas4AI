@@ -1,7 +1,5 @@
 package app
 
-import "strings"
-
 const cloudAgentToolDisclosureVersion = 2
 
 // Categories classify concrete tools for policy, telemetry, and UI grouping.
@@ -9,7 +7,9 @@ const cloudAgentToolDisclosureVersion = 2
 // at the beginning of each Pi model step.
 func cloudAgentToolCategory(name string) string {
 	switch name {
-	case "plan_update", "ask_user", "finish_run", "task_get", "delegate_task", "crew_wait", "task_result", "crew_propose":
+	case "web_search":
+		return "agent_tools_web"
+	case "plan_update", "ask_user", "finish_run", "task_get":
 		return "agent_tools_control"
 	case "agent_profile_read", "recall_lessons", "remember_lesson":
 		return "agent_tools_memory"
@@ -17,11 +17,11 @@ func cloudAgentToolCategory(name string) string {
 		return "agent_tools_skills"
 	case "read":
 		return "native_skill"
-	case "canvas_list_node_types", "canvas_get_state", "canvas_read_batch_table", "canvas_read_storyboard":
+	case "canvas_list_node_types", "canvas_get_state", "canvas_read_content", "canvas_read_drawing", "canvas_list_assets", "canvas_search_nodes", "canvas_read_batch_table", "canvas_read_storyboard", "previs_scene_read":
 		return "agent_tools_canvas_read"
 	case "image_text_detect", "image_annotation_render", "canvas_inspect_image":
 		return "agent_tools_image"
-	case "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_apply_ops", "canvas_arrange_nodes":
+	case "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_apply_ops", "canvas_edit_drawing", "canvas_bind_asset", "canvas_undo", "canvas_redo", "canvas_arrange_nodes", "canvas_create_character", "previs_scene_create", "previs_apply_patch", "previs_preview":
 		return "agent_tools_canvas_edit"
 	case "model_list", "generate_media", "image_layer_split":
 		return "agent_tools_generation"
@@ -32,7 +32,7 @@ func cloudAgentToolCategory(name string) string {
 
 func cloudAgentIsToolCategory(name string) bool {
 	switch name {
-	case "agent_tools_control", "agent_tools_memory", "agent_tools_skills", "agent_tools_canvas_read", "agent_tools_image", "agent_tools_canvas_edit", "agent_tools_generation":
+	case "agent_tools_web", "agent_tools_control", "agent_tools_memory", "agent_tools_skills", "agent_tools_canvas_read", "agent_tools_image", "agent_tools_canvas_edit", "agent_tools_generation":
 		return true
 	default:
 		return false
@@ -113,15 +113,11 @@ func cloudAgentAppendActivatedCategory(active []string, category string) []strin
 	return append(active, category)
 }
 
-func cloudAgentVisibleToolsForCategories(all []map[string]any, categories []string, previous []cloudAgentCall, repairScope []string) []map[string]any {
+func cloudAgentVisibleToolsForCategories(all []map[string]any, categories []string, _ []cloudAgentCall, repairScope []string) []map[string]any {
 	_ = categories // kept for callers restoring v1 checkpoints
 	repairAllowed := map[string]bool{}
 	for _, name := range repairScope {
 		repairAllowed[name] = true
-	}
-	record := ""
-	if names := cloudAgentPreviousStepCallNames(previous); names != "" {
-		record = " " + strings.ReplaceAll(cloudAgentToolText("previous_step_calls"), "{names}", names)
 	}
 	visible := make([]map[string]any, 0, len(all))
 	for _, tool := range all {
@@ -130,36 +126,7 @@ func cloudAgentVisibleToolsForCategories(all []map[string]any, categories []stri
 		if name == "" || cloudAgentIsToolCategory(name) || (len(repairScope) > 0 && !repairAllowed[name]) {
 			continue
 		}
-		if record == "" {
-			visible = append(visible, tool)
-			continue
-		}
-		copyFunction := cloneStringAnyMap(function)
-		copyFunction["description"] = stringField(function, "description") + record
-		visible = append(visible, map[string]any{"type": "function", "function": copyFunction})
+		visible = append(visible, tool)
 	}
 	return visible
-}
-
-func cloudAgentPreviousStepCallNames(calls []cloudAgentCall) string {
-	names := []string{}
-	seen := map[string]bool{}
-	for _, call := range calls {
-		name := call.Function.Name
-		if name == "" || cloudAgentIsToolCategory(name) || seen[name] {
-			continue
-		}
-		seen[name] = true
-		if len(names) < 6 {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return ""
-	}
-	record := strings.Join(names, "、")
-	if len(seen) > len(names) {
-		record += "等"
-	}
-	return record
 }

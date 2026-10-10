@@ -51,7 +51,7 @@ func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID strin
 
 	ids := make([]string, 0, 16)
 	for _, node := range nodes {
-		descriptor, known := cloudAgentNodeCapabilityForType(stringValue(node["type"]))
+		descriptor, known := cloudAgentNodeCapabilityForNode(node)
 		if known && descriptor.Connection.CanReference {
 			ids = append(ids, stringValue(node["id"]))
 		}
@@ -64,7 +64,7 @@ func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID strin
 			continue
 		}
 		node := byID[id]
-		descriptor, known := cloudAgentNodeCapabilityForType(stringValue(node["type"]))
+		descriptor, known := cloudAgentNodeCapabilityForNode(node)
 		if !known || !descriptor.Connection.CanReference {
 			continue
 		}

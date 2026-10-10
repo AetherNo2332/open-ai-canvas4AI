@@ -64,6 +64,12 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 				return
 			}
 			if !s.IsDraining() {
+				if err := s.ReconcileDynamicSubagents(ctx); err != nil {
+					log.Printf("subagent reconciliation: %v", err)
+				}
+				if _, err := s.SweepWorkerRecoveries(); err != nil {
+					log.Printf("pi recovery sweep: %v", err)
+				}
 				if swept, err := s.SweepStalledPiAgentRuns(); err != nil {
 					log.Printf("pi stalled sweep: %v", err)
 				} else if swept > 0 {
@@ -225,6 +231,9 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 	if task.Type == model.TaskTypeTimelineRender {
 		return w.processTimelineRender(task, ctx)
 	}
+	if task.Type == model.TaskTypePrevisRender {
+		return w.processPrevisRender(task, ctx)
+	}
 	if task.MediaRecoveryJSON != "" {
 		result, recoveryErr := s.resumeTaskMedia(ctx, task)
 		return s.finishTaskMediaRecovery(task, result, recoveryErr)
@@ -309,8 +318,7 @@ func (w *taskWorkerCoordinator) processClaimedTask(task *model.Task, globalSlot 
 			err = errors.New("上游任务长时间未同步，已停止自动查询，请确认渠道任务状态后重试。")
 		}
 		if errors.Is(err, context.DeadlineExceeded) || deadlineExpired {
-			// 画布 Agent 的单步超时是可恢复事件（运行期会关思考重试同一步），
-			// 因此必须与"任务执行超时"区分开，否则只能整轮判死。
+			// 单步超时使用专用标记，让运行期终止 Agent 并显示明确失败原因。
 			if cloudAgentModelOperation(task) {
 				err = errors.New(cloudAgentStepTimeoutError + "，已中止这一步")
 			} else {
@@ -375,8 +383,7 @@ func taskLeaseRenewContext(parent context.Context) (context.Context, context.Can
 // taskExecutionTimeout 解析一次任务的执行墙钟：画布 Agent 的单步调用可以配秒级超时
 // （AgentStepTimeoutSeconds），没配时沿用文本任务超时。秒级粒度是必要的——一轮里每一步
 // 都是几分钟级的调用，分钟粒度改不动"某一步卡住"的体验。
-// 超时的表现是任务错误里带 cloudAgentStepTimeoutError 标记，运行期据此关思考重试同一步，
-// 而不是把整轮判死（见 cloud_agent_step_timeout.go）。
+// 任务错误里的 cloudAgentStepTimeoutError 标记让运行期终止本轮 Agent。
 func taskExecutionTimeout(task *model.Task, policy RuntimeTaskPolicy) time.Duration {
 	if task != nil && cloudAgentModelOperation(task) && policy.AgentStepTimeoutSeconds > 0 {
 		return time.Duration(policy.AgentStepTimeoutSeconds) * time.Second
@@ -389,6 +396,8 @@ func taskExecutionTimeout(task *model.Task, policy RuntimeTaskPolicy) time.Durat
 
 func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) time.Duration {
 	switch {
+	case taskType == model.TaskTypePrevisRender:
+		return 30 * time.Minute
 	case strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):
 		return max(time.Duration(policy.VideoTimeoutMinutes)*time.Minute, 5*time.Minute)
 	case strings.HasPrefix(taskType, "canvas_image"):

@@ -37,3 +37,22 @@ test("modelStep preserves missing usage as missing", async () => {
     globalThis.fetch = previousFetch;
   }
 });
+
+test("a failed overflow task reaches Go failure settlement and Pi gets a safe recovery marker", async () => {
+  const previousFetch = globalThis.fetch;
+  const paths: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    paths.push(String(url));
+    const data = String(url).endsWith("/fail")
+      ? { status: "continue", reason: "context_overflow" }
+      : { taskId: "overflow-task", status: "failed", error: "raw upstream sensitive detail" };
+    return new Response(JSON.stringify({ code: 0, data }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const run = { runId: "run-overflow" } as PiSnapshot;
+    await assert.rejects(new CanvasBridge("http://backend:8080", "token", "worker").modelStep(run,
+      { systemPrompt: "test", messages: [], tools: [], toolChoice: "auto" }),
+      (error: unknown) => error instanceof Error && error.message === "context_length_exceeded");
+    assert.ok(paths.some(path => path.endsWith("/overflow-task/fail")));
+  } finally { globalThis.fetch = previousFetch; }
+});

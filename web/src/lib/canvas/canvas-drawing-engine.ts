@@ -14,6 +14,7 @@ export type CanvasDrawingEngineSetting = {
 export const DEFAULT_DRAWING_ENGINE: CanvasDrawingEngine = "excalidraw";
 
 export function drawingEngineForNode(node?: Pick<CanvasNodeData, "metadata"> | null): CanvasDrawingEngine {
+    if (node?.metadata?.drawingDocument) return node.metadata.drawingDocument.engine;
     // 旧绘图节点没有引擎标记，其快照只能由 tldraw 读取。
     return node?.metadata?.drawingEngine === "excalidraw" ? "excalidraw" : "tldraw";
 }

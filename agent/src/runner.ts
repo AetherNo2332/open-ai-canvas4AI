@@ -20,13 +20,13 @@ import {
   type SessionCompactFailedEvent,
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { CanvasBridge, CanvasCompactionNeeded, CanvasModelRetry, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
+import { CanvasBridge, CanvasCompactionNeeded, CanvasContextOverflow, CanvasModelRetry, CanvasRunSuspended, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
-import { compactionSettings, serializePreparation, runNativeCompaction } from "./native-compaction.js";
+import { compactionSettings, serializePreparation, runNativeCompaction, prepareNativeCompaction } from "./native-compaction.js";
 import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
-import { validateCrewEnvelope } from "./crew-wire.js";
+import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
-import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery } from "./native-skills.js";
+import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected } from "./native-skills.js";
 import { Unsafe, type TSchema } from "typebox";
 import { createImageContextExtension, createTerminalHistoryExtension, missingImageContent } from "./session-history.js";
 import { harnessHash, loadPromptParts, renderSystemPrompt, type PromptParts } from "./system-prompt.js";
@@ -60,8 +60,8 @@ const CANVAS_BASE_URL = "http://canvas-bridge.invalid/v1";
 const PI_FALLBACK_OUTPUT_TOKENS = 16_384;
 
 /**
- * 模型标识只用于 Pi 的会话记账与缓存键：真实渠道、模型能力、协议与费用全部由 Go 决定
- * （见 `PiModelStep`）。这里声明的窗口/输出上限是占位值，**不进入真实准入**。
+ * Pi 的模型窗口直接来自 Go 解析的预算，供原生上下文计量与压缩判定使用。
+ * 真实渠道、协议、模型请求与费用仍由 Go 的 PiModelStep 桥接。
  */
 export function canvasModel(snapshot: PiSnapshot): Model<any> {
   const name = snapshot.request.channelModelKey || snapshot.request.model || "canvas-model";
@@ -79,6 +79,12 @@ export function canvasModel(snapshot: PiSnapshot): Model<any> {
   return { id: name, name, provider: CANVAS_PROVIDER_ID, api: CANVAS_API_ID, baseUrl: CANVAS_BASE_URL,
     reasoning: true, input: snapshot.request.visionEnabled ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: contextWindowTokens, maxTokens: maxOutputTokens };
+}
+
+/** Refresh the SDK's actual model together with its derived compaction settings. */
+export function syncCanvasModelLimits(session: Pick<AgentSession, "agent" | "settingsManager">, snapshot: PiSnapshot): void {
+  session.agent.state.model = canvasModel(snapshot);
+  session.settingsManager.applyOverrides({ compaction: compactionSettings(snapshot) });
 }
 
 function textContent(content: unknown): string {
@@ -316,6 +322,7 @@ async function recoverToolResults(
       : admissionError ? { result: admissionError, isError: true } :
       await bridge.executeTool(snapshot, taskId, call.id, signal);
     if ("terminated" in receipt && receipt.terminated) throw new CanvasRunTerminated("terminated");
+    if ("suspended" in receipt && receipt.suspended) throw new CanvasRunSuspended();
     const result: ToolResultMessage = { role: "toolResult", toolCallId: call.id, toolName: call.function.name,
       content: [{ type: "text",
         text: typeof receipt.result === "string" ? receipt.result : JSON.stringify(receipt.result) }],
@@ -373,6 +380,26 @@ async function resumePoint(
 
   const storedEntries = (snapshot.piSessionEntries || []).map(({ entry }) => entry as unknown as SessionEntry);
   if (storedEntries.length > 0) {
+    // A crash can occur after SDK omission is durable but before the operation
+    // is registered. Replay only that current-run failed attempt on a new
+    // branch; Pi will decide its native overflow recovery again.
+    const byId = new Map(storedEntries.map(entry => [entry.id, entry]));
+    const branch: SessionEntry[] = [];
+    for (let id = snapshot.piActiveLeafId; id && byId.has(id);) {
+      const entry = byId.get(id)!;
+      branch.unshift(entry);
+      id = entry.parentId || undefined;
+    }
+    const edits: SessionEntry[] = [];
+    while (branch.at(-1)?.type === "context_edit") edits.unshift(branch.pop()!);
+    const failed = branch.at(-1);
+    if (!snapshot.activeTaskId && edits.length > 0 && failed?.type === "message" &&
+      failed.message.role === "assistant" && failed.message.stopReason === "error" &&
+      failed.message.errorMessage === "context_length_exceeded" &&
+      snapshot.piSessionEntries?.some(item => item.runId === snapshot.runId && item.entry.id === failed.id) &&
+      edits.every(entry => entry.type === "context_edit" && entry.targetId === failed.id && entry.replacement === null)) {
+      return { entries: storedEntries, prompt: CONTINUATION_PROMPT, activeLeafId: failed.id };
+    }
     let prompt = snapshot.piMessages?.length ? CONTINUATION_PROMPT : snapshot.request.prompt;
     let activeLeafId = snapshot.piActiveLeafId || undefined;
     const tail = history.at(-1);
@@ -386,7 +413,7 @@ async function resumePoint(
         prompt = textContent(tail.content);
       }
     }
-    if (snapshot.piMessages?.length && tail?.role === "assistant" && callsFromAssistant(tail as AssistantMessage).length === 0) {
+    if (snapshot.piMessages?.length && tail?.role === "assistant" && tail.stopReason !== "error" && tail.stopReason !== "aborted" && callsFromAssistant(tail as AssistantMessage).length === 0) {
       const taskId = snapshot.lastTaskId || snapshot.noToolTaskId;
       if (taskId) {
         const decision = await bridge.noToolTurn(snapshot, taskId, signal);
@@ -426,6 +453,7 @@ interface CanvasCompactionHookDependencies {
   activeLeafId: () => string;
   pendingCompaction: () => PiSnapshot["pendingContextCompaction"];
   drain: () => Promise<void>;
+  boundaryPreparation?: () => Promise<SessionBeforeCompactEvent["preparation"] | undefined>;
   signal?: AbortSignal;
   onCommitted: (entry: Record<string, unknown>, revision: number) => void;
   onFailure: (error: Error) => void;
@@ -449,13 +477,21 @@ export function createCanvasContextCompactionExtension(deps: CanvasCompactionHoo
           if (pending && (pending.sessionRevision !== deps.sessionRevision() || pending.activeLeafId !== deps.activeLeafId())) {
             throw new FatalWorkerError("Persisted Go compaction no longer matches the restored Pi session");
           }
-          let operation = pending
-            ? await deps.bridge.resumeContextCompaction(deps.snapshot(), pending.operationId, event.signal)
-            : await deps.bridge.compactContext(deps.snapshot(), {
+          const begin = (preparation: SessionBeforeCompactEvent["preparation"]) => deps.bridge.compactContext(deps.snapshot(), {
               sessionRevision: deps.sessionRevision(), activeLeafId: deps.activeLeafId(), reason: event.reason,
-              willRetry: event.willRetry, tokensBefore: event.preparation.tokensBefore,
-              ...(event.preparation.fileOps ? { preparation: serializePreparation(event.preparation) } : {}),
+              willRetry: event.willRetry, tokensBefore: preparation.tokensBefore,
+              ...(preparation.fileOps ? { preparation: serializePreparation(preparation) } : {}),
             }, event.signal);
+          let operation;
+          try {
+            operation = pending ? await deps.bridge.resumeContextCompaction(deps.snapshot(), pending.operationId, event.signal)
+              : await begin(event.preparation);
+          } catch (error) {
+            if (pending || !(error instanceof FatalWorkerError) || !error.message.includes("Pi 保留工具调用缺少结果")) throw error;
+            const preparation = await deps.boundaryPreparation?.();
+            if (!preparation) throw error;
+            operation = await begin(preparation);
+          }
           if (pending && operation.operationId !== pending.operationId) {
             throw new FatalWorkerError("Go resumed a different context compaction operation");
           }
@@ -497,7 +533,7 @@ export function createCanvasContextCompactionExtension(deps: CanvasCompactionHoo
         }
       });
       pi.on("session_compact_failed", (event: SessionCompactFailedEvent) => {
-        if (activeOperation) {
+        if (!event.aborted && (activeOperation || (event.reason === "overflow" && event.errorMessage))) {
           deps.onFailure(new FatalWorkerError(
             `Go-backed Pi context compaction failed (${event.reason}${event.errorMessage ? `: ${event.errorMessage}` : ""})`,
           ));
@@ -594,24 +630,6 @@ async function bootstrapSession(
  * 停在 running 被反复重领（真实 3000 部署验收复现）。转成 FatalWorkerError 后由
  * `server.ts` 写入 run 失败原因，界面得到明确终态而不是永久"运行中"。
  */
-/**
- * Go 的投影口径比 Pi 的 token 估算保守得多（中文尤其明显：同一段历史 Go 约 1 token/字，
- * Pi 约 0.4）。于是会出现"Go 判定超过准入线、Pi 却认为上下文还小、拒绝压缩"的僵局：
- * Pi 抛 Nothing to compact / Already compacted，运行在"准入拒绝 → 压缩失败"之间打转。
- *
- * Go 的判定是权威准入线。这里在 Go 已明确要求压缩时收紧 Pi 的触发线与保留窗口：触发线
- * 压到准入线的四分之一、原文保留量同样收到四分之一，让这次压缩真正把 Go 口径的投影压到线下。
- */
-function forceCompactionForAdmission(session: AgentSession, snapshot: PiSnapshot): void {
-  const window = snapshot.modelLimits.contextWindowTokens;
-  if (!Number.isSafeInteger(window) || window < 2) return;
-  const base = compactionSettings(snapshot);
-  const compactAt = snapshot.modelLimits.compactAtTokens ?? Math.floor(window * 0.85);
-  session.settingsManager.applyOverrides({ compaction: { ...base,
-    reserveTokens: Math.max(1, window - Math.max(1, Math.floor(compactAt / 4))),
-    keepRecentTokens: Math.max(1, Math.floor((base.keepRecentTokens ?? 1) / 4)) } });
-}
-
 async function compactSessionOrFail(session: AgentSession, reason: string, softFail = false): Promise<boolean> {
   try {
     await session.compact();
@@ -641,8 +659,9 @@ export async function runCanvasAgent(
 ): Promise<void> {
   shutdown?.throwIfAborted();
   let snapshot = initial;
-  try { validateCrewEnvelope(snapshot.crew, snapshot.tools); }
-  catch (error) { throw new FatalWorkerError(error instanceof Error ? error.message : "Invalid Crew envelope"); }
+  let runSuspended = false;
+  try { validateSubagentRuntime(snapshot.subagent, snapshot.runId, snapshot.request.subagentEnabled, snapshot.tools); }
+  catch (error) { throw new FatalWorkerError(error instanceof Error ? error.message : "Invalid subagent runtime"); }
   const model = canvasModel(snapshot);
   const initialVisualMessages = fromCanonical(snapshot, model);
   // 合同校验必须早于任何恢复副作用：schema 不兼容时不能先写检查点或执行工具。
@@ -658,6 +677,11 @@ export async function runCanvasAgent(
   let compactionFailure: unknown;
   let runTerminated = isTerminalRunStatus(snapshot.status);
   let session: AgentSession | undefined;
+  let abortRequested = false;
+  const abortSession = (): void => {
+    abortRequested = true;
+    void session?.abort().catch(() => undefined);
+  };
   let sessionManager: SessionManager | undefined;
   let sessionRevision = snapshot.piSessionRevision || 1;
   let sessionLeafId = snapshot.piActiveLeafId || "";
@@ -669,7 +693,7 @@ export async function runCanvasAgent(
       pendingContextCompaction = undefined;
       snapshot = { ...snapshot, pendingContextCompaction: undefined };
     }
-    session?.settingsManager.applyOverrides({ compaction: compactionSettings(snapshot) });
+    if (session) syncCanvasModelLimits(session, snapshot);
   };
   const persistedSessionEntryIds = new Set((snapshot.piSessionEntries || []).map(({ entry }) => String(entry.id || "")));
   const stagedRecoveryEntries: SessionEntry[] = [];
@@ -682,19 +706,20 @@ export async function runCanvasAgent(
   const resumedNativeCallIds = new Set<string>();
   let canonicalCount = snapshot.canonical.messages.length;
   const pendingInterjections = new Map<string, string>();
+  const interjectionSources = new Map<string, string | undefined>();
   const injectedInterjectionIds = new Set<string>();
   const syncPendingInterjections = (next: PiSnapshot): void => {
     for (const item of next.pendingInterjections || []) {
-      if (item.id && typeof item.text === "string") pendingInterjections.set(item.id, item.text);
+      if (item.id && typeof item.text === "string") { pendingInterjections.set(item.id, item.text); interjectionSources.set(item.id, item.source); }
     }
   };
-  const interjectionMessage = (text: string): string => `【用户插话】${text}`;
+  const interjectionMessage = (text: string, id: string): string => formatAgentInterjection(text, interjectionSources.get(id));
   syncPendingInterjections(snapshot);
   const interjectionIdsForMessage = (message: AgentMessage): string[] => {
     const content = (message as unknown as { content?: unknown }).content;
     const text = textContent(content);
     return [...pendingInterjections]
-      .filter(([id, body]) => injectedInterjectionIds.has(id) && text.includes(interjectionMessage(body)))
+      .filter(([id, body]) => injectedInterjectionIds.has(id) && text.includes(interjectionMessage(body, id)))
       .map(([id]) => id);
   };
   const prependPendingInterjections = (prompt: string): string => {
@@ -702,7 +727,7 @@ export async function runCanvasAgent(
     for (const [id, body] of pendingInterjections) {
       if (injectedInterjectionIds.has(id)) continue;
       injectedInterjectionIds.add(id);
-      notes.push(interjectionMessage(body));
+      notes.push(interjectionMessage(body, id));
     }
     if (notes.length === 0) return prompt;
     return [prompt, ...notes].filter((part) => part.trim() !== "").join("\n\n");
@@ -713,7 +738,7 @@ export async function runCanvasAgent(
       if (injectedInterjectionIds.has(id)) continue;
       injectedInterjectionIds.add(id);
       try {
-        await session.steer(interjectionMessage(body), undefined, { source: "interactive" });
+        await session.steer(interjectionMessage(body, id), undefined, { source: "interactive" });
       } catch (error) {
         injectedInterjectionIds.delete(id);
         throw error;
@@ -721,7 +746,8 @@ export async function runCanvasAgent(
     }
   };
 
-  const checkpoint = async (message: AgentMessage, taskId?: string, interjectionIds: string[] = []): Promise<void> => {
+  let lastCheckpointMessage = snapshot.piMessages?.at(-1) as AgentMessage | undefined;
+  const checkpoint = async (message: AgentMessage, taskId?: string, interjectionIds: string[] = [], reuseSequence = false): Promise<void> => {
     if (runTerminated || isTerminalRunStatus(snapshot.status)) return;
     let entries: SessionEntry[];
     let leafId: string;
@@ -743,7 +769,7 @@ export async function runCanvasAgent(
       entries = stagedRecoveryEntries.filter((entry) => !persistedSessionEntryIds.has(entry.id));
       leafId = sessionLeafId;
     }
-    const result = await bridge.checkpoint(snapshot, ++sequence, message as unknown as Record<string, unknown>, taskId, shutdown,
+    const result = await bridge.checkpoint(snapshot, reuseSequence ? sequence : ++sequence, message as unknown as Record<string, unknown>, taskId, shutdown,
       { revision: sessionRevision, activeLeafId: leafId, entries: entries as unknown as Record<string, unknown>[], interjectionIds });
     if (result?.terminated) {
       runTerminated = true;
@@ -751,6 +777,7 @@ export async function runCanvasAgent(
       return;
     }
     if (taskId) snapshot = { ...snapshot, activeTaskId: undefined, lastTaskId: taskId };
+    lastCheckpointMessage = message;
     if (result && typeof result.sessionRevision === "number" && result.sessionRevision > 0) {
       sessionRevision = result.sessionRevision;
       for (const entry of entries) persistedSessionEntryIds.add(entry.id);
@@ -767,10 +794,11 @@ export async function runCanvasAgent(
     }
     for (const id of interjectionIds) {
       pendingInterjections.delete(id);
+      interjectionSources.delete(id);
       injectedInterjectionIds.delete(id);
     }
     if (interjectionIds.length > 0) {
-      snapshot = { ...snapshot, pendingInterjections: [...pendingInterjections].map(([id, text]) => ({ id, text })) };
+      snapshot = { ...snapshot, pendingInterjections: [...pendingInterjections].map(([id, text]) => ({ id, text, source: interjectionSources.get(id) })) };
     }
   };
 
@@ -780,28 +808,40 @@ export async function runCanvasAgent(
     await queue.drain();
     if (listenerFailure !== undefined) throw listenerFailure;
     if (!admittedCallIds.has(callId)) throw new Error(batchRejection || "Tool batch was not admitted");
-    if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
-    const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
-    if (receipt.terminated) {
-      runTerminated = true;
-      return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
-    }
-    const refreshed = await bridge.snapshot(snapshot, signal);
-    for (const message of refreshed.canonical.messages.slice(canonicalCount)) {
-      // 插话里的图片要直接进会话，不能等下一次模型步骤才补（见旧实现的 steer 分支）。
-      if (message.role === "user" && hasImagePart(message.content)) {
-        session?.agent.steer(canvasUserMessage(message.content));
+    try {
+      if (!activeToolBatchTaskId) throw new FatalWorkerError("Pi tool call is missing its model task ID");
+      const receipt = await bridge.executeTool(snapshot, activeToolBatchTaskId, callId, signal);
+      if (receipt.suspended) {
+        runSuspended = runTerminated = true;
+        return { result: { suspended: true }, terminate: true };
       }
+      if (receipt.terminated) {
+        runTerminated = true;
+        return { result: receipt.result ?? { terminated: true }, isError: receipt.isError, terminate: true };
+      }
+      const refreshed = await bridge.snapshot(snapshot, signal);
+      for (const message of refreshed.canonical.messages.slice(canonicalCount)) {
+        // 插话里的图片要直接进会话，不能等下一次模型步骤才补（见旧实现的 steer 分支）。
+        if (message.role === "user" && hasImagePart(message.content)) {
+          session?.agent.steer(canvasUserMessage(message.content));
+        }
+      }
+      canonicalCount = refreshed.canonical.messages.length;
+      snapshot = refreshed;
+      syncCompaction();
+      runTerminated = isTerminalRunStatus(refreshed.status);
+      syncPendingInterjections(refreshed);
+      await steerPendingInterjections();
+      return { result: receipt.result, isError: receipt.isError,
+        terminate: runTerminated };
+    } catch (error) {
+      // SDK tool errors are model-visible. Bridge failures must instead exit
+      // this worker so a pending durable call cannot be skipped by a new turn.
+      listenerFailure ??= error;
+      abortSession();
+      throw error;
     }
-    canonicalCount = refreshed.canonical.messages.length;
-    snapshot = refreshed;
-    syncCompaction();
-    runTerminated = isTerminalRunStatus(refreshed.status);
-    syncPendingInterjections(refreshed);
-    await steerPendingInterjections();
-    return { result: receipt.result, isError: receipt.isError,
-      terminate: runTerminated };
-  }, snapshot.previousStepTemplate);
+  });
   const nativeMode = snapshot.skillRuntimeMode === "pi-native";
   const nativeReadSpec = nativeMode ? snapshot.tools.find((tool) => tool.name === "read" && tool.allowed) : undefined;
   if (nativeMode && !nativeReadSpec) throw new FatalWorkerError("Go did not disclose native Skill read");
@@ -819,15 +859,8 @@ export async function runCanvasAgent(
     if (compactionFailure !== undefined) throw compactionFailure;
     const canonical = withServerPolicy(toCanonical(messages as Message[], snapshot.canonical.promptCacheKey),
       snapshot.canonical.systemPrompt, systemPrompt);
-    canonical.tools = disclosure.decorateCanonicalTools(canonical.tools);
     try {
       if (pendingContextCompaction) throw new CanvasCompactionNeeded(snapshot.modelLimits);
-      if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
-        const decision = await bridge.modelPreflight(snapshot, canonical, signal, promptContract, parts);
-        if (decision.modelLimits) snapshot = { ...snapshot, modelLimits: decision.modelLimits };
-        syncCompaction();
-        if (decision.decision === "compact") throw new CanvasCompactionNeeded(decision.modelLimits);
-      }
       const step = await bridge.modelStep(snapshot, canonical, signal, onTextDelta, promptContract, parts);
       consecutiveCompactions = 0;
       if (nativeMode && snapshot.activeTaskId === step.taskId) {
@@ -838,6 +871,7 @@ export async function runCanvasAgent(
       activeTaskId = latestTaskId = step.taskId;
       return step.result;
     } catch (error) {
+      if (error instanceof CanvasContextOverflow) snapshot = { ...snapshot, activeTaskId: undefined };
       if (error instanceof CanvasCompactionNeeded) {
         compactionNeeded = true;
         if (error.modelLimits) snapshot = { ...snapshot, modelLimits: error.modelLimits };
@@ -849,6 +883,10 @@ export async function runCanvasAgent(
       }
       throw error;
     }
+  }, (error) => {
+    if (shutdown?.aborted || error instanceof CanvasContextOverflow || error instanceof CanvasCompactionNeeded ||
+        error instanceof CanvasModelRetry || error instanceof CanvasRunTerminated) return;
+    listenerFailure ??= error;
   });
 
   let resume: ResumePoint;
@@ -859,12 +897,12 @@ export async function runCanvasAgent(
     resume = await resumePoint(bridge, snapshot, model, disclosure, checkpoint, shutdown, nativeMode ? async (call) => {
       try {
         const params = JSON.parse(call.function.arguments) as Record<string, unknown>;
-        if (typeof params.path !== "string") throw new FatalWorkerError("Persisted Skill read requires a path");
+        if (typeof params.path !== "string") throw new NativeSkillReadRejected("Persisted Skill read requires a path");
         const path = rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path);
         return { result: await readNativeSkill(snapshot, nativeSkillsRoot, bridge, path,
           typeof params.offset === "number" ? params.offset : 0, typeof params.limit === "number" ? params.limit : 12_000, shutdown) };
       } catch (error) {
-        if (error instanceof FatalWorkerError) return { result: "Skill read rejected; use an enabled Skill file and valid range.", isError: true };
+        if (error instanceof NativeSkillReadRejected) return { result: "Skill read rejected; use an enabled Skill file and valid range.", isError: true };
         throw error;
       }
     } : undefined);
@@ -875,6 +913,7 @@ export async function runCanvasAgent(
     }
   } catch (error) {
     workspace.cleanup();
+    if (error instanceof CanvasRunSuspended) { await bridge.release(snapshot, shutdown); return; }
     if (error instanceof CanvasRunTerminated) return;
     throw error;
   }
@@ -885,7 +924,18 @@ export async function runCanvasAgent(
     sessionRevision: () => sessionRevision,
     activeLeafId: () => sessionLeafId,
     pendingCompaction: () => pendingContextCompaction,
-    drain: () => queue.drain(),
+    drain: async () => {
+      await queue.drain();
+      // Native recovery appends context_edit entries before compacting. Extend
+      // the last durable checkpoint idempotently so Go freezes the same leaf.
+      if (sessionManager?.getEntries().some(entry => entry.type === "context_edit" && !persistedSessionEntryIds.has(entry.id))) {
+        if (!lastCheckpointMessage) throw new FatalWorkerError("Pi recovery has no durable message checkpoint");
+        await checkpoint(lastCheckpointMessage, undefined, [], true);
+      }
+    },
+    boundaryPreparation: async () => sessionManager && session
+      ? prepareNativeCompaction(sessionManager.getBranch(), { ...session.settingsManager.getCompactionSettings(), keepRecentTokens: 1 })
+      : undefined,
     signal: shutdown,
     onCommitted: (entry, revision) => {
       const operationId = (entry.details as Record<string, unknown> | undefined)?.operationId;
@@ -917,8 +967,8 @@ export async function runCanvasAgent(
     execute: async (callId: string, params: Record<string, unknown>, signal: AbortSignal | undefined) => {
       await queue.drain();
       if (listenerFailure !== undefined) throw listenerFailure;
-      if (typeof params.path !== "string") throw new FatalWorkerError("Native Skill read requires a path");
       try {
+        if (typeof params.path !== "string") throw new NativeSkillReadRejected("Native Skill read requires a path");
         const path = resumedNativeCallIds.has(callId)
           ? rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path) : params.path;
         const text = await readNativeSkill(snapshot, nativeSkillsRoot, bridge, path,
@@ -927,7 +977,7 @@ export async function runCanvasAgent(
       } catch (error) {
         // Pi converts tool exceptions to model-visible results. Infrastructure
         // failures must instead leave the call pending for a worker retry.
-        if (!(error instanceof FatalWorkerError)) listenerFailure = error;
+        if (!(error instanceof NativeSkillReadRejected)) listenerFailure ??= error;
         throw error;
       }
     },
@@ -942,10 +992,56 @@ export async function runCanvasAgent(
     workspace);
   session = boot.session;
   sessionManager = boot.sessionManager;
+  // Refresh limits before the SDK's own prepare hook checks compaction. Doing
+  // this inside streamSimple is too late for a window changed during tool work.
+  const prepareNextTurn = session.agent.prepareNextTurnWithContext;
+  session.agent.prepareNextTurnWithContext = async (turn, signal) => {
+    await queue.drain();
+    if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
+      const canonical = withServerPolicy(toCanonical(turn.context.messages as Message[], snapshot.canonical.promptCacheKey),
+        snapshot.canonical.systemPrompt, systemPrompt);
+      const decision = await bridge.modelPreflight(snapshot, canonical, signal, promptContract, parts);
+      if (decision.modelLimits) snapshot = { ...snapshot, modelLimits: decision.modelLimits };
+      syncCompaction();
+      if (decision.decision === "compact") {
+        compactionNeeded = true;
+        throw new CanvasCompactionNeeded(decision.modelLimits);
+      }
+    }
+    return prepareNextTurn?.(turn, signal);
+  };
   if (resume.activeLeafId !== undefined && resume.activeLeafId !== sessionManager.getLeafId()) {
     if (resume.activeLeafId) sessionManager.branch(resume.activeLeafId);
     else sessionManager.resetLeaf();
+    session.agent.state.messages = buildSessionContext(sessionManager.getBranch()).messages;
   }
+  const compactCurrentSession = async (reason: string, softFail = false): Promise<boolean> => {
+    const retainedSettings = session!.settingsManager.getCompactionSettings();
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const compacted = await compactSessionOrFail(session!, reason, softFail);
+          if (compactionFailure !== undefined) throw compactionFailure;
+          return compacted;
+        } catch (error) {
+          // Pi replaces a cancelled extension with "Compaction cancelled".
+          // Preserve the bridge's fatal/lease/transport classification.
+          const failure = compactionFailure ?? error;
+          if (attempt === 0 && !pendingContextCompaction && failure instanceof FatalWorkerError &&
+            failure.message.includes("Pi 保留工具调用缺少结果")) {
+            // Summarize the old incomplete batch instead of retaining it. Go
+            // still validates the new boundary and all current-run receipts.
+            compactionFailure = undefined;
+            session!.settingsManager.applyOverrides({ compaction: { ...retainedSettings, keepRecentTokens: 1 } });
+            continue;
+          }
+          throw failure;
+        }
+      }
+    } finally {
+      session!.settingsManager.applyOverrides({ compaction: retainedSettings });
+    }
+  };
   try {
     session.subscribe((event) => {
       if (listenerFailure !== undefined) return;
@@ -953,7 +1049,12 @@ export async function runCanvasAgent(
       if (event.type !== "message_end") return;
       const message = event.message;
       if (message.role === "assistant" &&
-        (message.stopReason === "error" || message.stopReason === "aborted")) return;
+        (message.stopReason === "error" || message.stopReason === "aborted")) {
+        if (message.stopReason === "error" && message.errorMessage === "context_length_exceeded") {
+          queue.enqueue(async () => { await checkpoint(message as unknown as AgentMessage); });
+        }
+        return;
+      }
       const taskId = message.role === "assistant" && activeTaskId ? activeTaskId : undefined;
       if (message.role === "assistant") {
         activeTaskId = "";
@@ -964,7 +1065,6 @@ export async function runCanvasAgent(
         admittedCallIds = new Set(batchRejection ? [] : calls.map((call) => call.id));
         if (admittedCallIds.size > 0) {
           const batch = calls.filter((call) => admittedCallIds.has(call.id) && !(nativeMode && call.function.name === "read"));
-          disclosure.recordStepCalls(calls.map((call) => call.function.name));
           // 顺序是跨进程合同，不是实现细节：Go 的 `PiToolBatch` 在 `ActiveTaskID` 非空时
           // 拒绝整个批次（"Agent 尚有未完成的模型或工具步骤"），而清掉它的正是这条带 taskId
           // 的 assistant 检查点（`PiCheckpointMessage` 在同一事务里写消息 + 确认模型任务）。
@@ -983,11 +1083,6 @@ export async function runCanvasAgent(
       queue.enqueue(async () => { await checkpoint(message as unknown as AgentMessage, taskId, interjectionIds); });
     });
 
-    let abortRequested = false;
-    const abortSession = (): void => {
-      abortRequested = true;
-      void session?.abort().catch(() => undefined);
-    };
     const onShutdown = (): void => abortSession();
     shutdown?.addEventListener("abort", onShutdown, { once: true });
     let leaseCheckRunning = false;
@@ -1032,7 +1127,7 @@ export async function runCanvasAgent(
     try {
       let prompt = prependPendingInterjections(resume.prompt);
       if (pendingContextCompaction) {
-        await compactSessionOrFail(session, "服务端压缩操作无法执行");
+        await compactCurrentSession("服务端压缩操作无法执行");
         if (compactionFailure !== undefined) {
           throw compactionFailure instanceof Error ? compactionFailure : new Error(String(compactionFailure));
         }
@@ -1053,7 +1148,7 @@ export async function runCanvasAgent(
         await queue.drain();
         if (runTerminated || listenerFailure !== undefined || isTerminalRunStatus(snapshot.status)) break;
         syncCompaction();
-        if (pendingContextCompaction) await compactSessionOrFail(session, "服务端压缩操作无法执行");
+        if (pendingContextCompaction) await compactCurrentSession("服务端压缩操作无法执行");
         if (compactionFailure !== undefined) throw compactionFailure;
         if (pendingContextCompaction) throw new FatalWorkerError("Pi did not commit refreshed context compaction");
         if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
@@ -1062,15 +1157,14 @@ export async function runCanvasAgent(
           // SDK 的 Agent 以空 systemPrompt 初始化，只有首个 run 开始后才物化；
           // preflight 可能发生在首个 prompt 之前，此时必须回落到会话/装配层的系统提示，
           // 否则服务端会以"缺少服务端策略"拒绝（真实 3000 部署验收发现的缺口）。
-          planned.tools = disclosure.decorateCanonicalTools(snapshot.canonical.tools);
+          planned.tools = snapshot.canonical.tools;
           planned.messages.push({ role: "user", content: prompt });
           const decision = await bridge.modelPreflight(snapshot, planned, shutdown, promptContract, parts);
           if (decision.modelLimits) snapshot = { ...snapshot, modelLimits: decision.modelLimits };
           syncCompaction();
           if (decision.decision === "compact") {
             if (++consecutiveCompactions > 2) throw new FatalWorkerError("Context still exceeds admission budget after compaction");
-            forceCompactionForAdmission(session, snapshot);
-            const didCompact = await compactSessionOrFail(session, "上下文超过模型窗口", true);
+            const didCompact = await compactCurrentSession("上下文超过模型窗口", true);
             if (compactionFailure !== undefined) throw compactionFailure;
             if (didCompact) continue;
             // 已压到尖端：把本轮 prompt 纳入会话，让自动压缩与 Go 准入决定下一步。
@@ -1101,12 +1195,11 @@ export async function runCanvasAgent(
         if (compactionNeeded) {
           compactionNeeded = false;
           if (++consecutiveCompactions > 2) throw new FatalWorkerError("Context still exceeds admission budget after compaction");
-          forceCompactionForAdmission(session, snapshot);
           // Pi converted the denied request into an error message. Restore the last
           // durable leaf before manual compaction, outside its streaming loop.
           if (sessionLeafId) sessionManager.branch(sessionLeafId); else sessionManager.resetLeaf();
           session.agent.state.messages = buildSessionContext(sessionManager.getBranch()).messages;
-          await compactSessionOrFail(session, "上下文超过模型窗口");
+          await compactCurrentSession("上下文超过模型窗口");
           if (compactionFailure !== undefined) throw compactionFailure;
           prompt = CONTINUATION_PROMPT;
           continue;
@@ -1142,5 +1235,6 @@ export async function runCanvasAgent(
     throw error;
   } finally {
     boot.cleanup();
+    if (runSuspended) await bridge.release(snapshot, shutdown);
   }
 }

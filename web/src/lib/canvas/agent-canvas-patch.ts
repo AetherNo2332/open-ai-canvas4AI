@@ -9,6 +9,10 @@ export type AgentCanvasPatch = {
     updatedAt: string;
     nodes: Change<CanvasNodeData>[];
     connections: Change<CanvasConnection>[];
+    previousNodeOrder?: string[];
+    nodeOrder?: string[];
+    previousConnectionOrder?: string[];
+    connectionOrder?: string[];
 };
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -54,6 +58,34 @@ function keyedItems(value: unknown) {
     return items;
 }
 
+function insertsBeforeRetained(before: string[], after: string[], surviving: Set<string>): boolean {
+    const beforeSet = new Set(before);
+    let inserted = false;
+    for (const id of after) {
+        if (!surviving.has(id)) continue;
+        if (!beforeSet.has(id)) inserted = true;
+        else if (inserted) return true;
+    }
+    return false;
+}
+
+function mergeOrder(current: string[], before: string[], after: string[], surviving: Set<string>): string[] {
+    for (const order of [before, after]) {
+        if (!Array.isArray(order) || order.some((id) => typeof id !== "string" || !id) || new Set(order).size !== order.length) throw new Error("无效的画布增量顺序");
+    }
+    const currentSet = new Set(current);
+    const afterSet = new Set(after);
+    const common = new Set(before.filter((id) => afterSet.has(id) && currentSet.has(id) && surviving.has(id)));
+    const previous = before.filter((id) => common.has(id));
+    const incoming = after.filter((id) => common.has(id));
+    const local = current.filter((id) => common.has(id));
+    // A restoration at the head/middle changes placement even when the retained
+    // IDs have the same relative order. Tail additions can keep a local reorder.
+    if (equal(previous, incoming) && !insertsBeforeRetained(before, after, surviving)) return [...current.filter((id) => surviving.has(id)), ...after.filter((id) => surviving.has(id) && !currentSet.has(id))];
+    if (!equal(local, previous) && !equal(local, incoming)) throw new Error("Agent 画布顺序与本地调整冲突，需要校准；已保留本地编辑");
+    return [...after.filter((id) => surviving.has(id)), ...current.filter((id) => surviving.has(id) && !afterSet.has(id))];
+}
+
 /**
  * 以 id 为键的数组按 id 做三方合并。
  *
@@ -76,11 +108,16 @@ function mergeKeyedArray(current: unknown, before: unknown, after: unknown): unk
         if (value === null || value === undefined) merged.delete(id);
         else merged.set(id, value);
     }
-    // 保持本地顺序，新增行按服务端返回的顺序追加在末尾。
-    const result: unknown[] = [];
-    for (const id of currentItems.keys()) if (merged.has(id)) result.push(merged.get(id));
-    for (const id of created) if (merged.has(id)) result.push(merged.get(id));
-    return result;
+    const beforeOrder = [...beforeItems.keys()], afterOrder = [...afterItems.keys()];
+    const common = new Set(beforeOrder.filter((id) => afterItems.has(id)));
+    const reordered = !equal(beforeOrder.filter((id) => common.has(id)), afterOrder.filter((id) => common.has(id)));
+    const surviving = new Set(merged.keys());
+    // Sparse edits and tail additions preserve order. Positional changes,
+    // including restored rows, carry full before/after arrays from the server.
+    const order = reordered || insertsBeforeRetained(beforeOrder, afterOrder, surviving)
+        ? mergeOrder([...currentItems.keys()], beforeOrder, afterOrder, surviving)
+        : [...currentItems.keys(), ...created].filter((id) => merged.has(id));
+    return order.map((id) => merged.get(id));
 }
 
 function mergeItems<T extends { id: string }>(items: T[], changes: Change<T>[]): T[] {
@@ -95,6 +132,16 @@ function mergeItems<T extends { id: string }>(items: T[], changes: Change<T>[]):
     }
     const result = [...next.values()];
     return result.length === items.length && result.every((item, index) => item === items[index]) ? items : result;
+}
+
+function orderedItems<T extends { id: string }>(current: T[], merged: T[], before?: string[], after?: string[]): T[] {
+    if (after === undefined && before === undefined) return merged;
+    if (!before || !after) throw new Error("画布增量顺序缺少基线，需要重新读取画布");
+    const byId = new Map(merged.map((item) => [item.id, item]));
+    const order = mergeOrder(current.map((item) => item.id), before, after, new Set(byId.keys()));
+    if (order.length !== merged.length) throw new Error("无效的画布增量顺序：缺少新增节点");
+    const result = order.map((id) => byId.get(id)!);
+    return result.length === merged.length && result.every((item, index) => item === merged[index]) ? merged : result;
 }
 
 export function applyAgentCanvasPatch(project: CanvasProject, patch: AgentCanvasPatch): CanvasProject {
@@ -118,8 +165,11 @@ export function applyAgentCanvasPatch(project: CanvasProject, patch: AgentCanvas
         }
         return { ...change, before: { ...change.before!, metadata } };
     });
-    const nodes = mergeItems(project.nodes, nodeChanges);
-    const connections = mergeItems(project.connections, patch.connections);
+    const nodes = orderedItems(project.nodes, mergeItems(project.nodes, nodeChanges), patch.previousNodeOrder, patch.nodeOrder);
+    const connections = orderedItems(project.connections, mergeItems(project.connections, patch.connections), patch.previousConnectionOrder, patch.connectionOrder);
+    const retainedIds = new Set(nodes.map((node) => node.id));
+    const removedIds = new Set(project.nodes.filter((node) => !retainedIds.has(node.id)).map((node) => node.id));
+    if (connections.some((edge) => removedIds.has(edge.fromNodeId) || removedIds.has(edge.toNodeId)) || nodes.some((node) => node.parentId && removedIds.has(node.parentId))) throw new Error("Agent 删除与本地新增引用冲突，需要校准；已保留本地编辑");
     if (nodes === project.nodes && connections === project.connections) return project;
     return { ...project, nodes, connections, updatedAt: patch.updatedAt || project.updatedAt };
 }
@@ -138,5 +188,7 @@ export function mergeAgentCanvasEditor(previous: CanvasProject, incoming: Canvas
         updatedAt: incoming.updatedAt,
         nodes: changes(previous.nodes, incoming.nodes),
         connections: changes(previous.connections, incoming.connections),
+        ...(!equal(previous.nodes.map((item) => item.id), incoming.nodes.map((item) => item.id)) ? { previousNodeOrder: previous.nodes.map((item) => item.id), nodeOrder: incoming.nodes.map((item) => item.id) } : {}),
+        ...(!equal(previous.connections.map((item) => item.id), incoming.connections.map((item) => item.id)) ? { previousConnectionOrder: previous.connections.map((item) => item.id), connectionOrder: incoming.connections.map((item) => item.id) } : {}),
     });
 }

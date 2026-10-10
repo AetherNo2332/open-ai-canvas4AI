@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"infinite-canvas/backend/internal/model"
 )
 
 // 本文件是一致性守卫：工具表（模型看到的契约）与运行期分派必须始终一致。
@@ -25,10 +23,11 @@ import (
 func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	registered := cloudAgentRegisteredToolNames(t)
 	supported := CloudAgentSupportedToolNames()
-	// 普通 Agent 的能力列表排除 Crew 工具；一致性守卫检查普通、协调者和成员的并集。
-	for _, role := range []model.CrewMemberRole{model.CrewMemberRoleCoordinator, model.CrewMemberRoleMember} {
-		req := agentTestRequest()
-		req.crew = &CrewMemberRuntime{Role: role, Permission: model.CrewPermissionPropose}
+	// Include both dynamic parent and child catalogs in the dispatch contract.
+	for _, req := range []CloudAgentRequest{
+		{SubagentEnabled: true, PermissionMode: "auto", ContextScope: []string{"canvas"}},
+		{PermissionMode: "read_only", ContextScope: []string{"canvas"}, subagent: &SubagentRuntime{Depth: 1}},
+	} {
 		for _, tool := range cloudAgentTools(req) {
 			supported = append(supported, stringField(tool["function"].(map[string]any), "name"))
 		}
@@ -80,12 +79,37 @@ func TestCloudAgentToolTableMatchesRuntimeDispatch(t *testing.T) {
 	}
 }
 
-// cloudAgentRegisteredToolNames 收集 compileCloudAgentTools 里所有 add("name", …) 的名字全集。
+// cloudAgentRegisteredToolNames 收集 add("name", …)，以及字面量 []string
+// 的 range 中实际传给 add(name, …) 的注册名。无 add 调用的循环不构成注册。
 func cloudAgentRegisteredToolNames(t *testing.T) []string {
 	t.Helper()
 	file := parseCloudAgentFile(t, "cloud_agent_tools.go")
 	names := map[string]bool{}
 	ast.Inspect(file, func(node ast.Node) bool {
+		if loop, ok := node.(*ast.RangeStmt); ok {
+			value, valueOK := loop.Value.(*ast.Ident)
+			list, listOK := loop.X.(*ast.CompositeLit)
+			if valueOK && listOK {
+				array, arrayOK := list.Type.(*ast.ArrayType)
+				if arrayOK {
+					elt, eltOK := array.Elt.(*ast.Ident)
+					if eltOK && elt.Name == "string" {
+						ast.Inspect(loop.Body, func(item ast.Node) bool {
+							call, ok := item.(*ast.CallExpr)
+							if !ok || len(call.Args) == 0 {
+								return true
+							}
+							callee, calleeOK := call.Fun.(*ast.Ident)
+							arg, argOK := call.Args[0].(*ast.Ident)
+							if calleeOK && callee.Name == "add" && argOK && arg.Name == value.Name {
+								collectStringLiteralsOf(list.Elts, names)
+							}
+							return true
+						})
+					}
+				}
+			}
+		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
 			return true

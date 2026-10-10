@@ -1,5 +1,5 @@
 import { agentCanvasActions, agentCanvasActionLabel } from "@/lib/canvas/agent-canvas-actions";
-import { Button } from "antd";
+import { Button, Typography } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
@@ -81,8 +81,10 @@ export type CloudAgentChatMessage = {
     planTerminal?: boolean;
     question?: CloudAgentUserQuestion;
     meta?: string;
+    runId?: string;
     detail?: unknown;
     attachments?: CloudAgentChatAttachment[];
+    canvasReferenceNodeId?: string;
     interjection?: "sent" | "undelivered";
 };
 
@@ -211,6 +213,13 @@ export function AgentChatMessage({
                             {item.meta}
                         </div>
                     ) : null}
+                    {item.runId ? (
+                        <div className="mt-1 break-all text-[var(--fs-label)]">
+                            <Typography.Text style={{ color: theme.node.muted }} copyable={{ text: item.runId, tooltips: ["复制 Run ID", "已复制"], icon: <span aria-label="复制 Run ID">复制</span> }}>
+                                Run ID：<span className="font-mono select-text">{item.runId}</span>
+                            </Typography.Text>
+                        </div>
+                    ) : null}
                     {onRetry ? (
                         <Button type="text" size="small" className="mt-1 !h-7 !px-0" icon={retrying ? <LoaderCircle className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />} disabled={retrying} onClick={onRetry}>
                             {retrying ? "重试中" : "重试本轮"}
@@ -222,7 +231,7 @@ export function AgentChatMessage({
     }
     return (
         <div className={`flex items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-            <div className={`agent-message-body min-w-0 text-sm leading-6 ${isUser ? "agent-message-user max-w-[82%] px-4 py-3 text-right" : "max-w-full flex-1 text-left"}`} style={{ color }}>
+            <div className={`agent-message-body min-w-0 text-sm leading-6 text-left ${isUser ? "agent-message-user max-w-[82%] px-4 py-3" : "max-w-full flex-1"}`} style={{ color }}>
                 {item.interjection ? (
                     <span
                         className="mb-1 inline-flex items-center rounded-full px-1.5 py-[1px] text-[var(--fs-label)] leading-4"
