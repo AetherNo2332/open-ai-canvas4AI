@@ -11,6 +11,9 @@ RUN npm run build
 
 # 运行镜像按目标架构安装生产依赖（esbuild 等可选二进制由 npm 按平台挑选）。
 FROM node:22.19.0-alpine
+# qemu 模拟的 arm64 上 node/npm 会因默认 CPU 模型缺指令而 SIGILL（CI 实测 exit 132），
+# 让模拟器暴露全部 CPU 特性；原生执行时该变量无副作用。
+ENV QEMU_CPU=max
 ARG BUILD_VERSION
 ARG BUILD_COMMIT=unknown
 ARG BUILD_TIME=unknown
