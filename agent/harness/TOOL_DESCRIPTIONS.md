@@ -460,15 +460,15 @@ focusNodeIds 的展开深度，0–3，省略为1；仅与 focusNodeIds 一起�
 
 ## previs_preview
 
-生成预演白模视频。
+提交后台白模渲染任务。必须用返回的 taskId 核验任务终态和画布写回；节点真实出现后才能称已交付，“已请求”不是“已导出”。
 
 ## previs_scene_create
 
-创建预演场景。
+创建预演场景，并在画布上创建或绑定可打开预演台的 video 工作站节点；回执返回 nodeId。
 
 ## previs_apply_patch
 
-审批后应用预演语义补丁；先读 snapshotHash，最多32项。禁止原始 JSON、URL、storage key。
+审批后应用预演语义补丁；先读 snapshotHash，最多32项。旧场景没有工作站时会在补丁时自动补齐。回执返回 nodeId。禁止原始 JSON、URL、storage key。
 
 ## canvas_read_content
 

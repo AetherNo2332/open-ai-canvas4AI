@@ -596,10 +596,21 @@ func (s *Service) commitPrevisOutput(task *model.Task, input previsRenderInput, 
 				return fmt.Errorf("target_changed")
 			}
 			nodes := creationMaps(doc["nodes"])
+			workstationFound := false
+			for _, node := range nodes {
+				metadata, _ := node["metadata"].(map[string]any)
+				if stringValue(node["type"]) == "video" && stringValue(metadata["workflowKind"]) == "shot" && stringValue(metadata["previsSceneId"]) == input.SceneID {
+					workstationFound = true
+					break
+				}
+			}
+			if !workstationFound {
+				return fmt.Errorf("previs_workstation_missing sceneId=%s; use previs_scene_create or previs_apply_patch to repair the canvas", input.SceneID)
+			}
 			for _, output := range []struct {
-				id, resource, kind, title string
-				x                         float64
-			}{{result.VideoNodeID, result.ResourceID, "video", "白模预演", 0}, {result.PreviewNodeID, result.PreviewResourceID, "image", "预演构图帧", 380}} {
+				id, resource, kind, workflowKind, title string
+				x                                       float64
+			}{{result.VideoNodeID, result.ResourceID, "video", "reference_video", "白模预演", 0}, {result.PreviewNodeID, result.PreviewResourceID, "image", "reference_set", "预演构图帧", 380}} {
 				found := false
 				for _, node := range nodes {
 					if stringValue(node["id"]) == output.id {
@@ -613,7 +624,7 @@ func (s *Service) commitPrevisOutput(task *model.Task, input previsRenderInput, 
 				if found {
 					continue
 				}
-				metadata := map[string]any{"content": resourceFileURL(output.resource), "storageKey": "resource:" + output.resource, "status": "success", "taskId": origin, "taskStatus": "succeeded", "previsSceneId": input.SceneID, "previsShotId": input.ShotID, "previsSourceHash": input.SourceHash, "previsIndependent": !result.Linked, "naturalWidth": result.Width, "naturalHeight": result.Height, "duration": float64(result.DurationMs) / 1000, "previsRepairTaskId": task.ID}
+				metadata := map[string]any{"content": resourceFileURL(output.resource), "storageKey": "resource:" + output.resource, "status": "success", "taskId": origin, "taskStatus": "succeeded", "workflowKind": output.workflowKind, "assetTags": []any{"预演台" + map[bool]string{true: "构图", false: "白膜"}[output.workflowKind == "reference_set"], "镜头:" + input.ShotID}, "previsSceneId": input.SceneID, "previsShotId": input.ShotID, "previsSourceHash": input.SourceHash, "previsIndependent": !result.Linked, "naturalWidth": result.Width, "naturalHeight": result.Height, "duration": float64(result.DurationMs) / 1000, "previsRepairTaskId": task.ID}
 				y := float64(len(nodes)/2) * 300
 				nodes = append(nodes, creationAddedNode(CreationCanvasOp{ID: output.id, NodeType: output.kind, Title: output.title, X: ptr(output.x), Y: ptr(y), Metadata: metadata}))
 			}
