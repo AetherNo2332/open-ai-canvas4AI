@@ -1065,6 +1065,69 @@ func cloudAgentPrevisRelinkWorkstation(workstation map[string]any, scene map[str
 	return changed
 }
 
+// cloudAgentPrevisRepairLegacyOnRead 是纯读画布的显式迁移入口（修复计划 G2/D3，场景⑥）。
+// 只被 previs_scene_read 读过、从不写入的画布不会再走到任何写路径修复，这里补上入口：
+//   - 可写轮次：幂等修复后按画布 revision CAS 写回（并发冲突原样上抛，由模型重读）；
+//   - read_only 轮次：只报告待修复，不隐式改文档（此时在文档副本上探测，避免污染投影）。
+//
+// 返回回执：repaired=本次已修复并写回；pending=检测到待修复但本轮不写回；workstations 是
+// sceneId → 工作站节点 ID 的索引，供模型按 G3 口径引用 nodeId。
+func cloudAgentPrevisRepairLegacyOnRead(repo *repository.Repository, canvas *model.CanvasProject, doc map[string]any, service *Service, allowPersist bool) (map[string]any, error) {
+	receipt := map[string]any{"repaired": false, "pending": false, "workstations": cloudAgentPrevisWorkstationIndex(doc)}
+	if !allowPersist || service == nil {
+		if cloudAgentPrevisRepairLegacyNodes(cloudAgentPrevisDocumentCopy(doc)) {
+			receipt["pending"] = true
+		}
+		return receipt, nil
+	}
+	if !cloudAgentPrevisRepairLegacyNodes(doc) {
+		return receipt, nil
+	}
+	policy, err := service.RuntimePolicy()
+	if err != nil {
+		return nil, err
+	}
+	if err := saveCloudAgentDocument(repo, canvas, doc, policy); err != nil {
+		return nil, err
+	}
+	receipt["repaired"] = true
+	receipt["pending"] = false
+	receipt["workstations"] = cloudAgentPrevisWorkstationIndex(doc)
+	return receipt, nil
+}
+
+func cloudAgentPrevisDocumentCopy(doc map[string]any) map[string]any {
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return map[string]any{}
+	}
+	copied, err := creationDocument(string(raw))
+	if err != nil {
+		return map[string]any{}
+	}
+	return copied
+}
+
+// cloudAgentPrevisWorkstationIndex 返回每个场景绑定的唯一工作站节点 ID（video + workflowKind=shot）。
+func cloudAgentPrevisWorkstationIndex(doc map[string]any) map[string]any {
+	nodes := creationMaps(doc["nodes"])
+	index := map[string]any{}
+	for _, scene := range creationMaps(doc["previsScenes"]) {
+		sceneID := stringValue(scene["id"])
+		if sceneID == "" {
+			continue
+		}
+		for _, node := range nodes {
+			metadata, _ := node["metadata"].(map[string]any)
+			if stringValue(metadata["previsSceneId"]) == sceneID && stringValue(node["type"]) == "video" && stringValue(metadata["workflowKind"]) == "shot" {
+				index[sceneID] = stringValue(node["id"])
+				break
+			}
+		}
+	}
+	return index
+}
+
 func cloudAgentPrevisNodeMetadata(node map[string]any) map[string]any {
 	metadata, _ := node["metadata"].(map[string]any)
 	if metadata == nil {

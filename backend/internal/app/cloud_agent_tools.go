@@ -1093,7 +1093,7 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 	case "canvas_read_content", "canvas_search_nodes":
 		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
 	case "previs_scene_read":
-		return cloudAgentPrevisSceneRead(repo, userID, state.Request.CanvasID, call)
+		return cloudAgentPrevisSceneRead(repo, userID, state.Request.CanvasID, call, service, state.Request.PermissionMode != "read_only")
 	case "previs_preview":
 		return cloudAgentPrevisPreview(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":

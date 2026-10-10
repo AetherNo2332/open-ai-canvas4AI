@@ -449,7 +449,7 @@ func TestCloudAgentPrevisCatalogReadAndToolPermissions(t *testing.T) {
 	catalogCall := cloudAgentCall{ID: "catalog"}
 	catalogCall.Function.Name = "previs_scene_read"
 	catalogCall.Function.Arguments = `{}`
-	result, err := cloudAgentPrevisSceneRead(s.repo, "user", canvas.ID, catalogCall)
+	result, err := cloudAgentPrevisSceneRead(s.repo, "user", canvas.ID, catalogCall, s, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,5 +876,119 @@ func TestCloudAgentPrevisPatchRepairsLegacyDirtyCanvasNodes(t *testing.T) {
 	metadata, _ := nodes[0]["metadata"].(map[string]any)
 	if stringValue(metadata["workflowKind"]) != "shot" || stringValue(metadata["storageKey"]) != "resource:"+dirtyResource.ID {
 		t.Fatalf("dirty node was not promoted in place: %#v", metadata)
+	}
+}
+
+func previsSceneReadDirtyCanvas(t *testing.T, s *Service, canvas *model.CanvasProject, sceneID string) (string, *model.Resource) {
+	t.Helper()
+	scene, err := cloudAgentPrevisSceneCreateTemplate(cloudAgentPrevisSceneCreateArgs{SceneID: sceneID, Title: "纯读场景", TemplateID: "empty"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shotID := stringValue(creationMaps(scene["shots"])[0]["id"])
+	dirtyResource := previsMutationTestResource(t, s, "media", "read-repair.mp4")
+	doc := map[string]any{
+		"nodes": []any{map[string]any{"id": "read-video", "type": "video", "title": "白模预演", "metadata": map[string]any{
+			"content": resourceFileURL(dirtyResource.ID), "storageKey": "resource:" + dirtyResource.ID, "status": "success",
+			"previsSceneId": sceneID, "previsShotId": shotID, "previsRepairTaskId": "old-task",
+		}}},
+		"connections":  []any{},
+		"previsScenes": []any{scene},
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canvas.PayloadJSON = string(raw)
+	if err := s.repo.Save(canvas); err != nil {
+		t.Fatal(err)
+	}
+	return shotID, dirtyResource
+}
+
+func previsSceneReadCall(t *testing.T, id string) cloudAgentCall {
+	t.Helper()
+	call := cloudAgentCall{ID: id}
+	call.Function.Name = "previs_scene_read"
+	call.Function.Arguments = `{}`
+	return call
+}
+
+func previsSceneReadReceipt(t *testing.T, result any) map[string]any {
+	t.Helper()
+	catalog, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("scene read did not return a catalog: %#v", result)
+	}
+	receipt, _ := catalog["legacyRepair"].(map[string]any)
+	if receipt == nil {
+		t.Fatalf("scene read lost the legacy repair receipt: %#v", catalog)
+	}
+	return receipt
+}
+
+// 纯读画布的显式迁移入口：previs_scene_read 在可写轮次修复旧版回写节点并写回，
+// 幂等；read_only 轮次只报告待修复、绝不写回。
+func TestCloudAgentPrevisSceneReadRepairsLegacyNodes(t *testing.T) {
+	s, canvas := previsMutationFixture(t)
+	previsSceneReadDirtyCanvas(t, s, canvas, "read-scene")
+
+	first, err := cloudAgentPrevisSceneRead(s.repo, "user", canvas.ID, previsSceneReadCall(t, "read-1"), s, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := previsSceneReadReceipt(t, first)
+	if !boolValue(receipt["repaired"], false) || boolValue(receipt["pending"], false) {
+		t.Fatalf("first read did not repair: %#v", receipt)
+	}
+	workstations, _ := receipt["workstations"].(map[string]any)
+	if stringValue(workstations["read-scene"]) != "read-video" {
+		t.Fatalf("repaired workstation was not indexed: %#v", receipt)
+	}
+	stored, err := s.repo.CanvasProjectForUser("user", canvas.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, _ := creationMaps(mustCreationDocument(t, stored.PayloadJSON)["nodes"])[0]["metadata"].(map[string]any)
+	if stringValue(metadata["workflowKind"]) != "shot" {
+		t.Fatalf("read did not persist the repair: %#v", metadata)
+	}
+
+	second, err := cloudAgentPrevisSceneRead(s.repo, "user", canvas.ID, previsSceneReadCall(t, "read-2"), s, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt = previsSceneReadReceipt(t, second)
+	if boolValue(receipt["repaired"], false) || boolValue(receipt["pending"], false) {
+		t.Fatalf("second read must be a no-op: %#v", receipt)
+	}
+	storedAgain, err := s.repo.CanvasProjectForUser("user", canvas.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedAgain.PayloadJSON != stored.PayloadJSON {
+		t.Fatal("idempotent read rewrote the canvas")
+	}
+}
+
+func TestCloudAgentPrevisSceneReadReadOnlyOnlyReportsPending(t *testing.T) {
+	s, canvas := previsMutationFixture(t)
+	previsSceneReadDirtyCanvas(t, s, canvas, "read-only-scene")
+
+	result, err := cloudAgentPrevisSceneRead(s.repo, "user", canvas.ID, previsSceneReadCall(t, "read-ro"), s, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := previsSceneReadReceipt(t, result)
+	if !boolValue(receipt["pending"], false) || boolValue(receipt["repaired"], false) {
+		t.Fatalf("read-only read did not report pending repair: %#v", receipt)
+	}
+	stored, err := s.repo.CanvasProjectForUser("user", canvas.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, _ := creationMaps(mustCreationDocument(t, stored.PayloadJSON)["nodes"])[0]["metadata"].(map[string]any)
+	if stringValue(metadata["workflowKind"]) != "" {
+		t.Fatalf("read-only read mutated the canvas: %#v", metadata)
 	}
 }

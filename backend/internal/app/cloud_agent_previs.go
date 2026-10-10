@@ -11,7 +11,11 @@ import (
 // Previs Agent tools deliberately expose a projection rather than the raw
 // PrevisScene payload. The browser owns model URLs and storage references;
 // the Agent only needs semantic shot/layout data to plan a preview.
-func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID string, call cloudAgentCall) (any, error) {
+//
+// 场景读取同时是存量脏数据的显式迁移入口：只被 previs_scene_read 读过、从不写入的画布
+// 没有其他写路径能触发懒迁移。可写轮次修复并按画布 revision CAS 写回；read_only 轮次
+// 只报告待修复，不隐式改文档。
+func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, service *Service, allowPersist bool) (any, error) {
 	var args struct {
 		SceneID           string   `json:"sceneId"`
 		ShotID            string   `json:"shotId"`
@@ -51,6 +55,10 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 	if err != nil {
 		return nil, err
 	}
+	legacyRepair, err := cloudAgentPrevisRepairLegacyOnRead(repo, canvas, doc, service, allowPersist)
+	if err != nil {
+		return nil, err
+	}
 	rawScenes := creationMaps(doc["previsScenes"])
 	if args.SceneID == "" {
 		items := make([]map[string]any, 0, len(rawScenes))
@@ -68,7 +76,8 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 			"canvasSnapshotHash": cloudAgentCanvasHash(doc),
 			"scenes":             items,
 			"count":              len(items),
-			"guidance":           "先用返回的 sceneId 读取一个场景，再使用 shotId 进行布局或预演。创建场景时把 canvasSnapshotHash 原样传回。",
+			"legacyRepair":       legacyRepair,
+			"guidance":           previsSceneReadGuidance(legacyRepair, "先用返回的 sceneId 读取一个场景，再使用 shotId 进行布局或预演。创建场景时把 canvasSnapshotHash 原样传回。"),
 		}, nil
 	}
 
@@ -97,8 +106,21 @@ func cloudAgentPrevisSceneRead(repo *repository.Repository, userID, canvasID str
 		"snapshotHash":       creationHash(scene),
 		"canvasSnapshotHash": cloudAgentCanvasHash(doc),
 		"revision":           canvas.Revision,
-		"guidance":           "安全摘要。修改用 previs_apply_patch；预演用 previs_preview；布局规划用 includeTransforms=true 获取精确坐标。snapshotHash 只代表该场景。",
+		"legacyRepair":       legacyRepair,
+		"guidance":           previsSceneReadGuidance(legacyRepair, "安全摘要。修改用 previs_apply_patch；预演用 previs_preview；布局规划用 includeTransforms=true 获取精确坐标。snapshotHash 只代表该场景。"),
 	}, nil
+}
+
+// previsSceneReadGuidance 在常规指引上补充迁移回执的口径，让模型知道节点语义已对齐
+// 或仍待一次可写轮次修复。
+func previsSceneReadGuidance(repair map[string]any, base string) string {
+	if boolValue(repair["repaired"], false) {
+		return base + "本次读取已把旧版回写节点修复为工作站/产物语义，回执里的 nodeId 可直接引用。"
+	}
+	if boolValue(repair["pending"], false) {
+		return base + "画布存在旧版回写的待修复节点，当前为只读轮次不能写回；需要修复语义时在可写轮次重新读取。"
+	}
+	return base
 }
 
 // previsMapSafe safely casts a value to map[string]any, returning an empty map on failure.

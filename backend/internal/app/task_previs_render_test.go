@@ -329,6 +329,93 @@ func storedPrevis(t *testing.T, s *Service, task *model.Task, input previsRender
 	return result
 }
 
+// D6（修复计划 G2）：浏览器 preview-requested 监听与服务器渲染任务并存时以服务器回写为准。
+// 前端已无派发方（agent 预演只走后台任务），这里守住服务器侧语义：同一镜头先后两次服务端
+// 渲染，镜头指针必须重指最新任务的产物，旧产物节点保留为历史，不出现重复或覆盖损坏。
+func TestBackgroundPrevisReRenderRepointsShotToLatestServerWrite(t *testing.T) {
+	s, run, state := backgroundPrevisFixture(t, "auto")
+	canvas, _ := s.repo.CanvasProjectForUser(run.UserID, run.CanvasID)
+	scene := creationMaps(mustCreationDocument(t, canvas.PayloadJSON)["previsScenes"])[0]
+	shotID := stringValue(creationMaps(scene["shots"])[0]["id"])
+	// 同镜头再渲染一次：第二个 previs_preview 调用排在同一轮的调用清单里。
+	state.Calls = append(state.Calls, previsMutationCall(t, "render-call-2", "previs_preview", map[string]any{"sceneId": "scene", "shotId": shotID, "duration": 0.5, "fps": 8}))
+	state.Canonical.Messages[len(state.Canonical.Messages)-1]["tool_calls"] = state.Calls
+	if err := s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		return cloudAgentSave(current, state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commit := func() previsRenderResult {
+		t.Helper()
+		// 第一次提交直接执行当前调用；上一次提交后要先消化回执，下一个调用才会创建任务。
+		for attempt := 0; attempt < 3; attempt++ {
+			run, state = reloadPiRun(t, s, run.ID)
+			if err := s.executeCloudAgentToolCall(run, state); err != nil {
+				t.Fatal(err)
+			}
+			run, state = reloadPiRun(t, s, run.ID)
+			if state.MediaTaskID != "" {
+				break
+			}
+		}
+		if state.MediaTaskID == "" {
+			t.Fatal("re-render did not create a durable render task")
+		}
+		task, err := s.repo.TaskForUser(run.UserID, state.MediaTaskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task, err = s.repo.ClaimNextTask("previs-test-worker", time.Minute)
+		if err != nil || task == nil {
+			t.Fatal(err)
+		}
+		var input previsRenderInput
+		if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+			t.Fatal(err)
+		}
+		result := storedPrevis(t, s, task, input)
+		if err := s.commitPrevisOutput(task, input, result); err != nil {
+			t.Fatal(err)
+		}
+		// commitPrevisOutput 按值接收 result：节点 ID 以任务终态 ResultJSON 里的权威值为准。
+		completed, err := s.repo.Task(task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stored previsRenderResult
+		if err := json.Unmarshal([]byte(completed.ResultJSON), &stored); err != nil {
+			t.Fatal(err)
+		}
+		return stored
+	}
+	first := commit()
+	second := commit()
+
+	canvas, _ = s.repo.CanvasProjectForUser(run.UserID, run.CanvasID)
+	doc := mustCreationDocument(t, canvas.PayloadJSON)
+	nodes := creationMaps(doc["nodes"])
+	shot, _ := findPrevisShot(creationMaps(doc["previsScenes"])[0], shotID)
+	if stringValue(shot["previewNodeId"]) != second.PreviewNodeID || stringValue(shot["clayVideoNodeId"]) != second.VideoNodeID {
+		t.Fatalf("re-render did not repoint the shot to the latest server write: %#v", shot)
+	}
+	byID := map[string]bool{}
+	for _, node := range nodes {
+		if byID[stringValue(node["id"])] {
+			t.Fatalf("duplicate node after re-render: %s", canvas.PayloadJSON)
+		}
+		byID[stringValue(node["id"])] = true
+	}
+	for _, stale := range []string{first.VideoNodeID, first.PreviewNodeID} {
+		if !byID[stale] {
+			t.Fatalf("first render product was clobbered: %s", canvas.PayloadJSON)
+		}
+	}
+	if len(nodes) != 5 {
+		t.Fatalf("unexpected node count after re-render: %d %s", len(nodes), canvas.PayloadJSON)
+	}
+}
+
 func TestBackgroundPrevisWritebackMergesUnrelatedEditAndReplaysReceipt(t *testing.T) {
 	s, run, task, input := submittedPrevis(t)
 	result := storedPrevis(t, s, task, input)
