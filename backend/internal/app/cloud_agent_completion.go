@@ -19,6 +19,7 @@ package app
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -39,6 +40,9 @@ const (
 	// cloudAgentCompletionTruncatedKind 是"候选正文被上游输出上限截断"这条阻塞的 kind。
 	// 它与 pending_plan 一样是服务端能确证的事实：这一步的正文确实不完整。
 	cloudAgentCompletionTruncatedKind = "truncated_output"
+	// cloudAgentCompletionNodeClaimKind 是"候选正文引用了本轮从未出现过的节点 ID"这条阻塞的 kind。
+	// 它同样是服务端能确证的事实：这个 ID 既不来自任何工具回执，也不来自任何画布增量事件。
+	cloudAgentCompletionNodeClaimKind = "unverified_node_claim"
 )
 
 // cloudAgentCompletionBlocker 是一条机器可读的阻塞原因（kind）+ 给人看的细节（detail）。
@@ -122,6 +126,129 @@ func cloudAgentBlockTruncatedCompletion(block cloudAgentCompletionBlock, stopKin
 	return block
 }
 
+// cloudAgentClaimNodeIDPattern 匹配服务端会生成的画布节点 ID 形态：
+// cloudAgentID 的产物是 ag+32 位十六进制，预演工作站是 previs-<sceneId>。
+// 形态足够窄，正文里普通的数字与英文词不会误命中。
+var cloudAgentClaimNodeIDPattern = regexp.MustCompile(`\b(?:ag[0-9a-f]{32}|previs-[A-Za-z0-9_-]{1,80})\b`)
+
+// cloudAgentNodeClaimVerbs / Nouns 是"正文在宣称已创建节点"的保守判据：动作词与节点名词必须同时出现。
+var (
+	cloudAgentNodeClaimVerbs = []string{"创建", "新增", "已写入", "已添加", "已生成", "已绑定", "写入画布"}
+	cloudAgentNodeClaimNouns = []string{"节点", "工作站", "预演台", "导演台"}
+)
+
+// cloudAgentClaimedNodeIDs 取正文里出现的服务端形态节点 ID（去重、保持出现顺序）。
+func cloudAgentClaimedNodeIDs(text string) []string {
+	matches := cloudAgentClaimNodeIDPattern.FindAllString(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if !cloudAgentContainsString(ids, match) {
+			ids = append(ids, match)
+		}
+	}
+	return ids
+}
+
+// cloudAgentKnownRoundNodeIDs 汇总本轮事件里真实出现过的画布节点 ID：工具回执的
+// nodeId / nodeIds / referenceNodeIds，以及画布增量事件 actions[].nodeId。
+// 事件本身就落在检查点里，因此不需要额外的运行态字段。
+func cloudAgentKnownRoundNodeIDs(state *cloudAgentRuntime) map[string]bool {
+	known := map[string]bool{}
+	if state == nil {
+		return known
+	}
+	var collect func(value any)
+	collect = func(value any) {
+		switch typed := value.(type) {
+		case string:
+			if typed != "" {
+				known[typed] = true
+			}
+		case []any:
+			for _, item := range typed {
+				collect(item)
+			}
+		case []string:
+			for _, item := range typed {
+				collect(item)
+			}
+		}
+	}
+	for _, event := range state.Events {
+		for _, key := range []string{"nodeId", "nodeIds", "referenceNodeIds"} {
+			collect(event.Payload[key])
+		}
+		if result, ok := event.Payload["result"].(map[string]any); ok {
+			for _, key := range []string{"nodeId", "nodeIds", "referenceNodeIds"} {
+				collect(result[key])
+			}
+		}
+		if event.Type == "canvas_updated" {
+			for _, action := range creationMaps(event.Payload["actions"]) {
+				if id := stringValue(action["nodeId"]); id != "" {
+					known[id] = true
+				}
+			}
+		}
+	}
+	return known
+}
+
+// cloudAgentTextClaimsNodeCreation 判断正文是否在"宣称创建/新增/写入了画布节点"。
+// 动作词与节点名词必须同时出现；任一缺失就放行（我的决定 D4：不可判定一律放行）。
+func cloudAgentTextClaimsNodeCreation(text string) bool {
+	claimed := false
+	for _, verb := range cloudAgentNodeClaimVerbs {
+		if strings.Contains(text, verb) {
+			claimed = true
+			break
+		}
+	}
+	if !claimed {
+		return false
+	}
+	for _, noun := range cloudAgentNodeClaimNouns {
+		if strings.Contains(text, noun) {
+			return true
+		}
+	}
+	return false
+}
+
+// cloudAgentBlockUnverifiedNodeClaims 给候选收尾追加"引用了本轮从未出现过的节点 ID"这条阻塞。
+//
+// 判据刻意保守（D4）：只有正文里出现**服务端形态的节点 ID**、该 ID 既不在本轮任何工具回执、
+// 也不在本轮任何画布增量里，同时正文用了"创建/新增/写入…节点"这类交付措辞时才拦。
+// 只要有一个引用是真实见过的就放行——宁可漏拦，不误伤正常收尾（每次催办都是真实计费的模型调用）。
+func cloudAgentBlockUnverifiedNodeClaims(state *cloudAgentRuntime, block cloudAgentCompletionBlock, text string) cloudAgentCompletionBlock {
+	claimed := cloudAgentClaimedNodeIDs(text)
+	if len(claimed) == 0 {
+		return block
+	}
+	known := cloudAgentKnownRoundNodeIDs(state)
+	for _, id := range claimed {
+		if known[id] {
+			return block
+		}
+	}
+	if !cloudAgentTextClaimsNodeCreation(text) {
+		return block
+	}
+	if cloudAgentCompletionHasBlocker(block, cloudAgentCompletionNodeClaimKind) {
+		return block
+	}
+	block.Blockers = append(block.Blockers, cloudAgentCompletionBlocker{Kind: cloudAgentCompletionNodeClaimKind, Detail: strings.Join(claimed, "、")})
+	block.Final = false
+	// 与截断同理：这是本轮的事实性问题，不是"用户刚插话"，要走催办计数。
+	block.Interjected = false
+	block.Fingerprint = cloudAgentCompletionFingerprint(block.Blockers)
+	block.MaxAttempts = cloudAgentCompletionNudgeLimit
+	return block
+}
+
 // cloudAgentCompletionHasBlocker 判断本次阻塞里是否含指定 kind。
 func cloudAgentCompletionHasBlocker(block cloudAgentCompletionBlock, kind string) bool {
 	for _, blocker := range block.Blockers {
@@ -184,6 +311,8 @@ func cloudAgentCompletionBlockerText(block cloudAgentCompletionBlock) string {
 			parts = append(parts, blocker.Detail)
 		case cloudAgentCompletionTruncatedKind:
 			parts = append(parts, "上一步正文被输出上限截断，不是完整答复")
+		case cloudAgentCompletionNodeClaimKind:
+			parts = append(parts, "最终答复引用了本轮从未出现过的节点 ID（"+blocker.Detail+"）")
 		default:
 			parts = append(parts, blocker.Kind)
 		}
@@ -283,6 +412,7 @@ func cloudAgentFinishRun(runID string, state *cloudAgentRuntime, call cloudAgent
 			"text": "同一批里前面已经申请过一次收尾，本次未重复处理。"}, nil
 	}
 	block := cloudAgentEvaluateCompletion(state)
+	block = cloudAgentBlockUnverifiedNodeClaims(state, block, summary)
 	result := map[string]any{"phase": "completion", "summary": summary, "completionBlocked": !block.Final}
 	if block.Final {
 		return result, nil
@@ -304,8 +434,13 @@ func cloudAgentFinishRun(runID string, state *cloudAgentRuntime, call cloudAgent
 	result["blockers"] = block.Blockers
 	result["fingerprint"] = block.Fingerprint
 	result["attempt"], result["maxAttempts"] = attempt, cloudAgentCompletionNudgeLimit
-	result["requiredAction"] = "reconcile_plan"
-	result["text"] = cloudAgentCompletionBlockerText(block) + "；先把清单按真实结果对账（做完标 done、已取消则移除），再调用 finish_run。"
+	if cloudAgentCompletionHasBlocker(block, cloudAgentCompletionNodeClaimKind) {
+		result["requiredAction"] = "verify_node_receipts"
+		result["text"] = cloudAgentCompletionBlockerText(block) + "；先重新读取画布核对真实节点，再按回执里的 nodeId 改写答复，最后调用 finish_run。"
+	} else {
+		result["requiredAction"] = "reconcile_plan"
+		result["text"] = cloudAgentCompletionBlockerText(block) + "；先把清单按真实结果对账（做完标 done、已取消则移除），再调用 finish_run。"
+	}
 	if exhausted {
 		result["exhausted"] = true
 	}

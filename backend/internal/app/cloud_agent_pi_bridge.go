@@ -713,6 +713,7 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 		}
 		completion := cloudAgentEvaluateCompletion(&state)
 		completion = cloudAgentBlockTruncatedCompletion(completion, result.StopReasonKind)
+		completion = cloudAgentBlockUnverifiedNodeClaims(&state, completion, result.Text)
 		state.event(runID, "assistant_message", map[string]any{"messageId": taskID, "text": result.Text, "final": completion.Final})
 		state.cloudAgentRecordImageObservations(result.Text, false)
 		state.cloudAgentSyncVisualAnchor()
