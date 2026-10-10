@@ -6,6 +6,7 @@ export type DiagnosticExportInput = {
     to: string;
     taskId?: string;
     projectId?: string;
+    canvasId?: string;
     description?: string;
     runtime: {
         appVersion?: string;
@@ -23,6 +24,11 @@ export type DiagnosticPreview = {
     taskCount: number;
     taskLogCount: number;
     apiCallCount: number;
+    canvasCount: number;
+    canvasChangeCount: number;
+    agentRunCount: number;
+    agentMessageCount: number;
+    agentEventCount: number;
     estimatedBytes: number;
     willTruncate: boolean;
 };

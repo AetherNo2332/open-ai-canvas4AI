@@ -31,6 +31,15 @@ func cloudAgentNodeCapabilityForNode(node map[string]any) (cloudAgentNodeCapabil
 
 func cloudAgentNodeTypeNames() []string { return canvasCapabilityRegistry.Types() }
 
+func cloudAgentEditableNodeProjection(node map[string]any, descriptor cloudAgentNodeCapability, textLimit int) map[string]any {
+	values, truncated := descriptor.EditableValues(node, textLimit)
+	result := map[string]any{"fields": values}
+	if len(truncated) > 0 {
+		result["truncatedFields"] = truncated
+	}
+	return result
+}
+
 func cloudAgentGenerationModeNames() []string {
 	modes := make([]string, 0)
 	for _, mode := range canvasCapabilityRegistry.GenerationModeNames() {

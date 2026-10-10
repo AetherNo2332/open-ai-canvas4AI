@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
+import { CanvasContextOverflow, CanvasLeaseLost, CanvasModelRetry, CanvasRunTerminated, CanvasBridge, type PiCanonical, type PiSnapshot, type PiToolCall } from "../src/bridge.js";
 import type { CanvasModelResult } from "../src/pi-stream.js";
 import { FatalWorkerError, type CanvasToolSpec } from "../src/tool-disclosure.js";
 import { assembleSystemPrompt, canvasModel, fromCanonical, runCanvasAgent, withServerPolicy } from "../src/runner.js";
@@ -574,6 +574,38 @@ test("assistant checkpoint failure prevents queued batch admission and tool exec
   assert.deepEqual(state.executions, []);
 });
 
+for (const [kind, failure] of [
+  ["storage", new Error("Canvas bridge HTTP 500 on /phase")],
+  ["lease", new CanvasLeaseLost("the execution lease changed")],
+  ["fatal", new FatalWorkerError("Canvas bridge HTTP 403 on /tool-batches")],
+] as const) {
+  test(`tool bridge ${kind} failures stop Pi before another model request`, async () => {
+    const { bridge, state, snapshot } = fakeBridge([
+      { toolCalls: [{ id: "infra-call", function: { name: "canvas_get_state", arguments: "{}" } }] },
+      { text: "must not request another model after an infrastructure failure" },
+    ]);
+    const execute = bridge.executeTool.bind(bridge);
+    bridge.executeTool = async (...args) => { await execute(...args); throw failure; };
+    await assert.rejects(runCanvasAgent(bridge, snapshot, undefined, promptParts()), error => error === failure);
+    assert.equal(state.steps, 1);
+    assert.deepEqual(state.executions, ["infra-call"]);
+    assert.deepEqual(state.noToolTurns, []);
+  });
+}
+
+test("a rejected tool receipt remains a recoverable model result", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "rejected-call", function: { name: "canvas_get_state", arguments: "{}" } }] },
+    { text: "the rejected tool did not change the canvas" },
+  ]);
+  const execute = bridge.executeTool.bind(bridge);
+  bridge.executeTool = async (...args) => ({ ...await execute(...args), isError: true,
+    result: { errorClass: "state_conflict", message: "read the current snapshot" } });
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 2);
+  assert.equal(state.status, "completed");
+});
+
 test("a retried native run never admits an unresolved historical tool batch", async (t) => {
   for (const activeTask of [undefined, "task-1"]) await t.test(activeTask ? "in-flight model" : "before model", async () => {
     const { bridge, state, snapshot } = fakeBridge([{ text: "继续本轮请求" }]);
@@ -716,7 +748,7 @@ test("a window shrink during a tool turn is applied before Pi checks the next re
 test("native overflow recovery persists omission entries before the Go compaction CAS", async () => {
   const history = compactionHistory();
   const { bridge, state, snapshot } = fakeBridge([
-    async () => { throw new Error("context_length_exceeded"); }, { text: "Done" },
+    async () => { throw new CanvasContextOverflow(); }, { text: "Done" },
   ], { piSessionEntries: history.views, piActiveLeafId: history.leaf });
   snapshot.canonical.messages = history.canonical;
   snapshot.piSessionRevision = 8;

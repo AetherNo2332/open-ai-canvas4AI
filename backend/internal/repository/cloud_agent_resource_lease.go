@@ -42,7 +42,8 @@ func (r *Repository) ReleaseCloudAgentResourceLeases(userID, ownerID string) err
 }
 
 func (r *Repository) ReleaseCloudAgentResourceLeasesByRun(userID, runID string) error {
-	return r.db.Where("user_id = ? AND run_id = ?", userID, runID).Delete(&model.CloudAgentResourceLease{}).Error
+	// Render pins have their own bounded lifetime and survive Pi cleanup.
+	return r.db.Where("user_id = ? AND run_id = ? AND owner_id NOT LIKE ?", userID, runID, "previs-task:%").Delete(&model.CloudAgentResourceLease{}).Error
 }
 
 func (r *Repository) TransferCloudAgentResourceLeases(userID, fromOwner, toOwner, runID string, expiresAt time.Time) error {

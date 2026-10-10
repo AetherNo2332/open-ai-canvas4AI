@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SetVersion = "canvas-capabilities/v5"
+const SetVersion = "canvas-capabilities/v6"
 
 type Registry struct {
 	descriptors map[string]Descriptor
@@ -241,7 +241,7 @@ func cloneDescriptor(descriptor Descriptor) Descriptor {
 	descriptor.DetailFields = append([]string(nil), descriptor.DetailFields...)
 	patchFields := make(map[string]PatchField, len(descriptor.PatchFields))
 	for key, field := range descriptor.PatchFields {
-		patchFields[key] = field
+		patchFields[key] = clonePatchField(field)
 	}
 	descriptor.PatchFields = patchFields
 	if descriptor.Variant != nil {
@@ -278,6 +278,8 @@ type hashConnectionPolicy struct {
 	CanSource          bool
 	CanTarget          bool
 	CanReference       bool
+	CanGraphSource     bool
+	CanGraphTarget     bool
 	AcceptedInputKinds []string
 	RejectedInputKinds []string
 	MaxInputCount      int
@@ -291,6 +293,7 @@ type hashPatchField struct {
 	Order       int
 	Description string
 	MaxRunes    int
+	Schema      map[string]any
 }
 
 func registryHashItems(descriptors []Descriptor) []hashDescriptor {
@@ -304,7 +307,7 @@ func registryHashItems(descriptors []Descriptor) []hashDescriptor {
 		patchFields := make([]hashPatchField, 0, len(keys))
 		for _, key := range keys {
 			field := descriptor.PatchFields[key]
-			patchFields = append(patchFields, hashPatchField{Key: key, Path: field.Path, Kind: field.Kind, Label: field.Label, Order: field.Order, Description: field.Description, MaxRunes: field.MaxRunes})
+			patchFields = append(patchFields, hashPatchField{Key: key, Path: field.Path, Kind: field.Kind, Label: field.Label, Order: field.Order, Description: field.Description, MaxRunes: field.MaxRunes, Schema: field.JSONSchema()})
 		}
 		items = append(items, hashDescriptor{
 			Type: descriptor.Type, Version: descriptor.Version, Label: descriptor.Label,
@@ -313,7 +316,7 @@ func registryHashItems(descriptors []Descriptor) []hashDescriptor {
 			DefaultWidth: descriptor.DefaultWidth, DefaultHeight: descriptor.DefaultHeight,
 			InputKind: descriptor.InputKind, GenerationMode: descriptor.GenerationMode,
 			ProjectionKind: descriptor.ProjectionKind, ProjectionField: descriptor.ProjectionField,
-			Connection: hashConnectionPolicy{CanSource: descriptor.Connection.CanSource, CanTarget: descriptor.Connection.CanTarget, CanReference: descriptor.Connection.CanReference, AcceptedInputKinds: descriptor.Connection.AcceptedInputKinds, RejectedInputKinds: descriptor.Connection.RejectedInputKinds, MaxInputCount: descriptor.Connection.MaxInputCount},
+			Connection: hashConnectionPolicy{CanSource: descriptor.Connection.CanSource, CanTarget: descriptor.Connection.CanTarget, CanReference: descriptor.Connection.CanReference, CanGraphSource: descriptor.Connection.CanGraphSource, CanGraphTarget: descriptor.Connection.CanGraphTarget, AcceptedInputKinds: descriptor.Connection.AcceptedInputKinds, RejectedInputKinds: descriptor.Connection.RejectedInputKinds, MaxInputCount: descriptor.Connection.MaxInputCount},
 			CanUpdate:  descriptor.CanUpdate, SummaryFields: descriptor.SummaryFields, DetailFields: descriptor.DetailFields, PatchFields: patchFields,
 			Variant: descriptor.Variant,
 		})

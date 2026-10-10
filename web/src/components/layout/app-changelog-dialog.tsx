@@ -18,7 +18,7 @@ export function AppChangelogDialog({ open, onClose }: { open: boolean; onClose: 
                         <ScrollText className="size-4" />
                     </span>
                     <div className="app-changelog-heading-copy">
-                        <div className="app-changelog-heading-title">更新日志</div>
+                        <div className="app-changelog-heading-title">发行说明</div>
                         <div className="app-changelog-heading-description">按版本查看产品能力、交互与稳定性变化</div>
                     </div>
                     <span className="app-changelog-current-version">当前版本 {version}</span>
