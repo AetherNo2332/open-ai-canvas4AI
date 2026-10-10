@@ -8,11 +8,13 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
  * previsSceneId，但必须继续交给视频/图片渲染器，否则会变成点不开的"死卡片"。
  */
 export function canvasNodeHasCustomContent(node: Pick<CanvasNodeData, "type" | "metadata">, isEditingContent: boolean) {
-    return node.type === CanvasNodeType.Config ||
+    return (
+        node.type === CanvasNodeType.Config ||
         node.type === CanvasNodeType.Script ||
         node.type === CanvasNodeType.BatchTable ||
         isPrevisWorkstationNode(node) ||
         (node.metadata?.workflowKind === "character" && Boolean(node.metadata.characterAssetId)) ||
         (node.metadata?.workflowKind === "story_input" && !isEditingContent) ||
-        (node.metadata?.workflowKind === "styleboard" && !node.metadata.content);
+        (node.metadata?.workflowKind === "styleboard" && !node.metadata.content)
+    );
 }
