@@ -3,6 +3,14 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 云端 Agent 镜像发布与生产部署
+
+2026-10-05 本地验证（工作树，未合入）：`agent/Dockerfile` 改为 BUILDPLATFORM 编译 + 按目标架构安装生产依赖并内置 `agent/harness`；`publish-images.yml` 构建矩阵加入 `open-ai-canvas-agent`（amd64/arm64）；`quality.yml` 新增 agent 双架构 npm 测试；`docker-compose.deploy.yml` 新增 `pi` profile 的 agent 服务；`install-server-image.sh` 写入并固定 `CANVAS_AGENT_IMAGE` digest。已验证：三个 YAML 语法解析、`docker compose config` 三种场景渲染（profile 关闭 / digest 固定 / 未配 `CANVAS_AGENT_IMAGE` 时的 tag 回退）、`bash -n`。amd64 镜像本地构建与容器启动验证受网络与运行环境影响，保留以下云端/真机验收：
+
+- [ ] CI 上 agent 镜像双架构构建成功，GHCR 出现 `open-ai-canvas-agent` 的 sha/version manifest。
+- [ ] 生产服务器 `pi` profile 启动 agent 容器：配置 `CANVAS_AGENT_INTERNAL_TOKEN` 后 Worker 领取 Cloud Agent 运行并正常出事件流。
+- [ ] host-updater 在线更新在启用 `pi` profile 的部署上正常切换 agent 镜像 digest（更新器代码仍只管理 backend/web，agent 镜像由 `.env` 回退链或安装器维护）。
+
 ## Agent 默认技能与活动子智能体列表
 
 2026-10-04 自动验证（`392426c2`）：后端全量通过，已覆盖真实 20 个未安装默认技能建 Run/Pi 装配读取、容量拒绝不改会话、用户版本冻结、清空 revision 和独立 SQLite 连接 CAS。前端本任务聚焦 16/16、lint、build 通过；全量 2154/2165，余下 11 项在 canary 合入快照 `20689871` 同样复现。以下保留为真实浏览器/部署环境手工验收，PostgreSQL 多实例尚未实测。

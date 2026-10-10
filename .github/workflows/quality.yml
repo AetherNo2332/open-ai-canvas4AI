@@ -156,3 +156,28 @@ jobs:
         run: |
           google-chrome --version || chromium --version
           bun run test:director:e2e
+
+  agent:
+    name: Agent checks
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 发布矩阵按平台分别出 agent 镜像；CI 用原生 Runner 同步验收两个架构。
+          - runner: ubuntu-24.04
+          - runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      # package-lock.json 锁定 node >=22.19.0；版本随 agent/Dockerfile 的基础镜像更新。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - name: Install dependencies
+        working-directory: agent
+        run: npm ci --ignore-scripts
+      - name: Run tests
+        working-directory: agent
+        run: npm test

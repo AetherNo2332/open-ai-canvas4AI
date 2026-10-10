@@ -17,6 +17,8 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml --profile pi up
 
 原生 Skill 验收需从真实画布提交一轮并观察 `native_skill_enabled` / `native_skill_read` SSE、会话恢复和冻结版本读取；容器 healthy 或首页打开只说明入口可用。
 
+生产镜像部署（`docker-compose.deploy.yml`）同样以 `pi` profile 提供 worker：`.env` 配置 `CANVAS_AGENT_INTERNAL_TOKEN` 与 `COMPOSE_PROFILES=pi` 即可启用，agent 镜像默认按 `CANVAS_IMAGE_REPOSITORY` + `CANVAS_IMAGE_TAG` 解析，也可用 `CANVAS_AGENT_IMAGE` 固定 digest。详见[系统更新文档](system-update.mdx)。
+
 ## Compose 公网资源地址
 
 `docker-compose.yml`、`docker-compose.dev.yml`、`docker-compose.local.yml`、`docker-compose.server.yml` 和 `docker-compose.deploy.yml` 均将 `.env` 中的 `CANVAS_PUBLIC_BASE_URL` 传入后端。使用本地文件存储且上游模型需要读取参考素材时，将它设为上游能访问的 HTTPS 站点根地址（例如 `https://canvas.example.com`，不要附加 `/api`）；存储设置中的公网访问地址优先于该环境变量。

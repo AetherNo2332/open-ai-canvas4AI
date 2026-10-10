@@ -1331,12 +1331,9 @@ function AgentContextRing({ view }: { view: AgentContextUsageView }) {
                     style={
                         {
                             "--agent-context-progress": `${view.ring * 100}%`,
-                            "--agent-context-marker-angle": `${(marker || 0) * 360}deg`,
                         } as CSSProperties
                     }
-                >
-                    {marker ? <span className="agent-context-ring-marker" /> : null}
-                </span>
+                />
                 <span className="agent-context-meter-copy">
                     <strong>{meterLabel}</strong>
                     <small>上下文</small>
