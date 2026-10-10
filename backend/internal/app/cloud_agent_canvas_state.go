@@ -359,7 +359,7 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			fields = capability.DetailFields
 			projectMode = cloudAgentProjectionDetail
 			textLimit = cloudAgentDetailTextLimit
-			item["editable"] = cloudAgentEditableNodeProjection(node,capability,textLimit)
+			item["editable"] = cloudAgentEditableNodeProjection(node, capability, textLimit)
 		}
 		projected, err := cloudAgentProjectNodeFields(node, meta, capability, fields, textLimit, projectMode, storyboardOffset, readRows)
 		if err != nil {
@@ -730,12 +730,30 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, mode cloud
 				item[collection+"Truncated"] = true
 			}
 		}
-		if mode==cloudAgentProjectionDetail {
-			fields:=capability.StoryboardRowFields();extra:=map[string]capability.PatchField{}
-			for _,key:=range []string{"mustHave","optionalDetails","characters","assetBindings","imagePromptTemplateVariables","videoPromptTemplateVariables","sourceStartMs","sourceEndMs","keyframeTimeMs"}{extra[key]=fields[key]}
-			projected:=cloudAgentRowFieldProjection(row,extra,textLimit,8000)
-			if characters,ok:=projected["characters"].([]any);ok { originals:=creationMaps(row["characters"]);for index,value:=range characters {if index>=len(originals){break};character:=value.(map[string]any);for _,key:=range []string{"characterAssetId","characterVersionId"}{if id,ok:=originals[index][key].(string);ok{character[key]=truncateRunes(id,120)}}} }
-			for key,value:=range projected{item[key]=value}
+		if mode == cloudAgentProjectionDetail {
+			fields := capability.StoryboardRowFields()
+			extra := map[string]capability.PatchField{}
+			for _, key := range []string{"mustHave", "optionalDetails", "characters", "assetBindings", "imagePromptTemplateVariables", "videoPromptTemplateVariables", "sourceStartMs", "sourceEndMs", "keyframeTimeMs"} {
+				extra[key] = fields[key]
+			}
+			projected := cloudAgentRowFieldProjection(row, extra, textLimit, 8000)
+			if characters, ok := projected["characters"].([]any); ok {
+				originals := creationMaps(row["characters"])
+				for index, value := range characters {
+					if index >= len(originals) {
+						break
+					}
+					character := value.(map[string]any)
+					for _, key := range []string{"characterAssetId", "characterVersionId"} {
+						if id, ok := originals[index][key].(string); ok {
+							character[key] = truncateRunes(id, 120)
+						}
+					}
+				}
+			}
+			for key, value := range projected {
+				item[key] = value
+			}
 		}
 		// rowId 是编辑句柄：它只出现在逐字档，分页档由下面的提示告诉模型去哪里取。
 		if mode != cloudAgentProjectionDetail {
@@ -879,7 +897,13 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 		if outputNodeID := truncateRunes(stringValue(row["outputNodeId"]), 120); outputNodeID != "" {
 			item["outputNodeId"] = outputNodeID
 		}
-		if mode==cloudAgentProjectionDetail { fields:=capability.BatchRowFields();extra:=map[string]capability.PatchField{"textNodeIds":fields["textNodeIds"],"cells":fields["cells"]};for key,value:=range cloudAgentRowFieldProjection(row,extra,textLimit,8000){item[key]=value} }
+		if mode == cloudAgentProjectionDetail {
+			fields := capability.BatchRowFields()
+			extra := map[string]capability.PatchField{"textNodeIds": fields["textNodeIds"], "cells": fields["cells"]}
+			for key, value := range cloudAgentRowFieldProjection(row, extra, textLimit, 8000) {
+				item[key] = value
+			}
+		}
 		rows = append(rows, item)
 	}
 	projected := map[string]any{
@@ -890,7 +914,18 @@ func cloudAgentBatchTableState(table map[string]any, offset int, mode cloudAgent
 			"missingReferenceRows": missingReferences, "outputLinkedRows": outputLinked,
 		},
 	}
-	if mode==cloudAgentProjectionDetail { columns:=[]any{};for _,column:=range creationMaps(table["textColumns"])[:min(len(creationMaps(table["textColumns"])),100)]{id,label:=truncateRunes(stringValue(column["id"]),120),truncateRunes(stringValue(column["label"]),120);if id!=""&&label!=""{columns=append(columns,map[string]any{"id":id,"label":label,"type":"text"})}};if len(columns)>0{projected["textColumns"]=columns} }
+	if mode == cloudAgentProjectionDetail {
+		columns := []any{}
+		for _, column := range creationMaps(table["textColumns"])[:min(len(creationMaps(table["textColumns"])), 100)] {
+			id, label := truncateRunes(stringValue(column["id"]), 120), truncateRunes(stringValue(column["label"]), 120)
+			if id != "" && label != "" {
+				columns = append(columns, map[string]any{"id": id, "label": label, "type": "text"})
+			}
+		}
+		if len(columns) > 0 {
+			projected["textColumns"] = columns
+		}
+	}
 	if globalPrompt != "" {
 		projected["globalPrompt"] = truncateRunes(globalPrompt, textLimit)
 		if len([]rune(globalPrompt)) > textLimit {
@@ -921,24 +956,62 @@ func cloudAgentBatchInputIDs(value any, limit int) []any {
 	return out
 }
 
-func cloudAgentRowFieldProjection(row map[string]any,fields map[string]capability.PatchField,textLimit,budget int) map[string]any {
-	paths:=map[string]capability.PatchField{};for key,field:=range fields{field.Path=key;paths[key]=field}
-	values,flags:=(capability.Descriptor{PatchFields:paths}).EditableValues(row,textLimit)
-	keys:=make([]string,0,len(values));for key:=range values{keys=append(keys,key)};sort.Strings(keys)
-	for _,key:=range keys{value,cut:=cloudAgentBoundRowValue(key,values[key],&budget);values[key]=value;if cut||flags[key]{values[key+"Truncated"]=true}}
+func cloudAgentRowFieldProjection(row map[string]any, fields map[string]capability.PatchField, textLimit, budget int) map[string]any {
+	paths := map[string]capability.PatchField{}
+	for key, field := range fields {
+		field.Path = key
+		paths[key] = field
+	}
+	values, flags := (capability.Descriptor{PatchFields: paths}).EditableValues(row, textLimit)
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value, cut := cloudAgentBoundRowValue(key, values[key], &budget)
+		values[key] = value
+		if cut || flags[key] {
+			values[key+"Truncated"] = true
+		}
+	}
 	return values
 }
 
-func cloudAgentBoundRowValue(key string,value any,budget *int) (any,bool) {
-	switch typed:=value.(type) {
+func cloudAgentBoundRowValue(key string, value any, budget *int) (any, bool) {
+	switch typed := value.(type) {
 	case string:
-		if key=="nodeId"||strings.HasSuffix(key,"NodeId")||strings.HasSuffix(key,"NodeIds")||key=="role"{return typed,false}
-		text:=truncateRunes(typed,max(*budget,0));*budget-=len([]rune(text));return text,text!=typed
+		if key == "nodeId" || strings.HasSuffix(key, "NodeId") || strings.HasSuffix(key, "NodeIds") || key == "role" {
+			return typed, false
+		}
+		text := truncateRunes(typed, max(*budget, 0))
+		*budget -= len([]rune(text))
+		return text, text != typed
 	case []any:
-		values:=make([]any,len(typed));cut:=false;for index,item:=range typed{safe,truncated:=cloudAgentBoundRowValue(key,item,budget);values[index]=safe;cut=cut||truncated};return values,cut
+		values := make([]any, len(typed))
+		cut := false
+		for index, item := range typed {
+			safe, truncated := cloudAgentBoundRowValue(key, item, budget)
+			values[index] = safe
+			cut = cut || truncated
+		}
+		return values, cut
 	case map[string]any:
-		values:=map[string]any{};cut:=false;keys:=make([]string,0,len(typed));for key:=range typed{keys=append(keys,key)};sort.Strings(keys);for _,key:=range keys{safe,truncated:=cloudAgentBoundRowValue(key,typed[key],budget);values[key]=safe;cut=cut||truncated};return values,cut
-	default:return value,false
+		values := map[string]any{}
+		cut := false
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			safe, truncated := cloudAgentBoundRowValue(key, typed[key], budget)
+			values[key] = safe
+			cut = cut || truncated
+		}
+		return values, cut
+	default:
+		return value, false
 	}
 }
 

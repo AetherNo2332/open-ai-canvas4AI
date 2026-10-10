@@ -308,7 +308,11 @@ func cloudAgentValidateEdgeHandles(nodes []map[string]any, edge map[string]any) 
 			if strings.HasPrefix(handle, "batch-text:") {
 				prefix, key = "batch-text:", "textColumns"
 			}
-			if cloudAgentNodeIndex(creationMaps(table[key]), strings.TrimPrefix(handle, prefix)) < 0 {
+			columns := creationMaps(table[key])
+			if len(columns) == 0 && key == "referenceColumns" {
+				columns = []map[string]any{{"id": "reference-1"}, {"id": "reference-2"}, {"id": "reference-3"}}
+			}
+			if cloudAgentNodeIndex(columns, strings.TrimPrefix(handle, prefix)) < 0 {
 				return BadAuthRequest("批量表输入列端口不存在")
 			}
 		} else if handle == "storyboard:context" {

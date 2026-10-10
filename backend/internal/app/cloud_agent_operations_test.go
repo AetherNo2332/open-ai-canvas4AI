@@ -97,7 +97,9 @@ func TestAgentParityDisconnectAndReorderRows(t *testing.T) {
 }
 
 func TestAgentParityDeletionProducesBeforeAfterDelta(t *testing.T) {
- before:=[]map[string]any{{"id":"gone","type":"text"},{"id":"keep","type":"text"}}
- changes:=cloudAgentObjectChanges(before,[]map[string]any{{"id":"keep","type":"text"}})
- if len(changes)!=1 || changes[0]["after"]!=nil || changes[0]["before"].(map[string]any)["id"]!="gone" {t.Fatalf("missing deletion delta: %+v",changes)}
+	before := []map[string]any{{"id": "gone", "type": "text"}, {"id": "keep", "type": "text"}}
+	changes := cloudAgentObjectChanges(before, []map[string]any{{"id": "keep", "type": "text"}})
+	if len(changes) != 1 || changes[0]["after"] != nil || changes[0]["before"].(map[string]any)["id"] != "gone" {
+		t.Fatalf("missing deletion delta: %+v", changes)
+	}
 }
