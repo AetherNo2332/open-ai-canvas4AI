@@ -16,12 +16,12 @@ type AppChangelogButtonProps = {
     label?: ReactNode;
 };
 
-export function AppChangelogButton({ className, style, showVersion = false, showLabel = false, labelClassName, versionClassName, icon, label = "更新日志" }: AppChangelogButtonProps) {
+export function AppChangelogButton({ className, style, showVersion = false, showLabel = false, labelClassName, versionClassName, icon, label = "发行说明" }: AppChangelogButtonProps) {
     const [open, setOpen] = useState(false);
 
     return (
         <>
-            <button type="button" className={className} style={style} onClick={() => setOpen(true)} aria-label="查看更新日志" title="更新日志">
+            <button type="button" className={className} style={style} onClick={() => setOpen(true)} aria-label="查看发行说明" title="发行说明">
                 {icon ?? <ScrollText className="size-4 shrink-0" />}
                 {showLabel ? <span className={`whitespace-nowrap ${labelClassName || ""}`}>{label}</span> : null}
                 {showVersion ? <span className={versionClassName}>v{APP_VERSION.replace(/^v/, "")}</span> : null}

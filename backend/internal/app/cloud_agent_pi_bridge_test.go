@@ -1070,6 +1070,49 @@ func TestPiNoToolTurnRejectsFailedStep(t *testing.T) {
 
 // 失败上报必须幂等：worker 在"已记录失败、未收到响应"之间崩溃后会重投，
 // 第二次必须成功返回，否则 Node 把它当协议错误并整轮退出。
+func TestPiFailModelStepLeavesContextOverflowRecoveryToPi(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	const taskID = "pi-overflow-failed"
+	if err := db.Create(&model.Task{ID: taskID, UserID: "user", ProjectID: run.CanvasID, Type: "canvas_text",
+		Status: model.TaskStatusFailed, Error: "context_length_exceeded: upstream private details"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.MutateCloudAgent("user", run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		state, err := cloudAgentDecode(current)
+		if err != nil {
+			return err
+		}
+		state.ActiveTaskID = taskID
+		state.TaskIDs = append(state.TaskIDs, taskID)
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		decision, err := s.PiFailModelStepResult("user", run.ID, run.LeaseOwner, taskID)
+		if err != nil || decision.Status != "continue" || decision.Reason != "context_overflow" || decision.Nudge != "" {
+			t.Fatalf("Pi overflow recovery attempt %d: %+v %v", attempt, decision, err)
+		}
+	}
+	after, state := reloadPiRun(t, s, run.ID)
+	if after.Status != "running" || state.ActiveTaskID != taskID || state.ContextCompaction != nil {
+		t.Fatalf("Go decided compression or terminated: status=%s active=%s compaction=%+v", after.Status, state.ActiveTaskID, state.ContextCompaction)
+	}
+	for _, event := range after.Journal {
+		if strings.Contains(event.EventJSON, "upstream private details") {
+			t.Fatal("raw upstream error leaked")
+		}
+	}
+	if err := s.PiCheckpointMessage("user", run.ID, run.LeaseOwner, PiMessageCheckpoint{Sequence: 1,
+		Message: json.RawMessage(`{"role":"assistant","content":[],"stopReason":"error","errorMessage":"context_length_exceeded"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	_, state = reloadPiRun(t, s, run.ID)
+	if state.ActiveTaskID != "" {
+		t.Fatal("durable overflow checkpoint did not release the failed task")
+	}
+}
+
 func TestPiFailModelStepIdempotent(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
 
@@ -1328,6 +1371,9 @@ func TestPiFailRunMarksRunFailedWithReason(t *testing.T) {
 	failed, state := reloadPiRun(t, s, run.ID)
 	if failed.Status != "failed" {
 		t.Fatalf("状态 = %q，期望 failed", failed.Status)
+	}
+	if !failed.CleanupPending {
+		t.Fatal("worker failure must atomically schedule terminal cleanup")
 	}
 	if !strings.Contains(failed.FailureMessage, "tools missing") {
 		t.Fatalf("失败原因未落库: %q", failed.FailureMessage)

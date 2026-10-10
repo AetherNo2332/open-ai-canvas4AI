@@ -1,6 +1,6 @@
 package app
 
-// 自研：画布 Agent 单步边界（输出上限 + 秒级墙钟）的可配置化与超时可恢复。
+// 画布 Agent 单步边界（输出上限 + 秒级墙钟）与超时终止。
 import (
 	"context"
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/platform"
 
@@ -181,8 +182,8 @@ func TestRuntimePolicyBackfillsAgentStepLimitsForLegacyJSON(t *testing.T) {
 	}
 }
 
-// 单步墙钟到点不再把整轮判死：关思考重试一次；重试仍超时才失败，且失败原因可读。
-func TestCloudAgentStepTimeoutRetriesThenFailsWithReadableReason(t *testing.T) {
+// 单步超时必须立即结束运行，重投失败上报不能重新生成或重复失败事件。
+func TestCloudAgentStepTimeoutTerminatesRunWithoutRetry(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	_, initial := agentStartPiModelStep(t, s, root.ID)
 	failStepTask(t, db, initial.ActiveTaskID)
@@ -191,14 +192,16 @@ func TestCloudAgentStepTimeoutRetriesThenFailsWithReadableReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	run, state := agentInterjectionState(t, s, root.ID)
-	if state.StepTimeoutEscalated != 1 || !state.ForceThinkingOff {
-		t.Fatalf("超时后应关思考重试: escalated=%d forceThinkingOff=%v", state.StepTimeoutEscalated, state.ForceThinkingOff)
+	if run.Status != "failed" || run.RuntimePhase != "terminal" || !run.CleanupPending {
+		t.Fatalf("单步超时必须进入可清理的失败终态: status=%s phase=%s cleanup=%v", run.Status, run.RuntimePhase, run.CleanupPending)
 	}
-	if run.Status != "running" {
-		t.Fatalf("超时应先重试而不是判死，实际 status=%s（%s）", run.Status, run.FailureMessage)
+	if !strings.Contains(run.FailureMessage, "Agent 超时失败") || !agentHasEventWithReason(state, "run_failed", "model_step_timeout") {
+		t.Fatalf("缺少明确的超时失败提示: %s", run.FailureMessage)
 	}
-	if !agentHasEventWithReason(state, "model_failure_recovered", "step_timeout_retried") {
-		t.Fatal("缺少可读的自动重试事件")
+	for _, event := range state.Events {
+		if event.Type == "model_failure_recovered" {
+			t.Fatal("超时不得触发自动重试")
+		}
 	}
 	// 单步边界来自策略，并且进了压力载荷：界面要能显示"这一条线在管事"。
 	// 注意 StepLimits 是每次推进重算的瞬时字段（不进状态 JSON），可观测的口径就是事件载荷。
@@ -210,40 +213,87 @@ func TestCloudAgentStepTimeoutRetriesThenFailsWithReadableReason(t *testing.T) {
 		t.Fatalf("压力事件里的单步墙钟 = %v 秒（ok=%v）", value, ok)
 	}
 
-	// 重试那一步：必须真的关掉思考，并且带着生效的输出上限。
+	// 后续推进和重复失败上报都必须保留终态，不创建新的模型任务。
+	taskCount := len(state.TaskIDs)
+	eventCount := run.EventCount
 	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
 		t.Fatal(err)
 	}
-	_, retried := agentInterjectionState(t, s, root.ID)
-	if retried.ActiveTaskID == "" {
-		t.Fatal("重试没有重新发起模型调用")
+	decision, err := s.PiFailModelStepResult("user", run.ID, run.LeaseOwner, initial.ActiveTaskID)
+	if err != nil || decision.Status != "failed" || decision.Nudge != "" {
+		t.Fatalf("超时失败重投必须幂等: decision=%+v err=%v", decision, err)
 	}
-	task, err := s.repo.TaskForUser("user", retried.ActiveTaskID)
+	view, err := s.PiModelStepView("user", run.ID, run.LeaseOwner, initial.ActiveTaskID)
+	if err != nil || view.Status != "failed" {
+		t.Fatalf("Worker 必须收到失败终态: view=%+v err=%v", view, err)
+	}
+	run, state = agentInterjectionState(t, s, root.ID)
+	if run.Status != "failed" || len(state.TaskIDs) != taskCount || run.EventCount != eventCount {
+		t.Fatal("终态推进重新提交了模型任务或重复记录失败")
+	}
+	if state.PiModelFailureNudge != "" {
+		t.Fatal("超时失败不得保留重试提示")
+	}
+	next, err := s.PiModelStep("user", run.ID, run.LeaseOwner, PiModelStepRequest{})
+	if err != nil || next.Status != "failed" || next.TaskID != "" {
+		t.Fatalf("超时终态不得准入新模型步骤: next=%+v err=%v", next, err)
+	}
+}
+
+func TestPiCompactionTimeoutTerminatesRun(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	revision, leaf := seedPiCompactionBranch(t, db, run)
+	operation, err := s.PiBeginContextCompaction("user", run.ID, run.LeaseOwner, PiContextCompactionStart{
+		SessionRevision: revision, ActiveLeafID: leaf, Reason: "threshold", TokensBefore: 24000,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := stepTaskTextOptions(t, s, task)
-	if options["thinking"] != false {
-		t.Fatalf("重试请求没有关思考: %+v", options)
-	}
-	if options["maxOutputTokens"] != float64(platform.DefaultRuntimeAgentStepOutputTokens) {
-		t.Fatalf("重试请求的输出上限 = %v", options["maxOutputTokens"])
-	}
-
-	// 重试也超时 → 整轮失败，原因指向可配置的那条线。
-	failStepTask(t, db, retried.ActiveTaskID)
-	if err := advancePiAgentForTest(t, s, root.ID); err != nil {
+	if err := db.Model(&model.Task{}).Where("id = ?", operation.TaskID).Updates(map[string]any{
+		"status": model.TaskStatusFailed, "error": cloudAgentStepTimeoutError,
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	run, state = agentInterjectionState(t, s, root.ID)
-	if run.Status != "failed" {
-		t.Fatalf("重试仍超时应结束本轮，实际 status=%s", run.Status)
+	view, err := s.PiContextCompaction("user", run.ID, run.LeaseOwner, operation.OperationID)
+	if err != nil || view.Status != "failed" || view.Fallback {
+		t.Fatalf("压缩超时不得降级后继续运行: view=%+v err=%v", view, err)
 	}
-	if !strings.Contains(run.FailureMessage, "单步模型调用超过执行时限") {
-		t.Fatalf("失败文案没有解释单步超时: %s", run.FailureMessage)
+	failed, state := agentInterjectionState(t, s, run.ID)
+	if failed.Status != "failed" || !failed.CleanupPending || !agentHasEventWithReason(state, "run_failed", "model_step_timeout") {
+		t.Fatalf("压缩超时没有结束 Agent: status=%s", failed.Status)
 	}
-	if !agentHasEventWithReason(state, "run_failed", "model_step_timeout") {
-		t.Fatal("失败事件缺少 model_step_timeout 原因")
+	eventCount := failed.EventCount
+	view, err = s.PiContextCompaction("user", run.ID, run.LeaseOwner, operation.OperationID)
+	// 终态落库会释放会话租约，原 Worker 的重投必须被拒绝。
+	var leaseErr *kernel.AppError
+	if view != nil || !errors.As(err, &leaseErr) || leaseErr.Reason != kernel.ReasonAgentLeaseLost {
+		t.Fatalf("压缩超时后不得接受已失效 Worker 的查询: view=%+v err=%v", view, err)
+	}
+	replayed, _ := agentInterjectionState(t, s, run.ID)
+	if replayed.Status != "failed" || replayed.EventCount != eventCount {
+		t.Fatal("压缩查询重投重复记录失败事件")
+	}
+}
+
+func TestPiModelStepViewTimeoutTerminatesRun(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	run, initial := agentStartPiModelStep(t, s, root.ID)
+	failStepTask(t, db, initial.ActiveTaskID)
+	view, err := s.PiModelStepView("user", run.ID, run.LeaseOwner, initial.ActiveTaskID)
+	if err != nil || view.Status != "failed" {
+		t.Fatalf("Worker 查询应收到失败终态: view=%+v err=%v", view, err)
+	}
+	failed, state := agentInterjectionState(t, s, run.ID)
+	if failed.Status != "failed" || !failed.CleanupPending || !agentHasEventWithReason(state, "run_failed", "model_step_timeout") {
+		t.Fatalf("Worker 仅查询超时任务时也必须结束整轮: status=%s cleanup=%v", failed.Status, failed.CleanupPending)
+	}
+	eventCount := failed.EventCount
+	if _, err := s.PiModelStepView("user", run.ID, run.LeaseOwner, initial.ActiveTaskID); err != nil {
+		t.Fatal(err)
+	}
+	replayed, _ := agentInterjectionState(t, s, run.ID)
+	if replayed.Status != "failed" || replayed.EventCount != eventCount {
+		t.Fatal("超时查询重投复活运行或重复记录失败事件")
 	}
 }
 

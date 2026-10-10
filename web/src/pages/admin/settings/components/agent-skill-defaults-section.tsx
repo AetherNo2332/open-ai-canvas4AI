@@ -102,7 +102,7 @@ export default function AgentSkillDefaultsSection() {
             </div>
         </li>)}</ol>}
         {!loading && items.length === 0 ? <p className="text-sm opacity-60">尚未配置默认技能</p> : null}
-        <p className="agent-skill-defaults-totals text-sm">合计：启用 {enabled.length} 个 · {totalFiles} 文件 · {bytes(totalBytes)}；上下文预估 {bytes(totalBytes)}（技能包整体读入的保守上限）</p>
+        <p className="agent-skill-defaults-totals text-sm">合计：启用 {enabled.length} 个 · {totalFiles} 文件 · 包体积 {bytes(totalBytes)}；轮次开始加载技能索引，正文按需读取。</p>
         <div className="flex flex-wrap items-center gap-3"><Button type="primary" icon={<Save size={14} />} loading={saving} disabled={busy || revision === undefined || !dirty || conflict} onClick={() => { void save(); }}>保存默认技能</Button><span className="text-sm opacity-60">{revision === undefined ? "配置尚未读取" : `配置修订号 ${revision}${dirty ? " · 有未保存调整" : ""}`}</span></div>
     </div>;
 }

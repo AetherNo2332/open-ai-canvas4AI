@@ -40,12 +40,14 @@ type PiPendingContextCompaction struct {
 }
 
 type PiPendingInterjection struct {
+	Source    string    `json:"source,omitempty"`
 	ID        string    `json:"id"`
 	Text      string    `json:"text"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
 type PiAgentSnapshot struct {
+	Subagent                 *SubagentRuntime            `json:"subagent,omitempty"`
 	RunID                    string                      `json:"runId"`
 	PiSessionID              string                      `json:"piSessionId"`
 	PiSessionRevision        int64                       `json:"piSessionRevision"`
@@ -67,7 +69,6 @@ type PiAgentSnapshot struct {
 	ModelFailureNudge        string                      `json:"modelFailureNudge,omitempty"`
 	PendingInterjections     []PiPendingInterjection     `json:"pendingInterjections,omitempty"`
 	PendingContextCompaction *PiPendingContextCompaction `json:"pendingContextCompaction,omitempty"`
-	PreviousStepTemplate     string                      `json:"previousStepTemplate"`
 	Tools                    []PiAgentToolSpec           `json:"tools"`
 	PiMessages               []json.RawMessage           `json:"piMessages"`
 	Opened                   []string                    `json:"openedCategories"`
@@ -274,9 +275,11 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 		return 0, BadAuthRequest("Pi 会话版本无效")
 	}
 	var message struct {
-		Role    string `json:"role"`
-		Text    string `json:"text"`
-		Content any    `json:"content"`
+		Role         string `json:"role"`
+		Text         string `json:"text"`
+		Content      any    `json:"content"`
+		StopReason   string `json:"stopReason"`
+		ErrorMessage string `json:"errorMessage"`
 	}
 	if json.Unmarshal(input.Message, &message) != nil || (message.Role != "user" && message.Role != "assistant" && message.Role != "toolResult" && message.Role != "system") {
 		return 0, BadAuthRequest("Pi 消息类型无效")
@@ -377,6 +380,13 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 		state, err := cloudAgentDecode(current)
 		if err != nil {
 			return err
+		}
+		if input.TaskID == "" && message.Role == "assistant" && message.StopReason == "error" && message.ErrorMessage == "context_length_exceeded" {
+			failedTask, err := repo.TaskForUser(userID, state.PiModelFailureTaskID)
+			if err != nil || !piModelTaskContextOverflow(failedTask) || state.ActiveTaskID != failedTask.ID {
+				return kernel.Forbidden("Pi overflow recovery checkpoint has no matching failed task")
+			}
+			state.ActiveTaskID, state.PiModelStepFingerprint = "", ""
 		}
 		if message.Role == "toolResult" {
 			piSettleLocallyRejectedTool(current, &state, input.Message)
@@ -595,6 +605,7 @@ func nativeReadCheckpointCall(state *cloudAgentRuntime, transcript []model.Cloud
 }
 
 type PiToolReceipt struct {
+	Suspended   bool            `json:"suspended,omitempty"`
 	OperationID string          `json:"operationId,omitempty"`
 	CallID      string          `json:"callId"`
 	Pending     bool            `json:"pending"`
@@ -609,6 +620,7 @@ type PiToolReceipt struct {
 type PiTurnDecision struct {
 	Status string `json:"status"`
 	Nudge  string `json:"nudge,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDecision, error) {
@@ -667,7 +679,7 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 		return nil, kernel.Forbidden("Pi 收尾步骤包含工具调用")
 	}
 	decision := &PiTurnDecision{}
-	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 		disposition := cloudAgentStepStopDisposition(&state, stopKind)
 		state.event(runID, "model_step_stop", cloudAgentStopReasonPayload(state.Step, taskID,
 			result.StopReason, stopKind, disposition, cloudAgentStepStopFacts{
@@ -696,6 +708,9 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 		}
 		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "assistant", "content": result.Text})
 		state.PiNoToolTaskID = taskID
+		if err := refreshActiveSubagents(repo, current, &state); err != nil {
+			return err
+		}
 		completion := cloudAgentEvaluateCompletion(&state)
 		completion = cloudAgentBlockTruncatedCompletion(completion, result.StopReasonKind)
 		state.event(runID, "assistant_message", map[string]any{"messageId": taskID, "text": result.Text, "final": completion.Final})
@@ -740,10 +755,24 @@ func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
 	if err != nil || run == nil {
 		return nil, err
 	}
+	protected, err := s.repo.WorkerRecoveryProtectedWait(*run)
+	if err != nil {
+		return nil, err
+	}
+	if run.WorkerRecoveryExhausted(time.Now()) && (!protected || run.RecoveryAttempts >= model.AgentWorkerRecoveryLimit || run.RecoveryOperationAttempts >= model.AgentWorkerRecoveryLimit) {
+		err = s.mutatePiControl(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			return failWorkerRecovery(current, "pi_worker_recovery_exhausted", "Pi worker 连续接管仍无进展，本轮已停止，请重试")
+		})
+		return nil, err
+	}
 	return s.piAgentSnapshot(run)
 }
 
 func (s *Service) PiAgentSnapshot(userID, runID, owner string) (*PiAgentSnapshot, error) {
+	// Polling control also drains terminal child reports after a worker crash.
+	if err := s.reconcileDynamicSubagents(context.Background(), userID, runID); err != nil {
+		return nil, err
+	}
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
 		var terminal bool
@@ -867,7 +896,9 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 		}
 	}
 	allowed := map[string]bool{}
-	for _, tool := range cloudAgentVisibleToolsForCategories(state.Canonical.Tools, cloudAgentActivatedCategories(&state), nil, state.ToolScope) {
+	// Pi registers the run's eligible catalog once. Repair scope restricts call
+	// admission and execution, while the model request keeps that same catalog.
+	for _, tool := range cloudAgentVisibleToolsForCategories(state.Canonical.Tools, cloudAgentActivatedCategories(&state), nil, nil) {
 		function, _ := tool["function"].(map[string]any)
 		allowed[stringField(function, "name")] = true
 	}
@@ -974,26 +1005,13 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 		state.Snapshot, state.PromptContract = originalSnapshot, originalPromptContract
 	}
 	pressure := s.cloudAgentContextPressure(request.Canonical, state.Request.Prompt, state.Request)
-	channelID, modelKey := state.Request.ChannelID, firstNonEmpty(state.Request.ChannelModelKey, state.Request.Model)
-	signature := cloudAgentRequestSignature(&state, request.Canonical, channelID, modelKey)
-	cloudAgentExpireTokenAnchorForRequest(run.ID, &state, pressure.ContextWindowTokens, signature, modelKey, channelID)
+	cloudAgentExpireTokenAnchorForSelection(run.ID, &state)
 	projected, _ := cloudAgentProjectedInputTokens(pressure, &state)
-	encoded, _ := json.Marshal(request.Canonical.Messages)
-	needsCompaction := state.ContextCompaction != nil || (modelBudget.Configured && projected >= modelBudget.CompactAtTokens) ||
-		(!modelBudget.Configured && cloudAgentContextShouldCompact(len(request.Canonical.Messages), len(encoded)))
 	view := &PiModelStepView{Status: "ready", Decision: "model", ModelLimits: modelBudget, ProjectedTokens: projected}
-	if needsCompaction {
+	// Pi owns the trigger. Go only blocks ordinary requests while an existing
+	// persisted compaction operation is being recovered or committed.
+	if state.ContextCompaction != nil {
 		view.Status, view.Decision = "waiting_compaction", "compact"
-		// This records the decision, not a compaction operation: Pi must first prepare a valid cut.
-		state.PiModelStepFingerprint = ""
-		payload := cloudAgentContextPressurePayload(pressure, &state, request.Canonical)
-		payload["phase"], payload["decision"] = "preflight", "compact"
-		state.event(run.ID, "context_pressure", payload)
-		if err := s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-			return cloudAgentSave(current, &state)
-		}); err != nil {
-			return nil, err
-		}
 		return view, nil
 	}
 	if preflight {
@@ -1048,6 +1066,15 @@ func (s *Service) PiModelStepView(userID, runID, owner, taskID string) (*PiModel
 	task, err := s.repo.TaskForUser(userID, taskID)
 	if err != nil {
 		return nil, err
+	}
+	// Worker 将 failed 查询结果作为终止信号，不一定再调用失败上报。
+	// 因此超时必须在返回任务状态前持久化整轮失败。
+	if cloudAgentTaskTerminal(task.Status) && cloudAgentStepTimedOut(task) {
+		if err := s.failCloudAgentStepTimeout(run, &state, task); err != nil {
+			return nil, err
+		}
+		text, _ := cloudAgentModelFailure(task)
+		return &PiModelStepView{TaskID: task.ID, Status: "failed", Error: text}, nil
 	}
 	draft := state.ActiveTextDraft
 	if draft == "" {
@@ -1104,7 +1131,11 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 		if !cloudAgentRunTerminal(status) {
 			status = "continue"
 		}
-		return &PiTurnDecision{Status: status, Nudge: state.PiModelFailureNudge}, nil
+		decision := &PiTurnDecision{Status: status, Nudge: state.PiModelFailureNudge}
+		if status == "continue" && piModelTaskContextOverflow(task) {
+			decision.Reason = "context_overflow"
+		}
+		return decision, nil
 	}
 	if run.Status == "failed" {
 		// 重投：worker 可能在"已经记录失败、但没收到响应"之间崩溃。只有同一失败
@@ -1129,11 +1160,16 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 	if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
 		return nil, BadAuthRequest("模型任务没有失败")
 	}
+	if cloudAgentStepTimedOut(task) {
+		return &PiTurnDecision{Status: "failed"}, s.failCloudAgentStepTimeout(run, &state, task)
+	}
 	decision := &PiTurnDecision{}
 	err = s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		cloudAgentRestoreEscalationSwitches(&state)
 		nudge, reason := "", ""
 		switch {
+		case piModelTaskContextOverflow(task):
+			reason = "context_overflow"
 		case cloudAgentTruncatedToolArguments(task):
 			nudge = piAssistantText(cloudAgentRuntimeMessage(cloudAgentRuntimeContext{Kind: cloudAgentContextTruncatedArguments})["content"])
 			reason = "truncated_arguments_retried"
@@ -1145,17 +1181,17 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 			state.EmptyOutputEscalated++
 			state.ForceThinkingOff, state.BoostStepOutputBudget = true, true
 			nudge, reason = "上游连续返回空内容；已关闭思考并放大输出预算。请继续处理原请求并返回有效正文或工具调用。", "empty_output_escalated"
-		case cloudAgentStepTimedOut(task) && state.StepTimeoutEscalated < cloudAgentMaxStepTimeoutEscalations:
-			state.StepTimeoutEscalated++
-			state.ForceThinkingOff, state.BoostStepOutputBudget = true, false
-			nudge, reason = "上一步模型调用超时；已关闭思考。请重试同一步，不要重复已经成功的画布操作。", "step_timeout_retried"
 		}
 		state.PiModelFailureTaskID, state.PiModelFailureNudge = taskID, nudge
-		if nudge != "" {
-			state.ActiveTaskID, state.PiModelStepFingerprint = "", ""
+		if nudge != "" || reason == "context_overflow" {
+			// Keep an overflow task resumable until Pi's sanitized error checkpoint
+			// is durable. A crash between /fail and that checkpoint must replay it.
+			if reason != "context_overflow" {
+				state.ActiveTaskID, state.PiModelStepFingerprint = "", ""
+			}
 			state.Calls, state.CallIndex = nil, 0
 			state.event(runID, "model_failure_recovered", map[string]any{"text": nudge, "reason": reason, "taskId": taskID})
-			decision.Status, decision.Nudge = "continue", nudge
+			decision.Status, decision.Nudge, decision.Reason = "continue", nudge, reason
 			return cloudAgentSave(current, &state)
 		}
 		current.Status = "failed"
@@ -1167,6 +1203,24 @@ func (s *Service) PiFailModelStepResult(userID, runID, owner, taskID string) (*P
 		return cloudAgentSave(current, &state)
 	})
 	return decision, err
+}
+
+// Return a stable internal classification; raw provider errors must not become
+// Pi messages or public lifecycle payloads. Pi owns the compact-and-retry limit.
+func piModelTaskContextOverflow(task *model.Task) bool {
+	if task.Status != model.TaskStatusFailed {
+		return false
+	}
+	text := strings.ToLower(task.Error)
+	if strings.Contains(text, "rate limit") || strings.Contains(text, "tokens per minute") {
+		return false
+	}
+	for _, marker := range []string{"context_length_exceeded", "model_context_window_exceeded", "maximum context length", "context window exceeded", "context window exceeds limit", "prompt is too long", "input is too long", "exceeds the context window", "range of input length should be", "configured context size"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) PiModelStepAck(userID, runID, owner, taskID string) error {
@@ -1329,6 +1383,9 @@ func piSameCalls(left, right []cloudAgentCall) bool {
 }
 
 func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*PiToolReceipt, error) {
+	if err := s.reconcileDynamicSubagents(context.Background(), userID, runID); err != nil {
+		return nil, err
+	}
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
 		// 终态转换会清除 session 租约。Pi worker 可能正好在终结后轮询
@@ -1385,6 +1442,9 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 	}
 	if cloudAgentRunTerminal(latest.Status) {
 		return &PiToolReceipt{CallID: callID, Terminated: true}, nil
+	}
+	if latest.WaitKind == "subagents" {
+		return &PiToolReceipt{CallID: callID, Pending: true, Suspended: true}, nil
 	}
 	return &PiToolReceipt{CallID: callID, Pending: true}, nil
 }
@@ -1555,13 +1615,14 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 	}
 	pendingInterjections := make([]PiPendingInterjection, 0, len(state.PendingInterjections))
 	for _, item := range state.PendingInterjections {
-		pendingInterjections = append(pendingInterjections, PiPendingInterjection{ID: item.ID, Text: item.Text, CreatedAt: item.CreatedAt})
+		pendingInterjections = append(pendingInterjections, PiPendingInterjection{ID: item.ID, Text: item.Text, Source: item.Source, CreatedAt: item.CreatedAt})
 	}
 	return &PiAgentSnapshot{
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
+		Subagent:    state.Subagent,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
 		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,
-		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, PreviousStepTemplate: cloudAgentToolText("previous_step_calls"), Tools: tools,
+		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, Tools: tools,
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
 		SkillRuntimeMode: mode, Skills: nativeSkills,
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。
@@ -1656,14 +1717,14 @@ func cloudAgentCommitPiInterjections(runID string, state *cloudAgentRuntime, ids
 			}
 		}
 		item, ok := requested[id]
-		if !ok || !strings.Contains(messageText, "【用户插话】"+item.Text) {
+		if !ok || !strings.Contains(messageText, cloudAgentInterjectionContent(item)) {
 			return kernel.Forbidden("Pi 用户消息与待送插话不匹配")
 		}
 	}
 	remaining := make([]cloudAgentInterjection, 0, len(state.PendingInterjections)-len(requested))
 	for _, item := range state.PendingInterjections {
 		if _, delivered := requested[item.ID]; delivered {
-			state.event(runID, "user_interjection_delivered", map[string]any{"messageId": item.ID, "text": item.Text})
+			state.event(runID, cloudAgentInterjectionSource(item)+"_delivered", map[string]any{"messageId": item.ID, "text": item.Text})
 			cloudAgentRememberInterjectionID(state, item.ID)
 			continue
 		}
@@ -1708,7 +1769,7 @@ func taskIDForPiMessage(input PiMessageCheckpoint, runID string) string {
 // running，前端表现为"Agent 输出完了却永远显示运行中"——本轮真实踩到这个。
 // 只接受租约持有者上报，且只在本轮尚未终结时生效。
 func (s *Service) PiFailRun(userID, runID, owner, reason string) error {
-	run, err := s.piAgentLeasedRun(userID, runID, owner)
+	run, err := s.piAgentLeaseRow(userID, runID, owner, false)
 	if err != nil {
 		var terminal bool
 		run, terminal = s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
@@ -1723,17 +1784,13 @@ func (s *Service) PiFailRun(userID, runID, owner, reason string) error {
 	if message == "" {
 		message = "Pi worker 无法继续本轮（未提供原因）"
 	}
-	return s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
-		state, err := cloudAgentDecode(current)
-		if err != nil {
-			return err
-		}
+	return s.mutatePiControl(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		current.Status = "failed"
 		current.FailureMessage = message
-		state.event(runID, "run_failed", map[string]any{
+		current.CleanupPending = true
+		return appendWorkerEvent(current, "run_failed", map[string]any{
 			"text": "Agent 运行无法继续：" + message, "reason": "pi_worker_fatal",
 		})
-		return cloudAgentSave(current, &state)
 	})
 }
 

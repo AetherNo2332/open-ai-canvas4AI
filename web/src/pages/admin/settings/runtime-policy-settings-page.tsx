@@ -72,7 +72,7 @@ const agentFields: PolicyField[] = [
         group: "task",
         name: "agentStepTimeoutSeconds",
         label: "单步超时",
-        extra: "画布 Agent 单步模型调用的最长等待时间，到点会中止这一步并自动关思考重试一次。0 表示沿用“文本任务超时”，不再单独计时。",
+        extra: "画布 Agent 单步模型调用的最长等待时间，到点会终止本轮 Agent 并提示超时失败，不自动重试。0 表示沿用“文本任务超时”，不再单独计时。",
         unit: "秒",
         min: 0,
         max: 3_600,

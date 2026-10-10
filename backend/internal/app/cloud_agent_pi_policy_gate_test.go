@@ -16,7 +16,7 @@ import (
 //
 // 这条校验与"压迫 Go 侧重新装配提示"无关：Go 只是要求**自己下发的那份策略仍然在**，
 // Node 依然可以自由追加 Harness 内容。它也是 Node 侧 `renderSystemPrompt` 修复
-//（服务端策略永远在最前、SYSTEM.md 不能替换它）的服务端兜底 —— 两侧都要有，
+// （服务端策略永远在最前、SYSTEM.md 不能替换它）的服务端兜底 —— 两侧都要有，
 // 只修 Node 等于把强制层交给被校验方自己声明。
 func TestPiModelStepRejectsPromptWithoutServerPolicy(t *testing.T) {
 	s, _, run := piAgentTestLeasedFixture(t)

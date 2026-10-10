@@ -65,6 +65,11 @@ jobs:
             arch: multi
             platforms: linux/amd64,linux/arm64
             runner: ubuntu-24.04
+          - image: open-ai-canvas-agent
+            dockerfile: agent/Dockerfile
+            arch: multi
+            platforms: linux/amd64,linux/arm64
+            runner: ubuntu-24.04
           - image: open-ai-canvas-backend
             dockerfile: backend/Dockerfile
             arch: amd64
@@ -72,18 +77,6 @@ jobs:
             runner: ubuntu-24.04
           - image: open-ai-canvas-backend
             dockerfile: backend/Dockerfile
-            arch: arm64
-            platforms: linux/arm64
-            runner: ubuntu-24.04-arm
-          # Agent 的 TS 编译产物与平台无关（BUILDPLATFORM 固定），但生产依赖里的
-          # esbuild 等可选二进制按平台安装，所以与后端一样双架构分别出镜像。
-          - image: open-ai-canvas-agent
-            dockerfile: agent/Dockerfile
-            arch: amd64
-            platforms: linux/amd64
-            runner: ubuntu-24.04
-          - image: open-ai-canvas-agent
-            dockerfile: agent/Dockerfile
             arch: arm64
             platforms: linux/arm64
             runner: ubuntu-24.04-arm
@@ -91,6 +84,8 @@ jobs:
       IMAGE: ghcr.io/${{ needs.prepare.outputs.owner }}/${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.image == 'open-ai-canvas-agent'
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -126,7 +121,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
       - name: Record image digest
         env:
-          DIGEST: ${{ steps.existing.outputs.digest || steps.build.outputs.digest }}
+          DIGEST: ${{ steps.build.outputs.digest || steps.existing.outputs.digest }}
         shell: bash
         run: |
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid image digest" >&2; exit 1; }
@@ -174,7 +169,7 @@ jobs:
           IMAGE: ghcr.io/${{ needs.prepare.outputs.owner }}/${{ matrix.image }}
           VERSION_TAG: ${{ needs.prepare.outputs.image_tag }}
           DIGEST_DIR: ${{ runner.temp }}/digests
-          EXPECTED_DIGESTS: ${{ matrix.image == 'open-ai-canvas-backend' && '2' || matrix.image == 'open-ai-canvas-agent' && '2' || '1' }}
+          EXPECTED_DIGESTS: ${{ matrix.image == 'open-ai-canvas-backend' && '2' || '1' }}
         run: bash .github/scripts/promote-image.sh
 
   release:

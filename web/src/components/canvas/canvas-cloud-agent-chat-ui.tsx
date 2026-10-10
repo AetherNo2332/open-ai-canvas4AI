@@ -1,5 +1,5 @@
 import { agentCanvasActions, agentCanvasActionLabel } from "@/lib/canvas/agent-canvas-actions";
-import { Button } from "antd";
+import { Button, Typography } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { AIMessageMarkdown } from "@/components/ai/ai-message-markdown";
 import { WorkingGlow } from "@/components/ai/working-indicator";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
@@ -80,8 +81,10 @@ export type CloudAgentChatMessage = {
     planTerminal?: boolean;
     question?: CloudAgentUserQuestion;
     meta?: string;
+    runId?: string;
     detail?: unknown;
     attachments?: CloudAgentChatAttachment[];
+    canvasReferenceNodeId?: string;
     interjection?: "sent" | "undelivered";
 };
 
@@ -210,6 +213,13 @@ export function AgentChatMessage({
                             {item.meta}
                         </div>
                     ) : null}
+                    {item.runId ? (
+                        <div className="mt-1 break-all text-[var(--fs-label)]">
+                            <Typography.Text style={{ color: theme.node.muted }} copyable={{ text: item.runId, tooltips: ["复制 Run ID", "已复制"], icon: <span aria-label="复制 Run ID">复制</span> }}>
+                                Run ID：<span className="font-mono select-text">{item.runId}</span>
+                            </Typography.Text>
+                        </div>
+                    ) : null}
                     {onRetry ? (
                         <Button type="text" size="small" className="mt-1 !h-7 !px-0" icon={retrying ? <LoaderCircle className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />} disabled={retrying} onClick={onRetry}>
                             {retrying ? "重试中" : "重试本轮"}
@@ -221,7 +231,7 @@ export function AgentChatMessage({
     }
     return (
         <div className={`flex items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-            <div className={`agent-message-body min-w-0 text-sm leading-6 ${isUser ? "agent-message-user max-w-[82%] px-4 py-3 text-right" : "max-w-full flex-1 text-left"}`} style={{ color }}>
+            <div className={`agent-message-body min-w-0 text-sm leading-6 text-left ${isUser ? "agent-message-user max-w-[82%] px-4 py-3" : "max-w-full flex-1"}`} style={{ color }}>
                 {item.interjection ? (
                     <span
                         className="mb-1 inline-flex items-center rounded-full px-1.5 py-[1px] text-[var(--fs-label)] leading-4"
@@ -245,8 +255,7 @@ export function AgentChatMessage({
 }
 
 /**
- * 推理是辅助信息，不应与正文和工具输出争夺主视觉。一个事件流里的连续摘要
- * 合并成一个入口，默认收起；需要排查时再展开查看完整内容。
+ * 推理摘要默认只保留一行入口；流式更新不改变用户手动展开的状态。
  */
 export function AgentReasoningFeed({
     items,
@@ -255,29 +264,41 @@ export function AgentReasoningFeed({
     items: CloudAgentChatMessage[];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
 }) {
+    const [expanded, setExpanded] = useState(false);
+    const contentId = useId();
     const streaming = items.some((item) => item.streaming);
     const text = items.map((item) => item.text.trim()).filter(Boolean).join("\n\n");
-    const countLabel = items.length > 1 ? `${items.length} 段 · ` : "";
     return (
         <div className="agent-reasoning" style={{ "--agent-reasoning-accent": theme.accent.primary } as CSSProperties}>
-            <details className={`agent-reasoning-card${streaming ? " is-streaming" : ""}`}>
-                <summary className="agent-reasoning-summary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/20">
+            <div className={`agent-reasoning-card${expanded ? " is-open" : ""}${streaming ? " is-streaming" : ""}`}>
+                <button type="button" className="agent-reasoning-summary" aria-expanded={expanded} aria-controls={contentId} aria-label={`${expanded ? "收起" : "展开"}模型思考摘要`} onClick={() => setExpanded((current) => !current)}>
                     <span className="agent-reasoning-copy">
                         <span className="agent-reasoning-title">{streaming ? "模型正在思考" : "模型思考"}</span>
-                        <span className="agent-reasoning-subtitle">{streaming ? "实时整理 · 点击查看" : `${countLabel}点击查看`}</span>
-                    </span>
-                    <span className={`agent-reasoning-status${streaming ? " is-live" : ""}`}>
-                        {streaming ? <span className="agent-reasoning-status-dot" aria-hidden="true" /> : null}
-                        {streaming ? "实时" : "查看"}
+                        <span className="agent-reasoning-subtitle">{expanded ? "点击收起" : "点击查看"}</span>
                     </span>
                     <ChevronDown className="agent-reasoning-chevron" aria-hidden="true" />
-                </summary>
-                <div className="agent-reasoning-content" data-canvas-wheel-scroll>
-                    <div className="agent-reasoning-text">{text || (streaming ? "正在整理思路…" : "暂无可展示的推理摘要")}</div>
-                </div>
-            </details>
+                </button>
+                <AgentFeedDisclosure expanded={expanded} id={contentId} label="模型思考摘要">
+                    <div className="agent-reasoning-content" data-canvas-wheel-scroll>
+                        <div className="agent-reasoning-text">{text || (streaming ? "正在整理思路…" : "暂无可展示的推理摘要")}</div>
+                    </div>
+                </AgentFeedDisclosure>
+            </div>
         </div>
     );
+}
+
+/** 同时保留退出动画与辅助技术的即时收起语义；时长读取当前站点皮肤。 */
+function AgentFeedDisclosure({ expanded, id, label, children }: { expanded: boolean; id: string; label: string; children: ReactNode }) {
+    const reducedMotion = useReducedMotion();
+    const duration = useAppearanceStore((state) => state.appearance.activeSkin.tokens.components.motionNormal) / 1000;
+    return <div className="agent-feed-disclosure" inert={!expanded} aria-hidden={!expanded}>
+        <AnimatePresence initial={false}>
+            {expanded ? <motion.div id={id} role="region" aria-label={label} initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: reducedMotion ? 0 : duration, ease: [0.16, 1, 0.3, 1] }}>
+                {children}
+            </motion.div> : null}
+        </AnimatePresence>
+    </div>;
 }
 
 /**
@@ -592,8 +613,7 @@ export function AgentToolCard({
  * 语义要点：折叠态整段只有这一行可见，所以**类别徽标必须在折叠行上**（清单 / 查看画面 /
  * 修改画布），否则默认状态看不出刚才到底是读了清单还是真看了画面。
  *
- * 展开状态用「用户覆盖 + 失败时默认展开」两段决定 —— 失败的操作不能被折进一行里看不见，
- * 但用户手动收起之后就不再自动弹开（跑动中新步骤只会追加，不会重置状态）。
+ * 失败也保持收起，通过摘要文字和错误色提示；新步骤不重置用户的展开状态。
  * `live` 由面板按"这一段是不是对话末尾且在跑"给出：只有还在推进时才流光。
  */
 export function AgentOperationFeed({
@@ -609,18 +629,16 @@ export function AgentOperationFeed({
     onFocusNode?: (nodeId: string) => void;
     live?: boolean;
 }) {
-    const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
+    const [expanded, setExpanded] = useState(false);
     const reducedMotion = useReducedMotion();
+    const duration = useAppearanceStore((state) => state.appearance.activeSkin.tokens.components.motionNormal) / 1000;
     const listId = useId();
     const latest = items[items.length - 1];
     if (!latest) return null;
     const category = agentOperationCategory(latest);
-    const categoryLabel = agentToolCategoryLabel(agentToolName(latest.title || "工具执行", latest.detail), category);
     const label = agentOperationSegmentLabel(items);
-    // 只看最新一步的状态。前面的参数错误如果已被自动纠正，不应让整段
-    // 操作流继续保持红色并默认展开，否则用户会误以为最终动作仍然失败。
+    // 已自动纠正的旧错误不污染最新一步的状态。
     const failed = agentOperationFailed(latest);
-    const expanded = userExpanded ?? failed;
     const shimmering = live && !failed;
     return (
         <div className={`agent-operation-feed${expanded ? " is-open" : ""}${failed ? " is-failed" : ""}${shimmering ? " is-live" : ""}`} data-agent-operation-feed data-agent-category={category}>
@@ -629,14 +647,9 @@ export function AgentOperationFeed({
                 className="agent-operation-toggle"
                 aria-expanded={expanded}
                 aria-controls={listId}
-                // aria-label 会顶掉可见文字，所以类别与最新一步必须自己报出来。
-                aria-label={`${expanded ? "收起" : "展开"} ${items.length} 步${categoryLabel}记录，最新一步：${label}`}
-                onClick={() => setUserExpanded(!expanded)}
+                aria-label={`${expanded ? "收起" : "展开"}工具调用记录，最新操作：${label}`}
+                onClick={() => setExpanded((current) => !current)}
             >
-                <span className="agent-operation-kind agent-tool-category">
-                    {agentToolCategoryIcon(category)}
-                    <span>{categoryLabel}</span>
-                </span>
                 {/* 换步时旧文案高模糊淡出、新文案从下方上浮（先快后慢的非线性曲线）。 */}
                 <AnimatePresence mode="wait" initial={false}>
                     <motion.span
@@ -645,21 +658,20 @@ export function AgentOperationFeed({
                         initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 12, filter: "blur(6px)" }}
                         animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, filter: "blur(0px)" }}
                         exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -8, filter: "blur(8px)" }}
-                        transition={reducedMotion ? { duration: 0 } : { duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
+                        transition={{ duration: reducedMotion ? 0 : duration, ease: [0.16, 1, 0.3, 1] }}
                     >
                         {label}
                     </motion.span>
                 </AnimatePresence>
-                {items.length > 1 ? <span className="agent-operation-count">{items.length} 步</span> : null}
                 <ChevronDown className="agent-operation-chevron" aria-hidden="true" />
             </button>
-            {expanded ? (
-                <div id={listId} className="agent-operation-list">
+            <AgentFeedDisclosure expanded={expanded} id={listId} label="工具调用操作记录">
+                <div className="agent-operation-list">
                     {items.map((item) => (
                         <AgentChatMessage key={item.id} item={item} theme={theme} references={references} onFocusNode={onFocusNode} />
                     ))}
                 </div>
-            ) : null}
+            </AgentFeedDisclosure>
         </div>
     );
 }

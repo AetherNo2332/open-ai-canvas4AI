@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findCutPoint, shouldCompact } from "@earendil-works/pi-coding-agent";
-import { canvasModel } from "../src/runner.js";
+import { findCutPoint, shouldCompact, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { canvasModel, syncCanvasModelLimits } from "../src/runner.js";
 import type { CanvasBridge, PiSnapshot } from "../src/bridge.js";
 import { compactionSettings, serializePreparation, runNativeCompaction } from "../src/native-compaction.js";
+import { createCanvasStreamFn } from "../src/pi-stream.js";
 
 const snapshot = { request: { model: "model" }, modelLimits: {
   contextWindowTokens: 64_000, maxOutputTokens: 8_192, reservedOutputTokens: 8_192,
@@ -11,7 +13,7 @@ const snapshot = { request: { model: "model" }, modelLimits: {
   configured: true, source: "channel-model",
 } } as unknown as PiSnapshot;
 
-test("Pi trigger matches Go and recent history fits small model windows", () => {
+test("Pi decides compaction using its context count and the backend model budget", () => {
   const settings = compactionSettings(snapshot);
   assert.equal(shouldCompact(43_955, 64_000, settings), false);
   assert.equal(shouldCompact(43_956, 64_000, settings), true);
@@ -19,6 +21,24 @@ test("Pi trigger matches Go and recent history fits small model windows", () => 
   const small = compactionSettings({ ...snapshot, modelLimits: { ...snapshot.modelLimits,
     contextWindowTokens: 8_192, inputBudgetTokens: 4_096, compactAtTokens: 3_481 } });
   assert.ok(small.keepRecentTokens <= 1_024);
+});
+
+test("refreshed backend limits update the actual Pi model and its compaction decision", () => {
+  const agent = new Agent({ initialState: { model: canvasModel(snapshot) },
+    streamFn: createCanvasStreamFn(async () => { throw new Error("this limit test must not call a model"); }) });
+  const settingsManager = SettingsManager.inMemory();
+  const session = { agent, settingsManager };
+  syncCanvasModelLimits(session, { ...snapshot, modelLimits: { ...snapshot.modelLimits,
+    contextWindowTokens: 32_000, maxOutputTokens: 4_096, inputBudgetTokens: 23_808,
+    compactAtTokens: 20_236, compactionReserveTokens: 11_764 } });
+  assert.equal(agent.state.model?.contextWindow, 32_000);
+  assert.equal(agent.state.model?.maxTokens, 4_096);
+  assert.equal(shouldCompact(20_237, agent.state.model!.contextWindow, settingsManager.getCompactionSettings()), true);
+  syncCanvasModelLimits(session, { ...snapshot, modelLimits: { ...snapshot.modelLimits,
+    contextWindowTokens: 128_000, maxOutputTokens: 16_384, inputBudgetTokens: 106_496,
+    compactAtTokens: 90_521, compactionReserveTokens: 37_479 } });
+  assert.equal(agent.state.model?.contextWindow, 128_000);
+  assert.equal(shouldCompact(20_237, agent.state.model!.contextWindow, settingsManager.getCompactionSettings()), false);
 });
 
 const splitPreparation = { firstKeptEntryId: "kept", tokensBefore: 30_000, isSplitTurn: true,

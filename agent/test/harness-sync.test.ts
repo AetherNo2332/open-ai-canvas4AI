@@ -68,6 +68,13 @@ test("同步后的 harness 不含 YAML frontmatter", async () => {
   }
 });
 
+test("tool descriptions fit the worker limit with LF and Windows CRLF", async () => {
+  const text = (await readFile(join(harnessDir, "TOOL_DESCRIPTIONS.md"), "utf8")).replace(/\r\n/g, "\n");
+  for (const body of [text, text.replace(/\n/g, "\r\n")]) {
+    assert.ok(Buffer.byteLength(body, "utf8") <= 20 * 1024, "tool descriptions exceed the worker's 20KiB limit");
+  }
+});
+
 test("共用工具 schema 制品可被 Node 读取且结构完整", async () => {
   const artifact = JSON.parse(await readFile(join(harnessDir, "TOOL_SCHEMA.json"), "utf8")) as {
     schemaVersion: string;

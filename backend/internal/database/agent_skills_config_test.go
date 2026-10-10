@@ -23,8 +23,9 @@ func TestMigrateSchemaCreatesAgentSkillConfigTables(t *testing.T) {
 	if !db.Migrator().HasIndex(&model.AgentConversationSkill{}, "idx_agent_conversation_skills_conversation_skill") {
 		t.Fatal("迁移 v51 未创建会话技能 (conversation_id, skill_id) 唯一索引")
 	}
-	if CurrentSchemaVersion != 51 {
-		t.Fatalf("CurrentSchemaVersion = %d, want 51", CurrentSchemaVersion)
+	var migrationCount int64
+	if err := db.Model(&schemaMigration{}).Where("version = ?", 51).Count(&migrationCount).Error; err != nil || migrationCount != 1 {
+		t.Fatalf("技能配置迁移 v51 未登记：count=%d err=%v", migrationCount, err)
 	}
 	if err := RequireSchemaVersion(db); err != nil {
 		t.Fatalf("RequireSchemaVersion 拒绝 v51 结构：%v", err)

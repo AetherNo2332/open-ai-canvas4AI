@@ -35,9 +35,8 @@ type AgentSkillDefaultsViewItem struct {
 }
 
 // AgentSkillDefaultsView 是管理员默认技能配置的整体视图。
-// totals 只统计 enabled 行；ContextEstimateBytes = Σ enabled 技能的 SkillVersion.TotalBytes，
-// 是"运行时实际读入上下文的字节数"的保守上限代理口径（假设整个技能包都被读入），
-// 真实用量通常低于该值。
+// totals 只统计 enabled 行；ContextEstimateBytes 使用当前技能元数据估算初始
+// Native 索引。建 Run 时按冻结版本的入口元数据重新计算，正文按需读取。
 type AgentSkillDefaultsView struct {
 	Revision             int64                        `json:"revision"`
 	Items                []AgentSkillDefaultsViewItem `json:"items"`
@@ -89,8 +88,7 @@ func (s *Service) AdminAgentSkillDefaults(actor *model.User) (*AgentSkillDefault
 		if row.Enabled {
 			view.TotalFiles += version.FileCount
 			view.TotalBytes += version.TotalBytes
-			// 保守上限：假设启用的技能包整体进入上下文，真实读取量通常低于该估计。
-			view.ContextEstimateBytes += version.TotalBytes
+			view.ContextEstimateBytes += nativeSkillIndexContextBytes(cloudAgentSkill{ID: skill.ID, Name: skill.Name, Description: skill.Description})
 		}
 		view.Items = append(view.Items, item)
 	}
@@ -165,12 +163,13 @@ func (s *Service) validateAgentSkillDefaultItem(item AgentSkillDefaultItem) (mod
 		return model.AgentSkillDefault{}, skills.SkillCapacityFacts{}, kernel.AgentSkillDefaultsInvalid(fmt.Sprintf("版本 %s 不属于技能 %s", item.SkillVersionID, skillID), map[string]any{"skillId": skillID})
 	}
 	return model.AgentSkillDefault{
-		ID:             newID(),
-		SkillID:        skillID,
-		SkillVersionID: item.SkillVersionID,
-		Position:       item.Position,
-		Enabled:        item.Enabled != 0,
-	}, skills.SkillCapacityFacts{SkillID: skillID, FileCount: version.FileCount, TotalBytes: version.TotalBytes, ContextBytes: version.TotalBytes}, nil
+			ID:             newID(),
+			SkillID:        skillID,
+			SkillVersionID: item.SkillVersionID,
+			Position:       item.Position,
+			Enabled:        item.Enabled != 0,
+		}, skills.SkillCapacityFacts{SkillID: skillID, FileCount: version.FileCount, TotalBytes: version.TotalBytes,
+			ContextBytes: nativeSkillIndexContextBytes(cloudAgentSkill{ID: skill.ID, Name: skill.Name, Description: skill.Description})}, nil
 }
 
 func boolToInt(value bool) int {

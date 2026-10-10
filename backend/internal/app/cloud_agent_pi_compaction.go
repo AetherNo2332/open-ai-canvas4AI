@@ -149,6 +149,9 @@ func (s *Service) PiContextCompaction(userID, runID, owner, operationID string) 
 	if err != nil {
 		return nil, err
 	}
+	if cloudAgentRunTerminal(run.Status) {
+		return &PiContextCompactionView{OperationID: operationID, Status: run.Status}, nil
+	}
 	session, entries, err := s.repo.CloudAgentPiSession(userID, run.ConversationID)
 	if err != nil {
 		return nil, err
@@ -185,6 +188,10 @@ func (s *Service) PiContextCompaction(userID, runID, owner, operationID string) 
 	if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
 		return view, nil
 	}
+	if cloudAgentStepTimedOut(task) {
+		view.Status = "failed"
+		return view, s.failCloudAgentStepTimeout(run, &state, task)
+	}
 	checkpoint, mode, reason := cloudAgentContextCompactionResult(&state, task)
 	framed, err := agentcontext.Frame(checkpoint)
 	if err != nil {
@@ -208,6 +215,9 @@ func (s *Service) PiCommitContextCompaction(userID, runID, owner, operationID st
 	run, err := s.piAgentLeasedRun(userID, runID, owner)
 	if err != nil {
 		return 0, err
+	}
+	if cloudAgentRunTerminal(run.Status) {
+		return 0, kernel.Forbidden("Agent 运行已结束")
 	}
 	if input.SessionRevision < 1 || len(input.Entry) == 0 || len(input.Entry) > 1<<20 || !json.Valid(input.Entry) {
 		return 0, BadAuthRequest("Pi 压缩检查点无效")

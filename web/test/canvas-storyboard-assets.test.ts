@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { buildStoryboardAssetCatalog } from "@/lib/canvas/canvas-storyboard-assets";
+import { buildStoryboardAssetCatalog, storyboardAssetRoleForNode } from "@/lib/canvas/canvas-storyboard-assets";
 import { reconcileStoryboardTargetConnections, storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type StoryboardRow } from "@/types/canvas";
 
@@ -43,6 +43,11 @@ const row: StoryboardRow = {
 };
 
 describe("storyboard asset catalog", () => {
+    it("includes character cards before version synchronization", () => {
+        const card = node("card", CanvasNodeType.Text, { workflowKind: "character", characterAssetId: "asset-1" });
+        expect(buildStoryboardAssetCatalog([card])).toEqual([expect.objectContaining({ id: "card", type: "character" })]);
+        expect(storyboardAssetRoleForNode(card)).toBe("character");
+    });
     it("sends reusable image, video, audio and character assets but excludes generated shots", () => {
         const assets = buildStoryboardAssetCatalog([
             node("image", CanvasNodeType.Image, { content: "data:image/png;base64,x", assetCategory: "environment" }),
@@ -64,7 +69,16 @@ describe("storyboard asset catalog", () => {
 
 describe("storyboard target materializer", () => {
     const script = node("script", CanvasNodeType.Script, { storyboard: { rows: [row], visibleColumns: [], referenceNodeIds: ["project-style"] } });
-    const nodes = [script, node("project-style", CanvasNodeType.Image, { content: "style" }), node("prop", CanvasNodeType.Image, { content: "prop" }), node("character", CanvasNodeType.Image, { workflowKind: "character", characterAssetId: "character-asset" }), node("manual", CanvasNodeType.Video, { content: "video" }), node("direct-manual", CanvasNodeType.Audio, { content: "audio" }), node("first-frame", CanvasNodeType.Image, { content: "frame", workflowKind: "shot" }), node("target", CanvasNodeType.Video)];
+    const nodes = [
+        script,
+        node("project-style", CanvasNodeType.Image, { content: "style" }),
+        node("prop", CanvasNodeType.Image, { content: "prop" }),
+        node("character", CanvasNodeType.Image, { workflowKind: "character", characterAssetId: "character-asset" }),
+        node("manual", CanvasNodeType.Video, { content: "video" }),
+        node("direct-manual", CanvasNodeType.Audio, { content: "audio" }),
+        node("first-frame", CanvasNodeType.Image, { content: "frame", workflowKind: "shot" }),
+        node("target", CanvasNodeType.Video),
+    ];
     const connections: CanvasConnection[] = [{ id: "manual-row-input", fromNodeId: "manual", toNodeId: "script", toHandleId: "row:row-1" }];
 
     it("combines stable bindings and produces position mention tokens", () => {
@@ -80,7 +94,12 @@ describe("storyboard target materializer", () => {
         const manualTargetEdge: CanvasConnection = { id: "manual-target", fromNodeId: "manual", toNodeId: "target" };
         const created = reconcileStoryboardTargetConnections([manualTargetEdge], script, row, "target", ["prop", "character"]);
         expect(created.filter((edge) => edge.relation === "storyboard-output")).toHaveLength(1);
-        expect(created.filter((edge) => edge.relation === "storyboard-asset-reference").map((edge) => edge.fromNodeId).sort()).toEqual(["character", "prop"]);
+        expect(
+            created
+                .filter((edge) => edge.relation === "storyboard-asset-reference")
+                .map((edge) => edge.fromNodeId)
+                .sort(),
+        ).toEqual(["character", "prop"]);
 
         const reconciled = reconcileStoryboardTargetConnections(created, script, row, "target", ["character"]);
         expect(reconciled.some((edge) => edge.id === "manual-target")).toBe(true);

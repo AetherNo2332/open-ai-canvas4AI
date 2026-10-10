@@ -32,8 +32,20 @@ func TestAgentToolSchemaArtifactMatchesRuntime(t *testing.T) {
 	req.PermissionMode = "auto"
 	req.VisionEnabled = true
 	req.HasMemories = true
+	req.WebSearchEnabled = true
 	req.SkillIDs = []string{"schema-artifact-skill"}
 	artifact := agentToolSchemaArtifact{SchemaVersion: cloudAgentToolSchemaVersion, Tools: append(cloudAgentTools(req), nativeSkillReadToolSchema())}
+	for _, request := range []CloudAgentRequest{
+		{SubagentEnabled: true, PermissionMode: "read_only", ContextScope: []string{"canvas"}},
+		{PermissionMode: "read_only", ContextScope: []string{"canvas"}, subagent: &SubagentRuntime{Depth: 1}},
+	} {
+		for _, tool := range cloudAgentTools(request) {
+			name := stringField(tool["function"].(map[string]any), "name")
+			if strings.Contains(name, "subagent") || name == "send_parent_message" {
+				artifact.Tools = append(artifact.Tools, tool)
+			}
+		}
+	}
 	encoded, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
 		t.Fatal(err)

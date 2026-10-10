@@ -25,10 +25,11 @@ import (
 const appearanceSettingKey = "appearance"
 
 const (
-	AppearanceAssetLogo     = "logo"
-	AppearanceAssetDarkLogo = "logo-dark"
-	AppearanceAssetVideo    = "video"
-	AppearanceAssetPoster   = "poster"
+	AppearanceAssetLogo        = "logo"
+	AppearanceAssetDarkLogo    = "logo-dark"
+	AppearanceAssetVideo       = "video"
+	AppearanceAssetPoster      = "poster"
+	AppearanceAssetAgentAvatar = "agent-avatar"
 )
 
 const (
@@ -132,6 +133,8 @@ func AppearanceAssetMaxBytes(slot string) (int64, error) {
 		return appearancePosterMaxBytes, nil
 	case AppearanceAssetVideo:
 		return appearanceVideoMaxBytes, nil
+	case AppearanceAssetAgentAvatar:
+		return appearanceLogoMaxBytes, nil
 	default:
 		return 0, BadAuthRequest("外观资源类型无效")
 	}
@@ -213,6 +216,9 @@ func (s *Service) UpdateAppearance(actor *model.User, value AppearanceSetting) (
 		}
 		value.Canvas.Live2DEntry = entry
 	}
+	if err := s.validateAppearanceResource(actor, AppearanceAssetAgentAvatar, value.Canvas.AvatarResourceID, before.Canvas.AvatarResourceID); err != nil {
+		return nil, err
+	}
 	for _, candidate := range []struct {
 		slot       string
 		resourceID string
@@ -284,7 +290,7 @@ func (s *Service) UploadAppearanceAsset(actor *model.User, slot string, header *
 	// Logos are tiny, installation-owned assets. Keep them in the server's
 	// persistent resource directory so their availability and cost do not
 	// depend on the administrator's currently selected object storage.
-	if slot == AppearanceAssetLogo || slot == AppearanceAssetDarkLogo {
+	if slot == AppearanceAssetLogo || slot == AppearanceAssetDarkLogo || slot == AppearanceAssetAgentAvatar {
 		resource, err = s.uploadLocalResource(actor.ID, header, kind, 0, 0, 0)
 	} else {
 		resource, err = s.UploadResource(actor.ID, header, kind, 0, 0, 0)
@@ -363,6 +369,7 @@ func (s *Service) appearanceResourceReferences(resourceIDs []string) map[string]
 		{resourceID: value.AuthVideoResourceID, title: "登录页品牌视频"},
 		{resourceID: value.AuthVideoPosterResourceID, title: "登录页视频封面"},
 		{resourceID: value.Canvas.Live2DResourceID, title: "画布 Agent Live2D 形象"},
+		{resourceID: value.Canvas.AvatarResourceID, title: "画布 Agent PNG 形象"},
 	}
 	wanted := make(map[string]struct{}, len(resourceIDs))
 	for _, resourceID := range resourceIDs {
@@ -430,7 +437,7 @@ func (s *Service) readAppearance() (*model.SystemSetting, AppearanceSetting, err
 // Remote objects are not probed on every appearance request; the frontend has
 // its own load-error fallback for objects that disappear outside the system.
 func (s *Service) resolveAvailableAppearanceAssets(value AppearanceSetting) AppearanceSetting {
-	for _, slot := range []string{AppearanceAssetLogo, AppearanceAssetDarkLogo, AppearanceAssetVideo, AppearanceAssetPoster} {
+	for _, slot := range []string{AppearanceAssetLogo, AppearanceAssetDarkLogo, AppearanceAssetVideo, AppearanceAssetPoster, AppearanceAssetAgentAvatar} {
 		resourceID := appearanceResourceID(value, slot)
 		if resourceID == "" || s.appearanceAssetAvailable(slot, resourceID) {
 			continue
@@ -444,6 +451,8 @@ func (s *Service) resolveAvailableAppearanceAssets(value AppearanceSetting) Appe
 			value.AuthVideoResourceID = ""
 		case AppearanceAssetPoster:
 			value.AuthVideoPosterResourceID = ""
+		case AppearanceAssetAgentAvatar:
+			value.Canvas.AvatarResourceID = ""
 		}
 	}
 	return value
@@ -572,6 +581,9 @@ func validateAppearanceResourceType(slot string, resource *model.Resource) error
 	if slot != AppearanceAssetVideo && resource.Kind != "image" {
 		return BadAuthRequest("Logo 和视频封面必须是图片资源")
 	}
+	if slot == AppearanceAssetAgentAvatar && mimeType != "image/png" {
+		return BadAuthRequest("Agent PNG 形象必须是 PNG 文件")
+	}
 	return nil
 }
 
@@ -619,6 +631,9 @@ func appearanceAllowedMIMETypes(slot string) map[string]struct{} {
 	if slot == AppearanceAssetVideo {
 		return map[string]struct{}{"video/mp4": {}, "video/webm": {}}
 	}
+	if slot == AppearanceAssetAgentAvatar {
+		return map[string]struct{}{"image/png": {}}
+	}
 	return map[string]struct{}{"image/png": {}, "image/jpeg": {}, "image/webp": {}}
 }
 
@@ -630,6 +645,8 @@ func appearanceAssetLabel(slot string) string {
 		return "深色模式品牌 Logo"
 	case AppearanceAssetPoster:
 		return "视频封面"
+	case AppearanceAssetAgentAvatar:
+		return "Agent PNG 形象"
 	case AppearanceAssetVideo:
 		return "品牌视频"
 	default:
@@ -647,6 +664,8 @@ func appearanceResourceID(value AppearanceSetting, slot string) string {
 		return value.AuthVideoResourceID
 	case AppearanceAssetPoster:
 		return value.AuthVideoPosterResourceID
+	case AppearanceAssetAgentAvatar:
+		return value.Canvas.AvatarResourceID
 	default:
 		return ""
 	}

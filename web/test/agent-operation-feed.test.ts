@@ -1,13 +1,28 @@
 import { describe, expect, it } from "bun:test";
 import { agentOperationCategory, agentOperationFailed, agentOperationLabel, agentOperationSegmentLabel, buildAgentFeedSegments, isAgentCarrierRecord, isAgentOperationRecord } from "@/lib/canvas/agent-operation-feed";
 
-type Row = { id: string; role: string; title?: string; text: string; detail?: unknown; planItems?: { id: string }[]; question?: unknown };
+type Row = { id: string; role: string; title?: string; text: string; reasoning?: boolean; detail?: unknown; planItems?: { id: string }[]; question?: unknown };
 
 const step = (id: string, title: string, text: string, detail: unknown = { eventType: "tool_completed" }): Row => ({ id, role: "tool", title, text, detail });
 const kinds = (rows: Row[]) => buildAgentFeedSegments(rows).map((segment) => segment.kind);
-const idsOf = (segment: ReturnType<typeof buildAgentFeedSegments<Row>>[number]) => (segment.kind === "operations" ? segment.items.map((item) => item.id) : [segment.item.id]);
+const idsOf = (segment: ReturnType<typeof buildAgentFeedSegments<Row>>[number]) => (segment.kind !== "message" ? segment.items.map((item) => item.id) : [segment.item.id]);
 
 describe("Agent operation feed", () => {
+    it("keeps alternating reasoning and tools in two stable rows until assistant body arrives", () => {
+        const rows: Row[] = [
+            { id: "r1", role: "assistant", reasoning: true, text: "先读取素材" },
+            step("t1", "canvas_get_state", "工具执行成功"),
+            { id: "r2", role: "assistant", reasoning: true, text: "检查模型能力" },
+            step("t2", "model_list", "工具执行成功"),
+        ];
+        const segments = buildAgentFeedSegments(rows);
+        expect(segments.map((segment) => segment.kind)).toEqual(["reasoning", "operations"]);
+        expect(segments.map(idsOf)).toEqual([["r1", "r2"], ["t1", "t2"]]);
+        expect(segments.map((segment) => segment.key)).toEqual(["r1", "t1"]);
+        const afterBody = buildAgentFeedSegments([...rows, { id: "a1", role: "assistant", text: "已检查素材" }, { id: "r3", role: "assistant", reasoning: true, text: "准备下一步" }, step("t3", "task_get", "工具执行成功")]);
+        expect(afterBody.map((segment) => segment.kind)).toEqual(["reasoning", "operations", "message", "reasoning", "operations"]);
+    });
+
     it("folds consecutive tool records into one segment keyed by the first step", () => {
         const rows: Row[] = [
             { id: "u1", role: "user", text: "读一下画布" },

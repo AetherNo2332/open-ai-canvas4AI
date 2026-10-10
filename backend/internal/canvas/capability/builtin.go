@@ -3,12 +3,13 @@ package capability
 const (
 	maxAgentNodeTitleRunes   = 240
 	maxAgentNodeContentRunes = 16000
-	// 坐标绝对值上限：与 app 侧 layout 的收敛范围保持一致。
+	maxAgentDocumentRunes    = 1 << 20
+	// 坐标绝对值上限：与 app 侧整理工具收敛几何值的范围一致。
 	maxAgentNodeCoordLimit = 1e6
 )
 
 func BuiltinRegistry() *Registry {
-	registry, err := NewRegistry([]Descriptor{
+	descriptors := []Descriptor{
 		{
 			Type: "text", Version: "1", Label: "文本", DefaultWidth: 340, DefaultHeight: 240,
 			Purpose:     "承载普通说明、创意草稿和单段提示词。",
@@ -33,14 +34,15 @@ func BuiltinRegistry() *Registry {
 			PatchFields: editableNodeFields("metadata.content", "Markdown 正文", "Markdown 正文"),
 		},
 		generatedMediaDescriptor("image", "2", "图片", 720, 405, "image", ConnectionPolicy{
-			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image"},
+			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "character"},
 		}),
 		generatedMediaDescriptor("video", "2", "视频", 720, 405, "video", ConnectionPolicy{
-			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "video", "audio"},
+			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "video", "audio", "character"},
 		}),
 		generatedMediaDescriptor("audio", "2", "音频", 340, 120, "audio", ConnectionPolicy{
-			CanSource: true, CanTarget: true, CanReference: true, MaxInputCount: 1, AcceptedInputKinds: []string{"text"},
+			CanSource: true, CanTarget: true, CanReference: true, MaxInputCount: 1, AcceptedInputKinds: []string{"text", "character"},
 		}),
+		characterDescriptor(),
 		{
 			Type: "frame", Version: "1", Label: "背板", DefaultWidth: 760, DefaultHeight: 520,
 			Purpose:       "在画布上建立可移动、可折叠的视觉分区，用来归组相关节点；背板本身不承载创作正文或生成结果。",
@@ -54,7 +56,7 @@ func BuiltinRegistry() *Registry {
 		},
 		{
 			Type: "batch-table", Version: "1", Label: "批量创作表", DefaultWidth: 1280, DefaultHeight: 560,
-			Purpose:     "面向电商批量换装和创意生图的结构化任务表；每行绑定最多六组画布图片、可用 @参考图1 等位置引用编写独立提示词，也可设置全局提示词覆盖各行，并追踪生成结果。",
+			Purpose:     "面向电商批量换装和创意生图的结构化任务表；每行绑定最多十组画布图片、可用 @参考图1 等位置引用编写独立提示词，也可设置全局提示词覆盖各行，并追踪生成结果。",
 			GoodFor:     []string{"商品与模特批量换装", "同一商品多场景创意图", "多组参考图组合生成", "批量结果追踪与失败重试"},
 			NotIdealFor: []string{"通用数据库或库存管理", "单张图片快速试验", "多镜头叙事连续性"},
 			Tradeoffs:   []string{"参考图必须先作为图片节点进入画布", "批量提交会产生多项生成任务，执行前必须确认模型、数量和费用"},
@@ -98,11 +100,35 @@ func BuiltinRegistry() *Registry {
 				return map[string]any{"status": "idle", "workflowKind": "script", "storyboard": map[string]any{"rows": []any{}, "visibleColumns": []any{"shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"}, "referenceNodeIds": []any{}}}
 			},
 		},
-	})
+	}
+	descriptors = append(descriptors, remainingBuiltinDescriptors()...)
+	for index := range descriptors {
+		completeBuiltinEditableFields(&descriptors[index])
+	}
+	registry, err := NewRegistry(descriptors)
 	if err != nil {
 		panic(err)
 	}
 	return registry
+}
+
+// characterDescriptor 是角色卡能力：画布上是 text + metadata.workflowKind=character 的节点，
+// 设定、三视图与声音都来自账号内的角色资产而非节点正文。它可以被发现、精读、连线和引用，
+// 但不能用 add_node 凭空创建：必须经 canvas_create_character 用真实图片/音频建角色资产，名称和设定只随角色资产更新。
+func characterDescriptor() Descriptor {
+	return Descriptor{
+		Type: "character", Version: "1", Label: "角色卡", DefaultWidth: 264, DefaultHeight: 352,
+		Purpose:     "引用账号角色库中的角色资产，统一提供角色设定、三视图/形象图和绑定声音，用来保持人物在多次生成中的一致性。",
+		GoodFor:     []string{"图片或视频生成时锁定人物外观", "多镜头保持同一角色一致", "角色配音时使用绑定声音", "只取角色文字设定作为提示词来源"},
+		NotIdealFor: []string{"临时一次性的人物描述（直接写进提示词或文本节点）", "用 add_node 新建（应使用 canvas_create_character 打包形象图片与声音）", "承载普通正文（节点正文不是角色设定）"},
+		Tradeoffs:   []string{"设定与媒体随角色资产版本变化，提交时会校验版本", "未绑定形象或声音时对应引用不可用，需先读取 character.imageReference/audioReference"},
+		Actions:     []string{"read_character", "use_as_reference", "use_as_text_source"},
+		InputKind:   "character",
+		Connection:  ConnectionPolicy{CanSource: true, CanReference: true},
+		CanUpdate:   true,
+		PatchFields: positionPatchFields(),
+		Variant:     &NodeVariant{BaseType: "text", WorkflowKind: "character"},
+	}
 }
 
 func generatedMediaDescriptor(nodeType, version, label string, width, height float64, generationMode string, connection ConnectionPolicy) Descriptor {
@@ -167,6 +193,11 @@ func editableNodeFields(contentPath, contentLabel, contentDescription string) ma
 			Path: contentPath, Kind: patchKindString, Label: contentLabel, Order: 20, Description: contentDescription, MaxRunes: maxAgentNodeContentRunes,
 		},
 	}
+	if contentPath == "metadata.content" {
+		field := fields["content"]
+		field.MaxRunes = maxAgentDocumentRunes
+		fields["content"] = field
+	}
 	for key, field := range positionPatchFields() {
 		fields[key] = field
 	}
@@ -174,7 +205,7 @@ func editableNodeFields(contentPath, contentLabel, contentDescription string) ma
 }
 
 // positionPatchFields 是坐标字段：模型可以直接指定节点位置（微调），批量整理走 canvas_arrange_nodes。
-// 坐标上限与 layout 侧的收敛范围一致，避免写进离谱的几何值。
+// 坐标上限与整理侧的收敛范围一致，避免写进离谱的几何值。
 func positionPatchFields() map[string]PatchField {
 	return map[string]PatchField{
 		"x": {Path: "position.x", Kind: patchKindNumber, Label: "横坐标", Order: 30, Limit: maxAgentNodeCoordLimit, Description: "画布横坐标（像素）；与 y 一起移动节点，通常用 canvas_arrange_nodes 批量整理"},

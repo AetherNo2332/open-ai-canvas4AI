@@ -25,10 +25,13 @@ const cloudAgentOperation = "cloud_agent"
 // turns reference the previous run, not a mutable in-memory conversation. This
 // reuses transactional billing, worker leases, cancellation and text replay.
 type CloudAgentRequest struct {
+	subagent        *SubagentRuntime
 	ReasoningMode   string `json:"reasoningMode,omitempty"`
 	ProfileRevision string `json:"profileRevision,omitempty"`
 	CanvasID        string `json:"canvasId"`
 	Prompt          string `json:"prompt"`
+	// SubagentEnabled is the frozen per-canvas consent for this turn.
+	SubagentEnabled bool   `json:"subagentEnabled,omitempty"`
 	Model           string `json:"model,omitempty"`
 	LogicalModelID  string `json:"logicalModelId,omitempty"`
 	ChannelID       string `json:"channelId,omitempty"`
@@ -36,12 +39,14 @@ type CloudAgentRequest struct {
 	// VisionEnabled is server-derived from the selected model input contract and persisted for the run.
 	VisionEnabled bool `json:"visionEnabled,omitempty"`
 	// HasMemories is server-derived at run creation and controls whether recall_lessons is exposed.
-	HasMemories    bool     `json:"hasMemories,omitempty"`
-	PermissionMode string   `json:"permissionMode"`
-	SkillIDs       []string `json:"skillIds,omitempty"`
-	ContextScope   []string `json:"contextScope"`
-	FocusNodeIDs   []string `json:"focusNodeIds,omitempty"`
-	Budget         struct {
+	HasMemories bool `json:"hasMemories,omitempty"`
+	// WebSearchEnabled is server-derived; no provider credentials enter the run.
+	WebSearchEnabled bool     `json:"webSearchEnabled,omitempty"`
+	PermissionMode   string   `json:"permissionMode"`
+	SkillIDs         []string `json:"skillIds,omitempty"`
+	ContextScope     []string `json:"contextScope"`
+	FocusNodeIDs     []string `json:"focusNodeIds,omitempty"`
+	Budget           struct {
 		MaxCredits         float64 `json:"maxCredits"`
 		MaxGenerationTasks int     `json:"maxGenerationTasks,omitempty"`
 		MaxVideoSeconds    int     `json:"maxVideoSeconds,omitempty"`
@@ -65,6 +70,8 @@ func cloudAgentStepLimit(req CloudAgentRequest) int {
 }
 
 type cloudAgentState struct {
+	Subagent         *SubagentRuntime          `json:"subagent,omitempty"`
+	Workspace        *WorkspaceSnapshot        `json:"workspace,omitempty"`
 	Version          int                       `json:"version"`
 	SkillRuntimeMode string                    `json:"skillRuntimeMode,omitempty"`
 	Request          CloudAgentRequest         `json:"request"`
@@ -90,6 +97,9 @@ type CloudAgentRun struct {
 	FailureMessage   string            `json:"failureMessage,omitempty"`
 	PermissionMode   string            `json:"permissionMode"`
 	Model            string            `json:"model"`
+	ChannelID        string            `json:"channelId,omitempty"`
+	ChannelModelKey  string            `json:"channelModelKey,omitempty"`
+	LogicalModelID   string            `json:"logicalModelId,omitempty"`
 	CreatedAt        time.Time         `json:"createdAt"`
 	UpdatedAt        time.Time         `json:"updatedAt"`
 	Events           []CloudAgentEvent `json:"events,omitempty"`
@@ -272,7 +282,9 @@ func cloudAgentTaskIdentity(task *model.Task) cloudAgentRunIdentity {
 }
 
 func agentRunOutput(identity cloudAgentRunIdentity, state cloudAgentState) *CloudAgentRun {
-	return &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model, CreatedAt: identity.CreatedAt, UpdatedAt: identity.UpdatedAt, Skills: state.Skills}
+	return &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model,
+		ChannelID: state.Request.ChannelID, ChannelModelKey: state.Request.ChannelModelKey, LogicalModelID: state.Request.LogicalModelID,
+		CreatedAt: identity.CreatedAt, UpdatedAt: identity.UpdatedAt, Skills: state.Skills}
 }
 
 func (s *Service) cloudAgentTask(userID, id string) (*model.Task, cloudAgentState, error) {
@@ -428,6 +440,22 @@ func (s *Service) CloudAgentRunIfChanged(userID, id string, revision int64, opti
 // is deterministic per user/key. Competing requests may race, but task creation
 // and credit reservation share a transaction: only one can commit.
 func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, parentID string) (*CloudAgentRun, error) {
+	return s.createCloudAgentRunScoped(userID, req, parentID, nil)
+}
+
+type cloudAgentRunScope struct {
+	Workspace      *WorkspaceSnapshot
+	Skills         []cloudAgentSkill
+	ConversationID string
+	ParentID       string
+	Prepared       *repository.CloudAgentAdmission
+	Subagent       *SubagentRuntime
+}
+
+func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest, parentID string, scope *cloudAgentRunScope) (*CloudAgentRun, error) {
+	if scope != nil {
+		req.subagent = scope.Subagent
+	}
 	if err := validateCloudAgentRequest(&req); err != nil {
 		return nil, err
 	}
@@ -440,6 +468,18 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 			return nil, kernel.NotFound("画布不存在或尚未保存到服务端，请先完成画布同步")
 		}
 		return nil, err
+	}
+	if req.SubagentEnabled {
+		if err := s.RequireFeature(FeatureAgentSubagents); err != nil {
+			return nil, err
+		}
+		consent, consentErr := s.repo.AgentSubagentPolicy(userID, req.CanvasID)
+		if consentErr != nil {
+			return nil, consentErr
+		}
+		if !consent.Enabled {
+			return nil, kernel.Forbidden("当前画布未开启子代理授权")
+		}
 	}
 	// Resolve and freeze the effective preference document before idempotency
 	// lookup. A retry without an explicit revision must still refer to the same
@@ -454,6 +494,12 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	}
 	req.ProfileRevision = profile.Revision
 	id := cloudAgentID(userID, req.IdempotencyKey)
+	conversationID := s.cloudAgentConversationIDFor(userID, id, parentID)
+	linkedParentID := parentID
+	if scope != nil {
+		conversationID = scope.ConversationID
+		linkedParentID = scope.ParentID
+	}
 	fingerprint := cloudAgentFingerprint(req, parentID)
 	// 幂等判断必须走统一读路径：新形态的运行没有 `cloud_agent` 根任务（只有不可领取的
 	// 占位行，操作名不同），只认旧根任务会在重投时误判成"不存在"，于是再建一次——
@@ -472,6 +518,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	var history []providerTextMessage
 	var creativeAnchor cloudAgentCreativeAnchor
 	var inheritedPlan []cloudAgentPlanItem
+	var inheritedUsage *cloudAgentTokenAnchor
 	if parentID != "" {
 		// 父轮解析也必须走统一读路径：P1.5 之后的新形态运行没有 `cloud_agent` 根任务，
 		// 只认根任务会让"续聊"直接 404。LegacyTask 只在旧形态下非空。
@@ -525,6 +572,7 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 		// 否则新轮会把看过的图重新标成"没有视觉识别证据"并再花一次视觉 token。
 		creativeAnchor = parentState.CreativeAnchor
 		inheritedPlan = parentState.Plan
+		inheritedUsage = cloudAgentInheritedTokenAnchor(&parentState, req)
 		// 父轮的"原始要求"：旧形态取自根任务正文，新形态取自运行请求 —— 同一份事实，
 		// 两种形态都必须能续聊。
 		parentPrompt := parentState.Request.Prompt
@@ -569,14 +617,31 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
-	skillSnapshots, err := s.resolveRunSkills(userID, s.cloudAgentConversationIDFor(userID, id, parentID), req.SkillIDs, parentID == "")
-	if err != nil {
-		return nil, err
+	var workspace WorkspaceSnapshot
+	var skillSnapshots []cloudAgentSkill
+	if scope != nil {
+		if scope.Workspace == nil {
+			return nil, BadAuthRequest("Agent Workspace snapshot missing")
+		}
+		workspace, skillSnapshots = *scope.Workspace, scope.Skills
+	} else {
+		workspace, err = s.FreezeWorkspaceSnapshot(userID, req.CanvasID)
+		if err != nil {
+			return nil, err
+		}
+		skillSnapshots, err = s.resolveRunSkillsWithLayers(userID, conversationID, req.SkillIDs, parentID == "", workspace.Skills, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// 看图能力取决于本轮渠道模型自己的合同，在建 run 时定格，运行期间不再变化。
 	req.VisionEnabled = s.cloudAgentVisionEnabled(req)
 	// 个人记忆是长期积累的，建 run 时定格一次（运行期间不再变化）。
 	req.HasMemories = s.cloudAgentHasMemories(userID)
+	req.WebSearchEnabled, err = s.agentWebSearchEnabled()
+	if err != nil {
+		return nil, err
+	}
 	canvasSummary := ""
 	if len(req.ContextScope) != 0 {
 		canvasSummary, err = cloudAgentCanvasSummary(canvas, req.FocusNodeIDs...)
@@ -590,7 +655,10 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	if err != nil {
 		return nil, err
 	}
-	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: parentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy}
+	system += workspacePrompt(&workspace)
+	system += subagentSystemPrompt(req.subagent)
+	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy, Subagent: req.subagent}
+	state.Workspace = &workspace
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	canonical.Tools = compileCloudAgentToolsForRuntime(req, len(profile.Layers) > 0, cloudAgentSkillRuntimeNative)
 	// Keep the complete eligible tool catalog in the Go runtime snapshot. Pi
@@ -613,6 +681,22 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
 	canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(req.CanvasID, cloudAgentPromptCacheIdentity(req, policy), canonical.SystemPrompt, canonical.Tools)
 	attachCloudAgentPlan(&canonical, inheritedPlan)
+	if workspace.AgentsMD != "" || len(skillSnapshots) > 0 {
+		projected, err := cloudAgentRequestEstimatedTokens(&canonical)
+		if err != nil {
+			return nil, err
+		}
+		// Pi adds the Skill index to its initial prompt after this canonical
+		// snapshot. Use index bytes as a conservative token bound; bodies and
+		// references enter later requests only after an on-demand read.
+		for _, skill := range skillSnapshots {
+			projected += int(nativeSkillIndexContextBytes(skill))
+		}
+		budget := s.cloudAgentContextBudgetForRequest(req)
+		if projected > budget.InputBudgetTokens {
+			return nil, kernel.AgentSkillBudgetExceeded(map[string]any{"budget": "context_tokens", "limit": budget.InputBudgetTokens, "actual": projected})
+		}
+	}
 	// 根任务就是第一步模型调用：它的输出上限与后续每一步同源（策略解析结果），
 	// 否则"改配置"只影响第二步之后，第一步仍然按旧值跑。
 	stepLimits, err := s.cloudAgentStepLimits()
@@ -631,14 +715,17 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	//   - 不可变快照：服务端策略身份 + 工具 schema 身份在这里定型；
 	//   - 占位任务：承载本轮报价预留，worker 永不领取。
 	runtime := cloudAgentRuntime{
-		RuntimeRunID: id, Request: req, Policy: policy, ParentID: parentID, Fingerprint: fingerprint,
+		Subagent:     req.subagent,
+		Workspace:    &workspace,
+		RuntimeRunID: id, Request: req, Policy: policy, ParentID: linkedParentID, Fingerprint: fingerprint,
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
 		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
 		Plan: inheritedPlan, StepLimits: stepLimits,
+		TokenAnchor:     inheritedUsage,
 		ContractVersion: cloudAgentContractVersionFirstStep, Phase: cloudAgentPhaseAwaitingFirstStep,
 		Snapshot: cloudAgentContractSnapshotFor(canonical.SystemPrompt, canonical.Tools), PlaceholderTaskID: id,
 	}
-	run, err := s.newCloudAgentExecution(userID, id, req.CanvasID, parentID, s.cloudAgentConversationIDFor(userID, id, parentID), &runtime)
+	run, err := s.newCloudAgentExecution(userID, id, req.CanvasID, linkedParentID, conversationID, &runtime)
 	if err != nil {
 		return nil, err
 	}
@@ -676,6 +763,10 @@ func (s *Service) CreateCloudAgentRun(userID string, req CloudAgentRequest, pare
 	runtimePolicy, err := s.RuntimePolicy()
 	if err != nil {
 		return nil, err
+	}
+	if scope != nil && scope.Prepared != nil {
+		*scope.Prepared = repository.CloudAgentAdmission{Execution: run, Task: task, Order: prepare.Order, Skills: cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)}
+		return agentRunOutput(cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status, Model: req.Model, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt}, state), nil
 	}
 	if err = s.createCloudAgentRunWithinStorageQuota(run, task, prepare.Order, runtimePolicy, cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)); err != nil {
 		if errors.Is(err, repository.ErrCreationConflict) {
@@ -820,9 +911,13 @@ const (
 func cloudAgentCanvasSummary(canvas *model.CanvasProject, focusNodeIDs ...string) (string, error) {
 	var payload struct {
 		Nodes []struct {
-			ID    string `json:"id"`
-			Type  string `json:"type"`
-			Title string `json:"title"`
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			Title    string `json:"title"`
+			Metadata struct {
+				WorkflowKind     string `json:"workflowKind"`
+				CharacterAssetID string `json:"characterAssetId"`
+			} `json:"metadata"`
 		} `json:"nodes"`
 		Connections []struct {
 			FromNodeID string `json:"fromNodeId"`
@@ -867,9 +962,13 @@ func cloudAgentCanvasSummary(canvas *model.CanvasProject, focusNodeIDs ...string
 		}
 	}
 	candidates := make([]struct {
-		ID    string `json:"id"`
-		Type  string `json:"type"`
-		Title string `json:"title"`
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Title    string `json:"title"`
+		Metadata struct {
+			WorkflowKind     string `json:"workflowKind"`
+			CharacterAssetID string `json:"characterAssetId"`
+		} `json:"metadata"`
 	}, 0, len(payload.Nodes))
 	if len(focus) > 0 {
 		// Always retain explicitly selected nodes before neighbors when a highly
@@ -893,7 +992,10 @@ func cloudAgentCanvasSummary(canvas *model.CanvasProject, focusNodeIDs ...string
 			break
 		}
 		item := map[string]any{"id": truncateRunes(node.ID, 100), "type": truncateRunes(node.Type, 40), "title": truncateRunes(node.Title, 80)}
-		if _, known := cloudAgentNodeCapabilityForType(node.Type); !known {
+		if node.Type == "text" && node.Metadata.WorkflowKind == "character" {
+			item["kind"] = "character"
+		}
+		if _, known := canvasCapabilityRegistry.ResolveNode(node.Type, node.Metadata.WorkflowKind); !known {
 			item["agentSupported"] = false
 		}
 		nodes = append(nodes, item)

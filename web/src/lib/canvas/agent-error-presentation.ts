@@ -1,5 +1,19 @@
 import { ApiError } from "@/services/api/request";
-import { AgentStreamError } from "@/services/api/agent";
+import { AgentStreamError, type AgentEvent } from "@/services/api/agent";
+import type { CloudAgentChatMessage } from "@/components/canvas/canvas-cloud-agent-chat-ui";
+
+export function agentRunErrorMessage(event: AgentEvent): CloudAgentChatMessage {
+    const payload = event.payload || {};
+    const text = String(payload.failureMessage || payload.text || payload.summary || payload.message || "Agent 执行失败");
+    const timeout = payload.reason === "model_step_timeout" || payload.reason === "model_request_timeout" || text.startsWith("Agent 超时失败");
+    return {
+        id: event.type === "error" ? event.eventId : `terminal-${event.runId}`,
+        role: "error",
+        title: timeout ? "Agent 超时失败" : "Agent 执行失败",
+        text,
+        runId: event.runId,
+    };
+}
 
 export function agentErrorPresentation(cause: unknown, fallback = "Agent 执行失败") {
     const text = typeof cause === "string" ? cause.trim() : cause instanceof Error ? cause.message : fallback;

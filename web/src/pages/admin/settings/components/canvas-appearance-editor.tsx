@@ -5,17 +5,21 @@ import { useReducedMotion } from "motion/react";
 import { Live2DAvatar } from "@/components/canvas/live2d-avatar";
 import { FluidOrb } from "@/components/ui/fluid-orb";
 import { agentCopy, type CanvasAppearance } from "@/lib/canvas/agent-appearance";
-import { live2DModelURL, uploadLive2D } from "@/services/api/appearance";
+import { adminResourceFileUrl } from "@/services/api/admin-storage";
+import { live2DModelURL, uploadAppearanceAsset, uploadLive2D } from "@/services/api/appearance";
 
 export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading }: { value: CanvasAppearance; onChange: (value: CanvasAppearance) => void; disabled: boolean; onUploading: (value: boolean) => void }) {
     const { message } = App.useApp();
     const reducedMotion = useReducedMotion() ?? false;
     const input = useRef<HTMLInputElement>(null);
+    const pngInput = useRef<HTMLInputElement>(null);
     const [uploading, setUploading] = useState(false);
     const [readyURL, setReadyURL] = useState("");
     const [error, setError] = useState("");
+    const [pngError, setPNGError] = useState("");
     const [attempt, setAttempt] = useState(0);
     const url = value.live2dResourceId ? live2DModelURL(value.live2dResourceId, value.live2dEntry, true) : "";
+    const pngURL = value.avatarResourceId ? adminResourceFileUrl(value.avatarResourceId) : "";
     const change = (patch: Partial<CanvasAppearance>) => onChange({ ...value, ...patch });
     async function upload(file?: File) {
         if (!file) return;
@@ -33,6 +37,26 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
             message.success("导入成功，请预览后选择 Live2D，并点击页面顶部保存");
         } catch (cause) {
             message.error(cause instanceof Error ? cause.message : "模型导入失败");
+        } finally {
+            setUploading(false);
+            onUploading(false);
+        }
+    }
+    async function uploadPNG(file?: File) {
+        if (!file) return;
+        if (file.type !== "image/png" || file.size <= 0 || file.size > 5 * 1024 * 1024) {
+            message.error("请选择不超过 5 MiB 的 PNG 图片");
+            return;
+        }
+        setUploading(true);
+        onUploading(true);
+        setPNGError("");
+        try {
+            const resource = await uploadAppearanceAsset("agent-avatar", file);
+            change({ avatarResourceId: resource.id, avatarType: "png" });
+            message.success("PNG 形象导入成功，请点击页面顶部保存");
+        } catch (cause) {
+            message.error(cause instanceof Error ? cause.message : "PNG 形象导入失败");
         } finally {
             setUploading(false);
             onUploading(false);
@@ -68,10 +92,11 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
                     onChange={(event) => change({ avatarType: event.target.value })}
                     options={[
                         { label: "默认动态球", value: "orb" },
+                        { label: "PNG 图片", value: "png", disabled: !pngURL },
                         { label: "Live2D", value: "live2d", disabled: !url || readyURL !== url },
                     ]}
                 />
-                <p className="text-sm text-foreground/60">上传有授权的 Cubism 3/4 运行时 ZIP：一个 model3.json、moc3、PNG 纹理及可选动作/表情 JSON。首期不支持音频、旧版模型和编辑工程。模型会发送到浏览器，无法保证防下载。</p>
+                <p className="text-sm text-foreground/60">PNG 形象支持透明背景，建议使用竖向人物图；Live2D 仍支持 Cubism 3/4 运行时 ZIP。</p>
                 <div className="grid gap-2 text-sm">
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                         <span className="text-foreground/60">参考资料</span>
@@ -98,7 +123,20 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
                         event.currentTarget.value = "";
                     }}
                 />
+                <input
+                    ref={pngInput}
+                    type="file"
+                    accept="image/png,.png"
+                    className="hidden"
+                    onChange={(event) => {
+                        void uploadPNG(event.target.files?.[0]);
+                        event.currentTarget.value = "";
+                    }}
+                />
                 <div className="flex flex-wrap gap-2">
+                    <Button icon={<Upload className="size-4" />} loading={uploading} disabled={disabled} onClick={() => pngInput.current?.click()}>
+                        导入 PNG 形象（最大 5 MiB）
+                    </Button>
                     <Button icon={<Upload className="size-4" />} loading={uploading} disabled={disabled} onClick={() => input.current?.click()}>
                         导入 Live2D 模型（最大 128 MiB）
                     </Button>
@@ -106,11 +144,22 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
                         <Button
                             disabled={disabled || uploading}
                             onClick={() => {
-                                change({ avatarType: "orb", live2dResourceId: "", live2dEntry: "" });
+                                change({ avatarType: value.avatarType === "live2d" ? "orb" : value.avatarType, live2dResourceId: "", live2dEntry: "" });
                                 setError("");
                             }}
                         >
                             移除模型引用
+                        </Button>
+                    ) : null}
+                    {pngURL ? (
+                        <Button
+                            disabled={disabled || uploading}
+                            onClick={() => {
+                                change({ avatarType: value.avatarType === "png" ? "orb" : value.avatarType, avatarResourceId: "" });
+                                setPNGError("");
+                            }}
+                        >
+                            移除 PNG 形象
                         </Button>
                     ) : null}
                 </div>
@@ -120,6 +169,17 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
                     px
                 </label>
                 <div className="grid justify-items-center gap-3 rounded-xl border border-border bg-background p-5" aria-label="Agent 形象预览">
+                    {pngURL ? (
+                        <img
+                            key={`${pngURL}-${attempt}`}
+                            src={pngURL}
+                            alt="Agent PNG 形象预览"
+                            className="max-w-full object-contain"
+                            style={{ width: Math.round(value.avatarHeight * 0.75), height: value.avatarHeight }}
+                            onLoad={() => setPNGError("")}
+                            onError={() => setPNGError("PNG 形象读取失败，请重新导入")}
+                        />
+                    ) : null}
                     {url ? (
                         <Live2DAvatar
                             key={`${url}-${attempt}`}
@@ -137,19 +197,19 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
                                 setError(reason);
                             }}
                         />
-                    ) : (
+                    ) : !pngURL ? (
                         <FluidOrb size={60} color="#7164f6" />
-                    )}
+                    ) : null}
                     <strong>{agentCopy(value.welcomeTitle, value.agentName)}</strong>
                     <p className="text-sm text-foreground/60">{agentCopy(value.welcomeDescription, value.agentName)}</p>
-                    {url ? <small>{readyURL === url ? "预览已就绪，可选择 Live2D 并保存启用" : "等待模型预览就绪"}</small> : null}
+                    {url ? <small>{readyURL === url ? "Live2D 预览已就绪，可选择并保存启用" : "等待模型预览就绪"}</small> : null}
                 </div>
-                {error ? (
+                {error || pngError ? (
                     <Alert
                         type="warning"
                         showIcon
-                        title="Live2D 暂不可用"
-                        description={error}
+                        title="Agent 形象暂不可用"
+                        description={[pngError, error].filter(Boolean).join("；")}
                         action={
                             <Button
                                 size="small"
@@ -163,7 +223,7 @@ export function CanvasAppearanceEditor({ value, onChange, disabled, onUploading 
                         }
                     />
                 ) : null}
-                <p className="text-xs text-foreground/60">项目已内置 Cubism Core，无需另行安装。使用前仍需确认 Live2D SDK 及模型素材的适用授权。未启用的导入包可在资源管理中清理。</p>
+                <p className="text-xs text-foreground/60">PNG 和 Live2D 素材都会发送到浏览器显示；请确认素材具备适用授权。未启用的导入包可在资源管理中清理。</p>
             </div>
         </div>
     );

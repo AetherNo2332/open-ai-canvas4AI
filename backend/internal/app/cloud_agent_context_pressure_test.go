@@ -30,13 +30,13 @@ func TestCloudAgentContextPressureSeparatesNextRequestEstimateFromPreviousProvid
 		Step: 2, InputTokens: 10500, EstimatedTokens: 19500, Accepted: true,
 	}}
 	payload := cloudAgentContextPressurePayload(pressure, state)
-	if payload["readingScope"] != "next_request" || payload["estimateMethod"] != "local_v1" {
+	if payload["readingScope"] != "latest_provider_request" || payload["estimateMethod"] != "local_v1" {
 		t.Fatalf("next request scope missing: %+v", payload)
 	}
 	if payload["providerMeasurementScope"] != "previous_request" {
 		t.Fatalf("provider scope = %v", payload["providerMeasurementScope"])
 	}
-	if payload["estimatedInputTokens"] != 20000 || payload["projectedTokens"] != 11000 {
+	if payload["estimatedInputTokens"] != 20000 || payload["projectedTokens"] != 10500 {
 		t.Fatalf("estimate/projected readings were mixed: %+v", payload)
 	}
 }
@@ -60,7 +60,7 @@ func TestCloudAgentContextPressurePayloadCarriesSnapshotV2Fields(t *testing.T) {
 	if payload["schemaVersion"] != 2 || payload["phase"] != "before_request" {
 		t.Fatalf("snapshot version/phase 缺失：%+v", payload)
 	}
-	if payload["measurementSource"] != "provider" || payload["normalizedInputTokens"] != int64(10500) || payload["projectedNextInputTokens"] != 11000 {
+	if payload["measurementSource"] != "provider" || payload["normalizedInputTokens"] != int64(10500) || payload["projectedNextInputTokens"] != 10500 {
 		t.Fatalf("测量来源与两种量纲没分开：%+v", payload)
 	}
 	if payload["contextWindowTokens"] != 128000 || payload["usableInputTokens"] != 100000 ||
@@ -230,7 +230,7 @@ func TestCloudAgentContextPressureUsesEstimateOnFirstStepThenProviderAnchor(t *t
 		t.Fatalf("合理的上游用量必须被采信：%+v", state.TokenAnchor)
 	}
 
-	// 第二步：主读数换成"锚点实测 + 本地增量"，并带上换算比例。
+	// 第二步：主读数直接采用最近实测，本地估算增量只用于诊断。
 	second := cloudAgentContextPressurePayload(cloudAgentContextPressure{EstimatedInputTokens: 22000, ModelLimitConfigured: true, UsableInputTokens: budget.InputBudgetTokens}, state)
 	if second["tokenSource"] != "provider" || second["measurementSource"] != "provider" {
 		t.Fatalf("拿到实测后主读数必须换成 provider：%+v", second)
@@ -238,8 +238,8 @@ func TestCloudAgentContextPressureUsesEstimateOnFirstStepThenProviderAnchor(t *t
 	if second["pressureTokens"] != int64(10500) || second["normalizedInputTokens"] != int64(10500) {
 		t.Fatalf("锚点实测值不对：%+v", second)
 	}
-	if second["projectedNextInputTokens"] != 12500 || second["projectedTokens"] != 12500 {
-		t.Fatalf("投影应为 10500 + (22000-20000)：%+v", second)
+	if second["projectedNextInputTokens"] != 10500 || second["projectedTokens"] != 10500 {
+		t.Fatalf("压力必须直接采用上游 10500：%+v", second)
 	}
 	if second["tokenScale"] != 0.525 || second["anchorDeltaTokens"] != 2000 {
 		t.Fatalf("换算比例/增量不对：%+v", second)
@@ -249,24 +249,24 @@ func TestCloudAgentContextPressureUsesEstimateOnFirstStepThenProviderAnchor(t *t
 	}
 }
 
-// 锚点跨步沿用，但超过 3 步未刷新就作废（真机踩过"锚点冻结"）。
-func TestCloudAgentTokenAnchorSurvivesWithinMaxAgeAndExpiresAfterwards(t *testing.T) {
+// 同一 provider 的最近实测持续有效，直到新的实测更新。
+func TestCloudAgentTokenAnchorRetainsLatestUsageWithoutRefresh(t *testing.T) {
 	state := &cloudAgentRuntime{Request: agentTestRequest(), Step: 2, TokenAnchor: &cloudAgentTokenAnchor{TaskID: "task-1", Step: 2, Accepted: true, InputTokens: 10500, EstimatedTokens: 20000}}
 	state.TokenAnchor.Signature = cloudAgentStepSignature(state)
 
-	state.Step = 2 + cloudAgentAnchorMaxAgeSteps
+	state.Step = 5
 	// 取舍：作废入口沿用我方两参签名 cloudAgentExpireTokenAnchor(runID, state)（上游是三参、
 	// 多一个窗口入参），窗口比较改由 ForRequest 显式传入，语义不变。
 	cloudAgentExpireTokenAnchor("run-1", state)
 	if !state.TokenAnchor.Accepted || state.TokenAnchor.RejectReason != "" {
-		t.Fatalf("第 %d 步仍在有效期内，不该作废：%+v", cloudAgentAnchorMaxAgeSteps, state.TokenAnchor)
+		t.Fatalf("最近实测不该作废：%+v", state.TokenAnchor)
 	}
 	pressure := cloudAgentContextPressurePayload(cloudAgentContextPressure{EstimatedInputTokens: 20000}, state)
 	if pressure["tokenSource"] != "provider" {
 		t.Fatalf("沿用中的锚点必须继续当主读数：%+v", pressure)
 	}
 	anchor, ok := pressure["anchor"].(map[string]any)
-	if !ok || anchor["valid"] != true || anchor["ageSteps"] != cloudAgentAnchorMaxAgeSteps {
+	if !ok || anchor["valid"] != true || anchor["ageSteps"] != 3 {
 		t.Fatalf("anchor 快照不对：%+v", pressure["anchor"])
 	}
 
@@ -274,17 +274,17 @@ func TestCloudAgentTokenAnchorSurvivesWithinMaxAgeAndExpiresAfterwards(t *testin
 	// 取舍：作废入口沿用我方两参签名 cloudAgentExpireTokenAnchor(runID, state)（上游是三参、
 	// 多一个窗口入参），窗口比较改由 ForRequest 显式传入，语义不变。
 	cloudAgentExpireTokenAnchor("run-1", state)
-	if state.TokenAnchor.Accepted || !strings.Contains(state.TokenAnchor.RejectReason, "未刷新") {
-		t.Fatalf("超期锚点必须作废：%+v", state.TokenAnchor)
+	if !state.TokenAnchor.Accepted || state.TokenAnchor.RejectReason != "" {
+		t.Fatalf("没有新实测时必须沿用已有实测：%+v", state.TokenAnchor)
 	}
 	pressure = cloudAgentContextPressurePayload(cloudAgentContextPressure{EstimatedInputTokens: 20000}, state)
-	if pressure["tokenSource"] != "estimate" || pressure["anchorRejected"] == nil {
-		t.Fatalf("作废后必须退回估算并给出原因：%+v", pressure)
+	if pressure["tokenSource"] != "provider" || pressure["anchorRejected"] != nil {
+		t.Fatalf("后续步骤不能因未刷新退回估算：%+v", pressure)
 	}
 }
 
-// 窗口变化后锚点作废：同一个 token 数在 8K 窗口和 256K 窗口下的含义完全不同。
-func TestCloudAgentTokenAnchorExpiresWhenWindowChanges(t *testing.T) {
+// 窗口变化调整压力分母，不改变最近的 provider 用量。
+func TestCloudAgentTokenAnchorSurvivesWindowChanges(t *testing.T) {
 	state := &cloudAgentRuntime{
 		Request: agentTestRequest(), Step: 4,
 		TokenAnchor: &cloudAgentTokenAnchor{TaskID: "task-1", Step: 1, Accepted: true, InputTokens: 10500, EstimatedTokens: 20000, ContextWindowTokens: 128000},
@@ -292,8 +292,8 @@ func TestCloudAgentTokenAnchorExpiresWhenWindowChanges(t *testing.T) {
 	state.TokenAnchor.Signature = cloudAgentStepSignature(state)
 	// 取舍：窗口比较保留上游能力（我方两参入口不接窗口），按等价语义改用 ForRequest 显式传窗口。
 	cloudAgentExpireTokenAnchorForRequest("run-1", state, 256000, cloudAgentStepSignature(state), state.Request.Model, state.Request.ChannelID)
-	if state.TokenAnchor.Accepted || !strings.Contains(state.TokenAnchor.RejectReason, "窗口已变化") {
-		t.Fatalf("换窗口后锚点必须作废：%+v", state.TokenAnchor)
+	if !state.TokenAnchor.Accepted || state.TokenAnchor.InputTokens != 10500 {
+		t.Fatalf("换窗口不能否定实测：%+v", state.TokenAnchor)
 	}
 	transitions := 0
 	for _, event := range state.Events {
@@ -306,8 +306,8 @@ func TestCloudAgentTokenAnchorExpiresWhenWindowChanges(t *testing.T) {
 			}
 		}
 	}
-	if transitions != 1 {
-		t.Fatalf("窗口变化应落一条 context_transition(window_changed)，实际 %d", transitions)
+	if transitions != 0 {
+		t.Fatalf("窗口变化不能作废用量，实际 %d", transitions)
 	}
 	// 窗口未知（未解析到真实能力）时不比较，也不该据此作废。
 	unknown := &cloudAgentRuntime{
@@ -349,6 +349,12 @@ func TestCloudAgentTokenAnchorExpiresOnlyWhenRequestSignatureChanges(t *testing.
 				canonical.Tools = []map[string]interface{}{{"name": "b"}}
 			}
 			cloudAgentExpireTokenAnchorForRequest("run", state, 0, cloudAgentRequestSignature(state, canonical, testCase.channelID, testCase.model), testCase.model, testCase.channelID)
+			if testCase.kind == "" {
+				if !state.TokenAnchor.Accepted {
+					t.Fatalf("prompt/tools changes must retain provider usage: %+v", state.TokenAnchor)
+				}
+				return
+			}
 			if state.TokenAnchor.Accepted || state.TokenAnchor.RejectReason == "" {
 				t.Fatalf("signature changed without invalidation: %+v", state.TokenAnchor)
 			}
@@ -359,8 +365,8 @@ func TestCloudAgentTokenAnchorExpiresOnlyWhenRequestSignatureChanges(t *testing.
 	}
 }
 
-// 上游实测与本地估算差出一个量级（<0.5× / >2×）时不采信，并说明原因。
-func TestCloudAgentTokenAnchorRejectsImplausibleProviderUsage(t *testing.T) {
+// 上游有效用量不因本地估算的偏差而被否定。
+func TestCloudAgentTokenAnchorAcceptsUsageDespiteHeuristicDisagreement(t *testing.T) {
 	cases := []struct {
 		name  string
 		usage int64
@@ -386,18 +392,18 @@ func TestCloudAgentTokenAnchorRejectsImplausibleProviderUsage(t *testing.T) {
 			}
 			state.LastStepSignature = cloudAgentStepSignature(state)
 			service.recordCloudAgentTokenAnchor("user", state)
-			if state.TokenAnchor == nil || state.TokenAnchor.Accepted {
-				t.Fatalf("离谱的实测不该被采信：%+v", state.TokenAnchor)
+			if state.TokenAnchor == nil || !state.TokenAnchor.Accepted {
+				t.Fatalf("有效实测必须被采信：%+v", state.TokenAnchor)
 			}
-			if !strings.Contains(state.TokenAnchor.RejectReason, testCase.found) {
+			if state.TokenAnchor.RejectReason != "" {
 				t.Fatalf("拒绝原因不对：%q", state.TokenAnchor.RejectReason)
 			}
 			payload := cloudAgentContextPressurePayload(cloudAgentContextPressure{EstimatedInputTokens: 20000}, state)
-			if payload["tokenSource"] != "estimate" {
-				t.Fatalf("被拒绝的锚点不得当主读数：%+v", payload)
+			if payload["tokenSource"] != "provider" {
+				t.Fatalf("实测必须作为主读数：%+v", payload)
 			}
-			if reason, _ := payload["anchorRejected"].(string); !strings.Contains(reason, testCase.found) {
-				t.Fatalf("事件必须说明为什么不用这个实测：%+v", payload)
+			if payload["anchorRejected"] != nil {
+				t.Fatalf("不能因估算偏差拒绝实测：%+v", payload)
 			}
 		})
 	}
@@ -479,8 +485,8 @@ func TestCloudAgentTokenAnchorOnlyUsesOwnedSuccessfulTextCall(t *testing.T) {
 	state.TokenAnchor = nil
 	state.LastStepChannelID = "different-channel"
 	service.recordCloudAgentTokenAnchor("user", state)
-	if state.TokenAnchor != nil {
-		t.Fatalf("route changed after request construction: %+v", state.TokenAnchor)
+	if state.TokenAnchor == nil || state.TokenAnchor.ChannelID != valid.ChannelID || state.LastStepChannelID != valid.ChannelID {
+		t.Fatalf("successful routed call must publish its actual route: %+v", state.TokenAnchor)
 	}
 }
 
@@ -657,15 +663,18 @@ func TestCloudAgentRuntimeEmitsContextPressurePerStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := pressures()
-	if len(second) != 2 || nextTask.TaskID == firstTask.TaskID {
+	if len(second) != 3 || nextTask.TaskID == firstTask.TaskID {
 		t.Fatalf("Pi next request did not create one pressure event: tasks=%+v/%+v events=%+v", firstTask, nextTask, second)
 	}
-	payload := second[1].Payload
+	if second[1].Payload["phase"] != "after_request" || second[1].Payload["requestId"] != firstTask.TaskID || second[1].Payload["projectedTokens"] != float64(10500) {
+		t.Fatalf("completed step did not publish its exact measured input: %+v", second[1])
+	}
+	payload := second[2].Payload
 	if payload["tokenSource"] != "provider" || payload["measurementSource"] != "provider" ||
 		payload["normalizedInputTokens"] != float64(10500) || payload["requestId"] != nextTask.TaskID {
 		t.Fatalf("provider anchor and next-request identity are mixed: %+v", payload)
 	}
-	assertMatchesTask(nextTask.TaskID, second[1])
+	assertMatchesTask(nextTask.TaskID, second[2])
 	anchor, ok := payload["anchor"].(map[string]any)
 	if !ok || anchor["valid"] != true || anchor["id"] != firstTask.TaskID {
 		t.Fatalf("provider anchor snapshot is incorrect: %+v", payload["anchor"])
@@ -681,7 +690,7 @@ func TestEstimateCloudAgentTokensRoundsASCIIUp(t *testing.T) {
 	}
 }
 
-// 锚点治理（设计 §6）：超过 N 步未刷新就作废；模型/渠道变化也作废。
+// 最新实测不按步数失效；模型/渠道变化才作废。
 // 取舍：本用例来自我方 fork，作废入口按我方两参签名调用；签名/模型/线路优先取
 // LastStep*（"实际发出去的那份信封"的口径，上游 #601 的记账），缺失时退回运行态指纹。
 func TestCloudAgentTokenAnchorExpires(t *testing.T) {
@@ -695,8 +704,8 @@ func TestCloudAgentTokenAnchorExpires(t *testing.T) {
 	stale := &cloudAgentRuntime{Step: 20, Request: CloudAgentRequest{Model: "m", ChannelID: "c"}, TokenAnchor: &cloudAgentTokenAnchor{Step: 10, Accepted: true}}
 	stale.TokenAnchor.Signature = cloudAgentStepSignature(stale)
 	cloudAgentExpireTokenAnchor("run-1", stale)
-	if stale.TokenAnchor.Accepted || !strings.Contains(stale.TokenAnchor.RejectReason, "未刷新") {
-		t.Fatalf("超期锚点必须作废：%+v", stale.TokenAnchor)
+	if !stale.TokenAnchor.Accepted || stale.TokenAnchor.RejectReason != "" {
+		t.Fatalf("未更新的实测应持续有效：%+v", stale.TokenAnchor)
 	}
 
 	changed := &cloudAgentRuntime{Step: 2, Request: CloudAgentRequest{Model: "m2", ChannelID: "c"}, TokenAnchor: &cloudAgentTokenAnchor{Step: 1, Accepted: true, Model: "m", ChannelID: "c"}}
