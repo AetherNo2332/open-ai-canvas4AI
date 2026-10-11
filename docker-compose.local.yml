@@ -6,6 +6,8 @@ services:
       dockerfile: backend/Dockerfile
       args:
         GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        # Alpine 官方 CDN 在部分网络不可达；本地 compose 默认走国内镜像，CI 不受影响。
+        APK_MIRROR: ${APK_MIRROR:-https://mirrors.aliyun.com}
     environment:
       CANVAS_BACKEND_ADDR: ":8080"
       CANVAS_BACKEND_DATA_DIR: /data
