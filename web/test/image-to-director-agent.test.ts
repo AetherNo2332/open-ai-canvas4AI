@@ -16,3 +16,8 @@ test("request selection refuses models without image input", () => {
     const config = { model: "text-only", channels: [{ id: "system", scope: "system", models: ["text-only"], modelCosts: [{ model: "text-only", capabilityConfig: { text: { references: { maxImages: 0 } } } }] }], apiKey: "", baseUrl: "", apiFormat: "openai" } as any;
     expect(() => buildImageToDirectorAgentRequest({ canvasId: "canvas", reference, config, preferredModel: "text-only" })).toThrow("director_image_model_unsupported");
 });
+
+test("explicitly disabled vision capability is rejected even with a stale image limit", () => {
+    const config = { model: "text-no-vision", channels: [{ id: "system", scope: "system", models: ["text-no-vision"], modelCosts: [{ model: "text-no-vision", capabilityConfig: { text: { visionSupported: false, references: { maxImages: 4 } } } }] }], apiKey: "", baseUrl: "", apiFormat: "openai" } as any;
+    expect(() => buildImageToDirectorAgentRequest({ canvasId: "canvas-1", reference, config, preferredModel: "text-no-vision" })).toThrow("director_image_model_unsupported");
+});

@@ -1,4 +1,5 @@
-import { AmbientLight, Color, DirectionalLight, GridHelper, PerspectiveCamera, Scene, WebGLRenderer } from "three";
+import { AmbientLight, BoxGeometry, Color, DirectionalLight, GridHelper, Mesh, MeshStandardMaterial, PerspectiveCamera, Scene, WebGLRenderer, Group } from "three";
+import type { DirectorProject } from "./previs-runtime-types";
 
 export const DIRECTOR_DESK_VERSION = "0.4.11" as const;
 
@@ -19,6 +20,7 @@ export type DirectorRuntime = {
     readonly host: DirectorRuntimeHost;
     disposed: boolean;
     render(): void;
+    syncDocument(document: DirectorProject): void;
 };
 
 function createBrowserRenderer(container: HTMLElement): DirectorRenderer {
@@ -53,6 +55,9 @@ export function createDirectorRuntime(host: DirectorRuntimeHost): DirectorRuntim
     try {
         renderers = [createRenderer(host.stage), createRenderer(host.shot)];
     } catch (error) {
+        for (const renderer of renderers) renderer.dispose();
+        host.stage.replaceChildren?.();
+        host.shot.replaceChildren?.();
         host.onError?.(error);
         throw error;
     }
@@ -64,6 +69,22 @@ export function createDirectorRuntime(host: DirectorRuntimeHost): DirectorRuntim
         renderers,
         host,
         disposed: false,
+        syncDocument(document) {
+            scene.getObjectByName("director-desk-entities")?.removeFromParent();
+            const entities = new Group();
+            entities.name = "director-desk-entities";
+            for (const entity of document.entities) {
+                const material = new MeshStandardMaterial({ color: entity.color || "#ffffff", roughness: 0.82 });
+                const mesh = new Mesh(new BoxGeometry(entity.kind === "camera" ? 0.35 : 0.8, entity.kind === "camera" ? 0.25 : Math.max(0.8, entity.height), entity.kind === "camera" ? 0.6 : 0.8), material);
+                mesh.name = entity.id;
+                mesh.position.set(...entity.position);
+                mesh.rotation.set(...entity.rotation);
+                mesh.scale.set(...entity.scale);
+                mesh.visible = entity.visible;
+                entities.add(mesh);
+            }
+            scene.add(entities);
+        },
         render() {
             if (runtime.disposed) return;
             renderers[0]?.render?.(scene, editorCamera);

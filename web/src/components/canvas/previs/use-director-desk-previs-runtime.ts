@@ -24,7 +24,9 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
         if (runtimeRef.current) return;
         try {
             runtimeRef.current = createDirectorRuntime({ stage: stageRef.current, shot: shotRef.current });
-            runtimeRef.current.scene.userData.directorDocument = previsSceneToDirectorDocument(scene);
+            const document = previsSceneToDirectorDocument(scene);
+            runtimeRef.current.scene.userData.directorDocument = document;
+            runtimeRef.current.syncDocument(document);
             runtimeRef.current.render();
             setStatus("ready");
         } catch (cause) {
@@ -41,7 +43,9 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
 
     useEffect(() => {
         if (!runtimeRef.current || !scene) return;
-        runtimeRef.current.scene.userData.directorDocument = previsSceneToDirectorDocument(scene);
+        const document = previsSceneToDirectorDocument(scene);
+        runtimeRef.current.scene.userData.directorDocument = document;
+        runtimeRef.current.syncDocument(document);
         runtimeRef.current.render();
     }, [scene]);
 

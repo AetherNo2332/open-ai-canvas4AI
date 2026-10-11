@@ -17,6 +17,7 @@ export function createDirectorRenderBridge(options: { submit: (input: DirectorPr
     const preview = (scene: PrevisScene, renderOptions: RenderOptions = {}) => {
         const input = directorPreviewInput(scene, renderOptions.shotId || scene.activeShotId, renderOptions.time || 0);
         const key = keyFor(input);
+        if (renderOptions.signal?.aborted) return Promise.reject(new DOMException("The operation was aborted", "AbortError"));
         const existing = pending.get(key);
         if (existing) return existing.promise;
         const controller = new AbortController();

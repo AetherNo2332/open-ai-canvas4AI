@@ -3,11 +3,19 @@ import type { DirectorEntity, DirectorMotionPath, DirectorPreviewInput, Director
 
 const clone = <T>(value: T): T => structuredClone(value);
 
+function safeObjectExtension(object: PrevisObject): PrevisObject {
+    const { storageKey: _storageKey, url: _url, mimeType: _mimeType, ...safe } = object;
+    return clone(safe as PrevisObject);
+}
+
 function objectToEntity(object: PrevisObject): DirectorEntity {
     const path: DirectorMotionPath | null = object.motionPath ? {
         smooth: true,
         interpolation: "continuous",
         points: object.motionPath.points.map((position, index) => ({ time: object.motionPath!.startDelay + index, position: clone(position) })),
+        speed: object.motionPath.speed,
+        startDelay: object.motionPath.startDelay,
+        orientToPath: object.motionPath.orientToPath,
     } : null;
     return {
         id: object.id,
@@ -34,7 +42,7 @@ function objectToEntity(object: PrevisObject): DirectorEntity {
         spacing: 0.75,
         seed: 42,
         reference: object.sourceNodeId || "",
-        extensions: { infiniteCanvasObject: clone(object) },
+        extensions: { infiniteCanvasObject: safeObjectExtension(object) },
     };
 }
 
@@ -55,7 +63,14 @@ function cameraToEntity(scene: PrevisScene, cameraId: string): DirectorEntity {
         height: 1.6,
         build: "normal",
         gender: "male",
-        path: null,
+        path: camera.motionPath ? {
+            smooth: true,
+            interpolation: "continuous",
+            points: camera.motionPath.points.map((position, index) => ({ time: camera.motionPath!.startDelay + index, position: clone(position) })),
+            speed: camera.motionPath.speed,
+            startDelay: camera.motionPath.startDelay,
+            orientToPath: camera.motionPath.orientToPath,
+        } : null,
         face: "target",
         faceTarget: "",
         clips: [],
@@ -85,16 +100,22 @@ export function previsSceneToDirectorDocument(scene: PrevisScene): DirectorProje
         ...scene.cameras.map((camera) => cameraToEntity(scene, camera.id)),
     ];
     const firstShot = scene.shots[0];
+    let cutTime = 0;
+    const cuts = scene.shots.map((shot) => {
+        const cut = { time: cutTime, cameraId: shot.cameraId };
+        cutTime += shot.duration;
+        return cut;
+    });
     return {
         format: "director-desk",
         version: 1,
         name: scene.title,
-        duration: Math.max(0.1, scene.shots.reduce((max, shot) => Math.max(max, shot.duration), 0)),
+        duration: Math.max(0.1, scene.shots.reduce((total, shot) => total + shot.duration, 0)),
         fps: firstShot?.fps || 24,
         aspect: firstShot?.aspectRatio || "16:9",
         room: { enabled: false, width: 10, depth: 10, height: 4 },
         entities,
-        cuts: firstShot ? [{ time: 0, cameraId: firstShot.cameraId }] : [],
+        cuts,
         references: [],
         extensions: {
             infiniteCanvas: {
@@ -124,7 +145,14 @@ export function directorDocumentToPrevisScene(document: DirectorProject): Previs
     if (!bridge) throw new Error("director_document_missing_canvas_extension");
     const objects = document.entities.filter((entity) => entity.kind !== "camera").map((entity) => {
         const preserved = entity.extensions?.infiniteCanvasObject;
-        if (preserved) return { ...clone(preserved), transform: { ...preserved.transform, position: clone(entity.position), rotation: clone(entity.rotation), scale: clone(entity.scale) } };
+        const motionPath = entity.path ? { points: entity.path.points.map((point) => clone(point.position)), speed: entity.path.speed || "walk", startDelay: entity.path.startDelay ?? (entity.path.points[0]?.time || 0), orientToPath: entity.path.orientToPath ?? true } : undefined;
+        if (preserved) return {
+            ...clone(preserved),
+            transform: { ...preserved.transform, position: clone(entity.position), rotation: clone(entity.rotation), scale: clone(entity.scale) },
+            motionPath,
+            motionClips: Array.isArray(entity.clips) ? clone(entity.clips) as PrevisObject["motionClips"] : preserved.motionClips,
+            pose: typeof entity.pose?.value === "string" ? entity.pose.value as PrevisObject["pose"] : preserved.pose,
+        };
         return {
             id: entity.id,
             name: entity.name,
@@ -136,6 +164,7 @@ export function directorDocumentToPrevisScene(document: DirectorProject): Previs
             castShadow: true,
             receiveShadow: true,
             keyframes: [],
+            motionPath,
         } as PrevisObject;
     });
     const cameras = document.entities.filter((entity) => entity.kind === "camera").map((entity) => ({
@@ -150,6 +179,7 @@ export function directorDocumentToPrevisScene(document: DirectorProject): Previs
         near: 0.05,
         far: 500,
         keyframes: [],
+        motionPath: entity.path ? { points: entity.path.points.map((point) => clone(point.position)), speed: entity.path.speed || "walk", startDelay: entity.path.startDelay ?? (entity.path.points[0]?.time || 0), orientToPath: entity.path.orientToPath ?? true } : undefined,
     }));
     return {
         id: bridge.scene.id,

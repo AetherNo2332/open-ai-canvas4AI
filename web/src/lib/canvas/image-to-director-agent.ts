@@ -23,7 +23,8 @@ export function buildImageToDirectorDisplayText() {
 }
 
 export function modelSupportsImageInspection(config: AiConfig, model: string) {
-    return (modelCapabilityConfigFor(config, model).text?.references.maxImages || 0) > 0;
+    const capability = modelCapabilityConfigFor(config, model).text;
+    return capability?.visionSupported !== false && (capability?.references.maxImages || 0) > 0;
 }
 
 export function selectImageInspectionModel(config: AiConfig, preferredModel: string) {

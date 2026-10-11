@@ -4,7 +4,7 @@ export type DirectorVec3 = PrevisVec3;
 
 export type DirectorWaypoint = { time: number; position: DirectorVec3; heading?: number; easing?: string };
 
-export type DirectorMotionPath = { interpolation?: "continuous"; smooth: boolean; points: DirectorWaypoint[] };
+export type DirectorMotionPath = { interpolation?: "continuous"; smooth: boolean; points: DirectorWaypoint[]; speed?: "slow" | "walk" | "run"; startDelay?: number; orientToPath?: boolean };
 
 export type DirectorCamera = {
     aim: "target" | "manual";

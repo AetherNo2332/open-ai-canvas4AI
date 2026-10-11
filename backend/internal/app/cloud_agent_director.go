@@ -111,6 +111,20 @@ func cloudAgentDirectorRead(repo *repository.Repository, userID, canvasID string
 	issues := []string{}
 	if args.ShotID == "" {
 		issues = append(issues, "未指定镜头；请为每个镜头单独检查接拍")
+	} else if scene, ok := projection.(map[string]any); ok {
+		shots := creationMaps(scene["shots"])
+		cameras := creationMaps(scene["cameras"])
+		cameraIDs := map[string]bool{}
+		for _, camera := range cameras { cameraIDs[stringValue(camera["id"])] = true }
+		for _, shot := range shots {
+			if stringValue(shot["id"]) != args.ShotID { continue }
+			cameraID := stringValue(shot["cameraId"])
+			if cameraID == "" || !cameraIDs[cameraID] { issues = append(issues, "镜头缺少有效摄影机") }
+			if numberValue(shot["duration"], 0) <= 0 { issues = append(issues, "镜头时长必须大于零") }
+		}
+		for _, object := range creationMaps(scene["objects"]) {
+			if path, ok := object["motionPath"].(map[string]any); ok && len(creationMaps(path["points"])) < 2 { issues = append(issues, "运动路径至少需要两个点") }
+		}
 	}
 	return map[string]any{"sceneId": args.SceneID, "shotId": args.ShotID, "status": map[string]any{"ok": len(issues) == 0, "issues": issues}, "scene": projection, "repairRequiresApproval": true}, nil
 }

@@ -14,9 +14,10 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
     const runtime = useDirectorDeskPrevisRuntime(props.open, props.scene);
     return (
         <>
-            <div className="director-desk-runtime-host" aria-hidden="true">
+            <div className="director-desk-runtime-host" data-runtime-status={runtime.status}>
                 <div ref={runtime.stageRef} className="director-desk-runtime-stage" data-director-runtime="stage" />
                 <div ref={runtime.shotRef} className="director-desk-runtime-stage" data-director-runtime="shot" />
+                <span className="director-desk-runtime-label">DirectorDesk {runtime.status === "ready" ? "· 已连接" : runtime.status === "error" ? "· 回退" : "· 初始化"}</span>
             </div>
             <CanvasPrevisWorkbench {...props} />
         </>
