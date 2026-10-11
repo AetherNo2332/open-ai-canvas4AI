@@ -15221,7 +15221,7 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap { box-shadow: 0 
     min-height: 38px;
     flex: 1 1 auto;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     gap: 6px;
     border-radius: var(--r-md);
     padding: 0 7px;
@@ -15916,12 +15916,13 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap { box-shadow: 0 
     border-radius: 12px;
     color: var(--foreground);
     text-align: left;
-    transition: background-color .18s ease, transform .18s ease;
+    transition: transform .18s ease;
 }
 
 .app-user-workspace .app-workspace-sidebar-profile:hover,
 .app-user-workspace .app-workspace-sidebar-profile:focus-visible {
-    background: rgba(72, 72, 73, .055);
+    background: var(--user-surface-hover);
+    color: var(--user-ink);
 }
 
 .app-user-workspace .app-workspace-sidebar-profile.is-collapsed {
@@ -16022,6 +16023,38 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap { box-shadow: 0 
 .app-user-workspace .app-workspace-sidebar-notification svg {
     width: 16px;
     height: 16px;
+}
+
+.app-user-workspace .app-workspace-sidebar-collapse-toggle {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    place-items: center;
+    border-radius: var(--button-radius);
+    color: var(--user-ink-muted);
+}
+
+.app-user-workspace .app-workspace-sidebar-collapse-toggle:hover,
+.app-user-workspace .app-workspace-sidebar-collapse-toggle:focus-visible {
+    background: var(--user-surface-hover);
+    color: var(--user-ink);
+}
+
+.app-user-workspace .app-workspace-sidebar-collapse-toggle svg {
+    width: 18px;
+    height: 18px;
+    transition: transform var(--user-motion, .18s) ease;
+}
+
+.app-user-workspace .app-workspace-sidebar-collapse-toggle:hover svg {
+    transform: translateY(-1px);
+}
+
+.app-user-workspace .app-workspace-sidebar-nav.is-collapsed .app-workspace-sidebar-collapse-toggle {
+    width: 48px;
+    height: 48px;
+    flex: 0 0 48px;
 }
 
 .app-user-workspace .app-workspace-sidebar-profile-popover {

@@ -1,5 +1,5 @@
 import { Popover } from "antd";
-import { Bell, ChevronDown, ChevronRight, CircleUserRound, History as HistoryIcon, Infinity as InfinityIcon, PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleUserRound, History as HistoryIcon, Infinity as InfinityIcon, PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
@@ -56,7 +56,7 @@ export function buildNav(features: FeatureAvailability, isAdmin: boolean): { gro
     return { groups, footer: [] };
 }
 
-function WorkspaceSidebarProfile({ collapsed, user }: { collapsed: boolean; user: NonNullable<ReturnType<typeof useUserStore.getState>["user"]> | null }) {
+function WorkspaceSidebarProfile({ collapsed, user, onExpand, onCollapse }: { collapsed: boolean; user: NonNullable<ReturnType<typeof useUserStore.getState>["user"]> | null; onExpand: () => void; onCollapse: () => void }) {
     const [failed, setFailed] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     const avatarUrl = /^https?:\/\//i.test(user?.avatarUrl || "") ? user?.avatarUrl : "";
@@ -64,12 +64,21 @@ function WorkspaceSidebarProfile({ collapsed, user }: { collapsed: boolean; user
 
     useEffect(() => setFailed(false), [avatarUrl]);
 
+    const toggle = (
+        <button type="button" className={cn("app-workspace-sidebar-collapse-toggle", collapsed && "is-collapsed")} aria-label={collapsed ? "展开侧栏菜单" : "收起侧栏"} title={collapsed ? "展开侧栏菜单" : "收起侧栏"} aria-expanded={!collapsed} aria-controls="workspace-sidebar" onClick={collapsed ? onExpand : onCollapse}>
+            {collapsed ? <PanelLeftOpen className="size-4" strokeWidth={1.7} /> : <PanelLeftClose className="size-4" strokeWidth={1.7} />}
+        </button>
+    );
+
     if (!user) {
         return (
-            <Link to="/login" className={cn("app-workspace-sidebar-profile", collapsed && "is-collapsed")} aria-label="登录" title="登录">
-                <CircleUserRound className="size-5" />
-                <span>登录</span>
-            </Link>
+            <div className={cn("app-workspace-sidebar-account", collapsed && "is-collapsed")}>
+                <Link to="/login" className={cn("app-workspace-sidebar-profile", collapsed && "is-collapsed")} aria-label="登录" title="登录">
+                    <CircleUserRound className="size-5" />
+                    {!collapsed ? <span>登录</span> : null}
+                </Link>
+                {toggle}
+            </div>
         );
     }
 
@@ -101,44 +110,35 @@ function WorkspaceSidebarProfile({ collapsed, user }: { collapsed: boolean; user
                         </AnimatePresence>
                     </button>
                 </Popover>
-                {!collapsed ? <SystemAnnouncementCenter userId={user.id} className="app-workspace-sidebar-notification" /> : <span className="app-workspace-sidebar-notification-spacer" aria-hidden />}
+                {!collapsed ? <SystemAnnouncementCenter userId={user.id} className="app-workspace-sidebar-notification" /> : null}
+                {!collapsed ? toggle : null}
             </div>
+            {collapsed ? toggle : null}
         </div>
     );
 }
 
-function WorkspaceSwitcher({ collapsed, onNavigate, onExpand, onCollapse }: { collapsed: boolean; onNavigate: () => void; onExpand: () => void; onCollapse: () => void }) {
+function WorkspaceSwitcher({ collapsed, onNavigate }: { collapsed: boolean; onNavigate: () => void }) {
     const appearance = useAppearanceStore((state) => state.appearance);
-
     return (
-        <div className={collapsed ? "app-workspace-sidebar-rail-header shrink-0" : "app-workspace-sidebar-brand-row relative shrink-0 px-3 pt-3"}>
-            <WorkspaceMotionLink to="/" onClick={onNavigate} className="app-workspace-sidebar-brand-button group" aria-label={`${appearance.brandName}首页`} hidden={collapsed} inert={collapsed} animate={{ opacity: collapsed ? 0 : 1 }}>
+        <div className={cn("app-workspace-sidebar-brand-row relative shrink-0 px-3 pt-3", collapsed && "flex justify-center")}>
+            <WorkspaceMotionLink to="/" onClick={onNavigate} className="app-workspace-sidebar-brand-button group" aria-label={`${appearance.brandName}首页`}>
                 <span className="flex min-w-0 items-center gap-2">
-                    {/* 侧栏品牌标识直接展示 Logo，不加圆角矩形外框。 */}
                     <span className="app-workspace-brand-logo grid size-7 shrink-0 place-items-center" aria-hidden="true">
                         <BrandLogo className="size-full object-contain" fallback={<InfinityIcon className="size-6" strokeWidth={2.2} />} alt="" />
                     </span>
-                    <span className="flex min-w-0 flex-col">
-                        <span className="app-workspace-brand-title-row">
-                            <span className="app-workspace-brand-wordmark truncate text-[var(--fs-body)] leading-none font-semibold">{appearance.brandName}</span>
-                        </span>
-                        <span className="mt-1 truncate text-[var(--fs-label)] leading-none text-foreground/60">创作工作台</span>
-                    </span>
+                    <AnimatePresence initial={false}>
+                        {!collapsed ? (
+                            <motion.span key="brand-copy" className="flex min-w-0 flex-col" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                                <span className="app-workspace-brand-title-row">
+                                    <span className="app-workspace-brand-wordmark truncate text-[var(--fs-body)] leading-none font-semibold">{appearance.brandName}</span>
+                                </span>
+                                <span className="mt-1 truncate text-[var(--fs-label)] leading-none text-foreground/60">创作工作台</span>
+                            </motion.span>
+                        ) : null}
+                    </AnimatePresence>
                 </span>
             </WorkspaceMotionLink>
-            <button
-                type="button"
-                className={collapsed ? "app-workspace-sidebar-rail-button" : "app-workspace-sidebar-collapse-button"}
-                aria-label={collapsed ? "展开侧栏菜单" : "收起侧栏"}
-                aria-expanded={!collapsed}
-                aria-controls="workspace-sidebar"
-                title={collapsed ? "展开侧栏菜单" : "收起侧栏"}
-                onClick={collapsed ? onExpand : onCollapse}
-            >
-                <motion.span key={String(collapsed)} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                    {collapsed ? <PanelLeftOpen className="size-4" strokeWidth={1.7} /> : <PanelLeftClose className="size-4" strokeWidth={1.7} />}
-                </motion.span>
-            </button>
         </div>
     );
 }
@@ -347,7 +347,7 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
 
     return (
         <div className={cn("app-workspace-sidebar-nav flex h-full shrink-0 flex-col", collapsed && "is-collapsed")}>
-            <WorkspaceSwitcher collapsed={collapsed} onNavigate={onNavigate} onExpand={onExpand} onCollapse={onCollapse} />
+            <WorkspaceSwitcher collapsed={collapsed} onNavigate={onNavigate} />
 
             <LayoutGroup id="workspace-sidebar-nav">
                 <div
@@ -367,7 +367,7 @@ export function WorkspaceSidebarNav({ collapsed, onNavigate, onOpenSearch, onExp
             </LayoutGroup>
 
             <div className="app-workspace-sidebar-footer shrink-0 px-3 py-3">
-                <WorkspaceSidebarProfile collapsed={collapsed} user={user} />
+                <WorkspaceSidebarProfile collapsed={collapsed} user={user} onExpand={onExpand} onCollapse={onCollapse} />
                 {footer.length ? (
                     <div className="mt-2 flex flex-col gap-0.5">
                         {footer.map((item) => (
