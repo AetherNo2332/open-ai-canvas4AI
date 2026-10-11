@@ -1,0 +1,25 @@
+import { expect, test } from "bun:test";
+import { createPrevisScene } from "@/lib/canvas/previs/previs-scene";
+import { createDirectorRenderBridge } from "@/integrations/director-desk/render-bridge";
+
+test("render bridge deduplicates identical previews and forwards cancellation", async () => {
+    const scene = createPrevisScene();
+    let submissions = 0;
+    let signal: AbortSignal | undefined;
+    let resolveResult: ((result: { taskId: string; status: "queued" }) => void) | undefined;
+    const bridge = createDirectorRenderBridge({
+        submit: async (_input, options) => {
+            submissions += 1;
+            signal = options.signal;
+            return await new Promise((resolve) => { resolveResult = resolve; });
+        },
+    });
+    const first = bridge.preview(scene, { shotId: scene.activeShotId, time: 0 });
+    const second = bridge.preview(scene, { shotId: scene.activeShotId, time: 0 });
+    expect(submissions).toBe(1);
+    bridge.cancel(scene.id, scene.activeShotId, 0);
+    expect(signal?.aborted).toBe(true);
+    resolveResult?.({ taskId: "task-1", status: "queued" });
+    expect(await first).toEqual(await second);
+});
+
