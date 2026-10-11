@@ -1,0 +1,14 @@
+.director-desk-runtime-host {
+    position: fixed;
+    inset: auto 0 0 auto;
+    width: 2px;
+    height: 2px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.director-desk-runtime-stage {
+    width: 1px;
+    height: 1px;
+}
