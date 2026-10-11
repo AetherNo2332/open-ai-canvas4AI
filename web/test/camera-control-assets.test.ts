@@ -6,16 +6,16 @@ import { APERTURES, CAMERA_PROFILES, DEFAULT_CAMERA_CONTROL, LENS_PROFILES, buil
 
 describe("user supplied camera artwork", () => {
     test("each camera and lens image maps to its registered model", () => {
-        expect(Object.keys(CAMERA_BODY_IMAGES)).toHaveLength(9);
+        expect(Object.keys(CAMERA_BODY_IMAGES)).toHaveLength(14);
         expect(Object.keys(LENS_IMAGES)).toHaveLength(10);
-        for (const id of Object.keys(CAMERA_BODY_IMAGES)) expect(CAMERA_PROFILES.some(profile => profile.id === id)).toBe(true);
-        for (const id of Object.keys(LENS_IMAGES)) expect(LENS_PROFILES.some(profile => profile.id === id)).toBe(true);
-        for (const aperture of Object.keys(APERTURE_IMAGES)) expect(APERTURES.includes(Number(aperture) as typeof APERTURES[number])).toBe(true);
+        for (const id of Object.keys(CAMERA_BODY_IMAGES)) expect(CAMERA_PROFILES.some((profile) => profile.id === id)).toBe(true);
+        for (const id of Object.keys(LENS_IMAGES)) expect(LENS_PROFILES.some((profile) => profile.id === id)).toBe(true);
+        for (const aperture of Object.keys(APERTURE_IMAGES)) expect(APERTURES.includes(Number(aperture) as (typeof APERTURES)[number])).toBe(true);
     });
 
-    test("all 23 assets are local PNGs with real image dimensions", () => {
+    test("all 28 assets are local PNGs with real image dimensions", () => {
         const paths = [CAMERA_CONTROL_BACKGROUND, ...Object.values(CAMERA_BODY_IMAGES), ...Object.values(LENS_IMAGES), ...Object.values(APERTURE_IMAGES)];
-        expect(new Set(paths).size).toBe(23);
+        expect(new Set(paths).size).toBe(28);
         for (const path of paths) {
             expect(path.startsWith("/camera-controls/")).toBe(true);
             const file = join(import.meta.dir, "../public", path.slice(1));

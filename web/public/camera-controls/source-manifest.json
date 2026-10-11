@@ -1,5 +1,5 @@
 {
-  "source": "User-supplied app.tapnow.ai.har",
+  "source": "User-supplied app.tapnow.ai.har + 厂商官网产品图（2026-10-11 联网采集）",
   "sourceHost": "fe-assets.tapnow.media",
   "extractedAt": "2026-10-08",
   "assets": [
@@ -117,6 +117,78 @@
       "file": "f11.png",
       "bytes": 37040,
       "sourcePath": "/assets/f11-Bu2Wl3ak.png"
+    },
+    {
+      "file": "arri-alexa-mini-lf.png",
+      "bytes": 0,
+      "sourceUrl": "https://www.arri.com/resource/image/83566/landscape_ratio1x0_38/1920/737/e0d0c3b14d8089ad5b4420cf2a17ca8d/B78BBB86B355C816619CB86FAA162A51/cr-2019-alexa-mini-lf-product-image-1920x833.jpg",
+      "page": "https://www.arri.com/en/camera-systems/cameras/alexa-mini-lf",
+      "license": "ARRI 官网产品图，仅作界面示意"
+    },
+    {
+      "file": "arri-amira.png",
+      "bytes": 0,
+      "sourceUrl": "https://www.arri.com/resource/image/33916/landscape_ratio1x0_38/1920/737/90123bcf69e3bf5f9549d80209b40075/902F6A544FCACBE2AA88B0B4C4BD8E00/amira-product-image.jpg",
+      "page": "https://www.arri.com/en/camera-systems/cameras/amira",
+      "license": "ARRI 官网产品图，仅作界面示意"
+    },
+    {
+      "file": "sony-venice-2.png",
+      "bytes": 0,
+      "sourceUrl": "https://www.sonystyle.com.cn/content/dam/professional/professional-cameras/cinealtav2/cinealtav2_800_2409.jpg",
+      "page": "https://www.sonystyle.com.cn/professional/products/professional-cameras/digital-cinema-cameras-series.html",
+      "license": "Sony 中国官网产品图，仅作界面示意"
+    },
+    {
+      "file": "sony-fx6.png",
+      "bytes": 0,
+      "sourceUrl": "https://www.sonystyle.com.cn/content/dam/professional/professional-cameras/ilme-fx6/fx6_800_2409.jpg",
+      "page": "https://www.sonystyle.com.cn/professional/products/professional-cameras/digital-cinema-cameras-series.html",
+      "license": "Sony 中国官网产品图，仅作界面示意"
+    },
+    {
+      "file": "sony-fx9.png",
+      "bytes": 0,
+      "sourceUrl": "https://www.sonystyle.com.cn/content/dam/professional/professional-cameras/pxw-fx9/img_fx9_b1_800.jpg",
+      "page": "https://www.sonystyle.com.cn/professional/products/professional-cameras/digital-cinema-cameras-series.html",
+      "license": "Sony 中国官网产品图，仅作界面示意"
     }
-  ]
+  ],
+  "pending": {
+    "note": "以下目录条目暂缺真实图片（厂商站 JS 渲染/国际路由受限，2026-10-11），UI 回退 SVG 插画；补图后同步 camera-control-assets.ts 映射。",
+    "cameras": {
+      "arri_alexa_lf": "https://www.arri.com/en/camera-systems/cameras/alexa-lf",
+      "red_komodo_6k": "https://www.reddigitalcinema.com/komodo-6k",
+      "red_komodo_x": "https://www.reddigitalcinema.com/komodo-x",
+      "red_v_raptor_8k": "https://www.reddigitalcinema.com/v-raptor",
+      "red_v_raptor_xl_8k": "https://www.reddigitalcinema.com/v-raptor-xl-8k",
+      "red_monstro_8k": "https://www.reddigitalcinema.com/dsmc2-monstro-8k-vv",
+      "red_helium_8k": "https://www.reddigitalcinema.com/dsmc2-helium-8k-s35",
+      "red_gemini_5k": "https://www.reddigitalcinema.com/dsmc2-gemini-5k-s35",
+      "blackmagic_ursa_12k": "https://www.blackmagicdesign.com/cn/products/ursa12k",
+      "blackmagic_cinema_6k": "https://www.blackmagicdesign.com/cn/products/blackmagiccinemacamera6k",
+      "canon_c500_mk2": "https://www.canon.com.cn/product/eosc500markii",
+      "panavision_millennium_xl2": "https://www.panavision.com/film-cameras/",
+      "imax_mkiv": "https://www.imax.com/"
+    },
+    "lenses": {
+      "cooke_s7i": "https://www.cookeoptics.com/",
+      "anamorphic_cooke": "https://www.cookeoptics.com/",
+      "cooke_panchro_i_classic": "https://www.cookeoptics.com/",
+      "zeiss_supreme_prime": "https://www.zeiss.com/cine-cameras/en_cine_lenses.html",
+      "zeiss_cp3": "https://www.zeiss.com/cine-cameras/en_cine_lenses.html",
+      "canon_sumire_prime": "https://www.canon.com.cn/product/sumireprime.html",
+      "panavision_primo_70": "https://www.panavision.com/lenses/",
+      "panavision_e_series": "https://www.panavision.com/lenses/",
+      "anamorphic_atlas": "https://atlaslensco.com/",
+      "leica_summilux_c": "https://zh.leica-camera.com/PRO-AREA/Cine-Lenses",
+      "leica_thalia": "https://zh.leica-camera.com/PRO-AREA/Cine-Lenses",
+      "vintage_leica_r": "https://zh.leica-camera.com/PRO-AREA/Cine-Lenses",
+      "arri_master_prime": "https://www.arri.com/en/lens-systems",
+      "arri_master_anamorphic": "https://www.arri.com/en/lens-systems",
+      "angenieux_optimo_ultra_12x": "https://www.angenieux.com/",
+      "angenieux_ez": "https://www.angenieux.com/",
+      "macro_100mm": "通用 100mm 微距镜头，无单一厂商来源"
+    }
+  }
 }

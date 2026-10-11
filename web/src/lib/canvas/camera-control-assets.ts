@@ -11,6 +11,11 @@ export const CAMERA_BODY_IMAGES: Record<string, string> = {
     arriflex_435: "/camera-controls/arriflex-435.png",
     imax_keighley: "/camera-controls/imax-keighley.png",
     imax_film_camera: "/camera-controls/imax-film-camera.png",
+    arri_alexa_mini_lf: "/camera-controls/arri-alexa-mini-lf.png",
+    arri_amira: "/camera-controls/arri-amira.png",
+    sony_venice_2: "/camera-controls/sony-venice-2.png",
+    sony_fx6: "/camera-controls/sony-fx6.png",
+    sony_fx9: "/camera-controls/sony-fx9.png",
 };
 
 export const LENS_IMAGES: Record<string, string> = {
