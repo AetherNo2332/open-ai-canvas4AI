@@ -30,3 +30,5 @@
 - Task 6: image-node context menu now starts an image-to-director Agent run, selects an image-capable system model, requires real `canvas_inspect_image`, and directs the ordered block/design/continuity flow without local scene mutation.
 - Task 6 verification: `cd backend && go test ./internal/app -run 'CloudAgentDirector|CloudAgentDirectorImage' -count=1` (pass); `cd web && bun test test/image-to-director-agent.test.ts test/image-to-previs-flow.test.ts` (3 pass); `cd web && bun run typecheck` (pass).
 - Task 6 ruling: existing vision capability and image inspection receipts remain authoritative; the one-click entry adds no parallel vision endpoint and refuses unsupported models before scene creation.
+- Task 7: feature documentation, pending-test boundaries, README capability summary, and an end-to-end web contract test are in place; the implementation remains browser-safe and does not touch production services.
+- Task 7 verification: focused web/backend tests, `bun run typecheck`, and `git diff --check` pass; real browser/model/production deployment checks remain documented as pending acceptance.
