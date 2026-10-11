@@ -91,6 +91,7 @@ import {
     replaceCanvasReferenceMentions,
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
+import { buildImageToDirectorAgentRequest } from "@/lib/canvas/image-to-director-agent";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay, type PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
@@ -478,6 +479,26 @@ function InfiniteCanvasPage() {
         openAgent();
         setContextMenu(null);
     }, [agentMentionReferences, openAgent]);
+    const startImageToDirectorAgent = useCallback((nodeId: string) => {
+        const reference = agentMentionReferences.find((item) => item.nodeId === nodeId && item.kind === "image");
+        if (!reference) {
+            message.error("请选择已保存的图片节点");
+            return;
+        }
+        try {
+            const request = buildImageToDirectorAgentRequest({
+                canvasId: projectId,
+                reference,
+                config: effectiveConfig,
+                preferredModel: effectiveConfig.model,
+            });
+            setAgentPrefillPrompt(request.prompt);
+            openAgent();
+            setContextMenu(null);
+        } catch (error) {
+            message.error(error instanceof Error && error.message === "director_image_model_unsupported" ? "当前模型不支持图片输入" : "图片到导演预演入口不可用");
+        }
+    }, [agentMentionReferences, effectiveConfig, message, openAgent, projectId]);
     // 修复素材关联仍遵守当前画布版本，不能替用户确认覆盖云端的新内容。
     const confirmForceSaveCanvas = useCallback(() => {
         modal.confirm({
@@ -3111,6 +3132,9 @@ function InfiniteCanvasPage() {
                             onCopySelection={copySelectedNodes}
                             onDeleteSelection={() => deleteNodes(selectedNodeIds)}
                             onSendToAgent={() => sendSelectionToAgent(contextMenu?.type === "node" && selectedNodeIds.size <= 1 ? contextMenu.nodeId : undefined)}
+                            onImageToDirector={() => {
+                                if (contextMenu?.type === "node") startImageToDirectorAgent(contextMenu.nodeId);
+                            }}
                         />
 
                         <CanvasUploadModal open={uploadModalOpen} onClose={closeUploadModal} onUpload={handleUploadFiles} />
