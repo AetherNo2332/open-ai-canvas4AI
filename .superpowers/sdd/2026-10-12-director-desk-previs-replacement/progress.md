@@ -1,0 +1,32 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-10-12-director-desk-previs-replacement.md
+
+## Preflight interface review
+
+- Task 1 runtime -> Task 3 workbench: `createDirectorRuntime`, `disposeDirectorRuntime`, browser-safe runtime host callbacks.
+- Task 2 adapter -> Task 3/4: stable `PrevisScene` <-> DirectorDesk document conversion and preview input.
+- Task 3 lifecycle -> Task 4/7: workbench open/close/onChange/onApply and save-coordinator integration.
+- Task 4 bridges -> Task 7: authorized assets, render jobs, cancellation, retry and idempotent writeback.
+- Task 5 tools -> Task 6/7: director workflow tool contracts, approval/CAS/error semantics.
+- Task 6 image flow -> Task 7: real image inspection and ordered scene creation without partial scenes.
+
+## Progress
+
+- Plan approved by user; execution mode: Native.
+- Task 1: not started.
+- Task 1: `web/src/integrations/director-desk/index.ts` exposes a browser-safe Three runtime with injected renderer lifecycle and no Electron/MCP/filesystem boundary; license metadata recorded.
+- Task 1 verification: `cd web && bun test test/director-desk-runtime-import.test.ts` (1 pass), `cd web && bun run typecheck` (pass).
+- Task 1 ruling: keep cannon-es/mediabunny out of this first runtime slice because the selected browser-safe adapter does not import physics/media modules; add them only when Task 4 render/asset bridges require them.
+- Task 2: `previs-runtime-types.ts` and `previs-adapter.ts` provide a constrained DirectorDesk Project projection, stable IDs, object/camera/path/cut mappings, lossless canvas extension payload, and preview input.
+- Task 2 verification: `cd web && bun test test/director-desk-previs-adapter.test.ts test/director-desk-previs-roundtrip.test.ts` (2 pass); `cd web && bun run typecheck` (pass).
+- Task 3: `DirectorDeskPrevisWorkbench` is now the sole lazy-loaded canvas entry, owns the browser runtime hook, and preserves the existing save/Agent workbench lifecycle through the wrapper.
+- Task 3 verification: `cd web && bun test test/director-desk-previs-workbench.test.tsx test/director-desk-previs-lifecycle.test.ts` (2 pass); `cd web && bun run typecheck` (pass).
+- Task 3 ruling: keep the proven CanvasPrevisWorkbench UI shell behind the DirectorDesk entry during migration; this preserves current save/approval/Agent behavior while the browser runtime is made authoritative in later bridge tasks.
+- Task 4: browser-safe asset and render bridges now resolve authorized canvas resources, reject unsafe local/token URLs, deduplicate preview requests, and support cancellation through the existing render submission boundary.
+- Task 4 verification: `cd web && bun test test/director-desk-asset-loader.test.ts test/director-desk-render-bridge.test.ts` (2 pass); `cd web && bun run typecheck` (pass).
+- Task 4 ruling: the existing backend previs renderer already owns lease, retry, cancellation, CAS, and idempotent writeback semantics, so this task adds only the web boundary and avoids duplicating production state machines.
+- Task 5: six high-level Director Agent tools are advertised in canvas scope, presented distinctly in the web Agent UI, and compiled into the existing previs scene/patch/preview contracts with write approval preserved.
+- Task 5 verification: `cd backend && go test ./internal/app -run CloudAgentDirector -count=1` (pass); `cd web && bun test test/agent-director-tool-presentation.test.ts test/agent-tool-presentation.test.ts` (19 pass); `cd web && bun run typecheck` (pass).
+- Task 5 ruling: the director workflow is a controlled vocabulary over the existing Agent/previs contracts rather than a second MCP or persistence surface.
+- Task 6: image-node context menu now starts an image-to-director Agent run, selects an image-capable system model, requires real `canvas_inspect_image`, and directs the ordered block/design/continuity flow without local scene mutation.
+- Task 6 verification: `cd backend && go test ./internal/app -run 'CloudAgentDirector|CloudAgentDirectorImage' -count=1` (pass); `cd web && bun test test/image-to-director-agent.test.ts test/image-to-previs-flow.test.ts` (3 pass); `cd web && bun run typecheck` (pass).
+- Task 6 ruling: existing vision capability and image inspection receipts remain authoritative; the one-click entry adds no parallel vision endpoint and refuses unsupported models before scene creation.
