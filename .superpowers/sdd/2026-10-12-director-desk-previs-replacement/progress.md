@@ -32,3 +32,5 @@
 - Task 6 ruling: existing vision capability and image inspection receipts remain authoritative; the one-click entry adds no parallel vision endpoint and refuses unsupported models before scene creation.
 - Task 7: feature documentation, pending-test boundaries, README capability summary, and an end-to-end web contract test are in place; the implementation remains browser-safe and does not touch production services.
 - Task 7 verification: focused web/backend tests, `bun run typecheck`, and `git diff --check` pass; real browser/model/production deployment checks remain documented as pending acceptance.
+- Review follow-up: strengthened adapter cut/path round-trip, sanitized DirectorDesk object extensions, constrained asset URLs to resource endpoints, handled stale vision capability and aborted renders, cleaned partial renderer creation, and materialized a visible browser runtime preview.
+- Review disposition: full DirectorDesk editor replacement, server-side image receipt transaction, production render bridge wiring, and real browser/model acceptance remain pending and are called out in the documentation rather than being claimed as complete.
