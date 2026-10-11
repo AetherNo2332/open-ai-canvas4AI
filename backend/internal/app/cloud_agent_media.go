@@ -778,6 +778,9 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 		if err != nil {
 			return CreateTaskRequest{}, nil, err
 		}
+		if direction := cloudAgentMediaCameraPrompt(doc, a); direction != "" {
+			a.Prompt = a.Prompt + "\n\n" + direction
+		}
 	}
 	spec, err := cloudAgentGenerationSpec(a, refs, nil)
 	if err != nil {

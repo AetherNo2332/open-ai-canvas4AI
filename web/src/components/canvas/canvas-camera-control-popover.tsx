@@ -8,7 +8,7 @@ import { CanvasNodeCameraPanel } from "./canvas-node-camera-dialog";
 
 type CanvasCameraControlPopoverProps = {
     cameraControl?: CameraControlOptions;
-    onCameraControlChange: (options: CameraControlOptions) => void;
+    onCameraControlChange: (options: CameraControlOptions, cameraPrompt?: string) => void;
     theme: CanvasTheme;
     compact?: boolean;
 };
@@ -39,8 +39,8 @@ export function CanvasCameraControlPopover({ cameraControl, onCameraControlChang
                     <CanvasNodeCameraPanel
                         cameraControl={cameraControl}
                         onClose={() => setOpen(false)}
-                        onConfirm={(options) => {
-                            onCameraControlChange(options);
+                        onConfirm={(options, prompt) => {
+                            onCameraControlChange(options, prompt);
                             setOpen(false);
                         }}
                     />
