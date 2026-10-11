@@ -3681,3 +3681,15 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
   - [x] `node --test agent/test/harness-sync.test.ts`：4 pass（本轮未改工具 schema 与描述，制品无漂移）。
   - [x] `go test ./internal/app -count=1 -timeout 30m`：除 `TestAgentParityDatabaseHistoryDoesNotCrossTaskOrUnavailableBarrier` 在全量串跑中偶发失败（单跑通过，为上一轮已记录的既有偶发）外全绿；`go test` 其余 backend 包（含 `internal/database`/`internal/repository`）全部通过。
   - [x] `cd web; bun run build`：前端生产构建通过（既有 chunk 体积告警，非错误）。
+
+## 摄影机参数 × Agent 生图 × 设备图库（2026-10-11）
+
+- Agent 生图继承图片节点的摄影机参数（计划见仓库根 `CAMERA_AGENT_IMAGE_PLAN.md`）：前端摄像机控制确认时把编译出的镜头提示词持久化到节点 `metadata.cameraPrompt`（禁用时置空）；`generate_media`（image/video）准备阶段按 source → references 顺序读取第一个启用节点的 `cameraPrompt` 追加到任务提示词与节点 composer 提示词，与浏览器生成链路同构；旧节点无编译词时用 cameraControl 原始字段拼通用兜底，enabled=false 或 audio 模式不追加。工具 schema 无变化（制品零漂移）。
+- 摄像机控制面板机身栏目新增 5 台真实产品图（ARRI ALEXA Mini LF、AMIRA，Sony VENICE 2、FX6、FX9，均来自厂商官网/中国官网，来源与许可逐条记录在 `web/public/camera-controls/source-manifest.json`）。资产归一化：裁边 + 616×462 透明画布 PNG。`camera-control-assets.ts` 映射 14 台机身，加载失败仍回退 SVG 插画，布局与命中区域不变。
+- 诚实边界：其余 29 个缺失条目（RED×6、Panavision×3、Cooke×4、ZEISS×2、Angénieux×2、Atlas、IMAX、Canon Sumire、BMD×2、ARRI LF、Leica×3、通用微距）因厂商站 JS 渲染与国际路由受限暂未采集，来源 URL 已逐条记录在 manifest 的 `pending` 段；可在网络恢复后用 `.local/camera-fetch/normalize.py`（用法见文件头）按 spec 续传，落盘后同步映射即可，UI 回退路径不受影响。
+- 自动化验证：
+  - [x] `go test ./internal/app -run 'TestCloudAgentMediaCamera|TestCloudAgentMediaPrepareAppendsCameraPrompt'`：编译词优先 / 原始字段兜底 / 禁用静默 / audio 不追加 / 参数不完整静默 / source 优先 / prepare 集成断言，全过。
+  - [x] `cd web && bun run typecheck`；`bun test`：2274 例全过（含资产守护测试更新为 14 机身 / 28 资产）。
+  - [x] 本地 compose 脚本轨（`web/scripts/camera-control-compose-check.mjs`，`docker-compose.local.yml` 隔离项目名 `camera-check`）：后端健康经 nginx 200、28 张面板资产 200 且 image/png、5 张新图为有效 PNG（616×462）、1700 个产物 chunk 中 5 条新资产引用与 `cameraPrompt` 持久化键全部在位 —— 14/14 PASS 后撤栈。
+  - [ ] 真实模型渠道下的 agent 生图回路（任务 prompt 实际带镜头方向词的上游效果）待 G5.0 验收环境。
+- backend/Dockerfile 新增 `APK_MIRROR` 构建参数（与 GOPROXY 同型）：Alpine 官方 CDN 在部分网络不可达时切国内镜像，默认值保持官方 CDN，CI 行为不变。
