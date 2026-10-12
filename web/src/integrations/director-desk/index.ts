@@ -21,6 +21,16 @@ function directorProjectToEngineProject(document: DirectorProject) {
     };
 }
 
+export function updateDirectorEntityTransform(document: DirectorProject, entityId: string, position: [number, number, number], rotation: [number, number, number], scale: [number, number, number]): DirectorProject {
+    const next = structuredClone(document);
+    const entity = next.entities.find((candidate) => candidate.id === entityId);
+    if (!entity) return next;
+    entity.position = position;
+    entity.rotation = rotation;
+    entity.scale = scale;
+    return next;
+}
+
 function createBrowserRenderer(container: HTMLElement): DirectorRenderer {
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 1.5)); renderer.setSize(container.clientWidth || 1, container.clientHeight || 1, false); container.replaceChildren(renderer.domElement); return renderer;
@@ -31,7 +41,7 @@ export function createDirectorRuntime(host: DirectorRuntimeHost): DirectorRuntim
     const scene = new Scene(); scene.background = new Color("#c6c8c6"); scene.add(new AmbientLight(0xffffff, 1.1));
     const key = new DirectionalLight(0xffffff, 2.4); key.position.set(4, 6, 4); key.castShadow = true; scene.add(key); scene.add(new GridHelper(20, 20, 0x8b9298, 0xc7cbd0));
     const editorCamera = new PerspectiveCamera(45, 1, 0.03, 2000); editorCamera.position.set(7, 5.9, 7); const shotCamera = new PerspectiveCamera(45, 1, 0.03, 2000); shotCamera.position.set(4.8, 2.7, 6.8);
-    let renderers: DirectorRenderer[] = []; let upstreamEngine: Engine | undefined; let currentDocument: DirectorProject | null = null; let transformSnapshot: DirectorProject | null = null;
+    let renderers: DirectorRenderer[] = []; let upstreamEngine: Engine | undefined; let currentDocument: DirectorProject | null = null; let transformSnapshot: DirectorProject | null = null; let selectedEntityId = "";
     const runtime: DirectorRuntime = { scene, editorCamera, shotCamera, renderers, host, disposed: false, upstreamEngine: undefined,
         syncDocument(document) {
             currentDocument = structuredClone(document);
@@ -45,9 +55,9 @@ export function createDirectorRuntime(host: DirectorRuntimeHost): DirectorRuntim
     try {
         if (!host.createRenderer) {
             upstreamEngine = new Engine(directorProjectToEngineProject({ format: "director-desk", version: 1, name: "DirectorDesk", duration: 1, fps: 24, aspect: "16:9", room: { enabled: true, width: 20, depth: 20, height: 4 }, entities: [], cuts: [], references: [], extensions: { infiniteCanvas: { sourceSceneId: "", scene: { id: "", title: "", background: "#c6c8c6", environmentIntensity: 1, environment: undefined, gridVisible: true, activeShotId: "", createdAt: "", updatedAt: "" }, lights: [], shots: [], motionPaths: {} } } }), host.stage, host.shot, {
-                select: () => undefined, point: () => undefined, ground: () => undefined, stroke: () => undefined, joint: () => undefined,
+                select: (id) => { selectedEntityId = id; }, point: () => undefined, ground: () => undefined, stroke: () => undefined, joint: () => undefined,
                 transformStart: () => { transformSnapshot = currentDocument ? structuredClone(currentDocument) : null; },
-                transform: (position, rotation, scale) => { const selected = currentDocument?.entities[0]; if (selected) Object.assign(selected, { position, rotation, scale }); },
+                transform: (position, rotation, scale) => { if (currentDocument && selectedEntityId) currentDocument = updateDirectorEntityTransform(currentDocument, selectedEntityId, position, rotation, scale); },
                 transformEnd: (cancel = false) => { if (cancel && transformSnapshot) currentDocument = transformSnapshot; if (!cancel && currentDocument) host.onDocumentChange?.(structuredClone(currentDocument)); transformSnapshot = null; },
             });
             runtime.upstreamEngine = upstreamEngine;
