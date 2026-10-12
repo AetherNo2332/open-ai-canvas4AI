@@ -44,3 +44,4 @@
 - Production-readiness verification: `cd backend && go test ./internal/app -run 'CloudAgentDirector' -count=1` passes after the guarded rollback contract changes.
 - Production-readiness execution: DirectorDesk canary/on workbench preview export now submits through the existing canvas command `previs-tasks` session when available; legacy mode keeps browser recording as a fallback.
 - Production-readiness verification: `cd web && bun test test/director-desk-previs-workbench.test.tsx test/director-desk-feature.test.ts test/director-desk-render-bridge.test.ts`; `cd web && bun run typecheck` pass.
+- Production-readiness verification: focused web suite 13 pass / 53 expectations; backend app and handler focused suites pass; renderer 5 pass / 1 Chromium skip; full web suite 2298 pass / 9 unrelated baseline failures (video preview resource, admin lazy routes, shared request client, Live2D loader, password recovery, workspace routes, wallet entry).

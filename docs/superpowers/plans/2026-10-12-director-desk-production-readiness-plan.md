@@ -62,6 +62,7 @@
 - **P4 尚未完成**：仍需要独立 staging draft、成功后的原子 commit，以及取消/超时路径的回滚验收；当前不能把顺序校验和失败回滚切片当成完整事务闭环。
 - **P2 已落地第一切片**：灰度/全量 DirectorDesk 入口的白膜按钮接入现有 canvas command `previs-tasks`，使用任务队列、幂等 operationId 和后台资源写回；旧模式继续使用本地录制回退。
 - **P2 尚未完成**：仍需真实 renderer、任务终态、取消、重试和资源写回的浏览器端端到端验收。
+- **P5 基线结果**：DirectorDesk/Agent focused、后端 app/handler、Web typecheck 和 renderer tests 通过；全量 Web 为 2307 项中 2298 通过、9 个既有路由/资源相关失败，需在 RC 前单独处理或登记豁免。
 - 已通过：DirectorDesk feature flag focused test、workbench lifecycle test、admin regression test、Go feature availability test、Web typecheck。
 
 ## 阶段计划
