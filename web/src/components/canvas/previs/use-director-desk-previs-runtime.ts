@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { createDirectorRuntime, disposeDirectorRuntime, type DirectorRuntime } from "@/integrations/director-desk";
+import { createDirectorRuntime, disposeDirectorRuntime, DIRECTOR_DESK_VERSION, type DirectorRuntime } from "@/integrations/director-desk";
+import { recordPrevisDiagnostic } from "@/lib/canvas/previs/previs-diagnostics-recorder";
 import { previsSceneToDirectorDocument } from "@/integrations/director-desk/previs-adapter";
 import { decideRuntimeSync, resolveRuntimeViewState, type RuntimeSyncKey } from "@/integrations/director-desk/scene-sync";
 import type { DirectorProject } from "@/integrations/director-desk/previs-runtime-types";
@@ -96,6 +97,8 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
         } catch (cause) {
             setError(cause);
             setStatus("error");
+            // 可观测性:运行时初始化失败必须留下带版本的结构化事件(P5 回退演练)。
+            recordPrevisDiagnostic("PREVIS_RUNTIME_INIT_FAILED", { sceneId: scene?.id, runtimeVersion: DIRECTOR_DESK_VERSION });
         }
         return () => {
             if (!runtimeRef.current) return;

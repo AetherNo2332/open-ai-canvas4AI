@@ -3619,3 +3619,14 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 - 已加入 `AgentSubagentPolicy`、父子 Link/消息模型、revision CAS 和 `/api/agent/subagent-policy` 接口。
 - 动态 spawn 工具、子运行调度、消息唤醒、SSE 和旧 Crew 清理均已实现；父等待释放驻留容量，并在子任务终态后恢复。
 - 本轮复用既有全量结果，新增链路在 Linux 容器定向验证，Windows 仅做全包编译。最终镜像/HTTP 验收及 CI 状态见本文“Agent 动态子代理”。
+
+## DirectorDesk 预演台原生编辑器与基线测试治理（2026-10-12 D 副本）
+
+DirectorDesk 0.4.11 引擎原生导演编辑器（镜头列表/时间轴/属性检查器/播放/撤销重做）替代旧工作台为默认渲染内容；旧工作台仅在 flag 关闭或新运行时故障时回退。同一保存协调器为唯一写者。图片预演事务核心（staging draft + 原子提交 + 取消/超时/漂移/幂等）落地为纯函数库。基线全量测试 9 处失败完成治理：1 处全局 API host 泄漏修复（`resetAPIHost`）、1 处计时抖动改用 deadline 轮询、6 处上游 web 路由契约用例在本桌面 fork 中隔离（非删除）。
+
+- [x] 全量 web 套件通过 / 0 失败 / 6 隔离（347 文件、13386 断言，含 P5 canary+可观测性新增用例）；`tsc --noEmit` 通过；lint 25 处问题均在既有 vendor 引擎文件（规则定义配置项），新增文件无告警。后端 `go test ./internal/platform ./internal/app`（FeatureAvailability 域）ok，`go build ./...` + vet ok.
+- [ ] 真实浏览器验收（本环境无浏览器）：原生编辑器的视口渲染、指针/按键交互、WebGL 回退到旧工作台、关闭草稿恢复弹窗的视觉与交互。替代依据：renderToStaticMarkup 静态渲染合同 + 纯函数库测试 + 真实保存协调器往返测试 + 全量回归。
+- [ ] P5 灰度分群浏览器验收（本环境无浏览器）：管理后台 canary 分组行（内部用户白名单/比例%，保存后 /features 按用户解析）与灰度用户的原生编辑器路由。替代依据：Go 分群表/稳定分桶/全链路测试 + Web 类型/管理端 payload/面板源合同测试。
+- [ ] P5 可观测性浏览器验收（本环境无浏览器）：运行时初始化失败诊断事件（PREVIS_RUNTIME_INIT_FAILED，runtimeVersion=0.4.11）在统一诊断缓冲区可见。替代依据：白名单投影 + 去重签名 + hook 错误路径测试。
+- [ ] P2 真机 renderer 终态 E2E（1 个 Chromium 用例仍 skip）与 P4 图片→Agent 流程的 staging 接线，待有浏览器/后端联调环境后执行。
+- [ ] 6 处隔离用例（workspace-route-loading ×4、password-reset、channel-model-editor-form 管理后台路由边界）对应上游 web 路由契约，本桌面 fork 的 `src/router.tsx` 已移除这些路由段；上游路由恢复后需重新启用。
