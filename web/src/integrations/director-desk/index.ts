@@ -5,8 +5,24 @@ import { initialRuntimeViewState, type RuntimeViewState } from "./scene-sync";
 
 export const DIRECTOR_DESK_VERSION = "0.4.11" as const;
 export type DirectorRenderer = Pick<WebGLRenderer, "dispose"> & Partial<Pick<WebGLRenderer, "render" | "setSize">>;
-export type DirectorRuntimeHost = { stage: HTMLElement; shot: HTMLElement; createRenderer?: (container: HTMLElement) => DirectorRenderer; onDocumentChange?: (document: DirectorProject) => void; onError?: (error: unknown) => void };
-export type DirectorRuntime = { readonly scene: Scene; readonly editorCamera: PerspectiveCamera; readonly shotCamera: PerspectiveCamera; readonly renderers: readonly DirectorRenderer[]; readonly host: DirectorRuntimeHost; disposed: boolean; viewState: RuntimeViewState; render(): void; syncDocument(document: DirectorProject): void; applyViewState(state: RuntimeViewState): void; resetViewState(): void; upstreamEngine?: Engine };
+export type DirectorFrameDriver = {
+    request: (callback: (timestamp: number) => void) => number;
+    cancel: (handle: number) => void;
+};
+export type DirectorRuntimeHost = {
+    stage: HTMLElement;
+    shot: HTMLElement;
+    createRenderer?: (container: HTMLElement) => DirectorRenderer;
+    /** 帧驱动注入（测试用）；默认 globalThis.requestAnimationFrame。 */
+    frameDriver?: DirectorFrameDriver;
+    onDocumentChange?: (document: DirectorProject) => void;
+    /** 播放头变化（秒，整场时间轴）。 */
+    onTimeChange?: (time: number) => void;
+    /** 播放/暂停状态变化。 */
+    onPlayingChange?: (playing: boolean) => void;
+    onError?: (error: unknown) => void;
+};
+export type DirectorRuntime = { readonly scene: Scene; readonly editorCamera: PerspectiveCamera; readonly shotCamera: PerspectiveCamera; readonly renderers: readonly DirectorRenderer[]; readonly host: DirectorRuntimeHost; disposed: boolean; viewState: RuntimeViewState; render(): void; syncDocument(document: DirectorProject): void; applyViewState(state: RuntimeViewState): void; resetViewState(): void; play(): void; pause(): void; isPlaying(): boolean; setPlayhead(time: number): void; upstreamEngine?: Engine };
 
 const knownPropAssets = new Set(["ground", "road", "building", "bench", "fence", "streetlight", "bed", "nightstand", "wardrobe", "desk", "chair", "sofa", "table", "lamp", "laptop", "cup", "sword", "car", "tree", "rock", "cube", "sphere", "cylinder", "wall", "stairs", "door"]);
 const safeColor = (value: string) => /^#[0-9a-f]{6}$/i.test(value) ? value : "#a7bdd7";
@@ -43,10 +59,23 @@ export function createDirectorRuntime(host: DirectorRuntimeHost): DirectorRuntim
     const key = new DirectionalLight(0xffffff, 2.4); key.position.set(4, 6, 4); key.castShadow = true; scene.add(key); scene.add(new GridHelper(20, 20, 0x8b9298, 0xc7cbd0));
     const editorCamera = new PerspectiveCamera(45, 1, 0.03, 2000); editorCamera.position.set(7, 5.9, 7); const shotCamera = new PerspectiveCamera(45, 1, 0.03, 2000); shotCamera.position.set(4.8, 2.7, 6.8);
     let renderers: DirectorRenderer[] = []; let upstreamEngine: Engine | undefined; let currentDocument: DirectorProject | null = null; let transformSnapshot: DirectorProject | null = null; let selectedEntityId = "";
+    const frameDriver: DirectorFrameDriver = host.frameDriver || {
+        request: (callback) => globalThis.requestAnimationFrame ? globalThis.requestAnimationFrame(callback) : Number(globalThis.setTimeout(() => callback(Date.now()), 1000 / 24)),
+        cancel: (handle) => { if (globalThis.cancelAnimationFrame) globalThis.cancelAnimationFrame(handle); else globalThis.clearTimeout(handle); },
+    };
+    const playhead = { playing: false, handle: 0, lastTimestamp: 0 };
     const runtime: DirectorRuntime = { scene, editorCamera, shotCamera, renderers, host, disposed: false, upstreamEngine: undefined,
         syncDocument(document) {
             currentDocument = structuredClone(document);
-            if (upstreamEngine) { upstreamEngine.rebuild(directorProjectToEngineProject(currentDocument)); upstreamEngine.render(true); return; }
+            // 文档（重）建后引擎时间归零：播放头先按新时长钳位，再落回引擎，播放不中断。
+            const total = Math.max(0, currentDocument.duration);
+            const clampedTime = Math.min(runtime.viewState.time, total);
+            if (clampedTime !== runtime.viewState.time) runtime.viewState = { ...runtime.viewState, time: clampedTime };
+            if (upstreamEngine) {
+                upstreamEngine.rebuild(directorProjectToEngineProject(currentDocument)); upstreamEngine.render(true);
+                upstreamEngine.time = clampedTime; upstreamEngine.sample(clampedTime);
+                return;
+            }
             scene.getObjectByName("director-desk-entities")?.removeFromParent(); const entities = new Group(); entities.name = "director-desk-entities";
             for (const entity of document.entities) { const material = new MeshStandardMaterial({ color: entity.color || "#ffffff", roughness: 0.82 }); const mesh = new Mesh(new BoxGeometry(entity.kind === "camera" ? 0.35 : 0.8, entity.kind === "camera" ? 0.25 : Math.max(0.8, entity.height), entity.kind === "camera" ? 0.6 : 0.8), material); mesh.name = entity.id; mesh.position.set(...entity.position); mesh.rotation.set(...entity.rotation); mesh.scale.set(...entity.scale); mesh.visible = entity.visible; entities.add(mesh); }
             scene.add(entities);
@@ -72,6 +101,40 @@ export function createDirectorRuntime(host: DirectorRuntimeHost): DirectorRuntim
             upstreamEngine.sample(0);
             upstreamEngine.select("");
         },
+        setPlayhead(time) {
+            if (runtime.disposed) return;
+            const total = Math.max(0, currentDocument ? currentDocument.duration : 0);
+            const clamped = Number.isFinite(time) ? Math.min(Math.max(0, time), total) : 0;
+            if (clamped === runtime.viewState.time) return;
+            runtime.viewState = { ...runtime.viewState, time: clamped };
+            if (upstreamEngine) { upstreamEngine.time = clamped; upstreamEngine.sample(clamped); }
+            host.onTimeChange?.(clamped);
+        },
+        play() {
+            if (runtime.disposed || playhead.playing) return;
+            if (!currentDocument || currentDocument.duration <= 0) return;
+            playhead.playing = true;
+            host.onPlayingChange?.(true);
+            playhead.lastTimestamp = 0;
+            const step = (timestamp: number) => {
+                if (runtime.disposed || !playhead.playing) return;
+                const delta = playhead.lastTimestamp ? Math.min(0.1, (timestamp - playhead.lastTimestamp) / 1000) : 0;
+                playhead.lastTimestamp = timestamp;
+                const total = Math.max(0, currentDocument ? currentDocument.duration : 0);
+                let next = runtime.viewState.time + delta;
+                if (next >= total && total > 0) next = next - total < 1e-9 ? 0 : next - total; // 越过末尾环绕回 0（浮点残差收敛）
+                runtime.setPlayhead(next);
+                if (playhead.playing) playhead.handle = frameDriver.request(step);
+            };
+            playhead.handle = frameDriver.request(step);
+        },
+        pause() {
+            if (!playhead.playing) return;
+            playhead.playing = false;
+            frameDriver.cancel(playhead.handle);
+            host.onPlayingChange?.(false);
+        },
+        isPlaying() { return !runtime.disposed && playhead.playing; },
     };
     try {
         if (!host.createRenderer) {
@@ -89,4 +152,12 @@ export function createDirectorRuntime(host: DirectorRuntimeHost): DirectorRuntim
     return runtime;
 }
 
-export function disposeDirectorRuntime(runtime: DirectorRuntime): void { if (runtime.disposed) return; runtime.disposed = true; runtime.upstreamEngine?.dispose(); for (const renderer of runtime.renderers) renderer.dispose(); runtime.host.stage.replaceChildren?.(); runtime.host.shot.replaceChildren?.(); runtime.scene.clear(); }
+export function disposeDirectorRuntime(runtime: DirectorRuntime): void {
+    if (runtime.disposed) return;
+    // 先停播放循环（isPlaying 依赖 disposed=false），再宣告 disposed。
+    if (runtime.isPlaying()) runtime.pause();
+    runtime.disposed = true;
+    runtime.upstreamEngine?.dispose();
+    for (const renderer of runtime.renderers) renderer.dispose();
+    runtime.host.stage.replaceChildren?.(); runtime.host.shot.replaceChildren?.(); runtime.scene.clear();
+}

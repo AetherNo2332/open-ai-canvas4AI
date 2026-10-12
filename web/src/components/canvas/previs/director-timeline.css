@@ -1,0 +1,188 @@
+/* DirectorDesk 原生时间轴（导演编辑器 scope，P1）。
+   消费画布预演台皮肤 --pd-* token（回退站点语义 token）。 */
+
+ {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 12px 10px;
+    border-top: 1px solid var(--pd-b1, var(--border));
+    background: var(--pd-s1, var(--background));
+}
+
+ {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+ {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--pd-b0, var(--border));
+    border-radius: var(--pd-r-sm, var(--button-radius, 4px));
+    background: var(--pd-s2, var(--background));
+    color: var(--pd-t0, var(--foreground));
+    font-size: var(--pd-ts-xs, 10px);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 120ms var(--pd-ease-snap), border-color 120ms var(--pd-ease-snap);
+}
+
+ {
+    background: var(--pd-s3, var(--border));
+    border-color: var(--pd-b1, var(--border));
+}
+
+ {
+    border-color: var(--pd-a-bd, var(--ring, var(--border)));
+    background: var(--pd-a-bg, transparent);
+    color: var(--pd-a0, var(--primary, var(--foreground)));
+}
+
+ {
+    opacity: 0.4;
+    cursor: default;
+}
+
+ {
+    outline: 2px solid var(--pd-a0, var(--ring, var(--primary)));
+    outline-offset: 1px;
+}
+
+ {
+    font-variant-numeric: tabular-nums;
+    color: var(--pd-t1, var(--pd-faint, var(--foreground)));
+    font-size: var(--pd-ts-xs, 10px);
+}
+
+.dtn-clock strong {
+    color: var(--pd-t0, var(--foreground));
+    font-weight: 600;
+}
+
+.dtn-clock small {
+    color: var(--pd-t3, var(--pd-faint, var(--foreground)));
+}
+
+ {
+    padding: 8px;
+    text-align: center;
+    color: var(--pd-t3, var(--pd-faint, var(--foreground)));
+    font-size: var(--pd-ts-xs, 10px);
+    border: 1px dashed var(--pd-b0, var(--border));
+    border-radius: var(--pd-r-md, var(--card-radius, 8px));
+}
+
+ {
+    position: relative;
+    height: 44px;
+    border: 1px solid var(--pd-b0, var(--border));
+    border-radius: var(--pd-r-md, var(--card-radius, 8px));
+    background: var(--pd-s2, var(--background));
+    cursor: ew-resize;
+    touch-action: none;
+    overflow: hidden;
+}
+
+ {
+    outline: 2px solid var(--pd-a0, var(--ring, var(--primary)));
+    outline-offset: 2px;
+}
+
+.dtn-track--scrubbing {
+    cursor: col-resize;
+    background: var(--pd-s3, var(--border));
+}
+
+ {
+    position: absolute;
+    inset: 0;
+    display: flex;
+}
+
+ {
+    position: absolute;
+    top: 5px;
+    bottom: 5px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    padding: 0 6px;
+    border: 1px solid var(--pd-b1, var(--border));
+    border-radius: var(--pd-r-sm, var(--button-radius, 4px));
+    background: transparent;
+    color: var(--pd-t1, var(--pd-faint, var(--foreground)));
+    font-size: var(--pd-ts-xs, 10px);
+    font-family: inherit;
+    cursor: pointer;
+    overflow: hidden;
+    white-space: nowrap;
+    transition: background 120ms var(--pd-ease-snap), border-color 120ms var(--pd-ease-snap);
+}
+
+ {
+    background: var(--pd-s3, var(--border));
+}
+
+ {
+    outline: 2px solid var(--pd-a0, var(--ring, var(--primary)));
+    outline-offset: 1px;
+    z-index: 2;
+}
+
+ {
+    border-color: var(--pd-a-bd, var(--ring, var(--border)));
+    background: var(--pd-a-bg, transparent);
+    color: var(--pd-t0, var(--foreground));
+}
+
+ {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+ {
+    font-size: var(--pd-ts-2xs, 9px);
+    color: var(--pd-t3, var(--pd-faint, var(--foreground)));
+    font-variant-numeric: tabular-nums;
+}
+
+ {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--pd-a0, var(--primary, var(--foreground)));
+    z-index: 3;
+    pointer-events: none;
+}
+
+.dtn-head::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--pd-a0, var(--primary, var(--foreground)));
+}
+
+ {
+    position: absolute;
+    top: 2px;
+    left: 6px;
+    padding: 0 4px;
+    font-size: var(--pd-ts-2xs, 9px);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--pd-a-on, #fff);
+    background: var(--pd-a0, var(--primary, var(--foreground)));
+    border-radius: var(--pd-r-sm, var(--button-radius, 4px));
+}
