@@ -22,6 +22,7 @@ export const PREVIS_DIAGNOSTIC_CODES = [
     "PREVIS_SAVE_RETRY_RECOVERED",
     "PREVIS_SAVE_DRAFT_UNAVAILABLE",
     "PREVIS_CLOSE_BLOCKED",
+    "PREVIS_DIRECTOR_COMMIT_CONFLICT",
 ] as const;
 
 export type PrevisDiagnosticCode = (typeof PREVIS_DIAGNOSTIC_CODES)[number];
@@ -41,6 +42,7 @@ const MESSAGES: Record<PrevisDiagnosticCode, string> = {
     PREVIS_SAVE_RETRY_RECOVERED: "预演台场景重试保存成功",
     PREVIS_SAVE_DRAFT_UNAVAILABLE: "预演台本地草稿不可用",
     PREVIS_CLOSE_BLOCKED: "预演台关闭被阻止",
+    PREVIS_DIRECTOR_COMMIT_CONFLICT: "预演台 DirectorDesk 提交未进入保存",
 };
 
 const LEVELS: Record<PrevisDiagnosticCode, "info" | "warning" | "error"> = {
@@ -55,6 +57,7 @@ const LEVELS: Record<PrevisDiagnosticCode, "info" | "warning" | "error"> = {
     PREVIS_SAVE_RETRY_RECOVERED: "info",
     PREVIS_SAVE_DRAFT_UNAVAILABLE: "error",
     PREVIS_CLOSE_BLOCKED: "warning",
+    PREVIS_DIRECTOR_COMMIT_CONFLICT: "warning",
 };
 
 /** 对象种类枚举：只表达形态，绝不表达名称或素材来源。 */

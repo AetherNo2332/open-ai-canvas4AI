@@ -29,7 +29,7 @@ import { recordPrevisDiagnostic } from "@/lib/canvas/previs/previs-diagnostics-r
 import { shouldReinitializePrevisSession, isPrevisOutputSnapshotCurrent } from "@/lib/canvas/previs/previs-session";
 import { isPrevisPreviewRequestForWorkbench, previsPreviewRequestKey, type PrevisPreviewRequest } from "@/lib/canvas/previs/previs-preview";
 import { describePrevisSaveStatus, shouldOfferPrevisDraftRecovery, shouldBlockPrevisUnload, resolvePrevisCloseOutcome } from "@/lib/canvas/previs/previs-save-wiring";
-import { usePrevisSaveCoordinator } from "@/components/canvas/previs/use-previs-save-coordinator";
+import { usePrevisSaveCoordinator, type PrevisSaveController } from "@/components/canvas/previs/use-previs-save-coordinator";
 import "./canvas-previs-workbench.css";
 import { useAssetStore, type ModelAsset } from "@/stores/use-asset-store";
 import { usePrevisWorkbenchStore } from "@/stores/canvas/use-previs-workbench-store";
@@ -39,7 +39,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import type { PrevisCameraMove, PrevisRenderMode, PrevisScene, PrevisSceneOutput, PrevisTransform, PrevisVec3 } from "@/types/previs";
 export { cameraMoveOptions, poseOptions, shotSizeOptions } from "./previs-inspectors";
 
-export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush, onDraftChange, onSubmitPreview }: { open: boolean; canvasId?: string; scene: PrevisScene | null; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: PrevisScene) => void; onApply: (output: PrevisSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void>; onDraftChange?: (scene: PrevisScene) => void; onSubmitPreview?: (scene: PrevisScene, shot: PrevisShot) => Promise<boolean> }) {
+export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush, onDraftChange, onSubmitPreview, saveController: injectedSaveController }: { open: boolean; canvasId?: string; scene: PrevisScene | null; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: PrevisScene) => void; onApply: (output: PrevisSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void>; onDraftChange?: (scene: PrevisScene) => void; onSubmitPreview?: (scene: PrevisScene, shot: PrevisShot) => Promise<boolean>; saveController?: PrevisSaveController | null }) {
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
     const effectiveCanvasId = useMemo(() => {
@@ -139,12 +139,15 @@ export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboa
     const handledPreviewRequestsRef = useRef(new Set<string>());
 
     // 按 scene.id 持有唯一 coordinator：flush 先把 request.scene 写回项目，再等持久化完成。
-    const saveController = usePrevisSaveCoordinator({
-        sceneId: scene?.id ?? null,
+    // DirectorDesk 包装器在自己的壳里创建 coordinator 并注入（灰度/权威模式下），
+    // 此时本地 hook 保持 inert（sceneId 置 null）：同一场景同一时刻只有一个写入者。
+    const localSaveController = usePrevisSaveCoordinator({
+        sceneId: injectedSaveController ? null : (scene?.id ?? null),
         initialScene: scene,
         persistScene: (next) => onChangeRef.current(next),
         flushPersistence: () => onFlushRef.current?.(),
     });
+    const saveController = injectedSaveController ?? localSaveController;
     const saveControllerRef = useRef(saveController);
     saveControllerRef.current = saveController;
     const saveIndicator = describePrevisSaveStatus(saveController.progress);
