@@ -14,8 +14,16 @@ export type DirectorDeskPrevisRuntimeState = {
     syncScene: (scene: PrevisScene | null, force?: boolean) => void;
 };
 
+/** runtime 事件回传（宿主 create 时固定，经 latest-ref 读取最新处理器）。 */
+export type DirectorRuntimeEvents = {
+    onTimeChange?: (time: number) => void;
+    onPlayingChange?: (playing: boolean) => void;
+    onSelectChange?: (entityId: string) => void;
+    onError?: (error: unknown) => void;
+};
+
 /** Owns the DirectorDesk browser runtime for exactly one workbench session. */
-export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene | null, onDocumentChange?: (document: DirectorProject) => void): DirectorDeskPrevisRuntimeState {
+export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene | null, onDocumentChange?: (document: DirectorProject) => void, runtimeEvents?: DirectorRuntimeEvents): DirectorDeskPrevisRuntimeState {
     const stageRef = useRef<HTMLDivElement>(null);
     const shotRef = useRef<HTMLDivElement>(null);
     const runtimeRef = useRef<DirectorRuntime | null>(null);
@@ -29,6 +37,11 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
     useEffect(() => {
         onDocumentChangeRef.current = onDocumentChange;
     }, [onDocumentChange]);
+
+    const runtimeEventsRef = useRef(runtimeEvents);
+    useEffect(() => {
+        runtimeEventsRef.current = runtimeEvents;
+    }, [runtimeEvents]);
 
     // 按 sceneId/updatedAt 决策刷新：同场景同修订不重建（对象身份抖动免疫），
     // 同场景修订变化重建并保留/回退视图状态，场景 id 变化视为新会话。
@@ -69,7 +82,14 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
         if (!open || !scene || !stageRef.current || !shotRef.current) return;
         if (runtimeRef.current) return;
         try {
-            runtimeRef.current = createDirectorRuntime({ stage: stageRef.current, shot: shotRef.current, onDocumentChange: (document) => onDocumentChangeRef.current?.(document) });
+            runtimeRef.current = createDirectorRuntime({
+                stage: stageRef.current,
+                shot: shotRef.current,
+                onDocumentChange: (document) => onDocumentChangeRef.current?.(document),
+                onTimeChange: (time) => runtimeEventsRef.current?.onTimeChange?.(time),
+                onPlayingChange: (playing) => runtimeEventsRef.current?.onPlayingChange?.(playing),
+                onError: (error) => runtimeEventsRef.current?.onError?.(error),
+            });
             lastSyncKeyRef.current = null;
             syncScene(scene);
             setStatus("ready");

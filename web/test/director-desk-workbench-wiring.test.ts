@@ -67,3 +67,44 @@ describe("DirectorDesk edit commit wiring", () => {
         expect(source).toContain("saveControllerRef.current?.commitScene");
     });
 });
+
+const editorSource = () => moduleGroupSource("components/canvas/previs/director-previs-editor.tsx");
+
+describe("P1 editor composition wiring", () => {
+    test("05 wrapper mounts the native editor instead of the legacy workbench (fallback only on legacy/error)", () => {
+        const source = wrapperSource();
+        // 非 legacy 会话的默认渲染内容是原生导演编辑器。
+        expect(source).toContain("<DirectorPrevisEditor");
+        // 旧工作台只在 legacy 策略 / 未打开 / 无场景 / runtime 故障时出现。
+        expect(source).toContain('policy === "legacy" || !props.open || !props.scene');
+        expect(source).toContain('runtime.status === "error"');
+        // legacy 工作台渲染点 ≤ 2（legacy 分支 + 故障回退），不得与编辑器并存。
+        const legacyRenderCount = source.match(/<CanvasPrevisWorkbench/gu)?.length ?? 0;
+        expect(legacyRenderCount).toBeLessThanOrEqual(2);
+        // runtime 事件回传到编辑器 UI 状态。
+        expect(source).toContain("onTimeChange: (time) => setEditorTime(time)");
+        expect(source).toContain("onSelectChange: (entityId) => setEditorSelectedEntityId(entityId)");
+    });
+
+    test("06 editor is the single writer for native mode and owns close/pagehide semantics", () => {
+        const source = editorSource();
+        // 唯一提交路径：commitScene（协调器）+ store 镜像，没有第二条写者。
+        const commitCalls = source.match(/commitScene\((touched|next)\)/gu)?.length ?? 0;
+        expect(commitCalls).toBe(1);
+        expect(source).toContain("onChangeRef.current(touched)");
+        // 关闭走 prepareClose 决策；失败且无草稿时落诊断。
+        expect(source).toContain("prepareClose()");
+        expect(source).toContain("resolvePrevisCloseOutcome(");
+        expect(source).toContain("PREVIS_CLOSE_BLOCKED");
+        // 离开页面语义与 legacy 一致。
+        expect(source).toContain('window.addEventListener("pagehide"');
+        expect(source).toContain('window.addEventListener("beforeunload"');
+        expect(source).toContain("shouldBlockPrevisUnload(");
+        // 不使用静态 Modal.confirm（lint 亦禁止）。
+        expect(source).not.toContain("modal.confirm(");
+        // 时间轴与引擎播放循环接线。
+        expect(source).toContain("runtime?.setPlayhead(");
+        expect(source).toContain("runtime?.play()");
+        expect(source).toContain("runtime?.pause()");
+    });
+});

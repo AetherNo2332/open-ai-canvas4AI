@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type ComponentProps } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
 import { CanvasPrevisWorkbench } from "./canvas-previs-workbench";
 import { useDirectorDeskPrevisRuntime } from "./use-director-desk-previs-runtime";
 import { usePrevisSaveCoordinator } from "./use-previs-save-coordinator";
@@ -10,6 +10,7 @@ import type { PrevisScene, PrevisShot } from "@/types/previs";
 import { directorDocumentToPrevisScene } from "@/integrations/director-desk/previs-adapter";
 import { createDirectorControllerTransport, createDirectorEditBridge, type DirectorEditBridge } from "@/integrations/director-desk/edit-bridge";
 import type { DirectorProject } from "@/integrations/director-desk/previs-runtime-types";
+import { DirectorPrevisEditor } from "./director-previs-editor";
 import "./director-desk-previs-workbench.css";
 
 export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevisWorkbench>;
@@ -95,7 +96,15 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
         bridge.commitDocument(document);
     }, [props.onChange]);
 
-    const runtime = useDirectorDeskPrevisRuntime(props.open, props.scene, onDocumentChange);
+    // runtime 事件回传 → 编辑器 UI 状态（播放头/播放/选择）。
+    const [editorTime, setEditorTime] = useState(0);
+    const [editorPlaying, setEditorPlaying] = useState(false);
+    const [editorSelectedEntityId, setEditorSelectedEntityId] = useState("");
+    const runtime = useDirectorDeskPrevisRuntime(props.open, props.scene, onDocumentChange, {
+        onTimeChange: (time) => setEditorTime(time),
+        onPlayingChange: (playing) => setEditorPlaying(playing),
+        onSelectChange: (entityId) => setEditorSelectedEntityId(entityId),
+    });
     const runtimeRef = useRef(runtime);
     runtimeRef.current = runtime;
 
@@ -136,15 +145,25 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
         );
         return true;
     }, [props.canvasId]);
-    if (policy === "legacy") return <CanvasPrevisWorkbench {...props} />;
+    if (policy === "legacy" || !props.open || !props.scene) return <CanvasPrevisWorkbench {...props} />;
+    // 新运行时故障 → 整个编辑器回退到 legacy 工作台（同一 coordinator，数据不离手）。
+    if (runtime.status === "error") {
+        return <CanvasPrevisWorkbench {...props} saveController={saveController} onDraftChange={runtime.syncScene} onSubmitPreview={submitPreview} />;
+    }
     return (
-        <>
-            <div className="director-desk-runtime-host" data-runtime-policy={policy} data-runtime-status={runtime.status}>
-                <div ref={runtime.stageRef} className="director-desk-runtime-stage" data-director-runtime="stage" />
-                <div ref={runtime.shotRef} className="director-desk-runtime-stage" data-director-runtime="shot" />
-                <span className="director-desk-runtime-label">DirectorDesk {policy === "canary" ? "· 灰度同步" : "· 主运行时"} {runtime.status === "ready" ? "· 已连接" : runtime.status === "error" ? "· 回退" : "· 初始化"}</span>
-            </div>
-            <CanvasPrevisWorkbench {...props} saveController={saveController} onDraftChange={runtime.syncScene} onSubmitPreview={submitPreview} />
-        </>
+        <DirectorPrevisEditor
+            scene={props.scene}
+            policy={policy as "canary" | "authoritative"}
+            stageRef={runtime.stageRef}
+            shotRef={runtime.shotRef}
+            runtime={runtime.runtime}
+            runtimeStatus={runtime.status}
+            time={editorTime}
+            playing={editorPlaying}
+            selectedEntityId={editorSelectedEntityId}
+            saveController={saveController}
+            onChange={(scene) => props.onChange(scene)}
+            onClose={props.onClose}
+        />
     );
 }

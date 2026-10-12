@@ -20,6 +20,8 @@ export type DirectorRuntimeHost = {
     onTimeChange?: (time: number) => void;
     /** 播放/暂停状态变化。 */
     onPlayingChange?: (playing: boolean) => void;
+    /** 引擎选择变化。 */
+    onSelectChange?: (entityId: string) => void;
     onError?: (error: unknown) => void;
 };
 export type DirectorRuntime = { readonly scene: Scene; readonly editorCamera: PerspectiveCamera; readonly shotCamera: PerspectiveCamera; readonly renderers: readonly DirectorRenderer[]; readonly host: DirectorRuntimeHost; disposed: boolean; viewState: RuntimeViewState; render(): void; syncDocument(document: DirectorProject): void; applyViewState(state: RuntimeViewState): void; resetViewState(): void; play(): void; pause(): void; isPlaying(): boolean; setPlayhead(time: number): void; upstreamEngine?: Engine };
@@ -139,7 +141,7 @@ export function createDirectorRuntime(host: DirectorRuntimeHost): DirectorRuntim
     try {
         if (!host.createRenderer) {
             upstreamEngine = new Engine(directorProjectToEngineProject({ format: "director-desk", version: 1, name: "DirectorDesk", duration: 1, fps: 24, aspect: "16:9", room: { enabled: true, width: 20, depth: 20, height: 4 }, entities: [], cuts: [], references: [], extensions: { infiniteCanvas: { sourceSceneId: "", scene: { id: "", title: "", background: "#c6c8c6", environmentIntensity: 1, environment: undefined, gridVisible: true, activeShotId: "", createdAt: "", updatedAt: "" }, lights: [], shots: [], motionPaths: {} } } }), host.stage, host.shot, {
-                select: (id) => { selectedEntityId = id; runtime.viewState.selectedEntityId = id; }, point: () => undefined, ground: () => undefined, stroke: () => undefined, joint: () => undefined,
+                select: (id) => { selectedEntityId = id; runtime.viewState.selectedEntityId = id; host.onSelectChange?.(id); }, point: () => undefined, ground: () => undefined, stroke: () => undefined, joint: () => undefined,
                 transformStart: () => { transformSnapshot = currentDocument ? structuredClone(currentDocument) : null; },
                 transform: (position, rotation, scale) => { if (currentDocument && selectedEntityId) currentDocument = updateDirectorEntityTransform(currentDocument, selectedEntityId, position, rotation, scale); },
                 transformEnd: (cancel = false) => { if (cancel && transformSnapshot) currentDocument = transformSnapshot; if (!cancel && currentDocument) host.onDocumentChange?.(structuredClone(currentDocument)); transformSnapshot = null; },
