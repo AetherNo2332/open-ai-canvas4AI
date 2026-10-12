@@ -85,3 +85,17 @@
 - 最终验证(真实输出):web 全量 3 轮——2394 pass/0 fail/6 skip(347 文件)、2395/2/6(348 文件,2 处计时 flake:5 秒 deadline 用例在 SMB 全量负载下超过 bun 默认 5 秒测试超时)、2397/0/6(348 文件、13416 断言);`tsc --noEmit` exit 0;`bun run lint` 25 处问题全在既有 vendor 引擎文件。Go:`go test ./internal/... -count=1` 除 2 处本分支未触碰包的环境性既有失败外全 ok——hostupdate `TestSetEnvValuePreservesOtherSettings`(本机 umask 0077 → 文件 600≠640)、prompts `TestLoadAgentPoliciesUsesDocumentMetadata`(CRLF 测试夹具);两包在 c9d9d05..HEAD 无 diff。
 - Git 状态:c9d9d05(handoff)→ 11 个提交 → fc86349(VERSION `v1.5.7.11(b281698)`,bump 前 HEAD=b281698)。未 push(等待用户决策)。后续本分支若有新提交,push 前必须重新 bump(AGENTS §9)。
 - 剩余项(不阻塞代码侧上线,详见 pending-test.mdx):P4 流程接线切;P2 真浏览器 E2E 与 canary 分组 UI/观测事件/编辑器交互等浏览器验收清单;6 处隔离上游路由用例的重新启用条件。
+- 真机 compose 测验(2026-10-13, round 2):用户目标升级为「完整脚本测试 + 真机 compose 测验」。隔离栈 `director-previs-3040`(独立项目/镜像 tag :dpv-3040/数据卷/端口 3040,override 在 gitignored .local/compose-accept/,不触碰 3030 存量栈与 :local 镜像)。构建过程暴露真实问题:
+  - Ruling: vendor 引擎构建阻断真实存在——handoff 期引入的 `director-desk-engine.js`(58k 行)运行时引用 `new Worker(new URL("./model-import.worker.ts", import.meta.url))`,但该 worker 及其 7 个依赖模块(最小闭包:model-package/model-package-id/model-path/obj-geometry/obj-source/fbx-source/fbx-document,外部依赖仅 three ^0.185.1,零新增 npm)从未随 vendor 一起拷入;主仓与 fork 的 vendored 引擎文件 CRLF 归一后完全相同,主仓 dist 是 2026-10-08 的旧产物(早于 vendor 引入)——此前所有 :local 镜像都构建于 vendor 之前,生产镜像从未包含 DirectorDesk 代码。修复:从本地源码 `.local/director-desk-upstream/src/resources/` 拷入 8 个文件到 vendor/(相对 import 去掉 .ts 扩展名以适配 moduleResolution:bundler,不动 tsconfig)。tsc --noEmit exit 0。性质:上线阻断级构建缺陷,恰是 compose 测验的价值。
+  - 修复二处上线阻断缺陷后,隔离栈冷启动(独立卷)完成真机 compose 验收,**ACCEPTANCE: ALL PASS (26/26)**:
+    - ①/② `/api/health` ready=true(schema 58/58,DB+runtime+schema 全 true);`build.version=v1.5.7.11(1033ca9)` 由本分支 VERSION 经 ldflags 注入。
+    - ③ nginx SPA root 存在 + 构建产物含本分支代码指纹(`PREVIS_RUNTIME_INIT_FAILED`/`directorDeskPrevisCanaryUsers`)。
+    - ④ `/api` 代理到后端:openapi 200、匿名 session 200 且返回 guest 身份(user=null)。
+    - ⑤ canary 灰度全链路 E2E(真实 HTTP + 真实 sqlite):首用户注册=自动 admin → 新账号默认 off(fail-closed)→ PATCH 白名单分群 → **白名单用户 per-user 解析为 canary** → admin 建第二用户并登录 → 比例 0 保持 off → PATCH 比例桶 10000 → **非白名单第二用户进入 canary** → PATCH 回退 off → 两用户均见 off(回退演练)。
+    - ⑥ 容器/镜像状态:web/backend 均 Up (healthy),tag `open-ai-canvas-{web,backend}:dpv-3040`。
+  - Ruling(脚本缺陷,非产品缺陷):验收脚本初版两处 bug——canary 分组 PATCH 漏 `-X PATCH`(curl -d 默认 POST,后端正确 404,证明 PATCH 路由存在);admin_id JSON 双引号拼接待转义。均为脚本 bug,修复后 PASS;后端对 POST/非法 JSON 的 404/错误处理本身符合 fail-closed,反向佐证了 404 诊断是定位关键。
+  - compose 测验记录了两个此前测试/构建未覆盖的问题,印证真机验收价值:
+    - 缺陷A(worker):生产构建 `vite build` 在 rolldown 阶段 `UNRESOLVED_ENTRY model-import.worker.ts`——vendor 引擎内外加载 Worker 入口文件但仓库未交付该文件及其 7 依赖,历史 :local 镜像均构建于 vendor 之前未暴露。修复:从 `.local/director-desk-upstream/src/resources/` 复制 8 个 TS 文件到 vendor/ 并去掉相对 import 的 `.ts` 扩展名(适配 `moduleResolution:bundler`),tsc --noEmit=0。
+    - 缺陷B(CSS):`director-timeline.css` 整文件选择器缺失(仅规则体),lightningcss minify 报 `Invalid empty selector`。新增 `web/test/previs-css-selectors.test.ts` 守卫(4 个 director CSS 规则块须有选择器,RED→GREEN),重建 CSS 完整选择器。
+  - 本地 WSL 无法跑 `bun run build`(rolldown 原生绑定 win32/ENOENT 平台不匹配),生产构建验证一律走 docker 镜像构建路径。
+  - 隔离栈保留运行中(用户浏览器验收用):http://localhost:3040。销毁:`docker compose -p director-previs-3040 -f docker-compose.local.yml -f .local/compose-accept/director-previs-3040.yml down -v --remove-orphans`。未触碰 3030 栈与 :local 镜像。
