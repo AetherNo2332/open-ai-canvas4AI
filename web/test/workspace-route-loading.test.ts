@@ -7,7 +7,11 @@ function source(path: string) {
 }
 
 describe("workspace route loading", () => {
-    test("keeps lazy workspace routes inside the workspace stage", () => {
+    // 以下 4 个用例断言上游 web 工作台路由契约(WorkspaceRouteLoader / 根路由
+    // CreatePage / /wallet / canvas detail preload)。本 fork 分支的
+    // src/router.tsx 已改为桌面壳路由(UserLayout + 直达页面),
+    // 这些契约在本分支被有意移除(P5 基线 triage:隔离而非误删功能)。
+    test.skip("keeps lazy workspace routes inside the workspace stage", () => {
         const router = source("../src/router.tsx");
         const deferred = router.slice(router.indexOf("function deferred"), router.indexOf("function fullScreenDeferred"));
 
@@ -31,7 +35,7 @@ describe("workspace route loading", () => {
         expect(navigation).toContain("onFocus={() => preloadWorkspaceRoute(linkTo)}");
     });
 
-    test("keeps the creation page at root and preserves the create compatibility route", () => {
+    test.skip("keeps the creation page at root and preserves the create compatibility route", () => {
         const router = source("../src/router.tsx");
         const navigation = source("../src/components/layout/workspace-sidebar-nav.tsx");
 
@@ -44,7 +48,7 @@ describe("workspace route loading", () => {
         expect(navigation).not.toContain('to: "/home"');
     });
 
-    test("preloads canvas detail and paints opening feedback before navigation", () => {
+    test.skip("preloads canvas detail and paints opening feedback before navigation", () => {
         const modules = source("../src/lib/workspace-route-modules.ts");
         const router = source("../src/router.tsx");
         const canvasLibrary = source("../src/pages/canvas/index.tsx");
@@ -125,7 +129,8 @@ describe("workspace route loading", () => {
 });
 
 describe("workspace wallet entry", () => {
-    test("opens the credits modal instead of a dedicated wallet page", () => {
+    // 同文件顶部说明:上游 web 工作台的 /wallet 拦截路由契约在本 fork 的桌面壳路由中已移除。
+    test.skip("opens the credits modal instead of a dedicated wallet page", () => {
         const router = source("../src/router.tsx");
         const modules = source("../src/lib/workspace-route-modules.ts");
         const host = source("../src/components/layout/workspace-wallet-modal.tsx");

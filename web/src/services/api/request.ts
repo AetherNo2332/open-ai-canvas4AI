@@ -48,6 +48,12 @@ export function setAPIHost(endpoint: string) {
     apiClient.defaults.baseURL=apiBaseURL;
 }
 
+/** 还原为环境变量/默认值（桌面 bootstrap 之前、测试隔离用）。 */
+export function resetAPIHost() {
+    apiBaseURL=import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
+    apiClient.defaults.baseURL=apiBaseURL;
+}
+
 /**
  * 解包后端业务信封的唯一边界。这里把非零业务 code 转成 ApiError，保留 reason、重试语义和 Retry-After；
  * 取消请求必须继续抛出 AbortError，不能被包装成普通失败，否则页面切换会被误报为错误。
