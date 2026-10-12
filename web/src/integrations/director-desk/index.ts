@@ -1,11 +1,12 @@
 import { AmbientLight, BoxGeometry, Color, DirectionalLight, GridHelper, Mesh, MeshStandardMaterial, PerspectiveCamera, Scene, WebGLRenderer, Group } from "three";
 import { Engine } from "./vendor/director-desk-engine.js";
 import type { DirectorProject } from "./previs-runtime-types";
+import { initialRuntimeViewState, type RuntimeViewState } from "./scene-sync";
 
 export const DIRECTOR_DESK_VERSION = "0.4.11" as const;
 export type DirectorRenderer = Pick<WebGLRenderer, "dispose"> & Partial<Pick<WebGLRenderer, "render" | "setSize">>;
 export type DirectorRuntimeHost = { stage: HTMLElement; shot: HTMLElement; createRenderer?: (container: HTMLElement) => DirectorRenderer; onDocumentChange?: (document: DirectorProject) => void; onError?: (error: unknown) => void };
-export type DirectorRuntime = { readonly scene: Scene; readonly editorCamera: PerspectiveCamera; readonly shotCamera: PerspectiveCamera; readonly renderers: readonly DirectorRenderer[]; readonly host: DirectorRuntimeHost; disposed: boolean; render(): void; syncDocument(document: DirectorProject): void; upstreamEngine?: Engine };
+export type DirectorRuntime = { readonly scene: Scene; readonly editorCamera: PerspectiveCamera; readonly shotCamera: PerspectiveCamera; readonly renderers: readonly DirectorRenderer[]; readonly host: DirectorRuntimeHost; disposed: boolean; viewState: RuntimeViewState; render(): void; syncDocument(document: DirectorProject): void; applyViewState(state: RuntimeViewState): void; resetViewState(): void; upstreamEngine?: Engine };
 
 const knownPropAssets = new Set(["ground", "road", "building", "bench", "fence", "streetlight", "bed", "nightstand", "wardrobe", "desk", "chair", "sofa", "table", "lamp", "laptop", "cup", "sword", "car", "tree", "rock", "cube", "sphere", "cylinder", "wall", "stairs", "door"]);
 const safeColor = (value: string) => /^#[0-9a-f]{6}$/i.test(value) ? value : "#a7bdd7";
@@ -51,11 +52,31 @@ export function createDirectorRuntime(host: DirectorRuntimeHost): DirectorRuntim
             scene.add(entities);
         },
         render() { if (runtime.disposed) return; if (upstreamEngine) { upstreamEngine.render(true); return; } renderers[0]?.render?.(scene, editorCamera); renderers[1]?.render?.(scene, shotCamera); },
+        viewState: { selectedEntityId: "", activeShotId: "", time: 0 },
+        /** 刷新/切换后把选择、播放头落到引擎（当前镜头是画布层概念，见 viewState.activeShotId）。 */
+        applyViewState(state: RuntimeViewState) {
+            runtime.viewState = { selectedEntityId: state.selectedEntityId, activeShotId: state.activeShotId, time: state.time };
+            selectedEntityId = state.selectedEntityId;
+            if (!upstreamEngine || runtime.disposed) return;
+            upstreamEngine.time = state.time;
+            upstreamEngine.sample(state.time);
+            upstreamEngine.select(state.selectedEntityId || "");
+        },
+        /** 新会话（场景 id 变化）：选择清空、播放头归零、当前镜头取文档初始值。 */
+        resetViewState() {
+            const initial = currentDocument ? initialRuntimeViewState(currentDocument) : { selectedEntityId: "", activeShotId: "", time: 0 };
+            runtime.viewState = { ...initial };
+            selectedEntityId = initial.selectedEntityId;
+            if (!upstreamEngine || runtime.disposed) return;
+            upstreamEngine.time = 0;
+            upstreamEngine.sample(0);
+            upstreamEngine.select("");
+        },
     };
     try {
         if (!host.createRenderer) {
             upstreamEngine = new Engine(directorProjectToEngineProject({ format: "director-desk", version: 1, name: "DirectorDesk", duration: 1, fps: 24, aspect: "16:9", room: { enabled: true, width: 20, depth: 20, height: 4 }, entities: [], cuts: [], references: [], extensions: { infiniteCanvas: { sourceSceneId: "", scene: { id: "", title: "", background: "#c6c8c6", environmentIntensity: 1, environment: undefined, gridVisible: true, activeShotId: "", createdAt: "", updatedAt: "" }, lights: [], shots: [], motionPaths: {} } } }), host.stage, host.shot, {
-                select: (id) => { selectedEntityId = id; }, point: () => undefined, ground: () => undefined, stroke: () => undefined, joint: () => undefined,
+                select: (id) => { selectedEntityId = id; runtime.viewState.selectedEntityId = id; }, point: () => undefined, ground: () => undefined, stroke: () => undefined, joint: () => undefined,
                 transformStart: () => { transformSnapshot = currentDocument ? structuredClone(currentDocument) : null; },
                 transform: (position, rotation, scale) => { if (currentDocument && selectedEntityId) currentDocument = updateDirectorEntityTransform(currentDocument, selectedEntityId, position, rotation, scale); },
                 transformEnd: (cancel = false) => { if (cancel && transformSnapshot) currentDocument = transformSnapshot; if (!cancel && currentDocument) host.onDocumentChange?.(structuredClone(currentDocument)); transformSnapshot = null; },

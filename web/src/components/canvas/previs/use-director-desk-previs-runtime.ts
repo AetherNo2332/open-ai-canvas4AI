@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { createDirectorRuntime, disposeDirectorRuntime, type DirectorRuntime } from "@/integrations/director-desk";
 import { previsSceneToDirectorDocument } from "@/integrations/director-desk/previs-adapter";
+import { decideRuntimeSync, resolveRuntimeViewState, type RuntimeSyncKey } from "@/integrations/director-desk/scene-sync";
 import type { DirectorProject } from "@/integrations/director-desk/previs-runtime-types";
 import type { PrevisScene } from "@/types/previs";
 
@@ -21,19 +22,52 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
     const [status, setStatus] = useState<DirectorDeskPrevisRuntimeState["status"]>("idle");
     const [error, setError] = useState<unknown>(null);
 
+    // 提交回调身份随父级 store 更新变化（savePrevisScene 依赖 previsScenes）。
+    // 引擎生命周期必须与回调身份无关，否则每次编辑回执都会重建 WebGL 引擎；
+    // 用 latest-ref 解耦：创建 effect 只依赖 open/scene 存在性。
+    const onDocumentChangeRef = useRef(onDocumentChange);
+    useEffect(() => {
+        onDocumentChangeRef.current = onDocumentChange;
+    }, [onDocumentChange]);
+
+    // 按 sceneId/updatedAt 决策刷新：同场景同修订不重建（对象身份抖动免疫），
+    // 同场景修订变化重建并保留/回退视图状态，场景 id 变化视为新会话。
+    const lastSyncKeyRef = useRef<RuntimeSyncKey | null>(null);
+
     const syncScene = useCallback((nextScene: PrevisScene | null) => {
-        if (!nextScene || !runtimeRef.current) return;
-        const document = previsSceneToDirectorDocument(nextScene);
-        runtimeRef.current.scene.userData.directorDocument = document;
-        runtimeRef.current.syncDocument(document);
-        runtimeRef.current.render();
+        const runtime = runtimeRef.current;
+        if (!nextScene || !runtime) return;
+        const nextKey: RuntimeSyncKey = { id: nextScene.id, updatedAt: nextScene.updatedAt };
+        const decision = decideRuntimeSync(lastSyncKeyRef.current, nextKey);
+        if (decision.kind === "noop") return;
+        let document: DirectorProject;
+        try {
+            document = previsSceneToDirectorDocument(nextScene);
+        } catch {
+            // 新场景无法转换时保留当前文档与修订记忆，不推进 lastSyncKeyRef；
+            // 工作台的保存协调器会走原有的校验/诊断路径暴露问题。
+            return;
+        }
+        lastSyncKeyRef.current = nextKey;
+        runtime.scene.userData.directorDocument = document;
+        if (decision.kind === "session") {
+            // 先同步文档（更新 runtime 内部 currentDocument），再按新文档初始化视图状态。
+            runtime.syncDocument(document);
+            runtime.resetViewState();
+        } else {
+            // 外部/Agent 更新：选择、播放头、当前镜头仍存在则保留，否则确定性回退。
+            runtime.syncDocument(document);
+            runtime.applyViewState(resolveRuntimeViewState(document, runtime.viewState));
+        }
+        runtime.render();
     }, []);
 
     useEffect(() => {
         if (!open || !scene || !stageRef.current || !shotRef.current) return;
         if (runtimeRef.current) return;
         try {
-            runtimeRef.current = createDirectorRuntime({ stage: stageRef.current, shot: shotRef.current, onDocumentChange });
+            runtimeRef.current = createDirectorRuntime({ stage: stageRef.current, shot: shotRef.current, onDocumentChange: (document) => onDocumentChangeRef.current?.(document) });
+            lastSyncKeyRef.current = null;
             syncScene(scene);
             setStatus("ready");
         } catch (cause) {
@@ -46,7 +80,7 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
             runtimeRef.current = null;
             setStatus("idle");
         };
-    }, [open, Boolean(scene), onDocumentChange, syncScene]);
+    }, [open, Boolean(scene), syncScene]);
 
     useEffect(() => {
         if (!runtimeRef.current || !scene) return;
