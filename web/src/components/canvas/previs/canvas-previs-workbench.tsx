@@ -39,7 +39,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import type { PrevisCameraMove, PrevisRenderMode, PrevisScene, PrevisSceneOutput, PrevisTransform, PrevisVec3 } from "@/types/previs";
 export { cameraMoveOptions, poseOptions, shotSizeOptions } from "./previs-inspectors";
 
-export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush, onDraftChange }: { open: boolean; canvasId?: string; scene: PrevisScene | null; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: PrevisScene) => void; onApply: (output: PrevisSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void>; onDraftChange?: (scene: PrevisScene) => void }) {
+export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush, onDraftChange, onSubmitPreview }: { open: boolean; canvasId?: string; scene: PrevisScene | null; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: PrevisScene) => void; onApply: (output: PrevisSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void>; onDraftChange?: (scene: PrevisScene) => void; onSubmitPreview?: (scene: PrevisScene, shot: PrevisShot) => Promise<boolean> }) {
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
     const effectiveCanvasId = useMemo(() => {
@@ -844,6 +844,13 @@ export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboa
         setPlayhead(0);
         setPlaying(true);
         try {
+            if (onSubmitPreview) {
+                if (await onSubmitPreview(current, activeShot)) {
+                    setLastClayExport({ shotId: expected.shotId, at: Date.now() });
+                    message.success("白膜预演已提交后台任务，完成后自动写回画布");
+                    return;
+                }
+            }
             await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
             const recordedVideo = await viewportRef.current.recordVideo(activeShot.duration, activeShot.fps);
             const clayVideo = recordedVideo.type === "video/mp4" ? recordedVideo : await transcodeVideoToMp4(recordedVideo);

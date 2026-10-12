@@ -42,3 +42,5 @@
 - Production-readiness verification: `cd backend && go test ./internal/app -run 'CloudAgentDirector' -count=1`; `cd web && bun test test/image-to-previs-flow.test.ts test/image-to-director-agent.test.ts test/director-desk-feature.test.ts`; `cd web && bun run typecheck` all pass.
 - Production-readiness execution: image workflow failure handling now attempts a guarded rollback of the exact block mutation when the current canvas still matches its after-snapshot; concurrent edits prevent silent overwrite, and continuity-passed workflows are never rolled back.
 - Production-readiness verification: `cd backend && go test ./internal/app -run 'CloudAgentDirector' -count=1` passes after the guarded rollback contract changes.
+- Production-readiness execution: DirectorDesk canary/on workbench preview export now submits through the existing canvas command `previs-tasks` session when available; legacy mode keeps browser recording as a fallback.
+- Production-readiness verification: `cd web && bun test test/director-desk-previs-workbench.test.tsx test/director-desk-feature.test.ts test/director-desk-render-bridge.test.ts`; `cd web && bun run typecheck` pass.

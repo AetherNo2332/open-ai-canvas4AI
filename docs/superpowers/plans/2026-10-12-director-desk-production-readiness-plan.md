@@ -60,6 +60,8 @@
 - **P4 已落地第一切片**：图片入口带服务端识别工作流标识，服务端拒绝跳过识图回执的场面调度、镜头设计和连续性检查。
 - **P4 已落地第二切片**：Agent 失败终态会尝试通过现有 mutation 链恢复未通过连续性检查的导演草稿，并在检测到并发修改时放弃静默覆盖。
 - **P4 尚未完成**：仍需要独立 staging draft、成功后的原子 commit，以及取消/超时路径的回滚验收；当前不能把顺序校验和失败回滚切片当成完整事务闭环。
+- **P2 已落地第一切片**：灰度/全量 DirectorDesk 入口的白膜按钮接入现有 canvas command `previs-tasks`，使用任务队列、幂等 operationId 和后台资源写回；旧模式继续使用本地录制回退。
+- **P2 尚未完成**：仍需真实 renderer、任务终态、取消、重试和资源写回的浏览器端端到端验收。
 - 已通过：DirectorDesk feature flag focused test、workbench lifecycle test、admin regression test、Go feature availability test、Web typecheck。
 
 ## 阶段计划
