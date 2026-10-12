@@ -5,6 +5,8 @@ import { directorDeskRuntimePolicy } from "@/lib/canvas/director-desk-feature";
 import { useUserStore } from "@/stores/use-user-store";
 import { canvasCommandSession } from "@/stores/canvas/use-canvas-session-store";
 import type { PrevisScene, PrevisShot } from "@/types/previs";
+import { directorDocumentToPrevisScene } from "@/integrations/director-desk/previs-adapter";
+import type { DirectorProject } from "@/integrations/director-desk/previs-runtime-types";
 import "./director-desk-previs-workbench.css";
 
 export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevisWorkbench>;
@@ -17,7 +19,15 @@ export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevi
 export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchProps) {
     const mode = useUserStore((state) => state.features.directorDeskPrevisMode);
     const policy = directorDeskRuntimePolicy(mode);
-    const runtime = useDirectorDeskPrevisRuntime(props.open, props.scene);
+    const onDocumentChange = useCallback((document: DirectorProject) => {
+        try {
+            props.onChange(directorDocumentToPrevisScene(document));
+        } catch {
+            // Keep the current draft visible; the legacy workbench will surface
+            // the next save/validation error through its existing coordinator.
+        }
+    }, [props.onChange]);
+    const runtime = useDirectorDeskPrevisRuntime(props.open, props.scene, onDocumentChange);
     const submitPreview = useCallback(async (scene: PrevisScene, shot: PrevisShot) => {
         if (!props.canvasId) return false;
         const session = canvasCommandSession(props.canvasId);

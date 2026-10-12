@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { createDirectorRuntime, disposeDirectorRuntime, type DirectorRuntime } from "@/integrations/director-desk";
 import { previsSceneToDirectorDocument } from "@/integrations/director-desk/previs-adapter";
+import type { DirectorProject } from "@/integrations/director-desk/previs-runtime-types";
 import type { PrevisScene } from "@/types/previs";
 
 export type DirectorDeskPrevisRuntimeState = {
@@ -13,7 +14,7 @@ export type DirectorDeskPrevisRuntimeState = {
 };
 
 /** Owns the DirectorDesk browser runtime for exactly one workbench session. */
-export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene | null): DirectorDeskPrevisRuntimeState {
+export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene | null, onDocumentChange?: (document: DirectorProject) => void): DirectorDeskPrevisRuntimeState {
     const stageRef = useRef<HTMLDivElement>(null);
     const shotRef = useRef<HTMLDivElement>(null);
     const runtimeRef = useRef<DirectorRuntime | null>(null);
@@ -32,7 +33,7 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
         if (!open || !scene || !stageRef.current || !shotRef.current) return;
         if (runtimeRef.current) return;
         try {
-            runtimeRef.current = createDirectorRuntime({ stage: stageRef.current, shot: shotRef.current });
+            runtimeRef.current = createDirectorRuntime({ stage: stageRef.current, shot: shotRef.current, onDocumentChange });
             syncScene(scene);
             setStatus("ready");
         } catch (cause) {
@@ -45,7 +46,7 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
             runtimeRef.current = null;
             setStatus("idle");
         };
-    }, [open, Boolean(scene), syncScene]);
+    }, [open, Boolean(scene), onDocumentChange, syncScene]);
 
     useEffect(() => {
         if (!runtimeRef.current || !scene) return;
