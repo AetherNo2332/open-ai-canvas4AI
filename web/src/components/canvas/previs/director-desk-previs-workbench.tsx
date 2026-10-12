@@ -34,6 +34,10 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
     const saveControllerRef = useRef(saveController);
     saveControllerRef.current = saveController;
 
+    // 冲突回同步需要「当前 store 场景」：桥回调创建一次，不能用闭包里的旧 scene。
+    const sceneRef = useRef(scene);
+    sceneRef.current = scene;
+
     // One edit bridge per runtime session: runtime document commits are
     // converted to a PrevisScene and pushed through the coordinator above,
     // so they get the same local draft, debounce, CAS flush and close path
@@ -52,6 +56,15 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
                 // save-failed 另有协调器自身的 PREVIS_SAVE_FLUSH_FAILED（error 级）记录。
                 onCommitConflict: (record) => {
                     recordPrevisDiagnostic("PREVIS_DIRECTOR_COMMIT_CONFLICT", { sceneId: scene.id, revision: record.revision });
+                    // rejected/translation：store 场景未变，引擎里的新内容没有落库——
+                    // 把 runtime 强制拉回权威场景，避免界面与已保存状态漂移。
+                    // save-failed 不需要：coordinator 草稿已是新场景，重试恢复后自然一致。
+                    if (record.conflictReason === "rejected" || record.conflictReason === "translation") {
+                        const authoritative = sceneRef.current;
+                        if (authoritative && authoritative.id === scene.id) {
+                            runtimeRef.current?.syncScene(authoritative, true);
+                        }
+                    }
                 },
             });
         }
@@ -83,6 +96,36 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
     }, [props.onChange]);
 
     const runtime = useDirectorDeskPrevisRuntime(props.open, props.scene, onDocumentChange);
+    const runtimeRef = useRef(runtime);
+    runtimeRef.current = runtime;
+
+    // 编辑快捷键（canary/authoritative 会话）：Ctrl/Cmd+Z 撤销、Shift 变体重做。
+    // 输入态（输入框/富文本）不劫持；桥不存在（legacy 或无场景）时不处理。
+    useEffect(() => {
+        if (policy === "legacy") return;
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+            if (event.key.toLowerCase() !== "z") return;
+            const bridge = editBridgeRef.current;
+            if (!bridge) return;
+            const target = event.target as HTMLElement | null;
+            const inEditable = Boolean(
+                target
+                && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable),
+            );
+            if (inEditable) return;
+            event.preventDefault();
+            if (event.shiftKey) {
+                bridge.redo();
+            } else {
+                bridge.undo();
+            }
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => {
+            window.removeEventListener("keydown", onKeyDown);
+        };
+    }, [policy]);
     const submitPreview = useCallback(async (scene: PrevisScene, shot: PrevisShot) => {
         if (!props.canvasId) return false;
         const session = canvasCommandSession(props.canvasId);

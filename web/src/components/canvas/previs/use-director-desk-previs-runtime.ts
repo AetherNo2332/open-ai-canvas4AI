@@ -11,7 +11,7 @@ export type DirectorDeskPrevisRuntimeState = {
     runtime: DirectorRuntime | null;
     status: "idle" | "ready" | "error";
     error: unknown;
-    syncScene: (scene: PrevisScene | null) => void;
+    syncScene: (scene: PrevisScene | null, force?: boolean) => void;
 };
 
 /** Owns the DirectorDesk browser runtime for exactly one workbench session. */
@@ -34,11 +34,14 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
     // 同场景修订变化重建并保留/回退视图状态，场景 id 变化视为新会话。
     const lastSyncKeyRef = useRef<RuntimeSyncKey | null>(null);
 
-    const syncScene = useCallback((nextScene: PrevisScene | null) => {
+    const syncScene = useCallback((nextScene: PrevisScene | null, force = false) => {
         const runtime = runtimeRef.current;
         if (!nextScene || !runtime) return;
         const nextKey: RuntimeSyncKey = { id: nextScene.id, updatedAt: nextScene.updatedAt };
-        const decision = decideRuntimeSync(lastSyncKeyRef.current, nextKey);
+        // force：提交被拒后把引擎强行拉回权威场景（store 未变 → 键相同 → 按 content 处理）。
+        const decision = force && lastSyncKeyRef.current && lastSyncKeyRef.current.id === nextKey.id
+            ? { kind: "content" as const }
+            : decideRuntimeSync(lastSyncKeyRef.current, nextKey);
         if (decision.kind === "noop") return;
         let document: DirectorProject;
         try {

@@ -336,3 +336,163 @@ describe("DirectorDesk edit bridge — runtime commits through the save coordina
         expect(h.coordinator.getSnapshot().revision).toBe(revisionAfterDispose);
     });
 });
+
+/**
+ * undo/redo 合同：历史在桥内（文档快照栈，深度与上游 SceneSession 一致），
+ * 恢复不是"重放事件"，而是把目标文档的 PrevisScene 走回同一条提交路径
+ * （草稿/CAS/关闭 flush/冲突语义全部复用 commitDocument 的规则）。
+ */
+
+const sceneAt = (offset: number): PrevisScene => {
+    const scene = makeScene();
+    const object = structuredClone(makeScene().objects[0]);
+    object.transform = { position: [offset, 0, 2], rotation: [0, 0, 0], scale: [1, 1, 1] };
+    scene.objects = [object];
+    scene.updatedAt = `2026-01-01T00:00:00.00${offset}Z`;
+    return scene;
+};
+
+const docAt = (offset: number): DirectorProject => previsSceneToDirectorDocument(sceneAt(offset));
+
+type FakeTransport = { committed: PrevisScene[]; transport: Parameters<typeof createDirectorEditBridge>[0] };
+
+const createFakeTransport = (rejectFrom = Infinity): FakeTransport => {
+    const committed: PrevisScene[] = [];
+    let call = 0;
+    let revision = 0;
+    const transport: FakeTransport["transport"] = {
+        commit: (scene) => {
+            if (call >= rejectFrom) return false;
+            call += 1;
+            committed.push(scene);
+            revision += 1;
+            return true;
+        },
+        snapshot: () => ({ revision, confirmedRevision: revision, status: revision > 0 ? "saved" : "dirty" }),
+        onStatus: () => () => undefined,
+    };
+    return { committed, transport };
+};
+
+describe("DirectorDesk edit bridge — undo/redo through the commit path", () => {
+    test("01 空历史时 undo/redo 不可用", () => {
+        const { transport } = createFakeTransport();
+        const bridge = createDirectorEditBridge(transport, { expectedSceneId: "scene-1" });
+        expect(bridge.canUndo()).toBe(false);
+        expect(bridge.canRedo()).toBe(false);
+        expect(bridge.undo()).toBe(false);
+        expect(bridge.redo()).toBe(false);
+        bridge.dispose();
+    });
+
+    test("02 首次提交不产生历史项；第二次提交后可 undo 回第一个文档", () => {
+        const { transport, committed } = createFakeTransport();
+        const bridge = createDirectorEditBridge(transport, { expectedSceneId: "scene-1" });
+        bridge.commitDocument(docAt(0));
+        expect(bridge.canUndo()).toBe(false);
+        bridge.commitDocument(docAt(1));
+        expect(bridge.canUndo()).toBe(true);
+        expect(bridge.undo()).toBe(true);
+        expect(committed.length).toBe(3);
+        // undo 经同一条提交路径写回上一个文档的场景
+        expect(committed[2].objects[0].transform.position).toEqual([0, 0, 2]);
+        expect(bridge.canRedo()).toBe(true);
+        expect(bridge.canUndo()).toBe(false);
+        bridge.dispose();
+    });
+
+    test("03 redo 回到 undo 之后的提交，且历史仍然可继续 undo", () => {
+        const { transport, committed } = createFakeTransport();
+        const bridge = createDirectorEditBridge(transport, { expectedSceneId: "scene-1" });
+        bridge.commitDocument(docAt(0));
+        bridge.commitDocument(docAt(1));
+        bridge.undo();
+        expect(bridge.redo()).toBe(true);
+        expect(committed.length).toBe(4);
+        expect(committed[3].objects[0].transform.position).toEqual([1, 0, 2]);
+        expect(bridge.canRedo()).toBe(false);
+        expect(bridge.canUndo()).toBe(true);
+        expect(bridge.undo()).toBe(true);
+        expect(committed[4].objects[0].transform.position).toEqual([0, 0, 2]);
+        bridge.dispose();
+    });
+
+    test("04 新提交清空 redo 栈", () => {
+        const { transport } = createFakeTransport();
+        const bridge = createDirectorEditBridge(transport, { expectedSceneId: "scene-1" });
+        bridge.commitDocument(docAt(0));
+        bridge.commitDocument(docAt(1));
+        bridge.undo();
+        expect(bridge.canRedo()).toBe(true);
+        bridge.commitDocument(docAt(2));
+        expect(bridge.canRedo()).toBe(false);
+        expect(bridge.canUndo()).toBe(true);
+        bridge.dispose();
+    });
+
+    test("05 相同内容重复提交不产生重复历史项", () => {
+        const { transport, committed } = createFakeTransport();
+        const bridge = createDirectorEditBridge(transport, { expectedSceneId: "scene-1" });
+        bridge.commitDocument(docAt(0));
+        bridge.commitDocument(docAt(0));
+        expect(committed.length).toBe(2);
+        expect(bridge.canUndo()).toBe(false);
+        bridge.dispose();
+    });
+
+    test("06 历史深度上限 35（与上游 SceneSession 快照栈一致）", () => {
+        const { transport } = createFakeTransport();
+        const bridge = createDirectorEditBridge(transport, { expectedSceneId: "scene-1" });
+        for (let offset = 0; offset < 36; offset += 1) bridge.commitDocument(docAt(offset));
+        let undos = 0;
+        while (bridge.undo()) undos += 1;
+        expect(undos).toBe(35);
+        bridge.dispose();
+    });
+
+    test("07 传输拒绝 undo 提交时历史与当前文档不变", () => {
+        const { transport, committed } = createFakeTransport(2);
+        const bridge = createDirectorEditBridge(transport, { expectedSceneId: "scene-1" });
+        bridge.commitDocument(docAt(0));
+        bridge.commitDocument(docAt(1));
+        expect(bridge.canUndo()).toBe(true);
+        expect(bridge.undo()).toBe(false);
+        expect(committed.length).toBe(2);
+        expect(bridge.canUndo()).toBe(true);
+        expect(bridge.canRedo()).toBe(false);
+        bridge.dispose();
+    });
+
+    test("08 dispose 后 undo/redo 失效", () => {
+        const { transport } = createFakeTransport();
+        const bridge = createDirectorEditBridge(transport, { expectedSceneId: "scene-1" });
+        bridge.commitDocument(docAt(0));
+        bridge.commitDocument(docAt(1));
+        bridge.dispose();
+        expect(bridge.canUndo()).toBe(false);
+        expect(bridge.canRedo()).toBe(false);
+        expect(bridge.undo()).toBe(false);
+        expect(bridge.redo()).toBe(false);
+    });
+
+    test("09 真实协调器：undo 的恢复提交覆盖未 flush 的新提交，最终 flush 是上一个文档", async () => {
+        const h = createHarness();
+        const transport = createDirectorCommitTransport(h.coordinator);
+        const bridge = createDirectorEditBridge(transport, { expectedSceneId: "scene-1" });
+
+        bridge.commitDocument(docAt(0));
+        await h.flushMicrotasks();
+        // 第二次提交尚未 flush（debounce 窗口内）就发生 undo：
+        bridge.commitDocument(docAt(1));
+        expect(bridge.undo()).toBe(true);
+        await h.flushMicrotasks();
+
+        // docAt(1) 的待 flush 提交被恢复提交合并（协调器单窗口合并语义），
+        // 最终服务端收到的是上一个文档的场景。
+        expect(h.requests.length).toBe(2);
+        expect(h.requests[0].scene.objects[0].transform.position).toEqual([0, 0, 2]);
+        expect(h.requests[1].scene.objects[0].transform.position).toEqual([0, 0, 2]);
+        bridge.dispose();
+        h.dispose();
+    });
+});

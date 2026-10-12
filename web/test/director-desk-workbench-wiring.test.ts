@@ -51,6 +51,14 @@ describe("DirectorDesk edit commit wiring", () => {
         expect(source.match(/usePrevisSaveCoordinator\(/gu)).toHaveLength(1);
     });
 
+    test("03b wrapper exposes undo/redo keyboard bindings to the edit bridge", () => {
+        const source = wrapperSource();
+        // Ctrl/Cmd+Z (Shift=redo) 走编辑桥；输入态不劫持。
+        expect(source).toContain("keydown");
+        expect(source).toContain("bridge.undo()");
+        expect(source).toContain("bridge.redo()");
+    });
+
     test("04 workbench commit entry reports the coordinator decision", () => {
         const source = legacySource();
         const commitCalls = source.match(/commitScene\((current|next)\)/gu) ?? [];

@@ -37,6 +37,11 @@ export type DirectorEditBridge = {
     /** Convert one runtime document commit and drive it into the save coordinator. */
     commitDocument: (document: DirectorProject) => DirectorCommitRecord;
     getRecord: () => DirectorCommitRecord | null;
+    /** 撤销上一次提交：把目标文档的场景走回同一条提交路径（草稿/CAS/冲突语义一致）。 */
+    undo: () => boolean;
+    redo: () => boolean;
+    canUndo: () => boolean;
+    canRedo: () => boolean;
     dispose: () => void;
 };
 
@@ -71,6 +76,9 @@ export function createDirectorControllerTransport(controller: PrevisSaveControll
 /** No commit revision was allocated (translation conflict or transport rejection). */
 const NO_REVISION = -1;
 
+/** 文档快照栈深度：与上游 DirectorDesk SceneSession 的 undo 上限一致。 */
+const UNDO_DEPTH = 35;
+
 /**
  * Bridges DirectorDesk runtime commits into the existing previs save
  * coordinator. Every commit is converted to a PrevisScene, pushed through
@@ -85,6 +93,60 @@ export function createDirectorEditBridge(transport: DirectorCommitTransport, opt
     let current: DirectorCommitRecord | null = null;
     let unsubscribe: (() => void) | null = null;
     let disposed = false;
+
+    // 文档快照历史（桥内持有）：undoStack 是当前文档之前的版本，redoStack 是
+    // 被撤销的版本。present 记录当前已提交文档与其内容指纹（去重）。
+    let undoStack: DirectorProject[] = [];
+    let redoStack: DirectorProject[] = [];
+    let present: { json: string; document: DirectorProject } | null = null;
+
+    const pushHistory = (nextDocument: DirectorProject, nextJson: string): void => {
+        if (present) {
+            undoStack.push(present.document);
+            if (undoStack.length > UNDO_DEPTH) undoStack.shift();
+        }
+        redoStack = [];
+        present = { json: nextJson, document: structuredClone(nextDocument) };
+    };
+
+    const restoreHistory = (direction: "undo" | "redo"): boolean => {
+        if (disposed) return false;
+        const target = direction === "undo"
+            ? (undoStack.length ? undoStack[undoStack.length - 1] : null)
+            : (redoStack.length ? redoStack[redoStack.length - 1] : null);
+        if (!target || !present) return false;
+
+        let scene: PrevisScene;
+        try {
+            scene = directorDocumentToPrevisScene(target);
+        } catch {
+            // 已提交过的文档必然可转换；防御性拒绝，历史保持不变。
+            return false;
+        }
+        if (scene.id !== expectedSceneId) return false;
+
+        // 关键：恢复 = 把目标场景再提交一次，走与正常提交完全相同的路径。
+        // 被拒绝（如场景切换）时不移动任何历史指针。
+        if (!transport.commit(scene)) return false;
+
+        if (direction === "undo") {
+            undoStack.pop();
+            redoStack.push(present.document);
+        } else {
+            redoStack.pop();
+            undoStack.push(present.document);
+        }
+        if (undoStack.length > UNDO_DEPTH) undoStack.shift();
+        if (redoStack.length > UNDO_DEPTH) redoStack.shift();
+
+        const json = JSON.stringify(target);
+        present = { json, document: structuredClone(target) };
+
+        const record: DirectorCommitRecord = { scene, revision: transport.snapshot().revision, status: "pending" };
+        current = record;
+        attach(record);
+        return true;
+    };
 
     const detach = () => {
         if (unsubscribe) {
@@ -156,6 +218,11 @@ export function createDirectorEditBridge(transport: DirectorCommitTransport, opt
             return record;
         }
 
+        // 历史只在内容变化时前进：相同内容的重复提交（提交回执/无操作改动）
+        // 不产生新的 undo 项。
+        const json = JSON.stringify(document);
+        if (!present || present.json !== json) pushHistory(document, json);
+
         current = { scene, revision: transport.snapshot().revision, status: "pending" };
         attach(current);
         return current;
@@ -163,12 +230,20 @@ export function createDirectorEditBridge(transport: DirectorCommitTransport, opt
 
     const getRecord = () => current;
 
+    const undo = (): boolean => restoreHistory("undo");
+    const redo = (): boolean => restoreHistory("redo");
+    const canUndo = (): boolean => !disposed && undoStack.length > 0;
+    const canRedo = (): boolean => !disposed && redoStack.length > 0;
+
     const dispose = () => {
         if (disposed) return;
         disposed = true;
         detach();
         current = null;
+        undoStack = [];
+        redoStack = [];
+        present = null;
     };
 
-    return { commitDocument, getRecord, dispose };
+    return { commitDocument, getRecord, undo, redo, canUndo, canRedo, dispose };
 }
