@@ -37,6 +37,9 @@ export type FeatureAvailability = {
     systemPluginsVisibleToUsers: boolean;
     agentSubagentsEnabled: boolean;
     directorDeskPrevisMode: DirectorDeskPrevisMode;
+    /** canary 灰度分组:内部账号白名单 + 稳定哈希比例(万分比 0-10000)。服务端按用户解析。 */
+    directorDeskPrevisCanaryUsers?: string[];
+    directorDeskPrevisCanaryBasisPoints?: number;
     configured?: boolean;
     updatedBy?: string;
     updatedAt?: string;

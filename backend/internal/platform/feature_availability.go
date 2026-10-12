@@ -3,6 +3,7 @@ package platform
 import (
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"infinite-canvas/backend/internal/kernel"
 	"strings"
 	"time"
@@ -44,6 +45,9 @@ type FeatureAvailability struct {
 	TimelineTranscriptionEnabled bool   `json:"timelineTranscriptionEnabled"`
 	AgentSubagentsEnabled        bool   `json:"agentSubagentsEnabled"`
 	DirectorDeskPrevisMode       string `json:"directorDeskPrevisMode"`
+	// canary 分组:mode=canary 时生效。内部账号白名单 + 稳定哈希比例(万分比,0-10000)。
+	DirectorDeskPrevisCanaryUsers       []string `json:"directorDeskPrevisCanaryUsers"`
+	DirectorDeskPrevisCanaryBasisPoints int      `json:"directorDeskPrevisCanaryBasisPoints"`
 }
 
 type PublicFeatureAvailability struct {
@@ -75,6 +79,22 @@ func (s *Service) FeatureAvailability() (*PublicFeatureAvailability, error) {
 	if err != nil {
 		return nil, err
 	}
+	return publicFeatureAvailability(setting, value), nil
+}
+
+// UserFeatureAvailability 是登录用户视角的可用性:导演预演台模式按用户灰度
+// 分群(白名单/比例桶)解析,其余开关保持全局值。管理端接口仍读全局原始值。
+func (s *Service) UserFeatureAvailability(user *model.User) (*PublicFeatureAvailability, error) {
+	setting, value, err := s.readFeatureAvailability()
+	if err != nil {
+		return nil, err
+	}
+	value.DirectorDeskPrevisMode = ResolveDirectorDeskPrevisMode(
+		value.DirectorDeskPrevisMode,
+		value.DirectorDeskPrevisCanaryUsers,
+		value.DirectorDeskPrevisCanaryBasisPoints,
+		user.ID,
+	)
 	return publicFeatureAvailability(setting, value), nil
 }
 
@@ -187,11 +207,62 @@ func (s *Service) readFeatureAvailability() (*model.SystemSetting, FeatureAvaila
 	if !validDirectorDeskPrevisMode(value.DirectorDeskPrevisMode) {
 		value.DirectorDeskPrevisMode = DirectorDeskPrevisOff
 	}
+	value.normalizeDirectorDeskPrevisCanary()
 	return setting, value, nil
 }
 
 func validDirectorDeskPrevisMode(mode string) bool {
 	return mode == DirectorDeskPrevisOff || mode == DirectorDeskPrevisCanary || mode == DirectorDeskPrevisOn
+}
+
+// ResolveDirectorDeskPrevisMode 按用户解析导演预演台模式(灰度分群的唯一真源):
+// on → 全量;off/非法 → 全量关;canary → 白名单用户 + 稳定哈希万分比桶。
+// 空用户(未登录)不进入比例桶,匿名体验永远保守。
+func ResolveDirectorDeskPrevisMode(mode string, canaryUsers []string, canaryBasisPoints int, userID string) string {
+	if mode == DirectorDeskPrevisOn {
+		return DirectorDeskPrevisOn
+	}
+	if mode != DirectorDeskPrevisCanary {
+		return DirectorDeskPrevisOff
+	}
+	id := strings.TrimSpace(userID)
+	if id == "" {
+		return DirectorDeskPrevisOff
+	}
+	for _, entry := range canaryUsers {
+		if strings.TrimSpace(entry) == id {
+			return DirectorDeskPrevisCanary
+		}
+	}
+	if canaryBasisPoints <= 0 {
+		return DirectorDeskPrevisOff
+	}
+	if canaryBasisPoints > 10000 {
+		canaryBasisPoints = 10000
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte("director-desk-previs:" + id))
+	if h.Sum32()%10000 < uint32(canaryBasisPoints) {
+		return DirectorDeskPrevisCanary
+	}
+	return DirectorDeskPrevisOff
+}
+
+// 归一化 canary 分组参数:trim 白名单、剔除空项、限制比例到 [0,10000]。
+func (v *FeatureAvailability) normalizeDirectorDeskPrevisCanary() {
+	users := make([]string, 0, len(v.DirectorDeskPrevisCanaryUsers))
+	for _, entry := range v.DirectorDeskPrevisCanaryUsers {
+		if trimmed := strings.TrimSpace(entry); trimmed != "" {
+			users = append(users, trimmed)
+		}
+	}
+	v.DirectorDeskPrevisCanaryUsers = users
+	if v.DirectorDeskPrevisCanaryBasisPoints < 0 {
+		v.DirectorDeskPrevisCanaryBasisPoints = 0
+	}
+	if v.DirectorDeskPrevisCanaryBasisPoints > 10000 {
+		v.DirectorDeskPrevisCanaryBasisPoints = 10000
+	}
 }
 
 func publicFeatureAvailability(setting *model.SystemSetting, value FeatureAvailability) *PublicFeatureAvailability {

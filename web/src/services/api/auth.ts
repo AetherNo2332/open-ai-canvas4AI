@@ -437,7 +437,7 @@ export function getAdminFeatureAvailability() {
 
 export function updateAdminFeatureAvailability(
     features: Partial<
-        Pick<FeatureAvailability, "welcomeEnabled" | "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers" | "agentSubagentsEnabled" | "directorDeskPrevisMode">
+        Pick<FeatureAvailability, "welcomeEnabled" | "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers" | "agentSubagentsEnabled" | "directorDeskPrevisMode" | "directorDeskPrevisCanaryUsers" | "directorDeskPrevisCanaryBasisPoints">
     >,
 ) {
     return http.patch<{ features: FeatureAvailability }>("/admin/settings/features", features);
