@@ -40,3 +40,5 @@
 - Production-readiness execution: image-to-director requests now carry a server-validated `workflow=image_to_director`; the runtime persists the workflow phase and rejects scene writes that skip the successful image inspection or ordered block/design/continuity phases.
 - Production-readiness execution: successful high-level director receipts now include durable run `requestId`, tool `callId`, and the latest scene snapshot token as `revision`.
 - Production-readiness verification: `cd backend && go test ./internal/app -run 'CloudAgentDirector' -count=1`; `cd web && bun test test/image-to-previs-flow.test.ts test/image-to-director-agent.test.ts test/director-desk-feature.test.ts`; `cd web && bun run typecheck` all pass.
+- Production-readiness execution: image workflow failure handling now attempts a guarded rollback of the exact block mutation when the current canvas still matches its after-snapshot; concurrent edits prevent silent overwrite, and continuity-passed workflows are never rolled back.
+- Production-readiness verification: `cd backend && go test ./internal/app -run 'CloudAgentDirector' -count=1` passes after the guarded rollback contract changes.

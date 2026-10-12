@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/repository"
 )
@@ -122,7 +123,7 @@ func cloudAgentDirectorWorkflowError(state *cloudAgentRuntime, call cloudAgentCa
 	return nil
 }
 
-func cloudAgentAdvanceDirectorWorkflow(state *cloudAgentRuntime, toolName string, err error) {
+func cloudAgentAdvanceDirectorWorkflow(state *cloudAgentRuntime, toolName, callID string, err error) {
 	if state == nil || err != nil || state.Request.Workflow != "image_to_director" {
 		return
 	}
@@ -131,11 +132,52 @@ func cloudAgentAdvanceDirectorWorkflow(state *cloudAgentRuntime, toolName string
 		state.DirectorWorkflowPhase = "inspected"
 	case "director_block_scene":
 		state.DirectorWorkflowPhase = "blocked"
+		state.DirectorWorkflowMutationCallID = callID
 	case "director_design_shot":
 		state.DirectorWorkflowPhase = "designed"
 	case "director_check_continuity":
 		state.DirectorWorkflowPhase = "checked"
 	}
+}
+
+func directorWorkflowRollbackEligible(state *cloudAgentRuntime) bool {
+	if state == nil || state.Request.Workflow != "image_to_director" {
+		return false
+	}
+	return state.DirectorWorkflowPhase == "blocked" || state.DirectorWorkflowPhase == "designed"
+}
+
+// rollbackDirectorWorkflowDraft restores only an untouched draft mutation. A
+// later canvas edit, including a user edit, changes the current snapshot hash
+// and deliberately prevents silent overwrite.
+func rollbackDirectorWorkflowDraft(repo *repository.Repository, userID string, state *cloudAgentRuntime, policy RuntimePolicySetting) error {
+	if !directorWorkflowRollbackEligible(state) {
+		return nil
+	}
+	mutation, err := repo.LatestCloudAgentCanvasMutation(userID, state.RuntimeRunID)
+	if err != nil || mutation == nil || mutation.CanvasID != state.Request.CanvasID || mutation.StepID != state.DirectorWorkflowMutationCallID || mutation.BeforeJSON == "" || mutation.AfterSnapshotHash == "" {
+		return nil
+	}
+	canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID)
+	if err != nil {
+		return err
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil || creationHash(doc) != mutation.AfterSnapshotHash {
+		return nil
+	}
+	before, err := creationDocument(mutation.BeforeJSON)
+	if err != nil {
+		return err
+	}
+	if err := saveCloudAgentDocument(repo, canvas, before, policy); err != nil {
+		return err
+	}
+	if err := repo.MarkCloudAgentCanvasMutationUndone(userID, state.RuntimeRunID, mutation.ID, time.Now().UTC()); err != nil {
+		return err
+	}
+	state.DirectorWorkflowPhase = "rolled_back"
+	return nil
 }
 
 func cloudAgentDirectorToolSchema(name string) map[string]any {

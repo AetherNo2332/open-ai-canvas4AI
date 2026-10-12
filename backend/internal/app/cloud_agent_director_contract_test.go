@@ -64,9 +64,21 @@ func TestCloudAgentImageDirectorWorkflowRequiresInspectionBeforeWrites(t *testin
 	if err := cloudAgentDirectorWorkflowError(state, call); err != nil {
 		t.Fatalf("inspected phase rejected block_scene: %v", err)
 	}
-	cloudAgentAdvanceDirectorWorkflow(state, "director_block_scene", nil)
+	cloudAgentAdvanceDirectorWorkflow(state, "director_block_scene", "block-call", nil)
 	call.Function.Name = "director_design_shot"
 	if err := cloudAgentDirectorWorkflowError(state, call); err != nil {
 		t.Fatalf("blocked phase rejected design_shot: %v", err)
+	}
+}
+
+func TestCloudAgentImageDirectorRollbackOnlyAppliesBeforeContinuityPasses(t *testing.T) {
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{Workflow: "image_to_director"}}
+	state.DirectorWorkflowPhase = "blocked"
+	if !directorWorkflowRollbackEligible(state) {
+		t.Fatal("blocked image workflow should be rollback eligible")
+	}
+	state.DirectorWorkflowPhase = "checked"
+	if directorWorkflowRollbackEligible(state) {
+		t.Fatal("continuity-checked workflow must not be silently rolled back")
 	}
 }

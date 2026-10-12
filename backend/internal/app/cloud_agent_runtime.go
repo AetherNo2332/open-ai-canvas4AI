@@ -135,21 +135,22 @@ type cloudAgentRuntime struct {
 	// Snapshot 是本轮不可变的提示合同；首个模型步补齐 Harness 正文，之后只比对不重写。
 	Snapshot *cloudAgentContractSnapshot `json:"contractSnapshot,omitempty"`
 	// PlaceholderTaskID 是承载本轮报价预留的占位任务（当前实现里等于运行 ID）。
-	PlaceholderTaskID     string           `json:"placeholderTaskId,omitempty"`
-	ActiveTaskID          string           `json:"activeTaskId"`
-	PiNoToolTaskID        string           `json:"piNoToolTaskId,omitempty"`
-	PiNoToolNudge         string           `json:"piNoToolNudge,omitempty"`
-	PiModelFailureTaskID  string           `json:"piModelFailureTaskId,omitempty"`
-	PiModelFailureNudge   string           `json:"piModelFailureNudge,omitempty"`
-	ActiveTextDraft       string           `json:"activeTextDraft,omitempty"`
-	MediaTaskID           string           `json:"mediaTaskId,omitempty"`
-	TaskIDs               []string         `json:"taskIds"`
-	Step                  int              `json:"step"`
-	Generations           int              `json:"generations"`
-	VideoSeconds          int              `json:"videoSeconds"`
-	Calls                 []cloudAgentCall `json:"calls"`
-	CallIndex             int              `json:"callIndex"`
-	DirectorWorkflowPhase string           `json:"directorWorkflowPhase,omitempty"`
+	PlaceholderTaskID              string           `json:"placeholderTaskId,omitempty"`
+	ActiveTaskID                   string           `json:"activeTaskId"`
+	PiNoToolTaskID                 string           `json:"piNoToolTaskId,omitempty"`
+	PiNoToolNudge                  string           `json:"piNoToolNudge,omitempty"`
+	PiModelFailureTaskID           string           `json:"piModelFailureTaskId,omitempty"`
+	PiModelFailureNudge            string           `json:"piModelFailureNudge,omitempty"`
+	ActiveTextDraft                string           `json:"activeTextDraft,omitempty"`
+	MediaTaskID                    string           `json:"mediaTaskId,omitempty"`
+	TaskIDs                        []string         `json:"taskIds"`
+	Step                           int              `json:"step"`
+	Generations                    int              `json:"generations"`
+	VideoSeconds                   int              `json:"videoSeconds"`
+	Calls                          []cloudAgentCall `json:"calls"`
+	CallIndex                      int              `json:"callIndex"`
+	DirectorWorkflowPhase          string           `json:"directorWorkflowPhase,omitempty"`
+	DirectorWorkflowMutationCallID string           `json:"directorWorkflowMutationCallId,omitempty"`
 	// ToolRepairs is counted per tool so reads do not reset write-argument repairs.
 	ToolRepairs            map[string]cloudAgentToolRepair `json:"toolRepairs,omitempty"`
 	Approval               *cloudAgentApproval             `json:"approval,omitempty"`
@@ -1056,7 +1057,13 @@ func (s *Service) terminateCloudAgent(run *model.CloudAgentExecution, message st
 
 func (s *Service) failCloudAgent(run *model.CloudAgentExecution, state *cloudAgentRuntime, message string) error {
 	s.RecordObservability(observability.Event{TaskID: run.ActiveTaskID, RunID: run.ID, TraceID: run.ID, Kind: observability.KindTask, Status: observability.StatusFailed, EndedAt: time.Now().UTC(), Reason: message})
-	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+	policy, policyErr := s.RuntimePolicy()
+	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
+		if policyErr == nil {
+			if rollbackErr := rollbackDirectorWorkflowDraft(repo, run.UserID, state, policy); rollbackErr != nil {
+				message += "；导演流程草稿自动回滚失败，请保留当前场景并检查版本冲突"
+			}
+		}
 		current.Status = "failed"
 		current.FailureMessage = truncateRunes(message, 1000)
 		// 终态必须携带收尾标记：首步之前失败时，本轮还压着一笔占位预留，
@@ -1172,7 +1179,7 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	if err == nil && cloudAgentDirectorTool(call.Function.Name) {
 		result = cloudAgentDirectorReceipt(runID, call.ID, result)
 	}
-	cloudAgentAdvanceDirectorWorkflow(state, call.Function.Name, err)
+	cloudAgentAdvanceDirectorWorkflow(state, call.Function.Name, call.ID, err)
 	payload := map[string]any{"toolName": call.Function.Name, "callId": call.ID, "arguments": call.Function.Arguments}
 	if state.PiToolBatchTaskID != "" {
 		payload["taskId"] = state.PiToolBatchTaskID
