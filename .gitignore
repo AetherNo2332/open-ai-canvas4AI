@@ -80,6 +80,10 @@ backend/tmp_*
 /web/dist-previs/
 /renderer/.local/
 
-# Compiled plugin artifacts and local binary builds; never track.
+
+# Compiled plugin artifacts: keep sources/docs/manifests trackable, never track build output.
+plugin-packages/**/*.yingce-plugin
+plugin-packages/**/provider
+plugin-packages/**/provider-*
+# Local backend executable; never commit build output.
 backend/server
-plugin-packages/
