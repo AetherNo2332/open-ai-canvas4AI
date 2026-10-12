@@ -79,3 +79,7 @@ backend/tmp_*
 /web/public/live2d/live2dcubismcore.min.js.map
 /web/dist-previs/
 /renderer/.local/
+
+# Compiled plugin artifacts and local binary builds; never track.
+backend/server
+plugin-packages/
