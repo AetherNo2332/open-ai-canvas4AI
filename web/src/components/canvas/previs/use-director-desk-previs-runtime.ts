@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { createDirectorRuntime, disposeDirectorRuntime, type DirectorRuntime } from "@/integrations/director-desk";
 import { previsSceneToDirectorDocument } from "@/integrations/director-desk/previs-adapter";
 import type { PrevisScene } from "@/types/previs";
@@ -9,6 +9,7 @@ export type DirectorDeskPrevisRuntimeState = {
     runtime: DirectorRuntime | null;
     status: "idle" | "ready" | "error";
     error: unknown;
+    syncScene: (scene: PrevisScene | null) => void;
 };
 
 /** Owns the DirectorDesk browser runtime for exactly one workbench session. */
@@ -19,15 +20,20 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
     const [status, setStatus] = useState<DirectorDeskPrevisRuntimeState["status"]>("idle");
     const [error, setError] = useState<unknown>(null);
 
+    const syncScene = useCallback((nextScene: PrevisScene | null) => {
+        if (!nextScene || !runtimeRef.current) return;
+        const document = previsSceneToDirectorDocument(nextScene);
+        runtimeRef.current.scene.userData.directorDocument = document;
+        runtimeRef.current.syncDocument(document);
+        runtimeRef.current.render();
+    }, []);
+
     useEffect(() => {
         if (!open || !scene || !stageRef.current || !shotRef.current) return;
         if (runtimeRef.current) return;
         try {
             runtimeRef.current = createDirectorRuntime({ stage: stageRef.current, shot: shotRef.current });
-            const document = previsSceneToDirectorDocument(scene);
-            runtimeRef.current.scene.userData.directorDocument = document;
-            runtimeRef.current.syncDocument(document);
-            runtimeRef.current.render();
+            syncScene(scene);
             setStatus("ready");
         } catch (cause) {
             setError(cause);
@@ -39,15 +45,12 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
             runtimeRef.current = null;
             setStatus("idle");
         };
-    }, [open, Boolean(scene)]);
+    }, [open, Boolean(scene), syncScene]);
 
     useEffect(() => {
         if (!runtimeRef.current || !scene) return;
-        const document = previsSceneToDirectorDocument(scene);
-        runtimeRef.current.scene.userData.directorDocument = document;
-        runtimeRef.current.syncDocument(document);
-        runtimeRef.current.render();
-    }, [scene]);
+        syncScene(scene);
+    }, [scene, syncScene]);
 
-    return { stageRef, shotRef, runtime: runtimeRef.current, status, error };
+    return { stageRef, shotRef, runtime: runtimeRef.current, status, error, syncScene };
 }
