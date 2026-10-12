@@ -151,6 +151,7 @@ export type CreateAgentRunInput = {
     profileRevision?: string;
     canvasId: string;
     prompt: string;
+    workflow?: "image_to_director";
     model?: string;
     logicalModelId?: string;
     channelId?: string;

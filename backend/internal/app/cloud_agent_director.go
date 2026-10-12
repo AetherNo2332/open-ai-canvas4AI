@@ -2,11 +2,14 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"infinite-canvas/backend/internal/repository"
 )
+
+var errDirectorWorkflowOrder = errors.New("image_to_director workflow order is invalid")
 
 // cloudAgentDirectorUnderlyingCall compiles high-level director language into
 // the existing checked previs contracts. The model never receives raw
@@ -60,6 +63,78 @@ func cloudAgentDirectorWriteTool(name string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// cloudAgentDirectorReceipt adds one stable envelope to every successful
+// high-level director result. requestId identifies the durable Agent run; the
+// revision is the scene snapshot token returned by the checked previs layer.
+// Keeping this envelope here avoids exposing a second DirectorDesk persistence
+// contract while giving the UI and Harness a uniform correlation point.
+func cloudAgentDirectorReceipt(runID, callID string, result any) any {
+	fields, ok := result.(map[string]any)
+	if !ok || fields == nil {
+		return map[string]any{"requestId": runID, "callId": callID, "result": result}
+	}
+	out := make(map[string]any, len(fields)+4)
+	for key, value := range fields {
+		out[key] = value
+	}
+	out["requestId"] = runID
+	out["callId"] = callID
+	if _, exists := out["revision"]; !exists {
+		if snapshot, exists := out["snapshotHash"].(string); exists && snapshot != "" {
+			out["revision"] = snapshot
+		} else if nested, ok := out["result"].(map[string]any); ok {
+			if snapshot, exists := nested["snapshotHash"].(string); exists && snapshot != "" {
+				out["revision"] = snapshot
+			}
+		}
+	}
+	return out
+}
+
+// Image-to-director is a server-checked workflow, not only a prompt convention.
+// Read-only canvas calls may happen between phases, but scene writes cannot skip
+// the real image receipt or the ordered blocking/design/continuity steps.
+func cloudAgentDirectorWorkflowError(state *cloudAgentRuntime, call cloudAgentCall) error {
+	if state == nil || state.Request.Workflow != "image_to_director" {
+		return nil
+	}
+	switch call.Function.Name {
+	case "director_block_scene":
+		if state.DirectorWorkflowPhase != "inspected" {
+			return fmt.Errorf("%w: director_block_scene 之前必须成功完成 canvas_inspect_image", errDirectorWorkflowOrder)
+		}
+	case "director_design_shot":
+		if state.DirectorWorkflowPhase != "blocked" {
+			return fmt.Errorf("%w: director_design_shot 之前必须成功完成 director_block_scene", errDirectorWorkflowOrder)
+		}
+	case "director_check_continuity":
+		if state.DirectorWorkflowPhase != "designed" {
+			return fmt.Errorf("%w: director_check_continuity 之前必须成功完成 director_design_shot", errDirectorWorkflowOrder)
+		}
+	case "director_preview_shot", "director_handoff_shot":
+		if state.DirectorWorkflowPhase != "checked" {
+			return fmt.Errorf("%w: 预览或交付之前必须成功完成 director_check_continuity", errDirectorWorkflowOrder)
+		}
+	}
+	return nil
+}
+
+func cloudAgentAdvanceDirectorWorkflow(state *cloudAgentRuntime, toolName string, err error) {
+	if state == nil || err != nil || state.Request.Workflow != "image_to_director" {
+		return
+	}
+	switch toolName {
+	case "canvas_inspect_image":
+		state.DirectorWorkflowPhase = "inspected"
+	case "director_block_scene":
+		state.DirectorWorkflowPhase = "blocked"
+	case "director_design_shot":
+		state.DirectorWorkflowPhase = "designed"
+	case "director_check_continuity":
+		state.DirectorWorkflowPhase = "checked"
 	}
 }
 

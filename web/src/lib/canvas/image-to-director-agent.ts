@@ -48,6 +48,7 @@ export function buildImageToDirectorAgentRequest(options: ImageToDirectorAgentRe
     return {
         canvasId: options.canvasId,
         prompt: buildImageToDirectorAgentPrompt(options.reference),
+        workflow: "image_to_director",
         model,
         permissionMode: options.permissionMode || "request_approval",
         contextScope: ["canvas"],

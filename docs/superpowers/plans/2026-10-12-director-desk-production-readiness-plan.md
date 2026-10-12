@@ -56,6 +56,9 @@
 - **P0 已落地第一切片**：服务端新增 `directorDeskPrevisMode`，支持 `off`、`canary`、`on`，未知值安全回退到 `off`；管理员功能开放面板可直接切换。
 - **P1 已落地第一切片**：DirectorDesk 运行时可在草稿变化时实时同步场景文档，并保留旧工作台作为回退和编辑宿主。
 - **P1 尚未完成**：DirectorDesk 仍未接管完整视口、时间轴、检查器和提交事件，`on` 模式暂不能作为生产开关使用。
+- **P3 已落地第一切片**：导演工具成功回执统一携带 `requestId`、`callId` 和场景 `revision` 快照令牌。
+- **P4 已落地第一切片**：图片入口带服务端识别工作流标识，服务端拒绝跳过识图回执的场面调度、镜头设计和连续性检查。
+- **P4 尚未完成**：正式场景仍需要 staging draft、原子提交和失败回滚；当前不能把“顺序校验通过”当成事务闭环。
 - 已通过：DirectorDesk feature flag focused test、workbench lifecycle test、admin regression test、Go feature availability test、Web typecheck。
 
 ## 阶段计划

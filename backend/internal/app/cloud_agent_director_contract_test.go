@@ -41,3 +41,32 @@ func TestCloudAgentDirectorDesignShotCompilesToPrevisPatch(t *testing.T) {
 		t.Fatalf("unexpected normalized args: %s", normalized.Function.Arguments)
 	}
 }
+
+func TestCloudAgentDirectorReceiptCarriesRunCorrelationAndSceneRevision(t *testing.T) {
+	result := cloudAgentDirectorReceipt("run-1", "call-1", map[string]any{"snapshotHash": "scene-hash", "committed": true})
+	fields, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("receipt type = %T", result)
+	}
+	if fields["requestId"] != "run-1" || fields["callId"] != "call-1" || fields["revision"] != "scene-hash" {
+		t.Fatalf("unexpected director receipt: %#v", fields)
+	}
+}
+
+func TestCloudAgentImageDirectorWorkflowRequiresInspectionBeforeWrites(t *testing.T) {
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{Workflow: "image_to_director"}}
+	call := cloudAgentCall{}
+	call.Function.Name = "director_block_scene"
+	if err := cloudAgentDirectorWorkflowError(state, call); err == nil {
+		t.Fatal("director_block_scene must require a successful image inspection")
+	}
+	state.DirectorWorkflowPhase = "inspected"
+	if err := cloudAgentDirectorWorkflowError(state, call); err != nil {
+		t.Fatalf("inspected phase rejected block_scene: %v", err)
+	}
+	cloudAgentAdvanceDirectorWorkflow(state, "director_block_scene", nil)
+	call.Function.Name = "director_design_shot"
+	if err := cloudAgentDirectorWorkflowError(state, call); err != nil {
+		t.Fatalf("blocked phase rejected design_shot: %v", err)
+	}
+}
