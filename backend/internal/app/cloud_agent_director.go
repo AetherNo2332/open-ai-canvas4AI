@@ -123,7 +123,7 @@ func cloudAgentDirectorWorkflowError(state *cloudAgentRuntime, call cloudAgentCa
 	return nil
 }
 
-func cloudAgentAdvanceDirectorWorkflow(state *cloudAgentRuntime, toolName, callID string, err error) {
+func cloudAgentAdvanceDirectorWorkflow(state *cloudAgentRuntime, toolName, callID string, result any, err error) {
 	if state == nil || err != nil || state.Request.Workflow != "image_to_director" {
 		return
 	}
@@ -136,8 +136,27 @@ func cloudAgentAdvanceDirectorWorkflow(state *cloudAgentRuntime, toolName, callI
 	case "director_design_shot":
 		state.DirectorWorkflowPhase = "designed"
 	case "director_check_continuity":
-		state.DirectorWorkflowPhase = "checked"
+		if directorContinuityPassed(result) {
+			state.DirectorWorkflowPhase = "checked"
+		}
 	}
+}
+
+// directorContinuityPassed reports whether a continuity result cleared every
+// blocking issue. It reads the receipt-wrapped director result and is fail-
+// closed: a missing status, or a non-bool ok, counts as a non-pass, so a failed
+// check never advances the image-to-director workflow to checked.
+func directorContinuityPassed(result any) bool {
+	fields, ok := result.(map[string]any)
+	if !ok {
+		return false
+	}
+	status, ok := fields["status"].(map[string]any)
+	if !ok {
+		return false
+	}
+	passed, _ := status["ok"].(bool)
+	return passed
 }
 
 func directorWorkflowRollbackEligible(state *cloudAgentRuntime) bool {

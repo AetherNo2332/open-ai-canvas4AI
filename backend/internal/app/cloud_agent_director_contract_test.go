@@ -64,7 +64,7 @@ func TestCloudAgentImageDirectorWorkflowRequiresInspectionBeforeWrites(t *testin
 	if err := cloudAgentDirectorWorkflowError(state, call); err != nil {
 		t.Fatalf("inspected phase rejected block_scene: %v", err)
 	}
-	cloudAgentAdvanceDirectorWorkflow(state, "director_block_scene", "block-call", nil)
+	cloudAgentAdvanceDirectorWorkflow(state, "director_block_scene", "block-call", nil, nil)
 	call.Function.Name = "director_design_shot"
 	if err := cloudAgentDirectorWorkflowError(state, call); err != nil {
 		t.Fatalf("blocked phase rejected design_shot: %v", err)

@@ -1179,7 +1179,7 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	if err == nil && cloudAgentDirectorTool(call.Function.Name) {
 		result = cloudAgentDirectorReceipt(runID, call.ID, result)
 	}
-	cloudAgentAdvanceDirectorWorkflow(state, call.Function.Name, call.ID, err)
+	cloudAgentAdvanceDirectorWorkflow(state, call.Function.Name, call.ID, result, err)
 	payload := map[string]any{"toolName": call.Function.Name, "callId": call.ID, "arguments": call.Function.Arguments}
 	if state.PiToolBatchTaskID != "" {
 		payload["taskId"] = state.PiToolBatchTaskID
