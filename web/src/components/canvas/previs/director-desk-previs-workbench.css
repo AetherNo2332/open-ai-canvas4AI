@@ -5,12 +5,14 @@
     height: 174px;
     overflow: hidden;
     opacity: 0.96;
-    pointer-events: none;
+    pointer-events: auto;
     z-index: 4;
     border: 1px solid rgba(127, 135, 140, 0.35);
     border-radius: 10px;
     background: #c6c8c6;
     box-shadow: 0 12px 28px rgba(0,0,0,.18);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
 }
 
 .director-desk-runtime-stage {
