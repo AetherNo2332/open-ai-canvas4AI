@@ -1,0 +1,137 @@
+/* Admin console tokens. Scoped only to admin roots.
+ * Retain admin density while surfaces, states and geometry consume the site skin. */
+
+:is([data-admin-root], body.admin-overlays, .admin-drawer, .admin-secondary-drawer, .admin-modal-root, .admin-channel-modal-root, .admin-mobile-navigation-menu) {
+    --admin-font: ui-sans-serif, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+    --admin-font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    --admin-space: 8px;
+    --admin-radius-sm: var(--input-radius);
+    --admin-radius: var(--button-radius);
+    --admin-radius-lg: var(--card-radius);
+    --admin-control-h: 32px;
+    --admin-control-h-sm: 28px;
+    --admin-row-h: 36px;
+    --admin-row-padding: 4px;
+    --admin-head-h: 32px;
+    --admin-sidebar-width: 208px;
+    --admin-sidebar-collapsed: 64px;
+    --admin-motion: 120ms ease;
+    --admin-shadow-overlay: var(--elevation-overlay);
+
+    --admin-canvas: var(--site-admin-canvas);
+    --admin-sidebar: var(--site-admin-canvas);
+    --admin-surface: var(--site-admin-surface);
+    --admin-surface-2: var(--site-admin-subtle);
+    --admin-surface-3: var(--site-admin-strong);
+    --admin-text: var(--site-text);
+    --admin-text-secondary: var(--site-muted);
+    --admin-text-muted: var(--site-muted);
+    --admin-text-placeholder: var(--control-disabled-fg);
+    --admin-border: var(--site-border);
+    --admin-border-strong: var(--site-control-border);
+    --admin-divider: var(--site-border);
+    --admin-row-border: var(--site-border);
+    --admin-row-hover: var(--surface-hover);
+    --admin-nav-hover: var(--surface-hover);
+    --admin-nav-active: var(--control-selected-bg);
+    --admin-nav-active-border: transparent;
+    --admin-accent: var(--btn-solid-bg);
+    --admin-accent-fg: var(--btn-solid-fg);
+    --admin-focus: var(--control-focus-ring);
+    --admin-status-success: var(--palette-status-success);
+    --admin-status-warning: var(--palette-status-warning);
+    --admin-status-error: var(--palette-status-error);
+    --admin-status-info: var(--palette-status-loading);
+    --admin-switch-on: var(--control-switch-checked-bg);
+    --admin-chart-primary: var(--primary);
+    --admin-chart-secondary: var(--palette-status-loading);
+    --admin-chart-warning: var(--palette-status-warning);
+    --admin-card-shadow: none;
+
+    /* Compatibility aliases used by existing admin-ui.css. Independent values, not workspace skins. */
+    --admin-layer-0: var(--admin-canvas);
+    --admin-layer-1: var(--admin-surface);
+    --admin-layer-2: var(--admin-surface-2);
+    --admin-layer-3: var(--admin-surface-3);
+    --admin-text-primary: var(--admin-text);
+    --admin-control-border: var(--admin-border-strong);
+    --admin-card-border: var(--admin-border);
+
+    /* Firewall: leftover product/skin variables must resolve to admin values inside this tree. */
+    --background: var(--admin-canvas);
+    --foreground: var(--admin-text);
+    --color-surface: var(--admin-surface);
+    --color-border: var(--admin-border);
+    --border: var(--admin-border);
+    --muted: var(--admin-surface-2);
+    --popover: var(--admin-surface);
+    --ring: var(--admin-focus);
+    --font-sans: var(--admin-font);
+    --workspace-content: var(--admin-canvas);
+    --workspace-surface: var(--admin-surface);
+    --workspace-navigation: var(--admin-sidebar);
+    --workspace-page: var(--admin-canvas);
+    --workspace-accent: var(--admin-accent);
+    --workspace-nav-active-bg: var(--admin-nav-active);
+    --workspace-sidebar-width: var(--admin-sidebar-width);
+    --skin-admin-layer-0: var(--admin-canvas);
+    --skin-admin-layer-1: var(--admin-surface);
+    --skin-admin-layer-2: var(--admin-surface-2);
+    --skin-admin-layer-3: var(--admin-surface-3);
+    --theme-admin-card-shadow: none;
+    --r-sm: var(--admin-radius-sm);
+    --r-md: var(--admin-radius);
+    --r-lg: var(--admin-radius-lg);
+    --r-xl: var(--admin-radius-lg);
+    --r-2xl: var(--admin-radius-lg);
+    --motion-instant: var(--admin-motion);
+    --motion-state: var(--admin-motion);
+    --motion-ease-out: ease;
+
+    color: var(--admin-text);
+    font-family: var(--admin-font);
+    font-size: 13px;
+    line-height: 1.45;
+    font-feature-settings:
+        "ss01" 0,
+        "cv11" 0;
+}
+
+.dark :is([data-admin-root], .admin-drawer, .admin-secondary-drawer, .admin-modal-root, .admin-channel-modal-root, .admin-mobile-navigation-menu),
+.dark body.admin-overlays {
+    --admin-canvas: var(--site-admin-canvas);
+    --admin-sidebar: var(--site-admin-canvas);
+    --admin-surface: var(--site-admin-surface);
+    --admin-surface-2: var(--site-admin-subtle);
+    --admin-surface-3: var(--site-admin-strong);
+    --admin-text: var(--site-text);
+    --admin-text-secondary: var(--site-muted);
+    --admin-text-muted: var(--site-muted);
+    --admin-text-placeholder: var(--control-disabled-fg);
+    --admin-border: var(--site-border);
+    --admin-border-strong: var(--site-control-border);
+    --admin-divider: var(--site-border);
+    --admin-row-border: var(--site-border);
+    --admin-row-hover: var(--surface-hover);
+    --admin-nav-hover: var(--surface-hover);
+    --admin-nav-active: var(--control-selected-bg);
+    --admin-nav-active-border: transparent;
+    --admin-accent: var(--btn-solid-bg);
+    --admin-accent-fg: var(--btn-solid-fg);
+    --admin-focus: var(--control-focus-ring);
+    --admin-status-success: var(--palette-status-success);
+    --admin-status-warning: var(--palette-status-warning);
+    --admin-status-error: var(--palette-status-error);
+    --admin-status-info: var(--palette-status-loading);
+    --admin-switch-on: var(--control-switch-checked-bg);
+    --admin-chart-primary: var(--primary);
+    --admin-chart-secondary: var(--palette-status-loading);
+    --admin-chart-warning: var(--palette-status-warning);
+    --admin-shadow-overlay: var(--elevation-overlay);
+}
+
+[data-admin-root][data-admin-density="comfortable"] {
+    --admin-row-h: 44px;
+    --admin-row-padding: 8px;
+    --admin-head-h: 36px;
+}

@@ -1,0 +1,619 @@
+[
+  {
+    "name": "delete frame detaches children and removes edges",
+    "input": {
+      "nodes": [
+        {
+          "id": "frame",
+          "type": "frame",
+          "title": "frame",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {}
+        },
+        {
+          "id": "child",
+          "type": "image",
+          "title": "child",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "content": "asset.png",
+            "assetId": "shared"
+          },
+          "parentId": "frame"
+        },
+        {
+          "id": "kept",
+          "type": "text",
+          "title": "kept",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {}
+        }
+      ],
+      "connections": [
+        {
+          "id": "e",
+          "fromNodeId": "frame",
+          "toNodeId": "kept"
+        }
+      ]
+    },
+    "ops": [
+      {
+        "type": "delete_node",
+        "id": "frame"
+      }
+    ],
+    "expected": {
+      "nodeCount": 2,
+      "nodeAssertions": [
+        {
+          "id": "child",
+          "metadata": {
+            "assetId": "shared",
+            "content": "asset.png"
+          },
+          "absentNodeFields": [
+            "parentId"
+          ]
+        }
+      ],
+      "connections": []
+    }
+  },
+  {
+    "name": "delete storyboard output clears owned and reference relationships",
+    "input": {
+      "nodes": [
+        {
+          "id": "image",
+          "type": "image",
+          "title": "image",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "content": "asset.png",
+            "assetId": "shared"
+          }
+        },
+        {
+          "id": "script",
+          "type": "script",
+          "title": "script",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "storyboard": {
+              "referenceNodeIds": [
+                "image"
+              ],
+              "visibleColumns": [
+                "shotNumber"
+              ],
+              "rows": [
+                {
+                  "id": "r",
+                  "shotNumber": 1,
+                  "plotDescription": "plot",
+                  "imageGenerationPrompt": "prompt",
+                  "assetBindings": [
+                    {
+                      "nodeId": "image",
+                      "kind": "image"
+                    }
+                  ],
+                  "imageNodeId": "image"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "e",
+          "fromNodeId": "image",
+          "toNodeId": "script"
+        }
+      ]
+    },
+    "ops": [
+      {
+        "type": "delete_node",
+        "id": "image"
+      }
+    ],
+    "expected": {
+      "nodeCount": 1,
+      "nodeAssertions": [
+        {
+          "id": "script",
+          "metadata": {
+            "storyboard": {
+              "referenceNodeIds": [],
+              "visibleColumns": [
+                "shotNumber"
+              ],
+              "rows": [
+                {
+                  "id": "r",
+                  "shotNumber": 1,
+                  "plotDescription": "plot",
+                  "imageGenerationPrompt": "prompt",
+                  "assetBindings": []
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "connections": []
+    }
+  },
+  {
+    "name": "duplicate media retains inbound reference but isolates running tasks",
+    "input": {
+      "nodes": [
+        {
+          "id": "reference",
+          "type": "image",
+          "title": "reference",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "content": "reference.png"
+          }
+        },
+        {
+          "id": "video",
+          "type": "video",
+          "title": "video",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "content": "movie.mp4",
+            "prompt": "keep prompt",
+            "taskId": "task",
+            "taskStatus": "running",
+            "taskProgress": 42,
+            "status": "loading",
+            "batchRootId": "root",
+            "versionOfNodeId": "root",
+            "versionLabel": "B",
+            "videoStartFrameNodeId": "reference",
+            "retryOf": "old-task",
+            "attemptGroupId": "old-group",
+            "generationAppliedKeys": [
+              "old-effect"
+            ],
+            "generationErrorCode": "old-error"
+          }
+        },
+        {
+          "id": "video_copy1",
+          "type": "text",
+          "title": "video_copy1",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {}
+        }
+      ],
+      "connections": [
+        {
+          "id": "e",
+          "fromNodeId": "reference",
+          "toNodeId": "video"
+        }
+      ]
+    },
+    "ops": [
+      {
+        "type": "duplicate_node",
+        "sourceNodeId": "video",
+        "id": "copy"
+      }
+    ],
+    "expected": {
+      "nodeCount": 4,
+      "nodeAssertions": [
+        {
+          "id": "copy",
+          "title": "video_copy2",
+          "position": {
+            "x": 36,
+            "y": 36
+          },
+          "metadata": {
+            "content": "movie.mp4",
+            "prompt": "keep prompt",
+            "copiedFromNodeId": "video",
+            "generationResultPlacement": "replace-node",
+            "videoStartFrameNodeId": "reference",
+            "status": "success"
+          },
+          "absentMetadata": [
+            "taskId",
+            "taskStatus",
+            "taskProgress",
+            "batchRootId",
+            "versionOfNodeId",
+            "versionLabel",
+            "retryOf",
+            "attemptGroupId",
+            "generationAppliedKeys",
+            "generationErrorCode"
+          ]
+        }
+      ],
+      "connections": [
+        {
+          "fromNodeId": "reference",
+          "toNodeId": "video"
+        },
+        {
+          "fromNodeId": "reference",
+          "toNodeId": "copy"
+        }
+      ]
+    }
+  },
+  {
+    "name": "duplicate frame copies children and remaps internal edges",
+    "input": {
+      "nodes": [
+        {
+          "id": "frame",
+          "type": "frame",
+          "title": "frame",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "frame": {
+              "collapsed": false
+            }
+          }
+        },
+        {
+          "id": "a",
+          "type": "text",
+          "title": "a",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "content": "text"
+          },
+          "parentId": "frame"
+        },
+        {
+          "id": "b",
+          "type": "video",
+          "title": "b",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "videoStartFrameNodeId": "a"
+          },
+          "parentId": "frame"
+        }
+      ],
+      "connections": [
+        {
+          "id": "e",
+          "fromNodeId": "a",
+          "toNodeId": "b"
+        }
+      ]
+    },
+    "ops": [
+      {
+        "type": "duplicate_node",
+        "sourceNodeId": "frame",
+        "id": "copy"
+      }
+    ],
+    "expected": {
+      "nodeCount": 6,
+      "nodeAssertions": [
+        {
+          "id": "copy",
+          "title": "frame_copy1",
+          "position": {
+            "x": 36,
+            "y": 36
+          }
+        },
+        {
+          "copiedFromNodeId": "a",
+          "parentCopiedFromNodeId": "frame",
+          "position": {
+            "x": 36,
+            "y": 36
+          }
+        },
+        {
+          "copiedFromNodeId": "b",
+          "parentCopiedFromNodeId": "frame",
+          "metadataReferenceAssertions": {
+            "videoStartFrameNodeId": "a"
+          }
+        }
+      ],
+      "connections": [
+        {
+          "fromNodeId": "a",
+          "toNodeId": "b"
+        },
+        {
+          "fromCopiedNodeId": "a",
+          "toCopiedNodeId": "b"
+        }
+      ]
+    }
+  },
+  {
+    "name": "duplicate native drawing retains full content with new document identity",
+    "input": {
+      "nodes": [
+        {
+          "id": "drawing",
+          "type": "drawing",
+          "title": "drawing",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "drawingId": "original-document",
+            "drawingEngine": "excalidraw",
+            "drawingRevision": 4,
+            "drawingShapeCount": 0,
+            "drawingPageCount": 1,
+            "drawingDocument": {
+              "version": 2,
+              "engine": "excalidraw",
+              "revision": 4,
+              "updatedAt": "2026-10-07T10:00:04Z",
+              "shapeCount": 0,
+              "pageCount": 1,
+              "snapshot": {
+                "type": "excalidraw",
+                "version": 2,
+                "source": "canvas",
+                "elements": [],
+                "appState": {},
+                "files": {}
+              }
+            }
+          }
+        }
+      ],
+      "connections": []
+    },
+    "ops": [
+      {
+        "type": "duplicate_node",
+        "sourceNodeId": "drawing",
+        "id": "copy"
+      }
+    ],
+    "expected": {
+      "nodeCount": 2,
+      "nodeAssertions": [
+        {
+          "id": "copy",
+          "metadata": {
+            "drawingId": "copy-document",
+            "drawingEngine": "excalidraw",
+            "drawingRevision": 1,
+            "drawingDocument": {
+              "version": 2,
+              "engine": "excalidraw",
+              "revision": 1,
+              "shapeCount": 0,
+              "pageCount": 1,
+              "snapshot": {
+                "type": "excalidraw",
+                "version": 2,
+                "source": "canvas",
+                "elements": [],
+                "appState": {},
+                "files": {}
+              }
+            }
+          }
+        }
+      ],
+      "connections": []
+    }
+  },
+  {
+    "name": "duplicate storyboard in a frame preserves copied owned outputs and drops external owned output",
+    "input": {
+      "nodes": [
+        {
+          "id": "frame",
+          "type": "frame",
+          "title": "frame",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 920,
+          "height": 720,
+          "metadata": {}
+        },
+        {
+          "id": "script",
+          "type": "script",
+          "title": "script",
+          "parentId": "frame",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "width": 920,
+          "height": 360,
+          "metadata": {
+            "storyboard": {
+              "visibleColumns": [
+                "shotNumber"
+              ],
+              "referenceNodeIds": [
+                "image",
+                "external"
+              ],
+              "rows": [
+                {
+                  "id": "r",
+                  "shotNumber": 1,
+                  "plotDescription": "plot",
+                  "imageGenerationPrompt": "prompt",
+                  "status": "success",
+                  "imageNodeId": "image",
+                  "videoNodeId": "external",
+                  "assetBindings": [
+                    {
+                      "nodeId": "external",
+                      "kind": "image"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "image",
+          "type": "image",
+          "title": "image",
+          "parentId": "frame",
+          "position": {
+            "x": 100,
+            "y": 100
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "content": "asset.png"
+          }
+        },
+        {
+          "id": "external",
+          "type": "video",
+          "title": "external",
+          "position": {
+            "x": 1000,
+            "y": 0
+          },
+          "width": 320,
+          "height": 240,
+          "metadata": {
+            "content": "external.mp4"
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "owned",
+          "fromNodeId": "script",
+          "toNodeId": "image"
+        }
+      ]
+    },
+    "ops": [
+      {
+        "type": "duplicate_node",
+        "sourceNodeId": "frame",
+        "id": "copy"
+      }
+    ],
+    "expected": {
+      "nodeCount": 7,
+      "nodeAssertions": [
+        {
+          "copiedFromNodeId": "script",
+          "metadata": {
+            "storyboard": {
+              "rows": [
+                {
+                  "id": "r",
+                  "status": "success",
+                  "assetBindings": [
+                    {
+                      "nodeId": "external",
+                      "kind": "image"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "metadataReferenceAssertions": {
+            "storyboard.rows.0.imageNodeId": "image"
+          },
+          "absentMetadata": [
+            "storyboard.rows.0.videoNodeId"
+          ]
+        }
+      ],
+      "connections": [
+        {
+          "fromNodeId": "script",
+          "toNodeId": "image"
+        },
+        {
+          "fromCopiedNodeId": "script",
+          "toCopiedNodeId": "image"
+        }
+      ]
+    }
+  }
+]

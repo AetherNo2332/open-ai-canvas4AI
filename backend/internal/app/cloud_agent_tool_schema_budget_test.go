@@ -1,0 +1,76 @@
+package app
+
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+)
+
+// 工具 schema 是每一步都要发出去（并且是前缀缓存的第一段）的固定开销，因此值得钉住体积：
+// 平台工具全集按 auto + canvas + 技能构造（覆盖条件暴露的工具）。
+func platformToolSchema(t *testing.T) ([]map[string]any, []byte) {
+	t.Helper()
+	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}}
+	req.Budget.MaxGenerationTasks = 1
+	tools := cloudAgentTools(req)
+	raw, err := json.Marshal(tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tools, raw
+}
+
+func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
+	tools, raw := platformToolSchema(t)
+	t.Logf("platform tool schema: %d tools, %d bytes", len(tools), len(raw))
+	for _, tool := range tools {
+		encoded, _ := json.Marshal(tool)
+		if len(encoded) > 2000 {
+			t.Logf("%v: %d bytes", tool["function"].(map[string]any)["name"], len(encoded))
+		}
+	}
+
+	// 条件必填不是 type 枚举能表达的约束，压缩描述不能删掉协议语义。
+	found := false
+	for _, tool := range tools {
+		function, _ := tool["function"].(map[string]any)
+		if function["name"] != "canvas_apply_ops" {
+			continue
+		}
+		found = true
+		parameters, _ := function["parameters"].(map[string]any)
+		ops, _ := parameters["properties"].(map[string]any)
+		items, _ := ops["ops"].(map[string]any)
+		opItem, _ := items["items"].(map[string]any)
+		want := []map[string]any{
+			{"properties": map[string]any{"type": map[string]any{"const": "add_node"}}, "required": []string{"nodeType"}},
+			{"properties": map[string]any{"type": map[string]any{"const": "update_node"}}, "required": []string{"patch"}},
+			{"properties": map[string]any{"type": map[string]any{"const": "connect_nodes"}}, "required": []string{"fromNodeId", "toNodeId"}},
+		}
+		branches, ok := opItem["oneOf"].([]map[string]any)
+		if !ok || len(branches) != 11 || !reflect.DeepEqual(branches[:3], want) {
+			t.Fatalf("操作类型条件必填约束丢失: %#v", opItem["oneOf"])
+		}
+		if props, ok := opItem["properties"].(map[string]any); !ok || len(props) == 0 {
+			t.Fatal("canvas_apply_ops 的 ops.items 必须保留 properties")
+		}
+	}
+	if !found {
+		t.Fatal("canvas_apply_ops 未暴露")
+	}
+
+	// The full eligible catalog is sent at run start. Budget its actual request
+	// size rather than estimating from category subsets.
+	_ = raw
+	wire, err := json.Marshal(cloudAgentVisibleTools(tools, "", nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("wire schema: %d tools, %d bytes", len(cloudAgentToolNames(tools)), len(wire))
+	// Core CRUD, native drawing, asset binding, history and structured rows add
+	// bounded contracts. Deep node patches are discovered on demand; pin the
+	// complete catalog size rather than embedding every native schema per step.
+	if len(wire) > 64000 {
+		t.Fatalf("模型实际接收的完整工具 schema 超出 64000 字节：%d", len(wire))
+	}
+}

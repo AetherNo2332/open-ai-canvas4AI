@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN" class="font-sans">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="AI 影视与短剧创作工作台" />
+        <!-- 不写内置品牌资源：首屏必须品牌中性，favicon 由 use-appearance-store 解析出外观后写入。
+             空 data URL 只是为了不让浏览器去请求 /favicon.ico（那会是一条 404）。 -->
+        <link rel="icon" href="data:," />
+        <title>正在加载</title>
+        <style>
+            /* Fix layer order before production chunks can register utilities ahead of base. */
+            @layer theme, base, components, utilities;
+
+            html,
+            body {
+                margin: 0;
+                background: #ffffff;
+            }
+            html.dark,
+            html.dark body {
+                background: #0f0f0f;
+            }
+            /* 启动占位只留一条发丝进度线；swiss-design 禁止装饰图形与无阻尼脉冲动画。
+               这里必须用字面色值：皮肤 token 要等应用 CSS 之后才存在。 */
+            #root:empty {
+                min-height: 100dvh;
+            }
+            #root:empty::before {
+                content: "";
+                position: fixed;
+                top: 0;
+                right: 0;
+                left: 0;
+                height: 2px;
+                background: rgba(17, 17, 17, 0.12);
+            }
+            #root:empty::after {
+                content: "";
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 26%;
+                height: 2px;
+                background: #111111;
+                animation: appearance-bootstrap-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+            }
+            html.dark #root:empty::before {
+                background: rgba(255, 255, 255, 0.16);
+            }
+            html.dark #root:empty::after {
+                background: #ffffff;
+            }
+            @keyframes appearance-bootstrap-sweep {
+                0% { transform: translateX(-100%); }
+                100% { transform: translateX(400%); }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                #root:empty::after {
+                    animation: none;
+                    width: 100%;
+                    opacity: 0.3;
+                }
+            }
+        </style>
+        <script>
+            try {
+                var s = JSON.parse(localStorage.getItem("infinite-canvas:theme_store") || "{}");
+                var t = s.state && s.state.theme === "dark" ? "dark" : "light";
+                document.documentElement.classList.toggle("dark", t === "dark");
+                document.documentElement.style.colorScheme = t;
+            } catch (e) {}
+        </script>
+    </head>
+    <body class="bg-background text-foreground antialiased" style="background:#ffffff">
+        <div id="root"></div>
+        <script type="module" src="/src/main.tsx"></script>
+    </body>
+</html>

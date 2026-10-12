@@ -1,0 +1,20 @@
+{
+  "image": {"inputKind":"image","mode":"image"},
+  "text": {"inputKind":"text","mode":"text"},
+  "drawing": {"inputKind":"image"},
+  "script": {"inputKind":"text","mode":"text"},
+  "skill": {"inputKind":"text"},
+  "config": {"mode":"image","metadataMode":true},
+  "video": {"inputKind":"video","mode":"video"},
+  "audio": {"inputKind":"audio","mode":"audio"},
+  "frame": {"blocked":true},
+  "markdown": {"inputKind":"text"},
+  "svg": {"inputKind":"text"},
+  "html": {"inputKind":"text"},
+  "panorama": {"inputKind":"image"},
+  "compare": {"inputKind":"image"},
+  "chart": {"inputKind":"text"},
+  "colorgrade": {"inputKind":"image"},
+  "media-conversion": {"inputKind":"image","acceptedInputKinds":["image","video"],"acceptedSourceTypes":["image","video"],"maxInputCount":1},
+  "batch-table": {"inputKind":"text","acceptedInputKinds":["image"]}
+}

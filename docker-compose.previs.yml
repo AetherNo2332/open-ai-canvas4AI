@@ -1,0 +1,39 @@
+# Overlay: docker compose -f docker-compose.deploy.yml -f docker-compose.previs.yml ...
+services:
+  backend:
+    environment:
+      CANVAS_PREVIS_RENDERER_URL: http://previs-renderer:8081
+      CANVAS_PREVIS_RENDERER_TOKEN: ${CANVAS_PREVIS_RENDERER_TOKEN:?请生成独立的至少32字符预演服务密钥}
+    networks:
+      - default
+      - previs-internal
+    depends_on:
+      previs-renderer:
+        condition: service_healthy
+  previs-renderer:
+    init: true
+    image: ${CANVAS_PREVIS_RENDERER_IMAGE:-canvas-previs-renderer:local}
+    build:
+      context: .
+      dockerfile: renderer/Dockerfile
+    environment:
+      PREVIS_RENDERER_TOKEN: ${CANVAS_PREVIS_RENDERER_TOKEN:?请生成独立的至少32字符预演服务密钥}
+    volumes:
+      - previs-jobs:/data
+    networks:
+      - previs-internal
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 256
+    shm_size: 256m
+    restart: unless-stopped
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+networks:
+  previs-internal:
+    internal: true
+volumes:
+  previs-jobs:

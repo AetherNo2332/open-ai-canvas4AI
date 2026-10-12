@@ -1,0 +1,243 @@
+/* Route error — Swiss International Style.
+   版式、栅格、按钮和字重遵循工作区 skill `swiss-design`（.agents/skills/swiss-design）：
+   IBM Plex Sans、12 列 8px 基准栅格、透明度做层级、单一强调色、直角构件、150ms 只动 transform/opacity。
+   颜色全部消费站点外观 / 主体皮肤写入 :root 的语义 token，本文件不写死任何颜色。 */
+
+.route-error-page {
+    --re-fill: var(--button-primary-bg);
+    --re-fill-hover: var(--button-primary-hover-bg);
+    --re-ink-70: color-mix(in oklab, var(--foreground) 70%, transparent);
+    --re-ink-10: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --re-ink-border: color-mix(in oklab, var(--foreground) 25%, transparent);
+    --re-gutter: var(--space-4);
+    --re-hairline: 1px solid var(--border);
+    --re-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+    display: flex;
+    flex-direction: column;
+    /* 工作区全局把 html/body/#root 设为 overflow: hidden，这里自带滚动容器，
+       否则窄屏或长错误信息下按钮会被裁掉且无法触达。 */
+    height: 100dvh;
+    overflow-y: auto;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: "IBM Plex Sans Variable", "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+    -webkit-text-size-adjust: 100%;
+}
+
+/* 12 列栅格，移动端单列；区块间距与内边距全部落在 8px 基准上。 */
+.route-error-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: var(--space-4);
+    align-content: start;
+    width: 100%;
+    max-width: 1152px;
+    margin-inline: auto;
+    padding-inline: var(--re-gutter);
+    padding-block: var(--space-16);
+}
+
+.route-error-lead,
+.route-error-diagnostic,
+.route-error-actions {
+    grid-column: 1 / -1;
+}
+
+.route-error-display {
+    margin: 0;
+    font-size: clamp(2rem, 6vw, 5rem);
+    font-weight: 300;
+    line-height: 1;
+    letter-spacing: -0.02em;
+}
+
+.route-error-headline {
+    margin: var(--space-6) 0 0;
+    font-size: 1.875rem;
+    font-weight: 300;
+    line-height: 1.375;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+}
+
+.route-error-summary {
+    margin: var(--space-4) 0 0;
+    max-width: 60ch;
+    font-size: 1rem;
+    line-height: 1.625;
+    color: var(--re-ink-70);
+    text-wrap: pretty;
+}
+
+.route-error-diagnostic,
+.route-error-actions {
+    padding-top: var(--space-6);
+    border-top: var(--re-hairline);
+}
+
+.route-error-label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    color: var(--re-ink-70);
+}
+
+/* 状态色只用于状态本身；图标与「错误原因」同字号，并按实测做光学校正。 */
+.route-error-icon {
+    flex: none;
+    inline-size: 1em;
+    block-size: 1em;
+    color: var(--palette-status-error);
+    transform: translateY(-0.17em);
+}
+
+.route-error-message {
+    margin: var(--space-4) 0 0;
+    max-width: 60ch;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.625;
+    color: var(--re-ink-70);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.route-error-actions {
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: var(--space-4);
+}
+
+/* 次操作：直角描边按钮，悬停只换底色。 */
+.route-error-page .ant-btn.route-error-secondary {
+    width: 100%;
+    min-height: 44px;
+    padding: var(--space-3) var(--space-6);
+    border: 1px solid var(--re-ink-border);
+    border-radius: 0;
+    background-color: transparent;
+    color: var(--foreground);
+    font-size: 0.875rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    box-shadow: none;
+    transition: background-color 150ms var(--re-ease);
+}
+
+.route-error-page .ant-btn.route-error-secondary:hover {
+    border-color: var(--re-ink-border);
+    background-color: var(--re-ink-10);
+    color: var(--foreground);
+}
+
+/* 主操作：实心强调色直角按钮。皮肤按钮可能是渐变，background 无法插值，
+   因此恒定铺一层常态色伪元素盖住 AntD 的瞬间换底，再让悬停色淡入。 */
+.route-error-page .ant-btn.route-error-primary {
+    position: relative;
+    overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    width: 100%;
+    min-height: 44px;
+    padding: var(--space-3) var(--space-6);
+    border: 0;
+    border-radius: 0;
+    font-size: 0.875rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    box-shadow: none;
+}
+
+.route-error-page .ant-btn.route-error-primary::before,
+.route-error-page .ant-btn.route-error-primary::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.route-error-page .ant-btn.route-error-primary::before {
+    background: var(--re-fill);
+}
+
+.route-error-page .ant-btn.route-error-primary::after {
+    background: var(--re-fill-hover);
+    opacity: 0;
+    transition: opacity 150ms var(--re-ease);
+}
+
+.route-error-page .ant-btn.route-error-primary:hover::after,
+.route-error-page .ant-btn.route-error-primary:focus-visible::after {
+    opacity: 1;
+}
+
+.route-error-page .ant-btn.route-error-primary > span {
+    position: relative;
+    z-index: 1;
+}
+
+.route-error-arrow {
+    position: relative;
+    z-index: 1;
+    inline-size: var(--space-4);
+    block-size: var(--space-4);
+}
+
+.route-error-page :is(.ant-btn, a):focus-visible {
+    outline: 2px solid var(--ring) !important;
+    outline-offset: 2px !important;
+}
+
+@media (min-width: 768px) {
+    .route-error-page {
+        --re-gutter: var(--space-8);
+    }
+
+    .route-error-grid {
+        gap: var(--space-8);
+        padding-block: var(--space-24);
+    }
+
+    .route-error-lead {
+        grid-column: 1 / span 8;
+    }
+
+    .route-error-actions {
+        flex-direction: row;
+        align-items: center;
+        justify-content: flex-end;
+        gap: var(--space-4);
+    }
+
+    .route-error-page .ant-btn.route-error-secondary,
+    .route-error-page .ant-btn.route-error-primary {
+        width: auto;
+    }
+}
+
+@media (min-width: 1024px) {
+    .route-error-grid {
+        padding-block: calc(var(--space-24) + var(--space-8));
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .route-error-page *,
+    .route-error-page *::before,
+    .route-error-page *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

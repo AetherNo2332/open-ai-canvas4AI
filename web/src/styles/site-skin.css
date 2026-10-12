@@ -1,0 +1,353 @@
+/* Site geometry applies to every route and body portal, including lazy pages.
+   Declared before Tailwind so legacy !important utility rules cannot replace it. */
+@layer skin-policy {
+    html[data-skin],
+    html[data-skin] :is(body, #root, .ant-app) {
+        background: var(--site-canvas) !important;
+    }
+    html[data-skin],
+    html[data-skin] body {
+        scrollbar-color: var(--site-border) var(--site-canvas);
+    }
+    html[data-skin] body,
+    html[data-skin] body * {
+        scrollbar-color: var(--site-border) var(--site-canvas);
+    }
+    html[data-skin]::-webkit-scrollbar,
+    html[data-skin] body::-webkit-scrollbar,
+    html[data-skin] body *::-webkit-scrollbar {
+        background: var(--site-canvas) !important;
+    }
+    html[data-skin]::-webkit-scrollbar-track,
+    html[data-skin]::-webkit-scrollbar-corner,
+    html[data-skin]::-webkit-scrollbar-button,
+    html[data-skin] body::-webkit-scrollbar-button,
+    html[data-skin] body *::-webkit-scrollbar-button,
+    html[data-skin] body::-webkit-scrollbar-track,
+    html[data-skin] body *::-webkit-scrollbar-track,
+    html[data-skin] body::-webkit-scrollbar-corner,
+    html[data-skin] body *::-webkit-scrollbar-corner {
+        background: var(--site-canvas) !important;
+    }
+    html[data-skin]::-webkit-scrollbar-thumb,
+    html[data-skin] body::-webkit-scrollbar-thumb,
+    html[data-skin] body *::-webkit-scrollbar-thumb {
+        background-color: var(--site-border) !important;
+    }
+    html[data-skin] body :where(*),
+    html[data-skin] body :where(*)::before,
+    html[data-skin] body :where(*)::after {
+        border-radius: var(--input-radius) !important;
+    }
+    html[data-skin] body :is(button, [role="button"], .ant-btn) {
+        border-radius: var(--button-radius) !important;
+    }
+    html[data-skin] body :is(.ant-card, [class*="collection-card"], [class*="settings-section"], [class*="node-card"]) {
+        border-radius: var(--card-radius) !important;
+    }
+    html[data-skin] body :is([role="menuitem"], [role="option"], .ant-dropdown-menu-item, .ant-menu-item) {
+        border-radius: var(--menu-radius) !important;
+    }
+    html[data-skin] body :is(.ant-modal-container, .ant-modal-content, .ant-drawer-content, .ant-popover-container, .ant-popover-inner, .ant-dropdown-menu, .ant-tooltip-container, .ant-tooltip-inner, .ant-message-notice-content, .ant-notification-notice, [role="dialog"]) {
+        border-radius: var(--overlay-radius) !important;
+    }
+    html[data-skin] body :is(.ant-checkbox-inner, input[type="checkbox"]) {
+        border-radius: var(--checkbox-radius) !important;
+    }
+
+    html[data-skin] body .ant-switch {
+        min-width: 44px !important;
+        height: 22px !important;
+        overflow: hidden !important;
+    }
+    html[data-skin] body .ant-switch .ant-switch-handle {
+        top: 4px !important;
+        inset-inline-start: 4px !important;
+        width: 22px !important;
+        height: 14px !important;
+        transition: inset-inline-start var(--skin-motion-state, 150ms) cubic-bezier(.2, .8, .2, 1) !important;
+    }
+    html[data-skin] body .ant-switch.ant-switch-checked .ant-switch-handle {
+        inset-inline-start: calc(100% - 26px) !important;
+    }
+    html[data-skin] body .ant-switch .ant-switch-handle::before {
+        border-radius: var(--input-radius) !important;
+        background: var(--control-switch-off-handle) !important;
+        box-shadow: none !important;
+        transform-origin: left center !important;
+    }
+    html[data-skin] body .ant-switch.ant-switch-checked .ant-switch-handle::before {
+        background: var(--control-switch-checked-handle) !important;
+    }
+    html[data-skin] body .ant-switch[data-skin-switch-closing]:not(.ant-switch-checked) .ant-switch-handle::before {
+        animation: skin-switch-close var(--skin-motion-state, 150ms) cubic-bezier(.2, .8, .2, 1) !important;
+    }
+    html[data-skin] body .ant-switch:dir(rtl) .ant-switch-handle::before { transform-origin: right center !important; }
+    html[data-skin] body .ant-switch.ant-switch-small { min-width: 32px !important; height: 16px !important; }
+    html[data-skin] body .ant-switch.ant-switch-small .ant-switch-handle { top: 3px !important; inset-inline-start: 3px !important; width: 14px !important; height: 10px !important; }
+    html[data-skin] body .ant-switch.ant-switch-small.ant-switch-checked .ant-switch-handle { inset-inline-start: calc(100% - 17px) !important; }
+}
+
+@keyframes skin-switch-close {
+    0% { transform: scaleX(1); }
+    30% { transform: scaleX(1.8); }
+    75% { transform: scaleX(1.15); }
+    100% { transform: scaleX(1); }
+}
+@layer skin-policy {
+    @media (prefers-reduced-motion: reduce) {
+        html[data-skin] body .ant-switch .ant-switch-handle { transition: none !important; }
+        html[data-skin] body .ant-switch .ant-switch-handle::before,
+        html[data-skin] body .ant-switch[data-skin-switch-closing]:not(.ant-switch-checked) .ant-switch-handle::before { animation: none !important; }
+    }
+}
+
+/* Neutral utilities and older route aliases share the active skin. Artwork,
+   uploaded media and color-picker swatches keep their content colors. */
+html[data-skin] {
+    --color-gray-50: var(--site-canvas);
+    --color-gray-100: var(--site-subtle);
+    --color-gray-200: var(--site-raised);
+    --color-gray-300: var(--site-border);
+    --color-gray-400: var(--site-muted);
+    --color-gray-500: var(--site-muted);
+    --color-gray-600: var(--site-muted);
+    --color-gray-700: var(--site-text);
+    --color-gray-800: var(--site-text);
+    --color-gray-900: var(--site-text);
+    --color-gray-950: var(--site-text);
+}
+
+.welcome-page.welcome-page {
+    --welcome-black: var(--site-canvas);
+    --welcome-paper: var(--site-text);
+    --welcome-muted: var(--site-muted);
+    --welcome-accent: var(--primary);
+    --welcome-border: var(--site-border);
+    --welcome-radius: var(--card-radius);
+}
+body:has(.welcome-page) { background: var(--site-canvas); }
+
+/* Tailwind named palettes resolve through site roles instead of framework colors. */
+html[data-skin] {
+    --color-slate-50: var(--site-canvas);
+    --color-slate-100: var(--site-subtle);
+    --color-slate-200: var(--site-raised);
+    --color-slate-300: var(--site-border);
+    --color-slate-400: var(--site-muted);
+    --color-slate-500: var(--site-muted);
+    --color-slate-600: var(--site-muted);
+    --color-slate-700: var(--site-text);
+    --color-slate-800: var(--site-text);
+    --color-slate-900: var(--site-text);
+    --color-slate-950: var(--site-text);
+    --color-zinc-50: var(--site-canvas);
+    --color-zinc-100: var(--site-subtle);
+    --color-zinc-200: var(--site-raised);
+    --color-zinc-300: var(--site-border);
+    --color-zinc-400: var(--site-muted);
+    --color-zinc-500: var(--site-muted);
+    --color-zinc-600: var(--site-muted);
+    --color-zinc-700: var(--site-text);
+    --color-zinc-800: var(--site-text);
+    --color-zinc-900: var(--site-text);
+    --color-zinc-950: var(--site-text);
+    --color-neutral-50: var(--site-canvas);
+    --color-neutral-100: var(--site-subtle);
+    --color-neutral-200: var(--site-raised);
+    --color-neutral-300: var(--site-border);
+    --color-neutral-400: var(--site-muted);
+    --color-neutral-500: var(--site-muted);
+    --color-neutral-600: var(--site-muted);
+    --color-neutral-700: var(--site-text);
+    --color-neutral-800: var(--site-text);
+    --color-neutral-900: var(--site-text);
+    --color-neutral-950: var(--site-text);
+    --color-stone-50: var(--site-canvas);
+    --color-stone-100: var(--site-subtle);
+    --color-stone-200: var(--site-raised);
+    --color-stone-300: var(--site-border);
+    --color-stone-400: var(--site-muted);
+    --color-stone-500: var(--site-muted);
+    --color-stone-600: var(--site-muted);
+    --color-stone-700: var(--site-text);
+    --color-stone-800: var(--site-text);
+    --color-stone-900: var(--site-text);
+    --color-stone-950: var(--site-text);
+    --color-blue-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
+    --color-blue-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
+    --color-blue-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
+    --color-blue-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-blue-400: var(--primary);
+    --color-blue-500: var(--primary);
+    --color-blue-600: var(--primary);
+    --color-blue-700: var(--primary);
+    --color-blue-800: var(--primary);
+    --color-blue-900: var(--primary);
+    --color-blue-950: var(--primary);
+    --color-indigo-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
+    --color-indigo-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
+    --color-indigo-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
+    --color-indigo-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-indigo-400: var(--primary);
+    --color-indigo-500: var(--primary);
+    --color-indigo-600: var(--primary);
+    --color-indigo-700: var(--primary);
+    --color-indigo-800: var(--primary);
+    --color-indigo-900: var(--primary);
+    --color-indigo-950: var(--primary);
+    --color-violet-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
+    --color-violet-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
+    --color-violet-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
+    --color-violet-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-violet-400: var(--primary);
+    --color-violet-500: var(--primary);
+    --color-violet-600: var(--primary);
+    --color-violet-700: var(--primary);
+    --color-violet-800: var(--primary);
+    --color-violet-900: var(--primary);
+    --color-violet-950: var(--primary);
+    --color-purple-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
+    --color-purple-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
+    --color-purple-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
+    --color-purple-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-purple-400: var(--primary);
+    --color-purple-500: var(--primary);
+    --color-purple-600: var(--primary);
+    --color-purple-700: var(--primary);
+    --color-purple-800: var(--primary);
+    --color-purple-900: var(--primary);
+    --color-purple-950: var(--primary);
+    --color-pink-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
+    --color-pink-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
+    --color-pink-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
+    --color-pink-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-pink-400: var(--primary);
+    --color-pink-500: var(--primary);
+    --color-pink-600: var(--primary);
+    --color-pink-700: var(--primary);
+    --color-pink-800: var(--primary);
+    --color-pink-900: var(--primary);
+    --color-pink-950: var(--primary);
+    --color-cyan-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
+    --color-cyan-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
+    --color-cyan-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
+    --color-cyan-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-cyan-400: var(--primary);
+    --color-cyan-500: var(--primary);
+    --color-cyan-600: var(--primary);
+    --color-cyan-700: var(--primary);
+    --color-cyan-800: var(--primary);
+    --color-cyan-900: var(--primary);
+    --color-cyan-950: var(--primary);
+    --color-sky-50: color-mix(in srgb, var(--primary) 5%, var(--site-surface));
+    --color-sky-100: color-mix(in srgb, var(--primary) 10.0%, var(--site-surface));
+    --color-sky-200: color-mix(in srgb, var(--primary) 20.0%, var(--site-surface));
+    --color-sky-300: color-mix(in srgb, var(--primary) 30.0%, var(--site-surface));
+    --color-sky-400: var(--primary);
+    --color-sky-500: var(--primary);
+    --color-sky-600: var(--primary);
+    --color-sky-700: var(--primary);
+    --color-sky-800: var(--primary);
+    --color-sky-900: var(--primary);
+    --color-sky-950: var(--primary);
+    --color-teal-50: color-mix(in srgb, var(--palette-status-success) 5%, var(--site-surface));
+    --color-teal-100: color-mix(in srgb, var(--palette-status-success) 10.0%, var(--site-surface));
+    --color-teal-200: color-mix(in srgb, var(--palette-status-success) 20.0%, var(--site-surface));
+    --color-teal-300: color-mix(in srgb, var(--palette-status-success) 30.0%, var(--site-surface));
+    --color-teal-400: var(--palette-status-success);
+    --color-teal-500: var(--palette-status-success);
+    --color-teal-600: var(--palette-status-success);
+    --color-teal-700: var(--palette-status-success);
+    --color-teal-800: var(--palette-status-success);
+    --color-teal-900: var(--palette-status-success);
+    --color-teal-950: var(--palette-status-success);
+    --color-green-50: color-mix(in srgb, var(--palette-status-success) 5%, var(--site-surface));
+    --color-green-100: color-mix(in srgb, var(--palette-status-success) 10.0%, var(--site-surface));
+    --color-green-200: color-mix(in srgb, var(--palette-status-success) 20.0%, var(--site-surface));
+    --color-green-300: color-mix(in srgb, var(--palette-status-success) 30.0%, var(--site-surface));
+    --color-green-400: var(--palette-status-success);
+    --color-green-500: var(--palette-status-success);
+    --color-green-600: var(--palette-status-success);
+    --color-green-700: var(--palette-status-success);
+    --color-green-800: var(--palette-status-success);
+    --color-green-900: var(--palette-status-success);
+    --color-green-950: var(--palette-status-success);
+    --color-emerald-50: color-mix(in srgb, var(--palette-status-success) 5%, var(--site-surface));
+    --color-emerald-100: color-mix(in srgb, var(--palette-status-success) 10.0%, var(--site-surface));
+    --color-emerald-200: color-mix(in srgb, var(--palette-status-success) 20.0%, var(--site-surface));
+    --color-emerald-300: color-mix(in srgb, var(--palette-status-success) 30.0%, var(--site-surface));
+    --color-emerald-400: var(--palette-status-success);
+    --color-emerald-500: var(--palette-status-success);
+    --color-emerald-600: var(--palette-status-success);
+    --color-emerald-700: var(--palette-status-success);
+    --color-emerald-800: var(--palette-status-success);
+    --color-emerald-900: var(--palette-status-success);
+    --color-emerald-950: var(--palette-status-success);
+    --color-lime-50: color-mix(in srgb, var(--palette-status-success) 5%, var(--site-surface));
+    --color-lime-100: color-mix(in srgb, var(--palette-status-success) 10.0%, var(--site-surface));
+    --color-lime-200: color-mix(in srgb, var(--palette-status-success) 20.0%, var(--site-surface));
+    --color-lime-300: color-mix(in srgb, var(--palette-status-success) 30.0%, var(--site-surface));
+    --color-lime-400: var(--palette-status-success);
+    --color-lime-500: var(--palette-status-success);
+    --color-lime-600: var(--palette-status-success);
+    --color-lime-700: var(--palette-status-success);
+    --color-lime-800: var(--palette-status-success);
+    --color-lime-900: var(--palette-status-success);
+    --color-lime-950: var(--palette-status-success);
+    --color-yellow-50: color-mix(in srgb, var(--palette-status-warning) 5%, var(--site-surface));
+    --color-yellow-100: color-mix(in srgb, var(--palette-status-warning) 10.0%, var(--site-surface));
+    --color-yellow-200: color-mix(in srgb, var(--palette-status-warning) 20.0%, var(--site-surface));
+    --color-yellow-300: color-mix(in srgb, var(--palette-status-warning) 30.0%, var(--site-surface));
+    --color-yellow-400: var(--palette-status-warning);
+    --color-yellow-500: var(--palette-status-warning);
+    --color-yellow-600: var(--palette-status-warning);
+    --color-yellow-700: var(--palette-status-warning);
+    --color-yellow-800: var(--palette-status-warning);
+    --color-yellow-900: var(--palette-status-warning);
+    --color-yellow-950: var(--palette-status-warning);
+    --color-amber-50: color-mix(in srgb, var(--palette-status-warning) 5%, var(--site-surface));
+    --color-amber-100: color-mix(in srgb, var(--palette-status-warning) 10.0%, var(--site-surface));
+    --color-amber-200: color-mix(in srgb, var(--palette-status-warning) 20.0%, var(--site-surface));
+    --color-amber-300: color-mix(in srgb, var(--palette-status-warning) 30.0%, var(--site-surface));
+    --color-amber-400: var(--palette-status-warning);
+    --color-amber-500: var(--palette-status-warning);
+    --color-amber-600: var(--palette-status-warning);
+    --color-amber-700: var(--palette-status-warning);
+    --color-amber-800: var(--palette-status-warning);
+    --color-amber-900: var(--palette-status-warning);
+    --color-amber-950: var(--palette-status-warning);
+    --color-orange-50: color-mix(in srgb, var(--palette-status-warning) 5%, var(--site-surface));
+    --color-orange-100: color-mix(in srgb, var(--palette-status-warning) 10.0%, var(--site-surface));
+    --color-orange-200: color-mix(in srgb, var(--palette-status-warning) 20.0%, var(--site-surface));
+    --color-orange-300: color-mix(in srgb, var(--palette-status-warning) 30.0%, var(--site-surface));
+    --color-orange-400: var(--palette-status-warning);
+    --color-orange-500: var(--palette-status-warning);
+    --color-orange-600: var(--palette-status-warning);
+    --color-orange-700: var(--palette-status-warning);
+    --color-orange-800: var(--palette-status-warning);
+    --color-orange-900: var(--palette-status-warning);
+    --color-orange-950: var(--palette-status-warning);
+    --color-red-50: color-mix(in srgb, var(--palette-status-error) 5%, var(--site-surface));
+    --color-red-100: color-mix(in srgb, var(--palette-status-error) 10.0%, var(--site-surface));
+    --color-red-200: color-mix(in srgb, var(--palette-status-error) 20.0%, var(--site-surface));
+    --color-red-300: color-mix(in srgb, var(--palette-status-error) 30.0%, var(--site-surface));
+    --color-red-400: var(--palette-status-error);
+    --color-red-500: var(--palette-status-error);
+    --color-red-600: var(--palette-status-error);
+    --color-red-700: var(--palette-status-error);
+    --color-red-800: var(--palette-status-error);
+    --color-red-900: var(--palette-status-error);
+    --color-red-950: var(--palette-status-error);
+    --color-rose-50: color-mix(in srgb, var(--palette-status-error) 5%, var(--site-surface));
+    --color-rose-100: color-mix(in srgb, var(--palette-status-error) 10.0%, var(--site-surface));
+    --color-rose-200: color-mix(in srgb, var(--palette-status-error) 20.0%, var(--site-surface));
+    --color-rose-300: color-mix(in srgb, var(--palette-status-error) 30.0%, var(--site-surface));
+    --color-rose-400: var(--palette-status-error);
+    --color-rose-500: var(--palette-status-error);
+    --color-rose-600: var(--palette-status-error);
+    --color-rose-700: var(--palette-status-error);
+    --color-rose-800: var(--palette-status-error);
+    --color-rose-900: var(--palette-status-error);
+    --color-rose-950: var(--palette-status-error);
+}

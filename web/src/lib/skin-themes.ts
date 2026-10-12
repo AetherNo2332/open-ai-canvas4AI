@@ -1,0 +1,1180 @@
+export type SkinThemeMode = "light" | "dark";
+export type SkinShadowStyle = "none" | "soft" | "strong";
+
+export type SkinButtonFill = {
+    mode: "solid" | "gradient";
+    angle: number;
+    start: string;
+    end: string;
+    hoverStart: string;
+    hoverEnd: string;
+    activeStart: string;
+    activeEnd: string;
+    foreground: string;
+};
+
+export const DEFAULT_BUTTON_GRADIENT: SkinButtonFill = {
+    mode: "gradient",
+    angle: 115,
+    start: "#6554df",
+    end: "#386fbc",
+    hoverStart: "#5744cf",
+    hoverEnd: "#356bbb",
+    activeStart: "#4938b8",
+    activeEnd: "#2c5da5",
+    foreground: "#ffffff",
+};
+
+/**
+ * 实心按钮填充。swiss-design 只允许一种强调色，因此按钮各态都由皮肤主色派生，
+ * 不再提供渐变分支；`start/end` 等字段保留仅为满足既有数据结构。
+ */
+export function solidSkinButtonFill(color: string, foreground: string): SkinButtonFill {
+    return { mode: "solid", angle: 115, start: color, end: color, hoverStart: color, hoverEnd: color, activeStart: color, activeEnd: color, foreground };
+}
+
+export const SKIN_BUTTON_COLOR_FIELDS = [
+    { key: "start", label: "渐变起色" },
+    { key: "end", label: "渐变终色" },
+    { key: "hoverStart", label: "悬停起色" },
+    { key: "hoverEnd", label: "悬停终色" },
+    { key: "activeStart", label: "按下起色" },
+    { key: "activeEnd", label: "按下终色" },
+    { key: "foreground", label: "渐变按钮文字" },
+] as const;
+
+export type SkinModeTokens = {
+    canvas: string;
+    surface: string;
+    surfaceSubtle: string;
+    surfaceRaised: string;
+    overlay: string;
+    text: string;
+    textMuted: string;
+    border: string;
+    control: string;
+    controlHover: string;
+    controlActive: string;
+    controlBorder: string;
+    controlFocus: string;
+    controlDisabledBackground: string;
+    controlDisabledForeground: string;
+    switchChecked: string;
+    switchCheckedHover: string;
+    switchCheckedHandle: string;
+    switchUnchecked: string;
+    switchUncheckedHover: string;
+    switchUncheckedHandle: string;
+    primary: string;
+    primaryHover: string;
+    primaryActive: string;
+    primaryForeground: string;
+    selected: string;
+    selectedHover: string;
+    selectedActive: string;
+    selectedForeground: string;
+    icon: string;
+    iconMuted: string;
+    iconActive: string;
+    success: string;
+    warning: string;
+    danger: string;
+    dangerHover: string;
+    dangerActive: string;
+    dangerForeground: string;
+    info: string;
+    workspace: string;
+    workspaceGrid: string;
+    adminBackground: string;
+    adminSurface: string;
+    adminSubtle: string;
+    adminStrong: string;
+    authBackground: string;
+    authPanel: string;
+    authCard: string;
+    authAccent: string;
+    authMuted: string;
+};
+
+export type SkinComponentTokens = {
+    buttonRadius: number;
+    inputRadius: number;
+    cardRadius: number;
+    overlayRadius: number;
+    menuRadius: number;
+    checkboxRadius: number;
+    controlHeight: number;
+    controlHeightSmall: number;
+    controlHeightLarge: number;
+    borderWidth: number;
+    focusRingWidth: number;
+    iconSize: number;
+    buttonFontWeight: number;
+    hoverLift: number;
+    motionFast: number;
+    motionNormal: number;
+    shadowStyle: SkinShadowStyle;
+};
+
+export type SkinTokens = {
+    light: SkinModeTokens;
+    dark: SkinModeTokens;
+    components: SkinComponentTokens;
+    buttons: Record<SkinThemeMode, SkinButtonFill>;
+};
+
+export type SkinDefinition = {
+    id: string;
+    name: string;
+    description: string;
+    locked: boolean;
+    tokens: SkinTokens;
+};
+
+export type SkinAntOverrides = {
+    text: string;
+    textMuted: string;
+    primary: string;
+    primaryHover: string;
+    primaryActive: string;
+    primaryForeground: string;
+    selected: string;
+    selectedHover: string;
+    selectedActive: string;
+    selectedForeground: string;
+    controlSurface: string;
+    controlHover: string;
+    controlActive: string;
+    controlBorder: string;
+    controlFocus: string;
+    controlDisabledBackground: string;
+    controlDisabledForeground: string;
+    switchChecked: string;
+    switchCheckedHover: string;
+    switchCheckedHandle: string;
+    switchUnchecked: string;
+    switchUncheckedHover: string;
+    switchUncheckedHandle: string;
+    elevatedBackground: string;
+    subtleBackground: string;
+    menuBackground: string;
+    menuForeground: string;
+    icon: string;
+    iconHover: string;
+    success: string;
+    warning: string;
+    danger: string;
+    dangerHover: string;
+    dangerActive: string;
+    dangerForeground: string;
+    info: string;
+    borderRadius: number;
+    borderRadiusLG: number;
+    borderRadiusSM: number;
+    buttonRadius: number;
+    inputRadius: number;
+    overlayRadius: number;
+    menuRadius: number;
+    checkboxRadius: number;
+    controlHeight: number;
+    controlHeightSmall: number;
+    controlHeightLarge: number;
+    borderWidth: number;
+    iconSize: number;
+    buttonFontWeight: number;
+    motionFast: number;
+    motionNormal: number;
+    shadowStyle: SkinShadowStyle;
+};
+
+export type SkinColorField = {
+    key: keyof SkinModeTokens;
+    label: string;
+    help: string;
+};
+
+export type SkinColorGroup = {
+    key: string;
+    label: string;
+    fields: readonly SkinColorField[];
+};
+
+export type SkinComponentNumberField = {
+    key: Exclude<keyof SkinComponentTokens, "shadowStyle">;
+    label: string;
+    suffix: string;
+    min: number;
+    max: number;
+    step?: number;
+};
+
+/** 每个模式的中性阶锚点：页面底色与文字墨色。主色之外的颜色都由锚点和主色算出。 */
+export const SKIN_NEUTRAL_ANCHORS: Record<SkinThemeMode, { canvas: string; foreground: string; accent: string }> = {
+    light: { canvas: "#f7f6f3", foreground: "#111111", accent: "#c8102e" },
+    dark: { canvas: "#121212", foreground: "#f4f2ef", accent: "#e05163" },
+};
+
+export type SkinModeDerivationInput = {
+    primary: string;
+    foreground: string;
+    canvas: string;
+    mode: SkinThemeMode;
+};
+
+type SkinNeutralSlot =
+    | "surface"
+    | "surfaceSubtle"
+    | "surfaceRaised"
+    | "overlay"
+    | "border"
+    | "control"
+    | "controlHover"
+    | "controlActive"
+    | "controlBorder"
+    | "controlDisabledBackground"
+    | "workspaceGrid"
+    | "adminBackground"
+    | "adminSubtle"
+    | "adminStrong"
+    | "authPanel"
+    | "authCard"
+    | "switchUnchecked"
+    | "switchUncheckedHover";
+
+// 中性阶只由「底色 + 墨色」两个锚点按比例混出；浅色模式的高层级表面偏向白，深色模式一律偏向墨色。
+const SKIN_NEUTRAL_STEPS: Record<SkinThemeMode, Record<SkinNeutralSlot, readonly ["white" | "ink", number]>> = {
+    light: {
+        surface: ["white", 0.85],
+        surfaceSubtle: ["ink", 0.045],
+        surfaceRaised: ["ink", 0.095],
+        overlay: ["white", 0.95],
+        border: ["ink", 0.1],
+        control: ["white", 0.9],
+        controlHover: ["ink", 0.035],
+        controlActive: ["ink", 0.075],
+        controlBorder: ["ink", 0.16],
+        controlDisabledBackground: ["ink", 0.03],
+        workspaceGrid: ["ink", 0.05],
+        adminBackground: ["ink", 0.02],
+        adminSubtle: ["white", 0.5],
+        adminStrong: ["ink", 0.075],
+        authPanel: ["ink", 0.035],
+        authCard: ["white", 0.85],
+        switchUnchecked: ["ink", 0.2],
+        switchUncheckedHover: ["ink", 0.3],
+    },
+    dark: {
+        surface: ["ink", 0.05],
+        surfaceSubtle: ["ink", 0.08],
+        surfaceRaised: ["ink", 0.13],
+        overlay: ["ink", 0.07],
+        border: ["ink", 0.16],
+        control: ["ink", 0.03],
+        controlHover: ["ink", 0.06],
+        controlActive: ["ink", 0.1],
+        controlBorder: ["ink", 0.22],
+        controlDisabledBackground: ["ink", 0.05],
+        workspaceGrid: ["ink", 0.07],
+        adminBackground: ["ink", 0],
+        adminSubtle: ["ink", 0.095],
+        adminStrong: ["ink", 0.13],
+        authPanel: ["ink", 0.05],
+        authCard: ["ink", 0.08],
+        switchUnchecked: ["ink", 0.26],
+        switchUncheckedHover: ["ink", 0.34],
+    },
+};
+
+const SKIN_ACCENT_RATIOS: Record<SkinThemeMode, { hover: number; active: number; selected: number; selectedHover: number; selectedActive: number; selectedForeground: number; focus: number; disabledForeground: number; muted: number }> = {
+    light: { hover: 0.16, active: 0.3, selected: 0.88, selectedHover: 0.8, selectedActive: 0.72, selectedForeground: 0.3, focus: 0.12, disabledForeground: 0.55, muted: 0.42 },
+    dark: { hover: 0.16, active: 0.28, selected: 0.86, selectedHover: 0.78, selectedActive: 0.7, selectedForeground: 0.25, focus: 0.1, disabledForeground: 0.55, muted: 0.42 },
+};
+
+// 状态色只用于状态提示，不参与品牌强调，因此按模式固定，是唯一的例外色相。
+const SKIN_SIGNAL_PALETTE: Record<SkinThemeMode, Pick<SkinModeTokens, "success" | "warning" | "danger" | "dangerHover" | "dangerActive" | "dangerForeground" | "info">> = {
+    light: { success: "#2f7d4f", warning: "#b26a00", danger: "#c8102e", dangerHover: "#a90d27", dangerActive: "#8f0b21", dangerForeground: "#ffffff", info: "#1f5fa8" },
+    dark: { success: "#4ade80", warning: "#f2b35f", danger: "#ff7a7a", dangerHover: "#ff9a9a", dangerActive: "#e06262", dangerForeground: "#2b0808", info: "#7fb2f0" },
+};
+
+const SKIN_INK_CANDIDATE = "#111111";
+
+function hexChannels(hex: string) {
+    const value = hex.replace("#", "");
+    return [0, 2, 4].map((index) => parseInt(value.slice(index, index + 2), 16) / 255);
+}
+
+function linearChannel(channel: number) {
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+}
+
+function gammaChannel(channel: number) {
+    return channel <= 0.0031308 ? channel * 12.92 : 1.055 * channel ** (1 / 2.4) - 0.055;
+}
+
+function channelsToHex(channels: readonly number[]) {
+    return `#${channels
+        .map((channel) => Math.round(Math.min(1, Math.max(0, channel)) * 255)
+            .toString(16)
+            .padStart(2, "0"))
+        .join("")}`;
+}
+
+/** 在线性光空间混色：ratio 为 to 的占比。纯函数，便于与服务端校验对齐。 */
+export function mixSkinColors(from: string, to: string, ratio: number): string {
+    const start = hexChannels(from).map(linearChannel);
+    const end = hexChannels(to).map(linearChannel);
+    const weight = Math.min(1, Math.max(0, ratio));
+    return channelsToHex(start.map((channel, index) => gammaChannel(channel * (1 - weight) + end[index] * weight)));
+}
+
+export function skinColorLuminance(hex: string) {
+    const [red, green, blue] = hexChannels(hex).map(linearChannel);
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+/** WCAG 相对对比度，用于挑选主按钮前景并做服务端校验的同一把尺子。 */
+export function skinColorContrast(a: string, b: string) {
+    const [lighter, darker] = [skinColorLuminance(a), skinColorLuminance(b)].sort((left, right) => right - left);
+    return (lighter + 0.05) / (darker + 0.05);
+}
+
+export function skinColorChroma(hex: string) {
+    const channels = hexChannels(hex);
+    return Math.max(...channels) - Math.min(...channels);
+}
+
+/** 返回色相角；接近中性的颜色返回 null，避免把暖灰误判成第二个色相。 */
+export function skinColorHue(hex: string): number | null {
+    const [red, green, blue] = hexChannels(hex);
+    const max = Math.max(red, green, blue);
+    const min = Math.min(red, green, blue);
+    const delta = max - min;
+    if (delta < 0.02 || max === 0) return null;
+    const raw = max === red ? ((green - blue) / delta) % 6 : max === green ? (blue - red) / delta + 2 : (red - green) / delta + 4;
+    return (raw * 60 + 360) % 360;
+}
+
+/** 主按钮前景：在纯白与墨色之间取对比度更高者。 */
+export function pickPrimaryForeground(primary: string) {
+    return skinColorContrast(primary, "#ffffff") >= skinColorContrast(primary, SKIN_INK_CANDIDATE) ? "#ffffff" : SKIN_INK_CANDIDATE;
+}
+
+/**
+ * 由「品牌主色 + 中性阶锚点」派生出该模式全部 50 个语义色位。
+ * 派生结果保留主色单一色相，状态色是唯一例外；调用方不应再单独配置派生色。
+ */
+export function deriveSkinModeTokens({ primary, foreground, canvas, mode }: SkinModeDerivationInput): SkinModeTokens {
+    const steps = SKIN_NEUTRAL_STEPS[mode];
+    const ratios = SKIN_ACCENT_RATIOS[mode];
+    const neutral = (slot: SkinNeutralSlot) => {
+        const [target, ratio] = steps[slot];
+        return mixSkinColors(canvas, target === "white" ? "#ffffff" : foreground, ratio);
+    };
+    const primaryForeground = pickPrimaryForeground(primary);
+    const primaryHover = mixSkinColors(primary, foreground, ratios.hover);
+    const surface = neutral("surface");
+    return {
+        canvas,
+        surface,
+        surfaceSubtle: neutral("surfaceSubtle"),
+        surfaceRaised: neutral("surfaceRaised"),
+        overlay: neutral("overlay"),
+        text: foreground,
+        textMuted: mixSkinColors(foreground, canvas, ratios.muted),
+        border: neutral("border"),
+        control: neutral("control"),
+        controlHover: neutral("controlHover"),
+        controlActive: neutral("controlActive"),
+        controlBorder: neutral("controlBorder"),
+        controlFocus: mixSkinColors(primary, foreground, ratios.focus),
+        controlDisabledBackground: neutral("controlDisabledBackground"),
+        controlDisabledForeground: mixSkinColors(foreground, canvas, ratios.disabledForeground),
+        switchChecked: primary,
+        switchCheckedHover: primaryHover,
+        switchCheckedHandle: primaryForeground,
+        switchUnchecked: neutral("switchUnchecked"),
+        switchUncheckedHover: neutral("switchUncheckedHover"),
+        switchUncheckedHandle: mode === "light" ? neutral("control") : mixSkinColors(foreground, canvas, 0.1),
+        primary,
+        primaryHover,
+        primaryActive: mixSkinColors(primary, foreground, ratios.active),
+        primaryForeground,
+        selected: mixSkinColors(primary, canvas, ratios.selected),
+        selectedHover: mixSkinColors(primary, canvas, ratios.selectedHover),
+        selectedActive: mixSkinColors(primary, canvas, ratios.selectedActive),
+        selectedForeground: mixSkinColors(primary, foreground, ratios.selectedForeground),
+        icon: mixSkinColors(foreground, canvas, mode === "light" ? 0.12 : 0.14),
+        iconMuted: mixSkinColors(foreground, canvas, 0.52),
+        iconActive: mode === "light" ? foreground : "#ffffff",
+        ...SKIN_SIGNAL_PALETTE[mode],
+        workspace: surface,
+        workspaceGrid: neutral("workspaceGrid"),
+        adminBackground: neutral("adminBackground"),
+        adminSurface: mode === "light" ? surface : mixSkinColors(canvas, foreground, 0.06),
+        adminSubtle: neutral("adminSubtle"),
+        adminStrong: neutral("adminStrong"),
+        authBackground: mode === "light" ? canvas : mixSkinColors(canvas, "#000000", 0.15),
+        authPanel: neutral("authPanel"),
+        authCard: neutral("authCard"),
+        authAccent: primary,
+        authMuted: mixSkinColors(foreground, canvas, ratios.muted),
+    };
+}
+
+export const SKIN_MODE_COLOR_GROUPS: readonly SkinColorGroup[] = [
+    {
+        key: "foundation",
+        label: "基础表面与文字",
+        fields: [
+            { key: "canvas", label: "页面背景", help: "全站页面与画布底色" },
+            { key: "surface", label: "基础表面", help: "卡片、常规容器与输入区" },
+            { key: "surfaceSubtle", label: "次级表面", help: "弱分区、表头与悬停底色" },
+            { key: "surfaceRaised", label: "强调表面", help: "高层级卡片与激活容器" },
+            { key: "overlay", label: "浮层表面", help: "下拉、弹窗和气泡菜单" },
+            { key: "text", label: "主要文字", help: "标题和正文" },
+            { key: "textMuted", label: "次要文字", help: "说明、占位和元数据" },
+            { key: "border", label: "分隔与边界", help: "普通描边和分隔线" },
+        ],
+    },
+    {
+        key: "controls",
+        label: "控件与交互状态",
+        fields: [
+            { key: "control", label: "控件背景", help: "输入框、复选框和普通按钮" },
+            { key: "controlHover", label: "控件悬停", help: "普通控件 hover 背景" },
+            { key: "controlActive", label: "控件按下", help: "普通控件 active 背景" },
+            { key: "controlBorder", label: "控件边框", help: "输入与选择控件边界" },
+            { key: "controlFocus", label: "键盘焦点", help: "focus-visible 与输入焦点" },
+            { key: "controlDisabledBackground", label: "禁用背景", help: "不可操作控件背景" },
+            { key: "controlDisabledForeground", label: "禁用前景", help: "不可操作文字和图标" },
+            { key: "switchChecked", label: "开关开启", help: "Switch 开启轨道，须与关闭态明显区分" },
+            { key: "switchCheckedHover", label: "开启悬停", help: "开启状态 hover 轨道" },
+            { key: "switchCheckedHandle", label: "开启滑块", help: "开启状态圆形滑块" },
+            { key: "switchUnchecked", label: "开关关闭", help: "Switch 关闭轨道" },
+            { key: "switchUncheckedHover", label: "关闭悬停", help: "关闭状态 hover 轨道" },
+            { key: "switchUncheckedHandle", label: "关闭滑块", help: "关闭状态圆形滑块" },
+            { key: "primary", label: "主操作", help: "纯色主按钮与链接；开关使用独立颜色" },
+            { key: "primaryHover", label: "主操作悬停", help: "主要操作 hover" },
+            { key: "primaryActive", label: "主操作按下", help: "主要操作 active" },
+            { key: "primaryForeground", label: "主操作前景", help: "主按钮上的文字和图标" },
+            { key: "selected", label: "选中背景", help: "菜单、单选与分段控件" },
+            { key: "selectedHover", label: "选中悬停", help: "已选项 hover" },
+            { key: "selectedActive", label: "选中按下", help: "已选项 active" },
+            { key: "selectedForeground", label: "选中前景", help: "已选项文字和图标" },
+        ],
+    },
+    {
+        key: "signals",
+        label: "图标与状态",
+        fields: [
+            { key: "icon", label: "普通图标", help: "工具栏和普通功能图标" },
+            { key: "iconMuted", label: "弱化图标", help: "低优先级和占位图标" },
+            { key: "iconActive", label: "激活图标", help: "当前工具和强调图标" },
+            { key: "success", label: "成功", help: "完成与可用状态" },
+            { key: "warning", label: "警告", help: "待处理与风险提示" },
+            { key: "danger", label: "危险", help: "错误、删除与破坏性操作" },
+            { key: "dangerHover", label: "危险悬停", help: "破坏性操作 hover" },
+            { key: "dangerActive", label: "危险按下", help: "破坏性操作 active" },
+            { key: "dangerForeground", label: "危险前景", help: "实心危险按钮文字和图标" },
+            { key: "info", label: "信息", help: "普通说明和处理中状态" },
+        ],
+    },
+    {
+        key: "scenes",
+        label: "业务场景表面",
+        fields: [
+            { key: "workspace", label: "创作工作区", help: "工作区卡片和画布承载面" },
+            { key: "workspaceGrid", label: "画布网格", help: "画布网格与空间辅助线" },
+            { key: "adminBackground", label: "后台底层", help: "管理后台页面底色" },
+            { key: "adminSurface", label: "后台卡片", help: "管理后台主卡片" },
+            { key: "adminSubtle", label: "后台次级层", help: "后台弱分区" },
+            { key: "adminStrong", label: "后台强调层", help: "后台高对比区块" },
+            { key: "authBackground", label: "登录页背景", help: "登录页整体底色" },
+            { key: "authPanel", label: "登录表单区", help: "登录页右侧表单面板" },
+            { key: "authCard", label: "登录卡片", help: "登录表单卡片" },
+            { key: "authAccent", label: "登录页强调", help: "登录页品牌强调文字" },
+            { key: "authMuted", label: "登录页次要文字", help: "登录页说明和辅助信息" },
+        ],
+    },
+] as const;
+
+/** 配置面上唯一可编辑的颜色：每个模式一个品牌主色。 */
+export const SKIN_COLOR_GROUPS: readonly SkinColorGroup[] = [
+    {
+        key: "accent",
+        label: "品牌主色",
+        fields: [{ key: "primary", label: "品牌主色", help: "每模式一个主色，其余 49 个语义色由主色与中性阶派生" }],
+    },
+];
+
+export const SKIN_MODE_COLOR_KEYS = SKIN_MODE_COLOR_GROUPS.flatMap((group) => group.fields.map((field) => field.key));
+
+export const SKIN_MODE_COLOR_FIELDS = SKIN_MODE_COLOR_GROUPS.flatMap((group) => group.fields);
+
+export const SKIN_COMPONENT_NUMBER_FIELDS: readonly SkinComponentNumberField[] = [
+    { key: "buttonRadius", label: "按钮圆角", suffix: "px", min: 0, max: 32 },
+    { key: "inputRadius", label: "输入框圆角", suffix: "px", min: 0, max: 32 },
+    { key: "cardRadius", label: "卡片圆角", suffix: "px", min: 0, max: 40 },
+    { key: "overlayRadius", label: "弹窗与浮层圆角", suffix: "px", min: 0, max: 40 },
+    { key: "menuRadius", label: "菜单圆角", suffix: "px", min: 0, max: 32 },
+    { key: "checkboxRadius", label: "复选框圆角", suffix: "px", min: 0, max: 12 },
+    { key: "controlHeight", label: "标准控件高度", suffix: "px", min: 30, max: 48 },
+    { key: "controlHeightSmall", label: "小号控件高度", suffix: "px", min: 24, max: 40 },
+    { key: "controlHeightLarge", label: "大号控件高度", suffix: "px", min: 36, max: 56 },
+    { key: "borderWidth", label: "控件描边", suffix: "px", min: 1, max: 3 },
+    { key: "focusRingWidth", label: "键盘焦点环", suffix: "px", min: 1, max: 4 },
+    { key: "iconSize", label: "标准图标尺寸", suffix: "px", min: 12, max: 24 },
+    { key: "buttonFontWeight", label: "按钮字重", suffix: "", min: 400, max: 700, step: 50 },
+    { key: "hoverLift", label: "卡片悬停抬升", suffix: "px", min: 0, max: 4 },
+    { key: "motionFast", label: "快速反馈时长", suffix: "ms", min: 0, max: 400, step: 10 },
+    { key: "motionNormal", label: "常规过渡时长", suffix: "ms", min: 0, max: 800, step: 10 },
+] as const;
+
+/** 设计守则锁定的构件值：服务端会拒绝任何偏离，编辑器只做只读展示。 */
+export const SKIN_LOCKED_COMPONENT_KEYS: readonly (keyof SkinComponentTokens)[] = ["buttonRadius", "inputRadius", "cardRadius", "overlayRadius", "menuRadius", "checkboxRadius", "hoverLift", "motionFast", "motionNormal"];
+
+export const DEFAULT_CLASSIC_SKIN: SkinDefinition = {
+    id: "classic",
+    name: "瑞士纸感",
+    description: "暖纸墨色 · 单一品牌红 · 直角构件",
+    locked: true,
+    tokens: {
+        light: {
+            canvas: "#f7f6f3",
+            surface: "#ffffff",
+            surfaceSubtle: "#f1efeb",
+            surfaceRaised: "#e7e4de",
+            overlay: "#ffffff",
+            text: "#111111",
+            textMuted: "#6f6b66",
+            border: "#e3e0da",
+            control: "#ffffff",
+            controlHover: "#f4f2ee",
+            controlActive: "#ebe8e2",
+            controlBorder: "#d6d2cb",
+            controlFocus: "#111111",
+            controlDisabledBackground: "#f2f0ec",
+            controlDisabledForeground: "#a8a49d",
+            switchChecked: "#c8102e",
+            switchCheckedHover: "#a90d27",
+            switchCheckedHandle: "#ffffff",
+            switchUnchecked: "#c3bfb8",
+            switchUncheckedHover: "#a9a49c",
+            switchUncheckedHandle: "#ffffff",
+            primary: "#c8102e",
+            primaryHover: "#a90d27",
+            primaryActive: "#8f0b21",
+            primaryForeground: "#ffffff",
+            selected: "#efece6",
+            selectedHover: "#e6e2da",
+            selectedActive: "#ddd8cf",
+            selectedForeground: "#111111",
+            icon: "#3d3a36",
+            iconMuted: "#8b8780",
+            iconActive: "#111111",
+            success: "#2f7d4f",
+            warning: "#b26a00",
+            danger: "#c8102e",
+            dangerHover: "#a90d27",
+            dangerActive: "#8f0b21",
+            dangerForeground: "#ffffff",
+            info: "#1f5fa8",
+            workspace: "#ffffff",
+            workspaceGrid: "#efede9",
+            adminBackground: "#f4f2ee",
+            adminSurface: "#ffffff",
+            adminSubtle: "#f8f6f3",
+            adminStrong: "#eae7e1",
+            authBackground: "#f7f6f3",
+            authPanel: "#f1efeb",
+            authCard: "#ffffff",
+            authAccent: "#c8102e",
+            authMuted: "#6f6b66",
+        },
+        dark: {
+            canvas: "#121212",
+            surface: "#1a1a1a",
+            surfaceSubtle: "#212121",
+            surfaceRaised: "#2b2b2b",
+            overlay: "#1e1e1e",
+            text: "#f4f2ef",
+            textMuted: "#a5a09a",
+            border: "#2f2e2c",
+            control: "#1f1f1f",
+            controlHover: "#272727",
+            controlActive: "#303030",
+            controlBorder: "#3d3c39",
+            controlFocus: "#f4f2ef",
+            controlDisabledBackground: "#242424",
+            controlDisabledForeground: "#6f6c68",
+            switchChecked: "#e05163",
+            switchCheckedHover: "#ef6b7c",
+            switchCheckedHandle: "#240a0f",
+            switchUnchecked: "#4a4946",
+            switchUncheckedHover: "#5d5b57",
+            switchUncheckedHandle: "#f4f2ef",
+            primary: "#e05163",
+            primaryHover: "#ef6b7c",
+            primaryActive: "#c84456",
+            primaryForeground: "#240a0f",
+            selected: "#2a2a2a",
+            selectedHover: "#333333",
+            selectedActive: "#3c3c3c",
+            selectedForeground: "#f4f2ef",
+            icon: "#d7d4cf",
+            iconMuted: "#8f8b86",
+            iconActive: "#ffffff",
+            success: "#4ade80",
+            warning: "#f2b35f",
+            danger: "#ff7a7a",
+            dangerHover: "#ff9a9a",
+            dangerActive: "#e06262",
+            dangerForeground: "#2b0808",
+            info: "#7fb2f0",
+            workspace: "#1a1a1a",
+            workspaceGrid: "#242322",
+            adminBackground: "#141414",
+            adminSurface: "#1c1c1c",
+            adminSubtle: "#232323",
+            adminStrong: "#2c2c2c",
+            authBackground: "#101010",
+            authPanel: "#181818",
+            authCard: "#1f1f1f",
+            authAccent: "#ef6b7c",
+            authMuted: "#a5a09a",
+        },
+        buttons: { light: solidSkinButtonFill("#c8102e", "#ffffff"), dark: solidSkinButtonFill("#e05163", "#240a0f") },
+        components: {
+            buttonRadius: 0,
+            inputRadius: 0,
+            cardRadius: 0,
+            overlayRadius: 0,
+            menuRadius: 0,
+            checkboxRadius: 0,
+            controlHeight: 36,
+            controlHeightSmall: 30,
+            controlHeightLarge: 42,
+            borderWidth: 1,
+            focusRingWidth: 2,
+            iconSize: 16,
+            buttonFontWeight: 500,
+            hoverLift: 0,
+            motionFast: 150,
+            motionNormal: 150,
+            shadowStyle: "none",
+        },
+    },
+};
+
+const HEX_COLOR = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i;
+const MANAGED_VARIABLES = [
+    "--button-primary-bg",
+    "--button-primary-hover-bg",
+    "--button-primary-active-bg",
+    "--button-primary-fg",
+    "--background",
+    "--foreground",
+    "--card",
+    "--card-foreground",
+    "--popover",
+    "--popover-foreground",
+    "--primary",
+    "--primary-foreground",
+    "--secondary",
+    "--secondary-foreground",
+    "--muted",
+    "--muted-foreground",
+    "--accent",
+    "--accent-foreground",
+    "--destructive",
+    "--destructive-hover",
+    "--destructive-active",
+    "--destructive-foreground",
+    "--border",
+    "--input",
+    "--ring",
+    "--surface",
+    "--surface-hover",
+    "--surface-active",
+    "--surface-card",
+    "--surface-card-hover",
+    "--card-surface",
+    "--card-surface-hover",
+    "--card-surface-raised",
+    "--btn-solid-bg",
+    "--btn-solid-hover-bg",
+    "--btn-solid-active-bg",
+    "--btn-solid-fg",
+    "--control-selected-bg",
+    "--control-selected-hover-bg",
+    "--control-selected-fg",
+    "--control-selected-border",
+    "--control-check-bg",
+    "--control-check-fg",
+    "--control-switch-checked-bg",
+    "--control-switch-checked-hover-bg",
+    "--control-switch-checked-handle",
+    "--control-switch-off-bg",
+    "--control-switch-off-hover-bg",
+    "--control-switch-off-handle",
+    "--control-disabled-bg",
+    "--control-disabled-fg",
+    "--control-focus-ring",
+    "--workspace-surface",
+    "--workspace-surface-strong",
+    "--workspace-border",
+    "--workspace-border-strong",
+    "--workspace-grid-line",
+    "--workspace-accent",
+    "--workspace-accent-soft",
+    "--skin-admin-layer-0",
+    "--skin-admin-layer-1",
+    "--skin-admin-layer-2",
+    "--skin-admin-layer-3",
+    "--auth-page-bg",
+    "--auth-panel-bg",
+    "--auth-card-bg",
+    "--auth-accent",
+    "--auth-muted",
+    "--palette-status-success",
+    "--palette-status-error",
+    "--palette-status-loading",
+    "--palette-status-warning",
+    "--icon-foreground",
+    "--icon-muted",
+    "--icon-active",
+    "--r-sm",
+    "--r-md",
+    "--r-lg",
+    "--r-xl",
+    "--r-2xl",
+    "--radius",
+    "--control-radius",
+    "--button-radius",
+    "--input-radius",
+    "--card-radius",
+    "--overlay-radius",
+    "--menu-radius",
+    "--checkbox-radius",
+    "--control-border-width",
+    "--focus-ring-width",
+    "--icon-size",
+    "--theme-hover-lift",
+    "--motion-instant",
+    "--motion-state",
+    "--skin-motion-state",
+    "--elevation-card",
+    "--elevation-card-hover",
+    "--elevation-overlay",
+    "--theme-admin-card-shadow",
+] as const;
+
+export function normalizeSkinDefinition(value: unknown, fallback: SkinDefinition = DEFAULT_CLASSIC_SKIN): SkinDefinition {
+    if (!value || typeof value !== "object") return cloneSkinDefinition(fallback);
+    const candidate = value as Partial<SkinDefinition>;
+    const id = typeof candidate.id === "string" && /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(candidate.id) ? candidate.id : fallback.id;
+    const modes = candidate.tokens;
+    const light = normalizeSkinMode(modes?.light, fallback.tokens.light, "light");
+    const dark = normalizeSkinMode(modes?.dark, fallback.tokens.dark, "dark");
+    if (!modes || !light || !dark || !isSkinComponents(modes.components)) return cloneSkinDefinition(fallback);
+    return {
+        id,
+        name: typeof candidate.name === "string" && candidate.name.trim() ? candidate.name.trim().slice(0, 40) : fallback.name,
+        description: typeof candidate.description === "string" ? candidate.description.trim().slice(0, 100) : fallback.description,
+        locked: id === "classic",
+        tokens: {
+            light,
+            dark,
+            components: { ...modes.components },
+            buttons: {
+                light: normalizeButtonFill(modes.buttons?.light, id),
+                dark: normalizeButtonFill(modes.buttons?.dark, id),
+            },
+        },
+    };
+}
+
+export function cloneSkinDefinition(source: SkinDefinition): SkinDefinition {
+    return { ...source, tokens: cloneSkinTokens(source.tokens) };
+}
+
+/** 调整品牌主色：该模式所有派生色位与实心按钮填充一起重算，保证只有一个色相。 */
+export function applySkinAccent(source: SkinDefinition, mode: SkinThemeMode, primary: string): SkinDefinition {
+    const current = source.tokens[mode];
+    const accent = primary.trim().toLowerCase();
+    if (!HEX_COLOR.test(accent)) return cloneSkinDefinition(source);
+    const tokens = deriveSkinModeTokens({ primary: accent, foreground: current.text, canvas: current.canvas, mode });
+    return {
+        ...source,
+        tokens: {
+            ...source.tokens,
+            [mode]: tokens,
+            buttons: { ...source.tokens.buttons, [mode]: solidSkinButtonFill(tokens.primary, tokens.primaryForeground) },
+        },
+    };
+}
+
+/**
+ * 编辑入口的收敛：锁定主题原样返回，自定义主题按当前主色重新派生两个模式，
+ * 使编辑器展示的派生色与服务端校验口径一致，保存时不会被拒绝。
+ */
+export function convergeSkinDefinition(source: SkinDefinition): SkinDefinition {
+    if (source.locked || source.id === "classic") return cloneSkinDefinition(source);
+    const light = applySkinAccent(source, "light", source.tokens.light.primary);
+    return applySkinAccent(light, "dark", source.tokens.dark.primary);
+}
+
+export function createSkinThemeID(existingIDs: Iterable<string>) {
+    const existing = new Set(existingIDs);
+    const base = `custom-${Date.now().toString(36)}`;
+    let candidate = base;
+    let suffix = 2;
+    while (existing.has(candidate)) candidate = `${base}-${suffix++}`;
+    return candidate;
+}
+
+export function duplicateSkinDefinition(source: SkinDefinition, existingIDs: Iterable<string>, name?: string): SkinDefinition {
+    const copy = cloneSkinDefinition(source);
+    copy.id = createSkinThemeID(existingIDs);
+    copy.name = (name || `${source.name} 副本`).slice(0, 40);
+    copy.description = source.id === "classic" ? "从经典黑白参数复制，可自由调整" : `复制自 ${source.name}`;
+    copy.locked = false;
+    return copy;
+}
+
+export function skinSwatches(skin: SkinDefinition) {
+    const frequencyOrder: readonly (keyof SkinModeTokens)[] = [
+        "canvas",
+        "surface",
+        "text",
+        "textMuted",
+        "border",
+        "surfaceSubtle",
+        "control",
+        "controlHover",
+        "primary",
+        "primaryHover",
+        "selected",
+        "selectedForeground",
+        "surfaceRaised",
+        "overlay",
+        "controlBorder",
+        "switchChecked",
+        "switchUnchecked",
+        "icon",
+        "iconMuted",
+        "iconActive",
+        "success",
+        "warning",
+        "danger",
+        "info",
+        "workspace",
+        "workspaceGrid",
+        "adminBackground",
+        "adminSurface",
+        "adminSubtle",
+        "adminStrong",
+        "authBackground",
+        "authPanel",
+        "authCard",
+        "authAccent",
+        "authMuted",
+        "controlActive",
+        "controlFocus",
+        "controlDisabledBackground",
+        "controlDisabledForeground",
+        "primaryActive",
+        "primaryForeground",
+        "selectedHover",
+        "selectedActive",
+        "switchCheckedHover",
+        "switchCheckedHandle",
+        "switchUncheckedHover",
+        "switchUncheckedHandle",
+        "dangerHover",
+        "dangerActive",
+        "dangerForeground",
+    ];
+    const colors = frequencyOrder.flatMap((key) => [skin.tokens.light[key], skin.tokens.dark[key]]);
+    return [...new Set(colors)];
+}
+
+export function normalizeSkinID(value: unknown) {
+    return normalizeSkinDefinition(value).id;
+}
+
+export function getSkinAntOverrides(value: unknown, mode: SkinThemeMode): Partial<SkinAntOverrides> {
+    const skin = normalizeSkinDefinition(value);
+    const color = skin.tokens[mode];
+    const component = skin.tokens.components;
+    return {
+        text: color.text,
+        textMuted: color.textMuted,
+        primary: color.primary,
+        primaryHover: color.primaryHover,
+        primaryActive: color.primaryActive,
+        primaryForeground: color.primaryForeground,
+        selected: color.selected,
+        selectedHover: color.selectedHover,
+        selectedActive: color.selectedActive,
+        selectedForeground: color.selectedForeground,
+        controlSurface: color.control,
+        controlHover: color.controlHover,
+        controlActive: color.controlActive,
+        controlBorder: color.controlBorder,
+        controlFocus: color.controlFocus,
+        controlDisabledBackground: color.controlDisabledBackground,
+        controlDisabledForeground: color.controlDisabledForeground,
+        switchChecked: color.switchChecked,
+        switchCheckedHover: color.switchCheckedHover,
+        switchCheckedHandle: color.switchCheckedHandle,
+        switchUnchecked: color.switchUnchecked,
+        switchUncheckedHover: color.switchUncheckedHover,
+        switchUncheckedHandle: color.switchUncheckedHandle,
+        elevatedBackground: color.overlay,
+        subtleBackground: color.surfaceSubtle,
+        menuBackground: color.selected,
+        menuForeground: color.selectedForeground,
+        icon: color.icon,
+        iconHover: color.iconActive,
+        success: color.success,
+        warning: color.warning,
+        danger: color.danger,
+        dangerHover: color.dangerHover,
+        dangerActive: color.dangerActive,
+        dangerForeground: color.dangerForeground,
+        info: color.info,
+        borderRadius: component.buttonRadius,
+        borderRadiusLG: component.cardRadius,
+        borderRadiusSM: component.inputRadius,
+        buttonRadius: component.buttonRadius,
+        inputRadius: component.inputRadius,
+        overlayRadius: component.overlayRadius,
+        menuRadius: component.menuRadius,
+        checkboxRadius: component.checkboxRadius,
+        controlHeight: component.controlHeight,
+        controlHeightSmall: component.controlHeightSmall,
+        controlHeightLarge: component.controlHeightLarge,
+        borderWidth: component.borderWidth,
+        iconSize: component.iconSize,
+        buttonFontWeight: component.buttonFontWeight,
+        motionFast: component.motionFast,
+        motionNormal: component.motionNormal,
+        shadowStyle: component.shadowStyle,
+    };
+}
+
+export function applySkinTheme(skinValue: unknown, mode: SkinThemeMode, targetDocument: Document | undefined = typeof document === "undefined" ? undefined : document) {
+    if (!targetDocument) return;
+    const skin = normalizeSkinDefinition(skinValue);
+    const root = targetDocument.documentElement;
+    for (const property of MANAGED_VARIABLES) root.style.removeProperty(property);
+    const values = skinCSSVariables(skin, mode);
+    for (const [property, value] of Object.entries(values)) root.style.setProperty(property, value);
+    for (const [property, value] of Object.entries(skinButtonCSSVariables(skin, mode))) root.style.setProperty(property, value);
+    root.dataset.skin = skin.id;
+}
+
+export function isSkinButtonFill(value: unknown): value is SkinButtonFill {
+    if (!value || typeof value !== "object") return false;
+    const fill = value as SkinButtonFill;
+    return ["solid", "gradient"].includes(fill.mode) && Number.isInteger(fill.angle) && fill.angle >= 0 && fill.angle <= 360 && SKIN_BUTTON_COLOR_FIELDS.every(({ key }) => typeof fill[key] === "string" && HEX_COLOR.test(fill[key]));
+}
+
+function normalizeButtonFill(value: unknown, skinID: string): SkinButtonFill {
+    // 缺失或非法的按钮填充一律回落到实心：swiss-design 只允许一种强调色，没有渐变分支。
+    return isSkinButtonFill(value) ? { ...value } : { ...DEFAULT_BUTTON_GRADIENT, mode: "solid" };
+}
+
+export function getSkinButtonAppearance(skin: SkinDefinition, mode: SkinThemeMode) {
+    const fill = normalizeButtonFill(skin.tokens.buttons?.[mode], skin.id);
+    const color = skin.tokens[mode];
+    const gradient = (start: string, end: string) => `linear-gradient(${fill.angle}deg, ${start}, ${end})`;
+    return fill.mode === "gradient"
+        ? {
+              background: gradient(fill.start, fill.end),
+              hover: gradient(fill.hoverStart, fill.hoverEnd),
+              active: gradient(fill.activeStart, fill.activeEnd),
+              foreground: fill.foreground,
+          }
+        : { background: color.primary, hover: color.primaryHover, active: color.primaryActive, foreground: color.primaryForeground };
+}
+
+function skinButtonCSSVariables(skin: SkinDefinition, mode: SkinThemeMode) {
+    const button = getSkinButtonAppearance(skin, mode);
+    return { "--button-primary-bg": button.background, "--button-primary-hover-bg": button.hover, "--button-primary-active-bg": button.active, "--button-primary-fg": button.foreground };
+}
+
+export function skinCSSVariables(skin: SkinDefinition, mode: SkinThemeMode): Record<string, string> {
+    const color = skin.tokens[mode];
+    const component = skin.tokens.components;
+    const shadows = skinShadowVariables(component.shadowStyle, mode);
+    return {
+        "--background": color.canvas,
+        // Stable skin values survive route-local compatibility aliases (especially admin).
+        "--site-canvas": color.canvas,
+        "--site-surface": color.surface,
+        "--site-subtle": color.surfaceSubtle,
+        "--site-raised": color.surfaceRaised,
+        "--site-overlay": color.overlay,
+        "--site-text": color.text,
+        "--site-muted": color.textMuted,
+        "--site-border": color.border,
+        "--site-control-border": color.controlBorder,
+        "--site-admin-canvas": color.adminBackground,
+        "--site-admin-surface": color.adminSurface,
+        "--site-admin-subtle": color.adminSubtle,
+        "--site-admin-strong": color.adminStrong,
+        "--foreground": color.text,
+        "--card": color.surface,
+        "--card-foreground": color.text,
+        "--popover": color.overlay,
+        "--popover-foreground": color.text,
+        "--primary": color.primary,
+        "--primary-foreground": color.primaryForeground,
+        "--secondary": color.surfaceSubtle,
+        "--secondary-foreground": color.text,
+        "--muted": color.surfaceSubtle,
+        "--muted-foreground": color.textMuted,
+        "--accent": color.selected,
+        "--accent-foreground": color.selectedForeground,
+        "--destructive": color.danger,
+        "--destructive-hover": color.dangerHover,
+        "--destructive-active": color.dangerActive,
+        "--destructive-foreground": color.dangerForeground,
+        "--border": color.border,
+        "--input": color.controlBorder,
+        "--ring": color.controlFocus,
+        "--surface": color.surface,
+        "--surface-hover": color.controlHover,
+        "--surface-active": color.controlActive,
+        "--surface-card": color.surfaceSubtle,
+        "--surface-card-hover": color.controlHover,
+        "--card-surface": color.surfaceSubtle,
+        "--card-surface-hover": color.controlHover,
+        "--card-surface-raised": color.surfaceRaised,
+        "--btn-solid-bg": color.primary,
+        "--btn-solid-hover-bg": color.primaryHover,
+        "--btn-solid-active-bg": color.primaryActive,
+        "--btn-solid-fg": color.primaryForeground,
+        "--control-selected-bg": color.selected,
+        "--control-selected-hover-bg": color.selectedHover,
+        "--control-selected-fg": color.selectedForeground,
+        "--control-selected-border": color.controlBorder,
+        "--control-check-bg": color.primary,
+        "--control-check-fg": color.primaryForeground,
+        "--control-switch-checked-bg": color.switchChecked,
+        "--control-switch-checked-hover-bg": color.switchCheckedHover,
+        "--control-switch-checked-handle": color.switchCheckedHandle,
+        "--control-switch-off-bg": color.switchUnchecked,
+        "--control-switch-off-hover-bg": color.switchUncheckedHover,
+        "--control-switch-off-handle": color.switchUncheckedHandle,
+        "--control-disabled-bg": color.controlDisabledBackground,
+        "--control-disabled-fg": color.controlDisabledForeground,
+        "--control-focus-ring": color.controlFocus,
+        "--workspace-surface": color.workspace,
+        "--workspace-surface-strong": color.surfaceRaised,
+        "--workspace-border": color.border,
+        "--workspace-border-strong": color.controlBorder,
+        "--workspace-grid-line": color.workspaceGrid,
+        "--workspace-accent": color.primary,
+        "--workspace-accent-soft": `color-mix(in srgb, ${color.primary} 12%, transparent)`,
+        "--skin-admin-layer-0": color.adminBackground,
+        "--skin-admin-layer-1": color.adminSurface,
+        "--skin-admin-layer-2": color.adminSubtle,
+        "--skin-admin-layer-3": color.adminStrong,
+        "--auth-page-bg": color.authBackground,
+        "--auth-panel-bg": color.authPanel,
+        "--auth-card-bg": color.authCard,
+        "--auth-accent": color.authAccent,
+        "--auth-muted": color.authMuted,
+        "--palette-status-success": color.success,
+        "--palette-status-error": color.danger,
+        "--palette-status-loading": color.info,
+        "--palette-status-warning": color.warning,
+        "--icon-foreground": color.icon,
+        "--icon-muted": color.iconMuted,
+        "--icon-active": color.iconActive,
+        "--r-sm": `${component.inputRadius}px`,
+        "--r-md": `${component.buttonRadius}px`,
+        "--r-lg": `${component.cardRadius}px`,
+        "--r-xl": `${component.overlayRadius}px`,
+        "--r-2xl": `${component.overlayRadius}px`,
+        "--radius": `${component.buttonRadius / 16}rem`,
+        "--control-radius": `${component.inputRadius}px`,
+        "--button-radius": `${component.buttonRadius}px`,
+        "--input-radius": `${component.inputRadius}px`,
+        "--card-radius": `${component.cardRadius}px`,
+        "--overlay-radius": `${component.overlayRadius}px`,
+        "--menu-radius": `${component.menuRadius}px`,
+        "--checkbox-radius": `${component.checkboxRadius}px`,
+        "--control-border-width": `${component.borderWidth}px`,
+        "--focus-ring-width": `${component.focusRingWidth}px`,
+        "--icon-size": `${component.iconSize}px`,
+        "--theme-hover-lift": `${component.hoverLift}px`,
+        "--motion-instant": `${component.motionFast}ms`,
+        "--motion-state": `${component.motionNormal}ms`,
+        "--skin-motion-state": `${component.motionNormal}ms`,
+        ...shadows,
+    };
+}
+
+function skinShadowVariables(style: SkinShadowStyle, mode: SkinThemeMode) {
+    if (style === "none") return { "--elevation-card": "none", "--elevation-card-hover": "none", "--elevation-overlay": "none", "--theme-admin-card-shadow": "none" };
+    if (style === "strong") {
+        return mode === "dark"
+            ? { "--elevation-card": "0 5px 16px #00000080", "--elevation-card-hover": "0 18px 44px #000000a6", "--elevation-overlay": "0 30px 90px #000000c2", "--theme-admin-card-shadow": "0 5px 16px #00000070" }
+            : { "--elevation-card": "0 5px 16px #0f172a29", "--elevation-card-hover": "0 18px 44px #0f172a3d", "--elevation-overlay": "0 30px 90px #0f172a52", "--theme-admin-card-shadow": "0 5px 16px #11182724" };
+    }
+    return mode === "dark"
+        ? { "--elevation-card": "0 2px 7px #00000061", "--elevation-card-hover": "0 12px 30px #0000007a", "--elevation-overlay": "0 26px 72px #0000009e", "--theme-admin-card-shadow": "0 2px 7px #00000052" }
+        : { "--elevation-card": "0 2px 7px #0f172a14", "--elevation-card-hover": "0 12px 30px #0f172a24", "--elevation-overlay": "0 26px 72px #0f172a33", "--theme-admin-card-shadow": "0 2px 7px #1118270f" };
+}
+
+function cloneSkinTokens(tokens: SkinTokens): SkinTokens {
+    return { light: { ...tokens.light }, dark: { ...tokens.dark }, components: { ...tokens.components }, buttons: { light: { ...tokens.buttons.light }, dark: { ...tokens.buttons.dark } } };
+}
+
+function isSkinMode(value: unknown): value is SkinModeTokens {
+    if (!value || typeof value !== "object") return false;
+    return SKIN_MODE_COLOR_KEYS.every((key) => HEX_COLOR.test(String((value as Record<string, unknown>)[key] || "")));
+}
+
+function normalizeSkinMode(value: unknown, fallback: SkinModeTokens, mode: SkinThemeMode): SkinModeTokens | null {
+    if (!value || typeof value !== "object") return null;
+    const candidate = value as Partial<SkinModeTokens>;
+    const anchors = SKIN_NEUTRAL_ANCHORS[mode];
+    const anchor = (key: keyof SkinModeTokens, fallbackValue: string) => {
+        const raw = candidate[key];
+        return typeof raw === "string" && HEX_COLOR.test(raw.trim()) ? raw.trim().toLowerCase() : fallbackValue;
+    };
+    const derived = deriveSkinModeTokens({
+        primary: anchor("primary", HEX_COLOR.test(fallback.primary) ? fallback.primary : anchors.accent),
+        foreground: anchor("text", HEX_COLOR.test(fallback.text) ? fallback.text : anchors.foreground),
+        canvas: anchor("canvas", HEX_COLOR.test(fallback.canvas) ? fallback.canvas : anchors.canvas),
+        mode,
+    });
+    // 旧数据里已有的合法色位保留，缺失或不合法的一律由派生补齐。
+    const result: SkinModeTokens = { ...derived };
+    const stored = (key: keyof SkinModeTokens) => {
+        const raw = candidate[key];
+        return typeof raw === "string" && HEX_COLOR.test(raw.trim());
+    };
+    for (const key of SKIN_MODE_COLOR_KEYS) {
+        if (stored(key)) result[key] = (candidate[key] as string).trim().toLowerCase();
+    }
+    // 旧数据自定义过危险色时，缺失的 hover/active/前景按同一色相派生，避免跳回内置信号色。
+    if (result.danger !== SKIN_SIGNAL_PALETTE[mode].danger) {
+        if (!stored("dangerHover")) result.dangerHover = mixSkinColors(result.danger, result.text, SKIN_ACCENT_RATIOS[mode].hover);
+        if (!stored("dangerActive")) result.dangerActive = mixSkinColors(result.danger, result.text, SKIN_ACCENT_RATIOS[mode].active);
+        if (!stored("dangerForeground")) result.dangerForeground = pickPrimaryForeground(result.danger);
+    }
+    if (!stored("switchCheckedHover") && stored("primaryHover")) result.switchCheckedHover = result.primaryHover;
+    return isSkinMode(result) ? result : null;
+}
+
+function isSkinComponents(value: unknown): value is SkinComponentTokens {
+    if (!value || typeof value !== "object") return false;
+    const candidate = value as Record<string, unknown>;
+    return SKIN_COMPONENT_NUMBER_FIELDS.every((field) => typeof candidate[field.key] === "number" && Number.isFinite(candidate[field.key])) && ["none", "soft", "strong"].includes(String(candidate.shadowStyle));
+}

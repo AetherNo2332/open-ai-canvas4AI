@@ -1,0 +1,90 @@
+.agent-subagent-conversation {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+.agent-subagent-conversation-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+}
+.agent-subagent-conversation-header h2 {
+    margin: 0;
+    font-size: var(--fs-body);
+    font-weight: 500;
+    overflow-wrap: anywhere;
+}
+.agent-subagent-conversation-header p {
+    margin: var(--space-1) 0 0;
+    font-size: var(--fs-label);
+    opacity: 0.6;
+}
+.agent-subagent-conversation-header button {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: var(--button-radius);
+    background: transparent;
+    cursor: pointer;
+    color: inherit;
+}
+.agent-subagent-conversation-header button:hover {
+    background: var(--agent-surface-hover);
+}
+.agent-subagent-conversation-header button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.agent-subagent-conversation-header button:focus-visible,
+.agent-subagent-reports summary:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+.agent-subagent-conversation-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--space-4) var(--space-5);
+    overscroll-behavior: contain;
+    overflow-wrap: anywhere;
+}
+.agent-subagent-objective {
+    padding: var(--space-3);
+    background: var(--agent-surface-soft);
+    border-radius: var(--card-radius);
+}
+.agent-subagent-objective > span,
+.agent-subagent-reports article > span,
+.agent-subagent-transcript-note {
+    font-size: var(--fs-label);
+    opacity: 0.6;
+}
+.agent-subagent-objective p,
+.agent-subagent-reports p {
+    font-size: var(--fs-body);
+    line-height: 1.7;
+    white-space: pre-wrap;
+    margin-top: var(--space-2);
+}
+.agent-subagent-reports {
+    margin-block: var(--space-4);
+    font-size: var(--fs-label);
+}
+.agent-subagent-reports summary {
+    cursor: pointer;
+    min-height: 32px;
+    padding-block: var(--space-2);
+}
+.agent-subagent-reports article {
+    margin-top: var(--space-3);
+}
+.agent-subagent-transcript > * {
+    margin-top: var(--space-4);
+}

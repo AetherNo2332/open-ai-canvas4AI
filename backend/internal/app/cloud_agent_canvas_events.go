@@ -1,0 +1,494 @@
+package app
+
+import (
+	"reflect"
+
+	"infinite-canvas/backend/internal/repository"
+)
+
+// Persist the delta in the same transaction as the canvas and run checkpoint.
+// Clients can project it without fetching the entire canvas for every task.
+func cloudAgentCanvasEventRecorder(runID string, state *cloudAgentRuntime) cloudAgentMutationRecorder {
+	return func(repo *repository.Repository, input cloudAgentMutationInput) error {
+		if err := cloudAgentMutationRecorderForRun(runID)(repo, input); err != nil {
+			return err
+		}
+		return emitCloudAgentCanvasChange(repo, runID, state, input)
+	}
+}
+
+func cloudAgentObjectChanges(before, after any) []map[string]any {
+	previous := map[string]map[string]any{}
+	for _, item := range creationMaps(before) {
+		previous[stringValue(item["id"])] = item
+	}
+	changes := []map[string]any{}
+	for _, item := range creationMaps(after) {
+		old := previous[stringValue(item["id"])]
+		if !reflect.DeepEqual(old, item) {
+			before, after := cloudAgentShrinkChange(old, item)
+			changes = append(changes, map[string]any{"before": before, "after": after})
+		}
+		delete(previous, stringValue(item["id"]))
+	}
+	for _, item := range creationMaps(before) {
+		if previous[stringValue(item["id"])] != nil {
+			changes = append(changes, map[string]any{"before": item, "after": nil})
+		}
+	}
+	return changes
+}
+
+// cloudAgentGeometryFields 是"只改位置/尺寸"的字段集合。
+var cloudAgentGeometryFields = []string{"position", "width", "height", "zIndex"}
+
+// cloudAgentShrinkChange 把"只动了几何"的节点变更缩成几何增量。
+//
+// 画布增量在前端是**三方合并**（按字段合并，未出现的字段保持本地值），所以只发发生变化的
+// 几何字段既安全又必要：一次整理 50 个节点时，若每个节点都带完整正文（分镜行、Markdown
+// 正文可达十几 KB），单条 canvas_updated 事件就会顶穿状态校验里 128KB 的单事件上限，
+// 整轮被判成"超过安全限制"直接终止（2026-09-19 dev 上就是这么死的）。
+// 只有"除几何外完全一致"时才缩：带内容/metadata 变化的节点仍发完整 before/after，
+// 以免影响前端对生成任务状态的保护逻辑。
+func cloudAgentShrinkChange(before, after map[string]any) (map[string]any, map[string]any) {
+	if before == nil || after == nil {
+		return before, after
+	}
+	// 分镜行编辑：整节点 before/after 会把每行十几 KB 的正文重复两遍，
+	// 而前端是按行 id 三方合并的，所以这里只下发变化的那几行。
+	if shrunkBefore, shrunkAfter, ok := cloudAgentShrinkStoryboardRows(before, after); ok {
+		return shrunkBefore, shrunkAfter
+	}
+	for key, value := range after {
+		if cloudAgentContainsString(cloudAgentGeometryFields, key) {
+			continue
+		}
+		if !reflect.DeepEqual(before[key], value) {
+			return before, after
+		}
+	}
+	for key, value := range before {
+		if cloudAgentContainsString(cloudAgentGeometryFields, key) {
+			continue
+		}
+		if _, exists := after[key]; !exists && value != nil {
+			return before, after
+		}
+	}
+	shrunkBefore := map[string]any{"id": after["id"]}
+	shrunkAfter := map[string]any{"id": after["id"]}
+	for _, key := range cloudAgentGeometryFields {
+		final, hasFinal := after[key]
+		initial, hasInitial := before[key]
+		if !hasFinal && !hasInitial {
+			continue
+		}
+		if reflect.DeepEqual(initial, final) {
+			continue
+		}
+		if hasInitial {
+			shrunkBefore[key] = initial
+		}
+		if hasFinal {
+			shrunkAfter[key] = final
+		}
+	}
+	return shrunkBefore, shrunkAfter
+}
+
+func emitCloudAgentCanvasChange(repo *repository.Repository, runID string, state *cloudAgentRuntime, input cloudAgentMutationInput) error {
+	before, err := creationDocument(input.BeforeJSON)
+	if err != nil {
+		return err
+	}
+	canvas, err := repo.CanvasProjectForUser(input.UserID, input.CanvasID)
+	if err != nil {
+		return err
+	}
+	after, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		return err
+	}
+	nodes := cloudAgentObjectChanges(before["nodes"], after["nodes"])
+	edges := cloudAgentObjectChanges(before["connections"], after["connections"])
+	if !cloudAgentPatchCoversDocument(before, after) {
+		// A partial delta must never acknowledge a revision containing omitted edits.
+		state.event(runID, "canvas_updated", map[string]any{"canvasId": input.CanvasID, "operation": input.Operation, "requiresRefresh": true})
+		return nil
+	}
+	actions := []map[string]any{}
+	previewByOperationAndNode := map[string]cloudAgentApprovalPreviewItem{}
+	previewByUniqueNode := map[string]cloudAgentApprovalPreviewItem{}
+	ambiguousPreviewNode := map[string]bool{}
+	if inputPreview := input.Preview; inputPreview != nil {
+		for _, item := range inputPreview.Items {
+			if item.NodeID == "" {
+				continue
+			}
+			previewByOperationAndNode[item.Operation+"\x00"+item.NodeID] = item
+			if _, exists := previewByUniqueNode[item.NodeID]; exists {
+				ambiguousPreviewNode[item.NodeID] = true
+			} else {
+				previewByUniqueNode[item.NodeID] = item
+			}
+		}
+	}
+	findPreview := func(operation, nodeID string) (cloudAgentApprovalPreviewItem, bool) {
+		if item, ok := previewByOperationAndNode[operation+"\x00"+nodeID]; ok {
+			return item, true
+		}
+		if !ambiguousPreviewNode[nodeID] {
+			item, ok := previewByUniqueNode[nodeID]
+			return item, ok
+		}
+		return cloudAgentApprovalPreviewItem{}, false
+	}
+	for _, change := range nodes {
+		node, _ := change["after"].(map[string]any)
+		action := "updated"
+		if node == nil {
+			node, _ = change["before"].(map[string]any)
+			action = "deleted"
+		} else if old, _ := change["before"].(map[string]any); old == nil {
+			action = "created"
+		}
+		entry := map[string]any{"action": action, "nodeId": node["id"], "title": node["title"], "nodeType": node["type"]}
+		previewOperation := "update_node"
+		if action == "created" {
+			previewOperation = "add_node"
+		} else if action == "deleted" {
+			previewOperation = "delete_node"
+		}
+		if preview, ok := findPreview(previewOperation, stringValue(node["id"])); ok {
+			switch preview.Operation {
+			case "duplicate_node":
+				entry["action"] = "duplicated"
+			case "set_parent":
+				entry["action"] = "grouped"
+			case "reorder_rows":
+				entry["action"] = "reordered"
+			case "replace_text":
+				entry["action"] = "edited"
+			}
+			if preview.NodeTitle != "" {
+				entry["title"] = preview.NodeTitle
+			}
+			if len(preview.Fields) > 0 {
+				entry["fields"] = preview.Fields
+			}
+			if preview.ResultTitle != "" {
+				entry["resultTitle"] = preview.ResultTitle
+			}
+			if preview.Summary != "" {
+				entry["summary"] = preview.Summary
+			}
+		}
+		actions = append(actions, entry)
+	}
+	byID, err := creationObjects(after["nodes"])
+	if err != nil {
+		return err
+	}
+	for _, change := range edges {
+		edge, _ := change["after"].(map[string]any)
+		edgeAction := "referenced"
+		if edge == nil {
+			edge, _ = change["before"].(map[string]any)
+			edgeAction = "disconnected"
+		}
+		if node := byID[stringValue(edge["fromNodeId"])]; node != nil {
+			entry := map[string]any{"action": edgeAction, "nodeId": node["id"], "title": node["title"], "nodeType": node["type"], "targetNodeId": edge["toNodeId"]}
+			if target := byID[stringValue(edge["toNodeId"])]; target != nil {
+				entry["targetTitle"], entry["targetNodeType"] = target["title"], target["type"]
+			}
+			if preview, ok := findPreview("connect_nodes", stringValue(edge["fromNodeId"])); ok && preview.TargetNodeTitle != "" {
+				entry["targetTitle"], entry["targetNodeType"] = preview.TargetNodeTitle, preview.TargetNodeType
+				if preview.Summary != "" {
+					entry["summary"] = preview.Summary
+				}
+			}
+			actions = append(actions, entry)
+		}
+	}
+	payload := map[string]any{
+		"canvasId": input.CanvasID, "operation": input.Operation, "actions": actions,
+		"canvasPatch": map[string]any{"canvasId": input.CanvasID, "baseRevision": canvas.Revision - 1, "revision": canvas.Revision, "updatedAt": after["updatedAt"], "nodes": nodes, "connections": edges},
+	}
+	patch := payload["canvasPatch"].(map[string]any)
+	for _, kind := range []struct{ key, order, previous string }{{"nodes", "nodeOrder", "previousNodeOrder"}, {"connections", "connectionOrder", "previousConnectionOrder"}} {
+		oldOrder, newOrder := cloudAgentObjectOrder(before[kind.key]), cloudAgentObjectOrder(after[kind.key])
+		if !cloudAgentSameObjectOrder(oldOrder, newOrder) {
+			patch[kind.order] = newOrder
+			patch[kind.previous] = oldOrder
+		}
+	}
+	if input.Preview != nil {
+		payload["preview"] = input.Preview
+		payload["text"] = input.Preview.Description
+	}
+	if state.CallIndex >= 0 && state.CallIndex < len(state.Calls) {
+		payload["callId"] = state.Calls[state.CallIndex].ID
+	}
+	state.event(runID, "canvas_updated", payload)
+	return nil
+}
+
+func cloudAgentPatchCoversDocument(before, after map[string]any) bool {
+	for _, key := range []string{"nodes", "connections"} {
+		// Tombstones encode removals, and explicit baseline/final order arrays
+		// encode sorting. Both collections must be losslessly addressable by ID.
+		if !cloudAgentValidKeyedCollection(before[key]) || !cloudAgentValidKeyedCollection(after[key]) {
+			return false
+		}
+	}
+	content := func(doc map[string]any) map[string]any {
+		result := map[string]any{}
+		for key, value := range doc {
+			if key != "nodes" && key != "connections" && key != "updatedAt" && key != "viewport" {
+				result[key] = value
+			}
+		}
+		return result
+	}
+	return reflect.DeepEqual(content(before), content(after))
+}
+
+func cloudAgentValidKeyedCollection(value any) bool {
+	var items []map[string]any
+	switch list := value.(type) {
+	case nil:
+		return true // Missing legacy collections are empty.
+	case []map[string]any:
+		items = list
+	case []any:
+		for _, raw := range list {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				return false
+			}
+			items = append(items, item)
+		}
+	default:
+		return false
+	}
+	seen := map[string]bool{}
+	for _, item := range items {
+		id, ok := item["id"].(string)
+		if !ok || seen[id] || validateCloudAgentID(id, "画布对象 ID", 160) != nil {
+			return false
+		}
+		seen[id] = true
+	}
+	return true
+}
+
+func cloudAgentRetainedObjectOrderChanged(before, after any) bool {
+	oldOrder, nextOrder := cloudAgentObjectOrder(before), cloudAgentObjectOrder(after)
+	oldIDs, nextIDs := map[string]bool{}, map[string]bool{}
+	for _, id := range oldOrder {
+		oldIDs[id] = true
+	}
+	for _, id := range nextOrder {
+		nextIDs[id] = true
+	}
+	oldRetained, nextRetained := []string{}, []string{}
+	for _, id := range oldOrder {
+		if nextIDs[id] {
+			oldRetained = append(oldRetained, id)
+		}
+	}
+	for _, id := range nextOrder {
+		if oldIDs[id] {
+			nextRetained = append(nextRetained, id)
+		}
+	}
+	return !cloudAgentSameObjectOrder(oldRetained, nextRetained)
+}
+
+// cloudAgentShrinkStoryboardRows 把"只改了几行分镜"的节点变更缩成行级增量。
+//
+// 协议（与前端 mergeKeyedArray 对齐）：
+//   - 改过的行：before/after 各只带 id + 变化字段；
+//   - 新增的行：after 带完整行；
+//   - 删除的行：before 带完整行（否则前端无法与"本地改过这行"区分，会退化成冲突）。
+//
+// 行以外的字段（含 title/type/status/taskId）只有在完全相同的情况下才会走到这里，
+// 因此不会影响前端对生成任务状态的保护逻辑。
+func cloudAgentShrinkStoryboardRows(before, after map[string]any) (map[string]any, map[string]any, bool) {
+	if stringValue(before["type"]) != "script" || stringValue(after["type"]) != "script" {
+		return before, after, false
+	}
+	beforeMeta, beforeOK := before["metadata"].(map[string]any)
+	afterMeta, afterOK := after["metadata"].(map[string]any)
+	if !beforeOK || !afterOK {
+		return before, after, false
+	}
+	beforeBoard, beforeHasBoard := cloudAgentStoryboardBoard(beforeMeta)
+	afterBoard, afterHasBoard := cloudAgentStoryboardBoard(afterMeta)
+	if !beforeHasBoard || !afterHasBoard {
+		return before, after, false
+	}
+	beforeRows := cloudAgentRowsOf(beforeBoard["rows"])
+	afterRows := cloudAgentRowsOf(afterBoard["rows"])
+	// A sparse row delta does not encode order. Keep the full arrays when an
+	// existing row moves so clients can reconcile content and order separately.
+	if !cloudAgentValidKeyedCollection(beforeBoard["rows"]) || !cloudAgentValidKeyedCollection(afterBoard["rows"]) || cloudAgentRetainedObjectOrderChanged(beforeBoard["rows"], afterBoard["rows"]) {
+		return before, after, false
+	}
+	// Sparse additions append at the tail. Restoring a deleted row at its old
+	// position needs full arrays even if retained rows keep their relative order.
+	existingIDs := map[string]bool{}
+	for _, row := range beforeRows {
+		existingIDs[stringValue(row["id"])] = true
+	}
+	newRowSeen := false
+	for _, row := range afterRows {
+		if !existingIDs[stringValue(row["id"])] {
+			newRowSeen = true
+		} else if newRowSeen {
+			return before, after, false
+		}
+	}
+	if len(beforeRows) == 0 && len(afterRows) == 0 {
+		return before, after, false
+	}
+	// 除 rows 外的所有内容必须完全一致，否则交回调用方发完整增量。
+	if !cloudAgentSameExcept(before, after, "metadata") {
+		return before, after, false
+	}
+	if !cloudAgentSameExcept(beforeMeta, afterMeta, "storyboard") {
+		return before, after, false
+	}
+	if !cloudAgentSameExcept(beforeBoard, afterBoard, "rows") {
+		return before, after, false
+	}
+
+	beforeIndex := map[string]map[string]any{}
+	for _, row := range beforeRows {
+		beforeIndex[stringValue(row["id"])] = row
+	}
+	afterIndex := map[string]map[string]any{}
+	for _, row := range afterRows {
+		afterIndex[stringValue(row["id"])] = row
+	}
+	deltaBefore, deltaAfter := []any{}, []any{}
+	for _, row := range afterRows {
+		id := stringValue(row["id"])
+		if id == "" {
+			return before, after, false
+		}
+		old, existed := beforeIndex[id]
+		if !existed {
+			deltaAfter = append(deltaAfter, row) // 新增：完整行
+			continue
+		}
+		if reflect.DeepEqual(old, row) {
+			continue
+		}
+		deltaBefore = append(deltaBefore, cloudAgentRowDelta(old, row, true))
+		deltaAfter = append(deltaAfter, cloudAgentRowDelta(old, row, false))
+	}
+	for _, row := range beforeRows {
+		id := stringValue(row["id"])
+		if _, exists := afterIndex[id]; !exists {
+			deltaBefore = append(deltaBefore, row) // 删除：完整旧行
+		}
+	}
+	if len(deltaBefore) == 0 && len(deltaAfter) == 0 {
+		return before, after, false
+	}
+
+	// 行以外保留 id/type/title：画布变更列表要用它们构造人类可读的动作条目，
+	// 且它们在三方合并里是"两边相同 → 保持本地值"的空操作。
+	shrunkBefore := map[string]any{"id": before["id"], "metadata": map[string]any{"storyboard": map[string]any{"rows": deltaBefore}}}
+	shrunkAfter := map[string]any{"id": after["id"], "metadata": map[string]any{"storyboard": map[string]any{"rows": deltaAfter}}}
+	for _, key := range []string{"type", "title"} {
+		if value, exists := after[key]; exists {
+			shrunkBefore[key] = before[key]
+			shrunkAfter[key] = value
+		}
+	}
+	return shrunkBefore, shrunkAfter, true
+}
+
+func cloudAgentStoryboardBoard(meta map[string]any) (map[string]any, bool) {
+	// 画布文档里 storyboard 是对象（不是数组），兼容数组形态的历史数据。
+	if board, ok := meta["storyboard"].(map[string]any); ok {
+		return board, true
+	}
+	boards := creationMaps(meta["storyboard"])
+	if len(boards) == 0 {
+		return nil, false
+	}
+	return boards[0], true
+}
+
+// cloudAgentRowDelta 生成一行的字段级增量：只带 id 与发生变化的字段。
+func cloudAgentRowDelta(old, next map[string]any, useOld bool) map[string]any {
+	delta := map[string]any{"id": next["id"]}
+	for key := range next {
+		if key == "id" {
+			continue
+		}
+		if reflect.DeepEqual(old[key], next[key]) {
+			continue
+		}
+		if useOld {
+			if value, exists := old[key]; exists {
+				delta[key] = value
+			}
+			continue
+		}
+		delta[key] = next[key]
+	}
+	if useOld {
+		for key, value := range old {
+			if key == "id" {
+				continue
+			}
+			if _, exists := next[key]; !exists {
+				delta[key] = value
+			}
+		}
+	}
+	return delta
+}
+
+// cloudAgentSameExcept 判断两个 map 除 skip 之外的键是否完全一致。
+func cloudAgentSameExcept(left, right map[string]any, skip string) bool {
+	for key, value := range left {
+		if key == skip {
+			continue
+		}
+		if !reflect.DeepEqual(right[key], value) {
+			return false
+		}
+	}
+	for key, value := range right {
+		if key == skip {
+			continue
+		}
+		if _, exists := left[key]; !exists && value != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// cloudAgentRowsOf 把任意 JSON 数组形状的行集合收敛成 []map[string]any；非行结构返回 nil。
+func cloudAgentRowsOf(value any) []map[string]any {
+	switch items := value.(type) {
+	case []any:
+		rows := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			if row, ok := item.(map[string]any); ok {
+				rows = append(rows, row)
+			}
+		}
+		return rows
+	case []map[string]any:
+		return items
+	default:
+		return nil
+	}
+}

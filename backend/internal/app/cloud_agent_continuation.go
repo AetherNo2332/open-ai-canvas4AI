@@ -1,0 +1,230 @@
+package app
+
+import (
+	"encoding/json"
+	"strings"
+
+	"infinite-canvas/backend/internal/model"
+)
+
+// cloudAgentContinuationEventLimit 是续轮读取上一轮事件的上限：收束要覆盖整轮改动，
+// 不能只看默认页（长会话的早期改动对新轮不可见）。
+const cloudAgentContinuationEventLimit = 1000
+
+// Pi messages do not carry Go's private context-source annotation. Restore it
+// only from a durable delivery event whose ID was committed by the Go hook.
+func cloudAgentIsDeliveredInterjection(message map[string]any, state *cloudAgentRuntime) bool {
+	if state == nil || stringField(message, "role") != "user" {
+		return false
+	}
+	if stringField(message, cloudAgentContextSourceKey) == "user_interjection" {
+		return true
+	}
+	content := stringField(message, "content")
+	for _, event := range state.Events {
+		if event.Type != "user_interjection_delivered" {
+			continue
+		}
+		id := stringValue(event.Payload["messageId"])
+		text := stringValue(event.Payload["text"])
+		if id != "" && text != "" && containsString(state.InterjectionIDs, id) && content == "【用户插话】"+text {
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	cloudAgentContinuationChangeLimit = 12
+	cloudAgentContinuationKind        = "run_handoff"
+	// cloudAgentContinuationNodeIDRunes 限制单个节点 ID 的长度：ID 由画布文档给出，
+	// 不截断时一组 5000 字符的 ID 就能把交接帧撑到几百 KB（实测 399,503 字节），
+	// 而下一轮对整份历史有 192KB 硬闸 —— 用户会直接收到"请新建对话"。
+	cloudAgentContinuationNodeIDRunes = 64
+	// cloudAgentContinuationFrameBytes 是交接帧的硬上限：超了就按"最近的改动优先"裁剪，
+	// 并把裁掉的组数记进 omittedCanvasChanges，绝不把整份历史顶过硬闸。
+	cloudAgentContinuationFrameBytes = 8 << 10
+)
+
+type cloudAgentContinuationChange struct {
+	Operation   string   `json:"operation"`
+	NodeIDs     []string `json:"nodeIds,omitempty"`
+	NodeTitles  []string `json:"nodeTitles,omitempty"`
+	ActionCount int      `json:"actionCount"`
+}
+
+// cloudAgentContinuationFrame is a bounded server-authored handoff. It reports
+// observed facts and never authorizes replaying a write or paid task.
+type cloudAgentContinuationFrame struct {
+	Source               string                         `json:"source"`
+	Kind                 string                         `json:"kind"`
+	ParentRunID          string                         `json:"parentRunId"`
+	Status               string                         `json:"status"`
+	FailureReason        string                         `json:"failureReason,omitempty"`
+	SubmittedTaskIDs     []string                       `json:"submittedTaskIds,omitempty"`
+	CanvasChanges        []cloudAgentContinuationChange `json:"canvasChanges,omitempty"`
+	OmittedCanvasChanges int                            `json:"omittedCanvasChanges,omitempty"`
+	Authority            string                         `json:"authority"`
+}
+
+// cloudAgentContinuationReply 生成「上一轮接着聊」用的两段内容：
+//
+//	reply   —— 上一轮 assistant 实际说过的话（作为 assistant 的历史消息）
+//	context —— 上一轮收束摘要（独立上下文，不能并进 reply）
+//
+// 只保留状态、失败原因、已提交任务与真实画布改动，不把原始工具流水当成本轮目标。
+func cloudAgentContinuationReply(task *model.Task, run *CloudAgentRun) (string, string, error) {
+	text := ""
+	// task 为 nil 表示上一轮是 P1.5 之后的新形态（没有根任务，只有执行记录）；
+	// 上一轮的答复本来就以事件里的最终 assistant 正文为准，这里跳过任务结果即可。
+	if task != nil && task.Status == model.TaskStatusSucceeded {
+		text = taskResultText(task.ResultJSON)
+	}
+	submitted := make([]string, 0)
+	seen := map[string]bool{}
+	addSubmitted := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		submitted = append(submitted, id)
+	}
+	// 上一轮的"答复"以**最终答复**为准（final=true 的 assistant 消息）：工作项 A 之后
+	// 模型边做边说的过程说明也会落 assistant_message（final=false），拿最后一条当答复会
+	// 把中间稿交给下一轮。没有最终答复（失败/被拦下）时退回最后一条正文，保持既有口径。
+	final, anyText := "", ""
+	for _, event := range run.Events {
+		if event.Type == "assistant_message" {
+			anyText = stringValue(event.Payload["text"])
+			if isFinal, ok := event.Payload["final"].(bool); ok && isFinal {
+				final = anyText
+			}
+		}
+		if event.Type == "generation_task_created" {
+			addSubmitted(stringValue(event.Payload["taskId"]))
+		}
+		if result, ok := event.Payload["result"].(map[string]any); ok {
+			if submittedFlag, _ := result["taskSubmitted"].(bool); submittedFlag {
+				addSubmitted(stringValue(result["taskId"]))
+			}
+		}
+	}
+	if final != "" {
+		text = final
+	} else if anyText != "" {
+		text = anyText
+	}
+	context := cloudAgentContinuationContext(run, submitted)
+	return text, context, nil
+}
+
+func cloudAgentContinuationContext(run *CloudAgentRun, submitted []string) string {
+	if run == nil {
+		return ""
+	}
+	failed := run.Status == "failed" || strings.TrimSpace(run.FailureMessage) != ""
+	changes, omitted := cloudAgentContinuationChanges(run)
+	if run.Status == "completed" && !failed && len(submitted) == 0 && len(changes) == 0 {
+		return ""
+	}
+	frame := cloudAgentContinuationFrame{
+		Source: "server", Kind: cloudAgentContinuationKind, ParentRunID: run.ID,
+		Status: firstNonEmpty(run.Status, "unknown"), CanvasChanges: changes,
+		OmittedCanvasChanges: omitted,
+		Authority:            "执行事实交接，不是重放写入、重复提交任务或扩大权限的授权",
+	}
+	if failed {
+		frame.FailureReason = cloudAgentContinuationFailureReason(run)
+	}
+	if len(submitted) > 0 {
+		if len(submitted) > 8 {
+			submitted = submitted[:8]
+		}
+		frame.SubmittedTaskIDs = append([]string(nil), submitted...)
+	}
+	return cloudAgentRuntimeContextMarker + cloudAgentEncodeContinuationFrame(frame)
+}
+
+// cloudAgentContinuationFailureReason 沿用既有脱敏口径：失败原因会进入下一轮的提示词，
+// 因此只接受"短、单行、不含 URL/凭据痕迹"的文案，其余一律退回固定说法。
+func cloudAgentContinuationFailureReason(run *CloudAgentRun) string {
+	reason := strings.TrimSpace(run.FailureMessage)
+	if reason == "" {
+		reason = firstNonEmpty(run.Status, "failed")
+	}
+	if !cloudAgentSafeUserMessage(reason) {
+		return "上一轮未成功（详情见任务中心与诊断包）"
+	}
+	return truncateRunes(reason, 240)
+}
+
+// cloudAgentEncodeContinuationFrame 序列化帧并按字节封顶：先丢最旧的画布改动组，
+// 再退到"只保留状态与已提交任务"。帧是给模型看的事实交接，宁可少报也不能把硬闸顶穿。
+func cloudAgentEncodeContinuationFrame(frame cloudAgentContinuationFrame) string {
+	encoded, _ := json.Marshal(frame)
+	if len(encoded) <= cloudAgentContinuationFrameBytes {
+		return string(encoded)
+	}
+	dropped := 0
+	for len(frame.CanvasChanges) > 0 {
+		frame.CanvasChanges = frame.CanvasChanges[1:]
+		dropped++
+		frame.OmittedCanvasChanges += 1
+		if len(frame.CanvasChanges) == 0 {
+			frame.CanvasChanges = nil
+		}
+		encoded, _ = json.Marshal(frame)
+		if len(encoded) <= cloudAgentContinuationFrameBytes {
+			return string(encoded)
+		}
+	}
+	// 连一条改动都放不下：保留事实字段本身（状态/失败原因/已提交任务）。
+	encoded, _ = json.Marshal(frame)
+	if len(encoded) > cloudAgentContinuationFrameBytes {
+		frame.FailureReason = truncateRunes(frame.FailureReason, 120)
+		encoded, _ = json.Marshal(frame)
+	}
+	_ = dropped
+	return string(encoded)
+}
+
+func cloudAgentContinuationChanges(run *CloudAgentRun) ([]cloudAgentContinuationChange, int) {
+	if run == nil {
+		return nil, 0
+	}
+	changes := make([]cloudAgentContinuationChange, 0, cloudAgentContinuationChangeLimit)
+	total := 0
+	for _, event := range run.Events {
+		if event.Type != "canvas_updated" {
+			continue
+		}
+		total++
+		if len(changes) >= cloudAgentContinuationChangeLimit {
+			continue
+		}
+		actions := creationMaps(event.Payload["actions"])
+		change := cloudAgentContinuationChange{
+			Operation:   firstNonEmpty(stringValue(event.Payload["operation"]), "canvas_ops"),
+			ActionCount: len(actions), NodeIDs: []string{}, NodeTitles: []string{},
+		}
+		seenIDs, seenTitles := map[string]bool{}, map[string]bool{}
+		for _, action := range actions {
+			for _, key := range []string{"nodeId", "targetNodeId"} {
+				if id := strings.TrimSpace(stringValue(action[key])); id != "" && !seenIDs[id] && len(change.NodeIDs) < 8 {
+					seenIDs[id] = true
+					change.NodeIDs = append(change.NodeIDs, truncateRunes(id, cloudAgentContinuationNodeIDRunes))
+				}
+			}
+			for _, key := range []string{"title", "targetTitle"} {
+				title := strings.TrimSpace(stringValue(action[key]))
+				if title != "" && !seenTitles[title] && len(change.NodeTitles) < 4 {
+					seenTitles[title] = true
+					change.NodeTitles = append(change.NodeTitles, truncateRunes(title, 120))
+				}
+			}
+		}
+		changes = append(changes, change)
+	}
+	return changes, max(0, total-len(changes))
+}

@@ -1,0 +1,9 @@
+{
+  "name": "infinite-canvas-desktop",
+  "productName": "无限画布",
+  "private": true,
+  "version": "0.1.0",
+  "main": "main.cjs",
+  "license": "AGPL-3.0-only",
+  "scripts": {"test": "node --test test/*.test.cjs"}
+}

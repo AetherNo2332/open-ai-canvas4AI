@@ -1,0 +1,95 @@
+.agent-subagent-list {
+    min-width: 0;
+    padding: var(--space-2) var(--space-4);
+    color: var(--agent-subagent-text);
+}
+.agent-subagent-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--fs-label);
+    color: color-mix(in srgb, var(--agent-subagent-text) 55%, transparent);
+}
+.agent-subagent-count {
+    margin-left: var(--space-1);
+    font-variant-numeric: tabular-nums;
+}
+.agent-subagent-row {
+    display: flex;
+    gap: var(--space-2);
+    overflow-x: auto;
+    padding-block: var(--space-1);
+    overscroll-behavior: contain;
+}
+.agent-subagent-item {
+    flex: 0 0 64px;
+    min-width: 0;
+}
+.agent-subagent-button {
+    display: flex;
+    width: 100%;
+    min-height: 44px;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border: 0;
+    border-radius: var(--button-radius);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+.agent-subagent-button:hover {
+    background: color-mix(in srgb, var(--agent-subagent-text) 6%, transparent);
+}
+.agent-subagent-button:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+}
+.agent-subagent-avatar {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid color-mix(in srgb, var(--agent-subagent-text) 12%, transparent);
+    border-radius: var(--button-radius);
+    background: color-mix(in srgb, var(--agent-subagent-text) 4%, var(--agent-subagent-surface));
+}
+.agent-subagent-status {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    width: 9px;
+    height: 9px;
+    border: 2px solid var(--agent-subagent-surface);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--agent-subagent-text) 45%, var(--agent-subagent-surface));
+}
+.agent-subagent-item[data-state="running"] .agent-subagent-status {
+    background: var(--palette-status-success);
+}
+.agent-subagent-item[data-state="waiting"] .agent-subagent-status {
+    background: var(--palette-status-warning);
+}
+.agent-subagent-item[data-state="failed"] .agent-subagent-status {
+    background: var(--palette-status-error);
+}
+.agent-subagent-name {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: var(--fs-label);
+    line-height: 1.4;
+}
+.agent-subagent-number {
+    position: absolute;
+    top: -3px;
+    left: -3px;
+    font-size: 9px;
+    background: var(--agent-subagent-surface);
+    font-variant-numeric: tabular-nums;
+}
