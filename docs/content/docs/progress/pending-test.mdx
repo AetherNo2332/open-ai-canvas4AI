@@ -70,6 +70,9 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] 用户验收：任务中心原视频、诊断和两种只回写恢复操作，明暗主题；画布重新打开后可播放，正常手工导演台导出不回归。
 - [ ] 生产3000升级尚未授权或执行；CPU/内存性能与在途任务回退边界需部署前复盘。
 
+- [x] 2026-10-13 真机 Compose 验收（隔离栈 `director-previs-3040`：独立项目/镜像 tag `:dpv-3040`/数据卷/端口 3040，未触碰 3030 与 `:local` 镜像）：`docker compose -f docker-compose.local.yml -f .local/compose-accept/director-previs-3040.yml up -d --build` 冷启动后，验收脚本 `.local/compose-accept/acceptance-3040.sh` **ALL PASS（26/26）**——health ready（schema 58/58）、`build.version` 注入本分支 VERSION（v1.5.7.11(1033ca9)）、nginx SPA 与构建产物含本分支代码指纹、`/api` 代理与匿名 guest 身份、canary 全链路 E2E（注册=自动 admin → 默认 off → 白名单用户 per-user 解析 canary → 第二用户比例 0 保持 off → 比例桶 10000 进入 canary → 回退 off 双用户均 off）、双容器 healthy。该测验暴露并修复两处上线阻断构建缺陷：vendor 引擎的 `model-import.worker.ts` Worker 闭包（8 文件，从上游源码补入 vendor）与 `director-timeline.css` 整文件选择器缺失（新增 `test/previs-css-selectors.test.ts` 守卫，RED→GREEN）。
+- [ ] 浏览器视觉验收（本机无可用浏览器，替代依据=上述 HTTP 级真机验收 + 全量脚本测试；不得视为视觉验收通过）：3040 端口打开画布 → 导演预演台开关（canary 账号 vs 非 canary 账号）、时间轴/镜头列表/检查器排版、明暗皮肤；验收账号在本隔离栈内可自建（首个注册用户为 admin）。
+
 ## Agent 上下文缓存命中率
 
 - [x] 2026-10-07 自动验证：上下文用量、环形指示和运行状态相关 15 项专项测试通过；覆盖实测分母、0% 与未知值区分及无效数据处理。
