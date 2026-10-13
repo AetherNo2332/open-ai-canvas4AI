@@ -18,7 +18,8 @@ export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevi
  */
 export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchProps) {
     const mode = useUserStore((state) => state.features.directorDeskPrevisMode);
-    const policy = directorDeskRuntimePolicy(mode);
+    const userId = useUserStore((state) => state.user?.id);
+    const policy = directorDeskRuntimePolicy(mode, userId);
     const onDocumentChange = useCallback((document: DirectorProject) => {
         try {
             props.onChange(directorDocumentToPrevisScene(document));

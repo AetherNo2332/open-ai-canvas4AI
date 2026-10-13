@@ -6,10 +6,20 @@ export type DirectorDeskRuntimePolicy = "legacy" | "canary" | "authoritative";
  * Fail closed for unknown or missing server values. The canary mode keeps the
  * existing workbench available while the DirectorDesk runtime is observed.
  */
-export function directorDeskRuntimePolicy(mode: unknown): DirectorDeskRuntimePolicy {
+/**
+ * Canary is a stable ten percent user cohort. Missing identity fails closed so
+ * a partially hydrated session never receives the new runtime by accident.
+ */
+export function directorDeskRuntimePolicy(mode: unknown, userId?: string | null): DirectorDeskRuntimePolicy {
     if (mode === "on") return "authoritative";
-    if (mode === "canary") return "canary";
+    if (mode === "canary" && userId && directorDeskCanaryBucket(userId) < 10) return "canary";
     return "legacy";
+}
+
+export function directorDeskCanaryBucket(userId: string): number {
+    let hash = 2166136261;
+    for (const character of userId) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619) >>> 0;
+    return hash % 100;
 }
 
 export function directorDeskModeLabel(mode: DirectorDeskPrevisMode): string {
