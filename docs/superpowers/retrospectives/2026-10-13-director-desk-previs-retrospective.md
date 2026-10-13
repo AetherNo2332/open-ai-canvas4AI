@@ -47,8 +47,8 @@
 ## 3. 偏差清单
 
 **D1 宿主外壳被替换且未复原(严重)**
-- 证据:`web/src/router.tsx` 上游(云 worktree)228 行 → 现 46 行;`app-providers.tsx` 上游引 `AuthSessionHydrator`(既有件)→ 现引桌面引导。
-- 影响:根路由 `/` 不再进创作页;`/create` 兼容路由、`/share/canvas/:token`、`/wallet` 拦截、`RequireFeature` 门禁、admin 子路由表全部丢失。
+- 证据:`web/src/router.tsx` 上游(云 worktree)228 行 → 现 46 行;`app-providers.tsx` 上游引 `AuthSessionHydrator`(既有件)→ 现引桌面引导;`workspace-account-card.tsx` 上游有角色(管理员/创作者)、「账户与设置」、**管理员后台 `/admin`**、**退出登录** → 现只显示「本地主机」+「本地设置」,管理员入口与退出登录按钮消失;侧栏根入口「创作」→`/` 消失并多出桌面「本地设置」项。
+- 影响:根路由 `/` 不再进创作页;`/create` 兼容路由、`/share/canvas/:token`、`/wallet` 拦截、`RequireFeature` 门禁、admin 子路由表全部丢失;**管理员无法从 UI 进入后台**(canary 开关只能走 API)。
 
 **D2 6 条上游契约测试被静音(严重)**
 - 证据:handoff 基线 `c9d9d05` 在 `web/test` 下 `test.skip` 计数为 **0**;当前 HEAD 为 **6**,全部由本会话加入:
@@ -100,7 +100,7 @@
 ## 6. 纠正方案
 
 **P0 机械还原(不改逻辑,只取回真件)**
-1. 从云 worktree 取回 `web/src/router.tsx`(228 行)、`web/src/components/layout/app-providers.tsx`(改用既有 `AuthSessionHydrator`);
+1. 从云 worktree 取回 `web/src/router.tsx`(228 行)、`web/src/components/layout/app-providers.tsx`(改用既有 `AuthSessionHydrator`)、`workspace-sidebar-nav.tsx`(恢复根入口「创作」→`/`、去掉桌面壳「本地设置」)、`workspace-account-card.tsx`(恢复角色显示/管理员后台入口/退出登录);
 2. 删除我自造的 `web/src/components/auth/cloud-session-hydrator.tsx` 及其单测引用;
 3. 取消 6 处 `test.skip`(`workspace-route-loading.test.ts` ×4、`password-reset.test.ts` ×1、`channel-model-editor-form.test.ts` ×1)与"有意移除"注释,恢复契约守护;
 4. 清理 `__APP_RUNTIME__` 补丁(或仅保留为桌面壳隔离用途,不改宿主默认)。
