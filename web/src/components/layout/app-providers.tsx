@@ -4,11 +4,9 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { App, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 
-import { CloudSessionHydrator } from "@/components/auth/cloud-session-hydrator";
-import { DesktopSessionHydrator } from "@/components/auth/desktop-session-hydrator";
+import { AuthSessionHydrator } from "@/components/auth/auth-session-hydrator";
 import { FullScreenLoader } from "@/components/ui/aceternity/full-screen-loader";
 import { getAntThemeConfig } from "@/lib/app-theme";
-import { currentAppRuntimeMode } from "@/lib/app-runtime-mode";
 import { applySkinTheme } from "@/lib/skin-themes";
 import { appQueryClient } from "@/lib/query-client";
 import { isIsolatedPrevisRepro } from "@/lib/dev-repro";
@@ -38,14 +36,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
         applyAppearanceMetadata(appearance);
     }, [appearance, dark, theme]);
 
-    // DEV 复现台必须是同源本地确定性场景：会话引导会打 /api/auth/session 或 /api/desktop/bootstrap，
+    // DEV 复现台必须是同源本地确定性场景：AuthSessionHydrator 会打 /api/auth/session，
     // ClientRootInit 会打 /api/model-catalog，没有后端时产生真实 502，与导演台无关却会污染判据。
     // 与启动入口共用精确路径边界；生产构建中 import.meta.env.DEV 为 false，始终不启用隔离。
     const isolateDevRepro = typeof window !== "undefined" && isIsolatedPrevisRepro(import.meta.env.DEV, window.location.pathname);
-
-    // 双运行时:云镜像(Dockerfile 传 VITE_APP_RUNTIME=cloud)走登录页 + 云会话引导;
-    // 桌面端构建(无标志)保持 sidecar 的 /api/desktop/bootstrap 引导。
-    const appRuntime = currentAppRuntimeMode();
 
     return (
         <ConfigProvider locale={zhCN} theme={getAntThemeConfig(dark, appearance.activeSkin)} wave={{ disabled: true }}>
@@ -53,14 +47,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
                 <QueryClientProvider client={appQueryClient}>
                     {isolateDevRepro ? (
                         children
-                    ) : appRuntime === "cloud" ? (
-                        <CloudSessionHydrator>
-                            <ClientRootBoundary>{children}</ClientRootBoundary>
-                        </CloudSessionHydrator>
                     ) : (
-                        <DesktopSessionHydrator>
+                        <AuthSessionHydrator>
                             <ClientRootBoundary>{children}</ClientRootBoundary>
-                        </DesktopSessionHydrator>
+                        </AuthSessionHydrator>
                     )}
                 </QueryClientProvider>
             </App>
