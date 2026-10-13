@@ -12,6 +12,8 @@ COPY README.md /app/README.md
 COPY assets /app/assets
 COPY web ./
 COPY backend/internal/canvas/connection/builtin.json /app/backend/internal/canvas/connection/builtin.json
+# 工作台经 @desk/* 引用导演台源码(host bridge 契约单源),与仓库保持同一相对路径。
+COPY director-desk/src /app/director-desk/src
 ARG VITE_TLDRAW_LICENSE_KEY
 ARG BUILD_VERSION
 ARG BUILD_COMMIT=unknown

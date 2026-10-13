@@ -34,6 +34,15 @@ describe("导演台静态托管契约", () => {
         expect(section).not.toContain("/index.html ");
     });
 
+    test("工作台构建阶段能解析 @desk 源码(bridge 契约单源)", () => {
+        const dockerfile = read("Dockerfile");
+        const webStage = dockerfile.slice(dockerfile.indexOf("AS web-build"), dockerfile.indexOf("AS desk-build"));
+        // web 通过 @desk/* 引用 director-desk/src(tsconfig/vite alias),镜像内必须存在同一相对路径。
+        expect(webStage).toMatch(/COPY director-desk\/src \/app\/director-desk\/src/);
+        // 拷贝必须在 vite build 之前。
+        expect(webStage.indexOf("COPY director-desk/src")).toBeLessThan(webStage.indexOf("vite.js build"));
+    });
+
     test("构建上下文排除导演台的依赖与产物", () => {
         const dockerignore = read(".dockerignore");
         // 宿主安装的 node_modules 若进上下文,会覆盖镜像内安装的依赖(架构/版本不一致)。
