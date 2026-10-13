@@ -13,7 +13,10 @@ import type { DirectorProject } from "@/integrations/director-desk/previs-runtim
 import { DirectorDeskAppFrame } from "./director-desk-app-frame";
 import "./director-desk-previs-workbench.css";
 
-export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevisWorkbench>;
+export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevisWorkbench> & {
+    /** 打开影策 Agent(导演台顶栏入口);旧工作台不消费。 */
+    onOpenAgent?: () => void;
+};
 
 /**
  * Single previs entry point backed by the DirectorDesk browser runtime.
@@ -192,6 +195,7 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
             }}
             onClose={props.onClose}
             onFallback={() => setAppFailed(true)}
+            onOpenAgent={props.onOpenAgent}
         />
     );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Sparkles, X } from "lucide-react";
 import type { BridgeEndpoint } from "@desk/host/bridge";
 import { createDirectorDeskHostBridge, type DirectorDeskSaveResult } from "@/integrations/director-desk/app-bridge-client";
 import { usePrevisCloseHandler } from "@/hooks/use-previs-close-handler";
@@ -36,6 +37,8 @@ export type DirectorDeskAppFrameProps = {
     onClose?: () => void;
     /** 应用加载失败时回退到旧工作台(注入同一 saveController)。 */
     onFallback?: () => void;
+    /** 打开影策 Agent(面板以浮层叠在导演台之上);未提供时不显示入口。 */
+    onOpenAgent?: () => void;
 };
 
 export function DirectorDeskAppFrame({
@@ -48,6 +51,7 @@ export function DirectorDeskAppFrame({
     onReady,
     onClose,
     onFallback,
+    onOpenAgent,
 }: DirectorDeskAppFrameProps) {
     const frameRef = useRef<HTMLIFrameElement>(null);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -110,8 +114,10 @@ export function DirectorDeskAppFrame({
         if (status === "error") onFallbackRef.current?.();
     }, [status]);
 
-    return (
-        <div className="director-desk-app-frame" data-desk-status={status} data-desk-scene={sceneId}>
+    // 全屏外壳 portal 到 body:脱离画布页的层叠上下文,画布顶栏/侧栏/底部工具条不再叠在导演台之上;
+    // 层级用 --z-workbench(导航之上、Agent 浮层与弹窗之下),Agent 面板仍可叠在导演台上方。
+    const shell = (
+        <div className="director-desk-app-frame" data-canvas-no-zoom data-desk-status={status} data-desk-scene={sceneId}>
             {/* 顶部标题栏:关闭、保存状态、标题 */}
             <header className="director-desk-app-frame-header">
                 <h2 className="director-desk-app-frame-title">导演台</h2>
@@ -129,6 +135,18 @@ export function DirectorDeskAppFrame({
                         </button>
                     ) : null}
                 </div>
+                {onOpenAgent ? (
+                    <button
+                        type="button"
+                        className="director-desk-app-frame-agent"
+                        aria-label="打开 Agent 助手"
+                        title="打开 Agent 助手"
+                        onClick={onOpenAgent}
+                    >
+                        <Sparkles className="size-4" aria-hidden />
+                        <span>Agent</span>
+                    </button>
+                ) : null}
                 <button
                     type="button"
                     className="director-desk-app-frame-close"
@@ -185,4 +203,6 @@ export function DirectorDeskAppFrame({
             ) : null}
         </div>
     );
+    // SSR/测试环境没有 document 时直接返回外壳本身。
+    return typeof document === "undefined" ? shell : createPortal(shell, document.body);
 }

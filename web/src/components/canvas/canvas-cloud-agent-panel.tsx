@@ -102,6 +102,8 @@ type CloudAgentPanelProps = {
     references: CanvasResourceReference[];
     open: boolean;
     floating?: boolean;
+    /** 是否显示悬浮唤起按钮;宿主另有入口(如导演台顶栏)时关闭。 */
+    launcher?: boolean;
     prefillPrompt?: string;
     onOpen: () => void;
     onCollapse: () => void;
@@ -110,7 +112,7 @@ type CloudAgentPanelProps = {
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, floating = false, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
+export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const subagentsAvailable = useUserStore((state) => state.features.agentSubagentsEnabled);
     const [subagentPolicy, setSubagentPolicy] = useState<AgentSubagentPolicy | null>(null);
@@ -1042,7 +1044,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
 
     const panel = (
         <>
-            {!open ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
+            {!open && launcher ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
             <AnimatePresence>
                 {open ? (
                     <motion.aside

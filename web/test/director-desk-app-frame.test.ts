@@ -10,6 +10,40 @@ import { moduleGroupSource } from "./helpers/module-group-source";
 const frameSource = () => moduleGroupSource("components/canvas/previs/director-desk-app-frame.tsx");
 const cssSource = () => readFileSync(resolve(import.meta.dir, "../src/components/canvas/previs/director-desk-app-frame.css"), "utf8");
 
+describe("DirectorDeskAppFrame 层级与 Agent 入口", () => {
+    test("L1 全屏外壳 portal 到 body,使用预演台层级(位于画布导航之上、Agent 之下)", () => {
+        const source = frameSource();
+        expect(source).toContain("createPortal(");
+        expect(source).toContain("document.body");
+        expect(source).toContain("data-canvas-no-zoom");
+        const css = cssSource();
+        const root = css.slice(css.indexOf(".director-desk-app-frame {"), css.indexOf("}", css.indexOf(".director-desk-app-frame {")));
+        expect(root).toContain("position: fixed");
+        expect(root).toContain("inset: 0");
+        expect(root).toContain("z-index: var(--z-workbench)");
+    });
+
+    test("L2 顶栏提供 Agent 入口(仅在宿主提供 onOpenAgent 时出现)", () => {
+        const source = frameSource();
+        expect(source).toContain("onOpenAgent?: () => void");
+        expect(source).toMatch(/\{onOpenAgent \? \(/u);
+        expect(source).toContain('aria-label="打开 Agent 助手"');
+    });
+
+    test("L3 画布页挂载 Agent 面板;预演台打开时改为浮层并隐藏悬浮按钮,入口交给导演台顶栏", () => {
+        const project = moduleGroupSource("pages/canvas/project.tsx");
+        expect(project).toContain("<CanvasCloudAgentPanel");
+        expect(project).toContain("floating={Boolean(previsNodeId)}");
+        expect(project).toContain("launcher={!previsNodeId}");
+        expect(project).toContain("onOpenAgent={openAgent}");
+        const panel = moduleGroupSource("components/canvas/canvas-cloud-agent-panel.tsx");
+        expect(panel).toContain("launcher?: boolean");
+        expect(panel).toContain("{!open && launcher ? <AgentLauncher");
+        const wrapper = moduleGroupSource("components/canvas/previs/director-desk-previs-workbench.tsx");
+        expect(wrapper).toContain("onOpenAgent={props.onOpenAgent}");
+    });
+});
+
 describe("DirectorDeskAppFrame composition", () => {
     test("01 frame requires scene, saveController, and onFallback props", () => {
         const source = frameSource();

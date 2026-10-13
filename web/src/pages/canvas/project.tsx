@@ -76,6 +76,7 @@ import { batchReferenceColumns, promoteLegacyBatchTableSize } from "@/lib/canvas
 import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { CanvasPrevisNodePanel } from "@/components/canvas/previs/canvas-previs-node-panel";
 import { CanvasVersionCompareModal } from "@/components/canvas/canvas-version-compare-modal";
+import { CanvasCloudAgentPanel } from "@/components/canvas/canvas-cloud-agent-panel";
 import { useFocusMode } from "@/hooks/use-focus-mode";
 import { connectCanvasTextMention } from "@/lib/canvas/canvas-text-mention";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
@@ -3328,6 +3329,7 @@ function InfiniteCanvasPage() {
                                     onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
                                     onFlush={() => flushCanvasStorePersistence()}
                                     onboardingScope={previsOnboardingScope}
+                                    onOpenAgent={openAgent}
                                 />
                             </Suspense>
                         ) : null}
@@ -3412,6 +3414,12 @@ function InfiniteCanvasPage() {
                             onInsertFolder={projectAssetScope === "canvas" ? handleProjectFolderInsert : undefined}
                         />
                     </section>
+                    <div className={versions.open ? "hidden" : "contents"}>
+                        <CanvasCloudAgentPanel canvasId={projectId} domainProjectId={currentProject?.projectId} nodeCount={nodes.length} selectedNodeIds={Array.from(selectedNodeIds)} references={agentMentionReferences} prefillPrompt={agentPrefillPrompt} open={assistantOpen} floating={Boolean(previsNodeId)} launcher={!previsNodeId} onOpen={openAgent} onCollapse={closeAgent} onFocusNode={(nodeId) => {
+                            if (!nodesRef.current.some((node) => node.id === nodeId)) { message.info("该节点已删除或尚未同步到画布"); return; }
+                            focusCanvasNode(nodeId);
+                        }} />
+                    </div>
                     {versions.preview ? <CanvasVersionPreview key={versions.preview.key} preview={versions.preview} onReturn={versions.returnToCurrent} onShowVersions={versions.show} /> : null}
                     </div>
                 </CanvasOverlayLayerProvider>

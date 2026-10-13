@@ -1,11 +1,12 @@
-/* 原版导演台应用(iframe)在预演台里的外壳:填满可用空间,状态浮层只覆盖自身。
+/* 原版导演台应用(iframe)的全屏外壳:portal 到 body,覆盖整个视口(画布导航之上、Agent 浮层之下)。
  * 颜色、圆角、阴影、层级与时长全部来自当前皮肤 token(AGENTS.md §6),不写回退值。 */
 .director-desk-app-frame {
     display: flex;
     flex-direction: column;
-    position: relative;
-    width: 100%;
-    height: 100%;
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-workbench);
+    height: 100dvh;
     min-height: 0;
     overflow: hidden;
     background: var(--site-canvas);
@@ -49,6 +50,7 @@
 }
 
 .director-desk-app-frame-save-retry,
+.director-desk-app-frame-agent,
 .director-desk-app-frame-close,
 .director-desk-app-frame-confirm-ok,
 .director-desk-app-frame-confirm-cancel {
@@ -65,6 +67,16 @@
     font-size: 12px;
 }
 
+.director-desk-app-frame-agent {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 4px 12px;
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
 .director-desk-app-frame-close {
     display: inline-flex;
     align-items: center;
@@ -77,6 +89,7 @@
 }
 
 .director-desk-app-frame-save-retry:hover,
+.director-desk-app-frame-agent:hover,
 .director-desk-app-frame-close:hover:not(:disabled),
 .director-desk-app-frame-confirm-ok:hover,
 .director-desk-app-frame-confirm-cancel:hover {
@@ -84,6 +97,7 @@
 }
 
 .director-desk-app-frame-save-retry:focus-visible,
+.director-desk-app-frame-agent:focus-visible,
 .director-desk-app-frame-close:focus-visible,
 .director-desk-app-frame-confirm-ok:focus-visible,
 .director-desk-app-frame-confirm-cancel:focus-visible {
@@ -175,6 +189,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .director-desk-app-frame-agent,
     .director-desk-app-frame-save-retry,
     .director-desk-app-frame-close,
     .director-desk-app-frame-confirm-ok,
