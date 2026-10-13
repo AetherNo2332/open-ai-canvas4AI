@@ -7,10 +7,10 @@ import { useUserStore } from "@/stores/use-user-store";
 import { canvasCommandSession } from "@/stores/canvas/use-canvas-session-store";
 import { recordPrevisDiagnostic } from "@/lib/canvas/previs/previs-diagnostics-recorder";
 import type { PrevisScene, PrevisShot } from "@/types/previs";
-import { directorDocumentToPrevisScene } from "@/integrations/director-desk/previs-adapter";
+import { directorDocumentToPrevisScene, previsSceneToDirectorDocument } from "@/integrations/director-desk/previs-adapter";
 import { createDirectorControllerTransport, createDirectorEditBridge, type DirectorEditBridge } from "@/integrations/director-desk/edit-bridge";
 import type { DirectorProject } from "@/integrations/director-desk/previs-runtime-types";
-import { DirectorPrevisEditor } from "./director-previs-editor";
+import { DirectorDeskAppFrame } from "./director-desk-app-frame";
 import "./director-desk-previs-workbench.css";
 
 export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevisWorkbench>;
@@ -25,6 +25,8 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
     const mode = useUserStore((state) => state.features.directorDeskPrevisMode);
     const policy = directorDeskRuntimePolicy(mode);
     const scene = props.scene;
+    // canary/authoritative 走原版应用(iframe);legacy 仍走既有工作台。
+    const usingApp = policy !== "legacy" && props.open && Boolean(scene);
 
     const saveController = usePrevisSaveCoordinator({
         sceneId: policy === "legacy" ? null : (scene?.id ?? null),
@@ -100,7 +102,7 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
     const [editorTime, setEditorTime] = useState(0);
     const [editorPlaying, setEditorPlaying] = useState(false);
     const [editorSelectedEntityId, setEditorSelectedEntityId] = useState("");
-    const runtime = useDirectorDeskPrevisRuntime(props.open, props.scene, onDocumentChange, {
+    const runtime = useDirectorDeskPrevisRuntime(props.open && !usingApp, props.scene, onDocumentChange, {
         onTimeChange: (time) => setEditorTime(time),
         onPlayingChange: (playing) => setEditorPlaying(playing),
         onSelectChange: (entityId) => setEditorSelectedEntityId(entityId),
@@ -145,25 +147,46 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
         );
         return true;
     }, [props.canvasId]);
-    if (policy === "legacy" || !props.open || !props.scene) return <CanvasPrevisWorkbench {...props} />;
-    // 新运行时故障 → 整个编辑器回退到 legacy 工作台（同一 coordinator，数据不离手）。
-    if (runtime.status === "error") {
-        return <CanvasPrevisWorkbench {...props} saveController={saveController} onDraftChange={runtime.syncScene} onSubmitPreview={submitPreview} />;
+    // legacy 模式(或未打开/无场景)沿用工作台自己的协调器;应用壳只在 canary/authoritative 生效。
+    if (!usingApp || !scene) return <CanvasPrevisWorkbench {...props} />;
+
+    // app 加载失败回退到旧工作台,注入同一 saveController。
+    const [appFailed, setAppFailed] = useState(false);
+    if (appFailed) {
+        return (
+            <CanvasPrevisWorkbench
+                {...props}
+                saveController={saveController}
+                onDraftChange={runtime.syncScene}
+                onSubmitPreview={submitPreview}
+            />
+        );
     }
+
     return (
-        <DirectorPrevisEditor
-            scene={props.scene}
-            policy={policy as "canary" | "authoritative"}
-            stageRef={runtime.stageRef}
-            shotRef={runtime.shotRef}
-            runtime={runtime.runtime}
-            runtimeStatus={runtime.status}
-            time={editorTime}
-            playing={editorPlaying}
-            selectedEntityId={editorSelectedEntityId}
+        <DirectorDeskAppFrame
+            sceneId={scene.id}
+            scene={scene}
             saveController={saveController}
-            onChange={(scene) => props.onChange(scene)}
+            readDocument={() => {
+                const current = sceneRef.current;
+                return current ? previsSceneToDirectorDocument(current) : null;
+            }}
+            // bridge 载荷是不可信 unknown:形状校验由 commitDocument/适配器负责并在失败时保留草稿。
+            onSceneChange={(document) => onDocumentChange(document as DirectorProject)}
+            onSaveRequest={async () => {
+                // 应用内「保存」= 把草稿真正落盘:复用协调器的既有 flush 语义。
+                const ok = await saveController.retry();
+                return { ok, message: ok ? undefined : "保存未完成" };
+            }}
+            onReady={() => {
+                const current = sceneRef.current;
+                if (current) {
+                    saveControllerRef.current.commitScene(current);
+                }
+            }}
             onClose={props.onClose}
+            onFallback={() => setAppFailed(true)}
         />
     );
 }

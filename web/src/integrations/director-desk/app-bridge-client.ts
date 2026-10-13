@@ -1,0 +1,52 @@
+import { createHostBridge, type BridgeEndpoint } from "@desk/host/bridge";
+
+/**
+ * 宿主(工作台)侧的导演台 bridge 客户端。
+ *
+ * 职责边界:
+ * - 只在 host bridge 上交换消息,不直接读写 iframe 内部状态;
+ * - 应用就绪(`desk.ready`)后下发当前场景文档;应用文档变更(`desk.scene.changed`)
+ *   交给调用方提交——工作台把它送进既有的 previs 保存协调器(草稿/CAS/flush);
+ * - 应用的保存请求(`desk.save.request`)按契约映射应答 `host.save.result`。
+ */
+export type DirectorDeskSaveResult = { ok: boolean; message?: string };
+
+export type DirectorDeskHostBridgeOptions = {
+    /** 宿主窗口:监听本窗口消息、向 iframe 投递(由 frame 组件构造,测试可注入)。 */
+    endpoint: BridgeEndpoint;
+    /** 只接受该来源的消息(同源部署下即工作台来源)。 */
+    origin?: string;
+    /** 读取当前应下发给应用的场景文档(适配后的 DirectorDesk 文档)。 */
+    readDocument: () => unknown;
+    /** 应用侧文档变更:交给宿主的保存协调器路径,不得绕过 CAS。 */
+    commitDocument: (document: unknown) => void | Promise<void>;
+    /** 应用显式保存请求:返回是否真正落盘。 */
+    requestSave: () => Promise<DirectorDeskSaveResult>;
+    onReady?: () => void;
+};
+
+export type DirectorDeskHostBridge = {
+    /** 主动把当前场景文档推给应用(如 Agent 更新场景后)。 */
+    pushScene: () => void;
+    dispose: () => void;
+};
+
+export function createDirectorDeskHostBridge(options: DirectorDeskHostBridgeOptions): DirectorDeskHostBridge {
+    const bridge = createHostBridge(options.endpoint, { origin: options.origin, targetOrigin: options.origin });
+
+    const pushScene = () => {
+        bridge.notify("host.scene.load", { document: options.readDocument() });
+    };
+
+    bridge.on("desk.ready", () => {
+        options.onReady?.();
+        pushScene();
+    });
+    bridge.on("desk.scene.changed", (payload) => options.commitDocument(payload));
+    bridge.on("desk.save.request", () => options.requestSave());
+
+    return {
+        pushScene,
+        dispose: () => bridge.dispose(),
+    };
+}

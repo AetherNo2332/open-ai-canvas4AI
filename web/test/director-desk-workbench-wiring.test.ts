@@ -35,9 +35,13 @@ describe("DirectorDesk edit commit wiring", () => {
         expect(source).toContain("PREVIS_DIRECTOR_COMMIT_CONFLICT");
     });
 
-    test("02 wrapper injects its coordinator into the legacy workbench", () => {
+    test("02 wrapper injects its coordinator into the legacy workbench only on fallback", () => {
         const source = wrapperSource();
+        // app 模式下 legacy 回退（appFailed）时注入 saveController。
+        expect(source).toContain("appFailed");
         expect(source).toContain("saveController={saveController}");
+        // 默认路径（非 legacy、app 挂载）不注入 coordinator 给 CanvasPrevisWorkbench。
+        expect(source).toContain("if (!usingApp || !scene) return <CanvasPrevisWorkbench {...props} />");
     });
 
     test("03 legacy workbench honors an injected controller and stays single-writer", () => {
@@ -71,19 +75,23 @@ describe("DirectorDesk edit commit wiring", () => {
 const editorSource = () => moduleGroupSource("components/canvas/previs/director-previs-editor.tsx");
 
 describe("P1 editor composition wiring", () => {
-    test("05 wrapper mounts the native editor instead of the legacy workbench (fallback only on legacy/error)", () => {
+    test("05 wrapper mounts the DirectorDeskAppFrame instead of the legacy workbench (fallback only on legacy/error)", () => {
         const source = wrapperSource();
-        // 非 legacy 会话的默认渲染内容是原生导演编辑器。
-        expect(source).toContain("<DirectorPrevisEditor");
-        // 旧工作台只在 legacy 策略 / 未打开 / 无场景 / runtime 故障时出现。
-        expect(source).toContain('policy === "legacy" || !props.open || !props.scene');
-        expect(source).toContain('runtime.status === "error"');
-        // legacy 工作台渲染点 ≤ 2（legacy 分支 + 故障回退），不得与编辑器并存。
+        // 非 legacy 会话的默认渲染内容是原版应用壳（iframe）。
+        expect(source).toContain("<DirectorDeskAppFrame");
+        expect(source).toContain("sceneId={scene.id}");
+        expect(source).toContain("scene={scene}");
+        expect(source).toContain("saveController={saveController}");
+        // 旧工作台只在 legacy 策略 / 未打开 / 无场景 / app 加载失败时出现。
+        expect(source).toContain("if (!usingApp || !scene) return <CanvasPrevisWorkbench {...props} />");
+        expect(source).toContain("appFailed");
+        expect(source).toContain("onFallback={() => setAppFailed(true)}");
+        // legacy 工作台渲染点 ≤ 2（legacy 分支 + 故障回退），不得与 app 壳并存。
         const legacyRenderCount = source.match(/<CanvasPrevisWorkbench/gu)?.length ?? 0;
         expect(legacyRenderCount).toBeLessThanOrEqual(2);
-        // runtime 事件回传到编辑器 UI 状态。
-        expect(source).toContain("onTimeChange: (time) => setEditorTime(time)");
-        expect(source).toContain("onSelectChange: (entityId) => setEditorSelectedEntityId(entityId)");
+        // 关闭入口与保存请求接到 app 壳。
+        expect(source).toContain("onClose={props.onClose}");
+        expect(source).toContain("onSaveRequest={");
     });
 
     test("06 editor is the single writer for native mode and owns close/pagehide semantics", () => {
