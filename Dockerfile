@@ -20,6 +20,11 @@ ENV VITE_TLDRAW_LICENSE_KEY=${VITE_TLDRAW_LICENSE_KEY}
 ENV CANVAS_BUILD_VERSION=${BUILD_VERSION}
 ENV CANVAS_BUILD_COMMIT=${BUILD_COMMIT}
 ENV CANVAS_BUILD_TIME=${BUILD_TIME}
+# 云镜像显式声明 cloud 运行时：浏览器打开时走登录页 + /api/auth/session 引导，
+# 而不是桌面 sidecar 的 /api/desktop/bootstrap（后者只存在于桌面端构建）。
+# 桌面端构建(desktop/build-windows.ps1 的 bun build)不传该标志，默认 desktop，行为不变。
+ARG VITE_APP_RUNTIME=cloud
+ENV VITE_APP_RUNTIME=${VITE_APP_RUNTIME}
 # 生产镜像只构建云端工作台前端；Agent Runtime 在后端 Worker 中运行。
 RUN bun --bun ./node_modules/vite/bin/vite.js build
 

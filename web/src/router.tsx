@@ -1,8 +1,12 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate, Outlet } from 'react-router';
 import { FullScreenLoader } from '@/components/ui/aceternity/full-screen-loader';
+import { RequireAuth } from '@/components/auth/require-auth';
 import UserLayout from '@/layouts/user-layout';
 const CanvasPage=lazy(()=>import('@/pages/canvas'));
+const LoginPage=lazy(()=>import('@/pages/auth/login'));
+const RegisterPage=lazy(()=>import('@/pages/auth/register'));
+const ForgotPasswordPage=lazy(()=>import('@/pages/auth/forgot-password'));
 const CanvasProjectPage=lazy(()=>import('@/pages/canvas/project'));
 const AssetsPage=lazy(()=>import('@/pages/assets'));
 const TasksPage=lazy(()=>import('@/pages/tasks'));
@@ -16,7 +20,12 @@ const DesktopModelsPage=lazy(()=>import('@/pages/desktop/models'));
 const DesktopStoragePage=lazy(()=>import('@/pages/desktop/storage'));
 const DesktopAppearancePage=lazy(()=>import('@/pages/desktop/appearance'));
 function deferred(element:ReactNode) {return <Suspense fallback={<FullScreenLoader label="正在打开画布" />}>{element}</Suspense>}
-export const router=createBrowserRouter([{element:<UserLayout><Outlet /></UserLayout>,children:[
+export const router=createBrowserRouter([
+    // 公共认证路由(云运行时:未登录访客的工作区请求被 RequireAuth 重定向到 /login?next=)。
+    {path:'/login',element:deferred(<LoginPage />)},
+    {path:'/register',element:deferred(<RegisterPage />)},
+    {path:'/forgot-password',element:deferred(<ForgotPasswordPage />)},
+    {element:<RequireAuth><UserLayout><Outlet /></UserLayout></RequireAuth>,children:[
     {path:'/',element:<Navigate to="/canvas" replace />},
     {path:'/canvas',element:deferred(<CanvasPage />)},
     {path:'/canvas/:id',element:deferred(<CanvasProjectPage />)},

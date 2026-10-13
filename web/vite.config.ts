@@ -11,6 +11,8 @@ const buildCommit = process.env.CANVAS_BUILD_COMMIT?.trim() || process.env.VITE_
 const appVersion = formatBuildVersion(sourceVersion, buildCommit);
 const buildTime = process.env.CANVAS_BUILD_TIME?.trim() || process.env.VITE_BUILD_TIME?.trim() || "unknown";
 const appChangelog = readFileSync(resolve(webDir, "../CHANGELOG.md"), "utf8");
+// 双运行时构建标志:云镜像(Dockerfile)传 VITE_APP_RUNTIME=cloud;桌面端构建不传 → desktop。
+const appRuntime = process.env.VITE_APP_RUNTIME?.trim() || "desktop";
 const apiProxyTarget = process.env.VITE_API_PROXY_TARGET?.trim() || "http://127.0.0.1:8080";
 
 export default defineConfig({
@@ -18,6 +20,7 @@ export default defineConfig({
     define: {
         __APP_VERSION__: JSON.stringify(appVersion),
         __APP_CHANGELOG__: JSON.stringify(appChangelog),
+        __APP_RUNTIME__: JSON.stringify(appRuntime),
         "import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
         "import.meta.env.VITE_BUILD_COMMIT": JSON.stringify(buildCommit),
         "import.meta.env.VITE_BUILD_TIME": JSON.stringify(buildTime),

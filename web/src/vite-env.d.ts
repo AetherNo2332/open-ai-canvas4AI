@@ -2,6 +2,7 @@
 
 declare const __APP_VERSION__: string;
 declare const __APP_CHANGELOG__: string;
+declare const __APP_RUNTIME__: string;
 
 interface ImportMetaEnv {
     readonly VITE_APP_VERSION?: string;
