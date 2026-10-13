@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 DirectorDesk 0.4.11(@ `f3afacf`)去桌面端能力后**整应用**移植进云端 web 工作台,让原版导演台界面(文件/编辑/场景 菜单、场景·资产·精细模型 面板、双视口、多轨时间轴、属性/动作/走位/外观/物理 检查器)在浏览器可用,并保留其 AI 接入能力。
+**Goal:** 把 DirectorDesk 0.4.11(@ `f3afacf`)去桌面端能力后**整应用**移植进云端 web 工作台,让原版导演台界面(文件/编辑/场景 菜单、场景·资产·精细模型 面板、双视口、多轨时间轴、属性/动作/走位/外观/物理 检查器)在浏览器可用;并打通两条产品链路:**导出到画布**(白膜视频/构图帧/镜头参数/分镜表写回画布节点与结构化分镜表)与 **AI 操控画布**(影策 Agent 经导演工具改场景→嵌入应用实时可见可撤销;用户在应用内编辑→Agent 可见;图片→可编辑 3D 预演场景),全部写操作保留审批/CAS。
 
 **Architecture:** 上游本身是 Vite Web 应用(`index.html` + `src/main.ts` + `src/ui/*` 原生 DOM),Electron 只是外壳。因此移植 = 以上游源码为独立兄弟应用入库(`director-desk/`),按清单剥离桌面能力并改由显式 host bridge 提供宿主能力,`vite build`(`base=/desk/`)成静态站点由 nginx 同源托管;web 侧以 iframe + 类型化 bridge client 挂进画布预演台,持久化仍走影策 `PrevisScene` + 既有 save coordinator,AI 通道改接影策 Agent。
 
@@ -145,16 +145,62 @@
 - [ ] **Step 4: 跑测试 + tsc** — PASS / 0 错误。
 - [ ] **Step 5: 提交** `feat(previs): 导演台 - 原版应用场景往返与保存协调器接线`
 
+### Task 7: 导出到画布(白膜视频 / 构图帧 / 镜头参数 / 分镜表写回)
+
+**Files:**
+- Create: `web/src/integrations/director-desk/export-to-canvas.ts`
+- Modify: `web/src/integrations/director-desk/render-bridge.ts`(导出改走 `previs_preview` 任务链路)
+- Modify: `director-desk/src/ui/export*`(导出面板/快捷键改走 bridge `desk.export.request`;**删除本地文件下载路径**)
+- Modify: `web/src/pages/canvas/use-canvas-previs.ts`(导出完成后刷新画布节点)
+- Test: `web/test/director-desk-export-to-canvas.test.ts`;既有 `backend/internal/app/task_previs_render_test.go`、`backend/internal/canvas/tasks/previs.go` 必须保持绿
+
+**Interfaces:**
+- Consumes: Task 3 bridge(`desk.export.request` / `host.export.result`)、既有 `DirectorProject`、`canvas_edit_storyboard` 合同。
+- Produces:
+  - `requestPrevisRender(input: { canvasId: string; sceneId: string; shotId: string; kind: "whitebox-video" | "composition-frame"; render: PrevisRenderInput }): Promise<{ taskId: string }>` — 只提交任务,不落本地文件、不带磁盘路径;
+  - `writeBackPrevisArtifacts(input: { canvasId: string; sceneId: string; taskId: string; project: DirectorProject }): Promise<{ nodeIds: string[]; storyboardUpdated: boolean }>` — 幂等:同 taskId 重复调用不产生重复节点;
+  - `exportShotTable(project: DirectorProject): Promise<{ rows: number }>` — 镜头表 → 画布结构化分镜表(`canvas_edit_storyboard`)。
+
+- [ ] **Step 1: 写失败测试** — 断言:(a) 导出请求含 `canvasId/sceneId/shotId/kind`,且载荷**不含**任何文件系统路径或 blob 下载;(b) 任务未达终态前不写回、失败/取消不产生资源记录与画布节点;(c) 写回产生可引用节点且**幂等**(同 taskId 两次 → 节点数不变);(d) 镜头表导出生成结构化分镜行(字段与 `canvas_edit_storyboard` 合同一致)。
+- [ ] **Step 2: 跑测试确认失败** — `cd web && bun test test/director-desk-export-to-canvas.test.ts` → FAIL。
+- [ ] **Step 3: 实现** — bridge 导出请求 → `render-bridge` → 影策任务;产物经资源服务落库后写回画布节点;镜头表走结构化分镜表合同。禁止绕过配额/权限/任务状态。
+- [ ] **Step 4: 跑测试与后端回归** — 上述测试 PASS;`cd backend && go test ./internal/app -run 'Previs' -count=1`、`go test ./internal/canvas/... -count=1` → 保持既有结果。
+- [ ] **Step 5: 真机验收** — 3040 打开预演台 → 导出白膜视频与构图帧 → 任务中心出现任务 → 完成后画布出现对应节点并可预览;导出镜头表后画布分镜表行数与镜头数一致。
+- [ ] **Step 6: 提交** `feat(previs): 导演台 - 导出到画布(白膜/构图帧/镜头参数/分镜表写回)`
+
+### Task 8: AI 操控画布(工具→场景→应用双向 + 审批 + 图片入口)
+
+**Files:**
+- Create: `web/src/integrations/director-desk/agent-canvas-bridge.ts`
+- Modify: `web/src/integrations/director-desk/scene-sync.ts`、`edit-bridge.ts`(Agent 补丁下发与用户编辑回传)
+- Modify: `web/src/lib/canvas/image-to-director-agent.ts`(接到新壳)
+- Modify: `web/src/components/canvas/previs/director-desk-app-frame.tsx`(应用内选择状态与补丁的保留/恢复)
+- Test: `web/test/director-desk-agent-canvas.test.ts`;既有后端 `cloud_agent_director_contract_test.go`、`cloud_agent_director_continuity_test.go`、`cloud_agent_director_image_test.go`、`cloud_agent_director_staging*_test.go` 必须保持绿
+
+**Interfaces:**
+- Consumes: Task 3 bridge(`host.scene.load` / `desk.scene.changed`)、既有后端 6 个导演工具(`director_block_scene`/`design_shot`/`draw_action`/`check_continuity`/`preview_shot`/`handoff_shot`)、既有 `previs_apply_patch` 审批/CAS 链路。
+- Produces:
+  - `applyAgentScenePatch(input: { sceneId: string; patch: PrevisPatch; revision: string }): Promise<{ appliedRevision: string; selectionPreserved: boolean }>` — 经 bridge 下发给应用,保留当前选择/视图;
+  - `publishLocalEdit(input: { sceneId: string; project: DirectorProject }): Promise<{ revision: string }>` — 用户在应用内编辑 → PrevisScene → Agent 可见(`desk.scene.changed`);
+  - `startImageToDirectorFlow(input: { canvasId: string; nodeId: string }): Promise<{ runId: string }>` — 图片 → 可编辑 3D 预演场景。
+
+- [ ] **Step 1: 写失败测试** — 断言:(a) Agent 补丁经 bridge 下发且**保留选择/视图状态**;(b) **未审批的写操作不得下发**(审批预检失败 → 零 bridge 消息、零场景变更);(c) revision 过期走既有冲突策略(不静默覆盖);(d) 用户编辑回传带 revision 且可被 Agent 读取;(e) 图片入口在不支持图片输入的模型上**明确失败且不创建半成品场景**;工具顺序(block_scene → design_shot → check_continuity)被强制。
+- [ ] **Step 2: 跑测试确认失败** — `cd web && bun test test/director-desk-agent-canvas.test.ts` → FAIL。
+- [ ] **Step 3: 实现** — 实现 `agent-canvas-bridge` 并接入 `scene-sync`/`edit-bridge`/图片入口;所有写路径继续受权限、审批、revision、requestId、数量限制与资源校验约束。
+- [ ] **Step 4: 跑测试 + 后端导演工具回归** — 该测试 PASS;`cd backend && go test ./internal/app -run 'CloudAgentDirector' -count=1` → 保持绿(基线失败项按既有 A/B 口径对照)。
+- [ ] **Step 5: 真机验收** — 3040:Agent 指令(如"镜头1 加顶光并调整机位")→ 应用内立即可见且可撤销/重做;画布图片节点 → "根据此图生成 3D 预演台" → 生成可编辑 actor/道具/摄影机场景;不支持图片的模型明确报错且画布不变。
+- [ ] **Step 6: 提交** `feat(agent): 导演台 - AI 操控画布双向接入(补丁下发/编辑回传/审批/图片入口)`
+
 ---
 
-## 后续计划(接口依赖 Task 3 契约,Plan 1 落地后再写细则)
+## 后续计划
 
-**Plan 2 — 资源 / 渲染 / 导出**:`asset-loader.ts`、`render-bridge.ts` 经 bridge 接影策资源 API 与 `previs_preview` 任务链路;导出(白膜视频/构图帧)改走影策任务与资源写回,不落本地文件。
-**Plan 3 — AI 接入**:删除 MCP 后实现 host `ai.*` 通道 → 影策 `/api/agent`(SSE 事件、取消、**审批**、工具白名单),恢复原版 `ai-panel`/`ai-skills-panel`/`ai-edit-locations` 能力;补齐 `automation/*` 契约测试(含"写操作必须审批"回归)。
-**Plan 4 — 验收与发布**:端到端合同测试(打开旧场景→编辑→Agent 补丁→重开→图片生成→白膜任务→资源写回)、明暗皮肤、性能(WebGL 释放)、文档(pending-test/features/许可清单)与 VERSION。
+**Plan 2 — 皮肤与性能收口**:暗/明皮肤在嵌入应用内的表现、WebGL/资源释放、打开关闭耗时预算、iframe 加载失败降级。
+**Plan 3 — 验收与发布**:端到端合同测试(打开旧场景→编辑→Agent 补丁→重开→图片生成→白膜任务→资源写回)、`pending-test`/`features`/许可清单文档、VERSION 与真机 compose 全量验收。
 
 ## Self-Review
 
-- **Spec coverage**: 设计文档"三层边界/编辑生命周期/渲染与资源/Agent 控制/图片入口/迁移策略/验收 8 条"分别落在 T1–T6(边界与迁移策略)、Plan 2(渲染与资源)、Plan 3(Agent 控制)、Plan 4(图片入口与验收);设计文档第 8 条"不暴露本地工程文件/MCP token/内部地址"落在 T2 守卫测试。
-- **Type consistency**: `PROTOCOL_VERSION`/消息 type 在 T3 定义并被 T4(验收脚本指纹)、T5(bridge client)、T6(保存往返)、Plan 2/3 复用;`mountRemovedCapabilityNotice`、`createHostBridge`、`DirectorDeskAppFrame` 名称在后续任务中保持一致。
-- **Review Focus 覆盖**:1→T5 Step 1/5;2→T2 Step 1/3;3→T6 Step 1;4→Plan 3;5→Plan 2(缺失降级)。
+- **Spec coverage**: 设计文档「三层边界/编辑生命周期/渲染与资源/Agent 控制/图片入口/迁移策略/验收 8 条」分别落在 T1–T6(边界与迁移)、**T7(渲染与资源写回=导出到画布)**、**T8(Agent 控制画布 + 图片入口)**、Plan 2/3(皮肤性能与验收发布);设计第 8 条「不暴露本地工程文件/MCP token/内部地址」落在 T2 守卫测试 + T7 "载荷不含文件路径"断言。
+- **已有基础无需重建(已核验)**:后端 6 个导演工具(`backend/internal/app/cloud_agent_director.go`,含契约/连续性/图片/staging 测试)、渲染任务链路(`backend/internal/app/task_previs_render.go`、`backend/internal/canvas/tasks/previs.go`)、图片入口(`web/src/lib/canvas/image-to-director-agent.ts`)、结构化分镜合同(`canvas_create_storyboard`/`canvas_edit_storyboard`)均已存在 → T7/T8 是**接线与验收**,不是重写。
+- **Type consistency**: `PROTOCOL_VERSION`/消息 type 在 T3 定义,被 T4(验收指纹)、T5(bridge client)、T6(场景往返)、T7(`desk.export.request`)、T8(`desk.scene.changed`/`host.scene.load`)复用;`mountRemovedCapabilityNotice`、`createHostBridge`、`DirectorDeskAppFrame`、`requestPrevisRender`、`writeBackPrevisArtifacts`、`applyAgentScenePatch`、`publishLocalEdit`、`startImageToDirectorFlow` 名称在各任务间一致。
+- **Review Focus 覆盖**:1(iframe 隔离)→T5 Step 1/5;2(桌面能力降级)→T2 Step 1/3 + T7 Step 1(a 载荷无本地路径);3(场景零丢字段)→T6 Step 1;4(AI 不绕过审批)→**T8 Step 1(b/c)**;5(资源缺失降级与 WebGL 释放)→Plan 2。
