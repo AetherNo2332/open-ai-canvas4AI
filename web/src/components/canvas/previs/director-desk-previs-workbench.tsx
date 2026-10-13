@@ -27,6 +27,11 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
     const scene = props.scene;
     // canary/authoritative 走原版应用(iframe);legacy 仍走既有工作台。
     const usingApp = policy !== "legacy" && props.open && Boolean(scene);
+    // 应用加载失败 → 本会话回退到旧工作台;换场景时重置,让新场景重新尝试应用壳。
+    const [appFailed, setAppFailed] = useState(false);
+    useEffect(() => {
+        setAppFailed(false);
+    }, [scene?.id]);
 
     const saveController = usePrevisSaveCoordinator({
         sceneId: policy === "legacy" ? null : (scene?.id ?? null),
@@ -150,8 +155,7 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
     // legacy 模式(或未打开/无场景)沿用工作台自己的协调器;应用壳只在 canary/authoritative 生效。
     if (!usingApp || !scene) return <CanvasPrevisWorkbench {...props} />;
 
-    // app 加载失败回退到旧工作台,注入同一 saveController。
-    const [appFailed, setAppFailed] = useState(false);
+    // app 加载失败回退到旧工作台,注入同一 saveController(运行时故障回退,数据不离手)。
     if (appFailed) {
         return (
             <CanvasPrevisWorkbench

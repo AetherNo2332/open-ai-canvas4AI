@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { moduleGroupSource } from "./helpers/module-group-source";
 
 /**
@@ -6,7 +8,7 @@ import { moduleGroupSource } from "./helpers/module-group-source";
  */
 
 const frameSource = () => moduleGroupSource("components/canvas/previs/director-desk-app-frame.tsx");
-const cssSource = () => require("fs").readFileSync("web/src/components/canvas/previs/director-desk-app-frame.css", "utf-8");
+const cssSource = () => readFileSync(resolve(import.meta.dir, "../src/components/canvas/previs/director-desk-app-frame.css"), "utf8");
 
 describe("DirectorDeskAppFrame composition", () => {
     test("01 frame requires scene, saveController, and onFallback props", () => {
@@ -40,17 +42,23 @@ describe("DirectorDeskAppFrame composition", () => {
         expect(source).toContain("cancelExit");
     });
 
-    test("04 frame returns null on load failure (triggers onFallback)", () => {
+    test("04 frame triggers onFallback from an effect on load failure, never during render", () => {
         const source = frameSource();
         expect(source).toContain('status === "error"');
-        expect(source).toContain("onFallback?.()");
+        // 回退必须在 effect 里通知父组件，渲染期 setState 会触发 React 警告/循环。
+        expect(source).toMatch(/useEffect\(\(\) => \{\s*if \(status === "error"\) onFallbackRef\.current\?\.\(\);/u);
+        expect(source).not.toMatch(/if \(status === "error"\) \{\s*onFallback\?\.\(\);\s*return null;/u);
     });
 
     test("05 CSS uses semantic tokens only, no hardcoded colors, and includes :focus-visible", () => {
         const css = cssSource();
-        // 只用 CSS 变量，不用硬编码十六进制或 rgb。
+        // 只用 CSS 变量，不用硬编码十六进制或 rgb，也不给 token 写色值/圆角回退。
         expect(css).not.toContain("#");
         expect(css).not.toContain("rgb(");
+        expect(css).not.toMatch(/var\(--[a-z0-9-]+,\s*[^v)]/u);
+        // 时长引用动效 token，不写死秒数；禁止 transition: all。
+        expect(css).not.toMatch(/transition:[^;]*\d+(\.\d+)?m?s/u);
+        expect(css).not.toContain("transition: all");
         // 使用皮肤 token。
         expect(css).toContain("var(--site-canvas)");
         expect(css).toContain("var(--site-text)");

@@ -94,22 +94,36 @@ describe("P1 editor composition wiring", () => {
         expect(source).toContain("onSaveRequest={");
     });
 
+    test("05b fallback state hook is declared before any early return (Rules of Hooks)", () => {
+        const source = wrapperSource();
+        const hookAt = source.indexOf("const [appFailed, setAppFailed] = useState(false)");
+        const firstReturnAt = source.indexOf("if (!usingApp || !scene) return");
+        expect(hookAt).toBeGreaterThan(-1);
+        expect(firstReturnAt).toBeGreaterThan(-1);
+        expect(hookAt).toBeLessThan(firstReturnAt);
+    });
+
     test("06 editor is the single writer for native mode and owns close/pagehide semantics", () => {
         const source = editorSource();
         // 唯一提交路径：commitScene（协调器）+ store 镜像，没有第二条写者。
         const commitCalls = source.match(/commitScene\((touched|next)\)/gu)?.length ?? 0;
         expect(commitCalls).toBe(1);
         expect(source).toContain("onChangeRef.current(touched)");
+        // 关闭/离页语义统一由共享 hook 实现，编辑器与原版应用壳复用同一份（不复制）。
+        expect(source).toContain("usePrevisCloseHandler(");
+        expect(source).not.toContain('window.addEventListener("pagehide"');
+        const hook = moduleGroupSource("hooks/use-previs-close-handler.ts");
         // 关闭走 prepareClose 决策；失败且无草稿时落诊断。
-        expect(source).toContain("prepareClose()");
-        expect(source).toContain("resolvePrevisCloseOutcome(");
-        expect(source).toContain("PREVIS_CLOSE_BLOCKED");
+        expect(hook).toContain("prepareClose()");
+        expect(hook).toContain("resolvePrevisCloseOutcome(");
+        expect(hook).toContain("PREVIS_CLOSE_BLOCKED");
         // 离开页面语义与 legacy 一致。
-        expect(source).toContain('window.addEventListener("pagehide"');
-        expect(source).toContain('window.addEventListener("beforeunload"');
-        expect(source).toContain("shouldBlockPrevisUnload(");
+        expect(hook).toContain('window.addEventListener("pagehide"');
+        expect(hook).toContain('window.addEventListener("beforeunload"');
+        expect(hook).toContain("shouldBlockPrevisUnload(");
         // 不使用静态 Modal.confirm（lint 亦禁止）。
         expect(source).not.toContain("modal.confirm(");
+        expect(hook).not.toContain("modal.confirm(");
         // 时间轴与引擎播放循环接线。
         expect(source).toContain("runtime?.setPlayhead(");
         expect(source).toContain("runtime?.play()");

@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useRef, type RefObject } from "react";
 import { X } from "lucide-react";
 import { DirectorShotList } from "./director-shot-list";
 import { DirectorTimeline } from "./director-timeline";
 import { DirectorInspector } from "./director-inspector";
 import { addPrevisShot, updatePrevisShot, removePrevisShot, movePrevisShot } from "@/lib/canvas/previs/previs-shot-list";
 import { updatePrevisObjectTransform, updatePrevisCameraParams } from "@/lib/canvas/previs/previs-inspector";
-import { describePrevisSaveStatus, resolvePrevisCloseOutcome, shouldBlockPrevisUnload } from "@/lib/canvas/previs/previs-save-wiring";
-import { recordPrevisDiagnostic } from "@/lib/canvas/previs/previs-diagnostics-recorder";
+import { describePrevisSaveStatus } from "@/lib/canvas/previs/previs-save-wiring";
+import { usePrevisCloseHandler } from "@/hooks/use-previs-close-handler";
 import { touchPrevisScene } from "@/lib/canvas/previs/previs-scene";
 import type { PrevisScene, PrevisTransform, PrevisVec3 } from "@/types/previs";
 import type { DirectorRuntime } from "@/integrations/director-desk";
@@ -50,10 +50,6 @@ export function DirectorPrevisEditor({
     onChange,
     onClose,
 }: DirectorPrevisEditorProps) {
-    const [closing, setClosing] = useState(false);
-    const [notice, setNotice] = useState("");
-    const [exitConfirm, setExitConfirm] = useState("");
-
     const sceneRef = useRef(scene);
     sceneRef.current = scene;
     const onChangeRef = useRef(onChange);
@@ -118,54 +114,8 @@ export function DirectorPrevisEditor({
         commit((current) => updatePrevisCameraParams(current, id, patch));
     }, [commit]);
 
-    /** 关闭统一入口：prepareClose 决策 → 直接退出 / 二次确认 / 留在现场。 */
-    const closeEditor = useCallback(() => {
-        if (closing) return;
-        setClosing(true);
-        void (async () => {
-            let outcome;
-            try {
-                outcome = resolvePrevisCloseOutcome(await saveControllerRef.current.prepareClose());
-            } catch {
-                setNotice("关闭前的保存检查失败，已留在预演台");
-                setClosing(false);
-                return;
-            }
-            if (outcome.kind === "close") {
-                onClose();
-                return;
-            }
-            if (outcome.kind === "blocked") {
-                recordPrevisDiagnostic("PREVIS_CLOSE_BLOCKED", { sceneId: sceneRef.current.id, saveOutcome: "stay", revision: saveControllerRef.current.progress.revision, draftStored: saveControllerRef.current.progress.draftStored });
-                setNotice(outcome.message);
-                setClosing(false);
-                return;
-            }
-            // 二次确认用内联面板（不用静态 Modal.confirm）。
-            setExitConfirm(outcome.message);
-            setClosing(false);
-        })();
-    }, [closing, onClose]);
-
-    // 离开页面：dirty 时 coordinator.handlePageHide 自己 persist + flush；
-    // beforeunload 只同步声明「仍有未确认改动」。
-    useEffect(() => {
-        const onPageHide = () => {
-            void saveControllerRef.current.handlePageHide();
-        };
-        const onBeforeUnload = (event: BeforeUnloadEvent) => {
-            const controller = saveControllerRef.current;
-            if (!controller || !shouldBlockPrevisUnload(controller.progress)) return;
-            event.preventDefault();
-            event.returnValue = "";
-        };
-        window.addEventListener("pagehide", onPageHide);
-        window.addEventListener("beforeunload", onBeforeUnload);
-        return () => {
-            window.removeEventListener("pagehide", onPageHide);
-            window.removeEventListener("beforeunload", onBeforeUnload);
-        };
-    }, []);
+    // 关闭决策与离页语义(prepareClose / pagehide / beforeunload)由共享 hook 统一实现。
+    const { closing, notice, exitConfirm, closeHandler: closeEditor, confirmExit, cancelExit } = usePrevisCloseHandler({ saveController, scene, onClose });
 
     return (
         <div className="dpe-root" data-runtime-policy={policy} data-runtime-status={runtimeStatus}>
@@ -193,8 +143,8 @@ export function DirectorPrevisEditor({
                 <div className="dpe-confirm" role="alertdialog" aria-label="远端保存失败">
                     <span className="dpe-confirm__msg">{exitConfirm}</span>
                     <div className="dpe-confirm__actions">
-                        <button type="button" className="dpe-confirm__ok" onClick={() => { setExitConfirm(""); onClose(); }}>仍然离开</button>
-                        <button type="button" className="dpe-confirm__cancel" onClick={() => setExitConfirm("")}>留在预演台</button>
+                        <button type="button" className="dpe-confirm__ok" onClick={confirmExit}>仍然离开</button>
+                        <button type="button" className="dpe-confirm__cancel" onClick={cancelExit}>留在预演台</button>
                     </div>
                 </div>
             ) : null}

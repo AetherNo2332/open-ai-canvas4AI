@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { BridgeEndpoint } from "@desk/host/bridge";
 import { DirectorDeskAppFrame } from "../src/components/canvas/previs/director-desk-app-frame";
 import { createDirectorDeskHostBridge } from "../src/integrations/director-desk/app-bridge-client";
+import type { PrevisSaveController } from "../src/components/canvas/previs/use-previs-save-coordinator";
+import { idlePrevisSaveProgress } from "../src/lib/canvas/previs/previs-save-wiring";
+import type { PrevisScene } from "../src/types/previs";
 
 // T5:把原版 DirectorDesk 应用以 iframe 挂进预演台,宿主能力只经 host bridge 交换。
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -39,10 +42,37 @@ function linked() {
     return { host, app, received, endpoint };
 }
 
+// 静态渲染只需要 progress 可读;其余方法给出 inert 实现。
+const stubSaveController: PrevisSaveController = {
+    progress: idlePrevisSaveProgress,
+    currentSnapshot: () => idlePrevisSaveProgress,
+    onSaveStatus: () => () => undefined,
+    commitScene: () => true,
+    retry: async () => true,
+    restoreCandidate: () => null,
+    restoreDraft: () => false,
+    discardDraft: () => false,
+    prepareClose: async () => "close",
+    handlePageHide: async () => true,
+};
+const stubScene = { id: "scene-1", title: "测试场景" } as PrevisScene;
+
 describe("DirectorDeskAppFrame(原版应用挂载)", () => {
     const html = renderToStaticMarkup(
-        <DirectorDeskAppFrame sceneId="scene-1" onSceneChange={() => undefined} onSaveRequest={async () => ({ ok: true })} />,
+        <DirectorDeskAppFrame
+            sceneId="scene-1"
+            scene={stubScene}
+            saveController={stubSaveController}
+            onSceneChange={() => undefined}
+            onSaveRequest={async () => ({ ok: true })}
+        />,
     );
+
+    test("宿主外壳提供关闭入口与保存状态", () => {
+        expect(html).toContain('aria-label="关闭预演台"');
+        expect(html).toContain("director-desk-app-frame-save-status");
+        expect(html).toContain("已保存");
+    });
 
     test("以 /desk/ 同源加载原版应用", () => {
         expect(html).toContain('src="/desk/"');

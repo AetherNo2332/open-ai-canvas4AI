@@ -1,4 +1,5 @@
-/* 原版导演台应用(iframe)在预演台里的外壳:填满可用空间,状态浮层只覆盖自身。 */
+/* 原版导演台应用(iframe)在预演台里的外壳:填满可用空间,状态浮层只覆盖自身。
+ * 颜色、圆角、阴影、层级与时长全部来自当前皮肤 token(AGENTS.md §6),不写回退值。 */
 .director-desk-app-frame {
     display: flex;
     flex-direction: column;
@@ -8,14 +9,14 @@
     min-height: 0;
     overflow: hidden;
     background: var(--site-canvas);
+    color: var(--site-text);
 }
 
 .director-desk-app-frame-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 16px;
+    gap: 16px;
+    padding: 8px 16px;
     border-bottom: 1px solid var(--site-border);
     background: var(--site-canvas);
     flex-shrink: 0;
@@ -24,9 +25,8 @@
 .director-desk-app-frame-title {
     margin: 0;
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 400;
     color: var(--site-text);
-    flex: 0 0 auto;
 }
 
 .director-desk-app-frame-save-status {
@@ -34,65 +34,61 @@
     align-items: center;
     gap: 8px;
     flex: 1 1 auto;
+    min-width: 0;
     font-size: 13px;
-    color: var(--site-text);
+    color: color-mix(in oklab, var(--site-text) 70%, transparent);
 }
 
-.director-desk-app-frame-save-status[data-tone="error"] {
-    color: var(--color-error, #dc2626);
+/* tone 取值来自 describePrevisSaveStatus: idle | pending | danger。 */
+.director-desk-app-frame-save-status[data-tone="danger"] {
+    color: var(--destructive);
 }
 
-.director-desk-app-frame-save-status[data-tone="saving"] {
-    color: var(--color-warning, #ea580c);
+.director-desk-app-frame-save-status[data-tone="pending"] {
+    color: var(--status-warning);
 }
 
-.director-desk-app-frame-save-label {
-    flex: 0 0 auto;
-}
-
-.director-desk-app-frame-save-retry {
-    padding: 4px 10px;
+.director-desk-app-frame-save-retry,
+.director-desk-app-frame-close,
+.director-desk-app-frame-confirm-ok,
+.director-desk-app-frame-confirm-cancel {
     border: 1px solid var(--site-border);
     border-radius: var(--button-radius);
     background: transparent;
-    color: inherit;
-    font-size: 12px;
+    color: var(--site-text);
     cursor: pointer;
-    transition: background-color 0.15s ease-out;
+    transition: background-color var(--motion-state) var(--motion-ease-out);
 }
 
-.director-desk-app-frame-save-retry:hover {
-    background: color-mix(in oklab, var(--site-text) 8%, transparent);
-}
-
-.director-desk-app-frame-save-retry:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
+.director-desk-app-frame-save-retry {
+    padding: 4px 12px;
+    font-size: 12px;
 }
 
 .director-desk-app-frame-close {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 32px;
     height: 32px;
     padding: 0;
-    border: none;
-    border-radius: var(--button-radius);
-    background: transparent;
-    color: var(--site-text);
-    cursor: pointer;
-    transition: background-color 0.15s ease-out;
+    border-color: transparent;
     flex-shrink: 0;
 }
 
-.director-desk-app-frame-close:hover:not(:disabled) {
+.director-desk-app-frame-save-retry:hover,
+.director-desk-app-frame-close:hover:not(:disabled),
+.director-desk-app-frame-confirm-ok:hover,
+.director-desk-app-frame-confirm-cancel:hover {
     background: color-mix(in oklab, var(--site-text) 8%, transparent);
 }
 
-.director-desk-app-frame-close:focus-visible {
+.director-desk-app-frame-save-retry:focus-visible,
+.director-desk-app-frame-close:focus-visible,
+.director-desk-app-frame-confirm-ok:focus-visible,
+.director-desk-app-frame-confirm-cancel:focus-visible {
     outline: 2px solid var(--ring);
-    outline-offset: -2px;
+    outline-offset: 2px;
 }
 
 .director-desk-app-frame-close:disabled {
@@ -102,9 +98,9 @@
 
 .director-desk-app-frame-notice {
     padding: 8px 16px;
-    background: color-mix(in oklab, var(--color-error, #dc2626) 12%, var(--site-canvas));
-    border-bottom: 1px solid color-mix(in oklab, var(--color-error, #dc2626) 30%, transparent);
-    color: var(--color-error, #dc2626);
+    border-bottom: 1px solid color-mix(in oklab, var(--destructive) 30%, transparent);
+    background: color-mix(in oklab, var(--destructive) 10%, var(--site-canvas));
+    color: var(--destructive);
     font-size: 13px;
     flex-shrink: 0;
 }
@@ -127,10 +123,8 @@
     position: absolute;
     inset: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 12px;
     background: color-mix(in oklab, var(--site-canvas) 88%, transparent);
     color: var(--site-text);
     font-size: 14px;
@@ -138,33 +132,33 @@
 }
 
 .director-desk-app-frame-confirm {
-    position: fixed;
+    position: absolute;
     inset: 0;
+    z-index: var(--z-modal-overlay);
     display: flex;
     align-items: center;
     justify-content: center;
-    background: color-mix(in oklab, var(--foreground) 40%, transparent);
     padding: 16px;
-    z-index: 1000;
+    background: color-mix(in oklab, var(--site-canvas) 60%, transparent);
 }
 
-.director-desk-app-frame-confirm > div {
+.director-desk-app-frame-confirm-panel {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    background: var(--site-canvas);
+    max-width: 400px;
+    padding: 24px;
     border: 1px solid var(--site-border);
     border-radius: var(--overlay-radius);
-    padding: 20px;
-    box-shadow: 0 4px 12px color-mix(in oklab, var(--foreground) 15%, transparent);
-    max-width: 400px;
+    background: var(--site-surface);
+    box-shadow: var(--shadow-lg);
 }
 
 .director-desk-app-frame-confirm-msg {
     margin: 0;
-    color: var(--site-text);
     font-size: 14px;
     line-height: 1.5;
+    text-wrap: pretty;
 }
 
 .director-desk-app-frame-confirm-actions {
@@ -175,34 +169,16 @@
 
 .director-desk-app-frame-confirm-ok,
 .director-desk-app-frame-confirm-cancel {
-    padding: 8px 16px;
-    border: 1px solid var(--site-border);
-    border-radius: var(--button-radius);
-    background: transparent;
-    color: var(--site-text);
+    min-height: 32px;
+    padding: 6px 16px;
     font-size: 13px;
-    cursor: pointer;
-    transition: background-color 0.15s ease-out;
 }
 
-.director-desk-app-frame-confirm-ok:hover {
-    background: color-mix(in oklab, var(--site-text) 10%, transparent);
-}
-
-.director-desk-app-frame-confirm-ok:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
-}
-
-.director-desk-app-frame-confirm-cancel {
-    background: transparent;
-}
-
-.director-desk-app-frame-confirm-cancel:hover {
-    background: color-mix(in oklab, var(--site-text) 6%, transparent);
-}
-
-.director-desk-app-frame-confirm-cancel:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
+@media (prefers-reduced-motion: reduce) {
+    .director-desk-app-frame-save-retry,
+    .director-desk-app-frame-close,
+    .director-desk-app-frame-confirm-ok,
+    .director-desk-app-frame-confirm-cancel {
+        transition: none;
+    }
 }

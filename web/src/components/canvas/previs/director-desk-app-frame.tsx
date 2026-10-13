@@ -54,7 +54,7 @@ export function DirectorDeskAppFrame({
     const [attempt, setAttempt] = useState(0);
 
     // 关闭逻辑:复用 director-previs-editor 的处理流程。
-    const { closing, notice, exitConfirm, closeHandler, clearNotice, confirmExit, cancelExit } = usePrevisCloseHandler({
+    const { closing, notice, exitConfirm, closeHandler, confirmExit, cancelExit } = usePrevisCloseHandler({
         saveController,
         scene,
         onClose: () => {
@@ -103,11 +103,12 @@ export function DirectorDeskAppFrame({
         };
     }, [sceneId, attempt]);
 
-    // 应用加载失败时回退到旧工作台。
-    if (status === "error") {
-        onFallback?.();
-        return null;
-    }
+    // 应用加载失败 → 在 effect 里通知父组件回退旧工作台(渲染期不得 setState 父组件)。
+    const onFallbackRef = useRef(onFallback);
+    onFallbackRef.current = onFallback;
+    useEffect(() => {
+        if (status === "error") onFallbackRef.current?.();
+    }, [status]);
 
     return (
         <div className="director-desk-app-frame" data-desk-status={status} data-desk-scene={sceneId}>
@@ -154,7 +155,7 @@ export function DirectorDeskAppFrame({
                     key={attempt}
                     className="director-desk-app-frame-view"
                     src={DIRECTOR_DESK_APP_URL}
-                    title="导演台编辑器"
+                    title="导演台"
                     sandbox={DIRECTOR_DESK_APP_SANDBOX}
                     allow="fullscreen; clipboard-write"
                     onError={() => setStatus("error")}
@@ -168,15 +169,17 @@ export function DirectorDeskAppFrame({
 
             {/* 二次确认对话框:未保存状态下的离开 */}
             {exitConfirm ? (
-                <div className="director-desk-app-frame-confirm" role="alertdialog" aria-label="确认离开">
-                    <p className="director-desk-app-frame-confirm-msg">{exitConfirm}</p>
-                    <div className="director-desk-app-frame-confirm-actions">
-                        <button type="button" className="director-desk-app-frame-confirm-ok" onClick={confirmExit}>
-                            仍然离开
-                        </button>
-                        <button type="button" className="director-desk-app-frame-confirm-cancel" onClick={cancelExit}>
-                            留在预演台
-                        </button>
+                <div className="director-desk-app-frame-confirm">
+                    <div className="director-desk-app-frame-confirm-panel" role="alertdialog" aria-modal="true" aria-label="确认离开">
+                        <p className="director-desk-app-frame-confirm-msg">{exitConfirm}</p>
+                        <div className="director-desk-app-frame-confirm-actions">
+                            <button type="button" className="director-desk-app-frame-confirm-ok" onClick={confirmExit}>
+                                仍然离开
+                            </button>
+                            <button type="button" className="director-desk-app-frame-confirm-cancel" onClick={cancelExit}>
+                                留在预演台
+                            </button>
+                        </div>
                     </div>
                 </div>
             ) : null}
