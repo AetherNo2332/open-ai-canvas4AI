@@ -22,7 +22,7 @@ test("DirectorDesk transform updates the selected entity only", () => {
         ],
         cuts: [],
         references: [],
-        extensions: { infiniteCanvas: { sourceSceneId: "scene", scene: { id: "scene", title: "scene", background: "#fff", environmentIntensity: 1, gridVisible: true, activeShotId: "", createdAt: "", updatedAt: "" }, lights: [], shots: [], motionPaths: {} } },
+        extensions: { "infinite-canvas": { sourceSceneId: "scene", scene: { id: "scene", title: "scene", background: "#fff", environmentIntensity: 1, gridVisible: true, activeShotId: "", createdAt: "", updatedAt: "" }, objects: [], cameras: [], lights: [], shots: [] } },
     };
     const next = updateDirectorEntityTransform(document, "actor-b", [2, 0, 0], [0, 1, 0], [1, 1, 1]);
     expect(next.entities.find((entity) => entity.id === "actor-a")?.position).toEqual([0, 0, 0]);

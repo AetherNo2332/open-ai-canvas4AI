@@ -29,6 +29,8 @@ export type DirectorCommitRecord = {
 
 export type DirectorEditBridgeOptions = {
     expectedSceneId: string;
+    /** 宿主当前场景:回传转换时补回未下发给应用的资源字段(url/storageKey/mimeType)。 */
+    hostScene?: () => PrevisScene | null;
     onCommitSucceeded?: (record: DirectorCommitRecord) => void;
     onCommitConflict?: (record: DirectorCommitRecord) => void;
 };
@@ -89,6 +91,7 @@ const UNDO_DEPTH = 35;
  */
 export function createDirectorEditBridge(transport: DirectorCommitTransport, options: DirectorEditBridgeOptions): DirectorEditBridge {
     const { expectedSceneId, onCommitSucceeded, onCommitConflict } = options;
+    const toScene = (document: DirectorProject) => directorDocumentToPrevisScene(document, options.hostScene?.() ?? null);
 
     let current: DirectorCommitRecord | null = null;
     let unsubscribe: (() => void) | null = null;
@@ -118,7 +121,7 @@ export function createDirectorEditBridge(transport: DirectorCommitTransport, opt
 
         let scene: PrevisScene;
         try {
-            scene = directorDocumentToPrevisScene(target);
+            scene = toScene(target);
         } catch {
             // 已提交过的文档必然可转换；防御性拒绝，历史保持不变。
             return false;
@@ -199,7 +202,7 @@ export function createDirectorEditBridge(transport: DirectorCommitTransport, opt
 
         let scene: PrevisScene;
         try {
-            scene = directorDocumentToPrevisScene(document);
+            scene = toScene(document);
         } catch {
             const record: DirectorCommitRecord = { revision: NO_REVISION, status: "conflict", conflictReason: "translation" };
             notifyConflict(record);

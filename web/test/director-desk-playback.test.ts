@@ -14,12 +14,13 @@ const makeDocument = (duration = 2): DirectorProject => ({
     cuts: [],
     references: [],
     extensions: {
-        infiniteCanvas: {
+        "infinite-canvas": {
             sourceSceneId: "scene-1",
             scene: { id: "scene-1", title: "PB", background: "#111111", environmentIntensity: 1, gridVisible: true, activeShotId: "", createdAt: "", updatedAt: "" },
+            objects: [],
+            cameras: [],
             lights: [],
             shots: [],
-            motionPaths: {},
         },
     },
 });

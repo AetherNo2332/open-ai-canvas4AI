@@ -1,4 +1,4 @@
-import type { DirectorProject } from "./previs-runtime-types";
+import { DIRECTOR_CANVAS_EXTENSION_KEY, DIRECTOR_PLACEHOLDER_CAMERA_ID, type DirectorProject } from "./previs-runtime-types";
 
 /** 场景身份标记：id + updatedAt（画布项目的修订标记）。 */
 export type RuntimeSyncKey = { id: string; updatedAt: string };
@@ -26,16 +26,16 @@ export type RuntimeViewState = {
 };
 
 function firstShotId(document: DirectorProject): string {
-    return document.extensions?.infiniteCanvas.shots[0]?.id ?? "";
+    return document.extensions?.[DIRECTOR_CANVAS_EXTENSION_KEY]?.shots[0]?.id ?? "";
 }
 
 function liveShotId(document: DirectorProject, shotId: string): string {
-    return shotId && document.extensions?.infiniteCanvas.shots.some((shot) => shot.id === shotId) ? shotId : "";
+    return shotId && document.extensions?.[DIRECTOR_CANVAS_EXTENSION_KEY]?.shots.some((shot) => shot.id === shotId) ? shotId : "";
 }
 
 /** 新会话的初始视图状态：无选择、播放头 0、当前镜头取文档 activeShot（存在时）否则第一个。 */
 export function initialRuntimeViewState(document: DirectorProject): RuntimeViewState {
-    const active = liveShotId(document, document.extensions?.infiniteCanvas.scene.activeShotId ?? "");
+    const active = liveShotId(document, document.extensions?.[DIRECTOR_CANVAS_EXTENSION_KEY]?.scene.activeShotId ?? "");
     return { selectedEntityId: "", activeShotId: active || firstShotId(document), time: 0 };
 }
 
@@ -44,9 +44,11 @@ export function initialRuntimeViewState(document: DirectorProject): RuntimeViewS
  * 被删除的引用确定性地回退（第一个实体/镜头、时长边界），绝不悬空。
  */
 export function resolveRuntimeViewState(document: DirectorProject, state: RuntimeViewState): RuntimeViewState {
-    const selectedEntityId = document.entities.some((entity) => entity.id === state.selectedEntityId)
+    // 占位机位不是影策场景实体,不能成为选择目标。
+    const entities = document.entities.filter((entity) => entity.id !== DIRECTOR_PLACEHOLDER_CAMERA_ID);
+    const selectedEntityId = entities.some((entity) => entity.id === state.selectedEntityId)
         ? state.selectedEntityId
-        : document.entities[0]?.id ?? "";
+        : entities[0]?.id ?? "";
     const activeShotId = liveShotId(document, state.activeShotId) || firstShotId(document);
     const duration = Number.isFinite(document.duration) ? Math.max(0, document.duration) : 0;
     const time = Math.min(Math.max(0, state.time), duration);

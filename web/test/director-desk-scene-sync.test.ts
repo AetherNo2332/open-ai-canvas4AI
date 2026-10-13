@@ -92,7 +92,7 @@ describe("resolveRuntimeViewState — 刷新后视图状态回退", () => {
         scene.activeShotId = "shot-2";
         const document = previsSceneToDirectorDocument(scene);
         const resolved = resolveRuntimeViewState(document, state("obj-a", "shot-1", 3));
-        expect(resolved.activeShotId).toBe(document.extensions?.infiniteCanvas.shots[0].id);
+        expect(resolved.activeShotId).toBe(document.extensions?.["infinite-canvas"]?.shots[0].id);
     });
 
     test("05 文档没有镜头时当前镜头清空", () => {

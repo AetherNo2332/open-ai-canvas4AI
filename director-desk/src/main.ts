@@ -1,4 +1,5 @@
-import { installEmbeddedHostBridge } from './host/runtime.ts';
+import { installEmbeddedHostBridge, hostBridge } from './host/runtime.ts';
+import { createSceneSync, type SceneSync } from './host/scene-sync.ts';
 import { extensionHost } from './plugins/extension-host.ts';
 import './plugins/extension-panels.css';
 import { renderDepthControls } from './ui/depth-controls.ts';
@@ -61,6 +62,8 @@ let draft: {
     id: string;
 } | null = null;
 const history = new SceneWorkspace(project, () => ({ time, selected, preview }));
+/** 嵌入影策时的场景同步(宿主为事实源);独立运行时为 undefined。 */
+let sceneSync: SceneSync | undefined;
 const recoverySave = new RecoveryAutosave(force => autosave(() =>
     history.pending || draft || engine.dragging || engine.exporting || busy && !force ? null : history.document(),
     () => ({ path: history.filePath, dirty })),
@@ -131,7 +134,7 @@ const engine = new Engine(project, $('#stage-canvas'), $('#shot-canvas'), {
 });
 function current() { return project.entities.find(e => e.id === selected); }
 function toast(message: string, error = false) { const el = document.createElement('div'); el.className = 'toast' + (error ? ' error' : ''); el.textContent = message; $('#toasts').append(el); while ($('#toasts').children.length > 3) $('#toasts').firstElementChild!.remove(); setTimeout(() => el.remove(), 5000); }
-function changed(rebuild = true) { revision++; dirty = history.dirty; time = Math.max(0, time); if (!current()) selected = project.entities.find(e => e.kind === 'actor')?.id ?? project.entities[0].id; engine.selected = selected; $('#save-status').textContent = dirty ? '正在自动备份…' : '项目已保存'; if (rebuild)
+function changed(rebuild = true) { revision++; dirty = history.dirty; time = Math.max(0, time); if (!current()) selected = project.entities.find(e => e.kind === 'actor')?.id ?? project.entities[0].id; engine.selected = selected; $('#save-status').textContent = dirty ? '正在自动备份…' : '项目已保存'; sceneSync?.notifyChanged(); if (rebuild)
     engine.rebuild(project);
 else {
     engine.project = project;
@@ -335,6 +338,21 @@ const inspectorUI = createInspector(uiContext);
 const timelineUI = createTimeline(uiContext);
 const dialogsUI = createDialogs(uiContext);
 installEmbeddedHostBridge();
+{
+    const bridge = hostBridge();
+    if (bridge && window.parent !== window) {
+        sceneSync = createSceneSync({
+            bridge,
+            readDocument: () => history.pending || draft || engine.dragging || engine.exporting ? null : history.document(),
+            applyDocument: document => {
+                applyDocument(document, history.context, '载入影策场景', true);
+                history.markSaved(); dirty = false;
+            },
+            onLoadError: error => toast(error instanceof Error ? `影策场景载入失败：${error.message}` : '影策场景载入失败', true),
+        });
+        sceneSync.start();
+    }
+}
 const videopanelUI = createVideoPanel(uiContext);
 const commandsUI = createCommands(uiContext, inspectorUI);
 const toolService = createToolService(uiContext);
@@ -345,7 +363,7 @@ mountApplicationMenu();
 renderPanels();
 engine.select(selected);
 requestAnimationFrame(frame);
-void recoverSession().then(async restored => { const p = restored?.document; if (p && restored && revision === 0) {
+void (sceneSync ? Promise.resolve(undefined) : recoverSession()).then(async restored => { const p = restored?.document; if (p && restored && revision === 0) {
     await prepareDocumentModels(engine.externalModels, p);
     if (revision !== 0 || busy || history.pending || draft) {
         // An overlapping import owns its prepared sources until its own commit/cleanup.

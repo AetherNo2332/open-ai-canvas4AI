@@ -1,6 +1,6 @@
 import { directorPreviewInput } from "./previs-adapter";
 import type { PrevisScene } from "@/types/previs";
-import type { DirectorPreviewInput } from "./previs-runtime-types";
+import { DIRECTOR_CANVAS_EXTENSION_KEY, type DirectorPreviewInput } from "./previs-runtime-types";
 
 export type DirectorRenderResult = { taskId: string; status: "queued" | "running" | "succeeded" };
 export type DirectorRenderSubmitOptions = { requestId: string; signal: AbortSignal };
@@ -9,7 +9,7 @@ export type DirectorRenderBridge = ReturnType<typeof createDirectorRenderBridge>
 type RenderOptions = { shotId?: string; time?: number; requestId?: string; signal?: AbortSignal };
 
 function keyFor(input: DirectorPreviewInput) {
-    return `${input.sourceSceneId}:${input.shotId}:${input.time}:${input.project.extensions.infiniteCanvas.scene.updatedAt}`;
+    return `${input.sourceSceneId}:${input.shotId}:${input.time}:${input.project.extensions[DIRECTOR_CANVAS_EXTENSION_KEY].scene.updatedAt}`;
 }
 
 export function createDirectorRenderBridge(options: { submit: (input: DirectorPreviewInput, options: DirectorRenderSubmitOptions) => Promise<DirectorRenderResult> }) {

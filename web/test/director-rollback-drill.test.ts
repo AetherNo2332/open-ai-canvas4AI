@@ -72,9 +72,12 @@ describe("P5 回退演练 — 关闭开关后旧工作台可无损打开新运�
         const { resolve } = await import("node:path");
         const base = import.meta.dir;
         const wrapper = readFileSync(resolve(base, "../src/components/canvas/previs/director-desk-previs-workbench.tsx"), "utf8");
-        // 旧工作台只在 legacy 策略 / 未打开 / 无场景 / runtime 故障时出现。
-        expect(wrapper).toContain('policy === "legacy" || !props.open || !props.scene');
-        expect(wrapper).toContain('runtime.status === "error"');
+        // 旧工作台只在 legacy 策略 / 未打开 / 无场景 / 原版应用加载失败时出现。
+        expect(wrapper).toContain('const usingApp = policy !== "legacy" && props.open && Boolean(scene)');
+        expect(wrapper).toContain("if (!usingApp || !scene) return <CanvasPrevisWorkbench {...props} />");
+        // 运行时故障回退注入同一协调器(数据不离手)。
+        expect(wrapper).toContain("if (appFailed) {");
+        expect(wrapper).toContain("saveController={saveController}");
         // 政策解析只来自服务端 mode 值(客户端不做第二套分群判断)。
         const feature = readFileSync(resolve(base, "../src/lib/canvas/director-desk-feature.ts"), "utf8");
         expect(feature).toContain('mode === "on"');

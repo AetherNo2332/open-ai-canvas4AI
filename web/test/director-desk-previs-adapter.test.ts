@@ -14,7 +14,7 @@ test("maps actors, props, cameras, paths, cuts and character bindings with stabl
     expect(document.entities.find((entity) => entity.id === scene.objects[0].id)?.path?.points).toHaveLength(2);
     expect(document.entities.find((entity) => entity.id === scene.cameras[0].id)?.camera?.focal).toBe(scene.cameras[0].focalLength);
     expect(document.cuts).toHaveLength(2);
-    expect(document.extensions?.infiniteCanvas?.shots).toHaveLength(2);
+    expect(document.extensions?.["infinite-canvas"]?.shots).toHaveLength(2);
 
     const restored = directorDocumentToPrevisScene(document);
     expect(restored.id).toBe(scene.id);

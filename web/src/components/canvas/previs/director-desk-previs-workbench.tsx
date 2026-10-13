@@ -60,6 +60,7 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
         if (!editBridgeRef.current) {
             editBridgeRef.current = createDirectorEditBridge(createDirectorControllerTransport(saveControllerRef.current), {
                 expectedSceneId: scene.id,
+                hostScene: () => sceneRef.current ?? null,
                 // 诊断白名单只允许 sceneId/revision（reason 会被投影丢弃）；
                 // save-failed 另有协调器自身的 PREVIS_SAVE_FLUSH_FAILED（error 级）记录。
                 onCommitConflict: (record) => {
@@ -93,7 +94,7 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
             // Legacy mode or a not-yet-ready session: keep the previous
             // mirror behavior so no edit is dropped.
             try {
-                props.onChange(directorDocumentToPrevisScene(document));
+                props.onChange(directorDocumentToPrevisScene(document, sceneRef.current));
             } catch {
                 // Keep the current draft visible; the workbench surfaces the
                 // next save/validation error through its existing coordinator.
