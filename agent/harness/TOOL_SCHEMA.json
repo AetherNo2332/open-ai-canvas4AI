@@ -619,6 +619,254 @@
     },
     {
       "function": {
+        "description": "把已确认的导演意图编译成一个可编辑的 3D 预演场景。先读取画布快照，工具只接受受控模板和稳定 ID；成功前不会写入半成品场景，写入需遵循当前审批模式。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "director_block_scene",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "canvasSnapshotHash": {
+              "description": "最新画布快照",
+              "type": "string"
+            },
+            "sceneId": {
+              "description": "新场景稳定 ID",
+              "type": "string"
+            },
+            "templateId": {
+              "enum": [
+                "empty",
+                "monologue",
+                "dialogue",
+                "blocking",
+                "product",
+                "action_chase",
+                "interior",
+                "crowd"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "description": "场景标题",
+              "type": "string"
+            }
+          },
+          "required": [
+            "canvasSnapshotHash",
+            "sceneId",
+            "title",
+            "templateId"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "为已有预演场景设计镜头构图和运动。只修改指定镜头的镜头规格、机位运动和提示词，基于最新场景快照执行；过期快照必须重新读取，建议修复需要再次审批。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "director_design_shot",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "cameraMove": {
+              "enum": [
+                "static",
+                "push_in",
+                "pull_out",
+                "pan_left",
+                "pan_right",
+                "tilt_up",
+                "tilt_down",
+                "orbit_left",
+                "orbit_right",
+                "handheld"
+              ],
+              "type": "string"
+            },
+            "prompt": {
+              "description": "镜头意图",
+              "type": "string"
+            },
+            "sceneId": {
+              "description": "场景 ID",
+              "type": "string"
+            },
+            "shotId": {
+              "description": "镜头 ID",
+              "type": "string"
+            },
+            "shotSize": {
+              "enum": [
+                "extreme_wide",
+                "wide",
+                "full",
+                "medium",
+                "close_up",
+                "extreme_close_up"
+              ],
+              "type": "string"
+            },
+            "snapshotHash": {
+              "description": "场景快照",
+              "type": "string"
+            }
+          },
+          "required": [
+            "snapshotHash",
+            "sceneId",
+            "shotId"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "为演员或对象绘制可编辑动作路径。路径点使用 Y 轴向上的米制坐标，最多64个点；工具会编译成受限预演补丁，不接受任意工程 JSON、机器路径或资源凭证。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "director_draw_action",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "objectId": {
+              "description": "演员或对象 ID",
+              "type": "string"
+            },
+            "orientToPath": {
+              "type": "boolean"
+            },
+            "pathPoints": {
+              "items": {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              "maxItems": 64,
+              "minItems": 2,
+              "type": "array"
+            },
+            "pathSpeed": {
+              "enum": [
+                "slow",
+                "walk",
+                "run"
+              ],
+              "type": "string"
+            },
+            "sceneId": {
+              "description": "场景 ID",
+              "type": "string"
+            },
+            "snapshotHash": {
+              "description": "场景快照",
+              "type": "string"
+            },
+            "startDelay": {
+              "maximum": 60,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "snapshotHash",
+            "sceneId",
+            "objectId",
+            "pathPoints"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "提交指定镜头的后台白膜预演参数。先校验镜头和摄影机，沿用现有 previs_preview 任务、配额、取消、重试和资源写回合同；回执中的 taskSubmitted=false 不能当作已生成。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "name": "director_preview_shot",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "duration": {
+              "maximum": 60,
+              "minimum": 0.1,
+              "type": "number"
+            },
+            "fps": {
+              "maximum": 60,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "sceneId": {
+              "description": "场景 ID",
+              "type": "string"
+            },
+            "shotId": {
+              "description": "镜头 ID",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sceneId",
+            "shotId"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "检查场景与指定镜头的空间摘要和接拍风险。只读返回问题清单；任何修复都必须显式调用写工具并重新审批。",
+        "name": "director_check_continuity",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "sceneId": {
+              "description": "场景 ID",
+              "type": "string"
+            },
+            "shotId": {
+              "description": "可选镜头 ID",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sceneId"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "把当前镜头的受控导演摘要交给后续 Agent 回合或人工导演。回执不包含原始 DirectorDesk 工程、URL、storage key 或令牌。",
+        "name": "director_handoff_shot",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "sceneId": {
+              "description": "场景 ID",
+              "type": "string"
+            },
+            "shotId": {
+              "description": "镜头 ID",
+              "type": "string"
+            }
+          },
+          "required": [
+            "sceneId",
+            "shotId"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
         "description": "查询可创建节点和可编辑字段。传 nodeType 返回该类型的完整字段 schema；编辑复杂内容前先查字段合同。",
         "name": "canvas_list_node_types",
         "parameters": {
