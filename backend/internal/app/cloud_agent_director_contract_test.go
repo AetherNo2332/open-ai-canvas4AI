@@ -3,7 +3,24 @@ package app
 import (
 	"encoding/json"
 	"testing"
+
+	"infinite-canvas/backend/internal/model"
 )
+
+func TestDirectorWorkflowRollbackWindowRequiresContiguousPrevisMutations(t *testing.T) {
+	chain := []model.CloudAgentCanvasMutation{
+		{ID: "m1", CanvasID: "canvas-1", StepID: "block-call", Operation: "previs_scene_create", BeforeJSON: "before", BeforeSnapshotHash: "h0", AfterSnapshotHash: "h1"},
+		{ID: "m2", CanvasID: "canvas-1", StepID: "design-call", Operation: "previs_apply_patch", BeforeJSON: "mid", BeforeSnapshotHash: "h1", AfterSnapshotHash: "h2"},
+	}
+	first, last, ok := directorWorkflowRollbackWindow(chain, "canvas-1", "block-call")
+	if !ok || first.ID != "m1" || last.ID != "m2" {
+		t.Fatalf("rollback window = %#v %#v %v; want m1..m2", first, last, ok)
+	}
+	chain[1].BeforeSnapshotHash = "other"
+	if _, _, ok := directorWorkflowRollbackWindow(chain, "canvas-1", "block-call"); ok {
+		t.Fatal("broken mutation chain must not be rolled back")
+	}
+}
 
 func TestCloudAgentDirectorToolsAreAdvertisedWithControlledContracts(t *testing.T) {
 	req := CloudAgentRequest{ContextScope: []string{"canvas"}, PermissionMode: "edit", VisionEnabled: true}
