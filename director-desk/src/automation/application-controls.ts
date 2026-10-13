@@ -1,4 +1,5 @@
 import type { SkillRequest } from './desktop-types.ts';
+import { removedCapabilityMessage } from '../host/desktop-removed.ts';
 export async function controlApplication(args: Record<string, unknown>) {
     const desktop = window.directorDesktop;
     if (!desktop) throw Error('此功能需要桌面版');
@@ -13,9 +14,8 @@ export async function controlApplication(args: Record<string, unknown>) {
         if (!result.ok) throw Error(result.error); return result.data;
     }
     if (args.scope === 'updates') {
-        if (!['state','save','check','download','page'].includes(String(args.action))) throw Error('未知更新操作');
-        const result = await desktop.update(args.action as 'state'|'save'|'check'|'download'|'page', data);
-        if (!result.ok) throw Error(result.error); return result.data;
+        // 桌面版自动更新已剥离:云端更新由部署方管理。
+        throw Error(removedCapabilityMessage('file-update'));
     }
     throw Error('未知桌面功能');
 }

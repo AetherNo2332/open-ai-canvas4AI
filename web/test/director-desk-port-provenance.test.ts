@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -33,8 +34,15 @@ describe("DirectorDesk 上游入库来源固化", () => {
     });
 
     test("桌面端与上游开发目录不入库", () => {
-        for (const path of ["desktop", "node_modules", "docs", "examples", "scripts", "tests", ".git", "release", "dist"]) {
+        for (const path of ["desktop", "docs", "examples", "scripts", "tests", ".git", "release"]) {
             expect(existsSync(resolve(deskRoot, path))).toBe(false);
+        }
+    });
+
+    test("依赖与构建产物由 git 忽略(可原地安装/构建而不入库)", () => {
+        for (const path of ["director-desk/node_modules", "director-desk/dist"]) {
+            const ignored = execSync(`git check-ignore -q ${path} && echo yes || echo no`, { cwd: repoRoot, encoding: "utf8" }).trim();
+            expect(ignored).toBe("yes");
         }
     });
 });

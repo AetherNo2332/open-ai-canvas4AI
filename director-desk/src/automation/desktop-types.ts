@@ -14,8 +14,6 @@ declare global {
         skills?(data: SkillRequest): Promise<DesktopResult<SkillResult>>;
         files?(action: 'locations' | 'set-locations' | 'choose' | 'choose-export-directory' | 'save-project' | 'save-export' | 'automation-read' | 'automation-write-begin' | 'automation-write-chunk' | 'automation-write-close' | 'automation-write-abort', data?: unknown): Promise<DesktopResult<{ projects?: string; exports?: string; saved?: boolean; filename?: string; name?: string; id?: string; path?: string; content?: string; package?: import('../resources/model-package.ts').ModelPackage }>>;
         onSaveBeforeClose?(callback: () => Promise<boolean>): () => void;
-        update(action: 'state' | 'save' | 'check' | 'download' | 'install' | 'page', data?: unknown): Promise<DesktopResult<import('../updates/types.ts').UpdateState>>;
-        onUpdate(callback: (state: import('../updates/types.ts').UpdateState) => void): () => void;
         profiles(): Promise<DesktopResult<Channel[]>>;
         conversation(): Promise<DesktopResult<ConversationSnapshot>>;
         newConversation(): Promise<DesktopResult<ConversationSnapshot>>;

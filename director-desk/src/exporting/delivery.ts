@@ -1,57 +1,27 @@
 import { download } from '../storage.ts';
-import { numberedFilename, type ExportJob } from './plan.ts';
+import type { ExportJob } from './plan.ts';
 import type { ExportDestination } from './batch.ts';
-import { openOutput } from '../files/desktop-output.ts';
 
-export type SaveMode = 'default' | 'download' | 'disk' | 'directory';
-interface Pickers {
-    showSaveFilePicker(options: unknown): Promise<FileSystemFileHandle>;
-    showDirectoryPicker(options: unknown): Promise<FileSystemDirectoryHandle>;
-}
-export async function videoDestination(mode: SaveMode, jobs: ExportJob[], outputDirectory?: string): Promise<ExportDestination> {
-    if (mode === 'default' && window.directorDesktop?.files) {
-        let output: Awaited<ReturnType<typeof openOutput>> | undefined;
-        return {
-            async open(job) { output = await openOutput({ directory: outputDirectory }, job.filename, 'video'); return output.handle; },
-            async save() { if (!output?.output.saved) throw Error('视频尚未保存'); return output.output.path; },
-            async discard() { await output?.abort(); },
-        };
-    }
-    const pickers = window as unknown as Pickers;
-    const single = mode === 'disk' ? await pickers.showSaveFilePicker({ suggestedName: jobs[0].filename,
-        types: [{ description: '参考视频', accept: { [jobs[0].options.format === 'mp4' ? 'video/mp4' : 'video/webm']: ['.' + jobs[0].options.format] } }] }) : undefined;
-    const directory = mode === 'directory' ? await pickers.showDirectoryPicker({ mode: 'readwrite' }) : undefined;
-    let actualName = '', created = false;
+/**
+ * 云端导出投递。
+ *
+ * 桌面版的「默认目录 / 另存为 / 选择文件夹」依赖 Electron 文件服务,已随桌面能力剥离;
+ * 云端只保留浏览器下载这一条本地投递路径,**导出到画布**(白膜视频、构图帧、镜头参数、
+ * 分镜表)由 host bridge 交给影策任务与资源链路(T7)。
+ */
+export type SaveMode = 'download';
+
+export async function videoDestination(_mode: SaveMode, _jobs: ExportJob[], _outputDirectory?: string): Promise<ExportDestination> {
     return {
-        async open(job) {
-            actualName = single?.name ?? job.filename;
-            if (!directory) return single;
-            // Avoid replacing files already present in the chosen folder.
-            for (let index = 1; ; index++) {
-                actualName = numberedFilename(job.filename, index);
-                try { await directory.getFileHandle(actualName); }
-                catch (error) {
-                    if ((error as Error).name === 'NotFoundError') {
-                        const handle = await directory.getFileHandle(actualName, { create: true });
-                        created = true; return handle;
-                    }
-                    if ((error as Error).name !== 'TypeMismatchError') throw error;
-                }
-            }
+        async open() {
+            return undefined;
         },
         async save(job, blob) {
-            if (blob && mode === 'default') {
-                if (!window.directorDesktop?.files) throw Error('桌面文件服务不可用');
-                const result = await window.directorDesktop.files('save-export', { name: job.filename, bytes: await blob.arrayBuffer() });
-                if (!result.ok || !result.data?.saved) throw Error(result.error || '视频保存失败');
-                return result.data.filename ?? job.filename;
-            }
             if (blob) download(blob, job.filename);
-            created = false;
-            return actualName;
+            return job.filename;
         },
         async discard() {
-            if (created && directory) { await directory.removeEntry(actualName); created = false; }
+            // 浏览器下载没有可回滚的中间态。
         },
     };
 }

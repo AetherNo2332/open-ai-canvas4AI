@@ -1,5 +1,5 @@
 import { aiUsageText } from './ai-usage.ts';
-import { mountAIMcp } from './ai-mcp.ts';
+import { mountHostAIChannel } from '../host/ai-channel.ts';
 import { mountAISelection } from './ai-selection.ts';
 import type { AppContext } from '../app-context.ts';
 import type { AgentEvent, Channel, DesktopResult, ConversationSnapshot } from '../automation/desktop-types.ts';
@@ -15,7 +15,7 @@ export function mountAI(ctx: AppContext) {
     find('ai-send').title = '发送任务 · Ctrl / Cmd + Enter';
     find('ai-scene-prompt').onclick = () => { void ctx.act('production-prompt', find('ai-scene-prompt')); };
     find('ai-changes').onclick = () => { open(false); void ctx.act('ai-changes-open', find('ai-changes')); };
-    panel.querySelector('#ai-mcp > p')!.textContent = '让外部 Agent 操作当前工程。技能随软件内置，按版本读取，无需另装。';
+    panel.querySelector('#ai-host > p')!.textContent = '云端 AI 由影策 Agent 接入；技能随工作台内置。';
     let profiles: Channel[] = [], sessionId = '', active = false;
     const status = (text: string) => { find('ai-status').textContent = text; };
     mountAISkills(panel, status);
@@ -62,7 +62,7 @@ export function mountAI(ctx: AppContext) {
     find('ai-new').onclick = () => { if (bridge && !active) safe(async () => { busy(true); try { restoreConversation(check(await bridge.newConversation())); status('已手动开始新对话'); } finally { busy(false); } }); };
     find('ai-undo').onclick = () => { if (!active) void ctx.act('undo', document.createElement('button')); else status('请先停止任务，再撤销'); };
     find('ai-channel').onchange = () => { status('已切换渠道'); };
-    const mcpState = mountAIMcp(panel, status);
+    const mcpState = mountHostAIChannel(panel, status);
     function event(data: AgentEvent) {
         sessionId = data.sessionId;
         if (data.type === 'text') log(data.text || '');

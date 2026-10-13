@@ -118,13 +118,8 @@ export function createVideoPanel(ctx: AppContext) {
             if (isBatch) picker.refresh();
             else if (previousScope === 'batch') $('#export-name').value = picker.name(ctx.scenes.context.sceneId);
             const save = $('#export-save'), old = save.value;
-            const choices: [string, string][] = [];
-            if (window.directorDesktop?.files) choices.push(['default', '默认目录']);
-            else {
-                if (isBatch && 'showDirectoryPicker' in window) choices.push(['directory', '选择文件夹']);
-                if (!isBatch && 'showSaveFilePicker' in window) choices.push(['disk', '另存为']);
-                choices.push(['download', '下载']);
-            }
+            // 云端:桌面目录与本地另存为已剥离,只保留下载;导出到画布见 T7。
+            const choices: [string, string][] = [['download', '下载']];
             save.innerHTML = options(choices, choices.some(([id]) => id === old) ? old : choices[0][0]);
             previousScope = scope;
         }

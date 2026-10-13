@@ -2,7 +2,6 @@ import type { AppContext } from '../app-context.ts';
 import { listVersions, saveVersion, loadVersion, editVersion } from '../versions/store.ts';
 import { prepareDocumentModels } from '../scenes/document-models.ts';
 import { download } from '../storage.ts';
-import { openOutput } from '../files/desktop-output.ts';
 export async function versionAction(ctx: AppContext, args: Record<string, unknown>) {
     const projectId = ctx.scenes.projectId;
     if (args.action === 'list') return { projectId, items: await listVersions(projectId) };
@@ -13,10 +12,7 @@ export async function versionAction(ctx: AppContext, args: Record<string, unknow
     const context = ctx.scenes.context, saved = await loadVersion(String(args.id), projectId);
     if (args.action === 'export') {
         const blob = new Blob([JSON.stringify(saved)], { type: 'application/json' });
-        if (window.directorDesktop?.files) {
-            const output = await openOutput({ path: args.path as string | undefined }, '历史版本.director', 'project');
-            return output.blob(blob, new AbortController().signal);
-        }
+        // 桌面版按路径写出已剥离:云端统一走浏览器下载,导出到画布见 T7。
         download(blob, '历史版本.director'); return { status: 'download-requested' };
     }
     if (args.action !== 'restore') throw Error('未知版本操作');
