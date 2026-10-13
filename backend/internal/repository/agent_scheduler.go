@@ -4,6 +4,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"infinite-canvas/backend/internal/model"
+	"strings"
 	"time"
 )
 
@@ -56,6 +57,18 @@ func (r *Repository) AgentCapacityReport(owner string, p model.AgentCapacityRepo
 }
 
 func (r *Repository) SetAgentPhase(userID, runID, owner string, epoch int64, phase, kind, waitID, reason string) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		err = r.setAgentPhaseOnce(userID, runID, owner, epoch, phase, kind, waitID, reason)
+		if err == nil || r.db.Dialector.Name() != "sqlite" || !sqliteLockError(err) || attempt == 2 {
+			return err
+		}
+		time.Sleep(time.Duration(25*(attempt+1)) * time.Millisecond)
+	}
+	return err
+}
+
+func (r *Repository) setAgentPhaseOnce(userID, runID, owner string, epoch int64, phase, kind, waitID, reason string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var session model.CloudAgentPiSession
 		if err := tx.Where("user_id = ? AND active_run_id = ? AND lease_owner = ? AND lease_epoch = ? AND lease_expires_at > ?", userID, runID, owner, epoch, time.Now()).First(&session).Error; err != nil {
@@ -80,6 +93,16 @@ func (r *Repository) SetAgentPhase(userID, runID, owner string, epoch int64, pha
 		}
 		return nil
 	})
+}
+
+func sqliteLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "database is locked") ||
+		strings.Contains(text, "database table is locked") ||
+		strings.Contains(text, "sqlite_busy")
 }
 
 func (r *Repository) PrepareAgentToolOperation(operation *model.AgentToolOperation) error {
