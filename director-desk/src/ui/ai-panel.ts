@@ -15,7 +15,6 @@ export function mountAI(ctx: AppContext) {
     find('ai-send').title = '发送任务 · Ctrl / Cmd + Enter';
     find('ai-scene-prompt').onclick = () => { void ctx.act('production-prompt', find('ai-scene-prompt')); };
     find('ai-changes').onclick = () => { open(false); void ctx.act('ai-changes-open', find('ai-changes')); };
-    panel.querySelector('#ai-host > p')!.textContent = '云端 AI 由影策 Agent 接入；技能随工作台内置。';
     let profiles: Channel[] = [], sessionId = '', active = false;
     const status = (text: string) => { find('ai-status').textContent = text; };
     mountAISkills(panel, status);
