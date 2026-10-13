@@ -47,6 +47,19 @@ const appScale = (scale: PrevisVec3): PrevisVec3 => scale.map((value) => (Number
 const clamp = (value: number, min: number, max: number, fallback: number) => (Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback);
 const appName = (name: string) => name.slice(0, 200);
 
+/**
+ * 应用里摆放的白模资产(长椅、楼体、门……)在 PrevisScene 里没有对应字段。
+ * 按对象 id 记在场景扩展区,重开时还原为同一资产;只记与默认映射不同的对象。
+ */
+export const DIRECTOR_APP_ASSETS_KEY = "director-desk-assets";
+type AppAssetRecord = { kind: DirectorEntity["kind"]; asset: string; parameters?: unknown; assetParameters?: unknown; build?: DirectorEntity["build"] };
+type AppAssetMap = Record<string, AppAssetRecord>;
+
+function appAssetsOf(scene: Pick<PrevisScene, "extensions">): AppAssetMap {
+    const raw = scene.extensions?.[DIRECTOR_APP_ASSETS_KEY];
+    return isRecord(raw) ? (raw as AppAssetMap) : {};
+}
+
 function objectAsset(object: PrevisObject): string {
     if (object.kind === "actor") return object.archetype === "woman" ? "woman" : "person";
     switch (object.primitive) {
@@ -91,14 +104,21 @@ function baseEntity(): Omit<DirectorEntity, "id" | "kind" | "name" | "asset" | "
     return { locked: false, height: 1.75, build: "normal", gender: "male", face: "path", faceTarget: "", clips: [], pose: {}, poseKeys: [], camera: null, count: 1, spacing: 0.75, seed: 42, reference: "" };
 }
 
-function objectToEntity(object: PrevisObject): DirectorEntity {
+function objectToEntity(object: PrevisObject, appAssets: AppAssetMap = {}): DirectorEntity {
     const isActor = object.kind === "actor";
+    const kind = isActor ? "actor" : "prop";
+    const record = appAssets[object.id];
+    // 只在类型一致时还原应用资产(宿主把对象改成演员/道具后,资产记录失效)。
+    const app = record && record.kind === kind && typeof record.asset === "string" ? record : undefined;
     return {
         ...baseEntity(),
         id: object.id,
         kind: isActor ? "actor" : "prop",
         name: appName(object.name),
-        asset: objectAsset(object),
+        asset: app?.asset ?? objectAsset(object),
+        ...(app?.parameters !== undefined ? { parameters: clone(app.parameters) } : {}),
+        ...(app?.assetParameters !== undefined ? { assetParameters: clone(app.assetParameters) } : {}),
+        ...(app?.build ? { build: app.build } : {}),
         color: appColor(object.color),
         position: clone(object.transform.position),
         rotation: clone(object.transform.rotation),
@@ -186,7 +206,7 @@ export function previsSceneToDirectorDocument(scene: PrevisScene): DirectorProje
         fps: firstShot && APP_FRAME_RATES.includes(firstShot.fps) ? firstShot.fps : 24,
         aspect: APP_ASPECTS[firstShot?.aspectRatio ?? ""] ?? "16:9",
         room: { enabled: false, width: 10, depth: 10, height: 4 },
-        entities: [...scene.objects.map(objectToEntity), ...cameraEntities],
+        entities: [...scene.objects.map((object) => objectToEntity(object, appAssetsOf(scene))), ...cameraEntities],
         cuts,
         references: [],
         extensions: { [DIRECTOR_CANVAS_EXTENSION_KEY]: extension },
@@ -218,7 +238,7 @@ function canvasExtension(extensions: unknown): DirectorCanvasExtension {
     return shaped as DirectorCanvasExtension;
 }
 
-function mergeObject(entity: DirectorEntity, original: PrevisObject | undefined, host: PrevisObject | undefined): PrevisObject {
+function mergeObject(entity: DirectorEntity, original: PrevisObject | undefined, host: PrevisObject | undefined, appAssets: AppAssetMap = {}): PrevisObject {
     if (!original) {
         const isActor = entity.kind === "actor";
         return {
@@ -235,7 +255,7 @@ function mergeObject(entity: DirectorEntity, original: PrevisObject | undefined,
             ...(entity.path ? { motionPath: mergePath(entity.path, undefined) } : {}),
         } as PrevisObject;
     }
-    const projected = objectToEntity(original);
+    const projected = objectToEntity(original, appAssets);
     const next = clone(original);
     if (!same(entity.position, projected.position)) next.transform = { ...next.transform, position: clone(entity.position) };
     if (!same(entity.rotation, projected.rotation)) next.transform = { ...next.transform, rotation: clone(entity.rotation) };
@@ -286,9 +306,16 @@ export function directorDocumentToPrevisScene(document: DirectorProject | Direct
     const originalObjects = new Map(extension.objects.map((object) => [object.id, object]));
     const originalCameras = new Map(extension.cameras.map((camera) => [camera.id, camera]));
     const hostObjects = new Map((hostScene?.id === extension.scene.id ? hostScene.objects : []).map((object) => [object.id, object]));
-    const objects = view.entities
-        .filter((entity) => entity.kind !== "camera")
-        .map((entity) => mergeObject(entity, originalObjects.get(entity.id), hostObjects.get(entity.id)));
+    const previousAssets = appAssetsOf({ extensions: extension.sceneExtensions });
+    const objectEntities = view.entities.filter((entity) => entity.kind !== "camera");
+    const objects = objectEntities.map((entity) => mergeObject(entity, originalObjects.get(entity.id), hostObjects.get(entity.id), previousAssets));
+    const nextAssets: AppAssetMap = {};
+    objectEntities.forEach((entity, index) => {
+        const record = entity as DirectorEntity & { parameters?: unknown; assetParameters?: unknown };
+        const isDefault = entity.asset === objectAsset(objects[index]) && record.parameters === undefined && record.assetParameters === undefined && entity.build === "normal";
+        if (isDefault) return;
+        nextAssets[entity.id] = toJson({ kind: entity.kind, asset: entity.asset, parameters: record.parameters, assetParameters: record.assetParameters, build: entity.build });
+    });
     const cameras = view.entities
         .filter((entity) => entity.kind === "camera" && entity.id !== PLACEHOLDER_CAMERA_ID)
         .map((entity) => mergeCamera(entity, originalCameras.get(entity.id)));
@@ -312,7 +339,10 @@ export function directorDocumentToPrevisScene(document: DirectorProject | Direct
         createdAt: extension.scene.createdAt,
         updatedAt: extension.scene.updatedAt,
     };
-    if (extension.sceneExtensions !== undefined) scene.extensions = clone(extension.sceneExtensions);
+    const sceneExtensions: Record<string, unknown> = isRecord(extension.sceneExtensions) ? clone(extension.sceneExtensions) : {};
+    if (Object.keys(nextAssets).length) sceneExtensions[DIRECTOR_APP_ASSETS_KEY] = nextAssets;
+    else delete sceneExtensions[DIRECTOR_APP_ASSETS_KEY];
+    if (extension.sceneExtensions !== undefined || Object.keys(sceneExtensions).length) scene.extensions = sceneExtensions;
     return scene;
 }
 

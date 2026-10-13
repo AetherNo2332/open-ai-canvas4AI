@@ -96,6 +96,39 @@ describe("DirectorDesk 原版应用场景往返", () => {
         expect(restored.objects).toHaveLength(scene.objects.length + 1);
     });
 
+    test("06b 应用内摆放的白模资产经保存→重开仍是同一资产(不退化为立方体)", () => {
+        const scene = richScene();
+        const v3 = readSceneDocument(previsSceneToDirectorDocument(scene));
+        const project = projectForScene(v3);
+        const boxId = scene.objects.find((object) => object.name === "箱子")!.id;
+        const template = project.entities.find((entity) => entity.id === boxId)!;
+        project.entities.push({ ...structuredClone(template), id: "app-bench", name: "长椅", asset: "bench", position: [3, 0, -3] });
+        // 第一次回传 = 用户保存;得到的 PrevisScene 即服务端持久化内容。
+        const saved = directorDocumentToPrevisScene(updateDocumentScene(v3, v3.activeSceneId, project), scene);
+        // 重开 = 从持久化的 PrevisScene 重新下发给应用。
+        const reopened = readSceneDocument(previsSceneToDirectorDocument(saved));
+        const bench = projectForScene(reopened).entities.find((entity) => entity.id === "app-bench");
+        expect(bench?.asset).toBe("bench");
+        expect(bench?.position).toEqual([3, 0, -3]);
+        // 原有对象不受影响。
+        expect(projectForScene(reopened).entities.find((entity) => entity.id === boxId)?.asset).toBe("cube");
+    });
+
+    test("06c 宿主(Agent/旧工作台)改动对象变换时以 PrevisScene 为准,应用资产仍保留", () => {
+        const scene = richScene();
+        const v3 = readSceneDocument(previsSceneToDirectorDocument(scene));
+        const project = projectForScene(v3);
+        const boxId = scene.objects.find((object) => object.name === "箱子")!.id;
+        const template = project.entities.find((entity) => entity.id === boxId)!;
+        project.entities.push({ ...structuredClone(template), id: "app-bench", name: "长椅", asset: "bench" });
+        const saved = directorDocumentToPrevisScene(updateDocumentScene(v3, v3.activeSceneId, project), scene);
+        const moved = structuredClone(saved);
+        moved.objects.find((object) => object.id === "app-bench")!.transform.position = [9, 0, 9];
+        const bench = projectForScene(readSceneDocument(previsSceneToDirectorDocument(moved))).entities.find((entity) => entity.id === "app-bench");
+        expect(bench?.asset).toBe("bench");
+        expect(bench?.position).toEqual([9, 0, 9]);
+    });
+
     test("07 缺少影策扩展或形状不合法的回传被拒绝(不静默生成空场景)", () => {
         expect(() => directorDocumentToPrevisScene({ format: "director-desk", version: 3 } as never)).toThrow();
         const v3 = readSceneDocument(previsSceneToDirectorDocument(richScene()));
