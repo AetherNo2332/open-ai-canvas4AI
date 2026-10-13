@@ -1,4 +1,4 @@
-import { useCallback, type ComponentProps } from "react";
+import { useCallback, useRef, type ComponentProps } from "react";
 import { CanvasPrevisWorkbench } from "./canvas-previs-workbench";
 import { useDirectorDeskPrevisRuntime } from "./use-director-desk-previs-runtime";
 import { directorDeskRuntimePolicy } from "@/lib/canvas/director-desk-feature";
@@ -7,6 +7,7 @@ import { canvasCommandSession } from "@/stores/canvas/use-canvas-session-store";
 import type { PrevisScene, PrevisShot } from "@/types/previs";
 import { directorDocumentToPrevisScene } from "@/integrations/director-desk/previs-adapter";
 import type { DirectorProject } from "@/integrations/director-desk/previs-runtime-types";
+import { createDirectorDeskCommitBridge } from "./director-desk-commit-bridge";
 import "./director-desk-previs-workbench.css";
 
 export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevisWorkbench>;
@@ -20,9 +21,14 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
     const mode = useUserStore((state) => state.features.directorDeskPrevisMode);
     const userId = useUserStore((state) => state.user?.id);
     const policy = directorDeskRuntimePolicy(mode, userId);
+    const commitBridgeRef = useRef<ReturnType<typeof createDirectorDeskCommitBridge> | null>(null);
+    if (!commitBridgeRef.current) commitBridgeRef.current = createDirectorDeskCommitBridge(props.onChange);
+    const onCommitReady = useCallback((commit: (scene: PrevisScene) => void) => {
+        commitBridgeRef.current?.register(commit);
+    }, []);
     const onDocumentChange = useCallback((document: DirectorProject) => {
         try {
-            props.onChange(directorDocumentToPrevisScene(document));
+            commitBridgeRef.current?.commit(directorDocumentToPrevisScene(document));
         } catch {
             // Keep the current draft visible; the legacy workbench will surface
             // the next save/validation error through its existing coordinator.
@@ -47,7 +53,7 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
                 <div ref={runtime.shotRef} className="director-desk-runtime-stage" data-director-runtime="shot" />
                 <span className="director-desk-runtime-label">DirectorDesk {policy === "canary" ? "· 灰度同步" : "· 主运行时"} {runtime.status === "ready" ? "· 已连接" : runtime.status === "error" ? "· 回退" : "· 初始化"}</span>
             </div>
-            <CanvasPrevisWorkbench {...props} onDraftChange={runtime.syncScene} onSubmitPreview={submitPreview} />
+            <CanvasPrevisWorkbench {...props} onDraftChange={runtime.syncScene} onSubmitPreview={submitPreview} onCommitReady={onCommitReady} />
         </>
     );
 }

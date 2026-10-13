@@ -39,7 +39,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import type { PrevisCameraMove, PrevisRenderMode, PrevisScene, PrevisSceneOutput, PrevisTransform, PrevisVec3 } from "@/types/previs";
 export { cameraMoveOptions, poseOptions, shotSizeOptions } from "./previs-inspectors";
 
-export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush, onDraftChange, onSubmitPreview }: { open: boolean; canvasId?: string; scene: PrevisScene | null; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: PrevisScene) => void; onApply: (output: PrevisSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void>; onDraftChange?: (scene: PrevisScene) => void; onSubmitPreview?: (scene: PrevisScene, shot: PrevisShot) => Promise<boolean> }) {
+export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboardingScope, onClose, onChange, onApply, onDeleteImageNode, onFlush, onDraftChange, onSubmitPreview, onCommitReady }: { open: boolean; canvasId?: string; scene: PrevisScene | null; imageNodes: CanvasNodeData[]; onboardingScope: string; onClose: () => void; onChange: (scene: PrevisScene) => void; onApply: (output: PrevisSceneOutput) => Promise<void>; onDeleteImageNode: (nodeId: string) => void; onFlush?: () => void | Promise<void>; onDraftChange?: (scene: PrevisScene) => void; onSubmitPreview?: (scene: PrevisScene, shot: PrevisShot) => Promise<boolean>; onCommitReady?: (commit: (scene: PrevisScene) => void) => void }) {
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
     const effectiveCanvasId = useMemo(() => {
@@ -197,6 +197,11 @@ export function CanvasPrevisWorkbench({ open, canvasId, scene, imageNodes, onboa
         saveControllerRef.current?.commitScene(next);
         onChangeRef.current(next);
     }, [writeDraft]);
+
+    useEffect(() => {
+        onCommitReady?.(writeAndPublish);
+        return () => onCommitReady?.(() => undefined);
+    }, [onCommitReady, writeAndPublish]);
 
     // 会话初始化只认 scene id：同 id 的父级镜像回流不得重建会话。
     useEffect(() => {
