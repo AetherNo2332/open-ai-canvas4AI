@@ -2652,7 +2652,11 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 		// Persist intent independently of the transcript. Retrying also repairs
 		// legacy cancelled rows that crashed before cancelling their children.
 		state, decodeErr := cloudAgentDecode(run)
-		err = s.repo.MutateCloudAgent(userID, id, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		// 图片→导演流程的取消契约：连续性检查通过前取消运行，半成品导演场景
+		// 不得留在画布上——与失败路径 failCloudAgent 的 rollbackDirectorWorkflowDraft
+		// 同一语义。控制面优先：回滚失败不阻断取消，只记录。
+		rollbackPolicy, rollbackPolicyErr := s.RuntimePolicy()
+		err = s.repo.MutateCloudAgent(userID, id, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 			firstCancellation := current.Status != "cancelled"
 			current.Status = "cancelled"
 			current.CleanupPending = true
@@ -2663,6 +2667,11 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 					if saveErr := cloudAgentSave(current, &state); saveErr != nil {
 						// Cancellation must still work if the transcript is oversized.
 						log.Printf("[cloud-agent] cancellation event unavailable for run %s: checkpoint rejected", id)
+					}
+					if rollbackPolicyErr == nil {
+						if rollErr := rollbackDirectorWorkflowDraft(repo, userID, &state, rollbackPolicy); rollErr != nil {
+							log.Printf("[cloud-agent] director workflow draft rollback on cancel failed for run %s: %v", id, rollErr)
+						}
 					}
 				}
 			} else {

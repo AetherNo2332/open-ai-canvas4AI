@@ -58,6 +58,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 - 已实现：DirectorDesk browser-safe runtime、`PrevisScene` 双向适配器、资源归属校验、预览请求去重/取消，以及六个高层导演 Agent 工具；写操作继续复用影策审批、revision/CAS、任务和资源合同。
 - 已实现：图片节点右键“根据此图生成 3D 导演预演台”入口。入口会选择声明图片输入能力的系统模型，并要求真实 `canvas_inspect_image` 后才允许 block/design/continuity；模型不支持图片或流程失败时保持画布不变。
+- 已实现（2026-10-13，P4 U2-A）：图片→导演流程的服务端 staging 兜底——`image_to_director` 运行在连续性检查通过前被**取消**时，半成品导演场景自动回滚（与失败路径 `rollbackDirectorWorkflowDraft` 同语义）；漂移保护保留（场景创建后用户编辑画布，取消不静默覆盖）；非导演流程运行取消不受影响。Go TDD 3 测试 RED→GREEN（场景停在 designed → 取消后画布回到场景写入前 + mutation 标记 undone）。
 - [ ] 真实浏览器验收：打开旧 PrevisScene、手工编辑、Agent 补丁、关闭重开，确认 DirectorDesk 运行时与旧保存协调器双向同步且选择状态保留。
 - [ ] 真实模型验收：用一张图片触发入口，确认模型确实收到像素、生成可单独移动的 actor/prop/camera/light，并在取消、拒绝和图片超限时没有半成品场景。
 - [ ] 真实渲染验收：提交白膜预览，检查取消、失败重试、资源写回和任务中心记录仍与旧 renderer 合同一致。
