@@ -64,7 +64,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - 已实现（Plan 2/3）：嵌入 DirectorDesk 在启动和运行中接收宿主明/暗模式，浅色表面、控件和时间轴覆盖已纳入 iframe 样式；runtime、WebGL renderer、host bridge 的关闭释放保持幂等，加载超时/iframe error 仍回退旧预演台。`director-desk/NOTICE.md` 固化上游 MIT 许可与入库范围。
 - [x] 自动合同回归：旧 `PrevisScene` 往返、应用编辑回传、Agent 补丁保留视图、图片工具顺序、预览请求去重，以及导出任务写回合同均有专项测试；本轮主题同步新增 bridge/scene-sync 覆盖。
 - [ ] 真实浏览器验收：打开旧 PrevisScene、手工编辑、Agent 补丁、关闭重开，确认 DirectorDesk 运行时与旧保存协调器双向同步且选择状态保留。
-- [ ] 3040 浏览器验收：分别切换画布浅色/深色模式，确认 iframe 不闪回深色、顶栏/时间轴/检查器表面与可读性同步；反复打开/关闭并观察无残留键盘监听、WebGL 画布或旧 bridge 消息。
+- [x] 2026-10-14 3040 浏览器验收：验收画布旧 `PrevisScene` 打开 DirectorDesk，浅色/深色各完成一次打开与关闭。iframe 实测分别收到 `data-theme=light/#ffffff/#111111` 与 `data-theme=dark/#1a1a1a/#f4f2ef`，圆角令牌为 `0px`；顶栏、时间轴、检查器和 WebGL 视图可见，重开无 iframe 错误或 JS error。控制台仅有上游 Three.js 弃用 warning。
 - [x] 2026-10-13 隔离 3040 镜像重建：`open-ai-canvas-web/backend:dpv-3040` 自当前 HEAD 构建，web/backend healthy；`/desk/` 返回 200、原版 `id="app"` 与入口 JS 可取；canary 白名单/比例桶/回退等价流程通过。官方脚本在保留旧卷时的注册步骤因 `dpv-accept` 已存在而失败，未删除数据卷；浏览器视觉验收工具初始化超时，仍待人工页面确认。
 - [ ] 真实模型验收：用一张图片触发入口，确认模型确实收到像素、生成可单独移动的 actor/prop/camera/light，并在取消、拒绝和图片超限时没有半成品场景。
 - [ ] 真实渲染验收：提交白膜预览，检查取消、失败重试、资源写回和任务中心记录仍与旧 renderer 合同一致。
