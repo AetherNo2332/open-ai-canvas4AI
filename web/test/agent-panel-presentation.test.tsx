@@ -38,6 +38,11 @@ test("permission modes have distinct icons, not just distinct colors", () => {
     expect(icons[2]).toContain("lucide-sparkles");
 });
 
+test("cloud Agent starts in automatic approval mode", async () => {
+    const source = await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent-panel.tsx", import.meta.url)).text();
+    expect(source).toContain('useState<AgentPermissionMode>("auto")');
+});
+
 test("compact send button preserves empty-draft and sending guards", () => {
     for (const [prompt, sending, disabled] of [
         ["", false, true],
