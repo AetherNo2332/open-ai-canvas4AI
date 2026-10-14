@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
+
+var errPiNativePreparationInvalid = errors.New("Pi 原生压缩准备信息无效")
 
 // The preparation and model call receipts survive worker loss. SDK summarization
 // runs in Node, but every provider call and checkpoint remains Go-owned.
@@ -63,7 +66,7 @@ func cloudAgentNativeUsageMatches(sent, stored json.RawMessage) bool {
 func cloudAgentPrepareNativeCompaction(raw json.RawMessage, tokens int, source *cloudAgentPiCompactionSource, branch []cloudAgentPiCompactionEntry) (*cloudAgentPiNativeCompaction, error) {
 	var prep piNativePreparation
 	if len(raw) > 1<<20 || json.Unmarshal(raw, &prep) != nil || prep.FirstKeptEntryID == "" || prep.TokensBefore != tokens {
-		return nil, fmt.Errorf("Pi 原生压缩准备信息无效")
+		return nil, errPiNativePreparationInvalid
 	}
 	index := -1
 	for i, id := range source.MessageEntryIDs {
