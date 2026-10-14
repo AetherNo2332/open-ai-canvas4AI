@@ -19,6 +19,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [x] 前端失败状态 GET/SSE 专项 30/30、生产构建通过；失败运行 SSE 只有一条 `run_failed`。未操作浏览器。
 - [x] 双实例脚本使用受控模型响应，证明 epoch 1 → 2 接管后，旧回调返回 `403 agent_lease_lost` 且当前运行仍在进行；放行响应后，同一新实例完成，模型任务与上游调用均只有一笔。长等待中同实例又取得 epoch 3，复用原健康任务完成。终态、SSE 与数据库清理通过；原 3030 镜像、Harness 和数据卷已恢复，健康接口确认 schema 57，故障注入挂载已移除。脚本编码、启动等待和租约断言的调试记录单独保留。
 - [ ] 用户页面视觉验收、真实渠道故障演练及生产迁移验收；原诊断包中工具批次 403 的完整触发过程尚未复现。
+
 ## Agent 画布连线、工具技能与镜像发布
 
 - 已实现：连线复用手动节点限制，支持真实分镜行和批量表参考列端口；新增内置 `canvas-tools-guide` 技能及按需参考文件。
@@ -33,6 +34,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [ ] 复现工具批次冲突后检查 `agent/runs.jsonl` 的活动任务、工具批次、调用游标与 `agent/events.jsonl` 的失败顺序；不自动重跑 Agent。
 - [ ] 明暗主题、窄屏、空记录及截断提示的真实浏览器验收。自动验证结果记录在交付中；本次不部署生产环境。
 - [ ] PostgreSQL 下核对新增只读查询的排序、时间窗口及正文大小限制；本次数据库回归使用 SQLite。
+
 ## Agent 上游用量展示与 Pi 自主压缩
 
 前端占用量和占用率采用最近有效上游输入 Token，有实测时不加本地增量；相同模型/渠道的续轮保留实测，每步完成立即发布读数，包括末步。未取得有效上游用量时采用本地估算，切换模型/渠道及压缩后重新测量。Pi 使用自己的原生计量决定压缩，模型窗口与压缩设置随后端预算同步。Go 不以展示压力触发压缩，保留持久化操作恢复、摘要任务和事务提交；前端只根据压缩事件显示状态。
@@ -59,7 +61,10 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - 已实现：DirectorDesk browser-safe runtime、`PrevisScene` 双向适配器、资源归属校验、预览请求去重/取消，以及六个高层导演 Agent 工具；写操作继续复用影策审批、revision/CAS、任务和资源合同。
 - 已实现：图片节点右键“根据此图生成 3D 导演预演台”入口。入口会选择声明图片输入能力的系统模型，并要求真实 `canvas_inspect_image` 后才允许 block/design/continuity；模型不支持图片或流程失败时保持画布不变。
 - 已实现（2026-10-13，P4 U2-A）：图片→导演流程的服务端 staging 兜底——`image_to_director` 运行在连续性检查通过前被**取消**时，半成品导演场景自动回滚（与失败路径 `rollbackDirectorWorkflowDraft` 同语义）；漂移保护保留（场景创建后用户编辑画布，取消不静默覆盖）；非导演流程运行取消不受影响。Go TDD 3 测试 RED→GREEN（场景停在 designed → 取消后画布回到场景写入前 + mutation 标记 undone）。
+- 已实现（Plan 2/3）：嵌入 DirectorDesk 在启动和运行中接收宿主明/暗模式，浅色表面、控件和时间轴覆盖已纳入 iframe 样式；runtime、WebGL renderer、host bridge 的关闭释放保持幂等，加载超时/iframe error 仍回退旧预演台。`director-desk/NOTICE.md` 固化上游 MIT 许可与入库范围。
+- [x] 自动合同回归：旧 `PrevisScene` 往返、应用编辑回传、Agent 补丁保留视图、图片工具顺序、预览请求去重，以及导出任务写回合同均有专项测试；本轮主题同步新增 bridge/scene-sync 覆盖。
 - [ ] 真实浏览器验收：打开旧 PrevisScene、手工编辑、Agent 补丁、关闭重开，确认 DirectorDesk 运行时与旧保存协调器双向同步且选择状态保留。
+- [ ] 3040 浏览器验收：分别切换画布浅色/深色模式，确认 iframe 不闪回深色、顶栏/时间轴/检查器表面与可读性同步；反复打开/关闭并观察无残留键盘监听、WebGL 画布或旧 bridge 消息。
 - [x] 2026-10-13 隔离 3040 镜像重建：`open-ai-canvas-web/backend:dpv-3040` 自当前 HEAD 构建，web/backend healthy；`/desk/` 返回 200、原版 `id="app"` 与入口 JS 可取；canary 白名单/比例桶/回退等价流程通过。官方脚本在保留旧卷时的注册步骤因 `dpv-accept` 已存在而失败，未删除数据卷；浏览器视觉验收工具初始化超时，仍待人工页面确认。
 - [ ] 真实模型验收：用一张图片触发入口，确认模型确实收到像素、生成可单独移动的 actor/prop/camera/light，并在取消、拒绝和图片超限时没有半成品场景。
 - [ ] 真实渲染验收：提交白膜预览，检查取消、失败重试、资源写回和任务中心记录仍与旧 renderer 合同一致。
@@ -293,7 +298,6 @@ Go 服务与 Pi Worker 必须配套更新。已有运行使用冻结 schema；�
 
 最新验收见 docs/reports/agent-orchestrator-acceptance.md，第一阶段记录保留于 docs/reports/event-canary-acceptance.md。16 路请求、审批与重启、SSE、公平准入和热缩容通过；管理员页面已做 Firefox 实际验收，完整画布明暗主题及移动端等待交互仍待用户确认。
 
-
 ## 画布 Pi 原生 Skill（已实现，待真实部署确认）
 
 实现边界见 [原生 Skill 运行时](../backend/agent-native-skills)。Node 全量 94 项及 Web 类型检查/构建已通过；Go 原生 snapshot、撤销授权、冻结读取、内部路由专项已通过。Go 全量与本地 Compose 联调结果仍需收敛。
@@ -411,13 +415,13 @@ Go 服务与 Pi Worker 必须配套更新。已有运行使用冻结 schema；�
   我方在该链路上只保留自有改动（锚点 `UserPrompt` 截断、`assistant_message` 的 `final`、`strictTools`）。
 
 - [x] 迁移：`TestLegacyCloudAgentMigrationRelocation` 8 个子测试全过（含新增的"再上一版 dev 库（schema 35）"起点），
-  并用**变异测试**确认用例真的能挡住顺序错误：把 35→36 与 34→35 两条对调后，新用例报出上面那条"名称不一致"。
+      并用**变异测试**确认用例真的能挡住顺序错误：把 35→36 与 34→35 两条对调后，新用例报出上面那条"名称不一致"。
 - [x] 代码：`gofmt -l` 干净、`go build ./...` 与 `go vet ./internal/...`（含测试类型检查）无错；冲突按上述口径解完，
-  自动合并的 `cloud_agent_vision.go` 即上游重写版（我方对该文件本就无改动）。
+      自动合并的 `cloud_agent_vision.go` 即上游重写版（我方对该文件本就无改动）。
 - [ ] 真机：把停在 v34/v35 形态的 dev 库升到 v36 并确认启动正常；核对 `schema_migrations` 里
-  v34 = `task_media_recovery`、v35 = `cloud_agent_run_events`、v36 = `cloud_agent_transcript`。
+      v34 = `task_media_recovery`、v35 = `cloud_agent_run_events`、v36 = `cloud_agent_transcript`。
 - [ ] 真机：用声明了图片输入的渠道模型跑一轮看图，确认图片以真实字节送达上游、且不再依赖 `CANVAS_PUBLIC_BASE_URL`
-  （当前 dev 唯一启用模型 `maxImages=0`，看图工具不会暴露，需另配支持图片输入的模型）。
+      （当前 dev 唯一启用模型 `maxImages=0`，看图工具不会暴露，需另配支持图片输入的模型）。
 
 ## 云 Agent 收尾闸门与 runtime 催办语义（工作项 A，2026-09-22）
 
@@ -439,14 +443,14 @@ Go 服务与 Pi Worker 必须配套更新。已有运行使用冻结 schema；�
   工具 schema 预算按实测从 26000 抬到 26800（23 个工具 26,135 字节，其中 `finish_run` 610 字节，描述已压缩过一轮）。
 
 - [x] 后端新增/改造用例：候选收尾被拦下（不发布最终答复、落过程说明与控制事件）、闸门通过只发布一次最终答复、
-  催办有界并以 `completion_blocked` 终止、阻塞指纹随清单推进重置、清单对账后放行、`finish_run` 通过与阻塞两条路径、
-  `finish_run` 参数契约（缺 `summary` 走字段级回执）、上一轮交接只取 `final: true`。
+      催办有界并以 `completion_blocked` 终止、阻塞指纹随清单推进重置、清单对账后放行、`finish_run` 通过与阻塞两条路径、
+      `finish_run` 参数契约（缺 `summary` 走字段级回执）、上一轮交接只取 `final: true`。
 - [x] `go test ./internal/app/`（`TestCloudAgent*` 全绿）、`gofmt` 干净；前端 `bun test` 2040 通过 / 0 失败
-  （新增 6 条：`final` 语义、控制行不是用户气泡、面板接线、渲染层"过程说明"标记、断线重放草稿不被当成最终答复、`finish_run` 工具卡文案）、`bun run typecheck` 通过。
+      （新增 6 条：`final` 语义、控制行不是用户气泡、面板接线、渲染层"过程说明"标记、断线重放草稿不被当成最终答复、`finish_run` 工具卡文案）、`bun run typecheck` 通过。
 - [ ] 真机复验（需部署到 3001）：① 造一个多步待办再让它提前收尾，确认界面出现"过程说明"标记 + 控制行，且它继续把清单做完；
-  ② 让模型只写正文不改清单，确认第二次以 `run_failed` / `completion_blocked` 结束，且用户仍能看到过程正文；
-  ③ 真实渠道（`qwen3.6-35b-a3b` 等）是否会被提示词引导到调用 `finish_run`、`summary` 是否稳定成为最终答复；
-  ④ `completion_blocked` 控制行与"过程说明"标记在明暗主题、窄面板下的显示。
+      ② 让模型只写正文不改清单，确认第二次以 `run_failed` / `completion_blocked` 结束，且用户仍能看到过程正文；
+      ③ 真实渠道（`qwen3.6-35b-a3b` 等）是否会被提示词引导到调用 `finish_run`、`summary` 是否稳定成为最终答复；
+      ④ `completion_blocked` 控制行与"过程说明"标记在明暗主题、窄面板下的显示。
 
 ## 合并上游 57 个提交后的单步边界与租约口径（2026-09-22）
 
@@ -461,9 +465,9 @@ Go 服务与 Pi Worker 必须配套更新。已有运行使用冻结 schema；�
   根因修复（续租用 `context.WithoutCancel` + 5s，不再被自己的执行时限打断）保留。真实租约失效一律提前返回，
   避免旧 worker 在新 worker 接管后继续结算或写终态。
 - [x] `gofmt` / `go vet` 干净；`go test ./... -count=1`（含 Postgres 与 `redis-server` 依赖用例、`umask 0022`）全绿，
-  `internal/app` ok 493s；前端 `bun test` 2034 通过 / 0 失败、`bun run typecheck`、变更文件格式检查通过。
+      `internal/app` ok 493s；前端 `bun test` 2034 通过 / 0 失败、`bun run typecheck`、变更文件格式检查通过。
 - [ ] 真机复验这三条口径：把单步输出上限调小逼出空输出/超时，确认重试请求的 `max_output_tokens` **不超过**管理端配置值；
-  在策略读取失败（可临时把 `system_settings` 行改成非法 JSON）时确认整步按错误收场而不是用默认值放行。
+      在策略读取失败（可临时把 `system_settings` 行改成非法 JSON）时确认整步按错误收场而不是用默认值放行。
 - [ ] 真实租约失效路径：任务执行中让租约过期被另一个 worker 接管，确认旧 worker 不再写终态、也不产生重复计费。
 
 ## 发布回归与资源引用保护
@@ -576,7 +580,7 @@ handoff 工作项 B 第 4 步：把"逐字抄三个字段"的模型选择收敛�
   两者混用、被改写、跨用户、格式不对都按 `field=selectionId` 的字段级参数错误拒绝，提示重新调用 `model_list`。
 - 签发失败（密钥不可读）时只省略 `selectionId`，目录本身仍可用，模型回退旧契约。
 - [x] 单测：目录每一项都带可解开的 `selectionId` 且与 `selection` 一致；伪造签名 / 改写内容 / 跨用户 / 缺分隔符 / 空凭证都被拒；
-  只给 `selectionId` 能通过并归一化；与 `logicalModelId` 或 `channelId` 混用按 `mutually_exclusive` 拒；`selectionId` 为 null 按 `type_mismatch` 拒。
+      只给 `selectionId` 能通过并归一化；与 `logicalModelId` 或 `channelId` 混用按 `mutually_exclusive` 拒；`selectionId` 为 null 按 `type_mismatch` 拒。
 - [x] 回归：`go test ./internal/app/ -run TestCloudAgent` 全绿（27.2s）。
 - [ ] 真机复验：真实一轮里让模型只用 `selectionId` 提交生成，确认目录→选择→审批链路无回归；需部署后执行。
 - [ ] 未做：`selectionId` 的 TTL/失效策略（当前不设过期，选择本身在提交时仍会按目录与能力重新校验）。
@@ -590,7 +594,7 @@ handoff 工作项 B 第 3 步：把"同一个工具错三次就熔断"改成按*
   预检对集合外的工具回 `invalid_model_output`；第 3 次停止自动重试（`run_failed`、`reason=tool_retry_exhausted`、带 `fingerprint`）。
 - 换了错法（指纹不同）从第一次重新计数；修好后清空收紧与纠错记录；`retry.status` 仍保持 `retrying`/`exhausted`/`recovered` 三种，收紧是附加字段（`ladder=scoped`、`toolScope`）。
 - [x] 单测：指纹区分不同错法（同工具换字段重新计数）、第二次同类错误进入收紧档且状态仍是 `retrying`、收紧后工具表是非空真子集且预检按集合判定
-  （集合外的 `generate_media` 被拒、集合内的 `canvas_apply_ops` 放行）、修好后清空、第三次失败事件带指纹。
+      （集合外的 `generate_media` 被拒、集合内的 `canvas_apply_ops` 放行）、修好后清空、第三次失败事件带指纹。
 - [x] 回归：`go test ./internal/app/ -run TestCloudAgent` 全绿（26.7s）。
 - [ ] 真机复验：让模型连续两次提交同一种非法参数，确认第二步的"只开放修复工具"在真实事件流里可见；需部署后执行。
 - [ ] 未做：前端展示收紧档（`retry.ladder` / `retry.toolScope` 已下发，工具卡暂未单独显示）；"换更强模型"这一档未实现（当前以停止自动重试收尾）。
@@ -603,7 +607,7 @@ handoff 工作项 B 第 2 步的后半：上游支持 strict 时启用按 schema
 - 请求组装（内置协议与声明式协议两条路径）给每个函数工具加 `strict: true`；上游报"未知参数 / 不支持 / 非法取值"且文本里出现 strict 时，去掉标记**重发一次**，
   并把 `channelID|modelKey` 记进进程内拒绝名单，后续请求不再尝试（重启后重新探测一次）。
 - [x] 单测：`strict` 标记的加/去；兼容错误判定（识别三种 strict 报错、**不**把与 strict 无关的 unknown parameter 当 strict 问题）；httptest 上游先 400 再成功 →
-  两次请求且第二次不带 strict、拒绝名单已记录；能力合同声明才下发（nil 与拒绝过的线路都不下发）。
+      两次请求且第二次不带 strict、拒绝名单已记录；能力合同声明才下发（nil 与拒绝过的线路都不下发）。
 - [x] 回归：`go test ./internal/app/ -run 'TestCloudAgent|TestProvider|TestRunAgent'` 全绿（29.0s）。
 - [ ] 真机复验：给一个支持 strict 的渠道模型打开 `strictTools`，确认请求体带 strict 且调用成功率变化；不支持的上游确认自动回退不报错。需部署后执行。
 - [ ] 未做：strict 模式下的 schema 规范化（OpenAI strict 要求所有属性都进 `required`，我们的 schema 保留了可选字段——因此**默认不下发** strict，只对确实兼容的线路开启）。
@@ -619,10 +623,10 @@ handoff 工作项 B 第 2 步落地：模型一次返回的多个工具调用，
 - 参数类拒绝走既有字段级回执（`reason=invalid_tool_arguments`、`field`、`issue`、附 `parameters`、消耗纠错名额）；
   批次策略拒绝走 `errorClass=call_skipped`（reason `call_skipped`、`requiredAction=resubmit_next_step`、不消耗名额）。
 - [x] 单测：一批两个写调用只执行第一个（第二个 `single_write_per_step`，画布只改一次）；第一个参数不合法时后续三个写调用整批取消
-  （`batch_cancelled_after_write_failure`，画布零改动，只有参数错那条消耗一次纠错名额）；工具表外的名字按 `invalid_model_output` 拒；
-  只读调用不受限制；无预检结论的旧检查点照常执行。
+      （`batch_cancelled_after_write_failure`，画布零改动，只有参数错那条消耗一次纠错名额）；工具表外的名字按 `invalid_model_output` 拒；
+      只读调用不受限制；无预检结论的旧检查点照常执行。
 - [x] schema 校验器单测 16 例（必填/null/类型/整数 vs 小数/未定义字段/枚举/上下界/数组超限/数组元素/嵌套对象/非法 JSON/非对象/空参数），
-  以及 `canvas_apply_ops` 的条件必填（`add_node` 缺 `nodeType`、`update_node` 缺 `patch`、未定义 op 类型、`patch` 未声明键）。
+      以及 `canvas_apply_ops` 的条件必填（`add_node` 缺 `nodeType`、`update_node` 缺 `patch`、未定义 op 类型、`patch` 未声明键）。
 - [x] 回归：`go test ./internal/app/ -run TestCloudAgent` 全绿（28.7s）。
 - [ ] 真机复验：故意让模型在同一步发两个写入 / 发一个未知 op 类型，确认回执与画布零改动；需部署后执行。
 - [x] 完成闸门已交付（工作项 A，见本文档顶部"云 Agent 收尾闸门与 runtime 催办语义"一节）；本行原列的其余三项也已交付（PR #38–#40）。
@@ -862,23 +866,23 @@ P3 把「任务与账务事实」每步从数据库现读回灌（`kind=task_fac
 normalizePixelSize`、`edits` 走 multipart + `image`/`mask` 文件部分）。
 
 - [x] host 侧：`protocolRequestSize`（`backend/internal/app/provider_video_options.go`）在声明式协议路径上
-  按能力配置折算尺寸 —— 声明 `size` 的上游拿像素（`1:1 → 1024x1024`），声明 `aspect_ratio` 的
-  （grok/gemini 等，插件模板自带带容差的比例归一）与视频保持原样透传。
+      按能力配置折算尺寸 —— 声明 `size` 的上游拿像素（`1:1 → 1024x1024`），声明 `aspect_ratio` 的
+      （grok/gemini 等，插件模板自带带容差的比例归一）与视频保持原样透传。
 - [x] 插件侧：`openai-images` 的 `create` 增加 `contentTypeTemplate`（有参考图 → `multipart/form-data`）
-  与 `files`（`image` / `mask` 文件部分），并去掉 body 里那份 JSON `images`/`mask`；
-  生成器（`plugin-packages/generate-catalog.mjs`）与打包产物 `openai-images.yingce-plugin` 同步重建。
+      与 `files`（`image` / `mask` 文件部分），并去掉 body 里那份 JSON `images`/`mask`；
+      生成器（`plugin-packages/generate-catalog.mjs`）与打包产物 `openai-images.yingce-plugin` 同步重建。
 - [x] 用例：`internal/app` 新增尺寸折算用例（比例→像素、像素原样、`auto`、无能力配置兜底、
-  `aspect_ratio` 与视频不被改），`internal/protocol` 的插件用例改为断言 multipart + 文件部分，
-  并新增"无参考图仍是纯 JSON generations"。
+      `aspect_ratio` 与视频不被改），`internal/protocol` 的插件用例改为断言 multipart + 文件部分，
+      并新增"无参考图仍是纯 JSON generations"。
 - [x] dev 真实渠道 + 真实画布（`dev-imgproto`）：重放用户 07:58 失败的那两条任务输入（`size=1:1`）——
-  文生图 `POST /v1/images/generations` JSON **`size=1024x1024` → 200**；带参考图
-  `POST /v1/images/edits` **`multipart/form-data; boundary=…` `size=1024x1024` → 200**，两个任务都 `succeeded`。
-  修复前同两条路径分别是 400（`size` 格式、缺 `prompt`）。
+      文生图 `POST /v1/images/generations` JSON **`size=1024x1024` → 200**；带参考图
+      `POST /v1/images/edits` **`multipart/form-data; boundary=…` `size=1024x1024` → 200**，两个任务都 `succeeded`。
+      修复前同两条路径分别是 400（`size` 格式、缺 `prompt`）。
 - [x] 浏览器手工复验：画布默认画幅（`1:1`）直接生成 / 带参考图编辑都不再报参数错误。
 - [ ] 兼容性提醒（未验）：曾有第三方 OpenAI 兼容上游只接受 JSON edits（`images` 数组），现在统一按
-  官方 multipart 发送；如遇到这类上游需要单独插件包。
+      官方 multipart 发送；如遇到这类上游需要单独插件包。
 - [ ] vllm-omni 的蒙版字段名是 `mask_image`（OpenAI 官方是 `mask`）：该渠道用蒙版时需把模型能力的
-  `maskSupported` 关掉，或后续给该协议补一个独立插件，避免"静默忽略蒙版"。
+      `maskSupported` 关掉，或后续给该协议补一个独立插件，避免"静默忽略蒙版"。
 
 ## 运行事件出表 Stage 1（状态与轮数解耦）
 
@@ -1020,6 +1024,7 @@ normalizePixelSize`、`edits` 走 multipart + `image`/`mask` 文件部分）。
 - [ ] 真实浏览器确认《影策服务协议》弹窗、默认未勾选、取消勾选、普通注册限流和窄屏显示。
 - [ ] 在真实 Linux.do 环境验证新用户未同意被拒绝、同意后注册，以及注册关闭时已有用户仍可登录。
 - [ ] 升级前备份，在 PostgreSQL 上验证版本 32→33（本 fork 里上游 v33 就是 `oauth_state_accepted_terms`；我方两条 no-op 让位在 34/35，跑过上一版 dev 的库会先做让位搬迁再补 33）；前后端一起发布。当前同意标志不提供长期版本化签署留痕。
+
 ## 多模态列表与分镜表合并回归
 
 - [x] 合入 PR #549 的图片 / 视频列表分析、动态表格、视频脚本转换和批量生成设置；参考图上限前后端统一为 10。保留本地主分支表格布局、参考图提及、删除列、结果定位、手工行增量同步及单行重新生成。
@@ -1350,7 +1355,6 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 - [ ] 既有部署执行 schema 23 迁移并刷新前端，确认旧画布正文保留；历史只从升级后积累，不能恢复升级前已被覆盖的内容。
 
 ## 首页常驻滚动通知（2026-09-18）
-
 
 工作台首页顶部新增常驻滚动通知条，后台「运营 / 常驻通知」可配置类型、有效期、富文本标题和跳转。Schema 顺延为 v20-v22，不占用已发布的 v19 支付插件版本。待登录后：
 
@@ -2198,7 +2202,6 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 - 22 项相关测试及前端生产构建通过，包含子图普通挂载、选中与展开/收起的组件渲染回归；浏览器已确认本地画布可加载，尚未复验截图中的多图场景。
 - [ ] 人工确认多图生成后的堆叠预览、数量按钮展开/收起、子图点击与拖动、主图切换，以及保存后重新打开画布。已有画布保留用户保存的展开状态。
 
-
 ## PR #426 本地整合验收
 
 - 保留主分支图片尺寸选择器、后台尺寸预设布局、插件分类筛选、文本节点单击编辑、多角度居中弹窗、附件缩略图、站点外观与系统性能页面；接入 PR 的 UI 组件族和创作会话交互。
@@ -2221,6 +2224,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
   - [ ] Select（ui 版）：后台邮件/存储设置、用户编辑抽屉、皮肤主题编辑器、画布页布局切换、项目详情设置、设置页与技能编辑/安装——下拉观感与尺寸、placeholder、暗色模式正常；skill 模板/皮肤阴影下拉值回显正确。
   - [ ] CheckboxGroup（ui 版）：脚本节点右键「显示列」选择器——勾选/反选、列显隐即时生效，无残留 antd 勾选样式。
   - [ ] 已知保留（非本次改动，不判回归）：搜索/多选 Select（约 24 处）与画布 11 处 Segmented 维持 antd，ui 能力缺口补足前不迁移。
+
 ## v1.2.6.rc3 候选版本发布
 
 - 本版本在 rc2 基础上纳入此前未提交的模型编辑弹窗、协议浏览器、后台切页与画布网格源码及相邻回归测试；版本为 `v1.2.6.rc3`，镜像标签为 `1.2.6.rc3`，不覆盖 rc2。
@@ -2363,7 +2367,6 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 
 ## M5（编辑器插件权限执行，fail-closed）
 
-
 - [x] M5.1：`plugin-permission-check.ts` 新建——8 插槽→最小权限表（timeline.read/timeline.command/export.run 三类域）+ `pluginMayRenderEditorSlot`/`assertEditorPermission` fail-closed 判定；测试 10 用例（表完整性/空权限拒绝/未注册拒绝/缺权限拒绝含 missing 域/editor-shell 真实回归 8 插槽可渲染）全绿。
 - [x] M5.2 执行路径接入：editor.tsx SlotStack 渲染前过滤——缺权限插槽不渲染、改显一行诊断条（含缺失域）；editor-shell manifest 权限补全为 timeline.read/timeline.command/export.run；tsc 全绿、全量 bun test 失败集与改动前一致（零新增回归）。边界：宿主全局命令（editor-commands，v1 语义）与宿主 UI 手势不经过此校验，仅 v2 插件插槽贡献与后续 M6 AI 命令代发通道受约束——ADR-0007「v1 权限语义一字不动」。
 - [ ] M5 浏览器验证（待用户确认）：停用/注册一个缺 timeline.command 权限的第三方插件时对应面板被拒渲染并显示诊断；editor-shell 全部 8 面板正常。
@@ -2421,6 +2424,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 - [ ] 用户浏览器 re-test（第 35 条）：媒体面板中导入的素材与项目资产分组显示、筛选 Tab 切换、分组折叠与资产行展开；浅色/深色主题切换后媒体面板配色与编辑面板一致；时间线横跨整个编辑面板宽度，拖动分隔条调整高度正常。
 - [x] 轨道可见/静音开关（Concat 行头对齐）：轨道行头补齐 eye（显示/隐藏轨道）与 volume（静音/取消静音）按钮，与移除 X 三按钮同组（行头加宽 w-40→w-48）；关闭态图标变 accent 色（无背景块），轨道名与片段区随隐藏降透明度；新增 `setTrackFlag` 黄金命令（flag 白名单 visible/muted，golden ops 11→12），隐藏轨道（visible=false）上的片段不再参与监视器预览合成（getClipAtTime 过滤）；新增 3 条单测（目标轨设置且其余不受影响、muted 独立于 visible、未知轨道/flag/非布尔拒绝），输入不可变校验。
 - [ ] 用户浏览器 re-test（轨道可见/静音）：行头 hover 出现三按钮组；点 eye 隐藏轨道后监视器该轨画面消失、轨道行与轨道名变淡、再点恢复；点 volume 静音后图标变 accent（音频在 M4 播放/导出阶段生效）；仅剩一条轨道时无移除 X；以上操作均可一步 undo。
+
 ## 任务预览、文本创作与首屏加载优化
 
 - [x] 任务列表视频改为后端海报字段与前端懒加载图片占位，列表本身不再挂载视频源；后端安全 URL、视频海报专项测试通过。
@@ -2666,13 +2670,13 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 
 ## 画布复制粘贴命名
 
-- [x] 节点首次复制粘贴使用“原名称_copy1”，后续按当前画布已有最大序号递增。
+- [x] 节点首次复制粘贴使用“原名称\_copy1”，后续按当前画布已有最大序号递增。
 - [x] 复制已有 `_copyN` 副本时回到原始名称计算，避免生成 `_copy1_copy1`；旧版空格 `Copy` 后缀已有兼容测试。
 - [ ] 在画布中连续粘贴单个节点、多个同名节点和包含子节点的背板，确认名称依次递增且节点关系不变。
 
 ## 画布媒体下载文件名
 
-- [x] 图片、视频和音频下载统一使用“画布名_节点名_yyyyMMdd.扩展名”，中文名称和跨平台非法字符已有专项测试覆盖。
+- [x] 图片、视频和音频下载统一使用“画布名\_节点名\_yyyyMMdd.扩展名”，中文名称和跨平台非法字符已有专项测试覆盖。
 - [x] 扩展名优先按媒体 MIME 类型判断，并兼容远程 URL 后缀；JPEG、WebM 和 MOV 已有专项测试覆盖。
 - [x] 前端 TypeScript 检查与生产构建通过。
 - [ ] 在浏览器中分别下载本地上传、生成结果、LibTV 导入和 TapNow 导入的图片与视频，确认文件名、日期和实际媒体格式一致。
@@ -3023,7 +3027,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 - [ ] 在引导加载期间连续点击“重新开始引导”，再模拟 IndexedDB 写入失败与恢复，确认界面不会永久隐藏或假装推进。
 - [ ] 在窄窗口检查摆场、姿态、动画、摄影机四种模式：标题栏可横向到达，底部属性面板可滚动，时间轴与引导不互相遮挡。
 
- 用户确认上述场景后，再将对应条目移动到功能文档的已验证范围。
+用户确认上述场景后，再将对应条目移动到功能文档的已验证范围。
 
 ## 模型请求失败日志完整性
 
@@ -3193,6 +3197,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 - [ ] 在制作概览点击剧情、资产、分镜、预演、视频、交付和三个快速入口，确认跳转到正确章节及阶段，真实镜头产物数量与完成状态一致。
 - [ ] 在浅色、深色主题和 1280px、1680px 宽度检查镜头卡，确认时长明显、标题与镜头参数不溢出、“已生成”为绿色且选中态仍使用工作台强调色。
 - [ ] 在画布不同缩放和平移位置双击空白处，确认新增节点面板直接打开，选择文本、图片、视频和扩展节点后落点接近双击位置；双击节点、弹窗和其他浮层不应触发新增。
+
 ## 工作台首页创作仪表盘改造
 
 参考模板 Dashboard 将 `/home` 首页重构为创作仪表盘（欢迎区 + 统计卡 + 活跃度/素材图表 + 最近项目表格），以下场景仍需要浏览器确认：
@@ -3259,6 +3264,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 - [ ] 对存在 billing_orders/payment_orders 的用户（生产真实付款场景）点删除：提示「该用户存在资金流水/账单数据，无法彻底删除，请改用停用」。
 - [ ] 删除后审计事件落库（audit-events 页签可见 user.purge）；DB 中 users 行及 auth_sessions/user_identities 等关联行已物理清除。
 - [ ] 既有「停用/重新启用」语义未受影响：停用入口仍走 DELETE /admin/users/:id（保留用户主体），重新启用可用。
+
 ## 画布默认框选与移动期性能优化
 
 - [x] 默认工具改为“区域选择”；空白处左键拖动框选，抓手工具拖动平移。Space + 左键、中键和触控板双指手势保留为导航路径；专项测试、类型检查和生产构建通过。
@@ -3345,7 +3351,7 @@ PR #507 核心能力已按主分支实现保留，并补齐小视口尺寸约束
 
 ## 移除页面级任务通知按钮（2026-09-06）
 
-决策：创作页右上「任务通知」按钮（ClipboardList + 未读徽标 + 通知面板）整体移除——任务成败已由会话流内联状态与镜头时间线承担，跨会话查看由「历史对话」抽屉承担，页面级入口冗余。删除范围：CreationNotificationBell 组件、通知推导状态与扫描逻辑、creation-bell-* 全部样式、空态与工具栏两处挂载；顶栏系统公告铃铛（全局）保留。已实施（tsc 零错误），需浏览器验收：
+决策：创作页右上「任务通知」按钮（ClipboardList + 未读徽标 + 通知面板）整体移除——任务成败已由会话流内联状态与镜头时间线承担，跨会话查看由「历史对话」抽屉承担，页面级入口冗余。删除范围：CreationNotificationBell 组件、通知推导状态与扫描逻辑、creation-bell-\* 全部样式、空态与工具栏两处挂载；顶栏系统公告铃铛（全局）保留。已实施（tsc 零错误），需浏览器验收：
 
 - [ ] 空态页右上仅剩「历史」一枚按钮；多轮会话工具栏右侧仅「新建」「历史」；无 ClipboardList 残留图标。
 - [ ] 无任务通知相关 console 报错；生成任务成败仍以消息流内联状态与镜头时间线呈现。
@@ -3361,12 +3367,11 @@ v2（用户反馈首版难看后重做）：菜单改用 antd Dropdown（placeme
 - [ ] 删除走确认弹窗，确认后该行消失；重命名/删除后排序与分组不变；选中行底色可辨。
 - [ ] 明暗主题均无图标错位/文字重叠；无 console 报错。
 
-
 ## AI 消息代码块外壳 B1（2026-09-06）
 
-自研代码块渲染组件 AiMessageCodeBlock（components/ai/ai-message-code-block.tsx，替换 streamdown components.pre 映射，全站消息统一受益）：顶部 34px 工具条 = 左侧语言标签（取自 language-*，未知显示 code，小号大写等宽）+ 右侧复制按钮（复制成功反馈「已复制」1.6s）；正文滚动容器保留；圆角/边框/底色走 token + color-mix 明暗自适应（容器 r-md、5% 前景底、11% 边框），pre 内透明继承；prefers-reduced-motion 关闭过渡。语法高亮暂缓（调研发现 streamdown@2.5.0 运行时不消费 @streamdown/code 插件，方案待定）。tsc 零错误，需浏览器验收：
+自研代码块渲染组件 AiMessageCodeBlock（components/ai/ai-message-code-block.tsx，替换 streamdown components.pre 映射，全站消息统一受益）：顶部 34px 工具条 = 左侧语言标签（取自 language-\*，未知显示 code，小号大写等宽）+ 右侧复制按钮（复制成功反馈「已复制」1.6s）；正文滚动容器保留；圆角/边框/底色走 token + color-mix 明暗自适应（容器 r-md、5% 前景底、11% 边框），pre 内透明继承；prefers-reduced-motion 关闭过渡。语法高亮暂缓（调研发现 streamdown@2.5.0 运行时不消费 @streamdown/code 插件，方案待定）。tsc 零错误，需浏览器验收：
 
-- [ ] 让 AI 回复含多行代码（如 markdown 围栏 ```ts```）：代码块顶部有语言标签 + 复制按钮，点复制后变「已复制」，粘贴内容正确（不含语言标记行）。
+- [ ] 让 AI 回复含多行代码（如 markdown 围栏 `ts`）：代码块顶部有语言标签 + 复制按钮，点复制后变「已复制」，粘贴内容正确（不含语言标记行）。
 - [ ] 代码块圆角/边框/底色在明暗主题均可辨；长代码横向滚动不破版；流式输出中代码块容器稳定不跳动、复制按钮可用。
 - [ ] 消息中的行内代码（如 `const x`）样式不受影响；画布 Agent 消息里的代码块同样获得新外壳。
 
@@ -3403,6 +3408,7 @@ v2（用户反馈首版难看后重做）：菜单改用 antd Dropdown（placeme
 - [ ] 工具栏「截图当前视角」与「导出四向视图」：源节点右侧出现派生图片节点（四向视图为 2×2 带方向标注），多次导出按列错开不重叠；导出后视角自动还原。
 - [ ] 「全屏环视」：覆盖层展开，滚轮缩放视场角生效；退出全屏回到节点内环视且视角保留；展开期间节点体显示静态预览。
 - [ ] 分享只读页（未提供导出动作）不显示截图/四宫格按钮，仅保留环视、重置与全屏；明暗主题与性能模式（仅预览）行为不变。
+
 ## 方舟可信素材失败重试与素材库方舟素材 ID（2026-09-11）
 
 后端：方舟可信素材同步失败不再永久缓存——素材组未建成（素材组 ID 与素材 ID 均为空）的失败 binding 下次同步直接重试，素材组已建、素材未建时仅重试创建素材阶段的失败；审核拒绝（ArkAssetID 非空）保持终态；重试复用已建素材组；控制面 HTTP 非 2xx 时透传方舟 ResponseMetadata.Error 的原始 Code/Message（如 SubscriptionRequired），不再统一误报为「模型服务鉴权失败」；管理页 Region 输入补充仅 cn-beijing 开放的说明。前端：素材库编辑弹窗新增「方舟素材 ID」与「人像认证」两个字段（卡片封面显示「人像认证」徽章、详情抽屉显示方舟素材 ID）；方舟视频渠道（volcengine-ark-video 或 Ark Plan BaseURL）生成时，引用图片节点绑定的素材若已录入方舟素材 ID，任务参考图直接提交 `asset://<ID>` 跳过上传同步（后端任务与浏览器直连路径一致）；任务重跑按存储引用还原时会回退到常规上传路径。后端 go test（排除 main 存量失败用例 TestUserAssetsBatchIsBoundedAndScoped 与 protocol 插件清单校验）与前端构建通过，需浏览器验收：
@@ -3411,6 +3417,7 @@ v2（用户反馈首版难看后重做）：菜单改用 antd Dropdown（placeme
 - [ ] 套餐未开通等上游 403 场景，上传失败提示包含方舟原始错误码（如 SubscriptionRequired），不再是「模型服务鉴权失败」。
 - [ ] 素材库编辑图片素材：可填写 asset- 开头的方舟素材 ID、勾选人像认证，保存后刷新页面两字段仍在；卡片封面出现「人像认证」徽章，详情抽屉显示方舟素材 ID 标签；非法 ID（不以 asset- 开头）被表单拦截。
 - [ ] 画布图片节点绑定已录入方舟素材 ID 的素材后连接视频节点，用方舟渠道生成：任务参考图为 asset:// 引用、跳过「同步方舟可信素材」；非方舟渠道生成不受影响，仍走原参考图路径。
+
 ## 支付订单用户识别（待验收）
 
 已通过支付页与 API 的 ESLint、15 项后台 UI 回归检查，以及后端身份响应隔离测试和相关包编译。全量前端类型检查仍在未修改的动画、Tooltip 和画布模块报错；数据库搜索专项测试因本机 `CGO_ENABLED=0` 无法执行。尚未进行浏览器视觉验收。
@@ -3419,6 +3426,7 @@ v2（用户反馈首版难看后重做）：菜单改用 antd Dropdown（placeme
 - 验收用户身份、订单号、渠道交易号和完整用户 ID 查询，与状态过滤、分页组合使用。
 - 验收用户详情、订单详情、订单号复制和用户不存在的历史订单；关闭侧栏保留列表状态。
 - 检查同步状态、关单确认、明暗主题、长文本和窄屏固定操作列。
+
 ## 视频生成显式 @文本 引用内联（2026-09-11）
 
 修复普通模型视频渠道（非声明式工作流）丢弃显式 @文本N 引用内容的问题：`buildComposerGenerationContext` 此前受 `promptOnly` 门槛限制，提示词里的 @文本N 只被改写成「【文本N】」占位标记，文本节点真实内容不追加，导致发给上游的视频提示词只剩无意义占位符（如「任务要求提示词：【文本1】」）。现在显式 @文本 引用始终内联真实内容并在提示词末尾以「【文本N】\n正文」块追加；`promptOnly` 拦截自动上游连线文本的原有语义（提交 8f20240d）不变——未显式引用的连线文本在视频模式下仍不自动拼接，图片仍走结构化参考图通道。提示词超长时按既有校验明确报错，不静默截断。专项测试（canvas-node-generation-mentions.test.ts，新增 3 例）与前端全量测试通过（与 main 基线相比无新增失败），需浏览器验收：
@@ -3427,6 +3435,7 @@ v2（用户反馈首版难看后重做）：菜单改用 antd Dropdown（placeme
 - [ ] 视频节点只连图片和文本节点、提示词不写任何 @ 引用时：text 仍只有输入框原文，连线文本不自动拼入（8f20240d 行为保持）。
 - [ ] 图片、文本、音频模式生成行为不变；显式 @文本 引用的图片节点重试同样内联文本内容。
 - [ ] 引用超长文本（超过模型提示词上限）时提交被拦截并提示具体字符数，不出现静默截断或直接丢弃。
+
 ## 全景图生成弹窗重设计（2026-09-11）
 
 按设计系统重写 `canvas-panorama-config-modal.tsx`：由 1120px 双栏（左步骤表单 + 右侧栏）改为 680px 单栏表单结构，分区依次为生成方式（AntD Segmented）、参考图/源图缩略图行、场景描述（AntD TextArea）、全景类型（双选卡片）、高级选项（智能比例 Switch + 复制完整提示词）；底部固定操作栏含状态提示、取消与主操作按钮，支持 ⌘↵。视觉遵循「默认无边、选中才有 stroke」：未选中项用 `bg-foreground/5` 表面、无描边，选中项用 accent 环线加浅色填充；选图器内选中缩略图为 2px accent 环 + 角标对勾。修复部分缩略图停留在骨架态的问题：缓存图可能在 onLoad 挂载前已完成，新增 ref 挂载时 `complete && naturalWidth` 补检。功能行为（提示词合成、单/多选约束、配置字段、事件）保持不变。前端 `bun run build` 通过，需浏览器验收：
@@ -3538,11 +3547,13 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 入口精简与工具草稿复测：移除左侧工具菜单及图片节点提示词模板入口，保留图片风格 / 预设和其他节点模板入口。工具引用列表读取草稿改用空值判断，明确清空时不再从原始生成提示词回读旧标签。风格和预设的选择、替换、连续编辑、标签移除、全文清空及保存重载覆盖有图/空节点两种情况；5 个专项文件共 58 项通过，TypeScript 类型检查通过。实际页面仍需确认普通/放大编辑器均无图片提示词模板入口，以及风格和预设清空后重新聚焦不回填。
 
 主分支提交前复测：前端 `bun run test` 全量 1925 项通过，生产构建、类型检查、UI 退场 lint 通过；构建仍有大分块提示。同步了技能/工具标签结构与多行连接菜单的源码守护断言。后端 `go test ./...` 全量通过，工具、迁移、资源引用、handler 及工具预览权限/项目封面专项通过。本轮未执行真实模型调用、PostgreSQL 实库迁移或登录态浏览器验收，这些项目继续保留待验收。
+
 ## Agent 续轮 handoff 与上下文计量口径
 
 - [x] 后端专项覆盖：结构化 handoff 最多保留 12 组真实画布改动并报告遗漏数；普通用户文本不能通过相似前缀伪装成 continuation；已提交任务保留非重放语义。
 - [x] 前端纯函数测试覆盖：Provider 锚点从 estimate 切换到 provider 时，主圆环和预算条仍使用同一份下一请求本地估算；压缩决策继续保留 Provider 投影。
 - [ ] 发布后用真实多步 Agent 运行验收：圆环不再因首个 Provider 锚点到达而跳变；图片裁剪和语义压缩后的真实下降仍能从对应事件解释；续轮不重复上一轮已落库的画布改动或已提交收费任务。
+
 ## 画布媒体交互与 Agent 循环止损复测（2026-09-23）
 
 本轮针对画布媒体节点、生成任务状态及云端 Agent 重复读取问题完成实现和复测。代码仍未提交，以下结论基于当前工作区的专项测试与隔离本地浏览器环境，不代表已部署生产。
@@ -3587,9 +3598,9 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 ## Pi 迁移本轮新增：首步合同（占位任务与原子换单）与两处 Node 缺陷
 
 - [ ] **建 run 只落占位与快照，首个 Pi 模型步原子换单**：`CreateCloudAgentRun` 现在在同一事务里提交执行记录、合同快照（策略身份／Harness 正文与哈希／工具 schema 身份／装配提示身份）与一条 `holding` 占位任务及其报价预留；占位任务不进队列（`ClaimNextTask` 只匹配 `queued`/`running`）、不计入活动任务额度、不出现在任务列表。首个 `PiModelStep` 在同一事务里退还占位预留、按 Node 最终信封重新报价并落库真实首步任务，同时把运行从 `awaiting_first_step` 推进；首步准入失败当场写终态并退款。看门狗清扫后由新增的 `DrainPendingPiAgentCleanups` 补做收尾退款 —— 此前只有 HTTP 取消会调 `finishCloudAgentCleanup`，被清扫掉的运行会把预留一直冻在账上。新增用例 `internal/app/cloud_agent_pi_first_step_test.go`；既有的计费不变量与取消用例覆盖"首步前取消"。
-  **已跑通的部分**：宿主 `CGO_ENABLED=0` 且无 C 编译器，`go test` 需走容器（`open-ai-canvas-backend-test:sticky-tools`，Go 1.25 + gcc）：
-  `docker run --rm -v <repo>:/src -w /src/backend open-ai-canvas-backend-test:sticky-tools sh -c "CGO_ENABLED=1 go test ./internal/app -count=1 -timeout 600s -run 'TestPiFirstStep|TestPiCleanupDrain|TestCloudAgentHarnessBodyDigest'"` → 5/5 PASS（真实 SQLite 事务：换单、正文/哈希门、首步准入失败退款、真实未领取清扫 + 收尾排空退款、跨语言哈希向量）。这次跑通还修掉三个真实缺陷：首步准入失败发生在换单之前时不退款、`failCloudAgent` 不置收尾标记导致失败运行永不收尾、收尾退款被"状态不可解码"挡住。
-  **待真实环境验收**：PostgreSQL 一侧；崩溃节点注入（换单事务现在可以注入了）；一次 Node ↔ Go 真实 HTTP 首步，确认换单后账户预留额等于未结订单之和、真实首步只计费一次。**注意**整包直跑会卡在依赖外网的用例（容器无外网），表现为超时而非失败。
+      **已跑通的部分**：宿主 `CGO_ENABLED=0` 且无 C 编译器，`go test` 需走容器（`open-ai-canvas-backend-test:sticky-tools`，Go 1.25 + gcc）：
+      `docker run --rm -v <repo>:/src -w /src/backend open-ai-canvas-backend-test:sticky-tools sh -c "CGO_ENABLED=1 go test ./internal/app -count=1 -timeout 600s -run 'TestPiFirstStep|TestPiCleanupDrain|TestCloudAgentHarnessBodyDigest'"` → 5/5 PASS（真实 SQLite 事务：换单、正文/哈希门、首步准入失败退款、真实未领取清扫 + 收尾排空退款、跨语言哈希向量）。这次跑通还修掉三个真实缺陷：首步准入失败发生在换单之前时不退款、`failCloudAgent` 不置收尾标记导致失败运行永不收尾、收尾退款被"状态不可解码"挡住。
+      **待真实环境验收**：PostgreSQL 一侧；崩溃节点注入（换单事务现在可以注入了）；一次 Node ↔ Go 真实 HTTP 首步，确认换单后账户预留额等于未结订单之和、真实首步只计费一次。**注意**整包直跑会卡在依赖外网的用例（容器无外网），表现为超时而非失败。
 - [ ] **Node 工具批次顺序缺陷**：`agent/src/runner.ts` 曾把工具批次先入队、带 `taskId` 的 assistant 检查点后入队，而 Go 的 `PiToolBatch` 在 `ActiveTaskID` 非空时拒绝整批（清空它的正是那条检查点）。已改为"检查点 → 批次准入"，`agent/test/runner.test.ts` 用调用序列守住先后。
 - [ ] **Node 母类型披露与 Go 权威分叉**：`agent/src/session-tools.ts` 曾要求母类型"至少有一个合格子工具"才披露，而 Go 的 `cloudAgentVisibleToolsForCategories` 把合格目录里的所有母类型无条件下发；某个类别的子工具全被判不合格时 Node 的工具集会比服务端预检少一个入口。已按 Go 对齐。
 - [ ] **Agent 测试套件不再假死**：`agent/package.json` 的 `test` 脚本加 `--test-timeout=20000 --test-force-exit`。SDK 用例（`runner`、`pi-sdk-probe`）结束时会留下活跃句柄，整轮进程不退出，看起来像挂起。`node --test --test-timeout=20000 --test-force-exit "dist/test/*.test.js"` 实测 52/52 通过、8.70s。
@@ -3603,7 +3614,6 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 
 待登录态页面验收：对「扶颦」精读应返回实际外貌和服装；选择该卡生成时，审批/任务输入应同时包含该版设定与已绑定三视图；故意改动角色版本后旧审批不能提交。声音档案可精读，音频任务在未显式选择音色时采用角色绑定的 voiceKey 与声音指令；跨模型适配及真实音色效果仍需单独验收。此轮不代表生产已部署。
 
-
 ## 存储满额生成拦截与 Live2D 开关稳定性（2026-09-30）
 
 - 已修复：图片、视频、音频生成任务在创建、积分预留和上游调用之前检查账号文件容量；容量已满时返回配额错误并提示先清理素材，文本任务不受文件容量限制。普通画布与 Agent 媒体生成共用该 admission 边界。
@@ -3615,7 +3625,6 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 - [ ] 将测试账号文件容量填满后，从普通画布和 Agent 分别提交图片、视频、音频生成，确认立即显示容量提示、没有创建计费订单、没有调用上游；清理出容量后可恢复生成。
 - [ ] 使用自定义 Live2D 模型连续开合 Agent 面板，确认不出现默认动态球闪回，拖动、窗口缩放和重新进入画布仍正常。
 
-
 ## 后台存储资源用户筛选（2026-09-30）
 
 - 已修复：后台存储资源列表的用户筛选不再只接受完整用户 ID；现在支持按用户 ID、用户名、昵称和邮箱进行不区分大小写的模糊匹配，并可与资源类型、状态、存储位置、资源关键词组合使用。
@@ -3625,6 +3634,7 @@ SSE 现在按 revision 变化发送紧凑快照，无变化只 heartbeat；客�
 仍待真实环境验收：
 
 - [ ] 在管理员后台存储资源页分别输入完整/部分用户名、昵称、邮箱和用户 ID，确认返回同一用户资源；再叠加类型、状态和存储位置筛选，确认分页与清空筛选正常。
+
 ## 动态子代理开发切片（2026-10-06）
 
 - 已加入按画布持久化的“允许父 Agent 自动召唤子代理”开关，下一轮开始生效，关闭前持续有效。

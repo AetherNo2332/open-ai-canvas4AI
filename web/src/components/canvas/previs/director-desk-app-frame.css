@@ -133,6 +133,10 @@
     border: 0;
 }
 
+.director-desk-app-frame[data-desk-status="loading"] .director-desk-app-frame-view {
+    visibility: hidden;
+}
+
 .director-desk-app-frame-overlay {
     position: absolute;
     inset: 0;

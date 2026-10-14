@@ -1,5 +1,6 @@
 import { createHostBridge, type BridgeEndpoint } from "@desk/host/bridge";
 import type { ExportResultPublisher } from "./export-handler";
+import type { DirectorDeskAppearance } from "@desk/theme";
 
 /**
  * 宿主(工作台)侧的导演台 bridge 客户端。
@@ -14,6 +15,7 @@ export type DirectorDeskSaveResult = { ok: boolean; message?: string };
 
 export type DirectorDeskHostBridgeOptions = {
     canvasId?: string;
+    readAppearance?: () => DirectorDeskAppearance;
     /** 宿主窗口:监听本窗口消息、向 iframe 投递(由 frame 组件构造,测试可注入)。 */
     endpoint: BridgeEndpoint;
     /** 只接受该来源的消息(同源部署下即工作台来源)。 */
@@ -32,6 +34,7 @@ export type DirectorDeskHostBridgeOptions = {
 export type DirectorDeskHostBridge = {
     /** 主动把当前场景文档推给应用(如 Agent 更新场景后)。 */
     pushScene: (document?: unknown, options?: { preserveViewState?: boolean; viewState?: unknown; revision?: string; source?: string }) => void;
+    pushAppearance: (appearance: DirectorDeskAppearance) => void;
     publishExportResult: (result: unknown) => void;
     dispose: () => void;
 };
@@ -44,6 +47,8 @@ export function createDirectorDeskHostBridge(options: DirectorDeskHostBridgeOpti
     };
 
     bridge.on("desk.ready", () => {
+        const appearance = options.readAppearance?.();
+        if (appearance) bridge.notify("host.appearance.changed", appearance);
         options.onReady?.();
         pushScene();
     });
@@ -56,6 +61,7 @@ export function createDirectorDeskHostBridge(options: DirectorDeskHostBridgeOpti
 
     return {
         pushScene,
+        pushAppearance: (appearance) => bridge.notify("host.appearance.changed", appearance),
         publishExportResult: (result) => bridge.notify("host.export.result", result),
         dispose: () => bridge.dispose(),
     };

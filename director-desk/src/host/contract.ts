@@ -23,6 +23,7 @@ export const APP_TO_HOST_TYPES = [
 
 /** 宿主 → 导演台 */
 export const HOST_TO_APP_TYPES = [
+    "host.appearance.changed",
     "host.scene.load",
     "host.save.result",
     "host.asset.result",

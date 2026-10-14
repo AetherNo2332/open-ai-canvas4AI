@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, X } from "lucide-react";
 import type { BridgeEndpoint } from "@desk/host/bridge";
@@ -8,6 +8,8 @@ import { usePrevisCloseHandler } from "@/hooks/use-previs-close-handler";
 import { describePrevisSaveStatus } from "@/lib/canvas/previs/previs-save-wiring";
 import type { PrevisScene } from "@/types/previs";
 import type { PrevisSaveController } from "./use-previs-save-coordinator";
+import { useAppearanceStore } from "@/stores/use-appearance-store";
+import { directorDeskAppearance } from "@/integrations/director-desk/appearance";
 import "./director-desk-app-frame.css";
 
 /** 原版导演台应用的静态挂载点(由 nginx 同源托管,见仓库根 nginx.conf)。 */
@@ -37,6 +39,7 @@ export type DirectorDeskAppFrameProps = {
     /** Agent/CAS patch delivered by the canvas host; the iframe keeps its transient view state. */
     agentPatch?: { document: unknown; preserveViewState?: boolean; viewState?: unknown; revision?: string } | null;
     canvasId?: string;
+    theme?: "light" | "dark";
     onReady?: () => void;
     /** 关闭回调(触发回退到旧工作台)。 */
     onClose?: () => void;
@@ -46,27 +49,17 @@ export type DirectorDeskAppFrameProps = {
     onOpenAgent?: () => void;
 };
 
-export function DirectorDeskAppFrame({
-    sceneId,
-    scene,
-    saveController,
-    readDocument,
-    onSceneChange,
-    onSaveRequest,
-    onExportRequest,
-    agentPatch,
-    canvasId,
-    onReady,
-    onClose,
-    onFallback,
-    onOpenAgent,
-}: DirectorDeskAppFrameProps) {
+export function DirectorDeskAppFrame({ sceneId, scene, saveController, readDocument, onSceneChange, onSaveRequest, onExportRequest, agentPatch, canvasId, theme = "dark", onReady, onClose, onFallback, onOpenAgent }: DirectorDeskAppFrameProps) {
     const frameRef = useRef<HTMLIFrameElement>(null);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
     const [attempt, setAttempt] = useState(0);
     const hostBridgeRef = useRef<DirectorDeskHostBridge | null>(null);
     const agentPatchRef = useRef(agentPatch);
     agentPatchRef.current = agentPatch;
+    const skin = useAppearanceStore((state) => state.appearance.activeSkin);
+    const appearance = useMemo(() => directorDeskAppearance(theme, skin), [theme, skin]);
+    const appearanceRef = useRef(appearance);
+    appearanceRef.current = appearance;
 
     // 关闭逻辑:复用 director-previs-editor 的处理流程。
     const { closing, notice, exitConfirm, closeHandler, confirmExit, cancelExit } = usePrevisCloseHandler({
@@ -103,6 +96,7 @@ export function DirectorDeskAppFrame({
             endpoint,
             origin,
             canvasId,
+            readAppearance: () => appearanceRef.current,
             readDocument: () => readDocumentRef.current?.() ?? null,
             commitDocument: (document) => onSceneChangeRef.current(document),
             requestSave: () => onSaveRequestRef.current(),
@@ -139,6 +133,10 @@ export function DirectorDeskAppFrame({
         });
     }, [agentPatch]);
 
+    useEffect(() => {
+        hostBridgeRef.current?.pushAppearance(appearance);
+    }, [appearance]);
+
     // 应用加载失败 → 在 effect 里通知父组件回退旧工作台(渲染期不得 setState 父组件)。
     const onFallbackRef = useRef(onFallback);
     onFallbackRef.current = onFallback;
@@ -168,25 +166,12 @@ export function DirectorDeskAppFrame({
                     ) : null}
                 </div>
                 {onOpenAgent ? (
-                    <button
-                        type="button"
-                        className="director-desk-app-frame-agent"
-                        aria-label="打开 Agent 助手"
-                        title="打开 Agent 助手"
-                        onClick={onOpenAgent}
-                    >
+                    <button type="button" className="director-desk-app-frame-agent" aria-label="打开 Agent 助手" title="打开 Agent 助手" onClick={onOpenAgent}>
                         <Sparkles className="size-4" aria-hidden />
                         <span>Agent</span>
                     </button>
                 ) : null}
-                <button
-                    type="button"
-                    className="director-desk-app-frame-close"
-                    aria-label="关闭预演台"
-                    title="关闭"
-                    disabled={closing}
-                    onClick={closeHandler}
-                >
+                <button type="button" className="director-desk-app-frame-close" aria-label="关闭预演台" title="关闭" disabled={closing} onClick={closeHandler}>
                     <X className="size-4" aria-hidden />
                 </button>
             </header>
@@ -200,16 +185,7 @@ export function DirectorDeskAppFrame({
 
             {/* iframe 容器 */}
             <div className="director-desk-app-frame-body">
-                <iframe
-                    ref={frameRef}
-                    key={attempt}
-                    className="director-desk-app-frame-view"
-                    src={DIRECTOR_DESK_APP_URL}
-                    title="导演台"
-                    sandbox={DIRECTOR_DESK_APP_SANDBOX}
-                    allow="fullscreen; clipboard-write"
-                    onError={() => setStatus("error")}
-                />
+                <iframe ref={frameRef} key={attempt} className="director-desk-app-frame-view" src={DIRECTOR_DESK_APP_URL} title="导演台" sandbox={DIRECTOR_DESK_APP_SANDBOX} allow="fullscreen; clipboard-write" onError={() => setStatus("error")} />
                 {status === "loading" ? (
                     <div className="director-desk-app-frame-overlay" role="status" aria-live="polite">
                         正在打开导演台…

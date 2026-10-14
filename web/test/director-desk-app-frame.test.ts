@@ -9,6 +9,7 @@ import { moduleGroupSource } from "./helpers/module-group-source";
 
 const frameSource = () => moduleGroupSource("components/canvas/previs/director-desk-app-frame.tsx");
 const cssSource = () => readFileSync(resolve(import.meta.dir, "../src/components/canvas/previs/director-desk-app-frame.css"), "utf8");
+const repoRoot = resolve(import.meta.dir, "../..");
 
 describe("DirectorDeskAppFrame 层级与 Agent 入口", () => {
     test("L1 全屏外壳 portal 到 body,使用预演台层级(位于画布导航之上、Agent 之下)", () => {
@@ -62,7 +63,7 @@ describe("DirectorDeskAppFrame composition", () => {
         expect(source).toContain("director-desk-app-frame-close");
         expect(source).toContain("director-desk-app-frame-save-status");
         expect(source).toContain("closeHandler");
-        expect(source).toContain("aria-label=\"关闭预演台\"");
+        expect(source).toContain('aria-label="关闭预演台"');
     });
 
     test("03 frame shows notice on unsaved state and confirm dialog before exit", () => {
@@ -103,11 +104,27 @@ describe("DirectorDeskAppFrame composition", () => {
         expect(css).toContain(":focus-visible");
     });
 
-    test("06 frame bridge receives readDocument, onSceneChange, onSaveRequest", () => {
+    test("06 embedded app theme contract includes a light skin", () => {
+        const source = readFileSync(resolve(repoRoot, "director-desk/src/theme.ts"), "utf8");
+        const css = readFileSync(resolve(repoRoot, "director-desk/src/theme.css"), "utf8");
+        expect(source).toContain("applyDirectorDeskAppearance");
+        expect(css).toContain("html[data-desk-themed]");
+        expect(css).toContain("var(--desk-text)");
+        expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    });
+
+    test("07 frame bridge receives readDocument, onSceneChange, onSaveRequest", () => {
         const source = frameSource();
         expect(source).toContain("readDocument: () => readDocumentRef.current?.() ?? null");
         expect(source).toContain("commitDocument: (document) => onSceneChangeRef.current(document)");
         expect(source).toContain("requestSave: () => onSaveRequestRef.current()");
+    });
+
+    test("08 frame passes the active light/dark theme into the embedded app", () => {
+        const source = frameSource();
+        expect(source).toContain('theme?: "light" | "dark"');
+        expect(source).toContain("readAppearance: () => appearanceRef.current");
+        expect(source).toContain("pushAppearance(appearance)");
     });
 });
 
