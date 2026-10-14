@@ -45,6 +45,28 @@ func TestPiNativeCompactionTimeoutTerminatesRun(t *testing.T) {
 	}
 }
 
+func TestPiNativeCompactionInvalidPreparationFallsBackToServerCompaction(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	revision, leaf := seedPiCompactionBranch(t, db, run)
+	preparation := json.RawMessage(`{"firstKeptEntryId":"missing-entry","tokensBefore":24000,"isSplitTurn":false,"messagesToSummarize":[],"turnPrefixMessages":[],"fileOps":{"read":[],"written":[],"edited":[]}}`)
+	op, err := s.PiBeginContextCompaction("user", run.ID, run.LeaseOwner, PiContextCompactionStart{
+		SessionRevision: revision, ActiveLeafID: leaf, Reason: "threshold", TokensBefore: 24000, Preparation: preparation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.NativePreparation != nil || op.Status != "queued" {
+		t.Fatalf("invalid Pi preparation should use the server compactor: %+v", op)
+	}
+	var count int64
+	if err := db.Model(&model.Task{}).Where("operation = ?", cloudAgentContextCompactionOperation).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("server compactor was not queued: %d", count)
+	}
+}
+
 func TestPiNativeCompactionReusesBilledCallAndAcceptsNativeBoundary(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
 	revision, leaf := seedPiCompactionBranch(t, db, run)
