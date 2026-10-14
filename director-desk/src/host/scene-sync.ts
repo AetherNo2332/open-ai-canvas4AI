@@ -14,7 +14,7 @@ export interface SceneSyncOptions {
     bridge: HostBridge;
     /** 当前可回传的文档;编辑/拖动/导出进行中返回 null(结束后再回传)。 */
     readDocument: () => unknown;
-    applyDocument: (document: SceneDocument) => void;
+    applyDocument: (document: SceneDocument, options?: { preserveViewState?: boolean }) => void;
     onLoadError?: (error: unknown) => void;
     /** 节流调度(测试注入);返回取消函数。 */
     schedule?: (callback: () => void) => () => void;
@@ -57,11 +57,12 @@ export function createSceneSync(options: SceneSyncOptions): SceneSync {
 
     const load = (payload: unknown) => {
         if (disposed) return;
-        const document = payload && typeof payload === "object" ? (payload as { document?: unknown }).document : undefined;
+        const envelope = payload && typeof payload === "object" ? payload as { document?: unknown; preserveViewState?: unknown } : {};
+        const document = envelope.document;
         let parsed: SceneDocument;
         try {
             parsed = readSceneDocument(document);
-            options.applyDocument(parsed);
+            options.applyDocument(parsed, { preserveViewState: envelope.preserveViewState === true });
         } catch (error) {
             options.onLoadError?.(error);
             return;

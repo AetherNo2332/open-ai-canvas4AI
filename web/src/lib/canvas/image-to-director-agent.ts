@@ -3,11 +3,13 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { resolveModelChannel, selectableModelsByCapability, type AiConfig } from "@/stores/use-config-store";
 import type { AgentPermissionMode, CreateAgentRunInput } from "@/services/api/agent";
 
+export const DIRECTOR_IMAGE_TOOL_ORDER = ["canvas_inspect_image", "director_block_scene", "director_design_shot", "director_check_continuity"] as const;
+
 export const IMAGE_TO_DIRECTOR_AGENT_INSTRUCTION = [
     "请把这张画布图片复现为可编辑的 3D 导演预演场景，而不是把图片放进预演台。",
     "第一步必须调用 canvas_inspect_image 读取真实画面；不能根据节点标题、提示词或文件名猜测内容。",
     "如果本轮没有 canvas_inspect_image，立即停止并报告当前模型不支持图片输入，不得创建场景。",
-    "按顺序执行：canvas_inspect_image → director_block_scene → director_design_shot → director_check_continuity。",
+    `按顺序执行：${DIRECTOR_IMAGE_TOOL_ORDER.join(" → ")}。`,
     "根据实际观察建立可移动的人物、道具、环境、机位和灯光；人物使用 actor，对象必须能在预演台中单独移动、旋转和调整姿态。",
     "不要把原图作为 billboard、背景板、参考平面或图片对象加入场景；无法确认的细节写入 uncertainties。",
     "如果任一步失败或取消，保持画布不变，不创建半成品场景；成功后重新读取导演场景确认对象数量和镜头设置。",

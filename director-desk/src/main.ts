@@ -344,8 +344,8 @@ installEmbeddedHostBridge();
         sceneSync = createSceneSync({
             bridge,
             readDocument: () => history.pending || draft || engine.dragging || engine.exporting ? null : history.document(),
-            applyDocument: document => {
-                applyDocument(document, history.context, '载入影策场景', true);
+            applyDocument: (document, syncOptions) => {
+                applyDocument(document, history.context, '载入影策场景', !syncOptions?.preserveViewState);
                 history.markSaved(); dirty = false;
             },
             onLoadError: error => toast(error instanceof Error ? `影策场景载入失败：${error.message}` : '影策场景载入失败', true),

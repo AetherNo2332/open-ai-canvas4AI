@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, X } from "lucide-react";
 import type { BridgeEndpoint } from "@desk/host/bridge";
-import { createDirectorDeskHostBridge, type DirectorDeskSaveResult } from "@/integrations/director-desk/app-bridge-client";
+import { createDirectorDeskHostBridge, type DirectorDeskHostBridge, type DirectorDeskSaveResult } from "@/integrations/director-desk/app-bridge-client";
 import type { ExportResultPublisher } from "@/integrations/director-desk/export-handler";
 import { usePrevisCloseHandler } from "@/hooks/use-previs-close-handler";
 import { describePrevisSaveStatus } from "@/lib/canvas/previs/previs-save-wiring";
@@ -34,6 +34,8 @@ export type DirectorDeskAppFrameProps = {
     onSceneChange: (document: unknown) => void;
     onSaveRequest: () => Promise<DirectorDeskSaveResult>;
     onExportRequest?: (payload: unknown, publish: ExportResultPublisher) => unknown | Promise<unknown>;
+    /** Agent/CAS patch delivered by the canvas host; the iframe keeps its transient view state. */
+    agentPatch?: { document: unknown; preserveViewState?: boolean; viewState?: unknown; revision?: string } | null;
     canvasId?: string;
     onReady?: () => void;
     /** 关闭回调(触发回退到旧工作台)。 */
@@ -52,6 +54,7 @@ export function DirectorDeskAppFrame({
     onSceneChange,
     onSaveRequest,
     onExportRequest,
+    agentPatch,
     canvasId,
     onReady,
     onClose,
@@ -61,6 +64,9 @@ export function DirectorDeskAppFrame({
     const frameRef = useRef<HTMLIFrameElement>(null);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
     const [attempt, setAttempt] = useState(0);
+    const hostBridgeRef = useRef<DirectorDeskHostBridge | null>(null);
+    const agentPatchRef = useRef(agentPatch);
+    agentPatchRef.current = agentPatch;
 
     // 关闭逻辑:复用 director-previs-editor 的处理流程。
     const { closing, notice, exitConfirm, closeHandler, confirmExit, cancelExit } = usePrevisCloseHandler({
@@ -106,9 +112,12 @@ export function DirectorDeskAppFrame({
             },
             onReady: () => {
                 setStatus("ready");
+                const patch = agentPatchRef.current;
+                if (patch) bridge.pushScene(patch.document, { preserveViewState: patch.preserveViewState, viewState: patch.viewState, revision: patch.revision, source: "agent" });
                 onReadyRef.current?.();
             },
         });
+        hostBridgeRef.current = bridge;
         const timer = window.setTimeout(() => {
             // 已就绪则忽略;超时未就绪 = 应用没能起来(资源缺失/脚本错误)。
             setStatus((current) => (current === "loading" ? "error" : current));
@@ -116,8 +125,19 @@ export function DirectorDeskAppFrame({
         return () => {
             window.clearTimeout(timer);
             bridge.dispose();
+            if (hostBridgeRef.current === bridge) hostBridgeRef.current = null;
         };
     }, [sceneId, canvasId, attempt]);
+
+    useEffect(() => {
+        if (!agentPatch || !hostBridgeRef.current) return;
+        hostBridgeRef.current.pushScene(agentPatch.document, {
+            preserveViewState: agentPatch.preserveViewState,
+            viewState: agentPatch.viewState,
+            revision: agentPatch.revision,
+            source: "agent",
+        });
+    }, [agentPatch]);
 
     // 应用加载失败 → 在 effect 里通知父组件回退旧工作台(渲染期不得 setState 父组件)。
     const onFallbackRef = useRef(onFallback);

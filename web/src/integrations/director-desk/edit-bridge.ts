@@ -38,6 +38,8 @@ export type DirectorEditBridgeOptions = {
 export type DirectorEditBridge = {
     /** Convert one runtime document commit and drive it into the save coordinator. */
     commitDocument: (document: DirectorProject) => DirectorCommitRecord;
+    /** Explicit Agent-facing alias: local edits use the same CAS/undo path. */
+    publishLocalEdit: (document: DirectorProject) => DirectorCommitRecord;
     getRecord: () => DirectorCommitRecord | null;
     /** 撤销上一次提交：把目标文档的场景走回同一条提交路径（草稿/CAS/冲突语义一致）。 */
     undo: () => boolean;
@@ -248,5 +250,5 @@ export function createDirectorEditBridge(transport: DirectorCommitTransport, opt
         present = null;
     };
 
-    return { commitDocument, getRecord, undo, redo, canUndo, canRedo, dispose };
+    return { commitDocument, publishLocalEdit: commitDocument, getRecord, undo, redo, canUndo, canRedo, dispose };
 }

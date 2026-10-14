@@ -21,6 +21,8 @@ export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevi
     /** 打开影策 Agent(导演台顶栏入口);旧工作台不消费。 */
     onOpenAgent?: () => void;
     onCanvasRefresh?: () => void | Promise<void>;
+    /** Optional Agent patch envelope; applying it is delegated to the iframe host bridge. */
+    agentPatch?: ComponentProps<typeof DirectorDeskAppFrame>["agentPatch"];
 };
 
 /**
@@ -37,9 +39,21 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
     const usingApp = policy !== "legacy" && props.open && Boolean(scene);
     // 应用加载失败 → 本会话回退到旧工作台;换场景时重置,让新场景重新尝试应用壳。
     const [appFailed, setAppFailed] = useState(false);
+    const [agentPatch, setAgentPatch] = useState<ComponentProps<typeof DirectorDeskAppFrame>["agentPatch"]>(null);
     useEffect(() => {
         setAppFailed(false);
     }, [scene?.id]);
+
+    // Canvas Agent writes remain the canvas fact source. Once the projected
+    // PrevisScene changes, feed the new document into the already-open iframe
+    // while explicitly preserving its transient selection/playhead state.
+    useEffect(() => {
+        if (policy === "legacy" || !scene) {
+            setAgentPatch(null);
+            return;
+        }
+        setAgentPatch({ document: previsSceneToDirectorDocument(scene), preserveViewState: true, revision: scene.updatedAt });
+    }, [policy, scene?.id, scene?.updatedAt]);
 
     const saveController = usePrevisSaveCoordinator({
         sceneId: policy === "legacy" ? null : (scene?.id ?? null),
@@ -218,6 +232,7 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
                     publish(event);
                 });
             }}
+            agentPatch={props.agentPatch ?? agentPatch}
             onReady={() => {
                 const current = sceneRef.current;
                 if (current) {

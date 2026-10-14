@@ -31,7 +31,7 @@ export type DirectorDeskHostBridgeOptions = {
 
 export type DirectorDeskHostBridge = {
     /** 主动把当前场景文档推给应用(如 Agent 更新场景后)。 */
-    pushScene: () => void;
+    pushScene: (document?: unknown, options?: { preserveViewState?: boolean; viewState?: unknown; revision?: string; source?: string }) => void;
     publishExportResult: (result: unknown) => void;
     dispose: () => void;
 };
@@ -39,8 +39,8 @@ export type DirectorDeskHostBridge = {
 export function createDirectorDeskHostBridge(options: DirectorDeskHostBridgeOptions): DirectorDeskHostBridge {
     const bridge = createHostBridge(options.endpoint, { origin: options.origin, targetOrigin: options.origin });
 
-    const pushScene = () => {
-        bridge.notify("host.scene.load", { canvasId: options.canvasId, document: options.readDocument() });
+    const pushScene = (document = options.readDocument(), metadata: { preserveViewState?: boolean; viewState?: unknown; revision?: string; source?: string } = {}) => {
+        bridge.notify("host.scene.load", { canvasId: options.canvasId, document, ...metadata });
     };
 
     bridge.on("desk.ready", () => {
