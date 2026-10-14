@@ -8126,6 +8126,19 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
     transition: grid-template-rows var(--motion-dur-base-calc) var(--motion-ease-out), opacity var(--motion-dur-base-calc) var(--motion-ease-out);
 }
 
+/* Agent 侧栏打开时，底部工具栏在剩余画布区域内居中，避免落入右侧面板。 */
+.canvas-toolbar-agent-open {
+    --canvas-toolbar-agent-offset: 440px;
+    left: calc(50% - var(--canvas-toolbar-agent-offset) / 2) !important;
+    max-width: calc(100vw - 2 * var(--canvas-inset-x) - var(--canvas-toolbar-agent-offset)) !important;
+}
+
+@media (max-width: 999px) {
+    .canvas-toolbar-agent-open {
+        --canvas-toolbar-agent-offset: 0px !important;
+    }
+}
+
 .canvas-connection-create-option[data-expanded="true"] .canvas-connection-create-description {
     grid-template-rows: 1fr;
     opacity: 1;

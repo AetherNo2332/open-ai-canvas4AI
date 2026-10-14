@@ -83,6 +83,13 @@
 .canvas-main-with-workspace .canvas-workspace-zoom-controls {
     left: calc(var(--canvas-workspace-inset) + var(--canvas-inset-x));
 }
+.canvas-main-with-workspace .canvas-workspace-minimap {
+    left: calc(var(--canvas-workspace-inset) + var(--canvas-inset-x));
+}
+/* 项目章节栏已经占用编辑器自身的左侧空间，避免把它的宽度重复计算。 */
+.canvas-main-with-workspace:has(> .canvas-project-sidebar) .canvas-workspace-minimap {
+    left: var(--canvas-inset-x);
+}
 .canvas-workspace-shell {
     position: absolute;
     z-index: 2;
