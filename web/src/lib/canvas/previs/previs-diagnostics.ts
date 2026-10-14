@@ -23,6 +23,7 @@ export const PREVIS_DIAGNOSTIC_CODES = [
     "PREVIS_SAVE_DRAFT_UNAVAILABLE",
     "PREVIS_CLOSE_BLOCKED",
     "PREVIS_DIRECTOR_COMMIT_CONFLICT",
+    "PREVIS_DIRECTOR_EXPORT_FAILED",
     "PREVIS_RUNTIME_INIT_FAILED",
 ] as const;
 
@@ -44,6 +45,7 @@ const MESSAGES: Record<PrevisDiagnosticCode, string> = {
     PREVIS_SAVE_DRAFT_UNAVAILABLE: "预演台本地草稿不可用",
     PREVIS_CLOSE_BLOCKED: "预演台关闭被阻止",
     PREVIS_DIRECTOR_COMMIT_CONFLICT: "预演台 DirectorDesk 提交未进入保存",
+    PREVIS_DIRECTOR_EXPORT_FAILED: "预演台导出写回失败",
     PREVIS_RUNTIME_INIT_FAILED: "DirectorDesk 运行时初始化失败",
 };
 
@@ -60,6 +62,7 @@ const LEVELS: Record<PrevisDiagnosticCode, "info" | "warning" | "error"> = {
     PREVIS_SAVE_DRAFT_UNAVAILABLE: "error",
     PREVIS_CLOSE_BLOCKED: "warning",
     PREVIS_DIRECTOR_COMMIT_CONFLICT: "warning",
+    PREVIS_DIRECTOR_EXPORT_FAILED: "error",
     PREVIS_RUNTIME_INIT_FAILED: "error",
 };
 

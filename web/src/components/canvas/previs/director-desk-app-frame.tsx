@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Sparkles, X } from "lucide-react";
 import type { BridgeEndpoint } from "@desk/host/bridge";
 import { createDirectorDeskHostBridge, type DirectorDeskSaveResult } from "@/integrations/director-desk/app-bridge-client";
+import type { ExportResultPublisher } from "@/integrations/director-desk/export-handler";
 import { usePrevisCloseHandler } from "@/hooks/use-previs-close-handler";
 import { describePrevisSaveStatus } from "@/lib/canvas/previs/previs-save-wiring";
 import type { PrevisScene } from "@/types/previs";
@@ -32,6 +33,8 @@ export type DirectorDeskAppFrameProps = {
     readDocument?: () => unknown;
     onSceneChange: (document: unknown) => void;
     onSaveRequest: () => Promise<DirectorDeskSaveResult>;
+    onExportRequest?: (payload: unknown, publish: ExportResultPublisher) => unknown | Promise<unknown>;
+    canvasId?: string;
     onReady?: () => void;
     /** 关闭回调(触发回退到旧工作台)。 */
     onClose?: () => void;
@@ -48,6 +51,8 @@ export function DirectorDeskAppFrame({
     readDocument,
     onSceneChange,
     onSaveRequest,
+    onExportRequest,
+    canvasId,
     onReady,
     onClose,
     onFallback,
@@ -77,6 +82,8 @@ export function DirectorDeskAppFrame({
     onSaveRequestRef.current = onSaveRequest;
     const onReadyRef = useRef(onReady);
     onReadyRef.current = onReady;
+    const onExportRequestRef = useRef(onExportRequest);
+    onExportRequestRef.current = onExportRequest;
 
     useEffect(() => {
         setStatus("loading");
@@ -89,9 +96,14 @@ export function DirectorDeskAppFrame({
         const bridge = createDirectorDeskHostBridge({
             endpoint,
             origin,
+            canvasId,
             readDocument: () => readDocumentRef.current?.() ?? null,
             commitDocument: (document) => onSceneChangeRef.current(document),
             requestSave: () => onSaveRequestRef.current(),
+            onExportRequest: (payload, publish) => {
+                if (!onExportRequestRef.current) throw new Error("导演台导出未就绪");
+                return onExportRequestRef.current(payload, publish);
+            },
             onReady: () => {
                 setStatus("ready");
                 onReadyRef.current?.();
@@ -105,7 +117,7 @@ export function DirectorDeskAppFrame({
             window.clearTimeout(timer);
             bridge.dispose();
         };
-    }, [sceneId, attempt]);
+    }, [sceneId, canvasId, attempt]);
 
     // 应用加载失败 → 在 effect 里通知父组件回退旧工作台(渲染期不得 setState 父组件)。
     const onFallbackRef = useRef(onFallback);

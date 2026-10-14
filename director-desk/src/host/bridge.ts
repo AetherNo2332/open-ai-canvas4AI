@@ -64,10 +64,14 @@ export function createHostBridge(endpoint: BridgeEndpoint, options: HostBridgeOp
         const registered = handlers.get(message.type);
         if (!registered || registered.size === 0) return;
         void (async () => {
-            let result: unknown;
-            for (const handler of [...registered]) result = await handler(message.payload);
-            if (message.id && !disposed) {
-                post({ protocol: PROTOCOL_VERSION, id: message.id, type: REQUEST_RESPONSE[message.type] ?? message.type, payload: result });
+            try {
+                let result: unknown;
+                for (const handler of [...registered]) result = await handler(message.payload);
+                if (message.id && !disposed) {
+                    post({ protocol: PROTOCOL_VERSION, id: message.id, type: REQUEST_RESPONSE[message.type] ?? message.type, payload: result });
+                }
+            } catch (error) {
+                if (message.id && !disposed) post({ protocol: PROTOCOL_VERSION, id: message.id, type: REQUEST_RESPONSE[message.type] ?? message.type, error: error instanceof Error ? error.message : "bridge_request_failed" });
             }
         })();
     };

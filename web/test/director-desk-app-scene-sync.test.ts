@@ -65,6 +65,40 @@ function manualSchedule() {
 const tick = () => new Promise((done) => setTimeout(done, 0));
 
 describe("导演台应用侧场景同步", () => {
+    test("08 desk.export.request 经宿主处理并返回 host.export.result", async () => {
+        const { host, app } = pair();
+        const received: unknown[] = [];
+        const hostBridge = createDirectorDeskHostBridge({
+            endpoint: host.endpoint(),
+            origin: ORIGIN,
+            readDocument: () => null,
+            commitDocument: () => undefined,
+            requestSave: async () => ({ ok: true }),
+            onExportRequest: async (payload) => {
+                received.push(payload);
+                return { taskId: "export-task-1", status: "queued" };
+            },
+        });
+        const appBridge = createHostBridge(app.endpoint(), { origin: ORIGIN, targetOrigin: ORIGIN });
+        const payload = { canvasId: "canvas-1", sceneId: "scene-1", shotId: "shot-1", kind: "composition-frame" };
+        await expect(appBridge.request("desk.export.request", payload)).resolves.toEqual({ taskId: "export-task-1", status: "queued" });
+        expect(received).toEqual([payload]);
+        appBridge.dispose();
+        hostBridge.dispose();
+    });
+
+    test("09 导出失败作为 bridge error 回传，不等到超时", async () => {
+        const { host, app } = pair();
+        const hostBridge = createDirectorDeskHostBridge({
+            endpoint: host.endpoint(), origin: ORIGIN, readDocument: () => null,
+            commitDocument: () => undefined, requestSave: async () => ({ ok: true }),
+            onExportRequest: async () => { throw new Error("没有导出权限"); },
+        });
+        const appBridge = createHostBridge(app.endpoint(), { origin: ORIGIN, targetOrigin: ORIGIN });
+        await expect(appBridge.request("desk.export.request", {}, 30)).rejects.toThrow("没有导出权限");
+        appBridge.dispose(); hostBridge.dispose();
+    });
+
     test("01 启动即发 desk.ready,宿主下发的场景经 readSceneDocument 载入应用", async () => {
         const { host, app } = pair();
         const scene = createPrevisScene("往返");

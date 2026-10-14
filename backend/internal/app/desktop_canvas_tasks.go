@@ -18,7 +18,7 @@ type desktopTaskSubmitter struct{ s *Service }
 
 func (s *Service) DesktopTaskSubmitter() tasks.TaskSubmitter { return &desktopTaskSubmitter{s: s} }
 func (d *desktopTaskSubmitter) Prepare(ctx context.Context, p identity.Principal, req tasks.TaskRequest) (tasks.PreparedTask, error) {
-	if !d.s.desktopMode || !p.HasScope("generation.submit") || p.Role == "viewer" {
+	if (!d.s.desktopMode && !d.s.canvasCommandMode) || !p.HasScope("generation.submit") || p.Role == "viewer" {
 		return tasks.PreparedTask{}, Forbidden("没有生成权限")
 	}
 	if req.Mode == "previs" {

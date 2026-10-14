@@ -5,10 +5,20 @@ import { createHostBridge, type BridgeEndpoint, type HostBridge } from "./bridge
  * 未安装时(纯浏览器直开)返回 undefined,调用方走"能力不可用"的显式分支。
  */
 let installed: HostBridge | undefined;
+let canvasId: string | undefined;
+let unsubscribeScope: (() => void) | undefined;
 
 export function installHostBridge(bridge: HostBridge): void {
+    unsubscribeScope?.();
+    canvasId = undefined;
     installed = bridge;
+    unsubscribeScope = bridge.on("host.scene.load", (payload) => {
+        const scope = payload && typeof payload === "object" ? (payload as { canvasId?: unknown }).canvasId : undefined;
+        canvasId = typeof scope === "string" && scope.trim() ? scope : undefined;
+    });
 }
+
+export function hostCanvasId(): string | undefined { return canvasId; }
 
 export function hostBridge(): HostBridge | undefined {
     return installed;

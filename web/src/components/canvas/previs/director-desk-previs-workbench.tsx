@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { CanvasPrevisWorkbench } from "./canvas-previs-workbench";
 import { useDirectorDeskPrevisRuntime } from "./use-director-desk-previs-runtime";
 import { usePrevisSaveCoordinator } from "./use-previs-save-coordinator";
@@ -11,11 +11,16 @@ import { directorDocumentToPrevisScene, previsSceneToDirectorDocument } from "@/
 import { createDirectorControllerTransport, createDirectorEditBridge, type DirectorEditBridge } from "@/integrations/director-desk/edit-bridge";
 import type { DirectorProject } from "@/integrations/director-desk/previs-runtime-types";
 import { DirectorDeskAppFrame } from "./director-desk-app-frame";
+import { createDirectorDeskExportHandler } from "@/integrations/director-desk/export-handler";
+import { createDirectorDeskExportTransport, ensureDirectorDeskCanvasSession } from "@/integrations/director-desk/canvas-export-transport";
+import { queryGenerationTask, waitForGenerationTask } from "@/services/api/task-center";
+import { readTaskMaterialization } from "@/services/api/canvas-commands";
 import "./director-desk-previs-workbench.css";
 
 export type DirectorDeskPrevisWorkbenchProps = ComponentProps<typeof CanvasPrevisWorkbench> & {
     /** 打开影策 Agent(导演台顶栏入口);旧工作台不消费。 */
     onOpenAgent?: () => void;
+    onCanvasRefresh?: () => void | Promise<void>;
 };
 
 /**
@@ -156,6 +161,22 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
         );
         return true;
     }, [props.canvasId]);
+    const refreshRef = useRef(props.onCanvasRefresh);
+    refreshRef.current = props.onCanvasRefresh;
+    const userScope = useUserStore((state) => state.user?.id) ?? "guest";
+    const exportHandler = useMemo(() => !props.canvasId || !scene?.id ? null : createDirectorDeskExportHandler({
+        canvasId: props.canvasId,
+        sceneId: scene.id,
+        scene: () => sceneRef.current,
+        saveDocument: async (document) => {
+            const record = editBridgeRef.current?.commitDocument(document as DirectorProject);
+            if (!record?.scene || record.status === "conflict" || !await saveControllerRef.current.retry()) throw new Error("保存未完成，请先重试保存再导出");
+            return record.scene;
+        },
+        transport: createDirectorDeskExportTransport({ session: canvasCommandSession, queryTask: queryGenerationTask, readMaterialization: readTaskMaterialization }),
+        waitTask: (taskId) => waitForGenerationTask(taskId),
+        onRefresh: () => refreshRef.current?.(),
+    }), [props.canvasId, scene?.id]);
     // legacy 模式(或未打开/无场景)沿用工作台自己的协调器;应用壳只在 canary/authoritative 生效。
     if (!usingApp || !scene) return <CanvasPrevisWorkbench {...props} />;
 
@@ -173,6 +194,7 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
 
     return (
         <DirectorDeskAppFrame
+            canvasId={props.canvasId}
             sceneId={scene.id}
             scene={scene}
             saveController={saveController}
@@ -186,6 +208,15 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
                 // 应用内「保存」= 把草稿真正落盘:复用协调器的既有 flush 语义。
                 const ok = await saveController.retry();
                 return { ok, message: ok ? undefined : "保存未完成" };
+            }}
+            onExportRequest={async (payload, publish) => {
+                if (!exportHandler) throw new Error("导出画布未就绪");
+                if (!props.canvasId) throw new Error("导出画布未就绪");
+                await ensureDirectorDeskCanvasSession({ canvasId: props.canvasId, scope: userScope });
+                return exportHandler(payload, (event) => {
+                    if (event.status === "failed") recordPrevisDiagnostic("PREVIS_DIRECTOR_EXPORT_FAILED", { sceneId: scene.id, requestId: event.taskId });
+                    publish(event);
+                });
             }}
             onReady={() => {
                 const current = sceneRef.current;

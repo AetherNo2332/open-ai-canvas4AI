@@ -1669,7 +1669,7 @@ function InfiniteCanvasPage() {
         setStylePickerOpen,
     });
 
-    const { applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene } = useCanvasPrevis({
+    const { applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene, refreshAfterExport } = useCanvasPrevis({
         projectId,
         domainProjectId: currentProject?.projectId,
         previsNodeId,
@@ -3328,6 +3328,7 @@ function InfiniteCanvasPage() {
                                     onApply={applyPrevisOutput}
                                     onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
                                     onFlush={() => flushCanvasStorePersistence()}
+                                    onCanvasRefresh={refreshAfterExport}
                                     onboardingScope={previsOnboardingScope}
                                     onOpenAgent={openAgent}
                                 />

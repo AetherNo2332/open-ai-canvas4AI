@@ -15,6 +15,7 @@ import (
 
 	"infinite-canvas/backend/internal/auth"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/canvas/commands"
 	"infinite-canvas/backend/internal/canvas/tasks"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -30,7 +31,9 @@ import (
 )
 
 type Service struct {
+	canvasCommands          *commands.Service
 	canvasTasks              *tasks.Service
+	canvasCommandMode       bool
 	desktopMode              bool
 	desktopMasterKey         []byte
 	desktopPolicyMu          sync.RWMutex
@@ -198,6 +201,9 @@ func (s *Service) StartWorker() {
 		return
 	}
 	s.taskWorker().start(ctx)
+	if s.canvasTasks != nil {
+		s.startCanvasMaterializer()
+	}
 	s.startResourceDeletionWorker(ctx)
 	s.startSkillSyncWorker(ctx)
 	s.startPaymentWorker(ctx)
