@@ -1,7 +1,4 @@
-import {
-  readSceneDocument,
-  type SceneDocument,
-} from "../scenes/sequence-project.ts";
+import { readSceneDocument, type SceneDocument } from "../scenes/sequence-project.ts";
 import type { HostBridge } from "./bridge";
 
 /**
@@ -14,94 +11,84 @@ import type { HostBridge } from "./bridge";
  * 写回宿主;与上次已同步内容相同的文档不回传(宿主下发引起的刷新不回声)。
  */
 export interface SceneSyncOptions {
-  bridge: HostBridge;
-  /** 当前可回传的文档;编辑/拖动/导出进行中返回 null(结束后再回传)。 */
-  readDocument: () => unknown;
-  applyDocument: (
-    document: SceneDocument,
-    options?: { preserveViewState?: boolean },
-  ) => void;
-  onLoadError?: (error: unknown) => void;
-  /** 节流调度(测试注入);返回取消函数。 */
-  schedule?: (callback: () => void) => () => void;
-  delayMs?: number;
+    bridge: HostBridge;
+    /** 当前可回传的文档;编辑/拖动/导出进行中返回 null(结束后再回传)。 */
+    readDocument: () => unknown;
+    applyDocument: (document: SceneDocument, options?: { preserveViewState?: boolean }) => void;
+    onLoadError?: (error: unknown) => void;
+    /** 节流调度(测试注入);返回取消函数。 */
+    schedule?: (callback: () => void) => () => void;
+    delayMs?: number;
 }
 
 export interface SceneSync {
-  start(): void;
-  notifyChanged(): void;
-  dispose(): void;
+    start(): void;
+    notifyChanged(): void;
+    dispose(): void;
 }
 
 const DEFAULT_DELAY_MS = 300;
 
 export function createSceneSync(options: SceneSyncOptions): SceneSync {
-  const delayMs = options.delayMs ?? DEFAULT_DELAY_MS;
-  const schedule =
-    options.schedule ??
-    ((callback: () => void) => {
-      const timer = setTimeout(callback, delayMs);
-      return () => clearTimeout(timer);
+    const delayMs = options.delayMs ?? DEFAULT_DELAY_MS;
+    const schedule = options.schedule ?? ((callback: () => void) => {
+        const timer = setTimeout(callback, delayMs);
+        return () => clearTimeout(timer);
     });
-  let hostSceneLoaded = false;
-  let lastSynced: string | undefined;
-  let cancelPending: (() => void) | null = null;
-  let unsubscribe: (() => void) | null = null;
-  let disposed = false;
+    let hostSceneLoaded = false;
+    let lastSynced: string | undefined;
+    let cancelPending: (() => void) | null = null;
+    let unsubscribe: (() => void) | null = null;
+    let disposed = false;
 
-  const snapshot = (): string | undefined => {
-    const document = options.readDocument();
-    return document == null ? undefined : JSON.stringify(document);
-  };
+    const snapshot = (): string | undefined => {
+        const document = options.readDocument();
+        return document == null ? undefined : JSON.stringify(document);
+    };
 
-  const flush = () => {
-    cancelPending = null;
-    if (disposed || !hostSceneLoaded) return;
-    const json = snapshot();
-    if (json === undefined || json === lastSynced) return;
-    lastSynced = json;
-    options.bridge.notify("desk.scene.changed", JSON.parse(json));
-  };
+    const flush = () => {
+        cancelPending = null;
+        if (disposed || !hostSceneLoaded) return;
+        const json = snapshot();
+        if (json === undefined || json === lastSynced) return;
+        lastSynced = json;
+        options.bridge.notify("desk.scene.changed", JSON.parse(json));
+    };
 
-  const load = (payload: unknown) => {
-    if (disposed) return;
-    const envelope =
-      payload && typeof payload === "object"
-        ? (payload as { document?: unknown; preserveViewState?: unknown })
-        : {};
-    const document = envelope.document;
-    let parsed: SceneDocument;
-    try {
-      parsed = readSceneDocument(document);
-      options.applyDocument(parsed, {
-        preserveViewState: envelope.preserveViewState === true,
-      });
-    } catch (error) {
-      options.onLoadError?.(error);
-      return;
-    }
-    hostSceneLoaded = true;
-    // 载入后的应用文档即与宿主一致的基线,随后的同内容 changed() 不回传。
-    lastSynced = snapshot();
-  };
+    const load = (payload: unknown) => {
+        if (disposed) return;
+        const envelope = payload && typeof payload === "object" ? payload as { document?: unknown; preserveViewState?: unknown } : {};
+        const document = envelope.document;
+        let parsed: SceneDocument;
+        try {
+            parsed = readSceneDocument(document);
+            options.applyDocument(parsed, { preserveViewState: envelope.preserveViewState === true });
+        } catch (error) {
+            options.onLoadError?.(error);
+            return;
+        }
+        hostSceneLoaded = true;
+        // 载入后的应用文档即与宿主一致的基线,随后的同内容 changed() 不回传。
+        lastSynced = snapshot();
+    };
 
-  return {
-    start() {
-      if (disposed || unsubscribe) return;
-      unsubscribe = options.bridge.on("host.scene.load", load);
-      options.bridge.notify("desk.ready");
-    },
-    notifyChanged() {
-      if (disposed || cancelPending) return;
-      cancelPending = schedule(flush);
-    },
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      cancelPending?.();
-      cancelPending = null;
-      unsubscribe?.();
-      unsubscribe = null;
-    },
-  };
+    return {
+        start() {
+            if (disposed || unsubscribe) return;
+            unsubscribe = options.bridge.on("host.scene.load", load);
+            options.bridge.notify("desk.ready");
+        },
+        notifyChanged() {
+            if (disposed || cancelPending) return;
+            cancelPending = schedule(flush);
+        },
+        dispose() {
+            if (disposed) return;
+            disposed = true;
+            cancelPending?.();
+            cancelPending = null;
+            unsubscribe?.();
+            unsubscribe = null;
+        },
+    };
 }
