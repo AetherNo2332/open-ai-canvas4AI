@@ -2,6 +2,7 @@ package handler
 
 import (
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,5 +93,41 @@ func TestServeResourceDeliveryStreamsPlatformBytesAndRangeMetadata(t *testing.T)
 	}
 	if recorder.Header().Get("Content-Disposition") != `inline; filename="video.mp4"` {
 		t.Fatalf("content-disposition = %q", recorder.Header().Get("Content-Disposition"))
+	}
+}
+
+func TestResourceAccessOptionsCarriesDownloadNameForPlatformDelivery(t *testing.T) {
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/resource?download=1&downloadName=%E7%89%87%E5%A4%B4%E9%95%9C%E5%A4%B4.mp4", nil)
+
+	options := resourceAccessOptions(c)
+	if options.Purpose != assets.PurposeDownload {
+		t.Fatalf("purpose = %q, want download", options.Purpose)
+	}
+	if options.DownloadName != "片头镜头.mp4" {
+		t.Fatalf("download name = %q, want node title", options.DownloadName)
+	}
+}
+
+func TestServeResourceDeliveryUsesRequestedDownloadName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resource := &model.Resource{ID: "resource-1", MimeType: "video/mp4", UpdatedAt: time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)}
+	router := gin.New()
+	router.GET("/resource", func(c *gin.Context) {
+		options := resourceAccessOptions(c)
+		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": options.DownloadName})
+		serveResourceDelivery(c, &service.ResourceDelivery{
+			Resource: resource,
+			Access:   &assets.ResourceAccess{ResourceID: resource.ID, URL: "/api/resources/resource-1/file", Delivery: assets.DeliveryProxy},
+			Stream:   &assets.ResourceStream{Resource: resource, Body: io.NopCloser(strings.NewReader("media")), StatusCode: http.StatusOK, ContentLength: 5},
+		}, "private, no-cache", disposition)
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/resource?download=1&downloadName=%E7%89%87%E5%A4%B4%E9%95%9C%E5%A4%B4.mp4", nil))
+	if got := recorder.Header().Get("Content-Disposition"); got != "attachment; filename=\"片头镜头.mp4\"" {
+		t.Fatalf("content-disposition = %q", got)
 	}
 }

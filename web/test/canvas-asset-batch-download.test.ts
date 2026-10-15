@@ -15,7 +15,9 @@ describe("画布资产批量下载入口", () => {
     test("画布页面把选中节点交给批量下载回调", () => {
         const project = read("pages/canvas/project.tsx");
         const toolbar = read("pages/canvas/canvas-project-selection-toolbar.tsx");
+        const editor = read("pages/canvas/use-canvas-node-editor.ts");
         expect(project).toContain("downloadSelectedMedia");
+        expect(editor).toContain("createCanvasMediaArchive");
         expect(toolbar).toContain("onDownloadSelected");
         expect(toolbar).toContain("downloadableMediaCount");
     });

@@ -1303,6 +1303,7 @@ function InfiniteCanvasPage() {
         toggleNodeFreeResize,
     } = useCanvasNodeEditor({
         canvasId: projectId,
+        canvasTitle: currentProject?.title || "画布媒体",
         domainProjectId: linkedProjectId,
         nodesRef,
         setNodes,
