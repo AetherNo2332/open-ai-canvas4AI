@@ -25,10 +25,20 @@ const MIME_EXTENSIONS: Record<string, string> = {
 
 const CONTENT_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg", "mp4", "webm", "mov", "ogv", "ogg", "mpeg", "mpg", "mp3", "m4a", "wav", "aac", "flac", "opus"]);
 
-export function buildCanvasMediaDownloadFileName(canvasTitle: string, node: CanvasNodeData, now = new Date()) {
-    const canvasName = safeFileNamePart(canvasTitle, "未命名画布");
+export function buildCanvasMediaDownloadFileName(node: CanvasNodeData, usedNames?: Set<string>): string {
     const nodeName = safeFileNamePart(node.title, defaultNodeName(node.type));
-    return `${canvasName}_${nodeName}_${formatDownloadDate(now)}.${canvasMediaFileExtension(node)}`;
+    const extension = canvasMediaFileExtension(node);
+    const baseName = `${nodeName}.${extension}`;
+    if (!usedNames) return baseName;
+    if (!usedNames.has(baseName)) {
+        usedNames.add(baseName);
+        return baseName;
+    }
+    let index = 2;
+    let candidate = `${nodeName} (${index}).${extension}`;
+    while (usedNames.has(candidate)) candidate = `${nodeName} (${++index}).${extension}`;
+    usedNames.add(candidate);
+    return candidate;
 }
 
 export function canvasMediaFileExtension(node: CanvasNodeData) {
@@ -66,13 +76,6 @@ function safeFileNamePart(value: string, fallback: string) {
         .replace(/[. ]+$/g, "");
     if (!normalized) return fallback;
     return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(normalized) ? `_${normalized}` : normalized;
-}
-
-function formatDownloadDate(date: Date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}${month}${day}`;
 }
 
 function defaultNodeName(type: CanvasNodeTypeId) {
