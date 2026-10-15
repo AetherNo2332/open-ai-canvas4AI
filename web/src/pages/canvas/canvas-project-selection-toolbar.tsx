@@ -26,11 +26,34 @@ type CanvasProjectSelectionToolbarProps = {
     onDownloadSelected: () => void;
 };
 
-export function CanvasProjectSelectionToolbar({ anchorRef, containerRef, count, selectedVideoCount, downloadableMediaCount, downloading, mergingVideos, onAlign, onArrange, onCreateStoryboard, onCreateReferenceGroup, onBatchConnect, onMergeVideos, onSendSelectionToAgent, onDownloadSelected }: CanvasProjectSelectionToolbarProps) {
+export function CanvasProjectSelectionToolbar({
+    anchorRef,
+    containerRef,
+    count,
+    selectedVideoCount,
+    downloadableMediaCount,
+    downloading,
+    mergingVideos,
+    onAlign,
+    onArrange,
+    onCreateStoryboard,
+    onCreateReferenceGroup,
+    onBatchConnect,
+    onMergeVideos,
+    onSendSelectionToAgent,
+    onDownloadSelected,
+}: CanvasProjectSelectionToolbarProps) {
     const theme = canvasThemes[useCanvasThemeStore((state) => state.theme)];
 
     const handlers = {
-        onAlign, onArrange, onCreateStoryboard, onCreateReferenceGroup, onBatchConnect, onMergeVideos, onSendSelectionToAgent, onDownloadSelected,
+        onAlign,
+        onArrange,
+        onCreateStoryboard,
+        onCreateReferenceGroup,
+        onBatchConnect,
+        onMergeVideos,
+        onSendSelectionToAgent,
+        onDownloadSelected,
     } as Partial<ToolbarHandlers> as ToolbarHandlers;
 
     const ctx: ToolContext = {
