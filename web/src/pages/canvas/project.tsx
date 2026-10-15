@@ -119,6 +119,7 @@ import { CanvasFocusModeBar } from "@/components/canvas/canvas-focus-mode-bar";
 import { CanvasProjectContextMenu } from "./canvas-project-context-menu";
 import { CanvasProjectMediaDialogs } from "./canvas-project-media-dialogs";
 import { CanvasProjectSelectionToolbar } from "./canvas-project-selection-toolbar";
+import { isCanvasDownloadableMediaNode } from "@/lib/canvas/canvas-media-batch-download";
 import { CanvasProjectStatusDialogs } from "./canvas-project-status-dialogs";
 import { CanvasProjectWorldLayers } from "./canvas-project-world-layers";
 import { CanvasNodeActionContext, type CanvasNodeActionContextValue } from "@/components/canvas/canvas-node-action-context";
@@ -342,6 +343,7 @@ function InfiniteCanvasPage() {
     const [titleDraft, setTitleDraft] = useState("");
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
     const [cinematicAgentEntry, setCinematicAgentEntry] = useState(false);
+    const [downloadingSelectedMedia, setDownloadingSelectedMedia] = useState(false);
     const { assistantOpen, closeAgent, openAgent: openAssistant } = useCanvasAssistantVisibility();
     const agentMentionReferences = useMemo(() => buildCanvasAgentMentionReferences(nodes), [nodes]);
 
@@ -1284,6 +1286,7 @@ function InfiniteCanvasPage() {
     const {
         collapsingBatchIds,
         downloadNodeImage,
+        downloadSelectedMedia,
         handleConfigNodeChange,
         handleFolderStyleChange,
         handleFolderThemeChange,
@@ -1300,7 +1303,6 @@ function InfiniteCanvasPage() {
         toggleNodeFreeResize,
     } = useCanvasNodeEditor({
         canvasId: projectId,
-        canvasTitle: currentProject?.title || "未命名画布",
         domainProjectId: linkedProjectId,
         nodesRef,
         setNodes,
@@ -2977,6 +2979,19 @@ function InfiniteCanvasPage() {
                                 containerRef={containerRef}
                                 count={selectedNodeBounds.count}
                                 selectedVideoCount={selectedVideoNodes.length}
+                                downloadableMediaCount={nodes.filter((node) => selectedNodeIds.has(node.id) && isCanvasDownloadableMediaNode(node)).length}
+                                onDownloadSelected={() => {
+                                    if (downloadingSelectedMedia) return;
+                                    setDownloadingSelectedMedia(true);
+                                    void downloadSelectedMedia(nodes.filter((node) => selectedNodeIds.has(node.id)))
+                                        .then((results) => {
+                                            const failed = results.filter((result) => result.status === "failed").length;
+                                            message[failed ? "warning" : "success"](failed ? `已下载 ${results.length - failed} 个，${failed} 个失败` : `已下载 ${results.length} 个媒体`);
+                                        })
+                                        .catch((error) => message.error(error instanceof Error ? error.message : "批量下载失败"))
+                                        .finally(() => setDownloadingSelectedMedia(false));
+                                }}
+                                downloading={downloadingSelectedMedia}
                                 mergingVideos={Boolean(mergeVideoProgress)}
                                 onAlign={alignSelectedNodes}
                                 onArrange={arrangeSelectedNodes}

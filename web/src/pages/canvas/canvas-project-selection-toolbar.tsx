@@ -13,6 +13,8 @@ type CanvasProjectSelectionToolbarProps = {
     containerRef: RefObject<HTMLDivElement | null>;
     count: number;
     selectedVideoCount: number;
+    downloadableMediaCount: number;
+    downloading: boolean;
     mergingVideos: boolean;
     onAlign: (mode: CanvasAlignmentMode) => void;
     onArrange: (mode: "row" | "column" | "grid" | "flow") => void;
@@ -21,19 +23,22 @@ type CanvasProjectSelectionToolbarProps = {
     onBatchConnect: () => void;
     onMergeVideos: () => void;
     onSendSelectionToAgent: () => void;
+    onDownloadSelected: () => void;
 };
 
-export function CanvasProjectSelectionToolbar({ anchorRef, containerRef, count, selectedVideoCount, mergingVideos, onAlign, onArrange, onCreateStoryboard, onCreateReferenceGroup, onBatchConnect, onMergeVideos, onSendSelectionToAgent }: CanvasProjectSelectionToolbarProps) {
+export function CanvasProjectSelectionToolbar({ anchorRef, containerRef, count, selectedVideoCount, downloadableMediaCount, downloading, mergingVideos, onAlign, onArrange, onCreateStoryboard, onCreateReferenceGroup, onBatchConnect, onMergeVideos, onSendSelectionToAgent, onDownloadSelected }: CanvasProjectSelectionToolbarProps) {
     const theme = canvasThemes[useCanvasThemeStore((state) => state.theme)];
 
     const handlers = {
-        onAlign, onArrange, onCreateStoryboard, onCreateReferenceGroup, onBatchConnect, onMergeVideos, onSendSelectionToAgent,
+        onAlign, onArrange, onCreateStoryboard, onCreateReferenceGroup, onBatchConnect, onMergeVideos, onSendSelectionToAgent, onDownloadSelected,
     } as Partial<ToolbarHandlers> as ToolbarHandlers;
 
     const ctx: ToolContext = {
         selectedCount: count,
         selectedNodeTypes: new Set(),
         selectedVideoCount,
+        downloadableMediaCount,
+        downloadingSelectedMedia: downloading,
         canvasTool: "move",
         workspaceMode: "professional",
         isProjectLinked: false,
