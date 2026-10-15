@@ -42,7 +42,9 @@ export function buildCanvasMediaDownloadFileName(node: CanvasNodeData, usedNames
 }
 
 export function canvasMediaFileExtension(node: CanvasNodeData) {
-    return extensionFromMimeType(node.metadata?.mimeType) || extensionFromContent(node.metadata?.content) || defaultExtension(node.type);
+    return extensionFromMimeType(node.metadata?.mimeType)
+        || extensionFromContent(node.metadata?.content)
+        || defaultExtension(node.type);
 }
 
 function extensionFromMimeType(mimeType?: string) {

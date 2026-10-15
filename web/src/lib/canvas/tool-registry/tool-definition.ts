@@ -10,7 +10,17 @@ export type ToolbarId = "main" | "selection" | "node-hover" | "add-node-menu";
 export type NodeToolbarGroup = "primary" | "portrait" | "viewpoint" | "lighting" | "panorama" | "process" | "nine_grid" | "workspace" | "utility" | "more";
 
 /** 工具分类——用于分组渲染、危险隔离与 separator 自动插入 */
-export type ToolCategory = "navigation" | "history" | "create" | "appearance" | "selection" | "layout" | "arrange" | "danger" | "node-state" | "resource";
+export type ToolCategory =
+    | "navigation"
+    | "history"
+    | "create"
+    | "appearance"
+    | "selection"
+    | "layout"
+    | "arrange"
+    | "danger"
+    | "node-state"
+    | "resource";
 
 /** 所有工具栏回调的聚合类型。工具定义通过 ctx.handlers.onXxx 访问 */
 export type ToolbarHandlers = {
@@ -132,8 +142,7 @@ export type AddNodeMenuContext = {
     isProjectLinked: boolean;
     /** 内置应用插件的启用状态；未声明时视为未提供 gating 信息。 */
     enabledPluginIds?: ReadonlySet<string>;
-    handlers: Pick<
-        ToolbarHandlers,
+    handlers: Pick<ToolbarHandlers,
         | "onAddText"
         | "onAddImage"
         | "onAddVideo"
