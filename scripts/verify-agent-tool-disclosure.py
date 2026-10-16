@@ -103,10 +103,12 @@ class DisclosureAcceptance(parity.Acceptance):
         ], "现在画布有几个节点")
         view = self.wait_run(run)
         nodes = self.project(identity).get("nodes") or []
-        failed = [row for row in view.get("events", []) if row.get("type") in ("tool_failed", "tool_skipped")
-                  and (row.get("payload") or {}).get("toolName") == "canvas_edit_storyboard"]
+        tools = self.tools_at(scenario)
+        executed = [(row.get("payload") or {}).get("toolName") for row in view.get("events", [])
+                    if row.get("type") in ("tool_completed", "tool_failed", "tool_skipped")]
+        self.check("unadvertised storyboard edit is not advertised", "canvas_edit_storyboard" not in tools, tools=tools)
         self.check("unadvertised storyboard edit did not write nodes", nodes == [], nodeCount=len(nodes), status=view["status"])
-        self.check("unadvertised storyboard edit was rejected", bool(failed), status=view["status"], events=[row.get("type") for row in view.get("events", [])])
+        self.check("unadvertised storyboard edit was not executed", "canvas_edit_storyboard" not in executed, status=view["status"], executed=executed)
 
     def stable_prefix(self):
         identity = self.canvas()
