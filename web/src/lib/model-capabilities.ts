@@ -1,5 +1,6 @@
 import type { ModelProtocol, ModelProtocolWorkflow } from "@/lib/model-protocols";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
+import { kemeiSeedreamPresets } from "./kemei-image-presets";
 
 export type ModelCapabilityConfig = {
     version: number;
@@ -218,6 +219,19 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         outputFormat: { supported: true },
         maxOutputs: 15,
     };
+    if (protocol === "km-kemei-seedream") {
+        const presets = kemeiSeedreamPresets();
+        image.references = { ...image.references, maxImages: 10, maskSupported: false };
+        image.size = { parameter: "size", values: presets.map((preset) => preset.size), default: "2048x2048", allowCustom: true, presets };
+        image.quality = { supported: false, values: [], default: "auto" };
+        // 透明输出要求一张含 alpha 的参考图，宿主通用开关不能保证此条件。
+        // 此能力通过插件命名空间的 background + output_format 显式配置。
+        image.transparentBackground = { supported: false, default: false };
+        image.responseFormat = { supported: true };
+        image.outputFormat = { supported: true };
+        image.maxOutputs = 1;
+        return image;
+    }
     if (protocol === "grok-image") {
         image.references.maxImages = 1;
         image.references.maskSupported = false;
@@ -365,7 +379,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.resolutions = ["1080p"];
         video.defaultResolution = "1080p";
     }
-    if (protocol === "minimax-video") {
+    if (protocol === "minimax-video" || protocol === "metaso-h3") {
         video.references.maxImages = 9;
         video.references.maxImageBytes = 30 * 1024 * 1024;
         video.references.maxVideos = 3;
@@ -374,7 +388,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.references.maxAudios = 3;
         video.references.maxAudioBytes = 15 * 1024 * 1024;
         video.references.maxAudioDurationSeconds = 15;
-        video.duration = { selection: "enum", values: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], default: 5 };
+        video.duration = { selection: "enum", values: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], default: 5 };
         video.ratios = ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
         video.resolutions = ["768P", "2K"];
         video.defaultResolution = "768P";
@@ -965,7 +979,7 @@ export function normalizeImageValue(profile: ImageCapabilityConfig, value: { siz
             : value.quality && profile.quality.values.includes(value.quality)
                 ? value.quality
                 : profile.quality.default || "auto"
-        : requestedQuality === "1k" || requestedQuality === "2k" || requestedQuality === "4k"
+        : requestedQuality === "1k" || requestedQuality === "1.5k" || requestedQuality === "2k" || requestedQuality === "4k"
             ? requestedQuality
             : presetTier || profile.quality.default || "auto";
     const count = String(Math.max(1, Math.min(profile.maxOutputs, Math.floor(Math.abs(Number(value.count)) || 1))));

@@ -146,6 +146,10 @@ CANVAS_BACKEND_DATA_DIR=/明确的数据目录 ./migrate-schema repair-canvas-re
 
 `GET /public/appearance` 返回当前 `activeSkin`；管理员通过 `GET/PUT /admin/settings/appearance` 读取、保存完整主题库。外观合同版本 8 新增 `tokens.buttons.light/dark`，字段为 `mode`（`solid|gradient`）、整数 `angle`（0–360）、HEX 色值 `start/end`、`hoverStart/hoverEnd`、`activeStart/activeEnd`、`foreground`。纯色模式使用既有主操作颜色，渐变仅用于主按钮。非法模式、角度、色值或修改锁定经典主题均拒绝保存；整块缺失的旧配置按主题身份补齐。此变更不增加数据表迁移。
 
+## KM 图片尺寸能力
+
+图片能力 `size.presets[].tier` 在已有档位之外接受 `1.5k`；前端档位选择、请求归一化与服务端预设校验保持一致。`km-kemei-seedream` 默认 `2048x2048`、单次一张、最多十张参考图，提供二十四个精确尺寸。官方 1.5K 尺寸在价格匹配中归入 `1.5k` 档，仅配置了 1K / 2K 的存量价格档仍可命中，4K 档不参与回退。透明输出使用插件扩展字段，不开启宿主通用透明背景开关。模型能力仍保存在现有 JSON 字段，无数据库迁移或新端点。
+
 ## 模型规格报价
 
 ### 管理员批量调价

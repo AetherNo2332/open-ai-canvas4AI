@@ -119,6 +119,7 @@ export function PriceTierFields({
                                             options={[
                                                 { label: "任意质量", value: "*" },
                                                 { label: "1K", value: "1k" },
+                                                { label: "1.5K", value: "1.5k" },
                                                 { label: "2K", value: "2k" },
                                                 { label: "4K", value: "4k" },
                                             ]}
