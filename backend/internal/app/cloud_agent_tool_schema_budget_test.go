@@ -59,18 +59,18 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 		t.Fatal("canvas_apply_ops 未暴露")
 	}
 
-	// The full eligible catalog is sent at run start. Budget its actual request
-	// size rather than estimating from category subsets.
+	// The eligible catalog stays complete for authorization. The model wire is
+	// the frozen L0∪L1 advertised subset for an empty canvas with no L1 intent.
 	_ = raw
-	wire, err := json.Marshal(cloudAgentVisibleTools(tools, "", nil, nil))
+	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, SkillIDs: []string{"capability-list"}}
+	req.Budget.MaxGenerationTasks = 1
+	advertised := cloudAgentToolsNamed(tools, cloudAgentAdvertisedToolNames(req, cloudAgentCanvasInventory{}, "现在画布有几个节点"))
+	wire, err := json.Marshal(advertised)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("wire schema: %d tools, %d bytes", len(cloudAgentToolNames(tools)), len(wire))
-	// Core CRUD, native drawing, asset binding, history and structured rows add
-	// bounded contracts. Deep node patches are discovered on demand; pin the
-	// complete catalog size rather than embedding every native schema per step.
+	t.Logf("eligible catalog: %d tools, %d bytes; advertised wire: %d tools, %d bytes", len(cloudAgentToolNames(tools)), len(raw), len(cloudAgentToolNames(advertised)), len(wire))
 	if len(wire) > 64000 {
-		t.Fatalf("模型实际接收的完整工具 schema 超出 64000 字节：%d", len(wire))
+		t.Fatalf("模型实际接收的 advertised 工具 schema 超出 64000 字节：%d", len(wire))
 	}
 }

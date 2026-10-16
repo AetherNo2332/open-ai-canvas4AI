@@ -665,10 +665,10 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	state.Workspace = &workspace
 	canonical := cloudAgentCanonicalFor(system, history, req.Prompt, req, len(profile.Layers) > 0)
 	canonical.Tools = compileCloudAgentToolsForRuntime(req, len(profile.Layers) > 0, cloudAgentSkillRuntimeNative)
-	// Keep the complete eligible tool catalog in the Go runtime snapshot. Pi
-	// receives only the parent schemas on its first model request, but Go needs
-	// the child schemas to validate a category opened by a later tool call.
-	// Keep the catalog out of TextHistory while exposing it as a data message in this run.
+	inventory := cloudAgentScanCanvasInventory(canvas.PayloadJSON)
+	advertisedNames := cloudAgentSelectAdvertisedTools(canonical.Tools, inventory, req.Prompt)
+	// Keep the complete eligible tool catalog in the Go runtime snapshot for
+	// authorization. The model only receives the frozen L0∪L1 advertised subset.
 	if strings.TrimSpace(canvasSummary) != "" && len(canonical.Messages) > 0 {
 		catalog := map[string]any{
 			"role":                     "user",
@@ -683,7 +683,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	// 在这里改局部 policy 不会生效（state.Policy 是编译结果的值拷贝）。登记之后压力读数的
 	// "系统提示分段"才能把 memory 摊开，并与 system 桶合计对齐。
 	cloudAgentRecordMemorySegment(&state.Policy, canonical.SystemPrompt)
-	canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(req.CanvasID, cloudAgentPromptCacheIdentity(req, policy), canonical.SystemPrompt, canonical.Tools)
+	canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(req.CanvasID, cloudAgentPromptCacheIdentity(req, policy), canonical.SystemPrompt, cloudAgentToolsNamed(canonical.Tools, advertisedNames))
 	attachCloudAgentPlan(&canonical, inheritedPlan)
 	if workspace.AgentsMD != "" || len(skillSnapshots) > 0 {
 		projected, err := cloudAgentRequestEstimatedTokens(&canonical)
@@ -725,8 +725,10 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
 		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
 		Plan: inheritedPlan, StepLimits: stepLimits,
-		TokenAnchor:     inheritedUsage,
-		ContractVersion: cloudAgentContractVersionFirstStep, Phase: cloudAgentPhaseAwaitingFirstStep,
+		TokenAnchor:         inheritedUsage,
+		DisclosureVersion:   cloudAgentToolDisclosureVersion,
+		AdvertisedToolNames: advertisedNames,
+		ContractVersion:     cloudAgentContractVersionFirstStep, Phase: cloudAgentPhaseAwaitingFirstStep,
 		Snapshot: cloudAgentContractSnapshotFor(canonical.SystemPrompt, canonical.Tools), PlaceholderTaskID: id,
 	}
 	run, err := s.newCloudAgentExecution(userID, id, req.CanvasID, linkedParentID, conversationID, &runtime)

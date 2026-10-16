@@ -917,7 +917,9 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 	}
 	request.Canonical.PromptCacheKey = state.Canonical.PromptCacheKey
 	state.DisclosureVersion = cloudAgentToolDisclosureVersion
-	state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
+	if len(state.AdvertisedToolNames) == 0 {
+		state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
+	}
 	// 看图结果按参考素材水合：上下文里只有 `resource:<id>`，真实图片字节在**请求期**才进到
 	// referenceImages，不进检查点，也不要求上游能访问部署地址。
 	//
@@ -1570,9 +1572,10 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 			continue
 		}
 		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
+		allowed := nativeRead || (cloudAgentToolAllowed(state.Request, name) && cloudAgentToolAdvertisedForRun(&state, name))
 		tools = append(tools, PiAgentToolSpec{
 			Name: name, Description: stringField(function, "description"), Parameters: parameters,
-			Category: cloudAgentToolCategory(name), Allowed: nativeRead || cloudAgentToolAllowed(state.Request, name),
+			Category: cloudAgentToolCategory(name), Allowed: allowed,
 		})
 	}
 	session, sessionEntries, err := s.repo.CloudAgentPiSession(run.UserID, firstNonEmpty(run.ConversationID, run.ID))

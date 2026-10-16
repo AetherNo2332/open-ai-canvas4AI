@@ -152,8 +152,11 @@ func cloudAgentUnlockedL1Tools(inventory cloudAgentCanvasInventory, intent cloud
 }
 
 func cloudAgentAdvertisedToolNames(req CloudAgentRequest, inventory cloudAgentCanvasInventory, prompt string) []string {
+	return cloudAgentSelectAdvertisedTools(cloudAgentTools(req), inventory, prompt)
+}
+
+func cloudAgentSelectAdvertisedTools(eligible []map[string]any, inventory cloudAgentCanvasInventory, prompt string) []string {
 	unlocked := cloudAgentUnlockedL1Tools(inventory, cloudAgentPromptIntentFlags(prompt))
-	eligible := cloudAgentTools(req)
 	names := make([]string, 0, len(eligible))
 	for _, tool := range eligible {
 		function, _ := tool["function"].(map[string]any)
@@ -167,4 +170,36 @@ func cloudAgentAdvertisedToolNames(req CloudAgentRequest, inventory cloudAgentCa
 		names = append(names, name)
 	}
 	return names
+}
+
+func cloudAgentToolsNamed(all []map[string]any, names []string) []map[string]any {
+	set := map[string]bool{}
+	for _, name := range names {
+		if name != "" {
+			set[name] = true
+		}
+	}
+	out := make([]map[string]any, 0, len(set))
+	for _, tool := range all {
+		function, _ := tool["function"].(map[string]any)
+		if set[stringField(function, "name")] {
+			out = append(out, tool)
+		}
+	}
+	return out
+}
+
+func cloudAgentToolAdvertisedForRun(state *cloudAgentRuntime, name string) bool {
+	if state == nil || name == "" {
+		return false
+	}
+	if len(state.AdvertisedToolNames) == 0 {
+		return true
+	}
+	for _, advertised := range state.AdvertisedToolNames {
+		if advertised == name {
+			return true
+		}
+	}
+	return false
 }

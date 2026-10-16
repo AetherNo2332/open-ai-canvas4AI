@@ -2323,7 +2323,9 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				}
 			} else {
 				if contextPressure != nil {
-					state.AdvertisedToolNames = cloudAgentToolNames(requestCanonical.Tools)
+					if len(state.AdvertisedToolNames) == 0 {
+						state.AdvertisedToolNames = cloudAgentToolNames(requestCanonical.Tools)
+					}
 					// 口径变化就地作废锚点（上游 #601）：这一步的模型/线路/窗口取自任务 input，
 					// 与定锚时不一致的实测不再可比。我方 recordCloudAgentTokenAnchor 里还会兜一遍
 					// （这一步拿不到新实测时也必须先把过期锚点作废）。
