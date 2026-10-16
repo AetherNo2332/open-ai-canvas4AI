@@ -17,7 +17,7 @@ function toolOf(tools: SessionToolDefinitionLike[], name: string): SessionToolDe
   return tool;
 }
 
-test("all eligible concrete tools are registered from the first step; categories are not tools", async () => {
+test("only allowed advertised concrete tools are registered; categories are not tools", async () => {
   const called: string[] = [];
   const disclosure = new SessionToolDisclosure(specs, async (name) => {
     called.push(name);
