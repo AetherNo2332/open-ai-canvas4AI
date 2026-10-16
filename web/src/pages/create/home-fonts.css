@@ -1,0 +1,28 @@
+@font-face {
+    font-family: "Mona Sans";
+    src: url("/fonts/home/mona-sans-variable.woff2") format("woff2");
+    font-style: normal;
+    font-weight: 200 900;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Source Han Sans SC";
+    src: url("/fonts/home/source-han-sans-cn-variable.woff2") format("woff2");
+    font-style: normal;
+    font-weight: 250 900;
+    font-display: swap;
+}
+
+:root {
+    /* Mona Sans handles Latin; Chinese glyphs fall through to Source Han Sans. */
+    --font-home: "Mona Sans", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.app-home-workspace,
+body.app-home-overlays {
+    --font-sans: var(--font-home);
+    --font-heading: var(--font-home);
+    font-family: var(--font-home);
+    font-optical-sizing: auto;
+}

@@ -1,3 +1,5 @@
+@import "./home-fonts.css";
+
 .canvas-home {
     --home-ink-soft: color-mix(in oklab, var(--foreground) 70%, transparent);
     position: relative;
@@ -7,7 +9,7 @@
     overflow-y: auto;
     background: var(--site-canvas, var(--background));
     color: var(--foreground);
-    font-family: "IBM Plex Sans Variable", "IBM Plex Sans", "Microsoft YaHei", system-ui, sans-serif;
+    font-family: var(--font-home);
 }
 
 .canvas-home-inner {
