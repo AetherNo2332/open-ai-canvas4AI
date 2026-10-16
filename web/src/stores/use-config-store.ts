@@ -9,7 +9,7 @@ import { modelProtocolCapability, normalizeModelProtocol, type ModelProtocol } f
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
-import type { CapabilitySpec, PublicLogicalModelPriceTier } from "@/services/api/logical-models";
+import type { CapabilitySpec, PublicChannelModelAvailability, PublicLogicalModelPriceTier } from "@/services/api/logical-models";
 
 export type ApiCallFormat = "openai" | "gemini" | "claude";
 export type ChannelInterfaceType = ModelProtocol;
@@ -381,6 +381,8 @@ export type ModelChannel = {
         logicalCapabilityProfiles?: CapabilitySpec[];
         logicalPriceTiers?: PublicLogicalModelPriceTier[];
         defaultOptions?: Record<string, unknown>;
+        availability?: PublicChannelModelAvailability;
+        available?: boolean;
     }>;
 };
 

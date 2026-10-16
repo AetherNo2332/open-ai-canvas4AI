@@ -4,10 +4,11 @@ import { Check, Plus } from "lucide-react";
 import { Switch } from "@/components/ui/base/switch";
 import "./image-size-picker.css";
 import type { ImageCapabilityConfig } from "@/lib/model-capabilities";
-import { IMAGE_RATIOS, IMAGE_RESOLUTIONS, imagePresetForRatio, imageResolutionUsesQuality, imageSizeConfigWithPresets, imageSizePresets, imageTierAvailable } from "@/lib/image-size-presets";
+import { IMAGE_RATIOS, imageResolutionTiers, imagePresetForRatio, imageResolutionUsesQuality, imageSizeConfigWithPresets, imageSizePresets, imageTierAvailable } from "@/lib/image-size-presets";
 import type { ImageResolutionTier } from "@/lib/image-resolution-tiers";
 
 export function ImageSizePresetsEditor({ profile, disabled, onChange }: { profile: ImageCapabilityConfig; disabled?: boolean; onChange: (size: ImageCapabilityConfig["size"]) => void }) {
+    const IMAGE_RESOLUTIONS = imageResolutionTiers(profile);
     const presets = imageSizePresets(profile);
     const id = useId();
     const [drafts, setDrafts] = useState<Partial<Record<ImageResolutionTier, string>>>({});

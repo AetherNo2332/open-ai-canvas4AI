@@ -11,6 +11,19 @@ import { resolveImageRequestSize, validateImageSize } from "../src/services/api/
 import { buildGeminiImageGenerationConfig } from "../src/lib/gemini-image";
 
 describe("统一图片分辨率与宽高比", () => {
+    test("Seedream 5.0 shows 1.5K and retains the exact official 2K wide size", () => {
+        const profile = defaultImageCapabilityConfig("km-kemei-seedream", "doubao-seedream-5-0-pro-260628");
+        const intermediate = renderToStaticMarkup(<ImageSizePicker profile={profile} size="1536x1536" onChange={() => {}} />);
+        expect(intermediate).toMatch(/aria-pressed="true"[^>]*>1\.5K/);
+        expect(intermediate).toContain("1536 × 1536 px");
+        expect(intermediate).not.toMatch(/<button[^>]*>4K/);
+        const wide = renderToStaticMarkup(<ImageSizePicker profile={profile} size="2816x1584" onChange={() => {}} />);
+        expect(wide).toMatch(/aria-pressed="true"[^>]*>2K/);
+        expect(wide).toContain("2816 × 1584 px");
+        const reopened = normalizeModelCapabilityConfig({ version: 1, image: profile });
+        expect(reopened.image?.size.presets?.filter((p) => p.tier === "1.5k")).toHaveLength(8);
+        expect(resolveImageRequestSize(profile, "auto", "1536x1536")?.value).toBe("1536x1536");
+    });
     test("默认 Gemini 质量枚举不能把未启用的 1K 显示出来", () => {
         const profile = defaultImageCapabilityConfig("gemini-image", "nano-banana-pro-4k");
         profile.size = imageSizeConfigWithPresets(profile, IMAGE_RATIOS.map((ratio) => imagePresetForRatio("4k", ratio)));

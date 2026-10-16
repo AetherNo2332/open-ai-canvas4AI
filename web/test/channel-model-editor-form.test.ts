@@ -8,6 +8,13 @@ const definition = (value: string, capability: ModelProtocolDefinition["capabili
 const protocols = [definition("disabled-text", "text", false), definition("text", "text"), definition("image", "image"), definition("video", "video")];
 
 describe("channel model editor drafts", () => {
+    test("Kemei Seedream selection initializes the image profile and preserves pricing", () => {
+        const draft = initialChannelModelValues(null, protocols);
+        draft.priceTiers[0].unitPrice = 19;
+        const next = changeChannelModelCapability({ ...draft, capability: "image", protocol: "km-kemei-seedream", modelKey: "doubao-seedream-5-0-pro-260628" }, [definition("km-kemei-seedream", "image")]);
+        expect(next.capabilityConfig?.image).toMatchObject({ references: { maxImages: 10, maskSupported: false }, maxOutputs: 1, size: { default: "2048x2048" } });
+        expect(next.priceTiers[0].unitPrice).toBe(19);
+    });
     test("new drafts select an enabled protocol and never share price state", () => {
         const first = initialChannelModelValues(null, protocols);
         first.priceTiers[0].unitPrice = 42;

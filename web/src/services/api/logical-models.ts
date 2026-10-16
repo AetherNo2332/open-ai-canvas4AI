@@ -1,15 +1,10 @@
 import { http } from "@/services/api/request";
 import type { ModelTag } from "@/lib/model-tags";
+import type { ImageResolutionOption } from "@/lib/image-resolution-tiers";
 
 export type InputConstraint = { min: number; max: number };
 export type OptionConstraint = { values?: unknown[]; min?: number; max?: number; step?: number };
-export type CapabilityImageSizePreset = {
-    size: string;
-    tier: "1k" | "2k" | "4k";
-    ratio: string;
-    width: number;
-    height: number;
-};
+export type CapabilityImageSizePreset = ImageResolutionOption;
 export type CapabilityImageSize = {
     parameter?: "size" | "aspect_ratio";
     allowCustom?: boolean;
@@ -181,6 +176,24 @@ export type PublicChannelModel = {
     displayPrice?: number;
     priceLabel: string;
     available: boolean;
+    availability?: PublicChannelModelAvailability;
+};
+
+export type PublicChannelModelAvailability = {
+    rate24h: number | null;
+    sampleCount24h: number;
+    trend7d: PublicChannelModelAvailabilityDay[];
+    recentResults?: boolean[];
+    dataState: "ready" | "insufficient" | "no_data";
+    computedAt: string;
+    dataThrough?: string;
+};
+
+export type PublicChannelModelAvailabilityDay = {
+    day: string;
+    rate: number | null;
+    sampleCount: number;
+    dataState: "ready" | "insufficient" | "no_data";
 };
 
 export type PublicChannelModelPriceTier = {
