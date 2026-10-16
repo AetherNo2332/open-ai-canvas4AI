@@ -3,8 +3,8 @@ package app
 const cloudAgentToolDisclosureVersion = 2
 
 // Categories classify concrete tools for policy, telemetry, and UI grouping.
-// They are never model-callable tools: every eligible concrete tool is advertised
-// at the beginning of each Pi model step.
+// They are never model-callable tools. Each run advertises L0 plus unlocked L1
+// concrete tools; the eligible catalog remains the permission/capability superset.
 func cloudAgentToolCategory(name string) string {
 	switch name {
 	case "web_search":
