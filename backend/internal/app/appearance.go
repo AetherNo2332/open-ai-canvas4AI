@@ -459,6 +459,9 @@ func (s *Service) resolveAvailableAppearanceAssets(value AppearanceSetting) Appe
 }
 
 func (s *Service) appearanceAssetAvailable(slot string, resourceID string) bool {
+	if slot == AppearanceAssetAgentAvatar && isBuiltinAppearanceAssetID(resourceID) {
+		return true
+	}
 	resource, err := s.repo.Resource(resourceID)
 	if err != nil || validateAppearanceResourceType(slot, resource) != nil {
 		return false
@@ -509,7 +512,7 @@ func validateAppearanceSetting(value AppearanceSetting) error {
 	if value.ICPFilingEnabled && value.ICPFilingNumber == "" {
 		return BadAuthRequest("显示备案号前请先填写备案号")
 	}
-	for _, resourceID := range []string{value.LogoResourceID, value.DarkLogoResourceID, value.AuthVideoResourceID, value.AuthVideoPosterResourceID} {
+	for _, resourceID := range []string{value.LogoResourceID, value.DarkLogoResourceID, value.AuthVideoResourceID, value.AuthVideoPosterResourceID, value.Canvas.AvatarResourceID} {
 		if len(resourceID) > 80 {
 			return BadAuthRequest("外观资源 ID 无效")
 		}
@@ -556,6 +559,11 @@ func (s *Service) validateAppearanceResource(actor *model.User, slot string, res
 	if resourceID == "" {
 		return nil
 	}
+	// 内置 Agent PNG 形象随前端包发布（如 /agent-avatar.png），没有数据库资源行，
+	// 与前端 startsWith("/") 的约定保持一致，不参与资源归属校验。
+	if slot == AppearanceAssetAgentAvatar && isBuiltinAppearanceAssetID(resourceID) {
+		return nil
+	}
 	resource, err := s.repo.Resource(resourceID)
 	if err != nil {
 		return BadAuthRequest("选择的外观资源不存在")
@@ -564,6 +572,11 @@ func (s *Service) validateAppearanceResource(actor *model.User, slot string, res
 		return Forbidden("只能使用当前管理员上传的外观资源")
 	}
 	return validateAppearanceResourceType(slot, resource)
+}
+
+// 内置 Agent 形象使用站点根路径由前端静态托管。
+func isBuiltinAppearanceAssetID(resourceID string) bool {
+	return strings.HasPrefix(resourceID, "/")
 }
 
 func validateAppearanceResourceType(slot string, resource *model.Resource) error {
