@@ -53,3 +53,11 @@ test("invalid appearance is rejected atomically and unknown CSS slots are ignore
     expect(applyDirectorDeskAppearance(payload, root)).toBe(true);
     expect(properties.has("--desk-background-image")).toBe(false);
 });
+
+test("iframe geometry follows rendered host radii within the bridge limits", () => {
+    const values: Record<string, string> = { "--button-radius": "999px", "--input-radius": "999px", "--card-radius": "16px", "--overlay-radius": "20px" };
+    const geometry = { getPropertyValue: (key: string) => values[key] ?? "" };
+    const appearance = directorDeskAppearance("light", null, geometry);
+    expect(appearance.radii).toEqual({ button: 64, input: 64, card: 16, overlay: 20 });
+    expect(applyDirectorDeskAppearance(appearance, rootFixture().root)).toBe(true);
+});

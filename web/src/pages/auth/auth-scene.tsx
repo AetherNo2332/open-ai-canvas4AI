@@ -1,32 +1,25 @@
-import { Tabs } from "antd";
-import { ArrowLeft } from "lucide-react";
-import { Link, Outlet, useLocation, useNavigate } from "react-router";
+import { Link, Outlet, useLocation, useSearchParams } from "react-router";
+import { useEffect } from "react";
+import { Moon, Sun } from "lucide-react";
 
 import { BrandLogo } from "@/components/brand/brand-logo";
-import { SiteComplianceFooter } from "@/components/layout/site-compliance-footer";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useAuthMotion } from "./use-auth-motion";
+import { useAuthAmbientMotion } from "./use-auth-ambient-motion";
 
 import "./auth-scene.css";
 
-const AUTH_TABS = [
-    { key: "login", label: "登录" },
-    { key: "register", label: "注册" },
-];
-
 const authCopy = {
     login: {
-        eyebrow: "Welcome back",
-        title: "进入创作现场",
-        description: "继续编辑你的画布、素材与生成任务。",
+        title: "登录",
+        description: "欢迎回来，继续你的创作。",
     },
     register: {
-        eyebrow: "Create account",
-        title: "建立你的创作空间",
-        description: "一个账号管理画布、素材、技能和模型偏好。",
+        title: "创建你的账户",
+        description: "从这里开始，让灵感成为作品。",
     },
     recovery: {
-        eyebrow: "Account recovery",
         title: "重新设置密码",
         description: "验证账号邮箱后，设置一个新的登录密码。",
     },
@@ -48,60 +41,82 @@ export function LinuxDOIcon() {
 export function AuthScene() {
     const appearance = useAppearanceStore((state) => state.appearance);
     const theme = useThemeStore((state) => state.theme);
+    const setTheme = useThemeStore((state) => state.setTheme);
+    const { sceneRoot } = useAuthAmbientMotion(theme);
     const location = useLocation();
-    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const recovery = location.pathname === "/forgot-password";
     const activeTab = location.pathname === "/register" ? "register" : "login";
+    const registerPasswordStep = activeTab === "register" && searchParams.get("step") === "2";
+    const registerVerificationStep = activeTab === "register" && searchParams.get("step") === "3";
+    const authMode = recovery ? "recovery" : registerVerificationStep ? "register-verification" : registerPasswordStep ? "register-password" : activeTab;
+    const { motionRoot, onValidationError } = useAuthMotion(authMode);
     const copy = recovery ? authCopy.recovery : activeTab === "register" ? authCopy.register : authCopy.login;
-    const heroStatement = appearance.authHeroTitle.trim();
     const heroDescription = appearance.authHeroDescription.trim();
-    const hasMedia = Boolean(appearance.authVideoUrl || appearance.authVideoPosterUrl);
+    const title = activeTab === "login" && !recovery ? `登录到 ${appearance.brandName}` : registerVerificationStep ? "验证你的邮箱" : registerPasswordStep ? "为你的账户设置密码" : copy.title;
+    const switchSearch = new URLSearchParams(location.search);
+    switchSearch.delete("step");
+
+    useEffect(() => {
+        const applyPillRadius = () => {
+            const controls = document.querySelectorAll<HTMLElement>(".auth-scene-form-body .ant-input, .auth-scene-form-body .ant-input-affix-wrapper, .auth-scene-form-body .ant-btn, .auth-scene-form-body .auth-code-field");
+            controls.forEach((control) => {
+                const isPasswordInnerInput = control.matches(":is(.ant-input-affix-wrapper, .auth-code-field) > .ant-input");
+                control.style.setProperty("border-radius", isPasswordInnerInput ? "0" : "999px", "important");
+                if (isPasswordInnerInput) {
+                    control.style.setProperty("background", "inherit", "important");
+                    control.style.setProperty("border", "0", "important");
+                    control.style.setProperty("box-shadow", "none", "important");
+                }
+            });
+        };
+        applyPillRadius();
+        const observer = new MutationObserver(applyPillRadius);
+        observer.observe(document.body, { childList: true, subtree: true });
+        return () => observer.disconnect();
+    }, [authMode]);
 
     return (
-        <main className="auth-scene">
-            <header className="auth-scene-masthead">
-                <Link to="/" className="auth-scene-brand">
-                    <BrandLogo theme={theme} className="auth-scene-mark" alt="" fallback={<span className="auth-scene-mark-fallback" />} />
-                    {appearance.brandName}
-                </Link>
-                <Link to="/" className="auth-scene-return">
-                    <ArrowLeft className="size-3.5" />
-                    返回首页
-                </Link>
-            </header>
-
+        <main className="auth-scene" ref={sceneRoot}>
+            <button type="button" className="auth-theme-toggle" aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                {theme === "dark" ? <Sun size={20} aria-hidden="true" /> : <Moon size={20} aria-hidden="true" />}
+            </button>
             <div className="auth-scene-body">
-                <section className={hasMedia ? "auth-scene-statement is-over-media" : "auth-scene-statement"} aria-label={copy.title}>
-                    {hasMedia ? (
-                        <div className="auth-scene-media" aria-hidden="true">
-                            {appearance.authVideoUrl ? (
-                                <video className="auth-scene-media-source" src={appearance.authVideoUrl} poster={appearance.authVideoPosterUrl || undefined} autoPlay={appearance.authVideoAutoplay} muted loop playsInline preload="metadata" />
-                            ) : (
-                                <img className="auth-scene-media-source" src={appearance.authVideoPosterUrl} alt="" decoding="async" />
-                            )}
-                            <span className="auth-scene-media-scrim" />
-                        </div>
-                    ) : null}
-
-                    <div className="auth-scene-statement-copy">
-                        <p className="auth-scene-eyebrow">{copy.eyebrow}</p>
-                        <h1 className="auth-scene-title">{heroStatement || copy.title}</h1>
-                        <p className="auth-scene-summary">{heroDescription || copy.description}</p>
-                    </div>
-                </section>
-
-                <section className="auth-scene-form" aria-label={copy.title}>
+                <section className="auth-scene-form" aria-label={title}>
                     <div className="auth-scene-form-inner">
-                        <h2 className="auth-scene-form-title">{copy.title}</h2>
-                        {!recovery ? <Tabs className="auth-scene-tabs" activeKey={activeTab} items={AUTH_TABS} onChange={(key) => navigate({ pathname: key === "register" ? "/register" : "/login", search: location.search })} /> : null}
-                        <div key={location.pathname} className="auth-scene-form-body">
-                            <Outlet />
+                        <header className="auth-scene-heading">
+                            <Link to="/" className="auth-scene-brand" aria-label={`${appearance.brandName} 首页`}>
+                                <BrandLogo theme={theme} className="auth-scene-mark" alt="" fallback={<span className="auth-scene-mark auth-scene-mark-fallback" />} />
+                            </Link>
+                            <h1 className="auth-scene-title">{title}</h1>
+                            <p className="auth-scene-summary">{heroDescription || copy.description}</p>
+                        </header>
+                        <div
+                            ref={motionRoot}
+                            className="auth-scene-form-body auth-scene-form-transition"
+                            data-auth-mode={authMode}
+                        >
+                            <Outlet context={{ onValidationError }} />
                         </div>
+                        {!recovery ? (
+                            <p className="auth-scene-switch">
+                                <span>{activeTab === "register" ? "已有账户？" : "还没有账户？"}</span>
+                                <Link className="auth-scene-link" to={{ pathname: activeTab === "register" ? "/login" : "/register", search: `?${switchSearch.toString()}` }}>
+                                    {activeTab === "register" ? "返回登录" : "立即注册"}
+                                </Link>
+                            </p>
+                        ) : null}
                     </div>
                 </section>
             </div>
 
-            <SiteComplianceFooter variant="auth" className="auth-scene-footer" />
+            <div className={`auth-scene-footer-shell${registerPasswordStep ? " is-register-password" : ""}`}>
+                {registerPasswordStep ? <span className="auth-scene-footer-brand">{appearance.brandName}</span> : <span aria-hidden="true" />}
+                <footer className="site-compliance-footer auth-scene-footer" aria-label="站点版权与备案信息">
+                    <span>© 2026 {appearance.brandName}</span>
+                </footer>
+                <a className="auth-scene-help" href="mailto:support@example.com">需要帮助?</a>
+            </div>
         </main>
     );
 }

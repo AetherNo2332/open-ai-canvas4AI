@@ -47,6 +47,7 @@
         "@tiptap/starter-kit": "3.28.0",
         "@uiw/react-codemirror": "^4.25.11",
         "@vidstack/react": "1.15.6",
+        "animejs": "^4.5.0",
         "antd": "^6.5.1",
         "axios": "^1.18.1",
         "class-variance-authority": "^0.7.1",

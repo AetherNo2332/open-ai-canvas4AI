@@ -257,6 +257,8 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
             },
             Checkbox: {
                 borderRadiusSM: skin.checkboxRadius ?? 4,
+                // Ant Design 6 paints the tick with colorWhite, independent of colorTextLightSolid.
+                colorWhite: color.checkFg,
                 colorBgContainer: color.controlSurface,
                 colorBgContainerDisabled: color.controlDisabledBg,
                 colorBorder: color.controlBorder,

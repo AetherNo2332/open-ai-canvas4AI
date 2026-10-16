@@ -2,10 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import { DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition, skinCSSVariables } from "../src/lib/skin-themes";
+import { getAntThemeConfig } from "../src/lib/app-theme";
 
 const source = (path: string) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
 
 describe("authentication follows the application theme", () => {
+    test("checkbox ticks use their skin's contrasting foreground in both modes", () => {
+        const skin = duplicateSkinDefinition(DEFAULT_CLASSIC_SKIN, ["classic"]);
+        for (const mode of ["light", "dark"] as const) {
+            skin.tokens[mode].primary = mode === "dark" ? "#f5f5f5" : "#171717";
+            skin.tokens[mode].primaryForeground = mode === "dark" ? "#131313" : "#ffffff";
+            const config = getAntThemeConfig(mode === "dark", skin);
+            expect(config.components?.Checkbox?.colorWhite).toBe(skin.tokens[mode].primaryForeground);
+        }
+    });
     test("classic login surfaces have distinct light and dark palettes", () => {
         // globals.css 在不同平台上可能是 LF 或 CRLF；先归一化再分段，
         // 否则按字面换行查找 .dark 段会返回 -1，把断言变成永远失败。
@@ -33,10 +43,9 @@ describe("authentication follows the application theme", () => {
         expect(scene).not.toContain("getAntThemeConfig");
         expect(scene).not.toContain("auth-card-dark");
         expect(scene.match(/<main className="([^"]+)"/)?.[1]).not.toContain("text-white");
-        expect(scene).toContain("auth-scene-media");
+        expect(scene).not.toContain("<video");
         expect(scene).toContain("auth-scene-title");
-        // The statement surface uses skin tokens even when no poster/video exists,
-        // and its logo must follow the resolved theme.
+        // The centered form keeps the configured brand logo in the resolved theme.
         expect(scene).toContain("useThemeStore((state) => state.theme)");
         expect(scene).toContain("<BrandLogo theme={theme}");
         expect(source("components/layout/app-providers.tsx")).toContain("getAntThemeConfig(dark, appearance.activeSkin)");
@@ -58,7 +67,7 @@ describe("authentication follows the application theme", () => {
         const css = source("pages/auth/auth-scene.css");
         expect(css).toContain("input:-webkit-autofill");
         expect(css).toContain("-webkit-text-fill-color: var(--foreground) !important");
-        expect(css).toContain("box-shadow: 0 0 0 1000px var(--background) inset !important");
+        expect(css).toContain("box-shadow: 0 0 0 1000px var(--auth-card-bg, var(--background)) inset !important");
         expect(css).toContain(".auth-scene-link:focus-visible");
         expect(css).toContain("outline: 2px solid var(--ring)");
     });

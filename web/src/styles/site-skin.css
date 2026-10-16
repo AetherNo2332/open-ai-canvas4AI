@@ -1,6 +1,23 @@
 /* Site geometry applies to every route and body portal, including lazy pages.
    Declared before Tailwind so legacy !important utility rules cannot replace it. */
 @layer skin-policy {
+    /* 用户确认的全站圆角模式。覆盖旧皮肤内联的直角值，明暗配色仍由皮肤管理。 */
+    html[data-skin] {
+        --radius: 0.75rem !important;
+        --control-radius: 12px !important;
+        --button-radius: 12px !important;
+        --input-radius: 12px !important;
+        --card-radius: 16px !important;
+        --overlay-radius: 16px !important;
+        --menu-radius: 8px !important;
+        --checkbox-radius: 4px !important;
+        --r-sm: 8px !important;
+        --r-md: 12px !important;
+        --r-lg: 16px !important;
+        --r-xl: 16px !important;
+        --r-2xl: 16px !important;
+    }
+
     html[data-skin],
     html[data-skin] :is(body, #root, .ant-app) {
         background: var(--site-canvas) !important;
@@ -34,12 +51,14 @@
     html[data-skin] body *::-webkit-scrollbar-thumb {
         background-color: var(--site-border) !important;
     }
-    html[data-skin] body :where(*),
-    html[data-skin] body :where(*)::before,
-    html[data-skin] body :where(*)::after {
+    /* 布局边界不能使用控件圆角，否则 overflow:hidden 会裁掉页面内容。 */
+    html[data-skin] :is(body, #root, .ant-app, .app-user-workspace, .app-workspace-shell, .app-workspace-main-row, .app-workspace-stage, .app-workspace-sidebar, .app-workspace-sidebar-nav, .app-workspace-topbar, .app-user-content, .canvas-home) {
+        border-radius: 0 !important;
+    }
+    html[data-skin] body :is(input:not([type="checkbox"]):not([type="radio"]), select, .ant-input:not(textarea), .ant-input-affix-wrapper, .ant-input-number, .ant-input-number-affix-wrapper, .ant-select-selector, .ant-picker, .auth-code-field) {
         border-radius: var(--input-radius) !important;
     }
-    html[data-skin] body :is(button, [role="button"], .ant-btn) {
+    html[data-skin] body :is(button, .ant-btn) {
         border-radius: var(--button-radius) !important;
     }
     html[data-skin] body :is(.ant-card, [class*="collection-card"], [class*="settings-section"], [class*="node-card"]) {
@@ -51,8 +70,17 @@
     html[data-skin] body :is(.ant-modal-container, .ant-modal-content, .ant-drawer-content, .ant-popover-container, .ant-popover-inner, .ant-dropdown-menu, .ant-tooltip-container, .ant-tooltip-inner, .ant-message-notice-content, .ant-notification-notice, [role="dialog"]) {
         border-radius: var(--overlay-radius) !important;
     }
-    html[data-skin] body :is(.ant-checkbox-inner, input[type="checkbox"]) {
+    html[data-skin] body :is(.ant-checkbox, .ant-checkbox-inner, input[type="checkbox"]) {
         border-radius: var(--checkbox-radius) !important;
+    }
+    /* Ant Design 6 uses this pseudo-element for the tick, not the checkbox shell. */
+    html[data-skin] body .ant-checkbox::after {
+        border-radius: 0 !important;
+    }
+
+    /* 认证页按已确认的登录设计固定为胶囊控件；其他路由继续使用皮肤几何配置。 */
+    html[data-skin] body .auth-scene-form-body :is(.ant-input, .ant-input-affix-wrapper, .ant-btn, .auth-code-field, .ant-segmented, .ant-segmented-item, .ant-segmented-thumb) {
+        border-radius: 999px !important;
     }
 
     html[data-skin] body .ant-switch {

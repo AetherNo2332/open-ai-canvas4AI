@@ -7,11 +7,13 @@ import { defaultCanvasAppearance, DEFAULT_CANVAS_BACKGROUND_MODE } from "../src/
 const source = (path: string) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
 
 describe("auth, workspace chrome, and new canvas defaults", () => {
-    test("keeps the login media scrim dark when the dark skin maps neutral text to a light color", () => {
-        const css = source("pages/auth/auth-scene.css");
-
-        expect(css).toContain(".dark .auth-scene-media-scrim");
-        expect(css).toContain("var(--site-canvas)");
+    test("auth has route-specific headings instead of the previous promotional media", () => {
+        const scene = source("pages/auth/auth-scene.tsx");
+        expect(scene).not.toContain("authHeroTitle");
+        expect(scene).not.toContain("authVideoUrl");
+        expect(scene).toContain('title: "创建你的账户"');
+        expect(scene).toContain('title: "重新设置密码"');
+        expect(scene).toContain("`登录到 ${appearance.brandName}`");
     });
 
     test("exposes a consistent GitHub icon link in the workspace top bar", () => {

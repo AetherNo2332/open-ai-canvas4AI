@@ -50,11 +50,6 @@ body.app-user-overlays.app-user-overlays {
         color: var(--foreground) !important;
     }
 
-    .app-user-workspace.app-user-workspace :where(*),
-    body.app-user-overlays.app-user-overlays :where(.ant-popover, .ant-dropdown, .ant-modal, .ant-drawer, .ant-message, .ant-notification, .ant-tooltip) :where(*) {
-        border-radius: var(--input-radius) !important;
-    }
-
     .app-user-workspace.app-user-workspace .canvas-generation-spinner {
         border-radius: 50% !important;
     }
