@@ -928,7 +928,9 @@ html:not(.dark) .creation-home .creation-chat-composer .creation-model-picker.ca
     height: 5px;
     flex: 0 0 5px;
     border-radius: 50%;
-    transition: transform 120ms ease, background-color 120ms ease;
+    transition:
+        transform 120ms ease,
+        background-color 120ms ease;
 }
 
 .model-picker-availability-pill.is-success {
@@ -1015,8 +1017,12 @@ html:not(.dark) .creation-home .creation-chat-composer .creation-model-picker.ca
     line-height: 1.5;
 }
 
-.model-picker-availability-popover-meta { margin-top: 4px; }
-.model-picker-availability-popover-foot { margin-top: 6px; }
+.model-picker-availability-popover-meta {
+    margin-top: 4px;
+}
+.model-picker-availability-popover-foot {
+    margin-top: 6px;
+}
 
 .model-picker-availability-trend {
     display: grid;
@@ -1031,12 +1037,22 @@ html:not(.dark) .creation-home .creation-chat-composer .creation-model-picker.ca
     background: #4aa96c;
 }
 
-.model-picker-availability-segment.is-insufficient { background: #d59b35; }
-.model-picker-availability-segment.is-no_data { background: color-mix(in srgb, currentColor 14%, transparent); }
+.model-picker-availability-segment.is-insufficient {
+    background: #d59b35;
+}
+.model-picker-availability-segment.is-no_data {
+    background: color-mix(in srgb, currentColor 14%, transparent);
+}
 
-.dark .model-picker-availability-popover { color: #f0f1f2; }
-.dark .model-picker-availability-popover-head span { color: #7bd598; }
-.dark .model-picker-availability-segment.is-no_data { background: rgba(255, 255, 255, .14); }
+.dark .model-picker-availability-popover {
+    color: #f0f1f2;
+}
+.dark .model-picker-availability-popover-head span {
+    color: #7bd598;
+}
+.dark .model-picker-availability-segment.is-no_data {
+    background: rgba(255, 255, 255, 0.14);
+}
 
 @media (prefers-reduced-motion: reduce) {
     .canvas-model-picker-option,

@@ -127,7 +127,10 @@ func TestServeResourceDeliveryUsesRequestedDownloadName(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/resource?download=1&downloadName=%E7%89%87%E5%A4%B4%E9%95%9C%E5%A4%B4.mp4", nil))
-	if got := recorder.Header().Get("Content-Disposition"); got != "attachment; filename=\"片头镜头.mp4\"" {
-		t.Fatalf("content-disposition = %q", got)
+	// mime.FormatMediaType 对非 ASCII 文件名输出 RFC 2231 扩展参数
+	// （filename*=utf-8''...），因此解析参数校验而不是比对原始报文。
+	dispositionType, params, err := mime.ParseMediaType(recorder.Header().Get("Content-Disposition"))
+	if err != nil || dispositionType != "attachment" || params["filename"] != "片头镜头.mp4" {
+		t.Fatalf("content-disposition = %q (err = %v)", recorder.Header().Get("Content-Disposition"), err)
 	}
 }

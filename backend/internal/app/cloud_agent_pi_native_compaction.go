@@ -96,7 +96,15 @@ func cloudAgentPrepareNativeCompaction(raw json.RawMessage, tokens int, source *
 		}
 	}
 	if index < 0 {
-		return nil, fmt.Errorf("Pi 保留切点不在当前可见消息边界")
+		// 分支里完全不存在的切点意味着 Pi 端边界元数据已过期，按建议性信息
+		// 处理，交由调用方回退服务端语义压缩；已在会话中登记、但不能作为
+		// 保留边界的条目（例如 toolResult）仍按错误拒绝。
+		for _, entry := range branch {
+			if entry.ID == prep.FirstKeptEntryID {
+				return nil, fmt.Errorf("Pi 保留切点不在当前可见消息边界")
+			}
+		}
+		return nil, errPiNativePreparationInvalid
 	}
 	previous := ""
 	for _, entry := range branch {
