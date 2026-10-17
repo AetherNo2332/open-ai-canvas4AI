@@ -138,17 +138,16 @@ test("uncertain upstream submission remains visible without entering ordinary ta
 });
 test("uncertain submission ends polling and text waiting with an explicit recoverable reason", async () => {
     const previous = apiClient.request;
-    const previousWindow = globalThis.window;
     const previousFetch = globalThis.fetch;
+    const previousSetTimeout = globalThis.setTimeout;
     let queries = 0;
-    Object.assign(globalThis, {
-        window: {
-            dispatchEvent: () => {},
-            setTimeout: () => {
-                throw new Error("unexpected polling");
-            },
-        },
-    });
+    let pollScheduled = 0;
+    // Linux 上给只读的全局 window 赋值会抛 TypeError；这里改为只替换真正会被轮询用到的
+    // 定时器入口（delay 走 window.setTimeout，而 window 就是 globalThis），并计数断言。
+    globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+        pollScheduled++;
+        return previousSetTimeout(...args);
+    }) as typeof setTimeout;
     globalThis.fetch = (async () => {
         throw new Error("unexpected text stream");
     }) as typeof fetch;
@@ -160,11 +159,13 @@ test("uncertain submission ends polling and text waiting with an explicit recove
         const error = await waitForGenerationTask("uncertain").catch((e) => e);
         expect(error).toMatchObject({ reason: "submission_uncertain", taskId: "uncertain" });
         expect(queries).toBe(1);
+        expect(pollScheduled).toBe(0);
         const text = await waitForGenerationTask("uncertain", { initialTask: uncertain, useTextEvents: true }).catch((e) => e);
         expect(text).toMatchObject({ reason: "submission_uncertain", taskId: "uncertain" });
+        expect(pollScheduled).toBe(0);
     } finally {
         apiClient.request = previous;
-        Object.assign(globalThis, { window: previousWindow });
         globalThis.fetch = previousFetch;
+        globalThis.setTimeout = previousSetTimeout;
     }
 });
