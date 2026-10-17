@@ -3,6 +3,13 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 首页动效与工作台侧栏视觉
+
+- 首页 `/`、`/create` 重写动效：标题/文案/入口/人物按 `aceternityMotion` token 分层入场（仅首次挂载），鼠标跟随光斑（`--primary` 派生、reduced-motion 不渲染），入口用 `HoverBorderGradient` 包裹做 hover 流光描边（新增 `idleRotate` 参数，首页关闭闲置转动）。人物保持静态原图，未恢复 AGENTS.md 禁止的旧首页元素。
+- 工作台侧栏全局视觉重排：保留品牌行→主导航→分组→账户卡骨架，硬编码颜色/圆角/阴影全部换为皮肤语义 token（`--site-*`/`--r-*`/`--menu-radius`/`--border`/`--elevation-card`），分组标题降为 11px 微标签，侧栏可交互构件补 `--ring` 键盘焦点，导航行 40px、侧栏 200px 几何基准不变。
+- [x] `cd web && bun run build` 通过。
+- [ ] 明暗主题、0px 直角皮肤、窄屏（320px）、侧栏折叠态与 reduced-motion 的浏览器视觉验收待用户确认。
+
 ## Agent L0/L1 工具下发
 
 - 已实现：建 run 时按画布库存和封闭意图词表冻结 advertised 具体工具；轮内不改表。空画布问答不下发分镜/批次/绘图/拆图层；有 `script` 节点或 prompt 含「分镜」则下发分镜三件套。Go 专项测试已通过。

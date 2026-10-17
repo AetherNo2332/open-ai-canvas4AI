@@ -11,6 +11,8 @@ type HoverBorderGradientProps<T extends ElementType = "button"> = {
     className?: string;
     duration?: number;
     clockwise?: boolean;
+    /** 闲置时是否循环转动光斑方向；默认 true 保持原行为，改为 false 时仅在 hover 内播放。 */
+    idleRotate?: boolean;
     children?: ReactNode;
 } & Omit<ComponentPropsWithoutRef<T>, "as" | "children">;
 
@@ -30,19 +32,19 @@ function rotateDirection(current: Direction, clockwise: boolean): Direction {
 }
 
 // Aceternity Hover Border Gradient：中性墨色描边，不用彩色高光。
-export function HoverBorderGradient<T extends ElementType = "button">({ children, containerClassName, className, as, duration = 1, clockwise = true, onMouseEnter, onMouseLeave, ...props }: HoverBorderGradientProps<T>) {
+export function HoverBorderGradient<T extends ElementType = "button">({ children, containerClassName, className, as, duration = 1, clockwise = true, idleRotate = true, onMouseEnter, onMouseLeave, ...props }: HoverBorderGradientProps<T>) {
     const Tag = (as || "button") as any;
     const reducedMotion = useReducedMotion();
     const [hovered, setHovered] = useState(false);
     const [direction, setDirection] = useState<Direction>("TOP");
 
     useEffect(() => {
-        if (reducedMotion || hovered) return;
+        if (!idleRotate || reducedMotion || hovered) return;
         const interval = window.setInterval(() => {
             setDirection((current) => rotateDirection(current, clockwise));
         }, duration * 1000);
         return () => window.clearInterval(interval);
-    }, [clockwise, duration, hovered, reducedMotion]);
+    }, [clockwise, duration, hovered, idleRotate, reducedMotion]);
 
     return (
         <Tag
