@@ -727,17 +727,22 @@ async function saveFailureCloseGuard(cdp, baseUrl) {
     const modalShown = await cdp.poll(`!!document.querySelector('.ant-modal-confirm') && (document.body.innerText || "").includes('留在预演台')`, "close confirm modal", 40000);
     assert(modalShown, "F5 close is guarded by a confirm dialog, not silent exit");
 
-    const stayClicked = await cdp.clickText("留在预演台");
-    if (!stayClicked) throw new Error("F: 留在预演台 button not clickable");
-    const modalGone = await cdp.poll(
-        `![...document.querySelectorAll('.ant-modal-confirm')].some((modal) => {
+    // 确认框有入场/离场动画，且遮罩 mask.closable=false：首击若落在动画中的遮罩上会完全无效。
+    // 这里允许"点一次不生效再审一次"，两次都没让对话框消失才算失败（判据不放宽）。
+    const confirmGoneExpression = `![...document.querySelectorAll('.ant-modal-confirm')].some((modal) => {
             const rect = modal.getBoundingClientRect();
             const style = getComputedStyle(modal);
             return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0;
-        })`,
-        "modal dismissed",
-        20000,
-    );
+        })`;
+    let modalGone = false;
+    for (let attempt = 1; attempt <= 2 && !modalGone; attempt++) {
+        const stayClicked = await cdp.clickText("留在预演台");
+        if (!stayClicked) {
+            if (attempt === 1) throw new Error("F: 留在预演台 button not clickable");
+            break;
+        }
+        modalGone = await cdp.poll(confirmGoneExpression, `modal dismissed (attempt ${attempt})`, attempt === 1 ? 10000 : 20000);
+    }
     assert(modalGone, "F6 confirm dialog dismissed after choosing 留在预演台");
 
     await sleep(1000);
