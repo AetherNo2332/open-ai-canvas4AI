@@ -19,10 +19,12 @@
    ------------------------------------------------------------------------- */
 :root {
 
-    /* --- 0. 字体（composio：Inter + 开源等宽；@theme inline 自引用解析点）--- */
-    --font-sans: "Inter Variable", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+    /* --- 0. 字体（自托管 Mona Sans + 思源黑体 + 开源等宽；@theme inline 自引用解析点；
+           @font-face 声明见文件底部 fonts 区块）--- */
+    --font-home: "Mona Sans", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+    --font-sans: var(--font-home);
     --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    --font-heading: "Inter Variable", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+    --font-heading: var(--font-home);
     /* --- 1. 色彩（oklch 色板）--- */
     --color-neutral-0: oklch(1 0 0);
     --color-neutral-50: oklch(0.985 0 0);
@@ -2412,7 +2414,7 @@
         overflow: hidden;
         background: var(--background);
         color: var(--foreground);
-        font-family: "IBM Plex Sans Variable", "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+        font-family: var(--font-home);
     }
 
     .full-screen-loader-panel {
@@ -15375,7 +15377,7 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap { box-shadow: 0 
     padding: 2px 5px;
     background: var(--primary);
     color: var(--foreground);
-    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--font-sans);
     font-size: 9px;
     font-weight: 700;
     letter-spacing: .035em;
@@ -18548,4 +18550,25 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap { box-shadow: 0 
     border: 0 !important;
     background: color-mix(in srgb, var(--popover-foreground) 10%, var(--popover)) !important;
     color: var(--popover-foreground) !important;
+}
+
+/* -------------------------------------------------------------------------
+   Fonts: self-hosted Mona Sans (Latin) + Source Han Sans SC (CJK), used site-wide
+   as the unified sans stack (see token --font-home). Files live under /fonts/home/
+   with OFL license copies; font-display: swap renders fallback first.
+   ------------------------------------------------------------------------- */
+@font-face {
+    font-family: "Mona Sans";
+    src: url("/fonts/home/mona-sans-variable.woff2") format("woff2");
+    font-style: normal;
+    font-weight: 200 900;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Source Han Sans SC";
+    src: url("/fonts/home/source-han-sans-cn-variable.woff2") format("woff2");
+    font-style: normal;
+    font-weight: 250 900;
+    font-display: swap;
 }

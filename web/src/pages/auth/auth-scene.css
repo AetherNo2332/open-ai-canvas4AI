@@ -11,7 +11,7 @@
     overscroll-behavior: contain;
     background: #fff;
     color: var(--foreground);
-    font-family: "IBM Plex Sans Variable", "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-family: var(--font-home);
 }
 
 .dark .auth-scene {
