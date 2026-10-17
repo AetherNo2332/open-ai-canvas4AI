@@ -3,6 +3,18 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 用户自助修改密码（2026-10-18）
+
+- 已实现：新增 `POST /api/auth/password`（入参 `{ currentPassword, newPassword }`），登录态校验当前密码后写入新密码；同一事务内更新 `password_hash` 并删除该用户其他 `auth_sessions`，只保留发起改密的当前会话。新密码至少 8 位、不得与旧密码相同；无本地密码的第三方登录账号拒绝改密并提示改用邮箱验证码重置；按用户限流 10 次/小时。
+- 已实现：设置页新增「账户安全」分区（`/settings?section=account`），展示用户名与邮箱，提供当前密码、新密码、确认新密码三栏表单；成功后清空表单并提示「其他设备需要重新登录」。
+- 已实现：`openapi.yaml` 补 `/auth/password`，`CHANGELOG.md` 记入 v1.6.0 条目，`AGENTS.md` 第 5 节补充密码写路径约定（事务内更新密码并处理会话，OAuth 账号不得空密码改密）。
+- [x] backend `go test ./internal/auth`（改密 5 个用例：保留当前会话并清理其他会话、旧密码错误、长度不足与新旧相同、无密码账号、禁用账号）、`go test ./internal/handler ./internal/repository`、`go build ./...`、`go vet` 通过。
+- [x] web `tsc --noEmit`、改动文件 `eslint`、`bun test test/account-security.test.ts test/password-reset.test.ts` 通过。
+- [ ] 浏览器验收待用户确认：`/settings?section=account` 在明暗皮肤与窄屏下的表单布局、错误提示与焦点样式；改密成功后当前设备保持登录、另一浏览器或设备的下一次请求返回登录失效。
+- [ ] 错误路径文案验收：当前密码错误、新密码少于 8 位、两次输入不一致应就地提示，不能出现 500 或静默失败。
+- [ ] 第三方登录账号（无本地密码）提交时应看到「当前账号没有密码，请使用邮箱验证码重置密码后再修改」，且不产生任何密码写入。
+- [ ] 限流验收：同一账号 1 小时内第 11 次提交返回 429 与 `Retry-After`，且不影响登录、会话查询等其他接口。
+
 ## Agent 上下文占用治理（2026-10-18）
 
 - 已修复：`context_pressure` 的「个人记忆」分段越界。`cloudAgentRecordMemorySegment` 原先取 `system[index:]`（记忆标记到系统提示末尾），而 Node 会把 Harness 工作区文件拼在记忆块之后，导致 3040 实测该分段 37.6 KB / 11,814 tokens 里只有 50 字节是记忆。现在按 `## Workspace ` 段标题截断（`cloudAgentMemorySegmentText`），并把每个真实装配进信封的工作区文件登记为 `workspace:<name>` 独立分段（`cloudAgentRecordHarnessSegments`，被装配层跳过的文件不计）。
