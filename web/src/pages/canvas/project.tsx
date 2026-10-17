@@ -36,7 +36,6 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { getNodeSpec } from "@/constant/canvas";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
-import { CanvasCloudAgentPanel } from "@/components/canvas/canvas-cloud-agent-panel";
 import { CanvasActiveTaskPanel } from "@/components/canvas/canvas-active-task-panel";
 import { CanvasProjectSidebar } from "@/components/canvas/canvas-project-sidebar";
 import { CanvasProjectAssetModal } from "@/components/canvas/canvas-project-asset-modal";
@@ -77,6 +76,7 @@ import { batchReferenceColumns, promoteLegacyBatchTableSize } from "@/lib/canvas
 import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { CanvasPrevisNodePanel } from "@/components/canvas/previs/canvas-previs-node-panel";
 import { CanvasVersionCompareModal } from "@/components/canvas/canvas-version-compare-modal";
+import { CanvasCloudAgentPanel } from "@/components/canvas/canvas-cloud-agent-panel";
 import { useFocusMode } from "@/hooks/use-focus-mode";
 import { connectCanvasTextMention } from "@/lib/canvas/canvas-text-mention";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
@@ -92,8 +92,7 @@ import {
     replaceCanvasReferenceMentions,
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
-import { buildImageToPrevisAgentPrompt } from "@/lib/canvas/image-to-previs-agent";
-import { isPrevisWorkstationNode } from "@/lib/canvas/previs/previs-node";
+import { buildImageToDirectorAgentRequest } from "@/lib/canvas/image-to-director-agent";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay, type PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { CanvasOverlayLayerContainer, CanvasOverlayLayerProvider } from "@/components/canvas/canvas-overlay-layer";
 import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-graphics-layer";
@@ -178,7 +177,7 @@ import type { ReferenceImage } from "@/types/image";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
 import { canvasEntityReconciler } from "@/lib/canvas/canvas-entity-reconciliation";
 
-const CanvasPrevisWorkbench = lazy(() => import("@/components/canvas/previs/canvas-previs-workbench").then((module) => ({ default: module.CanvasPrevisWorkbench })));
+const CanvasPrevisWorkbench = lazy(() => import("@/components/canvas/previs/director-desk-previs-workbench").then((module) => ({ default: module.DirectorDeskPrevisWorkbench })));
 const CanvasDrawingEditorModal = lazy(() => import("@/components/canvas/canvas-drawing-editor-modal").then((module) => ({ default: module.CanvasDrawingEditorModal })));
 
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -407,6 +406,7 @@ function InfiniteCanvasPage() {
     );
 
     const { getHistoryCleanupContext, historyPausedRef, historyState, redoCanvas, resetHistory, undoCanvas } = useCanvasHistory({
+        projectId,
         projectLoaded,
         nodes,
         connections,
@@ -482,23 +482,26 @@ function InfiniteCanvasPage() {
         openAgent();
         setContextMenu(null);
     }, [agentMentionReferences, openAgent]);
-
-    const sendImageToPrevisAgent = useCallback((node: CanvasNodeData) => {
-        if (node.type !== CanvasNodeType.Image) return;
-        const reference = agentMentionReferences.find((item) => item.nodeId === node.id && item.kind === "image");
+    const startImageToDirectorAgent = useCallback((nodeId: string) => {
+        const reference = agentMentionReferences.find((item) => item.nodeId === nodeId && item.kind === "image");
         if (!reference) {
-            message.warning("这张图片暂时没有可供 Agent 引用的画布资源");
+            message.error("请选择已保存的图片节点");
             return;
         }
-        if (!selectedNodeIdsRef.current.has(node.id)) {
-            const selection = new Set([node.id]);
-            selectedNodeIdsRef.current = selection;
-            setSelectedNodeIds(selection);
+        try {
+            const request = buildImageToDirectorAgentRequest({
+                canvasId: projectId,
+                reference,
+                config: effectiveConfig,
+                preferredModel: effectiveConfig.model,
+            });
+            setAgentPrefillPrompt(request.prompt);
+            openAgent();
+            setContextMenu(null);
+        } catch (error) {
+            message.error(error instanceof Error && error.message === "director_image_model_unsupported" ? "当前模型不支持图片输入" : "图片到导演预演入口不可用");
         }
-        setAgentPrefillPrompt(buildImageToPrevisAgentPrompt(reference));
-        openAgent();
-        setContextMenu(null);
-    }, [agentMentionReferences, message, openAgent]);
+    }, [agentMentionReferences, effectiveConfig, message, openAgent, projectId]);
     // 修复素材关联仍遵守当前画布版本，不能替用户确认覆盖云端的新内容。
     const confirmForceSaveCanvas = useCallback(() => {
         modal.confirm({
@@ -1669,7 +1672,7 @@ function InfiniteCanvasPage() {
         setStylePickerOpen,
     });
 
-    const { applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene } = useCanvasPrevis({
+    const { applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene, refreshAfterExport } = useCanvasPrevis({
         projectId,
         domainProjectId: currentProject?.projectId,
         previsNodeId,
@@ -2394,7 +2397,7 @@ function InfiniteCanvasPage() {
                     />
                 );
             }
-            if (isPrevisWorkstationNode(contentNode)) {
+            if (contentNode.metadata?.previsSceneId) {
                 return (
                     <CanvasPrevisNodePanel
                         node={contentNode}
@@ -2931,7 +2934,7 @@ function InfiniteCanvasPage() {
                         dialogNode.type !== CanvasNodeType.Drawing &&
                         dialogNode.type !== CanvasNodeType.Panorama &&
                         !(dialogNode.metadata?.workflowKind === "character" && dialogNode.metadata.characterAssetId) &&
-                        !isPrevisWorkstationNode(dialogNode) &&
+                        !dialogNode.metadata?.previsSceneId &&
                         !selectionBox &&
                         !isCanvasNodeMoving ? (
                             <CanvasNodePanelOverlay
@@ -3058,7 +3061,6 @@ function InfiniteCanvasPage() {
                                 setLightingNodeId((current) => (current === node.id ? null : node.id));
                             }}
                             onPanorama={openPanoramaConfig}
-                            onPrevis={sendImageToPrevisAgent}
                             onViewImage={(node) => setPreviewNodeId(node.id)}
                             onExtractVideoFrames={openVideoFrameExtractor}
                             onExtractAudioFromVideo={(node) => void extractAudioFromVideo(node)}
@@ -3148,6 +3150,9 @@ function InfiniteCanvasPage() {
                             onCopySelection={copySelectedNodes}
                             onDeleteSelection={() => deleteNodes(selectedNodeIds)}
                             onSendToAgent={() => sendSelectionToAgent(contextMenu?.type === "node" && selectedNodeIds.size <= 1 ? contextMenu.nodeId : undefined)}
+                            onImageToDirector={() => {
+                                if (contextMenu?.type === "node") startImageToDirectorAgent(contextMenu.nodeId);
+                            }}
                         />
 
                         <CanvasUploadModal open={uploadModalOpen} onClose={closeUploadModal} onUpload={handleUploadFiles} />
@@ -3340,7 +3345,9 @@ function InfiniteCanvasPage() {
                                     onApply={applyPrevisOutput}
                                     onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
                                     onFlush={() => flushCanvasStorePersistence()}
+                                    onCanvasRefresh={refreshAfterExport}
                                     onboardingScope={previsOnboardingScope}
+                                    onOpenAgent={openAgent}
                                 />
                             </Suspense>
                         ) : null}
@@ -3426,7 +3433,7 @@ function InfiniteCanvasPage() {
                         />
                     </section>
                     <div className={versions.open ? "hidden" : "contents"}>
-                        <CanvasCloudAgentPanel canvasId={projectId} floating={Boolean(previsNodeId && activePrevisScene)} domainProjectId={currentProject?.projectId} nodeCount={nodes.length} selectedNodeIds={Array.from(selectedNodeIds)} references={agentMentionReferences} prefillPrompt={agentPrefillPrompt} open={assistantOpen} onOpen={openAgent} onCollapse={closeAgent} onFocusNode={(nodeId) => {
+                        <CanvasCloudAgentPanel canvasId={projectId} domainProjectId={currentProject?.projectId} nodeCount={nodes.length} selectedNodeIds={Array.from(selectedNodeIds)} references={agentMentionReferences} prefillPrompt={agentPrefillPrompt} open={assistantOpen} floating={Boolean(previsNodeId)} launcher={!previsNodeId} onOpen={openAgent} onCollapse={closeAgent} onFocusNode={(nodeId) => {
                             if (!nodesRef.current.some((node) => node.id === nodeId)) { message.info("该节点已删除或尚未同步到画布"); return; }
                             focusCanvasNode(nodeId);
                         }} />

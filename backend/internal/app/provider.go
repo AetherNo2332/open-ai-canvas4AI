@@ -910,7 +910,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		channelID = systemChannelIDFromBaseURL(config.BaseURL)
 	}
 	if channelID == "" {
-		if _, err := ValidateOutboundURL(config.BaseURL); err != nil {
+		if _, err := s.ValidateChannelOutboundURL(config.BaseURL); err != nil {
 			return providerConfig{}, err
 		}
 		return config, nil
@@ -939,7 +939,7 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 			modelKey = models[0]
 		}
 	}
-	if _, err := ValidateOutboundURL(channel.BaseURL); err != nil {
+	if _, err := s.ValidateChannelOutboundURL(channel.BaseURL); err != nil {
 		return providerConfig{}, err
 	}
 	config.ChannelID = channel.ID

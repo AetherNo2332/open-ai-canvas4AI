@@ -20,7 +20,10 @@ docker compose --env-file .local/agent-parity.env -p canvas-agent-parity -f dock
 docker compose --env-file .local/agent-parity.env -p canvas-agent-parity -f docker-compose.agent-parity.yml build
 docker compose --env-file .local/agent-parity.env -p canvas-agent-parity -f docker-compose.agent-parity.yml up -d --no-build
 python scripts/verify-agent-canvas-parity.py --restart
+python scripts/verify-agent-tool-disclosure.py
 ```
+
+`verify-agent-tool-disclosure.py` checks L0/L1 advertised tools via the stub `availableTools` field. It uses the same `canvas-agent-parity` project and must not change 3030.
 
 Before `up`, rebuild or restart, review the four service names, dedicated images,
 3040 binding and volume. `--restart` restarts only this project's worker during

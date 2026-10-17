@@ -4,11 +4,6 @@ import { getActiveUserScope } from "@/lib/user-scope";
 import type { AgentPermissionMode, AgentRun } from "@/services/api/agent";
 import type { AgentContextUsage } from "@/lib/canvas/agent-context-usage";
 
-export type CloudAgentMessagePresentation = {
-    displayText?: string;
-    canvasReferenceNodeId?: string;
-};
-
 export type CloudAgentConversationMessage = {
     id: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
@@ -45,7 +40,7 @@ type CloudAgentConversationDocument = {
     conversations: CloudAgentConversation[];
 };
 
-export type CloudAgentPendingSubmission = CloudAgentMessagePresentation & {
+export type CloudAgentPendingSubmission = {
     fingerprint: string;
     key: string;
     request?: import("@/services/api/agent").CreateAgentRunInput;
@@ -97,7 +92,7 @@ export async function loadCloudAgentPendingSubmission(canvasId: string, conversa
         if (parsed.request !== undefined && (!parsed.request || parsed.request.idempotencyKey !== parsed.key || parsed.request.canvasId !== canvasId || typeof parsed.request.prompt !== "string")) throw new Error("invalid request");
         if (parsed.parentRunId !== undefined && typeof parsed.parentRunId !== "string") throw new Error("invalid parent");
         if (parsed.messageId !== undefined && typeof parsed.messageId !== "string") throw new Error("invalid message");
-        return { fingerprint: parsed.fingerprint, key: parsed.key, request: parsed.request, parentRunId: parsed.parentRunId, messageId: parsed.messageId, displayText: parsed.displayText, canvasReferenceNodeId: parsed.canvasReferenceNodeId } satisfies CloudAgentPendingSubmission;
+        return { fingerprint: parsed.fingerprint, key: parsed.key, request: parsed.request, parentRunId: parsed.parentRunId, messageId: parsed.messageId } satisfies CloudAgentPendingSubmission;
     } catch {
         throw new Error("待确认请求记录损坏，已暂停本对话发送；请先在任务中心核对原运行，不要直接重复生成");
     }

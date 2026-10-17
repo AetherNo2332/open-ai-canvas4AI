@@ -22,6 +22,9 @@ export const PREVIS_DIAGNOSTIC_CODES = [
     "PREVIS_SAVE_RETRY_RECOVERED",
     "PREVIS_SAVE_DRAFT_UNAVAILABLE",
     "PREVIS_CLOSE_BLOCKED",
+    "PREVIS_DIRECTOR_COMMIT_CONFLICT",
+    "PREVIS_DIRECTOR_EXPORT_FAILED",
+    "PREVIS_RUNTIME_INIT_FAILED",
 ] as const;
 
 export type PrevisDiagnosticCode = (typeof PREVIS_DIAGNOSTIC_CODES)[number];
@@ -41,6 +44,9 @@ const MESSAGES: Record<PrevisDiagnosticCode, string> = {
     PREVIS_SAVE_RETRY_RECOVERED: "预演台场景重试保存成功",
     PREVIS_SAVE_DRAFT_UNAVAILABLE: "预演台本地草稿不可用",
     PREVIS_CLOSE_BLOCKED: "预演台关闭被阻止",
+    PREVIS_DIRECTOR_COMMIT_CONFLICT: "预演台 DirectorDesk 提交未进入保存",
+    PREVIS_DIRECTOR_EXPORT_FAILED: "预演台导出写回失败",
+    PREVIS_RUNTIME_INIT_FAILED: "DirectorDesk 运行时初始化失败",
 };
 
 const LEVELS: Record<PrevisDiagnosticCode, "info" | "warning" | "error"> = {
@@ -55,6 +61,9 @@ const LEVELS: Record<PrevisDiagnosticCode, "info" | "warning" | "error"> = {
     PREVIS_SAVE_RETRY_RECOVERED: "info",
     PREVIS_SAVE_DRAFT_UNAVAILABLE: "error",
     PREVIS_CLOSE_BLOCKED: "warning",
+    PREVIS_DIRECTOR_COMMIT_CONFLICT: "warning",
+    PREVIS_DIRECTOR_EXPORT_FAILED: "error",
+    PREVIS_RUNTIME_INIT_FAILED: "error",
 };
 
 /** 对象种类枚举：只表达形态，绝不表达名称或素材来源。 */
@@ -86,6 +95,10 @@ export type PrevisDiagnosticFields = {
     draftStored?: boolean;
     /** 是否由用户显式触发（区分自动重试与手动重试）。 */
     userInitiated?: boolean;
+    /** 提交/请求关联 id：safe-id 校验,用于把诊断关联到具体提交。 */
+    requestId?: string;
+    /** 运行时版本(headerVersion 形态):semver 校验,用于跨版本行为对比。 */
+    runtimeVersion?: string;
 };
 
 export type PrevisDiagnosticEvent = {
@@ -96,6 +109,17 @@ export type PrevisDiagnosticEvent = {
 };
 
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,96}$/;
+const RUNTIME_VERSION = /^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$/;
+const RUNTIME_VERSION_MAX = 64;
+
+/** semver 形态的运行时版本：只允许 x.y.z 与内部分支后缀，绝不接收自由文本。
+ *  与 safe-id 不同,版本不接受首尾空白——"0.4.11 " 会被拒绝,避免把带空格的版本当作有效值
+ *  进入去重签名(同一版本的不同形态会被当成两个版本)。 */
+function safeRuntimeVersion(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    if (value.length > RUNTIME_VERSION_MAX) return undefined;
+    return RUNTIME_VERSION.test(value) ? value : undefined;
+}
 
 export function isPrevisDiagnosticCode(value: unknown): value is PrevisDiagnosticCode {
     return typeof value === "string" && CODE_SET.has(value);
@@ -147,6 +171,12 @@ export function projectPrevisDiagnostic(code: unknown, fields: unknown): PrevisD
     if (typeof source.draftStored === "boolean") safe.draftStored = source.draftStored;
     if (typeof source.userInitiated === "boolean") safe.userInitiated = source.userInitiated;
 
+    const requestId = safePrevisId(source.requestId);
+    if (requestId) safe.requestId = requestId;
+
+    const runtimeVersion = safeRuntimeVersion(source.runtimeVersion);
+    if (runtimeVersion) safe.runtimeVersion = runtimeVersion;
+
     return { code, level: LEVELS[code], message: MESSAGES[code], fields: safe };
 }
 
@@ -167,6 +197,8 @@ export function formatPrevisDiagnosticCode(event: PrevisDiagnosticEvent): string
     if (event.fields.revision !== undefined) parts.push("revision=" + event.fields.revision);
     if (event.fields.draftStored !== undefined) parts.push("draft=" + (event.fields.draftStored ? "1" : "0"));
     if (event.fields.userInitiated !== undefined) parts.push("user=" + (event.fields.userInitiated ? "1" : "0"));
+    if (event.fields.requestId) parts.push("request=" + event.fields.requestId);
+    if (event.fields.runtimeVersion) parts.push("runtime=" + event.fields.runtimeVersion);
     return parts.join(" ");
 }
 

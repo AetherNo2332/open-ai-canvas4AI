@@ -10,7 +10,6 @@ import { producedModelCandidateForGeneration } from "@/lib/canvas/produced-model
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
-import { canvasCameraControlSnapshot } from "./canvas-generation-camera";
 
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -43,7 +42,7 @@ export async function executeVideoGeneration({
     const videoId = reuseSourceNode ? nodeId : nanoid();
     const versionRootId = isExistingVideoNode && sourceNode ? sourceNode.metadata?.versionOfNodeId || sourceNode.id : undefined;
     const parent = sourceNode?.position || { x: 0, y: 0 };
-    const videoGenerationMetadata = { ...buildVideoGenerationMetadata(sourceNode, generationContext, generationConfig), ...canvasCameraControlSnapshot(sourceNode?.metadata) };
+    const videoGenerationMetadata = buildVideoGenerationMetadata(sourceNode, generationContext, generationConfig);
     const videoNode: CanvasNodeData = {
         id: videoId,
         type: CanvasNodeType.Video,

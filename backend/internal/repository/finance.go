@@ -310,7 +310,7 @@ func (r *Repository) DeleteChannelModels(channelID string, ids []string, now tim
 			return ErrChannelModelInUse
 		}
 		if err := tx.Model(&model.Task{}).
-			Where("channel_model_id IN ? AND status IN ?", ids, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+			Where("channel_model_id IN ? AND status IN ?", ids, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}).
 			Count(&activeReferences).Error; err != nil {
 			return err
 		}
@@ -636,7 +636,7 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 
 func enforceActiveTaskLimit(tx *gorm.DB, userID string, activeTaskLimit int) error {
 	var count int64
-	if err := tx.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error; err != nil {
+	if err := tx.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}).Count(&count).Error; err != nil {
 		return err
 	}
 	if count >= int64(activeTaskLimit) {

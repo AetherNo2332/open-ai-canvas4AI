@@ -50,53 +50,55 @@ func (w *taskWorkerCoordinator) start(ctx context.Context) {
 	s := w.service
 	s.startTextReplayCleanup(ctx)
 	s.startProviderCancellationReconciliation(ctx)
-	s.startBillingReviewAudit(ctx)
-	s.startAgentMemoryCompactScheduler()
-	s.startAgentToolOperations()
-	// Pi 是唯一 Agent 循环，由 agent/ 里的独立 Node worker 领取 engine=pi 运行。
-	// 这里不再启动旧 Go 调度扫描，但必须保留一个**看门狗**：worker 崩溃或配置错误时，
-	// 运行会被反复领取却永远不终结，前端表现为"Agent 输出完了却一直运行中"。
-	s.runWorkerLoop(func(ctx context.Context) {
-		ticker := time.NewTicker(60 * time.Second)
-		defer ticker.Stop()
-		for {
-			if ctx.Err() != nil {
-				return
+	if !s.desktopMode {
+		s.startBillingReviewAudit(ctx)
+		s.startAgentMemoryCompactScheduler()
+		s.startAgentToolOperations()
+		// Pi 是唯一 Agent 循环，由 agent/ 里的独立 Node worker 领取 engine=pi 运行。
+		// 这里不再启动旧 Go 调度扫描，但必须保留一个**看门狗**：worker 崩溃或配置错误时，
+		// 运行会被反复领取却永远不终结，前端表现为"Agent 输出完了却一直运行中"。
+		s.runWorkerLoop(func(ctx context.Context) {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				if !s.IsDraining() {
+					if err := s.ReconcileDynamicSubagents(ctx); err != nil {
+						log.Printf("subagent reconciliation: %v", err)
+					}
+					if _, err := s.SweepWorkerRecoveries(); err != nil {
+						log.Printf("pi recovery sweep: %v", err)
+					}
+					if swept, err := s.SweepStalledPiAgentRuns(); err != nil {
+						log.Printf("pi stalled sweep: %v", err)
+					} else if swept > 0 {
+						log.Printf("pi stalled sweep: terminated %d run(s)", swept)
+					}
+					// 从未被领取的运行是**部署可用性**问题（没起 agent / token 不一致 /
+					// 容器在重建），与 worker 崩溃语义不同，所以用更长阈值与独立原因分开清扫。
+					if swept, err := s.SweepUnclaimedPiAgentRuns(); err != nil {
+						log.Printf("pi unclaimed sweep: %v", err)
+					} else if swept > 0 {
+						log.Printf("pi unclaimed sweep: terminated %d run(s)", swept)
+					}
+					// 清扫只写终态与 CleanupPending；真正的退预留、取消子任务、释放租约
+					// 在这里补做。少了这一步，看门狗停掉的运行会把占位预留冻在账上。
+					if cleaned, err := s.DrainPendingPiAgentCleanups(); err != nil {
+						log.Printf("pi cleanup drain: %v", err)
+					} else if cleaned > 0 {
+						log.Printf("pi cleanup drain: finished %d run(s)", cleaned)
+					}
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
 			}
-			if !s.IsDraining() {
-				if err := s.ReconcileDynamicSubagents(ctx); err != nil {
-					log.Printf("subagent reconciliation: %v", err)
-				}
-				if _, err := s.SweepWorkerRecoveries(); err != nil {
-					log.Printf("pi recovery sweep: %v", err)
-				}
-				if swept, err := s.SweepStalledPiAgentRuns(); err != nil {
-					log.Printf("pi stalled sweep: %v", err)
-				} else if swept > 0 {
-					log.Printf("pi stalled sweep: terminated %d run(s)", swept)
-				}
-				// 从未被领取的运行是**部署可用性**问题（没起 agent / token 不一致 /
-				// 容器在重建），与 worker 崩溃语义不同，所以用更长阈值与独立原因分开清扫。
-				if swept, err := s.SweepUnclaimedPiAgentRuns(); err != nil {
-					log.Printf("pi unclaimed sweep: %v", err)
-				} else if swept > 0 {
-					log.Printf("pi unclaimed sweep: terminated %d run(s)", swept)
-				}
-				// 清扫只写终态与 CleanupPending；真正的退预留、取消子任务、释放租约
-				// 在这里补做。少了这一步，看门狗停掉的运行会把占位预留冻在账上。
-				if cleaned, err := s.DrainPendingPiAgentCleanups(); err != nil {
-					log.Printf("pi cleanup drain: %v", err)
-				} else if cleaned > 0 {
-					log.Printf("pi cleanup drain: finished %d run(s)", cleaned)
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	})
+		})
+	}
 	s.runWorkerLoop(func(ctx context.Context) {
 		slots := make(chan struct{}, maxChannelConcurrencyLimit)
 		dispatch := func() {

@@ -338,6 +338,25 @@ export function skinColorContrast(a: string, b: string) {
     return (lighter + 0.05) / (darker + 0.05);
 }
 
+// 旧的派生主题可能把次要文字存成接近禁用态的浅灰；只校正渲染值，不改写管理员配置。
+function readableSkinColors(color: SkinModeTokens, mode: SkinThemeMode): SkinModeTokens {
+    if (mode !== "light") return color;
+    const surfaces = [color.canvas, color.surface, color.surfaceSubtle, color.surfaceRaised, color.overlay, color.adminBackground, color.adminSurface, color.adminSubtle, color.adminStrong];
+    const readable = (foreground: string, backgrounds: string[], minimum: number) => {
+        for (let step = 0; step <= 20; step += 1) {
+            const candidate = step === 0 ? foreground : mixSkinColors(foreground, color.text, step / 20);
+            if (backgrounds.every((background) => skinColorContrast(candidate, background) >= minimum)) return candidate;
+        }
+        return color.text;
+    };
+    return {
+        ...color,
+        textMuted: readable(color.textMuted, surfaces, 4.5),
+        iconMuted: readable(color.iconMuted, surfaces, 3),
+        authMuted: readable(color.authMuted, [color.authBackground, color.authPanel, color.authCard, "#ffffff"], 4.5),
+    };
+}
+
 export function skinColorChroma(hex: string) {
     const channels = hexChannels(hex);
     return Math.max(...channels) - Math.min(...channels);
@@ -905,7 +924,7 @@ export function normalizeSkinID(value: unknown) {
 
 export function getSkinAntOverrides(value: unknown, mode: SkinThemeMode): Partial<SkinAntOverrides> {
     const skin = normalizeSkinDefinition(value);
-    const color = skin.tokens[mode];
+    const color = readableSkinColors(skin.tokens[mode], mode);
     const component = skin.tokens.components;
     return {
         text: color.text,
@@ -1006,7 +1025,7 @@ function skinButtonCSSVariables(skin: SkinDefinition, mode: SkinThemeMode) {
 }
 
 export function skinCSSVariables(skin: SkinDefinition, mode: SkinThemeMode): Record<string, string> {
-    const color = skin.tokens[mode];
+    const color = readableSkinColors(skin.tokens[mode], mode);
     const component = skin.tokens.components;
     const shadows = skinShadowVariables(component.shadowStyle, mode);
     return {

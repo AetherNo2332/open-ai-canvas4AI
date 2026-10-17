@@ -14,7 +14,7 @@
     --welcome-z-copy: 3;
     background: var(--welcome-black);
     color: var(--welcome-paper);
-    font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: var(--font-home);
     font-size: 14px;
     line-height: 1.6;
     letter-spacing: 0;

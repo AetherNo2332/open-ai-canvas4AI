@@ -354,6 +354,7 @@ func TestCloudAgentApprovedWriteSurvivesBrowserAutosave(t *testing.T) {
 	req := agentTestRequest()
 	req.PermissionMode = "request_approval"
 	req.IdempotencyKey = "storyboard-autosave-race"
+	req.Prompt = "为这场戏创建分镜" // 分层工具表：分镜意图解锁 canvas_create_storyboard
 	root, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {
 		t.Fatal(err)
@@ -411,6 +412,7 @@ func TestCloudAgentStaleSnapshotIsRecoverableToolFailure(t *testing.T) {
 	req := agentTestRequest()
 	req.PermissionMode = "request_approval"
 	req.IdempotencyKey = "storyboard-stale-snapshot"
+	req.Prompt = "为这场戏创建分镜" // 分层工具表：分镜意图解锁 canvas_create_storyboard
 	root, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {
 		t.Fatal(err)

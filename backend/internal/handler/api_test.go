@@ -28,6 +28,10 @@ func TestRegisterCanvasAPIExposesOpenAPIAndProjects(t *testing.T) {
 		"GET /api/agent/skill-defaults":                false,
 		"GET /api/admin/agent/skill-defaults":          false,
 		"PUT /api/admin/agent/skill-defaults":          false,
+		"GET /api/desktop/capabilities":                 false,
+		"GET /api/desktop/canvases/:canvasId/snapshot": false,
+		"POST /api/desktop/canvases/:canvasId/previs-tasks": false,
+		"GET /api/desktop/tasks/:taskId/materialization": false,
 	}
 	for _, route := range router.Routes() {
 		key := route.Method + " " + route.Path

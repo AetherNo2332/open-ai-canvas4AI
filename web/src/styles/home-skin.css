@@ -50,11 +50,6 @@ body.app-user-overlays.app-user-overlays {
         color: var(--foreground) !important;
     }
 
-    .app-user-workspace.app-user-workspace :where(*),
-    body.app-user-overlays.app-user-overlays :where(.ant-popover, .ant-dropdown, .ant-modal, .ant-drawer, .ant-message, .ant-notification, .ant-tooltip) :where(*) {
-        border-radius: var(--input-radius) !important;
-    }
-
     .app-user-workspace.app-user-workspace .canvas-generation-spinner {
         border-radius: 50% !important;
     }
@@ -104,6 +99,11 @@ body.app-user-overlays.app-user-overlays {
 
     .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar-checkin-offer em, .app-workspace-credit-gift) {
         color: var(--primary) !important;
+    }
+
+    .app-user-workspace.app-user-workspace .app-workspace-canary-badge {
+        background: var(--control-selected-bg) !important;
+        color: var(--control-selected-fg) !important;
     }
 
     .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar-checkin-claim, .app-workspace-sidebar-checkin.is-collapsed) {

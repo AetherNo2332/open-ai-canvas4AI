@@ -702,6 +702,13 @@ func (s *Service) encryptSystemChannelSecrets(channel *model.ModelChannel) error
 	}
 	channel.APIKey = apiKey
 	channel.SecretKey = secretKey
+	if s.desktopMode {
+		headers, err := s.encryptSettingSecret(channel.HeadersJSON)
+		if err != nil {
+			return err
+		}
+		channel.HeadersJSON = headers
+	}
 	return nil
 }
 
@@ -716,6 +723,13 @@ func (s *Service) decryptSystemChannelSecrets(channel *model.ModelChannel) error
 	}
 	channel.APIKey = apiKey
 	channel.SecretKey = secretKey
+	if s.desktopMode {
+		headers, err := s.decryptSettingSecret(channel.HeadersJSON)
+		if err != nil {
+			return err
+		}
+		channel.HeadersJSON = headers
+	}
 	return nil
 }
 
@@ -884,7 +898,7 @@ func (s *Service) channelFromRequest(req ChannelRequest, channel model.ModelChan
 	// 只有 Base URL 实际变化时才做出站地址校验。
 	connectionChanged := strings.TrimRight(baseURL, "/") != strings.TrimRight(channel.BaseURL, "/")
 	if connectionChanged {
-		if _, err := ValidateOutboundURL(baseURL); err != nil {
+		if _, err := s.ValidateChannelOutboundURL(baseURL); err != nil {
 			return channel, err
 		}
 	}

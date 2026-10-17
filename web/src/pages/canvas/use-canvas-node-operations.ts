@@ -17,6 +17,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
+import {useCanvasSessionStore,commitCanvasCommandEditor,openCanvasCommandSession} from '@/stores/canvas/use-canvas-session-store';
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -371,6 +372,19 @@ export function useCanvasNodeOperations({
     const duplicateNode = useCallback((nodeId: string, duplicateMode: "variant" | "copy" = "variant") => {
         const source = nodesRef.current.find((node) => node.id === nodeId);
         if (!source) return;
+        if(useCanvasSessionStore.getState().scope) {
+            const scope=useCanvasSessionStore.getState().scope,id=nanoid();
+            void (async()=>{
+                await commitCanvasCommandEditor(projectId);
+                const session=await openCanvasCommandSession(projectId);
+                if(useCanvasSessionStore.getState().scope!==scope)throw new Error('画布主机已切换');
+                await session.submit([{type:'duplicate_node',id,sourceNodeId:nodeId,action:duplicateMode}],{preview:{entities:[]}});
+                selectNodes(new Set([id]));
+                if(source.type===CanvasNodeType.Script)setDialogNodeId(null);
+                else if(!isFrameNode(source)&&source.type!==CanvasNodeType.Drawing)setDialogNodeId(id);
+            })().catch(error=>message.error(error instanceof Error?error.message:'复制失败'));
+            return;
+        }
         const sources = isFrameNode(source) ? [source, ...getFrameChildren(source.id, nodesRef.current)] : [source];
         const idMap = new Map(sources.map((node, index) => [node.id, `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`]));
         const versionRootId = duplicateMode === "variant" && !isFrameNode(source) ? source.metadata?.versionOfNodeId || source.id : undefined;
@@ -402,15 +416,26 @@ export function useCanvasNodeOperations({
         });
         if (source.type === CanvasNodeType.Script) setDialogNodeId(null);
         else if (!isFrameNode(source) && source.type !== CanvasNodeType.Drawing) setDialogNodeId(id);
-    }, [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, nodesRef, selectNodes, setDialogNodeId]);
+    }, [projectId,message,cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, nodesRef, selectNodes, setDialogNodeId]);
 
     const setPrimaryVersion = useCallback((nodeId: string) => {
         const target = nodesRef.current.find((node) => node.id === nodeId);
         if (!target) return;
+        if(useCanvasSessionStore.getState().scope) {
+            const scope=useCanvasSessionStore.getState().scope;
+            void (async()=>{
+                await commitCanvasCommandEditor(projectId);
+                const session=await openCanvasCommandSession(projectId);
+                if(useCanvasSessionStore.getState().scope!==scope)throw new Error('画布主机已切换');
+                await session.submit([{type:'select_node_version',id:nodeId}],{preview:{entities:[]}});
+                message.success(`已将 ${target.metadata?.versionLabel||target.title} 设为主版本`);
+            })().catch(error=>message.error(error instanceof Error?error.message:'版本切换失败'));
+            return;
+        }
         const rootId = target.metadata?.versionOfNodeId || target.id;
         commitNodes(nodesRef.current.map((node) => (node.metadata?.versionOfNodeId || node.id) === rootId ? { ...node, metadata: { ...node.metadata, versionPrimary: node.id === nodeId } } : node));
         message.success(`已将 ${target.metadata?.versionLabel || target.title} 设为主版本`);
-    }, [commitNodes, message, nodesRef]);
+    }, [projectId,commitNodes, message, nodesRef]);
 
     const copyNodesToClipboard = useCallback((targetIds: Set<string>) => {
         if (!targetIds.size) return;

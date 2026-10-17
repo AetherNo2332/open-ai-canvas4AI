@@ -533,10 +533,50 @@ func (s *Service) checkpointPrevisOutput(task *model.Task, result previsRenderRe
 	}
 	task.ResultJSON = string(raw)
 	ids := []string{result.ResourceID, result.PreviewResourceID}
+	if s.desktopMode {
+		for _, id := range ids {
+			if id != "" {
+				if err := s.repo.SaveCanvasTaskResource(task.ID, task.UserID, id); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 	return s.repo.UpsertCloudAgentResourceLeases(task.UserID, task.AgentRunID, "previs-task:"+task.ID, ids, time.Now().Add(24*time.Hour))
 }
 
 func (s *Service) commitPrevisOutput(task *model.Task, input previsRenderInput, result previsRenderResult) error {
+	if s.desktopMode {
+		if _, err := s.repo.CanvasTaskBinding(task.ID); err != nil {
+			return err
+		}
+		completed := *task
+		completed.Status, completed.Progress, completed.Stage = model.TaskStatusSucceeded, 100, "预演已保存，等待写回画布"
+		completed.CompletedAt = ptr(time.Now())
+		raw, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		completed.ResultJSON = string(raw)
+		err = s.repo.SaveTaskCompletionWithRegistration(&completed, model.TaskStatusRunning, nil, func(tx *repository.Repository) error {
+			for index, id := range []string{result.ResourceID, result.PreviewResourceID} {
+				r, e := tx.ResourceForUser(task.UserID, id)
+				mime := "video/mp4"
+				if index == 1 {
+					mime = "image/png"
+				}
+				if e != nil || r.Status != model.ResourceStatusReady || r.MimeType != mime || r.Width != input.Width || r.Height != input.Height || r.Size < 100 {
+					return fmt.Errorf("missing_resource")
+				}
+			}
+			return nil
+		})
+		if err == nil {
+			*task = completed
+		}
+		return err
+	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return err
@@ -591,27 +631,15 @@ func (s *Service) commitPrevisOutput(task *model.Task, input previsRenderInput, 
 			if readErr != nil {
 				return fmt.Errorf("invalid_canvas")
 			}
-			cloudAgentPrevisRepairLegacyNodes(doc)
 			scene, exists := findPrevisScene(creationMaps(doc["previsScenes"]), input.SceneID)
 			if result.Linked && (!exists || previsRenderSourceHash(scene, input.ShotID) != input.SourceHash) {
 				return fmt.Errorf("target_changed")
 			}
 			nodes := creationMaps(doc["nodes"])
-			workstationFound := false
-			for _, node := range nodes {
-				metadata, _ := node["metadata"].(map[string]any)
-				if stringValue(node["type"]) == "video" && stringValue(metadata["workflowKind"]) == "shot" && stringValue(metadata["previsSceneId"]) == input.SceneID {
-					workstationFound = true
-					break
-				}
-			}
-			if !workstationFound {
-				return fmt.Errorf("previs_workstation_missing sceneId=%s; use previs_scene_create or previs_apply_patch to repair the canvas", input.SceneID)
-			}
 			for _, output := range []struct {
-				id, resource, kind, workflowKind, title string
-				x                                       float64
-			}{{result.VideoNodeID, result.ResourceID, "video", "reference_video", "白模预演", 0}, {result.PreviewNodeID, result.PreviewResourceID, "image", "reference_set", "预演构图帧", 380}} {
+				id, resource, kind, title string
+				x                         float64
+			}{{result.VideoNodeID, result.ResourceID, "video", "白模预演", 0}, {result.PreviewNodeID, result.PreviewResourceID, "image", "预演构图帧", 380}} {
 				found := false
 				for _, node := range nodes {
 					if stringValue(node["id"]) == output.id {
@@ -625,7 +653,7 @@ func (s *Service) commitPrevisOutput(task *model.Task, input previsRenderInput, 
 				if found {
 					continue
 				}
-				metadata := map[string]any{"content": resourceFileURL(output.resource), "storageKey": "resource:" + output.resource, "status": "success", "taskId": origin, "taskStatus": "succeeded", "workflowKind": output.workflowKind, "assetTags": []any{"预演台" + map[bool]string{true: "构图", false: "白膜"}[output.workflowKind == "reference_set"], "镜头:" + input.ShotID}, "previsSceneId": input.SceneID, "previsShotId": input.ShotID, "previsSourceHash": input.SourceHash, "previsIndependent": !result.Linked, "naturalWidth": result.Width, "naturalHeight": result.Height, "duration": float64(result.DurationMs) / 1000, "previsRepairTaskId": task.ID}
+				metadata := map[string]any{"content": resourceFileURL(output.resource), "storageKey": "resource:" + output.resource, "status": "success", "taskId": origin, "taskStatus": "succeeded", "previsSceneId": input.SceneID, "previsShotId": input.ShotID, "previsSourceHash": input.SourceHash, "previsIndependent": !result.Linked, "naturalWidth": result.Width, "naturalHeight": result.Height, "duration": float64(result.DurationMs) / 1000, "previsRepairTaskId": task.ID}
 				y := float64(len(nodes)/2) * 300
 				nodes = append(nodes, creationAddedNode(CreationCanvasOp{ID: output.id, NodeType: output.kind, Title: output.title, X: ptr(output.x), Y: ptr(y), Metadata: metadata}))
 			}

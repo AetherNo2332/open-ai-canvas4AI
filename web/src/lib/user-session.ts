@@ -32,15 +32,17 @@ export async function switchUserStorageScope(userId?: string | null) {
 
 let sessionGeneration = 0;
 
-export async function applyUserSession(payload: AuthSessionPayload) {
+type UserSessionOptions = {storageScope?:string; remoteAutoSync?:boolean; awaitHydration?:boolean};
+
+export async function applyUserSession(payload: AuthSessionPayload,options:UserSessionOptions={}) {
     const generation = ++sessionGeneration;
     const previousUserId = useUserStore.getState().user?.id || "";
     const nextUserId = payload.user?.id || "";
     useUserStore.getState().setHydrated(false);
     try {
         // Query key 不携带用户 ID；身份变化时必须取消并清空旧账号请求，避免跨账号复用内存数据。
-        if (previousUserId !== nextUserId) appQueryClient.clear();
-        await switchUserStorageScope(payload.user?.id);
+        if (previousUserId !== nextUserId || options.storageScope) appQueryClient.clear();
+        await switchUserStorageScope(options.storageScope || payload.user?.id);
         // 切换存储 scope 时 user store 仍保留旧身份；此处只能先检查 generation，
         // 否则登录后的新用户会被误判为过期会话，hydrated 永远无法解除。
         if (!isCurrentGeneration(generation)) return;
@@ -55,9 +57,11 @@ export async function applyUserSession(payload: AuthSessionPayload) {
         useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
         useUserStore.getState().setDrawingEngine(payload.drawingEngine);
         useUserStore.getState().setFeatures(payload.features);
-        installRemoteUserDataAutoSync();
+        if(options.remoteAutoSync !== false) installRemoteUserDataAutoSync();
         useUserStore.getState().setHydrated(true);
-        void hydrateUserSessionData(payload, generation).catch((error) => {
+        const hydration=hydrateUserSessionData(payload, generation,options);
+        if(options.awaitHydration) await hydration;
+        else void hydration.catch((error) => {
             if (isCurrentSession(generation, nextUserId)) console.warn("用户工作区后台初始化失败，基础页面仍可继续", error);
         });
     } finally {
@@ -74,7 +78,7 @@ function resetUserScopedMemory() {
     useCreationPreferencesStore.setState({ hydrated: false, preferences: {} });
 }
 
-async function hydrateUserSessionData(payload: AuthSessionPayload, generation: number) {
+async function hydrateUserSessionData(payload: AuthSessionPayload, generation: number,options:UserSessionOptions={}) {
     const startedAt = performance.now();
     const userId = payload.user?.id || "";
     const [canvas, canvasHistory, assets, plugins] = await Promise.allSettled([
@@ -125,8 +129,12 @@ async function hydrateUserSessionData(payload: AuthSessionPayload, generation: n
 
     if (userId) {
         try {
-            await initializeRemoteUserDataSession(userId);
+            if(options.remoteAutoSync === false) {
+                const {initializeLegacySingleWriter}=await import('@/services/desktop/legacy-single-writer');
+                await initializeLegacySingleWriter(userId);
+            } else await initializeRemoteUserDataSession(userId);
         } catch (error) {
+            if(options.awaitHydration) throw error;
             if (isCurrentSession(generation, userId)) console.warn("远端用户数据后台同步初始化失败", error);
         }
     } else {

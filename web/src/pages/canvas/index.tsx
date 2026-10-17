@@ -99,7 +99,7 @@ export default function CanvasPage() {
         void createCanvasProjectWithRemoteSync(`自由画布 ${projects.length + 1}`).then(({ id, syncError }) => {
             if (syncError) message.warning(syncError instanceof Error ? `画布已在本地创建，云端同步失败：${syncError.message}` : "画布已在本地创建，云端同步失败");
             enterProject(id);
-        });
+        }).catch((error)=>message.error(error instanceof Error?error.message:'画布创建失败'));
     };
     const filteredProjects = useMemo(() => {
         if (userId) return projects;
@@ -402,7 +402,7 @@ export default function CanvasPage() {
         void createCanvasProjectWithRemoteSync(`自由画布 ${projects.length + 1}`).then(({ id, syncError }) => {
             if (syncError) message.warning(syncError instanceof Error ? `画布已在本地创建，云端同步失败：${syncError.message}` : "画布已在本地创建，云端同步失败");
             enterProject(id);
-        });
+        }).catch((error)=>{message.error(error instanceof Error?error.message:'画布创建失败');navigate('/canvas',{replace:true});});
     }, [hydrated, message, mode, projects, sessionHydrated, userId, libraryQuery.isSuccess]);
 
     if (hydrated && !libraryQuery.isError && (mode === "new" || mode === "recent" || mode === "handoff")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;

@@ -69,6 +69,30 @@
 ## image_layer_split
 
 按用户要求将图片拆为透明图层。先查询 model_list 的图片能力，复制 selectionId；使用 referenceNodeIds 指定画布原图，prompt 描述要拆的对象。只接受本工具声明的字段，不传 mode、size 或 durationSeconds。request_approval 需独立审批，auto 通过模型、价格、预算和资源准入后直接提交收费任务。
+
+## director_block_scene
+
+把已确认的导演意图编译成一个可编辑的 3D 预演场景。先读取画布快照，工具只接受受控模板和稳定 ID；成功前不会写入半成品场景，写入需遵循当前审批模式。
+
+## director_design_shot
+
+为已有预演场景设计镜头构图和运动。只修改指定镜头的镜头规格、机位运动和提示词，基于最新场景快照执行；过期快照必须重新读取，建议修复需要再次审批。
+
+## director_draw_action
+
+为演员或对象绘制可编辑动作路径。路径点使用 Y 轴向上的米制坐标，最多64个点；工具会编译成受限预演补丁，不接受任意工程 JSON、机器路径或资源凭证。
+
+## director_check_continuity
+
+检查场景与指定镜头的空间摘要和接拍风险。只读返回问题清单；任何修复都必须显式调用写工具并重新审批。
+
+## director_preview_shot
+
+提交指定镜头的后台白膜预演参数。先校验镜头和摄影机，沿用现有 previs_preview 任务、配额、取消、重试和资源写回合同；回执中的 taskSubmitted=false 不能当作已生成。
+
+## director_handoff_shot
+
+把当前镜头的受控导演摘要交给后续 Agent 回合或人工导演。回执不包含原始 DirectorDesk 工程、URL、storage key 或令牌。
 ## model_list
 
 读取生成模型目录、能力与价格。生成前传 mode 和实际 referenceNodeIds，按真实素材与操作筛选；素材或模式变化后重新查询，空列表表示无匹配项。优先原样复制返回的 selectionId 字符串到生成工具，不传嵌套 selection 对象，不混用选择字段。再按能力核对时长、画幅、音频和价格。
@@ -460,15 +484,15 @@ focusNodeIds 的展开深度，0–3，省略为1；仅与 focusNodeIds 一起�
 
 ## previs_preview
 
-提交后台白模渲染任务。必须用返回的 taskId 核验任务终态和画布写回；节点真实出现后才能称已交付，“已请求”不是“已导出”。
+生成预演白模视频。
 
 ## previs_scene_create
 
-创建预演场景，并在画布上创建或绑定可打开预演台的 video 工作站节点；回执返回 nodeId。
+创建预演场景。
 
 ## previs_apply_patch
 
-审批后应用预演语义补丁；先读 snapshotHash，最多32项。旧场景没有工作站时会在补丁时自动补齐。回执返回 nodeId。禁止原始 JSON、URL、storage key。
+审批后应用预演语义补丁；先读 snapshotHash，最多32项。禁止原始 JSON、URL、storage key。
 
 ## canvas_read_content
 

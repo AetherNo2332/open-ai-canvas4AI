@@ -82,6 +82,8 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 		if err != nil {
 			return err
 		}
+		// 租约/恢复列由认领、续租与派发路径以 UTC 写入；SQLite 文本比较混入本地时区
+		// 会把未来租约误判为已过期，这里必须保持 UTC。
 		now := time.Now().UTC()
 		var candidates []model.CloudAgentExecution
 		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind",

@@ -46,13 +46,13 @@ export function CanvasShortDramaEmptyState({ onCreatePipeline, onOpenAgent, onSt
                 <header className="canvas-entry-header">
                     <div className="canvas-entry-heading-copy">
                         <h2><span>让灵感，</span><strong>开始成片。</strong></h2>
-                        <p>从一句想法开始，和 Agent 一起创作。</p>
+                        <p>整理灵感、素材和分镜，开始创作。</p>
                     </div>
                     <CanvasEntryFilmMark />
                 </header>
                 <div className="canvas-entry-actions">
-                    <button type="button" className="canvas-entry-agent" onClick={onOpenAgent}>
-                        <span className="canvas-entry-agent-label">交给 Agent</span>
+                    <button type="button" className="canvas-entry-agent" onClick={onCreatePipeline}>
+                        <span className="canvas-entry-agent-label">创建分镜流程</span>
                         <span className="canvas-entry-agent-arrow"><ArrowUpRight aria-hidden="true" /></span>
                     </button>
                     <div className="canvas-entry-secondary-actions">

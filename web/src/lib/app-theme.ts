@@ -194,6 +194,9 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
             controlHeightSM: skin.controlHeightSmall || 30,
             fontSize: 13,
             fontSizeSM: 12,
+            // 与 --font-sans（Mona Sans + 思源黑体）保持一致，否则 .ant-app 会用 antd
+            // 默认 -apple-system 字体栈打断 body 的字体继承。
+            fontFamily: "var(--font-sans)",
             motionDurationFast: `${skin.motionFast ?? 120}ms`,
             motionDurationMid: `${skin.motionNormal ?? 180}ms`,
             motionDurationSlow: `${Math.max(skin.motionNormal ?? 180, 240)}ms`,
@@ -257,6 +260,8 @@ export function getAntThemeConfig(dark: boolean, skinID: unknown = "classic"): T
             },
             Checkbox: {
                 borderRadiusSM: skin.checkboxRadius ?? 4,
+                // Ant Design 6 paints the tick with colorWhite, independent of colorTextLightSolid.
+                colorWhite: color.checkFg,
                 colorBgContainer: color.controlSurface,
                 colorBgContainerDisabled: color.controlDisabledBg,
                 colorBorder: color.controlBorder,

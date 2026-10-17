@@ -20,11 +20,13 @@ func RegisterFeatureAvailabilityRoutes(r *gin.RouterGroup, svc *service.Service)
 	})
 
 	r.GET("/features", func(c *gin.Context) {
-		if _, err := currentUser(c, svc); err != nil {
+		user, err := currentUser(c, svc)
+		if err != nil {
 			failService(c, err)
 			return
 		}
-		setting, err := svc.FeatureAvailability()
+		// 用户视角:导演预演台 canary 按白名单/比例分群,其余开关保持全局值。
+		setting, err := svc.UserFeatureAvailability(user)
 		if err != nil {
 			failService(c, err)
 			return

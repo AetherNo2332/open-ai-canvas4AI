@@ -370,6 +370,6 @@ func (r *Repository) DeleteModelPricing(id string) error {
 
 func (r *Repository) CurrentQueuedTaskCount() (int64, error) {
 	var count int64
-	err := r.db.Model(&model.Task{}).Where("status IN ?", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error
+	err := r.db.Model(&model.Task{}).Where("status IN ?", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}).Count(&count).Error
 	return count, err
 }

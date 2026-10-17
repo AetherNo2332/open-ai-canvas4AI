@@ -9,6 +9,8 @@ on:
   push:
     branches:
       - main
+      # canary 是前瞻开发分支：推送同样跑完整质量检查（镜像发布仍仅限 main/tag）。
+      - canary
       # dev 是日常集成分支：这里没有它时，直接推到 dev 的改动完全不会被 CI 覆盖。
       - dev
 

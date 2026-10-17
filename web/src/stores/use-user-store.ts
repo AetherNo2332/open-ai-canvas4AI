@@ -24,6 +24,8 @@ export type RuntimeLimits = {
     recycleBinRetentionDays?: number;
 };
 
+export type DirectorDeskPrevisMode = "off" | "canary" | "on";
+
 export type FeatureAvailability = {
     welcomeEnabled: boolean;
     shortDramaEnabled: boolean;
@@ -34,6 +36,10 @@ export type FeatureAvailability = {
     pluginCenterEnabled: boolean;
     systemPluginsVisibleToUsers: boolean;
     agentSubagentsEnabled: boolean;
+    directorDeskPrevisMode: DirectorDeskPrevisMode;
+    /** canary 灰度分组:内部账号白名单 + 稳定哈希比例(万分比 0-10000)。服务端按用户解析。 */
+    directorDeskPrevisCanaryUsers?: string[];
+    directorDeskPrevisCanaryBasisPoints?: number;
     configured?: boolean;
     updatedBy?: string;
     updatedAt?: string;
@@ -49,6 +55,7 @@ export const defaultFeatureAvailability: FeatureAvailability = {
     pluginCenterEnabled: true,
     systemPluginsVisibleToUsers: true,
     agentSubagentsEnabled: false,
+    directorDeskPrevisMode: "off",
 };
 
 type UserStore = {

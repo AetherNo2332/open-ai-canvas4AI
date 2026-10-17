@@ -127,8 +127,6 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     return url;
 }
 
-export const resolveVideoMediaUrl = resolveMediaUrl;
-
 export async function getMediaBlob(storageKey: string) {
     if (resourceIdFromStorageKey(storageKey)) return getCachedResourceBlob(storageKey);
     return store.getItem<Blob>(storageKey);

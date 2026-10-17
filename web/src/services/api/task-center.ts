@@ -5,7 +5,11 @@ import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics
 
 export type { BackendEnvelope } from "@/services/api/request";
 
-export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "submission_uncertain";
+export class TaskSubmissionUncertainError extends Error {
+    readonly reason='submission_uncertain';
+    constructor(readonly taskId:string){super('上游可能已收到生成请求，请由主机核对后处理，暂不重复提交');this.name='TaskSubmissionUncertainError'}
+}
 export type TaskBillingStatus = "reserved" | "running" | "settled" | "refunded" | "uncertain";
 export type ProviderCancelStatus = "requested" | "confirmed" | "uncertain";
 export type GenerationTaskResultState = "NOT_AVAILABLE" | "PENDING_MATERIALIZATION" | "MATERIALIZING" | "READY" | "FAILED_RETRYABLE" | "FAILED_PERMANENT";
@@ -230,7 +234,7 @@ export function createGenerationTaskSubscriptionService(dependencies: Generation
         entry.observation = (async () => {
             const initial = await dependencies.queryTask(id);
             publish(entry, initial);
-            if (initial.status === "succeeded" || initial.status === "failed" || initial.status === "cancelled") return;
+            if (initial.status === "succeeded" || initial.status === "failed" || initial.status === "cancelled" || initial.status === "submission_uncertain") return;
             const terminal = await dependencies.waitTask(id, {
                 initialTask: initial,
                 onTaskUpdate: (task) => publish(entry, task),
@@ -393,6 +397,7 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
                 await delay(intervalMs, options?.signal);
                 continue;
             }
+            if (task.status === "submission_uncertain") throw new TaskSubmissionUncertainError(task.id);
             if (task.status === "succeeded") {
                 window.dispatchEvent(new CustomEvent("wallet:updated"));
                 return task;
@@ -427,6 +432,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
         options.onTaskUpdate?.(lastTask);
     }
     const timeoutMs = options.timeoutMs || taskWaitTimeoutMs(lastTask);
+    if (lastTask?.status === 'submission_uncertain') throw new TaskSubmissionUncertainError(lastTask.id);
     while (Date.now() - startedAt < timeoutMs) {
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         let terminalReceived = false;
@@ -493,6 +499,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             if (terminalReceived) {
                 const completed = await queryGenerationTask(id, { signal: options.signal });
                 options.onTaskUpdate?.(completed);
+                if (completed.status === 'submission_uncertain') throw new TaskSubmissionUncertainError(completed.id);
                 window.dispatchEvent(new CustomEvent("wallet:updated"));
                 if (completed.status === "succeeded") return completed;
                 if (completed.status === "failed" || completed.status === "cancelled") {
@@ -502,7 +509,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             lastStreamError = new Error("任务文本流连接提前结束");
         } catch (error) {
             if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-            if (error instanceof TaskTextStreamFatalError) throw error;
+            if (error instanceof TaskTextStreamFatalError || error instanceof TaskSubmissionUncertainError) throw error;
             lastStreamError = error;
         }
         await delay(intervalMs, options.signal);
@@ -519,7 +526,7 @@ function numberValue(value: unknown) {
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus {
-    return value === "queued" || value === "running" || value === "succeeded" || value === "failed" || value === "cancelled";
+    return value === "queued" || value === "running" || value === "succeeded" || value === "failed" || value === "cancelled" || value === "submission_uncertain";
 }
 
 class TaskTextStreamFatalError extends Error {

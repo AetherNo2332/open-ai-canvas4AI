@@ -7,11 +7,11 @@ import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { createPrevisSceneFromTemplate, type PrevisTemplateId } from "@/lib/canvas/previs/previs-templates";
 import { mergePrevisOutputPreview, upsertPrevisSceneById } from "@/lib/canvas/previs/previs-session";
-import { isPrevisWorkstationNode } from "@/lib/canvas/previs/previs-node";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { canvasCommandSession } from "@/stores/canvas/use-canvas-session-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 import type { PrevisScene, PrevisSceneOutput } from "@/types/previs";
 
@@ -111,7 +111,7 @@ export function useCanvasPrevis({
 
     const openPrevisWorkbench = useCallback((nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);
-        if (!node || !isPrevisWorkstationNode(node)) return;
+        if (!node || node.metadata?.workflowKind !== "shot") return;
         if (shouldUpgradePrevisNodeSize(node)) {
             const upgradedNodes = nodesRef.current.map((item) => item.id === nodeId ? { ...item, width: PREVIS_NODE_SIZE.width, height: PREVIS_NODE_SIZE.height } : item);
             nodesRef.current = upgradedNodes;
@@ -249,5 +249,18 @@ export function useCanvasPrevis({
         savePrevisScene(mergedSceneAfterAssets);
     }, [connectionsRef, previsNodeId, domainProjectId, nodesRef, projectId, savePrevisScene, setConnections, setNodes]);
 
-    return { applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene };
+    const refreshAfterExport = useCallback(async () => {
+        const session = canvasCommandSession(projectId);
+        if (!session) return;
+        await session.reconnect();
+        const document = session.state.projected;
+        const nextNodes = Array.isArray(document.nodes) ? document.nodes as CanvasNodeData[] : [];
+        const nextConnections = Array.isArray(document.connections) ? document.connections as CanvasConnection[] : [];
+        nodesRef.current = nextNodes;
+        connectionsRef.current = nextConnections;
+        setNodes(nextNodes);
+        setConnections(nextConnections);
+    }, [connectionsRef, nodesRef, projectId, setConnections, setNodes]);
+
+    return { applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene, refreshAfterExport };
 }

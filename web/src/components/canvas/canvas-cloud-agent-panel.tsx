@@ -54,10 +54,8 @@ import {
     saveCloudAgentPendingSubmission,
     type CloudAgentConversation,
     type CloudAgentPendingSubmission,
-    type CloudAgentMessagePresentation,
 } from "@/services/cloud-agent-conversations";
 import { logicalModelIDForConfig, modelOptionName, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { selectImageInspectionModel } from "@/lib/canvas/image-to-previs-agent";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -105,6 +103,8 @@ type CloudAgentPanelProps = {
     references: CanvasResourceReference[];
     open: boolean;
     floating?: boolean;
+    /** 是否显示悬浮唤起按钮;宿主另有入口(如导演台顶栏)时关闭。 */
+    launcher?: boolean;
     prefillPrompt?: string;
     onOpen: () => void;
     onCollapse: () => void;
@@ -113,7 +113,7 @@ type CloudAgentPanelProps = {
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, floating = false, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
+export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const subagentsAvailable = useUserStore((state) => state.features.agentSubagentsEnabled);
     const [subagentPolicy, setSubagentPolicy] = useState<AgentSubagentPolicy | null>(null);
@@ -643,10 +643,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         void loadCloudAgentConversations(canvasId)
             .then(async (document) => {
                 if (!active) return;
-                // 旧会话缓存里可能还存有 native_skill_enabled 工具行；该回执已停止展示，恢复时一并滤掉。
-                const conversations = document.conversations.map(hydratedAgentConversation);
-                const current = conversations.find((conversation) => conversation.id === document.activeId) || conversations[0];
-                setConversations(conversations);
+                const current = document.conversations.find((conversation) => conversation.id === document.activeId) || document.conversations[0];
+                setConversations(document.conversations);
                 if (current) {
                     setActiveConversationId(current.id);
                     setMessages(current.messages);
@@ -658,7 +656,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     const pending = await loadCloudAgentPendingSubmission(canvasId, current.id);
                     if (!active) return;
                     pendingSubmission.current = pending;
-                    if (pending?.request) setPrompt(pending.displayText || pending.request.prompt);
+                    if (pending?.request) setPrompt(pending.request.prompt);
                 } else {
                     setActiveConversationId(nanoid());
                     pendingSubmission.current = null;
@@ -731,7 +729,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                         summary: String(event.payload?.summary || event.payload?.reason || ""),
                     });
                 }
-                setMessages((current) => current.some((item) => item.id === `stream-error-${run.id}`) ? current.filter((item) => item.id !== `stream-error-${run.id}`) : current);
+                setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
                 setContextUsage((current) => reduceAgentContextUsage(current, event));
                 applyAgentEvent(event, setMessages, setRun, setApproval, setPrompt);
                 if (event.type.startsWith("subagent_") || ["run_completed", "run_failed", "run_cancelled"].includes(event.type)) {
@@ -795,12 +793,8 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         }
     };
 
-    const submit = async (override?: string, options?: CloudAgentMessagePresentation & { requiresVision?: boolean }) => {
-        const draft = (override ?? prompt).trim();
-        const pendingRequest = pendingSubmission.current;
-        const matchesPending = pendingRequest?.request && pendingRequest.displayText === draft;
-        const value = matchesPending ? pendingRequest.request!.prompt : draft;
-        options = matchesPending ? { ...options, displayText: pendingRequest.displayText, canvasReferenceNodeId: pendingRequest.canvasReferenceNodeId } : options;
+    const submit = async (override?: string) => {
+        const value = (override ?? prompt).trim();
         if (running) {
             await interject(value);
             return;
@@ -815,8 +809,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         setBusy(true);
         let accepted = false;
         try {
-            const effectiveModel = options?.requiresVision ? selectImageInspectionModel(config, selectedModel) : selectedModel;
-            if (options?.requiresVision && !effectiveModel) throw new Error("当前没有配置支持图片输入的文本模型，请在模型能力设置中为一个文本模型开启图片输入后重试");
             const pending = pendingSubmission.current;
             // An ambiguous previous POST owns its body/key until reconciled.
             // Editing model settings or prompt must not silently create a new charge.
@@ -830,16 +822,16 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 if (selectedSkillIds.length && !capabilities.skills) throw new Error("当前后端尚未接入技能库");
                 await saveRemoteUserDataNow();
                 if (currentScope.current !== scope) return;
-                const agentConfig = { ...config, model: effectiveModel };
-                const requestConfig = resolveModelRequestConfig(agentConfig, effectiveModel);
+                const agentConfig = { ...config, model: selectedModel };
+                const requestConfig = resolveModelRequestConfig(agentConfig, selectedModel);
                 const logicalModelId = logicalModelIDForConfig(agentConfig);
                 const input = {
                     canvasId,
                     prompt: value,
                     reasoningMode: reasoningSupported ? reasoningMode : "off",
                     profileRevision: profileView.revision,
-                    model: modelOptionName(effectiveModel) || undefined,
-                    ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(effectiveModel) || undefined } : {}),
+                    model: modelOptionName(selectedModel) || undefined,
+                    ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(selectedModel) || undefined } : {}),
                     skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
                     permissionMode,
                     subagentEnabled: subagentsAvailable && subagentPolicy?.enabled === true,
@@ -1043,7 +1035,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                 if (currentScope.current === `${canvasId}:${conversation.id}`) {
                     pendingSubmission.current = pending;
                     setPendingHydrated(true);
-                    if (pending?.request) setPrompt(pending.displayText || pending.request.prompt);
+                    if (pending?.request) setPrompt(pending.request.prompt);
                 }
             })
             .catch((cause) => {
@@ -1059,7 +1051,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
 
     const panel = (
         <>
-            {!open ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
+            {!open && launcher ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
             <AnimatePresence>
                 {open ? (
                     <motion.aside
@@ -1960,9 +1952,6 @@ function applyAgentEvent(
 ) {
     const payload = event.payload || {};
     const text = String(payload.text || payload.summary || payload.message || "");
-    // 默认技能每轮运行都会触发 native_skill_enabled，"已启用技能"行没有增量信息，不再进对话流；
-    // 真实读取（native_skill_read / read_failed）保留。展示函数保留 enabled 分支，让旧缓存消息仍能友好渲染。
-    if (event.type === "native_skill_enabled") return;
     const nativeSkill = nativeSkillEventPresentation(event.type, payload);
     if (nativeSkill) {
         setMessages((current) => appendUniqueMessage(current, { id: event.eventId, role: "tool", ...nativeSkill }));
@@ -2169,11 +2158,6 @@ function applyAgentEvent(
         return;
     }
     if (event.type === "run_failed" || event.type === "error") setMessages((current) => appendUniqueMessage(current, agentRunErrorMessage(event)));
-}
-
-/** 恢复历史会话时滤掉已停止展示的 native_skill_enabled 工具行，老缓存不再回显"已启用技能"。 */
-function hydratedAgentConversation(conversation: CloudAgentConversation): CloudAgentConversation {
-    return { ...conversation, messages: conversation.messages.filter((message) => !(message.role === "tool" && toolDetailRecord(message.detail).eventType === "native_skill_enabled")) };
 }
 
 function toolDetailRecord(value: unknown): Record<string, unknown> {

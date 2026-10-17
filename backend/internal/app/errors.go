@@ -66,6 +66,8 @@ type ModelError struct {
 	Details   map[string]any
 }
 
+func (e *ModelError) Unwrap() error { return e.AppError }
+
 func (e *ModelError) Error() string {
 	if e.AppError != nil {
 		return e.AppError.Error()

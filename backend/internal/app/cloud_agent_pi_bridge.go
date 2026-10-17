@@ -713,7 +713,6 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 		}
 		completion := cloudAgentEvaluateCompletion(&state)
 		completion = cloudAgentBlockTruncatedCompletion(completion, result.StopReasonKind)
-		completion = cloudAgentBlockUnverifiedNodeClaims(&state, completion, result.Text)
 		state.event(runID, "assistant_message", map[string]any{"messageId": taskID, "text": result.Text, "final": completion.Final})
 		state.cloudAgentRecordImageObservations(result.Text, false)
 		state.cloudAgentSyncVisualAnchor()
@@ -918,7 +917,9 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 	}
 	request.Canonical.PromptCacheKey = state.Canonical.PromptCacheKey
 	state.DisclosureVersion = cloudAgentToolDisclosureVersion
-	state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
+	if len(state.AdvertisedToolNames) == 0 {
+		state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
+	}
 	// 看图结果按参考素材水合：上下文里只有 `resource:<id>`，真实图片字节在**请求期**才进到
 	// referenceImages，不进检查点，也不要求上游能访问部署地址。
 	//
@@ -1571,9 +1572,10 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 			continue
 		}
 		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
+		allowed := nativeRead || (cloudAgentToolAllowed(state.Request, name) && cloudAgentToolAdvertisedForRun(&state, name))
 		tools = append(tools, PiAgentToolSpec{
 			Name: name, Description: stringField(function, "description"), Parameters: parameters,
-			Category: cloudAgentToolCategory(name), Allowed: nativeRead || cloudAgentToolAllowed(state.Request, name),
+			Category: cloudAgentToolCategory(name), Allowed: allowed,
 		})
 	}
 	session, sessionEntries, err := s.repo.CloudAgentPiSession(run.UserID, firstNonEmpty(run.ConversationID, run.ID))
@@ -1855,8 +1857,6 @@ func (s *Service) SweepStalledPiAgentRuns() (int, error) {
 // 与 SweepStalledPiAgentRuns 的区别只有两点：阈值更长、失败原因不同。原因必须不同，
 // 否则运维无法区分"agent 服务没起来"与"agent 服务跑挂了"。
 func (s *Service) SweepUnclaimedPiAgentRuns() (int, error) {
-	// created_at 由 GORM 自动填充（本地时区序列化），阈值参数必须同为本地时区，
-	// 否则 SQLite 文本比较会把混合时区的时间判错（与租约列的 UTC 约定分域）。
 	cutoff := time.Now().Add(-piUnclaimedRunTimeout)
 	runs, err := s.repo.UnclaimedPiAgentRuns(cutoff, 50)
 	if err != nil {

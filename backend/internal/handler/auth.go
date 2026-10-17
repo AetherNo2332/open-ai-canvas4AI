@@ -174,7 +174,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		features, err := svc.FeatureAvailability()
+		features, err := svc.UserFeatureAvailability(user)
 		if err != nil {
 			failService(c, err)
 			return
