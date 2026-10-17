@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## v1.6.0(6e262b7)
+
+- 修复 Agent 上下文占用面板的「个人记忆」读数虚高：记忆分段原先一直取到系统提示末尾，把 Node 拼在其后的提示层文件也算成记忆。3040 实测该分段 37.6 KB / 11,814 token 里只有 50 字节是记忆。现在记忆分段到下一个工作区块为止，实际装配进信封的每个 Harness 文件单独登记为 `workspace:<文件名>` 分段。
+- 修复系统提示重复装配：Pi Worker 不再把 `SYSTEM_POLICY.md`、`MEDIA_POLICY.md`、`TOOL_DESCRIPTIONS.md` 再拼进系统提示。服务端策略已由 Go 编译，工具说明随每次请求的 `tools` schema 下发；实测同一轮里三份镜像重复了 11.8k token（按上游锚点换算约 9.8k，占该请求输入 38%）。三份镜像文件仍由 `sync-harness.mjs` 同步，用于 Go/Node 漂移核对。
+- 修复 `context_pressure` 前后两条读数口径不一致：补报的 `after_request` 复用该步准入时冻结的占用分布（`lastStepBreakdown`），不再从运行态 canonical 重算，同一步的 `before_request` 与 `after_request` 三桶与分段数值一致。
+- 升级说明：系统提示装配结果改变，Harness 内容身份随之变化。发布前先处理在途运行（非终态运行恢复时会被合同校验拒绝，需重新发起对话）；旧检查点没有 `lastStepBreakdown` 时仍按运行态重算，历史事件不做迁移。数据库 schema 与 HTTP API 无变更。
+
 ## v1.6.0(8f15062)
 
 - 合入上游 4AI 增量（270 个路径，105 修改 / 165 新增，零删除）：吸收模型能力、目录、路由与可用性配置、appearance 调整和 Pi 压缩回退容错；本地导演台、字体统一、首页动效与皮肤成果全部保留，5 处真实冲突按本地设计收口。
