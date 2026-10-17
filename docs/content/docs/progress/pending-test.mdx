@@ -18,6 +18,12 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [x] 3040 逐页浏览器验收（镜像 `open-ai-canvas-web:home-anim-3040`，账号 `dpv-accept`）：登录/注册页、首页、`/assets`、`/projects`、`/settings`、`/admin`、`/welcome`、错误路由的 body/主容器/侧栏/antd `.ant-app` 计算字体均为 `Mona Sans + Source Han Sans SC`；`document.fonts` 确认两个字体加载完成且无 Inter/Plex 字面残留。过程中发现并修复：antd `getAntThemeConfig` 未传 `fontFamily` token，`.ant-app` 用默认 `-apple-system` 栈打断继承覆盖了工作台各页（`d6140c7d` 修复后复验通过）。全程无 console 错误。
 - [ ] 公网部署首访需拉取 7.7MB 思源黑体（`font-display: swap` 保证系统字体先渲染），用户可自行感受观感；窄屏与 reduced-motion 待用户人工确认。
 
+## 3040 皮肤配色方案调整（TapNow / ChatGPT 参照）
+
+- 已实施：应用户决定，3040 生效皮肤 `swiss-ink`（墨色理性）从「无彩色墨阶」改为「近黑高对比 + 宝石蓝强调」，经后台 `/api/admin/settings/appearance` 同一条「站点外观」保存链路写入，属 3040 数据配置变更，不涉及仓库代码；描述更新为「近黑高对比 · 宝石蓝强调 · 直角构件」。要旨：暗色底 `#0c0d0e`/表面 `#161719`/边框 `#2a2b2e` 中性族（替换原偏暖墨阶与浑浊中灰选中项 `#666666`），主色蓝暗 `#2563eb`、亮 `#2861ee`（均为白字，过 4.5:1 校验），Switch/焦点/选中/强调同族蓝；亮色底转中性 `#fafafa`。按钮填充被后端 `convergeSkinDefinition` 收敛为主色派生，最终明暗两套均为蓝底白字 CTA（未保留 TapNow 式白底 CTA 形态）。
+- [x] 机器验证：亮色首页 `#fafafa`/`#2861ee`、暗色首页 `#0c0d0e`/`#161719`/`#2563eb`、工作台侧栏 `#161719`、admin 面板 `#0e0f10`/表面 `#161719`（亮色 admin `#ffffff`）均按新 token 生效，全程无 console 错误。
+- [ ] 明暗两套配色与 blue CTA 观感待用户肉眼确认（无窗口截图能力受限，机器取值已核对）；若希望暗色恢复 TapNow 式白底主按钮，需绕开收敛逻辑另行处理。
+
 ## Agent L0/L1 工具下发
 
 - 已实现：建 run 时按画布库存和封闭意图词表冻结 advertised 具体工具；轮内不改表。空画布问答不下发分镜/批次/绘图/拆图层；有 `script` 节点或 prompt 含「分镜」则下发分镜三件套。Go 专项测试已通过。
