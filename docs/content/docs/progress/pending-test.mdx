@@ -14,7 +14,9 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 ## 全站字体统一（Mona Sans + 思源黑体）
 
 - 已实现：按用户决定全站统一使用自托管 `Mona Sans`（拉丁）+ `Source Han Sans SC`（中文）字体栈（覆盖 AGENTS.md 的 IBM Plex 条目；两个字体文件均为仓库内 `/fonts/home/` 自托管 woff2，含 OFL 授权副本，不引 CDN）。`@font-face` 与 `--font-home` token 上移到 `styles/globals.css` 全局生效；`--font-sans`/`--font-heading` 根 token、Tailwind `@theme inline` 映射、`application.tsx` body 首帧字体、welcome 认证页、admin `--admin-font` 与 AntD 主题 token、canary 徽章、加载态、auth/路由错误页/画布刷新壳全部指向同一 token；移除 `@fontsource-variable/inter` 与 `@fontsource-variable/ibm-plex-sans` 依赖及其 import，`JetBrains Mono` 等宽字体保留。`bun run build` 通过。
-- [ ] 全站逐页（登录/注册/首页/工作台各路由/admin/welcome/错误页）字体渲染的浏览器视觉验收待用户确认（机器侧已核对产物 CSS 含 @font-face 且无 Inter/Plex 残留）；注意思源黑体全量 7.7MB 将随首访在所有页面下载，`font-display: swap` 保证系统字体先渲染。
+- [x] `cd web && bun run build` 通过。
+- [x] 3040 逐页浏览器验收（镜像 `open-ai-canvas-web:home-anim-3040`，账号 `dpv-accept`）：登录/注册页、首页、`/assets`、`/projects`、`/settings`、`/admin`、`/welcome`、错误路由的 body/主容器/侧栏/antd `.ant-app` 计算字体均为 `Mona Sans + Source Han Sans SC`；`document.fonts` 确认两个字体加载完成且无 Inter/Plex 字面残留。过程中发现并修复：antd `getAntThemeConfig` 未传 `fontFamily` token，`.ant-app` 用默认 `-apple-system` 栈打断继承覆盖了工作台各页（`d6140c7d` 修复后复验通过）。全程无 console 错误。
+- [ ] 公网部署首访需拉取 7.7MB 思源黑体（`font-display: swap` 保证系统字体先渲染），用户可自行感受观感；窄屏与 reduced-motion 待用户人工确认。
 
 ## Agent L0/L1 工具下发
 
