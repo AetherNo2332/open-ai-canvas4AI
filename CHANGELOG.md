@@ -1,8 +1,9 @@
 # CHANGELOG
 
-## v1.6.0(09cfdd7)
+## v1.6.0(e91e5a2)
 
 - 新增 Agent 工具快照管理：worker 启动时注册镜像内实际加载的 `TOOL_SCHEMA.json`（实例、启动、加载代次、构建提交），运行总览在任务失败前提示后端目录与 worker 制品不一致，支持字段级差异、重新检测、诊断导出和排空；领取前校验冻结工具子集兼容性，无兼容实例时任务保持等待而不是先授予租约再因漂移失败。详见 [Agent 工具快照管理](/docs/backend/agent-tool-snapshots)。
+- 修复画布撤销可能越过「已提交任务」栅栏：台账按时间戳排序，而时钟粒度较粗时连续两次操作会拿到完全相同的时间（Windows 实测），排序随之退化成按随机 ID 比较，撤销会选中更早的那次编辑。现在画布台账在同一事务内保证时间戳严格递增，撤销与重做都有确定顺序。
 - 修复 Agent 上下文占用面板的「个人记忆」读数虚高：记忆分段原先一直取到系统提示末尾，把 Node 拼在其后的提示层文件也算成记忆。3040 实测该分段 37.6 KB / 11,814 token 里只有 50 字节是记忆。现在记忆分段到下一个工作区块为止，实际装配进信封的每个 Harness 文件单独登记为 `workspace:<文件名>` 分段。
 - 修复系统提示重复装配：Pi Worker 不再把 `SYSTEM_POLICY.md`、`MEDIA_POLICY.md`、`TOOL_DESCRIPTIONS.md` 再拼进系统提示。服务端策略已由 Go 编译，工具说明随每次请求的 `tools` schema 下发；实测同一轮里三份镜像重复了 11.8k token（按上游锚点换算约 9.8k，占该请求输入 38%）。三份镜像文件仍由 `sync-harness.mjs` 同步，用于 Go/Node 漂移核对。
 - 修复 `context_pressure` 前后两条读数口径不一致：补报的 `after_request` 复用该步准入时冻结的占用分布（`lastStepBreakdown`），不再从运行态 canonical 重算，同一步的 `before_request` 与 `after_request` 三桶与分段数值一致。
