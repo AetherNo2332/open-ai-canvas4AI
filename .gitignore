@@ -70,6 +70,7 @@ camera_language_guide.md
 /output/
 /project-memory/
 .workbuddy/
+.workbuddy-ai/
 
 # Local backend executable; never commit build output.
 backend/cmd/server/server
