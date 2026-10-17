@@ -173,5 +173,6 @@
 - 文档默认中文，不写过期日期，不公开密码、Token、Cookie、真实账号或机器敏感路径。命令、端口、环境变量必须以当前脚本和 Compose 为准。
 - Git 提交说明使用 `<type>(<scope>): <业务模块> - <变更摘要>`，`type` 为 `feat|fix|refactor|perf|docs|test|build|ci|chore|revert`。
 - **每次 dev PR 必须更新内部版本号**：改仓库根 `VERSION`，格式 `<大版本>(<PR 分支最新提交短 SHA>)`（7 位），例如 `v1.5.7.1(0bdc0193)`。大版本取 `VERSION` 里现有的正式版本号，只在发布 / 上游同步换版本时才变；其中的 commit 取 **bump 之前**该 PR 分支的 HEAD，bump 后若 PR 又有新提交，push 前必须重新 bump。版本解析必须先剥离括号中的构建 commit，再按正式版本号比较；不得使用 `_` 或 `+` 作为 commit 分隔符。根 `VERSION` 是内部版本号的唯一来源（后端 ldflags `buildinfo.Version`、前端 `VITE_APP_VERSION`），不要再往别处另立版本号。
+- **更新日志先跑脚本再改写**：`node scripts/changelog.mjs` 预览草稿、`--write` 写入并同步 bump `VERSION`、`--check` 校验当前版本有对应条目（CI `Changelog entry` 任务执行）。脚本只按提交类型归并标题，`CHANGELOG.md` 条目仍须改写成用户可见的影响与升级说明。
 
 交付前至少检查：改动是否聚焦、调用方和类型是否同步、错误/权限/数据归属是否完整、必要文档是否同步、验证是否如实说明、是否留下密钥或本地数据。

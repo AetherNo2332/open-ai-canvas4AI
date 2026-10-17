@@ -23,6 +23,20 @@
   ```
 - 2 个 Redis 用例（`internal/platform`、`internal/app`）要求 `PATH` 上有 `redis-server` 可执行文件：用例自己拉临时实例（unix socket），不需要额外部署 redis 服务。
 
+## 更新日志
+
+`CHANGELOG.md` 的条目同时是 GitHub Release 说明：发布流程（`.github/workflows/publish-images.yml`）打 tag 时要求存在 `## <VERSION>` 标题，CI 的 `Changelog entry` 任务也会校验 `VERSION` 的正式版本号有对应条目。提交前用脚本生成草稿，再改写成用户可见的措辞：
+
+```bash
+node scripts/changelog.mjs                 # 预览：从 CHANGELOG 顶部条目的 commit 到 HEAD
+node scripts/changelog.mjs --write         # 写入 CHANGELOG.md 顶部，并同步 bump VERSION
+node scripts/changelog.mjs --write --force # 同版本条目已存在时重新生成
+node scripts/changelog.mjs --since <sha>   # 多线合并历史里起点不可达时手动指定
+node scripts/changelog.mjs --check         # 校验当前版本是否有日志条目（CI 用）
+```
+
+脚本只按提交类型归并标题，不判断用户可见影响：**发布前必须改写措辞并补充升级 / 迁移说明**，不要把 `git log` 原样提交。
+
 ## 提交要求
 
 - 保持改动聚焦，沿用现有目录职责、命名和错误处理风格。
