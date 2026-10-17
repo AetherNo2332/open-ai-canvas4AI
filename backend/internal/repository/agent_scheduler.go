@@ -52,7 +52,7 @@ func (r *Repository) AgentCapacityReport(owner string, p model.AgentCapacityRepo
 		if available > 0 {
 			phase, kind, reason = "ready", "", ""
 		}
-		return tx.Model(&model.CloudAgentExecution{}).Where("engine = ? AND status = ? AND lease_expires_at IS NULL AND runtime_phase <> ? AND wait_kind <> ?", "pi", "queued", phase, "canvas_capacity").Updates(map[string]any{"runtime_phase": phase, "wait_kind": kind, "wait_id": "", "wait_reason": reason, "revision": gorm.Expr("revision + 1")}).Error
+		return tx.Model(&model.CloudAgentExecution{}).Where("engine = ? AND status = ? AND lease_expires_at IS NULL AND runtime_phase <> ? AND wait_kind NOT IN ?", "pi", "queued", phase, []string{"canvas_capacity", "tool_snapshot"}).Updates(map[string]any{"runtime_phase": phase, "wait_kind": kind, "wait_id": "", "wait_reason": reason, "revision": gorm.Expr("revision + 1")}).Error
 	})
 }
 

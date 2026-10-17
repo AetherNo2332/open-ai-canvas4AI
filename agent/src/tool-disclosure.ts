@@ -28,7 +28,7 @@ export class FatalWorkerError extends Error {
 
 export interface ToolSchemaArtifact {
   schemaVersion: string;
-  tools: { type: string; function: { name: string; parameters: Record<string, unknown> } }[];
+  tools: { type: string; function: { name: string; description?: string; parameters: Record<string, unknown> } }[];
 }
 
 /**

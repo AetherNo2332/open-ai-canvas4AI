@@ -20,6 +20,7 @@ export class RuntimeConfigController {
 }
 
 export interface CapacityReport {
+ artifactFileState?: import("./tool-snapshot-registration.js").ArtifactFileState;
  active:number;capacity:number;claimReservations:number;dispatchActive:number;
  readyQueued:number;draining:boolean;appliedConfigRevision:number;
 }

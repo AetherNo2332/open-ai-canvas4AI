@@ -212,9 +212,9 @@ func (r *Repository) ClaimPiAgent(owner string, until time.Time) (*model.CloudAg
 	return r.ClaimPiAgentConfigured(owner, until, model.DefaultAgentSchedulerSetting())
 }
 
-func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p model.AgentSchedulerSetting) (*model.CloudAgentExecution, error) {
+func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p model.AgentSchedulerSetting, guards ...func(*Repository, model.CloudAgentExecution) (bool, error)) (*model.CloudAgentExecution, error) {
 	if r.db.Migrator().HasTable(&model.AgentAdmissionCounter{}) {
-		return r.ClaimPiAgentFair(owner, until, p)
+		return r.ClaimPiAgentFair(owner, until, p, guards...)
 	}
 	var candidates []model.CloudAgentExecution
 	// SQLite 把 time.Time 按写入方的时区偏移序列化成文本再比较：混用本地时区参数会把

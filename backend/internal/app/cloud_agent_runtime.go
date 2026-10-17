@@ -99,6 +99,7 @@ type cloudAgentApproval struct {
 	Reason           string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
+	ToolSchemaVersion string                    `json:"toolSchemaVersion,omitempty"`
 	ActiveSubagents   int                       `json:"activeSubagents,omitempty"`
 	Subagent          *SubagentRuntime          `json:"subagent,omitempty"`
 	Workspace         *WorkspaceSnapshot        `json:"workspace,omitempty"`

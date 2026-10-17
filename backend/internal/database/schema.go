@@ -17,7 +17,7 @@ import (
 func Models() []any {
 	return []any{
 		&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{},
-		&model.AgentRuntimeInstance{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{},
+		&model.AgentRuntimeInstance{}, &model.AgentToolSnapshotContent{}, &model.AgentToolSnapshot{}, &model.AgentToolRuntime{}, &model.AgentToolSnapshotAlert{}, &model.AgentToolSnapshotCounter{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{},
 		&model.CloudAgentExecution{},
 		&model.CloudAgentEventRecord{},
 		&model.CloudAgentMessageRecord{},
