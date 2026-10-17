@@ -8,8 +8,8 @@ import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceVideo } from "@/types/media";
 import { createStoryboardRow, cinematicStoryboardColumns, storyboardRowsOutputContract } from "@/lib/canvas/canvas-project-domain";
 import type { StoryboardColumn } from "@/types/canvas";
-import {useCanvasSessionStore} from '@/stores/canvas/use-canvas-session-store';
-import {consumeDesktopCanvasGeneration} from '@/services/desktop/canvas-generation';
+import { useCanvasSessionStore } from "@/stores/canvas/use-canvas-session-store";
+import { consumeDesktopCanvasGeneration } from "@/services/desktop/canvas-generation";
 
 const LIST_MODE_SYSTEM_PROMPT = `你是一个电商内容分析助手。用户会给你产品图片和一个任务描述。
 请严格根据用户要求的数量生成数据；如果用户说“生成5个卖点”，就必须返回5行，每行一个独立卖点。
@@ -373,8 +373,8 @@ export async function handleListGenerate({ sourceNodeId, prompt, nodes, connecti
 
         const fullPrompt = `${isVideoAnalysis ? VIDEO_LIST_MODE_SYSTEM_PROMPT : LIST_MODE_SYSTEM_PROMPT}\n\n用户任务：${prompt}\n\n图片数量：${imageNodes.length} 张\n视频数量：${referenceVideos.length} 个\n目标行数：${targetRowCount || "未指定，按任务判断"}`;
 
-        const commandScope=useCanvasSessionStore.getState().scope;
-        let hostTaskId='';
+        const commandScope = useCanvasSessionStore.getState().scope;
+        let hostTaskId = "";
         const result = await runBackendGenerationTask({
             projectId,
             mode: "text",
@@ -383,16 +383,25 @@ export async function handleListGenerate({ sourceNodeId, prompt, nodes, connecti
             referenceImages,
             referenceVideos,
             streamText: false,
-            ...(commandScope?{metadata:{nodeId:sourceNodeId,listAnalysis:{inputNodeIds:[...videoNodes,...imageNodes].map(node=>node.id),video:isVideoAnalysis,...(targetRowCount?{targetRowCount}:{})}},onTaskUpdate:(task:import('@/services/api/task-center').GenerationTask)=>{hostTaskId=task.id}}:{}),
+            ...(commandScope
+                ? {
+                      metadata: { nodeId: sourceNodeId, listAnalysis: { inputNodeIds: [...videoNodes, ...imageNodes].map((node) => node.id), video: isVideoAnalysis, ...(targetRowCount ? { targetRowCount } : {}) } },
+                      onTaskUpdate: (task: import("@/services/api/task-center").GenerationTask) => {
+                          hostTaskId = task.id;
+                      },
+                  }
+                : {}),
         });
 
-        if(commandScope) {
-            if(commandScope!==useCanvasSessionStore.getState().scope)throw new Error('画布主机已切换');
-            if(!hostTaskId)throw new Error('列表任务未返回任务标识');
-            const status=await consumeDesktopCanvasGeneration(projectId,hostTaskId);
-            if(!status)throw new Error('画布主机已切换');
-            if(status.outcome==='applied') {setDialogNodeId('batch-table-'+hostTaskId);message.success('多维表格已生成并保存到主机');}
-            else message.info('分析结果已保留；原目标已变化，因此未写入当前画布');
+        if (commandScope) {
+            if (commandScope !== useCanvasSessionStore.getState().scope) throw new Error("画布主机已切换");
+            if (!hostTaskId) throw new Error("列表任务未返回任务标识");
+            const status = await consumeDesktopCanvasGeneration(projectId, hostTaskId);
+            if (!status) throw new Error("画布主机已切换");
+            if (status.outcome === "applied") {
+                setDialogNodeId("batch-table-" + hostTaskId);
+                message.success("多维表格已生成并保存到主机");
+            } else message.info("分析结果已保留；原目标已变化，因此未写入当前画布");
             return;
         }
 

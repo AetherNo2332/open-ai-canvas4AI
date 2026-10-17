@@ -92,22 +92,25 @@ export default function LoginPage() {
                 />
             )}
             {method !== "password" ? (
-                <VerificationFields key={previewEmailVerification ? "email-preview" : method} purpose="login" method={previewEmailVerification ? "email" : method} value={verification} onChange={setVerification} disabled={submitting || previewEmailVerification} />
+                <VerificationFields
+                    key={previewEmailVerification ? "email-preview" : method}
+                    purpose="login"
+                    method={previewEmailVerification ? "email" : method}
+                    value={verification}
+                    onChange={setVerification}
+                    disabled={submitting || previewEmailVerification}
+                />
             ) : (
                 <>
                     <div className="auth-login-inputs">
-                        <label htmlFor="login-account" className="auth-scene-label sr-only">用户名 / 邮箱</label>
+                        <label htmlFor="login-account" className="auth-scene-label sr-only">
+                            用户名 / 邮箱
+                        </label>
                         <Input id="login-account" className="auth-login-account" size="large" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="请输入用户名或邮箱" autoComplete="username" required />
-                        <label htmlFor="login-password" className="auth-scene-label sr-only">密码</label>
-                        <Input.Password
-                            id="login-password"
-                            size="large"
-                            value={password}
-                            onChange={(event) => setPassword(event.target.value)}
-                            placeholder="请输入密码"
-                            autoComplete="current-password"
-                            required
-                        />
+                        <label htmlFor="login-password" className="auth-scene-label sr-only">
+                            密码
+                        </label>
+                        <Input.Password id="login-password" size="large" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="请输入密码" autoComplete="current-password" required />
                         <span className="auth-scene-icon sr-only" aria-hidden="true" />
                     </div>
                     <div className="auth-login-options">
@@ -124,7 +127,17 @@ export default function LoginPage() {
                 登录
             </Button>
             {/* label="密码" remains the semantic password landmark used by the recovery contract. */}
-            <p className="auth-login-terms">登录即表示你同意<br /><Link to="/terms" className="auth-scene-link">用户协议</Link><span>、</span><Link to="/privacy" className="auth-scene-link">隐私政策</Link></p>
+            <p className="auth-login-terms">
+                登录即表示你同意
+                <br />
+                <Link to="/terms" className="auth-scene-link">
+                    用户协议
+                </Link>
+                <span>、</span>
+                <Link to="/privacy" className="auth-scene-link">
+                    隐私政策
+                </Link>
+            </p>
             {linuxdoEnabled ? (
                 <>
                     <Divider plain className="auth-scene-divider">

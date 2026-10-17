@@ -31,9 +31,9 @@ import (
 )
 
 type Service struct {
-	canvasCommands          *commands.Service
+	canvasCommands           *commands.Service
 	canvasTasks              *tasks.Service
-	canvasCommandMode       bool
+	canvasCommandMode        bool
 	desktopMode              bool
 	desktopMasterKey         []byte
 	desktopPolicyMu          sync.RWMutex

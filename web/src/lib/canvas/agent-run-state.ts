@@ -15,11 +15,11 @@ export function reduceAgentRun(current: AgentRun | null, event: AgentEvent): Age
             cleanupPending: Boolean(payload.cleanupPending),
             failureMessage: String(payload.failureMessage || ""),
             skillRuntimeMode: payload.skillRuntimeMode === "pi-native" || payload.skillRuntimeMode === "legacy-go" ? payload.skillRuntimeMode : current.skillRuntimeMode,
-            skills: Object.hasOwn(payload, "skills") ? payload.skills as AgentRun["skills"] : current.skills,
+            skills: Object.hasOwn(payload, "skills") ? (payload.skills as AgentRun["skills"]) : current.skills,
             spentCredits: Number(payload.spentCredits || 0),
             step: Number(payload.step || 0),
-            approval: payload.approval && typeof payload.approval === "object" ? payload.approval as AgentRun["approval"] : undefined,
-            contextCompaction: !terminal && compaction && typeof compaction === "object" ? compaction as AgentContextCompactionState : undefined,
+            approval: payload.approval && typeof payload.approval === "object" ? (payload.approval as AgentRun["approval"]) : undefined,
+            contextCompaction: !terminal && compaction && typeof compaction === "object" ? (compaction as AgentContextCompactionState) : undefined,
         };
     }
     if (event.type === "context_compaction_requested") {

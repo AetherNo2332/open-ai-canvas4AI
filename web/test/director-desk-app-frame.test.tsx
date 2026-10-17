@@ -58,15 +58,7 @@ const stubSaveController: PrevisSaveController = {
 const stubScene = { id: "scene-1", title: "测试场景" } as PrevisScene;
 
 describe("DirectorDeskAppFrame(原版应用挂载)", () => {
-    const html = renderToStaticMarkup(
-        <DirectorDeskAppFrame
-            sceneId="scene-1"
-            scene={stubScene}
-            saveController={stubSaveController}
-            onSceneChange={() => undefined}
-            onSaveRequest={async () => ({ ok: true })}
-        />,
-    );
+    const html = renderToStaticMarkup(<DirectorDeskAppFrame sceneId="scene-1" scene={stubScene} saveController={stubSaveController} onSceneChange={() => undefined} onSaveRequest={async () => ({ ok: true })} />);
 
     test("宿主外壳提供关闭入口与保存状态", () => {
         expect(html).toContain('aria-label="关闭预演台"');

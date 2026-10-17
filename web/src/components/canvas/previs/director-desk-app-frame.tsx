@@ -49,22 +49,7 @@ export type DirectorDeskAppFrameProps = {
     onOpenAgent?: () => void;
 };
 
-export function DirectorDeskAppFrame({
-    sceneId,
-    scene,
-    saveController,
-    readDocument,
-    onSceneChange,
-    onSaveRequest,
-    onExportRequest,
-    agentPatch,
-    canvasId,
-    theme = "dark",
-    onReady,
-    onClose,
-    onFallback,
-    onOpenAgent,
-}: DirectorDeskAppFrameProps) {
+export function DirectorDeskAppFrame({ sceneId, scene, saveController, readDocument, onSceneChange, onSaveRequest, onExportRequest, agentPatch, canvasId, theme = "dark", onReady, onClose, onFallback, onOpenAgent }: DirectorDeskAppFrameProps) {
     const frameRef = useRef<HTMLIFrameElement>(null);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
     const [attempt, setAttempt] = useState(0);
@@ -181,25 +166,12 @@ export function DirectorDeskAppFrame({
                     ) : null}
                 </div>
                 {onOpenAgent ? (
-                    <button
-                        type="button"
-                        className="director-desk-app-frame-agent"
-                        aria-label="打开 Agent 助手"
-                        title="打开 Agent 助手"
-                        onClick={onOpenAgent}
-                    >
+                    <button type="button" className="director-desk-app-frame-agent" aria-label="打开 Agent 助手" title="打开 Agent 助手" onClick={onOpenAgent}>
                         <Sparkles className="size-4" aria-hidden />
                         <span>Agent</span>
                     </button>
                 ) : null}
-                <button
-                    type="button"
-                    className="director-desk-app-frame-close"
-                    aria-label="关闭预演台"
-                    title="关闭"
-                    disabled={closing}
-                    onClick={closeHandler}
-                >
+                <button type="button" className="director-desk-app-frame-close" aria-label="关闭预演台" title="关闭" disabled={closing} onClick={closeHandler}>
                     <X className="size-4" aria-hidden />
                 </button>
             </header>
@@ -213,16 +185,7 @@ export function DirectorDeskAppFrame({
 
             {/* iframe 容器 */}
             <div className="director-desk-app-frame-body">
-                <iframe
-                    ref={frameRef}
-                    key={attempt}
-                    className="director-desk-app-frame-view"
-                    src={DIRECTOR_DESK_APP_URL}
-                    title="导演台"
-                    sandbox={DIRECTOR_DESK_APP_SANDBOX}
-                    allow="fullscreen; clipboard-write"
-                    onError={() => setStatus("error")}
-                />
+                <iframe ref={frameRef} key={attempt} className="director-desk-app-frame-view" src={DIRECTOR_DESK_APP_URL} title="导演台" sandbox={DIRECTOR_DESK_APP_SANDBOX} allow="fullscreen; clipboard-write" onError={() => setStatus("error")} />
                 {status === "loading" ? (
                     <div className="director-desk-app-frame-overlay" role="status" aria-live="polite">
                         正在打开导演台…

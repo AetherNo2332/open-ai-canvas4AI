@@ -1,12 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-    createImageStagingDraft,
-    approveImageStagingDraft,
-    commitImageTransaction,
-    cancelImageTransaction,
-    expireImageDrafts,
-    type PrevisImageStagingDraft,
-} from "../src/lib/canvas/previs/previs-image-transaction";
+import { createImageStagingDraft, approveImageStagingDraft, commitImageTransaction, cancelImageTransaction, expireImageDrafts, type PrevisImageStagingDraft } from "../src/lib/canvas/previs/previs-image-transaction";
 import type { PrevisScene } from "../src/types/previs";
 
 const makeScene = (overrides: Partial<PrevisScene> = {}): PrevisScene => ({
@@ -17,9 +10,7 @@ const makeScene = (overrides: Partial<PrevisScene> = {}): PrevisScene => ({
     environmentIntensity: 1,
     gridVisible: true,
     objects: [],
-    cameras: [
-        { id: "cam-1", name: "主机位", transform: { position: [0, 1.6, 5], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1, 0], focalLength: 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] },
-    ],
+    cameras: [{ id: "cam-1", name: "主机位", transform: { position: [0, 1.6, 5], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1, 0], focalLength: 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] }],
     lights: [],
     shots: [{ id: "shot-1", name: "镜头 1", cameraId: "cam-1", duration: 4, fps: 24, shotSize: "medium", cameraMove: "static", prompt: "" }],
     activeShotId: "shot-1",
@@ -60,9 +51,7 @@ describe("图片预演事务 — staging draft 与原子提交", () => {
 
     test("03 批准后 CAS 提交成功：场景带 updatedAt 时间戳；重复提交同草稿被拒绝（幂等，重复点击不产生第二次提交）", () => {
         const base = makeScene();
-        const draft = approveImageStagingDraft(
-            { ...createImageStagingDraft({ scene: base, id: draftId, now, ttlMs: 60_000 }), scene: { ...base, title: "图片生成的标题" } },
-        );
+        const draft = approveImageStagingDraft({ ...createImageStagingDraft({ scene: base, id: draftId, now, ttlMs: 60_000 }), scene: { ...base, title: "图片生成的标题" } });
         expect(draft.status).toBe("approved");
 
         const first = commitImageTransaction({ draft, authoritative: base, now });
@@ -82,9 +71,7 @@ describe("图片预演事务 — staging draft 与原子提交", () => {
     test("04 权威场景漂移（其他写者已保存）时提交被 CAS 拒绝：reason=scene-drift，草稿保持可批准态，原场景不变", () => {
         const base = makeScene();
         const drifted: PrevisScene = { ...base, updatedAt: "2026-01-01T02:00:00Z" };
-        const draft = approveImageStagingDraft(
-            { ...createImageStagingDraft({ scene: base, id: draftId, now, ttlMs: 60_000 }), scene: { ...base, title: "草稿标题" } },
-        );
+        const draft = approveImageStagingDraft({ ...createImageStagingDraft({ scene: base, id: draftId, now, ttlMs: 60_000 }), scene: { ...base, title: "草稿标题" } });
 
         const result = commitImageTransaction({ draft, authoritative: drifted, now });
         expect(result.ok).toBe(false);
@@ -95,9 +82,7 @@ describe("图片预演事务 — staging draft 与原子提交", () => {
 
     test("05 超时提交被拒绝：reason=expired，草稿被标记 rejected 且不可再提交", () => {
         const base = makeScene();
-        const draft = approveImageStagingDraft(
-            { ...createImageStagingDraft({ scene: base, id: draftId, now, ttlMs: 60_000 }), scene: { ...base } },
-        );
+        const draft = approveImageStagingDraft({ ...createImageStagingDraft({ scene: base, id: draftId, now, ttlMs: 60_000 }), scene: { ...base } });
         const later = "2026-01-02T00:20:00Z";
 
         const result = commitImageTransaction({ draft, authoritative: base, now: later });
@@ -147,9 +132,7 @@ describe("图片预演事务 — staging draft 与原子提交", () => {
 
     test("09 sceneId 不匹配的草稿不允许提交", () => {
         const base = makeScene();
-        const draft = approveImageStagingDraft(
-            { ...createImageStagingDraft({ scene: base, id: draftId, now, ttlMs: 60_000 }), scene: { ...base } },
-        );
+        const draft = approveImageStagingDraft({ ...createImageStagingDraft({ scene: base, id: draftId, now, ttlMs: 60_000 }), scene: { ...base } });
         const result = commitImageTransaction({ draft, authoritative: makeScene({ id: "scene-other" }), now });
         expect(result.ok).toBe(false);
         if (!result.ok) expect(result.reason).toBe("scene-mismatch");

@@ -8,10 +8,20 @@ function harness() {
     const driver = ((targets, parameters) => {
         const record = { targets, parameters, reverts: 0 };
         calls.push(record);
-        return { revert: () => { record.reverts += 1; } };
+        return {
+            revert: () => {
+                record.reverts += 1;
+            },
+        };
     }) as typeof animate;
     const player = createAuthMotionPlayer({ driver, reducedMotion: () => reduced, normalDuration: 150, fastDuration: 120 });
-    return { player, calls, reduce: () => { reduced = true; } };
+    return {
+        player,
+        calls,
+        reduce: () => {
+            reduced = true;
+        },
+    };
 }
 const element = () => ({}) as HTMLElement;
 

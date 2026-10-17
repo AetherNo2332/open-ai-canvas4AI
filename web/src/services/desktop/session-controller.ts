@@ -1,4 +1,4 @@
-export type HostConnection = { endpoint: string; kind: 'local' | 'lan'; profileId?: string; principalId?: string };
+export type HostConnection = { endpoint: string; kind: "local" | "lan"; profileId?: string; principalId?: string };
 export type SessionIdentity = { instanceId: string; profileId: string; principal: { id: string }; features?: unknown; drawingEngine?: unknown; runtimeLimits?: unknown; capabilities: { protocol: number; saveMode: string } };
 export type SessionApplyOptions = { storageScope: string; remoteAutoSync: false; awaitHydration: true };
 
@@ -24,15 +24,16 @@ export function createDesktopSessionController<S extends SessionIdentity, A exte
             const bootstrap = await deps.readBootstrap(connection, requestSignal);
             const auth = await deps.readAuth(connection, requestSignal);
             requestSignal.throwIfAborted();
-            if (current !== generation) throw new DOMException('host changed', 'AbortError');
-            if (!auth.user || !bootstrap.profileId || bootstrap.principal.id !== auth.user.id ||
-                (connection.profileId && connection.profileId !== bootstrap.profileId) ||
-                (connection.principalId && connection.principalId !== auth.user.id)) throw new Error('desktop_identity_mismatch');
-            if (bootstrap.capabilities.protocol !== 1) throw new Error('desktop_protocol_mismatch');
-            await deps.apply({...auth, features: bootstrap.features, drawingEngine: bootstrap.drawingEngine, runtimeLimits: bootstrap.runtimeLimits},
-                {storageScope: `${bootstrap.profileId}:${auth.user.id}`, remoteAutoSync: false, awaitHydration: true});
+            if (current !== generation) throw new DOMException("host changed", "AbortError");
+            if (!auth.user || !bootstrap.profileId || bootstrap.principal.id !== auth.user.id || (connection.profileId && connection.profileId !== bootstrap.profileId) || (connection.principalId && connection.principalId !== auth.user.id))
+                throw new Error("desktop_identity_mismatch");
+            if (bootstrap.capabilities.protocol !== 1) throw new Error("desktop_protocol_mismatch");
+            await deps.apply(
+                { ...auth, features: bootstrap.features, drawingEngine: bootstrap.drawingEngine, runtimeLimits: bootstrap.runtimeLimits },
+                { storageScope: `${bootstrap.profileId}:${auth.user.id}`, remoteAutoSync: false, awaitHydration: true },
+            );
             requestSignal.throwIfAborted();
-            if (current !== generation) throw new DOMException('host changed', 'AbortError');
+            if (current !== generation) throw new DOMException("host changed", "AbortError");
             active = bootstrap;
             return bootstrap;
         },

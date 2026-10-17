@@ -63,7 +63,7 @@ describe("DirectorDeskAppFrame composition", () => {
         expect(source).toContain("director-desk-app-frame-close");
         expect(source).toContain("director-desk-app-frame-save-status");
         expect(source).toContain("closeHandler");
-        expect(source).toContain("aria-label=\"关闭预演台\"");
+        expect(source).toContain('aria-label="关闭预演台"');
     });
 
     test("03 frame shows notice on unsaved state and confirm dialog before exit", () => {

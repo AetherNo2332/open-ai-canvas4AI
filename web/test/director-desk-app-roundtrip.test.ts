@@ -13,7 +13,16 @@ import type { PrevisScene } from "@/types/previs";
 function richScene(): PrevisScene {
     const scene = createPrevisScene("往返场景");
     const actor = createPrevisActor("主角", [1, 0, 2], "#2f7de1", "woman");
-    actor.motionPath = { points: [[1, 0, 2], [3, 0, 2], [3, 0, 5]], speed: "walk", startDelay: 0.5, orientToPath: true };
+    actor.motionPath = {
+        points: [
+            [1, 0, 2],
+            [3, 0, 2],
+            [3, 0, 5],
+        ],
+        speed: "walk",
+        startDelay: 0.5,
+        orientToPath: true,
+    };
     actor.pose = "sit";
     const box = createPrevisObject("box", "箱子", [0, 0.5, 0], "#8795a5");
     const plane = createPrevisObject("plane", "地板", [0, 0, 0], "#d0d2d0");
@@ -37,7 +46,10 @@ describe("DirectorDesk 原版应用场景往返", () => {
         scene.shots = scene.shots.map((shot) => ({ ...shot, fps: 25, aspectRatio: "2.39:1" }));
         scene.objects[1].color = "steelblue";
         const restored = directorDocumentToPrevisScene(readSceneDocument(previsSceneToDirectorDocument(scene)));
-        expect(restored.shots.map((shot) => [shot.fps, shot.aspectRatio])).toEqual([[25, "2.39:1"], [25, "2.39:1"]]);
+        expect(restored.shots.map((shot) => [shot.fps, shot.aspectRatio])).toEqual([
+            [25, "2.39:1"],
+            [25, "2.39:1"],
+        ]);
         expect(restored.objects[1].color).toBe("steelblue");
     });
 

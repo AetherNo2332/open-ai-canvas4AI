@@ -41,9 +41,7 @@ const baseScene = (): PrevisScene => ({
         { id: "obj-a", name: "演员A", kind: "actor", transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, color: "#e0b08a", visible: true, castShadow: true, receiveShadow: true, pose: "stand", archetype: "adult", keyframes: [] },
         { id: "obj-b", name: "箱体B", kind: "primitive", primitive: "box", transform: { position: [2, 0, 1], rotation: [0, 0, 0], scale: [1, 1, 1] }, color: "#888888", visible: true, castShadow: true, receiveShadow: true, keyframes: [] },
     ],
-    cameras: [
-        { id: "cam-1", name: "主机位", transform: { position: [4, 2, 6], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1.5, 0], focalLength: 50, fov: 36, aperture: 2.8, focusDistance: 6, near: 0.1, far: 200, keyframes: [] },
-    ],
+    cameras: [{ id: "cam-1", name: "主机位", transform: { position: [4, 2, 6], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1.5, 0], focalLength: 50, fov: 36, aperture: 2.8, focusDistance: 6, near: 0.1, far: 200, keyframes: [] }],
     lights: [],
     shots: [
         { id: "shot-1", name: "镜头1", cameraId: "cam-1", duration: 5, fps: 24, shotSize: "medium", cameraMove: "static", prompt: "p1" },

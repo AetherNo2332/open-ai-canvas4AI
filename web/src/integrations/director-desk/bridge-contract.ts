@@ -8,27 +8,10 @@
 export const PROTOCOL_VERSION = 1;
 
 /** 导演台 → 宿主 */
-export const APP_TO_HOST_TYPES = [
-    "desk.ready",
-    "desk.scene.changed",
-    "desk.save.request",
-    "desk.asset.request",
-    "desk.export.request",
-    "desk.ai.send",
-    "desk.ai.cancel",
-    "desk.ai.approval",
-] as const;
+export const APP_TO_HOST_TYPES = ["desk.ready", "desk.scene.changed", "desk.save.request", "desk.asset.request", "desk.export.request", "desk.ai.send", "desk.ai.cancel", "desk.ai.approval"] as const;
 
 /** 宿主 → 导演台 */
-export const HOST_TO_APP_TYPES = [
-    "host.appearance.changed",
-    "host.scene.load",
-    "host.save.result",
-    "host.asset.result",
-    "host.export.result",
-    "host.ai.event",
-    "host.ai.state",
-] as const;
+export const HOST_TO_APP_TYPES = ["host.appearance.changed", "host.scene.load", "host.save.result", "host.asset.result", "host.export.result", "host.ai.event", "host.ai.state"] as const;
 
 /** 请求类型 → 应答类型(带 id 的请求必须收到同名 id 的应答) */
 export const REQUEST_RESPONSE: Record<string, string> = {

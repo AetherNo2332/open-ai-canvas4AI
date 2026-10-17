@@ -7,7 +7,9 @@ import type { CanvasNodeData } from "@/types/canvas";
 const MAX_DRAWING_DOCUMENT_BYTES = 4 * 1024 * 1024;
 const RESOURCE_REFERENCE = /^resource:[a-zA-Z0-9_-]+$/;
 type RecordValue = Record<string, unknown>;
-function record(value: unknown): value is RecordValue { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
+function record(value: unknown): value is RecordValue {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 function assetFields(document: CanvasDrawingSnapshot): Array<{ record: RecordValue; field: string; id: string }> {
     if (!record(document.snapshot)) throw new Error("绘图原生文档格式无效");
@@ -21,11 +23,14 @@ function assetFields(document: CanvasDrawingSnapshot): Array<{ record: RecordVal
     }
     const content = record(root.document) ? root.document : root;
     if (!record(content.store)) throw new Error("tldraw 文档缺少原生记录");
-    return Object.entries(content.store).flatMap(([id, item]) => record(item) && item.typeName === "asset" && record(item.props) && typeof item.props.src === "string" ? [{ record: item.props, field: "src", id }] : []);
+    return Object.entries(content.store).flatMap(([id, item]) => (record(item) && item.typeName === "asset" && record(item.props) && typeof item.props.src === "string" ? [{ record: item.props, field: "src", id }] : []));
 }
 
 function assertCredentialFree(value: unknown) {
-    if (Array.isArray(value)) { value.forEach(assertCredentialFree); return; }
+    if (Array.isArray(value)) {
+        value.forEach(assertCredentialFree);
+        return;
+    }
     if (record(value)) {
         for (const [key, item] of Object.entries(value)) {
             if (["__proto__", "constructor", "prototype"].includes(key) || /^(api[_-]?key|authorization|cookie|password|secret|token|access[_-]?token|refresh[_-]?token|headers)$/i.test(key)) throw new Error("绘图文档包含凭证或无效字段，未同步");
@@ -80,13 +85,13 @@ export async function hydrateCanvasDrawingDocument(document: CanvasDrawingSnapsh
 export function selectCanvasDrawingDocument(local: CanvasDrawingSnapshot | null, remote?: CanvasDrawingSnapshot, localPublished = false) {
     if (!remote) return local;
     if (localPublished && local && (local.revision !== remote.revision || local.updatedAt !== remote.updatedAt)) return remote;
-    if (!local || remote.revision > local.revision || remote.revision === local.revision && remote.updatedAt > local.updatedAt) return remote;
+    if (!local || remote.revision > local.revision || (remote.revision === local.revision && remote.updatedAt > local.updatedAt)) return remote;
     return local;
 }
 
 export async function loadCanvasDrawingForNode(projectId: string, node: CanvasNodeData) {
     const local = await loadCanvasDrawing(projectId, node.metadata?.drawingId || "");
-    const localPublished = Boolean(local && await isCanvasDrawingPublished(projectId, node.metadata?.drawingId || "", local));
+    const localPublished = Boolean(local && (await isCanvasDrawingPublished(projectId, node.metadata?.drawingId || "", local)));
     const selected = selectCanvasDrawingDocument(local, node.metadata?.drawingDocument, localPublished);
     if (!selected || selected === local) return local;
     const hydrated = await hydrateCanvasDrawingDocument(selected);

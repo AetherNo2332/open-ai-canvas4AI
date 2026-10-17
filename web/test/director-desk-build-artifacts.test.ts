@@ -10,7 +10,7 @@ const read = (path: string) => readFileSync(resolve(repoRoot, path), "utf8");
 describe("导演台静态托管契约", () => {
     test("应用构建以 /desk/ 为基准路径", () => {
         const config = read("director-desk/vite.config.mjs");
-        expect(config).toContain('/desk/');
+        expect(config).toContain("/desk/");
         expect(config).toMatch(/base\s*:/);
         expect(config).toMatch(/outDir\s*:\s*['"]?dist/);
     });

@@ -52,7 +52,9 @@ export function DirectorInspector({ scene, selectedEntityId, activeShotId, onUpd
     if (!object && !camera) {
         return (
             <div className="dps-root">
-                <div className="dps-empty" role="status">选择对象或切换镜头</div>
+                <div className="dps-empty" role="status">
+                    选择对象或切换镜头
+                </div>
             </div>
         );
     }

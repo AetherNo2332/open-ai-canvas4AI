@@ -32,5 +32,10 @@ export function createDirectorRenderBridge(options: { submit: (input: DirectorPr
             if (key.startsWith(`${sceneId}:${shotId}:${time}:`)) entry.controller.abort();
         }
     };
-    return { preview: (scene: PrevisScene, renderOptions: RenderOptions = {}) => render(scene, renderOptions), exportToCanvas: (scene: PrevisScene, kind: PrevisExportKind, renderOptions: RenderOptions = {}) => render(scene, renderOptions, kind), cancel, pendingCount: () => pending.size };
+    return {
+        preview: (scene: PrevisScene, renderOptions: RenderOptions = {}) => render(scene, renderOptions),
+        exportToCanvas: (scene: PrevisScene, kind: PrevisExportKind, renderOptions: RenderOptions = {}) => render(scene, renderOptions, kind),
+        cancel,
+        pendingCount: () => pending.size,
+    };
 }

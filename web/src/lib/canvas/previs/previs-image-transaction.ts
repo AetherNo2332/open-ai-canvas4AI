@@ -18,9 +18,7 @@ export type PrevisImageStagingDraft = {
     expiresAt: string;
 };
 
-export type ImageCommitResult =
-    | { ok: true; scene: PrevisScene }
-    | { ok: false; reason: "not-approved" | "rejected" | "scene-mismatch" | "scene-drift" | "expired" | "already-committed" };
+export type ImageCommitResult = { ok: true; scene: PrevisScene } | { ok: false; reason: "not-approved" | "rejected" | "scene-mismatch" | "scene-drift" | "expired" | "already-committed" };
 
 export type ImageStagingOptions = { scene: PrevisScene; id: string; now: string; ttlMs: number };
 

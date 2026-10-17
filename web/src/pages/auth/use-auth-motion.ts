@@ -47,7 +47,9 @@ export function useAuthMotion(mode: string) {
             const target = event.target instanceof Element ? event.target.closest<HTMLElement>(".ant-btn") : null;
             if (target && root.contains(target) && !target.matches(":disabled, [aria-disabled='true']")) player.press(target);
         };
-        const preferenceChanged = () => { if (reduced.matches) player.dispose(); };
+        const preferenceChanged = () => {
+            if (reduced.matches) player.dispose();
+        };
         const observer = new MutationObserver(enter);
         observer.observe(root, { childList: true, subtree: true });
         root.addEventListener("invalid", invalid, true);

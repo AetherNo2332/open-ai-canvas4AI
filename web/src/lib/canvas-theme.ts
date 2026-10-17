@@ -18,23 +18,43 @@ export type CanvasTheme = {
 /** Actual values also work in renderers that cannot resolve CSS variables. */
 export function getCanvasSkinTheme(mode: CanvasColorTheme, skinValue: unknown): CanvasTheme {
     const c = normalizeSkinDefinition(skinValue).tokens[mode];
-    const alpha = (color: string, opacity: number) => `${color.slice(0, 7)}${Math.round(opacity * 255).toString(16).padStart(2, "0")}`;
+    const alpha = (color: string, opacity: number) =>
+        `${color.slice(0, 7)}${Math.round(opacity * 255)
+            .toString(16)
+            .padStart(2, "0")}`;
     return {
         canvas: { background: c.workspace, dot: c.workspaceGrid, line: c.workspaceGrid, selectionFill: c.selected },
         node: {
-            label: c.textMuted, agentUserMessage: c.selected, fill: c.surface, panel: c.surface,
-            stroke: c.border, edge: c.border, shadow: "none", hoverShadow: "none",
-            activeStroke: c.primary, placeholder: c.controlDisabledForeground,
-            text: c.text, muted: c.textMuted, faint: c.iconMuted,
+            label: c.textMuted,
+            agentUserMessage: c.selected,
+            fill: c.surface,
+            panel: c.surface,
+            stroke: c.border,
+            edge: c.border,
+            shadow: "none",
+            hoverShadow: "none",
+            activeStroke: c.primary,
+            placeholder: c.controlDisabledForeground,
+            text: c.text,
+            muted: c.textMuted,
+            faint: c.iconMuted,
         },
-        frame: { fill: alpha(c.text, .025), stroke: c.border, activeFill: c.selected, activeStroke: c.primary, preview: c.overlay },
+        frame: { fill: alpha(c.text, 0.025), stroke: c.border, activeFill: c.selected, activeStroke: c.primary, preview: c.overlay },
         toolbar: { panel: c.overlay, border: c.border, item: c.icon, itemHover: c.controlHover, activeBg: c.selected, activeText: c.selectedForeground },
-        spatial: { surface: c.surface, elevated: c.overlay, dropzone: c.surfaceSubtle, glow: alpha(c.primary, .14), glowStrong: alpha(c.primary, .42), shadow: "transparent" },
+        spatial: { surface: c.surface, elevated: c.overlay, dropzone: c.surfaceSubtle, glow: alpha(c.primary, 0.14), glowStrong: alpha(c.primary, 0.42), shadow: "transparent" },
         timeline: {
-            trackFill: c.surfaceSubtle, trackBorder: c.border,
-            clipVideo: alpha(c.primary, .16), clipAudio: alpha(c.success, .14), clipSubtitle: alpha(c.warning, .16),
-            clipSelectedBorder: c.primary, handle: c.surfaceRaised, rulerTick: c.border,
-            rulerLabel: c.textMuted, playhead: c.primary, entryActive: c.selected, entryHover: c.controlHover,
+            trackFill: c.surfaceSubtle,
+            trackBorder: c.border,
+            clipVideo: alpha(c.primary, 0.16),
+            clipAudio: alpha(c.success, 0.14),
+            clipSubtitle: alpha(c.warning, 0.16),
+            clipSelectedBorder: c.primary,
+            handle: c.surfaceRaised,
+            rulerTick: c.border,
+            rulerLabel: c.textMuted,
+            playhead: c.primary,
+            entryActive: c.selected,
+            entryHover: c.controlHover,
         },
         accent: { primary: c.primary, primarySoft: c.selected, onPrimary: c.primaryForeground, danger: c.danger },
     };
@@ -50,6 +70,10 @@ function livePalette(mode: CanvasColorTheme) {
     return cached[mode]!;
 }
 export const canvasThemes: Record<CanvasColorTheme, CanvasTheme> = {
-    get light() { return livePalette("light"); },
-    get dark() { return livePalette("dark"); },
+    get light() {
+        return livePalette("light");
+    },
+    get dark() {
+        return livePalette("dark");
+    },
 };

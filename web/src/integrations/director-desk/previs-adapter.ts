@@ -160,14 +160,29 @@ function cameraToEntity(camera: PrevisCamera): DirectorEntity {
 }
 
 function placeholderCamera(): DirectorEntity {
-    return cameraToEntity({ id: PLACEHOLDER_CAMERA_ID, name: "占位机位", transform: { position: [4.8, 2.7, 6.8], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1, 0], focalLength: 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] });
+    return cameraToEntity({
+        id: PLACEHOLDER_CAMERA_ID,
+        name: "占位机位",
+        transform: { position: [4.8, 2.7, 6.8], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        target: [0, 1, 0],
+        focalLength: 35,
+        fov: 50,
+        aperture: 2.8,
+        focusDistance: 5,
+        near: 0.05,
+        far: 500,
+        keyframes: [],
+    });
 }
 
 export function previsSceneToDirectorDocument(scene: PrevisScene): DirectorProject {
     const cameraEntities = scene.cameras.map(cameraToEntity);
     if (!cameraEntities.length) cameraEntities.push(placeholderCamera());
     const cameraIds = new Set(cameraEntities.map((entity) => entity.id));
-    const duration = Math.max(0.1, scene.shots.reduce((total, shot) => total + Math.max(0, shot.duration), 0));
+    const duration = Math.max(
+        0.1,
+        scene.shots.reduce((total, shot) => total + Math.max(0, shot.duration), 0),
+    );
     // 应用要求切镜从 0 秒开始、严格递增、落在时长内且机位存在;不合格的镜头只保留在扩展区。
     const cuts: { time: number; cameraId: string }[] = [];
     let cutTime = 0;
@@ -277,7 +292,19 @@ function mergeObject(entity: DirectorEntity, original: PrevisObject | undefined,
 function mergeCamera(entity: DirectorEntity, original: PrevisCamera | undefined): PrevisCamera {
     const base: PrevisCamera = original
         ? clone(original)
-        : { id: entity.id, name: entity.name, transform: { position: clone(entity.position), rotation: clone(entity.rotation), scale: clone(entity.scale) }, target: clone(entity.camera?.target ?? [0, 1, 0]), focalLength: entity.camera?.focal ?? 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] };
+        : {
+              id: entity.id,
+              name: entity.name,
+              transform: { position: clone(entity.position), rotation: clone(entity.rotation), scale: clone(entity.scale) },
+              target: clone(entity.camera?.target ?? [0, 1, 0]),
+              focalLength: entity.camera?.focal ?? 35,
+              fov: 50,
+              aperture: 2.8,
+              focusDistance: 5,
+              near: 0.05,
+              far: 500,
+              keyframes: [],
+          };
     if (!original) return base;
     const projected = cameraToEntity(original);
     if (!same(entity.position, projected.position)) base.transform = { ...base.transform, position: clone(entity.position) };
@@ -316,9 +343,7 @@ export function directorDocumentToPrevisScene(document: DirectorProject | Direct
         if (isDefault) return;
         nextAssets[entity.id] = toJson({ kind: entity.kind, asset: entity.asset, parameters: record.parameters, assetParameters: record.assetParameters, build: entity.build });
     });
-    const cameras = view.entities
-        .filter((entity) => entity.kind === "camera" && entity.id !== PLACEHOLDER_CAMERA_ID)
-        .map((entity) => mergeCamera(entity, originalCameras.get(entity.id)));
+    const cameras = view.entities.filter((entity) => entity.kind === "camera" && entity.id !== PLACEHOLDER_CAMERA_ID).map((entity) => mergeCamera(entity, originalCameras.get(entity.id)));
     const cameraIds = new Set(cameras.map((camera) => camera.id));
     // 应用内删掉的机位不能留下悬空镜头:改挂到第一台仍存在的机位。
     const shots = extension.shots.map((shot) => (cameraIds.has(shot.cameraId) || !cameras[0] ? clone(shot) : { ...clone(shot), cameraId: cameras[0].id }));

@@ -40,11 +40,7 @@ export type UsePrevisCloseHandlerResult = {
     cancelExit: () => void;
 };
 
-export function usePrevisCloseHandler({
-    saveController,
-    scene,
-    onClose,
-}: UsePrevisCloseHandlerOptions): UsePrevisCloseHandlerResult {
+export function usePrevisCloseHandler({ saveController, scene, onClose }: UsePrevisCloseHandlerOptions): UsePrevisCloseHandlerResult {
     const [closing, setClosing] = useState(false);
     const [notice, setNotice] = useState("");
     const [exitConfirm, setExitConfirm] = useState("");

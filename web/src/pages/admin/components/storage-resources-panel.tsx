@@ -211,7 +211,15 @@ export default function StorageResourcesPanel() {
                             placeholder="资源 ID 或对象路径"
                             onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)}
                         />
-                        <Input aria-label="按用户名、昵称、邮箱或用户 ID 筛选" autoComplete="off" allowClear className="w-64" value={userQuery} placeholder="用户名 / 昵称 / 邮箱 / 用户 ID" onChange={(event) => updateUrl({ user: event.target.value, userId: "", page: 1 }, true)} />
+                        <Input
+                            aria-label="按用户名、昵称、邮箱或用户 ID 筛选"
+                            autoComplete="off"
+                            allowClear
+                            className="w-64"
+                            value={userQuery}
+                            placeholder="用户名 / 昵称 / 邮箱 / 用户 ID"
+                            onChange={(event) => updateUrl({ user: event.target.value, userId: "", page: 1 }, true)}
+                        />
                         <Select aria-label="筛选资源类型" className="w-32" value={kind} onChange={(value) => updateUrl({ kind: value, page: 1 })} options={kindOptions} />
                         <Select aria-label="筛选资源状态" className="w-32" value={status} onChange={(value) => updateUrl({ status: value, page: 1 })} options={statusOptions} />
                         <Select aria-label="筛选存储类型" className="w-36" value={provider} onChange={(value) => updateUrl({ provider: value, page: 1 })} options={providerOptions} />

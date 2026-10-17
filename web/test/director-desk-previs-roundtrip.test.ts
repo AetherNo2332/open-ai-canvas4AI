@@ -10,4 +10,3 @@ test("round-trip preserves unknown scene extensions and metadata", () => {
     expect((restored as any).extensions).toEqual((scene as any).extensions);
     expect(document.extensions?.["infinite-canvas"]?.sourceSceneId).toBe(scene.id);
 });
-

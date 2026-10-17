@@ -13,17 +13,31 @@ import type { PrevisScene } from "../src/types/previs";
 
 class MemoryStorage implements StorageLike {
     private readonly values = new Map<string, string>();
-    getItem(key: string): string | null { return this.values.get(key) ?? null; }
-    setItem(key: string, value: string): void { this.values.set(key, value); }
-    removeItem(key: string): void { this.values.delete(key); }
+    getItem(key: string): string | null {
+        return this.values.get(key) ?? null;
+    }
+    setItem(key: string, value: string): void {
+        this.values.set(key, value);
+    }
+    removeItem(key: string): void {
+        this.values.delete(key);
+    }
 }
 
 class ManualScheduler {
     private callbacks = new Map<number, () => void>();
     private id = 0;
-    schedule(callback: () => void, _delay: number): unknown { this.callbacks.set(this.id++, callback); return this.id - 1; }
-    cancel(handle: unknown): void { this.callbacks.delete(handle as number); }
-    runAll(): void { for (const callback of [...this.callbacks.values()]) callback(); this.callbacks.clear(); }
+    schedule(callback: () => void, _delay: number): unknown {
+        this.callbacks.set(this.id++, callback);
+        return this.id - 1;
+    }
+    cancel(handle: unknown): void {
+        this.callbacks.delete(handle as number);
+    }
+    runAll(): void {
+        for (const callback of [...this.callbacks.values()]) callback();
+        this.callbacks.clear();
+    }
 }
 
 const makeScene = (overrides: Partial<PrevisScene> = {}): PrevisScene => ({
@@ -33,16 +47,10 @@ const makeScene = (overrides: Partial<PrevisScene> = {}): PrevisScene => ({
     background: "#222222",
     environmentIntensity: 1,
     gridVisible: true,
-    objects: [
-        { id: "actor-1", name: "主角", kind: "actor", primitive: "character", transform: { position: [1, 0, 2], rotation: [0, 0, 0], scale: [1, 1, 1] }, color: "#336699", visible: true, castShadow: true, receiveShadow: true, keyframes: [] },
-    ],
-    cameras: [
-        { id: "cam-1", name: "主机位", transform: { position: [0, 1.6, 5], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1, 0], focalLength: 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] },
-    ],
+    objects: [{ id: "actor-1", name: "主角", kind: "actor", primitive: "character", transform: { position: [1, 0, 2], rotation: [0, 0, 0], scale: [1, 1, 1] }, color: "#336699", visible: true, castShadow: true, receiveShadow: true, keyframes: [] }],
+    cameras: [{ id: "cam-1", name: "主机位", transform: { position: [0, 1.6, 5], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1, 0], focalLength: 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] }],
     lights: [],
-    shots: [
-        { id: "shot-1", name: "镜头 1", cameraId: "cam-1", duration: 4, fps: 24, shotSize: "medium", cameraMove: "static", prompt: "" },
-    ],
+    shots: [{ id: "shot-1", name: "镜头 1", cameraId: "cam-1", duration: 4, fps: 24, shotSize: "medium", cameraMove: "static", prompt: "" }],
     activeShotId: "shot-1",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
@@ -124,10 +132,12 @@ describe("DirectorPrevisEditor — 渲染合同", () => {
 
     test("03 保存失败态显示重试入口", () => {
         const failingProgress: PrevisSaveProgress = { revision: 2, confirmedRevision: 1, status: "error", draftStored: true };
-        const html = renderToStaticMarkup(createElement(DirectorPrevisEditor, {
-            ...props,
-            saveController: { ...makeSaveController(), progress: failingProgress },
-        }));
+        const html = renderToStaticMarkup(
+            createElement(DirectorPrevisEditor, {
+                ...props,
+                saveController: { ...makeSaveController(), progress: failingProgress },
+            }),
+        );
         expect(html).toContain("保存失败");
         expect(html).toContain("重试");
     });
@@ -174,7 +184,10 @@ describe("P1 验收 — 打开→编辑→保存→关闭→重开 全链路", (
             initialScene: storedScene!,
             scope: "user-1",
             storage: new MemoryStorage(),
-            flush: async (request) => { requests.push(structuredClone(request)); await flushBehavior(request); },
+            flush: async (request) => {
+                requests.push(structuredClone(request));
+                await flushBehavior(request);
+            },
             now: () => Date.now(),
             debounceMs: 25,
             schedule: (callback, delay) => scheduler.schedule(callback, delay),
@@ -209,7 +222,9 @@ describe("P1 验收 — 打开→编辑→保存→关闭→重开 全链路", (
             initialScene: makeScene(),
             scope: "user-1",
             storage,
-            flush: async () => { throw new Error("remote down"); },
+            flush: async () => {
+                throw new Error("remote down");
+            },
             now: () => Date.now(),
             debounceMs: 25,
             schedule: (callback, delay) => scheduler.schedule(callback, delay),

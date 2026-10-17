@@ -22,13 +22,16 @@ export type PrevisExportTask = {
 };
 
 export type DirectorDeskExportTransport = {
-    submitPrevis(input: {
-        canvasId: string;
-        sceneId: string;
-        shotId: string;
-        kind: PrevisExportKind;
-        options: { duration: number; fps: number };
-    }, operationId: string): Promise<{ taskId: string }>;
+    submitPrevis(
+        input: {
+            canvasId: string;
+            sceneId: string;
+            shotId: string;
+            kind: PrevisExportKind;
+            options: { duration: number; fps: number };
+        },
+        operationId: string,
+    ): Promise<{ taskId: string }>;
     queryTask(taskId: string): Promise<PrevisExportTask>;
     readCanvas(canvasId: string): Promise<{ nodes: CanvasNodeData[] }>;
     /** 后台完成资源登记与幂等画布写回;前端不得绕过源场景校验自行补建节点。 */
@@ -76,10 +79,7 @@ function shotOf(project: DirectorProject, sceneId: string, shotId: string) {
     return { extension, shot };
 }
 
-export async function requestPrevisRender(
-    input: { canvasId: string; sceneId: string; shotId: string; kind: PrevisExportKind; render: PrevisRenderInput; requestId?: string },
-    transport: DirectorDeskExportTransport,
-): Promise<{ taskId: string }> {
+export async function requestPrevisRender(input: { canvasId: string; sceneId: string; shotId: string; kind: PrevisExportKind; render: PrevisRenderInput; requestId?: string }, transport: DirectorDeskExportTransport): Promise<{ taskId: string }> {
     if (!input.canvasId.trim() || !input.sceneId.trim() || !input.shotId.trim()) throw new Error("director_export_scope_invalid");
     assertExportPayloadSafe(input);
     if (input.render.sourceSceneId !== input.sceneId || input.render.shotId !== input.shotId) throw new Error("director_export_scope_mismatch");
@@ -100,21 +100,24 @@ export async function writeBackPrevisArtifacts(input: PrevisArtifactWriteInput, 
     if (materialization.outcome !== "applied") throw new Error(`director_export_writeback:${materialization.outcome || "unknown"}`);
     const current = await transport.readCanvas(input.canvasId);
     const nodeIds = [`previs-video-${input.taskId}`, `previs-preview-${input.taskId}`];
-    if (!nodeIds.every((id) => current.nodes.some((node) => node.id === id && node.metadata?.taskId === input.taskId && node.metadata?.previsSceneId === input.sceneId && node.metadata.storageKey && node.metadata.assetId))) throw new Error("director_export_artifacts_missing");
+    if (!nodeIds.every((id) => current.nodes.some((node) => node.id === id && node.metadata?.taskId === input.taskId && node.metadata?.previsSceneId === input.sceneId && node.metadata.storageKey && node.metadata.assetId)))
+        throw new Error("director_export_artifacts_missing");
     return { nodeIds, storyboardUpdated: false };
 }
 
 function storyboardRows(project: DirectorProject): StoryboardRow[] {
     const extension = extensionOf(project);
-    return extension.shots.map((shot, index) => createStoryboardRow(index + 1, {
-        id: `shot-${shot.id}`,
-        durationSeconds: shot.duration,
-        videoMotionPrompt: shot.prompt || `${shot.name} ${shot.cameraMove}`.trim(),
-        camera: shot.cameraId,
-        motion: shot.cameraMove,
-        shotSize: shot.shotSize,
-        previsSceneId: extension.scene.id,
-    }));
+    return extension.shots.map((shot, index) =>
+        createStoryboardRow(index + 1, {
+            id: `shot-${shot.id}`,
+            durationSeconds: shot.duration,
+            videoMotionPrompt: shot.prompt || `${shot.name} ${shot.cameraMove}`.trim(),
+            camera: shot.cameraId,
+            motion: shot.cameraMove,
+            shotSize: shot.shotSize,
+            previsSceneId: extension.scene.id,
+        }),
+    );
 }
 
 export async function exportShotTable(project: DirectorProject, canvasId: string, transport: DirectorDeskExportTransport): Promise<{ rows: number }> {

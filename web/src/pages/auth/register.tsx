@@ -167,30 +167,16 @@ export default function RegisterPage() {
                 </div>
             ) : null}
 
-            {step === 2 ? <div className="auth-register-passwords">
-                <AuthField label="密码">
-                    <Input.Password
-                        size="large"
-                        value={password}
-                        onChange={(event) => setPassword(event.target.value)}
-                        placeholder="至少 8 位"
-                        autoComplete="new-password"
-                        required
-                        disabled={disabled}
-                    />
-                </AuthField>
-                <AuthField label="确认密码">
-                    <Input.Password
-                        size="large"
-                        value={confirmPassword}
-                        onChange={(event) => setConfirmPassword(event.target.value)}
-                        placeholder="再次输入密码"
-                        autoComplete="new-password"
-                        required
-                        disabled={disabled}
-                    />
-                </AuthField>
-            </div> : null}
+            {step === 2 ? (
+                <div className="auth-register-passwords">
+                    <AuthField label="密码">
+                        <Input.Password size="large" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 8 位" autoComplete="new-password" required disabled={disabled} />
+                    </AuthField>
+                    <AuthField label="确认密码">
+                        <Input.Password size="large" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="再次输入密码" autoComplete="new-password" required disabled={disabled} />
+                    </AuthField>
+                </div>
+            ) : null}
 
             {settingsFailed ? (
                 <Notice icon={<TriangleAlert className="size-3.5" />} tone="amber">
@@ -203,16 +189,18 @@ export default function RegisterPage() {
                 </Notice>
             ) : null}
 
-            {settings ? (step === 2 ? (
-                <div className="auth-agreement-row" data-accepted={agreementAccepted ? "true" : "false"}>
-                    <Checkbox checked={agreementAccepted} onChange={(event) => setAgreementAccepted(event.target.checked)}>
-                        <span className="auth-agreement-label">我已阅读并同意</span>
-                    </Checkbox>
-                    <button type="button" className="auth-agreement-link" onClick={() => setAgreementOpen(true)}>
-                        《{agreementTitle}》
-                    </button>
-                </div>
-            ) : null) : null}
+            {settings ? (
+                step === 2 ? (
+                    <div className="auth-agreement-row" data-accepted={agreementAccepted ? "true" : "false"}>
+                        <Checkbox checked={agreementAccepted} onChange={(event) => setAgreementAccepted(event.target.checked)}>
+                            <span className="auth-agreement-label">我已阅读并同意</span>
+                        </Checkbox>
+                        <button type="button" className="auth-agreement-link" onClick={() => setAgreementOpen(true)}>
+                            《{agreementTitle}》
+                        </button>
+                    </div>
+                ) : null
+            ) : null}
 
             {step === 3 && methods.length > 0 ? <VerificationFields key={method} purpose="register" method={method} value={verification} onChange={setVerification} disabled={disabled || previewEmailVerification} /> : null}
 

@@ -93,7 +93,15 @@ export function createAgentCanvasBridge(options: AgentCanvasBridgeOptions): Agen
             const model = options.imageConfig ? selectImageInspectionModel(options.imageConfig, options.imageModel || "") : options.imageModel || "";
             if (!model || options.supportsImage === false || (options.imageConfig && !modelSupportsImageInspection(options.imageConfig, model))) throw new Error("director_image_model_unsupported");
             if (!options.createRun) throw new Error("director_agent_unavailable");
-            const request: CreateAgentRunInput = { canvasId: options.canvasId, prompt: options.imageConfig ? buildImageToDirectorAgentPrompt(options.imageReference) : `根据画布图片生成可编辑的 3D 导演预演场景。按顺序执行 ${DIRECTOR_IMAGE_TOOL_ORDER.join("、")}。`, workflow: "image_to_director", model, permissionMode: options.permissionMode || "request_approval", contextScope: ["canvas"], idempotencyKey: `image-to-director:${options.canvasId}:${input.nodeId}` };
+            const request: CreateAgentRunInput = {
+                canvasId: options.canvasId,
+                prompt: options.imageConfig ? buildImageToDirectorAgentPrompt(options.imageReference) : `根据画布图片生成可编辑的 3D 导演预演场景。按顺序执行 ${DIRECTOR_IMAGE_TOOL_ORDER.join("、")}。`,
+                workflow: "image_to_director",
+                model,
+                permissionMode: options.permissionMode || "request_approval",
+                contextScope: ["canvas"],
+                idempotencyKey: `image-to-director:${options.canvasId}:${input.nodeId}`,
+            };
             const result = await options.createRun(request);
             const runId = result.run?.id || result.id;
             if (!runId) throw new Error("director_agent_run_invalid");

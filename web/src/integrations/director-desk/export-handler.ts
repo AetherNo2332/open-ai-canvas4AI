@@ -16,10 +16,12 @@ export function createDirectorDeskExportHandler(options: {
     onRefresh?: () => void | Promise<void>;
 }) {
     const exporter = createDirectorDeskCanvasExporter(options.transport);
-    const render = createDirectorRenderBridge({ submit: async (input, context) => {
-        const result = await exporter.requestPrevisRender({ canvasId: options.canvasId, sceneId: input.sourceSceneId, shotId: input.shotId, kind: context.kind || "whitebox-video", render: input, requestId: context.requestId });
-        return { ...result, status: "queued" };
-    } });
+    const render = createDirectorRenderBridge({
+        submit: async (input, context) => {
+            const result = await exporter.requestPrevisRender({ canvasId: options.canvasId, sceneId: input.sourceSceneId, shotId: input.shotId, kind: context.kind || "whitebox-video", render: input, requestId: context.requestId });
+            return { ...result, status: "queued" };
+        },
+    });
     return async (payload: unknown, publish?: ExportResultPublisher) => {
         assertExportPayloadSafe(payload);
         if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("director_export_scope_invalid");

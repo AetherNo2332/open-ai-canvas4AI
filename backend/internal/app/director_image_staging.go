@@ -23,9 +23,9 @@ const (
 )
 
 type DirectorImageStagingDraft struct {
-	ID             string
-	RunID          string
-	SceneID        string
+	ID      string
+	RunID   string
+	SceneID string
 	// 创建时权威画布的快照哈希——提交时的 CAS 基线。
 	BaseCanvasHash string
 	Scene          json.RawMessage

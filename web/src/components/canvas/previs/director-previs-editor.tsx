@@ -36,20 +36,7 @@ export type DirectorPrevisEditorProps = {
  * store 场景是唯一权威（无第二写者）；页面离开走 coordinator 的
  * pagehide/prepareClose 语义，与 legacy 工作台一致。
  */
-export function DirectorPrevisEditor({
-    scene,
-    policy,
-    stageRef,
-    shotRef,
-    runtime,
-    runtimeStatus,
-    time,
-    playing,
-    selectedEntityId,
-    saveController,
-    onChange,
-    onClose,
-}: DirectorPrevisEditorProps) {
+export function DirectorPrevisEditor({ scene, policy, stageRef, shotRef, runtime, runtimeStatus, time, playing, selectedEntityId, saveController, onChange, onClose }: DirectorPrevisEditorProps) {
     const sceneRef = useRef(scene);
     sceneRef.current = scene;
     const onChangeRef = useRef(onChange);
@@ -73,10 +60,13 @@ export function DirectorPrevisEditor({
         runtime?.setPlayhead(0);
     }, [runtime]);
 
-    const selectShot = useCallback((shotId: string) => {
-        commit((current) => (current.activeShotId === shotId ? null : { ...current, activeShotId: shotId }));
-        resetPlayhead();
-    }, [commit, resetPlayhead]);
+    const selectShot = useCallback(
+        (shotId: string) => {
+            commit((current) => (current.activeShotId === shotId ? null : { ...current, activeShotId: shotId }));
+            resetPlayhead();
+        },
+        [commit, resetPlayhead],
+    );
 
     const addShot = useCallback(() => {
         const current = sceneRef.current;
@@ -89,30 +79,45 @@ export function DirectorPrevisEditor({
         resetPlayhead();
     }, [commit, resetPlayhead]);
 
-    const updateShot = useCallback((id: string, patch: Parameters<typeof updatePrevisShot>[2]) => {
-        commit((current) => updatePrevisShot(current, id, patch));
-    }, [commit]);
+    const updateShot = useCallback(
+        (id: string, patch: Parameters<typeof updatePrevisShot>[2]) => {
+            commit((current) => updatePrevisShot(current, id, patch));
+        },
+        [commit],
+    );
 
-    const removeShot = useCallback((id: string) => {
-        let wasActive = false;
-        commit((current) => {
-            wasActive = current.activeShotId === id;
-            return removePrevisShot(current, id);
-        });
-        if (wasActive) resetPlayhead();
-    }, [commit, resetPlayhead]);
+    const removeShot = useCallback(
+        (id: string) => {
+            let wasActive = false;
+            commit((current) => {
+                wasActive = current.activeShotId === id;
+                return removePrevisShot(current, id);
+            });
+            if (wasActive) resetPlayhead();
+        },
+        [commit, resetPlayhead],
+    );
 
-    const moveShot = useCallback((id: string, delta: -1 | 1) => {
-        commit((current) => movePrevisShot(current, id, delta));
-    }, [commit]);
+    const moveShot = useCallback(
+        (id: string, delta: -1 | 1) => {
+            commit((current) => movePrevisShot(current, id, delta));
+        },
+        [commit],
+    );
 
-    const updateObject = useCallback((id: string, patch: Partial<PrevisTransform>) => {
-        commit((current) => updatePrevisObjectTransform(current, id, patch));
-    }, [commit]);
+    const updateObject = useCallback(
+        (id: string, patch: Partial<PrevisTransform>) => {
+            commit((current) => updatePrevisObjectTransform(current, id, patch));
+        },
+        [commit],
+    );
 
-    const updateCamera = useCallback((id: string, patch: { focalLength?: number; target?: PrevisVec3 }) => {
-        commit((current) => updatePrevisCameraParams(current, id, patch));
-    }, [commit]);
+    const updateCamera = useCallback(
+        (id: string, patch: { focalLength?: number; target?: PrevisVec3 }) => {
+            commit((current) => updatePrevisCameraParams(current, id, patch));
+        },
+        [commit],
+    );
 
     // 关闭决策与离页语义(prepareClose / pagehide / beforeunload)由共享 hook 统一实现。
     const { closing, notice, exitConfirm, closeHandler: closeEditor, confirmExit, cancelExit } = usePrevisCloseHandler({ saveController, scene, onClose });
@@ -127,7 +132,13 @@ export function DirectorPrevisEditor({
                 <div className="dpe-save" data-tone={indicator.tone} role="status">
                     <span className="dpe-save__label">{indicator.label}</span>
                     {indicator.retryable ? (
-                        <button type="button" className="dpe-save__retry" onClick={() => { void saveController.retry(); }}>
+                        <button
+                            type="button"
+                            className="dpe-save__retry"
+                            onClick={() => {
+                                void saveController.retry();
+                            }}
+                        >
                             重试
                         </button>
                     ) : null}
@@ -137,14 +148,20 @@ export function DirectorPrevisEditor({
                 </button>
             </header>
             {notice ? (
-                <div className="dpe-notice" role="alert">{notice}</div>
+                <div className="dpe-notice" role="alert">
+                    {notice}
+                </div>
             ) : null}
             {exitConfirm ? (
                 <div className="dpe-confirm" role="alertdialog" aria-label="远端保存失败">
                     <span className="dpe-confirm__msg">{exitConfirm}</span>
                     <div className="dpe-confirm__actions">
-                        <button type="button" className="dpe-confirm__ok" onClick={confirmExit}>仍然离开</button>
-                        <button type="button" className="dpe-confirm__cancel" onClick={cancelExit}>留在预演台</button>
+                        <button type="button" className="dpe-confirm__ok" onClick={confirmExit}>
+                            仍然离开
+                        </button>
+                        <button type="button" className="dpe-confirm__cancel" onClick={cancelExit}>
+                            留在预演台
+                        </button>
                     </div>
                 </div>
             ) : null}
@@ -153,9 +170,7 @@ export function DirectorPrevisEditor({
                     <div className="dpe-stage-host" data-director-runtime-host="true">
                         <div ref={stageRef} className="dpe-stage" data-director-runtime="stage" />
                         <div ref={shotRef} className="dpe-stage" data-director-runtime="shot" />
-                        <span className="dpe-stage-label">
-                            视口 {runtimeStatus === "ready" ? "· 已连接" : runtimeStatus === "error" ? "· 回退" : "· 初始化"}
-                        </span>
+                        <span className="dpe-stage-label">视口 {runtimeStatus === "ready" ? "· 已连接" : runtimeStatus === "error" ? "· 回退" : "· 初始化"}</span>
                     </div>
                     <div className="dpe-timeline">
                         <DirectorTimeline
@@ -173,23 +188,10 @@ export function DirectorPrevisEditor({
                 </div>
                 <aside className="dpe-panels" aria-label="导演编辑面板">
                     <div className="dpe-panels__shot-list">
-                        <DirectorShotList
-                            scene={scene}
-                            onSelectShot={selectShot}
-                            onAddShot={addShot}
-                            onUpdateShot={updateShot}
-                            onRemoveShot={removeShot}
-                            onMoveShot={moveShot}
-                        />
+                        <DirectorShotList scene={scene} onSelectShot={selectShot} onAddShot={addShot} onUpdateShot={updateShot} onRemoveShot={removeShot} onMoveShot={moveShot} />
                     </div>
                     <div className="dpe-panels__inspector">
-                        <DirectorInspector
-                            scene={scene}
-                            selectedEntityId={selectedEntityId}
-                            activeShotId={scene.activeShotId}
-                            onUpdateObject={updateObject}
-                            onUpdateCamera={updateCamera}
-                        />
+                        <DirectorInspector scene={scene} selectedEntityId={selectedEntityId} activeShotId={scene.activeShotId} onUpdateObject={updateObject} onUpdateCamera={updateCamera} />
                     </div>
                 </aside>
             </div>

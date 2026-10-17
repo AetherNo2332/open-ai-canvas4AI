@@ -1,7 +1,11 @@
 import type { DirectorDeskAppearance } from "@desk/theme";
 import { normalizeSkinDefinition } from "@/lib/skin-themes";
 
-export function directorDeskAppearance(mode: "light" | "dark", skin: unknown, geometry: Pick<CSSStyleDeclaration, "getPropertyValue"> | undefined = typeof document === "undefined" ? undefined : document.defaultView?.getComputedStyle(document.documentElement)): DirectorDeskAppearance {
+export function directorDeskAppearance(
+    mode: "light" | "dark",
+    skin: unknown,
+    geometry: Pick<CSSStyleDeclaration, "getPropertyValue"> | undefined = typeof document === "undefined" ? undefined : document.defaultView?.getComputedStyle(document.documentElement),
+): DirectorDeskAppearance {
     const tokens = normalizeSkinDefinition(skin).tokens;
     const c = tokens[mode];
     const radius = (name: "button" | "input" | "card" | "overlay") => {

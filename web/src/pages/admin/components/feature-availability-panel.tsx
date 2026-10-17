@@ -464,7 +464,8 @@ function parseFeatureAvailability(value: unknown): FeatureAvailability {
         agentSubagentsEnabled: record.agentSubagentsEnabled === true,
         directorDeskPrevisMode: record.directorDeskPrevisMode === "canary" || record.directorDeskPrevisMode === "on" ? record.directorDeskPrevisMode : "off",
         directorDeskPrevisCanaryUsers: Array.isArray(record.directorDeskPrevisCanaryUsers) ? (record.directorDeskPrevisCanaryUsers.filter((value): value is string => typeof value === "string" && value.trim() !== "") as string[]) : [],
-        directorDeskPrevisCanaryBasisPoints: typeof record.directorDeskPrevisCanaryBasisPoints === "number" && Number.isFinite(record.directorDeskPrevisCanaryBasisPoints) ? Math.min(10000, Math.max(0, Math.round(record.directorDeskPrevisCanaryBasisPoints))) : 0,
+        directorDeskPrevisCanaryBasisPoints:
+            typeof record.directorDeskPrevisCanaryBasisPoints === "number" && Number.isFinite(record.directorDeskPrevisCanaryBasisPoints) ? Math.min(10000, Math.max(0, Math.round(record.directorDeskPrevisCanaryBasisPoints))) : 0,
         configured: typeof record.configured === "boolean" ? record.configured : undefined,
         updatedBy: typeof record.updatedBy === "string" ? record.updatedBy : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
@@ -504,15 +505,20 @@ function DirectorDeskModeRow({
         }
     }, [syncedKey, userText, ratioText, canaryUsers, canaryBasisPoints]);
 
-    const groupUsers = userText.split(",").map((value) => value.trim()).filter((value) => value !== "");
+    const groupUsers = userText
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value !== "");
     const groupRatio = Number(ratioText);
-    const groupDirty = !sameStringArray(groupUsers, canaryUsers) || (!Number.isFinite(groupRatio) || groupRatio / 100 !== canaryBasisPoints / 100);
+    const groupDirty = !sameStringArray(groupUsers, canaryUsers) || !Number.isFinite(groupRatio) || groupRatio / 100 !== canaryBasisPoints / 100;
     const groupInvalid = !Number.isFinite(groupRatio) || groupRatio < 0 || groupRatio > 100;
 
     return (
         <article className={cn("admin-feature-board-row is-source", (savedMode !== mode || groupDirty) && "is-dirty")}>
             <div className="admin-feature-board-row-copy">
-                <span className="admin-feature-board-row-icon"><Clapperboard className="size-4" aria-hidden="true" /></span>
+                <span className="admin-feature-board-row-icon">
+                    <Clapperboard className="size-4" aria-hidden="true" />
+                </span>
                 <span className="admin-feature-board-row-name">
                     <small>迁移开关</small>
                     <strong>DirectorDesk 预演台</strong>
@@ -531,32 +537,13 @@ function DirectorDeskModeRow({
                 <div className="admin-director-canary-group" aria-label="设置灰度分组">
                     <div className="admin-director-canary-field">
                         <label htmlFor="director-canary-users">内部用户(逗号分隔)</label>
-                        <input
-                            id="director-canary-users"
-                            value={userText}
-                            disabled={saving}
-                            placeholder="例如 user-1, user-2"
-                            onChange={(event) => setUserText(event.target.value)}
-                        />
+                        <input id="director-canary-users" value={userText} disabled={saving} placeholder="例如 user-1, user-2" onChange={(event) => setUserText(event.target.value)} />
                     </div>
                     <div className="admin-director-canary-field admin-director-canary-ratio">
                         <label htmlFor="director-canary-ratio">比例(%)</label>
-                        <input
-                            id="director-canary-ratio"
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={ratioText}
-                            disabled={saving}
-                            onChange={(event) => setRatioText(event.target.value)}
-                        />
+                        <input id="director-canary-ratio" type="number" min={0} max={100} step={0.1} value={ratioText} disabled={saving} onChange={(event) => setRatioText(event.target.value)} />
                     </div>
-                    <Button
-                        size="small"
-                        disabled={saving || !groupDirty || groupInvalid}
-                        onClick={() => onCanaryGroupChange(groupUsers, groupRatio * 100)}
-                    >
+                    <Button size="small" disabled={saving || !groupDirty || groupInvalid} onClick={() => onCanaryGroupChange(groupUsers, groupRatio * 100)}>
                         保存灰度分组
                     </Button>
                 </div>

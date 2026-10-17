@@ -46,9 +46,7 @@ export function initialRuntimeViewState(document: DirectorProject): RuntimeViewS
 export function resolveRuntimeViewState(document: DirectorProject, state: RuntimeViewState): RuntimeViewState {
     // 占位机位不是影策场景实体,不能成为选择目标。
     const entities = document.entities.filter((entity) => entity.id !== DIRECTOR_PLACEHOLDER_CAMERA_ID);
-    const selectedEntityId = entities.some((entity) => entity.id === state.selectedEntityId)
-        ? state.selectedEntityId
-        : entities[0]?.id ?? "";
+    const selectedEntityId = entities.some((entity) => entity.id === state.selectedEntityId) ? state.selectedEntityId : (entities[0]?.id ?? "");
     const activeShotId = liveShotId(document, state.activeShotId) || firstShotId(document);
     const duration = Number.isFinite(document.duration) ? Math.max(0, document.duration) : 0;
     const time = Math.min(Math.max(0, state.time), duration);

@@ -48,7 +48,9 @@ html.dark[data-skin] body .auth-scene::-webkit-scrollbar-corner {
     transition: opacity var(--motion-state, 150ms);
 }
 
-.auth-scene :is(.ant-btn, .auth-theme-toggle)[data-auth-halo="true"]:not(:disabled):not([aria-disabled="true"])::after { opacity: 1; }
+.auth-scene :is(.ant-btn, .auth-theme-toggle)[data-auth-halo="true"]:not(:disabled):not([aria-disabled="true"])::after {
+    opacity: 1;
+}
 
 .auth-scene-body,
 .auth-scene-footer-shell {
@@ -82,7 +84,9 @@ html.dark[data-skin] body .auth-scene::-webkit-scrollbar-corner {
 }
 
 .auth-typing-layer > span,
-.auth-typing-inserted { display: inline-block; }
+.auth-typing-inserted {
+    display: inline-block;
+}
 
 .auth-scene-body {
     display: grid;
@@ -524,7 +528,9 @@ html[data-skin] body .auth-scene .auth-scene-form-body :is(input.ant-input:hover
 
 @media (prefers-reduced-motion: reduce) {
     .auth-scene :is(.ant-btn, .auth-theme-toggle)::after,
-    .auth-typing-layer { display: none; }
+    .auth-typing-layer {
+        display: none;
+    }
     .auth-scene * {
         transition-duration: 0.01ms !important;
         animation-duration: 0.01ms !important;
