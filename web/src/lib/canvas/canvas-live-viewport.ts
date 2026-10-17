@@ -1,4 +1,5 @@
 import type { SelectionBox, ViewportTransform } from "@/types/canvas";
+import { canvasGridLayerStyle } from "@/lib/canvas/canvas-grid-geometry";
 
 export const CANVAS_VIEWPORT_PREVIEW_EVENT = "canvas:viewport-preview";
 export const CANVAS_GRAPHICS_VIEWPORT_PREVIEW_EVENT = "canvas:graphics-viewport-preview";
@@ -29,7 +30,7 @@ export type CanvasNodeSelectionPreview = {
 
 const nodeDragPreviewDomStates = new WeakMap<HTMLDivElement, NodeDragPreviewDomState>();
 const nodeSelectionPreviewDomStates = new WeakMap<HTMLDivElement, NodeSelectionPreviewDomState>();
-const liveViewportElements = new WeakMap<HTMLDivElement, { worldLayer: HTMLElement | null }>();
+const liveViewportElements = new WeakMap<HTMLDivElement, { worldLayer: HTMLElement | null; gridLayer: HTMLElement | null }>();
 
 export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewport: ViewportTransform, notify = true) {
     if (!container) return;
@@ -38,6 +39,7 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
     if (!elements) {
         elements = {
             worldLayer: container.querySelector<HTMLElement>("[data-canvas-world-layer]"),
+            gridLayer: container.querySelector<HTMLElement>("[data-canvas-grid-layer]"),
         };
         liveViewportElements.set(container, elements);
     }
@@ -47,6 +49,18 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
         worldLayer.style.transformOrigin = "0 0";
         worldLayer.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k / committedScale})`;
         worldLayer.style.willChange = container.dataset.canvasViewportInteracting === "true" ? "transform" : "";
+    }
+    let gridLayer = elements.gridLayer;
+    if (gridLayer && !gridLayer.isConnected) {
+        // 画布重挂载后旧节点已脱离文档，重新查找，避免把样式写到废弃节点。
+        gridLayer = container.querySelector<HTMLElement>("[data-canvas-grid-layer]");
+        elements.gridLayer = gridLayer;
+    }
+    if (gridLayer) {
+        // 网格同样按帧跟随视口；只写网格层自身的样式，避免画布根变量的继承重算。
+        const gridStyle = canvasGridLayerStyle(viewport);
+        gridLayer.style.backgroundSize = gridStyle.backgroundSize;
+        gridLayer.style.transform = gridStyle.transform;
     }
     container.style.setProperty("--canvas-live-scale", String(viewport.k));
     // 外置节点标题用同一帧逆倍率抵消世界层缩放，避免等待 React 提交后再校正尺寸。
