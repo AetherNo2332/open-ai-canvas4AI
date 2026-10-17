@@ -476,6 +476,11 @@ export function resetPassword(input: { email: string; emailCode: string; passwor
     return http.post<{ reset: boolean }>("/auth/password-reset", input);
 }
 
+/** 登录状态下自助改密；服务端校验当前密码并让其他设备的会话失效。 */
+export function changePassword(input: { currentPassword: string; newPassword: string }) {
+    return http.post<{ changed: boolean }>("/auth/password", input);
+}
+
 export async function register(input: { username: string; email?: string; emailCode?: string; phone?: string; smsCode?: string; ticket?: string; displayName?: string; password: string; acceptedTerms: boolean }) {
     const result = await http.post<{ user: LocalUser }>("/auth/register", input);
     invalidateAuthSessionCache();
