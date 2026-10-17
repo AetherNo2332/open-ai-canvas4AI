@@ -38,6 +38,8 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [x] `cd web && bun run build` 通过。
 - [ ] 明暗主题、0px 直角皮肤、窄屏（320px）、侧栏折叠态与 reduced-motion 的浏览器视觉验收待用户确认。
 - [x] 3040 隔离栈（镜像 `open-ai-canvas-web:home-anim-3040`）浏览器机器验收：登录后首页光斑层仅在指针离开后熄灭（真实 hover 进入亮起、移出侧栏熄灭）、入口 hover 流光描边在工作且闲置时三次采样位置完全静止（`idleRotate=false` 生效）、侧栏桌面 200px/折叠 64px/恢复、`/assets` 路由切换侧栏骨架不变、明暗模式 token 切换正确（首页底色 `#f7f6f3`/`#121212`、入口主色相应反转）、导航行圆角 12px 与颜色均为 token、`--ring` 焦点色 token、全程无 console 错误。窄屏与 reduced-motion 因浏览器工具无视口/媒体模拟能力，待用户人工确认。
+- [x] 动效库收敛：认证页 `auth-motion.ts`、`use-auth-ambient-motion.ts` 从 anime.js 改走 `motion`，新增 `web/src/lib/dom-motion.ts` 作为命令式 DOM 动效的唯一入口，`animejs` 依赖已从 `web/package.json` 与锁文件移除。时长（毫秒口径）、Penner 缓动（`outCubic`/`inOutSine` 按方程而非 cubic-bezier 近似）、keyframes 数组与结束/取消后的内联样式还原逐项对齐；DOM 垫片实测：动画逐帧推进、`onComplete` 只触发一次、完成后 `transform`/`opacity` 无残留、中途取消跨帧补清后无残留、同元素被新动画接手时旧还原不误清。`aceternity-motion.ts` 原注释把 JS 时长写成 CSS token 的近似值（0.12s≈150ms 等）与实际不符，已按真实值更正；数值未改，避免把首页 200/320ms 入场压到 150ms。
+- [ ] 认证页入场/按压/校验抖动与首页入场动效的真实浏览器逐帧观感待用户确认（当前环境标签页处于 hidden，rAF 被节流，无法逐帧采样）。
 
 ## 全站字体统一（Mona Sans + 思源黑体）
 

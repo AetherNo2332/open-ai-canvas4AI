@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { animate } from "animejs";
+import { animateDom, type DomMotionHandle } from "@/lib/dom-motion";
 import { insertedAuthText, permitsAuthTyping } from "./auth-typing";
 import { createAuthButtonHalo } from "./auth-button-halo";
 
@@ -86,7 +86,7 @@ export function useAuthAmbientMotion(theme: string) {
             const fill = input.style.getPropertyValue("-webkit-text-fill-color");
             const priority = input.style.getPropertyPriority("-webkit-text-fill-color");
             input.style.setProperty("-webkit-text-fill-color", "transparent", "important");
-            let animation: ReturnType<typeof animate> | undefined;
+            let animation: DomMotionHandle | undefined;
             clearTyping = () => {
                 animation?.revert();
                 layer.remove();
@@ -94,7 +94,7 @@ export function useAuthAmbientMotion(theme: string) {
                 else input.style.removeProperty("-webkit-text-fill-color");
                 clearTyping = () => {};
             };
-            animation = animate(fresh, { opacity: [0.35, 1], y: [2, 0], duration, ease: "outCubic", onComplete: () => clearTyping() });
+            animation = animateDom(fresh, { opacity: [0.35, 1], y: [2, 0] }, { duration, ease: "outCubic", onComplete: () => clearTyping() });
         };
         const inputChanged = (event: Event) => {
             const input = textInput(event);
