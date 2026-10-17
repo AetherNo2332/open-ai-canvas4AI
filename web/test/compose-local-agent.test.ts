@@ -5,7 +5,8 @@ import { resolve } from "node:path";
 /**
  * docker-compose.local.yml 本地构建运行时也要带上 Pi Agent worker:
  * 后端只有设置了 CANVAS_AGENT_INTERNAL_TOKEN 才挂载 /internal-agent(见 backend/internal/handler/internal_agent.go),
- * agent 必须使用同一个 token,并挂载与镜像同源的 harness(含 TOOL_SCHEMA.json)。
+ * agent 必须使用同一个 token。Harness(含 TOOL_SCHEMA.json) 由 agent/Dockerfile 在构建时
+ * COPY 进镜像（与生产镜像同源），不再用宿主目录挂载覆盖，避免开发态与生产态提示合同漂移。
  */
 const repoRoot = resolve(import.meta.dir, "../..");
 const read = (path: string) => readFileSync(resolve(repoRoot, path), "utf8").replace(/\r\n/gu, "\n");
@@ -38,10 +39,13 @@ describe("docker-compose.local.yml 包含 agent 服务", () => {
         expect(agent).toMatch(/depends_on:\n\s+backend:\n\s+condition: service_healthy/u);
     });
 
-    test("03 agent 只读挂载 harness,且不对外暴露端口", () => {
+    test("03 harness 固化进镜像、不再用宿主挂载覆盖，且不对外暴露端口", () => {
         const agent = serviceBlock(compose, "agent");
+        const dockerfile = read("agent/Dockerfile");
         expect(agent).toContain("CANVAS_AGENT_HARNESS_DIR: /agent/harness");
-        expect(agent).toContain("./agent/harness:/agent/harness:ro");
+        // 镜像构建时 COPY 与后端同源的 harness；宿主挂载会让开发态覆盖镜像内容。
+        expect(dockerfile).toContain("COPY agent/harness ./harness");
+        expect(agent).not.toContain("./agent/harness:/agent/harness:ro");
         expect(agent).not.toContain("ports:");
     });
 
