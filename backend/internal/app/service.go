@@ -15,9 +15,12 @@ import (
 
 	"infinite-canvas/backend/internal/auth"
 	"infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/canvas/commands"
+	"infinite-canvas/backend/internal/canvas/tasks"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/observability"
+	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/payment"
 	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/prompts"
@@ -28,6 +31,13 @@ import (
 )
 
 type Service struct {
+	canvasCommands          *commands.Service
+	canvasTasks              *tasks.Service
+	canvasCommandMode       bool
+	desktopMode              bool
+	desktopMasterKey         []byte
+	desktopPolicyMu          sync.RWMutex
+	desktopPolicy            *outbound.HostPolicy
 	agentWebSearchHTTPClient *http.Client
 	repo                     *repository.Repository
 	dataDir                  string
@@ -191,6 +201,9 @@ func (s *Service) StartWorker() {
 		return
 	}
 	s.taskWorker().start(ctx)
+	if s.canvasTasks != nil {
+		s.startCanvasMaterializer()
+	}
 	s.startResourceDeletionWorker(ctx)
 	s.startSkillSyncWorker(ctx)
 	s.startPaymentWorker(ctx)

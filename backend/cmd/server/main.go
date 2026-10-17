@@ -72,6 +72,12 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := database.MigrateCanvasCommands(db); err != nil {
+		return err
+	}
+	if err := database.MigrateCanvasTasks(db); err != nil {
+		return err
+	}
 
 	repo := repository.New(db)
 	addr := env("CANVAS_BACKEND_ADDR", ":8080")

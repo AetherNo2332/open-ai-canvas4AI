@@ -31,28 +31,7 @@ export type AgentProfileView = {
     layers: AgentProfileLayer[];
 };
 
-export type AgentApprovalPreviewOperation =
-    | "add_node"
-    | "update_node"
-    | "delete_node"
-    | "duplicate_node"
-    | "connect_nodes"
-    | "delete_connection"
-    | "update_connection"
-    | "set_parent"
-    | "replace_text"
-    | "reorder_nodes"
-    | "reorder_rows"
-    | "arrange_nodes"
-    | "generate_media"
-    | "create_storyboard"
-    | "edit_storyboard"
-    | "edit_drawing"
-    | "bind_asset"
-    | "canvas_undo"
-    | "canvas_redo"
-    | "create_character"
-    | "plan_step";
+export type AgentApprovalPreviewOperation = "add_node" | "update_node" | "delete_node" | "duplicate_node" | "connect_nodes" | "delete_connection" | "update_connection" | "set_parent" | "replace_text" | "reorder_nodes" | "reorder_rows" | "arrange_nodes" | "generate_media" | "create_storyboard" | "edit_storyboard" | "edit_drawing" | "bind_asset" | "canvas_undo" | "canvas_redo" | "create_character" | "plan_step";
 
 export type AgentApprovalPreviewItem = {
     operation: AgentApprovalPreviewOperation;
@@ -172,6 +151,7 @@ export type CreateAgentRunInput = {
     profileRevision?: string;
     canvasId: string;
     prompt: string;
+    workflow?: "image_to_director";
     model?: string;
     logicalModelId?: string;
     channelId?: string;
@@ -205,6 +185,10 @@ async function submitAgentRequest(path: string, input: CreateAgentRunInput) {
 
 export async function createAgentRun(input: CreateAgentRunInput) {
     return submitAgentRequest("/agent/runs", input);
+}
+
+export async function createImageToDirectorAgentRun(input: CreateAgentRunInput) {
+    return createAgentRun(input);
 }
 
 export async function sendAgentMessage(runId: string, input: CreateAgentRunInput) {

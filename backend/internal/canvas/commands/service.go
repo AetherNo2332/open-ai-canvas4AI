@@ -1,0 +1,587 @@
+package commands
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"infinite-canvas/backend/internal/assets"
+	"infinite-canvas/backend/internal/identity"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+)
+
+type ServiceOptions struct {
+	// Invoked within the same transaction immediately before document access.
+	Authorize   func(context.Context, *repository.Repository, identity.Principal, string, string) error
+	Validation  func(context.Context, *repository.Repository, identity.Principal) (ValidationContext, error)
+	AfterCommit func(Receipt)
+}
+type Service struct {
+	repo    *repository.Repository
+	options ServiceOptions
+	mu      sync.Mutex
+}
+
+func NewService(repo *repository.Repository, options ServiceOptions) *Service {
+	return &Service{repo: repo, options: options}
+}
+func newID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(raw[:])
+}
+func canonical(v any) (string, error) { raw, err := json.Marshal(v); return string(raw), err }
+func (s *Service) authorize(ctx context.Context, tx *repository.Repository, p identity.Principal, canvasID, scope string) error {
+	if p.ID == "" || p.OwnerID == "" || !p.HasScope(scope) || (scope == "canvas.write" && p.Role == "viewer") {
+		return failure("permission_denied", "没有画布权限")
+	}
+	user, err := tx.User(p.OwnerID)
+	if err != nil || user.Status != model.UserStatusActive {
+		return failure("permission_denied", "画布所有者不可用")
+	}
+	if s.options.Authorize != nil {
+		return s.options.Authorize(ctx, tx, p, canvasID, scope)
+	}
+	if p.ID != p.OwnerID || p.Role != "owner" {
+		return failure("permission_denied", "该画布未授权给当前操作者")
+	}
+	return nil
+}
+func validateClient(p identity.Principal, clientID, operationID string) error {
+	if err := validateCanvasID(clientID, "客户端 ID", 128); err != nil {
+		return err
+	}
+	if err := validateCanvasID(operationID, "操作 ID", 128); err != nil {
+		return err
+	}
+	if p.ClientID != "" && p.ClientID != clientID {
+		return failure("permission_denied", "客户端身份不匹配")
+	}
+	return nil
+}
+func (s *Service) state(tx *repository.Repository, p identity.Principal, id string, allowDeleted ...bool) (*model.CanvasProject, *model.CanvasDocumentEpoch, map[string]model.CanvasEntityVersion, Document, error) {
+	row, err := tx.CanvasProjectForUser(p.OwnerID, id)
+	if err != nil {
+		return nil, nil, nil, nil, failure("entity_deleted", "画布不存在")
+	}
+	var doc Document
+	if err = json.Unmarshal([]byte(row.PayloadJSON), &doc); err != nil || doc == nil {
+		return nil, nil, nil, nil, failure("invalid_document", "画布文档不可读取")
+	}
+	epoch, err := tx.CommandEpoch(p.OwnerID, id)
+	if tx.IsMissing(err) {
+		epoch = &model.CanvasDocumentEpoch{CanvasID: id, OwnerID: p.OwnerID, Epoch: newID(), UpdatedAt: time.Now()}
+		if err = tx.SaveCommandEpoch(epoch); err != nil {
+			return nil, nil, nil, nil, err
+		}
+		versions := []model.CanvasEntityVersion{}
+		for _, n := range maps(doc["nodes"]) {
+			versions = append(versions, model.CanvasEntityVersion{CanvasID: id, Epoch: epoch.Epoch, EntityKey: "node:" + text(n["id"]), Version: row.Revision})
+		}
+		for _, e := range maps(doc["connections"]) {
+			versions = append(versions, model.CanvasEntityVersion{CanvasID: id, Epoch: epoch.Epoch, EntityKey: "connection:" + text(e["id"]), Version: row.Revision})
+		}
+		if err = tx.SaveCommandVersions(versions); err != nil {
+			return nil, nil, nil, nil, err
+		}
+	} else if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if epoch.Deleted && (len(allowDeleted) == 0 || !allowDeleted[0]) {
+		return nil, nil, nil, nil, failure("entity_deleted", "画布已删除")
+	}
+	versions, err := tx.CommandVersions(id, epoch.Epoch)
+	return row, epoch, versions, doc, err
+}
+func snapshot(row *model.CanvasProject, epoch *model.CanvasDocumentEpoch, versions map[string]model.CanvasEntityVersion, doc Document) Snapshot {
+	values := map[string]int64{}
+	for key, v := range versions {
+		values[key] = v.Version
+	}
+	return Snapshot{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, Revision: row.Revision, EventSeq: epoch.EventSeq, Document: doc, EntityVersions: values}
+}
+func (s *Service) ReadSnapshot(ctx context.Context, p identity.Principal, id string) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out Snapshot
+	err := s.repo.CommandTransaction(ctx, func(tx *repository.Repository) error {
+		if err := s.authorize(ctx, tx, p, id, "canvas.read"); err != nil {
+			return err
+		}
+		row, epoch, versions, doc, err := s.state(tx, p, id)
+		if err != nil {
+			return err
+		}
+		out = snapshot(row, epoch, versions, doc)
+		return nil
+	})
+	return out, err
+}
+func (s *Service) Create(ctx context.Context, p identity.Principal, req CreateCanvasRequest) (Snapshot, error) {
+	if err := validateClient(p, req.ClientID, req.OperationID); err != nil {
+		return Snapshot{}, err
+	}
+	if utf8.RuneCountInString(req.Title) > 240 {
+		return Snapshot{}, BadAuthRequest("画布标题超出限制")
+	}
+	body, err := canonical(req)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out Snapshot
+	err = s.repo.CommandTransaction(ctx, func(tx *repository.Repository) error {
+		if err := s.authorize(ctx, tx, p, "", "canvas.write"); err != nil {
+			return err
+		}
+		key := model.CanvasCreateReceipt{OwnerID: p.OwnerID, ActorID: p.ID, ClientID: req.ClientID, OperationID: req.OperationID}
+		previous, err := tx.CommandCreateReceipt(key)
+		if err == nil {
+			if previous.CanonicalJSON != body {
+				return failure("operation_id_reused", "操作 ID 已用于不同的请求")
+			}
+			return json.Unmarshal([]byte(previous.SnapshotJSON), &out)
+		}
+		if !tx.IsMissing(err) {
+			return err
+		}
+		id, epochID := newID(), newID()
+		if req.ProjectID != "" {
+			if _, err := tx.ProjectForUser(p.OwnerID, req.ProjectID); err != nil {
+				return failure("permission_denied", "关联项目不存在或未授权")
+			}
+		}
+		now := time.Now()
+		title := req.Title
+		if title == "" {
+			title = "未命名画布"
+		}
+		doc := Document{"id": id, "title": title, "nodes": []any{}, "connections": []any{}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano)}
+		if req.ProjectID != "" {
+			doc["projectId"] = req.ProjectID
+		}
+		versions := map[string]model.CanvasEntityVersion{}
+		if len(req.InitialOperations) > 0 {
+			v, err := s.validation(ctx, tx, p, doc, req.InitialOperations)
+			if err != nil {
+				return err
+			}
+			plan, err := Plan(doc, Command{Protocol: ProtocolVersion, CanvasID: id, DocumentEpoch: epochID, ClientID: req.ClientID, OperationID: req.OperationID, Operations: req.InitialOperations}, v)
+			if err != nil {
+				return err
+			}
+			if plan.Document["_deleted"] == true {
+				return BadAuthRequest("不能创建已删除画布")
+			}
+			doc = plan.Document
+			for key := range plan.WriteSet {
+				versions[key] = model.CanvasEntityVersion{CanvasID: id, Epoch: epochID, EntityKey: key, Version: 1}
+			}
+		}
+		payload, err := canonical(doc)
+		if err != nil {
+			return err
+		}
+		row := &model.CanvasProject{ID: id, UserID: p.OwnerID, ProjectID: req.ProjectID, Title: title, PayloadJSON: payload, Revision: 1, CreatedAt: now, UpdatedAt: now}
+		if err = tx.CreateCommandCanvas(row); err != nil {
+			return err
+		}
+		epoch := &model.CanvasDocumentEpoch{CanvasID: id, OwnerID: p.OwnerID, Epoch: epochID, UpdatedAt: now}
+		if err = tx.SaveCommandEpoch(epoch); err != nil {
+			return err
+		}
+		rows := []model.CanvasEntityVersion{}
+		for _, v := range versions {
+			rows = append(rows, v)
+		}
+		if err = tx.SaveCommandVersions(rows); err != nil {
+			return err
+		}
+		if err = tx.SaveCommandResources(p.OwnerID, id, epochID, req.OperationID, resourceIDs(doc), resourceIDs(doc)); err != nil {
+			return err
+		}
+		out = snapshot(row, epoch, versions, doc)
+		encoded, err := canonical(out)
+		if err != nil {
+			return err
+		}
+		key.CanonicalJSON, key.SnapshotJSON, key.CanvasID, key.CreatedAt = body, encoded, id, now
+		return tx.InsertCommandCreateReceipt(&key)
+	})
+	return out, err
+}
+func receiptKey(p identity.Principal, req Command) model.CanvasCommandReceipt {
+	return model.CanvasCommandReceipt{OwnerID: p.OwnerID, CanvasID: req.CanvasID, Epoch: req.DocumentEpoch, ActorID: p.ID, ClientID: req.ClientID, OperationID: req.OperationID}
+}
+func (s *Service) validation(ctx context.Context, tx *repository.Repository, p identity.Principal, doc Document, ops []Operation) (ValidationContext, error) {
+	v := ValidationContext{Principal: p, Now: time.Now()}
+	var err error
+	if s.options.Validation != nil {
+		v, err = s.options.Validation(ctx, tx, p)
+		if err != nil {
+			return v, err
+		}
+		v.Principal = p
+		if v.Now.IsZero() {
+			v.Now = time.Now()
+		}
+	}
+	additionalResourcePolicy := v.ResourceAllowed
+	owned := map[string]bool{}
+	knownAssets := map[string]AssetMetadata{}
+	loadAsset := func(id string) (AssetMetadata, error) {
+		a, err := tx.AssetForUser(p.OwnerID, id)
+		if err != nil {
+			return AssetMetadata{}, failure("resource_not_owned", "素材不存在或未授权")
+		}
+		var payload map[string]any
+		if err = json.Unmarshal([]byte(a.PayloadJSON), &payload); err != nil {
+			return AssetMetadata{}, err
+		}
+		data, _ := payload["data"].(map[string]any)
+		if a.Kind == "text" {
+			_, hasContent := data["content"].(string)
+			_, hasText := data["text"].(string)
+			if !hasContent && !hasText {
+				return AssetMetadata{}, BadAuthRequest("文本素材内容无效")
+			}
+		}
+		resourceID := ""
+		for _, key := range []string{"storageKey", "dataUrl", "url"} {
+			if resourceID = assets.ResourceID(text(data[key])); resourceID != "" {
+				break
+			}
+		}
+		content := text(data["content"])
+		if content == "" {
+			content = text(data["text"])
+		}
+		result := AssetMetadata{ID: a.ID, Title: a.Title, Kind: a.Kind, Status: string(a.Status), Content: content, ResourceID: resourceID}
+		if resourceID != "" {
+			r, err := tx.ResourceForUser(p.OwnerID, resourceID)
+			if err != nil || r.Status != model.ResourceStatusReady {
+				return AssetMetadata{}, failure("resource_not_owned", "素材资源未就绪")
+			}
+			if r.Kind != a.Kind && !strings.HasPrefix(r.MimeType, a.Kind+"/") {
+				return AssetMetadata{}, BadAuthRequest("素材资源类型与素材记录不符")
+			}
+			owned[resourceID] = additionalResourcePolicy == nil || additionalResourcePolicy(resourceID)
+			result.MimeType, result.Size, result.Width, result.Height, result.DurationMs = r.MimeType, r.Size, r.Width, r.Height, r.DurationMs
+		}
+		return result, nil
+	}
+	for _, op := range ops {
+		if len(op.PrevisEntityOperations) > 0 {
+			ids := map[string]bool{}
+			for _, scene := range maps(doc["previsScenes"]) {
+				if text(scene["id"]) == op.ID {
+					for _, object := range maps(scene["objects"]) {
+						if id := text(object["assetId"]); id != "" {
+							ids[id] = true
+						}
+					}
+				}
+			}
+			for _, change := range op.PrevisEntityOperations {
+				if id := text(change.Patch["assetId"]); id != "" {
+					ids[id] = true
+				}
+			}
+			for id := range ids {
+				if _, ok := knownAssets[id]; !ok {
+					value, err := loadAsset(id)
+					if err != nil {
+						return v, err
+					}
+					knownAssets[id] = value
+				}
+			}
+		}
+		if op.Type == "edit_timeline" {
+			mediaAssets := map[string]bool{}
+			timeline, _ := doc["timeline"].(map[string]any)
+			for _, clip := range maps(timeline["clips"]) {
+				media, _ := clip["directMedia"].(map[string]any)
+				if id := text(media["assetId"]); id != "" {
+					mediaAssets[id] = true
+				}
+			}
+			for _, change := range op.TimelineOperations {
+				media, _ := change.Patch["directMedia"].(map[string]any)
+				if id := text(media["assetId"]); id != "" {
+					mediaAssets[id] = true
+				}
+			}
+			for id := range mediaAssets {
+				if _, ok := knownAssets[id]; !ok {
+					value, err := loadAsset(id)
+					if err != nil {
+						return v, err
+					}
+					knownAssets[id] = value
+				}
+			}
+		}
+		if op.Type == "bind_asset" {
+			if _, ok := knownAssets[op.AssetID]; ok {
+				continue
+			}
+			value, err := loadAsset(op.AssetID)
+			if err != nil {
+				return v, err
+			}
+			knownAssets[op.AssetID] = value
+		}
+	}
+	encoded, err := json.Marshal(map[string]any{"operations": ops})
+	if err != nil {
+		return v, err
+	}
+	var inputs Document
+	if err = json.Unmarshal(encoded, &inputs); err != nil {
+		return v, err
+	}
+	for _, source := range []Document{doc, inputs} {
+		for _, id := range resourceIDs(source) {
+			if _, ok := owned[id]; ok {
+				continue
+			}
+			row, err := tx.ResourceForUser(p.OwnerID, id)
+			if err != nil && !tx.IsMissing(err) {
+				return v, err
+			}
+			owned[id] = err == nil && row.Status == model.ResourceStatusReady && (additionalResourcePolicy == nil || additionalResourcePolicy(id))
+		}
+	}
+	// The planner sees only immutable metadata hydrated in this transaction.
+	v.ResourceAllowed = func(id string) bool { return owned[id] }
+	v.Asset = func(id string) (AssetMetadata, error) {
+		value, ok := knownAssets[id]
+		if !ok {
+			return AssetMetadata{}, failure("resource_not_owned", "素材未授权")
+		}
+		return value, nil
+	}
+	return v, nil
+}
+func checkVersions(req Command, row *model.CanvasProject, versions map[string]model.CanvasEntityVersion, reads map[string]bool) error {
+	complete := len(req.ExpectedEntityVersions) > 0
+	for key := range reads {
+		if _, ok := req.ExpectedEntityVersions[key]; !ok {
+			complete = false
+			break
+		}
+	}
+	if !complete {
+		if req.BaseRevision != row.Revision {
+			return failure("revision_conflict", "画布已变化，请读取最新版本后重试")
+		}
+		return nil
+	}
+	for key := range reads {
+		if versions[key].Version != req.ExpectedEntityVersions[key] {
+			return canvasFieldError(key, "entity_version_conflict", "目标实体已被其他操作修改")
+		}
+	}
+	return nil
+}
+func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command) (Receipt, error) {
+	if err := validateClient(p, req.ClientID, req.OperationID); err != nil {
+		return Receipt{}, err
+	}
+	body, err := canonical(req)
+	if err != nil {
+		return Receipt{}, err
+	}
+	s.mu.Lock()
+	var out Receipt
+	fresh := false
+	err = s.repo.CommandTransaction(ctx, func(tx *repository.Repository) error {
+		if err := s.authorize(ctx, tx, p, req.CanvasID, "canvas.write"); err != nil {
+			return err
+		}
+		row, epoch, versions, doc, err := s.state(tx, p, req.CanvasID, true)
+		if err != nil {
+			return err
+		}
+		if req.DocumentEpoch != epoch.Epoch {
+			return failure("document_epoch_mismatch", "画布已恢复到新的文档世代")
+		}
+		key := receiptKey(p, req)
+		previous, err := tx.CommandReceipt(key)
+		if err == nil {
+			if previous.CanonicalJSON != body {
+				return failure("operation_id_reused", "操作 ID 已用于不同的请求")
+			}
+			return json.Unmarshal([]byte(previous.ReceiptJSON), &out)
+		}
+		if !tx.IsMissing(err) {
+			return err
+		}
+		if epoch.Deleted {
+			return failure("entity_deleted", "画布已删除")
+		}
+		for _, op := range req.Operations {
+			switch op.Type {
+			case "update_node", "delete_node", "replace_text", "set_parent", "reorder_rows", "edit_drawing", "edit_storyboard", "edit_batch_table", "bind_asset":
+				if entity(doc, "node:"+op.ID) == nil {
+					return failure("entity_deleted", "目标节点已删除")
+				}
+			}
+		}
+		v, err := s.validation(ctx, tx, p, doc, req.Operations)
+		if err != nil {
+			return err
+		}
+		plan, err := Plan(doc, req, v)
+		if err != nil {
+			return err
+		}
+		if err = checkVersions(req, row, versions, plan.ReadSet); err != nil {
+			return err
+		}
+		if err = tx.AbandonRedo(p.OwnerID, row.ID, epoch.Epoch, p.ID, req.ClientID); err != nil {
+			return err
+		}
+		out, err = s.persist(tx, p, req, body, row, epoch, doc, plan, true)
+		fresh = err == nil
+		return err
+	})
+	s.mu.Unlock()
+	if err == nil && fresh && s.options.AfterCommit != nil {
+		s.options.AfterCommit(out)
+	}
+	return out, err
+}
+func (s *Service) persist(tx *repository.Repository, p identity.Principal, req Command, body string, row *model.CanvasProject, epoch *model.CanvasDocumentEpoch, before Document, plan PlanResult, history bool) (Receipt, error) {
+	oldRevision := row.Revision
+	row.Revision++
+	epoch.EventSeq++
+	epoch.UpdatedAt = time.Now()
+	payload, err := canonical(plan.Document)
+	if err != nil {
+		return Receipt{}, err
+	}
+	row.PayloadJSON = payload
+	epoch.Deleted = plan.Document["_deleted"] == true
+	if title, ok := plan.Document["title"].(string); ok {
+		row.Title = title
+	}
+	if err = tx.PersistCommandCanvas(row, oldRevision); err != nil {
+		return Receipt{}, err
+	}
+	expected := map[string]int64{}
+	versions := []model.CanvasEntityVersion{}
+	for key := range plan.WriteSet {
+		expected[key] = row.Revision
+		deleted := false
+		for _, change := range plan.Changes.Entities {
+			if change.Key == key {
+				deleted = change.Delete
+			}
+		}
+		versions = append(versions, model.CanvasEntityVersion{CanvasID: row.ID, Epoch: epoch.Epoch, EntityKey: key, Version: row.Revision, Deleted: deleted})
+	}
+	if err = tx.SaveCommandVersions(versions); err != nil {
+		return Receipt{}, err
+	}
+	out := Receipt{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, OperationID: req.OperationID, ClientID: req.ClientID, ActorID: p.ID, Revision: row.Revision, EventSeq: epoch.EventSeq, Changes: plan.Changes}
+	out.EntityVersions = expected
+	encoded, err := canonical(out)
+	if err != nil {
+		return Receipt{}, err
+	}
+	key := receiptKey(p, req)
+	key.CanonicalJSON, key.ReceiptJSON, key.CreatedAt = body, encoded, time.Now()
+	if err = tx.InsertCommandReceipt(&key); err != nil {
+		return Receipt{}, err
+	}
+	if err = tx.InsertCommandEvent(&model.CanvasCommandEvent{CanvasID: row.ID, Sequence: epoch.EventSeq, OwnerID: p.OwnerID, Epoch: epoch.Epoch, OperationID: req.OperationID, EventJSON: encoded, CreatedAt: time.Now()}); err != nil {
+		return Receipt{}, err
+	}
+	if err = tx.SaveCommandEpoch(epoch); err != nil {
+		return Receipt{}, err
+	}
+	historyResources := resourceIDs(before)
+	historyResources = append(historyResources, plan.ResourceIDs...)
+	if err = tx.SaveCommandResources(p.OwnerID, row.ID, epoch.Epoch, req.OperationID, plan.ResourceIDs, historyResources); err != nil {
+		return Receipt{}, err
+	}
+	if history {
+		forward, err := canonical(plan.Changes)
+		if err != nil {
+			return Receipt{}, err
+		}
+		inverse, err := canonical(plan.Inverse)
+		if err != nil {
+			return Receipt{}, err
+		}
+		expect, err := canonical(expected)
+		if err != nil {
+			return Receipt{}, err
+		}
+		err = tx.SaveActorHistory(&model.CanvasActorHistory{ID: newID(), CanvasID: row.ID, Epoch: epoch.Epoch, OwnerID: p.OwnerID, ActorID: p.ID, ClientID: req.ClientID, OperationID: req.OperationID, Sequence: epoch.EventSeq, State: "applied", ForwardJSON: forward, InverseJSON: inverse, ExpectedVersionsJSON: expect, CreatedAt: time.Now()})
+		if err != nil {
+			return Receipt{}, err
+		}
+	}
+	// Return the exact persisted wire representation, including numeric JSON
+	// values and omitted empty fields, so retries are identical to the first ACK.
+	var durable Receipt
+	if err = json.Unmarshal([]byte(encoded), &durable); err != nil {
+		return Receipt{}, err
+	}
+	return durable, nil
+}
+func (s *Service) GetReceipt(ctx context.Context, p identity.Principal, canvasID, epoch, clientID, operationID string) (Receipt, error) {
+	if err := validateClient(p, clientID, operationID); err != nil {
+		return Receipt{}, err
+	}
+	var out Receipt
+	err := s.repo.CommandTransaction(ctx, func(tx *repository.Repository) error {
+		if err := s.authorize(ctx, tx, p, canvasID, "canvas.read"); err != nil {
+			return err
+		}
+		row, err := tx.CommandReceipt(receiptKey(p, Command{CanvasID: canvasID, DocumentEpoch: epoch, ClientID: clientID, OperationID: operationID}))
+		if tx.IsMissing(err) {
+			return failure("receipt_missing", "命令尚未提交")
+		}
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal([]byte(row.ReceiptJSON), &out)
+	})
+	return out, err
+}
+func (s *Service) ReadEvents(ctx context.Context, p identity.Principal, canvasID string, after int64, limit int) ([]Receipt, error) {
+	if after < 0 || limit < 1 || limit > 1000 {
+		return nil, BadAuthRequest("事件游标或数量无效")
+	}
+	out := []Receipt{}
+	err := s.repo.CommandTransaction(ctx, func(tx *repository.Repository) error {
+		if err := s.authorize(ctx, tx, p, canvasID, "canvas.read"); err != nil {
+			return err
+		}
+		rows, err := tx.CommandEvents(p.OwnerID, canvasID, after, limit)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			var event Receipt
+			if err = json.Unmarshal([]byte(row.EventJSON), &event); err != nil {
+				return err
+			}
+			out = append(out, event)
+		}
+		return nil
+	})
+	return out, err
+}

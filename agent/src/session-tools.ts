@@ -19,9 +19,9 @@ export interface SessionToolDefinitionLike {
 const legacyCategoryPrefix = "agent_tools_";
 
 /**
- * Run-scoped registry for concrete Canvas tools. The snapshot already contains
- * the permission/capability-filtered set, so every allowed tool is registered
- * with Pi at session startup. Categories remain metadata and never become tools.
+ * Run-scoped registry for concrete Canvas tools. The snapshot marks the frozen
+ * L0∪L1 advertised subset as allowed; only those tools are registered with Pi.
+ * Categories remain metadata and never become tools.
  *
  * This registry is not an authorization boundary: Pi's tool_call hook checks
  * the current model batch, and Go revalidates ownership, permissions, schemas,
@@ -39,7 +39,7 @@ export class SessionToolDisclosure {
     this.byName = new Map(this.specs.map((spec) => [spec.name, spec]));
   }
 
-  /** Every eligible concrete tool is active from the first model step. */
+  /** Advertised concrete tools are active from the first model step. */
   activeNames(): string[] {
     return this.specs.map((spec) => spec.name);
   }

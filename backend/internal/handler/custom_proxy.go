@@ -18,6 +18,12 @@ import (
 
 const maxCustomRelayErrorResponseBytes int64 = 64 << 10
 
+// WriteDesktopRelayResponse reuses the validated JSON/SSE/binary response boundary.
+// Its caller must resolve and authorize the destination from persisted channel state.
+func WriteDesktopRelayResponse(c *gin.Context, svc *service.Service, response *http.Response, apiKey string, limit int64, binary bool) {
+	writeCustomRelayResponse(c, svc, response, apiKey, limit, binary)
+}
+
 var customRelayClient = service.CustomRelayHTTPClient
 
 func RegisterCustomRelayRoutes(r *gin.RouterGroup, svc *service.Service) {

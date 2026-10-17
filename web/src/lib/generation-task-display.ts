@@ -6,9 +6,10 @@ export const statusLabel: Record<TaskStatus, string> = {
     succeeded: "已完成",
     failed: "失败",
     cancelled: "已取消",
+    submission_uncertain: "提交结果待确认",
 };
 
-type GenerationTaskDisplayTarget = Pick<GenerationTask, "status" | "stage" | "mediaStage" | "progress" | "providerRequestId" | "providerCancelStatus"> & { type?: string };
+type GenerationTaskDisplayTarget = Pick<GenerationTask, "status" | "stage" | "mediaStage" | "progress" | "providerRequestId" | "providerCancelStatus"> & {type?: string};
 
 const cancellablePreSubmissionStages = new Set(["queued", "等待队列调度", "后端接管任务", "正在准备创作"]);
 
@@ -40,7 +41,7 @@ export function mediaDeliverySummary(status: TaskStatus | undefined, stage: Gene
 }
 
 export function isGenerationTaskSubmissionUncertain(task: GenerationTaskDisplayTarget) {
-    return task.stage === "submission_unknown";
+    return task.status === "submission_uncertain" || task.stage === "submission_unknown";
 }
 
 export function generationTaskStatusLabel(task: GenerationTaskDisplayTarget) {

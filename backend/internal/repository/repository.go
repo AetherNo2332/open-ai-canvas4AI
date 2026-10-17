@@ -341,7 +341,7 @@ func (r *Repository) TaskForUser(userID string, id string) (*model.Task, error) 
 
 func (r *Repository) ActiveTaskCountForUser(userID string) (int64, error) {
 	var count int64
-	err := r.db.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).Count(&count).Error
+	err := r.db.Model(&model.Task{}).Where("user_id = ? AND status IN ?", userID, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}).Count(&count).Error
 	return count, err
 }
 
@@ -351,7 +351,7 @@ func (r *Repository) ActiveTaskCountForProjectIDs(userID string, projectIDs []st
 	}
 	var count int64
 	err := r.db.Model(&model.Task{}).
-		Where("user_id = ? AND project_id IN ? AND status IN ?", userID, projectIDs, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+		Where("user_id = ? AND project_id IN ? AND status IN ?", userID, projectIDs, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}).
 		Count(&count).Error
 	return count, err
 }
@@ -535,33 +535,67 @@ func (r *Repository) SaveTaskCompletionWithRegistration(task *model.Task, expect
 			}
 		}
 		if register != nil {
-			return register(New(tx))
+			if err := register(New(tx)); err != nil {
+				return err
+			}
 		}
-		return nil
+		return New(tx).EnqueueCanvasMaterialization(task.ID)
 	})
 }
 
 func (r *Repository) UpdateTaskTerminalState(id string, owner string, expected model.TaskStatus, status model.TaskStatus, stage string, errorText string, completedAt time.Time) (bool, error) {
-	result := taskLeaseWriter(r.db.Model(&model.Task{}), owner).
-		Where("id = ? AND status = ?", id, expected).
-		Updates(map[string]any{
-			"status": status, "stage": stage, "error": errorText, "completed_at": &completedAt,
-			"lease_owner": "", "lease_expires_at": nil, "updated_at": completedAt,
-		})
-	return result.RowsAffected == 1, result.Error
+	changed := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		result := taskLeaseWriter(tx.Model(&model.Task{}), owner).
+			Where("id = ? AND status = ?", id, expected).
+			Updates(map[string]any{
+				"status": status, "stage": stage, "error": errorText, "completed_at": &completedAt,
+				"lease_owner": "", "lease_expires_at": nil, "updated_at": completedAt,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = result.RowsAffected == 1
+		if changed {
+			return New(tx).EnqueueCanvasMaterialization(id)
+		}
+		return nil
+	})
+	return changed && err == nil, err
 }
 
 func (r *Repository) UpdateTaskTerminalDiagnostic(task *model.Task, completedAt time.Time) (bool, error) {
-	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
-		Where("id = ? AND status = ?", task.ID, model.TaskStatusRunning).
-		Updates(map[string]any{
-			"status": task.Status, "stage": task.Stage, "error": task.Error, "completed_at": &completedAt,
-			"execution_diagnostic_json": task.ExecutionDiagnosticJSON,
-			"cancellation_source":       task.CancellationSource, "cancellation_actor_id": task.CancellationActorID,
-			"cancellation_requested_at": task.CancellationRequestedAt,
-			"lease_owner":               "", "lease_expires_at": nil, "updated_at": completedAt,
-		})
-	return result.RowsAffected == 1, result.Error
+	changed := false
+	committedStatus := task.Status
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		repo := New(tx)
+		status, err := repo.canvasTerminalStatus(task)
+		if err != nil {
+			return err
+		}
+		result := taskLeaseWriter(tx.Model(&model.Task{}), task.LeaseOwner).
+			Where("id = ? AND status = ?", task.ID, model.TaskStatusRunning).
+			Updates(map[string]any{
+				"status": status, "stage": task.Stage, "error": task.Error, "completed_at": &completedAt,
+				"execution_diagnostic_json": task.ExecutionDiagnosticJSON,
+				"cancellation_source":       task.CancellationSource, "cancellation_actor_id": task.CancellationActorID,
+				"cancellation_requested_at": task.CancellationRequestedAt,
+				"lease_owner":               "", "lease_expires_at": nil, "updated_at": completedAt,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = result.RowsAffected == 1
+		if !changed {
+			return nil
+		}
+		committedStatus = status
+		return repo.EnqueueCanvasMaterialization(task.ID)
+	})
+	if err == nil && changed {
+		task.Status = committedStatus
+	}
+	return changed && err == nil, err
 }
 
 func (r *Repository) UpdateTaskExecutionDiagnostic(userID, taskID, diagnosticJSON string) error {
@@ -591,10 +625,21 @@ func (r *Repository) CancelTaskIfStatus(userID string, id string, expected model
 		updates["cancellation_source"], updates["cancellation_actor_id"], updates["cancellation_requested_at"] = intent.Source, intent.ActorID, intent.RequestedAt
 		updates["execution_diagnostic_json"] = string(diagnostic)
 	}
-	result := r.db.Model(&model.Task{}).
-		Where("id = ? AND user_id = ? AND status = ?", id, userID, expected).
-		Updates(updates)
-	return result.RowsAffected == 1, result.Error
+	changed := false
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.Task{}).
+			Where("id = ? AND user_id = ? AND status = ?", id, userID, expected).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = result.RowsAffected == 1
+		if changed {
+			return New(tx).EnqueueCanvasMaterialization(id)
+		}
+		return nil
+	})
+	return changed && err == nil, err
 }
 
 // 上游取消先落库再发请求；条件更新保证并发和重复取消只有一个调用方取得发送权。
@@ -691,7 +736,7 @@ func (r *Repository) Tasks(userID string, limit int, projectID string, activeOnl
 		query = query.Where("project_id = ?", strings.TrimSpace(projectID))
 	}
 	if activeOnly {
-		query = query.Where("status IN ?", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning})
+		query = query.Where("status IN ?", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain})
 	}
 	err := query.Order("created_at desc").Limit(limit).Find(&tasks).Error
 	return tasks, err
@@ -1326,7 +1371,7 @@ func (r *Repository) DeleteProject(userID string, id string, canvasUpdates []mod
 		projectScopeIDs := append([]string{id}, canvasIDs...)
 		var activeTaskCount int64
 		if err := tx.Model(&model.Task{}).
-			Where("user_id = ? AND project_id IN ? AND status IN ?", userID, projectScopeIDs, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+			Where("user_id = ? AND project_id IN ? AND status IN ?", userID, projectScopeIDs, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning, model.TaskStatusSubmissionUncertain}).
 			Count(&activeTaskCount).Error; err != nil {
 			return err
 		}

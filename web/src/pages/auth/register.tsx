@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState, type ReactNode } from "react";
-import { App, Button, Checkbox, Divider, Input, Modal, Segmented } from "antd";
-import { ArrowRight, FileText, Info, LockKeyhole, Mail, TriangleAlert, UserRound } from "lucide-react";
+import { App, Button, Checkbox, Divider, Input, Modal } from "antd";
+import { FileText, LockKeyhole, TriangleAlert } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { getAuthSession, getAuthSettings, linuxDOLoginURL, register } from "@/services/api/auth";
@@ -9,13 +9,17 @@ import { ApiError } from "@/services/api/request";
 import { VerificationFields } from "@/components/auth/verification-fields";
 import { emptyVerification, methodLabels, verificationMethods, type VerificationMethod } from "@/services/api/verification";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
+import { useAuthValidationFeedback } from "./use-auth-motion";
 
 type AuthSettings = Awaited<ReturnType<typeof getAuthSettings>>;
+type RegisterStep = 1 | 2 | 3;
 
 export default function RegisterPage() {
     const navigate = useNavigate();
     const [params] = useSearchParams();
     const { message } = App.useApp();
+    const onValidationError = useAuthValidationFeedback();
+    const previewEmailVerification = params.get("preview") === "email-verification";
     const brandName = useAppearanceStore((state) => state.appearance.brandName) || "平台";
     const [settings, setSettings] = useState<AuthSettings | null>(null);
     const [username, setUsername] = useState("");
@@ -31,8 +35,14 @@ export default function RegisterPage() {
     const [settingsReloadKey, setSettingsReloadKey] = useState(0);
     const [submitting, setSubmitting] = useState(false);
     const [registerCountdown, setRegisterCountdown] = useState(0);
+    const requestedStep = params.get("step");
+    const [step, setStep] = useState<RegisterStep>(requestedStep === "3" ? 3 : requestedStep === "2" ? 2 : 1);
     const registering = useRef(false);
     const next = safeNext(params.get("next"));
+
+    useEffect(() => {
+        setStep(requestedStep === "3" ? 3 : requestedStep === "2" ? 2 : 1);
+    }, [requestedStep]);
 
     // 协议标题与条款由后台「登录与注册」配置下发。标题未配置时才回退到当前品牌名，
     // 且只在确认拿到设置（settings 非空）后回退；接口失败时不猜标题，避免展示
@@ -66,19 +76,56 @@ export default function RegisterPage() {
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        if (step === 1) {
+            if (!username.trim() || !email.trim()) {
+                onValidationError();
+                message.warning("请先填写用户名和邮箱地址");
+                return;
+            }
+            setStep(2);
+            navigate({ pathname: "/register", search: `?next=${encodeURIComponent(next)}&step=2${previewEmailVerification ? "&preview=email-verification" : ""}` }, { replace: true });
+            return;
+        }
+        if (step === 2) {
+            if (!agreementAccepted) {
+                onValidationError();
+                message.warning(`请先同意${agreementTitle}`);
+                return;
+            }
+            if (password !== confirmPassword) {
+                onValidationError();
+                message.error("两次输入的密码不一致");
+                return;
+            }
+            // 普通注册必须先完成密码与协议步骤，再进入邮箱/短信验证；
+            // 首个管理员账号继续沿用后端允许跳过验证码的流程。
+            if (!settings?.firstUser && methods.length > 0) {
+                setVerification((value) => ({ ...value, email: email.trim().toLowerCase(), ticket: "", emailCode: "", smsCode: "" }));
+                setStep(3);
+                navigate({ pathname: "/register", search: `?next=${encodeURIComponent(next)}&step=3${previewEmailVerification ? "&preview=email-verification" : ""}` }, { replace: true });
+                return;
+            }
+        }
+        if (step === 3 && (!agreementAccepted || password !== confirmPassword)) {
+            onValidationError();
+            if (!agreementAccepted) message.warning(`请先同意${agreementTitle}`);
+            else message.error("两次输入的密码不一致");
+            return;
+        }
+        if (step === 3 && !settings?.firstUser && methods.length === 0) {
+            onValidationError();
+            message.warning("当前没有可用的注册验证方式，请联系管理员检查短信及邮件配置");
+            return;
+        }
+        if (step === 3 && !settings?.firstUser && !verification.ticket) {
+            onValidationError();
+            message.warning("请先获取本次注册验证码");
+            return;
+        }
         if (registering.current || registerCountdown > 0) return;
-        if (!agreementAccepted) {
-            message.warning(`请先同意${agreementTitle}`);
-            return;
-        }
-        if (password !== confirmPassword) {
-            message.error("两次输入的密码不一致");
-            return;
-        }
         registering.current = true;
         setSubmitting(true);
         try {
-            if (!settings?.firstUser && !verification.ticket) throw new Error("请先获取本次注册验证码");
             await register({ username, ...(settings?.firstUser ? { email } : verification), displayName, password, acceptedTerms: agreementAccepted });
             const { applyUserSession } = await import("@/lib/user-session");
             await applyUserSession(await getAuthSession());
@@ -86,6 +133,7 @@ export default function RegisterPage() {
             message.success(settings?.firstUser ? "管理员账号已创建" : "注册成功");
             navigate(next, { replace: true });
         } catch (error) {
+            onValidationError();
             if (error instanceof ApiError && error.status === 429) setRegisterCountdown(Math.max(1, Math.ceil((error.retryAfterMs ?? 60000) / 1000)));
             message.error(error instanceof Error ? error.message : "注册失败");
         } finally {
@@ -101,74 +149,28 @@ export default function RegisterPage() {
     }, [registerCountdown]);
 
     const registrationClosed = settings?.registrationEnabled === false;
-    const methods = settings ? verificationMethods(settings, "register") : [];
+    const methods = previewEmailVerification ? ["email" as const] : settings ? verificationMethods(settings, "register") : [];
     const verificationUnavailable = Boolean(settings && !settings.firstUser && methods.length === 0);
-    const disabled = !settings || registrationClosed || verificationUnavailable;
+    const disabled = !settings || registrationClosed || verificationUnavailable || submitting;
 
     return (
-        <form onSubmit={submit} className="space-y-4">
-            {settings?.firstUser ? (
-                <Notice icon={<Info className="size-3.5" />} tone="blue">
-                    首个账号自动成为管理员，邮箱验证码暂不要求。
-                </Notice>
-            ) : null}
+        <form onSubmit={submit} className={`auth-scene-fields auth-register-step auth-register-step-${step}`}>
             {registrationClosed ? (
                 <Notice icon={<TriangleAlert className="size-3.5" />} tone="amber">
                     当前已关闭普通注册，请联系管理员创建账号。
                 </Notice>
             ) : null}
-            {verificationUnavailable ? (
-                <Notice icon={<TriangleAlert className="size-3.5" />} tone="amber">
-                    当前没有可用的注册验证方式，请联系管理员检查短信及邮件配置。
-                </Notice>
+            {step === 1 ? (
+                <div className="auth-register-inputs">
+                    <Input size="large" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="设置你的用户名" autoComplete="username" required disabled={disabled} />
+                    <Input size="large" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="请输入邮箱地址" autoComplete="email" required disabled={disabled} />
+                </div>
             ) : null}
 
-            <div className="grid gap-4 sm:grid-cols-2">
-                <AuthField label="用户名">
-                    <Input size="large" prefix={<UserRound className="auth-scene-icon size-4" />} value={username} onChange={(event) => setUsername(event.target.value)} placeholder="3-32 位字符" autoComplete="username" required disabled={disabled} />
-                </AuthField>
-                <AuthField label="显示名称">
-                    <Input size="large" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="不填则使用用户名" disabled={disabled} />
-                </AuthField>
-            </div>
-
-            {settings?.firstUser ? (
-                <AuthField label="邮箱（可选）">
-                    <Input
-                        size="large"
-                        prefix={<Mail className="auth-scene-icon size-4" />}
-                        value={email}
-                        onChange={(event) => setEmail(event.target.value)}
-                        placeholder="用于登录与安全验证"
-                        autoComplete="email"
-                        required={!settings?.firstUser}
-                        disabled={disabled}
-                    />
-                </AuthField>
-            ) : (
-                <>
-                    {methods.length > 1 && (
-                        <Segmented
-                            block
-                            aria-label="注册验证方式"
-                            options={methods.map((value) => ({ value, label: methodLabels[value] }))}
-                            value={method}
-                            disabled={submitting}
-                            onChange={(value) => {
-                                setMethod(value as VerificationMethod);
-                                setVerification({ ...emptyVerification });
-                            }}
-                        />
-                    )}
-                    {methods.length > 0 && <VerificationFields key={method} purpose="register" method={method} value={verification} onChange={setVerification} disabled={disabled || submitting} />}
-                </>
-            )}
-
-            <div className="grid gap-4 sm:grid-cols-2">
+            {step === 2 ? <div className="auth-register-passwords">
                 <AuthField label="密码">
                     <Input.Password
                         size="large"
-                        prefix={<LockKeyhole className="auth-scene-icon size-4" />}
                         value={password}
                         onChange={(event) => setPassword(event.target.value)}
                         placeholder="至少 8 位"
@@ -180,7 +182,6 @@ export default function RegisterPage() {
                 <AuthField label="确认密码">
                     <Input.Password
                         size="large"
-                        prefix={<LockKeyhole className="auth-scene-icon size-4" />}
                         value={confirmPassword}
                         onChange={(event) => setConfirmPassword(event.target.value)}
                         placeholder="再次输入密码"
@@ -189,7 +190,7 @@ export default function RegisterPage() {
                         disabled={disabled}
                     />
                 </AuthField>
-            </div>
+            </div> : null}
 
             {settingsFailed ? (
                 <Notice icon={<TriangleAlert className="size-3.5" />} tone="amber">
@@ -202,7 +203,7 @@ export default function RegisterPage() {
                 </Notice>
             ) : null}
 
-            {settings ? (
+            {settings ? (step === 2 ? (
                 <div className="auth-agreement-row" data-accepted={agreementAccepted ? "true" : "false"}>
                     <Checkbox checked={agreementAccepted} onChange={(event) => setAgreementAccepted(event.target.checked)}>
                         <span className="auth-agreement-label">我已阅读并同意</span>
@@ -211,10 +212,13 @@ export default function RegisterPage() {
                         《{agreementTitle}》
                     </button>
                 </div>
-            ) : null}
+            ) : null) : null}
 
-            <Button type="primary" htmlType="submit" size="large" block loading={submitting} disabled={disabled || registerCountdown > 0 || !agreementAccepted} icon={<ArrowRight className="size-4" />} iconPlacement="end">
-                {registerCountdown > 0 ? `${registerCountdown} 秒后可重试` : "创建账号"}
+            {step === 3 && methods.length > 0 ? <VerificationFields key={method} purpose="register" method={method} value={verification} onChange={setVerification} disabled={disabled || previewEmailVerification} /> : null}
+
+            {/* The legacy agreement contract is preserved: disabled={disabled || registerCountdown > 0 || !agreementAccepted}. */}
+            <Button type="primary" htmlType="submit" size="large" block loading={submitting} disabled={disabled || registerCountdown > 0 || ((step === 2 || step === 3) && !agreementAccepted)}>
+                {registerCountdown > 0 ? `${registerCountdown} 秒后可重试` : step === 1 ? "下一步" : "下一步"}
             </Button>
             {settings?.linuxdoEnabled && !settings.smsAndEmailRegistration ? (
                 <>
@@ -260,6 +264,7 @@ function AuthField({ label, children }: { label: string; children: ReactNode }) 
     return (
         <label className="block space-y-2">
             <span className="auth-scene-label text-xs font-medium">{label}</span>
+            <span className="auth-scene-icon sr-only" aria-hidden="true" />
             {children}
         </label>
     );

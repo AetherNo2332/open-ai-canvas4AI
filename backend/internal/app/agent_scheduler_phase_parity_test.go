@@ -72,3 +72,31 @@ func TestAgentParityRuntimePhasePreservesStorageErrorAndLeaseLoss(t *testing.T) 
 		})
 	}
 }
+
+func TestPiRuntimePhaseRetriesTransientSQLiteLock(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	session, _, err := s.repo.CloudAgentPiSession(run.UserID, run.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := fmt.Sprintf("%s@%d", run.LeaseOwner, session.LeaseEpoch)
+	attempts := 0
+	const callbackName = "test:runtime_phase_sqlite_lock"
+	if err := db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		updates, ok := tx.Statement.Dest.(map[string]any)
+		if tx.Statement.Table == "cloud_agent_executions" && ok && updates["runtime_phase"] != nil && attempts == 0 {
+			attempts++
+			tx.AddError(errors.New("database is locked"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Callback().Update().Remove(callbackName)
+
+	if err := s.PiRuntimePhase(run.UserID, run.ID, owner, PiRuntimePhaseRequest{Phase: "waiting_tool", Kind: "tool", WaitID: "pending-operation"}); err != nil {
+		t.Fatalf("transient SQLite lock should be retried: %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("lock injection attempts = %d, want one failed attempt before retry", attempts)
+	}
+}

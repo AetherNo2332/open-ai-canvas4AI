@@ -3,6 +3,10 @@ import { describe, expect, test } from "bun:test";
 import { ApiError, apiClient, compactApiParams, http, request, serializeApiParams } from "../src/services/api/request";
 
 describe("backend API request error semantics", () => {
+    test("preserves typed command rejection reason carried in envelope data", async () => {
+        const thrown=await request(Promise.reject({isAxiosError:true,response:{status:409,data:{code:409,data:{reason:'entity_version_conflict',field:'node:a'},msg:'对象已变化'}}})).catch(e=>e);
+        expect(thrown).toMatchObject({status:409,reason:'entity_version_conflict',details:{field:'node:a'}});
+    });
     test("unwraps a successful backend envelope", async () => {
         await expect(request(Promise.resolve({ data: { code: 0, data: { id: "task-1" }, msg: "ok" }, status: 200 }))).resolves.toEqual({ id: "task-1" });
     });

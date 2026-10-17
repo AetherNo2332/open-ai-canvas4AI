@@ -39,6 +39,8 @@ export default defineConfig({
     resolve: {
         alias: {
             "@": resolve(webDir, "src"),
+            // 导演台 host bridge 单一实现:web 直接引用 director-desk 源码(契约镜像由漂移守卫测试守护)。
+            "@desk": resolve(webDir, "../director-desk/src"),
         },
     },
     build: {

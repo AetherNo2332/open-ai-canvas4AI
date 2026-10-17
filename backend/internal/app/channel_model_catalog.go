@@ -132,8 +132,11 @@ func (s *Service) FetchChannelModelCatalog(ctx context.Context, actor *model.Use
 		}
 		target = baseURL + "/models"
 	}
-	if _, err := ValidateOutboundURL(target); err != nil {
+	if _, err := s.ValidateChannelOutboundURL(target); err != nil {
 		return nil, err
+	}
+	if s.desktopMode {
+		ctx = context.WithValue(ctx, desktopHTTPServiceKey{}, s)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {

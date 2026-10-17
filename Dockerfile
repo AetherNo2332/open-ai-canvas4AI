@@ -12,6 +12,8 @@ COPY README.md /app/README.md
 COPY assets /app/assets
 COPY web ./
 COPY backend/internal/canvas/connection/builtin.json /app/backend/internal/canvas/connection/builtin.json
+# 工作台经 @desk/* 引用导演台源码(host bridge 契约单源),与仓库保持同一相对路径。
+COPY director-desk/src /app/director-desk/src
 ARG VITE_TLDRAW_LICENSE_KEY
 ARG BUILD_VERSION
 ARG BUILD_COMMIT=unknown
@@ -23,10 +25,22 @@ ENV CANVAS_BUILD_TIME=${BUILD_TIME}
 # 生产镜像只构建云端工作台前端；Agent Runtime 在后端 Worker 中运行。
 RUN bun --bun ./node_modules/vite/bin/vite.js build
 
+# 构建导演台(DirectorDesk 云端移植副本)静态产物:nginx 同源托管在 /desk/。
+FROM --platform=$BUILDPLATFORM oven/bun:1.3.9 AS desk-build
+
+WORKDIR /app/director-desk
+COPY director-desk/package.json director-desk/bun.lock ./
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --registry=https://registry.npmmirror.com --cache-dir=/root/.bun/install/cache
+COPY director-desk ./
+# 与应用一致:先过项目自带 tsc,再产出静态站点。
+RUN bun run build
+
 # 运行镜像：nginx 托管静态前端，并在 Compose 中把 /api 转发到后端服务。
 FROM nginx:1.27-alpine
 
 COPY --from=web-build /app/web/dist /opt/canvas-release
+# 导演台产物随 release 一起发布到 html 根的 desk/ 子目录。
+COPY --from=desk-build /app/director-desk/dist /opt/canvas-release/desk
 COPY docker/canvas-web-entrypoint.sh /usr/local/bin/canvas-web-entrypoint
 RUN chmod +x /usr/local/bin/canvas-web-entrypoint
 COPY nginx.conf /etc/nginx/conf.d/default.conf

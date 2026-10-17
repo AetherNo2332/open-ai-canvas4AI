@@ -252,7 +252,7 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 	}
 	var release func()
 	var coordinator *platform.Coordinator
-	var runtimeService *Service
+	runtimeService, _ := req.Context().Value(desktopHTTPServiceKey{}).(*Service)
 	requestKind := providerRequestKindFromContext(req.Context())
 	cacheManagementRequest := requestKind == "cache-create" || requestKind == "cache-delete"
 	responseLimit := maxProviderResponseBytes
@@ -291,12 +291,17 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 			defer release()
 		}
 	}
-	if _, err := ValidateOutboundURL(req.URL.String()); err != nil {
+	validate := ValidateOutboundURL
+	client := OutboundHTTPClient(requestTimeout)
+	if runtimeService != nil && runtimeService.desktopMode {
+		validate = runtimeService.ValidateChannelOutboundURL
+		client = runtimeService.OutboundHTTPClientForChannel(requestTimeout, req.URL)
+	}
+	if _, err := validate(req.URL.String()); err != nil {
 		recordProviderRequest(req, startedAt, 0, nil, err)
 		return nil, "", err
 	}
 	ApplyDefaultOutboundHeaders(req)
-	client := OutboundHTTPClient(requestTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		err = providerConnectionError(err)

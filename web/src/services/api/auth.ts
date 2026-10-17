@@ -437,7 +437,7 @@ export function getAdminFeatureAvailability() {
 
 export function updateAdminFeatureAvailability(
     features: Partial<
-        Pick<FeatureAvailability, "welcomeEnabled" | "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers" | "agentSubagentsEnabled">
+        Pick<FeatureAvailability, "welcomeEnabled" | "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers" | "agentSubagentsEnabled" | "directorDeskPrevisMode" | "directorDeskPrevisCanaryUsers" | "directorDeskPrevisCanaryBasisPoints">
     >,
 ) {
     return http.patch<{ features: FeatureAvailability }>("/admin/settings/features", features);
@@ -565,15 +565,15 @@ export function resetUserPromptCustomization(operation: string) {
 }
 
 export function getAdminOSSSetting() {
-    return http.get<{ setting: AdminOSSSetting }>("/admin/settings/oss");
+    return http.get<{ setting: AdminOSSSetting }>("/desktop/settings/storage");
 }
 
 export function updateAdminOSSSetting(input: Partial<AdminOSSSetting>) {
-    return http.patch<{ setting: AdminOSSSetting }>("/admin/settings/oss", input);
+    return http.patch<{ setting: AdminOSSSetting }>("/desktop/settings/storage", input);
 }
 
 export function testAdminOSSConnection(input: OSSConnectionTestInput) {
-    return http.post<OSSConnectionTestResult>("/admin/settings/oss/test", input);
+    return http.post<OSSConnectionTestResult>("/desktop/settings/storage/test", input);
 }
 
 export function getAdminArkPrivateAssetSetting() {

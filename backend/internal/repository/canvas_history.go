@@ -165,6 +165,12 @@ func (r *Repository) CanvasHistoryReferencesObject(resource *model.Resource) (bo
 	err := r.db.Model(&model.CanvasSnapshotResource{}).
 		Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).
 		Count(&count).Error
+	if err == nil && count == 0 && r.db.Migrator().HasTable(&model.CanvasCommandResource{}) {
+		err = r.db.Model(&model.CanvasCommandResource{}).Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).Count(&count).Error
+	}
+	if err == nil && count == 0 && r.db.Migrator().HasTable(&model.CanvasTaskResource{}) {
+		err = r.db.Model(&model.CanvasTaskResource{}).Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).Count(&count).Error
+	}
 	return count > 0, err
 }
 

@@ -14,7 +14,9 @@ import { RouterProvider } from "react-router";
 import { AppProviders } from "@/components/layout/app-providers";
 import { router } from "@/router";
 
-document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
+// body 字体随 globals.css 的 --font-home（Mona Sans + 思源黑体）统一；此处内联写入
+// 是为了让首帧在样式表解析前就持有最终字体栈，避免冷启动闪换字体。
+document.body.style.fontFamily = '"Mona Sans","Source Han Sans SC","Microsoft YaHei",system-ui,sans-serif';
 
 createRoot(document.getElementById("root")!).render(
     <React.StrictMode>

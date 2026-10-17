@@ -84,8 +84,7 @@ describe("模式接线", () => {
     });
 
     test("时间轴只在 capabilities.timeline 为真时渲染", () => {
-        const normalized = workbench.replace(/\s+/g, " ");
-        expect(normalized).toContain("{capabilities.timeline ? ( <section className={`pv-inline-timeline");
+        expect(workbench).toContain("{capabilities.timeline ? <PrevisSequencer");
     });
 
     test("动画模式把 Transform 轨迹接入视口，隐藏演员和零长度轨迹不显示", () => {
@@ -156,7 +155,7 @@ describe("模式接线", () => {
         // 窄屏下检查器改为可开合的侧滑面板，dock 提供开关入口，而不是直接隐藏。
         const workbenchCss = readFileSync(resolve(import.meta.dir, "../src/components/canvas/previs/canvas-previs-workbench.css"), "utf8");
         expect(workbench).toContain('className={`pv-panel pv-panel--right thin-scrollbar ${inspectorOpen ? "is-open" : ""}`}');
-        expect(workbench.replace(/\s+/g, " ")).toContain("onToggleInspector={() => (compactLayout ? setInspectorOpen((value) => !value) : setInspectorDocked((value) => !value))}");
+        expect(workbench).toContain("onToggleInspector={() => compactLayout ? setInspectorOpen((value) => !value) : setInspectorDocked((value) => !value)}");
         expect(workbenchCss).toContain(".pv-panel--right.is-open { transform: translateX(0); }");
         expect(workbench).not.toContain("border-l max-lg:hidden");
     });
@@ -182,7 +181,7 @@ describe("模式接线", () => {
         // 逐个锁住依赖数组：任一处混入 mode，切模式就会掉草稿或掉历史。
         expect(workbench).toContain("}, [message, modal, open, scene, writeDraft]);");
         expect(workbench).toContain("}, [mirrorDraft, stagedTransaction]);");
-        expect(workbench).toMatch(/\},\s*\[mirrorDraft\],\s*\);/);
+        expect(workbench).toContain("}, [mirrorDraft]);");
         // 快捷键监听只随 open 装卸，不随 mode 反复重挂。
         expect(workbench).toContain("}, [open]);");
     });

@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,16 @@ import (
 
 // RegisterCanvasAPI 注册当前公开 HTTP API。main 把它挂在 /api。前后端一起发布，不做路径版本前缀。
 func RegisterCanvasAPI(api *gin.RouterGroup, svc *service.Service) {
+	commandService, taskService := svc.CanvasCommandServices()
+	canvasPrincipal := func(c *gin.Context) (identity.Principal, error) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			return identity.Principal{}, err
+		}
+		return identity.Principal{ID: user.ID, OwnerID: user.ID, Role: "owner", Scopes: identity.OwnerScopes()}, nil
+	}
+	RegisterCanvasCommandRoutes(api, commandService, canvasPrincipal)
+	RegisterCanvasTaskRoutes(api, taskService, canvasPrincipal)
 	RegisterOpenAPIRoutes(api)
 	RegisterAuthRoutes(api, svc)
 	RegisterAppearanceRoutes(api, svc)

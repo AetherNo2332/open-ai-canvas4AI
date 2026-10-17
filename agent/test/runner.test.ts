@@ -212,6 +212,27 @@ test("首个 system 由服务端策略与 Harness 正文组成，模型只看到
   assert.equal(canonical.messages.at(-1)?.content, "请给主角换一身衣服");
 });
 
+test("disallowed L1 tools stay out of canonical.tools across steps", async () => {
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [{ id: "read-1", function: { name: "canvas_get_state", arguments: "{}" } }] },
+    { text: "画布是空的" },
+  ], { receiptText: "Tool completed" });
+  snapshot.tools = [
+    { name: "canvas_get_state", description: "Get state", parameters: objectSchema, allowed: true },
+    { name: "canvas_edit_storyboard", description: "Edit storyboard", parameters: objectSchema, allowed: false },
+  ];
+  snapshot.canonical.tools = [
+    { type: "function", function: { name: "canvas_get_state", description: "Get state", parameters: objectSchema } },
+  ];
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.ok(state.canonical.length >= 2);
+  for (const request of state.canonical) {
+    const names = request.tools.map((tool) => (tool.function as { name: string }).name);
+    assert.deepEqual(names, ["canvas_get_state"]);
+    assert.equal(names.includes("canvas_edit_storyboard"), false);
+  }
+});
+
 test("tool definitions stay stable across different calls and continuation while receipts remain in messages", async () => {
   const { bridge, state, snapshot } = fakeBridge([
     { toolCalls: [{ id: "read-1", function: { name: "canvas_get_state", arguments: "{}" } }] },

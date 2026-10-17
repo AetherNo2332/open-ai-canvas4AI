@@ -132,6 +132,15 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 		return snapshot, err
 	}
 	snapshot.Direct = append(snapshot.Direct, history...)
+	if r.db.Migrator().HasTable(&model.CanvasTaskResource{}) {
+		var guards []model.CanvasTaskResource
+		if err := r.db.Where("owner_id = ? AND resource_id IN ?", userID, resourceIDs).Find(&guards).Error; err != nil {
+			return snapshot, err
+		}
+		for _, guard := range guards {
+			snapshot.Direct = append(snapshot.Direct, ResourceDirectReference{Kind: "画布任务输入", ID: guard.TaskID, Title: "已提交的任务输入", ResourceID: guard.ResourceID})
+		}
+	}
 	var leases []model.CloudAgentResourceLease
 	if err := r.db.Where("user_id = ? AND resource_id IN ? AND expires_at > ?", userID, resourceIDs, time.Now()).Find(&leases).Error; err != nil {
 		return snapshot, err

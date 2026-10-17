@@ -1,4 +1,4 @@
-.next/
+﻿.next/
 out/
 node_modules/
 open-storyboard-canvas/
@@ -78,4 +78,14 @@ backend/tmp_*
 # Keep the runtime in source control; its optional debug map is not deployed.
 /web/public/live2d/live2dcubismcore.min.js.map
 /web/dist-previs/
+director-desk/node_modules
+director-desk/dist
 /renderer/.local/
+
+
+# Compiled plugin artifacts: keep sources/docs/manifests trackable, never track build output.
+plugin-packages/**/*.yingce-plugin
+plugin-packages/**/provider
+plugin-packages/**/provider-*
+# Local backend executable; never commit build output.
+backend/server

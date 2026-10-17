@@ -9,7 +9,6 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { generationInputMentionLabel, normalizeGenerationNodeMentionTokens, type NodeGenerationInput } from "./canvas-node-generation";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
-import { CanvasCameraControlPopover } from "./canvas-camera-control-popover";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import type { CanvasGenerationMode, CanvasNodeMetadata, CanvasWorkspaceMode } from "@/types/canvas";
 
@@ -25,7 +24,9 @@ type CanvasConfigComposerProps = {
     workspaceMode?: CanvasWorkspaceMode;
 };
 
-type Token = { type: "text"; value: string } | { type: "reference"; nodeId: string };
+type Token =
+    | { type: "text"; value: string }
+    | { type: "reference"; nodeId: string };
 
 type MentionState = {
     query: string;
@@ -56,7 +57,13 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
     const normalizedValue = useMemo(() => normalizeGenerationNodeMentionTokens(value, inputs), [inputs, value]);
     const tokens = useMemo(() => parseComposerTokens(normalizedValue, inputs), [inputs, normalizedValue]);
     const referenceById = useMemo(() => new Map(inputs.map((input) => [input.nodeId, input])), [inputs]);
-    const videoFrameOptions = useMemo(() => inputs.filter((input) => input.type === "image" && input.image).map((input) => ({ nodeId: input.nodeId, label: resourceLabel(input, inputs), title: input.title, previewUrl: input.image?.dataUrl })), [inputs]);
+    const videoFrameOptions = useMemo(
+        () =>
+            inputs
+                .filter((input) => input.type === "image" && input.image)
+                .map((input) => ({ nodeId: input.nodeId, label: resourceLabel(input, inputs), title: input.title, previewUrl: input.image?.dataUrl })),
+        [inputs],
+    );
     const candidates = useMemo(() => {
         if (!mention) return [];
         const query = (mention.query || "").trim().toLowerCase();
@@ -171,9 +178,6 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                     <div className="truncate text-[var(--fs-label)] opacity-55">{simpleMode ? "已连接素材会自动带入" : workflowVideoReferenceMode ? "已连接媒体会按工作流字段顺序自动带入" : "@ 引用已连接素材或已激活技能，发送前自动组装"}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
-                    {onMetadataChange && (!generationMode || generationMode === "image" || generationMode === "video") ? (
-                        <CanvasCameraControlPopover cameraControl={metadata?.cameraControl} onCameraControlChange={(cameraControl, cameraPrompt) => onMetadataChange({ cameraControl, cameraPrompt: cameraPrompt ?? "" })} theme={theme} compact />
-                    ) : null}
                     {simpleMode ? null : <CanvasPresetPicker mode={generationMode || "image"} skillReferences={skillReferences} open={presetOpen} onOpenChange={setPresetOpen} onSelect={insertPreset} />}
                     <Button size="small" type="text" className="!h-7 !w-7 !min-w-7 !p-0" icon={<X className="size-3.5" />} onClick={onClose} />
                 </div>
@@ -194,11 +198,7 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                 </div>
             ) : null}
             <div className="canvas-config-composer-editor relative rounded-lg" style={{ background: theme.node.fill }}>
-                {!value.trim() ? (
-                    <div className="pointer-events-none absolute left-4 top-3 text-sm leading-7" style={{ color: theme.node.placeholder }}>
-                        输入提示词，按 @ 引用连接素材或技能
-                    </div>
-                ) : null}
+                {!value.trim() ? <div className="pointer-events-none absolute left-4 top-3 text-sm leading-7" style={{ color: theme.node.placeholder }}>输入提示词，按 @ 引用连接素材或技能</div> : null}
                 <div
                     ref={editorRef}
                     contentEditable
@@ -254,6 +254,7 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
             {imagePreview ? <Image src={imagePreview} alt="引用图片预览" style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
         </div>
     );
+
 }
 
 function removeActiveSlash(editor: HTMLDivElement) {
@@ -273,19 +274,7 @@ function removeActiveSlash(editor: HTMLDivElement) {
     selection?.addRange(range);
 }
 
-function MentionMenu({
-    candidates,
-    allInputs,
-    activeIndex,
-    theme,
-    onSelect,
-}: {
-    candidates: ComposerCandidate[];
-    allInputs: NodeGenerationInput[];
-    activeIndex: number;
-    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
-    onSelect: (candidate: ComposerCandidate) => void;
-}) {
+function MentionMenu({ candidates, allInputs, activeIndex, theme, onSelect }: { candidates: ComposerCandidate[]; allInputs: NodeGenerationInput[]; activeIndex: number; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onSelect: (candidate: ComposerCandidate) => void }) {
     const selectedRef = useRef(false);
     const activeItemRef = useRef<HTMLButtonElement | null>(null);
 

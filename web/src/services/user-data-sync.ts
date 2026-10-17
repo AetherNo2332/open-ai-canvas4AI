@@ -19,6 +19,7 @@ import { repairMissingCanvasAssets, repairMissingCanvasVideoPreviews, collectCan
 import { canvasNodeToAsset } from "@/lib/canvas/canvas-node-asset";
 import { applyAgentCanvasPatch, type AgentCanvasPatch } from "@/lib/canvas/agent-canvas-patch";
 import { stableDigestHex } from "@/lib/stable-digest";
+import {useCanvasSessionStore,createCanvasCommandProject} from '@/stores/canvas/use-canvas-session-store';
 
 let activeRemoteUserId = "";
 type RemoteUserDataPhase = "inactive" | "hydrating" | "ready" | "failed";
@@ -429,7 +430,8 @@ export function localSavedRemotePendingMessage(localAction: string, error: unkno
     return formatLocalSavedRemotePending(localAction, error);
 }
 
-export async function createCanvasProjectWithRemoteSync(title: string, projectId?: string, initialContent?: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>) {
+export async function createCanvasProjectWithRemoteSync(title: string, projectId?: string, initialContent?: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>):Promise<{id:string;syncError?:unknown}> {
+    if(useCanvasSessionStore.getState().scope)return createCanvasCommandProject(title,projectId,initialContent);
     const id = useCanvasStore.getState().createProject(title, projectId);
     if (initialContent) useCanvasStore.getState().updateProject(id, initialContent);
     if (!activeRemoteUserId) return { id, syncError: new Error("尚未建立云端同步会话") };

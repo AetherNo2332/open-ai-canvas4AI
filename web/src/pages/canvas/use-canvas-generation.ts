@@ -11,6 +11,7 @@ import { consumeGenerationTaskNode, ensureCanvasNodeAsset, retryCanvasAssetSyncA
 import { listGenerationTasks, listTaskLogs, queryGenerationTask, subscribeGenerationTasks, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import {useCanvasSessionStore,canvasCommandSession} from '@/stores/canvas/use-canvas-session-store';
 import { cinematicStoryboardColumns, storyboardRowsFromTask } from "@/lib/canvas/canvas-project-domain";
 import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
@@ -276,6 +277,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     const saveGeneratedAsset = useCallback(
         async (node: CanvasNodeData, taskId: string, signal?: AbortSignal) => {
+            if(useCanvasSessionStore.getState().scope)return;
             const result = await retryCanvasAssetSyncAfterRateLimit(() => ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node, source: "canvas-generation", taskId, signal }), { signal });
             if (signal?.aborted) return;
             setNodes((current) => current.map((item) => (item.id === node.id && item.metadata?.taskId === taskId ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item)));
@@ -286,6 +288,12 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     const applyGenerationTaskResult = useCallback(
         async (nodeId: string, task: GenerationTask) => {
+            const {consumeDesktopCanvasGeneration}=await import('@/services/desktop/canvas-generation');
+            const hostResult=await consumeDesktopCanvasGeneration(projectId,task.id,consumerControllerRef.current.signal);
+            if(hostResult) {
+                if(hostResult.outcome&&hostResult.outcome!=='applied')message.info('生成结果已保存在素材库；原目标已变化，因此未覆盖当前画布内容');
+                return;
+            }
             const applyStoredTaskResult = async () => {
                 const signal = consumerControllerRef.current.signal;
                 const before = nodesRef.current.find((node) => node.id === nodeId);
@@ -338,7 +346,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                 }
             }
         },
-        [nodesRef, projectId, setNodes],
+        [message,nodesRef, projectId, setNodes],
     );
 
     const observeSubscribedGenerationTask = useCallback(
@@ -375,6 +383,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     const recoverInterruptedGenerationTasks = useCallback(
         async (startedProjectId: string, signal: AbortSignal, isCurrentProject: () => boolean) => {
             if (!isCurrentProject()) return;
+            if(useCanvasSessionStore.getState().scope){await canvasCommandSession(startedProjectId)?.reconnect();return;}
             const recoveryNodes = nodesRef.current.filter((node) => {
                 const pendingAgentContinuation = node.metadata?.agentGenerationContinuation?.status === "pending";
                 const aggregateBatchRoot = node.metadata?.isBatchRoot && node.metadata.batchChildIds?.length;
@@ -501,6 +510,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     useEffect(() => {
         if (!projectLoaded) return;
+        if(useCanvasSessionStore.getState().scope)return;
         nodes.forEach((node) => {
             const taskId = node.metadata?.taskId;
             if (!taskId || !node.metadata?.content || node.metadata.status !== NODE_STATUS_SUCCESS || (node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio)) return;

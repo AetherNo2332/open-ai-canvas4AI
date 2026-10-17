@@ -101,7 +101,7 @@ func Validate(nodes []Node, edges []Edge, candidate Edge) error {
 		node   Node
 		handle string
 	}{{from, candidate.FromHandle}, {to, candidate.ToHandle}} {
-		if h.node.Type == "batch-table" && strings.HasPrefix(h.handle, "batch-reference:") {
+		if h.node.Type == "batch-table" && (strings.HasPrefix(h.handle, "batch-reference:") || strings.HasPrefix(h.handle, "batch-text:")) {
 			continue
 		}
 		if h.handle != "" && (h.node.Type != "script" || h.handle != "storyboard:context" && !strings.HasPrefix(h.handle, "row:")) {
@@ -114,7 +114,8 @@ func Validate(nodes []Node, edges []Edge, candidate Edge) error {
 		}
 	}
 	if len(target.AcceptedInputKinds) > 0 {
-		if !slices.Contains(target.AcceptedInputKinds, source.InputKind) || len(target.AcceptedSourceTypes) > 0 && !slices.Contains(target.AcceptedSourceTypes, from.Type) {
+		batchText := to.Type == "batch-table" && strings.HasPrefix(candidate.ToHandle, "batch-text:")
+		if batchText && source.InputKind != "text" || !batchText && (!slices.Contains(target.AcceptedInputKinds, source.InputKind) || len(target.AcceptedSourceTypes) > 0 && !slices.Contains(target.AcceptedSourceTypes, from.Type)) {
 			return fmt.Errorf("目标节点不接受该来源类型")
 		}
 		ids := map[string]bool{from.ID: true}

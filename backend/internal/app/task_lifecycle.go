@@ -42,6 +42,18 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if task.MediaRecoveryJSON != "" {
 		return nil, BadAuthRequest("作品已生成，请使用重试保存，不要重复生成")
 	}
+	if task.Status == model.TaskStatusSubmissionUncertain {
+		return nil, BadAuthRequest("上游接单状态尚未确认，请核对原任务，不能重新生成")
+	}
+	if s.desktopMode {
+		var diagnostic model.TaskExecutionDiagnostic
+		if json.Unmarshal([]byte(task.ExecutionDiagnosticJSON), &diagnostic) == nil && diagnostic.SubmissionOutcome == "unknown" {
+			return nil, BadAuthRequest("上游接单状态尚未确认，请核对原任务，不能重新生成")
+		}
+		if _, bindErr := s.repo.CanvasTaskBinding(task.ID); bindErr == nil {
+			return nil, BadAuthRequest("画布任务重做需要新的提交命令，请在画布中重做")
+		}
+	}
 	if task.Type == model.TaskTypePrevisRender {
 		return nil, BadAuthRequest("预演重做需新任务；已保存产物请使用只回写恢复")
 	}

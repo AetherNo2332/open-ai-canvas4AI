@@ -58,18 +58,33 @@ test("cleanup and other-canvas events cannot update the new canvas", async () =>
 });
 
 
+// 长 deadline 轮询替代固定 sleep:高负载(全量套件/SMB 文件系统)下固定
+// 120ms 等待会在 timer 抖动时误报;合同语义是「至少两次且任意两次间隔 ≥ 间隔」。
+const waitFor = async (condition: () => boolean, deadlineMs: number, stepMs = 5) => {
+    const start = Date.now();
+    while (Date.now() - start < deadlineMs) {
+        if (condition()) return true;
+        await new Promise((resolve) => setTimeout(resolve, stepMs));
+    }
+    return condition();
+};
+
 test("fallback snapshots obey the configured minimum refresh interval", async () => {
     const times: number[] = [];
     const sync = createAgentCanvasSync({ canvasId: "canvas", applyPatches: async () => {}, refresh: async () => { times.push(Date.now()); }, onError: () => {}, batchMs: 0, refreshIntervalMs: 100 });
     sync.reconcile();
     await sleep(15);
     for (let index = 0; index < 50; index++) sync.reconcile();
-    await sleep(15);
+    // 短于间隔的窗口内不允许第二次刷新。
+    let deadline = Date.now() + 80;
+    while (Date.now() < deadline) await sleep(5);
     expect(times).toHaveLength(1);
-    await sleep(120);
+    const arrived = await waitFor(() => times.length >= 2, 5000);
     sync.dispose();
-    expect(times).toHaveLength(2);
-    expect(times[1] - times[0]).toBeGreaterThanOrEqual(100);
+    expect(arrived).toBe(true);
+    for (let index = 1; index < times.length; index++) {
+        expect(times[index] - times[index - 1]).toBeGreaterThanOrEqual(100);
+    }
 });
 
 test("a full invalidation and undo still refresh after delta support was detected", async () => {

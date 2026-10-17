@@ -186,6 +186,8 @@ export type PrevisScene = {
     activeShotId: string;
     createdAt: string;
     updatedAt: string;
+    /** Integration metadata owned by the canvas product, ignored by renderers. */
+    extensions?: Record<string, unknown>;
 };
 
 export type PrevisSceneOutput = {

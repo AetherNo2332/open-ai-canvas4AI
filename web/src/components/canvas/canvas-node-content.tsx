@@ -8,7 +8,6 @@ import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskSt
 import type { CanvasNodeRenderLOD } from "@/lib/canvas/canvas-node-lod";
 import { CachedResourceImage } from "@/components/cached-resource-image";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
-import { canvasNodeHasCustomContent } from "@/lib/canvas/canvas-node-custom-content";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { canvasTextFontSize } from "@/lib/canvas/canvas-text-scale";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
@@ -84,7 +83,14 @@ export function CanvasNodeContent(props: CanvasNodeContentProps) {
     }
     if (props.renderLOD === "shell") return <CanvasNodeShellContent node={props.node} theme={props.theme} />;
     if (props.renderLOD === "preview") return <CanvasNodePreviewContent node={props.node} theme={props.theme} />;
-    const hasCustomContent = canvasNodeHasCustomContent(props.node, props.isEditingContent);
+    const hasCustomContent =
+        props.node.type === CanvasNodeType.Config ||
+        props.node.type === CanvasNodeType.Script ||
+        props.node.type === CanvasNodeType.BatchTable ||
+        Boolean(props.node.metadata?.previsSceneId) ||
+        (props.node.metadata?.workflowKind === "character" && Boolean(props.node.metadata.characterAssetId)) ||
+        (props.node.metadata?.workflowKind === "story_input" && !props.isEditingContent) ||
+        (props.node.metadata?.workflowKind === "styleboard" && !props.node.metadata.content);
     if (hasCustomContent && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.node.type === ART_CRITIQUE_NODE_TYPE) return <ArtCritiqueNodeContent node={props.node} />;
     if (props.node.type === MEDIA_CONVERSION_NODE_TYPE) return <MediaConversionNodeContent node={props.node} theme={props.theme} />;
@@ -1101,12 +1107,18 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, variant: "orig
         }
         let cancelled = false;
         setResolved({ identity, url: "", loading: true });
+        // Hosts without thumbnail delivery must resolve the original resource by its
+        // stable ID. Persisted fallback URLs can belong to a previous desktop port.
         void getResourceAccess(storageKey, "display", variant)
+            .catch((error) => {
+                if (variant !== "thumbnail") throw error;
+                return getResourceAccess(storageKey, "display", "original");
+            })
             .then((access) => {
                 if (!cancelled) setResolved({ identity, url: resolveResourceAccessURL(access.url), loading: false, originalWidth: access.originalWidth, originalHeight: access.originalHeight });
             })
             .catch(() => {
-                if (!cancelled) setResolved({ identity, url: fallback, loading: false });
+                if (!cancelled) setResolved({ identity, url: "", loading: false });
             });
         return () => {
             cancelled = true;

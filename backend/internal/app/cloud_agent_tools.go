@@ -572,6 +572,18 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		if req.PermissionMode != "read_only" {
 			add("previs_scene_create", cloudAgentToolText("previs_scene_create"), cloudAgentPrevisSceneCreateSchema()["properties"].(map[string]any), "canvasSnapshotHash", "sceneId", "title", "templateId")
 			add("previs_apply_patch", cloudAgentToolText("previs_apply_patch"), cloudAgentPrevisApplyPatchSchema()["properties"].(map[string]any), "snapshotHash", "sceneId", "operations")
+			for _, name := range []string{"director_block_scene", "director_design_shot", "director_draw_action", "director_preview_shot"} {
+				schema := cloudAgentDirectorToolSchema(name)
+				properties := schema["properties"].(map[string]any)
+				required, _ := schema["required"].([]string)
+				add(name, cloudAgentToolText(name), properties, required...)
+			}
+		}
+		for _, name := range []string{"director_check_continuity", "director_handoff_shot"} {
+			schema := cloudAgentDirectorToolSchema(name)
+			properties := schema["properties"].(map[string]any)
+			required, _ := schema["required"].([]string)
+			add(name, cloudAgentToolText(name), properties, required...)
 		}
 		add("canvas_list_node_types", "查询可创建节点和可编辑字段。传 nodeType 返回该类型的完整字段 schema；编辑复杂内容前先查字段合同。", map[string]any{"nodeType": str("可选节点类型；空值列出摘要")})
 		add("canvas_list_assets", "搜索当前用户素材库，返回可用于绑定的 assetId、标题和类型，不暴露下载凭证。", map[string]any{"query": str("可选搜索文字"), "kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio", "text"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
@@ -861,7 +873,7 @@ func cloudAgentWrite(name string) bool {
 	if name == "canvas_undo" || name == "canvas_redo" || name == "canvas_edit_drawing" || name == "canvas_bind_asset" {
 		return true
 	}
-	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == "previs_scene_create" || name == "previs_apply_patch" || name == "previs_preview"
+	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == "previs_scene_create" || name == "previs_apply_patch" || name == "previs_preview" || cloudAgentDirectorWriteTool(name)
 }
 
 // cloudAgentCanvasWriteTool 标记"调用返回即表示已经落到画布上"的写入工具。
@@ -874,7 +886,7 @@ func cloudAgentWrite(name string) bool {
 // generate_media / image_layer_split 创建草稿并进入独立审批，回执口径不同，故不在此列。
 func cloudAgentCanvasWriteTool(name string) bool {
 	switch name {
-	case "canvas_apply_ops", "canvas_undo", "canvas_redo", "canvas_edit_drawing", "canvas_bind_asset", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character":
+	case "canvas_apply_ops", "canvas_undo", "canvas_redo", "canvas_edit_drawing", "canvas_bind_asset", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character", "director_block_scene", "director_design_shot", "director_draw_action", "director_preview_shot":
 		return true
 	default:
 		return false
@@ -897,7 +909,7 @@ func cloudAgentReadToolCacheable(name string) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_content", "canvas_read_drawing", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "previs_scene_read", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
+	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_content", "canvas_read_drawing", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "previs_scene_read", "director_check_continuity", "director_handoff_shot", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
 		return true
 	default:
 		return false
@@ -1093,7 +1105,9 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 	case "canvas_read_content", "canvas_search_nodes":
 		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
 	case "previs_scene_read":
-		return cloudAgentPrevisSceneRead(repo, userID, state.Request.CanvasID, call, service, state.Request.PermissionMode != "read_only")
+		return cloudAgentPrevisSceneRead(repo, userID, state.Request.CanvasID, call)
+	case "director_check_continuity", "director_handoff_shot":
+		return cloudAgentDirectorRead(repo, userID, state.Request.CanvasID, call)
 	case "previs_preview":
 		return cloudAgentPrevisPreview(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":

@@ -8,8 +8,12 @@ import type { PrevisScene } from "@/types/previs";
 
 export type PrevisSaveController = {
     progress: PrevisSaveProgress;
-    /** canonical 提交入口：预览态与「仅镜像」路径都不得调用。 */
-    commitScene: (scene: PrevisScene) => void;
+    /** 同步读取当前保存快照；无 coordinator 时返回 idle 态（供非响应式代码取最新状态）。 */
+    currentSnapshot: () => PrevisSaveProgress;
+    /** 订阅 coordinator 状态变化（返回退订函数）；每次回调携带完整快照，不只是 status。 */
+    onSaveStatus: (handler: (progress: PrevisSaveProgress) => void) => () => void;
+    /** canonical 提交入口：预览态与「仅镜像」路径都不得调用。返回 false 表示 coordinator 不存在或拒绝了该场景。 */
+    commitScene: (scene: PrevisScene) => boolean;
     retry: () => Promise<boolean>;
     restoreCandidate: () => PrevisDraftEnvelope | null;
     restoreDraft: (candidate: PrevisDraftEnvelope) => boolean;
@@ -101,11 +105,30 @@ export function usePrevisSaveCoordinator(input: { sceneId: string | null; initia
         if (coordinator) setProgress(previsSaveProgress(coordinator.getSnapshot()));
     }, []);
 
+    const currentSnapshot = useCallback((): PrevisSaveProgress => {
+        const coordinator = coordinatorRef.current;
+        if (!coordinator) return idlePrevisSaveProgress;
+        return previsSaveProgress(coordinator.getSnapshot());
+    }, []);
+
+    const onSaveStatus = useCallback((handler: (progress: PrevisSaveProgress) => void): (() => void) => {
+        // coordinator 随 sceneId 变化重建：绑定当前实例，重建后旧实例不再派发。
+        // 订阅方（编辑桥）在场景切换时同步 dispose，不会跨 session 串事件。
+        const coordinator = coordinatorRef.current;
+        if (!coordinator) return () => undefined;
+        return coordinator.onStatusChange(() => {
+            if (coordinatorRef.current !== coordinator) return;
+            handler(previsSaveProgress(coordinator.getSnapshot()));
+        });
+    }, []);
+
     /** canonical 提交唯一入口：预览态和「仅镜像当前 draft」都不得调用。 */
     const commitScene = useCallback(
-        (scene: PrevisScene) => {
-            if (!coordinatorRef.current?.edit(scene)) return;
-            syncProgress();
+        (scene: PrevisScene): boolean => {
+            if (!coordinatorRef.current) return false;
+            const committed = coordinatorRef.current.edit(scene);
+            if (committed) syncProgress();
+            return committed;
         },
         [syncProgress],
     );
@@ -174,6 +197,8 @@ export function usePrevisSaveCoordinator(input: { sceneId: string | null; initia
 
     return {
         progress,
+        currentSnapshot,
+        onSaveStatus,
         commitScene,
         retry,
         restoreCandidate,
