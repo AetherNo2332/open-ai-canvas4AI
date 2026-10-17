@@ -5,6 +5,12 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## 管理员工具快照
+
+管理员工具快照使用 `/api/admin/agent/tool-snapshot-health`（当前健康）、`/tool-snapshots`（目录）、`/tool-snapshots/:id`（定义和引用）和 `/tool-snapshots/compare?left=...&right=...`（字段差异）。`POST /api/admin/agent/tool-snapshot-checks` 重新检测已上报内容；`PATCH /api/admin/agent/runtime-instances/:id/drain` 接收 `{ expectedRevision, draining, reason }`，写操作检查管理员身份、并发 revision 并记录审计。
+
+worker 使用内部协议 `POST /internal-agent/tool-snapshots/register` 注册实际加载的制品，后续 `/capacity` 和 `/claim` 关联同一进程与快照。注册丢失以机器可读原因 `tool_snapshot_registration_required` 要求重新注册，不能解析错误文案来决定恢复。详细语义见 [Agent 工具快照管理](/docs/backend/agent-tool-snapshots)。
+
 ## Pi worker 错误与有限恢复
 
 `POST /internal-agent/runs/:id/recovery` 使用现有内部 Token、协议版本、用户、worker owner 与 session epoch 请求头。提交 `revision`、`class`（network/http_5xx/timeout/rate_limited/conflict/result_unknown）、`operation`（snapshot/control/checkpoint/model/tool/phase/renew/compaction），可附 `taskId`、`callId`、`httpStatus`、`retryAfterMs`。拒绝未知字段、超大请求、旧 revision 和过期 epoch；同 run/epoch/操作/分类重报幂等。返回 `status`、`attempts` 和可选 `nextRecoveryAt`；终态以新运行快照为准。

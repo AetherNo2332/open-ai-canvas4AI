@@ -69,13 +69,18 @@ type AgentRuntimeInstance struct {
 }
 
 type AgentCapacityReport struct {
-	Active                int   `json:"active"`
-	Capacity              int   `json:"capacity"`
-	ClaimReservations     int   `json:"claimReservations"`
-	DispatchActive        int   `json:"dispatchActive"`
-	ReadyQueued           int   `json:"readyQueued"`
-	Draining              bool  `json:"draining"`
-	AppliedConfigRevision int64 `json:"appliedConfigRevision"`
+	InstanceID            string `json:"instanceId"`
+	BootID                string `json:"bootId"`
+	SnapshotID            string `json:"snapshotId"`
+	LoadGeneration        int64  `json:"loadGeneration"`
+	ArtifactFileState     string `json:"artifactFileState"`
+	Active                int    `json:"active"`
+	Capacity              int    `json:"capacity"`
+	ClaimReservations     int    `json:"claimReservations"`
+	DispatchActive        int    `json:"dispatchActive"`
+	ReadyQueued           int    `json:"readyQueued"`
+	Draining              bool   `json:"draining"`
+	AppliedConfigRevision int64  `json:"appliedConfigRevision"`
 }
 
 type AgentRuntimeStatus struct {

@@ -3,6 +3,13 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 工具快照管理与提前告警
+
+- 已实现内容与接口以 [Agent 工具快照管理](/docs/backend/agent-tool-snapshots) 为准；提交前执行专项测试、类型检查及独立代码审查。
+- [ ] 用户验收：运行总览在任务失败前提示后端/worker 不一致，打开详情核对工具名和字段差异；统计日期、用户和渠道筛选不能隐藏当前异常。
+- [ ] 部署验收：先升级 worker，再启用注册门禁；检查坏制品、未注册、心跳超时、恢复、排空及无兼容 worker 时的等待状态。
+- [ ] 浏览器验收：明暗皮肤、窄屏、长工具定义、可见性刷新与键盘操作。此提交不自动更新运行中的 3040 服务。
+
 ## 上游 4AI 增量合并（main + canary）
 
 - 已实现：将 `AetherNo2332/open-ai-canvas4AI`（v1.6.0，真实公共基 `7014aaf8`）的增量合入本地演进线（graft 伪头完成树级真实三方合并），同一合并树分别以 `main` 与 `canary` 新提交推送：本地 113 个路径（80 改 33 增、零删除）全部保留，4AI 的模型能力/目录/路由/可用性增量、`model_capability_kemei`、appearance 调整、Pi 压缩回退增强、canary 触发 CI（`quality.yml` push 分支加 `canary`）、100 个声明式插件包与 payment provider 制品（按其仓库跟踪约定随树恢复）、`backend/server` 运行时制品同步吸收；5 处真冲突（VERSION/面板/选中工具条/两插件包）按既定策略解决。主线已移除的旧 camera-control 资产族按「仅我方改动」语义保持删除（canary 侧亦已自行删除）。

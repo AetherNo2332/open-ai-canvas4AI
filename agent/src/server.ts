@@ -1,8 +1,7 @@
 import { hostname } from "node:os";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { CanvasBridge } from "./bridge.js";
-import type { ToolSchemaArtifact } from "./tool-disclosure.js";
+import { loadToolSchema, ToolSnapshotRegistration } from "./tool-snapshot-registration.js";
 import { loadHarnessPrompt, runCanvasAgent } from "./runner.js";
 import { RuntimeConfigController } from "./runtime-config.js";
 import { EventScheduler, RunEvents, runEventSessions } from "./event-scheduler.js";
@@ -19,21 +18,31 @@ process.once("SIGINT", () => controller.abort());
 const harnessDir = process.env.CANVAS_AGENT_HARNESS_DIR;
 const harness = await loadHarnessPrompt(harnessDir);
 // 共用工具 schema 制品在启动时读一次：与服务端快照的漂移在启动阶段就暴露。
-let toolSchema: ToolSchemaArtifact | undefined;
-if (harnessDir) {
-  try {
-    toolSchema = JSON.parse(await readFile(join(harnessDir, "TOOL_SCHEMA.json"), "utf8")) as ToolSchemaArtifact;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-}
+const loadedToolSchema = await loadToolSchema(harnessDir);
+const toolSchema = loadedToolSchema.artifact;
+const registration = new ToolSnapshotRegistration(loadedToolSchema, process.env.CANVAS_AGENT_BUILD_COMMIT || "unknown");
+if (loadedToolSchema.loadError) console.error("Agent tool schema:", loadedToolSchema.loadError);
 
 const scheduler = new EventScheduler(4);
 const events = new RunEvents();
 const availability={nextProbeAt:0};
-const eventBridge = new CanvasBridge(backend, token, `${hostname()}-${process.pid}-events`, scheduler, events,availability);
+const eventBridge = new CanvasBridge(backend, token, `${hostname()}-${process.pid}-events`, scheduler, events,availability,registration);
 // Fail closed before any claim when the authoritative configuration is unavailable.
-const config=new RuntimeConfigController(await eventBridge.schedulerConfig(controller.signal));
+async function loadInitialConfig(): Promise<RuntimeConfigController | undefined> {
+  while (!controller.signal.aborted) {
+    try {
+      // Capacity also registers and keeps invalid artifacts visible during config recovery.
+      await eventBridge.capacityReport({ active: 0, capacity: 4, claimReservations: 0, dispatchActive: 0, readyQueued: 0, draining: false, appliedConfigRevision: 0 }, controller.signal);
+      return new RuntimeConfigController(await eventBridge.schedulerConfig(controller.signal));
+    } catch (error) {
+      if (!controller.signal.aborted) console.error("Agent startup recovery:", workerErrorSummary(error));
+      await delay(5000, undefined, { signal: controller.signal }).catch(() => {});
+    }
+  }
+}
+const initialConfig = await loadInitialConfig();
+if (!initialConfig) process.exit(0);
+const config = initialConfig;
 scheduler.setConcurrency(config.current.dispatchConcurrency);
 let refreshing=false;
 const refresh=async()=>{
@@ -62,7 +71,7 @@ await runEventSessions({
   },
   signal: controller.signal,
   createBridge: (index) => new CanvasBridge(backend, token,
-    `${hostname()}-${process.pid}-${index + 1}`.slice(0, 80), scheduler, events,availability),
+    `${hostname()}-${process.pid}-${index + 1}`.slice(0, 80), scheduler, events,availability,registration),
   run: async (bridge, run, signal) => {
     await runLeasedPiSession(bridge, run, signal, (b, r, s) => runCanvasAgent(b, r, s, harness, toolSchema));
   },
