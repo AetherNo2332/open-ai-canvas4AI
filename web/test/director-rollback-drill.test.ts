@@ -12,26 +12,17 @@ const makeScene = (): PrevisScene => ({
     background: "#222222",
     environmentIntensity: 1,
     gridVisible: true,
-    objects: [
-        { id: "actor-1", name: "主角", kind: "actor", primitive: "character", transform: { position: [1, 0, 2], rotation: [0, 0, 0], scale: [1, 1, 1] }, color: "#336699", visible: true, castShadow: true, receiveShadow: true, keyframes: [] },
-    ],
-    cameras: [
-        { id: "cam-1", name: "主机位", transform: { position: [0, 1.6, 5], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1, 0], focalLength: 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] },
-    ],
+    objects: [{ id: "actor-1", name: "主角", kind: "actor", primitive: "character", transform: { position: [1, 0, 2], rotation: [0, 0, 0], scale: [1, 1, 1] }, color: "#336699", visible: true, castShadow: true, receiveShadow: true, keyframes: [] }],
+    cameras: [{ id: "cam-1", name: "主机位", transform: { position: [0, 1.6, 5], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1, 0], focalLength: 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] }],
     lights: [],
-    shots: [
-        { id: "shot-1", name: "镜头 1", cameraId: "cam-1", duration: 4, fps: 24, shotSize: "medium", cameraMove: "static", prompt: "" },
-    ],
+    shots: [{ id: "shot-1", name: "镜头 1", cameraId: "cam-1", duration: 4, fps: 24, shotSize: "medium", cameraMove: "static", prompt: "" }],
     activeShotId: "shot-1",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T01:00:00Z",
 });
 
 /** 合法 PrevisScene 顶层字段(持久化源真)— 引擎内部状态不得进入。 */
-const canonicalTopLevelKeys = new Set([
-    "id", "version", "title", "background", "environmentIntensity", "gridVisible",
-    "objects", "cameras", "lights", "shots", "activeShotId", "createdAt", "updatedAt", "extensions",
-]);
+const canonicalTopLevelKeys = new Set(["id", "version", "title", "background", "environmentIntensity", "gridVisible", "objects", "cameras", "lights", "shots", "activeShotId", "createdAt", "updatedAt", "extensions"]);
 
 describe("P5 回退演练 — 关闭开关后旧工作台可无损打开新运行时保存的场景", () => {
     test("01 新编辑器编辑路径产出的场景只包含 canonical 字段(无引擎私有状态泄漏)", () => {
@@ -82,6 +73,6 @@ describe("P5 回退演练 — 关闭开关后旧工作台可无损打开新运�
         const feature = readFileSync(resolve(base, "../src/lib/canvas/director-desk-feature.ts"), "utf8");
         expect(feature).toContain('mode === "on"');
         expect(feature).toContain('mode === "canary"');
-        expect(feature).toContain("return \"legacy\"");
+        expect(feature).toContain('return "legacy"');
     });
 });

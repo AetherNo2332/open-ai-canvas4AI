@@ -53,9 +53,7 @@ export function useDirectorDeskPrevisRuntime(open: boolean, scene: PrevisScene |
         if (!nextScene || !runtime) return;
         const nextKey: RuntimeSyncKey = { id: nextScene.id, updatedAt: nextScene.updatedAt };
         // force：提交被拒后把引擎强行拉回权威场景（store 未变 → 键相同 → 按 content 处理）。
-        const decision = force && lastSyncKeyRef.current && lastSyncKeyRef.current.id === nextKey.id
-            ? { kind: "content" as const }
-            : decideRuntimeSync(lastSyncKeyRef.current, nextKey);
+        const decision = force && lastSyncKeyRef.current && lastSyncKeyRef.current.id === nextKey.id ? { kind: "content" as const } : decideRuntimeSync(lastSyncKeyRef.current, nextKey);
         if (decision.kind === "noop") return;
         let document: DirectorProject;
         try {

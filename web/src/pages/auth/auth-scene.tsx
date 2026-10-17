@@ -91,11 +91,7 @@ export function AuthScene() {
                             <h1 className="auth-scene-title">{title}</h1>
                             <p className="auth-scene-summary">{heroDescription || copy.description}</p>
                         </header>
-                        <div
-                            ref={motionRoot}
-                            className="auth-scene-form-body auth-scene-form-transition"
-                            data-auth-mode={authMode}
-                        >
+                        <div ref={motionRoot} className="auth-scene-form-body auth-scene-form-transition" data-auth-mode={authMode}>
                             <Outlet context={{ onValidationError }} />
                         </div>
                         {!recovery ? (
@@ -115,7 +111,9 @@ export function AuthScene() {
                 <footer className="site-compliance-footer auth-scene-footer" aria-label="站点版权与备案信息">
                     <span>© 2026 {appearance.brandName}</span>
                 </footer>
-                <a className="auth-scene-help" href="mailto:support@example.com">需要帮助?</a>
+                <a className="auth-scene-help" href="mailto:support@example.com">
+                    需要帮助?
+                </a>
             </div>
         </main>
     );

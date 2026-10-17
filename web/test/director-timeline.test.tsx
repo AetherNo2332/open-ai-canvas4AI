@@ -1,12 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import {
-    previsTimelineTotalDuration,
-    resolveTimelineScrub,
-    findShotAtTime,
-    advancePlayhead,
-} from "../src/lib/canvas/previs/previs-timeline";
+import { previsTimelineTotalDuration, resolveTimelineScrub, findShotAtTime, advancePlayhead } from "../src/lib/canvas/previs/previs-timeline";
 import { DirectorTimeline } from "../src/components/canvas/previs/director-timeline";
 import type { PrevisScene } from "../src/types/previs";
 
@@ -18,9 +13,7 @@ const makeScene = (overrides: Partial<PrevisScene> = {}): PrevisScene => ({
     environmentIntensity: 1,
     gridVisible: true,
     objects: [],
-    cameras: [
-        { id: "cam-1", name: "主机位", transform: { position: [0, 1.6, 5], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1, 0], focalLength: 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] },
-    ],
+    cameras: [{ id: "cam-1", name: "主机位", transform: { position: [0, 1.6, 5], rotation: [0, 0, 0], scale: [1, 1, 1] }, target: [0, 1, 0], focalLength: 35, fov: 50, aperture: 2.8, focusDistance: 5, near: 0.05, far: 500, keyframes: [] }],
     lights: [],
     shots: [
         { id: "shot-1", name: "镜头 1", cameraId: "cam-1", duration: 4, fps: 24, shotSize: "wide", cameraMove: "static", prompt: "" },

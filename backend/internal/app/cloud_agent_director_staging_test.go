@@ -60,16 +60,16 @@ func TestDirectorImageStagingCreateValidatesInputs(t *testing.T) {
 		t.Fatalf("expiresAt = now + ttl, got %v", draft.ExpiresAt)
 	}
 	for name, mutate := range map[string]func(*DirectorImageStagingCreateOptions){
-		"missing-id":          func(o *DirectorImageStagingCreateOptions) { o.ID = "" },
-		"missing-run":         func(o *DirectorImageStagingCreateOptions) { o.RunID = "" },
-		"missing-scene-id":    func(o *DirectorImageStagingCreateOptions) { o.SceneID = "" },
-		"missing-cas-hash":    func(o *DirectorImageStagingCreateOptions) { o.BaseCanvasHash = "" },
-		"empty-scene":         func(o *DirectorImageStagingCreateOptions) { o.Scene = nil },
-		"invalid-scene-json":  func(o *DirectorImageStagingCreateOptions) { o.Scene = json.RawMessage(`17`) },
-		"non-object-scene":    func(o *DirectorImageStagingCreateOptions) { o.Scene = json.RawMessage(`[1]`) },
-		"zero-ttl":            func(o *DirectorImageStagingCreateOptions) { o.TTL = 0 },
-		"negative-ttl":        func(o *DirectorImageStagingCreateOptions) { o.TTL = -time.Second },
-		"zero-now":            func(o *DirectorImageStagingCreateOptions) { o.Now = time.Time{} },
+		"missing-id":         func(o *DirectorImageStagingCreateOptions) { o.ID = "" },
+		"missing-run":        func(o *DirectorImageStagingCreateOptions) { o.RunID = "" },
+		"missing-scene-id":   func(o *DirectorImageStagingCreateOptions) { o.SceneID = "" },
+		"missing-cas-hash":   func(o *DirectorImageStagingCreateOptions) { o.BaseCanvasHash = "" },
+		"empty-scene":        func(o *DirectorImageStagingCreateOptions) { o.Scene = nil },
+		"invalid-scene-json": func(o *DirectorImageStagingCreateOptions) { o.Scene = json.RawMessage(`17`) },
+		"non-object-scene":   func(o *DirectorImageStagingCreateOptions) { o.Scene = json.RawMessage(`[1]`) },
+		"zero-ttl":           func(o *DirectorImageStagingCreateOptions) { o.TTL = 0 },
+		"negative-ttl":       func(o *DirectorImageStagingCreateOptions) { o.TTL = -time.Second },
+		"zero-now":           func(o *DirectorImageStagingCreateOptions) { o.Now = time.Time{} },
 	} {
 		opts := valid
 		mutate(&opts)
@@ -120,24 +120,24 @@ func TestDirectorImageStagingCommitGates(t *testing.T) {
 	now := time.Date(2026, 10, 13, 8, 0, 0, 0, time.UTC)
 
 	cases := []struct {
-		name        string
-		setup       func(*DirectorImageStagingDraft)
-		authHash    string
-		at          time.Time
-		wantOK      bool
-		wantReason  string
-		wantStatus  DirectorImageStagingStatus
+		name       string
+		setup      func(*DirectorImageStagingDraft)
+		authHash   string
+		at         time.Time
+		wantOK     bool
+		wantReason string
+		wantStatus DirectorImageStagingStatus
 	}{
 		{
-			name:       "unapproved draft cannot commit",
-			setup:      func(d *DirectorImageStagingDraft) {},
-			authHash:   "hash-a", at: now,
+			name:     "unapproved draft cannot commit",
+			setup:    func(d *DirectorImageStagingDraft) {},
+			authHash: "hash-a", at: now,
 			wantOK: false, wantReason: "not-approved", wantStatus: DirectorImageStagingStaging,
 		},
 		{
-			name:       "approved draft commits once",
-			setup:      func(d *DirectorImageStagingDraft) { ApproveDirectorImageStagingDraft(d) },
-			authHash:   "hash-a", at: now,
+			name:     "approved draft commits once",
+			setup:    func(d *DirectorImageStagingDraft) { ApproveDirectorImageStagingDraft(d) },
+			authHash: "hash-a", at: now,
 			wantOK: true, wantStatus: DirectorImageStagingCommitted,
 		},
 		{
@@ -148,21 +148,21 @@ func TestDirectorImageStagingCommitGates(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			name:       "canvas drift blocks commit",
-			setup:      func(d *DirectorImageStagingDraft) { ApproveDirectorImageStagingDraft(d) },
-			authHash:   "hash-b", at: now,
+			name:     "canvas drift blocks commit",
+			setup:    func(d *DirectorImageStagingDraft) { ApproveDirectorImageStagingDraft(d) },
+			authHash: "hash-b", at: now,
 			wantOK: false, wantReason: "scene-drift", wantStatus: DirectorImageStagingApproved,
 		},
 		{
-			name:       "expired draft is rejected",
-			setup:      func(d *DirectorImageStagingDraft) { ApproveDirectorImageStagingDraft(d) },
-			authHash:   "hash-a", at: now.Add(61 * time.Second),
+			name:     "expired draft is rejected",
+			setup:    func(d *DirectorImageStagingDraft) { ApproveDirectorImageStagingDraft(d) },
+			authHash: "hash-a", at: now.Add(61 * time.Second),
 			wantOK: false, wantReason: "expired", wantStatus: DirectorImageStagingRejected,
 		},
 		{
-			name:       "rejected draft cannot commit",
-			setup:      func(d *DirectorImageStagingDraft) { RejectDirectorImageStagingDraft(d) },
-			authHash:   "hash-a", at: now,
+			name:     "rejected draft cannot commit",
+			setup:    func(d *DirectorImageStagingDraft) { RejectDirectorImageStagingDraft(d) },
+			authHash: "hash-a", at: now,
 			wantOK: false, wantReason: "rejected", wantStatus: DirectorImageStagingRejected,
 		},
 	}
@@ -247,12 +247,12 @@ func TestDirectorImageStagingReceipt(t *testing.T) {
 	draft := stagingTestDraft(t, now, time.Minute)
 	receipt := NewDirectorImageStagingReceipt("run-1", "call-7", draft)
 	want := map[string]any{
-		"requestId":  "run-1",
-		"callId":     "call-7",
-		"stagingId":  "stg-1",
-		"sceneId":    "scene-1",
-		"status":     "staging",
-		"expiresAt":  draft.ExpiresAt.Format(time.RFC3339),
+		"requestId": "run-1",
+		"callId":    "call-7",
+		"stagingId": "stg-1",
+		"sceneId":   "scene-1",
+		"status":    "staging",
+		"expiresAt": draft.ExpiresAt.Format(time.RFC3339),
 	}
 	raw, err := json.Marshal(receipt)
 	if err != nil {

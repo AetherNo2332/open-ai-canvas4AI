@@ -43,7 +43,10 @@
     color: var(--pd-t1, var(--pd-faint, var(--foreground)));
     font-size: var(--pd-ts-xs, 10px);
     cursor: pointer;
-    transition: background 120ms var(--pd-ease-snap), border-color 120ms var(--pd-ease-snap), color 120ms var(--pd-ease-snap);
+    transition:
+        background 120ms var(--pd-ease-snap),
+        border-color 120ms var(--pd-ease-snap),
+        color 120ms var(--pd-ease-snap);
 }
 
 .dsl-add:hover {
@@ -210,7 +213,9 @@
     background: transparent;
     color: var(--pd-t1, var(--pd-faint, var(--foreground)));
     cursor: pointer;
-    transition: background 120ms var(--pd-ease-snap), color 120ms var(--pd-ease-snap);
+    transition:
+        background 120ms var(--pd-ease-snap),
+        color 120ms var(--pd-ease-snap);
 }
 
 .dsl-icon-btn:hover:not(:disabled) {

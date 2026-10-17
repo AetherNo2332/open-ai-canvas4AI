@@ -29,7 +29,12 @@ describe("DirectorDesk previs end-to-end contract", () => {
         expect(directorPreviewInput(roundTrip, "shot-1").shotId).toBe("shot-1");
 
         let submissions = 0;
-        const bridge = createDirectorRenderBridge({ submit: async () => { submissions += 1; return { taskId: "task-1" }; } });
+        const bridge = createDirectorRenderBridge({
+            submit: async () => {
+                submissions += 1;
+                return { taskId: "task-1" };
+            },
+        });
         await Promise.all([bridge.preview(roundTrip, { shotId: "shot-1", time: 0 }), bridge.preview(roundTrip, { shotId: "shot-1", time: 0 })]);
         expect(submissions).toBe(1);
         expect(buildImageToDirectorAgentPrompt({ kind: "image", nodeId: "image-1", mentionToken: "@图片1" })).toContain("canvas_inspect_image");

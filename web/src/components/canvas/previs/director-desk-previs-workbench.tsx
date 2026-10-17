@@ -112,21 +112,24 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [policy, scene?.id]);
 
-    const onDocumentChange = useCallback((document: DirectorProject) => {
-        const bridge = editBridgeRef.current;
-        if (!bridge) {
-            // Legacy mode or a not-yet-ready session: keep the previous
-            // mirror behavior so no edit is dropped.
-            try {
-                props.onChange(directorDocumentToPrevisScene(document, sceneRef.current));
-            } catch {
-                // Keep the current draft visible; the workbench surfaces the
-                // next save/validation error through its existing coordinator.
+    const onDocumentChange = useCallback(
+        (document: DirectorProject) => {
+            const bridge = editBridgeRef.current;
+            if (!bridge) {
+                // Legacy mode or a not-yet-ready session: keep the previous
+                // mirror behavior so no edit is dropped.
+                try {
+                    props.onChange(directorDocumentToPrevisScene(document, sceneRef.current));
+                } catch {
+                    // Keep the current draft visible; the workbench surfaces the
+                    // next save/validation error through its existing coordinator.
+                }
+                return;
             }
-            return;
-        }
-        bridge.commitDocument(document);
-    }, [props.onChange]);
+            bridge.commitDocument(document);
+        },
+        [props.onChange],
+    );
 
     // runtime 事件回传 → 编辑器 UI 状态（播放头/播放/选择）。
     const [editorTime, setEditorTime] = useState(0);
@@ -150,10 +153,7 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
             const bridge = editBridgeRef.current;
             if (!bridge) return;
             const target = event.target as HTMLElement | null;
-            const inEditable = Boolean(
-                target
-                && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable),
-            );
+            const inEditable = Boolean(target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable));
             if (inEditable) return;
             event.preventDefault();
             if (event.shiftKey) {
@@ -167,45 +167,44 @@ export function DirectorDeskPrevisWorkbench(props: DirectorDeskPrevisWorkbenchPr
             window.removeEventListener("keydown", onKeyDown);
         };
     }, [policy]);
-    const submitPreview = useCallback(async (scene: PrevisScene, shot: PrevisShot) => {
-        if (!props.canvasId) return false;
-        const session = canvasCommandSession(props.canvasId);
-        if (!session) return false;
-        await session.submitPrevis(
-            { sceneId: scene.id, shotId: shot.id, options: { duration: shot.duration, fps: shot.fps } },
-            { operationId: `director-preview:${scene.id}:${shot.id}:${scene.updatedAt}` },
-        );
-        return true;
-    }, [props.canvasId]);
+    const submitPreview = useCallback(
+        async (scene: PrevisScene, shot: PrevisShot) => {
+            if (!props.canvasId) return false;
+            const session = canvasCommandSession(props.canvasId);
+            if (!session) return false;
+            await session.submitPrevis({ sceneId: scene.id, shotId: shot.id, options: { duration: shot.duration, fps: shot.fps } }, { operationId: `director-preview:${scene.id}:${shot.id}:${scene.updatedAt}` });
+            return true;
+        },
+        [props.canvasId],
+    );
     const refreshRef = useRef(props.onCanvasRefresh);
     refreshRef.current = props.onCanvasRefresh;
     const userScope = useUserStore((state) => state.user?.id) ?? "guest";
-    const exportHandler = useMemo(() => !props.canvasId || !scene?.id ? null : createDirectorDeskExportHandler({
-        canvasId: props.canvasId,
-        sceneId: scene.id,
-        scene: () => sceneRef.current,
-        saveDocument: async (document) => {
-            const record = editBridgeRef.current?.commitDocument(document as DirectorProject);
-            if (!record?.scene || record.status === "conflict" || !await saveControllerRef.current.retry()) throw new Error("保存未完成，请先重试保存再导出");
-            return record.scene;
-        },
-        transport: createDirectorDeskExportTransport({ session: canvasCommandSession, queryTask: queryGenerationTask, readMaterialization: readTaskMaterialization }),
-        waitTask: (taskId) => waitForGenerationTask(taskId),
-        onRefresh: () => refreshRef.current?.(),
-    }), [props.canvasId, scene?.id]);
+    const exportHandler = useMemo(
+        () =>
+            !props.canvasId || !scene?.id
+                ? null
+                : createDirectorDeskExportHandler({
+                      canvasId: props.canvasId,
+                      sceneId: scene.id,
+                      scene: () => sceneRef.current,
+                      saveDocument: async (document) => {
+                          const record = editBridgeRef.current?.commitDocument(document as DirectorProject);
+                          if (!record?.scene || record.status === "conflict" || !(await saveControllerRef.current.retry())) throw new Error("保存未完成，请先重试保存再导出");
+                          return record.scene;
+                      },
+                      transport: createDirectorDeskExportTransport({ session: canvasCommandSession, queryTask: queryGenerationTask, readMaterialization: readTaskMaterialization }),
+                      waitTask: (taskId) => waitForGenerationTask(taskId),
+                      onRefresh: () => refreshRef.current?.(),
+                  }),
+        [props.canvasId, scene?.id],
+    );
     // legacy 模式(或未打开/无场景)沿用工作台自己的协调器;应用壳只在 canary/authoritative 生效。
     if (!usingApp || !scene) return <CanvasPrevisWorkbench {...props} />;
 
     // app 加载失败回退到旧工作台,注入同一 saveController(运行时故障回退,数据不离手)。
     if (appFailed) {
-        return (
-            <CanvasPrevisWorkbench
-                {...props}
-                saveController={saveController}
-                onDraftChange={runtime.syncScene}
-                onSubmitPreview={submitPreview}
-            />
-        );
+        return <CanvasPrevisWorkbench {...props} saveController={saveController} onDraftChange={runtime.syncScene} onSubmitPreview={submitPreview} />;
     }
 
     return (

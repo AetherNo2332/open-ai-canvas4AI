@@ -16,15 +16,12 @@ export function previsInspectorViewModel(scene: PrevisScene, selectedEntityId: s
     const shot = scene.shots.find((candidate) => candidate.id === activeShotId);
     const camera = shot ? (scene.cameras.find((candidate) => candidate.id === shot.cameraId) ?? null) : null;
     return {
-        object: object
-            ? { id: object.id, name: object.name, position: object.transform.position, rotation: object.transform.rotation, scale: object.transform.scale }
-            : null,
+        object: object ? { id: object.id, name: object.name, position: object.transform.position, rotation: object.transform.rotation, scale: object.transform.scale } : null,
         camera: camera ? { id: camera.id, name: camera.name, focalLength: camera.focalLength, target: camera.target } : null,
     };
 }
 
-const clampVec3 = (value: PrevisVec3, min: number, max: number): PrevisVec3 =>
-    value.map((axis) => (Number.isFinite(axis) ? Math.min(max, Math.max(min, axis)) : 0)) as PrevisVec3;
+const clampVec3 = (value: PrevisVec3, min: number, max: number): PrevisVec3 => value.map((axis) => (Number.isFinite(axis) ? Math.min(max, Math.max(min, axis)) : 0)) as PrevisVec3;
 
 /** 缩放边界 [0.01, 100]：0 会破坏引擎的包围盒，过大没有意义。 */
 export function updatePrevisObjectTransform(scene: PrevisScene, id: string, patch: Partial<PrevisTransform>): PrevisScene | null {

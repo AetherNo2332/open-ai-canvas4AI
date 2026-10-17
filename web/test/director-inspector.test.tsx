@@ -1,11 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import {
-    previsInspectorViewModel,
-    updatePrevisObjectTransform,
-    updatePrevisCameraParams,
-} from "../src/lib/canvas/previs/previs-inspector";
+import { previsInspectorViewModel, updatePrevisObjectTransform, updatePrevisCameraParams } from "../src/lib/canvas/previs/previs-inspector";
 import { DirectorInspector } from "../src/components/canvas/previs/director-inspector";
 import type { PrevisScene, PrevisTransform } from "../src/types/previs";
 
@@ -46,9 +42,7 @@ const makeScene = (overrides: Partial<PrevisScene> = {}): PrevisScene => ({
         },
     ],
     lights: [],
-    shots: [
-        { id: "shot-1", name: "镜头 1", cameraId: "cam-1", duration: 4, fps: 24, shotSize: "medium", cameraMove: "static", prompt: "" },
-    ],
+    shots: [{ id: "shot-1", name: "镜头 1", cameraId: "cam-1", duration: 4, fps: 24, shotSize: "medium", cameraMove: "static", prompt: "" }],
     activeShotId: "shot-1",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",

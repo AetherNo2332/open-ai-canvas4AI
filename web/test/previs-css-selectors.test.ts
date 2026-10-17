@@ -2,12 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const FILES = [
-    "src/components/canvas/previs/director-timeline.css",
-    "src/components/canvas/previs/director-shot-list.css",
-    "src/components/canvas/previs/director-inspector.css",
-    "src/components/canvas/previs/director-previs-editor.css",
-];
+const FILES = ["src/components/canvas/previs/director-timeline.css", "src/components/canvas/previs/director-shot-list.css", "src/components/canvas/previs/director-inspector.css", "src/components/canvas/previs/director-previs-editor.css"];
 
 /**
  * 生产构建门禁:lightningcss minify 不容忍「空选择器」(规则体前没有选择器)。

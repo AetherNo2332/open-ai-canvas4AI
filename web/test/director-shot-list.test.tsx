@@ -1,13 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import {
-    buildPrevisShotListItems,
-    addPrevisShot,
-    updatePrevisShot,
-    removePrevisShot,
-    movePrevisShot,
-} from "../src/lib/canvas/previs/previs-shot-list";
+import { buildPrevisShotListItems, addPrevisShot, updatePrevisShot, removePrevisShot, movePrevisShot } from "../src/lib/canvas/previs/previs-shot-list";
 import { DirectorShotList } from "../src/components/canvas/previs/director-shot-list";
 import type { PrevisScene } from "../src/types/previs";
 

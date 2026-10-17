@@ -111,8 +111,14 @@ export function useAuthAmbientMotion(theme: string) {
             composing = null;
             if (input) showTyping(input);
         };
-        const clear = () => { hide(); clearTyping(); };
-        const preferenceChanged = () => { hide(); clear(); };
+        const clear = () => {
+            hide();
+            clearTyping();
+        };
+        const preferenceChanged = () => {
+            hide();
+            clear();
+        };
         root.addEventListener("pointermove", move);
         root.addEventListener("pointerleave", hide);
         root.addEventListener("beforeinput", remember);

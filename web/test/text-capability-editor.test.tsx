@@ -9,11 +9,7 @@ describe("文本模型能力编辑器", () => {
     test("图片引用卡片同时提供最大图片引用与识图批次封顶", () => {
         for (const section of ["references", "all"] as const) {
             const editor = renderToStaticMarkup(
-                <ModelCapabilityEditor
-                    capability="text"
-                    section={section}
-                    value={{ version: 1, text: { visionSupported: true, references: { promptMaxChars: 32000, maxImages: 10, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 } } }}
-                />,
+                <ModelCapabilityEditor capability="text" section={section} value={{ version: 1, text: { visionSupported: true, references: { promptMaxChars: 32000, maxImages: 10, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 } } }} />,
             );
             expect(editor).toContain("最大图片引用");
             expect(editor).toContain("识图批次安全封顶");
@@ -22,11 +18,7 @@ describe("文本模型能力编辑器", () => {
 
     test("最大图片引用按配置值回显，不受识图批次封顶影响", () => {
         const editor = renderToStaticMarkup(
-            <ModelCapabilityEditor
-                capability="text"
-                section="references"
-                value={{ version: 1, text: { visionMaxBatchImages: 4, references: { promptMaxChars: 32000, maxImages: 10, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 } } }}
-            />,
+            <ModelCapabilityEditor capability="text" section="references" value={{ version: 1, text: { visionMaxBatchImages: 4, references: { promptMaxChars: 32000, maxImages: 10, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 } } }} />,
         );
         expect(editor).toMatch(/最大图片引用[^]*?value="10"/);
         expect(editor).toMatch(/识图批次安全封顶[^]*?value="4"/);

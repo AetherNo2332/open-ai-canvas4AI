@@ -9,17 +9,33 @@ function fixture(save = true) {
     const calls: string[] = [];
     const events: unknown[] = [];
     let finish!: (task: PrevisExportTask) => void;
-    const completed = new Promise<PrevisExportTask>((resolve) => { finish = resolve; });
+    const completed = new Promise<PrevisExportTask>((resolve) => {
+        finish = resolve;
+    });
     const transport: DirectorDeskExportTransport = {
-        submitPrevis: async () => { calls.push("submit"); return { taskId: "task-1" }; },
-        queryTask: async (id) => { calls.push("query"); return { id, status: "succeeded" }; },
-        waitForMaterialization: async () => { calls.push("writeback"); return { state: "done", outcome: "applied" }; },
+        submitPrevis: async () => {
+            calls.push("submit");
+            return { taskId: "task-1" };
+        },
+        queryTask: async (id) => {
+            calls.push("query");
+            return { id, status: "succeeded" };
+        },
+        waitForMaterialization: async () => {
+            calls.push("writeback");
+            return { state: "done", outcome: "applied" };
+        },
         readCanvas: async () => ({ nodes: ["previs-video-task-1", "previs-preview-task-1"].map((id) => ({ id, metadata: { taskId: "task-1", previsSceneId: scene.id, storageKey: "resource:output", assetId: "asset-1" } })) as any }),
-        writeStoryboard: async () => { calls.push("storyboard"); },
+        writeStoryboard: async () => {
+            calls.push("storyboard");
+        },
     };
     let savedName = "";
     const handler = createDirectorDeskExportHandler({
-        canvasId: "canvas-1", sceneId: scene.id, scene: () => scene, transport,
+        canvasId: "canvas-1",
+        sceneId: scene.id,
+        scene: () => scene,
+        transport,
         saveDocument: async (document) => {
             calls.push("save");
             if (!save) throw new Error("保存未完成");
@@ -27,8 +43,13 @@ function fixture(save = true) {
             savedName = next.objects[0]?.name || "";
             return next;
         },
-        waitTask: async () => { calls.push("wait"); return completed; },
-        onRefresh: () => { calls.push("refresh"); },
+        waitTask: async () => {
+            calls.push("wait");
+            return completed;
+        },
+        onRefresh: () => {
+            calls.push("refresh");
+        },
     });
     const document = previsSceneToDirectorDocument(scene);
     document.entities.find((item) => item.kind !== "camera")!.name = "应用里刚改的名字";

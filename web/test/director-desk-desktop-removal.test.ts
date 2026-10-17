@@ -10,33 +10,19 @@ const repoRoot = resolve(import.meta.dir, "../..");
 const deskRoot = resolve(repoRoot, "director-desk");
 const read = (path: string) => readFileSync(resolve(deskRoot, path), "utf8");
 
-const REMOVED_PATHS = [
-    "src/files/desktop-output.ts",
-    "src/ui/project-save.ts",
-    "src/ui/file-locations.ts",
-    "src/ui/update-panel.ts",
-    "src/ui/update-panel.css",
-    "src/ui/ai-mcp.ts",
-    "src/updates",
-];
+const REMOVED_PATHS = ["src/files/desktop-output.ts", "src/ui/project-save.ts", "src/ui/file-locations.ts", "src/ui/update-panel.ts", "src/ui/update-panel.css", "src/ui/ai-mcp.ts", "src/updates"];
 
-const REMOVED_MODULE_REFERENCES = [
-    "files/desktop-output",
-    "ui/project-save",
-    "ui/file-locations",
-    "ui/update-panel",
-    "ui/ai-mcp",
-    "../updates/",
-];
+const REMOVED_MODULE_REFERENCES = ["files/desktop-output", "ui/project-save", "ui/file-locations", "ui/update-panel", "ui/ai-mcp", "../updates/"];
 
 /** 浏览器能力不得被误当桌面能力删除(历史误删项)。 */
 const BROWSER_SAFE_PATHS = ["src/storage/local-library.ts"];
 
 function sourceFiles(): string[] {
-    const walk = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-        const path = resolve(directory, entry.name);
-        return entry.isDirectory() ? walk(path) : entry.isFile() && path.endsWith(".ts") ? [relative(deskRoot, path).replaceAll("\\", "/")] : [];
-    });
+    const walk = (directory: string): string[] =>
+        readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+            const path = resolve(directory, entry.name);
+            return entry.isDirectory() ? walk(path) : entry.isFile() && path.endsWith(".ts") ? [relative(deskRoot, path).replaceAll("\\", "/")] : [];
+        });
     return walk(resolve(deskRoot, "src"));
 }
 

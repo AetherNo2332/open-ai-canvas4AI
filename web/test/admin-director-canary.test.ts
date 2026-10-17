@@ -25,7 +25,7 @@ describe("DirectorDesk canary grouping contracts", () => {
         const auth = source("../src/services/api/auth.ts");
         const payload = source("../src/pages/admin/components/feature-availability-panel.tsx");
         // PATCH 的 Pick 必须包含分组字段(否则管理端保存会丢失分群配置)。
-        expect(auth).toMatch(/Pick<FeatureAvailability,[^]*"directorDeskPrevisCanaryUsers"/);
+        expect(auth).toMatch(/Pick<\s*FeatureAvailability,[^]*"directorDeskPrevisCanaryUsers"/);
         expect(auth).toMatch(/"directorDeskPrevisCanaryBasisPoints"/);
         // 面板 payload/解析/比较三处一致。
         expect(payload).toContain("directorDeskPrevisCanaryUsers: features.directorDeskPrevisCanaryUsers");

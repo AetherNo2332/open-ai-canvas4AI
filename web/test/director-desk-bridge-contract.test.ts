@@ -78,7 +78,9 @@ describe("host bridge 行为", () => {
         const { app, host } = linkedPair();
         const appBridge = createHostBridge(app, { origin: "http://localhost:3040" });
         let handled = 0;
-        appBridge.on("host.scene.load", () => { handled += 1; });
+        appBridge.on("host.scene.load", () => {
+            handled += 1;
+        });
         host.postMessage({ protocol: 1, type: "host.unknown.thing", payload: {} });
         await Bun.sleep(5);
         expect(handled).toBe(0);
@@ -89,7 +91,9 @@ describe("host bridge 行为", () => {
         const { app, host } = linkedPair();
         const appBridge = createHostBridge(app, { origin: "http://localhost:3040" });
         let handled = 0;
-        appBridge.on("host.scene.load", () => { handled += 1; });
+        appBridge.on("host.scene.load", () => {
+            handled += 1;
+        });
         host.postMessage({ protocol: 999, type: "host.scene.load", payload: {} });
         await Bun.sleep(5);
         expect(handled).toBe(0);
@@ -100,7 +104,9 @@ describe("host bridge 行为", () => {
         const { app, host } = linkedPair("http://evil.example");
         const appBridge = createHostBridge(app, { origin: "http://localhost:3040" });
         let handled = 0;
-        appBridge.on("host.scene.load", () => { handled += 1; });
+        appBridge.on("host.scene.load", () => {
+            handled += 1;
+        });
         host.postMessage({ protocol: 1, type: "host.scene.load", payload: {} });
         await Bun.sleep(5);
         expect(handled).toBe(0);
@@ -118,7 +124,9 @@ describe("host bridge 行为", () => {
         const { app, host } = linkedPair();
         const appBridge = createHostBridge(app, { origin: "http://localhost:3040" });
         let handled = 0;
-        appBridge.on("host.scene.load", () => { handled += 1; });
+        appBridge.on("host.scene.load", () => {
+            handled += 1;
+        });
         appBridge.dispose();
         expect(app.listenerCount()).toBe(0);
         host.postMessage({ protocol: 1, type: "host.scene.load", payload: {} });

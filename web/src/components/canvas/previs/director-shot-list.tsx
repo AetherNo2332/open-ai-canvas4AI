@@ -33,7 +33,9 @@ export function DirectorShotList({ scene, onSelectShot, onAddShot, onUpdateShot,
 
     const header = (
         <div className="dsl-header">
-            <span className="dsl-header__label">镜头 <em>{items.length}</em></span>
+            <span className="dsl-header__label">
+                镜头 <em>{items.length}</em>
+            </span>
             <button type="button" className="dsl-add" onClick={onAddShot}>
                 <Plus className="size-3.5" aria-hidden />
                 新增镜头
@@ -62,14 +64,11 @@ export function DirectorShotList({ scene, onSelectShot, onAddShot, onUpdateShot,
                     const confirming = confirmingId === shot.id;
                     return (
                         <li key={shot.id} className="dsl-row" data-active={item.isActive ? "true" : "false"} aria-current={item.isActive ? "true" : undefined}>
-                            <button
-                                type="button"
-                                className="dsl-row__pick"
-                                onClick={() => onSelectShot(shot.id)}
-                                aria-label={`选中镜头 ${item.index + 1}：${shot.name}`}
-                            >
+                            <button type="button" className="dsl-row__pick" onClick={() => onSelectShot(shot.id)} aria-label={`选中镜头 ${item.index + 1}：${shot.name}`}>
                                 <span className="dsl-row__index">{item.index + 1}</span>
-                                <small className="dsl-row__span">{item.startAt.toFixed(1)}–{item.endAt.toFixed(1)}s</small>
+                                <small className="dsl-row__span">
+                                    {item.startAt.toFixed(1)}–{item.endAt.toFixed(1)}s
+                                </small>
                             </button>
                             <input
                                 className="dsl-row__name"
@@ -103,41 +102,25 @@ export function DirectorShotList({ scene, onSelectShot, onAddShot, onUpdateShot,
                                 }}
                             />
                             <small className="dsl-row__unit">{formatSeconds(shot.duration)}</small>
-                            <select
-                                className="dsl-row__opt"
-                                aria-label={`镜头 ${item.index + 1} 景别`}
-                                value={shot.shotSize}
-                                onChange={(event) => onUpdateShot(shot.id, { shotSize: event.target.value as PrevisShot["shotSize"] })}
-                            >
-                                {shotSizeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            <select className="dsl-row__opt" aria-label={`镜头 ${item.index + 1} 景别`} value={shot.shotSize} onChange={(event) => onUpdateShot(shot.id, { shotSize: event.target.value as PrevisShot["shotSize"] })}>
+                                {shotSizeOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                        {option.label}
+                                    </option>
+                                ))}
                             </select>
-                            <select
-                                className="dsl-row__opt"
-                                aria-label={`镜头 ${item.index + 1} 运镜`}
-                                value={shot.cameraMove}
-                                onChange={(event) => onUpdateShot(shot.id, { cameraMove: event.target.value as PrevisShot["cameraMove"] })}
-                            >
-                                {cameraMoveOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            <select className="dsl-row__opt" aria-label={`镜头 ${item.index + 1} 运镜`} value={shot.cameraMove} onChange={(event) => onUpdateShot(shot.id, { cameraMove: event.target.value as PrevisShot["cameraMove"] })}>
+                                {cameraMoveOptions.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                        {option.label}
+                                    </option>
+                                ))}
                             </select>
                             <div className="dsl-row__actions">
-                                <button
-                                    type="button"
-                                    className="dsl-icon-btn"
-                                    aria-label="上移镜头"
-                                    title="上移"
-                                    disabled={item.index === 0}
-                                    onClick={() => onMoveShot(shot.id, -1)}
-                                >
+                                <button type="button" className="dsl-icon-btn" aria-label="上移镜头" title="上移" disabled={item.index === 0} onClick={() => onMoveShot(shot.id, -1)}>
                                     <ChevronUp className="size-3.5" aria-hidden />
                                 </button>
-                                <button
-                                    type="button"
-                                    className="dsl-icon-btn"
-                                    aria-label="下移镜头"
-                                    title="下移"
-                                    disabled={item.index === items.length - 1}
-                                    onClick={() => onMoveShot(shot.id, 1)}
-                                >
+                                <button type="button" className="dsl-icon-btn" aria-label="下移镜头" title="下移" disabled={item.index === items.length - 1} onClick={() => onMoveShot(shot.id, 1)}>
                                     <ChevronDown className="size-3.5" aria-hidden />
                                 </button>
                                 <button
@@ -165,7 +148,9 @@ export function DirectorShotList({ scene, onSelectShot, onAddShot, onUpdateShot,
             </ul>
             {active ? (
                 <div className="dsl-prompt">
-                    <label className="dsl-prompt__label" htmlFor="dsl-prompt-input">镜头提示词</label>
+                    <label className="dsl-prompt__label" htmlFor="dsl-prompt-input">
+                        镜头提示词
+                    </label>
                     <textarea
                         id="dsl-prompt-input"
                         rows={3}

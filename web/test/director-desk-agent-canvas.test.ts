@@ -10,10 +10,46 @@ const project = {
     fps: 24,
     aspect: "16:9",
     room: { enabled: false, width: 10, depth: 10, height: 3 },
-    entities: [{ id: "actor-1", kind: "actor", name: "演员", asset: "person", color: "#a7bdd7", position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], visible: true, locked: false, height: 1.75, build: "normal", gender: "male", path: null, face: "path", faceTarget: "", clips: [], pose: {}, poseKeys: [], camera: null, count: 1, spacing: 0.75, seed: 1, reference: "" }],
+    entities: [
+        {
+            id: "actor-1",
+            kind: "actor",
+            name: "演员",
+            asset: "person",
+            color: "#a7bdd7",
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            visible: true,
+            locked: false,
+            height: 1.75,
+            build: "normal",
+            gender: "male",
+            path: null,
+            face: "path",
+            faceTarget: "",
+            clips: [],
+            pose: {},
+            poseKeys: [],
+            camera: null,
+            count: 1,
+            spacing: 0.75,
+            seed: 1,
+            reference: "",
+        },
+    ],
     cuts: [{ time: 0, cameraId: "camera-1" }],
     references: [],
-    extensions: { "infinite-canvas": { sourceSceneId: "scene-1", scene: { id: "scene-1", title: "场景", background: "#d8dde3", environmentIntensity: 0.7, environment: { mode: "color" }, gridVisible: true, activeShotId: "shot-1", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }, objects: [], cameras: [], lights: [], shots: [{ id: "shot-1", name: "镜头 1", duration: 5, fps: 24 }] } },
+    extensions: {
+        "infinite-canvas": {
+            sourceSceneId: "scene-1",
+            scene: { id: "scene-1", title: "场景", background: "#d8dde3", environmentIntensity: 0.7, environment: { mode: "color" }, gridVisible: true, activeShotId: "shot-1", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+            objects: [],
+            cameras: [],
+            lights: [],
+            shots: [{ id: "shot-1", name: "镜头 1", duration: 5, fps: 24 }],
+        },
+    },
 } as unknown as DirectorProject;
 
 const patch: PrevisPatch = { document: { ...project, name: "Agent 场景" } };
@@ -27,7 +63,10 @@ function harness(overrides: Partial<Parameters<typeof createAgentCanvasBridge>[0
         readRevision: () => "rev-1",
         readViewState: () => ({ selectedEntityId: "actor-1", activeShotId: "shot-1", time: 2 }),
         bridge: { notify: (type, payload) => messages.push({ type, payload }) },
-        approve: async (approval) => { approvals.push(approval); return true; },
+        approve: async (approval) => {
+            approvals.push(approval);
+            return true;
+        },
         ...overrides,
     });
     return { bridge, messages, approvals };
@@ -69,7 +108,9 @@ describe("DirectorDesk Agent ↔ 画布桥", () => {
     });
 
     test("不支持图片输入时明确失败且不创建半成品场景", async () => {
-        const createRun = async () => { throw new Error("must not create run"); };
+        const createRun = async () => {
+            throw new Error("must not create run");
+        };
         const { bridge, messages } = harness({ imageReference: { kind: "image", nodeId: "image-1" }, imageModel: "text-only", supportsImage: false, createRun });
         await expect(bridge.startImageToDirectorFlow({ canvasId: "canvas-1", nodeId: "image-1" })).rejects.toThrow("director_image_model_unsupported");
         expect(messages).toEqual([]);

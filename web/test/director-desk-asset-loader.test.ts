@@ -17,4 +17,3 @@ test("asset loader resolves only authorized asset ids and never accepts machine 
     await expect(loader.load({ assetId: "asset-1", url: "file:///secret/model.glb" })).rejects.toThrow("director_asset_unauthorized");
     await expect(loader.load({ assetId: "asset-1", url: "https://example.test/model.glb?token=secret" })).rejects.toThrow("director_asset_unauthorized");
 });
-

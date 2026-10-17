@@ -10,7 +10,7 @@
     border: 1px solid rgba(127, 135, 140, 0.35);
     border-radius: 10px;
     background: #c6c8c6;
-    box-shadow: 0 12px 28px rgba(0,0,0,.18);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
     display: grid;
     grid-template-columns: 1fr 1fr;
 }
@@ -20,4 +20,13 @@
     height: 100%;
 }
 
-.director-desk-runtime-label { position: absolute; left: 10px; bottom: 8px; color: #1f2428; font: 11px/1.2 sans-serif; background: rgba(255,255,255,.75); padding: 3px 6px; border-radius: 5px; }
+.director-desk-runtime-label {
+    position: absolute;
+    left: 10px;
+    bottom: 8px;
+    color: #1f2428;
+    font: 11px/1.2 sans-serif;
+    background: rgba(255, 255, 255, 0.75);
+    padding: 3px 6px;
+    border-radius: 5px;
+}

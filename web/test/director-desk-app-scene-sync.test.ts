@@ -74,21 +74,48 @@ describe("导演台应用侧场景同步", () => {
         const sync = createSceneSync({ bridge: appBridge, readDocument: () => null, applyDocument: () => undefined });
         sync.start();
         expect(themes).toEqual([{ mode: "light" }]);
-        sync.dispose(); appBridge.dispose(); hostBridge.dispose();
+        sync.dispose();
+        appBridge.dispose();
+        hostBridge.dispose();
     });
 
     test("切换外观不重载场景，待回传编辑仍只提交一次", () => {
         const { host, app } = pair();
         const bridge = createHostBridge(app.endpoint(), { origin: ORIGIN });
-        const saved: unknown[] = [], appearance: unknown[] = [];
-        const hostBridge = createDirectorDeskHostBridge({ endpoint: host.endpoint(), origin: ORIGIN, readDocument: () => previsSceneToDirectorDocument(createPrevisScene("host")), commitDocument: (value) => saved.push(value), requestSave: async () => ({ ok: true }) });
-        const timers = manualSchedule(); let current: unknown; let loads = 0;
-        const sync = createSceneSync({ bridge, readDocument: () => current, schedule: timers.schedule, applyDocument: (value) => { current = value; loads++; } });
+        const saved: unknown[] = [],
+            appearance: unknown[] = [];
+        const hostBridge = createDirectorDeskHostBridge({
+            endpoint: host.endpoint(),
+            origin: ORIGIN,
+            readDocument: () => previsSceneToDirectorDocument(createPrevisScene("host")),
+            commitDocument: (value) => saved.push(value),
+            requestSave: async () => ({ ok: true }),
+        });
+        const timers = manualSchedule();
+        let current: unknown;
+        let loads = 0;
+        const sync = createSceneSync({
+            bridge,
+            readDocument: () => current,
+            schedule: timers.schedule,
+            applyDocument: (value) => {
+                current = value;
+                loads++;
+            },
+        });
         bridge.on("host.appearance.changed", (value) => appearance.push(value));
-        sync.start(); current = { ...(current as object), name: "未提交编辑" }; sync.notifyChanged(); hostBridge.pushAppearance({ mode: "light" });
-        expect(loads).toBe(1); expect(appearance).toEqual([{ mode: "light" }]); timers.flush();
-        expect(saved).toHaveLength(1); expect((saved[0] as { name: string }).name).toBe("未提交编辑");
-        sync.dispose(); bridge.dispose(); hostBridge.dispose();
+        sync.start();
+        current = { ...(current as object), name: "未提交编辑" };
+        sync.notifyChanged();
+        hostBridge.pushAppearance({ mode: "light" });
+        expect(loads).toBe(1);
+        expect(appearance).toEqual([{ mode: "light" }]);
+        timers.flush();
+        expect(saved).toHaveLength(1);
+        expect((saved[0] as { name: string }).name).toBe("未提交编辑");
+        sync.dispose();
+        bridge.dispose();
+        hostBridge.dispose();
     });
 
     test("08 desk.export.request 经宿主处理并返回 host.export.result", async () => {
@@ -116,13 +143,19 @@ describe("导演台应用侧场景同步", () => {
     test("09 导出失败作为 bridge error 回传，不等到超时", async () => {
         const { host, app } = pair();
         const hostBridge = createDirectorDeskHostBridge({
-            endpoint: host.endpoint(), origin: ORIGIN, readDocument: () => null,
-            commitDocument: () => undefined, requestSave: async () => ({ ok: true }),
-            onExportRequest: async () => { throw new Error("没有导出权限"); },
+            endpoint: host.endpoint(),
+            origin: ORIGIN,
+            readDocument: () => null,
+            commitDocument: () => undefined,
+            requestSave: async () => ({ ok: true }),
+            onExportRequest: async () => {
+                throw new Error("没有导出权限");
+            },
         });
         const appBridge = createHostBridge(app.endpoint(), { origin: ORIGIN, targetOrigin: ORIGIN });
         await expect(appBridge.request("desk.export.request", {}, 30)).rejects.toThrow("没有导出权限");
-        appBridge.dispose(); hostBridge.dispose();
+        appBridge.dispose();
+        hostBridge.dispose();
     });
 
     test("01 启动即发 desk.ready,宿主下发的场景经 readSceneDocument 载入应用", async () => {

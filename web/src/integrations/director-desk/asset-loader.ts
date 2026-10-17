@@ -10,7 +10,11 @@ type AssetLoaderOptions = {
 function assertSafeResolvedUrl(url: string) {
     if (!url || url.startsWith("file:") || url.startsWith("blob:") || url.includes("\\")) throw new Error("director_asset_unauthorized");
     let parsed: URL;
-    try { parsed = new URL(url, typeof window === "undefined" ? "http://localhost" : window.location.origin); } catch { throw new Error("director_asset_unauthorized"); }
+    try {
+        parsed = new URL(url, typeof window === "undefined" ? "http://localhost" : window.location.origin);
+    } catch {
+        throw new Error("director_asset_unauthorized");
+    }
     if (!/^(?:\/api)?\/resources\/[A-Za-z0-9:_-]{1,160}\/file$/u.test(parsed.pathname)) throw new Error("director_asset_unauthorized");
     for (const key of parsed.searchParams.keys()) if (key !== "variant") throw new Error("director_asset_unauthorized");
 }

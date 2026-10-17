@@ -12,10 +12,16 @@ export function useSkinSwitchMotion() {
             control.dataset.skinSwitchClosing = "true";
             const duration = getComputedStyle(control).getPropertyValue("--skin-motion-state").trim();
             const milliseconds = parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1000);
-            pending.set(control, window.setTimeout(() => {
-                delete control.dataset.skinSwitchClosing;
-                pending.delete(control);
-            }, (Number.isFinite(milliseconds) ? milliseconds : 150) + 50));
+            pending.set(
+                control,
+                window.setTimeout(
+                    () => {
+                        delete control.dataset.skinSwitchClosing;
+                        pending.delete(control);
+                    },
+                    (Number.isFinite(milliseconds) ? milliseconds : 150) + 50,
+                ),
+            );
         };
         document.addEventListener("click", activate, true);
         return () => {

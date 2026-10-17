@@ -2,7 +2,7 @@ import { applyCanvasDraftChanges, canvasDocumentChanges, type CanvasDocument } f
 import { canvasEditorCommands, type CanvasCapabilities } from "../lib/canvas/canvas-editor-commands";
 import type { ChangeSet } from "../lib/canvas/command-contract.generated";
 import type { CanvasCommandSession, CommandSessionState } from "./canvas-command-session";
-import { canvasPersistentEditorDraft,carryCanvasTaskDisplay } from "../lib/canvas/canvas-editor-transient";
+import { canvasPersistentEditorDraft, carryCanvasTaskDisplay } from "../lib/canvas/canvas-editor-transient";
 type Entity = Record<string, unknown>;
 function bases(document: CanvasDocument, changes: ChangeSet) {
     const entities: Record<string, Entity> = {},
@@ -39,13 +39,13 @@ export function bindCanvasCommandEditor<N, E>(
         if (disposed || !state.acknowledged) return;
         let projected = structuredClone(state.projected);
         if (previous) {
-            const display=editor.read();
+            const display = editor.read();
             const live = sharedDraft(previous, display);
             const changes = canvasDocumentChanges(previous, live);
             const base = bases(previous, changes);
             for (const key of keys(changes)) draftExpected[key] ??= versions[key] ?? 0;
             projected = applyCanvasDraftChanges(projected, changes, base.entities, base.fields);
-            carryCanvasTaskDisplay(previous,display,projected);
+            carryCanvasTaskDisplay(previous, display, projected);
         }
         previous = structuredClone(state.projected);
         versions = { ...state.acknowledged.entityVersions };

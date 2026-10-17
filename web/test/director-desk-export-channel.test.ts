@@ -12,9 +12,15 @@ test("app export sends scoped document to host without creating a Blob or file",
     const scene = createPrevisScene();
     const document = readSceneDocument(previsSceneToDirectorDocument(scene));
     const calls: unknown[] = [];
-    const bridge: HostBridge = { notify() {}, request: async (type, payload) => {
-        calls.push({ type, payload }); return { taskId: "task-1", status: "queued" };
-    }, on: () => () => {}, dispose() {} };
+    const bridge: HostBridge = {
+        notify() {},
+        request: async (type, payload) => {
+            calls.push({ type, payload });
+            return { taskId: "task-1", status: "queued" };
+        },
+        on: () => () => {},
+        dispose() {},
+    };
     const result = await requestCanvasExport({ document, kind: "whitebox-video", shotId: scene.activeShotId }, { bridge, canvasId: "canvas-1" });
     expect(result).toEqual({ taskId: "task-1", status: "queued" });
     expect(calls[0]).toMatchObject({ type: "desk.export.request", payload: { canvasId: "canvas-1", sceneId: scene.id, shotId: scene.activeShotId, kind: "whitebox-video", document } });
@@ -38,7 +44,19 @@ test("export panel escapes scene labels and blocks repeat submission while busy"
     const previous = globalThis.document;
     globalThis.document = { querySelector: () => ({ value: scene.activeShotId, addEventListener() {} }) } as any;
     try {
-        const ctx = { busy: false, scenes: { document: () => { reads++; return document; } }, showModal: (_title: string, body: string) => { html = body; }, toast() {} } as any;
+        const ctx = {
+            busy: false,
+            scenes: {
+                document: () => {
+                    reads++;
+                    return document;
+                },
+            },
+            showModal: (_title: string, body: string) => {
+                html = body;
+            },
+            toast() {},
+        } as any;
         const panel = createVideoPanel(ctx);
         panel.exportDialog();
         expect(html).toContain("&lt;img");

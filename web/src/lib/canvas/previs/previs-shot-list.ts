@@ -33,8 +33,7 @@ const clampShotDuration = (value: number): number => {
     return Math.min(120, Math.max(0.5, value));
 };
 
-const newShotId = (): string =>
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `shot-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const newShotId = (): string => (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `shot-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
 export function addPrevisShot(scene: PrevisScene, cameraId: string): { scene: PrevisScene; shot: PrevisShot } | null {
     if (!scene.cameras.some((camera) => camera.id === cameraId)) return null;

@@ -42,16 +42,16 @@ export let apiBaseURL = import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
 export const apiClient = axios.create({ baseURL: apiBaseURL, withCredentials: true });
 
 export function setAPIHost(endpoint: string) {
-    const url=new URL(endpoint);
-    if (!['http:','https:'].includes(url.protocol) || url.username || url.password || url.origin!==endpoint) throw new Error('invalid_host_endpoint');
-    apiBaseURL=`${url.origin}/api`;
-    apiClient.defaults.baseURL=apiBaseURL;
+    const url = new URL(endpoint);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.origin !== endpoint) throw new Error("invalid_host_endpoint");
+    apiBaseURL = `${url.origin}/api`;
+    apiClient.defaults.baseURL = apiBaseURL;
 }
 
 /** 还原为环境变量/默认值（桌面 bootstrap 之前、测试隔离用）。 */
 export function resetAPIHost() {
-    apiBaseURL=import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
-    apiClient.defaults.baseURL=apiBaseURL;
+    apiBaseURL = import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
+    apiClient.defaults.baseURL = apiBaseURL;
 }
 
 /**
@@ -101,9 +101,9 @@ function unwrapTransportError(error: unknown): never {
 }
 
 function envelopeErrorFields(envelope: BackendEnvelope<unknown> | undefined) {
-    const data=envelope?.data;
-    const nested=data && typeof data==='object' && !Array.isArray(data) ? data as Record<string,unknown> : undefined;
-    return {reason:envelope?.reason || (typeof nested?.reason==='string'?nested.reason:undefined),details:envelope?.details || (typeof nested?.field==='string'?{field:nested.field}:undefined)};
+    const data = envelope?.data;
+    const nested = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : undefined;
+    return { reason: envelope?.reason || (typeof nested?.reason === "string" ? nested.reason : undefined), details: envelope?.details || (typeof nested?.field === "string" ? { field: nested.field } : undefined) };
 }
 
 function transportFailureMessage(status?: number, fallback?: string) {
@@ -168,12 +168,12 @@ export const http = {
 
 /** A canvas session must keep its original host even if the global UI connects
  * elsewhere while an ACK or retry is pending. Same client, same error boundary. */
-export function captureHTTP(baseURL=apiBaseURL):Pick<typeof http,'get'|'post'> {
-    const sendCaptured=<T>(method:string,url:string,data:unknown,config?:HttpRequestConfig)=>{
-        const {allowNotModified,...axiosConfig}=config||{};
-        return request<T>(apiClient.request<BackendEnvelope<T>>({...axiosConfig,baseURL,method,url,data}),{allowNotModified});
+export function captureHTTP(baseURL = apiBaseURL): Pick<typeof http, "get" | "post"> {
+    const sendCaptured = <T>(method: string, url: string, data: unknown, config?: HttpRequestConfig) => {
+        const { allowNotModified, ...axiosConfig } = config || {};
+        return request<T>(apiClient.request<BackendEnvelope<T>>({ ...axiosConfig, baseURL, method, url, data }), { allowNotModified });
     };
-    return {get:<T>(url:string,config?:HttpRequestConfig)=>sendCaptured<T>('get',url,undefined,config),post:<T>(url:string,data?:unknown,config?:HttpRequestConfig)=>sendCaptured<T>('post',url,data,config)};
+    return { get: <T>(url: string, config?: HttpRequestConfig) => sendCaptured<T>("get", url, undefined, config), post: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => sendCaptured<T>("post", url, data, config) };
 }
 
 export function compactApiParams(params: ApiParams) {

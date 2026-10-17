@@ -1,10 +1,6 @@
 import { useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
-import {
-    previsTimelineTotalDuration,
-    resolveTimelineScrub,
-    findShotAtTime,
-} from "@/lib/canvas/previs/previs-timeline";
+import { previsTimelineTotalDuration, resolveTimelineScrub, findShotAtTime } from "@/lib/canvas/previs/previs-timeline";
 import { buildPrevisShotListItems } from "@/lib/canvas/previs/previs-shot-list";
 import type { PrevisScene } from "@/types/previs";
 import "./director-timeline.css";
@@ -60,14 +56,7 @@ export function DirectorTimeline({ scene, time, playing, onScrub, onTogglePlay, 
     return (
         <div className="dtn-root">
             <div className="dtn-bar">
-                <button
-                    type="button"
-                    className="dtn-play"
-                    onClick={onTogglePlay}
-                    aria-pressed={playing}
-                    aria-label={playing ? "暂停" : "播放"}
-                    disabled={total <= 0}
-                >
+                <button type="button" className="dtn-play" onClick={onTogglePlay} aria-pressed={playing} aria-label={playing ? "暂停" : "播放"} disabled={total <= 0}>
                     {playing ? <Pause className="size-3.5" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
                     <span>{playing ? "暂停" : "播放"}</span>
                 </button>
@@ -77,7 +66,9 @@ export function DirectorTimeline({ scene, time, playing, onScrub, onTogglePlay, 
                 </span>
             </div>
             {total <= 0 ? (
-                <div className="dtn-empty" role="status">空时间轴</div>
+                <div className="dtn-empty" role="status">
+                    空时间轴
+                </div>
             ) : (
                 <div
                     ref={trackRef}
@@ -129,12 +120,7 @@ export function DirectorTimeline({ scene, time, playing, onScrub, onTogglePlay, 
                             );
                         })}
                     </div>
-                    <div
-                        className="dtn-head"
-                        data-time={Math.round(clampedTime * 10) / 10}
-                        style={{ left: percentOf(clampedTime, total) }}
-                        aria-hidden
-                    >
+                    <div className="dtn-head" data-time={Math.round(clampedTime * 10) / 10} style={{ left: percentOf(clampedTime, total) }} aria-hidden>
                         <span className="dtn-head__flag">{formatSeconds(clampedTime)}</span>
                     </div>
                 </div>

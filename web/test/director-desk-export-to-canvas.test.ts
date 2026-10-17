@@ -2,11 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createPrevisScene } from "@/lib/canvas/previs/previs-scene";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { previsSceneToDirectorDocument } from "@/integrations/director-desk/previs-adapter";
-import {
-    createDirectorDeskCanvasExporter,
-    type DirectorDeskExportTransport,
-    type PrevisExportTask,
-} from "@/integrations/director-desk/export-to-canvas";
+import { createDirectorDeskCanvasExporter, type DirectorDeskExportTransport, type PrevisExportTask } from "@/integrations/director-desk/export-to-canvas";
 
 function projectFixture() {
     const scene = createPrevisScene("T7 导出");
@@ -30,8 +26,13 @@ function transportFixture(overrides: Partial<DirectorDeskExportTransport> = {}) 
         },
         queryTask: async (taskId) => tasks.get(taskId) || { id: taskId, status: "queued" },
         readCanvas: async () => ({ nodes: [] }),
-        waitForMaterialization: async (taskId) => { calls.materialize.push(taskId); return { state: "done", outcome: "applied" }; },
-        writeStoryboard: async (_canvasId, rows) => { calls.storyboard.push(rows); },
+        waitForMaterialization: async (taskId) => {
+            calls.materialize.push(taskId);
+            return { state: "done", outcome: "applied" };
+        },
+        writeStoryboard: async (_canvasId, rows) => {
+            calls.storyboard.push(rows);
+        },
         ...overrides,
     };
     return { calls, tasks, transport };
@@ -74,11 +75,16 @@ describe("DirectorDesk 导出到画布", () => {
         transport.readCanvas = async () => ({ nodes });
         transport.waitForMaterialization = async (taskId) => {
             calls.materialize.push(taskId);
-            if (!nodes.length) nodes = [CanvasNodeType.Video, CanvasNodeType.Image].map((type) => ({
-                id: type === CanvasNodeType.Video ? `previs-video-${taskId}` : `previs-preview-${taskId}`,
-                type, title: "后台预演产物", position: { x: 0, y: 0 }, width: 320, height: 180,
-                metadata: { taskId, previsSceneId: "scene-1", previsShotId: "shot-a", storageKey: `resource:${type}`, assetId: `asset-${type}`, status: "success" },
-            }));
+            if (!nodes.length)
+                nodes = [CanvasNodeType.Video, CanvasNodeType.Image].map((type) => ({
+                    id: type === CanvasNodeType.Video ? `previs-video-${taskId}` : `previs-preview-${taskId}`,
+                    type,
+                    title: "后台预演产物",
+                    position: { x: 0, y: 0 },
+                    width: 320,
+                    height: 180,
+                    metadata: { taskId, previsSceneId: "scene-1", previsShotId: "shot-a", storageKey: `resource:${type}`, assetId: `asset-${type}`, status: "success" },
+                }));
             return { state: "done", outcome: "applied" };
         };
         const exporter = createDirectorDeskCanvasExporter(transport);

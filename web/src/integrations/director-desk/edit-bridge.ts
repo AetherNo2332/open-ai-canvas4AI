@@ -116,9 +116,7 @@ export function createDirectorEditBridge(transport: DirectorCommitTransport, opt
 
     const restoreHistory = (direction: "undo" | "redo"): boolean => {
         if (disposed) return false;
-        const target = direction === "undo"
-            ? (undoStack.length ? undoStack[undoStack.length - 1] : null)
-            : (redoStack.length ? redoStack[redoStack.length - 1] : null);
+        const target = direction === "undo" ? (undoStack.length ? undoStack[undoStack.length - 1] : null) : redoStack.length ? redoStack[redoStack.length - 1] : null;
         if (!target || !present) return false;
 
         let scene: PrevisScene;

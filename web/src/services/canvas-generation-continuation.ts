@@ -56,7 +56,7 @@ export function inferCanvasTaskBinding(document: CanvasDocument, nodeId: string,
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) throw new Error("canvas_generation_target_missing");
     if (node.type === "script" && mode === "text" && operation === "storyboard") return { targetNodeId: nodeId, consumer: { kind: "storyboard_document" } };
-    if(node.type==='text'&&mode==='text'&&operation==='list_analysis')return {targetNodeId:nodeId,consumer:{kind:'batch_document'}};
+    if (node.type === "text" && mode === "text" && operation === "list_analysis") return { targetNodeId: nodeId, consumer: { kind: "batch_document" } };
     const bindings: Array<{ targetNodeId: string; consumer: Consumer }> = [];
     for (const parent of nodes) {
         if (parent.type === "batch-table" && mode === "image")
