@@ -3,7 +3,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { sameCanvasContent } from "@/lib/canvas/canvas-content";
-import { defaultCanvasAppearance, DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, readCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
+import { defaultCanvasAppearance, DEFAULT_CANVAS_BACKGROUND_MODE, NEW_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, readCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
@@ -12,6 +12,7 @@ import type { CanvasStarterMode } from "@/lib/canvas/canvas-starter";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { PrevisScene } from "@/types/previs";
 import type { TimelineProject } from "@/types/timeline";
+import { useThemeStore } from "@/stores/use-theme-store";
 
 export type CanvasProject = {
     id: string;
@@ -463,8 +464,8 @@ export const useCanvasStore = create<CanvasStore>()(
                     connections: [],
                     chatSessions: [],
                     activeChatId: null,
-                    appearance: appearanceDefault?.appearance ?? defaultCanvasAppearance(),
-                    backgroundMode: appearanceDefault?.backgroundMode || DEFAULT_CANVAS_BACKGROUND_MODE,
+                    appearance: appearanceDefault?.appearance ?? defaultCanvasAppearance(useThemeStore.getState().theme),
+                    backgroundMode: appearanceDefault?.backgroundMode || NEW_CANVAS_BACKGROUND_MODE,
                     showImageInfo: false,
                     viewport: initialViewport,
                     previsScenes: [],

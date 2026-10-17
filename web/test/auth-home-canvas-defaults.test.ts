@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { canvasThemes } from "../src/lib/canvas-theme";
 import { defaultCanvasAppearance, DEFAULT_CANVAS_BACKGROUND_MODE } from "../src/lib/canvas/canvas-appearance";
 
 const source = (path: string) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
@@ -25,16 +24,17 @@ describe("auth, workspace chrome, and new canvas defaults", () => {
         expect(topBar).toContain('className="app-workspace-topbar-icon-button"');
     });
 
-    test("uses a black custom appearance for newly created canvases", () => {
-        expect(DEFAULT_CANVAS_BACKGROUND_MODE).toBe("blank");
-        expect(defaultCanvasAppearance()).toMatchObject({
-            mode: "custom",
-            custom: {
-                baseTheme: "dark",
-                backgroundColor: "#000000",
-                gridColor: canvasThemes.dark.canvas.line.toUpperCase(),
-            },
-        });
-        expect(source("stores/canvas/use-canvas-store.ts")).toContain("defaultCanvasAppearance()");
+    test("new canvas defaults use the classic preset for the requested workspace tone", () => {
+        expect(DEFAULT_CANVAS_BACKGROUND_MODE).toBe("dots");
+        for (const theme of ["light", "dark"] as const) {
+            expect(defaultCanvasAppearance(theme)).toMatchObject({
+                mode: "preset",
+                preset: { id: theme, values: {
+                    baseTheme: theme,
+                    backgroundColor: theme === "light" ? "#F0F0F0" : "#000000",
+                    gridColor: theme === "light" ? "#000000" : "#FFFFFF",
+                } },
+            });
+        }
     });
 });

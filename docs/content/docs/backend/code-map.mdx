@@ -5,6 +5,10 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## 画布外观预设与记忆
+
+`web/src/lib/canvas/canvas-appearance.ts` 管理预设快照、浅深色记忆与账号默认偏好；`canvas-appearance-controls.tsx` 提供预设和微调；`canvas-toolbar.tsx` 管理浮层高度与滚动。新建画布按工作台明暗选择经典预设，旧画布继续读取已保存配色，节点和工具栏颜色仍由 `canvas-theme.ts` 适配站点皮肤。
+
 ## 分镜 Agent 创作闭环
 
 以下 Go 文件位于 `backend/internal/app/`：
