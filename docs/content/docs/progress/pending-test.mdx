@@ -9,6 +9,12 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - 工作台侧栏全局视觉重排：保留品牌行→主导航→分组→账户卡骨架，硬编码颜色/圆角/阴影全部换为皮肤语义 token（`--site-*`/`--r-*`/`--menu-radius`/`--border`/`--elevation-card`），分组标题降为 11px 微标签，侧栏可交互构件补 `--ring` 键盘焦点，导航行 40px、侧栏 200px 几何基准不变。
 - [x] `cd web && bun run build` 通过。
 - [ ] 明暗主题、0px 直角皮肤、窄屏（320px）、侧栏折叠态与 reduced-motion 的浏览器视觉验收待用户确认。
+- [x] 3040 隔离栈（镜像 `open-ai-canvas-web:home-anim-3040`）浏览器机器验收：登录后首页光斑层仅在指针离开后熄灭（真实 hover 进入亮起、移出侧栏熄灭）、入口 hover 流光描边在工作且闲置时三次采样位置完全静止（`idleRotate=false` 生效）、侧栏桌面 200px/折叠 64px/恢复、`/assets` 路由切换侧栏骨架不变、明暗模式 token 切换正确（首页底色 `#f7f6f3`/`#121212`、入口主色相应反转）、导航行圆角 12px 与颜色均为 token、`--ring` 焦点色 token、全程无 console 错误。窄屏与 reduced-motion 因浏览器工具无视口/媒体模拟能力，待用户人工确认。
+
+## 全站字体统一（Mona Sans + 思源黑体）
+
+- 已实现：按用户决定全站统一使用自托管 `Mona Sans`（拉丁）+ `Source Han Sans SC`（中文）字体栈（覆盖 AGENTS.md 的 IBM Plex 条目；两个字体文件均为仓库内 `/fonts/home/` 自托管 woff2，含 OFL 授权副本，不引 CDN）。`@font-face` 与 `--font-home` token 上移到 `styles/globals.css` 全局生效；`--font-sans`/`--font-heading` 根 token、Tailwind `@theme inline` 映射、`application.tsx` body 首帧字体、welcome 认证页、admin `--admin-font` 与 AntD 主题 token、canary 徽章、加载态、auth/路由错误页/画布刷新壳全部指向同一 token；移除 `@fontsource-variable/inter` 与 `@fontsource-variable/ibm-plex-sans` 依赖及其 import，`JetBrains Mono` 等宽字体保留。`bun run build` 通过。
+- [ ] 全站逐页（登录/注册/首页/工作台各路由/admin/welcome/错误页）字体渲染的浏览器视觉验收待用户确认（机器侧已核对产物 CSS 含 @font-face 且无 Inter/Plex 残留）；注意思源黑体全量 7.7MB 将随首访在所有页面下载，`font-display: swap` 保证系统字体先渲染。
 
 ## Agent L0/L1 工具下发
 
