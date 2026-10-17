@@ -13,7 +13,7 @@ Go snapshot 的 `modelLimits` 提供模型窗口、`overheadTokens`、`inputBudg
 
 前端直接显示最近有效上游输入 Token，不叠加本地增量；尚未取得有效上游用量时才使用本地估算。`projectedTokens` 承载展示读数。这个读数不决定 Pi 是否压缩；前端根据 `context_compaction_requested` 和 `context_compacted` 显示压缩状态，不凭占用率推断“即将压缩”。
 
-每个成功模型步骤确认用量后，在同一事务里更新读数并发布 `context_pressure`（`phase=after_request`、`requestId` 指向刚完成的任务、`readingScope=latest_provider_request`）。发送前的压力事件沿用同一份实测。相同模型与渠道的续轮继承最近用量；暂时没有新 usage、系统提示/工具变化、窗口更新或步数增长均不使已知用量退回估算。切换模型、渠道或真正压缩后旧读数不再适用；窗口配置变化只调整压力分母。估算偏差不作为拒绝上游计数的理由。请求准入仍保留独立的体积和预算硬检查，最近实测不代表尚未发送的新内容已经被上游计数。
+每个成功模型步骤确认用量后，在同一事务里更新读数并发布 `context_pressure`（`phase=after_request`、`requestId` 指向刚完成的任务、`readingScope=latest_provider_request`）。发送前的压力事件沿用同一份实测。占用分布（system/tools/messages 三桶与系统提示分段）在准入时按**实际发出的信封**冻结：补报 `after_request` 时复用这一份，不从运行态 canonical 重算（运行态含全量工具目录、不含 Node 装配的工作区块，重算会让同一步前后两条读数的桶对不上）。相同模型与渠道的续轮继承最近用量；暂时没有新 usage、系统提示/工具变化、窗口更新或步数增长均不使已知用量退回估算。切换模型、渠道或真正压缩后旧读数不再适用；窗口配置变化只调整压力分母。估算偏差不作为拒绝上游计数的理由。请求准入仍保留独立的体积和预算硬检查，最近实测不代表尚未发送的新内容已经被上游计数。
 
 最近原文保留量为可用输入预算的四分之一，上限 20,000 token。摘要生成使用独立输出上限 `summaryOutputTokens = max(1, min(8192, maxOutputTokens, inputBudgetTokens / 8))`，在操作开始时冻结。它与上下文窗口预留 `reservedOutputTokens` 含义不同，摘要上限不会反向改变普通模型调用的压缩触发线。原生摘要最长 32 KiB，完整检查点最长 64 KiB；合法但超出摘要预算的结果使用服务端保底。
 

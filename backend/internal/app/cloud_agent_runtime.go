@@ -251,6 +251,10 @@ type cloudAgentRuntime struct {
 	LastStepEstimate    int                        `json:"lastStepEstimate,omitempty"`
 	LastStepPressure    *cloudAgentContextPressure `json:"lastStepPressure,omitempty"`
 	LastStepSourceBytes int                        `json:"lastStepSourceBytes,omitempty"`
+	// LastStepBreakdown 是这一步"实际发出去的信封"的占用构成（准入时算好并冻结）。
+	// 运行态 canonical 与真实请求不是同一份：它含全量工具目录，也不含 Node 拼在策略后的
+	// Harness 块。after_request 若从它重算，同一步前后两条读数的 system/tools 桶会对不上。
+	LastStepBreakdown map[string]any `json:"lastStepBreakdown,omitempty"`
 	// TokenAnchor 是上一步上游上报的用量（模型自己的分词器计数），上下文压力的权威锚点。
 	TokenAnchor *cloudAgentTokenAnchor `json:"tokenAnchor,omitempty"`
 	// EventSeqBase 是本次载入的事件窗口之前"已入库"的条数（只在内存里，不落检查点）：
@@ -355,6 +359,11 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	// canonical 才是真实请求，不能拿内存里的运行态副本顶替。
 	firstPressure := cloudAgentContextPressurePayload(pressure, &state, input.Requests.Canonical)
 	firstPressure["requestId"] = task.ID
+	// 冻结这一步实际信封的分布：发完之后补报 after_request 时运行态 canonical
+	// 已不是同一份（工具目录、Harness 块都可能不同），不能从它重算。
+	if breakdown, ok := firstPressure["breakdown"].(map[string]any); ok {
+		state.LastStepBreakdown = breakdown
+	}
 	state.event(task.ID, "context_pressure", firstPressure)
 	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Engine: input.AgentEngine, Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
 	if err := cloudAgentSave(run, &state); err != nil {
@@ -2339,10 +2348,18 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 					// 个人记忆块是编译之后拼上去的，编译器录不到：每一步幂等补登记一次，
 					// 占用分布的分段合计才能与 system 桶对齐。
 					cloudAgentRecordMemorySegment(&state.Policy, requestCanonical.SystemPrompt)
+					// Node 拼在记忆块之后的工作区文件同样要单独登记，否则它们会被
+					// 算成"其它"：那是排查时最想看到具体来源的一截。
+					cloudAgentRecordHarnessSegments(&state.Policy, cloudAgentFrozenHarness(state.Snapshot), requestCanonical.SystemPrompt)
 					// requestId 把读数钉在"即将发出的这次请求"上（设计 §4）：没有它，前端只能猜
 					// 哪个数字属于哪一次调用。占用分布对着实际信封（requestCanonical）算。
 					payload := cloudAgentContextPressurePayload(*contextPressure, state, requestCanonical)
 					payload["requestId"] = task.ID
+					// 冻结实际信封的占用分布：after_request 没有信封可传，
+					// 只能复用这一步准入时算好的那一份。
+					if breakdown, ok := payload["breakdown"].(map[string]any); ok {
+						state.LastStepBreakdown = breakdown
+					}
 					cloudAgentNoteContextWindowResolved(run.ID, state, *contextPressure)
 					state.event(run.ID, "context_pressure", payload)
 					state.LastStepEstimate = contextPressure.EstimatedInputTokens

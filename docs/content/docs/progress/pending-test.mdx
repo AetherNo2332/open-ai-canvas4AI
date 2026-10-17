@@ -3,6 +3,16 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## Agent 上下文占用治理（2026-10-18）
+
+- 已修复：`context_pressure` 的「个人记忆」分段越界。`cloudAgentRecordMemorySegment` 原先取 `system[index:]`（记忆标记到系统提示末尾），而 Node 会把 Harness 工作区文件拼在记忆块之后，导致 3040 实测该分段 37.6 KB / 11,814 tokens 里只有 50 字节是记忆。现在按 `## Workspace ` 段标题截断（`cloudAgentMemorySegmentText`），并把每个真实装配进信封的工作区文件登记为 `workspace:<name>` 独立分段（`cloudAgentRecordHarnessSegments`，被装配层跳过的文件不计）。
+- 已修复：系统提示重复装配。`agent/src/system-prompt.ts` 不再把 `SYSTEM_POLICY.md` / `MEDIA_POLICY.md` / `TOOL_DESCRIPTIONS.md` 拼进系统提示——策略已由 Go 编译进服务端策略，工具说明随每次请求的 `tools` schema 下发。3040 实测三份镜像在那一轮里重复了 11.8k token（本地估算；按上游锚点换算约 9.8k，占该请求输入 38%）。三份镜像文件继续由 `sync-harness.mjs` 同步并保留在 `agent/harness`，仅用于漂移核对。
+- 已修复：`context_pressure` 的 `before_request` / `after_request` 口径不一致。补报 `after_request` 时没有真实信封可传，原先从运行态 canonical 重算（含全量工具目录、不含 Node 拼的 Harness 块），同一 step 前后两条读数的 system/tools 桶会互相矛盾。现在准入时把分布冻结进 `lastStepBreakdown`，补报复用同一份。
+- [x] backend `go test ./internal/app`（CloudAgent/PiAgent 全族）通过；`go build ./...`、`go vet ./internal/app` 通过；`agent` 全量 `npm test` 180/180 通过。
+- [ ] 3040 真机复验待确认：新镜像重建后跑一轮 Agent，确认 `context_pressure` 的 memory 分段回落到字节级（本轮无记忆时应为十几 token）、system 桶不再包含 `## Workspace ` 段、同一 step 的 `before_request` 与 `after_request` 两桶数值一致；用户已有记忆时的索引召回未受影响。
+- [ ] 旧运行不受影响：`lastStepBreakdown` 是新字段，旧检查点没有它时仍走运行态重算；本轮没有迁移历史事件。
+- [ ] 部署顺序：系统提示装配变更会改变 Harness 哈希，**在途运行**（非终态）恢复时会被合同校验拒绝（`Agent runtime prompt body changed`），需重新发起对话；发布前先处理在途运行，与既有的策略版本升级要求一致。
+
 ## 上游 4AI 增量合并（main + canary）
 
 - 已实现：将 `AetherNo2332/open-ai-canvas4AI`（v1.6.0，真实公共基 `7014aaf8`）的增量合入本地演进线（graft 伪头完成树级真实三方合并），同一合并树分别以 `main` 与 `canary` 新提交推送：本地 113 个路径（80 改 33 增、零删除）全部保留，4AI 的模型能力/目录/路由/可用性增量、`model_capability_kemei`、appearance 调整、Pi 压缩回退增强、canary 触发 CI（`quality.yml` push 分支加 `canary`）、100 个声明式插件包与 payment provider 制品（按其仓库跟踪约定随树恢复）、`backend/server` 运行时制品同步吸收；5 处真冲突（VERSION/面板/选中工具条/两插件包）按既定策略解决。主线已移除的旧 camera-control 资产族按「仅我方改动」语义保持删除（canary 侧亦已自行删除）。

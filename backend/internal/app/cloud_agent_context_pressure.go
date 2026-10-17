@@ -196,7 +196,14 @@ func cloudAgentContextPressurePayload(pressure cloudAgentContextPressure, state 
 // cloudAgentContextBreakdownPayload 报"这次要发出去的请求被谁占着"：三个 canonical 桶
 // 加上编译进系统提示的各分段，用的是与占用读数同一把估算尺子。
 // 桶合计与 canonical 总量的差是协议外壳（tool choice、缓存键），单独报而不摊进任何一个桶。
+//
+// 传了 actual 就按它算；否则优先用这一步准入时冻结的分布（LastStepBreakdown），
+// 最后才退回运行态副本 —— after_request 的事件没有真实信封可传，从运行态重算会让
+// 同一步的前后两条读数口径不同。
 func cloudAgentContextBreakdownPayload(state *cloudAgentRuntime, actual ...canonicalAgentRequest) map[string]any {
+	if len(actual) == 0 && state != nil && len(state.LastStepBreakdown) > 0 {
+		return state.LastStepBreakdown
+	}
 	canonical := state.Canonical
 	if len(actual) > 0 {
 		// 上游 #601：优先用"实际发出去的那份信封"，运行态副本可能已被准入改写。

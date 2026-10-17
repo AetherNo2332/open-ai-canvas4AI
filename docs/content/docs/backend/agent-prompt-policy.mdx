@@ -21,7 +21,7 @@ description: 云端画布 Agent 的行为策略、上下文来源、运行提醒
 | 当前请求与候选素材快照 | `backend/internal/app/cloud_agent_anchor.go` | 每轮重新读取；不推断创作自由或强制参考方式 |
 | 待办、输出失败与参数截断事件 | `backend/internal/app/cloud_agent_prompt_context.go` | 有类型、有来源的状态消息 |
 | 待办生命周期与催办时机 | `backend/internal/app/cloud_agent_plan.go`、`cloud_agent_runtime.go` | 更新状态、限制重复催办；不在 Go 字符串中写行为剧本 |
-| 已批准记忆索引 | `backend/internal/app/cloud_agent_lessons.go` | 仅提供索引事实，按需召回，不自动注入正文或强制检索 |
+| 已批准记忆索引 | `backend/internal/app/cloud_agent_lessons.go` | 仅提供索引事实，按需召回，不自动注入正文或强制检索；占用分布里记忆块与 Node 工作区文件各自登记为独立分段 |
 | 工具参数、返回值和调用约束 | `backend/internal/app/cloud_agent_tools.go`、对应领域工具实现 | 与工具 schema 相邻维护，防止说明和执行合同脱节 |
 
 ## 文件式 Agent Harness
@@ -52,9 +52,11 @@ services:
 
 Markdown 只影响模型的行为指引。可调用的工具、参数校验、读写权限、预算、资源归属和审批仍由服务端注册表与执行层决定；在文件里写入工具名不会注册工具，也不能授予权限。
 
+Pi Worker 侧的 `agent/harness` 目录只提供 `TOOL_SCHEMA.json` 供双方校验。同目录由 `agent/scripts/sync-harness.mjs` 同步的 `SYSTEM_POLICY.md`、`MEDIA_POLICY.md`、`TOOL_DESCRIPTIONS.md` 是与 backend 对齐的镜像，**不参与系统提示装配**：策略由 Go 编译进服务端策略，工具说明随每次请求的 `tools` schema 下发。把它们再拼一遍只等于把同一段正文发两次（3040 实测该轮重复 11.8k token，按上游锚点换算约 9.8k、占请求输入 38%），模型拿不到任何新信息。
+
 ### 工具说明与按类展开
 
-发给模型的工具及字段说明集中在 `backend/internal/app/agent-tool-descriptions.md`。Go 代码保留工具名、JSON Schema 的类型与约束、权限和执行逻辑；缺少说明键会使构造工具表失败。运维注入的 `AGENTS.md`/`TOOLS.md` 仍是行为约定，不能改变工具注册或权限。
+发给模型的工具及字段说明集中在 `backend/internal/app/agent-tool-descriptions.md`（少数读/编辑类工具如 `canvas_read_content`、`canvas_undo` 的说明直接写在 `cloud_agent_tools.go`，同名小节留在 md 里只是历史）。Go 代码保留工具名、JSON Schema 的类型与约束、权限和执行逻辑；缺少说明键会使构造工具表失败。运维注入的 `AGENTS.md`/`TOOLS.md` 仍是行为约定，不能改变工具注册或权限。
 
 每个模型步默认只暴露本轮可用的 `agent_tools_*` 类型入口。模型调用一个类型入口后，下一模型步才附上该类中满足权限、画布上下文和模型能力的子工具。该步结束后子工具收回；需要继续使用时重新打开。每步最多打开一种类型。父工具 schema 中有界记录上一模型步调用的工具名，实际结果仍以工具回执为准。服务端持久化每步真实下发的工具名，预检拒绝未下发的调用；旧检查点保持旧工具表行为。
 

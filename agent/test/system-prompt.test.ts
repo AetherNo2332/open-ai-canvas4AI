@@ -101,19 +101,19 @@ test("服务端前缀已含同一 Harness 段时不重复装配", async () => {
   assert.equal(rendered.split("## Workspace AGENTS.md").length - 1, 1);
 });
 
-test("老 agent 的策略与工具描述被纳入装配，且顺序稳定", async () => {
+test("Harness 里的策略与工具描述镜像不再重复装配进系统提示", async () => {
   const dir = await fixtureDir();
   await writeFile(join(dir, "SYSTEM_POLICY.md"), "行为策略正文");
   await writeFile(join(dir, "MEDIA_POLICY.md"), "媒体策略正文");
   await writeFile(join(dir, "TOOL_DESCRIPTIONS.md"), "工具描述正文");
   await writeFile(join(dir, "AGENTS.md"), "项目约定");
   const parts = await loadPromptParts({ agentDir: dir });
-  assert.deepEqual(parts.context.map((e) => e.name), [
-    "SYSTEM_POLICY.md", "MEDIA_POLICY.md", "TOOL_DESCRIPTIONS.md", "AGENTS.md",
-  ]);
+  // 策略由 Go 编译进 base，工具说明随 tool schema 下发；镜像文件只做漂移核对。
+  assert.deepEqual(parts.context.map((e) => e.name), ["AGENTS.md"]);
   const rendered = renderSystemPrompt(parts, "服务端前缀");
   assert.ok(rendered.startsWith("服务端前缀"));
-  assert.ok(rendered.indexOf("行为策略正文") < rendered.indexOf("媒体策略正文"));
-  assert.ok(rendered.indexOf("媒体策略正文") < rendered.indexOf("工具描述正文"));
-  assert.ok(rendered.indexOf("工具描述正文") < rendered.indexOf("项目约定"));
+  for (const duplicated of ["行为策略正文", "媒体策略正文", "工具描述正文"]) {
+    assert.equal(rendered.includes(duplicated), false, `${duplicated} 不应再拼进系统提示`);
+  }
+  assert.ok(rendered.includes("项目约定"));
 });
