@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## v1.6.0(6e262b7)
+## v1.6.0(f214968)
 
 - 修复 Agent 上下文占用面板的「个人记忆」读数虚高：记忆分段原先一直取到系统提示末尾，把 Node 拼在其后的提示层文件也算成记忆。3040 实测该分段 37.6 KB / 11,814 token 里只有 50 字节是记忆。现在记忆分段到下一个工作区块为止，实际装配进信封的每个 Harness 文件单独登记为 `workspace:<文件名>` 分段。
 - 修复系统提示重复装配：Pi Worker 不再把 `SYSTEM_POLICY.md`、`MEDIA_POLICY.md`、`TOOL_DESCRIPTIONS.md` 再拼进系统提示。服务端策略已由 Go 编译，工具说明随每次请求的 `tools` schema 下发；实测同一轮里三份镜像重复了 11.8k token（按上游锚点换算约 9.8k，占该请求输入 38%）。三份镜像文件仍由 `sync-harness.mjs` 同步，用于 Go/Node 漂移核对。
