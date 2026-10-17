@@ -21,6 +21,7 @@ type (
 	RegistrationSettingRequest = auth.RegistrationSettingRequest
 	PublicRegistrationSetting  = auth.PublicRegistrationSetting
 	PasswordResetRequest       = auth.PasswordResetRequest
+	ChangePasswordRequest      = auth.ChangePasswordRequest
 	EmailSettingRequest        = auth.EmailSettingRequest
 	PublicEmailSetting         = auth.PublicEmailSetting
 	LinuxDOSettingRequest      = auth.LinuxDOSettingRequest
@@ -172,6 +173,10 @@ func (s *Service) SendPasswordResetEmailCode(rawEmail string) error {
 
 func (s *Service) ResetPassword(req PasswordResetRequest) error {
 	return s.authDomain().ResetPassword(req)
+}
+
+func (s *Service) ChangePassword(user *model.User, req ChangePasswordRequest, keepSessionID string) error {
+	return s.authDomain().ChangePassword(user, req, keepSessionID)
 }
 
 func (s *Service) AdminEmailSetting(actor *model.User) (*PublicEmailSetting, error) {

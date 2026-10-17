@@ -175,3 +175,17 @@ jobs:
         run: |
           google-chrome --version || chromium --version
           bun run test:previs:e2e
+
+  changelog:
+    name: Changelog entry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      # publish-images.yml 打 tag 时要求 CHANGELOG.md 里存在 `## <VERSION>`，并把它下面
+      # 的内容直接当作 GitHub Release 说明。这里提前在 PR 阶段拦住"忘了写日志"的情况，
+      # 免得到发布时才失败；条目内容仍需人工改写，脚本只负责生成草稿与版本对齐。
+      - name: Check CHANGELOG covers VERSION
+        run: node scripts/changelog.mjs --check

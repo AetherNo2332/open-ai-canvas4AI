@@ -120,6 +120,7 @@ type (
 	CanvasShareStatus                      = app.CanvasShareStatus
 	CapabilityMatch                        = app.CapabilityMatch
 	CapabilitySpec                         = app.CapabilitySpec
+	ChangePasswordRequest                  = app.ChangePasswordRequest
 	ChannelModelCatalogDefaultParameters   = app.ChannelModelCatalogDefaultParameters
 	ChannelModelCatalogItem                = app.ChannelModelCatalogItem
 	ChannelModelCatalogOption              = app.ChannelModelCatalogOption

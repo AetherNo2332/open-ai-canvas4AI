@@ -13,6 +13,7 @@
 | `web/` | Vite、React 19、TypeScript、React Router、Ant Design、Tailwind、Zustand、TanStack Query | `web/src/application.tsx`、`web/src/router.tsx` | 工作区 UI、画布交互、浏览器缓存、API 调用和模型协议适配 |
 | `backend/` | Go 1.25、Gin、GORM、SQLite/PostgreSQL、Redis 协调 | `backend/cmd/server/main.go` | 登录、权限、业务 API、任务队列、资源、模型中转和后台管理 |
 | `docs/` | Next.js、Fumadocs、MDX | `docs/content/docs/` | 面向用户和开发者的专题文档；构建配置见 `docs/source.config.ts` |
+| `scripts/` | Bash、Python、Go、Node | `scripts/changelog.mjs` | 发布、验收和运维辅助脚本；不参与运行时，改动需保证在 CI 的 Ubuntu 环境可执行 |
 
 根目录的 `Dockerfile` 构建前端静态镜像；`nginx.conf` 托管 SPA 并代理后端。`docker-compose.dev.yml` 是源码热更新开发编排，`docker-compose.local.yml` 是本地构建运行，`docker-compose.deploy.yml` 是 PostgreSQL + Redis 部署编排。
 
@@ -41,7 +42,7 @@
 
 - `backend/internal/handler/`：HTTP 入参、鉴权上下文、调用 service、返回统一响应；不放业务判断和数据库查询。
 - `backend/internal/service/`：稳定导入面。只再导出 `internal/app` 的类型、常量和包级函数（`aliases_*.go`）。handler/cmd 继续 import 本包。
-- `backend/internal/app/`：HTTP 组合根和尚未拆出的业务实现。校验、权限、跨域编排从这里进入。画布生成调度仍主要在 `provider.go`；文本 / 图片 / 视频遗留 / 音频 / HTTP / 声明式协议分别在 `provider_text.go`、`provider_image.go`、`provider_video.go`、`provider_audio.go`、`provider_http_client.go`、`provider_protocol.go`。技能库在 `internal/skills`，提示词与风格在 `internal/prompts`，登录注册在 `internal/auth`，画布分享在 `internal/canvas`，资源引用解析在 `internal/assets`，运行时策略/限流/worker 在 `internal/platform`，错误码与通用工具在 `internal/kernel`，出站 SSRF 在 `internal/outbound`，Agent 上下文检查点契约在 `internal/agentcontext`。域包不得 import `internal/service` 或 `internal/app`。
+- `backend/internal/app/`：HTTP 组合根和尚未拆出的业务实现。校验、权限、跨域编排从这里进入。画布生成调度仍主要在 `provider.go`；文本 / 图片 / 视频遗留 / 音频 / HTTP / 声明式协议分别在 `provider_text.go`、`provider_image.go`、`provider_video.go`、`provider_audio.go`、`provider_http_client.go`、`provider_protocol.go`。技能库在 `internal/skills`，提示词与风格在 `internal/prompts`，登录注册与密码（注册、登录、邮箱找回、登录态自助改密）在 `internal/auth`，画布分享在 `internal/canvas`，资源引用解析在 `internal/assets`，运行时策略/限流/worker 在 `internal/platform`，错误码与通用工具在 `internal/kernel`，出站 SSRF 在 `internal/outbound`，Agent 上下文检查点契约在 `internal/agentcontext`。域包不得 import `internal/service` 或 `internal/app`。
 - `backend/internal/repository/`：GORM 查询和持久化；不承载业务策略。
 - `backend/internal/model/`：结构、枚举和简单模型方法；不调用外部服务。
 - `backend/internal/provider/`：模型供应商能力和协议实现。
@@ -50,9 +51,10 @@
 
 调用链应保持为：`HTTP -> handler -> service（别名）-> app（组合根）-> 业务域包 -> repository/model -> database/resource`；需要模型上游时由域包或 app 进入 `protocol` / `generation` / `outbound`。跨层调用必须有明确理由并补测试。
 
-### Agent、插件和文档
+### Agent、插件、CI 和文档
 
 - 修改 `docs/` 前确认内容属于专题文档，而不是把长篇说明重新复制到根 README。目录索引见 `docs/index.md`。
+- `.github/workflows/quality.yml` 是 PR 与推送门禁（`agent`、`backend`、`payment-plugins`、`web`、`changelog`），`publish-images.yml` 只在 main/tag 构建镜像并校验 `VERSION` 与 `CHANGELOG.md`。新增门禁或脚本时同步更新本节和第 8 节的验证清单，避免文档与实际 CI 脱节。
 
 ## 4. 前端 API 和状态合同
 
@@ -91,6 +93,7 @@
 
 - Gin 接口统一返回 `{ code, data, msg, reason }`；失败时 HTTP status 和业务 `code` 都应表达真实失败，不把所有错误包装成 200。机器可读原因放在 `reason`，见 `docs/content/docs/backend/http-api.mdx`。
 - 所有对象读取、更新、删除都在 service 校验当前用户和资源归属；管理员权限在 service 校验，不依赖前端隐藏按钮。
+- 密码写路径必须在同一事务内更新 `password_hash` 并处理 `auth_sessions`：登录态自助改密（`POST /api/auth/password`）校验当前密码后保留当前会话、清理其他会话；管理员重置和邮箱验证码找回清空该用户全部会话。只改密码不清理会话视为权限缺陷；第三方登录创建的账号没有本地密码，应引导走邮箱找回而不是允许空密码改密。
 - 默认拒绝本机、私网和链路本地上游。可信开发主机只能通过 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 精确放行；不要设置“允许全部私网”来绕过 SSRF 防护。
 - 用户 API Key 保存在浏览器本地，任务创建时可能提交给自部署后端；只在可信部署和 HTTPS 下使用真实密钥。日志、错误上报、URL、localStorage 和持久任务正文不得写入敏感 URL、Cookie 或 API Key。
 - 生产必须配置明确的 `CANVAS_CORS_ORIGINS`，保持 HTTPS，限制数据库、备份、数据目录和 `.settings-key` 权限；默认关闭公开注册。
@@ -157,6 +160,7 @@
 - 后端：`cd backend && go test ./...`；涉及 PostgreSQL、资源、任务或权限时补对应集成/冒烟路径。
 - 云端 Agent：前端事件流和审批路径依赖后端 `/api/agent` 接口；在该接口实现后补充后端冒烟、Worker 运行和 SSE 断线重连验证。
 - 文档站：`cd docs && bun run types:check` 或 `bun run build`。
+- 版本与更新日志：`node scripts/changelog.mjs --check`（与 CI 的 `Changelog entry` 任务同款）；打 tag 前确认根 `VERSION` 与 `CHANGELOG.md` 里的 `## <VERSION>` 行完全一致（`publish-images.yml` 直接用它做发布门禁和 Release 说明）。
 - UI 变更能浏览器验证时，检查关键路由、明暗主题、滚动、弹窗、空态和核心交互；不能验证时说明替代依据，不把静态阅读或 `git diff` 写成运行验证。
 - 涉及皮肤时，覆盖默认/自定义皮肤、明暗模式、0px/非零圆角、伪元素、body 浮层、后台与画布界面；皮肤保存后检查颜色和圆角是否同步。功能入口验证同时覆盖普通用户和管理员，以及关闭后的快捷搜索与直达路由。首页验证覆盖窄屏、窗口缩放、滚动与人物只在首页出现。
 - 用户指定本机 Compose 端口验收时，使用相应隔离项目、镜像和数据卷，构建真实前端并更新指定服务；检查映射端口、镜像、容器状态和健康接口，最后做真实页面验收。不能用未重建的容器代表最新源码，也不能把该操作推断为允许修改其他端口、SSH 或生产部署。
@@ -172,6 +176,7 @@
 - API、数据表、SSE、资源存储、部署或安全边界变化时同步对应专题文档；不要只改代码和根 README。
 - 文档默认中文，不写过期日期，不公开密码、Token、Cookie、真实账号或机器敏感路径。命令、端口、环境变量必须以当前脚本和 Compose 为准。
 - Git 提交说明使用 `<type>(<scope>): <业务模块> - <变更摘要>`，`type` 为 `feat|fix|refactor|perf|docs|test|build|ci|chore|revert`。
-- **每次 dev PR 必须更新内部版本号**：改仓库根 `VERSION`，格式 `<大版本>(<PR 分支最新提交短 SHA>)`（7 位），例如 `v1.5.7.1(0bdc0193)`。大版本取 `VERSION` 里现有的正式版本号，只在发布 / 上游同步换版本时才变；其中的 commit 取 **bump 之前**该 PR 分支的 HEAD，bump 后若 PR 又有新提交，push 前必须重新 bump。版本解析必须先剥离括号中的构建 commit，再按正式版本号比较；不得使用 `_` 或 `+` 作为 commit 分隔符。根 `VERSION` 是内部版本号的唯一来源（后端 ldflags `buildinfo.Version`、前端 `VITE_APP_VERSION`），不要再往别处另立版本号。
+- **每次 dev PR 必须更新内部版本号**：改仓库根 `VERSION`，格式 `<大版本>(<PR 分支最新提交短 SHA>)`（7 位），例如 `v1.5.7.1(0bdc019)`，括号内一律 7 位，和 `git log --oneline`、`git rev-parse --short=7` 的输出一致。大版本取 `VERSION` 里现有的正式版本号，只在发布 / 上游同步换版本时才变；其中的 commit 取 **bump 之前**该 PR 分支的 HEAD，bump 后若 PR 又有新提交，push 前必须重新 bump。版本解析必须先剥离括号中的构建 commit，再按正式版本号比较；不得使用 `_` 或 `+` 作为 commit 分隔符。根 `VERSION` 是内部版本号的唯一来源（后端 ldflags `buildinfo.Version`、前端 `VITE_APP_VERSION`），不要再往别处另立版本号。
+- **更新日志先跑脚本再改写**：`node scripts/changelog.mjs` 预览草稿、`--write` 写入 `CHANGELOG.md` 顶部并同步 bump `VERSION`、`--write --force` 覆盖同版本条目、`--check` 校验当前版本有对应条目（CI `Changelog entry` 任务执行）。起点默认取 `CHANGELOG.md` 顶部条目的 commit；本仓库存在多线合并历史，该 commit 不可达时用 `--since <sha>` 指定。脚本只按提交类型归并标题，条目仍须改写成用户可见的影响与升级说明。
 
 交付前至少检查：改动是否聚焦、调用方和类型是否同步、错误/权限/数据归属是否完整、必要文档是否同步、验证是否如实说明、是否留下密钥或本地数据。
