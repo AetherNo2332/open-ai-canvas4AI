@@ -9,7 +9,7 @@ import (
 
 const ProtocolVersion = 1
 
-var OperationTypes = []string{"add_node", "update_node", "delete_node", "duplicate_node", "select_node_version", "set_parent", "connect_nodes", "delete_connection", "update_connection", "replace_text", "reorder_nodes", "reorder_connections", "reorder_rows", "edit_drawing", "edit_storyboard", "edit_batch_table", "create_previs_scene", "edit_previs_scene", "delete_previs_scene", "bind_asset", "rename_canvas", "delete_canvas", "edit_canvas_settings", "edit_timeline"}
+var OperationTypes = []string{"add_node", "update_node", "delete_node", "duplicate_node", "select_node_version", "set_parent", "connect_nodes", "delete_connection", "update_connection", "replace_text", "reorder_nodes", "reorder_connections", "reorder_rows", "edit_drawing", "edit_storyboard", "bind_storyboard_output", "edit_batch_table", "create_previs_scene", "edit_previs_scene", "delete_previs_scene", "bind_asset", "rename_canvas", "delete_canvas", "edit_canvas_settings", "edit_timeline"}
 
 type Snapshot struct {
 	Protocol       int              `json:"protocolVersion"`
@@ -72,6 +72,7 @@ type Operation struct {
 	DrawingOptions         map[string]any          `json:"drawingOptions,omitempty"`
 	Action                 string                  `json:"action,omitempty"`
 	RowID                  string                  `json:"rowId,omitempty"`
+	OutputMode             string                  `json:"outputMode,omitempty"`
 	ColumnID               string                  `json:"columnId,omitempty"`
 	BatchOperation         string                  `json:"batchOperation,omitempty"`
 	Concurrency            int                     `json:"concurrency,omitempty"`

@@ -9,7 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"infinite-canvas/backend/internal/assets"
+	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -22,6 +25,27 @@ const canvasHistoryInterval = 5 * time.Minute
 
 // 浏览器、云端 Agent 和创作任务共用此入口；外层事务仍负责任务和画布的一致性。
 func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasProject, after *model.CanvasProject, reason string) error {
+	var candidate map[string]any
+	if err := json.Unmarshal([]byte(after.PayloadJSON), &candidate); err != nil {
+		return err
+	}
+	if references.Enabled(candidate) {
+		var previous map[string]any
+		if before != nil {
+			if err := json.Unmarshal([]byte(before.PayloadJSON), &previous); err != nil {
+				return err
+			}
+		}
+		result, err := references.Reconcile(previous, candidate, capability.BuiltinRegistry(), uuid.NewString)
+		if err != nil {
+			return err
+		}
+		raw, err := json.Marshal(result.Document)
+		if err != nil {
+			return err
+		}
+		after.PayloadJSON = string(raw)
+	}
 	snapshot, resourceIDs, err := buildCanvasSnapshot(before, *after, reason)
 	if err != nil {
 		return err

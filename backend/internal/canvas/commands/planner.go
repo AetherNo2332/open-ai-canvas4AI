@@ -70,9 +70,20 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 			cleanTimelineNodeReferences(next)
 		}
 	}
+	coordinated, err := reconcileReferenceFields(doc, next, registry)
+	if err != nil {
+		return result, err
+	}
+	next = Document(coordinated.Document)
 	changes := Diff(doc, next)
 	inverse := Diff(next, doc)
 	reads := relatedReadSet(doc, req.Operations)
+	for _, id := range coordinated.ReadNodeIDs {
+		reads["node:"+id] = true
+	}
+	for _, id := range coordinated.ReadEdgeIDs {
+		reads["connection:"+id] = true
+	}
 	writes := map[string]bool{}
 	for _, change := range changes.Entities {
 		writes[change.Key] = true

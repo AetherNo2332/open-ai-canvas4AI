@@ -837,6 +837,9 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 }
 
 func saveCloudAgentDocument(repo *repository.Repository, canvas *model.CanvasProject, doc map[string]any, policy RuntimePolicySetting) error {
+	if err := reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
+		return err
+	}
 	if err := validateCloudAgentOwnedReferences(repo, canvas.UserID, doc); err != nil {
 		return err
 	}

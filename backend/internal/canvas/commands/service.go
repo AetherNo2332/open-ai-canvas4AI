@@ -164,7 +164,7 @@ func (s *Service) Create(ctx context.Context, p identity.Principal, req CreateCa
 		if title == "" {
 			title = "未命名画布"
 		}
-		doc := Document{"id": id, "title": title, "nodes": []any{}, "connections": []any{}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano)}
+		doc := Document{"id": id, "referenceFieldsVersion": 1, "title": title, "nodes": []any{}, "connections": []any{}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano)}
 		if req.ProjectID != "" {
 			doc["projectId"] = req.ProjectID
 		}
@@ -429,11 +429,20 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 		if epoch.Deleted {
 			return failure("entity_deleted", "画布已删除")
 		}
+		present := map[string]bool{}
+		for _, node := range maps(doc["nodes"]) {
+			present[text(node["id"])] = true
+		}
 		for _, op := range req.Operations {
 			switch op.Type {
-			case "update_node", "delete_node", "replace_text", "set_parent", "reorder_rows", "edit_drawing", "edit_storyboard", "edit_batch_table", "bind_asset":
-				if entity(doc, "node:"+op.ID) == nil {
+			case "add_node":
+				present[op.ID] = true
+			case "update_node", "delete_node", "replace_text", "set_parent", "reorder_rows", "edit_drawing", "edit_storyboard", "edit_batch_table", "bind_asset", "bind_storyboard_output":
+				if !present[op.ID] {
 					return failure("entity_deleted", "目标节点已删除")
+				}
+				if op.Type == "delete_node" {
+					delete(present, op.ID)
 				}
 			}
 		}

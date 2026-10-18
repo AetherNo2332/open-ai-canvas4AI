@@ -21,20 +21,24 @@ var cloudAgentStoryboardTextFields = []string{
 }
 
 type cloudAgentStoryboardCreateArgs struct {
-	SnapshotHash string           `json:"snapshotHash"`
-	NodeID       string           `json:"nodeId"`
-	Title        string           `json:"title"`
-	Rows         []map[string]any `json:"rows"`
-	X            float64          `json:"x"`
-	Y            float64          `json:"y"`
+	SnapshotHash     string           `json:"snapshotHash"`
+	NodeID           string           `json:"nodeId"`
+	Title            string           `json:"title"`
+	Rows             []map[string]any `json:"rows"`
+	ReferenceNodeIDs []string         `json:"referenceNodeIds,omitempty"`
+	X                float64          `json:"x"`
+	Y                float64          `json:"y"`
 }
 
 type cloudAgentStoryboardEditArgs struct {
-	SnapshotHash string         `json:"snapshotHash"`
-	NodeID       string         `json:"nodeId"`
-	Action       string         `json:"action"`
-	RowID        string         `json:"rowId"`
-	Patch        map[string]any `json:"patch"`
+	SnapshotHash     string         `json:"snapshotHash"`
+	NodeID           string         `json:"nodeId"`
+	Action           string         `json:"action"`
+	RowID            string         `json:"rowId"`
+	Patch            map[string]any `json:"patch"`
+	ReferenceNodeIDs []string       `json:"referenceNodeIds,omitempty"`
+	OutputMode       string         `json:"outputMode,omitempty"`
+	OutputNodeID     string         `json:"outputNodeId,omitempty"`
 }
 
 type cloudAgentStoryboardMutationPlan struct {
@@ -208,6 +212,12 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 		}},
 	})
 	doc["nodes"] = append(creationMaps(doc["nodes"]), node)
+	if args.ReferenceNodeIDs != nil {
+		cloudAgentNodeMetadata(node)["storyboard"].(map[string]any)["referenceNodeIds"] = args.ReferenceNodeIDs
+	}
+	if err := reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
+		return nil, err
+	}
 	return &cloudAgentStoryboardMutationPlan{
 		Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
 		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认创建分镜脚本", Description: fmt.Sprintf("Agent 准备创建分镜脚本《%s》，包含 %d 个镜头。批准后才会写入画布。", args.Title, len(rows)), Items: []cloudAgentApprovalPreviewItem{{Operation: "create_storyboard", NodeID: args.NodeID, NodeTitle: args.Title, NodeType: "script", NodeTypeLabel: "分镜脚本", Summary: fmt.Sprintf("创建分镜脚本《%s》（%d个镜头）", args.Title, len(rows))}}},
@@ -221,6 +231,9 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	}
 	if args.SnapshotHash == "" || args.NodeID == "" {
 		return nil, BadAuthRequest("编辑分镜需要快照和节点ID")
+	}
+	if args.Action == "set_references" || args.Action == "bind_output" || args.Action == "unbind_output" {
+		return prepareCloudAgentStoryboardReferenceEdit(repo, userID, canvasID, args)
 	}
 	if args.Action != "append" && args.Action != "update" && args.Action != "remove" {
 		return nil, BadAuthRequest("分镜操作必须是 append、update 或 remove")
@@ -325,6 +338,9 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	}
 	storyboard["rows"] = mapsAsAny(next)
 	node["metadata"].(map[string]any)["storyboard"] = storyboard
+	if err := reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
+		return nil, err
+	}
 	return &cloudAgentStoryboardMutationPlan{
 		Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
 		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认修改分镜脚本", Description: "Agent 准备修改分镜脚本。批准后才会写入画布。", Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeTitle: stringValue(node["title"]), NodeType: "script", NodeTypeLabel: "分镜脚本", Fields: fields, Summary: fmt.Sprintf("%s分镜脚本《%s》", map[string]string{"append": "追加镜头到", "update": "修改", "remove": "删除"}[args.Action], stringValue(node["title"]))}}},

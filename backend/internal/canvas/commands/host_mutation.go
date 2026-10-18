@@ -73,6 +73,20 @@ func (s *Service) ExecuteHost(ctx context.Context, p identity.Principal, req Com
 		if err != nil {
 			return err
 		}
+		coordinated, err := reconcileReferenceFields(doc, next, nil)
+		if err != nil {
+			return err
+		}
+		next = Document(coordinated.Document)
+		if reads == nil {
+			reads = map[string]bool{}
+		}
+		for _, id := range coordinated.ReadNodeIDs {
+			reads["node:"+id] = true
+		}
+		for _, id := range coordinated.ReadEdgeIDs {
+			reads["connection:"+id] = true
+		}
 		if err = validateResult(next); err != nil {
 			return err
 		}
