@@ -5,13 +5,17 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 ## 分镜声明式引用与旧画布迁移
 
-- [ ] 静态（已做）：权威输入与派生连接的读写投影已落在 `backend/internal/canvas/references`——表级 `referenceNodeIds`、行级 `assetBindings`、生成输入的 `generationSpec.referenceBindings` / `inputBindings`、行的 `imageNodeId` / `videoNodeId`，以及带 `managedBy: reference-fields-v1` 的托管连线；`referenceFieldsVersion=1` 标记规范化状态，托管连线由字段重建，用户普通连线保持不动。命令、快照读投影、Agent 工具合同与前端类型已按现状静态核对；本次未改动数据表或数据库列。
-- [x] 自动化（本轮实跑）：`cd web && bun test test/canvas-reference-flow.test.ts test/canvas-reference-migration.test.ts test/canvas-reference-edits.test.ts test/canvas-reference-copy.test.ts test/canvas-storyboard-assets.test.ts test/canvas-agent-operation-conformance.test.ts test/agent-approval-presentation.test.ts` → 43 pass / 0 fail（7 个文件，179 expect()，2.45s）；`cd backend && CGO_ENABLED=0 go test ./internal/canvas/references -count=1` → ok 0.871s。
-- [ ] 自动化（环境限制）：`internal/canvas/commands` 的引用迁移、生命周期与并发回归用例建在真实 SQLite 上，本机 Windows 无 CGO 时 `go test ./internal/canvas/commands -run Reference` 直接报 `go-sqlite3 requires cgo to work. This is a stub`，属工具链限制而非产品失败；`internal/canvas/tasks/reference_lifecycle_test.go`、`internal/app/cloud_agent_reference_contract_test.go` 等同样依赖数据库环境。这些包需在有 CGO 或 Linux 容器的环境里补跑，未补跑前不得当作已验证。
+- [x] 静态（已做）：权威输入与派生连接的读写投影已落在 `backend/internal/canvas/references`——表级 `referenceNodeIds`、行级 `assetBindings`、生成输入的 `generationSpec.referenceBindings` / `inputBindings`、行的 `imageNodeId` / `videoNodeId`，以及带 `managedBy: reference-fields-v1` 的托管连线；`referenceFieldsVersion=1` 标记规范化状态，托管连线由字段重建，用户普通连线保持不动。命令、快照读投影、Agent 工具合同与前端类型已按现状静态核对；本次未改动数据表或数据库列。
+- [x] 自动化（本轮实跑）：web 引用流程、迁移、编辑、复制、素材、Agent 操作一致性及审批展示 7 个专项文件 → 43 pass / 0 fail（179 expect()）；全量 `bun test --timeout 15000` → 2585 pass / 0 fail（388 文件、14367 次断言）；`bun run build`（包含 TypeScript 检查）、`bun run lint` 与 CI 同款改动文件格式检查通过；agent `npm test` → 197 pass / 0 fail。
+- [x] 自动化（新增门禁回归）：`TestCloudAgentMediaLegacyCanvasRequiresMigration` 的 prepare / writeback 两个子用例已在真实 SQLite 上验证 RED→GREEN：旧画布拒绝审批准备与事务内写入，文档逐字节不变且未新增媒体任务。普通生成不再保留旧连线写入分支；正常生成夹具使用 v1 文档，专门的旧画布回归显式使用无标记文档。
+- [x] 后端构建与 canvas 全量：Linux Go 1.25 下 `go build ./...`、`go vet ./internal/canvas/... ./internal/app`、`go test -vet=off ./internal/canvas/... -count=1` 全部通过，含真实 SQLite 的迁移、生命周期和并发回归。Windows 当前虽有 `CGO_ENABLED=1`，但 GCC 子程序缺失 DLL，本轮使用已缓存镜像、断网且只读挂载完整仓库验证，不能由旧交接推断本机工具链状态。
+- [ ] app 全量尚未全绿：完整执行 780.278s，最初 7 个失败中，1 个标注图生成测试仍使用旧文档夹具（已改为 v1 并专项通过），5 个依赖域名解析（断网容器下失败，保持断网并配置受控公共地址 hosts 后专项通过）。剩余基线失败为 `TestValidateAppearanceSkinThemesEnforcesSwissConstraints/rounded-components`：测试要求拒绝 8px，现行校验允许 0–32px，本分支未改外观文件。只改测试夹具后未再次重复整包长跑，不将专项复验表述为全量全绿。
+- [x] 环境缺口已处理：web 最初缺失导演台 `three` 依赖的三个错误已通过复用本地同版本 `three@0.185.1` 消除，未下载依赖或修改锁文件。
+- [ ] 集成环境（未做）：PostgreSQL / Redis 场景尚未执行，SQLite 与模拟 provider 的结果不能代替这些环境的验收。
 - [ ] 页面（未做）：没有启动 dev server，也没有浏览器视觉与明暗皮肤验收；320px 与 1440px 布局、刷新与双客户端一致性均未实测。
 - [ ] 真实模型（未做）：没有真实付费模型调用；模拟 provider 只记录真实提交参数，不能证明真实模型对引用字段的理解或出图质量。
 - [ ] 页面验收缺口：历史画布规范化时超限的旧连线不会被接管，保持为普通连线；旧画布迁移面板（冲突选择 fields/connections）与新画布编辑门禁需页面验收。
-- [ ] 已接受边界：普通媒体生成的**客户端**前置迁移 guard 未做，依赖主机 `reference_migration_required` 拒绝 + 会话冲突回流入迁移面板；这是已接受边界，不是已验证行为。
+- [ ] 客户端边界：普通媒体生成未单独增加客户端前置迁移 guard，原生入口依赖主机门禁，Agent 普通生成也已共用审批准备与事务内写入门禁；会话收到 `reference_migration_required` 后重新打开迁移面板的页面行为仍需真实应用验收。
 - [ ] 页面验收的环境口径：需要在隔离数据目录和确认空闲的端口下启动真实应用，端口、环境变量以当前 Compose 与脚本为准；本条目不写日期、账号与本机路径。
 
 ## 分镜脚本默认列与全屏编辑器
