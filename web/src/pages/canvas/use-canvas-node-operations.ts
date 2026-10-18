@@ -503,8 +503,9 @@ export function useCanvasNodeOperations({
         const idMap = new Map(clipboard.nodes.map((node, index) => [node.id, `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`]));
         const copiedSourceIds = new Set(clipboard.nodes.map((node) => node.id));
         const reservedTitles = new Set(nodesRef.current.map((node) => node.title));
+        const rowIds = new Map<string, string>();
         const nextNodes = clipboard.nodes.map((node) => {
-            const metadata = isolateCopiedNodeMetadata(node, idMap);
+            const metadata = isolateCopiedNodeMetadata(node, idMap, rowIds);
             const title = nextCopiedNodeTitle(node.title, reservedTitles);
             reservedTitles.add(title);
             if (node.type === CanvasNodeType.Drawing && metadata) {
@@ -524,18 +525,38 @@ export function useCanvasNodeOperations({
             };
         });
         // 1) 剪贴板内部连线；2) 仍保留到画布上未复制参考节点的入边（只复制结果节点时常见）。
+        // 托管边是字段的派生展示：粘贴只带字段，归属由服务端按目标范围重新协调。
+        const copiedRowId = (connection: CanvasConnection) => {
+            if (!connection.storyboardRowId) return undefined;
+            return rowIds.get(connection.storyboardRowId);
+        };
         const nextConnections = clipboard.connections.flatMap((connection, index) => {
+            if (connection.managedBy === "reference-fields-v1") return [];
             const fromNodeId = idMap.get(connection.fromNodeId);
             const toNodeId = idMap.get(connection.toNodeId);
-            return fromNodeId && toNodeId ? [{ ...connection, id: `conn-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`, fromNodeId, toNodeId }] : [];
+            if (!fromNodeId || !toNodeId) return [];
+            const copied: CanvasConnection = { ...connection, id: `conn-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`, fromNodeId, toNodeId };
+            if (connection.storyboardRowId) {
+                const rowId = copiedRowId(connection);
+                if (rowId) copied.storyboardRowId = rowId;
+                else delete copied.storyboardRowId;
+            }
+            return [copied];
         });
         connectionsRef.current.forEach((connection) => {
+            if (connection.managedBy === "reference-fields-v1") return;
             if (!copiedSourceIds.has(connection.toNodeId) || copiedSourceIds.has(connection.fromNodeId)) return;
             const toNodeId = idMap.get(connection.toNodeId);
             if (!toNodeId) return;
             // 参考节点仍在画布上时，粘贴结果应重新挂上同一入边。
             if (!nodesRef.current.some((node) => node.id === connection.fromNodeId)) return;
-            nextConnections.push({ ...connection, id: nanoid(), toNodeId });
+            const copied: CanvasConnection = { ...connection, id: nanoid(), toNodeId };
+            if (connection.storyboardRowId) {
+                const rowId = copiedRowId(connection);
+                if (rowId) copied.storyboardRowId = rowId;
+                else delete copied.storyboardRowId;
+            }
+            nextConnections.push(copied);
         });
         commitNodes([...nodesRef.current, ...nextNodes]);
         commitConnections([...connectionsRef.current, ...nextConnections]);
