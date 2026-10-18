@@ -175,8 +175,8 @@ export function generationSpecMetadata(spec: GenerationSpec): CanvasNodeMetadata
     // model is always projected, including undefined. This clears a stale
     // physical-channel mirror when the canonical contract selects a logical model.
     const result: Record<string, unknown> = { generationSpec: spec, composerContent: spec.prompt, model: undefined };
-    result.videoStartFrameNodeId=spec.referenceBindings.find(binding=>binding.role==="first-frame")?.nodeId;
-    result.videoEndFrameNodeId=spec.referenceBindings.find(binding=>binding.role==="last-frame")?.nodeId;
+    result.videoStartFrameNodeId = spec.referenceBindings.find((binding) => binding.role === "first-frame")?.nodeId;
+    result.videoEndFrameNodeId = spec.referenceBindings.find((binding) => binding.role === "last-frame")?.nodeId;
     for (const field of GENERATION_OPTION_FIELDS) {
         if (!(field.modes as readonly string[]).includes(spec.mode)) continue;
         const value = spec.options[field.name as keyof Options];
@@ -211,7 +211,7 @@ export function synchronizeGenerationSpec(node: CanvasNodeData, patch: Partial<C
 }
 
 export function bindingForNode(node: CanvasNodeData, order: number, previous?: ReferenceBinding): ReferenceBinding | undefined {
-    const mediaType = node.metadata?.workflowKind==="character"||node.type==="drawing"?"image":node.type === "text" || node.type === "markdown" ? "text" : canvasGenerationMode(node.type);
+    const mediaType = node.metadata?.workflowKind === "character" || node.type === "drawing" ? "image" : node.type === "text" || node.type === "markdown" ? "text" : canvasGenerationMode(node.type);
     if (!mediaType) return undefined;
     return { id: previous?.id || `node:${node.id}`, nodeId: node.id, mediaType, role: previous?.role || (mediaType === "text" ? "source-text" : "reference"), order, resolution: "latest" };
 }

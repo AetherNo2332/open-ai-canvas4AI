@@ -197,8 +197,13 @@ export function useCanvasConnectionController({
                 message.warning(reason);
                 return plan;
             }
-            let nextNodes=nodesRef.current;
-            const free=plan.connections.filter(connection=>{const intent=canvasReferenceIntentForConnection(nextNodes,connection);if(!intent)return true;nextNodes=applyCanvasReferenceEdit(nextNodes,intent);return false});
+            let nextNodes = nodesRef.current;
+            const free = plan.connections.filter((connection) => {
+                const intent = canvasReferenceIntentForConnection(nextNodes, connection);
+                if (!intent) return true;
+                nextNodes = applyCanvasReferenceEdit(nextNodes, intent);
+                return false;
+            });
             setNodes(nextNodes);
             setConnections((currentConnections) => [...currentConnections, ...free]);
             setContextMenu(null);
@@ -231,8 +236,12 @@ export function useCanvasConnectionController({
                 return;
             }
             const exists = connectionsRef.current.find((item) => item.fromNodeId === fromNodeId && item.toNodeId === toNodeId && item.fromHandleId === fromHandleId && item.toHandleId === toHandleId);
-            const intent=canvasReferenceIntentForConnection(nodesRef.current,{fromNodeId,toNodeId,fromHandleId,toHandleId});
-            if(intent){setNodes(current=>applyCanvasReferenceEdit(current,intent));setContextMenu(null);return;}
+            const intent = canvasReferenceIntentForConnection(nodesRef.current, { fromNodeId, toNodeId, fromHandleId, toHandleId });
+            if (intent) {
+                setNodes((current) => applyCanvasReferenceEdit(current, intent));
+                setContextMenu(null);
+                return;
+            }
             if (exists) {
                 setConnections((currentConnections) => currentConnections.map((item) => (item.id === exists.id ? { ...item, fromAnchorRatio, toAnchorRatio } : item)));
             } else {
@@ -342,8 +351,13 @@ export function useCanvasConnectionController({
                     setConnecting(null);
                     return;
                 }
-                let nextNodes=[...nodesRef.current,newNode];
-                const free=batchPlan.connections.filter(connection=>{const intent=canvasReferenceIntentForConnection(nextNodes,connection);if(!intent)return true;nextNodes=applyCanvasReferenceEdit(nextNodes,intent);return false});
+                let nextNodes = [...nodesRef.current, newNode];
+                const free = batchPlan.connections.filter((connection) => {
+                    const intent = canvasReferenceIntentForConnection(nextNodes, connection);
+                    if (!intent) return true;
+                    nextNodes = applyCanvasReferenceEdit(nextNodes, intent);
+                    return false;
+                });
                 const nextConnections = [...connectionsRef.current, ...free];
                 nodesRef.current = nextNodes;
                 connectionsRef.current = nextConnections;
@@ -413,9 +427,9 @@ export function useCanvasConnectionController({
             const fromAnchorRatio = connection.fromNodeId === pending.connection.nodeId ? pending.connection.anchorRatio : 0.5;
             const toAnchorRatio = connection.toNodeId === pending.connection.nodeId ? pending.connection.anchorRatio : 0.5;
             const connected = { ...connection, fromHandleId, toHandleId, fromAnchorRatio, toAnchorRatio };
-            const intent=canvasReferenceIntentForConnection([...nodesRef.current,newNode],connected);
-            setNodes((currentNodes) => intent?applyCanvasReferenceEdit([...currentNodes,newNode],intent):attachNodeToStoryboardRow([...currentNodes, newNode], connected));
-            if(!intent)setConnections((currentConnections) => [...currentConnections, { id: nanoid(), ...connected }]);
+            const intent = canvasReferenceIntentForConnection([...nodesRef.current, newNode], connected);
+            setNodes((currentNodes) => (intent ? applyCanvasReferenceEdit([...currentNodes, newNode], intent) : attachNodeToStoryboardRow([...currentNodes, newNode], connected)));
+            if (!intent) setConnections((currentConnections) => [...currentConnections, { id: nanoid(), ...connected }]);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
             if (nodeType === CanvasNodeType.Drawing) setDrawingNodeId(newNode.id);

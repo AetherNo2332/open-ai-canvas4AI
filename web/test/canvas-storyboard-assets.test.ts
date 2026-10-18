@@ -92,8 +92,8 @@ describe("storyboard target materializer", () => {
     });
 
     it("captures output draft references from fields without adding connections", () => {
-        const result=withStoryboardOutputDraft(nodes,script,row,"target");
-        expect(result.find(node=>node.id==="target")?.metadata?.generationSpec?.referenceBindings.map(binding=>binding.nodeId)).toEqual(["prop","character","project-style"]);
+        const result = withStoryboardOutputDraft(nodes, script, row, "target");
+        expect(result.find((node) => node.id === "target")?.metadata?.generationSpec?.referenceBindings.map((binding) => binding.nodeId)).toEqual(["prop", "character", "project-style"]);
         expect(connections).toHaveLength(1);
     });
 });
