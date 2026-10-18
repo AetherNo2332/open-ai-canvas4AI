@@ -1,0 +1,22 @@
+---
+title: 后端数据库
+description: 数据库迁移与 Agent 工具快照持久化结构
+---
+
+# 后端数据库
+
+## 工具快照（迁移 59）
+
+迁移为 SQLite 和 PostgreSQL 新增以下 GORM 模型对应表：
+
+| 表 | 用途 |
+| --- | --- |
+| `agent_tool_snapshot_contents` | 不可变规范化工具正文，相同内容共享一条记录 |
+| `agent_tool_snapshots` | 后端、worker、任务来源引用，schema 版本、工具名和构建提交 |
+| `agent_tool_runtimes` | 实例、启动标识、加载代次、心跳、文件观察、排空状态和并发 revision |
+| `agent_tool_snapshot_alerts` | 后端/worker 快照对的首次、最近检测及恢复时间 |
+| `agent_tool_snapshot_counters` | 快照写入事务的独立协调行 |
+
+`cloud_agent_executions` 增加 `tool_runtime_instance_id`、`tool_snapshot_id`、`worker_tool_snapshot_id`，在领取事务中记录实际执行组合。既有运行的冻结正文保持原样，历史快照按需读取，不批量改写任务。领取与排空通过事务协调；快照正文去重使用独立计数行，避免与调度租约形成相反锁顺序。
+
+完整接口及升级行为见 [Agent 工具快照管理](./agent-tool-snapshots)。

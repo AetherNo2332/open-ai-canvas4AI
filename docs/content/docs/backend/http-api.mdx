@@ -5,6 +5,12 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## 管理员工具快照
+
+管理员工具快照使用 `/api/admin/agent/tool-snapshot-health`（当前健康）、`/tool-snapshots`（目录）、`/tool-snapshots/:id`（定义和引用）和 `/tool-snapshots/compare?left=...&right=...`（字段差异）。`POST /api/admin/agent/tool-snapshot-checks` 重新检测已上报内容；`PATCH /api/admin/agent/runtime-instances/:id/drain` 接收 `{ expectedRevision, draining, reason }`，写操作检查管理员身份、并发 revision 并记录审计。
+
+worker 使用内部协议 `POST /internal-agent/tool-snapshots/register` 注册实际加载的制品，后续 `/capacity` 和 `/claim` 关联同一进程与快照。注册丢失以机器可读原因 `tool_snapshot_registration_required` 要求重新注册，不能解析错误文案来决定恢复。详细语义见 [Agent 工具快照管理](/docs/backend/agent-tool-snapshots)。
+
 ## Pi worker 错误与有限恢复
 
 `POST /internal-agent/runs/:id/recovery` 使用现有内部 Token、协议版本、用户、worker owner 与 session epoch 请求头。提交 `revision`、`class`（network/http_5xx/timeout/rate_limited/conflict/result_unknown）、`operation`（snapshot/control/checkpoint/model/tool/phase/renew/compaction），可附 `taskId`、`callId`、`httpStatus`、`retryAfterMs`。拒绝未知字段、超大请求、旧 revision 和过期 epoch；同 run/epoch/操作/分类重报幂等。返回 `status`、`attempts` 和可选 `nextRecoveryAt`；终态以新运行快照为准。
@@ -299,7 +305,7 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 - 压缩过程对外只有两个事件：`context_compaction_requested` 带触发读数（`basis` 为 `tokens`／`bytes`、`projectedTokens`、`usableInputTokens`、`compactAtTokens`、`pressureRatio`、`budgetSource`、`sourceBytes`、`turnCount`），`context_compacted` 带 `mode`（`model` 为压缩模型输出，`fallback` 为服务端保底检查点）、`resume`、`historyMessages`、`compactedTurnCount`、`droppedTurns`，降级时附 `reason`。压缩模型失败、输出不合规、或本轮在压缩期间被取消／失败，服务端都落保底检查点并写 `mode=fallback`；终态轮次的收尾只落检查点与事件，不改写已经失败或已取消的状态。
 - **`context_pressure` 的读数契约**（上游 #601 的契约与我方 V2 读数的**并集**）：每次普通 Agent 步进的模型调用发出之前都会落一条 `context_pressure` 事件（`schemaVersion: 2`、`phase: "before_request"`），把"这次请求装了多少、离装不下还有多远"作为可观测读数下发，`requestId` 是本次请求的任务 ID。主读数是 `projectedNextInputTokens`：有可采信的上游实测锚点时等于"锚点实测 + 本地估算的有符号增量"（`tokenSource` / `measurementSource` 为 `provider`，`tokenScale` 给出实测÷估算的换算比例）；没有实测时退回纯本地估算（`tokenSource` 为 `estimate`）。两把尺子各有自己的名字、谁也**不覆盖**谁：`estimatedInputTokens`（`readingScope: "next_request"`、`estimateMethod: "local_v1"`）永远是本地下一次请求的估算，`pressureTokens` / `tokenUsage` / `providerUsage`（`providerMeasurementScope: "previous_request"`）永远是上游对**上一次**请求的实测，消费方不得把两者画成一条曲线（`tokenUsage` 是我方的对外名、`providerUsage` 是上游同义名，两者同时下发且数字一致）。本读数只增加可观测性：请求准入与正文裁剪的既有判据不变。
 - 上游实测锚点的采信与治理：上游没有回 usage 的调用（`usage_available=false`）不定锚、不猜用量，读数继续用估算；只有"模型调用"这一步能配锚（媒体任务发的是另一份信封，`operation` 不匹配即跳过），并且只认本用户、成功、`text` 能力的那条调用。上游实测与本地估算差出一个量级时不采信（比值低于 0.5× 或高于 2×，通常是换了模型或计量口径），事件给 `anchorRejected` 说明原因并继续用估算。锚点可以跨步沿用，但**换模型、换线路、换系统提示或工具 schema、换模型窗口，以及超过 3 步未刷新**（`anchor.ageSteps`）都会作废：真机上出现过锚点被冻结、估算已经涨了 50% 而读数还停在老值的情况。
-- 事件还带 `breakdown` 占用分布（与下方"输入预算"一条互为补充）：三个桶（`system` 系统提示（含画布摘要）、`tools` 工具 schema、`messages` 会话消息（含工具结果））各自的字节与估算 Token，协议外壳余量 `envelopeBytes`（tool choice、缓存键这类不属于任何桶的部分，单独报而不摊进桶里），按锚点比例换算的 `tokenScale` 与每桶/每分段的 `scaledTokens`，以及 `systemSegments` 系统提示内部分段（`policy` / `mediaPolicy` / `capabilities` / `execution` / `memory` 个人记忆 / `other` 零头）。分段按编译顺序逐块量出，合计与 `system` 桶严格相等：编译之后才拼接的个人记忆由 `memory` 登记，零头归入 `other`，不出现"分段加不到桶"的错觉。
+- 事件还带 `breakdown` 占用分布（与下方"输入预算"一条互为补充）：三个桶（`system` 系统提示（含画布摘要）、`tools` 工具 schema、`messages` 会话消息（含工具结果））各自的字节与估算 Token，协议外壳余量 `envelopeBytes`（tool choice、缓存键这类不属于任何桶的部分，单独报而不摊进桶里），按锚点比例换算的 `tokenScale` 与每桶/每分段的 `scaledTokens`，以及 `systemSegments` 系统提示内部分段（`policy` / `mediaPolicy` / `capabilities` / `execution` / `memory` 个人记忆 / `workspace:<文件名>` Node 装配的工作区块 / `other` 零头）。分段按编译顺序逐块量出，合计与 `system` 桶严格相等：编译之后才拼接的个人记忆由 `memory` 登记（到下一个工作区段为止，不把后续文件算成记忆），实际装配进信封的 Harness 工作区文件各自登记为 `workspace:<文件名>`，零头归入 `other`，不出现"分段加不到桶"的错觉。补报的 `after_request` 沿用该步准入时冻结的同一份分布。
 - 窗口口径另在事件里平铺一份（与下方"输入预算的三段算式"一条互为补充）：`contextWindowTokens` / `reservedOutputTokens` / `usableInputTokens` / `inputBudgetTokens` / `overheadTokens` / `budgetSource`，再加 `compactAtTokens`（可重读正文就地裁剪的触发线，输入预算的 85%，只是给读数一个参照刻度、不是本读数触发的动作）。**没有解析到模型自己声明的窗口时不下发这些字段、也不给占用率**（`modelLimitConfigured: false`）：窗口未知就说未知，不拿兜底默认窗口冒充真实能力编一个百分比。
 - `context_transition` 事件说明"读数为什么变"：`window_resolved`（窗口从未确认变为已确认，读数改用窗口口径，**不是**上下文变少）、`model_changed` / `route_changed` / `window_changed`（锚点因换模型、换线路或换窗口而作废；窗口变化另带 `before` / `after` 的窗口读数）。它只解释口径与锚点状态，不携带任何授权语义，也不改变执行边界。
 - `canvas_list_node_types` 从服务端节点能力 registry 返回当前可用类型；可更新节点的 `updateFields` 同时包含字段类型、最大字符数和字段语义。模型不能从前端渲染器、技能或偏好文档推断额外能力。

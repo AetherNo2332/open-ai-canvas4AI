@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { resolveCanvasAppearance, resolveCanvasGridColor, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
+import { canvasGridLayerStyle } from "@/lib/canvas/canvas-grid-geometry";
 import { resolveCanvasPointerIntent } from "@/lib/canvas/canvas-selection";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { applyCanvasLiveViewport, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
@@ -474,7 +475,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 onDrop?.(event);
             }}
         >
-            <CanvasGrid appearance={appearance} mode={backgroundMode} />
+            <CanvasGrid appearance={appearance} mode={backgroundMode} viewport={viewport} />
             {graphicsLayer}
             <div
                 data-canvas-world-layer
@@ -493,22 +494,24 @@ function isCanvasInternalDragEvent(event: React.DragEvent<HTMLDivElement>) {
     return Boolean(target?.closest(CANVAS_INTERNAL_DRAG_SELECTOR));
 }
 
-export function CanvasGrid({ appearance, mode }: { appearance?: CanvasAppearance; mode: CanvasBackgroundMode }) {
+export function CanvasGrid({ appearance, mode, viewport }: { appearance?: CanvasAppearance; mode: CanvasBackgroundMode; viewport: ViewportTransform }) {
     const colorTheme = useActiveTheme();
     const gridColor = resolveCanvasGridColor(appearance, colorTheme, mode);
     const backgroundImage = mode === "dots" ? `radial-gradient(circle, ${gridColor} 0.8px, transparent 1px)` : `linear-gradient(${gridColor} 1px, transparent 1px), linear-gradient(90deg, ${gridColor} 1px, transparent 1px)`;
-    if (mode === "blank") return null;
+    const { overscanPx, backgroundSize, transform } = canvasGridLayerStyle(viewport);
 
     return (
         <div
             data-canvas-grid-layer
             className="pointer-events-none absolute"
             style={{
-                // 装饰网格固定在屏幕坐标，避免缩放时改变密度或产生亚像素位移闪烁。
-                inset: 0,
+                // 网格跟随世界层平移缩放；多画一圈避免平移到边缘时露出视口底色，空白模式只隐藏绘制。
+                inset: -overscanPx,
                 backgroundImage,
-                backgroundSize: "48px 48px",
+                backgroundSize,
+                transform,
                 opacity: mode === "dots" ? 0.34 : 0.46,
+                display: mode === "blank" ? "none" : undefined,
             }}
         />
     );

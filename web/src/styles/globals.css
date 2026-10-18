@@ -10079,6 +10079,10 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
         will-change: transform;
     }
 
+    [data-canvas-viewport-interacting="true"] [data-canvas-grid-layer] {
+        will-change: transform;
+    }
+
     [data-canvas-viewport-interacting="true"] :where(.canvas-connection-flow, .canvas-connection-comet, .canvas-connection-draft) {
         animation: none !important;
     }

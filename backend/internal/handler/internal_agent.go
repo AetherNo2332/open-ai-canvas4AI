@@ -101,7 +101,22 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		}
 		ok(c, gin.H{"setting": setting})
 	})
+	group.POST("/tool-snapshots/register", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, (2<<20)+(16<<10))
+		var input service.ToolSnapshotRegistration
+		if err := c.ShouldBindJSON(&input); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		result, err := svc.RegisterToolSnapshot(input)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
 	group.POST("/capacity", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
 		var input struct {
 			Owner string `json:"owner"`
 			model.AgentCapacityReport
@@ -145,14 +160,16 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		ok(c, gin.H{"released": true})
 	})
 	group.POST("/claim", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
 		var input struct {
 			Owner string `json:"owner" binding:"required"`
+			service.ToolSnapshotIdentity
 		}
 		if err := c.ShouldBindJSON(&input); err != nil || len(input.Owner) > 80 {
 			c.AbortWithStatus(http.StatusBadRequest)
 			return
 		}
-		claimed, err := svc.ClaimPiAgent(input.Owner)
+		claimed, err := svc.ClaimPiAgentWithIdentity(input.Owner, input.ToolSnapshotIdentity)
 		if err != nil {
 			failService(c, err)
 			return

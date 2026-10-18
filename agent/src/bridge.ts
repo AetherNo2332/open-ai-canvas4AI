@@ -5,6 +5,7 @@ import type { PromptParts } from "./system-prompt.js";
 import { EventScheduler, RunEvents } from "./event-scheduler.js";
 import { RetryableBridgeError, safeWorkerDetail } from "./worker-errors.js";
 import type { SubagentRuntime } from "./subagent-wire.js";
+import { ToolSnapshotRegistrationRequired, type ToolSnapshotRegistration, type ToolSnapshotRegistrationRequest } from "./tool-snapshot-registration.js";
 
 /**
  * 内部协议里的**确定性**客户端错误：同一条请求重发不可能成功。
@@ -211,27 +212,65 @@ export interface PiToolCall {
 export class CanvasBridge {
   constructor(private readonly baseUrl: string, private readonly token: string, readonly workerId: string,
     private readonly scheduler?: EventScheduler, private readonly events?: RunEvents,
-    private readonly availability: {nextProbeAt:number} = {nextProbeAt:0}) {
+    private readonly availability: {nextProbeAt:number} = {nextProbeAt:0},
+    private readonly toolRegistration?: ToolSnapshotRegistration) {
     if (!baseUrl || !token || !workerId) throw new Error("Pi bridge configuration is incomplete");
   }
 
   async claim(signal?: AbortSignal): Promise<PiSnapshot | null> {
     if(this.availability.nextProbeAt>Date.now())return null;
     if(this.availability.nextProbeAt)this.availability.nextProbeAt=Date.now()+5000;
-    const result = await this.request<{ run: PiSnapshot | null }>("POST", "/claim", { owner: this.workerId }, undefined, signal);
+    if (this.toolRegistration) {
+      await this.ensureToolRegistration(signal);
+      if (!this.toolRegistration.eligible) return null;
+    }
+    const result = await this.registeredRequest<{ run: PiSnapshot | null }>("/claim", { owner: this.workerId }, signal);
     this.availability.nextProbeAt=0;
     return result.run;
   }
 
   async capacity(active: number, capacity: number, signal?: AbortSignal): Promise<void> {
-    await this.request("POST", "/capacity", { owner: this.workerId, active, capacity }, undefined, signal);
+    await this.registeredRequest("/capacity", { owner: this.workerId, active, capacity }, signal);
   }
   async schedulerConfig(signal?:AbortSignal):Promise<import("./runtime-config.js").AgentSchedulerSetting> {
     const result=await this.request<{setting:import("./runtime-config.js").AgentSchedulerSetting}>("GET","/config",undefined,undefined,signal);
     return result.setting;
   }
   async capacityReport(report:import("./runtime-config.js").CapacityReport,signal?:AbortSignal):Promise<void> {
-    await this.request("POST","/capacity",{owner:this.workerId,...report},undefined,signal);
+    await this.registeredRequest("/capacity",{owner:this.workerId,...report},signal);
+  }
+
+  async registerToolSnapshot(request: ToolSnapshotRegistrationRequest, signal?: AbortSignal): Promise<{ snapshotId: string }> {
+    return this.request("POST", "/tool-snapshots/register", request, undefined, signal);
+  }
+
+  private async ensureToolRegistration(signal?: AbortSignal): Promise<void> {
+    await this.toolRegistration?.ensure(request => this.registerToolSnapshot(request, signal));
+  }
+
+  private async registeredRequest<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+    if (path === "/capacity" && this.toolRegistration) body = { ...body, artifactFileState: await this.toolRegistration.artifactFileState() };
+    let registrationError: unknown;
+    try { await this.ensureToolRegistration(signal); } catch (error) {
+      if (path !== "/capacity" || signal?.aborted) throw error;
+      registrationError = error;
+    }
+    for (let attempt = 0; ; attempt++) {
+      // A registration failure is reported as an unregistered process heartbeat.
+      // Sending only part of an identity would be rejected before it becomes observable.
+      const identity = registrationError ? undefined : this.toolRegistration?.identity;
+      if (registrationError && this.toolRegistration) body = { ...body, owner: this.toolRegistration.request.instanceId };
+      try {
+        const result = await this.request<T>("POST", path, { ...body, ...identity }, undefined, signal);
+        if (registrationError) throw registrationError;
+        return result;
+      } catch (error) {
+        if (!(error instanceof ToolSnapshotRegistrationRequired) || !this.toolRegistration) throw error;
+        this.toolRegistration.invalidate(identity?.snapshotId);
+        if (attempt >= 1) throw error;
+        await this.ensureToolRegistration(signal);
+      }
+    }
   }
 
   async snapshot(run: PiSnapshot, signal?: AbortSignal): Promise<PiSnapshot> {
@@ -537,6 +576,7 @@ export class CanvasBridge {
         // Keep the status and route when the server returns an empty or non-JSON error.
       }
       const terminalSnapshotPath = run ? `/runs/${encodeURIComponent(run.runId)}` : "";
+      if (!run && this.toolRegistration && publicReason === "tool_snapshot_registration_required") throw new ToolSnapshotRegistrationRequired("Tool snapshot registration is required");
       if (response.status === 403 && run && path !== terminalSnapshotPath) {
         try {
           const current = await this.request<{ run: PiSnapshot }>("GET", terminalSnapshotPath, undefined, run, signal);

@@ -73,6 +73,19 @@ func (s *Service) AdminAgentSchedulerStatus(actor *model.User) ([]model.AgentRun
 }
 
 func (s *Service) PiCapacityReport(owner string, p model.AgentCapacityReport) error {
+	if p.InstanceID != "" || p.BootID != "" || p.SnapshotID != "" {
+		if p.LoadGeneration < 1 { return toolRegistrationRequired() }
+		if p.InstanceID == "" || p.BootID == "" || p.SnapshotID == "" {
+			return BadAuthRequest("Incomplete worker snapshot identity")
+		}
+		if p.ArtifactFileState != "" && p.ArtifactFileState != "loaded" && p.ArtifactFileState != "changed" && p.ArtifactFileState != "unavailable" && p.ArtifactFileState != "unknown" {
+			return BadAuthRequest("Invalid artifact file diagnostic state")
+		}
+		if err := s.repo.HeartbeatToolRuntime(p.InstanceID, p.BootID, p.SnapshotID, p.LoadGeneration, p.ArtifactFileState); err != nil {
+			return toolRegistrationRequired()
+		}
+		owner = p.InstanceID
+	}
 	if owner == "" || len(owner) > 80 || p.Active < 0 || p.Active > 64 || p.Capacity < 1 || p.Capacity > 64 || p.ClaimReservations < 0 || p.ClaimReservations > 16 || p.DispatchActive < 0 || p.DispatchActive > 16 || p.ReadyQueued < 0 || p.AppliedConfigRevision < 0 || (p.Active > p.Capacity && !p.Draining) {
 		return BadAuthRequest("Invalid Agent capacity")
 	}

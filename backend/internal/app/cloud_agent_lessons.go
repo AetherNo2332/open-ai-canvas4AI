@@ -54,6 +54,11 @@ const (
 
 const cloudAgentLessonBlockMarker = "\n\n## 个人记忆\n\n"
 
+// cloudAgentWorkspaceSegmentMarker 是 Node 在记忆块之后拼接工作区/Harness 文件时的段标题
+// （见 agent/src/system-prompt.ts 的 renderSystemPrompt，格式固定为 "\n\n## Workspace <name>\n"）。
+// 它标出"记忆块结束"：不截断就会把整份提示层算进 memory 分段。
+const cloudAgentWorkspaceSegmentMarker = "\n\n## Workspace "
+
 func cloudAgentLessonScrub(field, text string) error {
 	for _, entry := range cloudAgentLessonLeakPatterns {
 		if entry.pattern.MatchString(text) {
@@ -129,6 +134,24 @@ func (s *Service) cloudAgentHasMemories(userID string) bool {
 	return false
 }
 
+// cloudAgentMemorySegmentText 截出系统提示里真正的个人记忆块。
+//
+// 记忆块是在策略编译之后拼到末尾的，但 Node 之后还会追加 Harness 工作区文件
+// （`## Workspace <name>`）。按 `system[index:]` 直接取会把它们一起算进 memory 分段：
+// 实测 37.6 KB 的"个人记忆"里只有 50 字节是记忆，其余是策略与工具描述镜像，
+// 占用面板因此把约 38% 的上下文显示成记忆。分段必须在下一个工作区段之前结束。
+func cloudAgentMemorySegmentText(system string) (string, bool) {
+	index := strings.Index(system, cloudAgentLessonBlockMarker)
+	if index < 0 {
+		return "", false
+	}
+	block := system[index:]
+	if end := strings.Index(block, cloudAgentWorkspaceSegmentMarker); end >= 0 {
+		block = block[:end]
+	}
+	return block, true
+}
+
 // cloudAgentRecordMemorySegment 把系统提示里已经存在的个人记忆块登记为分段。
 // 记忆块是在策略编译之后拼接的，编译器录不到它；不登记就会让"系统提示分段"合计
 // 小于 system 桶，读数看起来像少算了一截。
@@ -136,8 +159,8 @@ func cloudAgentRecordMemorySegment(policy *cloudAgentPolicySnapshot, system stri
 	if policy == nil {
 		return
 	}
-	index := strings.Index(system, cloudAgentLessonBlockMarker)
-	if index < 0 {
+	block, ok := cloudAgentMemorySegmentText(system)
+	if !ok {
 		for i := range policy.SystemSegments {
 			if policy.SystemSegments[i].Key == "memory" {
 				policy.SystemSegments = append(policy.SystemSegments[:i], policy.SystemSegments[i+1:]...)
@@ -146,7 +169,27 @@ func cloudAgentRecordMemorySegment(policy *cloudAgentPolicySnapshot, system stri
 		}
 		return
 	}
-	cloudAgentRecordSystemSegment(policy, "memory", "个人记忆", system[index:])
+	cloudAgentRecordSystemSegment(policy, "memory", "个人记忆", block)
+}
+
+// cloudAgentRecordHarnessSegments 把 Node 拼在系统提示末尾的 Harness 工作区文件登记为
+// 独立分段。它们跟在个人记忆块之后：不截断会算进 memory，截断后若不单独登记就落进
+// "其它"，占用面板仍然看不出那一大截到底是什么。只登记确实出现在这份信封里的块，
+// 被装配层跳过的文件不会被凭空计量。
+func cloudAgentRecordHarnessSegments(policy *cloudAgentPolicySnapshot, parts *cloudAgentHarnessSnapshot, system string) {
+	if policy == nil || parts == nil {
+		return
+	}
+	for _, entry := range parts.Context {
+		if strings.TrimSpace(entry.Name) == "" || strings.TrimSpace(entry.Text) == "" {
+			continue
+		}
+		block := "\n\n## Workspace " + entry.Name + "\n" + entry.Text
+		if !strings.Contains(system, block) {
+			continue
+		}
+		cloudAgentRecordSystemSegment(policy, "workspace:"+entry.Name, "Workspace "+entry.Name, block)
+	}
 }
 
 func cloudAgentRememberLesson(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall) (any, error) {

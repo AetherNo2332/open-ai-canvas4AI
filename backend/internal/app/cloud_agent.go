@@ -719,9 +719,10 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	//   - 不可变快照：服务端策略身份 + 工具 schema 身份在这里定型；
 	//   - 占位任务：承载本轮报价预留，worker 永不领取。
 	runtime := cloudAgentRuntime{
-		Subagent:     req.subagent,
-		Workspace:    &workspace,
-		RuntimeRunID: id, Request: req, Policy: policy, ParentID: linkedParentID, Fingerprint: fingerprint,
+		ToolSchemaVersion: cloudAgentToolSchemaVersion,
+		Subagent:          req.subagent,
+		Workspace:         &workspace,
+		RuntimeRunID:      id, Request: req, Policy: policy, ParentID: linkedParentID, Fingerprint: fingerprint,
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
 		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
 		Plan: inheritedPlan, StepLimits: stepLimits,

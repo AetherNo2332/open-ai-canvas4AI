@@ -1336,6 +1336,31 @@ paths:
           $ref: "#/components/responses/Envelope"
         "401":
           $ref: "#/components/responses/Error"
+  /auth/password:
+    post:
+      tags: [auth]
+      summary: 登录状态下修改密码，保留当前会话并让其他会话失效
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword: { type: string, minLength: 8 }
+      responses:
+        "200":
+          $ref: "#/components/responses/Envelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
   /projects:
     get:
       tags: [projects]

@@ -31,6 +31,8 @@ var ErrTextReplayClosed = errors.New("该文本任务已结束")
 
 var ErrEmailVerificationCodeInvalid = errors.New("邮箱验证码已失效，请重新获取")
 
+var ErrPasswordChangeRejected = errors.New("账号状态已变化，密码未更新")
+
 var ErrProjectAssetFolderNotEmpty = errors.New("资产文件夹不为空，无法删除")
 
 var ErrProjectHasActiveTasks = errors.New("项目中还有进行中的任务，请等待完成后再操作")
@@ -40,7 +42,9 @@ var ErrProjectUnitShotsChanged = errors.New("镜头已被修改，请刷新后�
 var ErrCanvasRevisionConflict = errors.New("画布已被更新，请刷新后重试")
 
 type Repository struct {
-	db *gorm.DB
+	db                    *gorm.DB
+	toolRuntimeInstanceID string
+	workerToolSnapshotID  string
 }
 
 type UserStorageUsage struct {
@@ -316,6 +320,26 @@ func (r *Repository) ResetUserPasswordWithEmailVerification(userID string, email
 		return tx.Model(&model.EmailVerificationCode{}).
 			Where("email = ? AND purpose = ? AND used_at IS NULL", email, purpose).
 			Update("used_at", usedAt).Error
+	})
+}
+
+// ChangeUserPassword 在同一事务里更新密码并清掉其他登录会话。
+// keepSessionID 是发起改密的当前会话，保留它以免用户改完密码立刻被登出。
+func (r *Repository) ChangeUserPassword(userID string, passwordHash string, keepSessionID string, updatedAt time.Time) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.User{}).
+			Where("id = ? AND status = ? AND password_hash <> ''", userID, model.UserStatusActive).
+			Updates(map[string]any{"password_hash": passwordHash, "updated_at": updatedAt})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrPasswordChangeRejected
+		}
+		if keepSessionID == "" {
+			return tx.Delete(&model.AuthSession{}, "user_id = ?", userID).Error
+		}
+		return tx.Delete(&model.AuthSession{}, "user_id = ? AND id <> ?", userID, keepSessionID).Error
 	})
 }
 

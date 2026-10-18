@@ -6,7 +6,7 @@
     "scripts": {
         "dev": "vite --host 0.0.0.0 --port 3000",
         "build": "tsc --noEmit && vite build",
-        "pretest": "bun test test/tiptap-dependency-versions.test.ts test/admin-ui-regressions.test.ts test/announcement-prompt-regressions.test.ts test/password-reset.test.ts test/oss-settings.test.ts test/channel-model-editor-form.test.ts test/channel-model-price-tier-form.test.ts test/admin-logical-models.test.ts && bun test test/canvas-grid-viewport.test.tsx",
+        "pretest": "bun test test/tiptap-dependency-versions.test.ts test/admin-ui-regressions.test.ts test/announcement-prompt-regressions.test.ts test/password-reset.test.ts test/account-security.test.ts test/oss-settings.test.ts test/channel-model-editor-form.test.ts test/channel-model-price-tier-form.test.ts test/admin-logical-models.test.ts && bun test test/canvas-grid-viewport.test.tsx",
         "typecheck": "tsc --noEmit",
         "test:canvas": "bun test test/canvas-media-performance.test.ts test/canvas-node-title-interaction.test.ts test/canvas-spatial-index.test.ts",
         "test": "bun test",
@@ -45,7 +45,6 @@
         "@tiptap/starter-kit": "3.28.0",
         "@uiw/react-codemirror": "^4.25.11",
         "@vidstack/react": "1.15.6",
-        "animejs": "^4.5.0",
         "antd": "^6.5.1",
         "axios": "^1.18.1",
         "class-variance-authority": "^0.7.1",

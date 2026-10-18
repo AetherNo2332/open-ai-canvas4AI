@@ -212,9 +212,9 @@ func (r *Repository) ClaimPiAgent(owner string, until time.Time) (*model.CloudAg
 	return r.ClaimPiAgentConfigured(owner, until, model.DefaultAgentSchedulerSetting())
 }
 
-func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p model.AgentSchedulerSetting) (*model.CloudAgentExecution, error) {
+func (r *Repository) ClaimPiAgentConfigured(owner string, until time.Time, p model.AgentSchedulerSetting, guards ...func(*Repository, model.CloudAgentExecution) (bool, error)) (*model.CloudAgentExecution, error) {
 	if r.db.Migrator().HasTable(&model.AgentAdmissionCounter{}) {
-		return r.ClaimPiAgentFair(owner, until, p)
+		return r.ClaimPiAgentFair(owner, until, p, guards...)
 	}
 	var candidates []model.CloudAgentExecution
 	// SQLite 把 time.Time 按写入方的时区偏移序列化成文本再比较：混用本地时区参数会把
@@ -596,6 +596,56 @@ func canonicalJSONValue(value any) any {
 	return value
 }
 
+// cloudAgentMutationOrderGap 是同一条画布台账里相邻两条记录的最小时间间隔。
+const cloudAgentMutationOrderGap = time.Microsecond
+
+// cloudAgentMutationMonotonicAt 把台账时间戳推到前一条之后，保证"先后"是真的全序。
+//
+// 撤销取最近一条画布变更、重做取最近一次撤销，两者都按时间戳排序。可时间戳的精度
+// 不够当时钟粒度粗（Windows 上连续两次操作实测拿到完全相同的时间），排序就退化到
+// 按随机 ID 比较 —— 撤销会越过"已提交任务"栅栏去撤更早的编辑，重做会重放更早那次
+// 撤销。这里只在同一事务内做微秒级的顺延，读取出来的时间与真实时钟只差几微秒。
+func cloudAgentMutationMonotonicAt(previous time.Time, at time.Time) time.Time {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	at = at.UTC()
+	if previous.IsZero() {
+		return at
+	}
+	previous = previous.UTC()
+	if !at.After(previous) {
+		return previous.Add(cloudAgentMutationOrderGap)
+	}
+	return at
+}
+
+// cloudAgentMutationLatestAt 读取同一画布台账里某列的最新时间戳（没有记录时返回零值）。
+// 只用单列排序：并列记录的值相同，取到哪一条都不影响最大值。NULL 必须先排除：
+// PostgreSQL 的降序默认把 NULL 排在前面，不排除就会读到空值而误以为没有前一条。
+func cloudAgentMutationLatestAt(tx *gorm.DB, userID, runID, canvasID, column string) (time.Time, error) {
+	var latest model.CloudAgentCanvasMutation
+	err := tx.Select(column).
+		Where("user_id = ? AND run_id = ? AND canvas_id = ?", userID, runID, canvasID).
+		Where(column + " IS NOT NULL").
+		Order(column + " DESC").First(&latest).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	switch column {
+	case "undone_at":
+		if latest.UndoneAt == nil {
+			return time.Time{}, nil
+		}
+		return *latest.UndoneAt, nil
+	default:
+		return latest.CreatedAt, nil
+	}
+}
+
 func (r *Repository) CreateCloudAgentCanvasMutation(mutation *model.CloudAgentCanvasMutation) error {
 	// A new edit creates a branch. Clear abandoned redos and insert the edit
 	// together, including callers outside the usual Agent checkpoint transaction.
@@ -605,6 +655,11 @@ func (r *Repository) CreateCloudAgentCanvasMutation(mutation *model.CloudAgentCa
 			Update("status", "discarded").Error; err != nil {
 			return err
 		}
+		previous, err := cloudAgentMutationLatestAt(tx, mutation.UserID, mutation.RunID, mutation.CanvasID, "created_at")
+		if err != nil {
+			return err
+		}
+		mutation.CreatedAt = cloudAgentMutationMonotonicAt(previous, mutation.CreatedAt)
 		return tx.Create(mutation).Error
 	})
 }
@@ -635,16 +690,33 @@ func (r *Repository) CloudAgentCanvasMutationForRedo(userID, runID, canvasID str
 }
 
 func (r *Repository) MarkCloudAgentCanvasMutationUndone(userID, runID, mutationID string, undoneAt time.Time) error {
-	result := r.db.Model(&model.CloudAgentCanvasMutation{}).
-		Where("id = ? AND user_id = ? AND run_id = ? AND status = ?", mutationID, userID, runID, "applied").
-		Updates(map[string]any{"status": "undone", "undone_at": undoneAt})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return ErrCreationConflict
-	}
-	return nil
+	// 撤销时间构成重做栈的顺序：与创建时间同理，必须严格晚于上一次撤销，
+	// 否则同一毫秒内的两次撤销会按创建时间（甚至随机 ID）重放，顺序就反了。
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var target model.CloudAgentCanvasMutation
+		if err := tx.Select("id", "canvas_id").
+			Where("id = ? AND user_id = ? AND run_id = ?", mutationID, userID, runID).First(&target).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// 与更新路径保持同一个冲突语义：调用方按"这一项已不可撤销"处理。
+				return ErrCreationConflict
+			}
+			return err
+		}
+		previous, err := cloudAgentMutationLatestAt(tx, userID, runID, target.CanvasID, "undone_at")
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&model.CloudAgentCanvasMutation{}).
+			Where("id = ? AND user_id = ? AND run_id = ? AND status = ?", mutationID, userID, runID, "applied").
+			Updates(map[string]any{"status": "undone", "undone_at": cloudAgentMutationMonotonicAt(previous, undoneAt)})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrCreationConflict
+		}
+		return nil
+	})
 }
 
 func (r *Repository) MarkCloudAgentCanvasMutationReapplied(userID, runID, mutationID string) error {
