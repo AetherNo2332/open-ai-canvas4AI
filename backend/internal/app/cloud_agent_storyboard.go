@@ -191,6 +191,13 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 	if beforeHash != args.SnapshotHash {
 		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
 	}
+	// 创建时不带引用声明的分镜在历史画布上仍然允许；带 referenceNodeIds 或行 assetBindings
+	// 才要求先完成规范化（否则服务端不会派生托管连接）。
+	if cloudAgentStoryboardCreateWritesReferences(args) {
+		if err := validateCloudAgentReferenceMigration(doc); err != nil {
+			return nil, err
+		}
+	}
 	for _, node := range creationMaps(doc["nodes"]) {
 		if stringValue(node["id"]) == args.NodeID {
 			return nil, BadAuthRequest("分镜节点ID已存在")
@@ -263,6 +270,12 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	beforeHash := cloudAgentCanvasHash(doc)
 	if beforeHash != args.SnapshotHash {
 		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
+	}
+	// 行素材声明（patch.assetBindings）属于引用字段：历史画布必须先规范化。
+	if cloudAgentStoryboardEditWritesReferences(args) {
+		if err := validateCloudAgentReferenceMigration(doc); err != nil {
+			return nil, err
+		}
 	}
 	node, storyboard, rows, err := storyboardNodeFromDocument(doc, args.NodeID)
 	if err != nil {

@@ -1,6 +1,12 @@
 package app
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+
+	"infinite-canvas/backend/internal/canvas/contract"
+	"infinite-canvas/backend/internal/canvas/references"
+)
 
 // cloudAgentLegacyConnectionOperations 是模型可见合同里已经停用的画布操作。连线改由
 // 服务端按引用字段派生，这些名字只剩一个用途：识别并拒绝旧载荷（关闭前生成的检查点、
@@ -50,6 +56,109 @@ func validateCloudAgentReferenceOperations(ops []agentCanvasOp) error {
 		}
 	}
 	return nil
+}
+
+// cloudAgentReferenceMigrationRequired 是历史画布（没有 referenceFieldsVersion）上的统一
+// 引用门禁：commands.Service.Execute 已覆盖浏览器写入口与生成提交，但 Agent 的字段级画布
+// 编辑走 app 侧计划器与整文档保存——没有该标记时 Reconcile 不运行，模型写下的引用字段不会
+// 派生托管连接，等于静默失效。只读路径与不依赖该标记的编辑（改名、位置、正文、复制、删除、
+// 排序、绘图、批量表既有行字段）不受影响。
+func cloudAgentReferenceMigrationRequired() error {
+	return cloudAgentFieldError("snapshotHash", "reference_migration_required",
+		"历史画布需要先完成一次引用规范化再编辑引用字段；请先在画布中完成引用规范化后重试")
+}
+
+func validateCloudAgentReferenceMigration(doc map[string]any) error {
+	if references.Enabled(doc) {
+		return nil
+	}
+	return cloudAgentReferenceMigrationRequired()
+}
+
+func cloudAgentDocumentNode(doc map[string]any, id string) map[string]any {
+	for _, node := range creationMaps(doc["nodes"]) {
+		if stringValue(node["id"]) == id {
+			return node
+		}
+	}
+	return nil
+}
+
+// cloudAgentGenerationSpecDeclaresReferences 只回答"这份生成合同是否声明了引用"：非法的
+// 生成合同由节点能力校验拒绝，不在这里下结论。
+func cloudAgentGenerationSpecDeclaresReferences(value any) bool {
+	if value == nil {
+		return false
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	spec, err := contract.Decode(encoded)
+	if err != nil {
+		return false
+	}
+	return len(spec.ReferenceBindings) > 0
+}
+
+// cloudAgentCanvasOpsWriteReferences 判断 canvas_apply_ops 这批操作是否写入声明式引用字段：
+// metadata.inputBindings 只在引用合同下有意义；generationSpec 只有在"新合同声明引用"或
+// "覆盖掉节点已有的引用声明"时才算引用变更，纯规格调整（时长、画幅）不在这里拦截。
+func cloudAgentCanvasOpsWriteReferences(doc map[string]any, ops []agentCanvasOp) bool {
+	for _, op := range ops {
+		if op.Type != "update_node" {
+			continue
+		}
+		if _, exists := op.Patch["inputBindings"]; exists {
+			return true
+		}
+		value, exists := op.Patch["generationSpec"]
+		if !exists {
+			continue
+		}
+		if cloudAgentGenerationSpecDeclaresReferences(value) {
+			return true
+		}
+		if node := cloudAgentDocumentNode(doc, op.ID); node != nil {
+			if cloudAgentGenerationSpecDeclaresReferences(cloudAgentNodeMetadata(node)["generationSpec"]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cloudAgentStoryboardEditWritesReferences 覆盖 canvas_edit_storyboard 里引用合同专属的两种
+// 语义：共享引用声明（set_references）和行素材声明（patch.assetBindings）。产物归属
+// （bind_output／unbind_output）写的是历史画布同样有效的行归属字段，不在这里拦。
+func cloudAgentStoryboardEditWritesReferences(args cloudAgentStoryboardEditArgs) bool {
+	if args.Action == "set_references" {
+		return true
+	}
+	_, exists := args.Patch["assetBindings"]
+	return exists
+}
+
+func cloudAgentStoryboardRowsWriteReferences(rows []map[string]any) bool {
+	for _, row := range rows {
+		if _, exists := row["assetBindings"]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func cloudAgentStoryboardCreateWritesReferences(args cloudAgentStoryboardCreateArgs) bool {
+	return args.ReferenceNodeIDs != nil || cloudAgentStoryboardRowsWriteReferences(args.Rows)
+}
+
+// validateCloudAgentReferenceDocument 是画布级前置条件：只有会写引用字段的变更才要求文档
+// 先规范化，其他编辑继续可用，避免把历史画布整体锁死。
+func validateCloudAgentReferenceDocument(doc map[string]any, ops []agentCanvasOp) error {
+	if !cloudAgentCanvasOpsWriteReferences(doc, ops) {
+		return nil
+	}
+	return validateCloudAgentReferenceMigration(doc)
 }
 
 // Keep conditional input contracts beside the shared tool catalog. Both Go's

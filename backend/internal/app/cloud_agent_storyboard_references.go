@@ -49,6 +49,14 @@ func prepareCloudAgentStoryboardReferenceEdit(repo *repository.Repository, userI
 	if args.SnapshotHash != beforeHash {
 		return nil, cloudAgentSnapshotConflictError("画布已变化，请重新读取后修改引用")
 	}
+	// 共享引用声明（set_references）是引用合同专属语义：历史画布必须先完成一次规范化，
+	// 否则服务端不会按字段派生托管连接。产物归属（bind_output／unbind_output）写的是
+	// 历史画布同样有效的行归属字段，不受这道门禁影响。
+	if args.Action == "set_references" {
+		if err := validateCloudAgentReferenceMigration(doc); err != nil {
+			return nil, err
+		}
+	}
 	_, board, _, err := storyboardNodeFromDocument(doc, args.NodeID)
 	if err != nil {
 		return nil, err

@@ -78,6 +78,11 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 			Field: "snapshotHash", Issue: "stale_snapshot",
 		}
 	}
+	// 画布级前置条件：写声明式引用字段前，历史画布必须先完成一次规范化。审批预览与
+	// 实际执行共用这里，所以两侧拿到同一个 reference_migration_required。
+	if err := validateCloudAgentReferenceDocument(doc, args.Ops); err != nil {
+		return nil, err
+	}
 	items, err := applyCloudAgentCanvasPlan(doc, args.Ops)
 	if err != nil {
 		return nil, err
@@ -104,8 +109,11 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 
 func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloudAgentApprovalPreviewItem, error) {
 	// 计划器自身也守住引用合同：调用方即使绕过预览/执行入口直接规划，也不能把旧的
-	// 连线操作或绕过 patch 混进候选文档。
+	// 连线操作、绕过 patch 或历史画布上的引用字段写入混进候选文档。
 	if err := validateCloudAgentReferenceOperations(ops); err != nil {
+		return nil, err
+	}
+	if err := validateCloudAgentReferenceDocument(doc, ops); err != nil {
 		return nil, err
 	}
 	// The planner is also used for previews: a rejected batch must leave its

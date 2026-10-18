@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/canvas/references"
 )
 
 // Task 8：模型可见合同不再包含画布连线操作。连线改由服务端按引用字段派生，
@@ -418,4 +420,274 @@ func agentLegacyCanvasApplyOpsSnapshot(t *testing.T, tools []map[string]any) []m
 	}
 	t.Fatal("未找到 canvas_apply_ops")
 	return nil
+}
+
+// ---- Task 11：历史画布（无 referenceFieldsVersion）必须先完成规范化，字段编辑才生效 ----
+
+// agentReferenceFieldOps 是一批"声明引用字段"的 canvas_apply_ops：新增一个输入节点并在
+// 同一批里用 inputBindings 声明对既有图片节点的引用。legacy 画布整批拒绝，v1 画布正常派生。
+func agentReferenceFieldOps() []map[string]any {
+	return []map[string]any{
+		{"type": "add_node", "id": "ref-target", "nodeType": "compare", "title": "对比"},
+		{"type": "update_node", "id": "ref-target", "patch": map[string]any{"inputBindings": []map[string]any{
+			{"id": "node:cat", "nodeId": "cat", "mediaType": "image", "role": "reference", "order": float64(0), "resolution": "latest"},
+		}}},
+	}
+}
+
+func agentCanvasOpsCall(t *testing.T, callID, snapshotHash string, ops []map[string]any) cloudAgentCall {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"snapshotHash": snapshotHash, "ops": ops})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := cloudAgentCall{ID: callID}
+	call.Function.Name, call.Function.Arguments = "canvas_apply_ops", string(raw)
+	return call
+}
+
+func agentAssertMigrationRequired(t *testing.T, err error) *cloudAgentFieldArgumentError {
+	t.Helper()
+	if err == nil {
+		t.Fatal("历史画布上的引用字段编辑未被拒绝")
+	}
+	var fieldErr *cloudAgentFieldArgumentError
+	if !errors.As(err, &fieldErr) || fieldErr.Issue != "reference_migration_required" {
+		t.Fatalf("历史画布必须先规范化，实际错误：%v", err)
+	}
+	if fieldErr.Field != "snapshotHash" {
+		t.Fatalf("迁移门禁应指向画布快照字段，实际：%s", fieldErr.Field)
+	}
+	return fieldErr
+}
+
+func agentCanvasPayload(t *testing.T, s *Service, canvasID string) string {
+	t.Helper()
+	stored, err := s.repo.CanvasProjectForUser("user", canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stored.PayloadJSON
+}
+
+// TestAgentLegacyCanvasRequiresMigration：审批预览与真实执行都拒绝历史画布上的引用字段写入，
+// 文档逐字节不变；同一操作在 v1 画布上正常通过，纯画布编辑在历史画布上仍可用。
+func TestAgentLegacyCanvasRequiresMigration(t *testing.T) {
+	s, db, args := agentMediaFixture(t)
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := agentCanvasPayload(t, s, "agent-canvas")
+
+	ops := agentReferenceFieldOps()
+	call := agentCanvasOpsCall(t, "legacy-field", args.SnapshotHash, ops)
+	if _, err := prepareCloudAgentCanvasMutation(s.repo, "user", "agent-canvas", call); err != nil {
+		agentAssertMigrationRequired(t, err)
+	} else {
+		t.Fatal("审批预览接受了历史画布上的引用字段写入")
+	}
+	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", call, policy); err != nil {
+		agentAssertMigrationRequired(t, err)
+	} else {
+		t.Fatal("真实执行接受了历史画布上的引用字段写入")
+	}
+	if got := agentCanvasPayload(t, s, "agent-canvas"); got != legacy {
+		t.Fatal("被拒绝的历史画布引用写入改写了文档")
+	}
+
+	// 不依赖 referenceFieldsVersion 的编辑继续可用：历史画布不该被整体锁死。
+	plain := agentCanvasOpsCall(t, "legacy-plain", args.SnapshotHash, []map[string]any{
+		{"type": "update_node", "id": "cat", "patch": map[string]any{"title": "历史画布改名"}},
+	})
+	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", plain, policy); err != nil {
+		t.Fatalf("历史画布上的普通编辑被过度拦截：%v", err)
+	}
+
+	// v1 反向用例：同一批引用字段操作正常通过，并由服务端派生托管连接。
+	canvas, err := s.repo.CanvasProjectForUser("user", "agent-canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc["referenceFieldsVersion"] = 1
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Model(canvas).Update("payload_json", string(encoded)).Error; err != nil {
+		t.Fatal(err)
+	}
+	args.SnapshotHash = cloudAgentCanvasHash(doc)
+	migrated := agentCanvasOpsCall(t, "v1-field", args.SnapshotHash, agentReferenceFieldOps())
+	if _, err := applyCloudAgentCanvas(s.repo, "user", "agent-canvas", migrated, policy); err != nil {
+		t.Fatalf("v1 画布拒绝了同一引用字段操作：%v", err)
+	}
+	after, err := creationDocument(agentCanvasPayload(t, s, "agent-canvas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived := false
+	for _, edge := range creationMaps(after["connections"]) {
+		if stringValue(edge["fromNodeId"]) == "cat" && stringValue(edge["toNodeId"]) == "ref-target" && stringValue(edge["managedBy"]) == references.ManagedBy {
+			derived = true
+		}
+	}
+	if !derived {
+		t.Fatalf("v1 画布没有派生托管连接：%+v", creationMaps(after["connections"]))
+	}
+}
+
+// TestAgentLegacyStoryboardReferencesRequireMigration：分镜共享引用与行素材声明同样受门禁保护；
+// 不含引用声明的分镜创建与改名在历史画布上继续可用。
+func TestAgentLegacyStoryboardReferencesRequireMigration(t *testing.T) {
+	s, db, canvas := cloudAgentStoryboardFixture(t)
+	// 历史画布上创建不含引用的分镜仍然允许（门禁只拦引用字段）。
+	rows := createCloudAgentStoryboardForTest(t, s, canvas)
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(agentCanvasPayload(t, s, canvas.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := agentCanvasPayload(t, s, canvas.ID)
+
+	setReferences := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "legacy-refs", map[string]any{
+		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "set_references", "referenceNodeIds": []any{"asset"},
+	})
+	if _, err := prepareCloudAgentStoryboardEdit(s.repo, "user", canvas.ID, setReferences); err != nil {
+		agentAssertMigrationRequired(t, err)
+	} else {
+		t.Fatal("审批预览接受了历史画布上的共享引用声明")
+	}
+	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, setReferences, policy); err != nil {
+		agentAssertMigrationRequired(t, err)
+	} else {
+		t.Fatal("真实执行接受了历史画布上的共享引用声明")
+	}
+
+	rowAssets := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "legacy-rows", map[string]any{
+		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "update", "rowId": rows[0]["id"],
+		"patch": map[string]any{"assetBindings": []any{map[string]any{"nodeId": "asset", "role": "style", "priority": 80}}},
+	})
+	if _, err := prepareCloudAgentStoryboardEdit(s.repo, "user", canvas.ID, rowAssets); err != nil {
+		agentAssertMigrationRequired(t, err)
+	} else {
+		t.Fatal("审批预览接受了历史画布上的行素材声明")
+	}
+	if got := agentCanvasPayload(t, s, canvas.ID); got != legacy {
+		t.Fatal("被拒绝的历史画布分镜引用写入改写了文档")
+	}
+
+	// v1 反向用例：同一 set_references 正常通过。
+	doc["referenceFieldsVersion"] = 1
+	doc["nodes"] = append(creationMaps(doc["nodes"]), map[string]any{"id": "asset", "type": "image", "metadata": map[string]any{}})
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Model(canvas).Update("payload_json", string(encoded)).Error; err != nil {
+		t.Fatal(err)
+	}
+	migrated := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "v1-refs", map[string]any{
+		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "set_references", "referenceNodeIds": []any{"asset"},
+	})
+	plan, err := prepareCloudAgentStoryboardEdit(s.repo, "user", canvas.ID, migrated)
+	if err != nil {
+		t.Fatalf("v1 画布拒绝了同一共享引用声明：%v", err)
+	}
+	if plan == nil || plan.Preview.Kind != "canvas_mutation" {
+		t.Fatalf("v1 预览缺少审批信息：%+v", plan)
+	}
+	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, migrated, policy); err != nil {
+		t.Fatalf("v1 画布执行共享引用声明失败：%v", err)
+	}
+	after, err := creationDocument(agentCanvasPayload(t, s, canvas.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, board, _, err := storyboardNodeFromDocument(after, "storyboard-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cloudAgentStrings(board["referenceNodeIds"])) != 1 {
+		t.Fatalf("v1 画布没有写入共享引用：%+v", board["referenceNodeIds"])
+	}
+}
+
+// TestAgentReferenceContractGatePrecedence：参数合同先于画布状态判定——旧连线操作在任何画布上
+// 都是 connection_ops_disabled；只有符合 schema 的引用字段写入才落到 reference_migration_required。
+func TestAgentReferenceContractGatePrecedence(t *testing.T) {
+	legacy := map[string]any{"nodes": []any{map[string]any{"id": "cat", "type": "image"}, map[string]any{"id": "target", "type": "compare", "metadata": map[string]any{}}}, "connections": []any{}}
+	migrated := map[string]any{"referenceFieldsVersion": 1, "nodes": []any{map[string]any{"id": "cat", "type": "image"}, map[string]any{"id": "target", "type": "compare", "metadata": map[string]any{}}}, "connections": []any{}}
+	fieldOps := []agentCanvasOp{{Type: "update_node", ID: "target", Patch: map[string]any{"inputBindings": []any{map[string]any{"id": "node:cat", "nodeId": "cat", "mediaType": "image", "role": "reference", "order": float64(0), "resolution": "latest"}}}}}
+	connectionOp := []agentCanvasOp{{Type: "connect_nodes", ID: "edge", FromNodeID: "cat", ToNodeID: "target"}}
+
+	for name, tc := range map[string]struct {
+		doc    map[string]any
+		ops    []agentCanvasOp
+		issue  string
+		field  string
+		accept bool
+	}{
+		"legacy connection":   {legacy, connectionOp, "connection_ops_disabled", "ops[0].type", false},
+		"migrated connection": {migrated, connectionOp, "connection_ops_disabled", "ops[0].type", false},
+		"legacy references":   {legacy, fieldOps, "reference_migration_required", "snapshotHash", false},
+		"migrated references": {migrated, fieldOps, "", "", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			doc, err := creationDocument(mustJSON(tc.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, _ := json.Marshal(doc)
+			_, err = applyCloudAgentCanvasPlan(doc, tc.ops)
+			if tc.accept {
+				if err != nil {
+					t.Fatalf("v1 画布拒绝了引用字段写入：%v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("操作未被拒绝")
+			}
+			var fieldErr *cloudAgentFieldArgumentError
+			if !errors.As(err, &fieldErr) || fieldErr.Issue != tc.issue || fieldErr.Field != tc.field {
+				t.Fatalf("判定顺序或字段不正确：%v", err)
+			}
+			after, _ := json.Marshal(doc)
+			if string(before) != string(after) {
+				t.Fatal("被拒绝的操作改写了文档")
+			}
+		})
+	}
+}
+
+// TestAgentLegacyCanvasReadsStayAvailable：只读路径不受迁移门禁影响——历史画布仍可读取，
+// 且读取不修改文档。
+func TestAgentLegacyCanvasReadsStayAvailable(t *testing.T) {
+	s, _, canvas := cloudAgentStoryboardFixture(t)
+	createCloudAgentStoryboardForTest(t, s, canvas)
+	doc, err := creationDocument(agentCanvasPayload(t, s, canvas.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := json.Marshal(doc)
+	state, err := cloudAgentCanvasState(s.repo, "user", canvas.ID, doc, 0, nil, 0)
+	if err != nil {
+		t.Fatalf("历史画布读取被门禁挡住：%v", err)
+	}
+	stateMap, _ := state.(map[string]any)
+	if stateMap == nil || len(creationMaps(stateMap["nodes"])) == 0 {
+		t.Fatalf("历史画布读取结果不完整：%+v", state)
+	}
+	after, _ := json.Marshal(doc)
+	if string(before) != string(after) {
+		t.Fatal("只读路径修改了历史画布文档")
+	}
 }
