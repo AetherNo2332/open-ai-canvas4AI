@@ -473,7 +473,7 @@ func agentCanvasPayload(t *testing.T, s *Service, canvasID string) string {
 // TestAgentLegacyCanvasRequiresMigration：审批预览与真实执行都拒绝历史画布上的引用字段写入，
 // 文档逐字节不变；同一操作在 v1 画布上正常通过，纯画布编辑在历史画布上仍可用。
 func TestAgentLegacyCanvasRequiresMigration(t *testing.T) {
-	s, db, args := agentMediaFixture(t)
+	s, db, args := agentMediaFixtureWithReferenceVersion(t, 0)
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		t.Fatal(err)

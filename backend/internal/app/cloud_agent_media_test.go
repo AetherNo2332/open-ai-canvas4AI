@@ -13,6 +13,11 @@ import (
 
 func agentMediaFixture(t *testing.T) (*Service, *gorm.DB, cloudAgentMediaArgs) {
 	t.Helper()
+	return agentMediaFixtureWithReferenceVersion(t, 1)
+}
+
+func agentMediaFixtureWithReferenceVersion(t *testing.T, version int) (*Service, *gorm.DB, cloudAgentMediaArgs) {
+	t.Helper()
 	s, db, _, _ := creationTestService(t)
 	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceVolcengineArkVideo), "seedance-test")
 	capability.Video.References.PromptMaxChars = 16000
@@ -32,6 +37,9 @@ func agentMediaFixture(t *testing.T) (*Service, *gorm.DB, cloudAgentMediaArgs) {
 		{"id": "cat", "type": "image", "title": "叮当猫在飞", "position": map[string]any{"x": 10, "y": 300}, "width": 300, "metadata": map[string]any{"status": "success", "storageKey": "resource:ref-one", "content": "https://must-not-expose.invalid/one.png"}},
 		{"id": "hero", "type": "image", "title": "古风奥特曼", "position": map[string]any{"x": 400, "y": 300}, "width": 300, "metadata": map[string]any{"status": "success", "storageKey": "resource:ref-two"}},
 	}, "connections": []any{}}
+	if version > 0 {
+		doc["referenceFieldsVersion"] = version
+	}
 	raw, _ := json.Marshal(doc)
 	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: string(raw)}).Error; err != nil {
 		t.Fatal(err)

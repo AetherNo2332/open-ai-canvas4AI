@@ -71,7 +71,11 @@ func TestCanvasAgentManualOperationConformance(t *testing.T) {
 					if !ok || source == "" || suffix == "" {
 						t.Fatalf("invalid copied-node placeholder %q", typed)
 					}
-					return stringValue(findCopied(source)["id"]) + "-" + suffix
+					copied := findCopied(source)
+					if id := stringValue(copied["id"]); id == "" {
+						t.Fatalf("placeholder %q resolved to an empty copied node id", typed)
+					}
+					return stringValue(copied["id"]) + "-" + suffix
 				default:
 					return value
 				}

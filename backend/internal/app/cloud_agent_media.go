@@ -11,7 +11,6 @@ import (
 
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/canvas/contract"
-	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -410,6 +409,11 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 	}
 	doc, err := creationDocument(canvas.PayloadJSON)
 	if err != nil {
+		return nil, nil, nil, err
+	}
+	// Approval preparation and transactional admission share this gate, so undo
+	// cannot restore a legacy canvas and revive the former edge-writing path.
+	if err := validateCloudAgentReferenceMigration(doc); err != nil {
 		return nil, nil, nil, err
 	}
 	unchanged := args.SnapshotHash != "" && (cloudAgentCanvasHash(doc) == args.SnapshotHash || cloudAgentMediaContentHash(doc) == args.SnapshotHash)
@@ -971,31 +975,8 @@ func createCloudAgentMediaNode(repo *repository.Repository, userID, canvasID str
 		meta["status"], meta["taskId"], meta["taskStatus"] = "loading", task.ID, "queued"
 		delete(meta, "agentDraftRunId")
 	}
-	if references.Enabled(doc) {
-		if err := saveCloudAgentDocument(repo, canvas, doc, policy); err != nil {
-			return err
-		}
-	} else {
-		edges := cloudAgentMediaConnections(creationMaps(doc["connections"]), a)
-		seen := map[string]bool{}
-		for _, edge := range edges {
-			if stringValue(edge["toNodeId"]) == a.NodeID {
-				seen[stringValue(edge["fromNodeId"])] = true
-			}
-		}
-		for _, id := range append(append([]string{}, a.ReferenceNodeIDs...), a.SourceNodeID) {
-			if id == "" || seen[id] {
-				continue
-			}
-			seen[id] = true
-			edges = append(edges, map[string]any{"id": "agent-" + newID(), "fromNodeId": id, "toNodeId": a.NodeID})
-		}
-		// Reused drafts may already contain only a subset of the new references.
-		// Reorder after adding missing edges so chip numbers match submitted arrays.
-		doc["connections"] = cloudAgentMediaConnections(edges, a)
-		if err := saveCloudAgentDocument(repo, canvas, doc, policy); err != nil {
-			return err
-		}
+	if err := saveCloudAgentDocument(repo, canvas, doc, policy); err != nil {
+		return err
 	}
 	if len(recorder) > 0 && recorder[0] != nil {
 		stepID := plan.CallID
