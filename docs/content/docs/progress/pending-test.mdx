@@ -5,6 +5,12 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## Agent 技能主动采用与检索修复
+
+- 已实现：系统策略与操作合同补充技能触发规则——本轮已启用技能时先拿任务对照名称与描述，匹配适用范围或触发词即先 `skill_search` 检索再 `skill_read_file` 读取（执行顺序新增第 1 步、「能力使用」节与工具描述同步）；`skill_search` 分词对含汉字且超过 2 字的关键词展开重叠 2-gram，自然语句整句关键词也能命中名称/描述/卡名；零命中不再返回空列表，降级为已启用技能索引并引导直接读取对应技能。策略版本 cloud-agent-system 15、cloud-agent-operations 8。
+- 已验证：`go test ./internal/app -run "SkillSearch|ToolSchemaStaysCompact|CloudAgentPolicyRegisters"` 与 `go test ./internal/prompts/` 通过；工具 schema 实测 36,072 字节，预算显式上调到 36,100。`-run "CloudAgent"` 全量中 6 项既有 e2e 失败经基线对照（stash 本地改动后同样失败）确认与本次改动无关。
+- [ ] 真实运行验收：挂载技能后用自然语言任务观察 Agent 是否主动 `skill_search` / `skill_read_file`；用技能用量统计（skills_load → skill_read_file 转化）对比改动效果。
+
 ## 画布多窗口光标与实时通知
 
 - 已实现：同一账号同一画布的独立窗口会话、顶部居中的可展开设备入口、远端世界坐标光标与拖拽轮廓、退出清理、断线重连与状态补偿；服务端统一分配设备编号，各端名称和颜色一致，仅本机行显示“此窗口”。单窗口隐藏全部设备标记并停止采集，本机鼠标不附加标签。最终节点位置仍走既有 operations，不持久化 Presence。
