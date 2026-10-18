@@ -779,10 +779,24 @@ func applyMigrationPlan(doc map[string]any, plan *migrationPlan) error {
 		if item == nil || len(item.claims) == 0 {
 			return nil
 		}
+		// A declared field is the authority: the old connections only replace it when the
+		// field is missing or the user explicitly picked the connections side. Without
+		// this, choosing "fields" would be overwritten by the very edges it rejected.
+		if item.present && plan.choice != MigrationChoiceConnections {
+			return nil
+		}
 		metadata := meta(node)
 		if plan.kind == "generation" {
 			spec := plan.spec
-			spec.ReferenceBindings = referenceBindings(item.claims)
+			bindings := referenceBindings(item.claims)
+			// Bindings carrying a resource or transient source have no edge that explains
+			// them, so keep them: choosing connections must not drop a real reference.
+			for _, binding := range spec.ReferenceBindings {
+				if binding.NodeID == "" {
+					bindings = append(bindings, binding)
+				}
+			}
+			spec.ReferenceBindings = bindings
 			if err := spec.Validate(); err != nil {
 				return fail("invalid_reference", "generationSpec", err.Error())
 			}
@@ -792,7 +806,16 @@ func applyMigrationPlan(doc map[string]any, plan *migrationPlan) error {
 			}
 			metadata["generationSpec"] = stored
 		} else {
-			metadata["inputBindings"] = bindingValues(item.claims)
+			values := bindingValues(item.claims)
+			if declared, ok := metadata["inputBindings"].([]any); ok {
+				for _, entry := range declared {
+					// Same reasoning as the generation branch: keep edge-less bindings.
+					if value, ok := entry.(map[string]any); ok && str(value["nodeId"]) == "" {
+						values = append(values, value)
+					}
+				}
+			}
+			metadata["inputBindings"] = values
 		}
 		node["metadata"] = metadata
 	}

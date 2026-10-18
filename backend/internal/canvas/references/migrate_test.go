@@ -573,3 +573,78 @@ func TestReferenceMigrationNeverGuessesFrames(t *testing.T) {
 		t.Fatalf("已声明关键帧模式的首帧没有按字段确认：%+v", bindings)
 	}
 }
+
+// 生成合同与普通输入字段各自与旧连线矛盾：用户对每个作用域的选择都必须真的生效。
+const migrationDeclaredChoiceDocument = `{
+  "title": "声明与连线冲突",
+  "nodes": [
+    {"id":"keep","type":"image","metadata":{}},
+    {"id":"edge","type":"image","metadata":{}},
+    {"id":"target","type":"image","metadata":{"generationSpec":{"version":1,"mode":"image","prompt":"画面","options":{},"textInputMode":"prompt-only","referenceBindings":[{"id":"node:keep:reference","nodeId":"keep","mediaType":"image","role":"reference","order":0,"resolution":"latest"}]}}},
+    {"id":"compare","type":"compare","metadata":{"inputBindings":[{"id":"node:keep:reference","nodeId":"keep","mediaType":"image","role":"reference","order":0,"resolution":"latest"}]}}
+  ],
+  "connections": [
+    {"id":"target-edge","fromNodeId":"edge","toNodeId":"target"},
+    {"id":"compare-edge","fromNodeId":"edge","toNodeId":"compare"}
+  ]
+}`
+
+func TestReferenceMigrationRespectsDeclaredReferenceChoice(t *testing.T) {
+	registry := capability.BuiltinRegistry()
+	doc := migrationDocument(t, migrationDeclaredChoiceDocument)
+	before := migrationSnapshot(t, doc)
+	preview := PreviewLegacy(doc, registry)
+	if !preview.Required || len(preview.Conflicts) != 2 {
+		t.Fatalf("冲突识别不稳定：%+v", preview)
+	}
+	found := map[string]bool{}
+	for _, conflict := range preview.Conflicts {
+		found[conflict.ScopeKey] = true
+	}
+	for _, key := range []string{"generation:target", "node:compare"} {
+		if !found[key] {
+			t.Fatalf("缺少作用域冲突 %q：%+v", key, preview.Conflicts)
+		}
+	}
+
+	// 未选择：不落库，文档逐字节不变。
+	pending, err := NormalizeLegacy(doc, nil, registry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending.Conflicts) != 2 || migrationSnapshot(t, pending.Document) != before {
+		t.Fatalf("未决冲突改写了文档：%+v", pending.Conflicts)
+	}
+
+	// 选择 fields：声明侧必须保留，不能被它拒绝的旧连线覆盖。
+	fields := map[string]string{}
+	for _, conflict := range preview.Conflicts {
+		fields[conflict.ScopeKey] = MigrationChoiceFields
+	}
+	kept, err := NormalizeLegacy(doc, fields, registry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := migrationDecodeBindings(t, obj(meta(migrationNode(t, kept.Document, "target"))["generationSpec"])["referenceBindings"]); len(got) != 1 || got[0].NodeID != "keep" {
+		t.Fatalf("生成合同选择了 fields 却被旧连线覆盖：%+v", got)
+	}
+	if got := migrationDecodeBindings(t, meta(migrationNode(t, kept.Document, "compare"))["inputBindings"]); len(got) != 1 || got[0].NodeID != "keep" {
+		t.Fatalf("普通输入选择了 fields 却被旧连线覆盖：%+v", got)
+	}
+
+	// 选择 connections：改用连线侧。
+	connections := map[string]string{}
+	for _, conflict := range preview.Conflicts {
+		connections[conflict.ScopeKey] = MigrationChoiceConnections
+	}
+	applied, err := NormalizeLegacy(doc, connections, registry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := migrationDecodeBindings(t, obj(meta(migrationNode(t, applied.Document, "target"))["generationSpec"])["referenceBindings"]); len(got) != 1 || got[0].NodeID != "edge" {
+		t.Fatalf("生成合同选择了 connections 却没有采用连线：%+v", got)
+	}
+	if got := migrationDecodeBindings(t, meta(migrationNode(t, applied.Document, "compare"))["inputBindings"]); len(got) != 1 || got[0].NodeID != "edge" {
+		t.Fatalf("普通输入选择了 connections 却没有采用连线：%+v", got)
+	}
+}
