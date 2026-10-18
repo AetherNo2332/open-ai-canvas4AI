@@ -2,6 +2,7 @@ import type { Operation } from "./command-contract.generated";
 import type { CanvasDocument } from "./canvas-event-projection";
 import { canvasTimelineCommands } from "./canvas-timeline-commands";
 import { canvasDrawingCommands } from "./canvas-drawing-commands";
+import { buildCanvasReferenceEdit } from "./canvas-reference-edits";
 import { canvasPrevisCommands, type PrevisEditorFields } from "./canvas-previs-commands";
 export type CanvasCapabilities = {
     protocolVersion: number;
@@ -33,6 +34,7 @@ function unmapped(id: string, paths: Set<string>) {
  * edits fail visibly until their actual domain operation has been migrated. */
 export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocument, capabilities: CanvasCapabilities): Operation[] {
     const operations: Operation[] = [];
+    const referenceFields = after.referenceFieldsVersion === 1;
     const oldNodes = entities(before, "nodes"),
         nextNodes = entities(after, "nodes");
     const oldById = new Map(oldNodes.map((n) => [n.id, n])),
@@ -40,7 +42,7 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
     const oldEdges = entities(before, "connections"),
         nextEdges = entities(after, "connections"),
         nextEdgeIds = new Set(nextEdges.map((e) => e.id));
-    for (const edge of oldEdges) if (!nextEdgeIds.has(edge.id)) operations.push({ type: "delete_connection", id: edge.id });
+    for (const edge of oldEdges) if (!nextEdgeIds.has(edge.id) && !(referenceFields && edge.managedBy === "reference-fields-v1")) operations.push({ type: "delete_connection", id: edge.id });
     const removed = new Set(oldNodes.filter((n) => !nextById.has(n.id)).map((n) => n.id));
     const implicit = new Set<string>();
     for (const node of oldNodes) if (removed.has(node.id)) for (const id of node.metadata?.batchChildIds || []) if (removed.has(id)) implicit.add(id);
@@ -67,6 +69,10 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             if (node.metadata?.status === "idle" || node.metadata?.status === "success") claim(paths, "metadata.status");
         }
         const patch: Record<string, unknown> = {};
+        if (referenceFields && node.type === "script" && !same(previous?.metadata?.storyboard?.referenceNodeIds || [], node.metadata?.storyboard?.referenceNodeIds || [])) {
+            operations.push(...buildCanvasReferenceEdit(after, { kind: "set_board_references", nodeId: node.id, referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [] }));
+            claim(paths, "metadata.storyboard.referenceNodeIds");
+        }
         for (const [key, field] of Object.entries(descriptor.patchFields)) {
             if (!field.path || !paths.size) continue;
             if (!same(at(previous, field.path), at(node, field.path)) && [...paths].some((path) => path === field.path || path.startsWith(field.path + ".") || field.path.startsWith(path + "."))) {
@@ -88,14 +94,21 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             const nextIds = new Set(rows.map((r: Entity) => r.id));
             const rowById = new Map<string, Entity>(oldRows.map((r: Entity) => [r.id, r]));
             const type = kind === "storyboard" ? "edit_storyboard" : "edit_batch_table";
+            const outputOperations: Operation[] = [];
             for (const row of oldRows) if (!nextIds.has(row.id)) operations.push({ type, id: node.id, action: "remove", rowId: row.id });
             for (const row of rows) {
                 const old = rowById.get(row.id);
                 const rowPaths = new Set(changedPaths(old || {}, row));
                 claim(rowPaths, "id");
                 claim(rowPaths, "shotNumber");
+                if (!old && row.status === "idle") claim(rowPaths, "status");
                 for (const field of kind === "storyboard" ? ["imageNodeId", "videoNodeId"] : ["outputNodeId"]) {
                     if (same(old?.[field], row[field])) continue;
+                    if (referenceFields && kind === "storyboard") {
+                        outputOperations.push({ type: "bind_storyboard_output", id: node.id, rowId: row.id, outputMode: field === "imageNodeId" ? "image" : "video", sourceNodeId: row[field] || "" });
+                        claim(rowPaths, field);
+                        continue;
+                    }
                     const relation = kind === "storyboard" ? "storyboard-output" : "batch-output";
                     const matches = (edge: Entity, target: string) => edge.relation === relation && edge.fromNodeId === node.id && edge.storyboardRowId === row.id && edge.toNodeId === target;
                     // Output IDs are domain effects of real binding edges, never
@@ -111,6 +124,7 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
                 unmapped("row:" + row.id, rowPaths);
                 if (!old || Object.keys(rowPatch).length) operations.push({ type, id: node.id, action: old ? "update" : "append", rowId: row.id, patch: rowPatch });
             }
+            operations.push(...outputOperations);
             const previousOrder = oldRows.map((r: Entity) => r.id),
                 order = rows.map((r: Entity) => r.id);
             if (
@@ -129,6 +143,7 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
     for (const node of nextNodes) if ((oldById.get(node.id)?.parentId || "") !== (node.parentId || "")) operations.push({ type: "set_parent", id: node.id, parentId: node.parentId || "" });
     const edgeById = new Map(oldEdges.map((e) => [e.id, e]));
     for (const edge of nextEdges) {
+        if (referenceFields && edge.managedBy === "reference-fields-v1") continue;
         const previous = edgeById.get(edge.id);
         if (same(previous, edge)) continue;
         const fields = new Set(changedPaths(previous || {}, edge));
@@ -181,6 +196,7 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
     )
         operations.push({ type: "reorder_nodes", id: String(after.id || before.id), nodeIds: nextNodes.map((n) => n.id) });
     if (
+        !referenceFields &&
         !same(
             oldEdges
                 .map((e) => e.id)

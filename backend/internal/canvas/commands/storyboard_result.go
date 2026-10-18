@@ -56,16 +56,11 @@ func ApplyGeneratedStoryboard(doc Document, nodeID, taskID, raw string) (Documen
 		rows = append(rows, result)
 	}
 	board["rows"] = p.mapsAsAny(rows)
-	defaults := []string{"shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets", "shotSize", "narrativeIntent", "viewerPOV", "performanceBlocking", "camera", "motion", "timeBeats", "lightingAndAtmosphere", "continuityOut", "negativePrompt"}
-	seen := map[string]bool{}
-	cols := []any{}
-	for _, col := range append(defaults, stringList(board["visibleColumns"])...) {
-		if !seen[col] {
-			seen[col] = true
-			cols = append(cols, col)
-		}
+	columns := []any{}
+	for _, column := range stringList(board["visibleColumns"]) {
+		columns = append(columns, column)
 	}
-	board["visibleColumns"] = cols
+	board["visibleColumns"] = capability.NormalizeStoryboardColumns(columns)
 	if title := strings.TrimSpace(text(payload["title"])); title != "" {
 		if len([]rune(title)) > 240 {
 			return doc, BadAuthRequest("分镜标题过长")

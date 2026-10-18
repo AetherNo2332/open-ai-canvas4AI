@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"infinite-canvas/backend/internal/canvas/capability"
 )
 
 type BatchDocumentContext struct {
@@ -242,7 +244,7 @@ func ApplyGeneratedBatchDocument(doc Document, taskID, raw string, context Batch
 	}
 	if context.Video {
 		stageID := "list-stage-" + taskID
-		stage := map[string]any{"id": stageID, "type": "script", "metadata": map[string]any{"storyboard": map[string]any{"rows": []any{}, "visibleColumns": []any{}, "referenceNodeIds": []any{}}}}
+		stage := map[string]any{"id": stageID, "type": "script", "metadata": map[string]any{"storyboard": map[string]any{"rows": []any{}, "visibleColumns": capability.StoryboardDefaultColumnValues(), "referenceNodeIds": []any{}}}}
 		for _, row := range source {
 			for seconds, ms := range map[string]string{"sourceStartSeconds": "sourceStartMs", "sourceEndSeconds": "sourceEndMs", "keyframeTimeSeconds": "keyframeTimeMs"} {
 				v := row[seconds]

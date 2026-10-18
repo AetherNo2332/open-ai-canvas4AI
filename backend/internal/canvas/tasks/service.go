@@ -23,8 +23,9 @@ type Service struct {
 }
 
 type ServiceOptions struct {
-	ValidateOutputs func(context.Context, *repository.Repository, string, int, int64) error
-	PrepareOutput   func(context.Context, model.Task, model.CanvasTaskBinding) (model.Task, error)
+	PrepareStoryboardInput func(context.Context, *repository.Repository, identity.Principal, commands.Document, SubmitRequest) (TaskRequest, error)
+	ValidateOutputs        func(context.Context, *repository.Repository, string, int, int64) error
+	PrepareOutput          func(context.Context, model.Task, model.CanvasTaskBinding) (model.Task, error)
 }
 
 func NewService(repo *repository.Repository, cs *commands.Service, submitter TaskSubmitter, options ...ServiceOptions) *Service {
@@ -66,6 +67,13 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 		}
 		if err := validateConsumer(node, req); err != nil {
 			return nil, nil, err
+		}
+		if req.Consumer.Kind == "storyboard" && (req.Task.Mode == "image" || req.Task.Mode == "video") && s.options.PrepareStoryboardInput != nil {
+			resolved, err := s.options.PrepareStoryboardInput(ctx, tx, p, doc, req)
+			if err != nil {
+				return nil, nil, err
+			}
+			req.Task = resolved
 		}
 		meta := metadata(node)
 		if req.Consumer.Kind == "batch" || req.Consumer.Kind == "storyboard" {

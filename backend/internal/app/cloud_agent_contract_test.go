@@ -227,7 +227,7 @@ func TestCloudAgentImageEditingToolsRespectPermissionBoundaries(t *testing.T) {
 
 func TestCloudAgentAnnotationRenderFeedsControlledTransientReference(t *testing.T) {
 	s, db, _, _ := creationTestService(t)
-	canvas := &model.CanvasProject{ID: "annotation-canvas", UserID: "user", PayloadJSON: `{"nodes":[{"id":"image-1","type":"image","title":"原图","width":640,"height":480,"metadata":{"content":"saved"}}],"connections":[]}`}
+	canvas := &model.CanvasProject{ID: "annotation-canvas", UserID: "user", PayloadJSON: `{"referenceFieldsVersion":1,"nodes":[{"id":"image-1","type":"image","title":"原图","width":640,"height":480,"metadata":{"content":"saved"}}],"connections":[]}`}
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatal(err)
 	}

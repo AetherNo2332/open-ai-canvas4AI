@@ -119,6 +119,14 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 				outcome = "binding_changed"
 				return doc, nil, nil
 			}
+			// The row's declared output slot and the output's task identity are the
+			// same durable claim for a failure as for a success: a terminal callback
+			// may only write back while the row still owns this task's output.
+			expected := consumer.OutputNodeID
+			field := "outputNodeId"
+			if consumer.Kind == "storyboard" {
+				field = consumer.Field
+			}
 			if task.Status == model.TaskStatusSucceeded {
 				if len(outputs) == 0 {
 					return nil, nil, fmt.Errorf("task output missing")
@@ -127,11 +135,6 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 					data := outputData(outputs[0])
 					row[consumer.Field] = str(data["content"])
 				} else {
-					expected := consumer.OutputNodeID
-					field := "outputNodeId"
-					if consumer.Kind == "storyboard" {
-						field = consumer.Field
-					}
 					result := findNode(doc, expected)
 					if result == nil || str(row[field]) != expected || str(metadata(result)["taskId"]) != taskID {
 						outcome = "output_binding_changed"
@@ -142,12 +145,14 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 					}
 				}
 			} else {
+				if expected != "" && binding.Mode != "text" && str(row[field]) != expected {
+					outcome = "output_binding_changed"
+					return doc, nil, nil
+				}
 				row["errorDetails"] = safeError(*task)
-				if consumer.OutputNodeID != "" {
-					if output := findNode(doc, consumer.OutputNodeID); output != nil && str(metadata(output)["taskId"]) == taskID {
-						m := metadata(output)
-						m["taskStatus"], m["status"], m["errorDetails"] = string(task.Status), resultStatus(task.Status), safeError(*task)
-					}
+				if output := findNode(doc, expected); output != nil && str(metadata(output)["taskId"]) == taskID {
+					m := metadata(output)
+					m["taskStatus"], m["status"], m["errorDetails"] = string(task.Status), resultStatus(task.Status), safeError(*task)
 				}
 			}
 			row["taskStatus"], row["status"] = string(task.Status), resultStatus(task.Status)

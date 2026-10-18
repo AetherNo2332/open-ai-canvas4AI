@@ -51,20 +51,10 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 		return args, cloudAgentFieldError("ops", "item_count", "画布参数 ops 必须包含1到20项操作")
 	}
 	args.SnapshotHash = envelope.SnapshotHash
+	ops := make([]agentCanvasOp, 0, len(envelope.Ops))
 	for i, rawOp := range envelope.Ops {
 		path := fmt.Sprintf("ops[%d]", i)
 		var op agentCanvasOp
-		var fields map[string]json.RawMessage
-		if json.Unmarshal(rawOp, &fields) == nil {
-			for _, key := range []string{"fromHandleId", "toHandleId"} {
-				if value, exists := fields[key]; exists {
-					var handle *string
-					if json.Unmarshal(value, &handle) != nil || handle == nil {
-						return args, cloudAgentFieldError(path+"."+key, "type_mismatch", "handle 必须是字符串")
-					}
-				}
-			}
-		}
 		if err := decodeCloudAgentJSONObject(string(rawOp), &op); err != nil {
 			field, issue := path, "invalid_value"
 			name := ""
@@ -87,10 +77,40 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 			}
 			return args, cloudAgentFieldError(field, issue, fmt.Sprintf("画布参数 %s 无效：%s", field, cloudAgentSafeToolError(cloudAgentJSONArgumentError(err))))
 		}
-		required := ""
-		if op.Type != "connect_nodes" && (op.FromHandleID != "" || op.ToHandleID != "") {
-			return args, cloudAgentFieldError(path, "unexpected_field", "handle 仅用于 connect_nodes")
+		ops = append(ops, op)
+	}
+	for i, op := range ops {
+		path := fmt.Sprintf("ops[%d]", i)
+		// 连线端点与端口字段已从 canvas_apply_ops 合同删除。struct 里保留这些字段只为识别旧
+		// 载荷：旧边操作由 validateCloudAgentReferenceOperations 统一判成
+		// connection_ops_disabled（提示模型改用引用字段，而不是"缺 fromNodeId"），其他操作
+		// 携带这些字段一律按不支持的字段拒绝，不能静默忽略模型输入。
+		legacyConnection := cloudAgentConnectionOperationDisabled(op.Type)
+		var rawFields map[string]json.RawMessage
+		if json.Unmarshal(envelope.Ops[i], &rawFields) == nil {
+			for _, key := range []string{"fromHandleId", "toHandleId"} {
+				value, exists := rawFields[key]
+				if !exists {
+					continue
+				}
+				var handle *string
+				if json.Unmarshal(value, &handle) != nil || handle == nil {
+					return args, cloudAgentFieldError(path+"."+key, "type_mismatch", "handle 必须是字符串")
+				}
+				if legacyConnection {
+					continue
+				}
+				return args, cloudAgentFieldError(path+"."+key, "unexpected_field", fmt.Sprintf("画布参数 %s.%s 不再属于 canvas_apply_ops：端口由服务端按引用字段派生", path, key))
+			}
+			if !legacyConnection {
+				for _, key := range []string{"fromNodeId", "toNodeId"} {
+					if _, exists := rawFields[key]; exists {
+						return args, cloudAgentFieldError(path+"."+key, "unexpected_field", fmt.Sprintf("画布参数 %s.%s 不再属于 canvas_apply_ops：引用请写入 generationSpec.referenceBindings、metadata.inputBindings 或分镜行 assetBindings", path, key))
+					}
+				}
+			}
 		}
+		required := ""
 		switch {
 		case op.Type == "":
 			required = "type"
@@ -100,10 +120,6 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 			required = "nodeType"
 		case op.Type == "update_node" && len(op.Patch) == 0:
 			required = "patch"
-		case (op.Type == "connect_nodes" || op.Type == "update_connection") && op.FromNodeID == "":
-			required = "fromNodeId"
-		case (op.Type == "connect_nodes" || op.Type == "update_connection") && op.ToNodeID == "":
-			required = "toNodeId"
 		case op.Type == "duplicate_node" && op.SourceNodeID == "":
 			required = "sourceNodeId"
 		case op.Type == "replace_text" && op.Match == "":

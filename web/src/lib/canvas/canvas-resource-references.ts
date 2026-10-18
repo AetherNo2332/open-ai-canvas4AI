@@ -2,6 +2,7 @@ import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeCharacterImageMentions } from "@/lib/canvas/canvas-character-reference";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
+import { canvasDeclaredInputNodeIds } from "./canvas-reference-inputs";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { Skill } from "@/services/api/skills";
@@ -461,12 +462,16 @@ export function imageGenerationReferenceConnections(sourceNodeId: string, target
 }
 
 export function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    const ids=canvasDeclaredInputNodeIds(nodeId,nodes);
+    if(ids!==undefined)return ids.flatMap(id=>{const node=nodes.find(n=>n.id===id);return node?[node]:[]});
     // 没有入边时，资源节点可以把自身当作 @图片1 / @视频1，用于图生图、视频再编辑。
     // 有入边时仍只暴露上游，避免自身把槽位序号挤掉。
     return buildCanvasResourceInputResolver(nodes, connections)(nodeId, true);
 }
 
 export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    const ids=canvasDeclaredInputNodeIds(nodeId,nodes);
+    if(ids!==undefined)return ids.flatMap(id=>{const node=nodes.find(n=>n.id===id);return node?[node]:[]});
     return buildCanvasResourceInputResolver(nodes, connections)(nodeId);
 }
 
@@ -491,6 +496,8 @@ export function collectUpstreamVideoNodes(nodeId: string, nodes: CanvasNodeData[
  * 扩展节点经 CanvasNodeGraphContext 复用它，不要另写一份取上游的逻辑。
  */
 export function getContextResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    const ids=canvasDeclaredInputNodeIds(nodeId,nodes);
+    if(ids!==undefined)return ids.flatMap(id=>{const node=nodes.find(n=>n.id===id);return node&&isResourceNode(node)?[node]:[]});
     return connections
         .filter((connection) => connection.toNodeId === nodeId)
         .map((connection) => nodes.find((node) => node.id === connection.fromNodeId))

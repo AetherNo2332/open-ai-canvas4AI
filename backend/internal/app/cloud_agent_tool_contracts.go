@@ -1,5 +1,166 @@
 package app
 
+import (
+	"encoding/json"
+	"fmt"
+
+	"infinite-canvas/backend/internal/canvas/contract"
+	"infinite-canvas/backend/internal/canvas/references"
+)
+
+// cloudAgentLegacyConnectionOperations 是模型可见合同里已经停用的画布操作。连线改由
+// 服务端按引用字段派生，这些名字只剩一个用途：识别并拒绝旧载荷（关闭前生成的检查点、
+// 关闭前记录的审批、手写调用）。删除它们之前必须先确认没有任何写入路径接受它们。
+var cloudAgentLegacyConnectionOperations = []string{"connect_nodes", "update_connection", "delete_connection"}
+
+// cloudAgentReferenceReservedPatchFields 是通用 metadata patch 永远不能写的字段：
+// connections 是服务端按字段派生的结果，托管归属标记只由引用协调器写入。
+var cloudAgentReferenceReservedPatchFields = []string{"connections", "metadata", "managedBy", "referenceOwnerNodeId", "referenceBindingId"}
+
+func cloudAgentConnectionOperationDisabled(opType string) bool {
+	for _, name := range cloudAgentLegacyConnectionOperations {
+		if name == opType {
+			return true
+		}
+	}
+	return false
+}
+
+func cloudAgentConnectionOpsDisabledError(path, opType string) error {
+	return cloudAgentFieldError(path+".type", "connection_ops_disabled", fmt.Sprintf(
+		"画布参数 %s.type=%s 已停用（connection_ops_disabled）：连线由服务端按引用字段派生，请改用 generationSpec.referenceBindings、metadata.inputBindings、分镜行 assetBindings，或 canvas_edit_storyboard 的 set_references／bind_output／unbind_output",
+		path, opType))
+}
+
+// validateCloudAgentReferenceOperations 是关闭 Agent 连线操作后的统一守卫：审批预览与
+// 真实执行入口都调用它，既拒绝旧边操作，也拒绝借通用 patch 直接写 connections 或
+// 托管归属标记。这里只回答"这份操作列表是否符合引用合同"，画布状态校验仍在准入阶段。
+func validateCloudAgentReferenceOperations(ops []agentCanvasOp) error {
+	for index, op := range ops {
+		path := fmt.Sprintf("ops[%d]", index)
+		if cloudAgentConnectionOperationDisabled(op.Type) {
+			return cloudAgentConnectionOpsDisabledError(path, op.Type)
+		}
+		if op.FromNodeID != "" || op.ToNodeID != "" || op.FromHandleID != "" || op.ToHandleID != "" {
+			return cloudAgentFieldError(path, "unexpected_field", fmt.Sprintf(
+				"画布参数 %s 不再接受连线端点或端口字段（fromNodeId／toNodeId／fromHandleId／toHandleId）：引用请写入引用字段，端口由服务端派生", path))
+		}
+		if op.Type != "update_node" {
+			continue
+		}
+		for _, key := range cloudAgentReferenceReservedPatchFields {
+			if _, exists := op.Patch[key]; exists {
+				return cloudAgentFieldError(path+".patch."+key, "reference_field_reserved", fmt.Sprintf(
+					"画布参数 %s.patch.%s 不能由 Agent 写入：connections 与托管归属标记由服务端维护", path, key))
+			}
+		}
+	}
+	return nil
+}
+
+// cloudAgentReferenceMigrationRequired 是历史画布（没有 referenceFieldsVersion）上的统一
+// 引用门禁：commands.Service.Execute 已覆盖浏览器写入口与生成提交，但 Agent 的字段级画布
+// 编辑走 app 侧计划器与整文档保存——没有该标记时 Reconcile 不运行，模型写下的引用字段不会
+// 派生托管连接，等于静默失效。只读路径与不依赖该标记的编辑（改名、位置、正文、复制、删除、
+// 排序、绘图、批量表既有行字段）不受影响。
+func cloudAgentReferenceMigrationRequired() error {
+	return cloudAgentFieldError("snapshotHash", "reference_migration_required",
+		"历史画布需要先完成一次引用规范化再编辑引用字段；请先在画布中完成引用规范化后重试")
+}
+
+func validateCloudAgentReferenceMigration(doc map[string]any) error {
+	if references.Enabled(doc) {
+		return nil
+	}
+	return cloudAgentReferenceMigrationRequired()
+}
+
+func cloudAgentDocumentNode(doc map[string]any, id string) map[string]any {
+	for _, node := range creationMaps(doc["nodes"]) {
+		if stringValue(node["id"]) == id {
+			return node
+		}
+	}
+	return nil
+}
+
+// cloudAgentGenerationSpecDeclaresReferences 只回答"这份生成合同是否声明了引用"：非法的
+// 生成合同由节点能力校验拒绝，不在这里下结论。
+func cloudAgentGenerationSpecDeclaresReferences(value any) bool {
+	if value == nil {
+		return false
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	spec, err := contract.Decode(encoded)
+	if err != nil {
+		return false
+	}
+	return len(spec.ReferenceBindings) > 0
+}
+
+// cloudAgentCanvasOpsWriteReferences 判断 canvas_apply_ops 这批操作是否写入声明式引用字段：
+// metadata.inputBindings 只在引用合同下有意义；generationSpec 只有在"新合同声明引用"或
+// "覆盖掉节点已有的引用声明"时才算引用变更，纯规格调整（时长、画幅）不在这里拦截。
+func cloudAgentCanvasOpsWriteReferences(doc map[string]any, ops []agentCanvasOp) bool {
+	for _, op := range ops {
+		if op.Type != "update_node" {
+			continue
+		}
+		if _, exists := op.Patch["inputBindings"]; exists {
+			return true
+		}
+		value, exists := op.Patch["generationSpec"]
+		if !exists {
+			continue
+		}
+		if cloudAgentGenerationSpecDeclaresReferences(value) {
+			return true
+		}
+		if node := cloudAgentDocumentNode(doc, op.ID); node != nil {
+			if cloudAgentGenerationSpecDeclaresReferences(cloudAgentNodeMetadata(node)["generationSpec"]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cloudAgentStoryboardEditWritesReferences 覆盖 canvas_edit_storyboard 里引用合同专属的两种
+// 语义：共享引用声明（set_references）和行素材声明（patch.assetBindings）。产物归属
+// （bind_output／unbind_output）写的是历史画布同样有效的行归属字段，不在这里拦。
+func cloudAgentStoryboardEditWritesReferences(args cloudAgentStoryboardEditArgs) bool {
+	if args.Action == "set_references" {
+		return true
+	}
+	_, exists := args.Patch["assetBindings"]
+	return exists
+}
+
+func cloudAgentStoryboardRowsWriteReferences(rows []map[string]any) bool {
+	for _, row := range rows {
+		if _, exists := row["assetBindings"]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func cloudAgentStoryboardCreateWritesReferences(args cloudAgentStoryboardCreateArgs) bool {
+	return args.ReferenceNodeIDs != nil || cloudAgentStoryboardRowsWriteReferences(args.Rows)
+}
+
+// validateCloudAgentReferenceDocument 是画布级前置条件：只有会写引用字段的变更才要求文档
+// 先规范化，其他编辑继续可用，避免把历史画布整体锁死。
+func validateCloudAgentReferenceDocument(doc map[string]any, ops []agentCanvasOp) error {
+	if !cloudAgentCanvasOpsWriteReferences(doc, ops) {
+		return nil
+	}
+	return validateCloudAgentReferenceMigration(doc)
+}
+
 // Keep conditional input contracts beside the shared tool catalog. Both Go's
 // preflight and Pi validate these exact JSON Schema branches.
 func cloudAgentToolParameterContracts(name string, schema map[string]any) {
@@ -14,16 +175,30 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 		}
 	case "generate_media":
 		p["durationSeconds"] = map[string]any{"type": "integer", "minimum": 0, "description": "视频必填且大于0，取 model_list 能力允许的秒数；图片/音频省略或0。"}
-		schema["oneOf"] = []map[string]any{
+		ordinaryModes := []map[string]any{
 			{"properties": map[string]any{"mode": map[string]any{"const": "video"}, "size": map[string]any{"minLength": 1}, "durationSeconds": map[string]any{"minimum": 1}}, "required": []string{"mode", "size", "durationSeconds"}},
 			{"properties": map[string]any{"mode": map[string]any{"const": "image"}, "size": map[string]any{"minLength": 1}, "durationSeconds": map[string]any{"const": 0}, "videoGenerateAudio": map[string]any{"not": map[string]any{}}}, "required": []string{"mode", "size"}},
 			{"properties": map[string]any{"mode": map[string]any{"const": "audio"}, "durationSeconds": map[string]any{"const": 0}, "videoGenerateAudio": map[string]any{"not": map[string]any{}}}, "required": []string{"mode"}},
 		}
-	case "canvas_edit_storyboard":
 		schema["oneOf"] = []map[string]any{
-			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId"),
-			cloudAgentActionBranch("update", []string{"rowId", "patch"}, nil),
-			cloudAgentActionBranch("remove", []string{"rowId"}, nil, "patch"),
+			{"required": []string{"prompt", "referenceNodeIds"}, "properties": cloudAgentForbiddenFields("storyboardNodeId", "storyboardRowId"), "oneOf": ordinaryModes},
+			{"required": []string{"storyboardNodeId", "storyboardRowId", "size"}, "properties": map[string]any{"storyboardNodeId": map[string]any{"minLength": 1}, "storyboardRowId": map[string]any{"minLength": 1}, "mode": map[string]any{"enum": []string{"image", "video"}}, "size": map[string]any{"minLength": 1}, "prompt": map[string]any{"not": map[string]any{}}, "referenceNodeIds": map[string]any{"not": map[string]any{}}, "referenceTransientIds": map[string]any{"not": map[string]any{}}, "sourceNodeId": map[string]any{"not": map[string]any{}}, "durationSeconds": map[string]any{"not": map[string]any{}}}},
+		}
+	case "model_list":
+		schema["oneOf"] = []map[string]any{
+			{"properties": cloudAgentForbiddenFields("storyboardNodeId", "storyboardRowId")},
+			{"required": []string{"mode", "storyboardNodeId", "storyboardRowId"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")},
+		}
+	case "canvas_edit_storyboard":
+		// append/update/remove 维护镜头行；set_references 与 bind_output／unbind_output 是
+		// 关闭 Agent 连线操作后的语义替代：共享引用和产物归属只通过字段声明。
+		schema["oneOf"] = []map[string]any{
+			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId", "referenceNodeIds", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("update", []string{"rowId", "patch"}, nil, "referenceNodeIds", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("remove", []string{"rowId"}, nil, "patch", "referenceNodeIds", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("set_references", []string{"referenceNodeIds"}, nil, "rowId", "patch", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "patch", "referenceNodeIds"),
+			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "patch", "referenceNodeIds", "outputNodeId"),
 		}
 	case "canvas_edit_batch_table":
 		schema["oneOf"] = []map[string]any{

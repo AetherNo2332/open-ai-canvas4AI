@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/canvas/contract"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -51,11 +52,13 @@ func (s *Service) cloudAgentModelIntent(userID, canvasID, arguments string) (*Mo
 	var a struct {
 		Mode             string   `json:"mode"`
 		ReferenceNodeIDs []string `json:"referenceNodeIds"`
+		StoryboardNodeID string   `json:"storyboardNodeId"`
+		StoryboardRowID  string   `json:"storyboardRowId"`
 	}
 	if err := decodeCloudAgentJSONObject(arguments, &a); err != nil {
 		return nil, BadAuthRequest("模型查询参数无效")
 	}
-	if a.Mode == "" && len(a.ReferenceNodeIDs) == 0 {
+	if a.Mode == "" && len(a.ReferenceNodeIDs) == 0 && a.StoryboardNodeID == "" && a.StoryboardRowID == "" {
 		return nil, nil
 	}
 	if !cloudAgentGenerationModeSupported(a.Mode) || len(a.ReferenceNodeIDs) > 16 {
@@ -68,6 +71,17 @@ func (s *Service) cloudAgentModelIntent(userID, canvasID, arguments string) (*Mo
 	doc, err := creationDocument(canvas.PayloadJSON)
 	if err != nil {
 		return nil, err
+	}
+	if a.StoryboardNodeID != "" || a.StoryboardRowID != "" {
+		args := cloudAgentMediaArgs{Mode: a.Mode, StoryboardNodeID: a.StoryboardNodeID, StoryboardRowID: a.StoryboardRowID}
+		if err := validateCloudAgentStoryboardInput(arguments, args); err != nil {
+			return nil, err
+		}
+		resolved, _, err := resolveCloudAgentStoryboardGeneration(doc, args)
+		if err != nil {
+			return nil, err
+		}
+		a.ReferenceNodeIDs = resolved.ReferenceNodeIDs
 	}
 	nodes, err := creationObjects(doc["nodes"])
 	if err != nil {
@@ -96,26 +110,29 @@ func (s *Service) cloudAgentModelIntent(userID, canvasID, arguments string) (*Mo
 }
 
 type cloudAgentMediaArgs struct {
-	Prepared              *cloudAgentPreparedMedia `json:"-"`
-	DraftRunID            string                   `json:"-"`
-	CharacterVersions     map[string]string        `json:"-"`
-	CharacterLabels       []string                 `json:"-"`
-	Mode                  string                   `json:"mode"`
-	Prompt                string                   `json:"prompt"`
-	SelectionID           string                   `json:"selectionId"`
-	LogicalModelID        string                   `json:"logicalModelId"`
-	ChannelID             string                   `json:"channelId"`
-	ChannelModelKey       string                   `json:"channelModelKey"`
-	Duration              int                      `json:"durationSeconds"`
-	Size                  string                   `json:"size"`
-	Quality               string                   `json:"quality"`
-	VideoGenerateAudio    *bool                    `json:"videoGenerateAudio,omitempty"`
-	SnapshotHash          string                   `json:"snapshotHash"`
-	NodeID                string                   `json:"nodeId"`
-	Title                 string                   `json:"title"`
-	SourceNodeID          string                   `json:"sourceNodeId"`
-	ReferenceNodeIDs      []string                 `json:"referenceNodeIds"`
-	ReferenceTransientIDs []string                 `json:"referenceTransientIds,omitempty"`
+	StoryboardNodeID      string                      `json:"storyboardNodeId,omitempty"`
+	StoryboardRowID       string                      `json:"storyboardRowId,omitempty"`
+	ResolvedBindings      []contract.ReferenceBinding `json:"-"`
+	Prepared              *cloudAgentPreparedMedia    `json:"-"`
+	DraftRunID            string                      `json:"-"`
+	CharacterVersions     map[string]string           `json:"-"`
+	CharacterLabels       []string                    `json:"-"`
+	Mode                  string                      `json:"mode"`
+	Prompt                string                      `json:"prompt"`
+	SelectionID           string                      `json:"selectionId"`
+	LogicalModelID        string                      `json:"logicalModelId"`
+	ChannelID             string                      `json:"channelId"`
+	ChannelModelKey       string                      `json:"channelModelKey"`
+	Duration              int                         `json:"durationSeconds"`
+	Size                  string                      `json:"size"`
+	Quality               string                      `json:"quality"`
+	VideoGenerateAudio    *bool                       `json:"videoGenerateAudio,omitempty"`
+	SnapshotHash          string                      `json:"snapshotHash"`
+	NodeID                string                      `json:"nodeId"`
+	Title                 string                      `json:"title"`
+	SourceNodeID          string                      `json:"sourceNodeId"`
+	ReferenceNodeIDs      []string                    `json:"referenceNodeIds"`
+	ReferenceTransientIDs []string                    `json:"referenceTransientIds,omitempty"`
 }
 
 type cloudAgentMediaPlan struct {
@@ -392,6 +409,11 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 	}
 	doc, err := creationDocument(canvas.PayloadJSON)
 	if err != nil {
+		return nil, nil, nil, err
+	}
+	// Approval preparation and transactional admission share this gate, so undo
+	// cannot restore a legacy canvas and revive the former edge-writing path.
+	if err := validateCloudAgentReferenceMigration(doc); err != nil {
 		return nil, nil, nil, err
 	}
 	unchanged := args.SnapshotHash != "" && (cloudAgentCanvasHash(doc) == args.SnapshotHash || cloudAgentMediaContentHash(doc) == args.SnapshotHash)
@@ -698,6 +720,11 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 		return CreateTaskRequest{}, nil, cloudAgentJSONArgumentError(err)
 	}
 	a.Mode = strings.ToLower(strings.TrimSpace(a.Mode))
+	var resolveErr error
+	a, resolveErr = s.resolveCloudAgentStoryboardArgs(run, state, call.Function.Arguments, a)
+	if resolveErr != nil {
+		return CreateTaskRequest{}, nil, resolveErr
+	}
 	defaultedModel, err := s.applyCloudAgentProjectDefaultModel(run, state, call.Function.Arguments, &a)
 	if err != nil {
 		return CreateTaskRequest{}, nil, err
@@ -788,6 +815,17 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 		config["channelId"], config["channelModelKey"], config["model"] = a.ChannelID, a.ChannelModelKey, a.ChannelModelKey
 	}
 	metadata := map[string]any{"nodeId": a.NodeID, "source": "cloud_agent"}
+	if a.StoryboardNodeID != "" {
+		metadata["storyboardNodeId"], metadata["storyboardRowId"] = a.StoryboardNodeID, a.StoryboardRowID
+		for _, b := range a.ResolvedBindings {
+			if b.Role == "first-frame" {
+				metadata["videoStartFrameNodeId"] = b.NodeID
+			}
+			if b.Role == "last-frame" {
+				metadata["videoEndFrameNodeId"] = b.NodeID
+			}
+		}
+	}
 	if len(a.CharacterVersions) > 0 {
 		resolvedVersions := make([]string, 0, len(a.CharacterVersions))
 		for id, versionID := range a.CharacterVersions {
@@ -837,6 +875,9 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 }
 
 func saveCloudAgentDocument(repo *repository.Repository, canvas *model.CanvasProject, doc map[string]any, policy RuntimePolicySetting) error {
+	if err := reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
+		return err
+	}
 	if err := validateCloudAgentOwnedReferences(repo, canvas.UserID, doc); err != nil {
 		return err
 	}
@@ -901,10 +942,6 @@ func createCloudAgentMediaNode(repo *repository.Repository, userID, canvasID str
 	meta["status"], meta["agentDraftRunId"], meta["referenceNodeIds"] = "idle", a.DraftRunID, a.ReferenceNodeIDs
 	meta["prompt"] = cloudAgentMediaComposerPrompt(a.Prompt, refs)
 	meta["composerContent"] = meta["prompt"]
-	if task != nil {
-		meta["status"], meta["taskId"], meta["taskStatus"] = "loading", task.ID, "queued"
-		delete(meta, "agentDraftRunId")
-	}
 	descriptor, supported := cloudAgentNodeCapabilityForGenerationMode(a.Mode)
 	if !supported || !cloudAgentGenerationModeSupported(a.Mode) {
 		return BadAuthRequest("生成模式当前不受 Agent 支持")
@@ -928,23 +965,16 @@ func createCloudAgentMediaNode(repo *repository.Repository, userID, canvasID str
 		nodes = append(nodes, node)
 	}
 	doc["nodes"] = nodes
-	edges := cloudAgentMediaConnections(creationMaps(doc["connections"]), a)
-	seen := map[string]bool{}
-	for _, edge := range edges {
-		if stringValue(edge["toNodeId"]) == a.NodeID {
-			seen[stringValue(edge["fromNodeId"])] = true
+	if a.StoryboardNodeID != "" {
+		doc["id"] = canvasID
+		if err := bindCloudAgentStoryboardOutput(repo, userID, doc, a, task); err != nil {
+			return err
 		}
 	}
-	for _, id := range append(append([]string{}, a.ReferenceNodeIDs...), a.SourceNodeID) {
-		if id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
-		edges = append(edges, map[string]any{"id": "agent-" + newID(), "fromNodeId": id, "toNodeId": a.NodeID})
+	if task != nil {
+		meta["status"], meta["taskId"], meta["taskStatus"] = "loading", task.ID, "queued"
+		delete(meta, "agentDraftRunId")
 	}
-	// Reused drafts may already contain only a subset of the new references.
-	// Reorder after adding missing edges so chip numbers match submitted arrays.
-	doc["connections"] = cloudAgentMediaConnections(edges, a)
 	if err := saveCloudAgentDocument(repo, canvas, doc, policy); err != nil {
 		return err
 	}
@@ -982,6 +1012,20 @@ type cloudAgentMediaWritebackError struct {
 func (e *cloudAgentMediaWritebackError) Unwrap() error { return e.error }
 
 func completeCloudAgentMediaNode(repo *repository.Repository, userID, canvasID, targetNodeID string, task *model.Task, policy RuntimePolicySetting) (string, error) {
+	if cloudAgentHasStoryboardTarget(task) {
+		if binding, consumer, err := cloudAgentStoryboardConsumer(repo, task.ID); err != nil {
+			return "", err
+		} else if binding != nil {
+			job, err := repo.CanvasMaterialization(task.ID)
+			if err != nil {
+				return "", err
+			}
+			if job.State == "done" && job.Outcome == "applied" {
+				return consumer.OutputNodeID, nil
+			}
+			return "", &cloudAgentMediaWritebackError{creationConflict("分镜输出归属已变化，作品保留在资源库"), "output_binding_changed"}
+		}
+	}
 	if validateCloudAgentID(targetNodeID, "生成节点ID", 80) != nil {
 		return "", &cloudAgentMediaWritebackError{error: creationConflict("任务缺少有效的目标节点记录，未回写画布"), reason: "target_node_unknown"}
 	}

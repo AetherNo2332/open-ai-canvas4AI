@@ -498,19 +498,21 @@ export function CanvasGrid({ appearance, mode, viewport }: { appearance?: Canvas
     const colorTheme = useActiveTheme();
     const gridColor = resolveCanvasGridColor(appearance, colorTheme, mode);
     const backgroundImage = mode === "dots" ? `radial-gradient(circle, ${gridColor} 0.8px, transparent 1px)` : `linear-gradient(${gridColor} 1px, transparent 1px), linear-gradient(90deg, ${gridColor} 1px, transparent 1px)`;
-    const { overscanPx, backgroundSize, transform } = canvasGridLayerStyle(viewport);
+    const { overscanPx, backgroundSize, transform, visible } = canvasGridLayerStyle(viewport);
 
     return (
         <div
             data-canvas-grid-layer
             className="pointer-events-none absolute"
             style={{
-                // 网格跟随世界层平移缩放；多画一圈避免平移到边缘时露出视口底色，空白模式只隐藏绘制。
+                // 网格跟随世界层平移缩放；多画一圈避免平移到边缘时露出视口底色。
+                // 空白模式不绘制；缩放低于 60% 时隐藏空间网格，避免小视图里网格过密。
                 inset: -overscanPx,
                 backgroundImage,
                 backgroundSize,
                 transform,
                 opacity: mode === "dots" ? 0.34 : 0.46,
+                visibility: visible ? undefined : "hidden",
                 display: mode === "blank" ? "none" : undefined,
             }}
         />

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"infinite-canvas/backend/internal/assets"
+	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -105,7 +106,14 @@ func snapshot(row *model.CanvasProject, epoch *model.CanvasDocumentEpoch, versio
 	for key, v := range versions {
 		values[key] = v.Version
 	}
-	return Snapshot{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, Revision: row.Revision, EventSeq: epoch.EventSeq, Document: doc, EntityVersions: values}
+	out := Snapshot{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, Revision: row.Revision, EventSeq: epoch.EventSeq, Document: doc, EntityVersions: values}
+	// 历史画布在读取投影上附带一次规范化预览：只读、幂等、不写文档、不分配标识。
+	// 已规范化文档保持 nil，客户端因此能区分“不需要迁移”与“迁移后无冲突”。
+	if !references.Enabled(doc) {
+		preview := references.PreviewLegacy(doc, nil)
+		out.ReferenceMigration = &preview
+	}
+	return out
 }
 func (s *Service) ReadSnapshot(ctx context.Context, p identity.Principal, id string) (Snapshot, error) {
 	s.mu.Lock()
@@ -164,7 +172,7 @@ func (s *Service) Create(ctx context.Context, p identity.Principal, req CreateCa
 		if title == "" {
 			title = "未命名画布"
 		}
-		doc := Document{"id": id, "title": title, "nodes": []any{}, "connections": []any{}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano)}
+		doc := Document{"id": id, "referenceFieldsVersion": 1, "title": title, "nodes": []any{}, "connections": []any{}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano)}
 		if req.ProjectID != "" {
 			doc["projectId"] = req.ProjectID
 		}
@@ -393,6 +401,54 @@ func checkVersions(req Command, row *model.CanvasProject, versions map[string]mo
 	}
 	return nil
 }
+// Durable consumer shape for occupancy checks; matches tasks.ConsumerJSON without
+// making the command layer depend on the task layer.
+type activeCanvasConsumer struct {
+	RowID        string `json:"rowId"`
+	OutputNodeID string `json:"outputNodeId"`
+}
+
+// Storyboard output ownership is a durable claim. Row and output metadata can be
+// reverted by history, so the accepted task bindings, not the metadata, decide
+// whether a slot may be rebound.
+func (s *Service) validateStoryboardOccupancy(tx *repository.Repository, p identity.Principal, canvasID, epoch string, ops []Operation) error {
+	rows := map[string]map[string]bool{}
+	outputs := map[string]bool{}
+	for _, op := range ops {
+		if op.Type != "bind_storyboard_output" {
+			continue
+		}
+		if rows[op.ID] == nil {
+			rows[op.ID] = map[string]bool{}
+		}
+		rows[op.ID][op.RowID] = true
+		if op.SourceNodeID != "" {
+			outputs[op.SourceNodeID] = true
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	bindings, err := tx.ActiveCanvasTaskBindings(p.OwnerID, canvasID, epoch)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		var consumer activeCanvasConsumer
+		if err = json.Unmarshal([]byte(binding.ConsumerJSON), &consumer); err != nil {
+			return err
+		}
+		for boardID, boardRows := range rows {
+			if binding.TargetNodeID == boardID && boardRows[consumer.RowID] {
+				return failure("reference_busy", "该分镜行仍有未完成任务，请先处理已有任务")
+			}
+		}
+		if outputs[binding.TargetNodeID] || (consumer.OutputNodeID != "" && outputs[consumer.OutputNodeID]) {
+			return failure("reference_busy", "该产物仍有未完成任务，请先处理已有任务")
+		}
+	}
+	return nil
+}
 func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command) (Receipt, error) {
 	if err := validateClient(p, req.ClientID, req.OperationID); err != nil {
 		return Receipt{}, err
@@ -429,16 +485,32 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 		if epoch.Deleted {
 			return failure("entity_deleted", "画布已删除")
 		}
+		// 历史画布先完成一次规范化；放行规则见 referenceMigrationGate。
+		if err := referenceMigrationGate(doc, req.Operations); err != nil {
+			return err
+		}
+		present := map[string]bool{}
+		for _, node := range maps(doc["nodes"]) {
+			present[text(node["id"])] = true
+		}
 		for _, op := range req.Operations {
 			switch op.Type {
-			case "update_node", "delete_node", "replace_text", "set_parent", "reorder_rows", "edit_drawing", "edit_storyboard", "edit_batch_table", "bind_asset":
-				if entity(doc, "node:"+op.ID) == nil {
+			case "add_node":
+				present[op.ID] = true
+			case "update_node", "delete_node", "replace_text", "set_parent", "reorder_rows", "edit_drawing", "edit_storyboard", "edit_batch_table", "bind_asset", "bind_storyboard_output":
+				if !present[op.ID] {
 					return failure("entity_deleted", "目标节点已删除")
+				}
+				if op.Type == "delete_node" {
+					delete(present, op.ID)
 				}
 			}
 		}
 		v, err := s.validation(ctx, tx, p, doc, req.Operations)
 		if err != nil {
+			return err
+		}
+		if err = s.validateStoryboardOccupancy(tx, p, row.ID, epoch.Epoch, req.Operations); err != nil {
 			return err
 		}
 		plan, err := Plan(doc, req, v)

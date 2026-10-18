@@ -13,6 +13,11 @@ import (
 
 func agentMediaFixture(t *testing.T) (*Service, *gorm.DB, cloudAgentMediaArgs) {
 	t.Helper()
+	return agentMediaFixtureWithReferenceVersion(t, 1)
+}
+
+func agentMediaFixtureWithReferenceVersion(t *testing.T, version int) (*Service, *gorm.DB, cloudAgentMediaArgs) {
+	t.Helper()
 	s, db, _, _ := creationTestService(t)
 	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceVolcengineArkVideo), "seedance-test")
 	capability.Video.References.PromptMaxChars = 16000
@@ -32,6 +37,9 @@ func agentMediaFixture(t *testing.T) (*Service, *gorm.DB, cloudAgentMediaArgs) {
 		{"id": "cat", "type": "image", "title": "叮当猫在飞", "position": map[string]any{"x": 10, "y": 300}, "width": 300, "metadata": map[string]any{"status": "success", "storageKey": "resource:ref-one", "content": "https://must-not-expose.invalid/one.png"}},
 		{"id": "hero", "type": "image", "title": "古风奥特曼", "position": map[string]any{"x": 400, "y": 300}, "width": 300, "metadata": map[string]any{"status": "success", "storageKey": "resource:ref-two"}},
 	}, "connections": []any{}}
+	if version > 0 {
+		doc["referenceFieldsVersion"] = version
+	}
 	raw, _ := json.Marshal(doc)
 	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: string(raw)}).Error; err != nil {
 		t.Fatal(err)
@@ -836,7 +844,7 @@ func TestCloudAgentStoryboardPrecisionAndPermission(t *testing.T) {
 	}
 }
 
-func TestCloudAgentCanvasCreatesTypedNodesAndEdges(t *testing.T) {
+func TestCloudAgentCanvasCreatesTypedNodes(t *testing.T) {
 	s, _, a := agentMediaFixture(t)
 	policy, err := s.RuntimePolicy()
 	if err != nil {
@@ -846,7 +854,6 @@ func TestCloudAgentCanvasCreatesTypedNodesAndEdges(t *testing.T) {
 	args := map[string]any{"snapshotHash": a.SnapshotHash, "ops": []map[string]any{
 		{"type": "add_node", "id": "blank-video", "nodeType": "video", "title": "镜头占位", "content": "生成提示词"},
 		{"type": "add_node", "id": "group", "nodeType": "frame", "title": "镜头组"},
-		{"type": "connect_nodes", "id": "ref-edge", "fromNodeId": "cat", "toNodeId": "blank-video"},
 	}}
 	raw, _ := json.Marshal(args)
 	call.Function.Arguments = string(raw)
@@ -857,8 +864,12 @@ func TestCloudAgentCanvasCreatesTypedNodesAndEdges(t *testing.T) {
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	nodes, _ := creationObjects(doc["nodes"])
 	meta := nodes["blank-video"]["metadata"].(map[string]any)
-	if meta["content"] != "" || meta["prompt"] != "生成提示词" || meta["composerContent"] != "生成提示词" || len(creationMaps(doc["connections"])) != 1 {
-		t.Fatal("typed nodes/edges missing")
+	if meta["content"] != "" || meta["prompt"] != "生成提示词" || meta["composerContent"] != "生成提示词" {
+		t.Fatal("typed nodes missing")
+	}
+	// 关闭连线操作后，画布操作本身不再产生任何边；引用写入由字段协调派生。
+	if len(creationMaps(doc["connections"])) != 0 {
+		t.Fatal("canvas operation created connections without a declared reference")
 	}
 }
 

@@ -1,5 +1,8 @@
+import { createBatchRow } from "@/lib/canvas/canvas-batch-table";
+import { createStoryboardRow } from "@/lib/canvas/canvas-project-domain";
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type StoryboardRow } from "@/types/canvas";
+import type { ReferenceBinding } from "@/lib/canvas/generation-contract.generated";
+import { CanvasNodeType, type CanvasBatchOperation, type CanvasBatchRow, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeStatus, type StoryboardRow } from "@/types/canvas";
 import { getFrameChildren, isFrameNode } from "@/lib/canvas/canvas-frame";
 
 const COPY_TITLE_SUFFIX = /^(.*)_copy(\d+)$/i;
@@ -29,11 +32,58 @@ function remapReferenceIds(nodeIds: string[] | undefined, idMap: ReadonlyMap<str
     return nodeIds ? Array.from(new Set(nodeIds.map((nodeId) => idMap.get(nodeId) || nodeId))) : undefined;
 }
 
-function copyStoryboardRow(row: StoryboardRow, idMap: ReadonlyMap<string, string>): StoryboardRow {
+function remapReferenceBindings(bindings: ReferenceBinding[] | undefined, idMap: ReadonlyMap<string, string>) {
+    return bindings?.map((binding) => (binding.nodeId ? { ...binding, nodeId: remapReferenceId(binding.nodeId, idMap)! } : { ...binding }));
+}
+
+// 托管边由服务端按权威字段重建，副本不能继承源节点的归属标记。
+function isManagedReferenceConnection(edge: Pick<CanvasConnection, "managedBy">) {
+    return edge.managedBy === "reference-fields-v1";
+}
+
+// 指向分镜行的副本连线必须改用副本行 id；行没被一起复制时该字段失效。
+function copiedConnection(edge: CanvasConnection, fromNodeId: string, toNodeId: string, id: string, rowIds: ReadonlyMap<string, string>): CanvasConnection {
+    const copied: CanvasConnection = { ...edge, id, fromNodeId, toNodeId };
+    if (edge.storyboardRowId) {
+        const rowId = rowIds.get(edge.storyboardRowId);
+        if (rowId) copied.storyboardRowId = rowId;
+        else delete copied.storyboardRowId;
+    }
+    return copied;
+}
+
+const ACTIVE_ROW_STATUSES = new Set<string>(["loading", "running", "pending", "queued"]);
+const COPIED_ROW_TASK_KEYS = ["taskId", "taskClientOperationId", "taskStatus", "taskProgress", "taskStage", "errorDetails"];
+
+// 副本没有自己的任务：源行还在跑时不能继承运行中状态，没有复制产物时回到未生成。
+function copiedRowStatus(status: CanvasNodeStatus | undefined, hasCopiedOutput: boolean): CanvasNodeStatus {
+    return hasCopiedOutput && status && !ACTIVE_ROW_STATUSES.has(status) ? status : "idle";
+}
+
+// 行 id 由副本节点 id 派生，前后端使用同一份确定性规则，副本之间不会串行。
+function copiedRowId(copiedNodeId: string, suffix: "row" | "batch-row", index: number) {
+    return `${copiedNodeId}-${suffix}-${index + 1}`;
+}
+
+// 批量表内嵌的分镜内容是展示与来源引用：范围内跟随副本，范围外保留原节点，
+// 既不换行身份也不清任务字段（与后端递归 *NodeId(s) 重映射一致）。
+function remapEmbeddedStoryboardRow(row: StoryboardRow, idMap: ReadonlyMap<string, string>): StoryboardRow {
+    return {
+        ...row,
+        characters: (row.characters || []).map((character) => ({
+            ...character,
+            characterImageNodeId: remapReferenceId(character.characterImageNodeId, idMap),
+        })),
+        assetBindings: (row.assetBindings || []).map((binding) => ({ ...binding, nodeId: remapReferenceId(binding.nodeId, idMap)! })),
+        imageNodeId: remapReferenceId(row.imageNodeId, idMap),
+        videoNodeId: remapReferenceId(row.videoNodeId, idMap),
+    };
+}
+
+function copyStoryboardRow(row: StoryboardRow, idMap: ReadonlyMap<string, string>, copiedNodeId: string, index: number, rowIds?: Map<string, string>): StoryboardRow {
     const imageNodeId = remapOwnedNodeId(row.imageNodeId, idMap);
     const videoNodeId = remapOwnedNodeId(row.videoNodeId, idMap);
-    const hasCopiedOutput = Boolean(imageNodeId || videoNodeId);
-    return {
+    const copied: Record<string, unknown> = {
         ...row,
         characters: (row.characters || []).map((character) => ({
             ...character,
@@ -42,13 +92,34 @@ function copyStoryboardRow(row: StoryboardRow, idMap: ReadonlyMap<string, string
         assetBindings: (row.assetBindings || []).map((binding) => ({ ...binding, nodeId: remapReferenceId(binding.nodeId, idMap)! })),
         imageNodeId,
         videoNodeId,
-        status: hasCopiedOutput ? row.status : "idle",
-        errorDetails: undefined,
+        status: copiedRowStatus(row.status, Boolean(imageNodeId || videoNodeId)),
+    };
+    // 行身份属于源表：副本换新 rowId，并且不继承产生源结果的任务绑定。
+    delete copied.id;
+    for (const key of COPIED_ROW_TASK_KEYS) delete copied[key];
+    const id = copiedRowId(copiedNodeId, "row", index);
+    rowIds?.set(row.id, id);
+    return { ...createStoryboardRow(row.shotNumber, copied as Partial<StoryboardRow>), id };
+}
+
+function copyBatchTableRow(row: CanvasBatchRow, operation: CanvasBatchOperation, idMap: ReadonlyMap<string, string>, copiedNodeId: string, index: number, rowIds?: Map<string, string>): CanvasBatchRow {
+    const id = copiedRowId(copiedNodeId, "batch-row", index);
+    rowIds?.set(row.id, id);
+    return {
+        ...createBatchRow(operation, remapReferenceIds(row.inputNodeIds, idMap) || []),
+        enabled: row.enabled,
+        prompt: row.prompt,
+        textNodeIds: remapReferenceIds(row.textNodeIds, idMap),
+        cells: row.cells ? { ...row.cells } : undefined,
+        // 行产物归属只在复制范围内跟随副本，范围外仍引用原产物。
+        outputNodeId: remapOwnedNodeId(row.outputNodeId, idMap),
+        id,
     };
 }
 
 // 副本只能继承内容和用户引用，运行中任务、批次及指向源生成结果的关系必须隔离。
-export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyMap<string, string>): CanvasNodeMetadata {
+// rowIds 收集源行 id → 副本行 id，供同批复制出来的连线改写 storyboardRowId。
+export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyMap<string, string>, rowIds?: Map<string, string>): CanvasNodeMetadata {
     const metadata = resetGenerationTaskMetadata(node.metadata, node.metadata?.content ? "success" : "idle");
     delete metadata.generationBatches;
     delete metadata.batchRootId;
@@ -93,11 +164,26 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
         faceBox: { ...node.metadata.emotionEdit.faceBox },
         editRegion: node.metadata.emotionEdit.editRegion ? { ...node.metadata.emotionEdit.editRegion } : undefined,
     } : undefined;
+    const copiedNodeId = idMap.get(node.id) || node.id;
     metadata.storyboard = node.metadata?.storyboard ? {
-        rows: node.metadata.storyboard.rows.map((row) => copyStoryboardRow(row, idMap)),
+        rows: node.metadata.storyboard.rows.map((row, index) => copyStoryboardRow(row, idMap, copiedNodeId, index, rowIds)),
         visibleColumns: [...node.metadata.storyboard.visibleColumns],
         referenceNodeIds: remapReferenceIds(node.metadata.storyboard.referenceNodeIds, idMap) || [],
     } : undefined;
+    const batchTable = node.metadata?.batchTable;
+    metadata.batchTable = batchTable ? {
+        ...batchTable,
+        rows: (batchTable.rows || []).map((row, index) => copyBatchTableRow(row, batchTable.operation, idMap, copiedNodeId, index, rowIds)),
+        storyboardSourceNodeIds: remapReferenceIds(batchTable.storyboardSourceNodeIds, idMap),
+        storyboardRows: batchTable.storyboardRows?.map((row) => remapEmbeddedStoryboardRow(row, idMap)),
+    } : undefined;
+    metadata.batchSourceNodeId = remapReferenceId(node.metadata?.batchSourceNodeId, idMap);
+    // 引用权威字段必须随之重映射；复制范围之外的素材继续引用原节点。
+    const generationSpec = node.metadata?.generationSpec;
+    const referenceBindings = remapReferenceBindings(generationSpec?.referenceBindings, idMap);
+    if (generationSpec && referenceBindings) metadata.generationSpec = { ...generationSpec, referenceBindings };
+    const inputBindings = remapReferenceBindings(node.metadata?.inputBindings, idMap);
+    if (inputBindings) metadata.inputBindings = inputBindings;
     return metadata;
 }
 
@@ -107,10 +193,11 @@ export function copyCanvasNodeGraph(nodes: CanvasNodeData[], connections: Canvas
     const sources = isFrameNode(source) ? [source, ...getFrameChildren(source.id, nodes)] : [source];
     const copiedIds = new Set(sources.map((node) => node.id));
     const copiedMap = new Map([...idMap].filter(([id]) => copiedIds.has(id)));
+    const rowIds = new Map<string, string>();
     const copiedNodes = sources.map((node) => {
         const id = copiedMap.get(node.id);
         if (!id || nodes.some((item) => item.id === id)) throw new Error("复制节点 ID 缺失或重复");
-        const metadata = isolateCopiedNodeMetadata(node, copiedMap);
+        const metadata = isolateCopiedNodeMetadata(node, copiedMap, rowIds);
         if (node.type === CanvasNodeType.Drawing) {
             metadata.drawingId = `${id}-document`;
             metadata.drawingRevision = 0;
@@ -128,9 +215,10 @@ export function copyCanvasNodeGraph(nodes: CanvasNodeData[], connections: Canvas
         }
         return { ...node, id, title: node.id === source.id ? title ?? nextCopiedNodeTitle(source.title, nodes.map((item) => item.title)) : node.title, position: { x: node.position.x + 36, y: node.position.y + 36 }, parentId: node.parentId ? copiedMap.get(node.parentId) || node.parentId : undefined, metadata };
     });
-    const copiedConnections = connections.filter((edge) => copiedIds.has(edge.fromNodeId) && copiedIds.has(edge.toNodeId)).map((edge) => ({ ...edge, id: connectionId(), fromNodeId: copiedMap.get(edge.fromNodeId)!, toNodeId: copiedMap.get(edge.toNodeId)! }));
+    const copiedConnections = connections.filter((edge) => copiedIds.has(edge.fromNodeId) && copiedIds.has(edge.toNodeId) && !isManagedReferenceConnection(edge)).map((edge) => copiedConnection(edge, copiedMap.get(edge.fromNodeId)!, copiedMap.get(edge.toNodeId)!, connectionId(), rowIds));
     if (!isFrameNode(source)) {
-        for (const edge of connections.filter((edge) => edge.toNodeId === source.id && !copiedIds.has(edge.fromNodeId))) copiedConnections.push({ ...edge, id: connectionId(), toNodeId: copiedMap.get(source.id)! });
+        // 来源在复制范围外的入边保留原节点，只把目标改挂到副本上。
+        for (const edge of connections.filter((edge) => edge.toNodeId === source.id && !copiedIds.has(edge.fromNodeId) && !isManagedReferenceConnection(edge))) copiedConnections.push(copiedConnection(edge, edge.fromNodeId, copiedMap.get(source.id)!, connectionId(), rowIds));
     }
     return { nodes: copiedNodes, connections: copiedConnections };
 }

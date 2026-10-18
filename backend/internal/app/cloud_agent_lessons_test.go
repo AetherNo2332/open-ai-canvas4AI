@@ -97,7 +97,7 @@ func TestAgentLessonStoresSteps(t *testing.T) {
 	repo := agentLessonTestRepo(t)
 	steps := []model.AgentLessonStep{
 		{Tool: "canvas_get_state", Action: "读取画布，拿到真实行 id"},
-		{Tool: "canvas_apply_ops", Action: "connect_nodes 带上 rowId 把资产挂到该行", Note: "只连节点本身会被拒"},
+		{Tool: "canvas_edit_storyboard", Action: "update 该行 patch.assetBindings 声明参考资产", Note: "连线由服务端派生，不要再调 connect_nodes"},
 	}
 	raw, err := json.Marshal(steps)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestAgentLessonStoresSteps(t *testing.T) {
 	}
 	now := time.Now()
 	entry := &model.AgentLesson{
-		ID: newID(), Topic: "storyboard.row-connect", Situation: "给某一镜挂参考资产",
+		ID: newID(), Topic: "storyboard.row-assets", Situation: "给某一镜挂参考资产",
 		StepsJSON: string(raw), Status: model.AgentLessonStatusApproved,
 		AuthorUserID: "user-b", LastVerifiedAt: &now, CreatedAt: now, UpdatedAt: now,
 	}
@@ -120,7 +120,7 @@ func TestAgentLessonStoresSteps(t *testing.T) {
 	if err := json.Unmarshal([]byte(got[0].StepsJSON), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded) != 2 || decoded[1].Tool != "canvas_apply_ops" || !strings.Contains(decoded[1].Note, "会被拒") {
+	if len(decoded) != 2 || decoded[1].Tool != "canvas_edit_storyboard" || !strings.Contains(decoded[1].Note, "不要再调 connect_nodes") {
 		t.Fatalf("steps 未原样保留：%+v", decoded)
 	}
 }

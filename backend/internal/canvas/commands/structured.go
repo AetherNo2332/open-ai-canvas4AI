@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"infinite-canvas/backend/internal/canvas/capability"
 	"infinite-canvas/backend/internal/canvas/connection"
+	"infinite-canvas/backend/internal/canvas/references"
 	"strings"
 	"unicode/utf8"
 )
@@ -96,6 +97,10 @@ func (p *planner) applyOperation(doc Document, op Operation, ctx ValidationConte
 		if err := p.editStoryboard(doc, op); err != nil {
 			return nil, err
 		}
+	case "bind_storyboard_output":
+		if err := references.BindStoryboardOutput(doc, op.ID, op.RowID, op.OutputMode, op.SourceNodeID); err != nil {
+			return nil, err
+		}
 	case "edit_batch_table":
 		if err := p.editBatchTable(doc, op); err != nil {
 			return nil, err
@@ -114,6 +119,8 @@ func (p *planner) applyOperation(doc Document, op Operation, ctx ValidationConte
 		if err := p.bindAsset(doc, op, ctx); err != nil {
 			return nil, err
 		}
+	case OperationMigrateReferences:
+		return p.migrateReferenceFields(doc, op)
 	default:
 		return p.applyCanvasCanvasPlanInPlace(doc, []Operation{op})
 	}
@@ -122,6 +129,18 @@ func (p *planner) applyOperation(doc Document, op Operation, ctx ValidationConte
 func (p *planner) editStoryboard(doc Document, op Operation) error {
 	_, board, rows, err := p.storyboardNodeFromDocument(doc, op.ID)
 	if err != nil {
+		return err
+	}
+	if op.Action == "set_references" {
+		field := capability.PatchField{Kind: "array", Items: &capability.PatchField{Kind: "string", MaxRunes: 120}, MaxItems: 100}
+		if op.RowID != "" || len(op.Patch) != 1 {
+			return BadAuthRequest("共享引用只能使用 referenceNodeIds")
+		}
+		if err := capability.ValidateEditableFields(map[string]capability.PatchField{"referenceNodeIds": field}, op.Patch); err != nil {
+			return BadAuthRequest(err.Error())
+		}
+		board["referenceNodeIds"] = op.Patch["referenceNodeIds"]
+		_, err := references.Resolve(doc, references.Scope{Kind: "storyboard-context", NodeID: op.ID}, p.registry)
 		return err
 	}
 	index := p.canvasNodeIndex(rows, op.RowID)
@@ -394,7 +413,7 @@ func (p *planner) bindAsset(doc Document, op Operation, ctx ValidationContext) e
 		if asset.ResourceID == "" || ctx.ResourceAllowed == nil || !ctx.ResourceAllowed(asset.ResourceID) {
 			return failure("resource_not_owned", "素材资源未授权")
 		}
-		p.canvasResetCopiedMetadata(metadata, nil)
+		p.canvasResetCopiedMetadata(metadata, "", nil)
 		for _, field := range []string{"generationContinuation", "generationSubmitted", "generationEffect", "generationEffects", "generationEffectKeys", "producedModel", "previewContent", "previewStorageKey", "videoPreview", "durationMs", "hasAudio", "naturalWidth", "naturalHeight", "intrinsicWidth", "intrinsicHeight", "bytes", "mimeType", "taskId", "taskStatus", "taskProgress", "taskError", "generationAppliedKeys", "generationPersistence", "errorDetails"} {
 			delete(metadata, field)
 		}

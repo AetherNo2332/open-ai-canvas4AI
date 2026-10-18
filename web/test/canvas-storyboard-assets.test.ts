@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
 import { buildStoryboardAssetCatalog, storyboardAssetRoleForNode } from "@/lib/canvas/canvas-storyboard-assets";
-import { reconcileStoryboardTargetConnections, storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
+import { storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
+import { withStoryboardOutputDraft } from "@/lib/canvas/canvas-reference-edits";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type StoryboardRow } from "@/types/canvas";
 
 const node = (id: string, type: CanvasNodeType, metadata: CanvasNodeData["metadata"] = {}): CanvasNodeData => ({
@@ -83,26 +84,16 @@ describe("storyboard target materializer", () => {
 
     it("combines stable bindings and produces position mention tokens", () => {
         const references = storyboardRowReferenceNodeIds(script, row, nodes, connections, true);
-        expect(references).toEqual(["project-style", "prop", "character", "manual", "first-frame"]);
-        expect(storyboardComposerContent("快速跟拍", references, nodes)).toBe("参考资产：@图片1 @图片2 @角色1 @视频1 @图片3\n快速跟拍");
+        expect(references).toEqual(["first-frame", "prop", "character", "project-style"]);
+        expect(storyboardComposerContent("快速跟拍", references, nodes)).toBe("参考资产：@图片1 @图片2 @角色1 @图片3\n快速跟拍");
 
         const withDirectManualInput = storyboardRowReferenceNodeIds(script, row, nodes, [...connections, { id: "direct", fromNodeId: "direct-manual", toNodeId: "target" }], false, "target");
-        expect(withDirectManualInput).toContain("direct-manual");
+        expect(withDirectManualInput).not.toContain("direct-manual");
     });
 
-    it("reconciles managed edges without deleting manual connections", () => {
-        const manualTargetEdge: CanvasConnection = { id: "manual-target", fromNodeId: "manual", toNodeId: "target" };
-        const created = reconcileStoryboardTargetConnections([manualTargetEdge], script, row, "target", ["prop", "character"]);
-        expect(created.filter((edge) => edge.relation === "storyboard-output")).toHaveLength(1);
-        expect(
-            created
-                .filter((edge) => edge.relation === "storyboard-asset-reference")
-                .map((edge) => edge.fromNodeId)
-                .sort(),
-        ).toEqual(["character", "prop"]);
-
-        const reconciled = reconcileStoryboardTargetConnections(created, script, row, "target", ["character"]);
-        expect(reconciled.some((edge) => edge.id === "manual-target")).toBe(true);
-        expect(reconciled.some((edge) => edge.relation === "storyboard-asset-reference" && edge.fromNodeId === "prop")).toBe(false);
+    it("captures output draft references from fields without adding connections", () => {
+        const result = withStoryboardOutputDraft(nodes, script, row, "target");
+        expect(result.find((node) => node.id === "target")?.metadata?.generationSpec?.referenceBindings.map((binding) => binding.nodeId)).toEqual(["prop", "character", "project-style"]);
+        expect(connections).toHaveLength(1);
     });
 });

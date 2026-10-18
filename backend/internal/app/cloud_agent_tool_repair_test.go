@@ -120,7 +120,8 @@ func TestCloudAgentEmptyCanvasRepairAcrossCheckpoints(t *testing.T) {
 				hash := cloudAgentCanvasHash(doc)
 				bad := `{"snapshotHash":"` + hash + `","ops":[{"id":"note","nodeType":"text"}]}`
 				if scenario == "connection_repaired" {
-					// Text-to-Markdown is valid; a self-edge remains invalid under manual rules.
+					// 连线操作已停用：整批（含合法的两个 add_node）不落地，并按可修复的
+					// 参数错误回给模型一次修复机会（connection_ops_disabled）。
 					bad = `{"snapshotHash":"` + hash + `","ops":[{"type":"add_node","id":"note","nodeType":"text"},{"type":"add_node","id":"doc","nodeType":"markdown"},{"type":"connect_nodes","id":"edge","fromNodeId":"note","toNodeId":"note"}]}`
 				}
 				attempts := 3

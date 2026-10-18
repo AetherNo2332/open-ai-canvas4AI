@@ -97,7 +97,7 @@ func BuiltinRegistry() *Registry {
 			Actions:       []string{"read_rows", "append_row", "update_row", "remove_row", "generate_storyboard"},
 			SummaryFields: []string{"storyboard"}, DetailFields: []string{"storyboard"}, ProjectionKind: "storyboard", ProjectionField: "storyboard",
 			CreateMetadata: func(string) map[string]any {
-				return map[string]any{"status": "idle", "workflowKind": "script", "storyboard": map[string]any{"rows": []any{}, "visibleColumns": []any{"shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"}, "referenceNodeIds": []any{}}}
+				return map[string]any{"status": "idle", "workflowKind": "script", "storyboard": map[string]any{"rows": []any{}, "visibleColumns": StoryboardDefaultColumnValues(), "referenceNodeIds": []any{}}}
 			},
 		},
 	}

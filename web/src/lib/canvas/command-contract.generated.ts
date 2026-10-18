@@ -16,6 +16,7 @@ export type OperationType =
     | "reorder_rows"
     | "edit_drawing"
     | "edit_storyboard"
+    | "bind_storyboard_output"
     | "edit_batch_table"
     | "create_previs_scene"
     | "edit_previs_scene"
@@ -24,7 +25,8 @@ export type OperationType =
     | "rename_canvas"
     | "delete_canvas"
     | "edit_canvas_settings"
-    | "edit_timeline";
+    | "edit_timeline"
+    | "migrate_references";
 
 export interface ChangeSet {
     entities: Array<EntityChange>;
@@ -86,6 +88,17 @@ export interface MaterializationStatus {
     nextAttemptAt?: string;
 }
 
+export interface MigrationConflict {
+    scopeKey: string;
+    fieldNodeIds: Array<string>;
+    edgeNodeIds: Array<string>;
+}
+
+export interface MigrationPreview {
+    required: boolean;
+    conflicts: Array<MigrationConflict>;
+}
+
 export interface Operation {
     type: OperationType;
     id: string;
@@ -117,6 +130,7 @@ export interface Operation {
     drawingOptions?: Record<string, unknown>;
     action?: string;
     rowId?: string;
+    outputMode?: string;
     columnId?: string;
     batchOperation?: string;
     concurrency?: number;
@@ -209,6 +223,7 @@ export interface Snapshot {
     eventSeq: number;
     document: Record<string, unknown>;
     entityVersions: Record<string, number>;
+    referenceMigration?: MigrationPreview;
 }
 
 export interface SubmitRequest {

@@ -134,6 +134,11 @@ func (s *Service) finishCloudAgentCleanup(ctx context.Context, run *model.CloudA
 			return err
 		}
 	}
+	if mediaTask != nil {
+		if err := s.materializeCloudAgentStoryboardTask(mediaTask); err != nil {
+			return err
+		}
+	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
 	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {

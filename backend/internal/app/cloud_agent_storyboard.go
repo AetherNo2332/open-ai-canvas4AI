@@ -21,20 +21,24 @@ var cloudAgentStoryboardTextFields = []string{
 }
 
 type cloudAgentStoryboardCreateArgs struct {
-	SnapshotHash string           `json:"snapshotHash"`
-	NodeID       string           `json:"nodeId"`
-	Title        string           `json:"title"`
-	Rows         []map[string]any `json:"rows"`
-	X            float64          `json:"x"`
-	Y            float64          `json:"y"`
+	SnapshotHash     string           `json:"snapshotHash"`
+	NodeID           string           `json:"nodeId"`
+	Title            string           `json:"title"`
+	Rows             []map[string]any `json:"rows"`
+	ReferenceNodeIDs []string         `json:"referenceNodeIds,omitempty"`
+	X                float64          `json:"x"`
+	Y                float64          `json:"y"`
 }
 
 type cloudAgentStoryboardEditArgs struct {
-	SnapshotHash string         `json:"snapshotHash"`
-	NodeID       string         `json:"nodeId"`
-	Action       string         `json:"action"`
-	RowID        string         `json:"rowId"`
-	Patch        map[string]any `json:"patch"`
+	SnapshotHash     string         `json:"snapshotHash"`
+	NodeID           string         `json:"nodeId"`
+	Action           string         `json:"action"`
+	RowID            string         `json:"rowId"`
+	Patch            map[string]any `json:"patch"`
+	ReferenceNodeIDs []string       `json:"referenceNodeIds,omitempty"`
+	OutputMode       string         `json:"outputMode,omitempty"`
+	OutputNodeID     string         `json:"outputNodeId,omitempty"`
 }
 
 type cloudAgentStoryboardMutationPlan struct {
@@ -187,6 +191,13 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 	if beforeHash != args.SnapshotHash {
 		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
 	}
+	// 创建时不带引用声明的分镜在历史画布上仍然允许；带 referenceNodeIds 或行 assetBindings
+	// 才要求先完成规范化（否则服务端不会派生托管连接）。
+	if cloudAgentStoryboardCreateWritesReferences(args) {
+		if err := validateCloudAgentReferenceMigration(doc); err != nil {
+			return nil, err
+		}
+	}
 	for _, node := range creationMaps(doc["nodes"]) {
 		if stringValue(node["id"]) == args.NodeID {
 			return nil, BadAuthRequest("分镜节点ID已存在")
@@ -204,10 +215,16 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 	node := creationAddedNode(CreationCanvasOp{
 		Type: "add_node", ID: args.NodeID, NodeType: "script", Title: args.Title, X: &args.X, Y: &args.Y,
 		Metadata: map[string]any{"storyboard": map[string]any{
-			"rows": rows, "visibleColumns": []any{"shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"}, "referenceNodeIds": []any{},
+			"rows": rows, "visibleColumns": capability.StoryboardDefaultColumnValues(), "referenceNodeIds": []any{},
 		}},
 	})
 	doc["nodes"] = append(creationMaps(doc["nodes"]), node)
+	if args.ReferenceNodeIDs != nil {
+		cloudAgentNodeMetadata(node)["storyboard"].(map[string]any)["referenceNodeIds"] = args.ReferenceNodeIDs
+	}
+	if err := reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
+		return nil, err
+	}
 	return &cloudAgentStoryboardMutationPlan{
 		Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
 		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认创建分镜脚本", Description: fmt.Sprintf("Agent 准备创建分镜脚本《%s》，包含 %d 个镜头。批准后才会写入画布。", args.Title, len(rows)), Items: []cloudAgentApprovalPreviewItem{{Operation: "create_storyboard", NodeID: args.NodeID, NodeTitle: args.Title, NodeType: "script", NodeTypeLabel: "分镜脚本", Summary: fmt.Sprintf("创建分镜脚本《%s》（%d个镜头）", args.Title, len(rows))}}},
@@ -222,8 +239,11 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	if args.SnapshotHash == "" || args.NodeID == "" {
 		return nil, BadAuthRequest("编辑分镜需要快照和节点ID")
 	}
+	if args.Action == "set_references" || args.Action == "bind_output" || args.Action == "unbind_output" {
+		return prepareCloudAgentStoryboardReferenceEdit(repo, userID, canvasID, args)
+	}
 	if args.Action != "append" && args.Action != "update" && args.Action != "remove" {
-		return nil, BadAuthRequest("分镜操作必须是 append、update 或 remove")
+		return nil, BadAuthRequest("分镜操作必须是 append、update、remove、set_references、bind_output 或 unbind_output")
 	}
 	if err := validateCloudAgentID(args.NodeID, "分镜节点ID", 80); err != nil {
 		return nil, err
@@ -250,6 +270,12 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	beforeHash := cloudAgentCanvasHash(doc)
 	if beforeHash != args.SnapshotHash {
 		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
+	}
+	// 行素材声明（patch.assetBindings）属于引用字段：历史画布必须先规范化。
+	if cloudAgentStoryboardEditWritesReferences(args) {
+		if err := validateCloudAgentReferenceMigration(doc); err != nil {
+			return nil, err
+		}
 	}
 	node, storyboard, rows, err := storyboardNodeFromDocument(doc, args.NodeID)
 	if err != nil {
@@ -325,6 +351,9 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	}
 	storyboard["rows"] = mapsAsAny(next)
 	node["metadata"].(map[string]any)["storyboard"] = storyboard
+	if err := reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
+		return nil, err
+	}
 	return &cloudAgentStoryboardMutationPlan{
 		Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
 		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认修改分镜脚本", Description: "Agent 准备修改分镜脚本。批准后才会写入画布。", Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeTitle: stringValue(node["title"]), NodeType: "script", NodeTypeLabel: "分镜脚本", Fields: fields, Summary: fmt.Sprintf("%s分镜脚本《%s》", map[string]string{"append": "追加镜头到", "update": "修改", "remove": "删除"}[args.Action], stringValue(node["title"]))}}},

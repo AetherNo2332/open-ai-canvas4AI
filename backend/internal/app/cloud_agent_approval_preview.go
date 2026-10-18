@@ -57,6 +57,10 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 	if err != nil {
 		return nil, err
 	}
+	// 审批预览入口的守卫：关闭连线操作后，旧操作在这里就被拒绝，既不读画布也不产生审批卡。
+	if err := validateCloudAgentReferenceOperations(args.Ops); err != nil {
+		return nil, err
+	}
 	canvas, err := repo.CanvasProjectForUser(userID, canvasID)
 	if err != nil {
 		return nil, err
@@ -73,6 +77,11 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 			error: &cloudAgentArgumentError{cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")},
 			Field: "snapshotHash", Issue: "stale_snapshot",
 		}
+	}
+	// 画布级前置条件：写声明式引用字段前，历史画布必须先完成一次规范化。审批预览与
+	// 实际执行共用这里，所以两侧拿到同一个 reference_migration_required。
+	if err := validateCloudAgentReferenceDocument(doc, args.Ops); err != nil {
+		return nil, err
 	}
 	items, err := applyCloudAgentCanvasPlan(doc, args.Ops)
 	if err != nil {
@@ -99,6 +108,14 @@ func prepareCloudAgentCanvasMutation(repo *repository.Repository, userID, canvas
 }
 
 func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloudAgentApprovalPreviewItem, error) {
+	// 计划器自身也守住引用合同：调用方即使绕过预览/执行入口直接规划，也不能把旧的
+	// 连线操作、绕过 patch 或历史画布上的引用字段写入混进候选文档。
+	if err := validateCloudAgentReferenceOperations(ops); err != nil {
+		return nil, err
+	}
+	if err := validateCloudAgentReferenceDocument(doc, ops); err != nil {
+		return nil, err
+	}
 	// The planner is also used for previews: a rejected batch must leave its
 	// input untouched, including metadata maps modified by earlier operations.
 	encoded, err := json.Marshal(doc)
@@ -111,6 +128,9 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 	}
 	items, err := applyCloudAgentCanvasPlanInPlace(planned, ops)
 	if err != nil {
+		return nil, err
+	}
+	if err := reconcileCloudAgentReferenceFields(planned, string(encoded)); err != nil {
 		return nil, err
 	}
 	for key := range doc {
@@ -126,7 +146,7 @@ func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) (
 	nodes := creationMaps(doc["nodes"])
 	edges := creationMaps(doc["connections"])
 	items := make([]cloudAgentApprovalPreviewItem, 0, len(ops))
-	for opIndex, op := range ops {
+	for _, op := range ops {
 		title, content := "", ""
 		if op.Title != nil {
 			title = *op.Title
@@ -171,7 +191,7 @@ func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) (
 						hint.Y = *y
 					}
 				}
-				if slot, ok := cloudAgentArrangeAddNodePosition(doc, pending, op, ops, hint); ok {
+				if slot, ok := cloudAgentArrangeAddNodePosition(doc, pending, op, hint); ok {
 					if x == nil {
 						value := slot.X
 						x = &value
@@ -189,54 +209,6 @@ func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) (
 				Operation: "add_node", NodeID: op.ID, NodeTitle: nodeTitle,
 				NodeType: capability.Type, NodeTypeLabel: capability.Label,
 				Summary: fmt.Sprintf("新增%s《%s》", capability.Label, nodeTitle),
-			})
-		case "connect_nodes":
-			if err := validateCloudAgentID(op.FromNodeID, "来源节点 ID", 80); err != nil {
-				return nil, err
-			}
-			if err := validateCloudAgentID(op.ToNodeID, "目标节点 ID", 80); err != nil {
-				return nil, err
-			}
-			fromIndex, toIndex := cloudAgentNodeIndex(nodes, op.FromNodeID), cloudAgentNodeIndex(nodes, op.ToNodeID)
-			// 端点不存在依赖画布状态，属准入失败（终止整轮）；自环边只由参数本身可判定，
-			// 归参数错误进入修复预算。两类共享旧文案，拆开时保留原文案给前者。
-			if fromIndex < 0 || toIndex < 0 {
-				return nil, BadAuthRequest("连线端点不存在或指向自身")
-			}
-			if op.FromNodeID == op.ToNodeID {
-				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "self_edge", "连线不能指向自身")
-			}
-			if err := validateCloudAgentConnection(nodes, op.FromNodeID, op.ToNodeID, edges); err != nil {
-				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", cloudAgentSafeToolError(err))
-			}
-			for _, edge := range edges {
-				if stringValue(edge["id"]) == op.ID || (stringValue(edge["fromNodeId"]) == op.FromNodeID && stringValue(edge["toNodeId"]) == op.ToNodeID && stringValue(edge["fromHandleId"]) == op.FromHandleID && stringValue(edge["toHandleId"]) == op.ToHandleID) {
-					return nil, BadAuthRequest("连线重复")
-				}
-			}
-			fromCapability, _ := cloudAgentNodeCapabilityForNode(nodes[fromIndex])
-			toCapability, _ := cloudAgentNodeCapabilityForNode(nodes[toIndex])
-			fromTitle := cloudAgentApprovalNodeTitle(nodes[fromIndex], fromCapability.Label)
-			toTitle := cloudAgentApprovalNodeTitle(nodes[toIndex], toCapability.Label)
-			edge := map[string]any{"id": op.ID, "fromNodeId": op.FromNodeID, "toNodeId": op.ToNodeID}
-			if op.FromHandleID != "" {
-				edge["fromHandleId"] = op.FromHandleID
-			}
-			if op.ToHandleID != "" {
-				edge["toHandleId"] = op.ToHandleID
-			}
-			if err := cloudAgentValidateEdgeHandles(nodes, edge); err != nil {
-				return nil, err
-			}
-			edges = append(edges, edge)
-			if err := cloudAgentAttachStoryboardEdge(nodes, edge); err != nil {
-				return nil, err
-			}
-			items = append(items, cloudAgentApprovalPreviewItem{
-				Operation: "connect_nodes", NodeID: op.FromNodeID, NodeTitle: fromTitle,
-				NodeType: fromCapability.Type, NodeTypeLabel: fromCapability.Label,
-				TargetNodeID: op.ToNodeID, TargetNodeTitle: toTitle, TargetNodeType: toCapability.Type,
-				Summary: fmt.Sprintf("建立《%s》→《%s》的引用连线", fromTitle, toTitle),
 			})
 		case "update_node":
 			if len(op.Patch) == 0 {
@@ -274,7 +246,7 @@ func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) (
 				NodeType: capability.Type, NodeTypeLabel: capability.Label, Fields: fields,
 				Summary: fmt.Sprintf("修改%s《%s》的%s", capability.Label, beforeTitle, strings.Join(fields, "、")),
 			})
-		case "delete_node", "delete_connection", "update_connection", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows":
+		case "delete_node", "duplicate_node", "set_parent", "replace_text", "reorder_nodes", "reorder_rows":
 			var item cloudAgentApprovalPreviewItem
 			var err error
 			nodes, edges, item, err = applyCloudAgentExtendedOp(nodes, edges, op)
@@ -303,10 +275,7 @@ func cloudAgentCanvasApprovalPreview(items []cloudAgentApprovalPreviewItem) clou
 	if counts["update_node"] > 0 {
 		parts = append(parts, fmt.Sprintf("修改 %d 个节点", counts["update_node"]))
 	}
-	if counts["connect_nodes"] > 0 {
-		parts = append(parts, fmt.Sprintf("建立 %d 条引用连线", counts["connect_nodes"]))
-	}
-	for _, kind := range []struct{ operation, label string }{{"delete_node", "删除节点"}, {"duplicate_node", "复制节点"}, {"delete_connection", "移除连线"}, {"update_connection", "改接连线"}, {"set_parent", "调整分组"}, {"replace_text", "精确编辑正文"}, {"reorder_nodes", "调整节点顺序"}, {"reorder_rows", "调整表格行顺序"}} {
+	for _, kind := range []struct{ operation, label string }{{"delete_node", "删除节点"}, {"duplicate_node", "复制节点"}, {"set_parent", "调整分组"}, {"replace_text", "精确编辑正文"}, {"reorder_nodes", "调整节点顺序"}, {"reorder_rows", "调整表格行顺序"}} {
 		if counts[kind.operation] > 0 {
 			parts = append(parts, fmt.Sprintf("%s %d 项", kind.label, counts[kind.operation]))
 		}

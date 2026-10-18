@@ -1730,6 +1730,30 @@
         "name": "model_list",
         "parameters": {
           "additionalProperties": false,
+          "oneOf": [
+            {
+              "properties": {
+                "storyboardNodeId": {
+                  "not": {}
+                },
+                "storyboardRowId": {
+                  "not": {}
+                }
+              }
+            },
+            {
+              "properties": {
+                "referenceNodeIds": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "mode",
+                "storyboardNodeId",
+                "storyboardRowId"
+              ]
+            }
+          ],
           "properties": {
             "mode": {
               "enum": [
@@ -1746,6 +1770,14 @@
               },
               "maxItems": 16,
               "type": "array"
+            },
+            "storyboardNodeId": {
+              "description": "分镜表节点 ID，与 storyboardRowId 同时传入，输入从行读取",
+              "type": "string"
+            },
+            "storyboardRowId": {
+              "description": "分镜行 ID",
+              "type": "string"
             }
           },
           "required": [],
@@ -1756,7 +1788,7 @@
     },
     {
       "function": {
-        "description": "创建结构化分镜脚本，适用于多镜头、连续性与逐镜维护。先读画布并传 snapshotHash；rows 是对象数组，每行需正数 durationSeconds 及非空 plotDescription 或 videoMotionPrompt，如 [{\"durationSeconds\":5,\"plotDescription\":\"人物走入房间\"}]。不能用 content 或 Markdown 替代 rows，写入遵循审批模式。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "创建结构化分镜脚本，适用于多镜头、连续性与逐镜维护。先读画布并传 snapshotHash；rows 是对象数组，每行需正数 durationSeconds 及非空 plotDescription 或 videoMotionPrompt，如 [{\"durationSeconds\":5,\"plotDescription\":\"人物走入房间\"}]。referenceNodeIds 可选，声明共享引用输入。不能用 content 或 Markdown 替代 rows，写入遵循审批模式。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_create_storyboard",
         "parameters": {
           "additionalProperties": false,
@@ -1764,6 +1796,15 @@
             "nodeId": {
               "description": "当前画布内新的稳定分镜节点ID",
               "type": "string"
+            },
+            "referenceNodeIds": {
+              "description": "可选：所有镜头共享的引用输入节点；服务端据此派生连接，不要另外连线",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array"
             },
             "rows": {
               "items": {
@@ -2052,7 +2093,7 @@
     },
     {
       "function": {
-        "description": "先read获取 nodeId/snapshotHash/真实rowId。append 给patch（正数durationSeconds及剧情或运动描述），不传rowId；update 给rowId+部分patch；remove 只给rowId。可写字段以节点合同为准；assetBindings仅引用当前画布节点，不写输出身份、任务状态、资源URL或任意metadata。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "先read获取 nodeId/snapshotHash/真实rowId。append 给patch（正数durationSeconds及剧情或运动描述），不传rowId；update 给rowId+部分patch；remove 只给rowId。set_references 给 referenceNodeIds 声明共享引用（[] 清空）；bind_output 给 rowId+outputMode+outputNodeId；unbind_output 给 rowId+outputMode 解除归属。assetBindings仅引用当前画布节点，不写输出身份、任务状态、资源URL或任意metadata，也不手工建边。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_edit_storyboard",
         "parameters": {
           "additionalProperties": false,
@@ -2061,6 +2102,12 @@
               "properties": {
                 "action": {
                   "const": "append"
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
                 },
                 "patch": {
                   "additionalProperties": false,
@@ -2316,6 +2363,9 @@
                   ],
                   "type": "object"
                 },
+                "referenceNodeIds": {
+                  "not": {}
+                },
                 "rowId": {
                   "not": {}
                 }
@@ -2329,6 +2379,15 @@
               "properties": {
                 "action": {
                   "const": "update"
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
                 }
               },
               "required": [
@@ -2342,7 +2401,16 @@
                 "action": {
                   "const": "remove"
                 },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
                 "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
                   "not": {}
                 }
               },
@@ -2350,19 +2418,102 @@
                 "action",
                 "rowId"
               ]
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "set_references"
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "rowId": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action",
+                "referenceNodeIds"
+              ]
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "bind_output"
+                },
+                "outputNodeId": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action",
+                "rowId",
+                "outputMode",
+                "outputNodeId"
+              ]
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "unbind_output"
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action",
+                "rowId",
+                "outputMode"
+              ]
             }
           ],
           "properties": {
             "action": {
+              "description": "append/update/remove 维护镜头行；set_references 改共享引用；bind_output/unbind_output 改镜头产物归属",
               "enum": [
                 "append",
                 "update",
-                "remove"
+                "remove",
+                "set_references",
+                "bind_output",
+                "unbind_output"
               ],
               "type": "string"
             },
             "nodeId": {
               "description": "真实分镜脚本节点ID",
+              "type": "string"
+            },
+            "outputMode": {
+              "description": "绑定或解除产物归属的槽位",
+              "enum": [
+                "image",
+                "video"
+              ],
+              "type": "string"
+            },
+            "outputNodeId": {
+              "description": "bind_output 必填：已有产物节点 ID；所属关系由服务端派生连接，不重写产物内容",
               "type": "string"
             },
             "patch": {
@@ -2594,6 +2745,15 @@
                 }
               },
               "type": "object"
+            },
+            "referenceNodeIds": {
+              "description": "set_references 必填：所有镜头共享的引用输入节点；服务端据此派生连接",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array"
             },
             "rowId": {
               "description": "update/remove 使用 canvas_read_storyboard 返回的真实 rowId；append 留空",
@@ -3014,7 +3174,7 @@
     },
     {
       "function": {
-        "description": "基于最新 snapshotHash 原子编辑画布，每批最多20项，各项需 type+id。add_node 给 nodeType，可给 title/content/x/y；update_node 给 patch，复杂字段先查 canvas_list_node_types。delete_node 清理节点及引用，保留素材；duplicate_node 给 sourceNodeId，id 为新ID，复制容器成员与内部关系并清任务身份。connect_nodes/update_connection 给 fromNodeId/toNodeId，可给端口；delete_connection 的 id 是连线ID。set_parent 给 parentId，空串解除分组。replace_text 给 match/replacement，需唯一匹配；reorder_nodes/nodeIds、reorder_rows/rowIds 各含全部ID一次。素材替换用 canvas_bind_asset，绘图用 canvas_edit_drawing，生成用 generate_media。不写任意 metadata、任务状态或 URL；快照冲突后重读。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "基于最新 snapshotHash 原子编辑画布，每批最多20项，各项需 type+id。add_node 给 nodeType，可给 title/content/x/y；update_node 给 patch，复杂字段先查 canvas_list_node_types。delete_node 清理节点及引用，保留素材；duplicate_node 给 sourceNodeId，id 为新ID，复制容器成员与内部关系并清任务身份。set_parent 给 parentId，空串解除分组。replace_text 给 match/replacement，需唯一匹配；reorder_nodes/nodeIds、reorder_rows/rowIds 各含全部ID一次。引用写字段：媒体草稿 generationSpec.referenceBindings，其他输入节点 inputBindings，分镜用 canvas_edit_storyboard。没有连接/改接/断线操作，旧边调用会被拒。素材替换用 canvas_bind_asset，绘图用 canvas_edit_drawing，生成用 generate_media。不写任意 metadata、托管标记、任务状态或 URL；快照冲突后重读。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_apply_ops",
         "parameters": {
           "additionalProperties": false,
@@ -3046,38 +3206,9 @@
                   {
                     "properties": {
                       "type": {
-                        "const": "connect_nodes"
-                      }
-                    },
-                    "required": [
-                      "fromNodeId",
-                      "toNodeId"
-                    ]
-                  },
-                  {
-                    "properties": {
-                      "type": {
                         "const": "delete_node"
                       }
                     }
-                  },
-                  {
-                    "properties": {
-                      "type": {
-                        "const": "delete_connection"
-                      }
-                    }
-                  },
-                  {
-                    "properties": {
-                      "type": {
-                        "const": "update_connection"
-                      }
-                    },
-                    "required": [
-                      "fromNodeId",
-                      "toNodeId"
-                    ]
                   },
                   {
                     "properties": {
@@ -3136,16 +3267,8 @@
                     "description": "新建节点的文本或待编辑提示词；update_node 使用 patch.content。正文长度按节点合同限制，媒体节点的内容参数仅修改草稿提示词，已有媒体替换用 canvas_bind_asset。",
                     "type": "string"
                   },
-                  "fromHandleId": {
-                    "description": "可选来源端口",
-                    "type": "string"
-                  },
-                  "fromNodeId": {
-                    "description": "连线来源节点ID",
-                    "type": "string"
-                  },
                   "id": {
-                    "description": "节点或连线唯一ID",
+                    "description": "节点唯一ID",
                     "type": "string"
                   },
                   "match": {
@@ -3433,6 +3556,12 @@
                         "minimum": 1,
                         "type": "number"
                       },
+                      "inputBindings": {
+                        "description": "数组元素合同见 canvas_list_node_types(nodeType)",
+                        "items": {},
+                        "maxItems": 100,
+                        "type": "array"
+                      },
                       "listMode": {
                         "type": "boolean"
                       },
@@ -3633,23 +3762,12 @@
                     "description": "新建节点的标题；update_node 更新标题必须放在 patch.title",
                     "type": "string"
                   },
-                  "toHandleId": {
-                    "description": "可选目标端口",
-                    "type": "string"
-                  },
-                  "toNodeId": {
-                    "description": "连线目标节点ID",
-                    "type": "string"
-                  },
                   "type": {
-                    "description": "创建、修改、删除、复制节点，维护连线、分组和排序，或精确替换文本",
+                    "description": "创建、修改、删除、复制节点，维护分组和排序，或精确替换文本；输入引用写引用字段（update_node 的 patch），不连节点",
                     "enum": [
                       "add_node",
                       "update_node",
-                      "connect_nodes",
                       "delete_node",
-                      "delete_connection",
-                      "update_connection",
                       "duplicate_node",
                       "set_parent",
                       "replace_text",
@@ -3690,7 +3808,7 @@
     },
     {
       "function": {
-        "description": "整理画布节点位置：只改坐标，不改内容、不建连线、不增删节点，先读画布并传 snapshotHash。mode 省略即 auto（有连线按依赖分层，否则按媒体类型分区）；groups 为横向分带（label 展示名，可覆盖整组 mode）。nodeIds 省略即整理全部可整理节点（跳过锁定、容器、批次子节点与已归属背板者）。align 对齐/等距，dryRun 只预演；一次最多 50 个节点，单个节点用 update_node 的 x/y。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "整理画布节点位置：只改坐标，不改内容、不改引用、不增删节点，先读画布并传 snapshotHash。mode 省略即 auto（有引用关系按依赖分层，否则按媒体类型分区）；groups 为横向分带（label 展示名，可覆盖整组 mode）。nodeIds 省略即整理全部可整理节点（跳过锁定、容器、批次子节点与已归属背板者）。align 对齐/等距，dryRun 只预演；一次最多 50 个节点，单个节点用 update_node 的 x/y。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_arrange_nodes",
         "parameters": {
           "additionalProperties": false,
@@ -3788,63 +3906,118 @@
     },
     {
       "function": {
-        "description": "提交媒体生成：准备草稿和引用连线。request_approval 需独立审批，auto 经服务端模型、能力、价格、预算与资源准入后直接提交收费任务。仅建节点、改提示词或连线用 canvas_apply_ops。生成前读画布并按实际参考筛选模型目录，参数须符合返回的时长、画幅和音频能力。可续用空闲且无任务、无产物的草稿；他人运行的草稿需其已结束且清理完成。已绑定任务或已有产物的节点不可覆盖，任务状态与错误从 generation 或 task_get 读取。sourceNodeId 是文本输入，referenceNodeIds 是媒体输入，referenceTransientIds 只接受标注工具返回的临时引用。准入错误按 reason 修正；已提交任务失败应告知用户，重新生成需用户明确要求并重新审批。 优先原样复制 model_list 返回的 selectionId（服务端签发的一次性凭证，不要修改其中任何字符）。兼容期也接受展开字段：非空 logicalModelId，或同时提供非空 channelId 和 channelModelKey。若 selectionId 与展开字段都完全省略，服务端仅在当前项目已配置该能力的可用默认模型时使用它；没有可用默认模型时拒绝提交，不会随机选模。selectionId 与展开字段互斥；未使用的选择字段省略或传空字符串，不得传 null 或仅含空白字符串。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "提交媒体生成：准备草稿并声明引用。request_approval 需独立审批，auto 经服务端模型、能力、价格、预算与资源准入后直接提交收费任务。只建节点、改提示词或声明引用用 canvas_apply_ops。分镜模式给 storyboardNodeId+storyboardRowId，输入从行读取，也不手工建边。生成前读画布并按实际参考筛选模型目录，参数须符合返回的时长、画幅和音频能力。可续用空闲且无任务、无产物的草稿；他人运行的草稿需其已结束且清理完成。已绑定任务或已有产物的节点不可覆盖，任务状态与错误从 generation 或 task_get 读取。sourceNodeId 是文本输入，referenceNodeIds 是媒体输入，referenceTransientIds 只接受标注工具返回的临时引用。准入错误按 reason 修正；已提交任务失败应告知用户，重新生成需用户明确要求并重新审批。 优先原样复制 model_list 返回的 selectionId（服务端签发的一次性凭证，不要修改其中任何字符）。兼容期也接受展开字段：非空 logicalModelId，或同时提供非空 channelId 和 channelModelKey。若 selectionId 与展开字段都完全省略，服务端仅在当前项目已配置该能力的可用默认模型时使用它；没有可用默认模型时拒绝提交，不会随机选模。selectionId 与展开字段互斥；未使用的选择字段省略或传空字符串，不得传 null 或仅含空白字符串。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "generate_media",
         "parameters": {
           "additionalProperties": false,
           "oneOf": [
             {
+              "oneOf": [
+                {
+                  "properties": {
+                    "durationSeconds": {
+                      "minimum": 1
+                    },
+                    "mode": {
+                      "const": "video"
+                    },
+                    "size": {
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "size",
+                    "durationSeconds"
+                  ]
+                },
+                {
+                  "properties": {
+                    "durationSeconds": {
+                      "const": 0
+                    },
+                    "mode": {
+                      "const": "image"
+                    },
+                    "size": {
+                      "minLength": 1
+                    },
+                    "videoGenerateAudio": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "size"
+                  ]
+                },
+                {
+                  "properties": {
+                    "durationSeconds": {
+                      "const": 0
+                    },
+                    "mode": {
+                      "const": "audio"
+                    },
+                    "videoGenerateAudio": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ]
+                }
+              ],
               "properties": {
-                "durationSeconds": {
-                  "minimum": 1
+                "storyboardNodeId": {
+                  "not": {}
                 },
-                "mode": {
-                  "const": "video"
-                },
-                "size": {
-                  "minLength": 1
+                "storyboardRowId": {
+                  "not": {}
                 }
               },
               "required": [
-                "mode",
-                "size",
-                "durationSeconds"
+                "prompt",
+                "referenceNodeIds"
               ]
             },
             {
               "properties": {
                 "durationSeconds": {
-                  "const": 0
+                  "not": {}
                 },
                 "mode": {
-                  "const": "image"
+                  "enum": [
+                    "image",
+                    "video"
+                  ]
+                },
+                "prompt": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "referenceTransientIds": {
+                  "not": {}
                 },
                 "size": {
                   "minLength": 1
                 },
-                "videoGenerateAudio": {
+                "sourceNodeId": {
                   "not": {}
+                },
+                "storyboardNodeId": {
+                  "minLength": 1
+                },
+                "storyboardRowId": {
+                  "minLength": 1
                 }
               },
               "required": [
-                "mode",
+                "storyboardNodeId",
+                "storyboardRowId",
                 "size"
-              ]
-            },
-            {
-              "properties": {
-                "durationSeconds": {
-                  "const": 0
-                },
-                "mode": {
-                  "const": "audio"
-                },
-                "videoGenerateAudio": {
-                  "not": {}
-                }
-              },
-              "required": [
-                "mode"
               ]
             }
           ],
@@ -3918,6 +4091,14 @@
               "description": "仅文本/镜头提示词节点ID；不要填媒体节点",
               "type": "string"
             },
+            "storyboardNodeId": {
+              "description": "分镜表节点 ID；分镜模式不传 prompt、引用和时长，由服务端读取行字段",
+              "type": "string"
+            },
+            "storyboardRowId": {
+              "description": "分镜行 ID，与 storyboardNodeId 同时传入",
+              "type": "string"
+            },
             "title": {
               "description": "媒体节点名称",
               "type": "string"
@@ -3929,10 +4110,8 @@
           },
           "required": [
             "mode",
-            "prompt",
             "nodeId",
-            "title",
-            "referenceNodeIds"
+            "title"
           ],
           "type": "object"
         }

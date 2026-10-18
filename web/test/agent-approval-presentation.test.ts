@@ -44,6 +44,20 @@ describe("Agent approval presentation", () => {
         expect(view.description).toContain("建立 1 条引用连线");
     });
 
+    it("summarizes the current declarative reference operations instead of connection commands", () => {
+        // Task 8 之后模型可见合同只剩字段声明式操作：分镜共享引用与输出归属都由
+        // edit_storyboard 的语义动作表达，审批展示必须能渲染它们且不泄露素材 id。
+        const view = agentApprovalPresentation({ toolName: "canvas_apply_ops", arguments: { ops: [
+            { type: "edit_storyboard", id: "script-node", action: "set_references", patch: { referenceNodeIds: ["private-reference-image"] } },
+            { type: "edit_storyboard", id: "script-node", action: "bind_output", rowId: "row-1", outputMode: "image", sourceNodeId: "private-output-image" },
+        ] } });
+        expect(view.items.map((item) => item.operation)).toEqual(["edit_storyboard", "edit_storyboard"]);
+        expect(view.items[0].summary).toContain("修改分镜");
+        expect(view.description).toContain("修改分镜 2 项");
+        expect(JSON.stringify(view)).not.toContain("private-reference-image");
+        expect(JSON.stringify(view)).not.toContain("private-output-image");
+    });
+
     it("summarizes an event approval and media request", () => {
         expect(agentApprovalPresentation({ toolName: "generate_media", arguments: { mode: "video" } }).title).toBe("确认生成视频");
     });

@@ -2,17 +2,18 @@
 
 ## 先明确要编辑还是生成
 
-只建空白节点、改提示词或连线，用 `canvas_apply_ops`。用户要求实际产出媒体才走生成路径；不能为了完成连接任务附带收费生成。
+只建空白节点、改提示词或声明引用字段，用 `canvas_apply_ops`；连线由服务端按引用字段派生，没有连接节点的操作。用户要求实际产出媒体才走生成路径；不能为了完成连接任务附带收费生成。
 
 生成前精读实际输入，核对资源就绪、当前任务及用户要求。`outputReference` 说明该节点的输出能否作参考，不说明本节点生成输入是否正确。角色卡读取其 definition 和 imageReference/audioReference，不只看 content。
 
 ## 引用与模型选择
 
-1. `sourceNodeId` 用能力卡允许的文本来源；图片、视频、音频和角色卡放 `referenceNodeIds`。提示词里的“参考图1”、节点标题或连线本身不能替代生成参数中的真实 ID。
-2. 临时标注图只能用 `image_annotation_render` 回执返回的 ID 放 `referenceTransientIds`；不把它当节点 ID，不构造 URL。
-3. 传实际 `mode` 和 `referenceNodeIds` 查询 `model_list`，素材或模式变化后重新查。目录为空就说明无匹配模型，不猜模型名绕过筛选。
-4. 原样复制返回的 `selectionId` 字符串到生成参数，不传 `selection` 对象，不混用其他模型选择字段。核对返回的时长、画幅、音频、参考数量、价格等能力，不能照搬其他模型的参数。
-5. 按 `generate_media` 当前 schema 填 mode/prompt/nodeId/title/referenceNodeIds 和适用的可选字段。不要先创建一个已绑定任务或已有产物的节点再尝试覆盖；新结果通常用新的唯一节点 ID，仅当工具确认草稿空闲且可复用时续用。
+1. `sourceNodeId` 用能力卡允许的文本来源；图片、视频、音频和角色卡放 `referenceNodeIds`。提示词里的“参考图1”、节点标题或已有连线本身不能替代生成参数中的真实 ID。
+2. 分镜模式同时给 `storyboardNodeId` 与 `storyboardRowId`：提示词、引用和视频时长从该行读取，不要另传 prompt、referenceNodeIds、sourceNodeId 或 durationSeconds；先把素材写进行绑定，再生成。
+3. 临时标注图只能用 `image_annotation_render` 回执返回的 ID 放 `referenceTransientIds`；不把它当节点 ID，不构造 URL。
+4. 传实际 `mode` 和 `referenceNodeIds` 查询 `model_list`，素材或模式变化后重新查；分镜模式改用同一对 `storyboardNodeId`／`storyboardRowId`，服务端用同一份行解析结果筛选。目录为空就说明无匹配模型，不猜模型名绕过筛选。
+5. 原样复制返回的 `selectionId` 字符串到生成参数，不传 `selection` 对象，不混用其他模型选择字段。核对返回的时长、画幅、音频、参考数量、价格等能力，不能照搬其他模型的参数。
+6. 按 `generate_media` 当前 schema 填 mode/prompt/nodeId/title/referenceNodeIds 和适用的可选字段。不要先创建一个已绑定任务或已有产物的节点再尝试覆盖；新结果通常用新的唯一节点 ID，仅当工具确认草稿空闲且可复用时续用。
 
 图片编辑把原图纳入 referenceNodeIds，prompt 明确保留和修改内容；不伪造新图片 URL。使用角色卡时直接传角色卡节点 ID，工具会附带其有效设定和表示，通常不再重复传同一张三视图。
 

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"infinite-canvas/backend/internal/canvas/references"
 )
 
 var cloudAgentCopySuffix = regexp.MustCompile(`(?i)^(.*)_copy([0-9]+)$`)
@@ -75,6 +77,7 @@ func cloudAgentCopyGraph(nodes, edges []map[string]any, op agentCanvasOp) ([]map
 		dy = *op.Y - value
 	}
 	copies := []map[string]any{}
+	copiedRows := map[string]string{}
 	for _, node := range sources {
 		if _, ok := cloudAgentNodeCapabilityForNode(node); !ok {
 			return nodes, edges, item, BadAuthRequest("复制包含不支持的节点类型")
@@ -106,7 +109,9 @@ func cloudAgentCopyGraph(nodes, edges []map[string]any, op agentCanvasOp) ([]map
 			position[axis] = value
 		}
 		metadata := cloudAgentNodeMetadata(copy)
-		cloudAgentResetCopiedMetadata(metadata, idMap)
+		for source, derived := range cloudAgentResetCopiedMetadata(metadata, stringValue(copy["id"]), idMap) {
+			copiedRows[source] = derived
+		}
 		cloudAgentRemapCopiedReferences(metadata, idMap)
 		metadata["copiedFromNodeId"] = oldID
 		switch stringValue(node["type"]) {
@@ -146,6 +151,12 @@ func cloudAgentCopyGraph(nodes, edges []map[string]any, op agentCanvasOp) ([]map
 	nextEdges := append([]map[string]any{}, edges...)
 	edgeIndex := 0
 	for _, edge := range edges {
+		// Managed edges are derived from declared fields. Copying one would carry the
+		// source owner's markers onto the copy, so the target scope re-coordinates them
+		// from the copied fields instead.
+		if stringValue(edge["managedBy"]) == references.ManagedBy {
+			continue
+		}
 		from, to := stringValue(edge["fromNodeId"]), stringValue(edge["toNodeId"])
 		if idMap[to] == "" || (idMap[from] == "" && frame) {
 			continue
@@ -166,13 +177,25 @@ func cloudAgentCopyGraph(nodes, edges []map[string]any, op agentCanvasOp) ([]map
 		if idMap[from] != "" {
 			copy["fromNodeId"] = idMap[from]
 		}
+		if row := stringValue(copy["storyboardRowId"]); row != "" {
+			if derived := copiedRows[row]; derived != "" {
+				copy["storyboardRowId"] = derived
+			} else {
+				delete(copy, "storyboardRowId")
+			}
+		}
 		nextEdges = append(nextEdges, copy)
 	}
 	item.Summary = fmt.Sprintf("复制 %d 个节点及关联连线，并隔离生成任务身份", len(copies))
 	return append(nodes, copies...), nextEdges, item, nil
 }
 
-func cloudAgentResetCopiedMetadata(meta map[string]any, idMap map[string]string) {
+// cloudAgentResetCopiedMetadata clears generation state a node copy must not inherit.
+// nodeID is the copied node's id, or "" when the caller only swaps a media asset. It
+// returns the source-to-copy identity mapping of the copied table rows so that row
+// scoped connections can be rebound onto the copy instead of the source table. The
+// command planner applies the same rules; the shared conformance fixture pins them.
+func cloudAgentResetCopiedMetadata(meta map[string]any, nodeID string, idMap map[string]string) map[string]string {
 	for _, key := range []string{"taskId", "taskClientOperationId", "retryOf", "attemptGroupId", "taskStatus", "taskProgress", "taskStage", "taskMediaStage", "taskCanRecoverMedia", "taskProvider", "taskStartedAt", "taskCompletedAt", "taskDurationMs", "taskErrorCode", "taskOfficialStatus", "taskReceiptRecorded", "taskCreatedAt", "taskUpdatedAt", "generationBatches", "batchRootId", "batchChildIds", "batchFailedCount", "isBatchRoot", "primaryImageId", "imageBatchExpanded", "batchUsesReferenceImages", "versionOfNodeId", "versionLabel", "versionPrimary", "errorDetails", "generationErrorCode", "resourceReloadAvailable", "failedPromptFingerprint"} {
 		delete(meta, key)
 	}
@@ -215,8 +238,10 @@ func cloudAgentResetCopiedMetadata(meta map[string]any, idMap map[string]string)
 			delete(meta, "characterViewNodeIds")
 		}
 	}
+	var rowIDs map[string]string
 	if board, ok := meta["storyboard"].(map[string]any); ok {
-		for _, row := range creationMaps(board["rows"]) {
+		rowIDs = map[string]string{}
+		for index, row := range creationMaps(board["rows"]) {
 			owned := false
 			for _, key := range []string{"imageNodeId", "videoNodeId"} {
 				source := stringValue(row[key])
@@ -227,21 +252,54 @@ func cloudAgentResetCopiedMetadata(meta map[string]any, idMap map[string]string)
 					delete(row, key)
 				}
 			}
-			delete(row, "errorDetails")
-			if !owned {
-				row["status"] = "idle"
-			}
+			cloudAgentIsolateCopiedRow(row, nodeID, "row", index, rowIDs, owned)
 		}
 	}
 	if table, ok := meta["batchTable"].(map[string]any); ok {
-		for _, row := range creationMaps(table["rows"]) {
+		if rowIDs == nil {
+			rowIDs = map[string]string{}
+		}
+		for index, row := range creationMaps(table["rows"]) {
+			owned := false
 			if source := stringValue(row["outputNodeId"]); idMap[source] == "" {
 				delete(row, "outputNodeId")
 			} else {
 				row["outputNodeId"] = idMap[source]
+				owned = true
 			}
+			cloudAgentIsolateCopiedRow(row, nodeID, "batch-row", index, rowIDs, owned)
 		}
 	}
+	return rowIDs
+}
+
+// cloudAgentIsolateCopiedRow makes a copied table row a new row. Task identity always
+// goes, because a copy is never the task that produced the source result; an in-flight
+// source status also resets so the copy cannot show a running task it does not own.
+func cloudAgentIsolateCopiedRow(row map[string]any, nodeID, suffix string, index int, rowIDs map[string]string, owned bool) {
+	for _, key := range []string{"taskId", "taskClientOperationId", "taskStatus", "taskProgress", "taskStage", "errorDetails"} {
+		delete(row, key)
+	}
+	if !owned || cloudAgentRowTaskActive(stringValue(row["status"])) {
+		row["status"] = "idle"
+	}
+	if nodeID == "" {
+		return
+	}
+	source := stringValue(row["id"])
+	next := fmt.Sprintf("%s-%s-%d", nodeID, suffix, index+1)
+	if source != "" {
+		rowIDs[source] = next
+	}
+	row["id"] = next
+}
+
+func cloudAgentRowTaskActive(status string) bool {
+	switch status {
+	case "loading", "running", "pending", "queued":
+		return true
+	}
+	return false
 }
 func cloudAgentRemapCopiedReferences(object map[string]any, idMap map[string]string) {
 	for key, value := range object {

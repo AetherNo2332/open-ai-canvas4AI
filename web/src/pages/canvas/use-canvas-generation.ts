@@ -12,7 +12,8 @@ import { listGenerationTasks, listTaskLogs, queryGenerationTask, subscribeGenera
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import {useCanvasSessionStore,canvasCommandSession} from '@/stores/canvas/use-canvas-session-store';
-import { cinematicStoryboardColumns, storyboardRowsFromTask } from "@/lib/canvas/canvas-project-domain";
+import { storyboardRowsFromTask } from "@/lib/canvas/canvas-project-domain";
+import { resolveStoryboardVisibleColumns } from "@/lib/canvas/canvas-storyboard-columns";
 import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
@@ -126,7 +127,7 @@ export async function recoverCanvasGenerationTaskNode(input: {
                                   generationErrorCode: undefined,
                                   resourceReloadAvailable: undefined,
                                   failedPromptFingerprint: undefined,
-                                  storyboard: { rows: result.rows, visibleColumns: cinematicStoryboardColumns(item.metadata?.storyboard?.visibleColumns), referenceNodeIds: item.metadata?.storyboard?.referenceNodeIds || [] },
+                                  storyboard: { rows: result.rows, visibleColumns: resolveStoryboardVisibleColumns(item.metadata?.storyboard?.visibleColumns), referenceNodeIds: item.metadata?.storyboard?.referenceNodeIds || [] },
                               },
                           }
                         : item,

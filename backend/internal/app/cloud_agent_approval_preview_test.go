@@ -42,7 +42,7 @@ func TestCloudAgentCanvasApprovalPreviewDescribesUpdateTargetAndFields(t *testin
 	}
 }
 
-func TestCloudAgentCanvasApprovalPreviewDescribesConnectionsAndMixedOperations(t *testing.T) {
+func TestCloudAgentCanvasApprovalPreviewDescribesMixedOperations(t *testing.T) {
 	doc, err := creationDocument(`{"nodes":[{"id":"image-1","type":"image","title":"参考图"},{"id":"video-1","type":"video","title":"视频镜头"}],"connections":[]}`)
 	if err != nil {
 		t.Fatal(err)
@@ -50,23 +50,36 @@ func TestCloudAgentCanvasApprovalPreviewDescribesConnectionsAndMixedOperations(t
 	items, err := applyCloudAgentCanvasPlan(doc, []agentCanvasOp{
 		{Type: "add_node", ID: "text-1", NodeType: "text", Title: stringPtr("镜头备注"), Content: stringPtr("private body")},
 		{Type: "update_node", ID: "video-1", Patch: map[string]any{"title": "视频镜头新版"}},
-		{Type: "connect_nodes", ID: "edge-1", FromNodeID: "image-1", ToNodeID: "video-1"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 3 {
+	if len(items) != 2 {
 		t.Fatalf("expected mixed preview items, got %d", len(items))
 	}
 	if !strings.Contains(items[0].Summary, "新增文本") || !strings.Contains(items[1].Summary, "节点名称") {
 		t.Fatalf("mixed preview summaries are incomplete: %+v", items)
 	}
-	if !strings.Contains(items[2].Summary, "参考图") || !strings.Contains(items[2].Summary, "视频镜头") {
-		t.Fatalf("connection preview omitted endpoints: %+v", items[2])
-	}
 	preview := cloudAgentCanvasApprovalPreview(items)
-	if !strings.Contains(preview.Description, "新增 1 个节点") || !strings.Contains(preview.Description, "修改 1 个节点") || !strings.Contains(preview.Description, "建立 1 条引用连线") {
+	if !strings.Contains(preview.Description, "新增 1 个节点") || !strings.Contains(preview.Description, "修改 1 个节点") {
 		t.Fatalf("preview description omitted operation counts: %s", preview.Description)
+	}
+	if strings.Contains(preview.Description, "连线") {
+		t.Fatalf("preview description still promises connections: %s", preview.Description)
+	}
+
+	// 关闭连线操作后，审批预览不再接受旧边操作，且同批的合法改名不进入预览文档。
+	before, _ := json.Marshal(doc)
+	_, err = applyCloudAgentCanvasPlan(doc, []agentCanvasOp{
+		{Type: "update_node", ID: "video-1", Patch: map[string]any{"title": "不应生效"}},
+		{Type: "connect_nodes", ID: "edge-1", FromNodeID: "image-1", ToNodeID: "video-1"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "connection_ops_disabled") {
+		t.Fatalf("preview accepted a legacy connection operation: %v", err)
+	}
+	after, _ := json.Marshal(doc)
+	if string(before) != string(after) {
+		t.Fatal("rejected preview batch changed the document")
 	}
 }
 

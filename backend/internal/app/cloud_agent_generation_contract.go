@@ -73,6 +73,14 @@ func cloudAgentGenerationSpec(a cloudAgentMediaArgs, refs map[string]any, resolv
 	if a.SourceNodeID != "" {
 		bindings = append(bindings, contract.ReferenceBinding{ID: "node:" + a.SourceNodeID, NodeID: a.SourceNodeID, MediaType: "text", Role: "source-text", Order: len(bindings), Resolution: "latest"})
 	}
+	if a.ResolvedBindings != nil {
+		bindings = append([]contract.ReferenceBinding{}, a.ResolvedBindings...)
+		for i := range bindings {
+			if resolved, ok := byID[bindings[i].NodeID]; ok {
+				bindings[i].ResourceID = resolved.ResourceID
+			}
+		}
+	}
 	spec := contract.GenerationSpec{Version: contract.GenerationVersion, Mode: a.Mode, Prompt: a.Prompt, ModelSelection: selection, Options: options, ReferenceBindings: bindings, TextInputMode: "prompt-only"}
 	return spec, spec.Validate()
 }
