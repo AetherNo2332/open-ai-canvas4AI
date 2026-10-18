@@ -119,6 +119,8 @@ func (p *planner) applyOperation(doc Document, op Operation, ctx ValidationConte
 		if err := p.bindAsset(doc, op, ctx); err != nil {
 			return nil, err
 		}
+	case OperationMigrateReferences:
+		return p.migrateReferenceFields(doc, op)
 	default:
 		return p.applyCanvasCanvasPlanInPlace(doc, []Operation{op})
 	}

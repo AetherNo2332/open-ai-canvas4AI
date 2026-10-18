@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"infinite-canvas/backend/internal/assets"
+	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -105,7 +106,14 @@ func snapshot(row *model.CanvasProject, epoch *model.CanvasDocumentEpoch, versio
 	for key, v := range versions {
 		values[key] = v.Version
 	}
-	return Snapshot{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, Revision: row.Revision, EventSeq: epoch.EventSeq, Document: doc, EntityVersions: values}
+	out := Snapshot{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, Revision: row.Revision, EventSeq: epoch.EventSeq, Document: doc, EntityVersions: values}
+	// 历史画布在读取投影上附带一次规范化预览：只读、幂等、不写文档、不分配标识。
+	// 已规范化文档保持 nil，客户端因此能区分“不需要迁移”与“迁移后无冲突”。
+	if !references.Enabled(doc) {
+		preview := references.PreviewLegacy(doc, nil)
+		out.ReferenceMigration = &preview
+	}
+	return out
 }
 func (s *Service) ReadSnapshot(ctx context.Context, p identity.Principal, id string) (Snapshot, error) {
 	s.mu.Lock()
@@ -476,6 +484,10 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 		}
 		if epoch.Deleted {
 			return failure("entity_deleted", "画布已删除")
+		}
+		// 历史画布先完成一次规范化；放行规则见 referenceMigrationGate。
+		if err := referenceMigrationGate(doc, req.Operations); err != nil {
+			return err
 		}
 		present := map[string]bool{}
 		for _, node := range maps(doc["nodes"]) {

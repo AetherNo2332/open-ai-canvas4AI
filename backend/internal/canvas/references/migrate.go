@@ -24,9 +24,16 @@ const (
 // 解决方式是在下一次调用中用 ScopeKey 传入 MigrationChoiceFields 或
 // MigrationChoiceConnections。
 type MigrationConflict struct {
-	ScopeKey     string
-	FieldNodeIDs []string
-	EdgeNodeIDs  []string
+	ScopeKey     string   `json:"scopeKey"`
+	FieldNodeIDs []string `json:"fieldNodeIds"`
+	EdgeNodeIDs  []string `json:"edgeNodeIds"`
+}
+
+// MigrationPreview 描述历史画布是否还需要一次规范化，以及仍需选择来源的作用域。
+// 它只用于读取投影：不带 choices、不写文档、不分配标识。
+type MigrationPreview struct {
+	Required  bool                `json:"required"`
+	Conflicts []MigrationConflict `json:"conflicts"`
 }
 
 // MigrationResult 是规范化结果，并列出仍需用户选择来源的作用域。
@@ -118,8 +125,7 @@ func NormalizeLegacy(doc map[string]any, choices map[string]string, registry *ca
 		return result, nil
 	}
 	plans, order := collectMigrationPlans(next, registry)
-	conflicts := []MigrationConflict{}
-	applied := []*migrationPlan{}
+	decisions := []migrationDecision{}
 	for _, key := range order {
 		plan := plans[key]
 		describeMigrationPlan(next, registry, plan)
@@ -127,28 +133,33 @@ func NormalizeLegacy(doc map[string]any, choices map[string]string, registry *ca
 			continue
 		}
 		fieldOnly, edgeOnly := plan.evaluate()
-		if len(edgeOnly) == 0 {
-			applied = append(applied, plan)
-			continue
+		decision := migrationDecision{plan: plan}
+		if len(edgeOnly) > 0 {
+			decision.conflict = &MigrationConflict{ScopeKey: key, FieldNodeIDs: fieldOnly, EdgeNodeIDs: edgeOnly}
 		}
-		if choice := migrationChoice(choices[key]); choice != "" {
-			plan.choice = choice
-			applied = append(applied, plan)
-			continue
-		}
-		conflicts = append(conflicts, MigrationConflict{ScopeKey: key, FieldNodeIDs: fieldOnly, EdgeNodeIDs: edgeOnly})
+		decisions = append(decisions, decision)
 	}
-	sort.Slice(conflicts, func(i, j int) bool { return conflicts[i].ScopeKey < conflicts[j].ScopeKey })
+	conflicts := migrationConflicts(decisions)
 	if len(conflicts) > 0 {
-		result.Conflicts = conflicts
-		return result, nil
+		// 冲突必须逐个有明确来源选择；只要还有一个未决，整份文档保持不变。
+		for _, decision := range decisions {
+			if decision.conflict == nil {
+				continue
+			}
+			choice := migrationChoice(choices[decision.conflict.ScopeKey])
+			if choice == "" {
+				result.Conflicts = conflicts
+				return result, nil
+			}
+			decision.plan.choice = choice
+		}
 	}
 	consumed := map[string]bool{}
-	for _, plan := range applied {
-		if err := applyMigrationPlan(next, plan); err != nil {
+	for _, decision := range decisions {
+		if err := applyMigrationPlan(next, decision.plan); err != nil {
 			return emptyMigrationResult(), err
 		}
-		for _, id := range plan.claimedEdges() {
+		for _, id := range decision.plan.claimedEdges() {
 			consumed[id] = true
 		}
 	}
@@ -182,6 +193,54 @@ func migrationChoice(value string) string {
 		return MigrationChoiceConnections
 	}
 	return ""
+}
+
+// migrationDecision 是一个已评估的作用域计划，以及它要求的来源选择。
+type migrationDecision struct {
+	plan     *migrationPlan
+	conflict *MigrationConflict
+}
+
+func migrationConflicts(decisions []migrationDecision) []MigrationConflict {
+	conflicts := []MigrationConflict{}
+	for _, decision := range decisions {
+		if decision.conflict != nil {
+			conflicts = append(conflicts, *decision.conflict)
+		}
+	}
+	sort.Slice(conflicts, func(i, j int) bool { return conflicts[i].ScopeKey < conflicts[j].ScopeKey })
+	return conflicts
+}
+
+// PreviewLegacy 只读地计算一次规范化预览：不分配标识、不改写文档、不受调用方
+// choices 影响，对同一文档稳定幂等。已写入 referenceFieldsVersion 的文档不需要
+// 规范化，因此 Required 为 false 且不返回冲突。
+func PreviewLegacy(doc map[string]any, registry *capability.Registry) MigrationPreview {
+	preview := MigrationPreview{Conflicts: []MigrationConflict{}}
+	if Enabled(doc) {
+		return preview
+	}
+	if registry == nil {
+		registry = capability.BuiltinRegistry()
+	}
+	plans, order := collectMigrationPlans(doc, registry)
+	decisions := []migrationDecision{}
+	for _, key := range order {
+		plan := plans[key]
+		describeMigrationPlan(doc, registry, plan)
+		if plan.skip {
+			continue
+		}
+		fieldOnly, edgeOnly := plan.evaluate()
+		decision := migrationDecision{plan: plan}
+		if len(edgeOnly) > 0 {
+			decision.conflict = &MigrationConflict{ScopeKey: key, FieldNodeIDs: fieldOnly, EdgeNodeIDs: edgeOnly}
+		}
+		decisions = append(decisions, decision)
+	}
+	preview.Required = true
+	preview.Conflicts = migrationConflicts(decisions)
+	return preview
 }
 
 // collectMigrationPlans 把仍是普通连线的历史边解释成作用域声明。

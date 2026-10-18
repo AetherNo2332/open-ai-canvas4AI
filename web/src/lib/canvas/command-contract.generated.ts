@@ -1,6 +1,6 @@
 // Generated from Go canvas command/task contracts. From backend: go run ./internal/canvas/commands/generate
 export const CANVAS_COMMAND_PROTOCOL = 1 as const;
-export type OperationType = "add_node" | "update_node" | "delete_node" | "duplicate_node" | "select_node_version" | "set_parent" | "connect_nodes" | "delete_connection" | "update_connection" | "replace_text" | "reorder_nodes" | "reorder_connections" | "reorder_rows" | "edit_drawing" | "edit_storyboard" | "bind_storyboard_output" | "edit_batch_table" | "create_previs_scene" | "edit_previs_scene" | "delete_previs_scene" | "bind_asset" | "rename_canvas" | "delete_canvas" | "edit_canvas_settings" | "edit_timeline";
+export type OperationType = "add_node" | "update_node" | "delete_node" | "duplicate_node" | "select_node_version" | "set_parent" | "connect_nodes" | "delete_connection" | "update_connection" | "replace_text" | "reorder_nodes" | "reorder_connections" | "reorder_rows" | "edit_drawing" | "edit_storyboard" | "bind_storyboard_output" | "edit_batch_table" | "create_previs_scene" | "edit_previs_scene" | "delete_previs_scene" | "bind_asset" | "rename_canvas" | "delete_canvas" | "edit_canvas_settings" | "edit_timeline" | "migrate_references";
 
 export interface ChangeSet {
   entities: Array<EntityChange>;
@@ -60,6 +60,17 @@ export interface MaterializationStatus {
   message?: string;
   attempts: number;
   nextAttemptAt?: string;
+}
+
+export interface MigrationConflict {
+  scopeKey: string;
+  fieldNodeIds: Array<string>;
+  edgeNodeIds: Array<string>;
+}
+
+export interface MigrationPreview {
+  required: boolean;
+  conflicts: Array<MigrationConflict>;
 }
 
 export interface Operation {
@@ -186,6 +197,7 @@ export interface Snapshot {
   eventSeq: number;
   document: Record<string, unknown>;
   entityVersions: Record<string, number>;
+  referenceMigration?: MigrationPreview;
 }
 
 export interface SubmitRequest {

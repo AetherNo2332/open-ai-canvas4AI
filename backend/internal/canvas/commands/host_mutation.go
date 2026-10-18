@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -68,6 +69,12 @@ func (s *Service) ExecuteHost(ctx context.Context, p identity.Principal, req Com
 		clone, err := cloneDocument(doc)
 		if err != nil {
 			return err
+		}
+		// 生成（task_submit）必须建立在已规范化的字段之上。task_result 不做这个门禁：
+		// 在途任务的迟到结果仍必须落库，否则会丢资源、产物和任务归属；迁移命令不向
+		// Agent 暴露，所以历史画布先由画布客户端完成一次规范化。
+		if domain == "task_submit" && !references.Enabled(clone) {
+			return referenceMigrationRequired()
 		}
 		next, reads, err := mutate(tx, clone)
 		if err != nil {

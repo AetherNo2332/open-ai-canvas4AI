@@ -508,6 +508,44 @@ func TestReferenceMigrationBatchColumns(t *testing.T) {
 	}
 }
 
+func TestReferenceMigrationPreviewIsReadOnly(t *testing.T) {
+	legacy := migrationDocument(t, migrationConflictDocument)
+	preimage := migrationSnapshot(t, legacy)
+	preview := PreviewLegacy(legacy, capability.BuiltinRegistry())
+	if !preview.Required || len(preview.Conflicts) != 1 || preview.Conflicts[0].ScopeKey != "storyboard-row:board:shot" {
+		t.Fatalf("预览没有报告待迁移与冲突：%+v", preview)
+	}
+	if !reflect.DeepEqual(preview, PreviewLegacy(legacy, capability.BuiltinRegistry())) {
+		t.Fatal("预览结果不稳定")
+	}
+	if migrationSnapshot(t, legacy) != preimage {
+		t.Fatal("预览改写了文档")
+	}
+
+	edgeOnly := migrationDocument(t, migrationLegacyEdgeDocument)
+	clean := PreviewLegacy(edgeOnly, capability.BuiltinRegistry())
+	if !clean.Required || len(clean.Conflicts) != 0 {
+		t.Fatalf("只有旧连线的文档应报告可一次规范化且无需选择：%+v", clean)
+	}
+
+	nextID, allocated := migrationCounter()
+	normalized, err := NormalizeLegacy(edgeOnly, nil, capability.BuiltinRegistry(), nextID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	used := *allocated
+	if used == 0 {
+		t.Fatal("首次规范化没有分配托管连线标识")
+	}
+	done := PreviewLegacy(normalized.Document, capability.BuiltinRegistry())
+	if done.Required || len(done.Conflicts) != 0 {
+		t.Fatalf("已规范化文档不应再要求迁移：%+v", done)
+	}
+	if *allocated != used {
+		t.Fatal("预览分配了新的标识")
+	}
+}
+
 func TestReferenceMigrationNeverGuessesFrames(t *testing.T) {
 	doc := migrationDocument(t, migrationFrameDocument)
 	nextID, _ := migrationCounter()
