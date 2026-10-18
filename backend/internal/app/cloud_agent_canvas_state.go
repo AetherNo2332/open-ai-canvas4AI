@@ -657,12 +657,28 @@ func cloudAgentSafeProjection(value any, textLimit int) (any, bool) {
 	}
 }
 
+// cloudAgentStoryboardVisibleColumns 暴露归一化后的展示列：缺省与历史默认都归一到当前
+// 默认，用户手选原样回读，让 Agent 不依赖浏览器状态也能知道分镜节点显示哪些列。
+func cloudAgentStoryboardVisibleColumns(storyboard map[string]any) []any {
+	columns, _ := storyboard["visibleColumns"].([]any)
+	if columns == nil {
+		if values, ok := storyboard["visibleColumns"].([]string); ok {
+			columns = make([]any, len(values))
+			for index, value := range values {
+				columns[index] = value
+			}
+		}
+	}
+	return capability.NormalizeStoryboardColumns(columns)
+}
+
 // Summaries locate a shot; a precise node read returns one full row at a time.
 // Only narrative fields and canvas IDs are exposed, never arbitrary metadata.
 func cloudAgentStoryboardState(storyboard map[string]any, offset int, mode cloudAgentProjectionMode, readRows ...int) map[string]any {
 	all := creationMaps(storyboard["rows"])
+	visibleColumns := cloudAgentStoryboardVisibleColumns(storyboard)
 	if mode == cloudAgentProjectionIndex {
-		return cloudAgentStoryboardIndex(all)
+		return cloudAgentStoryboardIndex(all, visibleColumns)
 	}
 	requested := 0
 	if len(readRows) > 0 {
@@ -761,7 +777,7 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, mode cloud
 		}
 		rows = append(rows, item)
 	}
-	state := map[string]any{"rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0}
+	state := map[string]any{"visibleColumns": visibleColumns, "rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0}
 	if mode != cloudAgentProjectionDetail {
 		state["rowIdSource"] = "本页不含 rowId；通读可继续用本工具翻页，需要真实 rowId 时用 canvas_read_storyboard(nodeId, offset, rows=1) 精读"
 	}
@@ -769,8 +785,8 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, mode cloud
 }
 
 // 摘要只承诺"存在与规模"：有多少镜、编号从哪到哪、以及哪个工具能取到行本身。
-func cloudAgentStoryboardIndex(all []map[string]any) map[string]any {
-	summary := map[string]any{"totalRows": len(all)}
+func cloudAgentStoryboardIndex(all []map[string]any, visibleColumns []any) map[string]any {
+	summary := map[string]any{"totalRows": len(all), "visibleColumns": visibleColumns}
 	first, last := "", ""
 	for _, row := range all {
 		number := truncateRunes(stringValue(row["shotNumber"]), 40)

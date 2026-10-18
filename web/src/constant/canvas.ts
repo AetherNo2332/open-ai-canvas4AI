@@ -1,3 +1,4 @@
+import { DEFAULT_STORYBOARD_COLUMNS } from "@/lib/canvas/canvas-storyboard-columns";
 import { CanvasNodeType } from "@/types/canvas";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 
@@ -50,7 +51,7 @@ export const NODE_SPECS = {
             workflowKind: "script",
             storyboard: {
                 rows: [],
-                visibleColumns: ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
+                visibleColumns: [...DEFAULT_STORYBOARD_COLUMNS],
                 referenceNodeIds: [],
             },
         },

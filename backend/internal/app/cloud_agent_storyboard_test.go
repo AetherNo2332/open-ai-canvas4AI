@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -204,6 +205,9 @@ func TestCloudAgentCreatesAndReadsStructuredStoryboard(t *testing.T) {
 	readRows := storyboard["rows"].([]any)
 	if len(readRows) != 1 || readRows[0].(map[string]any)["rowId"] != rows[0]["id"] || storyboard["nextOffset"] != 1 {
 		t.Fatalf("paged storyboard read lost row ID or pagination: %+v", read)
+	}
+	if !reflect.DeepEqual(storyboard["visibleColumns"], storyboardDefaultColumnValues()) {
+		t.Fatalf("canvas_read_storyboard did not expose the default columns: %+v", storyboard)
 	}
 }
 

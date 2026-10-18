@@ -90,7 +90,7 @@ func completeBuiltinEditableFields(d *Descriptor) {
 		add("folderTheme", "metadata.folder.theme", "背板主题", enumString("aurora", "obsidian", "ember", "pearl"))
 		d.DetailFields = append(d.DetailFields, "frame", "folder")
 	case "script":
-		add("visibleColumns", "metadata.storyboard.visibleColumns", "可见分镜列", arrayField(enumString("shotNumber", "durationSeconds", "plotDescription", "dialogue", "narrativeIntent", "viewerPOV", "performanceBlocking", "shotSize", "emotion", "lightingAndAtmosphere", "audioEffects", "camera", "motion", "timeBeats", "imageGenerationPrompt", "videoMotionPrompt", "assets", "continuityOut", "negativePrompt"), 20))
+		add("visibleColumns", "metadata.storyboard.visibleColumns", "可见分镜列", arrayField(enumString(StoryboardColumnNames()...), 20))
 		add("storyboardShotDuration", "metadata.storyboardShotDuration", "分镜时长", enumString("auto", "5", "10", "15", "30"))
 		add("storyboardShotCount", "metadata.storyboardShotCount", "分镜数量", enumString("auto", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))
 		add("storyboardVideoInputMode", "metadata.storyboardVideoInputMode", "视频分镜输入模式", enumString("direct", "keyframe"))

@@ -1,14 +1,15 @@
-import { Button, Dropdown, Input, InputNumber, Modal, Segmented, Table } from "antd";
+import { Button, Dropdown, Input, InputNumber, Modal, Popover, Segmented, Table } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { CheckboxGroup } from "@/components/ui/base/checkbox";
 import type { MenuProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { ChevronDown, ChevronUp, Clapperboard, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Merge, MoreHorizontal, Plus, RefreshCw, Send, Square, Trash2, Video } from "lucide-react";
+import { ChevronDown, ChevronUp, Clapperboard, Columns3, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Merge, MoreHorizontal, Plus, RefreshCw, Send, Square, Trash2, Video } from "lucide-react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
 import { StoryboardAssetsCell } from "@/components/canvas/storyboard-assets-cell";
+import { AppModal } from "@/components/ui/product/app-modal";
 import { ModelPicker } from "@/components/model-picker";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -19,7 +20,8 @@ import { navigateToSettings } from "@/lib/settings-navigation";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
-import { STORYBOARD_COMPOSER_MIN_HEIGHT, STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
+import { STORYBOARD_COMPOSER_MIN_HEIGHT, STORYBOARD_EDITOR_ACTIONS_WIDTH, STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardCardGridTemplate, storyboardCardMinWidth, storyboardEditorColumnsTotal, storyboardEditorColumnWidths, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
+import { DEFAULT_STORYBOARD_COLUMNS, resolveStoryboardVisibleColumns, STORYBOARD_COLUMN_OPTIONS, storyboardColumnLabel } from "@/lib/canvas/canvas-storyboard-columns";
 import type {
     CanvasGenerationBatch,
     CanvasGenerationBatchItem,
@@ -38,42 +40,58 @@ import { Select } from "@/components/ui/base/select";
 
 const STORYBOARD_PROMPT_MIN_HEIGHT = 40;
 const STORYBOARD_PROMPT_MAX_HEIGHT = 116;
-const SCRIPT_GRID_TEMPLATE = "64px 76px minmax(300px, 1.55fr) minmax(220px, 1fr) 180px";
 const EMPTY_STORYBOARD_ROWS: StoryboardRow[] = [];
-const DEFAULT_STORYBOARD_COLUMNS: StoryboardColumn[] = ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"];
-const LEGACY_STORYBOARD_COLUMNS: StoryboardColumn[] = ["shotNumber", "durationSeconds", "plotDescription", "dialogue"];
-const PREVIOUS_DEFAULT_STORYBOARD_COLUMNS: StoryboardColumn[] = ["shotNumber", "plotDescription", "videoMotionPrompt", "dialogue"];
+const STORYBOARD_SHOT_SIZES = ["特写", "近景", "中景", "全景", "远景"];
 
-function resolveStoryboardVisibleColumns(columns?: StoryboardColumn[]) {
-    const isLegacyDefault = columns?.length === LEGACY_STORYBOARD_COLUMNS.length && LEGACY_STORYBOARD_COLUMNS.every((column) => columns.includes(column));
-    const isPreviousDefault = columns?.length === PREVIOUS_DEFAULT_STORYBOARD_COLUMNS.length && PREVIOUS_DEFAULT_STORYBOARD_COLUMNS.every((column) => columns.includes(column));
-    if (!columns?.length || isLegacyDefault || isPreviousDefault) {
-        return DEFAULT_STORYBOARD_COLUMNS;
-    }
-    return columns;
+// 卡片占位文案按列语义给提示，比统一“填写某某”更接近实际录入内容。
+const STORYBOARD_CARD_PLACEHOLDERS: Partial<Record<StoryboardColumn, string>> = {
+    plotDescription: "描述画面、动作与构图",
+    dialogue: "台词或旁白",
+    narrativeIntent: "这一镜的叙事目的",
+    viewerPOV: "观众看到的视角",
+    performanceBlocking: "走位与表演调度",
+    emotion: "角色情绪",
+    lightingAndAtmosphere: "光线与氛围",
+    audioEffects: "音效与音乐",
+    camera: "机位、角度与运镜设计",
+    motion: "主体动作与运镜",
+    timeBeats: "如 0–2 秒转身",
+    imageGenerationPrompt: "首帧画面提示词",
+    videoMotionPrompt: "运镜、动作与结尾状态",
+    continuityOut: "衔接下一镜的状态",
+    negativePrompt: "应避免的画面或动作",
+};
+
+// 表头补充列语义，避免“镜头设计 / 运镜 / 观众视点”这类相邻列被混淆。
+const STORYBOARD_EDITOR_COLUMN_DESCRIPTIONS: Partial<Record<StoryboardColumn, string>> = {
+    shotNumber: "镜头顺序，删除或移动后自动重排",
+    durationSeconds: "该镜时长（秒）",
+    plotDescription: "本镜可见的剧情与关键动作",
+    dialogue: "本镜实际念出的台词或旁白",
+    narrativeIntent: "这一镜在剧情里承担的作用",
+    viewerPOV: "摄影机代表的观看视角",
+    performanceBlocking: "演员走位、动作与表演调度",
+    shotSize: "特写、近景、中景、全景或远景",
+    emotion: "角色表演情绪",
+    lightingAndAtmosphere: "光线、色调与氛围",
+    audioEffects: "音效、音乐与环境声",
+    camera: "机位、角度与镜头设计",
+    motion: "主体动作概要（与视频提示词分开）",
+    timeBeats: "镜头内的时间节拍",
+    imageGenerationPrompt: "给图片模型的首帧提示词",
+    videoMotionPrompt: "给视频模型的完整动态镜头提示词",
+    assets: "该镜引用的角色、场景、道具等画布资产",
+    continuityOut: "衔接下一镜需要的连续性状态",
+    negativePrompt: "应避免的画面或动作",
+};
+
+const KNOWN_STORYBOARD_COLUMNS = new Set<StoryboardColumn>(STORYBOARD_COLUMN_OPTIONS.map((option) => option.value));
+
+/** 统一清理持久化列：过滤未知值、迁移历史默认，并保证至少回退到默认列。 */
+function scriptVisibleColumns(columns?: readonly StoryboardColumn[]) {
+    const resolved = resolveStoryboardVisibleColumns(columns).filter((column) => KNOWN_STORYBOARD_COLUMNS.has(column));
+    return resolved.length ? resolved : [...DEFAULT_STORYBOARD_COLUMNS];
 }
-
-const columnOptions: Array<{ label: string; value: StoryboardColumn }> = [
-    { label: "序号", value: "shotNumber" },
-    { label: "时长", value: "durationSeconds" },
-    { label: "画面描述", value: "plotDescription" },
-    { label: "台词/旁白", value: "dialogue" },
-    { label: "镜头意图", value: "narrativeIntent" },
-    { label: "观众视点", value: "viewerPOV" },
-    { label: "表演调度", value: "performanceBlocking" },
-    { label: "景别", value: "shotSize" },
-    { label: "情绪", value: "emotion" },
-    { label: "光影氛围", value: "lightingAndAtmosphere" },
-    { label: "音效", value: "audioEffects" },
-    { label: "镜头设计", value: "camera" },
-    { label: "运镜", value: "motion" },
-    { label: "时间节拍", value: "timeBeats" },
-    { label: "图片提示词", value: "imageGenerationPrompt" },
-    { label: "视频提示词", value: "videoMotionPrompt" },
-    { label: "关联资产", value: "assets" },
-    { label: "连续性出口", value: "continuityOut" },
-    { label: "负面要求", value: "negativePrompt" },
-];
 
 export function CanvasScriptNodeContent({
     node,
@@ -141,6 +159,10 @@ export function CanvasScriptNodeContent({
     const generationConfig = buildGenerationConfig(effectiveConfig, node, "text");
     const simpleMode = workspaceMode === "simple";
     const rows = node.metadata?.storyboard?.rows || [];
+    // 卡片展示哪些列完全跟随全屏编辑器里的列勾选；宽度放不下时卡片内部横向滚动。
+    const visibleColumns = scriptVisibleColumns(node.metadata?.storyboard?.visibleColumns);
+    const cardGridTemplate = storyboardCardGridTemplate(visibleColumns);
+    const cardMinWidth = storyboardCardMinWidth(visibleColumns);
     const [prompt, setPrompt] = useState(node.metadata?.composerContent || "");
     const [scrollTop, setScrollTop] = useState(0);
     const composerHeightChangeRef = useRef(onComposerHeightChange);
@@ -292,21 +314,12 @@ export function CanvasScriptNodeContent({
                 </Modal>
             ) : null}
             <StoryboardMiniPipeline pipeline={pipeline} theme={theme} rows={rows} />
-            <div className="storyboard-header-gutter grid h-9 shrink-0 items-center border-b text-xs font-semibold" style={{ borderColor: theme.node.stroke, color: theme.node.muted, gridTemplateColumns: SCRIPT_GRID_TEMPLATE }}>
-                <HeaderCell borderColor={theme.node.stroke} align="center">
-                    序号
-                </HeaderCell>
-                <HeaderCell borderColor={theme.node.stroke} align="center">时长</HeaderCell>
-                <HeaderCell borderColor={theme.node.stroke}>视频提示词</HeaderCell>
-                <HeaderCell borderColor={theme.node.stroke}>台词/旁白</HeaderCell>
-                <span className="px-3">关联资产</span>
-            </div>
             <div
                 data-canvas-wheel-scroll
                 tabIndex={0}
                 role="region"
                 aria-label="分镜镜头列表"
-                className="storyboard-scrollbar min-h-0 flex-1 overflow-y-scroll overflow-x-hidden outline-none focus-visible:ring-1 focus-visible:ring-inset"
+                className="storyboard-scrollbar min-h-0 flex-1 overflow-auto outline-none focus-visible:ring-1 focus-visible:ring-inset"
                 style={{ "--tw-ring-color": theme.node.muted } as CSSProperties}
                 onScroll={(event) => {
                     const next = event.currentTarget.scrollTop;
@@ -315,60 +328,60 @@ export function CanvasScriptNodeContent({
                 }}
                 onWheel={(event) => event.stopPropagation()}
             >
-                {rows.length ? (
-                    rows.map((row) => (
-                        <div key={row.id} className="relative grid border-b" style={{ height: STORYBOARD_ROW_HEIGHT, borderColor: theme.node.stroke, gridTemplateColumns: SCRIPT_GRID_TEMPLATE }}>
-                            <div className="flex flex-col items-center justify-center gap-0.5 border-r tabular-nums" style={{ color: theme.node.muted, borderColor: theme.node.stroke }}>
-                                <div className="flex items-center gap-0.5">
-                                    <span className="text-sm">{row.shotNumber}</span>
-                                    <Dropdown
-                                        trigger={["click"]}
-                                        menu={{ items: [{ key: "delete", label: "删除镜头", icon: <Trash2 className="size-3.5" />, danger: true, disabled: rows.length <= 1, onClick: () => onRemoveRow(row.id) }] }}
-                                    >
-                                        <button
-                                            type="button"
-                                            className="grid size-5 place-items-center rounded outline-none opacity-45 transition hover:bg-black/5 hover:opacity-100 focus-visible:ring-2 dark:hover:bg-white/10"
-                                            aria-label={`镜头 ${row.shotNumber} 操作`}
-                                            onMouseDown={(event) => event.stopPropagation()}
-                                            onPointerDown={(event) => event.stopPropagation()}
-                                            onClick={(event) => event.stopPropagation()}
-                                        >
-                                            <MoreHorizontal className="size-3" />
-                                        </button>
-                                    </Dropdown>
-                                </div>
-                                {batchItemByRowId.get(row.id) ? (
-                                    <span className="max-w-14 truncate text-[var(--fs-micro)] leading-3" title={generationBatchItemLabel(batchItemByRowId.get(row.id)!)}>
-                                        {generationBatchItemLabel(batchItemByRowId.get(row.id)!)}
-                                    </span>
-                                ) : null}
-                            </div>
-                            <CompactDurationInput value={row.durationSeconds} borderColor={theme.node.stroke} onChange={(durationSeconds) => onUpdateRow(row.id, { durationSeconds })} />
-                            <CompactInput value={row.videoMotionPrompt} placeholder="描述视频运动、镜头和动作" onChange={(value) => onUpdateRow(row.id, { videoMotionPrompt: value })} borderColor={theme.node.stroke} />
-                            <CompactInput value={row.dialogue} placeholder="台词或旁白" onChange={(value) => onUpdateRow(row.id, { dialogue: value })} borderColor={theme.node.stroke} />
-                            <div className="flex h-full min-w-0 items-center px-3">
-                                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} />
-                            </div>
-                        </div>
-                    ))
-                ) : (
-                    <button
-                        type="button"
-                        className="grid h-full min-h-36 w-full place-items-center"
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onAddRow();
-                        }}
+                <div className="flex min-h-full flex-col" style={{ minWidth: cardMinWidth }}>
+                    <div
+                        className="sticky top-0 z-[1] grid h-9 items-center border-b text-xs font-semibold"
+                        style={{ borderColor: theme.node.stroke, color: theme.node.muted, background: theme.node.fill, gridTemplateColumns: cardGridTemplate }}
                     >
-                        <span className="flex flex-col items-center gap-2.5">
-                            <span className="text-sm font-bold">＋ 添加第一个镜头</span>
-                            <span className="text-[var(--fs-label)] font-medium" style={{ color: theme.node.faint }}>
-                                可先连接「故事梗概 / 项目画风」节点，或在下方输入提示词一键生成分镜表
+                        {visibleColumns.map((column) => (
+                            <HeaderCell
+                                key={column}
+                                borderColor={theme.node.stroke}
+                                align={column === "shotNumber" || column === "durationSeconds" ? "center" : "left"}
+                                title={STORYBOARD_EDITOR_COLUMN_DESCRIPTIONS[column]}
+                            >
+                                {storyboardColumnLabel(column)}
+                            </HeaderCell>
+                        ))}
+                    </div>
+                    {rows.length ? (
+                        rows.map((row) => (
+                            <div key={row.id} className="relative grid border-b" style={{ height: STORYBOARD_ROW_HEIGHT, borderColor: theme.node.stroke, gridTemplateColumns: cardGridTemplate }}>
+                                {visibleColumns.map((column) => (
+                                    <ScriptCardCell
+                                        key={column}
+                                        column={column}
+                                        row={row}
+                                        nodes={nodes}
+                                        borderColor={theme.node.stroke}
+                                        mutedColor={theme.node.muted}
+                                        batchItem={batchItemByRowId.get(row.id)}
+                                        canRemove={rows.length > 1}
+                                        onRemoveRow={onRemoveRow}
+                                        onUpdateRow={onUpdateRow}
+                                    />
+                                ))}
+                            </div>
+                        ))
+                    ) : (
+                        <button
+                            type="button"
+                            className="grid min-h-36 flex-1 place-items-center"
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onAddRow();
+                            }}
+                        >
+                            <span className="flex flex-col items-center gap-2.5">
+                                <span className="text-sm font-bold">＋ 添加第一个镜头</span>
+                                <span className="text-[var(--fs-label)] font-medium" style={{ color: theme.node.faint }}>
+                                    可先连接「故事梗概 / 项目画风」节点，或在下方输入提示词一键生成分镜表
+                                </span>
                             </span>
-                        </span>
-                    </button>
-                )}
+                        </button>
+                    )}
+                </div>
             </div>
             <div className="flex h-9 shrink-0 items-center justify-center border-b" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
                 <button
@@ -623,10 +636,27 @@ export function CanvasScriptEditor({
 }) {
     const [query, setQuery] = useState("");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [tableHeight, setTableHeight] = useState(480);
+    const [tableWidth, setTableWidth] = useState(0);
+    const tableWrapRef = useRef<HTMLDivElement>(null);
     const rows = node?.metadata?.storyboard?.rows || EMPTY_STORYBOARD_ROWS;
-    const visibleColumns = resolveStoryboardVisibleColumns(node?.metadata?.storyboard?.visibleColumns);
+    const visibleColumns = scriptVisibleColumns(node?.metadata?.storyboard?.visibleColumns);
+    const totalDuration = rows.reduce((sum, row) => sum + (Number(row.durationSeconds) || 0), 0);
     const videoInputMode = node?.metadata?.storyboardVideoInputMode || "direct";
     const nodeById = useMemo(() => new Map(nodes.map((item) => [item.id, item])), [nodes]);
+    // 表格高度跟随弹窗剩余空间；宽度用于把剩余空间分给文本列，避免宽屏右侧留白。
+    useLayoutEffect(() => {
+        const element = tableWrapRef.current;
+        if (!open || !element) return;
+        const measure = () => {
+            setTableHeight(Math.max(220, element.clientHeight));
+            setTableWidth(element.clientWidth);
+        };
+        measure();
+        const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+        observer?.observe(element);
+        return () => observer?.disconnect();
+    }, [open]);
     const filteredRows = useMemo(() => {
         const keyword = query.trim().toLowerCase();
         return keyword
@@ -662,46 +692,48 @@ export function CanvasScriptEditor({
     };
     const removeRow = (rowId: string) => onUpdateRows(rows.filter((row) => row.id !== rowId).map((row, index) => ({ ...row, shotNumber: index + 1 })));
 
-    const columns: ColumnsType<StoryboardRow> = columnOptions
-        .filter((option) => visibleColumns.includes(option.value))
-        .map((option) => ({
-            title: option.label,
-            dataIndex: option.value,
-            key: option.value,
-            width: option.value === "shotNumber" ? 72 : option.value === "durationSeconds" ? 100 : option.value === "assets" ? 220 : option.value === "plotDescription" || option.value === "dialogue" || option.value === "timeBeats" || option.value.endsWith("Prompt") ? 260 : 170,
-            fixed: option.value === "shotNumber" ? ("left" as const) : undefined,
-            render: (_: unknown, row: StoryboardRow) =>
-                option.value === "shotNumber" ? (
-                    <span className="font-semibold">{row.shotNumber}</span>
-                ) : option.value === "durationSeconds" ? (
-                    <InputNumber min={1} max={60} value={row.durationSeconds} addonAfter="s" onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
-                ) : option.value === "assets" ? (
-                    <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} />
-                ) : option.value === "shotSize" ? (
-                    <Select
-                        className="w-full"
-                        value={row.shotSize || undefined}
-                        placeholder="选择景别"
-                        options={["特写", "近景", "中景", "全景", "远景"].map((value) => ({ value, label: value }))}
-                        onChange={(shotSize) => updateRow(row.id, { shotSize })}
-                    />
-                ) : (
-                    <Input.TextArea
-                        autoSize={{ minRows: 1, maxRows: 4 }}
-                        value={String(row[option.value] || "")}
-                        placeholder={`填写${option.label}`}
-                        onChange={(event) => updateRow(row.id, { [option.value]: event.target.value } as Partial<StoryboardRow>)}
-                    />
-                ),
-        }));
+    const visibleColumnOptions = STORYBOARD_COLUMN_OPTIONS.filter((option) => visibleColumns.includes(option.value));
+    const columnWidths = storyboardEditorColumnWidths(visibleColumnOptions.map((option) => option.value), tableWidth);
+    const columns: ColumnsType<StoryboardRow> = visibleColumnOptions.map((option, index) => ({
+        title: <span title={STORYBOARD_EDITOR_COLUMN_DESCRIPTIONS[option.value]}>{option.label}</span>,
+        dataIndex: option.value,
+        key: option.value,
+        width: columnWidths[index],
+        fixed: option.value === "shotNumber" ? ("left" as const) : undefined,
+        render: (_: unknown, row: StoryboardRow) =>
+            option.value === "shotNumber" ? (
+                <span className="font-semibold tabular-nums">{row.shotNumber}</span>
+            ) : option.value === "durationSeconds" ? (
+                <InputNumber min={1} max={60} value={row.durationSeconds} addonAfter="s" className="w-full" onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
+            ) : option.value === "assets" ? (
+                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} />
+            ) : option.value === "shotSize" ? (
+                <Select
+                    className="w-full"
+                    value={row.shotSize || undefined}
+                    placeholder="选择景别"
+                    ariaLabel="景别"
+                    options={STORYBOARD_SHOT_SIZES.map((value) => ({ value, label: value }))}
+                    onChange={(shotSize) => updateRow(row.id, { shotSize })}
+                />
+            ) : (
+                <Input.TextArea
+                    autoSize={{ minRows: 1, maxRows: 6 }}
+                    value={String(row[option.value] || "")}
+                    placeholder={`填写${option.label}`}
+                    aria-label={option.label}
+                    onChange={(event) => updateRow(row.id, { [option.value]: event.target.value } as Partial<StoryboardRow>)}
+                />
+            ),
+    }));
     columns.push({
         title: "操作",
         key: "actions",
         dataIndex: "shotNumber",
-        width: 150,
+        width: STORYBOARD_EDITOR_ACTIONS_WIDTH,
         fixed: "right" as const,
         render: (_: unknown, row: StoryboardRow) => (
-            <div className="flex gap-1">
+            <div className="flex justify-end gap-1">
                 <SmallButton title="上移" onClick={() => moveRow(row.id, -1)}>
                     <ChevronUp className="size-3.5" />
                 </SmallButton>
@@ -717,43 +749,185 @@ export function CanvasScriptEditor({
             </div>
         ),
     });
-
-    return (
-        <Modal title={node?.title || "分镜脚本"} open={open} onCancel={onClose} footer={null} width="min(1480px, calc(100vw - 40px))" centered destroyOnHidden>
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-                <Input.Search className="w-72" allowClear placeholder="筛选画面、台词或提示词" value={query} onChange={(event) => setQuery(event.target.value)} />
-                    <CheckboxGroup className="script-column-picker" options={columnOptions} value={visibleColumns} onChange={(values) => onVisibleColumnsChange(values)} />
-                <span className="min-w-0 flex-1" />
-                <Button icon={<Plus className="size-4" />} onClick={() => onUpdateRows([...rows, editorRow(rows.length + 1)])}>
-                    新增镜头
-                </Button>
-                <Button icon={<ImageIcon className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateImages(selectedIds)}>
-                    生成{videoInputMode === "keyframe" ? "首帧" : "分镜图"}
-                </Button>
-                <Segmented<StoryboardVideoInputMode>
-                    value={videoInputMode}
-                    options={[
-                        { value: "direct", label: "直接生成" },
-                        { value: "keyframe", label: "先做首帧" },
-                    ]}
-                    onChange={onVideoInputModeChange}
-                />
-                <Button type="primary" icon={<Film className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateVideos(selectedIds)}>
-                    {videoInputMode === "keyframe" ? "确认首帧并生成" : "生成视频"}
+    const handleColumnsChange = (values: StoryboardColumn[]) => {
+        // 全屏编辑器与画布卡片都依赖至少一列；父级也会拒绝空数组，这里保持受控值不抖动。
+        if (!values.length) return;
+        onVisibleColumnsChange(values);
+    };
+    const resetColumns = () => onVisibleColumnsChange([...DEFAULT_STORYBOARD_COLUMNS]);
+    const columnPicker = (
+        <div className="w-[372px] max-w-[80vw]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="mb-2.5 flex items-center justify-between gap-3">
+                <span className="text-xs font-semibold">
+                    显示列 <span className="font-normal text-foreground/50">（{visibleColumns.length}/{STORYBOARD_COLUMN_OPTIONS.length}）</span>
+                </span>
+                <Button type="link" size="small" className="h-auto p-0 text-xs" onClick={resetColumns}>
+                    恢复默认列
                 </Button>
             </div>
-            <Table<StoryboardRow>
-                rowKey="id"
-                size="small"
-                bordered
-                sticky
-                pagination={false}
-                scroll={{ x: Math.max(900, columns.length * 180), y: "calc(78vh - 170px)" }}
-                dataSource={filteredRows}
-                columns={columns}
-                rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys.map(String)) }}
-            />
-        </Modal>
+            <CheckboxGroup className="script-column-picker grid grid-cols-2 gap-x-4 gap-y-2" options={STORYBOARD_COLUMN_OPTIONS.map((option) => ({ ...option }))} value={visibleColumns} onChange={handleColumnsChange} ariaLabel="分镜显示列" />
+            <p className="mt-3 text-[11px] leading-4 text-foreground/50">画布上的分镜脚本节点会同步显示所选列；默认展示序号、时长、画面描述、景别、运镜和关联资产。</p>
+        </div>
+    );
+
+    return (
+        <AppModal
+            flush
+            title={
+                <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate">{node?.title || "分镜脚本"}</span>
+                    <span className="shrink-0 text-xs font-normal text-foreground/50">
+                        {rows.length} 镜 · {totalDuration}s
+                    </span>
+                </span>
+            }
+            open={open}
+            onCancel={onClose}
+            footer={null}
+            width="min(1880px, calc(100vw - 24px))"
+            style={{ top: 12 }}
+            destroyOnHidden
+        >
+            <div className="flex h-[calc(100dvh-124px)] min-h-[520px] flex-col">
+                <div className="shrink-0 border-b border-foreground/10 px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Input.Search className="w-72" allowClear placeholder="筛选画面、台词或提示词" value={query} onChange={(event) => setQuery(event.target.value)} />
+                        <Popover trigger="click" placement="bottomLeft" arrow={false} content={columnPicker}>
+                            <Button icon={<Columns3 className="size-4" />}>
+                                显示列
+                                <span className="tabular-nums text-foreground/50">
+                                    {visibleColumns.length}/{STORYBOARD_COLUMN_OPTIONS.length}
+                                </span>
+                            </Button>
+                        </Popover>
+                        <span className="min-w-0 flex-1" />
+                        <Button icon={<Plus className="size-4" />} onClick={() => onUpdateRows([...rows, editorRow(rows.length + 1)])}>
+                            新增镜头
+                        </Button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-foreground/50">{selectedIds.length ? `已选 ${selectedIds.length} 镜` : "勾选镜头后可批量生成，列设置在画布卡片上同步生效"}</span>
+                        <span className="min-w-0 flex-1" />
+                        <Button icon={<ImageIcon className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateImages(selectedIds)}>
+                            生成{videoInputMode === "keyframe" ? "首帧" : "分镜图"}
+                        </Button>
+                        <Segmented<StoryboardVideoInputMode>
+                            value={videoInputMode}
+                            options={[
+                                { value: "direct", label: "直接生成" },
+                                { value: "keyframe", label: "先做首帧" },
+                            ]}
+                            onChange={onVideoInputModeChange}
+                        />
+                        <Button type="primary" icon={<Film className="size-4" />} disabled={!selectedIds.length} onClick={() => onGenerateVideos(selectedIds)}>
+                            {videoInputMode === "keyframe" ? "确认首帧并生成" : "生成视频"}
+                        </Button>
+                    </div>
+                </div>
+                <div className="min-h-0 flex-1 px-3 pb-3">
+                    <div ref={tableWrapRef} className="h-full min-h-0 pt-2">
+                        <Table<StoryboardRow>
+                            rowKey="id"
+                            size="middle"
+                            bordered
+                            pagination={false}
+                            scroll={{ x: Math.max(tableWidth, storyboardEditorColumnsTotal(columnWidths)), y: Math.max(200, tableHeight - 64) }}
+                            dataSource={filteredRows}
+                            columns={columns}
+                            rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys.map(String)) }}
+                        />
+                    </div>
+                </div>
+            </div>
+        </AppModal>
+    );
+}
+
+function ScriptCardCell({
+    column,
+    row,
+    nodes,
+    borderColor,
+    mutedColor,
+    batchItem,
+    canRemove,
+    onRemoveRow,
+    onUpdateRow,
+}: {
+    column: StoryboardColumn;
+    row: StoryboardRow;
+    nodes: CanvasNodeData[];
+    borderColor: string;
+    mutedColor: string;
+    batchItem?: CanvasGenerationBatchItem;
+    canRemove: boolean;
+    onRemoveRow: (rowId: string) => void;
+    onUpdateRow: (rowId: string, patch: Partial<StoryboardRow>) => void;
+}) {
+    if (column === "shotNumber") {
+        return (
+            <div className="flex flex-col items-center justify-center gap-0.5 border-r tabular-nums" style={{ color: mutedColor, borderColor }}>
+                <div className="flex items-center gap-0.5">
+                    <span className="text-sm">{row.shotNumber}</span>
+                    <Dropdown
+                        trigger={["click"]}
+                        menu={{ items: [{ key: "delete", label: "删除镜头", icon: <Trash2 className="size-3.5" />, danger: true, disabled: !canRemove, onClick: () => onRemoveRow(row.id) }] }}
+                    >
+                        <button
+                            type="button"
+                            className="grid size-5 place-items-center rounded outline-none opacity-45 transition hover:bg-black/5 hover:opacity-100 focus-visible:ring-2 dark:hover:bg-white/10"
+                            aria-label={`镜头 ${row.shotNumber} 操作`}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <MoreHorizontal className="size-3" />
+                        </button>
+                    </Dropdown>
+                </div>
+                {batchItem ? (
+                    <span className="max-w-14 truncate text-[var(--fs-micro)] leading-3" title={generationBatchItemLabel(batchItem)}>
+                        {generationBatchItemLabel(batchItem)}
+                    </span>
+                ) : null}
+            </div>
+        );
+    }
+    if (column === "durationSeconds") {
+        return <CompactDurationInput value={row.durationSeconds} borderColor={borderColor} onChange={(durationSeconds) => onUpdateRow(row.id, { durationSeconds })} />;
+    }
+    if (column === "assets") {
+        return (
+            <div className="flex h-full min-w-0 items-center border-r px-2.5" style={{ borderColor }}>
+                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} />
+            </div>
+        );
+    }
+    if (column === "shotSize") {
+        return (
+            <div className="flex h-full min-w-0 items-center border-r px-2" style={{ borderColor }}>
+                <Select
+                    className="w-full"
+                    size="sm"
+                    appearance="field"
+                    value={row.shotSize || undefined}
+                    placeholder="选择景别"
+                    ariaLabel="景别"
+                    options={STORYBOARD_SHOT_SIZES.map((value) => ({ value, label: value }))}
+                    popupMatchSelectWidth={false}
+                    onChange={(shotSize) => onUpdateRow(row.id, { shotSize })}
+                    onMouseDown={(event) => event.stopPropagation()}
+                />
+            </div>
+        );
+    }
+    return (
+        <CompactInput
+            value={String(row[column] ?? "")}
+            placeholder={STORYBOARD_CARD_PLACEHOLDERS[column] || `填写${storyboardColumnLabel(column)}`}
+            borderColor={borderColor}
+            onChange={(value) => onUpdateRow(row.id, { [column]: value } as Partial<StoryboardRow>)}
+        />
     );
 }
 
@@ -790,10 +964,10 @@ function CompactDurationInput({ value, borderColor, onChange }: { value: number;
     );
 }
 
-function HeaderCell({ children, borderColor, align = "left" }: { children: ReactNode; borderColor: string; align?: "left" | "center" }) {
+function HeaderCell({ children, borderColor, align = "left", title }: { children: ReactNode; borderColor: string; align?: "left" | "center"; title?: string }) {
     return (
-        <span className={`flex h-full items-center border-r px-4 ${align === "center" ? "justify-center text-center" : "justify-start"}`} style={{ borderColor }}>
-            {children}
+        <span title={title} className={`flex h-full min-w-0 items-center border-r px-4 ${align === "center" ? "justify-center text-center" : "justify-start"}`} style={{ borderColor }}>
+            <span className="truncate">{children}</span>
         </span>
     );
 }

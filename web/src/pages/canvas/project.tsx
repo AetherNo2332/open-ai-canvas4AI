@@ -99,7 +99,8 @@ import { CanvasLeaferGraphicsLayer } from "@/components/canvas/canvas-leafer-gra
 import { CanvasFreeformEmptyState, CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortDramaGuide, CanvasStoryInputNodeContent, CanvasStylePlaceholderNodeContent } from "@/components/canvas/canvas-short-drama-entry";
 import { resolveCanvasEmptyStateKind } from "@/lib/canvas/canvas-starter";
 import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRoot, restoreUnsubmittedImageBatchChild } from "@/lib/canvas/canvas-image-batch-retry";
-import { cinematicStoryboardColumns, createCanvasNode, getInputSummary, isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
+import { createCanvasNode, getInputSummary, isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
+import { resolveStoryboardVisibleColumns } from "@/lib/canvas/canvas-storyboard-columns";
 import { bindStoryboardKeyframes, storyboardKeyframeTime, storyboardRowsFromBatchTable } from "@/lib/canvas/canvas-batch-storyboard";
 import { stampCanvasNodeChanges, updateCanvasNode, updateCanvasNodes } from "@/lib/canvas/canvas-node-timestamps";
 import { canvasAssetHandoffAttempt, finalizeCanvasAssetHandoff, uninsertedCanvasAssetHandoffPayloads } from "@/lib/canvas/canvas-asset-handoff";
@@ -2094,7 +2095,7 @@ function InfiniteCanvasPage() {
             x: tableNode.position.x + tableNode.width + 160 + scriptSpec.width / 2,
             y: tableNode.position.y + Math.max(tableNode.height, scriptSpec.height) / 2,
         }, {
-            storyboard: { rows, visibleColumns: cinematicStoryboardColumns(), referenceNodeIds: sourceIds },
+            storyboard: { rows, visibleColumns: resolveStoryboardVisibleColumns(), referenceNodeIds: sourceIds },
             storyboardVideoInputMode: useKeyframes ? "keyframe" : "direct",
             workflowKind: "storyboard",
             workflowTitle: table.storyboardTitle || "视频脚本",
@@ -2116,7 +2117,7 @@ function InfiniteCanvasPage() {
         if (sourceVideo && keyframeTimesMs.length) {
             const frameNodes = await extractVideoFrames(sourceVideo, { timesMs: keyframeTimesMs });
             if (frameNodes.length) {
-                const withFrames = nodesRef.current.map((node) => node.id === scriptNode.id ? { ...node, metadata: { ...node.metadata, storyboard: { ...node.metadata?.storyboard, rows: bindStoryboardKeyframes(node.metadata?.storyboard?.rows || rows, frameNodes, sourceVideo.id), visibleColumns: cinematicStoryboardColumns(), referenceNodeIds: sourceIds } } } : node);
+                const withFrames = nodesRef.current.map((node) => node.id === scriptNode.id ? { ...node, metadata: { ...node.metadata, storyboard: { ...node.metadata?.storyboard, rows: bindStoryboardKeyframes(node.metadata?.storyboard?.rows || rows, frameNodes, sourceVideo.id), visibleColumns: resolveStoryboardVisibleColumns(), referenceNodeIds: sourceIds } } } : node);
                 nodesRef.current = withFrames;
                 setNodes(withFrames);
                 message.success(`已创建视频脚本并自动抽取 ${frameNodes.length} 个关键帧，点击“生成视频”继续`);

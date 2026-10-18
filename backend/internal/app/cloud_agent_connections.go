@@ -3,9 +3,11 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+
+	"infinite-canvas/backend/internal/canvas/capability"
 	"infinite-canvas/backend/internal/canvas/connection"
 	"infinite-canvas/backend/internal/repository"
-	"strings"
 )
 
 func validateCloudAgentConnectionCapacities(repo *repository.Repository, doc map[string]any, ops []agentCanvasOp) error {
@@ -201,7 +203,7 @@ func attachCloudAgentConnection(nodes []map[string]any, op agentCanvasOp) []stri
 		metadata["storyboard"] = storyboard
 	}
 	if storyboard["visibleColumns"] == nil {
-		storyboard["visibleColumns"] = []string{"shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"}
+		storyboard["visibleColumns"] = capability.StoryboardDefaultColumnValues()
 	}
 	if storyboard["referenceNodeIds"] == nil {
 		storyboard["referenceNodeIds"] = []any{}

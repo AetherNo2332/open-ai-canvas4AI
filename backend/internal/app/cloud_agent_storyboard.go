@@ -204,7 +204,7 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 	node := creationAddedNode(CreationCanvasOp{
 		Type: "add_node", ID: args.NodeID, NodeType: "script", Title: args.Title, X: &args.X, Y: &args.Y,
 		Metadata: map[string]any{"storyboard": map[string]any{
-			"rows": rows, "visibleColumns": []any{"shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"}, "referenceNodeIds": []any{},
+			"rows": rows, "visibleColumns": capability.StoryboardDefaultColumnValues(), "referenceNodeIds": []any{},
 		}},
 	})
 	doc["nodes"] = append(creationMaps(doc["nodes"]), node)

@@ -3,6 +3,15 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 分镜脚本默认列与全屏编辑器
+
+- [ ] 已实现：分镜脚本节点默认展示列改为序号、时长、画面描述、景别、运镜、关联资产（6 列）。前端唯一来源 `web/src/lib/canvas/canvas-storyboard-columns.ts`，后端唯一来源 `backend/internal/canvas/capability/storyboard_columns.go`；旧默认 5 列、两套旧 4 列与生成流程自动补出的 15 列在读取时归一到新默认，用户手选列原样保留。
+- [ ] 已实现：画布上的分镜脚本节点卡片跟随全屏编辑器的列勾选渲染，列超出节点宽度时卡片内部横向滚动；全屏编辑器扩大窗口（最大 1880px、高度铺满视口）、表格高度随窗口自适应、列宽按内容类型分配并填满宽屏，列设置收进「显示列」弹层且至少保留一列。
+- [ ] 已实现：AI 拆镜、任务恢复、视频转分镜回写列时不再自动扩成 15 列电影感列；`cinematicStoryboardColumns` 只保留给批量创作表列定义。
+- [ ] Agent 可达性：`canvas_read_storyboard` 与 `canvas_get_state` 的分镜投影（index/page/detail）都会返回归一化后的 `visibleColumns`；Agent 通过既有节点能力写 `visibleColumns` 的能力不变，未新增工具参数、未改工具描述与 `agent/harness/TOOL_SCHEMA.json`。待真实 Agent 会话验收「读取当前列 → 修改列 → 画布卡片跟随」。
+- [ ] 验证：web `bun run typecheck`、`bun run build`、`bun test` 全量 2564 个用例通过；backend `go test ./internal/canvas/...`、`go test ./internal/app -count=1 -timeout 15m` 全量包通过（598s，本机环境偏慢）、`go build ./...`、`go vet ./internal/canvas/... ./internal/app`、gofmt（LF 归一化）通过。
+- [ ] 浏览器视觉验收待确认：明暗皮肤、窄屏（≤768px）、勾选 10+ 列时卡片横向滚动、编辑器大/小窗口、空分镜与长文本行。
+
 ## 3040 隔离栈复验（2026-10-18）
 
 - [ ] 环境：`director-previs-3040` 隔离项目，web/backend 按当前 HEAD（`b7bc5e45`，`VERSION=v1.6.0(0ffc101)`）重建镜像 `open-ai-canvas-web:dpv-3040` / `open-ai-canvas-backend:dpv-3040`，复用既有数据卷（保留 `dpv-accept` 等验收账号），agent 沿用既有镜像；`/api/health` ready、schema 59/59。

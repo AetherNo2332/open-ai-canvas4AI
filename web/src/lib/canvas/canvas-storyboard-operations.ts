@@ -1,5 +1,6 @@
 import type { CanvasOperation, CanvasSnapshot } from "./canvas-operation-contract";
 import { createStoryboardRow } from "./canvas-project-domain";
+import { DEFAULT_STORYBOARD_COLUMNS } from "./canvas-storyboard-columns";
 import type { StoryboardRow } from "@/types/canvas";
 import { inspectStoryboardReadiness } from "./canvas-storyboard-context";
 import { createShortDramaPipeline } from "./canvas-short-drama";
@@ -64,7 +65,7 @@ export function buildAgentStoryboardOperations(snapshot: CanvasSnapshot, input: 
     next = next.map((row, i) => ({ ...row, shotNumber: i + 1 }));
     return [{ type: "update_node", id: node.id, metadata: { storyboard: {
         rows: next,
-        visibleColumns: node.metadata?.storyboard?.visibleColumns || ["shotNumber", "durationSeconds", "videoMotionPrompt", "dialogue", "assets"],
+        visibleColumns: node.metadata?.storyboard?.visibleColumns || [...DEFAULT_STORYBOARD_COLUMNS],
         referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [],
     } } }];
 }
