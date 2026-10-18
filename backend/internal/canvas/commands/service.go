@@ -393,6 +393,54 @@ func checkVersions(req Command, row *model.CanvasProject, versions map[string]mo
 	}
 	return nil
 }
+// Durable consumer shape for occupancy checks; matches tasks.ConsumerJSON without
+// making the command layer depend on the task layer.
+type activeCanvasConsumer struct {
+	RowID        string `json:"rowId"`
+	OutputNodeID string `json:"outputNodeId"`
+}
+
+// Storyboard output ownership is a durable claim. Row and output metadata can be
+// reverted by history, so the accepted task bindings, not the metadata, decide
+// whether a slot may be rebound.
+func (s *Service) validateStoryboardOccupancy(tx *repository.Repository, p identity.Principal, canvasID, epoch string, ops []Operation) error {
+	rows := map[string]map[string]bool{}
+	outputs := map[string]bool{}
+	for _, op := range ops {
+		if op.Type != "bind_storyboard_output" {
+			continue
+		}
+		if rows[op.ID] == nil {
+			rows[op.ID] = map[string]bool{}
+		}
+		rows[op.ID][op.RowID] = true
+		if op.SourceNodeID != "" {
+			outputs[op.SourceNodeID] = true
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	bindings, err := tx.ActiveCanvasTaskBindings(p.OwnerID, canvasID, epoch)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		var consumer activeCanvasConsumer
+		if err = json.Unmarshal([]byte(binding.ConsumerJSON), &consumer); err != nil {
+			return err
+		}
+		for boardID, boardRows := range rows {
+			if binding.TargetNodeID == boardID && boardRows[consumer.RowID] {
+				return failure("reference_busy", "该分镜行仍有未完成任务，请先处理已有任务")
+			}
+		}
+		if outputs[binding.TargetNodeID] || (consumer.OutputNodeID != "" && outputs[consumer.OutputNodeID]) {
+			return failure("reference_busy", "该产物仍有未完成任务，请先处理已有任务")
+		}
+	}
+	return nil
+}
 func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command) (Receipt, error) {
 	if err := validateClient(p, req.ClientID, req.OperationID); err != nil {
 		return Receipt{}, err
@@ -448,6 +496,9 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 		}
 		v, err := s.validation(ctx, tx, p, doc, req.Operations)
 		if err != nil {
+			return err
+		}
+		if err = s.validateStoryboardOccupancy(tx, p, row.ID, epoch.Epoch, req.Operations); err != nil {
 			return err
 		}
 		plan, err := Plan(doc, req, v)

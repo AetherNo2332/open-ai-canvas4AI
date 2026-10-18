@@ -13,6 +13,7 @@ import (
 	connection "infinite-canvas/backend/internal/canvas/connection"
 	contract "infinite-canvas/backend/internal/canvas/contract"
 	layout "infinite-canvas/backend/internal/canvas/layout"
+	references "infinite-canvas/backend/internal/canvas/references"
 	kernel "infinite-canvas/backend/internal/kernel"
 	math "math"
 	url "net/url"
@@ -742,7 +743,9 @@ func (p *planner) canvasCleanReferenceObject(object map[string]any, removed map[
 					continue
 				}
 				if entryMap, ok := entry.(map[string]any); ok {
-					if (key == "assetBindings" || key == "referenceBindings") && removed[p.stringValue(entryMap["nodeId"])] {
+					// Every declared binding array is dropped as a whole entry: leaving the
+					// entry behind with a dangling nodeId keeps a deleted node referenced.
+					if (key == "assetBindings" || key == "referenceBindings" || key == "inputBindings") && removed[p.stringValue(entryMap["nodeId"])] {
 						continue
 					}
 					p.canvasCleanReferenceObject(entryMap, removed)
@@ -820,6 +823,7 @@ func (p *planner) canvasCopyGraph(nodes, edges []map[string]any, op Operation) (
 		dy = *op.Y - value
 	}
 	copies := []map[string]any{}
+	copiedRows := map[string]string{}
 	for _, node := range sources {
 		if _, ok := p.canvasNodeCapabilityForNode(node); !ok {
 			return nodes, edges, item, BadAuthRequest("复制包含不支持的节点类型")
@@ -851,7 +855,9 @@ func (p *planner) canvasCopyGraph(nodes, edges []map[string]any, op Operation) (
 			position[axis] = value
 		}
 		metadata := p.canvasNodeMetadata(copy)
-		p.canvasResetCopiedMetadata(metadata, idMap)
+		for source, derived := range p.canvasResetCopiedMetadata(metadata, p.stringValue(copy["id"]), idMap) {
+			copiedRows[source] = derived
+		}
 		p.canvasRemapCopiedReferences(metadata, idMap)
 		metadata["copiedFromNodeId"] = oldID
 		switch p.stringValue(node["type"]) {
@@ -891,6 +897,12 @@ func (p *planner) canvasCopyGraph(nodes, edges []map[string]any, op Operation) (
 	nextEdges := append([]map[string]any{}, edges...)
 	edgeIndex := 0
 	for _, edge := range edges {
+		// Managed edges are derived from declared fields. Copying one would carry the
+		// source owner's markers onto the copy, so the target scope re-coordinates them
+		// from the copied fields instead.
+		if p.stringValue(edge["managedBy"]) == references.ManagedBy {
+			continue
+		}
 		from, to := p.stringValue(edge["fromNodeId"]), p.stringValue(edge["toNodeId"])
 		if idMap[to] == "" || (idMap[from] == "" && frame) {
 			continue
@@ -910,6 +922,13 @@ func (p *planner) canvasCopyGraph(nodes, edges []map[string]any, op Operation) (
 		copy["toNodeId"] = idMap[to]
 		if idMap[from] != "" {
 			copy["fromNodeId"] = idMap[from]
+		}
+		if row := p.stringValue(copy["storyboardRowId"]); row != "" {
+			if derived := copiedRows[row]; derived != "" {
+				copy["storyboardRowId"] = derived
+			} else {
+				delete(copy, "storyboardRowId")
+			}
 		}
 		nextEdges = append(nextEdges, copy)
 	}
@@ -2727,7 +2746,11 @@ func (p *planner) canvasReorderItems(items []map[string]any, ids []string) ([]ma
 	return result, nil
 }
 
-func (p *planner) canvasResetCopiedMetadata(meta map[string]any, idMap map[string]string) {
+// canvasResetCopiedMetadata clears generation state a node copy must not inherit.
+// nodeID is the copied node's id, or "" when the caller only swaps a media asset.
+// It returns the source-to-copy identity mapping of the copied table rows so that
+// row scoped connections can be rebound onto the copy instead of the source table.
+func (p *planner) canvasResetCopiedMetadata(meta map[string]any, nodeID string, idMap map[string]string) map[string]string {
 	for _, key := range []string{"taskId", "taskClientOperationId", "retryOf", "attemptGroupId", "taskStatus", "taskProgress", "taskStage", "taskMediaStage", "taskCanRecoverMedia", "taskProvider", "taskStartedAt", "taskCompletedAt", "taskDurationMs", "taskErrorCode", "taskOfficialStatus", "taskReceiptRecorded", "taskCreatedAt", "taskUpdatedAt", "generationBatches", "batchRootId", "batchChildIds", "batchFailedCount", "isBatchRoot", "primaryImageId", "imageBatchExpanded", "batchUsesReferenceImages", "versionOfNodeId", "versionLabel", "versionPrimary", "errorDetails", "generationErrorCode", "resourceReloadAvailable", "failedPromptFingerprint"} {
 		delete(meta, key)
 	}
@@ -2770,8 +2793,10 @@ func (p *planner) canvasResetCopiedMetadata(meta map[string]any, idMap map[strin
 			delete(meta, "characterViewNodeIds")
 		}
 	}
+	var rowIDs map[string]string
 	if board, ok := meta["storyboard"].(map[string]any); ok {
-		for _, row := range p.creationMaps(board["rows"]) {
+		rowIDs = map[string]string{}
+		for index, row := range p.creationMaps(board["rows"]) {
 			owned := false
 			for _, key := range []string{"imageNodeId", "videoNodeId"} {
 				source := p.stringValue(row[key])
@@ -2782,21 +2807,54 @@ func (p *planner) canvasResetCopiedMetadata(meta map[string]any, idMap map[strin
 					delete(row, key)
 				}
 			}
-			delete(row, "errorDetails")
-			if !owned {
-				row["status"] = "idle"
-			}
+			p.canvasIsolateCopiedRow(row, nodeID, "row", index, rowIDs, owned)
 		}
 	}
 	if table, ok := meta["batchTable"].(map[string]any); ok {
-		for _, row := range p.creationMaps(table["rows"]) {
+		if rowIDs == nil {
+			rowIDs = map[string]string{}
+		}
+		for index, row := range p.creationMaps(table["rows"]) {
+			owned := false
 			if source := p.stringValue(row["outputNodeId"]); idMap[source] == "" {
 				delete(row, "outputNodeId")
 			} else {
 				row["outputNodeId"] = idMap[source]
+				owned = true
 			}
+			p.canvasIsolateCopiedRow(row, nodeID, "batch-row", index, rowIDs, owned)
 		}
 	}
+	return rowIDs
+}
+
+// canvasIsolateCopiedRow makes a copied table row a new row. Task identity always goes,
+// because a copy is never the task that produced the source result; an in-flight source
+// status also resets so the copy cannot show a running task it does not own.
+func (p *planner) canvasIsolateCopiedRow(row map[string]any, nodeID, suffix string, index int, rowIDs map[string]string, owned bool) {
+	for _, key := range []string{"taskId", "taskClientOperationId", "taskStatus", "taskProgress", "taskStage", "errorDetails"} {
+		delete(row, key)
+	}
+	if !owned || canvasRowTaskActive(p.stringValue(row["status"])) {
+		row["status"] = "idle"
+	}
+	if nodeID == "" {
+		return
+	}
+	source := p.stringValue(row["id"])
+	next := fmt.Sprintf("%s-%s-%d", nodeID, suffix, index+1)
+	if source != "" {
+		rowIDs[source] = next
+	}
+	row["id"] = next
+}
+
+func canvasRowTaskActive(status string) bool {
+	switch status {
+	case "loading", "running", "pending", "queued":
+		return true
+	}
+	return false
 }
 
 func (p *planner) canvasSafeNumber(value any) (any, bool) {

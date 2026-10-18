@@ -411,7 +411,7 @@ func (p *planner) bindAsset(doc Document, op Operation, ctx ValidationContext) e
 		if asset.ResourceID == "" || ctx.ResourceAllowed == nil || !ctx.ResourceAllowed(asset.ResourceID) {
 			return failure("resource_not_owned", "素材资源未授权")
 		}
-		p.canvasResetCopiedMetadata(metadata, nil)
+		p.canvasResetCopiedMetadata(metadata, "", nil)
 		for _, field := range []string{"generationContinuation", "generationSubmitted", "generationEffect", "generationEffects", "generationEffectKeys", "producedModel", "previewContent", "previewStorageKey", "videoPreview", "durationMs", "hasAudio", "naturalWidth", "naturalHeight", "intrinsicWidth", "intrinsicHeight", "bytes", "mimeType", "taskId", "taskStatus", "taskProgress", "taskError", "generationAppliedKeys", "generationPersistence", "errorDetails"} {
 			delete(metadata, field)
 		}

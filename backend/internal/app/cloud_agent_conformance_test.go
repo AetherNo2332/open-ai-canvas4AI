@@ -46,6 +46,36 @@ func TestCanvasAgentManualOperationConformance(t *testing.T) {
 				t.Fatalf("copied node for %s not found", id)
 				return nil
 			}
+			// Each implementation mints copied node ids its own way, so a fixture value may
+			// name the copied node a derived row belongs to instead of a literal id.
+			var resolveCopiedIDs func(any) any
+			resolveCopiedIDs = func(value any) any {
+				switch typed := value.(type) {
+				case map[string]any:
+					out := map[string]any{}
+					for key, item := range typed {
+						out[key] = resolveCopiedIDs(item)
+					}
+					return out
+				case []any:
+					out := make([]any, len(typed))
+					for i, item := range typed {
+						out[i] = resolveCopiedIDs(item)
+					}
+					return out
+				case string:
+					if !strings.HasPrefix(typed, "@copy-node:") {
+						return typed
+					}
+					source, suffix, ok := strings.Cut(strings.TrimPrefix(typed, "@copy-node:"), ":")
+					if !ok || source == "" || suffix == "" {
+						t.Fatalf("invalid copied-node placeholder %q", typed)
+					}
+					return stringValue(findCopied(source)["id"]) + "-" + suffix
+				default:
+					return value
+				}
+			}
 			for _, assertion := range creationMaps(fixture.Expected["nodeAssertions"]) {
 				var actual map[string]any
 				if id := stringValue(assertion["id"]); id != "" {
@@ -69,7 +99,7 @@ func TestCanvasAgentManualOperationConformance(t *testing.T) {
 						fields[key] = value
 					}
 				}
-				assertCanvasAgentConformanceSubset(t, actual, fields, "node")
+				assertCanvasAgentConformanceSubset(t, actual, resolveCopiedIDs(fields), "node")
 				for _, key := range cloudAgentStrings(assertion["absentNodeFields"]) {
 					if actual[key] != nil {
 						t.Fatalf("field %s retained: %+v", key, actual)

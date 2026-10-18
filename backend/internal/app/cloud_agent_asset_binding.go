@@ -119,7 +119,7 @@ func prepareCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID
 		if resource.Status != model.ResourceStatusReady || !(resource.Kind == kind || strings.HasPrefix(resource.MimeType, kind+"/")) {
 			return nil, BadAuthRequest("素材资源未就绪或类型不符")
 		}
-		cloudAgentResetCopiedMetadata(metadata, nil)
+		cloudAgentResetCopiedMetadata(metadata, "", nil)
 		for _, field := range []string{"agentGenerationContinuation", "agentDraftRunId", "agentDraftCallId", "generationSubmitted", "generationEffect", "generationEffects", "generationEffectKeys", "producedModel", "previewContent", "previewStorageKey", "videoPreview", "durationMs", "hasAudio", "naturalWidth", "naturalHeight", "intrinsicWidth", "intrinsicHeight", "bytes", "mimeType"} {
 			delete(metadata, field)
 		}

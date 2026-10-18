@@ -23,10 +23,15 @@ func commandFixture(t *testing.T) (*Service, *gorm.DB, string, Snapshot) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sqlDB, _ := db.DB(); _ = sqlDB.Close() })
-	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.Resource{}); err != nil {
+	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.Resource{}, &model.Task{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.MigrateCanvasCommands(db); err != nil {
+		t.Fatal(err)
+	}
+	// Semantic output binding rechecks durable task occupancy, so the accepted
+	// binding tables have to exist rather than be swallowed as missing.
+	if err = database.MigrateCanvasTasks(db); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Create(&model.User{ID: "owner", Status: model.UserStatusActive}).Error; err != nil {
