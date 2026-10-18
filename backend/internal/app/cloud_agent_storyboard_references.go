@@ -1,7 +1,9 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
+
 	"infinite-canvas/backend/internal/canvas/capability"
 	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/repository"
@@ -32,6 +34,41 @@ func cloudAgentReferenceError(err error) error {
 		return cloudAgentFieldError(typed.Field, typed.Reason, typed.Message)
 	}
 	return err
+}
+
+// 行与输出的 metadata 可以被历史回滚，所以 Agent 的产物归属写入也要核对持久任务
+// 绑定：只有已受理且未终结的任务才能证明该槽位仍被占用。原生命令走
+// commands.Service 的同类校验，这里覆盖 app 侧的语义入口。
+type cloudAgentActiveConsumer struct {
+	RowID        string `json:"rowId"`
+	OutputNodeID string `json:"outputNodeId"`
+}
+
+func validateCloudAgentStoryboardOccupancy(repo *repository.Repository, userID, canvasID, boardID, rowID, outputID string) error {
+	epoch, err := repo.CommandEpoch(userID, canvasID)
+	if err != nil {
+		if repo.IsMissing(err) {
+			return nil
+		}
+		return err
+	}
+	bindings, err := repo.ActiveCanvasTaskBindings(userID, canvasID, epoch.Epoch)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		var consumer cloudAgentActiveConsumer
+		if err = json.Unmarshal([]byte(binding.ConsumerJSON), &consumer); err != nil {
+			return err
+		}
+		if binding.TargetNodeID == boardID && consumer.RowID == rowID {
+			return cloudAgentFieldError("rowId", "reference_busy", "该分镜行仍有未完成任务，请先处理已有任务")
+		}
+		if outputID != "" && (binding.TargetNodeID == outputID || consumer.OutputNodeID == outputID) {
+			return cloudAgentFieldError("outputNodeId", "reference_busy", "该产物仍有未完成任务，请先处理已有任务")
+		}
+	}
+	return nil
 }
 func prepareCloudAgentStoryboardReferenceEdit(repo *repository.Repository, userID, canvasID string, args cloudAgentStoryboardEditArgs) (*cloudAgentStoryboardMutationPlan, error) {
 	if len(args.Patch) != 0 {
@@ -84,6 +121,10 @@ func prepareCloudAgentStoryboardReferenceEdit(repo *repository.Repository, userI
 			}
 		} else if output == "" {
 			return nil, BadAuthRequest("绑定输出需要 outputNodeId")
+		}
+		// 绑定与解除都先核对持久占用：解除一个正在生成中的槽位同样会打乱回填。
+		if err = validateCloudAgentStoryboardOccupancy(repo, userID, canvasID, args.NodeID, args.RowID, output); err != nil {
+			return nil, err
 		}
 		if err = references.BindStoryboardOutput(doc, args.NodeID, args.RowID, args.OutputMode, output); err != nil {
 			return nil, cloudAgentReferenceError(err)
