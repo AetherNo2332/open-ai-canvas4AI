@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
+
+var errPiNativePreparationInvalid = errors.New("Pi 原生压缩准备信息无效")
 
 // The preparation and model call receipts survive worker loss. SDK summarization
 // runs in Node, but every provider call and checkpoint remains Go-owned.
@@ -63,7 +66,7 @@ func cloudAgentNativeUsageMatches(sent, stored json.RawMessage) bool {
 func cloudAgentPrepareNativeCompaction(raw json.RawMessage, tokens int, source *cloudAgentPiCompactionSource, branch []cloudAgentPiCompactionEntry) (*cloudAgentPiNativeCompaction, error) {
 	var prep piNativePreparation
 	if len(raw) > 1<<20 || json.Unmarshal(raw, &prep) != nil || prep.FirstKeptEntryID == "" || prep.TokensBefore != tokens {
-		return nil, fmt.Errorf("Pi 原生压缩准备信息无效")
+		return nil, errPiNativePreparationInvalid
 	}
 	index := -1
 	for i, id := range source.MessageEntryIDs {
@@ -93,7 +96,15 @@ func cloudAgentPrepareNativeCompaction(raw json.RawMessage, tokens int, source *
 		}
 	}
 	if index < 0 {
-		return nil, fmt.Errorf("Pi 保留切点不在当前可见消息边界")
+		// 分支里完全不存在的切点意味着 Pi 端边界元数据已过期，按建议性信息
+		// 处理，交由调用方回退服务端语义压缩；已在会话中登记、但不能作为
+		// 保留边界的条目（例如 toolResult）仍按错误拒绝。
+		for _, entry := range branch {
+			if entry.ID == prep.FirstKeptEntryID {
+				return nil, fmt.Errorf("Pi 保留切点不在当前可见消息边界")
+			}
+		}
+		return nil, errPiNativePreparationInvalid
 	}
 	previous := ""
 	for _, entry := range branch {

@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 
@@ -21,6 +22,7 @@ func resourceAccessOptions(c *gin.Context) service.ResourceAccessOptions {
 	return service.ResourceAccessOptions{
 		Purpose:      purpose,
 		Variant:      variant,
+		DownloadName: strings.TrimSpace(c.Query("downloadName")),
 		DescribeOnly: c.Query("access") == "1",
 	}
 }
@@ -64,6 +66,9 @@ func serveResourceDelivery(c *gin.Context, delivery *service.ResourceDelivery, c
 	defer stream.Body.Close()
 	if cacheControl != "" {
 		c.Header("Cache-Control", cacheControl)
+	}
+	if disposition == "" && strings.TrimSpace(c.Query("downloadName")) != "" && resourceAccessOptions(c).Purpose == assets.PurposeDownload {
+		disposition = mime.FormatMediaType("attachment", map[string]string{"filename": strings.TrimSpace(c.Query("downloadName"))})
 	}
 	if disposition != "" {
 		c.Header("Content-Disposition", disposition)

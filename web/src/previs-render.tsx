@@ -6,7 +6,11 @@ import { preparePrevisRenderScene, type PrevisRenderState } from "@/lib/canvas/p
 import type { PrevisScene } from "@/types/previs";
 
 type RendererAPI = { load: (scene: PrevisScene, shotId: string, duration: number) => void; state: () => PrevisRenderState; frame: (time: number) => Promise<string> };
-declare global { interface Window { previsRenderer: RendererAPI } }
+declare global {
+    interface Window {
+        previsRenderer: RendererAPI;
+    }
+}
 const noop = () => undefined;
 const paint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
@@ -17,7 +21,12 @@ function Renderer() {
     const viewport = useRef<PrevisViewportHandle>(null);
     useEffect(() => {
         window.previsRenderer = {
-            load: (input, shotId, duration) => flushSync(() => { setScene(preparePrevisRenderScene(input, shotId, duration)); setTime(0); setGeneration((value) => value + 1); }),
+            load: (input, shotId, duration) =>
+                flushSync(() => {
+                    setScene(preparePrevisRenderScene(input, shotId, duration));
+                    setTime(0);
+                    setGeneration((value) => value + 1);
+                }),
             state: () => viewport.current?.readRenderState() ?? { ready: false, error: "", pending: [] },
             frame: async (playhead) => {
                 if (!Number.isFinite(playhead) || playhead < 0 || playhead > 60) throw new Error("invalid_frame_time");
@@ -36,7 +45,27 @@ function Renderer() {
         };
     }, []);
     if (!scene) return null;
-    return <PrevisViewport key={generation} ref={viewport} scene={scene} selectedObjectId={null} selectedBone={null} transformMode="translate" renderMode="clay" playhead={time} playing={false} viewMode="camera" showNavigation={false} showModelLoadNotice={false} onSelectObject={noop} onSelectBone={noop} onObjectTransform={noop} onBoneTransform={noop} onActorRigReady={noop} />;
+    return (
+        <PrevisViewport
+            key={generation}
+            ref={viewport}
+            scene={scene}
+            selectedObjectId={null}
+            selectedBone={null}
+            transformMode="translate"
+            renderMode="clay"
+            playhead={time}
+            playing={false}
+            viewMode="camera"
+            showNavigation={false}
+            showModelLoadNotice={false}
+            onSelectObject={noop}
+            onSelectBone={noop}
+            onObjectTransform={noop}
+            onBoneTransform={noop}
+            onActorRigReady={noop}
+        />
+    );
 }
 
 createRoot(document.getElementById("root")!).render(<Renderer />);

@@ -7,7 +7,7 @@ export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "class
     const skin = getSkinAntOverrides(skinID, dark ? "dark" : "light");
     const colors = normalizeSkinDefinition(skinID).tokens[dark ? "dark" : "light"];
     const text = colors.text;
-    const textSecondary = colors.textMuted;
+    const textSecondary = skin.textMuted ?? colors.textMuted;
     const canvas = colors.adminBackground;
     const surface = colors.adminSurface;
     const surfaceMuted = colors.adminSubtle;
@@ -27,7 +27,7 @@ export function getIsolatedAdminAntTheme(dark: boolean, skinID: unknown = "class
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         cssVar: { key: `admin-console-${normalizeSkinID(skinID)}-${dark ? "dark" : "light"}` },
         token: {
-            fontFamily: 'ui-sans-serif, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif',
+            fontFamily: "var(--font-home)",
             fontSize: 13,
             fontSizeSM: 12,
             borderRadius: skin.buttonRadius ?? 0,

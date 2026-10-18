@@ -6,7 +6,7 @@
     --agent-surface-hover: color-mix(in srgb, var(--agent-ink) 7%, transparent);
     --agent-surface-raised: color-mix(in srgb, var(--agent-ink) 6%, var(--agent-material-solid));
     --agent-caption: color-mix(in srgb, var(--agent-ink) 62%, var(--agent-surface-base));
-    --agent-radius-surface: calc(var(--radius) * 2.5);
+    --agent-radius-surface: var(--card-radius);
     --agent-focus-ring: color-mix(in srgb, var(--agent-accent) 65%, var(--agent-ink));
 }
 

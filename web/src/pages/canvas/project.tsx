@@ -76,6 +76,7 @@ import { batchReferenceColumns, promoteLegacyBatchTableSize } from "@/lib/canvas
 import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { CanvasPrevisNodePanel } from "@/components/canvas/previs/canvas-previs-node-panel";
 import { CanvasVersionCompareModal } from "@/components/canvas/canvas-version-compare-modal";
+import { CanvasCloudAgentPanel } from "@/components/canvas/canvas-cloud-agent-panel";
 import { useFocusMode } from "@/hooks/use-focus-mode";
 import { connectCanvasTextMention } from "@/lib/canvas/canvas-text-mention";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
@@ -117,6 +118,7 @@ import { CanvasFocusModeBar } from "@/components/canvas/canvas-focus-mode-bar";
 import { CanvasProjectContextMenu } from "./canvas-project-context-menu";
 import { CanvasProjectMediaDialogs } from "./canvas-project-media-dialogs";
 import { CanvasProjectSelectionToolbar } from "./canvas-project-selection-toolbar";
+import { isCanvasDownloadableMediaNode } from "@/lib/canvas/canvas-media-batch-download";
 import { CanvasProjectStatusDialogs } from "./canvas-project-status-dialogs";
 import { CanvasProjectWorldLayers } from "./canvas-project-world-layers";
 import { CanvasNodeActionContext, type CanvasNodeActionContextValue } from "@/components/canvas/canvas-node-action-context";
@@ -340,6 +342,7 @@ function InfiniteCanvasPage() {
     const [titleDraft, setTitleDraft] = useState("");
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
     const [cinematicAgentEntry, setCinematicAgentEntry] = useState(false);
+    const [downloadingSelectedMedia, setDownloadingSelectedMedia] = useState(false);
     const { assistantOpen, closeAgent, openAgent: openAssistant } = useCanvasAssistantVisibility();
     const agentMentionReferences = useMemo(() => buildCanvasAgentMentionReferences(nodes), [nodes]);
 
@@ -1286,6 +1289,7 @@ function InfiniteCanvasPage() {
     const {
         collapsingBatchIds,
         downloadNodeImage,
+        downloadSelectedMedia,
         handleConfigNodeChange,
         handleFolderStyleChange,
         handleFolderThemeChange,
@@ -1302,7 +1306,7 @@ function InfiniteCanvasPage() {
         toggleNodeFreeResize,
     } = useCanvasNodeEditor({
         canvasId: projectId,
-        canvasTitle: currentProject?.title || "未命名画布",
+        canvasTitle: currentProject?.title || "画布媒体",
         domainProjectId: linkedProjectId,
         nodesRef,
         setNodes,
@@ -1668,7 +1672,7 @@ function InfiniteCanvasPage() {
         setStylePickerOpen,
     });
 
-    const { applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene } = useCanvasPrevis({
+    const { applyPrevisOutput, createPrevisShot, openPrevisWorkbench, savePrevisScene, refreshAfterExport } = useCanvasPrevis({
         projectId,
         domainProjectId: currentProject?.projectId,
         previsNodeId,
@@ -2869,6 +2873,7 @@ function InfiniteCanvasPage() {
                                             openCanvasAssetLibrary();
                                         }}
                                         onOpenProjectCharacters={() => openProjectAssets("character")}
+                                        agentOpen={assistantOpen}
                                     />
                                 ) : null}
                             </div>
@@ -2978,6 +2983,19 @@ function InfiniteCanvasPage() {
                                 containerRef={containerRef}
                                 count={selectedNodeBounds.count}
                                 selectedVideoCount={selectedVideoNodes.length}
+                                downloadableMediaCount={nodes.filter((node) => selectedNodeIds.has(node.id) && isCanvasDownloadableMediaNode(node)).length}
+                                onDownloadSelected={() => {
+                                    if (downloadingSelectedMedia) return;
+                                    setDownloadingSelectedMedia(true);
+                                    void downloadSelectedMedia(nodes.filter((node) => selectedNodeIds.has(node.id)))
+                                        .then((results) => {
+                                            const failed = results.filter((result) => result.status === "failed").length;
+                                            message[failed ? "warning" : "success"](failed ? `已下载 ${results.length - failed} 个，${failed} 个失败` : `已下载 ${results.length} 个媒体`);
+                                        })
+                                        .catch((error) => message.error(error instanceof Error ? error.message : "批量下载失败"))
+                                        .finally(() => setDownloadingSelectedMedia(false));
+                                }}
+                                downloading={downloadingSelectedMedia}
                                 mergingVideos={Boolean(mergeVideoProgress)}
                                 onAlign={alignSelectedNodes}
                                 onArrange={arrangeSelectedNodes}
@@ -3327,7 +3345,9 @@ function InfiniteCanvasPage() {
                                     onApply={applyPrevisOutput}
                                     onDeleteImageNode={(nodeId) => deleteNodes(new Set([nodeId]))}
                                     onFlush={() => flushCanvasStorePersistence()}
+                                    onCanvasRefresh={refreshAfterExport}
                                     onboardingScope={previsOnboardingScope}
+                                    onOpenAgent={openAgent}
                                 />
                             </Suspense>
                         ) : null}
@@ -3412,6 +3432,12 @@ function InfiniteCanvasPage() {
                             onInsertFolder={projectAssetScope === "canvas" ? handleProjectFolderInsert : undefined}
                         />
                     </section>
+                    <div className={versions.open ? "hidden" : "contents"}>
+                        <CanvasCloudAgentPanel canvasId={projectId} domainProjectId={currentProject?.projectId} nodeCount={nodes.length} selectedNodeIds={Array.from(selectedNodeIds)} references={agentMentionReferences} prefillPrompt={agentPrefillPrompt} open={assistantOpen} floating={Boolean(previsNodeId)} launcher={!previsNodeId} onOpen={openAgent} onCollapse={closeAgent} onFocusNode={(nodeId) => {
+                            if (!nodesRef.current.some((node) => node.id === nodeId)) { message.info("该节点已删除或尚未同步到画布"); return; }
+                            focusCanvasNode(nodeId);
+                        }} />
+                    </div>
                     {versions.preview ? <CanvasVersionPreview key={versions.preview.key} preview={versions.preview} onReturn={versions.returnToCurrent} onShowVersions={versions.show} /> : null}
                     </div>
                 </CanvasOverlayLayerProvider>

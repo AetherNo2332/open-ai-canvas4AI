@@ -113,6 +113,27 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"reset": true})
 	})
+	r.POST("/auth/password", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+		var req service.ChangePasswordRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if !enforceRateLimit(c, "change-password:"+user.ID, 10, time.Hour) {
+			return
+		}
+		if err := svc.ChangePassword(user, req, currentSessionID(c)); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"changed": true})
+	})
 	r.POST("/auth/login", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 		var req service.LoginRequest
@@ -174,7 +195,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		features, err := svc.FeatureAvailability()
+		features, err := svc.UserFeatureAvailability(user)
 		if err != nil {
 			failService(c, err)
 			return
@@ -1129,6 +1150,15 @@ func currentUser(c *gin.Context, svc *service.Service) (*model.User, error) {
 func sessionCookie(c *gin.Context) string {
 	value, _ := c.Cookie(service.SessionCookieName)
 	return value
+}
+
+// currentSessionID 取出会话 Cookie 里的会话 ID，改密后保留当前会话时使用。
+func currentSessionID(c *gin.Context) string {
+	value := sessionCookie(c)
+	if index := strings.IndexByte(value, '.'); index > 0 {
+		return value[:index]
+	}
+	return ""
 }
 
 func passwordResetRateLimitSubject(value string) string {

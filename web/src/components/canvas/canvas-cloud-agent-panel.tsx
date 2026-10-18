@@ -64,6 +64,7 @@ import { applyAgentCanvasPatches, refreshCanvasAfterAgent, saveRemoteUserDataNow
 import { createAgentCanvasSync } from "@/services/agent-canvas-sync";
 import { buildSkillMentionReferences, resolveSkillMentions } from "@/services/skill-runtime";
 import { nativeSkillEventPresentation } from "@/lib/canvas/agent-tool-presentation";
+import { notifyAgentApproval } from "@/lib/canvas/agent-browser-notifications";
 import {
     AgentChatComposer,
     AgentChatMessage,
@@ -102,6 +103,8 @@ type CloudAgentPanelProps = {
     references: CanvasResourceReference[];
     open: boolean;
     floating?: boolean;
+    /** 是否显示悬浮唤起按钮;宿主另有入口(如导演台顶栏)时关闭。 */
+    launcher?: boolean;
     prefillPrompt?: string;
     onOpen: () => void;
     onCollapse: () => void;
@@ -110,7 +113,7 @@ type CloudAgentPanelProps = {
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, floating = false, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
+export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const subagentsAvailable = useUserStore((state) => state.features.agentSubagentsEnabled);
     const [subagentPolicy, setSubagentPolicy] = useState<AgentSubagentPolicy | null>(null);
@@ -252,7 +255,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const [exporting, setExporting] = useState(false);
     const [stopping, setStopping] = useState(false);
     const [approval, setApproval] = useState<ApprovalState | null>(null);
-    const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("request_approval");
+    const [permissionMode, setPermissionMode] = useState<AgentPermissionMode>("auto");
     const [contextScope, setContextScope] = useState<AgentContextKey[]>(["canvas"]);
     const [maxCredits, setMaxCredits] = useState("200");
     const [maxGenerationTasks, setMaxGenerationTasks] = useState("0");
@@ -720,6 +723,12 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     if (event.seq > lastSeqRef.current + 1) canvasSyncRef.current?.reconcile();
                     lastSeqRef.current = event.seq;
                 }
+                if (event.type === "approval_requested" && event.seq > 0) {
+                    void notifyAgentApproval({
+                        approvalId: String(event.payload?.approvalId || "approval"),
+                        summary: String(event.payload?.summary || event.payload?.reason || ""),
+                    });
+                }
                 setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
                 setContextUsage((current) => reduceAgentContextUsage(current, event));
                 applyAgentEvent(event, setMessages, setRun, setApproval, setPrompt);
@@ -1042,7 +1051,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
 
     const panel = (
         <>
-            {!open ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
+            {!open && launcher ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
             <AnimatePresence>
                 {open ? (
                     <motion.aside
@@ -1323,7 +1332,7 @@ function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onO
             transition={{ duration: reducedMotion ? 0 : 0.18 }}
         >
             {png ? (
-                <AgentPNGAvatar url={appearanceAssetURL("agent-avatar", appearanceRevision)} width={width} height={height} fallback={<FluidOrb size={60} color="#7164f6" />} />
+                <AgentPNGAvatar url={appearance.avatarResourceId.startsWith("/") ? appearance.avatarResourceId : appearanceAssetURL("agent-avatar", appearanceRevision)} width={width} height={height} fallback={<FluidOrb size={60} color="#7164f6" />} />
             ) : live ? (
                 <Live2DAvatar url={live2DModelURL(appearance.live2dResourceId, appearance.live2dEntry)} width={width} height={height} reducedMotion={reducedMotion} fallback={<FluidOrb size={60} color="#7164f6" />} />
             ) : (

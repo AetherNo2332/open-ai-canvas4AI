@@ -4,8 +4,15 @@ import type { CanvasDrawingSnapshot } from "../src/lib/canvas/canvas-drawing-sto
 test("native drawing save and reload retain every page and its shapes", async () => {
     const result = await new Promise<{ saved: CanvasDrawingSnapshot; reloaded: CanvasDrawingSnapshot; undone: CanvasDrawingSnapshot; draft: CanvasDrawingSnapshot; retainedDraft: CanvasDrawingSnapshot }>((resolve, reject) => {
         const worker = new Worker(new URL("./helpers/canvas-drawing-pages.worker.ts", import.meta.url).href, { type: "module" });
-        worker.onmessage = ({ data }) => { worker.terminate(); if (data.error) reject(new Error(data.error)); else resolve(data); };
-        worker.onerror = (event) => { worker.terminate(); reject(event.error ?? new Error(event.message)); };
+        worker.onmessage = ({ data }) => {
+            worker.terminate();
+            if (data.error) reject(new Error(data.error));
+            else resolve(data);
+        };
+        worker.onerror = (event) => {
+            worker.terminate();
+            reject(event.error ?? new Error(event.message));
+        };
         worker.postMessage(null);
     });
     for (const document of [result.saved, result.reloaded]) {

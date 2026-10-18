@@ -437,7 +437,21 @@ export function getAdminFeatureAvailability() {
 
 export function updateAdminFeatureAvailability(
     features: Partial<
-        Pick<FeatureAvailability, "welcomeEnabled" | "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers" | "agentSubagentsEnabled" | "directorDeskPrevisMode">
+        Pick<
+            FeatureAvailability,
+            | "welcomeEnabled"
+            | "shortDramaEnabled"
+            | "taskCenterEnabled"
+            | "creditsEnabled"
+            | "customChannelsEnabled"
+            | "frontendModelsEnabled"
+            | "pluginCenterEnabled"
+            | "systemPluginsVisibleToUsers"
+            | "agentSubagentsEnabled"
+            | "directorDeskPrevisMode"
+            | "directorDeskPrevisCanaryUsers"
+            | "directorDeskPrevisCanaryBasisPoints"
+        >
     >,
 ) {
     return http.patch<{ features: FeatureAvailability }>("/admin/settings/features", features);
@@ -460,6 +474,11 @@ export function sendPasswordResetEmailCode(email: string) {
 
 export function resetPassword(input: { email: string; emailCode: string; password: string }) {
     return http.post<{ reset: boolean }>("/auth/password-reset", input);
+}
+
+/** 登录状态下自助改密；服务端校验当前密码并让其他设备的会话失效。 */
+export function changePassword(input: { currentPassword: string; newPassword: string }) {
+    return http.post<{ changed: boolean }>("/auth/password", input);
 }
 
 export async function register(input: { username: string; email?: string; emailCode?: string; phone?: string; smsCode?: string; ticket?: string; displayName?: string; password: string; acceptedTerms: boolean }) {

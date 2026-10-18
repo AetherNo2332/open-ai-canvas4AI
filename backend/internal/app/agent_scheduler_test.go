@@ -22,7 +22,7 @@ func TestPiEventSchedulerPhaseFencingAfterSameOwnerTakeover(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range []any{&model.CloudAgentExecution{}, &model.CloudAgentPiSession{}} {
-		if err = db.Model(entry).Where("id = ?", run.ID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		if err = db.Model(entry).Where("id = ?", run.ID).Update("lease_expires_at", time.Now().UTC().Add(-time.Minute)).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -92,7 +92,7 @@ func TestPiEventSchedulerDurableToolAdmissionAndReceiptRecovery(t *testing.T) {
 	}
 	old := fmt.Sprintf("%s@%d", run.LeaseOwner, session.LeaseEpoch)
 	for _, entry := range []any{&model.CloudAgentExecution{}, &model.CloudAgentPiSession{}} {
-		if err = db.Model(entry).Where("id = ?", run.ID).Update("lease_expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		if err = db.Model(entry).Where("id = ?", run.ID).Update("lease_expires_at", time.Now().UTC().Add(-time.Minute)).Error; err != nil {
 			t.Fatal(err)
 		}
 	}

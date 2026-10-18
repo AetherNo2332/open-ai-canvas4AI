@@ -13,14 +13,14 @@ export type CanvasAppearance = {
 };
 
 export const DEFAULT_CANVAS_APPEARANCE: CanvasAppearance = {
-    agentName: "影策",
+    agentName: "ArrowFX",
     launcherLabel: "Agent",
     panelTitle: "画布助手",
     welcomeTitle: "在这里，和{agentName}让灵感，慢慢成形",
     welcomeDescription: "从一个想法开始，和{agentName}一起创作。",
     inputPlaceholder: "输入操作指导；用 @ 引用画布节点，用 / 或 、 引用 Skills",
-    avatarType: "orb",
-    avatarResourceId: "",
+    avatarType: "png",
+    avatarResourceId: "/agent-avatar.png",
     live2dResourceId: "",
     live2dEntry: "",
     avatarHeight: 220,

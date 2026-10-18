@@ -198,8 +198,13 @@ func applyCloudAgentCanvasPlanInPlace(doc map[string]any, ops []agentCanvasOp) (
 				return nil, err
 			}
 			fromIndex, toIndex := cloudAgentNodeIndex(nodes, op.FromNodeID), cloudAgentNodeIndex(nodes, op.ToNodeID)
-			if fromIndex < 0 || toIndex < 0 || op.FromNodeID == op.ToNodeID {
+			// 端点不存在依赖画布状态，属准入失败（终止整轮）；自环边只由参数本身可判定，
+			// 归参数错误进入修复预算。两类共享旧文案，拆开时保留原文案给前者。
+			if fromIndex < 0 || toIndex < 0 {
 				return nil, BadAuthRequest("连线端点不存在或指向自身")
+			}
+			if op.FromNodeID == op.ToNodeID {
+				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "self_edge", "连线不能指向自身")
 			}
 			if err := validateCloudAgentConnection(nodes, op.FromNodeID, op.ToNodeID, edges); err != nil {
 				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", cloudAgentSafeToolError(err))

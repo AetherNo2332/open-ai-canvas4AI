@@ -8,6 +8,5 @@ test("round-trip preserves unknown scene extensions and metadata", () => {
     const document = previsSceneToDirectorDocument(scene);
     const restored = directorDocumentToPrevisScene(document);
     expect((restored as any).extensions).toEqual((scene as any).extensions);
-    expect(document.extensions?.infiniteCanvas?.sourceSceneId).toBe(scene.id);
+    expect(document.extensions?.["infinite-canvas"]?.sourceSceneId).toBe(scene.id);
 });
-

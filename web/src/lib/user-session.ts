@@ -32,9 +32,9 @@ export async function switchUserStorageScope(userId?: string | null) {
 
 let sessionGeneration = 0;
 
-type UserSessionOptions = {storageScope?:string; remoteAutoSync?:boolean; awaitHydration?:boolean};
+type UserSessionOptions = { storageScope?: string; remoteAutoSync?: boolean; awaitHydration?: boolean };
 
-export async function applyUserSession(payload: AuthSessionPayload,options:UserSessionOptions={}) {
+export async function applyUserSession(payload: AuthSessionPayload, options: UserSessionOptions = {}) {
     const generation = ++sessionGeneration;
     const previousUserId = useUserStore.getState().user?.id || "";
     const nextUserId = payload.user?.id || "";
@@ -57,13 +57,14 @@ export async function applyUserSession(payload: AuthSessionPayload,options:UserS
         useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
         useUserStore.getState().setDrawingEngine(payload.drawingEngine);
         useUserStore.getState().setFeatures(payload.features);
-        if(options.remoteAutoSync !== false) installRemoteUserDataAutoSync();
+        if (options.remoteAutoSync !== false) installRemoteUserDataAutoSync();
         useUserStore.getState().setHydrated(true);
-        const hydration=hydrateUserSessionData(payload, generation,options);
-        if(options.awaitHydration) await hydration;
-        else void hydration.catch((error) => {
-            if (isCurrentSession(generation, nextUserId)) console.warn("用户工作区后台初始化失败，基础页面仍可继续", error);
-        });
+        const hydration = hydrateUserSessionData(payload, generation, options);
+        if (options.awaitHydration) await hydration;
+        else
+            void hydration.catch((error) => {
+                if (isCurrentSession(generation, nextUserId)) console.warn("用户工作区后台初始化失败，基础页面仍可继续", error);
+            });
     } finally {
         if (useUserStore.getState().hydrated === false && isCurrentGeneration(generation)) useUserStore.getState().setHydrated(true);
     }
@@ -78,7 +79,7 @@ function resetUserScopedMemory() {
     useCreationPreferencesStore.setState({ hydrated: false, preferences: {} });
 }
 
-async function hydrateUserSessionData(payload: AuthSessionPayload, generation: number,options:UserSessionOptions={}) {
+async function hydrateUserSessionData(payload: AuthSessionPayload, generation: number, options: UserSessionOptions = {}) {
     const startedAt = performance.now();
     const userId = payload.user?.id || "";
     const [canvas, canvasHistory, assets, plugins] = await Promise.allSettled([
@@ -129,12 +130,12 @@ async function hydrateUserSessionData(payload: AuthSessionPayload, generation: n
 
     if (userId) {
         try {
-            if(options.remoteAutoSync === false) {
-                const {initializeLegacySingleWriter}=await import('@/services/desktop/legacy-single-writer');
+            if (options.remoteAutoSync === false) {
+                const { initializeLegacySingleWriter } = await import("@/services/desktop/legacy-single-writer");
                 await initializeLegacySingleWriter(userId);
             } else await initializeRemoteUserDataSession(userId);
         } catch (error) {
-            if(options.awaitHydration) throw error;
+            if (options.awaitHydration) throw error;
             if (isCurrentSession(generation, userId)) console.warn("远端用户数据后台同步初始化失败", error);
         }
     } else {
@@ -242,6 +243,8 @@ export function systemChannelModelChannels(channels: PublicChannelCatalog[]): Mo
                     channelId: channel.id,
                     modelKey: model.modelKey,
                     logicalPriceTiers,
+                    availability: model.availability,
+                    available: model.available,
                 };
             }),
         };

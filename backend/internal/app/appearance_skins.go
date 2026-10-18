@@ -207,7 +207,27 @@ func defaultSwissInkSkin() AppearanceSkinTheme {
 		primary: "#f5f5f5", primaryHover: "#ffffff", primaryActive: "#e5e5e5", primaryForeground: "#171717",
 		switchChecked: "#f5f5f5", switchCheckedHover: "#ffffff", switchCheckedHandle: "#171717",
 	})
+	theme.Tokens.Dark = darkenSwissInkSurfaces(theme.Tokens.Dark)
 	return theme
+}
+
+// darkenSwissInkSurfaces 把深色墨阶的工作区表面压回近黑：近黑画布上大面积中灰
+// （旧值 surface #3f3f40 / raised #626363）会显得发灰刺眼。只收表面与描边，
+// 文字、控件与强调色不动，保持既有层级（surface < subtle < raised）与对比度。
+func darkenSwissInkSurfaces(mode AppearanceSkinModeTokens) AppearanceSkinModeTokens {
+	mode.Surface = "#1b1c1e"
+	mode.SurfaceSubtle = "#232426"
+	mode.SurfaceRaised = "#2b2c2f"
+	mode.Overlay = "#1f2022"
+	mode.Border = "#34353a"
+	mode.Workspace = mode.Surface
+	mode.WorkspaceGrid = mode.Overlay
+	mode.AdminSurface = mode.Overlay
+	mode.AdminSubtle = mode.SurfaceSubtle
+	mode.AdminStrong = mode.SurfaceRaised
+	mode.AuthPanel = mode.Surface
+	mode.AuthCard = mode.SurfaceSubtle
+	return mode
 }
 
 type appearanceSkinPalette struct {

@@ -6,7 +6,7 @@
     "scripts": {
         "dev": "vite --host 0.0.0.0 --port 3000",
         "build": "tsc --noEmit && vite build",
-        "pretest": "bun test test/tiptap-dependency-versions.test.ts test/admin-ui-regressions.test.ts test/announcement-prompt-regressions.test.ts test/password-reset.test.ts test/oss-settings.test.ts test/channel-model-editor-form.test.ts test/channel-model-price-tier-form.test.ts test/admin-logical-models.test.ts && bun test test/canvas-grid-viewport.test.tsx",
+        "pretest": "bun test test/tiptap-dependency-versions.test.ts test/admin-ui-regressions.test.ts test/announcement-prompt-regressions.test.ts test/password-reset.test.ts test/account-security.test.ts test/oss-settings.test.ts test/channel-model-editor-form.test.ts test/channel-model-price-tier-form.test.ts test/admin-logical-models.test.ts && bun test test/canvas-grid-viewport.test.tsx",
         "typecheck": "tsc --noEmit",
         "test:canvas": "bun test test/canvas-media-performance.test.ts test/canvas-node-title-interaction.test.ts test/canvas-spatial-index.test.ts",
         "test": "bun test",
@@ -24,8 +24,6 @@
         "@ffmpeg/core": "0.12.10",
         "@ffmpeg/ffmpeg": "^0.12.15",
         "@ffmpeg/util": "^0.12.2",
-        "@fontsource-variable/ibm-plex-sans": "^5.3.0",
-        "@fontsource-variable/inter": "^5.3.0",
         "@fontsource-variable/jetbrains-mono": "^5.3.0",
         "@lobehub/icons": "5.16.0",
         "@mediapipe/tasks-vision": "^1.0.1",

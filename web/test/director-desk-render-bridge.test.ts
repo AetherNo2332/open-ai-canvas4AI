@@ -11,7 +11,9 @@ test("render bridge deduplicates identical previews and forwards cancellation", 
         submit: async (_input, options) => {
             submissions += 1;
             signal = options.signal;
-            return await new Promise((resolve) => { resolveResult = resolve; });
+            return await new Promise((resolve) => {
+                resolveResult = resolve;
+            });
         },
     });
     const first = bridge.preview(scene, { shotId: scene.activeShotId, time: 0 });
@@ -23,3 +25,18 @@ test("render bridge deduplicates identical previews and forwards cancellation", 
     expect(await first).toEqual(await second);
 });
 
+test("canvas exports forward kind and render options through the preview task bridge", async () => {
+    const scene = createPrevisScene();
+    const calls: unknown[] = [];
+    const bridge = createDirectorRenderBridge({
+        submit: async (input, options) => {
+            calls.push({ input, kind: options.kind });
+            return { taskId: "export-1", status: "queued" };
+        },
+    });
+    await bridge.exportToCanvas(scene, "composition-frame", { shotId: scene.activeShotId });
+    await bridge.exportToCanvas(scene, "whitebox-video", { shotId: scene.activeShotId });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({ input: { sourceSceneId: scene.id, shotId: scene.activeShotId }, kind: "composition-frame" });
+    expect(calls[1]).toMatchObject({ kind: "whitebox-video" });
+});

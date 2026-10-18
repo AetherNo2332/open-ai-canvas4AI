@@ -12,14 +12,15 @@ import "@/styles/workspace-menus.css";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 
-
-
 export default function UserLayout({ children }: { children: ReactNode }) {
     const { pathname } = useLocation();
     const skin = useAppearanceStore((state) => state.appearance.activeSkin);
     const theme = useActiveTheme();
     const workspaceTheme = getWorkspaceAntThemeConfig(theme === "dark", skin);
     const homeWorkspace = pathname === "/" || pathname === "/create";
+    if (homeWorkspace) {
+        workspaceTheme.token = { ...workspaceTheme.token, fontFamily: "var(--font-home)" };
+    }
     const adminWorkspace = pathname === "/admin" || pathname.startsWith("/admin/");
     const spatialWorkbench = isSpatialWorkbenchPath(pathname);
     const productWorkspace = !adminWorkspace && !/^\/canvas\/[^/]+(?:\/|$)/.test(pathname);

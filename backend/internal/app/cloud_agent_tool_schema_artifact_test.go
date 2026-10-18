@@ -28,24 +28,7 @@ func TestAgentToolSchemaArtifactMatchesRuntime(t *testing.T) {
 	// 制品必须是"任意运行配置下工具集合的超集"：单次快照会随权限模式、视觉能力、
 	// 技能与记忆开关变化（例如 canvas_inspect_image 只在 VisionEnabled 时暴露）。
 	// 用最宽的请求生成，Node 侧才能用"快照 ⊆ 制品 + 参数一致"做校验。
-	req := agentTestRequest()
-	req.PermissionMode = "auto"
-	req.VisionEnabled = true
-	req.HasMemories = true
-	req.WebSearchEnabled = true
-	req.SkillIDs = []string{"schema-artifact-skill"}
-	artifact := agentToolSchemaArtifact{SchemaVersion: cloudAgentToolSchemaVersion, Tools: append(cloudAgentTools(req), nativeSkillReadToolSchema())}
-	for _, request := range []CloudAgentRequest{
-		{SubagentEnabled: true, PermissionMode: "read_only", ContextScope: []string{"canvas"}},
-		{PermissionMode: "read_only", ContextScope: []string{"canvas"}, subagent: &SubagentRuntime{Depth: 1}},
-	} {
-		for _, tool := range cloudAgentTools(request) {
-			name := stringField(tool["function"].(map[string]any), "name")
-			if strings.Contains(name, "subagent") || name == "send_parent_message" {
-				artifact.Tools = append(artifact.Tools, tool)
-			}
-		}
-	}
+	artifact := backendToolArtifact()
 	encoded, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
 		t.Fatal(err)

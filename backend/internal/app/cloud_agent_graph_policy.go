@@ -11,6 +11,9 @@ func cloudAgentGraphMaxInputs(kind string) int {
 
 func cloudAgentManualGraphInputError(nodes []map[string]any, from, to map[string]any, fromKind string, connections []map[string]any) error {
 	targetType := stringValue(to["type"])
+	if fromKind == "character" && targetType == "text" && stringValue(cloudAgentNodeMetadata(to)["generationMode"]) == "" {
+		return BadAuthRequest("角色卡只能连接生成节点，不能连接普通文本节点")
+	}
 	if targetType == "media-conversion" && stringValue(from["type"]) != "image" && stringValue(from["type"]) != "video" {
 		return BadAuthRequest("转换节点只接受图片或视频节点")
 	}

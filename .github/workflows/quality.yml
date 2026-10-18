@@ -9,6 +9,8 @@ on:
   push:
     branches:
       - main
+      # canary 是前瞻开发分支：推送同样跑完整质量检查（镜像发布仍仅限 main/tag）。
+      - canary
       # dev 是日常集成分支：这里没有它时，直接推到 dev 的改动完全不会被 CI 覆盖。
       - dev
 
@@ -153,6 +155,10 @@ jobs:
           fi
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      # web 测试会直接引用 director-desk 源码（three 等依赖来自它自己的 lockfile）。
+      - name: Install director-desk dependencies
+        working-directory: ${{ github.workspace }}/director-desk
+        run: npm ci --ignore-scripts
       - name: Check formatting
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -169,3 +175,17 @@ jobs:
         run: |
           google-chrome --version || chromium --version
           bun run test:previs:e2e
+
+  changelog:
+    name: Changelog entry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      # publish-images.yml 打 tag 时要求 CHANGELOG.md 里存在 `## <VERSION>`，并把它下面
+      # 的内容直接当作 GitHub Release 说明。这里提前在 PR 阶段拦住"忘了写日志"的情况，
+      # 免得到发布时才失败；条目内容仍需人工改写，脚本只负责生成草稿与版本对齐。
+      - name: Check CHANGELOG covers VERSION
+        run: node scripts/changelog.mjs --check

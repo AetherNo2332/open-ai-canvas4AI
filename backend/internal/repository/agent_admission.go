@@ -64,7 +64,7 @@ func admissionKey(run model.CloudAgentExecution) string {
 	return run.UserID + ":session:" + run.ConversationID + ":" + run.ID
 }
 
-func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback model.AgentSchedulerSetting) (*model.CloudAgentExecution, error) {
+func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback model.AgentSchedulerSetting, guards ...func(*Repository, model.CloudAgentExecution) (bool, error)) (*model.CloudAgentExecution, error) {
 	var claimed *model.CloudAgentExecution
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		counter := model.AgentAdmissionCounter{ID: 1}
@@ -82,7 +82,18 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 		if err != nil {
 			return err
 		}
-		now := time.Now()
+		// 租约/恢复列由认领、续租与派发路径以 UTC 写入；SQLite 文本比较混入本地时区
+		// 会把未来租约误判为已过期，这里必须保持 UTC。
+		now := time.Now().UTC()
+		if r.toolRuntimeInstanceID != "" {
+			runtime, err := New(tx).LockToolRuntime(r.toolRuntimeInstanceID)
+			if err != nil {
+				return err
+			}
+			if runtime.ManualDraining || runtime.LoadError != "" || runtime.LastHeartbeatAt.Before(now.Add(-45*time.Second)) {
+				return nil
+			}
+		}
 		var candidates []model.CloudAgentExecution
 		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind",
 			"lease_owner", "lease_expires_at", "recovery_status", "recovery_attempts", "recovery_started_at", "progress_version", "claim_progress_version",
@@ -117,68 +128,104 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 			return a < b
 		})
 		for _, candidate := range candidates {
-			// Suspended parents yield residency until their dependencies terminate.
-			if candidate.WaitKind == "subagents" {
-				var pending int64
-				if err := tx.Table("agent_subagent_links AS links").Joins("JOIN cloud_agent_executions AS child ON child.id = links.child_run_id AND child.user_id = links.user_id").Where("links.user_id = ? AND links.parent_run_id = ? AND child.status IN ?", candidate.UserID, candidate.ID, []string{"queued", "running", "waiting_approval"}).Count(&pending).Error; err != nil {
+			if len(guards) > 0 {
+				var state model.CloudAgentExecution
+				if err := tx.Select("state_json").First(&state, "id = ?", candidate.ID).Error; err != nil {
 					return err
 				}
-				if pending > 0 {
-					continue
+				candidate.StateJSON = state.StateJSON
+			}
+			for _, guard := range guards {
+				allowed, err := guard(New(tx), candidate)
+				if err != nil {
+					if errors.Is(err, ErrToolRuntimeUnavailable) {
+						return nil
+					}
+					return err
+				}
+				if !allowed {
+					if candidate.Status == "queued" && candidate.WaitKind != "subagents" && (candidate.RuntimePhase != "waiting_resource" || candidate.WaitKind != "tool_snapshot" || candidate.WaitReason != "等待兼容工具快照的执行实例") {
+						if err := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ?", candidate.ID, candidate.Revision).Updates(map[string]any{"runtime_phase": "waiting_resource", "wait_kind": "tool_snapshot", "wait_reason": "等待兼容工具快照的执行实例", "revision": gorm.Expr("revision + 1")}).Error; err != nil {
+							return err
+						}
+					}
+					goto nextCandidate
 				}
 			}
-			key := admissionKey(candidate)
-			if counts[key] >= policy.MaxResidentPerCanvas {
-				if candidate.Status == "queued" && candidate.WaitKind != "canvas_capacity" {
-					if err := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ?", candidate.ID, candidate.Revision).Updates(map[string]any{"runtime_phase": "waiting_resource", "wait_kind": "canvas_capacity", "wait_reason": "等待画布会话容量", "revision": gorm.Expr("revision + 1")}).Error; err != nil {
+			{
+				// Suspended parents yield residency until their dependencies terminate.
+				if candidate.WaitKind == "subagents" {
+					var pending int64
+					if err := tx.Table("agent_subagent_links AS links").Joins("JOIN cloud_agent_executions AS child ON child.id = links.child_run_id AND child.user_id = links.user_id").Where("links.user_id = ? AND links.parent_run_id = ? AND child.status IN ?", candidate.UserID, candidate.ID, []string{"queued", "running", "waiting_approval"}).Count(&pending).Error; err != nil {
 						return err
 					}
+					if pending > 0 {
+						continue
+					}
 				}
-				continue
+				key := admissionKey(candidate)
+				if counts[key] >= policy.MaxResidentPerCanvas {
+					if candidate.Status == "queued" && candidate.WaitKind != "canvas_capacity" {
+						if err := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ?", candidate.ID, candidate.Revision).Updates(map[string]any{"runtime_phase": "waiting_resource", "wait_kind": "canvas_capacity", "wait_reason": "等待画布会话容量", "revision": gorm.Expr("revision + 1")}).Error; err != nil {
+							return err
+						}
+					}
+					continue
+				}
+				conversation := candidate.ConversationID
+				if conversation == "" {
+					conversation = candidate.ID
+				}
+				var session model.CloudAgentPiSession
+				err := tx.Where("conversation_id = ? AND user_id = ? AND active_run_id = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", conversation, candidate.UserID, candidate.ID, now).First(&session).Error
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				updates := map[string]any{"lease_owner": owner, "lease_expires_at": until, "status": gorm.Expr("CASE WHEN status = 'queued' THEN 'running' ELSE status END"), "runtime_phase": "ready", "wait_kind": "", "wait_reason": "", "revision": gorm.Expr("revision + 1")}
+				if r.toolRuntimeInstanceID != "" {
+					frozen, err := New(tx).FrozenToolSnapshot(candidate.ID)
+					if err != nil {
+						return err
+					}
+					updates["tool_runtime_instance_id"] = r.toolRuntimeInstanceID
+					updates["worker_tool_snapshot_id"] = r.workerToolSnapshotID
+					updates["tool_snapshot_id"] = frozen.ID
+				}
+				protected, err := New(tx).WorkerRecoveryProtectedWait(candidate)
+				if err != nil {
+					return err
+				}
+				for field, value := range workerRecoveryClaimUpdates(candidate, now, protected) {
+					updates[field] = value
+				}
+				result := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", candidate.ID, candidate.Revision, []string{"queued", "running", "waiting_approval"}, now).Updates(updates)
+				if result.Error != nil {
+					return result.Error
+				}
+				if result.RowsAffected != 1 {
+					continue
+				}
+				result = tx.Model(&model.CloudAgentPiSession{}).Where("id = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", session.ID, now).Updates(map[string]any{"lease_owner": owner, "lease_expires_at": until, "lease_epoch": gorm.Expr("lease_epoch + 1"), "updated_at": now})
+				if result.Error != nil {
+					return result.Error
+				}
+				if result.RowsAffected != 1 {
+					return ErrCreationConflict
+				}
+				counter.Value++
+				if err := tx.Model(&counter).UpdateColumn("value", counter.Value).Error; err != nil {
+					return err
+				}
+				if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&model.AgentCanvasAdmission{Key: key, LastAdmissionSequence: counter.Value}).Error; err != nil {
+					return err
+				}
+				claimed = &candidate
+				return nil
 			}
-			conversation := candidate.ConversationID
-			if conversation == "" {
-				conversation = candidate.ID
-			}
-			var session model.CloudAgentPiSession
-			err := tx.Where("conversation_id = ? AND user_id = ? AND active_run_id = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", conversation, candidate.UserID, candidate.ID, now).First(&session).Error
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			updates := map[string]any{"lease_owner": owner, "lease_expires_at": until, "status": gorm.Expr("CASE WHEN status = 'queued' THEN 'running' ELSE status END"), "runtime_phase": "ready", "wait_kind": "", "wait_reason": "", "revision": gorm.Expr("revision + 1")}
-			protected, err := New(tx).WorkerRecoveryProtectedWait(candidate)
-			if err != nil {
-				return err
-			}
-			for field, value := range workerRecoveryClaimUpdates(candidate, now, protected) {
-				updates[field] = value
-			}
-			result := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", candidate.ID, candidate.Revision, []string{"queued", "running", "waiting_approval"}, now).Updates(updates)
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected != 1 {
-				continue
-			}
-			result = tx.Model(&model.CloudAgentPiSession{}).Where("id = ? AND (lease_expires_at IS NULL OR lease_expires_at < ?)", session.ID, now).Updates(map[string]any{"lease_owner": owner, "lease_expires_at": until, "lease_epoch": gorm.Expr("lease_epoch + 1"), "updated_at": now})
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected != 1 {
-				return ErrCreationConflict
-			}
-			counter.Value++
-			if err := tx.Model(&counter).UpdateColumn("value", counter.Value).Error; err != nil {
-				return err
-			}
-			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&model.AgentCanvasAdmission{Key: key, LastAdmissionSequence: counter.Value}).Error; err != nil {
-				return err
-			}
-			claimed = &candidate
-			return nil
+		nextCandidate:
 		}
 		return nil
 	})

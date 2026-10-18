@@ -18,7 +18,14 @@ export type BrowserMediaDownload = {
 export async function downloadBrowserMedia({ fileName, storageKey, url, variant = "original" }: BrowserMediaDownload) {
     const normalizedStorageKey = storageKey?.trim();
     const normalizedUrl = url?.trim();
-    const href = normalizedStorageKey && resourceIdFromStorageKey(normalizedStorageKey) ? resolveResourceAccessURL((await getResourceAccess(normalizedStorageKey, "download", variant, fileName)).url) : normalizedUrl;
+    const access = normalizedStorageKey && resourceIdFromStorageKey(normalizedStorageKey) ? await getResourceAccess(normalizedStorageKey, "download", variant, fileName) : null;
+    let href = access ? resolveResourceAccessURL(access.url) : normalizedUrl;
+    if (access && (access.delivery === "platform-local" || access.delivery === "platform-proxy")) {
+        const localURL = new URL(href || "", window.location.href);
+        localURL.searchParams.set("download", "1");
+        localURL.searchParams.set("downloadName", fileName);
+        href = localURL.toString();
+    }
     if (!href) throw new Error("媒体资源不存在");
 
     const anchor = document.createElement("a");
@@ -29,4 +36,17 @@ export async function downloadBrowserMedia({ fileName, storageKey, url, variant 
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
+}
+
+export function downloadBrowserBlob({ fileName, blob }: { fileName: string; blob: Blob }) {
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = fileName;
+    anchor.rel = "noopener noreferrer";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(href);
 }

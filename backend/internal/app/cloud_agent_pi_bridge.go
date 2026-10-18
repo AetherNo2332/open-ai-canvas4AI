@@ -744,6 +744,10 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 }
 
 func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
+	return s.ClaimPiAgentWithIdentity(owner, ToolSnapshotIdentity{})
+}
+
+func (s *Service) ClaimPiAgentWithIdentity(owner string, identity ToolSnapshotIdentity) (*PiAgentSnapshot, error) {
 	if owner == "" {
 		return nil, BadAuthRequest("Pi worker ID is required")
 	}
@@ -751,7 +755,16 @@ func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	run, err := s.repo.ClaimPiAgentConfigured(owner, time.Now().Add(piAgentLeaseDuration), policy)
+	guard, err := s.toolClaimGuard(identity)
+	if err != nil {
+		return nil, err
+	}
+	var run *model.CloudAgentExecution
+	if guard != nil {
+		run, err = s.repo.WithToolRuntimeIdentity(identity.InstanceID, identity.SnapshotID).ClaimPiAgentConfigured(owner, time.Now().UTC().Add(piAgentLeaseDuration), policy, guard)
+	} else {
+		run, err = s.repo.ClaimPiAgentConfigured(owner, time.Now().UTC().Add(piAgentLeaseDuration), policy)
+	}
 	if err != nil || run == nil {
 		return nil, err
 	}
@@ -799,7 +812,7 @@ func (s *Service) RenewPiAgentLease(userID, runID, owner string) error {
 	if err != nil {
 		return kernel.AgentLeaseLost("Pi Agent 运行租约无效")
 	}
-	ok, err := s.repo.RenewPiAgentLease(userID, runID, workerID, epoch, time.Now().Add(piAgentLeaseDuration))
+	ok, err := s.repo.RenewPiAgentLease(userID, runID, workerID, epoch, time.Now().UTC().Add(piAgentLeaseDuration))
 	if err != nil {
 		return err
 	}
@@ -917,7 +930,9 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 	}
 	request.Canonical.PromptCacheKey = state.Canonical.PromptCacheKey
 	state.DisclosureVersion = cloudAgentToolDisclosureVersion
-	state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
+	if len(state.AdvertisedToolNames) == 0 {
+		state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
+	}
 	// 看图结果按参考素材水合：上下文里只有 `resource:<id>`，真实图片字节在**请求期**才进到
 	// referenceImages，不进检查点，也不要求上游能访问部署地址。
 	//
@@ -1570,9 +1585,10 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 			continue
 		}
 		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && name == "read"
+		allowed := nativeRead || (cloudAgentToolAllowed(state.Request, name) && cloudAgentToolAdvertisedForRun(&state, name))
 		tools = append(tools, PiAgentToolSpec{
 			Name: name, Description: stringField(function, "description"), Parameters: parameters,
-			Category: cloudAgentToolCategory(name), Allowed: nativeRead || cloudAgentToolAllowed(state.Request, name),
+			Category: cloudAgentToolCategory(name), Allowed: allowed,
 		})
 	}
 	session, sessionEntries, err := s.repo.CloudAgentPiSession(run.UserID, firstNonEmpty(run.ConversationID, run.ID))
@@ -1840,7 +1856,7 @@ const piUnclaimedRunTimeout = 30 * time.Minute
 // 系统级动作：不要求租约归属，但只处理租约已过期远超一个周期的运行，避免与活跃
 // worker 竞争。已终态的运行会被忽略（幂等）。
 func (s *Service) SweepStalledPiAgentRuns() (int, error) {
-	cutoff := time.Now().Add(-piStalledLeasePeriods * piAgentLeaseDuration)
+	cutoff := time.Now().UTC().Add(-piStalledLeasePeriods * piAgentLeaseDuration)
 	runs, err := s.repo.StalledPiAgentRuns(cutoff, 50)
 	if err != nil {
 		return 0, err

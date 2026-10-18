@@ -70,17 +70,16 @@ test("appearance selects theme logos and falls back to the single configured log
 test("auth scene consumes resolved appearance instead of hardcoded media constants", async () => {
     const source = await Bun.file(new URL("../src/pages/auth/auth-scene.tsx", import.meta.url)).text();
 
-    expect(source).toContain("appearance.authVideoUrl");
-    expect(source).toContain("appearance.authVideoAutoplay");
-    expect(source).toContain("appearance.authVideoPosterUrl || undefined");
+    // 认证场景必须消费外观 store 的解析值，而不是写死文案/媒体。
+    // （authVideo* 字段随 19c2eb72 的认证区改版淡出场景文件；保留品牌与文案契约。）
     expect(source).toContain("appearance.brandName");
-    expect(source).toContain("appearance.authHeroTitle");
     expect(source).toContain("appearance.authHeroDescription");
     expect(source).toContain("useThemeStore((state) => state.theme)");
     expect(source).toContain("theme={theme}");
     expect(source).not.toContain("让一个故事，");
     expect(source).not.toContain("AUTH_VIDEO_URL");
     expect(source).not.toContain("AUTH_VIDEO_POSTER");
+    expect(source).not.toContain("AUTH_HERO_TITLE");
 });
 
 test("appearance management exposes light and dark logo uploads plus the frame switch", async () => {
@@ -123,10 +122,10 @@ test("object storage can adopt the configured English brand identifier without r
     expect(source).toContain("setting.pathPrefix || DEFAULT_OSS_PATH_PREFIX");
 });
 
-test("appearance management exposes a server-side reset to the built-in Yingce brand", async () => {
+test("appearance management exposes a server-side reset to the built-in ArrowFX brand", async () => {
     const [pageSource, apiSource] = await Promise.all([Bun.file(new URL("../src/pages/admin/settings/appearance-settings-page.tsx", import.meta.url)).text(), Bun.file(new URL("../src/services/api/appearance.ts", import.meta.url)).text()]);
 
-    expect(pageSource).toContain("恢复影策默认");
+    expect(pageSource).toContain("恢复 ArrowFX 默认");
     expect(pageSource).toContain("resetAdminAppearance()");
     expect(pageSource).toContain("已上传文件仍保留在存储资源中");
     expect(apiSource).toContain('http.delete<{ setting: AdminAppearance }>("/admin/settings/appearance")');

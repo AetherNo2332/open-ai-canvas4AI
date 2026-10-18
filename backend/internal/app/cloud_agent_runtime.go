@@ -99,6 +99,7 @@ type cloudAgentApproval struct {
 	Reason           string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
+	ToolSchemaVersion string                    `json:"toolSchemaVersion,omitempty"`
 	ActiveSubagents   int                       `json:"activeSubagents,omitempty"`
 	Subagent          *SubagentRuntime          `json:"subagent,omitempty"`
 	Workspace         *WorkspaceSnapshot        `json:"workspace,omitempty"`
@@ -251,6 +252,10 @@ type cloudAgentRuntime struct {
 	LastStepEstimate    int                        `json:"lastStepEstimate,omitempty"`
 	LastStepPressure    *cloudAgentContextPressure `json:"lastStepPressure,omitempty"`
 	LastStepSourceBytes int                        `json:"lastStepSourceBytes,omitempty"`
+	// LastStepBreakdown 是这一步"实际发出去的信封"的占用构成（准入时算好并冻结）。
+	// 运行态 canonical 与真实请求不是同一份：它含全量工具目录，也不含 Node 拼在策略后的
+	// Harness 块。after_request 若从它重算，同一步前后两条读数的 system/tools 桶会对不上。
+	LastStepBreakdown map[string]any `json:"lastStepBreakdown,omitempty"`
 	// TokenAnchor 是上一步上游上报的用量（模型自己的分词器计数），上下文压力的权威锚点。
 	TokenAnchor *cloudAgentTokenAnchor `json:"tokenAnchor,omitempty"`
 	// EventSeqBase 是本次载入的事件窗口之前"已入库"的条数（只在内存里，不落检查点）：
@@ -355,6 +360,11 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	// canonical 才是真实请求，不能拿内存里的运行态副本顶替。
 	firstPressure := cloudAgentContextPressurePayload(pressure, &state, input.Requests.Canonical)
 	firstPressure["requestId"] = task.ID
+	// 冻结这一步实际信封的分布：发完之后补报 after_request 时运行态 canonical
+	// 已不是同一份（工具目录、Harness 块都可能不同），不能从它重算。
+	if breakdown, ok := firstPressure["breakdown"].(map[string]any); ok {
+		state.LastStepBreakdown = breakdown
+	}
 	state.event(task.ID, "context_pressure", firstPressure)
 	run := &model.CloudAgentExecution{ID: task.ID, UserID: task.UserID, Status: "running", Engine: input.AgentEngine, Revision: 1, CreatedAt: task.CreatedAt, UpdatedAt: time.Now()}
 	if err := cloudAgentSave(run, &state); err != nil {
@@ -1553,7 +1563,6 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 		if err != nil {
 			return s.terminateCloudAgent(run, "Agent 运行策略不可用，本轮已停止")
 		}
-		approvalCall := call
 		if cloudAgentDirectorWriteTool(call.Function.Name) {
 			normalized, normalizeErr := cloudAgentDirectorUnderlyingCall(call)
 			if normalizeErr != nil {
@@ -1784,14 +1793,18 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 					return mutationErr
 				}
 			}
-			state.Approval = &cloudAgentApproval{ID: fmt.Sprintf("%s-%d-%d", run.ID, state.Step, state.CallIndex), Call: approvalCall, CallHash: cloudAgentApprovalCallHash(approvalCall), Preview: preview, ModelName: modelName, Prepared: preparedMedia, PrevisSourceHash: previsSourceHash}
+			// 种批准与校验必须使用同一份最终调用：媒体分支重写过参数（注入资
+			// 产参考、解析默认规格、刷新读取哈希），director 分支本地做过 参数
+			// 归一化但状态里的调用还是旧形态；这里统一把最终调用写回状态。
+			state.Calls[state.CallIndex] = call
+			state.Approval = &cloudAgentApproval{ID: fmt.Sprintf("%s-%d-%d", run.ID, state.Step, state.CallIndex), Call: call, CallHash: cloudAgentApprovalCallHash(call), Preview: preview, ModelName: modelName, Prepared: preparedMedia, PrevisSourceHash: previsSourceHash}
 			if preparedMedia != nil {
 				if err := pinCloudAgentPreparedMedia(repo, run.UserID, run.ID, state.Approval.ID, preparedMedia); err != nil {
 					return err
 				}
 			}
 			current.Status = "waiting_approval"
-			state.event(run.ID, "approval_requested", map[string]any{"approvalId": state.Approval.ID, "toolName": approvalCall.Function.Name, "modelName": modelName, "arguments": json.RawMessage(approvalCall.Function.Arguments), "preview": preview, "prepared": preparedMedia.publicView(), "text": preview.Description})
+			state.event(run.ID, "approval_requested", map[string]any{"approvalId": state.Approval.ID, "toolName": call.Function.Name, "modelName": modelName, "arguments": json.RawMessage(call.Function.Arguments), "preview": preview, "prepared": preparedMedia.publicView(), "text": preview.Description})
 			return cloudAgentSave(current, state)
 		})
 	}
@@ -2323,7 +2336,9 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 				}
 			} else {
 				if contextPressure != nil {
-					state.AdvertisedToolNames = cloudAgentToolNames(requestCanonical.Tools)
+					if len(state.AdvertisedToolNames) == 0 {
+						state.AdvertisedToolNames = cloudAgentToolNames(requestCanonical.Tools)
+					}
 					// 口径变化就地作废锚点（上游 #601）：这一步的模型/线路/窗口取自任务 input，
 					// 与定锚时不一致的实测不再可比。我方 recordCloudAgentTokenAnchor 里还会兜一遍
 					// （这一步拿不到新实测时也必须先把过期锚点作废）。
@@ -2334,10 +2349,18 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 					// 个人记忆块是编译之后拼上去的，编译器录不到：每一步幂等补登记一次，
 					// 占用分布的分段合计才能与 system 桶对齐。
 					cloudAgentRecordMemorySegment(&state.Policy, requestCanonical.SystemPrompt)
+					// Node 拼在记忆块之后的工作区文件同样要单独登记，否则它们会被
+					// 算成"其它"：那是排查时最想看到具体来源的一截。
+					cloudAgentRecordHarnessSegments(&state.Policy, cloudAgentFrozenHarness(state.Snapshot), requestCanonical.SystemPrompt)
 					// requestId 把读数钉在"即将发出的这次请求"上（设计 §4）：没有它，前端只能猜
 					// 哪个数字属于哪一次调用。占用分布对着实际信封（requestCanonical）算。
 					payload := cloudAgentContextPressurePayload(*contextPressure, state, requestCanonical)
 					payload["requestId"] = task.ID
+					// 冻结实际信封的占用分布：after_request 没有信封可传，
+					// 只能复用这一步准入时算好的那一份。
+					if breakdown, ok := payload["breakdown"].(map[string]any); ok {
+						state.LastStepBreakdown = breakdown
+					}
 					cloudAgentNoteContextWindowResolved(run.ID, state, *contextPressure)
 					state.event(run.ID, "context_pressure", payload)
 					state.LastStepEstimate = contextPressure.EstimatedInputTokens
@@ -2652,7 +2675,11 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 		// Persist intent independently of the transcript. Retrying also repairs
 		// legacy cancelled rows that crashed before cancelling their children.
 		state, decodeErr := cloudAgentDecode(run)
-		err = s.repo.MutateCloudAgent(userID, id, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		// 图片→导演流程的取消契约：连续性检查通过前取消运行，半成品导演场景
+		// 不得留在画布上——与失败路径 failCloudAgent 的 rollbackDirectorWorkflowDraft
+		// 同一语义。控制面优先：回滚失败不阻断取消，只记录。
+		rollbackPolicy, rollbackPolicyErr := s.RuntimePolicy()
+		err = s.repo.MutateCloudAgent(userID, id, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 			firstCancellation := current.Status != "cancelled"
 			current.Status = "cancelled"
 			current.CleanupPending = true
@@ -2663,6 +2690,11 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 					if saveErr := cloudAgentSave(current, &state); saveErr != nil {
 						// Cancellation must still work if the transcript is oversized.
 						log.Printf("[cloud-agent] cancellation event unavailable for run %s: checkpoint rejected", id)
+					}
+					if rollbackPolicyErr == nil {
+						if rollErr := rollbackDirectorWorkflowDraft(repo, userID, &state, rollbackPolicy); rollErr != nil {
+							log.Printf("[cloud-agent] director workflow draft rollback on cancel failed for run %s: %v", id, rollErr)
+						}
 					}
 				}
 			} else {

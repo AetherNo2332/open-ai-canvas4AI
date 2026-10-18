@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -88,7 +89,14 @@ func (s *Service) PiBeginContextCompaction(userID, runID, owner string, input Pi
 	if len(input.Preparation) > 0 {
 		native, err = cloudAgentPrepareNativeCompaction(input.Preparation, input.TokensBefore, &source, branch)
 		if err != nil {
-			return nil, BadAuthRequest(err.Error())
+			if errors.Is(err, errPiNativePreparationInvalid) {
+				// Pi's preparation is advisory. If its boundary metadata is stale or
+				// malformed, keep the server-owned source projection and use the
+				// semantic compactor instead of terminating the Agent run.
+				native = nil
+			} else {
+				return nil, BadAuthRequest(err.Error())
+			}
 		}
 	}
 	operationID := cloudAgentPiCompactionOperationID(session.ID, runID, input, source.SourceDigest)

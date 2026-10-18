@@ -23,6 +23,8 @@ web/.next
 web/dist
 renderer/.local
 web/node_modules
+director-desk/node_modules
+director-desk/dist
 agent/node_modules
 agent/dist
 web/out

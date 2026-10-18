@@ -5,11 +5,14 @@ import { App } from "antd";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, FRAME_COLLAPSED_HEIGHT, FRAME_COLLAPSED_WIDTH, getFrameChildIds, isCanvasFolderNode, isFrameNode } from "@/lib/canvas/canvas-frame";
 import { buildCanvasMediaDownloadFileName } from "@/lib/canvas/canvas-media-download";
+import { resolveCanvasMediaDownloadItems } from "@/lib/canvas/canvas-media-batch-download";
+import type { CanvasMediaDownloadQueueResult } from "@/lib/canvas/canvas-media-download-queue";
+import { createCanvasMediaArchive } from "@/lib/canvas/canvas-media-archive";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import { applyBatchPrimaryImage, applyNodeConfigPatch } from "@/lib/canvas/canvas-project-domain";
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
-import { downloadBrowserMedia } from "@/services/browser-download";
+import { downloadBrowserBlob, downloadBrowserMedia } from "@/services/browser-download";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 
@@ -202,12 +205,19 @@ export function useCanvasNodeEditor({
         const storageKey = node.metadata?.storageKey?.trim();
         if (!supported || (!content && !storageKey)) return;
         try {
-            const downloadName = buildCanvasMediaDownloadFileName(canvasTitle, node);
+            const downloadName = buildCanvasMediaDownloadFileName(node);
             await downloadBrowserMedia({ storageKey, url: content, fileName: downloadName });
         } catch (error) {
             message.error(error instanceof Error ? error.message : "下载失败");
         }
-    }, [canvasTitle, message]);
+    }, [message]);
+
+    const downloadSelectedMedia = useCallback(async (selectedNodes: CanvasNodeData[]): Promise<CanvasMediaDownloadQueueResult[]> => {
+        const items = resolveCanvasMediaDownloadItems(selectedNodes);
+        const result = await createCanvasMediaArchive(items);
+        if (result.results.some((entry) => entry.status === "success")) downloadBrowserBlob({ blob: result.archive, fileName: `${canvasTitle || "画布媒体"}.zip` });
+        return result.results;
+    }, [canvasTitle]);
 
     const saveNodeAsset = useCallback(async (node: CanvasNodeData) => {
         if (node.type !== CanvasNodeType.Text && node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) return message.error("当前节点类型不能保存为素材");
@@ -229,6 +239,7 @@ export function useCanvasNodeEditor({
     return {
         collapsingBatchIds,
         downloadNodeImage,
+        downloadSelectedMedia,
         handleConfigNodeChange,
         handleFolderStyleChange,
         handleFolderThemeChange,

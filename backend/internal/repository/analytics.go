@@ -29,6 +29,16 @@ type APICallLogFilter struct {
 	Limit      int
 }
 
+// PublicModelAvailabilityFilter limits the public availability read model to
+// system catalog channel models. Keeping this query separate from admin
+// analytics avoids exposing the admin payload or accidentally including user
+// owned channels in a public response.
+type PublicModelAvailabilityFilter struct {
+	From       time.Time
+	To         time.Time
+	ChannelIDs []string
+}
+
 func (r *Repository) RecordUserActivity(userID string, event string, count int, now time.Time) error {
 	if userID == "" {
 		return nil
@@ -96,6 +106,59 @@ func (r *Repository) AnalyticsAPICallLogs(filter AnalyticsFilter) ([]model.ApiCa
 	var logs []model.ApiCallLog
 	query := r.apiCallLogQuery(filter)
 	return logs, query.Omit("RequestBody", "ResponseBody").Find(&logs).Error
+}
+
+// whereTimeRange compares instants. SQLite stores time.Time as offset text, so a
+// lexicographic compare against a UTC bound hides records written after local
+// midnight until the UTC date rolls forward.
+func whereTimeRange(query *gorm.DB, column string, from, to time.Time) *gorm.DB {
+	switch column {
+	case "created_at", "api_call_logs.created_at":
+	default:
+		return query.Where("1 = 0")
+	}
+	if query.Dialector.Name() == "sqlite" {
+		return query.Where("unixepoch("+column+") >= ? AND unixepoch("+column+") < ?", from.Unix(), to.Unix())
+	}
+	return query.Where(column+" >= ? AND "+column+" < ?", from, to)
+}
+
+// PublicModelAvailabilityLogs returns the compact, user-facing create
+// outcomes used by the model catalog availability read model. Polling,
+// downloads, uploads and local bookkeeping are deliberately excluded here.
+func (r *Repository) PublicModelAvailabilityLogs(filter PublicModelAvailabilityFilter) ([]model.ApiCallLog, error) {
+	var logs []model.ApiCallLog
+	if len(filter.ChannelIDs) == 0 || !filter.To.After(filter.From) {
+		return logs, nil
+	}
+	query := whereTimeRange(r.db.Select("channel_id", "model", "status", "created_at"), "api_call_logs.created_at", filter.From, filter.To).
+		Where("api_call_logs.channel_id IN ?", filter.ChannelIDs).
+		Where("api_call_logs.user_id <> ''").
+		Where("api_call_logs.model <> ''").
+		Where("api_call_logs.request_kind = ?", "create").
+		Where("api_call_logs.status IN ?", []model.ApiCallStatus{model.ApiCallStatusSucceeded, model.ApiCallStatusFailed}).
+		Order("api_call_logs.created_at asc")
+	return logs, query.Find(&logs).Error
+}
+
+// PublicModelRecentLogs 从当前时间往前推查询指定渠道最近的调用日志（按时间倒序），用于计算每个模型最近的执行结果状态点。
+func (r *Repository) PublicModelRecentLogs(channelIDs []string, limit int) ([]model.ApiCallLog, error) {
+	var logs []model.ApiCallLog
+	if len(channelIDs) == 0 {
+		return logs, nil
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+	query := r.db.Select("channel_id", "model", "status", "created_at").
+		Where("api_call_logs.channel_id IN ?", channelIDs).
+		Where("api_call_logs.user_id <> ''").
+		Where("api_call_logs.model <> ''").
+		Where("api_call_logs.request_kind = ?", "create").
+		Where("api_call_logs.status IN ?", []model.ApiCallStatus{model.ApiCallStatusSucceeded, model.ApiCallStatusFailed}).
+		Order("api_call_logs.created_at desc").
+		Limit(limit)
+	return logs, query.Find(&logs).Error
 }
 
 func (r *Repository) AnalyticsActivities(filter AnalyticsFilter) ([]model.UserDailyActivity, error) {

@@ -1,8 +1,14 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { createCanvasCommandTransport } from "../src/services/api/canvas-commands";
 import type { Command } from "../src/lib/canvas/command-contract.generated";
-import { apiClient, setAPIHost } from "../src/services/api/request";
+import { apiBaseURL, apiClient, resetAPIHost, setAPIHost } from "../src/services/api/request";
 const command: Command = { protocolVersion: 1, canvasId: "画布 /1", documentEpoch: "epoch", operationId: "op/1", clientId: "client", baseRevision: 1, operations: [] };
+// bun test 单进程顺序执行:本文件会用 setAPIHost 覆盖全局 apiBaseURL,
+// 文件结束后必须还原,否则后续文件(live2d-loader、canvas-remote-revision 等)
+// 会把相对 /api 解析成这里残留的绝对 origin。
+afterAll(() => {
+    resetAPIHost();
+});
 test("command transport captures its host URL before another host is selected", async () => {
     const original = apiClient.request;
     const hosts: string[] = [];
@@ -20,6 +26,14 @@ test("command transport captures its host URL before another host is selected", 
         apiClient.request = original;
         setAPIHost("http://127.0.0.1:41001");
     }
+});
+test("resetAPIHost restores the env/default base URL after setAPIHost", () => {
+    resetAPIHost(); // 先归一:前面的测试文件可能残留过绝对 host
+    expect(apiBaseURL).toBe("/api"); // 测试环境未设 VITE_CANVAS_BACKEND_URL
+    setAPIHost("http://127.0.0.1:41099");
+    expect(apiBaseURL).toBe("http://127.0.0.1:41099/api");
+    resetAPIHost();
+    expect(apiBaseURL).toBe("/api");
 });
 test("canvas command HTTP transport routes effects and recovers original task handles", async () => {
     const calls: any[] = [];

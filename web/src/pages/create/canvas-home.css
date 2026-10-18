@@ -1,3 +1,5 @@
+@import "./home-fonts.css";
+
 .canvas-home {
     --home-ink-soft: color-mix(in oklab, var(--foreground) 70%, transparent);
     position: relative;
@@ -7,7 +9,7 @@
     overflow-y: auto;
     background: var(--site-canvas, var(--background));
     color: var(--foreground);
-    font-family: "IBM Plex Sans Variable", "IBM Plex Sans", "Microsoft YaHei", system-ui, sans-serif;
+    font-family: var(--font-home);
 }
 
 .canvas-home-inner {
@@ -31,6 +33,14 @@
     transform: translate(14%, 14%);
     pointer-events: none;
     user-select: none;
+}
+
+/* 指针跟随光斑：位于画布层之上、内容之下，透明度由 JSX 端 motion 控制（reduced-motion 时不渲染）。 */
+.canvas-home-glow {
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    pointer-events: none;
 }
 
 .canvas-home-grid {
@@ -96,26 +106,69 @@
     transition: opacity 150ms ease;
 }
 
-.canvas-home-entry::before { background: var(--button-primary-hover-bg); }
-.canvas-home-entry::after { background: var(--button-primary-active-bg); }
-.canvas-home-entry:hover::before { opacity: 1; }
-.canvas-home-entry:active::after { opacity: 1; }
+.canvas-home-entry::before {
+    background: var(--button-primary-hover-bg);
+}
+.canvas-home-entry::after {
+    background: var(--button-primary-active-bg);
+}
+.canvas-home-entry:hover::before {
+    opacity: 1;
+}
+.canvas-home-entry:active::after {
+    opacity: 1;
+}
 .canvas-home-entry:hover,
-.canvas-home-entry:active { color: var(--button-primary-fg); }
-.canvas-home-entry:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
-.canvas-home-entry > svg { width: 1.25em; height: 1.25em; flex: none; }
+.canvas-home-entry:active {
+    color: var(--button-primary-fg);
+}
+.canvas-home-entry:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 4px;
+}
+.canvas-home-entry > svg {
+    width: 1.25em;
+    height: 1.25em;
+    flex: none;
+}
+
+/* HoverBorderGradient 外壳：1px 光描边包住既有主按钮，不改变主按钮自身的填充与命中区域。 */
+.canvas-home-entry-shell {
+    display: inline-flex;
+    width: auto;
+}
+
+.canvas-home-entry-shell .canvas-home-entry {
+    border-radius: calc(var(--button-radius) - 1px);
+}
+
+.canvas-home-entry-motion {
+    display: inline-block;
+}
 
 @media (min-width: 768px) {
-    .canvas-home-inner { padding: var(--space-8); }
-    .canvas-home-grid { gap: var(--space-8); padding-block: var(--space-8) var(--space-16); }
-    .canvas-home-copy { grid-column: 1 / -1; grid-row: 1; }
+    .canvas-home-inner {
+        padding: var(--space-8);
+    }
+    .canvas-home-grid {
+        gap: var(--space-8);
+        padding-block: var(--space-8) var(--space-16);
+    }
+    .canvas-home-copy {
+        grid-column: 1 / -1;
+        grid-row: 1;
+    }
 }
 
 @media (max-width: 767px) {
-    .canvas-home-character { width: min(52vw, 32dvh); }
+    .canvas-home-character {
+        width: min(52vw, 32dvh);
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {
     .canvas-home-entry::before,
-    .canvas-home-entry::after { transition: none; }
+    .canvas-home-entry::after {
+        transition: none;
+    }
 }

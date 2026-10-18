@@ -2931,6 +2931,55 @@
     opacity: 0.55;
 }
 
+.admin-director-canary-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-top: 8px;
+    border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+    border-radius: var(--input-radius, 6px);
+    background: var(--admin-layer-0, transparent);
+}
+
+.admin-director-canary-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.admin-director-canary-field label {
+    font-size: 12px;
+    color: var(--admin-text-secondary);
+}
+
+.admin-director-canary-field input {
+    height: 32px;
+    padding: 0 8px;
+    border: 1px solid color-mix(in srgb, var(--foreground) 14%, transparent);
+    border-radius: var(--input-radius, 6px);
+    background: var(--admin-layer-1, var(--input-bg, transparent));
+    color: var(--admin-text-primary);
+    font-size: 13px;
+    min-width: 220px;
+}
+
+.admin-director-canary-ratio {
+    flex: 0 0 120px;
+}
+
+.admin-director-canary-ratio input {
+    width: 100%;
+    min-width: 0;
+}
+
+.admin-director-canary-field input:focus-visible {
+    outline: 2px solid var(--ring, var(--primary));
+    outline-offset: 1px;
+}
+
 .admin-feature-detail {
     overflow: hidden;
     border: 1px solid var(--admin-card-border);

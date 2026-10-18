@@ -17,7 +17,10 @@ describe("Agent operation feed", () => {
         ];
         const segments = buildAgentFeedSegments(rows);
         expect(segments.map((segment) => segment.kind)).toEqual(["reasoning", "operations"]);
-        expect(segments.map(idsOf)).toEqual([["r1", "r2"], ["t1", "t2"]]);
+        expect(segments.map(idsOf)).toEqual([
+            ["r1", "r2"],
+            ["t1", "t2"],
+        ]);
         expect(segments.map((segment) => segment.key)).toEqual(["r1", "t1"]);
         const afterBody = buildAgentFeedSegments([...rows, { id: "a1", role: "assistant", text: "已检查素材" }, { id: "r3", role: "assistant", reasoning: true, text: "准备下一步" }, step("t3", "task_get", "工具执行成功")]);
         expect(afterBody.map((segment) => segment.kind)).toEqual(["reasoning", "operations", "message", "reasoning", "operations"]);

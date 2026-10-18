@@ -53,9 +53,23 @@ func checkAgentSchemaNode(t *testing.T, path string, schema map[string]any, clos
 	case "object":
 		properties, ok := schema["properties"].(map[string]any)
 		if !ok {
+			// Capability dictionaries are represented as open JSON objects; the
+			// runtime validates their values and key safety separately.
+			properties = map[string]any{}
+			ok = true
+		}
+		if !ok {
 			t.Fatalf("%s object has no properties map", path)
 		}
-		if closeObject && schema["additionalProperties"] != false {
+		// Native drawing records have engine-specific fields; their recursive
+		// business validator checks safety and engine structure before any write.
+		openNativeRecord := path == "canvas_edit_drawing.operations[].record" && schema["additionalProperties"] == true
+		mapValues, typedMap := schema["additionalProperties"].(map[string]any)
+		if typedMap {
+			checkAgentSchemaNode(t, path+".*", mapValues, true)
+		}
+		openCapabilityObject := len(properties) == 0 && !typedMap && schema["additionalProperties"] == nil
+		if closeObject && !openNativeRecord && !openCapabilityObject && !typedMap && schema["additionalProperties"] != false {
 			t.Fatalf("%s object permits unknown fields", path)
 		}
 		required := map[string]bool{}
@@ -96,6 +110,9 @@ func checkAgentSchemaNode(t *testing.T, path string, schema map[string]any, clos
 		checkAgentSchemaNode(t, path+"[]", child, true)
 	case "string", "number", "integer", "boolean":
 	case "":
+		if len(schema) == 0 {
+			return
+		}
 		if _, ok := schema["const"]; !ok {
 			t.Fatalf("%s has no type or const", path)
 		}

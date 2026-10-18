@@ -21,9 +21,7 @@ type CapabilityScopeEditorProps = {
 };
 
 const inputDefinitions: Record<CapabilityKind, Array<{ name: string; label: string; unit: string }>> = {
-    text: [
-        { name: "video", label: "参考视频", unit: "个" },
-    ],
+    text: [{ name: "video", label: "参考视频", unit: "个" }],
     image: [
         { name: "image", label: "参考图片", unit: "张" },
         { name: "mask", label: "蒙版", unit: "张" },

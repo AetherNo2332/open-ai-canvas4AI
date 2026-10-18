@@ -222,6 +222,88 @@ func TestTaskBillingOrderSkipsPricingWhenCreditsDisabled(t *testing.T) {
 	}
 }
 
+// 灰度分群全链路:管理员配置 canary 白名单/比例 → 用户视角按组解析,
+// 全局视角(管理端)保留原始分组参数,off/on 覆盖分组。
+func TestUserFeatureAvailabilityResolvesCanaryGrouping(t *testing.T) {
+	svc, db := newFeatureAvailabilityTestService(t)
+	admin := &model.User{ID: "admin-1", Role: model.UserRoleAdmin}
+	internalUser := &model.User{ID: "internal-1", Role: model.UserRoleUser}
+	otherUser := &model.User{ID: "other-1", Role: model.UserRoleUser}
+
+	value := FeatureAvailability{
+		ShortDramaEnabled: true, TaskCenterEnabled: true, CreditsEnabled: true,
+		CustomChannelsEnabled: true, PluginCenterEnabled: true, SystemPluginsVisibleToUsers: true,
+		DirectorDeskPrevisMode:        platform.DirectorDeskPrevisCanary,
+		DirectorDeskPrevisCanaryUsers: []string{"internal-1"},
+	}
+	if _, err := svc.UpdateFeatureAvailability(admin, value); err != nil {
+		t.Fatal(err)
+	}
+
+	global, err := svc.AdminFeatureAvailability(admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if global.DirectorDeskPrevisMode != platform.DirectorDeskPrevisCanary || len(global.DirectorDeskPrevisCanaryUsers) != 1 || global.DirectorDeskPrevisCanaryUsers[0] != "internal-1" {
+		t.Fatalf("admin view lost canary grouping: %#v", global)
+	}
+
+	internal, err := svc.UserFeatureAvailability(internalUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if internal.DirectorDeskPrevisMode != platform.DirectorDeskPrevisCanary {
+		t.Fatalf("allowlisted user mode = %q, want canary", internal.DirectorDeskPrevisMode)
+	}
+	other, err := svc.UserFeatureAvailability(otherUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.DirectorDeskPrevisMode != platform.DirectorDeskPrevisOff {
+		t.Fatalf("unlisted user with zero ratio mode = %q, want off", other.DirectorDeskPrevisMode)
+	}
+
+	// 比例桶生效:10000 → 全体(有账号者)进 canary。
+	value.DirectorDeskPrevisCanaryBasisPoints = 10000
+	if _, err := svc.UpdateFeatureAvailability(admin, value); err != nil {
+		t.Fatal(err)
+	}
+	otherFull, err := svc.UserFeatureAvailability(otherUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherFull.DirectorDeskPrevisMode != platform.DirectorDeskPrevisCanary {
+		t.Fatalf("full-ratio user mode = %q, want canary", otherFull.DirectorDeskPrevisMode)
+	}
+
+	// 全局 on 覆盖分组;全局 off 关闭分组。
+	value.DirectorDeskPrevisMode = platform.DirectorDeskPrevisOn
+	if _, err := svc.UpdateFeatureAvailability(admin, value); err != nil {
+		t.Fatal(err)
+	}
+	onView, err := svc.UserFeatureAvailability(otherUser)
+	if err != nil || onView.DirectorDeskPrevisMode != platform.DirectorDeskPrevisOn {
+		t.Fatalf("mode=on view = %#v, %v", onView, err)
+	}
+	value.DirectorDeskPrevisMode = platform.DirectorDeskPrevisOff
+	if _, err := svc.UpdateFeatureAvailability(admin, value); err != nil {
+		t.Fatal(err)
+	}
+	offView, err := svc.UserFeatureAvailability(internalUser)
+	if err != nil || offView.DirectorDeskPrevisMode != platform.DirectorDeskPrevisOff {
+		t.Fatalf("mode=off view = %#v, %v", offView, err)
+	}
+
+	// 配置持久化保留分组字段。
+	var rows int64
+	if err := db.Model(&model.SystemSetting{}).Where("key = ?", featureAvailabilitySettingKey).Count(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("feature setting rows = %d, want 1", rows)
+	}
+}
+
 func newFeatureAvailabilityTestService(t *testing.T) (*Service, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

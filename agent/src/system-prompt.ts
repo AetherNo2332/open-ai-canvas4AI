@@ -14,6 +14,11 @@ import { isAbsolute, join, resolve } from "node:path";
  * - `APPEND_SYSTEM.md` 追加到系统提示；
  * - `AGENTS.override.md` > `AGENTS.md` > `CLAUDE.md` 作为上下文文件；
  * - `SOUL.md` / `TOOLS.md` 是本仓库既有 Harness 文件，一并纳入。
+ *
+ * Harness 目录里由 `agent/scripts/sync-harness.mjs` 同步的 `SYSTEM_POLICY.md`、
+ * `MEDIA_POLICY.md`、`TOOL_DESCRIPTIONS.md` **不在这里装配**：前两份由 Go 编译进
+ * 服务端策略（`base`），工具说明随每次请求的 tool schema 下发。同一段正文再拼一次
+ * 只是把 system 桶翻倍，模型看不到任何新信息。
  */
 export interface PromptParts {
   /** SYSTEM.md 的正文；存在时替换默认提示。 */
@@ -34,9 +39,6 @@ export interface LoadPromptOptions {
 }
 
 const CONTEXT_FILES = ["AGENTS.override.md", "AGENTS.md", "CLAUDE.md", "CLAUDE.MD", "SOUL.md", "TOOLS.md"];
-// 老 agent 的系统提示素材（`agent/scripts/sync-harness.mjs` 从 backend/ 同步而来）。
-// 顺序即拼装顺序：行为策略 -> 媒体策略 -> 工具描述。
-const HARNESS_FILES = ["SYSTEM_POLICY.md", "MEDIA_POLICY.md", "TOOL_DESCRIPTIONS.md"];
 const DEFAULT_MAX_BYTES = 20 * 1024;
 
 async function readLimited(path: string, maxBytes: number): Promise<string | undefined> {
@@ -68,7 +70,7 @@ export async function loadPromptParts(options: LoadPromptOptions = {}): Promise<
     // SYSTEM.md / APPEND_SYSTEM.md 只在各自目录取一次；后出现的目录不覆盖先出现的。
     if (parts.system === undefined) parts.system = await readLimited(join(dir, "SYSTEM.md"), maxBytes);
     if (parts.appendSystem === undefined) parts.appendSystem = await readLimited(join(dir, "APPEND_SYSTEM.md"), maxBytes);
-    for (const name of [...HARNESS_FILES, ...CONTEXT_FILES]) {
+    for (const name of CONTEXT_FILES) {
       if (seen.has(name)) continue;
       const text = await readLimited(join(dir, name), maxBytes);
       if (text === undefined) continue;

@@ -2,7 +2,7 @@
  * Retain admin density while surfaces, states and geometry consume the site skin. */
 
 :is([data-admin-root], body.admin-overlays, .admin-drawer, .admin-secondary-drawer, .admin-modal-root, .admin-channel-modal-root, .admin-mobile-navigation-menu) {
-    --admin-font: ui-sans-serif, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, sans-serif;
+    --admin-font: var(--font-home);
     --admin-font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     --admin-space: 8px;
     --admin-radius-sm: var(--input-radius);

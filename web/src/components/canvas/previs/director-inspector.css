@@ -1,0 +1,124 @@
+/* DirectorDesk 原生检查器（导演编辑器 scope，P1）。
+   消费画布预演台皮肤 --pd-* token（回退站点语义 token）。 */
+
+.dps-root {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-family: inherit;
+}
+
+.dps-empty {
+    padding: 14px 10px;
+    text-align: center;
+    color: var(--pd-t3, var(--pd-faint, var(--foreground)));
+    font-size: var(--pd-ts-xs, 10px);
+    border: 1px dashed var(--pd-b0, var(--border));
+    border-radius: var(--pd-r-md, var(--card-radius, 8px));
+}
+
+.dps-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--pd-b0, var(--border));
+    border-radius: var(--pd-r-md, var(--card-radius, 8px));
+    background: var(--pd-s2, var(--background));
+}
+
+.dps-section__header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.dps-section__label {
+    font-size: var(--pd-ts-xs, 10px);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--pd-t1, var(--pd-faint, var(--foreground)));
+    text-transform: uppercase;
+}
+
+.dps-section__name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--pd-ts-sm, 11px);
+    color: var(--pd-t0, var(--foreground));
+}
+
+.dps-fields {
+    display: grid;
+    grid-template-columns: 34px repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    align-items: center;
+}
+
+.dps-fields__label {
+    font-size: var(--pd-ts-xs, 10px);
+    color: var(--pd-t2, var(--pd-faint, var(--foreground)));
+}
+
+.dps-axis {
+    width: 100%;
+    min-width: 0;
+    height: 24px;
+    padding: 0 5px;
+    border: 1px solid transparent;
+    border-radius: var(--pd-r-sm, var(--input-radius, 4px));
+    background: transparent;
+    color: var(--pd-t0, var(--foreground));
+    font-size: var(--pd-ts-xs, 10px);
+    font-variant-numeric: tabular-nums;
+    font-family: inherit;
+}
+
+.dps-axis:hover {
+    border-color: var(--pd-b1, var(--border));
+}
+
+.dps-axis:focus {
+    border-color: var(--pd-a-bd, var(--ring, var(--border)));
+    background: var(--pd-s1, var(--background));
+    outline: none;
+    box-shadow: 0 0 0 2px var(--pd-a-bg, transparent);
+}
+
+.dps-field {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 4px;
+    align-items: center;
+}
+
+.dps-focal {
+    width: 100%;
+    min-width: 0;
+    height: 24px;
+    padding: 0 5px;
+    border: 1px solid transparent;
+    border-radius: var(--pd-r-sm, var(--input-radius, 4px));
+    background: transparent;
+    color: var(--pd-t0, var(--foreground));
+    font-size: var(--pd-ts-xs, 10px);
+    font-variant-numeric: tabular-nums;
+    font-family: inherit;
+}
+
+.dps-focal:hover {
+    border-color: var(--pd-b1, var(--border));
+}
+
+.dps-focal:focus {
+    border-color: var(--pd-a-bd, var(--ring, var(--border)));
+    background: var(--pd-s1, var(--background));
+    outline: none;
+    box-shadow: 0 0 0 2px var(--pd-a-bg, transparent);
+}
+
+.dps-field:focus-within .dps-fields__label {
+    color: var(--pd-a0, var(--primary, var(--foreground)));
+}
