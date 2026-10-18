@@ -8,7 +8,8 @@ import type { ColumnsType } from "antd/es/table";
 import { ChevronDown, ChevronUp, Clapperboard, Columns3, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Merge, MoreHorizontal, Plus, RefreshCw, Send, Square, Trash2, Video } from "lucide-react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
-import { StoryboardAssetsCell } from "@/components/canvas/storyboard-assets-cell";
+import { StoryboardAssetsCell, StoryboardSharedReferencesControl } from "@/components/canvas/storyboard-assets-cell";
+import { storyboardInheritedBindings } from "@/lib/canvas/canvas-reference-edits";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { ModelPicker } from "@/components/model-picker";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
@@ -106,6 +107,7 @@ export function CanvasScriptNodeContent({
     onGenerateImages,
     onGenerateVideos,
     onVideoInputModeChange,
+    onReferenceNodeIdsChange,
     onMergeVideos,
     onCreateActionBoards,
     onRetryBatch,
@@ -136,6 +138,7 @@ export function CanvasScriptNodeContent({
     onGenerateImages: (rowIds: string[]) => void;
     onGenerateVideos: (rowIds: string[]) => void;
     onVideoInputModeChange: (mode: StoryboardVideoInputMode) => void;
+    onReferenceNodeIdsChange:(ids:string[])=>void;
     onMergeVideos: () => void;
     onCreateActionBoards: () => void;
     onRetryBatch: (batchId: string) => void;
@@ -263,6 +266,7 @@ export function CanvasScriptNodeContent({
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold" title={node.title || "分镜脚本"}>
                     {node.title || "分镜脚本"}
                 </span>
+                <StoryboardSharedReferencesControl node={node} nodes={nodes} onChange={onReferenceNodeIdsChange}/>
                 {batchSummary ? (
                     <span className="min-w-0 max-w-[42%] truncate text-[var(--fs-label)] font-medium" title={batchSummary} style={{ color: batch?.status === "partial_failed" ? theme.accent.danger : theme.node.muted }}>
                         {batchSummary}
@@ -349,6 +353,7 @@ export function CanvasScriptNodeContent({
                             <div key={row.id} className="relative grid border-b" style={{ height: STORYBOARD_ROW_HEIGHT, borderColor: theme.node.stroke, gridTemplateColumns: cardGridTemplate }}>
                                 {visibleColumns.map((column) => (
                                     <ScriptCardCell
+                                        scriptNode={node}
                                         key={column}
                                         column={column}
                                         row={row}
@@ -623,6 +628,7 @@ export function CanvasScriptEditor({
     onGenerateImages,
     onGenerateVideos,
     onVideoInputModeChange,
+    onReferenceNodeIdsChange,
 }: {
     node: CanvasNodeData | null;
     nodes: CanvasNodeData[];
@@ -633,6 +639,7 @@ export function CanvasScriptEditor({
     onGenerateImages: (rowIds: string[]) => void;
     onGenerateVideos: (rowIds: string[]) => void;
     onVideoInputModeChange: (mode: StoryboardVideoInputMode) => void;
+    onReferenceNodeIdsChange:(ids:string[])=>void;
 }) {
     const [query, setQuery] = useState("");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -706,7 +713,7 @@ export function CanvasScriptEditor({
             ) : option.value === "durationSeconds" ? (
                 <InputNumber min={1} max={60} value={row.durationSeconds} addonAfter="s" className="w-full" onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
             ) : option.value === "assets" ? (
-                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} />
+                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} inherited={node?storyboardInheritedBindings(node,row,nodes):[]} pending={row.status==="loading"} onChange={assetBindings=>updateRow(row.id,{assetBindings})} />
             ) : option.value === "shotSize" ? (
                 <Select
                     className="w-full"
@@ -792,6 +799,7 @@ export function CanvasScriptEditor({
                 <div className="shrink-0 border-b border-foreground/10 px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
                         <Input.Search className="w-72" allowClear placeholder="筛选画面、台词或提示词" value={query} onChange={(event) => setQuery(event.target.value)} />
+                        {node?<StoryboardSharedReferencesControl node={node} nodes={nodes} onChange={onReferenceNodeIdsChange}/>:null}
                         <Popover trigger="click" placement="bottomLeft" arrow={false} content={columnPicker}>
                             <Button icon={<Columns3 className="size-4" />}>
                                 显示列
@@ -844,6 +852,7 @@ export function CanvasScriptEditor({
 }
 
 function ScriptCardCell({
+    scriptNode,
     column,
     row,
     nodes,
@@ -854,6 +863,7 @@ function ScriptCardCell({
     onRemoveRow,
     onUpdateRow,
 }: {
+    scriptNode:CanvasNodeData;
     column: StoryboardColumn;
     row: StoryboardRow;
     nodes: CanvasNodeData[];
@@ -899,7 +909,7 @@ function ScriptCardCell({
     if (column === "assets") {
         return (
             <div className="flex h-full min-w-0 items-center border-r px-2.5" style={{ borderColor }}>
-                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} />
+                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} inherited={storyboardInheritedBindings(scriptNode,row,nodes)} pending={row.status==="loading"} onChange={assetBindings=>onUpdateRow(row.id,{assetBindings})} />
             </div>
         );
     }

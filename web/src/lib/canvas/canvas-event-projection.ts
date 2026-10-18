@@ -162,6 +162,28 @@ export function projectCanvasOperations(document: CanvasDocument, operations: Op
             case "rename_canvas":
                 next.title = op.title;
                 break;
+            case "bind_storyboard_output": {
+                const metadata=node?.metadata as Record<string,unknown>|undefined;
+                const board=metadata?.storyboard as Record<string,unknown>|undefined;
+                const row=objects(board?.rows).find(row=>row.id===op.rowId);
+                if(row&&(op.outputMode==="image"||op.outputMode==="video")){
+                    if(op.sourceNodeId)row[op.outputMode+"NodeId"]=op.sourceNodeId;
+                    else delete row[op.outputMode+"NodeId"];
+                }
+                break;
+            }
+            case "edit_storyboard":case "edit_batch_table":{
+                const metadata=node?.metadata as Record<string,unknown>|undefined;
+                const key=op.type==="edit_storyboard"?"storyboard":"batchTable";
+                const table=metadata?.[key] as Record<string,unknown>|undefined;
+                if(!table)break;
+                if(op.action==="set_references"){table.referenceNodeIds=clone(op.patch?.referenceNodeIds||[]);break;}
+                const rows=objects(table.rows),row=rows.find(row=>row.id===op.rowId);
+                if(op.action==="remove")table.rows=rows.filter(row=>row.id!==op.rowId);
+                else if(op.action==="update"&&row)Object.assign(row,clone(op.patch||{}));
+                else if(op.action==="append")table.rows=[...rows,{id:op.rowId,shotNumber:rows.length+1,...clone(op.patch||{})}];
+                break;
+            }
             case "reorder_nodes":
                 if (op.nodeIds) next.nodes = ordered(nodes, op.nodeIds);
                 break;

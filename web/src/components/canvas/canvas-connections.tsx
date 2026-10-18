@@ -40,6 +40,7 @@ export const ConnectionPath = React.memo(function ConnectionPath({
 
     return (
         <g>
+            {connection.managedBy==="reference-fields-v1"?<title>{connection.relation==="storyboard-output"?"镜头输出归属":connection.toHandleId==="storyboard:context"?"分镜表共享素材":connection.storyboardRowId?"镜头引用素材":"节点引用素材"}</title>:null}
             {showEmphasis ? <defs>
                 <linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1={startX} y1={startY} x2={endX} y2={endY}>
                     <stop offset="0%" stopColor={theme.node.muted} stopOpacity={0.18} />

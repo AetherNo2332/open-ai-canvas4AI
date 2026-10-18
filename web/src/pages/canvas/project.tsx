@@ -1,4 +1,5 @@
 import { CanvasWorkspacePanel } from "@/components/canvas/canvas-workspace-panel";
+import { applyCanvasReferenceEdit, canvasReferenceIntentForConnection, reorderCanvasReferenceInputs } from "@/lib/canvas/canvas-reference-edits";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { createCanvasStateWriter } from "@/lib/canvas/canvas-editor-state";
 import { canCancelGenerationTask } from "@/lib/generation-task-display";
@@ -1079,6 +1080,14 @@ function InfiniteCanvasPage() {
 
             const configNodeId = previousConnections.find((c) => c.fromNodeId === targetNodeId && previousNodes.find((n) => n.id === c.toNodeId)?.type === CanvasNodeType.Config)?.toNodeId;
             const receiverId = configNodeId || targetNodeId;
+            try{
+                const remove=oldReference.nodeId?canvasReferenceIntentForConnection(previousNodes,{fromNodeId:oldReference.nodeId,toNodeId:targetNodeId},true):undefined;
+                if(remove){
+                    let next=applyCanvasReferenceEdit(previousNodes,remove);
+                    const add=canvasReferenceIntentForConnection(next,{fromNodeId:sourceNodeId,toNodeId:targetNodeId});
+                    if(add){next=applyCanvasReferenceEdit(next,add);nodesRef.current=next;setNodes(next);message.success("已更新引用素材");return;}
+                }
+            }catch(error){message.info(error instanceof Error?error.message:"请在所属字段修改引用");return;}
 
             let rewired = false;
             const nextConnections = previousConnections.map((c) => {
@@ -1329,6 +1338,10 @@ function InfiniteCanvasPage() {
                 if (connection.fromNodeId !== targetNodeId) return false;
                 return previousNodes.find((node) => node.id === connection.toNodeId)?.type === CanvasNodeType.Config;
             })?.toNodeId;
+            try{
+                const intent=canvasReferenceIntentForConnection(previousNodes,{fromNodeId:referenceNodeId,toNodeId:targetNodeId},true);
+                if(intent){const next=applyCanvasReferenceEdit(previousNodes,intent);nodesRef.current=next;setNodes(next);return;}
+            }catch(error){message.info(error instanceof Error?error.message:"请在所属字段修改引用");return;}
             const removedConnectionIds = new Set(previousConnections.filter((connection) => connection.fromNodeId === referenceNodeId && (connection.toNodeId === targetNodeId || connection.toNodeId === configNodeId)).map((connection) => connection.id));
             if (!removedConnectionIds.size) return;
             const nextConnections = previousConnections.filter((connection) => !removedConnectionIds.has(connection.id));
@@ -1341,13 +1354,15 @@ function InfiniteCanvasPage() {
             setConnections(nextConnections);
             setSelectedConnectionId((current) => (current && removedConnectionIds.has(current) ? null : current));
         },
-        [connectionsRef, nodesRef, setConnections, setNodes, setSelectedConnectionId],
+        [connectionsRef, nodesRef, setConnections, setNodes, setSelectedConnectionId,message],
     );
 
     const handleReorderNodeReferences = useCallback(
         (targetNodeId: string, orderedNodeIds: string[]) => {
             const previousNodes = nodesRef.current;
             const previousConnections = connectionsRef.current;
+            const intent=reorderCanvasReferenceInputs(previousNodes,targetNodeId,orderedNodeIds);
+            if(intent){const next=applyCanvasReferenceEdit(previousNodes,intent);nodesRef.current=next;setNodes(next);return;}
             const nextConnections = reorderCanvasResourceConnections(targetNodeId, orderedNodeIds, previousNodes, previousConnections);
             if (nextConnections === previousConnections) return;
             const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
@@ -2373,6 +2388,7 @@ function InfiniteCanvasPage() {
                         onGenerateImages={(rowIds) => void generateScriptImages(contentNode.id, rowIds)}
                         onGenerateVideos={(rowIds) => (contentNode.metadata?.storyboardVideoInputMode === "keyframe" ? void generateScriptVideos(contentNode.id, rowIds) : void createAndGenerateScriptVideos(contentNode.id, rowIds))}
                         onVideoInputModeChange={(storyboardVideoInputMode) => handleConfigNodeChange(contentNode.id, { storyboardVideoInputMode })}
+                        onReferenceNodeIdsChange={referenceNodeIds=>setNodes(current=>applyCanvasReferenceEdit(current,{kind:"set_board_references",nodeId:contentNode.id,referenceNodeIds}))}
                         onMergeVideos={() => void mergeVideosByIds(pipeline.successfulVideoNodeIds)}
                         onCreateActionBoards={() => void createScriptActionBoards(contentNode.id)}
                         onRetryBatch={(batchId) => retryFailedBatchItems(contentNode.id, batchId)}
@@ -3326,6 +3342,7 @@ function InfiniteCanvasPage() {
                                 else void createAndGenerateScriptVideos(activeScriptNode.id, rowIds);
                             }}
                             onVideoInputModeChange={(storyboardVideoInputMode) => activeScriptNode && handleConfigNodeChange(activeScriptNode.id, { storyboardVideoInputMode })}
+                            onReferenceNodeIdsChange={referenceNodeIds=>activeScriptNode&&setNodes(current=>applyCanvasReferenceEdit(current,{kind:"set_board_references",nodeId:activeScriptNode.id,referenceNodeIds}))}
                         />
 
                         {previsNodeId && activePrevisScene ? (

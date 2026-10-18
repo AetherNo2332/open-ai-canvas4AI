@@ -22,7 +22,8 @@ import { DEFAULT_STORYBOARD_COLUMNS, resolveStoryboardVisibleColumns } from "@/l
 import { buildNodeMentionReferences } from "@/lib/canvas/canvas-resource-references";
 import { buildStoryboardAssetCatalog } from "@/lib/canvas/canvas-storyboard-assets";
 import { resolveStoryboardGenerationContext } from "@/lib/canvas/canvas-storyboard-context";
-import { reconcileStoryboardTargetConnections, storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
+import { storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
+import { assertStoryboardGenerationReady, withStoryboardOutputDraft } from "@/lib/canvas/canvas-reference-edits";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
@@ -279,7 +280,7 @@ export function useCanvasStoryboard({
         if (!scriptNode || !rows.length) return [];
         const imageSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
         const startX = scriptNode.position.x + scriptNode.width + 120;
-        const nextNodes = [...nodesRef.current];
+        let nextNodes = [...nodesRef.current];
         let nextConnections = [...connectionsRef.current];
         const targets: Array<{ row: StoryboardRow; node: CanvasNodeData; prompt: string }> = [];
         rows.forEach((row, index) => {
@@ -298,7 +299,7 @@ export function useCanvasStoryboard({
                 const existingIndex = nextNodes.findIndex((node) => node.id === existing.id);
                 nextNodes[existingIndex] = imageNode;
             }
-            nextConnections = reconcileStoryboardTargetConnections(nextConnections, scriptNode, row, imageNode.id, referenceIds);
+            nextNodes = withStoryboardOutputDraft(nextNodes,scriptNode,row,imageNode.id);
             targets.push({ row, node: imageNode, prompt });
         });
         const imageNodeByRowId = new Map(targets.map((target) => [target.row.id, target.node.id]));
@@ -363,7 +364,7 @@ export function useCanvasStoryboard({
         const videoSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
         const startLeft = scriptNode.position.x + scriptNode.width + 120;
         const videoModel = buildGenerationConfig(effectiveConfig, undefined, "video").model;
-        const nextNodes = [...nodesRef.current];
+        let nextNodes = [...nodesRef.current];
         let nextConnections = [...connectionsRef.current];
         const videoNodeByRowId = new Map<string, string>();
         let createdCount = 0;
@@ -377,14 +378,14 @@ export function useCanvasStoryboard({
                 const existing = nextNodes[existingIndex];
                 const existingMetadata = existing.metadata?.content ? existing.metadata : resetGenerationTaskMetadata(existing.metadata);
                 nextNodes[existingIndex] = { ...existing, metadata: { ...existingMetadata, prompt, composerContent, model: videoModel, ...storyboardPromptTemplateMetadata(row, "video"), seconds: String(row.durationSeconds), shotIndex: row.shotNumber, workflowKind: "shot", workflowTitle: `镜头 ${row.shotNumber} 视频`, generationMode: "video", videoEditOperation: existing.metadata?.videoEditOperation || "text_to_video" } };
-                nextConnections = reconcileStoryboardTargetConnections(nextConnections, scriptNode, row, existing.id, referenceIds);
+                nextNodes = withStoryboardOutputDraft(nextNodes,scriptNode,row,existing.id);
                 videoNodeByRowId.set(row.id, existing.id);
                 return;
             }
             const videoNode = createCanvasNode(CanvasNodeType.Video, { x: startLeft + videoSpec.width / 2, y: scriptNode.position.y + index * (videoSpec.height + 36) + videoSpec.height / 2 }, { prompt, composerContent, model: videoModel, ...storyboardPromptTemplateMetadata(row, "video"), workflowKind: "shot", workflowTitle: `镜头 ${row.shotNumber} 视频`, shotIndex: row.shotNumber, generationMode: "video", videoEditOperation: "text_to_video", status: NODE_STATUS_IDLE, seconds: String(row.durationSeconds) });
             videoNode.title = `镜头 ${row.shotNumber} · 视频`;
             nextNodes.push(videoNode);
-            nextConnections = reconcileStoryboardTargetConnections(nextConnections, scriptNode, row, videoNode.id, referenceIds);
+            nextNodes = withStoryboardOutputDraft(nextNodes,scriptNode,row,videoNode.id);
             videoNodeByRowId.set(row.id, videoNode.id);
             createdCount += 1;
         });
@@ -422,6 +423,7 @@ export function useCanvasStoryboard({
             const videoNode = row.videoNodeId ? nodesRef.current.find((node) => node.id === row.videoNodeId && node.type === CanvasNodeType.Video) : undefined;
             return !videoNode?.metadata?.content && (!videoNode || !activeNodeIds.has(videoNode.id));
         });
+        if(scriptNode){try{targetRows.forEach(row=>assertStoryboardGenerationReady(scriptNode!,row,nodesRef.current,"video"))}catch(error){message.warning(error instanceof Error?error.message:"首帧尚未就绪");return;}}
         if (!targetRows.length) {
             if (describedRows.some((row) => row.videoNodeId && nodesRef.current.some((node) => node.id === row.videoNodeId && Boolean(node.metadata?.content)))) message.info("镜头视频已存在");
             else message.warning("请先补充镜头画面描述");
@@ -471,7 +473,7 @@ export function useCanvasStoryboard({
         if (!await confirmGenerationSubmission(actionBoardRows.length, imageModel, "动作板生成")) return;
         const imageSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
         const startX = scriptNode.position.x + scriptNode.width + 120;
-        const nextNodes = [...nodesRef.current];
+        let nextNodes = [...nodesRef.current];
         const nextConnections = [...connectionsRef.current];
         const targets: Array<{ row: StoryboardRow; node: CanvasNodeData; prompt: string }> = [];
         actionBoardRows.forEach((row, index) => {
@@ -527,7 +529,7 @@ export function useCanvasStoryboard({
         const videoSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
         const currentRows = targetRows.map((row) => currentScriptNode.metadata?.storyboard?.rows.find((item) => item.id === row.id) || row);
         const startX = Math.max(...currentRows.map((row) => nodesRef.current.find((node) => node.id === row.imageNodeId)?.position.x || currentScriptNode.position.x + currentScriptNode.width)) + videoSpec.width + 120;
-        const nextNodes = [...nodesRef.current];
+        let nextNodes = [...nodesRef.current];
         let nextConnections = [...connectionsRef.current];
         const targets: Array<{ row: StoryboardRow; node: CanvasNodeData; prompt: string }> = [];
         currentRows.forEach((row, index) => {
@@ -546,7 +548,7 @@ export function useCanvasStoryboard({
                 const existingIndex = nextNodes.findIndex((node) => node.id === existing.id);
                 nextNodes[existingIndex] = videoNode;
             }
-            nextConnections = reconcileStoryboardTargetConnections(nextConnections, currentScriptNode, row, videoNode.id, referenceIds);
+            nextNodes = withStoryboardOutputDraft(nextNodes,currentScriptNode,row,videoNode.id);
             targets.push({ row, node: videoNode, prompt });
         });
         nodesRef.current = nextNodes;
