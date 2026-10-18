@@ -39,3 +39,23 @@ test("copying a container remaps every canonical reference and derives new manag
     expect(row.status).toBe("idle");
     expect(result.connections).toEqual([]);
 });
+test("copying a container remaps embedded batch storyboard references inside the scope and keeps external ones", () => {
+    const sourceRows = [
+        { id: "r1", imageNodeId: "asset", assetBindings: [{ nodeId: "asset", role: "style", priority: 60 }] },
+        { id: "r2", imageNodeId: "outside", assetBindings: [{ nodeId: "outside", role: "style", priority: 60 }] },
+    ];
+    const nodes = [
+        node("frame", CanvasNodeType.Frame),
+        node("asset", CanvasNodeType.Image, {}, "frame"),
+        node("outside", CanvasNodeType.Image),
+        node("batch", CanvasNodeType.BatchTable, { batchTable: { operation: "creative", concurrency: 1, rows: [], storyboardRows: sourceRows, storyboardSourceNodeIds: ["asset", "outside"] } }, "frame"),
+    ];
+    const ids = new Map(nodes.map((item) => [item.id, `copy-${item.id}`]));
+    const copied = copyCanvasNodeGraph(nodes, [], "frame", ids, () => "edge").nodes.find((item) => item.id === "copy-batch")!;
+    const table = copied.metadata!.batchTable!;
+    expect(table.storyboardSourceNodeIds).toEqual(["copy-asset", "outside"]);
+    expect(table.storyboardRows!.map((row) => row.imageNodeId)).toEqual(["copy-asset", "outside"]);
+    expect(table.storyboardRows!.map((row) => row.assetBindings[0].nodeId)).toEqual(["copy-asset", "outside"]);
+    // 内嵌内容是展示引用：复制不改变行身份，也不清除行上的业务字段。
+    expect(table.storyboardRows!.map((row) => row.id)).toEqual(["r1", "r2"]);
+});

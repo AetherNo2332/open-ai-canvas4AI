@@ -65,6 +65,21 @@ function copiedRowId(copiedNodeId: string, suffix: "row" | "batch-row", index: n
     return `${copiedNodeId}-${suffix}-${index + 1}`;
 }
 
+// 批量表内嵌的分镜内容是展示与来源引用：范围内跟随副本，范围外保留原节点，
+// 既不换行身份也不清任务字段（与后端递归 *NodeId(s) 重映射一致）。
+function remapEmbeddedStoryboardRow(row: StoryboardRow, idMap: ReadonlyMap<string, string>): StoryboardRow {
+    return {
+        ...row,
+        characters: (row.characters || []).map((character) => ({
+            ...character,
+            characterImageNodeId: remapReferenceId(character.characterImageNodeId, idMap),
+        })),
+        assetBindings: (row.assetBindings || []).map((binding) => ({ ...binding, nodeId: remapReferenceId(binding.nodeId, idMap)! })),
+        imageNodeId: remapReferenceId(row.imageNodeId, idMap),
+        videoNodeId: remapReferenceId(row.videoNodeId, idMap),
+    };
+}
+
 function copyStoryboardRow(row: StoryboardRow, idMap: ReadonlyMap<string, string>, copiedNodeId: string, index: number, rowIds?: Map<string, string>): StoryboardRow {
     const imageNodeId = remapOwnedNodeId(row.imageNodeId, idMap);
     const videoNodeId = remapOwnedNodeId(row.videoNodeId, idMap);
@@ -159,6 +174,8 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     metadata.batchTable = batchTable ? {
         ...batchTable,
         rows: (batchTable.rows || []).map((row, index) => copyBatchTableRow(row, batchTable.operation, idMap, copiedNodeId, index, rowIds)),
+        storyboardSourceNodeIds: remapReferenceIds(batchTable.storyboardSourceNodeIds, idMap),
+        storyboardRows: batchTable.storyboardRows?.map((row) => remapEmbeddedStoryboardRow(row, idMap)),
     } : undefined;
     metadata.batchSourceNodeId = remapReferenceId(node.metadata?.batchSourceNodeId, idMap);
     // 引用权威字段必须随之重映射；复制范围之外的素材继续引用原节点。
