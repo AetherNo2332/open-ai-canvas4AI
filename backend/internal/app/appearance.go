@@ -423,7 +423,7 @@ func (s *Service) readAppearance() (*model.SystemSetting, AppearanceSetting, err
 		value.SkinThemes = defaultAppearanceSkinThemes()
 	}
 	// 读取路径静默降级历史皮肤的渐变、圆角、长动效；写入路径仍然严格拒绝。
-	value.SkinThemes = migrateAppearanceSkinThemes(normalizeAppearanceSkinThemes(value.SkinThemes))
+	value.SkinThemes = normalizeAppearanceSkinThemes(value.SkinThemes) // patched: keep rounded component tokens
 	value.SEOTitle = normalizeAppearanceSingleLine(value.SEOTitle)
 	value.SEODescription = normalizeAppearanceCopy(value.SEODescription)
 	value.SEOKeywords = normalizeAppearanceSingleLine(value.SEOKeywords)
