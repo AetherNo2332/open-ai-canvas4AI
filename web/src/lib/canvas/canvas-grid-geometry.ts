@@ -6,6 +6,9 @@ export const CANVAS_GRID_CELL_PX = 48;
 /** 网格层向视口外多画一圈，保证平移时不会露出边缘。 */
 export const CANVAS_GRID_OVERSCAN_PX = 100;
 
+/** 缩放低于该比例时隐藏空间网格，避免缩小后网格过密干扰内容。 */
+export const CANVAS_GRID_MIN_VISIBLE_SCALE = 0.6;
+
 export type CanvasGridGeometry = {
     /** 当前缩放下单元格的屏幕边长。 */
     cellPx: number;
@@ -20,6 +23,8 @@ export type CanvasGridLayerStyle = {
     backgroundSize: string;
     transform: string;
     overscanPx: number;
+    /** 视口缩放达到阈值时才显示网格。 */
+    visible: boolean;
 };
 
 /**
@@ -46,6 +51,7 @@ export function canvasGridLayerStyle(viewport: ViewportTransform): CanvasGridLay
         backgroundSize: `${cell}px ${cell}px`,
         transform: `translate3d(${formatPx(offsetX)}px, ${formatPx(offsetY)}px, 0)`,
         overscanPx,
+        visible: viewport.k >= CANVAS_GRID_MIN_VISIBLE_SCALE,
     };
 }
 

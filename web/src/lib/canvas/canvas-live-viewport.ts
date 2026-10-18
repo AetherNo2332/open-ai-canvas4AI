@@ -61,6 +61,7 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
         const gridStyle = canvasGridLayerStyle(viewport);
         gridLayer.style.backgroundSize = gridStyle.backgroundSize;
         gridLayer.style.transform = gridStyle.transform;
+        gridLayer.style.visibility = gridStyle.visible ? "" : "hidden";
     }
     container.style.setProperty("--canvas-live-scale", String(viewport.k));
     // 外置节点标题用同一帧逆倍率抵消世界层缩放，避免等待 React 提交后再校正尺寸。

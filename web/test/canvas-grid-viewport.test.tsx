@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { InfiniteCanvas } from "../src/components/canvas/infinite-canvas";
 import { canvasAppearanceForTheme } from "../src/lib/canvas/canvas-appearance";
-import { CANVAS_GRID_CELL_PX, CANVAS_GRID_OVERSCAN_PX, canvasGridGeometry, canvasGridLayerStyle } from "../src/lib/canvas/canvas-grid-geometry";
+import { CANVAS_GRID_CELL_PX, CANVAS_GRID_MIN_VISIBLE_SCALE, CANVAS_GRID_OVERSCAN_PX, canvasGridGeometry, canvasGridLayerStyle } from "../src/lib/canvas/canvas-grid-geometry";
 import { applyCanvasLiveViewport, CANVAS_GRAPHICS_VIEWPORT_PREVIEW_EVENT, CANVAS_VIEWPORT_PREVIEW_EVENT } from "../src/lib/canvas/canvas-live-viewport";
 import type { CanvasBackgroundMode } from "../src/lib/canvas-theme";
 import type { ViewportTransform } from "../src/types/canvas";
@@ -56,9 +56,12 @@ describe("canvas world-space background", () => {
         expect(initial).toContain("background-size:48px 48px");
         expect(initial).toContain("transform:translate3d(4px, 4px, 0)");
         expect(initial).not.toContain("overscan");
+        expect(initial).not.toContain("visibility:hidden");
 
         expect(renderGrid("lines", { x: 120, y: -36, k: 1 })).toContain("transform:translate3d(28px, 16px, 0)");
-        expect(renderGrid("lines", { x: 0, y: 0, k: 0.5 })).toContain("background-size:24px 24px");
+        const zoomedOut = renderGrid("lines", { x: 0, y: 0, k: 0.5 });
+        expect(zoomedOut).toContain("background-size:24px 24px");
+        expect(zoomedOut).toContain("visibility:hidden");
         expect(renderGrid("lines", { x: 0, y: 0, k: 2 })).toContain("background-size:96px 96px");
 
         const oversized = renderGrid("lines", { x: 0, y: 0, k: 4 });
@@ -68,6 +71,25 @@ describe("canvas world-space background", () => {
         for (const viewport of viewports.slice(1)) {
             expect(renderGrid("lines", viewport)).not.toBe(initial);
         }
+    });
+
+    test("grid hides when zoom drops below 60%", () => {
+        expect(canvasGridLayerStyle({ x: 0, y: 0, k: CANVAS_GRID_MIN_VISIBLE_SCALE }).visible).toBe(true);
+        expect(canvasGridLayerStyle({ x: 0, y: 0, k: 0.599 }).visible).toBe(false);
+        for (const [scale, hidden] of [
+            [0.05, true],
+            [0.599, true],
+            [0.6, false],
+            [1, false],
+            [2, false],
+        ] as const) {
+            for (const mode of ["lines", "dots"] as const) {
+                const grid = renderGrid(mode, { x: 12.5, y: -8, k: scale });
+                expect(grid?.includes("visibility:hidden") ?? false).toBe(hidden);
+            }
+        }
+        // 空白模式仍由 display:none 负责，缩放阈值不会把它重新显示出来。
+        expect(renderGrid("blank", { x: 0, y: 0, k: 0.5 })).toContain("display:none");
     });
 
     test("dots reuse the same world geometry and keep their radius", () => {
@@ -94,7 +116,7 @@ describe("canvas world-space background", () => {
     test("live viewport updates move the grid with the world layer", () => {
         const properties = new Map<string, string>([["--canvas-committed-scale", "0.5"]]);
         const world = { isConnected: true, style: { transform: "", transformOrigin: "", willChange: "" } };
-        const grid = { isConnected: true, style: { backgroundSize: "", transform: "" } };
+        const grid = { isConnected: true, style: { backgroundSize: "", transform: "", visibility: "" } };
         let gridLookups = 0;
         const container = Object.assign(new EventTarget(), {
             style: {
@@ -125,6 +147,7 @@ describe("canvas world-space background", () => {
             expect(world.style.transform).toBe(`translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k / 0.5})`);
             expect(grid.style.backgroundSize).toBe(style.backgroundSize);
             expect(grid.style.transform).toBe(style.transform);
+            expect(grid.style.visibility).toBe(style.visible ? "" : "hidden");
             expect(properties.get("--canvas-live-scale")).toBe(String(viewport.k));
             expect(properties.get("--canvas-live-inverse-scale")).toBe(String(1 / viewport.k));
             gridTransforms.add(style.transform);
