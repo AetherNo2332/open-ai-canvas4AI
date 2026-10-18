@@ -16,14 +16,16 @@ const migrationLegacyEdgeDocument = `{
   "nodes": [
     {"id":"hero","type":"text","metadata":{"workflowKind":"character","characterAssetId":"hero-asset"}},
     {"id":"scene","type":"image","metadata":{}},
+    {"id":"sketch","type":"drawing","metadata":{}},
     {"id":"compare","type":"compare","metadata":{}},
     {"id":"note","type":"markdown","metadata":{"content":"备注"}},
     {"id":"board","type":"script","metadata":{"storyboard":{"referenceNodeIds":["hero"],"rows":[{"id":"shot","plotDescription":"第一镜"}]}}},
-    {"id":"product","type":"image","metadata":{"prompt":"镜头一已提交"}},
+    {"id":"product","type":"image","metadata":{"prompt":"镜头一已提交","composerContent":"镜头一草稿","logicalModelId":"model-1","count":2,"size":"1024x1024","transparentBackground":true}},
     {"id":"frame","type":"image","metadata":{}}
   ],
   "connections": [
     {"id":"row-scene","fromNodeId":"scene","toNodeId":"board","toHandleId":"row:shot"},
+    {"id":"row-sketch","fromNodeId":"sketch","toNodeId":"board","toHandleId":"row:shot"},
     {"id":"context-hero","fromNodeId":"hero","toNodeId":"board","toHandleId":"storyboard:context"},
     {"id":"output-product","fromNodeId":"board","toNodeId":"product","fromHandleId":"row:shot"},
     {"id":"input-compare","fromNodeId":"scene","toNodeId":"compare"},
@@ -137,6 +139,15 @@ func migrationSnapshot(t *testing.T, doc map[string]any) string {
 	return string(encoded)
 }
 
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
 func TestReferenceMigrationEdgeOnly(t *testing.T) {
 	doc := migrationDocument(t, migrationLegacyEdgeDocument)
 	preimage := migrationSnapshot(t, doc)
@@ -152,7 +163,10 @@ func TestReferenceMigrationEdgeOnly(t *testing.T) {
 		t.Fatal("规范化后的文档没有写入引用字段版本标记")
 	}
 	row := migrationRow(t, got.Document, "board", "shot")
-	want := []any{map[string]any{"nodeId": "scene", "role": "style", "priority": float64(60)}}
+	want := []any{
+		map[string]any{"nodeId": "scene", "role": "style", "priority": float64(60)},
+		map[string]any{"nodeId": "sketch", "role": "style", "priority": float64(60)},
+	}
 	if !reflect.DeepEqual(row["assetBindings"], want) {
 		t.Fatalf("行引用没有从旧连线补全：%#v", row["assetBindings"])
 	}
@@ -168,14 +182,32 @@ func TestReferenceMigrationEdgeOnly(t *testing.T) {
 		t.Fatalf("普通输入节点没有补全引用：%+v", compare)
 	}
 	spec := obj(meta(migrationNode(t, got.Document, "product"))["generationSpec"])
-	if number(spec["version"]) != contract.GenerationVersion || str(spec["mode"]) != "image" || str(spec["prompt"]) != "镜头一已提交" {
+	if number(spec["version"]) != contract.GenerationVersion || str(spec["mode"]) != "image" {
 		t.Fatalf("历史媒体节点没有从正式字段补全生成合同：%#v", spec)
+	}
+	// 合成必须保留历史扁平镜像的语义（prompt/modelSelection/options），否则接管即丢配置。
+	decoded, err := contract.Decode(mustJSON(t, spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Prompt != "镜头一草稿" || decoded.TextInputMode != "append-sources" {
+		t.Fatalf("历史提示词或文本输入模式没有被保留：%+v", decoded)
+	}
+	if decoded.ModelSelection == nil || decoded.ModelSelection.Kind != "logical" || decoded.ModelSelection.LogicalModelID != "model-1" {
+		t.Fatalf("历史模型选择没有被保留：%+v", decoded.ModelSelection)
+	}
+	if decoded.Options.Count == nil || *decoded.Options.Count != 2 || decoded.Options.Size == nil || *decoded.Options.Size != "1024x1024" ||
+		decoded.Options.TransparentBackground == nil || !*decoded.Options.TransparentBackground {
+		t.Fatalf("历史生成参数没有被保留：%+v", decoded.Options)
+	}
+	if prompt := str(meta(migrationNode(t, got.Document, "product"))["prompt"]); prompt != "镜头一已提交" {
+		t.Fatalf("迁移改写了已提交提示词镜像：%q", prompt)
 	}
 	mirrored := migrationDecodeBindings(t, spec["referenceBindings"])
 	if len(mirrored) != 1 || mirrored[0].NodeID != "frame" || mirrored[0].Role != "reference" {
 		t.Fatalf("历史媒体节点没有补全连线引用：%+v", mirrored)
 	}
-	for _, legacy := range []string{"row-scene", "context-hero", "output-product", "input-compare", "media-product"} {
+	for _, legacy := range []string{"row-scene", "row-sketch", "context-hero", "output-product", "input-compare", "media-product"} {
 		if migrationEdge(got.Document, legacy) != nil {
 			t.Fatalf("旧连线 %s 在接管后仍然存在", legacy)
 		}
@@ -183,7 +215,7 @@ func TestReferenceMigrationEdgeOnly(t *testing.T) {
 	if edge := migrationEdge(got.Document, "visual-note"); edge == nil || str(edge["managedBy"]) == ManagedBy {
 		t.Fatal("不相关普通连线被删除或接管")
 	}
-	if migrationManagedEdge(got.Document, "scene", "board", "row:shot") == nil {
+	if migrationManagedEdge(got.Document, "scene", "board", "row:shot") == nil || migrationManagedEdge(got.Document, "sketch", "board", "row:shot") == nil {
 		t.Fatal("行引用没有生成托管连线")
 	}
 	if migrationManagedEdge(got.Document, "hero", "board", "storyboard:context") == nil {
@@ -376,7 +408,7 @@ func TestReferenceMigrationUndoRestoresPreimage(t *testing.T) {
 	if migrationSnapshot(t, replay.Document) != migrationSnapshot(t, first.Document) {
 		t.Fatal("恢复前像后无法重建同一份规范化文档")
 	}
-	for _, id := range []string{"hero", "scene", "compare", "note", "board", "product", "frame"} {
+	for _, id := range []string{"hero", "scene", "sketch", "compare", "note", "board", "product", "frame"} {
 		if index(first.Document)[id] == nil {
 			t.Fatalf("规范化删除了节点：%s", id)
 		}
