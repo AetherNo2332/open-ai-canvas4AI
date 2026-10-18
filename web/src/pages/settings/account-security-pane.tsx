@@ -51,7 +51,12 @@ export function AccountSecurityPane() {
             </div>
             <div className="settings-section">
                 <SettingsRow label="用户名" description="登录账号，暂不支持修改" control={<span className="text-sm text-foreground/70">{user?.username || "—"}</span>} controlClassName="max-w-[240px] truncate text-right" />
-                <SettingsRow label="邮箱" description={user?.email ? "可用于找回密码" : "未绑定邮箱，忘记密码时需要联系管理员"} control={<span className="text-sm text-foreground/70">{user?.email || "未绑定"}</span>} controlClassName="max-w-[240px] truncate text-right" />
+                <SettingsRow
+                    label="邮箱"
+                    description={user?.email ? "可用于找回密码" : "未绑定邮箱，忘记密码时需要联系管理员"}
+                    control={<span className="text-sm text-foreground/70">{user?.email || "未绑定"}</span>}
+                    controlClassName="max-w-[240px] truncate text-right"
+                />
             </div>
             <div className="settings-section mt-4">
                 <div className="settings-preference-heading">
@@ -65,7 +70,14 @@ export function AccountSecurityPane() {
                     <Form.Item name="currentPassword" label="当前密码" rules={[{ required: true, message: "请输入当前密码" }]}>
                         <Input.Password autoComplete="current-password" placeholder="输入当前登录密码" />
                     </Form.Item>
-                    <Form.Item name="newPassword" label="新密码" rules={[{ required: true, message: "请输入新密码" }, { min: 8, message: "密码至少 8 位" }]}>
+                    <Form.Item
+                        name="newPassword"
+                        label="新密码"
+                        rules={[
+                            { required: true, message: "请输入新密码" },
+                            { min: 8, message: "密码至少 8 位" },
+                        ]}
+                    >
                         <Input.Password autoComplete="new-password" placeholder="至少 8 位" />
                     </Form.Item>
                     <Form.Item

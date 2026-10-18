@@ -74,7 +74,9 @@ func (s *Service) AdminAgentSchedulerStatus(actor *model.User) ([]model.AgentRun
 
 func (s *Service) PiCapacityReport(owner string, p model.AgentCapacityReport) error {
 	if p.InstanceID != "" || p.BootID != "" || p.SnapshotID != "" {
-		if p.LoadGeneration < 1 { return toolRegistrationRequired() }
+		if p.LoadGeneration < 1 {
+			return toolRegistrationRequired()
+		}
 		if p.InstanceID == "" || p.BootID == "" || p.SnapshotID == "" {
 			return BadAuthRequest("Incomplete worker snapshot identity")
 		}
