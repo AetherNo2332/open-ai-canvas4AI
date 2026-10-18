@@ -10,11 +10,15 @@
 - [x] 更新 HTTP 合同测试并确认新接口测试先失败。
 - [x] 移除桌面专用入口、页面、身份、配置、打包和测试；共享模块改为画布命名。
 - [x] Web 统一使用 IndexedDB journal 和正常登录；任务路径迁到 `/canvas-runtime`，预演写回按实际任务 binding 路由。
-- [ ] 运行前端测试/类型检查/构建、后端测试，记录结果并复核。
-- [ ] 更新文档、版本和日志，恢复用户未提交预演改动，确认上游提交可达且工作区仅剩原有改动。
+- [x] 运行前端测试/类型检查/构建、后端测试，记录结果并复核（后端全量 `app` 超时，见下文限制）。
+- [x] 更新文档、版本和日志，恢复用户未提交预演改动，确认上游提交可达且工作区仅剩原有改动。
 
 **验收：** 无可执行的 Electron/Desktop bootstrap、设置或免登录入口；Web 登录、Agent 和图片导演流程保留；新接口支持命令回执、任务恢复、预演与幂等写回，旧 `/desktop` 接口不再注册。移动端/桌面端响应式样式中的 desktop 术语不属于 Electron 功能。
 
 **验证记录：** Web 全量 2,547 项通过、0 失败；Web TypeScript、改动文件 ESLint、Web 生产构建与 DirectorDesk 自带 TypeScript/生产构建通过。只读代码审查未发现阻断问题。后端导演台/功能开关/画布预演 focused 通过；完整后端测试结果继续记录于本任务最终交付。
 
+后端 `go build ./...` 通过；HTTP（含新路径、身份不信任和未登录 401）、画布 commands/tasks、鉴权、数据库、repository、outbound 等包在全量运行中通过。`internal/app` 在默认 10 分钟累计上限处超时，超时时 `TestBundledWorkflowPluginsControlAvailability` 仅运行 2 秒；此前没有断言失败。不能将此全量运行记为全部通过，本次相关 app focused 已单独通过。
+
 **变更决策：** 上游完整 edit bridge 和 image staging 替代早期本地保存桥及回滚切片；保留历史记录，不重新引入旧实现。灰度以服务端白名单/比例解析为准，删除前端重复的固定 10% 分桶。原有两个未跟踪桌面 Python 缓存已保存在忽略的本地归档目录，未删除用户文件。
+
+原有未提交的 preview helper、测试和 wrapper 接线已恢复，未纳入本次移除提交；恢复后 18 项专项和 TypeScript 检查通过。Web 运行时 HTTP 回归（含未登录 401）通过，保留原 stash 作为恢复备份。本次没有推送、部署、SSH 或容器操作。
