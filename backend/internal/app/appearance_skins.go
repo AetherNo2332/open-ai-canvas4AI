@@ -490,8 +490,16 @@ func validateAppearanceSkinButtonFill(fill AppearanceSkinButtonFill) error {
 }
 
 func validateAppearanceSkinComponents(value AppearanceSkinComponentTokens) error {
-	if value.ButtonRadius != 0 || value.InputRadius != 0 || value.CardRadius != 0 || value.OverlayRadius != 0 || value.MenuRadius != 0 || value.CheckboxRadius != 0 {
-		return BadAuthRequest("构件圆角必须为 0：瑞士设计守则要求直角构件")
+	for _, radius := range []struct {
+		value int
+		label string
+	}{
+		{value.ButtonRadius, "按钮圆角"}, {value.InputRadius, "输入框圆角"}, {value.CardRadius, "卡片圆角"},
+		{value.OverlayRadius, "弹层圆角"}, {value.MenuRadius, "菜单圆角"}, {value.CheckboxRadius, "复选框圆角"},
+	} {
+		if radius.value < 0 || radius.value > 32 {
+			return BadAuthRequest(fmt.Sprintf("%s必须在 0 到 32 之间", radius.label))
+		}
 	}
 	if value.HoverLift != 0 {
 		return BadAuthRequest("悬停抬升必须为 0：悬停不得改变控件几何尺寸")
