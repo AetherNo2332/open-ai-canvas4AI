@@ -60,6 +60,7 @@ import { CanvasPrevisTemplateModal } from "@/components/canvas/previs/canvas-pre
 import { CanvasFileDropOverlay } from "@/components/canvas/canvas-file-drop-overlay";
 import { CanvasUploadModal } from "@/components/canvas/canvas-upload-modal";
 import { CanvasPanoramaConfigModal } from "@/components/canvas/canvas-panorama-config-modal";
+import { CanvasReferenceMigrationPanel } from "@/components/canvas/canvas-reference-migration-panel";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
 import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
@@ -149,6 +150,7 @@ import { useCanvasMediaTools } from "./use-canvas-media-tools";
 import { useCanvasNodeEditor } from "./use-canvas-node-editor";
 import { useCanvasNodeOperations } from "./use-canvas-node-operations";
 import { useCanvasProjectLifecycle } from "./use-canvas-project-lifecycle";
+import { useCanvasReferenceMigration } from "./use-canvas-reference-migration";
 import { useCanvasRenderModel } from "./use-canvas-render-model";
 import { useCanvasSelectionController } from "./use-canvas-selection-controller";
 import { useCanvasShortDrama } from "./use-canvas-short-drama";
@@ -300,6 +302,9 @@ function InfiniteCanvasPage() {
     const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
     const [size, setSize] = useState({ width: 1200, height: 720 });
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+    // 旧画布必须先完成一次引用规范化才能编辑或生成；预览来自命令会话快照。
+    const referenceMigration = useCanvasReferenceMigration(projectId);
+    const referenceMigrationNodeTitles = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node.title])), [nodes]);
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -3173,6 +3178,16 @@ function InfiniteCanvasPage() {
                         />
 
                         <CanvasUploadModal open={uploadModalOpen} onClose={closeUploadModal} onUpload={handleUploadFiles} />
+
+                        <CanvasReferenceMigrationPanel
+                            open={referenceMigration.open}
+                            conflicts={referenceMigration.conflicts}
+                            nodeTitles={referenceMigrationNodeTitles}
+                            applying={referenceMigration.applying}
+                            error={referenceMigration.error}
+                            onCancel={referenceMigration.dismiss}
+                            onApply={(choices) => void referenceMigration.apply(choices)}
+                        />
 
                         <input ref={imageInputRef} type="file" accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />
 

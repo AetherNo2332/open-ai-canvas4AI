@@ -24,6 +24,7 @@ import { buildStoryboardAssetCatalog } from "@/lib/canvas/canvas-storyboard-asse
 import { resolveStoryboardGenerationContext } from "@/lib/canvas/canvas-storyboard-context";
 import { storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
 import { assertStoryboardGenerationReady, withStoryboardOutputDraft } from "@/lib/canvas/canvas-reference-edits";
+import { assertCanvasReferenceMigrationReady } from "@/lib/canvas/canvas-reference-migration";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import type { Skill } from "@/services/api/skills";
@@ -196,6 +197,8 @@ export function useCanvasStoryboard({
             };
             const managed = Boolean(logicalModelIDForConfig(generationConfig) || resolveModelRequestConfig(generationConfig, generationConfig.model).channelId);
             const commandMode=Boolean(useCanvasSessionStore.getState().scope);
+            // 旧画布必须先完成一次引用规范化，未规范化时主机也会拒绝生成。
+            if(commandMode)assertCanvasReferenceMigrationReady(useCanvasSessionStore.getState().states[projectId]?.acknowledged?.referenceMigration);
             const task = commandMode ? await (async()=>{
                 const confirmed=await confirmGenerationSubmission(1,generationConfig.model,`专业拆镜${(scriptNode.metadata?.storyboard?.rows||[]).length?'（替换现有镜头，保留原媒体）':''}`);
                 if(!confirmed)return undefined;
