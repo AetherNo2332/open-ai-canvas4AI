@@ -239,4 +239,3 @@ expect(submitCount).toBe(0); // 所需首帧未就绪
 需求覆盖：评估中的五个缺口对应 Task 2、3、4、5、8；表级引用与输出语义对应 Task 3–4；权限、费用和冻结输入对应 Task 4、6；复制、撤销、并发对应 Task 3、6；历史规范化对应 Task 7。Review Focus 的五类风险均有任务及具名用例。
 
 边界检查：references 只依赖 capability／contract／connection，app 是组合入口；普通节点与分镜字段各自只有一个权威源；任务绑定复用 ConsumerJSON；新迁移命令不暴露给 Agent。计划未包含运行时产品代码、数据库／容器修改、收费生成或生产部署。
-

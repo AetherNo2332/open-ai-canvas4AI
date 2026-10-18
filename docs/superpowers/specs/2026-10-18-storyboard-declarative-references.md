@@ -106,4 +106,3 @@ Agent 编辑一行可以沿用现有工具和字段：
 建议先收敛分镜链路，再扩展为所有节点的统一输入合同。一般图片／视频／音频生成已有 referenceNodeIds，可沿用；批量表有 inputNodeIds 和 textNodeIds，也有基础。其他普通节点尚不能仅靠取消连接工具完成替代。分镜在 batch-table 中还有 storyboardRows 的表示，后续接管时应通过标准 StoryboardRow 适配，避免按列名重复推断业务关系。[批量表适配](https://github.com/AetherNo2332/open-ai-canvas4AI/blob/a6495805efc19101b2a8aaaefaded4722a5e7766/web/src/lib/canvas/canvas-batch-storyboard.ts#L81-L119)
 
 实施建议是保留画布图和连接领域，将维护连接的责任集中到画布服务。这样 Agent 可直接描述创作关系，用户也能继续在画布上看到和编辑这些关系。
-
