@@ -236,7 +236,7 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 		return prepareCloudAgentStoryboardReferenceEdit(repo, userID, canvasID, args)
 	}
 	if args.Action != "append" && args.Action != "update" && args.Action != "remove" {
-		return nil, BadAuthRequest("分镜操作必须是 append、update 或 remove")
+		return nil, BadAuthRequest("分镜操作必须是 append、update、remove、set_references、bind_output 或 unbind_output")
 	}
 	if err := validateCloudAgentID(args.NodeID, "分镜节点ID", 80); err != nil {
 		return nil, err

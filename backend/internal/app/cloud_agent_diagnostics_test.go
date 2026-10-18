@@ -14,7 +14,7 @@ func TestCloudAgentCanvasArgumentFeedbackIdentifiesFailingOperation(t *testing.T
 		{`{"type":"add_node","id":"note","nodeType":"text","snapshotHash":"misplaced"}`, "ops[0].snapshotHash", "unexpected_field"},
 		{`{"type":"add_node","nodeType":"text"}`, "ops[0].id", "required"},
 		{`{"type":"add_node","id":"note"}`, "ops[0].nodeType", "required"},
-		{`{"type":"connect_nodes","id":"edge","toNodeId":"target"}`, "ops[0].fromNodeId", "required"},
+		{`{"type":"connect_nodes","id":"edge","toNodeId":"target"}`, "ops[0].type", "connection_ops_disabled"},
 		{`{"type":"update_node","id":"note"}`, "ops[0].patch", "required"},
 		{`{"type":"add_node","id":"note","nodeType":"text","x":"private-sentinel"}`, "ops[0].x", "type_mismatch"},
 		{`{"type":"add_node","id":"note","nodeType":"text","private-sentinel":"private-sentinel"}`, "ops[0]", "unexpected_field"},

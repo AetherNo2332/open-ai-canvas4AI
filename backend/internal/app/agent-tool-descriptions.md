@@ -20,7 +20,7 @@
 
 ## canvas_list_node_types
 
-查询可创建节点、连接约束和可编辑字段；nodeType 为空返回摘要，传具体类型返回完整字段 schema。编辑复杂字段前先精读合同，不猜节点类型或字段。
+查询可创建节点、引用输入约束和可编辑字段；nodeType 为空返回摘要，传具体类型返回完整字段 schema。编辑复杂字段前先精读合同，不猜节点类型或字段。
 
 ## canvas_get_state
 
@@ -103,11 +103,11 @@
 
 ## canvas_create_storyboard
 
-创建结构化分镜脚本，适用于多镜头、连续性与逐镜维护。先读画布并传 snapshotHash；rows 是对象数组，每行需正数 durationSeconds 及非空 plotDescription 或 videoMotionPrompt，如 [{"durationSeconds":5,"plotDescription":"人物走入房间"}]。不能用 content 或 Markdown 替代 rows，写入遵循审批模式。
+创建结构化分镜脚本，适用于多镜头、连续性与逐镜维护。先读画布并传 snapshotHash；rows 是对象数组，每行需正数 durationSeconds 及非空 plotDescription 或 videoMotionPrompt，如 [{"durationSeconds":5,"plotDescription":"人物走入房间"}]。referenceNodeIds 可选，声明共享引用输入。不能用 content 或 Markdown 替代 rows，写入遵循审批模式。
 
 ## canvas_edit_storyboard
 
-先read获取 nodeId/snapshotHash/真实rowId。append 给patch（正数durationSeconds及剧情或运动描述），不传rowId；update 给rowId+部分patch；remove 只给rowId。可写字段以节点合同为准；assetBindings仅引用当前画布节点，不写输出身份、任务状态、资源URL或任意metadata。
+先read获取 nodeId/snapshotHash/真实rowId。append 给patch（正数durationSeconds及剧情或运动描述），不传rowId；update 给rowId+部分patch；remove 只给rowId。set_references 给 referenceNodeIds 声明共享引用（[] 清空）；bind_output 给 rowId+outputMode+outputNodeId；unbind_output 给 rowId+outputMode 解除归属。assetBindings仅引用当前画布节点，不写输出身份、任务状态、资源URL或任意metadata，也不手工建边。
 
 ## canvas_edit_batch_table
 
@@ -115,15 +115,15 @@
 
 ## canvas_apply_ops
 
-基于最新 snapshotHash 原子编辑画布，每批最多20项，各项需 type+id。add_node 给 nodeType，可给 title/content/x/y；update_node 给 patch，复杂字段先查 canvas_list_node_types。delete_node 清理节点及引用，保留素材；duplicate_node 给 sourceNodeId，id 为新ID，复制容器成员与内部关系并清任务身份。connect_nodes/update_connection 给 fromNodeId/toNodeId，可给端口；delete_connection 的 id 是连线ID。set_parent 给 parentId，空串解除分组。replace_text 给 match/replacement，需唯一匹配；reorder_nodes/nodeIds、reorder_rows/rowIds 各含全部ID一次。素材替换用 canvas_bind_asset，绘图用 canvas_edit_drawing，生成用 generate_media。不写任意 metadata、任务状态或 URL；快照冲突后重读。
+基于最新 snapshotHash 原子编辑画布，每批最多20项，各项需 type+id。add_node 给 nodeType，可给 title/content/x/y；update_node 给 patch，复杂字段先查 canvas_list_node_types。delete_node 清理节点及引用，保留素材；duplicate_node 给 sourceNodeId，id 为新ID，复制容器成员与内部关系并清任务身份。set_parent 给 parentId，空串解除分组。replace_text 给 match/replacement，需唯一匹配；reorder_nodes/nodeIds、reorder_rows/rowIds 各含全部ID一次。引用写字段：媒体草稿 generationSpec.referenceBindings，其他输入节点 inputBindings，分镜用 canvas_edit_storyboard。没有连接/改接/断线操作，旧边调用会被拒。素材替换用 canvas_bind_asset，绘图用 canvas_edit_drawing，生成用 generate_media。不写任意 metadata、托管标记、任务状态或 URL；快照冲突后重读。
 
 ## canvas_arrange_nodes
 
-整理画布节点位置：只改坐标，不改内容、不建连线、不增删节点，先读画布并传 snapshotHash。mode 省略即 auto（有连线按依赖分层，否则按媒体类型分区）；groups 为横向分带（label 展示名，可覆盖整组 mode）。nodeIds 省略即整理全部可整理节点（跳过锁定、容器、批次子节点与已归属背板者）。align 对齐/等距，dryRun 只预演；一次最多 50 个节点，单个节点用 update_node 的 x/y。
+整理画布节点位置：只改坐标，不改内容、不改引用、不增删节点，先读画布并传 snapshotHash。mode 省略即 auto（有引用关系按依赖分层，否则按媒体类型分区）；groups 为横向分带（label 展示名，可覆盖整组 mode）。nodeIds 省略即整理全部可整理节点（跳过锁定、容器、批次子节点与已归属背板者）。align 对齐/等距，dryRun 只预演；一次最多 50 个节点，单个节点用 update_node 的 x/y。
 
 ## generate_media
 
-提交媒体生成：准备草稿和引用连线。request_approval 需独立审批，auto 经服务端模型、能力、价格、预算与资源准入后直接提交收费任务。仅建节点、改提示词或连线用 canvas_apply_ops。生成前读画布并按实际参考筛选模型目录，参数须符合返回的时长、画幅和音频能力。可续用空闲且无任务、无产物的草稿；他人运行的草稿需其已结束且清理完成。已绑定任务或已有产物的节点不可覆盖，任务状态与错误从 generation 或 task_get 读取。sourceNodeId 是文本输入，referenceNodeIds 是媒体输入，referenceTransientIds 只接受标注工具返回的临时引用。准入错误按 reason 修正；已提交任务失败应告知用户，重新生成需用户明确要求并重新审批。
+提交媒体生成：准备草稿并声明引用。request_approval 需独立审批，auto 经服务端模型、能力、价格、预算与资源准入后直接提交收费任务。只建节点、改提示词或声明引用用 canvas_apply_ops。分镜模式给 storyboardNodeId+storyboardRowId，输入从行读取，也不手工建边。生成前读画布并按实际参考筛选模型目录，参数须符合返回的时长、画幅和音频能力。可续用空闲且无任务、无产物的草稿；他人运行的草稿需其已结束且清理完成。已绑定任务或已有产物的节点不可覆盖，任务状态与错误从 generation 或 task_get 读取。sourceNodeId 是文本输入，referenceNodeIds 是媒体输入，referenceTransientIds 只接受标注工具返回的临时引用。准入错误按 reason 修正；已提交任务失败应告知用户，重新生成需用户明确要求并重新审批。
 ## parameter_001
 
 短标识，如 1
@@ -320,10 +320,6 @@
 
 最近一次分镜读取返回的 snapshotHash
 
-## parameter_050
-
-真实分镜脚本节点ID
-
 ## parameter_051
 
 update/remove 使用 canvas_read_storyboard 返回的真实 rowId；append 留空
@@ -331,10 +327,6 @@ update/remove 使用 canvas_read_storyboard 返回的真实 rowId；append 留�
 ## parameter_052
 
 最近一次批量创作表读取返回的 snapshotHash
-
-## parameter_053
-
-真实批量创作表节点ID
 
 ## parameter_054
 
@@ -344,13 +336,9 @@ update/remove 使用 canvas_read_batch_table 返回的真实 rowId；其他操�
 
 set_global_prompt 使用；非空时覆盖各任务提示词，空字符串清除全局提示词
 
-## parameter_056
-
-必填的操作类型；新增节点必须传 add_node，nodeType 不能代替本字段
-
 ## parameter_057
 
-节点或连线唯一ID
+节点唯一ID
 
 ## parameter_058
 
@@ -359,14 +347,6 @@ set_global_prompt 使用；非空时覆盖各任务提示词，空字符串清�
 ## parameter_059
 
 新建节点的文本或待编辑提示词；update_node 使用 patch.content。正文长度按节点合同限制，媒体节点的内容参数仅修改草稿提示词，已有媒体替换用 canvas_bind_asset。
-
-## parameter_060
-
-连线来源节点ID
-
-## parameter_061
-
-连线目标节点ID
 
 ## parameter_062
 
@@ -407,14 +387,6 @@ true 只预演不写入
 ## parameter_071
 
 旧式模型选择：仅未使用 selectionId 时传 logicalModelId 字符串，与渠道选择互斥
-
-## parameter_072
-
-旧式渠道选择：未使用 selectionId/logicalModelId 时与 channelModelKey 成对传入
-
-## parameter_073
-
-旧式渠道模型键：与 channelId 成对传入，与 selectionId/logicalModelId 互斥
 
 ## parameter_074
 

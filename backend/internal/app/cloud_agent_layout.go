@@ -598,9 +598,10 @@ func cloudAgentApplyArrangePositions(plan *cloudAgentArrangePlan) error {
 	return nil
 }
 
-// cloudAgentArrangeAddNodePosition 给"没给坐标"的新节点找一个有序的落位：
-// 优先贴着本批建立连线的对端（生成输入在左、输出在右），否则按泳道追加到同类节点之后。
-func cloudAgentArrangeAddNodePosition(doc map[string]any, pending []layout.Node, op agentCanvasOp, ops []agentCanvasOp, hint *layout.Position) (layout.Position, bool) {
+// cloudAgentArrangeAddNodePosition 给"没给坐标"的新节点找一个有序的落位：优先采用
+// 模型显式给出的单个坐标轴，否则按泳道追加到同类节点之后。连线不再由 Agent 创建，
+// 因此这里不再按同批连线推断相对位置。
+func cloudAgentArrangeAddNodePosition(doc map[string]any, pending []layout.Node, op agentCanvasOp, hint *layout.Position) (layout.Position, bool) {
 	lane, supported := cloudAgentLayoutLane(op.NodeType)
 	if !supported {
 		return layout.Position{}, false
@@ -608,27 +609,7 @@ func cloudAgentArrangeAddNodePosition(doc map[string]any, pending []layout.Node,
 	width, height := cloudAgentAddedNodeSize(op.NodeType)
 	occupied := append([]layout.Node{}, cloudAgentLayoutNodes(doc)...)
 	occupied = append(occupied, pending...)
-
-	preferred := hint
-	for _, candidate := range ops {
-		if candidate.Type != "connect_nodes" {
-			continue
-		}
-		if preferred != nil {
-			break
-		}
-		switch {
-		case candidate.ToNodeID == op.ID:
-			if source, ok := findLayoutNode(occupied, candidate.FromNodeID); ok {
-				preferred = &layout.Position{X: source.X + source.Width + layout.PlacementGap, Y: source.Y}
-			}
-		case candidate.FromNodeID == op.ID:
-			if target, ok := findLayoutNode(occupied, candidate.ToNodeID); ok {
-				preferred = &layout.Position{X: target.X - width - layout.PlacementGap, Y: target.Y}
-			}
-		}
-	}
-	return layout.FreeSlot(width, height, lane, occupied, preferred, layout.PlacementGap), true
+	return layout.FreeSlot(width, height, lane, occupied, hint, layout.PlacementGap), true
 }
 
 func findLayoutNode(nodes []layout.Node, id string) (layout.Node, bool) {

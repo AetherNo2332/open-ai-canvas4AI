@@ -48,53 +48,6 @@ func applyCloudAgentExtendedOp(nodes, edges []map[string]any, op agentCanvasOp) 
 		}
 		item.Summary = fmt.Sprintf("删除《%s》及其关联引用，保留素材库原文件", item.NodeTitle)
 		return next, kept, item, nil
-	case "delete_connection":
-		edgeIndex := cloudAgentNodeIndex(edges, op.ID)
-		if edgeIndex < 0 {
-			return fail("删除连线不存在")
-		}
-		item.NodeID = stringValue(edges[edgeIndex]["toNodeId"])
-		item.TargetNodeID = stringValue(edges[edgeIndex]["fromNodeId"])
-		removed := edges[edgeIndex]
-		next := append(edges[:edgeIndex:edgeIndex], edges[edgeIndex+1:]...)
-		cloudAgentRemoveEdgeReference(nodes, removed, next)
-		item.Summary = "移除引用连线"
-		return nodes, next, item, nil
-	case "update_connection":
-		edgeIndex := cloudAgentNodeIndex(edges, op.ID)
-		if edgeIndex < 0 {
-			return fail("修改连线不存在")
-		}
-		other := append([]map[string]any{}, edges[:edgeIndex]...)
-		other = append(other, edges[edgeIndex+1:]...)
-		if err := validateCloudAgentConnection(nodes, op.FromNodeID, op.ToNodeID, other); err != nil {
-			return nodes, edges, item, err
-		}
-		old := edges[edgeIndex]
-		edge := map[string]any{"id": op.ID, "fromNodeId": op.FromNodeID, "toNodeId": op.ToNodeID}
-		if op.FromHandleID != "" {
-			edge["fromHandleId"] = op.FromHandleID
-		}
-		if op.ToHandleID != "" {
-			edge["toHandleId"] = op.ToHandleID
-		}
-		if err := cloudAgentValidateEdgeHandles(nodes, edge); err != nil {
-			return nodes, edges, item, err
-		}
-		for _, existing := range other {
-			if stringValue(existing["fromNodeId"]) == op.FromNodeID && stringValue(existing["toNodeId"]) == op.ToNodeID && stringValue(existing["fromHandleId"]) == op.FromHandleID && stringValue(existing["toHandleId"]) == op.ToHandleID {
-				return fail("连线重复")
-			}
-		}
-		edges[edgeIndex] = edge
-		cloudAgentRemoveEdgeReference(nodes, old, edges)
-		if err := cloudAgentAttachStoryboardEdge(nodes, edge); err != nil {
-			return nodes, edges, item, err
-		}
-		item.NodeID = op.FromNodeID
-		item.TargetNodeID = op.ToNodeID
-		item.Summary = "修改引用连线端点"
-		return nodes, edges, item, nil
 	case "duplicate_node":
 		return cloudAgentCopyGraph(nodes, edges, op)
 	case "set_parent":
@@ -227,7 +180,9 @@ func cloudAgentCleanReferenceObject(object map[string]any, removed map[string]bo
 					continue
 				}
 				if entryMap, ok := entry.(map[string]any); ok {
-					if (key == "assetBindings" || key == "referenceBindings") && removed[stringValue(entryMap["nodeId"])] {
+					// Every declared binding array is dropped as a whole entry: leaving the
+					// entry behind with a dangling nodeId keeps a deleted node referenced.
+					if (key == "assetBindings" || key == "referenceBindings" || key == "inputBindings") && removed[stringValue(entryMap["nodeId"])] {
 						continue
 					}
 					cloudAgentCleanReferenceObject(entryMap, removed)
@@ -260,68 +215,4 @@ func cloudAgentReorderItems(items []map[string]any, ids []string) ([]map[string]
 		delete(byID, id)
 	}
 	return result, nil
-}
-func cloudAgentRemoveEdgeReference(nodes []map[string]any, removed map[string]any, edges []map[string]any) {
-	from, to := stringValue(removed["fromNodeId"]), stringValue(removed["toNodeId"])
-	for _, edge := range edges {
-		if stringValue(edge["fromNodeId"]) == from && stringValue(edge["toNodeId"]) == to {
-			return
-		}
-	}
-	index := cloudAgentNodeIndex(nodes, to)
-	if index < 0 {
-		return
-	}
-	meta := cloudAgentNodeMetadata(nodes[index])
-	refs := cloudAgentStrings(meta["referenceNodeIds"])
-	next := []any{}
-	for _, id := range refs {
-		if id != from {
-			next = append(next, id)
-		}
-	}
-	if _, exists := meta["referenceNodeIds"]; exists {
-		meta["referenceNodeIds"] = next
-	}
-}
-func cloudAgentValidateEdgeHandles(nodes []map[string]any, edge map[string]any) error {
-	for _, end := range []string{"from", "to"} {
-		handle := stringValue(edge[end+"HandleId"])
-		if handle == "" {
-			continue
-		}
-		index := cloudAgentNodeIndex(nodes, stringValue(edge[end+"NodeId"]))
-		if index < 0 {
-			return BadAuthRequest("连线节点不存在")
-		}
-		if strings.HasPrefix(handle, "row:") {
-			board, _ := cloudAgentNodeMetadata(nodes[index])["storyboard"].(map[string]any)
-			if board == nil || cloudAgentNodeIndex(creationMaps(board["rows"]), strings.TrimPrefix(handle, "row:")) < 0 {
-				return BadAuthRequest("连线分镜行端口不存在")
-			}
-		} else if strings.HasPrefix(handle, "batch-reference:") || strings.HasPrefix(handle, "batch-text:") {
-			if end != "to" || stringValue(nodes[index]["type"]) != "batch-table" {
-				return BadAuthRequest("批量表端口只用于目标输入")
-			}
-			table, _ := cloudAgentNodeMetadata(nodes[index])["batchTable"].(map[string]any)
-			prefix, key := "batch-reference:", "referenceColumns"
-			if strings.HasPrefix(handle, "batch-text:") {
-				prefix, key = "batch-text:", "textColumns"
-			}
-			columns := creationMaps(table[key])
-			if len(columns) == 0 && key == "referenceColumns" {
-				columns = []map[string]any{{"id": "reference-1"}, {"id": "reference-2"}, {"id": "reference-3"}}
-			}
-			if cloudAgentNodeIndex(columns, strings.TrimPrefix(handle, prefix)) < 0 {
-				return BadAuthRequest("批量表输入列端口不存在")
-			}
-		} else if handle == "storyboard:context" {
-			if stringValue(nodes[index]["type"]) != "script" {
-				return BadAuthRequest("上下文端口只用于分镜节点")
-			}
-		} else if handle != "source" && handle != "target" {
-			return BadAuthRequest("连线端口不受支持")
-		}
-	}
-	return nil
 }

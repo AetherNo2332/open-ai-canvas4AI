@@ -82,13 +82,26 @@ func TestAgentParityParentRejectsCycleAndLockedContentRemainsEditable(t *testing
 	}
 }
 func TestAgentParityDisconnectAndReorderRows(t *testing.T) {
-	doc := parityDocument(t, `{"nodes":[{"id":"text","type":"text","metadata":{"content":"draft"}},{"id":"image","type":"image"},{"id":"script","type":"script","metadata":{"storyboard":{"rows":[{"id":"r1"},{"id":"r2"}]}}}],"connections":[{"id":"edge","fromNodeId":"text","toNodeId":"image"}]}`)
-	if err := parityOps(t, doc, `[{"type":"delete_connection","id":"edge"},{"type":"reorder_rows","id":"script","rowIds":["r2","r1"]},{"type":"reorder_nodes","id":"order","nodeIds":["script","image","text"]}]`); err != nil {
+	raw := `{"nodes":[{"id":"text","type":"text","metadata":{"content":"draft"}},{"id":"image","type":"image"},{"id":"script","type":"script","metadata":{"storyboard":{"rows":[{"id":"r1"},{"id":"r2"}]}}}],"connections":[{"id":"edge","fromNodeId":"text","toNodeId":"image"}]}`
+	// 关闭连线操作后，断边不再由 Agent 执行：同批里的合法改名和排序必须整批回滚。
+	mixed := parityDocument(t, raw)
+	beforeMixed, _ := json.Marshal(mixed)
+	err := parityOps(t, mixed, `[{"type":"delete_connection","id":"edge"},{"type":"reorder_rows","id":"script","rowIds":["r2","r1"]},{"type":"reorder_nodes","id":"order","nodeIds":["script","image","text"]}]`)
+	if err == nil || !strings.Contains(err.Error(), "connection_ops_disabled") {
+		t.Fatalf("旧断边操作未被拒绝：%v", err)
+	}
+	afterMixed, _ := json.Marshal(mixed)
+	if string(beforeMixed) != string(afterMixed) {
+		t.Fatal("混有旧边操作的批次改写了画布")
+	}
+
+	doc := parityDocument(t, raw)
+	if err := parityOps(t, doc, `[{"type":"reorder_rows","id":"script","rowIds":["r2","r1"]},{"type":"reorder_nodes","id":"order","nodeIds":["script","image","text"]}]`); err != nil {
 		t.Fatal(err)
 	}
 	nodes := creationMaps(doc["nodes"])
-	if nodes[0]["id"] != "script" || len(creationMaps(doc["connections"])) != 0 {
-		t.Fatal("graph order/disconnect failed")
+	if nodes[0]["id"] != "script" || len(creationMaps(doc["connections"])) != 1 {
+		t.Fatal("graph order or existing connections changed")
 	}
 	board := nodes[0]["metadata"].(map[string]any)["storyboard"].(map[string]any)
 	if creationMaps(board["rows"])[0]["id"] != "r2" {

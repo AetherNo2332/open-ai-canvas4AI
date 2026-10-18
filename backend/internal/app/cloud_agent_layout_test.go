@@ -245,8 +245,9 @@ func TestCloudAgentArrangeNodesRejectsStaleSnapshotAndTooManyNodes(t *testing.T)
 }
 
 // 已恢复（本轮移植）：TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered。
-// 它断言"add_node 不带坐标时由服务端按泳道自动落位（作为生成输入时排到目标左侧）"，
-// 与 agentCanvasOp.X/Y 的指针语义一起回到树里（不传坐标 ≠ 坐标 0）。
+// 它断言"add_node 不带坐标时由服务端按泳道自动落位"，与 agentCanvasOp.X/Y 的指针语义
+// 一起回到树里（不传坐标 ≠ 坐标 0）。Task 8 关闭 Agent 连线后，落位不再按同批连线推断
+// 相对位置：模型要固定关系就显式给坐标，或声明引用字段由服务端派生连接。
 func TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered(t *testing.T) {
 	nodes := []map[string]any{
 		layoutNode("text-1", "text", 0, 0),
@@ -268,22 +269,6 @@ func TestCloudAgentAddedNodeWithoutCoordinatesLandsOrdered(t *testing.T) {
 	}
 	if position.X == 0 && position.Y == 400 {
 		t.Fatalf("新增节点与已有图片重叠：%+v", position)
-	}
-
-	// 带连线：新节点作为生成输入时放在目标左侧。
-	ops = []agentCanvasOp{
-		{Type: "add_node", ID: "text-input", NodeType: "text", Title: stringPtr("输入")},
-		{Type: "connect_nodes", ID: "edge-new", FromNodeID: "text-input", ToNodeID: "image-1"},
-	}
-	if _, err := applyCloudAgentCanvasPlan(doc, ops); err != nil {
-		t.Fatal(err)
-	}
-	input := positionOf(t, nodeByID(t, doc, "text-input"))
-	if input.X >= 0 {
-		t.Fatalf("作为生成输入的新节点应排到目标左侧：%+v", input)
-	}
-	if input.Y != 400 {
-		t.Fatalf("新节点应与目标同高：%+v", input)
 	}
 
 	// 显式坐标优先。

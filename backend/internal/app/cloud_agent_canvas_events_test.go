@@ -187,14 +187,34 @@ func TestAgentParityDeletionEmitsCompleteCanvasDelta(t *testing.T) {
 }
 
 func TestCloudAgentCanvasOperationTraceSharesToolCallID(t *testing.T) {
-	s, _, args := agentMediaFixture(t)
+	s, db, args := agentMediaFixture(t)
+	canvas, err := s.repo.CanvasProjectForUser("user", "agent-canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 已切换到引用字段合同的文档才会按字段派生连接；这条用例验证派生结果同样进入轨迹。
+	doc["referenceFieldsVersion"] = 1
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Model(canvas).Update("payload_json", string(encoded)).Error; err != nil {
+		t.Fatal(err)
+	}
+	args.SnapshotHash = cloudAgentCanvasHash(doc)
 	run, state := agentMediaRun(t, s, args, "auto")
 	call := cloudAgentCall{ID: "canvas-call"}
 	call.Function.Name = "canvas_apply_ops"
 	raw, _ := json.Marshal(map[string]any{"snapshotHash": args.SnapshotHash, "ops": []map[string]any{
 		{"type": "update_node", "id": "cat", "patch": map[string]any{"title": "叮当猫飞行参考", "content": "下一版参考图提示词"}},
-		{"type": "add_node", "id": "trace-video", "nodeType": "video", "title": "视频草稿"},
-		{"type": "connect_nodes", "id": "trace-reference", "fromNodeId": "cat", "toNodeId": "trace-video"},
+		{"type": "add_node", "id": "trace-compare", "nodeType": "compare", "title": "对比草稿"},
+		{"type": "update_node", "id": "trace-compare", "patch": map[string]any{"inputBindings": []map[string]any{
+			{"id": "node:cat", "nodeId": "cat", "mediaType": "image", "role": "reference", "order": float64(0), "resolution": "latest"},
+		}}},
 	}})
 	call.Function.Arguments = string(raw)
 	state.Calls = []cloudAgentCall{call}
@@ -229,13 +249,14 @@ func TestCloudAgentCanvasOperationTraceSharesToolCallID(t *testing.T) {
 	if len(fieldValues) != 2 || fieldValues[0] != "节点名称" || fieldValues[1] != "下一版提示词" {
 		t.Fatalf("canvas operation trace lost updated fields: %+v", updated)
 	}
-	created := byActionAndNode["created:trace-video"]
-	if created == nil || created["title"] != "视频草稿" || created["nodeType"] != "video" {
+	created := byActionAndNode["created:trace-compare"]
+	if created == nil || created["title"] != "对比草稿" || created["nodeType"] != "compare" {
 		t.Fatalf("canvas operation trace lost created node identity: %+v", actions)
 	}
+	// 字段声明派生出的连接也必须出现在轨迹里：端点身份取自派生结果，不是模型传的边。
 	referenced := byActionAndNode["referenced:cat"]
-	if referenced == nil || referenced["title"] != "叮当猫飞行参考" || referenced["targetNodeId"] != "trace-video" || referenced["targetTitle"] != "视频草稿" || referenced["targetNodeType"] != "video" {
-		t.Fatalf("canvas operation trace lost reference endpoints: %+v", actions)
+	if referenced == nil || referenced["title"] != "叮当猫飞行参考" || referenced["targetNodeId"] != "trace-compare" || referenced["targetTitle"] != "对比草稿" || referenced["targetNodeType"] != "compare" {
+		t.Fatalf("canvas operation trace lost derived reference endpoints: %+v", actions)
 	}
 }
 

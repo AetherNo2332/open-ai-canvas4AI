@@ -836,7 +836,7 @@ func TestCloudAgentStoryboardPrecisionAndPermission(t *testing.T) {
 	}
 }
 
-func TestCloudAgentCanvasCreatesTypedNodesAndEdges(t *testing.T) {
+func TestCloudAgentCanvasCreatesTypedNodes(t *testing.T) {
 	s, _, a := agentMediaFixture(t)
 	policy, err := s.RuntimePolicy()
 	if err != nil {
@@ -846,7 +846,6 @@ func TestCloudAgentCanvasCreatesTypedNodesAndEdges(t *testing.T) {
 	args := map[string]any{"snapshotHash": a.SnapshotHash, "ops": []map[string]any{
 		{"type": "add_node", "id": "blank-video", "nodeType": "video", "title": "镜头占位", "content": "生成提示词"},
 		{"type": "add_node", "id": "group", "nodeType": "frame", "title": "镜头组"},
-		{"type": "connect_nodes", "id": "ref-edge", "fromNodeId": "cat", "toNodeId": "blank-video"},
 	}}
 	raw, _ := json.Marshal(args)
 	call.Function.Arguments = string(raw)
@@ -857,8 +856,12 @@ func TestCloudAgentCanvasCreatesTypedNodesAndEdges(t *testing.T) {
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	nodes, _ := creationObjects(doc["nodes"])
 	meta := nodes["blank-video"]["metadata"].(map[string]any)
-	if meta["content"] != "" || meta["prompt"] != "生成提示词" || meta["composerContent"] != "生成提示词" || len(creationMaps(doc["connections"])) != 1 {
-		t.Fatal("typed nodes/edges missing")
+	if meta["content"] != "" || meta["prompt"] != "生成提示词" || meta["composerContent"] != "生成提示词" {
+		t.Fatal("typed nodes missing")
+	}
+	// 关闭连线操作后，画布操作本身不再产生任何边；引用写入由字段协调派生。
+	if len(creationMaps(doc["connections"])) != 0 {
+		t.Fatal("canvas operation created connections without a declared reference")
 	}
 }
 

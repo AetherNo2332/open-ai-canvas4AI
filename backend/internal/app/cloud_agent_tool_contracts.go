@@ -1,5 +1,57 @@
 package app
 
+import "fmt"
+
+// cloudAgentLegacyConnectionOperations 是模型可见合同里已经停用的画布操作。连线改由
+// 服务端按引用字段派生，这些名字只剩一个用途：识别并拒绝旧载荷（关闭前生成的检查点、
+// 关闭前记录的审批、手写调用）。删除它们之前必须先确认没有任何写入路径接受它们。
+var cloudAgentLegacyConnectionOperations = []string{"connect_nodes", "update_connection", "delete_connection"}
+
+// cloudAgentReferenceReservedPatchFields 是通用 metadata patch 永远不能写的字段：
+// connections 是服务端按字段派生的结果，托管归属标记只由引用协调器写入。
+var cloudAgentReferenceReservedPatchFields = []string{"connections", "metadata", "managedBy", "referenceOwnerNodeId", "referenceBindingId"}
+
+func cloudAgentConnectionOperationDisabled(opType string) bool {
+	for _, name := range cloudAgentLegacyConnectionOperations {
+		if name == opType {
+			return true
+		}
+	}
+	return false
+}
+
+func cloudAgentConnectionOpsDisabledError(path, opType string) error {
+	return cloudAgentFieldError(path+".type", "connection_ops_disabled", fmt.Sprintf(
+		"画布参数 %s.type=%s 已停用（connection_ops_disabled）：连线由服务端按引用字段派生，请改用 generationSpec.referenceBindings、metadata.inputBindings、分镜行 assetBindings，或 canvas_edit_storyboard 的 set_references／bind_output／unbind_output",
+		path, opType))
+}
+
+// validateCloudAgentReferenceOperations 是关闭 Agent 连线操作后的统一守卫：审批预览与
+// 真实执行入口都调用它，既拒绝旧边操作，也拒绝借通用 patch 直接写 connections 或
+// 托管归属标记。这里只回答"这份操作列表是否符合引用合同"，画布状态校验仍在准入阶段。
+func validateCloudAgentReferenceOperations(ops []agentCanvasOp) error {
+	for index, op := range ops {
+		path := fmt.Sprintf("ops[%d]", index)
+		if cloudAgentConnectionOperationDisabled(op.Type) {
+			return cloudAgentConnectionOpsDisabledError(path, op.Type)
+		}
+		if op.FromNodeID != "" || op.ToNodeID != "" || op.FromHandleID != "" || op.ToHandleID != "" {
+			return cloudAgentFieldError(path, "unexpected_field", fmt.Sprintf(
+				"画布参数 %s 不再接受连线端点或端口字段（fromNodeId／toNodeId／fromHandleId／toHandleId）：引用请写入引用字段，端口由服务端派生", path))
+		}
+		if op.Type != "update_node" {
+			continue
+		}
+		for _, key := range cloudAgentReferenceReservedPatchFields {
+			if _, exists := op.Patch[key]; exists {
+				return cloudAgentFieldError(path+".patch."+key, "reference_field_reserved", fmt.Sprintf(
+					"画布参数 %s.patch.%s 不能由 Agent 写入：connections 与托管归属标记由服务端维护", path, key))
+			}
+		}
+	}
+	return nil
+}
+
 // Keep conditional input contracts beside the shared tool catalog. Both Go's
 // preflight and Pi validate these exact JSON Schema branches.
 func cloudAgentToolParameterContracts(name string, schema map[string]any) {
@@ -29,10 +81,15 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 			{"required": []string{"mode", "storyboardNodeId", "storyboardRowId"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")},
 		}
 	case "canvas_edit_storyboard":
+		// append/update/remove 维护镜头行；set_references 与 bind_output／unbind_output 是
+		// 关闭 Agent 连线操作后的语义替代：共享引用和产物归属只通过字段声明。
 		schema["oneOf"] = []map[string]any{
-			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId"),
-			cloudAgentActionBranch("update", []string{"rowId", "patch"}, nil),
-			cloudAgentActionBranch("remove", []string{"rowId"}, nil, "patch"),
+			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId", "referenceNodeIds", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("update", []string{"rowId", "patch"}, nil, "referenceNodeIds", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("remove", []string{"rowId"}, nil, "patch", "referenceNodeIds", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("set_references", []string{"referenceNodeIds"}, nil, "rowId", "patch", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "patch", "referenceNodeIds"),
+			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "patch", "referenceNodeIds", "outputNodeId"),
 		}
 	case "canvas_edit_batch_table":
 		schema["oneOf"] = []map[string]any{

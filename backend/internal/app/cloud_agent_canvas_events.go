@@ -201,12 +201,8 @@ func emitCloudAgentCanvasChange(repo *repository.Repository, runID string, state
 			if target := byID[stringValue(edge["toNodeId"])]; target != nil {
 				entry["targetTitle"], entry["targetNodeType"] = target["title"], target["type"]
 			}
-			if preview, ok := findPreview("connect_nodes", stringValue(edge["fromNodeId"])); ok && preview.TargetNodeTitle != "" {
-				entry["targetTitle"], entry["targetNodeType"] = preview.TargetNodeTitle, preview.TargetNodeType
-				if preview.Summary != "" {
-					entry["summary"] = preview.Summary
-				}
-			}
+			// 连接不再由 Agent 操作产生，而是引用字段协调出来的派生结果：端点身份直接取
+			// 变更后的文档，不再有 connect_nodes 预览可借。
 			actions = append(actions, entry)
 		}
 	}
