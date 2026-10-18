@@ -533,7 +533,11 @@ func (s *Service) checkpointPrevisOutput(task *model.Task, result previsRenderRe
 	}
 	task.ResultJSON = string(raw)
 	ids := []string{result.ResourceID, result.PreviewResourceID}
-	if s.desktopMode {
+	bound, err := s.canvasTaskOwnsWriteback(task)
+	if err != nil {
+		return err
+	}
+	if bound {
 		for _, id := range ids {
 			if id != "" {
 				if err := s.repo.SaveCanvasTaskResource(task.ID, task.UserID, id); err != nil {
@@ -547,10 +551,11 @@ func (s *Service) checkpointPrevisOutput(task *model.Task, result previsRenderRe
 }
 
 func (s *Service) commitPrevisOutput(task *model.Task, input previsRenderInput, result previsRenderResult) error {
-	if s.desktopMode {
-		if _, err := s.repo.CanvasTaskBinding(task.ID); err != nil {
-			return err
-		}
+	bound, err := s.canvasTaskOwnsWriteback(task)
+	if err != nil {
+		return err
+	}
+	if bound {
 		completed := *task
 		completed.Status, completed.Progress, completed.Stage = model.TaskStatusSucceeded, 100, "预演已保存，等待写回画布"
 		completed.CompletedAt = ptr(time.Now())

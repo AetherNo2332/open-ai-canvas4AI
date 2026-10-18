@@ -7,7 +7,7 @@ import (
 )
 
 func RegisterCanvasTaskRoutes(r *gin.RouterGroup, svc *tasks.Service, principal CanvasPrincipalResolver) {
-	r.GET("/desktop/canvases/:canvasId/task-submissions/:operationId", func(c *gin.Context) {
+	r.GET("/canvas-runtime/canvases/:canvasId/task-submissions/:operationId", func(c *gin.Context) {
 		p, err := principal(c)
 		if canvasCommandError(c, err) {
 			return
@@ -17,7 +17,7 @@ func RegisterCanvasTaskRoutes(r *gin.RouterGroup, svc *tasks.Service, principal 
 			commandOK(c, out)
 		}
 	})
-	r.POST("/desktop/tasks/:taskId/uncertainty/resolve", func(c *gin.Context) {
+	r.POST("/canvas-runtime/tasks/:taskId/uncertainty/resolve", func(c *gin.Context) {
 		p, err := principal(c)
 		if canvasCommandError(c, err) {
 			return
@@ -33,7 +33,7 @@ func RegisterCanvasTaskRoutes(r *gin.RouterGroup, svc *tasks.Service, principal 
 			commandOK(c, out)
 		}
 	})
-	r.POST("/desktop/canvases/:canvasId/previs-tasks", func(c *gin.Context) {
+	r.POST("/canvas-runtime/canvases/:canvasId/previs-tasks", func(c *gin.Context) {
 		p, err := principal(c)
 		if canvasCommandError(c, err) {
 			return
@@ -51,7 +51,7 @@ func RegisterCanvasTaskRoutes(r *gin.RouterGroup, svc *tasks.Service, principal 
 			commandOK(c, out)
 		}
 	})
-	r.GET("/desktop/tasks/:taskId/materialization", func(c *gin.Context) {
+	r.GET("/canvas-runtime/tasks/:taskId/materialization", func(c *gin.Context) {
 		p, err := principal(c)
 		if canvasCommandError(c, err) {
 			return
@@ -61,7 +61,7 @@ func RegisterCanvasTaskRoutes(r *gin.RouterGroup, svc *tasks.Service, principal 
 			commandOK(c, out)
 		}
 	})
-	r.POST("/desktop/tasks/:taskId/materialization/retry", func(c *gin.Context) {
+	r.POST("/canvas-runtime/tasks/:taskId/materialization/retry", func(c *gin.Context) {
 		p, err := principal(c)
 		if canvasCommandError(c, err) {
 			return
@@ -74,7 +74,7 @@ func RegisterCanvasTaskRoutes(r *gin.RouterGroup, svc *tasks.Service, principal 
 			commandOK(c, out)
 		}
 	})
-	r.POST("/desktop/canvases/:canvasId/tasks", func(c *gin.Context) {
+	r.POST("/canvas-runtime/canvases/:canvasId/tasks", func(c *gin.Context) {
 		p, err := principal(c)
 		if canvasCommandError(c, err) {
 			return

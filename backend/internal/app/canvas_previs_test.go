@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-func TestDesktopPrevisCompletionQueuesWritebackWithoutAgentOrLegacySave(t *testing.T) {
+func TestCanvasPrevisCompletionQueuesWritebackWithoutAgentOrLegacySave(t *testing.T) {
 	s, db := newMediaRecoveryTestService(t)
-	s.desktopMode = true
+	s.CanvasCommandServices()
 	if err := database.MigrateCanvasCommands(db); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestDesktopPrevisCompletionQueuesWritebackWithoutAgentOrLegacySave(t *testi
 	db.Create(&model.User{ID: "previs-owner", Status: model.UserStatusActive})
 	p := identity.Principal{ID: "previs-owner", OwnerID: "previs-owner", Role: "owner", Scopes: identity.OwnerScopes()}
 	cs := commands.NewService(s.repo, commands.ServiceOptions{})
-	ts := tasks.NewService(s.repo, cs, s.DesktopTaskSubmitter(), s.DesktopCanvasTaskOptions())
+	ts := tasks.NewService(s.repo, cs, s.CanvasTaskSubmitter(), s.CanvasTaskOptions())
 	snap, err := cs.Create(context.Background(), p, commands.CreateCanvasRequest{ClientID: "client", OperationID: "create"})
 	if err != nil {
 		t.Fatal(err)
@@ -48,13 +48,13 @@ func TestDesktopPrevisCompletionQueuesWritebackWithoutAgentOrLegacySave(t *testi
 	if err = json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
 		t.Fatal(err)
 	}
-	for _, r := range []model.Resource{{ID: "desktop-previs-video", UserID: p.OwnerID, Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 200, Width: input.Width, Height: input.Height}, {ID: "desktop-previs-preview", UserID: p.OwnerID, Status: model.ResourceStatusReady, MimeType: "image/png", Size: 200, Width: input.Width, Height: input.Height}} {
+	for _, r := range []model.Resource{{ID: "canvas-previs-video", UserID: p.OwnerID, Status: model.ResourceStatusReady, MimeType: "video/mp4", Size: 200, Width: input.Width, Height: input.Height}, {ID: "canvas-previs-preview", UserID: p.OwnerID, Status: model.ResourceStatusReady, MimeType: "image/png", Size: 200, Width: input.Width, Height: input.Height}} {
 		if err = db.Create(&r).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
 	before, _ := cs.ReadSnapshot(context.Background(), p, snap.CanvasID)
-	result := previsRenderResult{ResourceID: "desktop-previs-video", PreviewResourceID: "desktop-previs-preview", SceneID: input.SceneID, ShotID: input.ShotID, SourceHash: input.SourceHash, Width: input.Width, Height: input.Height, OutputReady: true}
+	result := previsRenderResult{ResourceID: "canvas-previs-video", PreviewResourceID: "canvas-previs-preview", SceneID: input.SceneID, ShotID: input.ShotID, SourceHash: input.SourceHash, Width: input.Width, Height: input.Height, OutputReady: true}
 	if err = s.commitPrevisOutput(task, input, result); err != nil {
 		t.Fatal(err)
 	}

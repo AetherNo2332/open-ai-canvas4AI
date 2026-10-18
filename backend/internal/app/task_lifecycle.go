@@ -45,7 +45,7 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if task.Status == model.TaskStatusSubmissionUncertain {
 		return nil, BadAuthRequest("上游接单状态尚未确认，请核对原任务，不能重新生成")
 	}
-	if s.desktopMode {
+	if s.canvasCommandMode {
 		var diagnostic model.TaskExecutionDiagnostic
 		if json.Unmarshal([]byte(task.ExecutionDiagnosticJSON), &diagnostic) == nil && diagnostic.SubmissionOutcome == "unknown" {
 			return nil, BadAuthRequest("上游接单状态尚未确认，请核对原任务，不能重新生成")

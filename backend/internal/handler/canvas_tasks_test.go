@@ -69,7 +69,7 @@ func TestCanvasTaskHTTPStrictEnvelopeAndSubmissionReceipt(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	RegisterCanvasTaskRoutes(router.Group("/api"), ts, func(*gin.Context) (identity.Principal, error) { return p, nil })
-	path := "/api/desktop/canvases/" + snap.CanvasID + "/tasks"
+	path := "/api/canvas-runtime/canvases/" + snap.CanvasID + "/tasks"
 	for _, body := range []string{strings.TrimSuffix(string(raw), "}") + `,"actorId":"forged"}`, string(raw) + ` {}`} {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
@@ -84,13 +84,13 @@ func TestCanvasTaskHTTPStrictEnvelopeAndSubmissionReceipt(t *testing.T) {
 	}
 	first := w.Body.String()
 	w = httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/desktop/canvases/"+snap.CanvasID+"/task-submissions/generate?clientId=client&documentEpoch="+snap.DocumentEpoch, nil))
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/canvas-runtime/canvases/"+snap.CanvasID+"/task-submissions/generate?clientId=client&documentEpoch="+snap.DocumentEpoch, nil))
 	if w.Code != 200 || w.Body.String() != first {
 		t.Fatal("task handle replay differs", w.Code, w.Body.String())
 	}
 	p.ClientID = "different-client"
 	w = httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/desktop/canvases/"+snap.CanvasID+"/task-submissions/generate?clientId=client&documentEpoch="+snap.DocumentEpoch, nil))
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/canvas-runtime/canvases/"+snap.CanvasID+"/task-submissions/generate?clientId=client&documentEpoch="+snap.DocumentEpoch, nil))
 	if w.Code != 403 {
 		t.Fatal("bound client receipt crossed", w.Code, w.Body.String())
 	}

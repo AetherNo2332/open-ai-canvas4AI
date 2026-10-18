@@ -109,24 +109,12 @@ func (s *Service) ResetRuntimePolicySetting(actor *model.User) (*PublicRuntimePo
 }
 
 func (s *Service) FeatureAvailability() (*PublicFeatureAvailability, error) {
-	value, err := s.platformDomain().FeatureAvailability()
-	if err == nil && s.desktopMode {
-		value.CreditsEnabled = false
-		value.AgentSubagentsEnabled = false
-		value.WelcomeEnabled = false
-	}
-	return value, err
+	return s.platformDomain().FeatureAvailability()
 }
 
 // UserFeatureAvailability 按当前用户解析灰度分群(导演预演台 canary 白名单/比例桶)。
 func (s *Service) UserFeatureAvailability(user *model.User) (*PublicFeatureAvailability, error) {
-	value, err := s.platformDomain().UserFeatureAvailability(user)
-	if err == nil && s.desktopMode {
-		value.CreditsEnabled = false
-		value.AgentSubagentsEnabled = false
-		value.WelcomeEnabled = false
-	}
-	return value, err
+	return s.platformDomain().UserFeatureAvailability(user)
 }
 
 func (s *Service) AdminFeatureAvailability(actor *model.User) (*PublicFeatureAvailability, error) {
@@ -138,9 +126,6 @@ func (s *Service) UpdateFeatureAvailability(actor *model.User, value FeatureAvai
 }
 
 func (s *Service) FeatureEnabled(feature string) (bool, error) {
-	if s.desktopMode && (feature == FeatureCredits || feature == FeatureAgentSubagents) {
-		return false, nil
-	}
 	return s.platformDomain().FeatureEnabled(feature)
 }
 

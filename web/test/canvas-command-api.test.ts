@@ -60,7 +60,7 @@ test("canvas command HTTP transport routes effects and recovers original task ha
     await t.invoke!(command, { type: "undo" }, signal);
     await t.recover!(command, { type: "redo" }, signal);
     await t.invoke!(command, { type: "resolve_uncertainty", taskId: "task/1" }, signal);
-    const base = "/desktop/canvases/" + encodeURIComponent(command.canvasId);
+    const base = "/canvas-runtime/canvases/" + encodeURIComponent(command.canvasId);
     expect(calls.map((c) => c.url)).toEqual([
         base + "/snapshot",
         base + "/events",
@@ -71,7 +71,7 @@ test("canvas command HTTP transport routes effects and recovers original task ha
         base + "/previs-tasks",
         base + "/undo",
         base + "/receipts/op%2F1",
-        "/desktop/tasks/task%2F1/uncertainty/resolve",
+        "/canvas-runtime/tasks/task%2F1/uncertainty/resolve",
     ]);
     expect(calls[1].config.params).toEqual({ after: 7, limit: 250 });
     expect(calls[3].config.params).toEqual({ clientId: "client", documentEpoch: "epoch" });

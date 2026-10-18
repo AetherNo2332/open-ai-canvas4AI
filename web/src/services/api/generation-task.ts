@@ -269,8 +269,8 @@ async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions
 
 async function createBackendGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
     const input=backendGenerationTaskInput(options,prepared);
-    const desktop=dependencies===defaultDependencies?await (await import('../desktop/canvas-generation')).submitDesktopCanvasGeneration(input,options.signal):undefined;
-    const task = desktop || await dependencies.createTask(input);
+    const canvasTask=dependencies===defaultDependencies?await (await import('../canvas-command-generation')).submitCanvasGeneration(input,options.signal):undefined;
+    const task = canvasTask || await dependencies.createTask(input);
     options.onTaskUpdate?.(task);
     return task;
 }

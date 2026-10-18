@@ -702,13 +702,6 @@ func (s *Service) encryptSystemChannelSecrets(channel *model.ModelChannel) error
 	}
 	channel.APIKey = apiKey
 	channel.SecretKey = secretKey
-	if s.desktopMode {
-		headers, err := s.encryptSettingSecret(channel.HeadersJSON)
-		if err != nil {
-			return err
-		}
-		channel.HeadersJSON = headers
-	}
 	return nil
 }
 
@@ -723,13 +716,6 @@ func (s *Service) decryptSystemChannelSecrets(channel *model.ModelChannel) error
 	}
 	channel.APIKey = apiKey
 	channel.SecretKey = secretKey
-	if s.desktopMode {
-		headers, err := s.decryptSettingSecret(channel.HeadersJSON)
-		if err != nil {
-			return err
-		}
-		channel.HeadersJSON = headers
-	}
 	return nil
 }
 

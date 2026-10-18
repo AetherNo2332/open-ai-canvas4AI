@@ -1,10 +1,10 @@
-import { useCanvasSessionStore, openCanvasCommandSession, commitCanvasCommandEditor } from "../../stores/canvas/use-canvas-session-store";
-import { createCanvasGenerationContinuation } from "../canvas-generation-continuation";
-import { captureHTTP } from "../api/request";
-import { waitForGenerationTask, type CreateTaskInput, type GenerationTask } from "../api/task-center";
-import { waitCanvasHostMaterialization } from "../canvas-host-materialization";
-import type { MaterializationStatus } from "../../lib/canvas/command-contract.generated";
-export async function consumeDesktopCanvasGeneration(projectId: string, taskId: string, signal?: AbortSignal): Promise<MaterializationStatus | undefined> {
+import { useCanvasSessionStore, openCanvasCommandSession, commitCanvasCommandEditor } from "../stores/canvas/use-canvas-session-store";
+import { createCanvasGenerationContinuation } from "./canvas-generation-continuation";
+import { captureHTTP } from "./api/request";
+import { waitForGenerationTask, type CreateTaskInput, type GenerationTask } from "./api/task-center";
+import { waitCanvasHostMaterialization } from "./canvas-host-materialization";
+import type { MaterializationStatus } from "../lib/canvas/command-contract.generated";
+export async function consumeCanvasGeneration(projectId: string, taskId: string, signal?: AbortSignal): Promise<MaterializationStatus | undefined> {
     const scope = useCanvasSessionStore.getState().scope;
     if (!scope) return undefined;
     const api = captureHTTP(),
@@ -18,7 +18,7 @@ export async function consumeDesktopCanvasGeneration(projectId: string, taskId: 
         signal,
         read: () => {
             check();
-            return api.get<MaterializationStatus>("/desktop/tasks/" + encodeURIComponent(taskId) + "/materialization", { signal });
+            return api.get<MaterializationStatus>("/canvas-runtime/tasks/" + encodeURIComponent(taskId) + "/materialization", { signal });
         },
         synchronize: async () => {
             check();
@@ -28,7 +28,7 @@ export async function consumeDesktopCanvasGeneration(projectId: string, taskId: 
     });
 }
 /** No legacy fallback for a canvas task once command mode is active. */
-export async function submitDesktopCanvasGeneration(request: CreateTaskInput, signal?: AbortSignal): Promise<GenerationTask | undefined> {
+export async function submitCanvasGeneration(request: CreateTaskInput, signal?: AbortSignal): Promise<GenerationTask | undefined> {
     const scope = useCanvasSessionStore.getState().scope;
     if (!scope || !request.projectId) return undefined;
     const metadata = request.input?.metadata as Record<string, unknown> | undefined;

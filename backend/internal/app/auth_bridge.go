@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"infinite-canvas/backend/internal/auth"
@@ -142,13 +141,6 @@ func (s *Service) Logout(cookieValue string) error {
 
 func (s *Service) CurrentUser(cookieValue string) (*model.User, error) {
 	return s.authDomain().CurrentUser(cookieValue)
-}
-
-func (s *Service) IssueLocalSession(userID string) (*AuthSessionResult, error) {
-	if !s.desktopMode {
-		return nil, errors.New("local sessions require desktop mode")
-	}
-	return s.authDomain().IssueLocalSession(userID)
 }
 
 func (s *Service) PublicAuthUser(user *model.User) (AuthUser, error) {

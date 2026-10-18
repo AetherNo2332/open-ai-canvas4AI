@@ -3,7 +3,6 @@ package service
 import "infinite-canvas/backend/internal/app"
 
 type (
-	SecretProvider                         = app.SecretProvider
 	AgentWebSearchSettingRequest           = app.AgentWebSearchSettingRequest
 	AgentWorkspaceView                     = app.AgentWorkspaceView
 	AgentWorkspaceSkillView                = app.AgentWorkspaceSkillView

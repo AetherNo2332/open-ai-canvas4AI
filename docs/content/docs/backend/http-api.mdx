@@ -5,6 +5,20 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## Web 画布命令与预演任务
+
+共享运行时接口统一使用 `/api/canvas-runtime`，不再注册 `/api/desktop`。前后端必须一起更新；请求仍使用站点登录 Cookie，服务端从当前用户解析画布归属与操作权限，不接受客户端声明的 owner。
+
+- `GET /capabilities`：画布命令能力。
+- `POST /canvases`、`GET /canvases/:canvasId/snapshot`：创建与读取画布。
+- `POST /canvases/:canvasId/commands`、`GET /canvases/:canvasId/events`、`GET /canvases/:canvasId/receipts/:operationId`：命令、事件与幂等回执。
+- `POST /canvases/:canvasId/tasks`、`POST /canvases/:canvasId/previs-tasks`、`GET /canvases/:canvasId/task-submissions/:operationId`：生成、白膜预演和提交恢复。
+- `GET /tasks/:taskId/materialization`、`POST /tasks/:taskId/materialization/retry`：资源写回状态及恢复。
+
+上述相对路径均接在 `/api/canvas-runtime` 之后。命令继续携带 `documentEpoch`、`clientId`、`operationId` 和 revision。Web 使用按用户 scope 隔离的 IndexedDB journal；无需 Electron、本地免登录身份或本机密钥桥。
+
+后台预演根据持久化的任务绑定决定画布写回；Agent 发起的预演继续使用已有的资源租约和 Agent 写回路径。
+
 ## 管理员工具快照
 
 管理员工具快照使用 `/api/admin/agent/tool-snapshot-health`（当前健康）、`/tool-snapshots`（目录）、`/tool-snapshots/:id`（定义和引用）和 `/tool-snapshots/compare?left=...&right=...`（字段差异）。`POST /api/admin/agent/tool-snapshot-checks` 重新检测已上报内容；`PATCH /api/admin/agent/runtime-instances/:id/drain` 接收 `{ expectedRevision, draining, reason }`，写操作检查管理员身份、并发 revision 并记录审计。

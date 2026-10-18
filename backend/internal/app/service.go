@@ -20,7 +20,6 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/observability"
-	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/payment"
 	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/prompts"
@@ -34,10 +33,6 @@ type Service struct {
 	canvasCommands           *commands.Service
 	canvasTasks              *tasks.Service
 	canvasCommandMode        bool
-	desktopMode              bool
-	desktopMasterKey         []byte
-	desktopPolicyMu          sync.RWMutex
-	desktopPolicy            *outbound.HostPolicy
 	agentWebSearchHTTPClient *http.Client
 	repo                     *repository.Repository
 	dataDir                  string

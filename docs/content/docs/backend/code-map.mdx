@@ -5,6 +5,14 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## Web 画布运行时
+
+- HTTP 与鉴权：`backend/internal/handler/api.go`、`canvas_commands.go`、`canvas_tasks.go`，接口统一为 `/api/canvas-runtime`。
+- 命令/任务组合根：`backend/internal/app/canvas_command_runtime.go`、`canvas_command_validation.go`、`canvas_task_runtime.go`、`canvas_task_output.go`。
+- Web 客户端：`web/src/services/api/canvas-commands.ts`、`canvas-command-generation.ts`、`canvas-command-journal.ts` 和 `stores/canvas/use-canvas-session-store.ts`。
+- DirectorDesk 集成继续位于 `web/src/integrations/director-desk`；`director-desk/` 为浏览器应用源码，不是 Electron 客户端。
+- Electron 打包、本地服务入口、免登录 owner 和桌面设置页已移除；数据库与资源不执行删除或转换。
+
 ## 可美 KM Seedream
 
 - 声明式请求、响应与参数合同：`plugin-packages/km-kemei-seedream/manifest.json`、`docs/interface.md`；分发包：`plugin-packages/km-kemei-seedream.yingce-plugin`。

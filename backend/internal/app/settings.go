@@ -383,9 +383,6 @@ func (s *Service) encryptSettingSecret(value string) (string, error) {
 
 func (s *Service) decryptSettingSecret(value string) (string, error) {
 	if !strings.HasPrefix(value, encryptedSettingPrefix) {
-		if s.desktopMode && value != "" {
-			return "", errors.New("desktop refuses unprotected stored secrets")
-		}
 		return value, nil
 	}
 	payload, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(value, encryptedSettingPrefix))
@@ -415,12 +412,6 @@ func (s *Service) decryptSettingSecret(value string) (string, error) {
 }
 
 func (s *Service) settingsEncryptionKey() ([]byte, error) {
-	if s.desktopMode {
-		if len(s.desktopMasterKey) != 32 {
-			return nil, errors.New("desktop protected master key unavailable")
-		}
-		return append([]byte(nil), s.desktopMasterKey...), nil
-	}
 	path := filepath.Join(s.dataDir, ".settings-key")
 	if data, err := os.ReadFile(path); err == nil && len(data) == 32 {
 		return data, nil

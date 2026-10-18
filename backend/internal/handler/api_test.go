@@ -17,23 +17,26 @@ func TestRegisterCanvasAPIExposesOpenAPIAndProjects(t *testing.T) {
 	RegisterCanvasAPI(router.Group("/api"), &service.Service{})
 
 	wanted := map[string]bool{
-		"GET /api/openapi.yaml":                             false,
-		"GET /api/projects":                                 false,
-		"POST /api/tasks":                                   false,
-		"POST /api/tasks/:id/recover-media":                 false,
-		"POST /api/tasks/:id/recover-previs-writeback":      false,
-		"GET /api/resources":                                false,
-		"GET /api/skills/presets":                           false,
-		"GET /api/agent/skills/usage":                       false,
-		"GET /api/agent/skill-defaults":                     false,
-		"GET /api/admin/agent/skill-defaults":               false,
-		"PUT /api/admin/agent/skill-defaults":               false,
-		"GET /api/desktop/capabilities":                     false,
-		"GET /api/desktop/canvases/:canvasId/snapshot":      false,
-		"POST /api/desktop/canvases/:canvasId/previs-tasks": false,
-		"GET /api/desktop/tasks/:taskId/materialization":    false,
+		"GET /api/openapi.yaml":                                    false,
+		"GET /api/projects":                                        false,
+		"POST /api/tasks":                                          false,
+		"POST /api/tasks/:id/recover-media":                        false,
+		"POST /api/tasks/:id/recover-previs-writeback":             false,
+		"GET /api/resources":                                       false,
+		"GET /api/skills/presets":                                  false,
+		"GET /api/agent/skills/usage":                              false,
+		"GET /api/agent/skill-defaults":                            false,
+		"GET /api/admin/agent/skill-defaults":                      false,
+		"PUT /api/admin/agent/skill-defaults":                      false,
+		"GET /api/canvas-runtime/capabilities":                     false,
+		"GET /api/canvas-runtime/canvases/:canvasId/snapshot":      false,
+		"POST /api/canvas-runtime/canvases/:canvasId/previs-tasks": false,
+		"GET /api/canvas-runtime/tasks/:taskId/materialization":    false,
 	}
 	for _, route := range router.Routes() {
+		if strings.HasPrefix(route.Path, "/api/desktop") {
+			t.Errorf("desktop endpoint must not be registered: %s", route.Path)
+		}
 		key := route.Method + " " + route.Path
 		if _, exists := wanted[key]; exists {
 			wanted[key] = true
@@ -42,6 +45,13 @@ func TestRegisterCanvasAPIExposesOpenAPIAndProjects(t *testing.T) {
 	for route, found := range wanted {
 		if !found {
 			t.Errorf("route %s is not registered", route)
+		}
+	}
+	for _, path := range []string{"/api/canvas-runtime/capabilities", "/api/canvas-runtime/canvases/private/snapshot", "/api/canvas-runtime/tasks/private/materialization"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Errorf("unauthenticated canvas runtime access %s returned %d, want 401", path, recorder.Code)
 		}
 	}
 

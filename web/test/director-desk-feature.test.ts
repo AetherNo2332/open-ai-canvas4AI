@@ -4,8 +4,8 @@ import { directorDeskModeLabel, directorDeskRuntimePolicy } from "@/lib/canvas/d
 test("DirectorDesk feature flag fails closed and exposes explicit rollout states", () => {
     expect(directorDeskRuntimePolicy(undefined)).toBe("legacy");
     expect(directorDeskRuntimePolicy("unsafe")).toBe("legacy");
-    expect(directorDeskRuntimePolicy("canary")).toBe("legacy");
-    expect(directorDeskRuntimePolicy("canary", "user-1")).toBe("canary");
+    // The authenticated server resolves the allowlist/rollout bucket once.
+    expect(directorDeskRuntimePolicy("canary")).toBe("canary");
     expect(directorDeskRuntimePolicy("on")).toBe("authoritative");
     expect(directorDeskModeLabel("off")).toBe("已关闭");
     expect(directorDeskModeLabel("canary")).toBe("灰度开放");

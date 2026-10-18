@@ -1,9 +1,5 @@
 import type { CommandJournal, StoredPending } from "./canvas-command-session";
 export type CommandJournalStorage = { getItem<T>(key: string): Promise<T | null>; setItem<T>(key: string, value: T): Promise<unknown> };
-export type NativeCommandJournal = { get: (key: string) => Promise<unknown>; set: (key: string, value: unknown) => Promise<void> };
-export function nativeCommandJournalStorage(bridge: NativeCommandJournal): CommandJournalStorage {
-    return { getItem: async <T>(key: string) => (await bridge.get(key)) as T | null, setItem: (key, value) => bridge.set(key, value) };
-}
 const scopeKey = (scope: string) => "infinite-canvas:command-journal:" + encodeURIComponent(scope) + ":";
 type PersonalViewport = { x: number; y: number; k: number };
 const validViewport = (value: unknown): value is PersonalViewport =>

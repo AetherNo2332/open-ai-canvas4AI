@@ -44,7 +44,7 @@ func TestCanvasCommandHTTPDoesNotTrustActor(t *testing.T) {
 	RegisterCanvasCommandRoutes(router.Group("/api"), svc, func(*gin.Context) (identity.Principal, error) { return p, nil })
 	request := commands.Command{Protocol: 1, CanvasID: snapshot.CanvasID, DocumentEpoch: snapshot.DocumentEpoch, OperationID: "edit1", ClientID: "client", BaseRevision: snapshot.Revision, Operations: []commands.Operation{{Type: "add_node", ID: "text", NodeType: "text"}}}
 	raw, _ := json.Marshal(request)
-	path := "/api/desktop/canvases/" + snapshot.CanvasID + "/commands"
+	path := "/api/canvas-runtime/canvases/" + snapshot.CanvasID + "/commands"
 	for _, body := range []string{strings.TrimSuffix(string(raw), "}") + `,"actorId":"forged"}`, string(raw) + " {}"} {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
@@ -64,7 +64,7 @@ func TestCanvasCommandHTTPDoesNotTrustActor(t *testing.T) {
 		t.Fatal("HTTP retry changed receipt")
 	}
 	w = httptest.NewRecorder()
-	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/desktop/capabilities", nil))
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/canvas-runtime/capabilities", nil))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "edit_drawing") {
 		t.Fatalf("capability registry did not serialize: %d %s", w.Code, w.Body.String())
 	}

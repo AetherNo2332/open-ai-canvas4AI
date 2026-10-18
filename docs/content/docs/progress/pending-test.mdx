@@ -3,6 +3,13 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## Web-only 上游同步与 Desktop 移除
+
+- [ ] 已合入上游 `main` 的 v1.6.0 更新，保留完整 DirectorDesk 浏览器应用、Agent 工具与图片 staging 流程。
+- [ ] 已移除 Electron 客户端、桌面后端、本地免登录身份和本地设置页；画布命令及预演任务迁移到 `/api/canvas-runtime`，管理员存储设置恢复 `/api/admin/settings/oss`。
+- [ ] 浏览器验收：普通登录、导演台打开/编辑/保存/重开、图片一键生成、白膜任务提交/取消/重试与画布产物写回。
+- [ ] 前后端一起发布后确认旧 `/api/desktop` 不再可访问，新运行时接口未登录返回 401；未修改生产服务或数据库。
+
 ## 3040 隔离栈复验（2026-10-18）
 
 - [ ] 环境：`director-previs-3040` 隔离项目，web/backend 按当前 HEAD（`b7bc5e45`，`VERSION=v1.6.0(0ffc101)`）重建镜像 `open-ai-canvas-web:dpv-3040` / `open-ai-canvas-backend:dpv-3040`，复用既有数据卷（保留 `dpv-accept` 等验收账号），agent 沿用既有镜像；`/api/health` ready、schema 59/59。

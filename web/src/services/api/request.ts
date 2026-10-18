@@ -48,7 +48,7 @@ export function setAPIHost(endpoint: string) {
     apiClient.defaults.baseURL = apiBaseURL;
 }
 
-/** 还原为环境变量/默认值（桌面 bootstrap 之前、测试隔离用）。 */
+/** 还原为环境变量/默认值，用于接口配置恢复与测试隔离。 */
 export function resetAPIHost() {
     apiBaseURL = import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
     apiClient.defaults.baseURL = apiBaseURL;

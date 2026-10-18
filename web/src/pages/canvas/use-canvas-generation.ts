@@ -288,8 +288,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     const applyGenerationTaskResult = useCallback(
         async (nodeId: string, task: GenerationTask) => {
-            const {consumeDesktopCanvasGeneration}=await import('@/services/desktop/canvas-generation');
-            const hostResult=await consumeDesktopCanvasGeneration(projectId,task.id,consumerControllerRef.current.signal);
+            const {consumeCanvasGeneration}=await import('@/services/canvas-command-generation');
+            const hostResult=await consumeCanvasGeneration(projectId,task.id,consumerControllerRef.current.signal);
             if(hostResult) {
                 if(hostResult.outcome&&hostResult.outcome!=='applied')message.info('生成结果已保存在素材库；原目标已变化，因此未覆盖当前画布内容');
                 return;

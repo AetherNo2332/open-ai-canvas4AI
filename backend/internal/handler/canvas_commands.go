@@ -61,12 +61,12 @@ func RegisterCanvasCommandRoutes(r *gin.RouterGroup, svc *commands.Service, prin
 		p, err := principal(c)
 		return p, !canvasCommandError(c, err)
 	}
-	r.GET("/desktop/capabilities", func(c *gin.Context) {
+	r.GET("/canvas-runtime/capabilities", func(c *gin.Context) {
 		if _, ok := resolve(c); ok {
 			commandOK(c, commands.Capabilities())
 		}
 	})
-	r.POST("/desktop/canvases", func(c *gin.Context) {
+	r.POST("/canvas-runtime/canvases", func(c *gin.Context) {
 		p, ok := resolve(c)
 		if !ok {
 			return
@@ -80,7 +80,7 @@ func RegisterCanvasCommandRoutes(r *gin.RouterGroup, svc *commands.Service, prin
 			commandOK(c, out)
 		}
 	})
-	r.GET("/desktop/canvases/:canvasId/snapshot", func(c *gin.Context) {
+	r.GET("/canvas-runtime/canvases/:canvasId/snapshot", func(c *gin.Context) {
 		p, ok := resolve(c)
 		if !ok {
 			return
@@ -90,7 +90,7 @@ func RegisterCanvasCommandRoutes(r *gin.RouterGroup, svc *commands.Service, prin
 			commandOK(c, out)
 		}
 	})
-	r.GET("/desktop/canvases/:canvasId/history-state", func(c *gin.Context) {
+	r.GET("/canvas-runtime/canvases/:canvasId/history-state", func(c *gin.Context) {
 		p, ok := resolve(c)
 		if !ok {
 			return
@@ -100,7 +100,7 @@ func RegisterCanvasCommandRoutes(r *gin.RouterGroup, svc *commands.Service, prin
 			commandOK(c, out)
 		}
 	})
-	r.POST("/desktop/canvases/:canvasId/commands", func(c *gin.Context) {
+	r.POST("/canvas-runtime/canvases/:canvasId/commands", func(c *gin.Context) {
 		p, ok := resolve(c)
 		if !ok {
 			return
@@ -118,7 +118,7 @@ func RegisterCanvasCommandRoutes(r *gin.RouterGroup, svc *commands.Service, prin
 			commandOK(c, out)
 		}
 	})
-	r.GET("/desktop/canvases/:canvasId/receipts/:operationId", func(c *gin.Context) {
+	r.GET("/canvas-runtime/canvases/:canvasId/receipts/:operationId", func(c *gin.Context) {
 		p, ok := resolve(c)
 		if !ok {
 			return
@@ -128,7 +128,7 @@ func RegisterCanvasCommandRoutes(r *gin.RouterGroup, svc *commands.Service, prin
 			commandOK(c, out)
 		}
 	})
-	r.GET("/desktop/canvases/:canvasId/events", func(c *gin.Context) {
+	r.GET("/canvas-runtime/canvases/:canvasId/events", func(c *gin.Context) {
 		p, ok := resolve(c)
 		if !ok {
 			return
@@ -149,7 +149,7 @@ func RegisterCanvasCommandRoutes(r *gin.RouterGroup, svc *commands.Service, prin
 		}
 	})
 	for _, action := range []string{"undo", "redo"} {
-		r.POST("/desktop/canvases/:canvasId/"+action, func(c *gin.Context) {
+		r.POST("/canvas-runtime/canvases/:canvasId/"+action, func(c *gin.Context) {
 			p, ok := resolve(c)
 			if !ok {
 				return
@@ -174,7 +174,7 @@ func RegisterCanvasCommandRoutes(r *gin.RouterGroup, svc *commands.Service, prin
 			}
 		})
 	}
-	r.POST("/desktop/canvases/:canvasId/restore", func(c *gin.Context) {
+	r.POST("/canvas-runtime/canvases/:canvasId/restore", func(c *gin.Context) {
 		p, ok := resolve(c)
 		if !ok {
 			return

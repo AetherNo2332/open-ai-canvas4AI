@@ -3,7 +3,7 @@ import localforage from "localforage";
 import { createCanvasCommandTransport, readCanvasCapabilities } from "../../services/api/canvas-commands";
 import { captureHTTP } from "../../services/api/request";
 import type { CanvasCapabilities } from "../../lib/canvas/canvas-editor-commands";
-import { createCanvasCommandJournal, createCanvasPersonalViewStorage, readCanvasClientId, nativeCommandJournalStorage, type NativeCommandJournal } from "../../services/canvas-command-journal";
+import { createCanvasCommandJournal, createCanvasPersonalViewStorage, readCanvasClientId } from "../../services/canvas-command-journal";
 import { createCanvasCommandWorkspace, type CanvasCommandWorkspace } from "../../services/canvas-command-workspace";
 import type { CanvasCommandSession, CommandSessionState } from "../../services/canvas-command-session";
 import { createCanvasCommandCreator } from "../../services/canvas-command-create";
@@ -36,8 +36,7 @@ export function commitCanvasCommandEditor(canvasId: string) {
     return editors.get(canvasId)?.commit() || Promise.resolve();
 }
 
-/** Preparation only; the desktop bootstrap activates this after all editor
- * callbacks and task consumers have moved to commands in the same change. */
+/** Connects the authenticated web session to durable canvas commands. */
 export async function connectCanvasCommandWorkspace(scope: string, boundClientId?: string) {
     const current = ++generation;
     const previous = workspace;
@@ -56,8 +55,7 @@ export async function connectCanvasCommandWorkspace(scope: string, boundClientId
     const transport = createCanvasCommandTransport(api);
     const capabilities = await readCanvasCapabilities(api);
     if (capabilities.protocolVersion !== 1 || !Array.isArray(capabilities.nodes) || !capabilities.structuredFields) throw new Error("canvas_capability_contract_invalid");
-    const native = typeof window !== "undefined" ? (window as Window & { infiniteCanvasDesktop?: { commandJournal?: NativeCommandJournal } }).infiniteCanvasDesktop?.commandJournal : undefined;
-    const journalStorage = native ? nativeCommandJournalStorage(native) : localforage;
+    const journalStorage = localforage;
     const clientId = boundClientId || (await readCanvasClientId(journalStorage, scope));
     if (current !== generation) throw new DOMException("画布主机已切换", "AbortError");
     workspace = createCanvasCommandWorkspace({ transport, clientId, journal: createCanvasCommandJournal(journalStorage, scope) });
@@ -66,7 +64,7 @@ export async function connectCanvasCommandWorkspace(scope: string, boundClientId
         scope,
         clientId,
         storage: journalStorage,
-        create: (request) => api.post<Snapshot>("/desktop/canvases", request),
+        create: (request) => api.post<Snapshot>("/canvas-runtime/canvases", request),
         onCreated: (snapshot) => {
             if (current !== generation) return;
             const document = snapshot.document;

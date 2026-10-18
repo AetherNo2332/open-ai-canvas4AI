@@ -4,10 +4,10 @@ import type { CommandTransport, CommandEffect } from "../canvas-command-session"
 import type { CanvasCapabilities } from "../../lib/canvas/canvas-editor-commands";
 
 type CommandHTTP = Pick<typeof http, "get" | "post">;
-const canvasPath = (id: string) => "/desktop/canvases/" + encodeURIComponent(id);
-const taskPath = (id: string) => "/desktop/tasks/" + encodeURIComponent(id);
+const canvasPath = (id: string) => "/canvas-runtime/canvases/" + encodeURIComponent(id);
+const taskPath = (id: string) => "/canvas-runtime/tasks/" + encodeURIComponent(id);
 const identity = (command: Command) => ({ documentEpoch: command.documentEpoch, clientId: command.clientId, operationId: command.operationId });
-export const readCanvasCapabilities = (api: CommandHTTP = captureHTTP(), signal?: AbortSignal) => api.get<CanvasCapabilities>("/desktop/capabilities", { signal });
+export const readCanvasCapabilities = (api: CommandHTTP = captureHTTP(), signal?: AbortSignal) => api.get<CanvasCapabilities>("/canvas-runtime/capabilities", { signal });
 export function createCanvasCommandTransport(api: CommandHTTP = captureHTTP()): CommandTransport {
     const receipt = (command: Command, signal?: AbortSignal) =>
         api.get<Receipt>(canvasPath(command.canvasId) + "/receipts/" + encodeURIComponent(command.operationId), { params: { clientId: command.clientId, documentEpoch: command.documentEpoch }, signal });

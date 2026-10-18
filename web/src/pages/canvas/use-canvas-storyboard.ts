@@ -31,7 +31,7 @@ import { skillRuntime } from "@/services/skill-runtime";
 import { submitStoryboardTask } from "@/services/storyboard-submission";
 import { getActiveUserScope } from "@/lib/user-scope";
 import {useCanvasSessionStore} from '@/stores/canvas/use-canvas-session-store';
-import {submitDesktopCanvasGeneration,consumeDesktopCanvasGeneration} from '@/services/desktop/canvas-generation';
+import {submitCanvasGeneration,consumeCanvasGeneration} from '@/services/canvas-command-generation';
 import { modelDisplayName, resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import {
     CanvasNodeType,
@@ -198,7 +198,7 @@ export function useCanvasStoryboard({
             const task = commandMode ? await (async()=>{
                 const confirmed=await confirmGenerationSubmission(1,generationConfig.model,`专业拆镜${(scriptNode.metadata?.storyboard?.rows||[]).length?'（替换现有镜头，保留原媒体）':''}`);
                 if(!confirmed)return undefined;
-                assertCurrent();return submitDesktopCanvasGeneration(request,signal);
+                assertCurrent();return submitCanvasGeneration(request,signal);
             })() : managed ? await submitStoryboardTask(request, { signal, assertCurrent, confirm: (submission) => new Promise<boolean>((resolve) => {
                 const quote = submission.quote;
                 const dialog = modal.confirm({
@@ -230,7 +230,7 @@ export function useCanvasStoryboard({
                 onTaskUpdate: (next) => { if (!signal.aborted && scope === getActiveUserScope()) setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...generationTaskMetadata(next), status: NODE_STATUS_LOADING } } : node)); },
             });
             if(commandMode) {
-                const result=await consumeDesktopCanvasGeneration(projectId,completed.id,signal);
+                const result=await consumeCanvasGeneration(projectId,completed.id,signal);
                 assertCurrent();
                 if(!result)throw new Error('画布主机已切换');
                 if(result.outcome==='applied')message.success('分镜已生成并保存到主机');
