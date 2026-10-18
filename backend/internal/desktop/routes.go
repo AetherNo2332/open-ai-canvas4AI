@@ -155,6 +155,7 @@ func NewRouter(svc *app.Service, cfg RouterConfig) *gin.Engine {
 	handler.RegisterUserDataRoutes(protected, svc)
 	handler.RegisterChunkedUploadRoutes(protected, svc)
 	handler.RegisterPluginRoutes(protected, svc)
+	handler.RegisterLibraryRoutes(protected, svc)
 	handler.RegisterProjectRoutes(protected, svc)
 	handler.RegisterLibTVRoutes(protected, svc)
 	handler.RegisterTapNowRoutes(protected, svc)
