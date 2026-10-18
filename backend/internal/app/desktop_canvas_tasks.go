@@ -153,7 +153,7 @@ func unsafeDesktopTaskInput(v any) bool {
 // Set once in the composition root, before starting background workers.
 func (s *Service) AttachDesktopCanvasTasks(service *tasks.Service) { s.canvasTasks = service }
 func (s *Service) DesktopCanvasTaskOptions() tasks.ServiceOptions {
-	return tasks.ServiceOptions{PrepareOutput: s.prepareDesktopCanvasOutput, ValidateOutputs: func(ctx context.Context, tx *repository.Repository, owner string, count int, bytes int64) error {
+	return tasks.ServiceOptions{PrepareStoryboardInput: prepareDesktopStoryboardInput, PrepareOutput: s.prepareDesktopCanvasOutput, ValidateOutputs: func(ctx context.Context, tx *repository.Repository, owner string, count int, bytes int64) error {
 		domain := platform.New(tx, s.coordinator, platformHost{svc: s})
 		policy, err := domain.RuntimePolicy()
 		if err != nil {

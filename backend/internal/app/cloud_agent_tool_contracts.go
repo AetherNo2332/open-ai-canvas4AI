@@ -14,10 +14,19 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 		}
 	case "generate_media":
 		p["durationSeconds"] = map[string]any{"type": "integer", "minimum": 0, "description": "视频必填且大于0，取 model_list 能力允许的秒数；图片/音频省略或0。"}
-		schema["oneOf"] = []map[string]any{
+		ordinaryModes := []map[string]any{
 			{"properties": map[string]any{"mode": map[string]any{"const": "video"}, "size": map[string]any{"minLength": 1}, "durationSeconds": map[string]any{"minimum": 1}}, "required": []string{"mode", "size", "durationSeconds"}},
 			{"properties": map[string]any{"mode": map[string]any{"const": "image"}, "size": map[string]any{"minLength": 1}, "durationSeconds": map[string]any{"const": 0}, "videoGenerateAudio": map[string]any{"not": map[string]any{}}}, "required": []string{"mode", "size"}},
 			{"properties": map[string]any{"mode": map[string]any{"const": "audio"}, "durationSeconds": map[string]any{"const": 0}, "videoGenerateAudio": map[string]any{"not": map[string]any{}}}, "required": []string{"mode"}},
+		}
+		schema["oneOf"] = []map[string]any{
+			{"required": []string{"prompt", "referenceNodeIds"}, "properties": cloudAgentForbiddenFields("storyboardNodeId", "storyboardRowId"), "oneOf": ordinaryModes},
+			{"required": []string{"storyboardNodeId", "storyboardRowId", "size"}, "properties": map[string]any{"storyboardNodeId": map[string]any{"minLength": 1}, "storyboardRowId": map[string]any{"minLength": 1}, "mode": map[string]any{"enum": []string{"image", "video"}}, "size": map[string]any{"minLength": 1}, "prompt": map[string]any{"not": map[string]any{}}, "referenceNodeIds": map[string]any{"not": map[string]any{}}, "referenceTransientIds": map[string]any{"not": map[string]any{}}, "sourceNodeId": map[string]any{"not": map[string]any{}}, "durationSeconds": map[string]any{"not": map[string]any{}}}},
+		}
+	case "model_list":
+		schema["oneOf"] = []map[string]any{
+			{"properties": cloudAgentForbiddenFields("storyboardNodeId", "storyboardRowId")},
+			{"required": []string{"mode", "storyboardNodeId", "storyboardRowId"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")},
 		}
 	case "canvas_edit_storyboard":
 		schema["oneOf"] = []map[string]any{

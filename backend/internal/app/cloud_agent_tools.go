@@ -664,7 +664,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"prompt": str(cloudAgentToolText("parameter_036")), "selectionId": str(cloudAgentToolText("model_selection_id")), "logicalModelId": str(cloudAgentToolText("parameter_037")), "channelId": str(cloudAgentToolText("parameter_038")), "channelModelKey": str(cloudAgentToolText("parameter_039")),
 			"quality": str(cloudAgentToolText("parameter_040")), "snapshotHash": str(cloudAgentToolText("parameter_041")), "nodeId": str(cloudAgentToolText("parameter_042")), "title": str(cloudAgentToolText("parameter_043")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_044"))},
 		}, "prompt", "nodeId", "title", "referenceNodeIds")
-		add("model_list", cloudAgentToolText("model_list"), map[string]any{"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_045"))}})
+		add("model_list", cloudAgentToolText("model_list"), map[string]any{"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_045"))}, "storyboardNodeId": str("分镜表节点 ID，与 storyboardRowId 同时传入，输入从行读取"), "storyboardRowId": str("分镜行 ID")})
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
 		add("canvas_create_storyboard", cloudAgentToolText("canvas_create_storyboard"), map[string]any{
@@ -750,11 +750,12 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
 		add("generate_media", cloudAgentToolText("generate_media"), map[string]any{
+			"storyboardNodeId": str("分镜表节点 ID；分镜模式不传 prompt、引用和时长，由服务端读取行字段"), "storyboardRowId": str("分镜行 ID，与 storyboardNodeId 同时传入"),
 			"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "prompt": str(cloudAgentToolText("parameter_070")),
 			"selectionId": str(cloudAgentToolText("model_selection_id")), "logicalModelId": str(cloudAgentToolText("parameter_071")), "channelId": str(cloudAgentToolText("parameter_072")), "channelModelKey": str(cloudAgentToolText("parameter_073")),
 			"durationSeconds": map[string]any{"type": "integer", "minimum": 0}, "size": str(cloudAgentToolText("parameter_074")), "quality": str(cloudAgentToolText("parameter_075")), "videoGenerateAudio": map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_076")},
 			"snapshotHash": str(cloudAgentToolText("parameter_077")), "nodeId": str(cloudAgentToolText("parameter_078")), "title": str(cloudAgentToolText("parameter_079")), "sourceNodeId": str(cloudAgentToolText("parameter_080")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_081"))}, "referenceTransientIds": map[string]any{"type": "array", "maxItems": 4, "items": str(cloudAgentToolText("parameter_082"))},
-		}, "mode", "prompt", "nodeId", "title", "referenceNodeIds")
+		}, "mode", "nodeId", "title")
 	}
 	if req.SubagentEnabled && req.subagent == nil {
 		add("spawn_subagent", "Create one independent child Agent with a name, role label and concrete objective.", map[string]any{

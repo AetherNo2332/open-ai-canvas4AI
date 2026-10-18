@@ -1632,7 +1632,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 					return err
 				}
 				plan.Args.SnapshotHash = cloudAgentMediaContentHash(doc)
-				raw, err := json.Marshal(plan.Args)
+				raw, err := cloudAgentMediaCallArguments(plan.Args)
 				if err != nil {
 					return err
 				}
@@ -1688,7 +1688,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 					return err
 				}
 				plan.Args.SnapshotHash = cloudAgentMediaContentHash(doc)
-				raw, err := json.Marshal(plan.Args)
+				raw, err := cloudAgentMediaCallArguments(plan.Args)
 				if err != nil {
 					return err
 				}
@@ -2283,6 +2283,11 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 		} else if err := createTaskWithStorageQuotaRepository(repo, task, prepare.Order, policy); err != nil {
 			return err
 		}
+		if media != nil {
+			if err := registerCloudAgentStoryboardTask(repo, run, state.Request.CanvasID, media, task); err != nil {
+				return err
+			}
+		}
 		if media != nil && prepared != nil {
 			if approvalID != "" {
 				if err := repo.TransferCloudAgentResourceLeases(run.UserID, approvalID, "task:"+task.ID, task.ID, prepared.Quote.ExpiresAt); err != nil {
@@ -2439,6 +2444,9 @@ func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, sta
 		}
 		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
 			return nil
+		}
+		if err := s.materializeCloudAgentStoryboardTask(task); err != nil {
+			return err
 		}
 		policy, err := s.RuntimePolicy()
 		if err != nil {
