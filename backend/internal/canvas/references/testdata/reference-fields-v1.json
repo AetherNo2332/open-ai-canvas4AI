@@ -1,0 +1,10 @@
+{
+  "referenceFieldsVersion": 1,
+  "nodes": [
+    {"id":"hero","type":"text","metadata":{"workflowKind":"character","characterAssetId":"hero-asset"}},
+    {"id":"scene","type":"image","metadata":{}},
+    {"id":"frame","type":"image","metadata":{}},
+    {"id":"board","type":"script","metadata":{"storyboard":{"referenceNodeIds":[],"rows":[{"id":"shot","assetBindings":[{"nodeId":"hero","role":"character","priority":90},{"nodeId":"scene","role":"environment","priority":90}],"imageNodeId":"frame"}]}}}
+  ],
+  "connections": [{"id":"stale","fromNodeId":"scene","toNodeId":"board","toHandleId":"row:shot"}]
+}

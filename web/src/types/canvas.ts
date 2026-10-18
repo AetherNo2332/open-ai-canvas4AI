@@ -7,7 +7,7 @@ import type { StyleExecutionPlan } from "@/lib/canvas/style-profile";
 import type { ArtCritiqueNodeState } from "@/lib/art-critique/contracts";
 import type { CameraControlOptions } from "@/lib/canvas/camera-prompt-library";
 import type { SrtEntry, SubtitleHighlight, SubtitleStyle } from "@/types/timeline";
-import type { GenerationSpec } from "@/lib/canvas/generation-contract.generated";
+import type { GenerationSpec, ReferenceBinding } from "@/lib/canvas/generation-contract.generated";
 import type { GenerationTask } from "@/services/api/task-center";
 
 export type Position = {
@@ -225,6 +225,7 @@ export type CanvasSkillSnapshot = {
 export type CanvasNodeMetadata = {
     /** Credential-free editable generation contract; submitted recipes live with tasks. */
     generationSpec?: GenerationSpec;
+    inputBindings?: ReferenceBinding[];
     /** Namespaced extension ownership for nodes contributed by a unified plugin. */
     pluginId?: string;
     pluginNodeId?: string;
@@ -535,6 +536,9 @@ export type CanvasConnection = {
     toAnchorRatio?: number;
     relation?: "storyboard-output" | "storyboard-asset-reference" | "batch-output" | "batch-input";
     storyboardRowId?: string;
+    managedBy?: "reference-fields-v1";
+    referenceOwnerNodeId?: string;
+    referenceBindingId?: string;
 };
 
 export type CanvasDisplayConnection = {

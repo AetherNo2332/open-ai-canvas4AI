@@ -12,6 +12,10 @@ import (
 	"infinite-canvas/backend/internal/canvas/contract"
 )
 
+func referenceBindingField() PatchField {
+	return objectField(map[string]PatchField{"id": stringField(120), "nodeId": stringField(120), "resourceId": stringField(120), "transientId": stringField(120), "mediaType": enumString("image", "video", "audio", "text"), "role": enumString("reference", "source-text", "first-frame", "last-frame", "mask"), "order": integerField(0, 10000), "resolution": enumString("latest", "snapshot")}, "id", "mediaType", "role", "order", "resolution")
+}
+
 func generationSpecField() PatchField {
 	options := map[string]PatchField{}
 	for _, key := range []string{"size", "quality", "resolution", "audioVoice", "audioFormat", "audioSpeed", "audioInstructions"} {
@@ -23,7 +27,7 @@ func generationSpecField() PatchField {
 	options["count"] = integerField(1, 100)
 	options["durationSeconds"] = integerField(0, 86400)
 	selection := objectField(map[string]PatchField{"kind": enumString("logical", "channel"), "logicalModelId": stringField(240), "channelId": stringField(240), "modelKey": stringField(240)}, "kind")
-	binding := objectField(map[string]PatchField{"id": stringField(120), "nodeId": stringField(120), "resourceId": stringField(120), "transientId": stringField(120), "mediaType": enumString("image", "video", "audio", "text"), "role": enumString("reference", "source-text", "first-frame", "last-frame", "mask"), "order": integerField(0, 10000), "resolution": enumString("latest", "snapshot")}, "id", "mediaType", "role", "order", "resolution")
+	binding := referenceBindingField()
 	field := objectField(map[string]PatchField{"version": integerField(1, 1), "mode": enumString("image", "video", "audio"), "prompt": stringField(16000), "modelSelection": selection, "options": objectField(options), "referenceBindings": arrayField(binding, 100), "textInputMode": enumString("prompt-only", "append-sources")}, "version", "mode", "prompt", "options", "referenceBindings", "textInputMode")
 	field.Format = "generation-spec"
 	return field

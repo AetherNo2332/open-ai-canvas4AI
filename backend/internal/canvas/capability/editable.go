@@ -114,6 +114,11 @@ func completeBuiltinEditableFields(d *Descriptor) {
 	if d.Type == "image" {
 		add("freeResize", "metadata.freeResize", "自由调整尺寸", PatchField{Kind: patchKindBoolean})
 	}
+	if d.Connection.CanTarget && d.Type != "batch-table" {
+		if _, hasGeneration := d.PatchFields["generationSpec"]; !hasGeneration {
+			add("inputBindings", "metadata.inputBindings", "引用输入", arrayField(referenceBindingField(), 100))
+		}
+	}
 	if d.Type == "video" {
 		add("subtitleEntries", "metadata.subtitleEntries", "字幕内容", subtitleEntriesField())
 		add("subtitleHighlights", "metadata.subtitleHighlights", "字幕重点", subtitleHighlightsField())
