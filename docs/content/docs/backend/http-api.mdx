@@ -242,6 +242,19 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 云端 Agent 与创作任务的写入共用版本和历史事务；Agent `canvasPatch` 携带 `baseRevision`、`revision`，客户端只接受连续增量，跳过重复事件，缺口或同字段冲突时保留草稿并重新核对。删除、重排或顶层内容变化无法由增量完整表示时，事件携带 `requiresRefresh: true` 且不附 `canvasPatch`，客户端完整核对后才推进基线；撤销事件同样触发核对。保存日志仅记录请求/链路 ID、画布/用户 ID、版本、节点数量变化及 HTTP 状态，不记录正文、提示词或媒体 URL。
 
+## 画布命令与声明式引用
+
+网页画布与桌面壳共用画布命令协议：`POST /api/desktop/canvases/:canvasId/commands` 提交命令，`GET /api/desktop/canvases/:canvasId/snapshot` 读取快照投影，信封和错误格式与其他业务接口一致（字段级错误放在 `data.reason` 和 `data.field`）。引用字段与派生连接在同一次事务内进入差异、历史和撤销，服务端不依赖分镜 UI 是否打开。
+
+- `migrate_references`（仅画布客户端）：`id` 是画布 ID，`patch` 只接受 `scopeChoices`（`scopeKey` → `fields` | `connections`）。它把历史画布的字段与旧连线矛盾按选择定案，写入权威字段、托管连线与 `referenceFieldsVersion=1`；未决冲突返回 `reference_migration_conflict` 且整份文档不变，已规范化的文档返回 `reference_migration_not_required`。该操作不向 Agent 暴露，`canvas_apply_ops` 不认识它；超出目标容量的旧连线不会被接管，保持为普通连线。
+- 规范化门禁：文档缺少 `referenceFieldsVersion` 时，改动引用内容的编辑与生成返回 `reference_migration_required`；读取、预览、导出、改名、删除画布和画布外观设置不受限制，任务结果回写也不经过该门禁。
+- `edit_storyboard` 新增 `set_references`：只接受表级 `referenceNodeIds`（`[]` 清空），不接受行或输出参数。
+- 原生命令 `bind_storyboard_output`：`id` 是分镜表节点，`rowId` 为行 ID，`outputMode` 取 `image` | `video`，`sourceNodeId` 是产物节点 ID；传空串解除归属并保留媒体。行或产物仍有持久活跃任务时返回 `reference_busy`，产物已属于另一分镜行时拒绝。
+- 快照读投影新增可选 `referenceMigration`：只在文档缺少 `referenceFieldsVersion` 时出现（v1 文档为 `null` 或缺省），含 `required` 与 `conflicts[{ scopeKey, fieldNodeIds, edgeNodeIds }]`。它是只读预览：不改文档、不写回执、不推进版本；提交迁移后自行消失。
+- `generate_media` 的分镜模式：传 `storyboardNodeId` + `storyboardRowId` + `mode`（`image` | `video`），输入由服务端从该行解析；该模式与 `prompt`、`referenceNodeIds`、`sourceNodeId`、`referenceTransientIds`、`durationSeconds` 互斥，混传按字段返回 `storyboard_input_conflict`。
+- `model_list` 的分镜模式：传 `mode` + `storyboardNodeId` + `storyboardRowId`，按该行解析出的真实输入筛选模型，且不接受 `referenceNodeIds`。
+- Agent 引用合同：`connect_nodes`、`update_connection`、`delete_connection` 以及 `fromNodeId`／`toNodeId`／`fromHandleId`／`toHandleId` 统一被拒（`connection_ops_disabled`）；`update_node.patch` 不能写 `connections`、`metadata`、`managedBy`、`referenceOwnerNodeId`、`referenceBindingId`（`reference_field_reserved`）。
+
 ## 欢迎页开放配置
 
 `GET /public/welcome` 无需登录，信封 `data` 仅包含布尔值 `welcomeEnabled`，响应禁用缓存。读取失败按标准错误信封返回。
@@ -423,6 +436,12 @@ CSV 使用中文表头、UTF-8 BOM、CRLF；金额按整数分精确转换为两
 | `agent_skill_budget_exceeded` | 400 / 400 | 拒绝超限技能集合；`details` 含 `budget`、`limit`、`actual`，不截断正文 |
 | `agent_skill_defaults_revision_conflict` | 409 / 409 | 配置已更新；`details.currentRevision` 指示当前修订号，客户端重新加载 |
 | `agent_skill_defaults_invalid` | 400 / 400 | 默认配置引用无效技能或版本；消息及 `details.skillId` 标识具体技能 |
+| `connection_ops_disabled` | 工具回执 | Agent 侧连线操作已停用：工具回执为 `reason=invalid_tool_arguments`、`issue=connection_ops_disabled`；引用改用 `set_references`／`bind_output`／`unbind_output` 或引用字段 |
+| `reference_busy` | 400 / 400 | 分镜行或产物仍有持久活跃任务占用，先处理已有任务（画布命令返回 400，Agent 工具以字段级回执返回） |
+| `reference_field_reserved` | 工具回执 | 通用 patch 不能写 `connections`、`metadata`、`managedBy`、`referenceOwnerNodeId`、`referenceBindingId`，同样是 `invalid_tool_arguments` 的字段级 issue |
+| `reference_migration_conflict` | 400 / 400 | 历史画布仍有未决冲突，需要 `patch.scopeChoices` 为每个作用域选择 `fields` 或 `connections` |
+| `reference_migration_not_required` | 400 / 400 | 文档已写 `referenceFieldsVersion`，拒绝重复规范化 |
+| `reference_migration_required` | 400 / 400 | 文档未规范化；先执行 `migrate_references` 再编辑或生成 |
 
 `code` 默认等于 HTTP 状态。需要区分同一状态的不同原因时，使用 `status * 100 + n`。没有单独的 1001/2001 号段，以免和 HTTP 状态、现有 42901 以及重试判断打架。
 

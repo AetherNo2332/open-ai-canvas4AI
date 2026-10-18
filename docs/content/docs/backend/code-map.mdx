@@ -16,7 +16,7 @@ description: 从产品功能快速定位主要代码入口
 
 - 工具快照管理：`internal/app/agent_tool_snapshots.go` 组合目录、比较与领取策略，`internal/repository/agent_tool_snapshot.go` 保存不可变定义与注册状态；worker 的 `agent/src/tool-snapshot-registration.ts` 注册实际内存制品；后台 `tool-snapshots-panel.tsx` 独立显示当前健康与管理操作。协议与迁移见 [工具快照专题](./agent-tool-snapshots)。
 
-- 核心画布操作：`internal/canvas/capability/` 注册类型化可编辑字段；`cloud_agent_operations.go` / `cloud_agent_copy.go` 处理节点、连线、引用与复制，`cloud_agent_history_tools.go` 处理逐步撤销/重做（数据库 v58）。原生绘图同步位于 `cloud_agent_drawing.go` / `cloud_agent_tldraw_validation.go` 和前端 `canvas-drawing-document-sync.ts`；远端结构合并位于 `canvas-entity-reconciliation.ts`。实现范围、边界与独立 Compose 验收见 [画布 Agent 节点与内容操作](../../../design/canvas-agent-operation-parity.md)。
+- 核心画布操作：`internal/canvas/capability/` 注册类型化可编辑字段；`cloud_agent_operations.go` / `cloud_agent_copy.go` 处理节点、引用与复制（连线已改由服务端按引用字段派生，Agent 连线操作停用），`cloud_agent_history_tools.go` 处理逐步撤销/重做（数据库 v58）。原生绘图同步位于 `cloud_agent_drawing.go` / `cloud_agent_tldraw_validation.go` 和前端 `canvas-drawing-document-sync.ts`；远端结构合并位于 `canvas-entity-reconciliation.ts`。实现范围、边界与独立 Compose 验收见 [画布 Agent 节点与内容操作](../../../design/canvas-agent-operation-parity.md)。
 
 - 后台导演台预演：`cloud_agent_previs_render.go`（冻结输入、审批与任务回执）、`task_previs_render.go`（执行、资源检查点和原子写回）、`repository/task_previs.go`（租约条件检查点）、`renderer/src`（实际视口、CDP和FFmpeg）。专题见[导演台后台预演](./previs-background)。
 
@@ -76,6 +76,15 @@ Pi 原生技能：`app/cloud_agent_native_skills.go` 负责命名、入口规范
 | 管理后台 | `web/src/pages/admin/`、`router.tsx` | `admin-context.tsx`、`users/`、`channels/`、`logs/`、`storyboard-prompts/`、`settings/`、`components/agent-lessons-panel.tsx` |
 | 支付 CSV 导出 | `web/src/pages/admin/payments/payments-page.tsx` | `services/api/payments.ts`、`AdminExportButton`；后端 `handler/payment_export.go`、`app/payment_export.go`、`repository/payment_export.go`（共享筛选、只读快照） |
 
+## 画布声明式引用
+
+- 引用领域合同与解析：`backend/internal/canvas/references/types.go`（`Scope`、`EdgeIntent`、`Resolution`、`Version=1`、`ManagedBy=reference-fields-v1`）、`resolve.go`（表级、行级、角色、首帧与输出归属的解析及数量上限）、`reconcile.go`（按权威字段重建托管边，保留普通连线与未变化边的 ID，只对声明输入做循环检测）、`output.go`（`BindStoryboardOutput` 校验分镜行、产物类型、归属唯一性与活跃任务占用）、`migrate.go`（`PreviewLegacy` 只读预览、`NormalizeLegacy` 一次性规范化并写入 `referenceFieldsVersion=1`）。
+- 命令规划：`backend/internal/canvas/commands/planner_reference_fields.go` 在计算 Diff／Inverse 之前同步字段与派生边，`reference_migration.go` 定义 `migrate_references`、迁移错误与写入门禁，`task_references.go` 让任务准入复用同一事务、资源归属与节点存在性校验。回归：`reference_fields_test.go`、`reference_migration_test.go`、`reference_lifecycle_test.go`、`reference_concurrency_test.go`，迁移锚点与夹具在 `references/migrate_test.go`、`references/testdata/reference-fields-v1.json`。
+- 任务生命周期：`backend/internal/canvas/tasks/materializer.go` 按冻结输入落库并在回写前核对行、输出归属与任务身份，`active_target.go` 以持久 `CanvasTaskBinding` 而不是可被历史回滚的节点元数据判断活跃占用；回归 `backend/internal/canvas/tasks/reference_lifecycle_test.go`。
+- Agent 合同：`backend/internal/app/cloud_agent_storyboard_references.go`（`set_references`、`bind_output`、`unbind_output` 与字段协调）、`cloud_agent_storyboard_generation.go`（分镜生成/选型的输入解析与迁移门禁）、`cloud_agent_copy.go`（审批预览复制路径与命令实现保持同一套重映射规则）、`cloud_agent_tool_contracts.go`（拒绝旧连线操作、端点字段与保留 patch 字段）。工具说明与共用制品：`backend/internal/app/agent-tool-descriptions.md`、`agent/harness/TOOL_DESCRIPTIONS.md`、`agent/harness/TOOL_SCHEMA.json`；内置技能说明在 `backend/builtin/canvas-tools-guide/`。
+- 前端：`web/src/lib/canvas/canvas-reference-edits.ts` 把用户操作翻译成 `edit_storyboard`、`update_node`、`bind_storyboard_output` 等语义命令，`canvas-reference-inputs.ts` 读取声明输入（未规范化文档返回 `undefined`，空的显式列表不回退连线），`canvas-reference-migration.ts` 与 `web/src/pages/canvas/use-canvas-reference-migration.ts` 负责迁移预览、选择与提交，`canvas-node-copy.ts` 复制时重映射引用、丢弃任务身份、不复制托管边；组件入口在 `web/src/components/canvas/storyboard-assets-cell.tsx`、`canvas-reference-migration-panel.tsx`。
+- 跨实现一致性夹具：`web/test/fixtures/canvas-agent-operation-cases.json` 同时由后端 `internal/app/cloud_agent_conformance_test.go` 与前端 `web/test/canvas-agent-operation-conformance.test.ts` 消费。
+
 ## 画布核心
 
 云端 Agent 的提示词维护边界见[画布 Agent 提示词与用户意图](/docs/backend/agent-prompt-policy)：行为策略在版本化 md，动态事实由 `cloud_agent_policy.go` 编译，运行状态消息由 `cloud_agent_prompt_context.go` 统一编码；`cloud_agent_anchor.go` 不再推断用户授权或锁定首轮目标。
@@ -103,6 +112,7 @@ Pi 原生技能：`app/cloud_agent_native_skills.go` 负责命名、入口规范
 | 生成 Composer | `web/src/components/canvas/canvas-node-prompt-panel.tsx`、`canvas-config-composer.tsx` |
 | 风格中心、用户风格编辑与项目快照 | `web/src/components/canvas/canvas-style-picker-modal.tsx`、`style-profile-editor-modal.tsx`、`style-asset-binding-modal.tsx`、`web/src/lib/canvas/style-profile.ts`、`web/src/services/api/style-profiles.ts` |
 | 分镜脚本节点 | `web/src/components/canvas/canvas-script-node.tsx` |
+| 分镜声明式引用与旧画布迁移 | `web/src/lib/canvas/canvas-reference-edits.ts`、`canvas-reference-inputs.ts`、`canvas-reference-migration.ts`、`canvas-node-copy.ts`；`web/src/components/canvas/storyboard-assets-cell.tsx`、`canvas-reference-migration-panel.tsx` |
 | 3D 导演台 | `web/src/components/canvas/director/` |
 | 节点生成上下文 | `web/src/components/canvas/canvas-node-generation.ts` |
 | 布局和连线算法 | `web/src/lib/canvas/canvas-layout.ts`、`canvas-frame.ts` |

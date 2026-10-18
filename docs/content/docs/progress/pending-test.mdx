@@ -3,6 +3,17 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 分镜声明式引用与旧画布迁移
+
+- [ ] 静态（已做）：权威输入与派生连接的读写投影已落在 `backend/internal/canvas/references`——表级 `referenceNodeIds`、行级 `assetBindings`、生成输入的 `generationSpec.referenceBindings` / `inputBindings`、行的 `imageNodeId` / `videoNodeId`，以及带 `managedBy: reference-fields-v1` 的托管连线；`referenceFieldsVersion=1` 标记规范化状态，托管连线由字段重建，用户普通连线保持不动。命令、快照读投影、Agent 工具合同与前端类型已按现状静态核对；本次未改动数据表或数据库列。
+- [x] 自动化（本轮实跑）：`cd web && bun test test/canvas-reference-flow.test.ts test/canvas-reference-migration.test.ts test/canvas-reference-edits.test.ts test/canvas-reference-copy.test.ts test/canvas-storyboard-assets.test.ts test/canvas-agent-operation-conformance.test.ts test/agent-approval-presentation.test.ts` → 43 pass / 0 fail（7 个文件，179 expect()，2.45s）；`cd backend && CGO_ENABLED=0 go test ./internal/canvas/references -count=1` → ok 0.871s。
+- [ ] 自动化（环境限制）：`internal/canvas/commands` 的引用迁移、生命周期与并发回归用例建在真实 SQLite 上，本机 Windows 无 CGO 时 `go test ./internal/canvas/commands -run Reference` 直接报 `go-sqlite3 requires cgo to work. This is a stub`，属工具链限制而非产品失败；`internal/canvas/tasks/reference_lifecycle_test.go`、`internal/app/cloud_agent_reference_contract_test.go` 等同样依赖数据库环境。这些包需在有 CGO 或 Linux 容器的环境里补跑，未补跑前不得当作已验证。
+- [ ] 页面（未做）：没有启动 dev server，也没有浏览器视觉与明暗皮肤验收；320px 与 1440px 布局、刷新与双客户端一致性均未实测。
+- [ ] 真实模型（未做）：没有真实付费模型调用；模拟 provider 只记录真实提交参数，不能证明真实模型对引用字段的理解或出图质量。
+- [ ] 页面验收缺口：历史画布规范化时超限的旧连线不会被接管，保持为普通连线；旧画布迁移面板（冲突选择 fields/connections）与新画布编辑门禁需页面验收。
+- [ ] 已接受边界：普通媒体生成的**客户端**前置迁移 guard 未做，依赖主机 `reference_migration_required` 拒绝 + 会话冲突回流入迁移面板；这是已接受边界，不是已验证行为。
+- [ ] 页面验收的环境口径：需要在隔离数据目录和确认空闲的端口下启动真实应用，端口、环境变量以当前 Compose 与脚本为准；本条目不写日期、账号与本机路径。
+
 ## 分镜脚本默认列与全屏编辑器
 
 - [ ] 已实现：分镜脚本节点默认展示列改为序号、时长、画面描述、景别、运镜、关联资产（6 列）。前端唯一来源 `web/src/lib/canvas/canvas-storyboard-columns.ts`，后端唯一来源 `backend/internal/canvas/capability/storyboard_columns.go`；旧默认 5 列、两套旧 4 列与生成流程自动补出的 15 列在读取时归一到新默认，用户手选列原样保留。

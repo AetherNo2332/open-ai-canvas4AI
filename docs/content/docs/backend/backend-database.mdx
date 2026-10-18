@@ -20,3 +20,7 @@ description: 数据库迁移与 Agent 工具快照持久化结构
 `cloud_agent_executions` 增加 `tool_runtime_instance_id`、`tool_snapshot_id`、`worker_tool_snapshot_id`，在领取事务中记录实际执行组合。既有运行的冻结正文保持原样，历史快照按需读取，不批量改写任务。领取与排空通过事务协调；快照正文去重使用独立计数行，避免与调度租约形成相反锁顺序。
 
 完整接口及升级行为见 [Agent 工具快照管理](./agent-tool-snapshots)。
+
+## 分镜声明式引用（未新增表或列）
+
+分镜声明式引用没有新增数据表或数据库列，也没有新的迁移版本：权威引用与产物归属保存在画布文档 JSON（`referenceFieldsVersion`、表级 `referenceNodeIds`、行级 `assetBindings`、生成输入的 `generationSpec.referenceBindings` 与 `inputBindings`、行的 `imageNodeId` / `videoNodeId`），派生连线继续放在文档的 `connections`；任务侧复用既有任务输入、`ConsumerJSON`、事件与回执记录以及 `CanvasTaskBinding`。`migrate_references` 只改写文档并产生常规版本、历史与事件，读取投影里的 `referenceMigration` 预览不写库。
