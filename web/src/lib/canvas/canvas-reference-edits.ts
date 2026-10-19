@@ -111,11 +111,14 @@ export function storyboardInheritedBindings(script: CanvasNodeData, row: Storybo
         own.add(node.id);
         return [{ nodeId: node.id, role: "character" as const, priority: 100, source: "出镜角色" }];
     });
-    return [...characters, ...(script.metadata?.storyboard?.referenceNodeIds || []).flatMap((id) => {
-        const node = nodes.find((n) => n.id === id),
-            binding = node && bindingForConnectedNode(node);
-        return !own.has(id) && binding ? [{ ...binding, source: "表级共享" }] : [];
-    })];
+    return [
+        ...characters,
+        ...(script.metadata?.storyboard?.referenceNodeIds || []).flatMap((id) => {
+            const node = nodes.find((n) => n.id === id),
+                binding = node && bindingForConnectedNode(node);
+            return !own.has(id) && binding ? [{ ...binding, source: "表级共享" }] : [];
+        }),
+    ];
 }
 export function reorderCanvasReferenceInputs(nodes: CanvasNodeData[], nodeId: string, orderedIds: string[]): ReferenceEditIntent | undefined {
     for (const board of nodes) {

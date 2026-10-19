@@ -17,7 +17,7 @@ test("character field references appear in the same asset list consumed by gener
         { nodeId: "global", role: "style", priority: 60, source: "表级共享" },
     ]);
     shot.assetBindings = [{ nodeId: "asset", role: "character", priority: 80 }];
-    expect(storyboardInheritedBindings(doc.nodes[0], shot, doc.nodes).map(binding => binding.nodeId)).toEqual(["global"]);
+    expect(storyboardInheritedBindings(doc.nodes[0], shot, doc.nodes).map((binding) => binding.nodeId)).toEqual(["global"]);
 });
 test("semantic output binding projects a pending draft without fabricating a line", () => {
     const result = projectCanvasOperations(document(), [{ type: "bind_storyboard_output", id: "board", rowId: "row", outputMode: "image", sourceNodeId: "asset" }]);
