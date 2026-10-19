@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +50,25 @@ func TestCloudAgentToolErrorClass(t *testing.T) {
 				t.Fatalf("归类 %q 缺少人读标签", class)
 			}
 		})
+	}
+}
+
+func TestAgentReferenceMigrationIsNotAnArgumentRepair(t *testing.T) {
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}}}
+	call := cloudAgentCall{ID: "needs-migration"}
+	call.Function.Name = "canvas_edit_storyboard"
+	call.Function.Arguments = `{"nodeId":"board","snapshotHash":"snapshot","action":"set_references","referenceNodeIds":["hero"]}`
+	cloudAgentToolResult("run", state, call, nil, cloudAgentReferenceMigrationRequired())
+	event := state.Events[len(state.Events)-1]
+	detail := event.Payload["result"].(map[string]any)
+	if detail["retryable"] != false || detail["requiredAction"] != "complete_reference_migration" {
+		t.Fatalf("迁移门禁错误地引导模型改参数重试：%+v", detail)
+	}
+	if event.Payload["retry"] != nil || len(state.ToolRepairs) != 0 {
+		t.Fatalf("迁移门禁进入了参数纠错循环：%+v", event.Payload)
+	}
+	if detail["reason"] != "reference_migration_required" || detail["parameters"] != nil || strings.Contains(fmt.Sprint(detail["guidance"]), "修正参数后重试") {
+		t.Fatalf("迁移门禁仍返回了参数修复建议：%+v", detail)
 	}
 }
 

@@ -248,6 +248,8 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 - `migrate_references`（仅画布客户端）：`id` 是画布 ID，`patch` 只接受 `scopeChoices`（`scopeKey` → `fields` | `connections`）。它把历史画布的字段与旧连线矛盾按选择定案，写入权威字段、托管连线与 `referenceFieldsVersion=1`；未决冲突返回 `reference_migration_conflict` 且整份文档不变，已规范化的文档返回 `reference_migration_not_required`。该操作不向 Agent 暴露，`canvas_apply_ops` 不认识它；超出目标容量的旧连线不会被接管，保持为普通连线。
 - 规范化门禁：文档缺少 `referenceFieldsVersion` 时，改动引用内容的编辑与生成返回 `reference_migration_required`；读取、预览、导出、改名、删除画布和画布外观设置不受限制，任务结果回写也不经过该门禁。
+- 普通网页迁移同样使用上述快照与命令接口，不要求初始化桌面命令工作区。提交前保存本地编辑并重新读取快照；若冲突来源已变化则要求重新确认。成功后通过既有云端同步链路刷新画布。
+- Agent 的画布读取投影包含 `referenceMigration.required`；需要迁移时附带 `reason=reference_migration_required` 和面向画布的下一步说明。行 `characters` 中的 `characterImageNodeId` / `characterAssetId` 也受引用门禁约束。该错误回执为 `retryable=false`、`requiredAction=complete_reference_migration`，不会返回参数修复提示或消耗参数纠错次数。
 - `edit_storyboard` 新增 `set_references`：只接受表级 `referenceNodeIds`（`[]` 清空），不接受行或输出参数。
 - 原生命令 `bind_storyboard_output`：`id` 是分镜表节点，`rowId` 为行 ID，`outputMode` 取 `image` | `video`，`sourceNodeId` 是产物节点 ID；传空串解除归属并保留媒体。行或产物仍有持久活跃任务时返回 `reference_busy`，产物已属于另一分镜行时拒绝。
 - 快照读投影新增可选 `referenceMigration`：只在文档缺少 `referenceFieldsVersion` 时出现（v1 文档为 `null` 或缺省），含 `required` 与 `conflicts[{ scopeKey, fieldNodeIds, edgeNodeIds }]`。它是只读预览：不改文档、不写回执、不推进版本；提交迁移后自行消失。

@@ -84,6 +84,7 @@ Pi 原生技能：`app/cloud_agent_native_skills.go` 负责命名、入口规范
 - Agent 合同：`backend/internal/app/cloud_agent_storyboard_references.go`（`set_references`、`bind_output`、`unbind_output` 与字段协调）、`cloud_agent_storyboard_generation.go`（分镜生成/选型的输入解析与迁移门禁）、`cloud_agent_copy.go`（审批预览复制路径与命令实现保持同一套重映射规则）、`cloud_agent_tool_contracts.go`（拒绝旧连线操作、端点字段与保留 patch 字段）。工具说明与共用制品：`backend/internal/app/agent-tool-descriptions.md`、`agent/harness/TOOL_DESCRIPTIONS.md`、`agent/harness/TOOL_SCHEMA.json`；内置技能说明在 `backend/builtin/canvas-tools-guide/`。
 - 前端：`web/src/lib/canvas/canvas-reference-edits.ts` 把用户操作翻译成 `edit_storyboard`、`update_node`、`bind_storyboard_output` 等语义命令，`canvas-reference-inputs.ts` 读取声明输入（未规范化文档返回 `undefined`，空的显式列表不回退连线），`canvas-reference-migration.ts` 与 `web/src/pages/canvas/use-canvas-reference-migration.ts` 负责迁移预览、选择与提交，`canvas-node-copy.ts` 复制时重映射引用、丢弃任务身份、不复制托管边；组件入口在 `web/src/components/canvas/storyboard-assets-cell.tsx`、`canvas-reference-migration-panel.tsx`。
 - 跨实现一致性夹具：`web/test/fixtures/canvas-agent-operation-cases.json` 同时由后端 `internal/app/cloud_agent_conformance_test.go` 与前端 `web/test/canvas-agent-operation-conformance.test.ts` 消费。
+- 普通网页迁移：`web/src/services/canvas-reference-migration.ts` 处理保存、快照重读、冲突来源核对、命令提交与刷新；页面 hook 同时支持桌面会话和普通网页。`cloud_agent_canvas_state.go` 披露迁移状态；`cloud_agent_tool_error_class.go`、`cloud_agent_tool_repair.go` 与 `cloud_agent_runtime.go` 将迁移门禁从可重试参数错误中分离。回归覆盖 `canvas-web-reference-migration.test.ts`、`canvas-reference-new-project.test.ts`、`cloud_agent_reference_contract_test.go` 与 `cloud_agent_tool_error_class_test.go`。
 
 ## 画布核心
 

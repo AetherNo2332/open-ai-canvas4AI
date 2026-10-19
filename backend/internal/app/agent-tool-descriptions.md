@@ -107,7 +107,7 @@
 
 ## canvas_edit_storyboard
 
-先read获取 nodeId/snapshotHash/真实rowId。append 给patch（正数durationSeconds及剧情或运动描述），不传rowId；update 给rowId+部分patch；remove 只给rowId。set_references 给 referenceNodeIds 声明共享引用（[] 清空）；bind_output 给 rowId+outputMode+outputNodeId；unbind_output 给 rowId+outputMode 解除归属。assetBindings仅引用当前画布节点，不写输出身份、任务状态、资源URL或任意metadata，也不手工建边。
+先read取 nodeId/snapshotHash/真实rowId。append 给patch（正数durationSeconds及剧情/运动描述），不传rowId；update 给rowId+patch；remove 只给rowId。set_references 给referenceNodeIds（[] 清空共享素材）；bind_output 给rowId+outputMode+outputNodeId；unbind_output 给rowId+outputMode。assetBindings只引当前画布素材，不写输出身份、任务、URL或metadata，不手工建边。角色资产ID也受迁移门禁约束；reference_migration_required时停止，等待画布迁移，禁止绕过或虚报绑定。
 
 ## canvas_edit_batch_table
 

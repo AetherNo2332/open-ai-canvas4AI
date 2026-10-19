@@ -5,6 +5,10 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 ## 分镜声明式引用与旧画布迁移
 
+- [x] 诊断回归：普通网页迁移不再依赖未初始化的桌面命令会话；新建画布写入引用版本，导入保留迁移状态；角色资产引用进入素材栏。前端全量 2591 pass / 0 fail，TypeScript 检查与生产构建通过。
+- [x] 后端专项：历史画布中的角色资产 ID 与行素材共用门禁；Agent 读取可见迁移状态；迁移错误返回不可参数重试的回执。真实 SQLite 验证「网页迁移命令 → Agent 声明行资产与角色引用 → 保存后解析到实际资产 → 派生托管连线」，Agent 引用、分镜与纠错专项通过。
+- [x] 本轮合同与领域回归：Go/Pi 工具 schema 制品一致性、Agent 全量 197 项、全部画布领域与提示策略包通过。画布命令整包首次在磁盘临时库建索引时超时，改用隔离容器的内存临时目录后整包通过；前端全量首次因缺失 TEMP 失败，指定本地临时目录后全量通过。
+- [ ] 本轮浏览器与真实 Agent 复验：浏览器工具初始化因内核资源路径缺失而失败，尚未操作修复后的真实页面；未调用付费模型，未直接改写诊断包对应的用户画布。需验证顶栏「确认素材引用」、迁移取消与重新打开、角色素材标记，以及真实会话不再把迁移门禁当成改参数重试。
 - [x] 静态（已做）：权威输入与派生连接的读写投影已落在 `backend/internal/canvas/references`——表级 `referenceNodeIds`、行级 `assetBindings`、生成输入的 `generationSpec.referenceBindings` / `inputBindings`、行的 `imageNodeId` / `videoNodeId`，以及带 `managedBy: reference-fields-v1` 的托管连线；`referenceFieldsVersion=1` 标记规范化状态，托管连线由字段重建，用户普通连线保持不动。命令、快照读投影、Agent 工具合同与前端类型已按现状静态核对；本次未改动数据表或数据库列。
 - [x] 自动化（本轮实跑）：web 引用流程、迁移、编辑、复制、素材、Agent 操作一致性及审批展示 7 个专项文件 → 43 pass / 0 fail（179 expect()）；全量 `bun test --timeout 15000` → 2585 pass / 0 fail（388 文件、14367 次断言）；`bun run build`（包含 TypeScript 检查）、`bun run lint` 与 CI 同款改动文件格式检查通过；agent `npm test` → 197 pass / 0 fail。
 - [x] 自动化（新增门禁回归）：`TestCloudAgentMediaLegacyCanvasRequiresMigration` 的 prepare / writeback 两个子用例已在真实 SQLite 上验证 RED→GREEN：旧画布拒绝审批准备与事务内写入，文档逐字节不变且未新增媒体任务。普通生成不再保留旧连线写入分支；正常生成夹具使用 v1 文档，专门的旧画布回归显式使用无标记文档。

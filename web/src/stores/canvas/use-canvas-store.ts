@@ -15,6 +15,7 @@ import type { TimelineProject } from "@/types/timeline";
 
 export type CanvasProject = {
     id: string;
+    referenceFieldsVersion?: 1;
     revision?: number;
     remoteContentHash?: string;
     projectId?: string;
@@ -452,6 +453,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 const appearanceDefault = readCanvasAppearanceDefault();
                 const project: CanvasProject = {
                     id,
+                    referenceFieldsVersion: 1,
                     revision: 0,
                     projectId,
                     title,
@@ -474,6 +476,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 const now = new Date().toISOString();
                 const project: CanvasProject = {
                     id: nanoid(),
+                    ...(source.referenceFieldsVersion === 1 ? { referenceFieldsVersion: 1 as const } : {}),
                     revision: 0,
                     projectId: source.projectId,
                     title: source.title || "导入画布",

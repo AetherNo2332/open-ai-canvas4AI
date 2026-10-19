@@ -94,6 +94,11 @@ func cloudAgentTrackToolRepair(runID string, state *cloudAgentRuntime, call clou
 		return false
 	}
 	detail, _ := result.(map[string]any)
+	if cloudAgentReferenceMigrationBlocked(err) {
+		delete(state.ToolRepairs, call.Function.Name)
+		cloudAgentClearToolScope(state)
+		return false
+	}
 	var argumentErr *cloudAgentArgumentError
 	if !errors.As(err, &argumentErr) || detail["taskSubmitted"] == true || detail["phase"] == "completion" {
 		return false

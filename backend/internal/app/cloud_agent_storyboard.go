@@ -271,7 +271,7 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	if beforeHash != args.SnapshotHash {
 		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
 	}
-	// 行素材声明（patch.assetBindings）属于引用字段：历史画布必须先规范化。
+	// 行素材与角色字段中的资产声明都属于引用：历史画布必须先规范化。
 	if cloudAgentStoryboardEditWritesReferences(args) {
 		if err := validateCloudAgentReferenceMigration(doc); err != nil {
 			return nil, err

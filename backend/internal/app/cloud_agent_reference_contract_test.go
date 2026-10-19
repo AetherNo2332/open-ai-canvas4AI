@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,13 +9,121 @@ import (
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/canvas/commands"
 	"infinite-canvas/backend/internal/canvas/references"
+	"infinite-canvas/backend/internal/database"
+	"infinite-canvas/backend/internal/identity"
+	"infinite-canvas/backend/internal/model"
 )
 
 // Task 8：模型可见合同不再包含画布连线操作。连线改由服务端按引用字段派生，
 // Agent 只能写 generationSpec.referenceBindings、metadata.inputBindings、
 // 行 assetBindings 或 canvas_edit_storyboard 的语义动作。
 var agentReferenceContractLegacyOps = []string{"connect_nodes", "update_connection", "delete_connection"}
+
+func TestAgentStoryboardCharacterReferencesRequireMigration(t *testing.T) {
+	for _, field := range []string{"characterImageNodeId", "characterAssetId"} {
+		t.Run(field, func(t *testing.T) {
+			patch := map[string]any{"characters": []any{map[string]any{"characterName": "主角", field: "asset"}}}
+			if !cloudAgentStoryboardEditWritesReferences(cloudAgentStoryboardEditArgs{Action: "update", Patch: patch}) {
+				t.Fatal("角色资产 ID 绕过迁移门禁，无法派生引用连线")
+			}
+			if !cloudAgentStoryboardRowsWriteReferences([]map[string]any{patch}) {
+				t.Fatal("创建分镜时的角色资产 ID 绕过迁移门禁")
+			}
+		})
+	}
+	if cloudAgentStoryboardRowsWriteReferences([]map[string]any{{"characters": []any{map[string]any{"characterName": "主角"}}}}) {
+		t.Fatal("纯角色文字不应被当作资产引用")
+	}
+}
+
+func TestAgentCanvasStateReportsReferenceMigration(t *testing.T) {
+	doc := map[string]any{"nodes": []any{}, "connections": []any{}}
+	view, err := cloudAgentCanvasState(nil, "user", "canvas", doc, 0, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := view.(map[string]any)
+	migration, ok := state["referenceMigration"].(map[string]any)
+	if !ok || migration["required"] != true || migration["reason"] != "reference_migration_required" {
+		t.Fatalf("Agent 读取画布前不知道需要迁移：%#v", state["referenceMigration"])
+	}
+	doc["referenceFieldsVersion"] = 1
+	view, err = cloudAgentCanvasState(nil, "user", "canvas", doc, 0, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.(map[string]any)["referenceMigration"].(map[string]any)["required"] != false {
+		t.Fatal("已规范化画布仍被报告为需要迁移")
+	}
+}
+
+func TestAgentReferencesApplyAfterWebMigration(t *testing.T) {
+	s, db, canvas := cloudAgentStoryboardFixture(t)
+	rows := createCloudAgentStoryboardForTest(t, s, canvas)
+	if err := database.MigrateCanvasCommands(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
+		t.Fatal(err)
+	}
+	doc, err := creationDocument(canvas.PayloadJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc["id"] = canvas.ID
+	doc["nodes"] = append(creationMaps(doc["nodes"]), map[string]any{"id": "hero", "type": "image", "metadata": map[string]any{}})
+	raw, _ := json.Marshal(doc)
+	if err := db.Model(canvas).Update("payload_json", string(raw)).Error; err != nil {
+		t.Fatal(err)
+	}
+	principal := identity.Principal{ID: "user", OwnerID: "user", Role: "owner", Scopes: identity.OwnerScopes()}
+	host := commands.NewService(s.repo, commands.ServiceOptions{})
+	snapshot, err := host.ReadSnapshot(context.Background(), principal, canvas.ID)
+	if err != nil || snapshot.ReferenceMigration == nil || !snapshot.ReferenceMigration.Required {
+		t.Fatalf("网页未读到旧画布迁移预览：%+v %v", snapshot, err)
+	}
+	if _, err := host.Execute(context.Background(), principal, commands.Command{
+		Protocol: 1, CanvasID: canvas.ID, DocumentEpoch: snapshot.DocumentEpoch, BaseRevision: snapshot.Revision,
+		ClientID: "web-reference-migration", OperationID: "confirm-migration",
+		Operations: []commands.Operation{{Type: commands.OperationMigrateReferences, ID: canvas.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	doc, err = creationDocument(agentCanvasPayload(t, s, canvas.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "associate-hero", map[string]any{
+		"snapshotHash": cloudAgentCanvasHash(doc), "nodeId": "storyboard-1", "action": "update", "rowId": rows[0]["id"],
+		"patch": map[string]any{
+			"assetBindings": []any{map[string]any{"nodeId": "hero", "role": "character", "priority": 100}},
+			"characters":    []any{map[string]any{"characterName": "主角", "characterImageNodeId": "hero"}},
+		},
+	})
+	if _, err := applyCloudAgentStoryboardMutation(s.repo, "user", canvas.ID, call, policy); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := creationDocument(agentCanvasPayload(t, s, canvas.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := references.Resolve(saved, references.Scope{Kind: "storyboard-row", NodeID: "storyboard-1", RowID: stringValue(rows[0]["id"])}, nil)
+	if err != nil || len(resolved.Bindings) != 1 || resolved.Bindings[0].NodeID != "hero" {
+		t.Fatalf("成功回执没有对应的真实资产引用：%+v %v", resolved, err)
+	}
+	for _, edge := range creationMaps(saved["connections"]) {
+		if edge["fromNodeId"] == "hero" && edge["toNodeId"] == "storyboard-1" && edge["managedBy"] == references.ManagedBy {
+			return
+		}
+	}
+	t.Fatal("Agent 写入字段后，画布没有派生资产到分镜表的托管连接")
+}
 
 func agentCanvasWriteRequest() CloudAgentRequest {
 	req := agentTestRequest()

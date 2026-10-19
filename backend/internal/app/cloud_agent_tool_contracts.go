@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"infinite-canvas/backend/internal/canvas/contract"
@@ -65,7 +66,12 @@ func validateCloudAgentReferenceOperations(ops []agentCanvasOp) error {
 // 排序、绘图、批量表既有行字段）不受影响。
 func cloudAgentReferenceMigrationRequired() error {
 	return cloudAgentFieldError("snapshotHash", "reference_migration_required",
-		"历史画布需要先完成一次引用规范化再编辑引用字段；请先在画布中完成引用规范化后重试")
+		"资产关联未执行：请用户先在画布迁移面板完成一次引用规范化；完成前停止重试引用写入，不得改写 characters 或正文来替代绑定，也不得报告资产已关联")
+}
+
+func cloudAgentReferenceMigrationBlocked(err error) bool {
+	var fieldErr *cloudAgentFieldArgumentError
+	return errors.As(err, &fieldErr) && (fieldErr.Issue == "reference_migration_required" || fieldErr.Issue == "reference_migration_conflict")
 }
 
 func validateCloudAgentReferenceMigration(doc map[string]any) error {
@@ -128,21 +134,24 @@ func cloudAgentCanvasOpsWriteReferences(doc map[string]any, ops []agentCanvasOp)
 	return false
 }
 
-// cloudAgentStoryboardEditWritesReferences 覆盖 canvas_edit_storyboard 里引用合同专属的两种
-// 语义：共享引用声明（set_references）和行素材声明（patch.assetBindings）。产物归属
+// cloudAgentStoryboardEditWritesReferences 覆盖共享引用、行素材和角色字段中的资产引用。产物归属
 // （bind_output／unbind_output）写的是历史画布同样有效的行归属字段，不在这里拦。
 func cloudAgentStoryboardEditWritesReferences(args cloudAgentStoryboardEditArgs) bool {
 	if args.Action == "set_references" {
 		return true
 	}
-	_, exists := args.Patch["assetBindings"]
-	return exists
+	return cloudAgentStoryboardRowsWriteReferences([]map[string]any{args.Patch})
 }
 
 func cloudAgentStoryboardRowsWriteReferences(rows []map[string]any) bool {
 	for _, row := range rows {
 		if _, exists := row["assetBindings"]; exists {
 			return true
+		}
+		for _, character := range creationMaps(row["characters"]) {
+			if stringValue(character["characterImageNodeId"]) != "" || stringValue(character["characterAssetId"]) != "" {
+				return true
+			}
 		}
 	}
 	return false
