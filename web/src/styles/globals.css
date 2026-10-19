@@ -8128,16 +8128,36 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
     transition: grid-template-rows var(--motion-dur-base-calc) var(--motion-ease-out), opacity var(--motion-dur-base-calc) var(--motion-ease-out);
 }
 
-/* Agent 侧栏打开时，底部工具栏在剩余画布区域内居中，避免落入右侧面板。 */
-.canvas-toolbar-agent-open {
-    --canvas-toolbar-agent-offset: 440px;
-    left: calc(50% - var(--canvas-toolbar-agent-offset) / 2) !important;
-    max-width: calc(100vw - 2 * var(--canvas-inset-x) - var(--canvas-toolbar-agent-offset)) !important;
+/* 主工具栏居中于可用画布区域，并为侧栏与两侧安全边距留出空间。 */
+.canvas-main-toolbar {
+    --canvas-toolbar-left-reserve: 0px;
+    --canvas-toolbar-right-reserve: 0px;
+    left: calc(var(--canvas-toolbar-left-reserve) + (100% - var(--canvas-toolbar-left-reserve) - var(--canvas-toolbar-right-reserve)) / 2);
+    max-width: max(0px, calc(100% - var(--canvas-inset-x) - var(--canvas-inset-x) - var(--canvas-toolbar-left-reserve) - var(--canvas-toolbar-right-reserve)));
+}
+
+.canvas-main-with-workspace .canvas-main-toolbar {
+    --canvas-toolbar-left-reserve: var(--canvas-workspace-inset);
+}
+
+@media (min-width: 992px) {
+    .canvas-main-with-workspace:has(> .canvas-project-sidebar) .canvas-main-toolbar {
+        --canvas-toolbar-left-reserve: 0px;
+    }
+}
+
+.canvas-main-toolbar.canvas-toolbar-agent-floating {
+    --canvas-toolbar-right-reserve: 440px;
+}
+
+.canvas-main-toolbar .canvas-floating-dock {
+    min-width: 0;
+    overscroll-behavior-x: contain;
 }
 
 @media (max-width: 999px) {
-    .canvas-toolbar-agent-open {
-        --canvas-toolbar-agent-offset: 0px !important;
+    .canvas-main-toolbar.canvas-toolbar-agent-floating {
+        --canvas-toolbar-right-reserve: 0px;
     }
 }
 
