@@ -1,3 +1,4 @@
+import { createUuid } from './uuid.ts';
 import { assertExtensionData, type ExtensionData } from './plugins/project-data.ts';
 import { assertDepthVideo, type DepthVideo } from './cinematography/depth-video.ts';
 import { cloneProjectData } from './resources/model-data.ts';
@@ -176,7 +177,7 @@ export const ACTIONS: Record<Action, string> = { idle: '站立 / 待机', walk: 
 export const clipLabel = (c: Clip) => c.name ?? (c.action === 'retarget' ? builtinMotionName(c) ?? `适配动作 ${c.retarget!.index + 1}` : c.action === 'native' ? `原生动画 ${c.native!.index + 1}` : ACTIONS[c.action]);
 export const JOINTS = JOINT_LABELS;
 export const COLORS = ['#a7bdd7', '#b8c7b3', '#d1bfa0', '#c5b3c9', '#d0d2d0', '#bdaca4'];
-export const uid = () => crypto.randomUUID();
+export const uid = () => createUuid();
 /** Editable metadata stays isolated; immutable model/media strings need no duplicate buffers. */
 export const clone = cloneProjectData;
 export function entity(kind: Kind, asset: string, name: string, position: Vec3 = [0, 0, 0]): Entity {

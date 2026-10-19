@@ -1,3 +1,4 @@
+import { createUuid } from '../uuid.ts';
 import { readIndependentScene, type SavedSceneReadOptions } from './scene-query.ts';
 import { clone, type Project } from '../model.ts';
 import { sameModelResources } from '../resources/package-validation.ts';
@@ -16,13 +17,13 @@ export class SceneSession {
     #document: SceneDocument;
     #file: DocumentFile;
     #dirtyCache?: { current: SceneDocument; saved: SceneDocument; value: boolean };
-    #sessionId = crypto.randomUUID();
+    #sessionId = createUuid();
     #revision = 0;
     #views: Record<string, SceneView> = {};
     #undo: HistoryEntry[] = [];
     #redo: HistoryEntry[] = [];
     #pending: { token: SceneTransaction; before: Snapshot } | null = null;
-    constructor(input: unknown) { this.#document = readSceneDocument(input); this.#document.projectId ??= crypto.randomUUID(); this.#file = { path: '', saved: this.#document }; }
+    constructor(input: unknown) { this.#document = readSceneDocument(input); this.#document.projectId ??= createUuid(); this.#file = { path: '', saved: this.#document }; }
     get projectId() { return this.#document.projectId!; }
     get filePath() { return this.#file.path; }
     get dirty() {
@@ -127,7 +128,7 @@ export class SceneSession {
     /** Caller may validate/prepare a proposed document before commit. Context must still match afterward. */
     replace(next: SceneDocument, context: SceneContext, label: string, resetViews = false) {
         this.#idle(); this.#check(context); const owned = readSceneDocument(next);
-        owned.projectId ??= crypto.randomUUID();
+        owned.projectId ??= createUuid();
         this.#publish(owned, this.#snapshot(), this.#label(label, context.sceneId), undefined, resetViews);
         if (resetViews) this.#views = {};
     }
