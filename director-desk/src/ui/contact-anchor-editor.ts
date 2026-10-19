@@ -1,3 +1,4 @@
+import { createUuid } from '../uuid.ts';
 import type { AppContext } from '../app-context.ts';
 import type { Entity } from '../model.ts';
 import { CONTACT_ROLES, contactAnchors } from '../assets/contact-anchors.ts';
@@ -35,7 +36,7 @@ export function createContactAnchorEditor(ctx: AppContext, refresh: () => void) 
             if (action === 'reset') { delete e.contactAnchors; return; }
             e.contactAnchors = points(e);
             if (action === 'remove') { e.contactAnchors = e.contactAnchors.filter(p => p.id !== selected); return; }
-            const point = action === 'estimate' ? estimateContact(ctx.engine.models.get(e.id)!, 'seat') : { id: crypto.randomUUID(), role: 'seat' as const, position: [0, .45, 0] as [number, number, number], normal: [0, 1, 0] as [number, number, number] };
+            const point = action === 'estimate' ? estimateContact(ctx.engine.models.get(e.id)!, 'seat') : { id: createUuid(), role: 'seat' as const, position: [0, .45, 0] as [number, number, number], normal: [0, 1, 0] as [number, number, number] };
             selected = point.id; e.contactAnchors.push(point);
         });
     });

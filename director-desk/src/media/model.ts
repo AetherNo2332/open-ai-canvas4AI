@@ -1,3 +1,4 @@
+import { createUuid } from '../uuid.ts';
 import { assertAnimated, numberAt, type AnimatedNumber } from '../animation/channels.ts';
 
 export interface MediaResource { id: string; name: string; mime: string; data: string; width: number; height: number; duration: number }
@@ -12,7 +13,7 @@ export interface SurfaceLayer {
     start: number; trimIn: number; trimOut: number; speed: number; loop: boolean;
 }
 export interface SurfaceAppearance { layers: SurfaceLayer[]; roughness?: AnimatedNumber; metalness?: AnimatedNumber; transmission?: AnimatedNumber; ior?: number; opacity?: AnimatedNumber; emissive?: AnimatedNumber }
-export const defaultSurfaceLayer = (resourceId: string, id: string = crypto.randomUUID()): SurfaceLayer => ({ id, resourceId,timeOffset:0, mesh: -1, material: -1, face: 'all', mapping: 'uv', crop: [0,0,1,1], offset: [0,0], repeat: [1,1], rotation: 0, tile: false, fit: 'stretch', opacity: 1, unlit: false, start: 0, trimIn: 0, trimOut: 0, speed: 1, loop: true });
+export const defaultSurfaceLayer = (resourceId: string, id: string = createUuid()): SurfaceLayer => ({ id, resourceId,timeOffset:0, mesh: -1, material: -1, face: 'all', mapping: 'uv', crop: [0,0,1,1], offset: [0,0], repeat: [1,1], rotation: 0, tile: false, fit: 'stretch', opacity: 1, unlit: false, start: 0, trimIn: 0, trimOut: 0, speed: 1, loop: true });
 const record = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
 const finite = (x: unknown, min: number, max: number) => typeof x === 'number' && Number.isFinite(x) && x >= min && x <= max;
 const tuple = (x: unknown, n: number, min: number, max: number): x is number[] => Array.isArray(x) && x.length === n && x.every(v => finite(v,min,max));

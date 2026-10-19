@@ -1,3 +1,4 @@
+import { createUuid } from "@/lib/client-id";
 import { directorPreviewInput } from "./previs-adapter";
 import type { PrevisScene } from "@/types/previs";
 import { DIRECTOR_CANVAS_EXTENSION_KEY, type DirectorPreviewInput } from "./previs-runtime-types";
@@ -23,7 +24,7 @@ export function createDirectorRenderBridge(options: { submit: (input: DirectorPr
         if (existing) return existing.promise;
         const controller = new AbortController();
         renderOptions.signal?.addEventListener("abort", () => controller.abort(), { once: true });
-        const promise = options.submit(input, { requestId: renderOptions.requestId || `director-preview:${crypto.randomUUID()}`, signal: controller.signal, kind }).finally(() => pending.delete(key));
+        const promise = options.submit(input, { requestId: renderOptions.requestId || `director-preview:${createUuid()}`, signal: controller.signal, kind }).finally(() => pending.delete(key));
         pending.set(key, { promise, controller });
         return promise;
     };

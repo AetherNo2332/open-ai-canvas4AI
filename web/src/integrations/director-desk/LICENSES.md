@@ -6,3 +6,7 @@ This integration is based on the MIT-licensed browser-safe concepts from
 bundled into the web product. The browser bundle in `vendor/director-desk-engine.js`
 is produced from the upstream `src/engine.ts` dependency graph and keeps its
 MIT provenance; it is loaded only through the canvas integration boundary.
+
+The maintained browser bundle imports `@desk/uuid` for UUID creation so HTTP LAN
+deployments use secure `getRandomValues` when `randomUUID` is unavailable. Preserve
+this adaptation when regenerating the engine bundle.

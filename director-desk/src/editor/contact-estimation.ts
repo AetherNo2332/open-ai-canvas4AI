@@ -1,3 +1,4 @@
+import { createUuid } from '../uuid.ts';
 import { Matrix3, Object3D, Raycaster, Vector3 } from 'three';
 import type { ContactAnchor } from '../assets/contact-anchors.ts';
 import { geometryBounds } from '../spatial/geometry.ts';
@@ -19,5 +20,5 @@ export function estimateContact(root: Object3D, role: ContactAnchor['role']): Co
     const best = [...hits].sort((a, b) => hits.filter(h => Math.abs(h.y - b.y) <= tolerance).length - hits.filter(h => Math.abs(h.y - a.y) <= tolerance).length
         || Math.hypot(a.x - center.x, a.z - center.z) - Math.hypot(b.x - center.x, b.z - center.z))[0];
     const normal = new Vector3(0, 1, 0).applyNormalMatrix(new Matrix3().getNormalMatrix(root.matrixWorld.clone().invert()));
-    return { id: crypto.randomUUID(), role, position: root.worldToLocal(best.clone()).toArray(), normal: normal.toArray() };
+    return { id: createUuid(), role, position: root.worldToLocal(best.clone()).toArray(), normal: normal.toArray() };
 }

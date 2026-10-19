@@ -1,3 +1,4 @@
+import { createUuid } from '../uuid.ts';
 import {freezeVisualState,receivesRootField} from '../visuals/continuity.ts';
 import {entityPosition} from '../timeline.ts';
 import type { Engine } from '../engine.ts';
@@ -18,7 +19,7 @@ export async function sceneContentHash(value: unknown) {
     return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 /** Capture through the exact playback evaluator, then restore the caller's frame before any async work. */
-export async function continueScene(engine: Engine, document: SceneDocument, name: string, id: string = crypto.randomUUID()): Promise<SceneDocument> {
+export async function continueScene(engine: Engine, document: SceneDocument, name: string, id: string = createUuid()): Promise<SceneDocument> {
     assertSceneDocument(document);
     const source = document.scenes.find(s => s.id === document.activeSceneId)!;
     if (stableSceneJson(updateDocumentScene(document, source.id, engine.project)) !== stableSceneJson(document)) throw Error('当前画面与工程戏段不同，请重新读取后接拍');

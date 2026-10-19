@@ -1,3 +1,4 @@
+import { createUuid } from '../uuid.ts';
 import { library, requestValue } from '../storage/local-library.ts';
 import { assertSceneDocument, readSceneDocument, type SceneDocument } from '../scenes/sequence-project.ts';
 const database = 'director-project-versions-v1';
@@ -22,7 +23,7 @@ export async function saveVersion(document: SceneDocument, name: string) {
     const resourceIds: string[] = [], mediaIds: string[] = [];
     for (const item of resources) resourceIds.push(await hash(item));
     for (const item of media) mediaIds.push(await hash(item));
-    const info: VersionInfo = { id: crypto.randomUUID(), projectId: document.projectId, name: name.trim(), created: Date.now(), scenes: document.scenes.length, sources: [...sources.keys()] };
+    const info: VersionInfo = { id: createUuid(), projectId: document.projectId, name: name.trim(), created: Date.now(), scenes: document.scenes.length, sources: [...sources.keys()] };
     await library<void>(database, 'readwrite', tx => {
         for (const [id, value] of sources) {
             const store = tx.objectStore('sources'), request = store.getKey(id);

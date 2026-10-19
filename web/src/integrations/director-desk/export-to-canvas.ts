@@ -1,3 +1,4 @@
+import { createUuid } from "@/lib/client-id";
 import { createStoryboardRow } from "@/lib/canvas/canvas-project-domain";
 import type { CanvasNodeData, StoryboardRow } from "@/types/canvas";
 import type { DirectorProject } from "./previs-runtime-types";
@@ -87,7 +88,7 @@ export async function requestPrevisRender(input: { canvasId: string; sceneId: st
     const duration = input.render.duration ?? shot.duration;
     const fps = input.render.fps ?? shot.fps;
     if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(fps) || fps <= 0) throw new Error("director_export_options_invalid");
-    const operationId = input.requestId || `director-export:${crypto.randomUUID()}`;
+    const operationId = input.requestId || `director-export:${createUuid()}`;
     return transport.submitPrevis({ canvasId: input.canvasId, sceneId: input.sceneId, shotId: input.shotId, kind: input.kind, options: { duration, fps } }, operationId);
 }
 

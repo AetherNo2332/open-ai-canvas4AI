@@ -1,3 +1,4 @@
+import { createUuid } from '../uuid.ts';
 import {assertMediaResources,type MediaResource} from '../media/model.ts';
 import { sameModelPackage, sameModelResources } from '../resources/package-validation.ts';
 import { assertProject, clone, type Project } from '../model.ts';
@@ -107,7 +108,7 @@ export function removeDocumentScene(document: SceneDocument, id: string): SceneD
 }
 
 /** Copying preserves entity IDs as cross-scene identities; it does not sample an ending pose. */
-export function duplicateDocumentScene(document: SceneDocument, sourceId: string, name: string, id: string = crypto.randomUUID()): SceneDocument {
+export function duplicateDocumentScene(document: SceneDocument, sourceId: string, name: string, id: string = createUuid()): SceneDocument {
     return commit(document, next => {
         const source = next.scenes.find(scene => scene.id === sourceId); if (!source) throw Error('来源戏段不存在');
         next.scenes.push({ ...clone(source), id, name }); next.activeSceneId = id;
@@ -115,7 +116,7 @@ export function duplicateDocumentScene(document: SceneDocument, sourceId: string
 }
 
 /** Add an independent ordinary scene, merging immutable sources by content identity. */
-export function addDocumentScene(document: SceneDocument, project: Project, name: string, id: string = crypto.randomUUID()): SceneDocument {
+export function addDocumentScene(document: SceneDocument, project: Project, name: string, id: string = createUuid()): SceneDocument {
     assertProject(project);
     return commit(document, next => {
         for (const resource of project.resources ?? []) {

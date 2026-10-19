@@ -1,3 +1,4 @@
+import { createUuid } from '../uuid.ts';
 import { clone, entity, type Project } from '../model.ts';
 import { emptyEditorView } from '../building/floors.ts';
 import { ROOM_PARTS, ROOM_PART_NAMES } from '../assets/catalog/room-parts.ts';
@@ -8,7 +9,7 @@ export function portableRoom(source: Project): Project {
     if (p.room.enabled) {
         ROOM_PARTS.forEach((side, part) => {
             const e = entity('prop', 'room-part', `房间 · ${ROOM_PART_NAMES[part]}`);
-            while (p.entities.some(other => other.id === e.id)) e.id = crypto.randomUUID();
+            while (p.entities.some(other => other.id === e.id)) e.id = createUuid();
             e.assetParameters = { width: p.room.width, depth: p.room.depth, height: p.room.height, part };
             p.entities.push(e); ids.set(side, e.id);
         });

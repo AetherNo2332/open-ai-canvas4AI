@@ -1,3 +1,4 @@
+import { createUuid } from '../uuid.ts';
 import { assertProject, clone, type Project, type Vec3 } from '../model.ts';
 import { sameModelPackage } from '../resources/package-validation.ts';
 import { entityPosition, entityYaw } from '../timeline.ts';
@@ -43,7 +44,7 @@ export function mergeScene(destination: Project, source: Project, options: Merge
         data.groups?.forEach(g => reserved.add(g.id));
         data.production?.notes.forEach(n => reserved.add(n.id));
     }
-    const fresh = () => { let id: string; do { id = crypto.randomUUID(); } while (reserved.has(id)); reserved.add(id); return id; };
+    const fresh = () => { let id: string; do { id = createUuid(); } while (reserved.has(id)); reserved.add(id); return id; };
     const entityMap = new Map(incoming.entities.map(e => [e.id, fresh()])), floorMap = new Map((incoming.floors ?? []).map(f => [f.id, fresh()]));
     const referenceMap = new Map<string, string>();
     for (const r of incoming.references) {

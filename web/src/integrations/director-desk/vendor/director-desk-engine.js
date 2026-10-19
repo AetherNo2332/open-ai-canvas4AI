@@ -1,3 +1,4 @@
+import { createUuid } from "@desk/uuid";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -46390,7 +46391,7 @@ var ACTIONS = {
     roll: "\u7FFB\u6EDA",
 };
 var COLORS = ["#a7bdd7", "#b8c7b3", "#d1bfa0", "#c5b3c9", "#d0d2d0", "#bdaca4"];
-var uid = () => crypto.randomUUID();
+var uid = () => createUuid();
 function entity(kind, asset, name, position2 = [0, 0, 0]) {
     return {
         id: uid(),
