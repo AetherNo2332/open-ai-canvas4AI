@@ -5,6 +5,12 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## 生成素材身份与来源
+
+`GET /api/tasks/:id` 在成功任务的 `resultJson.images[]`、`video`、`audio` / `audios[]` 中补充已登记素材的 `assetId`。ID 只从当前用户的服务器记录取得，并核对同一输出资源；项目工作流输出可复用版本表示所属素材。未登记、已删除或资源不匹配时不返回 ID，读取不会创建或恢复素材。客户端不得在缺少该字段时另建随机素材，应保留结果并提示重试保存。
+
+`GET /api/assets` 分页响应保留 `metadata.canvasId`、`canvasName` 与原项目归属；画布名称由当前用户的画布和任务记录批量解析，不接受跨用户名称。缺少顶层来源的历史生成素材在读取时补充 `source` 展示文案，不改写历史记录或自动合并重复素材。
+
 ## 管理员工具快照
 
 管理员工具快照使用 `/api/admin/agent/tool-snapshot-health`（当前健康）、`/tool-snapshots`（目录）、`/tool-snapshots/:id`（定义和引用）和 `/tool-snapshots/compare?left=...&right=...`（字段差异）。`POST /api/admin/agent/tool-snapshot-checks` 重新检测已上报内容；`PATCH /api/admin/agent/runtime-instances/:id/drain` 接收 `{ expectedRevision, draining, reason }`，写操作检查管理员身份、并发 revision 并记录审计。

@@ -57,6 +57,9 @@ func (s *Service) UserAssetsPage(userID string, page int, pageSize int, filter U
 		return UserAssetPage{}, err
 	}
 	rawAssets := make([]json.RawMessage, 0, len(assets))
+	if err := s.enrichAssetCanvasOrigins(userID, assets); err != nil {
+		return UserAssetPage{}, err
+	}
 	for _, asset := range assets {
 		if payload := clientAssetListPayload(asset); len(payload) > 0 {
 			rawAssets = append(rawAssets, payload)

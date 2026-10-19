@@ -81,3 +81,21 @@ func TestClientAssetListPayloadDropsVerboseMetadata(t *testing.T) {
 		t.Fatalf("duplicate cover URL was not removed: %#v", payload["coverUrl"])
 	}
 }
+
+func TestClientAssetListPayloadPreservesCanvasOriginAndGenerationSource(t *testing.T) {
+	asset := model.Asset{PayloadJSON: `{"id":"a","kind":"image","metadata":{"source":"generation-task","canvasId":"c","canvasName":"自由画布 7","taskId":"private-task"},"data":{"storageKey":"resource:r","width":2,"height":3}}`}
+	var payload map[string]any
+	if err := json.Unmarshal(ClientAssetListPayload(asset), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["source"] != "生成任务" {
+		t.Fatalf("source=%v", payload["source"])
+	}
+	metadata := payload["metadata"].(map[string]any)
+	if metadata["canvasName"] != "自由画布 7" || metadata["canvasId"] != "c" {
+		t.Fatalf("origin=%v", metadata)
+	}
+	if metadata["taskId"] != nil {
+		t.Fatal("verbose task metadata leaked")
+	}
+}

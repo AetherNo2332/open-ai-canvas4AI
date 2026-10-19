@@ -392,85 +392,73 @@ async function runScopeCleanupAfterLateCanvasReference() {
 async function runMediaCommitRace(mediaType: "video" | "audio") {
     const previousScope = getActiveUserScope();
     const harness = installStorageHarness();
+    const { apiClient } = await import("../../src/services/api/request");
+    const originalAdapter = apiClient.defaults.adapter;
     const scope = `generation-media-commit-race-${mediaType}`;
-    let releaseMediaWrite!: () => void;
-    const mediaWriteGate = new Promise<void>((resolve) => {
-        releaseMediaWrite = resolve;
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+        releaseRead = resolve;
     });
-    let mediaWriteStartedResolve!: () => void;
-    const mediaWriteStarted = new Promise<void>((resolve) => {
-        mediaWriteStartedResolve = resolve;
+    let readStartedResolve!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+        readStartedResolve = resolve;
     });
-    let blocked = false;
-    harness.hooks.onSet = async (storeName, key) => {
-        if (!blocked && storeName === "media_files" && key.startsWith(`generation-${mediaType}:${scope}:`)) {
-            blocked = true;
-            mediaWriteStartedResolve();
-            await mediaWriteGate;
-        }
+    let remoteAssetReads = 0;
+    let localMediaWrites = 0;
+    harness.hooks.onSet = (storeName) => {
+        if (storeName === "media_files") localMediaWrites++;
     };
-
+    const taskId = `remote-generation-media-race-${mediaType}`;
+    const assetId = `server-output-${mediaType}`;
+    const storageKey = `resource:server-${mediaType}`;
+    const url = `/api/resources/server-${mediaType}/file`;
+    const timestamp = "2026-08-14T00:00:00.000Z";
+    const task = { id: taskId, type: mediaType, status: "succeeded", prompt: "", attempts: 1, createdAt: timestamp, updatedAt: timestamp, resultJson: JSON.stringify({ mode: mediaType, [mediaType]: { dataUrl: url, storageKey, assetId } }) };
+    const asset = {
+        id: assetId,
+        kind: mediaType,
+        title: "server title",
+        coverUrl: "",
+        tags: [],
+        source: "生成任务",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        metadata: { taskId, generationEffectKey: `materialize:${taskId}:0` },
+        data: { url, storageKey, width: 16, height: 9, bytes: 3, mimeType: mediaType === "video" ? "video/mp4" : "audio/mpeg" },
+    };
+    apiClient.defaults.adapter = async (config) => {
+        let data: unknown;
+        if (config.url === "/user-data/snapshot") data = { assets: [], projects: [] };
+        else if (config.url === `/tasks/${taskId}`) data = task;
+        else if (config.url === "/assets/batch") {
+            remoteAssetReads++;
+            readStartedResolve();
+            await readGate;
+            data = { assets: [asset] };
+        } else throw new Error(`unexpected network call: ${config.url}`);
+        return { data: { code: 0, data }, status: 200, statusText: "OK", headers: {}, config };
+    };
     try {
         setActiveUserScope(scope);
-        const { materializeGenerationTaskAssets } = await import("../../src/services/project-asset-sync.ts?generation-media-commit-race-worker");
+        const { syncRemoteUserData, resetRemoteUserDataSync } = await import("../../src/services/user-data-sync");
         const { useAssetStore } = await import("../../src/stores/use-asset-store");
-        await import("../../src/stores/canvas/use-canvas-store");
-        const fileStorage = await import("../../src/services/file-storage");
-        const task = {
-            id: `remote-generation-media-race-${mediaType}`,
-            provider: "remote-test-provider",
-            type: mediaType,
-            status: "succeeded",
-            prompt: "redacted",
-            attempts: 1,
-            resultState: "PENDING_MATERIALIZATION",
-            resultJson: JSON.stringify(
-                mediaType === "video"
-                    ? {
-                          mode: "video",
-                          video: {
-                              dataUrl: "data:video/mp4;base64,AAAA",
-                              width: 16,
-                              height: 9,
-                              mimeType: "video/mp4",
-                          },
-                      }
-                    : {
-                          mode: "audio",
-                          audio: {
-                              dataUrl: "data:audio/mpeg;base64,AAAA",
-                              mimeType: "audio/mpeg",
-                          },
-                      },
-            ),
-            createdAt: "2026-08-14T00:00:00.000Z",
-            updatedAt: "2026-08-14T00:00:00.000Z",
-        } as const;
-
+        const { materializeGenerationTaskAssets } = await import("../../src/services/project-asset-sync");
+        await syncRemoteUserData("identity-user");
         const materializing = materializeGenerationTaskAssets(task as never);
-        await mediaWriteStarted;
+        await readStarted;
         useAssetStore.getState().cleanupImages({ assets: [] });
         const cleanupRun = harness.scheduled.at(-1);
-        if (!cleanupRun) throw new Error("cleanup was not scheduled");
-        await Promise.race([
-            cleanupRun,
-            new Promise<void>((resolve) => {
-                harness.realSetTimeout(resolve, 20);
-            }),
-        ]);
-
-        releaseMediaWrite();
+        releaseRead();
         const materialized = await materializing;
         await cleanupRun;
-
-        const assetId = materialized.outputs?.[0]?.materializedAssetId;
-        const asset = useAssetStore.getState().assets.find((candidate) => candidate.id === assetId);
-        const storageKey = asset?.kind === "video" || asset?.kind === "audio" ? asset.data.storageKey : undefined;
-        const blobPresent = storageKey ? (await fileStorage.getMediaBlob(storageKey)) instanceof Blob : false;
-        const generationAssetCount = useAssetStore.getState().assets.filter((candidate) => candidate.metadata?.generationEffectKey === `materialize:${task.id}:0`).length;
-        return { kind: asset?.kind, storageKey, blobPresent, generationAssetCount };
+        await materializeGenerationTaskAssets(task as never);
+        const stored = useAssetStore.getState().assets.find((candidate) => candidate.id === materialized.outputs?.[0]?.materializedAssetId);
+        const generationAssetCount = useAssetStore.getState().assets.filter((candidate) => candidate.metadata?.generationEffectKey === `materialize:${taskId}:0`).length;
+        resetRemoteUserDataSync();
+        return { kind: stored?.kind, storageKey: stored && "storageKey" in stored.data ? stored.data.storageKey : undefined, assetId: stored?.id, generationAssetCount, remoteAssetReads, localMediaWrites };
     } finally {
-        releaseMediaWrite();
+        releaseRead();
+        apiClient.defaults.adapter = originalAdapter;
         setActiveUserScope(previousScope);
         harness.restore();
     }

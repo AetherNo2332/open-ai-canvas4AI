@@ -19,6 +19,20 @@ func ClientAssetPayload(asset model.Asset) json.RawMessage {
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload == nil {
 		return json.RawMessage(raw)
 	}
+	if source, _ := payload["source"].(string); strings.TrimSpace(source) == "" {
+		if metadata, ok := payload["metadata"].(map[string]any); ok {
+			switch metadata["source"] {
+			case "generation-task":
+				payload["source"] = "生成任务"
+			case "canvas-generation":
+				payload["source"] = "画布生成"
+			case "canvas-upload":
+				payload["source"] = "画布上传"
+			case "canvas-manual":
+				payload["source"] = "画布素材"
+			}
+		}
+	}
 	if _, ok := payload["coverUrl"]; !ok {
 		payload["coverUrl"] = deriveAssetCoverURL(payload)
 	}
@@ -64,7 +78,7 @@ func ClientAssetListPayload(asset model.Asset) json.RawMessage {
 		// 列表只需要项目归属提示。canvasId 仍保留，避免列表卡片把画布素材
 		// 错显示成“未关联项目”；节点 ID、生成提示和其他同步上下文在详情路径读取。
 		for key := range metadata {
-			if key != "projectName" && key != "projectIds" && key != "canvasId" {
+			if key != "projectName" && key != "projectIds" && key != "canvasId" && key != "canvasName" {
 				delete(metadata, key)
 			}
 		}
