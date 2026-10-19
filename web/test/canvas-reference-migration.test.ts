@@ -26,7 +26,7 @@ test("legacy documents need migration and normalized ones do not", () => {
     expect(referenceMigrationRequired({ required: false, conflicts: [] })).toBe(false);
     expect(referenceMigrationRequired(preview)).toBe(true);
     expect(() => assertCanvasReferenceMigrationReady(undefined)).not.toThrow();
-    expect(() => assertCanvasReferenceMigrationReady(preview)).toThrow("引用规范化");
+    expect(() => assertCanvasReferenceMigrationReady(preview)).toThrow("素材关联");
 });
 
 test("only scopes with a real choice are submitted", () => {
@@ -51,11 +51,11 @@ test("scope keys are split for display without rewriting them", () => {
 });
 
 test("migration failures map to actionable copy", () => {
-    expect(referenceMigrationReasonMessage("reference_migration_required")).toContain("请先完成迁移");
-    expect(referenceMigrationReasonMessage("reference_migration_conflict")).toContain("没有选择引用来源");
-    expect(referenceMigrationReasonMessage("reference_migration_not_required")).toContain("无需再次迁移");
+    expect(referenceMigrationReasonMessage("reference_migration_required")).toContain("确认并升级");
+    expect(referenceMigrationReasonMessage("reference_migration_conflict")).toContain("未选择要保留的素材");
+    expect(referenceMigrationReasonMessage("reference_migration_not_required")).toContain("无需重复操作");
     expect(referenceMigrationReasonMessage("something_else")).toBeUndefined();
-    expect(referenceMigrationErrorText({ reason: "reference_migration_conflict" })).toContain("没有选择引用来源");
+    expect(referenceMigrationErrorText({ reason: "reference_migration_conflict" })).toContain("未选择要保留的素材");
     expect(referenceMigrationErrorText(new Error("网络中断"))).toBe("网络中断");
 });
 
@@ -73,18 +73,18 @@ test("panel shows both declared sides per scope and both source choices", () => 
     expect(html).not.toContain("完成一次引用规范化"); // 标题属于弹窗外壳，内容只负责作用域选择
     expect(html).toContain("分镜行");
     expect(html).toContain("雨夜分镜");
-    expect(html).toContain("行 row-1");
-    expect(html).toContain("只有字段声明");
-    expect(html).toContain("只有旧连线声明");
+    expect(html).not.toContain("行 row-1");
+    expect(html).toContain("仅素材列表中有");
+    expect(html).toContain("仅旧连线中有");
     expect(html).toContain("女主角定妆");
     expect(html).toContain("旧参考图");
-    expect(html).toContain("以字段为准");
-    expect(html).toContain("以旧连线为准");
-    expect(html).toContain("应用迁移（2 个作用域）");
+    expect(html).toContain("保留素材列表");
+    expect(html).toContain("沿用旧连线");
+    expect(html).toContain("确认并升级");
     // 字段侧为空的冲突显示“无”，不显示成空列表。
     expect(html).toContain(">无<");
-    // 未提供标题的节点回退到原始 id。
-    expect(html).toContain("compare-1");
+    // 没有标题时不把内部编号当成名称。
+    expect(html).toContain("未命名节点");
 });
 
 test("panel reports unresolved scopes, progress and errors without merging silently", () => {
@@ -103,6 +103,6 @@ test("panel reports unresolved scopes, progress and errors without merging silen
     expect(ready).toContain('role="alert"');
     expect(ready).toContain("没有选择引用来源");
     const empty = renderToStaticMarkup(createElement(CanvasReferenceMigrationContent, { conflicts: [], choices: {}, onChoose: () => {}, onCancel: () => {}, onApply: () => {} }));
-    expect(empty).toContain("没有需要逐项选择的作用域");
-    expect(empty).toContain("完成迁移");
+    expect(empty).toContain("无需选择保留哪组素材");
+    expect(empty).toContain("确认并升级");
 });

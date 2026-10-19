@@ -302,7 +302,6 @@ function InfiniteCanvasPage() {
     const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
     const [size, setSize] = useState({ width: 1200, height: 720 });
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
-    const referenceMigrationNodeTitles = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node.title])), [nodes]);
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -3187,11 +3186,16 @@ function InfiniteCanvasPage() {
                         <CanvasReferenceMigrationPanel
                             open={referenceMigration.open}
                             conflicts={referenceMigration.conflicts}
-                            nodeTitles={referenceMigrationNodeTitles}
+                            nodes={nodes}
+                            projectId={projectId}
                             applying={referenceMigration.applying}
                             error={referenceMigration.error}
                             onCancel={referenceMigration.dismiss}
                             onApply={(choices) => void referenceMigration.apply(choices)}
+                            onLocate={(nodeId) => {
+                                referenceMigration.dismiss();
+                                focusCanvasNode(nodeId);
+                            }}
                         />
 
                         <input ref={imageInputRef} type="file" accept="image/*,video/*,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav" className="hidden" onChange={handleImageInputChange} />

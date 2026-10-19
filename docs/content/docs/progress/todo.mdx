@@ -7,6 +7,8 @@ description: 当前项目已知未完成、待决策和待清理的事项
 
 ## 分镜声明式引用
 
+- [ ] 素材关联问题卡片真实页面验收：带标题与图片的节点定位、已丢失素材占位、自身关联的手动处理、修复后重新打开确认入口。前端诊断只覆盖缺失节点和自身引用，其余引用类型、容量与循环错误继续由主机校验，需补充相应结构化定位体验。
+
 - [ ] 旧画布页面端到端迁移验收：在真实应用里打开历史画布，确认编辑与生成被规范化门禁拦下、迁移面板能逐个作用域选择 `fields` / `connections`、确认后字段与托管连线一次写入、取消不改动画布、双客户端看到同一结果。页面验收尚未执行，证据缺口同时登记在[待测试](./pending-test)。
 - [ ] 工具说明的 20 KiB 预算需要决策：唯一维护入口为 `backend/internal/app/agent-tool-descriptions.md`；同步后的 `agent/harness/TOOL_DESCRIPTIONS.md` 由 `agent/test/harness-sync.test.ts` 对同一份正文分别按 LF 与 CRLF 两种形态校验不超过 20 KiB（20480 字节）。当前 LF 形态 19929 字节，CRLF 形态 20428 字节，**实际余量只有 52 字节**；需要决定提高上限、按类型拆分说明，还是继续压缩现有条目。
 - [ ] 已不可达的旧连线 helper 待清理：`backend/internal/app/cloud_agent_connections.go`、`cloud_agent_storyboard_edges.go` 中只服务于 Agent 直接操作画布连接的代码路径已经没有模型入口，删除前先确认没有其他写入路径仍接受这些操作，再连同相邻测试一起移除。
