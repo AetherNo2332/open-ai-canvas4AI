@@ -153,6 +153,27 @@ curl -fsSL https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/main/script
 
 脚本会先按指定 Release 拉取镜像，再解析并写入 `CANVAS_BACKEND_IMAGE`、`CANVAS_WEB_IMAGE` 的 GHCR digest；生产 Compose 不接受缺失 digest 的默认镜像或 `latest`。更新流程、数据库迁移、备份和回退说明见[系统更新文档](docs/content/docs/backend/system-update.mdx)。
 
+### 启用后台预演渲染器
+
+后台白模视频预演需要单独启用 renderer。先在服务器项目目录的 `.env` 中配置独立密钥（至少 32 个字符）；可用 `openssl rand -hex 32` 生成：
+
+```env
+CANVAS_PREVIS_RENDERER_TOKEN=<生成的随机密钥>
+CANVAS_PREVIS_RENDERER_IMAGE=canvas-previs-renderer:local
+```
+
+从源码构建部署时，在项目目录执行以下命令，将预演配置叠加到常规部署上：
+
+```bash
+sudo docker compose --env-file .env \
+  -f docker-compose.deploy.yml \
+  -f docker-compose.build.yml \
+  -f docker-compose.previs.yml \
+  up -d --build previs-renderer backend
+```
+
+叠加配置会将 `http://previs-renderer:8081` 注入后端，并把同一密钥传给 renderer。renderer 只加入 Compose 内部网络，不公开宿主机端口；容器限制为 2 CPU 和 2 GiB 内存。不要将密钥提交到 Git。当前 GHCR 镜像安装脚本只部署网页和后端，不包含 renderer 镜像；镜像部署要启用预演，需另行准备 renderer 镜像和对应 Compose 配置。
+
 ## 安全边界
 
 - 首次管理员注册应在受控网络完成，公网部署保持 `CANVAS_REGISTRATION_ENABLED=false`。
