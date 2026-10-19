@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ASSET_CATEGORY_OPTIONS, assetCategoryLabel } from "@/lib/asset-category";
+import { assetOriginLabel, assetSourceLabel } from "@/lib/asset-origin";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { formatBytes, readFileAsDataUrl, readImageMeta } from "@/lib/image-utils";
 import { uploadImage } from "@/services/image-storage";
@@ -1107,9 +1108,9 @@ function AssetCard({
                     </div>
                 )}
                 <div className="asset-collection-source mt-1 flex min-w-0 items-center gap-1.5">
-                    <span className="truncate">{asset.source || "未标注来源"}</span>
+                    <span className="truncate">{assetSourceLabel(asset)}</span>
                     <span aria-hidden="true">·</span>
-                    <span className="truncate">{assetProjectLabel(asset)}</span>
+                    <span className="truncate" title={assetOriginLabel(asset)}>{assetOriginLabel(asset)}</span>
                 </div>
             </button>
         </AssetLibraryCard>
@@ -1407,8 +1408,8 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: LibraryAss
                     </div>
                     <div className="asset-archive-link">
                         <Link2 />
-                        <span>所属项目</span>
-                        <strong>{assetProjectLabel(asset)}</strong>
+                        <span>来源与归属</span>
+                        <strong>{assetOriginLabel(asset)}</strong>
                     </div>
                     {asset.note ? (
                         <div className="asset-archive-section">
@@ -1498,12 +1499,6 @@ function StorageTag({ asset }: { asset: LibraryAsset }) {
 
 function assetSearchText(asset: LibraryAsset) {
     return [asset.title, asset.source || "", asset.note || "", assetCategoryLabel(asset.category), (asset.tags || []).join(" "), asset.kind === "text" ? asset.data.content : asset.data.mimeType].join(" ").toLowerCase();
-}
-
-function assetProjectLabel(asset: LibraryAsset) {
-    const projectName = asset.metadata?.projectName;
-    if (typeof projectName === "string" && projectName.trim()) return projectName;
-    return Array.isArray(asset.metadata?.projectIds) && asset.metadata.projectIds.length ? "已关联项目" : "未关联项目";
 }
 
 function assetKindLabel(kind: AssetKind) {

@@ -54,12 +54,14 @@ test("delayed cleanup preserves a same-scope Canvas-only reference added after c
     expect(result.unusedPresent).toBe(false);
 });
 
-test("generation video and audio materialization cannot race cleanup into a catalog row whose blob is missing", async () => {
+test("server video and audio assets survive cache misses, cleanup and repeated materialization without duplicate records", async () => {
     for (const mediaType of ["video", "audio"] as const) {
-        const result = await runScenario<{ kind?: string; storageKey?: string; blobPresent: boolean; generationAssetCount: number }>(`${mediaType}-commit-race`);
+        const result = await runScenario<{ kind?: string; storageKey?: string; assetId?: string; generationAssetCount: number; remoteAssetReads: number; localMediaWrites: number }>(`${mediaType}-commit-race`);
         expect(result.kind).toBe(mediaType);
-        expect(result.storageKey).toMatch(new RegExp(`^generation-${mediaType}:generation-media-commit-race-${mediaType}:`));
-        expect(result.blobPresent).toBe(true);
+        expect(result.storageKey).toBe(`resource:server-${mediaType}`);
+        expect(result.assetId).toBe(`server-output-${mediaType}`);
+        expect(result.remoteAssetReads).toBe(1);
+        expect(result.localMediaWrites).toBe(0);
         expect(result.generationAssetCount).toBe(1);
     }
 });

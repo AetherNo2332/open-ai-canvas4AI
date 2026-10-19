@@ -5,6 +5,12 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## 生成素材身份与来源归属
+
+- `backend/internal/app/task_output_assets.go`：任务详情按输出序号解析服务器登记 ID，核对当前用户、资源和项目版本表示；`task_media_assets.go` 登记生成来源、画布名称与确定性素材 ID。
+- `backend/internal/app/asset_origins.go` 与 `repository/asset_origins.go`：分页素材按当前用户批量查询画布名称，历史生成素材通过任务查回画布；`canvas/user_asset_client_payload.go` 保留列表所需来源字段。
+- `web/src/lib/canvas/registered-generation-output.ts`、`services/project-asset-sync.ts`：复用服务器素材，未登记或资源不匹配时报错，避免随机新建；`lib/asset-origin.ts` 统一资产页来源与归属文案。
+
 ## 摄影机控制前端
 
 - 入口与弹窗：`web/src/components/canvas/canvas-camera-control-popover.tsx`，复用于图片提示词和 `batch-generation-settings-dialog.tsx`。

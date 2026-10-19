@@ -40,8 +40,13 @@ func (s *Service) mediaTaskProject(task *model.Task) (string, error) {
 	return project.ID, nil
 }
 
-// Uses the same effect key and ID as browser materialization, so reconnecting
-// the canvas cannot create a second asset for a server-delivered output.
+// The server owns output identities; clients read the registered ID rather than
+// deriving a second identity from their local cache or browser crypto support.
+func recoveredMediaAssetID(taskID string, index int) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("materialize:%s:%d", taskID, index)))
+	return "generation_" + hex.EncodeToString(sum[:])
+}
+
 func (s *Service) registerRecoveredMediaAssets(task model.Task) error {
 	projectID, err := s.mediaTaskProject(&task)
 	if err != nil {
@@ -58,6 +63,10 @@ func (s *Service) registerRecoveredMediaAssets(task model.Task) error {
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return err
+	}
+	canvas, canvasErr := s.repo.CanvasProjectForUser(task.UserID, task.ProjectID)
+	if canvasErr != nil && !errors.Is(canvasErr, gorm.ErrRecordNotFound) {
+		return canvasErr
 	}
 	for index, item := range checkpoint.Items {
 		registered := false
@@ -78,8 +87,7 @@ func (s *Service) registerRecoveredMediaAssets(task model.Task) error {
 			return errors.New("作品文件尚未保存完成")
 		}
 		effectKey := fmt.Sprintf("materialize:%s:%d", task.ID, index)
-		sum := sha256.Sum256([]byte(effectKey))
-		assetID := "generation_" + hex.EncodeToString(sum[:])
+		assetID := recoveredMediaAssetID(task.ID, index)
 		// Preserve existing user edits on replay; the deterministic key is unique.
 		if _, err := s.repo.AssetForUser(task.UserID, assetID); err == nil {
 			continue
@@ -96,10 +104,13 @@ func (s *Service) registerRecoveredMediaAssets(task model.Task) error {
 		}
 		title := "生成作品"
 		metadata := map[string]any{"source": "generation-task", "generationEffectKey": effectKey, "taskId": task.ID, "outputIndex": index}
+		if canvasErr == nil {
+			metadata["canvasId"], metadata["canvasName"] = canvas.ID, canvas.Title
+		}
 		if projectID != "" {
 			metadata["projectIds"] = []string{projectID}
 		}
-		payload, err := json.Marshal(map[string]any{"id": assetID, "kind": checkpoint.Mode, "category": model.AssetCategoryMaterial, "status": model.AssetVersionStatusConfirmed, "title": title, "coverUrl": url, "tags": []string{"生成"}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano), "data": data, "metadata": metadata})
+		payload, err := json.Marshal(map[string]any{"id": assetID, "kind": checkpoint.Mode, "category": model.AssetCategoryMaterial, "status": model.AssetVersionStatusConfirmed, "title": title, "source": "生成任务", "coverUrl": url, "tags": []string{"生成"}, "createdAt": now.UTC().Format(time.RFC3339Nano), "updatedAt": now.UTC().Format(time.RFC3339Nano), "data": data, "metadata": metadata})
 		if err != nil {
 			return err
 		}
