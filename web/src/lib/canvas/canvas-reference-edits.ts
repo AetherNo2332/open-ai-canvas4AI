@@ -100,11 +100,22 @@ export function canvasReferenceIntentForConnection(nodes: CanvasNodeData[], edge
 }
 export function storyboardInheritedBindings(script: CanvasNodeData, row: StoryboardRow, nodes: CanvasNodeData[]): Array<StoryboardAssetBinding & { source: string }> {
     const own = new Set((row.assetBindings || []).map((b) => b.nodeId));
-    return (script.metadata?.storyboard?.referenceNodeIds || []).flatMap((id) => {
+    const characters = (row.characters || []).flatMap((character) => {
+        const matches = character.characterImageNodeId
+            ? nodes.filter((node) => node.id === character.characterImageNodeId)
+            : character.characterAssetId
+              ? nodes.filter((node) => node.metadata?.workflowKind === "character" && node.metadata.characterAssetId === character.characterAssetId)
+              : [];
+        const node = matches.length === 1 ? matches[0] : undefined;
+        if (!node || own.has(node.id) || !bindingForConnectedNode(node)) return [];
+        own.add(node.id);
+        return [{ nodeId: node.id, role: "character" as const, priority: 100, source: "出镜角色" }];
+    });
+    return [...characters, ...(script.metadata?.storyboard?.referenceNodeIds || []).flatMap((id) => {
         const node = nodes.find((n) => n.id === id),
             binding = node && bindingForConnectedNode(node);
         return !own.has(id) && binding ? [{ ...binding, source: "表级共享" }] : [];
-    });
+    })];
 }
 export function reorderCanvasReferenceInputs(nodes: CanvasNodeData[], nodeId: string, orderedIds: string[]): ReferenceEditIntent | undefined {
     for (const board of nodes) {

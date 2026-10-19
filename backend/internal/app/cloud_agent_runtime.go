@@ -1276,6 +1276,12 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 			if call.Function.Name == "canvas_apply_ops" {
 				detail["exampleArguments"] = map[string]any{"snapshotHash": "<canvas_get_state.snapshotHash>", "ops": []any{map[string]any{"type": "add_node", "id": "<new-node-id>", "nodeType": "text", "content": "<content>"}}}
 			}
+			if cloudAgentReferenceMigrationBlocked(err) {
+				detail["reason"] = detail["issue"]
+				detail["guidance"] = "资产尚未关联，请用户在画布的确认素材引用入口完成规范化后再继续；停止改参数重试，不得用其他字段替代或报告关联成功"
+				delete(detail, "parameters")
+				delete(detail, "exampleArguments")
+			}
 		}
 		// 稳定归类 + 可行动字段（handoff 工作项 B 第一步）：只加标注，不改任何放行/拒绝判定。
 		// allowed 与执行器用的是同一份判定（cloudAgentToolAllowed 是纯函数，结果一致），

@@ -8,6 +8,17 @@ const node = (id: string, type: CanvasNodeType, metadata: Record<string, unknown
 const row = (): StoryboardRow => ({ id: "row", shotNumber: 1, durationSeconds: 5, assetBindings: [], characters: [], plotDescription: "shot" }) as StoryboardRow;
 const board = () => node("board", CanvasNodeType.Script, { storyboard: { rows: [row()], referenceNodeIds: ["global"], visibleColumns: [] } });
 const document = () => ({ id: "canvas", referenceFieldsVersion: 1, nodes: [board(), node("asset", CanvasNodeType.Image), node("global", CanvasNodeType.Image)], connections: [] });
+
+test("character field references appear in the same asset list consumed by generation", () => {
+    const doc = document();
+    const shot = { ...row(), characters: [{ characterName: "主角", characterImageNodeId: "asset" }] } as StoryboardRow;
+    expect(storyboardInheritedBindings(doc.nodes[0], shot, doc.nodes)).toEqual([
+        { nodeId: "asset", role: "character", priority: 100, source: "出镜角色" },
+        { nodeId: "global", role: "style", priority: 60, source: "表级共享" },
+    ]);
+    shot.assetBindings = [{ nodeId: "asset", role: "character", priority: 80 }];
+    expect(storyboardInheritedBindings(doc.nodes[0], shot, doc.nodes).map(binding => binding.nodeId)).toEqual(["global"]);
+});
 test("semantic output binding projects a pending draft without fabricating a line", () => {
     const result = projectCanvasOperations(document(), [{ type: "bind_storyboard_output", id: "board", rowId: "row", outputMode: "image", sourceNodeId: "asset" }]);
     expect((result.nodes as CanvasNodeData[])[0].metadata?.storyboard?.rows[0].imageNodeId).toBe("asset");

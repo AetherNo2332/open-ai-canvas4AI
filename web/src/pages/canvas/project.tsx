@@ -302,8 +302,6 @@ function InfiniteCanvasPage() {
     const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
     const [size, setSize] = useState({ width: 1200, height: 720 });
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
-    // 旧画布必须先完成一次引用规范化才能编辑或生成；预览来自命令会话快照。
-    const referenceMigration = useCanvasReferenceMigration(projectId);
     const referenceMigrationNodeTitles = useMemo(() => Object.fromEntries(nodes.map((node) => [node.id, node.title])), [nodes]);
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -472,6 +470,7 @@ function InfiniteCanvasPage() {
         cleanupCanvasFiles,
     });
 
+    const referenceMigration = useCanvasReferenceMigration(projectId, { enabled: projectLoaded, scope: canvasStorageScope, revision: currentProject?.revision, referenceFieldsVersion: currentProject?.referenceFieldsVersion, save: saveCanvasProject });
     const versions = useCanvasVersionHistory(projectId, restoreCanvasProjectVersion);
     const openVersions = () => { closeAgent(); setVersionCompareRootId(null); versions.show(); };
     const openAgent = useCallback(() => { versions.close(); openAssistant(); }, [versions.close, openAssistant]);
@@ -2619,6 +2618,12 @@ function InfiniteCanvasPage() {
         );
     if (!projectLoaded) return <CanvasRefreshShell />;
 
+    const canvasSyncStatus = (
+        <>
+            <CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />
+            {referenceMigration.required ? <Button size="small" onClick={referenceMigration.show}>确认素材引用</Button> : null}
+        </>
+    );
     return (
         <>
             <a
@@ -2645,7 +2650,7 @@ function InfiniteCanvasPage() {
                         {!focusMode ? (
                             <CanvasTopBar
                                 canvasId={projectId}
-                                syncStatus={<CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />}
+                                syncStatus={canvasSyncStatus}
                                 versionsOpen={versions.open}
                                 onToggleVersions={() => { closeAgent(); setVersionCompareRootId(null); versions.toggle(); }}
                                 title={currentProject?.title || "未命名画布"}
@@ -2839,7 +2844,7 @@ function InfiniteCanvasPage() {
 
                                 {focusMode ? (
                                     <CanvasFocusModeBar
-                                        syncStatus={<CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />}
+                                        syncStatus={canvasSyncStatus}
                                         versionsOpen={versions.open}
                                         onToggleVersions={() => { closeAgent(); versions.toggle(); }}
                                         dockRevealed={focusDockRevealed}

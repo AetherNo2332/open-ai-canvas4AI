@@ -54,6 +54,9 @@ func cloudAgentToolErrorClass(req CloudAgentRequest, call cloudAgentCall, err er
 	if cloudAgentSnapshotConflict(err) {
 		return cloudAgentToolErrorStateConflict, true, "reread_canvas"
 	}
+	if cloudAgentReferenceMigrationBlocked(err) {
+		return cloudAgentToolErrorStateConflict, false, "complete_reference_migration"
+	}
 	var fieldErr *cloudAgentFieldArgumentError
 	if errors.As(err, &fieldErr) {
 		// 过期快照在两侧的写法不同：我们带 errCloudAgentSnapshotConflict（上面那条已经拦掉），

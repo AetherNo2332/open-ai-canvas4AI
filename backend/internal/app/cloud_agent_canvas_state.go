@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -485,6 +486,12 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 		}
 	}
 	result := map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "mediaSnapshotHash": cloudAgentMediaContentHash(doc), "nodes": nodes, "connections": edges, "totalNodes": len(all), "nextOffset": next, "hasMore": next > 0, "nextConnectionOffset": nextConnection, "hasMoreConnections": nextConnection > 0, "pageByteBudget": cloudAgentReadPageBytes}
+	migration := map[string]any{"required": !references.Enabled(doc)}
+	if !references.Enabled(doc) {
+		migration["reason"] = "reference_migration_required"
+		migration["nextAction"] = "请用户在画布迁移面板完成引用规范化后再关联资产；不要重试或改写其他字段来替代绑定"
+	}
+	result["referenceMigration"] = migration
 	if selectedMode {
 		result["totalSelectedNodes"] = len(candidateNodes)
 		selection := map[string]any{"mode": "subgraph", "focusNodeIds": focusNodeIDs, "selectedNodes": len(candidateNodes)}
