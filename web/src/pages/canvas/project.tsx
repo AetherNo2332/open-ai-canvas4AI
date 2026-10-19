@@ -2899,7 +2899,7 @@ function InfiniteCanvasPage() {
                                             openCanvasAssetLibrary();
                                         }}
                                         onOpenProjectCharacters={() => openProjectAssets("character")}
-                                        agentOpen={assistantOpen}
+                                        agentFloating={assistantOpen && Boolean(previsNodeId)}
                                     />
                                 ) : null}
                             </div>
