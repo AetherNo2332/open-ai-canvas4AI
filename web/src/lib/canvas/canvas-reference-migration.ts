@@ -65,11 +65,13 @@ export function referenceMigrationScope(scopeKey: string): CanvasReferenceMigrat
 export function referenceMigrationReasonMessage(reason: string | undefined): string | undefined {
     switch (reason) {
         case "reference_migration_required":
-            return "这张画布还没有完成引用规范化，请先完成迁移再编辑或生成";
+            return "请先确认并升级这张旧画布的素材关联，再继续编辑或生成";
         case "reference_migration_conflict":
-            return "还有作用域没有选择引用来源，请先为每个作用域选择字段或旧连线";
+            return "还有位置未选择要保留的素材，请逐项选择「保留素材列表」或「沿用旧连线」";
         case "reference_migration_not_required":
-            return "这张画布已经完成引用规范化，无需再次迁移";
+            return "这张画布的素材关联已经升级，无需重复操作";
+        case "reference_missing":
+            return "存在已丢失的素材或错误的自身关联。请检查下方节点，在素材设置中重新选择或移除关联后再试";
         default:
             return undefined;
     }
@@ -77,7 +79,7 @@ export function referenceMigrationReasonMessage(reason: string | undefined): str
 
 export function referenceMigrationErrorText(error: unknown): string {
     const reason = error && typeof error === "object" && "reason" in error ? String((error as { reason?: unknown }).reason || "") : "";
-    return referenceMigrationReasonMessage(reason) || (error instanceof Error && error.message ? error.message : "引用迁移没有完成，请重试");
+    return referenceMigrationReasonMessage(reason) || (error instanceof Error && error.message ? error.message : "素材关联尚未升级，请重试");
 }
 
 /** 编辑与生成前的门禁：未规范化的旧画布必须先走一次迁移。 */

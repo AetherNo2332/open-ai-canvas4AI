@@ -78,6 +78,8 @@ Pi 原生技能：`app/cloud_agent_native_skills.go` 负责命名、入口规范
 
 ## 画布声明式引用
 
+- 旧画布问题定位：`web/src/lib/canvas/canvas-reference-migration-issues.ts` 只读检查声明输入中的缺失节点和自身引用，返回关联所属节点、素材来源和行/字段位置；`canvas-reference-migration-panel.tsx` 展示标题与缩略图并阻止带已识别问题的升级。`project.tsx` 的定位回调关闭弹窗并复用画布聚焦及选择能力；预览资源沿用共享授权 URL 解析，不新增资源接口。此检查仅用于用户提示，服务端引用校验保持不变。
+
 - 引用领域合同与解析：`backend/internal/canvas/references/types.go`（`Scope`、`EdgeIntent`、`Resolution`、`Version=1`、`ManagedBy=reference-fields-v1`）、`resolve.go`（表级、行级、角色、首帧与输出归属的解析及数量上限）、`reconcile.go`（按权威字段重建托管边，保留普通连线与未变化边的 ID，只对声明输入做循环检测）、`output.go`（`BindStoryboardOutput` 校验分镜行、产物类型、归属唯一性与活跃任务占用）、`migrate.go`（`PreviewLegacy` 只读预览、`NormalizeLegacy` 一次性规范化并写入 `referenceFieldsVersion=1`）。
 - 命令规划：`backend/internal/canvas/commands/planner_reference_fields.go` 在计算 Diff／Inverse 之前同步字段与派生边，`reference_migration.go` 定义 `migrate_references`、迁移错误与写入门禁，`task_references.go` 让任务准入复用同一事务、资源归属与节点存在性校验。回归：`reference_fields_test.go`、`reference_migration_test.go`、`reference_lifecycle_test.go`、`reference_concurrency_test.go`，迁移锚点与夹具在 `references/migrate_test.go`、`references/testdata/reference-fields-v1.json`。
 - 任务生命周期：`backend/internal/canvas/tasks/materializer.go` 按冻结输入落库并在回写前核对行、输出归属与任务身份，`active_target.go` 以持久 `CanvasTaskBinding` 而不是可被历史回滚的节点元数据判断活跃占用；回归 `backend/internal/canvas/tasks/reference_lifecycle_test.go`。
