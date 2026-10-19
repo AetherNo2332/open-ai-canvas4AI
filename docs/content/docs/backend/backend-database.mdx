@@ -5,6 +5,10 @@ description: 数据库迁移与 Agent 工具快照持久化结构
 
 # 后端数据库
 
+## 用户自定义 Agent 系统提示词
+
+复用 `agent_profiles` 表，以 `scope=system_prompt`、当前 `user_id`、空 `project_id`/`canvas_id` 保存账户级提示词；不新增表或列。`content` 为正文，`revision` 沿用现有比较并交换更新，用于阻止旧页面覆盖新内容。该 scope 由 `/api/agent/settings` 独立管理，不计入原有 user/project/canvas 偏好层，也不通过 `agent_profile_read` 按需读取。运行创建时将正文写入已冻结的系统上下文。
+
 ## 工具快照（迁移 59）
 
 迁移为 SQLite 和 PostgreSQL 新增以下 GORM 模型对应表：

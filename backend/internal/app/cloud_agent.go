@@ -660,6 +660,13 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		return nil, err
 	}
 	system += workspacePrompt(&workspace)
+	customPrompt, err := s.UserAgentSystemPrompt(userID)
+	if err != nil {
+		return nil, err
+	}
+	customSystem := agentCustomSystemPrompt(customPrompt.SystemPrompt)
+	system += customSystem
+	cloudAgentRecordSystemSegment(&policy, "customSystemPrompt", "自定义系统提示词", customSystem)
 	system += subagentSystemPrompt(req.subagent)
 	state := cloudAgentState{Version: 1, SkillRuntimeMode: cloudAgentSkillRuntimeNative, Request: req, ParentID: linkedParentID, Fingerprint: fingerprint, CreativeAnchor: creativeAnchor, Plan: inheritedPlan, Skills: skillSnapshots, Profile: profile, Policy: policy, Subagent: req.subagent}
 	state.Workspace = &workspace

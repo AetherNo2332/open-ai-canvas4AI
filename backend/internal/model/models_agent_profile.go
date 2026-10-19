@@ -3,9 +3,10 @@ package model
 import "time"
 
 const (
-	AgentProfileScopeUser    = "user"
-	AgentProfileScopeProject = "project"
-	AgentProfileScopeCanvas  = "canvas"
+	AgentProfileScopeSystemPrompt = "system_prompt"
+	AgentProfileScopeUser         = "user"
+	AgentProfileScopeProject      = "project"
+	AgentProfileScopeCanvas       = "canvas"
 )
 
 // AgentProfile stores a durable preference document. It is never an authority:
