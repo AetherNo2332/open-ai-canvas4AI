@@ -1,9 +1,9 @@
 import { ArrowUpRight } from "lucide-react";
-import { useRef, useState, type MouseEvent, type PointerEvent } from "react";
+import { useRef, type MouseEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { App } from "antd";
-import { motion, useMotionTemplate, useMotionValue, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { HoverBorderGradient } from "@/components/ui/aceternity/hover-border-gradient";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import restingBoy from "../../../../assets/home-resting-boy.png";
@@ -28,10 +28,6 @@ export default function CreatePage() {
     const navigate = useNavigate();
     const openingRef = useRef(false);
     const reducedMotion = useReducedMotion();
-    const glowX = useMotionValue(0);
-    const glowY = useMotionValue(0);
-    const glowMask = useMotionTemplate`radial-gradient(320px circle at ${glowX}px ${glowY}px, black, transparent 78%)`;
-    const [pointerInside, setPointerInside] = useState(false);
     const userId = useUserStore((state) => state.user?.id);
     const sessionHydrated = useUserStore((state) => state.hydrated);
     const localProjects = useCanvasStore((state) => state.projects);
@@ -43,12 +39,6 @@ export default function CreatePage() {
     const canvasProjects = userId ? latestCanvasQuery.data?.projects || [] : localProjects;
     const lastEditedCanvasId = latestEditedCanvasId(canvasProjects);
     const continueCanvasHref = lastEditedCanvasId ? `/canvas/${encodeURIComponent(lastEditedCanvasId)}` : "/canvas";
-
-    const trackPointer = (event: PointerEvent<HTMLElement>) => {
-        const bounds = event.currentTarget.getBoundingClientRect();
-        glowX.set(event.clientX - bounds.left);
-        glowY.set(event.clientY - bounds.top);
-    };
 
     const continueCanvas = async (event: MouseEvent<HTMLAnchorElement>) => {
         if (!userId || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -73,30 +63,7 @@ export default function CreatePage() {
     const entranceState = reducedMotion ? "show" : "hidden";
 
     return (
-        <section
-            className="canvas-home"
-            aria-labelledby="canvas-home-title"
-            onPointerEnter={(event) => {
-                if (reducedMotion) return;
-                trackPointer(event);
-                setPointerInside(true);
-            }}
-            onPointerMove={reducedMotion ? undefined : trackPointer}
-            onPointerLeave={() => setPointerInside(false)}
-        >
-            {/* 指针跟随光斑：只动 opacity/transform，颜色由皮肤 token 派生，reduced-motion 不渲染。 */}
-            {reducedMotion ? null : (
-                <motion.span
-                    aria-hidden
-                    className="canvas-home-glow"
-                    style={{
-                        backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
-                        maskImage: glowMask,
-                        WebkitMaskImage: glowMask,
-                        opacity: pointerInside ? 1 : 0,
-                    }}
-                />
-            )}
+        <section className="canvas-home" aria-labelledby="canvas-home-title">
             <motion.img
                 className="canvas-home-character"
                 src={restingBoy}

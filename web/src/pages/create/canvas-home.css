@@ -35,14 +35,6 @@
     user-select: none;
 }
 
-/* 指针跟随光斑：位于画布层之上、内容之下，透明度由 JSX 端 motion 控制（reduced-motion 时不渲染）。 */
-.canvas-home-glow {
-    position: absolute;
-    z-index: 0;
-    inset: 0;
-    pointer-events: none;
-}
-
 .canvas-home-grid {
     flex: 1;
     display: grid;
@@ -142,8 +134,43 @@
     border-radius: calc(var(--button-radius) - 1px);
 }
 
+/* 主按钮的形状光晕：与按钮同形状的圆角矩形向外模糊扩散，分内外两层；纯装饰、不参与命中。 */
 .canvas-home-entry-motion {
+    position: relative;
+    isolation: isolate;
     display: inline-block;
+}
+
+.canvas-home-entry-motion::before,
+.canvas-home-entry-motion::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+    transition: opacity var(--motion-state) ease;
+}
+
+/* 外层：淡淡的环境光。 */
+.canvas-home-entry-motion::before {
+    inset: -16px -20px;
+    border-radius: var(--button-radius);
+    background: color-mix(in srgb, var(--primary) 15%, transparent);
+    filter: blur(30px);
+    opacity: 0.5;
+}
+
+/* 内层：贴近按钮边缘的微弱亮部。 */
+.canvas-home-entry-motion::after {
+    inset: -4px -6px;
+    border-radius: var(--button-radius);
+    background: color-mix(in srgb, var(--primary) 22%, transparent);
+    filter: blur(12px);
+    opacity: 0.5;
+}
+
+.canvas-home-entry-motion:hover::before,
+.canvas-home-entry-motion:hover::after {
+    opacity: 0.68;
 }
 
 @media (min-width: 768px) {
@@ -169,6 +196,10 @@
 @media (prefers-reduced-motion: reduce) {
     .canvas-home-entry::before,
     .canvas-home-entry::after {
+        transition: none;
+    }
+    .canvas-home-entry-motion::before,
+    .canvas-home-entry-motion::after {
         transition: none;
     }
 }
