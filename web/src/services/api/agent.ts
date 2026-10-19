@@ -2,6 +2,13 @@ import { http, apiBaseURL } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser } from "@/services/api/task-text-stream";
 
 export type AgentPermissionMode = "read_only" | "auto" | "request_approval";
+export type AgentSystemPromptSettings = { systemPrompt: string; revision: number };
+export function getAgentSystemPrompt() {
+    return http.get<AgentSystemPromptSettings>("/agent/settings", { timeout: 15_000 });
+}
+export function updateAgentSystemPrompt(input: AgentSystemPromptSettings) {
+    return http.patch<AgentSystemPromptSettings>("/agent/settings", input, { timeout: 15_000 });
+}
 export type AgentSkillDefaultsSummary = { count: number; skills: Array<{ skillId: string; skillName: string }> };
 export function listAgentSkillDefaults() {
     return http.get<AgentSkillDefaultsSummary>("/agent/skill-defaults");

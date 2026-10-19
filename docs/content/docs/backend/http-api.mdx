@@ -404,6 +404,12 @@ CSV 使用中文表头、UTF-8 BOM、CRLF；金额按整数分精确转换为两
 
 前端使用已经应用到列表的筛选条件导出；更改条件后，先查询/筛选再启用导出，分页和刷新沿用已应用条件。明细抽屉支持“仅异常”和单独刷新，切换记录/筛选时取消旧请求，避免旧响应覆盖新记录。下载接口的 JSON 错误 Blob 会解析为业务提示，超量或重跑冲突不会被保存为 CSV。
 
+## 用户 Agent 设置
+
+账户设置中的「Agent（beta）」提供自定义系统提示词和原有个人记忆管理。`GET /api/agent/settings` 返回 `{ systemPrompt, revision }`，仅读取当前登录账户；无设置时返回空提示词与 revision 0。`PATCH /api/agent/settings` 接收同样结构，最多 12000 个 Unicode 字符，拒绝非法 UTF-8 和除换行、回车、Tab 外的控制字符；保存时裁去首尾空白。revision 不匹配返回 409，重新读取后再保存；空字符串恢复默认行为。
+
+自定义正文直接追加到创建运行时的系统上下文，包含在已有运行快照、上下文计量和上游缓存标识中；修改仅影响后续新运行（含后续对话轮次），运行中的任务保持原快照。该设置适用于本账户所有画布，独立于按需读取的 user/project/canvas 偏好文档，不能扩展平台权限、预算或绕过审批。
+
 ## 用户 Agent 记忆
 
 `GET/POST /api/agent/memories`、`PATCH/DELETE /api/agent/memories/:id`、`POST /api/agent/memories/:id/decide`、`GET /api/agent/memories/export`、`POST /api/agent/memories/import`、`GET/PATCH /api/agent/memories/settings`、`POST /api/agent/memories/compact` 需要登录。记忆按 `author_user_id` 隔离；手动添加直接批准，Agent `remember_lesson` 写入待审，由本人 `decide`。导出 `kind` 为 `agent-memories`。压缩只处理该用户已批准记忆，创建 `canvas_text` 任务 `operation=agent_memory_compact`；worker 仅在 `agent_memory_settings.compact_task_id` 与任务 ID 一致时应用 JSON 计划（merge 保留第一条并删除其余，rewrite 原地更新）。周期为 `off` / `daily` / `weekly` / `monthly`，调度每 5 分钟扫描，每拍最多 3 个用户。

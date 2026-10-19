@@ -3,6 +3,16 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## Agent（beta）自定义系统提示词
+
+- [x] 已实现：账户设置原「Agent 记忆」更名「Agent（beta）」，新增自定义系统提示词编辑、保存、清空与 12000 字符计数；保留个人记忆功能及原有直达地址。
+- [x] 持久化与运行：使用独立 `system_prompt` scope、登录账户归属和 revision 冲突控制；创建运行时直接注入系统上下文并登记用量，冻结到原有运行快照，不改变按需偏好文档。
+- [x] 前端验证：最新本地运行设置表单、账户安全、Agent 设置与提示词缓存 4 个专项文件，11 项测试通过（44 次断言）；`bun run build`（含 TypeScript 检查）、UI lint 和新增文件格式检查通过。构建仍有现有分块体积警告。
+- [x] 后端专项：`TestUserAgentSystemPrompt*`、`TestCloudAgentProfile*` 与 `TestAgentSystemPromptHTTP` 通过。保存、账户隔离、版本冲突、非法输入、运行快照、清空恢复默认及 HTTP 鉴权均已覆盖；本机 GCC 链接不可用，使用缓存的 Linux Go 镜像断网验证，未运行后端全量测试。
+- [x] 独立审查：修复自定义 Markdown 标题被旧待办清单逻辑截断的问题，正文以 JSON 字符串完整注入；关闭自动重连刷新并保留已有数据上的表单，避免丢失未保存草稿。
+- [ ] 真实页面验收：保存后刷新、双页面冲突、切换账号隔离、320px/1440px 布局与明暗皮肤尚未浏览器验收；未启动 dev server。
+- [ ] 模型与数据库环境：未调用真实模型；PostgreSQL 与 Redis 集成未实测。
+
 ## 导演台 HTTP 启动兼容
 
 - [x] 已复现：HTTP 局域网页面缺少 `crypto.randomUUID` 时，初始化场景在 `model.ts` 抛出异常，导致 `/desk/` 无法启动。

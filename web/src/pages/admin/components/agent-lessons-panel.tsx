@@ -180,7 +180,7 @@ export default function AgentLessonsPanel() {
 
     return (
         <div className="flex flex-col gap-3">
-            <p className="text-xs text-foreground/60">记忆归用户自己批准和管理。这里只做巡查：可按用户、状态、关键词筛选，必要时删除违规内容。批准入口在用户的「设置 → Agent 记忆」。</p>
+            <p className="text-xs text-foreground/60">记忆归用户自己批准和管理。这里只做巡查：可按用户、状态、关键词筛选，必要时删除违规内容。批准入口在用户的「设置 → Agent（beta）→ 个人记忆」。</p>
             <AdminDataTable
                 toolbar={
                     <div className="flex flex-wrap items-center gap-2">

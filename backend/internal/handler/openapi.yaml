@@ -721,6 +721,38 @@ paths:
       responses:
         "200": {$ref: "#/components/responses/Envelope"}
         "404": {$ref: "#/components/responses/Error"}
+  /agent/settings:
+    get:
+      tags: [agent]
+      summary: 读取当前账户的 Agent 自定义系统提示词与 revision
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+    patch:
+      tags: [agent]
+      summary: 保存账户级 Agent 系统提示词，空字符串恢复默认
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [systemPrompt, revision]
+              properties:
+                systemPrompt:
+                  type: string
+                  maxLength: 12000
+                  description: 直接注入后续新建运行的系统上下文，不改变平台权限和审批规则
+                revision:
+                  type: integer
+                  minimum: 0
+                  description: 首次保存为 0，后续使用读取结果中的 revision
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
   /agent/profile:
     get:
       tags: [agent]

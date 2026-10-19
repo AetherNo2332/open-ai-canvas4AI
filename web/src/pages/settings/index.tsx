@@ -13,6 +13,7 @@ import { ModelDefaultGrid } from "./model-default-grid";
 import { PromptPreferencesPane } from "./prompt-preferences-pane";
 import DiagnosticsPanel from "./diagnostics-panel";
 import AgentMemoryPane from "./agent-memory-pane";
+import { AgentSystemPromptPane } from "./agent-system-prompt-pane";
 import { AccountSecurityPane } from "./account-security-pane";
 import { RunningHubSettingsPane } from "./runninghub-settings-pane";
 import { RUNNINGHUB_PLUGIN_ID } from "@/lib/plugins/builtin/workflows";
@@ -26,7 +27,7 @@ const configSections: Array<{ key: ConfigSectionKey; label: string; description:
     { key: "models", label: "模型选择", description: "按领域选择默认模型", icon: <Boxes className="size-4" /> },
     { key: "preferences", label: "生成偏好", description: "画布生成默认值", icon: <SlidersHorizontal className="size-4" /> },
     { key: "prompts", label: "提示词偏好", description: "按任务定制平台模板", icon: <MessageSquareText className="size-4" /> },
-    { key: "agent-memory", label: "Agent 记忆", description: "批准、添加、导出导入、压缩", icon: <Brain className="size-4" /> },
+    { key: "agent-memory", label: "Agent（beta）", description: "自定义系统提示词与个人记忆", icon: <Brain className="size-4" /> },
     { key: "storage", label: "我的对象存储", description: "管理个人媒体存储", icon: <Cloud className="size-4" /> },
     { key: "account", label: "账户安全", description: "修改登录密码", icon: <ShieldCheck className="size-4" /> },
     { key: "diagnostics", label: "问题诊断", description: "导出日志协助排查", icon: <Bug className="size-4" /> },
@@ -156,11 +157,18 @@ export default function SettingsPage() {
             <SettingsPane>
                 <div className="settings-pane-header">
                     <div className="min-w-0">
-                        <h2>Agent 记忆</h2>
-                        <p>只属于你。Agent 记下的先待批准；手动添加立刻生效。可导入导出，也可用文本模型压缩相近条目。</p>
+                        <h2>Agent（beta）</h2>
+                        <p>自定义画布 Agent 的系统提示词，管理只属于你的个人记忆。</p>
                     </div>
                 </div>
                 <div className="settings-section">
+                    <AgentSystemPromptPane />
+                </div>
+                <div className="settings-section mt-6">
+                    <div className="settings-preference-heading">
+                        <h3>个人记忆</h3>
+                        <p>Agent 记下的先待批准；手动添加立刻生效。支持导入、导出和压缩相近条目。</p>
+                    </div>
                     <AgentMemoryPane />
                 </div>
             </SettingsPane>

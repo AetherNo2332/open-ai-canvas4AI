@@ -14,6 +14,44 @@ import (
 )
 
 func RegisterAgentMemoryRoutes(r *gin.RouterGroup, svc *service.Service) {
+	r.GET("/agent/settings", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		view, err := svc.UserAgentSystemPrompt(user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
+	r.PATCH("/agent/settings", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var req struct {
+			SystemPrompt *string `json:"systemPrompt"`
+			Revision     *int64  `json:"revision"`
+		}
+		if err := decodeAgentJSON(c, &req, 80<<10); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		if req.SystemPrompt == nil || req.Revision == nil {
+			fail(c, http.StatusBadRequest, errors.New("缺少 systemPrompt 或 revision"))
+			return
+		}
+		view, err := svc.UpdateUserAgentSystemPrompt(user.ID, service.AgentSystemPromptRequest{SystemPrompt: *req.SystemPrompt, Revision: *req.Revision})
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
 	r.GET("/agent/memories", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
