@@ -555,7 +555,12 @@ export function CanvasNodePromptPanel({
                     ) : mode === "image" ? (
                         // 图片模式下，显示相机配置与镜头配置
                         <>
-                            <CanvasCameraControlPopover cameraControl={node.metadata?.cameraControl} onCameraControlChange={(options) => onConfigChange(node.id, { cameraControl: options })} theme={theme} compact={!expanded} />
+                            <CanvasCameraControlPopover
+                                cameraControl={node.metadata?.cameraControl}
+                                onCameraControlChange={(options) => onConfigChange(node.id, { cameraControl: options })}
+                                compact={!expanded}
+                                preview={node.type === "image" ? { src: node.metadata?.content, storageKey: node.metadata?.storageKey, title: node.title } : undefined}
+                            />
                             <CanvasImageSettingsPopover
                                 config={config}
                                 placement={expanded ? "topRight" : "topLeft"}
