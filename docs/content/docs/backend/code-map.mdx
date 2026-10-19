@@ -11,6 +11,11 @@ description: 从产品功能快速定位主要代码入口
 - `backend/internal/app/asset_origins.go` 与 `repository/asset_origins.go`：分页素材按当前用户批量查询画布名称，历史生成素材通过任务查回画布；`canvas/user_asset_client_payload.go` 保留列表所需来源字段。
 - `web/src/lib/canvas/registered-generation-output.ts`、`services/project-asset-sync.ts`：复用服务器素材，未登记或资源不匹配时报错，避免随机新建；`lib/asset-origin.ts` 统一资产页来源与归属文案。
 
+## 工作台侧栏动画
+
+- `web/src/components/layout/app-top-nav.tsx`：响应视口、桌面折叠偏好、Motion 宽度/位移与遮罩、移动端 Escape 和焦点恢复；`workspace-sidebar-motion.css` 统一宽度与 flex-basis，隔离旧 CSS 过渡。
+- `workspace-sidebar-nav.tsx`：实际导航入口、选中背景、图标反馈、标题/账户文案过渡和分组折叠；共享 `workspace-sidebar-motion.tsx` 保留 Router Link 语义，并管理退出动画中的不可聚焦状态。专项在 `web/test/workspace-sidebar-motion.test.tsx`。
+
 ## 摄影机控制前端
 
 - 入口与弹窗：`web/src/components/canvas/canvas-camera-control-popover.tsx`，复用于图片提示词和 `batch-generation-settings-dialog.tsx`。
