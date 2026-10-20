@@ -3,20 +3,13 @@ import { readFileSync } from "node:fs";
 
 const source = (path: string) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
 
-test("registration requires password and agreement before verification", () => {
+test("single-page registration retains the final backend validation and first-admin exception", () => {
     const page = source("pages/auth/register.tsx");
-    const scene = source("pages/auth/auth-scene.tsx");
-
-    expect(page).toContain("type RegisterStep = 1 | 2 | 3;");
-    expect(page).toContain("setStep(3);");
-    expect(page).toContain("step === 3 && methods.length > 0 ? <VerificationFields");
-    expect(page).toContain("if (step === 3 && !settings?.firstUser && !verification.ticket)");
-    expect(page).not.toContain("step === 1 && previewEmailVerification ? <VerificationFields");
-    expect(scene).toContain("registerVerificationStep");
-    expect(scene).toContain("验证你的邮箱");
-
-    const passwordStep = page.indexOf("auth-register-passwords");
-    const verificationStep = page.indexOf("step === 3 && methods.length > 0 ? <VerificationFields");
-    expect(passwordStep).toBeGreaterThanOrEqual(0);
-    expect(verificationStep).toBeGreaterThan(passwordStep);
+    expect(page).not.toContain("setStep(");
+    expect(page).toContain("if (!settings?.firstUser && !verification.ticket)");
+    expect(page).toContain("acceptedTerms: agreementAccepted");
+    expect(page).toContain("if (password !== confirmPassword)");
+    expect(page).toContain("if (Array.from(password).length < 8)");
+    expect(page).toContain("if (registering.current || registerCountdown > 0) return;");
+    expect(page).toContain("verificationUnavailable || submitting || previewEmailVerification");
 });

@@ -1,4 +1,4 @@
-import { Link, Outlet, useLocation, useSearchParams } from "react-router";
+import { Link, Outlet, useLocation } from "react-router";
 import { useEffect } from "react";
 import { Moon, Sun } from "lucide-react";
 
@@ -44,16 +44,13 @@ export function AuthScene() {
     const setTheme = useThemeStore((state) => state.setTheme);
     const { sceneRoot } = useAuthAmbientMotion(theme);
     const location = useLocation();
-    const [searchParams] = useSearchParams();
     const recovery = location.pathname === "/forgot-password";
     const activeTab = location.pathname === "/register" ? "register" : "login";
-    const registerPasswordStep = activeTab === "register" && searchParams.get("step") === "2";
-    const registerVerificationStep = activeTab === "register" && searchParams.get("step") === "3";
-    const authMode = recovery ? "recovery" : registerVerificationStep ? "register-verification" : registerPasswordStep ? "register-password" : activeTab;
+    const authMode = recovery ? "recovery" : activeTab;
     const { motionRoot, onValidationError } = useAuthMotion(authMode);
     const copy = recovery ? authCopy.recovery : activeTab === "register" ? authCopy.register : authCopy.login;
     const heroDescription = appearance.authHeroDescription.trim();
-    const title = activeTab === "login" && !recovery ? `登录到 ${appearance.brandName}` : registerVerificationStep ? "验证你的邮箱" : registerPasswordStep ? "为你的账户设置密码" : copy.title;
+    const title = activeTab === "login" && !recovery ? `登录到 ${appearance.brandName}` : copy.title;
     const switchSearch = new URLSearchParams(location.search);
     switchSearch.delete("step");
 
@@ -77,7 +74,7 @@ export function AuthScene() {
     }, [authMode]);
 
     return (
-        <main className="auth-scene" ref={sceneRoot}>
+        <main className="auth-scene" data-auth-page={authMode} ref={sceneRoot}>
             <button type="button" className="auth-theme-toggle" aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
                 {theme === "dark" ? <Sun size={20} aria-hidden="true" /> : <Moon size={20} aria-hidden="true" />}
             </button>
@@ -106,8 +103,8 @@ export function AuthScene() {
                 </section>
             </div>
 
-            <div className={`auth-scene-footer-shell${registerPasswordStep ? " is-register-password" : ""}`}>
-                {registerPasswordStep ? <span className="auth-scene-footer-brand">{appearance.brandName}</span> : <span aria-hidden="true" />}
+            <div className="auth-scene-footer-shell">
+                <span aria-hidden="true" />
                 <footer className="site-compliance-footer auth-scene-footer" aria-label="站点版权与备案信息">
                     <span>© 2026 {appearance.brandName}</span>
                 </footer>

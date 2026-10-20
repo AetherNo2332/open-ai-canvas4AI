@@ -18,6 +18,7 @@ function CodeField({
     autoComplete,
     inputMode,
     sendLabel,
+    required = false,
 }: {
     label: string;
     value: string;
@@ -31,6 +32,7 @@ function CodeField({
     autoComplete: string;
     inputMode: "text" | "email" | "tel" | "numeric";
     sendLabel: string;
+    required?: boolean;
 }) {
     const counting = remaining > 0;
     const blocked = disabled || sending || counting || !targetReady;
@@ -38,7 +40,18 @@ function CodeField({
         <label className="block space-y-2">
             <span className="auth-scene-label text-xs font-medium">{label}</span>
             <span className={`auth-code-field${sending ? " is-busy" : ""}`}>
-                <Input size="large" variant="borderless" value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} inputMode={inputMode} placeholder={placeholder} disabled={disabled || sending} />
+                <Input
+                    size="large"
+                    variant="borderless"
+                    value={value}
+                    onChange={(event) => onChange(event.target.value)}
+                    autoComplete={autoComplete}
+                    inputMode={inputMode}
+                    required={required}
+                    pattern={required ? "[0-9]{6}" : undefined}
+                    placeholder={placeholder}
+                    disabled={disabled || sending}
+                />
                 <Button className="auth-code-send" size="large" type="text" data-counting={counting ? "true" : "false"} loading={sending} disabled={blocked} onClick={onSend}>
                     {counting ? `${remaining} 秒后重发` : sendLabel}
                 </Button>
@@ -129,6 +142,7 @@ export function VerificationFields({
                     targetReady={(sms ? Boolean(value.phone.trim()) : true) && (email ? Boolean(value.email.trim()) : true) && (purpose !== "bind" || Boolean(password))}
                     disabled={disabled}
                     placeholder="6 位数字验证码"
+                    required={purpose === "register"}
                     autoComplete="one-time-code"
                     inputMode="numeric"
                     sendLabel={sendLabel}

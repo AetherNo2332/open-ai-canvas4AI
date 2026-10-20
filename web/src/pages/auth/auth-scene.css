@@ -403,25 +403,18 @@ html[data-skin] body .auth-scene .auth-scene-form-body :is(input.ant-input:hover
 }
 
 .auth-login-fields,
-.auth-register-step {
+.auth-register-form {
     display: flex;
     flex-direction: column;
     gap: 24px;
 }
 
-.auth-login-inputs,
-.auth-register-inputs,
-.auth-register-passwords {
+.auth-login-inputs {
     display: grid;
     gap: 18px;
 }
 
-.auth-register-passwords {
-    gap: 14px;
-}
-
-.auth-login-inputs :where(.ant-input, .ant-input-affix-wrapper),
-.auth-register-inputs :where(.ant-input, .ant-input-affix-wrapper) {
+.auth-login-inputs :where(.ant-input, .ant-input-affix-wrapper) {
     min-height: 56px;
 }
 
@@ -446,24 +439,40 @@ html[data-skin] body .auth-scene .auth-scene-form-body :is(input.ant-input:hover
     text-align: center;
 }
 
-.auth-register-step-1 .auth-scene-form-body,
-.auth-register-step-2 .auth-scene-form-body {
-    gap: 0;
+.auth-scene[data-auth-page="register"] .auth-scene-form {
+    max-width: 600px;
 }
 
-.auth-register-step-1 .auth-register-inputs {
-    gap: 14px;
+.auth-register-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
 }
 
-.auth-register-step-2 .auth-agreement-row {
-    margin-top: 2px;
+.auth-register-row > label {
+    min-width: 0;
+}
+
+.auth-register-form .auth-agreement-row {
+    margin-top: 0;
+}
+
+@media (max-width: 519px) {
+    .auth-register-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 
 /* 复用的验证码组件在认证页也采用完整的胶囊外边框。 */
 .auth-scene-form-body .auth-code-field {
     min-height: 56px;
+    overflow: hidden;
     border-color: var(--border);
     background: var(--auth-card-bg, var(--background));
+}
+
+.auth-scene-form-body .auth-code-field:has(.ant-input:disabled) {
+    background: var(--control-disabled-bg) !important;
 }
 
 .auth-scene-form-body .auth-code-field > .ant-input {
