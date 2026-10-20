@@ -459,7 +459,7 @@ paths:
     put:
       tags: [canvas]
       summary: 按 revision 保存画布内容
-      description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。忽略客户端 viewport 和 remoteContentHash，updatedAt 由服务端生成。
+      description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。referenceFieldsVersion=1 时，data.project 还包含服务端协调后的 connections 投影（包括空数组）。忽略客户端 viewport 和 remoteContentHash，updatedAt 由服务端生成。
       requestBody:
         required: true
         content:
@@ -477,7 +477,7 @@ paths:
                   additionalProperties: true
       responses:
         "200":
-          description: 信封 data.project 返回摘要及递增后的 revision
+          description: 信封 data.project 返回摘要及递增后的 revision；规范化引用文档还返回服务端协调后的 connections 投影
         "400":
           description: 请求、版本或素材引用不合法
         "409":

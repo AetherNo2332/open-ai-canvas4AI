@@ -2,7 +2,7 @@ import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeCharacterImageMentions } from "@/lib/canvas/canvas-character-reference";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
-import { canvasDeclaredInputNodeIds } from "./canvas-reference-inputs";
+import { buildCanvasDeclaredInputResolver, canvasDeclaredInputNodeIds } from "./canvas-reference-inputs";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { Skill } from "@/services/api/skills";
@@ -411,7 +411,16 @@ export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNo
 
 export function buildCanvasNodeMentionReferenceMap(nodes: CanvasNodeData[], connections: CanvasConnection[], targetNodes: CanvasNodeData[] = nodes) {
     const resolve = buildCanvasResourceInputResolver(nodes, connections);
-    return new Map(targetNodes.map((node) => [node.id, labelResourceNodes(resolve(node.id), true)]));
+    const declaredInputs = buildCanvasDeclaredInputResolver(nodes);
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    return new Map(targetNodes.map((node) => {
+        const ids = declaredInputs(node.id);
+        const inputs = ids === undefined ? resolve(node.id) : ids.flatMap((id) => {
+            const input = nodeById.get(id);
+            return input ? [input] : [];
+        });
+        return [node.id, labelResourceNodes(inputs, true)];
+    }));
 }
 
 /** 批次关系属于分组，不是媒体输入；展示与提交共用这一份输入顺序解析。 */

@@ -175,6 +175,12 @@ export function applyAgentCanvasPatch(project: CanvasProject, patch: AgentCanvas
 }
 
 export function mergeAgentCanvasEditor(previous: CanvasProject, incoming: CanvasProject, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+    const liveIds = new Set(nodes.map((node) => node.id));
+    const locallyRemovedIds = new Set(previous.nodes.filter((node) => !liveIds.has(node.id)).map((node) => node.id));
+    // A delayed server projection must not reconnect a node deleted locally
+    // while the save was in flight. Explicit connection edits still merge below.
+    const incomingConnections = incoming.connections.filter((edge) => edge.managedBy !== "reference-fields-v1"
+        || !(locallyRemovedIds.has(edge.fromNodeId) || locallyRemovedIds.has(edge.toNodeId) || locallyRemovedIds.has(edge.referenceOwnerNodeId || "")));
     const changes = <T extends { id: string }>(before: T[], after: T[]): Change<T>[] => {
         const byId = new Map(before.map((item) => [item.id, item]));
         const afterIds = new Set(after.map((item) => item.id));
@@ -187,8 +193,8 @@ export function mergeAgentCanvasEditor(previous: CanvasProject, incoming: Canvas
         canvasId: previous.id,
         updatedAt: incoming.updatedAt,
         nodes: changes(previous.nodes, incoming.nodes),
-        connections: changes(previous.connections, incoming.connections),
+        connections: changes(previous.connections, incomingConnections),
         ...(!equal(previous.nodes.map((item) => item.id), incoming.nodes.map((item) => item.id)) ? { previousNodeOrder: previous.nodes.map((item) => item.id), nodeOrder: incoming.nodes.map((item) => item.id) } : {}),
-        ...(!equal(previous.connections.map((item) => item.id), incoming.connections.map((item) => item.id)) ? { previousConnectionOrder: previous.connections.map((item) => item.id), connectionOrder: incoming.connections.map((item) => item.id) } : {}),
+        ...(!equal(previous.connections.map((item) => item.id), incomingConnections.map((item) => item.id)) ? { previousConnectionOrder: previous.connections.map((item) => item.id), connectionOrder: incomingConnections.map((item) => item.id) } : {}),
     });
 }

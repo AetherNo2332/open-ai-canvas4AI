@@ -20,16 +20,17 @@ type AssetsSyncRequest struct {
 }
 
 type UserDataSummary struct {
-	ID        string           `json:"id"`
-	FolderID  string           `json:"folderId,omitempty"`
-	Kind      string           `json:"kind,omitempty"`
-	Category  string           `json:"category,omitempty"`
-	Status    string           `json:"status,omitempty"`
-	Title     string           `json:"title"`
-	CreatedAt time.Time        `json:"createdAt"`
-	UpdatedAt time.Time        `json:"updatedAt"`
-	Revision  int64            `json:"revision,omitempty"`
-	SaveAudit *CanvasSaveAudit `json:"-"`
+	ID          string           `json:"id"`
+	FolderID    string           `json:"folderId,omitempty"`
+	Kind        string           `json:"kind,omitempty"`
+	Category    string           `json:"category,omitempty"`
+	Status      string           `json:"status,omitempty"`
+	Title       string           `json:"title"`
+	CreatedAt   time.Time        `json:"createdAt"`
+	UpdatedAt   time.Time        `json:"updatedAt"`
+	Revision    int64            `json:"revision,omitempty"`
+	Connections json.RawMessage  `json:"connections,omitempty"`
+	SaveAudit   *CanvasSaveAudit `json:"-"`
 }
 
 type CanvasSaveAudit struct {
@@ -236,7 +237,8 @@ func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (U
 
 func (s *Service) upsertUserCanvasProjectWithHistory(userID string, raw json.RawMessage, reason string) (UserDataSummary, error) {
 	var version struct {
-		Revision *int64 `json:"revision"`
+		Revision               *int64 `json:"revision"`
+		ReferenceFieldsVersion int    `json:"referenceFieldsVersion"`
 	}
 	if err := json.Unmarshal(raw, &version); err != nil {
 		return UserDataSummary{}, kernel.BadAuthRequest("画布版本格式错误")
@@ -315,7 +317,17 @@ func (s *Service) upsertUserCanvasProjectWithHistory(userID string, raw json.Raw
 	if err != nil {
 		return UserDataSummary{}, err
 	}
-	return UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision, SaveAudit: &audit}, nil
+	summary := UserDataSummary{ID: project.ID, Title: project.Title, CreatedAt: project.CreatedAt, UpdatedAt: project.UpdatedAt, Revision: project.Revision, SaveAudit: &audit}
+	if version.ReferenceFieldsVersion == 1 {
+		var projection struct {
+			Connections json.RawMessage `json:"connections"`
+		}
+		if err := json.Unmarshal([]byte(project.PayloadJSON), &projection); err != nil {
+			return UserDataSummary{}, err
+		}
+		summary.Connections = projection.Connections
+	}
+	return summary, nil
 }
 
 func (s *Service) DeleteUserCanvasProject(userID string, id string) error {

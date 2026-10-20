@@ -16,11 +16,24 @@ export function storyboardDeclaredNodeIds(script: CanvasNodeData, row: Storyboar
 // Undefined is reserved for an unnormalized legacy document. An explicit empty
 // list must never fall back to visual connection lines.
 export function canvasDeclaredInputNodeIds(nodeId: string, nodes: CanvasNodeData[]): string[] | undefined {
-    const target = nodes.find((n) => n.id === nodeId);
+    return buildCanvasDeclaredInputResolver(nodes)(nodeId);
+}
+
+export function buildCanvasDeclaredInputResolver(nodes: CanvasNodeData[]) {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const outputOwners = new Map<string, { script: CanvasNodeData; row: StoryboardRow }>();
     for (const script of nodes) {
-        const row = script.metadata?.storyboard?.rows.find((r) => r.imageNodeId === nodeId || r.videoNodeId === nodeId);
-        if (row) return storyboardDeclaredNodeIds(script, row, nodes, target?.type === "video" && script.metadata?.storyboardVideoInputMode === "keyframe");
+        for (const row of script.metadata?.storyboard?.rows || []) {
+            for (const id of [row.imageNodeId, row.videoNodeId]) {
+                if (id && !outputOwners.has(id)) outputOwners.set(id, { script, row });
+            }
+        }
     }
-    const bindings = target?.metadata?.generationSpec?.referenceBindings ?? target?.metadata?.inputBindings;
-    return bindings === undefined ? undefined : [...bindings].sort((a, b) => a.order - b.order).flatMap((b) => (b.nodeId ? [b.nodeId] : []));
+    return (nodeId: string): string[] | undefined => {
+        const target = nodeById.get(nodeId);
+        const owner = outputOwners.get(nodeId);
+        if (owner) return storyboardDeclaredNodeIds(owner.script, owner.row, nodes, target?.type === "video" && owner.script.metadata?.storyboardVideoInputMode === "keyframe");
+        const bindings = target?.metadata?.generationSpec?.referenceBindings ?? target?.metadata?.inputBindings;
+        return bindings === undefined ? undefined : [...bindings].sort((a, b) => a.order - b.order).flatMap((b) => (b.nodeId ? [b.nodeId] : []));
+    };
 }
