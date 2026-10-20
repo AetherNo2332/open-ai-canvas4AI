@@ -4,12 +4,15 @@ import { apiClient } from "../src/services/api/request";
 import { canvasContentHash } from "../src/lib/canvas/canvas-content";
 import { rebaseCanvasProjects, parseCanvasStorageDocument } from "../src/lib/canvas/canvas-storage-revision";
 import { readCanvasSyncDrafts } from "../src/services/canvas-sync-drafts";
-import { applyAgentCanvasPatches, deleteCanvasProjectsWithRemoteSync, refreshCanvasAfterAgent, initializeRemoteUserDataSession, installRemoteUserDataAutoSync, loadCanvasProjectForEditing, resetRemoteUserDataSync, saveRemoteUserDataNow, syncRemoteUserData } from "../src/services/user-data-sync";
+import { applyAgentCanvasPatches, deleteCanvasProjectsWithRemoteSync, refreshCanvasAfterAgent, initializeRemoteUserDataSession, installRemoteUserDataAutoSync, loadCanvasProjectForEditing, resetRemoteUserDataSync, saveRemoteUserDataNow, subscribeAgentCanvasRefresh, syncRemoteUserData } from "../src/services/user-data-sync";
+import { mergeAgentCanvasEditor } from "../src/lib/canvas/agent-canvas-patch";
+import { applyCanvasReferenceEdit, canvasReferenceIntentForConnection } from "../src/lib/canvas/canvas-reference-edits";
 import { createAgentCanvasSync } from "../src/services/agent-canvas-sync";
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "../src/stores/canvas/use-canvas-store";
 import { flushAssetStorePersistence, useAssetStore } from "../src/stores/use-asset-store";
 import { useSyncProgressStore } from "../src/stores/use-sync-progress-store";
 import { CanvasNodeType } from "../src/types/canvas";
+import type { CanvasConnection } from "../src/types/canvas";
 
 const originalWindow = globalThis.window;
 const originalAdapter = apiClient.defaults.adapter;
@@ -22,6 +25,7 @@ let autoSave: (() => void) | undefined;
 let remote = new Map<string, CanvasProject>();
 let requests: Array<{ method: string; id: string; project?: CanvasProject }> = [];
 let beforePut: (() => Promise<void>) | undefined;
+let savedConnections: CanvasConnection[] | undefined;
 let deleteFailureId: string | undefined;
 let mediaUploads: Array<{ id: string; kind: string; bytes: number }> = [];
 
@@ -54,6 +58,7 @@ beforeEach(async () => {
     requests = [];
     autoSave = undefined;
     beforePut = undefined;
+    savedConnections = undefined;
     deleteFailureId = undefined;
     mediaUploads = [];
     remote = new Map([
@@ -114,6 +119,7 @@ beforeEach(async () => {
                 data = { project: saved };
             }
         } else if (method === "put") {
+            const projectionConnections = savedConnections;
             await beforePut?.();
             const project = body.project as CanvasProject;
             const current = remote.get(id);
@@ -121,9 +127,9 @@ beforeEach(async () => {
             else if (new TextEncoder().encode(JSON.stringify(project)).byteLength > 4 << 20) status = 400;
             else if (project.revision !== (current?.revision ?? 0)) status = 409;
             else {
-                const saved = { ...structuredClone(project), revision: project.revision! + 1 };
+                const saved = { ...structuredClone(project), revision: project.revision! + 1, ...(projectionConnections === undefined ? {} : { connections: projectionConnections }) };
                 remote.set(id, saved);
-                data = { project: saved };
+                data = { project: { id, title: saved.title, revision: saved.revision, ...(projectionConnections === undefined ? {} : { connections: projectionConnections }) } };
             }
         } else data = { project: structuredClone(remote.get(id)) };
         return { config, status, statusText: "", headers: {}, data: { code: status === 200 ? 0 : status, data, msg: status === 409 ? "版本冲突" : status === 400 ? "画布数据超过 4MB，请先把媒体文件保存到资源存储" : "ok" } };
@@ -142,6 +148,92 @@ afterEach(async () => {
     localforage.setItem = originalSet;
     if (originalWindow === undefined) delete (globalThis as { window?: unknown }).window;
     else Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+});
+
+test("web saves project server-derived reference connections into the open editor and clean baseline", async () => {
+    const source = useCanvasStore.getState().openProject("canvas")!;
+    const nodes = [...source.nodes, { ...source.nodes[0], id: "target" }];
+    const intent = canvasReferenceIntentForConnection(nodes, { fromNodeId: "old-image", toNodeId: "target" })!;
+    const edited = applyCanvasReferenceEdit(nodes, intent);
+    useCanvasStore.getState().updateProject("canvas", { referenceFieldsVersion: 1, nodes: edited });
+    let editor = { nodes: edited, connections: [] as CanvasConnection[] };
+    const unsubscribe = subscribeAgentCanvasRefresh((incoming, previous) => {
+        editor = mergeAgentCanvasEditor(previous!, incoming, editor.nodes, editor.connections);
+    });
+    savedConnections = [{ id: "server-edge", fromNodeId: "old-image", toNodeId: "target", managedBy: "reference-fields-v1", referenceOwnerNodeId: "target", referenceBindingId: "node:old-image" }];
+    beforePut = async () => {
+        beforePut = undefined;
+        editor.nodes = editor.nodes.map((node) => node.id === "target" ? { ...node, title: "edited during save" } : node);
+        useCanvasStore.getState().updateProject("canvas", { nodes: editor.nodes });
+    };
+    try {
+        await saveRemoteUserDataNow("canvas");
+        expect(editor.connections).toEqual(savedConnections);
+        expect(editor.nodes.find((node) => node.id === "target")?.title).toBe("edited during save");
+        const current = useCanvasStore.getState().openProject("canvas")!;
+        expect(current.connections).toEqual(savedConnections);
+        expect(current.remoteContentHash).toBe(await canvasContentHash(current));
+        expect(requests.filter((request) => request.method === "put")).toHaveLength(2);
+        savedConnections = [];
+        editor.nodes = applyCanvasReferenceEdit(current.nodes, { kind: "set_node_inputs", nodeId: "target", bindings: [] });
+        useCanvasStore.getState().updateProject("canvas", { nodes: editor.nodes });
+        await saveRemoteUserDataNow("canvas");
+        expect(editor.connections).toEqual([]);
+        expect(useCanvasStore.getState().openProject("canvas")!.connections).toEqual([]);
+    } finally {
+        unsubscribe();
+    }
+});
+
+test("a connection added while saving survives the server connection projection", async () => {
+    const source = useCanvasStore.getState().openProject("canvas")!;
+    const nodes = [...source.nodes, { ...source.nodes[0], id: "target" }];
+    useCanvasStore.getState().updateProject("canvas", { referenceFieldsVersion: 1, nodes });
+    const edge = { id: "local-edge", fromNodeId: "old-image", toNodeId: "target" };
+    savedConnections = [];
+    beforePut = async () => {
+        beforePut = undefined;
+        useCanvasStore.getState().updateProject("canvas", { connections: [edge] });
+        // The next save receives the free connection unchanged from reconciliation.
+        savedConnections = undefined;
+    };
+    await saveRemoteUserDataNow("canvas");
+    expect(useCanvasStore.getState().openProject("canvas")!.connections).toEqual([edge]);
+    expect(remote.get("canvas")!.connections).toEqual([edge]);
+    expect(requests.filter((request) => request.method === "put")).toHaveLength(2);
+});
+
+test("a node deleted during a save is not reconnected by its delayed projection", async () => {
+    const source = useCanvasStore.getState().openProject("canvas")!;
+    const nodes = [...source.nodes, { ...source.nodes[0], id: "target" }];
+    const intent = canvasReferenceIntentForConnection(nodes, { fromNodeId: "old-image", toNodeId: "target" })!;
+    let editor = { nodes: applyCanvasReferenceEdit(nodes, intent), connections: [] as CanvasConnection[] };
+    useCanvasStore.getState().updateProject("canvas", { referenceFieldsVersion: 1, nodes: editor.nodes });
+    savedConnections = [{ id: "server-edge", fromNodeId: "old-image", toNodeId: "target", managedBy: "reference-fields-v1", referenceOwnerNodeId: "target", referenceBindingId: "node:old-image" }];
+    let projections = 0;
+    const unsubscribe = subscribeAgentCanvasRefresh((incoming, previous) => {
+        editor = mergeAgentCanvasEditor(previous!, incoming, editor.nodes, editor.connections);
+        projections++;
+        expect(editor.nodes.map((node) => node.id)).toEqual(["old-image"]);
+        expect(editor.connections).toEqual([]);
+    });
+    beforePut = async () => {
+        beforePut = undefined;
+        editor.nodes = editor.nodes.filter((node) => node.id !== "target");
+        useCanvasStore.getState().updateProject("canvas", { nodes: editor.nodes });
+        savedConnections = [];
+    };
+    try {
+        await saveRemoteUserDataNow("canvas");
+        const current = useCanvasStore.getState().openProject("canvas")!;
+        expect(projections).toBeGreaterThan(0);
+        expect(current.connections).toEqual([]);
+        expect(current.nodes.map((node) => node.id)).toEqual(["old-image"]);
+        expect(requests.filter((request) => request.method === "put")).toHaveLength(2);
+        expect(current.remoteContentHash).toBe(await canvasContentHash(current));
+    } finally {
+        unsubscribe();
+    }
 });
 
 test("saving a large inline preview uploads it without replacing the video's resource", async () => {

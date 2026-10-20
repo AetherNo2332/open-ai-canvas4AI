@@ -17,7 +17,7 @@ import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { repairMissingCanvasAssets, repairMissingCanvasVideoPreviews, collectCanvasMediaAssetIds, rebindInconsistentCanvasAssets, type CanvasAssetRebindResult } from "@/services/canvas-asset-repair";
 import { canvasNodeToAsset } from "@/lib/canvas/canvas-node-asset";
-import { applyAgentCanvasPatch, type AgentCanvasPatch } from "@/lib/canvas/agent-canvas-patch";
+import { applyAgentCanvasPatch, mergeAgentCanvasEditor, type AgentCanvasPatch } from "@/lib/canvas/agent-canvas-patch";
 import { stableDigestHex } from "@/lib/stable-digest";
 import {useCanvasSessionStore,createCanvasCommandProject} from '@/stores/canvas/use-canvas-session-store';
 
@@ -726,7 +726,6 @@ async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: {
             if (!Number.isSafeInteger(source.revision) || source.revision! < 0) {
                 throw new ApiError("缺少画布版本，请保留草稿并加载云端最新版本", { status: 428 });
             }
-            const hash = await canvasContentHash(source);
             const remotePayload = await ensureRemoteResourceReferences(source, uploaded, onMediaUploaded);
             if (total > 0) {
                 useSyncProgressStore.getState().setProjectProgress(source.id, {
@@ -738,19 +737,27 @@ async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: {
             if (!Number.isSafeInteger(saved.revision) || saved.revision !== source.revision! + 1) {
                 throw new ApiError("服务端未返回有效画布版本，请加载云端最新版本", { status: 409 });
             }
+            const projection = { ...source, connections: saved.connections ?? source.connections, revision: saved.revision };
+            const hash = await canvasContentHash(projection);
             const current = useCanvasStore.getState().openProject(source.id);
             if (current && current.revision !== source.revision) {
                 throw new ApiError("画布基线已变化，请加载云端最新版本", { status: 409 });
             }
-            const acknowledged = { ...source, revision: saved.revision, remoteContentHash: hash };
+            const acknowledged = { ...projection, remoteContentHash: hash };
+            // Reconciliation owns managed lines. Merge its delta into live edits,
+            // while retaining local media URLs and edits made during the request.
+            const merged = current ? mergeAgentCanvasEditor(source, acknowledged, current.nodes, current.connections) : undefined;
+            if (current && !sameCanvasContent(source, acknowledged)) {
+                for (const listener of agentCanvasListeners) listener(acknowledged, source);
+            }
             acknowledgedProjects.set(source.id, acknowledged);
             verifiedProjects.add(source.id);
             if (current) {
                 useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => project === current
-                    ? { ...project, revision: saved.revision, remoteContentHash: hash } : project) }));
+                    ? { ...project, connections: merged!.connections, revision: saved.revision, remoteContentHash: hash } : project) }));
             }
             await flushCanvasStorePersistence();
-            const pending = !sameCanvasContent(source, useCanvasStore.getState().openProject(source.id) || undefined);
+            const pending = !sameCanvasContent(acknowledged, useCanvasStore.getState().openProject(source.id) || undefined);
             useSyncProgressStore.getState().setProjectProgress(source.id, { phase: pending ? "pending" : "done", message: pending ? "有新修改等待保存" : "已保存到云端" });
             if (pending) syncQueued = true;
         } catch (error) {

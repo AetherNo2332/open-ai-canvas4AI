@@ -53,6 +53,55 @@ func TestCanvasProjectPayloadReplacesMetadataAndPreservesDocument(t *testing.T) 
 	}
 }
 
+func TestCanvasSaveReturnsReconciledConnections(t *testing.T) {
+	svc := newCanvasHistoryTestService(t)
+	for revision, bindings := range []string{
+		`[{"id":"node:source","nodeId":"source","mediaType":"image","role":"reference","order":0,"resolution":"latest"}]`,
+		`[]`,
+	} {
+		doc := map[string]any{
+			"id": "references", "revision": revision, "title": "references", "referenceFieldsVersion": 1,
+			"nodes": []any{
+				map[string]any{"id": "source", "type": "image"},
+				map[string]any{"id": "target", "type": "compare", "metadata": map[string]any{"inputBindings": json.RawMessage(bindings)}},
+			},
+			"connections": []any{},
+		}
+		raw, _ := json.Marshal(doc)
+		saved, err := svc.UpsertUserCanvasProject("owner", raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, _ := json.Marshal(saved)
+		var projection map[string]json.RawMessage
+		_ = json.Unmarshal(response, &projection)
+		if projection["connections"] == nil {
+			t.Fatalf("save omitted reconciled connections: %s", response)
+		}
+		var connections []map[string]any
+		if err := json.Unmarshal(projection["connections"], &connections); err != nil {
+			t.Fatal(err)
+		}
+		if len(connections) != 1-revision {
+			t.Fatalf("unexpected saved connections: %s", response)
+		}
+		if revision == 0 && (connections[0]["fromNodeId"] != "source" || connections[0]["toNodeId"] != "target" || connections[0]["managedBy"] != "reference-fields-v1") {
+			t.Fatalf("invalid projection: %s", response)
+		}
+		persisted, err := svc.UserCanvasProject("owner", "references")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document map[string]json.RawMessage
+		_ = json.Unmarshal(persisted, &document)
+		var stored []map[string]any
+		_ = json.Unmarshal(document["connections"], &stored)
+		if !reflect.DeepEqual(stored, connections) {
+			t.Fatal("response differs from saved connection identities")
+		}
+	}
+}
+
 func TestCanvasHistoryRestore(t *testing.T) {
 	svc := newCanvasHistoryTestService(t)
 	actor := &model.User{ID: "owner"}

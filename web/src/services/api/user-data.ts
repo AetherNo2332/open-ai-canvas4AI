@@ -132,7 +132,7 @@ export function getRemoteCanvasProject(id: string, knownProject?: CanvasProject)
 
 export function upsertRemoteCanvasProject(project: CanvasProject, options?: { repairMissingResources?: boolean }) {
     const { viewport: _viewport, remoteContentHash: _hash, ...content } = project;
-    return http.put<{ project: RemoteUserDataSummary & { revision: number } }>(`/canvas-projects/${encodeURIComponent(project.id)}`, { project: content, ...(options?.repairMissingResources ? { repairMissingResources: true } : {}) });
+    return http.put<{ project: RemoteUserDataSummary & { revision: number; connections?: CanvasProject["connections"] } }>(`/canvas-projects/${encodeURIComponent(project.id)}`, { project: content, ...(options?.repairMissingResources ? { repairMissingResources: true } : {}) });
 }
 
 export function deleteRemoteCanvasProject(id: string) {

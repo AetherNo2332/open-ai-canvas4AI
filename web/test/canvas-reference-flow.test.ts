@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-import { applyCanvasReferenceEdit, buildCanvasReferenceEdit } from "../src/lib/canvas/canvas-reference-edits";
+import { applyCanvasReferenceEdit, buildCanvasReferenceEdit, canvasReferenceIntentForConnection } from "../src/lib/canvas/canvas-reference-edits";
 import { canvasDeclaredInputNodeIds } from "../src/lib/canvas/canvas-reference-inputs";
-import { getGenerationResourceNodes } from "../src/lib/canvas/canvas-resource-references";
+import { buildCanvasNodeMentionReferenceMap, getGenerationResourceNodes } from "../src/lib/canvas/canvas-resource-references";
 import { projectCanvasOperations, type CanvasDocument } from "../src/lib/canvas/canvas-event-projection";
 import { canvasEditorCommands } from "../src/lib/canvas/canvas-editor-commands";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
@@ -52,6 +52,19 @@ const document = (): CanvasDocument => ({
 });
 const nodesOf = (doc: CanvasDocument) => doc.nodes as CanvasNodeData[];
 
+test("dragged image references appear in the prompt before server connections arrive", () => {
+    let nodes = [node("first", CanvasNodeType.Image, { content: "first.png" }), node("second", CanvasNodeType.Image, { content: "second.png" }), node("target", CanvasNodeType.Image)];
+    for (const fromNodeId of ["second", "first"]) {
+        const intent = canvasReferenceIntentForConnection(nodes, { fromNodeId, toNodeId: "target" })!;
+        nodes = applyCanvasReferenceEdit(nodes, intent);
+    }
+    const references = buildCanvasNodeMentionReferenceMap(nodes, []).get("target")!;
+    expect(references.map(({ nodeId, label }) => [nodeId, label])).toEqual([["second", "图片1"], ["first", "图片2"]]);
+    expect(references.map(({ nodeId }) => nodeId)).toEqual(getGenerationResourceNodes("target", nodes, []).map(({ id }) => id));
+    const cleared = applyCanvasReferenceEdit(nodes, { kind: "set_node_inputs", nodeId: "target", bindings: [] });
+    expect(buildCanvasNodeMentionReferenceMap(cleared, [{ id: "stale", fromNodeId: "first", toNodeId: "target" }]).get("target")).toEqual([]);
+});
+
 test("declared row bindings feed the storyboard output without creating any connection", () => {
     const doc = document();
     const withAssets = applyCanvasReferenceEdit(nodesOf(doc), { kind: "set_row_assets", nodeId: "board", rowId: "row-1", assetBindings: [{ nodeId: "asset", role: "character", priority: 80 }] });
@@ -63,6 +76,7 @@ test("declared row bindings feed the storyboard output without creating any conn
     // 生成输入直接来自行字段与归属，不依赖任何连线。
     expect(canvasDeclaredInputNodeIds("output", bound.nodes as CanvasNodeData[])).toEqual(["asset"]);
     expect(getGenerationResourceNodes("output", bound.nodes as CanvasNodeData[], []).map((item) => item.id)).toEqual(["asset"]);
+    expect(buildCanvasNodeMentionReferenceMap(nodesOf(bound), []).get("output")?.map((item) => item.nodeId)).toEqual(["asset"]);
     expect(bound.connections).toEqual([]);
     // 引用编辑不写任务身份。
     expect(board.metadata!.storyboard!.rows[0]).not.toHaveProperty("taskId");

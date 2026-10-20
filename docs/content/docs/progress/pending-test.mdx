@@ -3873,3 +3873,10 @@ DirectorDesk 0.4.11 引擎原生导演编辑器（镜头列表/时间轴/属性�
 - [ ] P5 可观测性浏览器验收（本环境无浏览器）：运行时初始化失败诊断事件（PREVIS_RUNTIME_INIT_FAILED，runtimeVersion=0.4.11）在统一诊断缓冲区可见。替代依据：白名单投影 + 去重签名 + hook 错误路径测试。
 - [ ] P2 真机 renderer 终态 E2E（1 个 Chromium 用例仍 skip）与 P4 图片→Agent 流程的 staging 接线，待有浏览器/后端联调环境后执行。
 - [ ] 6 处隔离用例（workspace-route-loading ×4、password-reset、channel-model-editor-form 管理后台路由边界）对应上游 web 路由契约，本桌面 fork 的 `src/router.tsx` 已移除这些路由段；上游路由恢复后需重新启用。
+
+## 画布手动连线与提示词素材引用
+
+- [x] 已修复：规范化画布保存后，服务端将引用字段协调出的托管连线随 `data.project.connections` 返回，前端同步投影到当前画布并保留保存期间的本地编辑；提示词素材引用优先解析节点声明字段及分镜行引用，不再依赖尚未同步的服务端连线。
+- [x] 自动验证：前端引用流与远端 revision 专项测试 28 pass / 0 fail（133 次断言）；后端 `go test ./internal/canvas/... ./internal/handler` 通过；前端 TypeScript + Vite 生产构建、ESLint 和 `git diff --check` 通过。
+- [ ] 前端全量套件本轮为 2598 pass、1 fail、4 errors（2603 项）：唯一断言失败在未修改的 `canvas-overlay-layout.test.ts`；4 项错误是 `director-desk` 测试无法解析其自身依赖 `three`。这两处与本次改动文件无交集，待对应 UI 断言和文档站依赖环境修复后重跑全量。
+- [ ] 手工验收：在登录态画布中将图片素材节点手动连到图片生成节点，确认保存后连线立即可见且刷新后保留；确认生成提示词包含该素材引用，并检查解除连接或清空引用后提示词不再带入素材。
