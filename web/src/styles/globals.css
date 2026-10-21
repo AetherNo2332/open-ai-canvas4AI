@@ -1606,13 +1606,6 @@
     }
 
 
-    .app-workspace-shell.is-spatial .app-workspace-brand-mark {
-        border: 1px solid color-mix(in srgb, var(--workspace-accent) 36%, transparent);
-        background: var(--workspace-accent);
-        color: color-mix(in srgb, var(--workspace-canvas) 92%, black);
-        box-shadow: 0 8px 24px color-mix(in srgb, var(--workspace-accent) 18%, transparent);
-    }
-
     .brand-logo-frame[data-logo-frame-enabled="false"] > :is(img, svg) {
         width: 100%;
         height: 100%;
@@ -15307,15 +15300,8 @@ html:not(.dark) .creation-home .creation-user-message-copy-wrap { box-shadow: 0 
     display: none;
 }
 
-.app-user-workspace .app-workspace-brand-mark {
-    width: 28px;
-    height: 28px;
-    border-radius: var(--r-sm);
-    background: transparent;
-    box-shadow: none;
+.app-user-workspace .app-workspace-brand-logo {
     color: var(--user-accent) !important;
-    border: 1px solid color-mix(in srgb, var(--user-accent) 28%, transparent);
-    background: color-mix(in srgb, var(--user-accent) 8%, transparent);
 }
 
 .app-user-workspace .app-workspace-nav-link {

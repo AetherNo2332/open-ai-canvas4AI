@@ -71,7 +71,7 @@ body.app-user-overlays.app-user-overlays {
         border-radius: var(--overlay-radius) !important;
     }
 
-    .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar, .app-workspace-brand-mark, .app-workspace-sidebar-checkin) {
+    .app-user-workspace.app-user-workspace :is(.app-workspace-sidebar, .app-workspace-sidebar-checkin) {
         background: var(--surface) !important;
         color: var(--foreground) !important;
         border-color: var(--border) !important;

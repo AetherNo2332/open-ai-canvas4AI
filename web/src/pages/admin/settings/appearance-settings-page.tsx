@@ -540,7 +540,7 @@ export default function AppearanceSettingsPage() {
                                                 <div className="admin-appearance-logo-frame-option">
                                                     <div className="admin-appearance-logo-frame-copy">
                                                         <strong>禁用 Logo 后面的圆角矩形外框</strong>
-                                                        <p id="appearance-logo-frame-help">开启后，工作台和管理后台导航只显示 Logo 本身；Logo 会等比放大到原外框的可用区域，导航占位保持不变。</p>
+                                                        <p id="appearance-logo-frame-help">开启后，管理后台导航只显示 Logo 本身；工作台侧栏品牌标识始终不显示外框。Logo 会等比放大到原外框的可用区域，导航占位保持不变。</p>
                                                     </div>
                                                     <div className="admin-appearance-logo-frame-control">
                                                         <span>{logoFrameEnabled ? "保留外框" : "已禁用外框"}</span>

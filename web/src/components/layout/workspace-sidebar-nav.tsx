@@ -4,7 +4,7 @@ import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/r
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 
-import { BrandLogoFrame } from "@/components/brand/brand-logo";
+import { BrandLogo } from "@/components/brand/brand-logo";
 import { Kbd } from "@/components/ui/base/kbd";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { useWorkspaceLogout } from "@/hooks/use-workspace-logout";
@@ -114,12 +114,10 @@ function WorkspaceSwitcher({ collapsed, onNavigate, onExpand, onCollapse }: { co
         <div className={collapsed ? "app-workspace-sidebar-rail-header shrink-0" : "app-workspace-sidebar-brand-row relative shrink-0 px-3 pt-3"}>
             <WorkspaceMotionLink to="/" onClick={onNavigate} className="app-workspace-sidebar-brand-button group" aria-label={`${appearance.brandName}首页`} hidden={collapsed} inert={collapsed} animate={{ opacity: collapsed ? 0 : 1 }}>
                 <span className="flex min-w-0 items-center gap-2">
-                    <BrandLogoFrame
-                        className="app-workspace-brand-mark grid size-8 shrink-0 place-items-center rounded-[var(--r-sm)] shadow-sm"
-                        logoClassName="size-5 object-contain"
-                        alt=""
-                        fallback={<InfinityIcon className="size-4" strokeWidth={2.2} />}
-                    />
+                    {/* 侧栏品牌标识直接展示 Logo，不加圆角矩形外框。 */}
+                    <span className="app-workspace-brand-logo grid size-7 shrink-0 place-items-center" aria-hidden="true">
+                        <BrandLogo className="size-full object-contain" fallback={<InfinityIcon className="size-6" strokeWidth={2.2} />} alt="" />
+                    </span>
                     <span className="flex min-w-0 flex-col">
                         <span className="app-workspace-brand-title-row">
                             <span className="app-workspace-brand-wordmark truncate text-[var(--fs-body)] leading-none font-semibold">{appearance.brandName}</span>

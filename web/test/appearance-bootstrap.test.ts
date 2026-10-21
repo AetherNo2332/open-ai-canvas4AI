@@ -113,6 +113,20 @@ test("appearance management exposes light and dark logo uploads plus the frame s
     expect(globalStyles).toContain('.brand-logo-frame[data-logo-frame-enabled="false"] > :is(img, svg)');
 });
 
+test("workspace sidebar brand logo renders without the square frame mark", async () => {
+    const [sidebarSource, globalStyles, homeSkinStyles] = await Promise.all([
+        Bun.file(new URL("../src/components/layout/workspace-sidebar-nav.tsx", import.meta.url)).text(),
+        Bun.file(new URL("../src/styles/globals.css", import.meta.url)).text(),
+        Bun.file(new URL("../src/styles/home-skin.css", import.meta.url)).text(),
+    ]);
+
+    // 侧栏品牌标识直接渲染 Logo；旧的外框类、全局框线规则和皮肤 !important 覆盖都不应回归。
+    expect(sidebarSource).toContain("app-workspace-brand-logo");
+    expect(sidebarSource).not.toContain("BrandLogoFrame");
+    expect(globalStyles).not.toContain(".app-workspace-brand-mark");
+    expect(homeSkinStyles).not.toContain(".app-workspace-brand-mark");
+});
+
 test("object storage can adopt the configured English brand identifier without replacing saved prefixes automatically", async () => {
     const source = await Bun.file(new URL("../src/pages/admin/settings/storage-settings-page.tsx", import.meta.url)).text();
 
