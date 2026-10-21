@@ -4,7 +4,6 @@ import "infinite-canvas/backend/internal/app"
 
 type (
 	AgentSystemPromptRequest               = app.AgentSystemPromptRequest
-	SecretProvider                         = app.SecretProvider
 	AgentWebSearchSettingRequest           = app.AgentWebSearchSettingRequest
 	AgentWorkspaceView                     = app.AgentWorkspaceView
 	AgentWorkspaceSkillView                = app.AgentWorkspaceSkillView

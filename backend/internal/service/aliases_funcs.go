@@ -39,7 +39,6 @@ var (
 	ModelRequestIntentFromTaskInput            = app.ModelRequestIntentFromTaskInput
 	ModelRouteUnavailable                      = app.ModelRouteUnavailable
 	New                                        = app.New
-	NewDesktop                                 = app.NewDesktop
 	NewAppError                                = app.NewAppError
 	NewModelError                              = app.NewModelError
 	NormalizeCapabilitySpec                    = app.NormalizeCapabilitySpec

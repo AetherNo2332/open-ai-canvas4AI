@@ -252,7 +252,7 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 ## 画布命令与声明式引用
 
-网页画布与桌面壳共用画布命令协议：`POST /api/desktop/canvases/:canvasId/commands` 提交命令，`GET /api/desktop/canvases/:canvasId/snapshot` 读取快照投影，信封和错误格式与其他业务接口一致（字段级错误放在 `data.reason` 和 `data.field`）。引用字段与派生连接在同一次事务内进入差异、历史和撤销，服务端不依赖分镜 UI 是否打开。
+网页画布使用画布命令协议（路由沿用历史前缀 `/api/desktop/canvases/*`，由云端 `cmd/server` 注册）：`POST /api/desktop/canvases/:canvasId/commands` 提交命令，`GET /api/desktop/canvases/:canvasId/snapshot` 读取快照投影，信封和错误格式与其他业务接口一致（字段级错误放在 `data.reason` 和 `data.field`）。引用字段与派生连接在同一次事务内进入差异、历史和撤销，服务端不依赖分镜 UI 是否打开。
 
 - `migrate_references`（仅画布客户端）：`id` 是画布 ID，`patch` 只接受 `scopeChoices`（`scopeKey` → `fields` | `connections`）。它把历史画布的字段与旧连线矛盾按选择定案，写入权威字段、托管连线与 `referenceFieldsVersion=1`；未决冲突返回 `reference_migration_conflict` 且整份文档不变，已规范化的文档返回 `reference_migration_not_required`。该操作不向 Agent 暴露，`canvas_apply_ops` 不认识它；超出目标容量的旧连线不会被接管，保持为普通连线。
 - 规范化门禁：文档缺少 `referenceFieldsVersion` 时，改动引用内容的编辑与生成返回 `reference_migration_required`；读取、预览、导出、改名、删除画布和画布外观设置不受限制，任务结果回写也不经过该门禁。

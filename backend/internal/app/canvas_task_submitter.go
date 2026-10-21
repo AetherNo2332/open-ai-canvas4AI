@@ -14,11 +14,11 @@ import (
 	"time"
 )
 
-type desktopTaskSubmitter struct{ s *Service }
+type canvasTaskSubmitter struct{ s *Service }
 
-func (s *Service) DesktopTaskSubmitter() tasks.TaskSubmitter { return &desktopTaskSubmitter{s: s} }
-func (d *desktopTaskSubmitter) Prepare(ctx context.Context, p identity.Principal, req tasks.TaskRequest) (tasks.PreparedTask, error) {
-	if (!d.s.desktopMode && !d.s.canvasCommandMode) || !p.HasScope("generation.submit") || p.Role == "viewer" {
+func (s *Service) CanvasTaskSubmitter() tasks.TaskSubmitter { return &canvasTaskSubmitter{s: s} }
+func (d *canvasTaskSubmitter) Prepare(ctx context.Context, p identity.Principal, req tasks.TaskRequest) (tasks.PreparedTask, error) {
+	if !d.s.canvasCommandMode || !p.HasScope("generation.submit") || p.Role == "viewer" {
 		return tasks.PreparedTask{}, Forbidden("没有生成权限")
 	}
 	if req.Mode == "previs" {
@@ -36,7 +36,7 @@ func (d *desktopTaskSubmitter) Prepare(ctx context.Context, p identity.Principal
 	if err != nil {
 		return tasks.PreparedTask{}, err
 	}
-	if unsafeDesktopTaskInput(input) || isTextReplayTaskRequest(input) {
+	if unsafeCanvasTaskInput(input) || isTextReplayTaskRequest(input) {
 		return tasks.PreparedTask{}, BadAuthRequest("任务只能使用主机已配置的执行渠道")
 	}
 	config, _ := input["config"].(map[string]any)
@@ -94,7 +94,7 @@ func (d *desktopTaskSubmitter) Prepare(ctx context.Context, p identity.Principal
 	selection.Task, selection.BillingOrder, selection.ActiveTaskLimit = *task, preparation.Order, policy.Task.ActiveTaskLimit
 	return selection, nil
 }
-func (d *desktopTaskSubmitter) Commit(ctx context.Context, tx *repository.Repository, prepared tasks.PreparedTask) error {
+func (d *canvasTaskSubmitter) Commit(ctx context.Context, tx *repository.Repository, prepared tasks.PreparedTask) error {
 	// SQLite serializes writes. Read quotas in this transaction rather than
 	// taking storageMu after the database write lock (inverse order can deadlock
 	// with provider completion). No wake or nested write transaction here.
@@ -126,9 +126,9 @@ func (d *desktopTaskSubmitter) Commit(ctx context.Context, tx *repository.Reposi
 	}
 	return tx.CommitPreparedTask(&prepared.Task, prepared.BillingOrder, policy.Task.ActiveTaskLimit)
 }
-func (d *desktopTaskSubmitter) Wake() { d.s.wakeTaskDispatcher() }
+func (d *canvasTaskSubmitter) Wake() { d.s.wakeTaskDispatcher() }
 func strValue(v any) string           { s, _ := v.(string); return strings.TrimSpace(s) }
-func unsafeDesktopTaskInput(v any) bool {
+func unsafeCanvasTaskInput(v any) bool {
 	switch x := v.(type) {
 	case map[string]any:
 		for key, child := range x {
@@ -136,13 +136,13 @@ func unsafeDesktopTaskInput(v any) bool {
 			case "apikey", "secretkey", "authorization", "password", "headers", "baseurl", "agentrequests", "cloudagent", "agentrunid", "generationid", "approvalid":
 				return true
 			}
-			if unsafeDesktopTaskInput(child) {
+			if unsafeCanvasTaskInput(child) {
 				return true
 			}
 		}
 	case []any:
 		for _, child := range x {
-			if unsafeDesktopTaskInput(child) {
+			if unsafeCanvasTaskInput(child) {
 				return true
 			}
 		}
@@ -150,10 +150,8 @@ func unsafeDesktopTaskInput(v any) bool {
 	return false
 }
 
-// Set once in the composition root, before starting background workers.
-func (s *Service) AttachDesktopCanvasTasks(service *tasks.Service) { s.canvasTasks = service }
-func (s *Service) DesktopCanvasTaskOptions() tasks.ServiceOptions {
-	return tasks.ServiceOptions{PrepareStoryboardInput: prepareDesktopStoryboardInput, PrepareOutput: s.prepareDesktopCanvasOutput, ValidateOutputs: func(ctx context.Context, tx *repository.Repository, owner string, count int, bytes int64) error {
+func (s *Service) CanvasTaskOptions() tasks.ServiceOptions {
+	return tasks.ServiceOptions{PrepareStoryboardInput: prepareCanvasStoryboardInput, PrepareOutput: s.prepareCanvasTaskOutput, ValidateOutputs: func(ctx context.Context, tx *repository.Repository, owner string, count int, bytes int64) error {
 		domain := platform.New(tx, s.coordinator, platformHost{svc: s})
 		policy, err := domain.RuntimePolicy()
 		if err != nil {

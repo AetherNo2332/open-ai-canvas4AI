@@ -9,7 +9,7 @@ import type { ReferenceVideo } from "@/types/media";
 import { createStoryboardRow, cinematicStoryboardColumns, storyboardRowsOutputContract } from "@/lib/canvas/canvas-project-domain";
 import type { StoryboardColumn } from "@/types/canvas";
 import { useCanvasSessionStore } from "@/stores/canvas/use-canvas-session-store";
-import { consumeDesktopCanvasGeneration } from "@/services/desktop/canvas-generation";
+import { consumeCanvasCommandGeneration } from "@/services/canvas-command-generation";
 
 const LIST_MODE_SYSTEM_PROMPT = `你是一个电商内容分析助手。用户会给你产品图片和一个任务描述。
 请严格根据用户要求的数量生成数据；如果用户说“生成5个卖点”，就必须返回5行，每行一个独立卖点。
@@ -396,7 +396,7 @@ export async function handleListGenerate({ sourceNodeId, prompt, nodes, connecti
         if (commandScope) {
             if (commandScope !== useCanvasSessionStore.getState().scope) throw new Error("画布主机已切换");
             if (!hostTaskId) throw new Error("列表任务未返回任务标识");
-            const status = await consumeDesktopCanvasGeneration(projectId, hostTaskId);
+            const status = await consumeCanvasCommandGeneration(projectId, hostTaskId);
             if (!status) throw new Error("画布主机已切换");
             if (status.outcome === "applied") {
                 setDialogNodeId("batch-table-" + hostTaskId);

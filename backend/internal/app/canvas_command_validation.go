@@ -8,7 +8,7 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-func (s *Service) DesktopCommandValidation(ctx context.Context, tx *repository.Repository, p identity.Principal) (commands.ValidationContext, error) {
+func (s *Service) CanvasCommandValidation(ctx context.Context, tx *repository.Repository, p identity.Principal) (commands.ValidationContext, error) {
 	v := commands.ValidationContext{Principal: p, ModelInputLimits: map[string]map[string]int{}}
 	catalog, err := s.ModelCatalog(nil)
 	if err != nil {

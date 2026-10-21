@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestDesktopEmotionResultStoredOnceWithoutRenderer(t *testing.T) {
+func TestCanvasEmotionResultStoredOnceWithoutRenderer(t *testing.T) {
 	s, db := newMediaRecoveryTestService(t)
 	db.Create(&model.User{ID: "emotion-owner", Status: model.UserStatusActive})
 	makePNG := func(c color.NRGBA) []byte {
@@ -41,11 +41,11 @@ func TestDesktopEmotionResultStoredOnceWithoutRenderer(t *testing.T) {
 	task := model.Task{ID: "emotion-task", UserID: "emotion-owner", Status: model.TaskStatusSucceeded, ResultJSON: string(result)}
 	contextJSON, _ := json.Marshal(tasks.EmotionContext{SourceResourceID: source.ID, EditRegion: tasks.EmotionRegion{X: 16, Y: 16, Width: 32, Height: 32}, FaceBox: tasks.EmotionRegion{X: 24, Y: 24, Width: 16, Height: 16}})
 	binding := model.CanvasTaskBinding{TaskID: task.ID, OwnerID: task.UserID, Mode: "image", ResultContextJSON: string(contextJSON)}
-	first, err := s.prepareDesktopCanvasOutput(context.Background(), task, binding)
+	first, err := s.prepareCanvasTaskOutput(context.Background(), task, binding)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.prepareDesktopCanvasOutput(context.Background(), task, binding)
+	second, err := s.prepareCanvasTaskOutput(context.Background(), task, binding)
 	if err != nil {
 		t.Fatal(err)
 	}

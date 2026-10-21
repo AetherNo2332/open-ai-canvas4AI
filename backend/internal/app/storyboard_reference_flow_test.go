@@ -180,9 +180,9 @@ func TestStoryboardReferenceFlow(t *testing.T) {
 	p := identity.Principal{ID: "flow-owner", OwnerID: "flow-owner", Role: "owner", ClientID: "client", Scopes: identity.OwnerScopes()}
 	cs := commands.NewService(s.repo, commands.ServiceOptions{})
 	submitter := &recordingTaskSubmitter{}
-	// Real desktop wiring: row input resolution and output preparation come from
+	// Real canvas task wiring: row input resolution and output preparation come from
 	// the application, only the provider boundary is recorded.
-	ts := tasks.NewService(s.repo, cs, submitter, s.DesktopCanvasTaskOptions())
+	ts := tasks.NewService(s.repo, cs, submitter, s.CanvasTaskOptions())
 
 	// Stage 1: real account resources back two real canvas assets.
 	for _, resource := range []model.Resource{
@@ -400,7 +400,7 @@ func TestStoryboardReferenceFlow(t *testing.T) {
 	if resourceCount != 3 || assetCount != 3 {
 		t.Fatalf("clearing references removed artifacts: resources=%d assets=%d", resourceCount, assetCount)
 	}
-	resolved, err := prepareDesktopStoryboardInput(ctx, s.repo, p, cleared.Document, req)
+	resolved, err := prepareCanvasStoryboardInput(ctx, s.repo, p, cleared.Document, req)
 	if err != nil {
 		t.Fatal(err)
 	}

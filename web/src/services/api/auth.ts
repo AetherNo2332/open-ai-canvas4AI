@@ -584,15 +584,15 @@ export function resetUserPromptCustomization(operation: string) {
 }
 
 export function getAdminOSSSetting() {
-    return http.get<{ setting: AdminOSSSetting }>("/desktop/settings/storage");
+    return http.get<{ setting: AdminOSSSetting }>("/admin/settings/oss");
 }
 
 export function updateAdminOSSSetting(input: Partial<AdminOSSSetting>) {
-    return http.patch<{ setting: AdminOSSSetting }>("/desktop/settings/storage", input);
+    return http.patch<{ setting: AdminOSSSetting }>("/admin/settings/oss", input);
 }
 
 export function testAdminOSSConnection(input: OSSConnectionTestInput) {
-    return http.post<OSSConnectionTestResult>("/desktop/settings/storage/test", input);
+    return http.post<OSSConnectionTestResult>("/admin/settings/oss/test", input);
 }
 
 export function getAdminArkPrivateAssetSetting() {

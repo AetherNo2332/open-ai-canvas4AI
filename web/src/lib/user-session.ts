@@ -32,7 +32,7 @@ export async function switchUserStorageScope(userId?: string | null) {
 
 let sessionGeneration = 0;
 
-type UserSessionOptions = { storageScope?: string; remoteAutoSync?: boolean; awaitHydration?: boolean };
+type UserSessionOptions = { storageScope?: string; awaitHydration?: boolean };
 
 export async function applyUserSession(payload: AuthSessionPayload, options: UserSessionOptions = {}) {
     const generation = ++sessionGeneration;
@@ -57,7 +57,7 @@ export async function applyUserSession(payload: AuthSessionPayload, options: Use
         useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
         useUserStore.getState().setDrawingEngine(payload.drawingEngine);
         useUserStore.getState().setFeatures(payload.features);
-        if (options.remoteAutoSync !== false) installRemoteUserDataAutoSync();
+        installRemoteUserDataAutoSync();
         useUserStore.getState().setHydrated(true);
         const hydration = hydrateUserSessionData(payload, generation, options);
         if (options.awaitHydration) await hydration;
@@ -130,10 +130,7 @@ async function hydrateUserSessionData(payload: AuthSessionPayload, generation: n
 
     if (userId) {
         try {
-            if (options.remoteAutoSync === false) {
-                const { initializeLegacySingleWriter } = await import("@/services/desktop/legacy-single-writer");
-                await initializeLegacySingleWriter(userId);
-            } else await initializeRemoteUserDataSession(userId);
+            await initializeRemoteUserDataSession(userId);
         } catch (error) {
             if (options.awaitHydration) throw error;
             if (isCurrentSession(generation, userId)) console.warn("远端用户数据后台同步初始化失败", error);

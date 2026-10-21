@@ -17,7 +17,7 @@ import (
 
 // Local image transformation runs before the materialization transaction. It
 // accesses only owner-checked resources and stores with a stable upload identity.
-func (s *Service) prepareDesktopCanvasOutput(ctx context.Context, task model.Task, binding model.CanvasTaskBinding) (model.Task, error) {
+func (s *Service) prepareCanvasTaskOutput(ctx context.Context, task model.Task, binding model.CanvasTaskBinding) (model.Task, error) {
 	if binding.Mode != "image" || binding.ResultContextJSON == "" || task.Status != model.TaskStatusSucceeded {
 		return task, nil
 	}
@@ -50,11 +50,11 @@ func (s *Service) prepareDesktopCanvasOutput(ctx context.Context, task model.Tas
 		if id == "" {
 			return task, fmt.Errorf("emotion output is not a stored resource")
 		}
-		source, err := s.readDesktopImage(ctx, task.UserID, edit.SourceResourceID)
+		source, err := s.readCanvasTaskImage(ctx, task.UserID, edit.SourceResourceID)
 		if err != nil {
 			return task, err
 		}
-		generated, err := s.readDesktopImage(ctx, task.UserID, id)
+		generated, err := s.readCanvasTaskImage(ctx, task.UserID, id)
 		if err != nil {
 			return task, err
 		}
@@ -88,7 +88,7 @@ func (s *Service) prepareDesktopCanvasOutput(ctx context.Context, task model.Tas
 	task.ResultJSON = string(raw)
 	return task, nil
 }
-func (s *Service) readDesktopImage(ctx context.Context, owner, id string) (image.Image, error) {
+func (s *Service) readCanvasTaskImage(ctx context.Context, owner, id string) (image.Image, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
