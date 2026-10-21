@@ -7,6 +7,7 @@ import { storyboardDeclaredNodeIds } from "./canvas-reference-inputs";
 import { bindingForConnectedNode } from "./canvas-storyboard-materializer";
 import { applyCanvasConnectionPromptSync, buildCanvasNodeMentionReferenceMap, replaceCanvasReferenceMentions } from "./canvas-resource-references";
 import { writeCanvasNodePrompt } from "./canvas-node-prompt";
+import { canvasReferenceOwnerConnections, canvasReferenceOwnerScoped, canvasReferenceTwinKey, reconcileCanvasReferenceConnections } from "./canvas-reference-projection";
 export type ReferenceEditIntent =
     | { kind: "set_row_assets"; nodeId: string; rowId: string; assetBindings: StoryboardAssetBinding[]; replaceNodeId?: string }
     | { kind: "set_board_references"; nodeId: string; referenceNodeIds: string[]; replaceNodeId?: string }
@@ -138,6 +139,66 @@ export function canvasReferenceIntentForConnection(nodes: CanvasNodeData[], edge
     const binding = bindingForNode(source, bindings.length);
     if (!binding) return undefined;
     return { kind: "set_node_inputs", nodeId: target.id, bindings: remove ? bindings.filter((b) => b.nodeId !== source.id) : bindings.some((b) => b.nodeId === source.id) ? bindings : [...bindings, binding] };
+}
+export type CanvasReferenceGraph = { nodes: CanvasNodeData[]; connections: CanvasConnection[] };
+// Undeclared legacy inputs are still drawn by their free lines.
+function referenceLineKeys(graph: CanvasReferenceGraph, ownerId: string) {
+    const owner = graph.nodes.find((node) => node.id === ownerId);
+    if (!owner) return new Set<string>();
+    if (canvasReferenceOwnerScoped(owner)) return new Set(canvasReferenceOwnerConnections(owner, graph.nodes).map(canvasReferenceTwinKey));
+    return new Set(editableInputBindings(owner, graph.nodes, graph.connections).flatMap((binding) => (binding.nodeId ? [canvasReferenceTwinKey({ fromNodeId: binding.nodeId, toNodeId: owner.id })] : [])));
+}
+/**
+ * Applies a reference field edit and redraws the owner's lines in the same update; waiting for the
+ * save round trip left lines late or, for free lines the server never manages, impossible to delete.
+ * Free lines of references the edit removed go with them.
+ */
+export function applyCanvasReferenceGraphEdit(graph: CanvasReferenceGraph, intent: ReferenceEditIntent, removedConnectionIds: Iterable<string> = []): CanvasReferenceGraph {
+    const before = referenceLineKeys(graph, intent.nodeId);
+    const nodes = applyCanvasReferenceEdit(graph.nodes, intent, graph.connections);
+    const after = referenceLineKeys({ nodes, connections: graph.connections }, intent.nodeId);
+    const removed = new Set(removedConnectionIds);
+    const retained = graph.connections.filter((edge) => {
+        if (removed.has(edge.id)) return false;
+        const key = canvasReferenceTwinKey(edge);
+        return edge.managedBy === "reference-fields-v1" || !before.has(key) || after.has(key);
+    });
+    return { nodes, connections: reconcileCanvasReferenceConnections(nodes, retained.length === graph.connections.length ? graph.connections : retained, [intent.nodeId]) };
+}
+/**
+ * Deletes a line together with every field that would draw it again. Undefined means the line is
+ * not a reference; throws when another field owns the reference (shared, character, first frame).
+ */
+export function deleteCanvasReferenceLine(graph: CanvasReferenceGraph, edge: Pick<CanvasConnection, "fromNodeId" | "toNodeId" | "fromHandleId" | "toHandleId">): CanvasReferenceGraph | undefined {
+    // Exact twins draw the same line; leaving one would look like the delete failed.
+    const twin = canvasReferenceTwinKey(edge);
+    const twinIds = graph.connections.filter((item) => canvasReferenceTwinKey(item) === twin);
+    let intent: ReferenceEditIntent | undefined;
+    try {
+        intent = canvasReferenceIntentForConnection(graph.nodes, edge, true, graph.connections);
+    } catch (error) {
+        // The owning field redraws a managed line; a free duplicate can still be removed.
+        if (twinIds.some((item) => item.managedBy === "reference-fields-v1")) throw error;
+        return undefined;
+    }
+    if (!intent) return undefined;
+    let next = applyCanvasReferenceGraphEdit(graph, intent, twinIds.map((item) => item.id));
+    // A shot output keeps a copy of its row's references in its own spec, which draws the same line.
+    const target = intent.nodeId === edge.toNodeId ? undefined : next.nodes.find((node) => node.id === edge.toNodeId);
+    const declared = target?.metadata?.generationSpec?.referenceBindings ?? target?.metadata?.inputBindings;
+    if (target && declared?.some((binding) => binding.nodeId === edge.fromNodeId)) next = applyCanvasReferenceGraphEdit(next, { kind: "set_node_inputs", nodeId: target.id, bindings: declared.filter((binding) => binding.nodeId !== edge.fromNodeId) });
+    return next;
+}
+/** Connects candidates through the reference field that owns them, or as free lines when none does. */
+export function connectCanvasReferences(graph: CanvasReferenceGraph, candidates: CanvasConnection[]): CanvasReferenceGraph {
+    let next = graph;
+    const free: CanvasConnection[] = [];
+    for (const candidate of candidates) {
+        const intent = canvasReferenceIntentForConnection(next.nodes, candidate, false, next.connections);
+        if (intent) next = applyCanvasReferenceGraphEdit(next, intent);
+        else free.push(candidate);
+    }
+    return free.length ? { nodes: next.nodes, connections: [...next.connections, ...free] } : next;
 }
 export function replaceCanvasReferenceInput(nodes: CanvasNodeData[], targetNodeId: string, oldNodeId: string, sourceNodeId: string, connections: CanvasConnection[] = []): ReferenceEditIntent | undefined {
     const target = nodes.find((node) => node.id === targetNodeId);

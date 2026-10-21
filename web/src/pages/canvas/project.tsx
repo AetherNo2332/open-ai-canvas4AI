@@ -1,5 +1,5 @@
 import { CanvasWorkspacePanel } from "@/components/canvas/canvas-workspace-panel";
-import { applyCanvasReferenceEdit, canvasReferenceIntentForConnection, reorderCanvasReferenceInputs, replaceCanvasReferenceInput } from "@/lib/canvas/canvas-reference-edits";
+import { applyCanvasReferenceGraphEdit, canvasReferenceIntentForConnection, deleteCanvasReferenceLine, reorderCanvasReferenceInputs, replaceCanvasReferenceInput, type ReferenceEditIntent } from "@/lib/canvas/canvas-reference-edits";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { createCanvasStateWriter } from "@/lib/canvas/canvas-editor-state";
 import { canCancelGenerationTask } from "@/lib/generation-task-display";
@@ -1091,6 +1091,15 @@ function InfiniteCanvasPage() {
         onNodesDeleted: handleNodesDeleted,
     });
 
+    const commitReferenceEdit = useCallback(
+        (intent: ReferenceEditIntent) => {
+            const next = applyCanvasReferenceGraphEdit({ nodes: nodesRef.current, connections: connectionsRef.current }, intent);
+            setNodes(next.nodes);
+            setConnections(next.connections);
+        },
+        [setConnections, setNodes],
+    );
+
     const handleReplaceNodeReference = useCallback(
         (targetNodeId: string, oldReference: { id: string; nodeId?: string; label?: string; title?: string }, sourceNodeId: string) => {
             const sourceNode = nodesRef.current.find((n) => n.id === sourceNodeId);
@@ -1102,16 +1111,17 @@ function InfiniteCanvasPage() {
             const configNodeId = previousConnections.find((c) => c.fromNodeId === targetNodeId && previousNodes.find((n) => n.id === c.toNodeId)?.type === CanvasNodeType.Config)?.toNodeId;
             const receiverId = configNodeId || targetNodeId;
             try{
+                const graph={nodes:previousNodes,connections:previousConnections};
                 const replacement=oldReference.nodeId?replaceCanvasReferenceInput(previousNodes,targetNodeId,oldReference.nodeId,sourceNodeId,previousConnections):undefined;
                 if(replacement){
-                    const next=applyCanvasReferenceEdit(previousNodes,replacement,previousConnections);
-                    nodesRef.current=next;setNodes(next);message.success("已更新引用素材");return;
+                    const next=applyCanvasReferenceGraphEdit(graph,replacement);
+                    setNodes(next.nodes);setConnections(next.connections);message.success("已更新引用素材");return;
                 }
                 const remove=oldReference.nodeId?canvasReferenceIntentForConnection(previousNodes,{fromNodeId:oldReference.nodeId,toNodeId:targetNodeId},true,previousConnections):undefined;
                 if(remove){
-                    let next=applyCanvasReferenceEdit(previousNodes,remove,previousConnections);
-                    const add=canvasReferenceIntentForConnection(next,{fromNodeId:sourceNodeId,toNodeId:targetNodeId},false,previousConnections);
-                    if(add){next=applyCanvasReferenceEdit(next,add,previousConnections);nodesRef.current=next;setNodes(next);message.success("已更新引用素材");return;}
+                    let next=applyCanvasReferenceGraphEdit(graph,remove);
+                    const add=canvasReferenceIntentForConnection(next.nodes,{fromNodeId:sourceNodeId,toNodeId:targetNodeId},false,next.connections);
+                    if(add){next=applyCanvasReferenceGraphEdit(next,add);setNodes(next.nodes);setConnections(next.connections);message.success("已更新引用素材");return;}
                 }
             }catch(error){message.info(error instanceof Error?error.message:"请在所属字段修改引用");return;}
 
@@ -1368,8 +1378,8 @@ function InfiniteCanvasPage() {
                 return previousNodes.find((node) => node.id === connection.toNodeId)?.type === CanvasNodeType.Config;
             })?.toNodeId;
             try{
-                const intent=canvasReferenceIntentForConnection(previousNodes,{fromNodeId:referenceNodeId,toNodeId:targetNodeId},true,previousConnections);
-                if(intent){const next=applyCanvasReferenceEdit(previousNodes,intent,previousConnections);nodesRef.current=next;setNodes(next);return;}
+                const next=deleteCanvasReferenceLine({nodes:previousNodes,connections:previousConnections},{fromNodeId:referenceNodeId,toNodeId:targetNodeId});
+                if(next){setNodes(next.nodes);setConnections(next.connections);return;}
             }catch(error){message.info(error instanceof Error?error.message:"请在所属字段修改引用");return;}
             const removedConnectionIds = new Set(previousConnections.filter((connection) => connection.fromNodeId === referenceNodeId && (connection.toNodeId === targetNodeId || connection.toNodeId === configNodeId)).map((connection) => connection.id));
             if (!removedConnectionIds.size) return;
@@ -1391,7 +1401,7 @@ function InfiniteCanvasPage() {
             const previousNodes = nodesRef.current;
             const previousConnections = connectionsRef.current;
             const intent=reorderCanvasReferenceInputs(previousNodes,targetNodeId,orderedNodeIds,previousConnections);
-            if(intent){const next=applyCanvasReferenceEdit(previousNodes,intent,previousConnections);nodesRef.current=next;setNodes(next);return;}
+            if(intent){const next=applyCanvasReferenceGraphEdit({nodes:previousNodes,connections:previousConnections},intent);setNodes(next.nodes);setConnections(next.connections);return;}
             const nextConnections = reorderCanvasResourceConnections(targetNodeId, orderedNodeIds, previousNodes, previousConnections);
             if (nextConnections === previousConnections) return;
             const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
@@ -2394,7 +2404,7 @@ function InfiniteCanvasPage() {
                         onGenerateImages={(rowIds) => void generateScriptImages(contentNode.id, rowIds)}
                         onGenerateVideos={(rowIds) => (contentNode.metadata?.storyboardVideoInputMode === "keyframe" ? void generateScriptVideos(contentNode.id, rowIds) : void createAndGenerateScriptVideos(contentNode.id, rowIds))}
                         onVideoInputModeChange={(storyboardVideoInputMode) => handleConfigNodeChange(contentNode.id, { storyboardVideoInputMode })}
-                        onReferenceNodeIdsChange={referenceNodeIds=>setNodes(current=>applyCanvasReferenceEdit(current,{kind:"set_board_references",nodeId:contentNode.id,referenceNodeIds},connectionsRef.current))}
+                        onReferenceNodeIdsChange={(referenceNodeIds) => commitReferenceEdit({ kind: "set_board_references", nodeId: contentNode.id, referenceNodeIds })}
                         onMergeVideos={() => void mergeVideosByIds(pipeline.successfulVideoNodeIds)}
                         onCreateActionBoards={() => void createScriptActionBoards(contentNode.id)}
                         onRetryBatch={(batchId) => retryFailedBatchItems(contentNode.id, batchId)}
@@ -2454,6 +2464,7 @@ function InfiniteCanvasPage() {
             addBatchReferenceColumn,
             addBatchRow,
             addScriptRow,
+            commitReferenceEdit,
             configInputsById,
             connections,
             createAndGenerateScriptVideos,
@@ -3368,9 +3379,7 @@ function InfiniteCanvasPage() {
                                     onSave={(bindings) => {
                                         // 镜头素材统一走 set_row_assets 意图，引用提示词同步由意图层处理。
                                         const assetBindings = validateStoryboardRowAssetSelection(nodesRef.current, assetScript.id, assetRow.id, bindings);
-                                        const next = applyCanvasReferenceEdit(nodesRef.current, { kind: "set_row_assets", nodeId: assetScript.id, rowId: assetRow.id, assetBindings }, connectionsRef.current);
-                                        nodesRef.current = next;
-                                        setNodes(next);
+                                        commitReferenceEdit({ kind: "set_row_assets", nodeId: assetScript.id, rowId: assetRow.id, assetBindings });
                                         setStoryboardAssetTarget(null);
                                     }}
                                     onImport={async (payloads) => {
@@ -3435,7 +3444,7 @@ function InfiniteCanvasPage() {
                                 else void createAndGenerateScriptVideos(activeScriptNode.id, rowIds);
                             }}
                             onVideoInputModeChange={(storyboardVideoInputMode) => activeScriptNode && handleConfigNodeChange(activeScriptNode.id, { storyboardVideoInputMode })}
-                            onReferenceNodeIdsChange={referenceNodeIds=>activeScriptNode&&setNodes(current=>applyCanvasReferenceEdit(current,{kind:"set_board_references",nodeId:activeScriptNode.id,referenceNodeIds},connectionsRef.current))}
+                            onReferenceNodeIdsChange={(referenceNodeIds) => activeScriptNode && commitReferenceEdit({ kind: "set_board_references", nodeId: activeScriptNode.id, referenceNodeIds })}
                         />
 
                         {previsNodeId && activePrevisScene ? (

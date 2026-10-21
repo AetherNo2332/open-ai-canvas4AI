@@ -39,10 +39,13 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
         nextNodes = entities(after, "nodes");
     const oldById = new Map(oldNodes.map((n) => [n.id, n])),
         nextById = new Map(nextNodes.map((n) => [n.id, n]));
-    const oldEdges = entities(before, "connections"),
-        nextEdges = entities(after, "connections"),
+    // Managed edges are drawn from reference fields by the host (and previewed
+    // by the editor before it does); they are never connection commands.
+    const commandEdges = (doc: CanvasDocument) => entities(doc, "connections").filter((e) => e.managedBy !== "reference-fields-v1");
+    const oldEdges = commandEdges(before),
+        nextEdges = commandEdges(after),
         nextEdgeIds = new Set(nextEdges.map((e) => e.id));
-    for (const edge of oldEdges) if (!nextEdgeIds.has(edge.id) && !(referenceFields && edge.managedBy === "reference-fields-v1")) operations.push({ type: "delete_connection", id: edge.id });
+    for (const edge of oldEdges) if (!nextEdgeIds.has(edge.id)) operations.push({ type: "delete_connection", id: edge.id });
     const removed = new Set(oldNodes.filter((n) => !nextById.has(n.id)).map((n) => n.id));
     const implicit = new Set<string>();
     for (const node of oldNodes) if (removed.has(node.id)) for (const id of node.metadata?.batchChildIds || []) if (removed.has(id)) implicit.add(id);
@@ -143,7 +146,6 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
     for (const node of nextNodes) if ((oldById.get(node.id)?.parentId || "") !== (node.parentId || "")) operations.push({ type: "set_parent", id: node.id, parentId: node.parentId || "" });
     const edgeById = new Map(oldEdges.map((e) => [e.id, e]));
     for (const edge of nextEdges) {
-        if (referenceFields && edge.managedBy === "reference-fields-v1") continue;
         const previous = edgeById.get(edge.id);
         if (same(previous, edge)) continue;
         const fields = new Set(changedPaths(previous || {}, edge));
