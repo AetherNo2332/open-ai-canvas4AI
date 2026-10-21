@@ -9,8 +9,9 @@ import { CanvasVideoPreviewImage } from "@/components/canvas/canvas-video-previe
 import { isStoryboardPreviewAsset, bindingForConnectedNode } from "@/lib/canvas/canvas-storyboard-materializer";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { CanvasNodeType, type CanvasNodeData, type StoryboardAssetBinding } from "@/types/canvas";
+import "./storyboard-assets-cell.css";
 
-const ROLE_LABELS: Record<StoryboardAssetBinding["role"], string> = {
+export const STORYBOARD_ASSET_ROLE_LABELS: Record<StoryboardAssetBinding["role"], string> = {
     character: "角色",
     environment: "场景",
     wardrobe: "服装",
@@ -20,6 +21,7 @@ const ROLE_LABELS: Record<StoryboardAssetBinding["role"], string> = {
     motion: "动态",
     audio: "音频",
 };
+const ROLE_LABELS = STORYBOARD_ASSET_ROLE_LABELS;
 
 export function StoryboardSharedReferencesControl({ node, nodes, onChange }: { node: CanvasNodeData; nodes: CanvasNodeData[]; onChange: (ids: string[]) => void }) {
     const ids = node.metadata?.storyboard?.referenceNodeIds || [];
@@ -63,6 +65,8 @@ export function StoryboardAssetsCell({
     nodes,
     inherited = [],
     onChange,
+    onEdit,
+    disabled = false,
     pending = false,
     limit = 2,
 }: {
@@ -70,6 +74,9 @@ export function StoryboardAssetsCell({
     nodes: CanvasNodeData[];
     inherited?: Array<StoryboardAssetBinding & { source: string }>;
     onChange?: (bindings: StoryboardAssetBinding[]) => void;
+    /** 提供时铅笔入口打开完整的镜头资产选择弹窗（含项目资产引入），否则回退到行内浮层。 */
+    onEdit?: () => void;
+    disabled?: boolean;
     pending?: boolean;
     limit?: number;
 }) {
@@ -91,7 +98,7 @@ export function StoryboardAssetsCell({
                                     type="button"
                                     data-icon-only
                                     disabled={!node}
-                                    className="relative grid size-11 shrink-0 place-items-center overflow-hidden rounded-[var(--button-radius)] border border-foreground/10 bg-foreground/[0.035] text-foreground/60 outline-none enabled:hover:border-foreground/30 enabled:hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed"
+                                    className="storyboard-assets-cell-preview relative grid size-11 shrink-0 place-items-center overflow-hidden rounded-[var(--button-radius)] border border-foreground/10 bg-foreground/[0.035] text-foreground/60 outline-none enabled:hover:border-foreground/30 enabled:hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed"
                                     aria-label={`预览${node?.title || "失效资产"}`}
                                     onMouseDown={(event) => event.stopPropagation()}
                                     onPointerDown={(event) => event.stopPropagation()}
@@ -113,7 +120,23 @@ export function StoryboardAssetsCell({
                         </p>
                     ) : null}
                 </div>
-                {onChange ? (
+                {onEdit ? (
+                    <button
+                        type="button"
+                        aria-label={assets.length ? "管理镜头素材" : "选择镜头素材"}
+                        title={disabled ? "请先解锁分镜节点" : undefined}
+                        disabled={disabled}
+                        className="grid size-11 shrink-0 place-items-center rounded-[var(--button-radius)] text-foreground/60 hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-40"
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onEdit();
+                        }}
+                    >
+                        <Pencil className="size-3.5" />
+                    </button>
+                ) : onChange ? (
                     <Popover trigger="click" title="镜头素材" content={<StoryboardAssetEditor bindings={bindings} inherited={inherited} nodes={nodes} onChange={onChange} pending={pending} />}>
                         <button
                             type="button"
@@ -220,7 +243,15 @@ function StoryboardAssetEditor({
     );
 }
 
-function AssetThumbnail({ node }: { node: CanvasNodeData }) {
+export function AssetThumbnail({ node }: { node: CanvasNodeData }) {
+    return (
+        <span className="storyboard-asset-thumbnail">
+            <AssetThumbnailContent node={node} />
+        </span>
+    );
+}
+
+function AssetThumbnailContent({ node }: { node: CanvasNodeData }) {
     const source = useNodeMediaSource(node.type === CanvasNodeType.Video ? null : node);
     if (node.type === CanvasNodeType.Audio) return <Music2 className="size-4" />;
     if (node.metadata?.workflowKind === "character" && !source) return <UserRound className="size-4" />;

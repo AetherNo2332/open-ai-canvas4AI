@@ -525,6 +525,7 @@ function ImageNodeContent(props: CanvasNodeContentProps) {
     if (!hasImage) return <EmptyImageContent {...props} />;
     return (
         <ImageContent
+            renderLOD={props.renderLOD}
             batchPreviewNodes={props.batchPreviewNodes}
             node={props.node}
             theme={props.theme}
@@ -918,6 +919,7 @@ function EmptyMediaContent({ icon, label, color }: { icon: ReactNode; label: str
 }
 
 function ImageContent({
+    renderLOD = "full",
     node,
     theme,
     isBatchRoot,
@@ -927,9 +929,9 @@ function ImageContent({
     batchOpening,
     batchRecovering,
     onToggleBatch,
-}: Pick<CanvasNodeContentProps, "node" | "theme" | "isBatchRoot" | "batchCount" | "batchPreviewNodes" | "batchExpanded" | "batchOpening" | "batchRecovering" | "onToggleBatch">) {
+}: Pick<CanvasNodeContentProps, "renderLOD" | "node" | "theme" | "isBatchRoot" | "batchCount" | "batchPreviewNodes" | "batchExpanded" | "batchOpening" | "batchRecovering" | "onToggleBatch">) {
     const imageContainerRef = useRef<HTMLDivElement>(null);
-    const nearViewport = useNearViewport(imageContainerRef);
+    const nearViewport = useNearViewport(imageContainerRef, renderLOD !== "shell");
     const { url, loading, originalWidth, originalHeight } = useNodeResourceUrl(node, nearViewport, "thumbnail");
     const importedFromLibTV = node.metadata?.importSource?.provider === "libtv";
     const { updateMediaNode } = useCanvasNodeActions();
@@ -971,7 +973,7 @@ function ImageContent({
     };
 
     return (
-        <BatchFrame batchPreviewNodes={batchPreviewNodes} batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} theme={theme} onToggleBatch={onToggleBatch}>
+        <BatchFrame batchPreviewNodes={renderLOD === "full" ? batchPreviewNodes : undefined} batchCount={isBatchRoot && renderLOD === "full" ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} theme={theme} onToggleBatch={onToggleBatch}>
             <div ref={imageContainerRef} className="relative h-full w-full overflow-hidden rounded-[var(--node-radius)]">
                 <RetainedCanvasImage
                     identity={`${getActiveUserScope()}:${node.id}:${node.metadata?.storageKey || node.metadata?.content || "empty"}`}
@@ -1129,9 +1131,10 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, variant: "orig
     return { url: current.url, loading: current.loading, originalWidth: isThumbnail ? current.originalWidth : undefined, originalHeight: isThumbnail ? current.originalHeight : undefined };
 }
 
-function useNearViewport(ref: RefObject<Element | null>) {
+function useNearViewport(ref: RefObject<Element | null>, enabled = true) {
     const [nearViewport, setNearViewport] = useState(false);
     useEffect(() => {
+        if (!enabled || nearViewport) return;
         const element = ref.current;
         if (!element || typeof IntersectionObserver === "undefined") {
             setNearViewport(true);
@@ -1148,7 +1151,7 @@ function useNearViewport(ref: RefObject<Element | null>) {
         );
         observer.observe(element);
         return () => observer.disconnect();
-    }, [ref]);
+    }, [enabled, nearViewport, ref]);
     return nearViewport;
 }
 

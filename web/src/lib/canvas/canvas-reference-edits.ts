@@ -5,10 +5,12 @@ import type { CanvasNodeData, CanvasConnection, StoryboardAssetBinding, Storyboa
 import { bindingForNode, readNodeGenerationSpec, validateGenerationSpec, synchronizeGenerationSpec } from "./generation-contract";
 import { storyboardDeclaredNodeIds } from "./canvas-reference-inputs";
 import { bindingForConnectedNode } from "./canvas-storyboard-materializer";
+import { applyCanvasConnectionPromptSync, buildCanvasNodeMentionReferenceMap, replaceCanvasReferenceMentions } from "./canvas-resource-references";
+import { writeCanvasNodePrompt } from "./canvas-node-prompt";
 export type ReferenceEditIntent =
-    | { kind: "set_row_assets"; nodeId: string; rowId: string; assetBindings: StoryboardAssetBinding[] }
-    | { kind: "set_board_references"; nodeId: string; referenceNodeIds: string[] }
-    | { kind: "set_node_inputs"; nodeId: string; bindings: ReferenceBinding[] }
+    | { kind: "set_row_assets"; nodeId: string; rowId: string; assetBindings: StoryboardAssetBinding[]; replaceNodeId?: string }
+    | { kind: "set_board_references"; nodeId: string; referenceNodeIds: string[]; replaceNodeId?: string }
+    | { kind: "set_node_inputs"; nodeId: string; bindings: ReferenceBinding[]; replaceNodeId?: string }
     | { kind: "bind_output"; nodeId: string; rowId: string; outputMode: "image" | "video"; outputNodeId: string }
     | { kind: "unbind_output"; nodeId: string; rowId: string; outputMode: "image" | "video" };
 const inputTypes = new Set(["compare", "panorama", "svg", "html", "chart", "colorgrade", "media-conversion"]);
@@ -44,9 +46,9 @@ export function buildCanvasReferenceEdit(doc: CanvasDocument, intent: ReferenceE
             return [{ type: "bind_storyboard_output", id: node.id, rowId: intent.rowId, outputMode: intent.outputMode, sourceNodeId: intent.kind === "bind_output" ? intent.outputNodeId : "" }];
     }
 }
-export function applyCanvasReferenceEdit(nodes: CanvasNodeData[], intent: ReferenceEditIntent): CanvasNodeData[] {
+export function applyCanvasReferenceEdit(nodes: CanvasNodeData[], intent: ReferenceEditIntent, connections?: CanvasConnection[]): CanvasNodeData[] {
     const [op] = buildCanvasReferenceEdit({ nodes }, intent);
-    return nodes.map((node) => {
+    const next = nodes.map((node) => {
         if (node.id !== intent.nodeId) return node;
         const metadata = { ...node.metadata };
         if (op.type === "update_node") Object.assign(metadata, op.patch);
@@ -63,8 +65,47 @@ export function applyCanvasReferenceEdit(nodes: CanvasNodeData[], intent: Refere
         }
         return { ...node, metadata };
     });
+    if (!connections) return next;
+    if (intent.kind === "set_node_inputs" && intent.replaceNodeId) {
+        const beforeReferences = buildCanvasNodeMentionReferenceMap(nodes, connections, [nodes.find((node) => node.id === intent.nodeId)!]).get(intent.nodeId) || [];
+        const afterTarget = next.find((node) => node.id === intent.nodeId)!;
+        let prompt = afterTarget.metadata?.composerContent ?? afterTarget.metadata?.prompt ?? "";
+        const previousReference = beforeReferences.find((reference) => reference.nodeId === intent.replaceNodeId);
+        const previousBindings = editableInputBindings(nodes.find((node) => node.id === intent.nodeId)!, nodes, connections);
+        const replacementId = intent.bindings[previousBindings.findIndex((binding) => binding.nodeId === intent.replaceNodeId)]?.nodeId;
+        if (previousReference && replacementId) prompt = replaceCanvasReferenceMentions(prompt, previousReference, `@[node:${replacementId}]`);
+        if (prompt !== (afterTarget.metadata?.composerContent ?? afterTarget.metadata?.prompt ?? "")) {
+            const prompted = writeCanvasNodePrompt(afterTarget, prompt);
+            const index = next.findIndex((node) => node.id === intent.nodeId);
+            next[index] = prompted;
+        }
+    }
+    let replaceNodeId = intent.kind === "set_node_inputs" ? intent.replaceNodeId : "";
+    let replacementNodeId = intent.kind === "set_node_inputs" ? intent.bindings[editableInputBindings(nodes.find((node) => node.id === intent.nodeId)!, nodes, connections).findIndex((binding) => binding.nodeId === replaceNodeId)]?.nodeId : "";
+    if (intent.kind === "set_board_references" && intent.replaceNodeId) {
+        replaceNodeId = intent.replaceNodeId;
+        const previous = nodes.find((node) => node.id === intent.nodeId)?.metadata?.storyboard?.referenceNodeIds || [];
+        replacementNodeId = intent.referenceNodeIds[previous.indexOf(replaceNodeId)] || "";
+    }
+    if (intent.kind === "set_row_assets" && intent.replaceNodeId) {
+        replaceNodeId = intent.replaceNodeId;
+        const previous = nodes.find((node) => node.id === intent.nodeId)?.metadata?.storyboard?.rows.find((row) => row.id === intent.rowId)?.assetBindings || [];
+        replacementNodeId = intent.assetBindings[previous.findIndex((binding) => binding.nodeId === replaceNodeId)]?.nodeId || "";
+    }
+    return applyCanvasConnectionPromptSync(nodes, connections, next, connections, replaceNodeId && replacementNodeId ? { replaceNodeIds: new Map([[replaceNodeId, replacementNodeId]]) } : undefined);
 }
-export function canvasReferenceIntentForConnection(nodes: CanvasNodeData[], edge: Pick<CanvasConnection, "fromNodeId" | "toNodeId" | "fromHandleId" | "toHandleId">, remove = false): ReferenceEditIntent | undefined {
+function editableInputBindings(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]): ReferenceBinding[] {
+    const declared = node.metadata?.generationSpec?.referenceBindings ?? node.metadata?.inputBindings;
+    if (declared !== undefined) return declared;
+    const inputs = buildCanvasNodeMentionReferenceMap(nodes, connections, [node]).get(node.id) || [];
+    const nodeById = new Map(nodes.map((input) => [input.id, input]));
+    return inputs.flatMap((input, order) => {
+        const source = nodeById.get(input.nodeId);
+        const binding = source && bindingForNode(source, order);
+        return binding ? [binding] : [];
+    });
+}
+export function canvasReferenceIntentForConnection(nodes: CanvasNodeData[], edge: Pick<CanvasConnection, "fromNodeId" | "toNodeId" | "fromHandleId" | "toHandleId">, remove = false, connections: CanvasConnection[] = []): ReferenceEditIntent | undefined {
     const source = nodes.find((n) => n.id === edge.fromNodeId),
         target = nodes.find((n) => n.id === edge.toNodeId);
     if (!source || !target) return undefined;
@@ -88,15 +129,38 @@ export function canvasReferenceIntentForConnection(nodes: CanvasNodeData[], edge
         const row = board.metadata?.storyboard?.rows.find((row) => row.imageNodeId === target.id || row.videoNodeId === target.id);
         if (row) {
             if (remove && target.type === "video" && board.metadata?.storyboardVideoInputMode === "keyframe" && row.imageNodeId === source.id) throw new Error("首帧引用由镜头的首帧选择管理");
-            return canvasReferenceIntentForConnection(nodes, { fromNodeId: source.id, toNodeId: board.id, toHandleId: `row:${row.id}` }, remove);
+            return canvasReferenceIntentForConnection(nodes, { fromNodeId: source.id, toNodeId: board.id, toHandleId: `row:${row.id}` }, remove, connections);
         }
     }
     const spec = nodeSpec(target);
     if (!spec && !inputTypes.has(target.type)) return undefined;
-    const bindings = spec?.referenceBindings || target.metadata?.inputBindings || [];
+    const bindings = editableInputBindings(target, nodes, connections);
     const binding = bindingForNode(source, bindings.length);
     if (!binding) return undefined;
     return { kind: "set_node_inputs", nodeId: target.id, bindings: remove ? bindings.filter((b) => b.nodeId !== source.id) : bindings.some((b) => b.nodeId === source.id) ? bindings : [...bindings, binding] };
+}
+export function replaceCanvasReferenceInput(nodes: CanvasNodeData[], targetNodeId: string, oldNodeId: string, sourceNodeId: string, connections: CanvasConnection[] = []): ReferenceEditIntent | undefined {
+    const target = nodes.find((node) => node.id === targetNodeId);
+    const source = nodes.find((node) => node.id === sourceNodeId);
+    if (!target || !source) return;
+    if (target.type === "script") {
+        const row = target.metadata?.storyboard?.rows.find((item) => item.assetBindings?.some((binding) => binding.nodeId === oldNodeId));
+        if (row) {
+            const replacement = bindingForConnectedNode(source);
+            if (!replacement) return;
+            return { kind: "set_row_assets", nodeId: target.id, rowId: row.id, assetBindings: row.assetBindings!.map((binding) => binding.nodeId === oldNodeId ? { ...replacement, ...binding, nodeId: replacement.nodeId } : binding), replaceNodeId: oldNodeId };
+        }
+        const index = target.metadata?.storyboard?.referenceNodeIds?.indexOf(oldNodeId) ?? -1;
+        if (index >= 0) return { kind: "set_board_references", nodeId: target.id, referenceNodeIds: target.metadata!.storyboard!.referenceNodeIds.map((id, itemIndex) => itemIndex === index ? sourceNodeId : id), replaceNodeId: oldNodeId };
+    }
+    const spec = nodeSpec(target);
+    if (!spec && !inputTypes.has(target.type)) return;
+    const bindings = editableInputBindings(target, nodes, connections);
+    const index = bindings.findIndex((binding) => binding.nodeId === oldNodeId);
+    if (index < 0) return;
+    const replacement = bindingForNode(source, index, bindings[index]);
+    if (!replacement) return;
+    return { kind: "set_node_inputs", nodeId: targetNodeId, bindings: bindings.map((binding, bindingIndex) => bindingIndex === index ? replacement : binding), replaceNodeId: oldNodeId };
 }
 export function storyboardInheritedBindings(script: CanvasNodeData, row: StoryboardRow, nodes: CanvasNodeData[]): Array<StoryboardAssetBinding & { source: string }> {
     const own = new Set((row.assetBindings || []).map((b) => b.nodeId));
@@ -120,7 +184,7 @@ export function storyboardInheritedBindings(script: CanvasNodeData, row: Storybo
         }),
     ];
 }
-export function reorderCanvasReferenceInputs(nodes: CanvasNodeData[], nodeId: string, orderedIds: string[]): ReferenceEditIntent | undefined {
+export function reorderCanvasReferenceInputs(nodes: CanvasNodeData[], nodeId: string, orderedIds: string[], connections: CanvasConnection[] = []): ReferenceEditIntent | undefined {
     for (const board of nodes) {
         const row = board.metadata?.storyboard?.rows.find((row) => row.imageNodeId === nodeId || row.videoNodeId === nodeId);
         if (row) {
@@ -131,8 +195,7 @@ export function reorderCanvasReferenceInputs(nodes: CanvasNodeData[], nodeId: st
     }
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return;
-    const bindings = nodeSpec(node)?.referenceBindings ?? node.metadata?.inputBindings;
-    if (bindings === undefined) return;
+    const bindings = editableInputBindings(node, nodes, connections);
     const order = new Map(orderedIds.map((id, index) => [id, index]));
     return { kind: "set_node_inputs", nodeId, bindings: [...bindings].sort((a, b) => (order.get(a.nodeId || "") ?? orderedIds.length + a.order) - (order.get(b.nodeId || "") ?? orderedIds.length + b.order)) };
 }

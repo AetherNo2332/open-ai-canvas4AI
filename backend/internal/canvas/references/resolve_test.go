@@ -63,6 +63,22 @@ func TestResolveKeyframeMode(t *testing.T) {
 		t.Fatal("keyframe mode accepted a missing frame")
 	}
 }
+
+func TestResolveBatchRowSkipsEmptyReferenceSlots(t *testing.T) {
+	doc := map[string]any{"nodes": []any{
+		map[string]any{"id": "image", "type": "image"},
+		map[string]any{"id": "text", "type": "text"},
+		map[string]any{"id": "table", "type": "batch-table", "metadata": map[string]any{"batchTable": map[string]any{"rows": []any{map[string]any{"id": "row", "inputNodeIds": []any{"", "image"}, "textNodeIds": []any{"", "text"}}}}}},
+	}}
+	got, err := Resolve(doc, Scope{Kind: "batch-row", NodeID: "table", RowID: "row"}, capability.BuiltinRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bindings) != 2 || got.Bindings[0].NodeID != "image" || got.Bindings[0].Role != "reference" || got.Bindings[1].NodeID != "text" || got.Bindings[1].Role != "source-text" {
+		t.Fatalf("empty reference slots were not ignored: %+v", got.Bindings)
+	}
+}
+
 func TestReferenceInputPolicies(t *testing.T) {
 	for _, tc := range []struct {
 		kind  string

@@ -15,6 +15,7 @@ export function canvasConnectionError(config: AiConfig, nodes: CanvasNodeData[],
     const source = nodes.find((node) => node.id === candidate.fromNodeId);
     const target = nodes.find((node) => node.id === candidate.toNodeId);
     if (!target) return "找不到连线目标节点";
+    if (target.type === CanvasNodeType.BatchTable && target.metadata?.locked) return "批量创作表已锁定";
     if (!source || source.id === target.id) return "连线端点不存在或指向自身";
     if (connectionTraits[source.type]?.blocked || connectionTraits[target.type]?.blocked || (source.type === CanvasNodeType.Config && target.type === CanvasNodeType.Config)) return "这两个节点不允许连线";
     for (const [node, handle] of [

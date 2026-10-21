@@ -63,9 +63,11 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
         gridLayer.style.transform = gridStyle.transform;
         gridLayer.style.visibility = gridStyle.visible ? "" : "hidden";
     }
-    container.style.setProperty("--canvas-live-scale", String(viewport.k));
-    // 外置节点标题用同一帧逆倍率抵消世界层缩放，避免等待 React 提交后再校正尺寸。
-    container.style.setProperty("--canvas-live-inverse-scale", String(1 / Math.max(viewport.k, 0.05)));
+    // 交互期避免修改根变量触发整棵节点树样式重算；提交帧会统一校正尺寸。
+    if (container.dataset.canvasViewportInteracting !== "true") {
+        container.style.setProperty("--canvas-live-scale", String(viewport.k));
+        container.style.setProperty("--canvas-live-inverse-scale", String(1 / Math.max(viewport.k, 0.05)));
+    }
     // 图形层必须逐帧跟随 DOM 世界层；浮层和滚动通知仍可按原频率节流。
     container.dispatchEvent(new CustomEvent<ViewportTransform>(CANVAS_GRAPHICS_VIEWPORT_PREVIEW_EVENT, { detail: viewport }));
     if (notify) {

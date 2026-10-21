@@ -1,10 +1,10 @@
-import { imageReferenceLabel } from "@/lib/image-reference-prompt";
+import { createCanvasReferenceLabeler } from "./canvas-reference-slots";
+import { detachRemovedBatchCellConnections } from "./canvas-batch-references";
 import { normalizeCharacterImageMentions } from "@/lib/canvas/canvas-character-reference";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import { buildCanvasDeclaredInputResolver, canvasDeclaredInputNodeIds } from "./canvas-reference-inputs";
 import { getNodeResourceKind } from "@/lib/canvas/node-registry";
-import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { Skill } from "@/services/api/skills";
 import type { Asset, AssetCategory } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeTypeId } from "@/types/canvas";
@@ -260,12 +260,18 @@ function rewriteCanvasPromptAfterReferenceChange(prompt: string, previousReferen
     return value === prompt ? prompt : compactRemovedCanvasMentionPrompt(value);
 }
 
-export function applyCanvasConnectionPromptSync(previousNodes: CanvasNodeData[], previousConnections: CanvasConnection[], nextNodes: CanvasNodeData[], nextConnections: CanvasConnection[]) {
+export function applyCanvasConnectionPromptSync(previousNodes: CanvasNodeData[], previousConnections: CanvasConnection[], nextNodes: CanvasNodeData[], nextConnections: CanvasConnection[], options: { replaceNodeIds?: Map<string, string> } = {}) {
+    // 删除格子连线时同步清空该格引用，否则行数据会把连线重新投影出来。
+    nextNodes = detachRemovedBatchCellConnections(nextNodes, previousConnections, nextConnections);
     const previousMap = buildCanvasNodeMentionReferenceMap(previousNodes, previousConnections, nextNodes);
     const nextMap = buildCanvasNodeMentionReferenceMap(nextNodes, nextConnections, nextNodes);
     let changed = false;
     const mapped = nextNodes.map((node) => {
-        const previousPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
+        let previousPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
+        for (const [oldNodeId, newNodeId] of options.replaceNodeIds || []) {
+            const oldReference = previousMap.get(node.id)?.find((reference) => reference.nodeId === oldNodeId);
+            if (oldReference && nextMap.get(node.id)?.some((reference) => reference.nodeId === newNodeId)) previousPrompt = replaceCanvasReferenceMentions(previousPrompt, oldReference, `@[node:${newNodeId}]`);
+        }
         const nextPrompt = rewriteCanvasPromptAfterReferenceChange(previousPrompt, previousMap.get(node.id) || [], nextMap.get(node.id) || []);
         if (nextPrompt === previousPrompt) return node;
         changed = true;
@@ -292,7 +298,7 @@ export function replaceCanvasMentionToken(value: string, token: string, replacem
     if (!token) return value;
     const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     // Numbered media mentions can touch Chinese prose or another mention, but not a longer number.
-    const boundary = /^@(图片|视频|音频|文本)\d+$/.test(token)
+    const boundary = /^@(图片|角色|绘图|视频|音频|文本)\d+$/.test(token)
         ? "(?![0-9])"
         : token.startsWith("@[node:") ? "" : `(?=${CANVAS_RESOURCE_MENTION_BOUNDARY.source})`;
     return value.replace(new RegExp(`${escapedToken}${boundary}`, "gu"), replacement);
@@ -540,13 +546,11 @@ export function reorderCanvasResourceConnections(targetNodeId: string, orderedNo
 }
 
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
-    const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0, skill: 0, character: 0, tool: 0 };
-    let drawingCount = 0;
+    const nextLabel = createCanvasReferenceLabeler();
     return nodes.flatMap((node): CanvasResourceReference[] => {
         const kind = resourceKind(node);
         if (!kind) return [];
-        const index = node.type === CanvasNodeType.Drawing ? drawingCount++ : counts[kind]++;
-        const label = node.type === CanvasNodeType.Drawing ? `绘图${index + 1}` : labelForKind(kind, index);
+        const label = nextLabel(node.type === CanvasNodeType.Drawing ? "drawing" : kind);
         return [
             {
                 id: node.id,
@@ -571,16 +575,6 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
             },
         ];
     });
-}
-
-function labelForKind(kind: CanvasResourceKind, index: number) {
-    if (kind === "character") return `角色${index + 1}`;
-    if (kind === "image") return imageReferenceLabel(index);
-    if (kind === "video") return seedanceReferenceLabel("video", index);
-    if (kind === "audio") return seedanceReferenceLabel("audio", index);
-    if (kind === "skill") return `技能${index + 1}`;
-    if (kind === "tool") return `工具${index + 1}`;
-    return `文本${index + 1}`;
 }
 
 function isResourceNode(node: CanvasNodeData) {

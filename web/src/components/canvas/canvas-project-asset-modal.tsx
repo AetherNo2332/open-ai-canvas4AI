@@ -125,19 +125,37 @@ function pickerMediaKind(value?: string): AssetPickerMediaKind {
     return value === "video" || value === "audio" || value === "text" ? value : "image";
 }
 
-function toInsertPayload(item: ProjectPickerItem): InsertAssetPayload {
+export function toInsertPayload(item: ProjectPickerItem): InsertAssetPayload {
     if (item.character?.character) {
         return projectCharacterToInsertPayload(item.character);
     }
     const asset = item.media;
     const project = item.project;
-    if (!asset && project) {
+    // 项目资产带服务端 storageKey 时以项目记录为准；本地素材只在指向同一对象时补充尺寸等元数据。
+    if (project && (!asset || project.storageKey)) {
         const resourceId = resourceIdFromStorageKey(project.storageKey);
         const remoteUrl = resourceId ? resourceFileUrl(resourceId) : "";
         if (project.mediaType === "text" && project.previewText) return { kind: "text", content: project.previewText, title: project.title, assetId: project.id };
-        if (project.mediaType === "video" && remoteUrl) return { kind: "video", url: remoteUrl, storageKey: project.storageKey, title: project.title, assetId: project.id };
-        if (project.mediaType === "audio" && remoteUrl) return { kind: "audio", url: remoteUrl, storageKey: project.storageKey, title: project.title, assetId: project.id };
-        if (project.mediaType === "image" && remoteUrl) return { kind: "image", dataUrl: remoteUrl, storageKey: project.storageKey, title: project.title, assetId: project.id };
+        if (project.mediaType === "video" && remoteUrl)
+            return {
+                ...(asset?.kind === "video" && asset.data.storageKey === project.storageKey ? asset.data : { durationMs: project.durationMs }),
+                kind: "video",
+                url: remoteUrl,
+                storageKey: project.storageKey,
+                title: project.title,
+                assetId: project.id,
+            };
+        if (project.mediaType === "audio" && remoteUrl)
+            return {
+                ...(asset?.kind === "audio" && asset.data.storageKey === project.storageKey ? asset.data : { durationMs: project.durationMs }),
+                kind: "audio",
+                url: remoteUrl,
+                storageKey: project.storageKey,
+                title: project.title,
+                assetId: project.id,
+            };
+        if (project.mediaType === "image" && remoteUrl)
+            return { ...(asset?.kind === "image" && asset.data.storageKey === project.storageKey ? asset.data : {}), kind: "image", dataUrl: remoteUrl, storageKey: project.storageKey, title: project.title, assetId: project.id };
         throw new Error(`“${project.title}”缺少可读取的内容`);
     }
     if (!asset) throw new Error("项目资产不可用");
