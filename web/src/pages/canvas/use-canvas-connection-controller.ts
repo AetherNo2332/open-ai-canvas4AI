@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatc
 import { App } from "antd";
 import { nanoid } from "nanoid";
 import { latchCanvasConnectionApproach, type CanvasConnectionApproach } from "@/lib/canvas/canvas-connection-tilt";
-import { applyCanvasReferenceEdit, canvasReferenceIntentForConnection } from "@/lib/canvas/canvas-reference-edits";
+import { applyCanvasReferenceGraphEdit, canvasReferenceIntentForConnection, connectCanvasReferences } from "@/lib/canvas/canvas-reference-edits";
 
 import type { PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { getNodeSpec } from "@/constant/canvas";
@@ -212,15 +212,9 @@ export function useCanvasConnectionController({
                 message.warning(reason);
                 return plan;
             }
-            let nextNodes = nodesRef.current;
-            const free = plan.connections.filter((connection) => {
-                const intent = canvasReferenceIntentForConnection(nextNodes, connection, false, connectionsRef.current);
-                if (!intent) return true;
-                nextNodes = applyCanvasReferenceEdit(nextNodes, intent, connectionsRef.current);
-                return false;
-            });
-            setNodes(nextNodes);
-            setConnections((currentConnections) => [...currentConnections, ...free]);
+            const next = connectCanvasReferences({ nodes: nodesRef.current, connections: connectionsRef.current }, plan.connections);
+            setNodes(next.nodes);
+            setConnections(next.connections);
             setContextMenu(null);
             const skippedCount = plan.skipped.length;
             const duplicateCount = plan.duplicates.length;
@@ -261,7 +255,9 @@ export function useCanvasConnectionController({
             const exists = connectionsRef.current.find((item) => item.fromNodeId === fromNodeId && item.toNodeId === toNodeId && item.fromHandleId === fromHandleId && item.toHandleId === toHandleId);
             const intent = canvasReferenceIntentForConnection(nodesRef.current, { fromNodeId, toNodeId, fromHandleId, toHandleId }, false, connectionsRef.current);
             if (intent) {
-                setNodes((current) => applyCanvasReferenceEdit(current, intent, connectionsRef.current));
+                const next = applyCanvasReferenceGraphEdit({ nodes: nodesRef.current, connections: connectionsRef.current }, intent);
+                setNodes(next.nodes);
+                setConnections(next.connections);
                 setContextMenu(null);
                 return;
             }
@@ -374,18 +370,11 @@ export function useCanvasConnectionController({
                     setConnecting(null);
                     return;
                 }
-                let nextNodes = [...nodesRef.current, newNode];
-                const free = batchPlan.connections.filter((connection) => {
-                    const intent = canvasReferenceIntentForConnection(nextNodes, connection, false, connectionsRef.current);
-                    if (!intent) return true;
-                    nextNodes = applyCanvasReferenceEdit(nextNodes, intent, connectionsRef.current);
-                    return false;
-                });
-                const nextConnections = [...connectionsRef.current, ...free];
-                nodesRef.current = nextNodes;
-                connectionsRef.current = nextConnections;
-                setNodes(nextNodes);
-                setConnections(nextConnections);
+                const next = connectCanvasReferences({ nodes: [...nodesRef.current, newNode], connections: connectionsRef.current }, batchPlan.connections);
+                nodesRef.current = next.nodes;
+                connectionsRef.current = next.connections;
+                setNodes(next.nodes);
+                setConnections(next.connections);
                 setSelectedNodeIds(new Set([newNode.id]));
                 setSelectedConnectionId(null);
                 if (nodeType === CanvasNodeType.Script) setDialogNodeId(null);
@@ -451,8 +440,14 @@ export function useCanvasConnectionController({
             const toAnchorRatio = connection.toNodeId === pending.connection.nodeId ? pending.connection.anchorRatio : 0.5;
             const connected = { ...connection, fromHandleId, toHandleId, fromAnchorRatio, toAnchorRatio };
             const intent = canvasReferenceIntentForConnection([...nodesRef.current, newNode], connected, false, connectionsRef.current);
-            setNodes((currentNodes) => (intent ? applyCanvasReferenceEdit([...currentNodes, newNode], intent, connectionsRef.current) : attachNodeToStoryboardRow([...currentNodes, newNode], connected)));
-            if (!intent) setConnections((currentConnections) => [...currentConnections, { id: nanoid(), ...connected }]);
+            if (intent) {
+                const next = applyCanvasReferenceGraphEdit({ nodes: [...nodesRef.current, newNode], connections: connectionsRef.current }, intent);
+                setNodes(next.nodes);
+                setConnections(next.connections);
+            } else {
+                setNodes((currentNodes) => attachNodeToStoryboardRow([...currentNodes, newNode], connected));
+                setConnections((currentConnections) => [...currentConnections, { id: nanoid(), ...connected }]);
+            }
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
             if (nodeType === CanvasNodeType.Drawing) setDrawingNodeId(newNode.id);

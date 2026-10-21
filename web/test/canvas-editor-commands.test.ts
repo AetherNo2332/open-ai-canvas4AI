@@ -124,3 +124,13 @@ test("drawing saves publish native records and explicit layer order instead of m
     changed.nodes[0].metadata.drawingDocument.snapshot.elements[0].x = 20;
     expect(canvasEditorCommands(next, changed, caps as any)[0].drawingOperations).toEqual([{ type: "upsert", id: "shape", record: { ...shape, x: 20 } }]);
 });
+test("editor-drawn managed edges on a legacy canvas leave the field operation to the host gate", () => {
+    const source = before(),
+        next = structuredClone(source) as any;
+    // A legacy canvas has no referenceFieldsVersion; the host answers the field edit with reference_migration_required.
+    next.connections.push({ id: "drawn", fromNodeId: "a", toNodeId: "board", toHandleId: "storyboard:context", managedBy: "reference-fields-v1", referenceOwnerNodeId: "board", referenceBindingId: "node:a:source-text" });
+    expect(canvasEditorCommands(source, next, capabilities as any)).toEqual([]);
+    const removed = structuredClone(next);
+    removed.connections = [];
+    expect(canvasEditorCommands(next, removed, capabilities as any)).toEqual([]);
+});

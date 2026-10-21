@@ -24,6 +24,7 @@ import { buildStoryboardAssetCatalog } from "@/lib/canvas/canvas-storyboard-asse
 import { resolveStoryboardGenerationContext } from "@/lib/canvas/canvas-storyboard-context";
 import { storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
 import { assertStoryboardGenerationReady, withStoryboardOutputDraft } from "@/lib/canvas/canvas-reference-edits";
+import { reconcileCanvasReferenceConnections } from "@/lib/canvas/canvas-reference-projection";
 import { assertCanvasReferenceMigrationReady } from "@/lib/canvas/canvas-reference-migration";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { navigateToSettings } from "@/lib/settings-navigation";
@@ -318,6 +319,7 @@ export function useCanvasStoryboard({
                 },
             },
         };
+        nextConnections = reconcileCanvasReferenceConnections(nextNodes, nextConnections, [scriptNode.id, ...imageNodeByRowId.values()]);
         nodesRef.current = nextNodes;
         connectionsRef.current = nextConnections;
         setNodes(nextNodes);
@@ -404,6 +406,7 @@ export function useCanvasStoryboard({
                 },
             },
         };
+        nextConnections = reconcileCanvasReferenceConnections(nextNodes, nextConnections, [scriptNode.id, ...videoNodeByRowId.values()]);
         nodesRef.current = nextNodes;
         connectionsRef.current = nextConnections;
         setNodes(nextNodes);
@@ -554,6 +557,7 @@ export function useCanvasStoryboard({
             nextNodes = withStoryboardOutputDraft(nextNodes,currentScriptNode,row,videoNode.id);
             targets.push({ row, node: videoNode, prompt });
         });
+        nextConnections = reconcileCanvasReferenceConnections(nextNodes, nextConnections, [currentScriptNode.id, ...targets.map((target) => target.node.id)]);
         nodesRef.current = nextNodes;
         connectionsRef.current = nextConnections;
         setNodes(nextNodes);

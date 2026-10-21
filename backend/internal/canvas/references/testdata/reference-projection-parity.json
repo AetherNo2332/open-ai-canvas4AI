@@ -1,0 +1,536 @@
+[
+  {
+    "name": "generation inputs keep declared order and drop duplicate roles",
+    "owners": [
+      "target"
+    ],
+    "document": {
+      "referenceFieldsVersion": 1,
+      "nodes": [
+        {
+          "id": "style",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "brief",
+          "type": "text",
+          "metadata": {
+            "content": "brief"
+          }
+        },
+        {
+          "id": "hero",
+          "type": "text",
+          "metadata": {
+            "workflowKind": "character",
+            "characterAssetId": "hero-asset"
+          }
+        },
+        {
+          "id": "target",
+          "type": "image",
+          "metadata": {
+            "generationSpec": {
+              "version": 1,
+              "mode": "image",
+              "prompt": "",
+              "options": {},
+              "textInputMode": "append-sources",
+              "referenceBindings": [
+                {
+                  "id": "node:style",
+                  "nodeId": "style",
+                  "mediaType": "image",
+                  "role": "reference",
+                  "order": 0,
+                  "resolution": "latest"
+                },
+                {
+                  "id": "node:brief",
+                  "nodeId": "brief",
+                  "mediaType": "text",
+                  "role": "source-text",
+                  "order": 1,
+                  "resolution": "latest"
+                },
+                {
+                  "id": "node:hero",
+                  "nodeId": "hero",
+                  "mediaType": "image",
+                  "role": "reference",
+                  "order": 2,
+                  "resolution": "latest"
+                },
+                {
+                  "id": "node:style:again",
+                  "nodeId": "style",
+                  "mediaType": "image",
+                  "role": "reference",
+                  "order": 3,
+                  "resolution": "latest"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "connections": []
+    },
+    "lines": [
+      {
+        "id": "edge-1",
+        "fromNodeId": "style",
+        "toNodeId": "target",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "target",
+        "referenceBindingId": "node:style"
+      },
+      {
+        "id": "edge-2",
+        "fromNodeId": "brief",
+        "toNodeId": "target",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "target",
+        "referenceBindingId": "node:brief"
+      },
+      {
+        "id": "edge-3",
+        "fromNodeId": "hero",
+        "toNodeId": "target",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "target",
+        "referenceBindingId": "node:hero"
+      }
+    ]
+  },
+  {
+    "name": "frame roles replace the plain reference to the same node",
+    "owners": [
+      "clip"
+    ],
+    "document": {
+      "referenceFieldsVersion": 1,
+      "nodes": [
+        {
+          "id": "first",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "ref",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "clip",
+          "type": "video",
+          "metadata": {
+            "generationSpec": {
+              "version": 1,
+              "mode": "video",
+              "prompt": "",
+              "options": {},
+              "textInputMode": "prompt-only",
+              "referenceBindings": [
+                {
+                  "id": "node:ref",
+                  "nodeId": "ref",
+                  "mediaType": "image",
+                  "role": "reference",
+                  "order": 0,
+                  "resolution": "latest"
+                },
+                {
+                  "id": "node:first",
+                  "nodeId": "first",
+                  "mediaType": "image",
+                  "role": "reference",
+                  "order": 1,
+                  "resolution": "latest"
+                },
+                {
+                  "id": "node:first:first-frame",
+                  "nodeId": "first",
+                  "mediaType": "image",
+                  "role": "first-frame",
+                  "order": 2,
+                  "resolution": "latest"
+                },
+                {
+                  "id": "upload",
+                  "resourceId": "resource-1",
+                  "mediaType": "image",
+                  "role": "reference",
+                  "order": 3,
+                  "resolution": "latest"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "connections": []
+    },
+    "lines": [
+      {
+        "id": "edge-1",
+        "fromNodeId": "ref",
+        "toNodeId": "clip",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "clip",
+        "referenceBindingId": "node:ref"
+      },
+      {
+        "id": "edge-2",
+        "fromNodeId": "first",
+        "toNodeId": "clip",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "clip",
+        "referenceBindingId": "node:first:first-frame"
+      }
+    ]
+  },
+  {
+    "name": "node input bindings",
+    "owners": [
+      "compare"
+    ],
+    "document": {
+      "referenceFieldsVersion": 1,
+      "nodes": [
+        {
+          "id": "left",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "right",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "compare",
+          "type": "compare",
+          "metadata": {
+            "inputBindings": [
+              {
+                "id": "node:left",
+                "nodeId": "left",
+                "mediaType": "image",
+                "role": "reference",
+                "order": 0,
+                "resolution": "latest"
+              },
+              {
+                "id": "node:right",
+                "nodeId": "right",
+                "mediaType": "image",
+                "role": "reference",
+                "order": 1,
+                "resolution": "latest"
+              }
+            ]
+          }
+        }
+      ],
+      "connections": []
+    },
+    "lines": [
+      {
+        "id": "edge-1",
+        "fromNodeId": "left",
+        "toNodeId": "compare",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "compare",
+        "referenceBindingId": "node:left"
+      },
+      {
+        "id": "edge-2",
+        "fromNodeId": "right",
+        "toNodeId": "compare",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "compare",
+        "referenceBindingId": "node:right"
+      }
+    ]
+  },
+  {
+    "name": "storyboard context, row assets, characters and outputs",
+    "owners": [
+      "board"
+    ],
+    "document": {
+      "referenceFieldsVersion": 1,
+      "nodes": [
+        {
+          "id": "style",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "notes",
+          "type": "text",
+          "metadata": {
+            "content": "notes"
+          }
+        },
+        {
+          "id": "scene",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "prop",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "hero",
+          "type": "text",
+          "metadata": {
+            "workflowKind": "character",
+            "characterAssetId": "hero-asset"
+          }
+        },
+        {
+          "id": "frame",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "clip",
+          "type": "video",
+          "metadata": {}
+        },
+        {
+          "id": "board",
+          "type": "script",
+          "metadata": {
+            "storyboard": {
+              "referenceNodeIds": [
+                "style",
+                "notes"
+              ],
+              "rows": [
+                {
+                  "id": "shot-1",
+                  "assetBindings": [
+                    {
+                      "nodeId": "prop",
+                      "role": "prop",
+                      "priority": 80
+                    },
+                    {
+                      "nodeId": "scene",
+                      "role": "environment",
+                      "priority": 90
+                    }
+                  ],
+                  "characters": [
+                    {
+                      "characterName": "主角",
+                      "characterAssetId": "hero-asset"
+                    }
+                  ],
+                  "imageNodeId": "frame",
+                  "videoNodeId": "clip"
+                },
+                {
+                  "id": "shot-2",
+                  "assetBindings": [
+                    {
+                      "nodeId": "style",
+                      "role": "style",
+                      "priority": 60
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "connections": []
+    },
+    "lines": [
+      {
+        "id": "edge-1",
+        "fromNodeId": "style",
+        "toNodeId": "board",
+        "toHandleId": "storyboard:context",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "node:style:reference"
+      },
+      {
+        "id": "edge-2",
+        "fromNodeId": "notes",
+        "toNodeId": "board",
+        "toHandleId": "storyboard:context",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "node:notes:source-text"
+      },
+      {
+        "id": "edge-3",
+        "fromNodeId": "scene",
+        "toNodeId": "board",
+        "toHandleId": "row:shot-1",
+        "storyboardRowId": "shot-1",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "node:scene:reference"
+      },
+      {
+        "id": "edge-4",
+        "fromNodeId": "prop",
+        "toNodeId": "board",
+        "toHandleId": "row:shot-1",
+        "storyboardRowId": "shot-1",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "node:prop:reference"
+      },
+      {
+        "id": "edge-5",
+        "fromNodeId": "hero",
+        "toNodeId": "board",
+        "toHandleId": "row:shot-1",
+        "storyboardRowId": "shot-1",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "node:hero:reference"
+      },
+      {
+        "id": "edge-6",
+        "fromNodeId": "style",
+        "toNodeId": "board",
+        "toHandleId": "row:shot-1",
+        "storyboardRowId": "shot-1",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "node:style:reference"
+      },
+      {
+        "id": "edge-7",
+        "fromNodeId": "notes",
+        "toNodeId": "board",
+        "toHandleId": "row:shot-1",
+        "storyboardRowId": "shot-1",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "node:notes:source-text"
+      },
+      {
+        "id": "edge-8",
+        "fromNodeId": "board",
+        "toNodeId": "frame",
+        "fromHandleId": "row:shot-1",
+        "relation": "storyboard-output",
+        "storyboardRowId": "shot-1",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "output:image"
+      },
+      {
+        "id": "edge-9",
+        "fromNodeId": "board",
+        "toNodeId": "clip",
+        "fromHandleId": "row:shot-1",
+        "relation": "storyboard-output",
+        "storyboardRowId": "shot-1",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "output:video"
+      },
+      {
+        "id": "edge-10",
+        "fromNodeId": "style",
+        "toNodeId": "board",
+        "toHandleId": "row:shot-2",
+        "storyboardRowId": "shot-2",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "node:style:reference"
+      },
+      {
+        "id": "edge-11",
+        "fromNodeId": "notes",
+        "toNodeId": "board",
+        "toHandleId": "row:shot-2",
+        "storyboardRowId": "shot-2",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "board",
+        "referenceBindingId": "node:notes:source-text"
+      }
+    ]
+  },
+  {
+    "name": "existing managed lines keep their identity",
+    "owners": [
+      "target"
+    ],
+    "document": {
+      "referenceFieldsVersion": 1,
+      "nodes": [
+        {
+          "id": "style",
+          "type": "image",
+          "metadata": {}
+        },
+        {
+          "id": "target",
+          "type": "image",
+          "metadata": {
+            "generationSpec": {
+              "version": 1,
+              "mode": "image",
+              "prompt": "",
+              "options": {},
+              "textInputMode": "append-sources",
+              "referenceBindings": [
+                {
+                  "id": "node:style",
+                  "nodeId": "style",
+                  "mediaType": "image",
+                  "role": "reference",
+                  "order": 0,
+                  "resolution": "latest"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "connections": [
+        {
+          "id": "kept",
+          "fromNodeId": "style",
+          "toNodeId": "target",
+          "managedBy": "reference-fields-v1",
+          "referenceOwnerNodeId": "target",
+          "referenceBindingId": "node:style"
+        },
+        {
+          "id": "stale",
+          "fromNodeId": "style",
+          "toNodeId": "target",
+          "managedBy": "reference-fields-v1",
+          "referenceOwnerNodeId": "target",
+          "referenceBindingId": "node:style:removed"
+        }
+      ]
+    },
+    "lines": [
+      {
+        "id": "kept",
+        "fromNodeId": "style",
+        "toNodeId": "target",
+        "managedBy": "reference-fields-v1",
+        "referenceOwnerNodeId": "target",
+        "referenceBindingId": "node:style"
+      }
+    ]
+  }
+]

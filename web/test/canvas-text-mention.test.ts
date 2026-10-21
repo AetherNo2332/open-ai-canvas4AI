@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { connectCanvasTextMention } from "@/lib/canvas/canvas-text-mention";
+import { connectCanvasReferences } from "@/lib/canvas/canvas-reference-edits";
 import { buildNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import { canvasResourceMentionToken } from "@/lib/canvas/canvas-resource-references";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -40,5 +41,16 @@ test("appending a text reference preserves existing mention numbering with an em
     expect(linked.reference.label).toBe("文本2");
     const context = buildNodeGenerationContext("video", linked.nodes, linked.connections, "@文本1 @文本2", []);
     expect(context.prompt).toContain("原有文本");
+    expect(context.prompt).toContain("清晨，人物推开木门");
+});
+
+test("a text mention into a node with declared inputs writes the field and its line", () => {
+    const style: CanvasNodeData = { ...nodes[0], id: "style", type: CanvasNodeType.Image, metadata: { content: "https://example.test/style.png" } };
+    const declared = connectCanvasReferences({ nodes: [...nodes, style], connections: [] }, [{ id: "drag", fromNodeId: "style", toNodeId: "video" }]);
+    const linked = connectCanvasTextMention(declared.nodes, declared.connections, "video", "text", "edge");
+    expect(linked.nodes.find((node) => node.id === "video")?.metadata?.generationSpec?.referenceBindings.map((binding) => [binding.nodeId, binding.role])).toEqual([["style", "reference"], ["text", "source-text"]]);
+    expect(linked.connections.map((edge) => [edge.fromNodeId, edge.managedBy])).toEqual([["style", "reference-fields-v1"], ["text", "reference-fields-v1"]]);
+    expect(linked.reference.nodeId).toBe("text");
+    const context = buildNodeGenerationContext("video", linked.nodes, linked.connections, `${canvasResourceMentionToken(linked.reference)} 缓慢运镜`, []);
     expect(context.prompt).toContain("清晨，人物推开木门");
 });

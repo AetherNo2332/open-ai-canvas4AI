@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"infinite-canvas/backend/internal/canvas/capability"
+	"os"
+	"reflect"
 	"testing"
 )
 
@@ -58,5 +60,45 @@ func TestReconcileClearsRemovedRowReferences(t *testing.T) {
 	}
 	if len(got.Document["nodes"].([]any)) != 4 {
 		t.Fatal("clearing relationships deleted assets")
+	}
+}
+
+// The web editor draws managed lines before saving (canvas-reference-projection.ts reads the same
+// fixture). Matching keys, order and allocation keep those ids when this reconciler confirms them.
+func TestReconcileMatchesEditorProjection(t *testing.T) {
+	raw, err := os.ReadFile("testdata/reference-projection-parity.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name     string           `json:"name"`
+		Owners   []string         `json:"owners"`
+		Document map[string]any   `json:"document"`
+		Lines    []map[string]any `json:"lines"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		allocated := 0
+		got, err := Reconcile(tc.Document, tc.Document, capability.BuiltinRegistry(), func() string { allocated++; return fmt.Sprintf("edge-%d", allocated) })
+		if err != nil {
+			t.Fatalf("%s: %v", tc.Name, err)
+		}
+		owners := map[string]bool{}
+		for _, id := range tc.Owners {
+			owners[id] = true
+		}
+		lines := []map[string]any{}
+		for _, edge := range maps(got.Document["connections"]) {
+			if str(edge["managedBy"]) == ManagedBy && owners[str(edge["referenceOwnerNodeId"])] {
+				lines = append(lines, edge)
+			}
+		}
+		if !reflect.DeepEqual(lines, tc.Lines) {
+			gotJSON, _ := json.Marshal(lines)
+			wantJSON, _ := json.Marshal(tc.Lines)
+			t.Fatalf("%s:\n got %s\nwant %s", tc.Name, gotJSON, wantJSON)
+		}
 	}
 }

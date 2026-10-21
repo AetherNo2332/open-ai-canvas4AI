@@ -7,7 +7,7 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { FOLDER_COLLAPSED_HEIGHT, FOLDER_COLLAPSED_WIDTH, FRAME_HEADER_HEIGHT, getFrameChildIds, getFrameChildren, isFrameNode } from "@/lib/canvas/canvas-frame";
 import { alignCanvasNodes, layoutCanvasAuto, layoutCanvasFlow, layoutCanvasNodes, nextCanvasVersionLabel, spreadCanvasNodes, type CanvasAlignmentMode } from "@/lib/canvas/canvas-layout";
 import { applyCanvasConnectionPromptSync } from "@/lib/canvas/canvas-resource-references";
-import { applyCanvasReferenceEdit, canvasReferenceIntentForConnection } from "@/lib/canvas/canvas-reference-edits";
+import { deleteCanvasReferenceLine, type CanvasReferenceGraph } from "@/lib/canvas/canvas-reference-edits";
 import { createCanvasNode, isHiddenBatchChild, removeCanvasNodes } from "@/lib/canvas/canvas-project-domain";
 import { copyCanvasNodeGraph, isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
 import { loadCanvasDrawingForNode, persistCanvasDrawingEditorSave } from "@/lib/canvas/canvas-drawing-document-sync";
@@ -362,17 +362,23 @@ export function useCanvasNodeOperations({
     const deleteConnection = useCallback((connectionId: string) => {
         const previousNodes = nodesRef.current;
         const previousConnections = connectionsRef.current;
-        const edge=previousConnections.find(item=>item.id===connectionId);
-        if(edge){
-            try {
-                const intent=canvasReferenceIntentForConnection(previousNodes,edge,true,previousConnections);
-                if(intent){commitNodes(applyCanvasReferenceEdit(previousNodes,intent,previousConnections));setSelectedConnectionId(null);setContextMenu(null);return;}
-            }catch(error){message.info(error instanceof Error?error.message:"请在引用所属字段修改");return;}
+        const edge = previousConnections.find((item) => item.id === connectionId);
+        let referenceDelete: CanvasReferenceGraph | undefined;
+        try {
+            referenceDelete = edge ? deleteCanvasReferenceLine({ nodes: previousNodes, connections: previousConnections }, edge) : undefined;
+        } catch (error) {
+            message.info(error instanceof Error ? error.message : "请在引用所属字段修改");
+            return;
         }
-        const nextConnections = previousConnections.filter((item) => item.id !== connectionId);
-        const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
-        if (nextNodes !== previousNodes) commitNodes(nextNodes);
-        commitConnections(nextConnections);
+        if (referenceDelete) {
+            commitNodes(referenceDelete.nodes);
+            commitConnections(referenceDelete.connections);
+        } else {
+            const nextConnections = previousConnections.filter((item) => item.id !== connectionId);
+            const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
+            if (nextNodes !== previousNodes) commitNodes(nextNodes);
+            commitConnections(nextConnections);
+        }
         setSelectedConnectionId((current) => current === connectionId ? null : current);
         setContextMenu((current) => current?.type === "connection" && current.connectionId === connectionId ? null : current);
     }, [commitConnections, commitNodes, connectionsRef, nodesRef, setContextMenu, setSelectedConnectionId,message]);
