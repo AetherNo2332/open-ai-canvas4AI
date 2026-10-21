@@ -11,6 +11,7 @@ import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { canvasNodeMentionToken, canvasResourceMentionToken, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { batchReferenceHandleY } from "@/lib/canvas/canvas-batch-table";
+import { batchCellAnchor, type BatchScroll } from "@/lib/canvas/canvas-batch-references";
 import { reconcileImageBatchRoot } from "@/lib/canvas/canvas-image-batch-retry";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -271,7 +272,9 @@ function resetGenerationParamsOnModelSwitch(node: CanvasNodeData, patch: Partial
  * 连线落到目标节点上的吸附点。单端口一侧取边的正中——与 connectionHandleY 保持同一个
  * 口径，否则吸附点和实际画出来的线会对不上（这两处是同一规则的两份实现，改一处必错）。
  */
-export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle, handleId?: string, scrollTop = 0) {
+export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle, handleId?: string, scrollTop = 0, batchScroll?: BatchScroll) {
+    const cell = current.handleType === "source" ? batchCellAnchor(node, handleId, batchScroll) : undefined;
+    if (cell) return { x: cell.x, y: cell.y };
     return {
         x: current.handleType === "source" ? node.position.x : node.position.x + node.width,
         y: batchReferenceHandleY(node, handleId) ?? storyboardHandleY(node, handleId, scrollTop) ?? node.position.y + node.height / 2,
@@ -497,7 +500,23 @@ export function removeCanvasNodes(nodes: CanvasNodeData[], requestedIds: Set<str
     });
     const remainingNodes = nodes.filter((node) => !removedIds.has(node.id));
     const cleanedNodes = remainingNodes.map((node) => {
-        const detached = node.parentId && removedIds.has(node.parentId) ? { ...node, parentId: undefined } : node;
+        let detached = node.parentId && removedIds.has(node.parentId) ? { ...node, parentId: undefined } : node;
+        const batchTable = detached.metadata?.batchTable;
+        if (batchTable) {
+            const rows = batchTable.rows.map((row) => {
+                const inputNodeIds = row.inputNodeIds.map((id) => removedIds.has(id) ? "" : id);
+                const textNodeIds = row.textNodeIds?.map((id) => removedIds.has(id) ? "" : id);
+                const outputNodeId = row.outputNodeId && removedIds.has(row.outputNodeId) ? undefined : row.outputNodeId;
+                const changed = inputNodeIds.some((id, index) => id !== row.inputNodeIds[index]) || textNodeIds?.some((id, index) => id !== row.textNodeIds?.[index]);
+                return changed || outputNodeId !== row.outputNodeId ? { ...row, inputNodeIds, textNodeIds, outputNodeId, inputChanged: Boolean(outputNodeId) || row.inputChanged } : row;
+            });
+            if (rows.some((row, index) => row !== batchTable.rows[index])) detached = { ...detached, metadata: { ...detached.metadata, batchTable: { ...batchTable, rows } } };
+        }
+        const generationSpec = detached.metadata?.generationSpec;
+        const cleanedGenerationBindings = generationSpec ? generationSpec.referenceBindings.filter((binding) => !binding.nodeId || !removedIds.has(binding.nodeId)).map((binding, order) => ({ ...binding, order })) : undefined;
+        const cleanedInputBindings = detached.metadata?.inputBindings?.filter((binding) => !binding.nodeId || !removedIds.has(binding.nodeId)).map((binding, order) => ({ ...binding, order }));
+        if (generationSpec && cleanedGenerationBindings && cleanedGenerationBindings.length !== generationSpec.referenceBindings.length) detached = { ...detached, metadata: { ...detached.metadata, generationSpec: { ...generationSpec, referenceBindings: cleanedGenerationBindings } } };
+        if (detached.metadata?.inputBindings && cleanedInputBindings?.length !== detached.metadata.inputBindings.length) detached = { ...detached, metadata: { ...detached.metadata, inputBindings: cleanedInputBindings } };
         const storyboard = detached.metadata?.storyboard;
         const cleaned = storyboard
             ? {

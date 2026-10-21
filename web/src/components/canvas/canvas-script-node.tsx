@@ -116,6 +116,7 @@ export function CanvasScriptNodeContent({
     onAddRow,
     onRemoveRow,
     onUpdateRow,
+    onEditAssets,
     onPromptChange,
     onGenerateScript,
     onModelChange,
@@ -147,6 +148,7 @@ export function CanvasScriptNodeContent({
     onAddRow: () => void;
     onRemoveRow: (rowId: string) => void;
     onUpdateRow: (rowId: string, patch: Partial<StoryboardRow>) => void;
+    onEditAssets?: (rowId: string) => void;
     onPromptChange: (prompt: string) => void;
     onGenerateScript: (prompt: string) => void;
     onModelChange: (model: string) => void;
@@ -364,6 +366,7 @@ export function CanvasScriptNodeContent({
                                         canRemove={rows.length > 1}
                                         onRemoveRow={onRemoveRow}
                                         onUpdateRow={onUpdateRow}
+                                        onEditAssets={onEditAssets}
                                     />
                                 ))}
                             </div>
@@ -624,6 +627,7 @@ export function CanvasScriptEditor({
     open,
     onClose,
     onUpdateRows,
+    onEditAssets,
     onVisibleColumnsChange,
     onGenerateImages,
     onGenerateVideos,
@@ -635,6 +639,7 @@ export function CanvasScriptEditor({
     open: boolean;
     onClose: () => void;
     onUpdateRows: (rows: StoryboardRow[]) => void;
+    onEditAssets?: (rowId: string) => void;
     onVisibleColumnsChange: (columns: StoryboardColumn[]) => void;
     onGenerateImages: (rowIds: string[]) => void;
     onGenerateVideos: (rowIds: string[]) => void;
@@ -713,7 +718,7 @@ export function CanvasScriptEditor({
             ) : option.value === "durationSeconds" ? (
                 <InputNumber min={1} max={60} value={row.durationSeconds} addonAfter="s" className="w-full" onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
             ) : option.value === "assets" ? (
-                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} inherited={node?storyboardInheritedBindings(node,row,nodes):[]} pending={row.status==="loading"} onChange={assetBindings=>updateRow(row.id,{assetBindings})} />
+                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} inherited={node?storyboardInheritedBindings(node,row,nodes):[]} pending={row.status==="loading"} onChange={assetBindings=>updateRow(row.id,{assetBindings})} onEdit={onEditAssets ? () => onEditAssets(row.id) : undefined} disabled={Boolean(node?.metadata?.locked)} />
             ) : option.value === "shotSize" ? (
                 <Select
                     className="w-full"
@@ -862,6 +867,7 @@ function ScriptCardCell({
     canRemove,
     onRemoveRow,
     onUpdateRow,
+    onEditAssets,
 }: {
     scriptNode:CanvasNodeData;
     column: StoryboardColumn;
@@ -873,6 +879,7 @@ function ScriptCardCell({
     canRemove: boolean;
     onRemoveRow: (rowId: string) => void;
     onUpdateRow: (rowId: string, patch: Partial<StoryboardRow>) => void;
+    onEditAssets?: (rowId: string) => void;
 }) {
     if (column === "shotNumber") {
         return (
@@ -909,7 +916,7 @@ function ScriptCardCell({
     if (column === "assets") {
         return (
             <div className="flex h-full min-w-0 items-center border-r px-2.5" style={{ borderColor }}>
-                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} inherited={storyboardInheritedBindings(scriptNode,row,nodes)} pending={row.status==="loading"} onChange={assetBindings=>onUpdateRow(row.id,{assetBindings})} />
+                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} inherited={storyboardInheritedBindings(scriptNode,row,nodes)} pending={row.status==="loading"} onChange={assetBindings=>onUpdateRow(row.id,{assetBindings})} onEdit={onEditAssets ? () => onEditAssets(row.id) : undefined} disabled={Boolean(scriptNode.metadata?.locked)} />
             </div>
         );
     }

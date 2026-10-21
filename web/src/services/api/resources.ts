@@ -122,8 +122,18 @@ export type ResourceAccess = {
 
 type ResourceAccessBatchItem = { resourceId: string; access?: ResourceAccess; error?: { msg?: string } };
 type CachedResourceAccess = { value: ResourceAccess; expiresAt: number };
+type PendingResourceAccess = {
+    key: string;
+    scope: string;
+    generation: number;
+    payload: { resourceId: string; purpose: ResourceAccessPurpose; variant: ResourceAccessVariant; downloadName?: string };
+    resolve: (value: ResourceAccess) => void;
+    reject: (reason?: unknown) => void;
+};
 const accessCache = new Map<string, CachedResourceAccess>();
 const accessRequests = new Map<string, Promise<ResourceAccess>>();
+const pendingResourceAccess = new Map<string, PendingResourceAccess>();
+let resourceAccessBatchTimer: ReturnType<typeof setTimeout> | undefined;
 const PERSISTED_DISPLAY_ACCESS_PREFIX = "resource-access-v1:";
 
 function persistedDisplayAccessKey(resourceId: string, variant: ResourceAccessVariant) {
@@ -179,6 +189,11 @@ let accessGeneration = 0;
  */
 export function clearResourceAccessCache() {
     accessGeneration += 1;
+    if (resourceAccessBatchTimer !== undefined) clearTimeout(resourceAccessBatchTimer);
+    resourceAccessBatchTimer = undefined;
+    const abortError = new DOMException("资源访问请求已因账号切换失效", "AbortError");
+    pendingResourceAccess.forEach((entry) => entry.reject(abortError));
+    pendingResourceAccess.clear();
     accessCache.clear();
     accessRequests.clear();
     resourceCache.clear();
@@ -373,6 +388,48 @@ function assertResourceRequestCurrent(generation: number, scope: string) {
     }
 }
 
+const RESOURCE_ACCESS_BATCH_LIMIT = 100;
+function enqueueResourceAccess(entry: Omit<PendingResourceAccess, "resolve" | "reject">) {
+    return new Promise<ResourceAccess>((resolve, reject) => {
+        pendingResourceAccess.set(entry.key, { ...entry, resolve, reject });
+        if (resourceAccessBatchTimer !== undefined) return;
+        resourceAccessBatchTimer = setTimeout(() => {
+            resourceAccessBatchTimer = undefined;
+            void flushResourceAccessBatch();
+        }, 16);
+    });
+}
+
+async function flushResourceAccessBatch() {
+    const scope = getActiveUserScope();
+    const generation = accessGeneration;
+    const entries = [...pendingResourceAccess.values()].filter((entry) => entry.scope === scope && entry.generation === generation).slice(0, RESOURCE_ACCESS_BATCH_LIMIT);
+    entries.forEach((entry) => pendingResourceAccess.delete(entry.key));
+    try {
+        const data = await http.post<{ items: ResourceAccessBatchItem[] }>("/resources/access", entries.map((entry) => entry.payload));
+        entries.forEach((entry, index) => {
+            const item = data.items?.[index];
+            if (entry.generation !== accessGeneration || entry.scope !== getActiveUserScope()) return entry.reject(new DOMException("资源访问请求已因账号切换失效", "AbortError"));
+            if (!item?.access?.url) return entry.reject(new Error(item?.error?.msg || "后端未返回资源访问地址"));
+            const cached = { value: item.access, expiresAt: resourceAccessCacheExpiry(item.access) } satisfies CachedResourceAccess;
+            if (cached.expiresAt > Date.now()) {
+                accessCache.set(entry.key, cached);
+                if (entry.payload.purpose === "display") void persistDisplayAccess(entry.scope, entry.payload.resourceId, entry.payload.variant, cached);
+            }
+            entry.resolve(item.access);
+        });
+    } catch (error) {
+        entries.forEach((entry) => entry.reject(error));
+    } finally {
+        if (pendingResourceAccess.size && resourceAccessBatchTimer === undefined) {
+            resourceAccessBatchTimer = setTimeout(() => {
+                resourceAccessBatchTimer = undefined;
+                void flushResourceAccessBatch();
+            }, 16);
+        }
+    }
+}
+
 export async function getResourceAccess(storageKey: string | undefined, purpose: ResourceAccessPurpose = "display", variant: ResourceAccessVariant = "original", downloadName = "") {
     const id = resourceIdFromStorageKey(storageKey);
     if (!id) throw new Error("当前媒体尚未上传到后端资源存储");
@@ -395,19 +452,7 @@ export async function getResourceAccess(storageKey: string | undefined, purpose:
                     return persisted.value;
                 }
             }
-            const data = await http.post<{ items: ResourceAccessBatchItem[] }>("/resources/access", [{ resourceId: id, purpose, variant, ...(downloadName ? { downloadName } : {}) }]);
-            if (generation !== accessGeneration || scope !== getActiveUserScope()) {
-                throw new DOMException("资源访问请求已因账号切换失效", "AbortError");
-            }
-            const item = data.items?.[0];
-            if (!item?.access?.url) throw new Error(item?.error?.msg || "后端未返回资源访问地址");
-            const value = item.access;
-            const entry = { value, expiresAt: resourceAccessCacheExpiry(value) } satisfies CachedResourceAccess;
-            if (entry.expiresAt > Date.now()) {
-                accessCache.set(key, entry);
-                if (purpose === "display") await persistDisplayAccess(scope, id, variant, entry);
-            }
-            return value;
+            return await enqueueResourceAccess({ key, scope, generation, payload: { resourceId: id, purpose, variant, ...(downloadName ? { downloadName } : {}) } });
         } catch (error) {
             if (error instanceof ApiError) throw new Error(error.message || "获取对象存储地址失败");
             throw error;

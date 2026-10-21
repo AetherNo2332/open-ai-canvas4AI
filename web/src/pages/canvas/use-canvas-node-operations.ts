@@ -365,8 +365,8 @@ export function useCanvasNodeOperations({
         const edge=previousConnections.find(item=>item.id===connectionId);
         if(edge){
             try {
-                const intent=canvasReferenceIntentForConnection(previousNodes,edge,true);
-                if(intent){commitNodes(applyCanvasReferenceEdit(previousNodes,intent));setSelectedConnectionId(null);setContextMenu(null);return;}
+                const intent=canvasReferenceIntentForConnection(previousNodes,edge,true,previousConnections);
+                if(intent){commitNodes(applyCanvasReferenceEdit(previousNodes,intent,previousConnections));setSelectedConnectionId(null);setContextMenu(null);return;}
             }catch(error){message.info(error instanceof Error?error.message:"请在引用所属字段修改");return;}
         }
         const nextConnections = previousConnections.filter((item) => item.id !== connectionId);

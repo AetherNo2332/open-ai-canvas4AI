@@ -1,9 +1,12 @@
 import type { CanvasNodeData, StoryboardRow } from "@/types/canvas";
 
 export function storyboardDeclaredNodeIds(script: CanvasNodeData, row: StoryboardRow, nodes: CanvasNodeData[], includeFirstFrame: boolean) {
+    const boundNodeIds = new Set((row.assetBindings || []).map((binding) => binding.nodeId));
+    // 镜头已显式绑定某个角色卡版本时，不再按角色资产 ID 自动匹配其他版本。
+    const explicitlyBoundCharacters = new Set(nodes.filter((node) => boundNodeIds.has(node.id)).map((node) => node.metadata?.characterAssetId).filter(Boolean));
     const characters = (row.characters || []).flatMap((character) => {
         if (character.characterImageNodeId) return [character.characterImageNodeId];
-        if (!character.characterAssetId) return [];
+        if (!character.characterAssetId || explicitlyBoundCharacters.has(character.characterAssetId)) return [];
         const matches = nodes.filter((node) => node.metadata?.workflowKind === "character" && node.metadata.characterAssetId === character.characterAssetId);
         if (matches.length > 1) throw new Error("人物素材匹配多个节点，请明确选择人物图片");
         return matches.map((node) => node.id);

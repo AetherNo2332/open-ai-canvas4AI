@@ -145,7 +145,7 @@ export function useCanvasGenerationRetry({
                 rawContext =
                     hasSavedImageMetadata && !baseContext.characterReferences.length
                         ? null
-                        : await hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, retryMode, retryMode === "video" && supportsVideoReferenceAudio(generationConfig), !promptOnly);
+                        : await hydrateNodeGenerationContext(baseContext, projectId, domainProjectId, retryMode, retryMode === "video" && supportsVideoReferenceAudio(generationConfig), !promptOnly, undefined, false);
             } catch (error) {
                 const failure = generationFailureMetadata(error, retryPromptSource);
                 message.error(failure.errorDetails);

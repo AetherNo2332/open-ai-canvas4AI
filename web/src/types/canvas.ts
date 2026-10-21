@@ -179,10 +179,16 @@ export type CanvasBatchRow = {
     id: string;
     enabled: boolean;
     inputNodeIds: string[];
+    /** Stable column IDs explicitly edited by the user, including deliberately empty cells. */
+    referenceOverrides?: string[];
     /** Text nodes selected for this row; their contents are appended to prompt. */
     textNodeIds?: string[];
     prompt: string;
     outputNodeId?: string;
+    /** Fingerprint of the inputs used when this row was last queued. */
+    generatedInputSignature?: string;
+    /** 标记输出生成所使用的输入已被删除或替换，保留批表列位置。 */
+    inputChanged?: boolean;
     /** AI-generated cell content keyed by column id (for aiGenerated tables). */
     cells?: Record<string, string>;
 };
@@ -208,6 +214,10 @@ export type CanvasBatchTableData = {
     rows: CanvasBatchRow[];
     /** When true, columns are AI-generated with dynamic headers. */
     aiGenerated?: boolean;
+    /** Cell overrides coexist with live column connections. */
+    referenceMode?: "cells";
+    /** 上次已应用的列输入顺序；行插入、删除及重开不重复分配引用。 */
+    referenceColumnInputs?: Record<string, string[]>;
 };
 
 export type CanvasSkillSnapshot = {
@@ -448,6 +458,10 @@ export type CanvasNodeMetadata = {
     batchRowId?: string;
     batchOperation?: CanvasBatchOperation;
     batchInputNodeIds?: string[];
+    /** 本次批量生成准备时的输入签名；不代表旧缩略图已采用这些输入。 */
+    batchInputSignature?: string;
+    /** 只有成功媒体写入后才记录，等待或失败时保持空缺。 */
+    batchResultInputSignature?: string;
     frame?: {
         collapsed: boolean;
         expandedWidth: number;

@@ -686,7 +686,7 @@ func (p *planner) canvasBatchInputNodeIDs(value any, maxItems int) ([]string, er
 	seen := map[string]bool{}
 	for _, item := range items {
 		id, ok := item.(string)
-		if !ok || validateCanvasID(id, "参考图片节点ID", 80) != nil || seen[id] {
+		if !ok || (id != "" && (validateCanvasID(id, "参考图片节点ID", 80) != nil || seen[id])) {
 			return nil, BadAuthRequest("批量创作行包含无效或重复的图片节点ID")
 		}
 		seen[id] = true
@@ -708,6 +708,10 @@ func (p *planner) canvasBatchTextNodeIDs(doc map[string]any, value any) ([]any, 
 	ids := make([]any, 0, len(items))
 	for _, item := range items {
 		id, ok := item.(string)
+		if ok && id == "" {
+			ids = append(ids, id)
+			continue
+		}
 		node := nodes[id]
 		if !ok || validateCanvasID(id, "文本节点ID", 80) != nil || seen[id] || node == nil || p.stringValue(node["type"]) != "text" || p.canvasCharacterNode(node) {
 			return nil, BadAuthRequest("批量创作行只能引用当前画布内唯一的普通文本节点")
@@ -739,6 +743,12 @@ func (p *planner) canvasCleanReferenceObject(object map[string]any, removed map[
 		case []any:
 			values := make([]any, 0, len(typed))
 			for _, entry := range typed {
+				if key == "inputNodeIds" || key == "textNodeIds" {
+					if id, ok := entry.(string); ok && removed[id] {
+						values = append(values, "")
+						continue
+					}
+				}
 				if s, ok := entry.(string); ok && (strings.HasSuffix(key, "NodeIds") || key == "batchChildIds") && removed[s] {
 					continue
 				}
@@ -751,6 +761,18 @@ func (p *planner) canvasCleanReferenceObject(object map[string]any, removed map[
 					p.canvasCleanReferenceObject(entryMap, removed)
 				}
 				values = append(values, entry)
+			}
+			if len(values) != len(typed) && (key == "referenceBindings" || key == "inputBindings") {
+				sort.SliceStable(values, func(i, j int) bool {
+					left, _ := values[i].(map[string]any)
+					right, _ := values[j].(map[string]any)
+					return p.numberValue(left["order"], 0) < p.numberValue(right["order"], 0)
+				})
+				for index, entry := range values {
+					if entryMap, ok := entry.(map[string]any); ok {
+						entryMap["order"] = float64(index)
+					}
+				}
 			}
 			object[key] = values
 		case string:
@@ -3631,6 +3653,9 @@ func (p *planner) validateCanvasBatchInputNodes(doc map[string]any, inputNodeIDs
 		nodes[p.stringValue(node["id"])] = node
 	}
 	for _, id := range inputNodeIDs {
+		if id == "" {
+			continue
+		}
 		node := nodes[id]
 		if node == nil || p.stringValue(node["type"]) != "image" {
 			return BadAuthRequest("批量创作表只能引用当前画布内真实存在的图片节点")

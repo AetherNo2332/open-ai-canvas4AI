@@ -44,7 +44,7 @@ describe("canvas node generation position mentions", () => {
         const prompt = "严格参考 @图片1，保持服装一致。";
         expect(normalizeCanvasNodeMentionTokens(prompt, references)).toBe("严格参考 @角色1，保持服装一致。");
         const context = buildNodeGenerationContext(target.id, nodes, connections, prompt, []);
-        expect(context.prompt).toBe("严格参考 @角色1，保持服装一致。");
+        expect(context.prompt).toBe("严格参考 @图片1，保持服装一致。");
         expect(context.characterReferences).toEqual([{ nodeId: character.id, assetId: "character-asset", requestedVersionId: undefined }]);
         expect(() => buildNodeGenerationContext(target.id, nodes, connections, "参考 @图片2", [])).toThrow("@图片2");
     });
@@ -56,11 +56,30 @@ describe("canvas node generation position mentions", () => {
         const image = node("scene", CanvasNodeType.Image, "data:image/png;base64,AA==");
         const nodes = [target, character, image];
         const connections = [connection(character.id), connection(image.id)];
-        const prompt = "@角色1 站在 @图片1 场景内。";
+        const prompt = "@角色1 站在 @图片2 场景内。";
         const references = buildCanvasResourceReferences(nodes, connections, target.id);
         expect(normalizeCanvasNodeMentionTokens(prompt, references)).toBe(prompt);
         const context = buildNodeGenerationContext(target.id, nodes, connections, prompt, []);
         expect(context.referenceImages.map((item) => item.id)).toEqual([image.id]);
+        expect(context.characterReferences.map((item) => item.nodeId)).toEqual([character.id]);
+    });
+
+    test("角色卡、绘图与普通图片共享图片槽位，编辑器标签与生成映射一致", () => {
+        const target = targetNode();
+        const character = node("character", CanvasNodeType.Text, "");
+        character.metadata = { workflowKind: "character", characterAssetId: "character-asset" };
+        const drawing = node("sketch", CanvasNodeType.Drawing, "");
+        drawing.metadata = { drawingId: "drawing-1", drawingRevision: 2, drawingShapeCount: 3 };
+        const image = node("scene", CanvasNodeType.Image, "data:image/png;base64,AA==");
+        const nodes = [target, character, drawing, image];
+        const connections = [connection(character.id), connection(drawing.id), connection(image.id)];
+        const references = buildCanvasResourceReferences(nodes, connections, target.id).filter((reference) => reference.active);
+        expect(references.map((reference) => [reference.nodeId, reference.label])).toEqual([[character.id, "角色1"], [drawing.id, "绘图2"], [image.id, "图片3"]]);
+        const prompt = "@角色1 按 @绘图2 构图站在 @图片3 场景内。";
+        expect(normalizeCanvasNodeMentionTokens(prompt, references)).toBe(prompt);
+        const context = buildNodeGenerationContext(target.id, nodes, connections, prompt, []);
+        expect(context.referenceImageSlots).toEqual([{ nodeId: character.id, kind: "character" }, { nodeId: drawing.id, kind: "image", imageId: drawing.id }, { nodeId: image.id, kind: "image", imageId: image.id }]);
+        expect(context.referenceImages.map((item) => item.id)).toEqual([drawing.id, image.id]);
         expect(context.characterReferences.map((item) => item.nodeId)).toEqual([character.id]);
     });
 

@@ -248,11 +248,17 @@ func resolveIndexed(idx map[string]map[string]any, scope Scope, registry *capabi
 			return result, fail("reference_capacity", "inputNodeIds", "批量行最多10张参考图")
 		}
 		for _, id := range ids {
+			if id == "" {
+				continue
+			}
 			if err := appendNode(id, "reference"); err != nil {
 				return result, err
 			}
 		}
 		for _, id := range stringsList(row["textNodeIds"]) {
+			if id == "" {
+				continue
+			}
 			if err := appendNode(id, "source-text"); err != nil {
 				return result, err
 			}

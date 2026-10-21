@@ -3,7 +3,9 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { MAX_BATCH_REFERENCE_COLUMNS, batchGenerationRows, batchInputColumns, batchPromptForRow, batchReferenceColumns, batchReferenceHandleId, batchTextInputColumns, createInheritedBatchRow, createBatchRowsFromColumns, moveBatchReferenceCell, removeLastBatchReferenceColumn, reorderBatchReferenceColumns } from "@/lib/canvas/canvas-batch-table";
+import { MAX_BATCH_REFERENCE_COLUMNS, batchGenerationRows, batchInputColumns, batchPromptForRow, batchReferenceColumns, batchReferenceHandleId, batchTextInputColumns, insertBatchRow, createBatchRowsFromColumns, moveBatchReferenceCell, removeLastBatchReferenceColumn, reorderBatchReferenceColumns } from "@/lib/canvas/canvas-batch-table";
+import { reconcileBatchCellConnections } from "@/lib/canvas/canvas-batch-references";
+import { patchCanvasBatchTableData } from "@/lib/canvas/canvas-batch-table-state";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { buildGenerationConfig, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { navigateToSettings } from "@/lib/settings-navigation";
@@ -36,8 +38,19 @@ export function useCanvasBatchTable({ nodesRef, connectionsRef, setNodes, setCon
     const [batchGenDialog, setBatchGenDialog] = useState<{ open: boolean; pending: PendingBatchGen | null }>({ open: false, pending: null });
 
     const patchTable = useCallback((nodeId: string, patch: Partial<CanvasBatchTableData>) => {
-        setNodes((current) => current.map((node) => node.id !== nodeId ? node : { ...node, metadata: { ...node.metadata, batchTable: { operation: "try_on", concurrency: 10, rows: [], ...node.metadata?.batchTable, ...patch } } }));
-    }, [setNodes]);
+        const next = nodesRef.current.map((node) => {
+            if (node.id !== nodeId || node.metadata?.locked) return node;
+            return { ...node, metadata: { ...node.metadata, batchTable: patchCanvasBatchTableData(node.metadata?.batchTable, patch) } };
+        });
+        // 行引用是格子连线的唯一来源；行增删或改格后同步投影连线。
+        const edges = reconcileBatchCellConnections(next, connectionsRef.current);
+        nodesRef.current = next;
+        setNodes(next);
+        if (edges !== connectionsRef.current) {
+            connectionsRef.current = edges;
+            setConnections(edges);
+        }
+    }, [nodesRef, connectionsRef, setNodes, setConnections]);
 
     const updateRow = useCallback((nodeId: string, rowId: string, patch: Partial<CanvasBatchRow>) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);
@@ -45,10 +58,13 @@ export function useCanvasBatchTable({ nodesRef, connectionsRef, setNodes, setCon
         patchTable(nodeId, { rows: node.metadata.batchTable.rows.map((row) => row.id === rowId ? { ...row, ...patch } : row) });
     }, [nodesRef, patchTable]);
 
-    const addRow = useCallback((nodeId: string) => {
+    const addRow = useCallback((nodeId: string, afterRowId?: string) => {
         const table = nodesRef.current.find((item) => item.id === nodeId)?.metadata?.batchTable;
         if (!table) return;
-        patchTable(nodeId, { rows: [...table.rows, createInheritedBatchRow(table.operation, table.rows)] });
+        const inserted = insertBatchRow(table, afterRowId);
+        if (!inserted) return;
+        patchTable(nodeId, { rows: inserted.rows });
+        return inserted.row.id;
     }, [nodesRef, patchTable]);
 
     const removeRow = useCallback((nodeId: string, rowId: string) => {
@@ -94,7 +110,8 @@ export function useCanvasBatchTable({ nodesRef, connectionsRef, setNodes, setCon
         if (!node || !table) return false;
         // AI 列表模式已经根据用户要求生成了独立行；参考图连线只负责
         // 提供素材，不能在保存/连线刷新时把 N 行重置成“每张图一行”。
-        if (table.aiGenerated) return false;
+        // 格子模式由 syncBatchColumnReferences 原位更新引用，不能按连线重建行。
+        if (table.aiGenerated || table.referenceMode === "cells") return false;
         const nodeById = new Map(nodesRef.current.map((item) => [item.id, item]));
         const columns = batchInputColumns(node, connectionsRef.current).map((column) => column.filter((inputNodeId) => {
             const input = nodeById.get(inputNodeId);
@@ -207,7 +224,8 @@ export function useCanvasBatchTable({ nodesRef, connectionsRef, setNodes, setCon
             targets.push({ rowId: row.id, nodeId: output.id });
         });
         const sourceIndex = nextNodes.findIndex((node) => node.id === sourceNode.id);
-        nextNodes[sourceIndex] = { ...sourceNode, metadata: { ...sourceNode.metadata, batchTable: { ...table, rows: table.rows.map((row) => outputByRowId.has(row.id) ? { ...row, outputNodeId: outputByRowId.get(row.id) } : row) } } };
+        // 重新入队即采用当前输入，清除“输入已变更”标记。
+        nextNodes[sourceIndex] = { ...sourceNode, metadata: { ...sourceNode.metadata, batchTable: { ...table, rows: table.rows.map((row) => outputByRowId.has(row.id) ? { ...row, outputNodeId: outputByRowId.get(row.id), inputChanged: undefined } : row) } } };
         nodesRef.current = nextNodes;
         connectionsRef.current = nextConnections;
         setNodes(nextNodes);
