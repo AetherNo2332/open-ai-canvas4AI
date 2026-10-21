@@ -148,8 +148,9 @@ describe("canvas world-space background", () => {
             expect(grid.style.backgroundSize).toBe(style.backgroundSize);
             expect(grid.style.transform).toBe(style.transform);
             expect(grid.style.visibility).toBe(style.visible ? "" : "hidden");
-            expect(properties.get("--canvas-live-scale")).toBe(String(viewport.k));
-            expect(properties.get("--canvas-live-inverse-scale")).toBe(String(1 / viewport.k));
+            // 交互期只写合成层，根变量留到提交帧统一校正，避免整棵节点树重算样式。
+            expect(properties.get("--canvas-live-scale")).toBeUndefined();
+            expect(properties.get("--canvas-live-inverse-scale")).toBeUndefined();
             gridTransforms.add(style.transform);
         }
         expect(gridTransforms.size).toBe(viewports.length);
@@ -165,6 +166,8 @@ describe("canvas world-space background", () => {
 
         container.dataset.canvasViewportInteracting = "false";
         applyCanvasLiveViewport(container as unknown as HTMLDivElement, viewports[0]);
+        expect(properties.get("--canvas-live-scale")).toBe(String(viewports[0].k));
+        expect(properties.get("--canvas-live-inverse-scale")).toBe(String(1 / Math.max(viewports[0].k, 0.05)));
         expect(world.style.willChange).toBe("");
         expect(previews).toEqual([viewports[0]]);
         expect(scrolls).toBe(1);

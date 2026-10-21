@@ -14,13 +14,14 @@ describe("画布叠层安全区", () => {
         expect(workspaceCss).toContain("left: calc(var(--canvas-workspace-inset) + var(--canvas-inset-x))");
     });
 
-    test("Agent 打开时底部工具栏使用右侧安全区并向可用画布居中", () => {
+    test("Agent 浮层打开时底部工具栏使用右侧安全区并向可用画布居中", () => {
         const toolbar = read("components/canvas/canvas-toolbar.tsx");
         const project = read("pages/canvas/project.tsx");
         const globalCss = read("styles/globals.css");
 
-        expect(toolbar).toContain("canvas-toolbar-agent-open");
-        expect(globalCss).toContain("--canvas-toolbar-agent-offset");
-        expect(project).toContain("agentOpen={assistantOpen}");
+        expect(toolbar).toContain("canvas-toolbar-agent-floating");
+        expect(globalCss).toContain(".canvas-main-toolbar.canvas-toolbar-agent-floating");
+        expect(globalCss).toContain("--canvas-toolbar-right-reserve: 440px");
+        expect(project).toContain("agentFloating={assistantOpen && Boolean(previsNodeId)}");
     });
 });
