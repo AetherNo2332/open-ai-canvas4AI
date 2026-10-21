@@ -189,6 +189,10 @@ export function generationSpecMetadata(spec: GenerationSpec): CanvasNodeMetadata
 export function synchronizeGenerationSpec(node: CanvasNodeData, patch: Partial<CanvasNodeMetadata> = {}): CanvasNodeData {
     const metadata = { ...node.metadata, ...patch };
     if (!canvasGenerationMode(node.type)) return { ...node, metadata };
+    // Keep legacy nodes unnormalized until a reference edit creates a spec.
+    // Materializing readNodeGenerationSpec() here would persist a synthetic
+    // empty referenceBindings list and hide their existing visual connections.
+    if (!node.metadata?.generationSpec) return { ...node, metadata };
     const current = readNodeGenerationSpec(node);
     if (!current) return { ...node, metadata };
     const next: GenerationSpec = { ...current, options: { ...current.options } };

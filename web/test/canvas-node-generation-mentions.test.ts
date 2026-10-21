@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
-import { buildCanvasResourceReferences, getGenerationResourceNodes, normalizeCanvasNodeMentionTokens } from "../src/lib/canvas/canvas-resource-references";
+import { buildCanvasNodeMentionReferenceMap, buildCanvasResourceReferences, getGenerationResourceNodes, normalizeCanvasNodeMentionTokens } from "../src/lib/canvas/canvas-resource-references";
+import { writeCanvasNodePrompt } from "../src/lib/canvas/canvas-node-prompt";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
 function node(id: string, type: CanvasNodeType, content: string): CanvasNodeData {
@@ -156,6 +157,35 @@ describe("canvas node generation position mentions", () => {
         expect(after.referenceImages.map((image) => image.id)).toEqual(["image-b"]);
         expect(before.prompt).toBe("让 @图片1 进入画面");
         expect(after.prompt).toBe("让 @图片1 进入画面");
+    });
+
+    test("旧画布中只有连线的图片，应用提示词预设后仍作为生成参考图", () => {
+        const source = node("source", CanvasNodeType.Image, "data:image/png;base64,AA==");
+        const target = node("target", CanvasNodeType.Image, "");
+        const connections = [connection(source.id)];
+        const before = buildCanvasNodeMentionReferenceMap([source, target], connections).get(target.id)!;
+
+        const promptedTarget = writeCanvasNodePrompt(target, "@图片1 电影级光影校正");
+        const nodes = [source, promptedTarget];
+        const references = buildCanvasNodeMentionReferenceMap(nodes, connections).get(target.id)!;
+
+        expect(before.map((reference) => [reference.nodeId, reference.label])).toEqual([[source.id, "图片1"]]);
+        expect(references.map((reference) => [reference.nodeId, reference.label])).toEqual([[source.id, "图片1"]]);
+        expect(buildNodeGenerationContext(target.id, nodes, connections, promptedTarget.metadata.composerContent!, []).referenceImages.map((image) => image.id)).toEqual([source.id]);
+    });
+
+    test("应用提示词预设不会覆盖显式清空的图片引用", () => {
+        const source = node("source", CanvasNodeType.Image, "data:image/png;base64,AA==");
+        const target = node("target", CanvasNodeType.Image, "");
+        target.metadata = {
+            generationSpec: { version: 1, mode: "image", prompt: "", options: {}, referenceBindings: [], textInputMode: "append-sources" },
+        };
+        const connections = [connection(source.id)];
+        const promptedTarget = writeCanvasNodePrompt(target, "@图片1 电影级光影校正");
+        const nodes = [source, promptedTarget];
+
+        expect(buildCanvasNodeMentionReferenceMap(nodes, connections).get(target.id)).toEqual([]);
+        expect(() => buildNodeGenerationContext(target.id, nodes, connections, promptedTarget.metadata.composerContent!, [])).toThrow("@图片1 没有对应的画布资源");
     });
 
     test("按类型位置选择资源，提示词出现顺序不会改变槽位含义", () => {
