@@ -85,7 +85,8 @@ describe("storyboard target materializer", () => {
     it("combines stable bindings and produces position mention tokens", () => {
         const references = storyboardRowReferenceNodeIds(script, row, nodes, connections, true);
         expect(references).toEqual(["first-frame", "prop", "character", "project-style"]);
-        expect(storyboardComposerContent("快速跟拍", references, nodes)).toBe("参考资产：@图片1 @图片2 @角色1 @图片3\n快速跟拍");
+        // 角色卡与普通图片共享图片编号：角色是第 3 个媒体输入，因此标记为 @角色3。
+        expect(storyboardComposerContent("快速跟拍", references, nodes)).toBe("参考资产：@图片1 @图片2 @角色3 @图片4\n快速跟拍");
 
         const withDirectManualInput = storyboardRowReferenceNodeIds(script, row, nodes, [...connections, { id: "direct", fromNodeId: "direct-manual", toNodeId: "target" }], false, "target");
         expect(withDirectManualInput).not.toContain("direct-manual");
