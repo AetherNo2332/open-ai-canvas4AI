@@ -75,7 +75,7 @@ func TestStoryboardModelListUsesSameInputs(t *testing.T) {
 func TestStoryboardGenerationNativeUsesDeclaredInputs(t *testing.T) {
 	s, _, doc, _ := storyboardMediaFixture(t)
 	request := tasks.SubmitRequest{Command: commands.Command{CanvasID: "agent-canvas"}, TargetNodeID: "board", Consumer: tasks.Consumer{Kind: "storyboard", RowID: "row", OutputNodeID: "output", Field: "videoNodeId"}, Task: tasks.TaskRequest{Mode: "video", Prompt: "stale client prompt", Input: map[string]any{"config": map[string]any{"videoSeconds": "99"}, "referenceImages": []any{map[string]any{"id": "stale"}}}}}
-	resolved, err := prepareDesktopStoryboardInput(context.Background(), s.repo, identity.Principal{ID: "user", OwnerID: "user"}, doc, request)
+	resolved, err := prepareCanvasStoryboardInput(context.Background(), s.repo, identity.Principal{ID: "user", OwnerID: "user"}, doc, request)
 	if err != nil {
 		t.Fatal(err)
 	}

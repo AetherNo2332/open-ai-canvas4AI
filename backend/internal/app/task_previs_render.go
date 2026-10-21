@@ -533,50 +533,10 @@ func (s *Service) checkpointPrevisOutput(task *model.Task, result previsRenderRe
 	}
 	task.ResultJSON = string(raw)
 	ids := []string{result.ResourceID, result.PreviewResourceID}
-	if s.desktopMode {
-		for _, id := range ids {
-			if id != "" {
-				if err := s.repo.SaveCanvasTaskResource(task.ID, task.UserID, id); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
 	return s.repo.UpsertCloudAgentResourceLeases(task.UserID, task.AgentRunID, "previs-task:"+task.ID, ids, time.Now().Add(24*time.Hour))
 }
 
 func (s *Service) commitPrevisOutput(task *model.Task, input previsRenderInput, result previsRenderResult) error {
-	if s.desktopMode {
-		if _, err := s.repo.CanvasTaskBinding(task.ID); err != nil {
-			return err
-		}
-		completed := *task
-		completed.Status, completed.Progress, completed.Stage = model.TaskStatusSucceeded, 100, "预演已保存，等待写回画布"
-		completed.CompletedAt = ptr(time.Now())
-		raw, err := json.Marshal(result)
-		if err != nil {
-			return err
-		}
-		completed.ResultJSON = string(raw)
-		err = s.repo.SaveTaskCompletionWithRegistration(&completed, model.TaskStatusRunning, nil, func(tx *repository.Repository) error {
-			for index, id := range []string{result.ResourceID, result.PreviewResourceID} {
-				r, e := tx.ResourceForUser(task.UserID, id)
-				mime := "video/mp4"
-				if index == 1 {
-					mime = "image/png"
-				}
-				if e != nil || r.Status != model.ResourceStatusReady || r.MimeType != mime || r.Width != input.Width || r.Height != input.Height || r.Size < 100 {
-					return fmt.Errorf("missing_resource")
-				}
-			}
-			return nil
-		})
-		if err == nil {
-			*task = completed
-		}
-		return err
-	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
 		return err

@@ -244,7 +244,7 @@ func bindCloudAgentStoryboardOutput(repo *repository.Repository, userID string, 
 	return nil
 }
 
-func prepareDesktopStoryboardInput(_ context.Context, repo *repository.Repository, p identity.Principal, doc commands.Document, req tasks.SubmitRequest) (tasks.TaskRequest, error) {
+func prepareCanvasStoryboardInput(_ context.Context, repo *repository.Repository, p identity.Principal, doc commands.Document, req tasks.SubmitRequest) (tasks.TaskRequest, error) {
 	if !references.Enabled(doc) {
 		return req.Task, cloudAgentFieldError("storyboardNodeId", "reference_migration_required", "请先在画布中规范化历史引用")
 	}

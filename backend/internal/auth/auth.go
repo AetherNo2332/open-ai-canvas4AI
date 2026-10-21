@@ -354,25 +354,6 @@ func (s *Service) createAuthSession(user *model.User) (*AuthSessionResult, error
 	return &AuthSessionResult{User: publicUser, Session: session.ID + "." + token, MaxAgeSecs: int(sessionMaxAge.Seconds())}, nil
 }
 
-// IssueLocalSession is internal to the local bootstrap exchange. It requires
-// the persisted desktop owner marker; no HTTP endpoint accepts a user ID.
-func (s *Service) IssueLocalSession(userID string) (*AuthSessionResult, error) {
-	profile, err := s.repo.DesktopProfile()
-	if err != nil {
-		return nil, err
-	}
-	if profile.UserID != userID {
-		return nil, kernel.Forbidden("not the local owner")
-	}
-	user, err := s.repo.User(userID)
-	if err != nil {
-		return nil, err
-	}
-	if user.Status != model.UserStatusActive {
-		return nil, kernel.Forbidden("local owner disabled")
-	}
-	return s.createAuthSession(user)
-}
 
 func HashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
