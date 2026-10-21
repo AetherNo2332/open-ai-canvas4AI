@@ -9313,6 +9313,22 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
         background: transparent;
     }
 
+    .canvas-node-camera-switch:hover,
+    .canvas-node-camera-switch:focus-visible {
+        box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+    }
+
+    .canvas-node-camera-apply:hover,
+    .canvas-node-camera-apply:focus-visible {
+        background: color-mix(in srgb, currentColor 10%, transparent) !important;
+    }
+
+    .canvas-node-composer-camera-tools-trigger:focus,
+    .canvas-node-composer-camera-tools-trigger:focus-visible {
+        outline: none;
+        box-shadow: none;
+    }
+
     .canvas-reference-autolink-switch:hover,
     .canvas-reference-autolink-switch:focus-visible {
         box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 10%, transparent);

@@ -67,7 +67,7 @@ export function BatchGenerationSettingsDialog({ open, config, rowCount, concurre
                         <div className="text-sm font-medium">摄像机控制</div>
                         <div className="mt-1 text-xs opacity-60">为本批次统一应用镜头、焦段和光圈设置</div>
                     </div>
-                    <CanvasCameraControlPopover cameraControl={cameraControl} onCameraControlChange={setCameraControl} compact />
+                    <CanvasCameraControlPopover cameraControl={cameraControl} onCameraControlChange={setCameraControl} theme={theme} compact />
                 </div>
 
                 <div className="mt-2 flex justify-end gap-2">
