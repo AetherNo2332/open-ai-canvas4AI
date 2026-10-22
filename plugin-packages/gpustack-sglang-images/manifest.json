@@ -1,0 +1,489 @@
+{
+  "apiVersion": "yingce.plugin/v2",
+  "id": "gpustack-sglang-images",
+  "name": "GPUStack 图像（Qwen-Image 2.1 / MOSS-Image）",
+  "version": "1.1.0",
+  "author": "影策 / 自建 GPUStack",
+  "description": "自建 GPUStack SGLang 图像协议：文生图走 JSON，参考图编辑走 multipart 内联字节（不经公网签名 URL、不回环拉取）；结果绝对地址由插件拼装后交宿主即时保存。",
+  "documentation": "# GPUStack 图像插件\n\n自建 GPUStack（SGLang 后端）图像协议的声明式实现，贡献一个 `image` provider。\n\n- Provider：`gpustack-images`\n- 能力：`image`\n- 默认 Base URL：`http://gpustack.example.com:8080`（GPUStack 网关）\n- 鉴权：`bearer`，密钥字段 `apiKey`\n- 创建：无参考图时 `POST /v1/images/generations`（JSON）；有参考图时 `POST /v1/images/edits`（multipart，图片字节内联上传）\n- 生命周期：同步响应，`resultEphemeral: true`，宿主立即下载并保存素材\n\n参考图不经过公网签名 URL：`requiresPublicMediaUrls` 为 false 时宿主直接内联素材字节，插件以 multipart 文件部件提交，上游不回环拉取。\n\n完整字段与地址拼装规则见 [docs/interface.md](docs/interface.md)。",
+  "permissions": [
+    "generation.run",
+    "media.read"
+  ],
+  "configuration": {
+    "fields": [
+      {
+        "name": "apiKey",
+        "type": "secret",
+        "label": "GPUStack API Key",
+        "required": true
+      }
+    ]
+  },
+  "contributes": {
+    "providers": [
+      {
+        "id": "gpustack-images",
+        "label": "GPUStack 图像（Qwen/MOSS）",
+        "capabilities": [
+          "image"
+        ],
+        "scopes": [
+          "admin.system-channel",
+          "user.custom-channel",
+          "canvas",
+          "creation"
+        ],
+        "baseUrl": "http://gpustack.example.com:8080",
+        "requiresPublicMediaUrls": false,
+        "auth": {
+          "type": "bearer",
+          "field": "apiKey"
+        },
+        "parameters": [
+          {
+            "name": "model",
+            "type": "string",
+            "required": true,
+            "mapping": "model",
+            "description": "GPUStack 模型名，例如 qwen-image-2.1 或 moss-image-sft。"
+          },
+          {
+            "name": "prompt",
+            "type": "string",
+            "required": true,
+            "mapping": "prompt",
+            "description": "图片提示词。"
+          },
+          {
+            "name": "images",
+            "type": "media[]",
+            "required": false,
+            "mapping": "multipart file(image)",
+            "description": "参考图或编辑源图；存在时改走 /v1/images/edits，以 multipart 文件部件内联上传，不经公网签名地址。"
+          },
+          {
+            "name": "aspectRatio",
+            "type": "string",
+            "required": false,
+            "mapping": "size",
+            "description": "宽x高像素或比例；像素会向上对齐到 32 的倍数。"
+          },
+          {
+            "name": "imageCount",
+            "type": "integer",
+            "required": false,
+            "mapping": "n",
+            "description": "输出数量，默认 1。"
+          },
+          {
+            "name": "providerOptions",
+            "type": "object",
+            "required": false,
+            "mapping": "provider-specific fields",
+            "description": "插件命名空间扩展，例如 gpustack-images.steps、gpustack-images.responseFormat。"
+          }
+        ],
+        "create": {
+          "method": "POST",
+          "path": "/v1/images/generations",
+          "pathTemplate": {
+            "$if": {
+              "condition": {
+                "$gt": [
+                  {
+                    "$len": {
+                      "$ref": "request.images"
+                    }
+                  },
+                  0
+                ]
+              },
+              "then": "/v1/images/edits",
+              "else": "/v1/images/generations"
+            }
+          },
+          "contentType": "application/json",
+          "contentTypeTemplate": {
+            "$if": {
+              "condition": {
+                "$gt": [
+                  {
+                    "$len": {
+                      "$ref": "request.images"
+                    }
+                  },
+                  0
+                ]
+              },
+              "then": "multipart/form-data",
+              "else": "application/json"
+            }
+          },
+          "body": {
+            "model": {
+              "$ref": "request.model"
+            },
+            "prompt": {
+              "$ref": "request.prompt"
+            },
+            "size": {
+              "$switch": {
+                "cases": [
+                  {
+                    "when": {
+                      "$eq": [
+                        {
+                          "$len": {
+                            "$split": [
+                              {
+                                "$lower": {
+                                  "$trim": {
+                                    "$ref": "request.aspectRatio"
+                                  }
+                                }
+                              },
+                              "x"
+                            ]
+                          }
+                        },
+                        2
+                      ]
+                    },
+                    "then": {
+                      "$concat": [
+                        {
+                          "$toString": {
+                            "$ceilStep": [
+                              {
+                                "$toFloat": {
+                                  "$at": [
+                                    {
+                                      "$split": [
+                                        {
+                                          "$lower": {
+                                            "$trim": {
+                                              "$ref": "request.aspectRatio"
+                                            }
+                                          }
+                                        },
+                                        "x"
+                                      ]
+                                    },
+                                    0
+                                  ]
+                                }
+                              },
+                              32
+                            ]
+                          }
+                        },
+                        "x",
+                        {
+                          "$toString": {
+                            "$ceilStep": [
+                              {
+                                "$toFloat": {
+                                  "$at": [
+                                    {
+                                      "$split": [
+                                        {
+                                          "$lower": {
+                                            "$trim": {
+                                              "$ref": "request.aspectRatio"
+                                            }
+                                          }
+                                        },
+                                        "x"
+                                      ]
+                                    },
+                                    1
+                                  ]
+                                }
+                              },
+                              32
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$lower": {
+                            "$trim": {
+                              "$ref": "request.aspectRatio"
+                            }
+                          }
+                        },
+                        [
+                          "1:1"
+                        ]
+                      ]
+                    },
+                    "then": "1024x1024"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$lower": {
+                            "$trim": {
+                              "$ref": "request.aspectRatio"
+                            }
+                          }
+                        },
+                        [
+                          "16:9"
+                        ]
+                      ]
+                    },
+                    "then": "1024x576"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$lower": {
+                            "$trim": {
+                              "$ref": "request.aspectRatio"
+                            }
+                          }
+                        },
+                        [
+                          "9:16"
+                        ]
+                      ]
+                    },
+                    "then": "576x1024"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$lower": {
+                            "$trim": {
+                              "$ref": "request.aspectRatio"
+                            }
+                          }
+                        },
+                        [
+                          "4:3"
+                        ]
+                      ]
+                    },
+                    "then": "1024x768"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$lower": {
+                            "$trim": {
+                              "$ref": "request.aspectRatio"
+                            }
+                          }
+                        },
+                        [
+                          "3:4"
+                        ]
+                      ]
+                    },
+                    "then": "768x1024"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$lower": {
+                            "$trim": {
+                              "$ref": "request.aspectRatio"
+                            }
+                          }
+                        },
+                        [
+                          "3:2"
+                        ]
+                      ]
+                    },
+                    "then": "1152x768"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$lower": {
+                            "$trim": {
+                              "$ref": "request.aspectRatio"
+                            }
+                          }
+                        },
+                        [
+                          "2:3"
+                        ]
+                      ]
+                    },
+                    "then": "768x1152"
+                  },
+                  {
+                    "when": {
+                      "$in": [
+                        {
+                          "$lower": {
+                            "$trim": {
+                              "$ref": "request.aspectRatio"
+                            }
+                          }
+                        },
+                        [
+                          "21:9"
+                        ]
+                      ]
+                    },
+                    "then": "1024x448"
+                  }
+                ],
+                "default": "1024x1024"
+              }
+            },
+            "num_inference_steps": {
+              "$coalesce": [
+                {
+                  "$ref": "request.providerOptions.gpustack-images.steps"
+                },
+                25
+              ]
+            },
+            "response_format": {
+              "$coalesce": [
+                {
+                  "$ref": "request.providerOptions.gpustack-images.responseFormat"
+                },
+                "url"
+              ]
+            },
+            "n": {
+              "$if": {
+                "condition": {
+                  "$gt": [
+                    {
+                      "$ref": "request.imageCount"
+                    },
+                    0
+                  ]
+                },
+                "then": {
+                  "$ref": "request.imageCount"
+                },
+                "else": 1
+              }
+            }
+          },
+          "files": [
+            {
+              "name": "image",
+              "source": {
+                "$ref": "request.images"
+              }
+            }
+          ]
+        },
+        "response": {
+          "status": "succeeded",
+          "images": {
+            "$map": {
+              "from": {
+                "$ref": "response.data"
+              },
+              "as": "item",
+              "in": {
+                "url": {
+                  "$omitEmpty": {
+                    "$if": {
+                      "condition": {
+                        "$eq": [
+                          {
+                            "$first": {
+                              "$split": [
+                                {
+                                  "$toString": {
+                                    "$ref": "item.url"
+                                  }
+                                },
+                                ":"
+                              ]
+                            }
+                          },
+                          "http"
+                        ]
+                      },
+                      "then": {
+                        "$ref": "item.url"
+                      },
+                      "else": {
+                        "$if": {
+                          "condition": {
+                            "$gt": [
+                              {
+                                "$len": {
+                                  "$toString": {
+                                    "$ref": "item.url"
+                                  }
+                                }
+                              },
+                              0
+                            ]
+                          },
+                          "then": {
+                            "$concat": [
+                              "http://gpustack.example.com:8080",
+                              {
+                                "$toString": {
+                                  "$ref": "item.url"
+                                }
+                              }
+                            ]
+                          },
+                          "else": null
+                        }
+                      }
+                    }
+                  }
+                },
+                "dataUrl": {
+                  "$if": {
+                    "condition": {
+                      "$ref": "item.b64_json"
+                    },
+                    "then": {
+                      "$concat": [
+                        "data:image/png;base64,",
+                        {
+                          "$ref": "item.b64_json"
+                        }
+                      ]
+                    },
+                    "else": null
+                  }
+                }
+              }
+            }
+          },
+          "resultKind": "image",
+          "resultEphemeral": true,
+          "errorPaths": [
+            "error.code",
+            "code"
+          ],
+          "messagePaths": [
+            "error.message",
+            "detail",
+            "error"
+          ]
+        }
+      }
+    ]
+  }
+}
