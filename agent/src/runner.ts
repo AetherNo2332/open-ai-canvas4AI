@@ -182,6 +182,13 @@ export function withServerPolicy(canonical: PiCanonical, requiredPolicy: string,
   return { ...canonical, systemPrompt: fallbackPrompt };
 }
 
+// Canonical retains the eligible catalog, including L1 tools not yet disclosed.
+function modelPreflightTools(snapshot: PiSnapshot): PiCanonical["tools"] {
+  return snapshot.tools
+    .filter(tool => tool.allowed && !tool.name.startsWith("agent_tools_"))
+    .map(tool => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
+}
+
 function callsFromAssistant(message: AssistantMessage): PiToolCall[] {
   return message.content.filter((block) => block.type === "toolCall").map((block) => ({
     id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.arguments) },
@@ -1006,7 +1013,7 @@ export async function runCanvasAgent(
       const current = toCanonical(turn.context.messages as Message[], snapshot.canonical.promptCacheKey);
       // The SDK materializes this new loadout in its prepare hook below. The
       // earlier Go capacity check must measure exactly the same tool schema.
-      current.tools = snapshot.tools.filter(tool => tool.allowed && !tool.name.startsWith("agent_tools_")).map(tool => ({type:"function",function:{name:tool.name,description:tool.description,parameters:tool.parameters}}));
+      current.tools = modelPreflightTools(snapshot);
       const canonical = withServerPolicy(current,
         snapshot.canonical.systemPrompt, systemPrompt);
       const decision = await bridge.modelPreflight(snapshot, canonical, signal, promptContract, parts);
@@ -1166,7 +1173,7 @@ export async function runCanvasAgent(
           // SDK 的 Agent 以空 systemPrompt 初始化，只有首个 run 开始后才物化；
           // preflight 可能发生在首个 prompt 之前，此时必须回落到会话/装配层的系统提示，
           // 否则服务端会以"缺少服务端策略"拒绝（真实 3000 部署验收发现的缺口）。
-          planned.tools = snapshot.canonical.tools;
+          planned.tools = modelPreflightTools(snapshot);
           planned.messages.push({ role: "user", content: prompt });
           const decision = await bridge.modelPreflight(snapshot, planned, shutdown, promptContract, parts);
           if (decision.modelLimits) snapshot = { ...snapshot, modelLimits: decision.modelLimits };
