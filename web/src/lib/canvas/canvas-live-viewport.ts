@@ -43,19 +43,18 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
         };
         liveViewportElements.set(container, elements);
     }
+    if (!elements.worldLayer?.isConnected) elements.worldLayer = container.querySelector<HTMLElement>("[data-canvas-world-layer]");
+    // 网格层会随“点/线/空白”切换挂载与卸载，失联后重新查找。
+    if (!elements.gridLayer?.isConnected) elements.gridLayer = container.querySelector<HTMLElement>("[data-canvas-grid-layer]");
     const worldLayer = elements.worldLayer;
     if (worldLayer) {
         // 平移期间直接更新合成层，避免修改容器继承变量导致所有节点重新计算样式。
         worldLayer.style.transformOrigin = "0 0";
         worldLayer.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k / committedScale})`;
-        worldLayer.style.willChange = container.dataset.canvasViewportInteracting === "true" ? "transform" : "";
+        const willChange = container.dataset.canvasViewportInteracting === "true" ? "transform" : "";
+        if (worldLayer.style.willChange !== willChange) worldLayer.style.willChange = willChange;
     }
-    let gridLayer = elements.gridLayer;
-    if (gridLayer && !gridLayer.isConnected) {
-        // 画布重挂载后旧节点已脱离文档，重新查找，避免把样式写到废弃节点。
-        gridLayer = container.querySelector<HTMLElement>("[data-canvas-grid-layer]");
-        elements.gridLayer = gridLayer;
-    }
+    const gridLayer = elements.gridLayer;
     if (gridLayer) {
         // 网格同样按帧跟随视口；只写网格层自身的样式，避免画布根变量的继承重算。
         const gridStyle = canvasGridLayerStyle(viewport);
