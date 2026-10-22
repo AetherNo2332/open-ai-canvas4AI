@@ -5,7 +5,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 ## Agent 上下文压缩回退保留边界
 
-- [x] 自动化：Go 新增回退切点单测（多轮工具调用只保留 `keepRecentTokens` 后缀、超大尾部工具结果保留其调用）与端到端用例（超过 1 MiB 的 Pi 准备信息回退服务端压缩，提交后 Go canonical 与 Pi 保留后缀一致、事件带 `engine` / `nativeFallback` / `retainedMessages`）；Agent 新增准备信息去除工具 `details` 用例。Agent 全量 198 项通过，Go 压缩相关专项（Pi 压缩源、原生/回退、提交与上下文压缩）通过。用真实 Pi SDK 驱动 runner 复现：旧回退切点下压缩后下一步请求 45 条（压缩前 44 条），有界切点下为 8 条。
+- [x] 自动化：Go 新增回退切点单测（多轮工具调用只保留 `keepRecentTokens` 后缀、超大尾部工具结果保留其调用）与端到端用例（超过 1 MiB 的 Pi 准备信息回退服务端压缩，提交后 Go canonical 与 Pi 保留后缀一致、事件带 `engine` / `nativeFallback` / `retainedMessages`）；Agent 新增准备信息去除工具 `details` 用例。canary 上 Go 压缩相关专项（Pi 压缩源、原生/回退、提交与上下文压缩）通过；canary 的 `agent/` 与 Go `internal/app` 与 main 逐字节一致，沿用 main 结果：Agent 全量 198 项通过，干净检出下 Go `internal/app`、`internal/protocol` 全量唯一失败 `TestValidateAppearanceSkinThemesEnforcesSwissConstraints` 在未修改基线同样复现。用真实 Pi SDK 驱动 runner 复现：旧回退切点下压缩后下一步请求 45 条（压缩前 44 条），有界切点下为 8 条。
 - [ ] 已实现：服务端压缩回退的保留切点按 `keepRecentTokens` 收紧，不再因“最近两轮完整对话”保留整段工具循环；Pi 与 Go 的压缩后上下文同源，界面读数不再出现压缩后 100%+ 占用。Worker 序列化准备信息时不再携带重复的工具回执，长会话更少落入回退。
 - [ ] 部署待验收：长工具循环会话触发压缩后，`context_compaction_requested.engine`、`nativeFallback` 与下一步 `context_pressure` 明显低于压缩线，且不在几分钟内再次压缩。Go 与 Worker 两处改动互不依赖，可分别部署。
 
