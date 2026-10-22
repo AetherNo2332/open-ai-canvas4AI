@@ -16,7 +16,6 @@ var cloudAgentTierL1Tools = map[string]bool{
 	"canvas_list_assets":        true,
 	"canvas_bind_asset":         true,
 	"canvas_create_character":   true,
-	"canvas_arrange_nodes":      true,
 	"previs_scene_read":         true,
 	"previs_scene_create":       true,
 	"previs_apply_patch":        true,
@@ -41,7 +40,6 @@ type cloudAgentToolIntent struct {
 	BatchTable bool
 	Assets     bool
 	Character  bool
-	Arrange    bool
 	Previs     bool
 }
 
@@ -107,7 +105,6 @@ func cloudAgentPromptIntentFlags(prompt string) cloudAgentToolIntent {
 		BatchTable: cloudAgentPromptHasAny(prompt, "批次", "批量创作"),
 		Assets:     cloudAgentPromptHasAny(prompt, "素材库", "替换素材", "绑定素材"),
 		Character:  cloudAgentPromptHasAny(prompt, "角色卡"),
-		Arrange:    cloudAgentPromptHasAny(prompt, "整理", "排版", "对齐"),
 		Previs:     cloudAgentPromptHasAny(prompt, "预演", "预可视化", "白模", "白膜", "导演台", "导演桌", "previs", "director desk", "3d blocking"),
 	}
 }
@@ -130,9 +127,6 @@ func cloudAgentUnlockedL1Tools(inventory cloudAgentCanvasInventory, intent cloud
 	}
 	if inventory.HasCharacter || intent.Character {
 		enable("canvas_create_character")
-	}
-	if intent.Arrange {
-		enable("canvas_arrange_nodes")
 	}
 	if inventory.HasPrevis || intent.Previs {
 		enable("previs_scene_read", "previs_scene_create", "previs_apply_patch", "previs_preview", "director_block_scene", "director_design_shot", "director_draw_action", "director_preview_shot", "director_check_continuity", "director_handoff_shot")

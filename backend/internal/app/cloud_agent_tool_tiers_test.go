@@ -32,7 +32,7 @@ func TestCloudAgentToolTierEmptyCanvasKeepsL0AndHidesHeavyL1(t *testing.T) {
 	req := tierAutoRequest()
 	inventory := cloudAgentScanCanvasInventory(tierPayload())
 	names := cloudAgentAdvertisedToolNames(req, inventory, "现在画布有几个节点")
-	for _, want := range []string{"canvas_get_state", "canvas_apply_ops", "generate_media"} {
+	for _, want := range []string{"canvas_get_state", "canvas_apply_ops", "canvas_arrange_nodes", "generate_media"} {
 		if !containsToolName(names, want) {
 			t.Fatalf("empty canvas Q&A missing L0 tool %q: %v", want, names)
 		}
@@ -84,7 +84,7 @@ func TestCloudAgentToolTierReadOnlyHidesWritesAndKeepsStoryboardRead(t *testing.
 	req.PermissionMode = "read_only"
 	inventory := cloudAgentScanCanvasInventory(tierPayload(tierNode("board", "script", nil)))
 	names := cloudAgentAdvertisedToolNames(req, inventory, "请分析这份分镜")
-	for _, hidden := range []string{"canvas_apply_ops", "generate_media", "canvas_create_storyboard", "canvas_edit_storyboard"} {
+	for _, hidden := range []string{"canvas_apply_ops", "canvas_arrange_nodes", "generate_media", "canvas_create_storyboard", "canvas_edit_storyboard"} {
 		if containsToolName(names, hidden) {
 			t.Fatalf("read_only advertised write/generate tool %q: %v", hidden, names)
 		}
@@ -139,7 +139,7 @@ func TestCloudAgentToolTierAdvertisedIsSubsetOfEligibleCatalog(t *testing.T) {
 
 func TestCloudAgentPromptIntentFlagsUseClosedLexicon(t *testing.T) {
 	empty := cloudAgentPromptIntentFlags("现在画布有几个节点")
-	if empty.Storyboard || empty.BatchTable || empty.Previs || empty.Arrange {
+	if empty.Storyboard || empty.BatchTable || empty.Previs {
 		t.Fatalf("plain node-count prompt must not set L1 intent: %+v", empty)
 	}
 	storyboard := cloudAgentPromptIntentFlags("帮我写分镜")
