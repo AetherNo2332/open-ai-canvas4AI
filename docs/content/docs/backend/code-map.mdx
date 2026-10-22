@@ -21,6 +21,7 @@ description: 从产品功能快速定位主要代码入口
 - 入口与弹窗：`web/src/components/canvas/canvas-camera-control-popover.tsx`，复用于图片提示词和 `batch-generation-settings-dialog.tsx`；`AppModal` 承载上游的四列卡片面板。
 - 四列卡片（相机、镜头、焦距、光圈）、悬停说明、配置摘要与提交：`canvas-node-camera-dialog.tsx`。卡片外层包裹必须保持整列宽度（`HoverTip` 包裹层 `w-full`），否则角标会遮住居中的档位标签、四列宽度也会被内容撑成不等宽。
 - 参数枚举和生成提示词合同仍由 `web/src/lib/canvas/camera-prompt-library.ts` 维护，生成执行器调用路径不变；界面回归在 `web/test/camera-control-panel.test.tsx`。
+- 滚轮切档：`web/src/lib/canvas/camera-wheel.ts` 负责滚轮增量归一化与累计步进（一次事件最多切一档），`canvas-node-camera-dialog.tsx` 用非 passive 原生 `wheel` 监听把四列卡片分别绑定到对应档位，并阻止滚轮同时滚动弹层；回归在 `web/test/camera-wheel-step.test.ts`。
 
 ## 可美 KM Seedream
 
