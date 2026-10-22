@@ -71,6 +71,9 @@ func validateCloudAgentStoryboardOccupancy(repo *repository.Repository, userID, 
 	return nil
 }
 func prepareCloudAgentStoryboardReferenceEdit(repo *repository.Repository, userID, canvasID string, args cloudAgentStoryboardEditArgs) (*cloudAgentStoryboardMutationPlan, error) {
+	if len(args.RowIDs) > 0 || args.Assets != nil {
+		return nil, BadAuthRequest("共享引用与产物归属动作不接受 rowIds 或 assets")
+	}
 	if len(args.Patch) != 0 {
 		return nil, BadAuthRequest("引用或产物归属动作不接受行 patch")
 	}
@@ -85,6 +88,15 @@ func prepareCloudAgentStoryboardReferenceEdit(repo *repository.Repository, userI
 	beforeHash := cloudAgentCanvasHash(doc)
 	if args.SnapshotHash != beforeHash {
 		return nil, cloudAgentSnapshotConflictError("画布已变化，请重新读取后修改引用")
+	}
+	if args.References != nil {
+		if args.Action != "set_references" || args.ReferenceNodeIDs != nil {
+			return nil, BadAuthRequest("references 仅用于 set_references，且不能与 referenceNodeIds 同时提交")
+		}
+		args.ReferenceNodeIDs, err = cloudAgentResolveBusinessReferences(doc, args.References)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// 共享引用声明（set_references）是引用合同专属语义：历史画布必须先完成一次规范化，
 	// 否则服务端不会按字段派生托管连接。产物归属（bind_output／unbind_output）写的是

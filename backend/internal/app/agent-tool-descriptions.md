@@ -32,7 +32,7 @@
 
 ## canvas_read_storyboard
 
-view 默认 bindings，与 summary 都默认且最多100行，显式返回共享引用、行绑定和有效输入；summary 分页扫描绑定健康，区分空输入、未知、不可用与待迁移。full 默认1行、最多20行，单行正文按字段截断。mode=image/video 按生成口径解析，video 遵守关键帧模式。rowIds 定位真实行，与非零 offset 互斥。coverage.complete 才支持全表结论；hasMore 按 nextRead 续读。编辑只用 rowId 和最新 snapshotHash，不从连线猜绑定。
+读取结构化分镜，默认 creative 返回创作、时长、对白和实际资产名称/版本。summary 扫描缺口，bindings 排查底层引用，full 查看高级字段；coverage.complete 才能支持整表结论。rowIds 定位，nextRead 续页，长文本按 nextReads 续读，不从连线推测绑定。
 
 ## image_text_detect
 
@@ -103,11 +103,11 @@ view 默认 bindings，与 summary 都默认且最多100行，显式返回共享
 
 ## canvas_create_storyboard
 
-创建结构化分镜脚本，适用于多镜头、连续性与逐镜维护。先读画布并传 snapshotHash；rows 是对象数组，每行需正数 durationSeconds 及非空 plotDescription 或 videoMotionPrompt，如 [{"durationSeconds":5,"plotDescription":"人物走入房间"}]。referenceNodeIds 可选，声明共享引用输入。不能用 content 或 Markdown 替代 rows，写入遵循审批模式。
+创建结构化分镜，自动分配节点/行 ID 和位置。传最新 snapshotHash、title 和 rows；每行用正数 durationSeconds、plotDescription 创作说明、dialogue，按需覆盖 imageGenerationPrompt/videoMotionPrompt。assets 用 ref（画布节点 ID 或唯一完整名称）和 role；references 是共享引用列表。同名多版本须用 ID，不猜版本。写入遵循审批模式。
 
 ## canvas_edit_storyboard
 
-先read取 nodeId/snapshotHash/真实rowId。append 给patch（正数durationSeconds及剧情/运动描述），不传rowId；update 给rowId+patch；remove 只给rowId。set_references 给referenceNodeIds（[] 清空共享素材）；bind_output 给rowId+outputMode+outputNodeId；unbind_output 给rowId+outputMode。assetBindings只引当前画布素材，不写输出身份、任务、URL或metadata，不手工建边。角色资产ID也受迁移门禁约束；reference_migration_required时停止，等待画布迁移，禁止绕过或虚报绑定。
+先读真实 rowId 和 snapshotHash。update/remove/set_assets 用 rowId 或 rowIds 选择行；update 给共同 patch，set_assets 给完整 assets（[] 清空），整批原子写入。append 给完整创作行 patch。set_references 给 references 或 referenceNodeIds。生成自动管理产物；显式指定已有产物才用 bind_output/unbind_output。不能写任务、状态、URL 或连线；历史引用需先迁移。
 
 ## canvas_edit_batch_table
 
@@ -123,7 +123,7 @@ view 默认 bindings，与 summary 都默认且最多100行，显式返回共享
 
 ## generate_media
 
-提交媒体生成：准备草稿并声明引用。request_approval 需独立审批，auto 经服务端模型、能力、价格、预算与资源准入后直接提交收费任务。只建节点、改提示词或声明引用用 canvas_apply_ops。分镜模式给 storyboardNodeId+storyboardRowId，输入从行读取，也不手工建边。生成前读画布并按实际参考筛选模型目录，参数须符合返回的时长、画幅和音频能力。可续用空闲且无任务、无产物的草稿；他人运行的草稿需其已结束且清理完成。已绑定任务或已有产物的节点不可覆盖，任务状态与错误从 generation 或 task_get 读取。sourceNodeId 是文本输入，referenceNodeIds 是媒体输入，referenceTransientIds 只接受标注工具返回的临时引用。准入错误按 reason 修正；已提交任务失败应告知用户，重新生成需用户明确要求并重新审批。
+提交媒体生成，审批、价格、预算与资源校验仍生效。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，自动分配产物 ID、标题、位置并回填；模型和参数可用项目/目录默认值。已有绑定产物不能通过省略 nodeId 绕开占用。普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds 等。生成前按实际输入查 model_list；只编辑用画布工具。已绑定任务或已有产物不可覆盖；状态用 task_get。提交失败按 reason 修正，已提交任务失败须告知用户，重新收费生成需用户明确要求及当前审批流程。
 ## parameter_001
 
 短标识，如 1

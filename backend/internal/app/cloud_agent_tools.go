@@ -451,7 +451,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v3"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v4"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -589,8 +589,8 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		add("canvas_list_node_types", "查询可创建节点和可编辑字段。传 nodeType 返回该类型的完整字段 schema；编辑复杂内容前先查字段合同。", map[string]any{"nodeType": str("可选节点类型；空值列出摘要")})
 		add("canvas_list_assets", "搜索当前用户素材库，返回可用于绑定的 assetId、标题和类型，不暴露下载凭证。", map[string]any{"query": str("可选搜索文字"), "kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio", "text"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
 		add("canvas_read_drawing", "分页读取绘图原生元素和素材记录，hasMore=false 才读到末尾；未同步的本地绘图需先由编辑器保存。", map[string]any{"nodeId": str("绘图节点 ID"), "offset": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}, "nodeId")
-		add("canvas_read_content", "分页读取节点可编辑的完整文本。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。", map[string]any{
-			"nodeId": str("当前画布节点 ID"), "field": map[string]any{"type": "string", "enum": []string{"content", "composerContent"}},
+		add("canvas_read_content", "分页读取节点正文或分镜行文本。分镜续读须同时指定 rowId 和 field。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。", map[string]any{
+			"nodeId": str("当前画布节点 ID"), "rowId": str("分镜行 ID，普通正文省略"), "field": map[string]any{"type": "string", "enum": append([]string{"content", "composerContent"}, cloudAgentStoryboardTextFields...)},
 			"offset": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 16000},
 		}, "nodeId")
 		add("canvas_search_nodes", "按标题和正文搜索当前画布节点；返回基础索引和新快照。需要编辑时继续精读目标。", map[string]any{
@@ -611,7 +611,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		add("canvas_read_batch_table", cloudAgentToolText("canvas_read_batch_table"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_013")), "offset": map[string]any{"type": "integer", "minimum": 0}}, "nodeId")
 		add("canvas_read_storyboard", cloudAgentToolText("canvas_read_storyboard"), map[string]any{
 			"nodeId": str(cloudAgentToolText("parameter_014")), "offset": map[string]any{"type": "integer", "minimum": 0},
-			"view":   map[string]any{"type": "string", "enum": []string{"summary", "bindings", "full"}, "description": "默认 bindings；summary 分页扫描绑定健康；full 读取正文"},
+			"view":   map[string]any{"type": "string", "enum": []string{"creative", "summary", "bindings", "full"}, "description": "默认 creative：镜头创作、资产名称/版本及有效输入；summary 扫描缺口，bindings 排查底层引用，full 高级字段"},
 			"mode":   map[string]any{"type": "string", "enum": []string{"image", "video"}, "description": "按生成模式解析有效输入；video 遵守关键帧模式"},
 			"rows":   map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "summary/bindings 默认且最多100行；full 最多20行，默认1行"},
 			"rowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 80}, "description": "可选真实行ID，与非零offset互斥"},
@@ -674,23 +674,27 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"prompt": str(cloudAgentToolText("parameter_036")), "selectionId": str(cloudAgentToolText("model_selection_id")), "logicalModelId": str(cloudAgentToolText("parameter_037")), "channelId": str(cloudAgentToolText("parameter_038")), "channelModelKey": str(cloudAgentToolText("parameter_039")),
 			"quality": str(cloudAgentToolText("parameter_040")), "snapshotHash": str(cloudAgentToolText("parameter_041")), "nodeId": str(cloudAgentToolText("parameter_042")), "title": str(cloudAgentToolText("parameter_043")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_044"))},
 		}, "prompt", "nodeId", "title", "referenceNodeIds")
-		add("model_list", cloudAgentToolText("model_list"), map[string]any{"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_045"))}, "storyboardNodeId": str("分镜表节点 ID，与 storyboardRowId 同时传入，输入从行读取"), "storyboardRowId": str("分镜行 ID")})
+		add("model_list", cloudAgentToolText("model_list")+" 分镜可传 storyboardRowIds 批量查询；相同实际输入能力合并为一份模型列表，逐行返回问题。", map[string]any{"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_045"))}, "storyboardNodeId": str("分镜表节点 ID，与 storyboardRowId 或 storyboardRowIds 同时传入，输入从行读取"), "storyboardRowId": str("分镜行 ID"), "storyboardRowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": map[string]any{"type": "string", "minLength": 1}}})
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
 		add("canvas_create_storyboard", cloudAgentToolText("canvas_create_storyboard"), map[string]any{
+			"references":   map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "全表共享输入：当前画布节点 ID 或唯一名称。逐镜角色和道具用 rows.assets；系统管理实际引用和连线"},
 			"snapshotHash": str(cloudAgentToolText("parameter_046")),
-			"nodeId":       str(cloudAgentToolText("parameter_047")),
+			"nodeId":       str("可选新分镜节点 ID，省略由系统分配"),
 			"title":        str(cloudAgentToolText("parameter_048")),
 			"rows":         map[string]any{"type": "array", "minItems": 1, "maxItems": maxCloudAgentStoryboardRows, "items": cloudAgentStoryboardRowSchema()},
 			"referenceNodeIds": map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1},
 				"description": "可选：所有镜头共享的引用输入节点；服务端据此派生连接，不要另外连线"},
 			"x": map[string]any{"type": "number"},
 			"y": map[string]any{"type": "number"},
-		}, "snapshotHash", "nodeId", "title", "rows")
+		}, "snapshotHash", "title", "rows")
 		add("canvas_edit_storyboard", cloudAgentToolText("canvas_edit_storyboard"), map[string]any{
+			"rowIds":       map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "update/remove/set_assets 可选多个真实行 ID，整批校验后一次写入；与 rowId 互斥"},
+			"assets":       cloudAgentStoryboardAssetsSchema(),
+			"references":   map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "set_references 的共享输入，可使用唯一业务名称"},
 			"snapshotHash": str(cloudAgentToolText("parameter_049")),
 			"nodeId":       str(cloudAgentToolText("parameter_014")),
-			"action":       map[string]any{"type": "string", "enum": []string{"append", "update", "remove", "set_references", "bind_output", "unbind_output"}, "description": "append/update/remove 维护镜头行；set_references 改共享引用；bind_output/unbind_output 改镜头产物归属"},
+			"action":       map[string]any{"type": "string", "enum": []string{"append", "update", "remove", "set_assets", "set_references", "bind_output", "unbind_output"}, "description": "append/update/remove 维护镜头；set_assets 批量替换所选镜头的完整资产声明，[]清空；set_references 改共享输入。生成产物归属由 generate_media 管理，手工接管才用 bind_output/unbind_output"},
 			"rowId":        str(cloudAgentToolText("parameter_051")),
 			"patch":        cloudAgentStoryboardPatchSchema(),
 			"referenceNodeIds": map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1},
@@ -698,7 +702,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"outputMode":   map[string]any{"type": "string", "enum": []string{"image", "video"}, "description": "绑定或解除产物归属的槽位"},
 			"outputNodeId": str("bind_output 必填：已有产物节点 ID；所属关系由服务端派生连接，不重写产物内容"),
 		}, "snapshotHash", "nodeId", "action")
-		add("canvas_create_character", "把就绪图片打包成角色卡并保存媒体来源；可分别指定定妆主图和三视图，单图时明确复用。按权限审批。已有同名卡先复用；definition 只填有依据的设定。", cloudAgentCharacterCreateSchema(), "nodeId", "name")
+		add("canvas_create_character", "把就绪图片打包成角色卡并保存媒体来源；自动分配节点 ID 和位置。可分别指定定妆主图和三视图，单图时明确复用。按权限审批。已有同名卡先复用；definition 只填有依据的设定。", cloudAgentCharacterCreateSchema(), "name")
 		add("canvas_edit_batch_table", cloudAgentToolText("canvas_edit_batch_table"), map[string]any{
 			"snapshotHash": str(cloudAgentToolText("parameter_052")),
 			"nodeId":       str(cloudAgentToolText("parameter_013")),
@@ -765,7 +769,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"selectionId": str(cloudAgentToolText("model_selection_id")), "logicalModelId": str(cloudAgentToolText("parameter_071")), "channelId": str(cloudAgentToolText("parameter_038")), "channelModelKey": str(cloudAgentToolText("parameter_039")),
 			"durationSeconds": map[string]any{"type": "integer", "minimum": 0}, "size": str(cloudAgentToolText("parameter_074")), "quality": str(cloudAgentToolText("parameter_075")), "videoGenerateAudio": map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_076")},
 			"snapshotHash": str(cloudAgentToolText("parameter_077")), "nodeId": str(cloudAgentToolText("parameter_078")), "title": str(cloudAgentToolText("parameter_079")), "sourceNodeId": str(cloudAgentToolText("parameter_080")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_081"))}, "referenceTransientIds": map[string]any{"type": "array", "maxItems": 4, "items": str(cloudAgentToolText("parameter_082"))},
-		}, "mode", "nodeId", "title")
+		}, "mode")
 	}
 	if req.SubagentEnabled && req.subagent == nil {
 		add("spawn_subagent", "Create one independent child Agent with a name, role label and concrete objective.", map[string]any{
@@ -955,7 +959,7 @@ func cloudAgentReadCacheKeyForState(repo *repository.Repository, userID string, 
 		return key
 	}
 	switch call.Function.Name {
-	case "canvas_get_state", "canvas_read_storyboard", "previs_scene_read":
+	case "canvas_get_state", "canvas_read_storyboard", "canvas_read_content", "canvas_search_nodes", "model_list", "previs_scene_read":
 		if repo != nil {
 			if canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID); err == nil && canvas != nil {
 				return fmt.Sprintf("%s:canvas-revision:%d", key, canvas.Revision)
@@ -1263,11 +1267,7 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 			return nil, errors.New("Agent 模型目录工具缺少服务上下文")
 		}
 		service := services[0]
-		intent, err := service.cloudAgentModelIntent(userID, state.Request.CanvasID, call.Function.Arguments)
-		if err != nil {
-			return nil, err
-		}
-		return service.cloudAgentModelList(userID, intent)
+		return service.cloudAgentQueryModels(userID, state.Request.CanvasID, call.Function.Arguments)
 	case "skill_read_file":
 		var args struct {
 			SkillID string `json:"skillId"`

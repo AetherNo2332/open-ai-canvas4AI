@@ -606,7 +606,10 @@ async function bootstrapSession(
       resourceLoader,
       // 默认 coding 工具（read/bash/edit/write/ls/grep/find/powershell）一个都不注册。
       noTools: "all",
-      tools: [...disclosure.activeNames(), ...(nativeMode ? ["read"] : [])],
+      // SDK tools is also a lifetime allowlist. Reserve the eligible catalog;
+      // only advertised definitions are registered by our extension, so hidden
+      // L1 tools stay absent until a later boundary explicitly registers them.
+      tools: snapshot.tools.filter(tool => !tool.name.startsWith("agent_tools_") && (nativeMode || tool.name!=="read")).map(tool=>tool.name),
     });
     return { session, sessionManager, cleanup: workspace.cleanup };
   } catch (error) {
@@ -846,8 +849,7 @@ export async function runCanvasAgent(
   const nativeMode = snapshot.skillRuntimeMode === "pi-native";
   const nativeReadSpec = nativeMode ? snapshot.tools.find((tool) => tool.name === "read" && tool.allowed) : undefined;
   if (nativeMode && !nativeReadSpec) throw new FatalWorkerError("Go did not disclose native Skill read");
-  // Old snapshots may still carry openedCategories. They are informational
-  // migration state only; all eligible concrete tools are available each run.
+  // Categories remain metadata; only advertised concrete tools enter Pi.
 
   // Provider：Pi 的每次模型请求都翻成 Go 的模型步骤（带上提示合同身份）。
   let modelRetry: PiTurnDecision | undefined;
@@ -998,8 +1000,18 @@ export async function runCanvasAgent(
   const prepareNextTurn = session.agent.prepareNextTurnWithContext;
   session.agent.prepareNextTurnWithContext = async (turn, signal) => {
     await queue.drain();
+    const refreshed = await bridge.snapshot(snapshot, signal);
+    if (toolSchema) assertToolSnapshotMatchesSchema(refreshed.tools, toolSchema);
+    snapshot = refreshed;
+    if (isTerminalRunStatus(snapshot.status)) {runTerminated=true; throw new CanvasRunTerminated(snapshot.status);}
+    disclosure.refresh(snapshot.tools.filter(tool => !(nativeMode && tool.name === "read")));
+    syncCompaction();
     if (!snapshot.activeTaskId && typeof bridge.modelPreflight === "function") {
-      const canonical = withServerPolicy(toCanonical(turn.context.messages as Message[], snapshot.canonical.promptCacheKey),
+      const current = toCanonical(turn.context.messages as Message[], snapshot.canonical.promptCacheKey);
+      // The SDK materializes this new loadout in its prepare hook below. The
+      // earlier Go capacity check must measure exactly the same tool schema.
+      current.tools = snapshot.tools.filter(tool => tool.allowed && !tool.name.startsWith("agent_tools_")).map(tool => ({type:"function",function:{name:tool.name,description:tool.description,parameters:tool.parameters}}));
+      const canonical = withServerPolicy(current,
         snapshot.canonical.systemPrompt, systemPrompt);
       const decision = await bridge.modelPreflight(snapshot, canonical, signal, promptContract, parts);
       if (decision.modelLimits) snapshot = { ...snapshot, modelLimits: decision.modelLimits };

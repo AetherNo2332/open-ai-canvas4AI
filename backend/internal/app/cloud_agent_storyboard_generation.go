@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -121,7 +122,7 @@ func cloudAgentMediaCallArguments(a cloudAgentMediaArgs) ([]byte, error) {
 	return json.Marshal(fields)
 }
 
-func (s *Service) resolveCloudAgentStoryboardArgs(run *model.CloudAgentExecution, state *cloudAgentRuntime, arguments string, a cloudAgentMediaArgs) (cloudAgentMediaArgs, error) {
+func (s *Service) resolveCloudAgentStoryboardArgs(run *model.CloudAgentExecution, state *cloudAgentRuntime, callID, arguments string, a cloudAgentMediaArgs) (cloudAgentMediaArgs, error) {
 	if err := validateCloudAgentStoryboardInput(arguments, a); err != nil {
 		return a, err
 	}
@@ -135,7 +136,35 @@ func (s *Service) resolveCloudAgentStoryboardArgs(run *model.CloudAgentExecution
 		return a, err
 	}
 	a, _, err = resolveCloudAgentStoryboardGeneration(snapshot.Document, a)
+	if err == nil {
+		a, err = cloudAgentStoryboardOutputTarget(snapshot.Document, a, run.UserID, fmt.Sprintf("%s:%d:%s:%s", run.ID, state.Step, state.LastStepTaskID, callID))
+	}
 	return a, err
+}
+
+func cloudAgentStoryboardOutputTarget(doc map[string]any, a cloudAgentMediaArgs, userID, seed string) (cloudAgentMediaArgs, error) {
+	if a.StoryboardNodeID == "" {
+		return a, nil
+	}
+	_, _, rows, err := storyboardNodeFromDocument(doc, a.StoryboardNodeID)
+	if err != nil {
+		return a, err
+	}
+	index := cloudAgentNodeIndex(rows, a.StoryboardRowID)
+	if index < 0 {
+		return a, BadAuthRequest("分镜行不存在")
+	}
+	row := rows[index]
+	if a.NodeID == "" {
+		a.NodeID = stringValue(row[a.Mode+"NodeId"])
+		if a.NodeID == "" {
+			a.NodeID = cloudAgentID(userID, "storyboard-output:"+a.StoryboardNodeID+":"+a.StoryboardRowID+":"+a.Mode+":"+seed)
+		}
+	}
+	if a.Title == "" {
+		a.Title = fmt.Sprintf("镜头 %v · %s", row["shotNumber"], map[string]string{"image": "关键帧", "video": "视频"}[a.Mode])
+	}
+	return a, nil
 }
 
 // Called within the existing Agent admission transaction, after billing/task

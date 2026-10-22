@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -26,6 +27,9 @@ func cloudAgentStoryboardCall(t *testing.T, name, callID string, args any) cloud
 func cloudAgentStoryboardFixture(t *testing.T) (*Service, *gorm.DB, *model.CanvasProject) {
 	t.Helper()
 	s, db, _, _ := creationTestService(t)
+	if err := database.MigrateCanvasCommands(db); err != nil {
+		t.Fatal(err)
+	}
 	canvas := &model.CanvasProject{ID: "agent-canvas", UserID: "user", Title: "分镜测试", PayloadJSON: `{"nodes":[],"connections":[]}`}
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatal(err)

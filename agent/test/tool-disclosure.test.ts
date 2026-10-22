@@ -30,6 +30,21 @@ test("only allowed advertised concrete tools are registered; categories are not 
   assert.deepEqual(called, ["canvas_get_state"]);
 });
 
+test("new boundary registers only newly advertised tools and keeps the loadout monotonic", () => {
+  const registry = new SessionToolDisclosure(specs, async () => ({ result: {} }));
+  const registered: string[] = [];
+  const active: string[][] = [];
+  const extension = createCanvasToolsExtension(registry, () => undefined);
+  if (typeof extension === "function") throw new Error("expected extension object");
+  extension.factory({registerTool(tool: SessionToolDefinitionLike) {registered.push(tool.name);},
+    on() {return () => {};}, setActiveTools(names: string[]) {active.push(names);}} as never);
+  registry.refresh(specs.map(spec => ({...spec, allowed: spec.name === "canvas_apply_ops" || spec.allowed})));
+  registry.refresh(specs);
+  assert.deepEqual(registered, ["canvas_get_state", "plan_update", "canvas_apply_ops"]);
+  assert.deepEqual(active, [["canvas_get_state", "plan_update", "canvas_apply_ops"]]);
+  assert.equal(registry.isVisible("agent_tools_canvas_read"), false);
+});
+
 test("Pi tool_call hook blocks ineligible names and calls outside the admitted batch", async () => {
   const registry = new SessionToolDisclosure(specs, async () => ({ result: {} }));
   const registered: SessionToolDefinitionLike[] = [];

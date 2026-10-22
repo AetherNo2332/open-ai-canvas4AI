@@ -233,6 +233,26 @@ test("disallowed L1 tools stay out of canonical.tools across steps", async () =>
   }
 });
 
+test("a new model boundary registers newly advertised L1 tools before the next provider request", async () => {
+  const {bridge,state,snapshot}=fakeBridge([
+    {toolCalls:[{id:"read-1",function:{name:"canvas_get_state",arguments:"{}"}}]},
+    {toolCalls:[{id:"edit-2",function:{name:"canvas_edit_storyboard",arguments:"{}"}}]},
+    {text:"完成"},
+  ]);
+  snapshot.tools=[{name:"canvas_get_state",description:"Get state",parameters:objectSchema,allowed:true},
+    {name:"canvas_edit_storyboard",description:"Edit storyboard",parameters:objectSchema,allowed:false}];
+  const execute=bridge.executeTool.bind(bridge);
+  bridge.executeTool=async (...args) => {const receipt=await execute(...args); snapshot.tools=snapshot.tools.map(tool=>({...tool,allowed:true}));return receipt;};
+  const preflights: PiCanonical[]=[];
+  bridge.modelPreflight=async (_run,canonical) => {preflights.push(canonical);return {status:"ready",taskId:"",decision:"model"};};
+  await runCanvasAgent(bridge,snapshot,undefined,promptParts());
+  assert.deepEqual(state.executions,["read-1","edit-2"]);
+  const names=(request:PiCanonical)=>request.tools.map(tool=>(tool.function as {name:string}).name);
+  assert.deepEqual(names(state.canonical[0]!),["canvas_get_state"]);
+  assert.deepEqual(names(state.canonical[1]!),["canvas_get_state","canvas_edit_storyboard"]);
+  assert.ok(preflights.some(request=>names(request).includes("canvas_edit_storyboard")));
+});
+
 test("tool definitions stay stable across different calls and continuation while receipts remain in messages", async () => {
   const { bridge, state, snapshot } = fakeBridge([
     { toolCalls: [{ id: "read-1", function: { name: "canvas_get_state", arguments: "{}" } }] },

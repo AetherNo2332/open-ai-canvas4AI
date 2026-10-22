@@ -125,10 +125,11 @@ type cloudAgentRuntime struct {
 	// SYSTEM.md/AGENTS.md 再重启，在途运行就会**静默换提示** —— 既违反"首步与后续步同一份
 	// 快照"，也违反"恢复不得重读新版磁盘文件"。工具 schema 早就有等价的漂移检查
 	//（`assertToolSnapshotMatchesSchema`），提示层此前完全没有。
-	PromptContract          string   `json:"promptContract,omitempty"`
-	SelectedToolCategory    string   `json:"selectedToolCategory,omitempty"`
-	ActivatedToolCategories []string `json:"activatedToolCategories,omitempty"`
-	AdvertisedToolNames     []string `json:"advertisedToolNames,omitempty"`
+	PromptContract           string   `json:"promptContract,omitempty"`
+	SelectedToolCategory     string   `json:"selectedToolCategory,omitempty"`
+	ActivatedToolCategories  []string `json:"activatedToolCategories,omitempty"`
+	AdvertisedToolNames      []string `json:"advertisedToolNames,omitempty"`
+	DeliveredIntentToolNames []string `json:"deliveredIntentToolNames,omitempty"`
 	// 首步合同（P1.5）：合同版本、阶段、不可变快照与占位任务的持久化位置。
 	// 旧运行的 ContractVersion 为 0，这些字段全部留空，行为与迁移前一致。
 	ContractVersion int `json:"contractVersion,omitempty"`
@@ -1577,6 +1578,17 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 	allowedRequest := state.Request
 	allowedRequest.subagent = state.Subagent
 	allowed := cloudAgentToolAllowed(allowedRequest, call.Function.Name)
+	if allowed {
+		normalized, err := cloudAgentResolveWorkflowIDs(run.UserID, run.ID, state, call)
+		if err != nil {
+			return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+				cloudAgentRecordToolResult(current, state, call, nil, err)
+				return cloudAgentSave(current, state)
+			})
+		}
+		call = normalized
+		state.Calls[state.CallIndex] = call
+	}
 	mediaTool := call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split"
 	if allowed && cloudAgentWrite(call.Function.Name) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
 		var plan *cloudAgentMediaPlan
@@ -2481,7 +2493,21 @@ func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, sta
 		var target struct {
 			NodeID string `json:"nodeId"`
 		}
-		if err := json.Unmarshal([]byte(call.Function.Arguments), &target); err != nil || validateCloudAgentID(target.NodeID, "生成节点ID", 80) != nil {
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &target); err != nil {
+			return s.cloudAgentMediaError(run, state, "completion", true, true, BadAuthRequest("已提交媒体任务的目标记录无效"))
+		}
+		if target.NodeID == "" {
+			var submitted struct {
+				Metadata struct {
+					NodeID string `json:"nodeId"`
+				} `json:"metadata"`
+			}
+			if err := json.Unmarshal([]byte(task.InputJSON), &submitted); err != nil {
+				return err
+			}
+			target.NodeID = submitted.Metadata.NodeID
+		}
+		if validateCloudAgentID(target.NodeID, "生成节点ID", 80) != nil {
 			return s.cloudAgentMediaError(run, state, "completion", true, true, BadAuthRequest("已提交媒体任务的目标节点记录无效，未回写画布"))
 		}
 		s.storageMu.Lock()

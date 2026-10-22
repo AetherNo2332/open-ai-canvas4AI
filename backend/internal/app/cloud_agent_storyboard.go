@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -21,24 +20,28 @@ var cloudAgentStoryboardTextFields = []string{
 }
 
 type cloudAgentStoryboardCreateArgs struct {
+	References       []string         `json:"references,omitempty"`
 	SnapshotHash     string           `json:"snapshotHash"`
 	NodeID           string           `json:"nodeId"`
 	Title            string           `json:"title"`
 	Rows             []map[string]any `json:"rows"`
 	ReferenceNodeIDs []string         `json:"referenceNodeIds,omitempty"`
-	X                float64          `json:"x"`
-	Y                float64          `json:"y"`
+	X                *float64         `json:"x"`
+	Y                *float64         `json:"y"`
 }
 
 type cloudAgentStoryboardEditArgs struct {
-	SnapshotHash     string         `json:"snapshotHash"`
-	NodeID           string         `json:"nodeId"`
-	Action           string         `json:"action"`
-	RowID            string         `json:"rowId"`
-	Patch            map[string]any `json:"patch"`
-	ReferenceNodeIDs []string       `json:"referenceNodeIds,omitempty"`
-	OutputMode       string         `json:"outputMode,omitempty"`
-	OutputNodeID     string         `json:"outputNodeId,omitempty"`
+	RowIDs           []string                    `json:"rowIds,omitempty"`
+	References       []string                    `json:"references,omitempty"`
+	Assets           []cloudAgentStoryboardAsset `json:"assets,omitempty"`
+	SnapshotHash     string                      `json:"snapshotHash"`
+	NodeID           string                      `json:"nodeId"`
+	Action           string                      `json:"action"`
+	RowID            string                      `json:"rowId"`
+	Patch            map[string]any              `json:"patch"`
+	ReferenceNodeIDs []string                    `json:"referenceNodeIds,omitempty"`
+	OutputMode       string                      `json:"outputMode,omitempty"`
+	OutputNodeID     string                      `json:"outputNodeId,omitempty"`
 }
 
 type cloudAgentStoryboardMutationPlan struct {
@@ -54,34 +57,21 @@ func storyboardArgumentError(action string) error {
 }
 
 func cloudAgentStoryboardRowSchema() map[string]any {
+	fields := capability.StoryboardRowFields()
 	properties := map[string]any{}
-	for key, field := range capability.StoryboardRowFields() {
-		properties[key] = field.JSONSchema()
+	for _, key := range []string{"durationSeconds", "plotDescription", "dialogue", "imageGenerationPrompt", "videoMotionPrompt"} {
+		properties[key] = fields[key].JSONSchema()
 	}
-	descriptions := map[string]string{
-		"durationSeconds": "镜头时长（秒），新增镜头必填且大于0。",
-		"plotDescription": "静态画面与剧情描述；新增镜头至少填写本字段或 videoMotionPrompt。",
-		"dialogue":        "台词文本；无台词可省略。", "videoMotionPrompt": "给视频模型的完整动态镜头提示词，包含动作和运镜。",
-		"imageGenerationPrompt": "给图片模型的静态关键帧提示词。", "camera": "机位、角度与运镜设计。",
-		"motion": "主体动作概要，与完整视频提示词分开记录。", "shotSize": "景别，如近景、中景、全景。",
-		"emotion": "角色情绪。", "lightingAndAtmosphere": "光线与氛围。", "audioEffects": "音效设计。",
-		"narrativeIntent": "镜头的叙事目的。", "viewerPOV": "观众视角。", "performanceBlocking": "演员走位与表演。",
-		"timeBeats":     "镜头内时间节拍的纯文本，如 0–2秒转身，2–5秒向前走；不是数组。",
-		"continuityOut": "衔接下一镜头所需的状态与连续性。", "negativePrompt": "应避免的画面或动作。",
-	}
-	for key, raw := range properties {
-		if description, exists := descriptions[key]; exists {
-			raw.(map[string]any)["description"] = description
-		}
-	}
+	properties["plotDescription"].(map[string]any)["description"] = "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。"
+	properties["imageGenerationPrompt"].(map[string]any)["description"] = "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。"
+	properties["videoMotionPrompt"].(map[string]any)["description"] = "可选视频提示词覆盖；省略时使用镜头创作说明。"
+	properties["assets"] = cloudAgentStoryboardAssetsSchema()
 	return map[string]any{"type": "object", "properties": properties, "required": []string{"durationSeconds"}, "additionalProperties": false,
 		"anyOf": []map[string]any{
 			{"properties": map[string]any{"plotDescription": map[string]any{"minLength": 1}}, "required": []string{"plotDescription"}},
 			{"properties": map[string]any{"videoMotionPrompt": map[string]any{"minLength": 1}}, "required": []string{"videoMotionPrompt"}},
-		},
-	}
+		}}
 }
-
 func cloudAgentStoryboardPatchSchema() map[string]any {
 	schema := cloudAgentStoryboardRowSchema()
 	delete(schema, "required")
@@ -170,7 +160,10 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
 		return nil, storyboardArgumentError("创建")
 	}
-	if args.SnapshotHash == "" || args.NodeID == "" || strings.TrimSpace(args.Title) == "" {
+	if args.NodeID == "" {
+		args.NodeID = cloudAgentID(userID, "storyboard:"+canvasID+":"+call.ID)
+	}
+	if args.SnapshotHash == "" || strings.TrimSpace(args.Title) == "" {
 		return nil, BadAuthRequest("创建分镜脚本需要快照、节点ID和标题")
 	}
 	if err := validateCloudAgentID(args.NodeID, "分镜节点ID", 80); err != nil {
@@ -203,6 +196,22 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 			return nil, BadAuthRequest("分镜节点ID已存在")
 		}
 	}
+	if args.References != nil {
+		if args.ReferenceNodeIDs != nil {
+			return nil, BadAuthRequest("references 与 referenceNodeIds 不能同时提交")
+		}
+		args.ReferenceNodeIDs, err = cloudAgentResolveBusinessReferences(doc, args.References)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for index, row := range args.Rows {
+		normalized, err := cloudAgentNormalizeStoryboardPatch(doc, row)
+		if err != nil {
+			return nil, err
+		}
+		args.Rows[index] = normalized
+	}
 	rows, err := normalizeCloudAgentStoryboardRows(args.Rows, userID, args.NodeID, call.ID)
 	if err != nil {
 		return nil, err
@@ -212,8 +221,15 @@ func prepareCloudAgentStoryboardCreate(repo *repository.Repository, userID, canv
 			return nil, err
 		}
 	}
+	position, _ := cloudAgentArrangeAddNodePosition(doc, nil, agentCanvasOp{ID: args.NodeID, NodeType: "script", X: args.X, Y: args.Y}, nil)
+	if (args.X == nil) != (args.Y == nil) {
+		return nil, BadAuthRequest("显式位置需要同时提供 x 和 y")
+	}
+	if args.X != nil {
+		position.X, position.Y = *args.X, *args.Y
+	}
 	node := creationAddedNode(CreationCanvasOp{
-		Type: "add_node", ID: args.NodeID, NodeType: "script", Title: args.Title, X: &args.X, Y: &args.Y,
+		Type: "add_node", ID: args.NodeID, NodeType: "script", Title: args.Title, X: &position.X, Y: &position.Y,
 		Metadata: map[string]any{"storyboard": map[string]any{
 			"rows": rows, "visibleColumns": capability.StoryboardDefaultColumnValues(), "referenceNodeIds": []any{},
 		}},
@@ -242,22 +258,8 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	if args.Action == "set_references" || args.Action == "bind_output" || args.Action == "unbind_output" {
 		return prepareCloudAgentStoryboardReferenceEdit(repo, userID, canvasID, args)
 	}
-	if args.Action != "append" && args.Action != "update" && args.Action != "remove" {
-		return nil, BadAuthRequest("分镜操作必须是 append、update、remove、set_references、bind_output 或 unbind_output")
-	}
-	if err := validateCloudAgentID(args.NodeID, "分镜节点ID", 80); err != nil {
-		return nil, err
-	}
-	if args.Action == "append" && args.RowID != "" {
-		return nil, BadAuthRequest("追加镜头不能指定已有 rowId")
-	}
-	if args.Action != "append" {
-		if err := validateCloudAgentID(args.RowID, "分镜行ID", 120); err != nil {
-			return nil, BadAuthRequest("修改或删除镜头必须使用最新读取结果中的真实 rowId")
-		}
-	}
-	if args.Action == "remove" && len(args.Patch) != 0 {
-		return nil, BadAuthRequest("删除镜头不接受 patch")
+	if args.Action != "append" && args.Action != "update" && args.Action != "remove" && args.Action != "set_assets" {
+		return nil, BadAuthRequest("分镜操作无效")
 	}
 	canvas, err := repo.CanvasProjectForUser(userID, canvasID)
 	if err != nil {
@@ -269,97 +271,54 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	}
 	beforeHash := cloudAgentCanvasHash(doc)
 	if beforeHash != args.SnapshotHash {
-		return nil, cloudAgentSnapshotConflictError("画布已变化，本次未写入；请重新读取并重新申请审批")
+		return nil, cloudAgentSnapshotConflictError("画布已变化，请重新读取后修改分镜")
 	}
-	// 行素材与角色字段中的资产声明都属于引用：历史画布必须先规范化。
 	if cloudAgentStoryboardEditWritesReferences(args) {
 		if err := validateCloudAgentReferenceMigration(doc); err != nil {
 			return nil, err
 		}
 	}
-	node, storyboard, rows, err := storyboardNodeFromDocument(doc, args.NodeID)
+	node, board, rows, err := storyboardNodeFromDocument(doc, args.NodeID)
 	if err != nil {
 		return nil, err
 	}
-	index := -1
-	for i, row := range rows {
-		if stringValue(row["id"]) == args.RowID {
-			index = i
-			break
-		}
+	next, fields, err := cloudAgentPlanStoryboardRows(doc, rows, args, userID, call.ID)
+	if err != nil {
+		return nil, err
 	}
-	if args.Action != "append" && index < 0 {
-		return nil, BadAuthRequest("分镜行不存在，请先读取真实行ID")
-	}
-	next := make([]map[string]any, len(rows))
-	for i, row := range rows {
-		next[i] = row
-	}
-	fields := []string{}
-	switch args.Action {
-	case "remove":
-		next = append(next[:index], next[index+1:]...)
-		fields = []string{"镜头行"}
-	case "append", "update":
-		if len(args.Patch) == 0 {
-			return nil, BadAuthRequest("分镜操作需要 patch")
+	if args.Action == "remove" {
+		ids := append([]string(nil), args.RowIDs...)
+		if args.RowID != "" {
+			ids = append(ids, args.RowID)
 		}
-		patch := map[string]any{}
-		if err := capability.ValidateEditableFields(capability.StoryboardRowFields(), args.Patch); err != nil {
-			return nil, BadAuthRequest(err.Error())
-		}
-		if err := validateCloudAgentStoryboardReferences(doc, args.Patch); err != nil {
-			return nil, err
-		}
-		for key, value := range args.Patch {
-			patch[key] = value
-			fields = append(fields, key)
-		}
-		sort.Strings(fields)
-		if args.Action == "append" {
-			if len(rows) >= maxCloudAgentStoryboardRows {
-				return nil, BadAuthRequest("单个分镜表最多100个镜头")
-			}
-			if err := validateCloudAgentStoryboardRow(patch, true); err != nil {
+		for _, id := range ids {
+			if err := validateCloudAgentStoryboardOccupancy(repo, userID, canvasID, args.NodeID, id, ""); err != nil {
 				return nil, err
 			}
-			row := cloudAgentStoryboardRowDefaults()
-			for key, value := range patch {
-				row[key] = value
-			}
-			row["id"] = cloudAgentID(userID, fmt.Sprintf("storyboard:%s:%s:%d", args.NodeID, call.ID, len(rows)+1))
-			row["shotNumber"] = float64(len(rows) + 1)
-			next = append(next, row)
-		} else {
-			candidate := map[string]any{}
-			for key, value := range next[index] {
-				candidate[key] = value
-			}
-			for key, value := range patch {
-				candidate[key] = value
-			}
-			if err := validateCloudAgentStoryboardSourceRange(candidate); err != nil {
-				return nil, err
-			}
-			for key, value := range patch {
-				next[index][key] = value
-			}
 		}
 	}
-	for i, row := range next {
-		row["shotNumber"] = float64(i + 1)
+	details := []string{}
+	for _, row := range rows {
+		id := stringValue(row["id"])
+		if id == args.RowID || cloudAgentContainsString(args.RowIDs, id) {
+			details = append(details, fmt.Sprintf("镜头 %v", row["shotNumber"]))
+		}
 	}
-	storyboard["rows"] = mapsAsAny(next)
-	node["metadata"].(map[string]any)["storyboard"] = storyboard
+	if args.Action == "set_assets" {
+		for _, asset := range args.Assets {
+			details = append(details, truncateRunes(asset.Ref, 120)+" · "+asset.Role)
+		}
+		if len(args.Assets) == 0 {
+			details = append(details, "清空所选镜头的资产声明与旧角色列表，共享引用保留")
+		}
+	}
+	board["rows"] = mapsAsAny(next)
 	if err := reconcileCloudAgentReferenceFields(doc, canvas.PayloadJSON); err != nil {
 		return nil, err
 	}
-	return &cloudAgentStoryboardMutationPlan{
-		Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
-		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认修改分镜脚本", Description: "Agent 准备修改分镜脚本。批准后才会写入画布。", Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeTitle: stringValue(node["title"]), NodeType: "script", NodeTypeLabel: "分镜脚本", Fields: fields, Summary: fmt.Sprintf("%s分镜脚本《%s》", map[string]string{"append": "追加镜头到", "update": "修改", "remove": "删除"}[args.Action], stringValue(node["title"]))}}},
-	}, nil
+	return &cloudAgentStoryboardMutationPlan{Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
+		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认修改分镜", Description: "按所选镜头统一修改创作内容或资产引用。", Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeTitle: stringValue(node["title"]), NodeType: "script", NodeTypeLabel: "分镜脚本", Fields: fields, Details: details, Summary: fmt.Sprintf("%s：%s", args.Action, stringValue(node["title"]))}}}}, nil
 }
-
 func applyCloudAgentStoryboardMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {
 	var plan *cloudAgentStoryboardMutationPlan
 	var err error
@@ -383,7 +342,13 @@ func applyCloudAgentStoryboardMutation(repo *repository.Repository, userID, canv
 	if len(plan.Preview.Items) > 0 {
 		nodeID = plan.Preview.Items[0].NodeID
 	}
-	return map[string]any{"canvasId": canvasID, "nodeId": nodeID, "snapshotHash": cloudAgentCanvasHash(plan.Document), "beforeSnapshotHash": plan.BeforeSnapshotHash, "summary": plan.Preview.Description, "preview": plan.Preview}, nil
+	rowRefs := []any{}
+	if _, _, rows, readErr := storyboardNodeFromDocument(plan.Document, nodeID); readErr == nil {
+		for _, row := range rows {
+			rowRefs = append(rowRefs, map[string]any{"rowId": row["id"], "shotNumber": row["shotNumber"]})
+		}
+	}
+	return map[string]any{"canvasId": canvasID, "nodeId": nodeID, "snapshotHash": cloudAgentCanvasHash(plan.Document), "beforeSnapshotHash": plan.BeforeSnapshotHash, "summary": plan.Preview.Description, "preview": plan.Preview, "rows": rowRefs}, nil
 }
 
 func mapsAsAny(values []map[string]any) []any {

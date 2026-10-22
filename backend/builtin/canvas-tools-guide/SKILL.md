@@ -3,14 +3,14 @@ name: canvas-tools-guide
 description: "画布工具操作指南：用户要求读取或修改画布、创建节点、维护分镜和批量创作表、声明素材引用与产物归属、绑定角色卡与媒体资产、选择模型或提交生成时使用。指导 Agent 从真实状态选择专用工具，正确填写 ID、引用字段、快照和分镜行身份，核对回执并修正参数错误。"
 metadata:
   skillId: yingce-canvas-tools-guide
-  version: "1.0.0"
+  version: "1.1.0"
   author: "影策"
   owner: yingce-system
   tag: others
   sortWeight: 1000
   source: 3
   createdAt: "2026-10-07T00:00:00Z"
-  updatedAt: "2026-10-07T00:00:00Z"
+  updatedAt: "2026-10-23T00:00:00Z"
 ---
 
 # 画布工具操作指南
@@ -23,8 +23,8 @@ metadata:
 | --- | --- |
 | 看有哪些节点、查已有关系或任务 | `canvas_get_state`；分镜或批量表继续用专用 read 工具 |
 | 创建空白节点、改普通节点文本、声明输入引用 | `canvas_list_node_types` → `canvas_apply_ops`（引用写 `generationSpec.referenceBindings`／`inputBindings`） |
-| 创建多镜头分镜 | `canvas_create_storyboard`，传结构化 `rows`（可传共享 `referenceNodeIds`） |
-| 改某镜头台词、时长、关联资产、共享引用或产物归属 | `canvas_read_storyboard` → `canvas_edit_storyboard`（`set_references`／`bind_output`／`unbind_output`） |
+| 创建多镜头分镜 | `canvas_create_storyboard`，维护紧凑创作 `rows`，系统分配 ID 与位置 |
+| 改镜头台词、时长、关联资产或共享引用 | `canvas_read_storyboard` → `canvas_edit_storyboard`；多行用 `rowIds`，资产用 `set_assets` |
 | 改批量表行、参考列、并发或全局提示词 | `canvas_read_batch_table` → `canvas_edit_batch_table` |
 | 用已有形象图建角色卡 | 精读原图 → `canvas_create_character` |
 | 生成或编辑媒体 | 读节点 → `model_list` → `generate_media` |
@@ -35,11 +35,11 @@ metadata:
 
 ## 一次操作的闭环
 
-1. **读目标**：首次 `canvas_get_state {}`。关系检查选 `view=references`；正文按 `nextRead` 续读，编辑富文本才选 `view=edit`。分镜先读 `summary/bindings`，只有覆盖完整才能总结整表。不能把标题当 ID，也不能用局部读取外推全局。
+1. **读目标**：首次 `canvas_get_state {}`。关系检查选 `view=references`；正文按 `nextRead` 续读，编辑富文本才选 `view=edit`。分镜默认 `creative` 看创作和有效输入，`summary` 扫描缺口，只有覆盖完整才能总结整表。不能用局部读取外推全局。
 2. **读能力**：创建或声明引用前查 `canvas_list_node_types`（其 referenceContract 说明引用写哪些字段）；结构化行用专用 read 取得真实 `rowId`、列 ID 和最新 `snapshotHash`。需要判断画面时读取实际图片，不能凭节点标题描述画面。
-3. **构造最小写入**：只传该 action 必需和确有用途的字段；省略不用的可选字段，不传 `null`。ID 字段分清节点、行、任务、模型凭证；数组保持数组，数字保持数字。新节点 ID 自行分配唯一短标识，已有对象 ID 必须来自读取；不要自己造边 ID。
+3. **构造最小写入**：只传该 action 必需和确有用途的字段；省略不用的可选字段，不传 `null`。分镜和角色创建省略 nodeId，分镜生成省略产物 nodeId/title，系统负责分配；普通 add_node 仍按合同提供唯一 ID。已有行 ID 来自读取；资产 ref 可用真实节点 ID 或唯一完整名称，同名多版本必须用 ID。
 4. **顺序提交**：一次模型响应只提交一个写工具；有关联的 add/update/引用声明可放进一个 `canvas_apply_ops`（最多 20 项）。等待回执后再做依赖它的写入；不要并行提交共享快照的多个写工具。
-5. **核对落地**：先看回执是否真的执行成功、是否待审批或拒绝，再精读改动对象。确认内容、引用字段、行绑定或新节点真实存在（派生出的 connections 也会出现在回执里）。写入后继续工作使用最新快照；不得沿用写入前的 hash。
+5. **核对落地**：先看回执是否执行成功、待审批或拒绝，确认内容、引用或产物归属；需要继续核对时读创作视图或 summary，不遍历派生连线。回执提供新节点/行身份及最新快照；不得沿用写入前的 hash。
 6. **如实收尾**：编辑成功、待审批、任务已提交、任务生成成功是不同结果。多步任务的计划按回执对账，再 `finish_run`；不能仅凭计划或预览声称完成。
 
 ## 按需读取参考

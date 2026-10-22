@@ -113,3 +113,43 @@ func TestCloudAgentEmptyAdvertisedNamesFallBackToEligibleCatalog(t *testing.T) {
 		t.Fatal("frozen L0 advertised set admitted L1 write")
 	}
 }
+
+func TestAgentStoryboardBoundaryLoadoutPersistsBeforeInventoryUndo(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: tierPayload()}).Error; err != nil {
+		t.Fatal(err)
+	}
+	view, err := s.CreateCloudAgentRun("user", tierRunRequest("节点数量", "workflow-loadout"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := s.repo.CloudAgent("user", view.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "agent-canvas").Update("payload_json", tierPayload(tierNode("board", "script", nil))).Error; err != nil {
+		t.Fatal(err)
+	}
+	run, err = s.cloudAgentRefreshToolLoadout(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "agent-canvas").Update("payload_json", tierPayload()).Error; err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.repo.CloudAgent("user", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := cloudAgentDecode(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsToolName(state.AdvertisedToolNames, "canvas_edit_storyboard") {
+		t.Fatal("Worker would receive an uncommitted loadout")
+	}
+	names, err := cloudAgentNextToolLoadout(s.repo, "user", &state)
+	if err != nil || !containsToolName(names, "canvas_edit_storyboard") {
+		t.Fatalf("loadout retracted after undo: %v %v", names, err)
+	}
+}

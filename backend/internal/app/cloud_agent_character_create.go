@@ -70,7 +70,7 @@ func cloudAgentCharacterCreateSchema() map[string]any {
 	}
 	definitionProperties["aliases"] = map[string]any{"type": "array", "maxItems": 16, "items": str("别称或称号")}
 	return map[string]any{
-		"nodeId": str("新节点ID"), "name": str("角色名"), "imageNodeId": str("单图模式：同一图片用于三视图和主图；与两个分视角字段互斥"),
+		"nodeId": str("可选新节点 ID，省略由系统分配"), "name": str("角色名"), "imageNodeId": str("单图模式：同一图片用于三视图和主图；与两个分视角字段互斥"),
 		"primaryImageNodeId":    str("定妆主图节点ID；可与 turnaroundImageNodeId 分别指定，缺一个时明确复用"),
 		"turnaroundImageNodeId": str("三视图节点ID；与主图分别保存来源"), "audioNodeId": str("可选，就绪的声音音频节点ID"),
 		"definition": map[string]any{"type": "object", "description": "可选角色设定；只填有依据的字段，未知项留空", "properties": definitionProperties, "additionalProperties": false},
@@ -143,6 +143,9 @@ func prepareCloudAgentCharacterCreate(repo *repository.Repository, userID, canva
 	var args cloudAgentCharacterCreateArgs
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
 		return nil, &cloudAgentArgumentError{BadAuthRequest("创建角色卡参数无效，请按当前 schema 提供形象节点、设定及可选位置")}
+	}
+	if args.NodeID == "" {
+		args.NodeID = cloudAgentID(userID, "character:"+canvasID+":"+call.ID)
 	}
 	if err := validateCloudAgentID(args.NodeID, "角色卡节点ID", 80); err != nil {
 		return nil, &cloudAgentArgumentError{err}

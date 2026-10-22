@@ -57,6 +57,15 @@ func agentStartPiModelStep(t *testing.T, s *Service, runID string) (*model.Cloud
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The boundary snapshot can persist newly disclosed tools. Requests use that
+	// exact catalog, rather than every permission-eligible tool in the fixture.
+	names := []string{}
+	for _, tool := range snapshot.Tools {
+		if tool.Allowed {
+			names = append(names, tool.Name)
+		}
+	}
+	request.Canonical.Tools = cloudAgentToolsNamed(state.Canonical.Tools, names)
 	for _, raw := range snapshot.PiMessages {
 		var message map[string]any
 		if json.Unmarshal(raw, &message) == nil && stringField(message, "role") == "user" {

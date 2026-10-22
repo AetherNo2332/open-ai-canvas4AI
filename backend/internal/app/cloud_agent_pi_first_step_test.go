@@ -117,8 +117,11 @@ func piFirstStepRequest(state *cloudAgentRuntime) (PiModelStepRequest, *cloudAge
 	}
 	canonical := state.Canonical
 	canonical.SystemPrompt = cloudAgentRenderTestPrompt(state.Canonical.SystemPrompt, parts)
-	// 首步暴露本轮所有合格的具体工具：与 PiModelStep 的披露校验同一份算法。
+	// 首步只发送本轮已披露的具体工具，与真实 Worker 使用同一名单。
 	canonical.Tools = cloudAgentVisibleTools(state.Canonical.Tools, "", nil, nil)
+	if len(state.AdvertisedToolNames) > 0 {
+		canonical.Tools = cloudAgentToolsNamed(canonical.Tools, state.AdvertisedToolNames)
+	}
 	return PiModelStepRequest{Canonical: canonical, HarnessHash: cloudAgentHarnessBodyDigest(parts), Harness: parts}, parts
 }
 

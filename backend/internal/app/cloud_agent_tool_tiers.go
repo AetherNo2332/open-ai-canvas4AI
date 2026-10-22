@@ -22,8 +22,6 @@ var cloudAgentTierL1Tools = map[string]bool{
 	"image_layer_split":        true,
 	"image_text_detect":        true,
 	"image_annotation_render":  true,
-	"canvas_read_content":      true,
-	"canvas_search_nodes":      true,
 }
 
 type cloudAgentCanvasInventory struct {
@@ -33,17 +31,15 @@ type cloudAgentCanvasInventory struct {
 }
 
 type cloudAgentToolIntent struct {
-	Storyboard  bool
-	BatchTable  bool
-	Drawing     bool
-	Assets      bool
-	Character   bool
-	Arrange     bool
-	LayerSplit  bool
-	OCR         bool
-	Annotation  bool
-	LongText    bool
-	SearchNodes bool
+	Storyboard bool
+	BatchTable bool
+	Drawing    bool
+	Assets     bool
+	Character  bool
+	Arrange    bool
+	LayerSplit bool
+	OCR        bool
+	Annotation bool
 }
 
 func cloudAgentScanCanvasInventory(payloadJSON string) cloudAgentCanvasInventory {
@@ -94,17 +90,15 @@ func cloudAgentPromptHasAny(prompt string, keywords ...string) bool {
 
 func cloudAgentPromptIntentFlags(prompt string) cloudAgentToolIntent {
 	return cloudAgentToolIntent{
-		Storyboard:  cloudAgentPromptHasAny(prompt, "分镜", "逐镜", "storyboard"),
-		BatchTable:  cloudAgentPromptHasAny(prompt, "批次", "批量创作"),
-		Drawing:     cloudAgentPromptHasAny(prompt, "绘图", "笔迹", "tldraw", "excalidraw"),
-		Assets:      cloudAgentPromptHasAny(prompt, "素材库", "替换素材", "绑定素材"),
-		Character:   cloudAgentPromptHasAny(prompt, "角色卡"),
-		Arrange:     cloudAgentPromptHasAny(prompt, "整理", "排版", "对齐"),
-		LayerSplit:  cloudAgentPromptHasAny(prompt, "拆图层"),
-		OCR:         cloudAgentPromptHasAny(prompt, "认字", "ocr"),
-		Annotation:  cloudAgentPromptHasAny(prompt, "标注"),
-		LongText:    cloudAgentPromptHasAny(prompt, "长文", "全文"),
-		SearchNodes: cloudAgentPromptHasAny(prompt, "搜索画布"),
+		Storyboard: cloudAgentPromptHasAny(prompt, "分镜", "逐镜", "storyboard"),
+		BatchTable: cloudAgentPromptHasAny(prompt, "批次", "批量创作"),
+		Drawing:    cloudAgentPromptHasAny(prompt, "绘图", "笔迹", "tldraw", "excalidraw"),
+		Assets:     cloudAgentPromptHasAny(prompt, "素材库", "替换素材", "绑定素材"),
+		Character:  cloudAgentPromptHasAny(prompt, "角色卡"),
+		Arrange:    cloudAgentPromptHasAny(prompt, "整理", "排版", "对齐"),
+		LayerSplit: cloudAgentPromptHasAny(prompt, "拆图层"),
+		OCR:        cloudAgentPromptHasAny(prompt, "认字", "ocr"),
+		Annotation: cloudAgentPromptHasAny(prompt, "标注"),
 	}
 }
 
@@ -116,7 +110,7 @@ func cloudAgentUnlockedL1Tools(inventory cloudAgentCanvasInventory, intent cloud
 		}
 	}
 	if cloudAgentInventoryHasType(inventory, "script") || intent.Storyboard {
-		enable("canvas_read_storyboard", "canvas_create_storyboard", "canvas_edit_storyboard")
+		enable("canvas_read_storyboard", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_create_character", "canvas_list_assets", "canvas_bind_asset")
 	}
 	if cloudAgentInventoryHasType(inventory, "batch-table") || intent.BatchTable {
 		enable("canvas_read_batch_table", "canvas_edit_batch_table")
@@ -142,13 +136,53 @@ func cloudAgentUnlockedL1Tools(inventory cloudAgentCanvasInventory, intent cloud
 	if intent.Annotation {
 		enable("image_annotation_render")
 	}
-	if intent.LongText {
-		enable("canvas_read_content")
-	}
-	if intent.SearchNodes || inventory.TotalNodes > cloudAgentCanvasSummaryMaxNodes {
-		enable("canvas_search_nodes")
-	}
 	return unlocked
+}
+
+// A model boundary may add eligible tools, but an in-flight model or tool batch
+// retains its admitted loadout. Pending/subagent text is not a user instruction.
+func cloudAgentNextAdvertisedToolNames(state *cloudAgentRuntime, inventory cloudAgentCanvasInventory) []string {
+	if len(state.AdvertisedToolNames) == 0 {
+		return cloudAgentToolNames(state.Canonical.Tools)
+	}
+	if state.ActiveTaskID != "" || state.CallIndex < len(state.Calls) {
+		return append([]string(nil), state.AdvertisedToolNames...)
+	}
+	prompt := state.Request.Prompt
+	for _, message := range state.Canonical.Messages {
+		source := stringField(message, cloudAgentContextSourceKey)
+		if stringField(message, "role") == "user" && source == "user_interjection" {
+			prompt += "\n" + stringField(message, "content")
+		}
+	}
+	selected := map[string]bool{}
+	for _, name := range append(append(append([]string(nil), state.AdvertisedToolNames...), state.DeliveredIntentToolNames...), cloudAgentSelectAdvertisedTools(state.Canonical.Tools, inventory, prompt)...) {
+		selected[name] = true
+	}
+	names := []string{}
+	eligible := map[string]bool{}
+	for _, name := range cloudAgentToolNames(state.Canonical.Tools) {
+		eligible[name] = true
+	}
+	for _, name := range append(append([]string(nil), state.AdvertisedToolNames...), cloudAgentToolNames(state.Canonical.Tools)...) {
+		if eligible[name] && selected[name] && (name == "read" && state.SkillRuntimeMode == cloudAgentSkillRuntimeNative || cloudAgentToolAllowed(state.Request, name)) {
+			names = append(names, name)
+			delete(selected, name)
+		}
+	}
+	return names
+}
+
+func cloudAgentRecordDeliveredToolIntent(state *cloudAgentRuntime, item cloudAgentInterjection) {
+	if item.Source == "subagent" {
+		return
+	}
+	unlocked := cloudAgentUnlockedL1Tools(cloudAgentCanvasInventory{}, cloudAgentPromptIntentFlags(item.Text))
+	for _, name := range cloudAgentToolNames(state.Canonical.Tools) {
+		if unlocked[name] && cloudAgentTierL1Tools[name] && !cloudAgentContainsString(state.DeliveredIntentToolNames, name) {
+			state.DeliveredIntentToolNames = append(state.DeliveredIntentToolNames, name)
+		}
+	}
 }
 
 func cloudAgentAdvertisedToolNames(req CloudAgentRequest, inventory cloudAgentCanvasInventory, prompt string) []string {

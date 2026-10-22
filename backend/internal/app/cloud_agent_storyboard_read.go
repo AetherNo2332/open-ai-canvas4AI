@@ -26,10 +26,10 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 		return nil, err
 	}
 	if args.View == "" {
-		args.View = "bindings"
+		args.View = "creative"
 	}
-	if args.View != "summary" && args.View != "bindings" && args.View != "full" {
-		return nil, cloudAgentFieldError("view", "invalid_value", "view 必须是 summary、bindings 或 full")
+	if args.View != "summary" && args.View != "bindings" && args.View != "full" && args.View != "creative" {
+		return nil, cloudAgentFieldError("view", "invalid_value", "view 必须是 creative、summary、bindings 或 full")
 	}
 	if args.Mode != "" && args.Mode != "image" && args.Mode != "video" {
 		return nil, cloudAgentFieldError("mode", "invalid_value", "mode 必须是 image 或 video；省略只解析声明引用")
@@ -100,6 +100,9 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 				}
 			}
 		}
+		if args.View == "creative" {
+			item = cloudAgentStoryboardCreativeRow(args.NodeID, row, resolved)
+		}
 		rowBytes := 0
 		if args.View != "summary" {
 			body, marshalErr := json.Marshal(item)
@@ -163,6 +166,27 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 		return nil, BadAuthRequest("分镜读取结果超过预算，请缩小 rowIds 或 rows")
 	}
 	return result, nil
+}
+
+func cloudAgentStoryboardCreativeRow(nodeID string, row, resolved map[string]any) map[string]any {
+	item := map[string]any{"rowId": row["id"], "shotNumber": row["shotNumber"], "durationSeconds": row["durationSeconds"], "inputs": resolved["effectiveInputs"], "inputState": resolved["state"], "imageNodeId": stringValue(row["imageNodeId"]), "videoNodeId": stringValue(row["videoNodeId"]), "hasImagePrompt": strings.TrimSpace(stringValue(row["imageGenerationPrompt"])) != "", "hasVideoPrompt": strings.TrimSpace(stringValue(row["videoMotionPrompt"])) != ""}
+	if issue := resolved["issue"]; issue != nil {
+		item["issue"] = issue
+	}
+	reads := map[string]any{}
+	for _, key := range []string{"plotDescription", "dialogue"} {
+		text := []rune(stringValue(row[key]))
+		end := min(len(text), 2000)
+		item[key] = string(text[:end])
+		if end < len(text) {
+			item[key+"Truncated"] = true
+			reads[key] = map[string]any{"tool": "canvas_read_content", "arguments": map[string]any{"nodeId": nodeID, "rowId": row["id"], "field": key, "offset": end, "limit": 8000}}
+		}
+	}
+	if len(reads) > 0 {
+		item["nextReads"] = reads
+	}
+	return item
 }
 
 func cloudAgentStoryboardBindingFields(row map[string]any, collection string) []any {

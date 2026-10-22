@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v3",
+  "schemaVersion": "cloud-agent-tools/v4",
   "tools": [
     {
       "function": {
@@ -945,7 +945,7 @@
     },
     {
       "function": {
-        "description": "分页读取节点可编辑的完整文本。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。",
+        "description": "分页读取节点正文或分镜行文本。分镜续读须同时指定 rowId 和 field。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。",
         "name": "canvas_read_content",
         "parameters": {
           "additionalProperties": false,
@@ -953,7 +953,23 @@
             "field": {
               "enum": [
                 "content",
-                "composerContent"
+                "composerContent",
+                "plotDescription",
+                "dialogue",
+                "videoMotionPrompt",
+                "imageGenerationPrompt",
+                "camera",
+                "motion",
+                "shotSize",
+                "emotion",
+                "lightingAndAtmosphere",
+                "audioEffects",
+                "narrativeIntent",
+                "viewerPOV",
+                "performanceBlocking",
+                "timeBeats",
+                "continuityOut",
+                "negativePrompt"
               ],
               "type": "string"
             },
@@ -969,6 +985,10 @@
             "offset": {
               "minimum": 0,
               "type": "integer"
+            },
+            "rowId": {
+              "description": "分镜行 ID，普通正文省略",
+              "type": "string"
             }
           },
           "required": [
@@ -1113,7 +1133,7 @@
     },
     {
       "function": {
-        "description": "view 默认 bindings，与 summary 都默认且最多100行，显式返回共享引用、行绑定和有效输入；summary 分页扫描绑定健康，区分空输入、未知、不可用与待迁移。full 默认1行、最多20行，单行正文按字段截断。mode=image/video 按生成口径解析，video 遵守关键帧模式。rowIds 定位真实行，与非零 offset 互斥。coverage.complete 才支持全表结论；hasMore 按 nextRead 续读。编辑只用 rowId 和最新 snapshotHash，不从连线猜绑定。",
+        "description": "读取结构化分镜，默认 creative 返回创作、时长、对白和实际资产名称/版本。summary 扫描缺口，bindings 排查底层引用，full 查看高级字段；coverage.complete 才能支持整表结论。rowIds 定位，nextRead 续页，长文本按 nextReads 续读，不从连线推测绑定。",
         "name": "canvas_read_storyboard",
         "parameters": {
           "additionalProperties": false,
@@ -1137,6 +1157,7 @@
                   "properties": {
                     "view": {
                       "enum": [
+                        "creative",
                         "summary",
                         "bindings"
                       ]
@@ -1199,8 +1220,9 @@
               "type": "integer"
             },
             "view": {
-              "description": "默认 bindings；summary 分页扫描绑定健康；full 读取正文",
+              "description": "默认 creative：镜头创作、资产名称/版本及有效输入；summary 扫描缺口，bindings 排查底层引用，full 高级字段",
               "enum": [
+                "creative",
                 "summary",
                 "bindings",
                 "full"
@@ -1832,7 +1854,7 @@
     },
     {
       "function": {
-        "description": "读取生成模型目录、能力与价格。生成前传 mode 和实际 referenceNodeIds，按真实素材与操作筛选；素材或模式变化后重新查询，空列表表示无匹配项。优先原样复制返回的 selectionId 字符串到生成工具，不传嵌套 selection 对象，不混用选择字段。再按能力核对时长、画幅、音频和价格。",
+        "description": "读取生成模型目录、能力与价格。生成前传 mode 和实际 referenceNodeIds，按真实素材与操作筛选；素材或模式变化后重新查询，空列表表示无匹配项。优先原样复制返回的 selectionId 字符串到生成工具，不传嵌套 selection 对象，不混用选择字段。再按能力核对时长、画幅、音频和价格。 分镜可传 storyboardRowIds 批量查询；相同实际输入能力合并为一份模型列表，逐行返回问题。",
         "name": "model_list",
         "parameters": {
           "additionalProperties": false,
@@ -1844,6 +1866,9 @@
                 },
                 "storyboardRowId": {
                   "not": {}
+                },
+                "storyboardRowIds": {
+                  "not": {}
                 }
               }
             },
@@ -1851,12 +1876,30 @@
               "properties": {
                 "referenceNodeIds": {
                   "not": {}
+                },
+                "storyboardRowIds": {
+                  "not": {}
                 }
               },
               "required": [
                 "mode",
                 "storyboardNodeId",
                 "storyboardRowId"
+              ]
+            },
+            {
+              "properties": {
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "storyboardRowId": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "mode",
+                "storyboardNodeId",
+                "storyboardRowIds"
               ]
             }
           ],
@@ -1878,12 +1921,22 @@
               "type": "array"
             },
             "storyboardNodeId": {
-              "description": "分镜表节点 ID，与 storyboardRowId 同时传入，输入从行读取",
+              "description": "分镜表节点 ID，与 storyboardRowId 或 storyboardRowIds 同时传入，输入从行读取",
               "type": "string"
             },
             "storyboardRowId": {
               "description": "分镜行 ID",
               "type": "string"
+            },
+            "storyboardRowIds": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
             }
           },
           "required": [],
@@ -1894,17 +1947,42 @@
     },
     {
       "function": {
-        "description": "创建结构化分镜脚本，适用于多镜头、连续性与逐镜维护。先读画布并传 snapshotHash；rows 是对象数组，每行需正数 durationSeconds 及非空 plotDescription 或 videoMotionPrompt，如 [{\"durationSeconds\":5,\"plotDescription\":\"人物走入房间\"}]。referenceNodeIds 可选，声明共享引用输入。不能用 content 或 Markdown 替代 rows，写入遵循审批模式。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "创建结构化分镜，自动分配节点/行 ID 和位置。传最新 snapshotHash、title 和 rows；每行用正数 durationSeconds、plotDescription 创作说明、dialogue，按需覆盖 imageGenerationPrompt/videoMotionPrompt。assets 用 ref（画布节点 ID 或唯一完整名称）和 role；references 是共享引用列表。同名多版本须用 ID，不猜版本。写入遵循审批模式。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_create_storyboard",
         "parameters": {
           "additionalProperties": false,
+          "anyOf": [
+            {
+              "properties": {
+                "references": {
+                  "not": {}
+                }
+              }
+            },
+            {
+              "properties": {
+                "referenceNodeIds": {
+                  "not": {}
+                }
+              }
+            }
+          ],
           "properties": {
             "nodeId": {
-              "description": "当前画布内新的稳定分镜节点ID",
+              "description": "可选新分镜节点 ID，省略由系统分配",
               "type": "string"
             },
             "referenceNodeIds": {
               "description": "可选：所有镜头共享的引用输入节点；服务端据此派生连接，不要另外连线",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "references": {
+              "description": "全表共享输入：当前画布节点 ID 或唯一名称。逐镜角色和道具用 rows.assets；系统管理实际引用和连线",
               "items": {
                 "minLength": 1,
                 "type": "string"
@@ -1938,19 +2016,14 @@
                   }
                 ],
                 "properties": {
-                  "assetBindings": {
+                  "assets": {
                     "items": {
                       "additionalProperties": false,
                       "properties": {
-                        "nodeId": {
-                          "maxLength": 120,
+                        "ref": {
+                          "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
+                          "minLength": 1,
                           "type": "string"
-                        },
-                        "priority": {
-                          "maximum": 100,
-                          "minimum": 0,
-                          "multipleOf": 1,
-                          "type": "number"
                         },
                         "role": {
                           "enum": [
@@ -1963,201 +2036,39 @@
                             "motion",
                             "audio"
                           ],
-                          "maxLength": 240,
                           "type": "string"
                         }
                       },
                       "required": [
-                        "nodeId",
-                        "role",
-                        "priority"
+                        "ref",
+                        "role"
                       ],
                       "type": "object"
                     },
                     "maxItems": 100,
                     "type": "array"
-                  },
-                  "audioEffects": {
-                    "description": "音效设计。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "camera": {
-                    "description": "机位、角度与运镜设计。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "characters": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "characterDescription": {
-                          "maxLength": 20000,
-                          "type": "string"
-                        },
-                        "characterImageNodeId": {
-                          "maxLength": 120,
-                          "type": "string"
-                        },
-                        "characterName": {
-                          "maxLength": 240,
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "characterName"
-                      ],
-                      "type": "object"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
-                  },
-                  "continuityOut": {
-                    "description": "衔接下一镜头所需的状态与连续性。",
-                    "maxLength": 20000,
-                    "type": "string"
                   },
                   "dialogue": {
-                    "description": "台词文本；无台词可省略。",
                     "maxLength": 20000,
                     "type": "string"
                   },
                   "durationSeconds": {
-                    "description": "镜头时长（秒），新增镜头必填且大于0。",
                     "maximum": 86400,
                     "minimum": 5e-324,
                     "type": "number"
                   },
-                  "emotion": {
-                    "description": "角色情绪。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
                   "imageGenerationPrompt": {
-                    "description": "给图片模型的静态关键帧提示词。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "imagePromptTemplateVariables": {
-                    "additionalProperties": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "maxProperties": 100,
-                    "properties": {},
-                    "propertyNames": {
-                      "maxLength": 240,
-                      "minLength": 1,
-                      "not": {
-                        "enum": [
-                          "__proto__",
-                          "constructor",
-                          "prototype"
-                        ]
-                      },
-                      "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                    },
-                    "type": "object"
-                  },
-                  "keyframeTimeMs": {
-                    "maximum": 1000000000000,
-                    "minimum": 0,
-                    "type": "number"
-                  },
-                  "lightingAndAtmosphere": {
-                    "description": "光线与氛围。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "motion": {
-                    "description": "主体动作概要，与完整视频提示词分开记录。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "mustHave": {
-                    "items": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
-                  },
-                  "narrativeIntent": {
-                    "description": "镜头的叙事目的。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "negativePrompt": {
-                    "description": "应避免的画面或动作。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "optionalDetails": {
-                    "items": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "maxItems": 100,
-                    "type": "array"
-                  },
-                  "performanceBlocking": {
-                    "description": "演员走位与表演。",
+                    "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
                     "maxLength": 20000,
                     "type": "string"
                   },
                   "plotDescription": {
-                    "description": "静态画面与剧情描述；新增镜头至少填写本字段或 videoMotionPrompt。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "shotSize": {
-                    "description": "景别，如近景、中景、全景。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "sourceEndMs": {
-                    "maximum": 1000000000000,
-                    "minimum": 0,
-                    "type": "number"
-                  },
-                  "sourceStartMs": {
-                    "maximum": 1000000000000,
-                    "minimum": 0,
-                    "type": "number"
-                  },
-                  "timeBeats": {
-                    "description": "镜头内时间节拍的纯文本，如 0–2秒转身，2–5秒向前走；不是数组。",
+                    "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
                     "maxLength": 20000,
                     "type": "string"
                   },
                   "videoMotionPrompt": {
-                    "description": "给视频模型的完整动态镜头提示词，包含动作和运镜。",
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "videoPromptTemplateVariables": {
-                    "additionalProperties": {
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "maxProperties": 100,
-                    "properties": {},
-                    "propertyNames": {
-                      "maxLength": 240,
-                      "minLength": 1,
-                      "not": {
-                        "enum": [
-                          "__proto__",
-                          "constructor",
-                          "prototype"
-                        ]
-                      },
-                      "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                    },
-                    "type": "object"
-                  },
-                  "viewerPOV": {
-                    "description": "观众视角。",
+                    "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
                     "maxLength": 20000,
                     "type": "string"
                   }
@@ -2188,7 +2099,6 @@
           },
           "required": [
             "snapshotHash",
-            "nodeId",
             "title",
             "rows"
           ],
@@ -2199,7 +2109,7 @@
     },
     {
       "function": {
-        "description": "先read取 nodeId/snapshotHash/真实rowId。append 给patch（正数durationSeconds及剧情/运动描述），不传rowId；update 给rowId+patch；remove 只给rowId。set_references 给referenceNodeIds（[] 清空共享素材）；bind_output 给rowId+outputMode+outputNodeId；unbind_output 给rowId+outputMode。assetBindings只引当前画布素材，不写输出身份、任务、URL或metadata，不手工建边。角色资产ID也受迁移门禁约束；reference_migration_required时停止，等待画布迁移，禁止绕过或虚报绑定。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "先读真实 rowId 和 snapshotHash。update/remove/set_assets 用 rowId 或 rowIds 选择行；update 给共同 patch，set_assets 给完整 assets（[] 清空），整批原子写入。append 给完整创作行 patch。set_references 给 references 或 referenceNodeIds。生成自动管理产物；显式指定已有产物才用 bind_output/unbind_output。不能写任务、状态、URL 或连线；历史引用需先迁移。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_edit_storyboard",
         "parameters": {
           "additionalProperties": false,
@@ -2208,6 +2118,9 @@
               "properties": {
                 "action": {
                   "const": "append"
+                },
+                "assets": {
+                  "not": {}
                 },
                 "outputMode": {
                   "not": {}
@@ -2240,19 +2153,14 @@
                     }
                   ],
                   "properties": {
-                    "assetBindings": {
+                    "assets": {
                       "items": {
                         "additionalProperties": false,
                         "properties": {
-                          "nodeId": {
-                            "maxLength": 120,
+                          "ref": {
+                            "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
+                            "minLength": 1,
                             "type": "string"
-                          },
-                          "priority": {
-                            "maximum": 100,
-                            "minimum": 0,
-                            "multipleOf": 1,
-                            "type": "number"
                           },
                           "role": {
                             "enum": [
@@ -2265,201 +2173,39 @@
                               "motion",
                               "audio"
                             ],
-                            "maxLength": 240,
                             "type": "string"
                           }
                         },
                         "required": [
-                          "nodeId",
-                          "role",
-                          "priority"
+                          "ref",
+                          "role"
                         ],
                         "type": "object"
                       },
                       "maxItems": 100,
                       "type": "array"
-                    },
-                    "audioEffects": {
-                      "description": "音效设计。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "camera": {
-                      "description": "机位、角度与运镜设计。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "characters": {
-                      "items": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "characterDescription": {
-                            "maxLength": 20000,
-                            "type": "string"
-                          },
-                          "characterImageNodeId": {
-                            "maxLength": 120,
-                            "type": "string"
-                          },
-                          "characterName": {
-                            "maxLength": 240,
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "characterName"
-                        ],
-                        "type": "object"
-                      },
-                      "maxItems": 100,
-                      "type": "array"
-                    },
-                    "continuityOut": {
-                      "description": "衔接下一镜头所需的状态与连续性。",
-                      "maxLength": 20000,
-                      "type": "string"
                     },
                     "dialogue": {
-                      "description": "台词文本；无台词可省略。",
                       "maxLength": 20000,
                       "type": "string"
                     },
                     "durationSeconds": {
-                      "description": "镜头时长（秒），新增镜头必填且大于0。",
                       "maximum": 86400,
                       "minimum": 5e-324,
                       "type": "number"
                     },
-                    "emotion": {
-                      "description": "角色情绪。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
                     "imageGenerationPrompt": {
-                      "description": "给图片模型的静态关键帧提示词。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "imagePromptTemplateVariables": {
-                      "additionalProperties": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "maxProperties": 100,
-                      "properties": {},
-                      "propertyNames": {
-                        "maxLength": 240,
-                        "minLength": 1,
-                        "not": {
-                          "enum": [
-                            "__proto__",
-                            "constructor",
-                            "prototype"
-                          ]
-                        },
-                        "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                      },
-                      "type": "object"
-                    },
-                    "keyframeTimeMs": {
-                      "maximum": 1000000000000,
-                      "minimum": 0,
-                      "type": "number"
-                    },
-                    "lightingAndAtmosphere": {
-                      "description": "光线与氛围。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "motion": {
-                      "description": "主体动作概要，与完整视频提示词分开记录。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "mustHave": {
-                      "items": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "maxItems": 100,
-                      "type": "array"
-                    },
-                    "narrativeIntent": {
-                      "description": "镜头的叙事目的。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "negativePrompt": {
-                      "description": "应避免的画面或动作。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "optionalDetails": {
-                      "items": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "maxItems": 100,
-                      "type": "array"
-                    },
-                    "performanceBlocking": {
-                      "description": "演员走位与表演。",
+                      "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
                       "maxLength": 20000,
                       "type": "string"
                     },
                     "plotDescription": {
-                      "description": "静态画面与剧情描述；新增镜头至少填写本字段或 videoMotionPrompt。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "shotSize": {
-                      "description": "景别，如近景、中景、全景。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "sourceEndMs": {
-                      "maximum": 1000000000000,
-                      "minimum": 0,
-                      "type": "number"
-                    },
-                    "sourceStartMs": {
-                      "maximum": 1000000000000,
-                      "minimum": 0,
-                      "type": "number"
-                    },
-                    "timeBeats": {
-                      "description": "镜头内时间节拍的纯文本，如 0–2秒转身，2–5秒向前走；不是数组。",
+                      "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
                       "maxLength": 20000,
                       "type": "string"
                     },
                     "videoMotionPrompt": {
-                      "description": "给视频模型的完整动态镜头提示词，包含动作和运镜。",
-                      "maxLength": 20000,
-                      "type": "string"
-                    },
-                    "videoPromptTemplateVariables": {
-                      "additionalProperties": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "maxProperties": 100,
-                      "properties": {},
-                      "propertyNames": {
-                        "maxLength": 240,
-                        "minLength": 1,
-                        "not": {
-                          "enum": [
-                            "__proto__",
-                            "constructor",
-                            "prototype"
-                          ]
-                        },
-                        "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                      },
-                      "type": "object"
-                    },
-                    "viewerPOV": {
-                      "description": "观众视角。",
+                      "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
                       "maxLength": 20000,
                       "type": "string"
                     }
@@ -2472,7 +2218,13 @@
                 "referenceNodeIds": {
                   "not": {}
                 },
+                "references": {
+                  "not": {}
+                },
                 "rowId": {
+                  "not": {}
+                },
+                "rowIds": {
                   "not": {}
                 }
               },
@@ -2482,10 +2234,35 @@
               ]
             },
             {
+              "oneOf": [
+                {
+                  "properties": {
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rowId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
+                }
+              ],
               "properties": {
                 "action": {
                   "const": "update"
                 },
+                "assets": {
+                  "not": {}
+                },
                 "outputMode": {
                   "not": {}
                 },
@@ -2494,18 +2271,45 @@
                 },
                 "referenceNodeIds": {
                   "not": {}
+                },
+                "references": {
+                  "not": {}
                 }
               },
               "required": [
                 "action",
-                "rowId",
                 "patch"
               ]
             },
             {
+              "oneOf": [
+                {
+                  "properties": {
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rowId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
+                }
+              ],
               "properties": {
                 "action": {
                   "const": "remove"
+                },
+                "assets": {
+                  "not": {}
                 },
                 "outputMode": {
                   "not": {}
@@ -2518,17 +2322,92 @@
                 },
                 "referenceNodeIds": {
                   "not": {}
+                },
+                "references": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            {
+              "oneOf": [
+                {
+                  "properties": {
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rowId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "set_assets"
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "references": {
+                  "not": {}
                 }
               },
               "required": [
                 "action",
-                "rowId"
+                "assets"
               ]
             },
             {
+              "oneOf": [
+                {
+                  "properties": {
+                    "referenceNodeIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "references"
+                  ]
+                },
+                {
+                  "properties": {
+                    "references": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "referenceNodeIds"
+                  ]
+                }
+              ],
               "properties": {
                 "action": {
                   "const": "set_references"
+                },
+                "assets": {
+                  "not": {}
                 },
                 "outputMode": {
                   "not": {}
@@ -2541,17 +2420,22 @@
                 },
                 "rowId": {
                   "not": {}
+                },
+                "rowIds": {
+                  "not": {}
                 }
               },
               "required": [
-                "action",
-                "referenceNodeIds"
+                "action"
               ]
             },
             {
               "properties": {
                 "action": {
                   "const": "bind_output"
+                },
+                "assets": {
+                  "not": {}
                 },
                 "outputNodeId": {
                   "minLength": 1,
@@ -2561,6 +2445,12 @@
                   "not": {}
                 },
                 "referenceNodeIds": {
+                  "not": {}
+                },
+                "references": {
+                  "not": {}
+                },
+                "rowIds": {
                   "not": {}
                 }
               },
@@ -2576,6 +2466,9 @@
                 "action": {
                   "const": "unbind_output"
                 },
+                "assets": {
+                  "not": {}
+                },
                 "outputNodeId": {
                   "not": {}
                 },
@@ -2583,6 +2476,12 @@
                   "not": {}
                 },
                 "referenceNodeIds": {
+                  "not": {}
+                },
+                "references": {
+                  "not": {}
+                },
+                "rowIds": {
                   "not": {}
                 }
               },
@@ -2595,16 +2494,49 @@
           ],
           "properties": {
             "action": {
-              "description": "append/update/remove 维护镜头行；set_references 改共享引用；bind_output/unbind_output 改镜头产物归属",
+              "description": "append/update/remove 维护镜头；set_assets 批量替换所选镜头的完整资产声明，[]清空；set_references 改共享输入。生成产物归属由 generate_media 管理，手工接管才用 bind_output/unbind_output",
               "enum": [
                 "append",
                 "update",
                 "remove",
+                "set_assets",
                 "set_references",
                 "bind_output",
                 "unbind_output"
               ],
               "type": "string"
+            },
+            "assets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "ref": {
+                    "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "character",
+                      "environment",
+                      "wardrobe",
+                      "prop",
+                      "weapon",
+                      "style",
+                      "motion",
+                      "audio"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ref",
+                  "role"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "type": "array"
             },
             "nodeId": {
               "description": "真实分镜脚本节点ID",
@@ -2626,19 +2558,14 @@
               "additionalProperties": false,
               "minProperties": 1,
               "properties": {
-                "assetBindings": {
+                "assets": {
                   "items": {
                     "additionalProperties": false,
                     "properties": {
-                      "nodeId": {
-                        "maxLength": 120,
+                      "ref": {
+                        "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
+                        "minLength": 1,
                         "type": "string"
-                      },
-                      "priority": {
-                        "maximum": 100,
-                        "minimum": 0,
-                        "multipleOf": 1,
-                        "type": "number"
                       },
                       "role": {
                         "enum": [
@@ -2651,201 +2578,39 @@
                           "motion",
                           "audio"
                         ],
-                        "maxLength": 240,
                         "type": "string"
                       }
                     },
                     "required": [
-                      "nodeId",
-                      "role",
-                      "priority"
+                      "ref",
+                      "role"
                     ],
                     "type": "object"
                   },
                   "maxItems": 100,
                   "type": "array"
-                },
-                "audioEffects": {
-                  "description": "音效设计。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "camera": {
-                  "description": "机位、角度与运镜设计。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "characters": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "characterDescription": {
-                        "maxLength": 20000,
-                        "type": "string"
-                      },
-                      "characterImageNodeId": {
-                        "maxLength": 120,
-                        "type": "string"
-                      },
-                      "characterName": {
-                        "maxLength": 240,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "characterName"
-                    ],
-                    "type": "object"
-                  },
-                  "maxItems": 100,
-                  "type": "array"
-                },
-                "continuityOut": {
-                  "description": "衔接下一镜头所需的状态与连续性。",
-                  "maxLength": 20000,
-                  "type": "string"
                 },
                 "dialogue": {
-                  "description": "台词文本；无台词可省略。",
                   "maxLength": 20000,
                   "type": "string"
                 },
                 "durationSeconds": {
-                  "description": "镜头时长（秒），新增镜头必填且大于0。",
                   "maximum": 86400,
                   "minimum": 5e-324,
                   "type": "number"
                 },
-                "emotion": {
-                  "description": "角色情绪。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
                 "imageGenerationPrompt": {
-                  "description": "给图片模型的静态关键帧提示词。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "imagePromptTemplateVariables": {
-                  "additionalProperties": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "maxProperties": 100,
-                  "properties": {},
-                  "propertyNames": {
-                    "maxLength": 240,
-                    "minLength": 1,
-                    "not": {
-                      "enum": [
-                        "__proto__",
-                        "constructor",
-                        "prototype"
-                      ]
-                    },
-                    "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                  },
-                  "type": "object"
-                },
-                "keyframeTimeMs": {
-                  "maximum": 1000000000000,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "lightingAndAtmosphere": {
-                  "description": "光线与氛围。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "motion": {
-                  "description": "主体动作概要，与完整视频提示词分开记录。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "mustHave": {
-                  "items": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "maxItems": 100,
-                  "type": "array"
-                },
-                "narrativeIntent": {
-                  "description": "镜头的叙事目的。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "negativePrompt": {
-                  "description": "应避免的画面或动作。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "optionalDetails": {
-                  "items": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "maxItems": 100,
-                  "type": "array"
-                },
-                "performanceBlocking": {
-                  "description": "演员走位与表演。",
+                  "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
                   "maxLength": 20000,
                   "type": "string"
                 },
                 "plotDescription": {
-                  "description": "静态画面与剧情描述；新增镜头至少填写本字段或 videoMotionPrompt。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "shotSize": {
-                  "description": "景别，如近景、中景、全景。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "sourceEndMs": {
-                  "maximum": 1000000000000,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "sourceStartMs": {
-                  "maximum": 1000000000000,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "timeBeats": {
-                  "description": "镜头内时间节拍的纯文本，如 0–2秒转身，2–5秒向前走；不是数组。",
+                  "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
                   "maxLength": 20000,
                   "type": "string"
                 },
                 "videoMotionPrompt": {
-                  "description": "给视频模型的完整动态镜头提示词，包含动作和运镜。",
-                  "maxLength": 20000,
-                  "type": "string"
-                },
-                "videoPromptTemplateVariables": {
-                  "additionalProperties": {
-                    "maxLength": 20000,
-                    "type": "string"
-                  },
-                  "maxProperties": 100,
-                  "properties": {},
-                  "propertyNames": {
-                    "maxLength": 240,
-                    "minLength": 1,
-                    "not": {
-                      "enum": [
-                        "__proto__",
-                        "constructor",
-                        "prototype"
-                      ]
-                    },
-                    "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
-                  },
-                  "type": "object"
-                },
-                "viewerPOV": {
-                  "description": "观众视角。",
+                  "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
                   "maxLength": 20000,
                   "type": "string"
                 }
@@ -2861,9 +2626,28 @@
               "maxItems": 100,
               "type": "array"
             },
+            "references": {
+              "description": "set_references 的共享输入，可使用唯一业务名称",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
             "rowId": {
               "description": "update/remove 使用 canvas_read_storyboard 返回的真实 rowId；append 留空",
               "type": "string"
+            },
+            "rowIds": {
+              "description": "update/remove/set_assets 可选多个真实行 ID，整批校验后一次写入；与 rowId 互斥",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
             },
             "snapshotHash": {
               "description": "最近一次分镜读取返回的 snapshotHash",
@@ -2882,7 +2666,7 @@
     },
     {
       "function": {
-        "description": "把就绪图片打包成角色卡并保存媒体来源；可分别指定定妆主图和三视图，单图时明确复用。按权限审批。已有同名卡先复用；definition 只填有依据的设定。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "把就绪图片打包成角色卡并保存媒体来源；自动分配节点 ID 和位置。可分别指定定妆主图和三视图，单图时明确复用。按权限审批。已有同名卡先复用；definition 只填有依据的设定。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_create_character",
         "parameters": {
           "additionalProperties": false,
@@ -2993,7 +2777,7 @@
               "type": "string"
             },
             "nodeId": {
-              "description": "新节点ID",
+              "description": "可选新节点 ID，省略由系统分配",
               "type": "string"
             },
             "primaryImageNodeId": {
@@ -3012,7 +2796,6 @@
             }
           },
           "required": [
-            "nodeId",
             "name"
           ],
           "type": "object"
@@ -4069,7 +3852,7 @@
     },
     {
       "function": {
-        "description": "提交媒体生成：准备草稿并声明引用。request_approval 需独立审批，auto 经服务端模型、能力、价格、预算与资源准入后直接提交收费任务。只建节点、改提示词或声明引用用 canvas_apply_ops。分镜模式给 storyboardNodeId+storyboardRowId，输入从行读取，也不手工建边。生成前读画布并按实际参考筛选模型目录，参数须符合返回的时长、画幅和音频能力。可续用空闲且无任务、无产物的草稿；他人运行的草稿需其已结束且清理完成。已绑定任务或已有产物的节点不可覆盖，任务状态与错误从 generation 或 task_get 读取。sourceNodeId 是文本输入，referenceNodeIds 是媒体输入，referenceTransientIds 只接受标注工具返回的临时引用。准入错误按 reason 修正；已提交任务失败应告知用户，重新生成需用户明确要求并重新审批。 优先原样复制 model_list 返回的 selectionId（服务端签发的一次性凭证，不要修改其中任何字符）。兼容期也接受展开字段：非空 logicalModelId，或同时提供非空 channelId 和 channelModelKey。若 selectionId 与展开字段都完全省略，服务端仅在当前项目已配置该能力的可用默认模型时使用它；没有可用默认模型时拒绝提交，不会随机选模。selectionId 与展开字段互斥；未使用的选择字段省略或传空字符串，不得传 null 或仅含空白字符串。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "提交媒体生成，审批、价格、预算与资源校验仍生效。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，自动分配产物 ID、标题、位置并回填；模型和参数可用项目/目录默认值。已有绑定产物不能通过省略 nodeId 绕开占用。普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds 等。生成前按实际输入查 model_list；只编辑用画布工具。已绑定任务或已有产物不可覆盖；状态用 task_get。提交失败按 reason 修正，已提交任务失败须告知用户，重新收费生成需用户明确要求及当前审批流程。 优先原样复制 model_list 返回的 selectionId（服务端签发的一次性凭证，不要修改其中任何字符）。兼容期也接受展开字段：非空 logicalModelId，或同时提供非空 channelId 和 channelModelKey。若 selectionId 与展开字段都完全省略，服务端仅在当前项目已配置该能力的可用默认模型时使用它；没有可用默认模型时拒绝提交，不会随机选模。selectionId 与展开字段互斥；未使用的选择字段省略或传空字符串，不得传 null 或仅含空白字符串。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "generate_media",
         "parameters": {
           "additionalProperties": false,
@@ -4141,7 +3924,9 @@
               },
               "required": [
                 "prompt",
-                "referenceNodeIds"
+                "referenceNodeIds",
+                "nodeId",
+                "title"
               ]
             },
             {
@@ -4179,8 +3964,7 @@
               },
               "required": [
                 "storyboardNodeId",
-                "storyboardRowId",
-                "size"
+                "storyboardRowId"
               ]
             }
           ],
@@ -4272,9 +4056,7 @@
             }
           },
           "required": [
-            "mode",
-            "nodeId",
-            "title"
+            "mode"
           ],
           "type": "object"
         }

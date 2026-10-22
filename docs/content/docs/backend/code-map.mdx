@@ -5,6 +5,15 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## 分镜 Agent 创作闭环
+
+以下 Go 文件位于 `backend/internal/app/`：
+
+- `cloud_agent_storyboard_workflow.go`：名称/ID 精确解析、资产用途转换、批量行副本规划、按运行与模型步骤分配创建身份。
+- `cloud_agent_storyboard.go`、`cloud_agent_storyboard_read.go`、`cloud_agent_content.go`：一次快照的创建/编辑/落库，creative/summary/bindings/full 读取及行文本续读。
+- `cloud_agent_storyboard_generation.go`、`cloud_agent_storyboard_models.go`：生成目标分配、归属与任务回填，按真实输入和时长合并选模结果。
+- `cloud_agent_tool_tiers.go`、`cloud_agent_tool_refresh.go`、`cloud_agent_pi_bridge.go` 和 `agent/src/session-tools.ts`、`runner.ts`：边界单调披露、CAS 持久化与 SDK 动态注册，权限和批次执行继续由 Go 校验。内置 `backend/builtin/canvas-tools-guide` 与共享 schema 同步说明合同。
+
 ## 生成素材身份与来源归属
 
 - `backend/internal/app/task_output_assets.go`：任务详情按输出序号解析服务器登记 ID，核对当前用户、资源和项目版本表示；`task_media_assets.go` 登记生成来源、画布名称与确定性素材 ID。

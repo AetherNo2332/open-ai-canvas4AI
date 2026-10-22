@@ -72,6 +72,26 @@ func (s *Service) cloudAgentModelIntent(userID, canvasID, arguments string) (*Mo
 	if err != nil {
 		return nil, err
 	}
+	return s.cloudAgentModelIntentFromDocument(userID, canvas.ProjectID, arguments, doc)
+}
+
+func (s *Service) cloudAgentModelIntentFromDocument(userID, projectID, arguments string, doc map[string]any) (*ModelRequestIntent, error) {
+	rowDuration := 0
+	var a struct {
+		Mode             string   `json:"mode"`
+		ReferenceNodeIDs []string `json:"referenceNodeIds"`
+		StoryboardNodeID string   `json:"storyboardNodeId"`
+		StoryboardRowID  string   `json:"storyboardRowId"`
+	}
+	if err := decodeCloudAgentJSONObject(arguments, &a); err != nil {
+		return nil, BadAuthRequest("模型查询参数无效")
+	}
+	if a.Mode == "" && len(a.ReferenceNodeIDs) == 0 && a.StoryboardNodeID == "" && a.StoryboardRowID == "" {
+		return nil, nil
+	}
+	if !cloudAgentGenerationModeSupported(a.Mode) || len(a.ReferenceNodeIDs) > 16 {
+		return nil, BadAuthRequest("请指定支持的生成模式，参考节点最多16个")
+	}
 	if a.StoryboardNodeID != "" || a.StoryboardRowID != "" {
 		args := cloudAgentMediaArgs{Mode: a.Mode, StoryboardNodeID: a.StoryboardNodeID, StoryboardRowID: a.StoryboardRowID}
 		if err := validateCloudAgentStoryboardInput(arguments, args); err != nil {
@@ -82,6 +102,7 @@ func (s *Service) cloudAgentModelIntent(userID, canvasID, arguments string) (*Mo
 			return nil, err
 		}
 		a.ReferenceNodeIDs = resolved.ReferenceNodeIDs
+		rowDuration = resolved.Duration
 	}
 	nodes, err := creationObjects(doc["nodes"])
 	if err != nil {
@@ -94,7 +115,7 @@ func (s *Service) cloudAgentModelIntent(userID, canvasID, arguments string) (*Mo
 			return nil, BadAuthRequest("参考节点不存在或重复")
 		}
 		seen[id] = true
-		ref, field, err := cloudAgentMediaReference(s.repo, userID, canvas.ProjectID, nodes[id])
+		ref, field, err := cloudAgentMediaReference(s.repo, userID, projectID, nodes[id])
 		if err != nil {
 			return nil, err
 		}
@@ -105,6 +126,9 @@ func (s *Service) cloudAgentModelIntent(userID, canvasID, arguments string) (*Mo
 		return nil, err
 	}
 	refs["mode"] = a.Mode
+	if a.Mode == "video" && rowDuration > 0 {
+		refs["config"] = map[string]any{"videoSeconds": strconv.Itoa(rowDuration)}
+	}
 	intent := ModelRequestIntentFromTaskInput(refs, "canvas_"+a.Mode, cloudAgentMediaOperation(a.Mode, refs))
 	return &intent, nil
 }
@@ -721,7 +745,7 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 	}
 	a.Mode = strings.ToLower(strings.TrimSpace(a.Mode))
 	var resolveErr error
-	a, resolveErr = s.resolveCloudAgentStoryboardArgs(run, state, call.Function.Arguments, a)
+	a, resolveErr = s.resolveCloudAgentStoryboardArgs(run, state, call.ID, call.Function.Arguments, a)
 	if resolveErr != nil {
 		return CreateTaskRequest{}, nil, resolveErr
 	}

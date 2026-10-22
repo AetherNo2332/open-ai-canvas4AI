@@ -34,9 +34,9 @@ func cloudAgentListAssets(repo *repository.Repository, userID string, call cloud
 	}
 	result := []any{}
 	for _, asset := range rows {
-		result = append(result, map[string]any{"assetId": asset.ID, "kind": asset.Kind, "title": asset.Title})
+		result = append(result, map[string]any{"assetId": asset.ID, "kind": asset.Kind, "title": truncateRunes(asset.Title, 300), "scope": "library_asset"})
 	}
-	return map[string]any{"assets": result, "page": args.Page, "hasMore": int64(args.Page*40) < total, "totalAssets": total}, nil
+	return map[string]any{"assets": result, "page": args.Page, "hasMore": int64(args.Page*40) < total, "totalAssets": total, "usage": "assetId 供 canvas_bind_asset 替换画布媒体节点；分镜 assets.ref 使用替换后的画布节点 ID 或唯一名称"}, nil
 }
 
 func prepareCloudAgentAssetBinding(repo *repository.Repository, userID, canvasID string, call cloudAgentCall) (*cloudAgentCanvasMutationPlan, error) {

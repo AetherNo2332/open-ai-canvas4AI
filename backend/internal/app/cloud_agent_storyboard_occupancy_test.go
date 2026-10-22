@@ -67,6 +67,10 @@ func TestAgentStoryboardOutputBindingChecksDurableOccupancy(t *testing.T) {
 	if stored.PayloadJSON != string(raw) {
 		t.Fatal("被拒绝的产物归属改写了画布")
 	}
+	remove := cloudAgentStoryboardCall(t, "canvas_edit_storyboard", "remove-active", map[string]any{"nodeId": "board", "snapshotHash": cloudAgentCanvasHash(doc), "action": "remove", "rowIds": []string{"row"}})
+	if _, err = prepareCloudAgentStoryboardEdit(s.repo, "user", "agent-canvas", remove); err == nil {
+		t.Fatal("持久活动占用被批量删除绕过")
+	}
 
 	// 任务终结后同一写入必须通过：占用校验只拦真正在跑的槽位。
 	if err = db.Model(&model.Task{}).Where("id = ?", "active-task").Update("status", model.TaskStatusSucceeded).Error; err != nil {

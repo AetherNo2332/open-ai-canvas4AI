@@ -19,8 +19,8 @@ export interface SessionToolDefinitionLike {
 const legacyCategoryPrefix = "agent_tools_";
 
 /**
- * Run-scoped registry for concrete Canvas tools. The snapshot marks the frozen
- * L0∪L1 advertised subset as allowed; only those tools are registered with Pi.
+ * Run-scoped registry for concrete Canvas tools. Each model boundary can add
+ * an advertised L1 tool; only allowed concrete tools are registered with Pi.
  * Categories remain metadata and never become tools.
  *
  * This registry is not an authorization boundary: Pi's tool_call hook checks
@@ -30,6 +30,7 @@ const legacyCategoryPrefix = "agent_tools_";
 export class SessionToolDisclosure {
   private readonly specs: CanvasToolSpec[];
   private readonly byName: Map<string, CanvasToolSpec>;
+  private onAdded?: (tools: SessionToolDefinitionLike[]) => void;
 
   constructor(
     specs: CanvasToolSpec[],
@@ -46,6 +47,17 @@ export class SessionToolDisclosure {
 
   isVisible(name: string): boolean {
     return this.byName.has(name);
+  }
+
+  /** Called only at model boundaries, after draining durable checkpoints. */
+  refresh(specs: CanvasToolSpec[]): void {
+    const added = specs.filter(spec => spec.allowed && !spec.name.startsWith(legacyCategoryPrefix) && !this.byName.has(spec.name));
+    for (const spec of added) {this.specs.push(spec); this.byName.set(spec.name, spec);}
+    if (added.length > 0) this.onAdded?.(added.map(spec => this.makeTool(spec)));
+  }
+
+  onToolsAdded(listener: (tools: SessionToolDefinitionLike[]) => void): void {
+    this.onAdded = listener;
   }
 
   /** Concrete tool definitions consumed by the Pi extension registration hook. */
@@ -87,13 +99,18 @@ export function createCanvasToolsExtension(
     name: "canvas-tools",
     hidden: true,
     factory: (pi: ExtensionAPI) => {
-      for (const tool of registry.tools()) {
+      const register = (tool: SessionToolDefinitionLike): void => {
         pi.registerTool({
           ...tool,
           execute: async (toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal) =>
             tool.execute(toolCallId, params, signal),
         } as never);
-      }
+      };
+      for (const tool of registry.tools()) register(tool);
+      registry.onToolsAdded(tools => {
+        for (const tool of tools) register(tool);
+        pi.setActiveTools([...registry.activeNames(), ...(nativeRead ? [nativeRead.name] : [])]);
+      });
       if (nativeRead) {
         pi.registerTool({ ...nativeRead, execute: async (callId: string, params: Record<string, unknown>, signal?: AbortSignal) =>
           nativeRead.execute(callId, params, signal) } as never);

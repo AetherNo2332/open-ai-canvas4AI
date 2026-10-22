@@ -165,6 +165,7 @@ func cloudAgentDrainInterjections(runID string, state *cloudAgentRuntime) bool {
 	}
 	for _, item := range state.PendingInterjections {
 		// Source distinguishes user instructions from other Agents' reports.
+		cloudAgentRecordDeliveredToolIntent(state, item)
 		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{
 			"role":                     "user",
 			"content":                  cloudAgentInterjectionContent(item),

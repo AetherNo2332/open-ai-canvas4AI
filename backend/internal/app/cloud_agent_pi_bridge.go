@@ -943,9 +943,13 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 		}
 	}
 	allowed := map[string]bool{}
-	// Pi registers the run's eligible catalog once. Repair scope restricts call
-	// admission and execution, while the model request keeps that same catalog.
-	for _, tool := range cloudAgentVisibleToolsForCategories(state.Canonical.Tools, cloudAgentActivatedCategories(&state), nil, nil) {
+	nextNames := state.AdvertisedToolNames
+	if len(nextNames) == 0 {
+		nextNames = cloudAgentToolNames(state.Canonical.Tools)
+	}
+	// Only concrete tools offered at this model boundary may enter the request.
+	// Repair scope remains a separate restriction on execution.
+	for _, tool := range cloudAgentToolsNamed(state.Canonical.Tools, nextNames) {
 		function, _ := tool["function"].(map[string]any)
 		allowed[stringField(function, "name")] = true
 	}
@@ -957,17 +961,21 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 			return nil, kernel.Forbidden("Pi 模型请求包含未披露工具")
 		}
 	}
+	requestedNames := cloudAgentToolNames(request.Canonical.Tools)
+	for _, previous := range state.AdvertisedToolNames {
+		if !cloudAgentContainsString(requestedNames, previous) {
+			return nil, kernel.Forbidden("Pi 模型请求不能移除已披露工具")
+		}
+	}
 	// 名字一致不等于同一份工具：同名不同参数结构足以让一次调用被服务端按另一套语义解读
 	// （例如只读工具被改写成带可写参数）。这里与 Go 目录逐字段比对参数结构。
 	if err := cloudAgentToolSchemaDrift(state.Canonical.Tools, request.Canonical.Tools); err != nil {
 		return nil, kernel.Forbidden(err.Error())
 	}
-	request.Canonical.PromptCacheKey = state.Canonical.PromptCacheKey
+	request.Canonical.PromptCacheKey = cloudAgentPromptCacheKeyForRequest(state.Request.CanvasID, cloudAgentPromptCacheIdentity(state.Request, state.Policy), state.Canonical.SystemPrompt, request.Canonical.Tools)
 	request.Canonical.Messages = append(request.Canonical.Messages, state.callLimitFacts())
 	state.DisclosureVersion = cloudAgentToolDisclosureVersion
-	if len(state.AdvertisedToolNames) == 0 {
-		state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
-	}
+	state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
 	// 看图结果按参考素材水合：上下文里只有 `resource:<id>`，真实图片字节在**请求期**才进到
 	// referenceImages，不进检查点，也不要求上游能访问部署地址。
 	//
@@ -1633,6 +1641,10 @@ func parsePiAgentLeaseOwner(owner string) (string, int64, bool, error) {
 }
 
 func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnapshot, error) {
+	run, err := s.cloudAgentRefreshToolLoadout(run)
+	if err != nil {
+		return nil, err
+	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
 		return nil, err
@@ -1820,6 +1832,7 @@ func cloudAgentCommitPiInterjections(runID string, state *cloudAgentRuntime, ids
 	remaining := make([]cloudAgentInterjection, 0, len(state.PendingInterjections)-len(requested))
 	for _, item := range state.PendingInterjections {
 		if _, delivered := requested[item.ID]; delivered {
+			cloudAgentRecordDeliveredToolIntent(state, item)
 			state.event(runID, cloudAgentInterjectionSource(item)+"_delivered", map[string]any{"messageId": item.ID, "text": item.Text})
 			cloudAgentRememberInterjectionID(state, item.ID)
 			continue

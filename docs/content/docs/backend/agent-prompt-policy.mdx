@@ -54,13 +54,13 @@ Markdown 只影响模型的行为指引。可调用的工具、参数校验、�
 
 Pi Worker 侧的 `agent/harness` 目录只提供 `TOOL_SCHEMA.json` 供双方校验。同目录由 `agent/scripts/sync-harness.mjs` 同步的 `SYSTEM_POLICY.md`、`MEDIA_POLICY.md`、`TOOL_DESCRIPTIONS.md` 是与 backend 对齐的镜像，**不参与系统提示装配**：策略由 Go 编译进服务端策略，工具说明随每次请求的 `tools` schema 下发。把它们再拼一遍只等于把同一段正文发两次（3040 实测该轮重复 11.8k token，按上游锚点换算约 9.8k、占请求输入 38%），模型拿不到任何新信息。
 
-### 工具说明与按类展开
+### 工具说明与分层下发
 
-发给模型的工具及字段说明集中在 `backend/internal/app/agent-tool-descriptions.md`（少数读/编辑类工具如 `canvas_read_content`、`canvas_undo` 的说明直接写在 `cloud_agent_tools.go`，同名小节留在 md 里只是历史）。Go 代码保留工具名、JSON Schema 的类型与约束、权限和执行逻辑；缺少说明键会使构造工具表失败。运维注入的 `AGENTS.md`/`TOOLS.md` 仍是行为约定，不能改变工具注册或权限。
+工具说明集中在 `backend/internal/app/agent-tool-descriptions.md`，部分读写工具直接在 `cloud_agent_tools.go` 声明；Go 保留参数 schema、权限与执行逻辑。运行时的 AGENTS.md/TOOLS.md 不能增加工具或权限。
 
-每个模型步默认只暴露本轮可用的 `agent_tools_*` 类型入口。模型调用一个类型入口后，下一模型步才附上该类中满足权限、画布上下文和模型能力的子工具。该步结束后子工具收回；需要继续使用时重新打开。每步最多打开一种类型。父工具 schema 中有界记录上一模型步调用的工具名，实际结果仍以工具回执为准。服务端持久化每步真实下发的工具名，预检拒绝未下发的调用；旧检查点保持旧工具表行为。
+模型直接接收 L0 与已解锁的 L1 具体函数，`agent_tools_*` 仅用于分组。基础正文续读、搜索和能力发现常驻；分镜库存或意图打开完整业务工具组。新模型步骤前按完整画布库存和已送达用户插话单调增补，先持久化名单再返回 Worker；进行中的模型任务和工具批次保留原合同，工具结果和待送文本不开放工具。
 
-函数工具的 `parameters` 是 JSON Schema：根类型为 `object`，声明 `properties`、`required` 和 `additionalProperties: false`；数组、枚举、长度与数值范围保留在各子工具 schema 中。类型入口不接受参数，只能以 `{}` 调用。所有已注册函数的名称、描述与参数模式在测试中逐一校验；服务端按**实际下发**的模式预检参数，再执行权限、归属、预算和审批检查。该实现属于后端管理的按需披露，不调用仅适用于特定 Responses 模型的托管 `tool_search`，因此可沿用现有 Chat Completions、Responses、Claude 与 Gemini 适配层。设计参考 [OpenAI Agents SDK 工具指南](https://openai.github.io/openai-agents-js/zh/guides/tools/)。
+Pi SDK 的允许目录包含运行的合格具体函数，但初始只注册已下发的定义；后续模型边界才新增注册。Go 校验模型请求不得包含未下发工具、不得移除已下发工具，执行预检仍检查权限、资源、修复范围、预算与审批。JSON Schema 保留有界数组、枚举和操作必填/互斥约束，共享制品用于阻止 Worker 参数漂移。详见 [读取与分镜闭环](./agent-tool-reads)。
 
 `generate_media` 与 `image_layer_split` 的 schema 显式包含 `selectionId`。模型可直接复制 `model_list` 返回的选择凭证，也可使用旧的模型字段；两种形式互斥，签名、归属及字段组合由服务端校验。JSON Schema 只描述字段形状，不承载资源级授权或收费审批。
 
@@ -90,6 +90,6 @@ Pi Worker 侧的 `agent/harness` 目录只提供 `TOOL_SCHEMA.json` 供双方校
 
 自动回归覆盖新目标继承、插话保留、否定参考需求、消息来源、计划取消、有界催办、恢复事件及 OpenAI Chat/Responses、Claude、Gemini 协议转换。测试使用临时 SQLite 和模拟模型结果，不证明真实模型的创作质量或指令遵循率。
 
-当前系统策略版本为 10、编译器为 `cloud-agent-policy-compiler/v5`。不涉及数据库表结构或 HTTP API 变更。既有冻结合同校验仍生效：旧版本正在执行或等待审批的运行不能由新版服务继续执行；终态历史仍可读取，新消息建立使用新合同的运行。发布前应处理在途运行；回滚同样受版本校验限制，不应改写历史快照来强行恢复。
+当前系统策略版本为 16、编译器为 `cloud-agent-policy-compiler/v5`。不涉及数据库表结构或 HTTP API 变更。既有冻结合同校验仍生效：旧版本正在执行或等待审批的运行不能由新版服务继续执行；终态历史仍可读取，新消息建立使用新合同的运行。发布前应处理在途运行；回滚同样受版本校验限制，不应改写历史快照来强行恢复。
 
 本轮治理覆盖对话主链路。批量创作表的业务默认词、个人记忆压缩专用提示词属于独立生成入口，尚未迁移到版本化资源；后续应分别明确空提示词语义和结构化输出合同，并建立真实模型场景评估，不能把本轮回归称为全仓提示词治理完成。

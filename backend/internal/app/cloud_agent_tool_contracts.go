@@ -137,7 +137,7 @@ func cloudAgentCanvasOpsWriteReferences(doc map[string]any, ops []agentCanvasOp)
 // cloudAgentStoryboardEditWritesReferences 覆盖共享引用、行素材和角色字段中的资产引用。产物归属
 // （bind_output／unbind_output）写的是历史画布同样有效的行归属字段，不在这里拦。
 func cloudAgentStoryboardEditWritesReferences(args cloudAgentStoryboardEditArgs) bool {
-	if args.Action == "set_references" {
+	if args.Action == "set_references" || args.Action == "set_assets" {
 		return true
 	}
 	return cloudAgentStoryboardRowsWriteReferences([]map[string]any{args.Patch})
@@ -145,6 +145,9 @@ func cloudAgentStoryboardEditWritesReferences(args cloudAgentStoryboardEditArgs)
 
 func cloudAgentStoryboardRowsWriteReferences(rows []map[string]any) bool {
 	for _, row := range rows {
+		if _, exists := row["assets"]; exists {
+			return true
+		}
 		if _, exists := row["assetBindings"]; exists {
 			return true
 		}
@@ -158,7 +161,7 @@ func cloudAgentStoryboardRowsWriteReferences(rows []map[string]any) bool {
 }
 
 func cloudAgentStoryboardCreateWritesReferences(args cloudAgentStoryboardCreateArgs) bool {
-	return args.ReferenceNodeIDs != nil || cloudAgentStoryboardRowsWriteReferences(args.Rows)
+	return args.ReferenceNodeIDs != nil || args.References != nil || cloudAgentStoryboardRowsWriteReferences(args.Rows)
 }
 
 // validateCloudAgentReferenceDocument 是画布级前置条件：只有会写引用字段的变更才要求文档
@@ -179,7 +182,7 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 		schema["allOf"] = []map[string]any{
 			{"oneOf": []map[string]any{
 				{"required": []string{"view"}, "properties": map[string]any{"view": map[string]any{"const": "full"}, "rows": map[string]any{"maximum": 20}}},
-				{"properties": map[string]any{"view": map[string]any{"enum": []string{"summary", "bindings"}}}},
+				{"properties": map[string]any{"view": map[string]any{"enum": []string{"creative", "summary", "bindings"}}}},
 			}},
 			{"anyOf": []map[string]any{
 				{"properties": cloudAgentForbiddenFields("rowIds")},
@@ -206,24 +209,38 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 			{"properties": map[string]any{"mode": map[string]any{"const": "audio"}, "durationSeconds": map[string]any{"const": 0}, "videoGenerateAudio": map[string]any{"not": map[string]any{}}}, "required": []string{"mode"}},
 		}
 		schema["oneOf"] = []map[string]any{
-			{"required": []string{"prompt", "referenceNodeIds"}, "properties": cloudAgentForbiddenFields("storyboardNodeId", "storyboardRowId"), "oneOf": ordinaryModes},
-			{"required": []string{"storyboardNodeId", "storyboardRowId", "size"}, "properties": map[string]any{"storyboardNodeId": map[string]any{"minLength": 1}, "storyboardRowId": map[string]any{"minLength": 1}, "mode": map[string]any{"enum": []string{"image", "video"}}, "size": map[string]any{"minLength": 1}, "prompt": map[string]any{"not": map[string]any{}}, "referenceNodeIds": map[string]any{"not": map[string]any{}}, "referenceTransientIds": map[string]any{"not": map[string]any{}}, "sourceNodeId": map[string]any{"not": map[string]any{}}, "durationSeconds": map[string]any{"not": map[string]any{}}}},
+			{"required": []string{"prompt", "referenceNodeIds", "nodeId", "title"}, "properties": cloudAgentForbiddenFields("storyboardNodeId", "storyboardRowId"), "oneOf": ordinaryModes},
+			{"required": []string{"storyboardNodeId", "storyboardRowId"}, "properties": map[string]any{"storyboardNodeId": map[string]any{"minLength": 1}, "storyboardRowId": map[string]any{"minLength": 1}, "mode": map[string]any{"enum": []string{"image", "video"}}, "size": map[string]any{"minLength": 1}, "prompt": map[string]any{"not": map[string]any{}}, "referenceNodeIds": map[string]any{"not": map[string]any{}}, "referenceTransientIds": map[string]any{"not": map[string]any{}}, "sourceNodeId": map[string]any{"not": map[string]any{}}, "durationSeconds": map[string]any{"not": map[string]any{}}}},
 		}
 	case "model_list":
 		schema["oneOf"] = []map[string]any{
-			{"properties": cloudAgentForbiddenFields("storyboardNodeId", "storyboardRowId")},
-			{"required": []string{"mode", "storyboardNodeId", "storyboardRowId"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")},
+			{"properties": cloudAgentForbiddenFields("storyboardNodeId", "storyboardRowId", "storyboardRowIds")},
+			{"required": []string{"mode", "storyboardNodeId", "storyboardRowId"}, "properties": cloudAgentForbiddenFields("referenceNodeIds", "storyboardRowIds")},
+			{"required": []string{"mode", "storyboardNodeId", "storyboardRowIds"}, "properties": cloudAgentForbiddenFields("referenceNodeIds", "storyboardRowId")},
 		}
+	case "canvas_create_storyboard":
+		schema["anyOf"] = []map[string]any{{"properties": cloudAgentForbiddenFields("references")}, {"properties": cloudAgentForbiddenFields("referenceNodeIds")}}
 	case "canvas_edit_storyboard":
-		// append/update/remove 维护镜头行；set_references 与 bind_output／unbind_output 是
-		// 关闭 Agent 连线操作后的语义替代：共享引用和产物归属只通过字段声明。
+		selection := []map[string]any{
+			{"required": []string{"rowId"}, "properties": cloudAgentForbiddenFields("rowIds")},
+			{"required": []string{"rowIds"}, "properties": cloudAgentForbiddenFields("rowId")},
+		}
+		update := cloudAgentActionBranch("update", []string{"patch"}, nil, "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId")
+		update["oneOf"] = selection
+		remove := cloudAgentActionBranch("remove", nil, nil, "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId")
+		remove["oneOf"] = selection
+		assets := cloudAgentActionBranch("set_assets", []string{"assets"}, nil, "patch", "references", "referenceNodeIds", "outputMode", "outputNodeId")
+		assets["oneOf"] = selection
+		refs := cloudAgentActionBranch("set_references", nil, nil, "rowId", "rowIds", "patch", "assets", "outputMode", "outputNodeId")
+		refs["oneOf"] = []map[string]any{
+			{"required": []string{"references"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")},
+			{"required": []string{"referenceNodeIds"}, "properties": cloudAgentForbiddenFields("references")},
+		}
 		schema["oneOf"] = []map[string]any{
-			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId", "referenceNodeIds", "outputMode", "outputNodeId"),
-			cloudAgentActionBranch("update", []string{"rowId", "patch"}, nil, "referenceNodeIds", "outputMode", "outputNodeId"),
-			cloudAgentActionBranch("remove", []string{"rowId"}, nil, "patch", "referenceNodeIds", "outputMode", "outputNodeId"),
-			cloudAgentActionBranch("set_references", []string{"referenceNodeIds"}, nil, "rowId", "patch", "outputMode", "outputNodeId"),
-			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "patch", "referenceNodeIds"),
-			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "patch", "referenceNodeIds", "outputNodeId"),
+			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId", "rowIds", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId"),
+			update, remove, assets, refs,
+			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "rowIds", "patch", "references", "referenceNodeIds", "assets"),
+			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputNodeId"),
 		}
 	case "canvas_edit_batch_table":
 		schema["oneOf"] = []map[string]any{

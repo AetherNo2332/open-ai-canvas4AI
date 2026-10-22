@@ -33,6 +33,7 @@ func (r *cloudAgentReferenceReader) nodeAvailability(id, mediaType string) map[s
 		value["issue"] = "引用节点不存在"
 		return value
 	}
+	value["title"] = truncateRunes(stringValue(node["title"]), 240)
 	if descriptor, ok := cloudAgentNodeCapabilityForNode(node); ok {
 		value["kind"] = descriptor.Type
 	}
@@ -53,6 +54,7 @@ func (r *cloudAgentReferenceReader) nodeAvailability(id, mediaType string) map[s
 			return value
 		}
 		value["assetId"], value["versionId"], value["versionPolicy"] = character.AssetID, character.Card.VersionID, character.VersionPolicy
+		value["version"], value["visualStatus"], value["voiceStatus"] = character.Card.Version, character.Card.VisualStatus, character.Card.VoiceStatus
 		if mediaType == "audio" {
 			_, err = cloudAgentCharacterAudioReference(r.repo, r.userID, id, character)
 		} else {
