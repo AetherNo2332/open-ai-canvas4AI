@@ -81,11 +81,17 @@ func (s *Service) PiBeginContextCompaction(userID, runID, owner string, input Pi
 	if err != nil {
 		return nil, BadAuthRequest("Pi 压缩活动分支无效")
 	}
-	source, err := cloudAgentPiCompactionSourceForBranch(branch, input.ActiveLeafID)
+	state, err := cloudAgentDecode(run)
+	if err != nil {
+		return nil, err
+	}
+	budget := s.cloudAgentContextBudgetForRequest(state.Request)
+	source, err := cloudAgentPiCompactionSourceForBranch(branch, input.ActiveLeafID, budget.KeepRecentTokens)
 	if err != nil {
 		return nil, BadAuthRequest("Pi 压缩上下文无效")
 	}
 	var native *cloudAgentPiNativeCompaction
+	nativeFallback := ""
 	if len(input.Preparation) > 0 {
 		native, err = cloudAgentPrepareNativeCompaction(input.Preparation, input.TokensBefore, &source, branch)
 		if err != nil {
@@ -93,7 +99,10 @@ func (s *Service) PiBeginContextCompaction(userID, runID, owner string, input Pi
 				// Pi's preparation is advisory. If its boundary metadata is stale or
 				// malformed, keep the server-owned source projection and use the
 				// semantic compactor instead of terminating the Agent run.
-				native = nil
+				native, nativeFallback = nil, "preparation_invalid"
+				if errors.Is(err, errPiNativePreparationTooLarge) {
+					nativeFallback = "preparation_too_large"
+				}
 			} else {
 				return nil, BadAuthRequest(err.Error())
 			}
@@ -105,10 +114,6 @@ func (s *Service) PiBeginContextCompaction(userID, runID, owner string, input Pi
 	}
 	if session.ActiveRunID != runID || session.Revision != input.SessionRevision || session.ActiveLeafID != input.ActiveLeafID {
 		return nil, kernel.Forbidden("Pi 压缩源会话已变化")
-	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
-		return nil, err
 	}
 	if state.ContextCompaction != nil {
 		if state.ContextCompaction.PiOperationID != operationID {
@@ -133,13 +138,20 @@ func (s *Service) PiBeginContextCompaction(userID, runID, owner string, input Pi
 		PiReason: input.Reason, PiWillRetry: input.WillRetry, PiTokensBefore: input.TokensBefore,
 		PiNative: native,
 	}
-	state.event(runID, "context_compaction_requested", map[string]any{
+	requested := map[string]any{
 		"kind": "semantic_compaction", "reason": input.Reason, "sourceBytes": source.SourceBytes,
 		"turns": source.CompactedTurnCount, "operationId": operationID, "sourceDigest": source.SourceDigest,
-		"piReason": input.Reason, "willRetry": input.WillRetry,
-	})
+		"piReason": input.Reason, "willRetry": input.WillRetry, "engine": "go-semantic",
+		"retainedMessages": len(source.Messages) - source.FirstKeptIndex,
+	}
 	if native != nil {
-		budget := s.cloudAgentContextBudgetForRequest(state.Request)
+		requested["engine"] = "pi-native"
+	}
+	if nativeFallback != "" {
+		requested["nativeFallback"] = nativeFallback
+	}
+	state.event(runID, "context_compaction_requested", requested)
+	if native != nil {
 		native.MaxTokens = budget.SummaryOutputTokens
 		if err := s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 			return cloudAgentSave(current, &state)

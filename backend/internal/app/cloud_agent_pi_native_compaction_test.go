@@ -197,7 +197,7 @@ func TestPiNativeCompactionRecoveryReplacementRemovesOldToolCalls(t *testing.T) 
 		t.Fatal(err)
 	}
 	branch = append(branch, edit)
-	source, err := cloudAgentPiCompactionSourceForBranch(branch, "edit")
+	source, err := cloudAgentPiCompactionSourceForBranch(branch, "edit", 20_000)
 	if err != nil {
 		t.Fatal(err)
 	}

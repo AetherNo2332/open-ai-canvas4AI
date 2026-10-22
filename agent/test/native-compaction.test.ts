@@ -91,6 +91,20 @@ test("second summary failure requests Go fallback and transport failure is prese
   assert.equal(fallback, 1);
 });
 
+test("serialized preparations omit tool receipt details that duplicate the result text", () => {
+  const receipt = { nodeId: "shot-1", state: "scene".repeat(200) };
+  const result = { role: "toolResult", toolCallId: "call-1", toolName: "canvas_read",
+    content: [{ type: "text", text: JSON.stringify(receipt) }], details: receipt, isError: false, timestamp: 2 };
+  const serialized = serializePreparation({ ...splitPreparation, fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() },
+    messagesToSummarize: [{ role: "user", content: "old scene", timestamp: 1 }, result],
+    turnPrefixMessages: [{ ...result, toolCallId: "call-2" }] } as any) as any;
+  for (const message of [serialized.messagesToSummarize[1], serialized.turnPrefixMessages[0]]) {
+    assert.equal("details" in message, false);
+    assert.deepEqual(message.content, result.content);
+  }
+  assert.equal(result.details, receipt, "the live session keeps its receipt");
+});
+
 test("SDK splits a long tool turn and sends its native prompt through an independent bridge", async () => {
   const messages: any[] = [{ type: "message", id: "user", parentId: null, timestamp: new Date().toISOString(),
     message: { role: "user", content: "design a film", timestamp: 1 } }];

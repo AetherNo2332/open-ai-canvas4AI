@@ -22,9 +22,23 @@ export function compactionSettings(snapshot: PiSnapshot) {
     keepRecentTokens: limits.keepRecentTokens ?? Math.max(1, Math.min(20_000, Math.floor(input / 4))) };
 }
 
+// Canvas tool results repeat their receipt in `details`. Neither Pi's summarizer nor
+// Go's boundary check reads it, and the copy can push a long session past Go's 1 MiB
+// preparation limit, which silently replaces Pi's summary with the server compactor.
+function withoutToolDetails(messages: Preparation["messagesToSummarize"]): Preparation["messagesToSummarize"] {
+  return messages.map((message) => {
+    if (message.role !== "toolResult" || message.details === undefined) return message;
+    const { details: _details, ...result } = message;
+    return result;
+  });
+}
+
 export function serializePreparation(preparation: Preparation): Record<string, unknown> {
-  return { ...preparation, protocolVersion: "canvas-pi-preparation/v1", fileOps: { read: [...preparation.fileOps.read],
-    written: [...preparation.fileOps.written], edited: [...preparation.fileOps.edited] } };
+  return { ...preparation, protocolVersion: "canvas-pi-preparation/v1",
+    messagesToSummarize: withoutToolDetails(preparation.messagesToSummarize),
+    turnPrefixMessages: withoutToolDetails(preparation.turnPrefixMessages),
+    fileOps: { read: [...preparation.fileOps.read],
+      written: [...preparation.fileOps.written], edited: [...preparation.fileOps.edited] } };
 }
 
 class SummaryTaskFailure extends Error {}
