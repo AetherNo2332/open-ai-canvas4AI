@@ -3,6 +3,12 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## Agent 上下文压缩回退保留边界
+
+- [x] 自动化：Go 新增回退切点单测（多轮工具调用只保留 `keepRecentTokens` 后缀、超大尾部工具结果保留其调用）与端到端用例（超过 1 MiB 的 Pi 准备信息回退服务端压缩，提交后 Go canonical 与 Pi 保留后缀一致、事件带 `engine` / `nativeFallback` / `retainedMessages`）；Agent 新增准备信息去除工具 `details` 用例。Agent 全量 198 项通过，Go 压缩相关专项（Pi 压缩源、原生/回退、提交与上下文压缩）通过。用真实 Pi SDK 驱动 runner 复现：旧回退切点下压缩后下一步请求 45 条（压缩前 44 条），有界切点下为 8 条。
+- [ ] 已实现：服务端压缩回退的保留切点按 `keepRecentTokens` 收紧，不再因“最近两轮完整对话”保留整段工具循环；Pi 与 Go 的压缩后上下文同源，界面读数不再出现压缩后 100%+ 占用。Worker 序列化准备信息时不再携带重复的工具回执，长会话更少落入回退。
+- [ ] 部署待验收：长工具循环会话触发压缩后，`context_compaction_requested.engine`、`nativeFallback` 与下一步 `context_pressure` 明显低于压缩线，且不在几分钟内再次压缩。Go 与 Worker 两处改动互不依赖，可分别部署。
+
 ## 摄影机控制真实设备素材
 
 - [x] 自动化：`camera-control-assets.test.ts` 校验 9 台相机 + 10 支镜头均有唯一 id、产品图文件存在且目录无孤立图片；`camera-control-panel.test.tsx` 覆盖默认机型与真实产品图渲染；前端全量 2688 pass / 0 fail（403 个文件），`tsc --noEmit`、生产构建、ESLint 与修改文件格式检查通过。

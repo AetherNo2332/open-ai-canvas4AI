@@ -14,7 +14,12 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-var errPiNativePreparationInvalid = errors.New("Pi 原生压缩准备信息无效")
+var (
+	errPiNativePreparationInvalid = errors.New("Pi 原生压缩准备信息无效")
+	// A preparation over the cap is still advisory; the caller falls back to the server
+	// compactor, so it wraps the invalid sentinel and only refines the diagnostic reason.
+	errPiNativePreparationTooLarge = fmt.Errorf("%w：超过 1 MiB", errPiNativePreparationInvalid)
+)
 
 // The preparation and model call receipts survive worker loss. SDK summarization
 // runs in Node, but every provider call and checkpoint remains Go-owned.
@@ -65,7 +70,10 @@ func cloudAgentNativeUsageMatches(sent, stored json.RawMessage) bool {
 
 func cloudAgentPrepareNativeCompaction(raw json.RawMessage, tokens int, source *cloudAgentPiCompactionSource, branch []cloudAgentPiCompactionEntry) (*cloudAgentPiNativeCompaction, error) {
 	var prep piNativePreparation
-	if len(raw) > 1<<20 || json.Unmarshal(raw, &prep) != nil || prep.FirstKeptEntryID == "" || prep.TokensBefore != tokens {
+	if len(raw) > 1<<20 {
+		return nil, errPiNativePreparationTooLarge
+	}
+	if json.Unmarshal(raw, &prep) != nil || prep.FirstKeptEntryID == "" || prep.TokensBefore != tokens {
 		return nil, errPiNativePreparationInvalid
 	}
 	index := -1

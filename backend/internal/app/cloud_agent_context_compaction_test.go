@@ -469,7 +469,7 @@ func TestCloudAgentCompactionContinuationIncludesFinalReplyWithoutReplayingPromp
 	if err != nil {
 		t.Fatal(err)
 	}
-	projected, err := cloudAgentPiCompactionSourceForBranch(branch, persistedSession.ActiveLeafID)
+	projected, err := cloudAgentPiCompactionSourceForBranch(branch, persistedSession.ActiveLeafID, 20_000)
 	if err != nil {
 		t.Fatal(err)
 	}

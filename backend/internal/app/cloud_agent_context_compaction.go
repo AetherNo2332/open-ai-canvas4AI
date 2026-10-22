@@ -556,7 +556,10 @@ func applyCloudAgentContextCheckpoint(runID string, current *model.CloudAgentExe
 	beforeBytes, beforeTokens := len(beforeRaw), estimateCloudAgentTokens(beforeRaw)
 	recent := cloudAgentCompleteTurnTail(state.Canonical.Messages, cloudAgentContextKeepPairs)
 	var nativeTail []map[string]any
-	if compaction := state.ContextCompaction; compaction != nil && compaction.PiNative != nil {
+	// Pi keeps the raw suffix from firstKeptEntryId after either summary engine. Mirror
+	// exactly that suffix; a text-only tail would report a context Pi never sends.
+	if compaction := state.ContextCompaction; compaction != nil && compaction.PiOperationID != "" &&
+		compaction.PiFirstKeptIndex >= 0 && compaction.PiFirstKeptIndex <= len(state.Canonical.Messages) {
 		nativeTail = append(make([]map[string]any, 0), state.Canonical.Messages[compaction.PiFirstKeptIndex:]...)
 		recent = nil
 		for _, message := range nativeTail {

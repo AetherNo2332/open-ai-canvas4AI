@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -147,6 +148,75 @@ func TestPiCompactionRestoresOnlyDurablyDeliveredInterjectionSources(t *testing.
 	}
 	if restored != 1 {
 		t.Fatalf("durable delivery identity was lost during compaction projection: %d", restored)
+	}
+}
+
+// Production: an oversized native preparation fell back to the server compactor, whose
+// "latest two complete turns" boundary kept every tool round of the only request. Go
+// reported five remaining messages while Pi sent 168 after the summary (103.87%).
+func TestPiServerCompactionRetainsOnlyTheBoundedSuffixPiSends(t *testing.T) {
+	s, db, run := piAgentTestLeasedFixture(t)
+	declareTestChannelWindow(t, db, 64_000, 8_192)
+	messages := []map[string]any{{"role": "user", "content": "把十二个镜头全部补完"}}
+	for round := 0; round < 12; round++ {
+		call := fmt.Sprintf("call-%d", round)
+		messages = append(messages,
+			map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "toolCall", "id": call, "name": "canvas_get_state", "arguments": map[string]any{}}}},
+			map[string]any{"role": "toolResult", "toolCallId": call, "toolName": "canvas_get_state",
+				"content": []any{map[string]any{"type": "text", "text": strings.Repeat("canvas state ", 1_000)}}})
+	}
+	messages = append(messages, map[string]any{"role": "assistant", "content": "已补完十二个镜头"})
+	revision, leaf := seedPiCompactionMessages(t, db, run, messages)
+	oversized, err := json.Marshal(map[string]any{"firstKeptEntryId": leaf, "tokensBefore": 40_000,
+		"messagesToSummarize": []any{}, "padding": strings.Repeat("x", 1<<20)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := s.PiBeginContextCompaction(run.UserID, run.ID, run.LeaseOwner, PiContextCompactionStart{
+		SessionRevision: revision, ActiveLeafID: leaf, Reason: "threshold", TokensBefore: 40_000, Preparation: oversized,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.NativePreparation != nil || operation.FirstKeptEntryID == "pi-compact-message-1" {
+		t.Fatalf("oversized preparation must use a bounded server boundary: %+v", operation)
+	}
+	_, pending := reloadPiRun(t, s, run.ID)
+	keep := pending.ContextCompaction.PiFirstKeptIndex
+	tail := append([]map[string]any(nil), pending.Canonical.Messages[keep:]...)
+	if stringField(tail[0], "role") != "assistant" || len(tail) >= len(messages)/2 {
+		t.Fatalf("retained suffix starts at %d of %d messages: %+v", keep, len(messages), tail[0])
+	}
+	requested := cloudAgentCompactionEvents(t, s, run, "context_compaction_requested")
+	if len(requested) != 1 || requested[0].Payload["engine"] != "go-semantic" ||
+		requested[0].Payload["nativeFallback"] != "preparation_too_large" || requested[0].Payload["retainedMessages"] != float64(len(tail)) {
+		t.Fatalf("server fallback was not reported: %+v", requested)
+	}
+	setPiCompactionTaskResult(t, db, operation.TaskID, model.TaskStatusFailed, "{}")
+	ready := queryPiCompactionForTest(t, s, run, operation.OperationID)
+	if ready.FirstKeptEntryID != operation.FirstKeptEntryID {
+		t.Fatalf("checkpoint boundary drifted: %q != %q", ready.FirstKeptEntryID, operation.FirstKeptEntryID)
+	}
+	commitPiCompactionForTest(t, s, run, ready, "bounded-server-compaction")
+	_, state := reloadPiRun(t, s, run.ID)
+	if len(state.Canonical.Messages) != 2+len(tail) || stringField(state.Canonical.Messages[0], cloudAgentContextSourceKey) != "checkpoint" {
+		t.Fatalf("Go canonical does not match the suffix Pi keeps: %d messages, want %d", len(state.Canonical.Messages), 2+len(tail))
+	}
+	for index, message := range tail {
+		got, _ := json.Marshal(state.Canonical.Messages[2+index])
+		want, _ := json.Marshal(message)
+		if string(got) != string(want) {
+			t.Fatalf("retained message %d changed: %s != %s", index, got, want)
+		}
+	}
+	var after map[string]any
+	for _, event := range cloudAgentCompactionEvents(t, s, run, "context_transition") {
+		if event.Payload["kind"] == "semantic_compaction" {
+			after, _ = event.Payload["after"].(map[string]any)
+		}
+	}
+	if after["historyMessages"] != float64(len(state.Canonical.Messages)) {
+		t.Fatalf("context_transition reports %v messages, Go keeps %d", after["historyMessages"], len(state.Canonical.Messages))
 	}
 }
 

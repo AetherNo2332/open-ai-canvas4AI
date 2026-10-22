@@ -96,7 +96,9 @@ func cloudAgentPiActiveBranch(entries []model.CloudAgentPiEntry, activeLeafID st
 // canonical message shape used by the existing Go compactor. A previous Pi compaction
 // contributes its structured checkpoint plus only the messages Pi still exposes after
 // its firstKeptEntryId; abandoned branches and already-compacted history are excluded.
-func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry, activeLeafID string) (cloudAgentPiCompactionSource, error) {
+// keepRecentTokens bounds the raw suffix the server compactor retains (see
+// cloudAgentPiRetentionIndex); a native preparation replaces this boundary.
+func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry, activeLeafID string, keepRecentTokens int) (cloudAgentPiCompactionSource, error) {
 	var source cloudAgentPiCompactionSource
 	source.ActiveLeafID = activeLeafID
 	if len(branch) == 0 || branch[len(branch)-1].ID != activeLeafID {
@@ -227,6 +229,13 @@ func cloudAgentPiCompactionSourceForBranch(branch []cloudAgentPiCompactionEntry,
 	if source.FirstKeptIndex < 0 || source.FirstKeptIndex > len(visible) {
 		return source, fmt.Errorf("Pi compaction retention boundary is not in the projected context")
 	}
+	start := 0
+	if latestCompaction >= 0 {
+		start = 2
+	}
+	if index := cloudAgentPiRetentionIndex(visible, start, keepRecentTokens); index > source.FirstKeptIndex {
+		source.FirstKeptEntryID, source.FirstKeptIndex = visible[index].EntryID, index
+	}
 	source.CompactedTurnCount = cloudAgentConversationTurnCount(source.Messages)
 	encoded, err := json.Marshal(source.Messages)
 	if err != nil {
@@ -276,6 +285,55 @@ func cloudAgentPiFirstKeptEntryID(messages []cloudAgentPiContextMessage) string 
 		return messages[0].EntryID
 	}
 	return ""
+}
+
+// cloudAgentPiRetentionIndex mirrors Pi's findCutPoint for the server compactor: walk
+// back from the newest message until the suffix holds keepTokens, then keep from the
+// nearest user or assistant message at or after that point. Tool results are never a
+// boundary, so every retained call keeps its results.
+//
+// Complete turns alone are not a bound: one user request can drive dozens of tool
+// rounds, and "the latest two complete turns" then retains the whole branch. Pi keeps
+// exactly this suffix after its summary, so an unbounded boundary leaves the next model
+// request as large as the one that triggered compaction. Returns -1 when keepTokens is
+// not positive or no boundary exists.
+func cloudAgentPiRetentionIndex(messages []cloudAgentPiContextMessage, start, keepTokens int) int {
+	if keepTokens <= 0 {
+		return -1
+	}
+	boundary := func(index int) bool {
+		message := messages[index].Value
+		role := stringField(message, "role")
+		return role == "assistant" || (role == "user" && stringField(message, cloudAgentContextSourceKey) != "checkpoint")
+	}
+	first, last := -1, -1
+	for index := start; index < len(messages); index++ {
+		if boundary(index) {
+			if first < 0 {
+				first = index
+			}
+			last = index
+		}
+	}
+	if first < 0 {
+		return -1
+	}
+	accumulated := 0
+	for index := len(messages) - 1; index >= start; index-- {
+		raw, _ := json.Marshal(messages[index].Value)
+		accumulated += estimateCloudAgentTokens(raw)
+		if accumulated < keepTokens {
+			continue
+		}
+		for candidate := index; candidate < len(messages); candidate++ {
+			if boundary(candidate) {
+				return candidate
+			}
+		}
+		// Trailing tool results alone exceed the budget: keep their assistant call.
+		return last
+	}
+	return first
 }
 
 func cloudAgentPiHasToolCalls(value any) bool {

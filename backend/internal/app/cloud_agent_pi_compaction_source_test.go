@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestCloudAgentPiCompactionSourceUsesActiveBranchAndCompleteTurnTail(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := cloudAgentPiCompactionSourceForBranch(branch, "user-3")
+	source, err := cloudAgentPiCompactionSourceForBranch(branch, "user-3", 20_000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func TestCloudAgentPiCompactionSourceReusesStructuredCheckpointAndRejectsBadBoun
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := cloudAgentPiCompactionSourceForBranch(branch, "next-user")
+	source, err := cloudAgentPiCompactionSourceForBranch(branch, "next-user", 20_000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +116,104 @@ func TestCloudAgentPiCompactionSourceReusesStructuredCheckpointAndRejectsBadBoun
 			badBranch[index].FirstKeptEntryID = "not-on-active-branch"
 		}
 	}
-	if _, err := cloudAgentPiCompactionSourceForBranch(badBranch, "next-user"); err == nil {
+	if _, err := cloudAgentPiCompactionSourceForBranch(badBranch, "next-user", 20_000); err == nil {
 		t.Fatal("a persisted compaction boundary outside the active branch was accepted")
+	}
+}
+
+// piCompactionToolRound is one Pi tool round: an assistant call and its result.
+func piCompactionToolRound(t *testing.T, round int, parentID, result string) []model.CloudAgentPiEntry {
+	t.Helper()
+	call := fmt.Sprintf("call-%d", round)
+	return []model.CloudAgentPiEntry{
+		piCompactionTestEntry(t, fmt.Sprintf("assistant-%d", round), parentID, "message", map[string]any{"message": map[string]any{
+			"role": "assistant", "content": []any{map[string]any{"type": "toolCall", "id": call, "name": "canvas_get_state", "arguments": map[string]any{}}},
+		}}),
+		piCompactionTestEntry(t, fmt.Sprintf("result-%d", round), fmt.Sprintf("assistant-%d", round), "message", map[string]any{"message": map[string]any{
+			"role": "toolResult", "toolCallId": call, "toolName": "canvas_get_state", "content": []any{map[string]any{"type": "text", "text": result}},
+		}}),
+	}
+}
+
+// One request followed by many tool rounds has a single complete turn. The server
+// compactor must still keep only a token-bounded suffix, because Pi sends exactly the
+// retained suffix after the checkpoint (production: 163 messages kept after a summary).
+func TestCloudAgentPiCompactionSourceBoundsAgentRoundsByKeepTokens(t *testing.T) {
+	entries := []model.CloudAgentPiEntry{
+		piCompactionTestEntry(t, "request", "", "message", map[string]any{"message": piCompactionMessage("user", "补完十二个镜头")}),
+	}
+	parentID := "request"
+	for round := 0; round < 12; round++ {
+		entries = append(entries, piCompactionToolRound(t, round, parentID, strings.Repeat("canvas state ", 300))...)
+		parentID = fmt.Sprintf("result-%d", round)
+	}
+	entries = append(entries, piCompactionTestEntry(t, "final", parentID, "message", map[string]any{"message": piCompactionMessage("assistant", "已补完全部镜头")}))
+	branch, err := cloudAgentPiActiveBranch(entries, "final")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unbounded, err := cloudAgentPiCompactionSourceForBranch(branch, "final", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unbounded.FirstKeptEntryID != "request" {
+		t.Fatalf("complete-turn boundary = %q, want the only request", unbounded.FirstKeptEntryID)
+	}
+	const keepTokens = 3_000
+	source, err := cloudAgentPiCompactionSourceForBranch(branch, "final", keepTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.FirstKeptIndex <= 0 || source.MessageEntryIDs[source.FirstKeptIndex] != source.FirstKeptEntryID {
+		t.Fatalf("token budget did not move the boundary: %+v", source)
+	}
+	if role := stringField(source.Messages[source.FirstKeptIndex], "role"); role != "assistant" && role != "user" {
+		t.Fatalf("retention boundary starts at %q", role)
+	}
+	tokens := func(messages []map[string]any) int {
+		total := 0
+		for _, message := range messages {
+			raw, _ := json.Marshal(message)
+			total += estimateCloudAgentTokens(raw)
+		}
+		return total
+	}
+	// The boundary is the nearest one at or after the message that fills the budget.
+	if after, from := tokens(source.Messages[source.FirstKeptIndex+1:]), tokens(source.Messages[source.FirstKeptIndex-1:]); after >= keepTokens || from < keepTokens {
+		t.Fatalf("suffix after boundary %d tokens, from previous message %d tokens, budget %d", after, from, keepTokens)
+	}
+	open := map[string]bool{}
+	for _, message := range source.Messages[source.FirstKeptIndex:] {
+		for _, call := range creationMaps(message["tool_calls"]) {
+			open[stringField(call, "id")] = true
+		}
+		if stringField(message, "role") == "tool" {
+			if !open[stringField(message, "tool_call_id")] {
+				t.Fatalf("retained result lost its call: %+v", message)
+			}
+			delete(open, stringField(message, "tool_call_id"))
+		}
+	}
+	if len(open) != 0 {
+		t.Fatalf("retained calls lost their results: %v", open)
+	}
+}
+
+func TestCloudAgentPiRetentionIndexKeepsTheCallOfAnOversizedTrailingResult(t *testing.T) {
+	entries := []model.CloudAgentPiEntry{
+		piCompactionTestEntry(t, "request", "", "message", map[string]any{"message": piCompactionMessage("user", "读取画布")}),
+	}
+	entries = append(entries, piCompactionToolRound(t, 0, "request", strings.Repeat("large state ", 4_000))...)
+	branch, err := cloudAgentPiActiveBranch(entries, "result-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := cloudAgentPiCompactionSourceForBranch(branch, "result-0", 1_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.FirstKeptEntryID != "assistant-0" || source.FirstKeptIndex != 1 {
+		t.Fatalf("boundary = %q at %d, want the assistant call before its oversized result", source.FirstKeptEntryID, source.FirstKeptIndex)
 	}
 }
 

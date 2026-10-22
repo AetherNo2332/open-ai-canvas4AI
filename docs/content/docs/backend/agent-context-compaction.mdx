@@ -41,6 +41,12 @@ Worker 重启后使用冻结 preparation 和输出预算重新运行原生编排
 
 模型失败、截断、空摘要或工具输出使用 Go 保底检查点；取消及源版本/租约变化不能强行提交。传输错误保持为错误，不伪装成成功摘要。运行最多允许四次压缩，避免无限压缩循环。
 
+## 服务端压缩回退
+
+Pi 准备信息超过 1 MiB 或切点元数据失效时，Go 改用服务端语义压缩器，由 Go 决定保留切点。切点与 Pi `findCutPoint` 同口径：从最新消息倒数累计到 `keepRecentTokens`，再取该位置之后最近的 user 或 assistant 消息，不以工具结果为切点，保留的调用与结果成对。保留量取最近两轮完整对话与该后缀中较短者。单个请求驱动几十轮工具调用时只有一轮完整对话，若只按完整轮次切，整个分支都会被保留。
+
+Pi 在摘要后原样发送 `firstKeptEntryId` 起的后缀，Go 运行态 canonical 和 `context_transition.after` 也取同一段后缀，读数与实际请求一致。`context_compaction_requested` 携带 `engine`（`pi-native` / `go-semantic`）和 `retainedMessages`；Pi 提交了准备信息却被拒时另带 `nativeFallback`（`preparation_too_large` / `preparation_invalid`）。Worker 序列化准备信息时去掉工具结果 `details` 中重复的回执，Pi 摘要与 Go 校验都不读取该字段。
+
 目前已用 SDK 回归、SQLite 事务、本地模拟模型上游和隔离真实模型验证。`qwen3.8-27b` 上普通与拆分轮次都生成了 `pi-native` 摘要：重放不增加上游请求，订单只结清一次，压缩后的真实续跑保留人物、约束与任务身份。浏览器 SSE、PostgreSQL 及生产双 Worker 仍待验收；GPUStack `/v1/models` 未暴露上下文窗口，测试中的 64K/1024 是本地夹具预算，不代表远端容量。Go 与 Pi Worker 需配套升级，不能在有新压缩准备记录时直接回退旧 Go 二进制。
 
 ## 触发判定归属
