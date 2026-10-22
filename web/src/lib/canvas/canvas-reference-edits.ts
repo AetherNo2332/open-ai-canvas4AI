@@ -8,6 +8,7 @@ import { bindingForConnectedNode } from "./canvas-storyboard-materializer";
 import { applyCanvasConnectionPromptSync, buildCanvasNodeMentionReferenceMap, replaceCanvasReferenceMentions } from "./canvas-resource-references";
 import { writeCanvasNodePrompt } from "./canvas-node-prompt";
 import { canvasReferenceOwnerConnections, canvasReferenceOwnerScoped, canvasReferenceTwinKey, reconcileCanvasReferenceConnections } from "./canvas-reference-projection";
+import { storyboardRowVideoDraft } from "./canvas-project-domain";
 export type ReferenceEditIntent =
     | { kind: "set_row_assets"; nodeId: string; rowId: string; assetBindings: StoryboardAssetBinding[]; replaceNodeId?: string }
     | { kind: "set_board_references"; nodeId: string; referenceNodeIds: string[]; replaceNodeId?: string }
@@ -148,22 +149,42 @@ function referenceLineKeys(graph: CanvasReferenceGraph, ownerId: string) {
     if (canvasReferenceOwnerScoped(owner)) return new Set(canvasReferenceOwnerConnections(owner, graph.nodes).map(canvasReferenceTwinKey));
     return new Set(editableInputBindings(owner, graph.nodes, graph.connections).flatMap((binding) => (binding.nodeId ? [canvasReferenceTwinKey({ fromNodeId: binding.nodeId, toNodeId: owner.id })] : [])));
 }
+// Redraws one owner's lines after its fields changed: free lines of references it no longer declares go too.
+function redrawReferenceLines(before: CanvasReferenceGraph, after: CanvasReferenceGraph, ownerId: string, removedConnectionIds: Iterable<string> = []): CanvasReferenceGraph {
+    const previous = referenceLineKeys(before, ownerId);
+    const next = referenceLineKeys(after, ownerId);
+    const removed = new Set(removedConnectionIds);
+    const retained = after.connections.filter((edge) => {
+        if (removed.has(edge.id)) return false;
+        const key = canvasReferenceTwinKey(edge);
+        return edge.managedBy === "reference-fields-v1" || !previous.has(key) || next.has(key);
+    });
+    return { nodes: after.nodes, connections: reconcileCanvasReferenceConnections(after.nodes, retained.length === after.connections.length ? after.connections : retained, [ownerId]) };
+}
 /**
  * Applies a reference field edit and redraws the owner's lines in the same update; waiting for the
  * save round trip left lines late or, for free lines the server never manages, impossible to delete.
  * Free lines of references the edit removed go with them.
  */
 export function applyCanvasReferenceGraphEdit(graph: CanvasReferenceGraph, intent: ReferenceEditIntent, removedConnectionIds: Iterable<string> = []): CanvasReferenceGraph {
-    const before = referenceLineKeys(graph, intent.nodeId);
-    const nodes = applyCanvasReferenceEdit(graph.nodes, intent, graph.connections);
-    const after = referenceLineKeys({ nodes, connections: graph.connections }, intent.nodeId);
-    const removed = new Set(removedConnectionIds);
-    const retained = graph.connections.filter((edge) => {
-        if (removed.has(edge.id)) return false;
-        const key = canvasReferenceTwinKey(edge);
-        return edge.managedBy === "reference-fields-v1" || !before.has(key) || after.has(key);
-    });
-    return { nodes, connections: reconcileCanvasReferenceConnections(nodes, retained.length === graph.connections.length ? graph.connections : retained, [intent.nodeId]) };
+    return redrawReferenceLines(graph, { nodes: applyCanvasReferenceEdit(graph.nodes, intent, graph.connections), connections: graph.connections }, intent.nodeId, removedConnectionIds);
+}
+/**
+ * A video newly bound as a row's output is drafted from that row, like the storyboard's own shot videos:
+ * shot title, prompt, template and duration, with its inputs declared from the row. `before` is the graph
+ * the bind was applied to. Binding the same video again keeps a prompt the user has edited since.
+ */
+export function draftStoryboardVideoOutput(before: CanvasReferenceGraph, bound: CanvasReferenceGraph, intent: ReferenceEditIntent): CanvasReferenceGraph {
+    if (intent.kind !== "bind_output" || intent.outputMode !== "video") return bound;
+    const previous = before.nodes.find((node) => node.id === intent.nodeId)?.metadata?.storyboard?.rows.find((row) => row.id === intent.rowId);
+    if (previous?.videoNodeId === intent.outputNodeId) return bound;
+    const script = bound.nodes.find((node) => node.id === intent.nodeId);
+    const row = script?.metadata?.storyboard?.rows.find((item) => item.id === intent.rowId);
+    const video = bound.nodes.find((node) => node.id === intent.outputNodeId && node.type === "video");
+    if (!script || !row || !video) return bound;
+    const drafted = bound.nodes.map((node) => (node.id === video.id ? storyboardRowVideoDraft(script, row, video, bound.nodes) : node));
+    // Inputs the video declared before binding are compared on the pre-bind graph, where they were its own.
+    return redrawReferenceLines(before, { nodes: withStoryboardOutputDraft(drafted, script, row, video.id), connections: bound.connections }, video.id);
 }
 /**
  * Deletes a line together with every field that would draw it again. Undefined means the line is

@@ -318,6 +318,13 @@ export function normalizeConnection(firstNodeId: string, secondNodeId: string, n
     return { fromNodeId: first.id, toNodeId: second.id };
 }
 
+/** A video taking a storyboard row's output carries that shot's title, prompt, template and duration. */
+export function storyboardRowVideoDraft(scriptNode: CanvasNodeData, row: StoryboardRow, video: CanvasNodeData, nodes: CanvasNodeData[]): CanvasNodeData {
+    const prompt = (row.videoMotionPrompt || row.plotDescription).trim();
+    const composerContent = storyboardComposerContent(prompt, storyboardRowReferenceNodeIds(scriptNode, row, nodes, [], false), nodes);
+    return { ...video, title: `镜头 ${row.shotNumber} · 视频`, metadata: { ...video.metadata, prompt, composerContent, ...storyboardPromptTemplateMetadata(row, "video"), workflowKind: "shot" as const, workflowTitle: `镜头 ${row.shotNumber} 视频`, shotIndex: row.shotNumber, generationMode: "video" as const, videoEditOperation: video.metadata?.videoEditOperation || "text_to_video", seconds: String(row.durationSeconds) } };
+}
+
 export function attachNodeToStoryboardRow(nodes: CanvasNodeData[], connection: Pick<CanvasConnection, "fromNodeId" | "toNodeId" | "fromHandleId" | "toHandleId">) {
     const fromStoryboardHandle = connection.fromHandleId?.startsWith("row:") || connection.fromHandleId === "storyboard:context";
     const toStoryboardHandle = connection.toHandleId?.startsWith("row:") || connection.toHandleId === "storyboard:context";
@@ -329,12 +336,10 @@ export function attachNodeToStoryboardRow(nodes: CanvasNodeData[], connection: P
     const scriptNode = nodes.find((node) => node.id === scriptNodeId && node.type === CanvasNodeType.Script);
     if (!scriptNodeId || !linkedNode || !scriptNode) return nodes;
     const row = rowId ? scriptNode.metadata?.storyboard?.rows.find((item) => item.id === rowId) : undefined;
-    const videoPrompt = row ? (row.videoMotionPrompt || row.plotDescription).trim() : "";
-    const videoComposerContent = row ? storyboardComposerContent(videoPrompt, storyboardRowReferenceNodeIds(scriptNode, row, nodes, [], false), nodes) : "";
 
     return nodes.map((node) => {
         if (row && node.id === linkedNode.id && scriptNodeId === connection.fromNodeId && node.type === CanvasNodeType.Video) {
-            return { ...node, title: `镜头 ${row.shotNumber} · 视频`, metadata: { ...node.metadata, prompt: videoPrompt, composerContent: videoComposerContent, ...storyboardPromptTemplateMetadata(row, "video"), workflowKind: "shot" as const, workflowTitle: `镜头 ${row.shotNumber} 视频`, shotIndex: row.shotNumber, generationMode: "video" as const, videoEditOperation: node.metadata?.videoEditOperation || "text_to_video", seconds: String(row.durationSeconds) } };
+            return storyboardRowVideoDraft(scriptNode, row, node, nodes);
         }
         if (node.id !== scriptNodeId || node.type !== CanvasNodeType.Script) return node;
         const storyboard = node.metadata?.storyboard;

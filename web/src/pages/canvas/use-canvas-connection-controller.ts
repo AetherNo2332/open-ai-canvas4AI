@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatc
 import { App } from "antd";
 import { nanoid } from "nanoid";
 import { latchCanvasConnectionApproach, type CanvasConnectionApproach } from "@/lib/canvas/canvas-connection-tilt";
-import { applyCanvasReferenceGraphEdit, canvasReferenceIntentForConnection, connectCanvasReferences } from "@/lib/canvas/canvas-reference-edits";
+import { applyCanvasReferenceGraphEdit, canvasReferenceIntentForConnection, connectCanvasReferences, draftStoryboardVideoOutput, type CanvasReferenceGraph, type ReferenceEditIntent } from "@/lib/canvas/canvas-reference-edits";
 
 import type { PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
 import { getNodeSpec } from "@/constant/canvas";
@@ -20,6 +20,14 @@ import { useUserStore } from "@/stores/use-user-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
+import { useCanvasSessionStore } from "@/stores/canvas/use-canvas-session-store";
+
+// The command host has no editable fields for a shot draft's prompt or shot metadata, so
+// there the bind stays a plain output binding instead of an edit every later commit rejects.
+function bindCanvasReferenceConnection(graph: CanvasReferenceGraph, intent: ReferenceEditIntent) {
+    const bound = applyCanvasReferenceGraphEdit(graph, intent);
+    return useCanvasSessionStore.getState().scope ? bound : draftStoryboardVideoOutput(graph, bound, intent);
+}
 
 type UseCanvasConnectionControllerOptions = {
     projectId: string;
@@ -255,9 +263,13 @@ export function useCanvasConnectionController({
             const exists = connectionsRef.current.find((item) => item.fromNodeId === fromNodeId && item.toNodeId === toNodeId && item.fromHandleId === fromHandleId && item.toHandleId === toHandleId);
             const intent = canvasReferenceIntentForConnection(nodesRef.current, { fromNodeId, toNodeId, fromHandleId, toHandleId }, false, connectionsRef.current);
             if (intent) {
-                const next = applyCanvasReferenceGraphEdit({ nodes: nodesRef.current, connections: connectionsRef.current }, intent);
-                setNodes(next.nodes);
-                setConnections(next.connections);
+                try {
+                    const next = bindCanvasReferenceConnection({ nodes: nodesRef.current, connections: connectionsRef.current }, intent);
+                    setNodes(next.nodes);
+                    setConnections(next.connections);
+                } catch (error) {
+                    message.warning(error instanceof Error ? error.message : "无法建立这条引用");
+                }
                 setContextMenu(null);
                 return;
             }
@@ -441,7 +453,15 @@ export function useCanvasConnectionController({
             const connected = { ...connection, fromHandleId, toHandleId, fromAnchorRatio, toAnchorRatio };
             const intent = canvasReferenceIntentForConnection([...nodesRef.current, newNode], connected, false, connectionsRef.current);
             if (intent) {
-                const next = applyCanvasReferenceGraphEdit({ nodes: [...nodesRef.current, newNode], connections: connectionsRef.current }, intent);
+                let next: CanvasReferenceGraph;
+                try {
+                    next = bindCanvasReferenceConnection({ nodes: [...nodesRef.current, newNode], connections: connectionsRef.current }, intent);
+                } catch (error) {
+                    message.warning(error instanceof Error ? error.message : "无法建立这条引用");
+                    closeConnectionCreateMenu();
+                    setConnecting(null);
+                    return;
+                }
                 setNodes(next.nodes);
                 setConnections(next.connections);
             } else {
