@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## v1.6.0(616b4dc)
+
+- 修复画布 Agent 长任务压缩上下文后占用不降反升：Pi 原生压缩准备信息被拒时，服务端回退压缩此前按「最近两轮完整对话」保留原文，一个请求带几十轮工具调用时会把整段历史连同新摘要继续发送，界面显示 100% 以上占用并在几分钟内反复压缩。现在回退压缩只保留最近 `keepRecentTokens` 的原文（工具调用与结果成对），压缩后的占用读数与实际请求一致。
+- 压缩开始事件新增 `engine`（`pi-native` / `go-semantic`）、`nativeFallback`、`retainedMessages` 诊断字段，可直接看出本次走的压缩路径与保留的消息数。
+- Agent Worker 提交压缩准备信息时不再重复携带工具回执，长会话更少落入服务端回退。
+- 需更新后端与 Agent Worker 镜像（两处改动互不依赖，可分别部署）；无数据库迁移，前端无需更新。
+
 ## v1.6.0(7bd9659)
 
 - 摄影机控制目录升级为 9 台电影机与 10 支镜头：ARRI ALEXA 65 / ALEXA 35、ARRICAM LT、ARRIFLEX 435、IMAX Keighley / IMAX 胶片机、Sony VENICE、RED V-RAPTOR、Panavision DXL2；ARRI Signature Prime、Zeiss Ultra Prime、Cooke S4 / Speed Panchro / Anamorphic SF 18x、Canon K-35、Helios 44-2、Panavision C-Series / Primo、Hawk Class X。相机与镜头卡片直接展示透明底真实设备产品图，提示词同步使用对应设备描述；旧相机 / 镜头 id 不再兼容，历史画布需重新选择设备。
