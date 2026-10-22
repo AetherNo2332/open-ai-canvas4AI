@@ -35,6 +35,12 @@ func (field PatchField) projectValue(value any, textLimit, depth int) (any, bool
 	if depth > 64 {
 		return nil, false
 	}
+	// 可空字段的零值在读取投影里没有表示：对象属性与数组元素不会经过 EditableValues
+	// 顶层的 nil 跳过，必须在这里统一短路，否则后续 string 断言会对 nil 接口 panic
+	// （旧数据里 nullable 字段的 null 值就能让后端崩溃）。
+	if value == nil {
+		return nil, false
+	}
 	switch field.Kind {
 	case patchKindObject:
 		object, ok := value.(map[string]any)
@@ -95,7 +101,11 @@ func (field PatchField) projectValue(value any, textLimit, depth int) (any, bool
 		if err := field.validateValue(value, "read", depth); err != nil {
 			return nil, false
 		}
-		text := value.(string)
+		text, ok := value.(string)
+		if !ok {
+			// 声明的不是 string 或者是无法表示的值：读取投影直接跳过，不能 panic。
+			return nil, false
+		}
 		runes := []rune(text)
 		if len(field.Enum) > 0 || textLimit <= 0 || len(runes) <= textLimit {
 			return text, false
