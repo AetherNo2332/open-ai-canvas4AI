@@ -39,30 +39,39 @@ test("card columns stretch to the column width so corner badges cannot cover the
     expect(html.match(/class="relative flex h-\[clamp/g)).toHaveLength(4);
 });
 
-test("a new camera draft uses the declared ARRI and f/2.8 defaults consistently", () => {
+test("camera and lens cards render real product images from public assets", () => {
     const html = render();
-    expect(html).toContain("阿莱 Mini LF");
-    expect(html).toContain("阿莱大师定焦");
+    expect(html).toContain('src="/camera-controls/cameras/arri-alexa-65.png"');
+    expect(html).toContain('src="/camera-controls/lenses/arri-signature-prime.png"');
+    expect(html).toContain('loading="lazy"');
+    // 产品图是纯装饰，名称由卡片标签与摘要提供。
+    expect(html.match(/alt=""/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+});
+
+test("a new camera draft uses the declared ARRI ALEXA 65 and f/2.8 defaults consistently", () => {
+    const html = render();
+    expect(html).toContain("阿莱 ALEXA 65");
+    expect(html).toContain("阿莱 Signature Prime");
     expect(html).toContain("50mm");
     expect(html).toContain("f/2.8");
-    expect(html).toContain("阿莱 Mini LF · 阿莱大师定焦 · 50mm · f/2.8");
+    expect(html).toContain("阿莱 ALEXA 65 · 阿莱 Signature Prime · 50mm · f/2.8");
     expect(html).toContain('aria-checked="false"');
 });
 
 test("existing settings are displayed intact without writing during editing", () => {
-    const options: CameraOptions = { enabled: true, camera: "sony_fx6", lens: "anamorphic_atlas", focalLength: 85, aperture: 1.8 };
+    const options: CameraOptions = { enabled: true, camera: "sony_venice", lens: "panavision_primo", focalLength: 85, aperture: 1.8 };
     let writes = 0;
     const html = render(options, () => {
         writes++;
     });
-    expect(html).toContain("索尼 FX6");
-    expect(html).toContain("Atlas Orion 变形");
+    expect(html).toContain("索尼 VENICE");
+    expect(html).toContain("Panavision Primo 变形");
     expect(html).toContain("85mm");
     expect(html).toContain("f/1.8");
     expect(html).toContain('aria-checked="true"');
     expect(html).not.toContain('role="alert"');
     expect(writes).toBe(0);
-    expect(options).toEqual({ enabled: true, camera: "sony_fx6", lens: "anamorphic_atlas", focalLength: 85, aperture: 1.8 });
+    expect(options).toEqual({ enabled: true, camera: "sony_venice", lens: "panavision_primo", focalLength: 85, aperture: 1.8 });
 });
 
 test("unknown saved camera settings require an explicit correction instead of silently applying the first camera", () => {
@@ -75,11 +84,11 @@ test("unknown saved camera settings require an explicit correction instead of si
 });
 
 test("disabled camera direction keeps its saved choices and never offers an empty prompt to copy", () => {
-    const html = render({ enabled: false, camera: "sony_fx6", lens: "anamorphic_atlas", focalLength: 85, aperture: 1.8 });
+    const html = render({ enabled: false, camera: "sony_venice", lens: "panavision_primo", focalLength: 85, aperture: 1.8 });
     const buttons = buttonsOf(html);
     expect(isDisabled(buttons.find((button) => button.includes("复制提示词")))).toBe(true);
     expect(isDisabled(buttons.find((button) => button.includes("应用")))).toBe(false);
-    expect(html).toContain("索尼 FX6");
+    expect(html).toContain("索尼 VENICE");
     expect(html).toContain("85mm");
     expect(html).toContain("f/1.8");
     expect(html).toContain('aria-checked="false"');

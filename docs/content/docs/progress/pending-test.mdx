@@ -3,9 +3,15 @@ title: 待测试
 description: 当前项目已实现功能的手工验证清单与未确认边界
 ---
 
+## 摄影机控制真实设备素材
+
+- [x] 自动化：`camera-control-assets.test.ts` 校验 9 台相机 + 10 支镜头均有唯一 id、产品图文件存在且目录无孤立图片；`camera-control-panel.test.tsx` 覆盖默认机型与真实产品图渲染；前端全量 2688 pass / 0 fail（403 个文件），`tsc --noEmit`、生产构建、ESLint 与修改文件格式检查通过。
+- [ ] 已实现：相机/镜头目录切换为 TapNow 相机控制的 9 机 10 镜（ARRI ALEXA 65/35、ARRICAM LT、ARRIFLEX 435、IMAX Keighley/胶片机、Sony VENICE、RED V-RAPTOR、Panavision DXL2；ARRI Signature Prime、Zeiss Ultra Prime、Cooke S4/Speed Panchro/Anamorphic SF 18x、Canon K-35、Helios 44-2、Panavision C-Series/Primo、Hawk Class X），卡片直接展示透明底产品图并保留悬停说明与滚轮切档。产品图位于 `web/public/camera-controls/`，`profile.image` 与文件一一对应。旧相机/镜头 id 不再兼容，历史画布需重新选择设备。
+- [ ] 页面待验收：默认/自定义皮肤与明暗模式下 9 台相机、10 支镜头的产品图比例、透明底与裁切；图片加载失败回退图标；窄屏两列；切换后的摘要与提示词。
+
 ## 摄像机面板滚轮切档
 
-- [x] 自动化：`camera-wheel-step.test.ts` 覆盖滚轮增量归一化、累计阈值、一次事件最多一档与组件非 passive 监听绑定；`camera-control-panel.test.tsx` 覆盖四列滚轮目标与提示文案；前端全量 2654 pass / 0 fail（400 个文件），`tsc --noEmit`、生产构建、ESLint 与修改文件格式检查通过。
+- [x] 自动化：`camera-wheel-step.test.ts` 覆盖滚轮增量归一化、累计阈值、一次事件最多一档与组件非 passive 监听绑定；`camera-control-panel.test.tsx` 覆盖四列滚轮目标与提示文案；前端全量 2688 pass / 0 fail（403 个文件），`tsc --noEmit`、生产构建、ESLint 与修改文件格式检查通过。
 - [ ] 已实现：相机、镜头、焦距、光圈四列卡片各自监听鼠标滚轮，滚轮上/下滑切换上一档/下一档；触控板小增量按阈值累计，一次事件最多切一档；Ctrl+滚轮保留浏览器缩放，卡片区域滚动不再带动弹层滚动。
 - [ ] 页面待验收：鼠标滚轮与触控板在四列上分别切档、连续快速滚动不跳档、边缘循环、Ctrl+滚轮缩放、窄屏两列与面板自身滚动；明暗皮肤与焦点可见性。
 
@@ -43,7 +49,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 - [x] 自动化：摄影机组件与提示词合同专项 8 项通过；Web `tsc --noEmit`、Vite 生产构建、ESLint 与 CI 同款修改文件格式检查通过；canary 前端全量 2645 pass / 0 fail（398 个文件）。同时修正上游同步后遗留的 3 项过期断言（画布网格交互期变量、工具栏浮层类名、角色卡与图片共用编号），未改对应产品实现。
 - [ ] 已实现：改回上游四列卡片（相机、镜头、焦距、光圈），每列上下切换档位并保留悬停说明与当前配置摘要；修复卡片包裹层收缩导致的角标遮挡「焦距」「光圈」标签和四列宽度不一致，窄屏收为两列。
-- [ ] 已实现：首次打开与重置统一使用 ARRI Mini LF / Signature Prime / 50mm / f/2.8；无效旧配置显示错误并禁止应用与复制，不再静默改成第一台机身。修改、重置和启用状态先留在草稿中，取消不写入；关闭状态禁用复制提示词。
+- [ ] 已实现：首次打开与重置统一使用 ARRI ALEXA 65 / Signature Prime / 50mm / f/2.8；无效旧配置显示错误并禁止应用与复制，不再静默改成第一台机身。修改、重置和启用状态先留在草稿中，取消不写入；关闭状态禁用复制提示词。
 - [ ] 页面待验收：1440px 四列与 320px 两列下角标与标签不重叠、悬停说明、切换与重置、取消后重开、应用后恢复、批量弹窗内的嵌套面板；默认/自定义皮肤、明暗模式、0px/非零圆角与焦点可见性。
 
 ## Agent（beta）自定义系统提示词

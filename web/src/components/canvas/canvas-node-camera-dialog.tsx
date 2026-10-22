@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronUp, ChevronDown, Camera as CameraIcon, RotateCcw, X } from "lucide-react";
+import { ChevronUp, ChevronDown, Camera as CameraIcon, Aperture as ApertureIcon, RotateCcw, X } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
@@ -9,120 +9,25 @@ import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
-import { APERTURES, APERTURE_META, CAMERA_PROFILES, FOCAL_LENGTHS, FOCAL_LENGTH_META, LENS_PROFILES, buildCameraPrompt, type CameraControlOptions, type CameraProfile, type LensProfile } from "@/lib/canvas/camera-prompt-library";
+import { APERTURES, APERTURE_META, CAMERA_PROFILES, FOCAL_LENGTHS, FOCAL_LENGTH_META, LENS_PROFILES, buildCameraPrompt, type CameraControlOptions } from "@/lib/canvas/camera-prompt-library";
 import { CAMERA_WHEEL_IDLE_RESET_MS, normalizeCameraWheelDelta, takeCameraWheelStep } from "@/lib/canvas/camera-wheel";
 
 const defaultCameraControl: CameraControlOptions = {
     enabled: false,
-    camera: "arri_alexa_mini_lf",
+    camera: "arri_alexa_65",
     lens: "arri_signature_prime",
     focalLength: 50,
     aperture: 2.8,
 };
 
-/* ── SVG renderers ── */
+/* ── 产品图 ── */
 
-function CameraBodySvg({ profile, className }: { profile: CameraProfile; className?: string }) {
-    const body = profile.bodyColor;
-    const accent = profile.accentColor;
-    switch (profile.id) {
-        case "panavision_dxl2":
-            return (
-                <svg viewBox="0 0 72 52" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                    <rect x="18" y="8" width="30" height="32" rx="3" fill={body} stroke={accent} strokeWidth="1.2" />
-                    <rect x="10" y="12" width="12" height="24" rx="2" fill="#1b1b1b" stroke={accent} />
-                    <rect x="48" y="14" width="16" height="20" rx="2" fill="#222" stroke={accent} />
-                    <circle cx="56" cy="24" r="6" fill="#0a0a0a" stroke={accent} />
-                    <rect x="26" y="3" width="14" height="6" rx="1" fill={body} />
-                    <rect x="20" y="42" width="26" height="4" rx="1" fill={accent} opacity="0.6" />
-                </svg>
-            );
-        case "arri_alexa_mini_lf":
-            return (
-                <svg viewBox="0 0 72 52" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                    <rect x="14" y="12" width="38" height="28" rx="4" fill={body} stroke={accent} />
-                    <circle cx="52" cy="26" r="10" fill="#111" stroke={accent} strokeWidth="1.2" />
-                    <circle cx="52" cy="26" r="6" fill="#2b2b2b" stroke="#666" />
-                    <rect x="20" y="6" width="18" height="8" rx="1.5" fill={body} />
-                    <rect x="18" y="18" width="8" height="6" rx="1" fill={accent} opacity="0.3" />
-                </svg>
-            );
-        case "red_komodo_6k":
-        case "red_v_raptor_8k": {
-            const is_raptor = profile.id === "red_v_raptor_8k";
-            return (
-                <svg viewBox="0 0 72 52" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                    <rect x="18" y="14" width={is_raptor ? "32" : "28"} height="26" rx="2" fill={body} stroke={accent} />
-                    <circle cx={is_raptor ? "50" : "46"} cy="27" r="9" fill="#050505" stroke={accent} />
-                    <circle cx={is_raptor ? "50" : "46"} cy="27" r="5" fill="#1a1a1a" stroke="#666" />
-                    <rect x="20" y="8" width="8" height="7" rx="1" fill={accent} opacity="0.85" />
-                    <text x="22" y="36" fontSize="6" fill="#fff" fontWeight="bold">
-                        RED
-                    </text>
-                </svg>
-            );
-        }
-        case "sony_venice_2":
-        case "sony_fx6":
-            return (
-                <svg viewBox="0 0 72 52" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                    <rect x="14" y="14" width="36" height="26" rx="3" fill={body} stroke={accent} />
-                    <circle cx="52" cy="27" r="9" fill="#050505" stroke={accent} />
-                    <rect x="16" y="18" width="6" height="6" rx="1" fill={accent} opacity="0.5" />
-                    <rect x="22" y="8" width="16" height="8" rx="1.5" fill={body} />
-                    <text x="22" y="36" fontSize="5.5" fill="#ccc">
-                        SONY
-                    </text>
-                </svg>
-            );
-        case "blackmagic_ursa_12k":
-            return (
-                <svg viewBox="0 0 72 52" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                    <rect x="16" y="12" width="32" height="28" rx="2" fill={body} stroke={accent} />
-                    <circle cx="50" cy="26" r="10" fill="#050505" stroke={accent} />
-                    <circle cx="50" cy="26" r="6" fill="#1a1a1a" stroke="#666" />
-                    <rect x="24" y="5" width="12" height="8" rx="1" fill={body} />
-                    <text x="18" y="35" fontSize="5" fill={accent} fontWeight="bold">
-                        URSA
-                    </text>
-                </svg>
-            );
-        case "canon_c500_mk2":
-            return (
-                <svg viewBox="0 0 72 52" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                    <rect x="16" y="12" width="34" height="28" rx="3" fill={body} stroke={accent} />
-                    <circle cx="50" cy="26" r="9" fill="#050505" stroke={accent} />
-                    <rect x="18" y="16" width="10" height="5" rx="1" fill={accent} opacity="0.7" />
-                    <text x="20" y="36" fontSize="5.5" fill="#eee">
-                        Canon
-                    </text>
-                </svg>
-            );
-        default:
-            return (
-                <svg viewBox="0 0 72 52" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                    <rect x="16" y="14" width="36" height="26" rx="3" fill={body} stroke={accent} />
-                    <circle cx="52" cy="27" r="9" fill="#0a0a0a" stroke={accent} />
-                </svg>
-            );
-    }
-}
-
-function LensBodySvg({ profile, className }: { profile: LensProfile; className?: string }) {
-    const body = profile.lensColor;
-    const ring = profile.ringColor;
-    const rings = profile.id.startsWith("anamorphic") ? 4 : 3;
-    return (
-        <svg viewBox="0 0 72 44" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden>
-            <rect x="6" y="14" width="56" height="18" rx="3" fill={body} stroke="#444" />
-            {Array.from({ length: rings }).map((_, i) => (
-                <rect key={i} x={12 + i * 12} y="14" width="4" height="18" fill={ring} opacity="0.6" />
-            ))}
-            <circle cx="58" cy="23" r="7" fill="#050505" stroke={ring} strokeWidth="1.5" />
-            <circle cx="58" cy="23" r="3.5" fill="#222" stroke="#888" />
-            {profile.id.startsWith("anamorphic") && <ellipse cx="58" cy="23" rx="7" ry="3" fill="none" stroke={ring} strokeWidth="0.8" opacity="0.7" />}
-        </svg>
-    );
+/** 相机/镜头卡片直接展示真实设备产品图；加载失败时退回图标，避免留下空白。 */
+function EquipmentImage({ src, className, fallback }: { src: string; className: string; fallback: React.ReactNode }) {
+    const [failed, setFailed] = useState(false);
+    useEffect(() => setFailed(false), [src]);
+    if (failed) return <span className="grid h-full w-full place-items-center opacity-60">{fallback}</span>;
+    return <img src={src} alt="" className={className} draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }
 
 /* ── HoverTip ── */
@@ -415,7 +320,7 @@ export function CanvasNodeCameraPanel({ cameraControl, onClose, onConfirm }: { c
                     tooltipTitle={`${currentCamera.zhName} · ${currentCamera.label}`}
                     tooltipDesc={currentCamera.description}
                     tooltipUseCase={currentCamera.useCase}
-                    visual={<CameraBodySvg profile={currentCamera} className="h-16" />}
+                    visual={<EquipmentImage src={currentCamera.image} className="h-16 w-auto max-w-full object-contain" fallback={<CameraIcon className="size-8" />} />}
                     captionBelow={currentCamera.zhName}
                     onPrev={() => cycleCamera(-1)}
                     onNext={() => cycleCamera(1)}
@@ -427,7 +332,7 @@ export function CanvasNodeCameraPanel({ cameraControl, onClose, onConfirm }: { c
                     tooltipTitle={`${currentLens.zhName} · ${currentLens.label}`}
                     tooltipDesc={currentLens.description}
                     tooltipUseCase={currentLens.useCase}
-                    visual={<LensBodySvg profile={currentLens} className="h-14" />}
+                    visual={<EquipmentImage src={currentLens.image} className="h-14 w-auto max-w-full object-contain" fallback={<ApertureIcon className="size-7" />} />}
                     captionBelow={currentLens.zhName}
                     onPrev={() => cycleLens(-1)}
                     onNext={() => cycleLens(1)}
