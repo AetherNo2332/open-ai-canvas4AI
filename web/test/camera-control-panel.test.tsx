@@ -13,13 +13,23 @@ const isDisabled = (button: string | undefined) => Boolean(button?.includes('dis
 test("camera panel keeps the four upstream columns with previous/next controls and a summary", () => {
     const html = render();
     expect(html).toContain("摄像机控制");
-    expect(html).toContain("为当前图片生成设置镜头、焦距与光圈");
+    expect(html).toContain("为当前图片生成设置镜头、焦距与光圈，滚轮可切换档位");
     for (const label of ["相机", "镜头", "焦距", "光圈"]) expect(html).toContain(label);
     expect(html.match(/title="上一项"/g)).toHaveLength(4);
     expect(html.match(/title="下一项"/g)).toHaveLength(4);
     expect(html).toContain("当前配置");
     expect(html).toContain("重置参数");
     expect(html).toContain("应用");
+});
+
+test("each parameter column exposes its own wheel-switch target", () => {
+    const html = render();
+    // 四列各自绑定滚轮切档，滑到卡片上时只切换本列参数。
+    expect(html.match(/data-camera-column=/g)).toHaveLength(4);
+    expect(html).toContain('data-camera-column="相机"');
+    expect(html).toContain('data-camera-column="镜头"');
+    expect(html).toContain('data-camera-column="焦距"');
+    expect(html).toContain('data-camera-column="光圈"');
 });
 
 test("card columns stretch to the column width so corner badges cannot cover the centered labels", () => {

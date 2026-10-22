@@ -10,6 +10,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { APERTURES, APERTURE_META, CAMERA_PROFILES, FOCAL_LENGTHS, FOCAL_LENGTH_META, LENS_PROFILES, buildCameraPrompt, type CameraControlOptions, type CameraProfile, type LensProfile } from "@/lib/canvas/camera-prompt-library";
+import { CAMERA_WHEEL_IDLE_RESET_MS, normalizeCameraWheelDelta, takeCameraWheelStep } from "@/lib/canvas/camera-wheel";
 
 const defaultCameraControl: CameraControlOptions = {
     enabled: false,
@@ -220,6 +221,44 @@ const HoverTip = memo(({ title, description, useCase, children }: HoverTipProps)
 });
 HoverTip.displayName = "HoverTip";
 
+/* ── 滚轮切档 ── */
+
+/**
+ * 参数卡上的滚轮只切换档位，不滚动弹层；一次事件最多切一档。
+ * 必须用非 passive 的原生监听，才能在滚轮事件里阻止弹层滚动。
+ */
+function useCameraWheelStep(onStep: (direction: 1 | -1) => void) {
+    const targetRef = useRef<HTMLDivElement | null>(null);
+    const onStepRef = useRef(onStep);
+    onStepRef.current = onStep;
+    useEffect(() => {
+        const target = targetRef.current;
+        if (!target) return;
+        let accumulator = 0;
+        let resetTimer: number | null = null;
+        const handleWheel = (event: WheelEvent) => {
+            // 保留 Ctrl+滚轮的浏览器缩放行为。
+            if (event.ctrlKey) return;
+            const delta = normalizeCameraWheelDelta(event.deltaY, event.deltaMode);
+            if (!delta) return;
+            event.preventDefault();
+            const next = takeCameraWheelStep(accumulator, delta);
+            accumulator = next.accumulator;
+            if (resetTimer !== null) window.clearTimeout(resetTimer);
+            resetTimer = window.setTimeout(() => {
+                accumulator = 0;
+            }, CAMERA_WHEEL_IDLE_RESET_MS);
+            if (next.step) onStepRef.current(next.step);
+        };
+        target.addEventListener("wheel", handleWheel, { passive: false });
+        return () => {
+            target.removeEventListener("wheel", handleWheel);
+            if (resetTimer !== null) window.clearTimeout(resetTimer);
+        };
+    }, []);
+    return targetRef;
+}
+
 /* ── CardColumn ── */
 
 interface CardColumnProps {
@@ -232,12 +271,14 @@ interface CardColumnProps {
     captionBelow: string;
     onPrev: () => void;
     onNext: () => void;
+    onWheelStep: (direction: 1 | -1) => void;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
 }
 
-const CardColumn = memo(({ label, tooltipTitle, tooltipDesc, tooltipUseCase, visual, cornerBadge, captionBelow, onPrev, onNext, theme }: CardColumnProps) => {
+const CardColumn = memo(({ label, tooltipTitle, tooltipDesc, tooltipUseCase, visual, cornerBadge, captionBelow, onPrev, onNext, onWheelStep, theme }: CardColumnProps) => {
+    const wheelRef = useCameraWheelStep(onWheelStep);
     return (
-        <div className="flex min-w-0 flex-col items-center gap-1.5">
+        <div ref={wheelRef} data-camera-column={label} className="flex min-w-0 flex-col items-center gap-1.5">
             <button type="button" onClick={onPrev} className="flex h-5 w-full items-center justify-center rounded-md transition-colors" style={{ color: theme.node.faint }} title="上一项">
                 <ChevronUp className="size-3.5" />
             </button>
@@ -359,7 +400,7 @@ export function CanvasNodeCameraPanel({ cameraControl, onClose, onConfirm }: { c
                 <div className="min-w-0">
                     <div className="text-sm font-semibold tracking-tight">摄像机控制</div>
                     <div className="mt-0.5 truncate text-[11px]" style={{ color: theme.node.muted }}>
-                        为当前图片生成设置镜头、焦距与光圈
+                        为当前图片生成设置镜头、焦距与光圈，滚轮可切换档位
                     </div>
                 </div>
                 <button type="button" className="grid size-7 shrink-0 place-items-center rounded-md transition-colors hover:bg-white/10" style={{ color: theme.node.muted }} onClick={onClose} aria-label="关闭摄像机控制" title="关闭">
@@ -378,6 +419,7 @@ export function CanvasNodeCameraPanel({ cameraControl, onClose, onConfirm }: { c
                     captionBelow={currentCamera.zhName}
                     onPrev={() => cycleCamera(-1)}
                     onNext={() => cycleCamera(1)}
+                    onWheelStep={(direction) => cycleCamera(direction)}
                     theme={theme}
                 />
                 <CardColumn
@@ -389,6 +431,7 @@ export function CanvasNodeCameraPanel({ cameraControl, onClose, onConfirm }: { c
                     captionBelow={currentLens.zhName}
                     onPrev={() => cycleLens(-1)}
                     onNext={() => cycleLens(1)}
+                    onWheelStep={(direction) => cycleLens(direction)}
                     theme={theme}
                 />
                 <CardColumn
@@ -408,6 +451,7 @@ export function CanvasNodeCameraPanel({ cameraControl, onClose, onConfirm }: { c
                     captionBelow={focalMeta?.zhName ?? ""}
                     onPrev={() => cycleFocal(-1)}
                     onNext={() => cycleFocal(1)}
+                    onWheelStep={(direction) => cycleFocal(direction)}
                     theme={theme}
                 />
                 <CardColumn
@@ -432,6 +476,7 @@ export function CanvasNodeCameraPanel({ cameraControl, onClose, onConfirm }: { c
                     captionBelow={apertureMeta?.zhName ?? ""}
                     onPrev={() => cycleAperture(-1)}
                     onNext={() => cycleAperture(1)}
+                    onWheelStep={(direction) => cycleAperture(direction)}
                     theme={theme}
                 />
             </div>
