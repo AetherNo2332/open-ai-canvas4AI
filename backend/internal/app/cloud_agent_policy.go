@@ -135,38 +135,8 @@ func cloudAgentCapabilityGuide() string {
 	return b.String()
 }
 
-// cloudAgentSkillFileLimit bounds the inlined file list. The list is a routing
-// aid, not a permission: skill_read_file lists the full directory on demand.
-const cloudAgentSkillFileLimit = 60
-
-// cloudAgentSkillManifestDescription bounds the system prompt: the description
-// is author-supplied public metadata, so it is trimmed and capped before it
-// enters the compiled policy.
-func cloudAgentSkillManifestDescription(description string) string {
-	const maxRunes = 500
-	trimmed := strings.TrimSpace(description)
-	if utf8.RuneCountInString(trimmed) <= maxRunes {
-		return trimmed
-	}
-	runes := []rune(trimmed)
-	return strings.TrimSpace(string(runes[:maxRunes])) + "…"
-}
-
-func cloudAgentSkillManifest(skill cloudAgentSkill) map[string]any {
-	paths := cloudAgentSkillPaths(skill)
-	manifest := map[string]any{"skillId": skill.ID, "name": skill.Name, "description": cloudAgentSkillManifestDescription(skill.Description), "version": skill.Version, "hash": skill.Hash, "entryPath": cloudAgentSkillEntryPath}
-	if omitted := len(paths) - cloudAgentSkillFileLimit; omitted > 0 {
-		manifest["files"] = paths[:cloudAgentSkillFileLimit]
-		manifest["filesOmitted"] = omitted
-		manifest["filesHint"] = "清单已截断；用 skill_read_file 传空 path 列出完整文件"
-		return manifest
-	}
-	manifest["files"] = paths
-	return manifest
-}
-
 func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, profile cloudAgentProfileSnapshot, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
-	return compileCloudAgentPoliciesForRuntime(req, skills, canvasSummary, profile, cloudAgentSkillRuntimeLegacy, anchors...)
+	return compileCloudAgentPoliciesForRuntime(req, skills, canvasSummary, profile, cloudAgentSkillRuntimeNative, anchors...)
 }
 
 func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, profile cloudAgentProfileSnapshot, skillMode string, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
@@ -224,15 +194,7 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 		context["referenceCandidates"] = anchors[0].ReferenceAssets
 		context["visualInspectionPolicy"] = "observationStatus 只描述已有观察；关系梳理无需识图，判断外观或一致性时再看图。cached_needs_validation 须由识图工具核对当前资源。"
 	}
-	if skillMode == cloudAgentSkillRuntimeNative {
-		context["skillRuntimeMode"] = cloudAgentSkillRuntimeNative
-	} else {
-		manifests := make([]map[string]any, 0, len(skills))
-		for _, skill := range skills {
-			manifests = append(manifests, cloudAgentSkillManifest(skill))
-		}
-		context["skills"] = manifests
-	}
+	context["skillRuntimeMode"] = skillMode
 	layers := make([]map[string]any, 0, len(profile.Layers))
 	for _, layer := range profile.Layers {
 		layers = append(layers, map[string]any{"scope": layer.Scope, "revision": layer.Revision, "hash": layer.Hash, "characters": utf8.RuneCountInString(layer.Content)})

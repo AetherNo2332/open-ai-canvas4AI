@@ -41,7 +41,7 @@ description: 从产品功能快速定位主要代码入口
 
 ## Agent 工具合同
 
-- 工具快照管理：`internal/app/agent_tool_snapshots.go` 组合目录、比较与领取策略，`internal/repository/agent_tool_snapshot.go` 保存不可变定义与注册状态；worker 的 `agent/src/tool-snapshot-registration.ts` 注册实际内存制品；后台 `tool-snapshots-panel.tsx` 独立显示当前健康与管理操作。协议与迁移见 [工具快照专题](./agent-tool-snapshots)。
+- Agent 工具目录：`internal/app/agent_tool_catalog.go` 生成当前全集与工具总数，`handler/agent_scheduler.go` 向后台返回数量，`agent-settings-page.tsx` 展示；Worker 使用服务端下发定义，不登记或比对工具快照。参见 [工具目录专题](./agent-tools)。
 - Agent 按需读取：`cloud_agent_read_views.go` 管理节点视图与正文续读；`cloud_agent_storyboard_read.go`、`cloud_agent_reference_read.go` 使用生成侧引用解析器检查行绑定和可用性；`cloud_agent_asset_usage.go` 处理画布节点归档用途；`cloud_agent_pi_receipt_history.go` 按精确会话条目恢复收尾回执。工具 schema 用 `cmd/export-agent-tool-schema` 导出，协议见 [读取与收尾合同](./agent-tool-reads)。
 
 - 核心画布操作：`internal/canvas/capability/` 注册类型化可编辑字段；`cloud_agent_operations.go` / `cloud_agent_copy.go` 处理节点、引用与复制（连线已改由服务端按引用字段派生，Agent 连线操作停用），`cloud_agent_history_tools.go` 处理逐步撤销/重做（数据库 v58）。原生绘图同步位于 `cloud_agent_drawing.go` / `cloud_agent_tldraw_validation.go` 和前端 `canvas-drawing-document-sync.ts`；远端结构合并位于 `canvas-entity-reconciliation.ts`。实现范围、边界与独立 Compose 验收见 [画布 Agent 节点与内容操作](../../../design/canvas-agent-operation-parity.md)。

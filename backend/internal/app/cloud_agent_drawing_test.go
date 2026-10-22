@@ -42,26 +42,6 @@ func TestAgentParityDrawingRejectsCredentialsAndTemporaryAssets(t *testing.T) {
 	}
 }
 
-func TestAgentParityDrawingRemovalSchemaMatchesRuntime(t *testing.T) {
-	for _, tool := range cloudAgentTools(CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}}) {
-		function := tool["function"].(map[string]any)
-		if function["name"] != "canvas_edit_drawing" {
-			continue
-		}
-		schema := function["parameters"].(map[string]any)
-		valid := `{"snapshotHash":"h","nodeId":"d","engine":"excalidraw","operations":[{"type":"remove","id":"r"}]}`
-		if err := validateCloudAgentToolArguments(schema, valid); err != nil {
-			t.Fatal(err)
-		}
-		invalid := `{"snapshotHash":"h","nodeId":"d","engine":"excalidraw","operations":[{"type":"remove","id":"r","record":{}}]}`
-		if err := validateCloudAgentToolArguments(schema, invalid); err == nil {
-			t.Fatal("advertised removal schema accepts record, contrary to runtime")
-		}
-		return
-	}
-	t.Fatal("missing drawing edit tool")
-}
-
 func TestAgentParityDrawingRejectsNormalizedUnsafeFieldsAndLinks(t *testing.T) {
 	for name, value := range map[string]any{
 		"prototype":            map[string]any{"__proto__": map[string]any{"polluted": true}},

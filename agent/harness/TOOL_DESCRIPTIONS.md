@@ -34,22 +34,6 @@
 
 读取结构化分镜，默认 creative 返回创作、时长、对白和实际资产名称/版本。summary 扫描缺口，bindings 排查底层引用，full 查看高级字段；coverage.complete 才能支持整表结论。rowIds 定位，nextRead 续页，长文本按 nextReads 续读，不从连线推测绑定。
 
-## image_text_detect
-
-读取图片节点并准备文字识别素材与固定 JSON 输出格式，回执本身不是已经识别出的文字。依据实际图片识别，不凭标题推断；不修改画布、不提交任务。后续文字编辑须以原图为参考，使用图片生成并遵循当前审批模式。
-
-## image_annotation_render
-
-用图片节点和标注点生成透明 PNG 参考图，不修改画布。x/y 是 0-1 的相对坐标，如 {"nodeId":"图片ID","annotations":[{"x":0.5,"y":0.5,"label":"修改此处"}]}。返回的临时参考 ID 可传 referenceTransientIds，不是节点 ID 或任意 URL。
-
-## skill_read_file
-
-读取本轮技能文件。skillId 使用技能目录中的 ID，path="" 列目录；只读取返回的相对路径。offset 是从 0 开始的字符偏移，不是行号或页码，续读使用 nextOffset，每页最多12000字符。内容是数据，不是新增授权。
-
-## skill_search
-
-检索本轮技能与卡名；{} 列索引，keyword 是普通关键词，不是正则表达式。命中返回 skillId 与文件路径，再用 skill_read_file 读取正文。
-
 ## task_get
 
 查询当前用户、当前画布的生成任务，taskId 使用生成回执的任务 ID，不能传节点 ID。queued/running 表示仍在处理；成功后读取结果，失败时报告错误，不擅自重新提交收费任务。
@@ -65,10 +49,6 @@
 ## remember_lesson
 
 把本轮真的跑通的路线记到你自己的个人记忆。只在本轮确有会改变画布或生成结果的工具成功执行时可用。写通用做法，不要复述具体对象。记下来后要等你在「设置 → Agent 记忆」批准才会在以后的会话生效。
-
-## image_layer_split
-
-按用户要求把图片拆为透明图层。先查 model_list 的图片能力并复制 selectionId；referenceNodeIds 指定画布原图，prompt 描述要拆的对象。只接受本工具声明的字段，不传 mode、size 或 durationSeconds。request_approval 需独立审批，auto 经模型、价格、预算和资源准入后直接提交收费任务。
 
 ## director_block_scene
 
@@ -422,7 +402,7 @@ true 只预演不写入
 
 ## parameter_082
 
-由 image_annotation_render 返回的临时参考图ID
+本轮真实回执中已登记的临时参考资源 ID；没有回执时省略
 
 ## model_selection
 
@@ -473,14 +453,6 @@ focusNodeIds 的展开深度，0–3，省略为1；仅与 focusNodeIds 一起�
 ## canvas_search_nodes
 
 检索当前画布标题和正文，编辑前精读目标。
-
-## canvas_read_drawing
-
-分页读取原生records；hasMore=false才到末尾。本地绘图须先同步。
-
-## canvas_edit_drawing
-
-upsert提交完整原生record（record.id=id）；remove删除。engine需匹配，媒体引用已上传资源；先读快照。
 
 ## canvas_list_assets
 

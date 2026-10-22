@@ -52,6 +52,7 @@ func previsResultString(t *testing.T, result any, key string) string {
 func TestCloudAgentPrevisSceneCreateAndPatchKeepSemanticAndCanvasHashesSeparate(t *testing.T) {
 	s, canvas := previsMutationFixture(t)
 	req := agentTestRequest()
+	req.Prompt = "创建并检查导演台预演场景"
 	req.CanvasID = canvas.ID
 	req.PermissionMode = "auto"
 	run, err := s.CreateCloudAgentRun("user", req, "")
@@ -459,6 +460,7 @@ func TestCloudAgentPrevisApprovalRoundTripUsesSharedAgentGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := agentTestRequest()
+	req.Prompt = "创建并检查导演台预演场景"
 	req.PermissionMode = "request_approval"
 	root, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {

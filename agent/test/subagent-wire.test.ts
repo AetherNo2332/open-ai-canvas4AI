@@ -22,7 +22,7 @@ test("agent reports are data rather than user instructions", () => {
 });
 
 test("read-only children reject the new canvas mutation tools", () => {
-  for (const name of ["canvas_edit_drawing", "canvas_bind_asset", "canvas_undo", "canvas_redo"]) {
+  for (const name of ["canvas_bind_asset", "canvas_undo", "canvas_redo"]) {
     assert.throws(() => validateSubagentRuntime(child, "child", false, [...reports, { name, allowed: true }]), /permission mismatch/);
   }
 });

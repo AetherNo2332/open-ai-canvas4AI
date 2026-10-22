@@ -142,7 +142,7 @@ func TestCloudAgentMediaToolsDeclareExclusiveModelSelection(t *testing.T) {
 	req.PermissionMode = "auto"
 	for _, tool := range cloudAgentTools(req) {
 		function := tool["function"].(map[string]any)
-		if function["name"] != "generate_media" && function["name"] != "image_layer_split" {
+		if function["name"] != "generate_media" {
 			continue
 		}
 		count++
@@ -158,7 +158,7 @@ func TestCloudAgentMediaToolsDeclareExclusiveModelSelection(t *testing.T) {
 			}
 		}
 	}
-	if count != 2 {
+	if count != 1 {
 		t.Fatalf("missing media tools: %d", count)
 	}
 }

@@ -42,9 +42,7 @@ var ErrProjectUnitShotsChanged = errors.New("镜头已被修改，请刷新后�
 var ErrCanvasRevisionConflict = errors.New("画布已被更新，请刷新后重试")
 
 type Repository struct {
-	db                    *gorm.DB
-	toolRuntimeInstanceID string
-	workerToolSnapshotID  string
+	db *gorm.DB
 }
 
 type UserStorageUsage struct {

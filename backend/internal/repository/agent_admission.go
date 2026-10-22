@@ -64,7 +64,7 @@ func admissionKey(run model.CloudAgentExecution) string {
 	return run.UserID + ":session:" + run.ConversationID + ":" + run.ID
 }
 
-func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback model.AgentSchedulerSetting, guards ...func(*Repository, model.CloudAgentExecution) (bool, error)) (*model.CloudAgentExecution, error) {
+func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback model.AgentSchedulerSetting) (*model.CloudAgentExecution, error) {
 	var claimed *model.CloudAgentExecution
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		counter := model.AgentAdmissionCounter{ID: 1}
@@ -85,15 +85,6 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 		// 租约/恢复列由认领、续租与派发路径以 UTC 写入；SQLite 文本比较混入本地时区
 		// 会把未来租约误判为已过期，这里必须保持 UTC。
 		now := time.Now().UTC()
-		if r.toolRuntimeInstanceID != "" {
-			runtime, err := New(tx).LockToolRuntime(r.toolRuntimeInstanceID)
-			if err != nil {
-				return err
-			}
-			if runtime.ManualDraining || runtime.LoadError != "" || runtime.LastHeartbeatAt.Before(now.Add(-45*time.Second)) {
-				return nil
-			}
-		}
 		var candidates []model.CloudAgentExecution
 		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind",
 			"lease_owner", "lease_expires_at", "recovery_status", "recovery_attempts", "recovery_started_at", "progress_version", "claim_progress_version",
@@ -128,30 +119,6 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 			return a < b
 		})
 		for _, candidate := range candidates {
-			if len(guards) > 0 {
-				var state model.CloudAgentExecution
-				if err := tx.Select("state_json").First(&state, "id = ?", candidate.ID).Error; err != nil {
-					return err
-				}
-				candidate.StateJSON = state.StateJSON
-			}
-			for _, guard := range guards {
-				allowed, err := guard(New(tx), candidate)
-				if err != nil {
-					if errors.Is(err, ErrToolRuntimeUnavailable) {
-						return nil
-					}
-					return err
-				}
-				if !allowed {
-					if candidate.Status == "queued" && candidate.WaitKind != "subagents" && (candidate.RuntimePhase != "waiting_resource" || candidate.WaitKind != "tool_snapshot" || candidate.WaitReason != "等待兼容工具快照的执行实例") {
-						if err := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ?", candidate.ID, candidate.Revision).Updates(map[string]any{"runtime_phase": "waiting_resource", "wait_kind": "tool_snapshot", "wait_reason": "等待兼容工具快照的执行实例", "revision": gorm.Expr("revision + 1")}).Error; err != nil {
-							return err
-						}
-					}
-					goto nextCandidate
-				}
-			}
 			{
 				// Suspended parents yield residency until their dependencies terminate.
 				if candidate.WaitKind == "subagents" {
@@ -185,15 +152,6 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 					return err
 				}
 				updates := map[string]any{"lease_owner": owner, "lease_expires_at": until, "status": gorm.Expr("CASE WHEN status = 'queued' THEN 'running' ELSE status END"), "runtime_phase": "ready", "wait_kind": "", "wait_reason": "", "revision": gorm.Expr("revision + 1")}
-				if r.toolRuntimeInstanceID != "" {
-					frozen, err := New(tx).FrozenToolSnapshot(candidate.ID)
-					if err != nil {
-						return err
-					}
-					updates["tool_runtime_instance_id"] = r.toolRuntimeInstanceID
-					updates["worker_tool_snapshot_id"] = r.workerToolSnapshotID
-					updates["tool_snapshot_id"] = frozen.ID
-				}
 				protected, err := New(tx).WorkerRecoveryProtectedWait(candidate)
 				if err != nil {
 					return err
@@ -225,7 +183,6 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 				claimed = &candidate
 				return nil
 			}
-		nextCandidate:
 		}
 		return nil
 	})

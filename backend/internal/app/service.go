@@ -44,8 +44,6 @@ type Service struct {
 	storageTestMu            sync.Mutex
 	agentSkillDefaultsMu     sync.Mutex
 	workerRuntimeMu          sync.Mutex
-	toolSnapshotMu           sync.Mutex
-	toolBackendSnapshot      *model.AgentToolSnapshot
 	taskDispatcherWake       chan struct{}
 	agentToolWake            chan struct{}
 	geminiCacheLockMu        sync.Mutex

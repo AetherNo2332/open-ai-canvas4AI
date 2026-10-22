@@ -6,6 +6,7 @@ import AgentLessonsPanel from "../components/agent-lessons-panel";
 import { RefreshCw, Save } from "lucide-react";
 import AgentSkillDefaultsSection from "./components/agent-skill-defaults-section";
 import AgentSubagentsAvailabilitySection from "./components/agent-subagents-availability-section";
+import AgentToolCount from "./components/agent-tool-count";
 import AgentWebSearchSection from "./components/agent-web-search-section";
 import "./agent-settings-page.css";
 import { getAgentSchedulerSetting, updateAgentSchedulerSetting, type AgentSchedulerDraft, type AgentSchedulerSetting } from "@/services/api/admin-agent-settings";
@@ -21,6 +22,7 @@ export default function AgentSettingsPage() {
     const location = useLocation();
     const memory = useRef<HTMLElement>(null);
     const mounted = useRef(true);
+    const [toolCount, setToolCount] = useState<number>();
     const [setting, setSetting] = useState<AgentSchedulerSetting>();
     const [draft, setDraft] = useState<AgentSchedulerDraft>();
     const [configError, setConfigError] = useState("");
@@ -30,6 +32,7 @@ export default function AgentSettingsPage() {
             const result = await getAgentSchedulerSetting();
             if (!mounted.current) return;
             setSetting(result.setting);
+            setToolCount(result.toolCount);
             setDraft(result.setting);
             setConfigError("");
         } catch (error) {
@@ -82,12 +85,14 @@ export default function AgentSettingsPage() {
         <AdminPageFrame title="Agent（beta）" description="统一管理 Agent 调度、动态子代理、联网搜索、默认技能与用户记忆" scroll>
             <div className="agent-settings">
                 <nav className="agent-settings-nav" aria-label="Agent 配置区域">
+                    <a href="#tools">工具总数</a>
                     <a href="#config">调度配置</a>
                     <a href="#subagents">动态子代理</a>
                     <a href="#web-search">联网搜索</a>
                     <a href="#skill-defaults">默认技能</a>
                     <a href="#memory">记忆管理</a>
                 </nav>
+                <AgentToolCount count={configError ? undefined : toolCount} loading={!draft && !configError} />
                 <section id="config" className="agent-settings-section space-y-4" aria-labelledby="agent-config-heading">
                     <div className="agent-settings-heading">
                         <h2 id="agent-config-heading" className="text-base font-semibold">

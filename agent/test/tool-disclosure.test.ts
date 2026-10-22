@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertToolSnapshotMatchesSchema, type CanvasToolSpec } from "../src/tool-disclosure.js";
+import type { CanvasToolSpec } from "../src/tool-disclosure.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, type SessionToolDefinitionLike } from "../src/session-tools.js";
 
 const objectSchema = { type: "object", properties: {}, required: [], additionalProperties: false };
@@ -64,51 +64,4 @@ test("Pi tool_call hook blocks ineligible names and calls outside the admitted b
     { block: true, reason: "batch rejected" });
   assert.deepEqual(hook({ toolName: "agent_tools_canvas_read", toolCallId: "admitted", input: {} }),
     { block: true, terminate: true, reason: "Tool agent_tools_canvas_read is not eligible for this run" });
-});
-
-test("server snapshot schema artifact drift fails closed", () => {
-  const schema = { type: "object", properties: {}, required: [], additionalProperties: false };
-  const artifact = { schemaVersion: "cloud-agent-tools/v3", tools: [{ type: "function", function: { name: "canvas_get_state", parameters: schema } }] };
-  assert.throws(
-    () => assertToolSnapshotMatchesSchema([{ name: "canvas_apply_ops", description: "x", parameters: schema, allowed: true }], artifact),
-    /missing from cloud-agent-tools\/v3: canvas_apply_ops/,
-  );
-  assertToolSnapshotMatchesSchema([{ name: "canvas_get_state", description: "x", parameters: schema, allowed: true }], artifact);
-  assert.throws(() => assertToolSnapshotMatchesSchema([], { schemaVersion: "", tools: [] }), /artifact is empty/);
-});
-
-test("same-name parameter schema drift fails closed regardless of key order", () => {
-  const server = { type: "object", properties: {}, required: [], additionalProperties: false };
-  const artifact = { schemaVersion: "cloud-agent-tools/v3", tools: [{ type: "function", function: { name: "canvas_get_state", parameters: { type: "object", properties: { offset: { type: "integer" } } } } }] };
-  assert.throws(
-    () => assertToolSnapshotMatchesSchema([{ name: "canvas_get_state", description: "x", parameters: server, allowed: true }], artifact),
-    /schema differs from cloud-agent-tools\/v3: canvas_get_state/,
-  );
-  assertToolSnapshotMatchesSchema(
-    [{ name: "canvas_get_state", description: "x", parameters: { properties: { offset: { type: "integer" } }, type: "object" }, allowed: true }],
-    artifact,
-  );
-});
-
-test("older canvas_inspect_image snapshots remain compatible with the optional summary field", () => {
-  const oldParameters = {
-    type: "object",
-    properties: {
-      nodeId: { type: "string" },
-      refresh: { type: "boolean" },
-    },
-    required: ["nodeId"],
-    additionalProperties: false,
-  };
-  const currentParameters = {
-    ...oldParameters,
-    properties: {
-      ...oldParameters.properties,
-      summary: { type: "object" },
-    },
-  };
-  assertToolSnapshotMatchesSchema(
-    [{ name: "canvas_inspect_image", description: "x", parameters: oldParameters, allowed: true }],
-    { schemaVersion: "cloud-agent-tools/v3", tools: [{ type: "function", function: { name: "canvas_inspect_image", parameters: currentParameters } }] },
-  );
 });

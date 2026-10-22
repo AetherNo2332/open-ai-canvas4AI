@@ -181,27 +181,23 @@ func TestCloudAgentSkillsLoadOnDemandAndPage(t *testing.T) {
 			t.Fatal("eager skill content")
 		}
 	}
-	state := cloudAgentRuntime{Skills: snapshots}
-	call := skillFeedbackCall(ids[0], cloudAgentSkillEntryPath)
-	result, err := cloudAgentReadTool(nil, "user", &state, call, s)
+	native, err := s.piNativeSkillSnapshots("user", snapshots)
 	if err != nil {
 		t.Fatal(err)
 	}
-	page := result.(map[string]any)
-	if len([]rune(page["content"].(string))) != 12000 || page["hasMore"] != true {
-		t.Fatal("missing bounded page")
+	page, err := nativeSkillReadPage(native[0].EntryContent, 0, 12000)
+	if err != nil || len([]rune(page.Content)) != 12000 || !page.HasMore {
+		t.Fatalf("missing bounded native page: %+v %v", page, err)
 	}
-	args, _ := json.Marshal(map[string]any{"skillId": ids[0], "path": cloudAgentSkillEntryPath, "offset": page["nextOffset"]})
-	call.Function.Arguments = string(args)
-	result, err = cloudAgentReadTool(nil, "user", &state, call, s)
-	if err != nil || result.(map[string]any)["hasMore"] != false {
+	page, err = nativeSkillReadPage(native[0].EntryContent, 12000, 12000)
+	if err != nil || page.HasMore {
 		t.Fatalf("continuation failed: %v", err)
 	}
-	if _, err := cloudAgentReadTool(nil, "other-user", &cloudAgentRuntime{Skills: snapshots}, skillFeedbackCall(ids[0], cloudAgentSkillEntryPath), s); err == nil {
-		t.Fatal("cross-user skill read")
+	if _, err := s.piNativeSkillSnapshots("other-user", snapshots); err == nil {
+		t.Fatal("cross-user Skill snapshot accepted")
 	}
 	snapshots[0].Hash = "changed"
-	if _, err := cloudAgentReadTool(nil, "user", &cloudAgentRuntime{Skills: snapshots}, skillFeedbackCall(ids[0], cloudAgentSkillEntryPath), s); err == nil {
-		t.Fatal("mixed skill version")
+	if _, err := s.piNativeSkillSnapshots("user", snapshots); err == nil {
+		t.Fatal("mixed Skill version accepted")
 	}
 }

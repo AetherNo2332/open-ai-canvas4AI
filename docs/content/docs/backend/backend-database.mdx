@@ -1,6 +1,6 @@
 ---
 title: 后端数据库
-description: 数据库迁移与 Agent 工具快照持久化结构
+description: 数据库迁移与当前业务持久化结构
 ---
 
 # 后端数据库
@@ -9,21 +9,9 @@ description: 数据库迁移与 Agent 工具快照持久化结构
 
 复用 `agent_profiles` 表，以 `scope=system_prompt`、当前 `user_id`、空 `project_id`/`canvas_id` 保存账户级提示词；不新增表或列。`content` 为正文，`revision` 沿用现有比较并交换更新，用于阻止旧页面覆盖新内容。该 scope 由 `/api/agent/settings` 独立管理，不计入原有 user/project/canvas 偏好层，也不通过 `agent_profile_read` 按需读取。运行创建时将正文写入已冻结的系统上下文。
 
-## 工具快照（迁移 59）
+## 已停用的工具快照表
 
-迁移为 SQLite 和 PostgreSQL 新增以下 GORM 模型对应表：
-
-| 表 | 用途 |
-| --- | --- |
-| `agent_tool_snapshot_contents` | 不可变规范化工具正文，相同内容共享一条记录 |
-| `agent_tool_snapshots` | 后端、worker、任务来源引用，schema 版本、工具名和构建提交 |
-| `agent_tool_runtimes` | 实例、启动标识、加载代次、心跳、文件观察、排空状态和并发 revision |
-| `agent_tool_snapshot_alerts` | 后端/worker 快照对的首次、最近检测及恢复时间 |
-| `agent_tool_snapshot_counters` | 快照写入事务的独立协调行 |
-
-`cloud_agent_executions` 增加 `tool_runtime_instance_id`、`tool_snapshot_id`、`worker_tool_snapshot_id`，在领取事务中记录实际执行组合。既有运行的冻结正文保持原样，历史快照按需读取，不批量改写任务。领取与排空通过事务协调；快照正文去重使用独立计数行，避免与调度租约形成相反锁顺序。
-
-完整接口及升级行为见 [Agent 工具快照管理](./agent-tool-snapshots)。
+工具快照检测机制已移除，相关模型和运行读写路径不再注册。迁移 59 保留原有版本与校验记录，但不再创建工具快照相关表；既有历史表与运行记录中的旧列不自动删除。新工具总数直接从后端目录计算，不需要持久化快照。
 
 ## 分镜声明式引用（未新增表或列）
 

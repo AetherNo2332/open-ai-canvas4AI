@@ -1,18 +1,12 @@
 package app
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/png"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -39,277 +33,6 @@ type cloudAgentSkill struct {
 }
 
 const cloudAgentSkillEntryPath = "SKILL.md"
-
-func cloudAgentSkillPaths(skill cloudAgentSkill) []string {
-	paths := make([]string, 0, len(skill.Files)+1)
-	seen := make(map[string]struct{}, len(skill.Files)+1)
-	if strings.TrimSpace(skill.Instruction) != "" {
-		paths = append(paths, cloudAgentSkillEntryPath)
-		seen[cloudAgentSkillEntryPath] = struct{}{}
-	}
-	for path := range skill.Files {
-		if _, exists := seen[path]; exists {
-			continue
-		}
-		paths = append(paths, path)
-		seen[path] = struct{}{}
-	}
-	sort.Strings(paths)
-	return paths
-}
-
-// cloudAgentSkillSearch* 实现 Agent 侧的技能检索：与 recall_lessons 的记忆检索同构
-// （同一套分词器与三档加权），数据源为本轮冻结的技能快照——搜到的必然是能读的。
-// 只返回「哪张卡值得读 + 路径」，正文仍走 skill_read_file 的渐进披露，技能内容永不整体内联。
-
-const (
-	cloudAgentSkillSearchTokenMax = 8
-	cloudAgentSkillSearchDefault  = 8
-	cloudAgentSkillSearchMax      = 20
-	cloudAgentSkillSnippetRunes   = 120
-	// 一次检索最多下发多少条卡路径（所有命中条目共享预算），防止大包把上下文撑爆。
-	cloudAgentSkillSearchCardBudget = 40
-)
-
-func cloudAgentSkillSearchTokens(keyword string) []string {
-	tokens := make([]string, 0, cloudAgentSkillSearchTokenMax)
-	seen := make(map[string]bool, cloudAgentSkillSearchTokenMax)
-	for _, raw := range strings.FieldsFunc(keyword, cloudAgentSkillTokenSeparator) {
-		token := strings.ToLower(strings.TrimSpace(raw))
-		// 单字停用词过滤照拿的是英文逻辑（a / I）；汉字单字「梗」「钩」「戏」本身是完整
-		// 语义的最小单位。一刀切丢后 tokens 为空，检索会退化成「列全部已启用技能索引」。
-		// 这里只放行单个汉字的 token，英文/数字单字与空串仍按停用词丢掉。
-		first, size := utf8.DecodeRuneInString(token)
-		singleHan := size == len(token) && unicode.Is(unicode.Han, first)
-		if (!singleHan && utf8.RuneCountInString(token) < 2) || seen[token] {
-			continue
-		}
-		seen[token] = true
-		tokens = append(tokens, token)
-		if len(tokens) >= cloudAgentSkillSearchTokenMax {
-			break
-		}
-	}
-	return tokens
-}
-
-func cloudAgentSkillTokenSeparator(r rune) bool {
-	return unicode.IsSpace(r) || strings.ContainsRune(",，、。;；:：/\\|()（）[]【】{}<>\"'“”‘’!！?？+*&", r)
-}
-
-// cloudAgentSkillCardSlug 取卡路径的文件名（去目录与扩展名），用于关键词匹配。
-// 例：cards/czks-hook-paywall.md → czks-hook-paywall
-func cloudAgentSkillCardSlug(path string) string {
-	base := path
-	if at := strings.LastIndex(base, "/"); at >= 0 {
-		base = base[at+1:]
-	}
-	for _, ext := range []string{".md", ".txt", ".json"} {
-		if strings.HasSuffix(base, ext) {
-			base = strings.TrimSuffix(base, ext)
-			break
-		}
-	}
-	return strings.ToLower(base)
-}
-
-// cloudAgentSkillCardPaths 返回技能包内除入口以外的全部卡路径（有序）。
-// 这些路径在快照里本来就有（Files 已载入），下发索引不需要读取任何正文。
-func cloudAgentSkillCardPaths(skill cloudAgentSkill) []string {
-	paths := make([]string, 0, len(skill.Files))
-	for path := range skill.Files {
-		if path == cloudAgentSkillEntryPath {
-			continue
-		}
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	return paths
-}
-
-// cloudAgentSkillMatch 同时给技能与其卡片打分，返回总分与最具体的命中路径。
-// 卡片命中 4 分 > 技能名 3 分 > 描述 2 分：命中最具体的那一层，Agent 才不必先读总纲。
-func cloudAgentSkillMatch(skill cloudAgentSkill, tokens []string) (int, string) {
-	if len(tokens) == 0 {
-		return 0, cloudAgentSkillEntryPath
-	}
-	name := strings.ToLower(skill.Name)
-	description := strings.ToLower(skill.Description)
-	score := 0
-	for _, token := range tokens {
-		switch {
-		case strings.Contains(name, token):
-			score += 3
-		case strings.Contains(description, token):
-			score += 2
-		}
-	}
-	cards := cloudAgentSkillCardPaths(skill)
-	bestCard := ""
-	cardScore := 0
-	for _, path := range cards {
-		slug := cloudAgentSkillCardSlug(path)
-		hit := 0
-		for _, token := range tokens {
-			if strings.Contains(slug, token) {
-				hit += 4
-			}
-		}
-		if hit > cardScore {
-			cardScore = hit
-			bestCard = path
-		}
-	}
-	score += cardScore
-	if bestCard != "" {
-		return score, bestCard
-	}
-	return score, cloudAgentSkillEntryPath
-}
-
-// cloudAgentSkillRuneIndex 在 rune 序列里做朴素子串查找，返回 rune 下标（未命中 -1）。
-// 描述只有数百字、token 最多 8 个，朴素查找足够，且避免字节/rune 下标混用。
-func cloudAgentSkillRuneIndex(hay, needle []rune) int {
-	if len(needle) == 0 || len(needle) > len(hay) {
-		return -1
-	}
-	for i := 0; i+len(needle) <= len(hay); i++ {
-		matched := true
-		for j := range needle {
-			if unicode.ToLower(hay[i+j]) != unicode.ToLower(needle[j]) {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return i
-		}
-	}
-	return -1
-}
-
-func cloudAgentSkillSnippet(skill cloudAgentSkill, tokens []string) string {
-	description := strings.TrimSpace(skill.Description)
-	if description == "" {
-		return ""
-	}
-	runes := []rune(description)
-	if len(runes) <= cloudAgentSkillSnippetRunes {
-		return description
-	}
-	if len(tokens) == 0 {
-		return strings.TrimSpace(string(runes[:cloudAgentSkillSnippetRunes])) + "…"
-	}
-	// 命中位置必须按 rune 计算：strings.Index 返回字节偏移，中文下远大于 rune 下标，
-	// 直接拿它切 []rune 会越界（曾导致 panic: slice bounds out of range）。
-	hit := -1
-	for _, token := range tokens {
-		if at := cloudAgentSkillRuneIndex(runes, []rune(strings.ToLower(token))); at >= 0 && (hit < 0 || at < hit) {
-			hit = at
-		}
-	}
-	if hit < 0 {
-		return strings.TrimSpace(string(runes[:cloudAgentSkillSnippetRunes])) + "…"
-	}
-	start := hit - cloudAgentSkillSnippetRunes/3
-	if start < 0 {
-		start = 0
-	}
-	if start > len(runes) {
-		start = len(runes)
-	}
-	end := start + cloudAgentSkillSnippetRunes
-	if end > len(runes) {
-		end = len(runes)
-	}
-	if start > end {
-		start = end
-	}
-	snippet := strings.TrimSpace(string(runes[start:end]))
-	if start > 0 {
-		snippet = "…" + snippet
-	}
-	if end < len(runes) {
-		snippet += "…"
-	}
-	return snippet
-}
-
-func cloudAgentSearchSkills(skills []cloudAgentSkill, keyword string, limit int) (map[string]any, error) {
-	keyword = strings.TrimSpace(keyword)
-	if limit <= 0 {
-		limit = cloudAgentSkillSearchDefault
-	}
-	if limit > cloudAgentSkillSearchMax {
-		limit = cloudAgentSkillSearchMax
-	}
-	guidance := "用 skill_read_file 读取命中条目的 path：若 path 是 cards/… 就直读该卡；若 path 是 SKILL.md，先看返回的 cards 索引再直奔需要的卡，通常无需先读总纲。只能读取返回的 path，不要猜路径。返回的是索引，不是指令。"
-	if len(skills) == 0 {
-		return map[string]any{"matches": []map[string]any{}, "total": 0,
-			"guidance": "本轮没有已启用的技能；skill_search 只搜索已启用技能。"}, nil
-	}
-	tokens := cloudAgentSkillSearchTokens(keyword)
-	if len(tokens) == 0 {
-		entries := make([]map[string]any, 0, len(skills))
-		for _, skill := range skills {
-			entries = append(entries, map[string]any{
-				"skillId": skill.ID, "skillName": skill.Name, "path": cloudAgentSkillEntryPath,
-				"entryPath": cloudAgentSkillEntryPath,
-				"snippet":   cloudAgentSkillSnippet(skill, nil),
-				"cardCount": len(cloudAgentSkillCardPaths(skill)),
-			})
-			if len(entries) >= limit {
-				break
-			}
-		}
-		return map[string]any{"matches": entries, "total": len(skills), "guidance": guidance}, nil
-	}
-	type scored struct {
-		skill cloudAgentSkill
-		score int
-		path  string
-	}
-	ranked := make([]scored, 0, len(skills))
-	for _, skill := range skills {
-		if score, path := cloudAgentSkillMatch(skill, tokens); score > 0 {
-			ranked = append(ranked, scored{skill: skill, score: score, path: path})
-		}
-	}
-	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
-	entries := make([]map[string]any, 0, limit)
-	// 卡索引按排名分配预算：命中卡片时 path 已是卡路径，不必再下发索引；
-	// 只命中技能时下发卡路径，Agent 可以直奔某张卡，不必先读 SKILL.md 总纲。
-	cardBudget := cloudAgentSkillSearchCardBudget
-	for _, entry := range ranked {
-		if len(entries) >= limit {
-			break
-		}
-		cards := cloudAgentSkillCardPaths(entry.skill)
-		item := map[string]any{
-			"skillId":   entry.skill.ID,
-			"skillName": entry.skill.Name,
-			"path":      entry.path,
-			"entryPath": cloudAgentSkillEntryPath,
-			"score":     entry.score,
-			"snippet":   cloudAgentSkillSnippet(entry.skill, tokens),
-			"cardCount": len(cards),
-		}
-		if entry.path == cloudAgentSkillEntryPath && len(cards) > 0 && cardBudget > 0 {
-			shown := cards
-			if len(shown) > cardBudget {
-				shown = shown[:cardBudget]
-			}
-			cardBudget -= len(shown)
-			item["cards"] = shown
-		}
-		entries = append(entries, item)
-	}
-	if len(entries) == 0 {
-		return map[string]any{"matches": []map[string]any{}, "total": 0,
-			"guidance": "没有命中「" + keyword + "」的已启用技能。换个说法重试，或先用 skill_search 不带参数列出已启用技能索引，再用 skill_read_file 读取其中的 SKILL.md 与卡。"}, nil
-	}
-	return map[string]any{"matches": entries, "total": len(entries), "keyword": keyword, "guidance": guidance}, nil
-}
 
 func (s *Service) cloudAgentSkills(userID string, ids []string) ([]cloudAgentSkill, error) {
 	snapshots := []cloudAgentSkill{}
@@ -451,7 +174,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v4"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v5"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -485,20 +208,10 @@ func cloudAgentTools(req CloudAgentRequest) []map[string]any {
 
 func compileCloudAgentToolsForRuntime(req CloudAgentRequest, includeProfileTool bool, runtimeMode string) []map[string]any {
 	tools := compileCloudAgentTools(req, includeProfileTool)
-	if runtimeMode != cloudAgentSkillRuntimeNative {
-		return tools
+	if runtimeMode == cloudAgentSkillRuntimeNative {
+		tools = append(tools, nativeSkillReadToolSchema())
 	}
-	filtered := make([]map[string]any, 0, len(tools)+1)
-	for _, tool := range tools {
-		function, _ := tool["function"].(map[string]any)
-		name := stringField(function, "name")
-		if name == "skill_search" || name == "skill_read_file" {
-			continue
-		}
-		filtered = append(filtered, tool)
-	}
-	filtered = append(filtered, nativeSkillReadToolSchema())
-	return filtered
+	return tools
 }
 
 func nativeSkillReadToolSchema() map[string]any {
@@ -520,7 +233,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		}
 		parameters := map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 		cloudAgentToolParameterContracts(name, parameters)
-		if name == "generate_media" || name == "image_layer_split" {
+		if name == "generate_media" {
 			description += " " + cloudAgentModelSelectionDescription
 		}
 		if cloudAgentWrite(name) {
@@ -588,7 +301,6 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		}
 		add("canvas_list_node_types", "查询可创建节点和可编辑字段。传 nodeType 返回该类型的完整字段 schema；编辑复杂内容前先查字段合同。", map[string]any{"nodeType": str("可选节点类型；空值列出摘要")})
 		add("canvas_list_assets", "搜索当前用户素材库，返回可用于绑定的 assetId、标题和类型，不暴露下载凭证。", map[string]any{"query": str("可选搜索文字"), "kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio", "text"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
-		add("canvas_read_drawing", "分页读取绘图原生元素和素材记录，hasMore=false 才读到末尾；未同步的本地绘图需先由编辑器保存。", map[string]any{"nodeId": str("绘图节点 ID"), "offset": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}, "nodeId")
 		add("canvas_read_content", "分页读取节点正文或分镜行文本。分镜续读须同时指定 rowId 和 field。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。", map[string]any{
 			"nodeId": str("当前画布节点 ID"), "rowId": str("分镜行 ID，普通正文省略"), "field": map[string]any{"type": "string", "enum": append([]string{"content", "composerContent"}, cloudAgentStoryboardTextFields...)},
 			"offset": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 16000},
@@ -616,19 +328,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"rows":   map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "summary/bindings 默认且最多100行；full 最多20行，默认1行"},
 			"rowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 80}, "description": "可选真实行ID，与非零offset互斥"},
 		}, "nodeId")
-		add("image_text_detect", cloudAgentToolText("image_text_detect"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_016"))}, "nodeId")
-		add("image_annotation_render", cloudAgentToolText("image_annotation_render"), map[string]any{
-			"nodeId": str(cloudAgentToolText("parameter_017")),
-			"annotations": map[string]any{"type": "array", "minItems": 1, "maxItems": 30, "items": map[string]any{
-				"type": "object", "properties": map[string]any{
-					"label": str(cloudAgentToolText("parameter_018")), "x": map[string]any{"type": "number", "minimum": 0, "maximum": 1}, "y": map[string]any{"type": "number", "minimum": 0, "maximum": 1},
-				}, "required": []string{"label", "x", "y"}, "additionalProperties": false,
-			}},
-		}, "nodeId", "annotations")
-	}
-	if len(req.SkillIDs) > 0 {
-		add("skill_read_file", cloudAgentToolText("skill_read_file"), map[string]any{"skillId": str(cloudAgentToolText("parameter_019")), "path": str(cloudAgentToolText("parameter_020")), "offset": map[string]any{"type": "integer", "minimum": 0}}, "skillId", "path")
-		add("skill_search", cloudAgentToolText("skill_search"), map[string]any{"keyword": str(cloudAgentToolText("parameter_021")), "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 20}})
+
 	}
 	add("task_get", cloudAgentToolText("task_get"), map[string]any{"taskId": str(cloudAgentToolText("parameter_022"))}, "taskId")
 	if req.VisionEnabled && len(req.ContextScope) > 0 {
@@ -666,14 +366,6 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			add(name, "撤销或重做本次运行的最新画布变更；画布有后续修改时返回冲突。已提交生成任务和费用不可撤销。", map[string]any{"snapshotHash": str("当前画布快照")}, "snapshotHash")
 		}
 		add("canvas_bind_asset", "用当前用户素材库的 assetId 替换匹配类型节点的内容；先读取画布并查询素材，不接受任意 URL。运行中的生成节点不能替换。", map[string]any{"snapshotHash": str("最新画布快照"), "nodeId": str("目标节点 ID"), "assetId": str("素材库 ID")}, "snapshotHash", "nodeId", "assetId")
-		add("canvas_edit_drawing", "在当前快照上修改原生绘图记录。upsert 提交完整 record，record.id 与 id 相同；remove 删除记录。图片只接受已上传资源 resource:ID。", map[string]any{
-			"snapshotHash": str("最新画布快照"), "nodeId": str("绘图节点 ID"), "engine": map[string]any{"type": "string", "enum": []string{"excalidraw", "tldraw"}},
-			"operations": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "object", "properties": map[string]any{"type": map[string]any{"type": "string", "enum": []string{"upsert", "remove"}}, "id": str("原生记录 ID"), "record": map[string]any{"type": "object", "properties": map[string]any{"id": str("原生记录 ID，必须与操作 id 一致")}, "required": []string{"id"}, "additionalProperties": true, "description": "完整原生元素或文件记录；先读取已有记录了解结构；引擎原生字段由绘图校验器验证"}}, "required": []string{"type", "id"}, "additionalProperties": false, "oneOf": []map[string]any{{"properties": map[string]any{"type": map[string]any{"const": "upsert"}}, "required": []string{"record"}}, {"properties": map[string]any{"type": map[string]any{"const": "remove"}}, "not": map[string]any{"required": []string{"record"}}}}}},
-		}, "snapshotHash", "nodeId", "engine", "operations")
-		add("image_layer_split", cloudAgentToolText("image_layer_split"), map[string]any{
-			"prompt": str(cloudAgentToolText("parameter_036")), "selectionId": str(cloudAgentToolText("model_selection_id")), "logicalModelId": str(cloudAgentToolText("parameter_037")), "channelId": str(cloudAgentToolText("parameter_038")), "channelModelKey": str(cloudAgentToolText("parameter_039")),
-			"quality": str(cloudAgentToolText("parameter_040")), "snapshotHash": str(cloudAgentToolText("parameter_041")), "nodeId": str(cloudAgentToolText("parameter_042")), "title": str(cloudAgentToolText("parameter_043")), "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_044"))},
-		}, "prompt", "nodeId", "title", "referenceNodeIds")
 		add("model_list", cloudAgentToolText("model_list")+" 分镜可传 storyboardRowIds 批量查询；相同实际输入能力合并为一份模型列表，逐行返回问题。", map[string]any{"mode": map[string]any{"type": "string", "enum": cloudAgentGenerationModeNames()}, "referenceNodeIds": map[string]any{"type": "array", "maxItems": 16, "items": str(cloudAgentToolText("parameter_045"))}, "storyboardNodeId": str("分镜表节点 ID，与 storyboardRowId 或 storyboardRowIds 同时传入，输入从行读取"), "storyboardRowId": str("分镜行 ID"), "storyboardRowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": map[string]any{"type": "string", "minLength": 1}}})
 	}
 	if req.PermissionMode != "read_only" && len(req.ContextScope) > 0 {
@@ -883,12 +575,12 @@ func cloudAgentToolAllowed(req CloudAgentRequest, name string) bool {
 }
 
 // cloudAgentWrite 表示"需要审批的写入类工具"：它会改变用户可见状态，因此按权限模式进入
-// 审批链。这里保留上游的 image_layer_split（它同样走媒体审批与计费）。
+// 审批链。媒体生成继续走独立的审批与计费。
 func cloudAgentWrite(name string) bool {
-	if name == "canvas_undo" || name == "canvas_redo" || name == "canvas_edit_drawing" || name == "canvas_bind_asset" {
+	if name == "canvas_undo" || name == "canvas_redo" || name == "canvas_bind_asset" {
 		return true
 	}
-	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "image_layer_split" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == "previs_scene_create" || name == "previs_apply_patch" || name == "previs_preview" || cloudAgentDirectorWriteTool(name)
+	return name == "canvas_apply_ops" || name == "canvas_arrange_nodes" || name == "generate_media" || name == "canvas_create_storyboard" || name == "canvas_edit_storyboard" || name == "canvas_edit_batch_table" || name == "canvas_create_character" || name == "previs_scene_create" || name == "previs_apply_patch" || name == "previs_preview" || cloudAgentDirectorWriteTool(name)
 }
 
 // cloudAgentCanvasWriteTool 标记"调用返回即表示已经落到画布上"的写入工具。
@@ -898,10 +590,10 @@ func cloudAgentWrite(name string) bool {
 //   - cloudAgentCanvasWriteTool 决定"工具结果里的 snapshotHash 是不是画布的新版本"，
 //     据此才能给模型"已写入画布"的口径、并做同一批写入的快照重基。
 //
-// generate_media / image_layer_split 创建草稿并进入独立审批，回执口径不同，故不在此列。
+// generate_media 创建草稿并进入独立审批，回执口径不同，故不在此列。
 func cloudAgentCanvasWriteTool(name string) bool {
 	switch name {
-	case "canvas_apply_ops", "canvas_undo", "canvas_redo", "canvas_edit_drawing", "canvas_bind_asset", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character", "director_block_scene", "director_design_shot", "director_draw_action", "director_preview_shot":
+	case "canvas_apply_ops", "canvas_undo", "canvas_redo", "canvas_bind_asset", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character", "director_block_scene", "director_design_shot", "director_draw_action", "director_preview_shot":
 		return true
 	default:
 		return false
@@ -915,7 +607,7 @@ const cloudAgentMaxReadToolCallsPerRun = platform.DefaultRuntimeAgentReadCallsPe
 
 func cloudAgentReadToolCacheable(name string) bool {
 	switch name {
-	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "skill_read_file", "model_list":
+	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "model_list":
 		return true
 	default:
 		return false
@@ -924,7 +616,7 @@ func cloudAgentReadToolCacheable(name string) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_content", "canvas_read_drawing", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "previs_scene_read", "director_check_continuity", "director_handoff_shot", "canvas_read_batch_table", "canvas_list_node_types", "skill_read_file", "skill_search", "model_list", "recall_lessons", "task_get":
+	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "previs_scene_read", "director_check_continuity", "director_handoff_shot", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "recall_lessons", "task_get":
 		return true
 	default:
 		return false
@@ -937,7 +629,7 @@ func cloudAgentReadCacheKey(call cloudAgentCall) string {
 	if err := json.Unmarshal([]byte(arguments), &value); err == nil {
 		if object, ok := value.(map[string]any); ok {
 			switch call.Function.Name {
-			case "skill_read_file", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table":
+			case "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table":
 				for _, field := range []string{"offset", "connectionOffset", "storyboardOffset"} {
 					if _, exists := object[field]; !exists {
 						object[field] = float64(0)
@@ -963,17 +655,6 @@ func cloudAgentReadCacheKeyForState(repo *repository.Repository, userID string, 
 		if repo != nil {
 			if canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID); err == nil && canvas != nil {
 				return fmt.Sprintf("%s:canvas-revision:%d", key, canvas.Revision)
-			}
-		}
-	case "skill_read_file":
-		var args struct {
-			SkillID string `json:"skillId"`
-		}
-		if json.Unmarshal([]byte(call.Function.Arguments), &args) == nil {
-			for _, skill := range state.Skills {
-				if skill.ID == args.SkillID {
-					return fmt.Sprintf("%s:skill-version:%s:%s", key, skill.Version, skill.Hash)
-				}
 			}
 		}
 	}
@@ -1115,8 +796,6 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentNodeTypesFiltered(args.NodeType)
 	case "canvas_list_assets":
 		return cloudAgentListAssets(repo, userID, call)
-	case "canvas_read_drawing":
-		return cloudAgentReadDrawing(repo, userID, state.Request.CanvasID, call)
 	case "canvas_read_content", "canvas_search_nodes":
 		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
 	case "previs_scene_read":
@@ -1214,128 +893,12 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 			return nil, err
 		}
 		return cloudAgentBatchTableReadResult(view, args.NodeID)
-	case "image_text_detect":
-		var args struct {
-			NodeID string `json:"nodeId"`
-		}
-		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-			return nil, cloudAgentJSONArgumentError(err)
-		}
-		if err := validateCloudAgentID(args.NodeID, "图片节点ID", 80); err != nil {
-			return nil, err
-		}
-		canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID)
-		if err != nil {
-			return nil, err
-		}
-		doc, err := creationDocument(canvas.PayloadJSON)
-		if err != nil {
-			return nil, err
-		}
-		nodes, err := creationObjects(doc["nodes"])
-		if err != nil {
-			return nil, err
-		}
-		node := nodes[args.NodeID]
-		if node == nil || stringValue(node["type"]) != "image" {
-			return nil, BadAuthRequest("目标节点不是图片节点")
-		}
-		ref, _, err := cloudAgentReference(repo, userID, node)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"nodeId": args.NodeID, "reference": ref, "status": "ready_for_visual_detection", "outputSchema": []string{"original", "text", "location"}, "nextStep": "使用视觉模型对该参考图返回 JSON 数组；不要把识别结果写回画布"}, nil
-	case "image_annotation_render":
-		if len(services) == 0 || services[0] == nil {
-			return nil, BadAuthRequest("标注资源存储不可用")
-		}
-		return cloudAgentRenderImageAnnotations(repo, userID, state, call, services[0])
-	case "skill_search":
-		var args struct {
-			Keyword string `json:"keyword"`
-			Limit   int    `json:"limit"`
-			// 容忍模型顺手带上的 skillId（对齐 skill_read_file 的参数习惯）：
-			// 检索范围恒为本轮已启用技能，该字段仅接收不生效。
-			SkillID string `json:"skillId,omitempty"`
-		}
-		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-			return nil, cloudAgentJSONArgumentError(err)
-		}
-		return cloudAgentSearchSkills(state.Skills, args.Keyword, args.Limit)
 	case "model_list":
 		if len(services) == 0 || services[0] == nil {
 			return nil, errors.New("Agent 模型目录工具缺少服务上下文")
 		}
 		service := services[0]
 		return service.cloudAgentQueryModels(userID, state.Request.CanvasID, call.Function.Arguments)
-	case "skill_read_file":
-		var args struct {
-			SkillID string `json:"skillId"`
-			Path    string `json:"path"`
-			Offset  int    `json:"offset"`
-		}
-		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-			return nil, cloudAgentJSONArgumentError(err)
-		}
-		if args.Offset < 0 || (args.Path == "" && args.Offset != 0) {
-			return nil, BadAuthRequest("技能读取偏移无效")
-		}
-		for _, skill := range state.Skills {
-			if skill.ID == args.SkillID {
-				key, _ := json.Marshal([]string{args.SkillID, args.Path})
-				if args.Offset > 0 {
-					key, _ = json.Marshal([]any{args.SkillID, args.Path, args.Offset})
-				}
-				if state.SkillReads[string(key)] {
-					return nil, BadAuthRequest("本轮已请求过该技能路径，请使用历史工具结果；不要重复读取或猜测文件路径")
-				}
-				if state.SkillReads == nil {
-					state.SkillReads = map[string]bool{}
-				}
-				state.SkillReads[string(key)] = true
-				if args.Path == "" {
-					return map[string]any{"version": skill.Version, "entryPath": cloudAgentSkillEntryPath, "files": cloudAgentSkillPaths(skill), "guidance": "先读取 SKILL.md，再只读取入口明确引用且当前任务需要的参考文件。只能读取 files 中列出的路径；不要重复列目录或猜测路径"}, nil
-				}
-				if service != nil {
-					detail, err := service.SkillDetail(userID, skill.ID)
-					if err != nil {
-						return nil, err
-					}
-					if !detail.IsAdded || detail.Status != 1 || detail.VersionID != skill.Version || detail.ContentHash != skill.Hash {
-						return nil, creationConflict("技能已更新或不可用，请重试")
-					}
-					if args.Path == cloudAgentSkillEntryPath {
-						return cloudAgentSkillPage(skill.Version, args.Path, detail.Instruction, args.Offset)
-					}
-					if _, ok := skill.Files[args.Path]; !ok {
-						return nil, BadAuthRequest("参考文件未包含在本轮固定快照中")
-					}
-					file, err := service.SkillPackageFile(userID, skill.ID, args.Path)
-					if err != nil {
-						return nil, err
-					}
-					if file.Binary {
-						return nil, BadAuthRequest("不支持读取二进制技能文件")
-					}
-					latest, err := service.SkillDetail(userID, skill.ID)
-					if err != nil {
-						return nil, err
-					}
-					if !latest.IsAdded || latest.Status != 1 || latest.VersionID != skill.Version || latest.ContentHash != skill.Hash {
-						return nil, creationConflict("技能已更新或不可用，请重试")
-					}
-					return cloudAgentSkillPage(skill.Version, args.Path, file.Content, args.Offset)
-				}
-				if args.Path == cloudAgentSkillEntryPath && strings.TrimSpace(skill.Instruction) != "" {
-					return map[string]any{"version": skill.Version, "path": args.Path, "content": skill.Instruction}, nil
-				}
-				if content, ok := skill.Files[args.Path]; ok && content != "" {
-					return map[string]any{"version": skill.Version, "path": args.Path, "content": content}, nil
-				}
-				return nil, BadAuthRequest(fmt.Sprintf("参考文件未包含在本轮固定快照中；可读路径：%s。不要重试此路径", strings.Join(cloudAgentSkillPaths(skill), ", ")))
-			}
-		}
-		return nil, BadAuthRequest("技能未在本轮启用，或参考文件未包含在固定快照中")
 	case "task_get":
 		var args struct {
 			TaskID string `json:"taskId"`
@@ -1356,106 +919,6 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return result, nil
 	}
 	return nil, BadAuthRequest("未知工具")
-}
-
-func cloudAgentRenderImageAnnotations(repo *repository.Repository, userID string, state *cloudAgentRuntime, call cloudAgentCall, service *Service) (any, error) {
-	var args struct {
-		NodeID      string `json:"nodeId"`
-		Annotations []struct {
-			Label string  `json:"label"`
-			X     float64 `json:"x"`
-			Y     float64 `json:"y"`
-		} `json:"annotations"`
-	}
-	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-		return nil, cloudAgentJSONArgumentError(err)
-	}
-	if err := validateCloudAgentID(args.NodeID, "图片节点ID", 80); err != nil {
-		return nil, err
-	}
-	if len(args.Annotations) == 0 || len(args.Annotations) > 30 {
-		return nil, BadAuthRequest("标注数量必须在1到30之间")
-	}
-	canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID)
-	if err != nil {
-		return nil, err
-	}
-	doc, err := creationDocument(canvas.PayloadJSON)
-	if err != nil {
-		return nil, err
-	}
-	nodes, err := creationObjects(doc["nodes"])
-	if err != nil {
-		return nil, err
-	}
-	node := nodes[args.NodeID]
-	if node == nil || stringValue(node["type"]) != "image" {
-		return nil, BadAuthRequest("目标节点不是图片节点")
-	}
-	width, height := 1024.0, 1024.0
-	if v, ok := node["width"].(float64); ok && v > 0 {
-		width = v
-	}
-	if v, ok := node["height"].(float64); ok && v > 0 {
-		height = v
-	}
-	if width < 1 || height < 1 || width > 8192 || height > 8192 || width*height > 16_777_216 {
-		return nil, BadAuthRequest("标注图片尺寸超过 1600 万像素预算，请先缩小图片节点")
-	}
-	if state.RuntimeRunID == "" {
-		return nil, BadAuthRequest("标注缺少运行归属")
-	}
-	canvasImage := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
-	red := color.RGBA{R: 239, G: 68, B: 68, A: 255}
-	white := color.RGBA{R: 255, G: 255, B: 255, A: 255}
-	for _, item := range args.Annotations {
-		if item.X < 0 || item.X > 1 || item.Y < 0 || item.Y > 1 || strings.TrimSpace(item.Label) == "" {
-			return nil, BadAuthRequest("标注坐标必须在0到1之间且文字不能为空")
-		}
-		x, y := int(item.X*width), int(item.Y*height)
-		drawFilledCircle(canvasImage, x, y, 18, red)
-		// A white center keeps markers visually distinct on dark and light images.
-		drawFilledCircle(canvasImage, x, y, 8, white)
-	}
-	var encoded bytes.Buffer
-	if err := png.Encode(&encoded, canvasImage); err != nil {
-		return nil, fmt.Errorf("编码标注参考图失败: %w", err)
-	}
-	if state.TransientReferences == nil {
-		state.TransientReferences = map[string]cloudAgentTransientReference{}
-	}
-	refID := "annotation-" + call.ID
-	identity := "agent-annotation:" + state.RuntimeRunID + ":" + call.ID + ":" + creationHash(call.Function.Arguments)
-	resource, err := service.UploadResourceFile(userID, "annotation-overlay.png", int64(encoded.Len()), "image", int(width), int(height), 0, bytes.NewReader(encoded.Bytes()), identity)
-	if err != nil {
-		return nil, err
-	}
-	expiresAt := time.Now().Add(24 * time.Hour)
-	if err := repo.UpsertCloudAgentResourceLeases(userID, state.RuntimeRunID, "annotation:"+call.ID, []string{resource.ID}, expiresAt); err != nil {
-		return nil, err
-	}
-	state.TransientReferences[refID] = cloudAgentTransientReference{ID: refID, Name: "annotation-overlay.png", MIMEType: "image/png", ResourceID: resource.ID, ExpiresAt: expiresAt}
-	return map[string]any{"nodeId": args.NodeID, "width": width, "height": height, "annotationCount": len(args.Annotations), "referenceTransientId": refID, "mimeType": "image/png", "referenceOrder": []string{args.NodeID, refID}, "expiresAt": expiresAt, "persisted": true}, nil
-}
-
-func drawFilledCircle(dst draw.Image, cx, cy, radius int, fill color.Color) {
-	for y := cy - radius; y <= cy+radius; y++ {
-		for x := cx - radius; x <= cx+radius; x++ {
-			dx, dy := x-cx, y-cy
-			if dx*dx+dy*dy <= radius*radius {
-				dst.Set(x, y, fill)
-			}
-		}
-	}
-}
-
-func cloudAgentSkillPage(version, path, content string, offset int) (any, error) {
-	runes := []rune(content)
-	if offset < 0 || offset > len(runes) {
-		return nil, BadAuthRequest("技能读取偏移超出文件范围")
-	}
-	end := offset + min(12000, len(runes)-offset)
-	return map[string]any{"version": version, "path": path, "content": string(runes[offset:end]), "offset": offset, "nextOffset": end, "hasMore": end < len(runes)}, nil
 }
 
 func validateCloudAgentID(value, label string, maxRunes int) error {

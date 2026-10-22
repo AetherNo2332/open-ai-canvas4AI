@@ -19,9 +19,9 @@ description: 当前项目已实现的核心工作台能力与使用入口
 
 修改先保留在面板草稿中，点击「应用到当前生成」才写回；取消与关闭不修改配置。关闭摄影机控制时仍保留四项参数，复制提示词在关闭或参数无效时不可用。首次打开使用 ARRI ALEXA 65、ARRI Signature Prime、50mm、f/2.8；已有配置按原值显示，不支持的旧配置需重新选择或重置。
 
-## Agent 工具快照管理
+## Agent 工具目录
 
-管理员运行总览展示后端、worker 实际加载工具和任务冻结定义的当前状态，支持查看、字段比较、重新检测、诊断导出和排空实例。不兼容的新任务在授予租约前等待兼容执行者；具体边界见 [Agent 工具快照管理](/docs/backend/agent-tool-snapshots)。
+后台「Agent（beta）」展示由后端实时计算的当前工具总数，保留现有卡片圆角。工具快照检测、注册、比对和兼容调度已移除；实际每轮的工具权限与 L0/L1 按需披露继续生效。详细边界见 [Agent 工具目录](/docs/backend/agent-tools)。
 
 ## 可美 KM Seedream 图片
 
@@ -63,7 +63,7 @@ Go 与 Pi 使用共用工具 schema，媒体、分镜及批量表按操作校验
 
 ## DirectorDesk 导演预演台与图片一键分镜
 
-画布预演台入口现在由 DirectorDesk 浏览器运行时承载，同时继续使用影策 `PrevisScene`、保存协调器、Agent 审批、快照 CAS、任务队列和资源写回作为事实源。右键图片节点可选择“根据此图生成 3D 导演预演台”：Agent 必须先把真实图片送入 `canvas_inspect_image`，再按 `director_block_scene`、`director_design_shot`、`director_check_continuity` 顺序创建可编辑演员、道具、机位和灯光；原图不会作为 billboard 或背景板写入场景。高层导演工具会编译到既有 `previs_scene_*` 合同，图片能力不足或中途失败时不会创建半成品场景。
+画布预演台入口现在由 DirectorDesk 浏览器运行时承载，同时继续使用影策 `PrevisScene`、保存协调器、Agent 审批、快照 CAS、任务队列和资源写回作为事实源。右键图片节点可选择“根据此图生成 3D 导演预演台”：Agent 必须先把真实图片送入 `canvas_inspect_image`，再按 `director_block_scene`、`director_design_shot`、`director_check_continuity` 顺序创建可编辑演员、道具、机位和灯光；原图不会作为 billboard 或背景板写入场景。预演与导演工具按 L1 披露，由已有预演场景或用户明确意图解锁；高层导演工具会编译到既有 `previs_scene_*` 合同，图片能力不足或中途失败时不会创建半成品场景。
 
 DirectorDesk 的 Electron、MCP、本地文件和内置工程存储不进入 Web 边界。现阶段沿用已验证的影策预演台界面外壳，并由浏览器 runtime 负责场景投影、资源加载和预览桥接；嵌入应用通过 host bridge 同步工作台的明暗模式，连续性修复和所有写入仍需显式审批。上游副本的许可与来源记录在 `director-desk/NOTICE.md`。
 

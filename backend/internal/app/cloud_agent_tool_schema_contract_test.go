@@ -61,15 +61,12 @@ func checkAgentSchemaNode(t *testing.T, path string, schema map[string]any, clos
 		if !ok {
 			t.Fatalf("%s object has no properties map", path)
 		}
-		// Native drawing records have engine-specific fields; their recursive
-		// business validator checks safety and engine structure before any write.
-		openNativeRecord := path == "canvas_edit_drawing.operations[].record" && schema["additionalProperties"] == true
 		mapValues, typedMap := schema["additionalProperties"].(map[string]any)
 		if typedMap {
 			checkAgentSchemaNode(t, path+".*", mapValues, true)
 		}
 		openCapabilityObject := len(properties) == 0 && !typedMap && schema["additionalProperties"] == nil
-		if closeObject && !openNativeRecord && !openCapabilityObject && !typedMap && schema["additionalProperties"] != false {
+		if closeObject && !openCapabilityObject && !typedMap && schema["additionalProperties"] != false {
 			t.Fatalf("%s object permits unknown fields", path)
 		}
 		required := map[string]bool{}

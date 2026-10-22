@@ -123,8 +123,7 @@ type cloudAgentRuntime struct {
 	// 为什么必须固化：Node 在 worker 启动时读一次 Harness，然后把同一个对象用于它领取的
 	// **每一条**运行（`server.ts` 的 `harness` 在 while 循环外）。运维改了
 	// SYSTEM.md/AGENTS.md 再重启，在途运行就会**静默换提示** —— 既违反"首步与后续步同一份
-	// 快照"，也违反"恢复不得重读新版磁盘文件"。工具 schema 早就有等价的漂移检查
-	//（`assertToolSnapshotMatchesSchema`），提示层此前完全没有。
+	// 快照"，也违反"恢复不得重读新版磁盘文件"。运行恢复继续核对冻结的 Harness 内容身份。
 	PromptContract           string   `json:"promptContract,omitempty"`
 	SelectedToolCategory     string   `json:"selectedToolCategory,omitempty"`
 	ActivatedToolCategories  []string `json:"activatedToolCategories,omitempty"`
@@ -620,7 +619,7 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 		return errors.New("Agent runtime active task is not in task history")
 	}
 	if state.MediaTaskID != "" {
-		if !cloudAgentContainsString(state.TaskIDs, state.MediaTaskID) || state.CallIndex >= len(state.Calls) || (state.Calls[state.CallIndex].Function.Name != "generate_media" && state.Calls[state.CallIndex].Function.Name != "image_layer_split" && state.Calls[state.CallIndex].Function.Name != "previs_preview") {
+		if !cloudAgentContainsString(state.TaskIDs, state.MediaTaskID) || state.CallIndex >= len(state.Calls) || (state.Calls[state.CallIndex].Function.Name != "generate_media" && state.Calls[state.CallIndex].Function.Name != "previs_preview") {
 			return errors.New("Agent runtime media task is not attached to current call")
 		}
 	}
@@ -629,7 +628,7 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 			return errors.New("Agent runtime auto media preparation is invalid")
 		}
 		current := state.Calls[state.CallIndex]
-		if current.Function.Name != "generate_media" && current.Function.Name != "image_layer_split" {
+		if current.Function.Name != "generate_media" {
 			return errors.New("Agent runtime auto media preparation is not attached to a media call")
 		}
 		if state.AutoPreparedCallHash != cloudAgentApprovalCallHash(current) {
@@ -1214,21 +1213,6 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	if state.PiToolBatchTaskID != "" {
 		payload["taskId"] = state.PiToolBatchTaskID
 	}
-	if call.Function.Name == "skill_read_file" {
-		var args struct {
-			SkillID string `json:"skillId"`
-			Path    string `json:"path"`
-		}
-		if json.Unmarshal([]byte(call.Function.Arguments), &args) == nil {
-			payload["skillId"], payload["path"] = args.SkillID, args.Path
-			for _, skill := range state.Skills {
-				if skill.ID == args.SkillID {
-					payload["skillName"] = skill.Name
-					break
-				}
-			}
-		}
-	}
 	kind := "tool_completed"
 	if err != nil {
 		detail, ok := result.(map[string]any)
@@ -1355,18 +1339,6 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 	exhausted := cloudAgentTrackToolRepair(runID, state, call, result, err, payload)
 	raw, _ := json.Marshal(cloudAgentModelToolResult(call.Function.Name, result))
 	payload["result"] = result
-	if call.Function.Name == "skill_read_file" && err == nil {
-		// SSE/UI needs the read receipt, not another durable copy of skill text.
-		if fields, ok := result.(map[string]any); ok {
-			receipt := make(map[string]any, len(fields))
-			for key, value := range fields {
-				if key != "content" {
-					receipt[key] = value
-				}
-			}
-			payload["result"] = receipt
-		}
-	}
 	state.event(runID, kind, payload)
 	state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": string(raw)})
 	state.CallIndex++
@@ -1381,9 +1353,9 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 //
 // 审批卡明细是写给人看的，而且已经通过 approval_requested 事件进了 SSE/界面；
 // 进入模型历史的工具结果只保留模型真正需要的东西：发生了什么、哪个节点、哪个快照。
-// 这与 skill_read_file 的先例方向相反但同理（回执进 SSE，正文不进上下文）。
+// 原生技能读取也区分模型正文与面向用户的回执。
 //
-// 上游新增的 image_text_detect / image_annotation_render / task_get 等工具的返回里
+// task_get 等工具的返回里
 // 不带 preview，因此原样穿过，不受影响。
 func cloudAgentModelToolResult(toolName string, result any) any {
 	fields, ok := result.(map[string]any)
@@ -1589,7 +1561,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 		call = normalized
 		state.Calls[state.CallIndex] = call
 	}
-	mediaTool := call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split"
+	mediaTool := call.Function.Name == "generate_media"
 	if allowed && cloudAgentWrite(call.Function.Name) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
 		var plan *cloudAgentMediaPlan
 		var modelName string
@@ -1607,8 +1579,8 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 			}
 			call = normalized
 		}
-		if call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split" {
-			mediaCall := cloudAgentMediaCall(call)
+		if call.Function.Name == "generate_media" {
+			mediaCall := call
 			req, prepared, err := s.prepareCloudAgentMedia(run, state, mediaCall)
 			if err != nil {
 				return s.cloudAgentMediaError(run, state, "admission", false, false, err)
@@ -1745,12 +1717,6 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 					if err == nil {
 						preview = plan.Preview
 					}
-				case "canvas_edit_drawing":
-					plan, err := prepareCloudAgentDrawing(repo, run.UserID, state.Request.CanvasID, call)
-					mutationErr = err
-					if err == nil {
-						preview = plan.Preview
-					}
 				case "canvas_undo", "canvas_redo":
 					plan, err := prepareCloudAgentHistory(repo, run.UserID, state.Request.CanvasID, run.ID, call)
 					mutationErr = err
@@ -1856,8 +1822,8 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 			})
 		}
 	}
-	if allowed && (call.Function.Name == "generate_media" || call.Function.Name == "image_layer_split") && state.Approval != nil && state.Approval.Decision == "approve" {
-		return s.executeCloudAgentMediaCall(run, state, cloudAgentMediaCall(call))
+	if allowed && (call.Function.Name == "generate_media") && state.Approval != nil && state.Approval.Decision == "approve" {
+		return s.executeCloudAgentMediaCall(run, state, call)
 	}
 	if allowed && call.Function.Name == "spawn_subagent" {
 		result, spawnErr := s.spawnDynamicSubagent(run, state, call)
@@ -1901,16 +1867,8 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 	// transaction to avoid nested DB reads and holding a write lock during HTTP.
 	var skillResult any
 	var skillErr error
-	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "skill_read_file" || call.Function.Name == "model_list" || call.Function.Name == "image_annotation_render") {
-		state.RuntimeRunID = run.ID
-		if call.Function.Name == "image_annotation_render" {
-			skillResult, skillErr = cloudAgentReadTool(s.repo, run.UserID, state, call, s)
-		} else {
-			// 技能文件和模型目录都是稳定的只读结果。统一走检查点缓存，
-			// 使重复调用不会再次访问文件系统/数据库，也不会把大结果重复
-			// 写入后续模型上下文。
-			skillResult, skillErr = cloudAgentReadToolCached(s.repo, run.UserID, state, call, s)
-		}
+	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "model_list") {
+		skillResult, skillErr = cloudAgentReadToolCached(s.repo, run.UserID, state, call, s)
 	}
 	s.storageMu.Lock()
 	defer s.storageMu.Unlock()
@@ -1976,8 +1934,6 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 				result, toolErr = applyCloudAgentCanvas(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 			case call.Function.Name == "canvas_bind_asset":
 				result, toolErr = applyCloudAgentAssetBinding(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-			case call.Function.Name == "canvas_edit_drawing":
-				result, toolErr = applyCloudAgentDrawing(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 			case call.Function.Name == "canvas_undo", call.Function.Name == "canvas_redo":
 				result, toolErr = applyCloudAgentHistory(repo, run.UserID, state.Request.CanvasID, run.ID, state, call, policy)
 			case call.Function.Name == "canvas_arrange_nodes":
@@ -2035,7 +1991,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 				}
 				// 显式完成：这里的闸门与"纯文本收尾"用的是同一份判据（cloud_agent_completion.go）。
 				result, toolErr = cloudAgentFinishRun(run.ID, state, call)
-			case call.Function.Name == "web_search", call.Function.Name == "skill_read_file", call.Function.Name == "model_list", call.Function.Name == "image_annotation_render":
+			case call.Function.Name == "web_search", call.Function.Name == "model_list":
 				result, toolErr = skillResult, skillErr
 			default:
 				result, toolErr = cloudAgentReadToolCached(repo, run.UserID, state, call)
@@ -2146,23 +2102,6 @@ func cloudAgentToolErrorIsBusiness(err error) bool {
 		return true
 	}
 	return false
-}
-
-// image_layer_split deliberately reuses the canonical media admission path.
-// Keeping the alias at this boundary preserves one approval, billing and
-// write-back implementation while exposing a task-specific Agent affordance.
-func cloudAgentMediaCall(call cloudAgentCall) cloudAgentCall {
-	if call.Function.Name != "image_layer_split" {
-		return call
-	}
-	var args map[string]any
-	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err == nil {
-		args["mode"] = "image"
-		if raw, err := json.Marshal(args); err == nil {
-			call.Function.Arguments = string(raw)
-		}
-	}
-	return call
 }
 
 func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *cloudAgentRuntime, req CreateTaskRequest, media *cloudAgentMediaPlan) error {

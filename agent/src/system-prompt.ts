@@ -120,8 +120,7 @@ export function renderSystemPrompt(parts: PromptParts, base = ""): string {
  * 为什么需要它：`server.ts` 在 worker 启动时读一次 Harness，然后把**同一个对象**用于
  * 它领取的每一条运行（`harness` 在 while 循环之外）。运维改了 SYSTEM.md / AGENTS.md
  * 再重启进程，**所有在途运行会静默换系统提示** —— 既违反"首步与后续步使用同一份不可变
- * 快照"，也违反"恢复不得重读新版磁盘文件"。工具 schema 早有等价的漂移检查
- * （`assertToolSnapshotMatchesSchema`），提示层此前完全没有。
+ * 快照"，也违反"恢复不得重读新版磁盘文件"。因此运行恢复继续核对冻结的 Harness 内容身份。
  *
  * 编码方式：对每一层先写入 `标签:字节长度:`，再写入内容。不能只用分隔符拼接 ——
  * 文件内容本身可能包含任何分隔符，长度前缀才是无歧义的。标签顺序固定，

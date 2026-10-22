@@ -8,7 +8,7 @@ export interface AgentSchedulerSetting {
     updatedAt: string;
 }
 export type AgentSchedulerDraft = Pick<AgentSchedulerSetting, "dispatchConcurrency" | "maxResidentSessions" | "maxResidentPerCanvas">;
-export const getAgentSchedulerSetting = () => http.get<{ setting: AgentSchedulerSetting }>("/admin/settings/agent-scheduler");
+export const getAgentSchedulerSetting = () => http.get<{ setting: AgentSchedulerSetting; toolCount: number }>("/admin/settings/agent-scheduler");
 export const updateAgentSchedulerSetting = (input: AgentSchedulerDraft & { expectedRevision: number }) => http.put<{ setting: AgentSchedulerSetting }>("/admin/settings/agent-scheduler", input);
 
 export interface AgentWebSearchSetting {

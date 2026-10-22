@@ -374,3 +374,22 @@ test("modelStep forwards only the unseen suffix of a cumulative text draft", asy
   }
   assert.deepEqual(deltas, ["你", "好"]);
 });
+
+test("claim and capacity use the direct protocol without tool snapshot registration", async () => {
+  const original = globalThis.fetch;
+  const calls: { path: string; body: Record<string, unknown> }[] = [];
+  try {
+    globalThis.fetch = (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      calls.push({ path, body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ code: 0, data: path.endsWith("/claim") ? { run: null } : { updated: true } }));
+    }) as typeof fetch;
+    const bridge = new CanvasBridge("http://backend:8080", "token", "worker");
+    await bridge.capacity(0, 4);
+    assert.equal(await bridge.claim(), null);
+    assert.deepEqual(calls, [
+      { path: "/internal-agent/capacity", body: { owner: "worker", active: 0, capacity: 4 } },
+      { path: "/internal-agent/claim", body: { owner: "worker" } },
+    ]);
+  } finally { globalThis.fetch = original; }
+});

@@ -15,7 +15,6 @@ import { analyticsFinanceColumns, formatCredits, formatFinanceCost, formatFinanc
 import { Select } from "@/components/ui/base/select";
 import { buildObservabilityParams, mergeObservabilityFailures, type ObservabilityFailureRow } from "./observability-view";
 import grafanaIcon from "@/components/grafana-icon.svg";
-import ToolSnapshotsPanel from "./tool-snapshots-panel";
 
 type Props = {
     users: AdminReferenceData["users"];
@@ -223,7 +222,6 @@ export default function AnalyticsPanel({ users, channels }: Props) {
 
     return (
         <div className="admin-analytics-panel" aria-busy={loading}>
-            <ToolSnapshotsPanel />
             <ListToolbar
                 className="admin-analytics-toolbar"
                 active={Boolean(userId || model || channelId || capability)}

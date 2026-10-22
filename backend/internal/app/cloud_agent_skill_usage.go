@@ -99,7 +99,7 @@ func cloudAgentSkillUsageFromEvents(events []CloudAgentEvent) *CloudAgentSkillUs
 		if event.Type == "native_skill_enabled" {
 			name = "native_skill_enabled"
 		} else if event.Type == "native_skill_read" || event.Type == "native_skill_read_failed" {
-			name = "skill_read_file"
+			name = "native_skill_read"
 		}
 		switch name {
 		case "native_skill_enabled":
@@ -130,7 +130,7 @@ func cloudAgentSkillUsageFromEvents(events []CloudAgentEvent) *CloudAgentSkillUs
 				}
 				entry(id).SearchHits++
 			}
-		case "skill_read_file":
+		case "native_skill_read", "skill_read_file":
 			id, _ := payload["skillId"].(string)
 			if strings.TrimSpace(id) == "" {
 				continue

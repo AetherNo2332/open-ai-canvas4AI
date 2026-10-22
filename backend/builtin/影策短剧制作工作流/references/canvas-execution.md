@@ -12,7 +12,7 @@
 - `canvas_read_batch_table`：读取批量创作表的真实行和配置。
 - `model_list`：按模式和实际参考节点查询可用模型、能力和价格。
 - `task_get`：查询当前用户任务状态。
-- `skill_search`、`skill_read_file`：读取已安装技能的正文和引用文件。
+- `read`：按本轮技能索引中的真实绝对路径读取入口和引用文件。
 
 ### 写入
 
@@ -23,7 +23,7 @@
 - `canvas_edit_batch_table`：只修改批量计划，不提交生成任务。
 - `canvas_arrange_nodes`：只整理坐标，不创建、删除或连线。
 - `generate_media`：提交图片、视频或音频生成；先准备提示词、模型和真实引用。
-- `image_annotation_render`、`image_layer_split`：仅在当前能力和用户目标确实需要时使用。
+- 识字和图像分析使用模型多模态能力；标注、拆图层和视觉修改将真实原图作为参考，通过 `generate_media` 的图片模式与提示词实现。
 - `plan_update`、`ask_user`：更新可见计划或询问一个必须由用户决定的问题。
 
 ## 标准执行链

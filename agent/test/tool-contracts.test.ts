@@ -2,20 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
-import { assertToolSnapshotMatchesSchema } from "../src/tool-disclosure.js";
 
 // Exercise Pi's actual validator against the Go-generated schema, rather than
 // recreating a second contract in TypeScript.
 const artifact = JSON.parse(await readFile(new URL("../../harness/TOOL_SCHEMA.json", import.meta.url), "utf8"));
-test("the shared artifact admits all previs tools in server snapshots", () => {
-  const names = ["previs_scene_read", "previs_preview", "previs_scene_create", "previs_apply_patch"];
-  const specs = names.map((name) => {
-    const tool = artifact.tools.find((entry: any) => entry.function.name === name);
-    assert.ok(tool, `missing previs tool ${name}`);
-    return { ...tool.function, allowed: true };
-  });
-  assert.doesNotThrow(() => assertToolSnapshotMatchesSchema(specs, artifact));
-});
 
 const cases: [string, ToolCall["arguments"], boolean][] = [
   // 连线操作已从 Agent 合同删除：旧调用必须被 Pi 的验证器直接拒绝。
@@ -29,9 +19,6 @@ const cases: [string, ToolCall["arguments"], boolean][] = [
   ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "duplicate_node", id: "new", sourceNodeId: "n" }] }, true],
   ["canvas_read_content", { nodeId: "n", field: "content", offset: 0, limit: 16000 }, true],
   ["canvas_read_content", { nodeId: "n", field: "content", offset: -1 }, false],
-  ["canvas_edit_drawing", { snapshotHash: "h", nodeId: "n", engine: "tldraw", operations: [{ type: "upsert", id: "shape:n", record: { id: "shape:n" } }] }, true],
-  ["canvas_edit_drawing", { snapshotHash: "h", nodeId: "n", engine: "tldraw", operations: [{ type: "upsert", id: "shape:n" }] }, false],
-  ["canvas_edit_drawing", { snapshotHash: "h", nodeId: "n", engine: "tldraw", operations: [{ type: "remove", id: "shape:n", record: {} }] }, false],
   ["canvas_bind_asset", { snapshotHash: "h", nodeId: "n", assetId: "a" }, true],
   ["canvas_undo", { snapshotHash: "h" }, true],
   ["canvas_redo", { snapshotHash: "h", taskId: "forbidden" }, false],
@@ -70,29 +57,4 @@ test("Pi validates the shared conditional contracts before execution", () => {
     if (valid) assert.doesNotThrow(validate, name);
     else assert.throws(validate, Error, name);
   }
-});
-
-test("an old frozen vision schema cannot silently bypass the SHA submission contract", () => {
-  const tool = artifact.tools.map((entry: any) => entry.function).find((entry: any) => entry.name === "canvas_inspect_image");
-  const parameters = structuredClone(tool.parameters);
-  delete parameters.properties.sha256;
-  delete parameters.oneOf;
-  assert.throws(() => assertToolSnapshotMatchesSchema([
-    { name: tool.name, category: "agent_tools_canvas_read", description: tool.description, allowed: true, parameters },
-  ], artifact), /server snapshot schema differs/);
-});
-
-test("a pre-cutover canvas_apply_ops snapshot stops the worker instead of executing edge requests", () => {
-  // 关闭连线操作前生成的检查点仍带着 connect_nodes 与端口字段：worker 必须按既有漂移机制
-  // 停下并重建上下文，不能拿着旧合同继续跑。
-  const tool = artifact.tools.map((entry: any) => entry.function).find((entry: any) => entry.name === "canvas_apply_ops");
-  const parameters = structuredClone(tool.parameters);
-  const item = parameters.properties.ops.items;
-  item.properties.type.enum.push("connect_nodes", "update_connection", "delete_connection");
-  item.properties.fromNodeId = { type: "string" };
-  item.properties.toNodeId = { type: "string" };
-  item.oneOf.push({ properties: { type: { const: "connect_nodes" } }, required: ["fromNodeId", "toNodeId"] });
-  assert.throws(() => assertToolSnapshotMatchesSchema([
-    { name: tool.name, category: "agent_tools_canvas_edit", description: tool.description, allowed: true, parameters },
-  ], artifact), /server snapshot schema differs/);
 });

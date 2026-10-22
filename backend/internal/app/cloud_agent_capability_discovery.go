@@ -47,7 +47,7 @@ func cloudAgentNodeTypesFiltered(nodeType string) (map[string]any, error) {
 			item["schemaHint"] = "传 nodeType 精读完整字段合同"
 		}
 		if stringValue(item["type"]) == "drawing" {
-			item["contentTools"] = []string{"canvas_read_drawing", "canvas_edit_drawing"}
+			item["contentHint"] = "绘图内容由画布编辑器维护；需要图像理解时使用已保存的参考图，需要新图或视觉编辑时使用 generate_media。"
 		}
 		filtered = append(filtered, item)
 	}

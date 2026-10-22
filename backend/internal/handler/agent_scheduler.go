@@ -7,7 +7,6 @@ import (
 )
 
 func registerAgentSchedulerAdminRoutes(r *gin.RouterGroup, svc *service.Service) {
-	registerToolSnapshotAdminRoutes(r, svc)
 	r.GET("/admin/settings/agent-scheduler", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -19,7 +18,7 @@ func registerAgentSchedulerAdminRoutes(r *gin.RouterGroup, svc *service.Service)
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"setting": setting})
+		ok(c, gin.H{"setting": setting, "toolCount": service.CloudAgentToolCount()})
 	})
 	r.PUT("/admin/settings/agent-scheduler", func(c *gin.Context) {
 		user, err := currentUser(c, svc)

@@ -222,7 +222,8 @@ var schemaMigrations = []migration{
 		return tx.AutoMigrate(&model.CloudAgentExecution{}, &model.CloudAgentCanvasMutation{})
 	}},
 	{version: 59, name: "agent_tool_snapshots", checksum: "sha256:agent-tool-snapshots-v59-20261018", apply: func(tx *gorm.DB) error {
-		return tx.AutoMigrate(&model.AgentToolSnapshotContent{}, &model.AgentToolSnapshot{}, &model.AgentToolRuntime{}, &model.AgentToolSnapshotAlert{}, &model.AgentToolSnapshotCounter{}, &model.CloudAgentExecution{})
+		// Keep the applied migration identity; retired snapshot tables are no longer created.
+		return nil
 	}},
 }
 

@@ -28,6 +28,7 @@ func newStagedDirectorRun(t *testing.T) (*Service, *gorm.DB, *model.CloudAgentEx
 		t.Fatal(err)
 	}
 	req := agentTestRequest()
+	req.Prompt = "创建并检查导演台预演场景"
 	const key = "director-staged-cancel"
 	req.IdempotencyKey = key
 	created, err := s.CreateCloudAgentRun("user", req, "")
@@ -155,6 +156,7 @@ func TestCancelCloudAgentIgnoresOrdinaryRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := agentTestRequest()
+	req.Prompt = "创建并检查导演台预演场景"
 	req.IdempotencyKey = "director-staged-cancel-plain"
 	run, err := s.CreateCloudAgentRun("user", req, "")
 	if err != nil {

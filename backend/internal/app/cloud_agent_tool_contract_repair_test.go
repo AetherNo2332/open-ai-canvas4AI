@@ -72,7 +72,6 @@ func TestCloudAgentToolContractRepairConditions(t *testing.T) {
 		{"question_example", "ask_user", `{"question":"style?","options":[{"label":"real"},{"label":"anime","detail":"drawn"}]}`, true},
 		{"question_string", "ask_user", `{"question":"style?","options":"real,anime"}`, false},
 		{"plan_example", "plan_update", `{"items":[{"id":"1","title":"read","status":"doing"}]}`, true},
-		{"annotation_example", "image_annotation_render", `{"nodeId":"n","annotations":[{"x":0.5,"y":0.5,"label":"edit"}]}`, true},
 		{"image", "generate_media", `{"mode":"image","prompt":"cat","nodeId":"n","title":"cat","referenceNodeIds":[],"size":"1:1"}`, true},
 		{"missing_size", "generate_media", `{"mode":"image","prompt":"cat","nodeId":"n","title":"cat","referenceNodeIds":[]}`, false},
 		{"video", "generate_media", `{"mode":"video","prompt":"cat","nodeId":"n","title":"cat","referenceNodeIds":[],"size":"16:9","durationSeconds":5}`, true},

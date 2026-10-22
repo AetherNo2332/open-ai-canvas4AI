@@ -323,8 +323,8 @@ func TestNativeRuntimeDoesNotExposeLegacySkillTools(t *testing.T) {
 
 	legacy := compileCloudAgentToolsForRuntime(req, true, cloudAgentSkillRuntimeLegacy)
 	legacyNames := cloudAgentToolNames(legacy)
-	if !slices.Contains(legacyNames, "skill_search") || !slices.Contains(legacyNames, "skill_read_file") {
-		t.Fatalf("legacy Skill tools missing from legacy runtime: %v", legacyNames)
+	if slices.Contains(legacyNames, "skill_search") || slices.Contains(legacyNames, "skill_read_file") {
+		t.Fatalf("retired Skill tools remain in legacy runtime: %v", legacyNames)
 	}
 }
 

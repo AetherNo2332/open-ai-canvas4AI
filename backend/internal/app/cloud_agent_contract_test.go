@@ -190,87 +190,27 @@ func TestCloudAgentToolsFollowCanvasCapabilityRegistry(t *testing.T) {
 	}
 }
 
-func TestCloudAgentImageEditingToolsRespectPermissionBoundaries(t *testing.T) {
-	readOnly := agentTestRequest()
-	readOnly.PermissionMode = "read_only"
-	readOnly.ContextScope = []string{"canvas"}
-	readNames := map[string]bool{}
-	for _, tool := range cloudAgentTools(readOnly) {
-		readNames[tool["function"].(map[string]any)["name"].(string)] = true
-	}
-	for _, name := range []string{"image_text_detect", "image_annotation_render"} {
-		if !readNames[name] {
-			t.Fatalf("read-only tool %s missing", name)
+func TestCloudAgentImageWorkUsesSharedMultimodalAndGenerationTools(t *testing.T) {
+	for _, permission := range []string{"auto", "read_only"} {
+		req := tierAutoRequest()
+		req.PermissionMode = permission
+		names := cloudAgentToolNames(cloudAgentTools(req))
+		if !containsToolName(names, "canvas_inspect_image") {
+			t.Fatal("multimodal inspection missing")
+		}
+		if containsToolName(names, "generate_media") != (permission != "read_only") {
+			t.Fatalf("shared image generation bypassed permissions: %v", names)
 		}
 	}
-	if readNames["image_layer_split"] {
-		t.Fatal("image_layer_split must not be exposed in read-only mode")
-	}
-
-	write := readOnly
-	write.PermissionMode = "auto"
-	write.Budget.MaxGenerationTasks = 1
-	writeNames := map[string]bool{}
-	for _, tool := range cloudAgentTools(write) {
-		writeNames[tool["function"].(map[string]any)["name"].(string)] = true
-	}
-	if !writeNames["image_layer_split"] || !cloudAgentWrite("image_layer_split") {
-		t.Fatal("image_layer_split must be an approved write tool")
-	}
-	if got := cloudAgentMediaCall(cloudAgentCall{Function: struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	}{Name: "image_layer_split", Arguments: `{"prompt":"split"}`}}); got.Function.Name != "image_layer_split" || !strings.Contains(got.Function.Arguments, `"mode":"image"`) {
-		t.Fatalf("image layer split was not normalized to image media: %+v", got.Function)
-	}
 }
 
-func TestCloudAgentAnnotationRenderFeedsControlledTransientReference(t *testing.T) {
-	s, db, _, _ := creationTestService(t)
-	canvas := &model.CanvasProject{ID: "annotation-canvas", UserID: "user", PayloadJSON: `{"referenceFieldsVersion":1,"nodes":[{"id":"image-1","type":"image","title":"原图","width":640,"height":480,"metadata":{"content":"saved"}}],"connections":[]}`}
-	if err := db.Create(canvas).Error; err != nil {
-		t.Fatal(err)
-	}
-	state := &cloudAgentRuntime{RuntimeRunID: "annotation-run", Request: CloudAgentRequest{CanvasID: canvas.ID}, TransientReferences: map[string]cloudAgentTransientReference{}}
-	call := cloudAgentCall{ID: "call-annotation"}
-	call.Function.Name = "image_annotation_render"
-	call.Function.Arguments = `{"nodeId":"image-1","annotations":[{"label":"主体","x":0.5,"y":0.5}]}`
-	result, err := cloudAgentReadTool(s.repo, "user", state, call, s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	view := result.(map[string]any)
-	refID := stringValue(view["referenceTransientId"])
-	ref, ok := state.TransientReferences[refID]
-	if !ok || ref.ResourceID == "" || ref.ExpiresAt.IsZero() {
-		t.Fatalf("annotation transient reference missing or unsafe: %#v", state.TransientReferences)
-	}
-	resultJSON, _ := json.Marshal(result)
-	if !strings.Contains(string(resultJSON), "image/png") {
-		t.Fatalf("annotation result must advertise PNG reference: %s", resultJSON)
-	}
-	doc, err := creationDocument(canvas.PayloadJSON)
-	if err != nil {
-		t.Fatal(err)
-	}
-	args := cloudAgentMediaArgs{Mode: "image", Prompt: "按标注编辑", SnapshotHash: cloudAgentMediaContentHash(doc), NodeID: "result-image", Title: "编辑结果", Size: "1:1", ReferenceTransientIDs: []string{refID}}
-	_, _, refs, err := cloudAgentMediaDocument(s.repo, "user", canvas.ID, args, state.TransientReferences)
-	if err != nil {
-		t.Fatal(err)
-	}
-	images, ok := refs["referenceImages"].([]any)
-	if !ok || len(images) != 1 || stringValue(images[0].(map[string]any)["id"]) != refID {
-		t.Fatalf("controlled transient reference was not forwarded: %#v", refs)
-	}
-}
-
-func TestCloudAgentPolicyPublishesSkillManifestWithoutInliningSkillBody(t *testing.T) {
+func TestCloudAgentPolicyUsesNativeSkillsWithoutInliningSkillBody(t *testing.T) {
 	skill := cloudAgentSkill{ID: "skill-1", Name: "任务技能", Description: "当用户要写短剧剧本时调用", Version: "v1", Hash: agentProfileHash("skill"), Instruction: "PRIVATE_SKILL_BODY", Files: map[string]string{"references/a.md": "A"}}
 	text, _, err := compileCloudAgentPolicies(agentTestRequest(), []cloudAgentSkill{skill}, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(text, skill.Instruction) || !strings.Contains(text, `"entryPath":"SKILL.md"`) || !strings.Contains(text, `"files":["SKILL.md","references/a.md"]`) || !strings.Contains(text, `"description":"当用户要写短剧剧本时调用"`) {
+	if strings.Contains(text, skill.Instruction) || !strings.Contains(text, `"skillRuntimeMode":"pi-native"`) || strings.Contains(text, `"skills":[`) {
 		t.Fatalf("compiled policy did not publish a safe on-demand skill manifest: %s", text)
 	}
 }

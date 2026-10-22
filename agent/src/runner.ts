@@ -23,7 +23,7 @@ import {
 import { CanvasBridge, CanvasCompactionNeeded, CanvasContextOverflow, CanvasModelRetry, CanvasRunSuspended, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
 import { compactionSettings, serializePreparation, runNativeCompaction, prepareNativeCompaction } from "./native-compaction.js";
-import { FatalWorkerError, assertToolSnapshotMatchesSchema, type ToolSchemaArtifact } from "./tool-disclosure.js";
+import { FatalWorkerError } from "./tool-disclosure.js";
 import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
 import { createCanvasToolsExtension, SessionToolDisclosure, sessionEntriesFromMessages } from "./session-tools.js";
 import { materializeNativeSkills, readNativeSkill, rebaseNativeSkillPath, verifyNativeSkillDiscovery, NativeSkillReadRejected } from "./native-skills.js";
@@ -659,7 +659,6 @@ export async function runCanvasAgent(
   initial: PiSnapshot,
   shutdown?: AbortSignal,
   harness?: PromptParts,
-  toolSchema?: ToolSchemaArtifact,
 ): Promise<void> {
   shutdown?.throwIfAborted();
   let snapshot = initial;
@@ -668,8 +667,6 @@ export async function runCanvasAgent(
   catch (error) { throw new FatalWorkerError(error instanceof Error ? error.message : "Invalid subagent runtime"); }
   const model = canvasModel(snapshot);
   const initialVisualMessages = fromCanonical(snapshot, model);
-  // 合同校验必须早于任何恢复副作用：schema 不兼容时不能先写检查点或执行工具。
-  if (toolSchema) assertToolSnapshotMatchesSchema(snapshot.tools, toolSchema);
   // 冻结的 Harness 正文优先：恢复时用原快照，重读磁盘会静默换掉在途运行的系统提示。
   const parts = snapshot.harness ?? harness;
   const systemPrompt = parts ? assembleSystemPrompt(parts, snapshot.canonical.systemPrompt) : snapshot.canonical.systemPrompt;
@@ -1001,7 +998,6 @@ export async function runCanvasAgent(
   session.agent.prepareNextTurnWithContext = async (turn, signal) => {
     await queue.drain();
     const refreshed = await bridge.snapshot(snapshot, signal);
-    if (toolSchema) assertToolSnapshotMatchesSchema(refreshed.tools, toolSchema);
     snapshot = refreshed;
     if (isTerminalRunStatus(snapshot.status)) {runTerminated=true; throw new CanvasRunTerminated(snapshot.status);}
     disclosure.refresh(snapshot.tools.filter(tool => !(nativeMode && tool.name === "read")));

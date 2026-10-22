@@ -37,7 +37,7 @@ func TestCloudAgentToolTierEmptyCanvasKeepsL0AndHidesHeavyL1(t *testing.T) {
 			t.Fatalf("empty canvas Q&A missing L0 tool %q: %v", want, names)
 		}
 	}
-	for _, hidden := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_edit_drawing", "image_layer_split"} {
+	for _, hidden := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table", "previs_scene_create", "director_design_shot"} {
 		if containsToolName(names, hidden) {
 			t.Fatalf("empty canvas Q&A advertised heavy L1 tool %q: %v", hidden, names)
 		}
@@ -53,7 +53,6 @@ func TestCloudAgentToolTierInventoryUnlocksMatchingL1(t *testing.T) {
 	}{
 		{"script", tierPayload(tierNode("board", "script", map[string]any{"workflowKind": "script"})), []string{"canvas_read_storyboard", "canvas_create_storyboard", "canvas_edit_storyboard"}},
 		{"batch-table", tierPayload(tierNode("table", "batch-table", nil)), []string{"canvas_read_batch_table", "canvas_edit_batch_table"}},
-		{"drawing", tierPayload(tierNode("draw", "drawing", nil)), []string{"canvas_read_drawing", "canvas_edit_drawing"}},
 		{"character", tierPayload(tierNode("hero", "text", map[string]any{"workflowKind": "character"})), []string{"canvas_create_character"}},
 	}
 	for _, tc := range cases {
@@ -118,7 +117,7 @@ func TestCloudAgentToolTierInventoryScansFullPayloadPastCatalogTruncation(t *tes
 func TestCloudAgentToolTierAdvertisedIsSubsetOfEligibleCatalog(t *testing.T) {
 	req := tierAutoRequest()
 	eligible := cloudAgentToolNames(cloudAgentTools(req))
-	for _, want := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_edit_drawing", "image_layer_split"} {
+	for _, want := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table", "previs_scene_create", "director_design_shot"} {
 		if !containsToolName(eligible, want) {
 			t.Fatalf("eligible catalog missing L1 tool %q: %v", want, eligible)
 		}
@@ -140,7 +139,7 @@ func TestCloudAgentToolTierAdvertisedIsSubsetOfEligibleCatalog(t *testing.T) {
 
 func TestCloudAgentPromptIntentFlagsUseClosedLexicon(t *testing.T) {
 	empty := cloudAgentPromptIntentFlags("现在画布有几个节点")
-	if empty.Storyboard || empty.BatchTable || empty.Drawing || empty.Arrange || empty.LayerSplit {
+	if empty.Storyboard || empty.BatchTable || empty.Previs || empty.Arrange {
 		t.Fatalf("plain node-count prompt must not set L1 intent: %+v", empty)
 	}
 	storyboard := cloudAgentPromptIntentFlags("帮我写分镜")

@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-// agentToolSchemaArtifactPath 是 Go/Node 共用的工具 schema 制品。Pi worker 用同一份定义
-// 校验"模型请求里的工具"与"服务端合格目录"是否一致，因此这份文件是双方合同的一部分。
+// agentToolSchemaArtifactPath 是离线文档与参数验证夹具使用的目录导出文件。
 func agentToolSchemaArtifactPath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join("..", "..", "..", "agent", "harness", "TOOL_SCHEMA.json")
@@ -27,7 +26,7 @@ type agentToolSchemaArtifact struct {
 func TestAgentToolSchemaArtifactMatchesRuntime(t *testing.T) {
 	// 制品必须是"任意运行配置下工具集合的超集"：单次快照会随权限模式、视觉能力、
 	// 技能与记忆开关变化（例如 canvas_inspect_image 只在 VisionEnabled 时暴露）。
-	// 用最宽的请求生成，Node 侧才能用"快照 ⊆ 制品 + 参数一致"做校验。
+	// 用最宽的请求生成，离线参数测试才能覆盖完整工具合同。
 	artifact := backendToolArtifact()
 	encoded, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {

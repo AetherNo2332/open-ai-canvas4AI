@@ -29,7 +29,7 @@ func TestCloudAgentRegistersEligibleConcreteToolsFromStart(t *testing.T) {
 			t.Fatalf("category entry %q must not be model-callable: %v", parent, names)
 		}
 	}
-	for _, concrete := range []string{"canvas_get_state", "canvas_apply_ops", "plan_update", "generate_media", "skill_search"} {
+	for _, concrete := range []string{"canvas_get_state", "canvas_apply_ops", "plan_update", "generate_media", "model_list"} {
 		if !containsToolName(names, concrete) {
 			t.Fatalf("eligible concrete tool %q missing at run start: %v", concrete, names)
 		}

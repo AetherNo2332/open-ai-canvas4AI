@@ -316,6 +316,7 @@ test("native Skill read checkpoints without a canvas tool batch", async () => {
   assert.deepEqual(state.batches, []);
   assert.ok(state.ops.indexOf("checkpoint:assistant") < state.ops.indexOf("checkpoint:toolResult"));
   assert.match(state.canonical[0]!.systemPrompt, /available_skills/);
+  assert.match(state.canonical[0]!.systemPrompt, /Use the read tool/);
   assert.ok(state.canonical[0]!.tools.some((tool) => (tool.function as { name: string }).name === "read"));
 });
 
