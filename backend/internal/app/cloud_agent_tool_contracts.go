@@ -175,6 +175,22 @@ func validateCloudAgentReferenceDocument(doc map[string]any, ops []agentCanvasOp
 func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 	p := schema["properties"].(map[string]any)
 	switch name {
+	case "canvas_read_storyboard":
+		schema["allOf"] = []map[string]any{
+			{"oneOf": []map[string]any{
+				{"required": []string{"view"}, "properties": map[string]any{"view": map[string]any{"const": "full"}, "rows": map[string]any{"maximum": 20}}},
+				{"properties": map[string]any{"view": map[string]any{"enum": []string{"summary", "bindings"}}}},
+			}},
+			{"anyOf": []map[string]any{
+				{"properties": cloudAgentForbiddenFields("rowIds")},
+				{"properties": map[string]any{"offset": map[string]any{"const": 0}}},
+			}},
+		}
+	case "canvas_create_character":
+		schema["oneOf"] = []map[string]any{
+			{"required": []string{"imageNodeId"}, "properties": cloudAgentForbiddenFields("primaryImageNodeId", "turnaroundImageNodeId")},
+			{"properties": cloudAgentForbiddenFields("imageNodeId"), "anyOf": []map[string]any{{"required": []string{"primaryImageNodeId"}}, {"required": []string{"turnaroundImageNodeId"}}}},
+		}
 	case "canvas_inspect_image":
 		p["summary"] = cloudAgentVisionSummarySchema()
 		p["sha256"] = map[string]any{"type": "string", "minLength": 64, "maxLength": 64, "description": "提交 summary 时必填：复制实际附图回执的 sha256，不是节点 ID 或内容签名。"}

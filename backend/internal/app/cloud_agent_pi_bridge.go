@@ -47,31 +47,33 @@ type PiPendingInterjection struct {
 }
 
 type PiAgentSnapshot struct {
-	Subagent                 *SubagentRuntime            `json:"subagent,omitempty"`
-	RunID                    string                      `json:"runId"`
-	PiSessionID              string                      `json:"piSessionId"`
-	PiSessionRevision        int64                       `json:"piSessionRevision"`
-	PiSessionLeaseEpoch      int64                       `json:"piSessionLeaseEpoch"`
-	PiSessionHeader          json.RawMessage             `json:"piSessionHeader"`
-	PiSessionEntries         []PiAgentSessionEntry       `json:"piSessionEntries"`
-	PiActiveLeafID           string                      `json:"piActiveLeafId,omitempty"`
-	UserID                   string                      `json:"userId"`
-	Revision                 int64                       `json:"revision"`
-	Status                   string                      `json:"status"`
-	Request                  CloudAgentRequest           `json:"request"`
-	ModelLimits              PiAgentModelLimits          `json:"modelLimits"`
-	Canonical                canonicalAgentRequest       `json:"canonical"`
-	ActiveTask               string                      `json:"activeTaskId,omitempty"`
-	LastTaskID               string                      `json:"lastTaskId,omitempty"`
-	NoToolTaskID             string                      `json:"noToolTaskId,omitempty"`
-	NoToolNudge              string                      `json:"noToolNudge,omitempty"`
-	ModelFailureTaskID       string                      `json:"modelFailureTaskId,omitempty"`
-	ModelFailureNudge        string                      `json:"modelFailureNudge,omitempty"`
-	PendingInterjections     []PiPendingInterjection     `json:"pendingInterjections,omitempty"`
-	PendingContextCompaction *PiPendingContextCompaction `json:"pendingContextCompaction,omitempty"`
-	Tools                    []PiAgentToolSpec           `json:"tools"`
-	PiMessages               []json.RawMessage           `json:"piMessages"`
-	Opened                   []string                    `json:"openedCategories"`
+	Subagent                 *SubagentRuntime             `json:"subagent,omitempty"`
+	RunID                    string                       `json:"runId"`
+	PiSessionID              string                       `json:"piSessionId"`
+	PiSessionRevision        int64                        `json:"piSessionRevision"`
+	PiSessionLeaseEpoch      int64                        `json:"piSessionLeaseEpoch"`
+	PiSessionHeader          json.RawMessage              `json:"piSessionHeader"`
+	PiSessionEntries         []PiAgentSessionEntry        `json:"piSessionEntries"`
+	HistoricalToolReceipts   []PiHistoricalToolReceipt    `json:"historicalToolReceipts,omitempty"`
+	VisionBatchBudget        *cloudAgentVisionBatchBudget `json:"visionBatchBudget,omitempty"`
+	PiActiveLeafID           string                       `json:"piActiveLeafId,omitempty"`
+	UserID                   string                       `json:"userId"`
+	Revision                 int64                        `json:"revision"`
+	Status                   string                       `json:"status"`
+	Request                  CloudAgentRequest            `json:"request"`
+	ModelLimits              PiAgentModelLimits           `json:"modelLimits"`
+	Canonical                canonicalAgentRequest        `json:"canonical"`
+	ActiveTask               string                       `json:"activeTaskId,omitempty"`
+	LastTaskID               string                       `json:"lastTaskId,omitempty"`
+	NoToolTaskID             string                       `json:"noToolTaskId,omitempty"`
+	NoToolNudge              string                       `json:"noToolNudge,omitempty"`
+	ModelFailureTaskID       string                       `json:"modelFailureTaskId,omitempty"`
+	ModelFailureNudge        string                       `json:"modelFailureNudge,omitempty"`
+	PendingInterjections     []PiPendingInterjection      `json:"pendingInterjections,omitempty"`
+	PendingContextCompaction *PiPendingContextCompaction  `json:"pendingContextCompaction,omitempty"`
+	Tools                    []PiAgentToolSpec            `json:"tools"`
+	PiMessages               []json.RawMessage            `json:"piMessages"`
+	Opened                   []string                     `json:"openedCategories"`
 	// Harness 是首步合同冻结的 Harness 正文（版本 2 运行在首步之后非空）。
 	//
 	// Node 恢复时优先用它而不是重读磁盘文件：运维改了 SYSTEM.md / AGENTS.md 再重启进程，
@@ -462,6 +464,8 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 			// usage of this completed step when available. Read through this same
 			// transaction so the usage anchor and assistant checkpoint commit together.
 			s.recordCloudAgentTokenAnchorWithRepository(repo, userID, &state)
+			state.PiAssistantCheckpointTaskID = input.TaskID
+			state.PiAssistantCheckpointEntryID = piCheckpointAssistantEntryID(input)
 			state.ActiveTaskID = ""
 		}
 		if len(input.InterjectionIDs) > 0 {
@@ -611,9 +615,8 @@ type PiToolReceipt struct {
 	Pending     bool            `json:"pending"`
 	Result      json.RawMessage `json:"result,omitempty"`
 	IsError     bool            `json:"isError,omitempty"`
-	// Terminated 表示本轮已进入终态（拒绝/失败/取消/完成），该调用不会有回执。
-	// Node 必须据此结束 Pi 循环，而不是继续轮询 pending —— 拒绝是控制面决策，
-	// 按合同不产生工具结果，也不得产生后续模型请求。
+	// Terminated 表示本轮已进入终态。Result 非空时仍是已持久化的真实回执，
+	// Worker 应先消费它再停止；终态查询不会重新执行工具。
 	Terminated bool `json:"terminated,omitempty"`
 }
 
@@ -948,7 +951,7 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 			visionBudget = configured
 		}
 	}
-	request.Canonical, _ = projectCloudAgentVisionRequest(request.Canonical, visionBudget, state.DeliveredImageSHAs)
+	request.Canonical, _ = projectCloudAgentVisionRequest(request.Canonical, visionBudget, state.DeliveredImageSHAs, state.DeliveredImageComparisons)
 	references, refErr := s.cloudAgentImageReferences(run.UserID, state.Request, &request.Canonical)
 	if refErr != nil {
 		// 水合失败按安全文案转成可见错误，由 worker 上报为运行失败，
@@ -1371,6 +1374,10 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	}
 	state.Calls = batch.Calls
 	state.PiToolBatchTaskID = batch.TaskID
+	state.PiToolBatchAssistantEntryID = ""
+	if state.PiAssistantCheckpointTaskID == batch.TaskID {
+		state.PiToolBatchAssistantEntryID = state.PiAssistantCheckpointEntryID
+	}
 	state.CallIndex = 0
 	state.CallAdmissions = cloudAgentPreflightBatch(&state, batch.Calls)
 	state.CanvasBatchHashes = nil
@@ -1406,14 +1413,11 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 		// 终态转换会清除 session 租约。Pi worker 可能正好在终结后轮询
 		// 工具回执；对已终结的本用户 Pi run 返回终止信号，避免旧租约错误
 		// 让 Node 将整轮判为协议失败。非终态仍必须通过租约 fencing。
-		if _, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner); terminal {
-			return &PiToolReceipt{CallID: callID, Terminated: true}, nil
+		terminalRun, terminal := s.piTerminalRunAfterLeaseFailure(userID, runID, owner)
+		if !terminal {
+			return nil, err
 		}
-		return nil, err
-	}
-	if cloudAgentRunTerminal(run.Status) {
-		// 本轮已终结：不再有工具回执。返回明确的终止信号，避免 Node 无限轮询 pending。
-		return &PiToolReceipt{CallID: callID, Terminated: true}, nil
+		run = terminalRun
 	}
 	state, err := cloudAgentDecode(run)
 	if err != nil {
@@ -1427,7 +1431,11 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 		return nil, kernel.Forbidden("Pi 工具调用顺序或标识无效")
 	}
 	if receipt := piToolReceipt(&state, taskID, callID); receipt != nil {
+		receipt.Terminated = cloudAgentRunTerminal(run.Status)
 		return receipt, nil
+	}
+	if cloudAgentRunTerminal(run.Status) {
+		return &PiToolReceipt{CallID: callID, Terminated: true}, nil
 	}
 	if state.CallIndex >= len(state.Calls) || state.Calls[state.CallIndex].ID != callID {
 		return nil, kernel.Forbidden("Pi 工具调用顺序或标识无效")
@@ -1453,6 +1461,7 @@ func (s *Service) PiToolAdvance(userID, runID, owner, taskID, callID string) (*P
 		return nil, err
 	}
 	if receipt := piToolReceipt(&updated, taskID, callID); receipt != nil {
+		receipt.Terminated = cloudAgentRunTerminal(latest.Status)
 		return receipt, nil
 	}
 	if cloudAgentRunTerminal(latest.Status) {
@@ -1599,6 +1608,10 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 	for _, entry := range sessionEntries {
 		entryViews = append(entryViews, PiAgentSessionEntry{RunID: entry.RunID, Entry: json.RawMessage(entry.EntryJSON)})
 	}
+	historicalReceipts, err := s.piHistoricalFinishReceipts(run, entryViews)
+	if err != nil {
+		return nil, err
+	}
 	var pendingCompaction *PiPendingContextCompaction
 	if compaction := state.ContextCompaction; compaction != nil && compaction.PiOperationID != "" {
 		pendingCompaction = &PiPendingContextCompaction{
@@ -1630,6 +1643,13 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		}
 	}
 	pendingInterjections := make([]PiPendingInterjection, 0, len(state.PendingInterjections))
+	var visionBudget *cloudAgentVisionBatchBudget
+	if state.Request.VisionEnabled {
+		budget, budgetErr := s.cloudAgentVisionBatchBudget(state.Request)
+		if budgetErr == nil {
+			visionBudget = &budget
+		}
+	}
 	for _, item := range state.PendingInterjections {
 		pendingInterjections = append(pendingInterjections, PiPendingInterjection{ID: item.ID, Text: item.Text, Source: item.Source, CreatedAt: item.CreatedAt})
 	}
@@ -1637,10 +1657,11 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
 		Subagent:    state.Subagent,
 		PiSessionID: session.ID, PiSessionRevision: session.Revision, PiSessionLeaseEpoch: session.LeaseEpoch, PiSessionHeader: json.RawMessage(session.HeaderJSON),
-		PiSessionEntries: entryViews, PiActiveLeafID: session.ActiveLeafID,
+		PiSessionEntries: entryViews, HistoricalToolReceipts: historicalReceipts, PiActiveLeafID: session.ActiveLeafID,
 		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, Tools: tools,
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
 		SkillRuntimeMode: mode, Skills: nativeSkills,
+		VisionBatchBudget: visionBudget,
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。
 		Harness: cloudAgentFrozenHarness(state.Snapshot),
 	}, nil

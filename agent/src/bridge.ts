@@ -78,6 +78,8 @@ export interface PiSnapshot {
   piSessionRevision?: number;
   piSessionHeader?: Record<string, unknown>;
   piSessionEntries?: Array<{ runId: string; entry: Record<string, unknown> }>;
+  historicalToolReceipts?: Array<{ runId: string; assistantEntryId: string; assistantTimestamp: number; callId: string; result: unknown; isError?: boolean }>;
+  visionBatchBudget?: { maxImages: number; maxCost: number };
   piActiveLeafId?: string;
   piSessionLeaseEpoch?: number;
   userId: string;
@@ -198,7 +200,7 @@ interface PiToolReceipt {
   pending: boolean;
   result?: unknown;
   isError?: boolean;
-  /** 本轮已进入终态（拒绝/失败/取消/完成），该调用不会有回执。 */
+  /** 已终结；result 如存在仍须消费，它来自 Go 已持久化的真实回执。 */
   terminated?: boolean;
 }
 

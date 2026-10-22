@@ -155,7 +155,7 @@ func TestCloudAgentProjectionModes(t *testing.T) {
 	if len(detailRows) != cloudAgentDetailStoryboardRows {
 		t.Fatalf("detail must return one row, got %d", len(detailRows))
 	}
-	if detailRows[0].(map[string]any)["id"] == nil {
+	if detailRows[0].(map[string]any)["rowId"] == nil {
 		t.Fatal("detail projection must carry the row ID")
 	}
 	if _, hasHint := detail["rowIdSource"]; hasHint {
@@ -620,7 +620,7 @@ func TestCloudAgentStoryboardReadRows(t *testing.T) {
 		t.Fatalf("rows=5 must return five rows and paginate: %d rows, next=%v", len(pageRows), page["nextOffset"])
 	}
 	for _, value := range pageRows {
-		if stringValue(value.(map[string]any)["id"]) == "" {
+		if stringValue(value.(map[string]any)["rowId"]) == "" {
 			t.Fatal("multi-row read must keep rowId for editing")
 		}
 	}

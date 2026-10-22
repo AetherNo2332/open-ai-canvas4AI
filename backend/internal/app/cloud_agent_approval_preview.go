@@ -130,6 +130,9 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 	if err != nil {
 		return nil, err
 	}
+	if err := validateCloudAgentAssetUsage(planned, ops); err != nil {
+		return nil, err
+	}
 	if err := reconcileCloudAgentReferenceFields(planned, string(encoded)); err != nil {
 		return nil, err
 	}

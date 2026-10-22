@@ -1,0 +1,48 @@
+---
+title: Agent 读取、引用检查与收尾回执
+description: 按需读取画布、检查分镜绑定、追溯角色媒体来源和恢复终态回执
+---
+
+## 画布读取
+
+`canvas_get_state` 提供 `catalog`、`detail`、`references`、`edit` 四种视图。未指定节点时默认目录；指定节点时默认 detail。只有 edit 返回 editable 和富文本。正文被截断时，`nextRead` 给出 `canvas_read_content` 的实际续读参数，偏移按 Unicode 字符计算。
+
+`connections` 参数为 `none`、`selected` 或 `incident`：默认不附边，子图默认 selected。连线是派生的只读关系；业务输入以引用字段及解析结果为准。`type` 表示底层存储，所有节点均提供 `kind` 表示业务能力，角色卡为 `kind=character`。
+
+## 分镜绑定检查
+
+`canvas_read_storyboard` 默认 `view=bindings`，与 `summary` 都默认且最多100行，并支持分页；`full` 读取正文，默认1行、最多20行。可按 `rowIds` 精确选行，与非零 offset 互斥。返回 `rowId` 作为唯一编辑句柄。bindings 只投影角色名和绑定标识，完整描述留在 full。
+
+结果显式包含共享 referenceNodeIds、行 assetBindings/characters、图片和视频产物以及有效输入。`mode=image/video` 复用生成的引用解析规则；video 遵守关键帧模式，省略 mode 时仅检查声明引用。
+
+`coverage` 区分全表规模、选择范围、已检查行数与完整覆盖。只有 complete=true 才支持全表结论。summary 的缺媒体输入、引用无效、资源不可用、状态未知、待迁移和缺输出分别统计；待迁移的旧连线不算作确认空输入。没有镜头产物不代表不能执行文生模式，行级数组为空也不代表共享输入为空。分页按 nextRead 继续，不把未返回字段当作明确为空。
+
+## 角色媒体来源
+
+角色卡仍使用 current/pinned 版本策略。读取返回实际版本、各表现资源的来源，以及 resolvedImage 表示最终选用的图片角色。主图和三视图可分别指定，单图模式会明确复用；primaryReusesTurnaround 只表示资源相同，不证明图片视觉内容满足三视图要求。
+
+新建角色卡支持 imageNodeId 单图模式，或 primaryImageNodeId/turnaroundImageNodeId 分别指定。来源节点和画布与表现资源一起记录，后端校验所有权和资源匹配。历史没有记录时 sourceStatus=unrecorded；sourceCandidates 只是当前画布中同资源的候选，不自动认定来源。
+
+HTTP `POST /api/characters` 支持 representations 数组，与 imageResourceId 互斥；每项包括 role、resourceId、metadata。metadata 中声明来源时必须同时提供可访问的 sourceCanvasId 和实际指向该资源的 sourceNodeId。角色详情返回这两个来源字段及可选 reusedFromRole，修改表现资源继续使用现有 representations 接口。
+
+## 画布素材留档
+
+可引用节点通过能力合同暴露 usageStatus（active/archived）、usageNote 和 supersededByNodeId。使用 canvas_apply_ops 的 update_node 修改，沿用快照、审批与撤销机制；替代节点必须存在、业务类型一致且不成环。恢复 active 时清理替代项。
+
+用途状态只作用于当前画布节点，不改变素材库全局状态或资源就绪状态。归档不删除文件、节点、标题、任务或已有显式引用；默认候选与搜索排除归档项，搜索历史内容需 includeArchived=true。已有固定版本引用保留，读取会提示归档状态，不自动换用替代版本。
+
+## 视觉观察
+
+候选的 observationStatus 描述未观察、有待验证缓存或已有观察，不强制本轮识图。关系检查直接读取引用；外观判断才请求图片。inspect 回执包含本轮调用额度、剩余额度、模型批次图片数和成本预算。
+
+视觉对比使用 purpose=compare，在模型能力内同批附送两张图；refresh=true 允许在每图上限内重新查看缓存原图。普通观察复用有效摘要，图片资源变化时旧摘要失效。Worker 最多保留模型允许的近期原图，后端继续负责图片数量和成本准入；输出文字大小与图片批次预算分开计算。
+
+## 终态回执恢复
+
+finish_run 通过后，工具回执、最终答复和终态共同保存。回执包含 committed、runId、finalMessageId。Pi 查询终态时仍须校验用户、模型步骤和调用 ID，优先返回已持久化回执，再通知 Worker 停止；查询不会重新执行工具。活跃运行继续要求有效租约。
+
+下一轮只为缺失的历史 finish_run 补回执。模型消息检查点与模型任务在同一事务中记录精确的会话条目 ID，批次准入时绑定该 ID；恢复同时核对原运行、条目、批次和调用内容，不将后续步骤复用的 callId 认作早前调用成功。补齐只影响模型投影，不重做写入。升级前未保存条目与任务关联的历史调用仍标记未知，不靠内容相同猜测成功。committed 表示已保存、可重放，不表示客户端已经展示或用户已经阅读。
+
+## 同步工具制品
+
+修改工具协议后，从 backend 目录运行 `go run ./cmd/export-agent-tool-schema -output ../agent/harness/TOOL_SCHEMA.json` 导出实际运行时目录，再运行 `node agent/scripts/sync-harness.mjs --tool-descriptions-only` 同步说明。导出命令不启动服务、不连接数据库、不运行测试。

@@ -348,6 +348,10 @@ func cloudAgentFailBlockedCompletion(current *model.CloudAgentExecution, state *
 // 这样这段 canonical 即便再看一次也是自洽的（assistant 的最后一句就是最终答复）。
 func cloudAgentCompleteByFinishRun(current *model.CloudAgentExecution, state *cloudAgentRuntime, runID string, call cloudAgentCall, result any) error {
 	summary := cloudAgentToolCallSummary(call)
+	if receipt, ok := result.(map[string]any); ok {
+		receipt["runId"], receipt["finalMessageId"] = runID, call.ID
+		receipt["committed"], receipt["terminalStatus"] = true, "completed"
+	}
 	cloudAgentRecordToolResult(current, state, call, result, nil)
 	// 同批剩下的调用与"纯文本收尾"的路径一样收成回执：本轮已经结束，它们不会被执行。
 	skipRemainingCloudAgentCalls(runID, state)

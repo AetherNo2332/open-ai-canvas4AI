@@ -8,6 +8,8 @@
 
 ## 引用与模型选择
 
+候选素材的 `observationStatus` 只是观察事实，不要求关系梳理任务逐张识图。视觉对比时同批读取要比较的两张图片并给 `purpose=compare`；需要重新附送已缓存原图时加 `refresh=true`，先检查 `inspectionBudget` 是否支持同批对比。普通观察优先复用有效摘要；未实际看见的部分如实标为未知。
+
 1. `sourceNodeId` 用能力卡允许的文本来源；图片、视频、音频和角色卡放 `referenceNodeIds`。提示词里的“参考图1”、节点标题或已有连线本身不能替代生成参数中的真实 ID。
 2. 分镜模式同时给 `storyboardNodeId` 与 `storyboardRowId`：提示词、引用和视频时长从该行读取，不要另传 prompt、referenceNodeIds、sourceNodeId 或 durationSeconds；先把素材写进行绑定，再生成。
 3. 临时标注图只能用 `image_annotation_render` 回执返回的 ID 放 `referenceTransientIds`；不把它当节点 ID，不构造 URL。

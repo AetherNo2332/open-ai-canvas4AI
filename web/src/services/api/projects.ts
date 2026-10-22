@@ -87,6 +87,9 @@ export type CharacterRepresentation = {
     id: string;
     resourceId: string;
     mediaType: string;
+    sourceNodeId?: string;
+    sourceCanvasId?: string;
+    reusedFromRole?: string;
     role: "primary" | "front" | "side" | "back" | "turnaround_sheet" | "expression_sheet" | string;
 };
 
@@ -542,7 +545,7 @@ export function getCharacter(assetId: string) {
     return http.get<ProjectCharacterDetail>(`/characters/${encodeURIComponent(assetId)}`);
 }
 
-export function createCharacter(input: { name: string; definition?: Record<string, unknown>; imageResourceId?: string; audioResourceId?: string; voiceName?: string; instructions?: string }) {
+export function createCharacter(input: { name: string; definition?: Record<string, unknown>; imageResourceId?: string; representations?: Array<{ role: string; resourceId: string; metadata?: Record<string, unknown> }>; audioResourceId?: string; voiceName?: string; instructions?: string }) {
     return http.post<ProjectCharacterDetail>("/characters", input);
 }
 

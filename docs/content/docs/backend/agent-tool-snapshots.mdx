@@ -13,6 +13,8 @@ worker 启动后读取一次镜像内的 `TOOL_SCHEMA.json`，注册 `instanceId
 
 后端权威目录由运行时代码生成。工具定义对象的 JSON 键序不影响判断，任务按冻结工具子集比较，不要求每个权限模式包含完整工具全集。参数定义内的说明文字变化仍按严格规则检测，不提供忽略差异或覆盖历史任务的入口。
 
+本地同步共享制品可从 backend 目录运行 `go run ./cmd/export-agent-tool-schema -output ../agent/harness/TOOL_SCHEMA.json`，该命令只导出实际目录，不启动服务或运行测试。读取视图与终态回执的业务合同见 [Agent 读取、引用检查与收尾回执](/docs/backend/agent-tool-reads)。
+
 ## 管理操作
 
 - 运行总览提供快照状态和可链接的管理入口，显示异常实例、受影响任务和具体工具名。

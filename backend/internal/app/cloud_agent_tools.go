@@ -593,9 +593,12 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"offset": map[string]any{"type": "integer", "minimum": 0}, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 16000},
 		}, "nodeId")
 		add("canvas_search_nodes", "按标题和正文搜索当前画布节点；返回基础索引和新快照。需要编辑时继续精读目标。", map[string]any{
-			"query": str("搜索文字，大小写不敏感"), "type": str("可选节点类型"), "offset": map[string]any{"type": "integer", "minimum": 0},
+			"includeArchived": map[string]any{"type": "boolean", "description": "默认排除归档节点；查历史资料时设 true"},
+			"query":           str("搜索文字，大小写不敏感"), "type": str("可选业务 kind 或底层存储 type，角色卡可用 character"), "offset": map[string]any{"type": "integer", "minimum": 0},
 		}, "query")
 		add("canvas_get_state", cloudAgentToolText("canvas_get_state"), map[string]any{
+			"view":             map[string]any{"type": "string", "enum": []string{"catalog", "detail", "references", "edit"}, "description": "默认目录；指定节点默认 detail。references 查关系；edit 才返回 editable/richText"},
+			"connections":      map[string]any{"type": "string", "enum": []string{"none", "selected", "incident"}, "description": "默认不返回连线；子图默认 selected；incident 包含所读节点的关联边"},
 			"offset":           map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_008")},
 			"connectionOffset": map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_009")},
 			"storyboardOffset": map[string]any{"type": "integer", "minimum": 0, "description": cloudAgentToolText("parameter_010")},
@@ -605,7 +608,13 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"includeRelated":   map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_086")},
 		})
 		add("canvas_read_batch_table", cloudAgentToolText("canvas_read_batch_table"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_013")), "offset": map[string]any{"type": "integer", "minimum": 0}}, "nodeId")
-		add("canvas_read_storyboard", cloudAgentToolText("canvas_read_storyboard"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_014")), "offset": map[string]any{"type": "integer", "minimum": 0}, "rows": map[string]any{"type": "integer", "minimum": 1, "maximum": cloudAgentMaxReadRows, "description": cloudAgentToolText("parameter_015")}}, "nodeId")
+		add("canvas_read_storyboard", cloudAgentToolText("canvas_read_storyboard"), map[string]any{
+			"nodeId": str(cloudAgentToolText("parameter_014")), "offset": map[string]any{"type": "integer", "minimum": 0},
+			"view":   map[string]any{"type": "string", "enum": []string{"summary", "bindings", "full"}, "description": "默认 bindings；summary 分页扫描绑定健康；full 读取正文"},
+			"mode":   map[string]any{"type": "string", "enum": []string{"image", "video"}, "description": "按生成模式解析有效输入；video 遵守关键帧模式"},
+			"rows":   map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "summary/bindings 默认且最多100行；full 最多20行，默认1行"},
+			"rowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 80}, "description": "可选真实行ID，与非零offset互斥"},
+		}, "nodeId")
 		add("image_text_detect", cloudAgentToolText("image_text_detect"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_016"))}, "nodeId")
 		add("image_annotation_render", cloudAgentToolText("image_annotation_render"), map[string]any{
 			"nodeId": str(cloudAgentToolText("parameter_017")),
@@ -622,7 +631,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 	}
 	add("task_get", cloudAgentToolText("task_get"), map[string]any{"taskId": str(cloudAgentToolText("parameter_022"))}, "taskId")
 	if req.VisionEnabled && len(req.ContextScope) > 0 {
-		add("canvas_inspect_image", cloudAgentToolText("canvas_inspect_image"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_023")), "refresh": map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_024")}}, "nodeId")
+		add("canvas_inspect_image", cloudAgentToolText("canvas_inspect_image"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_023")), "refresh": map[string]any{"type": "boolean", "description": "compare 时可在每图上限内重新附图"}, "purpose": map[string]any{"type": "string", "enum": []string{"inspect", "compare"}, "description": "compare 用于同批比较两张图片，仍遵守模型批次预算"}}, "nodeId")
 	}
 	add("recall_lessons", cloudAgentToolText("recall_lessons"),
 		map[string]any{
@@ -688,7 +697,7 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 			"outputMode":   map[string]any{"type": "string", "enum": []string{"image", "video"}, "description": "绑定或解除产物归属的槽位"},
 			"outputNodeId": str("bind_output 必填：已有产物节点 ID；所属关系由服务端派生连接，不重写产物内容"),
 		}, "snapshotHash", "nodeId", "action")
-		add("canvas_create_character", "把画布上就绪的形象图片（可加声音音频）打包成角色卡：写入角色库并在画布放置角色卡节点，按权限审批。已有同名角色卡先复用；definition 只填有依据的设定。", cloudAgentCharacterCreateSchema(), "nodeId", "name", "imageNodeId")
+		add("canvas_create_character", "把就绪图片打包成角色卡并保存媒体来源；可分别指定定妆主图和三视图，单图时明确复用。按权限审批。已有同名卡先复用；definition 只填有依据的设定。", cloudAgentCharacterCreateSchema(), "nodeId", "name")
 		add("canvas_edit_batch_table", cloudAgentToolText("canvas_edit_batch_table"), map[string]any{
 			"snapshotHash": str(cloudAgentToolText("parameter_052")),
 			"nodeId":       str(cloudAgentToolText("parameter_013")),
@@ -1113,6 +1122,8 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentPrevisPreview(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":
 		var args struct {
+			View             string   `json:"view"`
+			Connections      string   `json:"connections"`
 			Offset           int      `json:"offset"`
 			ConnectionOffset int      `json:"connectionOffset"`
 			NodeIDs          []string `json:"nodeIds"`
@@ -1153,6 +1164,10 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		if includeRelated && args.Depth != nil {
 			return nil, &cloudAgentArgumentError{BadAuthRequest("画布读取参数无效：includeRelated 与 depth 不能同时使用")}
 		}
+		read, err := cloudAgentCanvasReadView(args.View, args.Connections, len(args.NodeIDs) > 0 || len(args.FocusNodeIDs) > 0, len(args.FocusNodeIDs) > 0)
+		if err != nil {
+			return nil, err
+		}
 		canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID)
 		if err != nil {
 			return nil, err
@@ -1161,41 +1176,12 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		if err != nil {
 			return nil, err
 		}
-		if len(args.FocusNodeIDs) > 0 {
-			if includeRelated {
-				return cloudAgentCanvasStateWithRelated(repo, userID, state.Request.CanvasID, doc, args.Offset, args.FocusNodeIDs, args.StoryboardOffset, args.ConnectionOffset)
-			}
-			return cloudAgentCanvasStateWithFocus(repo, userID, state.Request.CanvasID, doc, args.Offset, args.FocusNodeIDs, depth, args.StoryboardOffset, args.ConnectionOffset)
+		if includeRelated {
+			depth = 0
 		}
-		return cloudAgentCanvasState(repo, userID, state.Request.CanvasID, doc, args.Offset, args.NodeIDs, args.StoryboardOffset, args.ConnectionOffset)
+		return cloudAgentCanvasStatePageSelected(repo, userID, state.Request.CanvasID, doc, args.Offset, args.NodeIDs, args.FocusNodeIDs, depth, includeRelated, args.StoryboardOffset, args.ConnectionOffset, 0, read)
 	case "canvas_read_storyboard":
-		var args struct {
-			NodeID string `json:"nodeId"`
-			Offset int    `json:"offset"`
-			Rows   int    `json:"rows"`
-		}
-		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-			return nil, cloudAgentJSONArgumentError(err)
-		}
-		if err := validateCloudAgentID(args.NodeID, "分镜节点ID", 80); err != nil || args.Offset < 0 || args.Rows < 0 || args.Rows > cloudAgentMaxReadRows {
-			return nil, BadAuthRequest("分镜节点ID、分页参数或每页行数无效")
-		}
-		canvas, err := repo.CanvasProjectForUser(userID, state.Request.CanvasID)
-		if err != nil {
-			return nil, err
-		}
-		doc, err := creationDocument(canvas.PayloadJSON)
-		if err != nil {
-			return nil, err
-		}
-		if _, _, _, err := storyboardNodeFromDocument(doc, args.NodeID); err != nil {
-			return nil, err
-		}
-		view, err := cloudAgentCanvasStatePage(repo, userID, state.Request.CanvasID, doc, 0, []string{args.NodeID}, args.Offset, 0, args.Rows)
-		if err != nil {
-			return nil, err
-		}
-		return cloudAgentStoryboardReadResult(view, args.NodeID)
+		return cloudAgentReadStoryboard(repo, userID, state.Request.CanvasID, call)
 	case "canvas_read_batch_table":
 		var args struct {
 			NodeID string `json:"nodeId"`

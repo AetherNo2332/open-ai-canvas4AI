@@ -24,7 +24,8 @@ type cloudAgentReferenceAnchor struct {
 	AssetTags                []string `json:"assetTags,omitempty"`
 	ReferenceReady           bool     `json:"referenceReady"`
 	VisualIdentity           string   `json:"visualIdentity"`
-	RequiresVisualInspection bool     `json:"requiresVisualInspection"`
+	RequiresVisualInspection bool     `json:"-"`
+	ObservationStatus        string   `json:"observationStatus"`
 	// 旧检查点可能含有未经确认的正文摘录，不再自动写入或跨轮继承。
 	VisualNote string `json:"visualNote,omitempty"`
 	Width      any    `json:"width,omitempty"`
@@ -51,6 +52,9 @@ func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID strin
 
 	ids := make([]string, 0, 16)
 	for _, node := range nodes {
+		if cloudAgentNodeUsageStatus(node) == "archived" {
+			continue
+		}
 		descriptor, known := cloudAgentNodeCapabilityForNode(node)
 		if known && descriptor.Connection.CanReference {
 			ids = append(ids, stringValue(node["id"]))
@@ -73,7 +77,10 @@ func cloudAgentCreativeAnchorForCanvas(repo *repository.Repository, userID strin
 			NodeID: stringValue(node["id"]), Type: stringValue(node["type"]),
 			Title:          truncateRunes(stringValue(node["title"]), 300),
 			Prompt:         truncateRunes(firstNonEmpty(stringValue(meta["prompt"]), stringValue(meta["composerContent"])), 1000),
-			VisualIdentity: "unknown", RequiresVisualInspection: true,
+			VisualIdentity: "unknown", RequiresVisualInspection: true, ObservationStatus: "unobserved",
+		}
+		if cache, ok := decodeCloudAgentVisionCache(node); ok && !cache.Stale {
+			item.ObservationStatus = "cached_needs_validation"
 		}
 		if tags, ok := meta["assetTags"].([]any); ok {
 			for _, tag := range tags {

@@ -84,6 +84,10 @@ func (character *cloudAgentCharacter) read(precise bool) map[string]any {
 		"versionPolicy": character.VersionPolicy, "visualStatus": character.Card.VisualStatus,
 		"voiceStatus": character.Card.VoiceStatus, "hasDefinition": len(character.definition()) > 0,
 	}
+	selected := character.imageRepresentation()
+	if selected != nil {
+		result["resolvedImage"] = cloudAgentCharacterRepresentationView(*selected)
+	}
 	if !precise {
 		return result
 	}
@@ -92,13 +96,20 @@ func (character *cloudAgentCharacter) read(precise bool) map[string]any {
 	representations := []map[string]any{}
 	for _, representation := range character.Card.Representations {
 		roles = append(roles, representation.Role)
-		representations = append(representations, map[string]any{
-			"id": representation.ID, "role": representation.Role, "mediaType": representation.MediaType,
-			"resourceId": representation.ResourceID,
-		})
+		representations = append(representations, cloudAgentCharacterRepresentationView(representation))
 	}
 	result["representationRoles"] = roles
 	result["representations"] = representations
+	primary, turnaround := "", ""
+	for _, representation := range character.Card.Representations {
+		if representation.Role == "primary" {
+			primary = representation.ResourceID
+		}
+		if representation.Role == "turnaround_sheet" {
+			turnaround = representation.ResourceID
+		}
+	}
+	result["primaryReusesTurnaround"] = primary != "" && primary == turnaround
 	if character.Card.Voice != nil {
 		profile := character.Card.Voice.Profile
 		result["voice"] = map[string]any{"profileId": profile.ID, "name": profile.Name, "voiceKey": profile.VoiceKey, "language": profile.Language, "timbre": profile.Timbre, "sampleResourceId": profile.SampleResourceID, "instructions": truncateRunes(character.Card.Voice.Instructions, 1000)}
@@ -120,24 +131,61 @@ func (character *cloudAgentCharacter) prompt() string {
 }
 
 func cloudAgentCharacterImageReference(repo *repository.Repository, userID, nodeID string, character *cloudAgentCharacter) (map[string]any, error) {
-	for _, role := range []string{"turnaround_sheet", "primary", "front"} {
-		for _, representation := range character.Card.Representations {
-			if representation.Role != role || !strings.HasPrefix(representation.MediaType, "image") || representation.ResourceID == "" {
-				continue
-			}
-			resource, err := repo.ResourceForUser(userID, representation.ResourceID)
-			if err != nil || resource.Status != model.ResourceStatusReady || !strings.HasPrefix(strings.ToLower(resource.MimeType), "image/") {
-				return nil, BadAuthRequest("角色卡三视图资源不存在、未就绪或不可访问")
-			}
-			return map[string]any{
-				"id": nodeID, "name": character.Name, "storageKey": "resource:" + resource.ID,
-				"canvasReferenceKind": "character",
-				"type":                resource.MimeType, "mimeType": resource.MimeType, "bytes": resource.Size,
-				"width": resource.Width, "height": resource.Height, "inputKind": "image",
-			}, nil
+	if representation := character.imageRepresentation(); representation != nil {
+		resource, err := repo.ResourceForUser(userID, representation.ResourceID)
+		if err != nil || resource.Status != model.ResourceStatusReady || !strings.HasPrefix(strings.ToLower(resource.MimeType), "image/") {
+			return nil, BadAuthRequest("角色卡三视图资源不存在、未就绪或不可访问")
 		}
+		return map[string]any{
+			"id": nodeID, "name": character.Name, "storageKey": "resource:" + resource.ID,
+			"canvasReferenceKind": "character",
+			"type":                resource.MimeType, "mimeType": resource.MimeType, "bytes": resource.Size,
+			"width": resource.Width, "height": resource.Height, "inputKind": "image",
+		}, nil
 	}
 	return nil, BadAuthRequest("角色卡尚未绑定可用的三视图图片")
+}
+
+func (character *cloudAgentCharacter) imageRepresentation() *CharacterRepresentationSummary {
+	for _, role := range []string{"turnaround_sheet", "primary", "front"} {
+		for _, representation := range character.Card.Representations {
+			if representation.Role == role && strings.HasPrefix(representation.MediaType, "image") && representation.ResourceID != "" {
+				return &representation
+			}
+		}
+	}
+	return nil
+}
+
+func cloudAgentCharacterRepresentationView(representation CharacterRepresentationSummary) map[string]any {
+	view := map[string]any{"id": representation.ID, "role": representation.Role, "mediaType": representation.MediaType, "resourceId": representation.ResourceID, "sourceStatus": "unrecorded", "sourceNodeId": nil}
+	if representation.SourceNodeID != "" {
+		view["sourceNodeId"], view["sourceCanvasId"], view["sourceStatus"] = representation.SourceNodeID, representation.SourceCanvasID, "recorded"
+	}
+	if representation.ReusedFromRole != "" {
+		view["reusedFromRole"] = representation.ReusedFromRole
+	}
+	return view
+}
+
+func cloudAgentCharacterSourceCandidates(view, doc map[string]any) {
+	add := func(representation map[string]any) {
+		if representation == nil || representation["sourceStatus"] != "unrecorded" {
+			return
+		}
+		candidates := []string{}
+		for _, node := range creationMaps(doc["nodes"]) {
+			if stringValue(cloudAgentNodeMetadata(node)["storageKey"]) == "resource:"+stringValue(representation["resourceId"]) {
+				candidates = append(candidates, stringValue(node["id"]))
+			}
+		}
+		representation["sourceCandidates"] = candidates
+	}
+	for _, representation := range creationMaps(view["representations"]) {
+		add(representation)
+	}
+	selected, _ := view["resolvedImage"].(map[string]any)
+	add(selected)
 }
 
 func cloudAgentCharacterAudioReference(repo *repository.Repository, userID, nodeID string, character *cloudAgentCharacter) (map[string]any, error) {

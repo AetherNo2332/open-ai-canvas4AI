@@ -222,6 +222,7 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 	if len(anchors) > 0 {
 		// User intent remains in user messages, never frozen into system context.
 		context["referenceCandidates"] = anchors[0].ReferenceAssets
+		context["visualInspectionPolicy"] = "observationStatus 只描述已有观察；关系梳理无需识图，判断外观或一致性时再看图。cached_needs_validation 须由识图工具核对当前资源。"
 	}
 	if skillMode == cloudAgentSkillRuntimeNative {
 		context["skillRuntimeMode"] = cloudAgentSkillRuntimeNative

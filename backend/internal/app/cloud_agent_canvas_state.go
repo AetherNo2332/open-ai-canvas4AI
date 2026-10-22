@@ -192,7 +192,11 @@ func cloudAgentCanvasStatePage(repo *repository.Repository, userID, canvasID str
 	return cloudAgentCanvasStatePageSelected(repo, userID, canvasID, doc, offset, ids, nil, 0, false, storyboardOffset, connectionOffset, readRows)
 }
 
-func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canvasID string, doc map[string]any, offset int, ids, focusNodeIDs []string, depth int, includeRelated bool, storyboardOffset, connectionOffset, readRows int) (any, error) {
+func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canvasID string, doc map[string]any, offset int, ids, focusNodeIDs []string, depth int, includeRelated bool, storyboardOffset, connectionOffset, readRows int, options ...cloudAgentCanvasReadOptions) (any, error) {
+	read := cloudAgentCanvasReadOptions{View: "edit"}
+	if len(options) > 0 {
+		read = options[0]
+	}
 	if offset < 0 || storyboardOffset < 0 || len(ids) > 8 || len(focusNodeIDs) > 8 || (len(ids) > 0 && len(focusNodeIDs) > 0) {
 		return nil, BadAuthRequest("画布读取分页参数无效")
 	}
@@ -311,9 +315,9 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			next = candidateIndex
 			break
 		}
-		precise := len(ids) > 0 || focus[id]
+		precise := len(ids) > 0 || focus[id] || (len(options) > 0 && read.View != "catalog")
 		meta, _ := node["metadata"].(map[string]any)
-		item := map[string]any{"id": id, "type": stringValue(node["type"])}
+		item := map[string]any{"id": id, "type": stringValue(node["type"]), "kind": stringValue(node["type"])}
 		if title, ok := node["title"].(string); ok {
 			item["title"] = truncateRunes(title, 300)
 		}
@@ -349,9 +353,9 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			included[id] = true
 			continue
 		}
-		if capability.Variant != nil {
-			// 变体节点（如角色卡）底层 type 仍是 text，用 kind 标明真实能力，避免当普通文本处理。
-			item["kind"] = capability.Type
+		item["kind"], item["displayType"] = capability.Type, capability.Label
+		if capability.Connection.CanReference {
+			item["usage"] = cloudAgentNodeUsageView(node)
 		}
 		fields := capability.SummaryFields
 		projectMode := mode
@@ -360,14 +364,28 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 			fields = capability.DetailFields
 			projectMode = cloudAgentProjectionDetail
 			textLimit = cloudAgentDetailTextLimit
-			item["editable"] = cloudAgentEditableNodeProjection(node, capability, textLimit)
+			if read.View == "edit" {
+				item["editable"] = cloudAgentEditableNodeProjection(node, capability, textLimit)
+			}
 		}
+		if read.View == "catalog" {
+			fields, projectMode, textLimit = capability.SummaryFields, cloudAgentProjectionIndex, cloudAgentIndexExcerptRunes
+		} else if read.View == "detail" {
+			textLimit = cloudAgentPageTextLimit
+		} else if read.View == "references" {
+			fields = nil
+		}
+		fields = cloudAgentReadFields(fields, read.View)
 		projected, err := cloudAgentProjectNodeFields(node, meta, capability, fields, textLimit, projectMode, storyboardOffset, readRows)
 		if err != nil {
 			return nil, err
 		}
 		for key, value := range projected {
 			item[key] = value
+		}
+		cloudAgentContentContinuation(node, item)
+		if read.View == "references" {
+			item["references"] = cloudAgentNodeReferenceView(repo, userID, canvasID, doc, node)
 		}
 		if cloudAgentCharacterNode(node) {
 			if repo == nil {
@@ -381,7 +399,11 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 				if characterErr != nil {
 					item["character"] = map[string]any{"available": false, "issue": cloudAgentSafeToolError(characterErr)}
 				} else {
-					characterView := character.read(precise)
+					characterView := character.read(precise && read.View != "catalog")
+					if read.View == "references" {
+						delete(characterView, "definition")
+					}
+					cloudAgentCharacterSourceCandidates(characterView, doc)
 					if precise {
 						_, referenceErr := cloudAgentCharacterImageReference(repo, userID, id, character)
 						characterView["imageReference"] = map[string]any{"ready": referenceErr == nil}
@@ -446,6 +468,7 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 				}
 			}
 		}
+		cloudAgentCompactEditable(item)
 		body, err := json.Marshal(item)
 		if err != nil {
 			return nil, err
@@ -464,12 +487,22 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 	edges := []any{}
 	nextConnection := 0
 	for index, edge := range creationMaps(doc["connections"]) {
+		if read.Connections == "none" {
+			break
+		}
 		if index < connectionOffset {
 			continue
 		}
 		fromIncluded := included[stringValue(edge["fromNodeId"])]
 		toIncluded := included[stringValue(edge["toNodeId"])]
-		if (selectedMode && fromIncluded && toIncluded) || (!selectedMode && (fromIncluded || toIncluded)) {
+		includeEdge := (selectedMode && fromIncluded && toIncluded) || (!selectedMode && (fromIncluded || toIncluded))
+		if read.Connections == "selected" {
+			includeEdge = fromIncluded && toIncluded
+		}
+		if read.Connections == "incident" {
+			includeEdge = fromIncluded || toIncluded
+		}
+		if includeEdge {
 			item := map[string]any{"id": edge["id"], "fromNodeId": edge["fromNodeId"], "toNodeId": edge["toNodeId"]}
 			for _, key := range []string{"fromHandleId", "toHandleId", "relation", "storyboardRowId"} {
 				if value := stringValue(edge[key]); value != "" {
@@ -486,6 +519,7 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 		}
 	}
 	result := map[string]any{"snapshotHash": cloudAgentCanvasHash(doc), "mediaSnapshotHash": cloudAgentMediaContentHash(doc), "nodes": nodes, "connections": edges, "totalNodes": len(all), "nextOffset": next, "hasMore": next > 0, "nextConnectionOffset": nextConnection, "hasMoreConnections": nextConnection > 0, "pageByteBudget": cloudAgentReadPageBytes}
+	result["view"], result["connectionMode"] = read.View, read.Connections
 	migration := map[string]any{"required": !references.Enabled(doc)}
 	if !references.Enabled(doc) {
 		migration["reason"] = "reference_migration_required"
@@ -781,12 +815,15 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, mode cloud
 		// rowId 是编辑句柄：它只出现在逐字档，分页档由下面的提示告诉模型去哪里取。
 		if mode != cloudAgentProjectionDetail {
 			delete(item, "id")
+		} else {
+			item["rowId"] = item["id"]
+			delete(item, "id")
 		}
 		rows = append(rows, item)
 	}
-	state := map[string]any{"visibleColumns": visibleColumns, "rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0}
+	state := map[string]any{"visibleColumns": visibleColumns, "referenceNodeIds": cloudAgentStrings(storyboard["referenceNodeIds"]), "rows": rows, "totalRows": len(all), "nextOffset": next, "hasMore": next > 0}
 	if mode != cloudAgentProjectionDetail {
-		state["rowIdSource"] = "本页不含 rowId；通读可继续用本工具翻页，需要真实 rowId 时用 canvas_read_storyboard(nodeId, offset, rows=1) 精读"
+		state["rowIdSource"] = "本页不含 rowId；用 canvas_read_storyboard(nodeId, view=bindings) 读取行标识和绑定，需要正文时指定 view=full"
 	}
 	return state
 }
@@ -810,7 +847,7 @@ func cloudAgentStoryboardIndex(all []map[string]any, visibleColumns []any) map[s
 		summary["lastShotNumber"] = last
 	}
 	summary["rowFields"] = []string{"shotNumber", "durationSeconds", "plotDescription", "imageNodeId", "videoNodeId"}
-	summary["readRowsWith"] = "通读用 canvas_get_state 分页（每页 5 行）或 canvas_read_storyboard(nodeId, offset, rows=5)；需要某一行的真实 rowId 时用 canvas_read_storyboard(nodeId, offset, rows=1) 精读"
+	summary["readRowsWith"] = "引用检查用 canvas_read_storyboard(nodeId, view=summary/bindings)，默认最多100行；正文用 view=full、offset/rows，默认1行最多20行，按 nextRead 续读"
 	return summary
 }
 

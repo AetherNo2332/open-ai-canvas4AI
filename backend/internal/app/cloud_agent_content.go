@@ -16,9 +16,10 @@ func cloudAgentContentRead(repo *repository.Repository, userID, canvasID string,
 	}
 	if call.Function.Name == "canvas_search_nodes" {
 		var args struct {
-			Query  string `json:"query"`
-			Type   string `json:"type"`
-			Offset int    `json:"offset"`
+			Query           string `json:"query"`
+			Type            string `json:"type"`
+			Offset          int    `json:"offset"`
+			IncludeArchived bool   `json:"includeArchived"`
 		}
 		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
 			return nil, cloudAgentJSONArgumentError(err)
@@ -29,13 +30,25 @@ func cloudAgentContentRead(repo *repository.Repository, userID, canvasID string,
 		found := []map[string]any{}
 		query := strings.ToLower(args.Query)
 		for _, node := range creationMaps(doc["nodes"]) {
-			if args.Type != "" && stringValue(node["type"]) != args.Type {
+			if !args.IncludeArchived && cloudAgentNodeUsageStatus(node) == "archived" {
+				continue
+			}
+			kind := stringValue(node["type"])
+			descriptor, supported := cloudAgentNodeCapabilityForNode(node)
+			if supported {
+				kind = descriptor.Type
+			}
+			if args.Type != "" && kind != args.Type && stringValue(node["type"]) != args.Type {
 				continue
 			}
 			meta := cloudAgentNodeMetadata(node)
 			text := stringValue(node["title"]) + "\n" + stringValue(meta["content"]) + "\n" + stringValue(meta["composerContent"])
 			if strings.Contains(strings.ToLower(text), query) {
-				found = append(found, map[string]any{"id": node["id"], "type": node["type"], "title": node["title"]})
+				item := map[string]any{"id": node["id"], "type": node["type"], "kind": kind, "title": node["title"]}
+				if supported && descriptor.Connection.CanReference {
+					item["usage"] = cloudAgentNodeUsageView(node)
+				}
+				found = append(found, item)
 			}
 		}
 		if args.Offset > len(found) {

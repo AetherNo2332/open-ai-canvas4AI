@@ -14,11 +14,18 @@ function assistantIdentity(message: AssistantMessage): string {
  * Current-run gaps must still be recovered from Go's authoritative receipts.
  */
 export function createTerminalHistoryExtension(snapshot: PiSnapshot): InlineExtension {
-  const historical = new Set<string>();
+  const historical = new Map<string, { runId: string; entryId: string }>();
+  const ambiguous = new Set<string>();
+  const receipts = new Map((snapshot.historicalToolReceipts || []).map(receipt =>
+    [JSON.stringify([receipt.runId, receipt.assistantEntryId, receipt.callId]), receipt]));
   for (const { runId, entry } of snapshot.piSessionEntries || []) {
     if (runId === snapshot.runId || entry.type !== "message") continue;
     const message = entry.message as AgentMessage | undefined;
-    if (message?.role === "assistant") historical.add(assistantIdentity(message));
+    if (message?.role === "assistant") {
+      const identity = assistantIdentity(message);
+      if (historical.has(identity)) ambiguous.add(identity);
+      historical.set(identity, { runId, entryId: String(entry.id || "") });
+    }
   }
   return {
     name: "canvas-terminal-history",
@@ -28,12 +35,15 @@ export function createTerminalHistoryExtension(snapshot: PiSnapshot): InlineExte
         const messages: AgentMessage[] = [];
         let pending: ToolCall[] = [];
         let timestamp = 0;
+        let historicalRunId = "";
+        let assistantEntryId = "";
         let repaired = false;
         const closeHistoricalBatch = (): void => {
           for (const call of pending) {
+            const receipt = receipts.get(JSON.stringify([historicalRunId, assistantEntryId, call.id]));
             const result: ToolResultMessage = {
-              role: "toolResult", toolCallId: call.id, toolName: call.name, isError: true, timestamp,
-              content: [{ type: "text", text: `上一轮已终结，${call.name} 缺少持久化工具回执，执行结果未知。请核对已有业务结果；不要依据这条历史消息重新执行写入或收费操作。` }],
+              role: "toolResult", toolCallId: call.id, toolName: call.name, isError: receipt ? Boolean(receipt.isError) : true, timestamp,
+              content: [{ type: "text", text: receipt ? JSON.stringify(receipt.result) : `上一轮已终结，${call.name} 缺少持久化工具回执，执行结果未知。请核对已有业务结果；不要依据这条历史消息重新执行写入或收费操作。` }],
             };
             messages.push(result);
             repaired = true;
@@ -48,6 +58,10 @@ export function createTerminalHistoryExtension(snapshot: PiSnapshot): InlineExte
             if (message.role === "assistant" && historical.has(assistantIdentity(message))) {
               pending = message.content.filter((part): part is ToolCall => part.type === "toolCall");
               timestamp = message.timestamp;
+              const identity = assistantIdentity(message);
+              const source = historical.get(identity)!;
+              historicalRunId = source.runId;
+              assistantEntryId = ambiguous.has(identity) ? "" : source.entryId;
             }
           }
           messages.push(message);
@@ -110,7 +124,9 @@ function projectImageSummaries(messages: readonly AgentMessage[], summaries: Map
     const projected = parts.map((part, index) => {
       if (!imageKey(part)) return part;
       const caption = parts[index - 1] as { text?: unknown } | undefined;
-      const key = observationKey(imageReceipt(caption?.text));
+      const receipt = imageReceipt(caption?.text);
+      if (receipt?.forceImage === true) return part;
+      const key = observationKey(receipt);
       if (!key || !summaries.has(key)) return part;
       changed = true;
       return { type: "text", text: `图片 SHA 未变化，使用已保存的结构化摘要：${JSON.stringify(summaries.get(key))}` };
@@ -147,9 +163,9 @@ function missingSummaryContent(source: readonly AgentMessage[], existing: readon
 }
 
 /** Preserve durable images, but replace observed SHAs with saved summaries in
- * the model projection. Only the latest unsummarized image is sent per request.
+ * the model projection. Keep recent originals within the current model budget.
  */
-export function createImageContextExtension(): InlineExtension {
+export function createImageContextExtension(imageLimit: number | (() => number) = 1): InlineExtension {
   return {
     name: "canvas-original-image-context",
     hidden: true,
@@ -174,12 +190,13 @@ export function createImageContextExtension(): InlineExtension {
           const restored = { role: "user", content: "", canvasContent: content, timestamp: 0 } as unknown as AgentMessage;
           messages = [restored, ...messages];
         }
+        const limit = Math.max(1, Math.min(4, typeof imageLimit === "function" ? imageLimit() : imageLimit));
         let remaining = messages.flatMap(message => imageParts(message)).filter(imageKey).length;
         messages = messages.map(message => {
           const parts = imageParts(message);
           let changed = false;
           const projected = parts.map(part => {
-            if (!imageKey(part) || remaining-- <= 1) return part;
+            if (!imageKey(part) || remaining-- <= limit) return part;
             changed = true;
             return { type: "text", text: "本次未附送这张旧图片；无结构化摘要时不能推断其内容，需要时通过识图工具重新读取。" };
           });

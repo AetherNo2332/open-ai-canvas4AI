@@ -321,7 +321,7 @@ async function recoverToolResults(
       ? { result: "旧版工具分类入口已完成兼容，不执行业务操作。请直接使用当前工具表中的具体工具。" }
       : admissionError ? { result: admissionError, isError: true } :
       await bridge.executeTool(snapshot, taskId, call.id, signal);
-    if ("terminated" in receipt && receipt.terminated) throw new CanvasRunTerminated("terminated");
+    if ("terminated" in receipt && receipt.terminated && receipt.result === undefined) throw new CanvasRunTerminated("terminated");
     if ("suspended" in receipt && receipt.suspended) throw new CanvasRunSuspended();
     const result: ToolResultMessage = { role: "toolResult", toolCallId: call.id, toolName: call.function.name,
       content: [{ type: "text",
@@ -329,6 +329,7 @@ async function recoverToolResults(
       isError: Boolean(receipt.isError), timestamp: Date.now() };
     await checkpoint(result);
     messages.push(result);
+    if ("terminated" in receipt && receipt.terminated) throw new CanvasRunTerminated("terminated");
   }
 }
 
@@ -988,7 +989,7 @@ export async function runCanvasAgent(
     return undefined;
   }, nativeRead);
   const boot = await bootstrapSession(snapshot, systemPrompt, resume.entries, streamSimple, disclosure,
-    [compactionExtension, toolExtension, createTerminalHistoryExtension(snapshot), createImageContextExtension()],
+    [compactionExtension, toolExtension, createTerminalHistoryExtension(snapshot), createImageContextExtension(() => snapshot.visionBatchBudget?.maxImages ?? 1)],
     workspace);
   session = boot.session;
   sessionManager = boot.sessionManager;

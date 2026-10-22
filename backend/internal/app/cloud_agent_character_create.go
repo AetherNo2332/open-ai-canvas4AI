@@ -31,19 +31,22 @@ type cloudAgentCharacterDefinitionArgs struct {
 }
 
 type cloudAgentCharacterCreateArgs struct {
-	NodeID      string                            `json:"nodeId"`
-	Name        string                            `json:"name"`
-	ImageNodeID string                            `json:"imageNodeId"`
-	AudioNodeID string                            `json:"audioNodeId"`
-	Definition  cloudAgentCharacterDefinitionArgs `json:"definition"`
-	X           *float64                          `json:"x"`
-	Y           *float64                          `json:"y"`
+	NodeID                string                            `json:"nodeId"`
+	Name                  string                            `json:"name"`
+	ImageNodeID           string                            `json:"imageNodeId"`
+	PrimaryImageNodeID    string                            `json:"primaryImageNodeId"`
+	TurnaroundImageNodeID string                            `json:"turnaroundImageNodeId"`
+	AudioNodeID           string                            `json:"audioNodeId"`
+	Definition            cloudAgentCharacterDefinitionArgs `json:"definition"`
+	X                     *float64                          `json:"x"`
+	Y                     *float64                          `json:"y"`
 }
 
 type cloudAgentCharacterCreatePlan struct {
 	Args            cloudAgentCharacterCreateArgs
 	Definition      map[string]any
 	ImageResourceID string
+	Representations []CharacterRepresentationInput
 	AudioResourceID string
 	VoiceName       string
 	Position        layout.Position
@@ -67,7 +70,9 @@ func cloudAgentCharacterCreateSchema() map[string]any {
 	}
 	definitionProperties["aliases"] = map[string]any{"type": "array", "maxItems": 16, "items": str("别称或称号")}
 	return map[string]any{
-		"nodeId": str("新节点ID"), "name": str("角色名"), "imageNodeId": str("就绪的形象图片节点ID"), "audioNodeId": str("可选，就绪的声音音频节点ID"),
+		"nodeId": str("新节点ID"), "name": str("角色名"), "imageNodeId": str("单图模式：同一图片用于三视图和主图；与两个分视角字段互斥"),
+		"primaryImageNodeId":    str("定妆主图节点ID；可与 turnaroundImageNodeId 分别指定，缺一个时明确复用"),
+		"turnaroundImageNodeId": str("三视图节点ID；与主图分别保存来源"), "audioNodeId": str("可选，就绪的声音音频节点ID"),
 		"definition": map[string]any{"type": "object", "description": "可选角色设定；只填有依据的字段，未知项留空", "properties": definitionProperties, "additionalProperties": false},
 		"x":          map[string]any{"type": "number"}, "y": map[string]any{"type": "number"},
 	}
@@ -137,7 +142,7 @@ func cloudAgentCharacterMediaResource(repo *repository.Repository, userID string
 func prepareCloudAgentCharacterCreate(repo *repository.Repository, userID, canvasID string, call cloudAgentCall) (*cloudAgentCharacterCreatePlan, error) {
 	var args cloudAgentCharacterCreateArgs
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-		return nil, &cloudAgentArgumentError{BadAuthRequest("创建角色卡参数无效：仅允许 nodeId、name、imageNodeId、audioNodeId、definition、x、y")}
+		return nil, &cloudAgentArgumentError{BadAuthRequest("创建角色卡参数无效，请按当前 schema 提供形象节点、设定及可选位置")}
 	}
 	if err := validateCloudAgentID(args.NodeID, "角色卡节点ID", 80); err != nil {
 		return nil, &cloudAgentArgumentError{err}
@@ -146,8 +151,13 @@ func prepareCloudAgentCharacterCreate(repo *repository.Repository, userID, canva
 	if err != nil || name == "" {
 		return nil, &cloudAgentArgumentError{BadAuthRequest("角色名不能为空且不超过 80 字")}
 	}
-	if args.ImageNodeID == "" {
-		return nil, &cloudAgentArgumentError{BadAuthRequest("创建角色卡需要 imageNodeId：先有一张已就绪的形象/三视图图片节点")}
+	if args.ImageNodeID != "" && (args.PrimaryImageNodeID != "" || args.TurnaroundImageNodeID != "") {
+		return nil, cloudAgentFieldError("imageNodeId", "unexpected_field", "单图模式与分别指定主图/三视图不能混用")
+	}
+	primaryID := firstNonEmpty(args.PrimaryImageNodeID, args.ImageNodeID, args.TurnaroundImageNodeID)
+	turnaroundID := firstNonEmpty(args.TurnaroundImageNodeID, args.ImageNodeID, args.PrimaryImageNodeID)
+	if primaryID == "" {
+		return nil, cloudAgentFieldError("imageNodeId", "required", "先指定一张就绪形象图片，或分别提供主图和三视图")
 	}
 	definition, err := args.Definition.normalized()
 	if err != nil {
@@ -170,12 +180,30 @@ func prepareCloudAgentCharacterCreate(repo *repository.Repository, userID, canva
 	}
 	plan := &cloudAgentCharacterCreatePlan{Args: args, Definition: definition}
 	plan.Args.Name = name
-	imageID, imageNode, err := cloudAgentCharacterMediaResource(repo, userID, nodes, args.ImageNodeID, "image", "形象图片")
+	imageID, imageNode, err := cloudAgentCharacterMediaResource(repo, userID, nodes, turnaroundID, "image", "三视图图片")
 	if err != nil {
 		return nil, err
 	}
 	plan.ImageResourceID = imageID
-	details := []string{"形象：《" + cloudAgentApprovalNodeTitle(imageNode, "图片") + "》"}
+	primaryResource, primaryNode, err := cloudAgentCharacterMediaResource(repo, userID, nodes, primaryID, "image", "定妆主图")
+	if err != nil {
+		return nil, err
+	}
+	plan.Args.ImageNodeID = turnaroundID
+	primaryOrigin := map[string]any{"source": "canvas-node", "sourceCanvasId": canvasID, "sourceNodeId": primaryID}
+	turnaroundOrigin := map[string]any{"source": "canvas-node", "sourceCanvasId": canvasID, "sourceNodeId": turnaroundID}
+	if primaryID == turnaroundID {
+		if args.PrimaryImageNodeID != "" && args.TurnaroundImageNodeID == "" {
+			turnaroundOrigin["reusedFromRole"] = "primary"
+		} else {
+			primaryOrigin["reusedFromRole"] = "turnaround_sheet"
+		}
+	}
+	plan.Representations = []CharacterRepresentationInput{{Role: "primary", ResourceID: primaryResource, Metadata: primaryOrigin}, {Role: "turnaround_sheet", ResourceID: imageID, Metadata: turnaroundOrigin}}
+	details := []string{"定妆主图：《" + cloudAgentApprovalNodeTitle(primaryNode, "图片") + "》", "三视图：《" + cloudAgentApprovalNodeTitle(imageNode, "图片") + "》"}
+	if primaryID == turnaroundID {
+		details = append(details, "主图与三视图复用同一图片，两个用途保留各自角色")
+	}
 	if args.AudioNodeID != "" {
 		audioID, audioNode, err := cloudAgentCharacterMediaResource(repo, userID, nodes, args.AudioNodeID, "audio", "声音音频")
 		if err != nil {
@@ -194,7 +222,7 @@ func prepareCloudAgentCharacterCreate(repo *repository.Repository, userID, canva
 	} else {
 		occupied := cloudAgentLayoutNodes(doc)
 		var preferred *layout.Position
-		if image, ok := findLayoutNode(occupied, args.ImageNodeID); ok {
+		if image, ok := findLayoutNode(occupied, turnaroundID); ok {
 			preferred = &layout.Position{X: image.X + image.Width + layout.PlacementGap, Y: image.Y}
 		}
 		plan.Position = layout.FreeSlot(cloudAgentCharacterNodeWidth, cloudAgentCharacterNodeHeight, "text", occupied, preferred, layout.PlacementGap)
@@ -228,7 +256,7 @@ func applyCloudAgentCharacterCreate(repo *repository.Repository, userID, canvasI
 		return nil, err
 	}
 	created, err := (&Service{repo: repo}).CreateCharacter(userID, CreateCharacterRequest{
-		Name: plan.Args.Name, Definition: plan.Definition, ImageResourceID: plan.ImageResourceID,
+		Name: plan.Args.Name, Definition: plan.Definition, Representations: plan.Representations,
 		AudioResourceID: plan.AudioResourceID, VoiceName: plan.VoiceName,
 	})
 	if err != nil {

@@ -211,6 +211,8 @@ type cloudAgentRuntime struct {
 	// Only admitted provider envelopes prove delivery; durable history can contain
 	// images excluded by Pi's model-facing projection.
 	DeliveredImageSHAs map[string]string `json:"deliveredImageSHAs,omitempty"`
+	// Comparisons may resend an observed SHA once per exact inspection call.
+	DeliveredImageComparisons map[string]string `json:"deliveredImageComparisons,omitempty"`
 	// ImageInspectCalls 记录本轮所有图片识别工具调用次数（包括只回执文字的重复调用）。
 	// 它与 ImageInspectCounts 一起进检查点，防止模型通过 refresh 或切换节点绕过总预算。
 	ImageInspectCalls int `json:"imageInspectCalls,omitempty"`
@@ -247,11 +249,14 @@ type cloudAgentRuntime struct {
 	LastStepTaskID string `json:"lastStepTaskId,omitempty"`
 	// PiToolBatchTaskID binds the admitted call IDs and receipts to the model
 	// step that emitted them. Model providers may reuse call IDs across turns.
-	PiToolBatchTaskID   string                     `json:"piToolBatchTaskId,omitempty"`
-	LastStepOperation   string                     `json:"lastStepOperation,omitempty"`
-	LastStepEstimate    int                        `json:"lastStepEstimate,omitempty"`
-	LastStepPressure    *cloudAgentContextPressure `json:"lastStepPressure,omitempty"`
-	LastStepSourceBytes int                        `json:"lastStepSourceBytes,omitempty"`
+	PiToolBatchTaskID            string                     `json:"piToolBatchTaskId,omitempty"`
+	PiAssistantCheckpointTaskID  string                     `json:"piAssistantCheckpointTaskId,omitempty"`
+	PiAssistantCheckpointEntryID string                     `json:"piAssistantCheckpointEntryId,omitempty"`
+	PiToolBatchAssistantEntryID  string                     `json:"piToolBatchAssistantEntryId,omitempty"`
+	LastStepOperation            string                     `json:"lastStepOperation,omitempty"`
+	LastStepEstimate             int                        `json:"lastStepEstimate,omitempty"`
+	LastStepPressure             *cloudAgentContextPressure `json:"lastStepPressure,omitempty"`
+	LastStepSourceBytes          int                        `json:"lastStepSourceBytes,omitempty"`
 	// LastStepBreakdown 是这一步"实际发出去的信封"的占用构成（准入时算好并冻结）。
 	// 运行态 canonical 与真实请求不是同一份：它含全量工具目录，也不含 Node 拼在策略后的
 	// Harness 块。after_request 若从它重算，同一步前后两条读数的 system/tools 桶会对不上。

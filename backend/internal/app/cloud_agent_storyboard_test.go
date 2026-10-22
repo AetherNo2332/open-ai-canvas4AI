@@ -195,7 +195,7 @@ func TestCloudAgentCreatesAndReadsStructuredStoryboard(t *testing.T) {
 	}
 
 	state := &cloudAgentRuntime{Request: agentTestRequest()}
-	readCall := cloudAgentStoryboardCall(t, "canvas_read_storyboard", "read-storyboard", map[string]any{"nodeId": "storyboard-1", "offset": 0})
+	readCall := cloudAgentStoryboardCall(t, "canvas_read_storyboard", "read-storyboard", map[string]any{"nodeId": "storyboard-1", "view": "full", "rows": 1, "offset": 0})
 	result, err := cloudAgentReadTool(s.repo, "user", state, readCall)
 	if err != nil {
 		t.Fatal(err)

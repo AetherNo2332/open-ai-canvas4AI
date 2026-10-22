@@ -414,7 +414,10 @@ func cloudAgentStoryboardReadResult(view any, nodeID string) (map[string]any, er
 	rows, _ := storyboard["rows"].([]any)
 	for _, value := range rows {
 		if row, ok := value.(map[string]any); ok {
-			row["rowId"] = row["id"]
+			if id, exists := row["id"]; exists {
+				row["rowId"] = id
+				delete(row, "id")
+			}
 		}
 	}
 	return map[string]any{

@@ -144,6 +144,8 @@ var toolSnapshotRechecks = struct {
 }{last: map[string]time.Time{}}
 
 // This is the same catalog used by the generated worker artifact contract test.
+func CloudAgentToolSchemaArtifact() ToolSnapshotArtifact { return backendToolArtifact() }
+
 func backendToolArtifact() ToolSnapshotArtifact {
 	req := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}, VisionEnabled: true, HasMemories: true, WebSearchEnabled: true, SkillIDs: []string{"schema-artifact-skill"}}
 	req.Budget.MaxCredits = 1

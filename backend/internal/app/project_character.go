@@ -19,12 +19,13 @@ type CreateProjectCharacterRequest struct {
 }
 
 type CreateCharacterRequest struct {
-	Name            string         `json:"name"`
-	Definition      map[string]any `json:"definition"`
-	ImageResourceID string         `json:"imageResourceId"`
-	AudioResourceID string         `json:"audioResourceId"`
-	VoiceName       string         `json:"voiceName"`
-	Instructions    string         `json:"instructions"`
+	Name            string                         `json:"name"`
+	Definition      map[string]any                 `json:"definition"`
+	ImageResourceID string                         `json:"imageResourceId"`
+	Representations []CharacterRepresentationInput `json:"representations,omitempty"`
+	AudioResourceID string                         `json:"audioResourceId"`
+	VoiceName       string                         `json:"voiceName"`
+	Instructions    string                         `json:"instructions"`
 }
 
 type CharacterAssetSummary struct {
@@ -55,10 +56,13 @@ type BindCharacterVoiceRequest struct {
 }
 
 type CharacterRepresentationSummary struct {
-	ID         string `json:"id"`
-	ResourceID string `json:"resourceId"`
-	MediaType  string `json:"mediaType"`
-	Role       string `json:"role"`
+	ID             string `json:"id"`
+	ResourceID     string `json:"resourceId"`
+	MediaType      string `json:"mediaType"`
+	Role           string `json:"role"`
+	SourceNodeID   string `json:"sourceNodeId,omitempty"`
+	SourceCanvasID string `json:"sourceCanvasId,omitempty"`
+	ReusedFromRole string `json:"reusedFromRole,omitempty"`
 }
 
 type VoiceProfileSummary struct {
@@ -203,7 +207,15 @@ func (s *Service) CreateCharacter(userID string, req CreateCharacterRequest) (Ch
 	}
 	asset := model.Asset{ID: assetID, UserID: userID, Kind: "entity", Category: model.AssetCategoryCharacter, Status: model.AssetVersionStatusConfirmed, PrimaryVersionID: versionID, Title: name, PayloadJSON: payload, CreatedAt: now, UpdatedAt: now}
 	version := model.AssetVersion{ID: versionID, AssetID: assetID, Version: 1, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: string(definition), CreatedAt: now, UpdatedAt: now}
-	representations, err := s.characterRepresentationsForResources(userID, newID(), req.ImageResourceID, now)
+	if req.ImageResourceID != "" && len(req.Representations) > 0 {
+		return CharacterAssetSummary{}, BadAuthRequest("imageResourceId 与 representations 不能同时提供")
+	}
+	var representations []model.AssetRepresentation
+	if len(req.Representations) > 0 {
+		representations, err = s.characterRepresentationsForInputs(userID, req.Representations, newID(), now)
+	} else {
+		representations, err = s.characterRepresentationsForResources(userID, newID(), req.ImageResourceID, now)
+	}
 	if err != nil {
 		return CharacterAssetSummary{}, err
 	}
@@ -360,31 +372,9 @@ func (s *Service) ReplaceProjectCharacterRepresentations(userID string, projectI
 	if err != nil {
 		return ProjectCharacterDetail{}, err
 	}
-	if len(req.Representations) == 0 || len(req.Representations) > 8 {
-		return ProjectCharacterDetail{}, BadAuthRequest("角色形象数量必须在 1 到 8 之间")
-	}
-	roles := make(map[string]struct{}, len(req.Representations))
-	representations := make([]model.AssetRepresentation, 0, len(req.Representations))
-	operationID := newID()
-	for _, input := range req.Representations {
-		role := strings.TrimSpace(input.Role)
-		if !validCharacterRepresentationRole(role) {
-			return ProjectCharacterDetail{}, BadAuthRequest("不支持的角色形象视角")
-		}
-		if _, exists := roles[role]; exists {
-			return ProjectCharacterDetail{}, BadAuthRequest("同一角色形象视角不能重复")
-		}
-		roles[role] = struct{}{}
-		resourceID := strings.TrimSpace(input.ResourceID)
-		resource, resourceErr := s.repo.ResourceForUser(userID, resourceID)
-		if resourceErr != nil || resource.Kind != "image" || resource.Status != model.ResourceStatusReady {
-			return ProjectCharacterDetail{}, BadAuthRequest("角色形象资源不可用")
-		}
-		metadata, marshalErr := json.Marshal(input.Metadata)
-		if marshalErr != nil {
-			return ProjectCharacterDetail{}, BadAuthRequest("角色形象元数据格式无效")
-		}
-		representations = append(representations, model.AssetRepresentation{ID: newID(), TaskID: operationID, ResourceID: resourceID, MediaType: "image", Role: role, MetadataJSON: string(metadata), CreatedAt: time.Now()})
+	representations, err := s.characterRepresentationsForInputs(userID, req.Representations, newID(), time.Now())
+	if err != nil {
+		return ProjectCharacterDetail{}, err
 	}
 	if _, err := s.createNextCharacterVersion(projectID, asset, asset.Title, "", representations, nil, false); err != nil {
 		return ProjectCharacterDetail{}, err
@@ -699,7 +689,10 @@ func (s *Service) characterCardVersion(userID string, version *model.AssetVersio
 	representations := make([]CharacterRepresentationSummary, 0, len(stored))
 	roles := make(map[string]bool, len(stored))
 	for _, representation := range stored {
-		representations = append(representations, CharacterRepresentationSummary{ID: representation.ID, ResourceID: representation.ResourceID, MediaType: representation.MediaType, Role: representation.Role})
+		origin := map[string]any{}
+		_ = json.Unmarshal([]byte(representation.MetadataJSON), &origin)
+		representations = append(representations, CharacterRepresentationSummary{ID: representation.ID, ResourceID: representation.ResourceID, MediaType: representation.MediaType, Role: representation.Role,
+			SourceNodeID: truncateRunes(stringValue(origin["sourceNodeId"]), 120), SourceCanvasID: truncateRunes(stringValue(origin["sourceCanvasId"]), 128), ReusedFromRole: truncateRunes(stringValue(origin["reusedFromRole"]), 40)})
 		roles[representation.Role] = true
 	}
 	visualStatus := "missing"
@@ -781,6 +774,22 @@ func (s *Service) characterRepresentationsForInputs(userID string, inputs []Char
 		metadata, marshalErr := json.Marshal(input.Metadata)
 		if marshalErr != nil {
 			return nil, BadAuthRequest("角色形象元数据格式无效")
+		}
+		origin := map[string]any{}
+		_ = json.Unmarshal(metadata, &origin)
+		if sourceID, canvasID := stringValue(origin["sourceNodeId"]), stringValue(origin["sourceCanvasId"]); sourceID != "" || canvasID != "" {
+			canvas, canvasErr := s.repo.CanvasProjectForUser(userID, canvasID)
+			if canvasErr != nil || sourceID == "" {
+				return nil, BadAuthRequest("角色形象来源画布不可访问或缺少节点标识")
+			}
+			doc, docErr := creationDocument(canvas.PayloadJSON)
+			if docErr != nil {
+				return nil, docErr
+			}
+			index := cloudAgentNodeIndex(creationMaps(doc["nodes"]), sourceID)
+			if index < 0 || stringValue(cloudAgentNodeMetadata(creationMaps(doc["nodes"])[index])["storageKey"]) != "resource:"+resourceID {
+				return nil, BadAuthRequest("角色形象来源节点与资源不一致")
+			}
 		}
 		result = append(result, model.AssetRepresentation{ID: newID(), TaskID: taskID, ResourceID: resourceID, MediaType: "image", Role: role, MetadataJSON: string(metadata), CreatedAt: now})
 	}

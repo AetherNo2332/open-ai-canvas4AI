@@ -2,9 +2,9 @@
 
 ## 读取足够的状态
 
-`canvas_get_state` 的 `nodeIds` 是字符串数组，和 `focusNodeIds` 互斥。精读若干目标时用前者；需要有限深度邻居时用后者搭配 `depth`。`connections` 是服务端按引用字段派生的只读结果，可能单独分页：按 `hasMoreConnections` 和 `nextConnectionOffset` 续读，用来说明现有关系，不是可写输入。
+`canvas_get_state` 的 `nodeIds` 是字符串数组，和 `focusNodeIds` 互斥。默认目录用 `view=catalog`；指定节点默认 `detail`；关系检查用 `references`；准备编辑时才用 `edit` 读取富文本与编辑字段。`connections` 默认 `none`，需要时用 `selected` 或 `incident`；连线只是只读结果，不能据此判断正文来源已被正确改编。正文截断时复制 `nextRead.arguments` 继续读取，不拼富文本树。
 
-分镜用 `canvas_read_storyboard`：通读 `rows=5` 并翻页，需要完整某行时 `rows=1`。批量表用 `canvas_read_batch_table`。两者返回实际行 ID 与快照；行序号、标题、模型记忆中的旧行 ID 都不能替代它。
+分镜用 `canvas_read_storyboard`：先用 `summary` 或默认 `bindings` 检查共享引用、行绑定和有效输入；`coverage.complete=false` 只能说明已检查的行，不能外推整表。`full` 通读最多20行、单行精读用 `rows=1`；可用 `rowIds` 定位。只使用返回的 `rowId`，不从边反推绑定。行绑定为空不等于有效输入为空，也不等于资源不可用。批量表仍用 `canvas_read_batch_table`。
 
 ## 普通节点
 
@@ -48,7 +48,9 @@ Agent 不连接、不改接、不断开连线：`canvas_apply_ops` 没有边操�
 {"assetBindings":[{"nodeId":"EXISTING_CHARACTER_NODE_ID","role":"character","priority":100}]}
 ```
 
-角色卡精读 `kind=character`、`character.definition`、版本和媒体 readiness；空 `content` 不代表空卡。已有同名角色卡先复用，建新卡必须使用已保存且就绪的形象图。
+角色卡的业务类型为 `kind=character`，底层存储 `type=text`。读取版本、`resolvedImage`、`representations` 和媒体 readiness；空 `content` 不代表空卡。来源未记录时 `sourceCandidates` 只表示同资源候选，不能据此认定版本。主图与三视图可分别指定；单图复用会显式标明。同名角色先核对版本。
+
+素材留档用 `canvas_apply_ops` 的 `update_node.patch` 设置 `usageStatus=archived`，可给 `usageNote` 和同业务类型的 `supersededByNodeId`；恢复用 `active`。只作用于本画布，保留标题、文件、任务和既有显式引用；默认候选与搜索排除归档项，查旧版本时搜索加 `includeArchived=true`。不要把归档解释为资源失效，也不要自动改接已有引用。
 
 ## 批量表
 

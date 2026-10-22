@@ -111,6 +111,11 @@ func completeBuiltinEditableFields(d *Descriptor) {
 	if d.Type == "config" || d.Type == "image" || d.Type == "video" || d.Type == "audio" || d.Type == "text" {
 		addGenerationEditableFields(d, add)
 	}
+	if d.Connection.CanReference {
+		add("usageStatus", "metadata.usageStatus", "素材用途状态", enumString("active", "archived"))
+		add("usageNote", "metadata.usageNote", "用途说明", stringField(500))
+		add("supersededByNodeId", "metadata.supersededByNodeId", "替代版本节点", stringField(80))
+	}
 	if d.Type == "image" {
 		add("freeResize", "metadata.freeResize", "自由调整尺寸", PatchField{Kind: patchKindBoolean})
 	}
