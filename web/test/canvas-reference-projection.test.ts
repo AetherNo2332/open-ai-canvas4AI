@@ -11,7 +11,8 @@ const sequence = () => {
 };
 const node = (id: string, type: CanvasNodeType, metadata: Record<string, unknown> = {}): CanvasNodeData => ({ id, type, title: id, position: { x: 0, y: 0 }, width: 300, height: 200, metadata });
 const image = (id: string) => node(id, CanvasNodeType.Image, { content: `https://example.test/${id}.png` });
-const board = (assetBindings: StoryboardRow["assetBindings"] = []) => node("board", CanvasNodeType.Script, { storyboard: { rows: [{ id: "shot", shotNumber: 1, durationSeconds: 5, plotDescription: "shot", characters: [], assetBindings }], referenceNodeIds: [], visibleColumns: [] } });
+const board = (assetBindings: StoryboardRow["assetBindings"] = []) =>
+    node("board", CanvasNodeType.Script, { storyboard: { rows: [{ id: "shot", shotNumber: 1, durationSeconds: 5, plotDescription: "shot", characters: [], assetBindings }], referenceNodeIds: [], visibleColumns: [] } });
 const removeLine = (graph: CanvasReferenceGraph, edge: CanvasConnection) => applyCanvasReferenceGraphEdit(graph, canvasReferenceIntentForConnection(graph.nodes, edge, true, graph.connections)!, [edge.id]);
 const reconcileProjected = (graph: CanvasReferenceGraph, owners: string[]) => ({ nodes: graph.nodes, connections: reconcileCanvasReferenceConnections(graph.nodes, graph.connections, owners) });
 
@@ -69,7 +70,9 @@ test("a projected graph is stable and keeps its line ids", () => {
 test("storyboard row references are drawn and erased with the row field", () => {
     const connected = connectCanvasReferences({ nodes: [image("scene"), board()], connections: [] }, [{ id: "drag", fromNodeId: "scene", toNodeId: "board", toHandleId: "row:shot" }]);
     expect(connected.nodes[1].metadata?.storyboard?.rows[0].assetBindings?.map((binding) => binding.nodeId)).toEqual(["scene"]);
-    expect(connected.connections).toEqual([{ id: expect.any(String), fromNodeId: "scene", toNodeId: "board", toHandleId: "row:shot", storyboardRowId: "shot", managedBy: "reference-fields-v1", referenceOwnerNodeId: "board", referenceBindingId: "node:scene:reference" }]);
+    expect(connected.connections).toEqual([
+        { id: expect.any(String), fromNodeId: "scene", toNodeId: "board", toHandleId: "row:shot", storyboardRowId: "shot", managedBy: "reference-fields-v1", referenceOwnerNodeId: "board", referenceBindingId: "node:scene:reference" },
+    ]);
     expect(removeLine(connected, connected.connections[0]).connections).toEqual([]);
 });
 
@@ -116,7 +119,12 @@ const sharedGraph = () => {
 
 test("shared references are still edited through their own field", () => {
     const graph = sharedGraph();
-    expect(() => deleteCanvasReferenceLine(graph, graph.connections.find((edge) => edge.toHandleId === "row:shot")!)).toThrow("共享引用");
+    expect(() =>
+        deleteCanvasReferenceLine(
+            graph,
+            graph.connections.find((edge) => edge.toHandleId === "row:shot")!,
+        ),
+    ).toThrow("共享引用");
 });
 
 test("a free line the owning field does not draw stays deletable", () => {

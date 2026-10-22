@@ -5,7 +5,8 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Storyb
 
 const node = (id: string, type: CanvasNodeType, metadata: Record<string, unknown> = {}, title = id): CanvasNodeData => ({ id, type, title, position: { x: 0, y: 0 }, width: 300, height: 200, metadata });
 const image = (id: string) => node(id, CanvasNodeType.Image, { content: `https://example.test/${id}.png` });
-const shot = (patch: Partial<StoryboardRow> = {}): StoryboardRow => ({ id: "shot", shotNumber: 3, durationSeconds: 8, plotDescription: "剧情描述", videoMotionPrompt: "镜头缓慢推进", characters: [], assetBindings: [{ nodeId: "asset", role: "style", priority: 60 }], ...patch }) as StoryboardRow;
+const shot = (patch: Partial<StoryboardRow> = {}): StoryboardRow =>
+    ({ id: "shot", shotNumber: 3, durationSeconds: 8, plotDescription: "剧情描述", videoMotionPrompt: "镜头缓慢推进", characters: [], assetBindings: [{ nodeId: "asset", role: "style", priority: 60 }], ...patch }) as StoryboardRow;
 const board = (row = shot(), metadata: Record<string, unknown> = {}) => node("board", CanvasNodeType.Script, { storyboard: { rows: [row], referenceNodeIds: ["global"], visibleColumns: [] }, ...metadata });
 const rowLine = { fromNodeId: "board", toNodeId: "clip", fromHandleId: "row:shot" };
 const bind = (graph: CanvasReferenceGraph, edge: Pick<CanvasConnection, "fromNodeId" | "toNodeId" | "fromHandleId" | "toHandleId"> = rowLine) => {
