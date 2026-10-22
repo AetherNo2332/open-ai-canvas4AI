@@ -3,7 +3,6 @@ package app
 import "encoding/json"
 
 const (
-	cloudAgentMaxToolCalls         = 8
 	cloudAgentMaxOutputBytes       = 32000
 	cloudAgentRuntimeContextMarker = "【运行状态】"
 	cloudAgentContextSourceKey     = "agentContextSource"
@@ -17,6 +16,7 @@ const (
 	cloudAgentContextEmptyOutput        cloudAgentRuntimeContextKind = "empty_output"
 	cloudAgentContextInvalidOutput      cloudAgentRuntimeContextKind = "invalid_output"
 	cloudAgentContextTruncatedArguments cloudAgentRuntimeContextKind = "truncated_tool_arguments"
+	cloudAgentRuntimeCallLimits         cloudAgentRuntimeContextKind = "call_limits"
 )
 
 // Only serializable fact fields belong here. Behavioral instructions live in
@@ -30,6 +30,8 @@ type cloudAgentRuntimeContext struct {
 	Detail            string                       `json:"detail,omitempty"`
 	MaxToolCalls      int                          `json:"maxToolCalls,omitempty"`
 	MaxOutputBytes    int                          `json:"maxOutputBytes,omitempty"`
+	CallLimits        *cloudAgentCallLimits        `json:"callLimits,omitempty"`
+	ReadToolCalls     int                          `json:"readToolCalls,omitempty"`
 }
 
 func cloudAgentRuntimeMessage(context cloudAgentRuntimeContext) map[string]any {

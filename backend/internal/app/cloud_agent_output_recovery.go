@@ -8,12 +8,12 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-func cloudAgentOutputViolation(text string, callCount int) string {
+func cloudAgentOutputViolation(text string, callCount int, limits cloudAgentCallLimits) string {
 	if len(text) > cloudAgentMaxOutputBytes {
 		return fmt.Sprintf("正文 %d 字节，超过单步 %d 字节上限", len(text), cloudAgentMaxOutputBytes)
 	}
-	if callCount > cloudAgentMaxToolCalls {
-		return fmt.Sprintf("一次发起了 %d 个工具调用，超过单步 %d 个上限", callCount, cloudAgentMaxToolCalls)
+	if callCount > limits.withDefaults().ToolCallsPerStep {
+		return fmt.Sprintf("一次发起了 %d 个工具调用，超过单步 %d 个上限", callCount, limits.withDefaults().ToolCallsPerStep)
 	}
 	return ""
 }
@@ -22,7 +22,7 @@ func (s *Service) correctCloudAgentOutput(run *model.CloudAgentExecution, state 
 	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		state.Canonical.Messages = append(state.Canonical.Messages, cloudAgentRuntimeMessage(cloudAgentRuntimeContext{
 			Kind: cloudAgentContextInvalidOutput, Detail: violation,
-			MaxOutputBytes: cloudAgentMaxOutputBytes, MaxToolCalls: cloudAgentMaxToolCalls,
+			MaxOutputBytes: cloudAgentMaxOutputBytes, MaxToolCalls: state.callLimits().ToolCallsPerStep,
 		}))
 		state.ActiveTaskID = ""
 		state.Calls = nil

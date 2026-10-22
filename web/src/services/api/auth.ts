@@ -350,6 +350,10 @@ export type RuntimeTaskPolicy = {
     agentStepMaxOutputTokens: number;
     /** 画布 Agent 单步模型调用的秒级墙钟；0 表示沿用文本任务超时。 */
     agentStepTimeoutSeconds: number;
+    agentMaxToolCallsPerStep: number;
+    agentMaxReadToolCallsPerRun: number;
+    /** 每轮模型调用次数上限；0 表示不限，请求预算仍可设更低值。 */
+    agentMaxStepsPerRun: number;
 };
 
 export type RuntimeRequestPolicy = {

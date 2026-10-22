@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -51,7 +52,7 @@ type CloudAgentRequest struct {
 		MaxCredits         float64 `json:"maxCredits"`
 		MaxGenerationTasks int     `json:"maxGenerationTasks,omitempty"`
 		MaxVideoSeconds    int     `json:"maxVideoSeconds,omitempty"`
-		// 0 = 不限制模型调用步数（与官方取消固定截断一致）。正数时夹到上限。
+		// 0 = 请求不另设模型步数限制；仍受后台执行策略约束。正数夹到参数上界。
 		MaxSteps int `json:"maxSteps,omitempty"`
 	} `json:"budget"`
 	IdempotencyKey string `json:"idempotencyKey"`
@@ -61,7 +62,7 @@ type CloudAgentRequest struct {
 	// 却被判为"未获本轮权限授权"。
 }
 
-const cloudAgentMaxStepsLimit = 9999
+const cloudAgentMaxStepsLimit = platform.MaxRuntimeAgentStepsPerRun
 
 func cloudAgentStepLimit(req CloudAgentRequest) int {
 	if req.Budget.MaxSteps > 0 {
@@ -732,7 +733,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		RuntimeRunID:      id, Request: req, Policy: policy, ParentID: linkedParentID, Fingerprint: fingerprint,
 		SkillRuntimeMode: cloudAgentSkillRuntimeNative, CreativeAnchor: creativeAnchor, TextHistory: history, Skills: skillSnapshots, Profile: profile,
 		Canonical: canonical, Decisions: map[string]string{}, Events: []CloudAgentEvent{},
-		Plan: inheritedPlan, StepLimits: stepLimits,
+		Plan: inheritedPlan, StepLimits: stepLimits, CallLimits: stepLimits.CallLimits,
 		TokenAnchor:         inheritedUsage,
 		DisclosureVersion:   cloudAgentToolDisclosureVersion,
 		AdvertisedToolNames: advertisedNames,

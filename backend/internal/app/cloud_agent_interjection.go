@@ -203,6 +203,6 @@ func cloudAgentStepBudgetExhausted(state *cloudAgentRuntime) bool {
 	if state == nil {
 		return true
 	}
-	limit := cloudAgentStepLimit(state.Request)
+	limit := state.callLimits().stepLimit(state.Request)
 	return limit > 0 && state.Step >= limit
 }

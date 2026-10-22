@@ -226,6 +226,7 @@ func (s *Service) recordCloudAgentTokenAnchorWithRepository(repo *repository.Rep
 
 // cloudAgentStepLimits 是一次模型调用实际生效的执行边界。
 type cloudAgentStepLimits struct {
+	CallLimits cloudAgentCallLimits
 	// OutputTokens 是本次调用的输出上限；0 表示不限制（只有 Timeout 兜底）。
 	OutputTokens int
 	// Timeout 是单步墙钟：策略给了秒级值时用它，否则沿用文本任务超时。
@@ -239,7 +240,7 @@ func (s *Service) cloudAgentStepLimits() (cloudAgentStepLimits, error) {
 	if err != nil {
 		return cloudAgentStepLimits{}, err
 	}
-	limits := cloudAgentStepLimits{OutputTokens: policy.AgentStepMaxOutputTokens}
+	limits := cloudAgentStepLimits{OutputTokens: policy.AgentStepMaxOutputTokens, CallLimits: cloudAgentCallLimitsForPolicy(policy)}
 	if policy.AgentStepTimeoutSeconds > 0 {
 		limits.Timeout = time.Duration(policy.AgentStepTimeoutSeconds) * time.Second
 	} else {

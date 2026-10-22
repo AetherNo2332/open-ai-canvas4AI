@@ -16,6 +16,7 @@ import (
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/observability"
+	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/prompts"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -179,6 +180,8 @@ type cloudAgentRuntime struct {
 	// StepLimits 是本步实际生效的执行边界（管理员策略解析结果），只用于构造请求与展示压力读数，
 	// 因此不进状态 JSON：每次推进都按当时的策略重新解析，改配置无需重发本轮。
 	StepLimits cloudAgentStepLimits `json:"-"`
+	// Refreshed at new model/tool admission; persisted so an admitted batch can resume.
+	CallLimits cloudAgentCallLimits `json:"callLimits"`
 	// ContextCompactionCount 是本轮已经压过几次：压完仍超阈值时不要无限暂停。
 	ContextCompactionCount int `json:"contextCompactionCount,omitempty"`
 	// ContextCheckpoint / ContextCompaction / HistoryIncludesCurrent 是语义压缩的状态面。
@@ -219,6 +222,8 @@ type cloudAgentRuntime struct {
 	// ReadToolCalls 记录本轮会读取运行时只读快照的工具调用次数。除了同参缓存护栏，
 	// 还需要一个跨参数的总上限，防止模型通过不断变化 offset/nodeIds 绕过重复读取保护。
 	ReadToolCalls int `json:"readToolCalls,omitempty"`
+	// Native Skill pages share the read budget; retries of the same step/page are free.
+	NativeReadBudgetKeys map[string]bool `json:"nativeReadBudgetKeys,omitempty"`
 	// PendingImageInspections 暂存"本批还有工具结果没入历史"的看图结果，等整批 tool
 	// 结果都入历史后合并成一条 user 图片消息（见 cloudAgentFlushPendingImages）。
 	//
@@ -324,6 +329,7 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 		return err
 	}
 	state := cloudAgentRuntime{Request: initial.Request, SkillRuntimeMode: initial.SkillRuntimeMode, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
+	state.CallLimits = stepLimits.CallLimits
 	s.RecordObservability(observability.Event{TaskID: task.ID, RunID: task.ID, TraceID: task.ID, Kind: observability.KindTask, Status: observability.StatusRunning, StartedAt: time.Now().UTC(), Model: stringValue(input.Config["model"]), PromptVersion: state.Fingerprint})
 	for _, name := range advertisedNames {
 		if cloudAgentIsToolCategory(name) {
@@ -542,6 +548,12 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if state.ReadToolCalls < 0 {
 		return errors.New("Agent runtime read tool budget is invalid")
 	}
+	limits := state.CallLimits
+	if limits.ToolCallsPerStep < 0 || limits.ToolCallsPerStep > platform.MaxRuntimeAgentToolCallsPerStep ||
+		limits.ReadCallsPerRun < 0 || limits.ReadCallsPerRun > platform.MaxRuntimeAgentReadCallsPerRun ||
+		limits.StepsPerRun < 0 || limits.StepsPerRun > platform.MaxRuntimeAgentStepsPerRun {
+		return errors.New("Agent runtime call limits are invalid")
+	}
 	for nodeID, count := range state.ImageInspectCounts {
 		if strings.TrimSpace(nodeID) == "" || count < 0 {
 			return errors.New("Agent runtime image inspection counts are invalid")
@@ -560,7 +572,9 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	if (state.Request.Budget.MaxGenerationTasks > 0 && state.Generations > state.Request.Budget.MaxGenerationTasks) || (state.Request.Budget.MaxVideoSeconds > 0 && state.VideoSeconds > state.Request.Budget.MaxVideoSeconds) {
 		return errors.New("Agent runtime generation budget is invalid")
 	}
-	if state.CallIndex < 0 || state.CallIndex > len(state.Calls) || len(state.Calls) > cloudAgentMaxToolCalls {
+	// Checkpoint structure uses the absolute policy bound. A lowered live limit
+	// must not make a previously admitted batch impossible to decode or replay.
+	if state.CallIndex < 0 || state.CallIndex > len(state.Calls) || len(state.Calls) > platform.MaxRuntimeAgentToolCallsPerStep {
 		return errors.New("Agent runtime call cursor is invalid")
 	}
 	for toolName, repair := range state.ToolRepairs {
@@ -1850,6 +1864,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 	if err != nil {
 		return s.terminateCloudAgent(run, "Agent 运行策略不可用，本轮已停止")
 	}
+	state.CallLimits = cloudAgentCallLimitsForPolicy(policy.Task)
 	if allowed && (call.Function.Name == "previs_preview" || call.Function.Name == "director_preview_shot") {
 		executionCall := call
 		if call.Function.Name == "director_preview_shot" {
@@ -1876,7 +1891,7 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 	var skillErr error
 	if allowed && (call.Function.Name == "web_search" || call.Function.Name == "skill_read_file" || call.Function.Name == "model_list" || call.Function.Name == "image_annotation_render") {
 		state.RuntimeRunID = run.ID
-		if call.Function.Name == "image_annotation_render" || call.Function.Name == "web_search" {
+		if call.Function.Name == "image_annotation_render" {
 			skillResult, skillErr = cloudAgentReadTool(s.repo, run.UserID, state, call, s)
 		} else {
 			// 技能文件和模型目录都是稳定的只读结果。统一走检查点缓存，

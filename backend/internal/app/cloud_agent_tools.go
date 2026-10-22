@@ -18,6 +18,7 @@ import (
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skills"
 )
@@ -906,7 +907,7 @@ func cloudAgentCanvasWriteTool(name string) bool {
 // 同参缓存只能拦住“原样重复”的读取。模型也可能不断修改 offset、nodeIds 或
 // profile scope 来绕过缓存，因此本轮还要限制所有只读快照工具的累计调用次数。
 // 该上限高于正常画布分页读取所需次数，但足以在异常循环继续消耗模型额度前止损。
-const cloudAgentMaxReadToolCallsPerRun = 32
+const cloudAgentMaxReadToolCallsPerRun = platform.DefaultRuntimeAgentReadCallsPerRun
 
 func cloudAgentReadToolCacheable(name string) bool {
 	switch name {
@@ -983,14 +984,14 @@ func cloudAgentReadToolCached(repo *repository.Repository, userID string, state 
 		return nil, errors.New("Agent 只读工具缺少运行时状态")
 	}
 	if !cloudAgentReadToolCacheable(call.Function.Name) {
-		if state.ReadToolCalls >= cloudAgentMaxReadToolCallsPerRun {
+		if state.ReadToolCalls >= state.callLimits().ReadCallsPerRun {
 			return nil, &cloudAgentReadLoopError{ToolName: call.Function.Name, Count: state.ReadToolCalls + 1, Budget: true}
 		}
 		state.ReadToolCalls++
 		return cloudAgentReadTool(repo, userID, state, call, services...)
 	}
 	key := cloudAgentReadCacheKeyForState(repo, userID, state, call)
-	if state.ReadToolCalls >= cloudAgentMaxReadToolCallsPerRun {
+	if state.ReadToolCalls >= state.callLimits().ReadCallsPerRun {
 		return nil, &cloudAgentReadLoopError{ToolName: call.Function.Name, Count: state.ReadToolCalls + 1, Budget: true}
 	}
 	if state.ToolReadResults != nil {

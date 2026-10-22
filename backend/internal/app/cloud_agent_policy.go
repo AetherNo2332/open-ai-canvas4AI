@@ -207,10 +207,10 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 		"source": "server_snapshot", "permissionMode": req.PermissionMode,
 		"reasoningMode": mode,
 		"budget": map[string]any{
-			"maxCredits": req.Budget.MaxCredits, "maxSteps": cloudAgentStepLimit(req),
+			"maxCredits":         req.Budget.MaxCredits,
 			"maxGenerationTasks": req.Budget.MaxGenerationTasks, "maxVideoSeconds": req.Budget.MaxVideoSeconds,
 		},
-		"maxToolCalls": cloudAgentMaxToolCalls, "maxOutputBytes": cloudAgentMaxOutputBytes,
+		"maxOutputBytes": cloudAgentMaxOutputBytes,
 	}
 	if strings.TrimSpace(canvasSummary) != "" {
 		// Callers may provide a catalog for policy-contract tests or other

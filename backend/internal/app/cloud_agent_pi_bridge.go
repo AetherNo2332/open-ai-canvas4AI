@@ -173,6 +173,31 @@ func (s *Service) PiSkillFile(userID, runID, owner string, request PiSkillFileRe
 	if listed == nil {
 		return nil, kernel.Forbidden("Skill file is not listed for this run")
 	}
+	limits, err := s.cloudAgentStepLimits()
+	if err != nil {
+		return nil, err
+	}
+	state.CallLimits = limits.CallLimits
+	budgetKey := fmt.Sprintf("%s:%s:%s:%d:%d", state.LastStepTaskID, skill.NativeName, path, request.Offset, request.Limit)
+	if !state.NativeReadBudgetKeys[budgetKey] {
+		if state.ReadToolCalls >= state.callLimits().ReadCallsPerRun {
+			budgetErr := &cloudAgentReadLoopError{ToolName: "read", Count: state.ReadToolCalls + 1, Budget: true}
+			if err := s.failCloudAgent(run, &state, budgetErr.Error()); err != nil {
+				return nil, err
+			}
+			return nil, kernel.Forbidden(budgetErr.Error())
+		}
+		state.ReadToolCalls++
+		if state.NativeReadBudgetKeys == nil {
+			state.NativeReadBudgetKeys = map[string]bool{}
+		}
+		state.NativeReadBudgetKeys[budgetKey] = true
+		if err := s.repo.MutateCloudAgent(userID, runID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+			return cloudAgentSave(current, &state)
+		}); err != nil {
+			return nil, err
+		}
+	}
 	file, err := s.cloudAgentFrozenSkillFile(userID, *skill, path)
 	if err != nil {
 		return nil, err
@@ -642,6 +667,11 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 	if cloudAgentRunTerminal(run.Status) {
 		return &PiTurnDecision{Status: run.Status}, nil
 	}
+	limits, err := s.cloudAgentStepLimits()
+	if err != nil {
+		return nil, err
+	}
+	state.CallLimits = limits.CallLimits
 	if state.PiNoToolTaskID == taskID {
 		status := run.Status
 		if status == "running" {
@@ -869,6 +899,7 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 	if err != nil {
 		return nil, err
 	}
+	state.CallLimits = state.StepLimits.CallLimits
 	fingerprint, err := piModelStepFingerprint(request)
 	if err != nil {
 		return nil, err
@@ -889,7 +920,7 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 		return nil, kernel.Forbidden("Agent 当前状态不允许继续请求模型")
 	}
 	if cloudAgentStepBudgetExhausted(&state) {
-		message := fmt.Sprintf("达到 %d 次模型调用上限，本轮已停止", cloudAgentStepLimit(state.Request))
+		message := fmt.Sprintf("达到 %d 次模型调用上限，本轮已停止", state.callLimits().stepLimit(state.Request))
 		if err := s.failCloudAgent(run, &state, message); err != nil {
 			return nil, err
 		}
@@ -932,6 +963,7 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 		return nil, kernel.Forbidden(err.Error())
 	}
 	request.Canonical.PromptCacheKey = state.Canonical.PromptCacheKey
+	request.Canonical.Messages = append(request.Canonical.Messages, state.callLimitFacts())
 	state.DisclosureVersion = cloudAgentToolDisclosureVersion
 	if len(state.AdvertisedToolNames) == 0 {
 		state.AdvertisedToolNames = cloudAgentToolNames(request.Canonical.Tools)
@@ -1093,6 +1125,22 @@ func (s *Service) PiModelStepView(userID, runID, owner, taskID string) (*PiModel
 		}
 		text, _ := cloudAgentModelFailure(task)
 		return &PiModelStepView{TaskID: task.ID, Status: "failed", Error: text}, nil
+	}
+	if task.Status == model.TaskStatusSucceeded && state.PiAssistantCheckpointTaskID != taskID && state.PiToolBatchTaskID != taskID {
+		var output struct {
+			Calls  []cloudAgentCall `json:"toolCalls"`
+			Legacy []cloudAgentCall `json:"tool_calls"`
+		}
+		if err := json.Unmarshal([]byte(task.ResultJSON), &output); err != nil {
+			return nil, err
+		}
+		// Count native reads before Worker filters them out of canvas batches.
+		if message := cloudAgentOutputViolation("", max(len(output.Calls), len(output.Legacy)), state.callLimits()); message != "" {
+			if err := s.failCloudAgent(run, &state, message); err != nil {
+				return nil, err
+			}
+			return &PiModelStepView{TaskID: task.ID, Status: "failed", Error: message}, nil
+		}
 	}
 	draft := state.ActiveTextDraft
 	if draft == "" {
@@ -1317,8 +1365,16 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	if state.ActiveTaskID != "" || state.CallIndex < len(state.Calls) || run.Status != "running" {
 		return kernel.Forbidden("Agent 尚有未完成的模型或工具步骤")
 	}
-	if err := validateCloudAgentCalls(batch.Calls); err != nil || len(batch.Calls) == 0 || len(batch.Calls) > 16 {
+	limits, err := s.cloudAgentStepLimits()
+	if err != nil {
+		return err
+	}
+	state.CallLimits = limits.CallLimits
+	if err := validateCloudAgentCalls(batch.Calls); err != nil || len(batch.Calls) == 0 {
 		return BadAuthRequest("Pi 工具调用批次无效")
+	}
+	if len(batch.Calls) > state.callLimits().ToolCallsPerStep {
+		return BadAuthRequest(fmt.Sprintf("单步工具调用数量 %d 超过后台配置上限 %d", len(batch.Calls), state.callLimits().ToolCallsPerStep))
 	}
 	// The worker can only submit calls that the billed model step actually emitted.
 	if state.LastStepTaskID != batch.TaskID {
@@ -1350,6 +1406,9 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 	expected := modelOutput.ToolCalls
 	if len(expected) == 0 {
 		expected = modelOutput.Legacy
+	}
+	if len(expected) > state.callLimits().ToolCallsPerStep {
+		return BadAuthRequest(fmt.Sprintf("模型回复包含 %d 个工具调用，超过后台配置上限 %d", len(expected), state.callLimits().ToolCallsPerStep))
 	}
 	if state.SkillRuntimeMode == cloudAgentSkillRuntimeNative {
 		canvasCalls := make([]cloudAgentCall, 0, len(expected))

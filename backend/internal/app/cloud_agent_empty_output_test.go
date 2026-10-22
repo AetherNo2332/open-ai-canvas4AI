@@ -37,13 +37,13 @@ func TestCloudAgentTruncatedToolArguments(t *testing.T) {
 }
 
 func TestCloudAgentOutputViolation(t *testing.T) {
-	if got := cloudAgentOutputViolation(stringsRepeat("x", 32001), 1); got == "" {
+	if got := cloudAgentOutputViolation(stringsRepeat("x", 32001), 1, cloudAgentCallLimits{}); got == "" {
 		t.Fatal("超长正文应判定违规")
 	}
-	if got := cloudAgentOutputViolation("ok", 9); got == "" {
+	if got := cloudAgentOutputViolation("ok", 9, cloudAgentCallLimits{}); got == "" {
 		t.Fatal("超过 8 个工具调用应判定违规")
 	}
-	if got := cloudAgentOutputViolation("ok", 2); got != "" {
+	if got := cloudAgentOutputViolation("ok", 2, cloudAgentCallLimits{}); got != "" {
 		t.Fatalf("合规输出不应违规：%s", got)
 	}
 }

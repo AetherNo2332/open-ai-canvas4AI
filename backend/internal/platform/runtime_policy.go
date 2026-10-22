@@ -36,6 +36,11 @@ const (
 	MinRuntimeAgentStepTimeoutSeconds   = 30
 	MaxRuntimeAgentStepTimeoutSeconds   = 3_600
 	DefaultRuntimeAgentStepTimeout      = 0
+	DefaultRuntimeAgentToolCallsPerStep = 8
+	MaxRuntimeAgentToolCallsPerStep     = 64
+	DefaultRuntimeAgentReadCallsPerRun  = 32
+	MaxRuntimeAgentReadCallsPerRun      = 9_999
+	MaxRuntimeAgentStepsPerRun          = 9_999
 )
 
 // agentStepMaxOutputTokensDefault 读取部署级覆盖并按同一套范围夹取；环境变量无法表达"不限制"（0），
@@ -89,7 +94,11 @@ type RuntimeTaskPolicy struct {
 	// 0 表示不限制输出，此时单步最坏耗时只由 AgentStepTimeoutSeconds 兜底。
 	AgentStepMaxOutputTokens int `json:"agentStepMaxOutputTokens"`
 	// AgentStepTimeoutSeconds 是画布 Agent 单步模型调用的秒级墙钟；0 表示沿用文本任务超时。
-	AgentStepTimeoutSeconds int `json:"agentStepTimeoutSeconds"`
+	AgentStepTimeoutSeconds     int `json:"agentStepTimeoutSeconds"`
+	AgentMaxToolCallsPerStep    int `json:"agentMaxToolCallsPerStep"`
+	AgentMaxReadToolCallsPerRun int `json:"agentMaxReadToolCallsPerRun"`
+	// 0 表示管理员不限制模型步数；请求预算仍可设置更低的上限。
+	AgentMaxStepsPerRun int `json:"agentMaxStepsPerRun"`
 }
 
 type RuntimeRequestPolicy struct {
@@ -162,17 +171,20 @@ func DefaultRuntimePolicy() RuntimePolicySetting {
 			ErrorBodyKB:                 1,
 		},
 		Task: RuntimeTaskPolicy{
-			WorkerConcurrency:        defaultWorkerConcurrencyLimit(),
-			ChannelConcurrency:       defaultChannelConcurrencyLimit(),
-			ActiveTaskLimit:          5,
-			ImageTimeoutMinutes:      8,
-			TextTimeoutMinutes:       8,
-			AudioTimeoutMinutes:      8,
-			VideoTimeoutMinutes:      60,
-			StoryboardTimeoutMinutes: 20,
-			DefaultTimeoutMinutes:    10,
-			AgentStepMaxOutputTokens: agentStepMaxOutputTokensDefault(),
-			AgentStepTimeoutSeconds:  agentStepTimeoutSecondsDefault(),
+			WorkerConcurrency:           defaultWorkerConcurrencyLimit(),
+			ChannelConcurrency:          defaultChannelConcurrencyLimit(),
+			ActiveTaskLimit:             5,
+			ImageTimeoutMinutes:         8,
+			TextTimeoutMinutes:          8,
+			AudioTimeoutMinutes:         8,
+			VideoTimeoutMinutes:         60,
+			StoryboardTimeoutMinutes:    20,
+			DefaultTimeoutMinutes:       10,
+			AgentStepMaxOutputTokens:    agentStepMaxOutputTokensDefault(),
+			AgentStepTimeoutSeconds:     agentStepTimeoutSecondsDefault(),
+			AgentMaxToolCallsPerStep:    DefaultRuntimeAgentToolCallsPerStep,
+			AgentMaxReadToolCallsPerRun: DefaultRuntimeAgentReadCallsPerRun,
+			AgentMaxStepsPerRun:         0,
 		},
 		Request: RuntimeRequestPolicy{
 			TaskCreatePerMinute:        30,
@@ -213,6 +225,8 @@ func selfUseRuntimePolicy() RuntimePolicySetting {
 		AudioTimeoutMinutes: maxRuntimeTimeoutMinutes, VideoTimeoutMinutes: maxRuntimeTimeoutMinutes,
 		StoryboardTimeoutMinutes: maxRuntimeTimeoutMinutes, DefaultTimeoutMinutes: maxRuntimeTimeoutMinutes,
 		AgentStepMaxOutputTokens: MaxRuntimeAgentStepOutputTokens, AgentStepTimeoutSeconds: MaxRuntimeAgentStepTimeoutSeconds,
+		AgentMaxToolCallsPerStep: MaxRuntimeAgentToolCallsPerStep, AgentMaxReadToolCallsPerRun: MaxRuntimeAgentReadCallsPerRun,
+		AgentMaxStepsPerRun: 0,
 	}
 	value.Request = RuntimeRequestPolicy{
 		TaskCreatePerMinute:     maxRuntimeRate,
@@ -436,6 +450,15 @@ func validateRuntimePolicy(value RuntimePolicySetting) error {
 	}
 	if task.AgentStepTimeoutSeconds != 0 && (task.AgentStepTimeoutSeconds < MinRuntimeAgentStepTimeoutSeconds || task.AgentStepTimeoutSeconds > MaxRuntimeAgentStepTimeoutSeconds) {
 		return kernel.BadAuthRequest(fmt.Sprintf("Agent 单步超时必须是 0 或 %d-%d 秒的整数 (0 表示沿用文本任务超时)", MinRuntimeAgentStepTimeoutSeconds, MaxRuntimeAgentStepTimeoutSeconds))
+	}
+	if task.AgentMaxToolCallsPerStep < 1 || task.AgentMaxToolCallsPerStep > MaxRuntimeAgentToolCallsPerStep {
+		return kernel.BadAuthRequest(fmt.Sprintf("Agent 单步工具调用上限必须是 1-%d 的整数", MaxRuntimeAgentToolCallsPerStep))
+	}
+	if task.AgentMaxReadToolCallsPerRun < 1 || task.AgentMaxReadToolCallsPerRun > MaxRuntimeAgentReadCallsPerRun {
+		return kernel.BadAuthRequest(fmt.Sprintf("Agent 每轮只读工具调用上限必须是 1-%d 的整数", MaxRuntimeAgentReadCallsPerRun))
+	}
+	if task.AgentMaxStepsPerRun < 0 || task.AgentMaxStepsPerRun > MaxRuntimeAgentStepsPerRun {
+		return kernel.BadAuthRequest(fmt.Sprintf("Agent 每轮模型调用上限必须是 0-%d 的整数 (0 表示不限制)", MaxRuntimeAgentStepsPerRun))
 	}
 	request := value.Request
 	for label, item := range map[string]int{
