@@ -317,8 +317,8 @@ func TestCloudAgentUnknownOperationTypeIsRepairable(t *testing.T) {
 	if payload["errorClass"] != cloudAgentToolErrorSchemaError || detail["reason"] != "invalid_tool_arguments" {
 		t.Fatalf("应作为可自纠的 schema_error 交回模型：%+v / %+v", payload, detail)
 	}
-	if detail["parameters"] == nil {
-		t.Fatalf("应把本轮 schema 回给模型：%+v", detail)
+	if detail["argumentHints"] == nil || detail["parameters"] != nil {
+		t.Fatalf("应返回本轮字段提示且不重复 schema：%+v", detail)
 	}
 	run, state = reloadAgentRun(t, s, run.ID)
 	if run.Status == "failed" {

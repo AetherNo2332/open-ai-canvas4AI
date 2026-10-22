@@ -56,12 +56,17 @@ test("native read accepts only frozen Skill paths and calls the bridge", async (
       const content = path === "SKILL.md" ? entry : "Reference";
       return { nativeName: name, path, skillId: skills[0]!.id, versionId: skills[0]!.versionId,
         contentHash: skills[0]!.contentHash, sha256: digest(content), isEntry: path === "SKILL.md",
-        offset: 0, limit: 12000, totalRunes: [...content].length, hasMore: false, content };
+        offset: 0, limit: 12000, totalRunes: [...content].length, hasMore: false, content,
+        readCallsUsed: 55, readCallsLimit: 64, readCallsRemaining: 9 };
     } } as unknown as CanvasBridge;
     const entryPath = join(root, "skill-abc", "SKILL.md");
-    assert.equal(await readNativeSkill(run, root, bridge, entryPath, 0, 12000), entry);
+    const readEntry = await readNativeSkill(run, root, bridge, entryPath, 0, 12000);
+    assert.ok(readEntry.startsWith(entry));
+    assert.match(readEntry, /"readCallsUsed":55/);
+    assert.match(readEntry, /"readCallsLimit":64/);
+    assert.match(readEntry, /"readCallsRemaining":9/);
     assert.deepEqual(requests, ["skill-abc:SKILL.md"]);
-    assert.equal(await readNativeSkill(run, root, bridge, join(root, "skill-abc", "references", "a.md"), 0, 12000), "Reference");
+    assert.ok((await readNativeSkill(run, root, bridge, join(root, "skill-abc", "references", "a.md"), 0, 12000)).startsWith("Reference"));
     assert.deepEqual(requests, ["skill-abc:SKILL.md", "skill-abc:references/a.md"]);
     for (const path of [resolve(parent, "elsewhere.md"), join(root, "other", "SKILL.md"),
       join(root, "skill-abc", "..", "other", "SKILL.md"), join(root, "skill-abc", "scripts", "run.js")]) {

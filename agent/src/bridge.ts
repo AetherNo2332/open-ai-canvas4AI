@@ -65,6 +65,9 @@ export interface PiSkillReadPage {
   content: string;
   hasMore: boolean;
   totalRunes: number;
+  readCallsUsed?: number;
+  readCallsLimit?: number;
+  readCallsRemaining?: number;
 }
 
 export interface PiSnapshot {

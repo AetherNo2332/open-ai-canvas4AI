@@ -3,17 +3,18 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { getResourceAccess, resolveResourceAccessURL, resourceStorageKey } from "@/services/api/resources";
 import type { CanvasNodeData } from "@/types/canvas";
+import { characterCoverResourceId } from "@/lib/canvas/canvas-character-reference";
 
-const RESOURCE_FILE_PATTERN = /\/resources\/([^/?#]+)\/file/;
+export { characterCoverResourceId } from "@/lib/canvas/canvas-character-reference";
 
 /** 角色卡封面存的是 `/resources/:id/file`，展示前换成授权访问地址；换取失败再回落原地址。 */
 export function useCharacterCoverSrc(url?: string) {
     const [resolved, setResolved] = useState<{ url: string; src: string } | null>(null);
-    const resourceId = url ? RESOURCE_FILE_PATTERN.exec(url)?.[1] : undefined;
+    const resourceId = characterCoverResourceId(url);
     useEffect(() => {
         if (!url || !resourceId) return;
         let cancelled = false;
-        getResourceAccess(resourceStorageKey(decodeURIComponent(resourceId)), "display")
+        getResourceAccess(resourceStorageKey(resourceId), "display")
             .then((access) => {
                 if (!cancelled) setResolved({ url, src: resolveResourceAccessURL(access.url) || url });
             })
@@ -27,11 +28,6 @@ export function useCharacterCoverSrc(url?: string) {
     if (!url) return "";
     if (!resourceId) return url;
     return resolved?.url === url ? resolved.src : "";
-}
-
-export function characterCoverResourceId(url?: string) {
-    const id = url ? RESOURCE_FILE_PATTERN.exec(url)?.[1] : undefined;
-    return id ? decodeURIComponent(id) : "";
 }
 
 export function characterInitial(name: string) {

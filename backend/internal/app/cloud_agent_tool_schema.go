@@ -22,7 +22,7 @@ import (
 const cloudAgentSchemaMaxDepth = 8
 
 // validateCloudAgentToolArguments 校验一次工具调用的参数；返回的错误是字段级参数错误，
-// 会被工具回执路径归类为 schema_error 并把 schema 回给模型。
+// 会被工具回执路径归类为 schema_error 并给出字段修正提示。
 func validateCloudAgentToolArguments(parameters map[string]any, raw string) error {
 	if parameters == nil {
 		return nil
@@ -33,7 +33,7 @@ func validateCloudAgentToolArguments(parameters map[string]any, raw string) erro
 	}
 	var args any
 	if err := json.Unmarshal([]byte(trimmed), &args); err != nil {
-		return cloudAgentFieldError("arguments", "invalid_json", "工具参数必须是合法的 JSON 对象；本次调用未执行，请按 parameters 重新提交")
+		return cloudAgentFieldError("arguments", "invalid_json", "工具参数必须是合法的 JSON 对象；本次调用未执行，请按本轮工具契约重新提交")
 	}
 	object, ok := args.(map[string]any)
 	if !ok {
@@ -127,7 +127,7 @@ func validateCloudAgentSchemaObject(path string, schema map[string]any, object m
 	for _, name := range cloudAgentSchemaStrings(schema["required"]) {
 		value, exists := object[name]
 		if !exists || value == nil {
-			return cloudAgentFieldError(cloudAgentSchemaPath(path, name), "required", fmt.Sprintf("工具参数缺少必填字段 %s；本次调用未执行，请按 parameters 补齐后重试", cloudAgentSchemaPath(path, name)))
+			return cloudAgentFieldError(cloudAgentSchemaPath(path, name), "required", fmt.Sprintf("工具参数缺少必填字段 %s；本次调用未执行，请按字段提示补齐后重试", cloudAgentSchemaPath(path, name)))
 		}
 	}
 	if minimum, ok := cloudAgentSchemaNumber(schema["minProperties"]); ok && float64(len(object)) < minimum {
@@ -138,7 +138,10 @@ func validateCloudAgentSchemaObject(path string, schema map[string]any, object m
 		child, declared := properties[name]
 		if !declared {
 			if additional, ok := schema["additionalProperties"].(bool); ok && !additional {
-				return cloudAgentFieldError(cloudAgentSchemaPath(path, name), "unknown_field", fmt.Sprintf("工具参数出现未定义字段 %s；本次调用未执行，请只使用 parameters 里列出的字段", cloudAgentSchemaPath(path, name)))
+				if strings.HasPrefix(path, "ops[") && cloudAgentNodeStyleField(name) {
+					return cloudAgentNodeStyleError(path, name)
+				}
+				return cloudAgentFieldError(cloudAgentSchemaPath(path, name), "unknown_field", fmt.Sprintf("工具参数出现未定义字段 %s；本次调用未执行，请只使用本轮契约声明的字段", cloudAgentSchemaPath(path, name)))
 			}
 			continue
 		}
@@ -266,14 +269,14 @@ func validateCloudAgentSchemaOneOf(path string, schema map[string]any, value any
 			if selectedError != nil {
 				return selectedError
 			}
-			return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 不满足允许的组合；本次调用未执行，请按 parameters 检查字段组合", path))
+			return cloudAgentFieldError(path, "invalid_value", fmt.Sprintf("工具参数 %s 不满足允许的组合；本次调用未执行，请按本轮契约检查字段组合", path))
 		}
 	}
 	return nil
 }
 
 func cloudAgentSchemaTypeError(path, expected string) error {
-	return cloudAgentFieldError(path, "type_mismatch", fmt.Sprintf("工具参数 %s 必须是%s；本次调用未执行，请按 parameters 修正后重试", path, expected))
+	return cloudAgentFieldError(path, "type_mismatch", fmt.Sprintf("工具参数 %s 必须是%s；本次调用未执行，请按字段提示修正后重试", path, expected))
 }
 
 func cloudAgentSchemaPath(parent, name string) string {

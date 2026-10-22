@@ -99,7 +99,10 @@ export async function readNativeSkill(run: PiSnapshot, root: string, bridge: Can
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(page.content)) {
     throw new FatalWorkerError("Native Skill file is not text");
   }
+  const budget = Number.isSafeInteger(page.readCallsRemaining) ?
+    `\n\n[Runtime read budget: ${JSON.stringify({ readCallsUsed: page.readCallsUsed,
+      readCallsLimit: page.readCallsLimit, readCallsRemaining: page.readCallsRemaining })}]` : "";
   return page.content + (page.hasMore
     ? `\n\n[Truncated: ${page.totalRunes} Unicode characters total. Continue with read at offset=${page.offset + [...page.content].length}.]`
-    : "");
+    : "") + budget;
 }

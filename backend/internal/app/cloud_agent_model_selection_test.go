@@ -51,7 +51,7 @@ func TestCloudAgentModelSelectionRejectsBeforeCanvasRead(t *testing.T) {
 			if err := json.Unmarshal([]byte(state.Canonical.Messages[0]["content"].(string)), &result); err != nil {
 				t.Fatal(err)
 			}
-			if result["field"] != tc.field || result["issue"] != tc.issue || result["reason"] != "invalid_tool_arguments" || result["parameters"] == nil || result["taskSubmitted"] != false {
+			if result["field"] != tc.field || result["issue"] != tc.issue || result["reason"] != "invalid_tool_arguments" || result["argumentHints"] == nil || result["parameters"] != nil || result["taskSubmitted"] != false {
 				t.Fatalf("missing strict repair feedback: %#v", result)
 			}
 		})

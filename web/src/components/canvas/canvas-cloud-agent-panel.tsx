@@ -1063,6 +1063,7 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                         data-agent-floating={floating || undefined}
                         style={{ "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
                         aria-label="Agent 工作台"
+                        data-agent-compact={panelLayout.compact || undefined}
                         data-canvas-no-zoom
                         data-canvas-wheel-scroll
                         onWheel={(event) => event.stopPropagation()}
@@ -1170,6 +1171,9 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                             }}
                                             onSettings={() => setView("settings")}
                                             onCollapse={onCollapse}
+                                            skillsOpen={skillsOpen}
+                                            selectedSkillCount={selectedSkillIds.length}
+                                            onSkills={() => setSkillsOpen(true)}
                                         />
                                         {run && connectionStatus !== "connected" ? (
                                             <div role="status" className="flex items-center justify-between gap-2 px-5 py-2 text-xs" style={{ color: theme.node.muted }}>
@@ -1262,9 +1266,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                                     theme={theme}
                                                     onModelChange={setModel}
                                                     onPermissionChange={setPermissionMode}
-                                                    skillsOpen={skillsOpen}
-                                                    onSkillsOpenChange={setSkillsOpen}
-                                                    selectedSkillCount={selectedSkillIds.length}
                                                 />
                                             }
                                         />
@@ -1352,7 +1353,7 @@ function AgentPNGAvatar({ url, width, height, fallback }: { url: string; width: 
     return <img src={url} alt="" aria-hidden="true" draggable={false} width={width} height={height} className="pointer-events-none size-full object-contain" onError={() => setFailed(true)} />;
 }
 
-function AgentHeader({
+export function AgentHeader({
     theme,
     hasMessages,
     statusLabel,
@@ -1364,6 +1365,9 @@ function AgentHeader({
     onCollapse,
     onExport,
     exporting,
+    skillsOpen,
+    selectedSkillCount,
+    onSkills,
 }: {
     theme: CanvasTheme;
     hasMessages: boolean;
@@ -1376,11 +1380,14 @@ function AgentHeader({
     onCollapse: () => void;
     onExport: () => void;
     exporting: boolean;
+    skillsOpen: boolean;
+    selectedSkillCount: number;
+    onSkills: () => void;
 }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
     return (
-        <header className="agent-panel-header flex shrink-0 items-center gap-3">
-            <div className="min-w-0 flex-1">
+        <header className="agent-panel-header flex shrink-0 flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1 basis-36">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="agent-panel-title">
                         {agentCopy(appearance.panelTitle, appearance.agentName)}
@@ -1395,7 +1402,20 @@ function AgentHeader({
                     {appearance.agentName} · 当前画布 {nodeCount} 个节点
                 </div>
             </div>
-            <div className="agent-header-actions flex items-center gap-0.5" style={{ color: theme.node.muted }}>
+            <div className="agent-header-actions ml-auto flex shrink-0 items-center gap-0.5" style={{ color: theme.node.muted }}>
+                <button
+                    type="button"
+                    className="agent-header-skills inline-flex min-h-8 shrink-0 items-center gap-1 rounded-[var(--button-radius)] px-2 text-xs focus-visible:outline-2 focus-visible:outline-ring"
+                    style={{ color: selectedSkillCount ? theme.accent.primary : theme.node.muted, background: skillsOpen ? theme.node.fill : "transparent" }}
+                    aria-label={`打开 Skills 技能库${selectedSkillCount ? `，已启用 ${selectedSkillCount} 个` : ""}`}
+                    aria-expanded={skillsOpen}
+                    aria-haspopup="dialog"
+                    title="打开 Skills 技能库"
+                    onClick={onSkills}
+                >
+                    <Sparkles className="size-3.5" />
+                    <span>Skills({selectedSkillCount})</span>
+                </button>
                 <Button type="text" shape="circle" icon={<Download className="size-4" />} loading={exporting} onClick={onExport} aria-label="导出 Agent 调试记录" title="导出对话、工具参数、审批和错误（分享前请检查隐私）" />
                 <Button type="text" shape="circle" icon={<MessageSquarePlus className="size-4" />} onClick={onNew} aria-label="新建对话" title="新建对话" />
                 <Button type="text" shape="circle" icon={<History className="size-4" />} onClick={onHistory} aria-label="历史对话" title="历史对话" />
@@ -1681,9 +1701,6 @@ function ComposerControls({
     theme,
     onModelChange,
     onPermissionChange,
-    skillsOpen,
-    onSkillsOpenChange,
-    selectedSkillCount,
     reasoningMode,
     onReasoningModeChange,
 }: {
@@ -1693,9 +1710,6 @@ function ComposerControls({
     theme: CanvasTheme;
     onModelChange: (model: string) => void;
     onPermissionChange: (mode: AgentPermissionMode) => void;
-    skillsOpen: boolean;
-    onSkillsOpenChange: (open: boolean) => void;
-    selectedSkillCount: number;
     // 推理模式由父组件持有状态；本组件只负责渲染选择器并回报变更。
     // reasoningSupported 刻意不通过 props 传入：本组件在下面自行推导一次，
     // 查不到能力时退化为"不支持推理"，避免父作用域变量缺失把面板打崩。
@@ -1754,19 +1768,6 @@ function ComposerControls({
                     <PermissionIcon className="size-3.5" style={{ color: permissionVisual.color }} aria-hidden="true" />
                 </button>
             </Dropdown>
-            <button
-                type="button"
-                className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/25"
-                style={{ color: selectedSkillCount ? theme.accent.primary : theme.node.muted, background: skillsOpen ? theme.node.fill : "transparent" }}
-                aria-label={`打开 Skills 技能库${selectedSkillCount ? `，已启用 ${selectedSkillCount} 个` : ""}`}
-                aria-expanded={skillsOpen}
-                aria-haspopup="dialog"
-                title="打开 Skills 技能库"
-                onClick={() => onSkillsOpenChange(true)}
-            >
-                <Sparkles className="size-3.5" />
-                <span className="max-w-28 truncate">Skills({selectedSkillCount})</span>
-            </button>
         </div>
     );
 }

@@ -2,6 +2,31 @@ package app
 
 import "infinite-canvas/backend/internal/platform"
 
+type cloudAgentReadBudget struct {
+	ReadCallsUsed      int `json:"readCallsUsed"`
+	ReadCallsLimit     int `json:"readCallsLimit"`
+	ReadCallsRemaining int `json:"readCallsRemaining"`
+}
+
+func (state *cloudAgentRuntime) readBudget() cloudAgentReadBudget {
+	limit := state.callLimits().ReadCallsPerRun
+	return cloudAgentReadBudget{ReadCallsUsed: state.ReadToolCalls, ReadCallsLimit: limit, ReadCallsRemaining: max(0, limit-state.ReadToolCalls)}
+}
+
+func (state *cloudAgentRuntime) withReadBudget(result any) any {
+	fields, ok := result.(map[string]any)
+	if !ok {
+		return result
+	}
+	receipt := make(map[string]any, len(fields)+3)
+	for key, value := range fields {
+		receipt[key] = value
+	}
+	budget := state.readBudget()
+	receipt["readCallsUsed"], receipt["readCallsLimit"], receipt["readCallsRemaining"] = budget.ReadCallsUsed, budget.ReadCallsLimit, budget.ReadCallsRemaining
+	return receipt
+}
+
 type cloudAgentCallLimits struct {
 	ToolCallsPerStep int `json:"toolCallsPerStep"`
 	ReadCallsPerRun  int `json:"readCallsPerRun"`

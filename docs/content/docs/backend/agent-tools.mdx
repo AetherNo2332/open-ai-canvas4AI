@@ -19,6 +19,19 @@ Worker 的首次及后续模型预检只提交当前 `allowed` 的具体工具�
 
 Worker 直接使用服务端下发的工具定义。启动不读取本地工具制品进行比对，不登记工具快照；心跳和领取不再携带快照身份，也不按快照兼容性筛选执行实例。运行总览中的工具快照管理、检测、告警、诊断导出和按快照排空入口已移除。
 
+## 参数语义与运行回执
+
+- `canvas_edit_storyboard.set_assets` 整行覆盖行资产并清空旧角色列表；新增资产前先读 `bindings`，合并需保留的行级项再回写。共享继承输入不随此动作清空。
+- `set_references` 整体替换共享引用列表，各行继承输入和派生连线随之更新，显式行级资产保留。`update.patch` 对全部选中行相同，任一目标或引用无效则整批拒绝；`append` 单次新增一行，批量新建用 `canvas_create_storyboard.rows`（1–100）。
+- `canvas_read_storyboard.summary` 的 `rows=[]` 属预期，缺口和覆盖范围看 `summary/coverage`；`bindings` 返回逐行绑定，不含创作正文。`canvas_get_state.nodeIds` 精读单次最多8个；整画布目录省略该字段。
+- `taskSubmitted` 仅表示曾提交任务，即使为 true 也可能失败；交付以 `status/task_get` 和实际产物为准，不能因此自动重复提交生成。
+
+参数错误不再回传整份 `parameters`，使用 `field/issue/argumentHints/guidance` 定位修正；可明确保留语义时提供 `exampleArguments`，示例中的占位符需要替换为真实读取值。快照冲突返回 `nextRead` 和 `retryArgumentsPatch`；小载荷示例保留原操作，大载荷不重复回传。分镜读写的行选择错误返回 `invalidRowIds/duplicateRowIds`。
+
+读取回执和原生技能 `read` 提供本次读取后的 `readCallsUsed/readCallsLimit/readCallsRemaining`。后台配额配置和扣减规则不变，技能同一步同页重试仍不重复扣减；缓存回执的预算按当前运行状态补充，不写入内容缓存。
+
+`add_node` 只支持 `type/id/nodeType/title/content/x/y`，尺寸样式使用后续 `update_node.patch` 并核对节点能力。`set_parent` 只调整容器归属，不承担排版；后续写入使用回执新快照，需要精确坐标时回读。
+
 ## 升级
 
 后端和 Worker 配套更新，旧 Worker 的快照注册协议不再提供。迁移 59 保留版本记录，新安装不再创建相关表；已存在的历史表与列不自动删除，也不再读写。工具目录导出文件只用于离线文档与参数合同测试，不参与运行时领取。

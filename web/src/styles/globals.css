@@ -8116,12 +8116,11 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
     transition: grid-template-rows var(--motion-dur-base-calc) var(--motion-ease-out), opacity var(--motion-dur-base-calc) var(--motion-ease-out);
 }
 
-/* 主工具栏居中于可用画布区域，并为侧栏与两侧安全边距留出空间。 */
+/* 主工具栏以编辑器外壳居中；Agent 展开只改变画布宽度，不改变此定位基准。 */
 .canvas-main-toolbar {
     --canvas-toolbar-left-reserve: 0px;
-    --canvas-toolbar-right-reserve: 0px;
-    left: calc(var(--canvas-toolbar-left-reserve) + (100% - var(--canvas-toolbar-left-reserve) - var(--canvas-toolbar-right-reserve)) / 2);
-    max-width: max(0px, calc(100% - var(--canvas-inset-x) - var(--canvas-inset-x) - var(--canvas-toolbar-left-reserve) - var(--canvas-toolbar-right-reserve)));
+    left: calc(var(--canvas-toolbar-left-reserve) + (100% - var(--canvas-toolbar-left-reserve)) / 2);
+    max-width: max(0px, calc(100% - var(--canvas-inset-x) - var(--canvas-inset-x) - var(--canvas-toolbar-left-reserve)));
 }
 
 .canvas-main-with-workspace .canvas-main-toolbar {
@@ -8134,19 +8133,14 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
     }
 }
 
-.canvas-main-toolbar.canvas-toolbar-agent-floating {
-    --canvas-toolbar-right-reserve: 440px;
+.canvas-editor-shell:has(.canvas-agent-panel[data-agent-compact]) .canvas-main-toolbar {
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .canvas-main-toolbar .canvas-floating-dock {
     min-width: 0;
     overscroll-behavior-x: contain;
-}
-
-@media (max-width: 999px) {
-    .canvas-main-toolbar.canvas-toolbar-agent-floating {
-        --canvas-toolbar-right-reserve: 0px;
-    }
 }
 
 .canvas-connection-create-option[data-expanded="true"] .canvas-connection-create-description {

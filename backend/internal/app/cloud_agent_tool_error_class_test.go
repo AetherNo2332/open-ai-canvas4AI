@@ -98,7 +98,7 @@ func TestCloudAgentToolResultCarriesErrorClass(t *testing.T) {
 
 // 真机踩到的场景：canvas_read_storyboard 缺 nodeId 时，业务校验抛的是普通 AppError
 // （"分镜节点ID、分页参数或每页行数无效"）。按 schema 的 required 判定后必须归成
-// schema_error，并把 schema 回给模型，而不是落到兜底的 tool_error。
+// schema_error，并给出字段修正提示，而不是落到兜底的 tool_error。
 func TestCloudAgentToolResultClassifiesMissingRequiredArguments(t *testing.T) {
 	schema := []map[string]any{{"type": "function", "function": map[string]any{
 		"name": "canvas_read_storyboard",
@@ -139,8 +139,8 @@ func TestCloudAgentToolResultClassifiesMissingRequiredArguments(t *testing.T) {
 	if detail["field"] != "nodeId" {
 		t.Fatalf("field = %v，期望 nodeId", detail["field"])
 	}
-	if _, ok := detail["parameters"].(map[string]any); !ok {
-		t.Fatalf("必须把本轮暴露的 schema 回给模型：%+v", detail["parameters"])
+	if _, ok := detail["argumentHints"].(map[string]any); !ok || detail["parameters"] != nil {
+		t.Fatalf("必须提供精简字段提示：%+v", detail)
 	}
 	// 必填字段齐备时不误判：参数没问题就不该被当成契约错误。
 	full := call

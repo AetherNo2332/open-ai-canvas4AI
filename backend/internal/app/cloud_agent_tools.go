@@ -383,14 +383,14 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 		add("canvas_edit_storyboard", cloudAgentToolText("canvas_edit_storyboard"), map[string]any{
 			"rowIds":       map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "update/remove/set_assets 可选多个真实行 ID，整批校验后一次写入；与 rowId 互斥"},
 			"assets":       cloudAgentStoryboardAssetsSchema(),
-			"references":   map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "set_references 的共享输入，可使用唯一业务名称"},
+			"references":   map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "set_references 整体替换共享输入；各行继承输入随之更新，显式行资产保留。可用唯一完整名称"},
 			"snapshotHash": str(cloudAgentToolText("parameter_049")),
 			"nodeId":       str(cloudAgentToolText("parameter_014")),
-			"action":       map[string]any{"type": "string", "enum": []string{"append", "update", "remove", "set_assets", "set_references", "bind_output", "unbind_output"}, "description": "append/update/remove 维护镜头；set_assets 批量替换所选镜头的完整资产声明，[]清空；set_references 改共享输入。生成产物归属由 generate_media 管理，手工接管才用 bind_output/unbind_output"},
+			"action":       map[string]any{"type": "string", "enum": []string{"append", "update", "remove", "set_assets", "set_references", "bind_output", "unbind_output"}, "description": "append 单次一行；update 对全部 rowIds 应用同一 patch；set_assets 整行覆盖，漏传的旧行资产会移除；set_references 整体替换共享列表。整批原子；产物归属通常由生成管理"},
 			"rowId":        str(cloudAgentToolText("parameter_051")),
 			"patch":        cloudAgentStoryboardPatchSchema(),
 			"referenceNodeIds": map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1},
-				"description": "set_references 必填：所有镜头共享的引用输入节点；服务端据此派生连接"},
+				"description": "set_references 与 references 二选一：整体替换共享列表并重建派生连线，显式行资产保留；[] 清空共享输入"},
 			"outputMode":   map[string]any{"type": "string", "enum": []string{"image", "video"}, "description": "绑定或解除产物归属的槽位"},
 			"outputNodeId": str("bind_output 必填：已有产物节点 ID；所属关系由服务端派生连接，不重写产物内容"),
 		}, "snapshotHash", "nodeId", "action")
@@ -683,7 +683,14 @@ func cloudAgentReadToolCached(repo *repository.Repository, userID string, state 
 		if cached, ok := state.ToolReadResults[key]; ok {
 			if cached.Error != "" {
 				if cached.ArgumentError {
-					return nil, &cloudAgentArgumentError{errors.New(cached.Error)}
+					var err error = &cloudAgentArgumentError{BadAuthRequest(cached.Error)}
+					if cached.Field != "" {
+						err = &cloudAgentFieldArgumentError{error: err, Field: cached.Field, Issue: cached.Issue}
+					}
+					if len(cached.InvalidRowIDs)+len(cached.DuplicateRowIDs) > 0 {
+						err = &cloudAgentStoryboardRowIDError{error: err, InvalidRowIDs: append([]string{}, cached.InvalidRowIDs...), DuplicateRowIDs: append([]string{}, cached.DuplicateRowIDs...)}
+					}
+					return nil, err
 				}
 				delete(state.ToolReadResults, key)
 			} else {
@@ -718,7 +725,17 @@ func cloudAgentReadToolCached(repo *repository.Repository, userID string, state 
 			if state.ToolReadResults == nil {
 				state.ToolReadResults = map[string]cloudAgentCachedToolResult{}
 			}
-			state.ToolReadResults[key] = cloudAgentCachedToolResult{Error: cloudAgentSafeToolError(err), ArgumentError: true}
+			cached := cloudAgentCachedToolResult{Error: cloudAgentSafeToolError(err), ArgumentError: true}
+			var fieldErr *cloudAgentFieldArgumentError
+			if errors.As(err, &fieldErr) {
+				cached.Field, cached.Issue = fieldErr.Field, fieldErr.Issue
+			}
+			var rowErr *cloudAgentStoryboardRowIDError
+			if errors.As(err, &rowErr) {
+				cached.InvalidRowIDs = append([]string(nil), rowErr.InvalidRowIDs...)
+				cached.DuplicateRowIDs = append([]string(nil), rowErr.DuplicateRowIDs...)
+			}
+			state.ToolReadResults[key] = cached
 		}
 		return result, err
 	}

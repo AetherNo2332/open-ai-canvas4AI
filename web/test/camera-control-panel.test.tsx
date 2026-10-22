@@ -93,3 +93,12 @@ test("disabled camera direction keeps its saved choices and never offers an empt
     expect(html).toContain("f/1.8");
     expect(html).toContain('aria-checked="false"');
 });
+
+test("camera control uses the shared switch with stable rail and thumb geometry", () => {
+    const html = render();
+    const control = buttonsOf(html).find((button) => button.includes('role="switch"'));
+    expect(control).toContain('data-slot="switch"');
+    expect(control).toContain('aria-label="启用摄像机控制"');
+    expect(control).toContain("shrink-0");
+    expect(control).toContain("sc-switch-thumb");
+});

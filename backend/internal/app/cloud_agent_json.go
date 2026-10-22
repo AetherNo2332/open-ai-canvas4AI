@@ -65,6 +65,9 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 			} else if strings.HasPrefix(err.Error(), "json: unknown field ") {
 				issue = "unexpected_field"
 				name = strings.Trim(strings.TrimPrefix(err.Error(), "json: unknown field "), "\"")
+				if cloudAgentNodeStyleField(name) {
+					return args, cloudAgentNodeStyleError(path, name)
+				}
 			}
 		knownField:
 			for _, typ := range []reflect.Type{reflect.TypeOf(agentCanvasArgs{}), reflect.TypeOf(agentCanvasOp{})} {
@@ -139,7 +142,7 @@ func decodeCloudAgentCanvasArgs(raw string) (agentCanvasArgs, error) {
 }
 
 // Report the failure category without echoing model-controlled keys or values.
-// The runtime attaches the advertised schema so the model can correct its call.
+// The runtime attaches compact hints from the advertised contract.
 func cloudAgentJSONArgumentError(err error) error {
 	message := "工具参数 JSON 格式无效，请按参数规范修正后重试"
 	var typeErr *json.UnmarshalTypeError

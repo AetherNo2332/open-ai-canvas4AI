@@ -8,6 +8,7 @@ import { Image as ImageIcon, Music2, Play, UserRound, Pencil, Link2 } from "luci
 import { CanvasVideoPreviewImage } from "@/components/canvas/canvas-video-preview-image";
 import { isStoryboardPreviewAsset, bindingForConnectedNode } from "@/lib/canvas/canvas-storyboard-materializer";
 import { resolveMediaUrl } from "@/services/file-storage";
+import { canvasAssetPreviewFallback, resolveCanvasAssetPreviewInput } from "@/services/canvas-asset-preview";
 import { CanvasNodeType, type CanvasNodeData, type StoryboardAssetBinding } from "@/types/canvas";
 import "./storyboard-assets-cell.css";
 
@@ -252,7 +253,7 @@ export function AssetThumbnail({ node }: { node: CanvasNodeData }) {
 }
 
 function AssetThumbnailContent({ node }: { node: CanvasNodeData }) {
-    const source = useNodeMediaSource(node.type === CanvasNodeType.Video ? null : node);
+    const { source } = useNodeMediaSource(node.type === CanvasNodeType.Video ? null : node);
     if (node.type === CanvasNodeType.Audio) return <Music2 className="size-4" />;
     if (node.metadata?.workflowKind === "character" && !source) return <UserRound className="size-4" />;
     if (node.type === CanvasNodeType.Video) {
@@ -271,7 +272,7 @@ function AssetThumbnailContent({ node }: { node: CanvasNodeData }) {
 }
 
 function AssetPreviewModal({ node, onClose }: { node: CanvasNodeData | null; onClose: () => void }) {
-    const source = useNodeMediaSource(node);
+    const { source, loading, error } = useNodeMediaSource(node);
     return (
         <AppModal flush title={node?.title || "资产预览"} open={Boolean(node)} onCancel={onClose} footer={null} width={880} centered destroyOnHidden>
             {node ? (
@@ -282,6 +283,10 @@ function AssetPreviewModal({ node, onClose }: { node: CanvasNodeData | null; onC
                         <audio src={source} controls autoPlay className="w-full max-w-xl" />
                     ) : source ? (
                         <img src={source} alt={node.title || "资产预览"} className="max-h-[68vh] max-w-full object-contain" />
+                    ) : loading ? (
+                        <span role="status" className="text-sm text-foreground/45">正在加载资产预览…</span>
+                    ) : error ? (
+                        <span role="alert" className="max-w-[60ch] text-pretty text-sm text-foreground/60">{error}</span>
                     ) : (
                         <span className="text-sm text-foreground/45">当前资产没有可预览的媒体内容</span>
                     )}
@@ -292,29 +297,26 @@ function AssetPreviewModal({ node, onClose }: { node: CanvasNodeData | null; onC
 }
 
 function useNodeMediaSource(node: CanvasNodeData | null) {
-    const fallback = node
-        ? node.metadata?.workflowKind === "character"
-            ? node.metadata.characterCoverUrl || ""
-            : node.type === CanvasNodeType.Drawing
-              ? node.metadata?.drawingPreviewUrl || node.metadata?.content || ""
-              : node.metadata?.content || ""
-        : "";
-    const storageKey = node?.metadata?.storageKey;
-    const [source, setSource] = useState(fallback);
+    const fallback = canvasAssetPreviewFallback(node);
+    const metadata = node?.metadata;
+    const key = JSON.stringify([node?.id, node?.type, metadata?.workflowKind, fallback, metadata?.storageKey, metadata?.characterAssetId, metadata?.characterVersionId, metadata?.characterVersionPolicy]);
+    const [resolved, setResolved] = useState({ key, source: fallback, loading: Boolean(node), error: "" });
     useEffect(() => {
         let cancelled = false;
-        setSource(fallback);
-        if (storageKey)
-            void resolveMediaUrl(storageKey, fallback)
-                .then((url) => {
-                    if (!cancelled) setSource(url || fallback);
-                })
-                .catch(() => {
-                    if (!cancelled) setSource(fallback);
-                });
+        const currentNode = node;
+        setResolved({ key, source: fallback, loading: Boolean(currentNode), error: "" });
+        if (currentNode) void resolveCanvasAssetPreviewInput(currentNode)
+            .then(({ storageKey, fallback: mediaFallback }) => resolveMediaUrl(storageKey, mediaFallback))
+            .then((source) => {
+                if (!cancelled) setResolved({ key, source, loading: false, error: "" });
+            })
+            .catch((cause) => {
+                if (!cancelled) setResolved({ key, source: fallback, loading: false, error: cause instanceof Error ? cause.message : "资产预览加载失败，请稍后重试" });
+            });
         return () => {
             cancelled = true;
         };
-    }, [fallback, storageKey]);
-    return source;
+    // The key tracks only media identity; moving a node must not restart its request.
+    }, [key]);
+    return resolved.key === key ? resolved : { key, source: fallback, loading: Boolean(node), error: "" };
 }

@@ -36,7 +36,7 @@ func TestCloudAgentCanvasArgumentFeedbackIdentifiesFailingOperation(t *testing.T
 			if err := json.Unmarshal([]byte(content), &result); err != nil {
 				t.Fatal(err)
 			}
-			if result["field"] != tc.field || result["issue"] != tc.issue || result["reason"] != "invalid_tool_arguments" || result["parameters"] == nil || strings.Contains(content, "private-sentinel") {
+			if result["field"] != tc.field || result["issue"] != tc.issue || result["reason"] != "invalid_tool_arguments" || result["argumentHints"] == nil || result["parameters"] != nil || strings.Contains(content, "private-sentinel") {
 				t.Fatalf("incorrect repair feedback: %s", content)
 			}
 		})

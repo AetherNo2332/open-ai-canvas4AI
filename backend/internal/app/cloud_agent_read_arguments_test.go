@@ -44,7 +44,7 @@ func TestCloudAgentReadArgumentsRejectBeforeReadingCanvas(t *testing.T) {
 	}
 }
 
-func TestCloudAgentReadArgumentFeedbackUsesAdvertisedSchema(t *testing.T) {
+func TestCloudAgentReadArgumentFeedbackUsesAdvertisedHints(t *testing.T) {
 	req := agentTestRequest()
 	for _, name := range []string{"agent_profile_read", "canvas_list_node_types", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "task_get"} {
 		t.Run(name, func(t *testing.T) {
@@ -68,8 +68,8 @@ func TestCloudAgentReadArgumentFeedbackUsesAdvertisedSchema(t *testing.T) {
 			if result["reason"] != "invalid_tool_arguments" || result["guidance"] == nil {
 				t.Fatalf("missing repair feedback: %s", content)
 			}
-			if result["parameters"] == nil {
-				t.Fatal("advertised schema missing from repair feedback")
+			if result["argumentHints"] == nil || result["parameters"] != nil {
+				t.Fatal("repair must use compact advertised field hints")
 			}
 		})
 	}
@@ -106,13 +106,15 @@ func TestCloudAgentCanvasReadArgumentRepairContinuesRun(t *testing.T) {
 			if result["reason"] != "invalid_tool_arguments" || result["exampleArguments"] == nil {
 				t.Fatalf("missing repair context: %#v", result)
 			}
-			schema, ok := result["parameters"].(map[string]any)
-			if !ok || schema["additionalProperties"] != false {
-				t.Fatalf("lost strict schema after checkpoint: %#v", result)
+			hints, ok := result["argumentHints"].(map[string]any)
+			if !ok || result["parameters"] != nil {
+				t.Fatalf("lost compact repair hints after checkpoint: %#v", result)
 			}
-			properties, _ := schema["properties"].(map[string]any)
-			if len(properties) != 7 || properties["offset"] == nil || properties["nodeIds"] == nil || properties["focusNodeIds"] == nil || properties["depth"] == nil || properties["includeRelated"] == nil || properties["storyboardOffset"] == nil || properties["connectionOffset"] == nil {
-				t.Fatalf("wrong repair schema: %#v", properties)
+			fields := cloudAgentSchemaStrings(hints["allowedFields"])
+			for _, field := range []string{"offset", "nodeIds", "focusNodeIds", "depth", "includeRelated", "storyboardOffset", "connectionOffset"} {
+				if !containsToolName(fields, field) {
+					t.Fatalf("missing advertised field %s: %#v", field, hints)
+				}
 			}
 		} else if result["error"] != nil || result["snapshotHash"] == nil || !strings.Contains(piAssistantText(last["content"]), "saved content") {
 			t.Fatalf("corrected read did not return saved canvas: %#v", result)

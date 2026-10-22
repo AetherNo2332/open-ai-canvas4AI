@@ -5,6 +5,21 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## 画布预览与 Agent 界面
+
+- `web/src/services/canvas-asset-preview.ts`：解析普通媒体与角色卡的预览输入，按账号和版本隔离查询缓存；角色资源继续走统一授权展示入口。
+- `storyboard-assets-cell.tsx`：缩略图与弹窗共用预览解析，展示加载/错误并隔离切换节点时的过期结果。
+- `canvas-cloud-agent-panel.tsx`：顶部 Skills 入口及窄屏面板标记；`canvas-cloud-agent.css`：思考正文的内边距和滚动边界。
+- `pages/canvas/project.tsx`：将主工具栏放在编辑器外壳，空白点击回调只收起 Agent；`infinite-canvas.tsx` 和 `use-canvas-selection-controller.ts` 分别维护移动与框选模式的空白点击。
+- `canvas-node-camera-dialog.tsx`：摄像机控制复用共享 Switch 的固定几何与可访问语义。
+
+## Agent 工具反馈
+
+- `backend/internal/app/cloud_agent_tool_feedback.go`：根据本轮披露契约生成精简字段提示与形状示例；快照冲突保留原操作，只替换快照占位符，大载荷不重复回传。
+- `cloud_agent_storyboard_row_ids.go`：分镜读写共用的行 ID 校验，报告全部不存在和重复 ID；写入规划仍在副本上完成。
+- `cloud_agent_call_limits.go`、`cloud_agent_runtime.go`：统一读取回执的实时共享预算，复制回执避免污染缓存；`cloud_agent_pi_bridge.go` 和 `agent/src/native-skills.ts` 将相同预算传给原生技能读取。
+- `agent-tool-descriptions.md`、`backend/builtin/canvas-tools-guide`：覆盖、批量、读取视图、任务成功口径与权限约束；Worker 镜像和共享 schema 由同步与导出脚本生成。
+
 ## 画布外观预设与记忆
 
 `web/src/lib/canvas/canvas-appearance.ts` 管理预设快照、浅深色记忆与账号默认偏好；`canvas-appearance-controls.tsx` 提供预设和微调；`canvas-toolbar.tsx` 管理浮层高度与滚动。新建画布按工作台明暗选择经典预设，旧画布继续读取已保存配色，节点和工具栏颜色仍由 `canvas-theme.ts` 适配站点皮肤。

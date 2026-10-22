@@ -53,9 +53,13 @@ type cloudAgentCall struct {
 }
 
 type cloudAgentCachedToolResult struct {
-	Result        json.RawMessage `json:"result,omitempty"`
-	Error         string          `json:"error,omitempty"`
-	ArgumentError bool            `json:"argumentError,omitempty"`
+	Result          json.RawMessage `json:"result,omitempty"`
+	Error           string          `json:"error,omitempty"`
+	ArgumentError   bool            `json:"argumentError,omitempty"`
+	Field           string          `json:"field,omitempty"`
+	Issue           string          `json:"issue,omitempty"`
+	InvalidRowIDs   []string        `json:"invalidRowIds,omitempty"`
+	DuplicateRowIDs []string        `json:"duplicateRowIds,omitempty"`
 	// ReplayCount is diagnostic only. Replaying a cached read is harmless and
 	// must not fail the run; the per-run real-read budget limits cache misses.
 	ReplayCount int `json:"replayCount,omitempty"`
@@ -1220,7 +1224,7 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 			detail = map[string]any{}
 		}
 		// 模型漏了必填字段（或参数不是对象）时，即便业务校验抛的是普通 AppError，也按
-		// "参数契约错误"处理：把本轮实际暴露的 schema 回给模型，它才改得对，归类也随之变成
+		// "参数契约错误"处理：给出本轮字段修正信息，归类也随之变成
 		// schema_error（handoff 工作项 B：缺必填字段必须能自纠，且不能只算普通工具失败）。
 		// 只在"业务侧确实按参数问题拒绝了"（400/422）时才这么归类：上游 5xx 或网络错误
 		// 即便模型同时漏了字段，也该算上游故障，别把锅扣到参数上。
@@ -1265,25 +1269,16 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 			if errors.As(err, &fieldErr) {
 				detail["field"], detail["issue"] = fieldErr.Field, fieldErr.Issue
 			}
-			// Use this run's advertised contract, including its permission scope.
-			for _, tool := range cloudAgentAdvertisedTools(state) {
-				function, _ := tool["function"].(map[string]any)
-				if function["name"] == call.Function.Name {
-					detail["parameters"] = function["parameters"]
-					break
-				}
-			}
-			detail["guidance"] = "本次调用未执行，请按 parameters 修正参数后重试，不要重复提交相同的错误参数"
-			if call.Function.Name == "canvas_get_state" {
-				detail["exampleArguments"] = map[string]any{}
-			}
-			if call.Function.Name == "canvas_apply_ops" {
-				detail["exampleArguments"] = map[string]any{"snapshotHash": "<canvas_get_state.snapshotHash>", "ops": []any{map[string]any{"type": "add_node", "id": "<new-node-id>", "nodeType": "text", "content": "<content>"}}}
+			cloudAgentArgumentFeedback(state, call, detail)
+			var rowErr *cloudAgentStoryboardRowIDError
+			if errors.As(err, &rowErr) {
+				detail["invalidRowIds"], detail["duplicateRowIds"] = rowErr.InvalidRowIDs, rowErr.DuplicateRowIDs
 			}
 			if cloudAgentReferenceMigrationBlocked(err) {
 				detail["reason"] = detail["issue"]
 				detail["guidance"] = "资产尚未关联，请用户在画布的确认素材引用入口完成规范化后再继续；停止改参数重试，不得用其他字段替代或报告关联成功"
 				delete(detail, "parameters")
+				delete(detail, "argumentHints")
 				delete(detail, "exampleArguments")
 			}
 		}
@@ -1298,12 +1293,18 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 				detail["requiredAction"] = requiredAction
 			}
 			payload["errorClass"] = class
+			if class == cloudAgentToolErrorStateConflict && requiredAction == "reread_canvas" {
+				cloudAgentSnapshotFeedback(state, call, detail)
+			}
 		}
 		result = detail
 		kind = "tool_failed"
 		payload["text"] = message
 	} else {
 		payload["text"] = "工具执行成功"
+	}
+	if cloudAgentReadToolReadOnly(call.Function.Name) {
+		result = state.withReadBudget(result)
 	}
 	if inspection, ok := result.(cloudAgentImageInspection); ok && err == nil {
 		// 重复查看时只回执文字（ImageURL 为空），不再附图。

@@ -20,6 +20,7 @@ type InfiniteCanvasProps = {
     boxSelectEnabled?: boolean;
     onCanvasDoubleClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
     onCanvasDeselect?: () => void;
+    onCanvasBackgroundClick?: () => void;
     onContextMenu?: (event: React.MouseEvent) => void;
     onDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
     onFileDragEnter?: (event: React.DragEvent<HTMLDivElement>) => void;
@@ -46,7 +47,7 @@ type PinchState = {
     initialScale: number;
 };
 
-export function InfiniteCanvas({ interactive = true, containerRef, viewport, appearance, backgroundMode = "dots", onViewportChange, onViewportPreviewChange, onCanvasMouseDown, boxSelectEnabled = false, onCanvasDoubleClick, onCanvasDeselect, onContextMenu, onDrop, onFileDragEnter, onFileDragLeave, onFileDragOver, graphicsLayer, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ interactive = true, containerRef, viewport, appearance, backgroundMode = "dots", onViewportChange, onViewportPreviewChange, onCanvasMouseDown, boxSelectEnabled = false, onCanvasDoubleClick, onCanvasDeselect, onCanvasBackgroundClick, onContextMenu, onDrop, onFileDragEnter, onFileDragLeave, onFileDragOver, graphicsLayer, children }: InfiniteCanvasProps) {
     const colorTheme = useActiveTheme();
     const resolvedAppearance = resolveCanvasAppearance(appearance, colorTheme);
     const panState = useRef({
@@ -57,6 +58,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         initialX: 0,
         initialY: 0,
         hasMoved: false,
+        backgroundClick: false,
     });
     const viewportRef = useRef(viewport);
     const scaleRef = useRef(viewport.k);
@@ -295,6 +297,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 initialX: current.x,
                 initialY: current.y,
                 hasMoved: false,
+                backgroundClick: true,
             };
             setIsPanning(true);
             document.body.style.cursor = "grabbing";
@@ -314,6 +317,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 initialX: current.x,
                 initialY: current.y,
                 hasMoved: false,
+                backgroundClick: isBackgroundClick && event.button === 0 && !spacePressedRef.current && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey,
             };
             setIsPanning(true);
             document.body.style.cursor = "grabbing";
@@ -379,8 +383,9 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             if (event.pointerType === "touch") touchPointsRef.current.delete(event.pointerId);
             if (!panState.current.isPanning || panState.current.pointerId !== event.pointerId) return;
 
-            if (event.type === "pointerup" && !panState.current.hasMoved) {
+            if (event.type === "pointerup" && !panState.current.hasMoved && Math.abs(event.clientX - panState.current.startX) <= 3 && Math.abs(event.clientY - panState.current.startY) <= 3) {
                 onCanvasDeselect?.();
+                if (panState.current.backgroundClick) onCanvasBackgroundClick?.();
             }
             panState.current.isPanning = false;
             panState.current.pointerId = -1;
@@ -400,7 +405,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             window.removeEventListener("pointerup", handlePointerEnd);
             window.removeEventListener("pointercancel", handlePointerEnd);
         };
-    }, [interactive, containerRef, onCanvasDeselect, scheduleViewportChange, syncViewport]);
+    }, [interactive, containerRef, onCanvasDeselect, onCanvasBackgroundClick, scheduleViewportChange, syncViewport]);
 
     useEffect(() => {
         const container = containerRef.current;

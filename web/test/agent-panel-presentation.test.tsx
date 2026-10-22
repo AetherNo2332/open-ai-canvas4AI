@@ -2,11 +2,23 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentWelcome } from "@/components/canvas/canvas-agent-welcome";
 import { AgentChatComposer } from "@/components/canvas/canvas-cloud-agent-chat-ui";
+import { AgentHeader } from "@/components/canvas/canvas-cloud-agent-panel";
 import { agentPermissionVisual } from "@/components/canvas/canvas-cloud-agent-settings";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { DEFAULT_CANVAS_APPEARANCE, agentCopy } from "@/lib/canvas/agent-appearance";
 
 const noop = () => {};
+
+test("Skills is accessible in the Agent header with its selected count and dialog state", () => {
+    const html = renderToStaticMarkup(<AgentHeader theme={canvasThemes.dark} hasMessages statusLabel="运行中" statusColor="green" nodeCount={12}
+        onNew={noop} onHistory={noop} onSettings={noop} onCollapse={noop} onExport={noop} exporting={false}
+        skillsOpen selectedSkillCount={3} onSkills={noop} />);
+    expect(html).toContain("Skills(3)");
+    expect(html).toContain('aria-label="打开 Skills 技能库，已启用 3 个"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('aria-haspopup="dialog"');
+    expect(html.indexOf("Skills(3)")).toBeLessThan(html.indexOf("导出 Agent 调试记录"));
+});
 
 test("welcome uses the independent assistant name and escapes it as text", () => {
     const html = renderToStaticMarkup(<AgentWelcome appearance={{ ...DEFAULT_CANVAS_APPEARANCE, agentName: "我的<工作室>" }} nodeCount={2} onChooseSkill={noop} onDraftPrompt={noop} />);

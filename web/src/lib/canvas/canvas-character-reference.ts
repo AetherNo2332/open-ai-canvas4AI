@@ -18,6 +18,11 @@ export type CharacterBreakdown = {
     voiceTimbre: string;
 };
 
+export function characterCoverResourceId(url?: string) {
+    const id = url ? /\/resources\/([^/?#]+)\/file/.exec(url)?.[1] : undefined;
+    return id ? decodeURIComponent(id) : "";
+}
+
 export function normalizeCharacterImageMentions(prompt: string, imageCount: number, characterLabels: string[]) {
     if (imageCount > 0 || !characterLabels.length) return prompt;
     return prompt.replace(/@图片([1-9]\d*)(?![0-9])/g, (token, index: string) => {

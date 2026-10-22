@@ -5,6 +5,7 @@ import { motion, useReducedMotion } from "motion/react";
 
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { Tooltip } from "@/components/ui/base/tooltip";
+import { Switch } from "@/components/ui/base/switch";
 import { aceternityMotion } from "@/lib/aceternity-motion";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -419,19 +420,7 @@ export function CanvasNodeCameraPanel({ cameraControl, onClose, onConfirm }: { c
                     <span className="text-xs transition-colors" style={{ color: enabled ? theme.accent.primary : theme.node.muted, fontWeight: enabled ? 600 : 400 }}>
                         {enabled ? "开启" : "关闭"}
                     </span>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
-                        onClick={() => setEnabled((v) => !v)}
-                        className="canvas-node-camera-switch relative inline-flex h-5 w-9 cursor-pointer items-center rounded-full border transition-colors"
-                        style={{
-                            background: enabled ? `${theme.node.activeStroke}22` : theme.toolbar.itemHover,
-                            borderColor: enabled ? theme.node.activeStroke : theme.toolbar.border,
-                        }}
-                    >
-                        <span className={`inline-block size-3.5 transform rounded-full shadow-sm transition-transform ${enabled ? "translate-x-[18px]" : "translate-x-0.5"}`} style={{ background: enabled ? theme.node.activeStroke : theme.node.muted }} />
-                    </button>
+                    <Switch size="sm" checked={enabled} onChange={setEnabled} aria-label="启用摄像机控制" />
                 </div>
                 <motion.button
                     type="button"

@@ -174,11 +174,15 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 	} else if len(ids) == 0 || len(ids) > 100 {
 		return nil, nil, BadAuthRequest("请选择1到100个真实分镜行 ID")
 	}
+	selectionField := "rowIds"
+	if args.RowID != "" {
+		selectionField = "rowId"
+	}
+	if err := validateCloudAgentStoryboardRowIDs(next, ids, selectionField); err != nil {
+		return nil, nil, err
+	}
 	selected := map[string]bool{}
 	for _, id := range ids {
-		if id == "" || selected[id] || cloudAgentNodeIndex(next, id) < 0 {
-			return nil, nil, BadAuthRequest("分镜行不存在或重复，请使用最新读取结果中的 rowId")
-		}
 		selected[id] = true
 	}
 	patch := args.Patch

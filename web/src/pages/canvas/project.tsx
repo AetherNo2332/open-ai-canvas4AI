@@ -1306,6 +1306,7 @@ function InfiniteCanvasPage() {
         setSelectedConnectionId,
         cancelPendingConnectionCreate,
         onCanvasSelectionStart: handleCanvasSelectionStart,
+        onCanvasBackgroundClick: closeAgent,
         onNodeInteractionStart: handleNodeInteractionStart,
         onNodeBringToFront: handleNodeBringToFront,
         onNodeClick: handleSelectedNodeClick,
@@ -2769,6 +2770,7 @@ function InfiniteCanvasPage() {
                                     boxSelectEnabled={canvasTool === "box-select"}
                                     onCanvasDoubleClick={handleCanvasDoubleClick}
                                     onCanvasDeselect={deselectCanvas}
+                                    onCanvasBackgroundClick={closeAgent}
                                     onContextMenu={handleCanvasContextMenu}
                                     onDrop={handleDrop}
                                     onFileDragEnter={handleFileDragEnter}
@@ -2878,48 +2880,6 @@ function InfiniteCanvasPage() {
 
                                 {emptyCanvasState}
 
-                                {!focusMode || focusDockRevealed ? (
-                                    <CanvasToolbar
-                                        selectedCount={selectedNodeIds.size}
-                                        workspaceMode={workspaceMode}
-                                        canvasTool={canvasTool}
-                                        onToolChange={setCanvasTool}
-                                        isProjectLinked={Boolean(shortDramaEnabled && currentProject?.projectId)}
-                                        canUndo={historyState.canUndo}
-                                        canRedo={historyState.canRedo}
-                                        appearance={canvasAppearance}
-                                        backgroundMode={backgroundMode}
-                                        showImageInfo={showImageInfo}
-                                        onAddImage={() => createNode(CanvasNodeType.Image)}
-                                        onAddVideo={() => createNode(CanvasNodeType.Video)}
-                                        onAddAudio={() => createNode(CanvasNodeType.Audio)}
-                                        onAddText={() => createNode(CanvasNodeType.Text)}
-                                        onChooseStyle={() => setStylePickerOpen(true)}
-                                        onAddScript={() => createNode(CanvasNodeType.Script)}
-                                        onAddFrame={() => createNode(CanvasNodeType.Frame)}
-                                        onAddFolder={createFolder}
-                                        onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
-                                        onAddExtensionNode={(type) => createNode(type)}
-                                        onAddWorkflow={() => createNode(CanvasNodeType.Config)}
-                                        onOpenPrevis={() => setPrevisTemplateRequest({})}
-                                        onUndo={undoCanvas}
-                                        onRedo={redoCanvas}
-                                        onUpload={() => handleUploadRequest()}
-                                        onDelete={() => deleteNodes(new Set(selectedNodeIds))}
-                                        onClear={() => setClearConfirmOpen(true)}
-                                        onDeselect={deselectCanvas}
-                                        onAppearanceChange={applyCanvasAppearance}
-                                        onSaveAppearanceDefault={saveCanvasAppearanceDefault}
-                                        onBackgroundModeChange={setBackgroundMode}
-                                        onShowImageInfoChange={setShowImageInfo}
-                                        onOpenWorkspace={() => setWorkspaceOpen(value => !value)}
-                                        onOpenMyAssets={() => {
-                                            openCanvasAssetLibrary();
-                                        }}
-                                        onOpenProjectCharacters={() => openProjectAssets("character")}
-                                        agentFloating={assistantOpen && Boolean(previsNodeId)}
-                                    />
-                                ) : null}
                             </div>
                         </div>
 
@@ -3552,6 +3512,47 @@ function InfiniteCanvasPage() {
                             onInsertFolder={projectAssetScope === "canvas" ? handleProjectFolderInsert : undefined}
                         />
                     </section>
+                    {!versions.preview && (!focusMode || focusDockRevealed) ? (
+                        <CanvasToolbar
+                            selectedCount={selectedNodeIds.size}
+                            workspaceMode={workspaceMode}
+                            canvasTool={canvasTool}
+                            onToolChange={setCanvasTool}
+                            isProjectLinked={Boolean(shortDramaEnabled && currentProject?.projectId)}
+                            canUndo={historyState.canUndo}
+                            canRedo={historyState.canRedo}
+                            appearance={canvasAppearance}
+                            backgroundMode={backgroundMode}
+                            showImageInfo={showImageInfo}
+                            onAddImage={() => createNode(CanvasNodeType.Image)}
+                            onAddVideo={() => createNode(CanvasNodeType.Video)}
+                            onAddAudio={() => createNode(CanvasNodeType.Audio)}
+                            onAddText={() => createNode(CanvasNodeType.Text)}
+                            onChooseStyle={() => setStylePickerOpen(true)}
+                            onAddScript={() => createNode(CanvasNodeType.Script)}
+                            onAddFrame={() => createNode(CanvasNodeType.Frame)}
+                            onAddFolder={createFolder}
+                            onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
+                            onAddExtensionNode={(type) => createNode(type)}
+                            onAddWorkflow={() => createNode(CanvasNodeType.Config)}
+                            onOpenPrevis={() => setPrevisTemplateRequest({})}
+                            onUndo={undoCanvas}
+                            onRedo={redoCanvas}
+                            onUpload={() => handleUploadRequest()}
+                            onDelete={() => deleteNodes(new Set(selectedNodeIds))}
+                            onClear={() => setClearConfirmOpen(true)}
+                            onDeselect={deselectCanvas}
+                            onAppearanceChange={applyCanvasAppearance}
+                            onSaveAppearanceDefault={saveCanvasAppearanceDefault}
+                            onBackgroundModeChange={setBackgroundMode}
+                            onShowImageInfoChange={setShowImageInfo}
+                            onOpenWorkspace={() => setWorkspaceOpen(value => !value)}
+                            onOpenMyAssets={() => {
+                                openCanvasAssetLibrary();
+                            }}
+                            onOpenProjectCharacters={() => openProjectAssets("character")}
+                        />
+                    ) : null}
                     <div className={versions.open ? "hidden" : "contents"}>
                         <CanvasCloudAgentPanel canvasId={projectId} domainProjectId={currentProject?.projectId} nodeCount={nodes.length} selectedNodeIds={Array.from(selectedNodeIds)} references={agentMentionReferences} prefillPrompt={agentPrefillPrompt} open={assistantOpen} floating={Boolean(previsNodeId)} launcher={!previsNodeId} onOpen={openAgent} onCollapse={closeAgent} onFocusNode={(nodeId) => {
                             if (!nodesRef.current.some((node) => node.id === nodeId)) { message.info("该节点已删除或尚未同步到画布"); return; }

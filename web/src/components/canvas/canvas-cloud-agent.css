@@ -1393,12 +1393,12 @@
 
 .agent-reasoning-content {
     position: relative;
-    display: flex;
+    min-width: 0;
     max-height: min(180px, 24vh);
-    gap: 0;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     border-top: 0;
-    padding: 4px 0 10px;
+    padding: var(--space-2) var(--space-4) var(--space-3);
     scrollbar-gutter: stable;
 }
 

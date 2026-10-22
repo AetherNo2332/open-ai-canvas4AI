@@ -222,6 +222,7 @@ func (s *Service) PiSkillFile(userID, runID, owner string, request PiSkillFileRe
 		return nil, err
 	}
 	page.Path = path
+	page.cloudAgentReadBudget = state.readBudget()
 	page.NativeName, page.SkillID, page.VersionID, page.ContentHash = skill.NativeName, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash
 	page.IsEntry = path == cloudAgentSkillEntryPath
 	if page.IsEntry {

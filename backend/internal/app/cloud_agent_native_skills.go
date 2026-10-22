@@ -83,6 +83,7 @@ type PiSkillSnapshot struct {
 }
 
 type PiSkillReadPage struct {
+	cloudAgentReadBudget
 	NativeName  string `json:"nativeName"`
 	SkillID     string `json:"skillId"`
 	VersionID   string `json:"versionId"`

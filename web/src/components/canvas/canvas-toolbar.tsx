@@ -54,7 +54,6 @@ export function CanvasToolbar({
     onOpenWorkspace,
     onOpenMyAssets,
     onOpenProjectCharacters,
-    agentFloating,
 }: {
     selectedCount: number;
     workspaceMode: CanvasWorkspaceMode;
@@ -91,7 +90,6 @@ export function CanvasToolbar({
     onOpenWorkspace?: () => void;
     onOpenMyAssets: () => void;
     onOpenProjectCharacters: () => void;
-    agentFloating?: boolean;
 }) {
     const rootRef = useRef<HTMLDivElement>(null);
     const { bringToFront, zIndex } = useCanvasOverlayLayer("main-toolbar", "var(--z-toolbar)");
@@ -198,7 +196,7 @@ export function CanvasToolbar({
     const createCommands = useCanvasCreateCommands(ctx, runAddAction);
 
     return (
-        <div ref={rootRef} data-canvas-no-zoom className={`canvas-main-toolbar pointer-events-none absolute bottom-[var(--canvas-inset-y)] -translate-x-1/2 flex ${agentFloating ? "canvas-toolbar-agent-floating" : ""}`} style={{ zIndex }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront}>
+        <div ref={rootRef} data-canvas-no-zoom className="canvas-main-toolbar pointer-events-none absolute bottom-[var(--canvas-inset-y)] -translate-x-1/2 flex" style={{ zIndex }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront}>
             <AnimatePresence>
                 {addOpen ? (
                     <AddNodeMenu

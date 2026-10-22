@@ -24,7 +24,7 @@
 
 ## canvas_get_state
 
-首次 {} 读目录；nodeIds 默认 detail，view=references 查有效引用和版本，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边；focusNodeIds 的子图默认 selected。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断正文按 nextRead 续读；kind 是业务类型。角色卡读 character 的版本、resolvedImage 和来源；结构化行用专用 read。
+首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=references 查有效引用和版本，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边；focusNodeIds 的子图默认 selected。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断正文按 nextRead 续读；kind 是业务类型。角色卡读 character 的版本、resolvedImage 和来源；结构化行用专用 read。
 
 ## canvas_read_batch_table
 
@@ -32,7 +32,7 @@
 
 ## canvas_read_storyboard
 
-读取结构化分镜，默认 creative 返回创作、时长、对白和实际资产名称/版本。summary 扫描缺口，bindings 排查底层引用，full 查看高级字段；coverage.complete 才能支持整表结论。rowIds 定位，nextRead 续页，长文本按 nextReads 续读，不从连线推测绑定。
+读取结构化分镜，默认 creative 返回创作、时长、对白和实际资产名称/版本。summary 扫描缺口，rows=[] 属预期；bindings 返回行级绑定、不含创作正文；full 查看全部字段。coverage.complete 才能支持整表结论。rowIds 定位，nextRead 续页，长文本按 nextReads 续读，不从连线推测绑定。
 
 ## task_get
 
@@ -68,7 +68,7 @@
 
 ## director_preview_shot
 
-提交指定镜头的后台白膜预演参数。先校验镜头与摄影机，沿用 previs_preview 的任务、配额、取消、重试与资源写回合同；taskSubmitted=false 不代表已生成。
+提交指定镜头的后台白膜预演参数，沿用 previs_preview 合同。taskSubmitted 仅表示曾提交任务，true 也可能 status=failed；以 status/task_get 及实际产物判断成功，不据此重发任务。
 
 ## director_handoff_shot
 
@@ -87,7 +87,7 @@
 
 ## canvas_edit_storyboard
 
-先读真实 rowId 和 snapshotHash。update/remove/set_assets 用 rowId 或 rowIds 选择行；update 给共同 patch，set_assets 给完整 assets（[] 清空），整批原子写入。append 给完整创作行 patch。set_references 给 references 或 referenceNodeIds。生成自动管理产物；显式指定已有产物才用 bind_output/unbind_output。不能写任务、状态、URL 或连线；历史引用需先迁移。
+先读真实 rowId 和 snapshotHash。update/remove/set_assets 用 rowId 或 rowIds；patch 对所有选中行同值生效，无逐行差异入参；任一目标或引用非法则整批拒绝。set_assets 整行覆盖资产且清空旧 characters：先读 bindings，合并需保留的行级项后整体回写，只传新增项会丢原绑定；[] 清空行资产，不清共享输入。set_references 整体替换共享列表，全部行继承输入和派生连线随之更新，显式行资产保留；保留旧共享素材须继续列入共享列表或声明为行资产。append 单次一行；批量新建用 canvas_create_storyboard.rows（1–100）。已有产物归属才用 bind_output/unbind_output。不写任务、状态、URL 或连线；历史引用需先迁移。
 
 ## canvas_edit_batch_table
 
@@ -95,7 +95,7 @@
 
 ## canvas_apply_ops
 
-基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。add_node 给 nodeType，可给 title/content/x/y；update_node 给 patch，复杂字段先查节点合同。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId，id 为新ID；set_parent 给 parentId（空串解除）；replace_text 给唯一 match/replacement；排序数组各含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具，不编辑连线。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复用 active，资源和既有引用保留，只影响本画布默认选材。素材、绘图、生成用专用工具；不写任意 metadata、托管标记、任务状态或 URL。
+基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。add_node 必填 nodeType，仅可另给 title/content/x/y；width/height/folderStyle/folderTheme/frame/locked 等尺寸样式须用后续 update_node.patch，先查节点合同。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId，id 为新ID；set_parent 只改容器归属，parentId 空串解除，不负责排版；后续写入使用回执新快照，需精确位置时回读。replace_text 给唯一 match/replacement；排序数组各含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具，不编辑连线。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active，保留资源和既有引用。不写任意 metadata、托管标记、任务状态或 URL。
 
 ## canvas_arrange_nodes
 
@@ -436,7 +436,7 @@ focusNodeIds 的展开深度，0–3，省略为1；仅与 focusNodeIds 一起�
 
 ## previs_preview
 
-生成预演白模视频。
+生成预演白模视频。taskSubmitted 仅表示曾提交任务，true 也可能 status=failed；以 status/task_get 和实际产物判断成功。queued/running 仍在处理，失败不自动重发。
 
 ## previs_scene_create
 

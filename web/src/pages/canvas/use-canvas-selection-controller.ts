@@ -19,6 +19,7 @@ type UseCanvasSelectionControllerOptions = {
     setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
     cancelPendingConnectionCreate: () => void;
     onCanvasSelectionStart: () => void;
+    onCanvasBackgroundClick?: () => void;
     onNodeInteractionStart: (selectionModifier: boolean) => void;
     onNodeBringToFront?: (nodeId: string) => void;
     onNodeClick: (node: CanvasNodeData) => void;
@@ -68,6 +69,7 @@ export function useCanvasSelectionController({
     setSelectedConnectionId,
     cancelPendingConnectionCreate,
     onCanvasSelectionStart,
+    onCanvasBackgroundClick,
     onNodeInteractionStart,
     onNodeBringToFront,
     onNodeClick,
@@ -343,8 +345,11 @@ export function useCanvasSelectionController({
         selectionFrameRef.current = null;
         const wasSelection = hadPendingSelection && updateSelectionPreview(screenToCanvas(clientX, clientY), true);
         resetSelectionBox();
-        if (hadPendingSelection && !wasSelection && strategy === "replace") deselectCanvas();
-    }, [deselectCanvas, resetSelectionBox, screenToCanvas, updateSelectionPreview]);
+        if (hadPendingSelection && !wasSelection && strategy === "replace") {
+            deselectCanvas();
+            onCanvasBackgroundClick?.();
+        }
+    }, [deselectCanvas, onCanvasBackgroundClick, resetSelectionBox, screenToCanvas, updateSelectionPreview]);
 
     // 重渲染只更新回调，不能拆掉进行中的手势监听并清除 iframe 保护层 / 待执行帧。
     const gestureHandlersRef = useRef({ finishNodeDrag, finishSelection, cancelSelectionBox, handleNodeDragMove, handlePointerMove });

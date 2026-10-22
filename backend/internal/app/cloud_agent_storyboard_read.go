@@ -54,14 +54,12 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 	}
 	selected := all
 	if len(args.RowIDs) > 0 {
+		if err := validateCloudAgentStoryboardRowIDs(all, args.RowIDs, "rowIds"); err != nil {
+			return nil, err
+		}
 		selected = []map[string]any{}
-		seen := map[string]bool{}
 		for _, id := range args.RowIDs {
 			index := cloudAgentNodeIndex(all, id)
-			if index < 0 || seen[id] {
-				return nil, cloudAgentFieldError("rowIds", "invalid_value", "rowIds 含不存在或重复的分镜行")
-			}
-			seen[id] = true
 			selected = append(selected, all[index])
 		}
 	}

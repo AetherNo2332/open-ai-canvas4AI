@@ -5,7 +5,7 @@
       "file": "SYSTEM_POLICY.md",
       "source": "backend/internal/prompts/agent-system-policy.md",
       "stripFrontmatter": true,
-      "sha256": "7383f089e98e9ba3a0d646fa678a326126ee9aa7227a2641221e3af69f402e9e"
+      "sha256": "535e85ffccdb86f16d663227ee1bb6becd688cb5d59fdf457b4868d39fb95d52"
     },
     {
       "file": "MEDIA_POLICY.md",
@@ -17,7 +17,7 @@
       "file": "TOOL_DESCRIPTIONS.md",
       "source": "backend/internal/app/agent-tool-descriptions.md",
       "stripFrontmatter": false,
-      "sha256": "8de0185ebe3ae51af46e95d0210ca616a2212d11d496357b35c783edef32c2cf"
+      "sha256": "5e5914d3e7ad3b428ca2a0c0cea8ca1388410c23a151b5f7f71758341474af1c"
     }
   ]
 }

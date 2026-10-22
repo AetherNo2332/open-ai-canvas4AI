@@ -3,7 +3,7 @@ name: canvas-tools-guide
 description: "画布工具操作指南：用户要求读取或修改画布、创建节点、维护分镜和批量创作表、声明素材引用与产物归属、绑定角色卡与媒体资产、选择模型或提交生成时使用。指导 Agent 从真实状态选择专用工具，正确填写 ID、引用字段、快照和分镜行身份，核对回执并修正参数错误。"
 metadata:
   skillId: yingce-canvas-tools-guide
-  version: "1.2.0"
+  version: "1.3.0"
   author: "影策"
   owner: yingce-system
   tag: others
@@ -30,7 +30,7 @@ metadata:
 | 生成或编辑媒体 | 读节点 → `model_list` → `generate_media` |
 | 识字、理解画面 | `canvas_inspect_image` → 用模型多模态能力分析 |
 | 拆透明图层、标注、修改画面 | 读原图 → 写明目标与保留项 → `model_list` → `generate_media`（图片模式、真实参考 ID） |
-| 整理节点位置 | 读快照 → `canvas_arrange_nodes` |
+| 整理节点位置 | 读快照 → 本轮提供的 `canvas_arrange_nodes`；替代操作仍须具备写权限 |
 
 工具名和参数以本轮提供的 schema 为准。`agent_tools_*` 是分类名，不能当工具调用；连线由服务端按引用字段派生，`canvas_apply_ops.ops` 没有 `connect_nodes`／`update_connection`／`delete_connection`，也不要传 `fromNodeId`／`toNodeId`／端口字段。不要调用不存在的 `canvas_node_types`，节点能力工具叫 `canvas_list_node_types`。工具未提供时说明当前能力缺口，不猜替代 API。
 

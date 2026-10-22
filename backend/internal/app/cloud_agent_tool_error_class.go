@@ -146,7 +146,7 @@ func schemaStringList(value any) []string {
 // 为什么需要它：各工具的校验点是业务代码，抛的多是普通 AppError（例如分镜读取参数无效），
 // 从错误类型上看不出"这是模型漏了必填字段"。而模型漏字段恰恰是最常见的工具失败
 // （handoff 工作项 B 的证据里，缺 size / 缺 nodeId 类占大头）。这里按 schema 的 required
-// 直接判定，把这些错误归到参数契约问题，并把 schema 回给模型让它改对。
+// 直接判定，把这些错误归到参数契约问题，并给出对应字段修正提示。
 //
 // 参数不是 JSON 对象时返回空列表（那种情况由 decodeCloudAgentJSONObject 的既有路径覆盖）。
 func cloudAgentMissingRequiredArguments(tools []map[string]any, call cloudAgentCall) []string {
