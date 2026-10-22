@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## v1.6.0(7bd9659)
+
+- 摄影机控制目录升级为 9 台电影机与 10 支镜头：ARRI ALEXA 65 / ALEXA 35、ARRICAM LT、ARRIFLEX 435、IMAX Keighley / IMAX 胶片机、Sony VENICE、RED V-RAPTOR、Panavision DXL2；ARRI Signature Prime、Zeiss Ultra Prime、Cooke S4 / Speed Panchro / Anamorphic SF 18x、Canon K-35、Helios 44-2、Panavision C-Series / Primo、Hawk Class X。相机与镜头卡片直接展示透明底真实设备产品图，提示词同步使用对应设备描述；旧相机 / 镜头 id 不再兼容，历史画布需重新选择设备。
+- 摄影机控制支持鼠标滚轮切档：四列卡片分别响应滚轮上滑 / 下滑切换上一档 / 下一档，触控板小增量按阈值累计且一次事件最多切一档；Ctrl+滚轮保留浏览器缩放，卡片区域滚轮不再带动弹层滚动，面板副标题补充提示。
+- 仅需更新前端（含 `web/public/camera-controls/` 图片资源），重新构建并发布前端即可；无后端接口或数据库迁移。
+
 ## v1.6.0(2347610)
 
 - 分镜行连到视频节点时带入镜头信息：把分镜行的输出连到已有视频节点、或从行端口拖出新建视频，视频节点自动带上「镜头 N · 视频」标题、该镜头的提示词（画面运动描述为空时用剧情描述，并列出参考资产）、提示词模板和时长，生成时使用该行声明的素材；关键帧模式下首帧为该镜头的分镜图。同一视频再次连到同一行不会覆盖之后手改的标题和提示词。
