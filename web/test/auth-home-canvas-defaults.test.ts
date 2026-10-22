@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { defaultCanvasAppearance, DEFAULT_CANVAS_BACKGROUND_MODE } from "../src/lib/canvas/canvas-appearance";
+import { defaultCanvasAppearance, NEW_CANVAS_BACKGROUND_MODE } from "../src/lib/canvas/canvas-appearance";
 
 const source = (path: string) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
 
@@ -25,7 +25,7 @@ describe("auth, workspace chrome, and new canvas defaults", () => {
     });
 
     test("new canvas defaults use the classic preset for the requested workspace tone", () => {
-        expect(DEFAULT_CANVAS_BACKGROUND_MODE).toBe("dots");
+        expect(NEW_CANVAS_BACKGROUND_MODE).toBe("dots");
         for (const theme of ["light", "dark"] as const) {
             expect(defaultCanvasAppearance(theme)).toMatchObject({
                 mode: "preset",

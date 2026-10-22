@@ -44,7 +44,7 @@ export type ResolvedCanvasAppearance = {
     grid: string;
 };
 
-export const DEFAULT_CANVAS_BACKGROUND_MODE: CanvasBackgroundMode = "dots";
+export const DEFAULT_CANVAS_BACKGROUND_MODE: CanvasBackgroundMode = "blank";
 export const NEW_CANVAS_BACKGROUND_MODE: CanvasBackgroundMode = "dots";
 
 const CANVAS_APPEARANCE_DEFAULT_KEY = "infinite-canvas:canvas-appearance-default";

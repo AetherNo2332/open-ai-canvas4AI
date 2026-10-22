@@ -2,8 +2,16 @@ import { describe, expect, test } from "bun:test";
 
 import { getCanvasSkinTheme } from "../src/lib/canvas-theme";
 import { DEFAULT_CLASSIC_SKIN, duplicateSkinDefinition } from "../src/lib/skin-themes";
+import { canvasDockStyle } from "../src/lib/canvas/canvas-aceternity-style";
 
 describe("canvas visual contrast", () => {
+    test("dock thumb uses the panel foreground even when selection foreground is different", () => {
+        const skin = duplicateSkinDefinition(DEFAULT_CLASSIC_SKIN, ["classic"]);
+        Object.assign(skin.tokens.light, { surface: "#ffffff", text: "#202020", selectedForeground: "#ffffff" });
+        const style = canvasDockStyle(getCanvasSkinTheme("light", skin));
+        expect(style["--dock-switch-thumb" as keyof typeof style]).toBe("#ffffff");
+        expect(style["--dock-switch-thumb-text" as keyof typeof style]).toBe("#202020");
+    });
     test("uses separately configured canvas and node surfaces in both themes", () => {
         for (const mode of ["light", "dark"] as const) {
             const skin = duplicateSkinDefinition(DEFAULT_CLASSIC_SKIN, ["classic"]);

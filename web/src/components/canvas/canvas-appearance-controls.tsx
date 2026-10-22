@@ -84,11 +84,11 @@ export function CanvasAppearanceControls({ appearance, backgroundMode, colorThem
             <div className="flex h-6 min-w-0 items-center justify-between gap-2">
                 <span className="truncate" style={{ color: theme.node.muted }}>{draft.mode === "custom" ? "自定义 · 已调整" : presets.find((preset) => preset.id === activePreset)?.label}</span>
                 {draft.mode === "custom" ? (
-                    <button type="button" className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-0.5 focus-visible:outline focus-visible:outline-2" onClick={resetCustom}>
+                    <button type="button" className="inline-flex shrink-0 items-center gap-1 rounded-[var(--button-radius)] px-1 py-0.5 focus-visible:outline focus-visible:outline-2" onClick={resetCustom}>
                         <RotateCcw className="size-3" />恢复预设
                     </button>
                 ) : draft.custom?.baseTheme === values.baseTheme ? (
-                    <button type="button" className="inline-flex shrink-0 items-center gap-1 rounded py-0.5 focus-visible:outline focus-visible:outline-2" onClick={() => updateCustom(draft.custom!)}>
+                    <button type="button" className="inline-flex shrink-0 items-center gap-1 rounded-[var(--button-radius)] py-0.5 focus-visible:outline focus-visible:outline-2" onClick={() => updateCustom(draft.custom!)}>
                         <Paintbrush className="size-3" />恢复自定义
                     </button>
                 ) : null}

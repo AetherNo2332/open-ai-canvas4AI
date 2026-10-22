@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent, type ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import { aceternityMotion } from "@/lib/aceternity-motion";
@@ -273,6 +273,19 @@ function DockCommandButton({ command, compact, showLabel, nativeTitle, motionEna
     );
 }
 
+export function handleDockSwitchKeyDown(event: KeyboardEvent<HTMLElement>, entry: FloatingDockSwitch) {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const selectedIndex = Math.max(0, entry.options.findIndex((option) => option.value === entry.value));
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const nextIndex = (selectedIndex + direction + entry.options.length) % entry.options.length;
+    const next = entry.options[nextIndex];
+    if (next) {
+        entry.onChange(next.value);
+        event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="radio"]')[nextIndex]?.focus();
+    }
+}
+
 function DockSwitch({ entry, compact, showLabel, nativeTitle, motionEnabled }: { entry: FloatingDockSwitch } & DockItemRenderProps) {
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -283,14 +296,7 @@ function DockSwitch({ entry, compact, showLabel, nativeTitle, motionEnabled }: {
             role="radiogroup"
             aria-label={entry.label}
             className={cn("aceternity-dock-switch relative inline-flex shrink-0 items-center gap-0.5 rounded-[var(--button-radius)] p-0.5", labeled && "is-labeled")}
-            onKeyDown={(event) => {
-                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
-                event.preventDefault();
-                const selectedIndex = Math.max(0, entry.options.findIndex((option) => option.value === entry.value));
-                const direction = event.key === "ArrowRight" ? 1 : -1;
-                const next = entry.options[(selectedIndex + direction + entry.options.length) % entry.options.length];
-                if (next) entry.onChange(next.value);
-            }}
+            onKeyDown={(event) => handleDockSwitchKeyDown(event, entry)}
         >
             {entry.options.map((option) => {
                 const checked = option.value === entry.value;
