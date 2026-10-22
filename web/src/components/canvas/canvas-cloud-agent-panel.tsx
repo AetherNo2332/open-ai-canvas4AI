@@ -1012,6 +1012,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                 Record<`--${string}`, string>
                         }
                         aria-label="Agent 工作台"
+                        data-popover-anchor-container
                         data-canvas-no-zoom
                         data-canvas-wheel-scroll
                         {...panelLayout.pointerHandlers}
@@ -1180,7 +1181,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
                                         references={[...references, ...buildSkillMentionReferences(installedSkills)]}
                                         slashSkills={installedSkills}
                                         includeAssetLibrary={false}
-                                        submitAccessory={<AgentContextRing view={presentAgentContextUsage(contextUsage)} />}
+                                        submitAccessory={<AgentContextRing view={presentAgentContextUsage(contextUsage)} theme={theme} />}
                                         footer={connectorsVisible ? <AgentConnectorsBar onClose={() => setConnectorsVisible(false)} /> : null}
                                         left={
                                             <ComposerControls
