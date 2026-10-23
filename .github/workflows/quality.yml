@@ -221,7 +221,7 @@ jobs:
       # These checks exercise deployment commands with mocks. The following step
       # is the real cross-process acceptance against deploy + build Compose.
       - name: Check deployment commands and smoke isolation
-        run: python3 -m unittest scripts/test_production_deployment.py scripts/test_agent_parity_container_commands.py scripts/test_production_agent_smoke.py
+        run: python3 -B -m unittest scripts/test_production_deployment.py scripts/test_agent_parity_container_commands.py scripts/test_production_agent_smoke.py scripts/test_install_agent_worker_id.py
       - name: Run real production Agent smoke
         timeout-minutes: 30
         run: python3 scripts/verify-production-agent-smoke.py --output "$RUNNER_TEMP/production-agent-smoke/report.json"

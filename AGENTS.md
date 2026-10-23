@@ -159,7 +159,7 @@
 - 前端：`cd web && bun run build`；专项测试用 `bun test ...`。UI 退场规则用 `bun run lint`（只禁 antd Empty 和静态 `Modal.confirm`，不是风格检查）。
 - 后端：`cd backend && go test ./...`；涉及 PostgreSQL、资源、任务或权限时补对应集成/冒烟路径。
 - 增量治理：`go test ./internal/architecture` 与 handler 的 OpenAPI 合同测试；baseline 必须对应精确规则和位置，不能自动接纳新违规。CI 分别验证锁版本分析器拒绝负例，保留已有工具 AST/制品与 Pi 合同检查。
-- 部署脚本：`python -B -m unittest scripts.test_production_deployment scripts.test_agent_parity_container_commands scripts.test_production_agent_smoke` 只检查隔离命令和配置；真实跨进程入口是 `scripts/verify-production-agent-smoke.py`。运行容器前检查项目、挂载、端口和数据范围，不能把静态检查当成生产验收。
+- 部署脚本：`python -B -m unittest scripts.test_production_deployment scripts.test_agent_parity_container_commands scripts.test_production_agent_smoke scripts.test_install_agent_worker_id` 只检查隔离命令、配置和身份边界；真实跨进程入口是 `scripts/verify-production-agent-smoke.py`。运行容器前检查项目、挂载、端口和数据范围，不能把静态检查当成生产验收。
 - 云端 Agent：前端事件流和审批路径依赖后端 `/api/agent` 接口；在该接口实现后补充后端冒烟、Worker 运行和 SSE 断线重连验证。
 - 文档站：`cd docs && bun run types:check` 或 `bun run build`。
 - 版本与更新日志：`node scripts/changelog.mjs --check`（与 CI 的 `Changelog entry` 任务同款）；打 tag 前确认根 `VERSION` 与 `CHANGELOG.md` 里的 `## <VERSION>` 行完全一致（`publish-images.yml` 直接用它做发布门禁和 Release 说明）。
