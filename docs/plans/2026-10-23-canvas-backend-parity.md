@@ -39,10 +39,11 @@ Interfaces: GET /agent/conversations?canvasId&before&limit；GET /agent/conversa
 - [ ] 补跨设备空缓存发现、分页、去重、过期父轮、未知POST和草稿保护行为测试；运行专项并独立review。
 
 ## Task 3: 项目资产关联持久重试
-Files: web/lib/canvas/project-asset-link-queue.ts、services/project-asset-sync.ts、user-data-sync.ts及必要调用方与测试。
-Interfaces: saveCanvasNodeAsAsset返回新增syncPending；持久记录按账号scope隔离。
+Files: web/lib/canvas/project-asset-link-queue.ts、services/project-asset-sync.ts、user-data-sync.ts及必要调用方与测试；后端新增项目素材关系同步端点与事务仓储方法。
+Interfaces: saveCanvasNodeAsAsset返回新增syncPending；持久记录按账号scope隔离；项目关系同步使用Project.Revision条件写入，阻止跨标签旧请求晚到后覆盖新意图。
 - [ ] 适配cd694236持久队列、幂等去重、分类/移动恢复、退避/登录/上线重试。
 - [ ] 保存成功与关联待同步分开呈现，保留现有取消和删除语义。
+- [ ] 队列意图token不复用；既有云端素材正文不被关联恢复覆盖；永久阻塞明确显示并支持手动重试。
 - [ ] 覆盖断线刷新、换账号、相同意图合并与不可重试目标；有限Bun专项和review。
 
 ## Task 4: OSS附件隔离、展示签名窗及CDN下载

@@ -9,7 +9,7 @@ import { getActiveUserScope } from "@/lib/user-scope";
 import { preserveCanvasSyncDraft, readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { appQueryClient } from "@/lib/query-client";
 import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
-import { parseAssetRecordList } from "@/lib/asset-record";
+import { parseAssetRecord, parseAssetRecordList } from "@/lib/asset-record";
 import { assetForRemoteSync } from "@/lib/asset-remote-sync";
 import type { Asset } from "@/stores/use-asset-store";
 import { flushAssetStorePersistence, useAssetStore } from "@/stores/use-asset-store";
@@ -48,13 +48,84 @@ export async function initializeRemoteUserDataSession(userId: string) {
         activeRemoteUserId = userId;
         incrementalSession = true;
         acknowledgedProjects = new Map(useCanvasStore.getState().projects.map((project) => [project.id, project]));
-        const pendingAssetIds = getActiveUserScope() === userId
-            ? new Set((await createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(userId), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, userId).list()).map((entry) => entry.assetId))
-            : new Set<string>();
+        const pendingQueue = createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(userId), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, userId);
+        const pendingEntries = getActiveUserScope() === userId ? await pendingQueue.list() : [];
+        const pendingAssetIds = new Set(pendingEntries.map((entry) => entry.assetId));
         acknowledgedAssets = new Map(useAssetStore.getState().assets.filter((asset) => !pendingAssetIds.has(asset.id)).map((asset) => [asset.id, asset]));
+        // A pending relation is not proof that its asset body is new. Adopt an
+        // existing remote entity before any automatic whole-asset save runs.
+        if (typeof navigator === "undefined" || navigator.onLine !== false) {
+            for (const assetId of pendingAssetIds) {
+                const exists = await recoverProjectLinkAsset(assetId, "check");
+                const entries = pendingEntries.filter((entry) => entry.assetId === assetId);
+                if (exists) for (const entry of entries) await pendingQueue.markAssetPersisted(entry);
+                else if (!entries.some((entry) => entry.createAssetIfMissing === true)) {
+                    const local = useAssetStore.getState().assets.find((asset) => asset.id === assetId);
+                    if (local) acknowledgedAssets.set(assetId, local);
+                }
+            }
+        } else {
+            for (const asset of useAssetStore.getState().assets) {
+                if (pendingAssetIds.has(asset.id) && !pendingEntries.some((entry) => entry.assetId === asset.id && entry.createAssetIfMissing === true)) acknowledgedAssets.set(asset.id, asset);
+            }
+        }
         remoteUserDataPhase = "ready";
     });
     notifyRemoteUserDataReady();
+}
+
+async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create" | "existing", projectId?: string) {
+    const epoch = sessionEpoch;
+    const scope = getActiveUserScope();
+    const local = useAssetStore.getState().assets.find((asset) => asset.id === assetId);
+    const unchanged = () => {
+        if (epoch !== sessionEpoch || scope !== getActiveUserScope()) throw new DOMException("账号已切换", "AbortError");
+        if (useAssetStore.getState().assets.find((asset) => asset.id === assetId) !== local) throw new Error("素材仍在编辑，请保存后重试项目关联");
+    };
+    let remote: Asset;
+    try {
+        const result = await getRemoteAsset(assetId);
+        unchanged();
+        remote = parseAssetRecord(result.asset);
+        if (remote.id !== assetId) throw new Error("云端素材标识不匹配，已停止同步");
+    } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) throw error;
+        unchanged();
+        if (mode === "check") return false;
+        if (mode === "existing") throw Object.assign(new Error("云端素材已删除或无法确认其创建来源，已停止自动重建；请另存为新素材或放弃此关联待办"), { permanent: true });
+        if (!local) throw Object.assign(new Error("素材已删除，无法关联到项目"), { permanent: true });
+        const payload = await ensureRemoteResourceReferences(assetForRemoteSync(local), new Map());
+        unchanged();
+        await upsertRemoteAsset(payload);
+        unchanged();
+        acknowledgedAssets.set(assetId, local);
+        verifiedAssets.add(assetId);
+        return true;
+    }
+    if (projectId) {
+        const projectIds = Array.isArray(remote.metadata?.projectIds) ? remote.metadata.projectIds.filter((id): id is string => typeof id === "string") : [];
+        remote = { ...remote, metadata: { ...remote.metadata, projectIds: [...new Set([...projectIds, projectId])] } } as Asset;
+    }
+    acknowledgedAssets.set(assetId, remote);
+    verifiedAssets.add(assetId);
+    useAssetStore.setState((state) => ({ assets: [...state.assets.filter((asset) => asset.id !== assetId), remote] }));
+    return true;
+}
+
+/** Relation recovery only creates a body after a confirmed404; existing bodies are read-only. */
+export async function prepareRemoteAssetForProjectLink(assetId: string, createIfMissing = false) {
+    await withRemoteUserDataSyncExclusive(async () => {
+        requireRemoteUserDataBaseline();
+        await recoverProjectLinkAsset(assetId, createIfMissing ? "create" : "existing");
+    });
+}
+
+/** Refresh the persisted relation result without PUTting cached title/body/metadata. */
+export async function refreshRemoteAssetAfterProjectLink(assetId: string, projectId: string) {
+    await withRemoteUserDataSyncExclusive(async () => {
+        requireRemoteUserDataBaseline();
+        await recoverProjectLinkAsset(assetId, "existing", projectId);
+    });
 }
 
 function liveCanvasIfUnchanged(id: string, snapshot: CanvasProject | null | undefined) {
@@ -340,15 +411,23 @@ export async function syncRemoteUserData(userId?: string | null) {
             const remoteAssetIds = new Set(remoteAssets.map((asset) => asset.id));
             // A local asset with a durable pending project link must survive the login snapshot;
             // otherwise refresh would erase the target before its queued link can resume.
-            const pendingAssetIds = getActiveUserScope() === activeRemoteUserId
-                ? new Set((await createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(activeRemoteUserId), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, activeRemoteUserId).list()).map((entry) => entry.assetId))
-                : new Set<string>();
+            const pendingQueue = createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(activeRemoteUserId), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, activeRemoteUserId);
+            const pendingEntries = getActiveUserScope() === activeRemoteUserId
+                ? await pendingQueue.list()
+                : [];
+            for (const entry of pendingEntries) {
+                if (remoteAssetIds.has(entry.assetId)) await pendingQueue.markAssetPersisted(entry);
+            }
+            const pendingAssetIds = new Set(pendingEntries.map((entry) => entry.assetId));
             const pendingLocalAssets = useAssetStore.getState().assets.filter((asset) => pendingAssetIds.has(asset.id) && !remoteAssetIds.has(asset.id));
             useCanvasStore.getState().replaceProjects(projects);
             useAssetStore.getState().replaceAssets([...remoteAssets, ...pendingLocalAssets]);
             await Promise.all([flushCanvasStorePersistence(), flushAssetStorePersistence()]);
             acknowledgedProjects = new Map(projects.map((project) => [project.id, project]));
             acknowledgedAssets = new Map(remoteAssets.map((asset) => [asset.id, asset]));
+            for (const asset of pendingLocalAssets) {
+                if (!pendingEntries.some((entry) => entry.assetId === asset.id && entry.createAssetIfMissing === true)) acknowledgedAssets.set(asset.id, asset);
+            }
             remoteUserDataPhase = "ready";
         } catch (error) {
             remoteUserDataPhase = "failed";

@@ -1,3 +1,5 @@
+import { nanoid } from "nanoid";
+
 export const CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY = "yingce:pending-canvas-project-asset-links";
 
 export type PendingCanvasProjectAssetLink = {
@@ -5,13 +7,18 @@ export type PendingCanvasProjectAssetLink = {
     domainProjectId: string;
     category?: string;
     folderId?: string;
+    /** Only a newly created local body can be uploaded after an asset404. */
+    createAssetIfMissing?: boolean;
     attempts: number;
     nextAttemptAt: number;
     revision: number;
-    blockedReason?: "auth";
+    /** Completion identity survives retries and is never reused after deletion. */
+    intentToken?: string;
+    blockedReason?: "auth" | "permanent";
+    blockedMessage?: string;
 };
 
-export type CanvasProjectAssetLinkRequest = Pick<PendingCanvasProjectAssetLink, "assetId" | "domainProjectId" | "category" | "folderId">;
+export type CanvasProjectAssetLinkRequest = Pick<PendingCanvasProjectAssetLink, "assetId" | "domainProjectId" | "category" | "folderId" | "createAssetIfMissing">;
 
 type Storage = {
     getItem(name: string): string | null | Promise<string | null>;
@@ -43,7 +50,10 @@ function validEntry(value: unknown): value is PendingCanvasProjectAssetLink {
         typeof entry.domainProjectId === "string" && !!entry.domainProjectId &&
         (entry.category === undefined || typeof entry.category === "string") &&
         (entry.folderId === undefined || typeof entry.folderId === "string") &&
-        (entry.blockedReason === undefined || entry.blockedReason === "auth") &&
+        (entry.createAssetIfMissing === undefined || typeof entry.createAssetIfMissing === "boolean") &&
+        (entry.intentToken === undefined || typeof entry.intentToken === "string" && !!entry.intentToken) &&
+        (entry.blockedReason === undefined || entry.blockedReason === "auth" || entry.blockedReason === "permanent") &&
+        (entry.blockedMessage === undefined || typeof entry.blockedMessage === "string") &&
         Number.isSafeInteger(entry.attempts) && entry.attempts! >= 0 &&
         Number.isFinite(entry.nextAttemptAt) && Number.isSafeInteger(entry.revision) && entry.revision! > 0;
 }
@@ -79,30 +89,38 @@ export function createCanvasProjectAssetLinkQueue(storage: Storage, storageKey: 
     }
     return {
         list: () => serialize(read),
-        upsert: (request: CanvasProjectAssetLinkRequest) => mutate((entries) => {
+        upsert: (request: CanvasProjectAssetLinkRequest, options: { retryBlocked?: boolean } = {}) => mutate((entries) => {
             if (!request.assetId || !request.domainProjectId) throw new Error("项目资产关联缺少目标标识");
             const index = entries.findIndex((entry) => identity(entry) === identity(request));
             const previous = entries[index];
             const category = request.category === undefined ? previous?.category : request.category;
             const folderId = request.folderId === undefined ? previous?.folderId : request.folderId;
-            if (previous && previous.category === category && previous.folderId === folderId) return { result: previous, changed: false };
+            if (previous && previous.category === category && previous.folderId === folderId && !(options.retryBlocked && (previous.blockedReason || previous.nextAttemptAt === Number.MAX_SAFE_INTEGER))) return { result: previous, changed: false };
             const next: PendingCanvasProjectAssetLink = {
                 assetId: request.assetId, domainProjectId: request.domainProjectId, category, folderId,
-                attempts: 0, nextAttemptAt: 0, revision: (previous?.revision || 0) + 1,
+                createAssetIfMissing: previous ? previous.createAssetIfMissing === true : request.createAssetIfMissing === true,
+                attempts: 0, nextAttemptAt: 0, revision: (previous?.revision || 0) + 1, intentToken: nanoid(),
             };
             if (index < 0) entries.push(next);
             else entries[index] = next;
             return { result: next, changed: true };
         }),
-        update: (entry: PendingCanvasProjectAssetLink, changes: Pick<PendingCanvasProjectAssetLink, "attempts" | "nextAttemptAt"> & { blockedReason?: "auth" }) => mutate((entries) => {
-            const index = entries.findIndex((candidate) => identity(candidate) === identity(entry) && candidate.revision === entry.revision);
+        markAssetPersisted: (entry: PendingCanvasProjectAssetLink) => mutate((entries) => {
+            const current = entries.find((candidate) => identity(candidate) === identity(entry) && candidate.intentToken === entry.intentToken && candidate.revision === entry.revision);
+            if (!current || current.createAssetIfMissing === false) return { result: undefined, changed: false };
+            // Narrow creation permission without changing the relationship's completion identity.
+            current.createAssetIfMissing = false;
+            return { result: undefined, changed: true };
+        }),
+        update: (entry: PendingCanvasProjectAssetLink, changes: Pick<PendingCanvasProjectAssetLink, "attempts" | "nextAttemptAt"> & Pick<PendingCanvasProjectAssetLink, "blockedReason" | "blockedMessage">) => mutate((entries) => {
+            const index = entries.findIndex((candidate) => identity(candidate) === identity(entry) && candidate.intentToken === entry.intentToken && candidate.revision === entry.revision);
             if (index < 0) return { result: undefined, changed: false };
-            const next = { ...entries[index], ...changes, blockedReason: changes.blockedReason, revision: entries[index].revision + 1 };
+            const next = { ...entries[index], ...changes, blockedReason: changes.blockedReason, blockedMessage: changes.blockedMessage, revision: entries[index].revision + 1 };
             entries[index] = next;
             return { result: next, changed: true };
         }),
         remove: (entry: PendingCanvasProjectAssetLink) => mutate((entries) => {
-            const index = entries.findIndex((candidate) => identity(candidate) === identity(entry) && candidate.revision === entry.revision);
+            const index = entries.findIndex((candidate) => identity(candidate) === identity(entry) && candidate.intentToken === entry.intentToken && candidate.revision === entry.revision);
             if (index < 0) return { result: false, changed: false };
             entries.splice(index, 1);
             return { result: true, changed: true };

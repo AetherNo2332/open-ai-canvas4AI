@@ -4,7 +4,7 @@ import localforage from "localforage";
 import { CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, createCanvasProjectAssetLinkQueue } from "@/lib/canvas/project-asset-link-queue";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { apiClient } from "@/services/api/request";
-import { resetRemoteUserDataSync, syncRemoteUserData } from "@/services/user-data-sync";
+import { initializeRemoteUserDataSession, resetRemoteUserDataSync, saveRemoteUserDataNow, syncRemoteUserData } from "@/services/user-data-sync";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 const originalWindow = globalThis.window;
@@ -67,4 +67,24 @@ test("another account's queued asset cannot survive the current account snapshot
     await syncRemoteUserData("owner-b");
 
     expect(useAssetStore.getState().assets).toEqual([]);
+});
+
+test("login recovery of an existing pending asset adopts cloud content instead of overwriting it", async () => {
+    installSnapshot("owner-existing");
+    const cached = { ...localAsset("asset"), title: "old cached title", updatedAt: "2026-10-21T00:00:00Z" };
+    const cloud = { ...localAsset("asset"), title: "new cloud title", data: { content: "new cloud content" }, metadata: { note: "new cloud metadata" } } as Asset;
+    useAssetStore.getState().replaceAssets([cached]);
+    await createCanvasProjectAssetLinkQueue(localForageStorageForScope("owner-existing"), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY)
+        .upsert({ assetId: "asset", domainProjectId: "project", folderId: "new-folder" });
+    const calls: string[] = [];
+    apiClient.defaults.adapter = async (config) => {
+        calls.push(`${config.method} ${config.url}`);
+        return { data: { code: 0, data: { asset: cloud }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+
+    await initializeRemoteUserDataSession("owner-existing");
+    await saveRemoteUserDataNow([]);
+
+    expect(calls).toEqual(["get /assets/asset"]);
+    expect(useAssetStore.getState().assets[0]).toEqual(cloud);
 });

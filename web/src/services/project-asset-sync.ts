@@ -5,16 +5,15 @@ import { projectAssetLinkStorageForScope } from "@/lib/canvas/project-asset-link
 import { appQueryClient } from "@/lib/query-client";
 import { parseBackendGenerationResult, type BackendGenerationResult } from "@/services/api/generation-task";
 import { ApiError } from "@/services/api/request";
-import { linkProjectAsset, moveProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
+import { getProjectAssetSyncBaseline, syncProjectAssetRelation } from "@/services/api/projects";
 import { queryGenerationTask, type GenerationTask, type GenerationTaskOutput } from "@/services/api/task-center";
 import { createGenerationTaskMaterializer, createIdempotentMaterializeOutput, type MaterializeGenerationTaskOutput } from "@/services/generation-task-materializer";
 import { uploadGeneratedAssetToConfiguredSources } from "@/services/external-asset-sources";
 import { createProviderNeutralGenerationTaskEffectStore } from "@/services/provider-neutral-generation-effects";
-import { hasRemoteUserDataSyncSession, loadAssetsForUse, saveRemoteUserDataNow, subscribeRemoteUserDataReady, subscribeRemoteAssetDeletion } from "@/services/user-data-sync";
+import { hasRemoteUserDataSyncSession, loadAssetsForUse, prepareRemoteAssetForProjectLink, refreshRemoteAssetAfterProjectLink, saveRemoteUserDataNow, subscribeRemoteUserDataReady, subscribeRemoteAssetDeletion } from "@/services/user-data-sync";
 import { getActiveUserScope } from "@/lib/user-scope";
-import { normalizeAssetCategory } from "@/lib/asset-category";
 import { runGenerationConsumer } from "@/services/generation-consumer-lifecycle";
-import { flushAssetStorePersistence, useAssetStore, type AssetCategory, type AssetStatus } from "@/stores/use-asset-store";
+import { flushAssetStorePersistence, useAssetStore, type AssetCategory } from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
 
 function throwIfAborted(signal?: AbortSignal) {
@@ -142,7 +141,7 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
     // A queue entry must never outlive the local asset it describes after a refresh.
     await flushAssetStorePersistence();
     throwIfAborted(options.signal);
-    const sync = await syncAssetToProject(asset.id, options.domainProjectId, declaredCategory, options.folderId, options.signal);
+    const sync = await syncAssetToProject(asset.id, options.domainProjectId, declaredCategory, options.folderId, options.signal, options.source === "canvas-manual", created);
     return { assetId: asset.id, created, linkedToProject: sync.linked, syncPending: sync.pending };
 }
 
@@ -186,53 +185,41 @@ async function performProjectAssetLink(job: PendingCanvasProjectAssetLink, scope
         throwIfAborted(signal);
         if (scope !== getActiveUserScope()) throw new DOMException("账号已切换", "AbortError");
     };
+    const isCurrent = async () => (await queueForScope(scope).list()).some((entry) => entry.assetId === job.assetId && entry.domainProjectId === job.domainProjectId && entry.intentToken === job.intentToken && entry.revision === job.revision);
     ensureScope();
-    let asset = useAssetStore.getState().assets.find((candidate) => candidate.id === job.assetId);
-    if (!asset) {
+    if (!(await isCurrent())) return false;
+    // A relation retry may create a missing body, but never overwrite an existing body.
+    await prepareRemoteAssetForProjectLink(job.assetId, job.createAssetIfMissing === true);
+    await queueForScope(scope).markAssetPersisted(job);
+    ensureScope();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const baseline = await getProjectAssetSyncBaseline(job.domainProjectId, job.assetId, signal);
+        ensureScope();
+        // This check must follow GET: an old GET can finish after the new intent was committed.
+        if (!(await isCurrent())) return false;
+        if (!Number.isSafeInteger(baseline.projectRevision) || baseline.projectRevision < 0) throw new Error("项目同步缺少有效版本，已停止关系写入");
         try {
-            await loadAssetsForUse([job.assetId]);
+            await syncProjectAssetRelation(job.domainProjectId, job.assetId, {
+                expectedProjectRevision: baseline.projectRevision,
+                category: job.category as AssetCategory | undefined,
+                folderId: job.folderId,
+            }, signal);
+            ensureScope();
+            await refreshRemoteAssetAfterProjectLink(job.assetId, job.domainProjectId);
+            ensureScope();
+            return true;
         } catch (error) {
-            if (error instanceof ApiError || (error instanceof DOMException && error.name === "AbortError")) throw error;
-            throw Object.assign(new Error("素材不存在或无权访问，无法关联到项目"), { permanent: true, cause: error });
+            if (!(error instanceof ApiError) || error.status !== 409 || error.reason !== "project_asset_sync_conflict") throw error;
+            ensureScope();
+            if (!(await isCurrent())) return false;
         }
-        ensureScope();
-        asset = useAssetStore.getState().assets.find((candidate) => candidate.id === job.assetId);
     }
-    if (!asset) throw Object.assign(new Error("素材已删除，无法关联到项目"), { permanent: true });
-    const category = job.category as AssetCategory | undefined;
-    const linkedProjectIds = Array.isArray(asset.metadata?.projectIds) ? asset.metadata.projectIds.filter((id): id is string => typeof id === "string") : [];
-    // The remote asset record must exist before the project link is created.
-    await saveRemoteUserDataNow([]);
-    ensureScope();
-    let linked;
-    if (linkedProjectIds.includes(job.domainProjectId)) {
-        if (category) linked = (await updateProjectAssetCategory(job.domainProjectId, asset.id, category, signal)).asset;
-        if (job.folderId !== undefined) linked = (await moveProjectAsset(job.domainProjectId, asset.id, job.folderId, signal)).asset;
-    } else {
-        linked = (await linkProjectAsset(job.domainProjectId, {
-            assetId: asset.id,
-            category: normalizeAssetCategory(category || asset.category),
-            folderId: job.folderId,
-            source: "canvas",
-        }, signal)).asset;
-        ensureScope();
-        if (category && linked.category !== category) linked = (await updateProjectAssetCategory(job.domainProjectId, asset.id, category, signal)).asset;
-        if (job.folderId !== undefined && (linked.folderId || "") !== job.folderId) linked = (await moveProjectAsset(job.domainProjectId, asset.id, job.folderId, signal)).asset;
-    }
-    ensureScope();
-    const current = useAssetStore.getState().assets.find((candidate) => candidate.id === asset.id);
-    if (!current) throw Object.assign(new Error("素材已删除，无法关联到项目"), { permanent: true });
-    useAssetStore.getState().updateAsset(asset.id, {
-        ...(linked ? { category: normalizeAssetCategory(linked.category), status: linked.status as AssetStatus, primaryVersionId: linked.primaryVersionId } : {}),
-        metadata: { ...current.metadata, projectIds: [...new Set([...linkedProjectIds, job.domainProjectId])] },
-    });
-    await saveRemoteUserDataNow([]);
-    ensureScope();
+    throw new ApiError("项目关系正在被其他窗口更新，稍后自动重试", { status: 409, reason: "project_asset_sync_conflict", retryable: true });
 }
 
-async function attemptProjectAssetLink(job: PendingCanvasProjectAssetLink, scope: string, signal?: AbortSignal) {
+async function attemptProjectAssetLink(job: PendingCanvasProjectAssetLink, scope: string, signal?: AbortSignal, flights = linkFlights) {
     const key = `${scope}\0${job.domainProjectId}\0${job.assetId}`;
-    const existing = linkFlights.get(key);
+    const existing = flights.get(key);
     if (existing) return existing;
     const queue = queueForScope(scope);
     const operation = (async () => {
@@ -240,7 +227,10 @@ async function attemptProjectAssetLink(job: PendingCanvasProjectAssetLink, scope
         if (scope !== getActiveUserScope()) throw new DOMException("账号已切换", "AbortError");
         if (!hasRemoteUserDataSyncSession() || !isOnline()) return { linked: false, pending: true };
         try {
-            await performProjectAssetLink(job, scope, signal);
+            if (!(await performProjectAssetLink(job, scope, signal))) {
+                await scheduleNextRetry(scope);
+                return { linked: false, pending: (await queue.list()).some((entry) => entry.assetId === job.assetId && entry.domainProjectId === job.domainProjectId) };
+            }
             if (!(await queue.remove(job))) {
                 await scheduleNextRetry(scope);
                 return { linked: false, pending: true };
@@ -262,25 +252,36 @@ async function attemptProjectAssetLink(job: PendingCanvasProjectAssetLink, scope
                 await scheduleNextRetry(scope);
                 return { linked: false, pending: true };
             }
-            await queue.update(job, { attempts: job.attempts, nextAttemptAt: blockedRetryAt });
+            const reason = error instanceof Error ? error.message : "项目关联失败";
+            await queue.update(job, { attempts: job.attempts, nextAttemptAt: blockedRetryAt, blockedReason: "permanent", blockedMessage: reason });
             await scheduleNextRetry(scope);
-            throw error;
+            throw new Error(`素材已保存到本地，项目关联已暂停：${reason}。修复目标或权限后，再次点击保存可重试`);
         }
     })();
-    linkFlights.set(key, operation);
+    flights.set(key, operation);
     try { return await operation; }
-    finally { if (linkFlights.get(key) === operation) linkFlights.delete(key); }
+    finally { if (flights.get(key) === operation) flights.delete(key); }
 }
 
-export async function retryPendingCanvasProjectAssetLinks(scope = getActiveUserScope()) {
+async function retryProjectAssetLinksWithFlights(scope: string, flights: typeof linkFlights) {
     if (scope !== getActiveUserScope() || !hasRemoteUserDataSyncSession() || !isOnline()) return;
     for (const entry of await queueForScope(scope).list()) {
         if (scope !== getActiveUserScope()) return;
         if (entry.nextAttemptAt > Date.now()) continue;
-        try { await attemptProjectAssetLink(entry, scope); }
+        try { await attemptProjectAssetLink(entry, scope, undefined, flights); }
         catch (error) { console.warn("云端项目资产关联需要处理", error); }
     }
     await scheduleNextRetry(scope);
+}
+
+/** One runner owns only its page's network flights; durable CAS coordinates other runners. */
+export function createCanvasProjectAssetLinkRetryRunner() {
+    const flights: typeof linkFlights = new Map();
+    return (scope = getActiveUserScope()) => retryProjectAssetLinksWithFlights(scope, flights);
+}
+
+export function retryPendingCanvasProjectAssetLinks(scope = getActiveUserScope()) {
+    return retryProjectAssetLinksWithFlights(scope, linkFlights);
 }
 
 async function resumePendingCanvasProjectAssetLinks(scope = getActiveUserScope()) {
@@ -298,16 +299,20 @@ subscribeRemoteAssetDeletion(async (scope, assetIds) => {
 });
 if (typeof window !== "undefined") window.addEventListener("online", () => void retryPendingCanvasProjectAssetLinks());
 
-async function syncAssetToProject(assetId: string, domainProjectId: string, category?: AssetCategory, folderId?: string, signal?: AbortSignal) {
+async function syncAssetToProject(assetId: string, domainProjectId: string, category?: AssetCategory, folderId?: string, signal?: AbortSignal, retryBlocked = false, createAssetIfMissing = false) {
     throwIfAborted(signal);
     const scope = getActiveUserScope();
     let job: PendingCanvasProjectAssetLink;
     try {
-        job = await queueForScope(scope).upsert({ assetId, domainProjectId, category, folderId });
+        // A deliberate save is the manual recovery action for permanently blocked intents.
+        job = await queueForScope(scope).upsert({ assetId, domainProjectId, category, folderId, createAssetIfMissing }, { retryBlocked });
     } catch (error) {
         throw new Error(`素材已保存在本地，但项目关联待办未能持久化：${error instanceof Error ? error.message : "请检查浏览器存储后重试"}`);
     }
     throwIfAborted(signal);
+    if (job.blockedReason === "permanent" || job.nextAttemptAt === blockedRetryAt && job.blockedReason !== "auth") {
+        throw new Error(`素材已保存到本地，项目关联已暂停：${job.blockedMessage || "目标暂不可用"}。修复目标或权限后，再次点击保存可重试`);
+    }
     if (job.nextAttemptAt > Date.now()) return { linked: false, pending: true };
     return attemptProjectAssetLink(job, scope, signal);
 }

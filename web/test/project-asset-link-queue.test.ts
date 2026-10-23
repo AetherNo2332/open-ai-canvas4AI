@@ -50,11 +50,11 @@ describe("project asset link journal", () => {
     test("reloads an interrupted category and folder intent from durable storage", async () => {
         const storage = memoryStorage();
         const first = createCanvasProjectAssetLinkQueue(storage, "user-a");
-        await first.upsert({ assetId: "asset", domainProjectId: "project", category: "character", folderId: "folder" });
+        const persisted = await first.upsert({ assetId: "asset", domainProjectId: "project", category: "character", folderId: "folder" });
         const restored = createCanvasProjectAssetLinkQueue(storage, "user-a");
         expect(await restored.list()).toEqual([{
             assetId: "asset", domainProjectId: "project", category: "character", folderId: "folder",
-            attempts: 0, nextAttemptAt: 0, revision: 1,
+            attempts: 0, nextAttemptAt: 0, revision: 1, intentToken: persisted.intentToken, createAssetIfMissing: false,
         }]);
     });
 
@@ -70,11 +70,24 @@ describe("project asset link journal", () => {
         expect(await queue.list()).toEqual([moved]);
     });
 
+    test("an old completion or failure cannot affect a removed and recreated intent", async () => {
+        const queue = createCanvasProjectAssetLinkQueue(memoryStorage(), "recreated");
+        const old = await queue.upsert({ assetId: "asset", domainProjectId: "project", folderId: "old" });
+        await queue.remove(old);
+        const current = await queue.upsert({ assetId: "asset", domainProjectId: "project", folderId: "new" });
+
+        expect(await queue.remove(old)).toBe(false);
+        expect(await queue.update(old, { attempts: 5, nextAttemptAt: Number.MAX_SAFE_INTEGER })).toBeUndefined();
+        expect(await queue.list()).toEqual([current]);
+    });
+
     test("a blocked target stays blocked until the intent changes", async () => {
         const queue = createCanvasProjectAssetLinkQueue(memoryStorage(), "user-a");
         const first = await queue.upsert({ assetId: "asset", domainProjectId: "project" });
         const blocked = await queue.update(first, { attempts: 1, nextAttemptAt: Number.MAX_SAFE_INTEGER });
         expect(await queue.upsert({ assetId: "asset", domainProjectId: "project" })).toEqual(blocked);
+        const manuallyRetried = await queue.upsert({ assetId: "asset", domainProjectId: "project" }, { retryBlocked: true });
+        expect(manuallyRetried.nextAttemptAt).toBe(0);
         const changed = await queue.upsert({ assetId: "asset", domainProjectId: "project", category: "prop" });
         expect(changed.nextAttemptAt).toBe(0);
     });

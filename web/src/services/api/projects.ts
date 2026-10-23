@@ -498,6 +498,16 @@ export function moveProjectAsset(projectId: string, assetId: string, folderId: s
     return http.patch<{ asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}`, { folderId }, { signal });
 }
 
+export type ProjectAssetSyncBaseline = { projectRevision: number; asset: ProjectAsset | null };
+
+export function getProjectAssetSyncBaseline(projectId: string, assetId: string, signal?: AbortSignal) {
+    return http.get<ProjectAssetSyncBaseline>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/sync`, { signal });
+}
+
+export function syncProjectAssetRelation(projectId: string, assetId: string, input: { expectedProjectRevision: number; category?: AssetCategory; folderId?: string }, signal?: AbortSignal) {
+    return http.put<{ projectRevision: number; asset: ProjectAsset }>(`/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/sync`, input, { signal });
+}
+
 export function listProjectAssetFolders(projectId: string, signal?: AbortSignal) {
     return http.get<{ folders: ProjectAssetFolder[] }>(`/projects/${encodeURIComponent(projectId)}/asset-folders`, { signal });
 }
