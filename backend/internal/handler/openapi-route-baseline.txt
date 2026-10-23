@@ -1,0 +1,1 @@
+# Existing undocumented public routes, by exact method and path. Remove rows as the spec catches up.

@@ -18,6 +18,17 @@ func TestAgentStepTimeoutEnvironmentBounds(t *testing.T) {
 	}
 }
 
+func TestAgentRequestedStepLimit(t *testing.T) {
+	for _, item := range []struct{ requested, want int }{
+		{-1, 0}, {0, 0}, {1, 1}, {MaxRuntimeAgentStepsPerRun, MaxRuntimeAgentStepsPerRun},
+		{MaxRuntimeAgentStepsPerRun + 1, MaxRuntimeAgentStepsPerRun},
+	} {
+		if got := AgentRequestedStepLimit(item.requested); got != item.want {
+			t.Errorf("requested %d: got %d, want %d", item.requested, got, item.want)
+		}
+	}
+}
+
 func TestAgentCallLimitsPolicyBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

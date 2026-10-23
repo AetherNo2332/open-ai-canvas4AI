@@ -53,7 +53,7 @@ func (limits cloudAgentCallLimits) withDefaults() cloudAgentCallLimits {
 }
 
 func (limits cloudAgentCallLimits) stepLimit(req CloudAgentRequest) int {
-	limit := cloudAgentStepLimit(req)
+	limit := platform.AgentRequestedStepLimit(req.Budget.MaxSteps)
 	if limits.StepsPerRun > 0 && (limit == 0 || limits.StepsPerRun < limit) {
 		return limits.StepsPerRun
 	}

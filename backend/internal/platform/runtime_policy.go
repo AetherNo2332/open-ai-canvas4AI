@@ -43,6 +43,15 @@ const (
 	MaxRuntimeAgentStepsPerRun          = 9_999
 )
 
+// AgentRequestedStepLimit maps an optional run request onto the platform cap.
+// Zero means the request adds no separate limit; the active runtime policy still applies.
+func AgentRequestedStepLimit(requested int) int {
+	if requested <= 0 {
+		return 0
+	}
+	return min(requested, MaxRuntimeAgentStepsPerRun)
+}
+
 // agentStepMaxOutputTokensDefault 读取部署级覆盖并按同一套范围夹取；环境变量无法表达"不限制"（0），
 // 那个档位只在管理端配置里设置。
 func agentStepMaxOutputTokensDefault() int {

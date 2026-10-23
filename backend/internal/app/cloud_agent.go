@@ -16,7 +16,6 @@ import (
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -59,15 +58,6 @@ type CloudAgentRequest struct {
 	// （text.references.maxImages > 0）重新推导并覆盖，客户端传入值一律被忽略；
 	// 必须持久化：工具授权校验每步都从落库状态重建，丢掉这个标记会让模型看得见工具
 	// 却被判为"未获本轮权限授权"。
-}
-
-const cloudAgentMaxStepsLimit = platform.MaxRuntimeAgentStepsPerRun
-
-func cloudAgentStepLimit(req CloudAgentRequest) int {
-	if req.Budget.MaxSteps > 0 {
-		return min(req.Budget.MaxSteps, cloudAgentMaxStepsLimit)
-	}
-	return 0
 }
 
 type cloudAgentState struct {

@@ -71,6 +71,33 @@ paths:
               schema: {type: string, format: binary}
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
+  /admin/settings/agent-web-search:
+    get:
+      tags: [admin]
+      summary: 读取联网搜索配置（管理员，密钥仅返回是否已配置）
+      responses:
+        '200': {description: 返回 setting，包含 enabled、hasApiKey、revision、updatedAt}
+        '403': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [admin]
+      summary: 保存联网搜索配置（管理员）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedRevision]
+              properties:
+                enabled: {type: boolean}
+                apiKey: {type: string, description: 仅写入，不在读取响应中返回}
+                clearApiKey: {type: boolean}
+                expectedRevision: {type: integer, format: int64, minimum: 0}
+      responses:
+        '200': {description: 返回更新后的脱敏 setting}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
   /admin/settings/agent-scheduler:
     get:
       tags: [admin]

@@ -68,3 +68,12 @@ test('terminal, lost-lease and shutdown control never overwrite the authoritativ
   assert.equal(calls,0);
   assert.doesNotMatch(workerErrorSummary(new Error('prompt=private password=secret')),/private|secret/);
 });
+for (const failure of [new Error('private prompt: secret'), new TypeError('private credential: secret'), 'private body']) {
+  test(`unclassified ${failure instanceof Error ? failure.name : 'throw'} reports a sanitized terminal reason`, async () => {
+    let reported = '';
+    await assert.rejects(runLeasedPiSession({failRun: async (_run, reason) => { reported = reason; }}, run,
+      new AbortController().signal, async () => { throw failure; }), e => e === failure);
+    assert.ok(reported);
+    assert.doesNotMatch(reported, /private|secret|credential/);
+  });
+}
