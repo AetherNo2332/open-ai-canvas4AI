@@ -13,6 +13,21 @@ import (
 func (r *Repository) CommandTransaction(ctx context.Context, fn func(*Repository) error) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return fn(r.transactionRepository(tx)) })
 }
+
+// CanvasAtomicWrite joins an Agent checkpoint transaction when present. Direct
+// callers get the same account/canvas lock and atomic document/receipt boundary.
+func (r *Repository) CanvasAtomicWrite(ctx context.Context, ownerID, canvasID string, fn func(*Repository) error) error {
+	apply := func(tx *Repository) error {
+		if err := tx.LockCanvasWrite(ownerID, canvasID); err != nil {
+			return err
+		}
+		return fn(tx)
+	}
+	if _, active := r.db.Statement.ConnPool.(gorm.TxCommitter); active {
+		return apply(r)
+	}
+	return r.CommandTransaction(ctx, apply)
+}
 func (r *Repository) CommandEpoch(ownerID, canvasID string) (*model.CanvasDocumentEpoch, error) {
 	var row model.CanvasDocumentEpoch
 	err := r.db.Where("owner_id = ? AND canvas_id = ?", ownerID, canvasID).First(&row).Error
@@ -60,6 +75,12 @@ func (r *Repository) SaveCommandVersions(rows []model.CanvasEntityVersion, recre
 func (r *Repository) CommandReceipt(key model.CanvasCommandReceipt) (*model.CanvasCommandReceipt, error) {
 	var row model.CanvasCommandReceipt
 	err := r.db.Where("owner_id = ? AND canvas_id = ? AND epoch = ? AND actor_id = ? AND client_id = ? AND operation_id = ?", key.OwnerID, key.CanvasID, key.Epoch, key.ActorID, key.ClientID, key.OperationID).First(&row).Error
+	return &row, err
+}
+
+func (r *Repository) CommandReceiptAnyEpoch(key model.CanvasCommandReceipt) (*model.CanvasCommandReceipt, error) {
+	var row model.CanvasCommandReceipt
+	err := r.db.Where("owner_id = ? AND canvas_id = ? AND actor_id = ? AND client_id = ? AND operation_id = ?", key.OwnerID, key.CanvasID, key.ActorID, key.ClientID, key.OperationID).Order("created_at desc").First(&row).Error
 	return &row, err
 }
 func (r *Repository) InsertCommandReceipt(row *model.CanvasCommandReceipt) error {

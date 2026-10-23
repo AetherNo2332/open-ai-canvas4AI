@@ -170,7 +170,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v8"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v10"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -314,12 +314,16 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 			"includeRelated":   map[string]any{"type": "boolean", "description": cloudAgentToolText("parameter_086")},
 		})
 		add("canvas_read_batch_table", cloudAgentToolText("canvas_read_batch_table"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_013")), "offset": map[string]any{"type": "integer", "minimum": 0}}, "nodeId")
+		readFields := append([]string{"durationSeconds"}, cloudAgentStoryboardTextFields...)
 		add("canvas_read_storyboard", cloudAgentToolText("canvas_read_storyboard"), map[string]any{
-			"nodeId": str(cloudAgentToolText("parameter_014")), "offset": map[string]any{"type": "integer", "minimum": 0},
-			"view":   map[string]any{"type": "string", "enum": []string{"creative", "summary", "bindings", "full"}, "description": "默认 creative：镜头创作、资产名称/版本及有效输入；summary 扫描缺口，bindings 排查底层引用，full 高级字段"},
-			"mode":   map[string]any{"type": "string", "enum": []string{"image", "video"}, "description": "按生成模式解析有效输入；video 遵守关键帧模式"},
-			"rows":   map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "summary/bindings 默认且最多100行；full 最多20行，默认1行"},
-			"rowIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 80}, "description": "可选真实行ID，与非零offset互斥"},
+			"operationIds": map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": map[string]any{"type": "string", "minLength": 8, "maxLength": 128}, "description": "中断恢复时查询稳定批次标识，返回已提交目标和待执行标识；实际剩余字段仍用 missingAnyFields 核对"},
+			"nodeId":       str(cloudAgentToolText("parameter_014")), "offset": map[string]any{"type": "integer", "minimum": 0},
+			"view":             map[string]any{"type": "string", "enum": []string{"creative", "summary", "bindings", "full"}, "description": "默认 creative：镜头创作、资产名称/版本及有效输入；summary 扫描缺口，bindings 排查底层引用，full 高级字段；指定 fields 时各视图均返回所选字段正文"},
+			"mode":             map[string]any{"type": "string", "enum": []string{"image", "video"}, "description": "按生成模式解析有效输入；video 遵守关键帧模式"},
+			"rows":             map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "非 full 默认且最多100行；full 最多20行，默认1行；实际分页受字节预算限制"},
+			"rowIds":           map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 80}, "description": "可选真实行ID，与非零offset互斥"},
+			"fields":           map[string]any{"type": "array", "minItems": 1, "maxItems": len(readFields), "uniqueItems": true, "items": map[string]any{"type": "string", "enum": readFields}, "description": "只投影所选创作字段，保留行标识和引用状态；长文本按 nextReads 读取原文，summary 指定本项也会返回正文"},
+			"missingAnyFields": map[string]any{"type": "array", "minItems": 1, "maxItems": len(readFields), "uniqueItems": true, "items": map[string]any{"type": "string", "enum": readFields}, "description": "筛出任一指定字段缺失或空白的行，时长缺失或非法也视为缺口；在 rowIds 选择后、分页前筛选，不代表生成被阻塞"},
 		}, "nodeId")
 
 	}
@@ -374,14 +378,18 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 			"y": map[string]any{"type": "number"},
 		}, "snapshotHash", "title", "rows")
 		add("canvas_edit_storyboard", cloudAgentToolText("canvas_edit_storyboard"), map[string]any{
-			"rowIds":       map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "update/remove/set_assets 可选多个真实行 ID，整批校验后一次写入；与 rowId 互斥"},
-			"assets":       cloudAgentStoryboardAssetsSchema(),
-			"references":   map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "set_references 整体替换共享输入；各行继承输入随之更新，显式行资产保留。可用唯一完整名称"},
-			"snapshotHash": str(cloudAgentToolText("parameter_049")),
-			"nodeId":       str(cloudAgentToolText("parameter_014")),
-			"action":       map[string]any{"type": "string", "enum": []string{"append", "update", "remove", "set_assets", "set_references", "bind_output", "unbind_output"}, "description": "append 单次一行；update 对全部 rowIds 应用同一 patch；set_assets 整行覆盖，漏传的旧行资产会移除；set_references 整体替换共享列表。整批原子；产物归属通常由生成管理"},
-			"rowId":        str(cloudAgentToolText("parameter_051")),
-			"patch":        cloudAgentStoryboardPatchSchema(),
+			"updates":            map[string]any{"type": "array", "minItems": 1, "maxItems": maxCloudAgentStoryboardRows, "items": map[string]any{"type": "object", "properties": map[string]any{"rowId": map[string]any{"type": "string", "minLength": 1}, "patch": cloudAgentStoryboardPatchSchema()}, "required": []string{"rowId", "patch"}, "additionalProperties": false}, "description": "batch_update：每个真实 rowId 对应自己的 patch；全部校验后一次提交，最多100项"},
+			"rows":               map[string]any{"type": "array", "minItems": 1, "maxItems": maxCloudAgentStoryboardRows, "items": cloudAgentStoryboardRowSchema(), "description": "append_rows：批量追加不同镜头，服务端分配行 ID；追加后总行数最多100"},
+			"rowIds":             map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "update/remove/set_assets 可选多个真实行 ID，整批校验后一次写入；与 rowId 互斥"},
+			"assets":             cloudAgentStoryboardAssetsSchema(),
+			"operationId":        map[string]any{"type": "string", "minLength": 8, "maxLength": 128, "description": "可选稳定批次标识；中断重试必须保持相同标识和相同操作参数。相同标识不重复执行，不同参数拒绝；新批次使用新标识"},
+			"storyboardRevision": map[string]any{"type": "string", "minLength": 1, "maxLength": 96, "description": "可选：复制该表读取/成功编辑回执的版本，仅用于纯创作字段 update/batch_update。包含全表、依赖资产和实体世代；无关布局不阻塞。同表或依赖变化仍冲突，省略沿用全画布 snapshotHash"},
+			"references":         map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1}, "description": "set_references 整体替换共享输入；各行继承输入随之更新，显式行资产保留。可用唯一完整名称"},
+			"snapshotHash":       str(cloudAgentToolText("parameter_049")),
+			"nodeId":             str(cloudAgentToolText("parameter_014")),
+			"action":             map[string]any{"type": "string", "enum": []string{"append", "append_rows", "update", "batch_update", "remove", "set_assets", "add_assets", "remove_assets", "upsert_assets", "set_references", "add_references", "remove_references", "bind_output", "unbind_output"}, "description": "append/append_rows 追加；update 同值补丁，batch_update 每行不同补丁；add_assets 增加且保留原资产，remove_assets 按节点及用途移除，upsert_assets 增加或改用途，set_assets 明确替换整行资产；add/remove_references 增减共享输入，set_references 明确替换。整批原子"},
+			"rowId":              str(cloudAgentToolText("parameter_051")),
+			"patch":              cloudAgentStoryboardPatchSchema(),
 			"referenceNodeIds": map[string]any{"type": "array", "maxItems": 100, "items": map[string]any{"type": "string", "minLength": 1},
 				"description": "set_references 与 references 二选一：整体替换共享列表并重建派生连线，显式行资产保留；[] 清空共享输入"},
 			"outputMode":   map[string]any{"type": "string", "enum": []string{"image", "video"}, "description": "绑定或解除产物归属的槽位"},

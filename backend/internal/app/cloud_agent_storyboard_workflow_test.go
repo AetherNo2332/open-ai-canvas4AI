@@ -23,7 +23,7 @@ func TestStoryboardWorkflowCompactContract(t *testing.T) {
 	if row["assets"] == nil {
 		t.Error("creative row needs business asset references")
 	}
-	for _, field := range []string{"camera", "motion", "emotion", "timeBeats", "continuityOut", "assetBindings", "characters"} {
+	for _, field := range []string{"assetBindings", "characters"} {
 		if row[field] != nil {
 			t.Errorf("mechanical or duplicate field %s remains in compact contract", field)
 		}
@@ -236,7 +236,7 @@ func TestStoryboardWorkflowConditionalArguments(t *testing.T) {
 		valid           bool
 	}{
 		{"canvas_create_storyboard", `{"snapshotHash":"h","title":"分镜","rows":[{"durationSeconds":5,"plotDescription":"进入教室","assets":[{"ref":"陈林","role":"character"}]}]}`, true},
-		{"canvas_create_storyboard", `{"snapshotHash":"h","title":"分镜","rows":[{"durationSeconds":5,"plotDescription":"进入教室","camera":"pan"}]}`, false},
+		{"canvas_create_storyboard", `{"snapshotHash":"h","title":"分镜","rows":[{"durationSeconds":5,"plotDescription":"进入教室","camera":"pan"}]}`, true},
 		{"canvas_create_storyboard", `{"snapshotHash":"h","title":"分镜","references":[],"referenceNodeIds":[],"rows":[{"durationSeconds":5,"plotDescription":"进入教室"}]}`, false},
 		{"canvas_edit_storyboard", `{"snapshotHash":"h","nodeId":"board","action":"set_assets","rowIds":["one","two"],"assets":[]}`, true},
 		{"canvas_edit_storyboard", `{"snapshotHash":"h","nodeId":"board","action":"update","rowIds":["one","two"],"patch":{"dialogue":"你好"}}`, true},

@@ -71,16 +71,11 @@ func resolveCloudAgentStoryboardGeneration(doc map[string]any, a cloudAgentMedia
 	}
 	a.ResolvedBindings = resolved.Bindings
 	a.ReferenceNodeIDs = []string{}
-	field := "imageGenerationPrompt"
 	if a.Mode == "video" {
-		field = "videoMotionPrompt"
 		seconds, _ := row["durationSeconds"].(float64)
 		a.Duration = int(seconds)
 	}
-	a.Prompt = strings.TrimSpace(stringValue(row[field]))
-	if a.Prompt == "" {
-		a.Prompt = strings.TrimSpace(stringValue(row["plotDescription"]))
-	}
+	a.Prompt, _ = cloudAgentStoryboardEffectivePrompt(row, a.Mode)
 	nodes := map[string]map[string]any{}
 	for _, node := range creationMaps(doc["nodes"]) {
 		nodes[stringValue(node["id"])] = node
@@ -105,6 +100,20 @@ func resolveCloudAgentStoryboardGeneration(doc map[string]any, a cloudAgentMedia
 		return a, tasks.Consumer{}, BadAuthRequest("参考节点最多 16 个；请在分镜中调整素材")
 	}
 	return a, tasks.Consumer{Kind: "storyboard", RowID: a.StoryboardRowID, Field: a.Mode + "NodeId", OutputNodeID: a.NodeID}, nil
+}
+
+func cloudAgentStoryboardEffectivePrompt(row map[string]any, mode string) (string, string) {
+	field := "imageGenerationPrompt"
+	if mode == "video" {
+		field = "videoMotionPrompt"
+	}
+	if prompt := strings.TrimSpace(stringValue(row[field])); prompt != "" {
+		return prompt, field
+	}
+	if prompt := strings.TrimSpace(stringValue(row["plotDescription"])); prompt != "" {
+		return prompt, "plotDescription"
+	}
+	return "", "none"
 }
 
 func cloudAgentMediaCallArguments(a cloudAgentMediaArgs) ([]byte, error) {
@@ -301,7 +310,11 @@ func prepareCanvasStoryboardInput(_ context.Context, repo *repository.Repository
 	if err = validateCloudAgentMediaReferences(a.Mode, refs); err != nil {
 		return req.Task, err
 	}
-	prompt, err := cloudAgentMediaReferencePrompt(a.Prompt, refs)
+	prompt, err := cloudAgentStoryboardProviderPrompt(a.Prompt, a.ResolvedBindings, refs)
+	if err != nil {
+		return req.Task, err
+	}
+	prompt, err = cloudAgentMediaReferencePrompt(prompt, refs)
 	if err != nil {
 		return req.Task, err
 	}

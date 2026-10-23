@@ -15,14 +15,26 @@ type cloudAgentStoryboardAsset struct {
 }
 
 // Provider call IDs may repeat in another model step. Resolve service-owned
-// node IDs before approval so replay and apply use the same durable identity.
+// identities before approval so replay and apply use the same durable identity.
 func cloudAgentResolveWorkflowIDs(userID, runID string, state *cloudAgentRuntime, call cloudAgentCall) (cloudAgentCall, error) {
-	if call.Function.Name != "canvas_create_storyboard" && call.Function.Name != "canvas_create_character" {
+	if call.Function.Name != "canvas_create_storyboard" && call.Function.Name != "canvas_create_character" && call.Function.Name != "canvas_edit_storyboard" {
 		return call, nil
 	}
 	var fields map[string]json.RawMessage
 	if err := decodeCloudAgentJSONObject(call.Function.Arguments, &fields); err != nil {
 		return call, cloudAgentJSONArgumentError(err)
+	}
+	if call.Function.Name == "canvas_edit_storyboard" {
+		var action string
+		if err := json.Unmarshal(fields["action"], &action); err != nil {
+			return call, cloudAgentJSONArgumentError(err)
+		}
+		if action == "append" || action == "append_rows" {
+			// These inputs are checkpointed while approval is pending. Rebuild the
+			// seed on restart without rewriting the original, schema-validated call.
+			call.storyboardMutationID = cloudAgentID(userID, fmt.Sprintf("storyboard-append:%s:%s:%d:%s:%s", state.Request.CanvasID, runID, state.Step, state.LastStepTaskID, call.ID))
+		}
+		return call, nil
 	}
 	var id string
 	if raw, exists := fields["nodeId"]; exists {
@@ -146,10 +158,10 @@ func cloudAgentNormalizeStoryboardPatch(doc, patch map[string]any) (map[string]a
 
 // Plan on a copy so one invalid target or reference cannot partially mutate a batch.
 func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, args cloudAgentStoryboardEditArgs, userID, callID string) ([]map[string]any, []string, error) {
-	if args.Action != "append" && args.Action != "update" && args.Action != "remove" && args.Action != "set_assets" {
+	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && !cloudAgentStoryboardAssetAction(args.Action) {
 		return nil, nil, BadAuthRequest("不支持的镜头编辑操作")
 	}
-	if args.References != nil || args.ReferenceNodeIDs != nil || args.OutputMode != "" || args.OutputNodeID != "" || (args.Action != "set_assets" && args.Assets != nil) {
+	if args.References != nil || args.ReferenceNodeIDs != nil || args.OutputMode != "" || args.OutputNodeID != "" || (!cloudAgentStoryboardAssetAction(args.Action) && args.Assets != nil) {
 		return nil, nil, BadAuthRequest("镜头编辑包含不适用于当前操作的参数")
 	}
 	raw, err := json.Marshal(rows)
@@ -159,6 +171,12 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 	next := []map[string]any{}
 	if err := json.Unmarshal(raw, &next); err != nil {
 		return nil, nil, err
+	}
+	if args.Action == "batch_update" || args.Action == "append_rows" {
+		return cloudAgentPlanStoryboardBatch(doc, next, args, userID, callID)
+	}
+	if args.Updates != nil || args.Rows != nil {
+		return nil, nil, BadAuthRequest("当前操作不接受 updates 或 rows")
 	}
 	ids := append([]string(nil), args.RowIDs...)
 	if args.RowID != "" {
@@ -193,7 +211,23 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 		patch = map[string]any{"assets": args.Assets}
 	}
 	fields := []string{}
-	if args.Action == "remove" {
+	if cloudAgentStoryboardAssetAction(args.Action) && args.Action != "set_assets" {
+		if len(args.Patch) > 0 || len(args.Assets) == 0 {
+			return nil, nil, BadAuthRequest("增量资产操作需要非空 assets，不接受 patch")
+		}
+		normalized, err := cloudAgentNormalizeStoryboardPatch(doc, map[string]any{"assets": args.Assets})
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, row := range next {
+			if selected[stringValue(row["id"])] {
+				if err := cloudAgentStoryboardAssetDelta(doc, row, creationMaps(normalized["assetBindings"]), args.Action); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+		fields = []string{"assetBindings", "characters"}
+	} else if args.Action == "remove" {
 		if len(patch) > 0 {
 			return nil, nil, BadAuthRequest("删除镜头不接受 patch")
 		}
@@ -228,23 +262,14 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 			for key, value := range normalized {
 				row[key] = value
 			}
-			row["id"] = cloudAgentID(userID, fmt.Sprintf("storyboard:%s:%s:%d", args.NodeID, callID, len(next)+1))
+			row["id"] = cloudAgentStoryboardAppendRowID(userID, args.NodeID, callID, next)
 			next = append(next, row)
 		} else {
 			for _, row := range next {
 				if !selected[stringValue(row["id"])] {
 					continue
 				}
-				for key, value := range normalized {
-					row[key] = value
-				}
-				// Validate the combined creative fields without treating persisted IDs,
-				// output ownership or legacy character metadata as editable fields.
-				creative := map[string]any{"durationSeconds": row["durationSeconds"], "plotDescription": stringValue(row["plotDescription"]), "videoMotionPrompt": stringValue(row["videoMotionPrompt"])}
-				if err := validateCloudAgentStoryboardRow(creative, true); err != nil {
-					return nil, nil, err
-				}
-				if err := validateCloudAgentStoryboardSourceRange(row); err != nil {
+				if err := cloudAgentApplyStoryboardRowPatch(row, normalized); err != nil {
 					return nil, nil, err
 				}
 			}
@@ -254,4 +279,122 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 		row["shotNumber"] = float64(index + 1)
 	}
 	return next, fields, nil
+}
+
+func cloudAgentApplyStoryboardRowPatch(row, patch map[string]any) error {
+	for key, value := range patch {
+		row[key] = value
+	}
+	// Persisted IDs, output ownership and legacy metadata are not editable fields.
+	creative := map[string]any{"durationSeconds": row["durationSeconds"], "plotDescription": stringValue(row["plotDescription"]), "videoMotionPrompt": stringValue(row["videoMotionPrompt"])}
+	if err := validateCloudAgentStoryboardRow(creative, true); err != nil {
+		return err
+	}
+	return validateCloudAgentStoryboardSourceRange(row)
+}
+
+func cloudAgentPlanStoryboardBatch(doc map[string]any, rows []map[string]any, args cloudAgentStoryboardEditArgs, userID, callID string) ([]map[string]any, []string, error) {
+	if args.RowID != "" || args.RowIDs != nil || args.Patch != nil {
+		return nil, nil, BadAuthRequest("批量操作不接受 rowId、rowIds 或 patch；请使用 updates 或 rows")
+	}
+	count, field := len(args.Updates), "updates"
+	if args.Action == "append_rows" {
+		count, field = len(args.Rows), "rows"
+		if args.Updates != nil {
+			return nil, nil, BadAuthRequest("append_rows 不接受 updates")
+		}
+		if len(rows)+count > maxCloudAgentStoryboardRows {
+			return nil, nil, cloudAgentFieldError("rows", "item_count", "rows 追加后分镜最多100行；整批未执行")
+		}
+	} else if args.Rows != nil {
+		return nil, nil, BadAuthRequest("batch_update 不接受 rows")
+	}
+	if count < 1 || count > maxCloudAgentStoryboardRows {
+		return nil, nil, cloudAgentFieldError(field, "item_count", field+" 必须包含1到100项；整批未执行")
+	}
+	if args.Action == "batch_update" {
+		ids := make([]string, count)
+		known, seen := map[string]bool{}, map[string]bool{}
+		for _, row := range rows {
+			known[stringValue(row["id"])] = true
+		}
+		badIndex := -1
+		for i, update := range args.Updates {
+			ids[i] = update.RowID
+			if badIndex < 0 && (!known[update.RowID] || seen[update.RowID]) {
+				badIndex = i
+			}
+			seen[update.RowID] = true
+		}
+		if err := validateCloudAgentStoryboardRowIDs(rows, ids, "updates"); err != nil {
+			path := fmt.Sprintf("updates[%d].rowId", badIndex)
+			if typed, ok := err.(*cloudAgentStoryboardRowIDError); ok {
+				typed.error = cloudAgentFieldError(path, "invalid_row_ids", path+" 不存在或重复；使用最新读取的 rowId；整批未执行")
+			}
+			return nil, nil, err
+		}
+	}
+	byID := map[string]map[string]any{}
+	for _, row := range rows {
+		byID[stringValue(row["id"])] = row
+	}
+	fields := map[string]bool{}
+	for i := 0; i < count; i++ {
+		path := fmt.Sprintf("rows[%d]", i)
+		var input map[string]any
+		if args.Action == "batch_update" {
+			input = args.Updates[i].Patch
+			path = fmt.Sprintf("updates[%d].patch", i)
+		} else {
+			input = args.Rows[i]
+		}
+		normalized, err := cloudAgentNormalizeStoryboardPatch(doc, input)
+		if err != nil {
+			return nil, nil, cloudAgentFieldError(path, "invalid_row", path+" 无效："+err.Error()+"；整批未执行")
+		}
+		if args.Action == "append_rows" {
+			err = validateCloudAgentStoryboardRow(normalized, true)
+			if err == nil {
+				row := cloudAgentStoryboardRowDefaults()
+				for key, value := range normalized {
+					row[key] = value
+				}
+				row["id"] = cloudAgentStoryboardAppendRowID(userID, args.NodeID, callID, rows)
+				row["shotNumber"] = float64(len(rows) + 1)
+				rows = append(rows, row)
+			}
+		} else {
+			err = cloudAgentApplyStoryboardRowPatch(byID[args.Updates[i].RowID], normalized)
+		}
+		if err != nil {
+			return nil, nil, cloudAgentFieldError(path, "invalid_row", path+" 无效："+err.Error()+"；整批未执行")
+		}
+		for name := range normalized {
+			fields[name] = true
+		}
+	}
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return rows, names, nil
+}
+
+func cloudAgentStoryboardAppendRowID(userID, nodeID, mutationID string, rows []map[string]any) string {
+	seed := fmt.Sprintf("storyboard:%s:%s:%d", nodeID, mutationID, len(rows)+1)
+	used := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		used[stringValue(row["id"])] = true
+	}
+	for attempt := 0; ; attempt++ {
+		candidateSeed := seed
+		if attempt > 0 {
+			candidateSeed = fmt.Sprintf("%s:collision:%d", seed, attempt)
+		}
+		id := cloudAgentID(userID, candidateSeed)
+		if !used[id] {
+			return id
+		}
+	}
 }

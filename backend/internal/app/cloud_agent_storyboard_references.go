@@ -90,7 +90,7 @@ func prepareCloudAgentStoryboardReferenceEdit(repo *repository.Repository, userI
 		return nil, cloudAgentSnapshotConflictError("画布已变化，请重新读取后修改引用")
 	}
 	if args.References != nil {
-		if args.Action != "set_references" || args.ReferenceNodeIDs != nil {
+		if !cloudAgentStoryboardSharedAction(args.Action) || args.ReferenceNodeIDs != nil {
 			return nil, BadAuthRequest("references 仅用于 set_references，且不能与 referenceNodeIds 同时提交")
 		}
 		args.ReferenceNodeIDs, err = cloudAgentResolveBusinessReferences(doc, args.References)
@@ -101,7 +101,7 @@ func prepareCloudAgentStoryboardReferenceEdit(repo *repository.Repository, userI
 	// 共享引用声明（set_references）是引用合同专属语义：历史画布必须先完成一次规范化，
 	// 否则服务端不会按字段派生托管连接。产物归属（bind_output／unbind_output）写的是
 	// 历史画布同样有效的行归属字段，不受这道门禁影响。
-	if args.Action == "set_references" {
+	if cloudAgentStoryboardSharedAction(args.Action) {
 		if err := validateCloudAgentReferenceMigration(doc); err != nil {
 			return nil, err
 		}
@@ -112,11 +112,40 @@ func prepareCloudAgentStoryboardReferenceEdit(repo *repository.Repository, userI
 	}
 	summary := ""
 	fields := []string{}
-	if args.Action == "set_references" {
+	if cloudAgentStoryboardSharedAction(args.Action) {
 		if args.RowID != "" || args.ReferenceNodeIDs == nil || len(args.ReferenceNodeIDs) > 100 || args.OutputMode != "" || args.OutputNodeID != "" {
 			return nil, BadAuthRequest("共享引用需要 referenceNodeIds，不接受行或输出参数")
 		}
-		board["referenceNodeIds"] = args.ReferenceNodeIDs
+		next := append([]string{}, cloudAgentStrings(board["referenceNodeIds"])...)
+		if args.Action == "set_references" {
+			next = args.ReferenceNodeIDs
+		} else {
+			if len(args.ReferenceNodeIDs) == 0 {
+				return nil, BadAuthRequest("增量共享引用需要非空 references")
+			}
+			if _, err = cloudAgentResolveBusinessReferences(doc, args.ReferenceNodeIDs); err != nil {
+				return nil, err
+			}
+			for _, id := range args.ReferenceNodeIDs {
+				if args.Action == "add_references" {
+					if !cloudAgentContainsString(next, id) {
+						next = append(next, id)
+					}
+				} else {
+					retained := []string{}
+					for _, old := range next {
+						if old != id {
+							retained = append(retained, old)
+						}
+					}
+					next = retained
+				}
+			}
+		}
+		if len(next) > 100 {
+			return nil, BadAuthRequest("共享引用最多100项")
+		}
+		board["referenceNodeIds"] = next
 		if _, err = references.Resolve(doc, references.Scope{Kind: "storyboard-context", NodeID: args.NodeID}, capability.BuiltinRegistry()); err != nil {
 			return nil, cloudAgentReferenceError(err)
 		}

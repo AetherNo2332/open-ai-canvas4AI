@@ -146,7 +146,7 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 			case !admission.Allowed:
 				writeFailed = true
 			case writeAdmitted:
-				admission = cloudAgentSkipCall(call, cloudAgentAdmissionSingleWrite, "本步已经执行了一个写入/生成调用，本调用已跳过；画布写入与生成每步只放行一个，请在下一步提交（并先重新读取画布拿到最新 snapshotHash）")
+				admission = cloudAgentSkipCall(call, cloudAgentAdmissionSingleWrite, "本模型步骤已放行一个写入/生成调用，本调用未执行；请在下一模型步骤单独提交，可复用成功回执的新 snapshotHash；仅在实际冲突或所需状态未知时重新读取目标并核对原操作")
 			default:
 				writeAdmitted = true
 			}

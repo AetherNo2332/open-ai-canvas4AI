@@ -753,7 +753,9 @@ func cloudAgentStoryboardState(storyboard map[string]any, offset int, mode cloud
 			switch value := row[key].(type) {
 			case string:
 				text := truncateRunes(value, min(textLimit, budget))
-				budget -= len([]rune(text))
+				// A display ellipsis can exhaust the final few runes. Remaining
+				// fields must keep valid empty previews rather than a negative limit.
+				budget = max(0, budget-len([]rune(text)))
 				item[key] = text
 				if text != value {
 					item[key+"Truncated"] = true

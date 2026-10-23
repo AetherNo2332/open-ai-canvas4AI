@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v8",
+  "schemaVersion": "cloud-agent-tools/v10",
   "tools": [
     {
       "function": {
@@ -1080,7 +1080,7 @@
     },
     {
       "function": {
-        "description": "读取结构化分镜，默认 creative 返回创作、时长、对白和实际资产名称/版本。summary 扫描缺口，rows=[] 属预期；bindings 返回行级绑定、不含创作正文；full 查看全部字段。coverage.complete 才能支持整表结论。rowIds 定位，nextRead 续页，长文本按 nextReads 续读，不从连线推测绑定。",
+        "description": "读取结构化分镜，默认 creative 返回创作、时长、对白和实际资产名称/版本，媒体输入提供 bindingId 和可复制的 promptHandle。fields 选择创作列，missingAnyFields 筛出任一列缺失或空白的行后分页。summary 默认 rows=[]，指定 fields 也返回所选正文；bindings 排查绑定，full 默认一行。coverage.tableComplete 表示本页覆盖整表，selectionComplete 表示范围已到末尾，正文按 nextReads 原文续读，行按 nextRead 续页。hasImagePromptOverride/hasVideoPromptOverride 仅表示独立覆盖，effectivePromptSource 区分覆盖、创作说明回退或 none，不等于生成就绪。返回 snapshotHash 和 storyboardRevision；operationIds 可查1–20个批次的持久提交目标，历史成功后仍须核对当前字段。不从连线推测绑定。",
         "name": "canvas_read_storyboard",
         "parameters": {
           "additionalProperties": false,
@@ -1133,6 +1133,64 @@
             }
           ],
           "properties": {
+            "fields": {
+              "description": "只投影所选创作字段，保留行标识和引用状态；长文本按 nextReads 读取原文，summary 指定本项也会返回正文",
+              "items": {
+                "enum": [
+                  "durationSeconds",
+                  "plotDescription",
+                  "dialogue",
+                  "videoMotionPrompt",
+                  "imageGenerationPrompt",
+                  "camera",
+                  "motion",
+                  "shotSize",
+                  "emotion",
+                  "lightingAndAtmosphere",
+                  "audioEffects",
+                  "narrativeIntent",
+                  "viewerPOV",
+                  "performanceBlocking",
+                  "timeBeats",
+                  "continuityOut",
+                  "negativePrompt"
+                ],
+                "type": "string"
+              },
+              "maxItems": 17,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "missingAnyFields": {
+              "description": "筛出任一指定字段缺失或空白的行，时长缺失或非法也视为缺口；在 rowIds 选择后、分页前筛选，不代表生成被阻塞",
+              "items": {
+                "enum": [
+                  "durationSeconds",
+                  "plotDescription",
+                  "dialogue",
+                  "videoMotionPrompt",
+                  "imageGenerationPrompt",
+                  "camera",
+                  "motion",
+                  "shotSize",
+                  "emotion",
+                  "lightingAndAtmosphere",
+                  "audioEffects",
+                  "narrativeIntent",
+                  "viewerPOV",
+                  "performanceBlocking",
+                  "timeBeats",
+                  "continuityOut",
+                  "negativePrompt"
+                ],
+                "type": "string"
+              },
+              "maxItems": 17,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
             "mode": {
               "description": "按生成模式解析有效输入；video 遵守关键帧模式",
               "enum": [
@@ -1149,6 +1207,18 @@
               "minimum": 0,
               "type": "integer"
             },
+            "operationIds": {
+              "description": "中断恢复时查询稳定批次标识，返回已提交目标和待执行标识；实际剩余字段仍用 missingAnyFields 核对",
+              "items": {
+                "maxLength": 128,
+                "minLength": 8,
+                "type": "string"
+              },
+              "maxItems": 20,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
             "rowIds": {
               "description": "可选真实行ID，与非零offset互斥",
               "items": {
@@ -1161,13 +1231,13 @@
               "type": "array"
             },
             "rows": {
-              "description": "summary/bindings 默认且最多100行；full 最多20行，默认1行",
+              "description": "非 full 默认且最多100行；full 最多20行，默认1行；实际分页受字节预算限制",
               "maximum": 100,
               "minimum": 1,
               "type": "integer"
             },
             "view": {
-              "description": "默认 creative：镜头创作、资产名称/版本及有效输入；summary 扫描缺口，bindings 排查底层引用，full 高级字段",
+              "description": "默认 creative：镜头创作、资产名称/版本及有效输入；summary 扫描缺口，bindings 排查底层引用，full 高级字段；指定 fields 时各视图均返回所选字段正文",
               "enum": [
                 "creative",
                 "summary",
@@ -1610,7 +1680,7 @@
     },
     {
       "function": {
-        "description": "创建结构化分镜，自动分配节点/行 ID 和位置。传最新 snapshotHash、title 和 rows；每行用正数 durationSeconds、plotDescription 创作说明、dialogue，按需覆盖 imageGenerationPrompt/videoMotionPrompt。assets 用 ref（画布节点 ID 或唯一完整名称）和 role；references 是共享引用列表。同名多版本须用 ID，不猜版本。写入遵循审批模式。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "创建结构化分镜，自动分配节点/行 ID 和位置，回执 createdRows 返回新行身份。传最新 snapshotHash、title 和 rows；每行用正数 durationSeconds、plotDescription 创作说明及 dialogue，可独立维护 shotSize、motion、lightingAndAtmosphere 等创作列，按需覆盖 imageGenerationPrompt/videoMotionPrompt。assets 用 ref（画布节点 ID 或唯一完整名称）和 role；references 是共享引用列表。同名多版本须用 ID，不猜版本。写入遵循审批模式。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_create_storyboard",
         "parameters": {
           "additionalProperties": false,
@@ -1711,6 +1781,18 @@
                     "maxItems": 100,
                     "type": "array"
                   },
+                  "audioEffects": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "camera": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "continuityOut": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
                   "dialogue": {
                     "maxLength": 20000,
                     "type": "string"
@@ -1720,8 +1802,32 @@
                     "minimum": 5e-324,
                     "type": "number"
                   },
+                  "emotion": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
                   "imageGenerationPrompt": {
                     "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "lightingAndAtmosphere": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "motion": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "narrativeIntent": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "negativePrompt": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "performanceBlocking": {
                     "maxLength": 20000,
                     "type": "string"
                   },
@@ -1730,8 +1836,20 @@
                     "maxLength": 20000,
                     "type": "string"
                   },
+                  "shotSize": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "timeBeats": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
                   "videoMotionPrompt": {
                     "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "viewerPOV": {
                     "maxLength": 20000,
                     "type": "string"
                   }
@@ -1772,7 +1890,7 @@
     },
     {
       "function": {
-        "description": "先读真实 rowId 和 snapshotHash。update/remove/set_assets 用 rowId 或 rowIds；patch 对所有选中行同值生效，无逐行差异入参；任一目标或引用非法则整批拒绝。set_assets 整行覆盖资产且清空旧 characters：先读 bindings，合并需保留的行级项后整体回写，只传新增项会丢原绑定；[] 清空行资产，不清共享输入。set_references 整体替换共享列表，全部行继承输入和派生连线随之更新，显式行资产保留；保留旧共享素材须继续列入共享列表或声明为行资产。append 单次一行；批量新建用 canvas_create_storyboard.rows（1–100）。已有产物归属才用 bind_output/unbind_output。不写任务、状态、URL 或连线；历史引用需先迁移。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "读真实 rowId、snapshotHash/storyboardRevision。batch_update 用 updates:[{rowId,patch}] 逐行写不同内容；update 对 rowId/rowIds 共用 patch。append_rows 用 rows、append 用完整 patch 追加，每批及全表最多100行。非法目标、字段或引用使整批拒绝。changedRows 只列实际变化；createdRows/removedRowIds 标识增删。纯创作字段 update/batch_update 可带 storyboardRevision，允许无关布局变化，同表/依赖/世代变化仍冲突；其他动作校验全画布快照。每模型步骤一次写入，下一步可复用成功版本。\r\n\r\n行资产增量用 add_assets（保留原角色）、remove_assets（按 ref+role 移除）、upsert_assets（新增或改用途），接受 rowId/rowIds 和非空 assets。set_assets 明确替换并清空旧 characters，[] 不清共享输入。共享增减用 add_references/remove_references，set_references 明确替换或清空。assetChanges/referenceChanges 分别列行级/共享影响及有效绑定。提示词复制输入的 promptHandle，如 {{ref:node:hero:reference}}；生成时才转素材序号，缺失句柄拒绝生成。产物归属用 bind_output/unbind_output，不写任务、状态、URL 或连线；历史引用先迁移。\r\n\r\n每批用稳定 operationId（8–128字符）；重试同键同操作返回原结果，不重复执行/审批，同键不同参数拒绝，版本前置条件可刷新。replayed=true 表示历史提交，其版本不代表当前内容；恢复时查询 operationIds 并读取目标字段/missingAnyFields，核对人工修改及缺口。退役世代的旧标识拒绝重发，新批次用新标识。明细省略按 assetChangesNextRead 续读。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_edit_storyboard",
         "parameters": {
           "additionalProperties": false,
@@ -1848,6 +1966,18 @@
                       "maxItems": 100,
                       "type": "array"
                     },
+                    "audioEffects": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
+                    "camera": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
+                    "continuityOut": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
                     "dialogue": {
                       "maxLength": 20000,
                       "type": "string"
@@ -1857,8 +1987,32 @@
                       "minimum": 5e-324,
                       "type": "number"
                     },
+                    "emotion": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
                     "imageGenerationPrompt": {
                       "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
+                    "lightingAndAtmosphere": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
+                    "motion": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
+                    "narrativeIntent": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
+                    "negativePrompt": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
+                    "performanceBlocking": {
                       "maxLength": 20000,
                       "type": "string"
                     },
@@ -1867,8 +2021,20 @@
                       "maxLength": 20000,
                       "type": "string"
                     },
+                    "shotSize": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
+                    "timeBeats": {
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
                     "videoMotionPrompt": {
                       "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
+                      "maxLength": 20000,
+                      "type": "string"
+                    },
+                    "viewerPOV": {
                       "maxLength": 20000,
                       "type": "string"
                     }
@@ -1889,6 +2055,15 @@
                 },
                 "rowIds": {
                   "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
                 }
               },
               "required": [
@@ -1897,6 +2072,133 @@
               ]
             },
             {
+              "anyOf": [
+                {
+                  "properties": {
+                    "storyboardRevision": {
+                      "not": {}
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "updates": {
+                      "items": {
+                        "properties": {
+                          "patch": {
+                            "properties": {
+                              "assets": {
+                                "not": {}
+                              }
+                            }
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  }
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "batch_update"
+                },
+                "assets": {
+                  "not": {}
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "references": {
+                  "not": {}
+                },
+                "rowId": {
+                  "not": {}
+                },
+                "rowIds": {
+                  "not": {}
+                },
+                "rows": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action",
+                "updates"
+              ]
+            },
+            {
+              "properties": {
+                "action": {
+                  "const": "append_rows"
+                },
+                "assets": {
+                  "not": {}
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "references": {
+                  "not": {}
+                },
+                "rowId": {
+                  "not": {}
+                },
+                "rowIds": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action",
+                "rows"
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "properties": {
+                    "storyboardRevision": {
+                      "not": {}
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "patch": {
+                      "properties": {
+                        "assets": {
+                          "not": {}
+                        }
+                      }
+                    }
+                  }
+                }
+              ],
               "oneOf": [
                 {
                   "properties": {
@@ -1936,6 +2238,12 @@
                   "not": {}
                 },
                 "references": {
+                  "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "updates": {
                   "not": {}
                 }
               },
@@ -1988,6 +2296,15 @@
                 },
                 "references": {
                   "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
                 }
               },
               "required": [
@@ -2034,6 +2351,15 @@
                   "not": {}
                 },
                 "references": {
+                  "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
                   "not": {}
                 }
               },
@@ -2086,6 +2412,15 @@
                 },
                 "rowIds": {
                   "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
                 }
               },
               "required": [
@@ -2114,6 +2449,15 @@
                   "not": {}
                 },
                 "rowIds": {
+                  "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
                   "not": {}
                 }
               },
@@ -2146,6 +2490,15 @@
                 },
                 "rowIds": {
                   "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
                 }
               },
               "required": [
@@ -2153,17 +2506,428 @@
                 "rowId",
                 "outputMode"
               ]
+            },
+            {
+              "oneOf": [
+                {
+                  "properties": {
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rowId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "add_assets"
+                },
+                "assets": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ref": {
+                        "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "character",
+                          "environment",
+                          "wardrobe",
+                          "prop",
+                          "weapon",
+                          "style",
+                          "motion",
+                          "audio"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "ref",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 100,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "references": {
+                  "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action",
+                "assets"
+              ]
+            },
+            {
+              "oneOf": [
+                {
+                  "properties": {
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rowId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "remove_assets"
+                },
+                "assets": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ref": {
+                        "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "character",
+                          "environment",
+                          "wardrobe",
+                          "prop",
+                          "weapon",
+                          "style",
+                          "motion",
+                          "audio"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "ref",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 100,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "references": {
+                  "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action",
+                "assets"
+              ]
+            },
+            {
+              "oneOf": [
+                {
+                  "properties": {
+                    "rowIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowId"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rowId": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "rowIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "upsert_assets"
+                },
+                "assets": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ref": {
+                        "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "role": {
+                        "enum": [
+                          "character",
+                          "environment",
+                          "wardrobe",
+                          "prop",
+                          "weapon",
+                          "style",
+                          "motion",
+                          "audio"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "ref",
+                      "role"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 100,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "not": {}
+                },
+                "references": {
+                  "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action",
+                "assets"
+              ]
+            },
+            {
+              "oneOf": [
+                {
+                  "properties": {
+                    "referenceNodeIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "references"
+                  ]
+                },
+                {
+                  "properties": {
+                    "references": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "referenceNodeIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "add_references"
+                },
+                "assets": {
+                  "not": {}
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "references": {
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "rowId": {
+                  "not": {}
+                },
+                "rowIds": {
+                  "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            {
+              "oneOf": [
+                {
+                  "properties": {
+                    "referenceNodeIds": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "references"
+                  ]
+                },
+                {
+                  "properties": {
+                    "references": {
+                      "not": {}
+                    }
+                  },
+                  "required": [
+                    "referenceNodeIds"
+                  ]
+                }
+              ],
+              "properties": {
+                "action": {
+                  "const": "remove_references"
+                },
+                "assets": {
+                  "not": {}
+                },
+                "outputMode": {
+                  "not": {}
+                },
+                "outputNodeId": {
+                  "not": {}
+                },
+                "patch": {
+                  "not": {}
+                },
+                "referenceNodeIds": {
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "references": {
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "rowId": {
+                  "not": {}
+                },
+                "rowIds": {
+                  "not": {}
+                },
+                "rows": {
+                  "not": {}
+                },
+                "storyboardRevision": {
+                  "not": {}
+                },
+                "updates": {
+                  "not": {}
+                }
+              },
+              "required": [
+                "action"
+              ]
             }
           ],
           "properties": {
             "action": {
-              "description": "append 单次一行；update 对全部 rowIds 应用同一 patch；set_assets 整行覆盖，漏传的旧行资产会移除；set_references 整体替换共享列表。整批原子；产物归属通常由生成管理",
+              "description": "append/append_rows 追加；update 同值补丁，batch_update 每行不同补丁；add_assets 增加且保留原资产，remove_assets 按节点及用途移除，upsert_assets 增加或改用途，set_assets 明确替换整行资产；add/remove_references 增减共享输入，set_references 明确替换。整批原子",
               "enum": [
                 "append",
+                "append_rows",
                 "update",
+                "batch_update",
                 "remove",
                 "set_assets",
+                "add_assets",
+                "remove_assets",
+                "upsert_assets",
                 "set_references",
+                "add_references",
+                "remove_references",
                 "bind_output",
                 "unbind_output"
               ],
@@ -2203,6 +2967,12 @@
             },
             "nodeId": {
               "description": "真实分镜脚本节点ID",
+              "type": "string"
+            },
+            "operationId": {
+              "description": "可选稳定批次标识；中断重试必须保持相同标识和相同操作参数。相同标识不重复执行，不同参数拒绝；新批次使用新标识",
+              "maxLength": 128,
+              "minLength": 8,
               "type": "string"
             },
             "outputMode": {
@@ -2253,6 +3023,18 @@
                   "maxItems": 100,
                   "type": "array"
                 },
+                "audioEffects": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "camera": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "continuityOut": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
                 "dialogue": {
                   "maxLength": 20000,
                   "type": "string"
@@ -2262,8 +3044,32 @@
                   "minimum": 5e-324,
                   "type": "number"
                 },
+                "emotion": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
                 "imageGenerationPrompt": {
                   "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "lightingAndAtmosphere": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "motion": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "narrativeIntent": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "negativePrompt": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "performanceBlocking": {
                   "maxLength": 20000,
                   "type": "string"
                 },
@@ -2272,8 +3078,20 @@
                   "maxLength": 20000,
                   "type": "string"
                 },
+                "shotSize": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "timeBeats": {
+                  "maxLength": 20000,
+                  "type": "string"
+                },
                 "videoMotionPrompt": {
                   "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
+                  "maxLength": 20000,
+                  "type": "string"
+                },
+                "viewerPOV": {
                   "maxLength": 20000,
                   "type": "string"
                 }
@@ -2312,9 +3130,287 @@
               "minItems": 1,
               "type": "array"
             },
+            "rows": {
+              "description": "append_rows：批量追加不同镜头，服务端分配行 ID；追加后总行数最多100",
+              "items": {
+                "additionalProperties": false,
+                "anyOf": [
+                  {
+                    "properties": {
+                      "plotDescription": {
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "plotDescription"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "videoMotionPrompt": {
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "videoMotionPrompt"
+                    ]
+                  }
+                ],
+                "properties": {
+                  "assets": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "ref": {
+                          "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "role": {
+                          "enum": [
+                            "character",
+                            "environment",
+                            "wardrobe",
+                            "prop",
+                            "weapon",
+                            "style",
+                            "motion",
+                            "audio"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "ref",
+                        "role"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "audioEffects": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "camera": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "continuityOut": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "dialogue": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "durationSeconds": {
+                    "maximum": 86400,
+                    "minimum": 5e-324,
+                    "type": "number"
+                  },
+                  "emotion": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "imageGenerationPrompt": {
+                    "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "lightingAndAtmosphere": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "motion": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "narrativeIntent": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "negativePrompt": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "performanceBlocking": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "plotDescription": {
+                    "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "shotSize": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "timeBeats": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "videoMotionPrompt": {
+                    "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "viewerPOV": {
+                    "maxLength": 20000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "durationSeconds"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
             "snapshotHash": {
               "description": "最近一次分镜读取返回的 snapshotHash",
               "type": "string"
+            },
+            "storyboardRevision": {
+              "description": "可选：复制该表读取/成功编辑回执的版本，仅用于纯创作字段 update/batch_update。包含全表、依赖资产和实体世代；无关布局不阻塞。同表或依赖变化仍冲突，省略沿用全画布 snapshotHash",
+              "maxLength": 96,
+              "minLength": 1,
+              "type": "string"
+            },
+            "updates": {
+              "description": "batch_update：每个真实 rowId 对应自己的 patch；全部校验后一次提交，最多100项",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "patch": {
+                    "additionalProperties": false,
+                    "minProperties": 1,
+                    "properties": {
+                      "assets": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "ref": {
+                              "description": "当前画布节点 ID 或唯一的完整名称；同名多版本必须使用读取结果中的 ID",
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "role": {
+                              "enum": [
+                                "character",
+                                "environment",
+                                "wardrobe",
+                                "prop",
+                                "weapon",
+                                "style",
+                                "motion",
+                                "audio"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "ref",
+                            "role"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 100,
+                        "type": "array"
+                      },
+                      "audioEffects": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "camera": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "continuityOut": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "dialogue": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "durationSeconds": {
+                        "maximum": 86400,
+                        "minimum": 5e-324,
+                        "type": "number"
+                      },
+                      "emotion": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "imageGenerationPrompt": {
+                        "description": "可选静态关键帧提示词覆盖；省略时使用镜头创作说明。",
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "lightingAndAtmosphere": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "motion": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "narrativeIntent": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "negativePrompt": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "performanceBlocking": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "plotDescription": {
+                        "description": "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。",
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "shotSize": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "timeBeats": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "videoMotionPrompt": {
+                        "description": "可选视频提示词覆盖；省略时使用镜头创作说明。",
+                        "maxLength": 20000,
+                        "type": "string"
+                      },
+                      "viewerPOV": {
+                        "maxLength": 20000,
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "rowId": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "rowId",
+                  "patch"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
             }
           },
           "required": [

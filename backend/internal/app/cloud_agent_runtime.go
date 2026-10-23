@@ -34,6 +34,9 @@ type CloudAgentEvent struct {
 }
 type cloudAgentCall struct {
 	ID string `json:"id"`
+	// Rebuilt from durable run/step context before approval and execution;
+	// never accepted from the model or serialized on the tool-call wire.
+	storyboardMutationID string
 	// Type 是 OpenAI 形态工具调用的 "function" 标记。
 	//
 	// /internal-agent 的请求解码使用 DisallowUnknownFields，而 Node 侧
@@ -1372,7 +1375,10 @@ func cloudAgentModelToolResult(toolName string, result any) any {
 	// 真正发生后才会产生，所以必须给出结果口径，否则模型会以为还在等审批并反复重读重试。
 	if cloudAgentCanvasWriteTool(toolName) {
 		receipt["applied"] = true
-		receipt["outcome"] = "已写入画布；本回执的 snapshotHash 是最新版本，可继续提交同一批的其它写入"
+		receipt["outcome"] = "本次画布操作已执行；每个模型步骤最多一个写入/生成调用，可在下一模型步骤复用本回执的新 snapshotHash 继续；仅在实际冲突或所需状态未知时重新读取目标并核对原操作"
+		if fields["replayed"] == true {
+			receipt["outcome"] = "这是该批次已提交的历史回执，本次没有重复写入或再次申请审批；snapshotHash/storyboardRevision 属于原提交。currentSnapshotHash 仅标记当前版本；继续新批次前按需读取目标字段和查缺，不能据历史回执断言当前内容未被人工修改"
+		}
 		if item := cloudAgentReceiptItemSummary(preview); item != "" {
 			receipt["summary"] = item
 		}
@@ -1437,6 +1443,9 @@ func (state *cloudAgentRuntime) recordCanvasBatchHash(result any, toolName strin
 	}
 	fields, ok := result.(map[string]any)
 	if !ok {
+		return
+	}
+	if fields["replayed"] == true {
 		return
 	}
 	produced, _ := fields["snapshotHash"].(string)
@@ -1556,6 +1565,18 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		state.Calls[state.CallIndex] = call
 	}
 	mediaTool := call.Function.Name == "generate_media"
+	if allowed && call.Function.Name == "canvas_edit_storyboard" {
+		result, replayed, err := cloudAgentStoryboardReplay(s.repo, run.UserID, state.Request.CanvasID, call)
+		if replayed || err != nil {
+			return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+				if err != nil && !cloudAgentToolErrorIsBusiness(err) {
+					return err
+				}
+				cloudAgentRecordToolResult(current, state, call, result, err)
+				return cloudAgentSave(current, state)
+			})
+		}
+	}
 	if allowed && cloudAgentWrite(call.Function.Name) && (state.Request.PermissionMode == "request_approval" || mediaTool) && state.Approval == nil {
 		var plan *cloudAgentMediaPlan
 		var modelName string

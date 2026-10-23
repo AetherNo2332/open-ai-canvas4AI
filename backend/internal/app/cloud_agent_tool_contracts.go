@@ -137,10 +137,14 @@ func cloudAgentCanvasOpsWriteReferences(doc map[string]any, ops []agentCanvasOp)
 // cloudAgentStoryboardEditWritesReferences 覆盖共享引用、行素材和角色字段中的资产引用。产物归属
 // （bind_output／unbind_output）写的是历史画布同样有效的行归属字段，不在这里拦。
 func cloudAgentStoryboardEditWritesReferences(args cloudAgentStoryboardEditArgs) bool {
-	if args.Action == "set_references" || args.Action == "set_assets" {
+	if cloudAgentStoryboardSharedAction(args.Action) || cloudAgentStoryboardAssetAction(args.Action) {
 		return true
 	}
-	return cloudAgentStoryboardRowsWriteReferences([]map[string]any{args.Patch})
+	rows := append([]map[string]any{args.Patch}, args.Rows...)
+	for _, update := range args.Updates {
+		rows = append(rows, update.Patch)
+	}
+	return cloudAgentStoryboardRowsWriteReferences(rows)
 }
 
 func cloudAgentStoryboardRowsWriteReferences(rows []map[string]any) bool {
@@ -225,22 +229,51 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 			{"required": []string{"rowId"}, "properties": cloudAgentForbiddenFields("rowIds")},
 			{"required": []string{"rowIds"}, "properties": cloudAgentForbiddenFields("rowId")},
 		}
-		update := cloudAgentActionBranch("update", []string{"patch"}, nil, "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId")
+		update := cloudAgentActionBranch("update", []string{"patch"}, nil, "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates", "rows")
 		update["oneOf"] = selection
-		remove := cloudAgentActionBranch("remove", nil, nil, "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId")
+		remove := cloudAgentActionBranch("remove", nil, nil, "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates", "rows")
 		remove["oneOf"] = selection
-		assets := cloudAgentActionBranch("set_assets", []string{"assets"}, nil, "patch", "references", "referenceNodeIds", "outputMode", "outputNodeId")
+		assets := cloudAgentActionBranch("set_assets", []string{"assets"}, nil, "patch", "references", "referenceNodeIds", "outputMode", "outputNodeId", "updates", "rows")
 		assets["oneOf"] = selection
-		refs := cloudAgentActionBranch("set_references", nil, nil, "rowId", "rowIds", "patch", "assets", "outputMode", "outputNodeId")
+		refs := cloudAgentActionBranch("set_references", nil, nil, "rowId", "rowIds", "patch", "assets", "outputMode", "outputNodeId", "updates", "rows")
 		refs["oneOf"] = []map[string]any{
 			{"required": []string{"references"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")},
 			{"required": []string{"referenceNodeIds"}, "properties": cloudAgentForbiddenFields("references")},
 		}
 		schema["oneOf"] = []map[string]any{
-			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId", "rowIds", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId", "rowIds", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates", "rows"),
+			cloudAgentActionBranch("batch_update", []string{"updates"}, nil, "rowId", "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "rows"),
+			cloudAgentActionBranch("append_rows", []string{"rows"}, nil, "rowId", "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates"),
 			update, remove, assets, refs,
-			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "rowIds", "patch", "references", "referenceNodeIds", "assets"),
-			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputNodeId"),
+			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "rowIds", "patch", "references", "referenceNodeIds", "assets", "updates", "rows"),
+			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputNodeId", "updates", "rows"),
+		}
+		branches := schema["oneOf"].([]map[string]any)
+		for _, action := range []string{"add_assets", "remove_assets", "upsert_assets"} {
+			assetSchema := cloudAgentStoryboardAssetsSchema()
+			assetSchema["minItems"] = 1
+			branch := cloudAgentActionBranch(action, []string{"assets"}, map[string]any{"assets": assetSchema}, "patch", "references", "referenceNodeIds", "outputMode", "outputNodeId", "updates", "rows")
+			branch["oneOf"] = selection
+			branches = append(branches, branch)
+		}
+		for _, action := range []string{"add_references", "remove_references"} {
+			branch := cloudAgentActionBranch(action, nil, map[string]any{"references": map[string]any{"type": "array", "minItems": 1}, "referenceNodeIds": map[string]any{"type": "array", "minItems": 1}}, "rowId", "rowIds", "patch", "assets", "outputMode", "outputNodeId", "updates", "rows")
+			branch["oneOf"] = refs["oneOf"]
+			branches = append(branches, branch)
+		}
+		schema["oneOf"] = branches
+		for _, branch := range branches {
+			properties := branch["properties"].(map[string]any)
+			action := properties["action"].(map[string]any)["const"]
+			if action != "update" && action != "batch_update" {
+				properties["storyboardRevision"] = map[string]any{"not": map[string]any{}}
+			} else {
+				pure := map[string]any{"patch": map[string]any{"properties": cloudAgentForbiddenFields("assets")}}
+				if action == "batch_update" {
+					pure = map[string]any{"updates": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": pure}}}
+				}
+				branch["anyOf"] = []map[string]any{{"properties": cloudAgentForbiddenFields("storyboardRevision")}, {"properties": pure}}
+			}
 		}
 	case "canvas_edit_batch_table":
 		schema["oneOf"] = []map[string]any{

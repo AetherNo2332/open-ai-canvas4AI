@@ -44,14 +44,14 @@ func TestAgentCallLimitsPolicyPersistenceDefaultsAndReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits, err = s.cloudAgentStepLimits()
-	if err != nil || limits.CallLimits != (cloudAgentCallLimits{ToolCallsPerStep: 11, ReadCallsPerRun: 53, StepsPerRun: 4}) {
+	if err != nil || limits.CallLimits != (cloudAgentCallLimits{ToolCallsPerStep: 11, ReadCallsPerRun: 53, StepsPerRun: 4, MutationCallsPerStep: 1}) {
 		t.Fatalf("saved policy not effective: %+v err=%v", limits, err)
 	}
 	if _, err := s.ResetRuntimePolicySetting(actor); err != nil {
 		t.Fatal(err)
 	}
 	limits, err = s.cloudAgentStepLimits()
-	if err != nil || limits.CallLimits != (cloudAgentCallLimits{ToolCallsPerStep: 8, ReadCallsPerRun: 32}) {
+	if err != nil || limits.CallLimits != (cloudAgentCallLimits{ToolCallsPerStep: 8, ReadCallsPerRun: 32, MutationCallsPerStep: 1}) {
 		t.Fatalf("reset not effective: %+v err=%v", limits, err)
 	}
 }
@@ -95,7 +95,7 @@ func TestAgentCallLimitsModelEnvelopeContainsEffectiveFacts(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(content, cloudAgentRuntimeContextMarker)), &facts); err != nil {
 			t.Fatal(err)
 		}
-		if facts.CallLimits == nil || *facts.CallLimits != (cloudAgentCallLimits{ToolCallsPerStep: 3, ReadCallsPerRun: 17, StepsPerRun: 5}) {
+		if facts.CallLimits == nil || *facts.CallLimits != (cloudAgentCallLimits{ToolCallsPerStep: 3, ReadCallsPerRun: 17, StepsPerRun: 5, MutationCallsPerStep: 1}) {
 			t.Fatalf("wrong model limits: %+v", facts.CallLimits)
 		}
 		found = true
@@ -215,6 +215,7 @@ func TestAgentCallLimitsNoToolTurnUsesRaisedBudget(t *testing.T) {
 		state.Step = 1
 		state.Request.Budget.MaxSteps = 0
 		state.CallLimits.StepsPerRun = 1
+		// A real protocol blocker needs another step; plan status alone allows completion.
 		state.PendingInterjections = []cloudAgentInterjection{{ID: "pending-user-input", Text: "继续分析刚补充的内容"}}
 		return cloudAgentSave(current, &state)
 	}); err != nil {
@@ -230,8 +231,8 @@ func TestAgentCallLimitsNoToolTurnUsesRaisedBudget(t *testing.T) {
 		t.Fatalf("raised budget ignored in completion: decision=%+v err=%v", decision, err)
 	}
 	_, state := agentInterjectionState(t, s, run.ID)
-	if state.CallLimits.StepsPerRun != 5 {
-		t.Fatalf("updated step cap was not persisted: %+v", state.CallLimits)
+	if state.CallLimits.StepsPerRun != 5 || len(state.PendingInterjections) != 1 {
+		t.Fatalf("completion must preserve the pending user message and refreshed budget: %+v", state)
 	}
 }
 

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"unicode/utf8"
 )
@@ -159,6 +160,15 @@ func validateCloudAgentSchemaArray(path string, schema map[string]any, items []a
 	}
 	if maximum, ok := cloudAgentSchemaNumber(schema["maxItems"]); ok && float64(len(items)) > maximum {
 		return cloudAgentFieldError(path, "item_count", fmt.Sprintf("工具参数 %s 最多 %d 项，请分批提交", path, int(maximum)))
+	}
+	if unique, _ := schema["uniqueItems"].(bool); unique {
+		for index, item := range items {
+			for previous := 0; previous < index; previous++ {
+				if reflect.DeepEqual(item, items[previous]) {
+					return cloudAgentFieldError(fmt.Sprintf("%s[%d]", path, index), "duplicate_item", fmt.Sprintf("工具参数 %s 第 %d 项与第 %d 项重复，请移除重复项", path, index+1, previous+1))
+				}
+			}
+		}
 	}
 	itemSchema, _ := schema["items"].(map[string]any)
 	if itemSchema == nil {
