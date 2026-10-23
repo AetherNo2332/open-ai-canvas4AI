@@ -1,6 +1,6 @@
 ---
 id: cloud-agent-media
-version: 4
+version: 5
 ---
 
 # ArrowFX Cloud Agent 媒体策略

@@ -1,8 +1,8 @@
 import { dirname, resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import { formatBuildVersion } from "./src/lib/app-version";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +23,9 @@ export default defineConfig({
         "import.meta.env.VITE_BUILD_TIME": JSON.stringify(buildTime),
     },
     server: {
+        // A worktree may share installed dependencies through a junction.
+        // Keep Vite's workspace boundary and permit only that dependency tree.
+        fs: { allow: [searchForWorkspaceRoot(webDir), realpathSync(resolve(webDir, "node_modules"))] },
         proxy: {
             "^/api/canvas-projects/[^/]+/realtime$": {
                 target: apiProxyTarget,

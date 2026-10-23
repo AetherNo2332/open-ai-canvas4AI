@@ -11,7 +11,7 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 版本号是策略文件的公开合同：工具披露规则改变时一同更新。
-	if system.ID != "cloud-agent-system" || system.Version != 21 || media.ID != "cloud-agent-media" || media.Version != 4 {
+	if system.ID != "cloud-agent-system" || system.Version != 21 || media.ID != "cloud-agent-media" || media.Version != 5 {
 		t.Fatalf("unexpected policy metadata: system=%s@%d media=%s@%d", system.ID, system.Version, media.ID, media.Version)
 	}
 	if strings.Contains(system.Text, "id: cloud-agent-system") || !strings.HasPrefix(system.Text, "# ArrowFX Cloud Agent") ||
@@ -19,7 +19,8 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 		t.Fatal("policy metadata leaked into a compiled policy body")
 	}
 	for _, phrase := range []string{
-		"auto 会由服务端完成模型、能力、价格、预算和资源准入后直接提交",
+		"auto 由服务端完成模型、价格、预算和资源准入后提交",
+		"成功自动采用，但用户期间手动选择过版本或输出归属曾改变时只进入历史",
 		"request_approval 必须等待界面独立审批",
 		"authorizedChargeMicrocredits / chargeLimitMicrocredits 是预授权或上限，不是实际消费",
 	} {
