@@ -93,6 +93,7 @@ export function useCanvasProjectLifecycle({
     const renameProject = useCanvasStore((state) => state.renameProject);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
     const commandScope = useCanvasSessionStore((state) => state.scope);
+    const commandConnectionGeneration = useCanvasSessionStore((state) => state.connectionGeneration);
     const commandBootstrapState = useCanvasSessionStore((state) => state.bootstrapState);
     const commandBootstrapError = useCanvasSessionStore((state) => state.bootstrapError);
     const commandEditorRef = useRef<Awaited<ReturnType<typeof attachCanvasCommandProject<CanvasNodeData, CanvasConnection>>> | null>(null);
@@ -217,7 +218,24 @@ export function useCanvasProjectLifecycle({
             dispose?.();
             commandEditorRef.current = null;
         };
-    }, [commandScope, hydrated, sessionHydrated, projectId, loadAttempt, resetHistory, setProjectLoaded, setNodes, setConnections, setChatSessions, setActiveChatId, setCanvasAppearance, setBackgroundMode, setShowImageInfo, setViewport]);
+    }, [
+        commandScope,
+        commandConnectionGeneration,
+        hydrated,
+        sessionHydrated,
+        projectId,
+        loadAttempt,
+        resetHistory,
+        setProjectLoaded,
+        setNodes,
+        setConnections,
+        setChatSessions,
+        setActiveChatId,
+        setCanvasAppearance,
+        setBackgroundMode,
+        setShowImageInfo,
+        setViewport,
+    ]);
 
     useEffect(() => {
         if (commandScope || commandBootstrapState !== "inactive" || !hydrated || !sessionHydrated) return;
@@ -639,6 +657,7 @@ export function useCanvasProjectLifecycle({
         reloadLatestCanvasProject,
         restoreCanvasProjectVersion,
         saveCanvasProject,
+        persistLocalEdits,
         forceSaveCanvasProject,
         updateProject,
     };

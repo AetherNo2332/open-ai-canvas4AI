@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import localforage from "localforage";
 import { createCanvasCommandTransport, readCanvasCapabilities } from "../../services/api/canvas-commands";
-import { captureHTTP } from "../../services/api/request";
+import { apiBaseURL, captureHTTP } from "../../services/api/request";
 import type { CanvasCapabilities } from "../../lib/canvas/canvas-editor-commands";
 import { createCanvasCommandJournal, createCanvasPersonalViewStorage, readCanvasClientId, nativeCommandJournalStorage, type NativeCommandJournal } from "../../services/canvas-command-journal";
 import { createCanvasCommandWorkspace, type CanvasCommandWorkspace } from "../../services/canvas-command-workspace";
@@ -10,9 +10,18 @@ import { createCanvasCommandCreator } from "../../services/canvas-command-create
 import { canvasEditorCommands } from "../../lib/canvas/canvas-editor-commands";
 import { useCanvasStore, withCanvasStorePersistenceSuppressed, type CanvasProject } from "./use-canvas-store";
 import type { Snapshot } from "../../lib/canvas/command-contract.generated";
+import { cancelCanvasEditLeases } from "../../services/canvas-edit-leases";
 
-type SessionStore = { scope: string | null; capabilities: CanvasCapabilities | null; states: Record<string, CommandSessionState>; bootstrapState: "inactive" | "connecting" | "ready" | "failed"; bootstrapError?: string };
-export const useCanvasSessionStore = create<SessionStore>(() => ({ scope: null, capabilities: null, states: {}, bootstrapState: "inactive" }));
+type SessionStore = {
+    scope: string | null;
+    capabilities: CanvasCapabilities | null;
+    states: Record<string, CommandSessionState>;
+    bootstrapState: "inactive" | "connecting" | "ready" | "failed";
+    bootstrapError?: string;
+    connectionBaseURL: string | null;
+    connectionGeneration: number;
+};
+export const useCanvasSessionStore = create<SessionStore>(() => ({ scope: null, capabilities: null, states: {}, bootstrapState: "inactive", connectionBaseURL: null, connectionGeneration: 0 }));
 let workspace: CanvasCommandWorkspace | null = null;
 let journal: ReturnType<typeof createCanvasCommandJournal> | null = null;
 const migrated = new Set<string>();
@@ -40,7 +49,8 @@ export function commitCanvasCommandEditor(canvasId: string) {
 }
 
 export async function connectCanvasCommandWorkspace(scope: string, boundClientId?: string) {
-    if (workspace && useCanvasSessionStore.getState().scope === scope) return;
+    if (workspace && useCanvasSessionStore.getState().scope === scope && useCanvasSessionStore.getState().connectionBaseURL === apiBaseURL) return;
+    cancelCanvasEditLeases();
     const current = ++generation;
     const previous = workspace;
     creator?.close();
@@ -54,9 +64,10 @@ export async function connectCanvasCommandWorkspace(scope: string, boundClientId
     observers.clear();
     migrated.clear();
     migrationFlights.clear();
-    useCanvasSessionStore.setState({ scope: null, capabilities: null, states: {}, bootstrapState: "connecting", bootstrapError: undefined });
+    useCanvasSessionStore.setState({ scope: null, capabilities: null, states: {}, bootstrapState: "connecting", bootstrapError: undefined, connectionBaseURL: null, connectionGeneration: current });
     await previous?.close();
-    const api = captureHTTP();
+    const connectionBaseURL = apiBaseURL;
+    const api = captureHTTP(connectionBaseURL);
     const transport = createCanvasCommandTransport(api);
     const capabilities = await readCanvasCapabilities(api);
     if (capabilities.protocolVersion !== 1 || !Array.isArray(capabilities.nodes) || !capabilities.structuredFields) throw new Error("canvas_capability_contract_invalid");
@@ -96,7 +107,7 @@ export async function connectCanvasCommandWorkspace(scope: string, boundClientId
     });
     await creator.recover();
     if (current !== generation) throw new DOMException("画布主机已切换", "AbortError");
-    useCanvasSessionStore.setState({ scope, capabilities, states: {}, bootstrapState: "ready" });
+    useCanvasSessionStore.setState({ scope, capabilities, states: {}, bootstrapState: "ready", connectionBaseURL });
 }
 export async function createCanvasCommandProject(title: string, projectId?: string, initialContent?: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>) {
     const current = creator,
@@ -172,6 +183,7 @@ export async function flushCanvasCommandWorkspace() {
     return current === workspace && editorsSaved.every(Boolean) && (await current.flush());
 }
 export async function disconnectCanvasCommandWorkspace() {
+    cancelCanvasEditLeases();
     generation++;
     creator?.close();
     creator = null;
@@ -187,5 +199,5 @@ export async function disconnectCanvasCommandWorkspace() {
     bindings.clear();
     observers.clear();
     await previous?.close();
-    useCanvasSessionStore.setState({ scope: null, capabilities: null, states: {}, bootstrapState: "inactive", bootstrapError: undefined });
+    useCanvasSessionStore.setState({ scope: null, capabilities: null, states: {}, bootstrapState: "inactive", bootstrapError: undefined, connectionBaseURL: null });
 }

@@ -64,6 +64,7 @@ export type CanvasNodeContentProps = {
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     drawingProjectId?: string;
     onContentChange: (nodeId: string, content: string) => void;
+    contentReadOnly?: boolean;
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
@@ -109,17 +110,40 @@ function CanvasNodeShellContent({ node, theme }: { node: CanvasNodeData; theme: 
     return (
         <div className="flex size-full flex-col items-center justify-center gap-2 rounded-[var(--node-radius)] px-3 text-center" style={{ background: theme.node.fill, color: theme.node.muted }}>
             <Icon className="size-6 opacity-40" />
-            <span className="max-w-full truncate text-xs font-medium" title={node.title}>{node.title || "画布节点"}</span>
+            <span className="max-w-full truncate text-xs font-medium" title={node.title}>
+                {node.title || "画布节点"}
+            </span>
         </div>
     );
 }
 
 function CanvasNodePreviewContent({ node, theme }: { node: CanvasNodeData; theme: CanvasTheme }) {
     if (node.type === CanvasNodeType.Image && (node.metadata?.content || node.metadata?.storageKey)) {
-        return <CachedResourceImage storageKey={node.metadata?.storageKey} src={node.metadata?.previewContent || node.metadata?.content} alt={node.title} loading="lazy" decoding="async" draggable={false} className="pointer-events-none block size-full select-none object-contain" fallback={<CanvasNodeShellContent node={node} theme={theme} />} />;
+        return (
+            <CachedResourceImage
+                storageKey={node.metadata?.storageKey}
+                src={node.metadata?.previewContent || node.metadata?.content}
+                alt={node.title}
+                loading="lazy"
+                decoding="async"
+                draggable={false}
+                className="pointer-events-none block size-full select-none object-contain"
+                fallback={<CanvasNodeShellContent node={node} theme={theme} />}
+            />
+        );
     }
     if (node.type === CanvasNodeType.Video && (node.metadata?.content || node.metadata?.storageKey)) {
-        return <CanvasVideoPreviewImage node={node} alt={node.title} loading="lazy" decoding="async" draggable={false} className="pointer-events-none block size-full select-none object-contain" fallback={<CanvasNodeShellContent node={node} theme={theme} />} />;
+        return (
+            <CanvasVideoPreviewImage
+                node={node}
+                alt={node.title}
+                loading="lazy"
+                decoding="async"
+                draggable={false}
+                className="pointer-events-none block size-full select-none object-contain"
+                fallback={<CanvasNodeShellContent node={node} theme={theme} />}
+            />
+        );
     }
     return <CanvasNodeShellContent node={node} theme={theme} />;
 }
@@ -186,7 +210,8 @@ function DrawingContent({ node, theme, drawingProjectId }: CanvasNodeContentProp
         if (!drawingProjectId || !drawingId) return;
         let active = true;
         let objectUrl = "";
-        void loadCanvasDrawingForNode(drawingProjectId, node).then(() => loadCanvasDrawingPreview(drawingProjectId, drawingId))
+        void loadCanvasDrawingForNode(drawingProjectId, node)
+            .then(() => loadCanvasDrawingPreview(drawingProjectId, drawingId))
             .then((preview) => {
                 if (!active) return;
                 if (!preview) {
@@ -384,7 +409,7 @@ function UnknownNodeContent({ theme }: Pick<CanvasNodeContentProps, "theme">) {
     );
 }
 
-function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, onContentChange, onStopEditing }: CanvasNodeContentProps) {
+function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, onContentChange, onStopEditing, contentReadOnly }: CanvasNodeContentProps) {
     const fontSize = canvasTextFontSize(node.width, node.height, node.metadata?.fontSize);
     const textStyle = { fontSize: `${fontSize}px`, lineHeight: `${Math.round(fontSize * 1.65)}px`, color: theme.node.text, boxSizing: "border-box" } as CSSProperties;
     const richTextHTML = useMemo(() => canvasRichTextHTML(node.metadata?.richText), [node.metadata?.richText]);
@@ -397,6 +422,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
                     className="thin-scrollbar m-0 block h-full w-full resize-none appearance-none overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent px-4 pb-4 pt-0 font-mono outline-none select-text"
                     style={textStyle}
                     value={node.metadata?.content || ""}
+                    readOnly={contentReadOnly}
                     references={mentionReferences}
                     highlightLabels={false}
                     onChange={(value) => onContentChange(node.id, value)}
@@ -635,7 +661,9 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
                         src={url}
                         mimeType={node.metadata?.mimeType}
                         title={node.title || "视频"}
-                        hasAudio={inferVideoHasAudio(node.metadata)} autoPlay preload="metadata"
+                        hasAudio={inferVideoHasAudio(node.metadata)}
+                        autoPlay
+                        preload="metadata"
                         brandColor={theme.accent.primary}
                         className="h-full w-full rounded-[var(--node-radius)] bg-black"
                         dataCanvasNoZoom
@@ -973,7 +1001,15 @@ function ImageContent({
     };
 
     return (
-        <BatchFrame batchPreviewNodes={renderLOD === "full" ? batchPreviewNodes : undefined} batchCount={isBatchRoot && renderLOD === "full" ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} theme={theme} onToggleBatch={onToggleBatch}>
+        <BatchFrame
+            batchPreviewNodes={renderLOD === "full" ? batchPreviewNodes : undefined}
+            batchCount={isBatchRoot && renderLOD === "full" ? batchCount : 0}
+            batchExpanded={batchExpanded}
+            batchOpening={batchOpening}
+            batchRecovering={batchRecovering}
+            theme={theme}
+            onToggleBatch={onToggleBatch}
+        >
             <div ref={imageContainerRef} className="relative h-full w-full overflow-hidden rounded-[var(--node-radius)]">
                 <RetainedCanvasImage
                     identity={`${getActiveUserScope()}:${node.id}:${node.metadata?.storageKey || node.metadata?.content || "empty"}`}
@@ -993,7 +1029,18 @@ function ImageContent({
 }
 
 /** A stable visible img is updated only after a queued candidate has loaded and decoded. */
-function RetainedCanvasImage({ identity, src, storageKey, fallbackSrc, originalSize, alt, fitToImage, className, loading, theme }: {
+function RetainedCanvasImage({
+    identity,
+    src,
+    storageKey,
+    fallbackSrc,
+    originalSize,
+    alt,
+    fitToImage,
+    className,
+    loading,
+    theme,
+}: {
     identity: string;
     src: string;
     storageKey?: string;
@@ -1171,7 +1218,7 @@ export function CanvasNodeProducedModel({ stored }: { stored: string }) {
     // Keep catalog subscriptions off the CanvasNode shell and avoid normalizing config per node.
     const channels = useConfigStore((state) => state.config.channels);
     const customChannelsEnabled = useUserStore((state) => state.features.customChannelsEnabled);
-    const visibleChannels = useMemo(() => customChannelsEnabled ? channels : channels.filter((channel) => channel.scope === "system"), [channels, customChannelsEnabled]);
+    const visibleChannels = useMemo(() => (customChannelsEnabled ? channels : channels.filter((channel) => channel.scope === "system")), [channels, customChannelsEnabled]);
     const label = producedModelLabel({ channels: visibleChannels }, stored);
     return <span className="max-w-full min-w-0 truncate rounded-[var(--r-sm)] bg-black/55 px-2 py-1 text-[var(--fs-label)] font-medium leading-none text-white backdrop-blur-sm">{label}</span>;
 }

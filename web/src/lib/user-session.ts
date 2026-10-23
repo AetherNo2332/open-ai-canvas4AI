@@ -18,11 +18,15 @@ import { clearResourceBlobCache } from "@/services/resource-blob-cache";
 import { withGenerationConsumersPaused } from "@/services/generation-consumer-lifecycle";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { cancelCanvasCommandBootstrap, installCanvasCommandBootstrap } from "@/services/canvas-command-bootstrap";
+import { cancelCanvasEditLeases } from "@/services/canvas-edit-leases";
+import { flushCanvasAuthorDrafts } from "@/services/canvas-author-drafts";
 import { disconnectCanvasCommandWorkspace } from "@/stores/canvas/use-canvas-session-store";
 
 export async function switchUserStorageScope(userId?: string | null) {
     cancelRemoteUserDataBootstrap();
     cancelCanvasCommandBootstrap();
+    cancelCanvasEditLeases();
+    await flushCanvasAuthorDrafts();
     await disconnectCanvasCommandWorkspace();
     await withGenerationConsumersPaused(async () => {
         await withRemoteUserDataSyncExclusive(async () => {

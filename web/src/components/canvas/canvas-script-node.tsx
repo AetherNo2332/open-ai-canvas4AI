@@ -1,4 +1,4 @@
-import { Button, Dropdown, Input, InputNumber, Modal, Popover, Segmented, Table } from "antd";
+import { App, Button, Dropdown, Input, InputNumber, Modal, Popover, Segmented, Table } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
@@ -8,6 +8,8 @@ import type { ColumnsType } from "antd/es/table";
 import { ChevronDown, ChevronUp, Clapperboard, Columns3, Copy, Expand, Film, Grid3X3, Image as ImageIcon, ListTree, Merge, MoreHorizontal, Plus, RefreshCw, Send, Square, Trash2, Video } from "lucide-react";
 
 import { CanvasResourceMentionTextarea } from "@/components/canvas/canvas-resource-mention-textarea";
+import { useCanvasEditLease } from "./use-canvas-edit-lease";
+import { captureCanvasAuthorIdentity, sameCanvasAuthorIdentity, readCanvasAuthorDraft, saveCanvasAuthorDraft, clearCanvasAuthorDraft } from "@/services/canvas-author-drafts";
 import { StoryboardAssetsCell, StoryboardSharedReferencesControl } from "@/components/canvas/storyboard-assets-cell";
 import { storyboardInheritedBindings } from "@/lib/canvas/canvas-reference-edits";
 import { AppModal } from "@/components/ui/product/app-modal";
@@ -21,7 +23,17 @@ import { navigateToSettings } from "@/lib/settings-navigation";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
-import { STORYBOARD_COMPOSER_MIN_HEIGHT, STORYBOARD_EDITOR_ACTIONS_WIDTH, STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardCardGridTemplate, storyboardCardMinWidth, storyboardEditorColumnsTotal, storyboardEditorColumnWidths, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
+import {
+    STORYBOARD_COMPOSER_MIN_HEIGHT,
+    STORYBOARD_EDITOR_ACTIONS_WIDTH,
+    STORYBOARD_HEADER_HEIGHT,
+    STORYBOARD_ROW_HEIGHT,
+    storyboardCardGridTemplate,
+    storyboardCardMinWidth,
+    storyboardEditorColumnsTotal,
+    storyboardEditorColumnWidths,
+    storyboardTableHeight,
+} from "@/lib/canvas/canvas-storyboard-layout";
 import { DEFAULT_STORYBOARD_COLUMNS, resolveStoryboardVisibleColumns, STORYBOARD_COLUMN_OPTIONS, storyboardColumnLabel } from "@/lib/canvas/canvas-storyboard-columns";
 import type {
     CanvasGenerationBatch,
@@ -95,6 +107,7 @@ function scriptVisibleColumns(columns?: readonly StoryboardColumn[]) {
 }
 
 export function CanvasScriptNodeContent({
+    projectId,
     node,
     nodes,
     batch,
@@ -118,6 +131,7 @@ export function CanvasScriptNodeContent({
     onUpdateRow,
     onEditAssets,
     onPromptChange,
+    onPersist,
     onGenerateScript,
     onModelChange,
     onShotDurationChange,
@@ -127,6 +141,7 @@ export function CanvasScriptNodeContent({
     onScrollTopChange,
     workspaceMode = "professional",
 }: {
+    projectId: string;
     node: CanvasNodeData;
     nodes: CanvasNodeData[];
     batch?: CanvasGenerationBatch;
@@ -139,7 +154,7 @@ export function CanvasScriptNodeContent({
     onGenerateImages: (rowIds: string[]) => void;
     onGenerateVideos: (rowIds: string[]) => void;
     onVideoInputModeChange: (mode: StoryboardVideoInputMode) => void;
-    onReferenceNodeIdsChange:(ids:string[])=>void;
+    onReferenceNodeIdsChange: (ids: string[]) => void;
     onMergeVideos: () => void;
     onCreateActionBoards: () => void;
     onRetryBatch: (batchId: string) => void;
@@ -150,6 +165,7 @@ export function CanvasScriptNodeContent({
     onUpdateRow: (rowId: string, patch: Partial<StoryboardRow>) => void;
     onEditAssets?: (rowId: string) => void;
     onPromptChange: (prompt: string) => void;
+    onPersist: () => Promise<void>;
     onGenerateScript: (prompt: string) => void;
     onModelChange: (model: string) => void;
     onShotDurationChange: (duration: StoryboardShotDuration) => void;
@@ -159,6 +175,7 @@ export function CanvasScriptNodeContent({
     onScrollTopChange: (scrollTop: number) => void;
     workspaceMode?: CanvasWorkspaceMode;
 }) {
+    const { message } = App.useApp();
     const theme = canvasThemes[useActiveTheme()];
     const effectiveConfig = useEffectiveConfig();
     const generationConfig = buildGenerationConfig(effectiveConfig, node, "text");
@@ -169,6 +186,65 @@ export function CanvasScriptNodeContent({
     const cardGridTemplate = storyboardCardGridTemplate(visibleColumns);
     const cardMinWidth = storyboardCardMinWidth(visibleColumns);
     const [prompt, setPrompt] = useState(node.metadata?.composerContent || "");
+    const [composerActive, setComposerActive] = useState(false);
+    const [composerReady, setComposerReady] = useState(false);
+    const [composerConflict, setComposerConflict] = useState(false);
+    const author = useCanvasEditLease(projectId, node.id, composerActive);
+    const basePrompt = useRef(node.metadata?.composerContent || "");
+    const appliedPrompt = useRef(node.metadata?.composerContent || "");
+    const baseIdentity = useRef(captureCanvasAuthorIdentity(projectId, node.id));
+    const promptRef = useRef(prompt);
+    promptRef.current = prompt;
+    const latestPrompt = useRef(node.metadata?.composerContent || "");
+    latestPrompt.current = node.metadata?.composerContent || "";
+    const dirtyPrompt = useRef(false);
+    const openedComposer = useRef(false);
+    useEffect(() => {
+        if (!dirtyPrompt.current) {
+            basePrompt.current = node.metadata?.composerContent || "";
+            promptRef.current = basePrompt.current;
+            setPrompt(basePrompt.current);
+        }
+    }, [node.metadata?.composerContent]);
+    const enterComposer = async () => {
+        setComposerActive(true);
+        try {
+            await author.begin();
+            if (!openedComposer.current && author.scope) {
+                const draft = await readCanvasAuthorDraft(author.scope, projectId, node.id, "prompt");
+                if (author.controller && !author.controller.isCurrent()) return;
+                if (draft) {
+                    setComposerConflict(!sameCanvasAuthorIdentity(draft.identity, captureCanvasAuthorIdentity(projectId, node.id)) || (String(draft.base.prompt || "") !== latestPrompt.current && String(draft.value.prompt || "") !== latestPrompt.current));
+                    basePrompt.current = String(draft.base.prompt || "");
+                    baseIdentity.current = draft.identity;
+                    promptRef.current = String(draft.value.prompt || "");
+                    setPrompt(promptRef.current);
+                    dirtyPrompt.current = true;
+                } else baseIdentity.current = captureCanvasAuthorIdentity(projectId, node.id);
+            }
+            openedComposer.current = true;
+            setComposerReady(true);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "编辑占用暂不可用，草稿已保留");
+        }
+    };
+    const saveComposer = async () => {
+        if (
+            composerConflict ||
+            (author.isRemote && !sameCanvasAuthorIdentity(baseIdentity.current, captureCanvasAuthorIdentity(projectId, node.id))) ||
+            (latestPrompt.current !== basePrompt.current && latestPrompt.current !== promptRef.current && latestPrompt.current !== appliedPrompt.current)
+        )
+            throw new Error("剧情内容或节点版本已改变，旧草稿已保留，请先复制当前输入");
+        await author.save(async () => {
+            appliedPrompt.current = promptRef.current;
+            onPromptChange(promptRef.current);
+            await onPersist();
+        });
+        if (author.scope) await clearCanvasAuthorDraft(author.scope, projectId, node.id, "prompt");
+        dirtyPrompt.current = false;
+        basePrompt.current = promptRef.current;
+        setComposerActive(false);
+    };
     const [scrollTop, setScrollTop] = useState(0);
     const composerHeightChangeRef = useRef(onComposerHeightChange);
     const reportedComposerHeightRef = useRef<number | null>(null);
@@ -246,9 +322,15 @@ export function CanvasScriptNodeContent({
               ]
             : []),
     ];
-    const submitPrompt = () => {
+    const submitPrompt = async () => {
         const value = prompt.trim();
-        if (value && node.metadata?.status !== "loading") onGenerateScript(value);
+        if (!value || node.metadata?.status === "loading") return;
+        try {
+            await saveComposer();
+            onGenerateScript(value);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "剧情尚未确认保存，未启动生成");
+        }
     };
     useLayoutEffect(() => {
         composerHeightChangeRef.current = onComposerHeightChange;
@@ -268,7 +350,7 @@ export function CanvasScriptNodeContent({
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold" title={node.title || "分镜脚本"}>
                     {node.title || "分镜脚本"}
                 </span>
-                <StoryboardSharedReferencesControl node={node} nodes={nodes} onChange={onReferenceNodeIdsChange}/>
+                <StoryboardSharedReferencesControl node={node} nodes={nodes} onChange={onReferenceNodeIdsChange} />
                 {batchSummary ? (
                     <span className="min-w-0 max-w-[42%] truncate text-[var(--fs-label)] font-medium" title={batchSummary} style={{ color: batch?.status === "partial_failed" ? theme.accent.danger : theme.node.muted }}>
                         {batchSummary}
@@ -335,17 +417,9 @@ export function CanvasScriptNodeContent({
                 onWheel={(event) => event.stopPropagation()}
             >
                 <div className="flex min-h-full flex-col" style={{ minWidth: cardMinWidth }}>
-                    <div
-                        className="sticky top-0 z-[1] grid h-9 items-center border-b text-xs font-semibold"
-                        style={{ borderColor: theme.node.stroke, color: theme.node.muted, background: theme.node.fill, gridTemplateColumns: cardGridTemplate }}
-                    >
+                    <div className="sticky top-0 z-[1] grid h-9 items-center border-b text-xs font-semibold" style={{ borderColor: theme.node.stroke, color: theme.node.muted, background: theme.node.fill, gridTemplateColumns: cardGridTemplate }}>
                         {visibleColumns.map((column) => (
-                            <HeaderCell
-                                key={column}
-                                borderColor={theme.node.stroke}
-                                align={column === "shotNumber" || column === "durationSeconds" ? "center" : "left"}
-                                title={STORYBOARD_EDITOR_COLUMN_DESCRIPTIONS[column]}
-                            >
+                            <HeaderCell key={column} borderColor={theme.node.stroke} align={column === "shotNumber" || column === "durationSeconds" ? "center" : "left"} title={STORYBOARD_EDITOR_COLUMN_DESCRIPTIONS[column]}>
                                 {storyboardColumnLabel(column)}
                             </HeaderCell>
                         ))}
@@ -415,10 +489,29 @@ export function CanvasScriptNodeContent({
                     className="thin-scrollbar h-full min-h-0 w-full touch-pan-y resize-none overflow-y-auto overflow-x-hidden overscroll-contain rounded-md border bg-transparent px-3 py-2 text-sm leading-5 outline-none transition placeholder:opacity-45 focus:ring-1"
                     style={{ borderColor: theme.node.stroke, color: theme.node.text, "--tw-ring-color": theme.node.muted } as CSSProperties}
                     value={prompt}
+                    readOnly={!composerReady || !author.canEdit || composerConflict}
+                    onFocus={() => void enterComposer()}
+                    onBlur={() => {
+                        if (dirtyPrompt.current) void saveComposer().catch((error) => message.error(error instanceof Error ? error.message : "剧情草稿已保留"));
+                        else setComposerActive(false);
+                    }}
                     placeholder="输入剧本或剧情，以及总时长等要求，自动拆分为镜头"
                     onContentSizeChange={resizePrompt}
                     onChange={(value) => {
+                        if (!author.canEdit || composerConflict) return;
+                        if ((author.isRemote && !sameCanvasAuthorIdentity(baseIdentity.current, captureCanvasAuthorIdentity(projectId, node.id))) || (latestPrompt.current !== basePrompt.current && latestPrompt.current !== appliedPrompt.current)) {
+                            setComposerConflict(true);
+                            return;
+                        }
+                        promptRef.current = value;
+                        dirtyPrompt.current = true;
                         setPrompt(value);
+                        if (author.scope)
+                            void saveCanvasAuthorDraft(author.scope, projectId, node.id, { kind: "prompt", identity: baseIdentity.current, base: { prompt: basePrompt.current }, value: { prompt: value } }).catch(() =>
+                                message.error("本地草稿保存失败，请复制当前剧情"),
+                            );
+                        author.markPending();
+                        appliedPrompt.current = value;
                         onPromptChange(value);
                     }}
                     onKeyDown={(event) => {
@@ -432,6 +525,29 @@ export function CanvasScriptNodeContent({
                     onWheel={(event) => event.stopPropagation()}
                 />
                 <div className="flex min-w-0 items-center justify-end gap-2" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+                    <span className="max-w-32 truncate text-[var(--fs-tiny)] text-muted-foreground" role="status" title={composerConflict ? "旧草稿与当前节点版本不同，请先复制保留，再重新打开画布处理" : author.message}>
+                        {composerConflict ? "旧草稿待核对" : author.message}
+                    </span>
+                    <Button size="small" onClick={() => void saveComposer().catch((error) => message.error(error instanceof Error ? error.message : "剧情尚未保存"))} disabled={composerConflict}>
+                        保存
+                    </Button>
+                    {composerConflict ? (
+                        <Button
+                            size="small"
+                            onClick={() => {
+                                if (author.scope) void clearCanvasAuthorDraft(author.scope, projectId, node.id, "prompt");
+                                basePrompt.current = latestPrompt.current;
+                                appliedPrompt.current = latestPrompt.current;
+                                baseIdentity.current = captureCanvasAuthorIdentity(projectId, node.id);
+                                promptRef.current = latestPrompt.current;
+                                setPrompt(latestPrompt.current);
+                                dirtyPrompt.current = false;
+                                setComposerConflict(false);
+                            }}
+                        >
+                            采用云端
+                        </Button>
+                    ) : null}
                     <Tooltip title="脚本生成需要文本理解与结构化输出能力，仅展示文本模型；视频/图片模型无法生成分镜表" placement="topLeft">
                         <div className="mr-auto min-w-36 max-w-56 flex-1">
                             <ModelPicker
@@ -644,7 +760,7 @@ export function CanvasScriptEditor({
     onGenerateImages: (rowIds: string[]) => void;
     onGenerateVideos: (rowIds: string[]) => void;
     onVideoInputModeChange: (mode: StoryboardVideoInputMode) => void;
-    onReferenceNodeIdsChange:(ids:string[])=>void;
+    onReferenceNodeIdsChange: (ids: string[]) => void;
 }) {
     const [query, setQuery] = useState("");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -673,7 +789,17 @@ export function CanvasScriptEditor({
         const keyword = query.trim().toLowerCase();
         return keyword
             ? rows.filter((row) =>
-                  [row.plotDescription, row.dialogue, row.camera, row.motion, row.timeBeats, row.imageGenerationPrompt, row.videoMotionPrompt, row.negativePrompt, ...(row.assetBindings || []).map((binding) => nodeById.get(binding.nodeId)?.title || "")].some((value) =>
+                  [
+                      row.plotDescription,
+                      row.dialogue,
+                      row.camera,
+                      row.motion,
+                      row.timeBeats,
+                      row.imageGenerationPrompt,
+                      row.videoMotionPrompt,
+                      row.negativePrompt,
+                      ...(row.assetBindings || []).map((binding) => nodeById.get(binding.nodeId)?.title || ""),
+                  ].some((value) =>
                       String(value || "")
                           .toLowerCase()
                           .includes(keyword),
@@ -705,7 +831,10 @@ export function CanvasScriptEditor({
     const removeRow = (rowId: string) => onUpdateRows(rows.filter((row) => row.id !== rowId).map((row, index) => ({ ...row, shotNumber: index + 1 })));
 
     const visibleColumnOptions = STORYBOARD_COLUMN_OPTIONS.filter((option) => visibleColumns.includes(option.value));
-    const columnWidths = storyboardEditorColumnWidths(visibleColumnOptions.map((option) => option.value), tableWidth);
+    const columnWidths = storyboardEditorColumnWidths(
+        visibleColumnOptions.map((option) => option.value),
+        tableWidth,
+    );
     const columns: ColumnsType<StoryboardRow> = visibleColumnOptions.map((option, index) => ({
         title: <span title={STORYBOARD_EDITOR_COLUMN_DESCRIPTIONS[option.value]}>{option.label}</span>,
         dataIndex: option.value,
@@ -718,16 +847,17 @@ export function CanvasScriptEditor({
             ) : option.value === "durationSeconds" ? (
                 <InputNumber min={1} max={60} value={row.durationSeconds} addonAfter="s" className="w-full" onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
             ) : option.value === "assets" ? (
-                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} inherited={node?storyboardInheritedBindings(node,row,nodes):[]} pending={row.status==="loading"} onChange={assetBindings=>updateRow(row.id,{assetBindings})} onEdit={onEditAssets ? () => onEditAssets(row.id) : undefined} disabled={Boolean(node?.metadata?.locked)} />
-            ) : option.value === "shotSize" ? (
-                <Select
-                    className="w-full"
-                    value={row.shotSize || undefined}
-                    placeholder="选择景别"
-                    ariaLabel="景别"
-                    options={STORYBOARD_SHOT_SIZES.map((value) => ({ value, label: value }))}
-                    onChange={(shotSize) => updateRow(row.id, { shotSize })}
+                <StoryboardAssetsCell
+                    bindings={row.assetBindings || []}
+                    nodes={nodes}
+                    inherited={node ? storyboardInheritedBindings(node, row, nodes) : []}
+                    pending={row.status === "loading"}
+                    onChange={(assetBindings) => updateRow(row.id, { assetBindings })}
+                    onEdit={onEditAssets ? () => onEditAssets(row.id) : undefined}
+                    disabled={Boolean(node?.metadata?.locked)}
                 />
+            ) : option.value === "shotSize" ? (
+                <Select className="w-full" value={row.shotSize || undefined} placeholder="选择景别" ariaLabel="景别" options={STORYBOARD_SHOT_SIZES.map((value) => ({ value, label: value }))} onChange={(shotSize) => updateRow(row.id, { shotSize })} />
             ) : (
                 <Input.TextArea
                     autoSize={{ minRows: 1, maxRows: 6 }}
@@ -771,7 +901,10 @@ export function CanvasScriptEditor({
         <div className="w-[372px] max-w-[80vw]" onMouseDown={(event) => event.stopPropagation()}>
             <div className="mb-2.5 flex items-center justify-between gap-3">
                 <span className="text-xs font-semibold">
-                    显示列 <span className="font-normal text-foreground/50">（{visibleColumns.length}/{STORYBOARD_COLUMN_OPTIONS.length}）</span>
+                    显示列{" "}
+                    <span className="font-normal text-foreground/50">
+                        （{visibleColumns.length}/{STORYBOARD_COLUMN_OPTIONS.length}）
+                    </span>
                 </span>
                 <Button type="link" size="small" className="h-auto p-0 text-xs" onClick={resetColumns}>
                     恢复默认列
@@ -804,7 +937,7 @@ export function CanvasScriptEditor({
                 <div className="shrink-0 border-b border-foreground/10 px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
                         <Input.Search className="w-72" allowClear placeholder="筛选画面、台词或提示词" value={query} onChange={(event) => setQuery(event.target.value)} />
-                        {node?<StoryboardSharedReferencesControl node={node} nodes={nodes} onChange={onReferenceNodeIdsChange}/>:null}
+                        {node ? <StoryboardSharedReferencesControl node={node} nodes={nodes} onChange={onReferenceNodeIdsChange} /> : null}
                         <Popover trigger="click" placement="bottomLeft" arrow={false} content={columnPicker}>
                             <Button icon={<Columns3 className="size-4" />}>
                                 显示列
@@ -869,7 +1002,7 @@ function ScriptCardCell({
     onUpdateRow,
     onEditAssets,
 }: {
-    scriptNode:CanvasNodeData;
+    scriptNode: CanvasNodeData;
     column: StoryboardColumn;
     row: StoryboardRow;
     nodes: CanvasNodeData[];
@@ -886,10 +1019,7 @@ function ScriptCardCell({
             <div className="flex flex-col items-center justify-center gap-0.5 border-r tabular-nums" style={{ color: mutedColor, borderColor }}>
                 <div className="flex items-center gap-0.5">
                     <span className="text-sm">{row.shotNumber}</span>
-                    <Dropdown
-                        trigger={["click"]}
-                        menu={{ items: [{ key: "delete", label: "删除镜头", icon: <Trash2 className="size-3.5" />, danger: true, disabled: !canRemove, onClick: () => onRemoveRow(row.id) }] }}
-                    >
+                    <Dropdown trigger={["click"]} menu={{ items: [{ key: "delete", label: "删除镜头", icon: <Trash2 className="size-3.5" />, danger: true, disabled: !canRemove, onClick: () => onRemoveRow(row.id) }] }}>
                         <button
                             type="button"
                             className="grid size-5 place-items-center rounded outline-none opacity-45 transition hover:bg-black/5 hover:opacity-100 focus-visible:ring-2 dark:hover:bg-white/10"
@@ -916,7 +1046,15 @@ function ScriptCardCell({
     if (column === "assets") {
         return (
             <div className="flex h-full min-w-0 items-center border-r px-2.5" style={{ borderColor }}>
-                <StoryboardAssetsCell bindings={row.assetBindings || []} nodes={nodes} inherited={storyboardInheritedBindings(scriptNode,row,nodes)} pending={row.status==="loading"} onChange={assetBindings=>onUpdateRow(row.id,{assetBindings})} onEdit={onEditAssets ? () => onEditAssets(row.id) : undefined} disabled={Boolean(scriptNode.metadata?.locked)} />
+                <StoryboardAssetsCell
+                    bindings={row.assetBindings || []}
+                    nodes={nodes}
+                    inherited={storyboardInheritedBindings(scriptNode, row, nodes)}
+                    pending={row.status === "loading"}
+                    onChange={(assetBindings) => onUpdateRow(row.id, { assetBindings })}
+                    onEdit={onEditAssets ? () => onEditAssets(row.id) : undefined}
+                    disabled={Boolean(scriptNode.metadata?.locked)}
+                />
             </div>
         );
     }

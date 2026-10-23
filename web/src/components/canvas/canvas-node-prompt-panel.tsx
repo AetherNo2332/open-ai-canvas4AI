@@ -1,4 +1,4 @@
-import { Button, Image as AntImage, InputNumber, Modal, Popover } from "antd";
+import { App, Button, Image as AntImage, InputNumber, Modal, Popover } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowLeftRight, ArrowUp, AtSign, Boxes, ChevronDown, FileText, GripVertical, ImageIcon, ImagePlus, LayoutList, Link2, LoaderCircle, Maximize2, Music2, Pencil, SlidersHorizontal, UserRound, Video, WandSparkles, X } from "lucide-react";
@@ -46,6 +46,10 @@ import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useResolvedCanvasResourceReferences } from "./use-resolved-canvas-resource-references";
 import { quoteModel, type LogicalModelQuote } from "@/services/api/logical-models";
+import { useCanvasEditLease } from "./use-canvas-edit-lease";
+import { CanvasEditLeaseStatus } from "./canvas-edit-lease-status";
+import { captureCanvasAuthorIdentity, sameCanvasAuthorIdentity, clearCanvasAuthorDraft, readCanvasAuthorDraft, saveCanvasAuthorDraft, type CanvasAuthorIdentity } from "@/services/canvas-author-drafts";
+import { getActiveUserScope } from "@/lib/user-scope";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
 
@@ -54,6 +58,7 @@ type CanvasNodePromptPanelProps = {
     node: CanvasNodeData;
     isRunning: boolean;
     onPromptChange: (nodeId: string, prompt: string) => void;
+    onPersist: () => Promise<void>;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
     mentionReferences?: CanvasResourceReference[];
@@ -90,6 +95,7 @@ export function CanvasNodePromptPanel({
     node,
     isRunning,
     onPromptChange,
+    onPersist,
     onConfigChange,
     onGenerate,
     mentionReferences = [],
@@ -104,6 +110,8 @@ export function CanvasNodePromptPanel({
     workspaceMode = "professional",
     onListGenerate,
 }: CanvasNodePromptPanelProps) {
+    const { message } = App.useApp();
+    const lease = useCanvasEditLease(projectId, node.id);
     const globalConfig = useEffectiveConfig();
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
@@ -119,6 +127,17 @@ export function CanvasNodePromptPanel({
     const savedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
     const [prompt, setPrompt] = useState(savedPrompt);
     const promptRef = useRef(savedPrompt);
+    const dirtyRef = useRef(false);
+    const basePromptRef = useRef(savedPrompt);
+    const appliedPromptRef = useRef(savedPrompt);
+    const baseIdentity = useRef<CanvasAuthorIdentity | undefined>(undefined);
+    const latestPromptRef = useRef(savedPrompt);
+    latestPromptRef.current = savedPrompt;
+    const [draftReady, setDraftReady] = useState(false);
+    const [draftConflict, setDraftConflict] = useState(false);
+    const [draftError, setDraftError] = useState("");
+    const [savingPrompt, setSavingPrompt] = useState(false);
+    const promptGeneration = useRef(0);
     const [presetOpen, setPresetOpen] = useState(false);
     const [expandedPresetOpen, setExpandedPresetOpen] = useState(false);
     const [nineGridOpen, setNineGridOpen] = useState(false);
@@ -245,10 +264,49 @@ export function CanvasNodePromptPanel({
     const canAutoMention = autoMentionedPrompt !== prompt;
 
     useEffect(() => {
+        if (dirtyRef.current && normalizedSavedPrompt !== promptRef.current) {
+            if (savedPrompt !== basePromptRef.current && savedPrompt !== appliedPromptRef.current) setDraftConflict(true);
+            return;
+        }
         promptRef.current = normalizedSavedPrompt;
         setPrompt(normalizedSavedPrompt);
-        if (normalizedSavedPrompt !== savedPrompt) onPromptChange(node.id, normalizedSavedPrompt);
     }, [node.id, normalizedSavedPrompt, onPromptChange, savedPrompt]);
+
+    useEffect(() => {
+        const current = ++promptGeneration.current;
+        dirtyRef.current = false;
+        basePromptRef.current = savedPrompt;
+        appliedPromptRef.current = savedPrompt;
+        baseIdentity.current = captureCanvasAuthorIdentity(projectId, node.id);
+        setDraftReady(false);
+        setDraftConflict(false);
+        setDraftError("");
+        if (!lease.scope) {
+            setDraftReady(true);
+            return;
+        }
+        const scope = lease.scope;
+        void readCanvasAuthorDraft(scope, projectId, node.id, "prompt")
+            .then((draft) => {
+                if (current !== promptGeneration.current || getActiveUserScope() !== scope) return;
+                if (draft) {
+                    const currentIdentity = baseIdentity.current;
+                    baseIdentity.current = draft.identity;
+                    basePromptRef.current = String(draft.base.prompt || "");
+                    promptRef.current = String(draft.value.prompt || "");
+                    setPrompt(promptRef.current);
+                    dirtyRef.current = true;
+                    setDraftConflict(!sameCanvasAuthorIdentity(draft.identity, currentIdentity) || (basePromptRef.current !== latestPromptRef.current && promptRef.current !== latestPromptRef.current));
+                }
+                setDraftReady(true);
+            })
+            .catch(() => {
+                if (current === promptGeneration.current) setDraftError("本地提示词草稿读取失败，请保留当前窗口");
+            });
+        return () => {
+            promptGeneration.current++;
+        };
+    }, [node.id, projectId, lease.scope, lease.controller]);
 
     useEffect(() => {
         setExpandedPromptOpen(false);
@@ -294,7 +352,29 @@ export function CanvasNodePromptPanel({
     const updatePrompt = (value: string) => {
         promptRef.current = value;
         setPrompt(value);
-        onPromptChange(node.id, value);
+        dirtyRef.current = true;
+        const current = promptGeneration.current;
+        if (lease.scope)
+            void saveCanvasAuthorDraft(lease.scope, projectId, node.id, { kind: "prompt", identity: baseIdentity.current, base: { prompt: basePromptRef.current }, value: { prompt: value } }).catch(() =>
+                setDraftError("本地草稿保存失败，请保持窗口打开并复制提示词"),
+            );
+        void lease
+            .begin()
+            .then(() => {
+                if (current !== promptGeneration.current || draftConflict) return;
+                if (lease.isRemote && !sameCanvasAuthorIdentity(baseIdentity.current, captureCanvasAuthorIdentity(projectId, node.id))) {
+                    setDraftConflict(true);
+                    return;
+                }
+                if (latestPromptRef.current !== basePromptRef.current && latestPromptRef.current !== promptRef.current && latestPromptRef.current !== appliedPromptRef.current) {
+                    setDraftConflict(true);
+                    return;
+                }
+                lease.markPending();
+                appliedPromptRef.current = promptRef.current;
+                onPromptChange(node.id, promptRef.current);
+            })
+            .catch(() => {});
         if (showPromptTemplates && /(^|\s)\/[\p{L}\p{N}_-]*$/u.test(value)) {
             if (expandedPromptOpen) setExpandedPresetOpen(true);
             else setPresetOpen(true);
@@ -326,16 +406,52 @@ export function CanvasNodePromptPanel({
 
     const removeMotionToolMention = () => updatePromptFromCurrent((currentPrompt) => removeToolMentions(currentPrompt, "motion"));
 
-    const submit = () => {
+    const savePrompt = async () => {
+        if (!draftReady || draftConflict) throw new Error("提示词基线尚未确认，请先保留草稿并处理冲突");
+        if (lease.isRemote && !sameCanvasAuthorIdentity(baseIdentity.current, captureCanvasAuthorIdentity(projectId, node.id))) {
+            setDraftConflict(true);
+            throw new Error("节点版本已改变，旧提示词草稿已保留");
+        }
+        if (latestPromptRef.current !== basePromptRef.current && latestPromptRef.current !== promptRef.current && latestPromptRef.current !== appliedPromptRef.current) {
+            setDraftConflict(true);
+            throw new Error("云端提示词已变化，本地草稿已保留");
+        }
+        setSavingPrompt(true);
+        try {
+            await lease.save(async () => {
+                onPromptChange(node.id, promptRef.current);
+                await onPersist();
+            });
+            if (lease.scope) await clearCanvasAuthorDraft(lease.scope, projectId, node.id, "prompt");
+            basePromptRef.current = promptRef.current;
+            dirtyRef.current = false;
+        } finally {
+            setSavingPrompt(false);
+        }
+    };
+    const savePromptWithFeedback = async () => {
+        try {
+            await savePrompt();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "提示词尚未保存，草稿已保留");
+        }
+    };
+    const submit = async () => {
         const text = prompt.trim();
         if (!text || isRunning) return false;
+        try {
+            await savePrompt();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "提示词尚未保存，未启动生成");
+            return false;
+        }
         if (mode === "text" && node.metadata?.listMode && onListGenerate) onListGenerate(node.id, text);
         else onGenerate(node.id, mode, text);
         return true;
     };
 
-    const submitExpandedPrompt = () => {
-        if (submit()) {
+    const submitExpandedPrompt = async () => {
+        if (await submit()) {
             setExpandedPresetOpen(false);
             setExpandedNineGridOpen(false);
             setExpandedPromptOpen(false);
@@ -428,7 +544,18 @@ export function CanvasNodePromptPanel({
                 ) : null}
                 {!expanded && onClose ? (
                     <Tooltip title="关闭">
-                        <button type="button" className="canvas-node-composer-header-action grid size-6 shrink-0 place-items-center rounded-md" onClick={onClose} aria-label="关闭创作面板">
+                        <button
+                            type="button"
+                            className="canvas-node-composer-header-action grid size-6 shrink-0 place-items-center rounded-md"
+                            onClick={() => {
+                                if (dirtyRef.current)
+                                    void savePrompt()
+                                        .then(onClose)
+                                        .catch((error) => message.error(error instanceof Error ? error.message : "草稿已保留，请重试保存"));
+                                else onClose();
+                            }}
+                            aria-label="关闭创作面板"
+                        >
                             <X className="size-3" />
                         </button>
                     </Tooltip>
@@ -597,6 +724,13 @@ export function CanvasNodePromptPanel({
                         onSelectReference={onAddReference ? (reference) => onAddReference(node.id, reference) : undefined}
                         includeAssetLibrary
                         onChange={updatePrompt}
+                        readOnly={!draftReady || !lease.canEdit || draftConflict || savingPrompt}
+                        onFocus={() => {
+                            if (!draftConflict) void lease.begin().catch(() => {});
+                        }}
+                        onBlur={() => {
+                            if (dirtyRef.current && !draftConflict && lease.canEdit) void savePromptWithFeedback();
+                        }}
                         autoLinkEnabled={autoLinkEnabled}
                         onReferenceFilesDrop={onReplaceReferenceFiles ? (reference, files) => onReplaceReferenceFiles(node.id, reference, files) : undefined}
                         onContentSizeChange={expanded ? setExpandedPromptContentHeight : setPromptContentHeight}
@@ -632,6 +766,31 @@ export function CanvasNodePromptPanel({
         >
             <div className="canvas-node-composer" style={composerSurfaceStyle} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
                 {renderComposerHeader(false)}
+
+                <div className="flex items-start gap-1 px-2 pb-1" data-canvas-no-drag>
+                    <div className="min-w-0 flex-1">
+                        <CanvasEditLeaseStatus phase={lease.phase} message={draftError || (draftConflict ? "云端提示词已变化，旧草稿已保留，请先复制提示词" : lease.message)} onRetry={() => void lease.begin().catch(() => {})} />
+                    </div>
+                    <Button size="small" loading={savingPrompt} disabled={!draftReady || draftConflict} onClick={() => void savePromptWithFeedback()}>
+                        保存
+                    </Button>
+                    {draftConflict ? (
+                        <Button
+                            size="small"
+                            onClick={() => {
+                                promptRef.current = latestPromptRef.current;
+                                setPrompt(latestPromptRef.current);
+                                basePromptRef.current = latestPromptRef.current;
+                                baseIdentity.current = captureCanvasAuthorIdentity(projectId, node.id);
+                                dirtyRef.current = false;
+                                setDraftConflict(false);
+                                if (lease.scope) void clearCanvasAuthorDraft(lease.scope, projectId, node.id, "prompt");
+                            }}
+                        >
+                            采用云端
+                        </Button>
+                    ) : null}
+                </div>
 
                 {renderPromptEditor(false)}
 

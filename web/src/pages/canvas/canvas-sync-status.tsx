@@ -6,9 +6,11 @@ import { readAllCanvasSyncDrafts, readCanvasSyncDrafts, type CanvasSyncDraft } f
 import { getActiveUserScope } from "@/lib/user-scope";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
+import { useCanvasSyncActivity } from "@/components/canvas/use-canvas-edit-lease";
 
 export function CanvasSyncStatus({ projectId, onLoadLatest, onOpenVersions }: { projectId: string; onLoadLatest: () => Promise<void>; onOpenVersions?: () => void }) {
     const { message } = App.useApp();
+    const { activity, error: activityError } = useCanvasSyncActivity(projectId);
     const progress = useSyncProgressStore((state) => state.syncingProjects[projectId]);
     const [busy, setBusy] = useState(false);
     const [statusOpen, setStatusOpen] = useState(false);
@@ -41,6 +43,23 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onOpenVersions }: { 
                             {progress?.message || (phase === "done" ? "画布已同步到云端" : "尚未确认云端保存，请保留本地内容")}
                         </p>
                         {conflict ? <p className="text-xs text-muted-foreground">此画布的自动提交已暂停。加载最新版前会保留本地草稿，可下载后从画布列表导入为副本。</p> : null}
+                        {activity ? (
+                            <div className="space-y-1 text-xs text-muted-foreground">
+                                <p>{activity.leases.length ? `${activity.leases.length} 个节点正在编辑` : "暂无节点编辑占用"}</p>
+                                {activity.leases.map((lease) => (
+                                    <p key={`${lease.nodeId}:${lease.sessionId}`} className="break-all">
+                                        节点 {lease.nodeId} · 占用至 {new Date(lease.expiresAt).toLocaleTimeString()}
+                                    </p>
+                                ))}
+                                {activity.activeAgents.map((agent) => (
+                                    <p key={agent.id}>
+                                        {agent.title || "Agent"} · {agent.status}
+                                    </p>
+                                ))}
+                            </div>
+                        ) : activityError ? (
+                            <p className="text-xs text-muted-foreground">编辑占用状态暂不可用，保存仍以回执为准</p>
+                        ) : null}
                         <div className="flex flex-wrap gap-2">
                             <Button size="small" loading={busy} onClick={() => void run(onLoadLatest)}>
                                 加载云端最新版本
