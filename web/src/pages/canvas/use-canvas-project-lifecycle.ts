@@ -19,6 +19,7 @@ import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { useUserStore } from "@/stores/use-user-store";
+import { ensureOrdinaryCanvasCommandWorkspace } from "@/services/canvas-command-bootstrap";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { CanvasHistorySnapshot } from "./use-canvas-history";
 
@@ -92,6 +93,8 @@ export function useCanvasProjectLifecycle({
     const renameProject = useCanvasStore((state) => state.renameProject);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
     const commandScope = useCanvasSessionStore((state) => state.scope);
+    const commandBootstrapState = useCanvasSessionStore((state) => state.bootstrapState);
+    const commandBootstrapError = useCanvasSessionStore((state) => state.bootstrapError);
     const commandEditorRef = useRef<Awaited<ReturnType<typeof attachCanvasCommandProject<CanvasNodeData, CanvasConnection>>> | null>(null);
     const sharedSettingsRef = useRef({ canvasAppearance, backgroundMode, showImageInfo });
     sharedSettingsRef.current = { canvasAppearance, backgroundMode, showImageInfo };
@@ -106,6 +109,9 @@ export function useCanvasProjectLifecycle({
     const historyRestoreRef = useRef<{ snapshotId: string; revision: number; resolve: () => void; reject: (error: unknown) => void } | null>(null);
     const pendingReloadRef = useRef<{ resolve: () => void; reject: (error: unknown) => void } | null>(null);
     const editorReadyRef = useRef(false);
+    useEffect(() => {
+        if (commandBootstrapState === "failed") setLoadError(commandBootstrapError || "画布同步连接暂不可用，请重试");
+    }, [commandBootstrapError, commandBootstrapState]);
 
     useEffect(() => {
         if (!commandScope || !hydrated || !sessionHydrated) return;
@@ -214,7 +220,7 @@ export function useCanvasProjectLifecycle({
     }, [commandScope, hydrated, sessionHydrated, projectId, loadAttempt, resetHistory, setProjectLoaded, setNodes, setConnections, setChatSessions, setActiveChatId, setCanvasAppearance, setBackgroundMode, setShowImageInfo, setViewport]);
 
     useEffect(() => {
-        if (commandScope || !hydrated || !sessionHydrated) return;
+        if (commandScope || commandBootstrapState !== "inactive" || !hydrated || !sessionHydrated) return;
         let cancelled = false;
         // Keep load intent on the refs until this attempt finishes. React Strict
         // Mode remounts the effect; consuming the flags here would turn "load
@@ -329,7 +335,26 @@ export function useCanvasProjectLifecycle({
         return () => {
             cancelled = true;
         };
-    }, [commandScope, hydrated, sessionHydrated, loadAttempt, message, navigate, openProject, projectId, resetHistory, setActiveChatId, setBackgroundMode, setCanvasAppearance, setChatSessions, setConnections, setNodes, setShowImageInfo, setViewport]);
+    }, [
+        commandScope,
+        commandBootstrapState,
+        hydrated,
+        sessionHydrated,
+        loadAttempt,
+        message,
+        navigate,
+        openProject,
+        projectId,
+        resetHistory,
+        setActiveChatId,
+        setBackgroundMode,
+        setCanvasAppearance,
+        setChatSessions,
+        setConnections,
+        setNodes,
+        setShowImageInfo,
+        setViewport,
+    ]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -372,6 +397,7 @@ export function useCanvasProjectLifecycle({
 
     useEffect(() => {
         if (!projectLoaded || historyPausedRef.current) return;
+        if (!commandScope && commandBootstrapState !== "inactive") return;
         if (commandScope) {
             const timer = setTimeout(() => {
                 void commitCanvasCommandEditor(projectId).catch((error) => message.error(error instanceof Error ? error.message : "画布编辑未提交"));
@@ -386,7 +412,24 @@ export function useCanvasProjectLifecycle({
         // 远端结果投影到编辑器不是一次本地编辑，避免改写时间戳并触发反向保存。
         if (stored && sameCanvasPatch(stored, patch)) return;
         updateProject(projectId, patch);
-    }, [commandScope, activeChatId, backgroundMode, canvasAppearance, chatSessions, connections, historyPausedRef, nodes, projectId, projectLoaded, showImageInfo, updateProject, currentProject?.previsScenes, currentProject?.timeline, message]);
+    }, [
+        commandScope,
+        commandBootstrapState,
+        activeChatId,
+        backgroundMode,
+        canvasAppearance,
+        chatSessions,
+        connections,
+        historyPausedRef,
+        nodes,
+        projectId,
+        projectLoaded,
+        showImageInfo,
+        updateProject,
+        currentProject?.previsScenes,
+        currentProject?.timeline,
+        message,
+    ]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -476,6 +519,7 @@ export function useCanvasProjectLifecycle({
             if (!(await commandEditorRef.current?.flush())) throw new Error("画布仍有未确认编辑，草稿已保留");
             return;
         }
+        if (commandBootstrapState !== "inactive") throw new Error("画布同步尚未连接，本地编辑已保留");
         const snapshot = { nodes: nodesRef.current, connections: connectionsRef.current, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo };
         if (observedContentRef.current && !sameCanvasHistorySnapshot(observedContentRef.current, snapshot)) {
             updateProject(projectId, {
@@ -492,7 +536,7 @@ export function useCanvasProjectLifecycle({
         }
         updateProject(projectId, { viewport: viewportRef.current });
         await flushCanvasStorePersistence();
-    }, [commandScope, activeChatId, backgroundMode, canvasAppearance, chatSessions, connectionsRef, nodesRef, projectId, showImageInfo, updateProject, viewportRef]);
+    }, [commandScope, commandBootstrapState, activeChatId, backgroundMode, canvasAppearance, chatSessions, connectionsRef, nodesRef, projectId, showImageInfo, updateProject, viewportRef]);
 
     const reloadLatestCanvasProject = useCallback(async () => {
         await persistLocalEdits();
@@ -581,7 +625,10 @@ export function useCanvasProjectLifecycle({
 
     return {
         loadError,
-        retryLoad: () => setLoadAttempt((attempt) => attempt + 1),
+        retryLoad: () => {
+            if (commandBootstrapState === "failed") void ensureOrdinaryCanvasCommandWorkspace().catch((error) => setLoadError(error instanceof Error ? error.message : "画布同步暂不可用"));
+            else setLoadAttempt((attempt) => attempt + 1);
+        },
         addedSkills,
         agentCreatedNodes: agentCreatedNodes?.projectId === projectId ? agentCreatedNodes.nodes : null,
         clearCanvasFiles,

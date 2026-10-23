@@ -11,9 +11,12 @@ import { canvasEditorCommands } from "../../lib/canvas/canvas-editor-commands";
 import { useCanvasStore, withCanvasStorePersistenceSuppressed, type CanvasProject } from "./use-canvas-store";
 import type { Snapshot } from "../../lib/canvas/command-contract.generated";
 
-type SessionStore = { scope: string | null; capabilities: CanvasCapabilities | null; states: Record<string, CommandSessionState> };
-export const useCanvasSessionStore = create<SessionStore>(() => ({ scope: null, capabilities: null, states: {} }));
+type SessionStore = { scope: string | null; capabilities: CanvasCapabilities | null; states: Record<string, CommandSessionState>; bootstrapState: "inactive" | "connecting" | "ready" | "failed"; bootstrapError?: string };
+export const useCanvasSessionStore = create<SessionStore>(() => ({ scope: null, capabilities: null, states: {}, bootstrapState: "inactive" }));
 let workspace: CanvasCommandWorkspace | null = null;
+let journal: ReturnType<typeof createCanvasCommandJournal> | null = null;
+const migrated = new Set<string>();
+const migrationFlights = new Map<string, Promise<void>>();
 let creator: ReturnType<typeof createCanvasCommandCreator> | null = null;
 let personalView: ReturnType<typeof createCanvasPersonalViewStorage> | null = null;
 export function canvasPersonalViewStorage() {
@@ -36,9 +39,8 @@ export function commitCanvasCommandEditor(canvasId: string) {
     return editors.get(canvasId)?.commit() || Promise.resolve();
 }
 
-/** Preparation only; the desktop bootstrap activates this after all editor
- * callbacks and task consumers have moved to commands in the same change. */
 export async function connectCanvasCommandWorkspace(scope: string, boundClientId?: string) {
+    if (workspace && useCanvasSessionStore.getState().scope === scope) return;
     const current = ++generation;
     const previous = workspace;
     creator?.close();
@@ -50,7 +52,9 @@ export async function connectCanvasCommandWorkspace(scope: string, boundClientId
     for (const dispose of bindings.values()) dispose();
     bindings.clear();
     observers.clear();
-    useCanvasSessionStore.setState({ scope: null, capabilities: null, states: {} });
+    migrated.clear();
+    migrationFlights.clear();
+    useCanvasSessionStore.setState({ scope: null, capabilities: null, states: {}, bootstrapState: "connecting", bootstrapError: undefined });
     await previous?.close();
     const api = captureHTTP();
     const transport = createCanvasCommandTransport(api);
@@ -60,7 +64,8 @@ export async function connectCanvasCommandWorkspace(scope: string, boundClientId
     const journalStorage = native ? nativeCommandJournalStorage(native) : localforage;
     const clientId = boundClientId || (await readCanvasClientId(journalStorage, scope));
     if (current !== generation) throw new DOMException("画布主机已切换", "AbortError");
-    workspace = createCanvasCommandWorkspace({ transport, clientId, journal: createCanvasCommandJournal(journalStorage, scope) });
+    journal = createCanvasCommandJournal(journalStorage, scope);
+    workspace = createCanvasCommandWorkspace({ transport, clientId, journal });
     personalView = createCanvasPersonalViewStorage(journalStorage, scope);
     creator = createCanvasCommandCreator({
         scope,
@@ -91,7 +96,7 @@ export async function connectCanvasCommandWorkspace(scope: string, boundClientId
     });
     await creator.recover();
     if (current !== generation) throw new DOMException("画布主机已切换", "AbortError");
-    useCanvasSessionStore.setState({ scope, capabilities, states: {} });
+    useCanvasSessionStore.setState({ scope, capabilities, states: {}, bootstrapState: "ready" });
 }
 export async function createCanvasCommandProject(title: string, projectId?: string, initialContent?: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId">>) {
     const current = creator,
@@ -106,8 +111,34 @@ export async function createCanvasCommandProject(title: string, projectId?: stri
 export async function openCanvasCommandSession(canvasId: string): Promise<CanvasCommandSession> {
     const current = workspace;
     if (!current) throw new Error("canvas_command_workspace_unavailable");
-    const session = await current.open(canvasId);
+    const scope = useCanvasSessionStore.getState().scope!;
+    const cached = structuredClone(useCanvasStore.getState().openProject(canvasId) || undefined);
+    const pending = await journal?.read(canvasId);
+    let session: CanvasCommandSession;
+    try {
+        session = await current.open(canvasId);
+    } catch (error) {
+        if (!pending?.length && cached?.revision === 0 && typeof error === "object" && error && "status" in error && error.status === 404) {
+            const { migrateNewCanvasCommandBase } = await import("../../services/user-data-sync");
+            await migrateNewCanvasCommandBase(canvasId);
+            session = await current.open(canvasId);
+        } else throw error;
+    }
     if (current !== workspace) throw new DOMException("画布主机已切换", "AbortError");
+    if (!migrated.has(canvasId)) {
+        let migration = migrationFlights.get(canvasId);
+        if (!migration) {
+            migration = import("../../services/canvas-command-bootstrap").then(({ migrateCachedCanvasIntoSession }) => migrateCachedCanvasIntoSession(session, cached, Boolean(pending?.length), scope));
+            migrationFlights.set(canvasId, migration);
+        }
+        try {
+            await migration;
+        } finally {
+            if (migrationFlights.get(canvasId) === migration) migrationFlights.delete(canvasId);
+        }
+        if (current !== workspace) throw new DOMException("画布主机已切换", "AbortError");
+        migrated.add(canvasId);
+    }
     if (!bindings.has(canvasId))
         bindings.set(
             canvasId,
@@ -146,6 +177,9 @@ export async function disconnectCanvasCommandWorkspace() {
     creator = null;
     const previous = workspace;
     workspace = null;
+    journal = null;
+    migrated.clear();
+    migrationFlights.clear();
     personalView = null;
     for (const editor of editors.values()) editor.dispose();
     editors.clear();
@@ -153,5 +187,5 @@ export async function disconnectCanvasCommandWorkspace() {
     bindings.clear();
     observers.clear();
     await previous?.close();
-    useCanvasSessionStore.setState({ scope: null, capabilities: null, states: {} });
+    useCanvasSessionStore.setState({ scope: null, capabilities: null, states: {}, bootstrapState: "inactive", bootstrapError: undefined });
 }

@@ -168,12 +168,16 @@ export const http = {
 
 /** A canvas session must keep its original host even if the global UI connects
  * elsewhere while an ACK or retry is pending. Same client, same error boundary. */
-export function captureHTTP(baseURL = apiBaseURL): Pick<typeof http, "get" | "post"> {
+export function captureHTTP(baseURL = apiBaseURL): Pick<typeof http, "get" | "post" | "put"> {
     const sendCaptured = <T>(method: string, url: string, data: unknown, config?: HttpRequestConfig) => {
         const { allowNotModified, ...axiosConfig } = config || {};
         return request<T>(apiClient.request<BackendEnvelope<T>>({ ...axiosConfig, baseURL, method, url, data }), { allowNotModified });
     };
-    return { get: <T>(url: string, config?: HttpRequestConfig) => sendCaptured<T>("get", url, undefined, config), post: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => sendCaptured<T>("post", url, data, config) };
+    return {
+        get: <T>(url: string, config?: HttpRequestConfig) => sendCaptured<T>("get", url, undefined, config),
+        post: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => sendCaptured<T>("post", url, data, config),
+        put: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => sendCaptured<T>("put", url, data, config),
+    };
 }
 
 export function compactApiParams(params: ApiParams) {

@@ -66,3 +66,46 @@ test("workspace opens one session per canvas and stops all observation on host s
     expect(cleared).toBeGreaterThan(0);
     await expect(workspace.open("three")).rejects.toThrow("canvas_workspace_closed");
 });
+
+test("workspace close waits for local journal durability while a network ACK is unknown", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    let writes = 0,
+        network = 0;
+    const transport = {
+        snapshot: async () => ({ protocolVersion: 1, canvasId: "c", documentEpoch: "e", revision: 0, eventSeq: 0, document: { id: "c", nodes: [], connections: [] }, entityVersions: {} }),
+        execute: () => {
+            network++;
+            return new Promise(() => {});
+        },
+    } as unknown as CommandTransport;
+    const workspace = createCanvasCommandWorkspace({
+        transport,
+        clientId: "client",
+        schedule: () => () => {},
+        journal: {
+            read: async () => [],
+            write: async (_id, pending) => {
+                if (pending.length) {
+                    writes++;
+                    await gate;
+                }
+            },
+        },
+    });
+    const session = await workspace.open("c");
+    void session.submit([{ type: "rename_canvas", id: "c", title: "durable draft" }]).catch(() => {});
+    let closed = false;
+    const closing = workspace.close().then(() => {
+        closed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(writes).toBeGreaterThan(0);
+    expect(network).toBe(0);
+    expect(closed).toBe(false);
+    release();
+    await closing;
+    expect(session.state.saveState).toBe("closed");
+});

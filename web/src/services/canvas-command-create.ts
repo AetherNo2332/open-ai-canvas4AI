@@ -1,5 +1,6 @@
 import type { CreateCanvasRequest, Snapshot } from "../lib/canvas/command-contract.generated";
 import type { CommandJournalStorage } from "./canvas-command-journal";
+import { nanoid } from "nanoid";
 type CreateInput = Omit<CreateCanvasRequest, "clientId" | "operationId">;
 type Saved = { protocolVersion: 1; scope: string; clientId: string; pending: CreateCanvasRequest[] };
 export function createCanvasCommandCreator(options: { scope: string; clientId: string; storage: CommandJournalStorage; create: (request: CreateCanvasRequest) => Promise<Snapshot>; onCreated: (snapshot: Snapshot) => void }) {
@@ -50,7 +51,7 @@ export function createCanvasCommandCreator(options: { scope: string; clientId: s
             return serial(async () => {
                 const pending = await read();
                 const matches = (request: CreateCanvasRequest) => JSON.stringify({ ...request, operationId: undefined, clientId: undefined }) === JSON.stringify({ ...input, operationId: undefined, clientId: undefined });
-                const request = pending.find(matches) || { ...structuredClone(input), clientId, operationId: crypto.randomUUID() };
+                const request = pending.find(matches) || { ...structuredClone(input), clientId, operationId: nanoid(48) };
                 if (!pending.includes(request)) pending.push(request);
                 // Persist before every network attempt, including a previous failed save.
                 await save(pending);

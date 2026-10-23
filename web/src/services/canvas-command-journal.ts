@@ -1,4 +1,5 @@
 import type { CommandJournal, StoredPending } from "./canvas-command-session";
+import { nanoid } from "nanoid";
 export type CommandJournalStorage = { getItem<T>(key: string): Promise<T | null>; setItem<T>(key: string, value: T): Promise<unknown> };
 export type NativeCommandJournal = { get: (key: string) => Promise<unknown>; set: (key: string, value: unknown) => Promise<void> };
 export function nativeCommandJournalStorage(bridge: NativeCommandJournal): CommandJournalStorage {
@@ -68,7 +69,7 @@ export async function readCanvasClientId(storage: CommandJournalStorage, scope: 
         if (typeof existing !== "string" || !existing || existing.length > 128) throw new Error("canvas_command_client_invalid");
         return existing;
     }
-    const id = crypto.randomUUID();
+    const id = nanoid(48);
     await storage.setItem(key, id);
     return id;
 }

@@ -62,7 +62,11 @@ export function createCanvasCommandWorkspace(deps: { transport: CommandTransport
             closed = true;
             for (const cancel of timers) cancel();
             timers.clear();
-            for (const session of [...sessions.values(), ...openingSessions]) session.close();
+            const current = [...sessions.values(), ...openingSessions];
+            // Account switching waits for already-enqueued local wires, never
+            // for an uncertain network request or its receipt.
+            await Promise.all(current.map((session) => session.whenJournalDurable()));
+            for (const session of current) session.close();
             sessions.clear();
             openingSessions.clear();
         },

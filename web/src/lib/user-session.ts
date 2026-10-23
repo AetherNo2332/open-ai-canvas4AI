@@ -17,9 +17,13 @@ import { clearResourceAccessCache } from "@/services/api/resources";
 import { clearResourceBlobCache } from "@/services/resource-blob-cache";
 import { withGenerationConsumersPaused } from "@/services/generation-consumer-lifecycle";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
+import { cancelCanvasCommandBootstrap, installCanvasCommandBootstrap } from "@/services/canvas-command-bootstrap";
+import { disconnectCanvasCommandWorkspace } from "@/stores/canvas/use-canvas-session-store";
 
 export async function switchUserStorageScope(userId?: string | null) {
     cancelRemoteUserDataBootstrap();
+    cancelCanvasCommandBootstrap();
+    await disconnectCanvasCommandWorkspace();
     await withGenerationConsumersPaused(async () => {
         await withRemoteUserDataSyncExclusive(async () => {
             await Promise.all([flushCanvasStorePersistence(), flushAssetStorePersistence()]);
@@ -59,6 +63,7 @@ export async function applyUserSession(payload: AuthSessionPayload, options: Use
         useUserStore.getState().setDrawingEngine(payload.drawingEngine);
         useUserStore.getState().setFeatures(payload.features);
         installRemoteUserDataAutoSync();
+        installCanvasCommandBootstrap();
         useUserStore.getState().setHydrated(true);
         const hydration = hydrateUserSessionData(payload, generation, options);
         if (options.awaitHydration) await hydration;
