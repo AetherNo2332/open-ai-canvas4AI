@@ -9,7 +9,7 @@ description: 数据库迁移与当前业务持久化结构
 
 迁移60为 `agent_scheduler_settings` 增加 `max_resident_per_user` 并为已有行回填默认32；`agent_user_admissions` 按用户保存上次准入序列。既有 `agent_admission_counters` 在准入事务内串行化策略更新与领取；统计跨执行器有效租约，先按用户、再按该用户的画布公平选择。queued、running、waiting_approval 中仍有有效租约的运行计入驻留；过期、释放和终态归还名额。`user_capacity` 与 `canvas_capacity` 等待保留，不按 Worker 未领取超时清理。
 
-`agent_runtime_instances` 随模型迁移增加 readiness 与原因，容量判断只使用新鲜、ready、非 draining 心跳；配置版本0是有效默认配置，不作为未就绪标志。
+迁移62为既有 `agent_runtime_instances` 增加 `readiness` 和 `readiness_reason`，旧心跳回填为 `starting`，必须收到新的 Worker 就绪报告后才可准入。容量判断只使用新鲜、ready、非 draining 心跳；配置版本0是有效默认配置，不作为未就绪标志。
 
 迁移61创建 `agent_workers`：身份 ID、凭据 SHA-256 摘要、可选用户作用域、撤销时间及创建/更新时间。凭据只在管理员创建响应中返回一次，列表和 JSON 不含摘要。环境引导只插入新身份，重启不会覆盖凭据、作用域或撤销状态。运行授权为短期签名数据，不另建持久化 token 表；每次访问继续查询当前 run/session 的用户、owner、epoch、有效租约和非终态，数据库始终是失效判断依据。
 

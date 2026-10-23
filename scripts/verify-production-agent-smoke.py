@@ -8,6 +8,7 @@ import re
 import secrets
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -312,27 +313,48 @@ class Smoke:
                    replay(cursor) == [value for value in initial if value > cursor], eventCount=len(initial))
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", required=True)
-    args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="canvas-production-smoke-") as directory:
-        smoke = Smoke(directory, args.output)
+def run_smoke(smoke):
+    try:
         try:
             smoke.execute()
             smoke.report["passed"] = True
         except Exception as error:
             smoke.report["passed"], smoke.report["failure"] = False, smoke.redact(str(error))
             raise
-        finally:
+    finally:
+        primary_error = sys.exc_info()[1]
+        evidence_error = None
+        cleanup_error = None
+        try:
             smoke.collect()
+        except Exception as error:
+            evidence_error = error
+            smoke.report["evidenceError"] = type(error).__name__
+            smoke.report["passed"] = False
+        finally:
             try:
                 smoke.cleanup()
             except Exception as error:
+                cleanup_error = error
                 smoke.report["cleanupError"] = smoke.redact(str(error))
-                smoke.save()
-                if smoke.report.get("passed"):
-                    raise
+                smoke.report["passed"] = False
+                try:
+                    smoke.save()
+                except Exception:
+                    pass  # Evidence failure must not hide the smoke or cleanup error.
+        if primary_error is None:
+            if evidence_error is not None:
+                raise evidence_error
+            if cleanup_error is not None:
+                raise cleanup_error
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+    with tempfile.TemporaryDirectory(prefix="canvas-production-smoke-") as directory:
+        run_smoke(Smoke(directory, args.output))
 
 
 if __name__ == "__main__":

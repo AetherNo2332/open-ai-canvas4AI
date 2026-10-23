@@ -14,7 +14,7 @@ import (
 // CurrentSchemaVersion follows upstream migrations through v43; our Agent
 // migrations register after that upstream range as 44+. When a future upstream
 // sync takes 44+, shift our block up again and extend the relocation table.
-const CurrentSchemaVersion int64 = 61
+const CurrentSchemaVersion int64 = 62
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 43
@@ -234,6 +234,19 @@ var schemaMigrations = []migration{
 	{version: 61, name: "agent_worker_registry", checksum: "sha256:agent-worker-registry-v61-20261023", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.AgentWorker{})
 	}},
+	{version: 62, name: "agent_runtime_readiness", checksum: "sha256:agent-runtime-readiness-v62-20261023", apply: migrateAgentRuntimeReadiness},
+}
+
+func migrateAgentRuntimeReadiness(tx *gorm.DB) error {
+	for _, field := range []string{"Readiness", "ReadinessReason"} {
+		if !tx.Migrator().HasColumn(&model.AgentRuntimeInstance{}, field) {
+			if err := tx.Migrator().AddColumn(&model.AgentRuntimeInstance{}, field); err != nil {
+				return err
+			}
+		}
+	}
+	// A pre-readiness heartbeat must report again before it can admit work.
+	return tx.Model(&model.AgentRuntimeInstance{}).Where("readiness IS NULL OR readiness = ''").UpdateColumn("readiness", "starting").Error
 }
 
 func migratePiAgentConversationSessions(tx *gorm.DB) error {

@@ -48,6 +48,33 @@ class ProductionSmokeTests(unittest.TestCase):
                 harness.cleanup()
             self.assertEqual([call.args[0] for call in compose.call_args_list], ["config"])
 
+    def test_evidence_write_failure_still_attempts_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            def started_then_failed():
+                harness.isolated = harness.resources_created = True
+                raise AssertionError("smoke failed")
+            with patch.object(harness, "execute", side_effect=started_then_failed), patch.object(
+                    harness, "compose", return_value=SimpleNamespace(stdout="")), patch.object(
+                    harness, "save", side_effect=OSError("report disk full")), patch.object(
+                    harness, "cleanup") as cleanup:
+                with self.assertRaisesRegex(AssertionError, "smoke failed"):
+                    smoke.run_smoke(harness)
+            cleanup.assert_called_once()
+            self.assertEqual(harness.report["evidenceError"], "OSError")
+
+    def test_evidence_write_failure_after_success_still_cleans_and_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            def started():
+                harness.isolated = harness.resources_created = True
+            with patch.object(harness, "execute", side_effect=started), patch.object(
+                    harness, "collect", side_effect=OSError("report disk full")), patch.object(
+                    harness, "cleanup") as cleanup:
+                with self.assertRaisesRegex(OSError, "report disk full"):
+                    smoke.run_smoke(harness)
+            cleanup.assert_called_once()
+
     def test_migration_failure_exercises_up_dependencies_and_keeps_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = smoke.Smoke(directory, Path(directory) / "report.json")

@@ -90,17 +90,28 @@ eval "$status"
                                     cwd=directory, env=env, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
 
-    def compose(self, files, token=TOKEN):
+    def compose(self, files, token=TOKEN, user_quota=None):
         env = {key: value for key, value in os.environ.items() if not key.startswith("CANVAS_")}
         env.update(POSTGRES_PASSWORD="test-password", DATABASE_URL="postgresql://test:test@postgres/test",
                    CANVAS_BACKEND_IMAGE="example.invalid/backend:test", CANVAS_WEB_IMAGE="example.invalid/web:test",
                    CANVAS_AGENT_IMAGE="example.invalid/agent:test", CANVAS_AGENT_INTERNAL_TOKEN=token,
                    CANVAS_AGENT_WORKER_ID="compose-worker", CANVAS_AGENT_WORKER_TOKEN=TOKEN)
+        if user_quota is not None:
+            env["CANVAS_AGENT_MAX_SESSIONS_PER_USER"] = str(user_quota)
         command = ["docker", "compose", "--env-file", ".env.example"]
         for file in files:
             command += ["-f", file]
         return subprocess.run(command + ["config", "--format", "json"], cwd=ROOT, env=env,
                               capture_output=True, text=True, encoding="utf-8", timeout=30)
+
+    def test_compose_backend_receives_per_user_quota(self):
+        for file in ("docker-compose.yml", "docker-compose.local.yml",
+                     "docker-compose.deploy.yml", "docker-compose.server.yml"):
+            with self.subTest(file=file):
+                result = self.compose([file], user_quota=2)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                backend_env = json.loads(result.stdout)["services"]["backend"]["environment"]
+                self.assertEqual(backend_env["CANVAS_AGENT_MAX_SESSIONS_PER_USER"], "2")
 
     def test_production_entries_start_agent_with_distinct_worker_token(self):
         for files in (["docker-compose.deploy.yml"], ["docker-compose.server.yml"],
