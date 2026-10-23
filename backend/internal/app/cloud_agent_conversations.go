@@ -89,6 +89,18 @@ func (s *Service) CloudAgentConversations(userID, canvasID, before string, limit
 		page.NextCursor = encodeCloudAgentHistoryCursor(rows[limit-1])
 		rows = rows[:limit]
 	}
+	ids := make([]string, 0, len(rows))
+	for _, run := range rows {
+		id := run.ConversationID
+		if id == "" {
+			id = run.ID
+		}
+		ids = append(ids, id)
+	}
+	queues, err := s.repo.AgentMessageQueueSummaries(userID, ids)
+	if err != nil {
+		return nil, err
+	}
 	for _, run := range rows {
 		id := run.ConversationID
 		if id == "" {
@@ -98,21 +110,8 @@ func (s *Service) CloudAgentConversations(userID, canvasID, before string, limit
 			ID: id, CanvasID: run.CanvasID, Title: run.Title, LatestRunID: run.ID,
 			Status: run.Status, Revision: run.Revision, CleanupPending: run.CleanupPending,
 			CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
+			QueueRevision: queues[id].Revision, QueuedCount: queues[id].QueuedCount, QueuePaused: queues[id].Paused,
 		})
-		if s.repo.HasAgentMessageQueue() {
-			if q, err := s.repo.AgentConversationQueue(userID, id); err == nil {
-				rows, err := s.repo.AgentQueuedMessages(userID, id)
-				if err != nil {
-					return nil, err
-				}
-				item := &page.Items[len(page.Items)-1]
-				item.QueueRevision = q.Revision
-				item.QueuedCount = len(rows)
-				item.QueuePaused = q.Paused
-			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, err
-			}
-		}
 	}
 	return page, nil
 }

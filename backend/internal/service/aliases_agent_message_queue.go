@@ -2,7 +2,6 @@ package service
 
 import (
 	"infinite-canvas/backend/internal/app"
-	"infinite-canvas/backend/internal/model"
 )
 
 type (
@@ -11,5 +10,5 @@ type (
 	AgentMessageQueueView           = app.AgentMessageQueueView
 	AgentQueuedMessageUpdate        = app.AgentQueuedMessageUpdate
 	AgentMessageQueueUpdate         = app.AgentMessageQueueUpdate
-	AgentUISetting                  = model.AgentUISetting
+	AgentUISetting                  = app.AgentUISetting
 )

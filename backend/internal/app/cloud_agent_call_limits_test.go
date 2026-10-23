@@ -215,7 +215,7 @@ func TestAgentCallLimitsNoToolTurnUsesRaisedBudget(t *testing.T) {
 		state.Step = 1
 		state.Request.Budget.MaxSteps = 0
 		state.CallLimits.StepsPerRun = 1
-		state.Plan = []cloudAgentPlanItem{{ID: "pending", Title: "Continue work", Status: "pending"}}
+		state.PendingInterjections = []cloudAgentInterjection{{ID: "pending-user-input", Text: "继续分析刚补充的内容"}}
 		return cloudAgentSave(current, &state)
 	}); err != nil {
 		t.Fatal(err)
@@ -228,6 +228,10 @@ func TestAgentCallLimitsNoToolTurnUsesRaisedBudget(t *testing.T) {
 	decision, err := s.PiNoToolTurn("user", run.ID, run.LeaseOwner, taskID)
 	if err != nil || decision.Status != "continue" {
 		t.Fatalf("raised budget ignored in completion: decision=%+v err=%v", decision, err)
+	}
+	_, state := agentInterjectionState(t, s, run.ID)
+	if state.CallLimits.StepsPerRun != 5 {
+		t.Fatalf("updated step cap was not persisted: %+v", state.CallLimits)
 	}
 }
 

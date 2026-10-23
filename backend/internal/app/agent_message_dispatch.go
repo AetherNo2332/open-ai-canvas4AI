@@ -78,6 +78,19 @@ func (s *Service) dispatchAgentConversation(userID, conversationID, preferredID 
 			return err
 		}
 		candidate := rows[0]
+		if q.AwaitingQuestionID != "" && preferredID == "" {
+			found := false
+			for _, row := range rows {
+				if row.ReplyToQuestionID == q.AwaitingQuestionID {
+					candidate = row
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil
+			}
+		}
 		if preferredID != "" {
 			found := false
 			for _, row := range rows {
@@ -93,6 +106,11 @@ func (s *Service) dispatchAgentConversation(userID, conversationID, preferredID 
 		}
 		if q.AwaitingQuestionID != "" && (candidate.ReplyToQuestionID != q.AwaitingQuestionID || q.QuestionRunID != latest.ID) {
 			return nil
+		}
+		if candidate.ReplyToQuestionID != "" && candidate.ReplyToQuestionID != q.AwaitingQuestionID {
+			q.Paused = true
+			q.PauseReason = "问题已更新，请核对待发回答"
+			return tx.SaveAgentConversationQueue(q)
 		}
 		if candidate.NextAttemptAt != nil && candidate.NextAttemptAt.After(time.Now()) {
 			return nil
@@ -169,14 +187,30 @@ func (s *Service) recoverAgentMessageClaim(message model.AgentQueuedMessage, cau
 			next = &at
 		} else {
 			q.Paused = true
-			q.PauseReason = truncateRunes(cause.Error(), 300)
+			q.PauseReason = agentMessageFailureText(cause)
 		}
-		if err = tx.ReleaseAgentMessageClaim(row, truncateRunes(cause.Error(), 300), next); err != nil {
+		if err = tx.ReleaseAgentMessageClaim(row, agentMessageFailureText(cause), next); err != nil {
 			return err
 		}
 		return tx.SaveAgentConversationQueue(q)
 	})
 	return agentMessageError(err)
+}
+
+func agentMessageFailureText(cause error) string {
+	switch {
+	case errors.Is(cause, repository.ErrInsufficientCredits):
+		return "积分不足，请补充额度"
+	case errors.Is(cause, repository.ErrLogicalModelUnavailable):
+		return "所选模型不可用，请选择模型后重新发送"
+	case errors.Is(cause, repository.ErrAgentMessageStorageLimit):
+		return "任务历史容量已满，请清理后重试"
+	}
+	var appErr *kernel.AppError
+	if errors.As(cause, &appErr) && appErr.Status >= 400 && appErr.Status < 500 {
+		return truncateRunes(appErr.Message, 300)
+	}
+	return "暂时无法发送，请稍后重试"
 }
 
 // Pause before choosing the cancellation target. A dispatch which committed

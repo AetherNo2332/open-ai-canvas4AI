@@ -17,6 +17,32 @@ var ErrAgentMessageStorageLimit = errors.New("账号任务历史容量或数量�
 
 func (r *Repository) HasAgentMessageQueue() bool { return r.agentMessageQueueEnabled }
 
+func (r *Repository) AgentMessageConversationOwned(userID, conversationID string) (bool, error) {
+	var count int64
+	err := r.db.Model(&model.CloudAgentExecution{}).Where("user_id = ? AND "+cloudAgentConversationIdentity+" = ?", userID, conversationID).Where("NOT EXISTS (SELECT 1 FROM agent_subagent_links l WHERE l.user_id = ? AND l.child_run_id = ?)", userID, conversationID).Count(&count).Error
+	return count > 0, err
+}
+
+type AgentMessageQueueSummary struct {
+	ConversationID string
+	Revision       int64
+	Paused         bool
+	QueuedCount    int
+}
+
+func (r *Repository) AgentMessageQueueSummaries(userID string, ids []string) (map[string]AgentMessageQueueSummary, error) {
+	result := map[string]AgentMessageQueueSummary{}
+	if !r.agentMessageQueueEnabled || len(ids) == 0 {
+		return result, nil
+	}
+	var rows []AgentMessageQueueSummary
+	err := r.db.Model(&model.AgentConversationQueue{}).Select("conversation_id, revision, paused, (SELECT COUNT(*) FROM agent_queued_messages m WHERE m.user_id = agent_conversation_queues.user_id AND m.conversation_id = agent_conversation_queues.conversation_id AND m.status IN ('queued','dispatching')) AS queued_count").Where("user_id = ? AND conversation_id IN ?", userID, ids).Scan(&rows).Error
+	for _, row := range rows {
+		result[row.ConversationID] = row
+	}
+	return result, err
+}
+
 func (r *Repository) requireAgentMessageAdmission(run *model.CloudAgentExecution) error {
 	if !r.agentMessageQueueEnabled || run.ParentID == "" || run.ConversationID == run.ID {
 		return nil
@@ -213,6 +239,12 @@ func (r *Repository) AgentQueuedMessages(userID, conversationID string) ([]model
 	err := r.db.Where("user_id = ? AND conversation_id = ? AND status IN ?", userID, conversationID, []string{"queued", "dispatching"}).Order("sequence,id").Find(&rows).Error
 	return rows, err
 }
+
+func (r *Repository) AgentQuestionAnswerPending(userID, conversationID, questionID string) (bool, error) {
+	var count int64
+	err := r.db.Model(&model.AgentQueuedMessage{}).Where("user_id = ? AND conversation_id = ? AND reply_to_question_id = ? AND status IN ?", userID, conversationID, questionID, []string{"queued", "dispatching"}).Count(&count).Error
+	return count > 0, err
+}
 func (r *Repository) InsertAgentQueuedMessage(row *model.AgentQueuedMessage, queue *model.AgentConversationQueue, perConversation, perUser int) error {
 	prior, err := r.AgentMessageByKey(row.UserID, row.IdempotencyKey)
 	if err == nil {
@@ -325,7 +357,23 @@ func (r *Repository) InvalidateAgentMessageClaims(userID, conversationID string)
 }
 func (r *Repository) PendingAgentMessageConversations(limit int) ([]model.AgentConversationQueue, error) {
 	rows := []model.AgentConversationQueue{}
-	err := r.db.Model(&model.AgentConversationQueue{}).Where("paused = ? AND EXISTS (SELECT 1 FROM agent_queued_messages m WHERE m.user_id = agent_conversation_queues.user_id AND m.conversation_id = agent_conversation_queues.conversation_id AND m.status IN ? AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= ?))", false, []string{"queued", "dispatching"}, time.Now().UTC()).Order("updated_at,user_id,conversation_id").Limit(limit).Find(&rows).Error
+	// Filter before LIMIT: active/waiting conversations must not consume every
+	// scan slot and starve a later conversation whose parent is already finished.
+	query := r.db.Model(&model.AgentConversationQueue{}).Where("paused = ?", false).Where(`EXISTS (
+	 SELECT 1 FROM cloud_agent_executions e WHERE e.user_id = agent_conversation_queues.user_id
+	 AND COALESCE(NULLIF(e.conversation_id, ''),e.id) = agent_conversation_queues.conversation_id
+	 AND e.status IN ('completed','failed','cancelled','rejected') AND e.cleanup_pending = false
+	 AND NOT EXISTS (SELECT 1 FROM cloud_agent_executions n WHERE n.user_id = e.user_id
+	 AND COALESCE(NULLIF(n.conversation_id, ''),n.id) = COALESCE(NULLIF(e.conversation_id, ''),e.id)
+	 AND (n.created_at > e.created_at OR (n.created_at = e.created_at AND n.id > e.id))))`)
+	query = query.Where(`EXISTS (SELECT 1 FROM agent_queued_messages m WHERE m.user_id = agent_conversation_queues.user_id
+	 AND m.conversation_id = agent_conversation_queues.conversation_id AND m.status IN ('queued','dispatching')
+	 AND (agent_conversation_queues.awaiting_question_id = '' OR m.reply_to_question_id = agent_conversation_queues.awaiting_question_id)
+	 AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= ?) AND (m.status = 'queued' OR m.lease_until <= ?)
+	 AND NOT EXISTS (SELECT 1 FROM agent_queued_messages p WHERE p.user_id = m.user_id AND p.conversation_id = m.conversation_id
+	 AND p.status IN ('queued','dispatching') AND p.sequence < m.sequence
+	 AND (agent_conversation_queues.awaiting_question_id = '' OR p.reply_to_question_id = agent_conversation_queues.awaiting_question_id)))`, time.Now().UTC(), time.Now().UTC())
+	err := query.Order("updated_at,user_id,conversation_id").Limit(limit).Find(&rows).Error
 	return rows, err
 }
 func (r *Repository) AgentUISettings(userID string) (*model.AgentUISetting, error) {

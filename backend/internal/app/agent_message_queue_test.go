@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -183,6 +184,105 @@ func TestAgentMessageQueueQuestionRequiresExplicitAnswer(t *testing.T) {
 	finishConversationTestRun(t, db, response.RunID)
 	if n, err := s.DispatchAgentMessages(10); err != nil || n != 1 {
 		t.Fatalf("queue did not resume: %d %v", n, err)
+	}
+}
+
+func TestAgentMessageQueueRejectsASecondPendingAnswer(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	finishConversationTestRun(t, db, root.ID)
+	first := queueTestInput(root.ID, "first-pending-answer", "interject")
+	first.ReplyToQuestionID = root.ID + ":1"
+	raw, _ := json.Marshal(first.Request)
+	if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, q *model.AgentConversationQueue, _ *model.CloudAgentExecution) error {
+		q.AwaitingQuestionID = first.ReplyToQuestionID
+		q.QuestionRunID = root.ID
+		return tx.InsertAgentQueuedMessage(&model.AgentQueuedMessage{ID: "first-answer", UserID: "user", ConversationID: root.ID, CanvasID: "agent-canvas", IdempotencyKey: first.Request.IdempotencyKey, Fingerprint: "original", Mode: "interject", Prompt: first.Request.Prompt, RequestJSON: string(raw), ReplyToQuestionID: first.ReplyToQuestionID}, q, 20, 100)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second := queueTestInput(root.ID, "second-pending-answer", "interject")
+	second.ReplyToQuestionID = first.ReplyToQuestionID
+	if _, err := s.SendAgentConversationMessage("user", root.ID, second); err == nil {
+		t.Fatal("two devices queued two answers to one question")
+	}
+}
+
+func TestAgentMessageQueueFullStillAllowsAnInterjection(t *testing.T) {
+	s, _, root := reliableAgentRoot(t)
+	policy, _ := s.RuntimePolicy()
+	policy.Task.AgentMaxQueuedMessagesPerConversation = 1
+	if _, err := s.UpdateRuntimePolicySetting(&model.User{ID: "admin", Role: model.UserRoleAdmin}, policy); err != nil {
+		t.Fatal(err)
+	}
+	actual, _ := s.RuntimePolicy()
+	if actual.Task.AgentMaxQueuedMessagesPerConversation != 1 {
+		t.Fatal("test policy was not applied")
+	}
+	if _, err := s.SendAgentConversationMessage("user", root.ID, queueTestInput(root.ID, "fill-one-queue-slot", "queue")); err != nil {
+		t.Fatal(err)
+	}
+	response, err := s.SendAgentConversationMessage("user", root.ID, queueTestInput(root.ID, "correct-active-agent", "interject"))
+	if err != nil || response.Delivery != "interjected" {
+		t.Fatalf("full queue blocked steering: %+v %v", response, err)
+	}
+}
+
+func TestAgentMessageQueueFailureTextIsActionableAndPrivate(t *testing.T) {
+	if got := agentMessageFailureText(repository.ErrInsufficientCredits); got != "积分不足，请补充额度" {
+		t.Fatalf("credit guidance: %q", got)
+	}
+	if got := agentMessageFailureText(errors.New("SQL connection contains private file path")); got != "暂时无法发送，请稍后重试" {
+		t.Fatalf("private storage detail exposed: %q", got)
+	}
+}
+
+func TestAgentMessageQueueWaitingConversationDoesNotStarveReadyOne(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	if _, err := s.SendAgentConversationMessage("user", root.ID, queueTestInput(root.ID, "first-active-queue", "queue")); err != nil {
+		t.Fatal(err)
+	}
+	request := agentTestRequest()
+	request.IdempotencyKey = "other-conversation-root"
+	other, err := s.CreateCloudAgentRun("user", request, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SendAgentConversationMessage("user", other.ID, queueTestInput(other.ID, "other-ready-queue", "queue")); err != nil {
+		t.Fatal(err)
+	}
+	finishConversationTestRun(t, db, other.ID)
+	if n, err := s.DispatchAgentMessages(1); err != nil || n != 1 {
+		t.Fatalf("waiting conversation starved ready queue: %d %v", n, err)
+	}
+}
+
+func TestAgentMessageQueueRecoversExplicitAnswerAheadOfOrdinaryMessages(t *testing.T) {
+	s, _, root := reliableAgentRoot(t)
+	if _, err := s.SendAgentConversationMessage("user", root.ID, queueTestInput(root.ID, "ordinary-message-before-question", "queue")); err != nil {
+		t.Fatal(err)
+	}
+	run, state := agentInterjectionState(t, s, root.ID)
+	state.event(root.ID, "user_question", map[string]any{"question": "继续吗", "options": []any{map[string]any{"label": "继续"}, map[string]any{"label": "停止"}}})
+	if err := s.repo.MutateCloudAgent("user", root.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		current.Status = "completed"
+		return cloudAgentSave(current, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	view, _ := s.AgentMessageQueue("user", root.ID)
+	answer := queueTestInput(root.ID, "crash-recovery-answer", "interject")
+	raw, _ := json.Marshal(answer.Request)
+	if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, q *model.AgentConversationQueue, _ *model.CloudAgentExecution) error {
+		return tx.InsertAgentQueuedMessage(&model.AgentQueuedMessage{ID: "recovered-answer", UserID: "user", CanvasID: "agent-canvas", ConversationID: root.ID, IdempotencyKey: answer.Request.IdempotencyKey, Fingerprint: "original", RequestJSON: string(raw), Prompt: answer.Request.Prompt, Mode: "interject", ReplyToQuestionID: view.AwaitingQuestionID}, q, 20, 100)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.DispatchAgentMessages(1); err != nil || n != 1 {
+		t.Fatalf("answer stranded after restart: %d %v", n, err)
+	}
+	view, err := s.AgentMessageQueue("user", root.ID)
+	if err != nil || view.AwaitingQuestionID != "" || len(view.Items) != 1 || view.Items[0].Prompt != "ordinary-message-before-question" {
+		t.Fatalf("answer recovery changed ordinary queue: %+v %v", view, err)
 	}
 }
 

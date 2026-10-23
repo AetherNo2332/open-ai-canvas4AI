@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -41,6 +42,10 @@ type AgentMessageQueueUpdate struct {
 	Revision int64  `json:"revision"`
 	Action   string `json:"action"`
 }
+type AgentUISetting = model.AgentUISetting
+
+var errAgentQuestionAnswerPending = errors.New("当前问题已收到回答，请等待处理")
+var errAgentQuestionStale = errors.New("问题已更新，请刷新后回答")
 
 func agentMessageError(err error) error {
 	switch {
@@ -48,7 +53,13 @@ func agentMessageError(err error) error {
 		return kernel.NotFound("Agent 对话或待发消息不存在")
 	case errors.Is(err, repository.ErrCloudAgentStaleParent):
 		return &kernel.AppError{Status: 409, Code: 409, Reason: "agent_conversation_stale_parent", Message: err.Error()}
-	case errors.Is(err, repository.ErrCreationConflict), errors.Is(err, repository.ErrAgentMessageQuestionPending):
+	case errors.Is(err, repository.ErrAgentMessageQuestionPending):
+		return &kernel.AppError{Status: 409, Code: 409, Reason: "agent_question_pending", Message: err.Error()}
+	case errors.Is(err, errAgentQuestionAnswerPending):
+		return &kernel.AppError{Status: 409, Code: 409, Reason: "agent_question_answer_pending", Message: err.Error()}
+	case errors.Is(err, errAgentQuestionStale):
+		return &kernel.AppError{Status: 409, Code: 409, Reason: "agent_question_stale", Message: err.Error()}
+	case errors.Is(err, repository.ErrCreationConflict):
 		return creationConflict(err.Error())
 	case errors.Is(err, repository.ErrAgentMessageQueueFull), errors.Is(err, repository.ErrAgentMessageStorageLimit):
 		return QuotaExceeded(err.Error())
@@ -70,12 +81,12 @@ func (s *Service) requireAgentQueueOwner(userID, conversationID string) error {
 	if err := validateCloudAgentID(conversationID, "会话 ID", 80); err != nil {
 		return err
 	}
-	ref, err := s.cloudAgentRunRefFor(userID, conversationID)
+	owned, err := s.repo.AgentMessageConversationOwned(userID, conversationID)
 	if err != nil {
 		return err
 	}
-	if ref.State.Subagent != nil {
-		return kernel.Forbidden("子代理对话不接受用户排队消息")
+	if !owned {
+		return kernel.NotFound("Agent 对话不存在")
 	}
 	return nil
 }
@@ -149,7 +160,16 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 			return repository.ErrAgentMessageQuestionPending
 		}
 		if input.ReplyToQuestionID != "" && input.ReplyToQuestionID != q.AwaitingQuestionID {
-			return repository.ErrCreationConflict
+			return errAgentQuestionStale
+		}
+		if input.ReplyToQuestionID != "" {
+			pending, err := tx.AgentQuestionAnswerPending(userID, conversationID, input.ReplyToQuestionID)
+			if err != nil {
+				return err
+			}
+			if pending {
+				return errAgentQuestionAnswerPending
+			}
 		}
 		if input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status) && utf8.RuneCountInString(row.Prompt) > cloudAgentInterjectionMaxRunes {
 			return BadAuthRequest("插话内容超过 4000 字，请改为排队")
@@ -158,13 +178,24 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 		if err != nil {
 			return err
 		}
-		if err = validateTaskDataGrowthQuotaWithPolicy(usage, int64(len(row.RequestJSON)+len(row.Prompt)+len(row.Fingerprint)), policy.Resource); err != nil {
+		immediateInterjection := input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status)
+		incoming := len(row.RequestJSON) + len(row.Prompt) + len(row.Fingerprint)
+		if immediateInterjection {
+			incoming = len(row.Fingerprint)
+		}
+		if err = validateTaskDataGrowthQuotaWithPolicy(usage, int64(incoming), policy.Resource); err != nil {
 			return err
 		}
-		if err = tx.InsertAgentQueuedMessage(row, q, policy.Task.AgentMaxQueuedMessagesPerConversation, policy.Task.AgentMaxQueuedMessagesPerUser); err != nil {
+		conversationLimit, userLimit := policy.Task.AgentMaxQueuedMessagesPerConversation, policy.Task.AgentMaxQueuedMessagesPerUser
+		// Immediate receipts and the single explicit answer must remain usable
+		// when the ordinary task queue is full; answers are unique per question.
+		if immediateInterjection || input.ReplyToQuestionID != "" {
+			conversationLimit, userLimit = math.MaxInt, math.MaxInt
+		}
+		if err = tx.InsertAgentQueuedMessage(row, q, conversationLimit, userLimit); err != nil {
 			return err
 		}
-		if input.Mode == "interject" && cloudAgentAcceptsInterjection(latest.Status) {
+		if immediateInterjection {
 			if _, err = interjectCloudAgentRepository(tx, userID, latest.ID, row.ID, row.Prompt); err != nil {
 				return err
 			}
