@@ -1,4 +1,5 @@
 import http from "node:http";
+import { handleMedia } from "./agent-parity-media-stub.mjs";
 
 // Only the model protocol is replaced. Every returned call runs through Pi and Go.
 const scenarios = new Map();
@@ -20,6 +21,7 @@ function expand(value, context) {
 http.createServer(async (req, res) => {
   let raw = "";
   for await (const chunk of req) raw += chunk;
+  if (await handleMedia(req, res, raw)) return;
   let body;
   try { body = raw ? JSON.parse(raw) : {}; } catch { return respond(res, 400, { error: "invalid JSON" }); }
   if (req.url === "/control") {
