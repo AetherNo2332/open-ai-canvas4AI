@@ -43,6 +43,8 @@ import { WorkingGlow } from "@/components/ai/working-indicator";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { Skill, SkillPreset } from "@/services/api/skills";
+import type { AgentSendMode } from "@/services/api/agent";
+import { AgentSendModeMenu } from "./canvas-agent-message-queue";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary, type AgentToolCategory } from "@/lib/canvas/agent-tool-presentation";
 import { agentOperationCategory, agentOperationFailed, agentOperationSegmentLabel } from "@/lib/canvas/agent-operation-feed";
@@ -924,6 +926,9 @@ export function AgentChatComposer({
     references = [],
     slashSkills,
     includeAssetLibrary,
+    sendMode,
+    sendModeSaving,
+    onSendModeChange,
 }: {
     prompt: string;
     attachments?: CloudAgentChatAttachment[];
@@ -947,6 +952,9 @@ export function AgentChatComposer({
     slashSkills?: Skill[];
     /** 是否在「@」候选里包含素材库资源 */
     includeAssetLibrary?: boolean;
+    sendMode?: AgentSendMode;
+    sendModeSaving?: boolean;
+    onSendModeChange?: (value: AgentSendMode) => void | Promise<void>;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [slash, setSlash] = useState<{ start: number; query: string } | null>(null);
@@ -1206,6 +1214,7 @@ export function AgentChatComposer({
                         {left}
                     </div>
                     <div className="agent-composer-submit flex items-center gap-2">
+                        {onSendModeChange ? <AgentSendModeMenu value={sendMode || "interject"} disabled={sendModeSaving} onChange={onSendModeChange} /> : null}
                         {submitAccessory}
                         {canStop ? (
                             <motion.button

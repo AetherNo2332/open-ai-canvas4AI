@@ -180,12 +180,12 @@ export type CreateAgentRunInput = {
 
 // Only Agent admission endpoints have server-side fingerprint/idempotency protection.
 // Never apply this policy to arbitrary provider generation POSTs.
-async function submitAgentRequest(path: string, input: CreateAgentRunInput, signal?: AbortSignal) {
-    const body = JSON.parse(JSON.stringify(input)) as CreateAgentRunInput;
+async function submitAgentRequest<TResult = { run: AgentRun }>(path: string, input: CreateAgentRunInput | AgentConversationMessageInput, signal?: AbortSignal): Promise<TResult> {
+    const body = JSON.parse(JSON.stringify(input)) as typeof input;
     for (let attempt = 0; ; attempt++) {
         signal?.throwIfAborted();
         try {
-            return await http.post<{ run: AgentRun }>(path, body, { timeout: 15_000, ...(signal ? { signal } : {}) });
+            return await http.post<TResult>(path, body, { timeout: 15_000, ...(signal ? { signal } : {}) });
         } catch (cause) {
             const error = cause as { retryable?: boolean; retryAfterMs?: number };
             if (!error.retryable || attempt >= 2) throw cause;
@@ -213,6 +213,31 @@ export async function sendAgentMessage(runId: string, input: CreateAgentRunInput
 export function sendAgentInterjection(runId: string, input: { text: string; messageId: string }) {
     return http.post<{ accepted: boolean; pending: number }>(`/agent/runs/${encodeURIComponent(runId)}/interjections`, input, { timeout: 20_000 });
 }
+
+export type AgentSendMode = "interject" | "queue";
+export type AgentConversationMessageInput = { mode: AgentSendMode; expectedRunId: string; replyToQuestionId?: string; request: CreateAgentRunInput };
+export type AgentMessageReceipt = { messageId: string; conversationId: string; delivery: "queued" | "started" | "interjected" | "cancelled"; runId?: string; queueRevision: number };
+export type AgentQueuedMessage = { id: string; conversationId: string; canvasId: string; mode: AgentSendMode; sequence: number; revision: number; prompt: string; status: "queued" | "dispatching"; runId?: string; error?: string; createdAt: string; updatedAt: string };
+export type AgentMessageQueue = { conversationId: string; canvasId: string; revision: number; paused: boolean; pauseReason?: string; awaitingQuestionId?: string; questionRunId?: string; latestRunId: string; items: AgentQueuedMessage[] };
+export type AgentUISettings = { defaultSendMode: AgentSendMode; revision: number };
+
+export function sendAgentConversationMessage(conversationId: string, input: AgentConversationMessageInput, signal?: AbortSignal) {
+    return submitAgentRequest<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/messages`, input, signal);
+}
+export function getAgentMessageQueue(conversationId: string, signal?: AbortSignal) {
+    return http.get<AgentMessageQueue>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue`, { signal, timeout: 15_000 });
+}
+export function updateAgentQueuedMessage(conversationId: string, messageId: string, input: { revision: number; prompt?: string; action?: "interject" }) {
+    return http.patch<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(messageId)}`, input, { timeout: 15_000 });
+}
+export function cancelAgentQueuedMessage(conversationId: string, messageId: string, revision: number) {
+    return http.delete<AgentMessageReceipt>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(messageId)}?revision=${revision}`, { timeout: 15_000 });
+}
+export function updateAgentMessageQueue(conversationId: string, input: { revision: number; action: "pause" | "resume" }) {
+    return http.patch<AgentMessageQueue>(`/agent/conversations/${encodeURIComponent(conversationId)}/queue`, input, { timeout: 15_000 });
+}
+export function getAgentUISettings(signal?: AbortSignal) { return http.get<AgentUISettings>("/agent/ui-settings", { signal, timeout: 15_000 }); }
+export function updateAgentUISettings(input: AgentUISettings) { return http.patch<AgentUISettings>("/agent/ui-settings", input, { timeout: 15_000 }); }
 
 export function getAgentCapabilities() {
     return http.get<{

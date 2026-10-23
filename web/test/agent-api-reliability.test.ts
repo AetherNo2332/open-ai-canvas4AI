@@ -259,6 +259,32 @@ describe("Agent admission replay and durable pending records", () => {
         expect(await conversations.loadCloudAgentPendingSubmission("canvas", "conversation")).toBeNull();
     });
 
+    it("freezes queued message delivery and question association across retries", async () => {
+        const saved = { fingerprint: "queue", key: input.idempotencyKey, request: input, parentRunId: "parent", conversationMessage: { conversationId: "server", mode: "queue" as const, expectedRunId: "parent" } };
+        await conversations.saveCloudAgentPendingSubmission("canvas", "conversation", saved);
+        expect(await conversations.loadCloudAgentPendingSubmission("canvas", "conversation")).toEqual(saved);
+        const bodies: unknown[] = [];
+        const request = { mode: "queue" as const, expectedRunId: "parent", request: { ...input } };
+        transport.http.post = async (path: string, body: unknown) => {
+            expect(path).toBe("/agent/conversations/server/messages");
+            bodies.push(structuredClone(body));
+            request.request.prompt = "changed after sending";
+            if (bodies.length < 2) throw { retryable: true };
+            return { delivery: "queued", messageId: "message", queueRevision: 2 };
+        };
+        expect(await api.sendAgentConversationMessage("server", request)).toMatchObject({ delivery: "queued" });
+        expect(bodies[0]).toEqual(bodies[1]);
+    });
+
+    it("fails closed when pending delivery mode is invalid", async () => {
+        await conversations.saveCloudAgentPendingSubmission("canvas", "conversation", { fingerprint: "queue", key: input.idempotencyKey, request: input, parentRunId: "parent" });
+        const key = [...storage.data.keys()][0];
+        const raw = JSON.stringify({ fingerprint: "queue", key: input.idempotencyKey, request: input, parentRunId: "parent", conversationMessage: { conversationId: "server", mode: "unknown", expectedRunId: "parent" } });
+        storage.data.set(key, raw);
+        await expect(conversations.loadCloudAgentPendingSubmission("canvas", "conversation")).rejects.toThrow("已暂停本对话发送");
+        expect(storage.data.get(key)).toBe(raw);
+    });
+
     it.each(["{broken", "null", "{}", JSON.stringify({ fingerprint: "f", key: input.idempotencyKey, request: { ...input, idempotencyKey: "wrong-key" } })])("fails closed on corrupt pending recovery data", async (raw) => {
         await conversations.saveCloudAgentPendingSubmission("canvas", "conversation", { fingerprint: "f", key: input.idempotencyKey });
         const key = [...storage.data.keys()][0];

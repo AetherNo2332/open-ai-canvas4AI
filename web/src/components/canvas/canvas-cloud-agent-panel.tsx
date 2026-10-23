@@ -22,11 +22,12 @@ import { effectiveAgentDefaultSkills } from "@/lib/canvas/agent-effective-skill-
 import {
     cancelAgentRun,
     getAgentCapabilities,
+    getAgentMessageQueue,
     listAgentSkillDefaults,
     getAgentRun,
     createAgentRun,
     decideAgentApproval,
-    sendAgentInterjection,
+    sendAgentConversationMessage,
     sendAgentMessage,
     subscribeAgentEvents,
     type AgentEvent,
@@ -34,6 +35,8 @@ import {
     type AgentReasoningMode,
     type AgentRun,
     type AgentSkillDefaultsSummary,
+    type AgentSendMode,
+    type AgentMessageReceipt,
 } from "@/services/api/agent";
 import { AGENT_APPROVAL_OPERATION_LABELS, agentApprovalPresentation } from "@/lib/canvas/agent-approval-presentation";
 import { buildAgentFeedSegments } from "@/lib/canvas/agent-operation-feed";
@@ -86,11 +89,13 @@ import { createPortal } from "react-dom";
 import "./canvas-cloud-agent.css";
 import { createUuid } from "@/lib/client-id";
 import { getAgentSubagentPolicy, listAgentSubagents, updateAgentSubagentPolicy, type AgentSubagentPolicy, type AgentSubagent } from "@/services/api/agent-subagent";
+import { useAgentMessageQueue } from "./use-agent-message-queue";
+import { AgentMessageQueueList } from "./canvas-agent-message-queue";
 
 export type CanvasCloudAgentPanelHandle = {
-    sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => Promise<boolean>;
+    sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => Promise<"sent" | "queued" | false>;
 };
-type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[] };
+type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[]; mode?: AgentSendMode; replyToQuestionId?: string };
 
 type CloudAgentPanelProps = {
     ref?: Ref<CanvasCloudAgentPanelHandle>;
@@ -182,6 +187,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         return () => { active = false; window.clearInterval(timer); };
     }, [open]);
     const [run, setRun] = useState<AgentRun | null>(null);
+    const messageQueue = useAgentMessageQueue(userScope, canvasId, run ? run.conversationId || run.id : undefined);
     const currentRunIdRef = useRef(run?.id);
     currentRunIdRef.current = run?.id;
     const [contextUsage, setContextUsage] = useState<AgentContextUsage>(() => emptyAgentContextUsage(""));
@@ -643,7 +649,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                     const pending = await loadCloudAgentPendingSubmission(canvasId, current.id, userScope);
                     if (!active) return;
                     pendingSubmission.current = pending;
-                    if (pending?.request) setPrompt(pending.composerDraft ?? pending.request.prompt);
+                    if (pending?.request) setPrompt((pending.conversationMessage ? current.draft : undefined) ?? pending.composerDraft ?? pending.request.prompt);
                 } else {
                     setActiveConversationId(nanoid());
                     pendingSubmission.current = null;
@@ -788,6 +794,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 setMessages((current) => current.filter((item) => item.id !== `stream-error-${run.id}`));
                 setContextUsage((current) => reduceAgentContextUsage(current, event));
                 applyAgentEvent(event, setMessages, setRun, setApproval, setPrompt);
+                if (["user_question", "run_completed", "run_failed", "run_cancelled"].includes(event.type)) void messageQueue.refresh();
                 if (event.type.startsWith("subagent_") || ["run_completed", "run_failed", "run_cancelled"].includes(event.type)) {
                     const request = ++subagentListRequestRef.current;
                     void listAgentSubagents(run.id)
@@ -829,43 +836,10 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         return () => { window.clearTimeout(timer); window.removeEventListener("online", reconnect); };
     }, [run?.id, connectionStatus]);
 
-    const interject = async (value: string, options: AgentSubmitOptions = {}): Promise<boolean> => {
-        const activeRun = run;
-        if (!value || !activeRun?.id || busy || submissionRequestRef.current || connectionStatus !== "connected" || currentScope.current !== conversationScope || !historyHydrated || !pendingHydrated) return false;
-        const scope = conversationScope;
-        const messageId = `user-${createUuid()}`;
-        const controller = new AbortController();
-        submissionControllerRef.current = controller;
-        submissionRequestRef.current = true;
-        setBusy(true);
-        try {
-            await sendAgentInterjection(activeRun.id, { text: value, messageId });
-            if (currentScope.current !== scope) return false;
-            if (!options.preserveDraft) setPrompt("");
-            setMessages((current) => appendUniqueMessage(current, { id: messageId, role: "user", text: value, interjection: "sent" }));
-            return true;
-        } catch (cause) {
-            if (currentScope.current !== scope) return false;
-            const status = (cause as { status?: number }).status;
-            setMessages((current) => appendAgentError(current, `interject-error-${activeConversationId}-${messageId}`, cause, "插话没有送达"));
-            if (status === 409 && !options.preserveDraft) setPrompt(value);
-            return false;
-        } finally {
-            if (submissionControllerRef.current === controller) {
-                submissionControllerRef.current = null;
-                submissionRequestRef.current = false;
-            }
-            if (currentScope.current === scope) setBusy(false);
-        }
-    };
-
-    const submit = async (override?: string, options: AgentSubmitOptions = {}): Promise<boolean> => {
+    const submit = async (override?: string, options: AgentSubmitOptions = {}): Promise<"sent" | "queued" | false> => {
         if (activeHistoryState?.status === "unavailable") return false;
         const value = (override ?? prompt).trim();
-        if (running) {
-            return interject(value, options);
-        }
-        if (!value || busy || running || (run && connectionStatus !== "connected") || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return false;
+        if (!value || busy || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return false;
         if (subagentsAvailable && (!subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicy.canvasId !== canvasId || subagentPolicySaving || subagentPolicyError)) {
             setSubagentPolicyError("请先加载并确认子代理授权设置，再发送消息");
             return false;
@@ -876,12 +850,16 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         submissionControllerRef.current = controller;
         setBusy(true);
         let accepted = false;
+        let outcome: "sent" | "queued" | false = false;
         try {
             const pending = pendingSubmission.current;
             // An ambiguous previous POST owns its body/key until reconciled.
             // Editing model settings or prompt must not silently create a new charge.
             if (pending?.request && pending.request.prompt !== value) throw new Error("上一条请求结果待确认，请先原样重试上一条消息，再发送新要求");
             if (!pending?.request) {
+                const mode = options.mode ?? await messageQueue.getMode();
+                const queueSnapshot = run ? messageQueue.queue || await getAgentMessageQueue(run.conversationId || run.id, controller.signal) : undefined;
+                if (currentScope.current !== scope) return false;
                 const capabilities = await getAgentCapabilities();
                 if (currentScope.current !== scope) return false;
                 setWorkerAvailability(capabilities.availability);
@@ -906,10 +884,12 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                     focusNodeIds: options.focusNodeIds?.slice(0, 8) ?? (selectedNodeIds.length <= 8 ? selectedNodeIds : []),
                     budget: { maxCredits: positiveNumber(maxCredits), maxGenerationTasks: permissionMode === "read_only" ? 0 : Number(maxGenerationTasks), maxVideoSeconds: permissionMode === "read_only" ? 0 : Number(maxVideoSeconds) },
                 };
-                const fingerprint = JSON.stringify({ scope, parent: run?.id, input });
+                const replyToQuestionId = options.replyToQuestionId || (!options.preserveDraft && pendingQuestion ? queueSnapshot?.awaitingQuestionId : undefined);
+                const conversationMessage = run ? { conversationId: run.conversationId || run.id, mode, expectedRunId: run.id, ...(mode === "interject" && replyToQuestionId ? { replyToQuestionId } : {}) } : undefined;
+                const fingerprint = JSON.stringify({ scope, parent: run?.id, input, conversationMessage });
                 if (pending && pending.fingerprint !== fingerprint) throw new Error("上一条请求尚未确认，请恢复原消息与设置后核对，不能覆盖原幂等记录");
                 const key = pending?.key || createUuid();
-                const next = { fingerprint, key, request: { ...input, idempotencyKey: key }, parentRunId: run?.id, messageId: `user-${key}`, ...(options.preserveDraft ? { composerDraft: prompt } : {}) };
+                const next = { fingerprint, key, request: { ...input, idempotencyKey: key }, parentRunId: run?.id, messageId: `user-${key}`, ...(options.preserveDraft ? { composerDraft: prompt } : {}), ...(conversationMessage ? { conversationMessage } : {}) };
                 // Persist before sending. A failed local save must not submit a request
                 // whose recovery identity will disappear on reload.
                 await saveCloudAgentPendingSubmission(canvasId, activeConversationId, next, userScope);
@@ -918,7 +898,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             }
             const submission = pendingSubmission.current!;
             const request = submission.request!;
-            const nextMessages = appendUniqueMessage(messages, { id: submission.messageId || `user-${submission.key}`, role: "user", text: request.prompt });
+            const nextMessages = submission.conversationMessage ? messages : appendUniqueMessage(messages, { id: submission.messageId || `user-${submission.key}`, role: "user", text: request.prompt });
             const now = new Date().toISOString();
             const existing = conversations.find((item) => item.id === activeConversationId);
             // Persist a discoverable conversation before POST as well as its key;
@@ -928,7 +908,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                     id: activeConversationId,
                     title: cloudAgentConversationTitle(nextMessages),
                     messages: nextMessages,
-                    ...(options.preserveDraft ? { draft: prompt } : {}),
+                    draft: historyStateRef.current.prompt,
                     run,
                     contextUsage,
                     model: selectedModel || undefined,
@@ -940,26 +920,45 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 ...conversations.filter((item) => item.id !== activeConversationId),
             ], userScope);
             if (currentScope.current !== scope) return false;
-            if (!options.preserveDraft) setPrompt("");
-            setMessages(nextMessages);
-            const result = submission.parentRunId ? await sendAgentMessage(submission.parentRunId, request, controller.signal) : await createAgentRun(request, controller.signal);
+            let nextRun: AgentRun | undefined;
+            let receipt: AgentMessageReceipt | undefined;
+            if (submission.conversationMessage) {
+                const { conversationId, ...delivery } = submission.conversationMessage;
+                receipt = await sendAgentConversationMessage(conversationId, { ...delivery, request }, controller.signal);
+            } else {
+                const result = submission.parentRunId ? await sendAgentMessage(submission.parentRunId, request, controller.signal) : await createAgentRun(request, controller.signal);
+                nextRun = result.run;
+            }
             accepted = true;
+            outcome = receipt?.delivery === "queued" ? "queued" : receipt?.delivery === "cancelled" ? false : "sent";
             if (currentScope.current === scope) {
                 // A read started before this accepted POST cannot describe the
                 // current tip, even after several local turns have completed.
                 acceptedSubmissionGenerationRef.current += 1;
-                currentRunIdRef.current = result.run.id;
-                setContextUsage((current) => (submission.parentRunId && sameAgentContextSelection(run, request) ? continueAgentContextUsage(current, result.run.id) : emptyAgentContextUsage(result.run.id)));
-                setRun(result.run);
+                if (!options.preserveDraft) setPrompt((current) => current.trim() === value ? (outcome ? "" : value) : current);
+                if (outcome === "sent") {
+                    setMessages((current) => appendUniqueMessage(current, { id: receipt?.delivery === "interjected" ? receipt.messageId : submission.messageId || `user-${submission.key}`, role: "user", text: request.prompt, ...(receipt?.delivery === "interjected" ? { interjection: "sent" } : {}) }));
+                } else if (!outcome) setMessages((current) => appendAgentError(current, `removed-${submission.key}`, new Error("这条待发消息已被移除"), "消息已移除"));
             }
             await clearCloudAgentPendingSubmission(canvasId, activeConversationId, userScope);
             if (currentScope.current === scope) pendingSubmission.current = null;
+            if (currentScope.current === scope && receipt?.delivery === "started" && receipt.runId) {
+                try { nextRun = (await getAgentRun(receipt.runId, controller.signal)).run; }
+                catch (cause) { if (currentScope.current === scope) setMessages((current) => appendAgentError(current, `run-read-${receipt!.messageId}`, cause, "消息已发送，正在同步运行")); }
+            }
+            if (currentScope.current === scope) {
+                if (nextRun) {
+                    currentRunIdRef.current = nextRun.id;
+                    setContextUsage((current) => (submission.parentRunId && sameAgentContextSelection(run, request) ? continueAgentContextUsage(current, nextRun!.id) : emptyAgentContextUsage(nextRun!.id)));
+                    setRun(nextRun);
+                }
+                await messageQueue.refresh();
+            }
         } catch (cause) {
             if (currentScope.current !== scope) return false;
             if (!accepted) {
-                if (!options.preserveDraft) setPrompt(value);
                 const status = (cause as { status?: number }).status;
-                if ((status && [400, 401, 403, 404, 422].includes(status)) || (cause as { reason?: string }).reason === "agent_conversation_stale_parent") {
+                if ((status && [400, 401, 403, 404, 422].includes(status)) || ["agent_conversation_stale_parent", "agent_question_pending", "agent_question_answer_pending", "agent_question_stale"].includes((cause as { reason?: string }).reason || "")) {
                     // These admission responses explicitly rejected the write.
                     // Transport errors and conflicts retain the pending identity.
                     try {
@@ -971,6 +970,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 }
             }
             setMessages((current) => appendAgentError(current, `submit-error-${activeConversationId}`, cause, agentSubmissionErrorTitle(cause, accepted)));
+            void messageQueue.refresh();
         } finally {
             if (submissionControllerRef.current === controller) {
                 submissionControllerRef.current = null;
@@ -978,7 +978,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             }
             if (currentScope.current === scope) setBusy(false);
         }
-        return accepted && currentScope.current === scope;
+        return accepted && currentScope.current === scope ? outcome : false;
     };
 
     useImperativeHandle(ref, () => ({
@@ -994,6 +994,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         setStopping(true);
         try {
             await cancelAgentRun(activeRun.id);
+            await messageQueue.refresh();
             const snapshot = await getAgentRun(activeRun.id, AbortSignal.timeout(5_000));
             if (currentScope.current === conversationScope) {
                 setRun((current) => (current?.id === activeRun.id ? snapshot.run : current));
@@ -1125,7 +1126,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 if (currentScope.current === `${userScope}:${canvasId}:${conversation.id}`) {
                     pendingSubmission.current = pending;
                     setPendingHydrated(true);
-                    if (pending?.request) setPrompt(pending.composerDraft ?? pending.request.prompt);
+                    if (pending?.request) setPrompt((pending.conversationMessage ? conversation.draft : undefined) ?? pending.composerDraft ?? pending.request.prompt);
                 }
             })
             .catch((cause) => {
@@ -1327,18 +1328,23 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                                 onPickSkill={(skill) => void applySingleSkill(skill)}
                                             />
                                         ) : null}
-                                        {pendingQuestion ? <AgentQuestionBar question={pendingQuestion} theme={theme} disabled={approvalSubmitting || connectionStatus !== "connected"} onAnswer={(label) => void submit(label)} /> : null}
+                                        {pendingQuestion ? <AgentQuestionBar question={pendingQuestion} theme={theme} disabled={approvalSubmitting || busy || !messageQueue.queue?.awaitingQuestionId} onAnswer={(label) => void submit(label, { mode: "interject", replyToQuestionId: messageQueue.queue?.awaitingQuestionId })} /> : null}
+                                        <AgentMessageQueueList key={conversationScope} queue={messageQueue.queue} error={messageQueue.queueError || messageQueue.settingsError} busy={busy || messageQueue.acting} onEdit={messageQueue.edit} onPromote={messageQueue.promote} onRemove={messageQueue.remove} onResume={messageQueue.resume} onRetry={messageQueue.retry} />
+                                        {pendingSubmission.current?.request && !busy ? <div className="agent-message-queue agent-message-queue-error"><span>发送结果待确认</span><button type="button" onClick={() => { const request = pendingSubmission.current?.request; if (request) void submit(request.prompt, { preserveDraft: true }); }}>重试发送</button></div> : null}
                                         <AgentChatComposer
                                             prompt={prompt}
-                                            disabled={activeHistoryState?.status === "unavailable" || Boolean(run && connectionStatus !== "connected") || !historyHydrated || !pendingHydrated}
+                                            disabled={activeHistoryState?.status === "unavailable" || !historyHydrated || !pendingHydrated}
                                             sending={busy}
                                             running={running}
-                                            placeholder={running ? "运行中可直接插话，会在它下一步生效" : "输入操作指导；用 @ 引用画布节点，用 / 或 、 引用 Skills"}
+                                            placeholder="输入消息，用 @ 引用节点，用 / 引用技能"
                                             theme={theme}
                                             onPromptChange={setPrompt}
                                             onSubmit={() => void submit()}
                                             onStop={run?.id && running ? stop : undefined}
                                             stopping={stopping}
+                                            sendMode={messageQueue.mode}
+                                            sendModeSaving={messageQueue.savingMode || !messageQueue.mode}
+                                            onSendModeChange={messageQueue.changeMode}
                                             references={[...references, ...buildSkillMentionReferences(installedSkills)]}
                                             slashSkills={installedSkills}
                                             includeAssetLibrary={false}
