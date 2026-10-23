@@ -67,6 +67,10 @@ export interface Item {
   taskId?: string;
   resourceId?: string;
   media?: Record<string, unknown>;
+  prompt?: string;
+  model?: string;
+  options?: Record<string, unknown>;
+  outputs?: Array<Output>;
   adoption: string;
   error?: string;
   isCurrent: boolean;
@@ -146,10 +150,19 @@ export interface Operation {
   timelineOperations?: Array<TimelineOperation>;
 }
 
+export interface Output {
+  index: number;
+  mode: string;
+  resourceId: string;
+  assetId: string;
+  media: Record<string, unknown>;
+}
+
 export interface Page {
   state: State;
   canCreateVersion: boolean;
   blockReason?: string;
+  blockIssue?: string;
   items: Array<Item>;
   nextBeforeVersion?: number;
 }
@@ -244,6 +257,7 @@ export interface State {
   epoch: string;
   generation: number;
   currentVersionId?: string;
+  currentVersion?: number;
   pendingVersionId?: string;
   activeTaskId?: string;
   selectionRevision: number;

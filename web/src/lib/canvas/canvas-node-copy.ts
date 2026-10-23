@@ -121,6 +121,7 @@ function copyBatchTableRow(row: CanvasBatchRow, operation: CanvasBatchOperation,
 // rowIds 收集源行 id → 副本行 id，供同批复制出来的连线改写 storyboardRowId。
 export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyMap<string, string>, rowIds?: Map<string, string>): CanvasNodeMetadata {
     const metadata = resetGenerationTaskMetadata(node.metadata, node.metadata?.content ? "success" : "idle");
+    delete metadata.mediaVersion;
     delete metadata.generationBatches;
     delete metadata.batchRootId;
     delete metadata.batchChildIds;

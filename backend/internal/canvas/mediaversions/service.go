@@ -16,6 +16,7 @@ type State struct {
 	Epoch             string `json:"epoch"`
 	Generation        int64  `json:"generation"`
 	CurrentVersionID  string `json:"currentVersionId,omitempty"`
+	CurrentVersion    int64  `json:"currentVersion,omitempty"`
 	PendingVersionID  string `json:"pendingVersionId,omitempty"`
 	ActiveTaskID      string `json:"activeTaskId,omitempty"`
 	SelectionRevision int64  `json:"selectionRevision"`
@@ -178,11 +179,12 @@ func Begin(repo *repository.Repository, scope Scope, node map[string]any, task m
 			return nil, err
 		}
 		sequence++
-		base := &model.CanvasMediaVersion{ID: "mv" + rand.Text(), OwnerID: scope.OwnerID, CanvasID: scope.CanvasID, Epoch: scope.Epoch, NodeID: scope.NodeID, Generation: scope.Generation, Sequence: sequence, SourceTaskID: str(m["taskId"]), Mode: mode, Status: "ready", MediaJSON: encode(capture(m)), ResourceID: resourceID, Adoption: "imported"}
+		base := &model.CanvasMediaVersion{ID: "mv" + rand.Text(), OwnerID: scope.OwnerID, CanvasID: scope.CanvasID, Epoch: scope.Epoch, NodeID: scope.NodeID, Generation: scope.Generation, Sequence: sequence, SourceTaskID: str(m["taskId"]), Mode: mode, Status: "ready", RequestJSON: encode(map[string]any{"prompt": m["prompt"], "model": m["producedModel"]}), MediaJSON: encode(capture(m)), ResourceID: resourceID, Adoption: "imported"}
 		if err = repo.InsertCanvasMediaVersion(base); err != nil {
 			return nil, err
 		}
 		state.CurrentVersionID = base.ID
+		state.CurrentVersion = base.Sequence
 	}
 	sequence++
 	var input any
@@ -298,6 +300,7 @@ func Finish(repo *repository.Repository, scope Scope, node map[string]any, task 
 		if task.Status == model.TaskStatusSucceeded && state.SelectionRevision == row.SelectionRevision && !blocked {
 			apply(node, result)
 			state.CurrentVersionID = row.ID
+			state.CurrentVersion = row.Sequence
 			state.SelectionRevision++
 			row.Adoption = "adopted"
 			adopted = true
@@ -362,6 +365,7 @@ func ApplySelection(node map[string]any, selection Selection) error {
 	}
 	apply(node, selection.Media)
 	state.CurrentVersionID = row.ID
+	state.CurrentVersion = row.Sequence
 	state.SelectionRevision++
 	writeState(node, state)
 	return nil

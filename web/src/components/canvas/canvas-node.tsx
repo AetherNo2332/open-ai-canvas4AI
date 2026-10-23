@@ -11,6 +11,7 @@ import {
     GripVertical,
     Image as ImageIcon,
     Lock,
+    LoaderCircle,
     Maximize2,
     Music2,
     Pencil,
@@ -160,6 +161,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
     const effectiveRenderLOD: CanvasNodeRenderLOD = renderLOD === "full" || hovered || isEditingContent || isEditingTitle || mediaActive ? "full" : renderLOD;
     const showChrome = effectiveRenderLOD === "full";
+    const showMediaVersionBadge = Boolean(onOpenVersions && [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio].some((type) => type === data.type) && (!data.metadata?.versionLabel || data.metadata?.mediaVersion) && (data.metadata?.content || data.metadata?.mediaVersion));
     const nodeState = isFocusRelated ? "focus" : isConnectionTarget ? "target" : isSelected ? "selected" : isRelated && !isBatchChild ? "related" : "idle";
     const showOutputConnection = getNodeDefinition(data.type)?.showOutputConnection !== false;
     const assetTags = data.metadata?.assetTags?.filter((tag) => tag.trim()) || [];
@@ -498,7 +500,12 @@ export const CanvasNode = React.memo(function CanvasNode({
                     </div>
                 ) : null}
 
-                {showChrome && data.metadata?.versionLabel ? (
+                {showChrome && showMediaVersionBadge ? (
+                    <button type="button" className="absolute left-3 top-3 z-[var(--node-z-overlay)] inline-flex h-7 items-center gap-1 rounded-[var(--r-full)] border px-2 text-[var(--node-badge-fs)]" style={{background:theme.toolbar.panel,borderColor:theme.toolbar.border,color:theme.node.text}} aria-label="查看媒体版本" onMouseDown={(event)=>event.stopPropagation()} onClick={(event)=>{event.stopPropagation();onOpenVersions?.(data);}}>
+                        {data.metadata?.mediaVersion?.activeTaskId ? <LoaderCircle className="size-3 motion-safe:animate-spin" aria-hidden /> : null}{data.metadata?.mediaVersion?.currentVersion ? `V${data.metadata.mediaVersion.currentVersion}` : "版本"}
+                    </button>
+                ) : null}
+                {showChrome && data.metadata?.versionLabel && !data.metadata?.mediaVersion ? (
                     <button
                         type="button"
                         className="absolute left-3 top-3 z-[var(--node-z-overlay)] grid size-7 place-items-center rounded-[var(--r-full)] border p-0.5 text-[var(--node-badge-fs)] font-semibold leading-none backdrop-blur-md transition-[transform,background,border-color,box-shadow] hover:-translate-y-px focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:hover:translate-y-0"
@@ -520,7 +527,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     </button>
                 ) : null}
                 {showChrome && showStatusTrack ? (
-                    <div className={`absolute right-3 top-3 z-[var(--node-z-overlay)] flex min-w-0 items-center justify-end gap-1 ${data.metadata?.versionLabel ? "max-w-[calc(100%-104px)]" : "max-w-[calc(100%-24px)]"}`}>
+                    <div className={`absolute right-3 top-3 z-[var(--node-z-overlay)] flex min-w-0 items-center justify-end gap-1 ${data.metadata?.versionLabel || showMediaVersionBadge ? "max-w-[calc(100%-104px)]" : "max-w-[calc(100%-24px)]"}`}>
                         {resourceLabel && data.type !== CanvasNodeType.Image ? <ResourceLabelBadge reference={resourceLabel} theme={theme} /> : null}
                         {hasMediaContent && !readOnly ? <ResourceStorageBadge storageKey={data.metadata?.storageKey} active={isActive} theme={theme} /> : null}
                         {isBatchRoot ? <BatchToggleBadge count={batchCount} expanded={batchExpanded} theme={theme} onToggle={() => onToggleBatch?.(data.id)} /> : null}

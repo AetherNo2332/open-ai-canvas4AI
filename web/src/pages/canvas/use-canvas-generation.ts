@@ -225,7 +225,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
 
     const openNodeTaskDetails = useCallback(
         async (node: CanvasNodeData) => {
-            const taskId = node.metadata?.taskId;
+            const taskId = node.metadata?.mediaVersion?.activeTaskId || node.metadata?.taskId;
             if (!taskId) return;
             setTaskDetailLoading(true);
             setTaskDetailLogs([]);
@@ -258,6 +258,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
             setNodes((current) =>
                 current.map((node) => {
                     if (node.id !== targetNodeId) return node;
+                    if (useCanvasSessionStore.getState().scope && node.metadata?.mediaVersion) return node;
                     const failed = task.status === "failed" || task.status === "cancelled";
                     const hasCompletedContent = task.status === "succeeded" && Boolean(node.metadata?.content || node.metadata?.storageKey);
                     const failure = failed ? generationFailureMetadata(task.error || (task.status === "cancelled" ? "任务已取消" : "任务失败"), node.metadata?.composerContent || node.metadata?.prompt || task.prompt || "") : undefined;

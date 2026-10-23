@@ -4,6 +4,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 // Task identity and runtime progress come from host receipts. Existing Canary
 // callbacks may display them locally, but they are never editor commands.
 export const canvasTaskDisplayFields = new Set([
+    "mediaVersion",
     "status",
     "errorDetails",
     "generationErrorCode",

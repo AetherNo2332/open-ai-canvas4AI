@@ -9,6 +9,7 @@ import type { CameraControlOptions } from "@/lib/canvas/camera-prompt-library";
 import type { SrtEntry, SubtitleHighlight, SubtitleStyle } from "@/types/timeline";
 import type { GenerationSpec, ReferenceBinding } from "@/lib/canvas/generation-contract.generated";
 import type { GenerationTask } from "@/services/api/task-center";
+import type { State as MediaVersionState } from "@/lib/canvas/command-contract.generated";
 
 export type Position = {
     x: number;
@@ -427,6 +428,7 @@ export type CanvasNodeMetadata = {
     versionPrimary?: boolean;
     copiedFromNodeId?: string;
     generationResultPlacement?: "replace-node" | "new-version";
+    mediaVersion?: MediaVersionState;
     previsSceneId?: string;
     previsShotId?: string;
     previsPreviewNodeId?: string;

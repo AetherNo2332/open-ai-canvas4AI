@@ -24,6 +24,8 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
+import { executeManagedMediaGeneration } from "./canvas-managed-media-executor";
+import { useCanvasSessionStore } from "@/stores/canvas/use-canvas-session-store";
 
 type UseCanvasGenerationExecutorOptions = {
     projectId: string;
@@ -286,7 +288,8 @@ export function useCanvasGenerationExecutor({
                     }
 
                     // 已有内容节点只是本次生成的来源；任务状态归新目标所有，不能覆盖已成功结果。
-                    const markSourceStatus = !sourceNode?.metadata?.content && !editingTextNode;
+                    const managedMedia = Boolean(useCanvasSessionStore.getState().scope && sourceNode?.type === mode && mode !== "text");
+                    const markSourceStatus = !managedMedia && !sourceNode?.metadata?.content && !editingTextNode;
                     const statusPrompt = sourceNode?.type === CanvasNodeType.Config ? effectivePrompt : prompt;
                     if (markSourceStatus)
                         setNodes((current) =>
@@ -326,7 +329,7 @@ export function useCanvasGenerationExecutor({
                         finishGenerationRequest,
                         bindGenerationTask: (targetNodeId: string, task: GenerationTask) => {
                             bindGenerationTask(targetNodeId, task);
-                            setNodes((current) => {
+                            if (!managedMedia) setNodes((current) => {
                                 const source = current.find((node) => node.id === nodeId);
                                 if (!source || source.metadata?.lastGenerationRequestFingerprint === requestFingerprint) return current;
                                 return current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, lastGenerationRequestFingerprint: requestFingerprint } } : node));
@@ -341,12 +344,14 @@ export function useCanvasGenerationExecutor({
                     };
 
                     try {
-                        if (mode === "image") await executeImageGeneration(execution);
+                        if (managedMedia && mode !== "text") await executeManagedMediaGeneration(execution, mode);
+                        else if (mode === "image") await executeImageGeneration(execution);
                         else if (mode === "video") await executeVideoGeneration(execution);
                         else if (mode === "audio") await executeAudioGeneration(execution);
                         else await executeTextGeneration(execution);
                     } catch (error) {
                         if (isGenerationCanceled(error)) return;
+                        if (managedMedia) { message.error(generationErrorMessage(error)); return; }
                         const failure = generationFailureMetadata(error, prompt);
                         if (options?.waitForTaskCapacity && isGenerationTaskCapacityError(error)) {
                             setNodes((current) =>

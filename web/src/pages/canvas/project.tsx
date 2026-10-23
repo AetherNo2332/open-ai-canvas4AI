@@ -87,6 +87,7 @@ import { useCanvasBatchReferences } from "./use-canvas-batch-references";
 import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { CanvasPrevisNodePanel } from "@/components/canvas/previs/canvas-previs-node-panel";
 import { CanvasVersionCompareModal } from "@/components/canvas/canvas-version-compare-modal";
+import { CanvasMediaVersionsModal } from "@/components/canvas/canvas-media-versions-modal";
 import { CanvasCloudAgentPanel, type CanvasCloudAgentPanelHandle } from "@/components/canvas/canvas-cloud-agent-panel";
 import { buildStoryboardAgentPrompt } from "@/lib/canvas/storyboard-agent-request";
 import { useFocusMode } from "@/hooks/use-focus-mode";
@@ -361,6 +362,7 @@ function InfiniteCanvasPage() {
     const [batchScrollById, setBatchScrollById] = useState<Record<string, BatchScroll>>({});
     const [previsNodeId, setPrevisNodeId] = useState<string | null>(null);
     const [versionCompareRootId, setVersionCompareRootId] = useState<string | null>(null);
+    const [mediaVersionNodeId, setMediaVersionNodeId] = useState<string | null>(null);
     const [libTVImportOpen, setLibTVImportOpen] = useState(false);
     const [titleEditing, setTitleEditing] = useState(false);
     const [titleDraft, setTitleDraft] = useState("");
@@ -529,6 +531,7 @@ function InfiniteCanvasPage() {
     const openVersions = () => {
         closeAgent();
         setVersionCompareRootId(null);
+        setMediaVersionNodeId(null);
         versions.show();
     };
     const openAgent = useCallback(() => {
@@ -1131,6 +1134,7 @@ function InfiniteCanvasPage() {
             setArtCritiqueNodeId(clearDeletedId);
             setPrevisNodeId(clearDeletedId);
             setVersionCompareRootId(clearDeletedId);
+            setMediaVersionNodeId(clearDeletedId);
             setScriptScrollTopById((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !removedIds.has(id))));
             setContextMenu((current) => (current?.type === "node" && removedIds.has(current.nodeId) ? null : current));
             const removedDrawingIds = removedNodes.flatMap((node) => (node.type === CanvasNodeType.Drawing && node.metadata?.drawingId ? [node.metadata.drawingId] : []));
@@ -2753,7 +2757,11 @@ function InfiniteCanvasPage() {
         },
         [openNodeTaskDetails],
     );
-    const openCanvasNodeVersions = useCallback((node: CanvasNodeData) => setVersionCompareRootId(node.metadata?.versionOfNodeId || node.id), []);
+    const openCanvasNodeVersions = useCallback((node: CanvasNodeData) => {
+        if (useCanvasSessionStore.getState().scope && (node.metadata?.mediaVersion || !node.metadata?.versionLabel)) setMediaVersionNodeId(node.id);
+        else setVersionCompareRootId(node.metadata?.versionOfNodeId || node.id);
+    }, []);
+    const mediaVersionNode = mediaVersionNodeId ? nodeById.get(mediaVersionNodeId) : undefined;
     const viewCanvasNodeImage = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
     const editCanvasPrevis = useCallback((node: CanvasNodeData) => openPrevisWorkbench(node.id), [openPrevisWorkbench]);
     const locateProjectStyleNode = useCallback(() => {
@@ -3674,6 +3682,16 @@ function InfiniteCanvasPage() {
                                 </Suspense>
                             ) : null}
 
+                            {mediaVersionNode ? (
+                                <CanvasMediaVersionsModal
+                                    key={`${projectId}:${mediaVersionNode.id}:${mediaVersionNode.metadata?.mediaVersion?.epoch || "legacy"}:${mediaVersionNode.metadata?.mediaVersion?.generation || 0}`}
+                                    canvasId={projectId}
+                                    node={mediaVersionNode}
+                                    onClose={() => setMediaVersionNodeId(null)}
+                                    onGenerate={() => void handleGenerateNode(mediaVersionNode.id, mediaVersionNode.type as CanvasNodeGenerationMode, mediaVersionNode.metadata?.composerContent || mediaVersionNode.metadata?.prompt || "")}
+                                    onTaskDetails={() => { setMediaVersionNodeId(null); void openNodeTaskDetails(mediaVersionNode); }}
+                                />
+                            ) : null}
                             <CanvasVersionCompareModal
                                 open={Boolean(versionCompareRootId)}
                                 versions={versionCompareNodes}

@@ -110,7 +110,7 @@ export class CanvasCommandSession {
             const kind = request.consumer?.kind;
             const rows = (metadata[kind === "batch" ? "batchTable" : "storyboard"] as { rows?: Array<Record<string, unknown>> } | undefined)?.rows;
             const target = kind === "batch" || kind === "storyboard" ? rows?.find((row) => row.id === request.consumer?.rowId) : metadata;
-            if (target) {
+            if (target && (kind === "batch" || kind === "storyboard" || request.intent !== "new_version")) {
                 delete target.taskId;
                 delete target.errorDetails;
                 Object.assign(target, { status: "loading", taskStatus: "queued", taskProgress: 0 });

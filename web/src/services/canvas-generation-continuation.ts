@@ -78,7 +78,8 @@ export function createCanvasGenerationContinuation(deps: {
     async function submit(targetNodeId: string, request: CreateTaskInput, consumer?: Consumer, signal?: AbortSignal) {
         signal?.throwIfAborted();
         const metadata = request.input?.metadata as Record<string, unknown> | undefined;
-        const result = await deps.session.submitTask({ targetNodeId, consumer, task: managedCanvasTaskRequest(request) }, { operationId: typeof metadata?.clientOperationId === "string" ? metadata.clientOperationId : undefined });
+        const intent = metadata?.mediaVersionIntent === "new_version" ? "new_version" : "create";
+        const result = await deps.session.submitTask({ targetNodeId, consumer, intent, task: managedCanvasTaskRequest(request) }, { operationId: typeof metadata?.clientOperationId === "string" ? metadata.clientOperationId : undefined });
         // An accepted host task survives navigation; abort only stops this listener.
         signal?.throwIfAborted();
         return deps.queryTask(result.taskId, { signal });
