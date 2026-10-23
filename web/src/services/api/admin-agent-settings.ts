@@ -3,11 +3,12 @@ import { http } from "./request";
 export interface AgentSchedulerSetting {
     dispatchConcurrency: number;
     maxResidentSessions: number;
+    maxResidentPerUser: number;
     maxResidentPerCanvas: number;
     revision: number;
     updatedAt: string;
 }
-export type AgentSchedulerDraft = Pick<AgentSchedulerSetting, "dispatchConcurrency" | "maxResidentSessions" | "maxResidentPerCanvas">;
+export type AgentSchedulerDraft = Pick<AgentSchedulerSetting, "dispatchConcurrency" | "maxResidentSessions" | "maxResidentPerUser" | "maxResidentPerCanvas">;
 export const getAgentSchedulerSetting = () => http.get<{ setting: AgentSchedulerSetting; toolCount: number }>("/admin/settings/agent-scheduler");
 export const updateAgentSchedulerSetting = (input: AgentSchedulerDraft & { expectedRevision: number }) => http.put<{ setting: AgentSchedulerSetting }>("/admin/settings/agent-scheduler", input);
 export interface AgentRuntimeStatus {

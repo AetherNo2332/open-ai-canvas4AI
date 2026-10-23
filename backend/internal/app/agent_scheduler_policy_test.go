@@ -56,7 +56,7 @@ func TestAgentSchedulerAdminPolicyAndCapacityDraining(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.UpdateAgentSchedulerSetting(admin, AgentSchedulerUpdate{ExpectedRevision: p.Revision, DispatchConcurrency: 4, MaxResidentSessions: 16, MaxResidentPerCanvas: 16}); err != nil {
+	if _, err = s.UpdateAgentSchedulerSetting(admin, AgentSchedulerUpdate{ExpectedRevision: p.Revision, DispatchConcurrency: 4, MaxResidentSessions: 16, MaxResidentPerUser: 16, MaxResidentPerCanvas: 16}); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.PiCapacityReport("executor", model.AgentCapacityReport{Active: 32, Capacity: 16, Draining: true, AppliedConfigRevision: 1}); err != nil {

@@ -39,7 +39,7 @@ func (r *Repository) SaveAgentSchedulerSetting(p *model.AgentSchedulerSetting, e
 		next.ID = 1
 		next.Revision = expected + 1
 		next.UpdatedAt = time.Now()
-		result := tx.Model(&model.AgentSchedulerSetting{}).Where("id = ? AND revision = ?", 1, expected).Updates(map[string]any{"dispatch_concurrency": next.DispatchConcurrency, "max_resident_sessions": next.MaxResidentSessions, "max_resident_per_canvas": next.MaxResidentPerCanvas, "revision": next.Revision, "updated_by": next.UpdatedBy, "updated_at": next.UpdatedAt})
+		result := tx.Model(&model.AgentSchedulerSetting{}).Where("id = ? AND revision = ?", 1, expected).Updates(map[string]any{"dispatch_concurrency": next.DispatchConcurrency, "max_resident_sessions": next.MaxResidentSessions, "max_resident_per_user": next.MaxResidentPerUser, "max_resident_per_canvas": next.MaxResidentPerCanvas, "revision": next.Revision, "updated_by": next.UpdatedBy, "updated_at": next.UpdatedAt})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -64,7 +64,7 @@ func admissionKey(run model.CloudAgentExecution) string {
 	return run.UserID + ":session:" + run.ConversationID + ":" + run.ID
 }
 
-func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback model.AgentSchedulerSetting) (*model.CloudAgentExecution, error) {
+func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback model.AgentSchedulerSetting, userScope ...string) (*model.CloudAgentExecution, error) {
 	var claimed *model.CloudAgentExecution
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		counter := model.AgentAdmissionCounter{ID: 1}
@@ -86,19 +86,23 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 		// 会把未来租约误判为已过期，这里必须保持 UTC。
 		now := time.Now().UTC()
 		var candidates []model.CloudAgentExecution
-		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind",
+		candidateQuery := tx.Select("id", "user_id", "canvas_id", "conversation_id", "engine", "status", "created_at", "revision", "wait_kind",
 			"lease_owner", "lease_expires_at", "recovery_status", "recovery_attempts", "recovery_started_at", "progress_version", "claim_progress_version",
 			"runtime_phase", "wait_reason", "active_task_id", "media_task_id").
-			Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?) AND (next_recovery_at IS NULL OR next_recovery_at <= ?)", "pi", []string{"queued", "running", "waiting_approval"}, now, now).Order("created_at,id").Find(&candidates).Error; err != nil {
+			Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?) AND (next_recovery_at IS NULL OR next_recovery_at <= ?)", "pi", []string{"queued", "running", "waiting_approval"}, now, now)
+		if len(userScope) > 0 && userScope[0] != "" { candidateQuery = candidateQuery.Where("user_id = ?", userScope[0]) }
+		if err := candidateQuery.Order("created_at,id").Find(&candidates).Error; err != nil {
 			return err
 		}
 		var live []model.CloudAgentExecution
-		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id").Where("engine = ? AND status IN ? AND lease_expires_at > ?", "pi", []string{"running", "waiting_approval"}, now).Find(&live).Error; err != nil {
+		if err := tx.Select("id", "user_id", "canvas_id", "conversation_id").Where("engine = ? AND status IN ? AND lease_expires_at > ?", "pi", []string{"queued", "running", "waiting_approval"}, now).Find(&live).Error; err != nil {
 			return err
 		}
-		counts := map[string]int{}
+		canvasCounts := map[string]int{}
+		userCounts := map[string]int{}
 		for _, run := range live {
-			counts[admissionKey(run)]++
+			canvasCounts[admissionKey(run)]++
+			userCounts[run.UserID]++
 		}
 		var states []model.AgentCanvasAdmission
 		if err := tx.Find(&states).Error; err != nil {
@@ -108,7 +112,21 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 		for _, state := range states {
 			sequences[state.Key] = state.LastAdmissionSequence
 		}
+		var userStates []model.AgentUserAdmission
+		if err := tx.Find(&userStates).Error; err != nil {
+			return err
+		}
+		userSequences := map[string]int64{}
+		for _, state := range userStates {
+			userSequences[state.UserID] = state.LastAdmissionSequence
+		}
 		sort.SliceStable(candidates, func(i, j int) bool {
+			if candidates[i].UserID != candidates[j].UserID {
+				if userSequences[candidates[i].UserID] != userSequences[candidates[j].UserID] {
+					return userSequences[candidates[i].UserID] < userSequences[candidates[j].UserID]
+				}
+				return candidates[i].UserID < candidates[j].UserID
+			}
 			a, b := admissionKey(candidates[i]), admissionKey(candidates[j])
 			if a == b {
 				return false
@@ -131,9 +149,15 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 					}
 				}
 				key := admissionKey(candidate)
-				if counts[key] >= policy.MaxResidentPerCanvas {
-					if candidate.Status == "queued" && candidate.WaitKind != "canvas_capacity" {
-						if err := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ?", candidate.ID, candidate.Revision).Updates(map[string]any{"runtime_phase": "waiting_resource", "wait_kind": "canvas_capacity", "wait_reason": "等待画布会话容量", "revision": gorm.Expr("revision + 1")}).Error; err != nil {
+				waitKind, waitReason := "", ""
+				if userCounts[candidate.UserID] >= policy.MaxResidentPerUser {
+					waitKind, waitReason = "user_capacity", "等待用户会话容量"
+				} else if canvasCounts[key] >= policy.MaxResidentPerCanvas {
+					waitKind, waitReason = "canvas_capacity", "等待画布会话容量"
+				}
+				if waitKind != "" {
+					if candidate.Status == "queued" && candidate.WaitKind != waitKind {
+						if err := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND revision = ?", candidate.ID, candidate.Revision).Updates(map[string]any{"runtime_phase": "waiting_resource", "wait_kind": waitKind, "wait_reason": waitReason, "revision": gorm.Expr("revision + 1")}).Error; err != nil {
 							return err
 						}
 					}
@@ -178,6 +202,9 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 					return err
 				}
 				if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&model.AgentCanvasAdmission{Key: key, LastAdmissionSequence: counter.Value}).Error; err != nil {
+					return err
+				}
+				if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&model.AgentUserAdmission{UserID: candidate.UserID, LastAdmissionSequence: counter.Value}).Error; err != nil {
 					return err
 				}
 				claimed = &candidate

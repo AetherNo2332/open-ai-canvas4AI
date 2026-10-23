@@ -63,6 +63,9 @@ func openAgentAdmissionAuditPostgresDB(t *testing.T) *gorm.DB {
 	}
 	sqlDB.SetMaxOpenConns(8)
 	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&model.AgentUserAdmission{}); err != nil {
+		t.Fatal("could not prepare user admission table")
+	}
 	return db
 }
 
@@ -233,6 +236,76 @@ func TestAgentAdmissionAuditPostgresEnforcesCanvasCapUnderRace(t *testing.T) {
 	}
 	if claimed != 1 {
 		t.Fatalf("canvas cap under race admitted %d leases, want 1", claimed)
+	}
+}
+
+func TestAgentAdmissionAuditPostgresUserCapAcrossBackends(t *testing.T) {
+	db := openAgentAdmissionAuditPostgresDB(t)
+	if err := db.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.CloudAgentExecution{}, &model.CloudAgentPiSession{}); err != nil {
+		t.Fatal(err)
+	}
+	var schema string
+	if err := db.Raw("SELECT current_schema()").Scan(&schema).Error; err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(strings.TrimSpace(os.Getenv("TEST_AGENT_POSTGRES_DSN")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	peer, err := database.Open(database.Config{Driver: "postgres", DSN: parsed.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerSQL, err := peer.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = peerSQL.Close() })
+	suffix := agentAdmissionAuditID()
+	for _, item := range []struct{ id, user, canvas string }{
+		{suffix + "-u1", suffix + "u", "a"},
+		{suffix + "-u2", suffix + "u", "b"},
+		{suffix + "-v1", suffix + "v", "a"},
+	} {
+		seedAuditRun(t, db, item.id, item.user, item.canvas, nil, 0)
+	}
+	p := model.DefaultAgentSchedulerSetting()
+	p.MaxResidentPerUser = 1
+	start := make(chan struct{})
+	results := make(chan *model.CloudAgentExecution, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i, handle := range []*gorm.DB{db, peer} {
+		wg.Add(1)
+		go func(i int, handle *gorm.DB) {
+			defer wg.Done()
+			<-start
+			run, err := repository.New(handle).ClaimPiAgentFair(fmt.Sprintf("%s-worker-%d", suffix, i), time.Now().UTC().Add(time.Minute), p)
+			results <- run
+			errs <- err
+		}(i, handle)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	users := map[string]int{}
+	for run := range results {
+		if run == nil {
+			t.Fatal("independent user did not receive second slot")
+		}
+		users[run.UserID]++
+	}
+	if users[suffix+"u"] != 1 || users[suffix+"v"] != 1 {
+		t.Fatalf("user cap or fairness failed: %+v", users)
 	}
 }
 

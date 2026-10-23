@@ -461,6 +461,7 @@ func migrations() []tableMigration {
 		migrateTable[model.AgentSchedulerSetting]("agent_scheduler_settings"),
 		migrateTable[model.AgentAdmissionCounter]("agent_admission_counters"),
 		migrateTable[model.AgentCanvasAdmission]("agent_canvas_admissions"),
+		migrateTable[model.AgentUserAdmission]("agent_user_admissions"),
 		migrateTable[model.AgentRuntimeInstance]("agent_runtime_instances"),
 		migrateTable[model.AgentToolOperation]("agent_tool_operations"),
 		migrateTable[model.AgentEventCounter]("agent_event_counters"),

@@ -195,7 +195,7 @@ func (r *Repository) UnclaimedPiAgentRuns(createdBefore time.Time, limit int) ([
 		}
 	}
 	query := r.db.Where("engine = ? AND status IN ? AND lease_expires_at IS NULL AND created_at < ?",
-		"pi", []string{"queued", "running", "waiting_approval"}, createdBefore).Where("wait_kind <> ?", "canvas_capacity")
+		"pi", []string{"queued", "running", "waiting_approval"}, createdBefore).Where("wait_kind NOT IN ?", []string{"canvas_capacity", "user_capacity"})
 	err := query.
 		Order("created_at").Limit(limit).Find(&runs).Error
 	return runs, err

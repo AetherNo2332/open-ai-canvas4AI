@@ -14,6 +14,7 @@ type AgentSchedulerUpdate struct {
 	ExpectedRevision     int64 `json:"expectedRevision"`
 	DispatchConcurrency  int   `json:"dispatchConcurrency"`
 	MaxResidentSessions  int   `json:"maxResidentSessions"`
+	MaxResidentPerUser   int   `json:"maxResidentPerUser"`
 	MaxResidentPerCanvas int   `json:"maxResidentPerCanvas"`
 }
 
@@ -38,7 +39,7 @@ func (s *Service) UpdateAgentSchedulerSetting(actor *model.User, input AgentSche
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
-	p := model.AgentSchedulerSetting{ID: 1, DispatchConcurrency: input.DispatchConcurrency, MaxResidentSessions: input.MaxResidentSessions, MaxResidentPerCanvas: input.MaxResidentPerCanvas, UpdatedBy: actor.ID}
+	p := model.AgentSchedulerSetting{ID: 1, DispatchConcurrency: input.DispatchConcurrency, MaxResidentSessions: input.MaxResidentSessions, MaxResidentPerUser: input.MaxResidentPerUser, MaxResidentPerCanvas: input.MaxResidentPerCanvas, UpdatedBy: actor.ID}
 	if input.ExpectedRevision < 0 {
 		return nil, BadAuthRequest("Invalid config revision")
 	}

@@ -14,7 +14,7 @@ import (
 // CurrentSchemaVersion follows upstream migrations through v43; our Agent
 // migrations register after that upstream range as 44+. When a future upstream
 // sync takes 44+, shift our block up again and extend the relocation table.
-const CurrentSchemaVersion int64 = 59
+const CurrentSchemaVersion int64 = 60
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 43
@@ -224,6 +224,12 @@ var schemaMigrations = []migration{
 	{version: 59, name: "agent_tool_snapshots", checksum: "sha256:agent-tool-snapshots-v59-20261018", apply: func(tx *gorm.DB) error {
 		// Keep the applied migration identity; retired snapshot tables are no longer created.
 		return nil
+	}},
+	{version: 60, name: "agent_user_admission", checksum: "sha256:agent-user-admission-v60-20261023", apply: func(tx *gorm.DB) error {
+		if err := tx.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentUserAdmission{}); err != nil {
+			return err
+		}
+		return tx.Model(&model.AgentSchedulerSetting{}).Where("max_resident_per_user IS NULL OR max_resident_per_user = 0").Update("max_resident_per_user", model.DefaultAgentSchedulerSetting().MaxResidentPerUser).Error
 	}},
 }
 

@@ -19,7 +19,7 @@ func openAgentSchedulerRepositoryDB(t *testing.T) (*repository.Repository, *gorm
 		t.Fatal("could not open isolated Agent operation database")
 	}
 	if err := db.AutoMigrate(&model.AgentToolOperation{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{},
-		&model.CloudAgentExecution{}, &model.CloudAgentPiSession{}); err != nil {
+		&model.CloudAgentExecution{}, &model.CloudAgentPiSession{}, &model.AgentUserAdmission{}); err != nil {
 		t.Fatal("could not create Agent operation tables")
 	}
 	if sqlDB, err := db.DB(); err == nil {

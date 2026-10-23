@@ -8,6 +8,7 @@ func DefaultAgentSchedulerSetting() AgentSchedulerSetting {
 	p := model.DefaultAgentSchedulerSetting()
 	p.DispatchConcurrency = envInt("CANVAS_AGENT_CONCURRENCY", p.DispatchConcurrency)
 	p.MaxResidentSessions = envInt("CANVAS_AGENT_MAX_SESSIONS", p.MaxResidentSessions)
+	p.MaxResidentPerUser = envInt("CANVAS_AGENT_MAX_SESSIONS_PER_USER", p.MaxResidentPerUser)
 	p.MaxResidentPerCanvas = envInt("CANVAS_AGENT_MAX_SESSIONS_PER_CANVAS", min(16, p.MaxResidentSessions))
 	return p
 }

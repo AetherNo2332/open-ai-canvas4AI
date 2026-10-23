@@ -15,10 +15,11 @@ test("hot slot changes expand immediately and shrink without cancelling in-fligh
  release();await Promise.all(work);assert.equal(entered,10);assert.equal(s.active,0);
 });
 test("configuration only applies valid newer revisions",()=>{
- const c=new RuntimeConfigController({dispatchConcurrency:4,maxResidentSessions:64,maxResidentPerCanvas:16,revision:1});
+ const c=new RuntimeConfigController({dispatchConcurrency:4,maxResidentSessions:64,maxResidentPerUser:32,maxResidentPerCanvas:16,revision:1});
  assert.equal(c.apply({...c.current,dispatchConcurrency:8,revision:2}),true);
  assert.equal(c.apply({...c.current,dispatchConcurrency:4,revision:1}),false);
  assert.throws(()=>c.apply({...c.current,maxResidentSessions:2,revision:3}),/Invalid/);
+ assert.throws(()=>c.apply({...c.current,maxResidentPerUser:0,revision:3}),/Invalid/);
  assert.equal(c.current.dispatchConcurrency,8);
 });
 test("resident shrink rechecks claims already in flight and releases excess leases",async()=>{

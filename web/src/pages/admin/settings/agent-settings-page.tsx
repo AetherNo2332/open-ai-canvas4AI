@@ -14,6 +14,7 @@ import { getAgentSchedulerSetting, getAgentSchedulerStatus, updateAgentScheduler
 const fields: Array<{ key: keyof AgentSchedulerDraft; label: string; detail: string; max: number }> = [
     { key: "dispatchConcurrency", label: "Agent 调度槽", detail: "每个执行器同时推进的短步骤数；等待模型、工具或审批不占槽。", max: 16 },
     { key: "maxResidentSessions", label: "执行器驻留会话上限", detail: "每个执行器持有的会话上限；缩容后已有会话自然排空。", max: 64 },
+    { key: "maxResidentPerUser", label: "用户驻留会话上限", detail: "同一用户跨画布、跨执行器共享的上限；缩容后已有会话自然排空。", max: 64 },
     { key: "maxResidentPerCanvas", label: "画布驻留会话上限", detail: "同一用户、同一画布跨执行器共享的上限，保留其他画布准入机会。", max: 64 },
 ];
 
@@ -62,6 +63,9 @@ export default function AgentSettingsPage() {
         Number.isInteger(draft.maxResidentSessions) &&
         draft.maxResidentSessions >= draft.dispatchConcurrency &&
         draft.maxResidentSessions <= 64 &&
+        Number.isInteger(draft.maxResidentPerUser) &&
+        draft.maxResidentPerUser >= 1 &&
+        draft.maxResidentPerUser <= 64 &&
         Number.isInteger(draft.maxResidentPerCanvas) &&
         draft.maxResidentPerCanvas >= 1 &&
         draft.maxResidentPerCanvas <= draft.maxResidentSessions;
@@ -73,6 +77,7 @@ export default function AgentSettingsPage() {
             const { setting: saved } = await updateAgentSchedulerSetting({
                 dispatchConcurrency: draft.dispatchConcurrency,
                 maxResidentSessions: draft.maxResidentSessions,
+                maxResidentPerUser: draft.maxResidentPerUser,
                 maxResidentPerCanvas: draft.maxResidentPerCanvas,
                 expectedRevision: setting.revision,
             });

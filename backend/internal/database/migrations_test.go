@@ -22,6 +22,38 @@ func TestCurrentSchemaVersionMatchesMigrationPlan(t *testing.T) {
 	}
 }
 
+func TestMigrateSchemaV60UpgradesLegacySchedulerRow(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:agent-user-admission-upgrade?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentSchedulerSetting{ID: 1, DispatchConcurrency: 4, MaxResidentSessions: 64, MaxResidentPerCanvas: 16, MaxResidentPerUser: 32}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrator().DropColumn(&model.AgentSchedulerSetting{}, "MaxResidentPerUser"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrator().DropTable(&model.AgentUserAdmission{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("version = ?", 60).Delete(&schemaMigration{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var setting model.AgentSchedulerSetting
+	if err := db.First(&setting, 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if setting.MaxResidentPerUser != model.DefaultAgentSchedulerSetting().MaxResidentPerUser || !db.Migrator().HasTable(&model.AgentUserAdmission{}) {
+		t.Fatalf("legacy scheduler did not acquire user quota: %+v", setting)
+	}
+}
+
 func TestPiConversationSessionMigrationBackfillsActiveRun(t *testing.T) {
 	db, err := Open(Config{Driver: "sqlite", DSN: "file:pi-session-backfill?mode=memory&cache=shared"})
 	if err != nil {
