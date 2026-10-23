@@ -68,9 +68,9 @@
 
 **Interfaces:** Full branch behavior conforms to approved spec; no backend queue rule depends on an open browser.
 
-- [ ] Run minimum sufficient real implementation tests for new queue and affected admission/history/UI recovery; include SQLite and available isolated PostgreSQL concurrent proof, no production/container changes.
-- [ ] Perform fresh independent whole-branch review on an explicitly non-Astra model; reproduce and fix material findings, record evidence and any deviations below.
-- [ ] Sync documentation, preview changelog then update existing v1.6.0 internal version; verify diff and changelog checks, commit. Keep remote unchanged and report delivery/remaining environment checks accurately.
+- [x] Run minimum sufficient real implementation tests for new queue and affected admission/history/UI recovery; include SQLite and available isolated PostgreSQL concurrent proof, no production/container changes.
+- [x] Perform fresh independent whole-branch review on an explicitly non-Astra model; reproduce and fix material findings, record evidence and any deviations below.
+- [x] Sync documentation, preview changelog then update existing v1.6.0 internal version; verify diff and changelog checks, commit. Keep remote unchanged and report delivery/remaining environment checks accurately.
 
 ## Execution ledger
 
@@ -92,3 +92,7 @@
 - Task 3: complete。实际面板 22 项、API/恢复 13 项、队列组件 2 项、分镜入口 4 项均通过；类型检查通过，正文期间新草稿、节点不代答、显式问题回答及冻结模式均有运行证据。
 - Task 4: in progress。六个 Go 包定向验证中，队列/仓储/策略/HTTP/迁移/架构通过；发现旧预算测试沿用已移除的待办阻塞，在未修改的 main 上单独复现同一失败。
 - Ruling: `TestAgentCallLimitsNoToolTurnUsesRaisedBudget` 改用待送用户插话保持继续，并断言热更新步数上限，RED→GREEN；仅同步测试夹具，不恢复待办催办或修改生产记忆算法。
+- Task 4: complete。前端最终实际面板/队列控件两个发现入口通过，分别执行22项面板和2项队列行为；此前API/恢复13项、分镜入口4项及类型检查通过。最终六包Go定向回归全部通过，覆盖应用、仓储、策略、HTTP/OpenAPI、64→65迁移与架构。
+- Review: 独立非Astra审阅者完成 `bc593e8d..100790e8` 整分支复核，指出优先级仅在调用栈保存的问题；后台抢先、暂停重启和临时失败重试均观察RED。修复持久候选及恢复意图后，再复现新异常暂停撤销遗漏和过期准备抢先提交，两个问题也均RED→GREEN。
+- Review resolution: `21763767` 持久化插队优先级、共用前后台候选，区分待恢复意图与普通暂停；停止/暂停及新异常撤销旧意图，原子提交要求租约未过期。最后限定复审没有进一步Critical/Important，代码可合并；前述六包回归作为最终门槛已通过。
+- Delivery: 功能、API、数据库、代码地图与待测试文档同步；脚本预览后沿用v1.6.0更新内部提交版本，保留既有更新日志。代码提交保存在本地功能分支，本轮不推送远端、不开服务、不改容器或生产；PostgreSQL、真实浏览器/模型和皮肤视觉仍待环境验收。

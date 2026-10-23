@@ -1,6 +1,6 @@
 # Agent 会话消息排队设计
 
-状态：用户已确认，进入实施。
+状态：实施与定向验证完成；独立复核通过，环境场景验收见实施计划及待测试清单。
 
 ## 目标与用户要求
 
@@ -9,7 +9,7 @@
 - 沿用当前会话、草稿、权限、模型、技能、预算及画布范围，不创建另一套聊天入口。
 - Agent 记忆、上下文压缩、待办管理保持现有设计。
 
-## 已核实的代码基础
+## 设计时核实的代码基线
 
 - `web/src/components/canvas/canvas-cloud-agent-panel.tsx` 的 `submit` 在运行中直接进入 `interject`，空闲时用当前轮作 parent 创建续轮；目前没有用户消息队列。
 - `backend/internal/app/cloud_agent_interjection.go` 允许 queued/running/waiting_approval 接收插话，通过 messageId 去重，并在本轮后续模型调用送达。
@@ -64,13 +64,13 @@
 首条空会话消息复用现有创建运行入口；它获得 conversationId 后才接受后续队列消息。未知的首条创建必须先核对原幂等请求，不能另造会话。已有会话新增统一发送入口：
 
 - `POST /agent/conversations/:id/messages`：请求携带 mode=interject|queue、原始 CreateAgentRunInput、expectedRunId、可选 replyToQuestionId；服务端决定插入当前轮或保存队列。客户端消息身份来自同一份持久幂等请求。
-- `GET /agent/conversations/:id/queue`：返回队列 revision、暂停状态、未回答问题及有序待发项，可按 revision 轻量刷新。
+- `GET /agent/conversations/:id/queue`：返回队列 revision、暂停状态、未回答问题及有序待发项，供快照刷新与条件修改。
 - `PATCH /agent/conversations/:id/queue/:messageId`：携带预期项 revision，更新未派发正文，或提升为插队；操作字段不得混合。
 - `DELETE /agent/conversations/:id/queue/:messageId`：携带预期项 revision，取消未派发项，保留内部收条防止未知重试复活。
 - `PATCH /agent/conversations/:id/queue`：携带预期控制 revision，执行 pause 或 resume。
 - `GET/PATCH /agent/ui-settings`：读取或条件更新 defaultSendMode；它与 systemPrompt/workspace 接口独立。
 
-统一发送收条明确 delivery=interjected|queued|started、messageId、conversationId、queueRevision 与实际 runId（若已派发）；遇到权限、格式等明确失败使用真实 4xx，不返回假成功。相同身份、相同原请求重试返回既有收条；更改正文、模式、问题关联或参数后复用身份返回冲突。当前轮在网络间隙完成时，服务端可在同一会话内转为续轮，但若 expectedRunId 已被另一用户提交推进则返回陈旧会话冲突，不能把用户更正插入陌生新轮。
+统一发送收条明确 delivery=interjected|queued|started|cancelled、messageId、conversationId、queueRevision 与实际 runId（若已派发）；遇到权限、格式等明确失败使用真实 4xx，不返回假成功。相同身份、相同原请求重试返回既有收条；更改正文、模式、问题关联或参数后复用身份返回冲突。当前轮在网络间隙完成时，服务端可在同一会话内转为续轮，但若 expectedRunId 已被另一用户提交推进则返回陈旧会话冲突，不能把用户更正插入陌生新轮。
 
 前端不猜测服务端是否已收下请求。未知提交保存原接口、模式、正文、幂等键和问题关联，恢复后原样查询或重试；不因默认方式切换而修改在途请求。仅收到明确收条后清空对应输入，外部入口仍不清空会话原草稿。切换账号或会话后的旧回执不能更改新作用域状态。
 
@@ -79,12 +79,14 @@
 服务端调度器由持久队列驱动，通过现有 worker 生命周期启动，唤醒与有界周期补扫结合；浏览器与 Agent SDK 不负责决定何时发送下一条。
 
 1. 按 userId、conversationId 串行领取，读取最新轮、队列状态、问题与清理状态；同一会话最多一个派发中的消息。
-2. 锁内校验最早待发项，选择最新合格 parent，准备既有 CloudAgentAdmission；在一次数据库事务内提交新轮、holding task、额度预留、消息到 runId 的绑定和队列 revision。
+2. 锁内选择持久优先级与顺序最早的待发项及最新合格 parent，领取租约；事务外准备既有 CloudAgentAdmission，提交事务重验有效租约、父轮和闸门，同时写入新轮、holding task、额度预留、消息到 runId 的绑定和队列 revision。
 3. 进程在准备或提交阶段崩溃后，依据稳定消息身份与已绑定运行恢复；租约过期只重试原身份，不创建第二份运行。多实例竞争、手动续聊和队列派发共用会话串行边界。
 4. 原子提升插队与取消同样参与会话串行边界。消息已经派发时，编辑、取消或提升返回冲突并给最新状态；不撤销运行，也不自动转成一次全新发送。
 5. 本轮 completed 且无阻塞时推进；failed/cancelled/rejected 或用户停止时暂停队列。停止与派发竞争必须在同一边界决定：要么阻止派发，要么将新轮作为同一次“停止并暂停”的目标，不能漏出一轮继续运行。
 6. 明确的模型/技能/权限/额度等准入错误阻塞队首并暂停，消息不丢失、不跳过。临时数据库/网络错误与资源容量不足保留原项、有限指数退避；不越过既有每用户/全局运行配额。
 7. 队列修改、消息被接收及派发、问题关联和暂停状态持久记录。队列查询供跨设备刷新；会话目录携带 queueRevision、queuedCount、queuePaused，现有轮 SSE 有更新时通知前端重新取快照。即使没有活跃 SSE 或页面关闭，服务端仍可派发。
+
+实施细化：插队方式与显式恢复意图均持久保存，前台即时派发和后台恢复共用候选选择。显式请求可以在普通队列暂停时启动一次恢复轮；后续停止、暂停或新的异常暂停撤销此前全部未完成的恢复意图，新提交或重新提升可再次发起。临时重试保留意图，确定性失败和自动尝试累计六次后保留消息并暂停。
 
 提问的 questionId 来自实际 user_question 事件身份，写事件时原子更新队列控制。旧问题按现有事件恢复一次，不能只查末页事件。回答必须引用当前尚未解决的 questionId；问题被新问题替换、已经回答或关联轮不匹配时返回冲突。完整自由文本未调用 ask_user 时不新增猜测性阻塞。
 
@@ -121,4 +123,4 @@
 ## 设计复核
 
 - 已由独立工程审阅者按实施可行性检查设计，并核对需要时的源码；结论：没有重要遗漏。
-- 本轮仅新增本文档，未改前后端运行时代码，未启动服务或运行测试。
+- 设计阶段仅新增本文档；后续实施与定向验证记录在对应实施计划中。
