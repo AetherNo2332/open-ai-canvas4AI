@@ -57,7 +57,7 @@ XFilming 是一个基于开源画布影策的AI-Base创作平台：用自由画�
 ### 宿主机启动
 
 ```bash
-git clone https://github.com/ddcat-ai/open-ai-canvas.git
+git clone https://github.com/AetherNo2332/open-ai-canvas4AI.git open-ai-canvas
 cd open-ai-canvas
 
 # 使用 Git 忽略的目录保存本地开发数据和缓存
@@ -126,53 +126,46 @@ docker compose -f docker-compose.local.yml up -d --build
 
 ### 源码构建（推荐）
 
-适用于 Linux 云服务器。脚本会安装 Docker、拉取源码、生成受保护的 `.env`，并启动 PostgreSQL、Redis、后端和网页：
+适用于 Linux 云服务器。脚本会安装 Docker、拉取源码、生成受保护的 `.env`，并启动 PostgreSQL、Redis、后端、Agent 和网页：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/main/scripts/install-server.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/AetherNo2332/open-ai-canvas4AI/main/scripts/install-server.sh | sudo bash
 ```
 
 默认访问 `http://服务器IP:3000`。更新或排查：
 
 ```bash
 cd /opt/open-ai-canvas
-sudo docker compose --env-file .env \
+sudo env CANVAS_BACKEND_IMAGE=open-ai-canvas-backend:server \
+  CANVAS_WEB_IMAGE=open-ai-canvas-web:server \
+  CANVAS_AGENT_IMAGE=open-ai-canvas-agent:server \
+  docker compose --env-file .env \
   -f docker-compose.deploy.yml -f docker-compose.build.yml ps
-sudo docker compose --env-file .env \
+sudo env CANVAS_BACKEND_IMAGE=open-ai-canvas-backend:server \
+  CANVAS_WEB_IMAGE=open-ai-canvas-web:server \
+  CANVAS_AGENT_IMAGE=open-ai-canvas-agent:server \
+  docker compose --env-file .env \
   -f docker-compose.deploy.yml -f docker-compose.build.yml logs -f --tail=200
 ```
 
 ### 使用 GHCR 镜像
 
-不需要源码时，可使用镜像部署脚本：
+不需要源码时，可使用镜像部署脚本。将版本占位替换为当前 fork 已发布且包含 Agent 编排修复的 Release：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/main/scripts/install-server-image.sh \
-  | sudo env CANVAS_IMAGE_TAG=v1.5.7.1 bash
+curl -fsSL https://raw.githubusercontent.com/AetherNo2332/open-ai-canvas4AI/main/scripts/install-server-image.sh \
+  | sudo env CANVAS_IMAGE_TAG='v<已发布版本>' bash
 ```
 
-脚本会先按指定 Release 拉取镜像，再解析并写入 `CANVAS_BACKEND_IMAGE`、`CANVAS_WEB_IMAGE` 的 GHCR digest；生产 Compose 不接受缺失 digest 的默认镜像或 `latest`。更新流程、数据库迁移、备份和回退说明见[系统更新文档](docs/content/docs/backend/system-update.mdx)。
+脚本会先按指定 Release 拉取镜像，再解析并写入 `CANVAS_BACKEND_IMAGE`、`CANVAS_WEB_IMAGE`、`CANVAS_AGENT_IMAGE` 的 GHCR digest；生产 Compose 不接受缺失 digest 的默认镜像或 `latest`。更新流程、数据库迁移、备份和回退说明见[生产部署文档](docs/content/docs/backend/production-deployment.mdx)。
 
-### 启用后台预演渲染器
+生产编排默认启动 Agent，无需启用 `pi` profile。安装脚本自动补齐并复用 `CANVAS_AGENT_INTERNAL_TOKEN`，backend 与 Agent 共用；手动部署需在 `.env` 中配置至少32字符的随机令牌。Agent 仅通过内部网络访问 backend，不暴露公网端口。详细配置和旧部署升级步骤见[生产部署文档](docs/content/docs/backend/production-deployment.mdx)。
 
-后台白模视频预演需要单独启用 renderer。先在服务器项目目录的 `.env` 中配置独立密钥（至少 32 个字符）；可用 `openssl rand -hex 32` 生成：
+### Compose 文件与可选服务
 
-```env
-CANVAS_PREVIS_RENDERER_TOKEN=<生成的随机密钥>
-CANVAS_PREVIS_RENDERER_IMAGE=canvas-previs-renderer:local
-```
+仓库根目录只保留六份常用 Compose 文件：`docker-compose.yml`、`docker-compose.build.yml`、`docker-compose.deploy.yml`、`docker-compose.dev.yml`、`docker-compose.local.yml` 和 `docker-compose.server.yml`。专项验收、灰度、监控、预演及历史回滚配置不再作为根目录入口提供。
 
-从源码构建部署时，在项目目录执行以下命令，将预演配置叠加到常规部署上：
-
-```bash
-sudo docker compose --env-file .env \
-  -f docker-compose.deploy.yml \
-  -f docker-compose.build.yml \
-  -f docker-compose.previs.yml \
-  up -d --build previs-renderer backend
-```
-
-叠加配置会将 `http://previs-renderer:8081` 注入后端，并把同一密钥传给 renderer。renderer 只加入 Compose 内部网络，不公开宿主机端口；容器限制为 2 CPU 和 2 GiB 内存。不要将密钥提交到 Git。当前 GHCR 镜像安装脚本只部署网页和后端，不包含 renderer 镜像；镜像部署要启用预演，需另行准备 renderer 镜像和对应 Compose 配置。
+后台白模视频预演仍需要独立 renderer 服务。该服务不属于默认编排；如需启用，请单独部署，并在后端进程环境中配置 `CANVAS_PREVIS_RENDERER_URL` 和至少 32 字符的独立 `CANVAS_PREVIS_RENDERER_TOKEN`，使后端能够访问该服务。密钥须与 renderer 一致，服务访问及数据目录由部署环境管理。
 
 ## 安全边界
 

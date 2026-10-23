@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-REPOSITORY_URL="${REPOSITORY_URL:-https://github.com/ddcat-ai/open-ai-canvas.git}"
+REPOSITORY_URL="${REPOSITORY_URL:-https://github.com/AetherNo2332/open-ai-canvas4AI.git}"
 REPOSITORY_REF="${REPOSITORY_REF:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/open-ai-canvas}"
 CANVAS_HTTP_PORT="${CANVAS_HTTP_PORT:-3000}"
@@ -68,7 +68,7 @@ sync_source() {
     if [[ -d "$INSTALL_DIR/.git" ]]; then
         cd "$INSTALL_DIR"
         [[ -z "$(git status --porcelain --untracked-files=no)" ]] || fail "$INSTALL_DIR 存在本地代码改动，请先处理后再更新"
-        git pull --ff-only origin "$REPOSITORY_REF"
+        git pull --ff-only "$REPOSITORY_URL" "$REPOSITORY_REF"
         return
     fi
 
@@ -78,6 +78,24 @@ sync_source() {
     mkdir -p "$(dirname "$INSTALL_DIR")"
     git clone --depth 1 --branch "$REPOSITORY_REF" "$REPOSITORY_URL" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
+}
+
+ensure_agent_token() {
+    local token temporary_env
+    token="$(sed -n 's/^CANVAS_AGENT_INTERNAL_TOKEN=//p' .env | tail -n 1)"
+    if [[ -z "$token" ]]; then
+        token="$(openssl rand -hex 32)"
+        temporary_env="$(mktemp ".env.XXXXXX")"
+        awk -v token="$token" '
+            BEGIN { updated=0 }
+            /^CANVAS_AGENT_INTERNAL_TOKEN=/ { print "CANVAS_AGENT_INTERNAL_TOKEN=" token; updated=1; next }
+            { print }
+            END { if (!updated) print "CANVAS_AGENT_INTERNAL_TOKEN=" token }
+        ' .env > "$temporary_env"
+        chmod --reference=.env "$temporary_env"
+        mv "$temporary_env" .env
+    fi
+    [[ ${#token} -ge 32 ]] || fail "CANVAS_AGENT_INTERNAL_TOKEN 至少需要32字符；请更新 .env 后重试"
 }
 
 prepare_environment() {
@@ -91,6 +109,7 @@ prepare_environment() {
             ((configured_http_port >= 1 && configured_http_port <= 65535)) || fail ".env 中的 CANVAS_HTTP_PORT 无效"
             CANVAS_HTTP_PORT="$configured_http_port"
         fi
+        ensure_agent_token
         return
     fi
 
@@ -109,14 +128,19 @@ CANVAS_ALLOW_PRIVATE_UPSTREAMS=false
 CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=
 CANVAS_CORS_ORIGINS=
 EOF
+    ensure_agent_token
 }
 
 start_services() {
-    step "从源码构建网页与后端镜像"
+    local CANVAS_BACKEND_IMAGE=open-ai-canvas-backend:server
+    local CANVAS_WEB_IMAGE=open-ai-canvas-web:server
+    local CANVAS_AGENT_IMAGE=open-ai-canvas-agent:server
+    export CANVAS_BACKEND_IMAGE CANVAS_WEB_IMAGE CANVAS_AGENT_IMAGE
+    step "从源码构建网页、后端与 Agent 镜像"
     # 标准一键部署已下载完整仓库，直接本地构建可避免公开项目被 GHCR 包可见性阻断。
-    docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" build backend web
+    docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" build backend web agent
 
-    step "启动 PostgreSQL、Redis、后端和网页服务"
+    step "启动 PostgreSQL、Redis、后端、Agent 和网页服务"
     docker compose --env-file .env -f "$COMPOSE_FILE" -f "$BUILD_COMPOSE_FILE" up -d --remove-orphans --wait --wait-timeout 600
 }
 

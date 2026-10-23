@@ -58,6 +58,7 @@ services:
       CANVAS_BACKEND_ADDR: ":8080"
       CANVAS_BACKEND_DATA_DIR: /data
       CANVAS_AUTO_MIGRATE: "false"
+      CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:?必须配置至少32字符的 Agent 内部令牌}
       CANVAS_SHUTDOWN_TIMEOUT: ${CANVAS_SHUTDOWN_TIMEOUT:-10m}
       CANVAS_DATABASE_DRIVER: postgres
       DATABASE_URL: ${DATABASE_URL:?必须配置 PostgreSQL 数据库连接}
@@ -81,6 +82,27 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: ${CANVAS_SHUTDOWN_TIMEOUT:-10m}
+
+  agent:
+    container_name: open-ai-canvas-agent
+    image: open-ai-canvas-agent:server
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+      args:
+        CANVAS_AGENT_BUILD_COMMIT: ${CANVAS_AGENT_BUILD_COMMIT:-unknown}
+    environment:
+      CANVAS_BACKEND_INTERNAL_URL: http://backend:8080
+      CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:?请先配置至少32字符的 Agent 内部令牌}
+      CANVAS_AGENT_HARNESS_DIR: /agent/harness
+      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS:-}
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,agent,web"
+      no_proxy: "localhost,127.0.0.1,::1,backend,agent,web"
+    depends_on:
+      backend:
+        condition: service_healthy
     restart: unless-stopped
     stop_grace_period: ${CANVAS_SHUTDOWN_TIMEOUT:-10m}
 

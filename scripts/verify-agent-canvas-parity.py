@@ -2,8 +2,10 @@
 
     python scripts/verify-agent-canvas-parity.py --restart
 
-Build/start docker-compose.agent-parity.yml first. Credentials and reports remain
-under ignored .local; reports contain IDs, counts and tool receipts, never Cookies.
+Connect to an already started canvas-agent-parity test project. Container access
+is scoped by project/service labels and does not require a Compose file.
+Credentials and reports remain under ignored .local; reports contain IDs,
+counts and tool receipts, never Cookies.
 """
 import argparse
 import base64
@@ -18,7 +20,8 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPOSE = ["docker", "compose", "--env-file", str(ROOT / ".local/agent-parity.env"), "-p", "canvas-agent-parity", "-f", str(ROOT / "docker-compose.agent-parity.yml")]
+PARITY_PROJECT = "canvas-agent-parity"
+PARITY_SERVICES = {"model-stub", "backend", "agent", "web"}
 BUILTINS = ["image", "text", "drawing", "script", "skill", "config", "video", "audio", "frame", "markdown", "svg", "html", "panorama", "compare", "chart", "colorgrade", "media-conversion", "batch-table"]
 TERMINAL = {"completed", "failed", "cancelled", "rejected"}
 
@@ -98,10 +101,31 @@ class Acceptance:
             raise AssertionError(f"{method} {path}: HTTP {response.status}, code {payload.get('code')}, reason {payload.get('reason')}, message {payload.get('msg')}")
         return payload.get("data", payload)
 
+    def container_id(self, service):
+        if service not in PARITY_SERVICES:
+            raise AssertionError("unknown isolated test service: " + service)
+        ids = subprocess.check_output([
+            "docker", "ps", "--all", "--quiet",
+            "--filter", "label=com.docker.compose.project=" + PARITY_PROJECT,
+            "--filter", "label=com.docker.compose.service=" + service,
+        ], cwd=ROOT, text=True, timeout=30).split()
+        if len(ids) != 1:
+            raise AssertionError(f"expected one isolated {service} container, found {len(ids)}")
+        return ids[0]
+
     def docker(self, *args, input=None):
-        result = subprocess.run(COMPOSE + list(args), cwd=ROOT, input=input, capture_output=True, text=True, timeout=180)
+        if args == ("ps", "-q"):
+            command = ["docker", "ps", "--quiet", "--filter", "label=com.docker.compose.project=" + PARITY_PROJECT]
+        elif len(args) >= 4 and args[:2] == ("exec", "-T"):
+            command = ["docker", "exec", "-i", self.container_id(args[2]), *args[3:]]
+        elif len(args) >= 2 and args[0] == "restart":
+            # Resolve every label-scoped target before issuing any restart.
+            command = ["docker", "restart", *(self.container_id(service) for service in args[1:])]
+        else:
+            raise AssertionError("unsupported isolated Docker command")
+        result = subprocess.run(command, cwd=ROOT, input=input, capture_output=True, text=True, timeout=180)
         if result.returncode:
-            raise AssertionError("isolated Compose command failed: " + result.stderr[-2000:])
+            raise AssertionError("isolated Docker command failed: " + result.stderr[-2000:])
         return result.stdout
 
     def stub(self, path, body=None):

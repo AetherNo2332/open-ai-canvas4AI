@@ -1,0 +1,28 @@
+---
+title: 生产部署
+description: 生产 Compose、Agent 内部连接与安装更新入口
+---
+
+## 编排与连接
+
+`docker-compose.deploy.yml` 包含 PostgreSQL、Redis、一次性 migrate、backend、agent 和 web；`docker-compose.server.yml` 提供服务器源码构建。两者均默认启动 Agent，无需 `pi` profile。只有根 `docker-compose.yml` 的 Agent 使用 `pi` profile。
+
+backend 和 Agent 必须使用相同的 `CANVAS_AGENT_INTERNAL_TOKEN`。安装脚本为缺失或空值生成64位十六进制随机令牌，保留已有至少32字符的令牌，过短值会中止安装。手动部署先用 `openssl rand -hex 32` 生成令牌，写入受保护的 `.env`。
+
+Agent 使用 `http://backend:8080` 和内部令牌访问后端，等待 backend 健康后启动，无数据库凭据和公网端口。进程退出由 Docker 重启策略处理；Compose 启动成功不代表 Agent 已完成模型调用，部署后仍需实际发起一轮对话检查领取与执行。
+
+## 源码与镜像安装
+
+源码安装入口是 `scripts/install-server.sh`，默认仓库 `AetherNo2332/open-ai-canvas4AI`，可通过 `REPOSITORY_URL`、`REPOSITORY_REF` 指定其他来源。更新现有检出也使用显式仓库地址，避免遗留 origin 指向上游。脚本叠加 deploy 和 build，显式提供本地镜像名并构建 backend、web、agent。
+
+镜像安装入口是 `scripts/install-server-image.sh`。`REPOSITORY` 控制 Compose、Host Updater 下载来源和更新仓库；默认镜像前缀为 `ghcr.io/aetherno2332/open-ai-canvas`，可通过 `IMAGE_REPOSITORY` 修改安装时使用的镜像前缀。在线更新按配置仓库的 owner 和标准 `open-ai-canvas-{backend,web,agent}` 名称解析镜像，不继承自定义镜像前缀。
+
+镜像部署固定 `CANVAS_IMAGE_TAG` 到实际已发布的版本，同时写入 `CANVAS_BACKEND_IMAGE`、`CANVAS_WEB_IMAGE`、`CANVAS_AGENT_IMAGE` 的仓库 digest。目标版本必须已发布三份镜像；这里的代码变更不会自动发布镜像或 Release。
+
+## 旧部署与在线更新
+
+原来缺少 Agent 的部署需要补齐服务、共用令牌和 Agent 镜像，不能只增加一个环境变量。使用更新后的源码安装脚本会补齐缺值令牌并构建三份镜像；使用镜像安装脚本需选择包含本次修复的已发布版本。
+
+Host Updater 更新三份镜像并保存临时和正式环境，迁移或回退前停止 web、Agent 和 backend；旧 Compose 没有 Agent 时跳过该服务。旧版 updater 只管理两份镜像，首次迁移前需通过新版镜像安装脚本重新安装 updater 并补齐环境，不能依赖旧二进制自行跨过这一变更。回退恢复备份的 Compose 和 `.env`。
+
+生产环境只暴露 web；配置准确的 CORS 与公开资源地址，并由入口代理提供 HTTPS。真实服务器安装、对话领取、升级和回退属于运行验收，静态 Compose 解析不能替代。

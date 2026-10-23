@@ -13,12 +13,19 @@ unchanged. Check port availability before starting the project.
 Create the ignored `.local/agent-parity.env` with a fresh
 `PARITY_INTERNAL_TOKEN`, `PARITY_BUILD_COMMIT` ending in
 `-canvas-agent-parity`, and a UTC `PARITY_BUILD_TIME`. The token is shared only
-between this project's backend and worker. Do not reuse production credentials.
+between this project's backend and worker. Supply these values through the
+separately managed test deployment. Do not reuse production credentials.
+
+The root directory retains only the six standard Compose entry points. The
+specialized acceptance stack is managed separately and must already be running.
+Provide exactly one container for each of model-stub/backend/agent/web with
+Compose project label canvas-agent-parity and matching service labels. Use the
+four dedicated canvas-agent-parity-* image tags, the loopback 3040 web binding,
+and an isolated persistent volume; the supplied tools/ Dockerfiles remain usable.
+The scripts discover containers through project/service labels without loading
+an environment file or a repository-specific Compose overlay.
 
 ```powershell
-docker compose --env-file .local/agent-parity.env -p canvas-agent-parity -f docker-compose.agent-parity.yml config --images
-docker compose --env-file .local/agent-parity.env -p canvas-agent-parity -f docker-compose.agent-parity.yml build
-docker compose --env-file .local/agent-parity.env -p canvas-agent-parity -f docker-compose.agent-parity.yml up -d --no-build
 python scripts/verify-agent-canvas-parity.py --restart
 python scripts/verify-agent-tool-disclosure.py
 ```

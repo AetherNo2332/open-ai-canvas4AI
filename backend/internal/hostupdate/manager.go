@@ -70,7 +70,7 @@ type Manager struct {
 func NewManager(config Config) (*Manager, error) {
 	config.Repository = strings.TrimSpace(config.Repository)
 	if config.Repository == "" {
-		config.Repository = "ddcat-ai/open-ai-canvas"
+		config.Repository = "AetherNo2332/open-ai-canvas4AI"
 	}
 	if config.InstallDir == "" {
 		config.InstallDir = "/opt/open-ai-canvas"
@@ -271,7 +271,7 @@ func (m *Manager) runUpdate(fromVersion, targetVersion string) {
 
 	m.setPhase(PhasePulling, "拉取目标版本镜像")
 	targetImages := immutableImageRefs(m.config.Repository, targetVersion)
-	if err := m.composeWithImages(nextCompose, targetVersion, targetImages, m.config.StepTimeout, nil, "pull", "backend", "web"); err != nil {
+	if err := m.composeWithImages(nextCompose, targetVersion, targetImages, m.config.StepTimeout, nil, "pull", "backend", "web", "agent"); err != nil {
 		m.failWithoutRollback(PhaseFailed, err)
 		return
 	}
@@ -281,8 +281,8 @@ func (m *Manager) runUpdate(fromVersion, targetVersion string) {
 		return
 	}
 
-	m.setPhase(PhaseDraining, "停止 Web 与 Backend，等待后台任务优雅退出")
-	if err := m.compose(m.composePath(), fromVersion, m.config.StepTimeout, nil, "stop", "web", "backend"); err != nil {
+	m.setPhase(PhaseDraining, "停止 Web、Agent 与 Backend，等待后台任务优雅退出")
+	if err := m.stopApplicationServices(fromVersion, m.config.StepTimeout); err != nil {
 		m.failWithRollback(err, fromVersion, backup)
 		return
 	}
@@ -366,7 +366,7 @@ func (m *Manager) failWithRollback(cause error, targetVersion string, backup Bac
 
 func (m *Manager) runRollback(targetVersion string, backup Backup, automatic bool) {
 	var failures []error
-	if err := m.compose(m.composePath(), targetVersion, 5*time.Minute, nil, "stop", "web", "backend"); err != nil {
+	if err := m.stopApplicationServices(targetVersion, 5*time.Minute); err != nil {
 		failures = append(failures, err)
 	}
 	if _, err := os.Stat(m.previousComposePath()); err == nil {

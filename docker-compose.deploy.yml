@@ -44,6 +44,7 @@ services:
       CANVAS_BACKEND_ADDR: ":8080"
       CANVAS_BACKEND_DATA_DIR: /data
       CANVAS_AUTO_MIGRATE: "false"
+      CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:?请先配置至少32字符的 Agent 内部令牌}
       CANVAS_SHUTDOWN_TIMEOUT: ${CANVAS_SHUTDOWN_TIMEOUT:-10m}
       CANVAS_DATABASE_DRIVER: postgres
       DATABASE_URL: ${DATABASE_URL:?请先运行一键部署脚本生成数据库连接}
@@ -70,6 +71,21 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: ${CANVAS_SHUTDOWN_TIMEOUT:-10m}
+
+  agent:
+    image: ${CANVAS_AGENT_IMAGE:?请先配置 CANVAS_AGENT_IMAGE（必须包含镜像 digest）}
+    environment:
+      CANVAS_BACKEND_INTERNAL_URL: http://backend:8080
+      CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:?请先配置至少32字符的 Agent 内部令牌}
+      CANVAS_AGENT_HARNESS_DIR: /agent/harness
+      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS:-}
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,agent,web"
+      no_proxy: "localhost,127.0.0.1,::1,backend,agent,web"
+    depends_on:
+      backend:
+        condition: service_healthy
     restart: unless-stopped
     stop_grace_period: ${CANVAS_SHUTDOWN_TIMEOUT:-10m}
 

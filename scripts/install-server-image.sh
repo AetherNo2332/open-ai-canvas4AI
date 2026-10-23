@@ -2,17 +2,20 @@
 
 set -Eeuo pipefail
 
+REPOSITORY="${REPOSITORY:-AetherNo2332/open-ai-canvas4AI}"
+REPOSITORY_OWNER="${REPOSITORY%%/*}"
 REPOSITORY_REF="${REPOSITORY_REF:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/open-ai-canvas}"
 CANVAS_HTTP_PORT="${CANVAS_HTTP_PORT:-3000}"
 REQUESTED_IMAGE_TAG="${CANVAS_IMAGE_TAG:-}"
 CANVAS_IMAGE_TAG="${REQUESTED_IMAGE_TAG#v}"
-IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-ghcr.io/ddcat-ai/open-ai-canvas}"
+IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-ghcr.io/${REPOSITORY_OWNER,,}/open-ai-canvas}"
 CANVAS_BACKEND_IMAGE=""
 CANVAS_WEB_IMAGE=""
+CANVAS_AGENT_IMAGE=""
 COMPOSE_FILE="docker-compose.deploy.yml"
-COMPOSE_URL="${COMPOSE_URL:-https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/${REPOSITORY_REF}/${COMPOSE_FILE}}"
-UPDATER_INSTALL_URL="${UPDATER_INSTALL_URL:-https://raw.githubusercontent.com/ddcat-ai/open-ai-canvas/${REPOSITORY_REF}/scripts/install-host-updater.sh}"
+COMPOSE_URL="${COMPOSE_URL:-https://raw.githubusercontent.com/${REPOSITORY}/${REPOSITORY_REF}/${COMPOSE_FILE}}"
+UPDATER_INSTALL_URL="${UPDATER_INSTALL_URL:-https://raw.githubusercontent.com/${REPOSITORY}/${REPOSITORY_REF}/scripts/install-host-updater.sh}"
 
 step() {
     printf '\n==> %s\n' "$1"
@@ -81,6 +84,24 @@ login_ghcr() {
     fi
 }
 
+ensure_agent_token() {
+    local token temporary_env
+    token="$(sed -n 's/^CANVAS_AGENT_INTERNAL_TOKEN=//p' .env | tail -n 1)"
+    if [[ -z "$token" ]]; then
+        token="$(openssl rand -hex 32)"
+        temporary_env="$(mktemp ".env.XXXXXX")"
+        awk -v token="$token" '
+            BEGIN { updated=0 }
+            /^CANVAS_AGENT_INTERNAL_TOKEN=/ { print "CANVAS_AGENT_INTERNAL_TOKEN=" token; updated=1; next }
+            { print }
+            END { if (!updated) print "CANVAS_AGENT_INTERNAL_TOKEN=" token }
+        ' .env > "$temporary_env"
+        chmod --reference=.env "$temporary_env"
+        mv "$temporary_env" .env
+    fi
+    [[ ${#token} -ge 32 ]] || fail "CANVAS_AGENT_INTERNAL_TOKEN 至少需要32字符；请更新 .env 后重试"
+}
+
 prepare_environment() {
     mkdir -p "$INSTALL_DIR"
     cd "$INSTALL_DIR"
@@ -118,9 +139,12 @@ prepare_environment() {
         fi
         CANVAS_BACKEND_IMAGE="${IMAGE_REPOSITORY}-backend:${CANVAS_IMAGE_TAG}"
         CANVAS_WEB_IMAGE="${IMAGE_REPOSITORY}-web:${CANVAS_IMAGE_TAG}"
+        CANVAS_AGENT_IMAGE="${IMAGE_REPOSITORY}-agent:${CANVAS_IMAGE_TAG}"
         set_env_value .env CANVAS_IMAGE_TAG "$CANVAS_IMAGE_TAG"
         set_env_value .env CANVAS_BACKEND_IMAGE "$CANVAS_BACKEND_IMAGE"
         set_env_value .env CANVAS_WEB_IMAGE "$CANVAS_WEB_IMAGE"
+        set_env_value .env CANVAS_AGENT_IMAGE "$CANVAS_AGENT_IMAGE"
+        ensure_agent_token
         return
     fi
 
@@ -140,11 +164,13 @@ CANVAS_HTTP_PORT=${CANVAS_HTTP_PORT}
 CANVAS_IMAGE_TAG=${CANVAS_IMAGE_TAG}
 CANVAS_BACKEND_IMAGE=${IMAGE_REPOSITORY}-backend:${CANVAS_IMAGE_TAG}
 CANVAS_WEB_IMAGE=${IMAGE_REPOSITORY}-web:${CANVAS_IMAGE_TAG}
+CANVAS_AGENT_IMAGE=${IMAGE_REPOSITORY}-agent:${CANVAS_IMAGE_TAG}
 CANVAS_REGISTRATION_ENABLED=false
 CANVAS_ALLOW_PRIVATE_UPSTREAMS=false
 CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=
 CANVAS_CORS_ORIGINS=
 EOF
+    ensure_agent_token
 }
 
 set_env_value() {
@@ -176,20 +202,23 @@ install_host_updater() {
     local installer
     installer="$(mktemp)"
     curl -fsSL "$UPDATER_INSTALL_URL" -o "$installer"
-    INSTALL_DIR="$INSTALL_DIR" bash "$installer"
+    INSTALL_DIR="$INSTALL_DIR" REPOSITORY="$REPOSITORY" bash "$installer"
     rm -f "$installer"
 }
 
 start_services() {
-    step "拉取并启动 GHCR 网页与后端镜像"
+    step "拉取并启动 GHCR 网页、后端与 Agent 镜像"
     if ! docker compose --env-file .env -f "$COMPOSE_FILE" pull; then
         fail "GHCR 镜像拉取失败；如果容器包尚未公开，请通过 GHCR_USERNAME 和 GHCR_TOKEN 登录后重试"
     fi
-    local backend_digest web_digest
-    backend_digest="$(docker image inspect "$CANVAS_BACKEND_IMAGE" --format '{{range .RepoDigests}}{{println .}}{{end}}' | awk -v repository="${IMAGE_REPOSITORY}-backend" '$0 ~ "^" repository "@sha256:" { print; exit }')"
-    web_digest="$(docker image inspect "$CANVAS_WEB_IMAGE" --format '{{range .RepoDigests}}{{println .}}{{end}}' | awk -v repository="${IMAGE_REPOSITORY}-web" '$0 ~ "^" repository "@sha256:" { print; exit }')"
+    local backend_digest web_digest agent_digest
+    backend_digest="$(docker image inspect "${IMAGE_REPOSITORY}-backend:${CANVAS_IMAGE_TAG}" --format '{{range .RepoDigests}}{{println .}}{{end}}' | awk -v repository="${IMAGE_REPOSITORY}-backend" '$0 ~ "^" repository "@sha256:" { print; exit }')"
+    web_digest="$(docker image inspect "${IMAGE_REPOSITORY}-web:${CANVAS_IMAGE_TAG}" --format '{{range .RepoDigests}}{{println .}}{{end}}' | awk -v repository="${IMAGE_REPOSITORY}-web" '$0 ~ "^" repository "@sha256:" { print; exit }')"
+    agent_digest="$(docker image inspect "${IMAGE_REPOSITORY}-agent:${CANVAS_IMAGE_TAG}" --format '{{range .RepoDigests}}{{println .}}{{end}}' | awk -v repository="${IMAGE_REPOSITORY}-agent" '$0 ~ "^" repository "@sha256:" { print; exit }')"
     [[ "$backend_digest" =~ ^${IMAGE_REPOSITORY//\//\/}-backend@sha256:[a-f0-9]{64}$ ]] || fail "后端镜像未返回可验证的仓库 digest"
     [[ "$web_digest" =~ ^${IMAGE_REPOSITORY//\//\/}-web@sha256:[a-f0-9]{64}$ ]] || fail "Web 镜像未返回可验证的仓库 digest"
+    [[ "$agent_digest" =~ ^${IMAGE_REPOSITORY//\//\/}-agent@sha256:[a-f0-9]{64}$ ]] || fail "Agent 镜像未返回可验证的仓库 digest"
+    set_env_value .env CANVAS_AGENT_IMAGE "$agent_digest"
     set_env_value .env CANVAS_BACKEND_IMAGE "$backend_digest"
     set_env_value .env CANVAS_WEB_IMAGE "$web_digest"
     docker compose --env-file .env -f "$COMPOSE_FILE" up -d --remove-orphans --wait --wait-timeout 600

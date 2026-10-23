@@ -5,6 +5,12 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## 生产 Agent 部署
+
+- `docker-compose.deploy.yml`、`docker-compose.server.yml`：默认启动内部 Agent worker，backend 与 worker 共用必填令牌；`docker-compose.build.yml`：源码构建三份应用镜像。
+- `scripts/install-server.sh`、`install-server-image.sh`：默认当前 fork，生成或补齐共用令牌，分别构建或固定三份镜像；`install-host-updater.sh` 将仓库配置写入 updater 环境。
+- `backend/internal/hostupdate/manager_ops.go`、`manager.go`：三份镜像拉取与固定、临时/正式环境更新，以及迁移和回退前停止可用的 Agent 服务。配置及升级边界见 [生产部署](./production-deployment)。
+
 ## Agent 提示词与规则
 
 - `web/src/components/agent/agent-system-prompt-settings.tsx`：账户全局提示词的共享加载与编辑组件，设置页及画布面板复用。
@@ -243,7 +249,7 @@ HTTP 请求 -> handler -> service（稳定导入面 / 别名）-> app（组合�
 
 - 旧版 `canvas-agent/` 和 Codex App/MCP 插件已删除；Agent 运行统一由后端云端控制面承载。
 - `docs/content/docs/`：产品、操作、开发和进度文档。
-- `docker-compose.local.yml`：本地前后端编排；`nginx.conf`：生产静态资源和 API 代理。
+- 根目录 Compose 仅保留 `docker-compose.yml`、`docker-compose.build.yml`、`docker-compose.deploy.yml`、`docker-compose.dev.yml`、`docker-compose.local.yml`、`docker-compose.server.yml` 六份；`nginx.conf`：生产静态资源和 API 代理。专项验收脚本按项目/服务标签定位既有隔离容器，不依赖专用 Compose 文件。
 
 ## 修改原则
 

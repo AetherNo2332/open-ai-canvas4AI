@@ -15,6 +15,14 @@ services:
       args:
         GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
 
+  agent:
+    image: open-ai-canvas-agent:server
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+      args:
+        CANVAS_AGENT_BUILD_COMMIT: ${CANVAS_AGENT_BUILD_COMMIT:-unknown}
+
   web:
     image: open-ai-canvas-web:server
     build:
