@@ -8,12 +8,18 @@ import (
 	"time"
 )
 
-func (r *Repository) AgentWakeEvents(after int64, limit int) ([]model.AgentWakeEvent, error) {
+func (r *Repository) AgentWakeEvents(after int64, limit int, userScope ...string) ([]model.AgentWakeEvent, error) {
 	if limit < 1 || limit > 256 {
 		limit = 128
 	}
 	var events []model.AgentWakeEvent
-	err := r.db.Where("sequence > ?", after).Order("sequence").Limit(limit).Find(&events).Error
+	query := r.db.Where("sequence > ?", after)
+	if len(userScope) > 0 && userScope[0] != "" {
+		// Unscoped scheduler notifications have no run or task identifiers.
+		// Other empty-user events can carry task IDs from unrelated users.
+		query = query.Where("user_id = ? OR (user_id = ? AND run_id = ? AND task_id = ?)", userScope[0], "", "", "")
+	}
+	err := query.Order("sequence").Limit(limit).Find(&events).Error
 	return events, err
 }
 

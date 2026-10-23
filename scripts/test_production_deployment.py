@@ -127,6 +127,20 @@ eval "$status"
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("CANVAS_AGENT_INTERNAL_TOKEN", result.stderr)
 
+    def test_local_pi_profile_separates_worker_credential(self):
+        env = {key: value for key, value in os.environ.items() if not key.startswith("CANVAS_")}
+        env.update(CANVAS_AGENT_INTERNAL_TOKEN=TOKEN, CANVAS_AGENT_WORKER_ID="local-pi",
+                   CANVAS_AGENT_WORKER_TOKEN="local-worker-" + TOKEN)
+        result = subprocess.run(["docker", "compose", "-f", "docker-compose.yml", "--profile", "pi", "config", "--format", "json"],
+                                cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        services = json.loads(result.stdout)["services"]
+        self.assertEqual(services["backend"]["environment"]["CANVAS_AGENT_INTERNAL_TOKEN"], TOKEN)
+        self.assertEqual(services["backend"]["environment"]["CANVAS_AGENT_WORKER_ID"], "local-pi")
+        self.assertNotIn("CANVAS_AGENT_INTERNAL_TOKEN", services["agent"]["environment"])
+        self.assertEqual(services["agent"]["environment"]["CANVAS_AGENT_WORKER_TOKEN"], "local-worker-" + TOKEN)
+        self.assertEqual(int(services["agent"]["mem_limit"]), 1024**3)
+
     def test_installers_generate_and_preserve_agent_token(self):
         for script_name in ("install-server.sh", "install-server-image.sh"):
             source = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")

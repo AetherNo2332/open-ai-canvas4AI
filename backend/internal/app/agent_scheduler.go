@@ -63,6 +63,10 @@ func (s *Service) PiWakeEvents(after int64) ([]model.AgentWakeEvent, error) {
 	return s.repo.AgentWakeEvents(after, 128)
 }
 
+func (s *Service) PiWakeEventsForWorker(after int64, userScope string) ([]model.AgentWakeEvent, error) {
+	return s.repo.AgentWakeEvents(after, 128, userScope)
+}
+
 func (s *Service) PiCapacity(owner string, active, capacity int) error {
 	if owner == "" || len(owner) > 80 || active < 0 || capacity < 1 || capacity > 64 || active > capacity {
 		return BadAuthRequest("Invalid Agent capacity")

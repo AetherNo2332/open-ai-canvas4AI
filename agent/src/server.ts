@@ -1,4 +1,5 @@
 import { hostname } from "node:os";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { CanvasBridge } from "./bridge.js";
 import { loadHarnessPrompt, runCanvasAgent } from "./runner.js";
@@ -7,12 +8,14 @@ import { EventScheduler, RunEvents, runEventSessions } from "./event-scheduler.j
 import { runLeasedPiSession, workerErrorSummary } from "./worker-runtime.js";
 import { WorkerHealthState } from "./health-state.js";
 import { validateHarnessArtifacts } from "./bootstrap-check.js";
+import { resourceBudgetFromEnv } from "./resource-budget.js";
 
 const health = new WorkerHealthState();
 const token = process.env.CANVAS_AGENT_WORKER_TOKEN;
 const identity = process.env.CANVAS_AGENT_WORKER_ID;
 const backend = process.env.CANVAS_BACKEND_INTERNAL_URL || "http://backend:8080";
 if (!token || !identity) { health.failed("configuration", "CANVAS_AGENT_WORKER_ID and CANVAS_AGENT_WORKER_TOKEN are required"); throw new Error("CANVAS_AGENT_WORKER_ID and CANVAS_AGENT_WORKER_TOKEN are required"); }
+const budget = resourceBudgetFromEnv();
 
 const controller = new AbortController();
 let reportDrain: (() => Promise<void>) | undefined;
@@ -50,8 +53,25 @@ async function loadInitialConfig(): Promise<RuntimeConfigController | undefined>
 const initialConfig = await loadInitialConfig();
 if (!initialConfig) { await shutdownReport; process.exit(0); }
 const config = initialConfig;
-scheduler.setConcurrency(config.current.dispatchConcurrency);
-let lastActivity = { active: 0, reserved: 0, capacity: config.current.maxResidentSessions };
+scheduler.setConcurrency(Math.min(config.current.dispatchConcurrency, budget.maxResidentSessions));
+const localConfig = () => ({ ...config.current, dispatchConcurrency: Math.min(config.current.dispatchConcurrency, budget.maxResidentSessions),
+  maxResidentSessions: Math.min(config.current.maxResidentSessions, budget.maxResidentSessions) });
+const eventLoop = monitorEventLoopDelay({ resolution: 20 });
+eventLoop.enable();
+let reportResourceChange = () => {};
+const sampleResources = () => {
+  const changed = budget.observe({ rssBytes: process.memoryUsage().rss, eventLoopLagMs: eventLoop.max / 1e6 });
+  eventLoop.reset();
+  health.setResourceReason(budget.reason);
+  if (changed) { events.wake("capacity"); reportResourceChange(); }
+  if (process.env.CANVAS_AGENT_METRICS === "true") console.log(JSON.stringify({ type: "agent_resources", rssBytes: budget.sample.rssBytes,
+    memoryBudgetBytes: budget.memoryBudgetBytes, eventLoopLagMs: budget.sample.eventLoopLagMs,
+    eventLoopLimitMs: budget.eventLoopLimitMs, residentLimit: budget.maxResidentSessions,
+    admissionPaused: budget.pressured, reason: budget.reason }));
+};
+sampleResources();
+const resourceSampler = setInterval(sampleResources, 5000);
+let lastActivity = { active: 0, reserved: 0, capacity: localConfig().maxResidentSessions };
 reportDrain = async () => {
   const { active, reserved, capacity } = lastActivity;
   try {
@@ -62,11 +82,11 @@ reportDrain = async () => {
 };
 const capacityReport = async (active:number, reserved:number, capacity:number) => {
   lastActivity = { active, reserved, capacity };
-  health.setClaimRequired(active + reserved < capacity);
-  const draining = controller.signal.aborted || active + reserved > capacity;
+  health.setClaimRequired(!budget.pressured && active + reserved < capacity);
+  const draining = controller.signal.aborted || budget.pressured || active + reserved > capacity;
   const status = health.current;
   const readiness = draining ? "draining" : status.readiness;
-  const report = {active,capacity,claimReservations:reserved,dispatchActive:scheduler.active,readyQueued:scheduler.queued,draining,appliedConfigRevision:config.current.revision,readiness,readinessReason:draining ? "capacity draining" : status.reason} as const;
+  const report = {active,capacity,claimReservations:reserved,dispatchActive:scheduler.active,readyQueued:scheduler.queued,draining,appliedConfigRevision:config.current.revision,readiness,readinessReason:budget.reason || (draining ? "capacity draining" : status.reason)} as const;
   try {
     await eventBridge.capacityReport(report,controller.signal);
     health.succeeded("capacity");
@@ -76,8 +96,9 @@ const capacityReport = async (active:number, reserved:number, capacity:number) =
   }
   if(process.env.CANVAS_AGENT_METRICS === "true") console.log(JSON.stringify({type:"scheduler_capacity",residentSessions:active,schedulerPeak:scheduler.peak,...report}));
 };
+reportResourceChange = () => { void capacityReport(lastActivity.active,lastActivity.reserved,lastActivity.capacity).catch(() => {}); };
 while (!controller.signal.aborted) {
-  try { await capacityReport(0,0,config.current.maxResidentSessions); break; }
+  try { await capacityReport(0,0,localConfig().maxResidentSessions); break; }
   catch (error) {
     console.error("Agent capacity recovery:", workerErrorSummary(error));
     await delay(5000, undefined, { signal: controller.signal }).catch(() => {});
@@ -90,7 +111,7 @@ const refresh=async()=>{
   refreshing=true;
   try {
     if(config.apply(await eventBridge.schedulerConfig(controller.signal))) {
-      scheduler.setConcurrency(config.current.dispatchConcurrency);
+      scheduler.setConcurrency(localConfig().dispatchConcurrency);
       events.wake("capacity");events.wake("dispatch");
     }
     health.succeeded("configuration"); events.wake("capacity");
@@ -101,9 +122,10 @@ const unsubscribeConfig=events.subscribe("config",()=>{void refresh();});
 const configRecovery=setInterval(()=>{void refresh();},5000);
 const eventStream = eventBridge.consumeEvents(controller.signal);
 await runEventSessions({
-  concurrency:config.current.dispatchConcurrency,
-  maxSessions:config.current.maxResidentSessions,
-  getConfig:()=>config.current,
+  concurrency:localConfig().dispatchConcurrency,
+  maxSessions:localConfig().maxResidentSessions,
+  getConfig:localConfig,
+  canClaim:(active,reserved)=>budget.canClaim(active,reserved),
   events,
   reportState: capacityReport,
   signal: controller.signal,
@@ -120,6 +142,6 @@ await runEventSessions({
   },
   onClaimSuccess: () => { health.succeeded("claim"); events.wake("capacity"); },
 });
-clearInterval(configRecovery);unsubscribeConfig();
+clearInterval(configRecovery);clearInterval(resourceSampler);eventLoop.disable();unsubscribeConfig();
 await eventStream;
 await shutdownReport;

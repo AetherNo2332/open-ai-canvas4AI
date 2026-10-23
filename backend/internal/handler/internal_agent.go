@@ -79,7 +79,7 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		heartbeat := time.NewTicker(25 * time.Second)
 		defer heartbeat.Stop()
 		for {
-			events, err := svc.PiWakeEvents(after)
+			events, err := svc.PiWakeEventsForWorker(after, c.GetString("agentWorkerUserID"))
 			if err != nil {
 				return
 			}
@@ -126,6 +126,10 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 			c.AbortWithStatus(http.StatusBadRequest)
 			return
 		}
+		if !svc.AgentWorkerOwnsOwner(c.GetString("agentWorkerID"), input.Owner) {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
 		if err := svc.PiCapacityReport(input.Owner, input.AgentCapacityReport); err != nil {
 			failService(c, err)
 			return
@@ -167,6 +171,10 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 		}
 		if err := c.ShouldBindJSON(&input); err != nil || len(input.Owner) > 80 {
 			c.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+		if !svc.AgentWorkerOwnsOwner(c.GetString("agentWorkerID"), input.Owner) {
+			c.AbortWithStatus(http.StatusForbidden)
 			return
 		}
 		claimed, err := svc.ClaimPiAgentForWorker(input.Owner, c.GetString("agentWorkerUserID"))

@@ -85,6 +85,9 @@ services:
       CANVAS_BACKEND_INTERNAL_URL: http://backend:8080
       CANVAS_AGENT_WORKER_ID: ${CANVAS_AGENT_WORKER_ID:?请先配置 Worker 身份}
       CANVAS_AGENT_WORKER_TOKEN: ${CANVAS_AGENT_WORKER_TOKEN:?请先配置至少32字符的 Worker 凭据}
+      CANVAS_AGENT_RESIDENT_LIMIT: ${CANVAS_AGENT_RESIDENT_LIMIT:-16}
+      CANVAS_AGENT_MEMORY_BUDGET_MB: ${CANVAS_AGENT_MEMORY_BUDGET_MB:-768}
+      CANVAS_AGENT_EVENT_LOOP_LIMIT_MS: ${CANVAS_AGENT_EVENT_LOOP_LIMIT_MS:-250}
       CANVAS_AGENT_HARNESS_DIR: /agent/harness
       CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: ${CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS:-}
       NO_PROXY: "localhost,127.0.0.1,::1,backend,agent,web"
@@ -93,6 +96,7 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    mem_limit: ${CANVAS_AGENT_CONTAINER_MEMORY_LIMIT:-1g}
     stop_grace_period: ${CANVAS_SHUTDOWN_TIMEOUT:-10m}
 
   web:

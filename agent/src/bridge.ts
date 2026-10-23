@@ -220,12 +220,19 @@ export class CanvasBridge {
     private readonly availability: {nextProbeAt:number} = {nextProbeAt:0},
     private readonly identity: string = workerId) {
     if (!baseUrl || !token || !workerId) throw new Error("Pi bridge configuration is incomplete");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(identity)) throw new Error("Invalid worker identity");
+  }
+
+  private get leaseOwner(): string {
+    const slot = this.workerId.slice(-Math.min(15, 79 - this.identity.length));
+    if (!/^[A-Za-z0-9._-]+$/.test(slot)) throw new Error("Invalid worker slot");
+    return `${this.identity}:${slot}`;
   }
 
   async claim(signal?: AbortSignal): Promise<PiSnapshot | null> {
     if(this.availability.nextProbeAt>Date.now())return null;
     if(this.availability.nextProbeAt)this.availability.nextProbeAt=Date.now()+5000;
-    const result = await this.request<{ run: PiSnapshot | null; runAuthorization?: string }>("POST", "/claim", { owner: this.workerId }, undefined, signal);
+    const result = await this.request<{ run: PiSnapshot | null; runAuthorization?: string }>("POST", "/claim", { owner: this.leaseOwner }, undefined, signal);
     this.availability.nextProbeAt=0;
     if (result.run) {
       if (!result.runAuthorization) throw new FatalWorkerError("Canvas bridge missing run authorization");
@@ -235,14 +242,14 @@ export class CanvasBridge {
   }
 
   async capacity(active: number, capacity: number, signal?: AbortSignal): Promise<void> {
-    await this.request("POST", "/capacity", { owner: this.workerId, active, capacity }, undefined, signal);
+    await this.request("POST", "/capacity", { owner: this.leaseOwner, active, capacity }, undefined, signal);
   }
   async schedulerConfig(signal?:AbortSignal):Promise<import("./runtime-config.js").AgentSchedulerSetting> {
     const result=await this.request<{setting:import("./runtime-config.js").AgentSchedulerSetting}>("GET","/config",undefined,undefined,signal);
     return result.setting;
   }
   async capacityReport(report:import("./runtime-config.js").CapacityReport,signal?:AbortSignal):Promise<void> {
-    await this.request("POST", "/capacity",{owner:this.workerId,...report},undefined,signal);
+    await this.request("POST", "/capacity",{owner:this.leaseOwner,...report},undefined,signal);
   }
 
   async snapshot(run: PiSnapshot, signal?: AbortSignal): Promise<PiSnapshot> {
@@ -519,7 +526,7 @@ export class CanvasBridge {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (run) {
       headers["X-Agent-User-ID"] = run.userId;
-      headers["X-Agent-Worker-ID"] = this.workerId;
+      headers["X-Agent-Worker-ID"] = this.leaseOwner;
       if (run.piSessionLeaseEpoch !== undefined) {
         headers["X-Agent-Session-Epoch"] = String(run.piSessionLeaseEpoch);
       }

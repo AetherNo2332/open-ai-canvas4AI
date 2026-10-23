@@ -10,6 +10,7 @@ export interface WorkerHealthSnapshot {
   updatedAt: number;
   channels: Record<HealthChannel, ChannelCheck>;
   claimRequired: boolean;
+  resourceReason?: string;
 }
 
 export const HEALTH_MAX_AGE_MS = 45_000;
@@ -26,7 +27,7 @@ export function evaluateWorkerHealth(state: WorkerHealthSnapshot, now = Date.now
       return { readiness: "degraded", reason: `${channel} check is stale` };
     }
   }
-  return { readiness: "ready", reason: "" };
+  return { readiness: "ready", reason: state.resourceReason || "" };
 }
 
 /** Local snapshot shared with the container health command. Each channel recovers independently. */
@@ -41,6 +42,7 @@ export class WorkerHealthState {
   succeeded(channel: HealthChannel): void { this.update(channel, { checkedAt: Date.now(), error: "" }); }
   failed(channel: HealthChannel, reason: string): void { this.update(channel, { ...this.state.channels[channel], error: reason.slice(0, 160) }); }
   setClaimRequired(required: boolean): void { if (this.state.claimRequired !== required) { this.state.claimRequired = required; this.persist(); } }
+  setResourceReason(reason: string): void { if (this.state.resourceReason !== reason) { this.state.resourceReason = reason; this.persist(); } }
   drain(reason = "shutdown"): void { this.state.readiness = "draining"; this.state.reason = reason; this.persist(); }
   private update(channel: HealthChannel, check: ChannelCheck): void {
     this.state.channels[channel] = check;

@@ -108,6 +108,7 @@ export async function runEventSessions<B extends SessionBridge>(options: {
   reportCapacity?: (active: number, capacity: number) => Promise<void>;
   getConfig?:()=>{dispatchConcurrency:number;maxResidentSessions:number;maxResidentPerCanvas?:number};
   reportState?:(active:number,reserved:number,capacity:number)=>Promise<void>;
+  canClaim?:(active:number,reserved:number)=>boolean;
 }): Promise<void> {
   if (!Number.isSafeInteger(options.maxSessions) || options.maxSessions < options.concurrency || options.maxSessions > 64) throw new Error("Invalid resident session limit");
   const active = new Map<string, Promise<void>>();
@@ -121,7 +122,7 @@ export async function runEventSessions<B extends SessionBridge>(options: {
   void options.reportState?.(active.size,reserved,config().maxResidentSessions).catch(error=>options.onError("capacity",error));
   const loops = Array.from({ length: options.getConfig?16:options.concurrency }, async (_,index) => {
     while (!options.signal.aborted) {
-      if (index>=config().dispatchConcurrency || active.size + reserved >= config().maxResidentSessions) { await options.events.pause("capacity",5000,options.signal); continue; }
+      if (index>=config().dispatchConcurrency || active.size + reserved >= config().maxResidentSessions || options.canClaim?.(active.size,reserved) === false) { await options.events.pause("capacity",5000,options.signal); continue; }
       reserved += 1;
       const bridge = options.createBridge(identity++);
       let snapshot: PiSnapshot | null = null;
@@ -131,7 +132,7 @@ export async function runEventSessions<B extends SessionBridge>(options: {
       if (!snapshot) { await options.events.pause("dispatch",5000,options.signal); continue; }
       // A configuration can shrink while a claim request is in flight.
       const canvasKey=`${snapshot.userId}:${snapshot.request.canvasId||`session:${snapshot.piSessionId||snapshot.runId}`}`;
-      if(options.signal.aborted || active.size>=config().maxResidentSessions || (canvasResidents.get(canvasKey)??0)>=(config().maxResidentPerCanvas??64)) {
+      if(options.signal.aborted || active.size>=config().maxResidentSessions || options.canClaim?.(active.size,reserved) === false || (canvasResidents.get(canvasKey)??0)>=(config().maxResidentPerCanvas??64)) {
         await bridge.release?.(snapshot).catch(error=>options.onError(snapshot!.runId,error));
         continue;
       }

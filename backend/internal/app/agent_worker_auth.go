@@ -16,7 +16,15 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-var agentWorkerIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`)
+var agentWorkerIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+var agentWorkerOwnerSuffixPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,15}$`)
+
+func (s *Service) AgentWorkerOwnsOwner(workerID, owner string) bool {
+	if !agentWorkerIDPattern.MatchString(workerID) || len(owner) > 80 || !strings.HasPrefix(owner, workerID+":") {
+		return false
+	}
+	return agentWorkerOwnerSuffixPattern.MatchString(strings.TrimPrefix(owner, workerID+":"))
+}
 
 type AgentRunGrant struct {
 	WorkerID string `json:"workerId"`
@@ -50,7 +58,7 @@ func (s *Service) AuthenticateAgentWorker(id, secret string) (*model.AgentWorker
 }
 
 func (s *Service) IssueAgentRunGrant(workerID, owner, userID, runID string, epoch int64) (string, error) {
-	if len(agentGrantKey()) < 32 || epoch <= 0 || owner == "" || !s.repo.AgentRunAuthorization(userID, runID, owner, epoch) {
+	if len(agentGrantKey()) < 32 || epoch <= 0 || !s.AgentWorkerOwnsOwner(workerID, owner) || !s.repo.AgentRunAuthorization(userID, runID, owner, epoch) {
 		return "", errors.New("invalid agent run lease")
 	}
 	worker, err := s.repo.AgentWorker(workerID)
@@ -91,7 +99,7 @@ func (s *Service) ValidateAgentRunGrant(token, userID, runID, owner string, epoc
 		return false
 	}
 	worker, err := s.repo.AgentWorker(grant.WorkerID)
-	if err != nil || worker.RevokedAt != nil || (worker.UserID != "" && worker.UserID != userID) {
+	if err != nil || worker.RevokedAt != nil || (worker.UserID != "" && worker.UserID != userID) || !s.AgentWorkerOwnsOwner(grant.WorkerID, grant.Owner) {
 		return false
 	}
 	return s.repo.AgentRunAuthorization(userID, runID, owner, epoch)

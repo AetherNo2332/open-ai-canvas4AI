@@ -100,7 +100,7 @@ test("native restart resumes its in-flight model task without reposting changed 
   assert.equal(request.method, "GET");
   assert.equal(request.url, "http://backend:8080/internal-agent/runs/run-wire/model-steps/old-task");
   assert.equal(request.headers["Authorization"], "Bearer test-run-grant");
-  assert.equal(request.headers["X-Agent-Worker-ID"], "worker-1");
+  assert.equal(request.headers["X-Agent-Worker-ID"], "worker-1:worker-1");
   assert.equal(request.headers["X-Agent-Session-Epoch"], "7");
 });
 
@@ -389,20 +389,21 @@ test("claim and capacity use the direct protocol without tool snapshot registrat
     await bridge.capacity(0, 4);
     assert.equal(await bridge.claim(), null);
     assert.deepEqual(calls, [
-      { path: "/internal-agent/capacity", body: { owner: "worker", active: 0, capacity: 4 } },
-      { path: "/internal-agent/claim", body: { owner: "worker" } },
+      { path: "/internal-agent/capacity", body: { owner: "worker:worker", active: 0, capacity: 4 } },
+      { path: "/internal-agent/claim", body: { owner: "worker:worker" } },
     ]);
   } finally { globalThis.fetch = original; }
 });
 
 test("claim installs a lease grant and run routes never send the worker credential", async () => {
   const original = globalThis.fetch;
-  const sent: Array<{path:string; authorization:string; identity:string}> = [];
+  const sent: Array<{path:string; authorization:string; identity:string; owner:string; body?:unknown}> = [];
   try {
     globalThis.fetch = (async (input, init) => {
       const path = new URL(String(input)).pathname;
       const headers = init?.headers as Record<string,string>;
-      sent.push({path, authorization: headers.Authorization ?? "", identity: headers["X-Agent-Identity"] ?? ""});
+      sent.push({path, authorization: headers.Authorization ?? "", identity: headers["X-Agent-Identity"] ?? "",
+        owner: headers["X-Agent-Worker-ID"] ?? "", body: init?.body ? JSON.parse(String(init.body)) : undefined});
       const data = path.endsWith("/claim") ? {run: {...run, runAuthorization: undefined}, runAuthorization: "grant-one"}
         : path.endsWith("/renew") ? {renewed:true,runAuthorization:"grant-two"} : {run:{...run,runAuthorization:undefined}};
       return new Response(JSON.stringify({code:0,data}));
@@ -415,5 +416,7 @@ test("claim installs a lease grant and run routes never send the worker credenti
     await bridge.snapshot(claimed);
     assert.deepEqual(sent.map(x => x.authorization), ["Bearer worker-secret", "Bearer grant-one", "Bearer grant-one", "Bearer grant-two"]);
     assert.ok(sent.every(x => x.identity === "provisioned-worker"));
+    assert.equal((sent[0]!.body as {owner:string}).owner, "provisioned-worker:lease-owner");
+    assert.deepEqual(sent.map(x => x.owner), ["", "provisioned-worker:lease-owner", "provisioned-worker:lease-owner", "provisioned-worker:lease-owner"]);
   } finally { globalThis.fetch = original; }
 });
