@@ -163,7 +163,10 @@ export async function loadCloudAgentConversation(conversationId: string, options
         }),
     );
     checkRequest(options, scope);
-    const remote = projectCloudAgentConversation(conversationId, restored.map((item) => item.run));
+    const remote = projectCloudAgentConversation(
+        conversationId,
+        restored.map((item) => item.run),
+    );
     if (restored.some((item) => item.missingPrefix > 0)) remote.historyState = { status: "partial", message: "该对话的部分早期记录已不可用，当前仅显示可恢复的记录。" };
     return options.existing ? mergeCloudAgentConversation(options.existing, remote) : remote;
 }
@@ -184,14 +187,17 @@ export function mergeCloudAgentConversation(local: CloudAgentConversation, remot
     });
     messages.push(...local.messages.filter((message) => !consumed.has(message.id) && !remote.messages.some((entry) => entry.id === message.id)));
     const ancestorSnapshot = local.run && remote.run && isRunAncestor(remote.run.id, local.run, [...(local.runs || []), ...(remote.runs || [])]);
-    const newerLocalRun = ancestorSnapshot ||
+    const newerLocalRun =
+        ancestorSnapshot ||
         (local.run && remote.run?.id === local.run.id && ((local.run.revision || 0) > (remote.run.revision || 0) || (local.lastEventSeq || 0) > (remote.lastEventSeq || 0) || (terminal.has(local.run.status) && !terminal.has(remote.run.status))));
     return {
         ...local,
         ...remote,
         id: local.id,
         messages,
-        ...(newerLocalRun ? { run: local.run, runs: orderRuns([...(remote.runs || []), ...(local.runs || []), local.run!]), messages: local.messages, lastEventSeq: ancestorSnapshot ? local.lastEventSeq : Math.max(local.lastEventSeq || 0, remote.lastEventSeq || 0) } : {}),
+        ...(newerLocalRun
+            ? { run: local.run, runs: orderRuns([...(remote.runs || []), ...(local.runs || []), local.run!]), messages: local.messages, lastEventSeq: ancestorSnapshot ? local.lastEventSeq : Math.max(local.lastEventSeq || 0, remote.lastEventSeq || 0) }
+            : {}),
         historyState: remote.historyState,
         draft: local.draft,
         permissionMode: local.permissionMode,

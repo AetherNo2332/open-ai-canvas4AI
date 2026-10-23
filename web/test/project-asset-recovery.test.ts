@@ -33,18 +33,32 @@ function installSnapshot(scope: string) {
         value: { localStorage: { getItem: () => scope, setItem: () => undefined }, setTimeout, clearTimeout },
     });
     localforage.getItem = (async (key: string) => indexed.get(key) ?? null) as typeof localforage.getItem;
-    localforage.setItem = (async (key: string, value: string) => { indexed.set(key, value); return value; }) as typeof localforage.setItem;
-    localforage.removeItem = (async (key: string) => { indexed.delete(key); }) as typeof localforage.removeItem;
+    localforage.setItem = (async (key: string, value: string) => {
+        indexed.set(key, value);
+        return value;
+    }) as typeof localforage.setItem;
+    localforage.removeItem = (async (key: string) => {
+        indexed.delete(key);
+    }) as typeof localforage.removeItem;
     apiClient.defaults.adapter = async (config) => ({
         data: { code: 0, data: { projects: [], assets: [] }, msg: "ok" },
-        status: 200, statusText: "OK", headers: {}, config,
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
     });
 }
 
 function localAsset(id: string): Asset {
     return {
-        id, kind: "text", title: id, coverUrl: "", tags: [], category: "material",
-        createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z",
+        id,
+        kind: "text",
+        title: id,
+        coverUrl: "",
+        tags: [],
+        category: "material",
+        createdAt: "2026-10-23T00:00:00Z",
+        updatedAt: "2026-10-23T00:00:00Z",
         data: { content: "local content" },
     };
 }
@@ -52,8 +66,7 @@ function localAsset(id: string): Asset {
 test("login snapshot retains this account's asset while its project link is pending", async () => {
     installSnapshot("owner-a");
     useAssetStore.getState().replaceAssets([localAsset("pending-asset"), localAsset("unrelated")]);
-    await createCanvasProjectAssetLinkQueue(localForageStorageForScope("owner-a"), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY)
-        .upsert({ assetId: "pending-asset", domainProjectId: "project", category: "material" });
+    await createCanvasProjectAssetLinkQueue(localForageStorageForScope("owner-a"), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY).upsert({ assetId: "pending-asset", domainProjectId: "project", category: "material" });
 
     await syncRemoteUserData("owner-a");
 
@@ -63,8 +76,7 @@ test("login snapshot retains this account's asset while its project link is pend
 test("another account's queued asset cannot survive the current account snapshot", async () => {
     installSnapshot("owner-b");
     useAssetStore.getState().replaceAssets([localAsset("foreign-asset")]);
-    await createCanvasProjectAssetLinkQueue(localForageStorageForScope("owner-a"), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY)
-        .upsert({ assetId: "foreign-asset", domainProjectId: "project" });
+    await createCanvasProjectAssetLinkQueue(localForageStorageForScope("owner-a"), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY).upsert({ assetId: "foreign-asset", domainProjectId: "project" });
 
     await syncRemoteUserData("owner-b");
 
@@ -76,8 +88,7 @@ test("login recovery of an existing pending asset adopts cloud content instead o
     const cached = { ...localAsset("asset"), title: "old cached title", updatedAt: "2026-10-21T00:00:00Z" };
     const cloud = { ...localAsset("asset"), title: "new cloud title", data: { content: "new cloud content" }, metadata: { note: "new cloud metadata" } } as Asset;
     useAssetStore.getState().replaceAssets([cached]);
-    await createCanvasProjectAssetLinkQueue(localForageStorageForScope("owner-existing"), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY)
-        .upsert({ assetId: "asset", domainProjectId: "project", folderId: "new-folder" });
+    await createCanvasProjectAssetLinkQueue(localForageStorageForScope("owner-existing"), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY).upsert({ assetId: "asset", domainProjectId: "project", folderId: "new-folder" });
     const calls: string[] = [];
     apiClient.defaults.adapter = async (config) => {
         calls.push(`${config.method} ${config.url}`);

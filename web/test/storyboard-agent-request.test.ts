@@ -3,7 +3,13 @@ import { buildStoryboardAgentPrompt } from "@/lib/canvas/storyboard-agent-reques
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const board = (metadata: CanvasNodeData["metadata"] = {}): CanvasNodeData => ({
-    id: "board-current", type: CanvasNodeType.Script, title: "第二场分镜", position: { x: 0, y: 0 }, width: 600, height: 400, metadata,
+    id: "board-current",
+    type: CanvasNodeType.Script,
+    title: "第二场分镜",
+    position: { x: 0, y: 0 },
+    width: 600,
+    height: 400,
+    metadata,
 });
 
 describe("storyboard Agent request", () => {

@@ -6,8 +6,12 @@ export type RealtimePeer = RealtimePresence & { sessionId: string; deviceNumber:
 export type CanvasRealtimeState = { status: "connecting" | "connected" | "offline" | "closed"; coordination: RealtimeCoordination; sessionId: string; deviceNumber: number; peers: RealtimePeer[] };
 type Socket = { readyState: number; onopen: (() => void) | null; onmessage: ((event: { data: unknown }) => void) | null; onclose: ((event: { code: number }) => void) | null; onerror: (() => void) | null; send(data: string): void; close(): void };
 type Dependencies = {
-    scope: string; canvasId: string; apiBaseURL: string; pageURL: string;
-    reconcile(): Promise<void>; deviceLabel: string;
+    scope: string;
+    canvasId: string;
+    apiBaseURL: string;
+    pageURL: string;
+    reconcile(): Promise<void>;
+    deviceLabel: string;
     socket?: (url: string) => Socket;
     now?: () => number;
     schedule?: (fn: () => void, ms: number) => () => void;
@@ -20,18 +24,33 @@ const byteLength = (s: string) => new TextEncoder().encode(s).length;
 function drag(v: unknown): v is RealtimeDrag[] {
     if (!Array.isArray(v) || v.length > 32) return false;
     const ids = new Set<string>();
-    return v.every(item => {
+    return v.every((item) => {
         if (!record(item)) return false;
         const nodeId = item.nodeId;
         if (!point(item) || typeof nodeId !== "string" || !nodeId || byteLength(nodeId) > 128 || ids.has(nodeId)) return false;
-        ids.add(nodeId); return true;
+        ids.add(nodeId);
+        return true;
     });
 }
 function peer(v: unknown, now: number): v is RealtimePeer {
-    return record(v) && typeof v.sessionId === "string" && v.sessionId.length > 0 && v.sessionId.length <= 128 && coord(v.coordination)
-        && Number.isInteger(v.deviceNumber) && typeof v.deviceNumber === "number" && v.deviceNumber >= (v.coordination === "shared" || v.coordination === "local" ? 1 : 0) && v.deviceNumber <= 64
-        && typeof v.deviceLabel === "string" && [...v.deviceLabel].length <= 64 && (v.cursor === null || point(v.cursor)) && drag(v.drag)
-        && typeof v.expiresAt === "string" && Number.isFinite(Date.parse(v.expiresAt)) && Date.parse(v.expiresAt) > now;
+    return (
+        record(v) &&
+        typeof v.sessionId === "string" &&
+        v.sessionId.length > 0 &&
+        v.sessionId.length <= 128 &&
+        coord(v.coordination) &&
+        Number.isInteger(v.deviceNumber) &&
+        typeof v.deviceNumber === "number" &&
+        v.deviceNumber >= (v.coordination === "shared" || v.coordination === "local" ? 1 : 0) &&
+        v.deviceNumber <= 64 &&
+        typeof v.deviceLabel === "string" &&
+        [...v.deviceLabel].length <= 64 &&
+        (v.cursor === null || point(v.cursor)) &&
+        drag(v.drag) &&
+        typeof v.expiresAt === "string" &&
+        Number.isFinite(Date.parse(v.expiresAt)) &&
+        Date.parse(v.expiresAt) > now
+    );
 }
 export function canvasRealtimeURL(base: string, canvasId: string, pageURL: string) {
     const url = new URL(base, pageURL);
@@ -45,71 +64,133 @@ export function canvasRealtimeURL(base: string, canvasId: string, pageURL: strin
 export function createCanvasRealtimeClient(deps: Dependencies) {
     const url = canvasRealtimeURL(deps.apiBaseURL, deps.canvasId, deps.pageURL);
     const now = deps.now || Date.now;
-    const schedule = deps.schedule || ((fn, ms) => { const id = setTimeout(fn, ms); return () => clearTimeout(id); });
+    const schedule =
+        deps.schedule ||
+        ((fn, ms) => {
+            const id = setTimeout(fn, ms);
+            return () => clearTimeout(id);
+        });
     const listeners = new Set<() => void>();
     let state: CanvasRealtimeState = { status: "offline", coordination: "recovering", sessionId: "", deviceNumber: 0, peers: [] };
-    let socket: Socket | WebSocket | null = null, stopped = false, started = false, attempt = 0, lastFrame = 0;
+    let socket: Socket | WebSocket | null = null,
+        stopped = false,
+        started = false,
+        attempt = 0,
+        lastFrame = 0;
     let retryCancel: (() => void) | undefined, tickCancel: (() => void) | undefined, presenceCancel: (() => void) | undefined;
-    let lastPresence = -Infinity, lastHeartbeat = 0;
+    let lastPresence = -Infinity,
+        lastHeartbeat = 0;
     let local: RealtimePresence = { cursor: null, drag: [] };
-    let reconciling = false, dirty = false;
+    let reconciling = false,
+        dirty = false;
     const label = [...deps.deviceLabel].slice(0, 64).join("");
-    const publish = (patch: Partial<CanvasRealtimeState>) => { state = { ...state, ...patch }; for (const listener of listeners) listener(); };
+    const publish = (patch: Partial<CanvasRealtimeState>) => {
+        state = { ...state, ...patch };
+        for (const listener of listeners) listener();
+    };
     function reconcile() {
         if (stopped) return;
         dirty = true;
         if (reconciling) return;
         reconciling = true;
-        void Promise.resolve().then(async () => {
-            while (dirty && !stopped) {
-                dirty = false;
-                try { await deps.reconcile(); } catch { /* Existing polling keeps recovery alive. */ }
-            }
-        }).finally(() => { reconciling = false; });
+        void Promise.resolve()
+            .then(async () => {
+                while (dirty && !stopped) {
+                    dirty = false;
+                    try {
+                        await deps.reconcile();
+                    } catch {
+                        /* Existing polling keeps recovery alive. */
+                    }
+                }
+            })
+            .finally(() => {
+                reconciling = false;
+            });
     }
     function send(frame: object) {
         if (socket?.readyState !== 1 || !state.sessionId || stopped) return false;
-        try { socket.send(JSON.stringify({ protocolVersion: 1, ...frame })); return true; } catch { disconnect(); return false; }
+        try {
+            socket.send(JSON.stringify({ protocolVersion: 1, ...frame }));
+            return true;
+        } catch {
+            disconnect();
+            return false;
+        }
     }
     function sendPresence() {
-        presenceCancel?.(); presenceCancel = undefined;
+        presenceCancel?.();
+        presenceCancel = undefined;
         if (send({ type: "presence", ...local, deviceLabel: label })) lastPresence = now();
     }
     function detach() {
         if (!socket) return;
-        const old = socket; socket = null;
+        const old = socket;
+        socket = null;
         old.onopen = old.onmessage = old.onclose = old.onerror = null;
         old.close();
     }
     function retry() {
         if (stopped || retryCancel) return;
         const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempt++, 5));
-        retryCancel = schedule(() => { retryCancel = undefined; connect(); }, delay);
+        retryCancel = schedule(() => {
+            retryCancel = undefined;
+            connect();
+        }, delay);
     }
     function disconnect(code = 1006) {
-        detach(); presenceCancel?.(); presenceCancel = undefined;
+        detach();
+        presenceCancel?.();
+        presenceCancel = undefined;
         publish({ status: "offline", peers: [], sessionId: "", deviceNumber: 0, coordination: "recovering" });
         if (code !== 1008) retry();
     }
     function connect() {
         if (stopped || socket) return;
-        publish({ status: "connecting" }); lastFrame = now();
+        publish({ status: "connecting" });
+        lastFrame = now();
         let current: Socket | WebSocket;
-        try { current = (deps.socket || (url => new WebSocket(url)))(url); } catch { disconnect(); return; }
+        try {
+            current = (deps.socket || ((url) => new WebSocket(url)))(url);
+        } catch {
+            disconnect();
+            return;
+        }
         socket = current;
         const active = () => !stopped && socket === current;
-        current.onopen = () => { if (active()) reconcile(); };
-        current.onclose = (event: { code: number }) => { if (active()) disconnect(event.code); };
-        current.onerror = () => { if (active()) disconnect(); };
+        current.onopen = () => {
+            if (active()) reconcile();
+        };
+        current.onclose = (event: { code: number }) => {
+            if (active()) disconnect(event.code);
+        };
+        current.onerror = () => {
+            if (active()) disconnect();
+        };
         current.onmessage = (event: { data: unknown }) => {
             if (!active() || typeof event.data !== "string" || byteLength(event.data) > 512 * 1024) return;
             let frame: unknown;
-            try { frame = JSON.parse(event.data); } catch { return; }
+            try {
+                frame = JSON.parse(event.data);
+            } catch {
+                return;
+            }
             if (!record(frame) || frame.protocolVersion !== 1) return;
             lastFrame = now();
             if (frame.type === "ready") {
-                if (typeof frame.sessionId !== "string" || !frame.sessionId || frame.sessionId.length > 128 || !coord(frame.coordination) || !Number.isInteger(frame.deviceNumber) || typeof frame.deviceNumber !== "number" || frame.deviceNumber < (["shared", "local"].includes(frame.coordination) ? 1 : 0) || frame.deviceNumber > 64) return;
-                attempt = 0; lastHeartbeat = now();
+                if (
+                    typeof frame.sessionId !== "string" ||
+                    !frame.sessionId ||
+                    frame.sessionId.length > 128 ||
+                    !coord(frame.coordination) ||
+                    !Number.isInteger(frame.deviceNumber) ||
+                    typeof frame.deviceNumber !== "number" ||
+                    frame.deviceNumber < (["shared", "local"].includes(frame.coordination) ? 1 : 0) ||
+                    frame.deviceNumber > 64
+                )
+                    return;
+                attempt = 0;
+                lastHeartbeat = now();
                 publish({ status: "connected", sessionId: frame.sessionId, coordination: frame.coordination, deviceNumber: ["degraded", "recovering"].includes(frame.coordination) ? 0 : frame.deviceNumber, peers: [] });
                 sendPresence();
             } else if (frame.type === "sync" || frame.type === "invalidate") reconcile();
@@ -129,26 +210,54 @@ export function createCanvasRealtimeClient(deps: Dependencies) {
     }
     function tick() {
         if (stopped) return;
-        const peers = state.peers.filter(p => Date.parse(p.expiresAt) > now());
+        const peers = state.peers.filter((p) => Date.parse(p.expiresAt) > now());
         if (peers.length !== state.peers.length) publish({ peers });
         if (socket && now() - lastFrame >= (state.sessionId ? 60_000 : 20_000)) disconnect();
-        if (state.sessionId && now() - lastHeartbeat >= 15_000) { lastHeartbeat = now(); send({ type: "heartbeat" }); }
+        if (state.sessionId && now() - lastHeartbeat >= 15_000) {
+            lastHeartbeat = now();
+            send({ type: "heartbeat" });
+        }
         tickCancel = schedule(tick, 1000);
     }
     return {
         state: () => state,
-        subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        start() { if (started || stopped) return; started = true; reconcile(); connect(); tickCancel = schedule(tick, 1000); },
-        wake() { if (stopped) return; reconcile(); if (!socket) { retryCancel?.(); retryCancel = undefined; connect(); } },
+        subscribe(listener: () => void) {
+            listeners.add(listener);
+            return () => {
+                listeners.delete(listener);
+            };
+        },
+        start() {
+            if (started || stopped) return;
+            started = true;
+            reconcile();
+            connect();
+            tickCancel = schedule(tick, 1000);
+        },
+        wake() {
+            if (stopped) return;
+            reconcile();
+            if (!socket) {
+                retryCancel?.();
+                retryCancel = undefined;
+                connect();
+            }
+        },
         presence(value: RealtimePresence) {
             if (stopped || (value.cursor !== null && !point(value.cursor)) || !drag(value.drag)) return;
-            local = { cursor: value.cursor ? { ...value.cursor } : null, drag: value.drag.map(p => ({ ...p })) };
+            local = { cursor: value.cursor ? { ...value.cursor } : null, drag: value.drag.map((p) => ({ ...p })) };
             if (!presenceCancel) presenceCancel = schedule(sendPresence, Math.max(0, 80 - (now() - lastPresence)));
         },
         close() {
             if (stopped) return;
-            stopped = true; dirty = false; retryCancel?.(); tickCancel?.(); presenceCancel?.(); detach();
-            publish({ status: "closed", peers: [], sessionId: "", deviceNumber: 0 }); listeners.clear();
+            stopped = true;
+            dirty = false;
+            retryCancel?.();
+            tickCancel?.();
+            presenceCancel?.();
+            detach();
+            publish({ status: "closed", peers: [], sessionId: "", deviceNumber: 0 });
+            listeners.clear();
         },
     };
 }

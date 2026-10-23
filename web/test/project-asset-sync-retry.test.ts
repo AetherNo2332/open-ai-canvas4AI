@@ -50,17 +50,41 @@ afterEach(() => {
 function installStorage(scope: string, online: { value: boolean }) {
     Object.defineProperty(globalThis, "window", {
         configurable: true,
-        value: { localStorage: { getItem: () => scope, setItem: () => undefined }, setTimeout, clearTimeout, addEventListener: (event: string, listener: EventListener) => { if (event === "online") onlineListeners.add(listener); } },
+        value: {
+            localStorage: { getItem: () => scope, setItem: () => undefined },
+            setTimeout,
+            clearTimeout,
+            addEventListener: (event: string, listener: EventListener) => {
+                if (event === "online") onlineListeners.add(listener);
+            },
+        },
     });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: { get onLine() { return online.value; } } });
+    Object.defineProperty(globalThis, "navigator", {
+        configurable: true,
+        value: {
+            get onLine() {
+                return online.value;
+            },
+        },
+    });
     localforage.getItem = (async (key: string) => indexed.get(key) ?? null) as typeof localforage.getItem;
-    localforage.setItem = (async (key: string, value: string) => { indexed.set(key, value); return value; }) as typeof localforage.setItem;
-    localforage.removeItem = (async (key: string) => { indexed.delete(key); }) as typeof localforage.removeItem;
+    localforage.setItem = (async (key: string, value: string) => {
+        indexed.set(key, value);
+        return value;
+    }) as typeof localforage.setItem;
+    localforage.removeItem = (async (key: string) => {
+        indexed.delete(key);
+    }) as typeof localforage.removeItem;
 }
 
 const node: CanvasNodeData = {
-    id: "node", type: CanvasNodeType.Text, title: "Scene notes", position: { x: 0, y: 0 },
-    width: 200, height: 100, metadata: { content: "The scene opens at dawn", assetCategory: "material" },
+    id: "node",
+    type: CanvasNodeType.Text,
+    title: "Scene notes",
+    position: { x: 0, y: 0 },
+    width: 200,
+    height: 100,
+    metadata: { content: "The scene opens at dawn", assetCategory: "material" },
 };
 
 test("offline save reports a local asset and resumes the project link when online", async () => {
@@ -104,10 +128,11 @@ test("a missing project is blocked instead of retried on every reconnect", async
         const missing = config.url?.startsWith("/projects/missing/assets/");
         if (missing) linkAttempts += 1;
         return {
-            data: missing
-                ? { code: 404, data: null, msg: "项目不存在", reason: "project_not_found" }
-                : { code: 0, data: { asset: { id: useAssetStore.getState().assets[0]?.id } }, msg: "ok" },
-            status: missing ? 404 : 200, statusText: missing ? "Not Found" : "OK", headers: {}, config,
+            data: missing ? { code: 404, data: null, msg: "项目不存在", reason: "project_not_found" } : { code: 0, data: { asset: { id: useAssetStore.getState().assets[0]?.id } }, msg: "ok" },
+            status: missing ? 404 : 200,
+            statusText: missing ? "Not Found" : "OK",
+            headers: {},
+            config,
         };
     };
     await initializeRemoteUserDataSession("owner-missing");
@@ -128,8 +153,7 @@ test("unavailable durable queue storage leaves the local asset and reports the f
     await Promise.resolve();
     Object.defineProperty(globalThis, "document", { configurable: true, value: {} });
 
-    await expect(ensureCanvasNodeAsset({ canvasId: "canvas", domainProjectId: "project", node, source: "canvas-manual" }))
-        .rejects.toThrow("项目关联待办未能持久化");
+    await expect(ensureCanvasNodeAsset({ canvasId: "canvas", domainProjectId: "project", node, source: "canvas-manual" })).rejects.toThrow("项目关联待办未能持久化");
     expect(useAssetStore.getState().assets).toHaveLength(1);
 });
 
@@ -147,8 +171,7 @@ test("cancellation keeps the persisted intent without scheduling a failed retry"
     };
     await initializeRemoteUserDataSession("owner-abort");
 
-    await expect(ensureCanvasNodeAsset({ canvasId: "canvas", domainProjectId: "project", node, source: "canvas-manual", signal: controller.signal }))
-        .rejects.toMatchObject({ name: "AbortError" });
+    await expect(ensureCanvasNodeAsset({ canvasId: "canvas", domainProjectId: "project", node, source: "canvas-manual", signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
     const queue = createCanvasProjectAssetLinkQueue(localForageStorageForScope("owner-abort"), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, "owner-abort");
     expect((await queue.list())[0]).toMatchObject({ attempts: 0, nextAttemptAt: 0 });
 });
@@ -157,7 +180,10 @@ test("deleting the saved asset also removes its pending project link", async () 
     installStorage("owner-delete", { value: false });
     apiClient.defaults.adapter = async (config) => ({
         data: { code: 0, data: { ids: [useAssetStore.getState().assets[0]?.id] }, msg: "ok" },
-        status: 200, statusText: "OK", headers: {}, config,
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
     });
     await initializeRemoteUserDataSession("owner-delete");
     const saved = await ensureCanvasNodeAsset({ canvasId: "canvas", domainProjectId: "project", node, source: "canvas-manual" });
@@ -253,7 +279,18 @@ test("an existing pending asset deleted in the cloud is not recreated by recover
 test("two executors cannot let an older in-flight relation overwrite a newer completed intent", async () => {
     const online = { value: false };
     installStorage("owner-two-tabs", online);
-    const asset: Asset = { id: "shared", kind: "text", title: "Cloud text", coverUrl: "", tags: [], category: "material", data: { content: "Cloud content" }, metadata: { projectIds: ["project"] }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+    const asset: Asset = {
+        id: "shared",
+        kind: "text",
+        title: "Cloud text",
+        coverUrl: "",
+        tags: [],
+        category: "material",
+        data: { content: "Cloud content" },
+        metadata: { projectIds: ["project"] },
+        createdAt: "2026-10-23T00:00:00Z",
+        updatedAt: "2026-10-23T00:00:00Z",
+    };
     useAssetStore.getState().replaceAssets([asset]);
     cloudAssets.set(asset.id, asset);
     await initializeRemoteUserDataSession("owner-two-tabs");
@@ -261,8 +298,12 @@ test("two executors cannot let an older in-flight relation overwrite a newer com
     await queue.upsert({ assetId: asset.id, domainProjectId: "project", folderId: "old" });
     let releaseOld!: () => void;
     let startedOld!: () => void;
-    const oldStarted = new Promise<void>((resolve) => { startedOld = resolve; });
-    const oldGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+    const oldStarted = new Promise<void>((resolve) => {
+        startedOld = resolve;
+    });
+    const oldGate = new Promise<void>((resolve) => {
+        releaseOld = resolve;
+    });
     let serverFolder = "initial";
     let revision = 1;
     let staleRequestsRejected = 0;
@@ -272,7 +313,10 @@ test("two executors cannot let an older in-flight relation overwrite a newer com
         const input = config.data ? JSON.parse(config.data) : {};
         const summary = { id: asset.id, title: asset.title, mediaType: "text", category: "material", status: "confirmed", folderId: serverFolder, versionCount: 1, usages: [], position: 0, updatedAt: asset.updatedAt };
         if (config.method === "get") return { data: { code: 0, data: { projectRevision: revision, asset: summary }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
-        if (input.folderId === "old") { startedOld(); await oldGate; }
+        if (input.folderId === "old") {
+            startedOld();
+            await oldGate;
+        }
         if (config.url?.endsWith("/sync") && input.expectedProjectRevision !== revision) {
             staleRequestsRejected += 1;
             return { data: { code: 409, data: null, reason: "project_asset_sync_conflict", retryable: true, msg: "关系版本已变化" }, status: 409, statusText: "Conflict", headers: {}, config };
@@ -309,8 +353,12 @@ test("a late create after404 adopts another device's new edited body without ove
     await queue.upsert({ assetId: local.id, domainProjectId: "project-b", createAssetIfMissing: true });
     let reachedCreate!: () => void;
     let releaseCreate!: () => void;
-    const createStarted = new Promise<void>((resolve) => { reachedCreate = resolve; });
-    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    const createStarted = new Promise<void>((resolve) => {
+        reachedCreate = resolve;
+    });
+    const createGate = new Promise<void>((resolve) => {
+        releaseCreate = resolve;
+    });
     let conditionalCreates = 0;
     let staleCreateRejected = 0;
     apiClient.defaults.adapter = async (config) => {
@@ -394,14 +442,21 @@ test("a delayed successful create seals a replacing intent even after the cloud 
     await queue.upsert({ assetId: local.id, domainProjectId: "project", folderId: "old", createAssetIfMissing: true });
     let created!: () => void;
     let releaseAck!: () => void;
-    const committed = new Promise<void>((resolve) => { created = resolve; });
-    const ackGate = new Promise<void>((resolve) => { releaseAck = resolve; });
+    const committed = new Promise<void>((resolve) => {
+        created = resolve;
+    });
+    const ackGate = new Promise<void>((resolve) => {
+        releaseAck = resolve;
+    });
     let puts = 0;
     apiClient.defaults.adapter = async (config) => {
         if (config.url === `/assets/${local.id}` && config.method === "put") {
             puts += 1;
             const response = assetAPIResponse(config)!;
-            if (puts === 1) { created(); await ackGate; }
+            if (puts === 1) {
+                created();
+                await ackGate;
+            }
             return response;
         }
         const response = assetAPIResponse(config);
@@ -507,8 +562,12 @@ test("switching accounts cancels failed bootstrap timers and rejects its late re
     let started!: () => void;
     let releaseLate!: () => void;
     let oldSignal: AbortSignal | undefined;
-    const inFlight = new Promise<void>((resolve) => { started = resolve; });
-    const responseGate = new Promise<void>((resolve) => { releaseLate = resolve; });
+    const inFlight = new Promise<void>((resolve) => {
+        started = resolve;
+    });
+    const responseGate = new Promise<void>((resolve) => {
+        releaseLate = resolve;
+    });
     apiClient.defaults.adapter = async (config) => {
         oldCalls += 1;
         if (oldCalls === 1) return { data: { code: 503, data: null, msg: "temporary failure" }, status: 503, statusText: "Unavailable", headers: {}, config };

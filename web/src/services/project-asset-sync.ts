@@ -163,10 +163,13 @@ function isOnline() {
 function scheduleRetry(scope: string, delayMs: number) {
     const previous = retryTimers.get(scope);
     if (previous) clearTimeout(previous);
-    const timer = setTimeout(() => {
-        retryTimers.delete(scope);
-        void retryPendingCanvasProjectAssetLinks(scope).catch((error) => console.warn("云端项目资产关联重试失败", error));
-    }, Math.max(0, delayMs));
+    const timer = setTimeout(
+        () => {
+            retryTimers.delete(scope);
+            void retryPendingCanvasProjectAssetLinks(scope).catch((error) => console.warn("云端项目资产关联重试失败", error));
+        },
+        Math.max(0, delayMs),
+    );
     retryTimers.set(scope, timer);
 }
 
@@ -191,7 +194,9 @@ async function performProjectAssetLink(job: PendingCanvasProjectAssetLink, scope
     // A relation retry may create a missing body, but never overwrite an existing body.
     await prepareRemoteAssetForProjectLink(job.assetId, async () => {
         ensureScope();
-        return (await queueForScope(scope).list()).some((entry) => entry.assetId === job.assetId && entry.domainProjectId === job.domainProjectId && entry.intentToken === job.intentToken && entry.revision === job.revision && entry.createAssetIfMissing === true);
+        return (await queueForScope(scope).list()).some(
+            (entry) => entry.assetId === job.assetId && entry.domainProjectId === job.domainProjectId && entry.intentToken === job.intentToken && entry.revision === job.revision && entry.createAssetIfMissing === true,
+        );
     });
     await queueForScope(scope).markAssetPersisted(job);
     ensureScope();
@@ -202,11 +207,16 @@ async function performProjectAssetLink(job: PendingCanvasProjectAssetLink, scope
         if (!(await isCurrent())) return false;
         if (!Number.isSafeInteger(baseline.projectRevision) || baseline.projectRevision < 0) throw new Error("项目同步缺少有效版本，已停止关系写入");
         try {
-            await syncProjectAssetRelation(job.domainProjectId, job.assetId, {
-                expectedProjectRevision: baseline.projectRevision,
-                category: job.category as AssetCategory | undefined,
-                folderId: job.folderId,
-            }, signal);
+            await syncProjectAssetRelation(
+                job.domainProjectId,
+                job.assetId,
+                {
+                    expectedProjectRevision: baseline.projectRevision,
+                    category: job.category as AssetCategory | undefined,
+                    folderId: job.folderId,
+                },
+                signal,
+            );
             ensureScope();
             await refreshRemoteAssetAfterProjectLink(job.assetId, job.domainProjectId);
             ensureScope();
@@ -262,8 +272,11 @@ async function attemptProjectAssetLink(job: PendingCanvasProjectAssetLink, scope
         }
     })();
     flights.set(key, operation);
-    try { return await operation; }
-    finally { if (flights.get(key) === operation) flights.delete(key); }
+    try {
+        return await operation;
+    } finally {
+        if (flights.get(key) === operation) flights.delete(key);
+    }
 }
 
 async function retryProjectAssetLinksWithFlights(scope: string, flights: typeof linkFlights) {
@@ -271,8 +284,11 @@ async function retryProjectAssetLinksWithFlights(scope: string, flights: typeof 
     for (const entry of await queueForScope(scope).list()) {
         if (scope !== getActiveUserScope()) return;
         if (entry.nextAttemptAt > Date.now()) continue;
-        try { await attemptProjectAssetLink(entry, scope, undefined, flights); }
-        catch (error) { console.warn("云端项目资产关联需要处理", error); }
+        try {
+            await attemptProjectAssetLink(entry, scope, undefined, flights);
+        } catch (error) {
+            console.warn("云端项目资产关联需要处理", error);
+        }
     }
     await scheduleNextRetry(scope);
 }
@@ -313,7 +329,7 @@ async function syncAssetToProject(assetId: string, domainProjectId: string, cate
         throw new Error(`素材已保存在本地，但项目关联待办未能持久化：${error instanceof Error ? error.message : "请检查浏览器存储后重试"}`);
     }
     throwIfAborted(signal);
-    if (job.blockedReason === "permanent" || job.nextAttemptAt === blockedRetryAt && job.blockedReason !== "auth") {
+    if (job.blockedReason === "permanent" || (job.nextAttemptAt === blockedRetryAt && job.blockedReason !== "auth")) {
         throw new Error(`素材已保存到本地，项目关联已暂停：${job.blockedMessage || "目标暂不可用"}。修复目标或权限后，再次点击保存可重试`);
     }
     if (job.nextAttemptAt > Date.now()) return { linked: false, pending: true };

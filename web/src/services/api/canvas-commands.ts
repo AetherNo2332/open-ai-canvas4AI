@@ -41,7 +41,8 @@ export function createCanvasCommandTransport(api: CommandHTTP = captureHTTP(), p
     };
 }
 export const readTaskMaterialization = (taskId: string, signal?: AbortSignal) => http.get<MaterializationStatus>(taskPath(taskId) + "/materialization", { signal });
-export const readCanvasMediaVersions = (canvasId: string, nodeId: string, beforeVersion = 0, signal?: AbortSignal) => http.get<MediaVersionPage>(canvasPath(canvasId) + "/nodes/" + encodeURIComponent(nodeId) + "/media-versions", { params: beforeVersion ? { beforeVersion } : undefined, signal });
+export const readCanvasMediaVersions = (canvasId: string, nodeId: string, beforeVersion = 0, signal?: AbortSignal) =>
+    http.get<MediaVersionPage>(canvasPath(canvasId) + "/nodes/" + encodeURIComponent(nodeId) + "/media-versions", { params: beforeVersion ? { beforeVersion } : undefined, signal });
 export const retryTaskMaterialization = (taskId: string, signal?: AbortSignal) => http.post<MaterializationStatus>(taskPath(taskId) + "/materialization/retry", undefined, { signal });
 export function createCanvasHistoryReader(api: CommandHTTP = captureHTTP()) {
     return (canvasId: string, documentEpoch: string, clientId: string, signal?: AbortSignal) => api.get<{ canUndo: boolean; canRedo: boolean }>(canvasPath(canvasId) + "/history-state", { params: { documentEpoch, clientId }, signal });

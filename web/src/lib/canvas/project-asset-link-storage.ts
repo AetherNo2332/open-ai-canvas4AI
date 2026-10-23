@@ -11,7 +11,9 @@ function queueDatabase() {
     if (typeof indexedDB === "undefined") throw new Error("浏览器存储不可用，项目关联待办未持久化；本地素材已保留，请恢复存储后重试");
     if (!connection) {
         connection = openDB(databaseName, 1, {
-            upgrade(db) { db.createObjectStore(storeName); },
+            upgrade(db) {
+                db.createObjectStore(storeName);
+            },
         }).catch((error) => {
             connection = null;
             throw error;
@@ -49,7 +51,11 @@ export function projectAssetLinkStorageForScope(scope: string) {
                 await transaction.done;
                 return next.result;
             } catch (error) {
-                try { transaction.abort(); } catch { /* Transaction may already be closed. */ }
+                try {
+                    transaction.abort();
+                } catch {
+                    /* Transaction may already be closed. */
+                }
                 throw error;
             }
         },

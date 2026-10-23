@@ -459,7 +459,17 @@ test("actual prompt panel focuses a lease, preserves prompt mirrors and starts g
 });
 
 test("storyboard card composer retains its constraints in simple mode and waits for ACK before sending to Agent", async () => {
-    mock.module("@/components/ui/base/select", () => ({ Select: ({ options, value, onChange }: any) => <select value={value} onChange={(event: any) => onChange(event.target.value)}>{options.map((item: any) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> }));
+    mock.module("@/components/ui/base/select", () => ({
+        Select: ({ options, value, onChange }: any) => (
+            <select value={value} onChange={(event: any) => onChange(event.target.value)}>
+                {options.map((item: any) => (
+                    <option key={item.value} value={item.value}>
+                        {item.label}
+                    </option>
+                ))}
+            </select>
+        ),
+    }));
     mock.module("@/components/canvas/storyboard-assets-cell", () => ({ StoryboardAssetsCell: () => null, StoryboardSharedReferencesControl: () => null }));
     const { CanvasScriptNodeContent } = await import("@/components/canvas/canvas-script-node");
     const { deriveStoryboardPipelineProgress } = await import("@/lib/canvas/canvas-storyboard-progress");

@@ -7,8 +7,12 @@ function memoryStorage() {
     return {
         values,
         getItem: async (key: string) => values.get(key) ?? null,
-        setItem: async (key: string, value: string) => { values.set(key, value); },
-        removeItem: async (key: string) => { values.delete(key); },
+        setItem: async (key: string, value: string) => {
+            values.set(key, value);
+        },
+        removeItem: async (key: string) => {
+            values.delete(key);
+        },
     };
 }
 
@@ -19,12 +23,18 @@ describe("project asset link journal", () => {
         let transactions = 0;
         const adapter = () => ({
             getItem: async (key: string) => values.get(key) ?? null,
-            setItem: async (key: string, value: string) => { values.set(key, value); },
-            removeItem: async (key: string) => { values.delete(key); },
+            setItem: async (key: string, value: string) => {
+                values.set(key, value);
+            },
+            removeItem: async (key: string) => {
+                values.delete(key);
+            },
             atomicUpdate: async <T>(key: string, change: (raw: string | null) => { value: string | null; result: T }) => {
                 const previous = transactionTail;
                 let release!: () => void;
-                transactionTail = new Promise<void>((resolve) => { release = resolve; });
+                transactionTail = new Promise<void>((resolve) => {
+                    release = resolve;
+                });
                 await previous;
                 try {
                     transactions += 1;
@@ -33,16 +43,15 @@ describe("project asset link journal", () => {
                     if (next.value === null) values.delete(key);
                     else values.set(key, next.value);
                     return next.result;
-                } finally { release(); }
+                } finally {
+                    release();
+                }
             },
         });
         // Distinct tail scopes simulate separate JS realms; only the shared transaction protects the record.
         const first = createCanvasProjectAssetLinkQueue(adapter(), "pending-links", "realm-a");
         const second = createCanvasProjectAssetLinkQueue(adapter(), "pending-links", "realm-b");
-        await Promise.all([
-            first.upsert({ assetId: "asset-a", domainProjectId: "project" }),
-            second.upsert({ assetId: "asset-b", domainProjectId: "project" }),
-        ]);
+        await Promise.all([first.upsert({ assetId: "asset-a", domainProjectId: "project" }), second.upsert({ assetId: "asset-b", domainProjectId: "project" })]);
         expect((await first.list()).map((entry) => entry.assetId).sort()).toEqual(["asset-a", "asset-b"]);
         expect(transactions).toBe(2);
     });
@@ -52,10 +61,19 @@ describe("project asset link journal", () => {
         const first = createCanvasProjectAssetLinkQueue(storage, "user-a");
         const persisted = await first.upsert({ assetId: "asset", domainProjectId: "project", category: "character", folderId: "folder" });
         const restored = createCanvasProjectAssetLinkQueue(storage, "user-a");
-        expect(await restored.list()).toEqual([{
-            assetId: "asset", domainProjectId: "project", category: "character", folderId: "folder",
-            attempts: 0, nextAttemptAt: 0, revision: 1, intentToken: persisted.intentToken, createAssetIfMissing: false,
-        }]);
+        expect(await restored.list()).toEqual([
+            {
+                assetId: "asset",
+                domainProjectId: "project",
+                category: "character",
+                folderId: "folder",
+                attempts: 0,
+                nextAttemptAt: 0,
+                revision: 1,
+                intentToken: persisted.intentToken,
+                createAssetIfMissing: false,
+            },
+        ]);
     });
 
     test("coalesces repeated intent and rejects stale completion or backoff", async () => {

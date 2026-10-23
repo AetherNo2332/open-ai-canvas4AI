@@ -785,7 +785,24 @@ function validatePublicBaseURL(value: string) {
 
 function storageResponseMatches(setting: AdminOSSSetting, expected: StoragePayload) {
     const actual = normalizeStoragePayload(formValues(setting), setting);
-    const fields: Array<keyof StoragePayload> = ["enabled", "provider", "region", "endpoint", "cdnBaseUrl", "cdnAuthMode", "requireCDN", "allowPrivateProxy", "cdnAttachmentQueryForwarding", "bucket", "accessKeyId", "publicBaseUrl", "pathPrefix", "s3Preset", "pathStyle", "allowUserS3"];
+    const fields: Array<keyof StoragePayload> = [
+        "enabled",
+        "provider",
+        "region",
+        "endpoint",
+        "cdnBaseUrl",
+        "cdnAuthMode",
+        "requireCDN",
+        "allowPrivateProxy",
+        "cdnAttachmentQueryForwarding",
+        "bucket",
+        "accessKeyId",
+        "publicBaseUrl",
+        "pathPrefix",
+        "s3Preset",
+        "pathStyle",
+        "allowUserS3",
+    ];
     if (expected.accessKeySecret && !setting.hasAccessKeySecret) return false;
     if (expected.sessionToken && !setting.hasSessionToken) return false;
     return fields.every((key) => actual[key] === expected[key]);
