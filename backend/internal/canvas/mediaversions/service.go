@@ -269,7 +269,10 @@ func CheckAdmission(repo *repository.Repository, scope Scope, node map[string]an
 		case model.TaskStatusSubmissionUncertain:
 			return fail("submission_uncertain", "原任务提交结果未知，请先核对")
 		}
-		if original.Status != model.TaskStatusCancelled && (original.MediaRecoveryJSON != "" || original.MediaStage != "" && original.MediaStage != "completed") {
+		// Successful delivery retains its encrypted checkpoint for provenance.
+		// Only unfinished delivery must resume the original paid task.
+		deliveryCompleted := original.Status == model.TaskStatusSucceeded && original.MediaStage == "completed"
+		if original.Status != model.TaskStatusCancelled && !deliveryCompleted && (original.MediaRecoveryJSON != "" || original.MediaStage != "" && original.MediaStage != "completed") {
 			return fail("materialization_pending", "原任务已有媒体保存过程，请先恢复原任务")
 		}
 		if original.Status == model.TaskStatusSucceeded {

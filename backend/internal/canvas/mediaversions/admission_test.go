@@ -17,6 +17,9 @@ func TestLegacyAdmissionDistinguishesExplicitNewAttemptAndOriginalSaveRecovery(t
 		{name: "ended requires intent", intent: "create", status: model.TaskStatusFailed, empty: true, reason: "new_version_required"},
 		{name: "old output plus save recovery", intent: "new_version", status: model.TaskStatusFailed, recovery: "opaque", stage: "upload", reason: "materialization_pending"},
 		{name: "completed media stage", intent: "new_version", status: model.TaskStatusSucceeded, stage: "completed"},
+		{name: "completed with retained checkpoint", intent: "new_version", status: model.TaskStatusSucceeded, stage: "completed", recovery: "encrypted completed checkpoint"},
+		{name: "unfinished checkpoint on succeeded task", intent: "new_version", status: model.TaskStatusSucceeded, stage: "upload", recovery: "encrypted pending checkpoint", reason: "materialization_pending"},
+		{name: "failed with checkpoint", intent: "new_version", status: model.TaskStatusFailed, stage: "completed", recovery: "encrypted failed checkpoint", reason: "materialization_pending"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, scope, node := versionFixture(t, "image")
