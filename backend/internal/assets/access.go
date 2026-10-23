@@ -108,7 +108,14 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 	if options.Purpose == PurposeProvider {
 		ttl = runtime.ProviderAccessURLTTL
 	}
+	signedAt := time.Time{}
+	if browserCacheable(options.Purpose) {
+		signedAt = alignedSigningTime(now, ttl)
+	}
 	expires := now.Add(ttl)
+	if !signedAt.IsZero() {
+		expires = signedAt.Add(ttl)
+	}
 	if !options.ExpiresAt.IsZero() && options.ExpiresAt.Before(expires) {
 		expires = options.ExpiresAt
 	}
@@ -126,16 +133,27 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 	}
 	if resource.Provider == "local" {
 		access.Delivery = DeliveryLocal
-	} else if options.Purpose == PurposeDownload {
-		// Cross-origin `a[download]` is only advisory. A real browser download must
-		// therefore be enforced by the object store response itself. Downloads use
-		// a signed origin URL carrying Content-Disposition=attachment; media bytes
-		// never pass through the application server or a Blob relay.
-		if !storage.PublicOrigin(setting) {
-			return nil, AccessError(503, "resource_origin_private", "对象存储源站不可由浏览器直连，无法在不占用服务器带宽的前提下下载")
+	} else if options.Purpose != PurposeProvider && (options.Purpose == PurposeDownload || !InlineMediaType(resource.MimeType)) {
+		// Browser attachment responses must be guaranteed by the actual byte
+		// endpoint. Never fall back to a platform proxy or an ordinary CDN URL.
+		if setting.Delivery.CDNAuthMode == "public" && storage.CDNEnabled(setting) && setting.Delivery.CDNAttachmentQueryForwarding {
+			access.URL, err = storage.PublicCDNObjectDownloadURL(setting, resource.ObjectKey, options.DownloadName)
+			access.Delivery = DeliveryCDN
+			access.ExpiresAt = nil
+		} else {
+			// Cross-origin `a[download]` is only advisory. A real browser download must
+			// therefore be enforced by the object store response itself. Downloads use
+			// a signed origin URL carrying Content-Disposition=attachment; media bytes
+			// never pass through the application server or a Blob relay.
+			if !storage.PublicOrigin(setting) {
+				if storage.CDNEnabled(setting) {
+					return nil, AccessError(503, "resource_attachment_unavailable", "CDN 未确认附件响应参数转发及缓存隔离合同，且源站不可直连；请检查存储分发设置")
+				}
+				return nil, AccessError(503, "resource_origin_private", "对象存储源站不可由浏览器直连，无法在不占用服务器带宽的前提下下载")
+			}
+			access.URL, err = storage.SignedOriginObjectDownloadURL(setting, resource.ObjectKey, expires, options.DownloadName)
+			access.Delivery = DeliveryOrigin
 		}
-		access.URL, err = storage.SignedOriginObjectDownloadURL(setting, resource.ObjectKey, expires, options.DownloadName)
-		access.Delivery = DeliveryOrigin
 	} else if storage.CDNEnabled(setting) {
 		access.URL, err = storage.SignCDNURL(setting, resource.ObjectKey, expires)
 		access.Delivery = DeliveryCDN
@@ -145,7 +163,15 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 	} else if setting.Delivery.RequireCDN {
 		return nil, AccessError(503, "resource_cdn_unconfigured", "CDN 访问鉴权未配置，请检查存储分发设置")
 	} else if storage.PublicOrigin(setting) {
-		access.URL, err = storage.SignedOriginObjectURL(setting, resource.ObjectKey, expires)
+		if signedAt.IsZero() {
+			access.URL, err = storage.SignedOriginObjectURL(setting, resource.ObjectKey, expires)
+		} else {
+			// Signed response fields must stay constant across the window. The
+			// budget is bounded by its shortest remaining authorization, rather
+			// than using TTL or the moving now-relative remainder.
+			cacheFor := expires.Sub(signedAt.Add(ttl / 4))
+			access.URL, err = storage.SignedOriginObjectDisplayURL(setting, resource.ObjectKey, signedAt, expires, cacheFor)
+		}
 		access.Delivery = DeliveryOrigin
 		if setting.CDNBaseURL != "" {
 			access.FallbackReason = "cdn_auth_unconfigured"
@@ -171,4 +197,18 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 		}
 	}
 	return access, nil
+}
+
+func browserCacheable(purpose AccessPurpose) bool {
+	return purpose == PurposeDisplay || purpose == PurposeCopy || purpose == PurposeProcess
+}
+
+// Align to ttl/4 so a URL has at least 3/4 of the administrator's TTL left.
+func alignedSigningTime(now time.Time, ttl time.Duration) time.Time {
+	window := ttl / 4
+	if window < time.Second {
+		return now.UTC()
+	}
+	unix := now.UTC().UnixNano()
+	return time.Unix(0, unix-unix%int64(window)).UTC()
 }

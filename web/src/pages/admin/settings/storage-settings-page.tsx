@@ -22,6 +22,7 @@ type OSSFormValues = {
     cdnAuthMode: "" | "public" | "qiniu" | string;
     requireCDN: boolean;
     allowPrivateProxy: boolean;
+    cdnAttachmentQueryForwarding: boolean;
     bucket: string;
     accessKeyId: string;
     accessKeySecret: string;
@@ -42,6 +43,7 @@ type StoragePayload = Pick<
     | "cdnAuthMode"
     | "requireCDN"
     | "allowPrivateProxy"
+    | "cdnAttachmentQueryForwarding"
     | "bucket"
     | "accessKeyId"
     | "accessKeySecret"
@@ -579,6 +581,14 @@ export default function StorageSettingsPage() {
                                                 <Switch checkedChildren="严格" unCheckedChildren="允许回源" />
                                             </Form.Item>
                                             <Form.Item
+                                                name="cdnAttachmentQueryForwarding"
+                                                label="公开 CDN 支持附件响应"
+                                                valuePropName="checked"
+                                                extra="仅在已验证 CDN 将 response-content-disposition 透传至源站、源站返回 attachment，且该参数参与 CDN 缓存键时开启。默认关闭；未确认时下载和非媒体文件走签名源站，源站不可直连则明确失败。此选项只对公开 CDN 生效。"
+                                            >
+                                                <Switch checkedChildren="已验证" unCheckedChildren="未确认" />
+                                            </Form.Item>
+                                            <Form.Item
                                                 name="allowPrivateProxy"
                                                 label="允许模型输入代理"
                                                 valuePropName="checked"
@@ -661,6 +671,7 @@ function formValues(setting: AdminOSSSetting): OSSFormValues {
         cdnAuthMode: setting.cdnAuthMode || "",
         requireCDN: setting.requireCDN === true,
         allowPrivateProxy: setting.allowPrivateProxy === true,
+        cdnAttachmentQueryForwarding: setting.cdnAttachmentQueryForwarding === true,
         bucket: setting.bucket || "",
         accessKeyId: setting.accessKeyId || "",
         accessKeySecret: "",
@@ -681,6 +692,7 @@ function providerDraftValues(mode: Exclude<StorageMode, "local">, setting: Admin
             cdnAuthMode: setting.cdnAuthMode || "",
             requireCDN: setting.requireCDN === true,
             allowPrivateProxy: setting.allowPrivateProxy === true,
+            cdnAttachmentQueryForwarding: setting.cdnAttachmentQueryForwarding === true,
             bucket: setting.bucket || "",
             accessKeyId: setting.accessKeyId || "",
             accessKeySecret: "",
@@ -697,6 +709,7 @@ function providerDraftValues(mode: Exclude<StorageMode, "local">, setting: Admin
         cdnAuthMode: "",
         requireCDN: false,
         allowPrivateProxy: false,
+        cdnAttachmentQueryForwarding: false,
         bucket: "",
         accessKeyId: "",
         accessKeySecret: "",
@@ -722,6 +735,7 @@ function normalizeStoragePayload(values: Partial<OSSFormValues>, setting: AdminO
         cdnAuthMode: values.cdnAuthMode || "",
         requireCDN: values.requireCDN === true,
         allowPrivateProxy: values.allowPrivateProxy === true,
+        cdnAttachmentQueryForwarding: values.cdnAttachmentQueryForwarding === true,
         bucket: values.bucket?.trim() || "",
         accessKeyId: values.accessKeyId?.trim() || "",
         accessKeySecret: values.accessKeySecret?.trim() || "",
@@ -771,7 +785,7 @@ function validatePublicBaseURL(value: string) {
 
 function storageResponseMatches(setting: AdminOSSSetting, expected: StoragePayload) {
     const actual = normalizeStoragePayload(formValues(setting), setting);
-    const fields: Array<keyof StoragePayload> = ["enabled", "provider", "region", "endpoint", "cdnBaseUrl", "cdnAuthMode", "requireCDN", "allowPrivateProxy", "bucket", "accessKeyId", "publicBaseUrl", "pathPrefix", "s3Preset", "pathStyle", "allowUserS3"];
+    const fields: Array<keyof StoragePayload> = ["enabled", "provider", "region", "endpoint", "cdnBaseUrl", "cdnAuthMode", "requireCDN", "allowPrivateProxy", "cdnAttachmentQueryForwarding", "bucket", "accessKeyId", "publicBaseUrl", "pathPrefix", "s3Preset", "pathStyle", "allowUserS3"];
     if (expected.accessKeySecret && !setting.hasAccessKeySecret) return false;
     if (expected.sessionToken && !setting.hasSessionToken) return false;
     return fields.every((key) => actual[key] === expected[key]);
@@ -790,6 +804,7 @@ function isAdminOSSSetting(value: unknown): value is AdminOSSSetting {
         typeof setting.cdnAuthMode === "string" &&
         typeof setting.requireCDN === "boolean" &&
         typeof setting.allowPrivateProxy === "boolean" &&
+        typeof setting.cdnAttachmentQueryForwarding === "boolean" &&
         typeof setting.bucket === "string" &&
         typeof setting.accessKeyId === "string" &&
         typeof setting.hasAccessKeySecret === "boolean" &&

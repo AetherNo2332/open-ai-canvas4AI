@@ -191,13 +191,13 @@ func TestResolveAccessUsesRuntimePolicyTTL(t *testing.T) {
 	resource := testReadyResource("local")
 	setting := storage.Settings{Runtime: storage.RuntimePolicy{AccessURLTTL: 2 * time.Hour, ProviderAccessURLTTL: 6 * time.Hour}}
 	var variants []ResourceVariant
-	for purpose, want := range map[AccessPurpose]time.Duration{PurposeDisplay: 2 * time.Hour, PurposeProvider: 6 * time.Hour} {
+	for purpose, want := range map[AccessPurpose]time.Time{PurposeDisplay: time.Date(2026, time.January, 2, 5, 0, 0, 0, time.UTC), PurposeProvider: now.Add(6 * time.Hour)} {
 		access, err := ResolveAccess(resource, setting, AccessOptions{Purpose: purpose}, now, testPlatformURL(&variants))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if access.ExpiresAt == nil || !access.ExpiresAt.Equal(now.Add(want)) {
-			t.Fatalf("%s access expiry = %v, want %v", purpose, access.ExpiresAt, now.Add(want))
+		if access.ExpiresAt == nil || !access.ExpiresAt.Equal(want) {
+			t.Fatalf("%s access expiry = %v, want %v", purpose, access.ExpiresAt, want)
 		}
 	}
 }

@@ -37,6 +37,7 @@ export type UserOSSSetting = {
     cdnAuthMode: "" | "public" | "qiniu" | string;
     requireCDN: boolean;
     allowPrivateProxy: boolean;
+    cdnAttachmentQueryForwarding: boolean;
     bucket: string;
     accessKeyId: string;
     hasAccessKeySecret: boolean;
@@ -59,6 +60,7 @@ export type UserOSSSettingInput = Pick<UserOSSSetting, "enabled" | "provider" | 
     cdnAuthMode?: "" | "public" | "qiniu" | string;
     requireCDN?: boolean;
     allowPrivateProxy?: boolean;
+    cdnAttachmentQueryForwarding?: boolean;
 };
 
 export type AccountFileStorageUsage = {

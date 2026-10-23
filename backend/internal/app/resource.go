@@ -205,20 +205,10 @@ func (s *Service) UploadResourceFile(userID string, fileName string, size int64,
 }
 
 func detectUploadedMimeType(file io.ReadSeeker, fileName string, declared string) string {
-	declared = strings.TrimSpace(strings.Split(declared, ";")[0])
-	if declared != "" && declared != "application/octet-stream" {
-		return declared
-	}
 	buffer := make([]byte, 512)
 	read, _ := file.Read(buffer)
 	_, _ = file.Seek(0, io.SeekStart)
-	if detected := http.DetectContentType(buffer[:read]); detected != "" && detected != "application/octet-stream" {
-		return strings.TrimSpace(strings.Split(detected, ";")[0])
-	}
-	if fromExtension := mime.TypeByExtension(filepath.Ext(fileName)); fromExtension != "" {
-		return strings.TrimSpace(strings.Split(fromExtension, ";")[0])
-	}
-	return "application/octet-stream"
+	return assets.DetectedContentType(buffer[:read], declared, fileName)
 }
 
 func (s *Service) ImportResourceURL(userID string, rawURL string, kind string, width int, height int, durationMs int64, uploadIdentity ...string) (*model.Resource, error) {
@@ -657,7 +647,7 @@ func (s *Service) decodeDataURL(value string) (string, []byte, error) {
 	if int64(len(data)) > megabytes(policy.Resource.GeneratedFileMB) {
 		return "", nil, fmt.Errorf("单个生成资源超过 %dMB", policy.Resource.GeneratedFileMB)
 	}
-	return mimeType, data, nil
+	return assets.DetectedContentType(data, mimeType, ""), data, nil
 }
 
 func intValue(value interface{}) int {
@@ -706,14 +696,8 @@ func downloadRemoteResource(rawURL string, maxBytes int64) (remoteResourcePayloa
 	if int64(len(data)) >= maxBytes {
 		return remoteResourcePayload{}, BadAuthRequest(fmt.Sprintf("远程资源必须小于 %s", formatStorageLimit(maxBytes)))
 	}
-	mimeType := strings.TrimSpace(resp.Header.Get("Content-Type"))
-	if idx := strings.Index(mimeType, ";"); idx >= 0 {
-		mimeType = strings.TrimSpace(mimeType[:idx])
-	}
-	if mimeType == "" || mimeType == "application/octet-stream" {
-		mimeType = http.DetectContentType(data)
-	}
 	fileName := path.Base(parsed.Path)
+	mimeType := assets.DetectedContentType(data, resp.Header.Get("Content-Type"), fileName)
 	if fileName == "" || fileName == "." || !strings.Contains(fileName, ".") {
 		fileName = "resource." + extensionFromMimeType(mimeType)
 	}

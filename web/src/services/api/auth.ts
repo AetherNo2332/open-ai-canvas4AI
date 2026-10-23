@@ -283,6 +283,7 @@ export type AdminOSSSetting = {
     cdnAuthMode: "" | "public" | "qiniu" | string;
     requireCDN: boolean;
     allowPrivateProxy: boolean;
+    cdnAttachmentQueryForwarding: boolean;
     bucket: string;
     accessKeyId: string;
     accessKeySecret?: string;

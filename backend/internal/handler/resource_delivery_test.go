@@ -134,3 +134,24 @@ func TestServeResourceDeliveryUsesRequestedDownloadName(t *testing.T) {
 		t.Fatalf("content-disposition = %q (err = %v)", recorder.Header().Get("Content-Disposition"), err)
 	}
 }
+
+func TestServeResourceDeliveryForcesAttachmentAndSandboxForNonMedia(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, mediaType := range []string{"image/svg+xml", "application/xml", "application/pdf", "application/octet-stream", "image/png"} {
+		t.Run(mediaType, func(t *testing.T) {
+			resource := &model.Resource{ID: "unsafe", MimeType: mediaType, ObjectKey: "users/u/fake.png"}
+			router := gin.New()
+			router.GET("/resource", func(c *gin.Context) {
+				serveResourceDelivery(c, &service.ResourceDelivery{Access: &assets.ResourceAccess{Delivery: assets.DeliveryLocal}, Stream: &assets.ResourceStream{Resource: resource, Body: io.NopCloser(strings.NewReader("<html><script>alert(1)</script></html>")), StatusCode: 200, ContentLength: 36}}, "private, no-cache", `inline; filename="fake.png"`)
+			})
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/resource", nil))
+			if recorder.Code != 200 || !strings.HasPrefix(recorder.Header().Get("Content-Disposition"), "attachment") || recorder.Header().Get("Content-Security-Policy") != "sandbox; default-src 'none'" || recorder.Header().Get("X-Content-Type-Options") != "nosniff" {
+				t.Fatalf("unsafe response: %d %#v", recorder.Code, recorder.Header())
+			}
+			if recorder.Header().Get("Content-Type") != "text/html" {
+				t.Fatalf("untrusted MIME survived: %q", recorder.Header().Get("Content-Type"))
+			}
+		})
+	}
+}

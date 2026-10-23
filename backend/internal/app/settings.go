@@ -52,6 +52,8 @@ type OSSSettingRequest struct {
 	CDNAuthMode       string `json:"cdnAuthMode"`
 	RequireCDN        bool   `json:"requireCDN"`
 	AllowPrivateProxy bool   `json:"allowPrivateProxy"`
+
+	CDNAttachmentQueryForwarding bool `json:"cdnAttachmentQueryForwarding"`
 }
 
 type PublicOSSSetting struct {
@@ -80,6 +82,8 @@ type PublicOSSSetting struct {
 	UpdatedBy               string     `json:"updatedBy"`
 	CreatedAt               time.Time  `json:"createdAt"`
 	UpdatedAt               time.Time  `json:"updatedAt"`
+
+	CDNAttachmentQueryForwarding bool `json:"cdnAttachmentQueryForwarding"`
 }
 
 func (s *Service) AdminOSSSetting(actor *model.User) (*PublicOSSSetting, error) {
@@ -545,7 +549,7 @@ func ossSettingFromRequest(req OSSSettingRequest, current ossSettingValue) (ossS
 		PathStyle:       req.PathStyle,
 		SessionToken:    strings.TrimSpace(req.SessionToken),
 		AllowUserS3:     req.AllowUserS3,
-		Delivery:        storage.DeliverySettings{CDNAuthMode: strings.ToLower(strings.TrimSpace(req.CDNAuthMode)), RequireCDN: req.RequireCDN, AllowPrivateProxy: req.AllowPrivateProxy},
+		Delivery:        storage.DeliverySettings{CDNAuthMode: strings.ToLower(strings.TrimSpace(req.CDNAuthMode)), RequireCDN: req.RequireCDN, AllowPrivateProxy: req.AllowPrivateProxy, CDNAttachmentQueryForwarding: req.CDNAttachmentQueryForwarding},
 	})
 	if next.Delivery.CDNAuthMode != "" && next.Delivery.CDNAuthMode != "public" && next.Delivery.CDNAuthMode != "qiniu" {
 		return next, BadAuthRequest("CDN 鉴权方式无效，仅支持 public 或 qiniu")
@@ -650,6 +654,8 @@ func (s *Service) publicOSSSetting(setting *model.SystemSetting, value ossSettin
 		CDNAuthMode:        value.Delivery.CDNAuthMode,
 		RequireCDN:         value.Delivery.RequireCDN,
 		AllowPrivateProxy:  value.Delivery.AllowPrivateProxy,
+
+		CDNAttachmentQueryForwarding: value.Delivery.CDNAttachmentQueryForwarding,
 	}
 	if setting != nil {
 		result.UpdatedBy = setting.UpdatedBy
@@ -682,6 +688,8 @@ func (s *Service) publicUserOSSSetting(setting *model.UserOSSSetting, value ossS
 		CDNAuthMode:        value.Delivery.CDNAuthMode,
 		RequireCDN:         value.Delivery.RequireCDN,
 		AllowPrivateProxy:  value.Delivery.AllowPrivateProxy,
+
+		CDNAttachmentQueryForwarding: value.Delivery.CDNAttachmentQueryForwarding,
 	}
 	if value.Provider == s3Provider && !allowUserS3 {
 		result.Enabled = false
