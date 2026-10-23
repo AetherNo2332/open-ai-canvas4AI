@@ -954,6 +954,7 @@ export async function saveRemoteUserDataNow(input?: string | readonly string[] |
     const options = input && typeof input === "object" && !Array.isArray(input) ? (input as { force?: boolean; repairMissingResources?: boolean }) : {};
     const epoch = sessionEpoch;
     const commandMode = useCanvasSessionStore.getState().bootstrapState !== "inactive";
+    if (commandMode && !useCanvasSessionStore.getState().scope && projectId !== undefined && (typeof projectId === "string" || projectId.length)) throw new Error("画布命令连接尚未就绪，本地内容已保留，尚未保存到云端");
     if (useCanvasSessionStore.getState().scope && projectId !== undefined && (typeof projectId === "string" || projectId.length)) {
         const ids = typeof projectId === "string" ? [projectId] : projectId;
         for (const id of ids) await openCanvasCommandSession(id);

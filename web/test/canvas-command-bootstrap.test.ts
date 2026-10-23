@@ -2,11 +2,12 @@ import { afterEach, expect, test } from "bun:test";
 import localforage from "localforage";
 import { apiClient, ApiError } from "@/services/api/request";
 import { ensureOrdinaryCanvasCommandWorkspace } from "@/services/canvas-command-bootstrap";
-import { associateCanvasProjectWithRemoteSync, initializeRemoteUserDataSession, resetRemoteUserDataSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
+import { associateCanvasProjectWithRemoteSync, createCanvasProjectWithRemoteSync, initializeRemoteUserDataSession, resetRemoteUserDataSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { disconnectCanvasCommandWorkspace, openCanvasCommandSession, useCanvasSessionStore } from "@/stores/canvas/use-canvas-session-store";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType } from "@/types/canvas";
+import { canvasContentHash } from "@/lib/canvas/canvas-content";
 
 const previous = { window: globalThis.window, adapter: apiClient.defaults.adapter, get: localforage.getItem, set: localforage.setItem };
 const storage = new Map<string, unknown>();
@@ -98,6 +99,8 @@ test("ordinary command activation waits for a remote baseline and archives local
     useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => ({ ...project, revision: 1 })) }));
     const remote = structuredClone(useCanvasStore.getState().openProject(id)) as CanvasProject;
     remote.nodes[0].metadata.content = "cloud body";
+    const baselineHash = await canvasContentHash(remote);
+    useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => ({ ...project, remoteContentHash: baselineHash })) }));
     const calls: string[] = [];
     let revision = 1;
     let seq = 0;
@@ -148,6 +151,8 @@ test("reopening restores an unknown original wire instead of converting legacy c
     useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => ({ ...project, revision: 1 })) }));
     const cloud = structuredClone(useCanvasStore.getState().openProject(id))!;
     cloud.nodes[0].metadata.content = "cloud";
+    const baselineHash = await canvasContentHash(cloud);
+    useCanvasStore.setState((state) => ({ projects: state.projects.map((project) => ({ ...project, remoteContentHash: baselineHash })) }));
     const wires: string[] = [];
     apiClient.defaults.adapter = async (config) => {
         let data: unknown;
@@ -173,4 +178,65 @@ test("reopening restores an unknown original wire instead of converting legacy c
     expect(second.state.projected?.nodes).toMatchObject([{ metadata: { content: "draft" } }]);
     expect(wires.length).toBeGreaterThanOrEqual(2);
     expect(wires.every((wire) => wire === wires[0])).toBe(true);
+});
+
+test.each(["old-epoch", "missing-epoch"])("same revision with %s cannot turn an unverified old cache into a new incarnation command", async (kind) => {
+    setup();
+    const id = useCanvasStore.getState().createProject("Cache");
+    useCanvasStore.getState().updateProject(id, { nodes: [{ id: "n", type: CanvasNodeType.Text, title: "Text", position: { x: 0, y: 0 }, width: 200, height: 100, metadata: { content: "old acknowledged" } }] });
+    const base = { ...structuredClone(useCanvasStore.getState().openProject(id))!, revision: 1 };
+    const hash = await canvasContentHash(base);
+    const cache = { ...base, ...(kind === "old-epoch" ? { documentEpoch: "old" } : {}), remoteContentHash: hash, nodes: base.nodes.map((node) => ({ ...node, metadata: { content: "old unsaved draft" } })) };
+    useCanvasStore.setState({ projects: [cache] });
+    const cloud = { ...base, nodes: base.nodes.map((node) => ({ ...node, metadata: { content: "new incarnation" } })) };
+    let commands = 0;
+    apiClient.defaults.adapter = async (config) => {
+        let data: unknown;
+        if (config.url === "/desktop/capabilities") data = { protocolVersion: 1, nodes: [{ type: "text", patchFields: { content: { path: "metadata.content" } } }], structuredFields: {} };
+        else if (config.url?.endsWith("/snapshot")) data = { protocolVersion: 1, canvasId: id, documentEpoch: "new", revision: 1, eventSeq: 0, document: cloud, entityVersions: { "node:n": 1 }, entityGenerations: { "node:n": 1 } };
+        else if (config.url?.endsWith("/events")) data = [];
+        else {
+            commands++;
+            throw new Error("old cache must not write");
+        }
+        return { data: { code: 0, data, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    await initializeRemoteUserDataSession(scope);
+    await ensureOrdinaryCanvasCommandWorkspace(scope);
+    const session = await openCanvasCommandSession(id);
+    await session.flush();
+    expect(commands).toBe(0);
+    expect(session.state.projected?.nodes).toMatchObject([{ metadata: { content: "new incarnation" } }]);
+    expect((await readCanvasSyncDrafts(id, scope))[0].project.nodes[0].metadata.content).toBe("old unsaved draft");
+});
+
+test.each(["connecting", "failed"] as const)("explicit project save cannot report success while bootstrap is %s; assets-only sync and later recovery remain available", async (phase) => {
+    setup();
+    await initializeRemoteUserDataSession(scope);
+    useCanvasSessionStore.setState({ bootstrapState: phase, scope: null });
+    const created = await createCanvasProjectWithRemoteSync("Preserved local");
+    expect(created.syncError).toBeInstanceOf(Error);
+    expect(useCanvasStore.getState().openProject(created.id)?.title).toBe("Preserved local");
+    await expect(saveRemoteUserDataNow(created.id)).rejects.toThrow("尚未就绪");
+    await saveRemoteUserDataNow([]);
+    let cloud: CanvasProject | undefined;
+    let writes = 0;
+    apiClient.defaults.adapter = async (config) => {
+        let data: unknown;
+        if (config.url === "/desktop/capabilities") data = { protocolVersion: 1, nodes: [], structuredFields: {} };
+        else if (config.url?.endsWith("/snapshot")) {
+            if (!cloud) throw new ApiError("missing", { status: 404 });
+            data = { protocolVersion: 1, canvasId: created.id, documentEpoch: "e", revision: 1, eventSeq: 0, document: cloud, entityVersions: {} };
+        } else if (config.method === "put") {
+            writes++;
+            cloud = { ...JSON.parse(config.data).project, revision: 1 };
+            data = { project: cloud };
+        } else if (config.url?.endsWith("/events")) data = [];
+        else throw new Error(`Unexpected ${config.method} ${config.url}`);
+        return { data: { code: 0, data, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    await ensureOrdinaryCanvasCommandWorkspace(scope);
+    await saveRemoteUserDataNow(created.id);
+    expect(cloud?.title).toBe("Preserved local");
+    expect(writes).toBe(1);
 });

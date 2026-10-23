@@ -91,9 +91,13 @@ export async function migrateCachedCanvasIntoSession(session: CanvasCommandSessi
     const snapshot = session.state.acknowledged;
     const capabilities = useCanvasSessionStore.getState().capabilities;
     if (!cached || !snapshot || !capabilities || hasJournal) return;
-    if (cached.revision !== snapshot.revision) {
+    const cachedEpoch = (cached as CanvasProject & { documentEpoch?: unknown }).documentEpoch;
+    // Revision can restart at 1 when an ID is deleted and recreated. Never
+    // attach a freshly read epoch/baseline to an old, unverified cache intent.
+    const sameIncarnation = typeof cachedEpoch === "string" ? cachedEpoch === snapshot.documentEpoch : Boolean(cached.remoteContentHash && cached.remoteContentHash === (await canvasContentHash(snapshot.document as CanvasProject)));
+    if (cached.revision !== snapshot.revision || !sameIncarnation) {
         const draftCount = await preserveCanvasSyncDraft(cached, scope);
-        useSyncProgressStore.getState().setProjectProgress(cached.id, { draftCount, message: "已加载云端版本，旧本地内容已保留为草稿" });
+        useSyncProgressStore.getState().setProjectProgress(cached.id, { draftCount, message: "已加载云端版本；旧缓存基线无法确认，已保留为草稿，可下载后恢复副本" });
         return;
     }
     // Legacy cache also contains chat/session/view state. Only shared document
