@@ -40,7 +40,7 @@ func TestCloudAgentCanvasPatchesPersistDraftSubmissionAndAllTerminalStates(t *te
 			state, _ := cloudAgentDecode(run)
 			taskID := state.MediaTaskID
 			if taskID == "" {
-				t.Fatal("approved task missing")
+				t.Fatalf("approved task missing: %+v", state.Events[max(0, len(state.Events)-3):])
 			}
 			if status == model.TaskStatusCancelled {
 				if err := s.CancelCloudAgent(context.Background(), "user", run.ID); err != nil {

@@ -216,6 +216,9 @@ func registerCloudAgentStoryboardTask(repo *repository.Repository, run *model.Cl
 	}
 	req := commands.Command{Protocol: 1, CanvasID: canvasID, DocumentEpoch: epoch.Epoch, ClientID: p.ClientID, OperationID: "media-version:" + task.ID, BaseRevision: snap.Revision}
 	_, _, err = cs.ExecuteHost(context.Background(), p, req, "task_submit", map[string]any{"taskId": task.ID, "intent": plan.Args.Intent}, false, func(tx *repository.Repository, doc commands.Document) (commands.Document, map[string]bool, error) {
+		if err = projectCloudAgentMediaNode(tx, run.UserID, canvasID, doc, input, plan, task); err != nil {
+			return nil, nil, err
+		}
 		nodes, _ := creationObjects(doc["nodes"])
 		node := nodes[plan.Args.NodeID]
 		scope, err := mediaversions.ScopeForNode(tx, run.UserID, canvasID, plan.Args.NodeID)
@@ -301,6 +304,9 @@ func bindCloudAgentStoryboardOutput(repo *repository.Repository, userID string, 
 			return e
 		}
 		for _, b := range active {
+			if task != nil && b.TaskID == task.ID {
+				continue
+			}
 			var c tasks.Consumer
 			_ = json.Unmarshal([]byte(b.ConsumerJSON), &c)
 			if b.TargetNodeID == a.StoryboardNodeID && c.RowID == a.StoryboardRowID {

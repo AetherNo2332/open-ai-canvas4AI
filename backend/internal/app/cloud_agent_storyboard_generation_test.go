@@ -19,9 +19,6 @@ func storyboardMediaFixture(t *testing.T) (*Service, *gorm.DB, map[string]any, m
 	if err := database.MigrateCanvasCommands(db); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
-		t.Fatal(err)
-	}
 	canvas, _ := s.repo.CanvasProjectForUser("user", "agent-canvas")
 	doc, _ := creationDocument(canvas.PayloadJSON)
 	doc["referenceFieldsVersion"] = 1
@@ -50,6 +47,59 @@ func storyboardMediaPrepare(t *testing.T, s *Service, args map[string]any) (Crea
 	state := cloudAgentRuntime{Request: agentTestRequest()}
 	return s.prepareCloudAgentMedia(&model.CloudAgentExecution{ID: "storyboard-run", UserID: "user"}, &state, storyboardMediaCall(t, args))
 }
+
+func TestCloudAgentStoryboardApprovalSubmitsItsOwnBindingOnce(t *testing.T) {
+	s, db, _, arguments := storyboardMediaFixture(t)
+	var args cloudAgentMediaArgs
+	raw, err := json.Marshal(arguments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(raw, &args); err != nil {
+		t.Fatal(err)
+	}
+	req := agentTestRequest()
+	req.PermissionMode = "request_approval"
+	req.Budget.MaxGenerationTasks, req.Budget.MaxVideoSeconds = 2, 24
+	view, err := s.CreateCloudAgentRun("user", req, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := storyboardMediaCall(t, arguments)
+	call.ID = "media-call"
+	run, _ := agentStagePiOutputForTest(t, s, db, view.ID, "", []cloudAgentCall{call})
+	if err = agentPiExecuteCallForTest(t, s, run.ID, "media-call"); err != nil {
+		t.Fatal(err)
+	}
+	approveAgentMediaDraft(t, s, run.ID)
+	_, state := agentInterjectionState(t, s, run.ID)
+	if state.MediaTaskID == "" {
+		t.Fatal("approved storyboard task was not submitted")
+	}
+	binding, err := s.repo.CanvasTaskBinding(state.MediaTaskID)
+	if err != nil || binding == nil || binding.TargetNodeID != args.StoryboardNodeID {
+		t.Fatalf("storyboard submission lost its binding: %+v %v", binding, err)
+	}
+	canvas, err := s.repo.CanvasProjectForUser("user", "agent-canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := creationDocument(canvas.PayloadJSON)
+	nodes, _ := creationObjects(doc["nodes"])
+	row := creationMaps(cloudAgentNodeMetadata(nodes["board"])["storyboard"].(map[string]any)["rows"])[0]
+	if row["videoNodeId"] != args.NodeID || row["taskId"] != state.MediaTaskID {
+		t.Fatalf("approved row was not bound to its submitted output: %+v", row)
+	}
+	agentCanvasPatchForOperation(t, state, "generate_media_submit")
+	if err = advancePiAgentForTest(t, s, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err = db.Model(&model.Task{}).Where("type = ?", "canvas_video").Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("approved storyboard created multiple tasks: %d %v", count, err)
+	}
+}
+
 func TestStoryboardGenerationResolvesDeclaredInputs(t *testing.T) {
 	s, _, _, args := storyboardMediaFixture(t)
 	req, plan, err := storyboardMediaPrepare(t, s, args)

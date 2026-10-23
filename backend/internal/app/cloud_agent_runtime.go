@@ -2270,9 +2270,6 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 			if err := validateCloudAgentPreparedAdmission(repo, run.UserID, prepared, task, prepare.Order, doc, media.Args); err != nil {
 				return err
 			}
-			if err := createCloudAgentMediaNode(repo, run.UserID, state.Request.CanvasID, media, task, policy, cloudAgentCanvasEventRecorder(run.ID, state)); err != nil {
-				return err
-			}
 		}
 		// 只有真正的首个**模型步**才允许换掉占位预留并推进相位。压缩摘要等内部任务
 		// 也走这条入队路径：若把它们当成首步，占位预留会被消耗、相位被清空，而
@@ -2297,7 +2294,14 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 			return err
 		}
 		if media != nil {
+			before, err := repo.CanvasProjectForUser(run.UserID, state.Request.CanvasID)
+			if err != nil {
+				return err
+			}
 			if err := registerCloudAgentStoryboardTask(repo, run, state.Request.CanvasID, media, task); err != nil {
+				return err
+			}
+			if err := emitCloudAgentCanvasChange(repo, run.ID, state, cloudAgentMutationInput{UserID: run.UserID, CanvasID: state.Request.CanvasID, BeforeJSON: before.PayloadJSON, Operation: "generate_media_submit"}); err != nil {
 				return err
 			}
 		}
@@ -2500,13 +2504,14 @@ func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, sta
 					return writeErr // Retry persistence, never resubmit the billed generation.
 				}
 			}
-			// A deleted canvas/node must still checkpoint the tool failure. Only
-			// a matched node can have changed and require an atomic canvas delta.
+			// Replay a committed result independently of later canvas edits or
+			// deletion. Legacy tasks still use the readable before document.
 			if nodeID != "" {
-				if readErr != nil {
-					return readErr
+				beforeJSON := ""
+				if readErr == nil {
+					beforeJSON = before.PayloadJSON
 				}
-				if err := emitCloudAgentCanvasChange(repo, run.ID, state, cloudAgentMutationInput{UserID: run.UserID, CanvasID: state.Request.CanvasID, BeforeJSON: before.PayloadJSON, Operation: "generate_media_complete"}); err != nil {
+				if err := emitCloudAgentMediaCompletion(repo, run, state, task.ID, beforeJSON); err != nil {
 					return err
 				}
 			}
@@ -2546,6 +2551,11 @@ func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, sta
 				// the same-run snapshot cache just like ordinary canvas writes.
 				cloudAgentInvalidateReadCache(state)
 				result["summary"] = "生成结果已回写画布节点"
+				if version, err := repo.CanvasMediaVersionForTask(run.UserID, task.ID); err != nil {
+					return err
+				} else if version != nil && version.Adoption == "selection_changed" {
+					result["summary"] = "新版本已保存，保留手动选择的当前版本"
+				}
 			}
 			if writeErr != nil {
 				recordTaskWritebackDiagnostic(task, target.NodeID, "failed", writebackReason, writeErr)

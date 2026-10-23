@@ -52,6 +52,15 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 			assertAgentCurrentResource(t, s, args.NodeID, "resource:ref-two")
 			approveAgentMediaDraft(t, s, run.ID)
 			_, state := agentInterjectionState(t, s, run.ID)
+			submitted := agentCanvasPatchForOperation(t, state, "generate_media_submit")["canvasPatch"].(map[string]any)
+			changed := creationMaps(submitted["nodes"])
+			if len(changed) != 1 || changed[0]["after"].(map[string]any)["id"] != args.NodeID {
+				t.Fatalf("version submit lacks the actual pending node: %+v", submitted)
+			}
+			projection := changed[0]["after"].(map[string]any)["metadata"].(map[string]any)["mediaVersion"].(map[string]any)
+			if projection["pendingVersionId"] == "" || projection["currentVersionId"] == "" {
+				t.Fatalf("version submit lost current/pending: %+v", projection)
+			}
 			if state.MediaTaskID == "" {
 				t.Fatalf("approved version has no task: %+v", state.Events[len(state.Events)-1])
 			}
@@ -122,6 +131,25 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 			version, err := s.repo.CanvasMediaVersionForTask("user", task.ID)
 			if err != nil || version == nil || version.Adoption != expectedAdoption {
 				t.Fatalf("version not adopted: %+v %v", version, err)
+			}
+			if err = advancePiAgentForTest(t, s, run.ID); err != nil {
+				t.Fatal(err)
+			}
+			_, completed := agentInterjectionState(t, s, run.ID)
+			found := false
+			for _, event := range completed.Events {
+				result, ok := event.Payload["result"].(map[string]any)
+				if !ok || result["taskId"] != task.ID || result["phase"] != "completion" {
+					continue
+				}
+				expected := "生成结果已回写画布节点"
+				if manual {
+					expected = "新版本已保存，保留手动选择的当前版本"
+				}
+				found = event.Type == "tool_completed" && result["summary"] == expected
+			}
+			if !found {
+				t.Fatal("completion did not report the persisted adoption decision")
 			}
 		})
 	}

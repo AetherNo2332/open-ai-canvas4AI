@@ -97,6 +97,11 @@ func (r *Repository) CommandEvents(ownerID, canvasID string, after int64, limit 
 func (r *Repository) SaveActorHistory(row *model.CanvasActorHistory) error {
 	return r.db.Save(row).Error
 }
+func (r *Repository) ActorHistoryForCommand(key model.CanvasCommandReceipt, sequence int64) (*model.CanvasActorHistory, error) {
+	var row model.CanvasActorHistory
+	err := r.db.Where("owner_id = ? AND canvas_id = ? AND epoch = ? AND actor_id = ? AND client_id = ? AND operation_id = ? AND sequence = ?", key.OwnerID, key.CanvasID, key.Epoch, key.ActorID, key.ClientID, key.OperationID, sequence).First(&row).Error
+	return &row, err
+}
 func (r *Repository) ActorHistory(ownerID, canvasID, epoch, actorID, clientID, state string) (*model.CanvasActorHistory, error) {
 	var row model.CanvasActorHistory
 	order := "sequence DESC"

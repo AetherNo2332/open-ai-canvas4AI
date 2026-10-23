@@ -42,7 +42,7 @@ func agentMediaFixtureWithReferenceVersion(t *testing.T, version int) (*Service,
 			t.Fatal(err)
 		}
 	}
-	doc := map[string]any{"nodes": []map[string]any{
+	doc := map[string]any{"id": "agent-canvas", "nodes": []map[string]any{
 		{"id": "shot-1", "type": "text", "title": "镜头1", "position": map[string]any{"x": 10, "y": 10}, "width": 300, "metadata": map[string]any{"content": strings.Repeat("镜头完整指令", 500)}},
 		{"id": "cat", "type": "image", "title": "叮当猫在飞", "position": map[string]any{"x": 10, "y": 300}, "width": 300, "metadata": map[string]any{"status": "success", "storageKey": "resource:ref-one", "content": "https://must-not-expose.invalid/one.png"}},
 		{"id": "hero", "type": "image", "title": "古风奥特曼", "position": map[string]any{"x": 400, "y": 300}, "width": 300, "metadata": map[string]any{"status": "success", "storageKey": "resource:ref-two"}},

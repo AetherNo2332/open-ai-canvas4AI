@@ -109,6 +109,10 @@ func emitCloudAgentCanvasChange(repo *repository.Repository, runID string, state
 	if err != nil {
 		return err
 	}
+	return emitCloudAgentCanvasDocuments(runID, state, input, before, after, canvas.Revision)
+}
+
+func emitCloudAgentCanvasDocuments(runID string, state *cloudAgentRuntime, input cloudAgentMutationInput, before, after map[string]any, revision int64) error {
 	nodes := cloudAgentObjectChanges(before["nodes"], after["nodes"])
 	edges := cloudAgentObjectChanges(before["connections"], after["connections"])
 	if !cloudAgentPatchCoversDocument(before, after) {
@@ -208,7 +212,7 @@ func emitCloudAgentCanvasChange(repo *repository.Repository, runID string, state
 	}
 	payload := map[string]any{
 		"canvasId": input.CanvasID, "operation": input.Operation, "actions": actions,
-		"canvasPatch": map[string]any{"canvasId": input.CanvasID, "baseRevision": canvas.Revision - 1, "revision": canvas.Revision, "updatedAt": after["updatedAt"], "nodes": nodes, "connections": edges},
+		"canvasPatch": map[string]any{"canvasId": input.CanvasID, "baseRevision": revision - 1, "revision": revision, "updatedAt": after["updatedAt"], "nodes": nodes, "connections": edges},
 	}
 	patch := payload["canvasPatch"].(map[string]any)
 	for _, kind := range []struct{ key, order, previous string }{{"nodes", "nodeOrder", "previousNodeOrder"}, {"connections", "connectionOrder", "previousConnectionOrder"}} {

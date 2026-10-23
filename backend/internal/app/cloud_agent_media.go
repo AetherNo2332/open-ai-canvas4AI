@@ -983,6 +983,30 @@ func createCloudAgentMediaNode(repo *repository.Repository, userID, canvasID str
 	}
 	beforeJSON := canvas.PayloadJSON
 	beforeHash := cloudAgentCanvasHash(doc)
+	if err = projectCloudAgentMediaNode(repo, userID, canvasID, doc, refs, plan, task); err != nil {
+		return err
+	}
+	if err = saveCloudAgentDocument(repo, canvas, doc, policy); err != nil {
+		return err
+	}
+	if len(recorder) > 0 && recorder[0] != nil {
+		stepID := firstNonEmpty(plan.CallID, a.NodeID)
+		operation := "generate_media_draft"
+		if task != nil {
+			operation = "generate_media_submit"
+		}
+		preview := cloudAgentMediaApprovalPreview(plan, "")
+		return recorder[0](repo, cloudAgentMutationInput{RunID: a.DraftRunID, UserID: userID, CanvasID: canvasID, StepID: stepID, Operation: operation, BeforeSnapshotHash: beforeHash, AfterSnapshotHash: cloudAgentCanvasHash(doc), BeforeJSON: beforeJSON, HasSubmittedTask: task != nil, Preview: &preview})
+	}
+	return nil
+}
+
+// Project approved config and task state into the caller's command document.
+func projectCloudAgentMediaNode(repo *repository.Repository, userID, canvasID string, doc, refs map[string]any, plan *cloudAgentMediaPlan, task *model.Task) error {
+	a := plan.Args
+	if a.Intent == "new_version" {
+		return nil
+	}
 	nodes := creationMaps(doc["nodes"])
 	x, y := 80.0, 80.0
 	for _, node := range nodes {
@@ -1037,7 +1061,11 @@ func createCloudAgentMediaNode(repo *repository.Repository, userID, canvasID str
 	if !replaced {
 		nodes = append(nodes, node)
 	}
-	doc["nodes"] = nodes
+	values := make([]any, len(nodes))
+	for index, value := range nodes {
+		values[index] = value
+	}
+	doc["nodes"] = values
 	if a.StoryboardNodeID != "" {
 		doc["id"] = canvasID
 		if err := bindCloudAgentStoryboardOutput(repo, userID, doc, a, task); err != nil {
@@ -1047,32 +1075,6 @@ func createCloudAgentMediaNode(repo *repository.Repository, userID, canvasID str
 	if task != nil {
 		meta["status"], meta["taskId"], meta["taskStatus"] = "loading", task.ID, "queued"
 		delete(meta, "agentDraftRunId")
-	}
-	if err := saveCloudAgentDocument(repo, canvas, doc, policy); err != nil {
-		return err
-	}
-	if len(recorder) > 0 && recorder[0] != nil {
-		stepID := plan.CallID
-		if stepID == "" {
-			stepID = a.NodeID
-		}
-		operation := "generate_media_draft"
-		if task != nil {
-			operation = "generate_media_submit"
-		}
-		preview := cloudAgentMediaApprovalPreview(plan, "")
-		return recorder[0](repo, cloudAgentMutationInput{
-			RunID:              a.DraftRunID,
-			UserID:             userID,
-			CanvasID:           canvasID,
-			StepID:             stepID,
-			Operation:          operation,
-			BeforeSnapshotHash: beforeHash,
-			AfterSnapshotHash:  cloudAgentCanvasHash(doc),
-			BeforeJSON:         beforeJSON,
-			HasSubmittedTask:   task != nil,
-			Preview:            &preview,
-		})
 	}
 	return nil
 }
@@ -1088,6 +1090,25 @@ func completeCloudAgentMediaNode(repo *repository.Repository, userID, canvasID, 
 	if version, err := repo.CanvasMediaVersionForTask(userID, task.ID); err != nil {
 		return "", err
 	} else if version != nil {
+		job, err := repo.CanvasMaterialization(task.ID)
+		if err != nil {
+			return "", err
+		}
+		key, bound, err := cloudAgentMediaResultKey(repo, userID, canvasID, task.ID)
+		if err != nil {
+			return "", err
+		}
+		if bound && job.State == "done" {
+			if _, err = repo.CommandReceipt(key); err == nil {
+				switch version.Adoption {
+				case "target_changed", "output_binding_changed", "row_deleted", "binding_changed":
+					return version.NodeID, &cloudAgentMediaWritebackError{creationConflict("输出归属已变化，版本保留在资源库"), version.Adoption}
+				}
+				return version.NodeID, nil
+			} else if !repo.IsMissing(err) {
+				return "", err
+			}
+		}
 		canvas, err := repo.CanvasProjectForUser(userID, canvasID)
 		if err != nil {
 			return "", &cloudAgentMediaWritebackError{creationConflict("目标画布不可用，版本保留在资源库"), "canvas_unavailable"}
@@ -1099,10 +1120,6 @@ func completeCloudAgentMediaNode(repo *repository.Repository, userID, canvasID, 
 		nodes, _ := creationObjects(doc["nodes"])
 		if nodes[version.NodeID] == nil {
 			return "", &cloudAgentMediaWritebackError{creationConflict("目标节点不存在，版本保留在资源库"), "target_node_missing"}
-		}
-		job, err := repo.CanvasMaterialization(task.ID)
-		if err != nil {
-			return "", err
 		}
 		if job.State != "done" {
 			return "", &cloudAgentMediaWritebackError{creationConflict("媒体仍待保存或写回，请恢复原任务"), "result_resource_unavailable"}
