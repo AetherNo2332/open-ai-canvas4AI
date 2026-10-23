@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveReleaseMetadata, releaseNotes } from './release-metadata.mjs';
+import { resolveReleaseMetadata, releaseNotes, previousFormalRelease } from './release-metadata.mjs';
 
 test('internal version produces formal release and legal image tags', () => {
   assert.deepEqual(resolveReleaseMetadata('v1.6.0(abcdef0)\n', 'v1.6.0'), {
@@ -22,11 +22,27 @@ test('rejects mismatched tags, invalid SHA and invalid image characters', () => 
 
 test('release notes collect exact current entry and intervening changes', () => {
   const log = '# Changes\n## v1.7.0(abcdef0)\nNew feature\n## v1.6.0(1234567)\nFix\n## v1.5.0(7654321)\nOld\n';
-  const notes = releaseNotes(log, 'v1.7.0(abcdef0)', 'v1.5.0');
+  const notes = releaseNotes(log, 'v1.7.0(abcdef0)', 'v1.5.0(7654321)');
   assert.match(notes, /New feature/);
   assert.match(notes, /Fix/);
   assert.doesNotMatch(notes, /Old/);
   assert.equal(releaseNotes(log, 'v1.7.0(abcdef0)'), 'New feature\n');
   assert.throws(() => releaseNotes(log, 'v1.7.0(0000000)'), /exact/);
-  assert.throws(() => releaseNotes(log, 'v1.7.0(abcdef0)', 'v1.4.0'), /Previous release/);
+  assert.throws(() => releaseNotes(log, 'v1.7.0(abcdef0)', 'v1.4.0(0000000)'), /Previous release/);
+});
+
+test('release notes retain unpublished entries sharing the last release baseline', () => {
+  const log = '# Changes\n## v1.6.1(aaaaaaa)\nRelease preparation\n## v1.6.0(bbbbbbb)\nDev fix\n## v1.6.0(ccccccc)\nLast published release\n';
+  assert.equal(releaseNotes(log, 'v1.6.1(aaaaaaa)', 'v1.6.0(ccccccc)'), 'Release preparation\n## v1.6.0(bbbbbbb)\nDev fix\n');
+});
+
+test('previous formal release skips drafts and prereleases', () => {
+  const releases = [
+    { tag_name: 'v1.7.0', draft: false, prerelease: false },
+    { tag_name: 'v1.7.0-rc.1', draft: false, prerelease: true },
+    { tag_name: 'v1.6.1', draft: true, prerelease: false },
+    { tag_name: 'v1.6.0', draft: false, prerelease: false },
+  ];
+  assert.equal(previousFormalRelease(releases, 'v1.7.0'), 'v1.6.0');
+  assert.equal(previousFormalRelease(releases, 'v1.7.0-rc.1'), 'v1.7.0');
 });

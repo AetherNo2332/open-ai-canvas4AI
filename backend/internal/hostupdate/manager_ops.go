@@ -635,8 +635,13 @@ func (m *Manager) checkHealthOnce(healthURL, targetVersion string) error {
 	if payload.Code != 0 {
 		return errors.New("健康接口业务状态异常")
 	}
-	if IsReleaseVersion(targetVersion) && payload.Data.Build.Version != "" && CompareVersions(payload.Data.Build.Version, targetVersion) != 0 {
-		return fmt.Errorf("运行版本仍为 %s，期望 %s", payload.Data.Build.Version, targetVersion)
+	if IsReleaseVersion(targetVersion) {
+		if strings.TrimSpace(payload.Data.Build.Version) == "" {
+			return errors.New("健康接口缺少运行版本")
+		}
+		if CompareVersions(payload.Data.Build.Version, targetVersion) != 0 {
+			return fmt.Errorf("运行版本仍为 %s，期望 %s", payload.Data.Build.Version, targetVersion)
+		}
 	}
 	return nil
 }

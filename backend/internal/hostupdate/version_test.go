@@ -11,14 +11,25 @@ func TestReleaseHealthInternalVersion(t *testing.T) {
 	for _, test := range []struct {
 		build, target string
 		wantError     bool
+		omitVersion   bool
 	}{
-		{"v1.6.0(abcdef0)", "v1.6.0", false},
-		{"v1.6.1(1234567)", "v1.6.1", false},
-		{"v1.6.0(abcdef0)", "v1.6.1", true},
-		{"v1.6.0.1(abcdef0)", "v1.6.0.1", false},
+		{build: "v1.6.0(abcdef0)", target: "v1.6.0"},
+		{build: "v1.6.1(1234567)", target: "v1.6.1"},
+		{build: "v1.6.0(abcdef0)", target: "v1.6.1", wantError: true},
+		{build: "v1.6.0.1(abcdef0)", target: "v1.6.0.1"},
+		{target: "v1.6.1", wantError: true},
+		{target: "v1.6.1", wantError: true, omitVersion: true},
 	} {
-		t.Run(test.build+"-"+test.target, func(t *testing.T) {
+		name := test.build + "-" + test.target
+		if test.omitVersion {
+			name = "missing-" + test.target
+		}
+		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if test.omitVersion {
+					fmt.Fprint(w, `{"code":0,"data":{"build":{}}}`)
+					return
+				}
 				fmt.Fprintf(w, `{"code":0,"data":{"build":{"version":%q}}}`, test.build)
 			}))
 			defer server.Close()

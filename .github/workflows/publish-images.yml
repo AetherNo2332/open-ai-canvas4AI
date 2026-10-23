@@ -200,12 +200,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          # Query this fork's published releases; local tags may belong to upstream.
-          previous=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq '.[] | select(.draft == false) | .tag_name' | \
-            awk -v current="$GITHUB_REF_NAME" '$0 != current && !found { print; found=1 }')
+          # Query this fork explicitly; local tags may belong to upstream.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | {tag_name, draft, prerelease}' | jq -s . > "$RUNNER_TEMP/releases.json"
+          previous=$(node scripts/release-metadata.mjs --releases-file "$RUNNER_TEMP/releases.json" --tag "$GITHUB_REF_NAME")
           args=(--tag "$GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md)
-          if [[ -n "$previous" ]]; then args+=(--previous-release "$previous"); fi
+          if [[ -n "$previous" ]]; then
+            previous_internal=$(gh api "repos/$GITHUB_REPOSITORY/contents/VERSION?ref=$previous" --jq '.content' | base64 --decode)
+            args+=(--previous-release "$previous" --previous-internal-version "$previous_internal")
+          fi
           node scripts/release-metadata.mjs "${args[@]}"
       - name: Create GitHub Release
         env:
