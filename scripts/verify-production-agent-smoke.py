@@ -43,6 +43,7 @@ class Smoke:
                     "DATABASE_URL": f"postgres://canvas_smoke:{password}@postgres:5432/canvas_smoke?sslmode=disable",
                     "CANVAS_BACKEND_IMAGE": self.project + "-backend:ci", "CANVAS_AGENT_IMAGE": self.project + "-agent:ci",
                     "CANVAS_WEB_IMAGE": self.project + "-web:ci", "CANVAS_AGENT_INTERNAL_TOKEN": secrets.token_urlsafe(48),
+                    "CANVAS_AGENT_WORKER_ID": "smoke-worker", "CANVAS_AGENT_WORKER_TOKEN": secrets.token_urlsafe(48),
                     "CANVAS_REGISTRATION_ENABLED": "true", "CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS": "model-stub",
                     "CANVAS_CORS_ORIGINS": f"http://127.0.0.1:{self.port}", "CANVAS_HTTP_PORT": str(self.port),
                     "CANVAS_UPDATER_SOCKET_DIR": str(self.directory / "updater-socket"), "CANVAS_SHUTDOWN_TIMEOUT": "15s"}
@@ -141,7 +142,7 @@ class Smoke:
         try:
             self.report["serviceStatus"] = self.compose("ps", "--format", "json", success=False).stdout[-12000:]
             logs = self.compose("logs", "--no-color", "--tail", "120", success=False).stdout
-            for secret in (self.env["POSTGRES_PASSWORD"], self.env["CANVAS_AGENT_INTERNAL_TOKEN"]):
+            for secret in (self.env["POSTGRES_PASSWORD"], self.env["CANVAS_AGENT_INTERNAL_TOKEN"], self.env["CANVAS_AGENT_WORKER_TOKEN"]):
                 logs = logs.replace(secret, "[redacted]")
             logs = re.sub(r"(?i)(postgres(?:ql)?://)[^\s@]+@", r"\1[redacted]@", logs)
             (self.output.parent / "production-smoke-services.log").write_text(logs[-50000:], encoding="utf-8")
@@ -182,7 +183,7 @@ class Smoke:
                    availability["queueReason"] == "worker_offline", stage="worker_not_ready",
                    queueReason=availability["queueReason"])
         probe = self.compose("run", "--rm", "--no-deps", "agent", "node", "-e",
-            "fetch('http://backend:8080/internal-agent/capacity',{method:'POST',headers:{Authorization:'Bearer '+process.env.CANVAS_AGENT_INTERNAL_TOKEN,'X-Agent-Protocol-Version':'canvas-pi-wire/v3','X-Pi-SDK-Version':'0.87.1','X-Pi-Session-Format':'3','Content-Type':'application/json'},body:JSON.stringify({owner:'ci-unready-probe',active:0,capacity:1,readiness:'degraded',readinessReason:'CI startup gate'})}).then(r=>{console.log(r.status);process.exit(r.status===200?0:1)})",
+            "fetch('http://backend:8080/internal-agent/capacity',{method:'POST',headers:{Authorization:'Bearer '+process.env.CANVAS_AGENT_WORKER_TOKEN,'X-Agent-Identity':process.env.CANVAS_AGENT_WORKER_ID,'X-Agent-Protocol-Version':'canvas-pi-wire/v3','X-Pi-SDK-Version':'0.87.1','X-Pi-Session-Format':'3','Content-Type':'application/json'},body:JSON.stringify({owner:'ci-unready-probe',active:0,capacity:1,readiness:'degraded',readinessReason:'CI startup gate'})}).then(r=>{console.log(r.status);process.exit(r.status===200?0:1)})",
             timeout=60, success=False)
         self.check("unready worker report is accepted", probe.returncode == 0 and probe.stdout.strip() == "200")
         availability = self.api("GET", "/agent/capabilities")["availability"]

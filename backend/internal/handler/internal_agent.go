@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -27,15 +26,31 @@ const (
 // every request; user ownership is checked by the service for each leased run.
 func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 	secret := os.Getenv("CANVAS_AGENT_INTERNAL_TOKEN")
-	if secret == "" {
+	if len(secret) < 32 {
 		return
+	}
+	if err := svc.SeedAgentWorker(); err != nil {
+		panic("agent worker bootstrap failed: " + err.Error())
 	}
 	group := r.Group("/internal-agent")
 	group.Use(func(c *gin.Context) {
 		provided := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-		if len(provided) != len(secret) || subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) != 1 {
-			c.AbortWithStatus(http.StatusUnauthorized)
-			return
+		if c.Param("id") != "" || strings.HasPrefix(c.Request.URL.Path, "/internal-agent/runs/") {
+			epoch, err := strconv.ParseInt(c.GetHeader("X-Agent-Session-Epoch"), 10, 64)
+			workerID, workerErr := svc.AgentRunGrantWorker(provided)
+			if err != nil || workerErr != nil || workerID != c.GetHeader("X-Agent-Identity") || !svc.ValidateAgentRunGrant(provided, c.GetHeader("X-Agent-User-ID"), c.Param("id"), c.GetHeader("X-Agent-Worker-ID"), epoch) {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
+		} else {
+			workerID := c.GetHeader("X-Agent-Identity")
+			worker, err := svc.AuthenticateAgentWorker(workerID, provided)
+			if err != nil {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
+			c.Set("agentWorkerID", worker.ID)
+			c.Set("agentWorkerUserID", worker.UserID)
 		}
 		if c.GetHeader("X-Agent-Protocol-Version") != internalAgentWireVersion ||
 			c.GetHeader("X-Pi-SDK-Version") != internalAgentPiSDKVersion ||
@@ -154,12 +169,22 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 			c.AbortWithStatus(http.StatusBadRequest)
 			return
 		}
-		claimed, err := svc.ClaimPiAgent(input.Owner)
+		claimed, err := svc.ClaimPiAgentForWorker(input.Owner, c.GetString("agentWorkerUserID"))
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"run": claimed})
+		if claimed == nil {
+			ok(c, gin.H{"run": nil})
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		token, err := svc.IssueAgentRunGrant(c.GetString("agentWorkerID"), input.Owner, claimed.UserID, claimed.RunID, claimed.PiSessionLeaseEpoch)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"run": claimed, "runAuthorization": token})
 	})
 	group.GET("/runs/:id", func(c *gin.Context) {
 		run, err := svc.PiAgentSnapshot(c.GetHeader("X-Agent-User-ID"), c.Param("id"), internalAgentOwner(c))
@@ -194,7 +219,20 @@ func RegisterInternalAgentRoutes(r *gin.Engine, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"renewed": true})
+		provided := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		workerID, err := svc.AgentRunGrantWorker(provided)
+		if err != nil {
+			c.AbortWithStatus(http.StatusUnauthorized)
+			return
+		}
+		epoch, _ := strconv.ParseInt(c.GetHeader("X-Agent-Session-Epoch"), 10, 64)
+		token, err := svc.IssueAgentRunGrant(workerID, c.GetHeader("X-Agent-Worker-ID"), c.GetHeader("X-Agent-User-ID"), c.Param("id"), epoch)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		ok(c, gin.H{"renewed": true, "runAuthorization": token})
 	})
 	group.POST("/runs/:id/messages", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)

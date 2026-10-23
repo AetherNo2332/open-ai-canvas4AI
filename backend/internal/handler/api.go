@@ -34,6 +34,7 @@ func RegisterCanvasAPI(api *gin.RouterGroup, svc *service.Service) {
 	RegisterAdminAnalyticsRoutes(api, svc)
 	RegisterAdminObservabilityRoutes(api, svc)
 	RegisterAdminAgentSkillDefaultsRoutes(api, svc)
+	RegisterAdminAgentWorkerRoutes(api, svc)
 	RegisterAdminStorageRoutes(api, svc)
 	RegisterAdminUpdateRoutes(api, svc)
 	RegisterAdminSystemPerformanceRoutes(api, svc)

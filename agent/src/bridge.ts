@@ -71,6 +71,7 @@ export interface PiSkillReadPage {
 }
 
 export interface PiSnapshot {
+	runAuthorization?: string;
 	subagent?: SubagentRuntime;
 
   skillRuntimeMode?: "pi-native" | "legacy-go";
@@ -216,15 +217,20 @@ export interface PiToolCall {
 export class CanvasBridge {
   constructor(private readonly baseUrl: string, private readonly token: string, readonly workerId: string,
     private readonly scheduler?: EventScheduler, private readonly events?: RunEvents,
-    private readonly availability: {nextProbeAt:number} = {nextProbeAt:0}) {
+    private readonly availability: {nextProbeAt:number} = {nextProbeAt:0},
+    private readonly identity: string = workerId) {
     if (!baseUrl || !token || !workerId) throw new Error("Pi bridge configuration is incomplete");
   }
 
   async claim(signal?: AbortSignal): Promise<PiSnapshot | null> {
     if(this.availability.nextProbeAt>Date.now())return null;
     if(this.availability.nextProbeAt)this.availability.nextProbeAt=Date.now()+5000;
-    const result = await this.request<{ run: PiSnapshot | null }>("POST", "/claim", { owner: this.workerId }, undefined, signal);
+    const result = await this.request<{ run: PiSnapshot | null; runAuthorization?: string }>("POST", "/claim", { owner: this.workerId }, undefined, signal);
     this.availability.nextProbeAt=0;
+    if (result.run) {
+      if (!result.runAuthorization) throw new FatalWorkerError("Canvas bridge missing run authorization");
+      result.run.runAuthorization = result.runAuthorization;
+    }
     return result.run;
   }
 
@@ -241,6 +247,7 @@ export class CanvasBridge {
 
   async snapshot(run: PiSnapshot, signal?: AbortSignal): Promise<PiSnapshot> {
     const result = await this.request<{ run: PiSnapshot }>("GET", `/runs/${encodeURIComponent(run.runId)}`, undefined, run, signal);
+    result.run.runAuthorization = run.runAuthorization;
     return result.run;
   }
 
@@ -252,7 +259,9 @@ export class CanvasBridge {
   }
 
   async renew(run: PiSnapshot, signal?: AbortSignal): Promise<void> {
-    await this.request("POST", `/runs/${encodeURIComponent(run.runId)}/renew`, {}, run, signal);
+    const result = await this.request<{runAuthorization:string}>("POST", `/runs/${encodeURIComponent(run.runId)}/renew`, {}, run, signal);
+    if (!result.runAuthorization) throw new FatalWorkerError("Canvas bridge missing renewed authorization");
+    run.runAuthorization = result.runAuthorization;
   }
 
   async release(run: PiSnapshot, signal?: AbortSignal): Promise<void> {
@@ -286,7 +295,7 @@ export class CanvasBridge {
       while (!signal.aborted) {
         try {
           const response = await fetch(`${this.baseUrl.replace(/\/+$/, "")}/internal-agent/events`, {
-            headers: { Authorization: `Bearer ${this.token}`, Accept: "text/event-stream", "Last-Event-ID": String(cursor),
+            headers: { Authorization: `Bearer ${this.token}`, "X-Agent-Identity": this.identity, Accept: "text/event-stream", "Last-Event-ID": String(cursor),
               "X-Agent-Protocol-Version": CANVAS_PI_WIRE_IDENTITY.protocolVersion,
               "X-Pi-SDK-Version": CANVAS_PI_WIRE_IDENTITY.piSdkVersion, "X-Pi-Session-Format": CANVAS_PI_WIRE_IDENTITY.sessionFormatVersion }, signal,
           });
@@ -500,7 +509,8 @@ export class CanvasBridge {
   private async request<T>(method: string, path: string, body?: unknown, run?: PiSnapshot, signal?: AbortSignal): Promise<T> {
     const operation=`${method} ${path.split('?')[0]}`;
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
+      Authorization: `Bearer ${run ? run.runAuthorization ?? "" : this.token}`,
+      "X-Agent-Identity": this.identity,
       Accept: "application/json",
       "X-Agent-Protocol-Version": CANVAS_PI_WIRE_IDENTITY.protocolVersion,
       "X-Pi-SDK-Version": CANVAS_PI_WIRE_IDENTITY.piSdkVersion,

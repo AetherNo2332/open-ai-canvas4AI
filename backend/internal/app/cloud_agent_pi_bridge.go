@@ -778,6 +778,14 @@ func (s *Service) PiNoToolTurn(userID, runID, owner, taskID string) (*PiTurnDeci
 }
 
 func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
+	return s.claimPiAgent(owner, "")
+}
+
+func (s *Service) ClaimPiAgentForWorker(owner, userScope string) (*PiAgentSnapshot, error) {
+	return s.claimPiAgent(owner, userScope)
+}
+
+func (s *Service) claimPiAgent(owner, userScope string) (*PiAgentSnapshot, error) {
 	if owner == "" {
 		return nil, BadAuthRequest("Pi worker ID is required")
 	}
@@ -785,7 +793,7 @@ func (s *Service) ClaimPiAgent(owner string) (*PiAgentSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	run, err := s.repo.ClaimPiAgentConfigured(owner, time.Now().UTC().Add(piAgentLeaseDuration), policy)
+	run, err := s.repo.ClaimPiAgentFair(owner, time.Now().UTC().Add(piAgentLeaseDuration), policy, userScope)
 	if err != nil || run == nil {
 		return nil, err
 	}

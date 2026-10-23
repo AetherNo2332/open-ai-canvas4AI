@@ -85,7 +85,7 @@ login_ghcr() {
 }
 
 ensure_agent_token() {
-    local token temporary_env
+    local token worker_token worker_id temporary_env
     token="$(sed -n 's/^CANVAS_AGENT_INTERNAL_TOKEN=//p' .env | tail -n 1)"
     if [[ -z "$token" ]]; then
         token="$(openssl rand -hex 32)"
@@ -100,6 +100,22 @@ ensure_agent_token() {
         mv "$temporary_env" .env
     fi
     [[ ${#token} -ge 32 ]] || fail "CANVAS_AGENT_INTERNAL_TOKEN 至少需要32字符；请更新 .env 后重试"
+    worker_token="$(sed -n 's/^CANVAS_AGENT_WORKER_TOKEN=//p' .env | tail -n 1)"
+    worker_id="$(sed -n 's/^CANVAS_AGENT_WORKER_ID=//p' .env | tail -n 1)"
+    if [[ -z "$worker_token" ]]; then worker_token="$(openssl rand -hex 32)"; fi
+    if [[ -z "$worker_id" ]]; then worker_id="compose-worker"; fi
+    [[ ${#worker_token} -ge 32 ]] || fail "CANVAS_AGENT_WORKER_TOKEN 至少需要32字符"
+    [[ "$worker_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] || fail "CANVAS_AGENT_WORKER_ID 无效"
+    temporary_env="$(mktemp ".env.XXXXXX")"
+    awk -v token="$worker_token" -v id="$worker_id" '
+        BEGIN { has_token=0; has_id=0 }
+        /^CANVAS_AGENT_WORKER_TOKEN=/ { print "CANVAS_AGENT_WORKER_TOKEN=" token; has_token=1; next }
+        /^CANVAS_AGENT_WORKER_ID=/ { print "CANVAS_AGENT_WORKER_ID=" id; has_id=1; next }
+        { print }
+        END { if (!has_token) print "CANVAS_AGENT_WORKER_TOKEN=" token; if (!has_id) print "CANVAS_AGENT_WORKER_ID=" id }
+    ' .env > "$temporary_env"
+    chmod --reference=.env "$temporary_env"
+    mv "$temporary_env" .env
 }
 
 prepare_environment() {

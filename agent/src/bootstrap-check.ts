@@ -7,8 +7,4 @@ export async function validateHarnessArtifacts(directory: string): Promise<void>
   for (const [key, expected] of Object.entries(CANVAS_PI_WIRE_IDENTITY)) {
     if (identity[key] !== expected) throw new Error(`Harness ${key} is incompatible with this worker`);
   }
-  const schema = JSON.parse(await readFile(join(directory, "TOOL_SCHEMA.json"), "utf8")) as { schemaVersion?: unknown; tools?: unknown };
-  if (typeof schema.schemaVersion !== "string" || !Array.isArray(schema.tools) || schema.tools.length === 0) {
-    throw new Error("Harness tool schema is missing or invalid");
-  }
 }

@@ -46,6 +46,8 @@ docker() {
             case "$*" in
                 *" up -d "*)
                     grep -Eq '^CANVAS_AGENT_INTERNAL_TOKEN=.{32,}$' .env || exit 22
+                    grep -Eq '^CANVAS_AGENT_WORKER_TOKEN=.{32,}$' .env || exit 25
+                    grep -Eq '^CANVAS_AGENT_WORKER_ID=.+$' .env || exit 26
                     grep -Eq '^CANVAS_UPDATER_TOKEN=.{32,}$' .env || exit 23
                     test -f updater.env || exit 24 ;;
             esac ;;
@@ -62,10 +64,11 @@ main
                 values = dict(line.split("=", 1) for line in (path / ".env").read_text().splitlines())
                 saved = dict(line.split("=", 1) for line in (path / "saved.env").read_text().splitlines())
                 self.assertEqual(values["CANVAS_IMAGE_TAG"], "1.6.0" if requested else "1.5.0")
-                for key in ("CANVAS_AGENT_INTERNAL_TOKEN", "CANVAS_UPDATER_TOKEN"):
+                for key in ("CANVAS_AGENT_INTERNAL_TOKEN", "CANVAS_AGENT_WORKER_TOKEN", "CANVAS_AGENT_WORKER_ID", "CANVAS_UPDATER_TOKEN"):
                     self.assertEqual(values[key], saved[key])
                     if existing:
-                        self.assertEqual(values[key], TOKEN)
+                        if key in ("CANVAS_AGENT_INTERNAL_TOKEN", "CANVAS_UPDATER_TOKEN"):
+                            self.assertEqual(values[key], TOKEN)
 
     def test_source_status_command_is_copyable_with_local_images(self):
         source = (ROOT / "scripts/install-server.sh").read_text(encoding="utf-8").rsplit('\nmain "$@"', 1)[0]
@@ -91,14 +94,15 @@ eval "$status"
         env = {key: value for key, value in os.environ.items() if not key.startswith("CANVAS_")}
         env.update(POSTGRES_PASSWORD="test-password", DATABASE_URL="postgresql://test:test@postgres/test",
                    CANVAS_BACKEND_IMAGE="example.invalid/backend:test", CANVAS_WEB_IMAGE="example.invalid/web:test",
-                   CANVAS_AGENT_IMAGE="example.invalid/agent:test", CANVAS_AGENT_INTERNAL_TOKEN=token)
+                   CANVAS_AGENT_IMAGE="example.invalid/agent:test", CANVAS_AGENT_INTERNAL_TOKEN=token,
+                   CANVAS_AGENT_WORKER_ID="compose-worker", CANVAS_AGENT_WORKER_TOKEN=TOKEN)
         command = ["docker", "compose", "--env-file", ".env.example"]
         for file in files:
             command += ["-f", file]
         return subprocess.run(command + ["config", "--format", "json"], cwd=ROOT, env=env,
                               capture_output=True, text=True, encoding="utf-8", timeout=30)
 
-    def test_production_entries_start_agent_with_backend_token(self):
+    def test_production_entries_start_agent_with_distinct_worker_token(self):
         for files in (["docker-compose.deploy.yml"], ["docker-compose.server.yml"],
                       ["docker-compose.deploy.yml", "docker-compose.build.yml"]):
             with self.subTest(files=files):
@@ -109,8 +113,11 @@ eval "$status"
                 agent = services["agent"]
                 self.assertFalse(agent.get("profiles"))
                 self.assertFalse(agent.get("ports"))
-                self.assertEqual(agent["environment"]["CANVAS_AGENT_INTERNAL_TOKEN"], TOKEN)
+                self.assertNotIn("CANVAS_AGENT_INTERNAL_TOKEN", agent["environment"])
+                self.assertEqual(agent["environment"]["CANVAS_AGENT_WORKER_TOKEN"], TOKEN)
+                self.assertEqual(agent["environment"]["CANVAS_AGENT_WORKER_ID"], "compose-worker")
                 self.assertEqual(services["backend"]["environment"]["CANVAS_AGENT_INTERNAL_TOKEN"], TOKEN)
+                self.assertEqual(services["backend"]["environment"]["CANVAS_AGENT_WORKER_TOKEN"], TOKEN)
                 self.assertEqual(agent["depends_on"]["backend"]["condition"], "service_healthy")
 
     def test_production_rejects_missing_internal_token(self):
@@ -151,6 +158,13 @@ eval "$status"
                         saved_tokens = [line for line in (Path(directory) / "saved.env").read_text().splitlines()
                                         if line.startswith("CANVAS_AGENT_INTERNAL_TOKEN=")]
                         self.assertEqual(saved_tokens, ["CANVAS_AGENT_INTERNAL_TOKEN=" + tokens[0]])
+                        worker_tokens = [line.split("=", 1)[1] for line in path.read_text().splitlines()
+                                         if line.startswith("CANVAS_AGENT_WORKER_TOKEN=")]
+                        saved_worker_tokens = [line for line in (Path(directory) / "saved.env").read_text().splitlines()
+                                               if line.startswith("CANVAS_AGENT_WORKER_TOKEN=")]
+                        self.assertEqual(len(worker_tokens), 1)
+                        self.assertEqual(saved_worker_tokens, ["CANVAS_AGENT_WORKER_TOKEN=" + worker_tokens[0]])
+                        self.assertNotEqual(worker_tokens[0], tokens[0])
                         if configured == TOKEN:
                             self.assertEqual(tokens[0], configured)
                         else:
@@ -162,7 +176,7 @@ eval "$status"
             path = Path(directory)
             for file in ("docker-compose.deploy.yml", "docker-compose.build.yml"):
                 shutil.copyfile(ROOT / file, path / file)
-            (path / ".env").write_text("POSTGRES_PASSWORD=test\nDATABASE_URL=postgresql://test:test@postgres/test\nCANVAS_AGENT_INTERNAL_TOKEN=" + TOKEN + "\n")
+            (path / ".env").write_text("POSTGRES_PASSWORD=test\nDATABASE_URL=postgresql://test:test@postgres/test\nCANVAS_AGENT_INTERNAL_TOKEN=" + TOKEN + "\nCANVAS_AGENT_WORKER_ID=compose-worker\nCANVAS_AGENT_WORKER_TOKEN=" + TOKEN + "\n")
             env = {key: value for key, value in os.environ.items() if not key.startswith("CANVAS_")}
             # Replace only container mutations. The real Compose parser checks interpolation.
             commands = '''

@@ -50,6 +50,7 @@ test('bridge transport failures are explicitly retryable; malformed successful J
 });
 
 const run: PiSnapshot = {
+  runAuthorization: "test-run-grant",
   runId: "run-wire",
   piSessionLeaseEpoch: 7,
   userId: "user-wire",
@@ -98,7 +99,7 @@ test("native restart resumes its in-flight model task without reposting changed 
   });
   assert.equal(request.method, "GET");
   assert.equal(request.url, "http://backend:8080/internal-agent/runs/run-wire/model-steps/old-task");
-  assert.equal(request.headers["Authorization"], "Bearer token");
+  assert.equal(request.headers["Authorization"], "Bearer test-run-grant");
   assert.equal(request.headers["X-Agent-Worker-ID"], "worker-1");
   assert.equal(request.headers["X-Agent-Session-Epoch"], "7");
 });
@@ -391,5 +392,28 @@ test("claim and capacity use the direct protocol without tool snapshot registrat
       { path: "/internal-agent/capacity", body: { owner: "worker", active: 0, capacity: 4 } },
       { path: "/internal-agent/claim", body: { owner: "worker" } },
     ]);
+  } finally { globalThis.fetch = original; }
+});
+
+test("claim installs a lease grant and run routes never send the worker credential", async () => {
+  const original = globalThis.fetch;
+  const sent: Array<{path:string; authorization:string; identity:string}> = [];
+  try {
+    globalThis.fetch = (async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      const headers = init?.headers as Record<string,string>;
+      sent.push({path, authorization: headers.Authorization ?? "", identity: headers["X-Agent-Identity"] ?? ""});
+      const data = path.endsWith("/claim") ? {run: {...run, runAuthorization: undefined}, runAuthorization: "grant-one"}
+        : path.endsWith("/renew") ? {renewed:true,runAuthorization:"grant-two"} : {run:{...run,runAuthorization:undefined}};
+      return new Response(JSON.stringify({code:0,data}));
+    }) as typeof fetch;
+    const bridge = new CanvasBridge("http://backend:8080", "worker-secret", "lease-owner", undefined, undefined, undefined, "provisioned-worker");
+    const claimed = await bridge.claim();
+    assert.ok(claimed);
+    await bridge.snapshot(claimed);
+    await bridge.renew(claimed);
+    await bridge.snapshot(claimed);
+    assert.deepEqual(sent.map(x => x.authorization), ["Bearer worker-secret", "Bearer grant-one", "Bearer grant-one", "Bearer grant-two"]);
+    assert.ok(sent.every(x => x.identity === "provisioned-worker"));
   } finally { globalThis.fetch = original; }
 });

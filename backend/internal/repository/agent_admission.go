@@ -90,7 +90,9 @@ func (r *Repository) ClaimPiAgentFair(owner string, until time.Time, fallback mo
 			"lease_owner", "lease_expires_at", "recovery_status", "recovery_attempts", "recovery_started_at", "progress_version", "claim_progress_version",
 			"runtime_phase", "wait_reason", "active_task_id", "media_task_id").
 			Where("engine = ? AND status IN ? AND (lease_expires_at IS NULL OR lease_expires_at < ?) AND (next_recovery_at IS NULL OR next_recovery_at <= ?)", "pi", []string{"queued", "running", "waiting_approval"}, now, now)
-		if len(userScope) > 0 && userScope[0] != "" { candidateQuery = candidateQuery.Where("user_id = ?", userScope[0]) }
+		if len(userScope) > 0 && userScope[0] != "" {
+			candidateQuery = candidateQuery.Where("user_id = ?", userScope[0])
+		}
 		if err := candidateQuery.Order("created_at,id").Find(&candidates).Error; err != nil {
 			return err
 		}
