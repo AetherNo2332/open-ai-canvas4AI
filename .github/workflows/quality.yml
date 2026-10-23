@@ -42,7 +42,7 @@ jobs:
     defaults:
       run:
         working-directory: backend
-    # CI强制6条依赖验收：3条 CANVAS_TEST_POSTGRES_DSN（迁移、素材修复、版本历史）、
+    # CI强制7条依赖验收：4条 CANVAS_TEST_POSTGRES_DSN（迁移、素材修复、版本历史、媒体并发准入）、
     # 1条 TEST_AGENT_POSTGRES_DSN（跨后端用户配额）、2条自起临时Redis实例
     # （Redis 租约、缓存白名单）。只跑 go test ./... 而不备齐这两样，这些路径永远不会被执行。
     services:

@@ -10,13 +10,13 @@ test("运行中不再锁死输入框，发送走插话而不是新建轮次", as
         + await Bun.file(new URL("../src/lib/canvas/cloud-agent-events.ts", import.meta.url)).text();
 
     // 运行中走插话分支（不建轮次、不走那套扣费幂等记账）
-    expect(panel).toContain("await interject(value)");
-    expect(panel).toContain("sendAgentInterjection(activeRun.id, { text: value, messageId })");
+    expect(panel).toContain("const mode = options.mode ?? await messageQueue.getMode()");
+    expect(panel).toContain("receipt = await sendAgentConversationMessage(conversationId, { ...delivery, request }, controller.signal)");
     // 乐观落进时间线时带插话标记，与「开新一轮」的消息在界面上区分开
     expect(panel).toContain('interjection: "sent"');
 
     // 输入框的禁用条件里不能再有 running —— 只保留「连不上事件流」「历史/待确认未水合」这类真不能发的状态
-    expect(panel).toContain('disabled={Boolean(run && connectionStatus !== "connected")');
+    expect(panel).toContain('disabled={activeHistoryState?.status === "unavailable" || !historyHydrated || !pendingHydrated}');
     const composer = panel.match(/<AgentChatComposer[\s\S]*?disabled=\{([^\n]+)\}/)?.[1];
     expect(composer).toBeDefined();
     expect(composer).not.toMatch(/\bbusy\b|\brunning\b/);

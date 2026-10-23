@@ -124,7 +124,7 @@ describe("canvas resource mention editor", () => {
         expect(component).toContain("[/、]([^\\s/、]*)$");
         // 保留主分支已恢复的固定 Skills 提示，不能因合并旧分支退回失效的外观配置断言。
         expect(source("../src/lib/canvas/agent-appearance.ts")).toContain("用 / 或 、 引用 Skills");
-        expect(source("../src/components/canvas/canvas-cloud-agent-panel.tsx")).toContain("用 / 或 、 引用 Skills");
+        expect(source("../src/components/canvas/canvas-cloud-agent-panel.tsx")).toContain("用 / 引用技能");
     });
 
     test("skill chips use one colored icon instead of exposing the serialized token", () => {

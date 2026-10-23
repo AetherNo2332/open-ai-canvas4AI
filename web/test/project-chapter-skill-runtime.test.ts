@@ -28,11 +28,10 @@ test("技能选择器占满表单宽度", async () => {
     expect(source).toContain('style={{ width: "100%" }}');
 });
 
-test("画布分镜生成统一经过 Skill Runtime", async () => {
-    const source = await Bun.file(new URL("../src/pages/canvas/use-canvas-storyboard.ts", import.meta.url)).text();
-    expect(source).toContain('profile: "shortDrama"');
-    expect(source).toContain("skillRuntime.prepare");
-    expect(source).toContain("...skillExecution.metadata");
-    expect(source).not.toContain("getSkillFile");
-    expect(source).not.toContain("getSkillBundle");
+test("画布拆镜请求交给当前 Agent 会话", async () => {
+    const source = await Bun.file(new URL("../src/pages/canvas/project.tsx", import.meta.url)).text();
+    expect(source).toContain("agentPanelRef.current?.sendPrompt");
+    expect(source).toContain("prompt: buildStoryboardAgentPrompt(node, prompt)");
+    const storyboard = await Bun.file(new URL("../src/pages/canvas/use-canvas-storyboard.ts", import.meta.url)).text();
+    expect(storyboard).not.toContain("skillRuntime.prepare");
 });

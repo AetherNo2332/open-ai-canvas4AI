@@ -10,6 +10,7 @@ REQUIRED = {
     ("platform", "TestRuntimeCoordinatorRedisLeasePreservesLongestTTL"),
     ("app", "TestClearAdminRuntimeCacheUsesRedisWhitelist"),
     ("database", "TestAgentAdmissionAuditPostgresUserCapAcrossBackends"),
+    ("tasks", "TestCanvasMediaAdmissionPostgres"),
 }
 
 

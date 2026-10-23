@@ -43,6 +43,14 @@ let syncPromise: Promise<void> | null = null;
 let syncQueued = false;
 let remoteOperationTail: Promise<void> = Promise.resolve();
 let subscriptionsInstalled = false;
+let onlineSyncWindow: Window | undefined;
+function resumeRemoteUserDataSync() {
+    if (remoteUserDataPhase === "ready") scheduleRemoteUserDataSync();
+    else if (activeRemoteUserId && remoteUserDataPhase === "failed") {
+        if (incrementalBootstrap) void retryIncrementalBootstrap().catch(() => undefined);
+        else void syncRemoteUserData(activeRemoteUserId).catch(() => undefined);
+    }
+}
 const remoteReadyListeners = new Set<() => void | Promise<void>>();
 const remoteAssetDeletionListeners = new Set<(scope: string, assetIds: readonly string[]) => void | Promise<void>>();
 let acknowledgedAssets = new Map<string, Asset>();
@@ -576,16 +584,13 @@ export async function syncRemoteUserData(userId?: string | null) {
 }
 
 export function installRemoteUserDataAutoSync() {
+    if (typeof window !== "undefined" && typeof window.addEventListener === "function" && onlineSyncWindow !== window) {
+        onlineSyncWindow?.removeEventListener?.("online", resumeRemoteUserDataSync);
+        onlineSyncWindow = window;
+        onlineSyncWindow.addEventListener("online", resumeRemoteUserDataSync);
+    }
     if (subscriptionsInstalled) return;
     subscriptionsInstalled = true;
-    if (typeof window !== "undefined")
-        window.addEventListener("online", () => {
-            if (remoteUserDataPhase === "ready") scheduleRemoteUserDataSync();
-            else if (activeRemoteUserId && remoteUserDataPhase === "failed") {
-                if (incrementalBootstrap) void retryIncrementalBootstrap().catch(() => undefined);
-                else void syncRemoteUserData(activeRemoteUserId).catch(() => undefined);
-            }
-        });
     useCanvasStore.subscribe((state, previous) => {
         if (state.projects === previous.projects) return;
         if (useCanvasSessionStore.getState().bootstrapState !== "inactive") return;
