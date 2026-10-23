@@ -619,6 +619,20 @@ paths:
           description: 当前版本或素材状态已变化，恢复未执行
         "428":
           description: 缺少当前 revision
+  /canvas-projects/{id}/realtime:
+    get:
+      tags: [canvas]
+      summary: 订阅已提交画布版本唤醒和临时设备 presence
+      description: Cookie 鉴权的 WebSocket；校验 Origin，每15秒复核归属。无查询参数、token 或正文。所有 JSON 文本帧 protocolVersion 为1；客户端32KiB、80条每秒，服务端帧512KiB上限（必要时省略临时drag/cursor）。每房间64、进程1024连接。消息仅唤醒，events/snapshot/poll 为恢复依据；Redis降级标明degraded/recovering，设备号0无全局有效性。关闭1008表示策略或鉴权失效，1013表示背压，1001表示服务关闭。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "101": {description: WebSocket ready、sync、invalidate、peers、coordination 帧；无持久写入ACK}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "503": {$ref: "#/components/responses/Error"}
   /canvas-projects/{id}/sync-status:
     get:
       tags: [canvas]

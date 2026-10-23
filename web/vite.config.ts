@@ -24,6 +24,20 @@ export default defineConfig({
     },
     server: {
         proxy: {
+            "^/api/canvas-projects/[^/]+/realtime$": {
+                target: apiProxyTarget,
+                changeOrigin: true,
+                xfwd: true,
+                ws: true,
+                configure(proxy) {
+                    proxy.on("proxyReqWs", (proxyRequest, request) => {
+                        // The WS proxy's xfwd path omits the original host.
+                        // Keep its external port for the backend Origin check.
+                        if (request.headers.host) proxyRequest.setHeader("X-Forwarded-Host", request.headers.host);
+                        proxyRequest.setHeader("X-Forwarded-Proto", "encrypted" in request.socket && request.socket.encrypted ? "https" : "http");
+                    });
+                },
+            },
             "/api": {
                 target: apiProxyTarget,
                 changeOrigin: true,

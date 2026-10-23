@@ -30,6 +30,10 @@ import (
 )
 
 type Service struct {
+	realtimeMu               sync.Mutex
+	realtime                 *canvas.RealtimeHub
+	realtimeBase             *repository.Repository
+	realtimeClosed           bool
 	canvasCommands           *commands.Service
 	canvasTasks              *tasks.Service
 	canvasCommandMode        bool
@@ -131,6 +135,9 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 	}
 	service := &Service{repo: repo, dataDir: dataDir, activeStorageTests: make(map[string]bool), activeCancels: make(map[string]context.CancelFunc), agentConflictStreak: make(map[string]int), taskDispatcherWake: make(chan struct{}, 1), coordinator: coordinator, runtimeErr: err, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, paymentRegistry: paymentRegistry, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time), geminiCacheLocks: make(map[string]*geminiCacheKeyLock), observability: observability.NewAggregator(4096), observabilityExporter: observability.NewConfiguredExporter()}
 	service.agentToolWake = make(chan struct{}, 1)
+	// Pin the observer to this base connection. Request/transaction facades
+	// cannot replace it with an uncommitted writer repository.
+	service.realtimeBase = repo
 	service.repo.SetStructuredWriteQuota(service.structuredWriteQuota)
 	service.taskBillingCoordinator = newTaskBillingCoordinator(service.repo)
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
@@ -208,11 +215,15 @@ func (s *Service) StartWorker() {
 func (s *Service) BeginDrain() { s.backgroundWorkers().BeginDrain() }
 
 func (s *Service) StopWorker(ctx context.Context) error {
+	realtimeErr := s.closeCanvasRealtime()
 	err := s.backgroundWorkers().Stop(ctx)
 	if s.observabilityExporter != nil {
 		s.observabilityExporter.CloseContext(ctx)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return realtimeErr
 }
 
 func (s *Service) IsDraining() bool { return s.backgroundWorkers().IsDraining() }

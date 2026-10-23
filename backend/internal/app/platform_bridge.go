@@ -154,13 +154,17 @@ func (s *Service) RecordChannelResult(ctx context.Context, channelID string, fai
 }
 
 func (s *Service) Close() error {
+	realtimeErr := s.closeCanvasRealtime()
 	if s == nil || s.coordinator == nil {
-		return nil
+		return realtimeErr
 	}
 	if !s.coordinator.HasRedis() {
-		return nil
+		return realtimeErr
 	}
-	return s.coordinator.Redis().Close()
+	if err := s.coordinator.Redis().Close(); err != nil {
+		return err
+	}
+	return realtimeErr
 }
 
 func ChannelSlotFailureDetails(err error) (string, string) {
