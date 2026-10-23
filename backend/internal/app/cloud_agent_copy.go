@@ -196,6 +196,7 @@ func cloudAgentCopyGraph(nodes, edges []map[string]any, op agentCanvasOp) ([]map
 // scoped connections can be rebound onto the copy instead of the source table. The
 // command planner applies the same rules; the shared conformance fixture pins them.
 func cloudAgentResetCopiedMetadata(meta map[string]any, nodeID string, idMap map[string]string) map[string]string {
+	delete(meta, "mediaVersion")
 	for _, key := range []string{"taskId", "taskClientOperationId", "retryOf", "attemptGroupId", "taskStatus", "taskProgress", "taskStage", "taskMediaStage", "taskCanRecoverMedia", "taskProvider", "taskStartedAt", "taskCompletedAt", "taskDurationMs", "taskErrorCode", "taskOfficialStatus", "taskReceiptRecorded", "taskCreatedAt", "taskUpdatedAt", "generationBatches", "batchRootId", "batchChildIds", "batchFailedCount", "isBatchRoot", "primaryImageId", "imageBatchExpanded", "batchUsesReferenceImages", "versionOfNodeId", "versionLabel", "versionPrimary", "errorDetails", "generationErrorCode", "resourceReloadAvailable", "failedPromptFingerprint"} {
 		delete(meta, key)
 	}

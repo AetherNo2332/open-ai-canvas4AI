@@ -2496,6 +2496,9 @@ func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, sta
 				}
 			}
 			result := map[string]any{"phase": "completion", "taskSubmitted": true, "taskId": task.ID, "nodeId": nodeID, "targetNodeId": target.NodeID, "status": task.Status}
+			for key, value := range cloudAgentTaskDiagnostic(repo, task) {
+				result[key] = value
+			}
 			var toolErr error
 			generationMessage := ""
 			writebackMessage, writebackReason := "", ""

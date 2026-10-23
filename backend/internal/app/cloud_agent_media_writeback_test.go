@@ -89,8 +89,8 @@ func TestCloudAgentMediaCleanupUsesPersistedTaskTarget(t *testing.T) {
 			nodes, _ := creationObjects(doc["nodes"])
 			meta := nodes[args.NodeID]["metadata"].(map[string]any)
 			if missingTarget {
-				if meta["status"] != "loading" || !strings.Contains(run.FailureMessage, "缺少有效的目标节点") {
-					t.Fatal("unknown target must not be guessed from a copied task ID")
+				if meta["status"] != "error" {
+					t.Fatal("durable version target did not recover missing request metadata")
 				}
 			} else if meta["status"] != "error" {
 				t.Fatal("known target did not receive terminal status")
@@ -146,6 +146,7 @@ func TestCloudAgentMediaCompletionKeepsGenerationAndWritebackFailures(t *testing
 					}
 					if test.change == "rebind" {
 						node["metadata"].(map[string]any)["taskId"] = "replacement-task"
+						node["metadata"].(map[string]any)["mediaVersion"].(map[string]any)["activeTaskId"] = "replacement-task"
 					}
 				}
 				updated = append(updated, node)

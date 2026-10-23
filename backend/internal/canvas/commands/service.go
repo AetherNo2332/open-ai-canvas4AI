@@ -248,7 +248,7 @@ func (s *Service) Create(ctx context.Context, p identity.Principal, req CreateCa
 func receiptKey(p identity.Principal, req Command) model.CanvasCommandReceipt {
 	return model.CanvasCommandReceipt{OwnerID: p.OwnerID, CanvasID: req.CanvasID, Epoch: req.DocumentEpoch, ActorID: p.ID, ClientID: req.ClientID, OperationID: req.OperationID}
 }
-func (s *Service) validation(ctx context.Context, tx *repository.Repository, p identity.Principal, doc Document, ops []Operation) (ValidationContext, error) {
+func (s *Service) validation(ctx context.Context, tx *repository.Repository, p identity.Principal, doc Document, ops []Operation, canvasIDs ...string) (ValidationContext, error) {
 	v := ValidationContext{Principal: p, Now: time.Now()}
 	var err error
 	if s.options.Validation != nil {
@@ -307,7 +307,11 @@ func (s *Service) validation(ctx context.Context, tx *repository.Repository, p i
 	}
 	for _, op := range ops {
 		if op.Type == "use_media_version" {
-			scope, err := mediaversions.ScopeForNode(tx, p.OwnerID, text(doc["id"]), op.ID)
+			canvasID := text(doc["id"])
+			if len(canvasIDs) > 0 {
+				canvasID = canvasIDs[0]
+			}
+			scope, err := mediaversions.ScopeForNode(tx, p.OwnerID, canvasID, op.ID)
 			if err != nil {
 				return v, PersistenceError(err)
 			}
@@ -548,7 +552,7 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 				}
 			}
 		}
-		v, err := s.validation(ctx, tx, p, doc, req.Operations)
+		v, err := s.validation(ctx, tx, p, doc, req.Operations, row.ID)
 		if err != nil {
 			return err
 		}

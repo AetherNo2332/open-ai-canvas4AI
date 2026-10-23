@@ -2,6 +2,7 @@ package repository
 
 import (
 	"encoding/json"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"infinite-canvas/backend/internal/model"
 	"time"
@@ -83,7 +84,19 @@ func (r *Repository) EnqueueCanvasMaterialization(taskID string) error {
 	}
 	now := time.Now()
 	job := model.CanvasMaterializationJob{TaskID: taskID, OwnerID: b.OwnerID, State: "pending", CreatedAt: now, UpdatedAt: now}
-	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&job).Error
+	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&job).Error; err != nil {
+		return err
+	}
+	// A recovered media-save failure reuses its paid task, but needs a fresh
+	// materialization receipt. Ordinary duplicate delivery remains a no-op.
+	result := r.db.Model(&model.CanvasMaterializationJob{}).Where("task_id = ? AND state = ? AND outcome = ? AND EXISTS (SELECT 1 FROM tasks WHERE tasks.id = ? AND tasks.status = ?)", taskID, "done", "media_save_pending", taskID, model.TaskStatusSucceeded).Updates(map[string]any{"state": "pending", "outcome": "", "next_attempt_at": nil, "last_error": "", "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 1 {
+		return r.db.Model(&model.CanvasTaskBinding{}).Where("task_id = ?", taskID).UpdateColumn("resolution_version", gorm.Expr("resolution_version + 1")).Error
+	}
+	return nil
 }
 
 // Reconciles older cancellation/lease-cleanup paths at startup. Successful task

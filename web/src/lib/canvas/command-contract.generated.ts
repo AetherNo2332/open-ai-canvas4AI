@@ -281,4 +281,3 @@ export interface TimelineOperation {
   trackIds?: Array<string>;
   clipIds?: Array<string>;
 }
-

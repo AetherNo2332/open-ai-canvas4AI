@@ -12,6 +12,8 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
+var errMediaVersionTargetChanged = errors.New("media version target changed")
+
 func mediaVersionError(err error) error {
 	var version *mediaversions.Error
 	if errors.As(err, &version) {

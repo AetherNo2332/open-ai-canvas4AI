@@ -20,7 +20,7 @@ summary 必填，内容为给用户的最终答复全文。通过后持久化回
 
 ## canvas_get_state
 
-首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=references 查有效引用和版本，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边；focusNodeIds 的子图默认 selected。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断正文按 nextRead 续读；kind 是业务类型。角色卡读 character 的版本、resolvedImage 和来源；结构化行用专用 read。
+首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=media_versions 指定一个媒体节点，固定20版，用 nextBeforeVersion 作为 beforeVersion 续页；返回当前/待生成版本、可否新建和阻断原因，不含原始请求。references 查有效引用，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断按 nextRead 续读；kind 是业务类型。角色卡读 character 的 resolvedImage 和来源；结构化行用专用 read。
 
 ## canvas_read_batch_table
 
@@ -95,7 +95,7 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 ## canvas_apply_ops
 
-基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。add_node 必填 nodeType，仅可另给 title/content/x/y；width/height/folderStyle/folderTheme/frame/locked 等尺寸样式须用后续 update_node.patch，先查节点合同。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId，id 为新ID；set_parent 只改容器归属，parentId 空串解除，不负责排版；后续写入使用回执新快照，需精确位置时回读。replace_text 给唯一 match/replacement；排序数组各含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具，不编辑连线。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active，保留资源和既有引用。不写任意 metadata、托管标记、任务状态或 URL。
+基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的就绪 versionId，无生成费用；即使选择当前版本，也会阻止在途结果自动采用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。
 
 ## canvas_arrange_nodes
 
@@ -103,7 +103,7 @@ nodeId 指定当前画布图片节点或角色卡绑定图，服务端读取资�
 
 ## generate_media
 
-提交媒体生成，审批、价格、预算与资源校验仍生效。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，自动分配产物 ID、标题、位置并回填；模型和参数可用项目/目录默认值。已有绑定产物不能通过省略 nodeId 绕开占用。普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds 等。生成前按实际输入查 model_list；只编辑用画布工具。已绑定任务或已有产物不可覆盖；状态用 task_get。提交失败按 reason 修正，已提交任务失败须告知用户，重新收费生成需用户明确要求及当前审批流程。
+提交图片、视频或音频任务，审批、价格、预算与资源校验仍生效。默认 intent=create；更新已有成品明确传 intent=new_version，复用原 nodeId 和分镜输出绑定，期间旧版可用，成功自动采用。生成期间手动选择版本后，结果只进历史。原任务执行中、接单未知或媒体待保存时，先 task_get 核对并恢复原任务，不新付费生成。new_version 的 referenceNodeIds 可含自身，服务端冻结旧资源且不建自连线。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，可省略 nodeId 续用原输出；普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds。生成前按实际输入查 model_list。taskSubmitted 只表示入队，必须看 status、versionStatus 和 adoption；失败后新收费生成需用户明确要求及当前审批流程。
 ## parameter_001
 
 短标识，如 1
@@ -386,7 +386,7 @@ true 只预演不写入
 
 ## parameter_078
 
-可续用的未提交媒体草稿ID；无草稿时才使用新唯一ID
+create 续用未提交草稿；new_version 使用已有媒体节点ID；分镜可省略并沿用原输出
 
 ## parameter_079
 

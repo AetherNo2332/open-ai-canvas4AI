@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/canvas/capability"
 	"infinite-canvas/backend/internal/canvas/commands"
+	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/canvas/tasks"
 	"infinite-canvas/backend/internal/identity"
@@ -179,15 +180,18 @@ func cloudAgentStoryboardOutputTarget(doc map[string]any, a cloudAgentMediaArgs,
 // Called within the existing Agent admission transaction, after billing/task
 // persistence. The structured materializer owns all subsequent canvas writes.
 func registerCloudAgentStoryboardTask(repo *repository.Repository, run *model.CloudAgentExecution, canvasID string, plan *cloudAgentMediaPlan, task *model.Task) error {
-	if plan.Args.StoryboardNodeID == "" {
-		return nil
-	}
 	epoch, err := repo.CommandEpoch(run.UserID, canvasID)
 	if err != nil {
 		return err
 	}
-	consumer, _ := json.Marshal(tasks.Consumer{Kind: "storyboard", RowID: plan.Args.StoryboardRowID, Field: plan.Args.Mode + "NodeId", OutputNodeID: plan.Args.NodeID})
-	binding := model.CanvasTaskBinding{TaskID: task.ID, OwnerID: run.UserID, CanvasID: canvasID, Epoch: epoch.Epoch, ActorID: run.UserID, ClientID: "agent:" + run.ID, OperationID: plan.CallID, TargetNodeID: plan.Args.StoryboardNodeID, Mode: plan.Args.Mode, ConsumerJSON: string(consumer), CreatedAt: time.Now()}
+	target := plan.Args.NodeID
+	consumerValue := tasks.Consumer{}
+	if plan.Args.StoryboardNodeID != "" {
+		target = plan.Args.StoryboardNodeID
+		consumerValue = tasks.Consumer{Kind: "storyboard", RowID: plan.Args.StoryboardRowID, Field: plan.Args.Mode + "NodeId", OutputNodeID: plan.Args.NodeID}
+	}
+	consumer, _ := json.Marshal(consumerValue)
+	binding := model.CanvasTaskBinding{TaskID: task.ID, OwnerID: run.UserID, CanvasID: canvasID, Epoch: epoch.Epoch, ActorID: run.UserID, ClientID: "agent:" + run.ID, OperationID: plan.CallID, TargetNodeID: target, Mode: plan.Args.Mode, ConsumerJSON: string(consumer), CreatedAt: time.Now()}
 	if err = repo.InsertCanvasTaskBinding(&binding); err != nil {
 		return err
 	}
@@ -204,7 +208,37 @@ func registerCloudAgentStoryboardTask(repo *repository.Repository, run *model.Cl
 			}
 		}
 	}
-	return nil
+	cs := commands.NewService(repo, commands.ServiceOptions{})
+	p := identity.Principal{ID: run.UserID, OwnerID: run.UserID, Role: "owner", ClientID: binding.ClientID, Scopes: identity.OwnerScopes()}
+	snap, err := cs.ReadSnapshot(context.Background(), p, canvasID)
+	if err != nil {
+		return err
+	}
+	req := commands.Command{Protocol: 1, CanvasID: canvasID, DocumentEpoch: epoch.Epoch, ClientID: p.ClientID, OperationID: "media-version:" + task.ID, BaseRevision: snap.Revision}
+	_, _, err = cs.ExecuteHost(context.Background(), p, req, "task_submit", map[string]any{"taskId": task.ID, "intent": plan.Args.Intent}, false, func(tx *repository.Repository, doc commands.Document) (commands.Document, map[string]bool, error) {
+		nodes, _ := creationObjects(doc["nodes"])
+		node := nodes[plan.Args.NodeID]
+		scope, err := mediaversions.ScopeForNode(tx, run.UserID, canvasID, plan.Args.NodeID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if _, err = mediaversions.Begin(tx, scope, node, *task, plan.Args.Intent); err != nil {
+			return nil, nil, BadAuthRequest(err.Error())
+		}
+		if plan.Args.StoryboardNodeID != "" {
+			_, _, rows, err := storyboardNodeFromDocument(doc, plan.Args.StoryboardNodeID)
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, row := range rows {
+				if stringValue(row["id"]) == plan.Args.StoryboardRowID {
+					row["taskId"], row["taskStatus"], row["status"] = task.ID, string(task.Status), "loading"
+				}
+			}
+		}
+		return doc, map[string]bool{"node:" + plan.Args.NodeID: true, "node:" + target: true}, nil
+	})
+	return err
 }
 
 func cloudAgentStoryboardConsumer(repo *repository.Repository, taskID string) (*model.CanvasTaskBinding, tasks.Consumer, error) {
@@ -225,18 +259,26 @@ func cloudAgentStoryboardConsumer(repo *repository.Repository, taskID string) (*
 	return binding, consumer, nil
 }
 func (s *Service) materializeCloudAgentStoryboardTask(task *model.Task) error {
-	if !cloudAgentHasStoryboardTarget(task) {
+	binding, err := s.repo.CanvasTaskBinding(task.ID)
+	if s.repo.IsMissing(err) {
 		return nil
 	}
-	binding, _, err := cloudAgentStoryboardConsumer(s.repo, task.ID)
-	if err != nil || binding == nil {
+	if err != nil {
 		return err
+	}
+	if binding.OwnerID != task.UserID {
+		return BadAuthRequest("任务画布归属不一致")
 	}
 	if err = s.repo.EnqueueCanvasMaterialization(task.ID); err != nil {
 		return err
 	}
 	_, service := s.CanvasCommandServices()
-	return service.Materialize(context.Background(), task.ID)
+	err = service.Materialize(context.Background(), task.ID)
+	var output *commands.Error
+	if errors.As(err, &output) && output.Reason == "result_resource_unavailable" {
+		return nil
+	}
+	return err
 }
 
 func cloudAgentHasStoryboardTarget(task *model.Task) bool {

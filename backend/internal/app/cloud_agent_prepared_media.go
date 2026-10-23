@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/canvas/contract"
+	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -86,7 +87,7 @@ func cloudAgentMediaDependencyHash(doc map[string]any, args cloudAgentMediaArgs)
 			return "", err
 		}
 		metadata, _ := target["metadata"].(map[string]any)
-		for _, key := range []string{"locked", "taskId", "generationTaskId", "agentDraftRunId", "status"} {
+		for _, key := range []string{"locked", "taskId", "generationTaskId", "agentDraftRunId", "status", "mediaVersion"} {
 			input[key] = metadata[key]
 		}
 		targetInput = map[string]any{"id": target["id"], "type": target["type"], "locked": target["locked"], "input": input, "resource": resourceProjection(metadata)}
@@ -132,7 +133,19 @@ func cloudAgentMediaDependencyHash(doc map[string]any, args cloudAgentMediaArgs)
 		}
 		storyboard = map[string]any{"nodeId": args.StoryboardNodeID, "rowId": args.StoryboardRowID, "mode": args.Mode, "row": row, "referenceNodeIds": board["referenceNodeIds"], "videoInputMode": metadata["storyboardVideoInputMode"]}
 	}
-	return creationHash(map[string]any{"version": 3, "target": targetInput, "bindings": bindings, "source": source, "edges": edges, "storyboard": storyboard}), nil
+	return creationHash(map[string]any{"version": 4, "intent": args.Intent, "target": targetInput, "bindings": bindings, "source": source, "edges": edges, "storyboard": storyboard}), nil
+}
+
+func scopedCloudAgentMediaDependency(repo *repository.Repository, userID, canvasID string, doc map[string]any, args cloudAgentMediaArgs) (string, error) {
+	dependency, err := cloudAgentMediaDependencyHash(doc, args)
+	if err != nil || args.Intent != "new_version" {
+		return dependency, err
+	}
+	scope, err := mediaversions.ScopeForNode(repo, userID, canvasID, args.NodeID)
+	if err != nil {
+		return "", creationConflict("目标节点生命周期已变化，请重新准备并批准")
+	}
+	return creationHash(map[string]any{"dependency": dependency, "scope": scope}), nil
 }
 
 func cloudAgentResourceSignature(resource *model.Resource) string {
@@ -185,7 +198,7 @@ func cloudAgentQuoteHash(order *model.BillingOrder) string {
 }
 
 func prepareCloudAgentMediaApproval(repo *repository.Repository, userID string, doc map[string]any, plan *cloudAgentMediaPlan, request CreateTaskRequest, task *model.Task, order *model.BillingOrder) (*cloudAgentPreparedMedia, error) {
-	dependency, err := cloudAgentMediaDependencyHash(doc, plan.Args)
+	dependency, err := scopedCloudAgentMediaDependency(repo, userID, task.ProjectID, doc, plan.Args)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +243,7 @@ func validateCloudAgentPreparedAdmission(repo *repository.Repository, userID str
 	if prepared == nil || prepared.Version != 1 || prepared.Hash == "" || time.Now().After(prepared.Quote.ExpiresAt) {
 		return creationConflict("生成报价已过期，请刷新报价并重新批准；未提交任务")
 	}
-	dependency, err := cloudAgentMediaDependencyHash(doc, args)
+	dependency, err := scopedCloudAgentMediaDependency(repo, userID, task.ProjectID, doc, args)
 	if err != nil {
 		return err
 	}

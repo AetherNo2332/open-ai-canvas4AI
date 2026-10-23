@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -440,6 +441,23 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 				}
 			}
 			item["generation"] = generation
+			if mediaversions.Supported(capability.GenerationMode) {
+				state := mediaversions.ReadState(node)
+				generation["currentVersionId"], generation["pendingVersionId"], generation["activeTaskId"], generation["versionCount"] = state.CurrentVersionID, state.PendingVersionID, state.ActiveTaskID, state.VersionCount
+				scope, scopeErr := mediaversions.ScopeForNode(repo, userID, canvasID, id)
+				if scopeErr == nil {
+					admission := mediaversions.CheckAdmission(repo, scope, node, "new_version")
+					generation["canCreateVersion"] = admission == nil
+					if e, ok := admission.(*mediaversions.Error); ok {
+						generation["newVersionBlockedReason"] = e.Reason
+					}
+				}
+				if state.ActiveTaskID != "" {
+					if pending, err := repo.TaskForUser(userID, state.ActiveTaskID); err == nil {
+						generation["pendingTask"] = cloudAgentTaskDiagnostic(repo, pending)
+					}
+				}
+			}
 		}
 		if draftRunID := stringValue(meta["agentDraftRunId"]); draftRunID != "" && stringValue(meta["taskId"]) == "" && stringValue(meta["generationTaskId"]) == "" {
 			draft := map[string]any{"submitted": false, "requiresApproval": true, "ownerStatus": "unknown"}

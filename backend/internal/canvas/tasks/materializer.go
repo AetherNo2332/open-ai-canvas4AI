@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/canvas/commands"
@@ -59,7 +60,7 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 	origin := identity.Principal{ID: binding.ActorID, OwnerID: binding.OwnerID, ClientID: binding.ClientID}
 	req := commands.Command{Protocol: 1, CanvasID: binding.CanvasID, DocumentEpoch: binding.Epoch, ClientID: p.ClientID, OperationID: "task-result:" + taskID}
 	if binding.ResolutionVersion > 0 {
-		req.OperationID += ":resolution"
+		req.OperationID += fmt.Sprintf(":resolution:%d", binding.ResolutionVersion)
 	}
 	outcome := "applied"
 	_, _, err = s.commands.ExecuteHost(ctx, p, req, "task_result", map[string]any{"taskId": taskID, "status": task.Status, "resultJson": task.ResultJSON, "error": task.Error}, true, func(tx *repository.Repository, doc commands.Document) (next commands.Document, reads map[string]bool, applyErr error) {
@@ -71,6 +72,9 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 		if version != nil {
 			var result commands.Document
 			result, outcome, err = settleMediaVersion(tx, doc, *binding, *task, *version, outputs)
+			if err == nil && outcome == "target_changed" {
+				return nil, nil, errMediaVersionTargetChanged
+			}
 			return result, nil, err
 		}
 		if binding.Mode == "previs" {
@@ -226,8 +230,13 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 		return doc, nil, nil
 	}, origin)
 	if err != nil {
-		if e, ok := err.(*commands.Error); ok && (e.Reason == "document_epoch_mismatch" || e.Reason == "entity_deleted") {
-			outcome = e.Reason
+		e, commandError := err.(*commands.Error)
+		if errors.Is(err, errMediaVersionTargetChanged) || (commandError && (e.Reason == "document_epoch_mismatch" || e.Reason == "entity_deleted")) {
+			if commandError {
+				outcome = e.Reason
+			} else {
+				outcome = "target_changed"
+			}
 			if version != nil {
 				return s.repo.CommandTransaction(ctx, func(tx *repository.Repository) error {
 					if err := tx.LockCanvasWrite(binding.OwnerID, binding.CanvasID); err != nil {
@@ -302,7 +311,7 @@ func (s *Service) materializeOutputs(ctx context.Context, task model.Task) ([]mo
 		}
 		values, err := resultValues(task.ResultJSON, binding.Mode)
 		if err != nil {
-			return err
+			return &commands.Error{Reason: "result_resource_unavailable", Message: "生成结果尚未保存为可用资源，请恢复原任务"}
 		}
 		for index, value := range values {
 			outputMode := binding.Mode
@@ -327,11 +336,14 @@ func (s *Service) materializeOutputs(ctx context.Context, task model.Task) ([]mo
 					}
 				}
 				if id == "" {
-					return fmt.Errorf("output resource not materialized")
+					return &commands.Error{Reason: "result_resource_unavailable", Message: "生成结果尚未保存为可用资源，请恢复原任务"}
 				}
 				r, err := tx.ResourceForUser(task.UserID, id)
+				if err != nil && !tx.IsMissing(err) {
+					return err
+				}
 				if err != nil || r.Status != model.ResourceStatusReady || !strings.HasPrefix(r.MimeType, outputMode+"/") {
-					return fmt.Errorf("output resource not ready or wrong kind")
+					return &commands.Error{Reason: "result_resource_unavailable", Message: "生成资源未就绪或类型不匹配，请恢复原任务"}
 				}
 				data = map[string]any{"storageKey": "resource:" + id, "dataUrl": assets.FileURL(id), "url": assets.FileURL(id), "width": r.Width, "height": r.Height, "durationMs": r.DurationMs, "bytes": r.Size, "mimeType": r.MimeType, "hasAudio": value["hasAudio"]}
 				if preview, ok := value["preview"].(map[string]any); ok && binding.Mode == "video" {

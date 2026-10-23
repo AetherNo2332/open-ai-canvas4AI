@@ -106,7 +106,7 @@ func main() {
 	for _, n := range names {
 		b.WriteString(output[n] + "\n\n")
 	}
-	if err := os.WriteFile(path, []byte(b.String()), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(strings.TrimRight(b.String(), "\n")+"\n"), 0644); err != nil {
 		panic(err)
 	}
 }

@@ -159,7 +159,7 @@ func Begin(repo *repository.Repository, scope Scope, node map[string]any, task m
 		}
 		return prior, nil
 	}
-	if err := CheckAdmission(repo, scope, node, intent); err != nil {
+	if err := CheckAdmission(repo, scope, node, intent, task.ID); err != nil {
 		return nil, err
 	}
 	state := ReadState(node)
@@ -203,7 +203,7 @@ func Begin(repo *repository.Repository, scope Scope, node map[string]any, task m
 
 // CheckAdmission is read-only and runs before preparing a billed task. The
 // caller must keep the account/canvas lock until Begin and task commit finish.
-func CheckAdmission(repo *repository.Repository, scope Scope, node map[string]any, intent string) error {
+func CheckAdmission(repo *repository.Repository, scope Scope, node map[string]any, intent string, admittedTaskID ...string) error {
 	if node == nil || str(node["id"]) != scope.NodeID || !Supported(str(node["type"])) {
 		return fail("invalid_version_target", "媒体目标无效")
 	}
@@ -226,7 +226,7 @@ func CheckAdmission(repo *repository.Repository, scope Scope, node map[string]an
 	if legacy == "" {
 		legacy = str(m["generationTaskId"])
 	}
-	if legacy != "" {
+	if legacy != "" && !(len(admittedTaskID) == 1 && legacy == admittedTaskID[0]) {
 		original, err := repo.TaskForUser(scope.OwnerID, legacy)
 		if err != nil {
 			return fail("task_unavailable", "无法核对原任务，请先恢复任务记录")
@@ -275,6 +275,10 @@ func Finish(repo *repository.Repository, scope Scope, node map[string]any, task 
 	if task.Status == model.TaskStatusSubmissionUncertain {
 		row.Status, row.Adoption = "submission_uncertain", "pending"
 		return false, "submission_uncertain", repo.UpdateCanvasMediaVersion(row)
+	}
+	if task.Status == model.TaskStatusFailed && task.MediaRecoveryJSON != "" {
+		row.Status, row.Adoption, row.Error = "materializing", "pending", "媒体已生成，保存未完成，请恢复原任务"
+		return false, "media_save_pending", repo.UpdateCanvasMediaVersion(row)
 	}
 	row.Status, row.Adoption = string(task.Status), "not_adopted"
 	if task.Status == model.TaskStatusSucceeded {

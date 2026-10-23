@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -19,6 +20,15 @@ func agentMediaFixture(t *testing.T) (*Service, *gorm.DB, cloudAgentMediaArgs) {
 func agentMediaFixtureWithReferenceVersion(t *testing.T, version int) (*Service, *gorm.DB, cloudAgentMediaArgs) {
 	t.Helper()
 	s, db, _, _ := creationTestService(t)
+	if err := db.Create(&model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MigrateCanvasCommands(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MigrateCanvasTasks(db); err != nil {
+		t.Fatal(err)
+	}
 	capability := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceVolcengineArkVideo), "seedance-test")
 	capability.Video.References.PromptMaxChars = 16000
 	for _, row := range []any{

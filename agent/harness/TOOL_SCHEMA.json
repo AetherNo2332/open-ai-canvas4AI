@@ -980,11 +980,16 @@
     },
     {
       "function": {
-        "description": "首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=references 查有效引用和版本，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边；focusNodeIds 的子图默认 selected。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断正文按 nextRead 续读；kind 是业务类型。角色卡读 character 的版本、resolvedImage 和来源；结构化行用专用 read。",
+        "description": "首次 {} 读整画布目录；nodeIds 精读单次最多8个，默认 detail。view=media_versions 指定一个媒体节点，固定20版，用 nextBeforeVersion 作为 beforeVersion 续页；返回当前/待生成版本、可否新建和阻断原因，不含原始请求。references 查有效引用，edit 才返回 editable/richText。connections 默认 none；selected 仅所读节点之间，incident 含关联边。focusNodeIds+depth 或 includeRelated 与 nodeIds 互斥。截断按 nextRead 续读；kind 是业务类型。角色卡读 character 的 resolvedImage 和来源；结构化行用专用 read。",
         "name": "canvas_get_state",
         "parameters": {
           "additionalProperties": false,
           "properties": {
+            "beforeVersion": {
+              "description": "media_versions 的 nextBeforeVersion 游标",
+              "minimum": 0,
+              "type": "integer"
+            },
             "connectionOffset": {
               "description": "连线分页起点；hasMoreConnections 为真时保持节点 offset 不变并使用 nextConnectionOffset",
               "minimum": 0,
@@ -1038,12 +1043,13 @@
               "type": "integer"
             },
             "view": {
-              "description": "默认目录；指定节点默认 detail。references 查关系；edit 才返回 editable/richText",
+              "description": "默认目录；指定节点默认 detail。media_versions 指定单个媒体 nodeId，固定20版；references 查关系；edit 才返回 editable/richText",
               "enum": [
                 "catalog",
                 "detail",
                 "references",
-                "edit"
+                "edit",
+                "media_versions"
               ],
               "type": "string"
             }
@@ -3863,7 +3869,7 @@
     },
     {
       "function": {
-        "description": "基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。add_node 必填 nodeType，仅可另给 title/content/x/y；width/height/folderStyle/folderTheme/frame/locked 等尺寸样式须用后续 update_node.patch，先查节点合同。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId，id 为新ID；set_parent 只改容器归属，parentId 空串解除，不负责排版；后续写入使用回执新快照，需精确位置时回读。replace_text 给唯一 match/replacement；排序数组各含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具，不编辑连线。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active，保留资源和既有引用。不写任意 metadata、托管标记、任务状态或 URL。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "基于最新 snapshotHash 原子编辑，每批最多20项，需 type+id。use_media_version 给 media_versions 的就绪 versionId，无生成费用；即使选择当前版本，也会阻止在途结果自动采用。add_node 必填 nodeType，仅另给 title/content/x/y；尺寸样式用后续 update_node.patch。delete_node 清理引用保留素材；duplicate_node 给 sourceNodeId 和副本ID；set_parent 改容器归属，parentId 空串解除，精确位置须回读。replace_text 给唯一 match/replacement；排序数组含全部ID一次。引用写 generationSpec.referenceBindings/inputBindings，分镜用专用工具。归档用 usageStatus=archived，可给 usageNote/supersededByNodeId；恢复 active。不写任意 metadata、托管标记、任务状态或 URL。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "canvas_apply_ops",
         "parameters": {
           "additionalProperties": false,
@@ -3948,6 +3954,16 @@
                     },
                     "required": [
                       "rowIds"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "use_media_version"
+                      }
+                    },
+                    "required": [
+                      "versionId"
                     ]
                   }
                 ],
@@ -4468,7 +4484,7 @@
                     "type": "string"
                   },
                   "type": {
-                    "description": "创建、修改、删除、复制节点，维护分组和排序，或精确替换文本；输入引用写引用字段（update_node 的 patch），不连节点",
+                    "description": "创建、修改、删除、复制节点，维护分组和排序，或精确替换文本；use_media_version 用 versionId 选择已有就绪媒体，无生成费用；输入引用写引用字段",
                     "enum": [
                       "add_node",
                       "update_node",
@@ -4477,8 +4493,13 @@
                       "set_parent",
                       "replace_text",
                       "reorder_nodes",
-                      "reorder_rows"
+                      "reorder_rows",
+                      "use_media_version"
                     ],
+                    "type": "string"
+                  },
+                  "versionId": {
+                    "description": "media_versions 返回的当前节点就绪版本 ID",
                     "type": "string"
                   },
                   "x": {
@@ -4611,7 +4632,7 @@
     },
     {
       "function": {
-        "description": "提交媒体生成，审批、价格、预算与资源校验仍生效。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，自动分配产物 ID、标题、位置并回填；模型和参数可用项目/目录默认值。已有绑定产物不能通过省略 nodeId 绕开占用。普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds 等。生成前按实际输入查 model_list；只编辑用画布工具。已绑定任务或已有产物不可覆盖；状态用 task_get。提交失败按 reason 修正，已提交任务失败须告知用户，重新收费生成需用户明确要求及当前审批流程。 优先原样复制 model_list 返回的 selectionId（服务端签发的一次性凭证，不要修改其中任何字符）。兼容期也接受展开字段：非空 logicalModelId，或同时提供非空 channelId 和 channelModelKey。若 selectionId 与展开字段都完全省略，服务端仅在当前项目已配置该能力的可用默认模型时使用它；没有可用默认模型时拒绝提交，不会随机选模。selectionId 与展开字段互斥；未使用的选择字段省略或传空字符串，不得传 null 或仅含空白字符串。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
+        "description": "提交图片、视频或音频任务，审批、价格、预算与资源校验仍生效。默认 intent=create；更新已有成品明确传 intent=new_version，复用原 nodeId 和分镜输出绑定，期间旧版可用，成功自动采用。生成期间手动选择版本后，结果只进历史。原任务执行中、接单未知或媒体待保存时，先 task_get 核对并恢复原任务，不新付费生成。new_version 的 referenceNodeIds 可含自身，服务端冻结旧资源且不建自连线。分镜给 mode+storyboardNodeId+storyboardRowId，提示词、引用和时长从行读取，可省略 nodeId 续用原输出；普通生成按 schema 给 prompt/nodeId/title/referenceNodeIds。生成前按实际输入查 model_list。taskSubmitted 只表示入队，必须看 status、versionStatus 和 adoption；失败后新收费生成需用户明确要求及当前审批流程。 优先原样复制 model_list 返回的 selectionId（服务端签发的一次性凭证，不要修改其中任何字符）。兼容期也接受展开字段：非空 logicalModelId，或同时提供非空 channelId 和 channelModelKey。若 selectionId 与展开字段都完全省略，服务端仅在当前项目已配置该能力的可用默认模型时使用它；没有可用默认模型时拒绝提交，不会随机选模。selectionId 与展开字段互斥；未使用的选择字段省略或传空字符串，不得传 null 或仅含空白字符串。 本次模型响应只提交一个写工具调用（ops 可含多项），等待回执后再写。快照冲突先重读；成功后使用回执新快照或重新读取，不复用旧快照。",
         "name": "generate_media",
         "parameters": {
           "additionalProperties": false,
@@ -4741,6 +4762,14 @@
               "minimum": 0,
               "type": "integer"
             },
+            "intent": {
+              "description": "默认 create；已有媒体须明确 new_version，在原节点生成版本，成功自动采用，期间旧版可用。原任务未完成、接单未知或待保存时先恢复原任务，不重付生成",
+              "enum": [
+                "create",
+                "new_version"
+              ],
+              "type": "string"
+            },
             "logicalModelId": {
               "description": "旧式模型选择：仅未使用 selectionId 时传 logicalModelId 字符串，与渠道选择互斥",
               "type": "string"
@@ -4754,7 +4783,7 @@
               "type": "string"
             },
             "nodeId": {
-              "description": "可续用的未提交媒体草稿ID；无草稿时才使用新唯一ID",
+              "description": "create 续用未提交草稿；new_version 使用已有媒体节点ID；分镜可省略并沿用原输出",
               "type": "string"
             },
             "prompt": {

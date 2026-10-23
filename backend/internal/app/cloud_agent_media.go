@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 
 	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/canvas/contract"
+	"infinite-canvas/backend/internal/canvas/mediaversions"
+	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -134,6 +137,7 @@ func (s *Service) cloudAgentModelIntentFromDocument(userID, projectID, arguments
 }
 
 type cloudAgentMediaArgs struct {
+	Intent                string                      `json:"intent,omitempty"`
 	StoryboardNodeID      string                      `json:"storyboardNodeId,omitempty"`
 	StoryboardRowID       string                      `json:"storyboardRowId,omitempty"`
 	ResolvedBindings      []contract.ReferenceBinding `json:"-"`
@@ -442,7 +446,7 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 	}
 	unchanged := args.SnapshotHash != "" && (cloudAgentCanvasHash(doc) == args.SnapshotHash || cloudAgentMediaContentHash(doc) == args.SnapshotHash)
 	if args.Prepared != nil {
-		dependency, err := cloudAgentMediaDependencyHash(doc, args)
+		dependency, err := scopedCloudAgentMediaDependency(repo, userID, canvasID, doc, args)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -465,14 +469,19 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 		return nil, nil, nil, err
 	}
 	if existing != nil {
-		if reason, issue := cloudAgentMediaTargetIssue(existing, targetDescriptor.Type); reason != "" {
-			return nil, nil, nil, &cloudAgentMediaAdmissionError{BadAuthRequest(issue), reason, args.NodeID}
+		if aReason, aIssue := cloudAgentMediaVersionTargetIssue(repo, userID, canvasID, existing, args); aReason != "" {
+			return nil, nil, nil, &cloudAgentMediaAdmissionError{BadAuthRequest(aIssue), aReason, args.NodeID}
+		}
+		if args.Intent != "new_version" {
+			if reason, issue := cloudAgentMediaTargetIssue(existing, targetDescriptor.Type); reason != "" {
+				return nil, nil, nil, &cloudAgentMediaAdmissionError{BadAuthRequest(issue), reason, args.NodeID}
+			}
 		}
 		if args.DraftRunID == "" {
 			return nil, nil, nil, BadAuthRequest("续用草稿缺少当前运行身份")
 		}
 		ownerID := stringValue(existingMeta["agentDraftRunId"])
-		if ownerID != "" && ownerID != args.DraftRunID {
+		if args.Intent != "new_version" && ownerID != "" && ownerID != args.DraftRunID {
 			owner, err := repo.CloudAgent(userID, ownerID)
 			if err != nil {
 				return nil, nil, nil, BadAuthRequest("无法确认草稿所属运行，请停止重试并检查原草稿")
@@ -481,6 +490,9 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 				return nil, nil, nil, BadAuthRequest("草稿仍由另一运行处理，请先完成或取消原运行；不要另建节点绕过审批")
 			}
 		}
+	}
+	if args.Intent == "new_version" && existing == nil {
+		return nil, nil, nil, BadAuthRequest("新版本需要指定已有媒体节点")
 	}
 	if args.SourceNodeID != "" && nodes[args.SourceNodeID] == nil {
 		return nil, nil, nil, BadAuthRequest("来源镜头节点不在当前画布")
@@ -511,6 +523,9 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 	prospectiveSources := append(append([]string{}, args.ReferenceNodeIDs...), args.SourceNodeID)
 	prospectiveSeen := map[string]bool{}
 	for _, sourceID := range prospectiveSources {
+		if args.Intent == "new_version" && sourceID == args.NodeID {
+			continue
+		}
 		if sourceID == "" || prospectiveSeen[sourceID] {
 			continue
 		}
@@ -570,6 +585,9 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 }
 
 func validateCloudAgentMediaArgs(a cloudAgentMediaArgs, state *cloudAgentRuntime) error {
+	if a.Intent != "" && a.Intent != "create" && a.Intent != "new_version" {
+		return BadAuthRequest("intent 必须是 create 或 new_version")
+	}
 	mode := strings.ToLower(strings.TrimSpace(a.Mode))
 	if !cloudAgentGenerationModeSupported(mode) {
 		return BadAuthRequest("生成模式当前不受 Agent 支持")
@@ -797,6 +815,12 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 	if err := validateCloudAgentMediaArgs(a, state); err != nil {
 		return CreateTaskRequest{}, nil, err
 	}
+	if a.Intent == "new_version" {
+		cs, _ := s.CanvasCommandServices()
+		if _, err := cs.ReadSnapshot(context.Background(), identity.Principal{ID: run.UserID, OwnerID: run.UserID, Role: "owner", ClientID: "agent:" + run.ID, Scopes: identity.OwnerScopes()}, state.Request.CanvasID); err != nil {
+			return CreateTaskRequest{}, nil, err
+		}
+	}
 	canvas, doc, refs, err := cloudAgentMediaDocument(s.repo, run.UserID, state.Request.CanvasID, a, state.TransientReferences)
 	if err != nil {
 		return CreateTaskRequest{}, nil, err
@@ -938,6 +962,12 @@ func createCloudAgentMediaNode(repo *repository.Repository, userID, canvasID str
 	if err != nil {
 		return err
 	}
+	// Existing output and authoring fields stay intact through approval. The
+	// common command transaction adds pending state only after the billed task
+	// has been inserted by the surrounding Agent admission.
+	if a.Intent == "new_version" {
+		return nil
+	}
 	beforeJSON := canvas.PayloadJSON
 	beforeHash := cloudAgentCanvasHash(doc)
 	nodes := creationMaps(doc["nodes"])
@@ -1042,6 +1072,36 @@ type cloudAgentMediaWritebackError struct {
 func (e *cloudAgentMediaWritebackError) Unwrap() error { return e.error }
 
 func completeCloudAgentMediaNode(repo *repository.Repository, userID, canvasID, targetNodeID string, task *model.Task, policy RuntimePolicySetting) (string, error) {
+	if version, err := repo.CanvasMediaVersionForTask(userID, task.ID); err != nil {
+		return "", err
+	} else if version != nil {
+		canvas, err := repo.CanvasProjectForUser(userID, canvasID)
+		if err != nil {
+			return "", &cloudAgentMediaWritebackError{creationConflict("目标画布不可用，版本保留在资源库"), "canvas_unavailable"}
+		}
+		doc, err := creationDocument(canvas.PayloadJSON)
+		if err != nil {
+			return "", err
+		}
+		nodes, _ := creationObjects(doc["nodes"])
+		if nodes[version.NodeID] == nil {
+			return "", &cloudAgentMediaWritebackError{creationConflict("目标节点不存在，版本保留在资源库"), "target_node_missing"}
+		}
+		job, err := repo.CanvasMaterialization(task.ID)
+		if err != nil {
+			return "", err
+		}
+		if job.State != "done" {
+			return "", &cloudAgentMediaWritebackError{creationConflict("媒体仍待保存或写回，请恢复原任务"), "result_resource_unavailable"}
+		}
+		if version.Adoption == "target_changed" && mediaversions.ReadState(nodes[version.NodeID]).ActiveTaskID != task.ID {
+			return "", &cloudAgentMediaWritebackError{creationConflict("目标节点的任务绑定已变化，版本保留在资源库"), "task_binding_changed"}
+		}
+		if version.Adoption == "target_changed" || version.Adoption == "output_binding_changed" || version.Adoption == "row_deleted" || version.Adoption == "binding_changed" {
+			return "", &cloudAgentMediaWritebackError{creationConflict("输出归属已变化，版本保留在资源库"), version.Adoption}
+		}
+		return version.NodeID, nil
+	}
 	if cloudAgentHasStoryboardTarget(task) {
 		if binding, consumer, err := cloudAgentStoryboardConsumer(repo, task.ID); err != nil {
 			return "", err
