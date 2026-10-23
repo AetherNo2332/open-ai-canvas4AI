@@ -20,6 +20,22 @@ SERVICES = {"postgres", "redis", "migrate", "backend", "agent", "web", "model-st
 TERMINAL = {"completed", "failed", "cancelled", "rejected"}
 
 
+def media_capability(mode):
+    references = {"promptMaxChars": 8000, "maxImages": 1, "maxImageBytes": 10 * 1024 * 1024}
+    if mode == "image":
+        return {"version": 1, "image": {"references": references, "maxOutputs": 1,
+            "size": {"parameter": "size", "values": ["1024x1024"], "default": "1024x1024"},
+            "quality": {"supported": True, "values": ["low"], "default": "low"},
+            "responseFormat": {"supported": True}}}
+    if mode == "video":
+        return {"version": 1, "video": {"references": references,
+            "duration": {"selection": "enum", "values": [5], "default": 5},
+            "ratios": ["16:9"], "defaultRatio": "16:9", "resolutions": ["720p"], "defaultResolution": "720p",
+            "generateAudio": {"supported": True, "default": False},
+            "operations": ["text_to_video", "image_to_video"], "defaultOperation": "text_to_video"}}
+    return None
+
+
 def wait(predicate, seconds=150):
     end = time.monotonic() + seconds
     while time.monotonic() < end:
@@ -147,8 +163,13 @@ class Smoke:
         request = urllib.request.Request(self.base + path, method=method,
                                          data=None if body is None else json.dumps(body).encode(),
                                          headers={"Content-Type": "application/json", "Origin": self.base[:-4]})
-        with self.http.open(request, timeout=25) as response:
-            payload = json.loads(response.read())
+        try:
+            with self.http.open(request, timeout=25) as response:
+                payload = json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            with error:
+                detail = error.read(4096).decode("utf-8", errors="replace")
+            raise AssertionError(self.redact(f"{method} {path}: HTTP {error.code} {detail}")) from error
         self.secrets.update(cookie.value for cookie in self.cookiejar)
         if "code" in payload and payload["code"] != 0:
             raise AssertionError(self.redact(f"{method} {path}: {payload.get('reason')}"))
@@ -168,7 +189,7 @@ class Smoke:
 
     def stub(self, path, body=None):
         script = ("const r=await fetch('http://127.0.0.1:8080/" + path + "'," +
-                  ("{method:'POST',headers:{'Content-Type':'application/json'},body:process.env.SMOKE_BODY}" if body else "{}") +
+                  ("{method:'POST',headers:{'Content-Type':'application/json'},body:process.env.SMOKE_BODY}" if body is not None else "{}") +
                   ");if(!r.ok)process.exit(2);console.log(await r.text())")
         return json.loads(self.compose("exec", "-T", "-e", "SMOKE_BODY=" + json.dumps(body), "model-stub",
                                        "node", "--input-type=module", "-e", script).stdout)
@@ -266,6 +287,7 @@ class Smoke:
 
     def media_versions(self):
         """Real HTTP admission, provider, billing, resource and writeback chain."""
+        self.stub("media-control", {})
         canvas = self.api("POST", "/desktop/canvases", {"clientId": "media-smoke",
             "operationId": str(uuid.uuid4()), "title": "Media version acceptance"})["canvasId"]
         self.report["mediaCanvasId"] = canvas
@@ -281,10 +303,13 @@ class Smoke:
                 ("image", "gpt-image-1", "openai-image"),
                 ("video", "doubao-seedance-1-0-pro", "volcengine-ark-video"),
                 ("audio", "tts-1", "openai-audio"))):
-            self.api("POST", f"/admin/channels/{self.channel}/models", {
+            model_path = f"/admin/channels/{self.channel}/models"
+            existing = next((row for row in self.api("GET", model_path)["models"] if row["modelKey"] == model), None)
+            self.api("PATCH" if existing else "POST", model_path + ("/" + existing["id"] if existing else ""), {
                 "modelKey": model, "providerModelKey": model, "displayName": "Smoke " + mode,
                 "capability": mode, "protocol": protocol, "billingMode": "fixed_request",
-                "unitPriceMicrocredits": 0, "priceConfigured": True, "enabled": True})
+                "unitPriceMicrocredits": 0, "priceConfigured": True, "enabled": True,
+                "capabilityConfig": media_capability(mode)})
             self.api("POST", path + "/commands", command([{"type": "add_node", "id": mode,
                 "nodeType": mode, "title": "Version " + mode, "x": index * 380, "y": 0}]))
             versions_path = path + f"/nodes/{mode}/media-versions"

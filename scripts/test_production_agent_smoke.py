@@ -1,5 +1,6 @@
 """Safety and receipt assertions for the CI production smoke; never starts Docker."""
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -15,6 +16,26 @@ spec.loader.exec_module(smoke)
 
 
 class ProductionSmokeTests(unittest.TestCase):
+    def test_empty_control_body_still_posts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            with patch.object(harness, "compose", return_value=SimpleNamespace(stdout='{}')) as compose:
+                harness.stub("media-control", {})
+            self.assertIn("method:'POST'", compose.call_args.args[-1])
+            self.assertIn("SMOKE_BODY={}", compose.call_args.args)
+
+    def test_http_failure_explains_server_rejection_and_redacts_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            secret = "test-private-upstream-key"
+            harness.secrets.add(secret)
+            error = urllib.error.HTTPError(harness.base + "/test", 400, "Bad request", {},
+                io.BytesIO(json.dumps({"msg": "missing capabilityConfig", "key": secret}).encode()))
+            with patch.object(harness.http, "open", side_effect=error):
+                with self.assertRaisesRegex(AssertionError, "missing capabilityConfig") as raised:
+                    harness.api("POST", "/test", {})
+            self.assertNotIn(secret, str(raised.exception))
+
     def test_health_wait_retries_startup_transport_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = smoke.Smoke(directory, Path(directory) / "report.json")
