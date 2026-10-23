@@ -80,6 +80,25 @@ jobs:
             printf '%s\n' "$files"
             exit 1
           fi
+      - name: Vet Go packages
+        run: go vet ./...
+      - name: Install pinned incremental analyzers
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          go install github.com/gordonklaus/ineffassign@v0.2.0
+      - name: Check architecture slice and analyzer fixtures
+        shell: bash
+        run: |
+          staticcheck ./internal/architecture
+          ineffassign ./internal/architecture
+          if staticcheck ./internal/architecture/testdata/lintbad; then
+            echo "staticcheck did not reject its fixture"
+            exit 1
+          fi
+          if ineffassign ./internal/architecture/testdata/lintbad; then
+            echo "ineffassign did not reject its fixture"
+            exit 1
+          fi
       - name: Run Go tests
         shell: bash
         run: |
@@ -189,3 +208,25 @@ jobs:
       # 免得到发布时才失败；条目内容仍需人工改写，脚本只负责生成草稿与版本对齐。
       - name: Check CHANGELOG covers VERSION
         run: node scripts/changelog.mjs --check
+
+  production-agent-smoke:
+    name: Production Agent Compose smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      # These checks exercise deployment commands with mocks. The following step
+      # is the real cross-process acceptance against deploy + build Compose.
+      - name: Check deployment commands and smoke isolation
+        run: python3 -m unittest scripts/test_production_deployment.py scripts/test_agent_parity_container_commands.py scripts/test_production_agent_smoke.py
+      - name: Run real production Agent smoke
+        timeout-minutes: 30
+        run: python3 scripts/verify-production-agent-smoke.py --output "$RUNNER_TEMP/production-agent-smoke/report.json"
+      - name: Upload bounded smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-agent-smoke
+          path: ${{ runner.temp }}/production-agent-smoke/
+          if-no-files-found: ignore
+          retention-days: 7
