@@ -834,7 +834,7 @@ func TestCloudAgentStoryboardPrecisionAndPermission(t *testing.T) {
 		t.Fatal("storyboard context missing full prompt, pagination or privacy boundary")
 	}
 	next := cloudAgentStoryboardState(storyboard, 1, cloudAgentProjectionDetail)
-	if next["hasMore"] != false || next["rows"].([]any)[0].(map[string]any)["id"] != "shot-2" {
+	if next["hasMore"] != false || next["rows"].([]any)[0].(map[string]any)["rowId"] != "shot-2" || next["rows"].([]any)[0].(map[string]any)["id"] != nil {
 		t.Fatal("storyboard pagination failed")
 	}
 	req := agentTestRequest()

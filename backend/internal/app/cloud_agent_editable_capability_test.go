@@ -11,8 +11,8 @@ func TestCloudAgentStructuredEditableRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	properties := cloudAgentStoryboardPatchSchema()["properties"].(map[string]any)
-	if properties["mustHave"] == nil || properties["characters"] == nil {
-		t.Fatal("structured storyboard fields absent from schema")
+	if properties["plotDescription"] == nil || properties["assets"] == nil || properties["mustHave"] != nil || properties["characters"] != nil {
+		t.Fatal("storyboard tool schema must expose compact narrative and asset fields only")
 	}
 	doc := map[string]any{"nodes": []any{map[string]any{"id": "image-1", "type": "image"}, map[string]any{"id": "text-1", "type": "text"}}, "connections": []any{}}
 	patch, _, err := validateCloudAgentBatchRowPatch(doc, map[string]any{"textNodeIds": []any{"text-1"}, "cells": map[string]any{"col-1": "Narrative"}}, 3)

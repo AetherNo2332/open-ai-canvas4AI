@@ -11,11 +11,12 @@ func TestLoadAgentPoliciesUsesDocumentMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 版本号是策略文件的公开合同：工具披露规则改变时一同更新。
-	if system.ID != "cloud-agent-system" || system.Version != 16 || media.ID != "cloud-agent-media" || media.Version != 4 {
-		t.Fatalf("unexpected policy metadata: system=%+v media=%+v", system, media)
+	if system.ID != "cloud-agent-system" || system.Version != 18 || media.ID != "cloud-agent-media" || media.Version != 4 {
+		t.Fatalf("unexpected policy metadata: system=%s@%d media=%s@%d", system.ID, system.Version, media.ID, media.Version)
 	}
-	if strings.Contains(system.Text, "id: cloud-agent-system") || !strings.HasPrefix(system.Text, "# ArrowFX Cloud Agent") {
-		t.Fatalf("metadata leaked into compiled policy body: %q", system.Text)
+	if strings.Contains(system.Text, "id: cloud-agent-system") || !strings.HasPrefix(system.Text, "# ArrowFX Cloud Agent") ||
+		strings.Contains(media.Text, "id: cloud-agent-media") || !strings.HasPrefix(media.Text, "#") {
+		t.Fatal("policy metadata leaked into a compiled policy body")
 	}
 	for _, phrase := range []string{
 		"auto 会由服务端完成模型、能力、价格、预算和资源准入后直接提交",

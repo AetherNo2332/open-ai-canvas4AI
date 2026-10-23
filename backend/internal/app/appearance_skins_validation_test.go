@@ -38,9 +38,9 @@ func TestValidateAppearanceSkinThemesEnforcesSwissConstraints(t *testing.T) {
 			expect: "纯色",
 		},
 		{
-			name:   "rounded-components",
-			mutate: func(themes []AppearanceSkinTheme) { themes[1].Tokens.Components.ButtonRadius = 8 },
-			expect: "圆角",
+			name:   "button-radius-out-of-range",
+			mutate: func(themes []AppearanceSkinTheme) { themes[1].Tokens.Components.ButtonRadius = 33 },
+			expect: "按钮圆角",
 		},
 		{
 			name:   "hover-lift",
@@ -98,6 +98,15 @@ func TestValidateAppearanceSkinThemesEnforcesSwissConstraints(t *testing.T) {
 				t.Fatalf("拒绝原因必须说明被拒字段，期望包含 %q，实际 %q", testCase.expect, err.Error())
 			}
 		})
+	}
+}
+
+func TestValidateAppearanceSkinThemesAcceptsRoundedComponents(t *testing.T) {
+	themes := baseValidationThemes()
+	themes[1].Tokens.Components.ButtonRadius = 8
+	themes[1].Tokens.Components.CardRadius = 32
+	if err := validateAppearanceSkinThemes(themes, defaultAppearanceSkinID); err != nil {
+		t.Fatalf("0 到 32px 的构件圆角必须可保存：%v", err)
 	}
 }
 

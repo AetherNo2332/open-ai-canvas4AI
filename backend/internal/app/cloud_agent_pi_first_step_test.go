@@ -298,7 +298,7 @@ func TestPiLaterStepRejectsChangedPromptContract(t *testing.T) {
 		t.Fatalf("首个模型步失败: %v", err)
 	}
 	// 首步任务终结并确认后才允许进入第二步。
-	if err := db.Model(&model.Task{}).Where("id = ?", step.TaskID).Update("status", model.TaskStatusSucceeded).Error; err != nil {
+	if err := db.Model(&model.Task{}).Where("id = ?", step.TaskID).Updates(map[string]any{"status": model.TaskStatusSucceeded, "result_json": `{}`}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PiModelStepAck("user", run.ID, run.LeaseOwner, step.TaskID); err != nil {

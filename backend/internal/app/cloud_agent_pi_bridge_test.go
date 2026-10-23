@@ -675,8 +675,8 @@ func TestPiFinishRunPublishesOneFinalReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Pi finish_run 执行失败: %v", err)
 	}
-	if receipt.Pending || receipt.IsError || receipt.Terminated {
-		t.Fatalf("finish_run 回执状态异常: %+v", receipt)
+	if receipt.Pending || receipt.IsError || !receipt.Terminated || len(receipt.Result) == 0 {
+		t.Fatalf("finish_run 应返回持久化结果及终止信号: pending=%v error=%v terminated=%v resultBytes=%d", receipt.Pending, receipt.IsError, receipt.Terminated, len(receipt.Result))
 	}
 
 	finished, state := reloadPiRun(t, s, run.ID)
@@ -1342,6 +1342,7 @@ func TestPiToolAdvanceSignalsTerminationInsteadOfPending(t *testing.T) {
 				return err
 			}
 			state.LastStepTaskID = taskID
+			state.PiToolBatchTaskID = taskID
 			state.Calls = []cloudAgentCall{piAgentTestCall("term-call", "canvas_list_node_types", "{}")}
 			state.CallIndex = 0
 			current.Status = status

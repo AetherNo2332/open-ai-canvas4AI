@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -99,7 +100,7 @@ func TestPiModelStepWiringHydratesImageReferences(t *testing.T) {
 	}
 }
 
-func TestPiModelStepImageOverflowCreatesNoTaskAndKeepsPendingObservations(t *testing.T) {
+func TestPiModelStepBatchesImageOverflowWithoutDroppingSource(t *testing.T) {
 	s, db, root := piAgentTestFixture(t)
 	profile := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
 	if profile == nil || profile.Text == nil {
@@ -149,30 +150,53 @@ func TestPiModelStepImageOverflowCreatesNoTaskAndKeepsPendingObservations(t *tes
 	}
 	request, _ := piFirstStepRequest(state)
 	request.Canonical.Messages = canonical.Messages
+	if len(deliveredImageNodeIDs(request.Canonical)) != 2 {
+		t.Fatal("fixture must contain both original image observations")
+	}
 	before, _ := json.Marshal(request.Canonical.Messages)
 	var tasksBefore, tasksAfter int64
 	if err := db.Model(&model.Task{}).Count(&tasksBefore).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.PiModelStep("user", run.ID, run.LeaseOwner, request); err == nil {
-		t.Fatal("图片超限必须在模型任务准入前拒绝")
+	step, err := s.PiModelStep("user", run.ID, run.LeaseOwner, request)
+	if err != nil {
+		t.Fatalf("图片批次准入失败: %v", err)
 	}
 	_, settled := reloadPiRun(t, s, run.ID)
-	if len(settled.PendingImageObservations) != 2 {
-		t.Fatalf("被拒绝的请求不能伪造图片送达: %+v", settled.PendingImageObservations)
+	if len(settled.PendingImageObservations) != 1 || settled.PendingImageObservations[0] != "upload-first-aaaa" {
+		t.Fatalf("视觉账本应仅记录已送达的第一张图片: %+v", settled.PendingImageObservations)
 	}
-	if settled.AgentImagesInContext != state.AgentImagesInContext {
-		t.Fatal("拒绝准入不得修改视觉账本的送达计数")
+	if settled.AgentImagesInContext != 1 {
+		t.Fatalf("模型输入应只有一张图片，实际 %d", settled.AgentImagesInContext)
 	}
 	if err := db.Model(&model.Task{}).Count(&tasksAfter).Error; err != nil {
 		t.Fatal(err)
 	}
-	if tasksBefore != tasksAfter {
-		t.Fatal("图片超限创建了额外的计费模型任务")
+	if tasksAfter != tasksBefore+1 {
+		t.Fatalf("一批图片应创建一个模型任务: before=%d after=%d", tasksBefore, tasksAfter)
+	}
+	task, err := s.repo.TaskForUser("user", step.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input struct {
+		AgentRequests struct {
+			Canonical canonicalAgentRequest `json:"canonical"`
+		} `json:"agentRequests"`
+	}
+	if err := json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
+		t.Fatal(err)
+	}
+	admitted := deliveredImageNodeIDs(input.AgentRequests.Canonical)
+	if len(admitted) != 1 || !admitted["upload-first-aaaa"] || admitted["upload-last-bbbb"] {
+		t.Fatalf("模型任务未限制为首张图片: %+v", admitted)
+	}
+	if !strings.Contains(task.InputJSON, "这张原图本次未附送") || !strings.Contains(task.InputJSON, "剩余图片") {
+		t.Fatal("模型任务没有标记第二张图片为后续批次")
 	}
 	after, _ := json.Marshal(request.Canonical.Messages)
 	if string(before) != string(after) {
-		t.Fatal("拒绝准入时删改了原始图片")
+		t.Fatal("图片批次投影删改了原始请求")
 	}
 }
 

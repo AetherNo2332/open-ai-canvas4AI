@@ -12,24 +12,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/service"
 )
-
-func wireTestService(t *testing.T) *service.Service {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&model.AgentWorker{}); err != nil {
-		t.Fatal(err)
-	}
-	return service.New(repository.New(db), t.TempDir())
-}
 
 func TestInternalAgentRequiresVersionedPiWireIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -37,7 +22,8 @@ func TestInternalAgentRequiresVersionedPiWireIdentity(t *testing.T) {
 	t.Setenv("CANVAS_AGENT_WORKER_ID", "wire-test-worker")
 	t.Setenv("CANVAS_AGENT_WORKER_TOKEN", strings.Repeat("w", 48))
 	router := gin.New()
-	RegisterInternalAgentRoutes(router, wireTestService(t))
+	_, svc, _ := workspaceHTTPFixture(t)
+	RegisterInternalAgentRoutes(router, svc)
 
 	request := func(body string, headers map[string]string) *httptest.ResponseRecorder {
 		recorder := httptest.NewRecorder()
@@ -103,13 +89,7 @@ func TestInternalAgentEventsHideForeignRunAndTaskIDs(t *testing.T) {
 	t.Setenv("CANVAS_AGENT_WORKER_ID", "scoped-worker")
 	t.Setenv("CANVAS_AGENT_WORKER_TOKEN", strings.Repeat("w", 48))
 	t.Setenv("CANVAS_AGENT_WORKER_USER_ID", "tenant-a")
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&model.AgentWorker{}, &model.AgentWakeEvent{}); err != nil {
-		t.Fatal(err)
-	}
+	_, svc, db := workspaceHTTPFixture(t)
 	events := []model.AgentWakeEvent{
 		{Sequence: 1, UserID: "tenant-b", RunID: "foreign-run", TaskID: "foreign-task", Kind: "tool_changed"},
 		{Sequence: 2, UserID: "tenant-a", RunID: "own-run", TaskID: "own-task", Kind: "tool_changed"},
@@ -120,7 +100,7 @@ func TestInternalAgentEventsHideForeignRunAndTaskIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := gin.New()
-	RegisterInternalAgentRoutes(router, service.New(repository.New(db), t.TempDir()))
+	RegisterInternalAgentRoutes(router, svc)
 	server := httptest.NewServer(router)
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

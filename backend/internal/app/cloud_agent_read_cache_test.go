@@ -74,8 +74,9 @@ func TestCloudAgentReadToolCacheReplaysReadResultsAndErrors(t *testing.T) {
 		t.Fatalf("cached read did not return a replay receipt: first=%#v second=%#v", first, second)
 	}
 	var cached map[string]any
-	if err := json.Unmarshal(state.ToolReadResults[cloudAgentReadCacheKey(call)].Result, &cached); err != nil || len(cached) == 0 {
-		t.Fatalf("full cached result was not retained: %#v err=%v", state.ToolReadResults, err)
+	cacheKey := cloudAgentReadCacheKeyForState(s.repo, "user", state, call)
+	if err := json.Unmarshal(state.ToolReadResults[cacheKey].Result, &cached); err != nil || len(cached) == 0 {
+		t.Fatalf("full cached result was not retained for %q: bytes=%d err=%v", cacheKey, len(state.ToolReadResults[cacheKey].Result), err)
 	}
 
 	bad := call
@@ -85,8 +86,8 @@ func TestCloudAgentReadToolCacheReplaysReadResultsAndErrors(t *testing.T) {
 	if firstErr == nil || secondErr == nil || firstErr.Error() != secondErr.Error() {
 		t.Fatalf("cached read error changed: first=%v second=%v", firstErr, secondErr)
 	}
-	if !state.ToolReadResults[cloudAgentReadCacheKey(bad)].ArgumentError || len(state.ToolReadResults) != 2 {
-		t.Fatalf("unexpected read cache entries: %#v", state.ToolReadResults)
+	if !state.ToolReadResults[cloudAgentReadCacheKeyForState(s.repo, "user", state, bad)].ArgumentError || len(state.ToolReadResults) != 2 {
+		t.Fatalf("unexpected read cache entry count: %d", len(state.ToolReadResults))
 	}
 }
 
