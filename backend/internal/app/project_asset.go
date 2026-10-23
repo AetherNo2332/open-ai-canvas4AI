@@ -272,7 +272,7 @@ func (s *Service) UnlinkProjectAsset(userID string, projectID string, assetID st
 	if err := s.repo.DeleteProjectAssetLink(projectID, assetID); err != nil {
 		return err
 	}
-	return s.repo.BumpProjectRevision(projectID)
+	return nil
 }
 
 func canvasReferencesCharacterAsset(payloadJSON string, assetID string) (bool, error) {
@@ -320,10 +320,7 @@ func (s *Service) UpdateProjectAsset(userID string, projectID string, assetID st
 		}
 		asset.Category = category
 		asset.UpdatedAt = time.Now()
-		if err := s.repo.UpdateAssetDomain(asset); err != nil {
-			return ProjectAssetSummary{}, err
-		}
-		if err := s.repo.BumpProjectRevision(projectID); err != nil {
+		if err := s.repo.SetProjectAssetCategory(userID, projectID, asset.ID, category, asset.UpdatedAt); err != nil {
 			return ProjectAssetSummary{}, err
 		}
 	} else if req.FolderID != nil {

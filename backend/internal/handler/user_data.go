@@ -485,7 +485,12 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, service.BadAuthRequest("素材 ID 与请求路径不一致"))
 			return
 		}
-		asset, err := svc.UpsertUserAsset(user.ID, req.Asset)
+		var asset service.UserDataSummary
+		if strings.TrimSpace(c.GetHeader("If-None-Match")) == "*" {
+			asset, err = svc.CreateUserAsset(user.ID, req.Asset)
+		} else {
+			asset, err = svc.UpsertUserAsset(user.ID, req.Asset)
+		}
 		if err != nil {
 			failService(c, err)
 			return

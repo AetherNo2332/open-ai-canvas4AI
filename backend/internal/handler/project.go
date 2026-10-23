@@ -160,6 +160,7 @@ func RegisterLibraryRoutes(r *gin.RouterGroup, svc *service.Service) {
 
 // RegisterProjectRoutes 注册短剧项目接口，调用方负责挂短剧功能开关。
 func RegisterProjectRoutes(r *gin.RouterGroup, svc *service.Service) {
+	registerProjectAssetSyncRoutes(r, svc)
 	r.GET("/projects", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

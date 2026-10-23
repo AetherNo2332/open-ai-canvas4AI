@@ -346,7 +346,6 @@ PUT /api/admin/settings/runtime-policy
 PUT /api/admin/sms/channels/{id}
 PUT /api/ai/custom
 PUT /api/ai/system/{channelId}/{path}
-PUT /api/assets/{id}
 PUT /api/characters/{assetId}/representations
 PUT /api/characters/{assetId}/voice
 PUT /api/plugins/{id}/activation

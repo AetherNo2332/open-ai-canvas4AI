@@ -182,6 +182,10 @@ func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataS
 	return s.canvasDomain().UpsertUserAsset(userID, raw)
 }
 
+func (s *Service) CreateUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
+	return s.canvasDomain().CreateUserAsset(userID, raw)
+}
+
 func (s *Service) DeleteUserAsset(userID string, id string) error {
 	return s.canvasDomain().DeleteUserAsset(userID, id)
 }

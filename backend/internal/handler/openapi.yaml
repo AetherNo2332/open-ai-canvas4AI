@@ -1453,6 +1453,73 @@ paths:
           $ref: "#/components/responses/Envelope"
         "400":
           $ref: "#/components/responses/Error"
+  /projects/{id}/assets/{assetId}/sync:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: assetId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      tags: [projects]
+      summary: 一致读取项目版本与素材关联
+      description: 项目和素材必须均属于当前账号；素材存在但未关联时 asset 为 null。
+      responses:
+        "200":
+          description: 同一事务快照中的项目版本和素材摘要
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Envelope"}
+                  - type: object
+                    properties:
+                      data: {$ref: "#/components/schemas/ProjectAssetSyncState"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+    put:
+      tags: [projects]
+      summary: 按项目版本原子关联、分类和移动素材
+      description: 同事务检查归属、抢占项目 revision、应用关联和可选字段。遗漏字段保留；空 folderId 表示项目根目录。失败全部回滚。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedProjectRevision]
+              properties:
+                expectedProjectRevision: {type: integer, format: int64, minimum: 0}
+                category: {type: string, enum: [character, environment, prop, material, other]}
+                folderId: {type: string}
+      responses:
+        "200":
+          description: 已持久化的实际项目版本与非空素材摘要；修订号可能递增多次
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Envelope"}
+                  - type: object
+                    properties:
+                      data: {$ref: "#/components/schemas/ProjectAssetSyncState"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409":
+          description: 版本已过期，无副作用；reason 为 project_asset_sync_conflict，retryable 为 true
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/ErrorEnvelope"}
+                  - type: object
+                    required: [retryable]
+                    properties:
+                      retryable: {type: boolean, enum: [true]}
   /resources:
     get:
       tags: [resources]
@@ -1624,6 +1691,34 @@ paths:
         name: id
         required: true
         schema: { type: string }
+    put:
+      tags: [assets]
+      summary: 保存当前用户素材，支持条件创建
+      description: If-None-Match 为 * 时在账号锁事务内仅创建不存在的全局素材 ID；已存在返回 412 且不改任何字段。遗漏此头维持原 upsert 行为。
+      parameters:
+        - in: header
+          name: If-None-Match
+          required: false
+          schema: {type: string, enum: ["*"]}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asset]
+              properties:
+                asset: {type: object}
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "412":
+          description: 全局素材 ID 已存在；reason 为 asset_already_exists，无副作用且不暴露已有实体
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
     delete:
       tags: [assets]
       summary: 彻底删除当前用户素材
@@ -1875,6 +1970,32 @@ components:
           type: string
           minLength: 8
           maxLength: 128
+    ProjectAssetSyncState:
+      type: object
+      required: [projectRevision, asset]
+      properties:
+        projectRevision: {type: integer, format: int64, minimum: 0}
+        asset:
+          type: object
+          nullable: true
+          required: [id, title, mediaType, category, status, versionCount, usages, position, updatedAt]
+          properties:
+            id: {type: string}
+            title: {type: string}
+            mediaType: {type: string}
+            category: {type: string, enum: [character, environment, prop, material, other]}
+            status: {type: string}
+            primaryVersionId: {type: string}
+            versionCount: {type: integer}
+            usages: {type: array, items: {type: string}}
+            folderId: {type: string}
+            position: {type: integer}
+            storageKey: {type: string}
+            durationMs: {type: integer, format: int64}
+            previewText: {type: string}
+            updatedAt: {type: string, format: date-time}
+            source: {type: string}
+            character: {type: object}
     Envelope:
       type: object
       required: [code, msg]
@@ -1895,7 +2016,7 @@ components:
           properties:
             code:
               type: integer
-              enum: [400, 401, 403, 404, 409, 429, 500, 502, 503, 504, 40301, 40901, 42901]
+              enum: [400, 401, 403, 404, 409, 412, 429, 500, 502, 503, 504, 40301, 40901, 42901]
             data:
               nullable: true
             reason:
@@ -1906,6 +2027,8 @@ components:
                 - forbidden
                 - not_found
                 - conflict
+                - project_asset_sync_conflict
+                - asset_already_exists
                 - failed_precondition
                 - quota_exceeded
                 - rate_limited

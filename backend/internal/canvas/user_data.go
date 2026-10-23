@@ -84,11 +84,33 @@ func (s *Service) UserAsset(userID string, id string) (json.RawMessage, error) {
 }
 
 func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
+	return s.persistUserAsset(userID, raw, false)
+}
+
+func (s *Service) CreateUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
+	return s.persistUserAsset(userID, raw, true)
+}
+
+func (s *Service) persistUserAsset(userID string, raw json.RawMessage, createOnly bool) (UserDataSummary, error) {
 	asset, err := AssetFromJSON(userID, raw)
 	if err != nil {
 		return UserDataSummary{}, err
 	}
 	err = s.host.WithStorageLock(func() error {
+		if createOnly {
+			err := s.repo.CreateAssetIfAbsent(&asset)
+			if errors.Is(err, repository.ErrAssetAlreadyExists) {
+				return &kernel.AppError{Status: 412, Code: 412, Reason: "asset_already_exists", Message: "素材已存在，请重新读取"}
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return kernel.BadAuthRequest("素材分类不存在")
+			}
+			if err != nil {
+				return err
+			}
+			s.host.RecordActivity(userID, "asset", 1)
+			return nil
+		}
 		if asset.FolderID != "" {
 			if _, err := s.repo.AssetFolderForUser(userID, asset.FolderID); err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
