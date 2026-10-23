@@ -41,26 +41,70 @@ let sessionEpoch = 0;
 const verifiedProjects = new Set<string>();
 const verifiedAssets = new Set<string>();
 const remoteProjectLoadPromises = new Map<string, Promise<CanvasProject | undefined>>();
+type IncrementalBootstrap = {
+    userId: string;
+    scope: string;
+    epoch: number;
+    controller: AbortController;
+    attempts: number;
+    timer?: ReturnType<typeof setTimeout>;
+    inFlight?: Promise<void>;
+    originalAssets: Map<string, Asset>;
+};
+let incrementalBootstrap: IncrementalBootstrap | undefined;
+let bootstrapRequestGeneration = 0;
+const bootstrapRetryDelays = [2_000, 4_000, 8_000, 16_000, 30_000] as const;
 
-export async function initializeRemoteUserDataSession(userId: string) {
-    await withRemoteUserDataSyncExclusive(async () => {
-        resetRemoteUserDataSync();
-        activeRemoteUserId = userId;
-        incrementalSession = true;
+/** Cancel before waiting for the remote-operation queue during an account switch. */
+export function cancelRemoteUserDataBootstrap() {
+    bootstrapRequestGeneration += 1;
+    const previous = incrementalBootstrap;
+    incrementalBootstrap = undefined;
+    if (previous?.timer) clearTimeout(previous.timer);
+    previous?.controller.abort();
+    if (previous && remoteUserDataPhase !== "ready") remoteUserDataPhase = "inactive";
+}
+
+function currentBootstrap(state: IncrementalBootstrap) {
+    return incrementalBootstrap === state && state.epoch === sessionEpoch && state.userId === activeRemoteUserId && state.scope === getActiveUserScope() && !state.controller.signal.aborted;
+}
+
+function scheduleBootstrapRetry(state: IncrementalBootstrap, error: unknown) {
+    if (!currentBootstrap(state) || typeof navigator !== "undefined" && navigator.onLine === false) return;
+    if ((error instanceof ApiError && !error.retryable && error.status !== undefined) || (error instanceof DOMException && error.name === "AbortError")) return;
+    const delay = bootstrapRetryDelays[Math.min(state.attempts++, bootstrapRetryDelays.length - 1)];
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+        state.timer = undefined;
+        if (!currentBootstrap(state)) return;
+        void retryIncrementalBootstrap(state).catch((failure) => console.warn("云端同步基线暂未恢复，稍后重试", failure));
+    }, delay);
+}
+
+async function attemptIncrementalBootstrap(state: IncrementalBootstrap) {
+    if (!currentBootstrap(state)) throw new DOMException("账号已切换", "AbortError");
+    remoteUserDataPhase = "hydrating";
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = undefined;
+    try {
         acknowledgedProjects = new Map(useCanvasStore.getState().projects.map((project) => [project.id, project]));
-        const pendingQueue = createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(userId), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, userId);
-        const pendingEntries = getActiveUserScope() === userId ? await pendingQueue.list() : [];
+        const pendingQueue = createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(state.userId), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, state.userId);
+        const pendingEntries = state.scope === state.userId ? await pendingQueue.list() : [];
         const pendingAssetIds = new Set(pendingEntries.map((entry) => entry.assetId));
         acknowledgedAssets = new Map(useAssetStore.getState().assets.filter((asset) => !pendingAssetIds.has(asset.id)).map((asset) => [asset.id, asset]));
-        // A pending relation is not proof that its asset body is new. Adopt an
-        // existing remote entity before any automatic whole-asset save runs.
         if (typeof navigator === "undefined" || navigator.onLine !== false) {
             for (const assetId of pendingAssetIds) {
-                const exists = await recoverProjectLinkAsset(assetId, "check");
+                const local = useAssetStore.getState().assets.find((asset) => asset.id === assetId);
+                const preserveLocal = local !== state.originalAssets.get(assetId);
+                const exists = await recoverProjectLinkAsset(assetId, "check", undefined, undefined, { signal: state.controller.signal, preserveLocal });
+                if (!currentBootstrap(state)) throw new DOMException("账号已切换", "AbortError");
+                if (!preserveLocal) {
+                    const accepted = useAssetStore.getState().assets.find((asset) => asset.id === assetId);
+                    if (accepted) state.originalAssets.set(assetId, accepted);
+                }
                 const entries = pendingEntries.filter((entry) => entry.assetId === assetId);
-                if (exists) for (const entry of entries) await pendingQueue.markAssetPersisted(entry);
+                if (exists) await pendingQueue.markAssetPersisted({ assetId });
                 else if (!entries.some((entry) => entry.createAssetIfMissing === true)) {
-                    const local = useAssetStore.getState().assets.find((asset) => asset.id === assetId);
                     if (local) acknowledgedAssets.set(assetId, local);
                 }
             }
@@ -69,25 +113,65 @@ export async function initializeRemoteUserDataSession(userId: string) {
                 if (pendingAssetIds.has(asset.id) && !pendingEntries.some((entry) => entry.assetId === asset.id && entry.createAssetIfMissing === true)) acknowledgedAssets.set(asset.id, asset);
             }
         }
+        if (!currentBootstrap(state)) throw new DOMException("账号已切换", "AbortError");
         remoteUserDataPhase = "ready";
-    });
-    notifyRemoteUserDataReady();
+        state.attempts = 0;
+    } catch (error) {
+        if (currentBootstrap(state)) {
+            remoteUserDataPhase = "failed";
+            scheduleBootstrapRetry(state, error);
+        }
+        throw error;
+    }
 }
 
-async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create" | "existing", projectId?: string, mayCreate?: () => Promise<boolean>) {
+async function retryIncrementalBootstrap(state = incrementalBootstrap) {
+    if (!state || !currentBootstrap(state)) return;
+    if (state.inFlight) return state.inFlight;
+    const operation = withRemoteUserDataSyncExclusive(() => attemptIncrementalBootstrap(state));
+    state.inFlight = operation;
+    try {
+        await operation;
+        if (currentBootstrap(state) && hasRemoteUserDataSyncSession()) notifyRemoteUserDataReady();
+    } finally {
+        if (state.inFlight === operation) state.inFlight = undefined;
+    }
+}
+
+export async function initializeRemoteUserDataSession(userId: string) {
+    cancelRemoteUserDataBootstrap();
+    const requestGeneration = bootstrapRequestGeneration;
+    const scope = getActiveUserScope();
+    let state: IncrementalBootstrap | undefined;
+    await withRemoteUserDataSyncExclusive(async () => {
+        if (requestGeneration !== bootstrapRequestGeneration || scope !== getActiveUserScope()) throw new DOMException("账号已切换", "AbortError");
+        resetRemoteUserDataSync();
+        activeRemoteUserId = userId;
+        incrementalSession = true;
+        state = { userId, scope, epoch: sessionEpoch, controller: new AbortController(), attempts: 0, originalAssets: new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset])) };
+        incrementalBootstrap = state;
+        await attemptIncrementalBootstrap(state);
+    });
+    if (state && currentBootstrap(state) && hasRemoteUserDataSyncSession()) notifyRemoteUserDataReady();
+}
+
+async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create" | "existing", projectId?: string, mayCreate?: () => Promise<boolean>, options: { signal?: AbortSignal; preserveLocal?: boolean } = {}) {
     const epoch = sessionEpoch;
     const scope = getActiveUserScope();
     const local = useAssetStore.getState().assets.find((asset) => asset.id === assetId);
+    const baseline = acknowledgedAssets.get(assetId);
+    const preserveLocal = options.preserveLocal ?? Boolean(local && baseline && verifiedAssets.has(assetId) && !sameEntitySnapshot(baseline, local));
     const unchanged = () => {
         if (epoch !== sessionEpoch || scope !== getActiveUserScope()) throw new DOMException("账号已切换", "AbortError");
         if (useAssetStore.getState().assets.find((asset) => asset.id === assetId) !== local) throw new Error("素材仍在编辑，请保存后重试项目关联");
     };
     let remote: Asset;
     try {
-        const result = await getRemoteAsset(assetId);
-        unchanged();
+        const result = await getRemoteAsset(assetId, options.signal);
         remote = parseAssetRecord(result.asset);
         if (remote.id !== assetId) throw new Error("云端素材标识不匹配，已停止同步");
+        await createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope).markAssetPersisted({ assetId });
+        unchanged();
     } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 404) throw error;
         unchanged();
@@ -104,6 +188,7 @@ async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create"
         unchanged();
         try {
             await upsertRemoteAsset(payload, { createOnly: true });
+            await createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope).markAssetPersisted({ assetId });
             unchanged();
             acknowledgedAssets.set(assetId, local);
             verifiedAssets.add(assetId);
@@ -113,9 +198,10 @@ async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create"
             // The404 was only an observation. Another device can create/edit
             // before our PUT; adopt it rather than retrying an unconditional PUT.
             const result = await getRemoteAsset(assetId);
-            unchanged();
             remote = parseAssetRecord(result.asset);
             if (remote.id !== assetId) throw new Error("云端素材标识不匹配，已停止同步");
+            await createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope).markAssetPersisted({ assetId });
+            unchanged();
         }
     }
     if (projectId) {
@@ -124,7 +210,7 @@ async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create"
     }
     acknowledgedAssets.set(assetId, remote);
     verifiedAssets.add(assetId);
-    useAssetStore.setState((state) => ({ assets: [...state.assets.filter((asset) => asset.id !== assetId), remote] }));
+    if (!preserveLocal) useAssetStore.setState((state) => ({ assets: [...state.assets.filter((asset) => asset.id !== assetId), remote] }));
     return true;
 }
 
@@ -393,6 +479,7 @@ export async function loadAssetsForUse(ids: Iterable<string>) {
 const LOCAL_STORAGE_KEY_PATTERN = /^(image|video|audio|file|video-reference|audio-reference):/;
 
 export async function syncRemoteUserData(userId?: string | null) {
+	cancelRemoteUserDataBootstrap();
 	// 登录/切换账号时，服务端快照建立新的远端基线；本地 IndexedDB 只负责首屏缓存，
 	// 不能把服务端已经删除或当前用户无权访问的实体重新补回去。后续增量保存必须基于这份基线做冲突校验。
     await withRemoteUserDataSyncExclusive(async () => {
@@ -458,7 +545,10 @@ export function installRemoteUserDataAutoSync() {
     subscriptionsInstalled = true;
     if (typeof window !== "undefined") window.addEventListener("online", () => {
         if (remoteUserDataPhase === "ready") scheduleRemoteUserDataSync();
-        else if (activeRemoteUserId && remoteUserDataPhase === "failed") void syncRemoteUserData(activeRemoteUserId).catch(() => undefined);
+        else if (activeRemoteUserId && remoteUserDataPhase === "failed") {
+            if (incrementalBootstrap) void retryIncrementalBootstrap().catch(() => undefined);
+            else void syncRemoteUserData(activeRemoteUserId).catch(() => undefined);
+        }
     });
     useCanvasStore.subscribe((state, previous) => {
         if (state.projects === previous.projects) return;
@@ -480,6 +570,7 @@ export function installRemoteUserDataAutoSync() {
 }
 
 export function resetRemoteUserDataSync() {
+    cancelRemoteUserDataBootstrap();
     sessionEpoch += 1;
     incrementalSession = false;
     verifiedProjects.clear();

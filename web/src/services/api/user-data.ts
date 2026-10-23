@@ -92,8 +92,8 @@ export function moveRemoteAssetsToFolder(assetIds: string[], folderId = "") {
     return http.patch<{ assetIds: string[]; folderId: string }>("/assets/folder", { assetIds, folderId });
 }
 
-export function getRemoteAsset(id: string) {
-    return http.get<{ asset: Asset }>(`/assets/${encodeURIComponent(id)}`);
+export function getRemoteAsset(id: string, signal?: AbortSignal) {
+    return http.get<{ asset: Asset }>(`/assets/${encodeURIComponent(id)}`, { signal });
 }
 
 export function getRemoteAssetsByIds(ids: string[]) {

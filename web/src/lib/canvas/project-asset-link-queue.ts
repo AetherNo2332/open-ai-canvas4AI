@@ -31,16 +31,26 @@ function identity(entry: Pick<PendingCanvasProjectAssetLink, "assetId" | "domain
     return `${entry.domainProjectId}\0${entry.assetId}`;
 }
 
-function readEntries(raw: string | null): PendingCanvasProjectAssetLink[] {
-    if (!raw) return [];
+type QueueDocument = { version: 1; entries: PendingCanvasProjectAssetLink[]; confirmedAssetIds: string[] };
+
+function readDocument(raw: string | null): QueueDocument {
+    if (!raw) return { version: 1, entries: [], confirmedAssetIds: [] };
     let value: unknown;
     try {
         value = JSON.parse(raw);
     } catch {
         throw new Error("项目资产待同步记录已损坏，原记录已保留");
     }
-    if (!Array.isArray(value) || value.some((entry) => !validEntry(entry))) throw new Error("项目资产待同步记录格式无效，原记录已保留");
-    return value;
+    if (Array.isArray(value)) {
+        if (value.some((entry) => !validEntry(entry))) throw new Error("项目资产待同步记录格式无效，原记录已保留");
+        // Old arrays cannot distinguish an acknowledged body from a conservative
+        // sealed permission. Preserve that denial across deletion/recreation.
+        return { version: 1, entries: value, confirmedAssetIds: [...new Set(value.filter((entry) => entry.createAssetIfMissing === false).map((entry) => entry.assetId))] };
+    }
+    const document = value as Partial<QueueDocument> | null;
+    if (!document || document.version !== 1 || !Array.isArray(document.entries) || document.entries.some((entry) => !validEntry(entry)) || !Array.isArray(document.confirmedAssetIds) || document.confirmedAssetIds.some((id) => typeof id !== "string" || !id)) throw new Error("项目资产待同步记录格式无效，原记录已保留");
+    const confirmed = new Set(document.confirmedAssetIds);
+    return { version: 1, entries: document.entries.map((entry) => confirmed.has(entry.assetId) ? { ...entry, createAssetIfMissing: false } : entry), confirmedAssetIds: [...confirmed] };
 }
 
 function validEntry(value: unknown): value is PendingCanvasProjectAssetLink {
@@ -70,26 +80,28 @@ export function createCanvasProjectAssetLinkQueue(storage: Storage, storageKey: 
         void tail.finally(() => { if (queueTails.get(lockName) === tail) queueTails.delete(lockName); });
         return result;
     }
-    const read = async () => readEntries(await storage.getItem(storageKey));
-    function mutate<T>(change: (entries: PendingCanvasProjectAssetLink[]) => { result: T; changed: boolean }) {
+    const read = async () => readDocument(await storage.getItem(storageKey));
+    const encode = (document: QueueDocument) => document.entries.length || document.confirmedAssetIds.length ? JSON.stringify(document) : null;
+    function mutate<T>(change: (entries: PendingCanvasProjectAssetLink[], confirmedAssetIds: string[]) => { result: T; changed: boolean }) {
         return serialize(async () => {
             if (storage.atomicUpdate) return storage.atomicUpdate(storageKey, (raw) => {
-                const entries = readEntries(raw);
-                const next = change(entries);
-                return { value: next.changed ? entries.length ? JSON.stringify(entries) : null : raw, result: next.result };
+                const document = readDocument(raw);
+                const next = change(document.entries, document.confirmedAssetIds);
+                return { value: next.changed ? encode(document) : raw, result: next.result };
             });
-            const entries = await read();
-            const next = change(entries);
+            const document = await read();
+            const next = change(document.entries, document.confirmedAssetIds);
             if (next.changed) {
-                if (entries.length) await storage.setItem(storageKey, JSON.stringify(entries));
+                const value = encode(document);
+                if (value !== null) await storage.setItem(storageKey, value);
                 else await storage.removeItem(storageKey);
             }
             return next.result;
         });
     }
     return {
-        list: () => serialize(read),
-        upsert: (request: CanvasProjectAssetLinkRequest, options: { retryBlocked?: boolean } = {}) => mutate((entries) => {
+        list: () => serialize(async () => (await read()).entries),
+        upsert: (request: CanvasProjectAssetLinkRequest, options: { retryBlocked?: boolean } = {}) => mutate((entries, confirmedAssetIds) => {
             if (!request.assetId || !request.domainProjectId) throw new Error("项目资产关联缺少目标标识");
             const index = entries.findIndex((entry) => identity(entry) === identity(request));
             const previous = entries[index];
@@ -98,19 +110,24 @@ export function createCanvasProjectAssetLinkQueue(storage: Storage, storageKey: 
             if (previous && previous.category === category && previous.folderId === folderId && !(options.retryBlocked && (previous.blockedReason || previous.nextAttemptAt === Number.MAX_SAFE_INTEGER))) return { result: previous, changed: false };
             const next: PendingCanvasProjectAssetLink = {
                 assetId: request.assetId, domainProjectId: request.domainProjectId, category, folderId,
-                createAssetIfMissing: previous ? previous.createAssetIfMissing === true : request.createAssetIfMissing === true,
+                createAssetIfMissing: !confirmedAssetIds.includes(request.assetId) && (previous ? previous.createAssetIfMissing === true : request.createAssetIfMissing === true),
                 attempts: 0, nextAttemptAt: 0, revision: (previous?.revision || 0) + 1, intentToken: nanoid(),
             };
             if (index < 0) entries.push(next);
             else entries[index] = next;
             return { result: next, changed: true };
         }),
-        markAssetPersisted: (entry: PendingCanvasProjectAssetLink) => mutate((entries) => {
-            const current = entries.find((candidate) => identity(candidate) === identity(entry) && candidate.intentToken === entry.intentToken && candidate.revision === entry.revision);
-            if (!current || current.createAssetIfMissing === false) return { result: undefined, changed: false };
-            // Narrow creation permission without changing the relationship's completion identity.
-            current.createAssetIfMissing = false;
-            return { result: undefined, changed: true };
+        markAssetPersisted: (entry: Pick<PendingCanvasProjectAssetLink, "assetId">) => mutate((entries, confirmedAssetIds) => {
+            let changed = !confirmedAssetIds.includes(entry.assetId);
+            if (changed) confirmedAssetIds.push(entry.assetId);
+            for (const current of entries) {
+                if (current.assetId !== entry.assetId || current.createAssetIfMissing === false) continue;
+                current.createAssetIfMissing = false;
+                changed = true;
+            }
+            // Asset existence is a monotonic account+asset lifecycle fact. It
+            // cannot inherit the folder/category job's replaceable token.
+            return { result: undefined, changed };
         }),
         update: (entry: PendingCanvasProjectAssetLink, changes: Pick<PendingCanvasProjectAssetLink, "attempts" | "nextAttemptAt"> & Pick<PendingCanvasProjectAssetLink, "blockedReason" | "blockedMessage">) => mutate((entries) => {
             const index = entries.findIndex((candidate) => identity(candidate) === identity(entry) && candidate.intentToken === entry.intentToken && candidate.revision === entry.revision);

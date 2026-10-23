@@ -111,4 +111,33 @@ describe("project asset link journal", () => {
         await expect(queue.upsert({ assetId: "asset", domainProjectId: "project" })).rejects.toThrow("项目资产待同步记录已损坏");
         expect(storage.values.get("user-a")).toBe("broken-json");
     });
+
+    test("confirmed asset existence survives intent replacement, removal and reload without changing relation fields", async () => {
+        const storage = memoryStorage();
+        const queue = createCanvasProjectAssetLinkQueue(storage, "owner");
+        const old = await queue.upsert({ assetId: "asset", domainProjectId: "project", folderId: "old", createAssetIfMissing: true });
+        const current = await queue.upsert({ assetId: "asset", domainProjectId: "project", folderId: "new" });
+        const deferred = await queue.update(current, { attempts: 3, nextAttemptAt: 123 });
+        await queue.markAssetPersisted(old);
+        expect(await queue.list()).toEqual([{ ...deferred!, createAssetIfMissing: false }]);
+        await queue.remove((await queue.list())[0]);
+        const restored = createCanvasProjectAssetLinkQueue(storage, "owner");
+        const recreated = await restored.upsert({ assetId: "asset", domainProjectId: "project", createAssetIfMissing: true });
+        expect(recreated.createAssetIfMissing).toBe(false);
+        await restored.removeAssets(["asset"]);
+        const afterDeletion = createCanvasProjectAssetLinkQueue(storage, "owner");
+        expect((await afterDeletion.upsert({ assetId: "asset", domainProjectId: "other", createAssetIfMissing: true })).createAssetIfMissing).toBe(false);
+        const otherAccount = createCanvasProjectAssetLinkQueue(storage, "other-owner");
+        expect((await otherAccount.upsert({ assetId: "asset", domainProjectId: "project", createAssetIfMissing: true })).createAssetIfMissing).toBe(true);
+    });
+
+    test("legacy array queues retain their intent while confirmed permission migrates durably", async () => {
+        const storage = memoryStorage();
+        const legacy = { assetId: "asset", domainProjectId: "project", folderId: "legacy", createAssetIfMissing: false, attempts: 2, nextAttemptAt: 123, revision: 7 };
+        storage.values.set("legacy", JSON.stringify([legacy]));
+        const queue = createCanvasProjectAssetLinkQueue(storage, "legacy");
+        expect(await queue.list()).toEqual([legacy]);
+        await queue.remove(legacy);
+        expect((await createCanvasProjectAssetLinkQueue(storage, "legacy").upsert({ assetId: "asset", domainProjectId: "project", createAssetIfMissing: true })).createAssetIfMissing).toBe(false);
+    });
 });

@@ -12,13 +12,14 @@ import { defaultModelCapabilityConfig, STANDARD_IMAGE_SIZE_VALUES, type ModelCap
 import { imageSizeConfigWithPresets } from "@/lib/image-size-presets";
 import { useUserStore } from "@/stores/use-user-store";
 import { PLUGIN_STORE_KEY, usePluginStore } from "@/stores/use-plugin-store";
-import { initializeRemoteUserDataSession, installRemoteUserDataAutoSync, resetRemoteUserDataSync, withRemoteUserDataSyncExclusive } from "@/services/user-data-sync";
+import { cancelRemoteUserDataBootstrap, initializeRemoteUserDataSession, installRemoteUserDataAutoSync, resetRemoteUserDataSync, withRemoteUserDataSyncExclusive } from "@/services/user-data-sync";
 import { clearResourceAccessCache } from "@/services/api/resources";
 import { clearResourceBlobCache } from "@/services/resource-blob-cache";
 import { withGenerationConsumersPaused } from "@/services/generation-consumer-lifecycle";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 
 export async function switchUserStorageScope(userId?: string | null) {
+    cancelRemoteUserDataBootstrap();
     await withGenerationConsumersPaused(async () => {
         await withRemoteUserDataSyncExclusive(async () => {
             await Promise.all([flushCanvasStorePersistence(), flushAssetStorePersistence()]);

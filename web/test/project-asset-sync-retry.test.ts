@@ -7,7 +7,7 @@ import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { apiClient } from "@/services/api/request";
 import { upsertRemoteAsset } from "@/services/api/user-data";
 import { createCanvasProjectAssetLinkRetryRunner, ensureCanvasNodeAsset, retryPendingCanvasProjectAssetLinks } from "@/services/project-asset-sync";
-import { deleteAssetWithRemoteSync, initializeRemoteUserDataSession, resetRemoteUserDataSync } from "@/services/user-data-sync";
+import { deleteAssetWithRemoteSync, hasRemoteUserDataSyncSession, initializeRemoteUserDataSession, installRemoteUserDataAutoSync, resetRemoteUserDataSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -21,6 +21,7 @@ const originalSet = localforage.setItem;
 const originalRemove = localforage.removeItem;
 const indexed = new Map<string, string>();
 const cloudAssets = new Map<string, Asset>();
+const onlineListeners = new Set<EventListener>();
 
 function assetAPIResponse(config: InternalAxiosRequestConfig) {
     const match = config.url?.match(/^\/assets\/([^/]+)$/);
@@ -49,7 +50,7 @@ afterEach(() => {
 function installStorage(scope: string, online: { value: boolean }) {
     Object.defineProperty(globalThis, "window", {
         configurable: true,
-        value: { localStorage: { getItem: () => scope, setItem: () => undefined }, setTimeout, clearTimeout, addEventListener: () => undefined },
+        value: { localStorage: { getItem: () => scope, setItem: () => undefined }, setTimeout, clearTimeout, addEventListener: (event: string, listener: EventListener) => { if (event === "online") onlineListeners.add(listener); } },
     });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: { get onLine() { return online.value; } } });
     localforage.getItem = (async (key: string) => indexed.get(key) ?? null) as typeof localforage.getItem;
@@ -381,3 +382,155 @@ test("a captured true permission cannot recreate an asset after its durable perm
     expect(cloudAssets.has(local.id)).toBe(false);
     expect((await queue.list())[0]?.createAssetIfMissing).toBe(false);
 });
+
+test("a delayed successful create seals a replacing intent even after the cloud body was deleted", async () => {
+    const online = { value: false };
+    const scope = "owner-delayed-ack";
+    installStorage(scope, online);
+    const local: Asset = { id: "created-then-deleted", kind: "text", title: "Local body", coverUrl: "", tags: [], category: "material", data: { content: "kept local draft" }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+    useAssetStore.getState().replaceAssets([local]);
+    await initializeRemoteUserDataSession(scope);
+    const queue = createCanvasProjectAssetLinkQueue(localForageStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope);
+    await queue.upsert({ assetId: local.id, domainProjectId: "project", folderId: "old", createAssetIfMissing: true });
+    let created!: () => void;
+    let releaseAck!: () => void;
+    const committed = new Promise<void>((resolve) => { created = resolve; });
+    const ackGate = new Promise<void>((resolve) => { releaseAck = resolve; });
+    let puts = 0;
+    apiClient.defaults.adapter = async (config) => {
+        if (config.url === `/assets/${local.id}` && config.method === "put") {
+            puts += 1;
+            const response = assetAPIResponse(config)!;
+            if (puts === 1) { created(); await ackGate; }
+            return response;
+        }
+        const response = assetAPIResponse(config);
+        if (response) return response;
+        if (!cloudAssets.has(local.id)) return { data: { code: 404, data: null, msg: "素材已删除" }, status: 404, statusText: "Not Found", headers: {}, config };
+        return { data: { code: 0, data: { projectRevision: config.method === "get" ? 1 : 2, asset: null }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    online.value = true;
+    const oldFlight = createCanvasProjectAssetLinkRetryRunner()(scope);
+    await committed;
+    await queue.upsert({ assetId: local.id, domainProjectId: "project", folderId: "new" });
+    cloudAssets.delete(local.id);
+    releaseAck();
+    await oldFlight;
+    await createCanvasProjectAssetLinkRetryRunner()(scope);
+
+    expect(puts).toBe(1);
+    expect(cloudAssets.has(local.id)).toBe(false);
+    const current = (await queue.list())[0];
+    expect(current.folderId).toBe("new");
+    expect(current.createAssetIfMissing).toBe(false);
+    expect(current.blockedReason).toBe("permanent");
+    expect(useAssetStore.getState().assets[0]?.data).toEqual(local.data);
+});
+
+test("a temporary bootstrap failure recovers through the real online listener without writing old bodies", async () => {
+    const scope = "owner-bootstrap-online";
+    installStorage(scope, { value: true });
+    installRemoteUserDataAutoSync();
+    const cached: Asset = { id: "bootstrap-asset", kind: "text", title: "Old cached title", coverUrl: "", tags: [], category: "material", data: { content: "old cached body" }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+    const fresh = { ...cached, title: "New cloud title", data: { content: "new cloud body" } } as Asset;
+    useAssetStore.getState().replaceAssets([cached]);
+    cloudAssets.set(cached.id, fresh);
+    const canvasId = useCanvasStore.getState().createProject("Local canvas draft");
+    const queue = createCanvasProjectAssetLinkQueue(localForageStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope);
+    await queue.upsert({ assetId: cached.id, domainProjectId: "project" });
+    let healthy = false;
+    const calls: string[] = [];
+    apiClient.defaults.adapter = async (config) => {
+        calls.push(`${config.method} ${config.url}`);
+        if (!healthy) return { data: { code: 503, data: null, msg: "temporary failure" }, status: 503, statusText: "Unavailable", headers: {}, config };
+        const response = assetAPIResponse(config);
+        if (response) return response;
+        return { data: { code: 0, data: { projectRevision: config.method === "get" ? 1 : 2, asset: null }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    await expect(initializeRemoteUserDataSession(scope)).rejects.toThrow("temporary failure");
+    expect(hasRemoteUserDataSyncSession()).toBe(false);
+    await retryPendingCanvasProjectAssetLinks(scope);
+    await expect(saveRemoteUserDataNow([])).rejects.toThrow("基线尚未建立");
+    expect(calls).toEqual([`get /assets/${cached.id}`]);
+    expect(useAssetStore.getState().assets[0]?.title).toBe(cached.title);
+    healthy = true;
+    for (const listener of onlineListeners) listener(new Event("online"));
+    for (let i = 0; i < 60 && (!hasRemoteUserDataSyncSession() || (await queue.list()).length); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(hasRemoteUserDataSyncSession()).toBe(true);
+    await retryPendingCanvasProjectAssetLinks(scope);
+    await saveRemoteUserDataNow([]);
+    expect(await queue.list()).toEqual([]);
+    expect(calls.filter((call) => call.startsWith("put /assets/"))).toEqual([]);
+    expect(useAssetStore.getState().assets[0]?.title).toBe(fresh.title);
+    expect(useCanvasStore.getState().openProject(canvasId)?.title).toBe("Local canvas draft");
+});
+
+test("bootstrap retries a503 with backoff while navigator stays online", async () => {
+    const scope = "owner-bootstrap-timer";
+    installStorage(scope, { value: true });
+    const asset: Asset = { id: "timer-asset", kind: "text", title: "Cached title", coverUrl: "", tags: [], category: "material", data: { content: "Cached body" }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+    useAssetStore.getState().replaceAssets([asset]);
+    cloudAssets.set(asset.id, asset);
+    const queue = createCanvasProjectAssetLinkQueue(localForageStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope);
+    await queue.upsert({ assetId: asset.id, domainProjectId: "project" });
+    let healthy = false;
+    let gets = 0;
+    apiClient.defaults.adapter = async (config) => {
+        if (config.url === `/assets/${asset.id}`) {
+            gets += 1;
+            if (!healthy) return { data: { code: 503, data: null, msg: "temporary failure" }, status: 503, statusText: "Unavailable", headers: {}, config };
+            return assetAPIResponse(config)!;
+        }
+        return { data: { code: 0, data: { projectRevision: config.method === "get" ? 1 : 2, asset: null }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    await expect(initializeRemoteUserDataSession(scope)).rejects.toThrow("temporary failure");
+    useAssetStore.getState().updateAsset(asset.id, { data: { content: "edited while baseline was unavailable" } });
+    healthy = true;
+    for (let i = 0; i < 140 && (!hasRemoteUserDataSyncSession() || (await queue.list()).length); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(gets).toBeGreaterThan(1);
+    expect(hasRemoteUserDataSyncSession()).toBe(true);
+    expect(await queue.list()).toEqual([]);
+    expect(useAssetStore.getState().assets[0]?.data).toEqual({ content: "edited while baseline was unavailable" });
+}, 6000);
+
+test("switching accounts cancels failed bootstrap timers and rejects its late response", async () => {
+    const scope = "owner-bootstrap-old";
+    installStorage(scope, { value: true });
+    installRemoteUserDataAutoSync();
+    const old: Asset = { id: "old-account-asset", kind: "text", title: "Old cached title", coverUrl: "", tags: [], category: "material", data: { content: "Old body" }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+    useAssetStore.getState().replaceAssets([old]);
+    const queue = createCanvasProjectAssetLinkQueue(localForageStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope);
+    await queue.upsert({ assetId: old.id, domainProjectId: "project" });
+    let oldCalls = 0;
+    let started!: () => void;
+    let releaseLate!: () => void;
+    let oldSignal: AbortSignal | undefined;
+    const inFlight = new Promise<void>((resolve) => { started = resolve; });
+    const responseGate = new Promise<void>((resolve) => { releaseLate = resolve; });
+    apiClient.defaults.adapter = async (config) => {
+        oldCalls += 1;
+        if (oldCalls === 1) return { data: { code: 503, data: null, msg: "temporary failure" }, status: 503, statusText: "Unavailable", headers: {}, config };
+        oldSignal = config.signal as AbortSignal;
+        started();
+        await responseGate;
+        return { data: { code: 0, data: { asset: old }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    await expect(initializeRemoteUserDataSession(scope)).rejects.toThrow("temporary failure");
+    for (const listener of onlineListeners) listener(new Event("online"));
+    await inFlight;
+    installStorage("owner-bootstrap-new", { value: true });
+    const fresh = { ...old, id: "new-account-asset", title: "New account draft" } as Asset;
+    useAssetStore.getState().replaceAssets([fresh]);
+    const newInitialization = initializeRemoteUserDataSession("owner-bootstrap-new");
+    expect(oldSignal?.aborted).toBe(true);
+    releaseLate();
+    await newInitialization;
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+
+    expect(oldCalls).toBe(2);
+    expect(hasRemoteUserDataSyncSession()).toBe(true);
+    expect(useAssetStore.getState().assets).toEqual([fresh]);
+    expect((await queue.list())[0]?.assetId).toBe(old.id);
+}, 6000);
