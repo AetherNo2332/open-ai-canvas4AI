@@ -42,14 +42,14 @@ func TestCloudAgentToolSchemaStaysCompact(t *testing.T) {
 		ops, _ := parameters["properties"].(map[string]any)
 		items, _ := ops["ops"].(map[string]any)
 		opItem, _ := items["items"].(map[string]any)
-		// 关闭 Agent 连线操作后，条件必填分支只剩 8 个节点操作；边操作与端口字段已删除。
+		// 节点操作及免费媒体版本选择；边操作与端口字段已删除。
 		want := []map[string]any{
 			{"properties": map[string]any{"type": map[string]any{"const": "add_node"}}, "required": []string{"nodeType"}},
 			{"properties": map[string]any{"type": map[string]any{"const": "update_node"}}, "required": []string{"patch"}},
 			{"properties": map[string]any{"type": map[string]any{"const": "delete_node"}}},
 		}
 		branches, ok := opItem["oneOf"].([]map[string]any)
-		if !ok || len(branches) != 8 || !reflect.DeepEqual(branches[:3], want) {
+		if !ok || len(branches) != 9 || !reflect.DeepEqual(branches[:3], want) || !reflect.DeepEqual(branches[8], map[string]any{"properties": map[string]any{"type": map[string]any{"const": "use_media_version"}}, "required": []string{"versionId"}}) {
 			t.Fatalf("操作类型条件必填约束丢失: %#v", opItem["oneOf"])
 		}
 		if props, ok := opItem["properties"].(map[string]any); !ok || len(props) == 0 {

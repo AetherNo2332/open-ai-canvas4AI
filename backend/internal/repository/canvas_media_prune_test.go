@@ -9,6 +9,36 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func TestPruneMediaVersionsWithoutCommandEpochRetainsLiveRoots(t *testing.T) {
+	db, err := database.Open(database.Config{Driver: "sqlite", DSN: t.TempDir() + "/legacy-prune.db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, _ := db.DB()
+	t.Cleanup(func() { _ = conn.Close() })
+	if err = db.AutoMigrate(&model.CanvasProject{}, &model.CanvasActorHistory{}, &model.CanvasMediaVersion{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&model.CanvasProject{ID: "canvas", UserID: "owner", PayloadJSON: `{"nodes":[{"id":"node","metadata":{"mediaVersion":{"epoch":"epoch","generation":1}}}]}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []model.CanvasMediaVersion{
+		{ID: "live", OwnerID: "owner", CanvasID: "canvas", Epoch: "epoch", NodeID: "node", Generation: 1, Sequence: 1},
+		{ID: "orphan", OwnerID: "owner", CanvasID: "canvas", Epoch: "old", NodeID: "deleted", Generation: 1, Sequence: 1},
+	} {
+		if err = db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = New(db).PruneCanvasMediaVersions("owner", "canvas"); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	if err = db.Model(&model.CanvasMediaVersion{}).Pluck("id", &ids).Error; err != nil || len(ids) != 1 || ids[0] != "live" {
+		t.Fatalf("legacy roots lost: %v %v", ids, err)
+	}
+}
+
 func TestPruneMediaVersionsRespectsLiveSnapshotUndoAndTaskRoots(t *testing.T) {
 	db, err := database.Open(database.Config{Driver: "sqlite", DSN: t.TempDir() + "/prune.db"})
 	if err != nil {

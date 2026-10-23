@@ -405,9 +405,8 @@ func TestCloudAgentVisionBudgetFollowsCanvasImageCount(t *testing.T) {
 	}
 }
 
-// TestCloudAgentVisionReusesConfirmedObservationWithoutBudget 覆盖账本优先：
-// 已有可靠观察的图片直接复用，既不附图、不判读循环，也不消耗额度。
-func TestCloudAgentVisionReusesConfirmedObservationWithoutBudget(t *testing.T) {
+// 普通读取复用观察；显式重看仍允许真实附图并标记重复。
+func TestCloudAgentVisionReusesConfirmedObservationAndAllowsRefresh(t *testing.T) {
 	s, _, _ := cloudAgentVisionFixture(t)
 	state := cloudAgentRuntime{Request: agentTestRequest()}
 	state.Request.VisionEnabled = true
@@ -416,8 +415,7 @@ func TestCloudAgentVisionReusesConfirmedObservationWithoutBudget(t *testing.T) {
 		t.Fatalf("observation was not recorded, recorded=%d", recorded)
 	}
 	before := state.ImageInspectCalls
-	// 即便模型传 refresh=true，也应当只回执文字并复用观察，而不是重发图片或终止本轮。
-	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-cat", map[string]any{"nodeId": "cat", "refresh": true})
+	call := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-cat", map[string]any{"nodeId": "cat"})
 	result, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, call)
 	if err != nil {
 		t.Fatal(err)
@@ -437,5 +435,14 @@ func TestCloudAgentVisionReusesConfirmedObservationWithoutBudget(t *testing.T) {
 	}
 	if state.ImageInspectCalls != before {
 		t.Fatalf("observation reuse must not consume the inspection budget: %d -> %d", before, state.ImageInspectCalls)
+	}
+	refresh := cloudAgentStoryboardCall(t, "canvas_inspect_image", "refresh-cat", map[string]any{"nodeId": "cat", "refresh": true})
+	result, err = s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, refresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection, ok = result.(cloudAgentImageInspection)
+	if !ok || inspection.ImageURL == "" || inspection.Receipt["imageAttached"] != true || inspection.Receipt["repeat"] != true || inspection.Receipt["forceImage"] != true {
+		t.Fatalf("explicit refresh must prepare the real image with repeat marker: %+v", result)
 	}
 }

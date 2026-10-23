@@ -158,7 +158,7 @@ func cloudAgentDispatchedToolNames(t *testing.T) []string {
 		file string
 		fn   string
 	}{
-		{"cloud_agent_runtime.go", "executeCloudAgentToolCall"},
+		{"cloud_agent_runtime.go", "executeCloudAgentToolCallAttempt"},
 		{"cloud_agent_tools.go", "cloudAgentReadTool"},
 	} {
 		file := parseCloudAgentFile(t, target.file)

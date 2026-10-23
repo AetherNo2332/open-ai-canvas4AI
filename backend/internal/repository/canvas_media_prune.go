@@ -78,7 +78,7 @@ func (r *Repository) canvasMediaVersionRoots(owner, canvasID string) (map[mediaV
 	}
 	// Undo is a recoverable document reference, but a permanently deleted
 	// canvas cannot be restored through its obsolete actor history.
-	if len(live) > 0 && r.db.Migrator().HasTable(&model.CanvasActorHistory{}) {
+	if len(live) > 0 && r.db.Migrator().HasTable(&model.CanvasActorHistory{}) && r.db.Migrator().HasTable(&model.CanvasDocumentEpoch{}) {
 		var histories []model.CanvasActorHistory
 		epochTable := r.db.NamingStrategy.TableName("CanvasDocumentEpoch")
 		if err := r.db.Model(&model.CanvasActorHistory{}).Select("canvas_actor_histories.canvas_id", "forward_json", "inverse_json").Joins("JOIN "+epochTable+" AS current_epoch ON current_epoch.canvas_id = canvas_actor_histories.canvas_id AND current_epoch.epoch = canvas_actor_histories.epoch AND current_epoch.owner_id = canvas_actor_histories.owner_id").Where("canvas_actor_histories.owner_id = ? AND canvas_actor_histories.canvas_id IN ? AND state IN ?", owner, live, []string{"applied", "undone"}).Find(&histories).Error; err != nil {
