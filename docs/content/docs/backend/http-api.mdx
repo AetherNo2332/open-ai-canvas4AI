@@ -59,6 +59,23 @@ description: 信封、错误码与 OpenAPI
 
 上传头像先通过共享裁剪弹窗选择 1:1 区域，支持拖动、缩放裁剪框、键盘调整与重置；确认后导出最大 512×512 的 PNG 到待保存预览，点击“保存头像”才上传。取消裁剪保留原头像；待保存图片可重新调整裁剪。选择系统头像使用现有 AppModal、Avatar 与主题 token，支持 8 个预设，确认后才写入服务端。
 
+
+## 用户反馈
+
+所有反馈接口使用登录 Cookie 和标准业务信封。普通用户只能提交反馈、上传附件和读取本人列表；`/api/admin/feedbacks` 下的写入与全量列表由 service 强制校验管理员权限。
+
+| 接口 | 入参与结果 |
+| --- | --- |
+| `POST /api/feedbacks` | `{ type, title, content, contact?, attachments?, environment? }`；类型为 `bug/feature/improvement/other`，标题最多 200 个 UTF-8 字节、正文最多 10000 个 UTF-8 字节。附件和环境字段是 JSON 字符串；返回 `data` 反馈记录 |
+| `GET /api/feedbacks/my` | 返回当前账号自己的反馈列表，按创建时间倒序，包含处理状态、管理员答复与归档标志 |
+| `POST /api/feedbacks/attachments` | multipart 字段 `file`；支持 PNG/JPG/JPEG/WebP/GIF/BMP 与 MP4/WebM/MOV/AVI/MKV，单文件最大 50 MiB，请求体最大 55 MiB；文件通过现有资源服务保存，返回附件元数据 |
+| `GET /api/admin/feedbacks` | 支持 `type`、`status`、`keyword`、`archived`、`page`、`pageSize`；默认每页 20 条，`pageSize` 超过 100 时使用默认值。返回 `data={list,total,page,limit}`，按创建时间倒序 |
+| `PATCH /api/admin/feedbacks/{id}` | 可更新 `status=pending/processing/resolved/closed`、`adminReply`、`archived`；返回更新后的反馈记录 |
+| `POST /api/admin/feedbacks/{id}/archive`、`POST /api/admin/feedbacks/{id}/unarchive` | 归档或恢复历史反馈，返回更新后的反馈记录 |
+| `DELETE /api/admin/feedbacks/{id}` | 删除反馈记录，返回 `data={ok:true}` |
+
+
+
 ## Agent 画布权限与大事件
 
 自由画布和项目关联画布均使用 `canvas_projects`。Agent 运行时按登录账号和画布 ID 查询归属，不能把所属项目 ID 当作画布 ID；画布不存在、属于其他账号或数据库读取失败时，不声明读写及导出权限。

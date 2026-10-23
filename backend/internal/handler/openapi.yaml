@@ -27,6 +27,8 @@ tags:
   - name: admin
   - name: skills
   - name: workbench
+  - name: feedback
+    description: 用户反馈与管理员收件箱
 paths:
   /projects/{id}/assets/{assetId}/image:
     put:
@@ -113,6 +115,174 @@ paths:
         "403": {$ref: "#/components/responses/Error"}
         "404": {$ref: "#/components/responses/Error"}
         "500": {$ref: "#/components/responses/Error"}
+  /feedbacks:
+    post:
+      tags: [feedback]
+      summary: 提交用户反馈
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/FeedbackSubmission"}
+      responses:
+        "200":
+          description: 成功信封，data 为新建反馈
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: {$ref: "#/components/schemas/UserFeedback"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+  /feedbacks/my:
+    get:
+      tags: [feedback]
+      summary: 读取当前用户自己的反馈列表
+      responses:
+        "200":
+          description: 成功信封，data 为按创建时间倒序排列的反馈数组
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: {$ref: "#/components/schemas/UserFeedback"}
+        "401": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+  /feedbacks/attachments:
+    post:
+      tags: [feedback]
+      summary: 上传用户反馈图片或视频附件
+      description: 单文件最大 50 MiB；整个 multipart 请求体最大 55 MiB。文件交由现有资源服务保存。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "200":
+          description: 成功信封，data 为附件元数据
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: {$ref: "#/components/schemas/FeedbackAttachment"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+  /admin/feedbacks:
+    get:
+      tags: [feedback, admin]
+      summary: 管理员筛选和分页查询反馈
+      parameters:
+        - {in: query, name: type, schema: {type: string, enum: [all, bug, feature, improvement, other]}}
+        - {in: query, name: status, schema: {type: string, enum: [all, pending, processing, resolved, closed, archived]}}
+        - {in: query, name: keyword, schema: {type: string}, description: 匹配标题、正文、用户名或联系方式}
+        - {in: query, name: archived, schema: {type: boolean}}
+        - {in: query, name: page, schema: {type: integer, minimum: 1, default: 1}}
+        - {in: query, name: pageSize, schema: {type: integer, minimum: 1, default: 20}, description: 大于 100 时服务端使用默认值 20}
+      responses:
+        "200":
+          description: 成功信封，data 含 list、total、page、limit
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: {$ref: "#/components/schemas/FeedbackListResult"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+  /admin/feedbacks/{id}:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    patch:
+      tags: [feedback, admin]
+      summary: 更新反馈状态、答复或归档标志
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/FeedbackAdminUpdate"}
+      responses:
+        "200":
+          description: 成功信封，data 为更新后的反馈
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: {$ref: "#/components/schemas/UserFeedback"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+    delete:
+      tags: [feedback, admin]
+      summary: 删除反馈记录
+      responses:
+        "200":
+          description: 成功信封 data={ok:true}
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          ok: {type: boolean, enum: [true]}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+  /admin/feedbacks/{id}/archive:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    post:
+      tags: [feedback, admin]
+      summary: 归档反馈
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+  /admin/feedbacks/{id}/unarchive:
+    parameters:
+      - {in: path, name: id, required: true, schema: {type: string}}
+    post:
+      tags: [feedback, admin]
+      summary: 取消归档反馈
+      responses:
+        "200": {$ref: "#/components/responses/Envelope"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "500": {$ref: "#/components/responses/Error"}
+
   /admin/settings/appearance/live2d:
     post:
       tags: [admin]
@@ -2019,6 +2189,62 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    FeedbackAttachment:
+      type: object
+      required: [id, name, type, url, size, mimeType]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        type: {type: string, enum: [image, video]}
+        url: {type: string}
+        size: {type: integer, format: int64, minimum: 0}
+        mimeType: {type: string}
+    UserFeedback:
+      type: object
+      required: [id, userId, userName, userEmail, contact, type, title, content, attachments, environment, status, adminReply, archived, createdAt, updatedAt]
+      properties:
+        id: {type: string}
+        userId: {type: string}
+        userName: {type: string}
+        userEmail: {type: string}
+        contact: {type: string}
+        type: {type: string, enum: [bug, feature, improvement, other]}
+        title: {type: string, description: 最多 200 个 UTF-8 字节}
+        content: {type: string, description: 最多 10000 个 UTF-8 字节}
+        attachments: {type: string, description: JSON-encoded array of FeedbackAttachment}
+        environment: {type: string, description: JSON-encoded client environment object}
+        status: {type: string, enum: [pending, processing, resolved, closed, archived]}
+        adminReply: {type: string}
+        repliedAt: {type: string, format: date-time, nullable: true}
+        archived: {type: boolean}
+        archivedAt: {type: string, format: date-time, nullable: true}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    FeedbackSubmission:
+      type: object
+      required: [title, content]
+      properties:
+        type: {type: string, enum: [bug, feature, improvement, other]}
+        title: {type: string, minLength: 1, description: 最多 200 个 UTF-8 字节}
+        content: {type: string, minLength: 1, description: 最多 10000 个 UTF-8 字节}
+        contact: {type: string}
+        attachments: {type: string, description: JSON-encoded array of FeedbackAttachment}
+        environment: {type: string, description: JSON-encoded client environment object}
+    FeedbackAdminUpdate:
+      type: object
+      properties:
+        status: {type: string, enum: [pending, processing, resolved, closed]}
+        adminReply: {type: string}
+        archived: {type: boolean}
+    FeedbackListResult:
+      type: object
+      required: [list, total, page, limit]
+      properties:
+        list: {type: array, items: {$ref: "#/components/schemas/UserFeedback"}}
+        total: {type: integer, format: int64}
+        page: {type: integer, minimum: 1}
+        limit: {type: integer, minimum: 1, maximum: 100}
+
     LoginLog:
       type: object
       properties:

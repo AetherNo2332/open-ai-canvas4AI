@@ -1,4 +1,4 @@
-import { http } from "./request";
+import { compactApiParams, http, serializeApiParams } from "./request";
 
 export type FeedbackType = "bug" | "feature" | "improvement" | "other";
 export type FeedbackStatus = "pending" | "processing" | "resolved" | "closed";
@@ -72,15 +72,15 @@ export async function uploadFeedbackAttachment(file: File): Promise<FeedbackAtta
 }
 
 export async function getAdminFeedbacks(filter: AdminFeedbackFilter = {}): Promise<FeedbackListResult> {
-    const params = new URLSearchParams();
-    if (filter.type && filter.type !== "all") params.set("type", filter.type);
-    if (filter.status && filter.status !== "all") params.set("status", filter.status);
-    if (filter.archived !== undefined && filter.archived !== "all") params.set("archived", String(filter.archived));
-    if (filter.keyword) params.set("keyword", filter.keyword);
-    if (filter.page) params.set("page", String(filter.page));
-    if (filter.limit) params.set("limit", String(filter.limit));
-
-    const queryStr = params.toString();
+    const params = compactApiParams({
+        type: filter.type && filter.type !== "all" ? filter.type : undefined,
+        status: filter.status && filter.status !== "all" ? filter.status : undefined,
+        archived: filter.archived !== undefined && filter.archived !== "all" ? String(filter.archived) : undefined,
+        keyword: filter.keyword,
+        page: filter.page || undefined,
+        pageSize: filter.limit || undefined,
+    });
+    const queryStr = serializeApiParams(params).toString();
     const url = queryStr ? `/admin/feedbacks?${queryStr}` : "/admin/feedbacks";
     return http.get<FeedbackListResult>(url);
 }
