@@ -354,7 +354,6 @@ func (s *Service) createAuthSession(user *model.User) (*AuthSessionResult, error
 	return &AuthSessionResult{User: publicUser, Session: session.ID + "." + token, MaxAgeSecs: int(sessionMaxAge.Seconds())}, nil
 }
 
-
 func HashPassword(password string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(hash), err

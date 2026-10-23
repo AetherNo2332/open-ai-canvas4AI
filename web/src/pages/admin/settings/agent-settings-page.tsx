@@ -44,7 +44,13 @@ export default function AgentSettingsPage() {
     useEffect(() => {
         mounted.current = true;
         void loadConfig();
-        const loadWorkers = () => { void getAgentSchedulerStatus().then(({ instances }) => { if (mounted.current) setWorkers(instances); }).catch(() => {}); };
+        const loadWorkers = () => {
+            void getAgentSchedulerStatus()
+                .then(({ instances }) => {
+                    if (mounted.current) setWorkers(instances);
+                })
+                .catch(() => {});
+        };
         loadWorkers();
         const timer = window.setInterval(loadWorkers, 15000);
         return () => {
@@ -105,12 +111,16 @@ export default function AgentSettingsPage() {
                 <AgentToolCount count={configError ? undefined : toolCount} loading={!draft && !configError} />
                 <section className="agent-settings-section space-y-2" aria-label="Agent Worker 状态">
                     <h2 className="text-base font-semibold">Worker 状态</h2>
-                    {workers.length === 0 ? <p className="text-sm text-foreground/60">暂无 Worker 心跳；请检查 Agent 容器、令牌和后端连接。</p> : workers.map((worker) => (
-                        <p key={worker.instanceId} className="text-sm text-foreground/70">
-                            {worker.instanceId} · {worker.online ? worker.readiness === "ready" ? "就绪" : `在线但未就绪（${worker.readiness || "starting"}）` : "离线"}
-                            {worker.readinessReason ? ` · ${worker.readinessReason}` : ""} · {worker.resident}/{worker.capacity} 会话
-                        </p>
-                    ))}
+                    {workers.length === 0 ? (
+                        <p className="text-sm text-foreground/60">暂无 Worker 心跳；请检查 Agent 容器、令牌和后端连接。</p>
+                    ) : (
+                        workers.map((worker) => (
+                            <p key={worker.instanceId} className="text-sm text-foreground/70">
+                                {worker.instanceId} · {worker.online ? (worker.readiness === "ready" ? "就绪" : `在线但未就绪（${worker.readiness || "starting"}）`) : "离线"}
+                                {worker.readinessReason ? ` · ${worker.readinessReason}` : ""} · {worker.resident}/{worker.capacity} 会话
+                            </p>
+                        ))
+                    )}
                 </section>
                 <section id="config" className="agent-settings-section space-y-4" aria-labelledby="agent-config-heading">
                     <div className="agent-settings-heading">

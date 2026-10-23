@@ -51,14 +51,24 @@ func TestDeleteNodeCleansReferences(t *testing.T) {
 func TestDeleteNodeKeepsBatchInputColumnsAndBindingOrder(t *testing.T) {
 	d := fixture(t, `{"nodes":[{"id":"remove","type":"image"},{"id":"keep","type":"image"},{"id":"remove-text","type":"text"},{"id":"keep-text","type":"text"},{"id":"consumer","type":"image","metadata":{"generationSpec":{"referenceBindings":[{"id":"gone","nodeId":"remove","mediaType":"image","role":"reference","order":0,"resolution":"latest"},{"id":"kept","nodeId":"keep","mediaType":"image","role":"reference","order":1,"resolution":"latest"}]},"inputBindings":[{"id":"gone-input","nodeId":"remove","mediaType":"image","role":"reference","order":0,"resolution":"latest"},{"id":"kept-input","nodeId":"keep","mediaType":"image","role":"reference","order":1,"resolution":"latest"}]}},{"id":"table","type":"batch-table","metadata":{"batchTable":{"rows":[{"inputNodeIds":["remove","keep"],"textNodeIds":["remove-text","keep-text"]}]}}}],"connections":[]}`)
 	result, err := Plan(d, command(Operation{Type: "delete_node", ID: "remove"}, Operation{Type: "delete_node", ID: "remove-text"}), ownerContext())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	rows := maps(entity(result.Document, "node:table")["metadata"].(map[string]any)["batchTable"].(map[string]any)["rows"])
-	if got := rows[0]["inputNodeIds"].([]any); !reflect.DeepEqual(got, []any{"", "keep"}) { t.Fatalf("batch columns shifted: %#v", got) }
-	if got := rows[0]["textNodeIds"].([]any); !reflect.DeepEqual(got, []any{"", "keep-text"}) { t.Fatalf("batch text columns shifted: %#v", got) }
+	if got := rows[0]["inputNodeIds"].([]any); !reflect.DeepEqual(got, []any{"", "keep"}) {
+		t.Fatalf("batch columns shifted: %#v", got)
+	}
+	if got := rows[0]["textNodeIds"].([]any); !reflect.DeepEqual(got, []any{"", "keep-text"}) {
+		t.Fatalf("batch text columns shifted: %#v", got)
+	}
 	bindings := maps(entity(result.Document, "node:consumer")["metadata"].(map[string]any)["generationSpec"].(map[string]any)["referenceBindings"])
-	if len(bindings) != 1 || bindings[0]["nodeId"] != "keep" || bindings[0]["order"] != float64(0) { t.Fatalf("surviving bindings were not compacted: %#v", bindings) }
+	if len(bindings) != 1 || bindings[0]["nodeId"] != "keep" || bindings[0]["order"] != float64(0) {
+		t.Fatalf("surviving bindings were not compacted: %#v", bindings)
+	}
 	inputBindings := maps(entity(result.Document, "node:consumer")["metadata"].(map[string]any)["inputBindings"])
-	if len(inputBindings) != 1 || inputBindings[0]["nodeId"] != "keep" || inputBindings[0]["order"] != float64(0) { t.Fatalf("surviving input bindings were not compacted: %#v", inputBindings) }
+	if len(inputBindings) != 1 || inputBindings[0]["nodeId"] != "keep" || inputBindings[0]["order"] != float64(0) {
+		t.Fatalf("surviving input bindings were not compacted: %#v", inputBindings)
+	}
 }
 
 func TestBatchRowUpdatePreservesEmptyReferenceSlots(t *testing.T) {

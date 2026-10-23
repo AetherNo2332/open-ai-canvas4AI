@@ -266,6 +266,7 @@ func (s *Service) CommitCreationCanvas(userID, id string, req CreationRequest) (
 	})
 	return out, creationError(err)
 }
+
 // normalizeCreationCanvasReferences 把智能创作导入的画布一次性翻译成声明式引用文档。
 // 它只在导入时调用一次：返回的文档带版本标记，之后的读写都走字段与托管连线。
 func normalizeCreationCanvasReferences(doc map[string]any) (map[string]any, error) {

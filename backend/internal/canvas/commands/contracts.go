@@ -2,8 +2,8 @@ package commands
 
 import (
 	"fmt"
-	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/identity"
 	"time"
 )

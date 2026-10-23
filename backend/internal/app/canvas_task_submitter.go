@@ -127,7 +127,7 @@ func (d *canvasTaskSubmitter) Commit(ctx context.Context, tx *repository.Reposit
 	return tx.CommitPreparedTask(&prepared.Task, prepared.BillingOrder, policy.Task.ActiveTaskLimit)
 }
 func (d *canvasTaskSubmitter) Wake() { d.s.wakeTaskDispatcher() }
-func strValue(v any) string           { s, _ := v.(string); return strings.TrimSpace(s) }
+func strValue(v any) string          { s, _ := v.(string); return strings.TrimSpace(s) }
 func unsafeCanvasTaskInput(v any) bool {
 	switch x := v.(type) {
 	case map[string]any:

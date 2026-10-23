@@ -401,6 +401,7 @@ func checkVersions(req Command, row *model.CanvasProject, versions map[string]mo
 	}
 	return nil
 }
+
 // Durable consumer shape for occupancy checks; matches tasks.ConsumerJSON without
 // making the command layer depend on the task layer.
 type activeCanvasConsumer struct {
