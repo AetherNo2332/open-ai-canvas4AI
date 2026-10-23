@@ -42,6 +42,135 @@ function transport(overrides: Partial<CommandTransport> = {}): CommandTransport 
 }
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+test("field baseline wire survives lost ACK, remote sync and journal reload byte-for-byte", async () => {
+    let stored: any[] = [],
+        attempts: string[] = [],
+        recovered: string[] = [];
+    const journal = {
+        read: async () => structuredClone(stored),
+        write: async (_id: string, pending: any[]) => {
+            stored = structuredClone(pending);
+        },
+    };
+    const operation = { type: "update_node", id: "a", patch: { content: "local" }, fieldBaselines: { nodeType: "text", generation: 0, fields: { content: { exists: true, value: "before" } } } };
+    const first = new CanvasCommandSession(
+        transport({
+            snapshot: async () => ({ ...snapshot(), entityGenerations: { "node:a": 0 } }),
+            execute: async (command) => {
+                attempts.push(JSON.stringify(command));
+                throw new Error("lost ACK");
+            },
+        }),
+        "client",
+        journal,
+    );
+    await first.open("canvas");
+    const pending = first.submit([operation]).catch((error) => error);
+    operation.fieldBaselines.fields.content.value = "mutated caller";
+    await tick();
+    await first.whenJournalDurable();
+    expect(stored[0].wire.operations[0].fieldBaselines.fields.content.value).toBe("before");
+    first.close();
+    await pending;
+    const remote = receipt(1, "b", "remote B");
+    const restarted = new CanvasCommandSession(
+        transport({
+            snapshot: async () => ({ ...snapshot(), entityGenerations: { "node:a": 99 } }),
+            events: async () => [remote],
+            receipt: async (command) => {
+                recovered.push(JSON.stringify(command));
+                throw { status: 404 };
+            },
+            execute: async (command) => {
+                attempts.push(JSON.stringify(command));
+                return { ...receipt(2, "a", "local", command.operationId), clientId: "client", entityGenerations: { "node:a": 0 } };
+            },
+        }),
+        "client",
+        journal,
+    );
+    await restarted.open("canvas");
+    await restarted.persistJournal();
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toBe(attempts[0]);
+    expect(recovered[0]).toBe(attempts[0]);
+    expect(stored).toEqual([]);
+    restarted.close();
+});
+
+test("field baseline queued dependency advances only version while retaining semantic observation", async () => {
+    let finish!: (event: Receipt) => void;
+    const sent: Command[] = [];
+    const s = new CanvasCommandSession(
+        transport({
+            snapshot: async () => ({ ...snapshot(), entityGenerations: { "node:a": 0 } }),
+            execute: async (command) => {
+                sent.push(structuredClone(command));
+                if (sent.length === 1)
+                    return new Promise((resolve) => {
+                        finish = resolve;
+                    });
+                return { ...receipt(2, "a", "second", command.operationId), clientId: "client", entityGenerations: { "node:a": 0 } };
+            },
+        }),
+        "client",
+    );
+    await s.open("canvas");
+    const one = s.submit([{ type: "update_node", id: "a", patch: { content: "first" }, fieldBaselines: { nodeType: "text", generation: 0, fields: { content: { exists: true, value: "before" } } } }]);
+    const two = s.submit([{ type: "update_node", id: "a", patch: { content: "second" }, fieldBaselines: { nodeType: "text", generation: 0, fields: { content: { exists: true, value: "first" } } } }]);
+    await tick();
+    finish({ ...receipt(1, "a", "first", sent[0].operationId), clientId: "client", entityGenerations: { "node:a": 0 } });
+    await Promise.all([one, two]);
+    expect(sent[1].expectedEntityVersions?.["node:a"]).toBe(2);
+    expect(sent[1].operations[0].fieldBaselines).toEqual({ nodeType: "text", generation: 0, fields: { content: { exists: true, value: "first" } } });
+    s.close();
+});
+
+test("journal durability awaits queued storage without waiting for an outstanding network write", async () => {
+    let release!: () => void,
+        finish!: (event: Receipt) => void,
+        blocked = false,
+        writes = 0;
+    const session = new CanvasCommandSession(
+        transport({
+            execute: async () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                }),
+        }),
+        "client",
+        {
+            read: async () => [],
+            write: async () => {
+                writes++;
+                if (blocked)
+                    await new Promise<void>((resolve) => {
+                        release = resolve;
+                    });
+            },
+        },
+    );
+    await session.open("canvas");
+    await session.persistJournal();
+    blocked = true;
+    const pending = session.submit([{ type: "update_node", id: "a", patch: { content: "local" } }]).catch((error) => error);
+    let durable = false;
+    const wait = session.whenJournalDurable().then(() => {
+        durable = true;
+    });
+    await tick();
+    expect(durable).toBe(false);
+    blocked = false;
+    release();
+    await wait;
+    await tick();
+    expect(writes).toBeGreaterThan(1);
+    expect(typeof finish).toBe("function");
+    expect(session.state.pending[0].status).toBe("inflight");
+    session.close();
+    await pending;
+});
+
 test("own restore settles before adopting the new epoch and recovers after restart", async () => {
     const reset = { ...snapshot(), documentEpoch: "restored", revision: 2, eventSeq: 1 };
     let saved: any[] = [];

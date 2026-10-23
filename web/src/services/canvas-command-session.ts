@@ -1,5 +1,6 @@
 import type { Command, Operation, Snapshot, Receipt, ChangeSet, SubmitRequest, PrevisSubmitRequest, TaskHandle } from "../lib/canvas/command-contract.generated";
 import { applyCanvasEventChanges, applyCanvasDraftChanges, canvasDocumentChanges, projectCanvasOperations, type CanvasDocument } from "../lib/canvas/canvas-event-projection";
+import { nanoid } from "nanoid";
 
 export type CommandTransport = {
     snapshot(canvasId: string, signal?: AbortSignal): Promise<Snapshot>;
@@ -41,7 +42,16 @@ export type CommandSessionState = {
     conflicts: Array<{ operationId: string; reason: string; message: string; operations: Operation[] }>;
     saveState: "saved" | "saving" | "offline" | "conflict" | "closed";
 };
-export type CommandPreconditions = { expectedEntityVersions?: Record<string, number>; preview?: ChangeSet; operationId?: string };
+export type CommandPreconditions = {
+    expectedEntityVersions?: Record<string, number>;
+    preview?: ChangeSet;
+    operationId?: string;
+    // Original semantic observations used by the binding's registry-based
+    // baseline assembly. Projection bases below intentionally use current state.
+    baseEntities?: Record<string, Record<string, unknown>>;
+    baseFields?: Record<string, unknown>;
+    baseEntityGenerations?: Record<string, number>;
+};
 const copy = <T>(v: T): T => structuredClone(v);
 const errorStatus = (e: unknown) => (e && typeof e === "object" ? ("status" in e ? Number(e.status) : undefined) : undefined);
 const errorReason = (e: unknown) => (e && typeof e === "object" && "reason" in e ? String(e.reason) : undefined);
@@ -140,7 +150,7 @@ export class CanvasCommandSession {
             }
             for (const key of Object.keys(preview.fields || {})) if (key in projected) Object.defineProperty(baseFields, key, { value: copy(projected[key]), enumerable: true, writable: true, configurable: true });
             const p: Pending = {
-                operationId: preconditions.operationId || crypto.randomUUID(),
+                operationId: preconditions.operationId || nanoid(),
                 documentEpoch: this.acknowledged!.documentEpoch,
                 operations: copy(operations),
                 effect,
@@ -189,7 +199,14 @@ export class CanvasCommandSession {
             } else {
                 if (event.documentEpoch !== this.acknowledged.documentEpoch) throw new Error("event_epoch_missing_reset");
                 const before = this.acknowledged;
-                const next: Snapshot = { ...before, document: applyCanvasEventChanges(before.document, event.changes), revision: event.revision, eventSeq: event.eventSeq, entityVersions: { ...before.entityVersions, ...event.entityVersions } };
+                const next: Snapshot = {
+                    ...before,
+                    document: applyCanvasEventChanges(before.document, event.changes),
+                    revision: event.revision,
+                    eventSeq: event.eventSeq,
+                    entityVersions: { ...before.entityVersions, ...event.entityVersions },
+                    entityGenerations: { ...before.entityGenerations, ...event.entityGenerations },
+                };
                 this.acknowledged = next;
                 if (event.clientId === this.clientId && this.pending.some((p) => p.operationId === event.operationId)) {
                     for (const p of this.pending) {
@@ -399,6 +416,11 @@ export class CanvasCommandSession {
             if (!reason && this.acknowledged) {
                 for (const key of this.touched(p.preview, p.operations)) {
                     if ((p.expectedEntityVersions[key] ?? 0) !== (this.acknowledged.entityVersions[key] ?? 0)) {
+                        // Field comparisons are authoritative on the host. Do
+                        // not report disjoint updates as conflicts pre-emptively.
+                        const targets = p.operations.filter((op) => "node:" + op.id === key);
+                        if (p.operations.every((op) => op.type === "update_node") && targets.length && targets.every((op) => op.fieldBaselines?.generation !== undefined && op.fieldBaselines.generation === this.acknowledged!.entityGenerations?.[key]))
+                            continue;
                         reason = "entity_version_conflict";
                         message = "其他编辑已修改相关对象，原草稿已保留";
                         break;
@@ -433,6 +455,12 @@ export class CanvasCommandSession {
             return false;
         }
         return this.pending.length === 0;
+    }
+    whenJournalDurable(): Promise<void> {
+        return this.journalTail;
+    }
+    persistJournal(): Promise<void> {
+        return this.whenJournalDurable();
     }
     close() {
         this.generation++;
