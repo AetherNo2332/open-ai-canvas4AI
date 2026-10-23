@@ -3,6 +3,8 @@ import { getImageBlob } from "@/services/image-storage";
 import { deleteRemoteAssets, deleteRemoteCanvasProject, getRemoteAsset, getRemoteAssetsByIds, getRemoteCanvasProject, getRemoteUserDataSnapshot, listRemoteAssetsPage, restoreRemoteCanvasHistory, upsertRemoteAsset, upsertRemoteCanvasProject } from "@/services/api/user-data";
 import { ApiError } from "@/services/api/request";
 import { canvasContentHash, sameCanvasContent } from "@/lib/canvas/canvas-content";
+import { CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, createCanvasProjectAssetLinkQueue } from "@/lib/canvas/project-asset-link-queue";
+import { projectAssetLinkStorageForScope } from "@/lib/canvas/project-asset-link-storage";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { preserveCanvasSyncDraft, readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
 import { appQueryClient } from "@/lib/query-client";
@@ -30,6 +32,8 @@ let syncPromise: Promise<void> | null = null;
 let syncQueued = false;
 let remoteOperationTail: Promise<void> = Promise.resolve();
 let subscriptionsInstalled = false;
+const remoteReadyListeners = new Set<() => void | Promise<void>>();
+const remoteAssetDeletionListeners = new Set<(scope: string, assetIds: readonly string[]) => void | Promise<void>>();
 let acknowledgedAssets = new Map<string, Asset>();
 let acknowledgedProjects = new Map<string, CanvasProject>();
 let incrementalSession = false;
@@ -44,9 +48,13 @@ export async function initializeRemoteUserDataSession(userId: string) {
         activeRemoteUserId = userId;
         incrementalSession = true;
         acknowledgedProjects = new Map(useCanvasStore.getState().projects.map((project) => [project.id, project]));
-        acknowledgedAssets = new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset]));
+        const pendingAssetIds = getActiveUserScope() === userId
+            ? new Set((await createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(userId), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, userId).list()).map((entry) => entry.assetId))
+            : new Set<string>();
+        acknowledgedAssets = new Map(useAssetStore.getState().assets.filter((asset) => !pendingAssetIds.has(asset.id)).map((asset) => [asset.id, asset]));
         remoteUserDataPhase = "ready";
     });
+    notifyRemoteUserDataReady();
 }
 
 function liveCanvasIfUnchanged(id: string, snapshot: CanvasProject | null | undefined) {
@@ -328,22 +336,35 @@ export async function syncRemoteUserData(userId?: string | null) {
                 return { ...project, viewport: local?.viewport || project.viewport || { x: 0, y: 0, k: 1 }, remoteContentHash: await canvasContentHash(project) };
             }));
             if (useCanvasStore.getState().projects !== localProjects) throw new Error("本地画布仍在更新，已保留本地内容，请重新同步");
+            const remoteAssets = parseAssetRecordList(snapshot.assets);
+            const remoteAssetIds = new Set(remoteAssets.map((asset) => asset.id));
+            // A local asset with a durable pending project link must survive the login snapshot;
+            // otherwise refresh would erase the target before its queued link can resume.
+            const pendingAssetIds = getActiveUserScope() === activeRemoteUserId
+                ? new Set((await createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(activeRemoteUserId), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, activeRemoteUserId).list()).map((entry) => entry.assetId))
+                : new Set<string>();
+            const pendingLocalAssets = useAssetStore.getState().assets.filter((asset) => pendingAssetIds.has(asset.id) && !remoteAssetIds.has(asset.id));
             useCanvasStore.getState().replaceProjects(projects);
-            useAssetStore.getState().replaceAssets(parseAssetRecordList(snapshot.assets));
+            useAssetStore.getState().replaceAssets([...remoteAssets, ...pendingLocalAssets]);
             await Promise.all([flushCanvasStorePersistence(), flushAssetStorePersistence()]);
             acknowledgedProjects = new Map(projects.map((project) => [project.id, project]));
-            acknowledgedAssets = new Map(parseAssetRecordList(snapshot.assets).map((asset) => [asset.id, asset]));
+            acknowledgedAssets = new Map(remoteAssets.map((asset) => [asset.id, asset]));
             remoteUserDataPhase = "ready";
         } catch (error) {
             remoteUserDataPhase = "failed";
             throw error;
         }
     });
+    if (hasRemoteUserDataSyncSession()) notifyRemoteUserDataReady();
 }
 
 export function installRemoteUserDataAutoSync() {
     if (subscriptionsInstalled) return;
     subscriptionsInstalled = true;
+    if (typeof window !== "undefined") window.addEventListener("online", () => {
+        if (remoteUserDataPhase === "ready") scheduleRemoteUserDataSync();
+        else if (activeRemoteUserId && remoteUserDataPhase === "failed") void syncRemoteUserData(activeRemoteUserId).catch(() => undefined);
+    });
     useCanvasStore.subscribe((state, previous) => {
         if (state.projects === previous.projects) return;
         const before = new Map(previous.projects.map((project) => [project.id, project]));
@@ -383,6 +404,21 @@ export function resetRemoteUserDataSync() {
 
 export function hasRemoteUserDataSyncSession() {
     return Boolean(activeRemoteUserId) && remoteUserDataPhase === "ready";
+}
+
+export function subscribeRemoteUserDataReady(listener: () => void | Promise<void>) {
+    remoteReadyListeners.add(listener);
+    if (hasRemoteUserDataSyncSession()) void Promise.resolve().then(listener).catch((error) => console.warn("云端同步就绪回调失败", error));
+    return () => { remoteReadyListeners.delete(listener); };
+}
+
+function notifyRemoteUserDataReady() {
+    for (const listener of remoteReadyListeners) void Promise.resolve().then(listener).catch((error) => console.warn("云端同步就绪回调失败", error));
+}
+
+export function subscribeRemoteAssetDeletion(listener: (scope: string, assetIds: readonly string[]) => void | Promise<void>) {
+    remoteAssetDeletionListeners.add(listener);
+    return () => { remoteAssetDeletionListeners.delete(listener); };
 }
 
 /**
@@ -450,6 +486,7 @@ export async function deleteAssetWithRemoteSync(id: string) {
 
 export async function deleteAssetsWithRemoteSync(ids: string[]) {
     const epoch = sessionEpoch;
+    const scope = getActiveUserScope();
     if (!ids.length || ids.length > 1000) throw new Error("每次请选择 1–1000 个素材删除");
     const assetIds = [...new Set(ids.map((id) => id.trim()))];
     if (assetIds.some((id) => !id)) throw new Error("素材 ID 不能为空");
@@ -463,6 +500,7 @@ export async function deleteAssetsWithRemoteSync(ids: string[]) {
         }
         await useAssetStore.getState().removeAssets(assetIds);
         await flushAssetStorePersistence();
+        for (const listener of remoteAssetDeletionListeners) await listener(scope, assetIds);
     });
     if (epoch !== sessionEpoch) throw new Error("账号已切换，请刷新原账号素材库确认删除结果");
     // 列表查询也会进入同步队列，必须在退出删除队列后触发，不能在队列内等待刷新。
@@ -619,14 +657,15 @@ export async function saveRemoteUserDataNow(input?: string | readonly string[] |
     syncPromise = withRemoteUserDataSyncExclusive(async () => {
         requireRemoteUserDataBaseline();
         if (epoch !== sessionEpoch) throw new Error("账号已切换，已停止旧会话保存");
-        await drainRemoteUserDataChanges(options);
+        await drainRemoteUserDataChanges(options, projectId === undefined ? undefined : new Set(typeof projectId === "string" ? [projectId] : projectId));
     });
     try {
         await syncPromise;
         assertNoConflict();
     } finally {
         syncPromise = null;
-        if (syncQueued) scheduleRemoteUserDataSync();
+        const otherProjectsPending = projectId !== undefined && useCanvasStore.getState().projects.some((project) => !sameCanvasContent(acknowledgedProjects.get(project.id), project));
+        if (syncQueued || otherProjectsPending) scheduleRemoteUserDataSync();
     }
 }
 
@@ -663,22 +702,22 @@ export async function forceOverwriteRemoteCanvasSync(): Promise<CanvasAssetRebin
     return rebind;
 }
 
-async function drainRemoteUserDataChanges(options: { force?: boolean; repairMissingResources?: boolean } = {}) {
+async function drainRemoteUserDataChanges(options: { force?: boolean; repairMissingResources?: boolean } = {}, projectIds?: ReadonlySet<string>) {
     const uploaded = new Map<string, string>();
     do {
         syncQueued = false;
-        await saveRemoteUserDataBatch(uploaded, options);
+        await saveRemoteUserDataBatch(uploaded, options, projectIds);
     } while (syncQueued);
 }
 
-async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: { force?: boolean; repairMissingResources?: boolean } = {}) {
+async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: { force?: boolean; repairMissingResources?: boolean } = {}, projectIds?: ReadonlySet<string>) {
     // 中央兜底：任何调用方只要把持久媒体写进画布，提交前都会先补齐素材记录与 assetId。
     // 页面级入口仍主动入库，以便立即反馈；这里负责阻止遗漏入口形成远端幽灵资源。
-    const changedProjectIds = new Set(useCanvasStore.getState().projects.filter((project) => !sameCanvasContent(acknowledgedProjects.get(project.id), project)).map((project) => project.id));
-    repairMissingCanvasAssets(changedProjectIds, incrementalSession);
+    const changedProjectIds = new Set(useCanvasStore.getState().projects.filter((project) => (!projectIds || projectIds.has(project.id)) && !sameCanvasContent(acknowledgedProjects.get(project.id), project)).map((project) => project.id));
+    if (changedProjectIds.size) repairMissingCanvasAssets(changedProjectIds, incrementalSession);
     const currentProjects = useCanvasStore.getState().projects;
     const currentAssets = useAssetStore.getState().assets;
-    const dirtyProjects = currentProjects.filter((project) => !sameCanvasContent(acknowledgedProjects.get(project.id), project) && useSyncProgressStore.getState().syncingProjects[project.id]?.phase !== "conflict");
+    const dirtyProjects = currentProjects.filter((project) => (!projectIds || projectIds.has(project.id)) && !sameCanvasContent(acknowledgedProjects.get(project.id), project) && useSyncProgressStore.getState().syncingProjects[project.id]?.phase !== "conflict");
     const dirtyAssets = currentAssets.filter((asset) => !sameEntitySnapshot(acknowledgedAssets.get(asset.id), asset));
     if (!dirtyProjects.length && !dirtyAssets.length) return;
 

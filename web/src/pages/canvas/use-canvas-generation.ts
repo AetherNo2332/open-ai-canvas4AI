@@ -282,9 +282,10 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
             const result = await retryCanvasAssetSyncAfterRateLimit(() => ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node, source: "canvas-generation", taskId, signal }), { signal });
             if (signal?.aborted) return;
             setNodes((current) => current.map((item) => (item.id === node.id && item.metadata?.taskId === taskId ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item)));
-            if (domainProjectId) await queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] });
+            if (result.syncPending) message.info({ key: `canvas-asset-sync:${projectId}`, content: domainProjectId ? "生成结果已保存到本地素材，云端项目资产正在自动同步" : "生成结果已保存到本地素材，云端素材待同步" });
+            else if (domainProjectId) await queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] });
         },
-        [domainProjectId, projectId, queryClient, setNodes],
+        [domainProjectId, message, projectId, queryClient, setNodes],
     );
 
     const applyGenerationTaskResult = useCallback(
