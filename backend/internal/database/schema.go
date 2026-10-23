@@ -19,6 +19,7 @@ func Models() []any {
 		&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AgentCanvasAdmission{}, &model.AgentUserAdmission{},
 		&model.AgentRuntimeInstance{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{},
 		&model.AgentWorker{},
+		&model.AgentQueuedMessage{}, &model.AgentConversationQueue{}, &model.AgentUISetting{},
 		&model.CloudAgentExecution{},
 		&model.CloudAgentEventRecord{},
 		&model.CloudAgentMessageRecord{},

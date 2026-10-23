@@ -14,7 +14,7 @@ import (
 // CurrentSchemaVersion follows upstream migrations through v43; our Agent
 // migrations register after that upstream range as 44+. When a future upstream
 // sync takes 44+, shift our block up again and extend the relocation table.
-const CurrentSchemaVersion int64 = 64
+const CurrentSchemaVersion int64 = 65
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 43

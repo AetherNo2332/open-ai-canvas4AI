@@ -23,7 +23,10 @@ func (r *Repository) requireAgentMessageAdmission(run *model.CloudAgentExecution
 	}
 	queue, err := r.AgentConversationQueue(run.UserID, run.ConversationID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
+		err = r.WithAgentConversation(run.UserID, run.ConversationID, func(_ *Repository, q *model.AgentConversationQueue, _ *model.CloudAgentExecution) error {
+			queue = q
+			return nil
+		})
 	}
 	if err != nil {
 		return err
@@ -147,6 +150,16 @@ func (r *Repository) WithAgentConversation(userID, conversationID string, fn fun
 			for _, record := range records {
 				writer.observeAgentQueueEvent(queue, latest, record.EventJSON)
 			}
+			if len(records) == 0 {
+				var old struct {
+					Events []json.RawMessage `json:"events"`
+				}
+				if json.Unmarshal([]byte(latest.StateJSON), &old) == nil {
+					for _, body := range old.Events {
+						writer.observeAgentQueueEvent(queue, latest, string(body))
+					}
+				}
+			}
 			if err = tx.Create(queue).Error; err != nil {
 				return err
 			}
@@ -245,6 +258,17 @@ func (r *Repository) UpdateAgentQueuedMessageBody(row *model.AgentQueuedMessage,
 	row.Prompt = prompt
 	row.Revision++
 	row.LastError = ""
+	return nil
+}
+
+func (r *Repository) PromoteAgentQueuedMessage(row *model.AgentQueuedMessage) error {
+	result := r.db.Model(&model.AgentQueuedMessage{}).Where("id = ? AND user_id = ? AND revision = ? AND status = ?", row.ID, row.UserID, row.Revision, "queued").Updates(map[string]any{"mode": "interject", "last_error": "", "next_attempt_at": nil, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrCreationConflict
+	}
 	return nil
 }
 func (r *Repository) ClaimAgentQueuedMessage(row *model.AgentQueuedMessage, token, parentID string, until time.Time) error {

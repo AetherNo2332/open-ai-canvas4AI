@@ -21,6 +21,9 @@ type CloudAgentConversation struct {
 	Status         string    `json:"status"`
 	Revision       int64     `json:"revision"`
 	CleanupPending bool      `json:"cleanupPending"`
+	QueueRevision  int64     `json:"queueRevision"`
+	QueuedCount    int       `json:"queuedCount"`
+	QueuePaused    bool      `json:"queuePaused"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
@@ -96,6 +99,20 @@ func (s *Service) CloudAgentConversations(userID, canvasID, before string, limit
 			Status: run.Status, Revision: run.Revision, CleanupPending: run.CleanupPending,
 			CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
 		})
+		if s.repo.HasAgentMessageQueue() {
+			if q, err := s.repo.AgentConversationQueue(userID, id); err == nil {
+				rows, err := s.repo.AgentQueuedMessages(userID, id)
+				if err != nil {
+					return nil, err
+				}
+				item := &page.Items[len(page.Items)-1]
+				item.QueueRevision = q.Revision
+				item.QueuedCount = len(rows)
+				item.QueuePaused = q.Paused
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, err
+			}
+		}
 	}
 	return page, nil
 }
