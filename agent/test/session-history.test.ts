@@ -48,6 +48,32 @@ test("image projection sends at most the newest unsummarized image", async () =>
   assert.equal(parts.find((p: any) => p.type === "image_url").image_url.url, "resource:two");
 });
 
+test("an explicit repeat keeps real pixels after a saved SHA summary", async () => {
+  const sha = "a".repeat(64);
+  const saved = { role: "toolResult", toolName: "canvas_inspect_image", toolCallId: "save", timestamp: 2,
+    content: [{ type: "text", text: JSON.stringify({ nodeId: "cat", sha256: sha, summarySaved: true,
+      imageAttached: false, visionCache: { short: "old observation", detailed: {} } }) }] } as unknown as AgentMessage;
+  const repeated = { role: "user", timestamp: 3, content: "", canvasContent: [
+    { type: "text", text: JSON.stringify({ nodeId: "cat", sha256: sha, purpose: "inspect", forceImage: true,
+      comparisonId: "step:refresh", repeat: true, imageAttached: true }) },
+    { type: "image_url", image_url: { url: "resource:cat" } },
+  ] } as unknown as AgentMessage;
+  let handler: any;
+  const extension = createImageContextExtension();
+  if (typeof extension === "function") throw new Error("expected image extension");
+  await extension.factory({ on: (_: string, listener: unknown) => { handler = listener; } } as unknown as ExtensionAPI);
+  const source = [saved, repeated];
+  const before = JSON.stringify(source);
+  const result = handler({ messages: source }, { sessionManager: {
+    getBranch: () => source.map(message => ({ type: "message", message })),
+  } });
+  const messages = result?.messages || source;
+  assert.equal(messages.flatMap((message: any) => message.canvasContent || [])
+    .filter((part: any) => part.type === "image_url").length, 1);
+  assert.ok(JSON.stringify(messages).includes('"repeat":true') || JSON.stringify(messages).includes('\\"repeat\\":true'));
+  assert.equal(JSON.stringify(source), before, "a repeat must not rewrite stored observations or pixels");
+});
+
 test("old SHA and failed summary receipts cannot hide an updated image", async () => {
   const image = { role: "user", timestamp: 3, content: "", canvasContent: [
     { type: "text", text: JSON.stringify({ bytes: 12, nodeId: "cat", sha256: "b".repeat(64) }) },

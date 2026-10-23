@@ -170,7 +170,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v6"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v7"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -325,7 +325,7 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 	}
 	add("task_get", cloudAgentToolText("task_get"), map[string]any{"taskId": str(cloudAgentToolText("parameter_022"))}, "taskId")
 	if req.VisionEnabled && len(req.ContextScope) > 0 {
-		add("canvas_inspect_image", cloudAgentToolText("canvas_inspect_image"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_023")), "refresh": map[string]any{"type": "boolean", "description": "compare 时可在每图上限内重新附图"}, "purpose": map[string]any{"type": "string", "enum": []string{"inspect", "compare"}, "description": "compare 用于同批比较两张图片，仍遵守模型批次预算"}}, "nodeId")
+		add("canvas_inspect_image", cloudAgentToolText("canvas_inspect_image"), map[string]any{"nodeId": str(cloudAgentToolText("parameter_023")), "refresh": map[string]any{"type": "boolean", "description": "true：在每图和本轮预算内重新附送真实图片，单图也有效；已保存摘要仍可重看，重复时 repeat=true"}, "purpose": map[string]any{"type": "string", "enum": []string{"inspect", "compare"}, "description": "默认 inspect 读取指定节点；compare 在同一工具批次逐个读取待对比节点，仍遵守图片数量和成本预算"}}, "nodeId")
 	}
 	add("recall_lessons", cloudAgentToolText("recall_lessons"),
 		map[string]any{

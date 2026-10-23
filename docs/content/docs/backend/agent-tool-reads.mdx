@@ -55,7 +55,11 @@ HTTP `POST /api/characters` 支持 representations 数组，与 imageResourceId 
 
 候选的 observationStatus 描述未观察、有待验证缓存或已有观察，不强制本轮识图。关系检查直接读取引用；外观判断才请求图片。inspect 回执包含本轮调用额度、剩余额度、模型批次图片数和成本预算。
 
-视觉对比使用 purpose=compare，在模型能力内同批附送两张图；refresh=true 允许在每图上限内重新查看缓存原图。普通观察复用有效摘要，图片资源变化时旧摘要失效。Worker 最多保留模型允许的近期原图，后端继续负责图片数量和成本准入；输出文字大小与图片批次预算分开计算。
+`canvas_inspect_image({nodeId})` 默认读取该节点图片，有效摘要命中时只返回 `visionCache`、`imageAttached=false`。保存摘要使用同一 nodeId、实际交付回执的 sha256 和 summary；保存操作不附图，图片内容变化后旧摘要失效。
+
+需要重新核对画面时调用 `canvas_inspect_image({nodeId,refresh:true})`，单图可省略 purpose。即使已保存摘要，服务端仍读取资源字节，将真实图片作为下一次模型请求的图片输入；重复读取标记 `repeat=true`，内容SHA相同时为 `imageChanged=false`。显式附图按本次调用单独登记交付，送达一次后不会在每个后续请求中自动重发。每节点本轮最多附图2次；只返回文字的缓存读取计入本轮调用预算，不占真实附图次数。
+
+视觉对比使用 `purpose=compare`，在同批中逐个指定待对比节点；重看已缓存图同样传 `refresh=true`。所有附图继续受模型图片数量、文件大小和成本预算限制。Worker保留模型允许的近期原图，普通历史可用摘要降低上下文开销；显式重看不会被旧摘要替换。附图准备成功不等于识别成功，模型应根据收到的画面作答。
 
 ## 终态回执恢复
 

@@ -38,15 +38,15 @@ func projectCloudAgentVisionRequest(canonical canonicalAgentRequest, budget clou
 			}
 			key := stringValue(receipt["nodeId"]) + ":" + stringValue(receipt["sha256"])
 			comparisonID := stringValue(receipt["comparisonId"])
-			force := receipt["forceImage"] == true && receipt["purpose"] == "compare" && comparisonID != "" && cloudAgentSHA256(stringValue(receipt["sha256"]))
+			force := receipt["forceImage"] == true && (receipt["purpose"] == "compare" || receipt["purpose"] == "inspect") && comparisonID != "" && cloudAgentSHA256(stringValue(receipt["sha256"]))
 			if force && len(delivered) > 1 && delivered[1][comparisonID] == stringValue(receipt["sha256"]) {
 				force = false
 			}
 			if summaries[key] != nil && !force {
 				continue
 			}
-			// The optional ledgers track ordinary SHA delivery and exact comparison
-			// calls. An explicit comparison bypasses old summaries only until sent.
+			// An explicit comparison or refresh bypasses old summaries and SHA
+			// delivery only until that exact tool call's image has been sent.
 			if !force && len(delivered) > 0 && delivered[0] != nil {
 				if sha := delivered[0][stringValue(receipt["nodeId"])]; sha != "" && sha == stringValue(receipt["sha256"]) {
 					continue

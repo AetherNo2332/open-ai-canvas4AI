@@ -365,8 +365,8 @@ func TestCloudAgentVisionRefreshCannotBypassPerImageLimit(t *testing.T) {
 		t.Fatalf("refresh protection receipt is incomplete: %+v", inspection.Receipt)
 	}
 	state.markCanvasImageInspection("cat", false, "")
-	if got := state.cloudAgentImageInspectionCount("cat"); got != 3 {
-		t.Fatalf("expected all successful inspection calls to count, got %d", got)
+	if got := state.cloudAgentImageInspectionCount("cat"); got != 2 || state.cloudAgentImageInspectionCalls() != 3 {
+		t.Fatalf("text receipt must count only toward total calls: attachments=%d calls=%d", got, state.cloudAgentImageInspectionCalls())
 	}
 }
 
@@ -390,7 +390,7 @@ func TestCloudAgentVisionRepeatReadGuidesWithoutAttaching(t *testing.T) {
 	state.ImageInspectionReads = map[string]int{inspection.CacheKey: 1}
 	state.DeliveredImageSHAs = map[string]string{"cat": inspection.ResourceSHA}
 
-	repeatCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-repeat", map[string]any{"nodeId": "cat", "refresh": true})
+	repeatCall := cloudAgentStoryboardCall(t, "canvas_inspect_image", "inspect-repeat", map[string]any{"nodeId": "cat"})
 	second, err := s.prepareCloudAgentImageInspection("user", "agent-canvas", &state, repeatCall)
 	if err != nil {
 		t.Fatalf("重复识图必须回执文字引导，而不是把本轮判失败：%v", err)
