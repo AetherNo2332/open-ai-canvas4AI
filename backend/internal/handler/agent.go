@@ -381,18 +381,28 @@ func writeAgentSSE(c *gin.Context, event string, id int64, value any) {
 // 请求更大的页没有意义（单次响应体积），直接拒绝比静默截断更容易被发现。
 const agentRunEventQueryLimit = 500
 
+type agentRunViewQuery struct {
+	SinceSeq   string `form:"sinceSeq"`
+	EventLimit string `form:"eventLimit"`
+}
+
 func agentRunViewOptions(c *gin.Context) (service.CloudAgentRunViewOptions, error) {
 	options := service.CloudAgentRunViewOptions{}
+	var query agentRunViewQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		return options, err
+	}
 	for _, item := range []struct {
 		name  string
+		raw   string
 		value *int
 		min   int
 		max   int
 	}{
-		{name: "sinceSeq", value: &options.SinceSeq, min: 0, max: math.MaxInt32},
-		{name: "eventLimit", value: &options.EventLimit, min: 1, max: agentRunEventQueryLimit},
+		{name: "sinceSeq", raw: query.SinceSeq, value: &options.SinceSeq, min: 0, max: math.MaxInt32},
+		{name: "eventLimit", raw: query.EventLimit, value: &options.EventLimit, min: 1, max: agentRunEventQueryLimit},
 	} {
-		raw := strings.TrimSpace(c.Query(item.name))
+		raw := strings.TrimSpace(item.raw)
 		if raw == "" {
 			continue
 		}

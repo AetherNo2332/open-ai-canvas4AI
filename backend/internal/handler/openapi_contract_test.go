@@ -18,14 +18,14 @@ import (
 
 var ginParameter = regexp.MustCompile(`[:*]([A-Za-z][A-Za-z0-9_]*)`)
 
-// First adoption slice: Agent's public protocol. Internal worker callbacks are
-// mounted separately and intentionally have no public OpenAPI contract.
+// RegisterCanvasAPI is the public /api contract. Internal worker callbacks are
+// mounted on /internal-agent independently and have a separate wire protocol.
 func governedOpenAPIRoute(key string) bool {
 	parts := strings.SplitN(key, " ", 2)
 	if len(parts) != 2 {
 		return false
 	}
-	return strings.HasPrefix(parts[1], "/api/agent/") || strings.HasPrefix(parts[1], "/api/admin/settings/agent-")
+	return strings.HasPrefix(parts[1], "/api/")
 }
 
 func openAPIRouteDiff(spec []byte, routes gin.RoutesInfo) ([]string, []string, error) {
@@ -42,7 +42,7 @@ func openAPIRouteDiff(spec []byte, routes gin.RoutesInfo) ([]string, []string, e
 	for path, methods := range document.Paths {
 		for method := range methods {
 			upper := strings.ToUpper(method)
-			if upper == "GET" || upper == "POST" || upper == "PUT" || upper == "PATCH" || upper == "DELETE" {
+			if upper == "GET" || upper == "POST" || upper == "PUT" || upper == "PATCH" || upper == "DELETE" || upper == "HEAD" || upper == "OPTIONS" || upper == "TRACE" {
 				key := upper + " /api" + path
 				if governedOpenAPIRoute(key) {
 					documented[key] = true
@@ -106,19 +106,34 @@ func TestOpenAPIRouteContract(t *testing.T) {
 }
 
 func TestOpenAPIRouteDiffFixtures(t *testing.T) {
-	routes := gin.RoutesInfo{{Method: "GET", Path: "/api/agent/things/:id"}, {Method: "POST", Path: "/api/agent/hidden"}}
-	missing, stale, err := openAPIRouteDiff([]byte("paths:\n  /agent/things/{id}:\n    get: {}\n  /agent/gone:\n    put: {}\n"), routes)
+	routes := gin.RoutesInfo{{Method: "GET", Path: "/api/things/:id"}, {Method: "POST", Path: "/api/hidden"}, {Method: "GET", Path: "/internal-agent/claim"}}
+	missing, stale, err := openAPIRouteDiff([]byte("paths:\n  /things/{id}:\n    get: {}\n  /gone:\n    put: {}\n"), routes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(missing, ",") != "POST /api/agent/hidden" || strings.Join(stale, ",") != "PUT /api/agent/gone" {
+	if strings.Join(missing, ",") != "POST /api/hidden" || strings.Join(stale, ",") != "PUT /api/gone" {
 		t.Fatalf("missing=%v stale=%v", missing, stale)
 	}
 }
 
-func schemaFieldsMatchJSONTags(properties map[string]any, required []string, value any) error {
-	typ := reflect.TypeOf(value)
-	tags := map[string]bool{}
+type openAPIObjectSchema struct {
+	Type       string                         `yaml:"type"`
+	Properties map[string]openAPIObjectSchema `yaml:"properties"`
+	Required   []string                       `yaml:"required"`
+}
+
+func schemaFieldsMatchJSONTags(schema openAPIObjectSchema, value any) error {
+	return objectSchemaMatchesJSONTags(schema, reflect.TypeOf(value), false, reflect.TypeOf(value).Name())
+}
+
+func objectSchemaMatchesJSONTags(schema openAPIObjectSchema, typ reflect.Type, complete bool, location string) error {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() != reflect.Struct {
+		return fmt.Errorf("%s is not a Go struct", location)
+	}
+	tags := map[string]reflect.Type{}
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
 		if !field.IsExported() {
@@ -126,17 +141,30 @@ func schemaFieldsMatchJSONTags(properties map[string]any, required []string, val
 		}
 		name := strings.Split(field.Tag.Get("json"), ",")[0]
 		if name != "" && name != "-" {
-			tags[name] = true
+			tags[name] = field.Type
 		}
 	}
-	for name := range properties {
-		if !tags[name] {
-			return fmt.Errorf("schema property %q has no JSON field on %s", name, typ.Name())
+	for name, property := range schema.Properties {
+		fieldType, ok := tags[name]
+		if !ok {
+			return fmt.Errorf("%s.%s has no Go JSON field", location, name)
+		}
+		if property.Type == "object" && len(property.Properties) != 0 {
+			if err := objectSchemaMatchesJSONTags(property, fieldType, true, location+"."+name); err != nil {
+				return err
+			}
 		}
 	}
-	for _, name := range required {
-		if _, ok := properties[name]; !ok {
-			return fmt.Errorf("required property %q is undefined", name)
+	for _, name := range schema.Required {
+		if _, ok := schema.Properties[name]; !ok {
+			return fmt.Errorf("%s: required property %q is undefined", location, name)
+		}
+	}
+	if complete {
+		for name := range tags {
+			if _, ok := schema.Properties[name]; !ok {
+				return fmt.Errorf("%s.%s Go JSON field is missing from schema", location, name)
+			}
 		}
 	}
 	return nil
@@ -145,10 +173,7 @@ func schemaFieldsMatchJSONTags(properties map[string]any, required []string, val
 func TestCloudAgentRequestSchemaMatchesJSONTags(t *testing.T) {
 	var document struct {
 		Components struct {
-			Schemas map[string]struct {
-				Properties map[string]any `yaml:"properties"`
-				Required   []string       `yaml:"required"`
-			} `yaml:"schemas"`
+			Schemas map[string]openAPIObjectSchema `yaml:"schemas"`
 		} `yaml:"components"`
 	}
 	if err := yaml.Unmarshal(openAPISpec, &document); err != nil {
@@ -158,13 +183,76 @@ func TestCloudAgentRequestSchemaMatchesJSONTags(t *testing.T) {
 	if !ok || len(schema.Properties) == 0 {
 		t.Fatal("CloudAgentRequest schema missing")
 	}
-	if err := schemaFieldsMatchJSONTags(schema.Properties, schema.Required, service.CloudAgentRequest{}); err != nil {
+	if err := schemaFieldsMatchJSONTags(schema, service.CloudAgentRequest{}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestSchemaTagGuardFixture(t *testing.T) {
-	if err := schemaFieldsMatchJSONTags(map[string]any{"missing": true}, []string{"missing"}, service.CloudAgentRequest{}); err == nil {
+	if err := schemaFieldsMatchJSONTags(openAPIObjectSchema{Properties: map[string]openAPIObjectSchema{"missing": {}}}, service.CloudAgentRequest{}); err == nil {
 		t.Fatal("unknown JSON property was accepted")
+	}
+	budget := openAPIObjectSchema{Type: "object", Properties: map[string]openAPIObjectSchema{
+		"maxCredits": {}, "maxGenerationTasks": {}, "maxVideoSeconds": {}, "maxStepz": {},
+	}}
+	if err := schemaFieldsMatchJSONTags(openAPIObjectSchema{Properties: map[string]openAPIObjectSchema{"budget": budget}}, service.CloudAgentRequest{}); err == nil {
+		t.Fatal("drifted nested budget field was accepted")
+	}
+}
+
+func queryTagsMatchParameters(value any, parameters []struct {
+	In   string `yaml:"in"`
+	Name string `yaml:"name"`
+}) error {
+	want := map[string]bool{}
+	for _, parameter := range parameters {
+		if parameter.In == "query" {
+			want[parameter.Name] = true
+		}
+	}
+	typ := reflect.TypeOf(value)
+	for i := 0; i < typ.NumField(); i++ {
+		name := strings.Split(typ.Field(i).Tag.Get("form"), ",")[0]
+		if !want[name] {
+			return fmt.Errorf("query DTO form field %q is absent from OpenAPI", name)
+		}
+		delete(want, name)
+	}
+	for name := range want {
+		return fmt.Errorf("OpenAPI query %q is absent from DTO", name)
+	}
+	return nil
+}
+
+func TestAgentRunReadQueryMatchesOpenAPI(t *testing.T) {
+	var document struct {
+		Paths map[string]struct {
+			Get struct {
+				Parameters []struct {
+					In   string `yaml:"in"`
+					Name string `yaml:"name"`
+				} `yaml:"parameters"`
+			} `yaml:"get"`
+		} `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(openAPISpec, &document); err != nil {
+		t.Fatal(err)
+	}
+	parameters := document.Paths["/agent/runs/{id}"].Get.Parameters
+	if len(parameters) == 0 {
+		t.Fatal("Agent run read query schema missing")
+	}
+	if err := queryTagsMatchParameters(agentRunViewQuery{}, parameters); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAgentRunReadQueryTagFixture(t *testing.T) {
+	parameters := []struct {
+		In   string `yaml:"in"`
+		Name string `yaml:"name"`
+	}{{In: "query", Name: "sinceSeq"}}
+	if err := queryTagsMatchParameters(agentRunViewQuery{}, parameters); err == nil {
+		t.Fatal("missing eventLimit was accepted")
 	}
 }

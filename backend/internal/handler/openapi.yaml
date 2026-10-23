@@ -71,6 +71,42 @@ paths:
               schema: {type: string, format: binary}
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
+  /admin/agent/workers:
+    get:
+      tags: [admin]
+      summary: 列出已配置 Agent worker 身份（管理员）
+      description: 返回 worker ID、作用用户、创建与撤销时间；不返回 bearer credential 或其哈希。
+      responses:
+        '200': {description: 信封 data.workers，列表不含 bearer credential}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [admin]
+      summary: 配置 Agent worker 身份并签发一次性凭据（管理员）
+      description: 响应中的 credential 仅此一次可见，响应使用 Cache-Control no-store；调用方不得将其写入日志、URL 或持久任务正文。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id]
+              properties:
+                id: {type: string, description: worker 身份 ID}
+                userId: {type: string, description: 留空表示全局 worker；指定后只领取该用户任务}
+      responses:
+        '200': {description: 信封 data 包含 id、userId、仅此一次返回的 bearer credential；不得记录在日志中}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /admin/agent/workers/{id}:
+    delete:
+      tags: [admin]
+      summary: 撤销 Agent worker 身份（管理员）
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        '200': {description: 信封 data.revoked 为 true}
+        '403': {$ref: '#/components/responses/Error'}
   /admin/settings/agent-web-search:
     get:
       tags: [admin]
@@ -1777,6 +1813,11 @@ components:
               type: integer
               minimum: 0
               maximum: 120
+            maxSteps:
+              type: integer
+              minimum: 0
+              maximum: 9999
+              description: 0 表示本次请求不另设上限；仍受后台执行策略限制
         idempotencyKey:
           type: string
           minLength: 8
