@@ -39,7 +39,7 @@ export function AgentSystemPromptForm({ settings, onSave, onReload }: FormProps)
     return (
         <section className="space-y-4" aria-labelledby="agent-system-prompt-heading">
             <div className="settings-preference-heading">
-                <h3 id="agent-system-prompt-heading">自定义系统提示词</h3>
+                <h3 id="agent-system-prompt-heading">全局自定义系统提示词</h3>
                 <p className="max-w-[60ch]">设置画布 Agent 的回复口吻、创作偏好和工作方式。保存后用于本账户所有画布后续新建的运行，运行中的任务保持原有设置。留空使用默认行为。</p>
             </div>
             <label htmlFor="agent-system-prompt" className="sr-only">

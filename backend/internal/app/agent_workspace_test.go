@@ -59,37 +59,51 @@ func TestAgentWorkspaceDocumentCASOwnershipAndFreeze(t *testing.T) {
 	}
 }
 
-func TestAgentWorkspaceSkillsValidationAndSources(t *testing.T) {
+func TestAgentWorkspaceIgnoresRetiredSkillConfiguration(t *testing.T) {
 	s, db := workspaceService(t)
 	seedSelectionSkill(t, s, db, "global", 1024, false, 1)
 	seedDefault(t, db, "global", 0)
-	seedSelectionSkill(t, s, db, "project", 1024, false, 1)
-	seedSelectionSkillFor(t, s, db, "other", "private", 1024, true, 1)
-	for _, selection := range []SkillSelection{
-		{SkillID: "project", SkillVersionID: "missing", Enabled: true},
-		{SkillID: "project", SkillVersionID: "global-v1", Enabled: true},
-		{SkillID: "private", SkillVersionID: "private-v1", Enabled: true},
-	} {
-		if _, err := s.ReplaceWorkspaceSkills("user", "workspace-canvas", 0, []SkillSelection{selection}); err == nil {
-			t.Fatalf("invalid selection accepted: %+v", selection)
-		}
-	}
-	if _, err := s.ReplaceWorkspaceSkills("user", "workspace-canvas", 0, []SkillSelection{{SkillID: "project", SkillVersionID: "project-v1", Enabled: true}}); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := s.FreezeWorkspaceSnapshot("user", "workspace-canvas")
+	view, err := s.GetAgentWorkspace("user", "workspace-canvas")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Skills) != 1 || snapshot.Skills[0].Source != "workspace" || snapshot.Skills[0].Hash == "" {
-		t.Fatalf("invalid skill freeze: %+v", snapshot)
+	if err := db.Create(&model.AgentWorkspaceSkill{WorkspaceID: view.WorkspaceID, SkillID: "retired-invalid", SkillVersionID: "missing", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
 	}
-	merged, err := s.resolveRunSkillsWithLayers("user", "conv", nil, true, snapshot.Skills, nil)
+	if _, err := s.FreezeWorkspaceSnapshot("user", "workspace-canvas"); err != nil {
+		t.Fatalf("retired skill configuration blocked the canvas document: %v", err)
+	}
+	selected, err := s.resolveRunSkills("user", "new-conversation", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(merged) != 2 || merged[0].Source != "global" || merged[1].Source != "workspace" {
-		t.Fatalf("layers not merged: %+v", merged)
+	if len(selected) != 1 || selected[0].Source != "global" || selected[0].ID != "global" {
+		t.Fatalf("unexpected skills: %+v", selected)
+	}
+	baseline := []model.AgentConversationSkill{
+		{ConversationID: "existing-conversation", SkillID: "global", SkillVersionID: selected[0].VersionID, ContentHash: selected[0].Hash, Source: "global", Position: 0},
+		{ConversationID: "existing-conversation", SkillID: "retired-invalid", SkillVersionID: "missing", Source: "workspace", Position: 1},
+	}
+	if err := db.Create(&baseline).Error; err != nil {
+		t.Fatal(err)
+	}
+	continued, err := s.resolveRunSkills("user", "existing-conversation", nil, false)
+	if err != nil || len(continued) != 1 || continued[0].Source != "global" {
+		t.Fatalf("retired conversation baseline was restored: skills=%+v err=%v", continued, err)
+	}
+}
+
+func TestAgentWorkspaceHistoricalSkillRemainsReadableWithoutInstallation(t *testing.T) {
+	s, db := workspaceService(t)
+	seedSelectionSkill(t, s, db, "historical-public", 1024, false, 1)
+	version, err := s.repo.SkillVersion("historical-public-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen := cloudAgentSkill{ID: "historical-public", VersionID: version.ID, Hash: version.ContentHash, Source: "workspace"}
+	entry, err := s.cloudAgentFrozenSkillFile("user", frozen, "SKILL.md")
+	if err != nil || entry == nil || !strings.Contains(entry.Content, "historical-public") {
+		t.Fatalf("historical frozen public skill must not require user installation: %v", err)
 	}
 }
 
@@ -101,9 +115,7 @@ func TestAgentWorkspaceRunInheritsDocumentAndNativeSkills(t *testing.T) {
 	if _, err := s.UpdateAgentWorkspace("user", "agent-canvas", 0, "FROZEN_PROJECT_MARKER"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ReplaceWorkspaceSkills("user", "agent-canvas", 1, []SkillSelection{{SkillID: "project-run", SkillVersionID: "project-run-v1", Enabled: true}}); err != nil {
-		t.Fatal(err)
-	}
+	seedDefault(t, db, "project-run", 0)
 	run, err := s.CreateCloudAgentRun("user", agentTestRequest(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -116,13 +128,13 @@ func TestAgentWorkspaceRunInheritsDocumentAndNativeSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Workspace == nil || state.Workspace.Revision != 2 || !strings.Contains(state.Canonical.SystemPrompt, "FROZEN_PROJECT_MARKER") {
+	if state.Workspace == nil || state.Workspace.Revision != 1 || !strings.Contains(state.Canonical.SystemPrompt, "FROZEN_PROJECT_MARKER") {
 		t.Fatal("workspace not frozen in real run")
 	}
-	if len(state.Skills) != 1 || state.Skills[0].Source != "workspace" {
-		t.Fatalf("workspace skill missing: %+v", state.Skills)
+	if len(state.Skills) != 1 || state.Skills[0].Source != "global" {
+		t.Fatalf("global default skill missing: %+v", state.Skills)
 	}
-	if _, err := s.UpdateAgentWorkspace("user", "agent-canvas", 2, "CHANGED_PROJECT_MARKER"); err != nil {
+	if _, err := s.UpdateAgentWorkspace("user", "agent-canvas", 1, "CHANGED_PROJECT_MARKER"); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := s.ClaimPiAgent("worker-workspace")

@@ -299,7 +299,7 @@ func cloudAgentLessonEligibleSuccesses(state *cloudAgentRuntime) int {
 		}
 		name, _ := event.Payload["toolName"].(string)
 		switch name {
-		case "", "skills_load", "remember_lesson", "recall_lessons", "agent_profile_read", "plan_update", "ask_user":
+		case "", "skills_load", "remember_lesson", "recall_lessons", "plan_update", "ask_user":
 			continue
 		}
 		count++

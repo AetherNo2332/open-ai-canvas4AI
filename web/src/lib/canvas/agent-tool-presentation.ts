@@ -10,7 +10,6 @@ import { agentToolRetry, type AgentToolRetry } from "./agent-tool-retry";
  */
 export const AGENT_TOOL_NAMES = [
     "web_search",
-    "agent_profile_read",
     "ask_user",
     "canvas_apply_ops",
     "canvas_arrange_nodes",
@@ -151,7 +150,7 @@ const AGENT_CANVAS_READ_TOOLS = new Set([
     "director_handoff_shot",
 ]);
 /** 非画布信息的只读工具（模型、任务、技能、偏好）。`skills_load` 是历史事件名，保留兼容。 */
-const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "agent_profile_read", "read", "native_skill_enabled", "canvas_list_assets"]);
+const AGENT_INFO_READ_TOOLS = new Set(["web_search", "model_list", "task_get", "skill_search", "skill_read_file", "skills_load", "read", "native_skill_enabled", "canvas_list_assets"]);
 const AGENT_VISION_TOOLS = new Set(["canvas_inspect_image"]);
 const AGENT_CREATE_TOOLS = new Set(["generate_media", "canvas_create_storyboard", "image_annotation_render", "canvas_create_character", "director_block_scene"]);
 const AGENT_OPERATE_TOOLS = new Set([

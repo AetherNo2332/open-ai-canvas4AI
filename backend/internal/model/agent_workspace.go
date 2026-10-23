@@ -3,7 +3,7 @@ package model
 import "time"
 
 // AgentWorkspace is the one-to-one Agent extension of a CanvasProject.
-// Its document and skill rows are versioned together for future runs.
+// Its document is versioned for future runs.
 type AgentWorkspace struct {
 	ID           string    `json:"id" gorm:"primaryKey;size:80"`
 	UserID       string    `json:"userId" gorm:"index;size:36;not null"`
@@ -15,6 +15,8 @@ type AgentWorkspace struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
+// AgentWorkspaceSkill retains the historical table for existing installations only.
+// Workspace skills are no longer read or written by the Agent runtime.
 type AgentWorkspaceSkill struct {
 	WorkspaceID    string `json:"workspaceId" gorm:"primaryKey;size:80"`
 	SkillID        string `json:"skillId" gorm:"primaryKey;size:36"`
@@ -31,5 +33,4 @@ type AgentWorkspaceSnapshot struct {
 	AgentsMD     string
 	AgentsMDHash string
 	Revision     int64
-	Skills       []AgentWorkspaceSkill
 }

@@ -493,7 +493,7 @@ func TestCloudAgentTokenAnchorOnlyUsesOwnedSuccessfulTextCall(t *testing.T) {
 
 // 占用分布：分段合计必须与 system 桶严格对得上（字节逐字节、token 逐 token）。
 func TestCloudAgentContextBreakdownSystemSegmentsFillSystemBucket(t *testing.T) {
-	system, policy, err := compileCloudAgentPolicies(agentTestRequest(), nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	system, policy, err := compileCloudAgentPolicies(agentTestRequest(), nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

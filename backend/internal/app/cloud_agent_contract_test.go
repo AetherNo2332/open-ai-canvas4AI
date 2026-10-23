@@ -205,8 +205,8 @@ func TestCloudAgentImageWorkUsesSharedMultimodalAndGenerationTools(t *testing.T)
 }
 
 func TestCloudAgentPolicyUsesNativeSkillsWithoutInliningSkillBody(t *testing.T) {
-	skill := cloudAgentSkill{ID: "skill-1", Name: "任务技能", Description: "当用户要写短剧剧本时调用", Version: "v1", Hash: agentProfileHash("skill"), Instruction: "PRIVATE_SKILL_BODY", Files: map[string]string{"references/a.md": "A"}}
-	text, _, err := compileCloudAgentPolicies(agentTestRequest(), []cloudAgentSkill{skill}, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	skill := cloudAgentSkill{ID: "skill-1", Name: "任务技能", Description: "当用户要写短剧剧本时调用", Version: "v1", Hash: agentContentHash("skill"), Instruction: "PRIVATE_SKILL_BODY", Files: map[string]string{"references/a.md": "A"}}
+	text, _, err := compileCloudAgentPolicies(agentTestRequest(), []cloudAgentSkill{skill}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,20 +215,20 @@ func TestCloudAgentPolicyUsesNativeSkillsWithoutInliningSkillBody(t *testing.T) 
 	}
 }
 
-func TestCloudAgentPolicyTruncatesOversizedSkillDescription(t *testing.T) {
+func TestCloudAgentPolicyLeavesOversizedSkillDescriptionToNativeIndex(t *testing.T) {
 	long := strings.Repeat("描", 600)
-	skill := cloudAgentSkill{ID: "skill-2", Name: "长描述技能", Description: long, Version: "v1", Hash: agentProfileHash("skill2")}
-	text, _, err := compileCloudAgentPolicies(agentTestRequest(), []cloudAgentSkill{skill}, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	skill := cloudAgentSkill{ID: "skill-2", Name: "长描述技能", Description: long, Version: "v1", Hash: agentContentHash("skill2")}
+	text, _, err := compileCloudAgentPolicies(agentTestRequest(), []cloudAgentSkill{skill}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(text, long) || !strings.Contains(text, strings.Repeat("描", 500)+"…") {
-		t.Fatalf("oversized skill description was not capped at 500 runes: %s", text)
+	if strings.Contains(text, long) || strings.Contains(text, strings.Repeat("描", 500)+"…") || strings.Contains(text, skill.Name) {
+		t.Fatal("native skill descriptions must remain in the Skill index instead of the policy prefix")
 	}
 }
 
 func TestCloudAgentPolicyPublishesCapabilityRoutingGuide(t *testing.T) {
-	text, _, err := compileCloudAgentPolicies(agentTestRequest(), nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	text, _, err := compileCloudAgentPolicies(agentTestRequest(), nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,12 +283,6 @@ func TestCloudAgentGenerationAdapterRejectsUnimplementedMode(t *testing.T) {
 	}
 }
 
-func TestCloudAgentProfileProjectScopeDoesNotSilentlyDiscardCanvas(t *testing.T) {
-	if err := validateAgentProfileScope(AgentProfileRequest{Scope: "project", ProjectID: "p1", CanvasID: "c1"}); err == nil {
-		t.Fatal("project profile accepted a canvas ID that would be silently discarded")
-	}
-}
-
 func TestCloudAgentProjectionRejectsMissingAdapterAndOpaqueMetadata(t *testing.T) {
 	node := map[string]any{"id": "n1", "type": "text", "title": "镜头"}
 	meta := map[string]any{"content": "公开正文", "storageKey": "resource:private", "url": "https://private.example/test", "status": "idle"}
@@ -323,7 +317,7 @@ func TestCloudAgentCanvasStateDoesNotForwardUnknownObjectFields(t *testing.T) {
 }
 
 func TestCloudAgentDurablePolicySnapshotRejectsMissingOrUnsupportedContracts(t *testing.T) {
-	_, snapshot, err := compileCloudAgentPolicies(agentTestRequest(), nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	_, snapshot, err := compileCloudAgentPolicies(agentTestRequest(), nil, "")
 	if err != nil || validateCloudAgentPolicySnapshot(snapshot) != nil {
 		t.Fatalf("valid policy snapshot rejected: %v", err)
 	}
@@ -340,11 +334,9 @@ func TestCloudAgentDurablePolicySnapshotRejectsMissingOrUnsupportedContracts(t *
 		{"missing capability version", func(p *cloudAgentPolicySnapshot) { p.CapabilitySetVersion = "" }},
 		{"missing capability hash", func(p *cloudAgentPolicySnapshot) { p.CapabilitySetHash = "" }},
 		{"invalid reasoning", func(p *cloudAgentPolicySnapshot) { p.ReasoningMode = "enabled" }},
-		{"missing profile revision", func(p *cloudAgentPolicySnapshot) { p.ProfileRevision = "" }},
-		{"invalid profile hash", func(p *cloudAgentPolicySnapshot) { p.ProfileHash = "not-sha256" }},
-		{"changed system contents", func(p *cloudAgentPolicySnapshot) { p.SystemPolicyHash = agentProfileHash("different system") }},
-		{"changed media contents", func(p *cloudAgentPolicySnapshot) { p.MediaPolicyHash = agentProfileHash("different media") }},
-		{"changed canvas contract", func(p *cloudAgentPolicySnapshot) { p.CapabilitySetHash = agentProfileHash("different capabilities") }},
+		{"changed system contents", func(p *cloudAgentPolicySnapshot) { p.SystemPolicyHash = agentContentHash("different system") }},
+		{"changed media contents", func(p *cloudAgentPolicySnapshot) { p.MediaPolicyHash = agentContentHash("different media") }},
+		{"changed canvas contract", func(p *cloudAgentPolicySnapshot) { p.CapabilitySetHash = agentContentHash("different capabilities") }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -364,7 +356,7 @@ func TestCloudAgentHarnessChangeBlocksContinuation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("Project guidance v1"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, snapshot, err := compileCloudAgentPolicies(agentTestRequest(), nil, "", cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	_, snapshot, err := compileCloudAgentPolicies(agentTestRequest(), nil, "")
 	if err != nil || validateCloudAgentPolicySnapshot(snapshot) != nil {
 		t.Fatalf("initial harness snapshot was rejected: %v", err)
 	}

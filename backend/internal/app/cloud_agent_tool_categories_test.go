@@ -150,7 +150,7 @@ func TestCloudAgentFlatDisclosureSurvivesLegacyCheckpointAndRepair(t *testing.T)
 
 func TestCloudAgentFirstWireRequestContainsConcreteFunctions(t *testing.T) {
 	req := categoryTestRequest()
-	canonical := cloudAgentCanonicalFor("policy", nil, "goal", req, true)
+	canonical := cloudAgentCanonical("policy", nil, "goal", req)
 	canonical.Tools = cloudAgentVisibleTools(canonical.Tools, "", nil, nil)
 	for protocol, body := range map[string]map[string]interface{}{
 		"chat":      canonicalAgentChatBody(&canonical, false),

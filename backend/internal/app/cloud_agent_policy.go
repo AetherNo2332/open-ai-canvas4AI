@@ -4,13 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/prompts"
 )
 
 const (
-	cloudAgentCompilerVersion  = "cloud-agent-policy-compiler/v5"
+	cloudAgentCompilerVersion  = "cloud-agent-policy-compiler/v6"
 	cloudAgentDefaultReasoning = "off"
 )
 
@@ -25,8 +24,6 @@ type cloudAgentPolicySnapshot struct {
 	CapabilitySetHash    string `json:"capabilitySetHash"`
 	ReasoningMode        string `json:"reasoningMode"`
 	CompilerVersion      string `json:"compilerVersion"`
-	ProfileRevision      string `json:"profileRevision,omitempty"`
-	ProfileHash          string `json:"profileHash,omitempty"`
 	// SystemSegments 记录编译出来的系统提示由哪些块组成。压力读数把它摊开上报，
 	// 排查时不必再从提示词正文反推"系统提示里谁是画布摘要、谁是个人记忆"。
 	SystemSegments []cloudAgentContextSegment `json:"systemSegments,omitempty"`
@@ -75,12 +72,6 @@ func (r *cloudAgentSegmentRecorder) mark(builder *strings.Builder, key, label st
 		r.segments = append(r.segments, cloudAgentContextSegment{Key: key, Label: label, Bytes: size, Tokens: estimateCloudAgentTokens([]byte(text))})
 	}
 	r.last = end
-}
-
-type cloudAgentProfileSnapshot struct {
-	Revision string              `json:"revision"`
-	Hash     string              `json:"hash"`
-	Layers   []AgentProfileLayer `json:"layers"`
 }
 
 func cloudAgentReasoningMode(req CloudAgentRequest) string {
@@ -135,11 +126,11 @@ func cloudAgentCapabilityGuide() string {
 	return b.String()
 }
 
-func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, profile cloudAgentProfileSnapshot, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
-	return compileCloudAgentPoliciesForRuntime(req, skills, canvasSummary, profile, cloudAgentSkillRuntimeNative, anchors...)
+func compileCloudAgentPolicies(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
+	return compileCloudAgentPoliciesForRuntime(req, skills, canvasSummary, cloudAgentSkillRuntimeNative, anchors...)
 }
 
-func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, profile cloudAgentProfileSnapshot, skillMode string, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
+func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAgentSkill, canvasSummary string, skillMode string, anchors ...cloudAgentCreativeAnchor) (string, cloudAgentPolicySnapshot, error) {
 	system, media, err := prompts.LoadAgentPolicies()
 	if err != nil {
 		return "", cloudAgentPolicySnapshot{}, err
@@ -151,7 +142,6 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 		MediaPolicyID: media.ID, MediaPolicyVersion: media.Version, MediaPolicyHash: media.Hash,
 		CapabilitySetVersion: cloudAgentCapabilitySetVersion, CapabilitySetHash: capabilityHash,
 		ReasoningMode: mode, CompilerVersion: cloudAgentCompilerVersion,
-		ProfileRevision: profile.Revision, ProfileHash: profile.Hash,
 	}
 	var b strings.Builder
 	var recorder cloudAgentSegmentRecorder
@@ -195,11 +185,6 @@ func compileCloudAgentPoliciesForRuntime(req CloudAgentRequest, skills []cloudAg
 		context["visualInspectionPolicy"] = "observationStatus 只描述已有观察；关系梳理无需识图，判断外观或一致性时再看图。cached_needs_validation 须由识图工具核对当前资源。"
 	}
 	context["skillRuntimeMode"] = skillMode
-	layers := make([]map[string]any, 0, len(profile.Layers))
-	for _, layer := range profile.Layers {
-		layers = append(layers, map[string]any{"scope": layer.Scope, "revision": layer.Revision, "hash": layer.Hash, "characters": utf8.RuneCountInString(layer.Content)})
-	}
-	context["profileLayers"] = layers
 	encoded, err := json.Marshal(context)
 	if err != nil {
 		return "", cloudAgentPolicySnapshot{}, fmt.Errorf("encode Agent execution context: %w", err)

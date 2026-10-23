@@ -85,7 +85,7 @@ func TestMeasureDumpPayload(t *testing.T) {
 	req.Prompt = "请分析这个画布"
 	// Full permission mode exposes all tool schemas, as in the audited session.
 	req.PermissionMode = "auto"
-	system, _, err := compileCloudAgentPolicies(req, nil, summary, cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")})
+	system, _, err := compileCloudAgentPolicies(req, nil, summary)
 	if err != nil {
 		t.Fatal(err)
 	}

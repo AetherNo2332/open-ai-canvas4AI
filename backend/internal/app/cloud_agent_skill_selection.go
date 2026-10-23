@@ -45,18 +45,6 @@ func agentSkillConversationRow(conversationID string, item skills.SkillSelection
 // 迁移前的旧会话没有基线行，行为与现状一致（只有本轮用户选择）。
 // 两种路径最终都逐技能冻结快照并做容量准入，超限返回 400 agent_skill_budget_exceeded。
 func (s *Service) resolveRunSkills(userID, conversationID string, userSkillIDs []string, isNewConversation bool) ([]cloudAgentSkill, error) {
-	return s.resolveRunSkillsWithLayers(userID, conversationID, userSkillIDs, isNewConversation, nil, nil)
-}
-
-func skillSelectionItems(snapshots []cloudAgentSkill) []skills.SkillSelectionItem {
-	items := make([]skills.SkillSelectionItem, 0, len(snapshots))
-	for _, snapshot := range snapshots {
-		items = append(items, skills.SkillSelectionItem{SkillID: snapshot.ID, VersionID: snapshot.VersionID, ContentHash: snapshot.Hash, Source: snapshot.Source})
-	}
-	return items
-}
-
-func (s *Service) resolveRunSkillsWithLayers(userID, conversationID string, userSkillIDs []string, isNewConversation bool, workspace, member []cloudAgentSkill) ([]cloudAgentSkill, error) {
 	var resolved []skills.SkillSelectionItem
 	if isNewConversation {
 		defaults, err := s.repo.EnabledAgentSkillDefaults()
@@ -99,7 +87,7 @@ func (s *Service) resolveRunSkillsWithLayers(userID, conversationID string, user
 				ContentHash: detail.ContentHash, Source: skills.SkillSourceUser,
 			})
 		}
-		items, err := skills.ResolveSkillSelection(globalLayer, skillSelectionItems(workspace), skillSelectionItems(member), userLayer)
+		items, err := skills.ResolveSkillSelection(globalLayer, userLayer)
 		if err != nil {
 			return nil, err
 		}
@@ -112,6 +100,10 @@ func (s *Service) resolveRunSkillsWithLayers(userID, conversationID string, user
 		resolved = make([]skills.SkillSelectionItem, 0, len(baseline)+len(userSkillIDs))
 		existing := make(map[string]int, len(baseline))
 		for _, row := range baseline {
+			// Retired Workspace selections must not become hidden skills in a new turn.
+			if row.Source == "workspace" {
+				continue
+			}
 			existing[row.SkillID] = len(resolved)
 			resolved = append(resolved, skills.SkillSelectionItem{
 				SkillID: row.SkillID, VersionID: row.SkillVersionID,
@@ -170,6 +162,9 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 			facts = append(facts, skills.SkillCapacityFacts{SkillID: item.SkillID, FileCount: snapshot.fileCount, TotalBytes: snapshot.totalBytes, ContextBytes: nativeSkillIndexContextBytes(snapshot.skill)})
 			continue
 		}
+		if item.Source != skills.SkillSourceGlobal {
+			return nil, BadAuthRequest("技能来源已停用，请通过默认技能或本轮 Skills 重新选择")
+		}
 		version, err := s.repo.SkillVersion(item.VersionID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -214,7 +209,9 @@ func (s *Service) freezeRunSkillSnapshots(userID string, resolved []skills.Skill
 }
 
 func (s *Service) cloudAgentFrozenSkillFile(userID string, skill cloudAgentSkill, path string) (*SkillPackageFileContent, error) {
-	if skill.Source == skills.SkillSourceGlobal || skill.Source == skills.SkillSourceWorkspace {
+	// Existing runs may still carry a frozen public Workspace skill. Preserve
+	// that read contract without selecting Workspace skills for any new run.
+	if skill.Source == skills.SkillSourceGlobal || skill.Source == "workspace" {
 		return s.skillDomain().GlobalSkillPackageFileAtVersion(skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, path)
 	}
 	return s.SkillPackageFileAtVersion(userID, skill.ID, firstNonEmpty(skill.VersionID, skill.Version), skill.Hash, path)

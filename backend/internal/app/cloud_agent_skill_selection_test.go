@@ -377,7 +377,7 @@ func TestResolveRunSkillsContextBudgetCountsIndexInsteadOfReferences(t *testing.
 	if len(snapshots) != 1 || snapshots[0].ID != "large-reference" {
 		t.Fatalf("selected default missing: %+v", snapshots)
 	}
-	for _, source := range []string{skills.SkillSourceUser, skills.SkillSourceWorkspace} {
+	for _, source := range []string{skills.SkillSourceUser, skills.SkillSourceGlobal} {
 		t.Run(source, func(t *testing.T) {
 			owner := "author-1"
 			if source != skills.SkillSourceUser {

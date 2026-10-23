@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AgentSystemPromptForm } from "@/pages/settings/agent-system-prompt-pane";
+import { AgentSystemPromptForm } from "@/components/agent/agent-system-prompt-settings";
 
 test("account system prompt form renders saved content and an explicit save action", () => {
     const html = renderToStaticMarkup(<AgentSystemPromptForm settings={{ systemPrompt: "用中文回答，保留角色名称。", revision: 3 }} onSave={async () => ({ systemPrompt: "", revision: 4 })} onReload={() => {}} />);

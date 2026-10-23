@@ -7,12 +7,12 @@ import (
 )
 
 func TestCloudAgentRetiredImageToolsAreNotCallable(t *testing.T) {
-	retired := []string{"canvas_read_drawing", "canvas_edit_drawing", "image_layer_split", "image_text_detect", "image_annotation_render", "skill_search", "skill_read_file"}
+	retired := []string{"canvas_read_drawing", "canvas_edit_drawing", "image_layer_split", "image_text_detect", "image_annotation_render", "skill_search", "skill_read_file", "agent_profile_read"}
 	for _, permission := range []string{"auto", "request_approval", "read_only"} {
 		req := tierAutoRequest()
 		req.PermissionMode = permission
 		for _, mode := range []string{cloudAgentSkillRuntimeLegacy, cloudAgentSkillRuntimeNative} {
-			names := cloudAgentToolNames(compileCloudAgentToolsForRuntime(req, true, mode))
+			names := cloudAgentToolNames(compileCloudAgentToolsForRuntime(req, mode))
 			for _, name := range retired {
 				if containsToolName(names, name) || cloudAgentToolAllowed(req, name) {
 					t.Fatalf("retired tool %s remains callable in %s/%s", name, permission, mode)
@@ -80,7 +80,7 @@ func TestCloudAgentToolTierDirectorIntentCannotComeFromSubagent(t *testing.T) {
 }
 
 func TestNativeSkillReadRemainsAvailable(t *testing.T) {
-	names := cloudAgentToolNames(compileCloudAgentToolsForRuntime(tierAutoRequest(), true, cloudAgentSkillRuntimeNative))
+	names := cloudAgentToolNames(compileCloudAgentToolsForRuntime(tierAutoRequest(), cloudAgentSkillRuntimeNative))
 	if !containsToolName(names, "read") || containsToolName(names, "skill") {
 		t.Fatalf("native Skill must keep the read tool: %v", names)
 	}

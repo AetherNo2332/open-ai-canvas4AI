@@ -1,17 +1,17 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button, Checkbox, Input, Switch } from "antd";
 import { ArrowLeft, BookMarked, Check, ChevronRight, Cpu, Gauge, LockKeyhole, PlugZap, Search, ShieldCheck, Sparkles, Wrench } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import AgentMemoryPane from "@/pages/settings/agent-memory-pane";
-import { CanvasAgentWorkspaceSettings } from "./canvas-agent-workspace-settings";
-import type { AgentPermissionMode, AgentProfileLayer, AgentProfileScope, AgentProfileView, AgentReasoningMode } from "@/services/api/agent";
+import { CanvasAgentRulesSettings } from "./canvas-agent-rules-settings";
+import type { AgentPermissionMode, AgentReasoningMode } from "@/services/api/agent";
 import type { Skill } from "@/services/api/skills";
 import type { AiConfig } from "@/stores/use-config-store";
 
 export type AgentContextKey = "canvas" | "resources" | "generation_history" | "skills" | "project";
-type SettingsSection = "home" | "profile" | "memories" | "skills" | "mcp" | "context" | "budget" | "workspace";
+type SettingsSection = "home" | "rules" | "memories" | "skills" | "mcp" | "context" | "budget";
 
 type AgentSettingsProps = {
     subagents?: { enabled: boolean; disabled: boolean; saving: boolean; error: string; onToggle: () => void; onReload: () => void };
@@ -21,14 +21,7 @@ type AgentSettingsProps = {
     permissionMode: AgentPermissionMode;
     reasoningMode: AgentReasoningMode;
     onReasoningModeChange: (value: AgentReasoningMode) => void;
-    profileView: AgentProfileView | null;
-    profileLoading: boolean;
-    profileSaving: boolean;
-    profileError?: string;
-    projectId?: string;
     canvasId: string;
-    onReloadProfile: () => Promise<void>;
-    onSaveProfile: (input: { scope: AgentProfileScope; projectId?: string; canvasId?: string; content: string; revision: number }) => Promise<AgentProfileView>;
     contextScope: AgentContextKey[];
     nodeCount: number;
     installedSkills: Skill[];
@@ -90,13 +83,12 @@ export function CanvasCloudAgentSettings(props: AgentSettingsProps) {
             </header>
 
             {section === "home" ? <SettingsHome props={props} theme={theme} onOpen={setSection} /> : null}
-            {section === "profile" ? <ProfileWorkspace props={props} theme={theme} /> : null}
             {section === "memories" ? <MemoriesWorkspace /> : null}
             {section === "skills" ? <SkillsWorkspace props={props} theme={theme} tab={skillTab} onTabChange={setSkillTab} /> : null}
             {section === "mcp" ? <McpWorkspace theme={theme} /> : null}
             {section === "context" ? <ContextWorkspace props={props} theme={theme} /> : null}
             {section === "budget" ? <BudgetWorkspace props={props} theme={theme} /> : null}
-            {section === "workspace" ? <CanvasAgentWorkspaceSettings canvasId={props.canvasId} availableSkills={props.installedSkills} /> : null}
+            {section === "rules" ? <CanvasAgentRulesSettings canvasId={props.canvasId} /> : null}
         </div>
     );
 }
@@ -179,8 +171,7 @@ function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; the
                 <SettingLabel label="能力与范围" />
                 <div className="space-y-1">
                     <SettingRow theme={theme} icon={<Cpu className="size-4" />} title="上下文" summary={`${props.nodeCount} 个节点 · ${props.contextScope.length} 个范围`} onClick={() => onOpen("context")} />
-                    <SettingRow theme={theme} icon={<BookMarked className="size-4" />} title="Workspace 项目规则" summary="Agents.md · 项目技能追加 · 版本快照" onClick={() => onOpen("workspace")} />
-                    <SettingRow theme={theme} icon={<Sparkles className="size-4" />} title="长期偏好" summary={profileSummary(props.profileView)} onClick={() => onOpen("profile")} />
+                    <SettingRow theme={theme} icon={<BookMarked className="size-4" />} title="提示词与规则" summary="全局自定义系统提示词 · 当前画布 Workspace" onClick={() => onOpen("rules")} />
                     <SettingRow theme={theme} icon={<BookMarked className="size-4" />} title="个人记忆" summary="批准、添加、导出导入；只影响你的会话" onClick={() => onOpen("memories")} />
                     <SettingRow theme={theme} icon={<Sparkles className="size-4" />} title="Skills · 用户技能库" summary={`${props.installedSkills.length} 个已安装 · 本轮启用 ${props.selectedSkillIds.length} 个`} onClick={() => onOpen("skills")} />
                     <SettingRow theme={theme} icon={<Wrench className="size-4" />} title="工具与连接" summary="画布、技能参考文件、生成任务" onClick={() => onOpen("mcp")} />
@@ -286,145 +277,6 @@ function SkillsWorkspace({ props, theme, tab, onTabChange }: { props: AgentSetti
                     </button>
                 ) : null}
             </div>
-        </div>
-    );
-}
-
-type ProfileDraft = Pick<AgentProfileLayer, "content" | "revision" | "hash"> & { dirty: boolean };
-
-function ProfileWorkspace({ props, theme }: { props: AgentSettingsProps; theme: CanvasTheme }) {
-    const [scope, setScope] = useState<AgentProfileScope>("user");
-    const [drafts, setDrafts] = useState<Record<string, ProfileDraft>>({});
-    const [error, setError] = useState("");
-    const layer = profileLayer(props.profileView, scope, props.projectId, props.canvasId);
-    const draftKey = profileDraftKey(scope, props.projectId, props.canvasId);
-    const serverDraft: ProfileDraft = { content: layer.content, revision: layer.revision, hash: layer.hash, dirty: false };
-    const draft = drafts[draftKey] || serverDraft;
-    const profileUnavailable = props.profileLoading || !props.profileView || Boolean(props.profileError);
-
-    useEffect(() => {
-        setDrafts((current) => {
-            const existing = current[draftKey];
-            if (existing?.dirty) return current;
-            if (existing && existing.revision === layer.revision && existing.hash === layer.hash && existing.content === layer.content) return current;
-            return { ...current, [draftKey]: { content: layer.content, revision: layer.revision, hash: layer.hash, dirty: false } };
-        });
-        setError("");
-    }, [draftKey, layer.content, layer.hash, layer.revision]);
-
-    const updateDraft = (content: string) => {
-        setDrafts((current) => {
-            const base = current[draftKey] || serverDraft;
-            return { ...current, [draftKey]: { ...base, content, dirty: true } };
-        });
-    };
-
-    const save = async () => {
-        setError("");
-        try {
-            const result = await props.onSaveProfile({
-                scope,
-                projectId: scope === "project" ? props.projectId : undefined,
-                canvasId: scope === "canvas" ? props.canvasId : undefined,
-                content: draft.content,
-                revision: draft.revision,
-            });
-            const savedLayer = profileLayer(result, scope, props.projectId, props.canvasId);
-            setDrafts((current) => ({
-                ...current,
-                [draftKey]: { content: savedLayer.content, revision: savedLayer.revision, hash: savedLayer.hash, dirty: false },
-            }));
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        }
-    };
-
-    const disabled = profileUnavailable || props.profileSaving || (scope === "project" && !props.projectId);
-    return (
-        <div className="canvas-agent-settings-scroll thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="rounded-xl p-4" style={{ background: theme.node.fill }}>
-                <div className="text-sm font-semibold">长期偏好文档</div>
-                <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>
-                    这里定义 Agent 的长期工作习惯、语气和输出结构。它不会增加工具、节点、预算或审批权限；安全契约始终由服务端代码控制。
-                </p>
-            </div>
-            <div className="mt-4 flex gap-1 rounded-xl p-1" style={{ background: theme.node.fill }}>
-                <TabButton theme={theme} active={scope === "user"} label="用户" onClick={() => setScope("user")} />
-                <TabButton theme={theme} active={scope === "project"} label="项目" onClick={() => setScope("project")} />
-                <TabButton theme={theme} active={scope === "canvas"} label="画布" onClick={() => setScope("canvas")} />
-            </div>
-            {scope === "project" && !props.projectId ? (
-                <p className="mt-3 text-xs leading-5" style={{ color: theme.node.muted }}>
-                    当前画布尚未关联项目，项目偏好暂不可用。
-                </p>
-            ) : null}
-            {props.profileLoading ? (
-                <p className="mt-4 text-xs" style={{ color: theme.node.muted }}>
-                    正在读取偏好快照…
-                </p>
-            ) : null}
-            {props.profileError ? <ProfileError message={props.profileError} onRetry={props.onReloadProfile} theme={theme} /> : null}
-            <label className="mt-4 block">
-                <span className="flex items-center justify-between text-xs font-semibold">
-                    <span>{scopeLabel(scope)}</span>
-                    <span className="text-[10px] font-normal opacity-40">
-                        修订 {draft.revision}
-                        {draft.dirty ? " · 未保存" : ""}
-                    </span>
-                </span>
-                <Input.TextArea
-                    value={draft.content}
-                    onChange={(event) => updateDraft(event.target.value)}
-                    disabled={disabled}
-                    maxLength={12000}
-                    showCount
-                    autoSize={{ minRows: 10, maxRows: 20 }}
-                    placeholder="例如：每次先给结论，再列出将改动的镜头；提示词同时给中文和英文。"
-                    className="mt-2 !rounded-xl"
-                    style={{ background: theme.node.fill }}
-                />
-            </label>
-            <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="text-[10px] leading-4 opacity-45">保存后只影响下一次新运行。正在运行的 Agent 会固定原快照。</span>
-                <Button type="primary" onClick={() => void save()} loading={props.profileSaving} disabled={disabled || !draft.dirty}>
-                    保存
-                </Button>
-            </div>
-            {error ? (
-                <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "color-mix(in srgb, var(--palette-status-error) 12%, transparent)", color: "var(--palette-status-error)" }}>
-                    {error}
-                </div>
-            ) : null}
-        </div>
-    );
-}
-
-function profileDraftKey(scope: AgentProfileScope, projectId: string | undefined, canvasId: string) {
-    if (scope === "project") return `project:${projectId || "unbound"}`;
-    if (scope === "canvas") return `canvas:${canvasId}`;
-    return "user";
-}
-
-function profileLayer(view: AgentProfileView | null, scope: AgentProfileScope, projectId: string | undefined, canvasId: string): AgentProfileLayer {
-    return view?.layers.find((item) => item.scope === scope) || { scope, projectId: scope === "project" ? projectId : undefined, canvasId: scope === "canvas" ? canvasId : undefined, content: "", revision: 0, hash: "" };
-}
-
-function profileSummary(view: AgentProfileView | null) {
-    const count = view?.layers.filter((layer) => layer.content.trim()).length || 0;
-    return count ? `${count} 层已配置 · 仅影响行为偏好` : "未配置 · 仅影响行为偏好";
-}
-
-function scopeLabel(scope: AgentProfileScope) {
-    return scope === "user" ? "用户偏好" : scope === "project" ? "项目偏好" : "当前画布偏好";
-}
-
-function ProfileError({ message, onRetry, theme }: { message: string; onRetry: () => Promise<void>; theme: CanvasTheme }) {
-    return (
-        <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "color-mix(in srgb, var(--palette-status-warning) 12%, transparent)", color: theme.node.text }}>
-            <div>{message}</div>
-            <button type="button" className="mt-2 underline" onClick={() => void onRetry()}>
-                重新读取
-            </button>
         </div>
     );
 }
@@ -587,14 +439,12 @@ function BudgetInput({ label, hint, value, onChange, theme }: { label: string; h
     );
 }
 function sectionTitle(section: SettingsSection) {
-    return section === "workspace" ? "Workspace 项目规则" : section === "profile" ? "长期偏好" : section === "memories" ? "个人记忆" : section === "skills" ? "Skills" : section === "mcp" ? "MCP 与工具" : section === "context" ? "上下文" : "预算";
+    return section === "rules" ? "提示词与规则" : section === "memories" ? "个人记忆" : section === "skills" ? "Skills" : section === "mcp" ? "MCP 与工具" : section === "context" ? "上下文" : "预算";
 }
 function sectionSubtitle(section: SettingsSection) {
-    return section === "workspace"
-        ? "项目文档与技能配置仅影响新 Run"
-        : section === "profile"
-          ? "用户、项目和画布的长期行为偏好"
-          : section === "memories"
+    return section === "rules"
+        ? "全局提示词与当前画布规则，新运行生效"
+        : section === "memories"
             ? "只属于你，批准后才会注入会话"
             : section === "skills"
               ? "搜索、安装并选择本轮技能"

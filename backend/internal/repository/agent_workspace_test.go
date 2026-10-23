@@ -93,14 +93,14 @@ func TestAgentWorkspaceCreatesOneRowAndFreezesSnapshot(t *testing.T) {
 	if err != nil || revision != 1 {
 		t.Fatalf("update: revision=%d err=%v", revision, err)
 	}
-	if _, err := repo.ReplaceAgentWorkspaceSkills("user-1", "canvas-1", 1, []model.AgentWorkspaceSkill{{SkillID: "skill-1", SkillVersionID: "version-1", Position: 0, Enabled: true}}); err != nil {
+	if err := repo.db.Create(&model.AgentWorkspaceSkill{WorkspaceID: first.ID, SkillID: "skill-1", SkillVersionID: "version-1", Position: 0, Enabled: true}).Error; err != nil {
 		t.Fatal(err)
 	}
 	got, err := repo.AgentWorkspaceSnapshot("user-1", "canvas-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Revision != 2 || got.AgentsMDHash != "hash-1" || len(got.Skills) != 1 {
+	if got.Revision != 1 || got.AgentsMDHash != "hash-1" {
 		t.Fatalf("snapshot = %+v", got)
 	}
 }

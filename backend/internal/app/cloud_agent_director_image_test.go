@@ -4,7 +4,7 @@ import "testing"
 
 func TestCloudAgentDirectorImageFlowKeepsInspectionSeparateFromSceneWrites(t *testing.T) {
 	req := CloudAgentRequest{ContextScope: []string{"canvas"}, PermissionMode: "request_approval", VisionEnabled: true}
-	tools := compileCloudAgentTools(req, false)
+	tools := compileCloudAgentTools(req)
 	seenInspection := false
 	for _, tool := range tools {
 		fn, _ := tool["function"].(map[string]any)

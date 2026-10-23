@@ -7,7 +7,7 @@ import (
 
 func TestCloudAgentDirectorToolsAreAdvertisedWithControlledContracts(t *testing.T) {
 	req := CloudAgentRequest{ContextScope: []string{"canvas"}, PermissionMode: "edit", VisionEnabled: true}
-	tools := compileCloudAgentTools(req, false)
+	tools := compileCloudAgentTools(req)
 	seen := map[string]bool{}
 	for _, tool := range tools {
 		fn, _ := tool["function"].(map[string]any)

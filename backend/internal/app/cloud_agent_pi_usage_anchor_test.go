@@ -16,16 +16,15 @@ func piUsageAnchorTestRun(t *testing.T) (*Service, *gorm.DB, *model.CloudAgentEx
 	req := agentTestRequest()
 	req.CanvasID = canvasID
 	req.PermissionMode = "auto"
-	profile := cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")}
-	system, policy, err := compileCloudAgentPolicies(req, nil, "", profile)
+	system, policy, err := compileCloudAgentPolicies(req, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := cloudAgentRuntime{
-		Request: req, Policy: policy, Profile: profile, Decisions: map[string]string{},
+		Request: req, Policy: policy, Decisions: map[string]string{},
 		TaskIDs: []string{"pi-usage-root-task"},
 	}
-	state.Canonical = cloudAgentCanonicalFor(system, nil, req.Prompt, req, false)
+	state.Canonical = cloudAgentCanonical(system, nil, req.Prompt, req)
 	state.StepLimits, err = s.cloudAgentStepLimits()
 	if err != nil {
 		t.Fatal(err)

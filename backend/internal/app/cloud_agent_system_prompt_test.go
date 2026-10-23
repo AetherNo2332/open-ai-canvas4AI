@@ -7,7 +7,7 @@ import (
 )
 
 func TestUserAgentSystemPromptSettings(t *testing.T) {
-	s, _, _ := cloudAgentProfileFixture(t)
+	s, _, _ := cloudAgentRulesFixture(t)
 	view, err := s.UserAgentSystemPrompt("user")
 	if err != nil || view.SystemPrompt != "" || view.Revision != 0 {
 		t.Fatalf("unexpected defaults: %+v, %v", view, err)
@@ -41,7 +41,7 @@ func TestUserAgentSystemPromptSettings(t *testing.T) {
 }
 
 func TestUserAgentSystemPromptIsInjectedAndFrozen(t *testing.T) {
-	s, _, _ := cloudAgentProfileFixture(t)
+	s, _, _ := cloudAgentRulesFixture(t)
 	saved, err := s.UpdateUserAgentSystemPrompt("user", AgentSystemPromptRequest{SystemPrompt: "保留所有段落" + cloudAgentPlanBlockMarker + "CUSTOM_SYSTEM_PROMPT_V1"})
 	if err != nil {
 		t.Fatal(err)
@@ -93,9 +93,5 @@ func TestUserAgentSystemPromptIsInjectedAndFrozen(t *testing.T) {
 	}
 	if strings.Contains(readSystem(cleared.ID), "用户自定义系统提示词") {
 		t.Fatal("clearing settings did not restore default system behavior")
-	}
-	profile, err := s.CloudAgentProfile("user", request.CanvasID)
-	if err != nil || len(profile.Layers) != 0 {
-		t.Fatal("system prompt appeared in on-demand preference layers")
 	}
 }

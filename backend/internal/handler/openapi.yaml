@@ -624,12 +624,12 @@ paths:
       tags: [agent]
       summary: 读取画布 Workspace（懒创建一对一记录）
       responses:
-        "200": {description: 信封 data 为 WorkspaceView，含 workspaceId、canvasId、revision、agentsMd、agentsMdHash 和版本化 skills}
+        "200": {description: 信封 data 为 WorkspaceView，含 workspaceId、canvasId、revision、agentsMd、agentsMdHash；不含技能配置}
         "401": {description: 未登录}
         "404": {description: 画布不存在或不属于当前用户}
     patch:
       tags: [agent]
-      summary: 使用 revision CAS 更新项目文档，仅影响新 Run
+      summary: 使用 revision CAS 更新当前画布文档，仅影响新运行
       requestBody:
         required: true
         content:
@@ -646,44 +646,6 @@ paths:
         "400": {description: 非法 JSON、缺失字段或文档超限}
         "404": {description: 画布不存在或不属于当前用户}
         "409": {description: "reason=agent_workspace_revision_conflict，details.currentRevision 为当前 revision"}
-  /agent/workspaces/{canvasId}/skills:
-    parameters:
-      - {in: path, name: canvasId, required: true, schema: {type: string}}
-    get:
-      tags: [agent]
-      summary: 读取 Workspace 技能版本、来源与容量
-      responses:
-        "200": {description: 有序技能数组，含 skillId、skillVersionId、position、enabled、skillName、contentHash、fileCount、totalBytes、source=workspace}
-        "404": {description: 画布不存在或不属于当前用户}
-    put:
-      tags: [agent]
-      summary: CAS 替换 Workspace 技能追加项（清空传空数组）
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [revision, skills]
-              properties:
-                revision: {type: integer, format: int64, minimum: 0}
-                skills:
-                  type: array
-                  items:
-                    type: object
-                    additionalProperties: false
-                    required: [skillId, skillVersionId, position, enabled]
-                    properties:
-                      skillId: {type: string}
-                      skillVersionId: {type: string}
-                      position: {type: integer, minimum: 0}
-                      enabled: {type: boolean}
-      responses:
-        "200": {description: 更新后的 WorkspaceView，文档与技能共用 revision}
-        "400": {description: 非法技能、私有技能、重复排序或容量超限}
-        "404": {description: 画布不存在或不属于当前用户}
-        "409": {description: "reason=agent_workspace_revision_conflict"}
   /agent/subagent-policy:
     get:
       tags: [agent]
@@ -753,43 +715,6 @@ paths:
         "400": {$ref: "#/components/responses/Error"}
         "401": {$ref: "#/components/responses/Error"}
         "409": {$ref: "#/components/responses/Error"}
-  /agent/profile:
-    get:
-      tags: [agent]
-      summary: 读取生效的用户、项目、画布 Agent 偏好层
-      parameters:
-        - in: query
-          name: scope
-          schema:
-            type: string
-            enum: [user, project, canvas]
-        - in: query
-          name: projectId
-          schema:
-            type: string
-        - in: query
-          name: canvasId
-          schema:
-            type: string
-      responses:
-        "200":
-          description: 信封 data 为合并 revision、hash 和按 user/project/canvas 顺序排列的 layers；每层含独立数字 revision
-        "403":
-          description: 项目或画布不属于当前用户
-    patch:
-      tags: [agent]
-      summary: 使用单层 revision CAS 更新 Agent 偏好
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AgentProfileRequest"
-      responses:
-        "200":
-          description: 返回更新后的生效偏好视图
-        "409":
-          description: 偏好 revision 已变化，须重新读取后保存
   /agent/memories:
     get:
       tags: [agent]
@@ -1770,25 +1695,6 @@ components:
               properties:
                 quote:
                   $ref: "#/components/schemas/LogicalModelQuote"
-    AgentProfileRequest:
-      type: object
-      additionalProperties: false
-      required: [scope, content, revision]
-      properties:
-        scope:
-          type: string
-          enum: [user, project, canvas]
-        projectId:
-          type: string
-        canvasId:
-          type: string
-        content:
-          type: string
-          description: 常驻偏好文档，最多 12000 个 Unicode 字符；不能授权节点、工具、预算或绕过审批
-        revision:
-          type: integer
-          minimum: 0
-          description: 待更新层的数字 revision；首次创建为 0
     CloudAgentRequest:
       type: object
       additionalProperties: false
@@ -1815,9 +1721,6 @@ components:
           type: string
           enum: [off, auto, deep]
           description: 本轮推理策略；供应商是否支持由后端校验
-        profileRevision:
-          type: string
-          description: GET /agent/profile 的生效合并 revision；变化时拒绝创建新轮次
         skillIds:
           type: array
           maxItems: 8

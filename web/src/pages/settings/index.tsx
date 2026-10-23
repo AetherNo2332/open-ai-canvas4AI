@@ -13,7 +13,7 @@ import { ModelDefaultGrid } from "./model-default-grid";
 import { PromptPreferencesPane } from "./prompt-preferences-pane";
 import DiagnosticsPanel from "./diagnostics-panel";
 import AgentMemoryPane from "./agent-memory-pane";
-import { AgentSystemPromptPane } from "./agent-system-prompt-pane";
+import { AgentSystemPromptPane } from "@/components/agent/agent-system-prompt-settings";
 import { AccountSecurityPane } from "./account-security-pane";
 import { RunningHubSettingsPane } from "./runninghub-settings-pane";
 import { RUNNINGHUB_PLUGIN_ID } from "@/lib/plugins/builtin/workflows";

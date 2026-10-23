@@ -163,7 +163,7 @@ func TestCloudAgentTerminalRunWithOlderCapabilityCanContinueOnCurrentContract(t 
 		t.Fatal(err)
 	}
 	parentState.Policy.CapabilitySetVersion = "canvas-capabilities/v1"
-	parentState.Policy.CapabilitySetHash = agentProfileHash("historical capability contract")
+	parentState.Policy.CapabilitySetHash = agentContentHash("historical capability contract")
 	if err = cloudAgentSave(parentExecution, &parentState); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestCloudAgentActiveRunWithOlderCapabilityIsTerminatedWithoutResume(t *test
 		t.Fatal(err)
 	}
 	state.Policy.CapabilitySetVersion = "canvas-capabilities/v1"
-	state.Policy.CapabilitySetHash = agentProfileHash("historical capability contract")
+	state.Policy.CapabilitySetHash = agentContentHash("historical capability contract")
 	if err = cloudAgentSave(execution, &state); err != nil {
 		t.Fatal(err)
 	}

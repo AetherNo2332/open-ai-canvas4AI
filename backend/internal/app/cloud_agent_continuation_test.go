@@ -111,7 +111,7 @@ func TestCloudAgentContinuationCarriesBoundedCanvasChangesAsStructuredHandoff(t 
 	if frame.Authority == "" || !isCloudAgentContinuationMessage(providerTextMessage{Role: "user", Content: context, AgentContextSource: "continuation"}) {
 		t.Fatalf("handoff 必须标记为非授权 continuation：%+v", frame)
 	}
-	canonical := cloudAgentCanonicalFor("", []providerTextMessage{{Role: "user", Content: context, AgentContextSource: "continuation"}}, "继续", CloudAgentRequest{}, false)
+	canonical := cloudAgentCanonical("", []providerTextMessage{{Role: "user", Content: context, AgentContextSource: "continuation"}}, "继续", CloudAgentRequest{})
 	if got := stringField(canonical.Messages[0], cloudAgentContextSourceKey); got != "continuation" {
 		t.Fatalf("canonical handoff source = %q", got)
 	}

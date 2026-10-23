@@ -64,41 +64,4 @@ func RegisterAgentWorkspaceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
-	r.GET("/agent/workspaces/:canvasId/skills", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		view, err := svc.ListWorkspaceSkills(user.ID, c.Param("canvasId"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, view)
-	})
-	r.PUT("/agent/workspaces/:canvasId/skills", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var req struct {
-			Revision *int64                    `json:"revision"`
-			Skills   *[]service.SkillSelection `json:"skills"`
-		}
-		if !decodeAgentConfiguration(c, &req) {
-			return
-		}
-		if req.Revision == nil || req.Skills == nil {
-			fail(c, 400, errors.New("revision 和 skills 必填（清空请传 []）"))
-			return
-		}
-		view, err := svc.ReplaceWorkspaceSkills(user.ID, c.Param("canvasId"), *req.Revision, *req.Skills)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, view)
-	})
 }

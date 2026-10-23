@@ -23,18 +23,14 @@ import {
     cancelAgentRun,
     getAgentCapabilities,
     listAgentSkillDefaults,
-    getAgentProfile,
     getAgentRun,
     createAgentRun,
     decideAgentApproval,
     sendAgentInterjection,
     sendAgentMessage,
     subscribeAgentEvents,
-    updateAgentProfile,
     type AgentEvent,
     type AgentPermissionMode,
-    type AgentProfileScope,
-    type AgentProfileView,
     type AgentReasoningMode,
     type AgentRun,
     type AgentSkillDefaultsSummary,
@@ -97,7 +93,6 @@ import { getAgentSubagentPolicy, listAgentSubagents, updateAgentSubagentPolicy, 
 
 type CloudAgentPanelProps = {
     canvasId: string;
-    domainProjectId?: string;
     nodeCount: number;
     selectedNodeIds: string[];
     references: CanvasResourceReference[];
@@ -113,7 +108,7 @@ type CloudAgentPanelProps = {
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
+export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const subagentsAvailable = useUserStore((state) => state.features.agentSubagentsEnabled);
     const [subagentPolicy, setSubagentPolicy] = useState<AgentSubagentPolicy | null>(null);
@@ -184,11 +179,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
     const [prompt, setPrompt] = useState("");
     const lastPrefillPromptRef = useRef("");
     const [reasoningMode, setReasoningMode] = useState<AgentReasoningMode>("off");
-    const [profileView, setProfileView] = useState<AgentProfileView | null>(null);
-    const [profileLoading, setProfileLoading] = useState(false);
-    const [profileSaving, setProfileSaving] = useState(false);
-    const [profileError, setProfileError] = useState<string>();
-    const profileRequestRef = useRef(0);
     const [skills, setSkills] = useState<Skill[]>([]);
     const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
     const [skillDefaults, setSkillDefaults] = useState<AgentSkillDefaultsSummary>({ count: 0, skills: [] });
@@ -498,37 +488,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
         if (!open || view !== "chat") setSkillsOpen(false);
     }, [open, view]);
 
-    const reloadProfile = useCallback(async () => {
-        const requestId = ++profileRequestRef.current;
-        setProfileLoading(true);
-        setProfileError(undefined);
-        setProfileView(null);
-        try {
-            const result = await getAgentProfile({ projectId: domainProjectId, canvasId });
-            if (profileRequestRef.current === requestId) setProfileView(result);
-        } catch (cause) {
-            if (profileRequestRef.current === requestId) setProfileError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            if (profileRequestRef.current === requestId) setProfileLoading(false);
-        }
-    }, [canvasId, domainProjectId]);
-
-    useEffect(() => {
-        void reloadProfile();
-    }, [reloadProfile]);
-
-    const saveProfile = async (input: { scope: AgentProfileScope; projectId?: string; canvasId?: string; content: string; revision: number }) => {
-        setProfileSaving(true);
-        try {
-            const result = await updateAgentProfile(input);
-            setProfileView(result);
-            setProfileError(undefined);
-            return result;
-        } finally {
-            setProfileSaving(false);
-        }
-    };
-
     useEffect(() => {
         const timer = window.setTimeout(() => setDebouncedSkillSearch(skillSearch.trim()), 250);
         return () => window.clearTimeout(timer);
@@ -814,8 +773,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
             // Editing model settings or prompt must not silently create a new charge.
             if (pending?.request && pending.request.prompt !== value) throw new Error("上一条请求结果待确认，请先原样重试上一条消息，再发送新要求");
             if (!pending?.request) {
-                if (profileLoading) throw new Error("正在确认长期偏好快照，请稍后再发送");
-                if (!profileView || profileError) throw new Error("长期偏好快照尚未确认，请重新读取后再发送");
                 const capabilities = await getAgentCapabilities();
                 if (currentScope.current !== scope) return;
                 if (!capabilities.permissionModes.includes(permissionMode)) throw new Error("当前后端不支持所选 Agent 权限，请更新后端");
@@ -829,7 +786,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                     canvasId,
                     prompt: value,
                     reasoningMode: reasoningSupported ? reasoningMode : "off",
-                    profileRevision: profileView.revision,
                     model: modelOptionName(selectedModel) || undefined,
                     ...(logicalModelId ? { logicalModelId } : requestConfig.channelId ? { channelId: requestConfig.channelId, channelModelKey: modelOptionName(selectedModel) || undefined } : {}),
                     skillIds: [...new Set([...selectedSkillIds, ...resolveSkillMentions(value, installedSkills).map((skill) => skill.skillId)])],
@@ -1095,11 +1051,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                             onPermissionChange={setPermissionMode}
                                             reasoningMode={reasoningMode}
                                             onReasoningModeChange={setReasoningMode}
-                                            profileView={profileView}
-                                            profileLoading={profileLoading}
-                                            profileSaving={profileSaving}
-                                            profileError={profileError}
-                                            projectId={domainProjectId}
                                             canvasId={canvasId}
                                             subagents={
                                                 subagentsAvailable
@@ -1113,8 +1064,6 @@ export function CanvasCloudAgentPanel({ canvasId, domainProjectId, nodeCount, se
                                                       }
                                                     : undefined
                                             }
-                                            onReloadProfile={reloadProfile}
-                                            onSaveProfile={saveProfile}
                                             onContextToggle={(value) => setContextScope((current) => (current.includes(value) ? current.filter((item) => item !== value) : [...current, value]))}
                                             onSkillSearch={setSkillSearch}
                                             onSkillToggle={(id) => setSelectedSkillIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))}
@@ -1403,19 +1352,18 @@ export function AgentHeader({
                 </div>
             </div>
             <div className="agent-header-actions ml-auto flex shrink-0 items-center gap-0.5" style={{ color: theme.node.muted }}>
-                <button
-                    type="button"
-                    className="agent-header-skills inline-flex min-h-8 shrink-0 items-center gap-1 rounded-[var(--button-radius)] px-2 text-xs focus-visible:outline-2 focus-visible:outline-ring"
-                    style={{ color: selectedSkillCount ? theme.accent.primary : theme.node.muted, background: skillsOpen ? theme.node.fill : "transparent" }}
+                <Button
+                    type="text"
+                    className="agent-header-skills"
+                    shape="circle"
+                    icon={<Sparkles className="size-4" />}
+                    style={{ color: selectedSkillCount || skillsOpen ? theme.accent.primary : theme.node.muted }}
                     aria-label={`打开 Skills 技能库${selectedSkillCount ? `，已启用 ${selectedSkillCount} 个` : ""}`}
                     aria-expanded={skillsOpen}
                     aria-haspopup="dialog"
                     title="打开 Skills 技能库"
                     onClick={onSkills}
-                >
-                    <Sparkles className="size-3.5" />
-                    <span>Skills({selectedSkillCount})</span>
-                </button>
+                />
                 <Button type="text" shape="circle" icon={<Download className="size-4" />} loading={exporting} onClick={onExport} aria-label="导出 Agent 调试记录" title="导出对话、工具参数、审批和错误（分享前请检查隐私）" />
                 <Button type="text" shape="circle" icon={<MessageSquarePlus className="size-4" />} onClick={onNew} aria-label="新建对话" title="新建对话" />
                 <Button type="text" shape="circle" icon={<History className="size-4" />} onClick={onHistory} aria-label="历史对话" title="历史对话" />

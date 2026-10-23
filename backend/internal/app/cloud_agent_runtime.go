@@ -104,24 +104,22 @@ type cloudAgentApproval struct {
 	Reason           string                    `json:"reason,omitempty"`
 }
 type cloudAgentRuntime struct {
-	ToolSchemaVersion string                    `json:"toolSchemaVersion,omitempty"`
-	ActiveSubagents   int                       `json:"activeSubagents,omitempty"`
-	Subagent          *SubagentRuntime          `json:"subagent,omitempty"`
-	Workspace         *WorkspaceSnapshot        `json:"workspace,omitempty"`
-	RuntimeRunID      string                    `json:"-"`
-	SkillRuntimeMode  string                    `json:"skillRuntimeMode,omitempty"`
-	Request           CloudAgentRequest         `json:"request"`
-	Policy            cloudAgentPolicySnapshot  `json:"policy"`
-	ParentID          string                    `json:"parentId,omitempty"`
-	Fingerprint       string                    `json:"fingerprint,omitempty"`
-	CreativeAnchor    cloudAgentCreativeAnchor  `json:"creativeAnchor,omitempty"`
-	TextHistory       []providerTextMessage     `json:"textHistory,omitempty"`
-	Skills            []cloudAgentSkill         `json:"skills"`
-	SkillReads        map[string]bool           `json:"skillReads,omitempty"`
-	Profile           cloudAgentProfileSnapshot `json:"profile"`
-	ProfileReads      map[string]bool           `json:"profileReads,omitempty"`
-	Canonical         canonicalAgentRequest     `json:"canonical"`
-	DisclosureVersion int                       `json:"disclosureVersion,omitempty"`
+	ToolSchemaVersion string                   `json:"toolSchemaVersion,omitempty"`
+	ActiveSubagents   int                      `json:"activeSubagents,omitempty"`
+	Subagent          *SubagentRuntime         `json:"subagent,omitempty"`
+	Workspace         *WorkspaceSnapshot       `json:"workspace,omitempty"`
+	RuntimeRunID      string                   `json:"-"`
+	SkillRuntimeMode  string                   `json:"skillRuntimeMode,omitempty"`
+	Request           CloudAgentRequest        `json:"request"`
+	Policy            cloudAgentPolicySnapshot `json:"policy"`
+	ParentID          string                   `json:"parentId,omitempty"`
+	Fingerprint       string                   `json:"fingerprint,omitempty"`
+	CreativeAnchor    cloudAgentCreativeAnchor `json:"creativeAnchor,omitempty"`
+	TextHistory       []providerTextMessage    `json:"textHistory,omitempty"`
+	Skills            []cloudAgentSkill        `json:"skills"`
+	SkillReads        map[string]bool          `json:"skillReads,omitempty"`
+	Canonical         canonicalAgentRequest    `json:"canonical"`
+	DisclosureVersion int                      `json:"disclosureVersion,omitempty"`
 	// PromptContract 是"运行创建时装配提示所用的 Harness 内容身份"（Node 侧 sha256）。
 	//
 	// 为什么必须固化：Node 在 worker 启动时读一次 Harness，然后把同一个对象用于它领取的
@@ -327,12 +325,12 @@ func (s *Service) ensureCloudAgentExecution(task *model.Task, initial cloudAgent
 	advertisedNames := cloudAgentToolNames(canonical.Tools)
 	// Rebuild the complete eligible catalog for server-side authorization. The
 	// root task contains only the parent schemas sent to the model.
-	canonical.Tools = compileCloudAgentToolsForRuntime(initial.Request, len(initial.Profile.Layers) > 0, firstNonEmpty(initial.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy))
+	canonical.Tools = compileCloudAgentToolsForRuntime(initial.Request, firstNonEmpty(initial.SkillRuntimeMode, cloudAgentSkillRuntimeLegacy))
 	stepLimits, err := s.cloudAgentStepLimits()
 	if err != nil {
 		return err
 	}
-	state := cloudAgentRuntime{Request: initial.Request, SkillRuntimeMode: initial.SkillRuntimeMode, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Profile: initial.Profile, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
+	state := cloudAgentRuntime{Request: initial.Request, SkillRuntimeMode: initial.SkillRuntimeMode, Policy: initial.Policy, ParentID: initial.ParentID, Fingerprint: initial.Fingerprint, CreativeAnchor: initial.CreativeAnchor, TextHistory: input.TextHistory, Skills: initial.Skills, Canonical: canonical, ActiveTaskID: task.ID, TaskIDs: []string{task.ID}, Step: 1, Decisions: map[string]string{}, Plan: initial.Plan, Events: []CloudAgentEvent{}, StepLimits: stepLimits}
 	state.CallLimits = stepLimits.CallLimits
 	s.RecordObservability(observability.Event{TaskID: task.ID, RunID: task.ID, TraceID: task.ID, Kind: observability.KindTask, Status: observability.StatusRunning, StartedAt: time.Now().UTC(), Model: stringValue(input.Config["model"]), PromptVersion: state.Fingerprint})
 	for _, name := range advertisedNames {
@@ -530,18 +528,6 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 	}
 	if err := validateCloudAgentPolicySnapshotStructure(state.Policy); err != nil {
 		return err
-	}
-	if err := validateCloudAgentProfileSnapshot(state.Profile, state.Policy); err != nil {
-		return err
-	}
-	for scope, read := range state.ProfileReads {
-		found := false
-		for _, layer := range state.Profile.Layers {
-			found = found || layer.Scope == scope
-		}
-		if !read || !found {
-			return errors.New("Agent runtime profile read history is invalid")
-		}
 	}
 	if state.Step < 0 || state.Generations < 0 || state.VideoSeconds < 0 {
 		return errors.New("Agent runtime budget or step is invalid")
@@ -750,8 +736,6 @@ func validateCloudAgentPolicySnapshotStructure(snapshot cloudAgentPolicySnapshot
 		{"system policy hash", snapshot.SystemPolicyHash},
 		{"media policy hash", snapshot.MediaPolicyHash},
 		{"capability set hash", snapshot.CapabilitySetHash},
-		{"profile revision", snapshot.ProfileRevision},
-		{"profile hash", snapshot.ProfileHash},
 	} {
 		if !cloudAgentSHA256(field.value) {
 			return fmt.Errorf("Agent runtime %s is invalid", field.name)
@@ -925,7 +909,7 @@ func (s *Service) cloudAgentExecutionOutput(userID string, identity cloudAgentRu
 		// A terminal failed run must remain readable even if its durable runtime
 		// blob was damaged. Do not invent permissions or approval state; expose
 		// only the identity available from the original task input.
-		state = cloudAgentRuntime{Request: initial.Request, ParentID: initial.ParentID, CreativeAnchor: initial.CreativeAnchor, Skills: initial.Skills, Profile: initial.Profile, TaskIDs: []string{identity.ID}, Events: []CloudAgentEvent{}}
+		state = cloudAgentRuntime{Request: initial.Request, ParentID: initial.ParentID, CreativeAnchor: initial.CreativeAnchor, Skills: initial.Skills, TaskIDs: []string{identity.ID}, Events: []CloudAgentEvent{}}
 	}
 	out := agentRunOutput(identity, initial)
 	out.Status = run.Status
@@ -1501,9 +1485,8 @@ func cloudAgentInvalidateReadCache(state *cloudAgentRuntime) {
 	if state == nil {
 		return
 	}
-	// Canvas writes invalidate only canvas projections. Skill documents,
-	// profile preferences, and the model catalog do not change when a canvas is
-	// edited, so retaining them avoids re-reading large unrelated tool results.
+	// Canvas writes invalidate only canvas projections. Skill documents and
+	// the model catalog remain valid, avoiding unrelated repeated reads.
 	for key := range state.ToolReadResults {
 		if strings.HasPrefix(key, "canvas_get_state:") || strings.HasPrefix(key, "canvas_read_storyboard:") || strings.HasPrefix(key, "previs_scene_read:") {
 			delete(state.ToolReadResults, key)

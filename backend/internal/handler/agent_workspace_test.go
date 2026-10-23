@@ -84,13 +84,13 @@ func TestAgentWorkspaceHTTPRevisionAndOwnership(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != 200 || response.Data.Revision != 1 || response.Data.AgentsMD != "项目规则" {
 		t.Fatalf("save: %d %s", w.Code, w.Body)
 	}
-	w = call("PUT", "own/skills", `{"revision":0,"skills":[]}`, true)
+	w = call("PATCH", "own", `{"revision":0,"agentsMd":"stale"}`, true)
 	if w.Code != 409 || !strings.Contains(w.Body.String(), "agent_workspace_revision_conflict") {
 		t.Fatalf("CAS: %d %s", w.Code, w.Body)
 	}
-	w = call("PUT", "own/skills", `{"revision":1,"skills":[]}`, true)
+	w = call("PATCH", "own", `{"revision":1,"agentsMd":"更新后的画布规则"}`, true)
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil || w.Code != 200 || response.Data.Revision != 2 {
-		t.Fatalf("skill CAS: %d %s", w.Code, w.Body)
+		t.Fatalf("document CAS: %d %s", w.Code, w.Body)
 	}
 	for _, body := range []string{`{}`, `{"agentsMd":"lost revision"}`, `{"revision":2}`, `{"revision":2,"agentsMd":"x","unknown":true}`, `{"revision":2,"agentsMd":"x"} {}`, `null`} {
 		if w := call("PATCH", "own", body, true); w.Code != 400 {
@@ -101,12 +101,9 @@ func TestAgentWorkspaceHTTPRevisionAndOwnership(t *testing.T) {
 	if w := call("PATCH", "own", string(oversized), true); w.Code != 400 {
 		t.Fatalf("byte limit: %d %s", w.Code, w.Body)
 	}
-	if w := call("PUT", "own/skills", `{"revision":2}`, true); w.Code != 400 {
-		t.Fatalf("missing skills: %d %s", w.Code, w.Body)
-	}
-	for _, body := range []string{`{"revision":2,"skills":null}`, `{"revision":2,"skills":[{"skillId":"missing","skillVersionId":"v","position":0}]}`} {
-		if w := call("PUT", "own/skills", body, true); w.Code != 400 {
-			t.Fatalf("incomplete selection: %d %s", w.Code, w.Body)
+	for _, method := range []string{"GET", "PUT"} {
+		if w := call(method, "own/skills", `{"revision":2,"skills":[]}`, true); w.Code != 404 {
+			t.Fatalf("retired skills endpoint: %d %s", w.Code, w.Body)
 		}
 	}
 }

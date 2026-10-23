@@ -45,7 +45,7 @@ func (r *Repository) AgentWorkspaceSnapshot(userID, canvasID string) (*model.Age
 		}
 		snapshot.ID, snapshot.UserID, snapshot.CanvasID = workspace.ID, workspace.UserID, workspace.CanvasID
 		snapshot.AgentsMD, snapshot.AgentsMDHash, snapshot.Revision = workspace.AgentsMD, workspace.AgentsMDHash, workspace.Revision
-		return tx.Where("workspace_id = ?", workspace.ID).Order("position asc, skill_id asc").Find(&snapshot.Skills).Error
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -77,40 +77,6 @@ func (r *Repository) UpdateAgentWorkspace(userID, canvasID string, expectedRevis
 		}
 		if result.RowsAffected != 1 {
 			return r.agentWorkspaceConflict(tx, workspace.ID, userID)
-		}
-		revision = expectedRevision + 1
-		return nil
-	})
-	return revision, err
-}
-
-func (r *Repository) ReplaceAgentWorkspaceSkills(userID, canvasID string, expectedRevision int64, rows []model.AgentWorkspaceSkill) (int64, error) {
-	var revision int64
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&model.AgentWorkspace{}).Where("user_id = ? AND canvas_id = ?", userID, canvasID).UpdateColumn("revision", gorm.Expr("revision")).Error; err != nil {
-			return err
-		}
-		workspace, err := r.ensureAgentWorkspace(tx, userID, canvasID)
-		if err != nil {
-			return err
-		}
-		result := tx.Model(&model.AgentWorkspace{}).Where("id = ? AND user_id = ? AND revision = ?", workspace.ID, userID, expectedRevision).UpdateColumn("revision", gorm.Expr("revision + 1"))
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return r.agentWorkspaceConflict(tx, workspace.ID, userID)
-		}
-		if err := tx.Where("workspace_id = ?", workspace.ID).Delete(&model.AgentWorkspaceSkill{}).Error; err != nil {
-			return err
-		}
-		for i := range rows {
-			rows[i].WorkspaceID = workspace.ID
-		}
-		if len(rows) > 0 {
-			if err := tx.Create(&rows).Error; err != nil {
-				return err
-			}
 		}
 		revision = expectedRevision + 1
 		return nil

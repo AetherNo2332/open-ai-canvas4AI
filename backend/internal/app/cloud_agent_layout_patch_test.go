@@ -91,8 +91,7 @@ func TestCloudAgentOversizedEventPayloadDegradesToRefresh(t *testing.T) {
 		t.Fatalf("治理后仍然超限：%d", len(raw))
 	}
 	state.Request = agentTestRequest()
-	state.Profile = cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")}
-	if _, policy, err := compileCloudAgentPolicies(state.Request, nil, "{}", state.Profile); err == nil {
+	if _, policy, err := compileCloudAgentPolicies(state.Request, nil, "{}"); err == nil {
 		state.Policy = policy
 	} else {
 		t.Fatal(err)

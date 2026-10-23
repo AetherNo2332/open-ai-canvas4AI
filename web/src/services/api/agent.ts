@@ -21,23 +21,6 @@ export type AgentMediaSettings = {
     size: string;
     quality: string;
 };
-export type AgentProfileScope = "user" | "project" | "canvas";
-
-export type AgentProfileLayer = {
-    scope: AgentProfileScope;
-    projectId?: string;
-    canvasId?: string;
-    content: string;
-    revision: number;
-    hash: string;
-};
-
-export type AgentProfileView = {
-    revision: string;
-    hash: string;
-    layers: AgentProfileLayer[];
-};
-
 export type AgentApprovalPreviewOperation =
     | "add_node"
     | "update_node"
@@ -176,7 +159,6 @@ export class AgentStreamError extends Error {
 
 export type CreateAgentRunInput = {
     reasoningMode?: AgentReasoningMode;
-    profileRevision?: string;
     canvasId: string;
     prompt: string;
     workflow?: "image_to_director";
@@ -240,19 +222,6 @@ export function getAgentCapabilities() {
         capabilitySetHash?: string;
         nodeTypes?: string[];
     }>("/agent/capabilities", { timeout: 15_000 });
-}
-
-export function getAgentProfile(options: { projectId?: string; canvasId?: string; scope?: AgentProfileScope } = {}) {
-    const params = new URLSearchParams();
-    if (options.projectId) params.set("projectId", options.projectId);
-    if (options.canvasId) params.set("canvasId", options.canvasId);
-    if (options.scope) params.set("scope", options.scope);
-    const query = params.toString();
-    return http.get<AgentProfileView>(`/agent/profile${query ? `?${query}` : ""}`, { timeout: 15_000 });
-}
-
-export function updateAgentProfile(input: { scope: AgentProfileScope; projectId?: string; canvasId?: string; content: string; revision: number }) {
-    return http.patch<AgentProfileView>("/agent/profile", input, { timeout: 15_000 });
 }
 
 export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sinceSeq?: number; eventLimit?: number }) {

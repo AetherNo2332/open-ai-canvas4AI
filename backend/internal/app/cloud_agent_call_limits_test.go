@@ -232,7 +232,7 @@ func TestAgentCallLimitsNoToolTurnUsesRaisedBudget(t *testing.T) {
 }
 
 func TestAgentCallLimitsReadBudgetCoversCachedAndUncachedTools(t *testing.T) {
-	s, _, _, canvasID := cloudAgentProfileFixtureDB(t)
+	s, _, _, canvasID := cloudAgentRulesFixtureDB(t)
 	for _, tool := range []string{"canvas_list_node_types", "canvas_get_state"} {
 		t.Run(tool, func(t *testing.T) {
 			state := &cloudAgentRuntime{Request: CloudAgentRequest{CanvasID: canvasID}, CallLimits: cloudAgentCallLimits{ReadCallsPerRun: 2}}
@@ -255,30 +255,16 @@ func TestAgentCallLimitsReadBudgetCoversCachedAndUncachedTools(t *testing.T) {
 }
 
 func TestAgentCallLimitsReadBudgetWithoutDatabase(t *testing.T) {
-	for _, tool := range []string{"canvas_list_node_types", "agent_profile_read"} {
-		t.Run(tool, func(t *testing.T) {
-			state := &cloudAgentRuntime{
-				CallLimits: cloudAgentCallLimits{ReadCallsPerRun: 2},
-				Profile: cloudAgentProfileSnapshot{Layers: []AgentProfileLayer{
-					{Scope: model.AgentProfileScopeUser, Content: "User preferences"},
-					{Scope: model.AgentProfileScopeProject, Content: "Project preferences"},
-				}},
-			}
-			for _, scope := range []string{"user", "project"} {
-				args := `{}`
-				if tool == "agent_profile_read" {
-					args = fmt.Sprintf(`{"scope":%q}`, scope)
-				}
-				if _, err := cloudAgentReadToolCached(nil, "user", state, piAgentTestCall(scope, tool, args)); err != nil {
-					t.Fatal(err)
-				}
-			}
-			_, err := cloudAgentReadToolCached(nil, "user", state, piAgentTestCall("over", tool, `{}`))
-			var budgetErr *cloudAgentReadLoopError
-			if !errors.As(err, &budgetErr) || !budgetErr.Budget || state.ReadToolCalls != 2 {
-				t.Fatalf("read count=%d err=%v", state.ReadToolCalls, err)
-			}
-		})
+	state := &cloudAgentRuntime{CallLimits: cloudAgentCallLimits{ReadCallsPerRun: 2}}
+	for _, id := range []string{"first", "second"} {
+		if _, err := cloudAgentReadToolCached(nil, "user", state, piAgentTestCall(id, "canvas_list_node_types", `{}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := cloudAgentReadToolCached(nil, "user", state, piAgentTestCall("over", "canvas_list_node_types", `{}`))
+	var budgetErr *cloudAgentReadLoopError
+	if !errors.As(err, &budgetErr) || !budgetErr.Budget || state.ReadToolCalls != 2 {
+		t.Fatalf("read count=%d err=%v", state.ReadToolCalls, err)
 	}
 }
 

@@ -80,7 +80,7 @@ func cloudAgentArgumentExample(call cloudAgentCall, field string) map[string]any
 	_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
 	snapshot := "<canvas_get_state.snapshotHash>"
 	switch call.Function.Name {
-	case "canvas_get_state", "canvas_list_node_types", "agent_profile_read", "canvas_list_assets", "model_list":
+	case "canvas_get_state", "canvas_list_node_types", "canvas_list_assets", "model_list":
 		return map[string]any{}
 	case "canvas_read_storyboard", "canvas_read_batch_table":
 		return map[string]any{"nodeId": "<nodeId>"}

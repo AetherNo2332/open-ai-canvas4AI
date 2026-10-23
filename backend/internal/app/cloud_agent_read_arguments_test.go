@@ -46,7 +46,7 @@ func TestCloudAgentReadArgumentsRejectBeforeReadingCanvas(t *testing.T) {
 
 func TestCloudAgentReadArgumentFeedbackUsesAdvertisedHints(t *testing.T) {
 	req := agentTestRequest()
-	for _, name := range []string{"agent_profile_read", "canvas_list_node_types", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "task_get"} {
+	for _, name := range []string{"canvas_list_node_types", "canvas_get_state", "canvas_read_storyboard", "canvas_read_batch_table", "task_get"} {
 		t.Run(name, func(t *testing.T) {
 			state := &cloudAgentRuntime{Request: req, Canonical: canonicalAgentRequest{Tools: cloudAgentTools(req)}}
 			call := cloudAgentCall{ID: "read-1"}

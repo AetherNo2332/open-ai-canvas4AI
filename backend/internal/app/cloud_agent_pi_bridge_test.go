@@ -27,18 +27,17 @@ func piAgentTestFixture(t *testing.T) (*Service, *gorm.DB, *model.CloudAgentExec
 	runID := cloudAgentID(userID, req.IdempotencyKey)
 	// read_only 会裁掉所有写工具，协议测试要同时覆盖写入与只读工具。
 	req.PermissionMode = "auto"
-	profile := cloudAgentProfileSnapshot{Revision: agentProfileRevision(nil), Hash: agentProfileHash("")}
-	system, policy, err := compileCloudAgentPolicies(req, nil, "", profile)
+	system, policy, err := compileCloudAgentPolicies(req, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := cloudAgentRuntime{Request: req, Policy: policy, Profile: profile, Decisions: map[string]string{}}
+	state := cloudAgentRuntime{Request: req, Policy: policy, Decisions: map[string]string{}}
 	// 运行必须至少登记一个已存在的任务 ID，否则恢复校验会拒绝这条状态。
 	state.TaskIDs = []string{"pi-root-task"}
 	if err := db.Create(&model.Task{ID: "pi-root-task", UserID: userID, ProjectID: req.CanvasID, Type: "canvas_text", Status: model.TaskStatusSucceeded, ResultJSON: `{"text":""}`}).Error; err != nil {
 		t.Fatal(err)
 	}
-	state.Canonical = cloudAgentCanonicalFor(system, nil, req.Prompt, req, false)
+	state.Canonical = cloudAgentCanonical(system, nil, req.Prompt, req)
 	state.Canonical.Tools = cloudAgentVisibleTools(state.Canonical.Tools, "", nil, nil)
 	state.StepLimits, _ = s.cloudAgentStepLimits()
 	encoded, err := json.Marshal(state)

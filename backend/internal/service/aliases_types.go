@@ -6,8 +6,6 @@ type (
 	AgentSystemPromptRequest               = app.AgentSystemPromptRequest
 	AgentWebSearchSettingRequest           = app.AgentWebSearchSettingRequest
 	AgentWorkspaceView                     = app.AgentWorkspaceView
-	AgentWorkspaceSkillView                = app.AgentWorkspaceSkillView
-	SkillSelection                         = app.SkillSelection
 	AgentSchedulerUpdate                   = app.AgentSchedulerUpdate
 	PaymentOrderQuery                      = app.PaymentOrderQuery
 	PaymentReconciliationQuery             = app.PaymentReconciliationQuery
@@ -32,8 +30,6 @@ type (
 	PiSkillSnapshot                        = app.PiSkillSnapshot
 	PiSkillReadPage                        = app.PiSkillReadPage
 	PiSkillFileRequest                     = app.PiSkillFileRequest
-	AgentProfileRequest                    = app.AgentProfileRequest
-	AgentProfileView                       = app.AgentProfileView
 	AgentSubagentPolicyRequest             = app.AgentSubagentPolicyRequest
 	AgentSubagentPolicyView                = app.AgentSubagentPolicyView
 	AgentSubagentView                      = app.AgentSubagentView

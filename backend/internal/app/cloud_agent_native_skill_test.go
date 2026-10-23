@@ -34,7 +34,7 @@ func nativeSkillLeasedFixture(t *testing.T) (*Service, *gorm.DB, *model.CloudAge
 	}
 	state.SkillRuntimeMode = cloudAgentSkillRuntimeNative
 	state.Skills = snapshots
-	state.Canonical.Tools = compileCloudAgentToolsForRuntime(state.Request, false, cloudAgentSkillRuntimeNative)
+	state.Canonical.Tools = compileCloudAgentToolsForRuntime(state.Request, cloudAgentSkillRuntimeNative)
 	if err := db.Model(run).Update("state_json", marshalNativeTestState(t, state)).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestCloudAgentSkillsFreezeFileHashesWithoutBodies(t *testing.T) {
 
 func TestNativeRuntimeDoesNotExposeLegacySkillTools(t *testing.T) {
 	req := CloudAgentRequest{SkillIDs: []string{"skill-1"}}
-	tools := compileCloudAgentToolsForRuntime(req, true, cloudAgentSkillRuntimeNative)
+	tools := compileCloudAgentToolsForRuntime(req, cloudAgentSkillRuntimeNative)
 	names := cloudAgentToolNames(tools)
 	if slices.Contains(names, "skill_search") || slices.Contains(names, "skill_read_file") {
 		t.Fatalf("legacy Skill tools exposed in native runtime: %v", names)
@@ -321,7 +321,7 @@ func TestNativeRuntimeDoesNotExposeLegacySkillTools(t *testing.T) {
 		t.Fatal("native read must be present in the Go model schema catalog")
 	}
 
-	legacy := compileCloudAgentToolsForRuntime(req, true, cloudAgentSkillRuntimeLegacy)
+	legacy := compileCloudAgentToolsForRuntime(req, cloudAgentSkillRuntimeLegacy)
 	legacyNames := cloudAgentToolNames(legacy)
 	if slices.Contains(legacyNames, "skill_search") || slices.Contains(legacyNames, "skill_read_file") {
 		t.Fatalf("retired Skill tools remain in legacy runtime: %v", legacyNames)

@@ -9,15 +9,20 @@ import { DEFAULT_CANVAS_APPEARANCE, agentCopy } from "@/lib/canvas/agent-appeara
 
 const noop = () => {};
 
-test("Skills is accessible in the Agent header with its selected count and dialog state", () => {
+test("Skills uses only an icon and active color while retaining its accessible count and dialog state", () => {
     const html = renderToStaticMarkup(<AgentHeader theme={canvasThemes.dark} hasMessages statusLabel="运行中" statusColor="green" nodeCount={12}
         onNew={noop} onHistory={noop} onSettings={noop} onCollapse={noop} onExport={noop} exporting={false}
         skillsOpen selectedSkillCount={3} onSkills={noop} />);
-    expect(html).toContain("Skills(3)");
+    const skillsButton = html.match(/<button\b[^>]*class="[^"]*\bagent-header-skills\b[^"]*"[^>]*>[\s\S]*?<\/button>/)?.[0];
+    expect(skillsButton).toBeDefined();
+    expect(skillsButton).toContain("lucide-sparkles");
+    expect(skillsButton).toContain(`color:${canvasThemes.dark.accent.primary}`);
+    expect(skillsButton).not.toContain("Skills(3)");
+    expect(skillsButton).not.toContain("<span>Skills");
     expect(html).toContain('aria-label="打开 Skills 技能库，已启用 3 个"');
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain('aria-haspopup="dialog"');
-    expect(html.indexOf("Skills(3)")).toBeLessThan(html.indexOf("导出 Agent 调试记录"));
+    expect(html.indexOf("agent-header-skills")).toBeLessThan(html.indexOf("导出 Agent 调试记录"));
 });
 
 test("welcome uses the independent assistant name and escapes it as text", () => {

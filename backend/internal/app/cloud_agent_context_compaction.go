@@ -292,14 +292,13 @@ func cloudAgentContextCompactionPrompt(state *cloudAgentRuntime) string {
 		ConversationJSON: cloudAgentJSON(state.Canonical.Messages),
 		OperationsJSON:   cloudAgentJSON(cloudAgentContextFacts(state.Events)),
 		CreativeJSON:     cloudAgentJSON(state.CreativeAnchor),
-		PreferencesJSON:  cloudAgentJSON(state.Profile.Layers),
 		DecisionsJSON:    cloudAgentJSON(state.Decisions),
 		TurnCount:        turnCount,
 	})
 }
 
 // cloudAgentFallbackCheckpoint 是压缩失败时的**服务端保底检查点**：不依赖模型输出，
-// 只把服务端已有的事实（用户要求、创作锚点、偏好、决策、事件流水）整理成同一份契约。
+// 只把服务端已有的事实（用户要求、创作锚点、决策、事件流水）整理成同一份契约。
 // 有它才能保证"压缩调用失败"只是少了一份更好的摘要，而不是整轮没有上下文可用。
 func cloudAgentFallbackCheckpoint(state *cloudAgentRuntime) agentcontext.Checkpoint {
 	checkpoint := agentcontext.Checkpoint{Version: agentcontext.Version}
@@ -336,11 +335,6 @@ func cloudAgentFallbackCheckpoint(state *cloudAgentRuntime) agentcontext.Checkpo
 	// 这里按本项目已拍板的口径保留删除：它与"下一轮重新附图"是互相替代的两条路，
 	// 同时启用会让模型在节点换图后仍然声称"我看过这张图"。
 	checkpoint.Constraints = append(checkpoint.Constraints, fmt.Sprintf("权限模式：%s；本轮预算上限：%.4f credits", state.Request.PermissionMode, state.Request.Budget.MaxCredits))
-	for _, layer := range state.Profile.Layers {
-		if content := strings.TrimSpace(layer.Content); content != "" {
-			checkpoint.UserPreferences = append(checkpoint.UserPreferences, layer.Scope+": "+truncateRunes(content, 2400))
-		}
-	}
 	keys := make([]string, 0, len(state.Decisions))
 	for key := range state.Decisions {
 		keys = append(keys, key)
@@ -593,7 +587,7 @@ func applyCloudAgentContextCheckpoint(runID string, current *model.CloudAgentExe
 	}
 	afterRaw, _ := json.Marshal(afterMessages)
 	afterBytes, afterTokens := len(afterRaw), estimateCloudAgentTokens(afterRaw)
-	state.SkillReads, state.ProfileReads = nil, nil
+	state.SkillReads = nil
 	state.ActiveTaskID, state.ActiveTextDraft = "", ""
 	resume := state.ContextCompaction != nil && state.ContextCompaction.Resume
 	state.ContextCompaction = nil

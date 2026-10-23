@@ -136,10 +136,6 @@ func cloudAgentSkillSnapshotFromFiles(skillID string, version *model.SkillVersio
 }
 
 func cloudAgentCanonical(system string, history []providerTextMessage, prompt string, req CloudAgentRequest) canonicalAgentRequest {
-	return cloudAgentCanonicalFor(system, history, prompt, req, true)
-}
-
-func cloudAgentCanonicalFor(system string, history []providerTextMessage, prompt string, req CloudAgentRequest, includeProfileTool bool) canonicalAgentRequest {
 	messages := []map[string]any{}
 	for _, m := range history {
 		message := map[string]any{"role": m.Role, "content": m.Content}
@@ -149,7 +145,7 @@ func cloudAgentCanonicalFor(system string, history []providerTextMessage, prompt
 		messages = append(messages, message)
 	}
 	messages = append(messages, map[string]any{"role": "user", "content": prompt})
-	return canonicalAgentRequest{SystemPrompt: system, Messages: messages, Tools: compileCloudAgentTools(req, includeProfileTool), ToolChoice: "auto", PromptCacheKey: cloudAgentPromptCacheKey(req)}
+	return canonicalAgentRequest{SystemPrompt: system, Messages: messages, Tools: compileCloudAgentTools(req), ToolChoice: "auto", PromptCacheKey: cloudAgentPromptCacheKey(req)}
 }
 
 func cloudAgentPromptCacheKey(req CloudAgentRequest) string {
@@ -174,7 +170,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v5"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v6"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -182,7 +178,7 @@ func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolic
 		cloudAgentPromptCacheSchemaVersion, cloudAgentToolSchemaVersion, cloudAgentPromptCacheKey(req),
 		policy.SystemPolicyID, fmt.Sprint(policy.SystemPolicyVersion), policy.SystemPolicyHash,
 		policy.MediaPolicyID, fmt.Sprint(policy.MediaPolicyVersion), policy.MediaPolicyHash,
-		policy.CapabilitySetHash, policy.ProfileRevision, policy.ProfileHash,
+		policy.CapabilitySetHash,
 		req.ChannelID, req.ChannelModelKey, req.Model, req.LogicalModelID,
 		strings.Join(req.ContextScope, ","), strings.Join(sortedCloudAgentIDs(req.SkillIDs), ","),
 	}
@@ -203,11 +199,11 @@ func cloudAgentPromptCacheKeyForRequest(canvasID, identity, system string, tools
 }
 
 func cloudAgentTools(req CloudAgentRequest) []map[string]any {
-	return compileCloudAgentTools(req, true)
+	return compileCloudAgentTools(req)
 }
 
-func compileCloudAgentToolsForRuntime(req CloudAgentRequest, includeProfileTool bool, runtimeMode string) []map[string]any {
-	tools := compileCloudAgentTools(req, includeProfileTool)
+func compileCloudAgentToolsForRuntime(req CloudAgentRequest, runtimeMode string) []map[string]any {
+	tools := compileCloudAgentTools(req)
 	if runtimeMode == cloudAgentSkillRuntimeNative {
 		tools = append(tools, nativeSkillReadToolSchema())
 	}
@@ -225,7 +221,7 @@ func nativeSkillReadToolSchema() map[string]any {
 	}}
 }
 
-func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []map[string]any {
+func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 	tools := []map[string]any{}
 	add := func(name, description string, properties map[string]any, required ...string) {
 		if required == nil {
@@ -246,9 +242,6 @@ func compileCloudAgentTools(req CloudAgentRequest, includeProfileTool bool) []ma
 	}
 	if req.WebSearchEnabled {
 		add("web_search", cloudAgentToolText("web_search"), map[string]any{"query": map[string]any{"type": "string", "minLength": 1, "maxLength": 500, "description": "要联网查询的问题或关键词"}}, "query")
-	}
-	if includeProfileTool {
-		add("agent_profile_read", cloudAgentToolText("agent_profile_read"), map[string]any{"scope": map[string]any{"type": "string", "enum": []string{"user", "project", "canvas"}}}, "scope")
 	}
 	add("plan_update", cloudAgentToolText("plan_update"),
 		map[string]any{"items": map[string]any{"type": "array", "maxItems": 20, "items": map[string]any{"type": "object", "properties": map[string]any{"id": str(cloudAgentToolText("parameter_001")), "title": str(cloudAgentToolText("parameter_002")), "status": map[string]any{"type": "string", "enum": []string{"pending", "doing", "done"}}}, "required": []string{"id", "title", "status"}, "additionalProperties": false}}},
@@ -601,13 +594,13 @@ func cloudAgentCanvasWriteTool(name string) bool {
 }
 
 // 同参缓存只能拦住“原样重复”的读取。模型也可能不断修改 offset、nodeIds 或
-// profile scope 来绕过缓存，因此本轮还要限制所有只读快照工具的累计调用次数。
+// 读取参数来绕过缓存，因此本轮还要限制所有只读工具的累计调用次数。
 // 该上限高于正常画布分页读取所需次数，但足以在异常循环继续消耗模型额度前止损。
 const cloudAgentMaxReadToolCallsPerRun = platform.DefaultRuntimeAgentReadCallsPerRun
 
 func cloudAgentReadToolCacheable(name string) bool {
 	switch name {
-	case "agent_profile_read", "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "model_list":
+	case "canvas_get_state", "canvas_read_storyboard", "previs_scene_read", "model_list":
 		return true
 	default:
 		return false
@@ -616,7 +609,7 @@ func cloudAgentReadToolCacheable(name string) bool {
 
 func cloudAgentReadToolReadOnly(name string) bool {
 	switch name {
-	case "web_search", "agent_profile_read", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "previs_scene_read", "director_check_continuity", "director_handoff_shot", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "recall_lessons", "task_get":
+	case "web_search", "canvas_get_state", "canvas_read_content", "canvas_list_assets", "canvas_search_nodes", "canvas_read_storyboard", "previs_scene_read", "director_check_continuity", "director_handoff_shot", "canvas_read_batch_table", "canvas_list_node_types", "model_list", "recall_lessons", "task_get":
 		return true
 	default:
 		return false
@@ -767,34 +760,6 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 			return nil, cloudAgentJSONArgumentError(err)
 		}
 		return service.agentWebSearch(args.Query)
-	case "agent_profile_read":
-		var args struct {
-			Scope string `json:"scope"`
-		}
-		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &args); err != nil {
-			return nil, cloudAgentJSONArgumentError(err)
-		}
-		if args.Scope != model.AgentProfileScopeUser && args.Scope != model.AgentProfileScopeProject && args.Scope != model.AgentProfileScopeCanvas {
-			return nil, BadAuthRequest("长期偏好作用域无效")
-		}
-		if state.ProfileReads == nil {
-			state.ProfileReads = map[string]bool{}
-		}
-		if state.ProfileReads[args.Scope] {
-			return nil, BadAuthRequest("本轮已读取该长期偏好层，请使用历史工具结果，不要重复读取")
-		}
-		available := make([]string, 0, len(state.Profile.Layers))
-		for _, layer := range state.Profile.Layers {
-			available = append(available, layer.Scope)
-			if layer.Scope == args.Scope {
-				state.ProfileReads[args.Scope] = true
-				return map[string]any{"scope": layer.Scope, "revision": layer.Revision, "hash": layer.Hash, "content": layer.Content}, nil
-			}
-		}
-		if len(available) == 0 {
-			return nil, BadAuthRequest("本轮没有长期偏好层，不要调用 agent_profile_read")
-		}
-		return nil, BadAuthRequest("本轮固定快照中不存在该长期偏好层；本轮可读的层只有：" + strings.Join(available, "、") + "。不要再尝试其它层")
 	case "plan_update":
 		return cloudAgentApplyPlanUpdate(state, call)
 	case "ask_user":

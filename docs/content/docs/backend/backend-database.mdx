@@ -7,7 +7,9 @@ description: 数据库迁移与当前业务持久化结构
 
 ## 用户自定义 Agent 系统提示词
 
-复用 `agent_profiles` 表，以 `scope=system_prompt`、当前 `user_id`、空 `project_id`/`canvas_id` 保存账户级提示词；不新增表或列。`content` 为正文，`revision` 沿用现有比较并交换更新，用于阻止旧页面覆盖新内容。该 scope 由 `/api/agent/settings` 独立管理，不计入原有 user/project/canvas 偏好层，也不通过 `agent_profile_read` 按需读取。运行创建时将正文写入已冻结的系统上下文。
+复用 `agent_profiles` 表，以 `scope=system_prompt`、当前 `user_id`、空 `project_id`/`canvas_id` 保存账户级提示词；不新增表或列。`content` 为正文，`revision` 沿用现有比较并交换更新，用于阻止旧页面覆盖新内容。该 scope 由 `/api/agent/settings` 管理，运行创建时将正文写入已冻结的系统上下文。原有 user/project/canvas 偏好层已停用，旧行保留，不再读取或注入新运行。
+
+画布规则继续保存于 `agent_workspaces`，按当前账号及 `canvas_id` 读取，并用 `revision` 并发校验。`agent_workspace_skills` 历史表与记录保留，但配置接口、读取和运行覆盖层已停用；新运行不查询该表，旧会话基线中的 workspace 来源也不会装配；已创建运行里冻结的 Workspace 公共技能保留只读文件访问，不恢复配置或新运行覆盖。未新增或删除数据库表、列，无需数据迁移。
 
 ## 已停用的工具快照表
 

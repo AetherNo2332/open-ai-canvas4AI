@@ -4,13 +4,10 @@ import "time"
 
 const (
 	AgentProfileScopeSystemPrompt = "system_prompt"
-	AgentProfileScopeUser         = "user"
-	AgentProfileScopeProject      = "project"
-	AgentProfileScopeCanvas       = "canvas"
 )
 
-// AgentProfile stores a durable preference document. It is never an authority:
-// the Agent compiler injects it as untrusted user data after server contracts.
+// AgentProfile stores the account system prompt. Historical user/project/canvas
+// preference rows are retained but are no longer read by Agent runs.
 type AgentProfile struct {
 	ID        string    `json:"id" gorm:"primaryKey;size:36"`
 	UserID    string    `json:"userId" gorm:"size:36;uniqueIndex:idx_agent_profiles_scope,priority:1;index"`

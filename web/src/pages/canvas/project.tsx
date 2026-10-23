@@ -3554,7 +3554,7 @@ function InfiniteCanvasPage() {
                         />
                     ) : null}
                     <div className={versions.open ? "hidden" : "contents"}>
-                        <CanvasCloudAgentPanel canvasId={projectId} domainProjectId={currentProject?.projectId} nodeCount={nodes.length} selectedNodeIds={Array.from(selectedNodeIds)} references={agentMentionReferences} prefillPrompt={agentPrefillPrompt} open={assistantOpen} floating={Boolean(previsNodeId)} launcher={!previsNodeId} onOpen={openAgent} onCollapse={closeAgent} onFocusNode={(nodeId) => {
+                        <CanvasCloudAgentPanel canvasId={projectId} nodeCount={nodes.length} selectedNodeIds={Array.from(selectedNodeIds)} references={agentMentionReferences} prefillPrompt={agentPrefillPrompt} open={assistantOpen} floating={Boolean(previsNodeId)} launcher={!previsNodeId} onOpen={openAgent} onCollapse={closeAgent} onFocusNode={(nodeId) => {
                             if (!nodesRef.current.some((node) => node.id === nodeId)) { message.info("该节点已删除或尚未同步到画布"); return; }
                             focusCanvasNode(nodeId);
                         }} />

@@ -1,10 +1,14 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
@@ -16,6 +20,25 @@ import (
 type AgentSystemPromptRequest struct {
 	SystemPrompt string `json:"systemPrompt"`
 	Revision     int64  `json:"revision"`
+}
+
+const agentSystemPromptMaxRunes = 12000
+
+func validateAgentSystemPromptContent(content string) error {
+	if !utf8.ValidString(content) || utf8.RuneCountInString(content) > agentSystemPromptMaxRunes {
+		return BadAuthRequest("Agent 系统提示词必须是有效 UTF-8，且不超过 12000 个字符")
+	}
+	for _, r := range content {
+		if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
+			return BadAuthRequest("Agent 系统提示词不能包含控制字符")
+		}
+	}
+	return nil
+}
+
+func agentContentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Service) UserAgentSystemPrompt(userID string) (AgentSystemPromptRequest, error) {
@@ -39,13 +62,13 @@ func (s *Service) UpdateUserAgentSystemPrompt(userID string, req AgentSystemProm
 	if req.Revision < 0 {
 		return AgentSystemPromptRequest{}, BadAuthRequest("提示词 revision 无效")
 	}
-	if err := validateAgentProfileContent(req.SystemPrompt); err != nil {
+	if err := validateAgentSystemPromptContent(req.SystemPrompt); err != nil {
 		return AgentSystemPromptRequest{}, err
 	}
 	content := strings.TrimSpace(req.SystemPrompt)
 	profile := &model.AgentProfile{
 		ID: newID(), UserID: userID, Scope: model.AgentProfileScopeSystemPrompt,
-		Content: content, Revision: 1, Hash: agentProfileHash(content), UpdatedAt: time.Now(),
+		Content: content, Revision: 1, Hash: agentContentHash(content), UpdatedAt: time.Now(),
 	}
 	if err := s.repo.SaveAgentProfile(profile, req.Revision); err != nil {
 		if errors.Is(err, repository.ErrTaskStateConflict) {
