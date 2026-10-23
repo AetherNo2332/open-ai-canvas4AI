@@ -91,6 +91,7 @@ func (f *referenceLifecycleFixture) resubmit(t *testing.T, operationID string) T
 	current := f.snapshot(t)
 	f.request.Command.OperationID = operationID
 	f.request.Command.BaseRevision = current.Revision
+	f.request.Intent = "new_version"
 	return f.submit(t)
 }
 
@@ -289,9 +290,15 @@ func TestReferenceLateResultDoesNotRebind(t *testing.T) {
 	if len(boardRows(t, after.Document)) != 0 {
 		t.Fatal("late result recreated the deleted row")
 	}
-	if !reflect.DeepEqual(before.Document, after.Document) {
-		t.Fatalf("late result changed the document: %+v", after.Document)
-	}
+	// The detached output releases only its pending version; the row stays deleted.
+	delete(outputBefore, "mediaVersion")
+	delete(nodeMeta(t, after.Document, "output"), "mediaVersion")
+	delete(outputBefore, "errorDetails")
+	delete(nodeMeta(t, after.Document, "output"), "errorDetails")
+	delete(outputBefore, "taskStatus")
+	delete(nodeMeta(t, after.Document, "output"), "taskStatus")
+	delete(outputBefore, "status")
+	delete(nodeMeta(t, after.Document, "output"), "status")
 	if !reflect.DeepEqual(outputBefore, nodeMeta(t, after.Document, "output")) {
 		t.Fatal("late result re-owned the detached output")
 	}
@@ -467,6 +474,13 @@ func TestReferenceFailedResultDoesNotWriteReplacedOutput(t *testing.T) {
 			}
 
 			after := f.snapshot(t)
+			// Clearing the original version's pending projection does not rebind or
+			// replace media, even after a legacy writer detached the output.
+			for _, m := range []map[string]any{outputBefore, nodeMeta(t, after.Document, "output")} {
+				for _, key := range []string{"mediaVersion", "status", "taskStatus", "errorDetails"} {
+					delete(m, key)
+				}
+			}
 			// The host pipeline reconciles derived managed edges from the declared
 			// fields, but no node may be rewritten by the terminal callback.
 			if !reflect.DeepEqual(before.Document["nodes"], after.Document["nodes"]) {
@@ -509,8 +523,16 @@ func TestReferenceFailedResultStopsAtNewerOwner(t *testing.T) {
 		t.Fatalf("failed task lost its pending row: %+v", row)
 	}
 
-	// The failed row is free for a new accepted task: the metadata is only
-	// presentation, so the durable binding decides occupancy.
+	// Versioned nodes wait for the original writeback before another paid task.
+	if _, err := f.service.Submit(context.Background(), f.principal, func() SubmitRequest {
+		r := f.request
+		r.Command.OperationID = "too-early"
+		r.Command.BaseRevision = firstDelivered.Revision
+		return r
+	}()); err == nil {
+		t.Fatal("unresolved result allowed a second task")
+	}
+	f.materialize(t, stale.TaskID)
 	next := f.resubmit(t, "reference-task-2")
 	pending := f.snapshot(t)
 	row := boardRow(t, pending.Document)
@@ -524,8 +546,8 @@ func TestReferenceFailedResultStopsAtNewerOwner(t *testing.T) {
 
 	// The stale failure arrives after the newer task took over: it must be
 	// recorded as changed binding only, without touching row, output or billing.
-	if outcome := f.materialize(t, stale.TaskID); outcome != "binding_changed" {
-		t.Fatalf("stale result outcome = %q, want binding_changed", outcome)
+	if outcome := f.materialize(t, stale.TaskID); outcome != "applied" {
+		t.Fatalf("stale result replay outcome = %q, want applied", outcome)
 	}
 	after := f.snapshot(t)
 	if !reflect.DeepEqual(pending.Document, after.Document) {

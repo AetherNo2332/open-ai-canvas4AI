@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"infinite-canvas/backend/internal/assets"
 	canvasdomain "infinite-canvas/backend/internal/canvas"
+	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/model"
@@ -305,6 +306,21 @@ func (s *Service) validation(ctx context.Context, tx *repository.Repository, p i
 		return result, nil
 	}
 	for _, op := range ops {
+		if op.Type == "use_media_version" {
+			scope, err := mediaversions.ScopeForNode(tx, p.OwnerID, text(doc["id"]), op.ID)
+			if err != nil {
+				return v, PersistenceError(err)
+			}
+			selection, err := mediaversions.PrepareSelection(tx, scope, op.VersionID)
+			if err != nil {
+				return v, PersistenceError(err)
+			}
+			if v.MediaVersionSelections == nil {
+				v.MediaVersionSelections = map[string]mediaversions.Selection{}
+			}
+			v.MediaVersionSelections[op.VersionID] = selection
+			owned[selection.Version.ResourceID] = additionalResourcePolicy == nil || additionalResourcePolicy(selection.Version.ResourceID)
+		}
 		if len(op.PrevisEntityOperations) > 0 {
 			ids := map[string]bool{}
 			for _, scene := range maps(doc["previsScenes"]) {

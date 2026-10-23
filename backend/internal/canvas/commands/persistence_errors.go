@@ -2,6 +2,7 @@ package commands
 
 import (
 	"errors"
+	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"infinite-canvas/backend/internal/repository"
 )
 
@@ -10,6 +11,13 @@ import (
 var ErrRevisionConflict = repository.ErrCanvasRevisionConflict
 
 func PersistenceError(err error) error {
+	if errors.Is(err, repository.ErrCanvasMediaVersionManaged) {
+		return failure("media_version_managed", err.Error())
+	}
+	var version *mediaversions.Error
+	if errors.As(err, &version) {
+		return &Error{Reason: version.Reason, Message: version.Message}
+	}
 	if errors.Is(err, ErrRevisionConflict) {
 		return failure("revision_conflict", "画布已变化，请读取最新版本后重试")
 	}

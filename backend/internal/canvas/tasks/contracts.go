@@ -25,14 +25,16 @@ type Consumer struct {
 	OutputNodeID string `json:"outputNodeId,omitempty"`
 }
 type SubmitRequest struct {
+	Intent       string           `json:"intent,omitempty"`
 	Command      commands.Command `json:"command"`
 	TargetNodeID string           `json:"targetNodeId"`
 	Task         TaskRequest      `json:"task"`
 	Consumer     Consumer         `json:"consumer,omitempty"`
 }
 type TaskHandle struct {
-	TaskID  string           `json:"taskId"`
-	Receipt commands.Receipt `json:"receipt"`
+	TaskID    string           `json:"taskId"`
+	VersionID string           `json:"versionId,omitempty"`
+	Receipt   commands.Receipt `json:"receipt"`
 }
 type PrevisSubmitRequest struct {
 	Command commands.Command `json:"command"`

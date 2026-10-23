@@ -91,6 +91,25 @@ func RegisterCanvasCommandRoutes(r *gin.RouterGroup, svc *commands.Service, prin
 			commandOK(c, out)
 		}
 	})
+	r.GET("/desktop/canvases/:canvasId/nodes/:nodeId/media-versions", func(c *gin.Context) {
+		p, ok := resolve(c)
+		if !ok {
+			return
+		}
+		var before int64
+		if value := c.Query("beforeVersion"); value != "" {
+			var err error
+			before, err = strconv.ParseInt(value, 10, 64)
+			if err != nil || before < 0 {
+				canvasCommandError(c, commands.BadAuthRequest("版本游标无效"))
+				return
+			}
+		}
+		out, err := svc.ReadMediaVersions(c.Request.Context(), p, c.Param("canvasId"), c.Param("nodeId"), before)
+		if !canvasCommandError(c, err) {
+			commandOK(c, out)
+		}
+	})
 	r.GET("/desktop/canvases/:canvasId/history-state", func(c *gin.Context) {
 		p, ok := resolve(c)
 		if !ok {

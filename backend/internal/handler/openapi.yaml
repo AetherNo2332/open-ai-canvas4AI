@@ -32,6 +32,34 @@ tags:
   - name: admin
   - name: skills
 paths:
+  /desktop/canvases/{canvasId}/nodes/{nodeId}/media-versions:
+    get:
+      tags: [canvas]
+      summary: 查看节点的图片、视频或音频版本
+      description: 当前节点生命周期内按序号倒序返回，固定每页20项。只包含媒体投影，不包含模型凭证或原始请求。生成期间保留当前媒体；手动选择会阻止在途结果自动替换。
+      parameters:
+        - name: canvasId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: nodeId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: beforeVersion
+          in: query
+          description: 上页返回的 nextBeforeVersion；省略时读取最新版本
+          schema: {type: integer, format: int64, minimum: 0}
+      responses:
+        "200":
+          description: 成功信封的 data 包含 state、items、canCreateVersion、blockReason，以及有后续页时的 nextBeforeVersion
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
   /diagnostics/preview:
     post:
       tags: [meta]

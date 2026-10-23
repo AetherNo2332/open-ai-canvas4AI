@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"infinite-canvas/backend/internal/canvas/capability"
+	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/identity"
 	"time"
@@ -10,7 +11,7 @@ import (
 
 const ProtocolVersion = 1
 
-var OperationTypes = []string{"add_node", "update_node", "delete_node", "duplicate_node", "select_node_version", "set_parent", "connect_nodes", "delete_connection", "update_connection", "replace_text", "reorder_nodes", "reorder_connections", "reorder_rows", "edit_drawing", "edit_storyboard", "bind_storyboard_output", "edit_batch_table", "create_previs_scene", "edit_previs_scene", "delete_previs_scene", "bind_asset", "rename_canvas", "delete_canvas", "edit_canvas_settings", "edit_timeline", "migrate_references"}
+var OperationTypes = []string{"add_node", "update_node", "delete_node", "duplicate_node", "select_node_version", "use_media_version", "set_parent", "connect_nodes", "delete_connection", "update_connection", "replace_text", "reorder_nodes", "reorder_connections", "reorder_rows", "edit_drawing", "edit_storyboard", "bind_storyboard_output", "edit_batch_table", "create_previs_scene", "edit_previs_scene", "delete_previs_scene", "bind_asset", "rename_canvas", "delete_canvas", "edit_canvas_settings", "edit_timeline", "migrate_references"}
 
 type Snapshot struct {
 	Protocol          int              `json:"protocolVersion"`
@@ -88,6 +89,7 @@ type Operation struct {
 	PrevisOperations       []PrevisOperation       `json:"previsOperations,omitempty"`
 	PrevisEntityOperations []PrevisEntityOperation `json:"previsEntityOperations,omitempty"`
 	AssetID                string                  `json:"assetId,omitempty"`
+	VersionID              string                  `json:"versionId,omitempty"`
 	TimelineOperations     []TimelineOperation     `json:"timelineOperations,omitempty"`
 }
 
@@ -135,9 +137,10 @@ type ValidationContext struct {
 	AllowedOperations map[string]bool
 	ResourceAllowed   func(resourceID string) bool
 	// Zero uses a stable epoch timestamp. The service supplies its commit time.
-	Now              time.Time
-	ModelInputLimits map[string]map[string]int
-	Asset            func(assetID string) (AssetMetadata, error)
+	Now                    time.Time
+	ModelInputLimits       map[string]map[string]int
+	Asset                  func(assetID string) (AssetMetadata, error)
+	MediaVersionSelections map[string]mediaversions.Selection
 }
 type AssetMetadata struct {
 	ID, Title, Kind, Status, Content, ResourceID, MimeType string

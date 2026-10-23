@@ -64,8 +64,12 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 		if ctx.AllowedOperations != nil && !ctx.AllowedOperations[op.Type] {
 			return result, failure("permission_denied", "没有该操作权限")
 		}
+		protected := managedMediaSnapshot(next)
 		items, err := p.applyOperation(next, op, ctx)
 		if err != nil {
+			return result, err
+		}
+		if err = validateManagedMedia(protected, next, []Operation{op}); err != nil {
 			return result, err
 		}
 		if op.Type == "update_node" && op.Patch["generationSpec"] != nil {
@@ -91,6 +95,9 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 			}
 		}
 		present = current
+	}
+	if err := validateManagedMedia(doc, next, req.Operations); err != nil {
+		return result, err
 	}
 	coordinated, err := reconcileReferenceFields(doc, next, registry)
 	if err != nil {

@@ -72,7 +72,7 @@ func ScopeForNode(repo *repository.Repository, owner, canvas, nodeID string) (Sc
 	return Scope{OwnerID: owner, CanvasID: canvas, Epoch: epoch.Epoch, NodeID: nodeID, Generation: v.Generation}, nil
 }
 
-var mediaKeys = []string{"content", "storageKey", "assetId", "naturalWidth", "naturalHeight", "bytes", "mimeType", "durationMs", "hasAudio", "videoPreview", "producedModel", "taskId", "taskStatus", "taskProgress", "taskStage", "taskMediaStage", "taskStartedAt", "taskCompletedAt", "taskDurationMs", "taskCreatedAt", "taskUpdatedAt"}
+var mediaKeys = model.CanvasMediaFields
 
 func capture(m map[string]any) map[string]any {
 	result := map[string]any{}
@@ -94,7 +94,7 @@ func apply(node map[string]any, result map[string]any) {
 		m[key] = value
 	}
 	m["status"] = "success"
-	for _, key := range []string{"errorDetails", "generationErrorCode", "resourceReloadAvailable", "failedPromptFingerprint"} {
+	for _, key := range []string{"errorDetails", "generationErrorCode", "resourceReloadAvailable", "failedPromptFingerprint", "richText", "runninghubWorkflowConfig", "workflowProvider", "runningHubWorkflowId", "runningHubWorkflowKind", "workflowParameters", "producedModelCandidate"} {
 		delete(m, key)
 	}
 }
@@ -159,44 +159,15 @@ func Begin(repo *repository.Repository, scope Scope, node map[string]any, task m
 		}
 		return prior, nil
 	}
-	if intent != "" && intent != "create" && intent != "new_version" {
-		return nil, fail("invalid_intent", "生成意图无效")
+	if err := CheckAdmission(repo, scope, node, intent); err != nil {
+		return nil, err
 	}
 	state := ReadState(node)
 	if state.Epoch != scope.Epoch || state.Generation != scope.Generation {
 		state = State{Epoch: scope.Epoch, Generation: scope.Generation}
 	}
-	active, err := repo.PendingCanvasMediaVersion(scope)
-	if err != nil {
-		return nil, err
-	}
-	if active != nil || state.PendingVersionID != "" {
-		return nil, fail("task_in_progress", "已有生成或待写回任务，请先查询原任务")
-	}
 	m := metadata(node)
-	legacyTaskID := str(m["taskId"])
-	if legacyTaskID == "" {
-		legacyTaskID = str(m["generationTaskId"])
-	}
-	if legacyTaskID != "" {
-		original, lookup := repo.TaskForUser(scope.OwnerID, legacyTaskID)
-		if lookup != nil {
-			return nil, fail("task_unavailable", "无法核对原任务，请先恢复任务记录")
-		}
-		switch original.Status {
-		case model.TaskStatusQueued, model.TaskStatusRunning:
-			return nil, fail("task_in_progress", "原任务仍在执行，请先查询原任务")
-		case model.TaskStatusSubmissionUncertain:
-			return nil, fail("submission_uncertain", "原任务提交结果未知，请先核对")
-		}
-		if original.MediaStage != "" && original.Status != model.TaskStatusCancelled && str(m["storageKey"]) == "" {
-			return nil, fail("materialization_pending", "原任务已有媒体保存过程，请先恢复原任务")
-		}
-	}
 	hasMedia := str(m["storageKey"]) != "" || str(m["content"]) != ""
-	if hasMedia && intent != "new_version" {
-		return nil, fail("new_version_required", "目标已有媒体，请明确生成新版本")
-	}
 	sequence, err := repo.CanvasMediaVersionSequence(scope)
 	if err != nil {
 		return nil, err
@@ -217,7 +188,7 @@ func Begin(repo *repository.Repository, scope Scope, node map[string]any, task m
 	var input any
 	_ = json.Unmarshal([]byte(task.InputJSON), &input)
 	taskID := task.ID
-	row := &model.CanvasMediaVersion{ID: "mv" + rand.Text(), OwnerID: scope.OwnerID, CanvasID: scope.CanvasID, Epoch: scope.Epoch, NodeID: scope.NodeID, Generation: scope.Generation, Sequence: sequence, TaskID: &taskID, ParentVersionID: state.CurrentVersionID, Mode: mode, Status: string(task.Status), SelectionRevision: state.SelectionRevision, RequestJSON: encode(map[string]any{"prompt": task.Prompt, "model": task.Model, "input": scrub(input)}), Adoption: "pending"}
+	row := &model.CanvasMediaVersion{ID: "mv" + rand.Text(), OwnerID: scope.OwnerID, CanvasID: scope.CanvasID, Epoch: scope.Epoch, NodeID: scope.NodeID, Generation: scope.Generation, Sequence: sequence, TaskID: &taskID, ParentVersionID: state.CurrentVersionID, Mode: mode, Status: string(task.Status), SelectionRevision: state.SelectionRevision, RequestJSON: encode(map[string]any{"prompt": task.Prompt, "model": task.Model, "input": scrub(input), "geometry": map[string]any{"position": node["position"], "width": node["width"], "height": node["height"]}}), Adoption: "pending"}
 	if err = repo.InsertCanvasMediaVersion(row); err != nil {
 		return nil, err
 	}
@@ -225,13 +196,66 @@ func Begin(repo *repository.Repository, scope Scope, node map[string]any, task m
 	writeState(node, state)
 	if state.CurrentVersionID == "" {
 		m["status"] = "loading"
+		delete(m, "errorDetails")
 	}
 	return row, nil
 }
 
+// CheckAdmission is read-only and runs before preparing a billed task. The
+// caller must keep the account/canvas lock until Begin and task commit finish.
+func CheckAdmission(repo *repository.Repository, scope Scope, node map[string]any, intent string) error {
+	if node == nil || str(node["id"]) != scope.NodeID || !Supported(str(node["type"])) {
+		return fail("invalid_version_target", "媒体目标无效")
+	}
+	if metadata(node)["locked"] == true {
+		return fail("target_locked", "目标节点已锁定")
+	}
+	if intent != "" && intent != "create" && intent != "new_version" {
+		return fail("invalid_intent", "生成意图无效")
+	}
+	state := ReadState(node)
+	active, err := repo.PendingCanvasMediaVersion(scope)
+	if err != nil {
+		return err
+	}
+	if active != nil || (state.Epoch == scope.Epoch && state.Generation == scope.Generation && state.PendingVersionID != "") {
+		return fail("task_in_progress", "已有生成或待写回任务，请先查询原任务")
+	}
+	m := metadata(node)
+	legacy := str(m["taskId"])
+	if legacy == "" {
+		legacy = str(m["generationTaskId"])
+	}
+	if legacy != "" {
+		original, err := repo.TaskForUser(scope.OwnerID, legacy)
+		if err != nil {
+			return fail("task_unavailable", "无法核对原任务，请先恢复任务记录")
+		}
+		switch original.Status {
+		case model.TaskStatusQueued, model.TaskStatusRunning:
+			return fail("task_in_progress", "原任务仍在执行，请先查询原任务")
+		case model.TaskStatusSubmissionUncertain:
+			return fail("submission_uncertain", "原任务提交结果未知，请先核对")
+		}
+		if original.MediaStage != "" && original.Status != model.TaskStatusCancelled && str(m["storageKey"]) == "" {
+			return fail("materialization_pending", "原任务已有媒体保存过程，请先恢复原任务")
+		}
+	}
+	hasMedia := str(m["storageKey"]) != "" || str(m["content"]) != ""
+	if hasMedia && intent != "new_version" {
+		return fail("new_version_required", "目标已有媒体，请明确生成新版本")
+	}
+	if hasMedia && state.CurrentVersionID == "" {
+		if _, err := readyResource(repo, scope.OwnerID, str(node["type"]), m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Finish records durable outputs before adopting them. A user selection wins
 // over later completion, including an A→B→A selection with the same pointer.
-func Finish(repo *repository.Repository, scope Scope, node map[string]any, task model.Task, result map[string]any, outputs []model.CanvasTaskOutput) (bool, string, error) {
+func Finish(repo *repository.Repository, scope Scope, node map[string]any, task model.Task, result map[string]any, outputs []model.CanvasTaskOutput, blockedReason ...string) (bool, string, error) {
 	if task.UserID != scope.OwnerID {
 		return false, "", fail("task_owner_mismatch", "任务不属于当前账号")
 	}
@@ -249,7 +273,8 @@ func Finish(repo *repository.Repository, scope Scope, node map[string]any, task 
 		return false, "", fail("task_in_progress", "任务尚未完成")
 	}
 	if task.Status == model.TaskStatusSubmissionUncertain {
-		return false, "", fail("submission_uncertain", "原任务提交结果未知，请先核对")
+		row.Status, row.Adoption = "submission_uncertain", "pending"
+		return false, "submission_uncertain", repo.UpdateCanvasMediaVersion(row)
 	}
 	row.Status, row.Adoption = string(task.Status), "not_adopted"
 	if task.Status == model.TaskStatusSucceeded {
@@ -265,7 +290,8 @@ func Finish(repo *repository.Repository, scope Scope, node map[string]any, task 
 	eligible := node != nil && matches(row, scope) && str(node["id"]) == scope.NodeID && str(node["type"]) == row.Mode && state.Epoch == scope.Epoch && state.Generation == scope.Generation && state.PendingVersionID == row.ID && state.ActiveTaskID == task.ID
 	adopted := false
 	if eligible {
-		if task.Status == model.TaskStatusSucceeded && state.SelectionRevision == row.SelectionRevision {
+		blocked := len(blockedReason) > 0 && blockedReason[0] != ""
+		if task.Status == model.TaskStatusSucceeded && state.SelectionRevision == row.SelectionRevision && !blocked {
 			apply(node, result)
 			state.CurrentVersionID = row.ID
 			state.SelectionRevision++
@@ -273,10 +299,17 @@ func Finish(repo *repository.Repository, scope Scope, node map[string]any, task 
 			adopted = true
 		} else if task.Status == model.TaskStatusSucceeded {
 			row.Adoption = "selection_changed"
+			if blocked {
+				row.Adoption = blockedReason[0]
+			}
 		}
 		state.PendingVersionID, state.ActiveTaskID, state.LastError = "", "", row.Error
+		if blocked {
+			row.Adoption = blockedReason[0]
+		}
 		if state.CurrentVersionID == "" {
 			metadata(node)["status"], metadata(node)["errorDetails"] = "error", row.Error
+			metadata(node)["taskStatus"] = string(task.Status)
 		}
 		writeState(node, state)
 	} else {
@@ -288,28 +321,52 @@ func Finish(repo *repository.Repository, scope Scope, node map[string]any, task 
 	return adopted, row.Adoption, nil
 }
 
-func Use(repo *repository.Repository, scope Scope, node map[string]any, versionID string) error {
+// Selection is hydrated inside the host transaction. Applying it is pure, so
+// the command planner never queries persistence or observes a different read.
+type Selection struct {
+	Scope   Scope
+	Version model.CanvasMediaVersion
+	Media   map[string]any
+}
+
+func PrepareSelection(repo *repository.Repository, scope Scope, versionID string) (Selection, error) {
 	row, err := repo.CanvasMediaVersion(scope, versionID)
 	if err != nil {
-		return fail("version_missing", "媒体版本不存在或不属于当前节点")
+		return Selection{}, fail("version_missing", "媒体版本不存在或不属于当前节点")
 	}
-	if row.Status != "ready" || node == nil || str(node["id"]) != scope.NodeID || str(node["type"]) != row.Mode || metadata(node)["locked"] == true {
-		return fail("version_not_ready", "该版本不可采用或节点已锁定")
+	if row.Status != "ready" {
+		return Selection{}, fail("version_not_ready", "该版本尚不可采用")
 	}
 	var result map[string]any
 	if err = json.Unmarshal([]byte(row.MediaJSON), &result); err != nil {
-		return fmt.Errorf("invalid version output: %w", err)
+		return Selection{}, fmt.Errorf("invalid version output: %w", err)
 	}
 	if _, err = readyResource(repo, scope.OwnerID, row.Mode, result); err != nil {
-		return err
+		return Selection{}, err
+	}
+	return Selection{Scope: scope, Version: *row, Media: result}, nil
+}
+
+func ApplySelection(node map[string]any, selection Selection) error {
+	scope, row := selection.Scope, selection.Version
+	if node == nil || !matches(&row, scope) || str(node["id"]) != scope.NodeID || str(node["type"]) != row.Mode || metadata(node)["locked"] == true {
+		return fail("version_not_ready", "该版本不可采用或节点已锁定")
 	}
 	state := ReadState(node)
 	if state.Epoch != scope.Epoch || state.Generation != scope.Generation {
 		return fail("version_scope_changed", "节点版本作用域已变化，请重新读取")
 	}
-	apply(node, result)
+	apply(node, selection.Media)
 	state.CurrentVersionID = row.ID
 	state.SelectionRevision++
 	writeState(node, state)
 	return nil
+}
+
+func Use(repo *repository.Repository, scope Scope, node map[string]any, versionID string) error {
+	selection, err := PrepareSelection(repo, scope, versionID)
+	if err != nil {
+		return err
+	}
+	return ApplySelection(node, selection)
 }

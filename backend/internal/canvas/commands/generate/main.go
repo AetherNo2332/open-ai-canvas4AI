@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"infinite-canvas/backend/internal/canvas/commands"
+	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"infinite-canvas/backend/internal/canvas/tasks"
 	"os"
 	"reflect"
@@ -87,7 +88,7 @@ func main() {
 	if len(os.Args) > 1 {
 		path = os.Args[1]
 	}
-	for _, v := range []any{commands.Command{}, commands.Operation{}, commands.ChangeSet{}, commands.Snapshot{}, commands.Receipt{}, commands.CreateCanvasRequest{}, tasks.TaskRequest{}, tasks.Consumer{}, tasks.SubmitRequest{}, tasks.PrevisSubmitRequest{}, tasks.TaskHandle{}, tasks.MaterializationStatus{}} {
+	for _, v := range []any{commands.Command{}, commands.Operation{}, commands.ChangeSet{}, commands.Snapshot{}, commands.Receipt{}, commands.CreateCanvasRequest{}, tasks.TaskRequest{}, tasks.Consumer{}, tasks.SubmitRequest{}, tasks.PrevisSubmitRequest{}, tasks.TaskHandle{}, tasks.MaterializationStatus{}, mediaversions.Page{}} {
 		ts(reflect.TypeOf(v))
 	}
 	names := []string{}

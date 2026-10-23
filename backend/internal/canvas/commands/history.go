@@ -119,6 +119,9 @@ func (s *Service) changeHistory(ctx context.Context, p identity.Principal, canva
 		if err != nil {
 			return err
 		}
+		if err = validateManagedMedia(before, after, nil); err != nil {
+			return err
+		}
 		if err = validateResult(after); err != nil {
 			return err
 		}
@@ -315,6 +318,13 @@ func (s *Service) RestoreVersion(ctx context.Context, p identity.Principal, canv
 		after["projectId"] = row.ProjectID
 		after["createdAt"] = row.CreatedAt.Format(time.RFC3339Nano)
 		delete(after, "_deleted")
+		// Restoring starts a new epoch; imported ready media becomes the safe
+		// baseline on its next submission and never inherits an old pending task.
+		for _, node := range maps(after["nodes"]) {
+			if m, _ := node["metadata"].(map[string]any); m != nil {
+				delete(m, "mediaVersion")
+			}
+		}
 		if err = validateResult(after); err != nil {
 			return err
 		}

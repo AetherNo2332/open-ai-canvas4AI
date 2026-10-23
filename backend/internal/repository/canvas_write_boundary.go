@@ -161,6 +161,9 @@ func (r *Repository) syncLegacyCanvasWrite(before, after *model.CanvasProject, r
 	if next == nil {
 		return fmt.Errorf("canvas document is null")
 	}
+	if err := guardLegacyMediaVersions(old, next); err != nil {
+		return err
+	}
 	epoch, err := r.CommandEpoch(after.UserID, after.ID)
 	newEpoch := r.IsMissing(err)
 	if err != nil && !newEpoch {

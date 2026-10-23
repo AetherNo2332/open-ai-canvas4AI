@@ -54,7 +54,14 @@ func TestStructuredOutputAndRowTaskGuard(t *testing.T) {
 	for _, kind := range []string{"batch", "storyboard"} {
 		t.Run(kind, func(t *testing.T) {
 			s, db, repo, cs, p, req, stub := taskFixture(t)
+			createOutput := req.Command
+			createOutput.OperationID = "create-structured-output"
+			createOutput.Operations = []commands.Operation{{Type: "add_node", ID: "output", NodeType: "image"}}
+			if _, err := cs.Execute(context.Background(), p, createOutput); err != nil {
+				t.Fatal(err)
+			}
 			snap, _ := cs.ReadSnapshot(context.Background(), p, req.Command.CanvasID)
+			req.Command.BaseRevision = snap.Revision
 			source := findNode(snap.Document, "target")
 			key, nodeType, field := "batchTable", "batch-table", "outputNodeId"
 			if kind == "storyboard" {
@@ -62,8 +69,6 @@ func TestStructuredOutputAndRowTaskGuard(t *testing.T) {
 			}
 			source["type"] = nodeType
 			metadata(source)[key] = map[string]any{"rows": []any{map[string]any{"id": "row1", field: "output", "unknown": "keep"}}}
-			output := map[string]any{"id": "output", "type": "image", "position": map[string]any{"x": 500, "y": 0}, "width": 320, "height": 320, "metadata": map[string]any{}}
-			snap.Document["nodes"] = append(snap.Document["nodes"].([]any), output)
 			raw, _ := json.Marshal(snap.Document)
 			db.Model(&model.CanvasProject{}).Where("id = ?", snap.CanvasID).Update("payload_json", string(raw))
 			req.Task.Mode = "image"

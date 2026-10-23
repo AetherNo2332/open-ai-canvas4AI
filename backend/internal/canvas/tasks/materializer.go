@@ -51,6 +51,10 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 	if err != nil {
 		return err
 	}
+	version, err := s.repo.CanvasMediaVersionForTask(task.UserID, task.ID)
+	if err != nil {
+		return err
+	}
 	p := identity.Principal{ID: binding.OwnerID, OwnerID: binding.OwnerID, ClientID: binding.ClientID, Role: "owner", Scopes: identity.OwnerScopes()}
 	origin := identity.Principal{ID: binding.ActorID, OwnerID: binding.OwnerID, ClientID: binding.ClientID}
 	req := commands.Command{Protocol: 1, CanvasID: binding.CanvasID, DocumentEpoch: binding.Epoch, ClientID: p.ClientID, OperationID: "task-result:" + taskID}
@@ -64,6 +68,11 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 				applyErr = tx.FinishCanvasMaterialization(taskID, outcome)
 			}
 		}()
+		if version != nil {
+			var result commands.Document
+			result, outcome, err = settleMediaVersion(tx, doc, *binding, *task, *version, outputs)
+			return result, nil, err
+		}
 		if binding.Mode == "previs" {
 			var input commands.PrevisRenderInput
 			if err := json.Unmarshal([]byte(binding.ResultContextJSON), &input); err != nil {
@@ -219,6 +228,17 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 	if err != nil {
 		if e, ok := err.(*commands.Error); ok && (e.Reason == "document_epoch_mismatch" || e.Reason == "entity_deleted") {
 			outcome = e.Reason
+			if version != nil {
+				return s.repo.CommandTransaction(ctx, func(tx *repository.Repository) error {
+					if err := tx.LockCanvasWrite(binding.OwnerID, binding.CanvasID); err != nil {
+						return err
+					}
+					if _, _, err := settleMediaVersion(tx, commands.Document{}, *binding, *task, *version, outputs); err != nil {
+						return err
+					}
+					return tx.FinishCanvasMaterialization(taskID, outcome)
+				})
+			}
 		} else {
 			return err
 		}
