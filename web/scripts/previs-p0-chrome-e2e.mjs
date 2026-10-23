@@ -413,7 +413,7 @@ async function smokeWorkbench(cdp, baseUrl) {
     const hoverPoint = await cdp.evaluate(`(() => { const b = document.querySelector(${JSON.stringify(tooltipButton)}); if (!b) return null; const r = b.getBoundingClientRect(); return {x:r.x+r.width/2, y:r.y+r.height/2}; })()`);
     if (!hoverPoint) throw new Error("A: 适配全部对象 dock button not found");
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...hoverPoint });
-    const describedTooltip = `(() => { const b = document.querySelector(${JSON.stringify(tooltipButton)}); return !!b && [...b.querySelectorAll('.aceternity-dock-tooltip')].some((t) => (t.textContent || '').includes('适配全部对象')); })()`;
+    const describedTooltip = `(() => { const b = document.querySelector(${JSON.stringify(tooltipButton)}); const t = b?.parentElement?.querySelector(':scope > .aceternity-dock-tooltip'); return !!t && (t.textContent || '').includes('适配全部对象'); })()`;
     assert(await cdp.poll(describedTooltip, "tooltip on hover", 5000), "A5b Tooltip hover describes the actual control");
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
     assert(await cdp.poll(`!(${describedTooltip})`, "tooltip dismiss", 5000), "A5b Tooltip dismisses when pointer leaves");
