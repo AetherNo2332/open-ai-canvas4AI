@@ -606,7 +606,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, service.BadAuthRequest("恢复请求格式错误"))
 			return
 		}
-		project, err := svc.RestoreCanvasHistory(user.ID, c.Param("id"), c.Param("snapshotId"), req.Revision)
+		project, err := svc.CanvasRequest(c.Request.Context()).RestoreCanvasHistory(user.ID, c.Param("id"), c.Param("snapshotId"), req.Revision)
 		if err != nil {
 			failService(c, err)
 			return
@@ -652,9 +652,9 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		var project service.UserDataSummary
 		if req.RepairMissingResources {
-			project, err = svc.RepairUserCanvasProject(user.ID, req.Project)
+			project, err = svc.CanvasRequest(c.Request.Context()).RepairUserCanvasProject(user.ID, req.Project)
 		} else {
-			project, err = svc.UpsertUserCanvasProject(user.ID, req.Project)
+			project, err = svc.CanvasRequest(c.Request.Context()).UpsertUserCanvasProject(user.ID, req.Project)
 		}
 		defer func() {
 			nodesBefore, nodesAfter := -1, len(audit.Nodes)
@@ -684,7 +684,7 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.DeleteUserCanvasProject(user.ID, c.Param("id")); err != nil {
+		if err := svc.CanvasRequest(c.Request.Context()).DeleteUserCanvasProject(user.ID, c.Param("id")); err != nil {
 			failService(c, err)
 			return
 		}

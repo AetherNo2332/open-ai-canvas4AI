@@ -10,6 +10,11 @@ info:
     （例如 40301 配额、42901 限流）。机器判断请用 `reason`，不要解析 `msg`。
 
     TypeScript 调用面仍是 `web/src/services/api` 的 `http` 模块，不从本规范生成客户端。
+
+    所有画布持久写入（含 desktop commands/undo/redo/restore、旧 PUT/删除）可用 X-Canvas-Edit-Proofs
+    header 提供临时编辑证明 JSON 数组 [{canvasId,nodeId,sessionId,token}]；最多 128 项、32 KiB。
+    header 不属于命令 canonical identity，不进入事件、回执或 URL；已提交 operationId 的重试可在租约过期后回放。
+    活跃租约只保护作者字段。冲突 reason 为 node_locked 或 edit_proof_invalid，客户端必须保留草稿。
 servers:
   - url: /api
 security:
@@ -523,6 +528,8 @@ paths:
     put:
       tags: [canvas]
       summary: 按 revision 保存画布内容
+      parameters:
+        - {$ref: "#/components/parameters/CanvasEditProofs"}
       description: 新建传 revision 0，更新传读取到的版本；成功原子加 1。referenceFieldsVersion=1 时，data.project 还包含服务端协调后的 connections 投影（包括空数组）。忽略客户端 viewport 和 remoteContentHash，updatedAt 由服务端生成。
       requestBody:
         required: true
@@ -585,6 +592,7 @@ paths:
       tags: [canvas]
       summary: 备份当前内容并将历史内容恢复为新版本
       parameters:
+        - {$ref: "#/components/parameters/CanvasEditProofs"}
         - in: path
           name: id
           required: true
@@ -611,6 +619,79 @@ paths:
           description: 当前版本或素材状态已变化，恢复未执行
         "428":
           description: 缺少当前 revision
+  /canvas-projects/{id}/sync-status:
+    get:
+      tags: [canvas]
+      summary: 读取当前画布同步版本、活跃节点租约与多个 Agent 摘要
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: 成功信封 data 为同步状态，leases 不含 token；不读取 Agent stateJSON
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Envelope"}
+                  - type: object
+                    properties:
+                      data: {$ref: "#/components/schemas/CanvasSyncStatus"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /canvas-projects/{id}/edit-leases/acquire:
+    post:
+      tags: [canvas]
+      summary: 获取节点作者字段的 30 秒租约
+      description: 客户端首次提交前生成随机 token 并保留至确认；同 session/token 可安全重试，sessionId 单独不能取回 token。其他标签页即使属于同一账号也互斥。响应禁止缓存。
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CanvasEditLeaseRequest"}
+      responses:
+        "200":
+          description: 成功信封 data 为 proof 与 expiresAt（含 token，仅返回给持有者）
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409":
+          description: node_locked 或 edit_proof_invalid；保留草稿，不覆盖现有租约
+  /canvas-projects/{id}/edit-leases/renew:
+    post:
+      tags: [canvas]
+      summary: 用现有 session/token 将租约续至当前时间后 30 秒
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CanvasEditLeaseRequest"}
+      responses:
+        "200": {description: 成功信封 data 返回原 proof 和新 expiresAt，禁止缓存}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {description: edit_proof_invalid；租约已过期或证明不符}
+  /canvas-projects/{id}/edit-leases/release:
+    post:
+      tags: [canvas]
+      summary: 持久保存确认后释放节点租约
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CanvasEditLeaseRequest"}
+      responses:
+        "200": {description: 成功信封 data.released 为 true}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {description: edit_proof_invalid；不能释放其他会话租约}
   /public/welcome:
     get:
       tags: [meta]
@@ -1732,6 +1813,11 @@ paths:
           $ref: "#/components/responses/Error"
 components:
   parameters:
+    CanvasEditProofs:
+      in: header
+      name: X-Canvas-Edit-Proofs
+      description: 临时证明 JSON 数组，每项为 canvasId/nodeId/sessionId/token；最多 128 项、32 KiB，禁止在 URL 或持久 operation identity 中携带
+      schema: {type: string, maxLength: 32768}
     AgentRunID:
       name: id
       in: path
@@ -1744,6 +1830,42 @@ components:
       in: cookie
       name: open_ai_canvas_session
   schemas:
+    CanvasEditLeaseRequest:
+      type: object
+      required: [nodeId, sessionId, token]
+      additionalProperties: false
+      properties:
+        canvasId: {type: string, maxLength: 128, description: 可省略；提供时必须与路径一致}
+        nodeId: {type: string, minLength: 1, maxLength: 128}
+        sessionId: {type: string, minLength: 1, maxLength: 128}
+        token: {type: string, minLength: 32, maxLength: 128, description: 客户端用安全随机源生成的可打印 ASCII；首次请求前生成以便丢 ACK 后重试}
+    CanvasSyncStatus:
+      type: object
+      required: [revision, documentEpoch, eventSeq, leases, activeAgents]
+      properties:
+        revision: {type: integer, format: int64}
+        documentEpoch: {type: string}
+        eventSeq: {type: integer, format: int64}
+        leases:
+          type: array
+          items:
+            type: object
+            required: [canvasId, nodeId, sessionId, expiresAt]
+            properties:
+              canvasId: {type: string}
+              nodeId: {type: string}
+              sessionId: {type: string}
+              expiresAt: {type: string, format: date-time}
+        activeAgents:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: string}
+              conversationId: {type: string}
+              title: {type: string}
+              status: {type: string}
+              updatedAt: {type: string, format: date-time}
     DiagnosticExportRequest:
       type: object
       properties:

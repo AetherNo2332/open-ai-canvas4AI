@@ -37,7 +37,7 @@ func TestCanvasTaskHTTPStrictEnvelopeAndSubmissionReceipt(t *testing.T) {
 	}
 	sql, _ := db.DB()
 	defer sql.Close()
-	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.Resource{}, &model.Asset{}, &model.Task{}); err != nil {
+	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.Resource{}, &model.Asset{}, &model.Task{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.MigrateCanvasCommands(db); err != nil {

@@ -58,7 +58,7 @@ func canvasLifecycleFixture(t *testing.T, pg bool) (*Repository, *gorm.DB, strin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { connection, _ := db.DB(); _ = connection.Close() })
-	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.Project{}, &model.Asset{}, &model.Resource{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.CanvasShare{}, &model.CanvasUnitLink{}, &model.Task{}); err != nil {
+	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.Project{}, &model.Asset{}, &model.Resource{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.CanvasShare{}, &model.CanvasUnitLink{}, &model.Task{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.MigrateCanvasCommands(db); err != nil {

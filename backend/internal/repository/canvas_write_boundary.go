@@ -59,6 +59,9 @@ func (r *Repository) LockCanvasWrite(ownerID, canvasID string) error {
 }
 
 func (r *Repository) checkCanvasWriteQuota(before, after *model.CanvasProject) error {
+	if err := r.checkCanvasAuthorLeases(before, after); err != nil {
+		return err
+	}
 	if r.structuredWriteQuota == nil {
 		return nil
 	}

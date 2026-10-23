@@ -35,7 +35,7 @@ func taskFixture(t *testing.T) (*Service, *gorm.DB, *repository.Repository, *com
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d, _ := db.DB(); _ = d.Close() })
-	if err = db.AutoMigrate(&model.User{}, &model.Task{}, &model.CanvasProject{}, &model.Resource{}, &model.Asset{}); err != nil {
+	if err = db.AutoMigrate(&model.User{}, &model.Task{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.Resource{}, &model.Asset{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.MigrateCanvasCommands(db); err != nil {

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"infinite-canvas/backend/internal/repository"
+	"infinite-canvas/backend/internal/canvas/commands"
 
 	"github.com/gin-gonic/gin"
 )
@@ -14,7 +14,7 @@ func TestCanvasCommandRevisionCASConflictHTTP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	if !canvasCommandError(ctx, repository.ErrCanvasRevisionConflict) || recorder.Code != 409 {
+	if !canvasCommandError(ctx, commands.ErrRevisionConflict) || recorder.Code != 409 {
 		t.Fatalf("CAS response %d: %s", recorder.Code, recorder.Body.String())
 	}
 	var payload struct {

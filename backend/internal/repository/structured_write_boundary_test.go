@@ -20,7 +20,7 @@ func structuredWriteFixture(t *testing.T) (*Repository, *gorm.DB) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sqlDB, _ := db.DB(); _ = sqlDB.Close() })
-	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.Asset{}); err != nil {
+	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.Asset{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Create(&model.User{ID: "owner", Status: model.UserStatusActive}).Error; err != nil {

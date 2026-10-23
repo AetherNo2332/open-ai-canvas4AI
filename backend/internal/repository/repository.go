@@ -1397,6 +1397,9 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 			return err
 		}
 		if before != nil {
+			if err := writer.checkCanvasAuthorLeases(before, nil); err != nil {
+				return err
+			}
 			var document map[string]any
 			if err := json.Unmarshal([]byte(before.PayloadJSON), &document); err != nil {
 				return err

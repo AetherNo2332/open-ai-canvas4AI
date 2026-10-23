@@ -26,7 +26,7 @@ func TestCanvasCommandHTTPDoesNotTrustActor(t *testing.T) {
 	}
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
-	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.Resource{}); err != nil {
+	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.Resource{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.MigrateCanvasCommands(db); err != nil {
@@ -41,6 +41,7 @@ func TestCanvasCommandHTTPDoesNotTrustActor(t *testing.T) {
 	}
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
+	router.Use(canvasEditProofMiddleware)
 	RegisterCanvasCommandRoutes(router.Group("/api"), svc, func(*gin.Context) (identity.Principal, error) { return p, nil })
 	request := commands.Command{Protocol: 1, CanvasID: snapshot.CanvasID, DocumentEpoch: snapshot.DocumentEpoch, OperationID: "edit1", ClientID: "client", BaseRevision: snapshot.Revision, Operations: []commands.Operation{{Type: "add_node", ID: "text", NodeType: "text"}}}
 	raw, _ := json.Marshal(request)
@@ -67,5 +68,29 @@ func TestCanvasCommandHTTPDoesNotTrustActor(t *testing.T) {
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/desktop/capabilities", nil))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "edit_drawing") {
 		t.Fatalf("capability registry did not serialize: %d %s", w.Code, w.Body.String())
+	}
+	latest, err := svc.ReadSnapshot(context.Background(), p, snapshot.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := repository.New(db).AcquireCanvasEditLease("owner", snapshot.CanvasID, repository.CanvasEditProof{NodeID: "text", SessionID: "tab", Token: strings.Repeat("a", 48)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.OperationID, request.BaseRevision = "leased-edit", latest.Revision
+	request.Operations = []commands.Operation{{Type: "update_node", ID: "text", Patch: map[string]any{"content": "leased"}}}
+	raw, _ = json.Marshal(request)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(raw))))
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "node_locked") {
+		t.Fatalf("unproved command: %d %s", w.Code, w.Body)
+	}
+	proved := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(raw)))
+	header, _ := json.Marshal([]repository.CanvasEditProof{proof.CanvasEditProof})
+	proved.Header.Set(repository.CanvasEditProofHeader, string(header))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, proved)
+	if w.Code != 200 {
+		t.Fatalf("proved command: %d %s", w.Code, w.Body)
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"infinite-canvas/backend/internal/canvas/commands"
 	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/repository"
 	"io"
 	"net/http"
 	"strconv"
@@ -19,9 +18,7 @@ func canvasCommandError(c *gin.Context, err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, repository.ErrCanvasRevisionConflict) {
-		err = &commands.Error{Reason: "revision_conflict", Message: "画布已变化，请读取最新版本后重试"}
-	}
+	err = commands.PersistenceError(err)
 	var typed *commands.Error
 	if !errors.As(err, &typed) {
 		var admission *kernel.AppError
@@ -38,7 +35,7 @@ func canvasCommandError(c *gin.Context, err error) bool {
 		status = 403
 	case "entity_deleted", "receipt_missing", "history_empty":
 		status = 404
-	case "revision_conflict", "entity_version_conflict", "document_epoch_mismatch", "history_conflict", "operation_id_reused":
+	case "revision_conflict", "entity_version_conflict", "document_epoch_mismatch", "history_conflict", "operation_id_reused", "node_locked", "edit_proof_invalid":
 		status = 409
 	}
 	c.AbortWithStatusJSON(status, gin.H{"code": status, "data": gin.H{"reason": typed.Reason, "field": typed.Field}, "msg": typed.Message})
