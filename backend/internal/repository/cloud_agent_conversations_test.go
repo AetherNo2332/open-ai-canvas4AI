@@ -77,7 +77,7 @@ func testCloudAgentConversationAdmission(t *testing.T, a, b *Repository, billed 
 		t.Fatal(err)
 	}
 	for _, item := range []any{
-		&model.CloudAgentExecution{ID: "parent", UserID: "user", ConversationID: "parent", Status: "completed", Revision: 7},
+		&model.CloudAgentExecution{ID: "parent", UserID: "user", ConversationID: "parent", Status: "completed", Revision: 7, CreatedAt: time.Unix(1700000000, 0).UTC()},
 		&model.CanvasProject{ID: "canvas-a", UserID: "user"},
 		&model.CanvasProject{ID: "canvas-b", UserID: "user"},
 		&model.CreditAccount{UserID: "user", AvailableMicrocredits: 1000},
@@ -95,12 +95,14 @@ func testCloudAgentConversationAdmission(t *testing.T, a, b *Repository, billed 
 			defer wg.Done()
 			<-start
 			task := &model.Task{ID: fmt.Sprintf("child-%d", i), UserID: "user", ProjectID: "canvas-a", Operation: "agent_holding", Status: model.TaskStatusTextReplay}
-			run := &model.CloudAgentExecution{ID: task.ID, UserID: "user", CanvasID: "canvas-a", ParentID: "parent", ConversationID: "parent", Status: "queued", CreatedAt: time.Now()}
+			// Equal provider/OS clock timestamps must never turn an existing
+			// child into a lexicographically older tip and admit another branch.
+			run := &model.CloudAgentExecution{ID: task.ID, UserID: "user", CanvasID: "canvas-a", ParentID: "parent", ConversationID: "parent", Status: "queued", CreatedAt: time.Unix(1700000000, 0).UTC()}
 			amount := int64(0)
 			if billed {
 				amount = 100
 			}
-			results <- repo.CreateCloudAgentHoldingTask(task, &model.BillingOrder{ID: "order-" + task.ID, UserID: "user", TaskID: task.ID, AmountMicrocredits: amount, BillingMode: "fixed_request"}, run, 100)
+			results <- repo.CreateCloudAgentHoldingTask(task, &model.BillingOrder{ID: "order-" + task.ID, IdempotencyKey: "operation-" + task.ID, UserID: "user", TaskID: task.ID, AmountMicrocredits: amount, BillingMode: "fixed_request"}, run, 100)
 
 		}(i, repo)
 	}

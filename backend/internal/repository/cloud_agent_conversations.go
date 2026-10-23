@@ -89,6 +89,12 @@ func (r *Repository) requireCurrentCloudAgentParent(run *model.CloudAgentExecuti
 	if identity != run.ConversationID {
 		return ErrCloudAgentStaleParent
 	}
+	// Tip ordering must be monotonic even on a coarse clock or after a clock
+	// adjustment. PostgreSQL stores microseconds; smaller increments can round
+	// back onto the parent's timestamp and let its ID win the tie again.
+	if !run.CreatedAt.After(parent.CreatedAt) {
+		run.CreatedAt = parent.CreatedAt.Add(time.Microsecond)
+	}
 	var latest model.CloudAgentExecution
 	if err := r.db.Select("id").Where("user_id = ? AND "+cloudAgentConversationIdentity+" = ?", run.UserID, identity).Order("created_at DESC, id DESC").First(&latest).Error; err != nil {
 		return err
