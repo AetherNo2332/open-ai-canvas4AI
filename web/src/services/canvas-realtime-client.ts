@@ -21,8 +21,10 @@ function drag(v: unknown): v is RealtimeDrag[] {
     if (!Array.isArray(v) || v.length > 32) return false;
     const ids = new Set<string>();
     return v.every(item => {
-        if (!point(item) || !record(item) || typeof item.nodeId !== "string" || !item.nodeId || byteLength(item.nodeId) > 128 || ids.has(item.nodeId)) return false;
-        ids.add(item.nodeId); return true;
+        if (!record(item)) return false;
+        const nodeId = item.nodeId;
+        if (!point(item) || typeof nodeId !== "string" || !nodeId || byteLength(nodeId) > 128 || ids.has(nodeId)) return false;
+        ids.add(nodeId); return true;
     });
 }
 function peer(v: unknown, now: number): v is RealtimePeer {
