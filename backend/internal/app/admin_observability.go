@@ -40,6 +40,7 @@ func (s *Service) committedObservability(filter repository.AnalyticsFilter) (obs
 	}
 	snapshot, _ := buildCommittedObservability(data, now, window)
 	snapshot.GrafanaURL = configuredGrafanaURL()
+	snapshot.Export = s.observabilityExporter.Stats()
 	return snapshot, nil
 }
 
@@ -235,6 +236,20 @@ func buildCommittedObservability(data repository.ObservabilityData, now time.Tim
 		aggregate.Record(event)
 	}
 	snapshot := aggregate.Snapshot(window)
+	// Recovery attempts are persisted on each run; polling this projection must not increment them.
+	frequentTakeover := false
+	for _, run := range data.Runs {
+		snapshot.Recovery.Attempts += run.RecoveryAttempts
+		if run.RecoveryStatus == "scheduled" || run.RecoveryStatus == "reconciling" {
+			snapshot.Recovery.Active++
+		}
+		if run.RecoveryAttempts >= 3 {
+			frequentTakeover = true
+		}
+	}
+	if frequentTakeover {
+		snapshot.Alerts = append(snapshot.Alerts, "worker_takeover_frequent")
+	}
 	snapshot.Available = len(events) > 0 || len(data.Workers) > 0
 	snapshot.Delayed = data.Truncated
 	snapshot.Queue.Depth = queueDepth

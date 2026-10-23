@@ -38,6 +38,22 @@ func TestObservabilityRejectsNonAdmin(t *testing.T) {
 	}
 }
 
+func TestCommittedObservabilityRecoveryAlerts(t *testing.T) {
+	now := time.Now().UTC()
+	data := repository.ObservabilityData{Runs: []model.CloudAgentExecution{{ID: "recovering", Status: "running", RecoveryAttempts: 3, RecoveryStatus: "reconciling", CreatedAt: now}}, Tasks: []model.Task{{ID: "waiting", AgentRunID: "recovering", Status: model.TaskStatusQueued, CreatedAt: now.Add(-6 * time.Minute)}}}
+	snapshot, _ := buildCommittedObservability(data, now, time.Hour)
+	if len(snapshot.Alerts) != 3 {
+		t.Fatalf("expected worker, queue and recovery alerts: %+v", snapshot.Alerts)
+	}
+	if snapshot.Recovery.Attempts != 3 || snapshot.Recovery.Active != 1 {
+		t.Fatalf("recovery missing: %+v", snapshot.Recovery)
+	}
+	again, _ := buildCommittedObservability(data, now, time.Hour)
+	if again.Recovery != snapshot.Recovery {
+		t.Fatal("polling accumulated recovery counters")
+	}
+}
+
 func TestCommittedObservabilityProjectionAppliesAnalyticsFilters(t *testing.T) {
 	now := time.Now().UTC()
 	data := repository.ObservabilityData{

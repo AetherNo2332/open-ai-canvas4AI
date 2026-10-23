@@ -61,6 +61,8 @@ type Snapshot struct {
 	GeneratedAt    time.Time         `json:"generatedAt"`
 	Window         time.Duration     `json:"window"`
 	GrafanaURL     string            `json:"grafanaUrl,omitempty"`
+	Export         ExportStats       `json:"export"`
+	Recovery       RecoverySnapshot  `json:"recovery"`
 	Worker         WorkerSnapshot    `json:"worker"`
 	Queue          QueueSnapshot     `json:"queue"`
 	Tasks          TaskSnapshot      `json:"tasks"`
@@ -70,6 +72,11 @@ type Snapshot struct {
 	Quality        QualitySnapshot   `json:"quality"`
 	Alerts         []string          `json:"alerts"`
 	RecentFailures []FailureSnapshot `json:"recentFailures"`
+}
+
+type RecoverySnapshot struct {
+	Attempts int `json:"attempts"`
+	Active   int `json:"active"`
 }
 
 type WorkerSnapshot struct {
