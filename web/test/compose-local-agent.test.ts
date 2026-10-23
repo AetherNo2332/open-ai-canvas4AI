@@ -4,8 +4,8 @@ import { resolve } from "node:path";
 
 /**
  * docker-compose.local.yml 本地构建运行时也要带上 Pi Agent worker:
- * 后端只有设置了 CANVAS_AGENT_INTERNAL_TOKEN 才挂载 /internal-agent(见 backend/internal/handler/internal_agent.go),
- * agent 必须使用同一个 token。Harness(含 TOOL_SCHEMA.json) 由 agent/Dockerfile 在构建时
+ * 后端只有设置了 CANVAS_AGENT_INTERNAL_TOKEN 才挂载 /internal-agent(见 backend/internal/handler/internal_agent.go)。
+ * 签名密钥只提供给后端；Worker 通过独立身份和凭据连接。Harness(含 TOOL_SCHEMA.json) 由 agent/Dockerfile 在构建时
  * COPY 进镜像（与生产镜像同源），不再用宿主目录挂载覆盖，避免开发态与生产态提示合同漂移。
  */
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -30,11 +30,15 @@ describe("docker-compose.local.yml 包含 agent 服务", () => {
         expect(agent).not.toContain("profiles:");
     });
 
-    test("02 agent 与 backend 共用同一个内部 token 变量,并经 compose 网络访问 backend", () => {
+    test("02 后端独占签名密钥，Worker 使用独立凭据经 compose 网络访问 backend", () => {
         const agent = serviceBlock(compose, "agent");
         const backend = serviceBlock(compose, "backend");
         expect(backend).toContain("CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:-}");
-        expect(agent).toContain("CANVAS_AGENT_INTERNAL_TOKEN: ${CANVAS_AGENT_INTERNAL_TOKEN:-}");
+        expect(backend).toContain("CANVAS_AGENT_WORKER_ID: ${CANVAS_AGENT_WORKER_ID:-}");
+        expect(backend).toContain("CANVAS_AGENT_WORKER_TOKEN: ${CANVAS_AGENT_WORKER_TOKEN:-}");
+        expect(agent).not.toContain("CANVAS_AGENT_INTERNAL_TOKEN:");
+        expect(agent).toContain("CANVAS_AGENT_WORKER_ID: ${CANVAS_AGENT_WORKER_ID:-}");
+        expect(agent).toContain("CANVAS_AGENT_WORKER_TOKEN: ${CANVAS_AGENT_WORKER_TOKEN:-}");
         expect(agent).toContain("CANVAS_BACKEND_INTERNAL_URL: http://backend:8080");
         expect(agent).toMatch(/depends_on:\n\s+backend:\n\s+condition: service_healthy/u);
     });
@@ -49,7 +53,9 @@ describe("docker-compose.local.yml 包含 agent 服务", () => {
         expect(agent).not.toContain("ports:");
     });
 
-    test("04 .env.example 说明需要设置内部 token", () => {
+    test("04 .env.example 分别声明后端签名密钥和 Worker 凭据", () => {
         expect(read(".env.example")).toMatch(/^CANVAS_AGENT_INTERNAL_TOKEN=/mu);
+        expect(read(".env.example")).toMatch(/^CANVAS_AGENT_WORKER_ID=/mu);
+        expect(read(".env.example")).toMatch(/^CANVAS_AGENT_WORKER_TOKEN=/mu);
     });
 });

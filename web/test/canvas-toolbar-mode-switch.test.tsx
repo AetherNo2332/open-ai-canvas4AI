@@ -55,17 +55,20 @@ function createMainContext(canvasTool: "move" | "box-select" = "box-select"): To
 }
 
 describe("canvas toolbar mode switch", () => {
-    test.each(["default", "compact"] as const)("renders %s canvas modes as an icon-only sliding switch", (size) => {
+    test.each(["default", "compact"] as const)("renders %s canvas modes as an icon-only skin-sized switch", (size) => {
         const entries = resolveToolbarEntries("main", createMainContext(), null);
         const modeSwitch = entries.find((entry) => entry.kind === "switch");
         if (!modeSwitch) throw new Error("Missing canvas mode switch");
         const html = renderToStaticMarkup(<FloatingDock size={size} items={[modeSwitch]} />);
-        const diameter = size === "compact" ? 24 : 26;
+        const itemSize = size === "compact" ? 28 : 32;
 
-        expect(html).toContain(`width:${diameter}px;height:${diameter}px`);
+        expect(html).toContain(`--dock-item-size:${itemSize}px`);
+        expect(html.match(/h-\[calc\(var\(--dock-item-size\)-4px\)\]/g)).toHaveLength(2);
+        expect(html.match(/w-\[calc\(var\(--dock-item-size\)-4px\)\]/g)).toHaveLength(2);
         expect(html.match(/aceternity-dock-switch-thumb/g)).toHaveLength(1);
-        expect(html).toContain("absolute top-1/2 rounded-full");
-        expect(html).toContain("grid size-4 shrink-0 place-items-center");
+        expect(html).toContain("rounded-[var(--button-radius)]");
+        expect(html).toContain("rounded-[var(--dock-item-radius)]");
+        expect(html).toContain(size === "compact" ? "place-items-center size-[15px]" : "place-items-center size-4");
         expect(html).not.toContain("is-labeled");
         expect(html).not.toContain("选择</span>");
         expect(html).not.toContain("移动</span>");
@@ -128,13 +131,7 @@ describe("canvas toolbar mode switch", () => {
 
     test("hides rarely used arrange tools from the selection toolbar by default", () => {
         const prefs = defaultToolbarPrefs("selection");
-        expect(prefs.hidden).toEqual(expect.arrayContaining([
-            "selection-arrange-row",
-            "selection-arrange-column",
-            "selection-arrange-grid",
-            "selection-arrange-flow",
-            "selection-create-reference-group",
-        ]));
+        expect(prefs.hidden).toEqual(expect.arrayContaining(["selection-arrange-row", "selection-arrange-column", "selection-arrange-grid", "selection-arrange-flow", "selection-create-reference-group"]));
 
         const entries = resolveToolbarEntries("selection", createMainContext(), null);
         expect(entries.some((entry) => entry.id === "selection-align-left")).toBe(true);
@@ -144,30 +141,40 @@ describe("canvas toolbar mode switch", () => {
         expect(entries.some((entry) => entry.id === "selection-create-reference-group")).toBe(false);
     });
 
-    test("renders the pill switch with an active circular thumb", () => {
+    test.each(["box-select", "move"] as const)("marks %s as the selected and focusable radio", (value) => {
         installRenderingWindowStub();
         const html = renderToStaticMarkup(
             <FloatingDock
-                items={[{
-                    kind: "switch",
-                    id: CANVAS_MODE_TOOL_ID,
-                    label: "抓手 / 框选",
-                    value: "box-select",
-                    options: [
-                        { id: "box-select", label: "区域选择", icon: <MousePointer2 />, value: "box-select" },
-                        { id: "move", label: "抓手工具", icon: <Hand />, value: "move" },
-                    ],
-                    onChange: () => {},
-                }]}
+                items={[
+                    {
+                        kind: "switch",
+                        id: CANVAS_MODE_TOOL_ID,
+                        label: "抓手 / 框选",
+                        value,
+                        options: [
+                            { id: "box-select", label: "区域选择", icon: <MousePointer2 />, value: "box-select" },
+                            { id: "move", label: "抓手工具", icon: <Hand />, value: "move" },
+                        ],
+                        onChange: () => {},
+                    },
+                ]}
             />,
         );
 
         expect(html).toContain('role="radiogroup"');
-        expect(html).toContain("aceternity-dock-switch-track");
-        expect(html).toContain("aceternity-dock-switch-thumb");
-        expect(html).toContain('aria-label="区域选择"');
-        expect(html).toContain('aria-label="抓手工具"');
-        expect(html).toContain('aria-checked="true"');
-        expect(html).toContain('aria-checked="false"');
+        expect(html).toContain('aria-label="抓手 / 框选"');
+        const radios = html.match(/<button\b[^>]*role="radio"[^>]*>[\s\S]*?<\/button>/g);
+        expect(radios).toHaveLength(2);
+        const [boxSelect, move] = radios ?? [];
+        expect(boxSelect).toContain('aria-label="区域选择"');
+        expect(move).toContain('aria-label="抓手工具"');
+        for (const [radio, selected] of [
+            [boxSelect, value === "box-select"],
+            [move, value === "move"],
+        ] as const) {
+            expect(radio).toContain(`aria-checked="${selected}"`);
+            expect(radio).toContain(`tabindex="${selected ? 0 : -1}"`);
+            expect(radio?.includes("aceternity-dock-switch-thumb")).toBe(selected);
+        }
     });
 });

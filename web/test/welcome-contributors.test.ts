@@ -1,16 +1,16 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { parseContributors } from "../src/pages/welcome/contributors-parse";
 
 const identityAvatar = (path: string) => path;
 
-test("welcome contributors parse the README HTML table", () => {
-    const readme = readFileSync(resolve(import.meta.dir, "../../README.md"), "utf8");
-    const people = parseContributors(readme, identityAvatar);
+test("welcome contributors parse the attributed contributor register", () => {
+    const register = readFileSync(resolve(import.meta.dir, "../../CONTRIBUTORS.md"), "utf8");
+    const people = parseContributors(register, identityAvatar);
 
-    expect(people.length).toBeGreaterThanOrEqual(20);
+    expect(people).toHaveLength(27);
     expect(people[0]).toMatchObject({
         name: "ddCat",
         avatar: "assets/user-ddcat.jpg",
@@ -23,6 +23,15 @@ test("welcome contributors parse the README HTML table", () => {
     expect(people.some((person) => person.name === "morrow" && person.email === "3201190041@qq.com" && person.signature === "最难不过坚持")).toBe(true);
     expect(people.some((person) => person.name === "亿媒网老宋" && person.avatar === "assets/user-song.jpg" && person.email === "61731514@qq.com" && person.signature === "全国10W+媒体、自媒体，助力企业品牌传播")).toBe(true);
     expect(people.filter((person) => person.isFounder)).toHaveLength(1);
+    expect(people.every((person) => existsSync(resolve(import.meta.dir, "../..", person.avatar)))).toBe(true);
+});
+
+test("web image copies the contributor register before building Vite", () => {
+    const dockerfile = readFileSync(resolve(import.meta.dir, "../../Dockerfile"), "utf8");
+    const webStage = dockerfile.slice(dockerfile.indexOf("AS web-build"), dockerfile.indexOf("AS desk-build"));
+    const copy = webStage.indexOf("COPY CONTRIBUTORS.md /app/CONTRIBUTORS.md");
+    expect(copy).toBeGreaterThanOrEqual(0);
+    expect(copy).toBeLessThan(webStage.indexOf("vite.js build"));
 });
 
 test("welcome contributors still parse markdown pipe tables", () => {

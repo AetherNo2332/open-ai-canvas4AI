@@ -146,7 +146,7 @@ bun run dev
 
 前端默认将 `/api` 代理到 `http://127.0.0.1:8080`，可用 `VITE_API_PROXY_TARGET` 修改。Windows 也可在仓库根目录运行 [scripts/start-local.ps1](scripts/start-local.ps1)。
 
-上述宿主机命令和 Windows 脚本只启动前后端。调试云端 Agent 时，还需运行 `agent/` Worker，并给 backend 和 Worker 设置相同内部令牌；Worker 的后端地址改为 `http://127.0.0.1:8080`，Harness 目录指向 `agent/harness`。构建与启动命令见 [agent/package.json](agent/package.json)。
+上述宿主机命令和 Windows 脚本只启动前后端。调试云端 Agent 时，还需运行 `agent/` Worker：backend 单独持有 `CANVAS_AGENT_INTERNAL_TOKEN`，backend 和 Worker 配置相同的 `CANVAS_AGENT_WORKER_ID` 与 `CANVAS_AGENT_WORKER_TOKEN`；Worker 的后端地址改为 `http://127.0.0.1:8080`，Harness 目录指向 `agent/harness`。构建与启动命令见 [agent/package.json](agent/package.json)。
 
 使用 Docker 开发编排前，需要先创建它挂载的数据和缓存目录：
 
@@ -202,7 +202,7 @@ agent / Pi Worker
 - [HTTP API](docs/content/docs/backend/http-api.mdx) · [数据库结构](docs/content/docs/backend/backend-database.mdx)
 - [代码功能地图](docs/content/docs/backend/code-map.mdx)
 - [待办](docs/content/docs/progress/todo.mdx) · [待测试](docs/content/docs/progress/pending-test.mdx)
-- [更新日志](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md)
+- [更新日志](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [影策贡献者名录](CONTRIBUTORS.md)
 
 ## 许可证与上游致谢
 
