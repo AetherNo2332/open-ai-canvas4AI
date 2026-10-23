@@ -105,7 +105,7 @@ ensure_agent_token() {
     if [[ -z "$worker_token" ]]; then worker_token="$(openssl rand -hex 32)"; fi
     if [[ -z "$worker_id" ]]; then worker_id="compose-worker"; fi
     [[ ${#worker_token} -ge 32 ]] || fail "CANVAS_AGENT_WORKER_TOKEN 至少需要32字符"
-    [[ "$worker_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$ ]] || fail "CANVAS_AGENT_WORKER_ID 无效"
+    [[ "$worker_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || fail "CANVAS_AGENT_WORKER_ID 无效或超过 64 字符；请将 .env 中的 CANVAS_AGENT_WORKER_ID 改为 1 到 64 字符后重试"
     temporary_env="$(mktemp ".env.XXXXXX")"
     awk -v token="$worker_token" -v id="$worker_id" '
         BEGIN { has_token=0; has_id=0 }

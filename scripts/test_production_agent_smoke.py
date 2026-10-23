@@ -38,6 +38,65 @@ class ProductionSmokeTests(unittest.TestCase):
             self.assertFalse(report["checks"][-1]["passed"])
             self.assertEqual(report["runs"][0]["status"], "failed")
 
+    def test_rejected_config_never_creates_or_cleans_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            invalid = json.dumps({"services": {"backend": {}}})
+            with patch.object(harness, "compose", return_value=SimpleNamespace(stdout=invalid)) as compose:
+                with self.assertRaisesRegex(AssertionError, "seven services"):
+                    harness.execute()
+                harness.cleanup()
+            self.assertEqual([call.args[0] for call in compose.call_args_list], ["config"])
+
+    def test_migration_failure_exercises_up_dependencies_and_keeps_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            results = [SimpleNamespace(returncode=1, stdout="", stderr="dependency failed: migrate"),
+                       SimpleNamespace(returncode=0, stdout="password authentication failed", stderr="")]
+            with patch.object(smoke.subprocess, "run", side_effect=results) as run, patch.object(
+                    harness, "compose", return_value=SimpleNamespace(stdout="")) as compose:
+                harness.verify_migration_gate()
+            command = run.call_args_list[0].args[0]
+            self.assertEqual(command[-6:], ["up", "-d", "--wait", "backend", "web", "agent"])
+            self.assertIn("-f", command)
+            self.assertEqual([call.args[2] for call in compose.call_args_list], ["backend", "web", "agent"])
+            self.assertIn("password authentication failed", harness.report["migrationFailure"]["diagnostics"])
+
+    def test_cleanup_refuses_unlabelled_volume_before_down(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            harness.isolated = harness.resources_created = True
+            name = harness.project + "_postgres-data"
+            harness.expected_volumes = {name}
+            def fake_run(command, **_):
+                if command[1:3] == ["volume", "inspect"]:
+                    return SimpleNamespace(returncode=0, stdout=json.dumps([{"Name": name, "Labels": {}}]), stderr="")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            with patch.object(smoke.subprocess, "run", side_effect=fake_run), patch.object(harness, "compose") as compose:
+                with self.assertRaisesRegex(AssertionError, "lacks project label"):
+                    harness.cleanup()
+            compose.assert_not_called()
+
+    def test_all_generated_credentials_are_redacted_in_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            account, model, cookie = "account-secret-value", "model-secret-value", "cookie-secret-value"
+            harness.secrets.update((account, model, cookie))
+            harness.report["failure"] = f"{account} {model} {cookie} {harness.env['CANVAS_AGENT_WORKER_TOKEN']} {harness.env['POSTGRES_PASSWORD']}"
+            harness.save()
+            body = harness.output.read_text()
+            for secret in (account, model, cookie, harness.env["CANVAS_AGENT_WORKER_TOKEN"], harness.env["POSTGRES_PASSWORD"]):
+                self.assertNotIn(secret, body)
+            self.assertIn("[redacted]", body)
+
+    def test_override_names_every_built_image_for_project(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            override = Path(harness.command[-1]).read_text()
+            for key in ("CANVAS_BACKEND_IMAGE", "CANVAS_AGENT_IMAGE", "CANVAS_WEB_IMAGE", "CANVAS_MODEL_STUB_IMAGE"):
+                self.assertIn("image: ${" + key + "}", override)
+                self.assertTrue(harness.env[key].startswith(harness.project + "-"))
+
 
 if __name__ == "__main__":
     unittest.main()

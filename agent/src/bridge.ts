@@ -18,7 +18,7 @@ import type { SubagentRuntime } from "./subagent-wire.js";
 const NON_RETRYABLE_BRIDGE_STATUSES = new Set([400, 401, 403, 404, 405, 406, 410, 413, 414, 415, 422, 426]);
 
 export const CANVAS_PI_WIRE_IDENTITY = {
-  protocolVersion: "canvas-pi-wire/v3",
+  protocolVersion: "canvas-pi-wire/v4",
   piSdkVersion: "0.87.1",
   sessionFormatVersion: "3",
 } as const;

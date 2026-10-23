@@ -38,6 +38,10 @@ class Smoke:
             self.port = listener.getsockname()[1]
         self.base = f"http://127.0.0.1:{self.port}/api"
         password = secrets.token_urlsafe(24)
+        self.secrets = {password}
+        self.isolated = False
+        self.resources_created = False
+        self.expected_volumes = set()
         self.env = {**os.environ, "POSTGRES_DB": "canvas_smoke", "POSTGRES_USER": "canvas_smoke",
                     "POSTGRES_PASSWORD": password,
                     "DATABASE_URL": f"postgres://canvas_smoke:{password}@postgres:5432/canvas_smoke?sslmode=disable",
@@ -51,29 +55,50 @@ class Smoke:
         override = self.directory / "override.yml"
         override.write_text('''services:
   model-stub:
+    image: ${CANVAS_MODEL_STUB_IMAGE}
     build:
       context: .
       dockerfile: tools/agent-parity-stub.Dockerfile
   web:
+    image: ${CANVAS_WEB_IMAGE}
     ports: !override
       - "127.0.0.1:${CANVAS_HTTP_PORT}:3000"
   backend:
+    image: ${CANVAS_BACKEND_IMAGE}
     environment:
       CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: model-stub
   agent:
+    image: ${CANVAS_AGENT_IMAGE}
     environment:
       CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: model-stub
+  migrate:
+    image: ${CANVAS_BACKEND_IMAGE}
 ''', encoding="utf-8")
+        self.env["CANVAS_MODEL_STUB_IMAGE"] = self.project + "-model-stub:ci"
+        self.secrets.update((self.env["CANVAS_AGENT_INTERNAL_TOKEN"], self.env["CANVAS_AGENT_WORKER_TOKEN"]))
         self.command = ["docker", "compose", "--project-directory", str(ROOT), "-p", self.project,
                         "-f", str(ROOT / "docker-compose.deploy.yml"), "-f", str(ROOT / "docker-compose.build.yml"),
                         "-f", str(override)]
+        self.cookiejar = http.cookiejar.CookieJar()
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}),
-                                                  urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+                                                  urllib.request.HTTPCookieProcessor(self.cookiejar))
         self.report = {"project": self.project, "checks": [], "runs": []}
+
+    def redact(self, value):
+        if isinstance(value, dict):
+            return {key: self.redact(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self.redact(item) for item in value]
+        if not isinstance(value, str):
+            return value
+        for secret in sorted(self.secrets, key=len, reverse=True):
+            if secret:
+                value = value.replace(secret, "[redacted]")
+        return re.sub(r"(?i)(postgres(?:ql)?://)[^\s@]+@", r"\1[redacted]@", value)
 
     def save(self):
         self.output.parent.mkdir(parents=True, exist_ok=True)
-        self.output.write_text(json.dumps(self.report, indent=2), encoding="utf-8")
+        self.output.write_text(json.dumps(self.redact(self.report), indent=2), encoding="utf-8")
 
     def check(self, name, passed, **details):
         self.report["checks"].append({"name": name, "passed": bool(passed), **details})
@@ -89,14 +114,43 @@ class Smoke:
             raise AssertionError(f"Compose {args[0]} stage exited {result.returncode}; see service logs")
         return result
 
+    def cleanup(self):
+        if not (self.isolated and self.resources_created):
+            return
+        containers = subprocess.run(["docker", "ps", "-aq", "--filter",
+            f"label=com.docker.compose.project={self.project}"], capture_output=True, text=True, timeout=30, check=True).stdout.split()
+        if containers:
+            rows = json.loads(subprocess.check_output(["docker", "inspect", *containers], text=True, timeout=30))
+            if any(row["Config"]["Labels"].get("com.docker.compose.project") != self.project or
+                   row["Config"]["Labels"].get("com.docker.compose.service") not in SERVICES for row in rows):
+                raise AssertionError("cleanup refused: unexpected container labels")
+        volumes = subprocess.run(["docker", "volume", "ls", "-q", "--filter",
+            f"label=com.docker.compose.project={self.project}"], capture_output=True, text=True, timeout=30, check=True).stdout.split()
+        if volumes:
+            rows = json.loads(subprocess.check_output(["docker", "volume", "inspect", *volumes], text=True, timeout=30))
+            if any(row["Name"] not in self.expected_volumes or
+                   (row.get("Labels") or {}).get("com.docker.compose.project") != self.project for row in rows):
+                raise AssertionError("cleanup refused: unexpected volume labels or names")
+        for name in self.expected_volumes:
+            result = subprocess.run(["docker", "volume", "inspect", name], capture_output=True, text=True, timeout=30)
+            if result.returncode:
+                if "no such volume" not in result.stderr.lower():
+                    raise AssertionError("cleanup refused: could not inspect expected volume")
+                continue
+            row = json.loads(result.stdout)[0]
+            if row["Name"] != name or (row.get("Labels") or {}).get("com.docker.compose.project") != self.project:
+                raise AssertionError("cleanup refused: expected volume lacks project label")
+        self.compose("down", "--volumes", "--remove-orphans", timeout=180)
+
     def api(self, method, path, body=None):
         request = urllib.request.Request(self.base + path, method=method,
                                          data=None if body is None else json.dumps(body).encode(),
                                          headers={"Content-Type": "application/json", "Origin": self.base[:-4]})
         with self.http.open(request, timeout=25) as response:
             payload = json.loads(response.read())
+        self.secrets.update(cookie.value for cookie in self.cookiejar)
         if "code" in payload and payload["code"] != 0:
-            raise AssertionError(f"{method} {path}: {payload.get('reason')}")
+            raise AssertionError(self.redact(f"{method} {path}: {payload.get('reason')}"))
         return payload.get("data", payload)
 
     def stub(self, path, body=None):
@@ -142,13 +196,28 @@ class Smoke:
         try:
             self.report["serviceStatus"] = self.compose("ps", "--format", "json", success=False).stdout[-12000:]
             logs = self.compose("logs", "--no-color", "--tail", "120", success=False).stdout
-            for secret in (self.env["POSTGRES_PASSWORD"], self.env["CANVAS_AGENT_INTERNAL_TOKEN"], self.env["CANVAS_AGENT_WORKER_TOKEN"]):
-                logs = logs.replace(secret, "[redacted]")
-            logs = re.sub(r"(?i)(postgres(?:ql)?://)[^\s@]+@", r"\1[redacted]@", logs)
-            (self.output.parent / "production-smoke-services.log").write_text(logs[-50000:], encoding="utf-8")
+            (self.output.parent / "production-smoke-services.log").write_text(self.redact(logs[-50000:]), encoding="utf-8")
         except Exception as error:
             self.report["diagnosticsError"] = type(error).__name__
         self.save()
+
+    def verify_migration_gate(self):
+        failure = self.directory / "migration-failure.yml"
+        failure.write_text("services:\n  migrate:\n    environment:\n      DATABASE_URL: postgres://bad:bad@postgres:5432/missing?sslmode=disable\n", encoding="utf-8")
+        bad_command = [*self.command, "-f", str(failure)]
+        bad = subprocess.run([*bad_command, "up", "-d", "--wait", "backend", "web", "agent"],
+            cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=180)
+        migration_logs = subprocess.run([*bad_command, "logs", "--no-color", "migrate"],
+            cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=30)
+        failure_text = (bad.stdout + bad.stderr + migration_logs.stdout + migration_logs.stderr).lower()
+        self.report["migrationFailure"] = {"exitCode": bad.returncode,
+            "diagnostics": self.redact(failure_text[-4000:])}
+        self.check("startup migration reports invalid database credentials", bad.returncode != 0 and
+                   ("password authentication failed" in failure_text or "sqlstate 28p01" in failure_text),
+                   stage="migrate", exitCode=bad.returncode)
+        self.check("failed startup migration blocks backend and web", all(
+            not self.compose("ps", "-q", service).stdout.strip() for service in ("backend", "web", "agent")),
+            stage="dependency_gate")
 
     def execute(self):
         config = json.loads(self.compose("config", "--format", "json").stdout)
@@ -159,31 +228,35 @@ class Smoke:
                    ports[0]["host_ip"] == "127.0.0.1" and ports[0]["published"] == str(self.port))
         volumes = [mount for service in config["services"].values() for mount in service.get("volumes", [])]
         self.check("all persistent storage is project-scoped", all(
-            volume["name"].startswith(self.project + "_") for volume in config.get("volumes", {}).values()) and
+            volume["name"].startswith(self.project + "_") and not volume.get("external")
+            for volume in config.get("volumes", {}).values()) and
             all(mount["type"] == "volume" or
                 (mount["type"] == "bind" and mount["source"] == str(self.directory / "updater-socket"))
                 for mount in volumes))
+        self.expected_volumes = {volume["name"] for volume in config.get("volumes", {}).values()}
+        self.check("all built images use this project", all(
+            config["services"][service]["image"] == self.env[variable] for service, variable in (
+                ("migrate", "CANVAS_BACKEND_IMAGE"), ("backend", "CANVAS_BACKEND_IMAGE"),
+                ("agent", "CANVAS_AGENT_IMAGE"), ("web", "CANVAS_WEB_IMAGE"),
+                ("model-stub", "CANVAS_MODEL_STUB_IMAGE"))))
+        self.isolated = True
         self.compose("build", "backend", "agent", "web", "model-stub", timeout=1200)
+        self.resources_created = True
         self.compose("up", "-d", "--wait", "postgres", "redis")
-        bad = self.compose("run", "--rm", "--no-deps", "-e",
-                           "DATABASE_URL=postgres://bad:bad@postgres:5432/missing?sslmode=disable", "migrate",
-                           timeout=60, success=False)
-        failure_text = (bad.stdout + bad.stderr).lower()
-        self.check("migration reports invalid database credentials", bad.returncode != 0 and
-                   ("password authentication failed" in failure_text or "sqlstate 28p01" in failure_text),
-                   stage="migrate", exitCode=bad.returncode)
-        self.check("failed migration has not admitted backend", not self.compose("ps", "-q", "backend").stdout.strip())
+        self.verify_migration_gate()
         self.compose("up", "-d", "migrate", "backend", "web", "model-stub", timeout=300)
         wait(lambda: self.api("GET", "/health").get("ready") is True)
         account = {"username": "smoke_" + uuid.uuid4().hex[:10], "password": secrets.token_urlsafe(24)}
+        self.secrets.add(account["password"])
         self.api("POST", "/auth/register", {**account, "acceptedTerms": True})
         self.api("POST", "/auth/login", account)
+        self.secrets.update(cookie.value for cookie in self.cookiejar)
         availability = self.api("GET", "/agent/capabilities")["availability"]
         self.check("absent worker has explicit offline stage", availability["readyWorkers"] == 0 and
                    availability["queueReason"] == "worker_offline", stage="worker_not_ready",
                    queueReason=availability["queueReason"])
         probe = self.compose("run", "--rm", "--no-deps", "agent", "node", "-e",
-            "fetch('http://backend:8080/internal-agent/capacity',{method:'POST',headers:{Authorization:'Bearer '+process.env.CANVAS_AGENT_WORKER_TOKEN,'X-Agent-Identity':process.env.CANVAS_AGENT_WORKER_ID,'X-Agent-Protocol-Version':'canvas-pi-wire/v3','X-Pi-SDK-Version':'0.87.1','X-Pi-Session-Format':'3','Content-Type':'application/json'},body:JSON.stringify({owner:'ci-unready-probe',active:0,capacity:1,readiness:'degraded',readinessReason:'CI startup gate'})}).then(r=>{console.log(r.status);process.exit(r.status===200?0:1)})",
+            "fetch('http://backend:8080/internal-agent/capacity',{method:'POST',headers:{Authorization:'Bearer '+process.env.CANVAS_AGENT_WORKER_TOKEN,'X-Agent-Identity':process.env.CANVAS_AGENT_WORKER_ID,'X-Agent-Protocol-Version':'canvas-pi-wire/v4','X-Pi-SDK-Version':'0.87.1','X-Pi-Session-Format':'3','Content-Type':'application/json'},body:JSON.stringify({owner:process.env.CANVAS_AGENT_WORKER_ID+':ci-probe',active:0,capacity:1,readiness:'degraded',readinessReason:'CI startup gate'})}).then(r=>{console.log(r.status);process.exit(r.status===200?0:1)})",
             timeout=60, success=False)
         self.check("unready worker report is accepted", probe.returncode == 0 and probe.stdout.strip() == "200")
         availability = self.api("GET", "/agent/capabilities")["availability"]
@@ -202,8 +275,10 @@ class Smoke:
             success=False)
         self.check("wrong token is rejected at internal auth", wrong.returncode == 0 and wrong.stdout.strip() == "401",
                    stage="internal_auth", httpStatus=wrong.stdout.strip())
+        model_key = secrets.token_urlsafe(24)
+        self.secrets.add(model_key)
         self.channel = self.api("POST", "/admin/channels", {"name": "Production CI stub",
-            "baseUrl": "http://model-stub:8080/v1", "apiKey": "non-secret-ci-key",
+            "baseUrl": "http://model-stub:8080/v1", "apiKey": model_key,
             "models": ["agent-parity-model"], "enabled": True})["channel"]["id"]
         self.api("POST", f"/admin/channels/{self.channel}/models", {"modelKey": "agent-parity-model",
             "providerModelKey": "agent-parity-model", "displayName": "CI stub", "capability": "text",
@@ -247,11 +322,17 @@ def main():
             smoke.execute()
             smoke.report["passed"] = True
         except Exception as error:
-            smoke.report["passed"], smoke.report["failure"] = False, str(error)
+            smoke.report["passed"], smoke.report["failure"] = False, smoke.redact(str(error))
             raise
         finally:
             smoke.collect()
-            smoke.compose("down", "--volumes", "--remove-orphans", timeout=180, success=False)
+            try:
+                smoke.cleanup()
+            except Exception as error:
+                smoke.report["cleanupError"] = smoke.redact(str(error))
+                smoke.save()
+                if smoke.report.get("passed"):
+                    raise
 
 
 if __name__ == "__main__":

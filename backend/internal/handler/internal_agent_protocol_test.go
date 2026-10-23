@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -70,6 +73,98 @@ func TestInternalAgentRequiresVersionedPiWireIdentity(t *testing.T) {
 		"X-Pi-Session-Format":      internalAgentSessionFormat,
 	}); got.Code != http.StatusBadRequest {
 		t.Fatalf("supported protocol identity did not pass middleware: status=%d body=%s", got.Code, got.Body.String())
+	}
+	validHeaders := map[string]string{
+		"X-Agent-Protocol-Version": internalAgentWireVersion,
+		"X-Pi-SDK-Version":         internalAgentPiSDKVersion,
+		"X-Pi-Session-Format":      internalAgentSessionFormat,
+	}
+	for _, owner := range []string{"other-worker:slot", "wire-test-worker:slot:extra", "wire-test-worker:"} {
+		if got := request(`{"owner":"`+owner+`"}`, validHeaders); got.Code != http.StatusForbidden {
+			t.Fatalf("claim accepted unauthorized owner %q: %d", owner, got.Code)
+		}
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/internal-agent/capacity", strings.NewReader(`{"owner":"`+owner+`","active":0,"capacity":1}`))
+		req.Header.Set("Authorization", "Bearer "+strings.Repeat("w", 48))
+		req.Header.Set("X-Agent-Identity", "wire-test-worker")
+		for name, value := range validHeaders {
+			req.Header.Set(name, value)
+		}
+		router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("capacity accepted unauthorized owner %q: %d", owner, recorder.Code)
+		}
+	}
+}
+
+func TestInternalAgentEventsHideForeignRunAndTaskIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("CANVAS_AGENT_INTERNAL_TOKEN", strings.Repeat("s", 48))
+	t.Setenv("CANVAS_AGENT_WORKER_ID", "scoped-worker")
+	t.Setenv("CANVAS_AGENT_WORKER_TOKEN", strings.Repeat("w", 48))
+	t.Setenv("CANVAS_AGENT_WORKER_USER_ID", "tenant-a")
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.AgentWorker{}, &model.AgentWakeEvent{}); err != nil {
+		t.Fatal(err)
+	}
+	events := []model.AgentWakeEvent{
+		{Sequence: 1, UserID: "tenant-b", RunID: "foreign-run", TaskID: "foreign-task", Kind: "tool_changed"},
+		{Sequence: 2, UserID: "tenant-a", RunID: "own-run", TaskID: "own-task", Kind: "tool_changed"},
+		{Sequence: 3, TaskID: "unscoped-foreign-task", Kind: "task_changed"},
+		{Sequence: 4, Kind: "scheduler_config_changed"},
+	}
+	if err := db.Create(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	RegisterInternalAgentRoutes(router, service.New(repository.New(db), t.TempDir()))
+	server := httptest.NewServer(router)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/internal-agent/events?after=0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("w", 48))
+	req.Header.Set("X-Agent-Identity", "scoped-worker")
+	req.Header.Set("X-Agent-Protocol-Version", internalAgentWireVersion)
+	req.Header.Set("X-Pi-SDK-Version", internalAgentPiSDKVersion)
+	req.Header.Set("X-Pi-Session-Format", internalAgentSessionFormat)
+	response, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("events status: %d", response.StatusCode)
+	}
+	scanner := bufio.NewScanner(response.Body)
+	var ids, payloads []string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "id: ") {
+			ids = append(ids, strings.TrimPrefix(line, "id: "))
+		}
+		if strings.HasPrefix(line, "data: ") {
+			payloads = append(payloads, strings.TrimPrefix(line, "data: "))
+		}
+		if len(payloads) == 2 {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ids, ",") != "2,4" || len(payloads) != 2 {
+		t.Fatalf("scoped SSE ids=%v data=%v", ids, payloads)
+	}
+	if !strings.Contains(payloads[0], "own-run") || !strings.Contains(payloads[0], "own-task") ||
+		strings.Contains(strings.Join(payloads, " "), "foreign-run") || strings.Contains(strings.Join(payloads, " "), "foreign-task") {
+		t.Fatalf("scoped SSE leaked or omitted identifiers: %v", payloads)
 	}
 }
 
