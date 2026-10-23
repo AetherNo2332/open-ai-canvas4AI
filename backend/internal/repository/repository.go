@@ -1785,7 +1785,7 @@ func (r *Repository) ProjectCanvasSummaries(userID string, projectID string) ([]
 
 func (r *Repository) ProjectCanvasDocuments(userID string, projectID string) ([]model.CanvasProject, error) {
 	var canvases []model.CanvasProject
-	err := r.db.Select("id", "title", "payload_json", "revision").Where("user_id = ? AND project_id = ?", userID, projectID).Find(&canvases).Error
+	err := r.db.Select("id", "user_id", "project_id", "title", "payload_json", "revision").Where("user_id = ? AND project_id = ?", userID, projectID).Find(&canvases).Error
 	return canvases, err
 }
 
