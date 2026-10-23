@@ -15,6 +15,8 @@ description: 数据库迁移与当前业务持久化结构
 
 实时presence没有新增数据表。服务端从基础数据库连接批量观察有在线设备的画布，只发布已提交元组的失效通知；Redis中的设备号、光标和拖动状态均为临时数据。项目素材关联复用现有 `Project.Revision` 做条件更新，没有为重试新增服务端队列表。
 
+`CanvasActorHistory` 继续承担命令撤销，既有 `canvas_snapshots` 承担用户可浏览的云端版本。命令保存与旧保存共用五分钟间隔、20条上限及快照资源保留策略；历史恢复强制备份当前状态，并保留当前行的项目归属和创建时间。两种历史与文档在同一事务内维护，不能用不可见的撤销记录代替版本列表。
+
 ## Agent 准入与 Worker 身份
 
 迁移60为 `agent_scheduler_settings` 增加 `max_resident_per_user` 并为已有行回填默认32；`agent_user_admissions` 按用户保存上次准入序列。既有 `agent_admission_counters` 在准入事务内串行化策略更新与领取；统计跨执行器有效租约，先按用户、再按该用户的画布公平选择。queued、running、waiting_approval 中仍有有效租约的运行计入驻留；过期、释放和终态归还名额。`user_capacity` 与 `canvas_capacity` 等待保留，不按 Worker 未领取超时清理。

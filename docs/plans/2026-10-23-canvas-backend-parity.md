@@ -56,12 +56,12 @@ Interfaces: 稳定展示签名adapter；仅明确合同可用时公开CDN附件�
 
 ## Task 5: 节点编辑租约与同步状态
 Dependencies: Task1。
-Files: model/models_canvas_sync.go、database迁移；repository/canvas_edit_leases.go；canvas/edit_leases.go、host.go；app/canvas_bridge.go；handler新协作路由；web/services/canvas-edit-leases.ts、components/canvas/use-canvas-text-lease.tsx及实际编辑组件。
+Files: model/models_canvas_sync.go、database迁移；repository/canvas_edit_leases.go；canvas/edit_leases.go、host.go；app/canvas_bridge.go；handler新协作路由；web/services/canvas-edit-leases.ts、components/canvas/use-canvas-edit-lease.ts及实际编辑组件。
 Interfaces: acquire/renew/release证明；状态返回revision/epoch、token-free leases、active Agent summaries；所有写入口检查作者字段proof。
 - [x] 持久30秒节点租约与事务校验；相同用户不同session仍互斥；仅保护作者字段。
-- [ ] 主文本/提示词编辑获取续期、保存确认后释放；离线/失效保留草稿。
-- [ ] 既有保存状态UI展示占用；API/OpenAPI/数据库文档同步。
-- [ ] 覆盖过期/丢ACK/任务进度/恢复删除/多实例，有限专项和review。
+- [x] 主文本/提示词编辑获取续期、保存确认后释放；离线/失效保留草稿。
+- [x] 既有保存状态UI展示占用；API/OpenAPI/数据库文档同步。
+- [x] 覆盖过期/丢ACK/任务进度/恢复删除/多实例，有限专项和review。
 
 ## Task 6: 普通画布命令接入及字段级冲突合并
 Dependencies: Task1/5；与Task2共享panel外的user-session文件变更需协调。
@@ -69,23 +69,23 @@ Files: web/lib/user-session.ts、stores/canvas/use-canvas-session-store.ts、pag
 Interfaces: 新旧写入统一事件流；字段基线仅用于允许的补丁，结构关系仍用实体版本；租约proof进入同命令。
 - [x] 登录/打开普通画布即接命令workspace，安全处理新画布/规范化/本地未确认草稿。
 - [x] 同节点不同字段安全合并，同字段冲突不覆盖；批量/删除/引用结构维持基线。
-- [ ] 验证旧PUT/Agent与命令交叉写、save丢ACK、断网重连和现有生成/历史入口。
-- [ ] 专项测试、契约再生成和类型检查，独立review。
+- [x] 验证旧PUT/Agent与命令交叉写、save丢ACK、断网重连和现有生成/历史入口。
+- [x] 专项测试、契约再生成和类型检查，独立review。
 
 ## Task 7: 实时失效与presence
 Dependencies: Task1/5/6。
-Files: canvas/realtime*.go、app/service与仓储提交后通知；handler/canvas_realtime.go；web/services/canvas-realtime-client.ts、画布presence overlay/状态消费；可选Redis协调及测试。
+Files: repository/canvas_realtime.go、canvas/realtime*.go、app/canvas_realtime.go与service基础连接装配；handler/canvas_realtime.go；web/services/canvas-realtime-client.ts、画布presence overlay/状态消费；可选Redis协调及测试。
 Interfaces: cookie鉴权画布WS房间；提交后invalidate触发既有事件补拉；cursor/drag/device为临时状态。
 - [x] 事务提交后通知覆盖所有写路；Redis跨实例，断线/Redis不可用仍可事件恢复。
-- [ ] 设备1–64租期60秒、15秒续期；请求限速、重验归属、清理连接，不将临时坐标落文档。
-- [ ] 前端在线端/光标和占用状态，主题/圆角按既有token。
-- [ ] 有限WS/Redis行为专项与客户端恢复测试，独立review。
+- [x] 设备1–64租期60秒、15秒续期；请求限速、重验归属、清理连接，不将临时坐标落文档。
+- [x] 前端在线端/光标和占用状态，主题/圆角按既有token。
+- [x] 有限WS/Redis行为专项与客户端恢复测试，独立review。
 
 ## Task 8: 文档、集成审查与交付
 Dependencies: Task1–7。
 Files: docs/design及backend API/数据库/代码地图、pending-test；VERSION/CHANGELOG。
-- [ ] 维护实际完成清单和设计边界；不把静态测试写成浏览器/厂商验收。
-- [ ] 执行一次受影响Go合同/架构检查、前端类型检查及精确专项集；新失败仅按影响补测。
-- [ ] 汇总review package并独立整分支审查，修复发现后单次限定复审。
+- [x] 维护实际完成清单和设计边界；不把静态测试写成浏览器/厂商验收。
+- [x] 执行一次受影响Go合同/架构检查、前端类型检查及精确专项集；新失败仅按影响补测。
+- [x] 汇总review package并独立整分支审查，修复发现后单次限定复审。
 - [ ] 本地主题分支提交，按仓库脚本生成版本/更新日志，保持main与远端不动。
 
