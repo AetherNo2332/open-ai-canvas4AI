@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## v1.6.0(d03067e)
+
+- 根目录精简为默认、build、deploy、dev、local、server 六份常用 Compose，删除七份专项配置并清理旧入口；隔离验收脚本改为按专用项目与服务标签定位既有容器。
+- 生产 deploy/server 默认启动 Agent，无需 pi profile；backend 与 Agent 共用必填内部令牌，Agent 只经内部网络访问后端。build 与源码安装同时构建 backend、web 和 Agent，并补齐构建前的镜像变量。
+- 安装脚本为首次安装和缺值旧环境生成随机令牌，复用已有有效值并拒绝过短值；源码、镜像及 Host Updater 默认来源统一到 AetherNo2332/open-ai-canvas4AI。
+- 镜像安装与在线更新同步管理三份应用镜像，迁移和回退前停止 Agent；旧 Compose 没有 Agent 时跳过。旧部署需通过新版安装入口补齐令牌、Agent 镜像和 updater；镜像安装必须选用包含本次修复的实际已发布版本。
+- 无数据库结构迁移。9项 Python 定向测试、Host Updater 模块、7组 Compose 静态解析和3份安装脚本语法检查通过；Windows 下1项 POSIX 权限断言跳过，独立审查无新增阻断。真实服务器安装、Agent 执行、升级和回退仍待运行验收。
+
 ## v1.6.0(7067997)
 
 - Agent 设置新增统一的“提示词与规则”菜单，分别编辑账户全局自定义系统提示词和当前画布 Workspace 文档。当前画布规则冲突时优先于全局默认，本次用户要求及平台权限、预算、审批约束始终优先；保存仅影响后续新运行。
