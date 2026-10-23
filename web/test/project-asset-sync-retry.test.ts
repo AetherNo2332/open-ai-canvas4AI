@@ -5,6 +5,7 @@ import type { InternalAxiosRequestConfig } from "axios";
 import { CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, createCanvasProjectAssetLinkQueue } from "@/lib/canvas/project-asset-link-queue";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { apiClient } from "@/services/api/request";
+import { upsertRemoteAsset } from "@/services/api/user-data";
 import { createCanvasProjectAssetLinkRetryRunner, ensureCanvasNodeAsset, retryPendingCanvasProjectAssetLinks } from "@/services/project-asset-sync";
 import { deleteAssetWithRemoteSync, initializeRemoteUserDataSession, resetRemoteUserDataSync } from "@/services/user-data-sync";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
@@ -293,4 +294,90 @@ test("two executors cannot let an older in-flight relation overwrite a newer com
     expect(serverFolder).toBe("new");
     expect(staleRequestsRejected).toBe(1);
     expect(await queue.list()).toEqual([]);
+});
+
+test("a late create after404 adopts another device's new edited body without overwriting it", async () => {
+    const online = { value: false };
+    const scope = "owner-create-race";
+    installStorage(scope, online);
+    const local: Asset = { id: "new-body", kind: "text", title: "Old local title", coverUrl: "", tags: [], category: "material", data: { content: "old local body" }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+    useAssetStore.getState().replaceAssets([local]);
+    await initializeRemoteUserDataSession(scope);
+    const queue = createCanvasProjectAssetLinkQueue(localForageStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope);
+    await queue.upsert({ assetId: local.id, domainProjectId: "project-a", createAssetIfMissing: true });
+    await queue.upsert({ assetId: local.id, domainProjectId: "project-b", createAssetIfMissing: true });
+    let reachedCreate!: () => void;
+    let releaseCreate!: () => void;
+    const createStarted = new Promise<void>((resolve) => { reachedCreate = resolve; });
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    let conditionalCreates = 0;
+    let staleCreateRejected = 0;
+    apiClient.defaults.adapter = async (config) => {
+        if (config.url === `/assets/${local.id}` && config.method === "put") {
+            const incoming = JSON.parse(config.data).asset as Asset;
+            if (incoming.title === local.title) {
+                reachedCreate();
+                await createGate;
+            }
+            if (config.headers.get("If-None-Match") === "*") {
+                conditionalCreates += 1;
+                if (cloudAssets.has(local.id)) {
+                    staleCreateRejected += 1;
+                    return { data: { code: 412, data: null, reason: "asset_already_exists", msg: "素材已存在" }, status: 412, statusText: "Precondition Failed", headers: {}, config };
+                }
+            }
+        }
+        const entityResponse = assetAPIResponse(config);
+        if (entityResponse) return entityResponse;
+        const projectRevision = config.method === "get" ? 1 : 2;
+        return { data: { code: 0, data: { projectRevision, asset: null }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    online.value = true;
+    const firstExecutor = createCanvasProjectAssetLinkRetryRunner();
+    const secondExecutor = createCanvasProjectAssetLinkRetryRunner();
+    const first = firstExecutor(scope);
+    await createStarted;
+    // A separate device can use the public API while this page is awaiting a response.
+    await upsertRemoteAsset({ ...local, title: "Other device created" });
+    const fresh = { ...local, title: "Other device edited", data: { content: "new cloud body" }, metadata: { note: "new cloud metadata" } } as Asset;
+    await upsertRemoteAsset(fresh);
+    const second = secondExecutor(scope);
+    releaseCreate();
+    await Promise.all([first, second]);
+
+    expect(conditionalCreates).toBe(1);
+    expect(staleCreateRejected).toBe(1);
+    expect(cloudAssets.get(local.id)).toEqual(fresh);
+    expect(useAssetStore.getState().assets[0]?.title).toBe(fresh.title);
+    expect(await queue.list()).toEqual([]);
+});
+
+test("a captured true permission cannot recreate an asset after its durable permission was sealed", async () => {
+    const online = { value: false };
+    const scope = "owner-sealed-create";
+    installStorage(scope, online);
+    const local: Asset = { id: "sealed-body", kind: "text", title: "Cached title", coverUrl: "", tags: [], category: "material", data: { content: "Cached content" }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+    useAssetStore.getState().replaceAssets([local]);
+    await initializeRemoteUserDataSession(scope);
+    const queue = createCanvasProjectAssetLinkQueue(localForageStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope);
+    const captured = await queue.upsert({ assetId: local.id, domainProjectId: "project", createAssetIfMissing: true });
+    let missingReads = 0;
+    let bodyWrites = 0;
+    apiClient.defaults.adapter = async (config) => {
+        if (config.url === `/assets/${local.id}` && config.method === "get") {
+            missingReads += 1;
+            await queue.markAssetPersisted(captured);
+        }
+        if (config.method === "put") bodyWrites += 1;
+        return assetAPIResponse(config)!;
+    };
+    online.value = true;
+
+    await createCanvasProjectAssetLinkRetryRunner()(scope);
+
+    expect(captured.createAssetIfMissing).toBe(true);
+    expect(missingReads).toBe(1);
+    expect(bodyWrites).toBe(0);
+    expect(cloudAssets.has(local.id)).toBe(false);
+    expect((await queue.list())[0]?.createAssetIfMissing).toBe(false);
 });

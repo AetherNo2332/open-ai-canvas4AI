@@ -74,7 +74,7 @@ export async function initializeRemoteUserDataSession(userId: string) {
     notifyRemoteUserDataReady();
 }
 
-async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create" | "existing", projectId?: string) {
+async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create" | "existing", projectId?: string, mayCreate?: () => Promise<boolean>) {
     const epoch = sessionEpoch;
     const scope = getActiveUserScope();
     const local = useAssetStore.getState().assets.find((asset) => asset.id === assetId);
@@ -92,15 +92,31 @@ async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create"
         if (!(error instanceof ApiError) || error.status !== 404) throw error;
         unchanged();
         if (mode === "check") return false;
-        if (mode === "existing") throw Object.assign(new Error("云端素材已删除或无法确认其创建来源，已停止自动重建；请另存为新素材或放弃此关联待办"), { permanent: true });
+        const creationDenied = () => Object.assign(new Error("云端素材已删除或当前关联待办已不允许创建，已停止自动重建；请另存为新素材或放弃此关联待办"), { permanent: true });
+        if (mode === "existing" || !(await mayCreate?.())) throw creationDenied();
+        unchanged();
         if (!local) throw Object.assign(new Error("素材已删除，无法关联到项目"), { permanent: true });
         const payload = await ensureRemoteResourceReferences(assetForRemoteSync(local), new Map());
         unchanged();
-        await upsertRemoteAsset(payload);
+        // Uploading references can take long enough for another tab to seal or
+        // replace this intent. Re-read durable permission just before creation.
+        if (!(await mayCreate?.())) throw creationDenied();
         unchanged();
-        acknowledgedAssets.set(assetId, local);
-        verifiedAssets.add(assetId);
-        return true;
+        try {
+            await upsertRemoteAsset(payload, { createOnly: true });
+            unchanged();
+            acknowledgedAssets.set(assetId, local);
+            verifiedAssets.add(assetId);
+            return true;
+        } catch (createError) {
+            if (!(createError instanceof ApiError) || createError.status !== 412 || createError.reason !== "asset_already_exists") throw createError;
+            // The404 was only an observation. Another device can create/edit
+            // before our PUT; adopt it rather than retrying an unconditional PUT.
+            const result = await getRemoteAsset(assetId);
+            unchanged();
+            remote = parseAssetRecord(result.asset);
+            if (remote.id !== assetId) throw new Error("云端素材标识不匹配，已停止同步");
+        }
     }
     if (projectId) {
         const projectIds = Array.isArray(remote.metadata?.projectIds) ? remote.metadata.projectIds.filter((id): id is string => typeof id === "string") : [];
@@ -113,10 +129,10 @@ async function recoverProjectLinkAsset(assetId: string, mode: "check" | "create"
 }
 
 /** Relation recovery only creates a body after a confirmed404; existing bodies are read-only. */
-export async function prepareRemoteAssetForProjectLink(assetId: string, createIfMissing = false) {
+export async function prepareRemoteAssetForProjectLink(assetId: string, mayCreate: () => Promise<boolean>) {
     await withRemoteUserDataSyncExclusive(async () => {
         requireRemoteUserDataBaseline();
-        await recoverProjectLinkAsset(assetId, createIfMissing ? "create" : "existing");
+        await recoverProjectLinkAsset(assetId, "create", undefined, mayCreate);
     });
 }
 
@@ -818,7 +834,22 @@ async function saveRemoteUserDataBatch(uploaded: Map<string, string>, options: {
     // 已确认快照记录的是本次上传所依据的本地实体；上传期间的新编辑会在下一轮继续提交。
     // 素材先于画布提交。这样画布中的 resource: 引用一旦成为远端事实，
     // 对应 Asset 已经存在，刷新或换设备不会出现只占容量、不见素材的窗口。
+    const linkScope = getActiveUserScope();
+    const pendingLinkQueue = createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(linkScope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, linkScope);
+    const pendingLinks = dirtyAssets.some((asset) => !acknowledgedAssets.has(asset.id)) ? await pendingLinkQueue.list() : [];
     for (const source of dirtyAssets) {
+        const assetLinks = pendingLinks.filter((entry) => entry.assetId === source.id);
+        if (!acknowledgedAssets.has(source.id) && assetLinks.length) {
+            // Auto-save must not bypass the relation runner's create-only path.
+            // An existing body is adopted; a missing body needs current durable permission.
+            await recoverProjectLinkAsset(source.id, "create", undefined, async () => {
+                if (linkScope !== getActiveUserScope()) throw new DOMException("账号已切换", "AbortError");
+                const current = await pendingLinkQueue.list();
+                return current.some((entry) => entry.assetId === source.id && entry.createAssetIfMissing === true && assetLinks.some((captured) => captured.domainProjectId === entry.domainProjectId && captured.intentToken === entry.intentToken && captured.revision === entry.revision));
+            });
+            for (const entry of assetLinks) await pendingLinkQueue.markAssetPersisted(entry);
+            continue;
+        }
         const remotePayload = await ensureRemoteResourceReferences(assetForRemoteSync(source), uploaded);
         await upsertRemoteAsset(remotePayload);
         acknowledgedAssets.set(source.id, source);

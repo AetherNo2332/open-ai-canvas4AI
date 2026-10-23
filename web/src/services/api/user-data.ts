@@ -100,8 +100,8 @@ export function getRemoteAssetsByIds(ids: string[]) {
     return http.post<{ assets: Asset[] }>("/assets/batch", { ids });
 }
 
-export function upsertRemoteAsset(asset: Asset) {
-    return http.put<{ asset: RemoteUserDataSummary }>(`/assets/${encodeURIComponent(asset.id)}`, { asset });
+export function upsertRemoteAsset(asset: Asset, options: { createOnly?: boolean } = {}) {
+    return http.put<{ asset: RemoteUserDataSummary }>(`/assets/${encodeURIComponent(asset.id)}`, { asset }, options.createOnly ? { headers: { "If-None-Match": "*" } } : undefined);
 }
 
 export function deleteRemoteAsset(id: string) {

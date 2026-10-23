@@ -189,7 +189,10 @@ async function performProjectAssetLink(job: PendingCanvasProjectAssetLink, scope
     ensureScope();
     if (!(await isCurrent())) return false;
     // A relation retry may create a missing body, but never overwrite an existing body.
-    await prepareRemoteAssetForProjectLink(job.assetId, job.createAssetIfMissing === true);
+    await prepareRemoteAssetForProjectLink(job.assetId, async () => {
+        ensureScope();
+        return (await queueForScope(scope).list()).some((entry) => entry.assetId === job.assetId && entry.domainProjectId === job.domainProjectId && entry.intentToken === job.intentToken && entry.revision === job.revision && entry.createAssetIfMissing === true);
+    });
     await queueForScope(scope).markAssetPersisted(job);
     ensureScope();
     for (let attempt = 0; attempt < 3; attempt += 1) {

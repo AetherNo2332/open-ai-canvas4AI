@@ -8,6 +8,7 @@ import { initializeRemoteUserDataSession, resetRemoteUserDataSync, saveRemoteUse
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
 const originalWindow = globalThis.window;
+const originalNavigator = globalThis.navigator;
 const originalAdapter = apiClient.defaults.adapter;
 const originalGet = localforage.getItem;
 const originalSet = localforage.setItem;
@@ -18,6 +19,7 @@ afterEach(() => {
     resetRemoteUserDataSync();
     useAssetStore.getState().replaceAssets([]);
     Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: originalNavigator });
     apiClient.defaults.adapter = originalAdapter;
     localforage.getItem = originalGet;
     localforage.setItem = originalSet;
@@ -87,4 +89,43 @@ test("login recovery of an existing pending asset adopts cloud content instead o
 
     expect(calls).toEqual(["get /assets/asset"]);
     expect(useAssetStore.getState().assets[0]).toEqual(cloud);
+});
+
+test("the ordinary save batch uses create-only recovery for an unacknowledged pending asset", async () => {
+    const scope = "owner-batch-race";
+    installSnapshot(scope);
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: false } });
+    await initializeRemoteUserDataSession(scope);
+    const local = { ...localAsset("batch-asset"), title: "stale local body" };
+    const fresh = { ...localAsset("batch-asset"), title: "other device edited", data: { content: "new cloud body" }, metadata: { note: "new cloud metadata" } } as Asset;
+    useAssetStore.getState().replaceAssets([local]);
+    const queue = createCanvasProjectAssetLinkQueue(localForageStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope);
+    await queue.upsert({ assetId: local.id, domainProjectId: "project", createAssetIfMissing: true });
+    let cloud: Asset | undefined = fresh;
+    let firstGet = true;
+    let conditionalCreates = 0;
+    const calls: string[] = [];
+    apiClient.defaults.adapter = async (config) => {
+        calls.push(`${config.method} ${config.url}`);
+        if (config.method === "get" && firstGet) {
+            firstGet = false;
+            return { data: { code: 404, data: null, msg: "素材不存在" }, status: 404, statusText: "Not Found", headers: {}, config };
+        }
+        if (config.method === "put") {
+            if (config.headers.get("If-None-Match") === "*") {
+                conditionalCreates += 1;
+                return { data: { code: 412, data: null, reason: "asset_already_exists", msg: "素材已存在" }, status: 412, statusText: "Precondition Failed", headers: {}, config };
+            }
+            cloud = JSON.parse(config.data).asset;
+        }
+        return { data: { code: 0, data: { asset: cloud }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+
+    await saveRemoteUserDataNow([]);
+
+    expect(cloud).toEqual(fresh);
+    expect(conditionalCreates).toBe(1);
+    expect(calls).toEqual(["get /assets/batch-asset", "put /assets/batch-asset", "get /assets/batch-asset"]);
+    expect(useAssetStore.getState().assets[0]).toEqual(fresh);
+    expect((await queue.list())[0]?.createAssetIfMissing).toBe(false);
 });
