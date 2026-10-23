@@ -1137,6 +1137,10 @@ func cloudAgentSafeToolError(err error) string {
 	if err == nil {
 		return ""
 	}
+	var lease *repository.CanvasEditLeaseError
+	if errors.As(err, &lease) {
+		return "节点编辑租约冲突；请保留当前工作，等待编辑结束或重新获取有效证明后再操作"
+	}
 	var readLoopErr *cloudAgentReadLoopError
 	if errors.As(err, &readLoopErr) {
 		return readLoopErr.Error()
@@ -1244,6 +1248,11 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 			}
 		}
 		var admissionErr *cloudAgentMediaAdmissionError
+		var lease *repository.CanvasEditLeaseError
+		if errors.As(err, &lease) {
+			detail["reason"], detail["canvasId"], detail["nodeId"] = lease.Reason, lease.CanvasID, lease.NodeID
+			detail["guidance"] = "本次工具副作用已回滚；不要立即重复写入。等待节点编辑结束，或让编辑客户端重新获取有效证明；可继续处理其他节点或只读工作"
+		}
 		if errors.As(err, &admissionErr) {
 			detail["reason"], detail["nodeId"] = admissionErr.Reason, admissionErr.NodeID
 		}
@@ -1499,7 +1508,7 @@ func cloudAgentInvalidateReadCache(state *cloudAgentRuntime) {
 // executeCloudAgentToolCall applies one preflighted business tool call. Pi owns
 // the model loop; this function performs the Go-side operation and records its
 // result in the same run transaction.
-func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
+func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecution, state *cloudAgentRuntime) error {
 	if run == nil || state == nil || (run.Status != "running" && run.Status != "queued") {
 		return nil
 	}
@@ -2041,6 +2050,8 @@ func (s *Service) executeCloudAgentToolCall(run *model.CloudAgentExecution, stat
 			// 画布写入与 recorder 共用本事务，recorder 失败时若仍提交，就会出现
 			// "画布已改 + 失败回执"的不一致状态（Codex 评审指出）。
 			// 只有已知的业务拒绝才作为回执交回模型自纠。
+			// Lease errors must also roll back here; the outer call wrapper records
+			// their business receipt only after this transaction has been undone.
 			if toolErr != nil && !cloudAgentToolErrorIsBusiness(toolErr) {
 				return toolErr
 			}
@@ -2071,6 +2082,10 @@ func cloudAgentToolErrorIsBusiness(err error) bool {
 	if err == nil {
 		return false
 	}
+	var lease *repository.CanvasEditLeaseError
+	if errors.As(err, &lease) {
+		return false
+	} // even if an adapter wrapped it in AppError
 	var argumentErr *cloudAgentArgumentError
 	if errors.As(err, &argumentErr) {
 		return true
@@ -2366,6 +2381,10 @@ func (s *Service) enqueueCloudAgentTask(run *model.CloudAgentExecution, state *c
 }
 
 func (s *Service) cloudAgentMediaError(run *model.CloudAgentExecution, state *cloudAgentRuntime, phase string, submitted, terminal bool, err error) error {
+	var lease *repository.CanvasEditLeaseError
+	if errors.As(err, &lease) {
+		return err
+	} // outer executor records only after rollback
 	return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 		if state.CallIndex < 0 || state.CallIndex >= len(state.Calls) {
 			current.Status = "failed"

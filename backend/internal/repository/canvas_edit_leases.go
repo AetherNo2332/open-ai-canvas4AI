@@ -119,7 +119,7 @@ func (r *Repository) mutateCanvasEditLease(ownerID, canvasID string, proof Canva
 		if err != nil && !tx.IsMissing(err) {
 			return err
 		}
-		now := time.Now()
+		now := time.Now().UTC()
 		active := exists && row.ExpiresAt.After(now)
 		switch action {
 		case "acquire":
@@ -163,8 +163,24 @@ func (r *Repository) ReleaseCanvasEditLease(ownerID, canvasID string, proof Canv
 }
 func (r *Repository) ActiveCanvasEditLeases(ownerID, canvasID string) ([]model.CanvasNodeEditLease, error) {
 	rows := []model.CanvasNodeEditLease{}
-	err := r.db.Select("canvas_id", "node_id", "session_id", "expires_at").Where("owner_id = ? AND canvas_id = ? AND expires_at > ?", ownerID, canvasID, time.Now()).Order("node_id").Find(&rows).Error
-	return rows, err
+	now := time.Now().UTC()
+	query := r.db.Select("canvas_id", "node_id", "session_id", "expires_at").Where("owner_id = ? AND canvas_id = ?", ownerID, canvasID)
+	// SQLite compares offset-bearing time strings lexically. Scoped Go filtering
+	// also handles the short-lived non-UTC rows written before normalization.
+	if r.Dialect() != "sqlite" {
+		query = query.Where("expires_at > ?", now)
+	}
+	if err := query.Order("node_id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	active := make([]model.CanvasNodeEditLease, 0, len(rows))
+	for _, row := range rows {
+		if row.ExpiresAt.After(now) {
+			row.ExpiresAt = row.ExpiresAt.UTC()
+			active = append(active, row)
+		}
+	}
+	return active, nil
 }
 
 // Only explicit summary columns are read; StateJSON/transcripts are not needed
@@ -226,12 +242,20 @@ func canvasAuthorFields(node map[string]any) map[string]any {
 // checkCanvasAuthorLeases runs only after the account/canvas lock and compares
 // actual persisted author data, regardless of caller (task, Agent or HTTP).
 func (r *Repository) checkCanvasAuthorLeases(before, after *model.CanvasProject) error {
-	if before == nil {
+	identity := before
+	if identity == nil {
+		identity = after
+	}
+	if identity == nil {
 		return nil
 	}
-	prior, err := canvasLeaseNodes(before.PayloadJSON)
-	if err != nil {
-		return err
+	prior := map[string]map[string]any{}
+	var err error
+	if before != nil {
+		prior, err = canvasLeaseNodes(before.PayloadJSON)
+		if err != nil {
+			return err
+		}
 	}
 	next := map[string]map[string]any{}
 	if after != nil {
@@ -262,7 +286,7 @@ func (r *Repository) checkCanvasAuthorLeases(before, after *model.CanvasProject)
 		return nil
 	}
 	rows := []model.CanvasNodeEditLease{}
-	if err := r.db.Where("owner_id = ? AND canvas_id = ? AND node_id IN ?", before.UserID, before.ID, changed).Find(&rows).Error; err != nil {
+	if err := r.db.Where("owner_id = ? AND canvas_id = ? AND node_id IN ?", identity.UserID, identity.ID, changed).Find(&rows).Error; err != nil {
 		return err
 	}
 	leases := map[string]model.CanvasNodeEditLease{}
@@ -273,17 +297,17 @@ func (r *Repository) checkCanvasAuthorLeases(before, after *model.CanvasProject)
 		row, exists := leases[id]
 		var proof *CanvasEditProof
 		for i := range proofs {
-			if proofs[i].CanvasID == before.ID && proofs[i].NodeID == id {
+			if proofs[i].CanvasID == identity.ID && proofs[i].NodeID == id {
 				proof = &proofs[i]
 				break
 			}
 		}
-		active := exists && row.ExpiresAt.After(time.Now())
+		active := exists && row.ExpiresAt.After(time.Now().UTC())
 		if proof != nil && (!active || !matchingLease(row, *proof)) {
-			return leaseFailure("edit_proof_invalid", before.ID, id)
+			return leaseFailure("edit_proof_invalid", identity.ID, id)
 		}
 		if active && proof == nil {
-			return leaseFailure("node_locked", before.ID, id)
+			return leaseFailure("node_locked", identity.ID, id)
 		}
 	}
 	return nil

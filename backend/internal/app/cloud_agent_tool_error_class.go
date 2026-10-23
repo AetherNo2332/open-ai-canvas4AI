@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"infinite-canvas/backend/internal/repository"
 	"strings"
 )
 
@@ -53,6 +54,13 @@ func cloudAgentToolErrorClass(req CloudAgentRequest, call cloudAgentCall, err er
 	}
 	if cloudAgentSnapshotConflict(err) {
 		return cloudAgentToolErrorStateConflict, true, "reread_canvas"
+	}
+	var lease *repository.CanvasEditLeaseError
+	if errors.As(err, &lease) {
+		if lease.Reason == "edit_proof_invalid" {
+			return cloudAgentToolErrorStateConflict, false, "reacquire_edit_lease"
+		}
+		return cloudAgentToolErrorStateConflict, false, "wait_for_edit_lease"
 	}
 	if cloudAgentReferenceMigrationBlocked(err) {
 		return cloudAgentToolErrorStateConflict, false, "complete_reference_migration"
