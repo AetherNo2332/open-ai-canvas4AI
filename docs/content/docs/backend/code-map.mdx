@@ -5,6 +5,19 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## 画布一致性、编辑与实时协作
+
+- `repository/canvas_write_boundary.go`、`canvas_commands.go`：账号与画布锁、事务配额、旧写入的版本/事件投影、实体generation；`commands/field_merge.go`：仅对有完整字段基线的普通节点补丁放宽目标版本，保留引用读取集与最终SQL CAS。
+- `repository/canvas_edit_leases.go`、`canvas/edit_leases.go`、`handler/canvas_sync.go`：节点作者字段租约和不含证明的同步状态；`app/cloud_agent_edit_lease.go`：先回滚工具副作用，再持久化租约业务冲突回执。
+- `web/src/services/canvas-command-bootstrap.ts`、`canvas-command-editor-binding.ts`、`canvas-command-session.ts`：旧缓存归档与可信迁移、原始编辑基线、不可变请求身份和待确认日志；`canvas-edit-leases.ts`、`canvas-author-drafts.ts`：浏览器租约与账号隔离的作者草稿。
+- `repository/canvas_realtime.go`、`canvas/realtime*.go`、`app/canvas_realtime.go`、`handler/canvas_realtime.go`：已提交版本观察、Redis临时协同、Cookie鉴权WS；前端 `canvas-realtime-client.ts` 与 `use-canvas-realtime.ts` 只唤醒事件补拉和绘制临时presence。
+- `nginx.conf`、`web/vite.config.ts`：仅实时路径的WebSocket升级转发；`web/test/canvas-realtime-proxy.test.mjs`：真实开发代理的upgrade、Cookie/Origin和普通API/SSE行为验证。
+
+## 云端会话目录与素材关联恢复
+
+- `app/cloud_agent_conversations.go`、`repository/cloud_agent_conversations.go`、`web/src/services/cloud-agent-history.ts`：账号/画布归属校验、目录和轮次分页、完整事件重放；`cloud-agent-events.ts` 复用同一展示投影，不改变记忆或压缩策略。
+- `project_asset_sync.go`、`asset_create_only.go`：项目关系revision CAS与条件创建；前端 `project-asset-link-queue.ts`、`project-asset-link-storage.ts`、`project-asset-sync.ts` 和 `user-data-sync.ts`：持久意图、确认事实、退避及基线恢复，避免旧关系请求重写素材正文。
+
 ## 生产 Agent 部署
 
 - `docker-compose.deploy.yml`、`docker-compose.server.yml`：默认启动内部 Agent worker，backend 签名材料与 Worker 凭据分开；`docker-compose.build.yml`：源码构建三份应用镜像。

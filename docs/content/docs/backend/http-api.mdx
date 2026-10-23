@@ -252,11 +252,17 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 ## 画布命令与声明式引用
 
+普通登录画布在远端基线就绪后启用命令工作区。连接前先归档未确认缓存；只有原epoch与版本一致，或已有确认内容基线与当前云端匹配时，才自动迁移缓存差异。无法确认来源的旧缓存保留为恢复草稿。已有未确认journal优先按原请求身份恢复；丢回执重试不修改命令正文、operationId或字段基线。连接尚未就绪时，显式画布保存返回错误，素材单独同步仍可继续。
+
+`update_node` 可选携带 `fieldBaselines: { nodeType, workflowKind?, generation?, fields: { [patchAlias]: { exists, value } } }`。路径由服务端能力目录解析；缺失字段为 `{exists:false,value:null}`，显式null为 `{exists:true,value:null}`。每个补丁别名及受保护的派生写都需原始基线，generation取编辑时快照的 `entityGenerations["node:" + id]`，0是有效值。只有纯节点更新批次才有条件合并不同字段；同字段、对象重建、真实引用输入和结构操作仍拒绝陈旧意图。缺少证明的旧客户端保持严格版本校验；权限、完整读取集和持久SQL CAS始终生效。
+
+项目归属暂没有独立命令。兼容入口先确认待办命令已保存，再读取最新云端正文、仅改projectId并做一次revision CAS写入，成功后补读命令事件；冲突或未确认状态停止，不重传本地整画布缓存。
+
 网页画布使用画布命令协议（路由沿用历史前缀 `/api/desktop/canvases/*`，由云端 `cmd/server` 注册）：`POST /api/desktop/canvases/:canvasId/commands` 提交命令，`GET /api/desktop/canvases/:canvasId/snapshot` 读取快照投影，信封和错误格式与其他业务接口一致（字段级错误放在 `data.reason` 和 `data.field`）。引用字段与派生连接在同一次事务内进入差异、历史和撤销，服务端不依赖分镜 UI 是否打开。
 
 - `migrate_references`（仅画布客户端）：`id` 是画布 ID，`patch` 只接受 `scopeChoices`（`scopeKey` → `fields` | `connections`）。它把历史画布的字段与旧连线矛盾按选择定案，写入权威字段、托管连线与 `referenceFieldsVersion=1`；未决冲突返回 `reference_migration_conflict` 且整份文档不变，已规范化的文档返回 `reference_migration_not_required`。该操作不向 Agent 暴露，`canvas_apply_ops` 不认识它；超出目标容量的旧连线不会被接管，保持为普通连线。
 - 规范化门禁：文档缺少 `referenceFieldsVersion` 时，改动引用内容的编辑与生成返回 `reference_migration_required`；读取、预览、导出、改名、删除画布和画布外观设置不受限制，任务结果回写也不经过该门禁。
-- 普通网页迁移同样使用上述快照与命令接口，不要求初始化桌面命令工作区。提交前保存本地编辑并重新读取快照；若冲突来源已变化则要求重新确认。成功后通过既有云端同步链路刷新画布。
+- 普通网页迁移在自动接入的命令工作区中使用上述快照与命令接口，无需桌面运行环境。提交前保留原编辑基线和本地草稿；若冲突来源已变化则要求重新确认，不能取新版号重发旧内容。成功后通过命令事件刷新画布。
 - Agent 的画布读取投影包含 `referenceMigration.required`；需要迁移时附带 `reason=reference_migration_required` 和面向画布的下一步说明。行 `characters` 中的 `characterImageNodeId` / `characterAssetId` 也受引用门禁约束。该错误回执为 `retryable=false`、`requiredAction=complete_reference_migration`，不会返回参数修复提示或消耗参数纠错次数。
 - `edit_storyboard` 新增 `set_references`：只接受表级 `referenceNodeIds`（`[]` 清空），不接受行或输出参数。
 - 原生命令 `bind_storyboard_output`：`id` 是分镜表节点，`rowId` 为行 ID，`outputMode` 取 `image` | `video`，`sourceNodeId` 是产物节点 ID；传空串解除归属并保留媒体。行或产物仍有持久活跃任务时返回 `reference_busy`，产物已属于另一分镜行时拒绝。
@@ -265,6 +271,28 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 - `model_list` 的分镜模式：传 `mode` + `storyboardNodeId` + `storyboardRowId`，按该行解析出的真实输入筛选模型，且不接受 `referenceNodeIds`。
 - Agent 引用合同：`connect_nodes`、`update_connection`、`delete_connection` 以及 `fromNodeId`／`toNodeId`／`fromHandleId`／`toHandleId` 统一被拒（`connection_ops_disabled`）；`update_node.patch` 不能写 `connections`、`metadata`、`managedBy`、`referenceOwnerNodeId`、`referenceBindingId`（`reference_field_reserved`）。
 
+## 节点编辑租约与实时状态
+
+以下路径均带 `/api` 前缀并使用现有登录会话：
+
+| 接口 | 合同 |
+| --- | --- |
+| `POST /canvas-projects/:id/edit-leases/acquire` | `{nodeId,sessionId,token}` 获取30秒作者字段租约；客户端先生成32–128字节安全随机证明，同会话同证明可幂等重试 |
+| `POST /canvas-projects/:id/edit-leases/renew` | 相同入参续期；错误或过期证明返回409 `edit_proof_invalid` |
+| `POST /canvas-projects/:id/edit-leases/release` | 按原证明释放；保存应先等待持久回执，不能把本地setNodes当作成功 |
+| `GET /canvas-projects/:id/sync-status` | 返回revision、documentEpoch、eventSeq、公开leases和多项activeAgents；不返回证明或Agent内部状态 |
+| `GET /canvas-projects/:id/realtime` | Cookie鉴权WebSocket；校验Origin并定期重验会话与画布归属 |
+
+持久写入的证明只放 `X-Canvas-Edit-Proofs` JSON数组header，最多128项、32KiB，不放URL、命令正文或journal。其他会话正在编辑时返回409 `node_locked`。所有writer都在持久边界验证作者字段；任务进度和媒体输出在作者内容不变时可以继续。Agent遇到租约冲突先回滚本次副作用，再保存可行动的业务拒绝回执。
+
+实时JSON帧要求 `protocolVersion:1`。ready/sync/invalidate只唤醒既有events/snapshot补读，不是保存ACK；peers是临时设备、光标与拖动快照。设备显示号1–64，15秒心跳、60秒租期；Redis故障时明确degraded/recovering并清除过期远端成员，号0不提供编辑授权。客户端入站限制32KiB，服务端快照上限512KiB；慢客户端断开后重连补读。代理必须允许该路径的HTTP升级、Cookie、Origin和外部Host；普通事件轮询仍是恢复基础。
+
+## 项目素材关联的条件同步
+
+`GET /api/projects/:id/assets/:assetId/sync` 返回当前项目revision及关系基线；对应PUT接受 `expectedProjectRevision` 与关系字段，账号与项目归属均校验，任意冲突整批回滚并返回409 `project_asset_sync_conflict`。省略的关系字段保留，不把本地素材正文作为关联恢复载荷；素材分类沿用已有全局Asset.Category语义，不新增每项目分类副本。
+
+新增素材可通过既有 `PUT /api/assets/:id` 加 `If-None-Match: *` 做条件创建。相同ID已存在时返回412 `asset_already_exists`，客户端重新GET并采用现有记录，不能回退为无条件覆盖。已确认存在的素材在本浏览器账号范围内记录持久事实，旧关系ACK、更换folder、移除后重建待办和刷新都不会重新授予创建权限；这不等同于服务端跨设备删除tombstone。
+
 ## 欢迎页开放配置
 
 `GET /public/welcome` 无需登录，信封 `data` 仅包含布尔值 `welcomeEnabled`，响应禁用缓存。读取失败按标准错误信封返回。
@@ -272,6 +300,10 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 管理员通过 `GET/PATCH /admin/settings/features` 读取和保存 `welcomeEnabled`，默认 `true`，与其他功能开关一起存入 `system_settings` 的 `feature_availability` JSON，并记录管理员审计。关闭后新访问 `/welcome` 的浏览器跳转到 `/`。
 
 ## 云端 Agent
+
+云端目录支持跨设备发现当前账号画布的会话：`GET /api/agent/conversations?canvasId=...&before=...&limit=...` 返回items和可选nextCursor，`GET /api/agent/conversations/:id/runs?after=...&limit=...` 分页读取轮次。游标是不透明值，直接使用响应值续读；动态子代理不作为独立父会话重复列出。接续已过期父轮会在计费前拒绝，重复已确认请求仍先回放回执。
+
+从头恢复事件可用运行详情的 `fromStart=true`、`sinceSeq`、`eventLimit`，运行中继续沿SSE游标增量消费。前端保留本地草稿和未知POST身份，目录刷新不能回退刚提交的新轮次；缺失旧事件的历史明确标记不完整，不伪造完整聊天。这里同步的是已有会话与展示事件，Agent记忆、长期偏好和压缩算法继续独立设计。
 
 所有 `/agent` 路径都需要登录 Cookie。`GET /agent/capabilities` 返回当前版本（2）、权限模式、上下文范围、技能和工具清单；跨轮历史仍按可恢复事实和发送预算整理，不把某个固定字节数当作模型窗口。Agent 运行由服务端任务 Worker 驱动，浏览器断开不会停止运行。
 
