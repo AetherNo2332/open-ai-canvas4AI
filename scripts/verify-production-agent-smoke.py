@@ -154,6 +154,18 @@ class Smoke:
             raise AssertionError(self.redact(f"{method} {path}: {payload.get('reason')}"))
         return payload.get("data", payload)
 
+    def health_ready(self):
+        try:
+            return self.api("GET", "/health").get("ready") is True
+        except (ConnectionError, TimeoutError):
+            return False
+        except urllib.error.HTTPError:
+            raise
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, (ConnectionError, TimeoutError)):
+                return False
+            raise
+
     def stub(self, path, body=None):
         script = ("const r=await fetch('http://127.0.0.1:8080/" + path + "'," +
                   ("{method:'POST',headers:{'Content-Type':'application/json'},body:process.env.SMOKE_BODY}" if body else "{}") +
@@ -196,7 +208,7 @@ class Smoke:
     def collect(self):
         try:
             self.report["serviceStatus"] = self.compose("ps", "--format", "json", success=False).stdout[-12000:]
-            logs = self.compose("logs", "--no-color", "--tail", "120", success=False).stdout
+            logs = self.compose("logs", "--no-color", "--tail", "120", *sorted(SERVICES), success=False).stdout
             (self.output.parent / "production-smoke-services.log").write_text(self.redact(logs[-50000:]), encoding="utf-8")
         except Exception as error:
             self.report["diagnosticsError"] = type(error).__name__
@@ -219,6 +231,20 @@ class Smoke:
         self.check("failed startup migration blocks backend and web", all(
             not self.compose("ps", "-q", service).stdout.strip() for service in ("backend", "web", "agent")),
             stage="dependency_gate")
+
+    def configure_channel_model(self):
+        model_path = f"/admin/channels/{self.channel}/models"
+        models = self.api("GET", model_path)["models"]
+        existing = next((row for row in models if row["modelKey"] == "agent-parity-model"), None)
+        if existing is None:
+            raise AssertionError("created channel lacks seeded agent-parity-model")
+        self.api("PATCH", f"{model_path}/{existing['id']}", {"modelKey": "agent-parity-model",
+            "providerModelKey": "agent-parity-model", "displayName": "CI stub", "capability": "text",
+            "protocol": "chat-completion", "billingMode": "token", "priceConfigured": True, "enabled": True,
+            "inputTokenPriceMicrocredits": 0, "outputTokenPriceMicrocredits": 0,
+            "capabilityConfig": {"version": 1, "text": {"streaming": False, "thinking": False,
+                "contextWindowTokens": 128000, "maxOutputTokens": 32000,
+                "references": {"promptMaxChars": 32000}}}})
 
     def execute(self):
         config = json.loads(self.compose("config", "--format", "json").stdout)
@@ -246,7 +272,7 @@ class Smoke:
         self.compose("up", "-d", "--wait", "postgres", "redis")
         self.verify_migration_gate()
         self.compose("up", "-d", "migrate", "backend", "web", "model-stub", timeout=300)
-        wait(lambda: self.api("GET", "/health").get("ready") is True)
+        wait(self.health_ready)
         account = {"username": "smoke_" + uuid.uuid4().hex[:10], "password": secrets.token_urlsafe(24)}
         self.secrets.add(account["password"])
         self.api("POST", "/auth/register", {**account, "acceptedTerms": True})
@@ -281,12 +307,7 @@ class Smoke:
         self.channel = self.api("POST", "/admin/channels", {"name": "Production CI stub",
             "baseUrl": "http://model-stub:8080/v1", "apiKey": model_key,
             "models": ["agent-parity-model"], "enabled": True})["channel"]["id"]
-        self.api("POST", f"/admin/channels/{self.channel}/models", {"modelKey": "agent-parity-model",
-            "providerModelKey": "agent-parity-model", "displayName": "CI stub", "capability": "text",
-            "protocol": "chat-completion", "billingMode": "token", "priceConfigured": True, "enabled": True,
-            "inputTokenPriceMicrocredits": 0, "outputTokenPriceMicrocredits": 0,
-            "capabilityConfig": {"version": 1, "text": {"streaming": False, "thinking": False,
-                "contextWindowTokens": 128000, "maxOutputTokens": 32000, "references": {"promptMaxChars": 32000}}}})
+        self.configure_channel_model()
         canvas = self.canvas()
         run, scenario = self.start(canvas, "auto")
         view = self.complete(run)

@@ -6,6 +6,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import urllib.error
 
 MODULE = Path(__file__).with_name("verify-production-agent-smoke.py")
 spec = importlib.util.spec_from_file_location("production_smoke", MODULE)
@@ -14,6 +15,41 @@ spec.loader.exec_module(smoke)
 
 
 class ProductionSmokeTests(unittest.TestCase):
+    def test_health_wait_retries_startup_transport_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            with patch.object(harness, "api", side_effect=[
+                    ConnectionResetError(104, "Connection reset by peer"),
+                    urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")),
+                    {"ready": True}]) as api, patch.object(smoke.time, "sleep"):
+                self.assertTrue(smoke.wait(harness.health_ready, seconds=1))
+            self.assertEqual(api.call_count, 3)
+
+    def test_health_wait_does_not_hide_http_or_payload_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            http_error = urllib.error.HTTPError(harness.base + "/health", 401, "Unauthorized", {}, None)
+            for error in (http_error, urllib.error.URLError(ValueError("bad URL")), ValueError("invalid response")):
+                with self.subTest(error=type(error).__name__), patch.object(harness, "api", side_effect=error):
+                    with self.assertRaises(type(error)):
+                        harness.health_ready()
+            http_error.close()
+
+    def test_seeded_channel_model_is_updated_by_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            harness.channel = "channel-1"
+            with patch.object(harness, "api", side_effect=[
+                    {"models": [{"id": "model-1", "modelKey": "agent-parity-model", "enabled": False}]},
+                    {"model": {"id": "model-1"}}]) as api:
+                harness.configure_channel_model()
+            self.assertEqual(api.call_count, 2)
+            self.assertEqual(api.call_args_list[0].args, ("GET", "/admin/channels/channel-1/models"))
+            self.assertEqual(api.call_args_list[1].args[:2],
+                             ("PATCH", "/admin/channels/channel-1/models/model-1"))
+            self.assertEqual(api.call_args_list[1].args[2]["modelKey"], "agent-parity-model")
+            self.assertTrue(api.call_args_list[1].args[2]["enabled"])
+
     def test_compose_commands_are_bound_to_unique_project_and_three_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = smoke.Smoke(directory, Path(directory) / "report.json")
