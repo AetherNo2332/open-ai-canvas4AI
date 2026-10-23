@@ -30,6 +30,9 @@ func cloudAgentStoryboardFixture(t *testing.T) (*Service, *gorm.DB, *model.Canva
 	if err := database.MigrateCanvasCommands(db); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.MigrateCanvasTasks(db); err != nil {
+		t.Fatal(err)
+	}
 	canvas := &model.CanvasProject{ID: "agent-canvas", UserID: "user", Title: "分镜测试", PayloadJSON: `{"nodes":[],"connections":[]}`}
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatal(err)

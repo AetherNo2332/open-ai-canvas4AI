@@ -140,7 +140,11 @@ func cloudAgentStoryboardEditWritesReferences(args cloudAgentStoryboardEditArgs)
 	if args.Action == "set_references" || args.Action == "set_assets" {
 		return true
 	}
-	return cloudAgentStoryboardRowsWriteReferences([]map[string]any{args.Patch})
+	rows := append([]map[string]any{args.Patch}, args.Rows...)
+	for _, update := range args.Updates {
+		rows = append(rows, update.Patch)
+	}
+	return cloudAgentStoryboardRowsWriteReferences(rows)
 }
 
 func cloudAgentStoryboardRowsWriteReferences(rows []map[string]any) bool {
@@ -225,22 +229,24 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 			{"required": []string{"rowId"}, "properties": cloudAgentForbiddenFields("rowIds")},
 			{"required": []string{"rowIds"}, "properties": cloudAgentForbiddenFields("rowId")},
 		}
-		update := cloudAgentActionBranch("update", []string{"patch"}, nil, "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId")
+		update := cloudAgentActionBranch("update", []string{"patch"}, nil, "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates", "rows")
 		update["oneOf"] = selection
-		remove := cloudAgentActionBranch("remove", nil, nil, "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId")
+		remove := cloudAgentActionBranch("remove", nil, nil, "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates", "rows")
 		remove["oneOf"] = selection
-		assets := cloudAgentActionBranch("set_assets", []string{"assets"}, nil, "patch", "references", "referenceNodeIds", "outputMode", "outputNodeId")
+		assets := cloudAgentActionBranch("set_assets", []string{"assets"}, nil, "patch", "references", "referenceNodeIds", "outputMode", "outputNodeId", "updates", "rows")
 		assets["oneOf"] = selection
-		refs := cloudAgentActionBranch("set_references", nil, nil, "rowId", "rowIds", "patch", "assets", "outputMode", "outputNodeId")
+		refs := cloudAgentActionBranch("set_references", nil, nil, "rowId", "rowIds", "patch", "assets", "outputMode", "outputNodeId", "updates", "rows")
 		refs["oneOf"] = []map[string]any{
 			{"required": []string{"references"}, "properties": cloudAgentForbiddenFields("referenceNodeIds")},
 			{"required": []string{"referenceNodeIds"}, "properties": cloudAgentForbiddenFields("references")},
 		}
 		schema["oneOf"] = []map[string]any{
-			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId", "rowIds", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId"),
+			cloudAgentActionBranch("append", []string{"patch"}, map[string]any{"patch": cloudAgentStoryboardRowSchema()}, "rowId", "rowIds", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates", "rows"),
+			cloudAgentActionBranch("batch_update", []string{"updates"}, nil, "rowId", "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "rows"),
+			cloudAgentActionBranch("append_rows", []string{"rows"}, nil, "rowId", "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputMode", "outputNodeId", "updates"),
 			update, remove, assets, refs,
-			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "rowIds", "patch", "references", "referenceNodeIds", "assets"),
-			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputNodeId"),
+			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "rowIds", "patch", "references", "referenceNodeIds", "assets", "updates", "rows"),
+			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputNodeId", "updates", "rows"),
 		}
 	case "canvas_edit_batch_table":
 		schema["oneOf"] = []map[string]any{

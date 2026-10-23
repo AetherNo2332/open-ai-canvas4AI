@@ -31,17 +31,24 @@ type cloudAgentStoryboardCreateArgs struct {
 }
 
 type cloudAgentStoryboardEditArgs struct {
-	RowIDs           []string                    `json:"rowIds,omitempty"`
-	References       []string                    `json:"references,omitempty"`
-	Assets           []cloudAgentStoryboardAsset `json:"assets,omitempty"`
-	SnapshotHash     string                      `json:"snapshotHash"`
-	NodeID           string                      `json:"nodeId"`
-	Action           string                      `json:"action"`
-	RowID            string                      `json:"rowId"`
-	Patch            map[string]any              `json:"patch"`
-	ReferenceNodeIDs []string                    `json:"referenceNodeIds,omitempty"`
-	OutputMode       string                      `json:"outputMode,omitempty"`
-	OutputNodeID     string                      `json:"outputNodeId,omitempty"`
+	Updates          []cloudAgentStoryboardRowUpdate `json:"updates,omitempty"`
+	Rows             []map[string]any                `json:"rows,omitempty"`
+	RowIDs           []string                        `json:"rowIds,omitempty"`
+	References       []string                        `json:"references,omitempty"`
+	Assets           []cloudAgentStoryboardAsset     `json:"assets,omitempty"`
+	SnapshotHash     string                          `json:"snapshotHash"`
+	NodeID           string                          `json:"nodeId"`
+	Action           string                          `json:"action"`
+	RowID            string                          `json:"rowId"`
+	Patch            map[string]any                  `json:"patch"`
+	ReferenceNodeIDs []string                        `json:"referenceNodeIds,omitempty"`
+	OutputMode       string                          `json:"outputMode,omitempty"`
+	OutputNodeID     string                          `json:"outputNodeId,omitempty"`
+}
+
+type cloudAgentStoryboardRowUpdate struct {
+	RowID string         `json:"rowId"`
+	Patch map[string]any `json:"patch"`
 }
 
 type cloudAgentStoryboardMutationPlan struct {
@@ -59,7 +66,7 @@ func storyboardArgumentError(action string) error {
 func cloudAgentStoryboardRowSchema() map[string]any {
 	fields := capability.StoryboardRowFields()
 	properties := map[string]any{}
-	for _, key := range []string{"durationSeconds", "plotDescription", "dialogue", "imageGenerationPrompt", "videoMotionPrompt"} {
+	for _, key := range append([]string{"durationSeconds"}, cloudAgentStoryboardTextFields...) {
 		properties[key] = fields[key].JSONSchema()
 	}
 	properties["plotDescription"].(map[string]any)["description"] = "镜头创作说明。可在同一文本中组织构图、动作、表演、节拍、光影和连续性；不必拆成多列。"
@@ -256,9 +263,12 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 		return nil, BadAuthRequest("编辑分镜需要快照和节点ID")
 	}
 	if args.Action == "set_references" || args.Action == "bind_output" || args.Action == "unbind_output" {
+		if args.Updates != nil || args.Rows != nil {
+			return nil, BadAuthRequest("引用或产物归属动作不接受 updates 或 rows")
+		}
 		return prepareCloudAgentStoryboardReferenceEdit(repo, userID, canvasID, args)
 	}
-	if args.Action != "append" && args.Action != "update" && args.Action != "remove" && args.Action != "set_assets" {
+	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && args.Action != "set_assets" {
 		return nil, BadAuthRequest("分镜操作无效")
 	}
 	canvas, err := repo.CanvasProjectForUser(userID, canvasID)
@@ -282,7 +292,13 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	if err != nil {
 		return nil, err
 	}
-	next, fields, err := cloudAgentPlanStoryboardRows(doc, rows, args, userID, call.ID)
+	mutationID := call.storyboardMutationID
+	if mutationID == "" {
+		// Internal callers outside the runtime have no run/step context. Scope
+		// their deterministic preparation to the exact document version.
+		mutationID = call.ID + ":" + args.SnapshotHash
+	}
+	next, fields, err := cloudAgentPlanStoryboardRows(doc, rows, args, userID, mutationID)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +316,11 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	details := []string{}
 	for _, row := range rows {
 		id := stringValue(row["id"])
-		if id == args.RowID || cloudAgentContainsString(args.RowIDs, id) {
+		selected := id == args.RowID || cloudAgentContainsString(args.RowIDs, id)
+		for _, update := range args.Updates {
+			selected = selected || id == update.RowID
+		}
+		if selected {
 			details = append(details, fmt.Sprintf("镜头 %v", row["shotNumber"]))
 		}
 	}
@@ -317,7 +337,7 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 		return nil, err
 	}
 	return &cloudAgentStoryboardMutationPlan{Canvas: canvas, Document: doc, BeforeJSON: canvas.PayloadJSON, BeforeSnapshotHash: beforeHash,
-		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认修改分镜", Description: "按所选镜头统一修改创作内容或资产引用。", Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeTitle: stringValue(node["title"]), NodeType: "script", NodeTypeLabel: "分镜脚本", Fields: fields, Details: details, Summary: fmt.Sprintf("%s：%s", args.Action, stringValue(node["title"]))}}}}, nil
+		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认修改分镜", Description: "整批校验并修改所选镜头的创作内容或资产引用。", Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeTitle: stringValue(node["title"]), NodeType: "script", NodeTypeLabel: "分镜脚本", Fields: fields, Details: details, Summary: fmt.Sprintf("%s：%s", args.Action, stringValue(node["title"]))}}}}, nil
 }
 func applyCloudAgentStoryboardMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {
 	var plan *cloudAgentStoryboardMutationPlan
@@ -330,6 +350,10 @@ func applyCloudAgentStoryboardMutation(repo *repository.Repository, userID, canv
 	if err != nil {
 		return nil, err
 	}
+	receipt, err := cloudAgentStoryboardMutationReceipt(plan, call)
+	if err != nil {
+		return nil, err
+	}
 	if err := saveCloudAgentDocument(repo, plan.Canvas, plan.Document, policy); err != nil {
 		return nil, err
 	}
@@ -338,17 +362,7 @@ func applyCloudAgentStoryboardMutation(repo *repository.Repository, userID, canv
 			return nil, err
 		}
 	}
-	nodeID := ""
-	if len(plan.Preview.Items) > 0 {
-		nodeID = plan.Preview.Items[0].NodeID
-	}
-	rowRefs := []any{}
-	if _, _, rows, readErr := storyboardNodeFromDocument(plan.Document, nodeID); readErr == nil {
-		for _, row := range rows {
-			rowRefs = append(rowRefs, map[string]any{"rowId": row["id"], "shotNumber": row["shotNumber"]})
-		}
-	}
-	return map[string]any{"canvasId": canvasID, "nodeId": nodeID, "snapshotHash": cloudAgentCanvasHash(plan.Document), "beforeSnapshotHash": plan.BeforeSnapshotHash, "summary": plan.Preview.Description, "preview": plan.Preview, "rows": rowRefs}, nil
+	return receipt, nil
 }
 
 func mapsAsAny(values []map[string]any) []any {

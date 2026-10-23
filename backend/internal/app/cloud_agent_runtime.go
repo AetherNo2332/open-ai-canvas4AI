@@ -34,6 +34,9 @@ type CloudAgentEvent struct {
 }
 type cloudAgentCall struct {
 	ID string `json:"id"`
+	// Rebuilt from durable run/step context before approval and execution;
+	// never accepted from the model or serialized on the tool-call wire.
+	storyboardMutationID string
 	// Type 是 OpenAI 形态工具调用的 "function" 标记。
 	//
 	// /internal-agent 的请求解码使用 DisallowUnknownFields，而 Node 侧
@@ -1372,7 +1375,7 @@ func cloudAgentModelToolResult(toolName string, result any) any {
 	// 真正发生后才会产生，所以必须给出结果口径，否则模型会以为还在等审批并反复重读重试。
 	if cloudAgentCanvasWriteTool(toolName) {
 		receipt["applied"] = true
-		receipt["outcome"] = "已写入画布；本回执的 snapshotHash 是最新版本，可继续提交同一批的其它写入"
+		receipt["outcome"] = "本次画布操作已执行；每个模型步骤最多一个写入/生成调用，可在下一模型步骤复用本回执的新 snapshotHash 继续；仅在实际冲突或所需状态未知时重新读取目标并核对原操作"
 		if item := cloudAgentReceiptItemSummary(preview); item != "" {
 			receipt["summary"] = item
 		}

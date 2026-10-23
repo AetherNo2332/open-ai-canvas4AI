@@ -23,7 +23,8 @@ func cloudAgentTextSource(doc map[string]any, args cloudAgentTextReadArgs) (stri
 		if index < 0 || !cloudAgentStoryboardTextField(args.Field) {
 			return "", "", BadAuthRequest("分镜续读需要真实 rowId 和文本字段 field")
 		}
-		return stringValue(rows[index][args.Field]), args.Field, nil
+		text, _ := rows[index][args.Field].(string)
+		return text, args.Field, nil
 	}
 	index := cloudAgentNodeIndex(creationMaps(doc["nodes"]), args.NodeID)
 	if index < 0 {

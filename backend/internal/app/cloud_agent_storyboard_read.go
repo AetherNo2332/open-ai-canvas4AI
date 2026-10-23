@@ -4,17 +4,20 @@ import (
 	"encoding/json"
 	"strings"
 
+	"infinite-canvas/backend/internal/canvas/capability"
 	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/repository"
 )
 
 type cloudAgentStoryboardReadArgs struct {
-	NodeID string   `json:"nodeId"`
-	View   string   `json:"view"`
-	Mode   string   `json:"mode"`
-	Offset int      `json:"offset"`
-	Rows   int      `json:"rows"`
-	RowIDs []string `json:"rowIds"`
+	NodeID           string   `json:"nodeId"`
+	View             string   `json:"view"`
+	Mode             string   `json:"mode"`
+	Offset           int      `json:"offset"`
+	Rows             int      `json:"rows"`
+	RowIDs           []string `json:"rowIds"`
+	Fields           []string `json:"fields"`
+	MissingAnyFields []string `json:"missingAnyFields"`
 }
 
 func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID string, call cloudAgentCall) (any, error) {
@@ -24,6 +27,23 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 	}
 	if err := validateCloudAgentID(args.NodeID, "分镜节点ID", 80); err != nil {
 		return nil, err
+	}
+	var provided map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &provided)
+	for key, fields := range map[string][]string{"fields": args.Fields, "missingAnyFields": args.MissingAnyFields} {
+		if _, exists := provided[key]; !exists {
+			continue
+		}
+		if len(fields) == 0 {
+			return nil, cloudAgentFieldError(key, "invalid_value", key+" 不能为空")
+		}
+		seen := map[string]bool{}
+		for _, field := range fields {
+			if (field != "durationSeconds" && !cloudAgentStoryboardTextField(field)) || seen[field] {
+				return nil, cloudAgentFieldError(key, "invalid_value", key+" 含有未知或重复的创作字段: "+field)
+			}
+			seen[field] = true
+		}
 	}
 	if args.View == "" {
 		args.View = "creative"
@@ -63,6 +83,16 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 			selected = append(selected, all[index])
 		}
 	}
+	selectionRows := len(selected)
+	if len(args.MissingAnyFields) > 0 {
+		matched := []map[string]any{}
+		for _, row := range selected {
+			if cloudAgentStoryboardMissingAny(row, args.MissingAnyFields) {
+				matched = append(matched, row)
+			}
+		}
+		selected = matched
+	}
 	if args.Offset > len(selected) {
 		return nil, BadAuthRequest("分镜偏移超出范围")
 	}
@@ -77,6 +107,8 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 	rows := []any{}
 	missingMedia, invalid, unavailable, unknown, migration, missingImage, missingVideo := []string{}, []string{}, []string{}, []string{}, []string{}, []string{}, []string{}
 	processed, next, bytes := 0, 0, 4096
+	contentTruncated := false
+	includeRows := args.View != "summary" || len(args.Fields) > 0
 	header, _ := json.Marshal(map[string]any{"referenceNodeIds": cloudAgentStrings(board["referenceNodeIds"]), "visibleColumns": cloudAgentStoryboardVisibleColumns(board), "rowIds": args.RowIDs})
 	bytes += len(header)
 	for index := args.Offset; index < len(selected); index++ {
@@ -90,7 +122,7 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 		item := map[string]any{"rowId": id, "shotNumber": row["shotNumber"], "assetBindings": cloudAgentStoryboardBindingFields(row, "assetBindings"), "characters": cloudAgentStoryboardBindingFields(row, "characters"), "references": resolved,
 			"imageNodeId": stringValue(row["imageNodeId"]), "videoNodeId": stringValue(row["videoNodeId"]),
 			"hasImagePrompt": strings.TrimSpace(stringValue(row["imageGenerationPrompt"])) != "", "hasVideoPrompt": strings.TrimSpace(stringValue(row["videoMotionPrompt"])) != ""}
-		if args.View == "full" {
+		if args.View == "full" && len(args.Fields) == 0 {
 			page := cloudAgentStoryboardState(map[string]any{"rows": []map[string]any{row}}, 0, cloudAgentProjectionDetail, limit)
 			for _, full := range creationMaps(page["rows"]) {
 				for key, value := range full {
@@ -101,13 +133,48 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 		if args.View == "creative" {
 			item = cloudAgentStoryboardCreativeRow(args.NodeID, row, resolved)
 		}
+		cloudAgentStoryboardPromptMetadata(item, row)
+		if len(args.Fields) > 0 {
+			for field := range capability.StoryboardRowFields() {
+				if field == "assetBindings" || field == "characters" {
+					continue
+				}
+				delete(item, field)
+				delete(item, field+"Truncated")
+			}
+			delete(item, "nextReads")
+			cloudAgentStoryboardProjectFields(item, args.NodeID, row, args.Fields, 2000)
+		} else if args.View == "full" {
+			reads := map[string]any{}
+			for _, field := range cloudAgentStoryboardTextFields {
+				if item[field+"Truncated"] == true {
+					text, _ := item[field].(string)
+					// The state projection appends a display ellipsis. Expose the
+					// exact source prefix so continuation offsets never count it.
+					offset := len([]rune(strings.TrimSuffix(text, "...")))
+					original, _ := row[field].(string)
+					item[field] = string([]rune(original)[:offset])
+					reads[field] = cloudAgentStoryboardContentContinuation(args.NodeID, row["id"], field, offset)
+				}
+			}
+			if len(reads) > 0 {
+				item["nextReads"] = reads
+			}
+		}
 		rowBytes := 0
-		if args.View != "summary" {
+		if includeRows {
 			body, marshalErr := json.Marshal(item)
 			if marshalErr != nil {
 				return nil, marshalErr
 			}
 			rowBytes = len(body)
+			// A field projection may request every text column on a single row.
+			// Reduce previews together, keeping exact continuation offsets.
+			for preview := 1000; processed == 0 && len(args.Fields) > 0 && bytes+rowBytes+8*len(id)+128 > cloudAgentReadPageBytes-1024 && preview >= 1; preview /= 2 {
+				cloudAgentStoryboardProjectFields(item, args.NodeID, row, args.Fields, preview)
+				body, _ = json.Marshal(item)
+				rowBytes = len(body)
+			}
 		}
 		// Reserve space for every summary list as well as the projected row.
 		if bytes+rowBytes+8*len(id)+128 > cloudAgentReadPageBytes-1024 {
@@ -118,8 +185,11 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 			break
 		}
 		bytes += rowBytes + 8*len(id) + 128
-		if args.View != "summary" {
+		if includeRows {
 			rows = append(rows, item)
+			if _, exists := item["nextReads"]; exists {
+				contentTruncated = true
+			}
 		}
 		processed++
 		if resolved["state"] == "invalid" {
@@ -142,7 +212,8 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 			missingVideo = append(missingVideo, id)
 		}
 	}
-	coverage := map[string]any{"totalRows": len(all), "selectedRows": len(selected), "inspectedRows": processed, "complete": args.Offset == 0 && processed == len(all) && len(selected) == len(all)}
+	tableComplete := args.Offset == 0 && processed == len(all) && len(selected) == len(all)
+	coverage := map[string]any{"totalRows": len(all), "selectionRows": selectionRows, "selectedRows": len(selected), "matchedRows": len(selected), "inspectedRows": processed, "offset": args.Offset, "complete": tableComplete, "selectionComplete": next == 0, "tableComplete": tableComplete, "contentTruncated": contentTruncated}
 	resultBoard := map[string]any{"referenceNodeIds": cloudAgentStrings(board["referenceNodeIds"]), "rows": rows, "visibleColumns": cloudAgentStoryboardVisibleColumns(board), "totalRows": len(all), "nextOffset": next, "hasMore": next > 0,
 		"videoInputMode": firstNonEmpty(stringValue(cloudAgentNodeMetadata(node)["storyboardVideoInputMode"]), "direct")}
 	if next > 0 {
@@ -152,7 +223,17 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 		}
 		if len(args.RowIDs) > 0 {
 			delete(nextArgs, "offset")
-			nextArgs["rowIds"] = args.RowIDs[next:]
+			ids := []string{}
+			for _, row := range selected[next:] {
+				ids = append(ids, stringValue(row["id"]))
+			}
+			nextArgs["rowIds"] = ids
+		}
+		if len(args.Fields) > 0 {
+			nextArgs["fields"] = args.Fields
+		}
+		if len(args.MissingAnyFields) > 0 {
+			nextArgs["missingAnyFields"] = args.MissingAnyFields
 		}
 		resultBoard["nextRead"] = map[string]any{"tool": "canvas_read_storyboard", "arguments": nextArgs}
 	}
@@ -171,20 +252,58 @@ func cloudAgentStoryboardCreativeRow(nodeID string, row, resolved map[string]any
 	if issue := resolved["issue"]; issue != nil {
 		item["issue"] = issue
 	}
+	cloudAgentStoryboardPromptMetadata(item, row)
+	cloudAgentStoryboardProjectFields(item, nodeID, row, []string{"plotDescription", "dialogue"}, 2000)
+	return item
+}
+
+func cloudAgentStoryboardPromptMetadata(item, row map[string]any) {
+	_, imageSource := cloudAgentStoryboardEffectivePrompt(row, "image")
+	_, videoSource := cloudAgentStoryboardEffectivePrompt(row, "video")
+	item["hasImagePromptOverride"] = imageSource == "imageGenerationPrompt"
+	item["hasVideoPromptOverride"] = videoSource == "videoMotionPrompt"
+	item["effectivePromptSource"] = map[string]any{"image": imageSource, "video": videoSource}
+}
+
+func cloudAgentStoryboardMissingAny(row map[string]any, fields []string) bool {
+	for _, field := range fields {
+		if field == "durationSeconds" {
+			if err := capability.ValidateEditableFields(capability.StoryboardRowFields(), map[string]any{field: row[field]}); err != nil {
+				return true
+			}
+		} else if strings.TrimSpace(stringValue(row[field])) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func cloudAgentStoryboardProjectFields(item map[string]any, nodeID string, row map[string]any, fields []string, preview int) {
 	reads := map[string]any{}
-	for _, key := range []string{"plotDescription", "dialogue"} {
-		text := []rune(stringValue(row[key]))
-		end := min(len(text), 2000)
+	for _, key := range fields {
+		if key == "durationSeconds" {
+			item[key] = row[key]
+			continue
+		}
+		value, _ := row[key].(string)
+		text := []rune(value)
+		end := min(len(text), preview)
 		item[key] = string(text[:end])
+		delete(item, key+"Truncated")
 		if end < len(text) {
 			item[key+"Truncated"] = true
-			reads[key] = map[string]any{"tool": "canvas_read_content", "arguments": map[string]any{"nodeId": nodeID, "rowId": row["id"], "field": key, "offset": end, "limit": 8000}}
+			reads[key] = cloudAgentStoryboardContentContinuation(nodeID, row["id"], key, end)
 		}
 	}
 	if len(reads) > 0 {
 		item["nextReads"] = reads
+	} else {
+		delete(item, "nextReads")
 	}
-	return item
+}
+
+func cloudAgentStoryboardContentContinuation(nodeID string, rowID any, field string, offset int) map[string]any {
+	return map[string]any{"tool": "canvas_read_content", "arguments": map[string]any{"nodeId": nodeID, "rowId": rowID, "field": field, "offset": offset, "limit": 8000}}
 }
 
 func cloudAgentStoryboardBindingFields(row map[string]any, collection string) []any {

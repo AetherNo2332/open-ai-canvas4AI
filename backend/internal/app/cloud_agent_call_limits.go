@@ -28,20 +28,24 @@ func (state *cloudAgentRuntime) withReadBudget(result any) any {
 }
 
 type cloudAgentCallLimits struct {
-	ToolCallsPerStep int `json:"toolCallsPerStep"`
-	ReadCallsPerRun  int `json:"readCallsPerRun"`
-	StepsPerRun      int `json:"stepsPerRun"`
+	ToolCallsPerStep     int `json:"toolCallsPerStep"`
+	ReadCallsPerRun      int `json:"readCallsPerRun"`
+	StepsPerRun          int `json:"stepsPerRun"`
+	MutationCallsPerStep int `json:"mutationCallsPerStep"`
 }
 
 func cloudAgentCallLimitsForPolicy(policy platform.RuntimeTaskPolicy) cloudAgentCallLimits {
 	return cloudAgentCallLimits{
-		ToolCallsPerStep: policy.AgentMaxToolCallsPerStep,
-		ReadCallsPerRun:  policy.AgentMaxReadToolCallsPerRun,
-		StepsPerRun:      policy.AgentMaxStepsPerRun,
+		ToolCallsPerStep:     policy.AgentMaxToolCallsPerStep,
+		ReadCallsPerRun:      policy.AgentMaxReadToolCallsPerRun,
+		StepsPerRun:          policy.AgentMaxStepsPerRun,
+		MutationCallsPerStep: 1,
 	}
 }
 
 func (limits cloudAgentCallLimits) withDefaults() cloudAgentCallLimits {
+	// The preflight single-write guard is fixed, including for older checkpoints.
+	limits.MutationCallsPerStep = 1
 	// Older checkpoints predate these fields; zero is not a configurable tool limit.
 	if limits.ToolCallsPerStep == 0 {
 		limits.ToolCallsPerStep = platform.DefaultRuntimeAgentToolCallsPerStep
