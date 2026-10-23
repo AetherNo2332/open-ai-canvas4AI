@@ -15,6 +15,8 @@ Agent 使用 `http://backend:8080` 和 Worker 凭据访问 config、claim、capa
 
 Worker 等待 backend 健康后启动；本机健康探针独立检查配置、领取与容量通道的时效，状态区分 starting、ready、degraded、draining。backend 的全局 ready 不依赖 Agent，避免 Compose 依赖循环。协议、凭据等连状态通道都无法通过的失败仅能从容器健康与日志判断，后台在心跳过期后显示离线。Agent 能力接口单独区分未配置、离线、未就绪和满载；缺配置立即拒绝新运行，暂时离线保留有期限的耐久排队，健康满载继续排队。
 
+通道恢复后，本机探针状态与后台容量心跳按周期收敛，后台显示可能延迟一个心跳周期（当前15秒）；不能把短暂未就绪显示解释为进程已退出。
+
 资源治理先暂停新认领，保留在途会话。部署项 `CANVAS_AGENT_RESIDENT_LIMIT`、`CANVAS_AGENT_MEMORY_BUDGET_MB`、`CANVAS_AGENT_EVENT_LOOP_LIMIT_MS` 与 `CANVAS_AGENT_CONTAINER_MEMORY_LIMIT` 控制本地驻留、RSS 预算、事件循环阈值和容器硬上限；默认分别为16、768MiB、250ms、1GiB。`CANVAS_AGENT_MAX_SESSIONS_PER_USER` 传给后端，默认32，在管理员尚未持久化调度策略时作为每用户配额的环境回退值。实际驻留上限取后台配置与本地限制的较小值；模型并发仍由后台调度策略控制。RSS 达预算80%或延迟达阈值时暂停，连续两次低于65%和40%阈值后恢复。此阶段不保证单运行的进程隔离。
 
 ## 源码与镜像安装
