@@ -195,6 +195,15 @@ func (r *Repository) CanvasHistoryReferencesObject(resource *model.Resource) (bo
 	if err == nil && count == 0 && r.db.Migrator().HasTable(&model.CanvasTaskResource{}) {
 		err = r.db.Model(&model.CanvasTaskResource{}).Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).Count(&count).Error
 	}
+	if err == nil && count == 0 && r.mediaVersionsEnabled {
+		ids := []string{resource.ID}
+		var other []string
+		if err = aliases.Pluck("id", &other).Error; err == nil {
+			refs, e := r.MediaVersionResourceReferences(resource.UserID, append(ids, other...))
+			err = e
+			count = int64(len(refs))
+		}
+	}
 	return count > 0, err
 }
 

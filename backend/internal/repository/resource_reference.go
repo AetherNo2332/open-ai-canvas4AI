@@ -132,6 +132,11 @@ func (r *Repository) ResourceReferenceSnapshotExcludingAssets(userID string, exc
 		return snapshot, err
 	}
 	snapshot.Direct = append(snapshot.Direct, history...)
+	versionRefs, err := r.MediaVersionResourceReferences(userID, resourceIDs)
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.Direct = append(snapshot.Direct, versionRefs...)
 	if r.db.Migrator().HasTable(&model.CanvasTaskResource{}) {
 		var guards []model.CanvasTaskResource
 		if err := r.db.Where("owner_id = ? AND resource_id IN ?", userID, resourceIDs).Find(&guards).Error; err != nil {

@@ -6,5 +6,5 @@ import (
 )
 
 func MigrateCanvasTasks(db *gorm.DB) error {
-	return db.AutoMigrate(&model.CanvasTaskBinding{}, &model.CanvasMaterializationJob{}, &model.CanvasTaskOutput{}, &model.CanvasTaskResource{})
+	return db.AutoMigrate(&model.CanvasTaskBinding{}, &model.CanvasMaterializationJob{}, &model.CanvasTaskOutput{}, &model.CanvasTaskResource{}, &model.CanvasMediaVersion{})
 }
