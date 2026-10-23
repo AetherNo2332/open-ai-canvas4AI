@@ -1258,6 +1258,21 @@ func cloudAgentToolResult(runID string, state *cloudAgentRuntime, call cloudAgen
 		}
 		if errors.As(err, &admissionErr) {
 			detail["reason"], detail["nodeId"] = admissionErr.Reason, admissionErr.NodeID
+			if admissionErr.TaskID != "" {
+				detail["taskId"] = admissionErr.TaskID
+			}
+			if admissionErr.Reason == "new_version_required" {
+				var args cloudAgentMediaArgs
+				_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+				example := map[string]any{"mode": args.Mode, "nodeId": admissionErr.NodeID, "intent": "new_version", "snapshotHash": "<canvas_get_state.snapshotHash>", "prompt": "<用户确认的新版本提示词>", "selectionId": "<模型目录返回的 selectionId>"}
+				if args.StoryboardNodeID != "" {
+					delete(example, "nodeId")
+					delete(example, "prompt")
+					example["storyboardNodeId"], example["storyboardRowId"] = args.StoryboardNodeID, args.StoryboardRowID
+				}
+				detail["exampleArguments"] = example
+				detail["guidance"] = "先确认用户确实需要重新付费生成，再用新版本意图提交；不要删除原任务或解绑产物"
+			}
 		}
 		var argumentErr *cloudAgentArgumentError
 		if errors.As(err, &argumentErr) {

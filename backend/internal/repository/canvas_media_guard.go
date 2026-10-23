@@ -36,6 +36,9 @@ func guardLegacyMediaVersions(before, after map[string]any) error {
 			continue
 		}
 		oldMeta, _ := old["metadata"].(map[string]any)
+		if oldMeta["mediaVersion"] == nil && meta["mediaVersion"] != nil {
+			return ErrCanvasMediaVersionManaged
+		}
 		if oldMeta["mediaVersion"] != nil && !reflect.DeepEqual(model.CanvasMediaProjection(old), model.CanvasMediaProjection(node)) {
 			return ErrCanvasMediaVersionManaged
 		}

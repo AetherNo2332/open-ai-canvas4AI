@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"infinite-canvas/backend/internal/model"
+	"strings"
 	"testing"
 )
 
@@ -38,6 +39,10 @@ func TestCloudAgentNewMediaVersionKeepsCurrentUntilApprovedAndFinished(t *testin
 			view, err := s.CloudAgentRun("user", run.ID)
 			if err != nil || view.Approval == nil {
 				t.Fatalf("missing version approval: %+v %v", view, err)
+			}
+			preview, _ := json.Marshal(view.Approval.Preview)
+			if !strings.Contains(string(preview), "新版本") || !strings.Contains(string(preview), "旧版本") || strings.Contains(string(preview), "草稿节点和引用连线已创建") {
+				t.Fatalf("misleading version preview: %s", preview)
 			}
 			var versions int64
 			db.Model(&model.CanvasMediaVersion{}).Count(&versions)

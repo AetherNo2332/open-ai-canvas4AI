@@ -221,7 +221,7 @@ func (s *Service) Submit(ctx context.Context, p identity.Principal, req SubmitRe
 			if err != nil {
 				return nil, nil, mediaVersionError(err)
 			}
-			version, err := mediaversions.Begin(tx, scope, target, prepared.Task, req.Intent)
+			version, err := mediaversions.Begin(tx, scope, target, prepared.Task, req.Intent, objectList(doc["nodes"]))
 			if err != nil {
 				return nil, nil, mediaVersionError(err)
 			}

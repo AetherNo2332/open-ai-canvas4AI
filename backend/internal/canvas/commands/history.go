@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"infinite-canvas/backend/internal/canvas/mediaversions"
 	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
@@ -119,9 +120,16 @@ func (s *Service) changeHistory(ctx context.Context, p identity.Principal, canva
 		if err != nil {
 			return err
 		}
-		if err = validateManagedMedia(before, after, nil); err != nil {
+		mediaOps, err := reconcileHistoryMedia(tx, p.OwnerID, canvasID, epochID, row.Revision+1, before, after, changes.RecreatedEntities)
+		if err != nil {
 			return err
 		}
+		if err = validateManagedMedia(before, after, mediaOps); err != nil {
+			return err
+		}
+		recreated := changes.RecreatedEntities
+		changes = Diff(before, after)
+		changes.RecreatedEntities = recreated
 		if err = validateResult(after); err != nil {
 			return err
 		}
@@ -219,8 +227,8 @@ func changeSetMatchesEntity(doc Document, changes ChangeSet, key string) bool {
 		if change.Delete {
 			return actual == nil
 		}
-		left, _ := canonical(actual)
-		right, _ := canonical(change.Value)
+		left, _ := canonical(historyEntityValue(actual, change.Value))
+		right, _ := canonical(historyEntityValue(change.Value, actual))
 		return left == right
 	}
 	if strings.HasPrefix(key, "project:") {
@@ -318,13 +326,6 @@ func (s *Service) RestoreVersion(ctx context.Context, p identity.Principal, canv
 		after["projectId"] = row.ProjectID
 		after["createdAt"] = row.CreatedAt.Format(time.RFC3339Nano)
 		delete(after, "_deleted")
-		// Restoring starts a new epoch; imported ready media becomes the safe
-		// baseline on its next submission and never inherits an old pending task.
-		for _, node := range maps(after["nodes"]) {
-			if m, _ := node["metadata"].(map[string]any); m != nil {
-				delete(m, "mediaVersion")
-			}
-		}
 		if err = validateResult(after); err != nil {
 			return err
 		}
@@ -365,6 +366,12 @@ func (s *Service) RestoreVersion(ctx context.Context, p identity.Principal, canv
 			return err
 		}
 		epoch.Epoch = newID()
+		for _, node := range maps(after["nodes"]) {
+			scope := mediaversions.Scope{OwnerID: p.OwnerID, CanvasID: canvasID, Epoch: epoch.Epoch, NodeID: text(node["id"]), Generation: row.Revision + 1}
+			if err = mediaversions.Rebase(tx, scope, node); err != nil {
+				return PersistenceError(err)
+			}
+		}
 		plan := PlanResult{Document: after, Changes: Diff(before, after), Inverse: Diff(after, before), WriteSet: writes, ResourceIDs: resources}
 		emitted, err = s.persist(tx, p, req, body, row, epoch, before, plan, false, "before_restore")
 		if err != nil {

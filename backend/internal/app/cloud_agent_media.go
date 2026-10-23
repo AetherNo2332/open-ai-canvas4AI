@@ -167,6 +167,9 @@ type cloudAgentMediaPlan struct {
 	Args                cloudAgentMediaArgs
 	CallID              string
 	TransientReferences map[string]cloudAgentTransientReference
+	CurrentTitle        string   `json:"currentTitle,omitempty"`
+	CurrentVersion      string   `json:"currentVersion,omitempty"`
+	Consumers           []string `json:"consumers,omitempty"`
 	// Prepared is checkpointed separately for auto mode and approval mode.
 	Prepared *cloudAgentPreparedMedia `json:"-"`
 }
@@ -411,11 +414,11 @@ func cloudAgentMediaTargetIssue(node map[string]any, nodeType string) (string, s
 	case meta["locked"] == true:
 		return "target_locked", "目标节点已锁定，不能提交生成"
 	case stringValue(meta["taskId"]) != "" || stringValue(meta["generationTaskId"]) != "":
-		return "task_bound", "目标节点已关联任务，不能覆盖；可读取 generation 或 task_get 查询原任务状态和错误"
+		return "new_version_required", "目标已有生成记录，请先核对原任务；确认重新生成后显式使用 intent=new_version"
 	case stringValue(node["type"]) != nodeType:
 		return "target_type_mismatch", "目标节点类型与生成模式不匹配"
 	case stringValue(meta["storageKey"]) != "" || stringValue(meta["content"]) != "":
-		return "output_exists", "目标节点已有媒体产物，不能作为未提交草稿覆盖"
+		return "new_version_required", "目标已有媒体，确认重新生成后显式使用 intent=new_version"
 	case stringValue(meta["status"]) != "idle":
 		return "target_not_idle", "目标节点不是空闲的未提交草稿，请读取节点及任务状态"
 	}
@@ -426,6 +429,7 @@ type cloudAgentMediaAdmissionError struct {
 	error
 	Reason string
 	NodeID string
+	TaskID string
 }
 
 func (e *cloudAgentMediaAdmissionError) Unwrap() error { return e.error }
@@ -453,7 +457,7 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 		unchanged = dependency == args.Prepared.DependencyHash
 	}
 	if !unchanged {
-		return nil, nil, nil, &cloudAgentMediaAdmissionError{creationConflict("画布内容已变化，请重新读取画布并重新审批；未提交生成任务"), "snapshot_conflict", args.NodeID}
+		return nil, nil, nil, &cloudAgentMediaAdmissionError{error: creationConflict("画布内容已变化，请重新读取画布并重新审批；未提交生成任务"), Reason: "snapshot_conflict", NodeID: args.NodeID}
 	}
 	nodes, err := creationObjects(doc["nodes"])
 	if err != nil {
@@ -470,11 +474,18 @@ func cloudAgentMediaDocument(repo *repository.Repository, userID, canvasID strin
 	}
 	if existing != nil {
 		if aReason, aIssue := cloudAgentMediaVersionTargetIssue(repo, userID, canvasID, existing, args); aReason != "" {
-			return nil, nil, nil, &cloudAgentMediaAdmissionError{BadAuthRequest(aIssue), aReason, args.NodeID}
+			original := mediaversions.ReadState(existing).ActiveTaskID
+			if original == "" {
+				original = stringValue(existingMeta["taskId"])
+			}
+			if original == "" {
+				original = stringValue(existingMeta["generationTaskId"])
+			}
+			return nil, nil, nil, &cloudAgentMediaAdmissionError{error: BadAuthRequest(aIssue), Reason: aReason, NodeID: args.NodeID, TaskID: original}
 		}
 		if args.Intent != "new_version" {
 			if reason, issue := cloudAgentMediaTargetIssue(existing, targetDescriptor.Type); reason != "" {
-				return nil, nil, nil, &cloudAgentMediaAdmissionError{BadAuthRequest(issue), reason, args.NodeID}
+				return nil, nil, nil, &cloudAgentMediaAdmissionError{error: BadAuthRequest(issue), Reason: reason, NodeID: args.NodeID}
 			}
 		}
 		if args.DraftRunID == "" {
@@ -925,7 +936,9 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 	for id, ref := range state.TransientReferences {
 		transientSnapshot[id] = ref
 	}
-	return CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_" + a.Mode, Operation: operation, Prompt: a.Prompt, LogicalModelID: a.LogicalModelID, Model: a.ChannelModelKey, Input: input}, &cloudAgentMediaPlan{Args: a, CallID: call.ID, TransientReferences: transientSnapshot}, nil
+	plan := &cloudAgentMediaPlan{Args: a, CallID: call.ID, TransientReferences: transientSnapshot}
+	cloudAgentMediaPreviewContext(plan, doc)
+	return CreateTaskRequest{ProjectID: state.Request.CanvasID, Type: "canvas_" + a.Mode, Operation: operation, Prompt: a.Prompt, LogicalModelID: a.LogicalModelID, Model: a.ChannelModelKey, Input: input}, plan, nil
 }
 
 func saveCloudAgentDocument(repo *repository.Repository, canvas *model.CanvasProject, doc map[string]any, policy RuntimePolicySetting) error {

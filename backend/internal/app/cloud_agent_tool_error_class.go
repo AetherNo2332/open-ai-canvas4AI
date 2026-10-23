@@ -81,6 +81,20 @@ func cloudAgentToolErrorClass(req CloudAgentRequest, call cloudAgentCall, err er
 	}
 	var admissionErr *cloudAgentMediaAdmissionError
 	if errors.As(err, &admissionErr) {
+		switch admissionErr.Reason {
+		case "new_version_required":
+			return cloudAgentToolErrorSchemaError, false, "confirm_new_version"
+		case "task_in_progress":
+			return cloudAgentToolErrorStateConflict, false, "query_original_task"
+		case "submission_uncertain":
+			return cloudAgentToolErrorStateConflict, false, "verify_original_submission"
+		case "materialization_pending":
+			return cloudAgentToolErrorStateConflict, false, "recover_original_task"
+		case "task_unavailable", "target_unavailable":
+			return cloudAgentToolErrorStateConflict, false, "reread_canvas"
+		case "snapshot_conflict":
+			return cloudAgentToolErrorStateConflict, true, "reread_canvas"
+		}
 		// 媒体准入里"上游拒绝该规格"属于上游故障；其余是参数/状态问题。
 		if strings.Contains(admissionErr.Error(), "上游") {
 			return cloudAgentToolErrorUpstream, false, "report_to_user"

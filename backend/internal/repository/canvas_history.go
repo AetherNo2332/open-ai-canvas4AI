@@ -75,7 +75,10 @@ func (r *Repository) SaveCanvasWithSnapshot(project *model.CanvasProject, snapsh
 		if err := writer.syncLegacyCanvasWrite(before, &next, snapshot != nil && snapshot.Reason == "before_restore"); err != nil {
 			return err
 		}
-		return writer.CaptureCanvasSnapshot(&next, snapshot, resourceIDs, currentResourceIDs, cutoff, limit, force)
+		if err = writer.CaptureCanvasSnapshot(&next, snapshot, resourceIDs, currentResourceIDs, cutoff, limit, force); err != nil {
+			return err
+		}
+		return writer.PruneCanvasMediaVersions(next.UserID, next.ID)
 	})
 	if err == nil {
 		*project = next

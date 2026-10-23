@@ -250,12 +250,13 @@ export function useCanvasGenerationRetry({
                     : undefined;
 
             setRunningNodeId(node.id);
-            setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined } } : item)));
+            const keepCurrentMedia = Boolean(node.metadata?.mediaVersion?.currentVersionId);
+            if (!keepCurrentMedia) setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined } } : item)));
             const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
             const retryContext = node.metadata?.taskId ? await createGenerationRetryContext(node.metadata.taskId, node.metadata.attemptGroupId) : {};
             const runAndConsumeRetry = async (input: Parameters<typeof runBackendCanvasGenerationTask>[0]) => {
                 await runCanvasGenerationTaskToConsumer(
-                    { ...input, ...retryContext },
+                    { ...input, ...retryContext, metadata: { ...input.metadata, ...(["image", "video", "audio"].includes(input.mode) ? { mediaVersionIntent: "new_version" } : {}) } },
                     {
                         bindTask: (task) => bindGenerationTask(node.id, task),
                         consumeTask: (task) => applyGenerationTaskResult(node.id, task),
@@ -431,7 +432,7 @@ export function useCanvasGenerationRetry({
                 if (isGenerationCanceled(error)) return;
                 const failure = generationFailureMetadata(error, retryPromptSource);
                 message.error(failure.errorDetails);
-                setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
+                if (!keepCurrentMedia) setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, ...failure } } : item)));
             } finally {
                 finishGenerationRequest(node.id, controller);
                 setRunningNodeId(null);

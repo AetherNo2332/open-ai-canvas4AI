@@ -85,7 +85,11 @@ func TestCloudAgentGenerationDiagnosticsSeparateOutputAndTask(t *testing.T) {
 			item := view.(map[string]any)["nodes"].([]any)[0].(map[string]any)
 			generation := item["generation"].(map[string]any)
 			output := item["outputReference"].(map[string]any)
-			if output["ready"] != false || output["issue"] == nil || generation["submitBlockedReason"] != "task_bound" {
+			wantReason := "new_version_required"
+			if !tc.visible {
+				wantReason = "task_unavailable"
+			}
+			if output["ready"] != false || output["issue"] == nil || generation["submitBlockedReason"] != wantReason {
 				t.Fatalf("ambiguous state: %+v", item)
 			}
 			if tc.visible {
@@ -126,17 +130,20 @@ func TestCloudAgentMediaAdmissionReportsTaskBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	args.SnapshotHash, args.DraftRunID = cloudAgentMediaContentHash(doc), "current-run"
+	if err := db.Create(&model.Task{ID: "original-task", UserID: "user", ProjectID: "agent-canvas", Status: model.TaskStatusFailed}).Error; err != nil {
+		t.Fatal(err)
+	}
 	_, _, _, err := cloudAgentMediaDocument(s.repo, "user", "agent-canvas", args)
 	if err == nil {
 		t.Fatal("existing task overwritten")
 	}
-	state := &cloudAgentRuntime{}
+	state := &cloudAgentRuntime{Request: CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}}}
 	cloudAgentToolResult("run", state, agentMediaCall(args), map[string]any{"phase": "admission", "taskSubmitted": false}, err)
 	var result map[string]any
 	if err := json.Unmarshal([]byte(state.Canonical.Messages[0]["content"].(string)), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result["reason"] != "task_bound" || result["nodeId"] != args.NodeID || result["taskSubmitted"] != false {
+	if result["reason"] != "new_version_required" || result["nodeId"] != args.NodeID || result["taskSubmitted"] != false || result["exampleArguments"] == nil || result["requiredAction"] != "confirm_new_version" {
 		t.Fatalf("missing admission diagnosis: %+v", result)
 	}
 	var count int64

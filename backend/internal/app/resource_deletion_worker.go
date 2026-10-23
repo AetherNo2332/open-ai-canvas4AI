@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 const resourceDeletionLease = 2 * time.Minute
@@ -20,6 +21,7 @@ func (s *Service) startResourceDeletionWorker(ctx context.Context) {
 		s.drainResourceDeletionJobs(32)
 		s.cleanupStaleAnnouncementImageDrafts()
 		s.cleanupExpiredArchivedAssets()
+		s.pruneOrphanMediaVersions(ctx)
 		s.cleanupDetachedResources()
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
@@ -33,12 +35,30 @@ func (s *Service) startResourceDeletionWorker(ctx context.Context) {
 				if time.Since(lastPeriodicCleanup) >= time.Hour {
 					s.cleanupStaleAnnouncementImageDrafts()
 					s.cleanupExpiredArchivedAssets()
+					s.pruneOrphanMediaVersions(ctx)
 					s.cleanupDetachedResources()
 					lastPeriodicCleanup = time.Now()
 				}
 			}
 		}
 	})
+}
+
+func (s *Service) pruneOrphanMediaVersions(ctx context.Context) {
+	owners, err := s.repo.CanvasMediaVersionOwners()
+	if err != nil {
+		log.Printf("media version cleanup owners: %v", err)
+		return
+	}
+	for _, owner := range owners {
+		if ctx.Err() != nil {
+			return
+		}
+		err = s.repo.CanvasAtomicWrite(ctx, owner, "", func(tx *repository.Repository) error { return tx.PruneCanvasMediaVersions(owner, "") })
+		if err != nil {
+			log.Printf("media version cleanup failed for user %s: %v", owner, err)
+		}
+	}
 }
 
 func (s *Service) cleanupDetachedResources() {

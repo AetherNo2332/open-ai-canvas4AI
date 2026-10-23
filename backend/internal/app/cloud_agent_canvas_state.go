@@ -423,7 +423,11 @@ func cloudAgentCanvasStatePageSelected(repo *repository.Repository, userID, canv
 		}
 		if capability.GenerationMode != "" {
 			generation := map[string]any{"taskStatus": "not_submitted"}
-			if reason, issue := cloudAgentMediaTargetIssue(node, capability.Type); reason != "" {
+			reason, issue := cloudAgentMediaTargetIssue(node, capability.Type)
+			if mediaversions.Supported(capability.GenerationMode) {
+				reason, issue = cloudAgentMediaVersionTargetIssue(repo, userID, canvasID, node, cloudAgentMediaArgs{Mode: capability.GenerationMode, NodeID: id})
+			}
+			if reason != "" {
 				generation["submitBlockedReason"], generation["submitBlockedIssue"] = reason, issue
 			}
 			taskID := stringValue(meta["taskId"])

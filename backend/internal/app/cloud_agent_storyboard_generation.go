@@ -222,7 +222,7 @@ func registerCloudAgentStoryboardTask(repo *repository.Repository, run *model.Cl
 		if err != nil {
 			return nil, nil, err
 		}
-		if _, err = mediaversions.Begin(tx, scope, node, *task, plan.Args.Intent); err != nil {
+		if _, err = mediaversions.Begin(tx, scope, node, *task, plan.Args.Intent, creationMaps(doc["nodes"])); err != nil {
 			return nil, nil, BadAuthRequest(err.Error())
 		}
 		if plan.Args.StoryboardNodeID != "" {

@@ -1469,7 +1469,10 @@ func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 		// 说明：我们自研的 cloud_agent_run_events 已随合并决定退役（表与数据保留、代码不再读写，
 		// 见 internal/database/migrations.go 里的 v32 no-op 迁移），因此不再清它的 canvas_id。
 		// 上游事件表 cloud_agent_event_records 没有 canvas_id 列，无需处理。
-		return tx.Delete(&model.CanvasProject{}, "id = ? AND user_id = ?", id, userID).Error
+		if err := tx.Delete(&model.CanvasProject{}, "id = ? AND user_id = ?", id, userID).Error; err != nil {
+			return err
+		}
+		return writer.PruneCanvasMediaVersions(userID, id)
 	})
 }
 

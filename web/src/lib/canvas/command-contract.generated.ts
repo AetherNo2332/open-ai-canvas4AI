@@ -66,6 +66,8 @@ export interface Item {
   status: string;
   taskId?: string;
   resourceId?: string;
+  sourceNodeId?: string;
+  sourceVersionId?: string;
   media?: Record<string, unknown>;
   prompt?: string;
   model?: string;

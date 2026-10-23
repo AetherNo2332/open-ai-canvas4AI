@@ -145,7 +145,7 @@ func scopedCloudAgentMediaDependency(repo *repository.Repository, userID, canvas
 	if err != nil {
 		return "", creationConflict("目标节点生命周期已变化，请重新准备并批准")
 	}
-	return creationHash(map[string]any{"dependency": dependency, "scope": scope}), nil
+	return creationHash(map[string]any{"dependency": dependency, "scope": scope, "outputOwners": mediaversions.OutputOwners(creationMaps(doc["nodes"]), args.NodeID)}), nil
 }
 
 func cloudAgentResourceSignature(resource *model.Resource) string {

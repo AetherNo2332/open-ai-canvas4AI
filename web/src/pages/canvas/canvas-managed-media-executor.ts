@@ -30,7 +30,7 @@ export async function executeManagedMediaGeneration(execution: CanvasGenerationE
                     ...execution.styleMetadata,
                     ...execution.skillMetadata,
                     ...execution.taskContext,
-                    mediaVersionIntent: sourceNode?.metadata?.content || sourceNode?.metadata?.storageKey ? "new_version" : "create",
+                    mediaVersionIntent: sourceNode?.metadata?.mediaVersion?.versionCount || sourceNode?.metadata?.taskId || sourceNode?.metadata?.content || sourceNode?.metadata?.storageKey ? "new_version" : "create",
                     resolvedCharacterVersions: generationContext.resolvedCharacterVersions,
                     resolvedCharacterVoices: generationContext.resolvedCharacterVoices,
                 },

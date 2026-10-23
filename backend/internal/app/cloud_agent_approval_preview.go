@@ -317,6 +317,9 @@ func cloudAgentMediaApprovalPreview(plan *cloudAgentMediaPlan, modelName string)
 	args := plan.Args
 	descriptor, _ := cloudAgentNodeCapabilityForGenerationMode(args.Mode)
 	nodeTitle := truncateRunes(strings.TrimSpace(args.Title), 120)
+	if plan.CurrentTitle != "" {
+		nodeTitle = truncateRunes(plan.CurrentTitle, 120)
+	}
 	if nodeTitle == "" {
 		nodeTitle = "未命名" + descriptor.Label
 	}
@@ -325,7 +328,7 @@ func cloudAgentMediaApprovalPreview(plan *cloudAgentMediaPlan, modelName string)
 		details = append(details, "模型："+truncateRunes(modelName, 120))
 	}
 	if len(args.ReferenceNodeIDs) > 0 {
-		details = append(details, fmt.Sprintf("引用 %d 个画布资产并建立连线", len(args.ReferenceNodeIDs)))
+		details = append(details, fmt.Sprintf("参考素材：%d 个", len(args.ReferenceNodeIDs)))
 	} else {
 		details = append(details, "不引用画布媒体资产")
 	}
@@ -345,13 +348,23 @@ func cloudAgentMediaApprovalPreview(plan *cloudAgentMediaPlan, modelName string)
 		}
 		details = append(details, "音频："+value)
 	}
+	title, description, summary := "确认生成"+descriptor.Label, descriptor.Label+"草稿已准备。批准后提交生成，完成后显示结果。", "生成"+descriptor.Label+"《"+nodeTitle+"》"
+	if args.Intent == "new_version" {
+		title = "确认生成新版本"
+		description = "生成期间继续使用旧版本。完成后采用新版本；期间的手动选择优先。"
+		details = append([]string{plan.CurrentVersion + " → 新版本"}, details...)
+		if len(plan.Consumers) > 0 {
+			details = append(details, "后续引用："+strings.Join(plan.Consumers, "、"))
+		}
+		summary = "为《" + nodeTitle + "》生成新版本"
+	}
 	return cloudAgentApprovalPreview{
-		Kind: "media_generation", Title: "确认生成" + descriptor.Label,
-		Description: descriptor.Label + "草稿节点和引用连线已创建，尚未提交生成。确认规格后批准才会提交收费任务；拒绝则保留草稿，结果自动回写画布。",
+		Kind: "media_generation", Title: title,
+		Description: description,
 		Items: []cloudAgentApprovalPreviewItem{{
 			Operation: "generate_media", NodeID: args.NodeID, NodeTitle: nodeTitle,
 			NodeType: descriptor.Type, NodeTypeLabel: descriptor.Label, Details: details,
-			Summary: "生成" + descriptor.Label + "《" + nodeTitle + "》",
+			Summary: summary,
 		}},
 	}
 }

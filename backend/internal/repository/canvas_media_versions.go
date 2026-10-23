@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -21,6 +20,11 @@ func (r *Repository) mediaVersionScope(scope MediaVersionScope) *gorm.DB {
 func (r *Repository) CanvasMediaVersion(scope MediaVersionScope, id string) (*model.CanvasMediaVersion, error) {
 	var row model.CanvasMediaVersion
 	err := r.mediaVersionScope(scope).Where("id = ?", id).First(&row).Error
+	return &row, err
+}
+func (r *Repository) CanvasMediaVersionFromSource(scope MediaVersionScope, source string) (*model.CanvasMediaVersion, error) {
+	var row model.CanvasMediaVersion
+	err := r.mediaVersionScope(scope).Where("source_version_id = ?", source).Order("sequence").First(&row).Error
 	return &row, err
 }
 func (r *Repository) CanvasMediaVersionForTask(owner, taskID string) (*model.CanvasMediaVersion, error) {
@@ -102,58 +106,21 @@ func (r *Repository) MediaVersionResourceReferences(owner string, ids []string) 
 	if len(rows) == 0 {
 		return refs, nil
 	}
-	roots := map[mediaVersionRoot]bool{}
-	collect := func(canvas, raw string) error {
-		if raw == "" {
-			return nil
-		}
-		var doc struct {
-			Nodes []struct {
-				ID       string `json:"id"`
-				Metadata struct {
-					Version struct {
-						Epoch      string `json:"epoch"`
-						Generation int64  `json:"generation"`
-					} `json:"mediaVersion"`
-				} `json:"metadata"`
-			} `json:"nodes"`
-		}
-		if err := json.Unmarshal([]byte(raw), &doc); err != nil {
-			return err
-		}
-		for _, node := range doc.Nodes {
-			if node.Metadata.Version.Epoch != "" {
-				roots[mediaVersionRoot{canvas, node.Metadata.Version.Epoch, node.ID, node.Metadata.Version.Generation}] = true
-			}
-		}
-		return nil
-	}
-	var canvases []model.CanvasProject
-	if err := r.db.Select("id", "payload_json").Where("user_id = ?", owner).Find(&canvases).Error; err != nil {
+	roots, err := r.canvasMediaVersionRoots(owner, "")
+	if err != nil {
 		return nil, err
 	}
-	for _, canvas := range canvases {
-		if err := collect(canvas.ID, canvas.PayloadJSON); err != nil {
-			return nil, err
-		}
+	tasks, err := r.mediaVersionTaskRoots(owner, rows)
+	if err != nil {
+		return nil, err
 	}
-	if r.db.Migrator().HasTable(&model.CanvasSnapshot{}) {
-		var snapshots []model.CanvasSnapshot
-		if err := r.db.Select("canvas_id", "payload_json").Where("user_id = ?", owner).Find(&snapshots).Error; err != nil {
-			return nil, err
-		}
-		for _, snapshot := range snapshots {
-			if err := collect(snapshot.CanvasID, snapshot.PayloadJSON); err != nil {
-				return nil, err
-			}
-		}
-	}
+	retained := retainedMediaVersionIDs(rows, roots, tasks)
 	wanted := map[string]bool{}
 	for _, id := range ids {
 		wanted[id] = true
 	}
 	for _, row := range rows {
-		if !roots[mediaVersionRoot{row.CanvasID, row.Epoch, row.NodeID, row.Generation}] {
+		if !retained[row.ID] {
 			continue
 		}
 		found := map[string]bool{}

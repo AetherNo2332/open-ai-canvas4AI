@@ -73,9 +73,13 @@ func settleMediaVersion(tx *repository.Repository, doc commands.Document, bindin
 	}
 	firstMedia := node != nil && mediaversions.ReadState(node).CurrentVersionID == ""
 	var frozen struct {
-		Geometry map[string]any `json:"geometry"`
+		Geometry     map[string]any              `json:"geometry"`
+		OutputOwners []mediaversions.OutputOwner `json:"outputOwners"`
 	}
 	_ = json.Unmarshal([]byte(version.RequestJSON), &frozen)
+	if blocked == "" && frozen.OutputOwners != nil && !reflect.DeepEqual(frozen.OutputOwners, mediaversions.OutputOwners(objectList(doc["nodes"]), version.NodeID)) {
+		blocked = "output_binding_changed"
+	}
 	geometryUnchanged := node != nil && reflect.DeepEqual(frozen.Geometry, map[string]any{"position": node["position"], "width": node["width"], "height": node["height"]})
 	adopted, reason, err := mediaversions.Finish(tx, scope, node, task, metadata(resultNode), outputs, blocked)
 	if err != nil {
@@ -84,7 +88,21 @@ func settleMediaVersion(tx *repository.Repository, doc commands.Document, bindin
 	if adopted && firstMedia && geometryUnchanged {
 		node["position"], node["width"], node["height"] = resultNode["position"], resultNode["width"], resultNode["height"]
 	}
-	if row != nil && str(row["taskId"]) == task.ID && blocked == "" {
+	claimField := consumer.Field
+	if consumer.Kind == "batch" {
+		claimField = "outputNodeId"
+	}
+	if row != nil && str(row["taskId"]) == task.ID && str(row[claimField]) == version.NodeID && (blocked != "" || reason == "output_binding_changed") {
+		// A restored row may still carry the original pending marker. Release
+		// only that marker; never apply the result into its changed ownership.
+		delete(row, "taskId")
+		delete(row, "taskStatus")
+		delete(row, "errorDetails")
+		row["status"] = "idle"
+		if node != nil && mediaversions.ReadState(node).CurrentVersionID != "" {
+			row["status"] = "success"
+		}
+	} else if row != nil && str(row["taskId"]) == task.ID && blocked == "" {
 		row["taskStatus"] = string(task.Status)
 		row["status"] = resultStatus(task.Status)
 		if task.Status != model.TaskStatusSucceeded {

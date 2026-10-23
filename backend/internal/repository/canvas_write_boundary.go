@@ -255,6 +255,9 @@ func (r *Repository) syncLegacyCanvasWrite(before, after *model.CanvasProject, r
 	if err = r.SaveCommandVersions(rows); err != nil {
 		return err
 	}
+	if err = r.fenceLegacyMediaOutputOwners(after.UserID, after.ID, epoch.Epoch, old, next); err != nil {
+		return err
+	}
 	values := map[string]int64{}
 	generations, changedGenerations := map[string]int64{}, map[string]int64{}
 	for _, value := range rows {

@@ -52,12 +52,16 @@ func validateManagedMedia(before, after Document, ops []Operation) error {
 		id := text(node["id"])
 		old := entity(before, "node:"+id)
 		if old == nil {
-			if m, _ := node["metadata"].(map[string]any); m["mediaVersion"] != nil {
+			if m, _ := node["metadata"].(map[string]any); m["mediaVersion"] != nil && !allowed[id] {
 				return failure("media_version_managed", "新节点不能继承其他节点的媒体版本")
 			}
 			continue
 		}
 		oldMeta, _ := old["metadata"].(map[string]any)
+		newMeta, _ := node["metadata"].(map[string]any)
+		if oldMeta["mediaVersion"] == nil && newMeta["mediaVersion"] != nil && !allowed[id] {
+			return failure("media_version_managed", "媒体版本身份由服务端管理")
+		}
 		if oldMeta["mediaVersion"] != nil && !allowed[id] && !reflect.DeepEqual(model.CanvasMediaProjection(old), model.CanvasMediaProjection(node)) {
 			return failure("media_version_managed", "媒体由版本记录管理，请通过版本菜单选择；生成中请查询原任务")
 		}

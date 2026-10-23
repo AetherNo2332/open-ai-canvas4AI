@@ -3,28 +3,31 @@ package mediaversions
 import (
 	"encoding/json"
 	"infinite-canvas/backend/internal/model"
+	"net/url"
 	"time"
 
 	"infinite-canvas/backend/internal/repository"
 )
 
 type Item struct {
-	VersionID  string         `json:"versionId"`
-	Sequence   int64          `json:"sequence"`
-	Mode       string         `json:"mode"`
-	Status     string         `json:"status"`
-	TaskID     *string        `json:"taskId,omitempty"`
-	ResourceID string         `json:"resourceId,omitempty"`
-	Media      map[string]any `json:"media,omitempty"`
-	Prompt     string         `json:"prompt,omitempty"`
-	Model      string         `json:"model,omitempty"`
-	Options    map[string]any `json:"options,omitempty"`
-	Outputs    []Output       `json:"outputs,omitempty"`
-	Adoption   string         `json:"adoption"`
-	Error      string         `json:"error,omitempty"`
-	IsCurrent  bool           `json:"isCurrent"`
-	IsPending  bool           `json:"isPending"`
-	CreatedAt  time.Time      `json:"createdAt"`
+	VersionID       string         `json:"versionId"`
+	Sequence        int64          `json:"sequence"`
+	Mode            string         `json:"mode"`
+	Status          string         `json:"status"`
+	TaskID          *string        `json:"taskId,omitempty"`
+	ResourceID      string         `json:"resourceId,omitempty"`
+	SourceNodeID    string         `json:"sourceNodeId,omitempty"`
+	SourceVersionID string         `json:"sourceVersionId,omitempty"`
+	Media           map[string]any `json:"media,omitempty"`
+	Prompt          string         `json:"prompt,omitempty"`
+	Model           string         `json:"model,omitempty"`
+	Options         map[string]any `json:"options,omitempty"`
+	Outputs         []Output       `json:"outputs,omitempty"`
+	Adoption        string         `json:"adoption"`
+	Error           string         `json:"error,omitempty"`
+	IsCurrent       bool           `json:"isCurrent"`
+	IsPending       bool           `json:"isPending"`
+	CreatedAt       time.Time      `json:"createdAt"`
 }
 
 type Output struct {
@@ -75,7 +78,10 @@ func Read(repo *repository.Repository, scope Scope, node map[string]any, before 
 		options := map[string]any{}
 		for _, key := range []string{"size", "quality", "transparentBackground", "count", "videoSeconds", "vquality", "videoGenerateAudio", "audioVoice", "audioFormat", "audioSpeed", "audioInstructions"} {
 			if value, ok := request.Input.Config[key]; ok {
-				options[key] = value
+				switch value.(type) {
+				case string, bool, float64:
+					options[key] = value
+				}
 			}
 		}
 		var media map[string]any
@@ -83,6 +89,7 @@ func Read(repo *repository.Repository, scope Scope, node map[string]any, before 
 			if err := json.Unmarshal([]byte(row.MediaJSON), &media); err != nil {
 				return out, err
 			}
+			media = publicMedia(media, row.ResourceID)
 		}
 		var records []model.CanvasTaskOutput
 		if row.OutputsJSON != "" {
@@ -102,10 +109,9 @@ func Read(repo *repository.Repository, scope Scope, node map[string]any, before 
 			if data == nil {
 				data = map[string]any{}
 			}
-			data["content"] = data["url"]
-			outputs = append(outputs, Output{Index: record.OutputIndex, Mode: record.Kind, ResourceID: record.ResourceID, AssetID: record.AssetID, Media: data})
+			outputs = append(outputs, Output{Index: record.OutputIndex, Mode: record.Kind, ResourceID: record.ResourceID, AssetID: record.AssetID, Media: publicMedia(data, record.ResourceID)})
 		}
-		out.Items = append(out.Items, Item{VersionID: row.ID, Sequence: row.Sequence, Mode: row.Mode, Status: row.Status, TaskID: row.TaskID, ResourceID: row.ResourceID, Media: media, Prompt: request.Prompt, Model: request.Model, Options: options, Outputs: outputs, Adoption: row.Adoption, Error: row.Error, IsCurrent: row.ID == out.State.CurrentVersionID, IsPending: row.ID == out.State.PendingVersionID, CreatedAt: row.CreatedAt})
+		out.Items = append(out.Items, Item{VersionID: row.ID, Sequence: row.Sequence, Mode: row.Mode, Status: row.Status, TaskID: row.TaskID, ResourceID: row.ResourceID, SourceNodeID: row.SourceNodeID, SourceVersionID: row.SourceVersionID, Media: media, Prompt: request.Prompt, Model: request.Model, Options: options, Outputs: outputs, Adoption: row.Adoption, Error: row.Error, IsCurrent: row.ID == out.State.CurrentVersionID, IsPending: row.ID == out.State.PendingVersionID, CreatedAt: row.CreatedAt})
 	}
 	if err = CheckAdmission(repo, scope, node, "new_version"); err == nil {
 		out.CanCreateVersion = true
@@ -116,4 +122,19 @@ func Read(repo *repository.Repository, scope Scope, node map[string]any, before 
 		return out, err
 	}
 	return out, nil
+}
+
+func publicMedia(media map[string]any, resource string) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"assetId", "naturalWidth", "naturalHeight", "width", "height", "bytes", "mimeType", "durationMs", "hasAudio", "producedModel"} {
+		switch value := media[key].(type) {
+		case string, bool, float64:
+			out[key] = value
+		}
+	}
+	if resource != "" {
+		out["storageKey"] = "resource:" + resource
+		out["content"] = "/api/resources/" + url.PathEscape(resource) + "/file"
+	}
+	return out
 }

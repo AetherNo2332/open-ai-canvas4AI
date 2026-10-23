@@ -35,6 +35,12 @@ func taskFixture(t *testing.T) (*Service, *gorm.DB, *repository.Repository, *com
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { d, _ := db.DB(); _ = d.Close() })
+	return seedTaskFixture(t, db)
+}
+
+func seedTaskFixture(t *testing.T, db *gorm.DB) (*Service, *gorm.DB, *repository.Repository, *commands.Service, identity.Principal, SubmitRequest, *stubSubmitter) {
+	t.Helper()
+	var err error
 	if err = db.AutoMigrate(&model.User{}, &model.Task{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.Resource{}, &model.Asset{}); err != nil {
 		t.Fatal(err)
 	}

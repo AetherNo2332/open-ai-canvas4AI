@@ -120,7 +120,7 @@ func scrub(value any) any {
 		out := map[string]any{}
 		for k, item := range v {
 			switch strings.ToLower(k) {
-			case "apikey", "api_key", "authorization", "cookie", "token", "secret", "password", "headers":
+			case "apikey", "api_key", "authorization", "cookie", "token", "secret", "password", "headers", "url", "publicurl", "signedurl", "downloadurl", "baseurl", "base_url", "endpoint":
 				continue
 			}
 			out[k] = scrub(item)
@@ -139,7 +139,7 @@ func scrub(value any) any {
 
 // Begin joins task admission's transaction. The task and billed reservation
 // must roll back together if any version or canvas write fails.
-func Begin(repo *repository.Repository, scope Scope, node map[string]any, task model.Task, intent string) (*model.CanvasMediaVersion, error) {
+func Begin(repo *repository.Repository, scope Scope, node map[string]any, task model.Task, intent string, families ...[]map[string]any) (*model.CanvasMediaVersion, error) {
 	if scope.OwnerID == "" || scope.Epoch == "" || node == nil || str(node["id"]) != scope.NodeID || task.UserID != scope.OwnerID || task.ID == "" {
 		return nil, fail("invalid_version_target", "媒体版本目标或任务身份无效")
 	}
@@ -174,23 +174,53 @@ func Begin(repo *repository.Repository, scope Scope, node map[string]any, task m
 		return nil, err
 	}
 	if state.CurrentVersionID == "" && hasMedia {
-		resourceID, err := readyResource(repo, scope.OwnerID, mode, m)
+		base, last, err := importLegacyFamily(repo, scope, node, sequence, families...)
 		if err != nil {
 			return nil, err
 		}
-		sequence++
-		base := &model.CanvasMediaVersion{ID: "mv" + rand.Text(), OwnerID: scope.OwnerID, CanvasID: scope.CanvasID, Epoch: scope.Epoch, NodeID: scope.NodeID, Generation: scope.Generation, Sequence: sequence, SourceTaskID: str(m["taskId"]), Mode: mode, Status: "ready", RequestJSON: encode(map[string]any{"prompt": m["prompt"], "model": m["producedModel"]}), MediaJSON: encode(capture(m)), ResourceID: resourceID, Adoption: "imported"}
-		if err = repo.InsertCanvasMediaVersion(base); err != nil {
-			return nil, err
-		}
+		sequence = last
 		state.CurrentVersionID = base.ID
 		state.CurrentVersion = base.Sequence
+	}
+	if !hasMedia && state.VersionCount == 0 {
+		legacy := str(m["taskId"])
+		if legacy == "" {
+			legacy = str(m["generationTaskId"])
+		}
+		if legacy != "" && legacy != task.ID {
+			original, e := repo.TaskForUser(scope.OwnerID, legacy)
+			if e != nil {
+				return nil, e
+			}
+			if original.Status == model.TaskStatusFailed || original.Status == model.TaskStatusCancelled {
+				previous, e := repo.CanvasMediaVersionForTask(scope.OwnerID, legacy)
+				if e != nil {
+					return nil, e
+				}
+				sequence++
+				var input any
+				_ = json.Unmarshal([]byte(original.InputJSON), &input)
+				attempt := &model.CanvasMediaVersion{ID: "mv" + rand.Text(), OwnerID: scope.OwnerID, CanvasID: scope.CanvasID, Epoch: scope.Epoch, NodeID: scope.NodeID, Generation: scope.Generation, Sequence: sequence, SourceNodeID: scope.NodeID, SourceTaskID: legacy, Mode: mode, Status: string(original.Status), RequestJSON: encode(map[string]any{"prompt": original.Prompt, "model": original.Model, "input": scrub(input)}), Adoption: "imported", Error: "历史生成未完成，请查看原任务"}
+				if previous == nil {
+					attempt.TaskID = &legacy
+				} else {
+					attempt.SourceVersionID = previous.ID
+				}
+				if e = repo.InsertCanvasMediaVersion(attempt); e != nil {
+					return nil, e
+				}
+			}
+		}
 	}
 	sequence++
 	var input any
 	_ = json.Unmarshal([]byte(task.InputJSON), &input)
 	taskID := task.ID
-	row := &model.CanvasMediaVersion{ID: "mv" + rand.Text(), OwnerID: scope.OwnerID, CanvasID: scope.CanvasID, Epoch: scope.Epoch, NodeID: scope.NodeID, Generation: scope.Generation, Sequence: sequence, TaskID: &taskID, ParentVersionID: state.CurrentVersionID, Mode: mode, Status: string(task.Status), SelectionRevision: state.SelectionRevision, RequestJSON: encode(map[string]any{"prompt": task.Prompt, "model": task.Model, "input": scrub(input), "geometry": map[string]any{"position": node["position"], "width": node["width"], "height": node["height"]}}), Adoption: "pending"}
+	allNodes := []map[string]any{}
+	for _, nodes := range families {
+		allNodes = append(allNodes, nodes...)
+	}
+	row := &model.CanvasMediaVersion{ID: "mv" + rand.Text(), OwnerID: scope.OwnerID, CanvasID: scope.CanvasID, Epoch: scope.Epoch, NodeID: scope.NodeID, Generation: scope.Generation, Sequence: sequence, TaskID: &taskID, ParentVersionID: state.CurrentVersionID, Mode: mode, Status: string(task.Status), SelectionRevision: state.SelectionRevision, RequestJSON: encode(map[string]any{"prompt": task.Prompt, "model": task.Model, "input": scrub(input), "outputOwners": OutputOwners(allNodes, scope.NodeID), "geometry": map[string]any{"position": node["position"], "width": node["width"], "height": node["height"]}}), Adoption: "pending"}
 	if err = repo.InsertCanvasMediaVersion(row); err != nil {
 		return nil, err
 	}
@@ -230,7 +260,7 @@ func CheckAdmission(repo *repository.Repository, scope Scope, node map[string]an
 	}
 	if legacy != "" && !(len(admittedTaskID) == 1 && legacy == admittedTaskID[0]) {
 		original, err := repo.TaskForUser(scope.OwnerID, legacy)
-		if err != nil {
+		if err != nil || original.ProjectID != "" && original.ProjectID != scope.CanvasID {
 			return fail("task_unavailable", "无法核对原任务，请先恢复任务记录")
 		}
 		switch original.Status {
@@ -239,9 +269,24 @@ func CheckAdmission(repo *repository.Repository, scope Scope, node map[string]an
 		case model.TaskStatusSubmissionUncertain:
 			return fail("submission_uncertain", "原任务提交结果未知，请先核对")
 		}
-		if original.MediaStage != "" && original.Status != model.TaskStatusCancelled && str(m["storageKey"]) == "" {
+		if original.Status != model.TaskStatusCancelled && (original.MediaRecoveryJSON != "" || original.MediaStage != "" && original.MediaStage != "completed") {
 			return fail("materialization_pending", "原任务已有媒体保存过程，请先恢复原任务")
 		}
+		if original.Status == model.TaskStatusSucceeded {
+			pending, err := repo.CanvasMediaTaskMaterializationPending(scope.OwnerID, legacy)
+			if err != nil {
+				return err
+			}
+			if pending {
+				return fail("materialization_pending", "原任务尚待写回，请先恢复原任务")
+			}
+		}
+		if intent != "new_version" {
+			return fail("new_version_required", "目标已有已结束的生成申请，请确认后明确生成新版本")
+		}
+	}
+	if state.VersionCount > 0 && intent != "new_version" {
+		return fail("new_version_required", "目标已有生成记录，请明确生成新版本")
 	}
 	hasMedia := str(m["storageKey"]) != "" || str(m["content"]) != ""
 	if hasMedia && intent != "new_version" {
@@ -267,6 +312,9 @@ func Finish(repo *repository.Repository, scope Scope, node map[string]any, task 
 	}
 	if row == nil {
 		return false, "", fail("version_missing", "原任务没有媒体版本记录")
+	}
+	if row.AutoAdoptBlockedReason != "" && (len(blockedReason) == 0 || blockedReason[0] == "") {
+		blockedReason = []string{row.AutoAdoptBlockedReason}
 	}
 	if row.Status == "ready" || row.Status == "failed" || row.Status == "cancelled" {
 		return row.Adoption == "adopted", row.Adoption, nil

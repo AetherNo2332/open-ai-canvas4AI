@@ -633,6 +633,9 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 	if err = tx.SaveCommandVersions(versions, plan.Changes.RecreatedEntities); err != nil {
 		return Receipt{}, err
 	}
+	if err = tx.FenceChangedMediaOutputOwners(p.OwnerID, row.ID, epoch.Epoch, maps(before["nodes"]), maps(plan.Document["nodes"]), plan.Changes.RecreatedEntities); err != nil {
+		return Receipt{}, err
+	}
 	out := Receipt{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, OperationID: req.OperationID, ClientID: req.ClientID, ActorID: p.ID, Revision: row.Revision, EventSeq: epoch.EventSeq, Changes: plan.Changes}
 	out.EntityVersions = expected
 	out.EntityGenerations = map[string]int64{}
@@ -679,6 +682,9 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 	}
 	// Return the exact persisted wire representation, including numeric JSON
 	// values and omitted empty fields, so retries are identical to the first ACK.
+	if err = tx.PruneCanvasMediaVersions(p.OwnerID, row.ID); err != nil {
+		return Receipt{}, err
+	}
 	var durable Receipt
 	if err = json.Unmarshal([]byte(encoded), &durable); err != nil {
 		return Receipt{}, err

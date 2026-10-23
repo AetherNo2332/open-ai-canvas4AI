@@ -370,12 +370,12 @@ func TestReferenceUndoDuringTask(t *testing.T) {
 		t.Fatal("undo of the removal did not restore exactly that difference")
 	}
 	f.finish(t, second.TaskID, model.TaskStatusCancelled, "")
-	if outcome := f.materialize(t, second.TaskID); outcome != "applied" {
-		t.Fatalf("cancelled result outcome = %q, want applied", outcome)
+	if outcome := f.materialize(t, second.TaskID); outcome != "output_binding_changed" {
+		t.Fatalf("cancelled result outcome = %q, want output_binding_changed", outcome)
 	}
 	restored = f.snapshot(t)
-	if row = boardRow(t, restored.Document); str(row["taskId"]) != second.TaskID || str(row["status"]) != "error" || str(row["errorDetails"]) == "" {
-		t.Fatalf("cancelled result not delivered to the owning row: %+v", row)
+	if row = boardRow(t, restored.Document); str(row["taskId"]) != "" || str(row["status"]) != "success" || str(row["errorDetails"]) != "" {
+		t.Fatalf("restored row lost available media or retained stale pending: %+v", row)
 	}
 	if tasks, assets, outputs, orders := f.counts(t); tasks != 2 || assets != 1 || outputs != 1 || orders != 0 {
 		t.Fatalf("history work was regenerated: tasks=%d assets=%d outputs=%d orders=%d", tasks, assets, outputs, orders)
