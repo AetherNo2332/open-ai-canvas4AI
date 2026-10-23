@@ -50,6 +50,45 @@ class ProductionSmokeTests(unittest.TestCase):
             self.assertEqual(api.call_args_list[1].args[2]["modelKey"], "agent-parity-model")
             self.assertTrue(api.call_args_list[1].args[2]["enabled"])
 
+    def test_preflight_accepts_persisted_finish_and_canvas_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            scenario, canvas = "smoke_case", "canvas-1"
+            view = {"id": "run-1", "status": "completed", "events": [
+                {"type": "canvas_updated", "payload": {"canvasId": canvas}},
+                {"type": "tool_completed", "payload": {"toolName": "canvas_apply_ops"}},
+                {"type": "tool_completed", "payload": {"toolName": "finish_run", "result": {
+                    "runId": "run-1", "committed": True, "terminalStatus": "completed"}}},
+                {"type": "assistant_message", "payload": {"final": True, "via": "finish_run"}}]}
+            with patch.object(harness, "stub", return_value={"requests": [{"scenario": scenario}]}), patch.object(
+                    harness, "api", return_value={"project": {"nodes": [{"id": scenario}]}}):
+                self.assertTrue(harness.preflight_receipt(scenario, canvas, view))
+
+    def test_preflight_rejects_missing_finish_or_canvas_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = smoke.Smoke(directory, Path(directory) / "report.json")
+            scenario, canvas = "smoke_case", "canvas-1"
+            base_events = [
+                {"type": "tool_completed", "payload": {"toolName": "canvas_apply_ops"}},
+                {"type": "tool_completed", "payload": {"toolName": "finish_run", "result": {
+                    "runId": "run-1", "committed": True, "terminalStatus": "completed"}}},
+                {"type": "assistant_message", "payload": {"final": True, "via": "finish_run"}}]
+            cases = (
+                ("missing canvas write", base_events[1:], [{"id": scenario}]),
+                ("missing finish receipt", [base_events[0], base_events[2]], [{"id": scenario}]),
+                ("uncommitted finish", [base_events[0], {"type": "tool_completed", "payload": {
+                    "toolName": "finish_run", "result": {"runId": "run-1", "committed": False,
+                                                         "terminalStatus": "completed"}}}, base_events[2]], [{"id": scenario}]),
+                ("missing final message", base_events[:2], [{"id": scenario}]),
+                ("missing persisted node", base_events, []),
+            )
+            for name, events, nodes in cases:
+                with self.subTest(name=name), patch.object(harness, "stub", return_value={
+                        "requests": [{"scenario": scenario}]}), patch.object(
+                        harness, "api", return_value={"project": {"nodes": nodes}}):
+                    self.assertFalse(harness.preflight_receipt(scenario, canvas, {
+                        "id": "run-1", "status": "completed", "events": events}))
+
     def test_compose_commands_are_bound_to_unique_project_and_three_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = smoke.Smoke(directory, Path(directory) / "report.json")

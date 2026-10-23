@@ -246,6 +246,24 @@ class Smoke:
                 "contextWindowTokens": 128000, "maxOutputTokens": 32000,
                 "references": {"promptMaxChars": 32000}}}})
 
+    def preflight_receipt(self, scenario, canvas, view):
+        requests = self.stub("stats")["requests"]
+        nodes = self.api("GET", f"/canvas-projects/{canvas}")["project"]["nodes"]
+        events = view["events"]
+        return (view["status"] == "completed" and
+                any(row["scenario"] == scenario for row in requests) and
+                any(event["type"] == "tool_completed" and
+                    event.get("payload", {}).get("toolName") == "canvas_apply_ops" for event in events) and
+                any(event["type"] == "tool_completed" and
+                    event.get("payload", {}).get("toolName") == "finish_run" and
+                    event["payload"].get("result", {}).get("runId") == view["id"] and
+                    event["payload"]["result"].get("committed") is True and
+                    event["payload"]["result"].get("terminalStatus") == "completed" for event in events) and
+                any(event["type"] == "assistant_message" and
+                    event.get("payload", {}).get("final") is True and
+                    event["payload"].get("via") == "finish_run" for event in events) and
+                any(node.get("id") == scenario for node in nodes))
+
     def execute(self):
         config = json.loads(self.compose("config", "--format", "json").stdout)
         self.check("production deploy/build plus stub resolves seven services", set(config["services"]) == SERVICES,
@@ -311,10 +329,7 @@ class Smoke:
         canvas = self.canvas()
         run, scenario = self.start(canvas, "auto")
         view = self.complete(run)
-        self.check("preflight reaches model and durable write receipt", any(r["scenario"] == scenario for r in self.stub("stats")["requests"]) and
-                   any(e["type"] == "tool_completed" and e.get("payload", {}).get("toolName") == "canvas_apply_ops" for e in view["events"]) and
-                   any(e["type"] == "run_completed" for e in view["events"]) and
-                   self.api("GET", f"/canvas-projects/{canvas}")["project"]["nodes"][0]["id"] == scenario)
+        self.check("preflight reaches model and durable write receipt", self.preflight_receipt(scenario, canvas, view))
         approval_canvas = self.canvas()
         approval_run, approval_scenario = self.start(approval_canvas, "request_approval")
         pending = wait(lambda: (r if (r := self.view(approval_run))["status"] in {"waiting_approval", *TERMINAL} else None))
