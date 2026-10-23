@@ -1,17 +1,76 @@
 package observability
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
+type failingSpanReader struct{}
+
+func (failingSpanReader) Read([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+
+func TestExporterEntropyFailureDropsOnlyEvent(t *testing.T) {
+	e := NewExporter(1, "http://collector.invalid")
+	e.spanIDReader = failingSpanReader{}
+	_ = e.Emit(Event{})
+	e.Close()
+	if got := e.Stats(); got.Failed != 1 || got.Dropped != 1 || got.Exported != 0 {
+		t.Fatalf("entropy failure stats: %+v", got)
+	}
+}
+
+func TestExporterCloseContextBoundsWholeQueue(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-entered:
+		default:
+			close(entered)
+		}
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+	e := NewExporter(2, server.URL)
+	_ = e.Emit(Event{TaskID: "first"})
+	<-entered
+	_ = e.Emit(Event{TaskID: "second"})
+	_ = e.Emit(Event{TaskID: "third"})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	e.CloseContext(ctx)
+	select {
+	case <-e.done:
+	case <-time.After(time.Second):
+		t.Fatal("exporter did not stop after deadline")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("shutdown exceeded deadline: %v", elapsed)
+	}
+	if got := e.Stats(); got.Exported != 0 || got.Failed != 1 || got.Dropped != 3 {
+		t.Fatalf("undelivered events not accounted: %+v", got)
+	}
+}
+
 func TestExporterUniqueValidSpans(t *testing.T) {
-	first := spanPayload(Event{TraceID: "0123456789abcdef0123456789abcdef", Status: StatusFailed})
-	second := spanPayload(Event{TraceID: "0123456789abcdef0123456789abcdef"})
+	first, err := spanPayloadWithReader(Event{TraceID: "0123456789abcdef0123456789abcdef", Status: StatusFailed}, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := spanPayloadWithReader(Event{TraceID: "0123456789abcdef0123456789abcdef"}, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if first["traceId"] != "0123456789abcdef0123456789abcdef" {
 		t.Fatal("valid trace ID changed")
 	}
@@ -24,7 +83,11 @@ func TestExporterUniqueValidSpans(t *testing.T) {
 	if first["status"].(map[string]any)["code"] != 2 {
 		t.Fatal("failed event requires error span status")
 	}
-	raw, _ := json.Marshal(spanPayload(Event{Reason: "secret credential", TraceID: strings.Repeat("0", 32)}))
+	unsafeSpan, err := spanPayloadWithReader(Event{Reason: "secret credential", TraceID: strings.Repeat("0", 32)}, rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(unsafeSpan)
 	if strings.Contains(string(raw), "secret") || strings.Contains(string(raw), `"traceId":"00000000000000000000000000000000"`) {
 		t.Fatal("unsafe payload")
 	}

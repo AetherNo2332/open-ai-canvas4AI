@@ -37,7 +37,7 @@ func (r *Repository) ObservabilityData(from time.Time) (ObservabilityData, error
 		}
 	}
 	if r.db.Migrator().HasTable(&model.AgentRuntimeInstance{}) {
-		if err := r.db.Select("id,active,capacity,draining,updated_at").Where("updated_at > ?", time.Now().Add(-45*time.Second)).Find(&data.Workers).Error; err != nil {
+		if err := r.db.Select("id,active,capacity,draining,readiness,updated_at").Where("updated_at > ?", time.Now().Add(-45*time.Second)).Find(&data.Workers).Error; err != nil {
 			return data, err
 		}
 	}

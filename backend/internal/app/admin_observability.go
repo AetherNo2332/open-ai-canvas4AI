@@ -257,7 +257,7 @@ func buildCommittedObservability(data repository.ObservabilityData, now time.Tim
 	snapshot.Tasks.Retried = retries
 	capacity := 0
 	for _, worker := range data.Workers {
-		if worker.Draining {
+		if worker.Draining || worker.Readiness != "ready" {
 			continue
 		}
 		snapshot.Worker.Online++

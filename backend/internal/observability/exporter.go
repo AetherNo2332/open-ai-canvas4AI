@@ -2,10 +2,12 @@ package observability
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -15,18 +17,23 @@ import (
 )
 
 type Exporter struct {
-	queue     chan Event
-	endpoint  string
-	client    *http.Client
-	stop      chan struct{}
-	done      chan struct{}
-	once      sync.Once
-	droppedMu sync.Mutex
-	dropped   int64
-	failed    int64
-	exported  int64
-	closed    bool
+	queue          chan Event
+	endpoint       string
+	client         *http.Client
+	stop           chan struct{}
+	done           chan struct{}
+	deliveryCtx    context.Context
+	cancelDelivery context.CancelFunc
+	spanIDReader   io.Reader
+	once           sync.Once
+	droppedMu      sync.Mutex
+	dropped        int64
+	failed         int64
+	exported       int64
+	closed         bool
 }
+
+const maxFlushTime = 2 * time.Second
 
 type ExportStats struct {
 	Exported int64 `json:"exported"`
@@ -47,7 +54,8 @@ func NewExporter(capacity int, endpoint string) *Exporter {
 	if capacity < 1 {
 		capacity = 256
 	}
-	e := &Exporter{queue: make(chan Event, capacity), endpoint: endpoint, client: &http.Client{Timeout: 2 * time.Second}, stop: make(chan struct{}), done: make(chan struct{})}
+	deliveryCtx, cancelDelivery := context.WithCancel(context.Background())
+	e := &Exporter{queue: make(chan Event, capacity), endpoint: endpoint, client: &http.Client{Timeout: 2 * time.Second}, stop: make(chan struct{}), done: make(chan struct{}), deliveryCtx: deliveryCtx, cancelDelivery: cancelDelivery, spanIDReader: rand.Reader}
 	go e.loop()
 	return e
 }
@@ -86,25 +94,52 @@ func (e *Exporter) Dropped() int64 {
 	return e.dropped
 }
 func (e *Exporter) Close() {
+	e.CloseContext(context.Background())
+}
+
+func (e *Exporter) CloseContext(ctx context.Context) {
 	if e == nil {
 		return
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	e.once.Do(func() {
+		flushCtx, stopFlush := context.WithTimeout(ctx, maxFlushTime)
+		go func() {
+			select {
+			case <-flushCtx.Done():
+				e.cancelDelivery()
+			case <-e.done:
+			}
+			stopFlush()
+		}()
 		e.droppedMu.Lock()
 		e.closed = true
 		close(e.stop)
 		e.droppedMu.Unlock()
 	})
-	<-e.done
+	select {
+	case <-e.done:
+	case <-ctx.Done():
+	}
 }
 func (e *Exporter) loop() {
 	defer close(e.done)
 	for {
+		if e.deliveryCtx.Err() != nil {
+			e.discardQueued()
+			return
+		}
 		select {
 		case event := <-e.queue:
 			e.send(event)
 		case <-e.stop:
 			for {
+				if e.deliveryCtx.Err() != nil {
+					e.discardQueued()
+					return
+				}
 				select {
 				case event := <-e.queue:
 					e.send(event)
@@ -115,15 +150,36 @@ func (e *Exporter) loop() {
 		}
 	}
 }
+
+func (e *Exporter) discardQueued() {
+	for {
+		select {
+		case <-e.queue:
+			e.droppedMu.Lock()
+			e.dropped++
+			e.droppedMu.Unlock()
+		default:
+			return
+		}
+	}
+}
 func (e *Exporter) send(event Event) {
 	if e.endpoint == "" {
 		return
 	}
-	body := map[string]any{"resourceSpans": []any{map[string]any{"scopeSpans": []any{map[string]any{"spans": []any{spanPayload(event)}}}}}}
+	span, err := spanPayloadWithReader(event, e.spanIDReader)
+	if err != nil {
+		e.recordFailure()
+		return
+	}
+	body := map[string]any{"resourceSpans": []any{map[string]any{"scopeSpans": []any{map[string]any{"spans": []any{span}}}}}}
 	raw, err := json.Marshal(body)
 	if err == nil {
 		for attempt := 0; attempt < 3; attempt++ {
-			req, requestErr := http.NewRequest(http.MethodPost, e.endpoint, bytes.NewReader(raw))
+			if e.deliveryCtx.Err() != nil {
+				break
+			}
+			req, requestErr := http.NewRequestWithContext(e.deliveryCtx, http.MethodPost, e.endpoint, bytes.NewReader(raw))
 			if requestErr != nil {
 				break
 			}
@@ -142,17 +198,23 @@ func (e *Exporter) send(event Event) {
 				break
 			}
 			if attempt < 2 {
-				time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
+				select {
+				case <-time.After(time.Duration(attempt+1) * 25 * time.Millisecond):
+				case <-e.deliveryCtx.Done():
+				}
 			}
 		}
 	}
 	// Delivery failures are counters only: never feed an exporter error back into its queue.
+	e.recordFailure()
+}
+func (e *Exporter) recordFailure() {
 	e.droppedMu.Lock()
 	e.failed++
 	e.dropped++
 	e.droppedMu.Unlock()
 }
-func spanPayload(event Event) map[string]any {
+func spanPayloadWithReader(event Event, reader io.Reader) (map[string]any, error) {
 	trace := strings.ToLower(event.TraceID)
 	decoded, err := hex.DecodeString(trace)
 	if err != nil || len(decoded) != 16 || trace == strings.Repeat("0", 32) {
@@ -160,8 +222,8 @@ func spanPayload(event Event) map[string]any {
 		trace = hex.EncodeToString(sum[:16])
 	}
 	var span [8]byte
-	if _, err := rand.Read(span[:]); err != nil {
-		panic("observability: random span ID unavailable")
+	if _, err := io.ReadFull(reader, span[:]); err != nil {
+		return nil, err
 	}
 	if span == [8]byte{} {
 		span[7] = 1
@@ -180,7 +242,7 @@ func spanPayload(event Event) map[string]any {
 	if event.Status == StatusFailed || event.Status == StatusExpired || event.Status == StatusCancelled {
 		status = 2
 	}
-	return map[string]any{"traceId": trace, "spanId": hex.EncodeToString(span[:]), "name": string(event.Kind), "startTimeUnixNano": strconv.FormatInt(start.UnixNano(), 10), "endTimeUnixNano": strconv.FormatInt(end.UnixNano(), 10), "status": map[string]any{"code": status}, "attributes": []any{attribute("task_id", event.TaskID), attribute("run_id", event.RunID), attribute("status", string(event.Status)), attribute("model", event.Model), attribute("tool_type", event.ToolType)}}
+	return map[string]any{"traceId": trace, "spanId": hex.EncodeToString(span[:]), "name": string(event.Kind), "startTimeUnixNano": strconv.FormatInt(start.UnixNano(), 10), "endTimeUnixNano": strconv.FormatInt(end.UnixNano(), 10), "status": map[string]any{"code": status}, "attributes": []any{attribute("task_id", event.TaskID), attribute("run_id", event.RunID), attribute("status", string(event.Status)), attribute("model", event.Model), attribute("tool_type", event.ToolType)}}, nil
 }
 func attribute(key, value string) map[string]any {
 	return map[string]any{"key": key, "value": map[string]any{"stringValue": value}}

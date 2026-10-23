@@ -209,7 +209,7 @@ func (s *Service) BeginDrain() { s.backgroundWorkers().BeginDrain() }
 func (s *Service) StopWorker(ctx context.Context) error {
 	err := s.backgroundWorkers().Stop(ctx)
 	if s.observabilityExporter != nil {
-		s.observabilityExporter.Close()
+		s.observabilityExporter.CloseContext(ctx)
 	}
 	return err
 }

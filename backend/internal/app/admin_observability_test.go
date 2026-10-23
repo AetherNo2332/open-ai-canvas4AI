@@ -10,7 +10,7 @@ import (
 func TestCommittedObservabilityProjection(t *testing.T) {
 	now := time.Now().UTC()
 	started, completed := now.Add(-500*time.Millisecond), now
-	data := repository.ObservabilityData{Runs: []model.CloudAgentExecution{{ID: "run-1", Status: "completed", CreatedAt: now.Add(-time.Second), UpdatedAt: now}}, Logs: []model.ApiCallLog{{ID: "call", TaskID: "step", Capability: "text", Status: model.ApiCallStatusSucceeded, InputTokens: 40, OutputTokens: 8, DurationMs: 500, CreatedAt: now}}, Tasks: []model.Task{{ID: "step", AgentRunID: "run-1", Status: model.TaskStatusSucceeded, CreatedAt: now, StartedAt: &started, CompletedAt: &completed, Attempts: 2}}, Workers: []model.AgentRuntimeInstance{{ID: "worker", Capacity: 4, Active: 2, UpdatedAt: now}}}
+	data := repository.ObservabilityData{Runs: []model.CloudAgentExecution{{ID: "run-1", Status: "completed", CreatedAt: now.Add(-time.Second), UpdatedAt: now}}, Logs: []model.ApiCallLog{{ID: "call", TaskID: "step", Capability: "text", Status: model.ApiCallStatusSucceeded, InputTokens: 40, OutputTokens: 8, DurationMs: 500, CreatedAt: now}}, Tasks: []model.Task{{ID: "step", AgentRunID: "run-1", Status: model.TaskStatusSucceeded, CreatedAt: now, StartedAt: &started, CompletedAt: &completed, Attempts: 2}}, Workers: []model.AgentRuntimeInstance{{ID: "worker", Capacity: 4, Active: 2, Readiness: "ready", UpdatedAt: now}}}
 	snapshot, events := buildCommittedObservability(data, now, time.Minute)
 	if snapshot.Tasks.Completed != 1 || snapshot.Worker.BusyRatio != 50 || snapshot.LLM.InputTokens != 40 {
 		t.Fatalf("wrong projection: %+v", snapshot)
@@ -28,6 +28,24 @@ func TestCommittedObservabilityProjection(t *testing.T) {
 		if len(event.TraceID) != 32 {
 			t.Fatalf("invalid trace identity: %q", event.TraceID)
 		}
+	}
+}
+
+func TestCommittedObservabilityExcludesNonReadyWorkers(t *testing.T) {
+	now := time.Now().UTC()
+	data := repository.ObservabilityData{
+		Tasks: []model.Task{{ID: "queued", AgentRunID: "run", Status: model.TaskStatusQueued, CreatedAt: now.Add(-time.Minute)}},
+		Workers: []model.AgentRuntimeInstance{
+			{ID: "starting", Capacity: 8, Active: 2, Readiness: "starting", UpdatedAt: now},
+			{ID: "degraded", Capacity: 8, Active: 2, Readiness: "degraded", UpdatedAt: now},
+		},
+	}
+	snapshot, _ := buildCommittedObservability(data, now, time.Hour)
+	if snapshot.Worker.Online != 0 || snapshot.Worker.Busy != 0 || snapshot.Worker.BusyRatio != 0 {
+		t.Fatalf("non-ready workers counted: %+v", snapshot.Worker)
+	}
+	if len(snapshot.Alerts) != 1 || snapshot.Alerts[0] != "worker_unavailable" {
+		t.Fatalf("missing unavailable alert: %+v", snapshot.Alerts)
 	}
 }
 
