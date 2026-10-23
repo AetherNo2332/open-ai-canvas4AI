@@ -137,7 +137,7 @@ export function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlay
                     nextMetadata.naturalHeight = height;
                     changed = true;
                 }
-                if (durationMs > 0 && !metadata?.durationMs) {
+                if (durationMs > 0 && (!metadata?.durationMs || metadata.durationMs <= 0)) {
                     nextMetadata.durationMs = durationMs;
                     changed = true;
                 }
