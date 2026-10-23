@@ -42,8 +42,9 @@ var ErrProjectUnitShotsChanged = errors.New("镜头已被修改，请刷新后�
 var ErrCanvasRevisionConflict = errors.New("画布已被更新，请刷新后重试")
 
 type Repository struct {
-	db                   *gorm.DB
-	structuredWriteQuota StructuredWriteQuota
+	db                       *gorm.DB
+	structuredWriteQuota     StructuredWriteQuota
+	agentMessageQueueEnabled bool
 }
 
 type UserStorageUsage struct {
@@ -59,7 +60,7 @@ type UserStorageUsage struct {
 func New(db *gorm.DB) *Repository {
 	database.InstallAgentEventCallbacks(db)
 	quota, _ := db.Statement.Context.Value(canvasWriteQuotaContextKey{}).(StructuredWriteQuota)
-	return &Repository{db: db, structuredWriteQuota: quota}
+	return &Repository{db: db, structuredWriteQuota: quota, agentMessageQueueEnabled: db.Migrator().HasTable(&model.AgentConversationQueue{})}
 }
 
 func (r *Repository) WithContext(ctx context.Context) *Repository {
@@ -103,6 +104,16 @@ func (r *Repository) UserStorageUsage(userID string) (UserStorageUsage, error) {
 		query = strings.ReplaceAll(query, ", '') AS BLOB))", ", ''))")
 	}
 	err := r.db.Raw(query, userID, userID, userID, userID, userID, userID, userID, userID, userID, userID, userID).Scan(&usage).Error
+	if err == nil && r.agentMessageQueueEnabled {
+		var bytes int64
+		expr := "COALESCE(SUM(length(CAST(COALESCE(request_json, '') AS BLOB)) + length(CAST(COALESCE(prompt, '') AS BLOB)) + length(CAST(COALESCE(fingerprint, '') AS BLOB)) + length(CAST(COALESCE(last_error, '') AS BLOB))), 0)"
+		if r.Dialect() == "postgres" {
+			expr = strings.ReplaceAll(expr, "length(CAST(COALESCE(", "octet_length(COALESCE(")
+			expr = strings.ReplaceAll(expr, ", '') AS BLOB))", ", ''))")
+		}
+		err = r.db.Model(&model.AgentQueuedMessage{}).Where("user_id = ?", userID).Select(expr).Scan(&bytes).Error
+		usage.TaskBytes += bytes
+	}
 	return usage, err
 }
 

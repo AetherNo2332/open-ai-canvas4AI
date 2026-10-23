@@ -504,6 +504,9 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 				return err
 			}
 		}
+		if err = writer.observeAgentMessageQueue(run, previousEvents); err != nil {
+			return err
+		}
 		for _, message := range run.Transcript {
 			key := fmt.Sprintf("%s:%d", message.Kind, message.Sequence)
 			if previousMessages[key] == message.MessageJSON {
