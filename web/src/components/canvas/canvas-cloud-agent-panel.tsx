@@ -264,6 +264,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const conversationsRef = useRef(conversations);
     conversationsRef.current = conversations;
     const autoRestoreRef = useRef(true);
+    const acceptedSubmissionGenerationRef = useRef(0);
     const submissionControllerRef = useRef<AbortController | null>(null);
     useEffect(() => () => {
         submissionControllerRef.current?.abort();
@@ -696,8 +697,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             if (loading || controller.signal.aborted) return;
             loading = true;
             try {
+                const submissionGeneration = acceptedSubmissionGenerationRef.current;
                 const remote = await refreshCloudAgentConversations({ canvasId, scope: userScope, signal: controller.signal, existing: conversationsRef.current });
-                if (controller.signal.aborted || getActiveUserScope() !== userScope) return;
+                if (controller.signal.aborted || getActiveUserScope() !== userScope || submissionGeneration !== acceptedSubmissionGenerationRef.current) return;
                 const state = historyStateRef.current;
                 const protectedSubmission = state.busy || Boolean(pendingSubmission.current) || submissionRequestRef.current;
                 const local = conversationsRef.current.map((conversation) => conversation.id === state.activeConversationId
@@ -928,6 +930,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             const result = submission.parentRunId ? await sendAgentMessage(submission.parentRunId, request, controller.signal) : await createAgentRun(request, controller.signal);
             accepted = true;
             if (currentScope.current === scope) {
+                // A read started before this accepted POST cannot describe the
+                // current tip, even after several local turns have completed.
+                acceptedSubmissionGenerationRef.current += 1;
                 currentRunIdRef.current = result.run.id;
                 setContextUsage((current) => (submission.parentRunId && sameAgentContextSelection(run, request) ? continueAgentContextUsage(current, result.run.id) : emptyAgentContextUsage(result.run.id)));
                 setRun(result.run);

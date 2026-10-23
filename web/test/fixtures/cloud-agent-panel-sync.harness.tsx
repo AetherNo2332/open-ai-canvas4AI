@@ -27,6 +27,7 @@ let local: CloudAgentConversation[] = [];
 let remote: CloudAgentConversation[] = [];
 let pending: CloudAgentPendingSubmission | null = null;
 let composer: any;
+let sendMessageOverride: ((parentId: string) => AgentRun) | undefined;
 let refreshOverride: ((options: any) => Promise<CloudAgentConversation[]>) | undefined;
 const subscriptions: Array<{ id: string; after: number; closed: boolean; receive: (event: AgentEvent) => void }> = [];
 const reads: Array<{ canvasId: string; scope: string; signal: AbortSignal }> = [];
@@ -37,7 +38,7 @@ mock.module("motion/react", () => ({ AnimatePresence: Box, motion: { aside: Box,
 mock.module("antd", () => ({ Button: ({ children, icon, onClick }: any) => <button onClick={onClick}>{icon}{children}</button>, Dropdown: Box, Popover: Box, Input: Object.assign(Box, { TextArea: Box }) }));
 mock.module("@/services/api/agent", () => ({
     ...agent,
-    sendAgentMessage: async () => ({ run: { ...conversation("local-child").run!, parentId: "desktop", status: "running", createdAt: "2026-10-23T00:01:00Z" } }),
+    sendAgentMessage: async (parentId: string) => ({ run: sendMessageOverride ? sendMessageOverride(parentId) : { ...conversation("local-child").run!, parentId: "desktop", status: "running", createdAt: "2026-10-23T00:01:00Z" } }),
     getAgentCapabilities: async () => ({ permissionModes: ["auto"], skills: true, availability: { configured: true } }),
     listAgentSkillDefaults: async () => ({ count: 0, skills: [] }),
     subscribeAgentEvents: (id: string, receive: (event: AgentEvent) => void, options: any) => {
@@ -92,6 +93,7 @@ const settle = async () => { for (let i = 0; i < 4; i++) await new Promise((reso
 async function focus() { await act(async () => { window.dispatchEvent(new Event("focus")); await settle(); }); }
 async function mount(initial: CloudAgentConversation[] = [], initialPending: CloudAgentPendingSubmission | null = null, loader?: typeof refreshOverride) {
     local = initial; remote = [conversation("desktop")]; pending = initialPending; refreshOverride = loader;
+    sendMessageOverride = undefined;
     subscriptions.length = 0; reads.length = 0;
     setActiveUserScope("sync-user");
     useUserStore.setState({ hydrated: true, user: { id: "sync-user", username: "test", displayName: "test", role: "user", status: "active" }, features: { agentSubagentsEnabled: false } as any });
@@ -161,6 +163,42 @@ test("a delayed parent directory result cannot close the SSE of an accepted loca
         await act(async () => { finish([conversation("desktop")]); await settle(); });
         expect(subscriptions.at(-1)).toMatchObject({ id: "local-child", closed: false });
         expect(subscriptions.map((item) => item.id)).toEqual(["desktop", "local-child"]);
+    } finally { await mounted.close(); }
+});
+
+test("an old directory read stays obsolete across repeated accepted POSTs and SSE completions, then fresh reads resume", async () => {
+    const mounted = await mount([conversation("desktop", "local")]);
+    try {
+        let finish!: (value: CloudAgentConversation[]) => void;
+        refreshOverride = () => new Promise((resolve) => { finish = resolve; });
+        await focus();
+        const ids = ["local-first", "local-second", "local-third"];
+        const parents: string[] = [];
+        sendMessageOverride = (parentId) => {
+            parents.push(parentId);
+            return { ...conversation(ids[parents.length - 1]).run!, parentId, status: "running", createdAt: `2026-10-23T00:0${parents.length}:00Z` };
+        };
+        for (const [index, id] of ids.entries()) {
+            await act(async () => { composer.onPromptChange(`继续第 ${index + 1} 轮`); await settle(); });
+            await act(async () => { composer.onSubmit(); await settle(); });
+            expect(subscriptions.at(-1)).toMatchObject({ id, after: 0, closed: false });
+            expect(pending).toBeNull();
+            if (index < ids.length - 1) {
+                await act(async () => {
+                    subscriptions.at(-1)!.receive({ runId: id, eventId: `${id}:1`, seq: 1, type: "run_status", payload: { status: "completed", revision: 2 }, createdAt: `2026-10-23T00:0${index + 1}:01Z` });
+                    await settle();
+                });
+            }
+        }
+        expect(parents).toEqual(["desktop", "local-first", "local-second"]);
+        await act(async () => { finish([conversation("desktop")]); await settle(); });
+        expect(subscriptions.at(-1)).toMatchObject({ id: "local-third", closed: false });
+        expect(subscriptions.map((item) => item.id)).toEqual(["desktop", ...ids]);
+        refreshOverride = undefined;
+        remote = [conversation("fresh-phone-child")];
+        await focus();
+        expect(subscriptions.at(-1)?.id).toBe("fresh-phone-child");
+        expect(mounted.host.textContent).toContain("结果-fresh-phone-child");
     } finally { await mounted.close(); }
 });
 
