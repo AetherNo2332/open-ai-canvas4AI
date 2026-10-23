@@ -175,8 +175,7 @@ func TestCloudAgentPlanCancellationClearsPendingWithoutCompletingIt(t *testing.T
 	if len(state.Plan) != 0 || len(cloudAgentPendingPlanItems(state.Plan)) != 0 {
 		t.Fatal("取消清单后仍残留旧项")
 	}
-	// 把清单清空本身就是对账（用户已取消的工作应当移除），所以闸门随之放行；
-	// 旧指纹也不再适用，下一条阻塞原因会重新计数（工作项 A）。
+	// 清空清单仅修改模型维护的待办，不影响其他协议阻塞的计数。
 	if block := cloudAgentEvaluateCompletion(state); !block.Final {
 		t.Fatalf("取消清单后不该再阻塞收尾：%+v", block)
 	}

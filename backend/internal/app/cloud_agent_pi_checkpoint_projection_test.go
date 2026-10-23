@@ -15,7 +15,7 @@ func TestPiNoToolCheckpointDefersPublicationUntilCompletionGate(t *testing.T) {
 		published, final       bool
 	}{
 		{name: "completed", stopKind: "stop", status: "completed", published: true, final: true},
-		{name: "pending plan", stopKind: "stop", status: "continue", pendingPlan: true, published: true},
+		{name: "pending plan", stopKind: "stop", status: "completed", pendingPlan: true, published: true, final: true},
 		{name: "truncated", stopKind: "length", status: "continue"},
 		{name: "refusal", stopKind: "refusal", status: "failed"},
 	} {
@@ -58,6 +58,11 @@ func TestPiNoToolCheckpointDefersPublicationUntilCompletionGate(t *testing.T) {
 				t.Fatalf("收尾判定 = %+v，错误 %v，期望 %s", decision, err, test.status)
 			}
 			before, state := reloadPiRun(t, s, run.ID)
+			if test.pendingPlan {
+				if len(state.Plan) != 1 || state.Plan[0].Status != "doing" || state.CompletionNudges != 0 || len(agentEventPayloads(*state, "completion_blocked")) != 0 {
+					t.Fatalf("正文收尾不应修改待办或触发催办：plan=%+v nudges=%d", state.Plan, state.CompletionNudges)
+				}
+			}
 			messages := agentEventPayloads(*state, "assistant_message")
 			wantCount := 0
 			if test.published {

@@ -161,7 +161,7 @@ export function applyAgentEvent(
         const attempt = Number(payload.attempt || 0);
         const maxAttempts = Number(payload.maxAttempts || 0);
         const id = `completion-blocked-${event.runId}:${event.seq ?? event.eventId}`;
-        setMessages((current) => appendUniqueMessage(current, agentControlMessage(id, text || "这次收尾没通过服务端核对，已要求 Agent 先对账待办清单。", attempt > 0 && maxAttempts > 0 ? `第 ${attempt}/${maxAttempts} 次` : undefined)));
+        setMessages((current) => appendUniqueMessage(current, agentControlMessage(id, text || "本次收尾尚有协议或交付阻塞。", attempt > 0 && maxAttempts > 0 ? `第 ${attempt}/${maxAttempts} 次` : undefined)));
         return;
     }
     if (event.type === "assistant_snapshot") {

@@ -14,9 +14,9 @@ test("服务端的 final 标记仍按缺省视为结论", () => {
 });
 
 test("运行时控制消息是 system 行，不是用户气泡", () => {
-    const message = agentControlMessage("completion-blocked-ag1:7", "待办清单还有未完成的项（生成镜头1）；已要求 Agent 先对账再收尾。", "第 1/2 次");
+    const message = agentControlMessage("completion-blocked-ag1:7", "子代理结果尚未收集；已将阻塞原因返回 Agent。", "第 1/2 次");
     expect(message.role).toBe("system");
-    expect(message.text).toContain("生成镜头1");
+    expect(message.text).toContain("子代理结果");
     expect(message.meta).toBe("第 1/2 次");
     // 时间线里没有第二种"控制行"表示法：必须是 system（user 会被当成真人发言）
     expect(message.role === "user").toBe(false);
@@ -49,7 +49,7 @@ test("时间线不再挂模型品牌 glyph，也不再给非最终正文加过�
 
 test("finish_run 的工具卡说清这次收尾是否被拦下", () => {
     const blocked = friendlyAgentToolSummary("finish_run", "工具执行成功", { eventType: "tool_completed", result: { completionBlocked: true } });
-    expect(blocked).toBe("收尾被拦下，继续处理未完成项");
+    expect(blocked).toBe("收尾被拦下，继续处理交付阻塞");
     const accepted = friendlyAgentToolSummary("finish_run", "工具执行成功", { eventType: "tool_completed", result: { completionBlocked: false } });
     expect(accepted).toBe("已收尾并给出最终答复");
     expect(friendlyAgentToolSummary("finish_run", "", undefined, true)).toBe("准备收尾并给出最终答复");

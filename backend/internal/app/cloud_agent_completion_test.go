@@ -1,12 +1,6 @@
 package app
 
-// 工作项 A：收尾闸门与 runtime 催办的时序语义。
-// 依据 token-audit/local-only/HANDOFF-工作项A-完成闸门与催办.md 的五条验收：
-// ① 有未对账待办时，候选收尾正文不得作为最终答复发布；
-// ② runtime 控制消息不显示成真人 user 消息（事件层用 completion_blocked，前端渲染成控制行）；
-// ③ 闸门通过后只发布一次最终 assistant 消息；
-// ④ 终止态明确：催办用尽后以 completion_blocked 结束，不无限催办；
-// ⑤ 同一个阻塞原因不会无限重复（指纹计数 + 变化即重置）。
+// 收尾保护针对协议与交付事实；待办清单由模型自行管理。
 import (
 	"encoding/json"
 	"fmt"
@@ -81,43 +75,16 @@ func agentWithPendingPlan(t *testing.T, s *Service, db *gorm.DB, root *CloudAgen
 	return run, state
 }
 
-// ① 有未对账待办时，模型"看起来收尾"的正文不得作为最终答复发布，本轮也不能结束。
-func TestCloudAgentPendingPlanBlocksCandidateCompletion(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	agentWithPendingPlan(t, s, db, root)
-
-	run, state := agentFinishRunForTest(t, s, db, root.ID, "finish-candidate", "镜头已经全部生成完毕，任务完成。")
-
-	if run.Status != "running" {
-		t.Fatalf("待办未对账时不该结束本轮，status=%s", run.Status)
-	}
-	if replies := agentFinalReplies(state); len(replies) != 0 {
-		t.Fatalf("候选收尾正文不该作为最终答复发布：%v", replies)
-	}
-	// 用户仍然看得到这段内容，但它是"过程说明"而不是最终答复。
-	var progress []map[string]any
-	for _, payload := range agentEventPayloads(state, "assistant_message") {
-		if payload["final"] == false {
-			progress = append(progress, payload)
+// pending/doing/done 都只是模型维护的状态。
+func TestCloudAgentCompletionIgnoresPlanStatus(t *testing.T) {
+	for _, status := range []string{"pending", "doing", "done"} {
+		state := &cloudAgentRuntime{Plan: []cloudAgentPlanItem{{ID: "1", Title: "后续工作", Status: status}}}
+		if block := cloudAgentEvaluateCompletion(state); !block.Final || len(block.Blockers) != 0 {
+			t.Fatalf("待办状态 %s 不应阻止收尾：%+v", status, block)
 		}
-	}
-	if len(progress) != 1 || !strings.Contains(stringValue(progress[0]["text"]), "镜头已经全部生成完毕") {
-		t.Fatalf("候选正文应以非最终（final=false）形式发布：%+v", progress)
-	}
-	// 被拦下的原因要作为控制事件落库：用户能看到"为什么它又继续跑了"。
-	blocked := agentEventPayloads(state, "completion_blocked")
-	if len(blocked) != 1 {
-		t.Fatalf("应落一条 completion_blocked 控制事件：%+v", blocked)
-	}
-	if !strings.Contains(fmt.Sprint(blocked[0]["blockers"]), "pending_plan") {
-		t.Fatalf("控制事件要带机器可读的阻塞原因：%+v", blocked[0])
-	}
-	if !strings.Contains(fmt.Sprint(state.Canonical.Messages), "生成镜头1") {
-		t.Fatalf("模型侧仍要拿到未完成项催办：%+v", state.Canonical.Messages)
 	}
 }
 
-// ③ 闸门通过后只发布一次最终消息，并且本轮就此结束。
 func TestCloudAgentCompletionPublishesOneFinalReply(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	run, state := agentFinishRunForTest(t, s, db, root.ID, "finish-complete", "分析完成：画布上共有 3 个节点。")
@@ -146,77 +113,55 @@ func TestCloudAgentCompletionPublishesOneFinalReply(t *testing.T) {
 	}
 }
 
-// ④⑤ 同一个阻塞原因不会无限催办：到上限后以 completion_blocked 明确终止。
-func TestCloudAgentCompletionNudgeIsBounded(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	agentWithPendingPlan(t, s, db, root)
-
-	for attempt := 1; attempt <= cloudAgentCompletionNudgeLimit; attempt++ {
-		run, state := agentFinishRunForTest(t, s, db, root.ID, fmt.Sprintf("finish-%d", attempt), fmt.Sprintf("第 %d 次声称完成。", attempt))
-		if run.Status != "running" {
-			t.Fatalf("第 %d 次仍应有催办机会，status=%s", attempt, run.Status)
-		}
-		if blocked := agentEventPayloads(state, "completion_blocked"); len(blocked) != attempt {
-			t.Fatalf("第 %d 次应累计 %d 条控制事件：%+v", attempt, attempt, blocked)
-		}
+// 子代理结果尚未收集时仍需报告真实阻塞。
+func TestCloudAgentCompletionReportsProtocolBlockerWithoutPlanNudge(t *testing.T) {
+	state := &cloudAgentRuntime{
+		ActiveSubagents: 1,
+		Plan:            []cloudAgentPlanItem{{ID: "1", Title: "后续工作", Status: "doing"}},
+		Canonical:       canonicalAgentRequest{Messages: []map[string]any{{"role": "user", "content": "先汇总子代理结果"}}},
 	}
-	// 用尽之后：不再开新的模型调用，而是明确以 completion_blocked 收场。
-	run, state := agentFinishRunForTest(t, s, db, root.ID, "finish-exhausted", "我认为已经完成。")
-	if run.Status != "failed" {
-		t.Fatalf("催办用尽后应终止本轮，status=%s", run.Status)
+	block := cloudAgentEvaluateCompletion(state)
+	if block.Final || !cloudAgentCompletionHasBlocker(block, "pending_subagents") {
+		t.Fatalf("应保留子代理结果保护：%+v", block)
 	}
-	if replies := agentFinalReplies(state); len(replies) != 0 {
-		t.Fatalf("闸门未通过时不得发布最终答复：%v", replies)
+	cloudAgentCompletionBlockedNudge("run", state, block)
+	last := state.Canonical.Messages[len(state.Canonical.Messages)-1]
+	var context cloudAgentRuntimeContext
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(stringField(last, "content"), cloudAgentRuntimeContextMarker)), &context); err != nil {
+		t.Fatal(err)
 	}
-	last := agentLastEvent(t, state)
-	if last.Type != "run_failed" || stringValue(last.Payload["reason"]) != "completion_blocked" {
-		t.Fatalf("终止原因应当是 completion_blocked：%s %+v", last.Type, last.Payload)
+	if context.Kind != cloudAgentContextCompletionBlocked || !strings.Contains(context.Detail, "wait_subagents") || strings.Contains(context.Detail, "后续工作") {
+		t.Fatalf("只应报告实际协议阻塞：%+v", context)
 	}
-	if !strings.Contains(run.FailureMessage, "生成镜头1") {
-		t.Fatalf("失败说明要点出未对账的待办：%q", run.FailureMessage)
+	if !isCloudAgentRuntimeContextMessage(last) || cloudAgentLatestUserInstruction(state.Canonical.Messages) != "先汇总子代理结果" {
+		t.Fatalf("协议状态不得冒充用户要求：%+v", last)
+	}
+	if len(agentEventPayloads(*state, "completion_blocked")) != 1 {
+		t.Fatal("缺少界面控制事件")
 	}
 }
 
-// ⑤ 阻塞原因变了（模型真的推进了清单）时重新给机会：不算重复同一个错误。
-func TestCloudAgentCompletionFingerprintResetsAfterPlanProgress(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	agentWithPendingPlan(t, s, db, root)
-
-	for attempt := 1; attempt <= cloudAgentCompletionNudgeLimit; attempt++ {
-		if run, _ := agentFinishRunForTest(t, s, db, root.ID, fmt.Sprintf("fingerprint-%d", attempt), fmt.Sprintf("第 %d 次声称完成。", attempt)); run.Status != "running" {
-			t.Fatalf("第 %d 次不该终止：%s", attempt, run.Status)
-		}
+func TestCloudAgentPlanUpdateDoesNotResetProtocolRetries(t *testing.T) {
+	state := &cloudAgentRuntime{ActiveSubagents: 1}
+	block := cloudAgentEvaluateCompletion(state)
+	for i := 0; i < cloudAgentCompletionNudgeLimit; i++ {
+		cloudAgentNoteCompletionBlocked(state, block.Fingerprint)
 	}
-	// 模型把清单改成"只剩另一项"，阻塞原因因此变化 → 重新获得催办机会，而不是立刻终止。
-	run, err := s.repo.CloudAgent("user", root.ID)
-	if err != nil {
+	call := cloudAgentCall{ID: "plan"}
+	call.Function.Arguments = `{"items":[{"id":"1","title":"模型自行调整清单","status":"pending"}]}`
+	if _, err := cloudAgentApplyPlanUpdate(state, call); err != nil {
 		t.Fatal(err)
 	}
-	state, err := cloudAgentDecode(run)
-	if err != nil {
-		t.Fatal(err)
+	after := cloudAgentEvaluateCompletion(state)
+	if after.Fingerprint != block.Fingerprint {
+		t.Fatal("待办修改不应影响协议阻塞指纹")
 	}
-	state.Plan = []cloudAgentPlanItem{
-		{ID: "1", Title: "生成镜头1", Status: "done"},
-		{ID: "2", Title: "拼接成片", Status: "pending"},
-	}
-	if err := cloudAgentSave(run, &state); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Save(run).Error; err != nil {
-		t.Fatal(err)
-	}
-	run, state = agentFinishRunForTest(t, s, db, root.ID, "fingerprint-changed", "镜头1 已完成，继续拼接。")
-	if run.Status != "running" {
-		t.Fatalf("阻塞原因变化后应重新给一次机会：status=%s", run.Status)
-	}
-	if !strings.Contains(fmt.Sprint(state.Canonical.Messages), "拼接成片") {
-		t.Fatalf("新一轮催办应指向新的未完成项：%+v", state.Canonical.Messages)
+	if attempt, exhausted := cloudAgentNoteCompletionBlocked(state, after.Fingerprint); attempt != cloudAgentCompletionNudgeLimit+1 || !exhausted {
+		t.Fatalf("待办修改不应重置协议恢复次数：attempt=%d exhausted=%v", attempt, exhausted)
 	}
 }
 
-// 待办全部对账（全部 done）后，闸门放行。
-func TestCloudAgentCompletionGateAllowsReconciledPlan(t *testing.T) {
+func TestCloudAgentCompletionPreservesCompletedPlan(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	run, err := s.repo.CloudAgent("user", root.ID)
 	if err != nil {
@@ -242,40 +187,6 @@ func TestCloudAgentCompletionGateAllowsReconciledPlan(t *testing.T) {
 	}
 }
 
-// A-1 显式完成工具：闸门不通过时返回结构化回执并继续本轮，不发布最终答复。
-func TestCloudAgentFinishRunIsBlockedByPendingPlan(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	agentWithPendingPlan(t, s, db, root)
-
-	run, state := agentSettleToolStep(t, s, db, root.ID, "finish-1", "finish_run", `{"summary":"镜头已全部生成完毕。"}`)
-
-	if run.Status != "running" {
-		t.Fatalf("闸门未通过时 finish_run 不该结束本轮：status=%s", run.Status)
-	}
-	if replies := agentFinalReplies(state); len(replies) != 0 {
-		t.Fatalf("闸门未通过时不得发布最终答复：%v", replies)
-	}
-	completed := agentEventPayloads(state, "tool_completed")
-	if len(completed) != 1 {
-		t.Fatalf("finish_run 应返回一条结构化回执：%+v", completed)
-	}
-	result, _ := completed[0]["result"].(map[string]any)
-	if result["completionBlocked"] != true {
-		t.Fatalf("回执要说明被闸门拦下：%+v", completed[0])
-	}
-	if !strings.Contains(fmt.Sprint(result["blockers"]), "pending_plan") {
-		t.Fatalf("回执要带机器可读的阻塞原因：%+v", result)
-	}
-	if blocked := agentEventPayloads(state, "completion_blocked"); len(blocked) != 1 {
-		t.Fatalf("应落一条 completion_blocked 控制事件：%+v", blocked)
-	}
-	// 回执必须进模型上下文，它下一步才知道要做什么。
-	if !strings.Contains(fmt.Sprint(state.Canonical.Messages), "completionBlocked") {
-		t.Fatalf("结构化回执要进 canonical：%+v", state.Canonical.Messages)
-	}
-}
-
-// A-1 显式完成工具：闸门通过时发布一次最终答复并收尾。
 func TestCloudAgentFinishRunCompletesRun(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	run, state := agentSettleToolStep(t, s, db, root.ID, "finish-1", "finish_run", `{"summary":"画布分析完成。"}`)
@@ -314,28 +225,29 @@ func TestCloudAgentFinishRunRequiresSummary(t *testing.T) {
 	}
 }
 
-// finish_run 连续被拦下同样受催办额度约束：用尽即以 completion_blocked 终止，
-// 不让模型一直重复"申请收尾"（每一次都是真实计费的模型调用）。
-func TestCloudAgentFinishRunNudgeIsBounded(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	agentWithPendingPlan(t, s, db, root)
-	for attempt := 1; attempt <= cloudAgentCompletionNudgeLimit; attempt++ {
-		run, _ := agentSettleToolStep(t, s, db, root.ID, fmt.Sprintf("finish-%d", attempt), "finish_run", `{"summary":"我认为完成了。"}`)
-		if run.Status != "running" {
-			t.Fatalf("第 %d 次仍应有催办机会：status=%s", attempt, run.Status)
+// 子代理协议阻塞仍保留有限恢复。
+func TestCloudAgentFinishRunProtocolRetriesAreBounded(t *testing.T) {
+	state := &cloudAgentRuntime{ActiveSubagents: 1}
+	call := cloudAgentCall{ID: "finish"}
+	call.Function.Arguments = `{"summary":"汇总完成。"}`
+	for attempt := 1; attempt <= cloudAgentCompletionNudgeLimit+1; attempt++ {
+		result, err := cloudAgentFinishRun("run", state, call)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	run, state := agentSettleToolStep(t, s, db, root.ID, "finish-final", "finish_run", `{"summary":"我认为完成了。"}`)
-	if run.Status != "failed" {
-		t.Fatalf("催办用尽后应终止本轮，status=%s", run.Status)
-	}
-	last := agentLastEvent(t, state)
-	if last.Type != "run_failed" || stringValue(last.Payload["reason"]) != "completion_blocked" {
-		t.Fatalf("终止原因应当是 completion_blocked：%s %+v", last.Type, last.Payload)
+		detail := result.(map[string]any)
+		if detail["completionBlocked"] != true || detail["requiredAction"] != "resolve_blockers" || !strings.Contains(fmt.Sprint(detail["blockers"]), "pending_subagents") {
+			t.Fatalf("未返回实际协议阻塞：%+v", detail)
+		}
+		if cloudAgentFinishRunExhausted(result) != (attempt > cloudAgentCompletionNudgeLimit) {
+			t.Fatalf("协议恢复次数未受限：attempt=%d result=%+v", attempt, detail)
+		}
+		if strings.Contains(fmt.Sprint(detail), "清单") {
+			t.Fatalf("协议失败不得要求对账待办：%+v", detail)
+		}
 	}
 }
 
-// 上一轮的"答复"以最终答复为准：过程说明（final=false）不能被当成上一轮的回答交给下一轮。
 func TestCloudAgentContinuationPrefersFinalReply(t *testing.T) {
 	task := &model.Task{Status: model.TaskStatusSucceeded, ResultJSON: `{"text":"过程草稿"}`}
 	run := &CloudAgentRun{ID: "ag-final", Status: "completed", Events: []CloudAgentEvent{
@@ -354,43 +266,35 @@ func TestCloudAgentContinuationPrefersFinalReply(t *testing.T) {
 
 // 同一批里重复申请收尾只处理第一个：否则一个模型步骤就能把整轮催办额度烧光。
 func TestCloudAgentFinishRunCountsOncePerBatch(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	agentWithPendingPlan(t, s, db, root)
-	call := func(id string) cloudAgentCall {
-		entry := cloudAgentCall{ID: id}
-		entry.Function.Name, entry.Function.Arguments = "finish_run", `{"summary":"我认为完成了。"}`
-		return entry
+	first, second := cloudAgentCall{ID: "finish-1"}, cloudAgentCall{ID: "finish-2"}
+	first.Function.Name, first.Function.Arguments = "finish_run", `{"summary":"汇总完成。"}`
+	second.Function = first.Function
+	state := &cloudAgentRuntime{ActiveSubagents: 1, Calls: []cloudAgentCall{first, second}}
+	if _, err := cloudAgentFinishRun("run", state, first); err != nil {
+		t.Fatal(err)
 	}
-	run, state := agentSettleBatch(t, s, db, root.ID, []cloudAgentCall{call("finish-1"), call("finish-2")})
-	if run.Status != "running" {
-		t.Fatalf("被闸门拦下时不该收尾：status=%s", run.Status)
+	state.CallIndex = 1
+	result, err := cloudAgentFinishRun("run", state, second)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if state.CompletionNudgeAttempt != 1 || state.CompletionNudges != 1 {
-		t.Fatalf("同一批只该记一次催办：attempt=%d total=%d", state.CompletionNudgeAttempt, state.CompletionNudges)
+	if state.CompletionNudgeAttempt != 1 || state.CompletionNudges != 1 || len(agentEventPayloads(*state, "completion_blocked")) != 1 {
+		t.Fatalf("同一批只应处理一次协议阻塞：%+v", state)
 	}
-	if blocked := agentEventPayloads(state, "completion_blocked"); len(blocked) != 1 {
-		t.Fatalf("同一批只该落一条控制事件：%+v", blocked)
-	}
-	completed := agentEventPayloads(state, "tool_completed")
-	if len(completed) != 2 {
-		t.Fatalf("两次调用都要有回执：%+v", completed)
-	}
-	second, _ := completed[1]["result"].(map[string]any)
-	if second["duplicate"] != true {
-		t.Fatalf("第二次申请应如实说明未重复处理：%+v", completed[1])
+	if result.(map[string]any)["duplicate"] != true {
+		t.Fatalf("重复申请应明确未执行：%+v", result)
 	}
 }
 
-// 两种停止原因要给出不同的说明：催办用尽 vs 开不起下一次模型调用。
 func TestCloudAgentCompletionStopMessagesDiffer(t *testing.T) {
-	block := cloudAgentCompletionBlock{Blockers: []cloudAgentCompletionBlocker{{Kind: "pending_plan", Detail: "生成镜头1"}}}
+	block := cloudAgentCompletionBlock{Blockers: []cloudAgentCompletionBlocker{{Kind: "pending_subagents", Detail: "使用 wait_subagents 收集结果"}}}
 	budget := cloudAgentCompletionExhaustedMessage(block)
 	if !strings.Contains(budget, "预算") || strings.Contains(budget, "连续") {
 		t.Fatalf("没有步数预算时要说明预算而不是催办次数：%q", budget)
 	}
 	block.Attempt = cloudAgentCompletionNudgeLimit
 	nudged := cloudAgentCompletionExhaustedMessage(block)
-	if !strings.Contains(nudged, fmt.Sprintf("连续 %d 次", cloudAgentCompletionNudgeLimit)) || !strings.Contains(nudged, "生成镜头1") {
+	if !strings.Contains(nudged, fmt.Sprintf("连续 %d 次", cloudAgentCompletionNudgeLimit)) || !strings.Contains(nudged, "wait_subagents") {
 		t.Fatalf("催办用尽时要说明次数与未完成项：%q", nudged)
 	}
 }

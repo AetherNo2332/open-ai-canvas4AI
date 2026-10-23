@@ -175,8 +175,7 @@ func cloudAgentDrainInterjections(runID string, state *cloudAgentRuntime) bool {
 		cloudAgentRememberInterjectionID(state, item.ID)
 	}
 	state.PendingInterjections = nil
-	// 用户插话改变了要求：收尾催办额度随之重置——旧账（未对账的清单项）很可能已被这次插话
-	// 取消，不该继续拿它压着模型（工作项 A）。
+	// 用户插话改变了要求，协议阻塞的恢复次数从新要求重新计数。
 	state.CompletionNudgeAttempt, state.CompletionNudges, state.CompletionNudgeFingerprint = 0, 0, ""
 	state.Canonical.ToolChoice = "auto"
 	return true

@@ -132,7 +132,7 @@ export const AGENT_TOOL_METADATA: Record<string, AgentToolMetadataEntry> = {
     },
     // 收尾闸门（工作项 A）：被拦下时卡片要说清"这次没结束"，而不是千篇一律的"操作已完成"。
     finish_run: {
-        summary: ({ pending, detail }) => (pending ? "准备收尾并给出最终答复" : field(field(detail, "result"), "completionBlocked") === true ? "收尾被拦下，继续处理未完成项" : "已收尾并给出最终答复"),
+        summary: ({ pending, detail }) => (pending ? "准备收尾并给出最终答复" : field(field(detail, "result"), "completionBlocked") === true ? "收尾被拦下，继续处理交付阻塞" : "已收尾并给出最终答复"),
         failureMessage: "收尾未完成",
     },
 };

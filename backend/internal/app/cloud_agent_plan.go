@@ -71,13 +71,6 @@ func cloudAgentPlanRequiresFirstApproval(state *cloudAgentRuntime, call cloudAge
 	return ok
 }
 
-func cloudAgentPlanNudgeMessage(state *cloudAgentRuntime, pendingTitle string) map[string]any {
-	return cloudAgentRuntimeMessage(cloudAgentRuntimeContext{
-		Kind: cloudAgentContextPendingPlan, PendingTitle: pendingTitle,
-		LatestUserMessage: cloudAgentLatestUserInstruction(state.Canonical.Messages),
-	})
-}
-
 func cloudAgentPlanApprovalPreview(call cloudAgentCall) (cloudAgentApprovalPreview, bool) {
 	var args struct {
 		Items []cloudAgentPlanItem `json:"items"`
@@ -131,8 +124,6 @@ func cloudAgentApplyPlanUpdate(state *cloudAgentRuntime, call cloudAgentCall) (a
 			args.Items[i].Status = "pending"
 		}
 	}
-	// 清单变了就换了阻塞指纹：收尾催办的"同一原因"计数随之重置（见 cloud_agent_completion.go
-	// 的 cloudAgentNoteCompletionBlocked），这里不需要再单独清一个布尔标志。
 	state.Plan = args.Items
 	return map[string]any{"items": args.Items, "pendingTitles": cloudAgentPendingPlanItems(args.Items)}, nil
 }

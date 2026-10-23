@@ -694,7 +694,7 @@ func TestPiFinishRunPublishesOneFinalReply(t *testing.T) {
 	}
 }
 
-func TestPiFinishRunIsBlockedByPendingPlan(t *testing.T) {
+func TestPiFinishRunCompletesWithPendingPlan(t *testing.T) {
 	s, db, run := piAgentTestLeasedFixture(t)
 	call := piAgentTestCall("blocked-finish-call", "finish_run", `{"summary":"全部完成。"}`)
 	taskID := "pi-blocked-finish-model-step"
@@ -725,19 +725,19 @@ func TestPiFinishRunIsBlockedByPendingPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Pi finish_run 阻塞判定失败: %v", err)
 	}
-	if receipt.Pending || receipt.IsError || len(receipt.Result) == 0 {
-		t.Fatalf("finish_run 阻塞应返回结构化工具回执: %+v", receipt)
+	if receipt.Pending || receipt.IsError || !receipt.Terminated || len(receipt.Result) == 0 {
+		t.Fatalf("finish_run 应返回持久化终态回执: %+v", receipt)
 	}
 	var resultMap map[string]any
 	if err := json.Unmarshal(receipt.Result, &resultMap); err != nil {
 		t.Fatalf("finish_run 回执不是 JSON: %v", err)
 	}
-	if resultMap["completionBlocked"] != true || resultMap["requiredAction"] != "reconcile_plan" {
-		t.Fatalf("待办未对账时未阻止收尾: %s", receipt.Result)
+	if resultMap["completionBlocked"] != false || resultMap["committed"] != true || resultMap["terminalStatus"] != "completed" {
+		t.Fatalf("待办状态不应阻止收尾: %s", receipt.Result)
 	}
 	current, state := reloadPiRun(t, s, run.ID)
-	if current.Status != "running" {
-		t.Fatalf("待办未对账应留在运行中，实际 %q", current.Status)
+	if current.Status != "completed" {
+		t.Fatalf("存在待办时也应正常完成，实际 %q", current.Status)
 	}
 	blockedEvents := 0
 	for _, event := range state.Events {
@@ -745,13 +745,14 @@ func TestPiFinishRunIsBlockedByPendingPlan(t *testing.T) {
 			blockedEvents++
 		}
 	}
-	if blockedEvents != 1 {
-		t.Fatalf("finish_run 阻塞应写入一次 completion_blocked 事件，实际 %d", blockedEvents)
+	if blockedEvents != 0 {
+		t.Fatalf("待办不应产生 completion_blocked 事件，实际 %d", blockedEvents)
 	}
-	for _, event := range state.Events {
-		if event.Type == "assistant_message" && event.Payload["final"] == true {
-			t.Fatalf("被待办闸门拦截的 summary 不得作为最终答复发布: %+v", event.Payload)
-		}
+	if replies := agentFinalReplies(*state); len(replies) != 1 || replies[0] != "全部完成。" {
+		t.Fatalf("应只发布一次最终答复：%+v", replies)
+	}
+	if len(state.Plan) != 1 || state.Plan[0].Status != "doing" || state.CompletionNudges != 0 {
+		t.Fatalf("服务端不得修改待办或催办：plan=%+v nudges=%d", state.Plan, state.CompletionNudges)
 	}
 }
 

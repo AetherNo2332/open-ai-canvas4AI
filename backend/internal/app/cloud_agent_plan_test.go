@@ -111,19 +111,6 @@ func TestCloudAgentAskUserRequiresChoices(t *testing.T) {
 	}
 }
 
-func TestCloudAgentPlanNudgePrefersLatestUserInstruction(t *testing.T) {
-	state := &cloudAgentRuntime{
-		Canonical: canonicalAgentRequest{Messages: []map[string]any{{"role": "user", "content": "改成 16:9"}}},
-	}
-	content := stringField(cloudAgentPlanNudgeMessage(state, "生成镜头2视频"), "content")
-	if !strings.Contains(content, "改成 16:9") || !strings.Contains(content, "生成镜头2视频") || !strings.Contains(content, "pending_plan") {
-		t.Fatalf("nudge missing user-first prefix: %s", content)
-	}
-}
-
-// 本轮"本批剩余调用"必须逐个拿到回执：ask_user 结束这一轮时，紧随其后的那个调用
-// 之前会被静默丢掉（skip 的起点多算了一位），而 cloudAgentToolResult 已经把游标推进了。
-// 少了回执，落库的这轮 canonical 就自相矛盾——assistant(tool_calls) 里有 tool_call_id 没有对应的 tool 消息。
 func TestCloudAgentAskUserReceiptsEveryRemainingCall(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	ask := cloudAgentCall{ID: "ask-1"}
@@ -147,48 +134,5 @@ func TestCloudAgentAskUserReceiptsEveryRemainingCall(t *testing.T) {
 		if !paired[id] {
 			t.Fatalf("tool_call_id %s 没有回执：%+v", id, state.Canonical.Messages)
 		}
-	}
-}
-
-// 工作项 A 改造后的口径：清单没对账时不再"催一次就静默收尾"，而是把候选收尾拦下来，
-// 要求模型先按真实结果对账（做完标 done、用户已取消的从清单移除），对账之后才放行收尾。
-func TestCloudAgentPendingPlanMustBeReconciledBeforeCompletion(t *testing.T) {
-	s, db, root := reliableAgentRoot(t)
-	agentWithPendingPlan(t, s, db, root)
-	run, state := agentFinishRunForTest(t, s, db, root.ID, "finish-pending", "先看到这里")
-	if run.Status != "running" {
-		t.Fatalf("未完成清单时不该收尾，status=%s", run.Status)
-	}
-	found := false
-	for _, message := range state.Canonical.Messages {
-		content, _ := message["content"].(string)
-		if strings.Contains(content, "生成镜头1") && strings.Contains(content, "pending_plan") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("没有催办未完成项: %+v", state.Canonical.Messages)
-	}
-	if state.Canonical.ToolChoice != "auto" {
-		t.Fatal("旧计划催办不得强制工具调用")
-	}
-	if replies := agentFinalReplies(state); len(replies) != 0 {
-		t.Fatalf("未对账时的正文不是最终答复：%v", replies)
-	}
-
-	// 模型按最新要求对账：这一项已被用户取消 → 从清单移除（清空清单本身就是对账）。
-	run, state = agentSettleStep(t, s, db, root.ID, "", "plan-1", "plan_update", `{"items":[]}`)
-	if len(cloudAgentPendingPlanItems(state.Plan)) != 0 {
-		t.Fatalf("对账后清单不该还有未完成项：%+v", state.Plan)
-	}
-	run, state = agentFinishRunForTest(t, s, db, root.ID, "finish-after-reconcile", "按最新要求停止生成，保留草稿。")
-	if run.Status != "completed" {
-		t.Fatalf("对账之后应当放行收尾：status=%s", run.Status)
-	}
-	if len(state.Plan) != 0 {
-		t.Fatalf("不得伪造计划完成：%+v", state.Plan)
-	}
-	if replies := agentFinalReplies(state); len(replies) != 1 || !strings.Contains(replies[0], "保留草稿") {
-		t.Fatalf("对账后只应发布一次最终答复：%v", replies)
 	}
 }

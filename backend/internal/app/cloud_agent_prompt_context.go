@@ -12,7 +12,7 @@ type cloudAgentRuntimeContextKind string
 
 const (
 	cloudAgentContextPlan               cloudAgentRuntimeContextKind = "plan_state"
-	cloudAgentContextPendingPlan        cloudAgentRuntimeContextKind = "pending_plan"
+	cloudAgentContextCompletionBlocked  cloudAgentRuntimeContextKind = "completion_blocked"
 	cloudAgentContextEmptyOutput        cloudAgentRuntimeContextKind = "empty_output"
 	cloudAgentContextInvalidOutput      cloudAgentRuntimeContextKind = "invalid_output"
 	cloudAgentContextTruncatedArguments cloudAgentRuntimeContextKind = "truncated_tool_arguments"
@@ -22,16 +22,14 @@ const (
 // Only serializable fact fields belong here. Behavioral instructions live in
 // prompts/agent-system-policy.md and share its version/hash contract.
 type cloudAgentRuntimeContext struct {
-	Source            string                       `json:"source"`
-	Kind              cloudAgentRuntimeContextKind `json:"kind"`
-	Items             []cloudAgentPlanItem         `json:"items,omitempty"`
-	PendingTitle      string                       `json:"pendingTitle,omitempty"`
-	LatestUserMessage string                       `json:"latestUserMessage,omitempty"`
-	Detail            string                       `json:"detail,omitempty"`
-	MaxToolCalls      int                          `json:"maxToolCalls,omitempty"`
-	MaxOutputBytes    int                          `json:"maxOutputBytes,omitempty"`
-	CallLimits        *cloudAgentCallLimits        `json:"callLimits,omitempty"`
-	ReadToolCalls     int                          `json:"readToolCalls,omitempty"`
+	Source         string                       `json:"source"`
+	Kind           cloudAgentRuntimeContextKind `json:"kind"`
+	Items          []cloudAgentPlanItem         `json:"items,omitempty"`
+	Detail         string                       `json:"detail,omitempty"`
+	MaxToolCalls   int                          `json:"maxToolCalls,omitempty"`
+	MaxOutputBytes int                          `json:"maxOutputBytes,omitempty"`
+	CallLimits     *cloudAgentCallLimits        `json:"callLimits,omitempty"`
+	ReadToolCalls  int                          `json:"readToolCalls,omitempty"`
 }
 
 func cloudAgentRuntimeMessage(context cloudAgentRuntimeContext) map[string]any {

@@ -456,24 +456,24 @@ test("模型在没有工具调用时收尾：由 Go 判定完成，且助手正�
   assert.match(assistant[0]?.text || "", /已经换好衣服了/);
 });
 
-test("a blocked finish_run keeps the Pi loop alive for reconciliation", async () => {
+test("a protocol-blocked finish_run keeps the Pi loop alive", async () => {
   const { bridge, state, snapshot } = fakeBridge([
     { toolCalls: [{ id: "finish-blocked", function: { name: "finish_run", arguments: '{"summary":"done"}' } }] },
-    { text: "已按真实结果对账。" },
+    { text: "已收集子代理结果。" },
   ]);
-  snapshot.tools = [...tools, { name: "finish_run", description: "Finish after reconciling the plan",
+  snapshot.tools = [...tools, { name: "finish_run", description: "Finish after collecting child results",
     parameters: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: false },
     allowed: true }];
   bridge.executeTool = async (_run, _taskId, callId) => {
     state.executions.push(callId);
     state.ops.push(`execute:${_taskId}:${callId}`);
-    return { callId, pending: false, result: { completionBlocked: true, requiredAction: "reconcile_plan" } };
+    return { callId, pending: false, result: { completionBlocked: true, requiredAction: "resolve_blockers" } };
   };
   await runCanvasAgent(bridge, snapshot, undefined, promptParts());
   assert.equal(state.steps, 2, "a successful blocked receipt must not terminate the Pi loop");
   assert.deepEqual(state.noToolTurns, ["task-2"]);
   assert.equal(state.status, "completed");
-  assert.match(JSON.stringify(state.canonical[1]?.messages), /reconcile_plan/);
+  assert.match(JSON.stringify(state.canonical[1]?.messages), /resolve_blockers/);
 });
 
 test("suspended wait releases residency without a fake tool receipt or another model step", async () => {

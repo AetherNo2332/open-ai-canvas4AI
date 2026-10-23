@@ -4,7 +4,7 @@
 
 ## plan_update
 
-维护多步任务清单，items 是对象数组并整表替换，如 [{"id":"1","title":"读取画布","status":"done"}]。status 只能为 pending、doing、done；按真实结果更新，取消项移除，全取消传 []。清单不是额外授权，简单问答或单点修改无需先建清单。
+items 是待办对象数组，整表替换当前清单，最多20项，如 [{"id":"1","title":"读取画布","status":"done"}]。id 不可重复，status 为 pending、doing、done；[] 清空。返回 items 和 pendingTitles。由模型按需要建立、更新或清空，未完成项不会触发催办或阻止收尾；清单不增加执行授权。
 
 ## ask_user
 
@@ -12,7 +12,7 @@
 
 ## finish_run
 
-本轮收尾：summary 是最终答复全文。服务端核对清单后持久化回执、最终消息和终态；通过回执含 committed/runId/finalMessageId，可按原调用恢复，不重复发布。completionBlocked 时先对账。还有工具、待审批或需继续做时不要调用；已保存不等于用户已看见。
+summary 必填，内容为给用户的最终答复全文。通过后持久化回执、最终消息和 completed 终态，返回 committed/runId/finalMessageId，可按原调用恢复且不重复发布。待办状态不阻止收尾。completionBlocked=true 时按 blockers/requiredAction 处理尚未送达的用户插话或子代理交付协议；无需为此清空待办。仍需执行工具或等待审批时继续处理，已保存不等于用户已看见。
 
 ## canvas_list_node_types
 
