@@ -1307,13 +1307,21 @@ func (r *Repository) ReplaceAssets(userID string, assets []model.Asset) error {
 
 func (r *Repository) CanvasProjects(userID string) ([]model.CanvasProject, error) {
 	var projects []model.CanvasProject
-	err := r.db.Order("updated_at desc").Find(&projects, "user_id = ?", userID).Error
+	query, err := r.liveCanvasProjectsQuery()
+	if err != nil {
+		return nil, err
+	}
+	err = query.Order("updated_at desc").Find(&projects, "user_id = ?", userID).Error
 	return projects, err
 }
 
 func (r *Repository) CanvasProjectSummaries(userID string) ([]model.CanvasProject, error) {
 	var projects []model.CanvasProject
-	err := r.db.Select("id", "title", "revision", "created_at", "updated_at").Order("updated_at desc").Find(&projects, "user_id = ?", userID).Error
+	query, err := r.liveCanvasProjectsQuery()
+	if err != nil {
+		return nil, err
+	}
+	err = query.Select("id", "title", "revision", "created_at", "updated_at").Order("updated_at desc").Find(&projects, "user_id = ?", userID).Error
 	return projects, err
 }
 
@@ -1742,7 +1750,11 @@ func (r *Repository) UpsertCanvasUnitLink(link *model.CanvasUnitLink) error {
 
 func (r *Repository) ProjectCanvasSummaries(userID string, projectID string) ([]model.CanvasProject, error) {
 	var canvases []model.CanvasProject
-	err := r.db.Select("id", "user_id", "project_id", "title", "revision", "created_at", "updated_at").Where("user_id = ? AND project_id = ?", userID, projectID).Order("updated_at desc").Find(&canvases).Error
+	query, err := r.liveCanvasProjectsQuery()
+	if err != nil {
+		return nil, err
+	}
+	err = query.Select("id", "user_id", "project_id", "title", "revision", "created_at", "updated_at").Where("user_id = ? AND project_id = ?", userID, projectID).Order("updated_at desc").Find(&canvases).Error
 	return canvases, err
 }
 

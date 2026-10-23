@@ -105,20 +105,17 @@ type CanvasSyncStatus struct {
 
 func (s *Service) CanvasSyncStatus(ctx context.Context, owner, canvasID string) (CanvasSyncStatus, error) {
 	out := CanvasSyncStatus{Leases: []CanvasActiveEditLease{}, ActiveAgents: []CanvasActiveAgent{}}
-	err := s.repo.CommandTransaction(ctx, func(tx *repository.Repository) error {
-		if err := tx.LockCanvasWrite(owner, canvasID); err != nil {
-			return err
-		}
+	err := s.repo.CanvasReadTransaction(ctx, func(tx *repository.Repository) error {
 		row, err := tx.CanvasProjectMetadata(owner, canvasID)
 		if err != nil {
 			return err
 		}
 		out.Revision = row.Revision
-		epoch, err := tx.CommandEpoch(owner, canvasID)
-		if err != nil && !tx.IsMissing(err) {
+		epoch, err := tx.LiveCanvasEpoch(owner, canvasID)
+		if err != nil {
 			return err
 		}
-		if err == nil {
+		if epoch != nil {
 			out.DocumentEpoch, out.EventSeq = epoch.Epoch, epoch.EventSeq
 		}
 		out.Leases, err = tx.ActiveCanvasEditLeases(owner, canvasID)

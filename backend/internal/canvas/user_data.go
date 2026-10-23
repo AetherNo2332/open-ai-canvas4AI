@@ -242,13 +242,14 @@ func (s *Service) UserCanvasProjectSummaries(userID string) ([]UserDataSummary, 
 }
 
 func (s *Service) UserCanvasProjectMetadata(userID string, id string) (*model.CanvasProject, error) {
-	return s.repo.CanvasProjectMetadataForUser(userID, id)
+	project, err := s.repo.LiveCanvasProjectMetadataForUser(userID, id)
+	return project, s.canvasSyncError(err)
 }
 
 func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
-	project, err := s.repo.CanvasProjectForUser(userID, id)
+	project, err := s.repo.LiveCanvasProjectForUser(userID, id)
 	if err != nil {
-		return nil, err
+		return nil, s.canvasSyncError(err)
 	}
 	return canvasProjectPayload(*project)
 }

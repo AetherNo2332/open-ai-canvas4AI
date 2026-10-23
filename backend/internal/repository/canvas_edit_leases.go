@@ -106,12 +106,17 @@ func (r *Repository) mutateCanvasEditLease(ownerID, canvasID string, proof Canva
 		if err != nil {
 			return err
 		}
-		nodes, err := canvasLeaseNodes(canvas.PayloadJSON)
-		if err != nil {
-			return err
-		}
-		if nodes[proof.NodeID] == nil {
-			return gorm.ErrRecordNotFound
+		if action != "release" {
+			if _, err := tx.LiveCanvasEpoch(ownerID, canvasID); err != nil {
+				return err
+			}
+			nodes, err := canvasLeaseNodes(canvas.PayloadJSON)
+			if err != nil {
+				return err
+			}
+			if nodes[proof.NodeID] == nil {
+				return gorm.ErrRecordNotFound
+			}
 		}
 		var row model.CanvasNodeEditLease
 		err = db.Where("owner_id = ? AND canvas_id = ? AND node_id = ?", ownerID, canvasID, proof.NodeID).First(&row).Error
