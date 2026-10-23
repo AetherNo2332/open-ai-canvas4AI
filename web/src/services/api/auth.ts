@@ -355,6 +355,8 @@ export type RuntimeTaskPolicy = {
     agentMaxReadToolCallsPerRun: number;
     /** 每轮模型调用次数上限；0 表示不限，请求预算仍可设更低值。 */
     agentMaxStepsPerRun: number;
+    agentMaxQueuedMessagesPerConversation: number;
+    agentMaxQueuedMessagesPerUser: number;
 };
 
 export type RuntimeRequestPolicy = {

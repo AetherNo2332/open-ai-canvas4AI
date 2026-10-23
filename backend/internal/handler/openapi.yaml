@@ -1120,6 +1120,120 @@ paths:
           description: 会话 ID、limit 或分页游标无效
         "404":
           description: 会话不存在或不属于当前用户
+  /agent/ui-settings:
+    get:
+      tags: [agent]
+      summary: 读取账号默认发送方式
+      responses:
+        "200": { description: "data 含 defaultSendMode（interject 或 queue）与 revision" }
+        "401": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [agent]
+      summary: 按版本保存账号默认发送方式
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, defaultSendMode]
+              properties:
+                revision: { type: integer, format: int64, minimum: 0 }
+                defaultSendMode: { type: string, enum: [interject, queue] }
+      responses:
+        "200": { description: 返回保存后的设置与 revision }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /agent/conversations/{id}/messages:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, maxLength: 80 } }
+    post:
+      tags: [agent]
+      summary: 向当前会话插话或加入持久待发队列
+      description: 相同幂等身份与原请求重试返回既有收条；排队不创建运行或预留费用。expectedRunId 必须是已知最新轮，replyToQuestionId 只允许显式 interject 回答当前问题。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentConversationMessageRequest"
+      responses:
+        "200": { description: "data 含 delivery（queued、started、interjected 或 cancelled）、messageId、conversationId、queueRevision 和实际 runId；queued 仅表示已收下待发消息" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /agent/conversations/{id}/queue:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, maxLength: 80 } }
+    get:
+      tags: [agent]
+      summary: 读取会话的有序待发消息与暂停状态
+      responses:
+        "200": { description: "data 含 conversationId、canvasId、revision、paused、pauseReason、awaitingQuestionId、questionRunId、latestRunId、items。items 按 sequence 升序，字段为 id、prompt、mode、revision、status、sequence、runId、error、createdAt、updatedAt；不返回内部请求或幂等身份" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [agent]
+      summary: 按版本暂停或恢复待发队列
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, action]
+              properties:
+                revision: { type: integer, format: int64, minimum: 1 }
+                action: { type: string, enum: [pause, resume] }
+      responses:
+        "200": { description: 返回最新队列状态 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /agent/conversations/{id}/queue/{messageId}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, maxLength: 80 } }
+      - { in: path, name: messageId, required: true, schema: { type: string, maxLength: 80 } }
+    patch:
+      tags: [agent]
+      summary: 编辑未派发消息或提升为插队
+      description: prompt 和 action 二选一，已领取或已派发时拒绝；提升失败保留原项。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision]
+              properties:
+                revision: { type: integer, format: int64, minimum: 1 }
+                prompt: { type: string, maxLength: 16000 }
+                action: { type: string, enum: [interject] }
+      responses:
+        "200": { description: 返回消息投递收条 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [agent]
+      summary: 移除未派发消息并保留幂等收条
+      parameters:
+        - { in: query, name: revision, required: true, schema: { type: integer, format: int64, minimum: 1 } }
+      responses:
+        "200": { description: 返回 cancelled 消息收条 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
   /agent/runs:
     post:
       tags: [agent]
@@ -2042,6 +2156,16 @@ components:
               properties:
                 quote:
                   $ref: "#/components/schemas/LogicalModelQuote"
+    AgentConversationMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [mode, expectedRunId, request]
+      properties:
+        mode: { type: string, enum: [interject, queue] }
+        expectedRunId: { type: string, maxLength: 80 }
+        replyToQuestionId: { type: string, maxLength: 160 }
+        request:
+          $ref: "#/components/schemas/CloudAgentRequest"
     CloudAgentRequest:
       type: object
       additionalProperties: false

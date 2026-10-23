@@ -5,6 +5,14 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## Agent 消息排队
+
+- `model/agent_message_queue.go`、`repository/agent_message_queue.go`：持久消息收条、队列控制、账号发送设置、领取/提交事务和目录聚合；`database/migrations.go` 的65及 `schema.go` 登记表结构。
+- `app/agent_message_queue.go`、`agent_message_dispatch.go`：发送方式、条件编辑/提升/移除、问题与异常暂停、原子准入准备、有界重试；`task_worker.go` 接入既有服务生命周期。
+- `repository/finance.go`、`cloud_agent.go`：旧准入、检查点和新队列共享锁与提问边界；`app/cloud_agent_runtime.go` 在停止时先暂停队列并决定最新取消目标。
+- `handler/agent_message_queue.go`、`service/aliases_agent_message_queue.go`、`handler/openapi.yaml`：账号作用域、严格 JSON、限流与公开合同。`platform/runtime_policy.go` 维护后台待发数量限制。
+- `web/src/components/canvas/use-agent-message-queue.ts`：账号与会话作用域的 API 状态、快照刷新和条件操作；`canvas-agent-message-queue.tsx/.css` 只提供模式菜单与待发列表。`canvas-cloud-agent-panel.tsx`、`services/cloud-agent-conversations.ts` 保留原请求、投递模式和独立草稿，`pages/canvas/project.tsx` 区分节点已发送与已排队。
+
 ## 画布一致性、编辑与实时协作
 
 - `repository/canvas_write_boundary.go`、`canvas_commands.go`：账号与画布锁、事务配额、旧写入的版本/事件投影、实体generation；`commands/field_merge.go`：仅对有完整字段基线的普通节点补丁放宽目标版本，保留引用读取集与最终SQL CAS。

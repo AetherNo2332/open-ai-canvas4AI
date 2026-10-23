@@ -107,7 +107,9 @@ type RuntimeTaskPolicy struct {
 	AgentMaxToolCallsPerStep    int `json:"agentMaxToolCallsPerStep"`
 	AgentMaxReadToolCallsPerRun int `json:"agentMaxReadToolCallsPerRun"`
 	// 0 表示管理员不限制模型步数；请求预算仍可设置更低的上限。
-	AgentMaxStepsPerRun int `json:"agentMaxStepsPerRun"`
+	AgentMaxStepsPerRun                   int `json:"agentMaxStepsPerRun"`
+	AgentMaxQueuedMessagesPerConversation int `json:"agentMaxQueuedMessagesPerConversation"`
+	AgentMaxQueuedMessagesPerUser         int `json:"agentMaxQueuedMessagesPerUser"`
 }
 
 type RuntimeRequestPolicy struct {
@@ -180,20 +182,22 @@ func DefaultRuntimePolicy() RuntimePolicySetting {
 			ErrorBodyKB:                 1,
 		},
 		Task: RuntimeTaskPolicy{
-			WorkerConcurrency:           defaultWorkerConcurrencyLimit(),
-			ChannelConcurrency:          defaultChannelConcurrencyLimit(),
-			ActiveTaskLimit:             5,
-			ImageTimeoutMinutes:         8,
-			TextTimeoutMinutes:          8,
-			AudioTimeoutMinutes:         8,
-			VideoTimeoutMinutes:         60,
-			StoryboardTimeoutMinutes:    20,
-			DefaultTimeoutMinutes:       10,
-			AgentStepMaxOutputTokens:    agentStepMaxOutputTokensDefault(),
-			AgentStepTimeoutSeconds:     agentStepTimeoutSecondsDefault(),
-			AgentMaxToolCallsPerStep:    DefaultRuntimeAgentToolCallsPerStep,
-			AgentMaxReadToolCallsPerRun: DefaultRuntimeAgentReadCallsPerRun,
-			AgentMaxStepsPerRun:         0,
+			WorkerConcurrency:                     defaultWorkerConcurrencyLimit(),
+			ChannelConcurrency:                    defaultChannelConcurrencyLimit(),
+			ActiveTaskLimit:                       5,
+			ImageTimeoutMinutes:                   8,
+			TextTimeoutMinutes:                    8,
+			AudioTimeoutMinutes:                   8,
+			VideoTimeoutMinutes:                   60,
+			StoryboardTimeoutMinutes:              20,
+			DefaultTimeoutMinutes:                 10,
+			AgentStepMaxOutputTokens:              agentStepMaxOutputTokensDefault(),
+			AgentStepTimeoutSeconds:               agentStepTimeoutSecondsDefault(),
+			AgentMaxToolCallsPerStep:              DefaultRuntimeAgentToolCallsPerStep,
+			AgentMaxReadToolCallsPerRun:           DefaultRuntimeAgentReadCallsPerRun,
+			AgentMaxStepsPerRun:                   0,
+			AgentMaxQueuedMessagesPerConversation: 20,
+			AgentMaxQueuedMessagesPerUser:         100,
 		},
 		Request: RuntimeRequestPolicy{
 			TaskCreatePerMinute:        30,
@@ -235,7 +239,8 @@ func selfUseRuntimePolicy() RuntimePolicySetting {
 		StoryboardTimeoutMinutes: maxRuntimeTimeoutMinutes, DefaultTimeoutMinutes: maxRuntimeTimeoutMinutes,
 		AgentStepMaxOutputTokens: MaxRuntimeAgentStepOutputTokens, AgentStepTimeoutSeconds: MaxRuntimeAgentStepTimeoutSeconds,
 		AgentMaxToolCallsPerStep: MaxRuntimeAgentToolCallsPerStep, AgentMaxReadToolCallsPerRun: MaxRuntimeAgentReadCallsPerRun,
-		AgentMaxStepsPerRun: 0,
+		AgentMaxStepsPerRun:                   0,
+		AgentMaxQueuedMessagesPerConversation: 9999, AgentMaxQueuedMessagesPerUser: 9999,
 	}
 	value.Request = RuntimeRequestPolicy{
 		TaskCreatePerMinute:     maxRuntimeRate,
@@ -468,6 +473,9 @@ func validateRuntimePolicy(value RuntimePolicySetting) error {
 	}
 	if task.AgentMaxStepsPerRun < 0 || task.AgentMaxStepsPerRun > MaxRuntimeAgentStepsPerRun {
 		return kernel.BadAuthRequest(fmt.Sprintf("Agent 每轮模型调用上限必须是 0-%d 的整数 (0 表示不限制)", MaxRuntimeAgentStepsPerRun))
+	}
+	if task.AgentMaxQueuedMessagesPerConversation < 1 || task.AgentMaxQueuedMessagesPerConversation > 9999 || task.AgentMaxQueuedMessagesPerUser < 1 || task.AgentMaxQueuedMessagesPerUser > 9999 {
+		return kernel.BadAuthRequest("Agent 待发消息上限必须是 1–9999 的整数")
 	}
 	request := value.Request
 	for label, item := range map[string]int{

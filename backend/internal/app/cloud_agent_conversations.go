@@ -21,6 +21,9 @@ type CloudAgentConversation struct {
 	Status         string    `json:"status"`
 	Revision       int64     `json:"revision"`
 	CleanupPending bool      `json:"cleanupPending"`
+	QueueRevision  int64     `json:"queueRevision"`
+	QueuedCount    int       `json:"queuedCount"`
+	QueuePaused    bool      `json:"queuePaused"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
@@ -86,6 +89,18 @@ func (s *Service) CloudAgentConversations(userID, canvasID, before string, limit
 		page.NextCursor = encodeCloudAgentHistoryCursor(rows[limit-1])
 		rows = rows[:limit]
 	}
+	ids := make([]string, 0, len(rows))
+	for _, run := range rows {
+		id := run.ConversationID
+		if id == "" {
+			id = run.ID
+		}
+		ids = append(ids, id)
+	}
+	queues, err := s.repo.AgentMessageQueueSummaries(userID, ids)
+	if err != nil {
+		return nil, err
+	}
 	for _, run := range rows {
 		id := run.ConversationID
 		if id == "" {
@@ -95,6 +110,7 @@ func (s *Service) CloudAgentConversations(userID, canvasID, before string, limit
 			ID: id, CanvasID: run.CanvasID, Title: run.Title, LatestRunID: run.ID,
 			Status: run.Status, Revision: run.Revision, CleanupPending: run.CleanupPending,
 			CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
+			QueueRevision: queues[id].Revision, QueuedCount: queues[id].QueuedCount, QueuePaused: queues[id].Paused,
 		})
 	}
 	return page, nil

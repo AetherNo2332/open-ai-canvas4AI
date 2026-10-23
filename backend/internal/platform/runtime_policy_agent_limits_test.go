@@ -2,6 +2,22 @@ package platform
 
 import "testing"
 
+func TestAgentMessageQueuePolicyBounds(t *testing.T) {
+	p := DefaultRuntimePolicy()
+	if p.Task.AgentMaxQueuedMessagesPerConversation != 20 || p.Task.AgentMaxQueuedMessagesPerUser != 100 {
+		t.Fatal("queue defaults changed")
+	}
+	p.Task.AgentMaxQueuedMessagesPerConversation = 0
+	if validateRuntimePolicy(p) == nil {
+		t.Fatal("zero conversation limit accepted")
+	}
+	p = DefaultRuntimePolicy()
+	p.Task.AgentMaxQueuedMessagesPerUser = 10000
+	if validateRuntimePolicy(p) == nil {
+		t.Fatal("unbounded account queue accepted")
+	}
+}
+
 func TestAgentStepTimeoutEnvironmentBounds(t *testing.T) {
 	for _, tc := range []struct {
 		value string

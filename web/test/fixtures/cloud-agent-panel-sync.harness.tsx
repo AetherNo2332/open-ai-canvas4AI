@@ -1,6 +1,6 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import type { AgentEvent, AgentRun, CreateAgentRunInput } from "@/services/api/agent";
+import type { AgentConversationMessageInput, AgentEvent, AgentMessageReceipt, AgentQueuedMessage, AgentRun, AgentSendMode, CreateAgentRunInput } from "@/services/api/agent";
 import type { CanvasCloudAgentPanelHandle } from "@/components/canvas/canvas-cloud-agent-panel";
 import type { CloudAgentConversation, CloudAgentPendingSubmission } from "@/services/cloud-agent-conversations";
 
@@ -16,6 +16,7 @@ const React = await import("react");
 const { act } = React;
 const { createRoot } = await import("react-dom/client");
 const agent = await import("@/services/api/agent");
+const getRunFromService = agent.getAgentRun;
 const cache = await import("@/services/cloud-agent-conversations");
 const history = await import("@/services/cloud-agent-history");
 const refreshFromService = history.refreshCloudAgentConversations;
@@ -34,6 +35,13 @@ let interjectionOverride: (() => Promise<void>) | undefined;
 const sentRequests: Array<{ parentId: string; request: CreateAgentRunInput }> = [];
 const interjections: Array<{ runId: string; text: string }> = [];
 const createdRequests: CreateAgentRunInput[] = [];
+const conversationRequests: AgentConversationMessageInput[] = [];
+const queueItems: AgentQueuedMessage[] = [];
+const acceptedRuns = new Map<string, AgentRun>();
+let serverSendMode: AgentSendMode = "interject";
+let queueMessageOverride: ((input: AgentConversationMessageInput) => Promise<AgentMessageReceipt>) | undefined;
+let awaitingQuestionId = "";
+let questionBar: any;
 let refreshOverride: ((options: any) => Promise<CloudAgentConversation[]>) | undefined;
 const subscriptions: Array<{ id: string; after: number; closed: boolean; receive: (event: AgentEvent) => void }> = [];
 const reads: Array<{ canvasId: string; scope: string; signal: AbortSignal }> = [];
@@ -44,6 +52,27 @@ mock.module("motion/react", () => ({ AnimatePresence: Box, motion: { aside: Box,
 mock.module("antd", () => ({ Button: ({ children, icon, onClick }: any) => <button onClick={onClick}>{icon}{children}</button>, Dropdown: Box, Popover: Box, Input: Object.assign(Box, { TextArea: Box }) }));
 mock.module("@/services/api/agent", () => ({
     ...agent,
+    getAgentUISettings: async () => ({ defaultSendMode: serverSendMode, revision: 1 }),
+    updateAgentUISettings: async (input: any) => { serverSendMode = input.defaultSendMode; return { ...input, revision: input.revision + 1 }; },
+    getAgentMessageQueue: async (id: string) => ({ conversationId: id, canvasId: "canvas", revision: 1, paused: false, awaitingQuestionId, latestRunId: local[0]?.run?.id || "desktop", items: [...queueItems] }),
+    getAgentRun: async (id: string, ...args: any[]) => acceptedRuns.has(id) ? { run: acceptedRuns.get(id)! } : getRunFromService(id, ...args),
+    sendAgentConversationMessage: async (id: string, input: AgentConversationMessageInput) => {
+        conversationRequests.push(structuredClone(input));
+        if (queueMessageOverride) return queueMessageOverride(input);
+        const messageId = `message-${input.request.idempotencyKey}`;
+        if (input.mode === "queue") {
+            queueItems.push({ id: messageId, conversationId: id, canvasId: "canvas", prompt: input.request.prompt, revision: 1, sequence: queueItems.length + 1, mode: "queue", status: "queued", createdAt: "", updatedAt: "" });
+            return { messageId, conversationId: id, queueRevision: 1, delivery: "queued" };
+        }
+        if (local[0]?.run?.status === "running") {
+            interjections.push({ runId: input.expectedRunId, text: input.request.prompt }); await interjectionOverride?.();
+            return { messageId, conversationId: id, queueRevision: 1, delivery: "interjected", runId: input.expectedRunId };
+        }
+        sentRequests.push({ parentId: input.expectedRunId, request: input.request });
+        const next = sendMessageOverride ? await sendMessageOverride(input.expectedRunId, input.request) : { ...conversation("local-child").run!, status: "running" as const, parentId: input.expectedRunId, createdAt: "2026-10-23T00:01:00Z" };
+        acceptedRuns.set(next.id, next);
+        return { messageId, conversationId: id, queueRevision: 1, delivery: "started", runId: next.id };
+    },
     sendAgentMessage: async (parentId: string, request: CreateAgentRunInput) => {
         sentRequests.push({ parentId, request });
         return { run: sendMessageOverride ? await sendMessageOverride(parentId, request) : { ...conversation("local-child").run!, parentId, status: "running", createdAt: "2026-10-23T00:01:00Z" } };
@@ -84,7 +113,7 @@ mock.module("@/components/canvas/canvas-cloud-agent-chat-ui", () => ({
     AgentChatComposer: (props: any) => { composer = props; return <textarea value={props.prompt} readOnly />; },
     AgentChatMessage: ({ item }: any) => <div>{item.text}</div>,
     AgentOperationFeed: () => null, AgentReasoningFeed: () => null, AgentWorkingMessage: () => null,
-    AgentPlanBar: () => null, AgentQuestionBar: () => null, AgentSceneCapsules: () => null,
+    AgentPlanBar: () => null, AgentQuestionBar: (props: any) => { questionBar = props; return null; }, AgentSceneCapsules: () => null,
 }));
 mock.module("@/components/canvas/canvas-agent-skill-library-modal", () => ({ CanvasAgentSkillLibraryModal: () => null }));
 mock.module("@/components/canvas/canvas-cloud-agent-settings", () => ({
@@ -102,12 +131,14 @@ function conversation(runId: string, id = "server", draft = ""): CloudAgentConve
 }
 const settle = async () => { for (let i = 0; i < 4; i++) await new Promise((resolve) => setTimeout(resolve, 10)); };
 async function focus() { await act(async () => { window.dispatchEvent(new Event("focus")); await settle(); }); }
-async function mount(initial: CloudAgentConversation[] = [], initialPending: CloudAgentPendingSubmission | null = null, loader?: typeof refreshOverride) {
+async function mount(initial: CloudAgentConversation[] = [], initialPending: CloudAgentPendingSubmission | null = null, loader?: typeof refreshOverride, mode: AgentSendMode = "interject", questionId = "") {
     local = initial; remote = [conversation("desktop")]; pending = initialPending; refreshOverride = loader;
     sendMessageOverride = undefined;
     createRunOverride = undefined; interjectionOverride = undefined;
     subscriptions.length = 0; reads.length = 0;
     sentRequests.length = 0; interjections.length = 0; createdRequests.length = 0;
+    serverSendMode = mode; queueItems.length = 0; conversationRequests.length = 0; acceptedRuns.clear(); queueMessageOverride = undefined;
+    awaitingQuestionId = questionId; questionBar = undefined;
     setActiveUserScope("sync-user");
     useUserStore.setState({ hydrated: true, user: { id: "sync-user", username: "test", displayName: "test", role: "user", status: "active" }, features: { agentSubagentsEnabled: false } as any });
     const channel = createModelChannel({ id: "test", scope: "system", models: ["text"] });
@@ -122,12 +153,96 @@ afterAll(() => dom.happyDOM.abort());
 
 const externalPrompt = { canvasId: "canvas", userScope: "sync-user", prompt: "为目标分镜表提出拆镜方案，先询问确认", focusNodeIds: ["storyboard-target"] };
 
+test("account queue default applies to node and composer sends while preserving drafts", async () => {
+    const current = conversation("desktop", "local", "未发送的草稿"); current.run = { ...current.run!, status: "running" };
+    const mounted = await mount([current], null, async () => [current], "queue");
+    try {
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe("queued"); await settle(); });
+        expect(interjections).toHaveLength(0);
+        expect(createdRequests).toHaveLength(0);
+        expect(conversationRequests[0]).toMatchObject({ mode: "queue", expectedRunId: "desktop", request: { prompt: externalPrompt.prompt } });
+        expect(composer.prompt).toBe("未发送的草稿");
+        await act(async () => { composer.onSubmit(); await settle(); });
+        expect(conversationRequests[1]).toMatchObject({ mode: "queue", request: { prompt: "未发送的草稿" } });
+        expect(composer.prompt).toBe("");
+        expect(mounted.host.textContent).not.toContain("幂等");
+    } finally { await mounted.close(); }
+});
+
+test("unknown queued POST keeps its original mode after the account default changes", async () => {
+    const current = conversation("desktop", "local", "保留草稿"); current.run = { ...current.run!, status: "running" };
+    const mounted = await mount([current], null, async () => [current], "queue");
+    try {
+        queueMessageOverride = async () => { throw new Error("response lost"); };
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(false); await settle(); });
+        const identity = pending!.key;
+        expect(pending?.conversationMessage?.mode).toBe("queue");
+        await act(async () => { await composer.onSendModeChange("interject"); await settle(); });
+        queueMessageOverride = async () => ({ delivery: "queued", messageId: "accepted", conversationId: "shared", queueRevision: 2 });
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe("queued"); await settle(); });
+        expect(conversationRequests[1]).toMatchObject({ mode: "queue", request: { idempotencyKey: identity } });
+        expect(composer.prompt).toBe("保留草稿");
+    } finally { await mounted.close(); }
+});
+
+test("question answers bypass queue default and queued words do not hide the pending question", async () => {
+    const current = conversation("desktop", "local", "确认");
+    current.messages.push({ id: "question-desktop:4", role: "assistant", text: "", question: { question: "采用这个方案吗", options: [{ label: "确认" }, { label: "取消" }] } });
+    const mounted = await mount([current], null, async () => [current], "queue", "desktop:4");
+    try {
+        await act(async () => { composer.onSubmit(); await settle(); });
+        expect(conversationRequests[0].mode).toBe("queue");
+        expect(conversationRequests[0].replyToQuestionId).toBeUndefined();
+        expect(questionBar.question.question).toBe("采用这个方案吗");
+        expect(questionBar.disabled).toBe(false);
+        await act(async () => { questionBar.onAnswer("确认"); await settle(); });
+        expect(conversationRequests[1]).toMatchObject({ mode: "interject", replyToQuestionId: "desktop:4", request: { prompt: "确认" } });
+    } finally { await mounted.close(); }
+});
+
+test("a node request is not silently attached as an answer to a pending question", async () => {
+    const current = conversation("desktop", "local", "保留草稿");
+    const mounted = await mount([current], null, async () => [current], "interject", "desktop:4");
+    try {
+        queueMessageOverride = async () => { throw { status: 409, reason: "agent_question_pending" }; };
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(false); await settle(); });
+        expect(conversationRequests[0].replyToQuestionId).toBeUndefined();
+        expect(pending).toBeNull();
+        expect(composer.prompt).toBe("保留草稿");
+    } finally { await mounted.close(); }
+});
+
+test("typing a new draft while a queued POST is pending survives its acknowledgement", async () => {
+    const current = conversation("desktop", "local", "准备入队的消息"); current.run = { ...current.run!, status: "running" };
+    const mounted = await mount([current], null, async () => [current], "queue");
+    try {
+        let release!: (value: AgentMessageReceipt) => void;
+        queueMessageOverride = () => new Promise((resolve) => { release = resolve; });
+        await act(async () => { composer.onSubmit(); await settle(); });
+        await act(async () => { composer.onPromptChange("下一条草稿正在输入"); await settle(); });
+        await act(async () => { release({ delivery: "queued", messageId: "queued", conversationId: "shared", queueRevision: 2 }); await settle(); });
+        expect(composer.prompt).toBe("下一条草稿正在输入");
+    } finally { await mounted.close(); }
+});
+
+test("restoring an unknown queue send retains the newer draft separately from its frozen body", async () => {
+    const request = { canvasId: "canvas", prompt: "原待确认消息", idempotencyKey: "queue-pending-new-draft" };
+    const mounted = await mount([conversation("desktop", "local", "后来写的新草稿")], { fingerprint: "original", key: request.idempotencyKey, request, parentRunId: "desktop", conversationMessage: { conversationId: "shared", mode: "queue", expectedRunId: "desktop" } });
+    try {
+        expect(composer.prompt).toBe("后来写的新草稿"); expect(pending?.request?.prompt).toBe("原待确认消息");
+        await act(async () => { [...mounted.host.querySelectorAll("button")].find((button) => button.textContent === "重试发送")!.click(); await settle(); });
+        expect(conversationRequests[0]).toMatchObject({ mode: "queue", request: { prompt: "原待确认消息", idempotencyKey: request.idempotencyKey } });
+        expect(composer.prompt).toBe("后来写的新草稿");
+    }
+    finally { await mounted.close(); }
+});
+
 test("external storyboard request continues the current chat and preserves its composer draft", async () => {
     const mounted = await mount([conversation("desktop", "local", "原来的 Agent 草稿")]);
     try {
-        let accepted: boolean | undefined;
+        let accepted: Awaited<ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>> | undefined;
         await act(async () => { accepted = await mounted.handle.current!.sendPrompt(externalPrompt); await settle(); });
-        expect(accepted).toBe(true);
+        expect(accepted).toBe("sent");
         expect(sentRequests).toHaveLength(1);
         expect(sentRequests[0]).toMatchObject({ parentId: "desktop", request: { prompt: externalPrompt.prompt, focusNodeIds: ["storyboard-target"], permissionMode: "auto" } });
         expect(createdRequests).toHaveLength(0);
@@ -141,9 +256,9 @@ test("external request interjects into the running Agent without creating anothe
     current.run = { ...current.run!, status: "running" };
     const mounted = await mount([current], null, async () => [current]);
     try {
-        let accepted: boolean | undefined;
+        let accepted: Awaited<ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>> | undefined;
         await act(async () => { accepted = await mounted.handle.current!.sendPrompt(externalPrompt); await settle(); });
-        expect(accepted).toBe(true);
+        expect(accepted).toBe("sent");
         expect(interjections).toEqual([{ runId: "desktop", text: externalPrompt.prompt }]);
         expect(sentRequests).toHaveLength(0);
         expect(createdRequests).toHaveLength(0);
@@ -154,7 +269,7 @@ test("external request interjects into the running Agent without creating anothe
 test("external request creates only the first run when the current chat is empty", async () => {
     const mounted = await mount([], null, async () => []);
     try {
-        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(true); await settle(); });
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe("sent"); await settle(); });
         expect(createdRequests).toHaveLength(1);
         expect(createdRequests[0].prompt).toBe(externalPrompt.prompt);
         expect(sentRequests).toHaveLength(0);
@@ -172,7 +287,7 @@ test("an unknown external POST keeps its original identity and composer draft fo
         await act(async () => { expect(await mounted.handle.current!.sendPrompt({ ...externalPrompt, prompt: "另一个要求" })).toBe(false); await settle(); });
         expect(sentRequests).toHaveLength(1);
         sendMessageOverride = undefined;
-        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(true); await settle(); });
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe("sent"); await settle(); });
         expect(sentRequests[1].request.idempotencyKey).toBe(originalKey);
         expect(composer.prompt).toBe("独立的 Agent 草稿");
     } finally { await mounted.close(); }
@@ -185,14 +300,14 @@ test("external send rejects stale scopes and synchronously excludes duplicate cl
         expect(await mounted.handle.current!.sendPrompt({ ...externalPrompt, userScope: "old-user" })).toBe(false);
         let release!: (run: AgentRun) => void;
         sendMessageOverride = () => new Promise((resolve) => { release = resolve; });
-        let first!: Promise<boolean>;
+        let first!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>;
         await act(async () => {
             first = mounted.handle.current!.sendPrompt(externalPrompt);
             expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(false);
             await settle();
         });
         expect(sentRequests).toHaveLength(1);
-        await act(async () => { release({ ...conversation("local-child").run!, status: "running" }); expect(await first).toBe(true); await settle(); });
+        await act(async () => { release({ ...conversation("local-child").run!, status: "running" }); expect(await first).toBe("sent"); await settle(); });
         expect(composer.prompt).toBe("草稿");
     } finally { await mounted.close(); }
 });
@@ -214,7 +329,7 @@ test("switching chats during an interjection releases only the old send lock", a
         let releaseOld!: () => void, releaseNew!: (run: AgentRun) => void;
         interjectionOverride = () => new Promise((resolve) => { releaseOld = resolve; });
         createRunOverride = () => new Promise((resolve) => { releaseNew = resolve; });
-        let oldSend!: Promise<boolean>, newSend!: Promise<boolean>;
+        let oldSend!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>, newSend!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>;
         await act(async () => { oldSend = mounted.handle.current!.sendPrompt(externalPrompt); await settle(); });
         await act(async () => { (mounted.host.querySelector("svg.lucide-message-square-plus")!.closest("button") as HTMLButtonElement).click(); await settle(); });
         await act(async () => { composer.onPromptChange("新会话草稿"); await settle(); });
@@ -223,7 +338,7 @@ test("switching chats during an interjection releases only the old send lock", a
         await act(async () => { releaseOld(); expect(await oldSend).toBe(false); await settle(); });
         await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(false); });
         expect(createdRequests).toHaveLength(1);
-        await act(async () => { releaseNew({ ...conversation("first-run").run!, status: "running" }); expect(await newSend).toBe(true); await settle(); });
+        await act(async () => { releaseNew({ ...conversation("first-run").run!, status: "running" }); expect(await newSend).toBe("sent"); await settle(); });
         expect(composer.prompt).toBe("新会话草稿");
     } finally { await mounted.close(); }
 });
@@ -242,7 +357,7 @@ test("an external POST response from the old account cannot replace the new acco
     try {
         let release!: (run: AgentRun) => void;
         sendMessageOverride = () => new Promise((resolve) => { release = resolve; });
-        let sending!: Promise<boolean>;
+        let sending!: ReturnType<CanvasCloudAgentPanelHandle["sendPrompt"]>;
         await act(async () => { sending = mounted.handle.current!.sendPrompt(externalPrompt); await settle(); });
         await act(async () => { setActiveUserScope("other"); useUserStore.setState({ user: { ...useUserStore.getState().user!, id: "other" } }); await settle(); });
         await act(async () => { composer.onPromptChange("新账号草稿"); await settle(); });

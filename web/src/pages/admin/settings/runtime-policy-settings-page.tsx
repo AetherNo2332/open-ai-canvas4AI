@@ -86,6 +86,8 @@ const agentFields: PolicyField[] = [
         min: 0,
         max: 9_999,
     },
+    { group: "task", name: "agentMaxQueuedMessagesPerConversation", label: "每会话待发消息上限", extra: "限制单个会话的待发消息数量。", unit: "条", min: 1, max: 9_999 },
+    { group: "task", name: "agentMaxQueuedMessagesPerUser", label: "每账号待发消息上限", extra: "限制账号全部会话的待发消息总数。", unit: "条", min: 1, max: 9_999 },
     {
         group: "task",
         name: "agentStepMaxOutputTokens",

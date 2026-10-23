@@ -120,8 +120,35 @@ func (s *Service) InterjectCloudAgent(userID, id, messageID, text string) (int, 
 	if _, err := s.cloudAgentRunRefFor(userID, id); err != nil {
 		return 0, err
 	}
-	for attempt := 0; attempt < cloudAgentInterjectionAttempts; attempt++ {
+	if s.repo.HasAgentMessageQueue() {
 		run, err := s.repo.CloudAgent(userID, id)
+		if err != nil {
+			return 0, err
+		}
+		conversationID := run.ConversationID
+		if conversationID == "" {
+			conversationID = run.ID
+		}
+		var pending int
+		err = s.repo.WithAgentConversation(userID, conversationID, func(tx *repository.Repository, q *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+			if latest.ID != id {
+				return repository.ErrCloudAgentStaleParent
+			}
+			if q.AwaitingQuestionID != "" {
+				return repository.ErrAgentMessageQuestionPending
+			}
+			var err error
+			pending, err = interjectCloudAgentRepository(tx, userID, id, messageID, text)
+			return err
+		})
+		return pending, agentMessageError(err)
+	}
+	return interjectCloudAgentRepository(s.repo, userID, id, messageID, text)
+}
+
+func interjectCloudAgentRepository(repo *repository.Repository, userID, id, messageID, text string) (int, error) {
+	for attempt := 0; attempt < cloudAgentInterjectionAttempts; attempt++ {
+		run, err := repo.CloudAgent(userID, id)
 		if err != nil {
 			return 0, err
 		}
@@ -137,7 +164,7 @@ func (s *Service) InterjectCloudAgent(userID, id, messageID, text string) (int, 
 		if !cloudAgentAcceptsInterjection(run.Status) {
 			return 0, creationConflict("本轮已经结束，这条消息将作为新一轮发送")
 		}
-		err = s.repo.MutateCloudAgent(userID, id, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
+		err = repo.MutateCloudAgent(userID, id, run.Revision, func(current *model.CloudAgentExecution, _ *repository.Repository) error {
 			state.PendingInterjections = append(state.PendingInterjections, cloudAgentInterjection{ID: messageID, Text: text, CreatedAt: time.Now()})
 			// 立刻发一条事件：用户点了发送就该在时间线上看到自己的话，
 			// 也让多标签页/多设备对齐（另一个页签靠 SSE 收到这条）。

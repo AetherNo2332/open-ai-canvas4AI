@@ -5,6 +5,27 @@ description: 信封、错误码与 OpenAPI
 
 # HTTP API 合同
 
+## Agent 会话队列与默认发送方式
+
+已有会话使用下列接口，均验证当前账号和会话归属，动态子代理对话不接收该用户消息入口。首条空会话仍由 `POST /api/agent/runs` 创建，结果未知时先核对原请求，不能另造会话。
+
+| 方法 | 路径 | 行为 |
+| --- | --- | --- |
+| GET / PATCH | `/api/agent/ui-settings` | 读取或按 revision 保存 `defaultSendMode=interject/queue`；初始 interject，与系统提示词、workspace 和记忆独立 |
+| POST | `/api/agent/conversations/:id/messages` | 提交 `{mode,expectedRunId,request,replyToQuestionId?}`，request 沿用 CloudAgentRequest 与原幂等键 |
+| GET | `/api/agent/conversations/:id/queue` | 返回有序 items、revision、paused、pauseReason、awaitingQuestionId、questionRunId、latestRunId |
+| PATCH | `/api/agent/conversations/:id/queue` | `{revision,action:pause/resume}` 暂停或恢复队列 |
+| PATCH | `/api/agent/conversations/:id/queue/:messageId` | `{revision,prompt}` 编辑正文，或 `{revision,action:interject}` 提升；不能混用，已领取/派发时拒绝 |
+| DELETE | `/api/agent/conversations/:id/queue/:messageId?revision=...` | 移除未派发消息，保留防止重放复活的收条 |
+
+发送收条为 `{messageId,conversationId,delivery,queueRevision,runId?}`。delivery 是 queued、started、interjected 或 cancelled；queued 只表示已收下，未创建模型运行或预留费用。相同身份与原正文重试返回既有收条；编辑或移除后也不会被原 POST 覆盖。陈旧 expectedRunId 返回 `agent_conversation_stale_parent`，不会将输入静默改投另一个新轮。
+
+问题回答必须为 interject 并携带当前 `replyToQuestionId`；缺少关联、问题已更新或已有另一份待发回答，分别返回明确409原因 `agent_question_pending`、`agent_question_stale`、`agent_question_answer_pending`。旧直接续聊和插话接口同样遵守问题与会话准入边界。默认方式修改只影响新的提交，不能重写未知请求的原接口、模式、正文或问题关联。
+
+入队与实际建轮分别校验存储和执行准入。后台 RuntimePolicy.task 的 `agentMaxQueuedMessagesPerConversation`、`agentMaxQueuedMessagesPerUser` 默认20、100，范围1–9999；即时插话与唯一问题回答不会因普通待发条数受阻，仍校验其他配额。暂停和错误只返回可操作提示，不暴露存储连接细节。停止会话先暂停队列并作废在准备中的派发，再取消同一锁边界决定的最新运行。
+
+完整字段与错误信封见 `/api/openapi.yaml`。升级需配套更新 backend 与 web，数据库迁移至65；无需修改 Agent SDK、工具披露或记忆算法。
+
 ## 生成素材身份与来源
 
 `GET /api/tasks/:id` 在成功任务的 `resultJson.images[]`、`video`、`audio` / `audios[]` 中补充已登记素材的 `assetId`。ID 只从当前用户的服务器记录取得，并核对同一输出资源；项目工作流输出可复用版本表示所属素材。未登记、已删除或资源不匹配时不返回 ID，读取不会创建或恢复素材。客户端不得在缺少该字段时另建随机素材，应保留结果并提示重试保存。

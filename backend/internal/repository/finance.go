@@ -460,16 +460,30 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 // queued/running，所以它永远不会被执行；它唯一的作用是让"这一轮的报价"有一个可退的载体。
 func (r *Repository) CreateCloudAgentHoldingTask(task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int, skillRows ...[]model.AgentConversationSkill) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if r.agentMessageQueueEnabled {
+			if err := r.transactionRepository(tx).LockCanvasWrite(run.UserID, ""); err != nil {
+				return err
+			}
+		}
 		return createCloudAgentHoldingTask(tx, task, order, run, activeTaskLimit, skillRows...)
 	})
 }
 
 func createCloudAgentHoldingTask(tx *gorm.DB, task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int, skillRows ...[]model.AgentConversationSkill) error {
+	return createCloudAgentHoldingTaskGuarded(tx, task, order, run, activeTaskLimit, false, skillRows...)
+}
+
+func createCloudAgentHoldingTaskGuarded(tx *gorm.DB, task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int, queueAdmission bool, skillRows ...[]model.AgentConversationSkill) error {
 	r := &Repository{db: tx}
 	if err := r.requireCurrentCloudAgentParent(run); err != nil {
 		return err
 	}
 	r = New(tx)
+	if !queueAdmission {
+		if err := r.requireAgentMessageAdmission(run); err != nil {
+			return err
+		}
+	}
 	if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
 		return err
 	}

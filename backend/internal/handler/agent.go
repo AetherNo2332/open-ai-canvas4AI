@@ -18,6 +18,7 @@ import (
 
 // Agent orchestration is durable; the browser stream never drives execution.
 func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
+	RegisterAgentMessageQueueRoutes(r, svc)
 	r.GET("/agent/conversations", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

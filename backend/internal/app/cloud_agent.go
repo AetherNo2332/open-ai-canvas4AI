@@ -477,7 +477,7 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	id := cloudAgentID(userID, req.IdempotencyKey)
 	conversationID := s.cloudAgentConversationIDFor(userID, id, parentID)
 	linkedParentID := parentID
-	if scope != nil {
+	if scope != nil && scope.ConversationID != "" {
 		conversationID = scope.ConversationID
 		linkedParentID = scope.ParentID
 	}
@@ -600,11 +600,10 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 	}
 	var workspace WorkspaceSnapshot
 	var skillSnapshots []cloudAgentSkill
-	if scope != nil {
-		if scope.Workspace == nil {
-			return nil, BadAuthRequest("Agent Workspace snapshot missing")
-		}
+	if scope != nil && scope.Workspace != nil {
 		workspace, skillSnapshots = *scope.Workspace, scope.Skills
+	} else if scope != nil && scope.Subagent != nil {
+		return nil, BadAuthRequest("Agent Workspace snapshot missing")
 	} else {
 		workspace, err = s.FreezeWorkspaceSnapshot(userID, req.CanvasID)
 		if err != nil {
@@ -762,6 +761,9 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		return agentRunOutput(cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status, Model: req.Model, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt}, state), nil
 	}
 	if err = s.createCloudAgentRunWithinStorageQuota(run, task, prepare.Order, runtimePolicy, cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)); err != nil {
+		if errors.Is(err, repository.ErrAgentMessageQuestionPending) {
+			return nil, creationConflict(err.Error())
+		}
 		if errors.Is(err, repository.ErrCloudAgentStaleParent) {
 			// A competing identical request may have committed between the
 			// initial lookup and the parent lock. Its receipt still wins.

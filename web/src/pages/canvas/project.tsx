@@ -2221,7 +2221,8 @@ function InfiniteCanvasPage() {
         openAgent();
         try {
             const accepted = await agentPanelRef.current?.sendPrompt({ canvasId: projectId, userScope: getActiveUserScope(), prompt: buildStoryboardAgentPrompt(node, prompt), focusNodeIds: [node.id] });
-            if (accepted) message.success("已发送到当前 Agent，请在会话中确认拆镜方案");
+            if (accepted === "queued") message.success("已加入当前 Agent 的待发消息");
+            else if (accepted) message.success("已发送到当前 Agent，请在会话中确认拆镜方案");
             else message.warning("发送尚未确认，请在 Agent 面板核对连接或待确认请求后重试");
             return Boolean(accepted);
         } catch (error) {

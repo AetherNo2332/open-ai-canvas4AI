@@ -2671,6 +2671,11 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 	if err != nil {
 		return err
 	}
+	run, err = s.pauseAgentMessagesForStop(userID, run)
+	if err != nil {
+		return err
+	}
+	id = run.ID
 	if run.Status == "completed" || ((run.Status == "failed" || run.Status == "cancelled") && !run.CleanupPending) {
 		return s.cancelRunPrevis(ctx, userID, id)
 	}
