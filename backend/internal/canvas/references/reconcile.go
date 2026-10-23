@@ -61,6 +61,7 @@ func Reconcile(before, candidate map[string]any, registry *capability.Registry, 
 	ordered := []string{}
 	changedOwners := map[string]bool{}
 	reads := map[string]bool{}
+	inputReads := map[string]bool{}
 	for _, scope := range scopesFor(maps(next["nodes"])) {
 		resolution, err := resolveIndexed(idx, scope, registry)
 		if err != nil {
@@ -76,6 +77,9 @@ func Reconcile(before, candidate map[string]any, registry *capability.Registry, 
 			changedOwners[scope.NodeID] = true
 			for _, id := range resolution.DependencyNodeIDs {
 				reads[id] = true
+				if id != scope.NodeID {
+					inputReads[id] = true
+				}
 			}
 		}
 		for _, intent := range resolution.Edges {
@@ -159,7 +163,11 @@ func Reconcile(before, candidate map[string]any, registry *capability.Registry, 
 	for id := range reads {
 		result.ReadNodeIDs = append(result.ReadNodeIDs, id)
 	}
+	for id := range inputReads {
+		result.ReadInputNodeIDs = append(result.ReadInputNodeIDs, id)
+	}
 	sort.Strings(result.ReadNodeIDs)
+	sort.Strings(result.ReadInputNodeIDs)
 	sort.Strings(result.ReadEdgeIDs)
 	return result, nil
 }

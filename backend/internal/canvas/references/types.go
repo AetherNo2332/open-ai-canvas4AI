@@ -17,6 +17,9 @@ type Result struct {
 	Document    map[string]any
 	ReadNodeIDs []string
 	ReadEdgeIDs []string
+	// Internal provenance: excludes a scope's owner-self read, but includes it
+	// when it is an input to a different scope. ReadNodeIDs remains unchanged.
+	ReadInputNodeIDs []string `json:"-"`
 }
 type Error struct{ Reason, Field, Message string }
 

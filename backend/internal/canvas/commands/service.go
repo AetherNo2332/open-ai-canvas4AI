@@ -107,10 +107,12 @@ func (s *Service) state(tx *repository.Repository, p identity.Principal, id stri
 }
 func snapshot(row *model.CanvasProject, epoch *model.CanvasDocumentEpoch, versions map[string]model.CanvasEntityVersion, doc Document) Snapshot {
 	values := map[string]int64{}
+	generations := map[string]int64{}
 	for key, v := range versions {
 		values[key] = v.Version
+		generations[key] = v.Generation
 	}
-	out := Snapshot{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, Revision: row.Revision, EventSeq: epoch.EventSeq, Document: doc, EntityVersions: values}
+	out := Snapshot{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, Revision: row.Revision, EventSeq: epoch.EventSeq, Document: doc, EntityVersions: values, EntityGenerations: generations}
 	// 历史画布在读取投影上附带一次规范化预览：只读、幂等、不写文档、不分配标识。
 	// 已规范化文档保持 nil，客户端因此能区分“不需要迁移”与“迁移后无冲突”。
 	if !references.Enabled(doc) {
@@ -221,6 +223,9 @@ func (s *Service) Create(ctx context.Context, p identity.Principal, req CreateCa
 		}
 		if err = tx.SaveCommandVersions(rows); err != nil {
 			return err
+		}
+		for _, version := range rows {
+			versions[version.EntityKey] = version
 		}
 		if err = tx.SaveCommandResources(p.OwnerID, id, epochID, req.OperationID, resourceIDs(doc), resourceIDs(doc)); err != nil {
 			return err
@@ -358,7 +363,11 @@ func (s *Service) validation(ctx context.Context, tx *repository.Repository, p i
 			knownAssets[op.AssetID] = value
 		}
 	}
-	encoded, err := json.Marshal(map[string]any{"operations": ops})
+	inputsOps := append([]Operation(nil), ops...)
+	for i := range inputsOps {
+		inputsOps[i].FieldBaselines = nil
+	}
+	encoded, err := json.Marshal(map[string]any{"operations": inputsOps})
 	if err != nil {
 		return v, err
 	}
@@ -389,7 +398,7 @@ func (s *Service) validation(ctx context.Context, tx *repository.Repository, p i
 	}
 	return v, nil
 }
-func checkVersions(req Command, row *model.CanvasProject, versions map[string]model.CanvasEntityVersion, reads map[string]bool) error {
+func checkVersions(req Command, row *model.CanvasProject, versions map[string]model.CanvasEntityVersion, reads map[string]bool, fieldMerges ...map[string]bool) error {
 	complete := len(req.ExpectedEntityVersions) > 0
 	for key := range reads {
 		if _, ok := req.ExpectedEntityVersions[key]; !ok {
@@ -405,6 +414,9 @@ func checkVersions(req Command, row *model.CanvasProject, versions map[string]mo
 	}
 	for key := range reads {
 		if versions[key].Version != req.ExpectedEntityVersions[key] {
+			if len(fieldMerges) == 1 && fieldMerges[0][key] {
+				continue
+			}
 			return canvasFieldError(key, "entity_version_conflict", "目标实体已被其他操作修改")
 		}
 	}
@@ -527,7 +539,15 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 		if err != nil {
 			return err
 		}
-		if err = checkVersions(req, row, versions, plan.ReadSet); err != nil {
+		for _, op := range req.Operations {
+			if baseline := op.FieldBaselines; baseline != nil && baseline.Generation != nil {
+				version, exists := versions["node:"+op.ID]
+				if !exists || version.Deleted || version.Generation != *baseline.Generation {
+					return canvasFieldError("node:"+op.ID, "entity_version_conflict", "节点已进入新的生命周期")
+				}
+			}
+		}
+		if err = checkVersions(req, row, versions, plan.ReadSet, plan.FieldMergeTargets); err != nil {
 			return err
 		}
 		if err = tx.AbandonRedo(p.OwnerID, row.ID, epoch.Epoch, p.ID, req.ClientID); err != nil {
@@ -577,11 +597,15 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 		}
 		versions = append(versions, model.CanvasEntityVersion{CanvasID: row.ID, Epoch: epoch.Epoch, EntityKey: key, Version: row.Revision, Deleted: deleted})
 	}
-	if err = tx.SaveCommandVersions(versions); err != nil {
+	if err = tx.SaveCommandVersions(versions, plan.Changes.RecreatedEntities); err != nil {
 		return Receipt{}, err
 	}
 	out := Receipt{Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch, OperationID: req.OperationID, ClientID: req.ClientID, ActorID: p.ID, Revision: row.Revision, EventSeq: epoch.EventSeq, Changes: plan.Changes}
 	out.EntityVersions = expected
+	out.EntityGenerations = map[string]int64{}
+	for _, version := range versions {
+		out.EntityGenerations[version.EntityKey] = version.Generation
+	}
 	encoded, err := canonical(out)
 	if err != nil {
 		return Receipt{}, err

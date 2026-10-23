@@ -33,6 +33,7 @@ export interface ChangeSet {
     fields?: Record<string, FieldChange>;
     nodeOrder?: Array<string>;
     connectionOrder?: Array<string>;
+    recreatedEntities?: Record<string, boolean>;
 }
 
 export interface Command {
@@ -74,6 +75,11 @@ export interface EntityChange {
     delete?: boolean;
 }
 
+export interface FieldBaseline {
+    exists: boolean;
+    value: unknown;
+}
+
 export interface FieldChange {
     value?: unknown;
     delete?: boolean;
@@ -99,6 +105,13 @@ export interface MigrationPreview {
     conflicts: Array<MigrationConflict>;
 }
 
+export interface NodeFieldBaselines {
+    nodeType: string;
+    generation?: number;
+    workflowKind?: string;
+    fields: Record<string, FieldBaseline>;
+}
+
 export interface Operation {
     type: OperationType;
     id: string;
@@ -106,6 +119,7 @@ export interface Operation {
     title?: string;
     content?: string;
     patch?: Record<string, unknown>;
+    fieldBaselines?: NodeFieldBaselines;
     x?: number;
     y?: number;
     fromNodeId?: string;
@@ -212,6 +226,7 @@ export interface Receipt {
     eventSeq: number;
     changes: ChangeSet;
     entityVersions: Record<string, number>;
+    entityGenerations?: Record<string, number>;
     reset?: Snapshot;
 }
 
@@ -223,6 +238,7 @@ export interface Snapshot {
     eventSeq: number;
     document: Record<string, unknown>;
     entityVersions: Record<string, number>;
+    entityGenerations?: Record<string, number>;
     referenceMigration?: MigrationPreview;
 }
 

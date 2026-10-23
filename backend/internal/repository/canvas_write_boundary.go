@@ -253,13 +253,21 @@ func (r *Repository) syncLegacyCanvasWrite(before, after *model.CanvasProject, r
 		return err
 	}
 	values := map[string]int64{}
+	generations, changedGenerations := map[string]int64{}, map[string]int64{}
+	for _, value := range rows {
+		versions[value.EntityKey] = value
+		changedGenerations[value.EntityKey] = value.Generation
+	}
 	for key, value := range versions {
 		values[key] = value.Version
+		generations[key] = value.Generation
 	}
 	op := fmt.Sprintf("legacy:%d:%d", after.Revision, epoch.EventSeq)
 	snapshot := map[string]any{"protocolVersion": 1, "canvasId": after.ID, "documentEpoch": epoch.Epoch, "revision": after.Revision, "eventSeq": epoch.EventSeq, "document": next, "entityVersions": values}
+	snapshot["entityGenerations"] = generations
 	changes["entities"] = entities
 	event := map[string]any{"protocolVersion": 1, "canvasId": after.ID, "documentEpoch": epoch.Epoch, "operationId": op, "clientId": "legacy", "actorId": after.UserID, "revision": after.Revision, "eventSeq": epoch.EventSeq, "changes": changes, "entityVersions": changedVersions}
+	event["entityGenerations"] = changedGenerations
 	if newEpoch || epoch.Deleted {
 		event["reset"] = snapshot
 	}

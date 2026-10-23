@@ -31,9 +31,30 @@ func (r *Repository) CommandVersions(canvasID, epoch string) (map[string]model.C
 	}
 	return values, err
 }
-func (r *Repository) SaveCommandVersions(rows []model.CanvasEntityVersion) error {
+func (r *Repository) SaveCommandVersions(rows []model.CanvasEntityVersion, recreated ...map[string]bool) error {
 	if len(rows) == 0 {
 		return nil
+	}
+	// Every caller holds the durable account/canvas lock. Centralizing births
+	// here covers commands, undo/redo, Host writes, legacy saves and restores.
+	type scope struct{ canvasID, epoch string }
+	prior := map[scope]map[string]model.CanvasEntityVersion{}
+	for i := range rows {
+		row := &rows[i]
+		key := scope{row.CanvasID, row.Epoch}
+		if _, loaded := prior[key]; !loaded {
+			values, err := r.CommandVersions(row.CanvasID, row.Epoch)
+			if err != nil {
+				return err
+			}
+			prior[key] = values
+		}
+		before, exists := prior[key][row.EntityKey]
+		row.Generation = before.Generation
+		forcedBirth := len(recreated) == 1 && recreated[0][row.EntityKey] && !row.Deleted
+		if !exists || (before.Deleted && !row.Deleted) || forcedBirth {
+			row.Generation = row.Version
+		}
 	}
 	return r.db.Clauses(clause.OnConflict{UpdateAll: true}).CreateInBatches(rows, 200).Error
 }

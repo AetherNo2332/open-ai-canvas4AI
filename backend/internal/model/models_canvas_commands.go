@@ -11,11 +11,12 @@ type CanvasDocumentEpoch struct {
 	UpdatedAt time.Time
 }
 type CanvasEntityVersion struct {
-	CanvasID  string `gorm:"primaryKey;size:80"`
-	Epoch     string `gorm:"primaryKey;size:80"`
-	EntityKey string `gorm:"primaryKey;size:200"`
-	Version   int64  `gorm:"not null"`
-	Deleted   bool   `gorm:"not null;default:false"`
+	CanvasID   string `gorm:"primaryKey;size:80"`
+	Epoch      string `gorm:"primaryKey;size:80"`
+	EntityKey  string `gorm:"primaryKey;size:200"`
+	Version    int64  `gorm:"not null"`
+	Generation int64  `gorm:"not null;default:0"`
+	Deleted    bool   `gorm:"not null;default:false"`
 }
 type CanvasCommandReceipt struct {
 	OwnerID       string `gorm:"primaryKey;size:36"`

@@ -46,12 +46,20 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 	if registry == nil {
 		registry = capability.BuiltinRegistry()
 	}
+	baselinePaths, err := validateFieldBaselines(doc, req.Operations, registry)
+	if err != nil {
+		return result, err
+	}
 	now := ctx.Now
 	if now.IsZero() {
 		now = time.Unix(0, 0).UTC()
 	}
 	p := &planner{registry: registry, now: func() time.Time { return now }}
 	summary := []OperationSummary{}
+	present, removed, recreated := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, node := range maps(next["nodes"]) {
+		present[text(node["id"])] = true
+	}
 	for _, op := range req.Operations {
 		if ctx.AllowedOperations != nil && !ctx.AllowedOperations[op.Type] {
 			return result, failure("permission_denied", "没有该操作权限")
@@ -69,6 +77,20 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 		if op.Type == "delete_node" {
 			cleanTimelineNodeReferences(next)
 		}
+		current := map[string]bool{}
+		for _, node := range maps(next["nodes"]) {
+			id := text(node["id"])
+			current[id] = true
+			if !present[id] && removed[id] {
+				recreated["node:"+id] = true
+			}
+		}
+		for id := range present {
+			if !current[id] {
+				removed[id] = true
+			}
+		}
+		present = current
 	}
 	coordinated, err := reconcileReferenceFields(doc, next, registry)
 	if err != nil {
@@ -94,6 +116,33 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 			reads[key] = true
 		}
 	}
+	// A same-ID replacement is an object lifecycle even when its final value
+	// equals the original. Keep that write in events and both history directions.
+	recreatedKeys := make([]string, 0, len(recreated))
+	for key := range recreated {
+		recreatedKeys = append(recreatedKeys, key)
+	}
+	sort.Strings(recreatedKeys)
+	for _, key := range recreatedKeys {
+		value := entity(next, key)
+		if value == nil {
+			delete(recreated, key)
+			continue
+		}
+		if !writes[key] {
+			changes.Entities = append(changes.Entities, EntityChange{Key: key, Value: value})
+			if prior := entity(doc, key); prior != nil {
+				inverse.Entities = append(inverse.Entities, EntityChange{Key: key, Value: prior})
+			} else {
+				inverse.Entities = append(inverse.Entities, EntityChange{Key: key, Delete: true})
+			}
+		}
+		writes[key], reads[key] = true, true
+	}
+	if len(recreated) > 0 {
+		changes.RecreatedEntities = recreated
+		inverse.RecreatedEntities = recreated
+	}
 	for field := range changes.Fields {
 		writes["project:"+field] = true
 		reads["project:"+field] = true
@@ -115,7 +164,8 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 	if err = validateResult(next); err != nil {
 		return result, err
 	}
-	return PlanResult{Document: next, Changes: changes, ReadSet: reads, WriteSet: writes, Inverse: inverse, ResourceIDs: resources, Summary: summary}, nil
+	mergeTargets := fieldMergeTargets(doc, next, req.Operations, registry, baselinePaths, coordinated.ReadNodeIDs, coordinated.ReadInputNodeIDs)
+	return PlanResult{Document: next, Changes: changes, ReadSet: reads, WriteSet: writes, Inverse: inverse, ResourceIDs: resources, Summary: summary, FieldMergeTargets: mergeTargets}, nil
 }
 func drawingPresent(n map[string]any) bool { return n != nil && n["type"] == "drawing" }
 func maps(value any) []map[string]any {

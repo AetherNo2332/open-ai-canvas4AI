@@ -13,29 +13,31 @@ const ProtocolVersion = 1
 var OperationTypes = []string{"add_node", "update_node", "delete_node", "duplicate_node", "select_node_version", "set_parent", "connect_nodes", "delete_connection", "update_connection", "replace_text", "reorder_nodes", "reorder_connections", "reorder_rows", "edit_drawing", "edit_storyboard", "bind_storyboard_output", "edit_batch_table", "create_previs_scene", "edit_previs_scene", "delete_previs_scene", "bind_asset", "rename_canvas", "delete_canvas", "edit_canvas_settings", "edit_timeline", "migrate_references"}
 
 type Snapshot struct {
-	Protocol       int              `json:"protocolVersion"`
-	CanvasID       string           `json:"canvasId"`
-	DocumentEpoch  string           `json:"documentEpoch"`
-	Revision       int64            `json:"revision"`
-	EventSeq       int64            `json:"eventSeq"`
-	Document       Document         `json:"document"`
-	EntityVersions map[string]int64 `json:"entityVersions"`
+	Protocol          int              `json:"protocolVersion"`
+	CanvasID          string           `json:"canvasId"`
+	DocumentEpoch     string           `json:"documentEpoch"`
+	Revision          int64            `json:"revision"`
+	EventSeq          int64            `json:"eventSeq"`
+	Document          Document         `json:"document"`
+	EntityVersions    map[string]int64 `json:"entityVersions"`
+	EntityGenerations map[string]int64 `json:"entityGenerations,omitempty"`
 	// ReferenceMigration 只出现在读取投影里，且只在文档缺少 referenceFieldsVersion
 	// 时填充：客户端据此区分“需要一次性迁移”和“已规范化”。nil 表示无需迁移。
 	ReferenceMigration *references.MigrationPreview `json:"referenceMigration,omitempty"`
 }
 type Receipt struct {
-	Protocol       int              `json:"protocolVersion"`
-	CanvasID       string           `json:"canvasId"`
-	DocumentEpoch  string           `json:"documentEpoch"`
-	OperationID    string           `json:"operationId"`
-	ClientID       string           `json:"clientId"`
-	ActorID        string           `json:"actorId"`
-	Revision       int64            `json:"revision"`
-	EventSeq       int64            `json:"eventSeq"`
-	Changes        ChangeSet        `json:"changes"`
-	EntityVersions map[string]int64 `json:"entityVersions"`
-	Reset          *Snapshot        `json:"reset,omitempty"`
+	Protocol          int              `json:"protocolVersion"`
+	CanvasID          string           `json:"canvasId"`
+	DocumentEpoch     string           `json:"documentEpoch"`
+	OperationID       string           `json:"operationId"`
+	ClientID          string           `json:"clientId"`
+	ActorID           string           `json:"actorId"`
+	Revision          int64            `json:"revision"`
+	EventSeq          int64            `json:"eventSeq"`
+	Changes           ChangeSet        `json:"changes"`
+	EntityVersions    map[string]int64 `json:"entityVersions"`
+	EntityGenerations map[string]int64 `json:"entityGenerations,omitempty"`
+	Reset             *Snapshot        `json:"reset,omitempty"`
 }
 type CreateCanvasRequest struct {
 	OperationID       string      `json:"operationId"`
@@ -52,6 +54,7 @@ type Operation struct {
 	Title                  *string                 `json:"title,omitempty"`
 	Content                *string                 `json:"content,omitempty"`
 	Patch                  map[string]any          `json:"patch,omitempty"`
+	FieldBaselines         *NodeFieldBaselines     `json:"fieldBaselines,omitempty"`
 	X                      *float64                `json:"x,omitempty"`
 	Y                      *float64                `json:"y,omitempty"`
 	FromNodeID             string                  `json:"fromNodeId,omitempty"`
@@ -104,6 +107,18 @@ type PrevisEntityOperation struct {
 }
 
 type Document map[string]any
+
+type FieldBaseline struct {
+	Exists bool `json:"exists"`
+	Value  any  `json:"value"`
+}
+
+type NodeFieldBaselines struct {
+	NodeType     string                   `json:"nodeType"`
+	Generation   *int64                   `json:"generation,omitempty"`
+	WorkflowKind string                   `json:"workflowKind,omitempty"`
+	Fields       map[string]FieldBaseline `json:"fields"`
+}
 type Command struct {
 	Protocol               int              `json:"protocolVersion"`
 	CanvasID               string           `json:"canvasId"`
@@ -140,10 +155,11 @@ type FieldChange struct {
 	Delete bool `json:"delete,omitempty"`
 }
 type ChangeSet struct {
-	Entities        []EntityChange         `json:"entities"`
-	Fields          map[string]FieldChange `json:"fields,omitempty"`
-	NodeOrder       []string               `json:"nodeOrder,omitempty"`
-	ConnectionOrder []string               `json:"connectionOrder,omitempty"`
+	Entities          []EntityChange         `json:"entities"`
+	Fields            map[string]FieldChange `json:"fields,omitempty"`
+	NodeOrder         []string               `json:"nodeOrder,omitempty"`
+	ConnectionOrder   []string               `json:"connectionOrder,omitempty"`
+	RecreatedEntities map[string]bool        `json:"recreatedEntities,omitempty"`
 }
 type PlanResult struct {
 	Document    Document           `json:"document"`
@@ -153,6 +169,9 @@ type PlanResult struct {
 	Inverse     ChangeSet          `json:"inverse"`
 	ResourceIDs []string           `json:"resourceIds"`
 	Summary     []OperationSummary `json:"summary"`
+	// Internal proof from the registry, operation provenance and actual diff.
+	// Never accepted from the wire or used to remove related read-set entries.
+	FieldMergeTargets map[string]bool `json:"-"`
 }
 type Error struct {
 	Reason  string `json:"reason"`
