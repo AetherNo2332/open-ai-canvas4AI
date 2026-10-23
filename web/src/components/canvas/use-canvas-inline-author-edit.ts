@@ -2,7 +2,7 @@ import { useRef } from "react";
 import { App } from "antd";
 import { useCanvasEditLease } from "./use-canvas-edit-lease";
 import type { CanvasNodeData } from "@/types/canvas";
-import { captureCanvasAuthorIdentity, sameCanvasAuthorIdentity, clearCanvasAuthorDraft, readCanvasAuthorDraft, saveCanvasAuthorDraft, type CanvasAuthorIdentity } from "@/services/canvas-author-drafts";
+import { captureCanvasAuthorIdentity, sameCanvasAuthorIdentity, clearCanvasAuthorDraft, readCanvasAuthorDraft, patchCanvasAuthorDraft, acknowledgeCanvasAuthorDraftFields, type CanvasAuthorIdentity } from "@/services/canvas-author-drafts";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { flushCanvasCommandWorkspace } from "@/stores/canvas/use-canvas-session-store";
 
@@ -15,7 +15,7 @@ export function useCanvasInlineAuthorEdit(canvasId: string, node: CanvasNodeData
     const current = useRef(node);
     current.current = node;
     const scope = lease.scope || getActiveUserScope();
-    const retain = (value: Record<string, unknown>) => saveCanvasAuthorDraft(scope, canvasId, node.id, { kind: "text", identity: identity.current, base: base.current, value });
+    const retain = (value: Record<string, unknown>) => patchCanvasAuthorDraft(scope, canvasId, node.id, { kind: "text", identity: identity.current, base: base.current, value });
     return {
         ...lease,
         async enter(apply: (value: Record<string, unknown>) => void) {
@@ -29,7 +29,10 @@ export function useCanvasInlineAuthorEdit(canvasId: string, node: CanvasNodeData
                 if (
                     draft &&
                     ((lease.isRemote && !sameCanvasAuthorIdentity(draft.identity, captureCanvasAuthorIdentity(canvasId, node.id))) ||
-                        (JSON.stringify(draft.base) !== JSON.stringify(fields(current.current)) && JSON.stringify(draft.value) !== JSON.stringify(fields(current.current))))
+                        Object.entries(draft.base).some(
+                            ([field, before]) =>
+                                JSON.stringify((fields(current.current) as Record<string, unknown>)[field]) !== JSON.stringify(before) && JSON.stringify((fields(current.current) as Record<string, unknown>)[field]) !== JSON.stringify(draft.value[field]),
+                        ))
                 ) {
                     modal.confirm({
                         title: "旧草稿与云端版本不同",
@@ -47,19 +50,21 @@ export function useCanvasInlineAuthorEdit(canvasId: string, node: CanvasNodeData
                     });
                     return;
                 }
-                if (draft) base.current = draft.base;
+                if (draft) base.current = { ...fields(current.current), ...draft.base };
                 if (draft) identity.current = draft.identity;
-                apply(draft?.value || fields(current.current));
+                apply({ ...fields(current.current), ...draft?.value });
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "暂时无法获取编辑占用");
             }
         },
         remember(patch: Record<string, unknown>) {
-            void retain({ ...fields(current.current), ...patch }).catch(() => message.error("本地草稿保存失败，请复制并保留当前内容"));
+            void retain(structuredClone(patch)).catch(() => message.error("本地草稿保存失败，请复制并保留当前内容"));
         },
         async commit(patch: Record<string, unknown>, apply: () => void) {
             try {
-                await retain({ ...fields(current.current), ...patch });
+                const intent = structuredClone(patch),
+                    capturedIdentity = identity.current && { ...identity.current };
+                await retain(intent);
                 if (lease.isRemote && !sameCanvasAuthorIdentity(identity.current, captureCanvasAuthorIdentity(canvasId, node.id))) throw new Error("节点版本已改变，旧草稿已保留");
                 const latest = fields(current.current) as Record<string, unknown>;
                 for (const [key, value] of Object.entries(patch))
@@ -68,7 +73,7 @@ export function useCanvasInlineAuthorEdit(canvasId: string, node: CanvasNodeData
                     apply();
                     if (lease.isRemote && !(await flushCanvasCommandWorkspace())) throw new Error("云端保存尚未确认，草稿已保留，请重试");
                 });
-                await clearCanvasAuthorDraft(scope, canvasId, node.id, "text");
+                await acknowledgeCanvasAuthorDraftFields(scope, canvasId, node.id, "text", intent, capturedIdentity);
                 return true;
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "保存尚未确认，草稿已保留");

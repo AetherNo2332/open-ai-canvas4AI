@@ -13,7 +13,7 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { CanvasNodeData } from "@/types/canvas";
 import { useCanvasEditLease } from "./use-canvas-edit-lease";
 import { CanvasEditLeaseStatus } from "./canvas-edit-lease-status";
-import { captureCanvasAuthorIdentity, sameCanvasAuthorIdentity, clearCanvasAuthorDraft, readCanvasAuthorDraft, saveCanvasAuthorDraft, type CanvasAuthorIdentity } from "@/services/canvas-author-drafts";
+import { captureCanvasAuthorIdentity, sameCanvasAuthorIdentity, clearCanvasAuthorDraft, readCanvasAuthorDraft, saveCanvasAuthorDraft, acknowledgeCanvasAuthorDraftFields, type CanvasAuthorIdentity } from "@/services/canvas-author-drafts";
 import { getActiveUserScope } from "@/lib/user-scope";
 
 type CanvasTextEditorModalProps = {
@@ -82,13 +82,21 @@ export function CanvasTextEditorModal({ projectId, node, open, onClose, onSave }
             .then((draft) => {
                 if (cancelled || getActiveUserScope() !== scope) return;
                 if (draft) {
-                    baseRef.current = draft.base;
+                    const restoredBase = { ...textAuthorFields(node), ...draft.base };
+                    const restoredValue = { ...textAuthorFields(node), ...draft.value };
+                    baseRef.current = restoredBase;
                     const currentIdentity = baseIdentity.current;
                     baseIdentity.current = draft.identity;
-                    setTitle(String(draft.value.title || "文本"));
-                    editor.commands.setContent((draft.value.richText as JSONContent | undefined) || plainTextDocument(String(draft.value.content || "")), { emitUpdate: false });
+                    setTitle(String(restoredValue.title || "文本"));
+                    editor.commands.setContent((restoredValue.richText as JSONContent | undefined) || plainTextDocument(String(restoredValue.content || "")), { emitUpdate: false });
                     setDirty(true);
-                    setDraftConflict(!sameCanvasAuthorIdentity(draft.identity, currentIdentity) || (JSON.stringify(draft.base) !== JSON.stringify(textAuthorFields(node)) && JSON.stringify(draft.value) !== JSON.stringify(textAuthorFields(node))));
+                    setDraftConflict(
+                        !sameCanvasAuthorIdentity(draft.identity, currentIdentity) ||
+                            Object.entries(draft.base).some(
+                                ([field, before]) =>
+                                    JSON.stringify((textAuthorFields(node) as Record<string, unknown>)[field]) !== JSON.stringify(before) && JSON.stringify((textAuthorFields(node) as Record<string, unknown>)[field]) !== JSON.stringify(draft.value[field]),
+                            ),
+                    );
                 }
                 setDraftReady(true);
             })
@@ -112,6 +120,7 @@ export function CanvasTextEditorModal({ projectId, node, open, onClose, onSave }
         setSaving(true);
         try {
             const value = { title: title.trim() || "文本", content: editor.getText({ blockSeparator: "\n" }).trimEnd(), richText: editor.getJSON() as Record<string, unknown> };
+            const capturedIdentity = baseIdentity.current && { ...baseIdentity.current };
             await persistDraft(value);
             if (
                 draftConflict ||
@@ -124,7 +133,7 @@ export function CanvasTextEditorModal({ projectId, node, open, onClose, onSave }
             await lease.save(async () => {
                 await onSave(node.id, value.title, value.content, value.richText);
             });
-            if (lease.scope) await clearCanvasAuthorDraft(lease.scope, projectId, node.id, "text");
+            if (lease.scope) await acknowledgeCanvasAuthorDraftFields(lease.scope, projectId, node.id, "text", value, capturedIdentity);
             baseRef.current = value;
             setDirty(false);
             message.success(lease.isRemote ? "文本节点已确认保存到云端" : "文本节点已保存到本地");

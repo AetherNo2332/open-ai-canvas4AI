@@ -345,7 +345,18 @@ test("actual prompt panel focuses a lease, preserves prompt mirrors and starts g
         ["canvas/canvas-portrait-texture-popover", "CanvasPortraitTexturePopover"],
         ["canvas/canvas-prompt-optimizer-drawer", "CanvasPromptOptimizerDrawer"],
     ])
-        mock.module(`@/components/${path}`, () => ({ [name]: name === "CanvasPromptOptimizerDrawer" ? Box : () => null }));
+        mock.module(`@/components/${path}`, () => ({
+            [name]:
+                name === "CanvasPromptOptimizerDrawer"
+                    ? Box
+                    : name === "CanvasChooseImageStylePicker"
+                      ? ({ onSelect }: any) => (
+                            <button data-test-style onClick={() => onSelect(1, "style")}>
+                                style
+                            </button>
+                        )
+                      : () => null,
+        }));
     mock.module("@/lib/plugins/builtin/prompt-optimizer", () => ({ PROMPT_OPTIMIZER_PLUGIN_ID: "prompt-optimizer", promptOptimizerPlugin: {} }));
     const { CanvasNodePromptPanel } = await import("@/components/canvas/canvas-node-prompt-panel");
     const { writeCanvasNodePrompt } = await import("@/lib/canvas/canvas-node-prompt");
@@ -551,4 +562,168 @@ test("storyboard card composer takes the same lease and waits for ACK before gen
     await act(async () => root.unmount());
     cancelCanvasEditLeases();
     element.remove();
+});
+
+test.each(["title", "body"])("inline %s ACK preserves unrelated restored author fields and their original base", async (surface) => {
+    const actualStore = await import("@/stores/canvas/use-canvas-session-store");
+    mock.module("@/stores/canvas/use-canvas-session-store", () => ({ ...actualStore, flushCanvasCommandWorkspace: async () => true }));
+    const { useCanvasInlineAuthorEdit } = await import("@/components/canvas/use-canvas-inline-author-edit");
+    const scope = `field-${surface}`;
+    editScope(scope);
+    const persisted = structuredClone(node);
+    const base = { title: "Text", content: "before", richText: null };
+    const richText = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "UNSAVED BODY", marks: [{ type: "bold" }] }] }] };
+    const value = surface === "title" ? { ...base, content: "UNSAVED BODY", richText } : { ...base, title: "UNSAVED TITLE" };
+    await saveCanvasAuthorDraft(scope, "c", "n", { kind: "text", identity: { documentEpoch: "e", nodeGeneration: 1 }, base, value });
+    apiClient.defaults.adapter = async (config) => {
+        const body = JSON.parse(config.data);
+        return { data: { code: 0, data: config.url?.endsWith("/release") ? { released: true } : { canvasId: "c", ...body, expiresAt: new Date(Date.now() + 30000).toISOString() }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    let author: any;
+    const element = document.createElement("div");
+    document.body.append(element);
+    let root = createRoot(element);
+    function Inline() {
+        author = useCanvasInlineAuthorEdit("c", persisted, true);
+        return null;
+    }
+    try {
+        await act(async () => {
+            root.render(<Inline />);
+            await tick();
+        });
+        await act(async () => {
+            await author.enter(() => {});
+        });
+        const patch = surface === "title" ? { title: "Renamed" } : { content: "ACK BODY", richText: null };
+        await act(async () => {
+            author.remember(patch);
+            await flushCanvasAuthorDrafts();
+            expect(
+                await author.commit(patch, () => {
+                    if (surface === "title") persisted.title = "Renamed";
+                    else persisted.metadata.content = "ACK BODY";
+                }),
+            ).toBe(true);
+        });
+        const remaining = await readCanvasAuthorDraft(scope, "c", "n", "text");
+        expect(remaining?.identity).toEqual({ documentEpoch: "e", nodeGeneration: 1 });
+        if (surface === "title") {
+            expect(remaining?.value.content).toBe("UNSAVED BODY");
+            expect(remaining?.value.richText).toEqual(richText);
+            expect(remaining?.base.content).toBe("before");
+        } else {
+            expect(remaining?.value.title).toBe("UNSAVED TITLE");
+            expect(remaining?.base.title).toBe("Text");
+        }
+        await act(async () => root.unmount());
+        root = createRoot(element);
+        await act(async () => {
+            root.render(<CanvasTextEditorModal projectId="c" node={persisted} open onClose={() => {}} onSave={() => {}} />);
+            await tick();
+        });
+        expect(element.querySelector<HTMLInputElement>('[aria-label="文本节点标题"]')?.value).toBe(surface === "title" ? "Renamed" : "UNSAVED TITLE");
+        expect(element.querySelector(".ProseMirror")?.textContent).toBe(surface === "title" ? "UNSAVED BODY" : "ACK BODY");
+        if (surface === "title") expect(element.querySelector(".ProseMirror strong")?.textContent).toBe("UNSAVED BODY");
+    } finally {
+        await act(async () => root.unmount());
+        cancelCanvasEditLeases();
+        element.remove();
+    }
+});
+
+test("tool edits and generate cannot borrow a pending save ACK; a later tool intent gets a separate ACK", async () => {
+    const { CanvasNodePromptPanel } = await import("@/components/canvas/canvas-node-prompt-panel");
+    const { writeCanvasNodePrompt } = await import("@/lib/canvas/canvas-node-prompt");
+    editScope("exact-prompt");
+    let current = writeCanvasNodePrompt({ ...node, id: "prompt", type: "image", metadata: { content: "" } }, "before"),
+        writes = 0,
+        generated: string[] = [],
+        ackA!: () => void,
+        ackB!: () => void;
+    const a = new Promise<void>((resolve) => {
+            ackA = resolve;
+        }),
+        b = new Promise<void>((resolve) => {
+            ackB = resolve;
+        });
+    apiClient.defaults.adapter = async (config) => {
+        const body = JSON.parse(config.data);
+        return { data: { code: 0, data: config.url?.endsWith("/release") ? { released: true } : { canvasId: "c", ...body, expiresAt: new Date(Date.now() + 30000).toISOString() }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+    };
+    function Prompt() {
+        const [live, setLive] = React.useState(current);
+        return (
+            <CanvasNodePromptPanel
+                projectId="c"
+                node={live}
+                isRunning={false}
+                onConfigChange={() => {}}
+                onPromptChange={(_id, value) => {
+                    current = writeCanvasNodePrompt(current, value);
+                    setLive(current);
+                }}
+                onPersist={async () => {
+                    writes++;
+                    await (writes === 1 ? a : b);
+                }}
+                onGenerate={(_id, _mode, value) => generated.push(value)}
+            />
+        );
+    }
+    const element = document.createElement("div");
+    document.body.append(element);
+    const root = createRoot(element);
+    try {
+        await act(async () => {
+            root.render(<Prompt />);
+            await tick();
+        });
+        const textarea = element.querySelector("textarea")!;
+        await act(async () => {
+            textarea.focus();
+            await tick();
+            textarea.value = "A";
+            const props = Object.keys(textarea).find((key) => key.startsWith("__reactProps"))!;
+            (textarea as any)[props].onChange({ target: textarea, currentTarget: textarea });
+            await tick();
+        });
+        await act(async () => {
+            [...element.querySelectorAll("button")].find((button) => button.textContent === "保存")!.click();
+            await tick();
+        });
+        await act(async () => {
+            element.querySelector<HTMLButtonElement>("[data-test-style]")!.click();
+            await tick();
+            element.querySelector<HTMLButtonElement>('button[aria-label="生成"]')!.click();
+            await tick();
+        });
+        expect(current.metadata.composerContent).toBe("A");
+        expect(writes).toBe(1);
+        await act(async () => {
+            ackA();
+            await tick();
+        });
+        expect(generated).toEqual([]);
+        await act(async () => {
+            element.querySelector<HTMLButtonElement>("[data-test-style]")!.click();
+            await tick();
+            element.querySelector<HTMLButtonElement>('button[aria-label="生成"]')!.click();
+            await tick();
+        });
+        expect(writes).toBe(2);
+        expect(generated).toEqual([]);
+        expect((await readCanvasAuthorDraft("exact-prompt", "c", "prompt", "prompt"))?.value.prompt).toContain("tool:style");
+        await act(async () => {
+            ackB();
+            await tick();
+        });
+        expect(generated).toEqual([current.metadata.composerContent!]);
+    } finally {
+        ackA();
+        ackB();
+        await act(async () => root.unmount());
+        cancelCanvasEditLeases();
+        element.remove();
+    }
 });

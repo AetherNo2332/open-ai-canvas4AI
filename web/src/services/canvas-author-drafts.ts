@@ -45,6 +45,40 @@ export function clearCanvasAuthorDraft(scope: string, canvasId: string, nodeId: 
     const draftKey = key(canvasId, nodeId, kind);
     return serial(scope, draftKey, () => localforage.removeItem(scopedStorageKey(draftKey, scope)));
 }
+const sameDraftIdentity = (left: CanvasAuthorIdentity | undefined, right: CanvasAuthorIdentity | undefined) => (!left && !right) || sameCanvasAuthorIdentity(left, right);
+
+/** A surface that edits one field must not reconstruct the other fields from
+ * the document: they may be recovery intents not yet applied to that document. */
+export function patchCanvasAuthorDraft(scope: string, canvasId: string, nodeId: string, draft: Omit<CanvasAuthorDraft, "version" | "savedAt">) {
+    const draftKey = key(canvasId, nodeId, draft.kind);
+    return serial(scope, draftKey, async () => {
+        const old = await readCanvasAuthorDraft(scope, canvasId, nodeId, draft.kind);
+        if (old && !sameDraftIdentity(old.identity, draft.identity)) throw new Error("旧草稿属于另一节点版本，请先保留并处理旧草稿");
+        const base = { ...old?.base };
+        for (const field of Object.keys(draft.value)) if (!old || !Object.hasOwn(old.value, field)) base[field] = structuredClone(draft.base[field]);
+        const next: CanvasAuthorDraft = { version: 1, kind: draft.kind, identity: old ? old.identity : draft.identity, base, value: { ...old?.value, ...structuredClone(draft.value) }, savedAt: new Date().toISOString() };
+        await localforage.setItem(scopedStorageKey(draftKey, scope), JSON.stringify(next));
+    });
+}
+
+/** Only an exact ACK can remove its fields. A newer or unrelated intent keeps
+ * its original base and incarnation, including pre-field-scoped v1 records. */
+export function acknowledgeCanvasAuthorDraftFields(scope: string, canvasId: string, nodeId: string, kind: CanvasAuthorDraft["kind"], acknowledged: Record<string, unknown>, identity: CanvasAuthorIdentity | undefined) {
+    const draftKey = key(canvasId, nodeId, kind);
+    return serial(scope, draftKey, async () => {
+        const old = await readCanvasAuthorDraft(scope, canvasId, nodeId, kind);
+        if (!old || !sameDraftIdentity(old.identity, identity)) return;
+        const base = { ...old.base },
+            value = { ...old.value };
+        for (const [field, received] of Object.entries(acknowledged))
+            if (Object.hasOwn(value, field) && JSON.stringify(value[field]) === JSON.stringify(received)) {
+                delete value[field];
+                delete base[field];
+            }
+        if (!Object.keys(value).length) await localforage.removeItem(scopedStorageKey(draftKey, scope));
+        else await localforage.setItem(scopedStorageKey(draftKey, scope), JSON.stringify({ ...old, base, value }));
+    });
+}
 export async function flushCanvasAuthorDrafts() {
     await Promise.all([...tails.values()]);
 }

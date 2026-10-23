@@ -76,6 +76,14 @@ test("actual lease API denies another tab, renews one owner, sends only header p
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(one.node("n").phase).toBe("saving");
     expect(releaseCount).toBe(0);
+    let secondPersisted = false;
+    await expect(
+        one.save("n", async () => {
+            secondPersisted = true;
+        }),
+    ).rejects.toThrow("正在确认另一笔保存");
+    expect(secondPersisted).toBe(false);
+    expect(releaseCount).toBe(0);
     expect(JSON.parse(header)[0]).toMatchObject({ canvasId: "c", nodeId: "n" });
     expect(commandBody).not.toContain(remote!.token);
     ack();

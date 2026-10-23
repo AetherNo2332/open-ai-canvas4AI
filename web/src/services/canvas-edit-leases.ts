@@ -184,7 +184,7 @@ export function createCanvasEditLeaseController(deps: { scope: string; canvasId:
         },
         async save(nodeId: string, persist: () => Promise<void>) {
             const entry = record(nodeId);
-            if (entry.save) return entry.save;
+            if (entry.save) throw new Error("当前节点正在确认另一笔保存，请等待回执后重试");
             const operation = (async () => {
                 await ensure(nodeId);
                 check();

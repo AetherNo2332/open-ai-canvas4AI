@@ -38,7 +38,7 @@ import { App, Button } from "antd";
 import { ArrowLeftRight } from "lucide-react";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { getNodeSpec } from "@/constant/canvas";
-import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
+import { CanvasConfigComposer, saveCanvasConfigComposerIntent, type CanvasConfigComposerHandle } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CanvasActiveTaskPanel } from "@/components/canvas/canvas-active-task-panel";
 import { CanvasProjectSidebar } from "@/components/canvas/canvas-project-sidebar";
@@ -282,6 +282,7 @@ function InfiniteCanvasPage() {
     const didInitialCenterRef = useRef(false);
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const assetHandoffRef = useRef("");
+    const configComposerHandles = useRef(new Map<string, CanvasConfigComposerHandle>());
 
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -2391,11 +2392,49 @@ function InfiniteCanvasPage() {
         [effectiveConfig, message],
     );
 
+    const generateConfigNode = useCallback(
+        async (nodeId: string) => {
+            const target = nodesRef.current.find((item) => item.id === nodeId);
+            if (!target) return;
+            const bound = useCanvasSessionStore.getState();
+            const scope = getActiveUserScope();
+            const mode = target.metadata?.generationMode || "image";
+            try {
+                const activeComposer = configComposerHandles.current.get(nodeId);
+                const prompt = activeComposer
+                    ? await activeComposer.save()
+                    : await saveCanvasConfigComposerIntent({
+                          projectId,
+                          nodeId,
+                          value: target.metadata?.composerContent ?? target.metadata?.prompt ?? "",
+                          readValue: () => {
+                              const current = nodesRef.current.find((item) => item.id === nodeId);
+                              return current?.metadata?.composerContent ?? current?.metadata?.prompt ?? "";
+                          },
+                          onChange: (composerContent) => handleConfigNodeChange(nodeId, { composerContent }),
+                          onPersist: persistLocalEdits,
+                      });
+                const current = useCanvasSessionStore.getState();
+                if (getActiveUserScope() !== scope || current.scope !== bound.scope || current.connectionGeneration !== bound.connectionGeneration || !nodesRef.current.some((item) => item.id === nodeId)) throw new Error("画布或账号已切换，未启动生成");
+                await handleGenerateNode(nodeId, mode, prompt);
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "提示词尚未确认保存，未启动生成");
+            }
+        },
+        [handleConfigNodeChange, handleGenerateNode, message, persistLocalEdits, projectId],
+    );
+
     const renderCanvasNodePanel = useCallback(
         (panelNode: CanvasNodeData) => {
             if (panelNode.type === CanvasNodeType.Script || panelNode.type === CanvasNodeType.Drawing) return null;
             return panelNode.type === CanvasNodeType.Config ? (
                 <CanvasConfigComposer
+                    ref={(handle) => {
+                        if (handle) configComposerHandles.current.set(panelNode.id, handle);
+                        else configComposerHandles.current.delete(panelNode.id);
+                    }}
+                    projectId={projectId}
+                    nodeId={panelNode.id}
                     value={panelNode.metadata?.composerContent ?? panelNode.metadata?.prompt ?? ""}
                     inputs={configInputsById.get(panelNode.id) || []}
                     skillReferences={skillMentionReferences}
@@ -2403,6 +2442,7 @@ function InfiniteCanvasPage() {
                     metadata={panelNode.metadata}
                     workspaceMode={workspaceMode}
                     onChange={(composerContent) => handleConfigNodeChange(panelNode.id, { composerContent })}
+                    onPersist={persistLocalEdits}
                     onMetadataChange={(patch) => handleConfigNodeChange(panelNode.id, patch)}
                     onClose={() => setDialogNodeId(null)}
                 />
@@ -2596,10 +2636,7 @@ function InfiniteCanvasPage() {
                     inputSummary={getInputSummary(configInputsById.get(contentNode.id) || [])}
                     onConfigChange={handleConfigNodeChange}
                     onComposerToggle={() => setDialogNodeId((current) => (current === contentNode.id ? null : contentNode.id))}
-                    onGenerate={(nodeId) => {
-                        const target = nodesRef.current.find((item) => item.id === nodeId);
-                        void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.composerContent ?? target?.metadata?.prompt ?? "");
-                    }}
+                    onGenerate={(nodeId) => void generateConfigNode(nodeId)}
                     workspaceMode={workspaceMode}
                 />
             );
@@ -2620,6 +2657,7 @@ function InfiniteCanvasPage() {
             batchReferences,
             focusCanvasImageNode,
             generateBatchRows,
+            generateConfigNode,
             generateScriptImages,
             generateScriptRows,
             persistLocalEdits,
