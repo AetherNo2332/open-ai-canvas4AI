@@ -65,7 +65,8 @@ class Smoke:
                     "CANVAS_BACKEND_IMAGE": self.project + "-backend:ci", "CANVAS_AGENT_IMAGE": self.project + "-agent:ci",
                     "CANVAS_WEB_IMAGE": self.project + "-web:ci", "CANVAS_AGENT_INTERNAL_TOKEN": secrets.token_urlsafe(48),
                     "CANVAS_AGENT_WORKER_ID": "smoke-worker", "CANVAS_AGENT_WORKER_TOKEN": secrets.token_urlsafe(48),
-                    "CANVAS_REGISTRATION_ENABLED": "true", "CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS": "model-stub",
+                    "CANVAS_REGISTRATION_ENABLED": "true", "CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS": "model-stub,backend",
+                    "CANVAS_PUBLIC_BASE_URL": "http://backend:8080",
                     "CANVAS_CORS_ORIGINS": f"http://127.0.0.1:{self.port}", "CANVAS_HTTP_PORT": str(self.port),
                     "CANVAS_UPDATER_SOCKET_DIR": str(self.directory / "updater-socket"), "CANVAS_SHUTDOWN_TIMEOUT": "15s"}
         (self.directory / "updater-socket").mkdir()
@@ -83,11 +84,11 @@ class Smoke:
   backend:
     image: ${CANVAS_BACKEND_IMAGE}
     environment:
-      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: model-stub
+      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: model-stub,backend
   agent:
     image: ${CANVAS_AGENT_IMAGE}
     environment:
-      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: model-stub
+      CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS: model-stub,backend
   migrate:
     image: ${CANVAS_BACKEND_IMAGE}
 ''', encoding="utf-8")
@@ -365,7 +366,10 @@ class Smoke:
         snapshot = self.api("GET", path + "/snapshot")
         self.check("all media updates preserve three logical nodes", len(snapshot["document"]["nodes"]) == 3)
         self.save()
+        self.agent_media_version(canvas)
 
+    def agent_media_version(self, canvas):
+        path = f"/desktop/canvases/{canvas}"
         scenario = "media_" + uuid.uuid4().hex[:8]
         before = self.api("GET", path + "/nodes/image/media-versions")
         previous = {item["versionId"] for item in before["items"]}
@@ -373,6 +377,7 @@ class Smoke:
             {"tool": "canvas_get_state"},
             {"tool": "model_list", "args": {"mode": "image", "referenceNodeIds": ["image"]}},
             {"tool": "generate_media", "args": {"mode": "image", "intent": "new_version", "nodeId": "image",
+                "title": "Version image",
                 "prompt": "Preserve the reference composition", "referenceNodeIds": ["image"],
                 "channelId": self.channel, "channelModelKey": "gpt-image-1", "size": "1024x1024",
                 "snapshotHash": "$snapshotHash"}},
@@ -387,7 +392,7 @@ class Smoke:
             return result if any(item["versionId"] not in previous and item["status"] == "ready" and
                 item["isCurrent"] for item in result["items"]) else None
         adopted = wait(agent_ready, 180)
-        self.check("real Pi worker updates existing image with frozen self-reference", len(adopted["items"]) == 4 and
+        self.check("real Pi worker updates existing image with frozen self-reference", len(adopted["items"]) == len(previous) + 1 and
             len(self.api("GET", path + "/snapshot")["document"]["nodes"]) == 3)
 
     def execute(self):
