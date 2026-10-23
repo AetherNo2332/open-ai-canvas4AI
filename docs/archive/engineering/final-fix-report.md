@@ -1,5 +1,7 @@
 # Pi Native Skills Review Fix Report
 
+> Historical archive: this records an earlier review, not current implementation or acceptance instructions.
+
 ## Scope
 
 The review wave covered native Skill loading, frozen snapshots, Pi recovery, tool admission, read authorization, failed-read semantics, and text/binary validation. The implementation is split into three commits: runtime Agent/Go protocol, Web projection, and documentation/version metadata.

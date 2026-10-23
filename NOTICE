@@ -26,3 +26,11 @@ and cloud Agent integrations.
 Third-party packages remain subject to the licenses declared by their
 respective authors. Product names and logos under web/public/icons are the
 property of their respective owners and do not imply endorsement.
+
+This fork is maintained as ArrowFX by AetherNo2332:
+https://github.com/AetherNo2332/open-ai-canvas4AI
+
+Fork-specific changes include Agent tool disclosure and contracts, structured
+storyboard and asset references, canvas interaction and appearance, deployment,
+and operational governance. Upstream copyright and license notices above remain
+applicable to the respective contributions.

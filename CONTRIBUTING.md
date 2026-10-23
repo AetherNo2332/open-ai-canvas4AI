@@ -5,8 +5,10 @@
 ## 开发环境
 
 - 前端：Bun、Vite、React、TypeScript。
-- 后端：Go、Gin、GORM、SQLite。
+- 后端：Go 1.25、Gin、GORM；开发可用 SQLite，生产编排使用 PostgreSQL、Redis。
 - 本地全栈：`docker compose up -d --build`。
+
+源码热更新、Agent 单独启动与定向验证见[本地开发](docs/content/docs/backend/local-development.mdx)。完整本地 Agent 使用 `docker-compose.local.yml`；根默认编排需显式启用 `pi` profile。
 
 不要提交 `.env`、数据库、数据目录、生成产物、编辑器配置或真实 API/OSS 密钥。新增配置项时只在 `.env.example` 中提供无敏感信息的说明。
 
@@ -46,3 +48,11 @@ node scripts/changelog.mjs --check         # 校验当前版本是否有日志�
 - 用户可见文案使用中文；核心业务入口和安全边界使用简短中文注释说明原因。
 
 Pull Request 应包含改动摘要、风险、验证方式和必要截图。提交即表示你有权按本项目 MIT 许可证贡献相关代码或素材，并保留已有上游署名和许可证通知。
+
+## 责任与审查
+
+本 fork 的维护入口是 [AetherNo2332/open-ai-canvas4AI](https://github.com/AetherNo2332/open-ai-canvas4AI)。提交者负责给出实现与验证证据；审查者负责核对外部行为、权限、失败恢复和迁移影响。发布执行者负责记录目标提交、版本、镜像 digest、备份位置和回退结果。角色可以由同一维护者暂时承担，但不能据此声称已有第二维护者或独立复核。
+
+涉及账务、对象归属、数据库迁移、Agent 租约、凭据、更新与回退的改动应有独立审查记录。没有独立审查时，在交付中标明缺口；不要用自动检查通过代替人工责任。模块责任随实际维护工作交接，不填写虚构的 CODEOWNERS 账号。
+
+发布前按[工程治理与交接](docs/content/docs/backend/engineering-governance.mdx)记录验收。第二维护者需独立完成一次隔离安装、升级与回退演练，并留下实际输出，才能作为可接班证据。生产操作仍需单独授权。

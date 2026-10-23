@@ -7,6 +7,17 @@ docs/*
 !docs/index.md
 !docs/adr/
 !docs/plans/
+!docs/archive/
+docs/archive/*
+!docs/archive/engineering/
+docs/archive/engineering/*
+!docs/archive/engineering/README.md
+!docs/archive/engineering/PLAN.md
+!docs/archive/engineering/HANDOFF-DirectorDesk-Previs-2026-10-12.md
+!docs/archive/engineering/PREVIS_REFACTOR_PLAN.md
+!docs/archive/engineering/PREVIS_REDESIGN_EXECUTION_PLAN.md
+!docs/archive/engineering/PREVIS_REQUIREMENTS_STATUS.md
+!docs/archive/engineering/final-fix-report.md
 # Keep the new plugin design spec versioned without unignoring generated docs.
 !docs/content/
 docs/content/*
@@ -29,6 +40,8 @@ docs/content/docs/backend/*
 !docs/content/docs/backend/creative-agent-runtime.mdx
 !docs/content/docs/backend/agent-tool-reads.mdx
 !docs/content/docs/backend/agent-tools.mdx
+!docs/content/docs/backend/local-development.mdx
+!docs/content/docs/backend/engineering-governance.mdx
 # Keep the creative Agent design versioned without unignoring generated docs.
 !docs/content/docs/overview/
 docs/content/docs/overview/*

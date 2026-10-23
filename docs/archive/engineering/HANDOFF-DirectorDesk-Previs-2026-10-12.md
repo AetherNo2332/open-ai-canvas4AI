@@ -1,5 +1,7 @@
 # Handoff：DirectorDesk 导演台仓库治理、可追踪克隆与上线交接
 
+> 历史归档：保留当时交接背景；当前入口与验收范围以现行文档和源码为准。
+
 文档日期：2026-10-12（Asia/Shanghai）
 适用对象：在新会话中继续本仓库 DirectorDesk 预演台迁移与上线准备的 Codex/开发者。
 前置阅读：上一份交接 Handoff-DirectorDesk-Previs-Complete-2026-10-12.md（位于 C:\Users\13537\.codex\visualizations\2026\10\11\01a12c56-30c8-7522-a7fc-742187bc6811\）。本文是其后续增量，两文冲突时以本文"已核验"事实为准。
