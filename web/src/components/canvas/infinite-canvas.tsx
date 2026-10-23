@@ -425,12 +425,13 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         };
     }, [interactive, containerRef, handleWheel]);
 
+    // 视口通过 transform 平移缩放，只裁剪而不建立原生滚动容器。
     return (
         <div
             ref={containerRef}
             data-canvas-viewport
             data-canvas-pan-state={isPanning ? "grabbing" : isSpacePressed || !boxSelectEnabled ? "grab" : undefined}
-            className={`relative h-full w-full select-none overflow-hidden touch-none ${isPanning ? "cursor-grabbing" : isSpacePressed || !boxSelectEnabled ? "cursor-grab" : "canvas-cursor-select"}`}
+            className={`relative h-full w-full select-none overflow-clip touch-none ${isPanning ? "cursor-grabbing" : isSpacePressed || !boxSelectEnabled ? "cursor-grab" : "canvas-cursor-select"}`}
             style={{
                 background: resolvedAppearance.background,
                 overscrollBehavior: "none",
