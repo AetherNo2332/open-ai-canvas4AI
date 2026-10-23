@@ -75,105 +75,112 @@ func (r *Repository) SaveCanvasWithSnapshot(project *model.CanvasProject, snapsh
 		if err := writer.syncLegacyCanvasWrite(before, &next, snapshot != nil && snapshot.Reason == "before_restore"); err != nil {
 			return err
 		}
-		capture := false
-		if snapshot != nil {
-			var last model.CanvasSnapshot
-			err := tx.Select("id", "revision", "created_at").Where("canvas_id = ?", project.ID).Order("revision DESC").First(&last).Error
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-			capture = err != nil || (last.Revision != snapshot.Revision && (force || !last.CreatedAt.After(cutoff)))
-		}
-		requiredIDs := append([]string{}, currentResourceIDs...)
-		if capture {
-			requiredIDs = append(requiredIDs, resourceIDs...)
-		}
-		slices.Sort(requiredIDs)
-		requiredIDs = slices.Compact(requiredIDs)
-		if len(requiredIDs) > 0 {
-			var resources []model.Resource
-			query := tx.Select("id").Where("id IN ? AND user_id = ? AND status = ?", requiredIDs, project.UserID, model.ResourceStatusReady).Order("id")
-			if r.Dialect() == "postgres" {
-				query = query.Clauses(clause.Locking{Strength: "UPDATE"})
-			}
-			if err := query.Find(&resources).Error; err != nil {
-				return err
-			}
-			found := make(map[string]struct{}, len(resources))
-			for _, resource := range resources {
-				found[resource.ID] = struct{}{}
-			}
-			missingIDs := make([]string, 0)
-			allowDamagedPreimage := snapshot != nil && (snapshot.Reason == "before_resource_repair" || snapshot.Reason == "before_restore")
-			for _, id := range requiredIDs {
-				if _, exists := found[id]; !exists {
-					if allowDamagedPreimage && !slices.Contains(currentResourceIDs, id) {
-						continue
-					}
-					missingIDs = append(missingIDs, id)
-				}
-			}
-			if len(missingIDs) > 0 {
-				missingSet := make(map[string]struct{}, len(missingIDs))
-				for _, id := range missingIDs {
-					missingSet[id] = struct{}{}
-				}
-				missingRefs := make([]assets.DocumentResourceReference, 0)
-				documents := map[string]string{"current": project.PayloadJSON}
-				if capture {
-					documents["history"] = snapshot.PayloadJSON
-				}
-				for _, source := range []string{"current", "history"} {
-					refs, collectErr := assets.CollectDocumentResourceReferences(documents[source])
-					if collectErr != nil {
-						return collectErr
-					}
-					for _, ref := range refs {
-						if _, missing := missingSet[ref.ResourceID]; missing {
-							ref.Source = source
-							missingRefs = append(missingRefs, ref)
-						}
-					}
-				}
-				for _, id := range missingIDs {
-					if !containsResourceReference(missingRefs, id) {
-						missingRefs = append(missingRefs, assets.DocumentResourceReference{ResourceID: id, Path: "history", ReferenceType: "snapshot"})
-					}
-				}
-				return &CanvasHistoryResourceMissingError{ResourceIDs: missingIDs, References: missingRefs}
-			}
-			if allowDamagedPreimage {
-				resourceIDs = slices.DeleteFunc(slices.Clone(resourceIDs), func(id string) bool {
-					_, exists := found[id]
-					return !exists
-				})
-			}
-		}
-		if !capture {
-			return nil
-		}
-		if err := tx.Create(snapshot).Error; err != nil {
-			return err
-		}
-		refs := make([]model.CanvasSnapshotResource, 0, len(resourceIDs))
-		for _, id := range resourceIDs {
-			refs = append(refs, model.CanvasSnapshotResource{SnapshotID: snapshot.ID, ResourceID: id})
-		}
-		if len(refs) > 0 {
-			if err := tx.CreateInBatches(refs, 200).Error; err != nil {
-				return err
-			}
-		}
-		var expired []string
-		if err := tx.Model(&model.CanvasSnapshot{}).Where("canvas_id = ?", project.ID).Order("revision DESC").Offset(limit).Limit(100).Pluck("id", &expired).Error; err != nil {
-			return err
-		}
-		return deleteCanvasSnapshots(tx, expired)
+		return writer.CaptureCanvasSnapshot(&next, snapshot, resourceIDs, currentResourceIDs, cutoff, limit, force)
 	})
 	if err == nil {
 		*project = next
 	}
 	return err
+}
+
+// CaptureCanvasSnapshot composes with an existing document transaction after
+// its account/canvas locks. It never writes the canvas, epoch or command identity.
+func (r *Repository) CaptureCanvasSnapshot(project *model.CanvasProject, snapshot *model.CanvasSnapshot, resourceIDs, currentResourceIDs []string, cutoff time.Time, limit int, force bool) error {
+	tx := r.db
+	capture := false
+	if snapshot != nil {
+		var last model.CanvasSnapshot
+		err := tx.Select("id", "revision", "created_at").Where("canvas_id = ?", project.ID).Order("revision DESC").First(&last).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		capture = err != nil || (last.Revision != snapshot.Revision && (force || !last.CreatedAt.After(cutoff)))
+	}
+	requiredIDs := append([]string{}, currentResourceIDs...)
+	if capture {
+		requiredIDs = append(requiredIDs, resourceIDs...)
+	}
+	slices.Sort(requiredIDs)
+	requiredIDs = slices.Compact(requiredIDs)
+	if len(requiredIDs) > 0 {
+		var resources []model.Resource
+		query := tx.Select("id").Where("id IN ? AND user_id = ? AND status = ?", requiredIDs, project.UserID, model.ResourceStatusReady).Order("id")
+		if r.Dialect() == "postgres" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := query.Find(&resources).Error; err != nil {
+			return err
+		}
+		found := make(map[string]struct{}, len(resources))
+		for _, resource := range resources {
+			found[resource.ID] = struct{}{}
+		}
+		missingIDs := make([]string, 0)
+		allowDamagedPreimage := snapshot != nil && (snapshot.Reason == "before_resource_repair" || snapshot.Reason == "before_restore")
+		for _, id := range requiredIDs {
+			if _, exists := found[id]; !exists {
+				if allowDamagedPreimage && !slices.Contains(currentResourceIDs, id) {
+					continue
+				}
+				missingIDs = append(missingIDs, id)
+			}
+		}
+		if len(missingIDs) > 0 {
+			missingSet := make(map[string]struct{}, len(missingIDs))
+			for _, id := range missingIDs {
+				missingSet[id] = struct{}{}
+			}
+			missingRefs := make([]assets.DocumentResourceReference, 0)
+			documents := map[string]string{"current": project.PayloadJSON}
+			if capture {
+				documents["history"] = snapshot.PayloadJSON
+			}
+			for _, source := range []string{"current", "history"} {
+				refs, collectErr := assets.CollectDocumentResourceReferences(documents[source])
+				if collectErr != nil {
+					return collectErr
+				}
+				for _, ref := range refs {
+					if _, missing := missingSet[ref.ResourceID]; missing {
+						ref.Source = source
+						missingRefs = append(missingRefs, ref)
+					}
+				}
+			}
+			for _, id := range missingIDs {
+				if !containsResourceReference(missingRefs, id) {
+					missingRefs = append(missingRefs, assets.DocumentResourceReference{ResourceID: id, Path: "history", ReferenceType: "snapshot"})
+				}
+			}
+			return &CanvasHistoryResourceMissingError{ResourceIDs: missingIDs, References: missingRefs}
+		}
+		if allowDamagedPreimage {
+			resourceIDs = slices.DeleteFunc(slices.Clone(resourceIDs), func(id string) bool {
+				_, exists := found[id]
+				return !exists
+			})
+		}
+	}
+	if !capture {
+		return nil
+	}
+	if err := tx.Create(snapshot).Error; err != nil {
+		return err
+	}
+	refs := make([]model.CanvasSnapshotResource, 0, len(resourceIDs))
+	for _, id := range resourceIDs {
+		refs = append(refs, model.CanvasSnapshotResource{SnapshotID: snapshot.ID, ResourceID: id})
+	}
+	if len(refs) > 0 {
+		if err := tx.CreateInBatches(refs, 200).Error; err != nil {
+			return err
+		}
+	}
+	var expired []string
+	if err := tx.Model(&model.CanvasSnapshot{}).Where("canvas_id = ?", project.ID).Order("revision DESC").Offset(limit).Limit(100).Pluck("id", &expired).Error; err != nil {
+		return err
+	}
+	return deleteCanvasSnapshots(tx, expired)
 }
 
 func (r *Repository) CanvasHistoryReferencesObject(resource *model.Resource) (bool, error) {

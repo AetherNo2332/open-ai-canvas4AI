@@ -23,6 +23,20 @@ import (
 const canvasHistoryLimit = 20
 const canvasHistoryInterval = 5 * time.Minute
 
+// CaptureDocumentHistory shares the ordinary version UI policy with command
+// writes, without entering the legacy document writer or starting a transaction.
+func CaptureDocumentHistory(repo *repository.Repository, before *model.CanvasProject, after model.CanvasProject, reason string) error {
+	snapshot, resourceIDs, err := buildCanvasSnapshot(before, after, reason)
+	if err != nil {
+		return err
+	}
+	current := map[string]struct{}{}
+	if err := assets.CollectOwnedDocumentReferences(after.PayloadJSON, current); err != nil {
+		return err
+	}
+	return repo.CaptureCanvasSnapshot(&after, snapshot, resourceIDs, assets.SortedIDs(current), after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, reason == "before_restore" || reason == "before_resource_repair")
+}
+
 // 浏览器、云端 Agent 和创作任务共用此入口；外层事务仍负责任务和画布的一致性。
 func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasProject, after *model.CanvasProject, reason string) error {
 	var candidate map[string]any
@@ -156,7 +170,10 @@ func canvasHistoryContent(project model.CanvasProject) ([]byte, error) {
 
 func buildCanvasSnapshot(before *model.CanvasProject, after model.CanvasProject, reason string) (*model.CanvasSnapshot, []string, error) {
 	if before == nil {
-		return nil, nil, nil
+		if reason != "initial" {
+			return nil, nil, nil
+		}
+		before = &after
 	}
 	oldContent, err := canvasHistoryContent(*before)
 	if err != nil {
@@ -166,7 +183,7 @@ func buildCanvasSnapshot(before *model.CanvasProject, after model.CanvasProject,
 	if err != nil {
 		return nil, nil, err
 	}
-	if reason != "before_restore" && bytes.Equal(oldContent, newContent) {
+	if reason != "before_restore" && reason != "initial" && bytes.Equal(oldContent, newContent) {
 		return nil, nil, nil
 	}
 	raw, err := canvasProjectPayload(*before)

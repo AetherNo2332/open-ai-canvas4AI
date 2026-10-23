@@ -312,6 +312,8 @@ func (s *Service) RestoreVersion(ctx context.Context, p identity.Principal, canv
 			return BadAuthRequest("恢复文档无效")
 		}
 		after["id"] = canvasID
+		after["projectId"] = row.ProjectID
+		after["createdAt"] = row.CreatedAt.Format(time.RFC3339Nano)
 		delete(after, "_deleted")
 		if err = validateResult(after); err != nil {
 			return err
@@ -354,7 +356,7 @@ func (s *Service) RestoreVersion(ctx context.Context, p identity.Principal, canv
 		}
 		epoch.Epoch = newID()
 		plan := PlanResult{Document: after, Changes: Diff(before, after), Inverse: Diff(after, before), WriteSet: writes, ResourceIDs: resources}
-		emitted, err = s.persist(tx, p, req, body, row, epoch, before, plan, false)
+		emitted, err = s.persist(tx, p, req, body, row, epoch, before, plan, false, "before_restore")
 		if err != nil {
 			return err
 		}

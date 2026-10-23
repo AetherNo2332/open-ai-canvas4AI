@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"infinite-canvas/backend/internal/assets"
+	canvasdomain "infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/canvas/references"
 	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/model"
@@ -211,6 +212,9 @@ func (s *Service) Create(ctx context.Context, p identity.Principal, req CreateCa
 			}
 		}
 		if err = tx.CreateCommandCanvas(row); err != nil {
+			return err
+		}
+		if err = canvasdomain.CaptureDocumentHistory(tx, nil, *row, "initial"); err != nil {
 			return err
 		}
 		epoch := &model.CanvasDocumentEpoch{CanvasID: id, OwnerID: p.OwnerID, Epoch: epochID, UpdatedAt: now}
@@ -563,11 +567,13 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 	}
 	return out, err
 }
-func (s *Service) persist(tx *repository.Repository, p identity.Principal, req Command, body string, row *model.CanvasProject, epoch *model.CanvasDocumentEpoch, before Document, plan PlanResult, history bool) (Receipt, error) {
+func (s *Service) persist(tx *repository.Repository, p identity.Principal, req Command, body string, row *model.CanvasProject, epoch *model.CanvasDocumentEpoch, before Document, plan PlanResult, history bool, snapshotReasons ...string) (Receipt, error) {
+	prior := *row
 	oldRevision := row.Revision
 	row.Revision++
 	epoch.EventSeq++
 	epoch.UpdatedAt = time.Now()
+	row.UpdatedAt = epoch.UpdatedAt
 	payload, err := canonical(plan.Document)
 	if err != nil {
 		return Receipt{}, err
@@ -583,6 +589,13 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 		row.Title = title
 	}
 	if err = tx.PersistCommandCanvas(row, oldRevision); err != nil {
+		return Receipt{}, err
+	}
+	reason := "automatic"
+	if len(snapshotReasons) > 0 {
+		reason = snapshotReasons[0]
+	}
+	if err = canvasdomain.CaptureDocumentHistory(tx, &prior, *row, reason); err != nil {
 		return Receipt{}, err
 	}
 	expected := map[string]int64{}

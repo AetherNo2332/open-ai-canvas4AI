@@ -6,7 +6,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"infinite-canvas/backend/internal/model"
-	"time"
 )
 
 // CommandTransaction makes all document, version, receipt, event, reference and
@@ -149,7 +148,7 @@ func (r *Repository) PersistCommandCanvas(row *model.CanvasProject, expected int
 	if err = r.checkCanvasWriteQuota(before, row); err != nil {
 		return err
 	}
-	result := r.db.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ? AND revision = ?", row.ID, row.UserID, expected).Updates(map[string]any{"payload_json": row.PayloadJSON, "revision": row.Revision, "title": row.Title, "updated_at": time.Now()})
+	result := r.db.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ? AND revision = ?", row.ID, row.UserID, expected).Updates(map[string]any{"payload_json": row.PayloadJSON, "revision": row.Revision, "title": row.Title, "updated_at": row.UpdatedAt})
 	if result.Error != nil {
 		return result.Error
 	}
