@@ -173,6 +173,77 @@ describe("Agent cloud conversation history", () => {
         expect(merged.messages).toEqual(local.messages);
     });
 
+    test("an ancestor snapshot cannot replace a locally accepted descendant regardless of per-run revision", () => {
+        const parent = run("parent", { revision: 100 });
+        const child = run("child", { parentId: parent.id, revision: 1 });
+        const local = projectCloudAgentConversation(conversationId, [parent, child, run("grandchild", { parentId: child.id, revision: 1, status: "running", latestSeq: 4 })]);
+        const merged = mergeCloudAgentConversation(local, projectCloudAgentConversation(conversationId, [parent]));
+        expect(merged.run?.id).toBe("grandchild");
+        expect(merged.lastEventSeq).toBe(4);
+        expect(merged.messages).toEqual(local.messages);
+        expect(mergeCloudAgentConversation(projectCloudAgentConversation(conversationId, [parent]), local).run?.id).toBe("grandchild");
+    });
+
+    test("restores an explicitly declared legacy tail without inventing its missing prefix or blocking other conversations", async () => {
+        const result = await refreshCloudAgentConversations({ canvasId: "canvas-1", client: client({
+            listConversations: async () => ({ items: [summary(), summary({ id: "new", latestRunId: "new" })] }),
+            listRuns: async (id) => ({ items: [run(id, { conversationId: id })] }),
+            getRun: async (id) => ({ run: run(id, { conversationId: id, eventSeqBase: id === conversationId ? 2 : 0, eventCount: id === conversationId ? 3 : 0, events: id === conversationId ? [event(id, 3, "assistant_message", { messageId: "tail", text: "可用旧记录" })] : [] }) }),
+        }) });
+        expect(result).toHaveLength(2);
+        const legacy = result.find((item) => item.serverConversationId === conversationId)!;
+        expect(legacy.historyState?.status).toBe("partial");
+        expect(legacy.historyState?.message).toContain("早期记录");
+        expect(legacy.run?.events?.map((item) => item.seq)).toEqual([3]);
+        expect(legacy.run?.eventSeqBase).toBe(2);
+        expect(legacy.lastEventSeq).toBe(3);
+        expect(legacy.messages.at(-1)?.text).toBe("可用旧记录");
+        expect(result.find((item) => item.serverConversationId === "new")?.historyState).toBeUndefined();
+    });
+
+    test("isolates a corrupt conversation and retries it without losing its cached draft", async () => {
+        const cached = { ...projectCloudAgentConversation(conversationId, [run("first")]), draft: "未发送草稿" };
+        let broken = true;
+        let reads = 0;
+        const api = client({
+            listConversations: async () => ({ items: [summary({ revision: 2 }), summary({ id: "healthy", latestRunId: "healthy", revision: 2 })] }),
+            listRuns: async (id) => { reads++; return { items: [run(id === conversationId ? "first" : id, { conversationId: id, revision: 2 })] }; },
+            getRun: async (id) => ({ run: run(id, { conversationId: id === "first" ? conversationId : id, revision: 2, eventSeqBase: 0, eventCount: broken && id === "first" ? 2 : 0, events: broken && id === "first" ? [event(id, 2, "assistant_message", { text: "真实坏页" })] : [] }) }),
+        });
+        const restored = await refreshCloudAgentConversations({ canvasId: "canvas-1", existing: [cached], client: api });
+        const failed = restored.find((item) => item.serverConversationId === conversationId)!;
+        expect(failed.historyState?.status).toBe("unavailable");
+        expect(failed.historyState?.message).toContain("历史事件未完整");
+        expect(failed.draft).toBe("未发送草稿");
+        expect(restored.find((item) => item.serverConversationId === "healthy")?.run?.id).toBe("healthy");
+        broken = false;
+        const retried = await refreshCloudAgentConversations({ canvasId: "canvas-1", existing: restored, client: api });
+        expect(reads).toBe(3);
+        expect(retried.find((item) => item.serverConversationId === conversationId)?.historyState).toBeUndefined();
+    });
+
+    test("a declared tail still rejects a mismatched base and gaps within or after the initial page", async () => {
+        for (const events of [[3], [3, 5]]) {
+            await expect(loadCloudAgentConversation(conversationId, { client: client({ getRun: async (id) => ({ run: run(id, {
+                eventSeqBase: events.length === 1 ? 1 : 2, eventCount: 5, events: events.map((seq) => event(id, seq, "assistant_delta")),
+            }) }) }) })).rejects.toThrow("历史事件未完整");
+        }
+        await expect(loadCloudAgentConversation(conversationId, { client: client({ getRun: async (id, _signal, options) => ({ run: run(id, {
+            eventSeqBase: options?.sinceSeq ? 2 : 0, eventCount: 3, events: [event(id, options?.sinceSeq ? 3 : 1, "assistant_delta")],
+        }) }) }) })).rejects.toThrow("历史事件未完整");
+    });
+
+    test("per-conversation isolation retains pagination errors but does not swallow account cancellation", async () => {
+        const api = client({ listRuns: async () => ({ items: [], nextCursor: "stuck" }) });
+        const result = await refreshCloudAgentConversations({ canvasId: "canvas-1", client: api });
+        expect(result[0].historyState?.status).toBe("unavailable");
+        expect(result[0].historyState?.message).toContain("分页未前进");
+        const controller = new AbortController();
+        await expect(refreshCloudAgentConversations({ canvasId: "canvas-1", signal: controller.signal, client: client({
+            listRuns: async () => { controller.abort(); throw new Error("request aborted"); },
+        }) })).rejects.toMatchObject({ name: "AbortError" });
+    });
+
     test("directory pagination reads every conversation with public limits and reuses unchanged cache", async () => {
         const cached = projectCloudAgentConversation(conversationId, [run("first")]);
         const seen: Array<string | undefined> = [];

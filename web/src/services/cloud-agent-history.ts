@@ -109,21 +109,29 @@ async function restoreRun(run: AgentRun, client: CloudAgentHistoryClient, option
     const prefix = [...new Map((run.events || []).filter((event) => event.runId === run.id && Number.isSafeInteger(event.seq) && event.seq > 0).map((event) => [event.seq, event])).values()].sort((a, b) => a.seq - b.seq);
     const events: AgentEvent[] = prefix.every((event, index) => event.seq === index + 1) ? prefix : [];
     let seq = events.at(-1)?.seq || 0;
+    let missingPrefix = 0;
     let snapshot = run;
-    if (seq > 0 && seq === run.eventCount && !run.eventsTruncated) return { ...run, events };
+    if (seq > 0 && seq === run.eventCount && !run.eventsTruncated) return { run: { ...run, events }, missingPrefix };
     do {
         checkRequest(options, scope);
         const { run: next } = await client.getRun(run.id, options.signal, { sinceSeq: seq, fromStart: seq === 0, eventLimit: 500 });
         checkRequest(options, scope);
         if (next.id !== run.id || next.conversationId !== run.conversationId) throw new Error("Agent 轮次归属不一致，已停止恢复");
         const page = [...new Map((next.events || []).filter((event) => event.runId === run.id && Number.isSafeInteger(event.seq) && event.seq > seq).map((event) => [event.seq, event])).values()].sort((a, b) => a.seq - b.seq);
+        // Older state_json checkpoints may only retain an explicitly positioned
+        // tail. Accept that declared initial window, never an undeclared gap or
+        // a gap in a subsequent page, and keep the unavailable prefix visible.
+        if (seq === 0 && Number.isSafeInteger(next.eventSeqBase) && next.eventSeqBase! > 0 && page[0]?.seq === next.eventSeqBase! + 1 && Number.isSafeInteger(next.eventCount) && next.eventCount! >= page.at(-1)!.seq) {
+            seq = next.eventSeqBase!;
+            missingPrefix = seq;
+        }
         if (page.some((event, index) => event.seq !== seq + index + 1) || (!page.length && seq < (next.eventCount || 0))) throw new Error("Agent 历史事件未完整返回，请重试读取");
         snapshot = next;
         events.push(...page);
         if (!page.length) break;
         seq = page.at(-1)!.seq;
     } while (seq < (snapshot.eventCount || 0));
-    return { ...snapshot, events, latestSeq: seq, eventsTruncated: false };
+    return { run: { ...snapshot, events, eventSeqBase: missingPrefix, latestSeq: seq, eventsTruncated: missingPrefix > 0 }, missingPrefix };
 }
 
 export async function loadCloudAgentConversation(conversationId: string, options: HistoryOptions & { existing?: CloudAgentConversation } = {}): Promise<CloudAgentConversation> {
@@ -144,7 +152,7 @@ export async function loadCloudAgentConversation(conversationId: string, options
         if (after) cursors.add(after);
     } while (after);
     const ordered = orderRuns(runs);
-    const restored = new Array<AgentRun>(ordered.length);
+    const restored = new Array<Awaited<ReturnType<typeof restoreRun>>>(ordered.length);
     let index = 0;
     await Promise.all(
         Array.from({ length: Math.min(4, ordered.length) }, async () => {
@@ -155,7 +163,8 @@ export async function loadCloudAgentConversation(conversationId: string, options
         }),
     );
     checkRequest(options, scope);
-    const remote = projectCloudAgentConversation(conversationId, restored);
+    const remote = projectCloudAgentConversation(conversationId, restored.map((item) => item.run));
+    if (restored.some((item) => item.missingPrefix > 0)) remote.historyState = { status: "partial", message: "该对话的部分早期记录已不可用，当前仅显示可恢复的记录。" };
     return options.existing ? mergeCloudAgentConversation(options.existing, remote) : remote;
 }
 
@@ -174,19 +183,33 @@ export function mergeCloudAgentConversation(local: CloudAgentConversation, remot
         return message.role === "user" ? { ...message, ...cached, id: message.id } : { ...cached, ...message };
     });
     messages.push(...local.messages.filter((message) => !consumed.has(message.id) && !remote.messages.some((entry) => entry.id === message.id)));
-    const newerLocalRun =
-        local.run && remote.run?.id === local.run.id && ((local.run.revision || 0) > (remote.run.revision || 0) || (local.lastEventSeq || 0) > (remote.lastEventSeq || 0) || (terminal.has(local.run.status) && !terminal.has(remote.run.status)));
+    const ancestorSnapshot = local.run && remote.run && isRunAncestor(remote.run.id, local.run, [...(local.runs || []), ...(remote.runs || [])]);
+    const newerLocalRun = ancestorSnapshot ||
+        (local.run && remote.run?.id === local.run.id && ((local.run.revision || 0) > (remote.run.revision || 0) || (local.lastEventSeq || 0) > (remote.lastEventSeq || 0) || (terminal.has(local.run.status) && !terminal.has(remote.run.status))));
     return {
         ...local,
         ...remote,
         id: local.id,
         messages,
-        ...(newerLocalRun ? { run: local.run, messages: local.messages, lastEventSeq: Math.max(local.lastEventSeq || 0, remote.lastEventSeq || 0) } : {}),
+        ...(newerLocalRun ? { run: local.run, runs: orderRuns([...(remote.runs || []), ...(local.runs || []), local.run!]), messages: local.messages, lastEventSeq: ancestorSnapshot ? local.lastEventSeq : Math.max(local.lastEventSeq || 0, remote.lastEventSeq || 0) } : {}),
+        historyState: remote.historyState,
         draft: local.draft,
         permissionMode: local.permissionMode,
         model: local.model || remote.model,
         skillIds: local.skillIds || remote.skillIds,
     };
+}
+
+function isRunAncestor(ancestorId: string, descendant: AgentRun, runs: AgentRun[]) {
+    const byId = new Map(runs.map((run) => [run.id, run]));
+    const seen = new Set<string>();
+    let parentId = descendant.parentId;
+    while (parentId && !seen.has(parentId)) {
+        if (parentId === ancestorId) return true;
+        seen.add(parentId);
+        parentId = byId.get(parentId)?.parentId;
+    }
+    return false;
 }
 
 export function mergeCloudAgentConversations(local: CloudAgentConversation[], remote: CloudAgentConversation[]) {
@@ -203,7 +226,7 @@ export function mergeCloudAgentConversations(local: CloudAgentConversation[], re
 
 function unchanged(summary: AgentConversationSummary, cached: CloudAgentConversation | undefined) {
     const run = cached?.run;
-    return run?.id === summary.latestRunId && (run.revision || 0) === summary.revision && run.status === summary.status && Boolean(run.cleanupPending) === Boolean(summary.cleanupPending);
+    return cached?.historyState?.status !== "unavailable" && run?.id === summary.latestRunId && (run.revision || 0) === summary.revision && run.status === summary.status && Boolean(run.cleanupPending) === Boolean(summary.cleanupPending);
 }
 
 export async function refreshCloudAgentConversations(options: HistoryOptions & { canvasId?: string; existing?: CloudAgentConversation[]; observedConversationIds?: string[] } = {}): Promise<CloudAgentConversation[]> {
@@ -233,7 +256,25 @@ export async function refreshCloudAgentConversations(options: HistoryOptions & {
                 const id = ids[current];
                 const cached = options.existing?.find((conversation) => cloudAgentConversationServerId(conversation) === id);
                 const summary = byId.get(id);
-                conversations[current] = summary && unchanged(summary, cached) ? cached! : await loadCloudAgentConversation(id, { ...options, scope, client, existing: cached });
+                try {
+                    conversations[current] = summary && unchanged(summary, cached) ? cached! : await loadCloudAgentConversation(id, { ...options, scope, client, existing: cached });
+                } catch (cause) {
+                    // An unavailable conversation must not hide other directory
+                    // entries. Cancellation/account changes still abort the batch.
+                    checkRequest(options, scope);
+                    conversations[current] = {
+                        ...cached,
+                        id: cached?.id || id,
+                        serverConversationId: id,
+                        title: cached?.title || summary?.title || "对话暂不可用",
+                        messages: cached?.messages || [],
+                        run: cached?.run || null,
+                        permissionMode: cached?.permissionMode || "request_approval",
+                        createdAt: cached?.createdAt || summary?.createdAt || "",
+                        updatedAt: cached?.updatedAt || summary?.updatedAt || "",
+                        historyState: { status: "unavailable", message: `该对话暂时无法恢复，已保留本地记录，将自动重试。${cause instanceof Error ? cause.message : ""}` },
+                    };
+                }
             }
         }),
     );

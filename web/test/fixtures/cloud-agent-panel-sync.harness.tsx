@@ -17,6 +17,7 @@ const { createRoot } = await import("react-dom/client");
 const agent = await import("@/services/api/agent");
 const cache = await import("@/services/cloud-agent-conversations");
 const history = await import("@/services/cloud-agent-history");
+const refreshFromService = history.refreshCloudAgentConversations;
 const chatUI = await import("@/components/canvas/canvas-cloud-agent-chat-ui");
 const { setActiveUserScope } = await import("@/lib/user-scope");
 const { useUserStore } = await import("@/stores/use-user-store");
@@ -36,6 +37,7 @@ mock.module("motion/react", () => ({ AnimatePresence: Box, motion: { aside: Box,
 mock.module("antd", () => ({ Button: ({ children, icon, onClick }: any) => <button onClick={onClick}>{icon}{children}</button>, Dropdown: Box, Popover: Box, Input: Object.assign(Box, { TextArea: Box }) }));
 mock.module("@/services/api/agent", () => ({
     ...agent,
+    sendAgentMessage: async () => ({ run: { ...conversation("local-child").run!, parentId: "desktop", status: "running", createdAt: "2026-10-23T00:01:00Z" } }),
     getAgentCapabilities: async () => ({ permissionModes: ["auto"], skills: true, availability: { configured: true } }),
     listAgentSkillDefaults: async () => ({ count: 0, skills: [] }),
     subscribeAgentEvents: (id: string, receive: (event: AgentEvent) => void, options: any) => {
@@ -47,6 +49,8 @@ mock.module("@/services/api/agent", () => ({
 }));
 mock.module("@/services/cloud-agent-conversations", () => ({
     ...cache,
+    saveCloudAgentPendingSubmission: async (_canvas: string, _id: string, value: CloudAgentPendingSubmission) => { pending = value; },
+    clearCloudAgentPendingSubmission: async () => { pending = null; },
     loadCloudAgentConversations: async (_canvas: string, scope: string) => ({ version: 1, activeId: scope === "sync-user" ? local[0]?.id : null, conversations: scope === "sync-user" ? local : [] }),
     saveCloudAgentConversations: async (_canvas: string, _id: string, items: CloudAgentConversation[], scope: string) => { if (scope === "sync-user") local = items; },
     loadCloudAgentPendingSubmission: async (_canvas: string, _id: string, scope: string) => scope === "sync-user" ? pending : null,
@@ -86,8 +90,8 @@ function conversation(runId: string, id = "server", draft = ""): CloudAgentConve
 }
 const settle = async () => { for (let i = 0; i < 4; i++) await new Promise((resolve) => setTimeout(resolve, 10)); };
 async function focus() { await act(async () => { window.dispatchEvent(new Event("focus")); await settle(); }); }
-async function mount(initial: CloudAgentConversation[] = [], initialPending: CloudAgentPendingSubmission | null = null) {
-    local = initial; remote = [conversation("desktop")]; pending = initialPending; refreshOverride = undefined;
+async function mount(initial: CloudAgentConversation[] = [], initialPending: CloudAgentPendingSubmission | null = null, loader?: typeof refreshOverride) {
+    local = initial; remote = [conversation("desktop")]; pending = initialPending; refreshOverride = loader;
     subscriptions.length = 0; reads.length = 0;
     setActiveUserScope("sync-user");
     useUserStore.setState({ hydrated: true, user: { id: "sync-user", username: "test", displayName: "test", role: "user", status: "active" }, features: { agentSubagentsEnabled: false } as any });
@@ -141,5 +145,64 @@ test("switching accounts aborts the old directory request and prevents its late 
         expect(request.signal.aborted).toBe(true);
         await act(async () => { finish([conversation("late-old-account")]); await settle(); });
         expect(mounted.host.textContent).not.toContain("结果-late-old-account");
+    } finally { await mounted.close(); }
+});
+
+test("a delayed parent directory result cannot close the SSE of an accepted local child", async () => {
+    const mounted = await mount([conversation("desktop", "local")]);
+    try {
+        let finish!: (value: CloudAgentConversation[]) => void;
+        refreshOverride = () => new Promise((resolve) => { finish = resolve; });
+        await focus();
+        await act(async () => { composer.onPromptChange("继续"); await settle(); });
+        await act(async () => { composer.onSubmit(); await settle(); });
+        expect(subscriptions.at(-1)?.id).toBe("local-child");
+        expect(pending).toBeNull();
+        await act(async () => { finish([conversation("desktop")]); await settle(); });
+        expect(subscriptions.at(-1)).toMatchObject({ id: "local-child", closed: false });
+        expect(subscriptions.map((item) => item.id)).toEqual(["desktop", "local-child"]);
+    } finally { await mounted.close(); }
+});
+
+test("the real history service restores a legacy tail with a visible limitation while discovering healthy conversations", async () => {
+    let restored: CloudAgentConversation[] = [];
+    const mounted = await mount([], null, async (options) => {
+        const snapshot = (id: string): AgentRun => ({ ...conversation(id).run!, id, conversationId: id, eventSeqBase: id === "legacy" ? 2 : 0, eventCount: id === "legacy" ? 3 : 0,
+            events: id === "legacy" ? [{ eventId: "legacy:3", runId: id, seq: 3, type: "assistant_message", payload: { messageId: "tail", text: "可用旧记录" }, createdAt: "2026-10-23T00:00:00Z" }] : [] });
+        restored = await refreshFromService({ ...options, client: {
+            listConversations: async () => ({ items: ["legacy", "healthy"].map((id) => ({ id, canvasId: "canvas", title: id, latestRunId: id, status: "completed", revision: 1, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" })) }),
+            listRuns: async (id: string) => ({ items: [snapshot(id)] }), getRun: async (id: string) => ({ run: snapshot(id) }),
+        } });
+        return restored;
+    });
+    try {
+        expect(restored).toHaveLength(2);
+        expect(mounted.host.textContent).toContain("可用旧记录");
+        expect(mounted.host.textContent).toContain("早期记录");
+        expect(subscriptions.at(-1)).toMatchObject({ id: "legacy", after: 3 });
+        expect(composer.disabled).toBe(false);
+    } finally { await mounted.close(); }
+});
+
+test("one unavailable conversation keeps its draft and blocks continuation until a successful history retry", async () => {
+    let broken = true;
+    const mounted = await mount([conversation("desktop", "local", "保留草稿")], null, (options) => refreshFromService({ ...options, client: {
+        listConversations: async () => ({ items: [{ id: "shared", canvasId: "canvas", title: "对话", latestRunId: "desktop", status: "completed", revision: 2, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" }] }),
+        listRuns: async () => ({ items: [{ ...conversation("desktop").run!, revision: 2 }] }),
+        getRun: async () => ({ run: { ...conversation("desktop").run!, revision: 2, eventSeqBase: 0, eventCount: broken ? 2 : 0,
+            events: broken ? [{ eventId: "desktop:2", runId: "desktop", seq: 2, type: "assistant_message", payload: { text: "坏页" }, createdAt: "2026-10-23T00:00:00Z" }] : [] } }),
+    } }));
+    try {
+        expect(mounted.host.textContent).toContain("暂时无法恢复");
+        expect(composer.prompt).toBe("保留草稿");
+        expect(composer.disabled).toBe(true);
+        await act(async () => { composer.onSubmit(); await settle(); });
+        expect(subscriptions.at(-1)?.id).toBe("desktop");
+        expect(pending).toBeNull();
+        broken = false;
+        await focus();
+        expect(mounted.host.textContent).not.toContain("暂时无法恢复");
+        expect(composer.prompt).toBe("保留草稿");
+        expect(composer.disabled).toBe(false);
     } finally { await mounted.close(); }
 });

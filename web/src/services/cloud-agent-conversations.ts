@@ -26,6 +26,7 @@ export type CloudAgentConversation = {
     serverConversationId?: string;
     runs?: AgentRun[];
     lastEventSeq?: number;
+    historyState?: { status: "partial" | "unavailable"; message: string };
     draft?: string;
     title: string;
     messages: CloudAgentConversationMessage[];

@@ -258,6 +258,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const [maxVideoSeconds, setMaxVideoSeconds] = useState("0");
     const [conversations, setConversations] = useState<CloudAgentConversation[]>([]);
     const [activeConversationId, setActiveConversationId] = useState(() => nanoid());
+    const activeHistoryState = conversations.find((conversation) => conversation.id === activeConversationId)?.historyState;
     const [loadedHistoryScope, setLoadedHistoryScope] = useState("");
     const historyHydrated = loadedHistoryScope === `${userScope}:${canvasId}`;
     const conversationsRef = useRef(conversations);
@@ -709,22 +710,22 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 conversationsRef.current = next;
                 setConversations(next);
                 const restored = !protectedSubmission && next.find((conversation) => conversation.id === state.activeConversationId);
-                const discovered = !protectedSubmission && autoRestoreRef.current && !state.messages.length && !state.run && !state.prompt.trim() ? next.find((conversation) => conversation.run) : undefined;
+                const discovered = !protectedSubmission && autoRestoreRef.current && !state.messages.length && !state.run && !state.prompt.trim() ? next.find((conversation) => conversation.run) || next[0] : undefined;
                 const selected = restored || discovered;
-                if (selected?.run) {
+                if (selected && (selected.run || selected.historyState?.status === "unavailable")) {
                     if (selected.id !== state.activeConversationId) {
                         currentScope.current = `${userScope}:${canvasId}:${selected.id}`;
                         setActiveConversationId(selected.id);
                         setPermissionMode(selected.permissionMode);
                         setSelectedSkillIds(selected.skillIds || []);
                     }
-                    const changedRun = state.run?.id !== selected.run.id;
-                    if (changedRun) setContextUsage(selected.contextUsage || emptyAgentContextUsage(selected.run.id));
-                    lastSeqRunIdRef.current = selected.run.id;
+                    const changedRun = state.run?.id !== selected.run?.id;
+                    if (changedRun) setContextUsage(selected.contextUsage || emptyAgentContextUsage(selected.run?.id || ""));
+                    lastSeqRunIdRef.current = selected.run?.id || "";
                     lastSeqRef.current = Math.max(changedRun ? 0 : lastSeqRef.current, selected.lastEventSeq || 0);
                     setRun(selected.run);
                     setMessages(selected.messages);
-                    const snapshotApproval = selected.run.approval;
+                    const snapshotApproval = selected.run?.approval;
                     setApproval((current) => snapshotApproval && !snapshotApproval.decision
                         ? { approvalId: snapshotApproval.approvalId, detail: snapshotApproval, reason: current?.approvalId === snapshotApproval.approvalId ? current.reason : snapshotApproval.reason || "" }
                         : null);
@@ -842,6 +843,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     };
 
     const submit = async (override?: string) => {
+        if (activeHistoryState?.status === "unavailable") return;
         const value = (override ?? prompt).trim();
         if (running) {
             await interject(value);
@@ -1235,6 +1237,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                         {workerAvailability?.queueReason ? (
                                             <div role="status" className="px-5 py-2 text-xs text-foreground/70">{workerAvailability.reason}</div>
                                         ) : null}
+                                        {activeHistoryState ? (
+                                            <div role="status" className="px-5 py-2 text-xs" style={{ color: theme.node.muted }}>{activeHistoryState.message}</div>
+                                        ) : null}
                                         <AgentConversation
                                             key={activeConversationId}
                                             theme={theme}
@@ -1291,7 +1296,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                         {pendingQuestion ? <AgentQuestionBar question={pendingQuestion} theme={theme} disabled={approvalSubmitting || connectionStatus !== "connected"} onAnswer={(label) => void submit(label)} /> : null}
                                         <AgentChatComposer
                                             prompt={prompt}
-                                            disabled={Boolean(run && connectionStatus !== "connected") || !historyHydrated || !pendingHydrated}
+                                            disabled={activeHistoryState?.status === "unavailable" || Boolean(run && connectionStatus !== "connected") || !historyHydrated || !pendingHydrated}
                                             sending={busy}
                                             running={running}
                                             placeholder={running ? "运行中可直接插话，会在它下一步生效" : "输入操作指导；用 @ 引用画布节点，用 / 或 、 引用 Skills"}
