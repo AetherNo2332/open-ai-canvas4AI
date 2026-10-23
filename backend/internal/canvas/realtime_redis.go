@@ -32,6 +32,21 @@ redis.call('PEXPIRE',KEYS[1],120000);redis.call('PEXPIRE',KEYS[2],120000)
 return tonumber(number)
 `)
 var realtimeReleaseScript = redis.NewScript(`redis.call('ZREM',KEYS[1],ARGV[1]);redis.call('HDEL',KEYS[2],ARGV[1]);return 1`)
+var realtimeOwnsSlotScript = redis.NewScript(`
+local number=redis.call('HGET',KEYS[2],ARGV[1])
+local expiry=redis.call('ZSCORE',KEYS[1],ARGV[1])
+if number==ARGV[2] and expiry and tonumber(expiry)>tonumber(ARGV[3]) then return 1 end
+return 0
+`)
+
+func removeRemoteSlotLocked(room *realtimeRoom, number int, sessionID string) {
+	for id, peer := range room.remote {
+		if id != sessionID && peer.DeviceNumber == number {
+			delete(room.remote, id)
+			room.dirty = true
+		}
+	}
+}
 
 func (h *RealtimeHub) redisKeys(key RealtimeRoomKey) []string {
 	encode := base64.RawURLEncoding.EncodeToString
@@ -138,6 +153,7 @@ func (h *RealtimeHub) reconcileRedis() {
 		s.peer.DeviceNumber = number
 		s.peer.Coordination = "shared"
 		if room := h.rooms[s.key]; room != nil {
+			removeRemoteSlotLocked(room, number, s.id)
 			room.dirty = true
 		}
 		peer := s.peer
@@ -195,31 +211,65 @@ func (h *RealtimeHub) receiveRemote(env realtimeEnvelope) {
 		return
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	room := h.rooms[env.Key]
 	if room == nil || h.mode != "shared" {
+		h.mu.Unlock()
 		return
 	}
 	if env.Kind == "invalidate" {
 		h.nudge()
+		h.mu.Unlock()
 		return
 	}
 	if env.Kind == "leave" {
 		delete(room.remote, env.Peer.SessionID)
 		room.dirty = true
+		h.mu.Unlock()
 		return
 	}
 	if env.Kind != "presence" && env.Kind != "join" {
+		h.mu.Unlock()
 		return
 	}
 	peer := env.Peer
 	now := time.Now().UTC()
 	if !realtimeID(peer.SessionID) || peer.DeviceNumber < 1 || peer.DeviceNumber > 64 || peer.Coordination != "shared" || !peer.ExpiresAt.After(now) || peer.ExpiresAt.After(now.Add(h.options.SessionTTL+time.Second)) || !validRealtimePresence(realtimeClientMessage{Type: "presence", Cursor: peer.Cursor, Drag: peer.Drag, DeviceLabel: peer.DeviceLabel}) {
+		h.mu.Unlock()
 		return
 	}
-	if _, own := room.members[peer.SessionID]; own {
+	if room.members[peer.SessionID] != nil || room.pending[peer.SessionID] != nil {
+		h.mu.Unlock()
 		return
 	}
+	previous, exists := room.remote[peer.SessionID]
+	verify := !exists || previous.DeviceNumber != peer.DeviceNumber
+	h.mu.Unlock()
+	if verify {
+		// Pub/sub ordering and TTL are insufficient after a released slot is
+		// reused: only its current Redis owner may replace a remote identity.
+		ctx, cancel := context.WithTimeout(h.ctx, 500*time.Millisecond)
+		valid, err := realtimeOwnsSlotScript.Run(ctx, h.options.Redis, h.redisKeys(env.Key), peer.SessionID, peer.DeviceNumber, now.UnixMilli()).Int()
+		cancel()
+		if err != nil {
+			h.setCoordination("degraded")
+			return
+		}
+		if valid != 1 {
+			return
+		}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	room = h.rooms[env.Key]
+	if room == nil || h.mode != "shared" || room.members[peer.SessionID] != nil || room.pending[peer.SessionID] != nil {
+		return
+	}
+	for _, member := range room.members {
+		if member.peer.DeviceNumber == peer.DeviceNumber {
+			return // a local live claim wins over stale remote hints
+		}
+	}
+	removeRemoteSlotLocked(room, peer.DeviceNumber, peer.SessionID)
 	if _, exists := room.remote[peer.SessionID]; !exists && len(room.members)+len(room.remote) >= 64 {
 		return
 	}

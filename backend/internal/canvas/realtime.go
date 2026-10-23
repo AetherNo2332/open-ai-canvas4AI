@@ -73,6 +73,7 @@ type RealtimeOptions struct {
 }
 type realtimeRoom struct {
 	members    map[string]*RealtimeSession
+	pending    map[string]*RealtimeSession // capacity reservations, never public peers
 	remote     map[string]RealtimePeer
 	dirty      bool
 	localDirty bool
@@ -161,16 +162,19 @@ func (h *RealtimeHub) Join(ctx context.Context, key RealtimeRoomKey) (*RealtimeS
 	}
 	h.pruneLocked(time.Now().UTC())
 	room := h.rooms[key]
-	if h.count >= h.options.MaxSessions || room != nil && len(room.members) >= 64 || room == nil && len(h.rooms) >= 1024 {
+	if h.count >= h.options.MaxSessions || room != nil && len(room.members)+len(room.pending) >= 64 || room == nil && len(h.rooms) >= 1024 {
 		h.mu.Unlock()
 		return nil, fmt.Errorf("realtime capacity reached")
 	}
 	if room == nil {
-		room = &realtimeRoom{members: map[string]*RealtimeSession{}, remote: map[string]RealtimePeer{}}
+		room = &realtimeRoom{members: map[string]*RealtimeSession{}, pending: map[string]*RealtimeSession{}, remote: map[string]RealtimePeer{}}
 		h.rooms[key] = room
 	}
 	used := map[int]bool{}
 	for _, s := range room.members {
+		used[s.peer.DeviceNumber] = true
+	}
+	for _, s := range room.pending {
 		used[s.peer.DeviceNumber] = true
 	}
 	number := 0
@@ -184,9 +188,7 @@ func (h *RealtimeHub) Join(ctx context.Context, key RealtimeRoomKey) (*RealtimeS
 	}
 	s := &RealtimeSession{hub: h, key: key, id: uuid.NewString(), done: make(chan struct{}), queue: make(chan []byte, 8), peer: RealtimePeer{DeviceNumber: number, Coordination: h.mode, Drag: []RealtimeDrag{}, ExpiresAt: time.Now().UTC().Add(h.options.SessionTTL)}}
 	s.peer.SessionID = s.id
-	room.members[s.id] = s
-	room.dirty = true
-	room.localDirty = true
+	room.pending[s.id] = s
 	h.count++
 	h.startLoops()
 	h.mu.Unlock()
@@ -210,6 +212,20 @@ func (h *RealtimeHub) Join(ctx context.Context, key RealtimeRoomKey) (*RealtimeS
 		}
 	}
 	h.mu.Lock()
+	room = h.rooms[key]
+	if h.closed || room == nil || room.pending[s.id] != s {
+		h.mu.Unlock()
+		s.end(1001)
+		return nil, fmt.Errorf("realtime hub is closed")
+	}
+	delete(room.pending, s.id)
+	// A successful local claim is authoritative even if the prior owner's
+	// release succeeded but its independent leave hint was lost.
+	if s.peer.DeviceNumber > 0 {
+		removeRemoteSlotLocked(room, s.peer.DeviceNumber, s.id)
+	}
+	room.members[s.id] = s
+	room.dirty, room.localDirty = true, true
 	s.ready = true
 	h.sendLocked(s, RealtimeMessage{Type: "ready", Protocol: 1, SessionID: s.id, DeviceNumber: s.peer.DeviceNumber, Coordination: s.peer.Coordination, HeartbeatSeconds: 15, LeaseSeconds: 60})
 	h.sendLocked(s, RealtimeMessage{Type: "sync", Protocol: 1})
@@ -254,14 +270,15 @@ func (s *RealtimeSession) Close() {
 }
 func (h *RealtimeHub) removeLocked(s *RealtimeSession) {
 	room := h.rooms[s.key]
-	if room == nil || room.members[s.id] != s {
+	if room == nil || room.members[s.id] != s && room.pending[s.id] != s {
 		return
 	}
 	delete(room.members, s.id)
+	delete(room.pending, s.id)
 	h.count--
 	room.dirty = true
 	h.publish(realtimeEnvelope{Kind: "leave", Key: s.key, Peer: RealtimePeer{SessionID: s.id}})
-	if len(room.members) == 0 {
+	if len(room.members)+len(room.pending) == 0 {
 		delete(h.rooms, s.key)
 	}
 }
@@ -392,6 +409,12 @@ func realtimeFrame(msg RealtimeMessage) []byte {
 }
 func (h *RealtimeHub) pruneLocked(now time.Time) {
 	for _, room := range h.rooms {
+		for _, s := range room.pending {
+			if !s.peer.ExpiresAt.After(now) {
+				s.end(1008)
+				h.removeLocked(s)
+			}
+		}
 		for _, s := range room.members {
 			select {
 			case <-s.done:
@@ -516,6 +539,9 @@ func (h *RealtimeHub) Close() error {
 		h.cancel()
 		for _, room := range h.rooms {
 			for _, s := range room.members {
+				s.end(1001)
+			}
+			for _, s := range room.pending {
 				s.end(1001)
 			}
 		}
