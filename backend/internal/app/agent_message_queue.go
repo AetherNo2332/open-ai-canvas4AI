@@ -210,11 +210,7 @@ func (s *Service) SendAgentConversationMessage(userID, conversationID string, in
 		return nil, agentMessageError(err)
 	}
 	if row.Status == "queued" {
-		preferred := ""
-		if input.Mode == "interject" {
-			preferred = row.ID
-		}
-		if _, err = s.dispatchAgentConversation(userID, conversationID, preferred); err != nil {
+		if _, err = s.dispatchAgentConversation(userID, conversationID); err != nil {
 			return nil, err
 		}
 	}
@@ -302,7 +298,7 @@ func (s *Service) UpdateAgentQueuedMessage(userID, conversationID, id string, in
 		return nil, agentMessageError(err)
 	}
 	if input.Action == "interject" {
-		if _, err = s.dispatchAgentConversation(userID, conversationID, id); err != nil {
+		if _, err = s.dispatchAgentConversation(userID, conversationID); err != nil {
 			return nil, err
 		}
 	}

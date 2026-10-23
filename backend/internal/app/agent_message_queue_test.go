@@ -286,6 +286,291 @@ func TestAgentMessageQueueRecoversExplicitAnswerAheadOfOrdinaryMessages(t *testi
 	}
 }
 
+func TestAgentMessageQueuePromotionSurvivesBackgroundRecovery(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		paused    bool
+		transient bool
+	}{
+		{name: "worker_before_frontend_dispatch"},
+		{name: "restart_with_paused_queue", paused: true},
+		{name: "retry_after_temporary_admission_failure", transient: true},
+		{name: "paused_retry_after_temporary_admission_failure", paused: true, transient: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			s, db, root := reliableAgentRoot(t)
+			var promotedID string
+			for _, key := range []string{"ordinary-first", "promoted-second", "ordinary-third"} {
+				receipt, err := s.SendAgentConversationMessage("user", root.ID, queueTestInput(root.ID, key, "queue"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if key == "promoted-second" {
+					promotedID = receipt.MessageID
+				}
+			}
+			finishConversationTestRun(t, db, root.ID)
+			// Stop at the real promotion transaction boundary: the HTTP caller
+			// has not yet reached its opportunistic dispatch call.
+			if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, q *model.AgentConversationQueue, _ *model.CloudAgentExecution) error {
+				row, err := tx.AgentQueuedMessage("user", root.ID, promotedID)
+				if err != nil {
+					return err
+				}
+				if err = tx.PromoteAgentQueuedMessage(row); err != nil {
+					return err
+				}
+				q.Paused = scenario.paused
+				return tx.SaveAgentConversationQueue(q)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if scenario.transient {
+				var claimed model.AgentQueuedMessage
+				if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, _ *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+					row, err := tx.AgentQueuedMessage("user", root.ID, promotedID)
+					if err != nil {
+						return err
+					}
+					if err = tx.ClaimAgentQueuedMessage(row, "priority-retry", latest.ID, time.Now().UTC().Add(time.Minute)); err != nil {
+						return err
+					}
+					claimed = *row
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.recoverAgentMessageClaim(claimed, repository.ErrActiveTaskLimit); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.Model(&model.AgentQueuedMessage{}).Where("id = ?", promotedID).Update("next_attempt_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			other := &Service{repo: repository.New(db), dataDir: s.dataDir}
+			if n, err := other.DispatchAgentMessages(1); err != nil || n != 1 {
+				t.Fatalf("persisted promotion was stranded: %d %v", n, err)
+			}
+			promoted, err := other.repo.AgentQueuedMessage("user", root.ID, promotedID)
+			if err != nil || promoted.Status != "started" {
+				t.Fatalf("background dispatch lost promotion priority: %+v %v", promoted, err)
+			}
+			view, err := other.AgentMessageQueue("user", root.ID)
+			if err != nil || len(view.Items) != 2 || view.Items[0].Prompt != "ordinary-first" || view.Items[1].Prompt != "ordinary-third" || view.Paused != scenario.paused {
+				t.Fatalf("promotion changed ordinary queue: %+v %v", view, err)
+			}
+			finishConversationTestRun(t, db, promoted.RunID)
+			if scenario.paused {
+				if n, err := other.DispatchAgentMessages(1); err != nil || n != 0 {
+					t.Fatalf("explicit recovery released the paused ordinary queue: %d %v", n, err)
+				}
+			}
+		})
+	}
+}
+
+func TestAgentMessageQueueExplicitRecoveryRespectsLaterPause(t *testing.T) {
+	for _, action := range []string{"stop", "pause", "definitive_failure"} {
+		t.Run(action, func(t *testing.T) {
+			s, db, root := reliableAgentRoot(t)
+			if _, err := s.SendAgentConversationMessage("user", root.ID, queueTestInput(root.ID, "ordinary-paused", "queue")); err != nil {
+				t.Fatal(err)
+			}
+			finishConversationTestRun(t, db, root.ID)
+			input := queueTestInput(root.ID, "explicit-recovery", "interject")
+			raw, _ := json.Marshal(input.Request)
+			if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, q *model.AgentConversationQueue, _ *model.CloudAgentExecution) error {
+				q.Paused = true
+				return tx.InsertAgentQueuedMessage(&model.AgentQueuedMessage{ID: "explicit-recovery", UserID: "user", CanvasID: "agent-canvas", ConversationID: root.ID, IdempotencyKey: input.Request.IdempotencyKey, Fingerprint: "original", RequestJSON: string(raw), Prompt: input.Request.Prompt, Mode: "interject"}, q, 20, 100)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			switch action {
+			case "stop":
+				if err := s.CancelCloudAgent(context.Background(), "user", root.ID); err != nil {
+					t.Fatal(err)
+				}
+			case "pause":
+				view, _ := s.AgentMessageQueue("user", root.ID)
+				if _, err := s.UpdateAgentMessageQueue("user", root.ID, AgentMessageQueueUpdate{Revision: view.Revision, Action: "pause"}); err != nil {
+					t.Fatal(err)
+				}
+			case "definitive_failure":
+				var claimed model.AgentQueuedMessage
+				if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, _ *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+					row, err := tx.AgentQueuedMessage("user", root.ID, "explicit-recovery")
+					if err != nil {
+						return err
+					}
+					if err = tx.ClaimAgentQueuedMessage(row, "rejected-recovery", latest.ID, time.Now().UTC().Add(time.Minute)); err != nil {
+						return err
+					}
+					claimed = *row
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.recoverAgentMessageClaim(claimed, repository.ErrInsufficientCredits); err != nil {
+					t.Fatal(err)
+				}
+			}
+			other := &Service{repo: repository.New(db), dataDir: s.dataDir}
+			if n, err := other.DispatchAgentMessages(1); err != nil || n != 0 {
+				t.Fatalf("explicit dispatch escaped a later pause: %d %v", n, err)
+			}
+			view, err := other.AgentMessageQueue("user", root.ID)
+			if err != nil || !view.Paused || len(view.Items) != 2 {
+				t.Fatalf("pause lost messages: %+v %v", view, err)
+			}
+			if _, err = other.UpdateAgentMessageQueue("user", root.ID, AgentMessageQueueUpdate{Revision: view.Revision, Action: "resume"}); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := other.DispatchAgentMessages(1); err != nil || n != 1 {
+				t.Fatalf("manual resume did not recover the message: %d %v", n, err)
+			}
+			recovery, err := other.repo.AgentQueuedMessage("user", root.ID, "explicit-recovery")
+			if err != nil || recovery.Status != "started" {
+				t.Fatalf("manual resume lost priority: %+v %v", recovery, err)
+			}
+		})
+	}
+}
+
+func TestAgentMessageQueueNewFailureRevokesEarlierExplicitDispatches(t *testing.T) {
+	for _, source := range []string{"observed_terminal", "recovered_terminal", "admission_failure"} {
+		t.Run(source, func(t *testing.T) {
+			s, db, root := reliableAgentRoot(t)
+			finishConversationTestRun(t, db, root.ID)
+			for _, key := range []string{"explicit-first", "explicit-second"} {
+				input := queueTestInput(root.ID, key, "interject")
+				raw, _ := json.Marshal(input.Request)
+				if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, q *model.AgentConversationQueue, _ *model.CloudAgentExecution) error {
+					return tx.InsertAgentQueuedMessage(&model.AgentQueuedMessage{ID: key, UserID: "user", CanvasID: "agent-canvas", ConversationID: root.ID, IdempotencyKey: key, Fingerprint: key, RequestJSON: string(raw), Prompt: input.Request.Prompt, Mode: "interject"}, q, 20, 100)
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch source {
+			case "observed_terminal":
+				current, err := s.repo.CloudAgent("user", root.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = s.repo.MutateCloudAgent("user", root.ID, current.Revision, func(run *model.CloudAgentExecution, _ *repository.Repository) error {
+					run.Status = "failed"
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+			case "recovered_terminal":
+				// Simulate a persisted old checkpoint being reconciled on restart.
+				if err := db.Model(&model.CloudAgentExecution{}).Where("id = ?", root.ID).Update("status", "failed").Error; err != nil {
+					t.Fatal(err)
+				}
+			case "admission_failure":
+				var claimed model.AgentQueuedMessage
+				if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, _ *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+					row, err := tx.AgentQueuedMessage("user", root.ID, "explicit-first")
+					if err != nil {
+						return err
+					}
+					if err = tx.ClaimAgentQueuedMessage(row, "failed-first", latest.ID, time.Now().UTC().Add(time.Minute)); err != nil {
+						return err
+					}
+					claimed = *row
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.recoverAgentMessageClaim(claimed, repository.ErrInsufficientCredits); err != nil {
+					t.Fatal(err)
+				}
+			}
+			other := &Service{repo: repository.New(db), dataDir: s.dataDir}
+			if n, err := other.DispatchAgentMessages(1); err != nil || n != 0 {
+				t.Fatalf("earlier explicit intent bypassed a new failure: %d %v", n, err)
+			}
+			view, err := other.AgentMessageQueue("user", root.ID)
+			if err != nil || !view.Paused || len(view.Items) != 2 {
+				t.Fatalf("failure lost pending messages: %+v %v", view, err)
+			}
+		})
+	}
+}
+
+func TestAgentMessageQueueExpiredPreparationCannotOvertakePromotion(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	var first, promoted string
+	for _, key := range []string{"expired-preparation", "later-promotion"} {
+		receipt, err := s.SendAgentConversationMessage("user", root.ID, queueTestInput(root.ID, key, "queue"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first == "" {
+			first = receipt.MessageID
+		} else {
+			promoted = receipt.MessageID
+		}
+	}
+	finishConversationTestRun(t, db, root.ID)
+	var message model.AgentQueuedMessage
+	if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, _ *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+		row, err := tx.AgentQueuedMessage("user", root.ID, first)
+		if err != nil {
+			return err
+		}
+		if err = tx.ClaimAgentQueuedMessage(row, "old-preparation", latest.ID, time.Now().UTC().Add(time.Minute)); err != nil {
+			return err
+		}
+		message = *row
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var request CloudAgentRequest
+	if err := json.Unmarshal([]byte(message.RequestJSON), &request); err != nil {
+		t.Fatal(err)
+	}
+	var admission repository.CloudAgentAdmission
+	if _, err := s.createCloudAgentRunScoped("user", request, root.ID, &cloudAgentRunScope{Prepared: &admission}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentQueuedMessage{}).Where("id = ?", first).Update("lease_until", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.WithAgentConversation("user", root.ID, func(tx *repository.Repository, q *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
+		row, err := tx.AgentQueuedMessage("user", root.ID, promoted)
+		if err != nil {
+			return err
+		}
+		if err = tx.PromoteAgentQueuedMessage(row); err != nil {
+			return err
+		}
+		row, err = tx.AgentQueuedMessageForDispatch("user", root.ID)
+		if err != nil {
+			return err
+		}
+		if row == nil || row.ID != promoted {
+			t.Fatalf("promotion was not selected: %+v", row)
+		}
+		if err = tx.ClaimAgentQueuedMessage(row, "new-owner", latest.ID, time.Now().UTC().Add(time.Minute)); err != nil {
+			return err
+		}
+		return tx.SaveAgentConversationQueue(q)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.repo.CreditAccount("user")
+	policy, _ := s.RuntimePolicy()
+	if err := s.repo.CommitAgentMessageAdmission(message, admission, policy.Task.ActiveTaskLimit, policy.Resource.TaskCount, gigabytes(policy.Resource.TaskDataGB)); !errors.Is(err, repository.ErrCreationConflict) {
+		t.Fatalf("expired preparation overtook the new owner: %v", err)
+	}
+	after, _ := s.repo.CreditAccount("user")
+	if after.ReservedMicrocredits != before.ReservedMicrocredits {
+		t.Fatalf("expired admission reserved credits: %+v => %+v", before, after)
+	}
+}
+
 func TestAgentMessageQueueEditingPromotionStopAndSettings(t *testing.T) {
 	s, _, root := reliableAgentRoot(t)
 	input := queueTestInput(root.ID, "queue-edit-message", "queue")

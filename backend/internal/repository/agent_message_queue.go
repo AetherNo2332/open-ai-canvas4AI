@@ -94,6 +94,9 @@ func (r *Repository) observeAgentMessageQueue(run *model.CloudAgentExecution, pr
 		}
 	}
 	if isTerminalCloudAgentRunStatus(run.Status) && run.Status != "completed" && queue.LastSettledRunID != run.ID {
+		if err := r.InvalidateAgentMessageClaims(run.UserID, identity); err != nil {
+			return err
+		}
 		queue.Paused = true
 		queue.PauseReason = "上一轮未完成"
 		queue.LastSettledRunID = run.ID
@@ -113,7 +116,7 @@ func (r *Repository) CommitAgentMessageAdmission(message model.AgentQueuedMessag
 		if err != nil {
 			return err
 		}
-		if row.Status != "dispatching" || row.DispatchToken != message.DispatchToken || row.Revision != message.Revision || latest.ID != row.DispatchParentID || (q.Paused && row.Mode != "interject") {
+		if row.Status != "dispatching" || row.DispatchToken != message.DispatchToken || row.Revision != message.Revision || row.LeaseUntil == nil || !row.LeaseUntil.After(time.Now().UTC()) || latest.ID != row.DispatchParentID || (q.Paused && !row.DispatchRequested) {
 			return ErrCreationConflict
 		}
 		if q.AwaitingQuestionID != "" && (row.ReplyToQuestionID != q.AwaitingQuestionID || q.QuestionRunID != latest.ID) {
@@ -193,6 +196,9 @@ func (r *Repository) WithAgentConversation(userID, conversationID string, fn fun
 			return err
 		}
 		if latest.Status != "completed" && isTerminalCloudAgentRunStatus(latest.Status) && queue.LastSettledRunID != latest.ID {
+			if err = writer.InvalidateAgentMessageClaims(userID, conversationID); err != nil {
+				return err
+			}
 			queue.Paused = true
 			queue.PauseReason = "上一轮未完成"
 			queue.LastSettledRunID = latest.ID
@@ -240,6 +246,27 @@ func (r *Repository) AgentQueuedMessages(userID, conversationID string) ([]model
 	return rows, err
 }
 
+// Both the periodic scan and a caller's opportunistic dispatch use the same
+// persisted ordering. A delayed head blocks later work, preserving its place.
+func (r *Repository) agentMessageDispatchCandidateQuery() *gorm.DB {
+	return r.db.Table("agent_queued_messages AS candidate").Select("candidate.id").
+		Joins("JOIN agent_conversation_queues control ON control.user_id = candidate.user_id AND control.conversation_id = candidate.conversation_id").
+		Where("candidate.status IN ?", []string{"queued", "dispatching"}).
+		Where("(control.paused = false OR candidate.dispatch_requested = true)").
+		Where("(control.awaiting_question_id = '' OR candidate.reply_to_question_id = control.awaiting_question_id)").
+		Order("CASE WHEN candidate.mode = 'interject' THEN 0 ELSE 1 END, candidate.sequence, candidate.id").Limit(1)
+}
+
+func (r *Repository) AgentQueuedMessageForDispatch(userID, conversationID string) (*model.AgentQueuedMessage, error) {
+	candidate := r.agentMessageDispatchCandidateQuery().Where("control.user_id = ? AND control.conversation_id = ?", userID, conversationID)
+	var row model.AgentQueuedMessage
+	err := r.db.Where("id = (?)", candidate).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &row, err
+}
+
 func (r *Repository) AgentQuestionAnswerPending(userID, conversationID, questionID string) (bool, error) {
 	var count int64
 	err := r.db.Model(&model.AgentQueuedMessage{}).Where("user_id = ? AND conversation_id = ? AND reply_to_question_id = ? AND status IN ?", userID, conversationID, questionID, []string{"queued", "dispatching"}).Count(&count).Error
@@ -272,6 +299,7 @@ func (r *Repository) InsertAgentQueuedMessage(row *model.AgentQueuedMessage, que
 	row.Sequence = queue.NextSequence
 	row.Status = "queued"
 	row.Revision = 1
+	row.DispatchRequested = row.Mode == "interject"
 	if err = r.db.Create(row).Error; err != nil {
 		return err
 	}
@@ -294,7 +322,7 @@ func (r *Repository) UpdateAgentQueuedMessageBody(row *model.AgentQueuedMessage,
 }
 
 func (r *Repository) PromoteAgentQueuedMessage(row *model.AgentQueuedMessage) error {
-	result := r.db.Model(&model.AgentQueuedMessage{}).Where("id = ? AND user_id = ? AND revision = ? AND status = ?", row.ID, row.UserID, row.Revision, "queued").Updates(map[string]any{"mode": "interject", "last_error": "", "next_attempt_at": nil, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()})
+	result := r.db.Model(&model.AgentQueuedMessage{}).Where("id = ? AND user_id = ? AND revision = ? AND status = ?", row.ID, row.UserID, row.Revision, "queued").Updates(map[string]any{"mode": "interject", "dispatch_requested": true, "last_error": "", "next_attempt_at": nil, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -328,7 +356,7 @@ func (r *Repository) ClaimAgentQueuedMessage(row *model.AgentQueuedMessage, toke
 	return nil
 }
 func (r *Repository) FinishAgentQueuedMessage(row *model.AgentQueuedMessage, status, runID string) error {
-	result := r.db.Model(&model.AgentQueuedMessage{}).Where("id = ? AND user_id = ? AND revision = ?", row.ID, row.UserID, row.Revision).Updates(map[string]any{"status": status, "run_id": runID, "request_json": "", "prompt": "", "dispatch_token": "", "lease_until": nil, "last_error": "", "revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()})
+	result := r.db.Model(&model.AgentQueuedMessage{}).Where("id = ? AND user_id = ? AND revision = ?", row.ID, row.UserID, row.Revision).Updates(map[string]any{"status": status, "run_id": runID, "request_json": "", "prompt": "", "dispatch_requested": false, "dispatch_token": "", "lease_until": nil, "last_error": "", "revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -343,7 +371,7 @@ func (r *Repository) FinishAgentQueuedMessage(row *model.AgentQueuedMessage, sta
 	return nil
 }
 func (r *Repository) ReleaseAgentMessageClaim(row *model.AgentQueuedMessage, message string, next *time.Time) error {
-	result := r.db.Model(&model.AgentQueuedMessage{}).Where("id = ? AND user_id = ? AND revision = ? AND dispatch_token = ?", row.ID, row.UserID, row.Revision, row.DispatchToken).Updates(map[string]any{"status": "queued", "dispatch_token": "", "lease_until": nil, "next_attempt_at": next, "last_error": message, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()})
+	result := r.db.Model(&model.AgentQueuedMessage{}).Where("id = ? AND user_id = ? AND revision = ? AND dispatch_token = ?", row.ID, row.UserID, row.Revision, row.DispatchToken).Updates(map[string]any{"status": "queued", "dispatch_requested": row.DispatchRequested && next != nil, "dispatch_token": "", "lease_until": nil, "next_attempt_at": next, "last_error": message, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now().UTC()})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -353,26 +381,24 @@ func (r *Repository) ReleaseAgentMessageClaim(row *model.AgentQueuedMessage, mes
 	return nil
 }
 func (r *Repository) InvalidateAgentMessageClaims(userID, conversationID string) error {
-	return r.db.Model(&model.AgentQueuedMessage{}).Where("user_id = ? AND conversation_id = ? AND status = ?", userID, conversationID, "dispatching").Updates(map[string]any{"status": "queued", "dispatch_token": "", "lease_until": nil, "revision": gorm.Expr("revision + 1")}).Error
+	return r.db.Model(&model.AgentQueuedMessage{}).Where("user_id = ? AND conversation_id = ? AND status IN ? AND (status = ? OR dispatch_requested = true)", userID, conversationID, []string{"queued", "dispatching"}, "dispatching").Updates(map[string]any{"status": "queued", "dispatch_requested": false, "dispatch_token": "", "lease_until": nil, "revision": gorm.Expr("revision + 1")}).Error
 }
 func (r *Repository) PendingAgentMessageConversations(limit int) ([]model.AgentConversationQueue, error) {
 	rows := []model.AgentConversationQueue{}
 	// Filter before LIMIT: active/waiting conversations must not consume every
 	// scan slot and starve a later conversation whose parent is already finished.
-	query := r.db.Model(&model.AgentConversationQueue{}).Where("paused = ?", false).Where(`EXISTS (
+	query := r.db.Model(&model.AgentConversationQueue{}).Where(`EXISTS (
 	 SELECT 1 FROM cloud_agent_executions e WHERE e.user_id = agent_conversation_queues.user_id
 	 AND COALESCE(NULLIF(e.conversation_id, ''),e.id) = agent_conversation_queues.conversation_id
 	 AND e.status IN ('completed','failed','cancelled','rejected') AND e.cleanup_pending = false
 	 AND NOT EXISTS (SELECT 1 FROM cloud_agent_executions n WHERE n.user_id = e.user_id
 	 AND COALESCE(NULLIF(n.conversation_id, ''),n.id) = COALESCE(NULLIF(e.conversation_id, ''),e.id)
 	 AND (n.created_at > e.created_at OR (n.created_at = e.created_at AND n.id > e.id))))`)
-	query = query.Where(`EXISTS (SELECT 1 FROM agent_queued_messages m WHERE m.user_id = agent_conversation_queues.user_id
-	 AND m.conversation_id = agent_conversation_queues.conversation_id AND m.status IN ('queued','dispatching')
-	 AND (agent_conversation_queues.awaiting_question_id = '' OR m.reply_to_question_id = agent_conversation_queues.awaiting_question_id)
+	candidate := r.agentMessageDispatchCandidateQuery().Where("control.user_id = agent_conversation_queues.user_id AND control.conversation_id = agent_conversation_queues.conversation_id")
+	query = query.Where(`EXISTS (SELECT 1 FROM agent_queued_messages m WHERE m.id = (?)
 	 AND (m.next_attempt_at IS NULL OR m.next_attempt_at <= ?) AND (m.status = 'queued' OR m.lease_until <= ?)
 	 AND NOT EXISTS (SELECT 1 FROM agent_queued_messages p WHERE p.user_id = m.user_id AND p.conversation_id = m.conversation_id
-	 AND p.status IN ('queued','dispatching') AND p.sequence < m.sequence
-	 AND (agent_conversation_queues.awaiting_question_id = '' OR p.reply_to_question_id = agent_conversation_queues.awaiting_question_id)))`, time.Now().UTC(), time.Now().UTC())
+	 AND p.status = 'dispatching' AND p.lease_until > ?))`, candidate, time.Now().UTC(), time.Now().UTC(), time.Now().UTC())
 	err := query.Order("updated_at,user_id,conversation_id").Limit(limit).Find(&rows).Error
 	return rows, err
 }

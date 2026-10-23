@@ -53,7 +53,7 @@ func (s *Service) DispatchAgentMessages(limit int) (int, error) {
 	}
 	dispatched := 0
 	for _, q := range queues {
-		ok, err := s.dispatchAgentConversation(q.UserID, q.ConversationID, "")
+		ok, err := s.dispatchAgentConversation(q.UserID, q.ConversationID)
 		if err != nil {
 			return dispatched, err
 		}
@@ -64,45 +64,18 @@ func (s *Service) DispatchAgentMessages(limit int) (int, error) {
 	return dispatched, nil
 }
 
-func (s *Service) dispatchAgentConversation(userID, conversationID, preferredID string) (bool, error) {
+func (s *Service) dispatchAgentConversation(userID, conversationID string) (bool, error) {
 	if s.IsDraining() {
 		return false, nil
 	}
 	var message *model.AgentQueuedMessage
 	err := s.repo.WithAgentConversation(userID, conversationID, func(tx *repository.Repository, q *model.AgentConversationQueue, latest *model.CloudAgentExecution) error {
-		if !cloudAgentRunTerminal(latest.Status) || latest.CleanupPending || (q.Paused && preferredID == "") {
+		if !cloudAgentRunTerminal(latest.Status) || latest.CleanupPending {
 			return nil
 		}
-		rows, err := tx.AgentQueuedMessages(userID, conversationID)
-		if err != nil || len(rows) == 0 {
+		candidate, err := tx.AgentQueuedMessageForDispatch(userID, conversationID)
+		if err != nil || candidate == nil {
 			return err
-		}
-		candidate := rows[0]
-		if q.AwaitingQuestionID != "" && preferredID == "" {
-			found := false
-			for _, row := range rows {
-				if row.ReplyToQuestionID == q.AwaitingQuestionID {
-					candidate = row
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil
-			}
-		}
-		if preferredID != "" {
-			found := false
-			for _, row := range rows {
-				if row.ID == preferredID {
-					candidate = row
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil
-			}
 		}
 		if q.AwaitingQuestionID != "" && (candidate.ReplyToQuestionID != q.AwaitingQuestionID || q.QuestionRunID != latest.ID) {
 			return nil
@@ -110,6 +83,9 @@ func (s *Service) dispatchAgentConversation(userID, conversationID, preferredID 
 		if candidate.ReplyToQuestionID != "" && candidate.ReplyToQuestionID != q.AwaitingQuestionID {
 			q.Paused = true
 			q.PauseReason = "问题已更新，请核对待发回答"
+			if err = tx.InvalidateAgentMessageClaims(userID, conversationID); err != nil {
+				return err
+			}
 			return tx.SaveAgentConversationQueue(q)
 		}
 		if candidate.NextAttemptAt != nil && candidate.NextAttemptAt.After(time.Now()) {
@@ -118,7 +94,7 @@ func (s *Service) dispatchAgentConversation(userID, conversationID, preferredID 
 		if candidate.Status == "dispatching" && candidate.LeaseUntil != nil && candidate.LeaseUntil.After(time.Now()) {
 			return nil
 		}
-		if err = tx.ClaimAgentQueuedMessage(&candidate, newID(), latest.ID, time.Now().UTC().Add(time.Minute)); err != nil {
+		if err = tx.ClaimAgentQueuedMessage(candidate, newID(), latest.ID, time.Now().UTC().Add(time.Minute)); err != nil {
 			if errors.Is(err, repository.ErrCreationConflict) {
 				return nil
 			}
@@ -127,7 +103,7 @@ func (s *Service) dispatchAgentConversation(userID, conversationID, preferredID 
 		if err = tx.SaveAgentConversationQueue(q); err != nil {
 			return err
 		}
-		message = &candidate
+		message = candidate
 		return nil
 	})
 	if err != nil {
@@ -191,6 +167,11 @@ func (s *Service) recoverAgentMessageClaim(message model.AgentQueuedMessage, cau
 		}
 		if err = tx.ReleaseAgentMessageClaim(row, agentMessageFailureText(cause), next); err != nil {
 			return err
+		}
+		if !transient {
+			if err = tx.InvalidateAgentMessageClaims(message.UserID, message.ConversationID); err != nil {
+				return err
+			}
 		}
 		return tx.SaveAgentConversationQueue(q)
 	})

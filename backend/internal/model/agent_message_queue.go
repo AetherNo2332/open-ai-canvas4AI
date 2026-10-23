@@ -5,13 +5,16 @@ import "time"
 // AgentQueuedMessage is a durable submission receipt, independent of a run.
 // Fingerprint always describes the original POST; edits only change RequestJSON.
 type AgentQueuedMessage struct {
-	ID                string     `json:"id" gorm:"primaryKey;size:80"`
-	UserID            string     `json:"-" gorm:"size:36;uniqueIndex:idx_agent_message_key,priority:1;index:idx_agent_message_queue,priority:1"`
-	ConversationID    string     `json:"conversationId" gorm:"size:80;index:idx_agent_message_queue,priority:2"`
-	CanvasID          string     `json:"canvasId" gorm:"size:80"`
-	IdempotencyKey    string     `json:"-" gorm:"size:128;uniqueIndex:idx_agent_message_key,priority:2"`
-	Fingerprint       string     `json:"-" gorm:"size:64;not null"`
-	Mode              string     `json:"mode" gorm:"size:16;not null"`
+	ID             string `json:"id" gorm:"primaryKey;size:80"`
+	UserID         string `json:"-" gorm:"size:36;uniqueIndex:idx_agent_message_key,priority:1;index:idx_agent_message_queue,priority:1"`
+	ConversationID string `json:"conversationId" gorm:"size:80;index:idx_agent_message_queue,priority:2"`
+	CanvasID       string `json:"canvasId" gorm:"size:80"`
+	IdempotencyKey string `json:"-" gorm:"size:128;uniqueIndex:idx_agent_message_key,priority:2"`
+	Fingerprint    string `json:"-" gorm:"size:64;not null"`
+	Mode           string `json:"mode" gorm:"size:16;not null"`
+	// An explicit send may start one recovery turn while ordinary work stays
+	// paused. Stop/pause and a definitive admission failure revoke that intent.
+	DispatchRequested bool       `json:"-" gorm:"not null;default:false"`
 	Sequence          int64      `json:"sequence" gorm:"index:idx_agent_message_queue,priority:4"`
 	Revision          int64      `json:"revision" gorm:"not null"`
 	Prompt            string     `json:"prompt" gorm:"type:text"`
