@@ -544,6 +544,12 @@ func (r *Repository) SaveTaskCompletion(task *model.Task, expected model.TaskSta
 // the task recoverable and never exposes a false success to the canvas.
 func (r *Repository) SaveTaskCompletionWithRegistration(task *model.Task, expected model.TaskStatus, results []model.Result, register func(*Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		writer := r.transactionRepository(tx)
+		// Registration may write assets/canvases. Acquire the account before
+		// the Task lock, matching deletion and command root transactions.
+		if err := writer.LockCanvasWrite(task.UserID, ""); err != nil {
+			return err
+		}
 		updated := taskLeaseWriter(tx.Model(&model.Task{}), task.LeaseOwner).
 			Where("id = ? AND status = ?", task.ID, expected).
 			Select("*").Omit("id", "created_at").Updates(task)
@@ -559,11 +565,11 @@ func (r *Repository) SaveTaskCompletionWithRegistration(task *model.Task, expect
 			}
 		}
 		if register != nil {
-			if err := register(New(tx)); err != nil {
+			if err := register(writer); err != nil {
 				return err
 			}
 		}
-		return New(tx).EnqueueCanvasMaterialization(task.ID)
+		return writer.EnqueueCanvasMaterialization(task.ID)
 	})
 }
 
@@ -1466,13 +1472,30 @@ func (r *Repository) CreateProject(project *model.Project) error {
 }
 
 func (r *Repository) UpdateProject(project *model.Project) error {
-	return r.db.Model(&model.Project{}).Where("id = ? AND user_id = ?", project.ID, project.UserID).Updates(map[string]any{
-		"name": project.Name, "type": project.Type, "aspect_ratio": project.AspectRatio, "source_type": project.SourceType,
-		"description": project.Description, "cover_resource_id": project.CoverResourceID,
-		"style_preset_id": project.StylePresetID, "style_profile_json": project.StyleProfileJSON,
-		"default_image_model": project.DefaultImageModel, "default_video_model": project.DefaultVideoModel,
-		"status": project.Status, "revision": project.Revision, "updated_at": project.UpdatedAt,
-	}).Error
+	var revision int64
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).LockCanvasWrite(project.UserID, ""); err != nil {
+			return err
+		}
+		result := tx.Model(&model.Project{}).Where("id = ? AND user_id = ?", project.ID, project.UserID).Updates(map[string]any{
+			"name": project.Name, "type": project.Type, "aspect_ratio": project.AspectRatio, "source_type": project.SourceType,
+			"description": project.Description, "cover_resource_id": project.CoverResourceID,
+			"style_preset_id": project.StylePresetID, "style_profile_json": project.StyleProfileJSON,
+			"default_image_model": project.DefaultImageModel, "default_video_model": project.DefaultVideoModel,
+			"status": project.Status, "revision": gorm.Expr("revision + 1"), "updated_at": project.UpdatedAt,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Model(&model.Project{}).Where("id = ? AND user_id = ?", project.ID, project.UserID).Pluck("revision", &revision).Error
+	})
+	if err == nil {
+		project.Revision = revision
+	}
+	return err
 }
 
 func (r *Repository) DeleteProject(userID string, id string, canvasUpdates []model.CanvasProject) error {
@@ -1827,6 +1850,9 @@ func (r *Repository) NextProjectAssetPosition(projectID string, folderID string)
 
 func (r *Repository) MoveProjectAsset(projectID string, assetID string, folderID string, position int) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).LockProjectAssetWrite(projectID); err != nil {
+			return err
+		}
 		result := tx.Model(&model.ProjectAssetLink{}).
 			Where("project_id = ? AND asset_id = ?", projectID, assetID).
 			Updates(map[string]any{"folder_id": folderID, "position": position})
@@ -1857,6 +1883,9 @@ func (r *Repository) ProjectAssetFolder(projectID string, folderID string) (*mod
 
 func (r *Repository) CreateProjectAssetFolder(folder *model.ProjectAssetFolder) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).LockProjectAssetWrite(folder.ProjectID); err != nil {
+			return err
+		}
 		if err := tx.Create(folder).Error; err != nil {
 			return err
 		}
@@ -1867,6 +1896,9 @@ func (r *Repository) CreateProjectAssetFolder(folder *model.ProjectAssetFolder) 
 
 func (r *Repository) UpdateProjectAssetFolder(folder *model.ProjectAssetFolder) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).LockProjectAssetWrite(folder.ProjectID); err != nil {
+			return err
+		}
 		result := tx.Model(&model.ProjectAssetFolder{}).
 			Where("id = ? AND project_id = ?", folder.ID, folder.ProjectID).
 			Updates(map[string]any{"parent_id": folder.ParentID, "name": folder.Name, "name_key": folder.NameKey, "style": folder.Style, "theme": folder.Theme, "position": folder.Position, "updated_at": folder.UpdatedAt})
@@ -1883,6 +1915,9 @@ func (r *Repository) UpdateProjectAssetFolder(folder *model.ProjectAssetFolder) 
 
 func (r *Repository) DeleteProjectAssetFolder(projectID string, folderID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).LockProjectAssetWrite(projectID); err != nil {
+			return err
+		}
 		var childCount int64
 		if err := tx.Model(&model.ProjectAssetFolder{}).Where("project_id = ? AND parent_id = ?", projectID, folderID).Count(&childCount).Error; err != nil {
 			return err
@@ -1912,6 +1947,9 @@ func (r *Repository) DeleteProjectAssetFolder(projectID string, folderID string)
 func (r *Repository) LinkProjectAsset(asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink) (bool, error) {
 	createdLink := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).LockProjectAssetWrite(link.ProjectID); err != nil {
+			return err
+		}
 		if err := r.transactionRepository(tx).guardAssetPersistence(asset, true); err != nil {
 			return err
 		}
@@ -1948,7 +1986,16 @@ func (r *Repository) LinkProjectAsset(asset *model.Asset, version *model.AssetVe
 }
 
 func (r *Repository) DeleteProjectAssetLink(projectID string, assetID string) error {
-	return r.db.Delete(&model.ProjectAssetLink{}, "project_id = ? AND asset_id = ?", projectID, assetID).Error
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		writer := r.transactionRepository(tx)
+		if err := writer.LockProjectAssetWrite(projectID); err != nil {
+			return err
+		}
+		if err := tx.Delete(&model.ProjectAssetLink{}, "project_id = ? AND asset_id = ?", projectID, assetID).Error; err != nil {
+			return err
+		}
+		return writer.BumpProjectRevision(projectID)
+	})
 }
 
 func (r *Repository) ProjectAssetShotReferenceCount(projectID string, assetID string) (int64, error) {
@@ -2392,6 +2439,9 @@ func (r *Repository) CreateProjectAssetCandidate(candidate *model.ProjectAssetCa
 // ConfirmProjectAssetCandidate 将正式资产身份、首版本、项目引用和候选状态放在同一事务中，避免出现半确认数据。
 func (r *Repository) ConfirmProjectAssetCandidate(candidate *model.ProjectAssetCandidate, asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink, createAsset bool) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).LockProjectAssetWrite(candidate.ProjectID); err != nil {
+			return err
+		}
 		if err := r.transactionRepository(tx).guardAssetPersistence(asset, true); err != nil {
 			return err
 		}

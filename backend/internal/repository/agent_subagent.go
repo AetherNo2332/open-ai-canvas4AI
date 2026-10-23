@@ -113,6 +113,10 @@ func (r *Repository) AgentSubagentMessages(userID, parentRunID string) ([]model.
 // so opposite-direction deliveries cannot deadlock on PostgreSQL.
 func (r *Repository) WithAgentSubagentFamily(userID, parentRunID, childRunID string, fn func(*Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		writer := r.transactionRepository(tx)
+		if err := writer.LockCanvasWrite(userID, ""); err != nil {
+			return err
+		}
 		for _, id := range []string{parentRunID, childRunID} {
 			q := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ?", id, userID).UpdateColumn("revision", gorm.Expr("revision"))
 			if q.Error != nil {
@@ -122,7 +126,7 @@ func (r *Repository) WithAgentSubagentFamily(userID, parentRunID, childRunID str
 				return gorm.ErrRecordNotFound
 			}
 		}
-		return fn(New(tx))
+		return fn(writer)
 	})
 }
 
@@ -130,6 +134,9 @@ func (r *Repository) WithAgentSubagentFamily(userID, parentRunID, childRunID str
 // commit or all roll back. A child is never visible to workers without its Link.
 func (r *Repository) CreateDynamicSubagentAdmission(admission CloudAgentAdmission, link *model.AgentSubagentLink, activeTaskLimit, maxChildren, maxConcurrent int) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).LockCanvasWrite(link.UserID, ""); err != nil {
+			return err
+		}
 		locked := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND status IN ?", link.ParentRunID, link.UserID, []string{"queued", "running"}).UpdateColumn("revision", gorm.Expr("revision"))
 		if locked.Error != nil {
 			return locked.Error

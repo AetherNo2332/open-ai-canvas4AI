@@ -11,6 +11,10 @@ import (
 // Only fresh append-only events are accepted; existing messages remain untouched.
 func (r *Repository) MutateCloudAgentControl(userID, id string, revision int64, fn func(*model.CloudAgentExecution, *Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		repo := r.transactionRepository(tx)
+		if err := repo.LockCanvasWrite(userID, ""); err != nil {
+			return err
+		}
 		update := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND revision = ?", id, userID, revision).
 			UpdateColumn("revision", gorm.Expr("revision + 1"))
 		if update.Error != nil {
@@ -19,7 +23,6 @@ func (r *Repository) MutateCloudAgentControl(userID, id string, revision int64, 
 		if update.RowsAffected != 1 {
 			return ErrCreationConflict
 		}
-		repo := New(tx)
 		run, err := repo.CloudAgentControlRow(userID, id)
 		if err != nil {
 			return err

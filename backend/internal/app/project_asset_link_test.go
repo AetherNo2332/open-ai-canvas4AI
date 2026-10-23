@@ -18,6 +18,7 @@ func newProjectAssetLinkTestService(t *testing.T) (*Service, *gorm.DB) {
 		t.Fatal(err)
 	}
 	if err := db.AutoMigrate(
+		&model.User{},
 		&model.Project{},
 		&model.ProjectAssetLink{},
 		&model.ProjectAssetFolder{},

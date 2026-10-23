@@ -275,20 +275,24 @@ func (r *Repository) syncLegacyCanvasWrite(before, after *model.CanvasProject, r
 		return err
 	}
 	current := []string{}
-	for _, ref := range refs {
-		current = append(current, ref.ResourceID)
-	}
-	history := append([]string{}, current...)
-	if before != nil {
-		refs, err = assets.CollectDocumentResourceReferences(before.PayloadJSON)
-		if err != nil {
-			return err
-		}
+	if !epoch.Deleted {
 		for _, ref := range refs {
-			history = append(history, ref.ResourceID)
+			current = append(current, ref.ResourceID)
 		}
 	}
-	return r.SaveCommandResources(after.UserID, after.ID, epoch.Epoch, op, current, history)
+	// Legacy events support synchronization, not undo. Snapshot resources have
+	// their own bounded retention; only actual command history owns undo pins.
+	if err = r.SaveCommandResources(after.UserID, after.ID, epoch.Epoch, op, current, nil); err != nil {
+		return err
+	}
+	return r.releaseOrphanLegacyCommandResources(after.UserID, after.ID)
+}
+
+func (r *Repository) releaseOrphanLegacyCommandResources(ownerID, canvasID string) error {
+	retained := r.db.Model(&model.CanvasActorHistory{}).Select("1").
+		Where("canvas_actor_histories.owner_id = canvas_command_resources.owner_id AND canvas_actor_histories.canvas_id = canvas_command_resources.canvas_id AND canvas_actor_histories.epoch = canvas_command_resources.epoch AND canvas_actor_histories.operation_id = canvas_command_resources.operation_id")
+	return r.db.Where("owner_id = ? AND canvas_id = ? AND kind = ? AND operation_id LIKE ?", ownerID, canvasID, "history", "legacy:%").
+		Where("NOT EXISTS (?)", retained).Delete(&model.CanvasCommandResource{}).Error
 }
 
 func (r *Repository) hasCommandSchema() (bool, error) {

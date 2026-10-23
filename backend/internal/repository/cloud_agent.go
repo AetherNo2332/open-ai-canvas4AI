@@ -386,6 +386,10 @@ func (r *Repository) RecentCloudAgentEventsForUser(userID string, runLimit int) 
 // Lock before reading: checkpoints, canvas writes and task reservations commit together.
 func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func(*model.CloudAgentExecution, *Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		writer := r.transactionRepository(tx)
+		if err := writer.LockCanvasWrite(userID, ""); err != nil {
+			return err
+		}
 		q := tx.Model(&model.CloudAgentExecution{}).Where("id = ? AND user_id = ? AND revision = ?", id, userID, revision).UpdateColumn("revision", gorm.Expr("revision + 1"))
 		if q.Error != nil {
 			return q.Error
@@ -393,7 +397,7 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 		if q.RowsAffected != 1 {
 			return ErrCreationConflict
 		}
-		run, err := New(tx).CloudAgent(userID, id)
+		run, err := writer.CloudAgent(userID, id)
 		if err != nil {
 			return err
 		}
@@ -407,7 +411,7 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 		for _, message := range run.Transcript {
 			previousMessages[fmt.Sprintf("%s:%d", message.Kind, message.Sequence)] = message.MessageJSON
 		}
-		callbackRepo := New(tx)
+		callbackRepo := writer
 		previousActive, previousMedia := run.ActiveTaskID, run.MediaTaskID
 		if err = fn(run, callbackRepo); err != nil {
 			return err
