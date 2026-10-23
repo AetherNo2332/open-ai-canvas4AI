@@ -460,7 +460,15 @@ func TestBackgroundPrevisInvalidTargetsKeepSavedArtifacts(t *testing.T) {
 				raw, _ := json.Marshal(doc)
 				canvas.PayloadJSON = string(raw)
 			}
-			if err := s.repo.UpsertCanvasProject(canvas); err != nil {
+			if failure == "bad_canvas" {
+				if err := s.repo.UpsertCanvasProject(canvas); err == nil {
+					t.Fatal("normal canvas writes accepted invalid JSON")
+				}
+				// Simulate pre-existing database corruption, which ordinary writes reject.
+				if err := s.repo.Save(canvas); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := s.repo.UpsertCanvasProject(canvas); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.commitPrevisOutput(task, input, result); err == nil || previsErrorCode(err) != want {
