@@ -9,7 +9,7 @@ import { upsertRemoteAsset } from "@/services/api/user-data";
 import { createCanvasProjectAssetLinkRetryRunner, ensureCanvasNodeAsset, retryPendingCanvasProjectAssetLinks } from "@/services/project-asset-sync";
 import { deleteAssetWithRemoteSync, hasRemoteUserDataSyncSession, initializeRemoteUserDataSession, installRemoteUserDataAutoSync, resetRemoteUserDataSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const originalWindow = globalThis.window;
@@ -534,3 +534,56 @@ test("switching accounts cancels failed bootstrap timers and rejects its late re
     expect(useAssetStore.getState().assets).toEqual([fresh]);
     expect((await queue.list())[0]?.assetId).toBe(old.id);
 }, 6000);
+
+for (const change of ["edit ordinary asset", "create ordinary asset", "edit canvas"] as const) {
+    test(`bootstrap retry retains the first baseline so normal save can ${change}`, async () => {
+        const scope = `owner-stable-baseline-${change}`;
+        installStorage(scope, { value: true });
+        installRemoteUserDataAutoSync();
+        const pending: Asset = { id: "pending", kind: "text", title: "Pending", coverUrl: "", tags: [], category: "material", data: { content: "cloud original" }, createdAt: "2026-10-23T00:00:00Z", updatedAt: "2026-10-23T00:00:00Z" };
+        const ordinary = { ...pending, id: "ordinary", title: "Ordinary" } as Asset;
+        useAssetStore.getState().replaceAssets([pending, ordinary]);
+        cloudAssets.set(pending.id, pending);
+        cloudAssets.set(ordinary.id, ordinary);
+        const canvasId = useCanvasStore.getState().createProject("Cloud original canvas");
+        let cloudCanvas = structuredClone(useCanvasStore.getState().openProject(canvasId)) as CanvasProject;
+        const queue = createCanvasProjectAssetLinkQueue(localForageStorageForScope(scope), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, scope);
+        await queue.upsert({ assetId: pending.id, domainProjectId: "project" });
+        let healthy = false;
+        const calls: string[] = [];
+        apiClient.defaults.adapter = async (config) => {
+            calls.push(`${config.method} ${config.url}`);
+            if (!healthy) return { data: { code: 503, data: null, msg: "temporary failure" }, status: 503, statusText: "Unavailable", headers: {}, config };
+            const response = assetAPIResponse(config);
+            if (response) return response;
+            if (config.url === `/canvas-projects/${canvasId}`) {
+                if (config.method === "put") {
+                    const submitted = JSON.parse(config.data).project as CanvasProject;
+                    cloudCanvas = { ...submitted, revision: (submitted.revision || 0) + 1 };
+                }
+                return { data: { code: 0, data: { project: cloudCanvas }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+            }
+            return { data: { code: 0, data: { projectRevision: config.method === "get" ? 1 : 2, asset: null }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
+        };
+        await expect(initializeRemoteUserDataSession(scope)).rejects.toThrow("temporary failure");
+        let changedAssetId = ordinary.id;
+        if (change === "edit ordinary asset") useAssetStore.getState().updateAsset(ordinary.id, { data: { content: "user edited during failed bootstrap" } });
+        else if (change === "create ordinary asset") changedAssetId = useAssetStore.getState().addAsset({ kind: "text", title: "New local body", coverUrl: "", tags: [], category: "material", data: { content: "created during failed bootstrap" } });
+        else useCanvasStore.getState().renameProject(canvasId, "User edited during failed bootstrap");
+        await expect(saveRemoteUserDataNow(change === "edit canvas" ? canvasId : [])).rejects.toThrow("基线尚未建立");
+        expect(calls.filter((call) => call.startsWith("put "))).toEqual([]);
+        healthy = true;
+        for (const listener of onlineListeners) listener(new Event("online"));
+        for (let i = 0; i < 60 && !hasRemoteUserDataSyncSession(); i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(hasRemoteUserDataSyncSession()).toBe(true);
+        await saveRemoteUserDataNow(change === "edit canvas" ? canvasId : []);
+
+        if (change === "edit canvas") {
+            expect(calls).toContain(`put /canvas-projects/${canvasId}`);
+            expect(cloudCanvas.title).toBe("User edited during failed bootstrap");
+        } else {
+            expect(calls).toContain(`put /assets/${changedAssetId}`);
+            expect(cloudAssets.get(changedAssetId)?.data).toEqual({ content: change === "edit ordinary asset" ? "user edited during failed bootstrap" : "created during failed bootstrap" });
+        }
+    });
+}

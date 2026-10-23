@@ -87,11 +87,14 @@ async function attemptIncrementalBootstrap(state: IncrementalBootstrap) {
     if (state.timer) clearTimeout(state.timer);
     state.timer = undefined;
     try {
-        acknowledgedProjects = new Map(useCanvasStore.getState().projects.map((project) => [project.id, project]));
         const pendingQueue = createCanvasProjectAssetLinkQueue(projectAssetLinkStorageForScope(state.userId), CANVAS_PROJECT_ASSET_LINK_QUEUE_KEY, state.userId);
         const pendingEntries = state.scope === state.userId ? await pendingQueue.list() : [];
         const pendingAssetIds = new Set(pendingEntries.map((entry) => entry.assetId));
-        acknowledgedAssets = new Map(useAssetStore.getState().assets.filter((asset) => !pendingAssetIds.has(asset.id)).map((asset) => [asset.id, asset]));
+        // The initial cached identity stays stable across retries. Only pending
+        // bodies without a verified remote baseline need that assumption removed.
+        for (const assetId of pendingAssetIds) {
+            if (!verifiedAssets.has(assetId)) acknowledgedAssets.delete(assetId);
+        }
         if (typeof navigator === "undefined" || navigator.onLine !== false) {
             for (const assetId of pendingAssetIds) {
                 const local = useAssetStore.getState().assets.find((asset) => asset.id === assetId);
@@ -105,12 +108,13 @@ async function attemptIncrementalBootstrap(state: IncrementalBootstrap) {
                 const entries = pendingEntries.filter((entry) => entry.assetId === assetId);
                 if (exists) await pendingQueue.markAssetPersisted({ assetId });
                 else if (!entries.some((entry) => entry.createAssetIfMissing === true)) {
-                    if (local) acknowledgedAssets.set(assetId, local);
+                    const original = state.originalAssets.get(assetId);
+                    if (original) acknowledgedAssets.set(assetId, original);
                 }
             }
         } else {
-            for (const asset of useAssetStore.getState().assets) {
-                if (pendingAssetIds.has(asset.id) && !pendingEntries.some((entry) => entry.assetId === asset.id && entry.createAssetIfMissing === true)) acknowledgedAssets.set(asset.id, asset);
+            for (const asset of state.originalAssets.values()) {
+                if (pendingAssetIds.has(asset.id) && !acknowledgedAssets.has(asset.id) && !pendingEntries.some((entry) => entry.assetId === asset.id && entry.createAssetIfMissing === true)) acknowledgedAssets.set(asset.id, asset);
             }
         }
         if (!currentBootstrap(state)) throw new DOMException("账号已切换", "AbortError");
@@ -148,6 +152,10 @@ export async function initializeRemoteUserDataSession(userId: string) {
         resetRemoteUserDataSync();
         activeRemoteUserId = userId;
         incrementalSession = true;
+        // Capture once, before the first network attempt. Waiting for another
+        // body's baseline must never acknowledge edits/new entities made later.
+        acknowledgedProjects = new Map(useCanvasStore.getState().projects.map((project) => [project.id, project]));
+        acknowledgedAssets = new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset]));
         state = { userId, scope, epoch: sessionEpoch, controller: new AbortController(), attempts: 0, originalAssets: new Map(useAssetStore.getState().assets.map((asset) => [asset.id, asset])) };
         incrementalBootstrap = state;
         await attemptIncrementalBootstrap(state);
