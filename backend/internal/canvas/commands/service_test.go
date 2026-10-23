@@ -23,6 +23,12 @@ func commandFixture(t *testing.T) (*Service, *gorm.DB, string, Snapshot) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sqlDB, _ := db.DB(); _ = sqlDB.Close() })
+	return seedCommandFixture(t, db, path)
+}
+
+func seedCommandFixture(t *testing.T, db *gorm.DB, path string) (*Service, *gorm.DB, string, Snapshot) {
+	t.Helper()
+	var err error
 	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.Resource{}, &model.Task{}); err != nil {
 		t.Fatal(err)
 	}

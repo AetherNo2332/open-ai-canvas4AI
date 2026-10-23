@@ -142,6 +142,9 @@ func (r *Repository) MoveUserAssetsToFolder(userID string, assetIDs []string, fo
 
 func (r *Repository) DeleteAssetFolder(userID string, folderID string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).LockCanvasWrite(userID, ""); err != nil {
+			return err
+		}
 		var folder model.AssetFolder
 		if err := tx.First(&folder, "id = ? AND user_id = ?", folderID, userID).Error; err != nil {
 			return err
@@ -172,6 +175,10 @@ func moveUserAssetsToFolder(tx *gorm.DB, userID string, assetIDs []string, folde
 	if len(assetIDs) == 0 {
 		return nil
 	}
+	writer := New(tx)
+	if err := writer.LockCanvasWrite(userID, ""); err != nil {
+		return err
+	}
 	var assets []model.Asset
 	if err := tx.Where("user_id = ? AND id IN ?", userID, assetIDs).Find(&assets).Error; err != nil {
 		return err
@@ -183,6 +190,11 @@ func moveUserAssetsToFolder(tx *gorm.DB, userID string, assetIDs []string, folde
 	for index := range assets {
 		payloadJSON, err := assetPayloadWithFolder(assets[index].PayloadJSON, folderID, now)
 		if err != nil {
+			return err
+		}
+		after := assets[index]
+		after.PayloadJSON = payloadJSON
+		if err := writer.checkAssetWriteQuota(&assets[index], &after); err != nil {
 			return err
 		}
 		if err := tx.Model(&model.Asset{}).Where("id = ? AND user_id = ?", assets[index].ID, userID).Updates(map[string]any{

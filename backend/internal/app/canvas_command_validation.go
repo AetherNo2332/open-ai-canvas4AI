@@ -8,6 +8,27 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
+func (s *Service) structuredWriteQuota(tx *repository.Repository, ownerID, kind string, countDelta, deltaBytes int64) error {
+	// Policy and usage are read from the locked transaction, never the root pool.
+	reader := &Service{repo: tx, dataDir: s.dataDir}
+	policy, err := reader.RuntimePolicy()
+	if err != nil {
+		return err
+	}
+	usage, err := tx.CanvasStructuredStorageUsage(ownerID)
+	if err != nil {
+		return err
+	}
+	if countDelta <= 0 {
+		return validateStructuredStorageQuotaWithPolicy(usage, kind, false, deltaBytes, policy.Resource)
+	}
+	count, bytes := usage.CanvasCount+countDelta, usage.CanvasBytes+deltaBytes
+	if kind == "asset" {
+		count, bytes = usage.AssetCount+countDelta, usage.AssetBytes+deltaBytes
+	}
+	return validateStructuredReplacementQuotaWithPolicy(usage, kind, int(count), bytes, policy.Resource)
+}
+
 func (s *Service) CanvasCommandValidation(ctx context.Context, tx *repository.Repository, p identity.Principal) (commands.ValidationContext, error) {
 	v := commands.ValidationContext{Principal: p, ModelInputLimits: map[string]map[string]int{}}
 	catalog, err := s.ModelCatalog(nil)

@@ -131,6 +131,7 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 	}
 	service := &Service{repo: repo, dataDir: dataDir, activeStorageTests: make(map[string]bool), activeCancels: make(map[string]context.CancelFunc), agentConflictStreak: make(map[string]int), taskDispatcherWake: make(chan struct{}, 1), coordinator: coordinator, runtimeErr: err, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, paymentRegistry: paymentRegistry, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time), geminiCacheLocks: make(map[string]*geminiCacheKeyLock), observability: observability.NewAggregator(4096), observabilityExporter: observability.NewConfiguredExporter()}
 	service.agentToolWake = make(chan struct{}, 1)
+	service.repo.SetStructuredWriteQuota(service.structuredWriteQuota)
 	service.taskBillingCoordinator = newTaskBillingCoordinator(service.repo)
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
 	service.taskRouteExecutor = newTaskRouteExecutor(service)

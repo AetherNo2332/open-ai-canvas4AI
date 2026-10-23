@@ -12,7 +12,7 @@ import (
 // CommandTransaction makes all document, version, receipt, event, reference and
 // history writes composable. Callers must not start a nested write transaction.
 func (r *Repository) CommandTransaction(ctx context.Context, fn func(*Repository) error) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return fn(&Repository{db: tx}) })
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return fn(r.transactionRepository(tx)) })
 }
 func (r *Repository) CommandEpoch(ownerID, canvasID string) (*model.CanvasDocumentEpoch, error) {
 	var row model.CanvasDocumentEpoch
@@ -75,8 +75,13 @@ func (r *Repository) SaveCommandResources(ownerID, canvasID, epoch, operationID 
 	rows := []model.CanvasCommandResource{}
 	seen := map[string]bool{}
 	for _, id := range current {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		rows = append(rows, model.CanvasCommandResource{OwnerID: ownerID, CanvasID: canvasID, Epoch: epoch, OperationID: "", Kind: "current", ResourceID: id})
 	}
+	seen = map[string]bool{}
 	for _, id := range history {
 		if seen[id] {
 			continue
@@ -98,9 +103,31 @@ func (r *Repository) InsertCommandCreateReceipt(row *model.CanvasCreateReceipt) 
 	return r.db.Create(row).Error
 }
 func (r *Repository) CreateCommandCanvas(row *model.CanvasProject) error {
+	if err := r.LockCanvasWrite(row.UserID, row.ID); err != nil {
+		return err
+	}
+	if err := r.checkCanvasWriteQuota(nil, row); err != nil {
+		return err
+	}
 	return r.db.Create(row).Error
 }
 func (r *Repository) PersistCommandCanvas(row *model.CanvasProject, expected int64) error {
+	if err := r.LockCanvasWrite(row.UserID, row.ID); err != nil {
+		return err
+	}
+	before, err := r.CanvasProjectForUser(row.UserID, row.ID)
+	if err != nil {
+		if r.IsMissing(err) {
+			return ErrCanvasRevisionConflict
+		}
+		return err
+	}
+	if before.Revision != expected {
+		return ErrCanvasRevisionConflict
+	}
+	if err = r.checkCanvasWriteQuota(before, row); err != nil {
+		return err
+	}
 	result := r.db.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ? AND revision = ?", row.ID, row.UserID, expected).Updates(map[string]any{"payload_json": row.PayloadJSON, "revision": row.Revision, "title": row.Title, "updated_at": time.Now()})
 	if result.Error != nil {
 		return result.Error

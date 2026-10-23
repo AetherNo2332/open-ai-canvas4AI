@@ -67,7 +67,7 @@ func TestCanvasRevision(t *testing.T) {
 
 func testCanvasRevision(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	if err := db.AutoMigrate(&model.CanvasProject{}, &model.CanvasUnitLink{}, &model.Project{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.CanvasUnitLink{}, &model.Project{}); err != nil {
 		t.Fatal(err)
 	}
 	repo := New(db)
@@ -139,6 +139,10 @@ func testCanvasRevision(t *testing.T, db *gorm.DB) {
 	if err := repo.AssignCanvasToProject("owner", initial.ID, "project"); err != nil {
 		t.Fatal(err)
 	}
+	assigned, err := repo.CanvasProjectForUser("owner", initial.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := repo.UpsertCanvasProject(winner); !errors.Is(err, ErrCanvasRevisionConflict) {
 		t.Fatalf("association did not invalidate old content: %v", err)
 	}
@@ -146,7 +150,7 @@ func testCanvasRevision(t *testing.T, db *gorm.DB) {
 		t.Fatal("stale unassignment replaced canvas content")
 	}
 	stored, _ = repo.CanvasProjectForUser("owner", initial.ID)
-	if stored.PayloadJSON != winner.PayloadJSON || stored.Revision != 3 {
+	if stored.PayloadJSON != assigned.PayloadJSON || stored.Revision != 3 {
 		t.Fatal("stale unassignment changed the canvas")
 	}
 	if err := db.Delete(&model.CanvasProject{}, "id = ?", initial.ID).Error; err != nil {

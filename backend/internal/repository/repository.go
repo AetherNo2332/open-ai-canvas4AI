@@ -42,7 +42,8 @@ var ErrProjectUnitShotsChanged = errors.New("镜头已被修改，请刷新后�
 var ErrCanvasRevisionConflict = errors.New("画布已被更新，请刷新后重试")
 
 type Repository struct {
-	db *gorm.DB
+	db                   *gorm.DB
+	structuredWriteQuota StructuredWriteQuota
 }
 
 type UserStorageUsage struct {
@@ -57,11 +58,12 @@ type UserStorageUsage struct {
 
 func New(db *gorm.DB) *Repository {
 	database.InstallAgentEventCallbacks(db)
-	return &Repository{db: db}
+	quota, _ := db.Statement.Context.Value(canvasWriteQuotaContextKey{}).(StructuredWriteQuota)
+	return &Repository{db: db, structuredWriteQuota: quota}
 }
 
 func (r *Repository) WithContext(ctx context.Context) *Repository {
-	return &Repository{db: r.db.WithContext(ctx)}
+	return r.transactionRepository(r.db.WithContext(ctx))
 }
 
 func (r *Repository) Dialect() string {
@@ -1221,6 +1223,23 @@ func (r *Repository) AssetsForUserIDs(userID string, ids []string) ([]model.Asse
 }
 
 func (r *Repository) UpsertAsset(asset *model.Asset) error {
+	return r.db.Transaction(func(db *gorm.DB) error {
+		tx := r.transactionRepository(db)
+		if err := tx.LockCanvasWrite(asset.UserID, ""); err != nil {
+			return err
+		}
+		before, err := tx.AssetForUser(asset.UserID, asset.ID)
+		if err != nil && !tx.IsMissing(err) {
+			return err
+		}
+		if err := tx.checkAssetWriteQuota(before, asset); err != nil {
+			return err
+		}
+		return tx.upsertAsset(asset)
+	})
+}
+
+func (r *Repository) upsertAsset(asset *model.Asset) error {
 	result := r.db.Model(&model.Asset{}).
 		Where("id = ? AND user_id = ?", asset.ID, asset.UserID).
 		Updates(map[string]any{"folder_id": asset.FolderID, "kind": asset.Kind, "category": asset.Category, "status": asset.Status, "primary_version_id": asset.PrimaryVersionID, "title": asset.Title, "payload_json": asset.PayloadJSON, "updated_at": asset.UpdatedAt})
@@ -1248,6 +1267,28 @@ func (r *Repository) FindExpiredArchivedAssets(cutoff time.Time, limit int) ([]m
 
 func (r *Repository) ReplaceAssets(userID string, assets []model.Asset) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		writer := r.transactionRepository(tx)
+		if err := writer.LockCanvasWrite(userID, ""); err != nil {
+			return err
+		}
+		for _, asset := range assets {
+			if asset.UserID != userID {
+				return fmt.Errorf("asset owner does not match replacement owner")
+			}
+		}
+		if writer.structuredWriteQuota != nil {
+			usage, err := writer.CanvasStructuredStorageUsage(userID)
+			if err != nil {
+				return err
+			}
+			bytes := int64(0)
+			for _, asset := range assets {
+				bytes += int64(len(asset.PayloadJSON))
+			}
+			if err := writer.structuredWriteQuota(writer, userID, "asset", int64(len(assets))-usage.AssetCount, bytes-usage.AssetBytes); err != nil {
+				return err
+			}
+		}
 		if err := tx.Delete(&model.Asset{}, "user_id = ?", userID).Error; err != nil {
 			return err
 		}
@@ -1279,6 +1320,34 @@ func (r *Repository) CanvasProjectForUser(userID string, id string) (*model.Canv
 }
 
 func (r *Repository) UpsertCanvasProject(project *model.CanvasProject) error {
+	next := *project
+	err := r.db.Transaction(func(db *gorm.DB) error {
+		tx := r.transactionRepository(db)
+		if err := tx.LockCanvasWrite(next.UserID, next.ID); err != nil {
+			return err
+		}
+		before, err := tx.CanvasProjectForUser(next.UserID, next.ID)
+		if err != nil && !tx.IsMissing(err) {
+			return err
+		}
+		if err := checkCanvasRevision(before, &next); err != nil {
+			return err
+		}
+		if err := tx.checkCanvasWriteQuota(before, &next); err != nil {
+			return err
+		}
+		if err := tx.upsertCanvasProject(&next); err != nil {
+			return err
+		}
+		return tx.syncLegacyCanvasWrite(before, &next, false)
+	})
+	if err == nil {
+		*project = next
+	}
+	return err
+}
+
+func (r *Repository) upsertCanvasProject(project *model.CanvasProject) error {
 	expected := project.Revision
 	if expected < 0 {
 		return ErrCanvasRevisionConflict
@@ -1313,9 +1382,33 @@ func (r *Repository) UpsertCanvasProject(project *model.CanvasProject) error {
 
 func (r *Repository) DeleteCanvasProject(userID string, id string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		// Serialize deletion with saves before reading the history IDs to remove.
-		if err := tx.Model(&model.CanvasProject{}).Where("user_id = ? AND id = ?", userID, id).UpdateColumn("revision", gorm.Expr("revision")).Error; err != nil {
+		writer := r.transactionRepository(tx)
+		if err := writer.LockCanvasWrite(userID, id); err != nil {
 			return err
+		}
+		before, err := writer.CanvasProjectForUser(userID, id)
+		if err != nil && !writer.IsMissing(err) {
+			return err
+		}
+		if before != nil {
+			var document map[string]any
+			if err := json.Unmarshal([]byte(before.PayloadJSON), &document); err != nil {
+				return err
+			}
+			if document == nil {
+				return fmt.Errorf("canvas document is null")
+			}
+			document["_deleted"] = true
+			encoded, err := json.Marshal(document)
+			if err != nil {
+				return err
+			}
+			tombstone := *before
+			tombstone.Revision++
+			tombstone.PayloadJSON = string(encoded)
+			if err := writer.syncLegacyCanvasWrite(before, &tombstone, false); err != nil {
+				return err
+			}
 		}
 		var snapshotIDs []string
 		if err := tx.Model(&model.CanvasSnapshot{}).Where("user_id = ? AND canvas_id = ?", userID, id).Pluck("id", &snapshotIDs).Error; err != nil {
@@ -1384,6 +1477,10 @@ func (r *Repository) UpdateProject(project *model.Project) error {
 
 func (r *Repository) DeleteProject(userID string, id string, canvasUpdates []model.CanvasProject) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		writer := r.transactionRepository(tx)
+		if err := writer.LockCanvasWrite(userID, ""); err != nil {
+			return err
+		}
 		var canvasIDs []string
 		if err := tx.Model(&model.CanvasProject{}).
 			Where("user_id = ? AND project_id = ?", userID, id).
@@ -1407,14 +1504,16 @@ func (r *Repository) DeleteProject(userID string, id string, canvasUpdates []mod
 			return err
 		}
 		for _, canvas := range canvasUpdates {
-			result := tx.Model(&model.CanvasProject{}).
-				Where("id = ? AND user_id = ? AND project_id = ? AND revision = ?", canvas.ID, userID, id, canvas.Revision).
-				Updates(map[string]any{"project_id": "", "payload_json": canvas.PayloadJSON, "updated_at": canvas.UpdatedAt, "revision": canvas.Revision + 1})
-			if result.Error != nil {
-				return result.Error
+			before, err := writer.CanvasProjectForUser(userID, canvas.ID)
+			if err != nil {
+				return err
 			}
-			if result.RowsAffected != 1 {
+			if before.ProjectID != id || canvas.UserID != userID {
 				return gorm.ErrRecordNotFound
+			}
+			canvas.ProjectID = ""
+			if err := writer.UpsertCanvasProject(&canvas); err != nil {
+				return err
 			}
 		}
 		var remainingCanvasCount int64
@@ -1647,22 +1746,51 @@ func (r *Repository) DeleteCanvasUnitLink(projectID string, canvasID string, uni
 }
 
 func (r *Repository) AssignCanvasToProject(userID string, canvasID string, projectID string) error {
-	return r.db.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ?", canvasID, userID).Updates(map[string]any{"project_id": projectID, "revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error
+	return r.db.Transaction(func(db *gorm.DB) error {
+		tx := r.transactionRepository(db)
+		if err := tx.LockCanvasWrite(userID, canvasID); err != nil {
+			return err
+		}
+		row, err := tx.CanvasProjectForUser(userID, canvasID)
+		if err != nil {
+			return err
+		}
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(row.PayloadJSON), &doc); err != nil {
+			return err
+		}
+		if doc == nil {
+			return fmt.Errorf("canvas document is null")
+		}
+		doc["projectId"] = projectID
+		raw, err := json.Marshal(doc)
+		if err != nil {
+			return err
+		}
+		row.ProjectID, row.PayloadJSON, row.UpdatedAt = projectID, string(raw), time.Now()
+		return tx.UpsertCanvasProject(row)
+	})
 }
 
 func (r *Repository) UnassignCanvasFromProject(userID string, projectID string, canvasID string, payloadJSON string, updatedAt time.Time, revision int64) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		writer := r.transactionRepository(tx)
+		if err := writer.LockCanvasWrite(userID, canvasID); err != nil {
+			return err
+		}
+		row, err := writer.CanvasProjectForUser(userID, canvasID)
+		if err != nil {
+			return err
+		}
+		if row.ProjectID != projectID || row.Revision != revision {
+			return gorm.ErrRecordNotFound
+		}
 		if err := tx.Where("project_id = ? AND canvas_id = ?", projectID, canvasID).Delete(&model.CanvasUnitLink{}).Error; err != nil {
 			return err
 		}
-		result := tx.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ? AND project_id = ? AND revision = ?", canvasID, userID, projectID, revision).Updates(map[string]any{
-			"project_id": "", "payload_json": payloadJSON, "updated_at": updatedAt, "revision": revision + 1,
-		})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
+		row.ProjectID, row.PayloadJSON, row.UpdatedAt = "", payloadJSON, updatedAt
+		if err := writer.UpsertCanvasProject(row); err != nil {
+			return err
 		}
 		return tx.Model(&model.Project{}).Where("id = ?", projectID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": updatedAt}).Error
 	})
@@ -1784,6 +1912,9 @@ func (r *Repository) DeleteProjectAssetFolder(projectID string, folderID string)
 func (r *Repository) LinkProjectAsset(asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink) (bool, error) {
 	createdLink := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).guardAssetPersistence(asset, true); err != nil {
+			return err
+		}
 		// 资产可能尚未落库（首次导入）或已存在（并发/重试），冲突幂等跳过。
 		assetCreated := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).Create(asset)
 		if assetCreated.Error != nil {
@@ -2261,6 +2392,9 @@ func (r *Repository) CreateProjectAssetCandidate(candidate *model.ProjectAssetCa
 // ConfirmProjectAssetCandidate 将正式资产身份、首版本、项目引用和候选状态放在同一事务中，避免出现半确认数据。
 func (r *Repository) ConfirmProjectAssetCandidate(candidate *model.ProjectAssetCandidate, asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink, createAsset bool) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.transactionRepository(tx).guardAssetPersistence(asset, true); err != nil {
+			return err
+		}
 		if createAsset {
 			if err := tx.Create(asset).Error; err != nil {
 				return err

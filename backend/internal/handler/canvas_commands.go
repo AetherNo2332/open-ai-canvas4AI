@@ -7,6 +7,7 @@ import (
 	"infinite-canvas/backend/internal/canvas/commands"
 	"infinite-canvas/backend/internal/identity"
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/repository"
 	"io"
 	"net/http"
 	"strconv"
@@ -17,6 +18,9 @@ type CanvasPrincipalResolver func(*gin.Context) (identity.Principal, error)
 func canvasCommandError(c *gin.Context, err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, repository.ErrCanvasRevisionConflict) {
+		err = &commands.Error{Reason: "revision_conflict", Message: "画布已变化，请读取最新版本后重试"}
 	}
 	var typed *commands.Error
 	if !errors.As(err, &typed) {

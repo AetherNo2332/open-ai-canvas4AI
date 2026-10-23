@@ -55,7 +55,24 @@ func (r *Repository) CanvasSnapshot(userID, canvasID, id string) (*model.CanvasS
 func (r *Repository) SaveCanvasWithSnapshot(project *model.CanvasProject, snapshot *model.CanvasSnapshot, resourceIDs, currentResourceIDs []string, cutoff time.Time, limit int, force bool) error {
 	next := *project
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := New(tx).UpsertCanvasProject(&next); err != nil {
+		writer := r.transactionRepository(tx)
+		if err := writer.LockCanvasWrite(next.UserID, next.ID); err != nil {
+			return err
+		}
+		before, err := writer.CanvasProjectForUser(next.UserID, next.ID)
+		if err != nil && !writer.IsMissing(err) {
+			return err
+		}
+		if err := checkCanvasRevision(before, &next); err != nil {
+			return err
+		}
+		if err := writer.checkCanvasWriteQuota(before, &next); err != nil {
+			return err
+		}
+		if err := writer.upsertCanvasProject(&next); err != nil {
+			return err
+		}
+		if err := writer.syncLegacyCanvasWrite(before, &next, snapshot != nil && snapshot.Reason == "before_restore"); err != nil {
 			return err
 		}
 		capture := false

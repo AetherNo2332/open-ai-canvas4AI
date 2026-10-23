@@ -19,7 +19,7 @@ func newAssetLibraryTestRepository(t *testing.T) (*Repository, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.Asset{}, &model.AssetFolder{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.Asset{}, &model.AssetFolder{}); err != nil {
 		t.Fatal(err)
 	}
 	return New(db), db

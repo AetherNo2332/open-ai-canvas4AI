@@ -20,6 +20,7 @@ type ServiceOptions struct {
 	// Invoked within the same transaction immediately before document access.
 	Authorize   func(context.Context, *repository.Repository, identity.Principal, string, string) error
 	Validation  func(context.Context, *repository.Repository, identity.Principal) (ValidationContext, error)
+	Quota       repository.CanvasWriteQuota
 	AfterCommit func(Receipt)
 }
 type Service struct {
@@ -42,6 +43,9 @@ func canonical(v any) (string, error) { raw, err := json.Marshal(v); return stri
 func (s *Service) authorize(ctx context.Context, tx *repository.Repository, p identity.Principal, canvasID, scope string) error {
 	if p.ID == "" || p.OwnerID == "" || !p.HasScope(scope) || (scope == "canvas.write" && p.Role == "viewer") {
 		return failure("permission_denied", "没有画布权限")
+	}
+	if err := tx.LockCanvasWrite(p.OwnerID, canvasID); err != nil {
+		return err
 	}
 	user, err := tx.User(p.OwnerID)
 	if err != nil || user.Status != model.UserStatusActive {
@@ -199,6 +203,11 @@ func (s *Service) Create(ctx context.Context, p identity.Principal, req CreateCa
 			return err
 		}
 		row := &model.CanvasProject{ID: id, UserID: p.OwnerID, ProjectID: req.ProjectID, Title: title, PayloadJSON: payload, Revision: 1, CreatedAt: now, UpdatedAt: now}
+		if s.options.Quota != nil {
+			if err = s.options.Quota(tx, p.OwnerID, true, int64(len(payload))); err != nil {
+				return err
+			}
+		}
 		if err = tx.CreateCommandCanvas(row); err != nil {
 			return err
 		}
@@ -542,6 +551,11 @@ func (s *Service) persist(tx *repository.Repository, p identity.Principal, req C
 	payload, err := canonical(plan.Document)
 	if err != nil {
 		return Receipt{}, err
+	}
+	if s.options.Quota != nil {
+		if err = s.options.Quota(tx, p.OwnerID, false, int64(len(payload)-len(row.PayloadJSON))); err != nil {
+			return Receipt{}, err
+		}
 	}
 	row.PayloadJSON = payload
 	epoch.Deleted = plan.Document["_deleted"] == true
