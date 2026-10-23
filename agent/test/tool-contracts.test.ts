@@ -8,6 +8,20 @@ import { validateToolArguments, type ToolCall } from "@earendil-works/pi-ai";
 const artifact = JSON.parse(await readFile(new URL("../../harness/TOOL_SCHEMA.json", import.meta.url), "utf8"));
 
 const cases: [string, ToolCall["arguments"], boolean][] = [
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "add_assets", rowIds: ["r"], assets: [{ref:"hero",role:"character"}] }, true],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "remove_assets", rowId: "r", assets: [] }, false],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "upsert_assets", rowId: "r", assets: [{ref:"hero",role:"character"}], patch:{dialogue:"mixed"} }, false],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "add_references", references: ["hero"] }, true],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "remove_references", referenceNodeIds: [] }, false],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "append_rows", operationId: "task/chunk-1", rows:[{durationSeconds:5,plotDescription:"new"}] }, true],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "update", rowId:"r", operationId:"short", patch:{dialogue:"new"} }, false],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "update", rowId:"r", storyboardRevision:"rev", patch:{dialogue:"{{ref:node:hero:reference}}"} }, true],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "update", rowId:"r", storyboardRevision:"rev", patch:{assets:[]} }, false],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "batch_update", storyboardRevision:"rev", updates:[{rowId:"r",patch:{assets:[]}}] }, false],
+  ["canvas_edit_storyboard", { snapshotHash: "h", nodeId: "b", action: "append_rows", storyboardRevision:"rev", rows:[{durationSeconds:5,plotDescription:"new"}] }, false],
+  ["canvas_read_storyboard", { nodeId:"b", operationIds:["task/chunk-1","task/chunk-2"] }, true],
+  ["canvas_read_storyboard", { nodeId:"b", operationIds:[] }, false],
+  ["canvas_read_storyboard", { nodeId:"b", operationIds:["task/chunk-1","task/chunk-1"] }, false],
   // 连线操作已从 Agent 合同删除：旧调用必须被 Pi 的验证器直接拒绝。
   ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "connect_nodes", id: "e", fromNodeId: "a", toNodeId: "b", toHandleId: "row:r1" }] }, false],
   ["canvas_apply_ops", { snapshotHash: "h", ops: [{ type: "update_connection", id: "e", fromNodeId: "a", toNodeId: "b" }] }, false],

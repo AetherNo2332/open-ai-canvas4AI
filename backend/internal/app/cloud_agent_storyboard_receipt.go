@@ -89,6 +89,43 @@ func cloudAgentStoryboardMutationReceipt(plan *cloudAgentStoryboardMutationPlan,
 	if fields := cloudAgentStoryboardChangedFields(beforeBoard, board, "rows"); len(fields) > 0 {
 		receipt["changedFields"] = fields
 	}
+	assets, err := cloudAgentStoryboardAssetChanges(beforeDoc, plan.Document, nodeID, beforeRows, rows, cloudAgentStrings(board["referenceNodeIds"]))
+	if err != nil {
+		return nil, err
+	}
+	if len(assets) > 0 {
+		receipt["assetChanges"] = assets
+		remaining := []string{}
+		for _, change := range creationMaps(assets) {
+			if change["detailsOmitted"] == true {
+				remaining = append(remaining, stringValue(change["rowId"]))
+			}
+		}
+		if len(remaining) > 0 {
+			receipt["assetChangesNextRead"] = map[string]any{"tool": "canvas_read_storyboard", "arguments": map[string]any{"nodeId": nodeID, "rowIds": remaining, "view": "bindings"}}
+		}
+	}
+	if call.Function.Name == "canvas_edit_storyboard" {
+		var args cloudAgentStoryboardEditArgs
+		_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
+		if cloudAgentStoryboardSharedAction(args.Action) {
+			old, next := cloudAgentStrings(beforeBoard["referenceNodeIds"]), cloudAgentStrings(board["referenceNodeIds"])
+			added, removed, retained := []string{}, []string{}, []string{}
+			for _, id := range old {
+				if cloudAgentContainsString(next, id) {
+					retained = append(retained, id)
+				} else {
+					removed = append(removed, id)
+				}
+			}
+			for _, id := range next {
+				if !cloudAgentContainsString(old, id) {
+					added = append(added, id)
+				}
+			}
+			receipt["referenceChanges"] = map[string]any{"scope": "shared", "addedNodeIds": added, "removedNodeIds": removed, "retainedNodeIds": retained, "affectedRows": len(rows)}
+		}
+	}
 	return receipt, nil
 }
 

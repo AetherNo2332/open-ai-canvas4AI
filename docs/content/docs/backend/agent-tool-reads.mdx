@@ -33,6 +33,20 @@ description: 按需读取画布、检查分镜绑定、追溯角色媒体来源�
 
 ## 分镜创作与生成闭环
 
+分镜读取同时返回 `storyboardRevision`，覆盖整表、共享/行级资产、输出依赖及持久实体世代。纯创作字段的 `update` / `batch_update` 可携带该版本与 `snapshotHash`：无关节点布局不阻塞编辑，同表或依赖内容、表重建仍产生冲突。没有表版本时沿用全画布保护；追加、删除、资产和产物动作仍校验全画布快照。该版本当前按整表计算，另一行的人工修改也会冲突。
+
+增量行资产使用 `add_assets`、`remove_assets`、`upsert_assets`，由 `ref` 和 `role` 定位，未提及的角色/资产保留；增量共享输入使用 `add_references` / `remove_references`。增量数组必须非空。`set_assets` / `set_references` 保留明确替换与清空语义。回执 `assetChanges` 列行资产新增、移除、保留及有效输入的计数，小变更直接列明细；明细总预算为8KiB，超出时标记 `detailsOmitted` 并给出 `assetChangesNextRead`，用绑定分页核对，不重复返回每行全部资产。`referenceChanges` 列共享增减及影响行数，不将共享删除误报为行资产删除。
+
+有效媒体输入提供现有 `bindingId` 及 `promptHandle`，例如 `{{ref:node:hero:reference}}`。在分镜提示词中复制这个句柄；Agent 与浏览器的实际分镜生成入口都在最终素材顺序确定后转换为供应商序号，原表正文不改写。调整另一行、共享输入或当前资产优先级不会改变句柄指向；当前输入移除该资产、句柄格式无效或无实际媒体槽位时拒绝生成。旧的数字编号文本仍按既有协议处理，新的创作应使用稳定句柄。
+
+## 分镜分块恢复
+
+每个编辑批次可提供8–128字符的稳定 `operationId`。画布写入和已有命令回执表中的批次记录在同一事务提交；相同标识、相同操作参数返回原结果，不重复追加或审批；同标识不同参数拒绝。版本前置条件不属于操作身份，冲突后可刷新版本继续原操作。恢复生成新画布 epoch 后，旧标识返回 `operation_epoch_conflict`，不允许将历史追加当作未执行而重发；重新确认目标后，新操作使用新标识。
+
+`canvas_read_storyboard` 的 `operationIds` 每次可查1–20个不同批次，返回 `committed` 及其目标行/字段、追加行，或 `not_found`；旧画布世代的记录标记 `retired_epoch`。目标清单过大时应减少每次查询的批次数量。继续用 `fields` / `missingAnyFields` 核对当前持久内容与剩余缺口；历史已提交不代表后来未被人工修改。重放返回 `replayed=true` 和当前版本提示 `currentSnapshotHash`，原 `snapshotHash` / `storyboardRevision` 仍属于原提交，不加入新的写入版本链；新批次应从当前目标状态继续。数据库或回执写入失败时整次回滚，不留下“行已改但无回执”的状态。
+
+## 分镜创作字段
+
 `canvas_create_storyboard` 自动分配节点、行 ID 与默认位置。行以 `plotDescription` 维护创作说明，并可独立编辑景别、运镜、光影、表演、节拍和连续性等领域创作字段；时长、对白与可选图片/视频提示词覆盖分别维护。UI 与 Agent 的创作字段来自同一领域合同，任务状态和产物身份仍由专用流程管理。已有提示词覆盖优先于创作说明，修改说明不会隐式清空覆盖。
 
 行 `assets` 为 `{ref,role}` 数组，ref 接受当前画布节点 ID 或唯一完整名称，服务端转成现有 `assetBindings` 并校验用途。同名多版本、缺失、归档或用途不匹配时整次拒绝，禁止模糊匹配和猜版本。共享上下文用 `references`；仍可显式使用真实 `referenceNodeIds`。

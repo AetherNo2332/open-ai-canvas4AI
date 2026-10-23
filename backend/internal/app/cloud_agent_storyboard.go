@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -31,19 +32,21 @@ type cloudAgentStoryboardCreateArgs struct {
 }
 
 type cloudAgentStoryboardEditArgs struct {
-	Updates          []cloudAgentStoryboardRowUpdate `json:"updates,omitempty"`
-	Rows             []map[string]any                `json:"rows,omitempty"`
-	RowIDs           []string                        `json:"rowIds,omitempty"`
-	References       []string                        `json:"references,omitempty"`
-	Assets           []cloudAgentStoryboardAsset     `json:"assets,omitempty"`
-	SnapshotHash     string                          `json:"snapshotHash"`
-	NodeID           string                          `json:"nodeId"`
-	Action           string                          `json:"action"`
-	RowID            string                          `json:"rowId"`
-	Patch            map[string]any                  `json:"patch"`
-	ReferenceNodeIDs []string                        `json:"referenceNodeIds,omitempty"`
-	OutputMode       string                          `json:"outputMode,omitempty"`
-	OutputNodeID     string                          `json:"outputNodeId,omitempty"`
+	OperationID        string                          `json:"operationId,omitempty"`
+	StoryboardRevision string                          `json:"storyboardRevision,omitempty"`
+	Updates            []cloudAgentStoryboardRowUpdate `json:"updates,omitempty"`
+	Rows               []map[string]any                `json:"rows,omitempty"`
+	RowIDs             []string                        `json:"rowIds,omitempty"`
+	References         []string                        `json:"references,omitempty"`
+	Assets             []cloudAgentStoryboardAsset     `json:"assets,omitempty"`
+	SnapshotHash       string                          `json:"snapshotHash"`
+	NodeID             string                          `json:"nodeId"`
+	Action             string                          `json:"action"`
+	RowID              string                          `json:"rowId"`
+	Patch              map[string]any                  `json:"patch"`
+	ReferenceNodeIDs   []string                        `json:"referenceNodeIds,omitempty"`
+	OutputMode         string                          `json:"outputMode,omitempty"`
+	OutputNodeID       string                          `json:"outputNodeId,omitempty"`
 }
 
 type cloudAgentStoryboardRowUpdate struct {
@@ -262,13 +265,16 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 	if args.SnapshotHash == "" || args.NodeID == "" {
 		return nil, BadAuthRequest("编辑分镜需要快照和节点ID")
 	}
-	if args.Action == "set_references" || args.Action == "bind_output" || args.Action == "unbind_output" {
+	if args.StoryboardRevision != "" && !cloudAgentStoryboardScopedEdit(args) {
+		return nil, cloudAgentFieldError("storyboardRevision", "invalid_revision_scope", "表级版本仅用于纯创作字段 update/batch_update")
+	}
+	if cloudAgentStoryboardSharedAction(args.Action) || args.Action == "bind_output" || args.Action == "unbind_output" {
 		if args.Updates != nil || args.Rows != nil {
 			return nil, BadAuthRequest("引用或产物归属动作不接受 updates 或 rows")
 		}
 		return prepareCloudAgentStoryboardReferenceEdit(repo, userID, canvasID, args)
 	}
-	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && args.Action != "set_assets" {
+	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && !cloudAgentStoryboardAssetAction(args.Action) {
 		return nil, BadAuthRequest("分镜操作无效")
 	}
 	canvas, err := repo.CanvasProjectForUser(userID, canvasID)
@@ -280,8 +286,8 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 		return nil, err
 	}
 	beforeHash := cloudAgentCanvasHash(doc)
-	if beforeHash != args.SnapshotHash {
-		return nil, cloudAgentSnapshotConflictError("画布已变化，请重新读取后修改分镜")
+	if err := validateCloudAgentStoryboardRevision(repo, userID, canvasID, doc, args); err != nil {
+		return nil, err
 	}
 	if cloudAgentStoryboardEditWritesReferences(args) {
 		if err := validateCloudAgentReferenceMigration(doc); err != nil {
@@ -324,7 +330,7 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 			details = append(details, fmt.Sprintf("镜头 %v", row["shotNumber"]))
 		}
 	}
-	if args.Action == "set_assets" {
+	if cloudAgentStoryboardAssetAction(args.Action) {
 		for _, asset := range args.Assets {
 			details = append(details, truncateRunes(asset.Ref, 120)+" · "+asset.Role)
 		}
@@ -340,6 +346,19 @@ func prepareCloudAgentStoryboardEdit(repo *repository.Repository, userID, canvas
 		Preview: cloudAgentApprovalPreview{Kind: "canvas_mutation", Title: "确认修改分镜", Description: "整批校验并修改所选镜头的创作内容或资产引用。", Items: []cloudAgentApprovalPreviewItem{{Operation: "edit_storyboard", NodeID: args.NodeID, NodeTitle: stringValue(node["title"]), NodeType: "script", NodeTypeLabel: "分镜脚本", Fields: fields, Details: details, Summary: fmt.Sprintf("%s：%s", args.Action, stringValue(node["title"]))}}}}, nil
 }
 func applyCloudAgentStoryboardMutation(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {
+	var result any
+	err := repo.CanvasAtomicWrite(context.Background(), userID, canvasID, func(tx *repository.Repository) error {
+		var err error
+		result, err = applyCloudAgentStoryboardMutationAtomic(tx, userID, canvasID, call, policy, recorder...)
+		return err
+	})
+	return result, err
+}
+
+func applyCloudAgentStoryboardMutationAtomic(repo *repository.Repository, userID, canvasID string, call cloudAgentCall, policy RuntimePolicySetting, recorder ...cloudAgentMutationRecorder) (any, error) {
+	if result, found, err := cloudAgentStoryboardReplay(repo, userID, canvasID, call); found || err != nil {
+		return result, err
+	}
 	var plan *cloudAgentStoryboardMutationPlan
 	var err error
 	if call.Function.Name == "canvas_create_storyboard" {
@@ -357,10 +376,18 @@ func applyCloudAgentStoryboardMutation(repo *repository.Repository, userID, canv
 	if err := saveCloudAgentDocument(repo, plan.Canvas, plan.Document, policy); err != nil {
 		return nil, err
 	}
+	revision, err := cloudAgentStoryboardRevision(repo, userID, canvasID, plan.Document, stringValue(receipt["nodeId"]))
+	if err != nil {
+		return nil, err
+	}
+	receipt["storyboardRevision"] = revision
 	if len(recorder) > 0 && recorder[0] != nil {
 		if err := recorder[0](repo, cloudAgentMutationInput{UserID: userID, CanvasID: canvasID, StepID: call.ID, Operation: call.Function.Name, BeforeSnapshotHash: plan.BeforeSnapshotHash, AfterSnapshotHash: cloudAgentCanvasHash(plan.Document), BeforeJSON: plan.BeforeJSON, Preview: &plan.Preview}); err != nil {
 			return nil, err
 		}
+	}
+	if err := cloudAgentStoreStoryboardOperation(repo, userID, canvasID, call, receipt); err != nil {
+		return nil, err
 	}
 	return receipt, nil
 }

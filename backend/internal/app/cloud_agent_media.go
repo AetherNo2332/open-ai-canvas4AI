@@ -825,6 +825,12 @@ func (s *Service) prepareCloudAgentMedia(run *model.CloudAgentExecution, state *
 		if utf8.RuneCountInString(a.Prompt) > 16000 {
 			return CreateTaskRequest{}, nil, BadAuthRequest("角色卡设定与生成提示词合计超过16000字符，请精简后重新提交")
 		}
+		if a.StoryboardNodeID != "" {
+			a.Prompt, err = cloudAgentStoryboardProviderPrompt(a.Prompt, a.ResolvedBindings, refs)
+			if err != nil {
+				return CreateTaskRequest{}, nil, err
+			}
+		}
 		a.Prompt, err = cloudAgentMediaReferencePrompt(a.Prompt, refs)
 		if err != nil {
 			return CreateTaskRequest{}, nil, err

@@ -89,7 +89,10 @@ func (r *cloudAgentReferenceReader) resolve(scope references.Scope) map[string]a
 	inputs := []any{}
 	mediaCount, unavailable, unknown := 0, 0, 0
 	for _, binding := range resolution.Bindings {
-		input := map[string]any{"nodeId": binding.NodeID, "mediaType": binding.MediaType, "role": binding.Role, "order": binding.Order}
+		input := map[string]any{"bindingId": binding.ID, "nodeId": binding.NodeID, "mediaType": binding.MediaType, "role": binding.Role, "order": binding.Order}
+		if binding.MediaType != "text" {
+			input["promptHandle"] = references.PromptHandle(binding.ID)
+		}
 		if binding.MediaType != "text" {
 			mediaCount++
 		}

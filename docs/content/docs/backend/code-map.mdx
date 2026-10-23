@@ -62,6 +62,11 @@ description: 从产品功能快速定位主要代码入口
 
 ## 分镜 Agent 创作闭环
 
+- `cloud_agent_storyboard_assets.go`：行级资产增减/用途更新与行级、共享、最终绑定影响回执；显式替换保持原入口。
+- `cloud_agent_storyboard_recovery.go`：复用命令回执保存稳定批次身份、目标及结果，重放不重复落库；运行时在审批前识别已有结果。
+- `cloud_agent_storyboard_revision.go`：整表、实际依赖和持久世代版本；只为纯创作字段更新缩小冲突范围。
+- `references/prompt.go` 与 `cloud_agent_storyboard_prompt.go`：复用现有绑定 ID 形成提示词句柄，在 Agent/浏览器实际生成的最终素材槽位确定后转换，缺失引用拒绝。
+
 以下 Go 文件位于 `backend/internal/app/`：
 
 - `cloud_agent_storyboard_workflow.go`：名称/ID 精确解析、资产用途转换、批量行副本规划、按运行与模型步骤分配创建身份。

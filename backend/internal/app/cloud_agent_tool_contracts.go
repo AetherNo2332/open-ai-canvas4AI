@@ -137,7 +137,7 @@ func cloudAgentCanvasOpsWriteReferences(doc map[string]any, ops []agentCanvasOp)
 // cloudAgentStoryboardEditWritesReferences 覆盖共享引用、行素材和角色字段中的资产引用。产物归属
 // （bind_output／unbind_output）写的是历史画布同样有效的行归属字段，不在这里拦。
 func cloudAgentStoryboardEditWritesReferences(args cloudAgentStoryboardEditArgs) bool {
-	if args.Action == "set_references" || args.Action == "set_assets" {
+	if cloudAgentStoryboardSharedAction(args.Action) || cloudAgentStoryboardAssetAction(args.Action) {
 		return true
 	}
 	rows := append([]map[string]any{args.Patch}, args.Rows...)
@@ -247,6 +247,33 @@ func cloudAgentToolParameterContracts(name string, schema map[string]any) {
 			update, remove, assets, refs,
 			cloudAgentActionBranch("bind_output", []string{"rowId", "outputMode", "outputNodeId"}, map[string]any{"outputNodeId": map[string]any{"type": "string", "minLength": 1}}, "rowIds", "patch", "references", "referenceNodeIds", "assets", "updates", "rows"),
 			cloudAgentActionBranch("unbind_output", []string{"rowId", "outputMode"}, nil, "rowIds", "patch", "references", "referenceNodeIds", "assets", "outputNodeId", "updates", "rows"),
+		}
+		branches := schema["oneOf"].([]map[string]any)
+		for _, action := range []string{"add_assets", "remove_assets", "upsert_assets"} {
+			assetSchema := cloudAgentStoryboardAssetsSchema()
+			assetSchema["minItems"] = 1
+			branch := cloudAgentActionBranch(action, []string{"assets"}, map[string]any{"assets": assetSchema}, "patch", "references", "referenceNodeIds", "outputMode", "outputNodeId", "updates", "rows")
+			branch["oneOf"] = selection
+			branches = append(branches, branch)
+		}
+		for _, action := range []string{"add_references", "remove_references"} {
+			branch := cloudAgentActionBranch(action, nil, map[string]any{"references": map[string]any{"type": "array", "minItems": 1}, "referenceNodeIds": map[string]any{"type": "array", "minItems": 1}}, "rowId", "rowIds", "patch", "assets", "outputMode", "outputNodeId", "updates", "rows")
+			branch["oneOf"] = refs["oneOf"]
+			branches = append(branches, branch)
+		}
+		schema["oneOf"] = branches
+		for _, branch := range branches {
+			properties := branch["properties"].(map[string]any)
+			action := properties["action"].(map[string]any)["const"]
+			if action != "update" && action != "batch_update" {
+				properties["storyboardRevision"] = map[string]any{"not": map[string]any{}}
+			} else {
+				pure := map[string]any{"patch": map[string]any{"properties": cloudAgentForbiddenFields("assets")}}
+				if action == "batch_update" {
+					pure = map[string]any{"updates": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": pure}}}
+				}
+				branch["anyOf"] = []map[string]any{{"properties": cloudAgentForbiddenFields("storyboardRevision")}, {"properties": pure}}
+			}
 		}
 	case "canvas_edit_batch_table":
 		schema["oneOf"] = []map[string]any{

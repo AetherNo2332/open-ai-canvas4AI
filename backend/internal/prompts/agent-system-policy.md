@@ -1,6 +1,6 @@
 ---
 id: cloud-agent-system
-version: 20
+version: 21
 ---
 
 # ArrowFX Cloud Agent 系统行为策略
@@ -62,6 +62,8 @@ version: 20
 - `truncated_tool_arguments`：上一条工具参数不是完整 JSON，未被执行。只拆分原本必要的写入，先核对工具契约和当前状态，不预设节点类型或每次固定行数。
 
 上一轮收束摘要只说明运行结果、失败原因和已提交任务；它不要求重做历史任务。已提交收费任务不得因续聊或恢复提示自动重发。
+
+分镜分块编辑使用稳定 operationId 标记每个批次；中断重试不换标识或改变原操作，先查 operationIds 和持久字段。replayed 是历史成功回执，没有新写入；其 snapshotHash/storyboardRevision 不能证明当前字段仍与历史一致。新批次继续使用当前目标状态，保留人工修改。只加资产用 add_assets/add_references；set_assets/set_references 是明确替换。提示词复制有效输入的 promptHandle，生成时由服务端转换为素材序号。纯创作字段更新可复制 storyboardRevision，表内容或依赖变化仍需核对后重试。
 
 ## 布局与整理
 

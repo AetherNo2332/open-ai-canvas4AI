@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 )
 
 type cloudAgentStoryboardReadArgs struct {
+	OperationIDs     []string `json:"operationIds,omitempty"`
 	NodeID           string   `json:"nodeId"`
 	View             string   `json:"view"`
 	Mode             string   `json:"mode"`
@@ -30,6 +32,14 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 	}
 	var provided map[string]json.RawMessage
 	_ = json.Unmarshal([]byte(call.Function.Arguments), &provided)
+	if _, exists := provided["operationIds"]; exists && len(args.OperationIDs) == 0 {
+		return nil, cloudAgentFieldError("operationIds", "invalid_value", "operationIds 不能为空")
+	}
+	if _, exists := provided["operationIds"]; exists {
+		if err := validateCloudAgentStoryboardOperationIDs(args.OperationIDs); err != nil {
+			return nil, err
+		}
+	}
 	for key, fields := range map[string][]string{"fields": args.Fields, "missingAnyFields": args.MissingAnyFields} {
 		if _, exists := provided[key]; !exists {
 			continue
@@ -60,6 +70,16 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 	if len(args.RowIDs) > 0 && args.Offset != 0 {
 		return nil, BadAuthRequest("rowIds 与 offset 不能同时使用")
 	}
+	var result any
+	err := repo.CanvasReadTransaction(context.Background(), func(tx *repository.Repository) error {
+		var err error
+		result, err = cloudAgentReadStoryboardSnapshot(tx, userID, canvasID, args)
+		return err
+	})
+	return result, err
+}
+
+func cloudAgentReadStoryboardSnapshot(repo *repository.Repository, userID, canvasID string, args cloudAgentStoryboardReadArgs) (any, error) {
 	canvas, err := repo.CanvasProjectForUser(userID, canvasID)
 	if err != nil {
 		return nil, err
@@ -239,6 +259,18 @@ func cloudAgentReadStoryboard(repo *repository.Repository, userID, canvasID stri
 	}
 	result := map[string]any{"nodeId": args.NodeID, "title": truncateRunes(stringValue(node["title"]), 300), "snapshotHash": cloudAgentCanvasHash(doc), "view": args.View, "mode": firstNonEmpty(args.Mode, "declared"), "storyboard": resultBoard, "coverage": coverage, "pageByteBudget": cloudAgentReadPageBytes,
 		"referenceMigration": map[string]any{"required": !references.Enabled(doc)}, "summary": map[string]any{"scope": "inspected_rows", "rowsWithoutMediaInputs": missingMedia, "rowsWithInvalidReferences": invalid, "rowsWithUnavailableInputs": unavailable, "rowsWithUnknownInputs": unknown, "rowsRequiringMigration": migration, "rowsWithoutImageOutput": missingImage, "rowsWithoutVideoOutput": missingVideo}}
+	revision, err := cloudAgentStoryboardRevision(repo, userID, canvasID, doc, args.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	result["storyboardRevision"] = revision
+	if len(args.OperationIDs) > 0 {
+		operations, err := cloudAgentStoryboardOperationStatuses(repo, userID, canvasID, args.NodeID, args.OperationIDs)
+		if err != nil {
+			return nil, err
+		}
+		result["operations"] = operations
+	}
 	if body, err := json.Marshal(result); err != nil {
 		return nil, err
 	} else if len(body) > cloudAgentReadPageBytes {

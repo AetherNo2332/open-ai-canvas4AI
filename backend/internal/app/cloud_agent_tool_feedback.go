@@ -224,6 +224,14 @@ func cloudAgentSnapshotFeedback(state *cloudAgentRuntime, call cloudAgentCall, d
 	detail["guidance"] = "本次未写入；先读取最新画布，重新核对目标与原操作，再使用新 snapshotHash 提交；不要改成新建节点"
 	detail["nextRead"] = map[string]any{"tool": "canvas_get_state", "arguments": map[string]any{}}
 	detail["retryArgumentsPatch"] = map[string]any{"snapshotHash": "<canvas_get_state.snapshotHash>"}
+	var arguments map[string]any
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &arguments)
+	if call.Function.Name == "canvas_edit_storyboard" && stringValue(arguments["storyboardRevision"]) != "" {
+		detail["field"] = "storyboardRevision"
+		detail["guidance"] = "本次未写入；先读取目标分镜和依赖，核对原补丁及人工修改后刷新 snapshotHash 与 storyboardRevision；保持 operationId 和原操作，不自动覆盖冲突内容"
+		detail["nextRead"] = map[string]any{"tool": "canvas_read_storyboard", "arguments": map[string]any{"nodeId": arguments["nodeId"], "view": "creative"}}
+		detail["retryArgumentsPatch"] = map[string]any{"snapshotHash": "<canvas_read_storyboard.snapshotHash>", "storyboardRevision": "<canvas_read_storyboard.storyboardRevision>"}
+	}
 	// Large operations stay in the existing call; only the replacement hash is needed.
 	if len(call.Function.Arguments) > 1600 {
 		return
@@ -234,7 +242,9 @@ func cloudAgentSnapshotFeedback(state *cloudAgentRuntime, call cloudAgentCall, d
 	}
 	var example map[string]any
 	if json.Unmarshal([]byte(call.Function.Arguments), &example) == nil && example != nil {
-		example["snapshotHash"] = "<canvas_get_state.snapshotHash>"
+		for field, value := range detail["retryArgumentsPatch"].(map[string]any) {
+			example[field] = value
+		}
 		detail["exampleArguments"] = example
 	}
 }

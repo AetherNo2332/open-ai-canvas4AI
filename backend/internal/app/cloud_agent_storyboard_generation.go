@@ -310,7 +310,11 @@ func prepareCanvasStoryboardInput(_ context.Context, repo *repository.Repository
 	if err = validateCloudAgentMediaReferences(a.Mode, refs); err != nil {
 		return req.Task, err
 	}
-	prompt, err := cloudAgentMediaReferencePrompt(a.Prompt, refs)
+	prompt, err := cloudAgentStoryboardProviderPrompt(a.Prompt, a.ResolvedBindings, refs)
+	if err != nil {
+		return req.Task, err
+	}
+	prompt, err = cloudAgentMediaReferencePrompt(prompt, refs)
 	if err != nil {
 		return req.Task, err
 	}

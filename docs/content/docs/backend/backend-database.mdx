@@ -37,4 +37,6 @@ description: 数据库迁移与当前业务持久化结构
 
 ## 分镜声明式引用（未新增表或列）
 
+分镜编辑的可选 `operationId` 复用 `CanvasCommandReceipt`（`canvas_command_receipts`），使用 `client_id=agent:storyboard` 与当前用户、画布、epoch 隔离。`CanonicalJSON` 保存去除版本前置条件后的完整操作参数，`ReceiptJSON` 保留目标行/字段、追加行身份及原提交版本，和画布修改同一事务提交；相同标识但参数不同不覆盖旧记录。没有新增进度表、列或迁移。表级版本复用 `CanvasDocumentEpoch` 和 `CanvasEntityVersion.Generation`，防止同 ID 节点删除重建后接受旧读数。
+
 分镜声明式引用没有新增数据表或数据库列，也没有新的迁移版本：权威引用与产物归属保存在画布文档 JSON（`referenceFieldsVersion`、表级 `referenceNodeIds`、行级 `assetBindings`、生成输入的 `generationSpec.referenceBindings` 与 `inputBindings`、行的 `imageNodeId` / `videoNodeId`），派生连线继续放在文档的 `connections`；任务侧复用既有任务输入、`ConsumerJSON`、事件与回执记录以及 `CanvasTaskBinding`。`migrate_references` 只改写文档并产生常规版本、历史与事件，读取投影里的 `referenceMigration` 预览不写库。

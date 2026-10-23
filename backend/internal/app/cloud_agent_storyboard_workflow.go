@@ -158,10 +158,10 @@ func cloudAgentNormalizeStoryboardPatch(doc, patch map[string]any) (map[string]a
 
 // Plan on a copy so one invalid target or reference cannot partially mutate a batch.
 func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, args cloudAgentStoryboardEditArgs, userID, callID string) ([]map[string]any, []string, error) {
-	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && args.Action != "set_assets" {
+	if args.Action != "append" && args.Action != "append_rows" && args.Action != "batch_update" && args.Action != "update" && args.Action != "remove" && !cloudAgentStoryboardAssetAction(args.Action) {
 		return nil, nil, BadAuthRequest("不支持的镜头编辑操作")
 	}
-	if args.References != nil || args.ReferenceNodeIDs != nil || args.OutputMode != "" || args.OutputNodeID != "" || (args.Action != "set_assets" && args.Assets != nil) {
+	if args.References != nil || args.ReferenceNodeIDs != nil || args.OutputMode != "" || args.OutputNodeID != "" || (!cloudAgentStoryboardAssetAction(args.Action) && args.Assets != nil) {
 		return nil, nil, BadAuthRequest("镜头编辑包含不适用于当前操作的参数")
 	}
 	raw, err := json.Marshal(rows)
@@ -211,7 +211,23 @@ func cloudAgentPlanStoryboardRows(doc map[string]any, rows []map[string]any, arg
 		patch = map[string]any{"assets": args.Assets}
 	}
 	fields := []string{}
-	if args.Action == "remove" {
+	if cloudAgentStoryboardAssetAction(args.Action) && args.Action != "set_assets" {
+		if len(args.Patch) > 0 || len(args.Assets) == 0 {
+			return nil, nil, BadAuthRequest("增量资产操作需要非空 assets，不接受 patch")
+		}
+		normalized, err := cloudAgentNormalizeStoryboardPatch(doc, map[string]any{"assets": args.Assets})
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, row := range next {
+			if selected[stringValue(row["id"])] {
+				if err := cloudAgentStoryboardAssetDelta(doc, row, creationMaps(normalized["assetBindings"]), args.Action); err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+		fields = []string{"assetBindings", "characters"}
+	} else if args.Action == "remove" {
 		if len(patch) > 0 {
 			return nil, nil, BadAuthRequest("删除镜头不接受 patch")
 		}
