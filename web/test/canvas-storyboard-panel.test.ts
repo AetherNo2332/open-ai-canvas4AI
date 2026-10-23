@@ -26,6 +26,8 @@ describe("storyboard prompt panel boundaries", () => {
         expect(project).toMatch(/else if \(node.type === CanvasNodeType.Script\) \{\s*setDialogNodeId\(null\)/);
         expect(project).toContain("dialogNode.type !== CanvasNodeType.Script");
         expect(project).toContain("onOpen={() => setScriptEditorNodeId(contentNode.id)}");
-        expect(project).toContain("onGenerateScript={(prompt) => void generateScriptRows(contentNode.id, prompt)}");
+        expect(project).toContain("onRequestStoryboard={(prompt) => requestStoryboardToAgent(contentNode.id, prompt)}");
+        expect(project).toContain("buildStoryboardAgentPrompt(node, prompt)");
+        expect(project).toContain("agentPanelRef.current?.sendPrompt");
     });
 });

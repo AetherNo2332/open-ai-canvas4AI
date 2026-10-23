@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import { Button, Dropdown, Input, Popover } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
@@ -87,7 +87,13 @@ import "./canvas-cloud-agent.css";
 import { createUuid } from "@/lib/client-id";
 import { getAgentSubagentPolicy, listAgentSubagents, updateAgentSubagentPolicy, type AgentSubagentPolicy, type AgentSubagent } from "@/services/api/agent-subagent";
 
+export type CanvasCloudAgentPanelHandle = {
+    sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => Promise<boolean>;
+};
+type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[] };
+
 type CloudAgentPanelProps = {
+    ref?: Ref<CanvasCloudAgentPanelHandle>;
     canvasId: string;
     nodeCount: number;
     selectedNodeIds: string[];
@@ -104,7 +110,7 @@ type CloudAgentPanelProps = {
 type ApprovalState = { approvalId: string; detail: Record<string, unknown>; reason: string };
 type AgentPanelView = "chat" | "history" | "settings";
 
-export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
+export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, references, open, floating = false, launcher = true, prefillPrompt, ref, onOpen, onCollapse, onFocusNode }: CloudAgentPanelProps) {
     const userId = useUserStore((state) => state.user?.id);
     const userScope = getActiveUserScope();
     const subagentsAvailable = useUserStore((state) => state.features.agentSubagentsEnabled);
@@ -637,7 +643,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                     const pending = await loadCloudAgentPendingSubmission(canvasId, current.id, userScope);
                     if (!active) return;
                     pendingSubmission.current = pending;
-                    if (pending?.request) setPrompt(pending.request.prompt);
+                    if (pending?.request) setPrompt(pending.composerDraft ?? pending.request.prompt);
                 } else {
                     setActiveConversationId(nanoid());
                     pendingSubmission.current = null;
@@ -823,38 +829,46 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         return () => { window.clearTimeout(timer); window.removeEventListener("online", reconnect); };
     }, [run?.id, connectionStatus]);
 
-    const interject = async (value: string) => {
+    const interject = async (value: string, options: AgentSubmitOptions = {}): Promise<boolean> => {
         const activeRun = run;
-        if (!value || !activeRun?.id || busy || connectionStatus !== "connected" || currentScope.current !== conversationScope || !historyHydrated) return;
+        if (!value || !activeRun?.id || busy || submissionRequestRef.current || connectionStatus !== "connected" || currentScope.current !== conversationScope || !historyHydrated || !pendingHydrated) return false;
         const scope = conversationScope;
         const messageId = `user-${createUuid()}`;
+        const controller = new AbortController();
+        submissionControllerRef.current = controller;
+        submissionRequestRef.current = true;
         setBusy(true);
         try {
             await sendAgentInterjection(activeRun.id, { text: value, messageId });
-            if (currentScope.current !== scope) return;
-            setPrompt("");
+            if (currentScope.current !== scope) return false;
+            if (!options.preserveDraft) setPrompt("");
             setMessages((current) => appendUniqueMessage(current, { id: messageId, role: "user", text: value, interjection: "sent" }));
+            return true;
         } catch (cause) {
-            if (currentScope.current !== scope) return;
+            if (currentScope.current !== scope) return false;
             const status = (cause as { status?: number }).status;
             setMessages((current) => appendAgentError(current, `interject-error-${activeConversationId}-${messageId}`, cause, "插话没有送达"));
-            if (status === 409) setPrompt(value);
+            if (status === 409 && !options.preserveDraft) setPrompt(value);
+            return false;
         } finally {
+            if (submissionControllerRef.current === controller) {
+                submissionControllerRef.current = null;
+                submissionRequestRef.current = false;
+            }
             if (currentScope.current === scope) setBusy(false);
         }
     };
 
-    const submit = async (override?: string) => {
-        if (activeHistoryState?.status === "unavailable") return;
+    const submit = async (override?: string, options: AgentSubmitOptions = {}): Promise<boolean> => {
+        if (activeHistoryState?.status === "unavailable") return false;
         const value = (override ?? prompt).trim();
         if (running) {
-            await interject(value);
-            return;
+            return interject(value, options);
         }
-        if (!value || busy || running || (run && connectionStatus !== "connected") || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return;
+        if (!value || busy || running || (run && connectionStatus !== "connected") || submissionRequestRef.current || !historyHydrated || !pendingHydrated || currentScope.current !== conversationScope) return false;
         if (subagentsAvailable && (!subagentPolicy || loadedPolicyScope !== policyScope || subagentPolicy.canvasId !== canvasId || subagentPolicySaving || subagentPolicyError)) {
             setSubagentPolicyError("请先加载并确认子代理授权设置，再发送消息");
-            return;
+            return false;
         }
         const scope = conversationScope;
         submissionRequestRef.current = true;
@@ -869,13 +883,13 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             if (pending?.request && pending.request.prompt !== value) throw new Error("上一条请求结果待确认，请先原样重试上一条消息，再发送新要求");
             if (!pending?.request) {
                 const capabilities = await getAgentCapabilities();
-                if (currentScope.current !== scope) return;
+                if (currentScope.current !== scope) return false;
                 setWorkerAvailability(capabilities.availability);
                 if (!capabilities.availability.configured) throw new Error(capabilities.availability.reason);
                 if (!capabilities.permissionModes.includes(permissionMode)) throw new Error("当前后端不支持所选 Agent 权限，请更新后端");
                 if (selectedSkillIds.length && !capabilities.skills) throw new Error("当前后端尚未接入技能库");
                 await saveRemoteUserDataNow();
-                if (currentScope.current !== scope) return;
+                if (currentScope.current !== scope) return false;
                 const agentConfig = { ...config, model: selectedModel };
                 const requestConfig = resolveModelRequestConfig(agentConfig, selectedModel);
                 const logicalModelId = logicalModelIDForConfig(agentConfig);
@@ -889,17 +903,17 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                     permissionMode,
                     subagentEnabled: subagentsAvailable && subagentPolicy?.enabled === true,
                     contextScope,
-                    focusNodeIds: selectedNodeIds.length <= 8 ? selectedNodeIds : [],
+                    focusNodeIds: options.focusNodeIds?.slice(0, 8) ?? (selectedNodeIds.length <= 8 ? selectedNodeIds : []),
                     budget: { maxCredits: positiveNumber(maxCredits), maxGenerationTasks: permissionMode === "read_only" ? 0 : Number(maxGenerationTasks), maxVideoSeconds: permissionMode === "read_only" ? 0 : Number(maxVideoSeconds) },
                 };
                 const fingerprint = JSON.stringify({ scope, parent: run?.id, input });
                 if (pending && pending.fingerprint !== fingerprint) throw new Error("上一条请求尚未确认，请恢复原消息与设置后核对，不能覆盖原幂等记录");
                 const key = pending?.key || createUuid();
-                const next = { fingerprint, key, request: { ...input, idempotencyKey: key }, parentRunId: run?.id, messageId: `user-${key}` };
+                const next = { fingerprint, key, request: { ...input, idempotencyKey: key }, parentRunId: run?.id, messageId: `user-${key}`, ...(options.preserveDraft ? { composerDraft: prompt } : {}) };
                 // Persist before sending. A failed local save must not submit a request
                 // whose recovery identity will disappear on reload.
                 await saveCloudAgentPendingSubmission(canvasId, activeConversationId, next, userScope);
-                if (currentScope.current !== scope) return;
+                if (currentScope.current !== scope) return false;
                 pendingSubmission.current = next;
             }
             const submission = pendingSubmission.current!;
@@ -914,6 +928,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                     id: activeConversationId,
                     title: cloudAgentConversationTitle(nextMessages),
                     messages: nextMessages,
+                    ...(options.preserveDraft ? { draft: prompt } : {}),
                     run,
                     contextUsage,
                     model: selectedModel || undefined,
@@ -924,8 +939,8 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 },
                 ...conversations.filter((item) => item.id !== activeConversationId),
             ], userScope);
-            if (currentScope.current !== scope) return;
-            setPrompt("");
+            if (currentScope.current !== scope) return false;
+            if (!options.preserveDraft) setPrompt("");
             setMessages(nextMessages);
             const result = submission.parentRunId ? await sendAgentMessage(submission.parentRunId, request, controller.signal) : await createAgentRun(request, controller.signal);
             accepted = true;
@@ -940,9 +955,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             await clearCloudAgentPendingSubmission(canvasId, activeConversationId, userScope);
             if (currentScope.current === scope) pendingSubmission.current = null;
         } catch (cause) {
-            if (currentScope.current !== scope) return;
+            if (currentScope.current !== scope) return false;
             if (!accepted) {
-                setPrompt(value);
+                if (!options.preserveDraft) setPrompt(value);
                 const status = (cause as { status?: number }).status;
                 if ((status && [400, 401, 403, 404, 422].includes(status)) || (cause as { reason?: string }).reason === "agent_conversation_stale_parent") {
                     // These admission responses explicitly rejected the write.
@@ -963,8 +978,16 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             }
             if (currentScope.current === scope) setBusy(false);
         }
+        return accepted && currentScope.current === scope;
     };
 
+    useImperativeHandle(ref, () => ({
+        sendPrompt: async (request) => {
+            if (request.canvasId !== canvasId || request.userScope !== userScope || getActiveUserScope() !== userScope) return false;
+            setView("chat");
+            return submit(request.prompt, { preserveDraft: true, focusNodeIds: request.focusNodeIds });
+        },
+    }));
     const stop = async () => {
         const activeRun = run;
         if (!activeRun?.id || stopping) return;
@@ -1053,6 +1076,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         const id = nanoid();
         autoRestoreRef.current = false;
         currentScope.current = `${userScope}:${canvasId}:${id}`;
+        submissionControllerRef.current?.abort();
+        submissionControllerRef.current = null;
+        submissionRequestRef.current = false;
         presetApplyingRef.current = null;
         setPresetApplyingId("");
         setPendingHydrated(true);
@@ -1074,6 +1100,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const openConversation = (conversation: CloudAgentConversation) => {
         autoRestoreRef.current = false;
         currentScope.current = `${userScope}:${canvasId}:${conversation.id}`;
+        submissionControllerRef.current?.abort();
+        submissionControllerRef.current = null;
+        submissionRequestRef.current = false;
         presetApplyingRef.current = null;
         setPresetApplyingId("");
         setPendingHydrated(false);
@@ -1096,7 +1125,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 if (currentScope.current === `${userScope}:${canvasId}:${conversation.id}`) {
                     pendingSubmission.current = pending;
                     setPendingHydrated(true);
-                    if (pending?.request) setPrompt(pending.request.prompt);
+                    if (pending?.request) setPrompt(pending.composerDraft ?? pending.request.prompt);
                 }
             })
             .catch((cause) => {

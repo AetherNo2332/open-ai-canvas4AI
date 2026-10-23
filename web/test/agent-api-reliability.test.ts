@@ -251,7 +251,7 @@ describe("Agent admission replay and durable pending records", () => {
     });
 
     it("restores the full original request and message identity, isolated by conversation", async () => {
-        const pending = { fingerprint: "fingerprint", key: input.idempotencyKey, request: input, parentRunId: "parent", messageId: "bubble" };
+        const pending = { fingerprint: "fingerprint", key: input.idempotencyKey, request: input, parentRunId: "parent", messageId: "bubble", composerDraft: "分镜请求之外的 Agent 草稿" };
         await conversations.saveCloudAgentPendingSubmission("canvas", "conversation", pending);
         expect(await conversations.loadCloudAgentPendingSubmission("canvas", "conversation")).toEqual(pending);
         expect(await conversations.loadCloudAgentPendingSubmission("canvas", "other")).toBeNull();

@@ -87,7 +87,8 @@ import { useCanvasBatchReferences } from "./use-canvas-batch-references";
 import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { CanvasPrevisNodePanel } from "@/components/canvas/previs/canvas-previs-node-panel";
 import { CanvasVersionCompareModal } from "@/components/canvas/canvas-version-compare-modal";
-import { CanvasCloudAgentPanel } from "@/components/canvas/canvas-cloud-agent-panel";
+import { CanvasCloudAgentPanel, type CanvasCloudAgentPanelHandle } from "@/components/canvas/canvas-cloud-agent-panel";
+import { buildStoryboardAgentPrompt } from "@/lib/canvas/storyboard-agent-request";
 import { useFocusMode } from "@/hooks/use-focus-mode";
 import { connectCanvasTextMention } from "@/lib/canvas/canvas-text-mention";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
@@ -315,6 +316,7 @@ function InfiniteCanvasPage() {
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [agentPrefillPrompt, setAgentPrefillPrompt] = useState("");
+    const agentPanelRef = useRef<CanvasCloudAgentPanelHandle>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
     const [canvasAppearance, setCanvasAppearance] = useState<CanvasAppearance>(() => canvasAppearanceForTheme(colorTheme));
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>(DEFAULT_CANVAS_BACKGROUND_MODE);
@@ -2213,10 +2215,23 @@ function InfiniteCanvasPage() {
         });
     }, [projectLoaded, setNodes]);
 
-    const { addScriptRow, createAndGenerateScriptVideos, createScriptActionBoards, createScriptImageNodes, createScriptVideoNodes, generateScriptImages, generateScriptRows, generateScriptVideos, removeScriptRow, replaceScriptRows, updateScriptRow } =
+    const requestStoryboardToAgent = useCallback(async (nodeId: string, prompt: string): Promise<boolean> => {
+        const node = nodesRef.current.find((item) => item.id === nodeId && item.type === CanvasNodeType.Script);
+        if (!node || !prompt.trim()) return false;
+        openAgent();
+        try {
+            const accepted = await agentPanelRef.current?.sendPrompt({ canvasId: projectId, userScope: getActiveUserScope(), prompt: buildStoryboardAgentPrompt(node, prompt), focusNodeIds: [node.id] });
+            if (accepted) message.success("已发送到当前 Agent，请在会话中确认拆镜方案");
+            else message.warning("发送尚未确认，请在 Agent 面板核对连接或待确认请求后重试");
+            return Boolean(accepted);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "发送到 Agent 失败，剧情已保留");
+            return false;
+        }
+    }, [message, nodesRef, openAgent, projectId]);
+
+    const { addScriptRow, createAndGenerateScriptVideos, createScriptActionBoards, createScriptImageNodes, createScriptVideoNodes, generateScriptImages, generateScriptVideos, removeScriptRow, replaceScriptRows, updateScriptRow } =
         useCanvasStoryboard({
-            projectId,
-            addedSkills,
             nodesRef,
             connectionsRef,
             setNodes,
@@ -2599,8 +2614,7 @@ function InfiniteCanvasPage() {
                         onUpdateRow={(rowId, patch) => updateScriptRow(contentNode.id, rowId, patch)}
                         onEditAssets={(rowId) => setStoryboardAssetTarget({ nodeId: contentNode.id, rowId })}
                         onPromptChange={(composerContent) => handleConfigNodeChange(contentNode.id, { composerContent })}
-                        onGenerateScript={(prompt) => void generateScriptRows(contentNode.id, prompt)}
-                        onModelChange={(model) => handleConfigNodeChange(contentNode.id, { model })}
+                        onRequestStoryboard={(prompt) => requestStoryboardToAgent(contentNode.id, prompt)}
                         onShotDurationChange={(duration: StoryboardShotDuration) => handleConfigNodeChange(contentNode.id, { storyboardShotDuration: duration })}
                         onShotCountChange={(count: StoryboardShotCount) => handleConfigNodeChange(contentNode.id, { storyboardShotCount: count })}
                         workspaceMode={workspaceMode}
@@ -2659,7 +2673,7 @@ function InfiniteCanvasPage() {
             generateBatchRows,
             generateConfigNode,
             generateScriptImages,
-            generateScriptRows,
+            requestStoryboardToAgent,
             persistLocalEdits,
             generateScriptVideos,
             handleConfigNodeChange,
@@ -2711,7 +2725,7 @@ function InfiniteCanvasPage() {
                     message.warning("分镜脚本缺少剧情内容，无法重试");
                     return;
                 }
-                void generateScriptRows(node.id, prompt);
+                void requestStoryboardToAgent(node.id, prompt);
                 return;
             }
             if (node.type === CanvasNodeType.Image && node.metadata?.isBatchRoot) {
@@ -2730,7 +2744,7 @@ function InfiniteCanvasPage() {
             }
             void handleRetryNode(node);
         },
-        [generateScriptRows, handleRetryNode, message, nodesRef, retryImageBatchChildren],
+        [requestStoryboardToAgent, handleRetryNode, message, nodesRef, retryImageBatchChildren],
     );
     const openCanvasNodeTaskDetails = useCallback(
         (node: CanvasNodeData) => {
@@ -3778,6 +3792,7 @@ function InfiniteCanvasPage() {
                         ) : null}
                         <div className={versions.open ? "hidden" : "contents"}>
                             <CanvasCloudAgentPanel
+                                ref={agentPanelRef}
                                 canvasId={projectId}
                                 nodeCount={nodes.length}
                                 selectedNodeIds={Array.from(selectedNodeIds)}

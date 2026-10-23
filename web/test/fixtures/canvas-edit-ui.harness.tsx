@@ -458,8 +458,8 @@ test("actual prompt panel focuses a lease, preserves prompt mirrors and starts g
     element.remove();
 });
 
-test("storyboard card composer takes the same lease and waits for ACK before generating", async () => {
-    mock.module("@/components/ui/base/select", () => ({ Select: () => null }));
+test("storyboard card composer retains its constraints in simple mode and waits for ACK before sending to Agent", async () => {
+    mock.module("@/components/ui/base/select", () => ({ Select: ({ options, value, onChange }: any) => <select value={value} onChange={(event: any) => onChange(event.target.value)}>{options.map((item: any) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> }));
     mock.module("@/components/canvas/storyboard-assets-cell", () => ({ StoryboardAssetsCell: () => null, StoryboardSharedReferencesControl: () => null }));
     const { CanvasScriptNodeContent } = await import("@/components/canvas/canvas-script-node");
     const { deriveStoryboardPipelineProgress } = await import("@/lib/canvas/canvas-storyboard-progress");
@@ -493,7 +493,6 @@ test("storyboard card composer takes the same lease and waits for ACK before gen
             "onAddRow",
             "onRemoveRow",
             "onUpdateRow",
-            "onModelChange",
             "onShotDurationChange",
             "onShotCountChange",
             "onComposerHeightChange",
@@ -512,14 +511,16 @@ test("storyboard card composer takes the same lease and waits for ACK before gen
                 nodes={[]}
                 pipeline={deriveStoryboardPipelineProgress(current, [], [])}
                 scale={1}
+                workspaceMode="simple"
                 mentionReferences={[]}
                 onPromptChange={(value) => setCurrent((old) => ({ ...old, metadata: { ...old.metadata, composerContent: value } }))}
                 onPersist={async () => {
                     writes++;
                     await ack;
                 }}
-                onGenerateScript={() => {
+                onRequestStoryboard={async () => {
                     generated++;
+                    return true;
                 }}
             />
         );
@@ -531,6 +532,9 @@ test("storyboard card composer takes the same lease and waits for ACK before gen
         root.render(<StoryboardHarness />);
         await tick();
     });
+    expect(element.querySelectorAll("select")).toHaveLength(2);
+    expect(element.textContent).toContain("自动拆分");
+    expect(element.textContent).toContain("每镜 10 秒");
     const textarea = element.querySelector("textarea")!;
     await act(async () => {
         textarea.focus();

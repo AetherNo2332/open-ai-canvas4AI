@@ -55,6 +55,8 @@ export type CloudAgentPendingSubmission = {
     request?: import("@/services/api/agent").CreateAgentRunInput;
     parentRunId?: string;
     messageId?: string;
+    /** Draft retained when a canvas node sends a separate request. */
+    composerDraft?: string;
 };
 
 const CLOUD_AGENT_CONVERSATIONS_KEY = "cloud-agent-conversations-v1";
@@ -101,7 +103,8 @@ export async function loadCloudAgentPendingSubmission(canvasId: string, conversa
         if (parsed.request !== undefined && (!parsed.request || parsed.request.idempotencyKey !== parsed.key || parsed.request.canvasId !== canvasId || typeof parsed.request.prompt !== "string")) throw new Error("invalid request");
         if (parsed.parentRunId !== undefined && typeof parsed.parentRunId !== "string") throw new Error("invalid parent");
         if (parsed.messageId !== undefined && typeof parsed.messageId !== "string") throw new Error("invalid message");
-        return { fingerprint: parsed.fingerprint, key: parsed.key, request: parsed.request, parentRunId: parsed.parentRunId, messageId: parsed.messageId } satisfies CloudAgentPendingSubmission;
+        if (parsed.composerDraft !== undefined && typeof parsed.composerDraft !== "string") throw new Error("invalid composer draft");
+        return { fingerprint: parsed.fingerprint, key: parsed.key, request: parsed.request, parentRunId: parsed.parentRunId, messageId: parsed.messageId, ...(parsed.composerDraft !== undefined ? { composerDraft: parsed.composerDraft } : {}) } satisfies CloudAgentPendingSubmission;
     } catch {
         throw new Error("待确认请求记录损坏，已暂停本对话发送；请先在任务中心核对原运行，不要直接重复生成");
     }

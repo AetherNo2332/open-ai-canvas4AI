@@ -1,8 +1,8 @@
 import type { CanvasNodeData } from "@/types/canvas";
 
 export type StoryboardGenerationContext = {
-    projectStyle: {
-        presetId: string;
+    projectStyle?: {
+        presetId?: string;
         title: string;
         prompt: string;
         profileJson?: string;
@@ -15,12 +15,11 @@ export type StoryboardGenerationContext = {
     }>;
 };
 
-// 分镜的两条入口共用同一强校验，避免画风或角色版本在某条旁路里被遗漏。
+// 画风提供参考而非规划门槛；实际引用角色仍需使用已同步的资产版本。
 export function resolveStoryboardGenerationContext(nodes: CanvasNodeData[]): StoryboardGenerationContext {
     const styleNode = nodes.find((node) => node.metadata?.workflowKind === "styleboard");
     const stylePrompt = String(styleNode?.metadata?.content || styleNode?.metadata?.prompt || "").trim();
     const stylePresetId = String(styleNode?.metadata?.stylePresetId || "").trim();
-    if (!styleNode || !stylePrompt || !stylePresetId) throw new Error("请先设置项目画风，再生成分镜");
 
     // `workflowKind=character` is also used by standalone character-design
     // image workflows. Only nodes linked to a project character asset are
@@ -30,12 +29,12 @@ export function resolveStoryboardGenerationContext(nodes: CanvasNodeData[]): Sto
     if (invalidCharacter) throw new Error(`角色卡“${invalidCharacter.metadata?.characterName || invalidCharacter.title || "未命名角色"}”版本未同步，请刷新角色资产后再生成分镜`);
 
     return {
-        projectStyle: {
-            presetId: stylePresetId,
+        projectStyle: styleNode && stylePrompt ? {
+            presetId: stylePresetId || undefined,
             title: styleNode.title.replace(/^(?:项目)?画风\s*[·：:]?\s*/, "").trim() || styleNode.title,
             prompt: stylePrompt,
             profileJson: styleNode.metadata?.styleProfileJson,
-        },
+        } : undefined,
         characters: characterNodes.map((node) => ({
             assetId: node.metadata!.characterAssetId!.trim(),
             versionId: node.metadata!.characterVersionId!.trim(),
@@ -52,7 +51,7 @@ export function inspectStoryboardReadiness(nodes: CanvasNodeData[]) {
     try { generationContext = resolveStoryboardGenerationContext(nodes); }
     catch (error) { blockingReason = error instanceof Error ? error.message : "分镜上下文未就绪"; }
     const styleNode = nodes.find((node) => node.metadata?.workflowKind === "styleboard");
-    const styleReady = Boolean(styleNode?.metadata?.stylePresetId?.trim() && String(styleNode.metadata.content || styleNode.metadata.prompt || "").trim());
+    const styleReady = Boolean(String(styleNode?.metadata?.content || styleNode?.metadata?.prompt || "").trim());
     const storyboards = nodes.filter((node) => node.type === "script").map((node) => {
         const rows = node.metadata?.storyboard?.rows || [];
         const incompleteRowIds = rows.filter((row) => !Number.isFinite(row.durationSeconds) || row.durationSeconds <= 0 || !row.videoMotionPrompt?.trim()).map((row) => row.id);
@@ -63,7 +62,8 @@ export function inspectStoryboardReadiness(nodes: CanvasNodeData[]) {
         style: { ready: styleReady, nodeId: styleNode?.id, presetId: styleNode?.metadata?.stylePresetId, title: styleNode?.title },
         storyboards,
         nextActions: [
-            ...(!styleReady ? ["先 canvas_list_styles 读取真实画风，结合已确认风格调用 canvas_apply_style；该工具会复用或创建画风节点。仅在缺少关键风格取舍时询问用户。"] : []),
+            "由当前 Agent 结合项目基调、上下文及适用技能提出拆镜方案，先询问用户确认，再编辑目标分镜表；画风预设不是规划前置条件。",
+            ...(!styleReady ? ["当前没有画风正文，可根据剧情提出合适的基调并请用户确认，不必先创建画风节点。"] : []),
             ...(storyboards.some((item) => !item.populated) ? ["先 canvas_read_storyboard 读取真实行 ID，再 canvas_edit_storyboard 更新空行并按需新增镜头；正文或标题不代表已填充分镜表。"] : []),
         ],
     };

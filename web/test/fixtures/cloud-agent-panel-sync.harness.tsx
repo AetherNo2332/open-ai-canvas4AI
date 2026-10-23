@@ -1,6 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
-import type { AgentEvent, AgentRun } from "@/services/api/agent";
+import type { AgentEvent, AgentRun, CreateAgentRunInput } from "@/services/api/agent";
+import type { CanvasCloudAgentPanelHandle } from "@/components/canvas/canvas-cloud-agent-panel";
 import type { CloudAgentConversation, CloudAgentPendingSubmission } from "@/services/cloud-agent-conversations";
 
 const dom = new Window({ url: "http://localhost/" });
@@ -27,7 +28,12 @@ let local: CloudAgentConversation[] = [];
 let remote: CloudAgentConversation[] = [];
 let pending: CloudAgentPendingSubmission | null = null;
 let composer: any;
-let sendMessageOverride: ((parentId: string) => AgentRun) | undefined;
+let sendMessageOverride: ((parentId: string, request: CreateAgentRunInput) => AgentRun | Promise<AgentRun>) | undefined;
+let createRunOverride: (() => Promise<AgentRun>) | undefined;
+let interjectionOverride: (() => Promise<void>) | undefined;
+const sentRequests: Array<{ parentId: string; request: CreateAgentRunInput }> = [];
+const interjections: Array<{ runId: string; text: string }> = [];
+const createdRequests: CreateAgentRunInput[] = [];
 let refreshOverride: ((options: any) => Promise<CloudAgentConversation[]>) | undefined;
 const subscriptions: Array<{ id: string; after: number; closed: boolean; receive: (event: AgentEvent) => void }> = [];
 const reads: Array<{ canvasId: string; scope: string; signal: AbortSignal }> = [];
@@ -38,7 +44,12 @@ mock.module("motion/react", () => ({ AnimatePresence: Box, motion: { aside: Box,
 mock.module("antd", () => ({ Button: ({ children, icon, onClick }: any) => <button onClick={onClick}>{icon}{children}</button>, Dropdown: Box, Popover: Box, Input: Object.assign(Box, { TextArea: Box }) }));
 mock.module("@/services/api/agent", () => ({
     ...agent,
-    sendAgentMessage: async (parentId: string) => ({ run: sendMessageOverride ? sendMessageOverride(parentId) : { ...conversation("local-child").run!, parentId: "desktop", status: "running", createdAt: "2026-10-23T00:01:00Z" } }),
+    sendAgentMessage: async (parentId: string, request: CreateAgentRunInput) => {
+        sentRequests.push({ parentId, request });
+        return { run: sendMessageOverride ? await sendMessageOverride(parentId, request) : { ...conversation("local-child").run!, parentId, status: "running", createdAt: "2026-10-23T00:01:00Z" } };
+    },
+    createAgentRun: async (request: CreateAgentRunInput) => { createdRequests.push(request); return { run: createRunOverride ? await createRunOverride() : { ...conversation("first-run").run!, status: "running" } }; },
+    sendAgentInterjection: async (runId: string, request: { text: string }) => { interjections.push({ runId, text: request.text }); await interjectionOverride?.(); },
     getAgentCapabilities: async () => ({ permissionModes: ["auto"], skills: true, availability: { configured: true } }),
     listAgentSkillDefaults: async () => ({ count: 0, skills: [] }),
     subscribeAgentEvents: (id: string, receive: (event: AgentEvent) => void, options: any) => {
@@ -94,17 +105,128 @@ async function focus() { await act(async () => { window.dispatchEvent(new Event(
 async function mount(initial: CloudAgentConversation[] = [], initialPending: CloudAgentPendingSubmission | null = null, loader?: typeof refreshOverride) {
     local = initial; remote = [conversation("desktop")]; pending = initialPending; refreshOverride = loader;
     sendMessageOverride = undefined;
+    createRunOverride = undefined; interjectionOverride = undefined;
     subscriptions.length = 0; reads.length = 0;
+    sentRequests.length = 0; interjections.length = 0; createdRequests.length = 0;
     setActiveUserScope("sync-user");
     useUserStore.setState({ hydrated: true, user: { id: "sync-user", username: "test", displayName: "test", role: "user", status: "active" }, features: { agentSubagentsEnabled: false } as any });
     const channel = createModelChannel({ id: "test", scope: "system", models: ["text"] });
     useConfigStore.setState({ config: normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel], model: "test::text", textModel: "test::text" } }).config });
     const host = document.createElement("div"); document.body.append(host);
     const root = createRoot(host);
-    await act(async () => { root.render(<CanvasCloudAgentPanel canvasId="canvas" nodeCount={1} selectedNodeIds={[]} references={[]} open onOpen={silent} onCollapse={silent} />); await settle(); });
-    return { host, close: async () => { await act(async () => root.unmount()); host.remove(); } };
+    const handle = React.createRef<CanvasCloudAgentPanelHandle>();
+    await act(async () => { root.render(<CanvasCloudAgentPanel ref={handle} canvasId="canvas" nodeCount={1} selectedNodeIds={[]} references={[]} open onOpen={silent} onCollapse={silent} />); await settle(); });
+    return { host, handle, close: async () => { await act(async () => root.unmount()); host.remove(); } };
 }
 afterAll(() => dom.happyDOM.abort());
+
+const externalPrompt = { canvasId: "canvas", userScope: "sync-user", prompt: "为目标分镜表提出拆镜方案，先询问确认", focusNodeIds: ["storyboard-target"] };
+
+test("external storyboard request continues the current chat and preserves its composer draft", async () => {
+    const mounted = await mount([conversation("desktop", "local", "原来的 Agent 草稿")]);
+    try {
+        let accepted: boolean | undefined;
+        await act(async () => { accepted = await mounted.handle.current!.sendPrompt(externalPrompt); await settle(); });
+        expect(accepted).toBe(true);
+        expect(sentRequests).toHaveLength(1);
+        expect(sentRequests[0]).toMatchObject({ parentId: "desktop", request: { prompt: externalPrompt.prompt, focusNodeIds: ["storyboard-target"], permissionMode: "auto" } });
+        expect(createdRequests).toHaveLength(0);
+        expect(composer.prompt).toBe("原来的 Agent 草稿");
+        expect(local.find((entry) => entry.id === "local")?.draft).toBe("原来的 Agent 草稿");
+    } finally { await mounted.close(); }
+});
+
+test("external request interjects into the running Agent without creating another run", async () => {
+    const current = conversation("desktop", "local", "保留的草稿");
+    current.run = { ...current.run!, status: "running" };
+    const mounted = await mount([current], null, async () => [current]);
+    try {
+        let accepted: boolean | undefined;
+        await act(async () => { accepted = await mounted.handle.current!.sendPrompt(externalPrompt); await settle(); });
+        expect(accepted).toBe(true);
+        expect(interjections).toEqual([{ runId: "desktop", text: externalPrompt.prompt }]);
+        expect(sentRequests).toHaveLength(0);
+        expect(createdRequests).toHaveLength(0);
+        expect(composer.prompt).toBe("保留的草稿");
+    } finally { await mounted.close(); }
+});
+
+test("external request creates only the first run when the current chat is empty", async () => {
+    const mounted = await mount([], null, async () => []);
+    try {
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(true); await settle(); });
+        expect(createdRequests).toHaveLength(1);
+        expect(createdRequests[0].prompt).toBe(externalPrompt.prompt);
+        expect(sentRequests).toHaveLength(0);
+    } finally { await mounted.close(); }
+});
+
+test("an unknown external POST keeps its original identity and composer draft for a safe retry", async () => {
+    const mounted = await mount([conversation("desktop", "local", "独立的 Agent 草稿")]);
+    try {
+        sendMessageOverride = async () => { throw new Error("network response unknown"); };
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(false); await settle(); });
+        expect(pending?.composerDraft).toBe("独立的 Agent 草稿");
+        const originalKey = pending!.key;
+        expect(composer.prompt).toBe("独立的 Agent 草稿");
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt({ ...externalPrompt, prompt: "另一个要求" })).toBe(false); await settle(); });
+        expect(sentRequests).toHaveLength(1);
+        sendMessageOverride = undefined;
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(true); await settle(); });
+        expect(sentRequests[1].request.idempotencyKey).toBe(originalKey);
+        expect(composer.prompt).toBe("独立的 Agent 草稿");
+    } finally { await mounted.close(); }
+});
+
+test("external send rejects stale scopes and synchronously excludes duplicate clicks", async () => {
+    const mounted = await mount([conversation("desktop", "local", "草稿")]);
+    try {
+        expect(await mounted.handle.current!.sendPrompt({ ...externalPrompt, canvasId: "old-canvas" })).toBe(false);
+        expect(await mounted.handle.current!.sendPrompt({ ...externalPrompt, userScope: "old-user" })).toBe(false);
+        let release!: (run: AgentRun) => void;
+        sendMessageOverride = () => new Promise((resolve) => { release = resolve; });
+        let first!: Promise<boolean>;
+        await act(async () => {
+            first = mounted.handle.current!.sendPrompt(externalPrompt);
+            expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(false);
+            await settle();
+        });
+        expect(sentRequests).toHaveLength(1);
+        await act(async () => { release({ ...conversation("local-child").run!, status: "running" }); expect(await first).toBe(true); await settle(); });
+        expect(composer.prompt).toBe("草稿");
+    } finally { await mounted.close(); }
+});
+
+test("restoring an unknown external submission keeps the original Agent draft", async () => {
+    const request = { canvasId: "canvas", prompt: externalPrompt.prompt, idempotencyKey: "external-pending-key" };
+    const mounted = await mount([conversation("desktop", "local", "原草稿")], { request, key: request.idempotencyKey, fingerprint: "saved", parentRunId: "desktop", composerDraft: "原草稿" });
+    try {
+        expect(composer.prompt).toBe("原草稿");
+        expect(pending?.request?.idempotencyKey).toBe("external-pending-key");
+    } finally { await mounted.close(); }
+});
+
+test("switching chats during an interjection releases only the old send lock", async () => {
+    const current = conversation("desktop", "local", "旧草稿");
+    current.run = { ...current.run!, status: "running" };
+    const mounted = await mount([current], null, async () => [current]);
+    try {
+        let releaseOld!: () => void, releaseNew!: (run: AgentRun) => void;
+        interjectionOverride = () => new Promise((resolve) => { releaseOld = resolve; });
+        createRunOverride = () => new Promise((resolve) => { releaseNew = resolve; });
+        let oldSend!: Promise<boolean>, newSend!: Promise<boolean>;
+        await act(async () => { oldSend = mounted.handle.current!.sendPrompt(externalPrompt); await settle(); });
+        await act(async () => { (mounted.host.querySelector("svg.lucide-message-square-plus")!.closest("button") as HTMLButtonElement).click(); await settle(); });
+        await act(async () => { composer.onPromptChange("新会话草稿"); await settle(); });
+        await act(async () => { newSend = mounted.handle.current!.sendPrompt(externalPrompt); await settle(); });
+        expect(createdRequests).toHaveLength(1);
+        await act(async () => { releaseOld(); expect(await oldSend).toBe(false); await settle(); });
+        await act(async () => { expect(await mounted.handle.current!.sendPrompt(externalPrompt)).toBe(false); });
+        expect(createdRequests).toHaveLength(1);
+        await act(async () => { releaseNew({ ...conversation("first-run").run!, status: "running" }); expect(await newSend).toBe(true); await settle(); });
+        expect(composer.prompt).toBe("新会话草稿");
+    } finally { await mounted.close(); }
+});
 
 test("empty cache discovers a cloud conversation and resumes SSE after restored events", async () => {
     const mounted = await mount();
@@ -112,6 +234,21 @@ test("empty cache discovers a cloud conversation and resumes SSE after restored 
         expect(mounted.host.textContent).toContain("结果-desktop");
         expect(subscriptions.at(-1)).toMatchObject({ id: "desktop", after: 4 });
         expect(reads[0]).toMatchObject({ canvasId: "canvas", scope: "sync-user" });
+    } finally { await mounted.close(); }
+});
+
+test("an external POST response from the old account cannot replace the new account's draft or run", async () => {
+    const mounted = await mount([conversation("desktop", "local", "旧账号草稿")]);
+    try {
+        let release!: (run: AgentRun) => void;
+        sendMessageOverride = () => new Promise((resolve) => { release = resolve; });
+        let sending!: Promise<boolean>;
+        await act(async () => { sending = mounted.handle.current!.sendPrompt(externalPrompt); await settle(); });
+        await act(async () => { setActiveUserScope("other"); useUserStore.setState({ user: { ...useUserStore.getState().user!, id: "other" } }); await settle(); });
+        await act(async () => { composer.onPromptChange("新账号草稿"); await settle(); });
+        await act(async () => { release({ ...conversation("late-old-child").run!, status: "running" }); expect(await sending).toBe(false); await settle(); });
+        expect(composer.prompt).toBe("新账号草稿");
+        expect(subscriptions.some((item) => item.id === "late-old-child")).toBe(false);
     } finally { await mounted.close(); }
 });
 test("focus discovers a new child and closes the previous run observation while retaining the draft", async () => {

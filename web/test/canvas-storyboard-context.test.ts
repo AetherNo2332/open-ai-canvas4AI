@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { resolveStoryboardGenerationContext } from "@/lib/canvas/canvas-storyboard-context";
+import { inspectStoryboardReadiness, resolveStoryboardGenerationContext } from "@/lib/canvas/canvas-storyboard-context";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const node = (id: string, type: CanvasNodeType, metadata: CanvasNodeData["metadata"] = {}): CanvasNodeData => ({
@@ -20,6 +20,22 @@ const styleNode = node("style", CanvasNodeType.Text, {
 });
 
 describe("storyboard generation context", () => {
+    it("allows planning without a style node or preset and requires an Agent confirmation", () => {
+        const context = resolveStoryboardGenerationContext([]);
+        expect(context.projectStyle).toBeUndefined();
+        const readiness = inspectStoryboardReadiness([]);
+        expect(readiness.canGenerateStoryboard).toBe(true);
+        expect(readiness.blockingReason).toBeUndefined();
+        expect(readiness.nextActions.join(" ")).toContain("确认");
+        expect(readiness.nextActions.join(" ")).not.toContain("先 canvas_list_styles");
+    });
+
+    it("accepts a freeform project style without an effective preset", () => {
+        const context = resolveStoryboardGenerationContext([node("free-style", CanvasNodeType.Text, { workflowKind: "styleboard", content: "低饱和手绘，缓慢叙事" })]);
+        expect(context.projectStyle?.prompt).toBe("低饱和手绘，缓慢叙事");
+        expect(context.projectStyle?.presetId).toBeUndefined();
+        expect(inspectStoryboardReadiness([node("free-style", CanvasNodeType.Text, { workflowKind: "styleboard", content: "低饱和手绘" })]).canGenerateStoryboard).toBe(true);
+    });
     it("ignores standalone character-design workflows without a linked asset", () => {
         const context = resolveStoryboardGenerationContext([
             styleNode,
