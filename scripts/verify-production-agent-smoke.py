@@ -110,7 +110,7 @@ class Smoke:
 
     def compose(self, *args, timeout=180, success=True):
         result = subprocess.run([*self.command, *args], cwd=ROOT, env=self.env, capture_output=True,
-                                text=True, timeout=timeout)
+                                text=True, encoding="utf-8", errors="replace", timeout=timeout)
         if success and result.returncode:
             raise AssertionError(f"Compose {args[0]} stage exited {result.returncode}; see service logs")
         return result
