@@ -23,7 +23,8 @@ test("运行时控制消息是 system 行，不是用户气泡", () => {
 });
 
 test("面板把闸门事件接进时间线，并把 final 标记传给渲染层", async () => {
-    const panel = await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent-panel.tsx", import.meta.url)).text();
+    const panel = await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent-panel.tsx", import.meta.url)).text()
+        + await Bun.file(new URL("../src/lib/canvas/cloud-agent-events.ts", import.meta.url)).text();
 
     // 控制事件要有处理分支，且走 agentControlMessage（→ system 行）
     expect(panel).toContain('event.type === "completion_blocked"');

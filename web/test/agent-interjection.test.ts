@@ -6,7 +6,8 @@ import { expect, test } from "bun:test";
 // （旧代码 `disabled={busy || running || …}`），策略提示词也据此写着「运行中用户无法打字」。
 // 所以这里的断言要盯住两件事：入口真的打开了，以及旧前提没有残留在代码里。
 test("运行中不再锁死输入框，发送走插话而不是新建轮次", async () => {
-    const panel = await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent-panel.tsx", import.meta.url)).text();
+    const panel = await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent-panel.tsx", import.meta.url)).text()
+        + await Bun.file(new URL("../src/lib/canvas/cloud-agent-events.ts", import.meta.url)).text();
 
     // 运行中走插话分支（不建轮次、不走那套扣费幂等记账）
     expect(panel).toContain("await interject(value)");

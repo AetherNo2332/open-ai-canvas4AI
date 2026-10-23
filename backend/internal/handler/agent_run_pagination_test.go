@@ -50,6 +50,7 @@ func TestAgentRunViewOptionsRejectsInvalidPaginationQuery(t *testing.T) {
 		"?eventLimit=501",
 		"?eventLimit=-5",
 		"?eventLimit=abc",
+		"?fromStart=maybe",
 	} {
 		t.Run(query, func(t *testing.T) {
 			request := httptest.NewRequest("GET", "/api/agent/runs/run-1"+query, nil)
@@ -59,5 +60,30 @@ func TestAgentRunViewOptionsRejectsInvalidPaginationQuery(t *testing.T) {
 				t.Fatalf("%s 未被拒绝，解析为 %+v", query, options)
 			}
 		})
+	}
+}
+
+func TestAgentConversationPaginationQueries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		query   string
+		limit   int
+		invalid bool
+	}{
+		{"", 100, false}, {"?limit=1", 1, false}, {"?limit=100", 100, false},
+		{"?limit=0", 0, true}, {"?limit=101", 0, true}, {"?limit=1.5", 0, true}, {"?limit=abc", 0, true},
+	} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("GET", "/api/agent/conversations"+tc.query, nil)
+		limit, err := agentConversationLimit(c)
+		if (err != nil) != tc.invalid || limit != tc.limit {
+			t.Fatalf("%s: limit=%d err=%v", tc.query, limit, err)
+		}
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/api/agent/runs/run?fromStart=true&eventLimit=500", nil)
+	view, err := agentRunViewOptions(c)
+	if err != nil || !view.FromStart || view.EventLimit != 500 {
+		t.Fatalf("history prefix read was lost: %+v %v", view, err)
 	}
 }

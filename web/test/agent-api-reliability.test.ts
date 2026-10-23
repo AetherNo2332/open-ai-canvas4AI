@@ -10,14 +10,14 @@ import type { AgentEvent, CreateAgentRunInput } from "../src/services/api/agent"
 const dir = mkdtempSync(join(tmpdir(), "agent-reliability-"));
 const root = new URL("../src/", import.meta.url);
 const requestPath = join(dir, "request.ts");
-writeFileSync(requestPath, 'export const apiBaseURL = "https://agent.invalid/api"; export const http = { post: async () => { throw new Error("unexpected POST"); } };');
+writeFileSync(requestPath, 'export const apiBaseURL = "https://agent.invalid/api"; export const compactApiParams = (p) => Object.fromEntries(Object.entries(p).filter(([,v]) => v !== undefined)); export const http = { post: async () => { throw new Error("unexpected POST"); } };');
 writeFileSync(join(dir, "agent.ts"), readFileSync(new URL("services/api/agent.ts", root), "utf8")
     .replace('"@/services/api/request"', JSON.stringify(requestPath))
     .replace('"@/services/api/task-text-stream"', JSON.stringify(fileURLToPath(new URL("services/api/task-text-stream.ts", root)))));
 const api: typeof import("../src/services/api/agent") = await import(join(dir, "agent.ts"));
 const transport = await import(requestPath);
 const storagePath = join(dir, "storage.ts");
-writeFileSync(storagePath, 'export const data = new Map(); export const localForageStorageForScope = () => ({ getItem: async (k) => data.get(k) ?? null, setItem: async (k,v) => {data.set(k,v);}, removeItem: async (k) => {data.delete(k);} });');
+writeFileSync(storagePath, 'export const data = new Map(); export const localForageStorageForScope = (scope) => ({ getItem: async (k) => data.get(scope + ":" + k) ?? null, setItem: async (k,v) => {data.set(scope + ":" + k,v);}, removeItem: async (k) => {data.delete(scope + ":" + k);} });');
 writeFileSync(join(dir, "scope.ts"), 'export const getActiveUserScope = () => "test-user";');
 writeFileSync(join(dir, "conversations.ts"), readFileSync(new URL("services/cloud-agent-conversations.ts", root), "utf8")
     .replace('"@/lib/localforage-storage"', JSON.stringify(storagePath))
@@ -182,6 +182,38 @@ describe("Agent SSE recovery", () => {
 
 describe("Agent admission replay and durable pending records", () => {
     const input: CreateAgentRunInput = { canvasId: "canvas", prompt: "generate", model: "original", idempotencyKey: "stable-key-123" };
+    it("requests scoped history pages with cancellation and starts event hydration at seq one", async () => {
+        const requests: Array<{ path: string; options: any }> = [];
+        transport.http.get = async (path: string, options: any) => { requests.push({ path, options }); return { items: [] }; };
+        const controller = new AbortController();
+        await api.listAgentConversations({ canvasId: "canvas", limit: 100, signal: controller.signal });
+        await api.listAgentConversationRuns("a/b", { after: "cursor", signal: controller.signal });
+        await api.getAgentRun("run", controller.signal, { fromStart: true, eventLimit: 500 });
+        expect(requests[0]).toEqual({ path: "/agent/conversations", options: { params: { canvasId: "canvas", limit: 100 }, signal: controller.signal } });
+        expect(requests[1]).toEqual({ path: "/agent/conversations/a%2Fb/runs", options: { params: { after: "cursor" }, signal: controller.signal } });
+        expect(requests[2]).toEqual({ path: "/agent/runs/run?eventLimit=500&fromStart=true", options: { signal: controller.signal } });
+    });
+    it("aborts a switched account's pending admission before another retry", async () => {
+        const controller = new AbortController();
+        let attempts = 0;
+        transport.http.post = async (_path: string, _body: unknown, options: { signal?: AbortSignal }) => {
+            attempts++;
+            expect(options.signal).toBe(controller.signal);
+            controller.abort();
+            throw { retryable: true };
+        };
+        await expect(api.createAgentRun(input, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+        expect(attempts).toBe(1);
+    });
+    it("clears the captured account recovery identity without touching the new account", async () => {
+        const first = { fingerprint: "first", key: input.idempotencyKey, request: input };
+        const second = { fingerprint: "second", key: "second-stable-key", request: { ...input, idempotencyKey: "second-stable-key" } };
+        await conversations.saveCloudAgentPendingSubmission("canvas", "same-chat", first, "first-account");
+        await conversations.saveCloudAgentPendingSubmission("canvas", "same-chat", second, "second-account");
+        await conversations.clearCloudAgentPendingSubmission("canvas", "same-chat", "first-account");
+        expect(await conversations.loadCloudAgentPendingSubmission("canvas", "same-chat", "first-account")).toBeNull();
+        expect(await conversations.loadCloudAgentPendingSubmission("canvas", "same-chat", "second-account")).toEqual(second);
+    });
     it("creates and continues Cloud Agent runs with only Skill IDs", async () => {
         const bodies: unknown[] = [];
         transport.http.post = async (_path: string, body: unknown) => { bodies.push(body); return { run: { id: "run" } }; };

@@ -465,7 +465,11 @@ func (r *Repository) CreateCloudAgentHoldingTask(task *model.Task, order *model.
 }
 
 func createCloudAgentHoldingTask(tx *gorm.DB, task *model.Task, order *model.BillingOrder, run *model.CloudAgentExecution, activeTaskLimit int, skillRows ...[]model.AgentConversationSkill) error {
-	r := New(tx)
+	r := &Repository{db: tx}
+	if err := r.requireCurrentCloudAgentParent(run); err != nil {
+		return err
+	}
+	r = New(tx)
 	if err := r.requireActiveLogicalModelForTask(tx, task); err != nil {
 		return err
 	}

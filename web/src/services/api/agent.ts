@@ -1,4 +1,4 @@
-import { http, apiBaseURL } from "@/services/api/request";
+import { http, apiBaseURL, compactApiParams } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser } from "@/services/api/task-text-stream";
 
 export type AgentPermissionMode = "read_only" | "auto" | "request_approval";
@@ -89,6 +89,10 @@ export type AgentRunSkill = {
 
 export type AgentRun = {
     id: string;
+    conversationId?: string;
+    parentId?: string;
+    userPrompt?: string;
+    idempotencyKey?: string;
     canvasId: string;
     status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "rejected";
     permissionMode: AgentPermissionMode;
@@ -176,11 +180,12 @@ export type CreateAgentRunInput = {
 
 // Only Agent admission endpoints have server-side fingerprint/idempotency protection.
 // Never apply this policy to arbitrary provider generation POSTs.
-async function submitAgentRequest(path: string, input: CreateAgentRunInput) {
+async function submitAgentRequest(path: string, input: CreateAgentRunInput, signal?: AbortSignal) {
     const body = JSON.parse(JSON.stringify(input)) as CreateAgentRunInput;
     for (let attempt = 0; ; attempt++) {
+        signal?.throwIfAborted();
         try {
-            return await http.post<{ run: AgentRun }>(path, body, { timeout: 15_000 });
+            return await http.post<{ run: AgentRun }>(path, body, { timeout: 15_000, ...(signal ? { signal } : {}) });
         } catch (cause) {
             const error = cause as { retryable?: boolean; retryAfterMs?: number };
             if (!error.retryable || attempt >= 2) throw cause;
@@ -193,16 +198,16 @@ async function submitAgentRequest(path: string, input: CreateAgentRunInput) {
     }
 }
 
-export async function createAgentRun(input: CreateAgentRunInput) {
-    return submitAgentRequest("/agent/runs", input);
+export async function createAgentRun(input: CreateAgentRunInput, signal?: AbortSignal) {
+    return submitAgentRequest("/agent/runs", input, signal);
 }
 
 export async function createImageToDirectorAgentRun(input: CreateAgentRunInput) {
     return createAgentRun(input);
 }
 
-export async function sendAgentMessage(runId: string, input: CreateAgentRunInput) {
-    return submitAgentRequest(`/agent/runs/${encodeURIComponent(runId)}/messages`, input);
+export async function sendAgentMessage(runId: string, input: CreateAgentRunInput, signal?: AbortSignal) {
+    return submitAgentRequest(`/agent/runs/${encodeURIComponent(runId)}/messages`, input, signal);
 }
 
 export function sendAgentInterjection(runId: string, input: { text: string; messageId: string }) {
@@ -225,12 +230,39 @@ export function getAgentCapabilities() {
     }>("/agent/capabilities", { timeout: 15_000 });
 }
 
-export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sinceSeq?: number; eventLimit?: number }) {
+export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sinceSeq?: number; eventLimit?: number; fromStart?: boolean }) {
     const params = new URLSearchParams();
     if (options?.sinceSeq) params.set("sinceSeq", String(options.sinceSeq));
     if (options?.eventLimit) params.set("eventLimit", String(options.eventLimit));
+    if (options?.fromStart !== undefined) params.set("fromStart", String(options.fromStart));
     const query = params.toString();
     return http.get<{ run: AgentRun }>(`/agent/runs/${encodeURIComponent(runId)}${query ? `?${query}` : ""}`, { signal });
+}
+
+export type AgentConversationSummary = {
+    id: string;
+    canvasId: string;
+    title: string;
+    latestRunId: string;
+    status: AgentRun["status"];
+    revision: number;
+    cleanupPending?: boolean;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export function listAgentConversations(options: { canvasId: string; before?: string; limit?: number; signal?: AbortSignal }) {
+    return http.get<{ items: AgentConversationSummary[]; nextCursor?: string }>("/agent/conversations", {
+        params: compactApiParams({ canvasId: options.canvasId, before: options.before, limit: options.limit }),
+        signal: options.signal,
+    });
+}
+
+export function listAgentConversationRuns(conversationId: string, options: { after?: string; limit?: number; signal?: AbortSignal } = {}) {
+    return http.get<{ items: AgentRun[]; nextCursor?: string }>(`/agent/conversations/${encodeURIComponent(conversationId)}/runs`, {
+        params: compactApiParams({ after: options.after, limit: options.limit }),
+        signal: options.signal,
+    });
 }
 
 export function cancelAgentRun(runId: string) {

@@ -77,6 +77,9 @@ type cloudAgentState struct {
 type CloudAgentRun struct {
 	SkillRuntimeMode string            `json:"skillRuntimeMode,omitempty"`
 	ID               string            `json:"id"`
+	ConversationID   string            `json:"conversationId"`
+	UserPrompt       string            `json:"userPrompt,omitempty"`
+	IdempotencyKey   string            `json:"idempotencyKey,omitempty"`
 	CanvasID         string            `json:"canvasId"`
 	ParentID         string            `json:"parentId,omitempty"`
 	Status           string            `json:"status"`
@@ -115,6 +118,7 @@ type CloudAgentRun struct {
 type CloudAgentRunViewOptions struct {
 	SinceSeq   int
 	EventLimit int
+	FromStart  bool
 }
 
 func validateCloudAgentRequest(req *CloudAgentRequest) error {
@@ -271,6 +275,7 @@ func cloudAgentTaskIdentity(task *model.Task) cloudAgentRunIdentity {
 
 func agentRunOutput(identity cloudAgentRunIdentity, state cloudAgentState) *CloudAgentRun {
 	return &CloudAgentRun{ID: identity.ID, CanvasID: identity.CanvasID, ParentID: state.ParentID, Status: identity.Status, PermissionMode: state.Request.PermissionMode, Model: identity.Model,
+		UserPrompt: state.Request.Prompt, IdempotencyKey: state.Request.IdempotencyKey,
 		ChannelID: state.Request.ChannelID, ChannelModelKey: state.Request.ChannelModelKey, LogicalModelID: state.Request.LogicalModelID,
 		CreatedAt: identity.CreatedAt, UpdatedAt: identity.UpdatedAt, Skills: state.Skills}
 }
@@ -757,6 +762,17 @@ func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest
 		return agentRunOutput(cloudAgentRunIdentity{ID: run.ID, CanvasID: run.CanvasID, Status: run.Status, Model: req.Model, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt}, state), nil
 	}
 	if err = s.createCloudAgentRunWithinStorageQuota(run, task, prepare.Order, runtimePolicy, cloudAgentConversationSkillRows(run.ConversationID, skillSnapshots)); err != nil {
+		if errors.Is(err, repository.ErrCloudAgentStaleParent) {
+			// A competing identical request may have committed between the
+			// initial lookup and the parent lock. Its receipt still wins.
+			if ref, readErr := s.cloudAgentRunRefFor(userID, id); readErr == nil {
+				if ref.State.Fingerprint != fingerprint {
+					return nil, kernel.NewAppError(409, "幂等键已用于不同请求")
+				}
+				return s.CloudAgentRun(userID, id)
+			}
+			return nil, &kernel.AppError{Status: 409, Code: 409, Reason: "agent_conversation_stale_parent", Message: repository.ErrCloudAgentStaleParent.Error()}
+		}
 		if errors.Is(err, repository.ErrCreationConflict) {
 			return nil, creationConflict("同一 Agent 对话已有新的活动运行，请刷新对话后继续")
 		}
