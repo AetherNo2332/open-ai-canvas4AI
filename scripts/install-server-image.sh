@@ -206,8 +206,8 @@ install_host_updater() {
     rm -f "$installer"
 }
 
-start_services() {
-    step "拉取并启动 GHCR 网页、后端与 Agent 镜像"
+pull_and_pin_images() {
+    step "拉取并固定 GHCR 网页、后端与 Agent 镜像"
     if ! docker compose --env-file .env -f "$COMPOSE_FILE" pull; then
         fail "GHCR 镜像拉取失败；如果容器包尚未公开，请通过 GHCR_USERNAME 和 GHCR_TOKEN 登录后重试"
     fi
@@ -221,6 +221,10 @@ start_services() {
     set_env_value .env CANVAS_AGENT_IMAGE "$agent_digest"
     set_env_value .env CANVAS_BACKEND_IMAGE "$backend_digest"
     set_env_value .env CANVAS_WEB_IMAGE "$web_digest"
+}
+
+start_services() {
+    step "启动 PostgreSQL、Redis、后端、Agent 和网页服务"
     docker compose --env-file .env -f "$COMPOSE_FILE" up -d --remove-orphans --wait --wait-timeout 600
 }
 
@@ -244,8 +248,9 @@ main() {
     login_ghcr
     prepare_environment
     download_compose
-    start_services
+    pull_and_pin_images
     install_host_updater
+    start_services
     print_result
 }
 

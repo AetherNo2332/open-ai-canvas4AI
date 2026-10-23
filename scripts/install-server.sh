@@ -152,7 +152,7 @@ print_result() {
     printf '\n部署完成。\n'
     printf '访问地址：http://%s:%s\n' "$local_ip" "$CANVAS_HTTP_PORT"
     printf '安装目录：%s\n' "$INSTALL_DIR"
-    printf '查看状态：cd %q && docker compose --env-file .env -f %s -f %s ps\n' "$INSTALL_DIR" "$COMPOSE_FILE" "$BUILD_COMPOSE_FILE"
+    printf '查看状态：cd %q && CANVAS_BACKEND_IMAGE=open-ai-canvas-backend:server CANVAS_WEB_IMAGE=open-ai-canvas-web:server CANVAS_AGENT_IMAGE=open-ai-canvas-agent:server docker compose --env-file .env -f %s -f %s ps\n' "$INSTALL_DIR" "$COMPOSE_FILE" "$BUILD_COMPOSE_FILE"
     printf '\n首次打开后注册的第一个账号会自动成为管理员。公网长期使用前请配置 HTTPS。\n'
 }
 

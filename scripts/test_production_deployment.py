@@ -13,6 +13,80 @@ TOKEN = "deployment-test-token-" + "x" * 32
 
 
 class ProductionDeploymentTests(unittest.TestCase):
+    def test_image_install_starts_after_tokens_and_pins(self):
+        source = (ROOT / "scripts/install-server-image.sh").read_text(encoding="utf-8").rsplit('\nmain "$@"', 1)[0]
+        updater = (ROOT / "scripts/install-host-updater.sh").read_text(encoding="utf-8").rsplit('\nmain "$@"', 1)[0]
+        for existing, requested in ((False, True), (True, True), (True, False)):
+            with self.subTest(existing=existing, requested=requested), tempfile.TemporaryDirectory(prefix="canvas install ") as directory:
+                path = Path(directory)
+                if existing:
+                    (path / ".env").write_text("POSTGRES_PASSWORD=test\nDATABASE_URL=test\nCANVAS_IMAGE_TAG=1.5.0\nCANVAS_AGENT_INTERNAL_TOKEN=" + TOKEN + "\nCANVAS_UPDATER_TOKEN=" + TOKEN + "\n")
+                env = {key: value for key, value in os.environ.items() if not key.startswith(("CANVAS_", "REPOSITORY", "IMAGE_REPOSITORY", "INSTALL_DIR"))}
+                env.update(INSTALL_DIR=path.as_posix())
+                if requested:
+                    env["CANVAS_IMAGE_TAG"] = "v1.6.0"
+                commands = '''
+require_root() { :; }
+hostname() { printf '127.0.0.1\\n'; }
+install_packages() { :; }
+install_docker() { :; }
+download_compose() { touch "$COMPOSE_FILE"; }
+install_host_updater() { (
+''' + updater + '''
+UPDATER_ENV="$INSTALL_DIR/updater.env"
+for service in BACKEND WEB AGENT; do
+    grep -Eq "^CANVAS_${service}_IMAGE=.+@sha256:" "$INSTALL_DIR/.env" || exit 21
+done
+ensure_token
+); }
+docker() {
+    case "$1 $2" in
+        "image inspect") printf '%s@sha256:%064d\\n' "${3%:*}" 0 ;;
+        "compose --env-file")
+            case "$*" in
+                *" up -d "*)
+                    grep -Eq '^CANVAS_AGENT_INTERNAL_TOKEN=.{32,}$' .env || exit 22
+                    grep -Eq '^CANVAS_UPDATER_TOKEN=.{32,}$' .env || exit 23
+                    test -f updater.env || exit 24 ;;
+            esac ;;
+        *) return 1 ;;
+    esac
+}
+main
+cp .env saved.env
+main
+'''
+                result = subprocess.run([BASH, "--noprofile", "--norc", "-s"], input=source + commands,
+                                        cwd=directory, env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = dict(line.split("=", 1) for line in (path / ".env").read_text().splitlines())
+                saved = dict(line.split("=", 1) for line in (path / "saved.env").read_text().splitlines())
+                self.assertEqual(values["CANVAS_IMAGE_TAG"], "1.6.0" if requested else "1.5.0")
+                for key in ("CANVAS_AGENT_INTERNAL_TOKEN", "CANVAS_UPDATER_TOKEN"):
+                    self.assertEqual(values[key], saved[key])
+                    if existing:
+                        self.assertEqual(values[key], TOKEN)
+
+    def test_source_status_command_is_copyable_with_local_images(self):
+        source = (ROOT / "scripts/install-server.sh").read_text(encoding="utf-8").rsplit('\nmain "$@"', 1)[0]
+        with tempfile.TemporaryDirectory(prefix="canvas status ") as directory:
+            env = {key: value for key, value in os.environ.items() if not key.startswith("CANVAS_")}
+            env["INSTALL_DIR"] = Path(directory).as_posix()
+            commands = '''
+docker() {
+    test "${CANVAS_BACKEND_IMAGE:-}" = open-ai-canvas-backend:server &&
+    test "${CANVAS_WEB_IMAGE:-}" = open-ai-canvas-web:server &&
+    test "${CANVAS_AGENT_IMAGE:-}" = open-ai-canvas-agent:server
+}
+start_services
+status="$(print_result | sed -n 's/^查看状态：//p')"
+unset CANVAS_BACKEND_IMAGE CANVAS_WEB_IMAGE CANVAS_AGENT_IMAGE
+eval "$status"
+'''
+            result = subprocess.run([BASH, "--noprofile", "--norc", "-s"], input=source + commands,
+                                    cwd=directory, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def compose(self, files, token=TOKEN):
         env = {key: value for key, value in os.environ.items() if not key.startswith("CANVAS_")}
         env.update(POSTGRES_PASSWORD="test-password", DATABASE_URL="postgresql://test:test@postgres/test",
@@ -123,6 +197,7 @@ docker() {
     esac
 }
 prepare_environment
+pull_and_pin_images
 start_services
 '''
             result = subprocess.run([BASH, "--noprofile", "--norc", "-s"], input=source + commands,
