@@ -85,7 +85,12 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		capabilities := service.CloudAgentCapabilitySetInfo()
-		ok(c, gin.H{"version": 2, "permissionModes": []string{"read_only", "request_approval", "auto"}, "contextScopes": []string{"canvas"}, "skills": true, "writeTools": true, "billing": "fixed_request", "maxHistoryPairs": 10, "maxHistoryBytes": 64000, "maxSteps": 0, "tools": service.CloudAgentSupportedToolNames(), "capabilitySetVersion": capabilities.Version, "capabilitySetHash": capabilities.Hash, "nodeTypes": capabilities.Nodes})
+		availability, err := svc.AgentAvailability()
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"version": 2, "permissionModes": []string{"read_only", "request_approval", "auto"}, "contextScopes": []string{"canvas"}, "skills": true, "writeTools": true, "billing": "fixed_request", "maxHistoryPairs": 10, "maxHistoryBytes": 64000, "maxSteps": 0, "tools": service.CloudAgentSupportedToolNames(), "capabilitySetVersion": capabilities.Version, "capabilitySetHash": capabilities.Hash, "nodeTypes": capabilities.Nodes, "availability": availability})
 	})
 	// Skill usage is derived from the caller's own journal receipts, so it stays
 	// read-only and never exposes another user's runs.
@@ -122,6 +127,15 @@ func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		if err := decoder.Decode(&struct{}{}); err != io.EOF {
 			fail(c, http.StatusBadRequest, errors.New("请求必须只包含一个 JSON 对象"))
+			return
+		}
+		availability, err := svc.AgentAvailability()
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if !availability.Configured {
+			fail(c, http.StatusServiceUnavailable, errors.New(availability.Reason))
 			return
 		}
 		run, err := svc.CreateCloudAgentRun(user.ID, req, c.Param("id"))

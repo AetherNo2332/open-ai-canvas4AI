@@ -64,18 +64,22 @@ type AgentRuntimeInstance struct {
 	DispatchActive        int       `json:"dispatchActive"`
 	ReadyQueued           int       `json:"readyQueued"`
 	Draining              bool      `json:"draining"`
+	Readiness             string    `gorm:"size:16" json:"readiness"`
+	ReadinessReason       string    `gorm:"size:512" json:"readinessReason,omitempty"`
 	AppliedConfigRevision int64     `json:"appliedConfigRevision"`
 	UpdatedAt             time.Time `gorm:"index" json:"lastHeartbeatAt"`
 }
 
 type AgentCapacityReport struct {
-	Active                int   `json:"active"`
-	Capacity              int   `json:"capacity"`
-	ClaimReservations     int   `json:"claimReservations"`
-	DispatchActive        int   `json:"dispatchActive"`
-	ReadyQueued           int   `json:"readyQueued"`
-	Draining              bool  `json:"draining"`
-	AppliedConfigRevision int64 `json:"appliedConfigRevision"`
+	Active                int    `json:"active"`
+	Capacity              int    `json:"capacity"`
+	ClaimReservations     int    `json:"claimReservations"`
+	DispatchActive        int    `json:"dispatchActive"`
+	ReadyQueued           int    `json:"readyQueued"`
+	Draining              bool   `json:"draining"`
+	Readiness             string `json:"readiness"`
+	ReadinessReason       string `json:"readinessReason,omitempty"`
+	AppliedConfigRevision int64  `json:"appliedConfigRevision"`
 }
 
 type AgentRuntimeStatus struct {

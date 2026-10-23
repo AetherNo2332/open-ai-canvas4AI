@@ -6,6 +6,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/platform"
 	"infinite-canvas/backend/internal/repository"
+	"os"
 	"time"
 )
 
@@ -73,9 +74,52 @@ func (s *Service) AdminAgentSchedulerStatus(actor *model.User) ([]model.AgentRun
 }
 
 func (s *Service) PiCapacityReport(owner string, p model.AgentCapacityReport) error {
-
-	if owner == "" || len(owner) > 80 || p.Active < 0 || p.Active > 64 || p.Capacity < 1 || p.Capacity > 64 || p.ClaimReservations < 0 || p.ClaimReservations > 16 || p.DispatchActive < 0 || p.DispatchActive > 16 || p.ReadyQueued < 0 || p.AppliedConfigRevision < 0 || (p.Active > p.Capacity && !p.Draining) {
+	if p.Readiness == "" {
+		p.Readiness = "starting"
+	}
+	if owner == "" || len(owner) > 80 || p.Active < 0 || p.Active > 64 || p.Capacity < 1 || p.Capacity > 64 || p.ClaimReservations < 0 || p.ClaimReservations > 16 || p.DispatchActive < 0 || p.DispatchActive > 16 || p.ReadyQueued < 0 || p.AppliedConfigRevision < 0 || (p.Active > p.Capacity && !p.Draining) || len(p.ReadinessReason) > 512 || (p.Readiness != "starting" && p.Readiness != "ready" && p.Readiness != "degraded" && p.Readiness != "draining") {
 		return BadAuthRequest("Invalid Agent capacity")
 	}
 	return s.repo.AgentCapacityReport(owner, p)
+}
+
+type AgentAvailability struct {
+	Configured   bool   `json:"configured"`
+	ReadyWorkers int    `json:"readyWorkers"`
+	QueueReason  string `json:"queueReason"`
+	Reason       string `json:"reason"`
+}
+
+func (s *Service) AgentAvailability() (AgentAvailability, error) {
+	status := AgentAvailability{Configured: os.Getenv("CANVAS_AGENT_INTERNAL_TOKEN") != ""}
+	if !status.Configured {
+		status.QueueReason, status.Reason = "not_configured", "Agent 未配置：请设置 CANVAS_AGENT_INTERNAL_TOKEN 并部署 Worker"
+		return status, nil
+	}
+	rows, err := s.repo.AgentRuntimeInstances()
+	if err != nil {
+		return status, err
+	}
+	var online, free int
+	for _, row := range rows {
+		if !row.UpdatedAt.After(time.Now().Add(-45 * time.Second)) {
+			continue
+		}
+		online++
+		if row.Readiness == "ready" && !row.Draining {
+			status.ReadyWorkers++
+			if row.Active+row.ClaimReservations < row.Capacity {
+				free++
+			}
+		}
+	}
+	switch {
+	case status.ReadyWorkers == 0 && online == 0:
+		status.QueueReason, status.Reason = "worker_offline", "Agent Worker 离线；请检查容器、令牌和后端连接，任务将在限定时间内等待"
+	case status.ReadyWorkers == 0:
+		status.QueueReason, status.Reason = "worker_not_ready", "Agent Worker 在线但未就绪；请检查协议、Harness 和配置"
+	case free == 0:
+		status.QueueReason, status.Reason = "capacity", "Agent Worker 已满载，任务正在排队"
+	}
+	return status, nil
 }

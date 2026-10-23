@@ -103,6 +103,7 @@ export async function runEventSessions<B extends SessionBridge>(options: {
   createBridge: (index: number) => B;
   run: (bridge: B, snapshot: PiSnapshot, signal: AbortSignal) => Promise<void>;
   onError: (runId: string, error: unknown) => void;
+  onClaimSuccess?: () => void;
   events: RunEvents;
   reportCapacity?: (active: number, capacity: number) => Promise<void>;
   getConfig?:()=>{dispatchConcurrency:number;maxResidentSessions:number;maxResidentPerCanvas?:number};
@@ -124,7 +125,7 @@ export async function runEventSessions<B extends SessionBridge>(options: {
       reserved += 1;
       const bridge = options.createBridge(identity++);
       let snapshot: PiSnapshot | null = null;
-      try { snapshot = await bridge.claim(options.signal); }
+      try { snapshot = await bridge.claim(options.signal); options.onClaimSuccess?.(); }
       catch (error) { if (!options.signal.aborted) options.onError("claim", error); }
       finally { reserved -= 1; }
       if (!snapshot) { await options.events.pause("dispatch",5000,options.signal); continue; }

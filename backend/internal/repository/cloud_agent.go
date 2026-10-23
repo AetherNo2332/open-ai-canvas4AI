@@ -181,10 +181,9 @@ func (r *Repository) StalledPiAgentRuns(expiredBefore time.Time, limit int) ([]m
 // make the first claim impossible — so these runs stay claimable until they are swept.
 func (r *Repository) UnclaimedPiAgentRuns(createdBefore time.Time, limit int) ([]model.CloudAgentExecution, error) {
 	var runs []model.CloudAgentExecution
-	capacityAlive := false
 	if r.db.Migrator().HasTable(&model.AgentRuntimeInstance{}) {
 		var alive, available int64
-		query := r.db.Model(&model.AgentRuntimeInstance{}).Where("updated_at > ?", time.Now().Add(-45*time.Second))
+		query := r.db.Model(&model.AgentRuntimeInstance{}).Where("updated_at > ? AND readiness = ? AND draining = ?", time.Now().Add(-45*time.Second), "ready", false)
 		if err := query.Count(&alive).Error; err != nil {
 			return nil, err
 		}
@@ -194,13 +193,9 @@ func (r *Repository) UnclaimedPiAgentRuns(createdBefore time.Time, limit int) ([
 		if alive > 0 && available == 0 {
 			return runs, nil
 		}
-		capacityAlive = alive > 0
 	}
 	query := r.db.Where("engine = ? AND status IN ? AND lease_expires_at IS NULL AND created_at < ?",
-		"pi", []string{"queued", "running", "waiting_approval"}, createdBefore)
-	if capacityAlive {
-		query = query.Where("wait_kind <> ?", "canvas_capacity")
-	}
+		"pi", []string{"queued", "running", "waiting_approval"}, createdBefore).Where("wait_kind <> ?", "canvas_capacity")
 	err := query.
 		Order("created_at").Limit(limit).Find(&runs).Error
 	return runs, err

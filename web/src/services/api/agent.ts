@@ -216,6 +216,7 @@ export function getAgentCapabilities() {
         contextScopes: string[];
         skills: boolean;
         writeTools: boolean;
+        availability: { configured: boolean; readyWorkers: number; queueReason: string; reason: string };
         historyPolicy?: "server_compacted";
         contextCompaction?: { enabled: boolean; strategy: "structured_checkpoint"; thresholdBytes: number; thresholdHistoryMessages: number; retainedRecentPairs: number };
         capabilitySetVersion?: string;

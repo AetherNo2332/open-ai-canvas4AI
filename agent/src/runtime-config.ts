@@ -22,4 +22,5 @@ export class RuntimeConfigController {
 export interface CapacityReport {
  active:number;capacity:number;claimReservations:number;dispatchActive:number;
  readyQueued:number;draining:boolean;appliedConfigRevision:number;
+ readiness:"starting"|"ready"|"degraded"|"draining";readinessReason?:string;
 }

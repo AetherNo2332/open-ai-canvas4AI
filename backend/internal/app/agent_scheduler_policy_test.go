@@ -5,6 +5,44 @@ import (
 	"testing"
 )
 
+func TestAgentAvailabilityDistinguishesConfigurationCapacityAndReadiness(t *testing.T) {
+	s, db, _ := piAgentTestLeasedFixture(t)
+	if err := db.AutoMigrate(&model.AgentRuntimeInstance{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CANVAS_AGENT_INTERNAL_TOKEN", "")
+	status, err := s.AgentAvailability()
+	if err != nil || status.Configured || status.QueueReason != "not_configured" {
+		t.Fatalf("unconfigured: %+v %v", status, err)
+	}
+	t.Setenv("CANVAS_AGENT_INTERNAL_TOKEN", "test-token")
+	status, err = s.AgentAvailability()
+	if err != nil || status.QueueReason != "worker_offline" {
+		t.Fatalf("offline: %+v %v", status, err)
+	}
+	if err = s.PiCapacityReport("worker", model.AgentCapacityReport{Capacity: 1, Readiness: "degraded", ReadinessReason: "protocol mismatch"}); err != nil {
+		t.Fatal(err)
+	}
+	status, err = s.AgentAvailability()
+	if err != nil || status.QueueReason != "worker_not_ready" {
+		t.Fatalf("degraded: %+v %v", status, err)
+	}
+	if err = s.PiCapacityReport("worker", model.AgentCapacityReport{Active: 1, Capacity: 1, Readiness: "ready", AppliedConfigRevision: 0}); err != nil {
+		t.Fatal(err)
+	}
+	status, err = s.AgentAvailability()
+	if err != nil || status.ReadyWorkers != 1 || status.QueueReason != "capacity" {
+		t.Fatalf("full: %+v %v", status, err)
+	}
+	if err = s.PiCapacityReport("worker", model.AgentCapacityReport{Capacity: 1, Readiness: "ready", AppliedConfigRevision: 0}); err != nil {
+		t.Fatal(err)
+	}
+	status, err = s.AgentAvailability()
+	if err != nil || status.ReadyWorkers != 1 || status.QueueReason != "" {
+		t.Fatalf("recovered: %+v %v", status, err)
+	}
+}
+
 func TestAgentSchedulerAdminPolicyAndCapacityDraining(t *testing.T) {
 	s, db, _ := piAgentTestLeasedFixture(t)
 	if err := db.AutoMigrate(&model.AgentSchedulerSetting{}, &model.AgentAdmissionCounter{}, &model.AdminAuditEvent{}, &model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentRuntimeInstance{}); err != nil {

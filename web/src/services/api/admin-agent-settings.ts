@@ -10,6 +10,16 @@ export interface AgentSchedulerSetting {
 export type AgentSchedulerDraft = Pick<AgentSchedulerSetting, "dispatchConcurrency" | "maxResidentSessions" | "maxResidentPerCanvas">;
 export const getAgentSchedulerSetting = () => http.get<{ setting: AgentSchedulerSetting; toolCount: number }>("/admin/settings/agent-scheduler");
 export const updateAgentSchedulerSetting = (input: AgentSchedulerDraft & { expectedRevision: number }) => http.put<{ setting: AgentSchedulerSetting }>("/admin/settings/agent-scheduler", input);
+export interface AgentRuntimeStatus {
+    instanceId: string;
+    online: boolean;
+    readiness: "starting" | "ready" | "degraded" | "draining";
+    readinessReason?: string;
+    resident: number;
+    capacity: number;
+    lastHeartbeatAt: string;
+}
+export const getAgentSchedulerStatus = () => http.get<{ instances: AgentRuntimeStatus[] }>("/admin/settings/agent-scheduler/status");
 
 export interface AgentWebSearchSetting {
     enabled: boolean;

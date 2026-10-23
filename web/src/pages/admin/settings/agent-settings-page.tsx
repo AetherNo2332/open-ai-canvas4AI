@@ -9,7 +9,7 @@ import AgentSubagentsAvailabilitySection from "./components/agent-subagents-avai
 import AgentToolCount from "./components/agent-tool-count";
 import AgentWebSearchSection from "./components/agent-web-search-section";
 import "./agent-settings-page.css";
-import { getAgentSchedulerSetting, updateAgentSchedulerSetting, type AgentSchedulerDraft, type AgentSchedulerSetting } from "@/services/api/admin-agent-settings";
+import { getAgentSchedulerSetting, getAgentSchedulerStatus, updateAgentSchedulerSetting, type AgentRuntimeStatus, type AgentSchedulerDraft, type AgentSchedulerSetting } from "@/services/api/admin-agent-settings";
 
 const fields: Array<{ key: keyof AgentSchedulerDraft; label: string; detail: string; max: number }> = [
     { key: "dispatchConcurrency", label: "Agent 调度槽", detail: "每个执行器同时推进的短步骤数；等待模型、工具或审批不占槽。", max: 16 },
@@ -26,6 +26,7 @@ export default function AgentSettingsPage() {
     const [setting, setSetting] = useState<AgentSchedulerSetting>();
     const [draft, setDraft] = useState<AgentSchedulerDraft>();
     const [configError, setConfigError] = useState("");
+    const [workers, setWorkers] = useState<AgentRuntimeStatus[]>([]);
     const [saving, setSaving] = useState(false);
     const loadConfig = useCallback(async () => {
         try {
@@ -42,8 +43,12 @@ export default function AgentSettingsPage() {
     useEffect(() => {
         mounted.current = true;
         void loadConfig();
+        const loadWorkers = () => { void getAgentSchedulerStatus().then(({ instances }) => { if (mounted.current) setWorkers(instances); }).catch(() => {}); };
+        loadWorkers();
+        const timer = window.setInterval(loadWorkers, 15000);
         return () => {
             mounted.current = false;
+            window.clearInterval(timer);
         };
     }, [loadConfig]);
     useEffect(() => {
@@ -93,6 +98,15 @@ export default function AgentSettingsPage() {
                     <a href="#memory">记忆管理</a>
                 </nav>
                 <AgentToolCount count={configError ? undefined : toolCount} loading={!draft && !configError} />
+                <section className="agent-settings-section space-y-2" aria-label="Agent Worker 状态">
+                    <h2 className="text-base font-semibold">Worker 状态</h2>
+                    {workers.length === 0 ? <p className="text-sm text-foreground/60">暂无 Worker 心跳；请检查 Agent 容器、令牌和后端连接。</p> : workers.map((worker) => (
+                        <p key={worker.instanceId} className="text-sm text-foreground/70">
+                            {worker.instanceId} · {worker.online ? worker.readiness === "ready" ? "就绪" : `在线但未就绪（${worker.readiness || "starting"}）` : "离线"}
+                            {worker.readinessReason ? ` · ${worker.readinessReason}` : ""} · {worker.resident}/{worker.capacity} 会话
+                        </p>
+                    ))}
+                </section>
                 <section id="config" className="agent-settings-section space-y-4" aria-labelledby="agent-config-heading">
                     <div className="agent-settings-heading">
                         <h2 id="agent-config-heading" className="text-base font-semibold">

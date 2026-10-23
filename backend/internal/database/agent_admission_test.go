@@ -92,7 +92,7 @@ func TestAgentCanvasCapacityWaitIsNotUnavailableWorker(t *testing.T) {
 	if err := db.AutoMigrate(&model.AgentRuntimeInstance{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&model.AgentRuntimeInstance{ID: "live", Capacity: 64, Active: 16, UpdatedAt: time.Now()}).Error; err != nil {
+	if err := db.Create(&model.AgentRuntimeInstance{ID: "live", Capacity: 64, Active: 16, Readiness: "ready", UpdatedAt: time.Now()}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&model.CloudAgentExecution{ID: "waiting", UserID: "u", Engine: "pi", Status: "queued", WaitKind: "canvas_capacity", CreatedAt: time.Now().Add(-time.Hour)}).Error; err != nil {

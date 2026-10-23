@@ -169,6 +169,15 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const reducedMotion = useReducedMotion();
     const [view, setView] = useState<AgentPanelView>("chat");
+    const [workerAvailability, setWorkerAvailability] = useState<{ queueReason: string; reason: string }>();
+    useEffect(() => {
+        if (!open) return;
+        let active = true;
+        const refresh = () => { void getAgentCapabilities().then((result) => { if (active) setWorkerAvailability(result.availability); }).catch(() => {}); };
+        refresh();
+        const timer = window.setInterval(refresh, 15000);
+        return () => { active = false; window.clearInterval(timer); };
+    }, [open]);
     const [run, setRun] = useState<AgentRun | null>(null);
     const currentRunIdRef = useRef(run?.id);
     currentRunIdRef.current = run?.id;
@@ -775,6 +784,8 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             if (!pending?.request) {
                 const capabilities = await getAgentCapabilities();
                 if (currentScope.current !== scope) return;
+                setWorkerAvailability(capabilities.availability);
+                if (!capabilities.availability.configured) throw new Error(capabilities.availability.reason);
                 if (!capabilities.permissionModes.includes(permissionMode)) throw new Error("当前后端不支持所选 Agent 权限，请更新后端");
                 if (selectedSkillIds.length && !capabilities.skills) throw new Error("当前后端尚未接入技能库");
                 await saveRemoteUserDataNow();
@@ -1133,6 +1144,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                                     </Button>
                                                 ) : null}
                                             </div>
+                                        ) : null}
+                                        {workerAvailability?.queueReason ? (
+                                            <div role="status" className="px-5 py-2 text-xs text-foreground/70">{workerAvailability.reason}</div>
                                         ) : null}
                                         <AgentConversation
                                             key={activeConversationId}
