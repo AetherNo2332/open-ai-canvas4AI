@@ -7,9 +7,15 @@ description: 生产 Compose、Agent 内部连接与安装更新入口
 
 `docker-compose.deploy.yml` 包含 PostgreSQL、Redis、一次性 migrate、backend、agent 和 web；`docker-compose.server.yml` 提供服务器源码构建。两者均默认启动 Agent，无需 `pi` profile。只有根 `docker-compose.yml` 的 Agent 使用 `pi` profile。
 
-backend 和 Agent 必须使用相同的 `CANVAS_AGENT_INTERNAL_TOKEN`。安装脚本为缺失或空值生成64位十六进制随机令牌，保留已有至少32字符的令牌，过短值会中止安装。手动部署先用 `openssl rand -hex 32` 生成令牌，写入受保护的 `.env`。
+backend 使用至少32字符的 `CANVAS_AGENT_INTERNAL_TOKEN` 作为运行授权签名材料，不下发给 Agent。Worker 使用独立的 `CANVAS_AGENT_WORKER_ID` 和至少32字符的 `CANVAS_AGENT_WORKER_TOKEN`；backend 在启动时将该身份的凭据摘要与可选 `CANVAS_AGENT_WORKER_USER_ID` 作用域插入注册表，Agent 仅持有 Worker 凭据。空作用域明确表示可服务全部用户，填写用户 ID 则只允许领取该用户的运行。
 
-Agent 使用 `http://backend:8080` 和内部令牌访问后端，等待 backend 健康后启动，无数据库凭据和公网端口。进程退出由 Docker 重启策略处理；Compose 启动成功不代表 Agent 已完成模型调用，部署后仍需实际发起一轮对话检查领取与执行。
+安装脚本为缺失值生成随机凭据，保留已有有效值，过短值会中止安装。手动部署执行两次 `openssl rand -hex 32`，分别填写签名材料与 Worker 凭据。数据库引导为只插入：已有身份的凭据、作用域和撤销状态不会被环境变量或重启覆盖。更换凭据或作用域时，管理员通过 Worker 管理 API 创建新 ID，再更新部署配置；不要修改 `.env` 的旧 ID 后期待数据库自动轮换。
+
+Agent 使用 `http://backend:8080` 和 Worker 凭据访问 config、claim、capacity、events，领取后用五分钟短期授权访问对应运行。授权绑定 Worker、用户、run、lease owner 与 epoch，并再次校验数据库有效租约；续租返回新授权，撤销、终态和接管使旧授权失效。它没有数据库凭据和公网端口。
+
+Worker 等待 backend 健康后启动；本机健康探针独立检查配置、领取与容量通道的时效，状态区分 starting、ready、degraded、draining。backend 的全局 ready 不依赖 Agent，避免 Compose 依赖循环。协议、凭据等连状态通道都无法通过的失败仅能从容器健康与日志判断，后台在心跳过期后显示离线。Agent 能力接口单独区分未配置、离线、未就绪和满载；缺配置立即拒绝新运行，暂时离线保留有期限的耐久排队，健康满载继续排队。
+
+资源治理先暂停新认领，保留在途会话。部署项 `CANVAS_AGENT_RESIDENT_LIMIT`、`CANVAS_AGENT_MEMORY_BUDGET_MB`、`CANVAS_AGENT_EVENT_LOOP_LIMIT_MS` 与 `CANVAS_AGENT_CONTAINER_MEMORY_LIMIT` 控制本地驻留、RSS 预算、事件循环阈值和容器硬上限；默认分别为16、768MiB、250ms、1GiB。实际驻留上限取后台配置与本地限制的较小值；模型并发仍由后台调度策略控制。RSS 达预算80%或延迟达阈值时暂停，连续两次低于65%和40%阈值后恢复。此阶段不保证单运行的进程隔离。
 
 ## 源码与镜像安装
 
@@ -19,10 +25,18 @@ Agent 使用 `http://backend:8080` 和内部令牌访问后端，等待 backend 
 
 镜像部署固定 `CANVAS_IMAGE_TAG` 到实际已发布的版本，同时写入 `CANVAS_BACKEND_IMAGE`、`CANVAS_WEB_IMAGE`、`CANVAS_AGENT_IMAGE` 的仓库 digest。目标版本必须已发布三份镜像；这里的代码变更不会自动发布镜像或 Release。
 
+镜像安装按“拉取并固定三份镜像 → 安装 Host Updater 并写入令牌 → 启动服务”执行，保证 backend 首次启动读到 Updater token。源码安装结果打印的状态命令带三份本地镜像变量，可在新的 shell 中直接运行。
+
 ## 旧部署与在线更新
 
-原来缺少 Agent 的部署需要补齐服务、共用令牌和 Agent 镜像，不能只增加一个环境变量。使用更新后的源码安装脚本会补齐缺值令牌并构建三份镜像；使用镜像安装脚本需选择包含本次修复的已发布版本。
+原来缺少 Agent 的部署需要补齐服务、独立 Worker 凭据和 Agent 镜像，不能只增加一个环境变量。数据库需先迁移至包含用户配额与 Worker 注册表的版本，再启动匹配的 backend 和 Agent。旧 Worker 只持有共享签名令牌，不能调用新的 Worker 协议；更新时同时升级两端与部署配置。使用更新后的安装脚本会补齐缺值凭据；镜像安装需选择已实际发布的匹配版本。
 
 Host Updater 更新三份镜像并保存临时和正式环境，迁移或回退前停止 web、Agent 和 backend；旧 Compose 没有 Agent 时跳过该服务。旧版 updater 只管理两份镜像，首次迁移前需通过新版镜像安装脚本重新安装 updater 并补齐环境，不能依赖旧二进制自行跨过这一变更。回退恢复备份的 Compose 和 `.env`。
 
 生产环境只暴露 web；配置准确的 CORS 与公开资源地址，并由入口代理提供 HTTPS。真实服务器安装、对话领取、升级和回退属于运行验收，静态 Compose 解析不能替代。
+
+## 运行观测
+
+内建管理 API 从已提交的 run、task、event 与新鲜 Worker 心跳派生队列、成功率、重试和恢复指标，反复读取不会重复累计。恢复次数是所选运行的持久化累计值；同一运行多次接管会产生频繁恢复告警。可用 Worker 只计 ready 且不在 draining 的实例。
+
+可选 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 填写完整 OTLP/HTTP traces 地址（如 collector 的 `/v1/traces`），`CANVAS_GRAFANA_URL` 仅提供管理跳转。collector 单独部署，不新增根 Compose。导出器有界排队，网络错误、429和5xx最多尝试三次；失败/丢弃/成功计数是 backend 进程内统计，重启后清零，不是持久化账务。关闭排空最多两秒并受调用者期限约束，超时记录未送达数量。未配置 collector 时继续使用内建观测。

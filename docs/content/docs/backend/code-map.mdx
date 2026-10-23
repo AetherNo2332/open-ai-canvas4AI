@@ -7,9 +7,18 @@ description: 从产品功能快速定位主要代码入口
 
 ## 生产 Agent 部署
 
-- `docker-compose.deploy.yml`、`docker-compose.server.yml`：默认启动内部 Agent worker，backend 与 worker 共用必填令牌；`docker-compose.build.yml`：源码构建三份应用镜像。
-- `scripts/install-server.sh`、`install-server-image.sh`：默认当前 fork，生成或补齐共用令牌，分别构建或固定三份镜像；`install-host-updater.sh` 将仓库配置写入 updater 环境。
+- `docker-compose.deploy.yml`、`docker-compose.server.yml`：默认启动内部 Agent worker，backend 签名材料与 Worker 凭据分开；`docker-compose.build.yml`：源码构建三份应用镜像。
+- `scripts/install-server.sh`、`install-server-image.sh`：默认当前 fork，生成或补齐独立凭据，分别构建或固定三份镜像；镜像安装在启动前安装 Updater 并准备其 token。
 - `backend/internal/hostupdate/manager_ops.go`、`manager.go`：三份镜像拉取与固定、临时/正式环境更新，以及迁移和回退前停止可用的 Agent 服务。配置及升级边界见 [生产部署](./production-deployment)。
+
+## 运行治理与验收
+
+- `agent/src/health-state.ts`、`health-probe.ts`、`server.ts`：本机原子健康快照、独立通道时效与状态上报；`resource-budget.ts`、`event-scheduler.ts`：资源采样、暂停认领和在途清理。
+- `backend/internal/model/agent_admission.go`、`repository/agent_admission.go`：后台配额、数据库串行化准入、用户与画布公平性；`database/migrations.go`：迁移60、61。
+- `app/agent_worker_auth.go`、`repository/agent_worker.go`、`handler/internal_agent.go`：Worker 引导/撤销、用户作用域、短期授权与当前租约验证；`handler/admin_agent_workers.go`：管理员身份管理。
+- `internal/observability/exporter.go`、`app/admin_observability.go`：有界外部导出与已提交数据的管理投影。
+- `internal/architecture`、`handler/openapi_contract_test.go`：精确依赖 baseline、公共路由合同、读取 DTO 与嵌套字段守卫；既有工具 AST/schema 制品测试继续保留。
+- `scripts/release-metadata.mjs`：唯一 VERSION 的发布派生与精确日志边界；`scripts/verify-production-agent-smoke.py`：隔离生产编排、确定性模型、审批和 SSE 验收入口。
 
 ## Agent 提示词与规则
 

@@ -42,8 +42,8 @@ jobs:
     defaults:
       run:
         working-directory: backend
-    # 后端有 5 个用例默认会静默跳过：3 个需要 CANVAS_TEST_POSTGRES_DSN（PostgreSQL 迁移、
-    # 素材字节修复、画布版本历史），2 个用 exec.LookPath("redis-server") 自起临时实例
+    # CI强制6条依赖验收：3条 CANVAS_TEST_POSTGRES_DSN（迁移、素材修复、版本历史）、
+    # 1条 TEST_AGENT_POSTGRES_DSN（跨后端用户配额）、2条自起临时Redis实例
     # （Redis 租约、缓存白名单）。只跑 go test ./... 而不备齐这两样，这些路径永远不会被执行。
     services:
       postgres:
@@ -60,6 +60,7 @@ jobs:
           --health-retries 12
     env:
       CANVAS_TEST_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_test?sslmode=disable
+      TEST_AGENT_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_event_integration?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -67,6 +68,8 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
           cache: true
+      - name: Prepare isolated Agent admission database
+        run: docker exec "${{ job.services.postgres.id }}" psql -U postgres -d postgres -c 'CREATE DATABASE canvas_event_integration'
       - name: Install redis-server for integration tests
         # 用例自己拉起临时 redis-server（unix socket），所以需要的是可执行文件而不是 redis 服务。
         run: |
@@ -89,13 +92,13 @@ jobs:
       - name: Check architecture slice and analyzer fixtures
         shell: bash
         run: |
-          staticcheck ./internal/architecture
-          ineffassign ./internal/architecture
-          if staticcheck ./internal/architecture/testdata/lintbad; then
+          "$(go env GOPATH)/bin/staticcheck" ./internal/architecture
+          "$(go env GOPATH)/bin/ineffassign" ./internal/architecture
+          if "$(go env GOPATH)/bin/staticcheck" ./internal/architecture/testdata/lintbad; then
             echo "staticcheck did not reject its fixture"
             exit 1
           fi
-          if ineffassign ./internal/architecture/testdata/lintbad; then
+          if "$(go env GOPATH)/bin/ineffassign" ./internal/architecture/testdata/lintbad; then
             echo "ineffassign did not reject its fixture"
             exit 1
           fi

@@ -16,7 +16,7 @@
 
 ## 1. 一开始要做什么(原始任务,含出处)
 
-出处:`docs/superpowers/specs/2026-10-12-director-desk-previs-replacement-design.md`、`docs/superpowers/plans/2026-10-12-director-desk-previs-replacement.md`、`HANDOFF-DirectorDesk-Previs-2026-10-12.md`。
+出处:`docs/superpowers/specs/2026-10-12-director-desk-previs-replacement-design.md`、`docs/superpowers/plans/2026-10-12-director-desk-previs-replacement.md`、`docs/archive/engineering/HANDOFF-DirectorDesk-Previs-2026-10-12.md`。
 
 1. **目标**(设计 L3-13):用 `mangfufu/director-desk` 的三维场景编辑/走位/镜头/时间轴能力**替换影策现有预演台的编辑运行时**,同时**保留影策现有 Agent 控制合同、审批与持久化链路**,并保留"图片→可编辑 3D 预演场景"入口。
 2. **边界**(设计 L23-27、L105-108、计划 L15-21):
@@ -121,7 +121,7 @@
 
 ## 8. 证据索引
 
-- 原始任务:`docs/superpowers/specs/2026-10-12-director-desk-previs-replacement-design.md`(L3-13/23-27/105-108/110-119)、`docs/superpowers/plans/2026-10-12-director-desk-previs-replacement.md`(L5-21、Task1-7)、`HANDOFF-DirectorDesk-Previs-2026-10-12.md`(§2.1 e62290e 来源、§5 skip≠pass、§7 约束)
+- 原始任务:`docs/superpowers/specs/2026-10-12-director-desk-previs-replacement-design.md`(L3-13/23-27/105-108/110-119)、`docs/superpowers/plans/2026-10-12-director-desk-previs-replacement.md`(L5-21、Task1-7)、`docs/archive/engineering/HANDOFF-DirectorDesk-Previs-2026-10-12.md`(§2.1 e62290e 来源、§5 skip≠pass、§7 约束)
 - 宿主真件:`/mnt/d/open-ai-canvas-worktrees/agent-crew-runtime/web/src/router.tsx`(228 行)、同目录 `components/layout/app-providers.tsx`、`components/auth/auth-session-hydrator.tsx`、`test/workspace-route-loading.test.ts`(0 处 skip)
 - 静音证据:`git grep -c "test\.skip" c9d9d05 -- web/test` = 0,`… HEAD …` = 6;`git diff origin/codex/electron-canary-local..HEAD -- web/test/workspace-route-loading.test.ts web/test/password-reset.test.ts web/test/channel-model-editor-form.test.ts`
 - 文件清单差:`comm -23`(云 worktree vs 当前树)= 38 个宿主文件缺失;`comm -13` = 122 个新增(含 DirectorDesk/previs 正当成果)

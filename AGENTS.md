@@ -54,7 +54,7 @@
 ### Agent、插件、CI 和文档
 
 - 修改 `docs/` 前确认内容属于专题文档，而不是把长篇说明重新复制到根 README。目录索引见 `docs/index.md`。
-- `.github/workflows/quality.yml` 是 PR 与推送门禁（`agent`、`backend`、`payment-plugins`、`web`、`changelog`），`publish-images.yml` 只在 main/tag 构建镜像并校验 `VERSION` 与 `CHANGELOG.md`。新增门禁或脚本时同步更新本节和第 8 节的验证清单，避免文档与实际 CI 脱节。
+- `.github/workflows/quality.yml` 是 PR 与推送门禁（`agent`、`backend`、`payment-plugins`、`web`、`changelog`、`production-agent-smoke`）。backend 显式运行 vet、依赖 AST baseline、公共 Agent 路由/OpenAPI 合同，并用锁定版本的 staticcheck/ineffassign 从受控包逐步扩大检查。生产 smoke 以临时覆盖运行 deploy+build 和确定性模型；保留四服务 parity 的隔离边界。`publish-images.yml` 在 main/tag 构建镜像，从根 VERSION 派生内部版本、正式版本和镜像 tag。新增门禁或脚本时同步更新本节和第 8 节。
 
 ## 4. 前端 API 和状态合同
 
@@ -158,6 +158,8 @@
 
 - 前端：`cd web && bun run build`；专项测试用 `bun test ...`。UI 退场规则用 `bun run lint`（只禁 antd Empty 和静态 `Modal.confirm`，不是风格检查）。
 - 后端：`cd backend && go test ./...`；涉及 PostgreSQL、资源、任务或权限时补对应集成/冒烟路径。
+- 增量治理：`go test ./internal/architecture` 与 handler 的 OpenAPI 合同测试；baseline 必须对应精确规则和位置，不能自动接纳新违规。CI 分别验证锁版本分析器拒绝负例，保留已有工具 AST/制品与 Pi 合同检查。
+- 部署脚本：`python -B -m unittest scripts.test_production_deployment scripts.test_agent_parity_container_commands scripts.test_production_agent_smoke` 只检查隔离命令和配置；真实跨进程入口是 `scripts/verify-production-agent-smoke.py`。运行容器前检查项目、挂载、端口和数据范围，不能把静态检查当成生产验收。
 - 云端 Agent：前端事件流和审批路径依赖后端 `/api/agent` 接口；在该接口实现后补充后端冒烟、Worker 运行和 SSE 断线重连验证。
 - 文档站：`cd docs && bun run types:check` 或 `bun run build`。
 - 版本与更新日志：`node scripts/changelog.mjs --check`（与 CI 的 `Changelog entry` 任务同款）；打 tag 前确认根 `VERSION` 与 `CHANGELOG.md` 里的 `## <VERSION>` 行完全一致（`publish-images.yml` 直接用它做发布门禁和 Release 说明）。

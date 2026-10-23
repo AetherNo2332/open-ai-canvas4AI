@@ -7,7 +7,13 @@ description: 当前项目已实现的核心工作台能力与使用入口
 
 ## Docker Compose 入口
 
-根目录保留默认、build、deploy、dev、local 和 server 六份编排。移除专项验收、灰度、回滚、监控与预演叠加文件；生产 deploy/server 默认包含 Agent；build 叠加支持构建 Agent 镜像，安装脚本生成共用令牌，镜像安装与在线更新同步管理 backend、web、Agent。可选 renderer、监控和专项验收服务由独立环境管理，验收脚本按专用项目与服务标签定位容器。
+根目录保留默认、build、deploy、dev、local 和 server 六份编排。生产 deploy/server 默认包含 Agent；build 叠加支持构建 Agent 镜像。安装脚本分别生成 backend 签名材料与 Worker 凭据，先固定镜像及准备 Updater token，再启动应用；镜像安装与在线更新同步管理三份应用镜像。可选 renderer、监控和专项验收服务由独立环境管理，验收脚本按专用项目与服务标签定位容器。
+
+## Agent 运行治理
+
+能力状态区分未配置、离线、未就绪和满载，Worker 本地探针独立检查配置、认领与容量通道；backend 全局就绪不等待 Agent。后台可配置每用户跨画布驻留上限，数据库按用户和画布公平准入。本地驻留、RSS 和事件循环预算在资源压力时暂停新认领，保留在途会话；部署可配置容器内存上限。
+
+Worker 注册表支持独立凭据、用户作用域与撤销；领取后的短期授权绑定运行租约及 epoch。运行观测从持久数据派生队列和恢复指标，可选 OTLP/HTTP 导出显示成功、失败和丢弃统计。上述行为已接入代码，真实生产升级、collector 链路与故障域验收见待测试清单。
 
 ## Agent 提示词与规则
 

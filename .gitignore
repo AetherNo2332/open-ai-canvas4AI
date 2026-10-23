@@ -52,6 +52,7 @@ data/
 .local/
 /.local/docker-compose.postgres.yml
 coverage/
+__pycache__/
 dist/
 *.log
 *.tsbuildinfo

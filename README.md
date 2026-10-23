@@ -46,11 +46,13 @@ cd open-ai-canvas
 cp .env.example .env
 ```
 
-编辑 `.env`，将 `CANVAS_AGENT_INTERNAL_TOKEN` 填为至少 32 字符的随机令牌。backend 与 Agent 必须使用相同值；可用下面的命令生成，再将结果填入配置：
+编辑 `.env`，分别生成两个至少 32 字符的随机值：`CANVAS_AGENT_INTERNAL_TOKEN` 仅供 backend 签发运行授权，`CANVAS_AGENT_WORKER_TOKEN` 是 Worker 凭据；保留默认 `CANVAS_AGENT_WORKER_ID` 或设置独立实例身份。两个值分别生成，Agent 容器只接收 Worker 凭据：
 
 ```bash
 openssl rand -hex 32
 ```
+
+该命令执行两次，将结果分别填入配置。已有 Worker 身份的凭据与撤销状态保存在数据库中，重启不会覆盖；更换凭据或租户范围时使用新的 Worker ID，见[生产部署](docs/content/docs/backend/production-deployment.mdx)。
 
 ### 2. 构建并启动
 
