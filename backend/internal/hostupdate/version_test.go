@@ -1,6 +1,34 @@
 package hostupdate
 
-import "testing"
+import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestReleaseHealthInternalVersion(t *testing.T) {
+	for _, test := range []struct {
+		build, target string
+		wantError     bool
+	}{
+		{"v1.6.0(abcdef0)", "v1.6.0", false},
+		{"v1.6.1(1234567)", "v1.6.1", false},
+		{"v1.6.0(abcdef0)", "v1.6.1", true},
+		{"v1.6.0.1(abcdef0)", "v1.6.0.1", false},
+	} {
+		t.Run(test.build+"-"+test.target, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"code":0,"data":{"build":{"version":%q}}}`, test.build)
+			}))
+			defer server.Close()
+			manager := &Manager{httpClient: server.Client()}
+			if err := manager.checkHealthOnce(server.URL, test.target); (err != nil) != test.wantError {
+				t.Fatalf("checkHealthOnce() error = %v, wantError %v", err, test.wantError)
+			}
+		})
+	}
+}
 
 func TestCompareVersions(t *testing.T) {
 	tests := []struct {
@@ -14,6 +42,9 @@ func TestCompareVersions(t *testing.T) {
 		{"v1.5.7.1", "v1.5.7", 1},
 		{"v1.5.7.1", "v1.5.7.2", -1},
 		{"v1.2.0", "v1.2.0", 0},
+		{"v1.6.0(abcdef0)", "v1.6.0", 0},
+		{"v1.6.1(1234567)", "v1.6.1", 0},
+		{"v1.6.0(abcdef0)", "v1.6.1", -1},
 		{"v1.5.7.2(45bd1062)", "v1.5.7.2", 0},
 		{"v1.5.7.3(abcdef0)", "v1.5.7.2(45bd1062)", 1},
 		{"vsha-5509b17", "v1.5.0", -1},

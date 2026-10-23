@@ -37,13 +37,11 @@ jobs:
           REPOSITORY_OWNER: ${{ github.repository_owner }}
         shell: bash
         run: |
-          version="$(tr -d '\r\n' < VERSION)"
+          args=()
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            [[ "$version" == "$GITHUB_REF_NAME" ]] || { echo "VERSION=$version does not match tag $GITHUB_REF_NAME" >&2; exit 1; }
-            grep -Fqx "## $version" CHANGELOG.md || { echo "CHANGELOG.md is missing ## $version" >&2; exit 1; }
+            args+=(--tag "$GITHUB_REF_NAME")
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${version#v}" >> "$GITHUB_OUTPUT"
+          node scripts/release-metadata.mjs "${args[@]}"
           # 相同提交的 main/tag/重跑使用相同时间，避免人为破坏缓存。
           echo "build_time=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
           echo "owner=${REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
@@ -198,15 +196,17 @@ jobs:
           cd ../dist
           sha256sum open-ai-canvas-host-updater-linux-* > SHA256SUMS
       - name: Prepare release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          version="$GITHUB_REF_NAME"
-          awk -v heading="## $version" '
-            $0 == heading { found=1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > dist/RELEASE_NOTES.md
-          test -s dist/RELEASE_NOTES.md || printf '影策 %s\n' "$version" > dist/RELEASE_NOTES.md
+          # Query this fork's published releases; local tags may belong to upstream.
+          previous=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false) | .tag_name' | \
+            awk -v current="$GITHUB_REF_NAME" '$0 != current && !found { print; found=1 }')
+          args=(--tag "$GITHUB_REF_NAME" --notes-file dist/RELEASE_NOTES.md)
+          if [[ -n "$previous" ]]; then args+=(--previous-release "$previous"); fi
+          node scripts/release-metadata.mjs "${args[@]}"
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -223,10 +223,11 @@ jobs:
             docker-compose.deploy.yml
           )
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
               --verify-tag \
+              --repo "$GITHUB_REPOSITORY" \
               --title "$GITHUB_REF_NAME" \
               --notes-file dist/RELEASE_NOTES.md \
               "${prerelease_args[@]}"
