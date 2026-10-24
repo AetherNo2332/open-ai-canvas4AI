@@ -1,5 +1,6 @@
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, type AssistantMessage, type Model, type ToolCall, type Usage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { createCanvasToolCall } from "./raw-tool-calls.js";
 
 export interface CanvasModelResult {
   text?: string;
@@ -108,15 +109,7 @@ export function createCanvasStreamFn(step: ModelStep, onFailure?: (error: unknow
           }
         }
         for (const call of stopReason(result) === "toolUse" ? result.toolCalls || [] : []) {
-          const parsed: unknown = JSON.parse(call.function.arguments);
-          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-            throw new Error(`Invalid tool arguments for ${call.function.name}`);
-          }
-          const toolCall: ToolCall = {
-            type: "toolCall", id: call.id, name: call.function.name,
-            arguments: parsed as ToolCall["arguments"],
-            ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}),
-          };
+          const toolCall: ToolCall = createCanvasToolCall({ ...call, type: "function" });
           const contentIndex = partial.content.length;
           partial.content.push({ ...toolCall, arguments: {} });
           stream.push({ type: "toolcall_start", contentIndex, partial });

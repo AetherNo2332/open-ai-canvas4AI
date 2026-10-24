@@ -32,13 +32,14 @@ export const canvasTaskDisplayFields = new Set([
 // Previews, decoded dimensions and duration describe host media or local rendering;
 // neither is an authored patch or a row progress field.
 const canvasNodeDisplayFields = new Set([...canvasTaskDisplayFields, "videoPreview", "naturalWidth", "naturalHeight", "durationMs"]);
+const storyboardMeasuredFields = ["storyboardComposerHeight"];
 export function canvasPersistentEditorDraft(base: CanvasDocument, live: CanvasDocument): CanvasDocument {
     const next = structuredClone(live),
         nodes = new Map(((base.nodes as Entity[]) || []).map((node) => [node.id, node]));
     for (const node of (next.nodes as Entity[]) || []) {
         const previous = nodes.get(node.id);
         if (!node.metadata) continue;
-        for (const key of canvasNodeDisplayFields) {
+        for (const key of [...canvasNodeDisplayFields, ...(node.type === "script" ? storyboardMeasuredFields : [])]) {
             if (previous?.metadata && Object.hasOwn(previous.metadata, key)) node.metadata[key] = structuredClone(previous.metadata[key]);
             else delete node.metadata[key];
         }
@@ -53,6 +54,21 @@ export function canvasPersistentEditorDraft(base: CanvasDocument, live: CanvasDo
         }
     }
     return next;
+}
+
+/** Text layout is measured by each browser; reconnecting must not publish it or
+ * replace it with another browser's measurement. Authored node geometry stays shared. */
+export function carryCanvasMeasuredLayout(live: CanvasDocument, target: CanvasDocument): void {
+    const liveNodes = new Map(((live.nodes as Entity[]) || []).map((node) => [node.id, node]));
+    for (const node of (target.nodes as Entity[]) || []) {
+        const local = liveNodes.get(node.id);
+        if (node.type !== "script" || local?.type !== "script") continue;
+        for (const key of storyboardMeasuredFields)
+            if (local.metadata && Object.hasOwn(local.metadata, key)) {
+                node.metadata ||= {};
+                node.metadata[key] = structuredClone(local.metadata[key]);
+            }
+    }
 }
 
 /** Progress can remain visible across another user's edit. A new host task or

@@ -129,7 +129,9 @@ func cloudAgentPreflightBatch(state *cloudAgentRuntime, calls []cloudAgentCall) 
 		case state.DisclosureVersion < cloudAgentToolDisclosureVersion && cloudAgentIsToolCategory(name) && categoryAdmitted:
 			admission = cloudAgentRejectCall(call, cloudAgentAdmissionInvalidOutput, "", "每个模型步只可打开一种工具类型；请在下一步选择其他类型")
 		default:
-			if err := validateCloudAgentToolArguments(schema, call.Function.Arguments); err != nil {
+			if err := cloudAgentStrictArgumentObjectError(call.Function.Arguments); err != nil {
+				admission = cloudAgentRejectArgumentError(call, err)
+			} else if err := validateCloudAgentToolArguments(schema, call.Function.Arguments); err != nil {
 				admission = cloudAgentRejectArgumentError(call, err)
 			}
 		}

@@ -2,12 +2,14 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { Unsafe, type TSchema } from "typebox";
 import type { CanvasToolSpec, ExecuteCanvasTool } from "./tool-disclosure.js";
+import { prepareCanvasToolArguments } from "./raw-tool-calls.js";
 
 export interface SessionToolDefinitionLike {
   name: string;
   label: string;
   description: string;
   parameters: unknown;
+  prepareArguments?: (args: unknown) => Record<string, unknown>;
   executionMode?: "sequential" | "parallel";
   execute: (
     toolCallId: string,
@@ -71,8 +73,10 @@ export class SessionToolDisclosure {
       label: spec.name,
       description: spec.description,
       parameters: Unsafe<TSchema>(spec.parameters as TSchema),
+      prepareArguments: prepareCanvasToolArguments,
       executionMode: "sequential",
       execute: async (toolCallId, params, signal) => {
+        prepareCanvasToolArguments(params);
         // Defense in depth if a Pi adapter invokes execute without passing the hook.
         if (!this.isVisible(spec.name)) throw new Error(`Tool ${spec.name} is not eligible for this run`);
         const receipt = await this.executeCanvas(spec.name, params, toolCallId, signal);

@@ -429,6 +429,9 @@ func (s *Service) PiCheckpointMessageResult(userID, runID, owner string, input P
 				return BadAuthRequest("Pi Skill read result is invalid")
 			}
 			if result.ToolName == "read" {
+				if err := s.validatePiNativeRawRead(repo, userID, &state, current.Transcript, result.ToolCallID, result.IsError); err != nil {
+					return err
+				}
 				skill, path, err := nativeReadCheckpointCall(&state, current.Transcript, result.ToolCallID, !result.IsError)
 				if err != nil {
 					return err
@@ -1374,7 +1377,7 @@ func (s *Service) PiToolBatch(userID, runID, owner string, batch PiToolBatchRequ
 		return err
 	}
 	state.CallLimits = limits.CallLimits
-	if err := validateCloudAgentCalls(batch.Calls); err != nil || len(batch.Calls) == 0 {
+	if err := validatePiToolBatchEnvelope(batch.Calls); err != nil || len(batch.Calls) == 0 {
 		return BadAuthRequest("Pi 工具调用批次无效")
 	}
 	if len(batch.Calls) > state.callLimits().ToolCallsPerStep {
@@ -1459,8 +1462,7 @@ func piSameCalls(left, right []cloudAgentCall) bool {
 		if left[index].ID != right[index].ID || left[index].Function.Name != right[index].Function.Name {
 			return false
 		}
-		var leftArgs, rightArgs any
-		if json.Unmarshal([]byte(left[index].Function.Arguments), &leftArgs) != nil || json.Unmarshal([]byte(right[index].Function.Arguments), &rightArgs) != nil || !reflect.DeepEqual(leftArgs, rightArgs) {
+		if !piSameToolArguments(left[index].Function.Arguments, right[index].Function.Arguments) {
 			return false
 		}
 	}

@@ -1,4 +1,4 @@
-import type { StoryboardColumn } from "@/types/canvas";
+import type { CanvasNodeData, StoryboardColumn } from "@/types/canvas";
 
 export const STORYBOARD_ROW_HEIGHT = 48;
 export const STORYBOARD_HEADER_HEIGHT = 124;
@@ -22,6 +22,15 @@ export function storyboardNodeHeight(rowCount: number, composerHeight = STORYBOA
 
 export function storyboardMinNodeHeight(composerHeight = STORYBOARD_COMPOSER_MIN_HEIGHT) {
     return STORYBOARD_HEADER_HEIGHT + STORYBOARD_ROW_HEIGHT + STORYBOARD_ADD_ROW_HEIGHT + normalizedComposerHeight(composerHeight);
+}
+
+/** Composer measurements are local UI state. Only a node below its minimum
+ * needs a geometry change; measuring must not mark the node as manually sized. */
+export function applyStoryboardComposerMeasurement<T extends Pick<CanvasNodeData, "height" | "metadata">>(node: T, composerHeight: number): T {
+    const measured = normalizedComposerHeight(composerHeight);
+    const height = node.metadata?.locked ? node.height : Math.max(node.height, storyboardMinNodeHeight(measured));
+    if (node.height === height && node.metadata?.storyboardComposerHeight === measured) return node;
+    return { ...node, height, metadata: { ...node.metadata, storyboardComposerHeight: measured } };
 }
 
 export function storyboardTableHeight(nodeHeight: number, composerHeight = STORYBOARD_COMPOSER_MIN_HEIGHT) {

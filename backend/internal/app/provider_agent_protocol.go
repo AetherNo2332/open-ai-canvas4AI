@@ -135,6 +135,11 @@ func canonicalAgentChatBody(source *canonicalAgentRequest, claude bool) map[stri
 			wireCalls := make([]interface{}, 0, len(calls))
 			for _, call := range calls {
 				call["type"] = "function"
+				if function, ok := call["function"].(map[string]interface{}); claude && ok {
+					// Only Claude history requires object input; retain the raw
+					// canonical arguments for validation and other protocols.
+					function["arguments"] = canonicalAgentJSONObject(function["arguments"])
+				}
 				wireCalls = append(wireCalls, call)
 			}
 			converted["tool_calls"] = wireCalls

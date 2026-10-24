@@ -2,7 +2,7 @@ import { applyCanvasDraftChanges, canvasDocumentChanges, type CanvasDocument } f
 import { canvasEditorCommands, type CanvasCapabilities } from "../lib/canvas/canvas-editor-commands";
 import type { ChangeSet } from "../lib/canvas/command-contract.generated";
 import type { CanvasCommandSession, CommandSessionState } from "./canvas-command-session";
-import { canvasPersistentEditorDraft, carryCanvasTaskDisplay } from "../lib/canvas/canvas-editor-transient";
+import { canvasPersistentEditorDraft, carryCanvasMeasuredLayout, carryCanvasTaskDisplay } from "../lib/canvas/canvas-editor-transient";
 import { canvasBaselineAliases, canvasBaselineDescriptor, canvasBaselineValue, restoreCanvasBaselineValue, withCanvasFieldBaselines } from "../lib/canvas/canvas-field-baselines";
 import { sameCanvasJsonValue } from "../lib/canvas/canvas-json-value";
 type Entity = Record<string, unknown>;
@@ -80,6 +80,7 @@ export function bindCanvasCommandEditor<N, E>(
             const { changes, base } = capture(previous, live);
             projected = applyCanvasDraftChanges(projected, changes, base.entities, base.fields);
             carryCanvasTaskDisplay(previous, display, projected);
+            carryCanvasMeasuredLayout(display, projected);
         }
         previous = structuredClone(state.projected);
         versions = { ...state.acknowledged.entityVersions };
@@ -99,7 +100,7 @@ export function bindCanvasCommandEditor<N, E>(
         editor.present(projected, state);
     });
     return {
-        commit() {
+        async commit() {
             if (disposed) return Promise.reject(new DOMException("画布编辑器已关闭", "AbortError"));
             const target = sharedDraft(session.state.projected, editor.read());
             capture(previous || session.state.projected, target);

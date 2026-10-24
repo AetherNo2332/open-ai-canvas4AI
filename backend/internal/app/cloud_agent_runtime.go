@@ -651,14 +651,14 @@ func validateCloudAgentRuntime(run *model.CloudAgentExecution, state *cloudAgent
 			return errors.New("Agent runtime event payload is too large")
 		}
 	}
-	for _, call := range state.Calls {
+	for index, call := range state.Calls {
 		if err := validateCloudAgentID(call.ID, "工具调用 ID", 160); err != nil || call.Function.Name == "" || utf8.RuneCountInString(call.Function.Name) > 80 || !utf8.ValidString(call.Function.Name) {
 			return errors.New("Agent runtime tool call is invalid")
 		}
 		if len(call.Function.Arguments) > 32000 {
 			return errors.New("Agent runtime tool arguments are too large")
 		}
-		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &map[string]any{}); err != nil {
+		if err := decodeCloudAgentJSONObject(call.Function.Arguments, &map[string]any{}); err != nil && (run.Engine != "pi" || !piHasRejectedArgumentState(state, index)) {
 			return errors.New("Agent runtime tool arguments are invalid")
 		}
 	}

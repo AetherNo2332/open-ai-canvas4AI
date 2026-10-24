@@ -22,6 +22,19 @@ import (
 
 const cloudAgentSchemaMaxDepth = 8
 
+// Preflight never treats an empty string or a missing schema as executable
+// arguments. Pi can transport malformed model output only to record rejection.
+func cloudAgentStrictArgumentObjectError(raw string) error {
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return cloudAgentFieldError("arguments", "invalid_json", "工具参数必须是合法的 JSON 对象；本次调用未执行，请修正后重新提交")
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return cloudAgentFieldError("arguments", "type_mismatch", "工具参数必须是 JSON 对象，不能是数组、字符串或 null")
+	}
+	return nil
+}
+
 // validateCloudAgentToolArguments 校验一次工具调用的参数；返回的错误是字段级参数错误，
 // 会被工具回执路径归类为 schema_error 并给出字段修正提示。
 func validateCloudAgentToolArguments(parameters map[string]any, raw string) error {
