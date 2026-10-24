@@ -21,6 +21,33 @@ test("independent windows preserve each other's unacknowledged operations", asyn
     await a.write("canvas", []);
     expect(await createCanvasCommandJournal(storage, "owner").read("canvas")).toEqual([pending("b")]);
 });
+test("rolling back an uncertain replacement preserves another window's pending operation", async () => {
+    for (const persisted of [false, true]) {
+        const data = new Map<string, unknown>();
+        let failWrite = false;
+        const storage = {
+            getItem: async <T>(key: string) => structuredClone(data.get(key) ?? null) as T | null,
+            setItem: async (key: string, value: unknown) => {
+                if (!failWrite || persisted) data.set(key, structuredClone(value));
+                if (failWrite) {
+                    failWrite = false;
+                    throw new Error("storage failure");
+                }
+            },
+        };
+        const a = createCanvasCommandJournal(storage, "owner"),
+            b = createCanvasCommandJournal(storage, "owner");
+        const pending = (operationId: string) => ({ operationId, documentEpoch: "epoch", operations: [], preview: { entities: [] }, expectedEntityVersions: {}, dependencies: [], status: "unconfirmed" as const });
+        await Promise.all([a.read("canvas"), b.read("canvas")]);
+        await a.write("canvas", [pending("original")]);
+        failWrite = true;
+        await expect(a.write("canvas", [pending("replacement")])).rejects.toThrow("storage failure");
+        await b.write("canvas", [pending("other-window")]);
+        await a.write("canvas", [pending("original")]);
+        expect((await createCanvasCommandJournal(storage, "owner").read("canvas")).map((p) => p.operationId).sort()).toEqual(["original", "other-window"]);
+    }
+});
+
 test("command journals and stable client identities are isolated by captured host scope", async () => {
     const values = new Map<string, unknown>();
     const kv = {

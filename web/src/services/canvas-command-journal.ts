@@ -52,6 +52,8 @@ export function createCanvasCommandJournal(storage: CommandJournalStorage, scope
                 const known = observed.get(canvasId) || new Set<string>();
                 const merged = new Map((await readPending(canvasId)).filter((p) => !known.has(p.operationId)).map((p) => [p.operationId, p]));
                 for (const entry of pending) merged.set(entry.operationId, structuredClone(entry));
+                // Storage may persist and then reject; a rollback still owns these attempted IDs.
+                observed.set(canvasId, new Set([...known, ...pending.map((p) => p.operationId)]));
                 await storage.setItem(key(canvasId), { protocolVersion: 1, scope, canvasId, pending: [...merged.values()] });
                 observed.set(canvasId, new Set(pending.map((p) => p.operationId)));
             });
