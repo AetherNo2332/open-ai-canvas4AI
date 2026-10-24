@@ -8,7 +8,7 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { useCanvasSyncActivity } from "@/components/canvas/use-canvas-edit-lease";
 
-export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenVersions }: { projectId: string; onLoadLatest: () => Promise<void>; onRetrySync?: () => Promise<void>; onOpenVersions?: () => void }) {
+export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenVersions, onLocateNode }: { projectId: string; onLoadLatest: () => Promise<void>; onRetrySync?: () => Promise<void>; onOpenVersions?: () => void; onLocateNode?: (nodeId: string) => void }) {
     const { message } = App.useApp();
     const { activity, error: activityError } = useCanvasSyncActivity(projectId);
     const progress = useSyncProgressStore((state) => state.syncingProjects[projectId]);
@@ -68,9 +68,14 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenV
                             <div className="space-y-1 text-xs text-muted-foreground">
                                 <p>{activity.leases.length ? `${activity.leases.length} 个节点正在编辑` : "暂无节点编辑占用"}</p>
                                 {activity.leases.map((lease) => (
-                                    <p key={`${lease.nodeId}:${lease.sessionId}`} className="break-all">
-                                        节点 {lease.nodeId} · 占用至 {new Date(lease.expiresAt).toLocaleTimeString()}
-                                    </p>
+                                    <div key={`${lease.nodeId}:${lease.sessionId}`} className="space-y-1 border-b border-border/60 py-2 last:border-b-0">
+                                        <div className="flex items-start justify-between gap-2">
+                                            <p className="min-w-0 break-words text-foreground" title={`节点 ID：${lease.nodeId}`}>{lease.nodeTypeLabel} · {lease.nodeTitle}</p>
+                                            {lease.nodeExists && onLocateNode ? <Button type="link" size="small" className="shrink-0" disabled={busy} onClick={() => { setStatusOpen(false); onLocateNode(lease.nodeId); }}>定位节点</Button> : null}
+                                        </div>
+                                        <p>{lease.isCurrentWindow ? "当前窗口正在编辑" : "其他窗口正在编辑"}</p>
+                                        <p>占用有效至 {new Date(lease.expiresAt).toLocaleTimeString([], { hour12: false })}，编辑时自动续期</p>
+                                    </div>
                                 ))}
                                 {activity.activeAgents.map((agent) => (
                                     <p key={agent.id}>

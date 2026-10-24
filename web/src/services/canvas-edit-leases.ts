@@ -5,7 +5,8 @@ import type { Command } from "@/lib/canvas/command-contract.generated";
 
 export type CanvasEditPhase = "idle" | "acquiring" | "editing" | "saving" | "saved" | "denied" | "offline" | "expired";
 export type CanvasNodeEditStatus = { phase: CanvasEditPhase; message: string; expiresAt?: string };
-export type CanvasEditState = { nodes: Record<string, CanvasNodeEditStatus>; activity?: CanvasSyncActivity; activityError?: string };
+export type CanvasSyncActivityView = Omit<CanvasSyncActivity, "leases"> & { leases: Array<CanvasSyncActivity["leases"][number] & { isCurrentWindow: boolean }> };
+export type CanvasEditState = { nodes: Record<string, CanvasNodeEditStatus>; activity?: CanvasSyncActivityView; activityError?: string };
 const idle: CanvasNodeEditStatus = { phase: "idle", message: "点击编辑后获取占用" };
 type Owned = { proof: CanvasEditProof; expiresAt: number; holders: number; awaitingAck: boolean; owned: boolean; version: number; request?: Promise<void>; save?: Promise<void>; cancelTimer?: () => void };
 
@@ -131,7 +132,7 @@ export function createCanvasEditLeaseController(deps: { scope: string; canvasId:
             try {
                 const activity = await deps.api.status(deps.canvasId, abort.signal);
                 check();
-                update({ activity, activityError: undefined });
+                update({ activity: { ...activity, leases: activity.leases.map((lease) => ({ ...lease, isCurrentWindow: lease.sessionId === sessionId })) }, activityError: undefined });
             } catch (error) {
                 if (!closed && deps.current()) update({ activityError: error instanceof Error ? error.message : "占用状态暂不可用" });
             }

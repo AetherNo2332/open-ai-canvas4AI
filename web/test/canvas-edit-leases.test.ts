@@ -13,6 +13,30 @@ afterEach(() => {
     apiClient.defaults.adapter = previousAdapter;
 });
 const command: Command = { protocolVersion: 1, canvasId: "c", documentEpoch: "e", clientId: "client", operationId: "op", expectedEntityVersions: { "node:n": 1 }, operations: [{ type: "update_node", id: "n", patch: { content: "draft" } }] };
+
+test("activity marks this window's lease separately while retaining node names and types", async () => {
+    let ownSession = "";
+    const api: CanvasEditLeaseAPI = {
+        acquire: async (proof) => { ownSession = proof.sessionId; return { ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }; },
+        renew: async (proof) => ({ ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }),
+        release: async () => ({ released: true }),
+        status: async () => ({
+            revision: 1, documentEpoch: "e", eventSeq: 0, activeAgents: [],
+            leases: [ownSession, "another-window"].map((sessionId) => ({
+                canvasId: "c", nodeId: sessionId === ownSession ? "n" : "other", sessionId,
+                expiresAt: new Date(Date.now() + 30000).toISOString(),
+                nodeTitle: "镜06 · 关键帧", nodeType: "image", nodeTypeLabel: "图片", nodeExists: true,
+            })),
+        }),
+    };
+    const value = controller(api);
+    await value.begin("n");
+    await value.refreshStatus();
+    const leases = value.getState().activity!.leases;
+    expect(leases[0]).toMatchObject({ nodeTitle: "镜06 · 关键帧", nodeTypeLabel: "图片", isCurrentWindow: true });
+    expect(leases[1].isCurrentWindow).toBe(false);
+    expect(JSON.stringify(leases)).not.toContain('"token"');
+});
 function controller(api: CanvasEditLeaseAPI, extras: Partial<Parameters<typeof createCanvasEditLeaseController>[0]> = {}) {
     const value = createCanvasEditLeaseController({ scope: "owner", canvasId: "c", api, current: () => true, ...extras });
     controllers.push(value);

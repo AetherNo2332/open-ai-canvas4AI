@@ -113,3 +113,61 @@ func TestCanvasSyncStatusKeepsMultipleAgentsAndNeverLoadsStateOrToken(t *testing
 		t.Fatal("other account read sync state")
 	}
 }
+
+func TestCanvasSyncStatusIdentifiesLeasedNodesWithoutExposingProofs(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	if err := database.MigrateCanvasCommands(db); err != nil {
+		t.Fatal(err)
+	}
+	row := &model.CanvasProject{ID: "lease-names", UserID: "user", PayloadJSON: `{"nodes":[{"id":"picture","type":"image","title":"镜06 · 关键帧（已归档）"},{"id":"hero","type":"text","title":"顾行","metadata":{"workflowKind":"character"}},{"id":"untitled","type":"image"},{"id":"one","type":"video","title":"同名"},{"id":"two","type":"video","title":"同名"},{"id":"removed","type":"text","title":"old"}],"connections":[]}`}
+	if err := s.repo.UpsertCanvasProject(row); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"picture", "hero", "untitled", "one", "two", "removed"} {
+		if _, err := s.AcquireCanvasEditLease(context.Background(), "user", row.ID, CanvasEditProof{NodeID: id, SessionID: "tab", Token: strings.Repeat("private-proof", 4)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Characterize a stale lease after its node disappears, without mutating a real canvas.
+	doc, _ := creationDocument(row.PayloadJSON)
+	doc["nodes"] = creationMaps(doc["nodes"])[:5]
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", row.ID).Update("payload_json", mustCanvasSyncJSON(t, doc)).Error; err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.CanvasSyncStatus(context.Background(), "user", row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := mustCanvasSyncJSON(t, out)
+	var result struct {
+		Leases []struct {
+			NodeID, NodeTitle, NodeType, NodeTypeLabel string
+			NodeExists                                 bool
+		}
+	}
+	json.Unmarshal([]byte(raw), &result)
+	byID := map[string]struct {
+		title, kind, label string
+		exists             bool
+	}{}
+	for _, lease := range result.Leases {
+		byID[lease.NodeID] = struct {
+			title, kind, label string
+			exists             bool
+		}{lease.NodeTitle, lease.NodeType, lease.NodeTypeLabel, lease.NodeExists}
+	}
+	for id, want := range map[string]string{"picture": "镜06 · 关键帧（已归档）", "hero": "顾行", "untitled": "未命名图片（untitled）", "one": "同名（one）", "two": "同名（two）", "removed": "节点已删除（removed）"} {
+		if byID[id].title != want {
+			t.Errorf("%s title = %q, want %q", id, byID[id].title, want)
+		}
+	}
+	if byID["hero"].kind != "character" || byID["hero"].label != "角色卡" || !byID["picture"].exists || byID["removed"].exists {
+		t.Fatalf("wrong business types or deleted-node status: %s", raw)
+	}
+	if strings.Contains(raw, "private-proof") || strings.Contains(raw, "token") {
+		t.Fatalf("private lease proof leaked: %s", raw)
+	}
+	if _, err := s.CanvasSyncStatus(context.Background(), "other", row.ID); err == nil {
+		t.Fatal("other account read node names")
+	}
+}
