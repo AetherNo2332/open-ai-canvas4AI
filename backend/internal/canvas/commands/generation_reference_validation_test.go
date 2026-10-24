@@ -1,9 +1,13 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
+
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func TestGenerationReferenceCharacterDraft(t *testing.T) {
@@ -49,6 +53,47 @@ func TestGenerationReferenceCharacterDraft(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestGenerationReferenceCharacterPersistsAndReloadsWithReceipt(t *testing.T) {
+	for _, mode := range []string{"image", "video"} {
+		t.Run(mode, func(t *testing.T) {
+			svc, db, _, _ := commandFixture(t)
+			canvasID := "character-save"
+			payload := fmt.Sprintf(`{"id":"character-save","referenceFieldsVersion":1,"nodes":[{"id":"hero","type":"text","title":"角色","metadata":{"workflowKind":"character","characterAssetId":"asset"}},{"id":"target","type":"%s","metadata":{}}],"connections":[]}`, mode)
+			if err := db.Create(&model.CanvasProject{ID: canvasID, UserID: "owner", Title: "引用保存", Revision: 1, PayloadJSON: payload}).Error; err != nil {
+				t.Fatal(err)
+			}
+			current, err := svc.ReadSnapshot(context.Background(), ownerContext().Principal, canvasID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, prompt := range []string{"first save", "edited prompt"} {
+				spec := fixture(t, fmt.Sprintf(`{"version":1,"mode":"%s","prompt":"%s","options":{},"referenceBindings":[{"id":"hero-ref","nodeId":"hero","mediaType":"image","role":"reference","order":0,"resolution":"latest"}],"textInputMode":"prompt-only"}`, mode, prompt))
+				req := mergeRequest(current, prompt, Operation{Type: "update_node", ID: "target", Patch: map[string]any{"generationSpec": map[string]any(spec)}})
+				// Request identities must use printable identifiers, not prompt text.
+				req.OperationID = fmt.Sprintf("save-%d", current.Revision)
+				receipt, err := svc.Execute(context.Background(), ownerContext().Principal, req)
+				if err != nil {
+					t.Fatalf("persistent %s save rejected: %v", mode, err)
+				}
+				reopened := NewService(repository.New(db), ServiceOptions{})
+				current, err = reopened.ReadSnapshot(context.Background(), ownerContext().Principal, canvasID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target := entity(current.Document, "node:target")
+				got := target["metadata"].(map[string]any)["generationSpec"].(map[string]any)
+				if got["prompt"] != prompt || len(maps(got["referenceBindings"])) != 1 || len(maps(current.Document["connections"])) != 1 {
+					t.Fatalf("reopened state lost reference, edge, or edit: %#v", current.Document)
+				}
+				recovered, err := reopened.GetReceipt(context.Background(), ownerContext().Principal, canvasID, current.DocumentEpoch, req.ClientID, req.OperationID)
+				if err != nil || recovered.OperationID != receipt.OperationID {
+					t.Fatalf("saved command cannot recover its receipt: %v", err)
+				}
+			}
+		})
 	}
 }
 

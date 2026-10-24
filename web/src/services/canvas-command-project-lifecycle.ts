@@ -1,7 +1,6 @@
 import { bindCanvasCommandEditor } from "./canvas-command-editor-binding";
 import type { CanvasCommandSession, CommandSessionState } from "./canvas-command-session";
-import { canvasEditorCommands, type CanvasCapabilities } from "../lib/canvas/canvas-editor-commands";
-import { withCanvasFieldBaselines } from "../lib/canvas/canvas-field-baselines";
+import type { CanvasCapabilities } from "../lib/canvas/canvas-editor-commands";
 import type { CanvasDocument } from "../lib/canvas/canvas-event-projection";
 import { applyCanvasDraftChanges, canvasDocumentChanges } from "../lib/canvas/canvas-event-projection";
 import { sameCanvasJsonValue } from "../lib/canvas/canvas-json-value";
@@ -66,35 +65,12 @@ export async function attachCanvasCommandProject<N, E>(deps: {
             await deps.session.reconnect();
             const state = deps.session.state;
             if (!state.acknowledged || !state.rejections.length) throw new Error("没有可直接重试的保存，请先处理冲突或确认提交结果");
-            const local = structuredClone(deps.read());
-            const comparison = structuredClone(state.acknowledged.document);
-            const entities: Record<string, Record<string, any>> = {};
-            const fields = new Set<string>();
-            const generations = { ...state.acknowledged.entityGenerations };
-            const expected = { ...state.acknowledged.entityVersions, ...state.pending[0].expectedEntityVersions };
-            for (const pending of state.pending) {
-                for (const [key, entity] of Object.entries(pending.baseEntities || {})) {
-                    if (entities[key]) continue;
-                    entities[key] = structuredClone(entity);
-                    const field = key.startsWith("node:") ? "nodes" : "connections";
-                    const list = (comparison[field] ||= []) as Array<Record<string, unknown>>;
-                    const index = list.findIndex((value) => value.id === entity.id);
-                    if (index < 0) list.push(structuredClone(entity));
-                    else list[index] = structuredClone(entity);
-                }
-                for (const [key, value] of Object.entries(pending.baseFields || {})) if (!fields.has(key)) {
-                    Object.defineProperty(comparison, key, { value: structuredClone(value), enumerable: true, writable: true, configurable: true });
-                    fields.add(key);
-                }
-                for (const op of pending.operations) if (op.fieldBaselines?.generation !== undefined && entities["node:" + op.id]) {
-                    generations["node:" + op.id] = op.fieldBaselines.generation;
-                }
-            }
-            const operations = withCanvasFieldBaselines(canvasEditorCommands(comparison, local, deps.capabilities), entities, generations, deps.capabilities);
-            await deps.session.replaceRejectedDraft(operations, { expectedEntityVersions: expected, preview: canvasDocumentChanges(state.acknowledged.document, local) },
-                () => preserveDraft(local), () => {
+            const draft = binding.prepareRetry();
+            const visible = structuredClone(deps.read());
+            await deps.session.replaceRejectedDraft(draft.operations, draft.preconditions,
+                () => preserveDraft(visible), () => {
                     deps.signal?.throwIfAborted();
-                    if (!sameCanvasJsonValue(local, deps.read())) throw new Error("画布仍在更新，本地修改已保留，请稍后再重试");
+                    if (!sameCanvasJsonValue(draft.document, binding.readDraft())) throw new Error("画布仍在更新，本地修改已保留，请稍后再重试");
                 });
         },
         dispose: () => binding.dispose(),

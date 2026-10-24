@@ -5,6 +5,7 @@ import type { CanvasCommandSession, CommandSessionState } from "./canvas-command
 import { canvasPersistentEditorDraft, carryCanvasTaskDisplay } from "../lib/canvas/canvas-editor-transient";
 import { canvasBaselineAliases, canvasBaselineDescriptor, canvasBaselineValue, restoreCanvasBaselineValue, withCanvasFieldBaselines } from "../lib/canvas/canvas-field-baselines";
 import { sameCanvasJsonValue } from "../lib/canvas/canvas-json-value";
+import { mergeRejectedCanvasEdits } from "../lib/canvas/canvas-command-retry";
 type Entity = Record<string, unknown>;
 function bases(document: CanvasDocument, changes: ChangeSet) {
     const entities: Record<string, Entity> = {},
@@ -98,34 +99,54 @@ export function bindCanvasCommandEditor<N, E>(
         editor.refs.connections.current = (projected.connections || []) as E[];
         editor.present(projected, state);
     });
-    return {
-        commit() {
-            if (disposed) return Promise.reject(new DOMException("画布编辑器已关闭", "AbortError"));
-            const target = sharedDraft(session.state.projected, editor.read());
-            capture(previous || session.state.projected, target);
-            // Compare dirty aliases against their original observation even if
-            // a remote event has since changed that same field (or deleted it).
-            const comparison = structuredClone(session.state.projected);
-            const nodes = (comparison.nodes ||= []) as Entity[];
-            for (const [key, aliases] of dirtyAliases) {
-                const original = draftEntities[key];
-                let node = nodes.find((value) => "node:" + value.id === key);
-                if (!node) {
-                    node = structuredClone(original);
-                    nodes.push(node);
-                }
-                const descriptor = canvasBaselineDescriptor(original, capabilities);
-                if (descriptor) for (const alias of aliases) restoreCanvasBaselineValue(node, descriptor.patchFields[alias].path, canvasBaselineValue(original, descriptor.patchFields[alias].path));
+    function prepareCommit() {
+        if (disposed) throw new DOMException("画布编辑器已关闭", "AbortError");
+        const target = sharedDraft(session.state.projected, editor.read());
+        capture(previous || session.state.projected, target);
+        // Compare dirty aliases against their original observation even if
+        // a remote event has since changed that same field (or deleted it).
+        const comparison = structuredClone(session.state.projected);
+        const nodes = (comparison.nodes ||= []) as Entity[];
+        for (const [key, aliases] of dirtyAliases) {
+            const original = draftEntities[key];
+            let node = nodes.find((value) => "node:" + value.id === key);
+            if (!node) {
+                node = structuredClone(original);
+                nodes.push(node);
             }
-            const operations = withCanvasFieldBaselines(canvasEditorCommands(comparison, target, capabilities), draftEntities, draftGenerations, capabilities);
-            if (!operations.length) return Promise.resolve(undefined);
-            return session.submit(operations, {
+            const descriptor = canvasBaselineDescriptor(original, capabilities);
+            if (descriptor) for (const alias of aliases) restoreCanvasBaselineValue(node, descriptor.patchFields[alias].path, canvasBaselineValue(original, descriptor.patchFields[alias].path));
+        }
+        const operations = withCanvasFieldBaselines(canvasEditorCommands(comparison, target, capabilities), draftEntities, draftGenerations, capabilities);
+        return {
+            document: target,
+            operations,
+            preconditions: {
                 preview: canvasDocumentChanges(session.state.projected, target),
                 expectedEntityVersions: { ...draftExpected },
                 baseEntities: structuredClone(draftEntities),
                 baseFields: structuredClone(draftFields),
                 baseEntityGenerations: { ...draftGenerations },
-            });
+            },
+        };
+    }
+    return {
+        readDraft: () => sharedDraft(session.state.projected, editor.read()),
+        prepareRetry() {
+            const draft = prepareCommit();
+            return {
+                ...draft,
+                operations: mergeRejectedCanvasEdits([...session.state.pending.flatMap((p) => p.operations), ...draft.operations]),
+                preconditions: {
+                    expectedEntityVersions: { ...draft.preconditions.expectedEntityVersions, ...session.state.pending[0]?.expectedEntityVersions },
+                    preview: canvasDocumentChanges(session.state.acknowledged!.document, draft.document),
+                },
+            };
+        },
+        commit() {
+            if (disposed) return Promise.reject(new DOMException("画布编辑器已关闭", "AbortError"));
+            const draft = prepareCommit();
+            return draft.operations.length ? session.submit(draft.operations, draft.preconditions) : Promise.resolve(undefined);
         },
         dispose() {
             disposed = true;

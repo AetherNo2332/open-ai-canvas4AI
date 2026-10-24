@@ -102,7 +102,8 @@ export class CanvasCommandSession {
         this.pending = stored.map((p) => ({
             ...copy(p),
             status: p.status === "rejected" || (p.status === "conflicted" && historicalCanvasRejection(p.reason)) ? "rejected" : p.status === "conflicted" ? "conflicted" : p.wire ? "unconfirmed" : "queued",
-            resolve: () => {}, reject: () => {},
+            resolve: () => {},
+            reject: () => {},
         }));
         this.emit();
         if (this.pending.length) await this.reconnect();
@@ -487,7 +488,14 @@ export class CanvasCommandSession {
             if (reason) conflicts.push({ operationId: p.operationId, reason, message: message || "编辑草稿需要处理", operations: copy(p.operations) });
         }
         const stored = this.pending.map(({ resolve: _, reject: __, ...p }) => copy(p));
-        this.state = { acknowledged: this.acknowledged, pending: stored, projected, conflicts, rejections, saveState: !this.acknowledged ? "closed" : conflicts.length ? "conflict" : this.offline ? "offline" : rejections.length ? "error" : this.pending.length ? "saving" : "saved" };
+        this.state = {
+            acknowledged: this.acknowledged,
+            pending: stored,
+            projected,
+            conflicts,
+            rejections,
+            saveState: !this.acknowledged ? "closed" : conflicts.length ? "conflict" : this.offline ? "offline" : rejections.length ? "error" : this.pending.length ? "saving" : "saved",
+        };
         if (persist && this.journal && this.acknowledged) {
             const id = this.acknowledged.canvasId;
             this.journalTail = this.journalTail.catch(() => {}).then(() => this.journal!.write(id, stored));
@@ -502,7 +510,9 @@ export class CanvasCommandSession {
             throw new Error("仍有冲突、任务或未确认的提交，请先确认保存结果；本地修改已保留");
         }
         if (operations.length > 100) throw new Error("本次修改过多，请先下载草稿后分批处理");
-        const generation = this.generation, acknowledged = this.acknowledged, pending = [...this.pending];
+        const generation = this.generation,
+            acknowledged = this.acknowledged,
+            pending = [...this.pending];
         const original = pending.map(({ resolve: _, reject: __, ...p }) => copy(p));
         const unchanged = () => {
             if (generation !== this.generation) throw aborted();

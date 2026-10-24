@@ -17,15 +17,26 @@ const command: Command = { protocolVersion: 1, canvasId: "c", documentEpoch: "e"
 test("activity marks this window's lease separately while retaining node names and types", async () => {
     let ownSession = "";
     const api: CanvasEditLeaseAPI = {
-        acquire: async (proof) => { ownSession = proof.sessionId; return { ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }; },
+        acquire: async (proof) => {
+            ownSession = proof.sessionId;
+            return { ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() };
+        },
         renew: async (proof) => ({ ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }),
         release: async () => ({ released: true }),
         status: async () => ({
-            revision: 1, documentEpoch: "e", eventSeq: 0, activeAgents: [],
+            revision: 1,
+            documentEpoch: "e",
+            eventSeq: 0,
+            activeAgents: [],
             leases: [ownSession, "another-window"].map((sessionId) => ({
-                canvasId: "c", nodeId: sessionId === ownSession ? "n" : "other", sessionId,
+                canvasId: "c",
+                nodeId: sessionId === ownSession ? "n" : "other",
+                sessionId,
                 expiresAt: new Date(Date.now() + 30000).toISOString(),
-                nodeTitle: "镜06 · 关键帧", nodeType: "image", nodeTypeLabel: "图片", nodeExists: true,
+                nodeTitle: "镜06 · 关键帧",
+                nodeType: "image",
+                nodeTypeLabel: "图片",
+                nodeExists: true,
             })),
         }),
     };
