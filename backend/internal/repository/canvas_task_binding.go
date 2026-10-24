@@ -127,8 +127,8 @@ func (r *Repository) CanvasMaterialization(taskID string) (*model.CanvasMaterial
 	err := r.db.Where("task_id = ?", taskID).First(&j).Error
 	return &j, err
 }
-func (r *Repository) FinishCanvasMaterialization(taskID, outcome string) error {
-	return r.db.Model(&model.CanvasMaterializationJob{}).Where("task_id = ? AND state = ?", taskID, "pending").Updates(map[string]any{"state": "done", "outcome": outcome, "last_error": "", "next_attempt_at": nil, "updated_at": time.Now()}).Error
+func (r *Repository) FinishCanvasMaterialization(taskID, outcome string, resolutionVersion int) error {
+	return r.db.Model(&model.CanvasMaterializationJob{}).Where("task_id = ? AND state = ? AND EXISTS (SELECT 1 FROM canvas_task_bindings b WHERE b.task_id = ? AND b.resolution_version = ?)", taskID, "pending", taskID, resolutionVersion).Updates(map[string]any{"state": "done", "outcome": outcome, "last_error": "", "next_attempt_at": nil, "updated_at": time.Now()}).Error
 }
 func (r *Repository) RecordCanvasMaterializationFailure(taskID string) error {
 	j, err := r.CanvasMaterialization(taskID)

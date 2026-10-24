@@ -9,7 +9,9 @@ description: 从产品功能快速定位主要代码入口
 
 - `agent/src/raw-tool-calls.ts`、`pi-stream.ts`、`runner.ts` 与 `session-tools.ts`：保留原始参数，在 Pi 的公开参数准备入口阻止坏 JSON 和非对象执行；普通工具与 native read 的历史恢复共用该投影。
 - `app/cloud_agent_pi_arguments.go`、`cloud_agent_pi_bridge.go`、`cloud_agent_tool_preflight.go` 与 `cloud_agent_runtime.go`：仅 Pi 传输层接收坏参数，严格核对成功模型任务来源、原始参数、租约与披露，再持久化拒绝和对应错误回执。普通引擎调用与合法工具执行继续严格校验。
-- `app/provider_agent_protocol.go`：Claude 历史调用在派生请求中保持对象形态，已拒绝的坏参数不污染下一步请求；canonical 与模型任务中的原始参数继续保留，不用于执行。
+- `app/provider_agent_protocol.go`：Claude 历史调用在派生请求中保持对象形态；Gemini 保留嵌套调用、结果配对与 thoughtSignature；canonical 与模型任务中的原始参数继续保留，不用于执行。
+- `app/cloud_agent_conversations.go`、`repository/cloud_agent_conversations.go`：会话归档与跨设备目录墓碑；`web/src/services/cloud-agent-history.ts` 合并归档标记并移除本地历史入口。
+- `web/src/services/canvas-command-session.ts`、`canvas-command-journal.ts`、`canvas-journal-lock.ts`：大编辑分批、旧版本回执恢复、多窗口未确认操作合并；Agent 回写通过同一命令事件投影。
 
 ## Agent 消息排队
 

@@ -7,7 +7,9 @@ description: 数据库迁移与当前业务持久化结构
 
 ## Agent 持久消息队列
 
-数据库当前迁移版本为65，新增 `agent_queued_messages`、`agent_conversation_queues` 和 `agent_ui_settings`，既有运行、会话正文及记忆数据保留。迁移清单与 `database.Models()` 共用同一模型定义。
+数据库当前迁移版本为67。迁移65新增 `agent_queued_messages`、`agent_conversation_queues` 和 `agent_ui_settings`，迁移66新增 `canvas_media_versions`，迁移67为 `cloud_agent_executions` 增加可空的 `archived_at`。既有运行、会话正文及记忆数据保留。迁移清单与 `database.Models()` 共用同一模型定义。
+
+删除 Agent 对话采用持久归档：当前账号的会话轮次写入 `archived_at`，目录按同一会话任一轮的归档标记返回 `archived`，其他设备据此移除缓存入口。运行检查点不能覆盖归档字段；后续已排队轮次不会让对话重新出现。归档不取消任务、不删除运行和费用凭据，`conversation_archived` 仅为目录查询投影，不建数据库列。
 
 消息表以 ID 为主键，`user_id + idempotency_key` 唯一，按账号、会话、状态和 sequence 查待发项。记录原提交指纹、当前 RequestJSON/Prompt、投递方式、revision、问题关联、状态、绑定运行以及派发 token/parent/租约/重试时间。编辑只改当前正文，不改原 POST 指纹；派发或移除后清理请求正文并保留收条，未知重试不会新建或复活消息。插队优先级持久保存，显式恢复请求另有 `dispatch_requested` 标志；停止、暂停或新的异常暂停撤销此前未完成的恢复意图，之后的新提交可重新发起恢复。
 

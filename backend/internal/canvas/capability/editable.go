@@ -91,6 +91,11 @@ func completeBuiltinEditableFields(d *Descriptor) {
 		add("folderTheme", "metadata.folder.theme", "背板主题", enumString("aurora", "obsidian", "ember", "pearl"))
 		d.DetailFields = append(d.DetailFields, "frame", "folder")
 	case "script":
+		add("workflowKind", "metadata.workflowKind", "分镜类型", enumString("script", "storyboard"))
+		add("workflowTitle", "metadata.workflowTitle", "分镜标题", stringField(240))
+		add("workflowDescription", "metadata.workflowDescription", "分镜说明", stringField(2000))
+		add("chapterId", "metadata.chapterId", "来源章节", stringField(240))
+		add("chapterTitle", "metadata.chapterTitle", "来源章节标题", stringField(240))
 		add("visibleColumns", "metadata.storyboard.visibleColumns", "可见分镜列", arrayField(enumString(StoryboardColumnNames()...), 20))
 		add("storyboardShotDuration", "metadata.storyboardShotDuration", "分镜时长", enumString("auto", "5", "10", "15", "30"))
 		add("storyboardShotCount", "metadata.storyboardShotCount", "分镜数量", enumString("auto", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))

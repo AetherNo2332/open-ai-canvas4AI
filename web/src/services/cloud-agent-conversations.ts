@@ -22,6 +22,7 @@ export type CloudAgentConversationMessage = {
 };
 
 export type CloudAgentConversation = {
+	archived?: boolean;
     id: string;
     serverConversationId?: string;
     runs?: AgentRun[];

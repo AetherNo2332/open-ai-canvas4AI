@@ -17,6 +17,7 @@ description: 信封、错误码与 OpenAPI
 | PATCH | `/api/agent/conversations/:id/queue` | `{revision,action:pause/resume}` 暂停或恢复队列 |
 | PATCH | `/api/agent/conversations/:id/queue/:messageId` | `{revision,prompt}` 编辑正文，或 `{revision,action:interject}` 提升；不能混用，已领取/派发时拒绝 |
 | DELETE | `/api/agent/conversations/:id/queue/:messageId?revision=...` | 移除未派发消息，保留防止重放复活的收条 |
+| DELETE | `/api/agent/conversations/:id` | 从历史列表移除会话；归档同步到其他设备，执行记录保留，正在运行及排队的任务继续遵循原状态 |
 
 发送收条为 `{messageId,conversationId,delivery,queueRevision,runId?}`。delivery 是 queued、started、interjected 或 cancelled；queued 只表示已收下，未创建模型运行或预留费用。相同身份与原正文重试返回既有收条；编辑或移除后也不会被原 POST 覆盖。陈旧 expectedRunId 返回 `agent_conversation_stale_parent`，不会将输入静默改投另一个新轮。
 
@@ -24,9 +25,11 @@ description: 信封、错误码与 OpenAPI
 
 入队与实际建轮分别校验存储和执行准入。后台 RuntimePolicy.task 的 `agentMaxQueuedMessagesPerConversation`、`agentMaxQueuedMessagesPerUser` 默认20、100，范围1–9999；即时插话与唯一问题回答不会因普通待发条数受阻，仍校验其他配额。暂停和错误只返回可操作提示，不暴露存储连接细节。停止会话先暂停队列并作废在准备中的派发，再取消同一锁边界决定的最新运行。
 
-完整字段与错误信封见 `/api/openapi.yaml`。升级需配套更新 backend 与 web，数据库迁移至65；无需修改 Agent SDK、工具披露或记忆算法。
+完整字段与错误信封见 `/api/openapi.yaml`。会话目录中的 `archived=true` 是缓存移除标记，客户端不再加载其正文。升级需配套更新 backend 与 web，数据库迁移至67；不修改记忆算法。
 
 ## 生成素材身份与来源
+
+通用任务重试不复用画布生成的旧任务 ID：绑定画布的任务返回409、`reason=canvas_task_retry_requires_new_version`，用户回到画布重新生成。检查在新费用预留之前完成。已生成作品的“重试保存”仍沿用原任务，只恢复素材保存与画布写回；写回完成按 `resolution_version` 核对，旧回写不能结束新恢复。
 
 `GET /api/tasks/:id` 在成功任务的 `resultJson.images[]`、`video`、`audio` / `audios[]` 中补充已登记素材的 `assetId`。ID 只从当前用户的服务器记录取得，并核对同一输出资源；项目工作流输出可复用版本表示所属素材。未登记、已删除或资源不匹配时不返回 ID，读取不会创建或恢复素材。客户端不得在缺少该字段时另建随机素材，应保留结果并提示重试保存。
 

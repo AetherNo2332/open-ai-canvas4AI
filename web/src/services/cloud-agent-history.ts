@@ -222,12 +222,13 @@ export function mergeCloudAgentConversations(local: CloudAgentConversation[], re
     const remaining = new Map(remote.map((conversation) => [cloudAgentConversationServerId(conversation), conversation]));
     const conversations = local.map((conversation) => {
         const key = cloudAgentConversationServerId(conversation);
-        const restored = key ? remaining.get(key) : [...remaining.values()].find((entry) => conversation.run && entry.runs?.some((run) => run.id === conversation.run?.id));
+        const restored = key ? remaining.get(key) : [...remaining.values()].find((entry) => conversation.run && (entry.runs?.some((run) => run.id === conversation.run?.id) || (entry.archived && entry.serverConversationId === conversation.run.id)));
         if (!restored) return conversation;
         remaining.delete(cloudAgentConversationServerId(restored));
+        if (restored.archived) return { ...conversation, archived: true };
         return mergeCloudAgentConversation(conversation, restored);
     });
-    return [...conversations, ...remaining.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return [...conversations, ...remaining.values()].filter((conversation) => !conversation.archived).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 function unchanged(summary: AgentConversationSummary, cached: CloudAgentConversation | undefined) {
@@ -262,6 +263,10 @@ export async function refreshCloudAgentConversations(options: HistoryOptions & {
                 const id = ids[current];
                 const cached = options.existing?.find((conversation) => cloudAgentConversationServerId(conversation) === id);
                 const summary = byId.get(id);
+                if (summary?.archived) {
+                    conversations[current] = { id, serverConversationId: id, archived: true, title: summary.title, messages: [], run: null, permissionMode: "request_approval", createdAt: summary.createdAt, updatedAt: summary.updatedAt };
+                    continue;
+                }
                 try {
                     conversations[current] = summary && unchanged(summary, cached) ? cached! : await loadCloudAgentConversation(id, { ...options, scope, client, existing: cached });
                 } catch (cause) {

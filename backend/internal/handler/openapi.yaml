@@ -1119,11 +1119,26 @@ paths:
           schema: { type: string, maxLength: 512 }
       responses:
         "200":
-          description: 信封 data 为 items（id、canvasId、title、latestRunId、status、revision、cleanupPending、createdAt、updatedAt）和可选 nextCursor；没有记录时 items 为空数组
+          description: 信封 data 为 items（id、canvasId、title、latestRunId、status、revision、cleanupPending、archived、createdAt、updatedAt）和可选 nextCursor；archived 为 true 时移除本地历史入口，不加载正文；没有记录时 items 为空数组
         "400":
           description: 画布 ID、limit 或分页游标无效
         "404":
           description: 画布不存在或不属于当前用户
+  /agent/conversations/{id}:
+    delete:
+      tags: [agent]
+      summary: 从历史列表移除当前用户的 Agent 对话
+      description: 持久归档；目录返回 archived 标记供其他设备移除缓存。保留运行记录与费用凭据，不取消正在执行的任务。
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, maxLength: 80 }
+      responses:
+        "200":
+          description: 信封 data 为 archived true
+        "404":
+          description: 对话不存在或不属于当前用户
   /agent/conversations/{id}/runs:
     get:
       tags: [agent]

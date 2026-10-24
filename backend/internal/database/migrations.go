@@ -14,7 +14,7 @@ import (
 // CurrentSchemaVersion follows upstream migrations through v43; our Agent
 // migrations register after that upstream range as 44+. When a future upstream
 // sync takes 44+, shift our block up again and extend the relocation table.
-const CurrentSchemaVersion int64 = 66
+const CurrentSchemaVersion int64 = 67
 
 // PreviousUpstreamSchemaVersion is the highest upstream migration version.
 const PreviousUpstreamSchemaVersion int64 = 43
@@ -242,6 +242,12 @@ var schemaMigrations = []migration{
 	}},
 	{version: 66, name: "canvas_media_versions", checksum: "sha256:canvas-media-versions-v66-20261024", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.CanvasMediaVersion{})
+	}},
+	{version: 67, name: "agent_conversation_archive", checksum: "sha256:agent-conversation-archive-v67-20261024", apply: func(tx *gorm.DB) error {
+		if tx.Migrator().HasColumn(&model.CloudAgentExecution{}, "ArchivedAt") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.CloudAgentExecution{}, "ArchivedAt")
 	}},
 }
 

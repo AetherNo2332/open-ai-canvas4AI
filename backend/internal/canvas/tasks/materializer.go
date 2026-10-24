@@ -66,7 +66,7 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 	_, _, err = s.commands.ExecuteHost(ctx, p, req, "task_result", map[string]any{"taskId": taskID, "status": task.Status, "resultJson": task.ResultJSON, "error": task.Error}, true, func(tx *repository.Repository, doc commands.Document) (next commands.Document, reads map[string]bool, applyErr error) {
 		defer func() {
 			if applyErr == nil {
-				applyErr = tx.FinishCanvasMaterialization(taskID, outcome)
+				applyErr = tx.FinishCanvasMaterialization(taskID, outcome, binding.ResolutionVersion)
 			}
 		}()
 		if version != nil {
@@ -245,14 +245,19 @@ func (s *Service) Materialize(ctx context.Context, taskID string) error {
 					if _, _, err := settleMediaVersion(tx, commands.Document{}, *binding, *task, *version, outputs); err != nil {
 						return err
 					}
-					return tx.FinishCanvasMaterialization(taskID, outcome)
+					return tx.FinishCanvasMaterialization(taskID, outcome, binding.ResolutionVersion)
 				})
 			}
 		} else {
 			return err
 		}
 	}
-	return s.repo.FinishCanvasMaterialization(taskID, outcome)
+	if err == nil {
+		// Completed atomically with the command. A recovery may have requeued
+		// this task after commit; never finish that newer attempt here.
+		return nil
+	}
+	return s.repo.FinishCanvasMaterialization(taskID, outcome, binding.ResolutionVersion)
 }
 func (s *Service) DrainMaterializations(ctx context.Context) error {
 	jobs, err := s.repo.PendingCanvasMaterializations(50)
