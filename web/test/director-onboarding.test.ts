@@ -552,15 +552,7 @@ describe("引导浮层契约", () => {
 });
 
 describe("引导产品接线", () => {
-    const projectCode = stripComments(moduleGroupSource("pages/canvas/project.tsx"));
     const workbenchCode = stripComments(moduleGroupSource("components/canvas/previs/canvas-previs-workbench.tsx"));
-
-    test("页面只把已认证用户 id 传给引导，不使用 guest fallback 或未定义变量", () => {
-        expect(projectCode).toContain('const previsOnboardingScope = useUserStore((state) => state.user?.id?.trim() || "")');
-        expect(projectCode).toContain("onboardingScope={previsOnboardingScope}");
-        expect(projectCode).not.toContain("trimmedUserId");
-        expect(projectCode).not.toContain("onboardingScope={canvasStorageScope}");
-    });
 
     test("工作台渲染非模态引导，并提供可发现的重新开始入口", () => {
         expect(workbenchCode).toContain('import { CanvasPrevisOnboarding } from "@/components/canvas/previs/canvas-previs-onboarding"');

@@ -72,16 +72,16 @@ const waitFor = async (condition: () => boolean, deadlineMs: number, stepMs = 5)
 test("fallback snapshots obey the configured minimum refresh interval", async () => {
     const times: number[] = [];
     const sync = createAgentCanvasSync({ canvasId: "canvas", applyPatches: async () => {}, refresh: async () => { times.push(Date.now()); }, onError: () => {}, batchMs: 0, refreshIntervalMs: 100 });
-    sync.reconcile();
-    await sleep(15);
-    for (let index = 0; index < 50; index++) sync.reconcile();
-    // 短于间隔的窗口内不允许第二次刷新。
-    let deadline = Date.now() + 80;
-    while (Date.now() < deadline) await sleep(5);
-    expect(times).toHaveLength(1);
-    const arrived = await waitFor(() => times.length >= 2, 5000);
-    sync.dispose();
-    expect(arrived).toBe(true);
+    try {
+        sync.reconcile();
+        expect(await waitFor(() => times.length >= 1, 5000)).toBe(true);
+        for (let index = 0; index < 50; index++) sync.reconcile();
+        expect(await waitFor(() => times.length >= 2, 5000)).toBe(true);
+    } finally {
+        sync.dispose();
+    }
+    // 断言真实刷新间隔；测试线程晚唤醒不代表刷新提前发生。
+    expect(times).toHaveLength(2);
     for (let index = 1; index < times.length; index++) {
         expect(times[index] - times[index - 1]).toBeGreaterThanOrEqual(100);
     }
