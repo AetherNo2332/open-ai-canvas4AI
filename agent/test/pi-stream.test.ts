@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Model } from "@earendil-works/pi-ai";
 import { createCanvasStreamFn } from "../src/pi-stream.js";
+import { fromCanonical, toCanonical } from "../src/runner.js";
+import type { PiSnapshot } from "../src/bridge.js";
 
 const model: Model<any> = {
   id: "canvas-test", name: "Canvas test", api: "openai-completions", provider: "canvas", baseUrl: "http://backend",
@@ -90,4 +92,24 @@ test("没有流式增量时正文仍作为单次 delta 发送", async () => {
     if (event.type === "text_delta") deltas.push(event.delta);
   }
   assert.deepEqual(deltas, ["整段正文"]);
+});
+
+test("malformed tool arguments remain lossless and recoverable instead of failing the model stream", async () => {
+  for (const raw of ['{"rows":[{"dialogue":"bad "quote""}]}', "", "[]", "null", "true", '"text"']) {
+    const failures: unknown[] = [];
+    const fn = createCanvasStreamFn(async () => ({ toolCalls: [
+      { id: "bad-call", function: { name: "canvas_edit_storyboard", arguments: raw } },
+    ] }), error => failures.push(error));
+    const stream = await fn(model, { messages: [] } as never);
+    for await (const _ of stream) { /* drain the real SDK stream */ }
+    const message = await stream.result();
+    assert.equal(message.stopReason, "toolUse", `raw=${JSON.stringify(raw)}`);
+    assert.deepEqual(failures, []);
+    const canonical = toCanonical([message]);
+    assert.equal((canonical.messages[0]!.tool_calls as any[])[0].function.arguments, raw);
+    const snapshot = { canonical, modelLimits: { contextWindowTokens: 8192, maxOutputTokens: 2048 } } as PiSnapshot;
+    const restored = fromCanonical(snapshot, model);
+    const replayed = toCanonical(restored as never);
+    assert.equal((replayed.messages[0]!.tool_calls as any[])[0].function.arguments, raw);
+  }
 });

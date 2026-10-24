@@ -83,7 +83,7 @@ import { BatchGenerationSettingsDialog } from "@/components/canvas/batch-generat
 import { promoteLegacyBatchTableSize } from "@/lib/canvas/canvas-batch-table";
 import { filterBatchCellConnections, reconcileBatchCellConnections, syncBatchColumnReferences, type BatchScroll } from "@/lib/canvas/canvas-batch-references";
 import { useCanvasBatchReferences } from "./use-canvas-batch-references";
-import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
+import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, applyStoryboardComposerMeasurement, storyboardTableHeight } from "@/lib/canvas/canvas-storyboard-layout";
 import { CanvasVersionCompareModal } from "@/components/canvas/canvas-version-compare-modal";
 import { CanvasMediaVersionsModal } from "@/components/canvas/canvas-media-versions-modal";
 import { CanvasCloudAgentPanel, type CanvasCloudAgentPanelHandle } from "@/components/canvas/canvas-cloud-agent-panel";
@@ -2572,10 +2572,11 @@ function InfiniteCanvasPage() {
                         onShotCountChange={(count: StoryboardShotCount) => handleConfigNodeChange(contentNode.id, { storyboardShotCount: count })}
                         workspaceMode={workspaceMode}
                         onComposerHeightChange={(height) => {
-                            if (contentNode.metadata?.storyboardComposerHeight === height) return;
-                            handleConfigNodeChange(contentNode.id, { storyboardComposerHeight: height });
-                            const minHeight = storyboardMinNodeHeight(height);
-                            if (contentNode.height < minHeight) handleNodeResize(contentNode.id, contentNode.width, minHeight);
+                            const current = nodesRef.current;
+                            const next = current.map((node) => (node.id === contentNode.id ? applyStoryboardComposerMeasurement(node, height) : node));
+                            if (next.every((node, index) => node === current[index])) return;
+                            nodesRef.current = next;
+                            setNodes(next);
                         }}
                         onConnectStart={(event, rowId, handleType) => handleConnectStart(event, contentNode.id, handleType, rowId === "context" ? "storyboard:context" : `row:${rowId}`)}
                         onScrollTopChange={(scrollTop) => setScriptScrollTopById((current) => (current[contentNode.id] === scrollTop ? current : { ...current, [contentNode.id]: scrollTop }))}

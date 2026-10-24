@@ -148,6 +148,80 @@ function fakeBridge(replies: (CanvasModelResult | (() => Promise<CanvasModelResu
   return { bridge, state, snapshot };
 }
 
+test("malformed JSON becomes a durable Pi tool error and only the corrected call executes", async () => {
+  const raw = '{"cookie":"private-cookie","dialogue":"bad "quote""}';
+  const { bridge, state, snapshot } = fakeBridge([
+    { toolCalls: [
+      { id: "already-valid", function: { name: "canvas_apply_ops", arguments: "{}" } },
+      { id: "malformed", function: { name: "canvas_get_state", arguments: raw } },
+    ] },
+    { toolCalls: [{ id: "corrected", function: { name: "canvas_get_state", arguments: "{}" } }] },
+    { text: "完成" },
+  ]);
+  snapshot.tools = [...tools, { name: "canvas_apply_ops", description: "Write once", parameters: objectSchema, allowed: true }];
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.status, "completed");
+  assert.equal(state.steps, 3);
+  assert.deepEqual(state.executions, ["already-valid", "corrected"]);
+  assert.equal(state.batches[0]![1]!.function.arguments, raw);
+  const rejected = state.checkpoints.find(message => message.role === "toolResult" && message.isError);
+  assert.ok(rejected, "the SDK rejection must pass through the durable checkpoint boundary");
+  assert.doesNotMatch(rejected.text, /private-cookie|bad "quote/);
+  assert.ok(state.canonical[1]!.messages.some(message => message.role === "tool"));
+  assert.deepEqual(state.checkpoints.filter(message => message.role === "toolResult").map(message => message.isError), [false,true,false],
+    "sequential SDK tools checkpoint the valid write before the malformed call rejection");
+});
+
+test("recovery fills only the malformed rejection after an already checkpointed successful write", async () => {
+  const raw = '{"dialogue":"bad "quote""}';
+  const {bridge,state,snapshot}=fakeBridge([{text:"继续处理已拒绝调用"}]);
+  snapshot.tools=[...tools,{name:"canvas_apply_ops",description:"Write once",parameters:objectSchema,allowed:true}];
+  snapshot.lastTaskId="previous-step";
+  snapshot.canonical.messages.push({role:"assistant",content:"",tool_calls:[
+    {id:"written",type:"function",function:{name:"canvas_apply_ops",arguments:"{}"}},
+    {id:"rejected",type:"function",function:{name:"canvas_get_state",arguments:raw}},
+  ]},{role:"tool",tool_call_id:"written",content:"original successful write receipt"});
+  const advances:string[]=[];
+  bridge.executeTool=async (_run,_task,callId)=>{
+    advances.push(callId);
+    assert.equal(callId,"rejected","successful business call must never be automatically replayed");
+    return {callId,pending:false,isError:true,result:"invalid_tool_arguments"};
+  };
+  await runCanvasAgent(bridge,snapshot,undefined,promptParts());
+  assert.deepEqual(advances,["rejected"]);
+  assert.equal(state.steps,1);
+  assert.equal(state.checkpoints.filter(message=>message.role==="toolResult").length,1);
+  assert.equal(state.checkpoints.find(message=>message.role==="toolResult")?.isError,true);
+  assert.equal(state.batches[0]![1]!.function.arguments,raw);
+});
+
+test("native malformed read is paired on recovery without reading a file or replaying a canvas write", async () => {
+  const raw = '{"path":"private-cookie"';
+  const { bridge, state, snapshot } = fakeBridge([{ text: "已理解参数错误" }]);
+  snapshot.skillRuntimeMode = "pi-native";
+  snapshot.skills = [];
+  snapshot.tools = [{ name: "read", description: "Read an enabled Skill", allowed: true,
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false } }];
+  snapshot.canonical.messages.push({ role: "assistant", content: "", tool_calls: [
+    { id: "bad-native-read", type: "function", function: { name: "read", arguments: raw } },
+  ] });
+  const persisted = fromCanonical(snapshot, canvasModel(snapshot));
+  snapshot.piMessages = persisted as unknown as Record<string, unknown>[];
+  snapshot.piSessionEntries = JSON.parse(JSON.stringify(sessionEntriesFromMessages(snapshot.runId, persisted)
+    .map(entry => ({ runId: snapshot.runId, entry: entry as unknown as Record<string, unknown> }))));
+  snapshot.piActiveLeafId = String(snapshot.piSessionEntries!.at(-1)!.entry.id);
+  snapshot.piSessionRevision = 3;
+  snapshot.lastTaskId = "prior-task";
+  await runCanvasAgent(bridge, snapshot, undefined, promptParts());
+  assert.equal(state.steps, 1);
+  assert.deepEqual(state.executions, []);
+  assert.deepEqual(state.batches, []);
+  const rejected = state.checkpoints.find(message => message.role === "toolResult");
+  assert.ok(rejected?.isError);
+  assert.doesNotMatch(rejected.text, /private-cookie/);
+  assert.equal((state.canonical[0]!.messages[1]!.tool_calls as any[])[0].function.arguments, raw);
+});
+
 test("Go model recovery continues through a persisted Pi user message", async () => {
   const nudge = "上一步模型调用超时；已关闭思考。请重试同一步。";
   const { bridge, state, snapshot } = fakeBridge([

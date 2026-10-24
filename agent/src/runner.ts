@@ -22,6 +22,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { CanvasBridge, CanvasCompactionNeeded, CanvasContextOverflow, CanvasModelRetry, CanvasRunSuspended, CanvasRunTerminated, type PiCanonical, type PiSnapshot, type PiToolCall, type PiTurnDecision } from "./bridge.js";
 import { createCanvasStreamFn } from "./pi-stream.js";
+import { CanvasToolArgumentsRejected, canvasToolCallToRaw, createCanvasToolCall, decodeCanvasToolArguments, prepareCanvasToolArguments } from "./raw-tool-calls.js";
 import { compactionSettings, serializePreparation, runNativeCompaction, prepareNativeCompaction } from "./native-compaction.js";
 import { FatalWorkerError } from "./tool-disclosure.js";
 import { formatAgentInterjection, validateSubagentRuntime } from "./subagent-wire.js";
@@ -119,10 +120,7 @@ export function fromCanonical(snapshot: PiSnapshot, model: Model<any>): AgentMes
       if (text) blocks.push({ type: "text", text });
       const rawCalls = Array.isArray(source.tool_calls) ? source.tool_calls as PiToolCall[] : [];
       for (const call of rawCalls) {
-        try {
-          blocks.push({ type: "toolCall", id: call.id, name: call.function.name,
-            arguments: JSON.parse(call.function.arguments) });
-        } catch { /* 历史里解析不出来的调用不再回放：它不可能被重新准入。 */ }
+        blocks.push(createCanvasToolCall(call));
       }
       messages.push({ role: "assistant", content: blocks, api: model.api, provider: model.provider,
         model: model.id, usage: emptyUsage,
@@ -153,9 +151,7 @@ export function toCanonical(messagesIn: readonly Message[], cacheKey?: string): 
     if (message.role === "user") messages.push({ role: "user",
       content: (message as unknown as Record<string, unknown>).canvasContent || textContent(message.content) });
     if (message.role === "assistant") {
-      const calls = message.content.filter((block) => block.type === "toolCall").map((block) => ({
-        id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.arguments) },
-      }));
+      const calls = message.content.filter((block) => block.type === "toolCall").map(canvasToolCallToRaw);
       messages.push({ role: "assistant",
         content: message.content.filter((block) => block.type === "text").map((block) => block.text).join("\n"),
         ...(calls.length ? { tool_calls: calls } : {}) });
@@ -190,9 +186,7 @@ function modelPreflightTools(snapshot: PiSnapshot): PiCanonical["tools"] {
 }
 
 function callsFromAssistant(message: AssistantMessage): PiToolCall[] {
-  return message.content.filter((block) => block.type === "toolCall").map((block) => ({
-    id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.arguments) },
-  }));
+  return message.content.filter((block) => block.type === "toolCall").map(canvasToolCallToRaw);
 }
 
 /**
@@ -903,13 +897,14 @@ export async function runCanvasAgent(
     if (nativeMode) materializeNativeSkills(snapshot.skills || [], nativeSkillsRoot);
     resume = await resumePoint(bridge, snapshot, model, disclosure, checkpoint, shutdown, nativeMode ? async (call) => {
       try {
-        const params = JSON.parse(call.function.arguments) as Record<string, unknown>;
+        const params = decodeCanvasToolArguments(call.function.arguments);
         if (typeof params.path !== "string") throw new NativeSkillReadRejected("Persisted Skill read requires a path");
         const path = rebaseNativeSkillPath(snapshot.skills || [], nativeSkillsRoot, params.path);
         return { result: await readNativeSkill(snapshot, nativeSkillsRoot, bridge, path,
           typeof params.offset === "number" ? params.offset : 0, typeof params.limit === "number" ? params.limit : 12_000, shutdown) };
       } catch (error) {
         if (error instanceof NativeSkillReadRejected) return { result: "Skill read rejected; use an enabled Skill file and valid range.", isError: true };
+        if (error instanceof CanvasToolArgumentsRejected) return { result: error.message, isError: true };
         throw error;
       }
     } : undefined);
@@ -971,7 +966,9 @@ export async function runCanvasAgent(
   const nativeRead = nativeReadSpec ? {
     name: "read", label: "read", description: nativeReadSpec.description,
     parameters: Unsafe<TSchema>(nativeReadSpec.parameters as TSchema), executionMode: "sequential" as const,
+    prepareArguments: prepareCanvasToolArguments,
     execute: async (callId: string, params: Record<string, unknown>, signal: AbortSignal | undefined) => {
+      prepareCanvasToolArguments(params);
       await queue.drain();
       if (listenerFailure !== undefined) throw listenerFailure;
       try {

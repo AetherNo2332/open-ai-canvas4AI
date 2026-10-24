@@ -5,6 +5,12 @@ description: 从产品功能快速定位主要代码入口
 
 # 代码功能地图
 
+## Agent 工具参数恢复
+
+- `agent/src/raw-tool-calls.ts`、`pi-stream.ts`、`runner.ts` 与 `session-tools.ts`：保留原始参数，在 Pi 的公开参数准备入口阻止坏 JSON 和非对象执行；普通工具与 native read 的历史恢复共用该投影。
+- `app/cloud_agent_pi_arguments.go`、`cloud_agent_pi_bridge.go`、`cloud_agent_tool_preflight.go` 与 `cloud_agent_runtime.go`：仅 Pi 传输层接收坏参数，严格核对成功模型任务来源、原始参数、租约与披露，再持久化拒绝和对应错误回执。普通引擎调用与合法工具执行继续严格校验。
+- `app/provider_agent_protocol.go`：Claude 历史调用在派生请求中保持对象形态，已拒绝的坏参数不污染下一步请求；canonical 与模型任务中的原始参数继续保留，不用于执行。
+
 ## Agent 消息排队
 
 - `model/agent_message_queue.go`、`repository/agent_message_queue.go`：持久消息收条、队列控制、账号发送设置、领取/提交事务和目录聚合；`database/migrations.go` 的65及 `schema.go` 登记表结构。
@@ -19,6 +25,7 @@ description: 从产品功能快速定位主要代码入口
 - `repository/canvas_edit_leases.go`、`canvas/edit_leases.go`、`handler/canvas_sync.go`：节点作者字段租约和不含证明的同步状态；`app/cloud_agent_edit_lease.go`：先回滚工具副作用，再持久化租约业务冲突回执。
 - `canvas/canvas_history.go`、`repository/canvas_history.go` 与 `commands/history.go`：命令及旧保存共用可浏览快照策略，恢复前备份、资源保留与当前业务归属校准；命令撤销另保留actor history。
 - `web/src/services/canvas-command-bootstrap.ts`、`canvas-command-editor-binding.ts`、`canvas-command-session.ts`：旧缓存归档与可信迁移、原始编辑基线、不可变请求身份和待确认日志；`canvas-edit-leases.ts`、`canvas-author-drafts.ts`：浏览器租约与账号隔离的作者草稿。
+- `canvas/capability/editable.go`：公共 boolean `manualSize` 映射到节点 `metadata.manualSize`；`web/src/lib/canvas/canvas-editor-transient.ts`、`canvas-storyboard-layout.ts`：保留本地分镜输入区测量，只提交实际作者字段与尺寸变化；编辑器绑定将校验错误作为 Promise 拒绝交还调用方。
 - `repository/canvas_realtime.go`、`canvas/realtime*.go`、`app/canvas_realtime.go`、`handler/canvas_realtime.go`：已提交版本观察、Redis临时协同、Cookie鉴权WS；前端 `canvas-realtime-client.ts` 与 `use-canvas-realtime.ts` 只唤醒事件补拉和绘制临时presence。
 - `nginx.conf`、`web/vite.config.ts`：仅实时路径的WebSocket升级转发；`web/test/canvas-realtime-proxy.test.mjs`：真实开发代理的upgrade、Cookie/Origin和普通API/SSE行为验证。
 

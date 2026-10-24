@@ -4,6 +4,7 @@ import { bindCanvasCommandEditor } from "../src/services/canvas-command-editor-b
 import type { CanvasDocument } from "../src/lib/canvas/canvas-event-projection";
 import type { Command, Receipt, Snapshot } from "../src/lib/canvas/command-contract.generated";
 import type { CanvasCapabilities } from "../src/lib/canvas/canvas-editor-commands";
+import { applyStoryboardComposerMeasurement } from "../src/lib/canvas/canvas-storyboard-layout";
 const initial = { id: "canvas", nodes: [{ id: "a", type: "text", metadata: { content: "before", extension: "keep" } }], connections: [] };
 const cap = { protocolVersion: 1, nodes: [{ type: "text", patchFields: { content: { path: "metadata.content" } } }], structuredFields: {} };
 
@@ -120,6 +121,121 @@ async function fieldEditor(generation: number | null = 0, capabilities = fieldCa
         },
     };
 }
+
+test("measured storyboard composer layout remains local across reconnect and a real content ACK", async () => {
+    const capabilities = { protocolVersion: 1, nodes: [{ type: "script", patchFields: { composerContent: { path: "metadata.composerContent" }, height: { path: "height" } } }], structuredFields: {} };
+    const e = await fieldEditor(0, capabilities, { id: "a", type: "script", height: 480, metadata: { composerContent: "before", storyboard: { rows: [] } } });
+    e.live().nodes[0] = applyStoryboardComposerMeasurement(e.live().nodes[0], 152);
+    try {
+        for (let i = 0; i < 3; i++) {
+            await e.binding.commit();
+            await e.session.reconnect();
+            expect(e.live().nodes[0].metadata.storyboardComposerHeight).toBe(152);
+        }
+        expect(e.sent).toEqual([]);
+        e.live().nodes[0].metadata.composerContent = "saved script";
+        await e.binding.commit();
+        expect(e.sent).toHaveLength(1);
+        expect(e.sent[0].operations[0].patch).toEqual({ composerContent: "saved script" });
+        expect(e.host().document.nodes).toMatchObject([{ metadata: { composerContent: "saved script" } }]);
+        expect((e.host().document.nodes as any[])[0].metadata).not.toHaveProperty("storyboardComposerHeight");
+        expect(e.live().nodes[0].metadata.storyboardComposerHeight).toBe(152);
+        await e.session.reconnect();
+        await e.binding.commit();
+        expect(e.sent).toHaveLength(1);
+        expect(e.session.state.acknowledged?.revision).toBe(2);
+        expect(e.session.state.acknowledged?.document.nodes).toMatchObject([{ metadata: { composerContent: "saved script" } }]);
+    } finally {
+        e.binding.dispose();
+        e.session.close();
+    }
+});
+
+test("an undersized storyboard grows once without acquiring a manual resize flag", async () => {
+    const capabilities = { protocolVersion: 1, nodes: [{ type: "script", patchFields: { height: { path: "height" } } }], structuredFields: {} };
+    const e = await fieldEditor(0, capabilities, { id: "a", type: "script", height: 240, metadata: { storyboard: { rows: [] } } });
+    try {
+        e.live().nodes[0] = applyStoryboardComposerMeasurement(e.live().nodes[0], 180);
+        expect(e.live().nodes[0].height).toBe(388);
+        expect(e.live().nodes[0].metadata).not.toHaveProperty("manualSize");
+        await e.binding.commit();
+        expect(e.sent).toHaveLength(1);
+        expect(e.sent[0].operations[0].patch).toEqual({ height: 388 });
+        for (let i = 0; i < 3; i++) {
+            await e.session.reconnect();
+            const node = e.live().nodes[0];
+            expect(applyStoryboardComposerMeasurement(node, 180)).toBe(node);
+            await e.binding.commit();
+        }
+        expect(e.sent).toHaveLength(1);
+        expect(e.host().document.nodes).toMatchObject([{ height: 388 }]);
+        expect((e.host().document.nodes as any[])[0].metadata).not.toHaveProperty("storyboardComposerHeight");
+        expect((e.host().document.nodes as any[])[0].metadata).not.toHaveProperty("manualSize");
+    } finally {
+        e.binding.dispose();
+        e.session.close();
+    }
+});
+
+test("only the measured storyboard field is local; other metadata and wrong node types remain strict", async () => {
+    const cases = [
+        { type: "script", patch: { storyboardComposerHeight: 152, anotherMeasuredField: 20 }, path: "anotherMeasuredField" },
+        { type: "text", patch: { storyboardComposerHeight: 152 }, path: "storyboardComposerHeight" },
+    ];
+    for (const item of cases) {
+        const capabilities = { protocolVersion: 1, nodes: [{ type: item.type, patchFields: {} }], structuredFields: {} };
+        const e = await fieldEditor(0, capabilities, { id: "a", type: item.type, height: 480, metadata: { content: "before" } });
+        Object.assign(e.live().nodes[0].metadata, item.patch);
+        try {
+            await expect(e.binding.commit()).rejects.toThrow("canvas_editor_unmapped:node:a:metadata." + item.path);
+            expect(e.sent).toEqual([]);
+            expect(e.session.state.pending).toEqual([]);
+        } finally {
+            e.binding.dispose();
+            e.session.close();
+        }
+    }
+});
+
+test("unmapped local edits reject through the Promise boundary without enqueuing or changing acknowledged data", async () => {
+    const e = await fieldEditor();
+    e.live().nodes[0].metadata.content = "unsubmitted text";
+    e.live().nodes[0].metadata.extension = "unknown edit";
+    try {
+        let commit: Promise<unknown> | undefined;
+        expect(() => {
+            commit = e.binding.commit();
+        }).not.toThrow();
+        await expect(commit).rejects.toThrow("canvas_editor_unmapped:node:a:metadata.extension");
+        expect(e.sent).toEqual([]);
+        expect(e.session.state.pending).toEqual([]);
+        expect(e.session.state.acknowledged?.revision).toBe(1);
+        expect(e.session.state.acknowledged?.document.nodes).toMatchObject([{ metadata: { content: "before" } }]);
+        expect(e.live().nodes[0].metadata.content).toBe("unsubmitted text");
+    } finally {
+        e.binding.dispose();
+        e.session.close();
+    }
+});
+
+test("manual node dimensions and intent submit together once using the published boolean field", async () => {
+    const capabilities = { protocolVersion: 1, nodes: [{ type: "markdown", patchFields: { width: { path: "width" }, height: { path: "height" }, manualSize: { path: "metadata.manualSize" } } }], structuredFields: {} };
+    const e = await fieldEditor(0, capabilities, { id: "a", type: "markdown", width: 320, height: 240, metadata: { content: "outline" } });
+    Object.assign(e.live().nodes[0], { width: 640, height: 400 });
+    e.live().nodes[0].metadata.manualSize = true;
+    try {
+        await e.binding.commit();
+        expect(e.sent).toHaveLength(1);
+        expect(e.sent[0].operations[0].patch).toEqual({ width: 640, height: 400, manualSize: true });
+        expect(e.host().document.nodes).toMatchObject([{ width: 640, height: 400, metadata: { manualSize: true } }]);
+        await e.session.reconnect();
+        await e.binding.commit();
+        expect(e.sent).toHaveLength(1);
+    } finally {
+        e.binding.dispose();
+        e.session.close();
+    }
+});
 
 test("field baseline preserves original content across two remote disjoint updates", async () => {
     const e = await fieldEditor();

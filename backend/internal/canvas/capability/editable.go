@@ -74,6 +74,7 @@ func completeBuiltinEditableFields(d *Descriptor) {
 	}
 	add("width", "width", "节点宽度", boundedNumber(1, 100000))
 	add("height", "height", "节点高度", boundedNumber(1, 100000))
+	add("manualSize", "metadata.manualSize", "手动尺寸", PatchField{Kind: patchKindBoolean})
 	add("locked", "metadata.locked", "锁定节点", PatchField{Kind: patchKindBoolean})
 	add("fontSize", "metadata.fontSize", "字号", boundedNumber(8, 120))
 	d.Actions = append(d.Actions, "update_node", "delete_node", "duplicate_node", "set_parent", "reorder_nodes")

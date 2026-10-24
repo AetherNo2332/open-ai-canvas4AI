@@ -1,9 +1,19 @@
 import { describe, expect, test } from "bun:test";
 
 import { DEFAULT_STORYBOARD_COLUMNS, STORYBOARD_COLUMN_OPTIONS } from "@/lib/canvas/canvas-storyboard-columns";
-import { STORYBOARD_EDITOR_ACTIONS_WIDTH, storyboardCardGridTemplate, storyboardCardMinWidth, storyboardEditorColumnsTotal, storyboardEditorColumnWidth, storyboardEditorColumnWidths, storyboardEditorScrollWidth } from "@/lib/canvas/canvas-storyboard-layout";
+import { STORYBOARD_EDITOR_ACTIONS_WIDTH, applyStoryboardComposerMeasurement, storyboardCardGridTemplate, storyboardCardMinWidth, storyboardEditorColumnsTotal, storyboardEditorColumnWidth, storyboardEditorColumnWidths, storyboardEditorScrollWidth } from "@/lib/canvas/canvas-storyboard-layout";
 
 describe("storyboard card column layout", () => {
+    test("measuring a composer preserves manual size intent, avoids locked geometry changes and stabilizes", () => {
+        const node = { height: 480, metadata: { manualSize: true, composerContent: "script" } };
+        const measured = applyStoryboardComposerMeasurement(node, 152);
+        expect(measured).toEqual({ height: 480, metadata: { manualSize: true, composerContent: "script", storyboardComposerHeight: 152 } });
+        expect(applyStoryboardComposerMeasurement(measured, 152)).toBe(measured);
+        const locked = applyStoryboardComposerMeasurement({ height: 240, metadata: { locked: true } }, 1000);
+        expect(locked).toEqual({ height: 240, metadata: { locked: true, storyboardComposerHeight: 180 } });
+        expect(applyStoryboardComposerMeasurement(locked, 1000)).toBe(locked);
+    });
+
     test("default columns render fixed index/duration columns plus flexible content columns", () => {
         expect(DEFAULT_STORYBOARD_COLUMNS).toEqual(["shotNumber", "durationSeconds", "plotDescription", "shotSize", "motion", "assets"]);
         expect(storyboardCardGridTemplate(DEFAULT_STORYBOARD_COLUMNS)).toBe("64px 84px minmax(200px, 1.4fr) minmax(112px, 0.8fr) minmax(150px, 1.1fr) minmax(168px, 0.9fr)");

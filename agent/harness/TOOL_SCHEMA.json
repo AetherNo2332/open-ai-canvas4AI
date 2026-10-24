@@ -3569,6 +3569,9 @@
                       "locked": {
                         "type": "boolean"
                       },
+                      "manualSize": {
+                        "type": "boolean"
+                      },
                       "model": {
                         "maxLength": 16000,
                         "type": "string"
