@@ -161,7 +161,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
     const effectiveRenderLOD: CanvasNodeRenderLOD = renderLOD === "full" || hovered || isEditingContent || isEditingTitle || mediaActive ? "full" : renderLOD;
     const showChrome = effectiveRenderLOD === "full";
-    const showMediaVersionBadge = Boolean(onOpenVersions && [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio].some((type) => type === data.type) && (!data.metadata?.versionLabel || data.metadata?.mediaVersion) && (data.metadata?.content || data.metadata?.mediaVersion));
+    const showMediaVersionBadge = Boolean(
+        onOpenVersions && [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio].some((type) => type === data.type) && (!data.metadata?.versionLabel || data.metadata?.mediaVersion) && (data.metadata?.content || data.metadata?.mediaVersion),
+    );
     const nodeState = isFocusRelated ? "focus" : isConnectionTarget ? "target" : isSelected ? "selected" : isRelated && !isBatchChild ? "related" : "idle";
     const showOutputConnection = getNodeDefinition(data.type)?.showOutputConnection !== false;
     const assetTags = data.metadata?.assetTags?.filter((tag) => tag.trim()) || [];
@@ -306,6 +308,22 @@ export const CanvasNode = React.memo(function CanvasNode({
     };
 
     const connectionTilt = isConnectionTarget && !reduceMediaEffects && !dragOffset ? canvasConnectionTilt(data, connectionApproach) : undefined;
+    const mediaVersionBadge = showMediaVersionBadge ? (
+        <button
+            type="button"
+            className={`inline-flex items-center gap-1 rounded-[var(--r-full)] border px-2 text-[var(--node-badge-fs)] ${data.type === CanvasNodeType.Audio ? "h-5 shrink-0" : "absolute left-3 top-3 z-[var(--node-z-overlay)] h-7"}`}
+            style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+            aria-label="查看媒体版本"
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+                event.stopPropagation();
+                onOpenVersions?.(data);
+            }}
+        >
+            {data.metadata?.mediaVersion?.activeTaskId ? <LoaderCircle className="size-3 motion-safe:animate-spin" aria-hidden /> : null}
+            {data.metadata?.mediaVersion?.currentVersion ? `V${data.metadata.mediaVersion.currentVersion}` : "版本"}
+        </button>
+    ) : null;
 
     return (
         <div
@@ -333,6 +351,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     node={data}
                     scale={scale}
                     dimensionLabel={mediaDimensionLabel}
+                    actions={data.type === CanvasNodeType.Audio ? mediaVersionBadge : undefined}
                     active={isSelected || isFocusRelated}
                     editable={!readOnly && !data.metadata?.locked && Boolean(onTitleChange)}
                     editing={isEditingTitle}
@@ -500,11 +519,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     </div>
                 ) : null}
 
-                {showChrome && showMediaVersionBadge ? (
-                    <button type="button" className="absolute left-3 top-3 z-[var(--node-z-overlay)] inline-flex h-7 items-center gap-1 rounded-[var(--r-full)] border px-2 text-[var(--node-badge-fs)]" style={{background:theme.toolbar.panel,borderColor:theme.toolbar.border,color:theme.node.text}} aria-label="查看媒体版本" onMouseDown={(event)=>event.stopPropagation()} onClick={(event)=>{event.stopPropagation();onOpenVersions?.(data);}}>
-                        {data.metadata?.mediaVersion?.activeTaskId ? <LoaderCircle className="size-3 motion-safe:animate-spin" aria-hidden /> : null}{data.metadata?.mediaVersion?.currentVersion ? `V${data.metadata.mediaVersion.currentVersion}` : "版本"}
-                    </button>
-                ) : null}
+                {showChrome && data.type !== CanvasNodeType.Audio ? mediaVersionBadge : null}
                 {showChrome && data.metadata?.versionLabel && !data.metadata?.mediaVersion ? (
                     <button
                         type="button"
@@ -788,6 +803,7 @@ function NodeExternalHeader({
     node,
     scale,
     dimensionLabel,
+    actions,
     active,
     editable,
     editing,
@@ -803,6 +819,7 @@ function NodeExternalHeader({
     node: CanvasNodeData;
     scale: number;
     dimensionLabel: string | null;
+    actions?: ReactNode;
     active: boolean;
     editable: boolean;
     editing: boolean;
@@ -826,8 +843,8 @@ function NodeExternalHeader({
             className="canvas-node-external-header absolute bottom-full left-0 z-[var(--node-z-overlay)] flex h-6 items-center gap-1 overflow-hidden"
             style={
                 {
-                    width: dimensionLabel ? "calc(var(--canvas-node-width) * var(--canvas-live-scale, 1))" : undefined,
-                    maxWidth: dimensionLabel ? undefined : maxHeaderWidth,
+                    width: dimensionLabel || actions ? "calc(var(--canvas-node-width) * var(--canvas-live-scale, 1))" : undefined,
+                    maxWidth: dimensionLabel || actions ? undefined : maxHeaderWidth,
                     "--canvas-node-width": `${node.width}px`,
                     borderRadius: "var(--r-sm)",
                     background: "transparent",
@@ -899,6 +916,7 @@ function NodeExternalHeader({
                     {dimensionLabel}
                 </span>
             ) : null}
+            {actions ? <div className="ml-auto flex shrink-0 items-center">{actions}</div> : null}
         </div>
     );
 }

@@ -1,15 +1,10 @@
 import { captureVideoPoster } from "@/lib/video-poster";
 import { resolveMediaUrl } from "@/services/file-storage";
-import { uploadImage } from "@/services/image-storage";
-import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
-
-type VideoPreview = NonNullable<CanvasNodeMetadata["videoPreview"]>;
+import type { CanvasNodeData } from "@/types/canvas";
 
 export type HydratedCanvasVideoPreview = {
-    /** 页面先用这个 object URL 渲染首帧，不等待 OSS 预览图上传。 */
+    /** 仅用于当前页面显示；调用方负责在媒体切换或卸载时释放。 */
     localUrl: string;
-    /** 持久化上传在首帧已经可见后后台完成；失败不影响本地首帧。 */
-    persisted: Promise<VideoPreview | null>;
 };
 
 export function hydrateCanvasVideoPreview(node: CanvasNodeData, signal?: AbortSignal) {
@@ -30,21 +25,7 @@ async function generateCanvasVideoPreview(node: CanvasNodeData, signal?: AbortSi
     throwIfAborted(signal);
     if (!captured.poster) return null;
     const localUrl = URL.createObjectURL(captured.poster);
-    const persisted = uploadImage(captured.poster)
-        .then((preview) => ({
-            content: preview.url,
-            storageKey: preview.storageKey,
-            width: preview.width,
-            height: preview.height,
-            bytes: preview.bytes,
-            mimeType: preview.mimeType,
-        }))
-        .catch((error) => {
-            // 首帧已经在本地可见；预览图持久化失败只影响后续刷新，不阻断视频节点。
-            console.warn("视频首帧持久化失败，保留本地首帧", { nodeId: node.id, error });
-            return null;
-        });
-    return { localUrl, persisted };
+    return { localUrl };
 }
 
 function waitForBrowserIdle(signal?: AbortSignal) {

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { waitCanvasHostMaterialization } from "../src/services/canvas-host-materialization";
 import { canvasPersistentEditorDraft } from "../src/lib/canvas/canvas-editor-transient";
+import { canvasEditorCommands } from "../src/lib/canvas/canvas-editor-commands";
 test("host completion is synchronized before success with no browser output mutation", async () => {
     const sequence: string[] = [];
     let polls = 0;
@@ -54,4 +55,27 @@ test("task progress remains display state while creative edits and canonical tas
     expect(result.nodes[0].metadata).toEqual({ content: "typed", taskId: "host-task", status: "loading", taskProgress: 0 });
     expect(result.nodes[1].metadata).toEqual({ prompt: "creative prompt" });
     expect(draft.nodes[1].metadata.taskId).toBe("forged");
+});
+
+test("hydrated video previews do not block unrelated media editor commits", () => {
+    const before = {
+        id: "canvas",
+        nodes: [
+            { id: "image", type: "image", title: "Image", metadata: {} },
+            { id: "video", type: "video", title: "Video", metadata: {} },
+        ],
+        connections: [],
+    };
+    const live = structuredClone(before) as any;
+    live.nodes[0].title = "Edited image";
+    live.nodes[1].metadata.videoPreview = { content: "/signed-poster", storageKey: "resource:poster", mimeType: "image/png", width: 320, height: 180, bytes: 400 };
+    const capabilities = { protocolVersion: 1, nodes: ["image", "video"].map((type) => ({ type, patchFields: { title: { path: "title" } } })), structuredFields: {} };
+    const persistent = canvasPersistentEditorDraft(before, live);
+    expect(canvasEditorCommands(before, persistent, capabilities)).toEqual([{ type: "update_node", id: "image", patch: { title: "Edited image" } }]);
+    expect(live.nodes[1].metadata.videoPreview.storageKey).toBe("resource:poster");
+    const canonical = structuredClone(live);
+    canonical.nodes[1].metadata.videoPreview.content = "/canonical-poster";
+    expect((canvasPersistentEditorDraft(canonical, live).nodes as any[])[1].metadata.videoPreview.content).toBe("/canonical-poster");
+    live.nodes[1].metadata.unknownAuthorField = "still rejected";
+    expect(() => canvasEditorCommands(before, canvasPersistentEditorDraft(before, live), capabilities)).toThrow("unknownAuthorField");
 });

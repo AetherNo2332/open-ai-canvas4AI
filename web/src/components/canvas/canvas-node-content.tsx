@@ -701,11 +701,12 @@ function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentPro
     const persistedPreviewSource = persistedPreview?.src || "";
     const persistedPreviewStorageKey = persistedPreview?.storageKey || "";
     const hasPersistedPreview = Boolean(persistedPreviewSource || persistedPreviewStorageKey);
-    const { updateMetadata } = useCanvasNodeActions();
-    const updateMetadataRef = useRef(updateMetadata);
+    const mediaSourceKey = JSON.stringify([node.id, node.metadata?.storageKey || node.metadata?.content || ""]);
     const [hydrating, setHydrating] = useState(false);
-    const [localPreviewUrl, setLocalPreviewUrl] = useState("");
+    const [localPreview, setLocalPreview] = useState({ sourceKey: "", url: "" });
+    const localPreviewUrl = localPreview.sourceKey === mediaSourceKey ? localPreview.url : "";
     const localPreviewUrlRef = useRef("");
+    const localPreviewSourceRef = useRef("");
     const [passiveVideoUrl, setPassiveVideoUrl] = useState("");
     const [passiveVideoReady, setPassiveVideoReady] = useState(false);
 
@@ -716,10 +717,6 @@ function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentPro
         const fallback = node.metadata?.importSource?.provider === "libtv" ? buildLibTVVideoSourceUrl(content) : content;
         return bindCanvasVideoHoverPreview(element, () => resolveMediaUrl(node.metadata?.storageKey, fallback));
     }, [node.metadata?.content, node.metadata?.storageKey, node.metadata?.importSource?.provider]);
-
-    useEffect(() => {
-        updateMetadataRef.current = updateMetadata;
-    }, [updateMetadata]);
 
     useEffect(
         () => () => {
@@ -753,19 +750,19 @@ function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentPro
     }, [hasPersistedPreview, localPreviewUrl, nearViewport, node.metadata?.content, node.metadata?.storageKey, node.metadata?.importSource?.provider]);
 
     useEffect(() => {
-        if (hasPersistedPreview || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current) {
-            if (hasPersistedPreview && localPreviewUrlRef.current) {
-                URL.revokeObjectURL(localPreviewUrlRef.current);
-                localPreviewUrlRef.current = "";
-                setLocalPreviewUrl("");
-            }
+        if (localPreviewUrlRef.current && (hasPersistedPreview || localPreviewSourceRef.current !== mediaSourceKey)) {
+            URL.revokeObjectURL(localPreviewUrlRef.current);
+            localPreviewUrlRef.current = "";
+            localPreviewSourceRef.current = "";
+            setLocalPreview({ sourceKey: "", url: "" });
+        }
+        if (hasPersistedPreview || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey)) {
             setHydrating(false);
             return;
         }
         if (localPreviewUrlRef.current) {
-            URL.revokeObjectURL(localPreviewUrlRef.current);
-            localPreviewUrlRef.current = "";
-            setLocalPreviewUrl("");
+            setHydrating(false);
+            return;
         }
         const controller = new AbortController();
         setHydrating(true);
@@ -777,10 +774,8 @@ function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentPro
                 }
                 if (localPreviewUrlRef.current) URL.revokeObjectURL(localPreviewUrlRef.current);
                 localPreviewUrlRef.current = hydrated.localUrl;
-                setLocalPreviewUrl(hydrated.localUrl);
-                void hydrated.persisted.then((videoPreview) => {
-                    if (!controller.signal.aborted && videoPreview) updateMetadataRef.current?.(node.id, { videoPreview });
-                });
+                localPreviewSourceRef.current = mediaSourceKey;
+                setLocalPreview({ sourceKey: mediaSourceKey, url: hydrated.localUrl });
             })
             .catch(() => undefined)
             .finally(() => {
@@ -789,7 +784,7 @@ function InactiveVideoPreview({ node, theme, onPlay }: Pick<CanvasNodeContentPro
         return () => {
             controller.abort();
         };
-    }, [hasPersistedPreview, nearViewport, node.id, node.metadata?.content, node.metadata?.storageKey, persistedPreviewSource, persistedPreviewStorageKey]);
+    }, [hasPersistedPreview, nearViewport, node.id, node.metadata?.content, node.metadata?.storageKey, persistedPreviewSource, persistedPreviewStorageKey, mediaSourceKey]);
 
     if (hasPersistedPreview || localPreviewUrl || passiveVideoUrl) {
         return (

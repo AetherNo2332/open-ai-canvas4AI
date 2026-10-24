@@ -76,7 +76,7 @@ describe("large canvas media rendering", () => {
 
     test("keeps inactive video nodes on a viewport-gated static first frame", () => {
         const inactivePreviewSource = canvasNodeContentSource.match(/function InactiveVideoPreview[\s\S]*?\n}\n\nfunction VideoPreviewPlayButton/)?.[0] || "";
-        expect(canvasNodeContentSource).toContain("if (hasPersistedPreview || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current)");
+        expect(canvasNodeContentSource).toContain("if (hasPersistedPreview || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey))");
         expect(canvasNodeContentSource).not.toContain("hydrateMediaPreview");
         expect(inactivePreviewSource).toContain("hasPersistedPreview || !nearViewport");
         expect(inactivePreviewSource).toContain("URL.revokeObjectURL(localPreviewUrlRef.current)");
@@ -89,7 +89,7 @@ describe("large canvas media rendering", () => {
         expect(inactivePreviewSource).not.toContain("<VideoPlayer");
         expect(inactivePreviewSource).toContain("hydrateCanvasVideoPreview(node, controller.signal)");
         expect(canvasVideoPreviewSource).toContain("captureVideoPoster(source, { signal, maxWidth: 400 })");
-        expect(inactivePreviewSource).toContain("hydrated.persisted.then");
+        expect(inactivePreviewSource).not.toContain("updateMetadata");
         expect(inactivePreviewSource).not.toContain("autoPlay");
         expect(inactivePreviewSource).toContain("<VideoPreviewPlayButton");
         expect(canvasNodeContentSource).toContain("useVideoPlaybackUrl(node, mediaActive)");
@@ -111,9 +111,10 @@ describe("large canvas media rendering", () => {
         expect(workflowProductionSource).not.toContain("await response.blob()");
     });
 
-    test("shows a captured first frame before its OSS poster upload finishes and allows later retries", () => {
+    test("shows a captured first frame locally without uploading display-only posters", () => {
         expect(canvasVideoPreviewSource).toContain("const localUrl = URL.createObjectURL(captured.poster)");
-        expect(canvasVideoPreviewSource).toContain("return { localUrl, persisted }");
+        expect(canvasVideoPreviewSource).toContain("return { localUrl }");
+        expect(canvasVideoPreviewSource).not.toContain("uploadImage");
         expect(canvasVideoPreviewSource).not.toContain("previewRequests");
     });
 });
