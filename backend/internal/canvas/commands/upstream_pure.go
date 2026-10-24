@@ -11,7 +11,6 @@ import (
 	assets "infinite-canvas/backend/internal/assets"
 	capability "infinite-canvas/backend/internal/canvas/capability"
 	connection "infinite-canvas/backend/internal/canvas/connection"
-	contract "infinite-canvas/backend/internal/canvas/contract"
 	layout "infinite-canvas/backend/internal/canvas/layout"
 	references "infinite-canvas/backend/internal/canvas/references"
 	kernel "infinite-canvas/backend/internal/kernel"
@@ -3892,39 +3891,11 @@ func (p *planner) validateCanvasDrawingValue(value any, depth int) error {
 }
 
 func (p *planner) validateCanvasGenerationReferences(doc map[string]any, nodeID string) error {
-	nodes := p.creationMaps(doc["nodes"])
-	index := p.canvasNodeIndex(nodes, nodeID)
-	if index < 0 {
-		return BadAuthRequest("生成配置节点不存在")
+	err := references.ValidateGenerationReferences(doc, nodeID, p.registry)
+	if typed, ok := err.(*references.Error); ok {
+		return canvasFieldError(typed.Field, typed.Reason, typed.Message)
 	}
-	raw, err := json.Marshal(p.canvasNodeMetadata(nodes[index])["generationSpec"])
-	if err != nil {
-		return err
-	}
-	spec, err := contract.Decode(raw)
-	if err != nil {
-		return BadAuthRequest(err.Error())
-	}
-	for _, binding := range spec.ReferenceBindings {
-		if binding.TransientID != "" {
-			return BadAuthRequest("编辑生成草稿不能写入临时引用，请使用生成工具解析临时素材")
-		}
-		if binding.NodeID != "" {
-			referenced := p.canvasNodeIndex(nodes, binding.NodeID)
-			if referenced < 0 || binding.NodeID == nodeID {
-				return BadAuthRequest("生成引用必须是当前画布的其他节点")
-			}
-			descriptor, ok := p.canvasNodeCapabilityForNode(nodes[referenced])
-			canReference := ok && descriptor.Connection.CanReference
-			if binding.Role == "source-text" && ok {
-				canReference = descriptor.Connection.CanSource
-			}
-			if !canReference || descriptor.InputKind != binding.MediaType {
-				return BadAuthRequest("生成参考节点类型不匹配或不可引用")
-			}
-		}
-	}
-	return nil
+	return err
 }
 
 func (p *planner) validateCanvasStoryboardReferences(doc, row map[string]any) error {

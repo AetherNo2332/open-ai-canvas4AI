@@ -199,9 +199,10 @@ export function useCanvasProjectLifecycle({
                         setProjectLoaded(true);
                     }
                     useSyncProgressStore.getState().setProjectProgress(projectId, {
-                        phase: state.saveState === "conflict" ? "conflict" : state.saveState === "offline" ? "error" : state.saveState === "saved" ? "done" : "saving",
+                        phase: state.saveState === "conflict" ? "conflict" : state.saveState === "offline" || state.saveState === "error" ? "error" : state.saveState === "saved" ? "done" : "saving",
+                        reason: state.rejections[0]?.reason,
                         draftCount: state.pending.length,
-                        message: state.saveState === "conflict" ? "编辑草稿已保留，请处理冲突" : state.saveState === "offline" ? "主机暂不可用，未确认编辑已保留" : undefined,
+                        message: state.saveState === "conflict" ? "编辑草稿已保留，请处理冲突" : state.saveState === "error" ? state.rejections[0]?.message : state.saveState === "offline" ? "主机暂不可用，未确认编辑已保留" : undefined,
                     });
                 },
             });
@@ -589,6 +590,18 @@ export function useCanvasProjectLifecycle({
             if (!session) throw new Error("画布尚未连接，请稍后重试");
             await session.reconnect();
             if (session.state.saveState === "offline") throw new Error("暂时无法确认云端结果，请检查网络后重试；本地修改仍然保留");
+            if (session.state.rejections.length) {
+                const editor = commandEditorRef.current;
+                if (!editor) throw new Error("画布尚未连接，请稍后重试");
+                const scope = getActiveUserScope();
+                await editor.retryRejected(async (document) => {
+                    if (scope !== getActiveUserScope()) throw new Error("账号已切换，请重新打开画布");
+                    const cached = useCanvasStore.getState().openProject(projectId);
+                    if (!cached) throw new Error("无法读取本地画布，修改已保留");
+                    await preserveCanvasSyncDraft({ ...cached, ...document, id: projectId } as CanvasProject, scope);
+                    if (scope !== getActiveUserScope()) throw new Error("账号已切换，请重新打开画布");
+                });
+            }
             return;
         }
         await saveRemoteUserDataNow(projectId);

@@ -2839,7 +2839,7 @@ function InfiniteCanvasPage() {
 
     const canvasSyncStatus = (
         <>
-                        <CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onRetrySync={retryCanvasProjectSync} onOpenVersions={openVersions} />
+                        <CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onRetrySync={retryCanvasProjectSync} onOpenVersions={openVersions} onLocateNode={focusCanvasNode} />
             <CanvasRealtimeStatus state={realtime} />
             {referenceMigration.required ? (
                 <Button size="small" onClick={referenceMigration.show}>

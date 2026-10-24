@@ -8,14 +8,23 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/canvas/capability"
 	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 )
 
 type CanvasEditProof = repository.CanvasEditProof
 type CanvasEditLeaseGrant = repository.CanvasEditLeaseGrant
-type CanvasActiveEditLease = model.CanvasNodeEditLease
+type CanvasActiveEditLease struct {
+	CanvasID      string    `json:"canvasId"`
+	NodeID        string    `json:"nodeId"`
+	SessionID     string    `json:"sessionId"`
+	ExpiresAt     time.Time `json:"expiresAt"`
+	NodeTitle     string    `json:"nodeTitle"`
+	NodeType      string    `json:"nodeType"`
+	NodeTypeLabel string    `json:"nodeTypeLabel"`
+	NodeExists    bool      `json:"nodeExists"`
+}
 
 const CanvasEditProofHeader = repository.CanvasEditProofHeader
 
@@ -118,9 +127,29 @@ func (s *Service) CanvasSyncStatus(ctx context.Context, owner, canvasID string) 
 		if epoch != nil {
 			out.DocumentEpoch, out.EventSeq = epoch.Epoch, epoch.EventSeq
 		}
-		out.Leases, err = tx.ActiveCanvasEditLeases(owner, canvasID)
+		leases, err := tx.ActiveCanvasEditLeases(owner, canvasID)
 		if err != nil {
 			return err
+		}
+		if len(leases) > 0 {
+			full, err := tx.CanvasProjectForUser(owner, canvasID)
+			if err != nil {
+				return err
+			}
+			names, err := canvasLeaseNodeNames(full.PayloadJSON)
+			if err != nil {
+				return err
+			}
+			for _, lease := range leases {
+				item := CanvasActiveEditLease{
+					CanvasID: lease.CanvasID, NodeID: lease.NodeID, SessionID: lease.SessionID, ExpiresAt: lease.ExpiresAt,
+					NodeTitle: "节点已删除（" + canvasLeaseShortID(lease.NodeID) + "）", NodeTypeLabel: "节点",
+				}
+				if node, exists := names[lease.NodeID]; exists {
+					item.NodeTitle, item.NodeType, item.NodeTypeLabel, item.NodeExists = node.title, node.kind, node.label, true
+				}
+				out.Leases = append(out.Leases, item)
+			}
 		}
 		agents, err := tx.CanvasActiveAgentSummaries(owner, canvasID)
 		if err != nil {
@@ -132,4 +161,48 @@ func (s *Service) CanvasSyncStatus(ctx context.Context, owner, canvasID string) 
 		return nil
 	})
 	return out, s.canvasSyncError(err)
+}
+
+type canvasLeaseNodeName struct{ title, kind, label string }
+
+func canvasLeaseNodeNames(payload string) (map[string]canvasLeaseNodeName, error) {
+	var doc struct {
+		Nodes []struct {
+			ID, Type, Title string
+			Metadata        struct{ WorkflowKind string }
+		}
+	}
+	if err := json.Unmarshal([]byte(payload), &doc); err != nil {
+		return nil, errors.New("画布节点信息暂不可用")
+	}
+	counts := map[string]int{}
+	for _, node := range doc.Nodes {
+		if title := strings.TrimSpace(node.Title); title != "" {
+			counts[title]++
+		}
+	}
+	out := map[string]canvasLeaseNodeName{}
+	registry := capability.BuiltinRegistry()
+	for _, node := range doc.Nodes {
+		kind, label := node.Type, "节点"
+		if descriptor, ok := registry.ResolveNode(node.Type, node.Metadata.WorkflowKind); ok {
+			kind, label = descriptor.Type, descriptor.Label
+		}
+		title := strings.TrimSpace(node.Title)
+		if title == "" {
+			title = "未命名" + label + "（" + canvasLeaseShortID(node.ID) + "）"
+		} else if counts[title] > 1 {
+			title += "（" + canvasLeaseShortID(node.ID) + "）"
+		}
+		out[node.ID] = canvasLeaseNodeName{title, kind, label}
+	}
+	return out, nil
+}
+
+func canvasLeaseShortID(id string) string {
+	runes := []rune(id)
+	if len(runes) <= 12 {
+		return id
+	}
+	return string(runes[:8]) + "…" + string(runes[len(runes)-4:])
 }

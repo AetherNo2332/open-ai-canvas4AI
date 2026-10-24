@@ -296,6 +296,12 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 - `model_list` 的分镜模式：传 `mode` + `storyboardNodeId` + `storyboardRowId`，按该行解析出的真实输入筛选模型，且不接受 `referenceNodeIds`。
 - Agent 引用合同：`connect_nodes`、`update_connection`、`delete_connection` 以及 `fromNodeId`／`toNodeId`／`fromHandleId`／`toHandleId` 统一被拒（`connection_ops_disabled`）；`update_node.patch` 不能写 `connections`、`metadata`、`managedBy`、`referenceOwnerNodeId`、`referenceBindingId`（`reference_field_reserved`）。
 
+## 生成参考校验与保存失败
+
+角色卡是 text 节点的 character 业务变体，其形象、声音和文字设定分别以 image、audio、text 媒体表示。保存生成配置、解析引用和 Agent 编辑预览共用后端引用规则，不要求业务类型与媒体类型同名；源节点权限、画布归属、引用角色、目标输入能力与真实角色素材可用性仍须通过校验。
+
+命令会话按机器原因区分版本冲突与明确拒绝。参数或权限错误、节点占用和请求身份复用不会被改写为版本冲突；明确拒绝的记录保留原错误与本地修改，刷新不自动重发。用户显式重试原请求时保持原身份；修正后的内容先备份，再以新身份替换已拒绝的纯编辑记录。存在任务副作用、真实冲突或结果不明时不做此替换，继续核对原回执。本地备份或日志替换失败、期间继续编辑或切换账号时保留原记录。
+
 ## 节点编辑租约与实时状态
 
 以下路径均带 `/api` 前缀并使用现有登录会话：
@@ -311,6 +317,8 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 持久写入的证明只放 `X-Canvas-Edit-Proofs` JSON数组header，最多128项、32KiB，不放URL、命令正文或journal。其他会话正在编辑时返回409 `node_locked`。所有writer都在持久边界验证作者字段；任务进度和媒体输出在作者内容不变时可以继续。Agent遇到租约冲突先回滚本次副作用，再保存可行动的业务拒绝回执。
 
 实时JSON帧要求 `protocolVersion:1`。ready/sync/invalidate只唤醒既有events/snapshot补读，不是保存ACK；peers是临时设备、光标与拖动快照。设备显示号1–64，15秒心跳、60秒租期；Redis故障时明确degraded/recovering并清除过期远端成员，号0不提供编辑授权。客户端入站限制32KiB，服务端快照上限512KiB；慢客户端断开后重连补读。代理必须允许该路径的HTTP升级、Cookie、Origin和外部Host；普通事件轮询仍是恢复基础。
+
+公开租约额外提供 nodeTitle、nodeType、nodeTypeLabel、nodeExists，名称从当前账号的同一画布解析，角色卡显示业务类型 character。重名和未命名条目带短标识，已删除节点不提供定位。前端根据控制器的 sessionId 标记当前窗口，sessionId 不代表用户姓名；完整节点 ID 仅作辅助详情。占用期限会随编辑自动续期，不代表到该时刻一定可编辑。响应继续排除 token 和 Agent 内部状态。
 
 ## 项目素材关联的条件同步
 

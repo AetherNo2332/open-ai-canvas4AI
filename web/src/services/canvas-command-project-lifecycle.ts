@@ -59,6 +59,20 @@ export async function attachCanvasCommandProject<N, E>(deps: {
             binding.dispose();
             binding = bindCanvasCommandEditor(deps.session, deps.capabilities, deps);
         },
+        async retryRejected(preserveDraft: (document: CanvasDocument) => Promise<void>) {
+            deps.signal?.throwIfAborted();
+            if (!deps.session.state.rejections.length) throw new Error("没有可直接重试的保存，请先处理冲突或确认提交结果");
+            await deps.session.reconnect();
+            const state = deps.session.state;
+            if (!state.acknowledged || !state.rejections.length) throw new Error("没有可直接重试的保存，请先处理冲突或确认提交结果");
+            const draft = binding.prepareRetry();
+            const visible = structuredClone(deps.read());
+            await deps.session.replaceRejectedDraft(draft.operations, draft.preconditions,
+                () => preserveDraft(visible), () => {
+                    deps.signal?.throwIfAborted();
+                    if (!sameCanvasJsonValue(draft.document, binding.readDraft())) throw new Error("画布仍在更新，本地修改已保留，请稍后再重试");
+                });
+        },
         dispose: () => binding.dispose(),
     };
 }

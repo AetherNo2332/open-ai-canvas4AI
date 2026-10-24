@@ -58,7 +58,7 @@ function validPending(p: StoredPending) {
         p.expectedEntityVersions &&
         typeof p.expectedEntityVersions === "object" &&
         Array.isArray(p.dependencies) &&
-        ["queued", "inflight", "unconfirmed", "conflicted"].includes(p.status)
+        ["queued", "inflight", "unconfirmed", "conflicted", "rejected"].includes(p.status)
     );
 }
 export async function readCanvasClientId(storage: CommandJournalStorage, scope: string): Promise<string> {
