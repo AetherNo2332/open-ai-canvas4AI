@@ -571,7 +571,7 @@ func cloudAgentWrite(name string) bool {
 // generate_media 创建草稿并进入独立审批，回执口径不同，故不在此列。
 func cloudAgentCanvasWriteTool(name string) bool {
 	switch name {
-	case "canvas_apply_ops", "canvas_undo", "canvas_redo", "canvas_bind_asset", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character", "director_block_scene", "director_design_shot", "director_draw_action", "director_preview_shot":
+	case "canvas_apply_ops", "canvas_undo", "canvas_redo", "canvas_bind_asset", "canvas_arrange_nodes", "canvas_create_storyboard", "canvas_edit_storyboard", "canvas_edit_batch_table", "canvas_create_character":
 		return true
 	default:
 		return false
@@ -765,12 +765,6 @@ func cloudAgentReadTool(repo *repository.Repository, userID string, state *cloud
 		return cloudAgentListAssets(repo, userID, call)
 	case "canvas_read_content", "canvas_search_nodes":
 		return cloudAgentContentRead(repo, userID, state.Request.CanvasID, call)
-	case "previs_scene_read":
-		return cloudAgentPrevisSceneRead(repo, userID, state.Request.CanvasID, call)
-	case "director_check_continuity", "director_handoff_shot":
-		return cloudAgentDirectorRead(repo, userID, state.Request.CanvasID, call)
-	case "previs_preview":
-		return cloudAgentPrevisPreview(repo, userID, state.Request.CanvasID, call)
 	case "canvas_get_state":
 		var args struct {
 			View             string   `json:"view"`
