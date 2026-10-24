@@ -17,7 +17,6 @@ type CanvasProjectContextMenuProps = {
     onAddNode: (type: CanvasNodeTypeId, position: Position) => void;
     onAddFolder: (position: Position) => void;
     onChooseStyle: () => void;
-    onOpenPrevis: (position?: Position) => void;
     onUpload: (nodeId: string | undefined, position: Position) => void;
     onOpenAssets: (position: Position) => void;
     onOpenProjectCharacters: (position: Position) => void;
@@ -43,7 +42,6 @@ type CanvasProjectContextMenuProps = {
     onCopySelection: () => void;
     onDeleteSelection: () => void;
     onSendToAgent: () => void;
-    onImageToDirector?: () => void;
 };
 
 export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props }: CanvasProjectContextMenuProps) {
@@ -67,7 +65,6 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
                 if (menu.type === "canvas") props.onAddFolder(menu.position);
             }}
             onChooseStyle={props.onChooseStyle}
-            onOpenPrevis={props.onOpenPrevis}
             onUpload={() => props.onUpload(menu.type === "node" ? menu.nodeId : undefined, menuPosition())}
             onOpenAssets={() => props.onOpenAssets(menuPosition())}
             onOpenProjectCharacters={() => props.onOpenProjectCharacters(menuPosition())}
@@ -117,7 +114,6 @@ export function CanvasProjectContextMenu({ menu, node, screenToCanvas, ...props 
             onCopySelection={props.onCopySelection}
             onDeleteSelection={props.onDeleteSelection}
             onSendToAgent={props.onSendToAgent}
-            onImageToDirector={props.onImageToDirector}
         />
     );
 }

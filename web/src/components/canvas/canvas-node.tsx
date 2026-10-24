@@ -87,7 +87,6 @@ type CanvasNodeProps = {
     onViewImage?: (node: CanvasNodeData) => void;
     onReplaceMedia?: (node: CanvasNodeData) => void;
     onOpenTextEditor?: (node: CanvasNodeData) => void;
-    onOpenPrevis?: (node: CanvasNodeData) => void;
     onOpenDrawing?: (node: CanvasNodeData) => void;
     onMediaPlayRequest?: (nodeId: string) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
@@ -135,7 +134,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     onOpenVersions,
     onViewImage,
     onOpenTextEditor,
-    onOpenPrevis,
     onOpenDrawing,
     onMediaPlayRequest,
     onContextMenu,
@@ -405,11 +403,6 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onViewImage?.(data);
                         return;
                     }
-                    if (data.metadata?.previsSceneId) {
-                        event.stopPropagation();
-                        onOpenPrevis?.(data);
-                        return;
-                    }
                     if (data.type === CanvasNodeType.Drawing) {
                         event.stopPropagation();
                         onOpenDrawing?.(data);
@@ -658,7 +651,6 @@ function areCanvasNodePropsEqual(previous: CanvasNodeProps, next: CanvasNodeProp
         previous.onViewImage === next.onViewImage &&
         previous.onReplaceMedia === next.onReplaceMedia &&
         previous.onOpenTextEditor === next.onOpenTextEditor &&
-        previous.onOpenPrevis === next.onOpenPrevis &&
         previous.onOpenDrawing === next.onOpenDrawing &&
         previous.onContextMenu === next.onContextMenu
     );

@@ -38,19 +38,6 @@ describe("新建场景必须显式选模板", () => {
         expect(hook).not.toContain("createPrevisScene(");
     });
 
-    test("两个新建入口都先开模板选择，而不是直接建场景", () => {
-        expect(project).toContain("onOpenPrevis={() => setPrevisTemplateRequest({})}");
-        expect(project).toContain("onOpenPrevis={(position) => setPrevisTemplateRequest({ position })}");
-        expect(project).not.toContain("onOpenPrevis={() => createPrevisShot()}");
-        expect(project).not.toContain("onOpenPrevis={createPrevisShot}");
-    });
-
-    test("选中模板后带着 position 建场景", () => {
-        const element = slice(project, "<CanvasPrevisTemplateModal", "/>");
-        expect(element).toContain("open={Boolean(previsTemplateRequest)}");
-        expect(element).toContain("onSelect={(templateId) => createPrevisShot(templateId, previsTemplateRequest?.position)}");
-    });
-
     test("模板弹窗把 5 个模板全列出来，没有「默认」快捷项", () => {
         expect(modal).toContain("PREVIS_TEMPLATES.map");
         expect(modal).toContain("onSelect(template.id)");
