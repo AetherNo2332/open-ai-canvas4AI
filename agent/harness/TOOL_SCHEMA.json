@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v11",
+  "schemaVersion": "cloud-agent-tools/v12",
   "tools": [
     {
       "function": {
@@ -3375,6 +3375,14 @@
                         "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
+                      "chapterId": {
+                        "maxLength": 240,
+                        "type": "string"
+                      },
+                      "chapterTitle": {
+                        "maxLength": 240,
+                        "type": "string"
+                      },
                       "chartKind": {
                         "enum": [
                           "bar",
@@ -3740,11 +3748,27 @@
                         "minimum": 1,
                         "type": "number"
                       },
+                      "workflowDescription": {
+                        "maxLength": 2000,
+                        "type": "string"
+                      },
+                      "workflowKind": {
+                        "enum": [
+                          "script",
+                          "storyboard"
+                        ],
+                        "maxLength": 240,
+                        "type": "string"
+                      },
                       "workflowProvider": {
                         "enum": [
                           "model",
                           "runninghub"
                         ],
+                        "maxLength": 240,
+                        "type": "string"
+                      },
+                      "workflowTitle": {
                         "maxLength": 240,
                         "type": "string"
                       },
