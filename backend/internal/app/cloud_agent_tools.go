@@ -174,7 +174,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v10"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v11"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -265,37 +265,6 @@ func compileCloudAgentTools(req CloudAgentRequest) []map[string]any {
 		map[string]any{"summary": str(cloudAgentToolText("parameter_007"))},
 		"summary")
 	if len(req.ContextScope) > 0 {
-		add("previs_scene_read", cloudAgentToolText("previs_scene_read"), map[string]any{
-			"sceneId":           str("可选。省略返回目录；提供则精读该场景"),
-			"shotId":            str("可选。精读特定镜头；需同时提供 sceneId"),
-			"objectIds":         map[string]any{"type": "array", "maxItems": 16, "items": str("可选。精读特定对象 ID")},
-			"includeTransforms": map[string]any{"type": "boolean"},
-		})
-		if req.PermissionMode != "read_only" {
-			add("previs_preview", cloudAgentToolText("previs_preview"), map[string]any{
-				"sceneId":  str("导演场景 ID"),
-				"shotId":   str("镜头 ID"),
-				"duration": map[string]any{"type": "number", "minimum": 0.1, "maximum": 60},
-				"fps":      map[string]any{"type": "integer", "minimum": 1, "maximum": 60},
-				"output":   map[string]any{"type": "string", "enum": []string{"clay_video"}},
-			}, "sceneId", "shotId")
-		}
-		if req.PermissionMode != "read_only" {
-			add("previs_scene_create", cloudAgentToolText("previs_scene_create"), cloudAgentPrevisSceneCreateSchema()["properties"].(map[string]any), "canvasSnapshotHash", "sceneId", "title", "templateId")
-			add("previs_apply_patch", cloudAgentToolText("previs_apply_patch"), cloudAgentPrevisApplyPatchSchema()["properties"].(map[string]any), "snapshotHash", "sceneId", "operations")
-			for _, name := range []string{"director_block_scene", "director_design_shot", "director_draw_action", "director_preview_shot"} {
-				schema := cloudAgentDirectorToolSchema(name)
-				properties := schema["properties"].(map[string]any)
-				required, _ := schema["required"].([]string)
-				add(name, cloudAgentToolText(name), properties, required...)
-			}
-		}
-		for _, name := range []string{"director_check_continuity", "director_handoff_shot"} {
-			schema := cloudAgentDirectorToolSchema(name)
-			properties := schema["properties"].(map[string]any)
-			required, _ := schema["required"].([]string)
-			add(name, cloudAgentToolText(name), properties, required...)
-		}
 		add("canvas_list_node_types", "查询可创建节点和可编辑字段。传 nodeType 返回该类型的完整字段 schema；编辑复杂内容前先查字段合同。", map[string]any{"nodeType": str("可选节点类型；空值列出摘要")})
 		add("canvas_list_assets", "搜索当前用户素材库，返回可用于绑定的 assetId、标题和类型，不暴露下载凭证。", map[string]any{"query": str("可选搜索文字"), "kind": map[string]any{"type": "string", "enum": []string{"image", "video", "audio", "text"}}, "page": map[string]any{"type": "integer", "minimum": 1}})
 		add("canvas_read_content", "分页读取节点正文或分镜行文本。分镜续读须同时指定 rowId 和 field。offset/limit 是 Unicode 字符计数；hasMore=false 才表示读到末尾。返回 snapshotHash 可用于精确编辑。", map[string]any{

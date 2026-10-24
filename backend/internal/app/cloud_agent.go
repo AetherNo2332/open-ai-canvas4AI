@@ -135,7 +135,10 @@ func validateCloudAgentRequest(req *CloudAgentRequest) error {
 		return err
 	}
 	req.Prompt = strings.TrimSpace(req.Prompt)
-	if req.Workflow != "" && req.Workflow != "image_to_director" {
+	if req.Workflow == "image_to_director" {
+		return BadAuthRequest("画布已移除导演台与预演台，请使用普通 Agent 对话继续创作")
+	}
+	if req.Workflow != "" {
 		return BadAuthRequest("无效的 Agent 工作流")
 	}
 	if err := validateCloudAgentID(req.IdempotencyKey, "幂等键", 128); err != nil || utf8.RuneCountInString(req.IdempotencyKey) < 8 {

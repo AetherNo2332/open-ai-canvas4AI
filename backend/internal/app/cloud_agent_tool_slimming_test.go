@@ -37,45 +37,58 @@ func TestCloudAgentRetiredImageToolsAreNotCallable(t *testing.T) {
 	}
 }
 
-func TestCloudAgentToolTierPrevisRequiresRelatedContext(t *testing.T) {
+func TestCloudAgentRetiredDirectorToolsAreNotCallable(t *testing.T) {
 	tools := []string{"previs_scene_read", "previs_scene_create", "previs_apply_patch", "previs_preview", "director_block_scene", "director_design_shot", "director_draw_action", "director_preview_shot", "director_check_continuity", "director_handoff_shot"}
-	for _, prompt := range []string{"现在画布有几个节点", "根据参考图生成图片并标注文字", "请写分镜和镜头提示词"} {
-		names := cloudAgentAdvertisedToolNames(tierAutoRequest(), cloudAgentCanvasInventory{}, prompt)
-		for _, name := range tools {
-			if containsToolName(names, name) {
-				t.Fatalf("unrelated prompt %q disclosed %s", prompt, name)
+	inventory := cloudAgentScanCanvasInventory(`{"nodes":[{"id":"legacy","type":"video","metadata":{"previsSceneId":"scene-1"}}],"previsScenes":[{"id":"scene-1"}]}`)
+	for _, permission := range []string{"auto", "request_approval", "read_only"} {
+		req := tierAutoRequest()
+		req.PermissionMode = permission
+		for _, runtimeMode := range []string{cloudAgentSkillRuntimeLegacy, cloudAgentSkillRuntimeNative} {
+			names := cloudAgentToolNames(compileCloudAgentToolsForRuntime(req, runtimeMode))
+			for _, name := range tools {
+				if containsToolName(names, name) || cloudAgentToolAllowed(req, name) {
+					t.Fatalf("retired tool %s remains callable in %s/%s", name, permission, runtimeMode)
+				}
+				// A saved pre-removal loadout must not override the current server gate.
+				state := &cloudAgentRuntime{
+					Request: req, SkillRuntimeMode: runtimeMode,
+					Canonical:         canonicalAgentRequest{Tools: []map[string]any{{"function": map[string]any{"name": name, "parameters": map[string]any{"type": "object"}}}}},
+					DisclosureVersion: cloudAgentToolDisclosureVersion, AdvertisedToolNames: []string{name},
+				}
+				admission := cloudAgentPreflightBatch(state, []cloudAgentCall{categoryCall(name)})[0]
+				if admission.Allowed || admission.Issue != cloudAgentAdmissionPermission {
+					t.Fatalf("frozen legacy loadout bypassed retirement of %s: %+v", name, admission)
+				}
 			}
 		}
-	}
-	for _, prompt := range []string{"创建一个预演场景", "打开导演台", "create a previs scene", "use director desk"} {
-		names := cloudAgentAdvertisedToolNames(tierAutoRequest(), cloudAgentCanvasInventory{}, prompt)
-		for _, name := range tools {
-			if !containsToolName(names, name) {
-				t.Fatalf("explicit prompt %q did not disclose %s", prompt, name)
+		for _, prompt := range []string{"现在画布有几个节点", "打开导演台", "创建一个预演场景", "use director desk", "继续当前场景"} {
+			names := cloudAgentAdvertisedToolNames(req, inventory, prompt)
+			for _, name := range tools {
+				if containsToolName(names, name) {
+					t.Fatalf("retired tool %s was redisclosed for %s/%q", name, permission, prompt)
+				}
 			}
 		}
+		if !cloudAgentToolAllowed(req, "canvas_get_state") || permission != "read_only" && !cloudAgentToolAllowed(req, "generate_media") {
+			t.Fatal("ordinary canvas reading or media generation was removed")
+		}
 	}
-	inventory := cloudAgentScanCanvasInventory(`{"nodes":[],"previsScenes":[{"id":"scene-1"}]}`)
-	req := tierAutoRequest()
-	req.PermissionMode = "read_only"
-	names := cloudAgentAdvertisedToolNames(req, inventory, "继续当前场景")
 	for _, name := range tools {
-		want := name == "previs_scene_read" || name == "director_check_continuity" || name == "director_handoff_shot"
-		if containsToolName(names, name) != want {
-			t.Fatalf("existing scene bypassed permissions or lost read tool %s: %v", name, names)
+		if containsToolName(CloudAgentSupportedToolNames(), name) || containsToolName(cloudAgentToolNames(CloudAgentToolSchemaArtifact().Tools), name) {
+			t.Fatalf("retired tool %s remains in the shared catalog", name)
 		}
 	}
 }
 
-func TestCloudAgentToolTierDirectorIntentCannotComeFromSubagent(t *testing.T) {
+func TestCloudAgentRetiredDirectorIntentCannotUnlockTools(t *testing.T) {
 	state := &cloudAgentRuntime{Canonical: canonicalAgentRequest{Tools: cloudAgentTools(tierAutoRequest())}}
 	cloudAgentRecordDeliveredToolIntent(state, cloudAgentInterjection{Source: "subagent", Text: "打开导演台并做预演"})
 	if len(state.DeliveredIntentToolNames) != 0 {
 		t.Fatal("subagent text unlocked director tools")
 	}
 	cloudAgentRecordDeliveredToolIntent(state, cloudAgentInterjection{Source: "user", Text: "打开导演台并做预演"})
-	if !containsToolName(state.DeliveredIntentToolNames, "director_design_shot") || !containsToolName(state.DeliveredIntentToolNames, "previs_scene_create") {
-		t.Fatalf("delivered user intent did not unlock director tools: %v", state.DeliveredIntentToolNames)
+	if len(state.DeliveredIntentToolNames) != 0 {
+		t.Fatalf("delivered user intent unlocked retired director tools: %v", state.DeliveredIntentToolNames)
 	}
 }
 

@@ -5,17 +5,11 @@ import (
 	"testing"
 )
 
-func TestCloudAgentDirectorToolsAreAdvertisedWithControlledContracts(t *testing.T) {
-	req := CloudAgentRequest{ContextScope: []string{"canvas"}, PermissionMode: "edit", VisionEnabled: true}
-	tools := compileCloudAgentTools(req)
-	seen := map[string]bool{}
-	for _, tool := range tools {
-		fn, _ := tool["function"].(map[string]any)
-		seen[stringField(fn, "name")] = true
-	}
+func TestCloudAgentHistoricalDirectorContractsRemainControlled(t *testing.T) {
 	for _, name := range []string{"director_block_scene", "director_design_shot", "director_draw_action", "director_check_continuity", "director_preview_shot", "director_handoff_shot"} {
-		if !seen[name] {
-			t.Fatalf("missing director tool %s", name)
+		schema := cloudAgentDirectorToolSchema(name)
+		if schema["type"] != "object" || schema["additionalProperties"] != false || schema["properties"] == nil {
+			t.Fatalf("historical director contract is not controlled: %s", name)
 		}
 	}
 	if !cloudAgentWrite("director_block_scene") || !cloudAgentWrite("director_design_shot") || !cloudAgentWrite("director_draw_action") || !cloudAgentWrite("director_preview_shot") {
