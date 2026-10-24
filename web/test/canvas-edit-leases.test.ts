@@ -33,7 +33,7 @@ test("activity marks this window's lease separately while retaining node names a
                 nodeId: sessionId === ownSession ? "n" : "other",
                 sessionId,
                 expiresAt: new Date(Date.now() + 30000).toISOString(),
-                nodeTitle: "镜06 · 关键帧",
+                nodeTitle: "镜头 A · 关键帧",
                 nodeType: "image",
                 nodeTypeLabel: "图片",
                 nodeExists: true,
@@ -44,7 +44,7 @@ test("activity marks this window's lease separately while retaining node names a
     await value.begin("n");
     await value.refreshStatus();
     const leases = value.getState().activity!.leases;
-    expect(leases[0]).toMatchObject({ nodeTitle: "镜06 · 关键帧", nodeTypeLabel: "图片", isCurrentWindow: true });
+    expect(leases[0]).toMatchObject({ nodeTitle: "镜头 A · 关键帧", nodeTypeLabel: "图片", isCurrentWindow: true });
     expect(leases[1].isCurrentWindow).toBe(false);
     expect(JSON.stringify(leases)).not.toContain('"token"');
 });

@@ -119,7 +119,7 @@ func TestCanvasSyncStatusIdentifiesLeasedNodesWithoutExposingProofs(t *testing.T
 	if err := database.MigrateCanvasCommands(db); err != nil {
 		t.Fatal(err)
 	}
-	row := &model.CanvasProject{ID: "lease-names", UserID: "user", PayloadJSON: `{"nodes":[{"id":"picture","type":"image","title":"镜06 · 关键帧（已归档）"},{"id":"hero","type":"text","title":"顾行","metadata":{"workflowKind":"character"}},{"id":"untitled","type":"image"},{"id":"one","type":"video","title":"同名"},{"id":"two","type":"video","title":"同名"},{"id":"removed","type":"text","title":"old"}],"connections":[]}`}
+	row := &model.CanvasProject{ID: "lease-names", UserID: "user", PayloadJSON: `{"nodes":[{"id":"picture","type":"image","title":"镜头 A · 关键帧（已归档）"},{"id":"hero","type":"text","title":"角色甲","metadata":{"workflowKind":"character"}},{"id":"untitled","type":"image"},{"id":"one","type":"video","title":"同名"},{"id":"two","type":"video","title":"同名"},{"id":"removed","type":"text","title":"old"}],"connections":[]}`}
 	if err := s.repo.UpsertCanvasProject(row); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestCanvasSyncStatusIdentifiesLeasedNodesWithoutExposingProofs(t *testing.T
 			exists             bool
 		}{lease.NodeTitle, lease.NodeType, lease.NodeTypeLabel, lease.NodeExists}
 	}
-	for id, want := range map[string]string{"picture": "镜06 · 关键帧（已归档）", "hero": "顾行", "untitled": "未命名图片（untitled）", "one": "同名（one）", "two": "同名（two）", "removed": "节点已删除（removed）"} {
+	for id, want := range map[string]string{"picture": "镜头 A · 关键帧（已归档）", "hero": "角色甲", "untitled": "未命名图片（untitled）", "one": "同名（one）", "two": "同名（two）", "removed": "节点已删除（removed）"} {
 		if byID[id].title != want {
 			t.Errorf("%s title = %q, want %q", id, byID[id].title, want)
 		}

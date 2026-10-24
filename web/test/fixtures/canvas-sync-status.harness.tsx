@@ -41,7 +41,7 @@ afterAll(async () => {
 
 test("lease activity shows readable names, window ownership and working node locations", async () => {
     let sessionId = "";
-    const fullId = "agb65e4d7c793756636e061c3c415711f4";
+    const fullId = "image-reference-node-00000000000000000001";
     const located: string[] = [];
     setActiveUserScope("ui");
     useCanvasSessionStore.setState({ scope: "ui" });
@@ -55,8 +55,8 @@ test("lease activity shows readable names, window ownership and working node loc
             data = {
                 revision: 1, documentEpoch: "epoch", eventSeq: 0, activeAgents: [],
                 leases: [
-                    { canvasId: "lease-canvas", nodeId: fullId, sessionId, nodeTitle: "镜06 合掌截停 · 关键帧（已归档）", nodeType: "image", nodeTypeLabel: "图片", nodeExists: true, expiresAt: new Date(Date.now() + 30000).toISOString() },
-                    { canvasId: "lease-canvas", nodeId: "hero", sessionId: "other-window", nodeTitle: "顾行", nodeType: "character", nodeTypeLabel: "角色卡", nodeExists: true, expiresAt: new Date(Date.now() + 30000).toISOString() },
+                    { canvasId: "lease-canvas", nodeId: fullId, sessionId, nodeTitle: "镜头 A · 关键帧（已归档）", nodeType: "image", nodeTypeLabel: "图片", nodeExists: true, expiresAt: new Date(Date.now() + 30000).toISOString() },
+                    { canvasId: "lease-canvas", nodeId: "hero", sessionId: "other-window", nodeTitle: "角色甲", nodeType: "character", nodeTypeLabel: "角色卡", nodeExists: true, expiresAt: new Date(Date.now() + 30000).toISOString() },
                     { canvasId: "lease-canvas", nodeId: "removed", sessionId: "other-window", nodeTitle: "节点已删除（removed）", nodeType: "", nodeTypeLabel: "节点", nodeExists: false, expiresAt: new Date(Date.now() + 30000).toISOString() },
                 ],
             };
@@ -71,7 +71,7 @@ test("lease activity shows readable names, window ownership and working node loc
         root.render(<ConfigProvider theme={{ token: { motion: false } }}><App><CanvasSyncStatus projectId="lease-canvas" onLocateNode={(id) => located.push(id)} onLoadLatest={async () => {}} /></App></ConfigProvider>);
         await settle();
     });
-    expect(document.body.textContent).toContain("镜06 合掌截停 · 关键帧（已归档）");
+    expect(document.body.textContent).toContain("镜头 A · 关键帧（已归档）");
     expect(document.body.textContent).toContain("角色卡");
     expect(document.body.textContent).toContain("当前窗口正在编辑");
     expect(document.body.textContent).toContain("其他窗口正在编辑");
