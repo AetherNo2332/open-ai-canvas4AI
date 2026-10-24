@@ -595,7 +595,6 @@ function EmptyImageContent({ node, theme, isBatchRoot, batchCount, batchPreviewN
 
 function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest }: CanvasNodeContentProps) {
     const playerBoxRef = useRef<HTMLDivElement>(null);
-    const { updateMediaNode } = useCanvasNodeActions();
     const { url, loading } = useVideoPlaybackUrl(node, mediaActive);
     const preview = canvasNodeVideoPreviewReference(node);
     const subtitleEntries = node.metadata?.subtitleEntries || [];
@@ -606,6 +605,7 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
 
     useEffect(() => {
         setVideoReady(false);
+        setVideoSize(null);
     }, [url]);
 
     useEffect(() => {
@@ -615,9 +615,6 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
         const handleLoadedMetadata = () => {
             if (video.videoWidth <= 0 || video.videoHeight <= 0) return;
             setVideoSize({ width: video.videoWidth, height: video.videoHeight });
-            if (node.metadata?.naturalWidth !== video.videoWidth || node.metadata?.naturalHeight !== video.videoHeight) {
-                updateMediaNode?.(node.id, (current) => ({ ...current, metadata: { ...current.metadata, naturalWidth: video.videoWidth, naturalHeight: video.videoHeight } }));
-            }
         };
         video.addEventListener("loadedmetadata", handleLoadedMetadata);
         handleLoadedMetadata();
@@ -628,7 +625,7 @@ function VideoNodeContent({ node, theme, mediaActive = false, onMediaPlayRequest
             video.removeEventListener("timeupdate", handleTimeUpdate);
             video.removeEventListener("loadedmetadata", handleLoadedMetadata);
         };
-    }, [node.id, node.metadata?.naturalHeight, node.metadata?.naturalWidth, subtitleEntries.length, updateMediaNode, url]);
+    }, [node.id, subtitleEntries.length, url]);
 
     if (!node.metadata?.content && !node.metadata?.storageKey) return <EmptyMediaContent icon={<Video className="size-7 opacity-35" />} label="空视频节点" color={theme.node.placeholder} />;
     if (!mediaActive) return <InactiveVideoPreview node={node} theme={theme} onPlay={() => onMediaPlayRequest?.(node.id)} />;

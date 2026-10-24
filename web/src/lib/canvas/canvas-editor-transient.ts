@@ -29,9 +29,9 @@ export const canvasTaskDisplayFields = new Set([
     "taskCreatedAt",
     "taskUpdatedAt",
 ]);
-// A poster may be hydrated locally with a display URL or task result. It is
-// host media data, not an authored patch or a row progress field.
-const canvasNodeDisplayFields = new Set([...canvasTaskDisplayFields, "videoPreview"]);
+// Posters and decoded dimensions describe host media or local rendering;
+// neither is an authored patch or a row progress field.
+const canvasNodeDisplayFields = new Set([...canvasTaskDisplayFields, "videoPreview", "naturalWidth", "naturalHeight"]);
 export function canvasPersistentEditorDraft(base: CanvasDocument, live: CanvasDocument): CanvasDocument {
     const next = structuredClone(live),
         nodes = new Map(((base.nodes as Entity[]) || []).map((node) => [node.id, node]));
