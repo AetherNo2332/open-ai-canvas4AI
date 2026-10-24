@@ -299,13 +299,16 @@ func resolveIndexed(idx map[string]map[string]any, scope Scope, registry *capabi
 			if !ok {
 				return result, fail("invalid_reference", "nodeId", "引用节点类型不受支持")
 			}
-			if d.InputKind != b.MediaType && !(d.InputKind == "character" && (b.MediaType == "image" || b.MediaType == "audio" || b.MediaType == "text")) {
+			if !referenceMediaMatches(d, b) {
 				return result, fail("invalid_reference", "mediaType", "引用媒体类型与节点不符")
 			}
 			if (b.Role == "first-frame" || b.Role == "last-frame" || b.Role == "mask") && b.MediaType != "image" {
 				return result, fail("invalid_reference", "role", "首尾帧与遮罩必须引用图片")
 			}
 			if scope.Kind == "node" || scope.Kind == "generation" {
+				if err := validateReferenceCapability(d, b); err != nil {
+					return result, err
+				}
 				allowed := false
 				for _, kind := range target.Connection.AcceptedInputKinds {
 					if kind == d.InputKind {
