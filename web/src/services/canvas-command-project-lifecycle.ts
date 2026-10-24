@@ -43,9 +43,7 @@ export async function attachCanvasCommandProject<N, E>(deps: {
             deps.signal?.throwIfAborted();
             const local = structuredClone(deps.read());
             const projected = structuredClone(deps.session.state.projected);
-            const entities = Object.fromEntries(
-                (["nodes", "connections"] as const).flatMap((field) => ((projected[field] || []) as Array<Record<string, unknown>>).map((entity) => [`${field === "nodes" ? "node" : "connection"}:${entity.id}`, entity])),
-            );
+            const entities = Object.fromEntries((["nodes", "connections"] as const).flatMap((field) => ((projected[field] || []) as Array<Record<string, unknown>>).map((entity) => [`${field === "nodes" ? "node" : "connection"}:${entity.id}`, entity])));
             await deps.view.write(deps.canvasId, structuredClone(deps.readViewport()));
             const validateLocalDraft = () => {
                 deps.signal?.throwIfAborted();
@@ -67,11 +65,15 @@ export async function attachCanvasCommandProject<N, E>(deps: {
             if (!state.acknowledged || !state.rejections.length) throw new Error("没有可直接重试的保存，请先处理冲突或确认提交结果");
             const draft = binding.prepareRetry();
             const visible = structuredClone(deps.read());
-            await deps.session.replaceRejectedDraft(draft.operations, draft.preconditions,
-                () => preserveDraft(visible), () => {
+            await deps.session.replaceRejectedDraft(
+                draft.operations,
+                draft.preconditions,
+                () => preserveDraft(visible),
+                () => {
                     deps.signal?.throwIfAborted();
                     if (!sameCanvasJsonValue(draft.document, binding.readDraft())) throw new Error("画布仍在更新，本地修改已保留，请稍后再重试");
-                });
+                },
+            );
         },
         dispose: () => binding.dispose(),
     };

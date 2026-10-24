@@ -135,6 +135,7 @@ func validateCloudAgentRequest(req *CloudAgentRequest) error {
 		return err
 	}
 	req.Prompt = strings.TrimSpace(req.Prompt)
+	// Historical runs must remain readable and cancellable after workflow retirement.
 	if req.Workflow != "" && req.Workflow != "image_to_director" {
 		return BadAuthRequest("无效的 Agent 工作流")
 	}
@@ -446,6 +447,9 @@ type cloudAgentRunScope struct {
 }
 
 func (s *Service) createCloudAgentRunScoped(userID string, req CloudAgentRequest, parentID string, scope *cloudAgentRunScope) (*CloudAgentRun, error) {
+	if req.Workflow == "image_to_director" {
+		return nil, BadAuthRequest("画布已移除导演台与预演台，请使用普通 Agent 对话继续创作")
+	}
 	if scope != nil {
 		req.subagent = scope.Subagent
 	}

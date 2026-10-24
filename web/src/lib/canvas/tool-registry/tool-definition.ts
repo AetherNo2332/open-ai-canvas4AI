@@ -47,7 +47,6 @@ export type ToolbarHandlers = {
      */
     onAddExtensionNode: (type: CanvasNodeTypeId) => void;
     onChooseStyle: () => void;
-    onOpenPrevis: () => void;
     // 主工具栏——资源
     onUpload: () => void;
     onOpenWorkspace?: () => void;
@@ -154,7 +153,6 @@ export type AddNodeMenuContext = {
         | "onAddWorkflow"
         | "onAddExtensionNode"
         | "onChooseStyle"
-        | "onOpenPrevis"
         | "onUpload"
         | "onOpenMyAssets"
         | "onOpenProjectCharacters"

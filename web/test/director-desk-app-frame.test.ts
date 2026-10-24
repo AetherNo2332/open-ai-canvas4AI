@@ -31,12 +31,9 @@ describe("DirectorDeskAppFrame 层级与 Agent 入口", () => {
         expect(source).toContain('aria-label="打开 Agent 助手"');
     });
 
-    test("L3 画布页挂载 Agent 面板;预演台打开时改为浮层并隐藏悬浮按钮,入口交给导演台顶栏", () => {
+    test("L3 画布保留普通 Agent 面板，独立导演台框架仍支持宿主 Agent 入口", () => {
         const project = moduleGroupSource("pages/canvas/project.tsx");
         expect(project).toContain("<CanvasCloudAgentPanel");
-        expect(project).toContain("floating={Boolean(previsNodeId)}");
-        expect(project).toContain("launcher={!previsNodeId}");
-        expect(project).toContain("onOpenAgent={openAgent}");
         const panel = moduleGroupSource("components/canvas/canvas-cloud-agent-panel.tsx");
         expect(panel).toContain("launcher?: boolean");
         expect(panel).toContain("{!open && launcher ? <AgentLauncher");

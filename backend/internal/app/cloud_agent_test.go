@@ -271,6 +271,22 @@ func TestCloudAgentValidation(t *testing.T) {
 	}
 }
 
+func TestCloudAgentRejectsRetiredDirectorWorkflowBeforeTaskCreation(t *testing.T) {
+	s, db, _, _ := creationTestService(t)
+	if err := db.Create(&model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: `{"nodes":[]}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	req := agentTestRequest()
+	req.Workflow = "image_to_director"
+	if _, err := s.CreateCloudAgentRun("user", req, ""); err == nil || !strings.Contains(err.Error(), "画布已移除导演台与预演台") {
+		t.Fatalf("retired workflow must be rejected with an actionable explanation: %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.Task{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("rejected workflow created tasks: count=%d err=%v", count, err)
+	}
+}
+
 func TestCloudAgentValidationNormalizesFocusNodeIDs(t *testing.T) {
 	req := agentTestRequest()
 	req.FocusNodeIDs = []string{" node-1 ", "node-2"}
