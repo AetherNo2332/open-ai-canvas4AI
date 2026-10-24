@@ -472,6 +472,7 @@ function InfiniteCanvasPage() {
         deleteCurrentProject,
         renameCurrentProject,
         reloadLatestCanvasProject,
+        retryCanvasProjectSync,
         restoreCanvasProjectVersion,
         saveCanvasProject,
         persistLocalEdits,
@@ -2838,7 +2839,7 @@ function InfiniteCanvasPage() {
 
     const canvasSyncStatus = (
         <>
-            <CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />
+                        <CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onRetrySync={retryCanvasProjectSync} onOpenVersions={openVersions} />
             <CanvasRealtimeStatus state={realtime} />
             {referenceMigration.required ? (
                 <Button size="small" onClick={referenceMigration.show}>

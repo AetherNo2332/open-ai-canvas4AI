@@ -68,6 +68,7 @@ export class CanvasCommandSession {
     private pumping: Promise<void> | null = null;
     private synchronizing: Promise<void> | null = null;
     private journalTail: Promise<void> = Promise.resolve();
+    private loadingLatest = false;
     state: CommandSessionState = { acknowledged: null, pending: [], projected: {}, conflicts: [], saveState: "closed" };
     constructor(
         private transport: CommandTransport,
@@ -133,6 +134,7 @@ export class CanvasCommandSession {
     }
     private enqueue(operations: Operation[], preconditions: CommandPreconditions = {}, effect?: CommandEffect): Promise<Receipt | TaskHandle> {
         if (!this.acknowledged) return Promise.reject(aborted());
+        if (this.loadingLatest) return Promise.reject(new Error("正在加载云端版本，请稍后再编辑"));
         if (effect && (!this.transport.invoke || !this.transport.recover)) return Promise.reject(new Error("canvas_effect_transport_unavailable"));
         if ((!operations.length && !effect) || operations.length > 100) return Promise.reject(new Error("每条命令需要1至100项操作"));
         const projected = this.state.projected;
@@ -302,7 +304,7 @@ export class CanvasCommandSession {
         return result;
     }
     async reconnect(): Promise<void> {
-        if (!this.acknowledged) return;
+        if (!this.acknowledged || this.loadingLatest) return;
         const generation = this.generation;
         try {
             await this.synchronize();
@@ -349,10 +351,11 @@ export class CanvasCommandSession {
         }
     }
     private pump(): Promise<void> {
+        if (this.loadingLatest) return Promise.resolve();
         if (this.pumping) return this.pumping;
         const generation = this.generation;
         const run = async () => {
-            while (this.acknowledged && !this.offline) {
+            while (this.acknowledged && !this.offline && !this.loadingLatest) {
                 const p = this.pending.find((p) => p.status === "queued");
                 if (!p) break;
                 if (this.pending.some((other) => other.status === "conflicted" && p.dependencies.includes(other.operationId))) break;
@@ -427,7 +430,7 @@ export class CanvasCommandSession {
         }
         return [...keys];
     }
-    private emit() {
+    private emit(persist = true) {
         let projected = this.acknowledged ? copy(this.acknowledged.document) : {};
         const conflicts: CommandSessionState["conflicts"] = [];
         for (const p of this.pending) {
@@ -457,12 +460,63 @@ export class CanvasCommandSession {
         }
         const stored = this.pending.map(({ resolve: _, reject: __, ...p }) => copy(p));
         this.state = { acknowledged: this.acknowledged, pending: stored, projected, conflicts, saveState: !this.acknowledged ? "closed" : conflicts.length ? "conflict" : this.offline ? "offline" : this.pending.length ? "saving" : "saved" };
-        if (this.journal && this.acknowledged) {
+        if (persist && this.journal && this.acknowledged) {
             const id = this.acknowledged.canvasId;
             this.journalTail = this.journalTail.catch(() => {}).then(() => this.journal!.write(id, stored));
             void this.journalTail.catch(() => {});
         }
         for (const listener of this.listeners) listener(this.state);
+    }
+    async loadLatest(preserveDraft: (document: CanvasDocument) => Promise<void>, validateLocalDraft: () => void = () => {}): Promise<void> {
+        if (!this.acknowledged) throw aborted();
+        if (this.loadingLatest) throw new Error("正在加载云端版本，请稍候");
+        if (this.pending.some((p) => p.status === "inflight" || p.status === "unconfirmed")) {
+            throw new Error("仍有提交正在等待服务端确认，请先点击「重新同步」，确认结果后再加载云端版本；本地修改已保留");
+        }
+        const generation = this.generation;
+        const acknowledged = this.acknowledged;
+        const pending = [...this.pending];
+        const unchanged = () => generation === this.generation && this.acknowledged === acknowledged && this.pending.length === pending.length && this.pending.every((p, index) => p === pending[index]);
+        const requireUnchanged = () => {
+            if (generation !== this.generation) throw aborted();
+            if (!unchanged()) throw new Error("画布仍在更新，本地修改已保留，请稍后再加载云端版本");
+        };
+        const stored = pending.map(({ resolve: _, reject: __, ...p }) => copy(p));
+        this.loadingLatest = true;
+        try {
+            await this.whenJournalDurable();
+            const snapshot = await this.transport.snapshot(acknowledged.canvasId, this.abort.signal);
+            requireUnchanged();
+            this.validateSnapshot(snapshot, acknowledged.canvasId);
+            if (snapshot.eventSeq < acknowledged.eventSeq || snapshot.revision < acknowledged.revision) throw new Error("云端版本尚未更新完成，请稍后重试");
+            // Conflicted previews are absent from the live projection. Include them
+            // in the independent backup before removing any pending command.
+            let draft = copy(acknowledged.document);
+            for (const p of pending) draft = applyCanvasDraftChanges(draft, p.preview, p.baseEntities, p.baseFields);
+            await preserveDraft(draft);
+            requireUnchanged();
+            validateLocalDraft();
+            if (this.journal) {
+                this.journalTail = this.journalTail.then(() => this.journal!.write(acknowledged.canvasId, []));
+                await this.journalTail;
+                try {
+                    requireUnchanged();
+                    validateLocalDraft();
+                } catch (error) {
+                    this.journalTail = this.journalTail.then(() => this.journal!.write(acknowledged.canvasId, stored));
+                    await this.journalTail;
+                    throw error;
+                }
+            }
+            this.pending = [];
+            this.adopt(snapshot);
+            this.buffer.clear();
+            this.offline = false;
+            for (const p of pending) p.reject(new DOMException("未同步修改已保留为本地草稿，已采用云端版本", "AbortError"));
+            this.emit(false);
+        } finally {
+            if (generation === this.generation) this.loadingLatest = false;
+        }
     }
     discard(operationId: string) {
         const index = this.pending.findIndex((p) => p.operationId === operationId);
@@ -490,6 +544,7 @@ export class CanvasCommandSession {
     }
     close() {
         this.generation++;
+        this.loadingLatest = false;
         this.abort.abort();
         for (const p of this.pending) p.reject(aborted());
         this.pending = [];
