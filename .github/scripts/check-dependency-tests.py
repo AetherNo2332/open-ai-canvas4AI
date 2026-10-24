@@ -11,6 +11,8 @@ REQUIRED = {
     ("app", "TestClearAdminRuntimeCacheUsesRedisWhitelist"),
     ("database", "TestAgentAdmissionAuditPostgresUserCapAcrossBackends"),
     ("tasks", "TestCanvasMediaAdmissionPostgres"),
+    ("canvas", "TestRealtimeRedisTwoHubsRecoveryAndIsolation"),
+    ("canvas", "TestRealtimeRedisLostLeaveSlotReuseKeepsAuthoritativeMembers"),
 }
 
 

@@ -113,6 +113,14 @@ eval "$status"
                 backend_env = json.loads(result.stdout)["services"]["backend"]["environment"]
                 self.assertEqual(backend_env["CANVAS_AGENT_MAX_SESSIONS_PER_USER"], "2")
 
+    def test_production_postgres_health_waits_for_tcp_listener(self):
+        # The entrypoint's temporary initialization server only listens on a
+        # Unix socket. Reporting it healthy can start migrations during restart.
+        result = self.compose(["docker-compose.deploy.yml"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        probe = json.loads(result.stdout)["services"]["postgres"]["healthcheck"]["test"]
+        self.assertIn("-h 127.0.0.1", probe[1])
+
     def test_production_entries_start_agent_with_distinct_worker_token(self):
         for files in (["docker-compose.deploy.yml"], ["docker-compose.server.yml"],
                       ["docker-compose.deploy.yml", "docker-compose.build.yml"]):

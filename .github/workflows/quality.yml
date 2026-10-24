@@ -42,10 +42,18 @@ jobs:
     defaults:
       run:
         working-directory: backend
-    # CI强制7条依赖验收：4条 CANVAS_TEST_POSTGRES_DSN（迁移、素材修复、版本历史、媒体并发准入）、
-    # 1条 TEST_AGENT_POSTGRES_DSN（跨后端用户配额）、2条自起临时Redis实例
-    # （Redis 租约、缓存白名单）。只跑 go test ./... 而不备齐这两样，这些路径永远不会被执行。
+    # CI强制9条依赖验收：4条画布PostgreSQL、1条Agent配额PostgreSQL、
+    # 2条自起临时Redis（租约、缓存白名单）及2条真实TCP Redis跨实例协作恢复。
     services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
       postgres:
         image: postgres:16-alpine
         env:
@@ -54,11 +62,12 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
     env:
+      CANVAS_TEST_REDIS_ADDR: 127.0.0.1:6379
       CANVAS_TEST_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_test?sslmode=disable
       TEST_AGENT_POSTGRES_DSN: postgres://postgres:canvas_test@127.0.0.1:5432/canvas_event_integration?sslmode=disable
     steps:
