@@ -5,11 +5,10 @@ import { expect, test } from "bun:test";
 // 这条功能的核心是**取消一个此前刻意加上的限制**：运行时输入框本来是禁用的
 // （旧代码 `disabled={busy || running || …}`），策略提示词也据此写着「运行中用户无法打字」。
 // 所以这里的断言要盯住两件事：入口真的打开了，以及旧前提没有残留在代码里。
-test("运行中不再锁死输入框，发送走插话而不是新建轮次", async () => {
+test("运行中不再锁死输入框，发送沿用会话消息入口", async () => {
     const panel = (await Bun.file(new URL("../src/components/canvas/canvas-cloud-agent-panel.tsx", import.meta.url)).text()) + (await Bun.file(new URL("../src/lib/canvas/cloud-agent-events.ts", import.meta.url)).text());
 
-    // 运行中走插话分支（不建轮次、不走那套扣费幂等记账）
-    expect(panel).toContain("const mode = options.mode ?? await messageQueue.getMode()");
+    // 默认方式、快捷键反转及未知结果重试由 cloud-agent-panel-sync 的组件用例验证。
     expect(panel).toContain("receipt = await sendAgentConversationMessage(conversationId, { ...delivery, request }, controller.signal)");
     // 乐观落进时间线时带插话标记，与「开新一轮」的消息在界面上区分开
     expect(panel).toContain('interjection: "sent"');

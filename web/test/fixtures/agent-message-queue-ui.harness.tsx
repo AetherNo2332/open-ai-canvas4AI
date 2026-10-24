@@ -23,7 +23,7 @@ for (const [key, value] of Object.entries({
 const React = await import("react");
 const { act } = React;
 const { createRoot } = await import("react-dom/client");
-const { AgentMessageQueueList, AgentSendModeMenu } = await import("@/components/canvas/canvas-agent-message-queue");
+const { AgentMessageQueueList, AgentSendModeButton } = await import("@/components/canvas/canvas-agent-message-queue");
 afterAll(() => dom.happyDOM.abort());
 const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
 
@@ -65,7 +65,7 @@ test("queue editor preserves a separate composer and sends the original item rev
         );
     });
     const click = async (label: string) => {
-        const button = [...host.querySelectorAll("button")].find((entry) => entry.textContent === label);
+        const button = [...host.querySelectorAll("button")].find((entry) => entry.getAttribute("aria-label") === label);
         expect(button).toBeDefined();
         await act(async () => {
             button!.click();
@@ -74,22 +74,22 @@ test("queue editor preserves a separate composer and sends the original item rev
     };
     try {
         expect(host.textContent).toContain("积分不足，请补充额度");
-        await click("待发 1");
-        await click("编辑");
+        expect(host.textContent).toContain("原待发内容");
+        await click("编辑待发消息");
         const input = host.querySelector<HTMLTextAreaElement>('[aria-label="编辑待发消息"]')!;
         await act(async () => {
             Object.getOwnPropertyDescriptor(dom.HTMLTextAreaElement.prototype, "value")!.set!.call(input, "编辑后的待发内容");
             input.dispatchEvent(new Event("input", { bubbles: true }));
             await settle();
         });
-        await click("保存");
+        await click("保存待发消息");
         expect(edited).toEqual({ entry: item, value: "编辑后的待发内容" });
         expect(host.querySelector<HTMLTextAreaElement>('[aria-label="原会话草稿"]')!.value).toBe("继续保留草稿");
-        await click("插队");
+        await click("插队发送");
         expect(promoted).toBe(item);
-        await click("移除");
+        await click("移除待发消息");
         expect(removed).toBe(item);
-        await click("继续");
+        await click("继续发送");
         expect(resumed).toBe(1);
         expect(host.textContent).not.toMatch(/CAS|幂等|调度|事务|worker/);
     } finally {
@@ -98,13 +98,20 @@ test("queue editor preserves a separate composer and sends the original item rev
     }
 });
 
-test("send mode menu uses a compact accessible label", async () => {
+test("send mode icon exposes the default and opens settings", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
-    await act(async () => root.render(<AgentSendModeMenu value="queue" onChange={() => {}} />));
-    expect(host.querySelector('button[aria-label="默认发送方式：排队"]')).not.toBeNull();
-    expect(host.textContent).toBe("排队");
+    let opened = 0;
+    for (const mode of ["queue", "interject"] as const) {
+        await act(async () => root.render(<AgentSendModeButton value={mode} onOpenSettings={() => opened++} />));
+        const button = host.querySelector("button")!;
+        expect(button.getAttribute("aria-label")).toContain(mode === "queue" ? "默认排队" : "默认插队");
+        expect(button.getAttribute("aria-label")).toContain("打开发送设置");
+        expect(host.textContent).toBe("");
+        await act(async () => button.click());
+    }
+    expect(opened).toBe(2);
     await act(async () => root.unmount());
     host.remove();
 });
