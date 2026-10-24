@@ -8,7 +8,19 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { useCanvasSyncActivity } from "@/components/canvas/use-canvas-edit-lease";
 
-export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenVersions, onLocateNode }: { projectId: string; onLoadLatest: () => Promise<void>; onRetrySync?: () => Promise<void>; onOpenVersions?: () => void; onLocateNode?: (nodeId: string) => void }) {
+export function CanvasSyncStatus({
+    projectId,
+    onLoadLatest,
+    onRetrySync,
+    onOpenVersions,
+    onLocateNode,
+}: {
+    projectId: string;
+    onLoadLatest: () => Promise<void>;
+    onRetrySync?: () => Promise<void>;
+    onOpenVersions?: () => void;
+    onLocateNode?: (nodeId: string) => void;
+}) {
     const { message } = App.useApp();
     const { activity, error: activityError } = useCanvasSyncActivity(projectId);
     const progress = useSyncProgressStore((state) => state.syncingProjects[projectId]);
@@ -20,7 +32,7 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenV
     const failed = phase === "error" || conflict || !phase;
     const saving = phase === "pending" || phase === "saving" || phase === "uploading";
     const rejected = phase === "error" && !!progress?.reason;
-    const label = conflict ? "版本冲突 · 点击处理" : rejected ? progress.reason === "node_locked" ? "其他窗口正在编辑" : "修改未保存" : !phase ? "尚未同步" : failed ? "云端未保存" : saving ? "正在保存" : "已保存";
+    const label = conflict ? "版本冲突 · 点击处理" : rejected ? (progress.reason === "node_locked" ? "其他窗口正在编辑" : "修改未保存") : !phase ? "尚未同步" : failed ? "云端未保存" : saving ? "正在保存" : "已保存";
     useEffect(() => {
         setActionError("");
         setStatusOpen(conflict || rejected);
@@ -62,7 +74,11 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenV
                                 <p className="text-xs text-muted-foreground">草稿保存在当前浏览器和账号下。处理完成前，请保留本站浏览器数据。</p>
                             </div>
                         ) : null}
-                        {actionError ? <p role="alert" className="text-sm leading-6">{actionError}</p> : null}
+                        {actionError ? (
+                            <p role="alert" className="text-sm leading-6">
+                                {actionError}
+                            </p>
+                        ) : null}
                         {rejected ? <p className="text-sm leading-6">本地修改已保留。请修正上述问题后点击「重试保存」，无需先切换到云端版本。</p> : null}
                         {activity ? (
                             <div className="space-y-1 text-xs text-muted-foreground">
@@ -70,8 +86,23 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenV
                                 {activity.leases.map((lease) => (
                                     <div key={`${lease.nodeId}:${lease.sessionId}`} className="space-y-1 border-b border-border/60 py-2 last:border-b-0">
                                         <div className="flex items-start justify-between gap-2">
-                                            <p className="min-w-0 break-words text-foreground" title={`节点 ID：${lease.nodeId}`}>{lease.nodeTypeLabel} · {lease.nodeTitle}</p>
-                                            {lease.nodeExists && onLocateNode ? <Button type="link" size="small" className="shrink-0" disabled={busy} onClick={() => { setStatusOpen(false); onLocateNode(lease.nodeId); }}>定位节点</Button> : null}
+                                            <p className="min-w-0 break-words text-foreground" title={`节点 ID：${lease.nodeId}`}>
+                                                {lease.nodeTypeLabel} · {lease.nodeTitle}
+                                            </p>
+                                            {lease.nodeExists && onLocateNode ? (
+                                                <Button
+                                                    type="link"
+                                                    size="small"
+                                                    className="shrink-0"
+                                                    disabled={busy}
+                                                    onClick={() => {
+                                                        setStatusOpen(false);
+                                                        onLocateNode(lease.nodeId);
+                                                    }}
+                                                >
+                                                    定位节点
+                                                </Button>
+                                            ) : null}
                                         </div>
                                         <p>{lease.isCurrentWindow ? "当前窗口正在编辑" : "其他窗口正在编辑"}</p>
                                         <p>占用有效至 {new Date(lease.expiresAt).toLocaleTimeString([], { hour12: false })}，编辑时自动续期</p>
@@ -87,15 +118,12 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenV
                             <p className="text-xs text-muted-foreground">编辑占用状态暂不可用，保存仍以回执为准</p>
                         ) : null}
                         <div className="flex flex-wrap gap-2">
-                            {onRetrySync ? <Button size="small" disabled={busy} onClick={() => void run(onRetrySync)}>{rejected ? "重试保存" : "重新同步"}</Button> : null}
-                            <Popconfirm
-                                title="采用云端最新版本？"
-                                description="未同步修改会先备份为本地草稿。备份成功后，当前画布将显示云端内容。"
-                                okText="备份并加载"
-                                cancelText="暂不处理"
-                                disabled={busy}
-                                onConfirm={() => run(onLoadLatest)}
-                            >
+                            {onRetrySync ? (
+                                <Button size="small" disabled={busy} onClick={() => void run(onRetrySync)}>
+                                    {rejected ? "重试保存" : "重新同步"}
+                                </Button>
+                            ) : null}
+                            <Popconfirm title="采用云端最新版本？" description="未同步修改会先备份为本地草稿。备份成功后，当前画布将显示云端内容。" okText="备份并加载" cancelText="暂不处理" disabled={busy} onConfirm={() => run(onLoadLatest)}>
                                 <Button size="small" type={conflict ? "primary" : "default"} loading={busy}>
                                     {conflict ? "备份草稿并加载云端" : "加载云端最新版本"}
                                 </Button>
