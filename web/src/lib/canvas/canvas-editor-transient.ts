@@ -29,9 +29,9 @@ export const canvasTaskDisplayFields = new Set([
     "taskCreatedAt",
     "taskUpdatedAt",
 ]);
-// Posters and decoded dimensions describe host media or local rendering;
+// Previews, decoded dimensions and duration describe host media or local rendering;
 // neither is an authored patch or a row progress field.
-const canvasNodeDisplayFields = new Set([...canvasTaskDisplayFields, "videoPreview", "naturalWidth", "naturalHeight"]);
+const canvasNodeDisplayFields = new Set([...canvasTaskDisplayFields, "videoPreview", "naturalWidth", "naturalHeight", "durationMs"]);
 export function canvasPersistentEditorDraft(base: CanvasDocument, live: CanvasDocument): CanvasDocument {
     const next = structuredClone(live),
         nodes = new Map(((base.nodes as Entity[]) || []).map((node) => [node.id, node]));

@@ -63,6 +63,7 @@ test("hydrated video previews do not block unrelated media editor commits", () =
         nodes: [
             { id: "image", type: "image", title: "Image", metadata: {} },
             { id: "video", type: "video", title: "Video", metadata: {} },
+            { id: "audio", type: "audio", title: "Audio", metadata: {} },
         ],
         connections: [],
     };
@@ -71,15 +72,18 @@ test("hydrated video previews do not block unrelated media editor commits", () =
     live.nodes[1].metadata.videoPreview = { content: "/signed-poster", storageKey: "resource:poster", mimeType: "image/png", width: 320, height: 180, bytes: 400 };
     live.nodes[1].metadata.naturalWidth = 320;
     live.nodes[1].metadata.naturalHeight = 180;
-    const capabilities = { protocolVersion: 1, nodes: ["image", "video"].map((type) => ({ type, patchFields: { title: { path: "title" } } })), structuredFields: {} };
+    live.nodes[2].metadata.durationMs = 1000;
+    const capabilities = { protocolVersion: 1, nodes: ["image", "video", "audio"].map((type) => ({ type, patchFields: { title: { path: "title" } } })), structuredFields: {} };
     const persistent = canvasPersistentEditorDraft(before, live);
     expect(canvasEditorCommands(before, persistent, capabilities)).toEqual([{ type: "update_node", id: "image", patch: { title: "Edited image" } }]);
     expect(live.nodes[1].metadata.videoPreview.storageKey).toBe("resource:poster");
     const canonical = structuredClone(live);
     canonical.nodes[1].metadata.videoPreview.content = "/canonical-poster";
     canonical.nodes[1].metadata.naturalWidth = 640;
+    canonical.nodes[2].metadata.durationMs = 2000;
     expect((canvasPersistentEditorDraft(canonical, live).nodes as any[])[1].metadata.videoPreview.content).toBe("/canonical-poster");
     expect((canvasPersistentEditorDraft(canonical, live).nodes as any[])[1].metadata.naturalWidth).toBe(640);
+    expect((canvasPersistentEditorDraft(canonical, live).nodes as any[])[2].metadata.durationMs).toBe(2000);
     live.nodes[1].metadata.unknownAuthorField = "still rejected";
     expect(() => canvasEditorCommands(before, canvasPersistentEditorDraft(before, live), capabilities)).toThrow("unknownAuthorField");
 });

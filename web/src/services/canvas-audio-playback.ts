@@ -107,6 +107,11 @@ class CanvasAudioPlaybackController {
         });
     }
 
+    reset(nodeId: string) {
+        this.stop(nodeId);
+        this.update(nodeId, { phase: "idle", currentTimeMs: 0, durationMs: 0, error: undefined });
+    }
+
     async seek(nodeId: string, timeMs: number, source?: CanvasAudioSource) {
         if (!this.activeSource || this.activeSource.nodeId !== nodeId) {
             if (source) {
@@ -250,7 +255,8 @@ class CanvasAudioPlaybackController {
 }
 
 function sameSource(left: CanvasAudioSource, right: CanvasAudioSource) {
-    return left.content === right.content && left.storageKey === right.storageKey && left.mimeType === right.mimeType;
+    if (left.storageKey || right.storageKey) return Boolean(left.storageKey) && left.storageKey === right.storageKey;
+    return left.content === right.content && left.mimeType === right.mimeType;
 }
 
 async function resolveAudioSource(source: CanvasAudioSource) {
@@ -277,4 +283,5 @@ export const subscribeCanvasAudioNode = (nodeId: string, listener: Listener) => 
 export const toggleCanvasAudio = (source: CanvasAudioSource) => canvasAudioPlayback.toggle(source);
 export const pauseCanvasAudio = (nodeId?: string) => canvasAudioPlayback.pause(nodeId);
 export const stopCanvasAudio = (nodeId?: string) => canvasAudioPlayback.stop(nodeId);
+export const resetCanvasAudio = (nodeId: string) => canvasAudioPlayback.reset(nodeId);
 export const seekCanvasAudio = (nodeId: string, timeMs: number, source?: CanvasAudioSource) => canvasAudioPlayback.seek(nodeId, timeMs, source);

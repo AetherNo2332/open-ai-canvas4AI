@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { AlertCircle, LoaderCircle, Pause, Play } from "lucide-react";
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
-import { useCanvasNodeActions } from "./canvas-node-action-context";
-import { getCanvasAudioPlaybackSnapshot, seekCanvasAudio, stopCanvasAudio, subscribeCanvasAudioNode, toggleCanvasAudio } from "@/services/canvas-audio-playback";
+import { getCanvasAudioPlaybackSnapshot, resetCanvasAudio, seekCanvasAudio, subscribeCanvasAudioNode, toggleCanvasAudio } from "@/services/canvas-audio-playback";
 import type { CanvasNodeData } from "@/types/canvas";
 
 type CanvasAudioPlayerProps = {
@@ -12,7 +11,6 @@ type CanvasAudioPlayerProps = {
 };
 
 export function CanvasAudioPlayer({ node, theme }: CanvasAudioPlayerProps) {
-    const { updateMetadata } = useCanvasNodeActions();
     const subscribe = useCallback((listener: () => void) => subscribeCanvasAudioNode(node.id, listener), [node.id]);
     const getSnapshot = useCallback(() => getCanvasAudioPlaybackSnapshot(node.id), [node.id]);
     const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -27,17 +25,11 @@ export function CanvasAudioPlayer({ node, theme }: CanvasAudioPlayerProps) {
         [node.id, node.metadata?.content, node.metadata?.durationMs, node.metadata?.mimeType, node.metadata?.storageKey],
     );
     const waveform = useMemo(() => createStableWaveform(node.id), [node.id]);
-    const syncedDurationRef = useRef(0);
     const durationMs = snapshot.durationMs || node.metadata?.durationMs || 0;
     const progress = durationMs > 0 ? Math.min(1, Math.max(0, snapshot.currentTimeMs / durationMs)) : 0;
 
-    useEffect(() => {
-        if (!snapshot.durationMs || snapshot.durationMs === node.metadata?.durationMs || syncedDurationRef.current === snapshot.durationMs) return;
-        syncedDurationRef.current = snapshot.durationMs;
-        updateMetadata?.(node.id, { durationMs: snapshot.durationMs });
-    }, [node.id, node.metadata?.durationMs, snapshot.durationMs, updateMetadata]);
-
-    useEffect(() => () => stopCanvasAudio(node.id), [node.id]);
+    const sourceKey = source.storageKey || source.content;
+    useEffect(() => () => resetCanvasAudio(node.id), [node.id, sourceKey]);
 
     const stopCanvasEvent = (event: React.SyntheticEvent) => event.stopPropagation();
     const togglePlayback = () => {
@@ -71,7 +63,9 @@ export function CanvasAudioPlayer({ node, theme }: CanvasAudioPlayerProps) {
                 </button>
                 <div className="relative min-w-0 flex-1">
                     <div className="relative mb-1 flex items-center gap-2 text-[var(--fs-label)] tabular-nums" style={{ color: theme.node.muted }}>
-                        <span>{formatAudioTime(snapshot.currentTimeMs)}/{durationMs ? formatAudioTime(durationMs) : "--:--"}</span>
+                        <span>
+                            {formatAudioTime(snapshot.currentTimeMs)}/{durationMs ? formatAudioTime(durationMs) : "--:--"}
+                        </span>
                     </div>
                     <input
                         type="range"
