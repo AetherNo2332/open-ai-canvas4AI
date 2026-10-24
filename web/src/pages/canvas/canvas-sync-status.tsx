@@ -19,11 +19,12 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenV
     const conflict = phase === "conflict";
     const failed = phase === "error" || conflict || !phase;
     const saving = phase === "pending" || phase === "saving" || phase === "uploading";
-    const label = conflict ? "版本冲突 · 点击处理" : !phase ? "尚未同步" : failed ? "云端未保存" : saving ? "正在保存" : "已保存";
+    const rejected = phase === "error" && !!progress?.reason;
+    const label = conflict ? "版本冲突 · 点击处理" : rejected ? progress.reason === "node_locked" ? "其他窗口正在编辑" : "修改未保存" : !phase ? "尚未同步" : failed ? "云端未保存" : saving ? "正在保存" : "已保存";
     useEffect(() => {
         setActionError("");
-        setStatusOpen(conflict);
-    }, [projectId, conflict]);
+        setStatusOpen(conflict || rejected);
+    }, [projectId, conflict, rejected]);
     const run = async (operation: () => Promise<unknown>) => {
         setBusy(true);
         setActionError("");
@@ -62,6 +63,7 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenV
                             </div>
                         ) : null}
                         {actionError ? <p role="alert" className="text-sm leading-6">{actionError}</p> : null}
+                        {rejected ? <p className="text-sm leading-6">本地修改已保留。请修正上述问题后点击「重试保存」，无需先切换到云端版本。</p> : null}
                         {activity ? (
                             <div className="space-y-1 text-xs text-muted-foreground">
                                 <p>{activity.leases.length ? `${activity.leases.length} 个节点正在编辑` : "暂无节点编辑占用"}</p>
@@ -80,7 +82,7 @@ export function CanvasSyncStatus({ projectId, onLoadLatest, onRetrySync, onOpenV
                             <p className="text-xs text-muted-foreground">编辑占用状态暂不可用，保存仍以回执为准</p>
                         ) : null}
                         <div className="flex flex-wrap gap-2">
-                            {onRetrySync ? <Button size="small" disabled={busy} onClick={() => void run(onRetrySync)}>重新同步</Button> : null}
+                            {onRetrySync ? <Button size="small" disabled={busy} onClick={() => void run(onRetrySync)}>{rejected ? "重试保存" : "重新同步"}</Button> : null}
                             <Popconfirm
                                 title="采用云端最新版本？"
                                 description="未同步修改会先备份为本地草稿。备份成功后，当前画布将显示云端内容。"

@@ -55,3 +55,19 @@ test("conflict guidance opens automatically, supports resync, and asks before re
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("备份未能完成");
     expect(useSyncProgressStore.getState().syncingProjects.canvas.phase).toBe("conflict");
 });
+
+test("a rejected save shows its reason and retries without asking to adopt the cloud", async () => {
+    let retried = 0;
+    let loaded = 0;
+    useSyncProgressStore.getState().setProjectProgress("rejected", { phase: "error", reason: "invalid_reference", message: "此角色尚未配置参考形象" });
+    await act(async () => {
+        root.render(<ConfigProvider theme={{ token: { motion: false } }}><App><CanvasSyncStatus projectId="rejected" onRetrySync={async () => { retried++; }} onLoadLatest={async () => { loaded++; }} /></App></ConfigProvider>);
+        await settle();
+    });
+    expect(document.body.textContent).toContain("此角色尚未配置参考形象");
+    expect(document.body.textContent).toContain("修改未保存");
+    expect(document.querySelector("ol")).toBeNull();
+    await click("重试保存");
+    expect(retried).toBe(1);
+    expect(loaded).toBe(0);
+});

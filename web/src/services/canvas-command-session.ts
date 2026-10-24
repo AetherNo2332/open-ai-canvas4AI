@@ -1,6 +1,7 @@
 import type { Command, Operation, Snapshot, Receipt, ChangeSet, SubmitRequest, PrevisSubmitRequest, TaskHandle } from "../lib/canvas/command-contract.generated";
 import { applyCanvasEventChanges, applyCanvasDraftChanges, canvasDocumentChanges, projectCanvasOperations, type CanvasDocument } from "../lib/canvas/canvas-event-projection";
 import { nanoid } from "nanoid";
+import { classifyCanvasCommandFailure, historicalCanvasRejection } from "../lib/canvas/canvas-command-failure";
 
 export type CommandTransport = {
     snapshot(canvasId: string, signal?: AbortSignal): Promise<Snapshot>;
@@ -29,7 +30,8 @@ export type StoredPending = {
     expectedEntityVersions: Record<string, number>;
     dependencies: string[];
     wire?: Command;
-    status: "queued" | "inflight" | "unconfirmed" | "conflicted";
+    status: "queued" | "inflight" | "unconfirmed" | "conflicted" | "rejected";
+    failureStatus?: number;
     reason?: string;
     message?: string;
 };
@@ -40,7 +42,8 @@ export type CommandSessionState = {
     pending: StoredPending[];
     projected: CanvasDocument;
     conflicts: Array<{ operationId: string; reason: string; message: string; operations: Operation[] }>;
-    saveState: "saved" | "saving" | "offline" | "conflict" | "closed";
+    rejections: Array<{ operationId: string; reason: string; message: string; status?: number }>;
+    saveState: "saved" | "saving" | "offline" | "conflict" | "error" | "closed";
 };
 export type CommandPreconditions = {
     expectedEntityVersions?: Record<string, number>;
@@ -69,7 +72,7 @@ export class CanvasCommandSession {
     private synchronizing: Promise<void> | null = null;
     private journalTail: Promise<void> = Promise.resolve();
     private loadingLatest = false;
-    state: CommandSessionState = { acknowledged: null, pending: [], projected: {}, conflicts: [], saveState: "closed" };
+    state: CommandSessionState = { acknowledged: null, pending: [], projected: {}, conflicts: [], rejections: [], saveState: "closed" };
     constructor(
         private transport: CommandTransport,
         readonly clientId: string,
@@ -96,7 +99,11 @@ export class CanvasCommandSession {
         }
         this.acknowledged = copy(snapshot);
         this.offline = false;
-        this.pending = stored.map((p) => ({ ...copy(p), status: p.wire ? "unconfirmed" : p.status === "conflicted" ? "conflicted" : "queued", resolve: () => {}, reject: () => {} }));
+        this.pending = stored.map((p) => ({
+            ...copy(p),
+            status: p.status === "rejected" || (p.status === "conflicted" && historicalCanvasRejection(p.reason)) ? "rejected" : p.status === "conflicted" ? "conflicted" : p.wire ? "unconfirmed" : "queued",
+            resolve: () => {}, reject: () => {},
+        }));
         this.emit();
         if (this.pending.length) await this.reconnect();
     }
@@ -137,12 +144,24 @@ export class CanvasCommandSession {
         if (this.loadingLatest) return Promise.reject(new Error("正在加载云端版本，请稍后再编辑"));
         if (effect && (!this.transport.invoke || !this.transport.recover)) return Promise.reject(new Error("canvas_effect_transport_unavailable"));
         if ((!operations.length && !effect) || operations.length > 100) return Promise.reject(new Error("每条命令需要1至100项操作"));
-        const projected = this.state.projected;
+        const entry = this.preparePending(operations, preconditions, effect);
+        if (this.pending.some((other) => other.operationId === entry.pending.operationId)) {
+            entry.pending.reject(new Error("操作 ID 重复"));
+            return entry.completion;
+        }
+        this.pending.push(entry.pending);
+        this.emit();
+        void this.pump();
+        return entry.completion;
+    }
+    private preparePending(operations: Operation[], preconditions: CommandPreconditions, effect?: CommandEffect, projected = this.state.projected) {
+        if (!this.acknowledged) throw aborted();
         const preview = preconditions.preview || canvasDocumentChanges(projected, projectCanvasOperations(projected, operations));
         const expected = { ...this.acknowledged.entityVersions, ...preconditions.expectedEntityVersions };
         for (const key of Object.keys(this.acknowledged.document)) expected["project:" + key] ??= 0;
         for (const key of ["project:nodeOrder", "project:connectionOrder", ...this.touched(preview, operations)]) expected[key] ??= 0;
-        return new Promise<Receipt | TaskHandle>((resolve, reject) => {
+        let pending!: Pending;
+        const completion = new Promise<Receipt | TaskHandle>((resolve, reject) => {
             const baseEntities: Record<string, Record<string, unknown>> = {},
                 baseFields: Record<string, unknown> = {};
             for (const e of preview.entities) {
@@ -151,7 +170,7 @@ export class CanvasCommandSession {
                 if (before) baseEntities[e.key] = copy(before);
             }
             for (const key of Object.keys(preview.fields || {})) if (key in projected) Object.defineProperty(baseFields, key, { value: copy(projected[key]), enumerable: true, writable: true, configurable: true });
-            const p: Pending = {
+            pending = {
                 operationId: preconditions.operationId || nanoid(),
                 documentEpoch: this.acknowledged!.documentEpoch,
                 operations: copy(operations),
@@ -165,14 +184,8 @@ export class CanvasCommandSession {
                 resolve,
                 reject,
             };
-            if (this.pending.some((other) => other.operationId === p.operationId)) {
-                reject(new Error("操作 ID 重复"));
-                return;
-            }
-            this.pending.push(p);
-            this.emit();
-            void this.pump();
         });
+        return { pending, completion };
     }
     async receive(event: Receipt): Promise<void> {
         const ack = this.acknowledged;
@@ -325,7 +338,7 @@ export class CanvasCommandSession {
                     }
                     continue;
                 }
-                if (p.documentEpoch !== this.acknowledged!.documentEpoch || p.status === "conflicted") continue;
+                if (p.documentEpoch !== this.acknowledged!.documentEpoch || p.status === "conflicted" || p.status === "rejected") continue;
                 if (p.wire) {
                     try {
                         const result = p.effect ? await this.transport.recover!(p.wire, p.effect, this.abort.signal) : await this.transport.receipt(p.wire, this.abort.signal);
@@ -358,7 +371,7 @@ export class CanvasCommandSession {
             while (this.acknowledged && !this.offline && !this.loadingLatest) {
                 const p = this.pending.find((p) => p.status === "queued");
                 if (!p) break;
-                if (this.pending.some((other) => other.status === "conflicted" && p.dependencies.includes(other.operationId))) break;
+                if (this.pending.some((other) => ["conflicted", "rejected"].includes(other.status) && p.dependencies.includes(other.operationId))) break;
                 if (p.documentEpoch !== this.acknowledged.documentEpoch) {
                     this.conflict(p, "document_epoch_mismatch", "画布世代已变化，编辑草稿已保留");
                     this.emit();
@@ -395,8 +408,18 @@ export class CanvasCommandSession {
                 } catch (error) {
                     if (generation !== this.generation) return;
                     const status = errorStatus(error);
-                    if (status !== undefined && status >= 400 && status < 500 && ![408, 425, 429].includes(status)) {
-                        this.conflict(p, errorReason(error) || "command_rejected", error instanceof Error ? error.message : "操作被主机拒绝");
+                    const kind = classifyCanvasCommandFailure(status, errorReason(error));
+                    if (kind !== "unconfirmed") {
+                        const reason = errorReason(error) || "command_rejected";
+                        const message = error instanceof Error ? error.message : "修改未保存，请检查后重试";
+                        if (kind === "conflict") this.conflict(p, reason, message);
+                        else {
+                            p.status = "rejected";
+                            p.failureStatus = status;
+                            p.reason = reason;
+                            p.message = message;
+                            p.reject(Object.assign(new Error(message), { reason, status }));
+                        }
                         this.emit();
                         continue;
                     }
@@ -433,12 +456,17 @@ export class CanvasCommandSession {
     private emit(persist = true) {
         let projected = this.acknowledged ? copy(this.acknowledged.document) : {};
         const conflicts: CommandSessionState["conflicts"] = [];
+        const rejections: CommandSessionState["rejections"] = [];
         for (const p of this.pending) {
             try {
                 if (!p.acknowledgedReceipt) projected = applyCanvasDraftChanges(projected, p.preview, p.baseEntities, p.baseFields);
             } catch {
                 if (p.status === "conflicted") continue;
-                this.conflict(p, "projection_conflict", "原编辑草稿不能直接投影到最新画布，已保留待处理");
+                if (p.status !== "rejected") this.conflict(p, "projection_conflict", "原编辑草稿不能直接投影到最新画布，已保留待处理");
+            }
+            if (p.status === "rejected") {
+                rejections.push({ operationId: p.operationId, reason: p.reason || "command_rejected", message: p.message || "修改未保存，请检查后重试", status: p.failureStatus });
+                continue;
             }
             let reason = p.reason,
                 message = p.message;
@@ -459,13 +487,76 @@ export class CanvasCommandSession {
             if (reason) conflicts.push({ operationId: p.operationId, reason, message: message || "编辑草稿需要处理", operations: copy(p.operations) });
         }
         const stored = this.pending.map(({ resolve: _, reject: __, ...p }) => copy(p));
-        this.state = { acknowledged: this.acknowledged, pending: stored, projected, conflicts, saveState: !this.acknowledged ? "closed" : conflicts.length ? "conflict" : this.offline ? "offline" : this.pending.length ? "saving" : "saved" };
+        this.state = { acknowledged: this.acknowledged, pending: stored, projected, conflicts, rejections, saveState: !this.acknowledged ? "closed" : conflicts.length ? "conflict" : this.offline ? "offline" : rejections.length ? "error" : this.pending.length ? "saving" : "saved" };
         if (persist && this.journal && this.acknowledged) {
             const id = this.acknowledged.canvasId;
             this.journalTail = this.journalTail.catch(() => {}).then(() => this.journal!.write(id, stored));
             void this.journalTail.catch(() => {});
         }
         for (const listener of this.listeners) listener(this.state);
+    }
+    async replaceRejectedDraft(operations: Operation[], preconditions: CommandPreconditions, preserveDraft: () => Promise<void>, validateLocalDraft: () => void): Promise<void> {
+        if (!this.acknowledged) throw aborted();
+        if (this.loadingLatest) throw new Error("正在处理本地草稿，请稍候");
+        if (!this.pending.some((p) => p.status === "rejected") || this.pending.some((p) => p.effect || !["rejected", "queued"].includes(p.status))) {
+            throw new Error("仍有冲突、任务或未确认的提交，请先确认保存结果；本地修改已保留");
+        }
+        if (operations.length > 100) throw new Error("本次修改过多，请先下载草稿后分批处理");
+        const generation = this.generation, acknowledged = this.acknowledged, pending = [...this.pending];
+        const original = pending.map(({ resolve: _, reject: __, ...p }) => copy(p));
+        const unchanged = () => {
+            if (generation !== this.generation) throw aborted();
+            if (this.acknowledged !== acknowledged || this.pending.length !== pending.length || this.pending.some((p, index) => p !== pending[index])) throw new Error("画布仍在更新，本地修改已保留，请稍后再重试");
+            validateLocalDraft();
+        };
+        this.loadingLatest = true;
+        let entry: ReturnType<CanvasCommandSession["preparePending"]> | undefined;
+        try {
+            await this.whenJournalDurable();
+            await preserveDraft();
+            unchanged();
+            if (operations.length) {
+                entry = this.preparePending(operations, preconditions, undefined, acknowledged.document);
+                entry.pending.dependencies = [];
+                void entry.completion.catch(() => {});
+            }
+            const stored = entry ? [copy((({ resolve: _, reject: __, ...p }) => p)(entry.pending))] : [];
+            if (this.journal) {
+                try {
+                    this.journalTail = this.journalTail.then(() => this.journal!.write(acknowledged.canvasId, stored));
+                    await this.journalTail;
+                    unchanged();
+                } catch (error) {
+                    // Restore identities even if storage reports failure after a write.
+                    this.journalTail = this.journalTail.catch(() => {}).then(() => this.journal!.write(acknowledged.canvasId, original));
+                    await this.journalTail;
+                    throw error;
+                }
+            } else unchanged();
+            this.pending = entry ? [entry.pending] : [];
+            for (const old of pending) old.reject(new DOMException("原修改已备份，正在保存修正后的内容", "AbortError"));
+            this.offline = false;
+            this.emit(false);
+        } finally {
+            if (generation === this.generation) this.loadingLatest = false;
+        }
+        await this.pump();
+        if (entry) {
+            if (this.pending.includes(entry.pending) && ["inflight", "unconfirmed", "queued"].includes(entry.pending.status)) throw new Error("保存结果尚未确认，请先重新同步；本地修改已保留");
+            await entry.completion;
+        }
+    }
+    async retryRejected(operationId: string): Promise<void> {
+        if (this.loadingLatest) throw new Error("正在处理本地草稿，请稍候");
+        const pending = this.pending.find((p) => p.operationId === operationId);
+        if (!pending || pending.status !== "rejected") throw new Error("此提交不能直接重试，请先确认保存结果");
+        pending.status = "queued";
+        delete pending.reason;
+        delete pending.message;
+        delete pending.failureStatus;
+        this.emit();
+        await this.pump();
+        if (this.pending.includes(pending)) throw Object.assign(new Error(pending.message || "保存结果尚未确认，本地修改已保留"), { status: pending.failureStatus, reason: pending.reason });
     }
     async loadLatest(preserveDraft: (document: CanvasDocument) => Promise<void>, validateLocalDraft: () => void = () => {}): Promise<void> {
         if (!this.acknowledged) throw aborted();
