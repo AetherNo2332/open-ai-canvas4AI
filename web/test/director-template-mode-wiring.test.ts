@@ -11,7 +11,6 @@ const workbench = moduleGroupSource("components/canvas/previs/canvas-previs-work
 const dock = readFileSync(resolve(import.meta.dir, "../src/components/canvas/previs/previs-viewport-dock.tsx"), "utf8");
 const viewport = moduleGroupSource("components/canvas/previs/previs-viewport.tsx");
 const hook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-previs.ts"), "utf8");
-const project = moduleGroupSource("pages/canvas/project.tsx");
 const modal = readFileSync(resolve(import.meta.dir, "../src/components/canvas/previs/canvas-previs-template-modal.tsx"), "utf8");
 const store = readFileSync(resolve(import.meta.dir, "../src/stores/canvas/use-previs-workbench-store.ts"), "utf8");
 const styles = readFileSync(resolve(import.meta.dir, "../src/styles/globals.css"), "utf8");

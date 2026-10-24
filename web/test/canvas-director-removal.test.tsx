@@ -26,10 +26,40 @@ test("image context menu retains ordinary media actions without a director conve
     const noop = () => {};
     const callbacks = new Proxy({}, { get: () => noop });
     const props = {
-        ...Object.fromEntries(["onClose", "onAddNode", "onAddFolder", "onChooseStyle", "onUpload", "onOpenAssets", "onOpenProjectCharacters", "onUndo", "onRedo", "onPaste", "onCopyNode", "onCreateGenerationCopy", "onDuplicate", "onDelete", "onSaveAsset", "onViewMedia", "onEditText", "onOpenDrawing", "onGenerateImage", "onCopyContent", "onCopyMediaUrl", "onUploadToArkPrivateAsset", "onSetAssetCategory", "onToggleFrame", "onSendToAgent"].map((name) => [name, callbacks[name]])),
+        ...Object.fromEntries(
+            [
+                "onClose",
+                "onAddNode",
+                "onAddFolder",
+                "onChooseStyle",
+                "onUpload",
+                "onOpenAssets",
+                "onOpenProjectCharacters",
+                "onUndo",
+                "onRedo",
+                "onPaste",
+                "onCopyNode",
+                "onCreateGenerationCopy",
+                "onDuplicate",
+                "onDelete",
+                "onSaveAsset",
+                "onViewMedia",
+                "onEditText",
+                "onOpenDrawing",
+                "onGenerateImage",
+                "onCopyContent",
+                "onCopyMediaUrl",
+                "onUploadToArkPrivateAsset",
+                "onSetAssetCategory",
+                "onToggleFrame",
+                "onSendToAgent",
+            ].map((name) => [name, callbacks[name]]),
+        ),
         menu: { type: "node", nodeId: "image", x: 20, y: 20 },
         node: { id: "image", type: CanvasNodeType.Image, title: "Saved image", position: { x: 0, y: 0 }, width: 300, height: 200, metadata: { content: "https://example.test/image.png" } },
-        canUndo: false, canRedo: false, canPaste: false,
+        canUndo: false,
+        canRedo: false,
+        canPaste: false,
     } as any;
     const html = renderToStaticMarkup(<CanvasNodeContextMenu {...props} />);
     expect(html).not.toContain("3D 导演预演台");
@@ -39,10 +69,33 @@ test("image context menu retains ordinary media actions without a director conve
 
 test("historical previs metadata does not replace ordinary text/media content with a legacy editor", () => {
     for (const type of [CanvasNodeType.Text, CanvasNodeType.Video]) {
-        const node = { id: "legacy", type, title: "Historical result", position: { x: 0, y: 0 }, width: 300, height: 200, metadata: { content: type === CanvasNodeType.Text ? "Saved document body" : "https://example.test/video.mp4", previsSceneId: "saved-scene", previsShotId: "saved-shot" } };
+        const node = {
+            id: "legacy",
+            type,
+            title: "Historical result",
+            position: { x: 0, y: 0 },
+            width: 300,
+            height: 200,
+            metadata: { content: type === CanvasNodeType.Text ? "Saved document body" : "https://example.test/video.mp4", previsSceneId: "saved-scene", previsShotId: "saved-shot" },
+        };
         const before = structuredClone(node);
         let customCalls = 0;
-        const props = { node, theme: canvasThemes.dark, renderLOD: "full", isEditingContent: false, textareaRef: { current: null }, isBatchRoot: false, batchCount: 0, batchExpanded: false, batchOpening: false, batchRecovering: false, renderNodeContent: () => { customCalls++; return <div>Legacy editor</div>; } } as any;
+        const props = {
+            node,
+            theme: canvasThemes.dark,
+            renderLOD: "full",
+            isEditingContent: false,
+            textareaRef: { current: null },
+            isBatchRoot: false,
+            batchCount: 0,
+            batchExpanded: false,
+            batchOpening: false,
+            batchRecovering: false,
+            renderNodeContent: () => {
+                customCalls++;
+                return <div>Legacy editor</div>;
+            },
+        } as any;
         const html = renderToStaticMarkup(<CanvasNodeContent {...props} />);
         expect(customCalls).toBe(0);
         expect(html).not.toContain("Legacy editor");
