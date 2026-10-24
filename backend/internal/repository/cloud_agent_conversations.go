@@ -20,7 +20,8 @@ const cloudAgentHistoryColumns = "id, user_id, conversation_id, parent_id, title
 
 func (r *Repository) CloudAgentConversations(userID, canvasID string, before *CloudAgentHistoryCursor, limit int) ([]model.CloudAgentExecution, error) {
 	rows := []model.CloudAgentExecution{}
-	query := r.db.Table("cloud_agent_executions e").Select("e.id, e.user_id, e.conversation_id, e.parent_id, e.title, e.canvas_id, e.status, e.revision, e.cleanup_pending, e.created_at, e.updated_at").
+	query := r.db.Table("cloud_agent_executions e").Select(`e.id, e.user_id, e.conversation_id, e.parent_id, e.title, e.canvas_id, e.status, e.revision, e.cleanup_pending, e.created_at, e.updated_at,
+		EXISTS (SELECT 1 FROM cloud_agent_executions a WHERE a.user_id = e.user_id AND COALESCE(NULLIF(a.conversation_id, ''), a.id) = COALESCE(NULLIF(e.conversation_id, ''), e.id) AND a.archived_at IS NOT NULL) AS conversation_archived`).
 		Where("e.user_id = ?", userID).
 		Where("NOT EXISTS (SELECT 1 FROM agent_subagent_links l WHERE l.user_id = e.user_id AND l.child_run_id = COALESCE(NULLIF(e.conversation_id, ''), e.id))").
 		Where(`EXISTS (SELECT 1 FROM cloud_agent_executions c WHERE c.user_id = e.user_id AND c.canvas_id = ?
@@ -53,6 +54,12 @@ func (r *Repository) CloudAgentConversationExists(userID, conversationID string)
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// Archive is independent of run checkpoints and billing. Keep a tombstone in
+// the directory so devices with cached history can remove their local entry.
+func (r *Repository) ArchiveCloudAgentConversation(userID, conversationID string) error {
+	return r.db.Model(&model.CloudAgentExecution{}).Where("user_id = ? AND "+cloudAgentConversationIdentity+" = ?", userID, conversationID).UpdateColumn("archived_at", time.Now()).Error
 }
 
 var ErrCloudAgentStaleParent = errors.New("对话已有更新，请同步最新一轮后再发送")

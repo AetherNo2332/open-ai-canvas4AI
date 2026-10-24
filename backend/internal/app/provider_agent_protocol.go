@@ -238,6 +238,23 @@ func canonicalAgentGeminiBody(source *canonicalAgentRequest) map[string]interfac
 				role = "model"
 			}
 			parts = canonicalAgentContent(message["content"], "gemini")
+			if role == "model" {
+				converted := parts.([]interface{})
+				if message["content"] == nil || message["content"] == "" {
+					converted = nil
+				}
+				for _, call := range canonicalAgentToolCalls(message["tool_calls"]) {
+					function, _ := call["function"].(map[string]interface{})
+					id, name := stringField(call, "id"), stringField(function, "name")
+					callNames[id] = name
+					part := map[string]interface{}{"functionCall": map[string]interface{}{"id": id, "name": name, "args": canonicalAgentJSONObject(function["arguments"])}}
+					if signature := stringField(call, "thoughtSignature"); signature != "" {
+						part["thoughtSignature"] = signature
+					}
+					converted = append(converted, part)
+				}
+				parts = converted
+			}
 		}
 		contents = append(contents, map[string]interface{}{"role": role, "parts": parts})
 	}

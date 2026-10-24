@@ -95,6 +95,7 @@ export interface PiSnapshot {
   canonical: PiCanonical;
   activeTaskId?: string;
   lastTaskId?: string;
+  pendingToolBatch?: { taskId: string; calls: PiToolCall[] };
   noToolTaskId?: string;
   noToolNudge?: string;
   modelFailureTaskId?: string;

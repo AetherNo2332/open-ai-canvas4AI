@@ -20,6 +20,7 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/agent-error-presentation";
 import { effectiveAgentDefaultSkills } from "@/lib/canvas/agent-effective-skill-defaults";
 import {
+    archiveAgentConversation,
     cancelAgentRun,
     getAgentCapabilities,
     getAgentMessageQueue,
@@ -46,6 +47,7 @@ import { CanvasAgentImageApprovalSettings } from "./canvas-agent-image-approval-
 import { addSkill, listAddedSkills, listSkills, listSkillPresets, type Skill, type SkillCategory, type SkillPreset } from "@/services/api/skills";
 import {
     clearCloudAgentPendingSubmission,
+    cloudAgentConversationServerId,
     cloudAgentConversationTitle,
     loadCloudAgentConversations,
     loadCloudAgentPendingSubmission,
@@ -723,6 +725,11 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 const next = protectedSubmission ? merged.map((conversation) => conversation.id === state.activeConversationId ? local.find((entry) => entry.id === conversation.id)! : conversation) : merged;
                 conversationsRef.current = next;
                 setConversations(next);
+                const active = local.find((conversation) => conversation.id === state.activeConversationId);
+                if (!protectedSubmission && active && remote.some((conversation) => conversation.archived && conversation.serverConversationId === (cloudAgentConversationServerId(active) || active.run?.id))) {
+                    newConversation();
+                    return;
+                }
                 const restored = !protectedSubmission && next.find((conversation) => conversation.id === state.activeConversationId);
                 const discovered = !protectedSubmission && autoRestoreRef.current && !state.messages.length && !state.run && !state.prompt.trim() ? next.find((conversation) => conversation.run) || next[0] : undefined;
                 const selected = restored || discovered;
@@ -866,7 +873,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 if (!capabilities.availability.configured) throw new Error(capabilities.availability.reason);
                 if (!capabilities.permissionModes.includes(permissionMode)) throw new Error("当前后端不支持所选 Agent 权限，请更新后端");
                 if (selectedSkillIds.length && !capabilities.skills) throw new Error("当前后端尚未接入技能库");
-                await saveRemoteUserDataNow();
+                await saveRemoteUserDataNow(canvasId);
                 if (currentScope.current !== scope) return false;
                 const agentConfig = { ...config, model: selectedModel };
                 const requestConfig = resolveModelRequestConfig(agentConfig, selectedModel);
@@ -1021,7 +1028,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
         approvalRequestRef.current = approvalId;
         setApprovalSubmitting(true);
         try {
-            if (decision === "approve") await saveRemoteUserDataNow();
+            if (decision === "approve") await saveRemoteUserDataNow(canvasId);
             if (currentScope.current !== scope) return;
             await decideAgentApproval(runId, approvalId, decision, approval.reason, AbortSignal.timeout(15_000), mediaSettings);
             if (currentScope.current === scope) {
@@ -1133,11 +1140,25 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 if (currentScope.current === `${userScope}:${canvasId}:${conversation.id}`) setMessages((current) => appendAgentError(current, `pending-${conversation.id}`, cause, "待确认请求读取失败"));
             });
     };
-    const deleteConversation = (id: string) => {
-        const next = conversations.filter((item) => item.id !== id);
-        setConversations(next);
-        if (id === activeConversationId) newConversation();
-        void saveCloudAgentConversations(canvasId, id === activeConversationId ? null : activeConversationId, next, userScope);
+    const deleteConversation = async (id: string) => {
+        const conversation = conversationsRef.current.find((item) => item.id === id);
+        if (!conversation) return;
+        const scope = userScope;
+        try {
+            const serverId = cloudAgentConversationServerId(conversation) || conversation.run?.id;
+            if (serverId) await archiveAgentConversation(serverId);
+            if (getActiveUserScope() !== scope || !currentScope.current.startsWith(`${scope}:${canvasId}:`)) return;
+            // Invalidate directory responses that started before the archive.
+            acceptedSubmissionGenerationRef.current++;
+            const next = conversationsRef.current.filter((item) => item.id !== id);
+            conversationsRef.current = next;
+            setConversations(next);
+            const active = historyStateRef.current.activeConversationId;
+            if (id === active) newConversation();
+            await saveCloudAgentConversations(canvasId, id === active ? null : active, next, scope);
+        } catch (cause) {
+            if (getActiveUserScope() === scope) setMessages((current) => appendAgentError(current, `archive-${id}`, cause, "删除对话失败"));
+        }
     };
 
     const panel = (

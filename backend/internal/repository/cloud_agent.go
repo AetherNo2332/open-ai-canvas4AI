@@ -493,7 +493,7 @@ func (r *Repository) MutateCloudAgent(userID, id string, revision int64, fn func
 		if len(run.Journal) > 0 && run.Journal[len(run.Journal)-1].Sequence != run.EventCount {
 			return fmt.Errorf("cloud Agent journal watermark is inconsistent")
 		}
-		if err = tx.Omit("Journal", "Transcript").Save(run).Error; err != nil {
+		if err = tx.Omit("Journal", "Transcript", "ArchivedAt").Save(run).Error; err != nil {
 			return err
 		}
 		for _, event := range run.Journal {

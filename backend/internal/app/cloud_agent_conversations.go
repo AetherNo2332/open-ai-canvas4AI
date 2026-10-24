@@ -21,6 +21,7 @@ type CloudAgentConversation struct {
 	Status         string    `json:"status"`
 	Revision       int64     `json:"revision"`
 	CleanupPending bool      `json:"cleanupPending"`
+	Archived       bool      `json:"archived"`
 	QueueRevision  int64     `json:"queueRevision"`
 	QueuedCount    int       `json:"queuedCount"`
 	QueuePaused    bool      `json:"queuePaused"`
@@ -109,11 +110,29 @@ func (s *Service) CloudAgentConversations(userID, canvasID, before string, limit
 		page.Items = append(page.Items, CloudAgentConversation{
 			ID: id, CanvasID: run.CanvasID, Title: run.Title, LatestRunID: run.ID,
 			Status: run.Status, Revision: run.Revision, CleanupPending: run.CleanupPending,
+			Archived:  run.ConversationArchived,
 			CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
 			QueueRevision: queues[id].Revision, QueuedCount: queues[id].QueuedCount, QueuePaused: queues[id].Paused,
 		})
 	}
 	return page, nil
+}
+
+func (s *Service) ArchiveCloudAgentConversation(userID, conversationID string) error {
+	if userID == "" {
+		return kernel.Unauthorized("请先登录")
+	}
+	if err := validateCloudAgentID(conversationID, "会话 ID", 80); err != nil {
+		return err
+	}
+	exists, err := s.repo.CloudAgentConversationExists(userID, conversationID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return kernel.NotFound("Agent 对话不存在")
+	}
+	return s.repo.ArchiveCloudAgentConversation(userID, conversationID)
 }
 
 func (s *Service) CloudAgentConversationRuns(userID, conversationID, after string, limit int) (*CloudAgentConversationRunPage, error) {

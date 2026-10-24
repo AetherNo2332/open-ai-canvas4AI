@@ -78,6 +78,7 @@ func TestBuiltinTypedEditableConfiguration(t *testing.T) {
 		{"colorgrade", map[string]any{"colorGrade": map[string]any{"brightness": 110.0, "contrast": 90.0, "saturate": 100.0, "hueRotate": -20.0}}},
 		{"media-conversion", map[string]any{"conversionOperation": "depth"}},
 		{"script", map[string]any{"visibleColumns": []any{"shotNumber", "dialogue"}, "storyboardShotDuration": "5"}},
+		{"script", map[string]any{"workflowKind": "storyboard", "workflowTitle": "章节分镜", "workflowDescription": "已导入 1 个镜头", "chapterId": "chapter", "chapterTitle": "Chapter"}},
 	}
 	registry := BuiltinRegistry()
 	for _, fixture := range fixtures {

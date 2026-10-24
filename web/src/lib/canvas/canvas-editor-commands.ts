@@ -70,10 +70,12 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             claim(paths, "title");
             claim(paths, "metadata.content");
             if (node.metadata?.status === "idle" || node.metadata?.status === "success") claim(paths, "metadata.status");
+            if (node.type === "script" && same(node.metadata?.storyboard?.referenceNodeIds, [])) claim(paths, "metadata.storyboard.referenceNodeIds");
         }
         const patch: Record<string, unknown> = {};
-        if (referenceFields && node.type === "script" && !same(previous?.metadata?.storyboard?.referenceNodeIds || [], node.metadata?.storyboard?.referenceNodeIds || [])) {
-            operations.push(...buildCanvasReferenceEdit(after, { kind: "set_board_references", nodeId: node.id, referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [] }));
+        if (referenceFields && node.type === "script") {
+            if (!same(previous?.metadata?.storyboard?.referenceNodeIds || [], node.metadata?.storyboard?.referenceNodeIds || []))
+                operations.push(...buildCanvasReferenceEdit(after, { kind: "set_board_references", nodeId: node.id, referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [] }));
             claim(paths, "metadata.storyboard.referenceNodeIds");
         }
         for (const [key, field] of Object.entries(descriptor.patchFields)) {

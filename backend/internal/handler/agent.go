@@ -19,6 +19,18 @@ import (
 // Agent orchestration is durable; the browser stream never drives execution.
 func RegisterAgentRoutes(r *gin.RouterGroup, svc *service.Service) {
 	RegisterAgentMessageQueueRoutes(r, svc)
+	r.DELETE("/agent/conversations/:id", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		if err := svc.ArchiveCloudAgentConversation(user.ID, c.Param("id")); err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"archived": true})
+	})
 	r.GET("/agent/conversations", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
