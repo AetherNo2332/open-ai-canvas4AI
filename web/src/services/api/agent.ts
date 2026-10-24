@@ -282,6 +282,7 @@ export function getAgentRun(runId: string, signal?: AbortSignal, options?: { sin
 }
 
 export type AgentConversationSummary = {
+    archived?: boolean;
     id: string;
     canvasId: string;
     title: string;
@@ -298,6 +299,10 @@ export function listAgentConversations(options: { canvasId: string; before?: str
         params: compactApiParams({ canvasId: options.canvasId, before: options.before, limit: options.limit }),
         signal: options.signal,
     });
+}
+
+export function archiveAgentConversation(conversationId: string) {
+    return http.delete<{ archived: boolean }>(`/agent/conversations/${encodeURIComponent(conversationId)}`);
 }
 
 export function listAgentConversationRuns(conversationId: string, options: { after?: string; limit?: number; signal?: AbortSignal } = {}) {

@@ -380,6 +380,12 @@ export function subscribeAgentCanvasRefresh(listener: (project: CanvasProject, p
 }
 
 export async function refreshCanvasAfterAgent(id: string) {
+    if (useCanvasSessionStore.getState().bootstrapState !== "inactive") {
+        const session = await openCanvasCommandSession(id);
+        await session.reconnect();
+        if (session.state.saveState === "offline") throw new Error("暂时无法同步画布，请稍后重试");
+        return useCanvasStore.getState().projects.find((project) => project.id === id);
+    }
     const epoch = sessionEpoch;
     return withRemoteUserDataSyncExclusive(async () => {
         if (!activeRemoteUserId) throw new Error("请先登录再刷新 Agent 画布结果");
@@ -421,6 +427,9 @@ export async function refreshCanvasAfterAgent(id: string) {
 }
 
 export async function applyAgentCanvasPatches(id: string, patches: AgentCanvasPatch[]) {
+    // Command sessions reconcile canonical events and retain optimistic edits.
+    // Legacy patches must not create a second, stale acknowledged baseline.
+    if (useCanvasSessionStore.getState().bootstrapState !== "inactive") return refreshCanvasAfterAgent(id);
     const epoch = sessionEpoch;
     return withRemoteUserDataSyncExclusive(async () => {
         if (epoch !== sessionEpoch || !activeRemoteUserId) throw new Error("账号已切换或未登录，已停止 Agent 画布同步");

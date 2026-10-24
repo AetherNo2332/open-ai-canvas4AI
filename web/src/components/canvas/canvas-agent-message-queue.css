@@ -1,4 +1,7 @@
 .agent-send-mode {
+    width: 28px;
+    height: 28px;
+    justify-content: center;
     display: inline-flex;
     flex: 0 0 auto;
     align-items: center;
@@ -13,11 +16,13 @@
 }
 .agent-message-queue {
     flex: 0 0 auto;
-    margin: var(--space-2) var(--space-4);
+    margin: 0 var(--space-2);
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--site-border);
-    border-radius: var(--card-radius);
-    color: var(--site-text);
+    border-bottom: 0;
+    border-radius: var(--card-radius) var(--card-radius) 0 0;
+    background: var(--agent-surface-soft);
+    color: var(--agent-ink, var(--site-text));
     font-size: 12px;
 }
 .agent-message-queue-header,
@@ -32,43 +37,74 @@
     margin-right: auto;
 }
 .agent-message-queue-status {
-    color: color-mix(in oklab, var(--site-text) 60%, transparent);
+    color: var(--agent-caption, color-mix(in oklab, var(--site-text) 60%, transparent));
 }
 .agent-message-queue-items {
     max-height: min(240px, 30dvh);
     overflow-y: auto;
     overscroll-behavior: contain;
-    margin-top: var(--space-2);
+    margin: 0;
 }
 .agent-message-queue-items li {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: var(--space-2);
-    padding-block: var(--space-2);
+    padding-block: var(--space-1);
     border-top: 1px solid var(--site-border);
 }
+.agent-message-queue-items li:first-child {
+    border-top: 0;
+}
 .agent-message-queue-index {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
     font-variant-numeric: tabular-nums;
     opacity: 0.5;
 }
 .agent-message-queue-content {
     flex: 1;
     min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-2);
+}
+.agent-message-queue-content[data-editing] {
+    display: block;
+}
+.agent-message-queue-item-error {
+    grid-column: 1 / -1;
 }
 .agent-message-queue-content p {
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 1;
     overflow: hidden;
     overflow-wrap: anywhere;
     white-space: pre-wrap;
     line-height: 1.6;
 }
 .agent-message-queue-actions {
+    gap: 0;
+}
+.agent-message-queue-content[data-editing] .agent-message-queue-actions {
+    justify-content: flex-end;
     margin-top: var(--space-1);
 }
+.agent-message-queue[data-expanded] .agent-message-queue-content p {
+    -webkit-line-clamp: 2;
+}
 .agent-message-queue button {
+    min-height: 28px;
+    min-width: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border-radius: var(--button-radius);
+}
+.agent-message-queue button:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--site-text) 8%, transparent);
 }
 .agent-message-queue-content textarea {
     width: 100%;

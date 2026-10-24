@@ -113,7 +113,7 @@ export async function createCanvasCommandProject(title: string, projectId?: stri
     const current = creator,
         capabilities = useCanvasSessionStore.getState().capabilities;
     if (!current || !capabilities) throw new Error("canvas_command_workspace_unavailable");
-    const base = { id: "initial", nodes: [], connections: [] };
+    const base = { id: "initial", referenceFieldsVersion: 1, nodes: [], connections: [] };
     const initialOperations = initialContent ? canvasEditorCommands(base, { ...base, nodes: initialContent.nodes || [], connections: initialContent.connections || [] }, capabilities) : [];
     const result = await current.create({ title, ...(projectId ? { projectId } : {}), ...(initialOperations.length ? { initialOperations } : {}) });
     if (current !== creator) throw new DOMException("画布主机已切换", "AbortError");
@@ -124,7 +124,7 @@ export async function openCanvasCommandSession(canvasId: string): Promise<Canvas
     if (!current) throw new Error("canvas_command_workspace_unavailable");
     const scope = useCanvasSessionStore.getState().scope!;
     const cached = structuredClone(useCanvasStore.getState().openProject(canvasId) || undefined);
-    const pending = await journal?.read(canvasId);
+    const pending = current.get(canvasId)?.state.pending ?? (await journal?.read(canvasId));
     let session: CanvasCommandSession;
     try {
         session = await current.open(canvasId);

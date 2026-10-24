@@ -17,14 +17,15 @@ import (
 )
 
 var (
-	ErrInsufficientCredits     = errors.New("积分不足，请先充值")
-	ErrRedeemCodeInvalid       = errors.New("兑换码无效或已使用")
-	ErrActiveTaskLimit         = errors.New("同时进行的任务数已达上限，请等待已有任务完成")
-	ErrTaskNotRetryable        = errors.New("该任务当前状态不支持重试")
-	ErrBillingStateConflict    = errors.New("计费状态已变化，请刷新后重试")
-	ErrBillingUsageUnavailable = errors.New("暂时无法获取用量，计费未完成")
-	ErrBillingChargeLimit      = errors.New("本次费用超过授权上限，已拒绝扣费")
-	ErrChannelModelInUse       = errors.New("该渠道模型正在被使用，无法删除或停用")
+	ErrInsufficientCredits          = errors.New("积分不足，请先充值")
+	ErrRedeemCodeInvalid            = errors.New("兑换码无效或已使用")
+	ErrActiveTaskLimit              = errors.New("同时进行的任务数已达上限，请等待已有任务完成")
+	ErrTaskNotRetryable             = errors.New("该任务当前状态不支持重试")
+	ErrCanvasTaskRequiresNewVersion = errors.New("画布任务重试需要新版本")
+	ErrBillingStateConflict         = errors.New("计费状态已变化，请刷新后重试")
+	ErrBillingUsageUnavailable      = errors.New("暂时无法获取用量，计费未完成")
+	ErrBillingChargeLimit           = errors.New("本次费用超过授权上限，已拒绝扣费")
+	ErrChannelModelInUse            = errors.New("该渠道模型正在被使用，无法删除或停用")
 )
 
 // 先抢占唯一业务键再更新账户，确保注册和签到奖励在多实例并发下只入账一次。
@@ -608,6 +609,15 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 	var task model.Task
 	taskID := prepared.ID
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if tx.Migrator().HasTable(&model.CanvasTaskBinding{}) {
+			var count int64
+			if err := tx.Model(&model.CanvasTaskBinding{}).Where("task_id = ?", taskID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return ErrCanvasTaskRequiresNewVersion
+			}
+		}
 		if err := enforceActiveTaskLimit(tx, userID, activeTaskLimit); err != nil {
 			return err
 		}

@@ -154,7 +154,12 @@ mock.module("@/components/canvas/canvas-cloud-agent-chat-ui", () => ({
     AGENT_SCENE_DEFS: [],
     AgentChatComposer: (props: any) => {
         composer = props;
-        return <textarea value={props.prompt} readOnly />;
+        return (
+            <>
+                {props.queuedMessages}
+                <textarea value={props.prompt} readOnly />
+            </>
+        );
     },
     AgentChatMessage: ({ item }: any) => <div>{item.text}</div>,
     AgentOperationFeed: () => null,
@@ -249,6 +254,35 @@ afterAll(() => dom.happyDOM.abort());
 
 const externalPrompt = { canvasId: "canvas", userScope: "sync-user", prompt: "为目标分镜表提出拆镜方案，先询问确认", focusNodeIds: ["storyboard-target"] };
 
+for (const mode of ["queue", "interject"] as const) {
+    test(`opposite send overrides ${mode} once without changing the account default`, async () => {
+        const current = conversation("desktop", "local", "临时发送");
+        current.run = { ...current.run!, status: "running" };
+        const mounted = await mount([current], null, async () => [current], mode);
+        try {
+            await act(async () => {
+                composer.onSubmit(true);
+                await settle();
+            });
+            expect(conversationRequests).toHaveLength(1);
+            expect(conversationRequests[0].mode).toBe(mode === "queue" ? "interject" : "queue");
+            expect(serverSendMode).toBe(mode);
+            await act(async () => {
+                composer.onPromptChange("普通发送");
+                await settle();
+            });
+            await act(async () => {
+                composer.onSubmit();
+                await settle();
+            });
+            expect(conversationRequests).toHaveLength(2);
+            expect(conversationRequests[1].mode).toBe(mode);
+        } finally {
+            await mounted.close();
+        }
+    });
+}
+
 test("account queue default applies to node and composer sends while preserving drafts", async () => {
     const current = conversation("desktop", "local", "未发送的草稿");
     current.run = { ...current.run!, status: "running" };
@@ -289,7 +323,8 @@ test("unknown queued POST keeps its original mode after the account default chan
         const identity = pending!.key;
         expect(pending?.conversationMessage?.mode).toBe("queue");
         await act(async () => {
-            await composer.onSendModeChange("interject");
+            serverSendMode = "interject";
+            window.dispatchEvent(new Event("focus"));
             await settle();
         });
         queueMessageOverride = async () => ({ delivery: "queued", messageId: "accepted", conversationId: "shared", queueRevision: 2 });

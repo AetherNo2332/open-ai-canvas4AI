@@ -2,12 +2,26 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentWelcome } from "@/components/canvas/canvas-agent-welcome";
 import { AgentChatComposer } from "@/components/canvas/canvas-cloud-agent-chat-ui";
+import { AgentMessageQueueList } from "@/components/canvas/canvas-agent-message-queue";
+import type { AgentMessageQueue } from "@/services/api/agent";
 import { AgentHeader } from "@/components/canvas/canvas-cloud-agent-panel";
 import { agentPermissionVisual } from "@/components/canvas/canvas-cloud-agent-settings";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { DEFAULT_CANVAS_APPEARANCE, agentCopy } from "@/lib/canvas/agent-appearance";
 
 const noop = () => {};
+
+test("pending messages expose their first preview and accessible actions without expanding", () => {
+    const queue: AgentMessageQueue = { conversationId: "test", canvasId: "test", revision: 1, paused: false, latestRunId: "test", items: [
+        { id: "1", conversationId: "test", canvasId: "test", sequence: 1, revision: 1, mode: "queue", status: "queued", prompt: "先补充第二场", createdAt: "", updatedAt: "" },
+        { id: "2", conversationId: "test", canvasId: "test", sequence: 2, revision: 1, mode: "queue", status: "queued", prompt: "再补充第三场", createdAt: "", updatedAt: "" },
+    ] };
+    const html = renderToStaticMarkup(<AgentMessageQueueList queue={queue} onEdit={async () => true} onPromote={async () => true} onRemove={async () => true} onResume={async () => true} onRetry={noop} />);
+    expect(html).toContain("先补充第二场");
+    expect(html).not.toContain("再补充第三场");
+    expect(html).toContain('aria-expanded="false"');
+    for (const label of ["编辑待发消息", "插队发送", "移除待发消息"]) expect(html).toContain(`aria-label="${label}"`);
+});
 
 test("Skills uses only an icon and active color while retaining its accessible count and dialog state", () => {
     const html = renderToStaticMarkup(<AgentHeader theme={canvasThemes.dark} hasMessages statusLabel="运行中" statusColor="green" nodeCount={12}

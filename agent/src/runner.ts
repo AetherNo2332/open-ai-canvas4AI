@@ -310,9 +310,14 @@ async function recoverToolResults(
   // paired result; do not submit a synthetic call to Go or execute any tool.
   const executableCalls = calls.filter((call) => !call.function.name.startsWith("agent_tools_") &&
     !(recoverNativeRead && call.function.name === "read"));
-  const admissionError = batchAdmissionError(disclosure, executableCalls);
   const taskId = snapshot.lastTaskId || "";
-  if (!admissionError && executableCalls.length > 0) await bridge.startToolBatch(snapshot, taskId, executableCalls, signal);
+  const persisted = snapshot.pendingToolBatch;
+  // Recovery submits only the persisted call identity. Go owns its arguments,
+  // admission and receipt; today's disclosure still gates every new batch.
+  const recovering = persisted?.taskId === taskId && executableCalls.length > 0 &&
+    executableCalls.every(call => persisted.calls.some(saved => saved.id === call.id && saved.function.name === call.function.name));
+  const admissionError = recovering ? null : batchAdmissionError(disclosure, executableCalls);
+  if (!recovering && !admissionError && executableCalls.length > 0) await bridge.startToolBatch(snapshot, taskId, executableCalls, signal);
   for (const call of calls) {
     if (completed.has(call.id)) continue;
     const legacyCategory = call.function.name.startsWith("agent_tools_");

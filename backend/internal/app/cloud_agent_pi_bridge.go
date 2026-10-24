@@ -65,6 +65,7 @@ type PiAgentSnapshot struct {
 	Canonical                canonicalAgentRequest        `json:"canonical"`
 	ActiveTask               string                       `json:"activeTaskId,omitempty"`
 	LastTaskID               string                       `json:"lastTaskId,omitempty"`
+	PendingToolBatch         *PiToolBatchRequest          `json:"pendingToolBatch,omitempty"`
 	NoToolTaskID             string                       `json:"noToolTaskId,omitempty"`
 	NoToolNudge              string                       `json:"noToolNudge,omitempty"`
 	ModelFailureTaskID       string                       `json:"modelFailureTaskId,omitempty"`
@@ -962,6 +963,13 @@ func (s *Service) piModelStep(userID, runID, owner string, request PiModelStepRe
 	}
 	requestedNames := cloudAgentToolNames(request.Canonical.Tools)
 	for _, previous := range state.AdvertisedToolNames {
+		// A recovered batch may finish before the worker reads a fresh snapshot.
+		// Retired tools can leave the next model loadout only after that batch
+		// settles; current tools and all new calls retain normal disclosure checks.
+		nativeRead := state.SkillRuntimeMode == cloudAgentSkillRuntimeNative && previous == "read"
+		if state.CallIndex >= len(state.Calls) && !nativeRead && !cloudAgentToolAllowed(state.Request, previous) {
+			continue
+		}
 		if !cloudAgentContainsString(requestedNames, previous) {
 			return nil, kernel.Forbidden("Pi 模型请求不能移除已披露工具")
 		}
@@ -1722,6 +1730,10 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 	for _, item := range state.PendingInterjections {
 		pendingInterjections = append(pendingInterjections, PiPendingInterjection{ID: item.ID, Text: item.Text, Source: item.Source, CreatedAt: item.CreatedAt})
 	}
+	var pendingBatch *PiToolBatchRequest
+	if state.PiToolBatchTaskID != "" && len(state.Calls) > 0 {
+		pendingBatch = &PiToolBatchRequest{TaskID: state.PiToolBatchTaskID, Calls: state.Calls}
+	}
 	return &PiAgentSnapshot{
 		RunID: run.ID, UserID: run.UserID, Revision: run.Revision, Status: run.Status,
 		Subagent:    state.Subagent,
@@ -1729,6 +1741,7 @@ func (s *Service) piAgentSnapshot(run *model.CloudAgentExecution) (*PiAgentSnaps
 		PiSessionEntries: entryViews, HistoricalToolReceipts: historicalReceipts, PiActiveLeafID: session.ActiveLeafID,
 		Request: state.Request, ModelLimits: budget, Canonical: state.Canonical, ActiveTask: state.ActiveTaskID, LastTaskID: state.LastStepTaskID, NoToolTaskID: state.PiNoToolTaskID, NoToolNudge: state.PiNoToolNudge, ModelFailureTaskID: state.PiModelFailureTaskID, ModelFailureNudge: state.PiModelFailureNudge, PendingInterjections: pendingInterjections, PendingContextCompaction: pendingCompaction, Tools: tools,
 		Opened: state.ActivatedToolCategories, PiMessages: piAgentMessages(run),
+		PendingToolBatch: pendingBatch,
 		SkillRuntimeMode: mode, Skills: nativeSkills,
 		VisionBatchBudget: visionBudget,
 		// 冻结的 Harness 正文随快照回发：恢复的 worker 因此不必（也不允许）重读磁盘 Harness。

@@ -4,6 +4,14 @@ import { agentErrorPresentation, agentSubmissionErrorTitle } from "@/lib/canvas/
 import { ApiError } from "@/services/api/request";
 
 describe("Agent window layout", () => {
+    it("clamps the preferred width while preserving a usable canvas and narrow-screen layout", () => {
+        expect(agentPanelWidth({ width: 1440, height: 900 }, 600)).toBe(600);
+        expect(agentPanelWidth({ width: 1280, height: 800 }, 900)).toBe(720);
+        expect(agentPanelWidth({ width: 1280, height: 800 }, 100)).toBe(360);
+        expect(agentPanelWidth({ width: 1920, height: 1080 }, 1200)).toBe(800);
+        expect(agentPanelWidth({ width: 768, height: 700 }, 600)).toBe(768);
+        expect(agentPanelWidth({ width: 1280, height: 800 }, Number.NaN)).toBe(440);
+    });
     it("docks at a fixed width when the viewport is wide enough", () => {
         expect(agentPanelWidth({ width: 1280, height: 800 })).toBe(AGENT_PANEL_WIDTH);
         expect(agentPanelIsCompact({ width: 1280, height: 800 })).toBe(false);

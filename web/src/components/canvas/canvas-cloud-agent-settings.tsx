@@ -1,12 +1,12 @@
 import { useState, type ReactNode } from "react";
 import { Button, Checkbox, Input, Switch } from "antd";
-import { ArrowLeft, BookMarked, Check, ChevronRight, Cpu, Gauge, LockKeyhole, PlugZap, Search, ShieldCheck, Sparkles, Wrench } from "lucide-react";
+import { ArrowLeft, BookMarked, Check, ChevronRight, CornerUpLeft, Cpu, Gauge, ListOrdered, LockKeyhole, PlugZap, Search, ShieldCheck, Sparkles, Wrench } from "lucide-react";
 
 import { ModelPicker } from "@/components/model-picker";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import AgentMemoryPane from "@/pages/settings/agent-memory-pane";
 import { CanvasAgentRulesSettings } from "./canvas-agent-rules-settings";
-import type { AgentPermissionMode, AgentReasoningMode } from "@/services/api/agent";
+import type { AgentPermissionMode, AgentReasoningMode, AgentSendMode } from "@/services/api/agent";
 import type { Skill } from "@/services/api/skills";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -14,6 +14,11 @@ export type AgentContextKey = "canvas" | "resources" | "generation_history" | "s
 type SettingsSection = "home" | "rules" | "memories" | "skills" | "mcp" | "context" | "budget";
 
 type AgentSettingsProps = {
+    sendMode?: AgentSendMode;
+    sendModeSaving?: boolean;
+    sendModeError?: string;
+    onSendModeChange: (mode: AgentSendMode) => void | Promise<void>;
+    onSendModeRetry: () => void | Promise<void>;
     subagents?: { enabled: boolean; disabled: boolean; saving: boolean; error: string; onToggle: () => void; onReload: () => void };
     theme: CanvasTheme;
     config: AiConfig;
@@ -73,7 +78,7 @@ export function CanvasCloudAgentSettings(props: AgentSettingsProps) {
                 <Button type="text" shape="circle" icon={<ArrowLeft className="size-4" />} onClick={section === "home" ? props.onBack : goHome} aria-label={section === "home" ? "返回对话" : "返回设置"} />
                 <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold">{title}</div>
-                    <div className="mt-0.5 text-[11px] opacity-40">{section === "home" ? "只影响下一次新运行" : sectionSubtitle(section)}</div>
+                    <div className="mt-0.5 text-[11px] opacity-40">{section === "home" ? "发送偏好与任务配置" : sectionSubtitle(section)}</div>
                 </div>
                 {section !== "home" ? (
                     <span className="rounded-full px-2 py-1 text-[10px] opacity-50" style={{ background: theme.node.fill }}>
@@ -96,6 +101,26 @@ export function CanvasCloudAgentSettings(props: AgentSettingsProps) {
 function SettingsHome({ props, theme, onOpen }: { props: AgentSettingsProps; theme: CanvasTheme; onOpen: (section: SettingsSection) => void }) {
     return (
         <div className="canvas-agent-settings-scroll thin-scrollbar min-h-0 flex-1 space-y-6 overflow-y-auto p-4">
+            <section aria-label="默认发送方式">
+                <SettingLabel label="默认发送方式" hint={props.sendModeSaving ? "保存中…" : props.sendMode ? "账号同步" : "加载中…"} />
+                <div className="grid grid-cols-2 gap-2">
+                    {([
+                        { value: "interject", label: "插队", description: "优先把新要求交给当前任务。", icon: CornerUpLeft },
+                        { value: "queue", label: "排队", description: "等当前任务结束，再按顺序发送。", icon: ListOrdered },
+                    ] as const).map(({ value, label, description, icon: Icon }) => (
+                        <button type="button" key={value} aria-pressed={props.sendMode === value}
+                            disabled={props.sendModeSaving || !props.sendMode}
+                            onClick={() => void props.onSendModeChange(value)}
+                            className="rounded-xl p-3 text-left disabled:opacity-50"
+                            style={{ background: theme.node.fill, border: `1px solid ${props.sendMode === value ? theme.accent.primary : "transparent"}` }}>
+                            <span className="flex items-center gap-2 text-xs font-semibold"><Icon aria-hidden="true" className="size-4" />{label}</span>
+                            <span className="mt-2 block text-xs leading-5" style={{ color: theme.node.muted }}>{description}</span>
+                        </button>
+                    ))}
+                </div>
+                <p className="mt-2 text-xs leading-5" style={{ color: theme.node.muted }}>Enter 或点击发送使用默认方式；Ctrl/⌘+Enter 仅本次使用相反方式，Shift+Enter 换行。没有运行中的任务时会直接开始。</p>
+                {props.sendModeError ? <div role="alert" className="mt-2 text-xs"><span>{props.sendModeError}</span><Button type="link" size="small" onClick={() => void props.onSendModeRetry()}>重试</Button></div> : null}
+            </section>
             <section>
                 <SettingLabel label="推理模式" hint="新运行生效" />
                 <div className="grid grid-cols-3 gap-2">

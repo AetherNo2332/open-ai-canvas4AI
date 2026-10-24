@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { CanvasCommandSession, type CommandTransport } from "../src/services/canvas-command-session";
+import { CanvasCommandSession, type CommandTransport, type StoredPending } from "../src/services/canvas-command-session";
+import { projectCanvasOperations, canvasDocumentChanges } from "../src/lib/canvas/canvas-event-projection";
 import type { Snapshot, Receipt, Command } from "../src/lib/canvas/command-contract.generated";
 const snapshot = (): Snapshot => ({
     protocolVersion: 1,
@@ -41,6 +42,104 @@ function transport(overrides: Partial<CommandTransport> = {}): CommandTransport 
     };
 }
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+test.each(["missing", "accepted", "offline"])("cold recovery checks old epoch receipt: %s", async (outcome) => {
+    let stored: StoredPending[] = [];
+    const journal = {
+        read: async () => structuredClone(stored),
+        write: async (_id: string, pending: StoredPending[]) => {
+            stored = structuredClone(pending);
+        },
+    };
+    const first = new CanvasCommandSession(
+        transport({
+            execute: async () => {
+                throw new Error("lost ACK");
+            },
+        }),
+        "client",
+        journal,
+    );
+    await first.open("canvas");
+    void first.submit([{ type: "update_node", id: "a", patch: { content: "draft" } }]).catch(() => {});
+    await tick();
+    await first.whenJournalDurable();
+    first.close();
+    let lookedUp = 0;
+    const current = { ...snapshot(), documentEpoch: "restored", revision: 8, eventSeq: 7 };
+    const recovered = new CanvasCommandSession(
+        transport({
+            snapshot: async () => current,
+            receipt: async (command) => {
+                lookedUp++;
+                if (outcome === "offline") throw new Error("offline");
+                if (outcome === "missing") throw Object.assign(new Error("missing"), { status: 404 });
+                return { ...receipt(1, "a", "draft", command.operationId), clientId: "client" };
+            },
+            execute: async () => {
+                throw new Error("must not replay across epochs");
+            },
+        }),
+        "client",
+        journal,
+    );
+    await recovered.open("canvas");
+    expect(lookedUp).toBe(1);
+    expect(recovered.state.acknowledged?.document).toEqual(current.document);
+    if (outcome === "accepted") expect(recovered.state.pending).toHaveLength(0);
+    else if (outcome === "offline") expect(recovered.state.pending[0].status).toBe("unconfirmed");
+    else {
+        expect(recovered.state.pending[0].status).toBe("conflicted");
+        let backup: unknown;
+        await recovered.loadLatest(async (draft) => {
+            backup = draft;
+        });
+        expect((backup as any).nodes[0].metadata.content).toBe("draft");
+    }
+    recovered.close();
+});
+
+test("large edits persist all chunks before sending and retain the unconfirmed remainder", async () => {
+    let stored: StoredPending[] = [];
+    const sent: Command[] = [];
+    let host = snapshot();
+    const session = new CanvasCommandSession(
+        transport({
+            execute: async (command) => {
+                sent.push(command);
+                if (sent.length === 1) expect(stored.map((p) => p.operations.length)).toEqual([100, 1]);
+                else throw new Error("connection lost");
+                const document = projectCanvasOperations(host.document, command.operations);
+                const result: Receipt = {
+                    ...receipt(1),
+                    operationId: command.operationId,
+                    clientId: command.clientId,
+                    changes: canvasDocumentChanges(host.document, document),
+                    entityVersions: Object.fromEntries(command.operations.map((op) => ["node:" + op.id, 1])),
+                };
+                host = { ...host, document, eventSeq: 1, revision: 2, entityVersions: { ...host.entityVersions, ...result.entityVersions } };
+                return result;
+            },
+        }),
+        "client",
+        {
+            read: async () => [],
+            write: async (_id, pending) => {
+                stored = structuredClone(pending);
+            },
+        },
+    );
+    await session.open("canvas");
+    void session.submit(Array.from({ length: 101 }, (_, i) => ({ type: "add_node", id: "bulk-" + i, nodeType: "text", content: String(i) }))).catch(() => {});
+    await tick();
+    await session.whenJournalDurable();
+    expect(sent.map((command) => command.operations.length)).toEqual([100, 1]);
+    expect(stored).toHaveLength(1);
+    expect(stored[0].operations[0].id).toBe("bulk-100");
+    expect(stored[0].status).toBe("unconfirmed");
+    expect(session.state.projected.nodes).toHaveLength(103);
+    session.close();
+});
 
 test.each([1, 3])("receipt-only no-op at host cursor %i synchronizes real events before settling and allows the next real edit", async (cursor) => {
     const remoteEvents = Array.from({ length: cursor }, (_, index) => receipt(index + 1, "a", "REMOTE " + (index + 1)));

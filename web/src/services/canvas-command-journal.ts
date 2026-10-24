@@ -1,5 +1,6 @@
 import type { CommandJournal, StoredPending } from "./canvas-command-session";
 import { nanoid } from "nanoid";
+import { withCanvasJournalLock } from "./canvas-journal-lock";
 export type CommandJournalStorage = { getItem<T>(key: string): Promise<T | null>; setItem<T>(key: string, value: T): Promise<unknown> };
 export type NativeCommandJournal = { get: (key: string) => Promise<unknown>; set: (key: string, value: unknown) => Promise<void> };
 export function nativeCommandJournalStorage(bridge: NativeCommandJournal): CommandJournalStorage {
@@ -32,15 +33,30 @@ export function createCanvasPersonalViewStorage(storage: CommandJournalStorage, 
 export function createCanvasCommandJournal(storage: CommandJournalStorage, scope: string): CommandJournal {
     if (!scope) throw new Error("canvas_command_journal_scope_missing");
     const prefix = scopeKey(scope);
+    const observed = new Map<string, Set<string>>();
+    const key = (canvasId: string) => prefix + "canvas:" + encodeURIComponent(canvasId);
+    async function readPending(canvasId: string) {
+        const value = await storage.getItem<{ protocolVersion: number; scope: string; canvasId: string; pending: StoredPending[] }>(key(canvasId));
+        if (value === null) return [];
+        if (value.protocolVersion !== 1 || value.scope !== scope || value.canvasId !== canvasId || !Array.isArray(value.pending) || value.pending.some((p) => !validPending(p))) throw new Error("canvas_command_journal_invalid");
+        return structuredClone(value.pending);
+    }
     return {
         async read(canvasId) {
-            const value = await storage.getItem<{ protocolVersion: number; scope: string; canvasId: string; pending: StoredPending[] }>(prefix + "canvas:" + encodeURIComponent(canvasId));
-            if (value === null) return [];
-            if (value.protocolVersion !== 1 || value.scope !== scope || value.canvasId !== canvasId || !Array.isArray(value.pending) || value.pending.some((p) => !validPending(p))) throw new Error("canvas_command_journal_invalid");
-            return structuredClone(value.pending);
+            const pending = await readPending(canvasId);
+            observed.set(canvasId, new Set(pending.map((p) => p.operationId)));
+            return pending;
         },
         async write(canvasId, pending) {
-            await storage.setItem(prefix + "canvas:" + encodeURIComponent(canvasId), { protocolVersion: 1, scope, canvasId, pending: structuredClone(pending) });
+            await withCanvasJournalLock(key(canvasId), async () => {
+                const known = observed.get(canvasId) || new Set<string>();
+                const merged = new Map((await readPending(canvasId)).filter((p) => !known.has(p.operationId)).map((p) => [p.operationId, p]));
+                for (const entry of pending) merged.set(entry.operationId, structuredClone(entry));
+                // Storage may persist and then reject; a rollback still owns these attempted IDs.
+                observed.set(canvasId, new Set([...known, ...pending.map((p) => p.operationId)]));
+                await storage.setItem(key(canvasId), { protocolVersion: 1, scope, canvasId, pending: [...merged.values()] });
+                observed.set(canvasId, new Set(pending.map((p) => p.operationId)));
+            });
         },
     };
 }
@@ -64,12 +80,14 @@ function validPending(p: StoredPending) {
 export async function readCanvasClientId(storage: CommandJournalStorage, scope: string): Promise<string> {
     if (!scope) throw new Error("canvas_command_journal_scope_missing");
     const key = scopeKey(scope) + "client";
-    const existing = await storage.getItem<string>(key);
-    if (existing !== null) {
-        if (typeof existing !== "string" || !existing || existing.length > 128) throw new Error("canvas_command_client_invalid");
-        return existing;
-    }
-    const id = nanoid(48);
-    await storage.setItem(key, id);
-    return id;
+    return withCanvasJournalLock(key, async () => {
+        const existing = await storage.getItem<string>(key);
+        if (existing !== null) {
+            if (typeof existing !== "string" || !existing || existing.length > 128) throw new Error("canvas_command_client_invalid");
+            return existing;
+        }
+        const id = nanoid(48);
+        await storage.setItem(key, id);
+        return id;
+    });
 }

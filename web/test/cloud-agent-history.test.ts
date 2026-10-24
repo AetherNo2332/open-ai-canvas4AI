@@ -39,6 +39,23 @@ function client(overrides: Partial<CloudAgentHistoryClient> = {}): CloudAgentHis
 }
 
 describe("Agent cloud conversation history", () => {
+    test("remote archive removes cached history without loading its runs", async () => {
+        const local = await loadCloudAgentConversation(conversationId, { client: client() });
+        const remote = await refreshCloudAgentConversations({
+            canvasId: "canvas-1",
+            existing: [local],
+            client: client({
+                listConversations: async () => ({ items: [summary({ archived: true })] }),
+                listRuns: async () => {
+                    throw new Error("archived history must not reload");
+                },
+            }),
+        });
+        expect(remote[0].archived).toBe(true);
+        expect(mergeCloudAgentConversations([local], remote)).toEqual([]);
+        const legacy = { ...local, serverConversationId: undefined, run: { ...run(conversationId), conversationId: undefined } };
+        expect(mergeCloudAgentConversations([legacy], remote)).toEqual([]);
+    });
     test("restores every run page and every event page from the first event", async () => {
         const reads: Array<{ id: string; seq: number; fromStart?: boolean }> = [];
         const restored = await loadCloudAgentConversation(conversationId, {

@@ -144,16 +144,30 @@ export class CanvasCommandSession {
         if (!this.acknowledged) return Promise.reject(aborted());
         if (this.loadingLatest) return Promise.reject(new Error("正在加载云端版本，请稍后再编辑"));
         if (effect && (!this.transport.invoke || !this.transport.recover)) return Promise.reject(new Error("canvas_effect_transport_unavailable"));
-        if ((!operations.length && !effect) || operations.length > 100) return Promise.reject(new Error("每条命令需要1至100项操作"));
-        const entry = this.preparePending(operations, preconditions, effect);
-        if (this.pending.some((other) => other.operationId === entry.pending.operationId)) {
-            entry.pending.reject(new Error("操作 ID 重复"));
-            return entry.completion;
-        }
-        this.pending.push(entry.pending);
+        if (!operations.length && !effect) return Promise.reject(new Error("每条命令需要至少1项操作"));
+        if (preconditions.operationId && this.pending.some((other) => other.operationId === preconditions.operationId)) return Promise.reject(new Error("操作 ID 重复"));
+        const entries = this.prepareBatch(operations, preconditions, effect);
+        const completion = Promise.all(entries.map((entry) => entry.completion)).then((receipts) => receipts[receipts.length - 1]);
+        // Persist every chunk before the first network write, so navigation or
+        // a rejected chunk cannot discard the remainder of a large edit.
+        this.pending.push(...entries.map((entry) => entry.pending));
         this.emit();
         void this.pump();
-        return entry.completion;
+        return completion;
+    }
+    private prepareBatch(operations: Operation[], preconditions: CommandPreconditions, effect?: CommandEffect, projected = this.state.projected) {
+        if (operations.length <= 100) return [this.preparePending(operations, preconditions, effect, projected)];
+        const entries: ReturnType<CanvasCommandSession["preparePending"]>[] = [];
+        const finalDocument = preconditions.preview ? applyCanvasDraftChanges(projected, preconditions.preview) : undefined;
+        for (let offset = 0; offset < operations.length; offset += 100) {
+            const chunk = operations.slice(offset, offset + 100);
+            const next = offset + 100 >= operations.length && finalDocument ? finalDocument : projectCanvasOperations(projected, chunk);
+            const entry = this.preparePending(chunk, { ...preconditions, operationId: offset === 0 ? preconditions.operationId : undefined, preview: canvasDocumentChanges(projected, next) }, effect, projected);
+            entry.pending.dependencies.push(...entries.map((previous) => previous.pending.operationId));
+            entries.push(entry);
+            projected = next;
+        }
+        return entries;
     }
     private preparePending(operations: Operation[], preconditions: CommandPreconditions, effect?: CommandEffect, projected = this.state.projected) {
         if (!this.acknowledged) throw aborted();
@@ -328,18 +342,24 @@ export class CanvasCommandSession {
                 // it finishes can observe a normal 404 and mark it queued.
                 // Restored journal wires enter as unconfirmed, so still recover.
                 if (p.status === "inflight" && this.pumping) continue;
-                if (p.wire && p.effect?.type === "restore" && p.documentEpoch !== this.acknowledged!.documentEpoch) {
+                if (p.documentEpoch !== this.acknowledged!.documentEpoch) {
                     try {
-                        const result = await this.transport.recover!(p.wire, p.effect, this.abort.signal);
+                        if (!p.wire) {
+                            this.conflict(p, "document_epoch_mismatch", "画布已恢复到新的版本，原编辑草稿已保留");
+                            continue;
+                        }
+                        const result = p.effect ? await this.transport.recover!(p.wire, p.effect, this.abort.signal) : await this.transport.receipt(p.wire, this.abort.signal);
                         if (generation !== this.generation) return;
+                        if ("receipt" in result) p.result = result;
                         await this.receiveReceipt("receipt" in result ? result.receipt : result);
                     } catch (error) {
+                        if (generation !== this.generation) return;
                         if (errorStatus(error) !== 404) throw error;
-                        this.conflict(p, "document_epoch_mismatch", "画布已恢复到新的世代，原恢复请求已保留");
+                        this.conflict(p, "document_epoch_mismatch", "画布已恢复到新的版本，原编辑草稿已保留");
                     }
                     continue;
                 }
-                if (p.documentEpoch !== this.acknowledged!.documentEpoch || p.status === "conflicted" || p.status === "rejected") continue;
+                if (p.status === "conflicted" || p.status === "rejected") continue;
                 if (p.wire) {
                     try {
                         const result = p.effect ? await this.transport.recover!(p.wire, p.effect, this.abort.signal) : await this.transport.receipt(p.wire, this.abort.signal);
@@ -509,7 +529,6 @@ export class CanvasCommandSession {
         if (!this.pending.some((p) => p.status === "rejected") || this.pending.some((p) => p.effect || !["rejected", "queued"].includes(p.status))) {
             throw new Error("仍有冲突、任务或未确认的提交，请先确认保存结果；本地修改已保留");
         }
-        if (operations.length > 100) throw new Error("本次修改过多，请先下载草稿后分批处理");
         const generation = this.generation,
             acknowledged = this.acknowledged,
             pending = [...this.pending];
@@ -520,17 +539,19 @@ export class CanvasCommandSession {
             validateLocalDraft();
         };
         this.loadingLatest = true;
-        let entry: ReturnType<CanvasCommandSession["preparePending"]> | undefined;
+        let entries: ReturnType<CanvasCommandSession["preparePending"]>[] = [];
         try {
             await this.whenJournalDurable();
             await preserveDraft();
             unchanged();
             if (operations.length) {
-                entry = this.preparePending(operations, preconditions, undefined, acknowledged.document);
-                entry.pending.dependencies = [];
-                void entry.completion.catch(() => {});
+                entries = this.prepareBatch(operations, preconditions, undefined, acknowledged.document);
+                for (const [index, entry] of entries.entries()) {
+                    entry.pending.dependencies = entries.slice(0, index).map((previous) => previous.pending.operationId);
+                    void entry.completion.catch(() => {});
+                }
             }
-            const stored = entry ? [copy((({ resolve: _, reject: __, ...p }) => p)(entry.pending))] : [];
+            const stored = entries.map((entry) => copy((({ resolve: _, reject: __, ...p }) => p)(entry.pending)));
             if (this.journal) {
                 try {
                     this.journalTail = this.journalTail.then(() => this.journal!.write(acknowledged.canvasId, stored));
@@ -543,7 +564,7 @@ export class CanvasCommandSession {
                     throw error;
                 }
             } else unchanged();
-            this.pending = entry ? [entry.pending] : [];
+            this.pending = entries.map((entry) => entry.pending);
             for (const old of pending) old.reject(new DOMException("原修改已备份，正在保存修正后的内容", "AbortError"));
             this.offline = false;
             this.emit(false);
@@ -551,7 +572,7 @@ export class CanvasCommandSession {
             if (generation === this.generation) this.loadingLatest = false;
         }
         await this.pump();
-        if (entry) {
+        for (const entry of entries) {
             if (this.pending.includes(entry.pending) && ["inflight", "unconfirmed", "queued"].includes(entry.pending.status)) throw new Error("保存结果尚未确认，请先重新同步；本地修改已保留");
             await entry.completion;
         }

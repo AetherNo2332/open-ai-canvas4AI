@@ -20,6 +20,31 @@ func finishConversationTestRun(t *testing.T, db *gorm.DB, runID string) {
 	}
 }
 
+func TestCloudAgentConversationArchivePersistsAcrossTurns(t *testing.T) {
+	s, db, root := reliableAgentRoot(t)
+	if err := s.ArchiveCloudAgentConversation("other", root.ID); err == nil {
+		t.Fatal("cross-owner archive accepted")
+	}
+	if err := s.ArchiveCloudAgentConversation("user", root.ID); err != nil {
+		t.Fatal(err)
+	}
+	finishConversationTestRun(t, db, root.ID)
+	req := agentTestRequest()
+	req.CanvasID, req.Prompt, req.IdempotencyKey = "agent-canvas", "Continue", "archived-followup"
+	child, err := s.CreateCloudAgentRun("user", req, root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.CloudAgentConversations("user", "agent-canvas", "", 100)
+	if err != nil || len(page.Items) != 1 || !page.Items[0].Archived || page.Items[0].LatestRunID != child.ID {
+		t.Fatalf("archive lost: %#v, %v", page, err)
+	}
+	runs, err := s.CloudAgentConversationRuns("user", root.ID, "", 100)
+	if err != nil || len(runs.Items) != 2 {
+		t.Fatalf("archive removed execution records: %#v, %v", runs, err)
+	}
+}
+
 func TestCloudAgentConversationHistoryRestoresTurnsAndOwnership(t *testing.T) {
 	s, db, root := reliableAgentRoot(t)
 	finishConversationTestRun(t, db, root.ID)

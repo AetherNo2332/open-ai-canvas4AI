@@ -743,25 +743,24 @@ export function CanvasScriptEditor({
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [tableHeight, setTableHeight] = useState(480);
     const [tableWidth, setTableWidth] = useState(0);
-    const tableWrapRef = useRef<HTMLDivElement>(null);
+    const [tableWrap, setTableWrap] = useState<HTMLDivElement | null>(null);
     const rows = node?.metadata?.storyboard?.rows || EMPTY_STORYBOARD_ROWS;
     const visibleColumns = scriptVisibleColumns(node?.metadata?.storyboard?.visibleColumns);
     const totalDuration = rows.reduce((sum, row) => sum + (Number(row.durationSeconds) || 0), 0);
     const videoInputMode = node?.metadata?.storyboardVideoInputMode || "direct";
     const nodeById = useMemo(() => new Map(nodes.map((item) => [item.id, item])), [nodes]);
-    // 表格高度跟随弹窗剩余空间；宽度用于把剩余空间分给文本列，避免宽屏右侧留白。
+    // Modal 的 portal 延迟挂载；等容器实际出现后再订阅尺寸，重开时也重新绑定。
     useLayoutEffect(() => {
-        const element = tableWrapRef.current;
-        if (!open || !element) return;
+        if (!open || !tableWrap) return;
         const measure = () => {
-            setTableHeight(Math.max(220, element.clientHeight));
-            setTableWidth(element.clientWidth);
+            setTableHeight(tableWrap.clientHeight);
+            setTableWidth(tableWrap.clientWidth);
         };
         measure();
         const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-        observer?.observe(element);
+        observer?.observe(tableWrap);
         return () => observer?.disconnect();
-    }, [open]);
+    }, [open, tableWrap]);
     const filteredRows = useMemo(() => {
         const keyword = query.trim().toLowerCase();
         return keyword
@@ -822,7 +821,7 @@ export function CanvasScriptEditor({
             option.value === "shotNumber" ? (
                 <span className="font-semibold tabular-nums">{row.shotNumber}</span>
             ) : option.value === "durationSeconds" ? (
-                <InputNumber min={1} max={60} value={row.durationSeconds} addonAfter="s" className="w-full" onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
+                <InputNumber min={1} max={60} value={row.durationSeconds} suffix="s" aria-label="时长（秒）" style={{ width: "100%" }} onChange={(value) => updateRow(row.id, { durationSeconds: Number(value) || 1 })} />
             ) : option.value === "assets" ? (
                 <StoryboardAssetsCell
                     bindings={row.assetBindings || []}
@@ -908,12 +907,16 @@ export function CanvasScriptEditor({
             footer={null}
             width="min(1880px, calc(100vw - 24px))"
             style={{ top: 12 }}
+            styles={{
+                container: { height: "calc(100dvh - 24px)", display: "flex", flexDirection: "column" },
+                body: { flex: 1, minHeight: 0, display: "flex" },
+            }}
             destroyOnHidden
         >
-            <div className="flex h-[calc(100dvh-124px)] min-h-[520px] flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 <div className="shrink-0 border-b border-foreground/10 px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2">
-                        <Input.Search className="w-72" allowClear placeholder="筛选画面、台词或提示词" value={query} onChange={(event) => setQuery(event.target.value)} />
+                        <Input.Search style={{ width: "min(18rem, 100%)" }} allowClear placeholder="筛选画面、台词或提示词" value={query} onChange={(event) => setQuery(event.target.value)} />
                         {node ? <StoryboardSharedReferencesControl node={node} nodes={nodes} onChange={onReferenceNodeIdsChange} /> : null}
                         <Popover trigger="click" placement="bottomLeft" arrow={false} content={columnPicker}>
                             <Button icon={<Columns3 className="size-4" />}>
@@ -948,13 +951,13 @@ export function CanvasScriptEditor({
                     </div>
                 </div>
                 <div className="min-h-0 flex-1 px-3 pb-3">
-                    <div ref={tableWrapRef} className="h-full min-h-0 pt-2">
+                    <div ref={setTableWrap} className="h-full min-h-0 pt-2">
                         <Table<StoryboardRow>
                             rowKey="id"
                             size="middle"
                             bordered
                             pagination={false}
-                            scroll={{ x: Math.max(tableWidth, storyboardEditorColumnsTotal(columnWidths)), y: Math.max(200, tableHeight - 64) }}
+                            scroll={{ x: Math.max(tableWidth, storyboardEditorColumnsTotal(columnWidths)), y: Math.max(1, tableHeight - 64) }}
                             dataSource={filteredRows}
                             columns={columns}
                             rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys.map(String)) }}
