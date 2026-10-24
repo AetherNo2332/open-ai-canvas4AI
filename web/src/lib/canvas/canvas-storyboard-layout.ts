@@ -38,6 +38,19 @@ export function storyboardTableHeight(nodeHeight: number, composerHeight = STORY
 }
 
 /**
+ * Rows the in-node card list keeps mounted: the scrolled window plus overscan
+ * (`end` is exclusive). Rows have a fixed height, so the rest become spacers;
+ * a long storyboard otherwise mounts thousands of controls nobody can see.
+ */
+export function storyboardCardRowWindow(rowCount: number, scrollTop: number, viewportHeight: number, overscan = 4) {
+    const top = Math.max(0, scrollTop);
+    const first = Math.floor(top / STORYBOARD_ROW_HEIGHT) - overscan;
+    const last = Math.ceil((top + Math.max(STORYBOARD_ROW_HEIGHT, viewportHeight)) / STORYBOARD_ROW_HEIGHT) + overscan;
+    const start = Math.min(rowCount, Math.max(0, first));
+    return { start, end: Math.min(rowCount, Math.max(start, last)) };
+}
+
+/**
  * 画布节点卡片按勾选的列渲染：序号、时长、关联资产保持固定宽度，
  * 文本列用 minmax(最小宽度, 权重) 在节点变宽时分配剩余空间，放不下时由卡片横向滚动兜底。
  */

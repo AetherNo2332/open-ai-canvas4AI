@@ -132,9 +132,15 @@ export function createCanvasEditLeaseController(deps: { scope: string; canvasId:
             try {
                 const activity = await deps.api.status(deps.canvasId, abort.signal);
                 check();
-                update({ activity: { ...activity, leases: activity.leases.map((lease) => ({ ...lease, isCurrentWindow: lease.sessionId === sessionId })) }, activityError: undefined });
+                const view: CanvasSyncActivityView = { ...activity, leases: activity.leases.map((lease) => ({ ...lease, isCurrentWindow: lease.sessionId === sessionId })) };
+                // The 5s poll usually returns the same activity. Every node reading
+                // lease state subscribes to this snapshot, so only publish changes.
+                if (state.activityError === undefined && state.activity && JSON.stringify(state.activity) === JSON.stringify(view)) return;
+                update({ activity: view, activityError: undefined });
             } catch (error) {
-                if (!closed && deps.current()) update({ activityError: error instanceof Error ? error.message : "占用状态暂不可用" });
+                if (closed || !deps.current()) return;
+                const activityError = error instanceof Error ? error.message : "占用状态暂不可用";
+                if (state.activityError !== activityError) update({ activityError });
             }
         })();
         statusFlight = operation;

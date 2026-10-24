@@ -927,6 +927,18 @@ function nodeTypeIcon(type: CanvasNodeTypeId) {
 
 // 节点状态徽章（对应 #97 决策2：左上角状态指示，loading/success/error）
 function NodeStatusBadge({ status }: { status: "loading" | "success" | "error" }) {
+    // success 只在本次挂载内观察到“进入完成”时闪现一次：视口裁剪或 LOD 切换导致的重新挂载不重播，
+    // 淡出后卸载，避免透明徽章的 backdrop-filter 继续占用合成层。
+    const previousStatus = useRef(status);
+    const [successVisible, setSuccessVisible] = useState(false);
+    useEffect(() => {
+        const entered = status === "success" && previousStatus.current !== "success";
+        previousStatus.current = status;
+        if (!entered) return;
+        setSuccessVisible(true);
+        const timer = window.setTimeout(() => setSuccessVisible(false), 2000);
+        return () => window.clearTimeout(timer);
+    }, [status]);
     if (status === "loading") {
         return (
             <div
@@ -951,7 +963,8 @@ function NodeStatusBadge({ status }: { status: "loading" | "success" | "error" }
             </div>
         );
     }
-    // success：短暂闪现后淡出（由 CSS animation 控制，2s 后消失）
+    if (!successVisible) return null;
+    // success：短暂闪现后淡出（由 CSS animation 控制，2s 后卸载）
     return (
         <div
             className="pointer-events-none absolute left-2 top-2 z-20 flex items-center gap-1 rounded-full px-2 py-0.5 backdrop-blur-sm"
@@ -1029,7 +1042,6 @@ function ConnectionSideRail({ side, scale, theme, visible = false, onPointerDown
                     transform: `translate(${sideOffset}px, 0) scale(1)`,
                     transition: "transform 80ms ease-out",
                     transformOrigin: "center",
-                    willChange: "transform",
                 }}
             >
                 <svg

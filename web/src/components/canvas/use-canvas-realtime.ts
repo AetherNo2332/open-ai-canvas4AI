@@ -51,11 +51,29 @@ export function useCanvasRealtime({ scope, canvasId, apiBaseURL, enabled, contai
             local = { ...local, ...patch };
             client.presence(local);
         };
+        // pointermove fires every frame while dragging. Reading geometry there
+        // flushes any pending style work synchronously, so the container rect is
+        // measured once and only re-read after a resize or a real scroll.
+        let bounds: DOMRect | null = null;
+        const invalidateBounds = () => {
+            bounds = null;
+        };
+        // The canvas dispatches synthetic scroll notifications while panning;
+        // they never move the container itself.
+        const invalidateBoundsOnScroll = (event: Event) => {
+            if (event.isTrusted) bounds = null;
+        };
+        const resizeObserver = element && typeof ResizeObserver !== "undefined" ? new ResizeObserver(invalidateBounds) : undefined;
         const move = (event: PointerEvent) => {
             if (!element) return;
             const target = event.target instanceof Element ? event.target : null;
             const ignored = target?.closest("[data-canvas-no-zoom],[data-connection-create-menu],input,textarea,select,button,[contenteditable='true'],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown");
-            publish({ cursor: ignored ? null : realtimeCursorWorldPoint({ x: event.clientX, y: event.clientY }, element.getBoundingClientRect(), viewportRef.current) });
+            if (ignored) {
+                publish({ cursor: null });
+                return;
+            }
+            bounds ??= element.getBoundingClientRect();
+            publish({ cursor: realtimeCursorWorldPoint({ x: event.clientX, y: event.clientY }, bounds, viewportRef.current) });
         };
         const leave = () => publish({ cursor: null });
         const clear = () => publish({ cursor: null, drag: [] });
@@ -72,6 +90,9 @@ export function useCanvasRealtime({ scope, canvasId, apiBaseURL, enabled, contai
                   publish({ drag: realtimeDragPositions(nodesRef.current, preview) });
               })
             : undefined;
+        if (element) resizeObserver?.observe(element);
+        window.addEventListener("resize", invalidateBounds);
+        window.addEventListener("scroll", invalidateBoundsOnScroll, true);
         element?.addEventListener("pointermove", move, true);
         element?.addEventListener("pointerleave", leave);
         element?.addEventListener("pointercancel", clear);
@@ -80,6 +101,9 @@ export function useCanvasRealtime({ scope, canvasId, apiBaseURL, enabled, contai
         return () => {
             offViewport?.();
             offDrag?.();
+            resizeObserver?.disconnect();
+            window.removeEventListener("resize", invalidateBounds);
+            window.removeEventListener("scroll", invalidateBoundsOnScroll, true);
             element?.removeEventListener("pointermove", move, true);
             element?.removeEventListener("pointerleave", leave);
             element?.removeEventListener("pointercancel", clear);

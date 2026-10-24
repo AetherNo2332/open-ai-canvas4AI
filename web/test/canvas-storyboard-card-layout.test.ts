@@ -1,7 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
 import { DEFAULT_STORYBOARD_COLUMNS, STORYBOARD_COLUMN_OPTIONS } from "@/lib/canvas/canvas-storyboard-columns";
-import { STORYBOARD_EDITOR_ACTIONS_WIDTH, applyStoryboardComposerMeasurement, storyboardCardGridTemplate, storyboardCardMinWidth, storyboardEditorColumnsTotal, storyboardEditorColumnWidth, storyboardEditorColumnWidths, storyboardEditorScrollWidth } from "@/lib/canvas/canvas-storyboard-layout";
+import {
+    STORYBOARD_EDITOR_ACTIONS_WIDTH,
+    STORYBOARD_ROW_HEIGHT,
+    applyStoryboardComposerMeasurement,
+    storyboardCardGridTemplate,
+    storyboardCardMinWidth,
+    storyboardCardRowWindow,
+    storyboardEditorColumnsTotal,
+    storyboardEditorColumnWidth,
+    storyboardEditorColumnWidths,
+    storyboardEditorScrollWidth,
+} from "@/lib/canvas/canvas-storyboard-layout";
 
 describe("storyboard card column layout", () => {
     test("measuring a composer preserves manual size intent, avoids locked geometry changes and stabilizes", () => {
@@ -57,5 +68,21 @@ describe("storyboard card column layout", () => {
         expect(wide[2]).toBeGreaterThan(320);
         expect(wide[3]).toBeGreaterThan(150);
         expect(wide[4]).toBeGreaterThan(200);
+    });
+});
+
+describe("storyboard card row window", () => {
+    test("mounts only the scrolled rows plus overscan for a long storyboard", () => {
+        // 73 shots in a node showing about four rows: the full list used to mount every control.
+        expect(storyboardCardRowWindow(73, 0, 192)).toEqual({ start: 0, end: 8 });
+        expect(storyboardCardRowWindow(73, 30 * STORYBOARD_ROW_HEIGHT, 192)).toEqual({ start: 26, end: 38 });
+        expect(storyboardCardRowWindow(73, 73 * STORYBOARD_ROW_HEIGHT, 192)).toEqual({ start: 69, end: 73 });
+    });
+
+    test("short lists, empty lists and odd inputs stay within bounds", () => {
+        expect(storyboardCardRowWindow(3, 0, 960)).toEqual({ start: 0, end: 3 });
+        expect(storyboardCardRowWindow(0, 0, 192)).toEqual({ start: 0, end: 0 });
+        expect(storyboardCardRowWindow(10, -40, 0)).toEqual({ start: 0, end: 5 });
+        expect(storyboardCardRowWindow(10, 10_000, 192)).toEqual({ start: 10, end: 10 });
     });
 });
