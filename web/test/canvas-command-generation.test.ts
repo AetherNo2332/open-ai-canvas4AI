@@ -4,6 +4,7 @@ import { createGenerationTaskSubscriptionService, waitForGenerationTask, type Ge
 import { generationTaskStatusLabel, generationTaskShowsProgress, canCancelGenerationTask } from "../src/lib/generation-task-display";
 import { managedCanvasTaskRequest, inferCanvasTaskBinding, createCanvasGenerationContinuation } from "../src/services/canvas-generation-continuation";
 import { CanvasCommandSession, type CommandTransport } from "../src/services/canvas-command-session";
+import type { Receipt } from "../src/lib/canvas/command-contract.generated";
 const uncertain = { id: "uncertain", status: "submission_uncertain", type: "text", prompt: "x", attempts: 1, createdAt: "now", updatedAt: "now" } as unknown as GenerationTask;
 test("ordinary continuation binds an output to its actual batch or storyboard row", () => {
     const document = {
@@ -26,24 +27,30 @@ test("ordinary continuation binds an output to its actual batch or storyboard ro
 test("ordinary continuation commits new editor nodes before submitting one durable task", async () => {
     const steps: string[] = [];
     let sent: any;
+    let committed: Receipt | undefined;
+    let eventReads = 0;
     const session = new CanvasCommandSession(
         {
             snapshot: async () => ({
                 protocolVersion: 1,
                 canvasId: "canvas",
                 documentEpoch: "epoch",
-                revision: 1,
-                eventSeq: 0,
+                revision: committed?.revision || 1,
+                eventSeq: committed?.eventSeq || 0,
                 entityVersions: { "node:target": 1 },
                 document: { nodes: [{ id: "target", type: "text", metadata: { content: "old" } }], connections: [] },
             }),
-            events: async () => [],
+            events: async (_id, after) => {
+                eventReads++;
+                return committed && committed.eventSeq > after ? [committed] : [];
+            },
             invoke: async (command, effect) => {
                 steps.push("submit");
                 sent = { command, effect };
+                committed = { protocolVersion: 1, canvasId: "canvas", documentEpoch: "epoch", clientId: "client", actorId: "owner", operationId: command.operationId, revision: 2, eventSeq: 1, changes: { entities: [] }, entityVersions: {} };
                 return {
                     taskId: "task",
-                    receipt: { protocolVersion: 1, canvasId: "canvas", documentEpoch: "epoch", clientId: "client", actorId: "owner", operationId: command.operationId, revision: 2, eventSeq: 1, changes: { entities: [] }, entityVersions: {} },
+                    receipt: committed,
                 };
             },
             recover: async () => {},
@@ -70,6 +77,9 @@ test("ordinary continuation commits new editor nodes before submitting one durab
     expect(steps).toEqual(["commit", "submit", "query"]);
     expect(sent.command.operationId).toBe("stable-operation");
     expect(sent.effect.request.targetNodeId).toBe("target");
+    expect(eventReads).toBe(1);
+    expect(session.state.acknowledged?.eventSeq).toBe(1);
+    expect(session.state.pending).toEqual([]);
     session.close();
 });
 test("managed canvas tasks retain creative and workflow inputs while omitting renderer credentials", () => {

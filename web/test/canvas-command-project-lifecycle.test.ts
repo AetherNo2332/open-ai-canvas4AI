@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { attachCanvasCommandProject } from "../src/services/canvas-command-project-lifecycle";
 import { CanvasCommandSession, type CommandTransport } from "../src/services/canvas-command-session";
+import { customCanvasAppearanceFromTheme, defaultCanvasAppearance, normalizeCanvasAppearance } from "../src/lib/canvas/canvas-appearance";
+import { canvasDocumentChanges, projectCanvasOperations, type CanvasDocument } from "../src/lib/canvas/canvas-event-projection";
 test("editor lifecycle commits semantic changes, stores personal view and never invokes whole-document save", async () => {
     const sent: any[] = [];
     let live: any = {};
@@ -67,4 +69,80 @@ test("editor lifecycle commits semantic changes, stores personal view and never 
     expect(legacy).toBe(0);
     editor.dispose();
     session.close();
+});
+
+test.each(["preset", "custom"] as const)("normalized host %s appearance stays idle across reconnects and saves one real color setting change", async (mode) => {
+    // Go JSON map responses sort keys; presentation rebuilds custom values and
+    // preset theme memory in the appearance normalizer's field order.
+    const hostJSON = (value: unknown): any =>
+        Array.isArray(value)
+            ? value.map(hostJSON)
+            : value && typeof value === "object"
+              ? Object.fromEntries(
+                    Object.keys(value)
+                        .sort()
+                        .map((key) => [key, hostJSON((value as Record<string, unknown>)[key])]),
+                )
+              : value;
+    const appearance = mode === "custom" ? customCanvasAppearanceFromTheme("dark") : defaultCanvasAppearance("dark");
+    const values = (value: any) => (mode === "custom" ? value.custom : value.preset.values);
+    let document: CanvasDocument = hostJSON({ id: "canvas", nodes: [], connections: [], appearance });
+    let revision = 1;
+    let eventSeq = 0;
+    let live: any = {};
+    const sent: any[] = [];
+    const session = new CanvasCommandSession(
+        {
+            snapshot: async () => ({ protocolVersion: 1, canvasId: "canvas", documentEpoch: "epoch", revision, eventSeq, document: structuredClone(document), entityVersions: {} }),
+            events: async () => [],
+            execute: async (command) => {
+                sent.push(command);
+                const next = hostJSON(projectCanvasOperations(document, command.operations));
+                const changes = canvasDocumentChanges(document, next);
+                document = next;
+                return { protocolVersion: 1, canvasId: "canvas", documentEpoch: "epoch", clientId: "client", operationId: command.operationId, actorId: "owner", revision: ++revision, eventSeq: ++eventSeq, changes, entityVersions: {} };
+            },
+            receipt: async () => {
+                throw new Error("unexpected receipt lookup");
+            },
+        } as CommandTransport,
+        "client",
+    );
+    await session.open("canvas");
+    const editor = await attachCanvasCommandProject({
+        canvasId: "canvas",
+        session,
+        capabilities: { protocolVersion: 1, nodes: [], structuredFields: {} },
+        refs: { nodes: { current: [] }, connections: { current: [] } },
+        read: () => live,
+        present: (projected) => {
+            live = { ...projected, appearance: normalizeCanvasAppearance(projected.appearance, "dark") };
+        },
+        view: { read: async () => null, write: async () => {} },
+        readViewport: () => ({ x: 0, y: 0, k: 1 }),
+        presentViewport: () => {},
+    });
+    try {
+        for (let cycle = 0; cycle < 5; cycle++) {
+            await session.reconnect();
+            await editor.commit();
+            expect(await session.flush()).toBe(true);
+            expect(sent).toHaveLength(0);
+        }
+        values(live.appearance).gridOpacity = 47;
+        await editor.commit();
+        expect(sent).toHaveLength(1);
+        expect(sent[0].operations).toEqual([{ type: "edit_canvas_settings", id: "canvas", patch: { appearance: mode === "custom" ? { custom: { gridOpacity: 47 } } : { preset: { values: { gridOpacity: 47 } } } } }]);
+        expect(values(document.appearance).gridOpacity).toBe(47);
+        for (let cycle = 0; cycle < 5; cycle++) {
+            await session.reconnect();
+            await editor.commit();
+            expect(await session.flush()).toBe(true);
+        }
+        expect(sent).toHaveLength(1);
+        expect(revision).toBe(2);
+    } finally {
+        editor.dispose();
+        session.close();
+    }
 });

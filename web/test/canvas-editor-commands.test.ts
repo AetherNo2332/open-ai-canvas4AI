@@ -51,6 +51,26 @@ test("unmapped editing fields are surfaced with their paths instead of silently 
     next.nodes[0].metadata.extension = "changed";
     expect(() => canvasEditorCommands(source, next, capabilities as any)).toThrow("canvas_editor_unmapped:node:a:metadata.extension");
 });
+test("object-valued node fields ignore key order but preserve array edits and reject unknown changes", () => {
+    const richText = {
+        type: "doc",
+        content: [
+            { type: "paragraph", attrs: { align: "left", indent: 0 } },
+            { type: "paragraph", attrs: { align: "right", indent: 1 } },
+        ],
+    };
+    const source = { id: "canvas", nodes: [{ id: "a", type: "text", metadata: { richText, extension: { first: 1, second: 2 } } }], connections: [] };
+    const next = {
+        ...source,
+        nodes: [{ ...source.nodes[0], metadata: { extension: { second: 2, first: 1 }, richText: { content: richText.content.map((entry) => ({ attrs: { indent: entry.attrs.indent, align: entry.attrs.align }, type: entry.type })), type: "doc" } } }],
+    };
+    const caps = { protocolVersion: 1, nodes: [{ type: "text", patchFields: { richText: { path: "metadata.richText" } } }], structuredFields: {} };
+    expect(canvasEditorCommands(source, next, caps)).toEqual([]);
+    next.nodes[0].metadata.richText.content.reverse();
+    expect(canvasEditorCommands(source, next, caps)).toEqual([{ type: "update_node", id: "a", patch: { richText: next.nodes[0].metadata.richText } }]);
+    next.nodes[0].metadata.extension.first = 3;
+    expect(() => canvasEditorCommands(source, next, caps)).toThrow("canvas_editor_unmapped:node:a:metadata.extension.first");
+});
 test("shared appearance uses a small settings patch and viewport stays personal", () => {
     const source = { ...before(), appearance: { mode: "light", extension: "keep" }, backgroundMode: "blank", viewport: { x: 0, y: 0, k: 1 } },
         next = structuredClone(source);

@@ -42,6 +42,233 @@ function transport(overrides: Partial<CommandTransport> = {}): CommandTransport 
 }
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+test.each([1, 3])("receipt-only no-op at host cursor %i synchronizes real events before settling and allows the next real edit", async (cursor) => {
+    const remoteEvents = Array.from({ length: cursor }, (_, index) => receipt(index + 1, "a", "REMOTE " + (index + 1)));
+    const sent: Command[] = [];
+    const reads: number[] = [];
+    const session = new CanvasCommandSession(
+        transport({
+            events: async (_id, after) => {
+                reads.push(after);
+                return remoteEvents.filter((event) => event.eventSeq > after);
+            },
+            execute: async (command) => {
+                sent.push(command);
+                if (sent.length === 1) return { ...receipt(cursor, "a", "unused", command.operationId), clientId: command.clientId, changes: { entities: [], fields: {} }, entityVersions: {} };
+                return { ...receipt(cursor + 1, "a", "EDITED", command.operationId), clientId: command.clientId };
+            },
+        }),
+        "client",
+    );
+    await session.open("canvas");
+    const done = session.submit([{ type: "edit_canvas_settings", id: "canvas", patch: { appearance: { custom: {} } } }]).catch((error) => error);
+    try {
+        await tick();
+        expect(session.state.acknowledged?.eventSeq).toBe(cursor);
+        expect((session.state.projected.nodes as any[])[0].metadata.content).toBe("REMOTE " + cursor);
+        expect(reads).toEqual([0]);
+        expect(session.state.saveState).toBe("saved");
+        expect(session.state.pending).toEqual([]);
+        await done;
+        await session.submit([{ type: "update_node", id: "a", patch: { content: "EDITED" } }]);
+        expect(sent[1].baseRevision).toBe(cursor + 1);
+        expect(session.state.acknowledged?.eventSeq).toBe(cursor + 1);
+        expect((session.state.projected.nodes as any[])[0].metadata.content).toBe("EDITED");
+    } finally {
+        session.close();
+    }
+});
+
+test("receipt recovery synchronizes events that appeared after the initial reconnect read", async () => {
+    let command!: Command;
+    let eventsVisible = false;
+    const remote = receipt(1, "a", "REMOTE");
+    const session = new CanvasCommandSession(
+        transport({
+            execute: async (request) => {
+                command = request;
+                throw new Error("lost ACK");
+            },
+            events: async (_id, after) => (eventsVisible && after === 0 ? [remote] : []),
+            receipt: async (request) => {
+                expect(request).toEqual(command);
+                eventsVisible = true;
+                return { ...remote, clientId: request.clientId, operationId: request.operationId, changes: { entities: [], fields: {} }, entityVersions: {} };
+            },
+        }),
+        "client",
+    );
+    await session.open("canvas");
+    const done = session.submit([{ type: "edit_canvas_settings", id: "canvas", patch: { appearance: { custom: {} } } }]);
+    try {
+        await tick();
+        expect(session.state.saveState).toBe("offline");
+        await session.reconnect();
+        await done;
+        expect((session.state.projected.nodes as any[])[0].metadata.content).toBe("REMOTE");
+        expect(session.state.acknowledged?.eventSeq).toBe(1);
+        expect(session.state.pending).toEqual([]);
+    } finally {
+        session.close();
+    }
+});
+
+test("receipt-only no-op falls back to an authoritative snapshot when the event log cannot cover its cursor", async () => {
+    let snapshotReads = 0;
+    const session = new CanvasCommandSession(
+        transport({
+            snapshot: async () => {
+                snapshotReads++;
+                if (snapshotReads === 1) return snapshot();
+                const latest = snapshot();
+                (latest.document.nodes as any[])[0].metadata.content = "SNAPSHOT REMOTE";
+                return { ...latest, revision: 4, eventSeq: 3, entityVersions: { "node:a": 4, "node:b": 1 } };
+            },
+            execute: async (command) => ({ ...receipt(3, "a", "unused", command.operationId), clientId: command.clientId, changes: { entities: [], fields: {} }, entityVersions: {} }),
+        }),
+        "client",
+    );
+    await session.open("canvas");
+    const done = session.submit([{ type: "edit_canvas_settings", id: "canvas", patch: { appearance: { custom: {} } } }]).catch((error) => error);
+    try {
+        await tick();
+        expect(snapshotReads).toBe(2);
+        expect(session.state.acknowledged?.eventSeq).toBe(3);
+        expect((session.state.projected.nodes as any[])[0].metadata.content).toBe("SNAPSHOT REMOTE");
+        expect(session.state.pending).toEqual([]);
+        await done;
+    } finally {
+        session.close();
+    }
+});
+
+test("a real empty host event from the log advances the cursor and keeps the preceding remote update", async () => {
+    const remote = receipt(1, "a", "REMOTE");
+    const emptyHostEvent = { ...receipt(2), changes: { entities: [], fields: {} }, entityVersions: { "node:a": 7 } };
+    const log = [remote, emptyHostEvent];
+    const session = new CanvasCommandSession(
+        transport({
+            events: async (_id, after) => log.filter((event) => event.eventSeq > after),
+            execute: async (command) => {
+                const ownHostEvent = { ...emptyHostEvent, eventSeq: 3, revision: 4, clientId: command.clientId, operationId: command.operationId, entityVersions: { "node:a": 8 } };
+                log.push(ownHostEvent);
+                return ownHostEvent;
+            },
+        }),
+        "client",
+    );
+    await session.open("canvas");
+    try {
+        await session.reconnect();
+        expect(session.state.acknowledged?.eventSeq).toBe(2);
+        expect(session.state.acknowledged?.revision).toBe(3);
+        expect(session.state.acknowledged?.entityVersions["node:a"]).toBe(7);
+        expect((session.state.projected.nodes as any[])[0].metadata.content).toBe("REMOTE");
+        await session.submit([{ type: "edit_canvas_settings", id: "canvas", patch: { appearance: { custom: {} } } }]);
+        expect(session.state.acknowledged?.eventSeq).toBe(3);
+        expect(session.state.acknowledged?.revision).toBe(4);
+        expect(session.state.acknowledged?.entityVersions["node:a"]).toBe(8);
+        expect(session.state.pending).toEqual([]);
+    } finally {
+        session.close();
+    }
+});
+
+test("an empty receipt whose cursor is not yet available stays unconfirmed until real events cover it", async () => {
+    let available = false;
+    let writes = 0;
+    let original!: Command;
+    const remote = receipt(1, "a", "REMOTE");
+    const noOp = (command: Command): Receipt => ({ ...remote, clientId: command.clientId, operationId: command.operationId, changes: { entities: [], fields: {} }, entityVersions: {} });
+    const session = new CanvasCommandSession(
+        transport({
+            events: async (_id, after) => (available && after === 0 ? [remote] : []),
+            execute: async (command) => {
+                writes++;
+                original = command;
+                return noOp(command);
+            },
+            receipt: async (command) => {
+                expect(command).toEqual(original);
+                return noOp(command);
+            },
+        }),
+        "client",
+    );
+    await session.open("canvas");
+    const done = session.submit([{ type: "edit_canvas_settings", id: "canvas", patch: { appearance: { custom: {} } } }]).catch((error) => error);
+    try {
+        await tick();
+        expect(session.state.acknowledged?.eventSeq).toBe(0);
+        expect((session.state.projected.nodes as any[])[0].metadata.content).toBe("before");
+        expect(session.state.saveState).toBe("offline");
+        expect(session.state.pending[0].status).toBe("unconfirmed");
+        expect(session.state.pending[0].wire).toEqual(original);
+        available = true;
+        await session.reconnect();
+        await done;
+        expect(writes).toBe(1);
+        expect(session.state.acknowledged?.eventSeq).toBe(1);
+        expect((session.state.projected.nodes as any[])[0].metadata.content).toBe("REMOTE");
+        expect(session.state.pending).toEqual([]);
+    } finally {
+        session.close();
+    }
+});
+
+test.each(["command", "task"] as const)("reconnect leaves a live %s request inflight without looking up an early receipt", async (kind) => {
+    let finish!: () => void;
+    let started!: () => void;
+    let writes = 0;
+    let lookups = 0;
+    const requestStarted = new Promise<void>((resolve) => {
+        started = resolve;
+    });
+    const heldRequest = (command: Command) => {
+        writes++;
+        started();
+        return new Promise<any>((resolve) => {
+            finish = () => {
+                const event = { ...receipt(1, "a", kind === "task" ? "before" : "draft", command.operationId), clientId: command.clientId, actorId: "owner" };
+                if (kind === "task") event.changes.entities[0].value!.metadata = { content: "before", taskId: "one-task", taskStatus: "queued", status: "loading" };
+                resolve(kind === "task" ? { taskId: "one-task", receipt: event } : event);
+            };
+        });
+    };
+    const prematureLookup = async () => {
+        lookups++;
+        throw Object.assign(new Error("the active request has not committed yet"), { status: 404 });
+    };
+    const session = new CanvasCommandSession(transport({ execute: heldRequest, invoke: heldRequest, receipt: prematureLookup, recover: prematureLookup }), "client");
+    await session.open("canvas");
+    const done =
+        kind === "task" ? session.submitTask({ targetNodeId: "a", task: { mode: "text", prompt: "generate", input: { config: { channelId: "managed", model: "text" } } } }) : session.submit([{ type: "update_node", id: "a", patch: { content: "draft" } }]);
+    await requestStarted;
+    const wire = structuredClone(session.state.pending[0].wire);
+    const polling = session.reconnect();
+    let settledState = "";
+    let remaining = -1;
+    try {
+        await tick();
+        expect(lookups).toBe(0);
+        expect(writes).toBe(1);
+        expect(session.state.pending[0].status).toBe("inflight");
+        expect(session.state.pending[0].wire).toEqual(wire);
+        expect(() => session.discard(wire!.operationId)).toThrow("提交回执尚未确认");
+        expect(session.state.pending).toHaveLength(1);
+    } finally {
+        finish();
+        await Promise.all([done, polling]);
+        settledState = session.state.saveState;
+        remaining = session.state.pending.length;
+        session.close();
+    }
+    expect(lookups).toBe(0);
+    expect(writes).toBe(1);
+    expect(settledState).toBe("saved");
+    expect(remaining).toBe(0);
+});
+
 test("field baseline wire survives lost ACK, remote sync and journal reload byte-for-byte", async () => {
     let stored: any[] = [],
         attempts: string[] = [],
@@ -563,4 +790,65 @@ test("task submission journal recovers task id from durable handle after lost AC
     expect((s.state.projected.nodes as any[])[0].metadata.taskId).toBe("one-task");
     expect(s.state.pending).toEqual([]);
     s.close();
+});
+
+test("restart recovers a journaled inflight task with its original wire while the old HTTP ACK is still absent", async () => {
+    let stored: any[] = [];
+    let writes = 0;
+    let recoveries = 0;
+    let started!: () => void;
+    let finish!: () => void;
+    let handle: any;
+    let originalWire = "";
+    let recoveredWire = "";
+    const requestStarted = new Promise<void>((resolve) => {
+        started = resolve;
+    });
+    const journal = {
+        read: async () => structuredClone(stored),
+        write: async (_id: string, pending: any[]) => {
+            stored = structuredClone(pending);
+        },
+    };
+    const t = transport({
+        invoke: async (command, effect) => {
+            writes++;
+            originalWire = JSON.stringify({ command, effect });
+            const event = { ...receipt(1, "a", "before", command.operationId), clientId: command.clientId };
+            event.changes.entities[0].value!.metadata = { content: "before", taskId: "durable-task", taskStatus: "queued", status: "loading" };
+            handle = { taskId: "durable-task", receipt: event };
+            started();
+            return new Promise((resolve) => {
+                finish = () => resolve(handle);
+            });
+        },
+        recover: async (command, effect) => {
+            recoveries++;
+            recoveredWire = JSON.stringify({ command, effect });
+            return handle;
+        },
+    });
+    const first = new CanvasCommandSession(t, "client", journal);
+    await first.open("canvas");
+    const pending = first.submitTask({ targetNodeId: "a", task: { mode: "text", prompt: "generate", input: { config: { channelId: "managed", model: "text" } } } }).catch((error) => error);
+    await requestStarted;
+    await first.whenJournalDurable();
+    expect(stored[0].status).toBe("inflight");
+    first.close();
+    await pending;
+    const restarted = new CanvasCommandSession(t, "client", journal);
+    try {
+        await restarted.open("canvas");
+        await restarted.whenJournalDurable();
+        expect(writes).toBe(1);
+        expect(recoveries).toBe(1);
+        expect(recoveredWire).toBe(originalWire);
+        expect(restarted.state.saveState).toBe("saved");
+        expect(restarted.state.pending).toEqual([]);
+        expect((restarted.state.projected.nodes as any[])[0].metadata.taskId).toBe("durable-task");
+        expect(stored).toEqual([]);
+    } finally {
+        finish();
+        restarted.close();
+    }
 });

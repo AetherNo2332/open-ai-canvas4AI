@@ -1,25 +1,37 @@
 import { expect, test } from "bun:test";
 import { CanvasCommandSession, type CommandTransport } from "../src/services/canvas-command-session";
+import type { Receipt } from "../src/lib/canvas/command-contract.generated";
 import { isCanvasNodeGenerating } from "../src/lib/canvas/canvas-node-task-state";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 test("new-version command preview keeps the current playable output and task provenance", async () => {
     let sent: any;
     let finish!: (value: any) => void;
+    let committed: Receipt | undefined;
     const current = { id: "media", type: "image", metadata: { content: "/old.png", storageKey: "resource:old", taskId: "old-task", taskStatus: "succeeded", status: "success" } };
     const session = new CanvasCommandSession(
         {
-            snapshot: async () => ({ protocolVersion: 1, canvasId: "canvas", documentEpoch: "epoch", revision: 1, eventSeq: 0, entityVersions: { "node:media": 1 }, document: { nodes: [current], connections: [] } }),
-            events: async () => [],
+            snapshot: async () => ({
+                protocolVersion: 1,
+                canvasId: "canvas",
+                documentEpoch: "epoch",
+                revision: committed?.revision || 1,
+                eventSeq: committed?.eventSeq || 0,
+                entityVersions: { "node:media": 1 },
+                document: { nodes: [current], connections: [] },
+            }),
+            events: async (_id, after) => (committed && committed.eventSeq > after ? [committed] : []),
             invoke: async (command, effect) => {
                 sent = effect;
                 return new Promise((resolve) => {
-                    finish = () =>
+                    finish = () => {
+                        committed = { protocolVersion: 1, canvasId: "canvas", documentEpoch: "epoch", revision: 2, eventSeq: 1, actorId: "owner", clientId: "client", operationId: command.operationId, changes: { entities: [] }, entityVersions: {} };
                         resolve({
                             taskId: "new-task",
                             versionId: "new-version",
-                            receipt: { protocolVersion: 1, canvasId: "canvas", documentEpoch: "epoch", revision: 2, eventSeq: 1, actorId: "owner", clientId: "client", operationId: command.operationId, changes: { entities: [] }, entityVersions: {} },
+                            receipt: committed,
                         });
+                    };
                 });
             },
             execute: async () => {},
@@ -35,6 +47,8 @@ test("new-version command preview keeps the current playable output and task pro
     expect(sent.request.intent).toBe("new_version");
     finish({});
     await submission;
+    expect(session.state.acknowledged?.eventSeq).toBe(1);
+    expect(session.state.pending).toEqual([]);
     session.close();
 });
 

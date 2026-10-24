@@ -187,6 +187,28 @@ export class CanvasCommandSession {
         this.drainBuffer();
         if (this.buffer.size) await this.synchronize();
     }
+    private async receiveReceipt(receipt: Receipt): Promise<void> {
+        const ack = this.acknowledged;
+        const changes = receipt.changes;
+        const empty = !receipt.reset && !changes.entities.length && !Object.keys(changes.fields || {}).length && changes.nodeOrder === undefined && changes.connectionOrder === undefined;
+        if (!ack || !empty || receipt.eventSeq <= ack.eventSeq) return this.receive(receipt);
+        if (receipt.protocolVersion !== 1 || receipt.canvasId !== ack.canvasId) throw new Error("canvas_event_scope_mismatch");
+        // A no-op receipt points at the host's current cursor without adding an
+        // event. Never let that empty ACK stand in for an unseen real event.
+        const generation = this.generation;
+        await this.synchronize();
+        if (generation !== this.generation || !this.acknowledged) return;
+        if (this.acknowledged.eventSeq < receipt.eventSeq) {
+            const snapshot = await this.transport.snapshot(this.acknowledged.canvasId, this.abort.signal);
+            if (generation !== this.generation) return;
+            this.validateSnapshot(snapshot, this.acknowledged.canvasId);
+            if (snapshot.eventSeq < receipt.eventSeq) throw new Error("canvas_receipt_cursor_unconfirmed");
+            this.adopt(snapshot);
+            for (const seq of this.buffer.keys()) if (seq <= snapshot.eventSeq) this.buffer.delete(seq);
+            this.emit();
+        }
+        await this.receive(receipt);
+    }
     private drainBuffer() {
         while (this.acknowledged) {
             const event = this.buffer.get(this.acknowledged.eventSeq + 1);
@@ -286,11 +308,15 @@ export class CanvasCommandSession {
             await this.synchronize();
             if (generation !== this.generation) return;
             for (const p of [...this.pending]) {
+                // The live pump still owns this request's ACK. Recovery before
+                // it finishes can observe a normal 404 and mark it queued.
+                // Restored journal wires enter as unconfirmed, so still recover.
+                if (p.status === "inflight" && this.pumping) continue;
                 if (p.wire && p.effect?.type === "restore" && p.documentEpoch !== this.acknowledged!.documentEpoch) {
                     try {
                         const result = await this.transport.recover!(p.wire, p.effect, this.abort.signal);
                         if (generation !== this.generation) return;
-                        await this.receive("receipt" in result ? result.receipt : result);
+                        await this.receiveReceipt("receipt" in result ? result.receipt : result);
                     } catch (error) {
                         if (errorStatus(error) !== 404) throw error;
                         this.conflict(p, "document_epoch_mismatch", "画布已恢复到新的世代，原恢复请求已保留");
@@ -304,7 +330,7 @@ export class CanvasCommandSession {
                         if (generation !== this.generation) return;
                         const receipt = "receipt" in result ? result.receipt : result;
                         if ("receipt" in result) p.result = result;
-                        await this.receive(receipt);
+                        await this.receiveReceipt(receipt);
                         continue;
                     } catch (error) {
                         if (generation !== this.generation) return;
@@ -355,7 +381,7 @@ export class CanvasCommandSession {
                     if (generation !== this.generation) return;
                     const receipt = "receipt" in result ? result.receipt : result;
                     if ("receipt" in result) p.result = result;
-                    await this.receive(receipt);
+                    await this.receiveReceipt(receipt);
                     if (generation !== this.generation) return;
                     if (this.pending.includes(p)) {
                         p.status = "unconfirmed";

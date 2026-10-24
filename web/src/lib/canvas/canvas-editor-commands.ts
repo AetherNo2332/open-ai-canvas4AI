@@ -4,6 +4,7 @@ import { canvasTimelineCommands } from "./canvas-timeline-commands";
 import { canvasDrawingCommands } from "./canvas-drawing-commands";
 import { buildCanvasReferenceEdit } from "./canvas-reference-edits";
 import { canvasPrevisCommands, type PrevisEditorFields } from "./canvas-previs-commands";
+import { sameCanvasJsonValue as same } from "./canvas-json-value";
 export type CanvasCapabilities = {
     protocolVersion: number;
     nodes: Array<{ type: string; baseType?: string; workflowKind?: string; patchFields: Record<string, { path: string }> }>;
@@ -12,7 +13,6 @@ export type CanvasCapabilities = {
     previsFields?: PrevisEditorFields;
 };
 type Entity = Record<string, any>;
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const entities = (doc: CanvasDocument, key: string) => (doc[key] as Entity[]) || [];
 const at = (object: Entity | undefined, path: string) => path.split(".").reduce((value, key) => value?.[key], object);
 function changedPaths(before: unknown, after: unknown, prefix = ""): string[] {

@@ -138,6 +138,28 @@ test("field baseline preserves original content across two remote disjoint updat
     e.session.close();
 });
 
+test("reordered rich text does not capture text baselines for a disjoint title edit", async () => {
+    const richText = { type: "doc", content: [{ type: "text", text: "before" }] };
+    const e = await fieldEditor(0, fieldCap, { id: "a", type: "text", title: "Old title", metadata: { content: "before", richText } });
+    try {
+        e.live().nodes[0].title = "My title";
+        e.live().nodes[0].metadata.richText = { content: richText.content, type: richText.type };
+        await e.remote((node) => {
+            node.metadata.content = "Remote text";
+            node.metadata.richText = { type: "doc", content: [{ type: "text", text: "Remote text" }] };
+        });
+        await e.binding.commit();
+        expect(e.sent).toHaveLength(1);
+        expect(e.sent[0].operations[0].patch).toEqual({ title: "My title" });
+        expect(e.sent[0].operations[0].fieldBaselines?.fields).toEqual({ title: { exists: true, value: "Old title" } });
+        expect(e.live().nodes[0].metadata.content).toBe("Remote text");
+        expect(e.live().nodes[0].metadata.richText.content[0].text).toBe("Remote text");
+    } finally {
+        e.binding.dispose();
+        e.session.close();
+    }
+});
+
 test("field baseline keeps same-field conflict draft through repeated remote updates", async () => {
     const e = await fieldEditor();
     e.live().nodes[0].metadata.content = "local";

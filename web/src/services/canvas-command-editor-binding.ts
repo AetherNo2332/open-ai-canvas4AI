@@ -4,6 +4,7 @@ import type { ChangeSet } from "../lib/canvas/command-contract.generated";
 import type { CanvasCommandSession, CommandSessionState } from "./canvas-command-session";
 import { canvasPersistentEditorDraft, carryCanvasTaskDisplay } from "../lib/canvas/canvas-editor-transient";
 import { canvasBaselineAliases, canvasBaselineDescriptor, canvasBaselineValue, restoreCanvasBaselineValue, withCanvasFieldBaselines } from "../lib/canvas/canvas-field-baselines";
+import { sameCanvasJsonValue } from "../lib/canvas/canvas-json-value";
 type Entity = Record<string, unknown>;
 function bases(document: CanvasDocument, changes: ChangeSet) {
     const entities: Record<string, Entity> = {},
@@ -54,7 +55,7 @@ export function bindCanvasCommandEditor<N, E>(
             const descriptor = canvasBaselineDescriptor(entity, capabilities);
             if (!descriptor) continue;
             const changed = Object.entries(descriptor.patchFields)
-                .filter(([, field]) => JSON.stringify(canvasBaselineValue(entity, field.path)) !== JSON.stringify(canvasBaselineValue(after, field.path)))
+                .filter(([, field]) => !sameCanvasJsonValue(canvasBaselineValue(entity, field.path), canvasBaselineValue(after, field.path)))
                 .map(([alias]) => alias);
             const captured = capturedAliases.get(key) || new Set<string>(),
                 dirty = dirtyAliases.get(key) || new Set<string>();

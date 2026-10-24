@@ -1,4 +1,5 @@
 import type { ChangeSet, Operation } from "./command-contract.generated";
+import { sameCanvasJsonValue } from "./canvas-json-value";
 export type CanvasDocument = Record<string, unknown>;
 type Entity = Record<string, unknown> & { id: string };
 const clone = <T>(value: T): T => structuredClone(value);
@@ -13,7 +14,7 @@ function ordered(items: Entity[], order: string[] | undefined) {
     return order.map((id) => byId.get(id)!);
 }
 function mergeDraftValue(base: unknown, draft: unknown, current: unknown): unknown {
-    if (JSON.stringify(base) === JSON.stringify(draft)) return clone(current);
+    if (sameCanvasJsonValue(base, draft)) return clone(current);
     if (base && draft && current && typeof base === "object" && typeof draft === "object" && typeof current === "object" && !Array.isArray(base) && !Array.isArray(draft) && !Array.isArray(current)) {
         const before = base as Record<string, unknown>,
             desired = draft as Record<string, unknown>,
@@ -95,16 +96,22 @@ export function canvasDocumentChanges(before: CanvasDocument, after: CanvasDocum
         const old = new Map(objects(before[field]).map((item) => [item.id, item]));
         const current = objects(after[field]);
         for (const item of current) {
-            if (JSON.stringify(old.get(item.id)) !== JSON.stringify(item)) changes.entities.push({ key: prefix + item.id, value: clone(item) });
+            if (!sameCanvasJsonValue(old.get(item.id), item)) changes.entities.push({ key: prefix + item.id, value: clone(item) });
             old.delete(item.id);
         }
         for (const id of old.keys()) changes.entities.push({ key: prefix + id, delete: true });
         const order = current.map((n) => n.id);
-        if (JSON.stringify(objects(before[field]).map((n) => n.id)) !== JSON.stringify(order)) changes[field === "nodes" ? "nodeOrder" : "connectionOrder"] = order;
+        if (
+            !sameCanvasJsonValue(
+                objects(before[field]).map((n) => n.id),
+                order,
+            )
+        )
+            changes[field === "nodes" ? "nodeOrder" : "connectionOrder"] = order;
     }
     for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
         if (["nodes", "connections"].includes(key)) continue;
-        if (JSON.stringify(before[key]) === JSON.stringify(after[key])) continue;
+        if (sameCanvasJsonValue(before[key], after[key])) continue;
         changes.fields![key] = key in after ? { value: clone(after[key]) } : { delete: true };
     }
     return changes;

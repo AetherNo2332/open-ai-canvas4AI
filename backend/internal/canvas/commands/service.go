@@ -574,6 +574,33 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 		if err = checkVersions(req, row, versions, plan.ReadSet, plan.FieldMergeTargets); err != nil {
 			return err
 		}
+		// An unchanged editor command still needs a durable ACK for recovery, but
+		// must not create a document event or alter undo/redo. Host mutations and
+		// same-value lifecycle writes keep their existing commit paths.
+		if len(plan.WriteSet) == 0 && len(plan.Changes.Entities) == 0 && len(plan.Changes.Fields) == 0 &&
+			plan.Changes.NodeOrder == nil && plan.Changes.ConnectionOrder == nil && len(plan.Changes.RecreatedEntities) == 0 {
+			// Older clients interpret ACKs as events. Reuse only a cursor whose
+			// document revision the caller has already observed.
+			if req.BaseRevision != row.Revision {
+				return failure("revision_conflict", "画布已变化，请读取最新版本后重试")
+			}
+			out = Receipt{
+				Protocol: ProtocolVersion, CanvasID: row.ID, DocumentEpoch: epoch.Epoch,
+				OperationID: req.OperationID, ClientID: req.ClientID, ActorID: p.ID,
+				Revision: row.Revision, EventSeq: epoch.EventSeq, Changes: plan.Changes,
+				EntityVersions: map[string]int64{}, EntityGenerations: map[string]int64{},
+			}
+			encoded, err := canonical(out)
+			if err != nil {
+				return err
+			}
+			key.CanonicalJSON, key.ReceiptJSON, key.CreatedAt = body, encoded, time.Now()
+			if err = tx.InsertCommandReceipt(&key); err != nil {
+				return err
+			}
+			out = Receipt{}
+			return json.Unmarshal([]byte(encoded), &out)
+		}
 		if err = tx.AbandonRedo(p.OwnerID, row.ID, epoch.Epoch, p.ID, req.ClientID); err != nil {
 			return err
 		}
