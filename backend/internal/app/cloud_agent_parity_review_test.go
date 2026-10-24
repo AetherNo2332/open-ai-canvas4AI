@@ -96,6 +96,18 @@ func TestAgentParityGenerationSourceTextUsesSourceCapability(t *testing.T) {
 	}
 }
 
+func TestAgentParityGenerationReferenceCharacter(t *testing.T) {
+	for _, mode := range []string{"image", "video"} {
+		doc := parityDocument(t, `{"nodes":[{"id":"hero","type":"text","metadata":{"workflowKind":"character","characterAssetId":"asset"}},{"id":"target","type":"image","metadata":{"generationSpec":{"version":1,"mode":"image","prompt":"draft","options":{},"referenceBindings":[{"id":"hero-ref","nodeId":"hero","mediaType":"image","role":"reference","order":0,"resolution":"latest"}],"textInputMode":"prompt-only"}}}]}`)
+		target := creationMaps(doc["nodes"])[1]
+		target["type"] = mode
+		cloudAgentNodeMetadata(target)["generationSpec"].(map[string]any)["mode"] = mode
+		if err := validateCloudAgentGenerationReferences(doc, "target"); err != nil {
+			t.Fatalf("valid character reference rejected for %s: %v", mode, err)
+		}
+	}
+}
+
 func TestAgentParityStoryboardVideoDurationAndCanonicalOptions(t *testing.T) {
 	for _, canonical := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy", true: "canonical"}[canonical], func(t *testing.T) {

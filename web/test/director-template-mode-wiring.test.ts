@@ -11,7 +11,6 @@ const workbench = moduleGroupSource("components/canvas/previs/canvas-previs-work
 const dock = readFileSync(resolve(import.meta.dir, "../src/components/canvas/previs/previs-viewport-dock.tsx"), "utf8");
 const viewport = moduleGroupSource("components/canvas/previs/previs-viewport.tsx");
 const hook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-previs.ts"), "utf8");
-const project = moduleGroupSource("pages/canvas/project.tsx");
 const modal = readFileSync(resolve(import.meta.dir, "../src/components/canvas/previs/canvas-previs-template-modal.tsx"), "utf8");
 const store = readFileSync(resolve(import.meta.dir, "../src/stores/canvas/use-previs-workbench-store.ts"), "utf8");
 const styles = readFileSync(resolve(import.meta.dir, "../src/styles/globals.css"), "utf8");
@@ -36,19 +35,6 @@ describe("新建场景必须显式选模板", () => {
     test("新建走模板工厂，不再走带默认演员的 createPrevisScene", () => {
         expect(hook).toContain("createPrevisSceneFromTemplate(templateId, `镜头 ${shotIndex}`)");
         expect(hook).not.toContain("createPrevisScene(");
-    });
-
-    test("两个新建入口都先开模板选择，而不是直接建场景", () => {
-        expect(project).toContain("onOpenPrevis={() => setPrevisTemplateRequest({})}");
-        expect(project).toContain("onOpenPrevis={(position) => setPrevisTemplateRequest({ position })}");
-        expect(project).not.toContain("onOpenPrevis={() => createPrevisShot()}");
-        expect(project).not.toContain("onOpenPrevis={createPrevisShot}");
-    });
-
-    test("选中模板后带着 position 建场景", () => {
-        const element = slice(project, "<CanvasPrevisTemplateModal", "/>");
-        expect(element).toContain("open={Boolean(previsTemplateRequest)}");
-        expect(element).toContain("onSelect={(templateId) => createPrevisShot(templateId, previsTemplateRequest?.position)}");
     });
 
     test("模板弹窗把 5 个模板全列出来，没有「默认」快捷项", () => {

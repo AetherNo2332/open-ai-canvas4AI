@@ -17,7 +17,8 @@ import { attachCanvasCommandProject } from "@/services/canvas-command-project-li
 import type { CanvasDocument } from "@/lib/canvas/canvas-event-projection";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
-import { readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
+import { preserveCanvasSyncDraft, readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
+import { getActiveUserScope } from "@/lib/user-scope";
 import { useUserStore } from "@/stores/use-user-store";
 import { ensureOrdinaryCanvasCommandWorkspace } from "@/services/canvas-command-bootstrap";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
@@ -198,9 +199,10 @@ export function useCanvasProjectLifecycle({
                         setProjectLoaded(true);
                     }
                     useSyncProgressStore.getState().setProjectProgress(projectId, {
-                        phase: state.saveState === "conflict" ? "conflict" : state.saveState === "offline" ? "error" : state.saveState === "saved" ? "done" : "saving",
+                        phase: state.saveState === "conflict" ? "conflict" : state.saveState === "offline" || state.saveState === "error" ? "error" : state.saveState === "saved" ? "done" : "saving",
+                        reason: state.rejections[0]?.reason,
                         draftCount: state.pending.length,
-                        message: state.saveState === "conflict" ? "编辑草稿已保留，请处理冲突" : state.saveState === "offline" ? "主机暂不可用，未确认编辑已保留" : undefined,
+                        message: state.saveState === "conflict" ? "编辑草稿已保留，请处理冲突" : state.saveState === "error" ? state.rejections[0]?.message : state.saveState === "offline" ? "主机暂不可用，未确认编辑已保留" : undefined,
                     });
                 },
             });
@@ -557,18 +559,53 @@ export function useCanvasProjectLifecycle({
     }, [commandScope, commandBootstrapState, activeChatId, backgroundMode, canvasAppearance, chatSessions, connectionsRef, nodesRef, projectId, showImageInfo, updateProject, viewportRef]);
 
     const reloadLatestCanvasProject = useCallback(async () => {
-        await persistLocalEdits();
         if (commandScope) {
-            await canvasCommandSession(projectId)?.reconnect();
+            const editor = commandEditorRef.current;
+            if (!editor) throw new Error("画布尚未连接，请稍后重试");
+            const scope = getActiveUserScope();
+            let draftCount = 0;
+            await editor.loadLatest(async (document) => {
+                if (scope !== getActiveUserScope()) throw new Error("账号已切换，请重新打开画布");
+                const cached = useCanvasStore.getState().openProject(projectId);
+                if (!cached) throw new Error("无法读取本地画布，已停止加载云端版本");
+                const draft = { ...cached, ...document, id: projectId, viewport: viewportRef.current } as CanvasProject;
+                draftCount = await preserveCanvasSyncDraft(draft, scope);
+                if (scope !== getActiveUserScope()) throw new Error("账号已切换，请重新打开画布");
+            });
+            useSyncProgressStore.getState().setProjectProgress(projectId, { phase: "done", draftCount, message: "已加载云端最新版本，原修改可从「本地草稿」下载" });
             return;
         }
+        await persistLocalEdits();
         return new Promise<void>((resolve, reject) => {
             pendingReloadRef.current?.reject(new Error("已有新的加载请求"));
             loadLatestRef.current = true;
             pendingReloadRef.current = { resolve, reject };
             setLoadAttempt((value) => value + 1);
         });
-    }, [commandScope, projectId, persistLocalEdits]);
+    }, [commandScope, projectId, persistLocalEdits, viewportRef]);
+
+    const retryCanvasProjectSync = useCallback(async () => {
+        if (commandScope) {
+            const session = canvasCommandSession(projectId);
+            if (!session) throw new Error("画布尚未连接，请稍后重试");
+            await session.reconnect();
+            if (session.state.saveState === "offline") throw new Error("暂时无法确认云端结果，请检查网络后重试；本地修改仍然保留");
+            if (session.state.rejections.length) {
+                const editor = commandEditorRef.current;
+                if (!editor) throw new Error("画布尚未连接，请稍后重试");
+                const scope = getActiveUserScope();
+                await editor.retryRejected(async (document) => {
+                    if (scope !== getActiveUserScope()) throw new Error("账号已切换，请重新打开画布");
+                    const cached = useCanvasStore.getState().openProject(projectId);
+                    if (!cached) throw new Error("无法读取本地画布，修改已保留");
+                    await preserveCanvasSyncDraft({ ...cached, ...document, id: projectId } as CanvasProject, scope);
+                    if (scope !== getActiveUserScope()) throw new Error("账号已切换，请重新打开画布");
+                });
+            }
+            return;
+        }
+        await saveRemoteUserDataNow(projectId);
+    }, [commandScope, projectId]);
 
     const restoreCanvasProjectVersion = useCallback(
         async (snapshotId: string, revision: number) => {
@@ -655,6 +692,7 @@ export function useCanvasProjectLifecycle({
         deleteCurrentProject,
         renameCurrentProject,
         reloadLatestCanvasProject,
+        retryCanvasProjectSync,
         restoreCanvasProjectVersion,
         saveCanvasProject,
         persistLocalEdits,

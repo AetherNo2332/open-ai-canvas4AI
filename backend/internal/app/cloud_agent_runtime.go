@@ -1540,6 +1540,10 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		return s.failCloudAgent(run, state, "Agent 工具调用状态无效，本轮已停止")
 	}
 	call := state.Calls[state.CallIndex]
+	// A task admitted before retirement may finish; this cannot submit new work.
+	if resumed, err := s.resumeCloudAgentRetiredPrevis(run, state, call); resumed {
+		return err
+	}
 	// 同一批内的后续写入要基于本批自己产出的版本，否则第二个写入必然被"画布已变化"拒绝；
 	// 之后再按本步读取基线把仍然匹配的哈希接到当前画布上（跨轮或模型自己换过的哈希不接）。
 	call = cloudAgentRebaseWriteSnapshot(state, call)
@@ -1601,13 +1605,6 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		policy, err := s.RuntimePolicy()
 		if err != nil {
 			return s.terminateCloudAgent(run, "Agent 运行策略不可用，本轮已停止")
-		}
-		if cloudAgentDirectorWriteTool(call.Function.Name) {
-			normalized, normalizeErr := cloudAgentDirectorUnderlyingCall(call)
-			if normalizeErr != nil {
-				return s.terminateCloudAgent(run, "导演工具参数无法编译")
-			}
-			call = normalized
 		}
 		if call.Function.Name == "generate_media" {
 			mediaCall := call
@@ -1712,7 +1709,6 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		defer s.storageMu.Unlock()
 		return s.repo.MutateCloudAgent(run.UserID, run.ID, run.Revision, func(current *model.CloudAgentExecution, repo *repository.Repository) error {
 			var preview cloudAgentApprovalPreview
-			var previsSourceHash string
 			var preparedMedia *cloudAgentPreparedMedia
 			if plan != nil {
 				if err := createCloudAgentMediaNode(repo, run.UserID, state.Request.CanvasID, plan, nil, policy, cloudAgentCanvasEventRecorder(run.ID, state)); err != nil {
@@ -1777,23 +1773,6 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 					if err == nil {
 						preview = characterPlan.Preview
 					}
-				case "previs_scene_create":
-					plan, err := prepareCloudAgentPrevisSceneCreate(repo, run.UserID, state.Request.CanvasID, call)
-					mutationErr = err
-					if err == nil {
-						preview = plan.Preview
-					}
-				case "previs_preview":
-					var prepared previsRenderInput
-					prepared, mutationErr = preparePrevisRender(repo, run.UserID, state.Request.CanvasID, call)
-					previsSourceHash = prepared.SourceHash
-					preview = cloudAgentApprovalPreview{Kind: "previs_preview", Title: "导演台白模输出", Description: "批准后服务器生成白模视频和构图帧并回写画布，关闭网页仍会执行", Items: []cloudAgentApprovalPreviewItem{{Operation: "previs_preview", Summary: "后台生成预演并回写画布"}}}
-				case "previs_apply_patch":
-					plan, err := prepareCloudAgentPrevisApplyPatch(repo, run.UserID, state.Request.CanvasID, call)
-					mutationErr = err
-					if err == nil {
-						preview = plan.Preview
-					}
 				case "canvas_arrange_nodes":
 					arrangePlan, err := prepareCloudAgentArrangeNodes(repo, run.UserID, state.Request.CanvasID, call)
 					mutationErr = err
@@ -1826,11 +1805,9 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 					return mutationErr
 				}
 			}
-			// 种批准与校验必须使用同一份最终调用：媒体分支重写过参数（注入资
-			// 产参考、解析默认规格、刷新读取哈希），director 分支本地做过 参数
-			// 归一化但状态里的调用还是旧形态；这里统一把最终调用写回状态。
+			// 审批与校验使用同一份已解析参考素材、默认规格和读取哈希的最终调用。
 			state.Calls[state.CallIndex] = call
-			state.Approval = &cloudAgentApproval{ID: fmt.Sprintf("%s-%d-%d", run.ID, state.Step, state.CallIndex), Call: call, CallHash: cloudAgentApprovalCallHash(call), Preview: preview, ModelName: modelName, Prepared: preparedMedia, PrevisSourceHash: previsSourceHash}
+			state.Approval = &cloudAgentApproval{ID: fmt.Sprintf("%s-%d-%d", run.ID, state.Step, state.CallIndex), Call: call, CallHash: cloudAgentApprovalCallHash(call), Preview: preview, ModelName: modelName, Prepared: preparedMedia}
 			if preparedMedia != nil {
 				if err := pinCloudAgentPreparedMedia(repo, run.UserID, run.ID, state.Approval.ID, preparedMedia); err != nil {
 					return err
@@ -1873,17 +1850,6 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 		return s.terminateCloudAgent(run, "Agent 运行策略不可用，本轮已停止")
 	}
 	state.CallLimits = cloudAgentCallLimitsForPolicy(policy.Task)
-	if allowed && (call.Function.Name == "previs_preview" || call.Function.Name == "director_preview_shot") {
-		executionCall := call
-		if call.Function.Name == "director_preview_shot" {
-			normalized, normalizeErr := cloudAgentDirectorUnderlyingCall(call)
-			if normalizeErr != nil {
-				return s.terminateCloudAgent(run, "导演预演参数无法编译")
-			}
-			executionCall = normalized
-		}
-		return s.advanceCloudAgentPrevis(run, state, executionCall, policy)
-	}
 	// 看图的资源与能力校验在写事务外完成；真实图片只在模型任务执行时读取。
 	var inspectionResult any
 	var inspectionErr error
@@ -1974,20 +1940,6 @@ func (s *Service) executeCloudAgentToolCallAttempt(run *model.CloudAgentExecutio
 				result, toolErr = applyCloudAgentBatchTableMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
 			case call.Function.Name == "canvas_create_character":
 				result, toolErr = applyCloudAgentCharacterCreate(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-			case call.Function.Name == "previs_scene_create", call.Function.Name == "previs_apply_patch":
-				result, toolErr = applyCloudAgentPrevisMutation(repo, run.UserID, state.Request.CanvasID, call, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-			case call.Function.Name == "director_block_scene", call.Function.Name == "director_design_shot", call.Function.Name == "director_draw_action":
-				executionCall, normalizeErr := cloudAgentDirectorUnderlyingCall(call)
-				if normalizeErr != nil {
-					toolErr = normalizeErr
-				} else {
-					result, toolErr = applyCloudAgentPrevisMutation(repo, run.UserID, state.Request.CanvasID, executionCall, policy, cloudAgentCanvasEventRecorder(run.ID, state))
-					if toolErr == nil {
-						result = map[string]any{"tool": call.Function.Name, "compiledOperation": executionCall.Function.Name, "result": result}
-					}
-				}
-			case call.Function.Name == "previs_preview":
-				result, toolErr = cloudAgentPrevisPreview(repo, run.UserID, state.Request.CanvasID, call)
 			case call.Function.Name == "canvas_inspect_image":
 				result, toolErr = inspectionResult, inspectionErr
 				if toolErr == nil && inspectionResult != nil {
@@ -2447,8 +2399,25 @@ func (s *Service) cloudAgentMediaError(run *model.CloudAgentExecution, state *cl
 	})
 }
 
+func (s *Service) resumeCloudAgentRetiredPrevis(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) (bool, error) {
+	if state.MediaTaskID == "" || call.Function.Name != "previs_preview" {
+		return false, nil
+	}
+	task, err := s.repo.TaskForUser(run.UserID, state.MediaTaskID)
+	if err != nil {
+		return true, err
+	}
+	if task.AgentRunID != run.ID || task.Type != model.TaskTypePrevisRender {
+		return true, BadAuthRequest("预演任务身份不匹配，无法恢复结果")
+	}
+	return true, s.executeCloudAgentMediaCall(run, state, call)
+}
+
 func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, state *cloudAgentRuntime, call cloudAgentCall) error {
 	if call.Function.Name == "previs_preview" {
+		if state.MediaTaskID == "" {
+			return BadAuthRequest("预演工具已停用，无法创建新任务")
+		}
 		policy, err := s.RuntimePolicy()
 		if err != nil {
 			return err

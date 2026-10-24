@@ -45,9 +45,7 @@ func TestPrevisRendererClientRetriesOnlyTransientFailure(t *testing.T) {
 func submittedPrevis(t *testing.T) (*Service, *model.CloudAgentExecution, *model.Task, previsRenderInput) {
 	t.Helper()
 	s, run, state := backgroundPrevisFixture(t, "auto")
-	if err := s.executeCloudAgentToolCall(run, state); err != nil {
-		t.Fatal(err)
-	}
+	submitHistoricalPrevis(t, s, run, state)
 	_, state = reloadPiRun(t, s, run.ID)
 	task, err := s.repo.TaskForUser(run.UserID, state.MediaTaskID)
 	if err != nil {
@@ -140,9 +138,7 @@ func TestBackgroundPrevisRealThreeShots(t *testing.T) {
 	}
 	for index := 0; index < 3; index++ {
 		run, state = reloadPiRun(t, s, run.ID)
-		if err := s.executeCloudAgentToolCall(run, state); err != nil {
-			t.Fatal(err)
-		}
+		submitHistoricalPrevis(t, s, run, state)
 		run, state = reloadPiRun(t, s, run.ID)
 		task, err := s.repo.ClaimNextTask("e2e-worker", 45*time.Second)
 		if err != nil || task == nil || task.ID != state.MediaTaskID {

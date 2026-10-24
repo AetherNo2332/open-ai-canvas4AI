@@ -2006,12 +2006,16 @@ components:
           type: array
           items:
             type: object
-            required: [canvasId, nodeId, sessionId, expiresAt]
+            required: [canvasId, nodeId, sessionId, expiresAt, nodeTitle, nodeType, nodeTypeLabel, nodeExists]
             properties:
               canvasId: {type: string}
               nodeId: {type: string}
               sessionId: {type: string}
               expiresAt: {type: string, format: date-time}
+              nodeTitle: {type: string, description: 当前节点展示名称；未命名、重名和已删除节点包含短标识}
+              nodeType: {type: string, description: 节点业务类型；角色卡为 character}
+              nodeTypeLabel: {type: string, description: 节点类型的中文名称}
+              nodeExists: {type: boolean, description: 节点仍存在时才显示定位操作}
         activeAgents:
           type: array
           items:

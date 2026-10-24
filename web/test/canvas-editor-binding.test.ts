@@ -203,7 +203,9 @@ test("unmapped local edits reject through the Promise boundary without enqueuing
     e.live().nodes[0].metadata.extension = "unknown edit";
     try {
         let commit: Promise<unknown> | undefined;
-        expect(() => { commit = e.binding.commit(); }).not.toThrow();
+        expect(() => {
+            commit = e.binding.commit();
+        }).not.toThrow();
         await expect(commit).rejects.toThrow("canvas_editor_unmapped:node:a:metadata.extension");
         expect(e.sent).toEqual([]);
         expect(e.session.state.pending).toEqual([]);
