@@ -34,12 +34,12 @@ type MentionTextPart =
           reference: CanvasResourceReference;
       };
 
-type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value"> & {
+type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "onSubmit" | "value"> & {
     value: string;
     references: CanvasResourceReference[];
     onSelectReference?: (reference: CanvasResourceReference) => CanvasResourceReference | undefined;
     onChange: (value: string) => void;
-    onSubmit?: () => void;
+    onSubmit?: (modifiers: { ctrlKey: boolean; metaKey: boolean }) => void;
     containerClassName?: string;
     highlightLabels?: boolean;
     mentionMenuWidth?: number;
@@ -448,7 +448,7 @@ if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.curr
                             event.preventDefault();
                             const shouldSubmit = shouldSubmitOnEnter(event, sendOnEnter);
                             if (onSubmit && shouldSubmit) {
-                                onSubmit();
+                                onSubmit({ ctrlKey: event.ctrlKey, metaKey: event.metaKey });
                                 return;
                             }
                             replaceEditableSelection("\n");
@@ -563,7 +563,7 @@ if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.curr
                     const shouldSubmit = shouldSubmitOnEnter(event, sendOnEnter);
                     if (shouldSubmit && onSubmit) {
                         event.preventDefault();
-                        onSubmit();
+                        onSubmit({ ctrlKey: event.ctrlKey, metaKey: event.metaKey });
                         return;
                     }
                     onKeyDown?.(event);

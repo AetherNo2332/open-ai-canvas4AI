@@ -95,7 +95,7 @@ import { AgentMessageQueueList } from "./canvas-agent-message-queue";
 export type CanvasCloudAgentPanelHandle = {
     sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => Promise<"sent" | "queued" | false>;
 };
-type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[]; mode?: AgentSendMode; replyToQuestionId?: string };
+type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[]; mode?: AgentSendMode; oppositeMode?: boolean; replyToQuestionId?: string };
 
 type CloudAgentPanelProps = {
     ref?: Ref<CanvasCloudAgentPanelHandle>;
@@ -857,7 +857,8 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
             // Editing model settings or prompt must not silently create a new charge.
             if (pending?.request && pending.request.prompt !== value) throw new Error("上一条请求结果待确认，请先原样重试上一条消息，再发送新要求");
             if (!pending?.request) {
-                const mode = options.mode ?? await messageQueue.getMode();
+                const defaultMode = options.mode ?? await messageQueue.getMode();
+                const mode = options.oppositeMode ? (defaultMode === "queue" ? "interject" : "queue") : defaultMode;
                 const queueSnapshot = run ? messageQueue.queue || await getAgentMessageQueue(run.conversationId || run.id, controller.signal) : undefined;
                 if (currentScope.current !== scope) return false;
                 const capabilities = await getAgentCapabilities();
@@ -1149,23 +1150,41 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                         initial={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
                         animate={{ opacity: 1, width: panelLayout.width }}
                         exit={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
-                        transition={{ duration: reducedMotion ? 0 : 0.42, ease: [0.22, 1, 0.36, 1] }}
+                        transition={{ duration: reducedMotion || panelLayout.resizing ? 0 : 0.42, ease: [0.22, 1, 0.36, 1] }}
                         className="canvas-agent-panel relative flex min-h-0 min-w-0 shrink flex-col overflow-hidden"
                         data-agent-floating={floating || undefined}
-                        style={{ "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
+                        style={{ "--agent-panel-width": `${panelLayout.width}px`, "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
                         aria-label="Agent 工作台"
                         data-agent-compact={panelLayout.compact || undefined}
                         data-canvas-no-zoom
                         data-canvas-wheel-scroll
                         onWheel={(event) => event.stopPropagation()}
                     >
-                        {/* 动画只改外层宽度；内容体固定在目标宽度，避免每帧文字重排。 */}
-                        <div className="flex min-h-0 min-w-0 flex-1 flex-col" style={{ width: panelLayout.compact ? "100%" : panelLayout.width }}>
+                        {!panelLayout.compact ? <div
+                            role="separator"
+                            tabIndex={0}
+                            aria-label="调整 Agent 侧栏宽度"
+                            aria-orientation="vertical"
+                            aria-valuemin={panelLayout.minWidth}
+                            aria-valuemax={panelLayout.maxWidth}
+                            aria-valuenow={panelLayout.width}
+                            aria-valuetext={`${panelLayout.width} 像素`}
+                            title="拖动调整宽度，左右方向键微调，双击恢复默认"
+                            className="canvas-agent-width-handle"
+                            {...panelLayout.resizeHandlers}
+                        /> : null}
+                        {/* 内容宽度及容器查询不跟随外层动画；窄屏同样按最终宽度排版。 */}
+                        <div className="canvas-agent-panel-content flex min-h-0 flex-1 flex-col">
                             <AnimatePresence mode="wait" initial={false}>
                                 {view === "settings" ? (
                                     <motion.div key="settings" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
                                         <CanvasCloudAgentSettings
                                             key={`${userId}:${canvasId}`}
+                                            sendMode={messageQueue.mode}
+                                            sendModeSaving={messageQueue.savingMode}
+                                            sendModeError={messageQueue.settingsError}
+                                            onSendModeChange={messageQueue.changeMode}
+                                            onSendModeRetry={messageQueue.retry}
                                             theme={theme}
                                             config={config}
                                             selectedModel={selectedModel}
@@ -1329,9 +1348,11 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                             />
                                         ) : null}
                                         {pendingQuestion ? <AgentQuestionBar question={pendingQuestion} theme={theme} disabled={approvalSubmitting || busy || !messageQueue.queue?.awaitingQuestionId} onAnswer={(label) => void submit(label, { mode: "interject", replyToQuestionId: messageQueue.queue?.awaitingQuestionId })} /> : null}
-                                        <AgentMessageQueueList key={conversationScope} queue={messageQueue.queue} error={messageQueue.queueError || messageQueue.settingsError} busy={busy || messageQueue.acting} onEdit={messageQueue.edit} onPromote={messageQueue.promote} onRemove={messageQueue.remove} onResume={messageQueue.resume} onRetry={messageQueue.retry} />
-                                        {pendingSubmission.current?.request && !busy ? <div className="agent-message-queue agent-message-queue-error"><span>发送结果待确认</span><button type="button" onClick={() => { const request = pendingSubmission.current?.request; if (request) void submit(request.prompt, { preserveDraft: true }); }}>重试发送</button></div> : null}
                                         <AgentChatComposer
+                                            queuedMessages={<>
+                                                <AgentMessageQueueList key={conversationScope} queue={messageQueue.queue} error={messageQueue.queueError || messageQueue.settingsError} busy={busy || messageQueue.acting} onEdit={messageQueue.edit} onPromote={messageQueue.promote} onRemove={messageQueue.remove} onResume={messageQueue.resume} onRetry={messageQueue.retry} />
+                                                {pendingSubmission.current?.request && !busy ? <div className="agent-message-queue agent-message-queue-error"><span>发送结果待确认</span><button type="button" onClick={() => { const request = pendingSubmission.current?.request; if (request) void submit(request.prompt, { preserveDraft: true }); }}>重试发送</button></div> : null}
+                                            </>}
                                             prompt={prompt}
                                             disabled={activeHistoryState?.status === "unavailable" || !historyHydrated || !pendingHydrated}
                                             sending={busy}
@@ -1339,12 +1360,12 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                             placeholder="输入消息，用 @ 引用节点，用 / 引用技能"
                                             theme={theme}
                                             onPromptChange={setPrompt}
-                                            onSubmit={() => void submit()}
+                                            onSubmit={(oppositeMode) => void submit(undefined, { oppositeMode })}
                                             onStop={run?.id && running ? stop : undefined}
                                             stopping={stopping}
                                             sendMode={messageQueue.mode}
                                             sendModeSaving={messageQueue.savingMode || !messageQueue.mode}
-                                            onSendModeChange={messageQueue.changeMode}
+                                            onSendModeSettings={() => setView("settings")}
                                             references={[...references, ...buildSkillMentionReferences(installedSkills)]}
                                             slashSkills={installedSkills}
                                             includeAssetLibrary={false}

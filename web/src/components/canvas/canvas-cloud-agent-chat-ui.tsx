@@ -44,7 +44,7 @@ import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textare
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import type { Skill, SkillPreset } from "@/services/api/skills";
 import type { AgentSendMode } from "@/services/api/agent";
-import { AgentSendModeMenu } from "./canvas-agent-message-queue";
+import { AgentSendModeButton } from "./canvas-agent-message-queue";
 import { buildSkillMentionReferences } from "@/services/skill-runtime";
 import { agentToolCategory, agentToolCategoryLabel, agentToolErrorClassLabel, agentToolName, agentToolRetryLabel, agentToolStatus, friendlyAgentToolSummary, type AgentToolCategory } from "@/lib/canvas/agent-tool-presentation";
 import { agentOperationCategory, agentOperationFailed, agentOperationSegmentLabel } from "@/lib/canvas/agent-operation-feed";
@@ -928,7 +928,8 @@ export function AgentChatComposer({
     includeAssetLibrary,
     sendMode,
     sendModeSaving,
-    onSendModeChange,
+    onSendModeSettings,
+    queuedMessages,
 }: {
     prompt: string;
     attachments?: CloudAgentChatAttachment[];
@@ -938,7 +939,7 @@ export function AgentChatComposer({
     placeholder: string;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     onPromptChange: (value: string) => void;
-    onSubmit: () => void;
+    onSubmit: (oppositeMode?: boolean) => void;
     onStop?: () => void | Promise<void>;
     stopping?: boolean;
     onAddFiles?: (files: FileList | File[] | null) => void | Promise<void>;
@@ -954,7 +955,8 @@ export function AgentChatComposer({
     includeAssetLibrary?: boolean;
     sendMode?: AgentSendMode;
     sendModeSaving?: boolean;
-    onSendModeChange?: (value: AgentSendMode) => void | Promise<void>;
+    onSendModeSettings?: () => void;
+    queuedMessages?: ReactNode;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [slash, setSlash] = useState<{ start: number; query: string } | null>(null);
@@ -1079,6 +1081,7 @@ export function AgentChatComposer({
 
     return (
         <div className="agent-composer-wrap min-w-0 shrink-0" onWheelCapture={(event) => event.stopPropagation()}>
+            {queuedMessages}
             <div
                 className="agent-composer-surface group/composer relative transition-[background-color,box-shadow] duration-200"
                 style={{
@@ -1148,8 +1151,8 @@ export function AgentChatComposer({
                             sendOnEnter={canSubmit ? "both" : false}
                             disabled={disabled}
                             onChange={handlePromptChange}
-                            onSubmit={() => {
-                                if (canSubmit) onSubmit();
+                            onSubmit={({ ctrlKey, metaKey }) => {
+                                if (canSubmit) onSubmit(ctrlKey || metaKey);
                             }}
                             onContentSizeChange={handlePromptContentSizeChange}
                             className="w-full resize-none border-0 bg-transparent px-1 py-1 text-sm leading-5 outline-none placeholder:opacity-45"
@@ -1214,7 +1217,7 @@ export function AgentChatComposer({
                         {left}
                     </div>
                     <div className="agent-composer-submit flex items-center gap-2">
-                        {onSendModeChange ? <AgentSendModeMenu value={sendMode || "interject"} disabled={sendModeSaving} onChange={onSendModeChange} /> : null}
+                        {onSendModeSettings ? <AgentSendModeButton value={sendMode} saving={sendModeSaving} onOpenSettings={onSendModeSettings} /> : null}
                         {submitAccessory}
                         {canStop ? (
                             <motion.button
