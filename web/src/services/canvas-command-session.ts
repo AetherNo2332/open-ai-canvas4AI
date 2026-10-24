@@ -334,6 +334,13 @@ export class CanvasCommandSession {
     async reconnect(): Promise<void> {
         if (!this.acknowledged || this.loadingLatest) return;
         const generation = this.generation;
+        // The workspace polls every second. An idle poll leaves the acknowledged
+        // snapshot, the queue and the connection state untouched; emitting then
+        // would clone the whole document and re-render every subscriber.
+        const acknowledged = this.acknowledged;
+        const wasOffline = this.offline;
+        const hadPending = this.pending.length > 0;
+        const changed = () => hadPending || this.pending.length > 0 || this.acknowledged !== acknowledged;
         try {
             await this.synchronize();
             if (generation !== this.generation) return;
@@ -376,12 +383,12 @@ export class CanvasCommandSession {
                 p.status = "queued";
             }
             this.offline = false;
-            this.emit();
+            if (wasOffline || changed()) this.emit();
             await this.pump();
         } catch (error) {
             if (generation !== this.generation) return;
             this.offline = true;
-            this.emit();
+            if (!wasOffline || changed()) this.emit();
         }
     }
     private pump(): Promise<void> {

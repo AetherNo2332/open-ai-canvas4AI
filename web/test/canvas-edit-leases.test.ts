@@ -240,3 +240,42 @@ test("late renewal ACK cannot restore a lease or restart renewal after saved rel
     expect(acquired).toBe(1);
     detach();
 });
+
+test("unchanged status polls keep the published snapshot so lease subscribers do not re-render", async () => {
+    let eventSeq = 1;
+    let failure: Error | null = null;
+    const own = controller({
+        acquire: async (proof) => ({ ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }),
+        renew: async (proof) => ({ ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }),
+        release: async () => ({ released: true }),
+        status: async () => {
+            if (failure) throw failure;
+            return { revision: 1, documentEpoch: "e", eventSeq, leases: [], activeAgents: [{ id: "a", conversationId: "a", title: "a", status: "running", updatedAt: "now" }] };
+        },
+    });
+    let notifications = 0;
+    own.subscribe(() => notifications++);
+    await own.refreshStatus();
+    expect(notifications).toBe(1);
+    const published = own.getState();
+    await own.refreshStatus();
+    await own.refreshStatus();
+    expect(notifications).toBe(1);
+    expect(own.getState()).toBe(published);
+
+    eventSeq = 2;
+    await own.refreshStatus();
+    expect(notifications).toBe(2);
+    expect(own.getState().activity?.eventSeq).toBe(2);
+
+    failure = new Error("占用状态暂不可用");
+    await own.refreshStatus();
+    await own.refreshStatus();
+    expect(notifications).toBe(3);
+    expect(own.getState().activityError).toBe("占用状态暂不可用");
+
+    failure = null;
+    await own.refreshStatus();
+    expect(notifications).toBe(4);
+    expect(own.getState().activityError).toBeUndefined();
+});

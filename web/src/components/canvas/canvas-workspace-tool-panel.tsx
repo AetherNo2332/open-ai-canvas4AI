@@ -8,7 +8,7 @@ import { App, Button, Dropdown, Form, Input, Radio, Space, type MenuProps } from
 
 import { CanvasImagePreview } from "@/components/canvas/canvas-image-preview";
 import { AppModal } from "@/components/ui/product/app-modal";
-import { VideoPlayer } from "@/components/video-player";
+import { LazyVideoPlayer } from "@/components/lazy-video-player";
 import { WorkspaceErrorState, WorkspaceState } from "@/components/layout/workspace-state";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
@@ -303,7 +303,7 @@ export function CanvasWorkspaceToolPanel({ onInsert }: CanvasWorkspaceToolPanelP
             {previewTool && preview ? (
                 preview.kind === "video" ? (
                     <AppModal flush open title={previewTool.label} onCancel={() => setPreviewTool(null)} footer={null} width="min(1200px, calc(100vw - 32px))">
-                        <VideoPlayer src={preview.src} title={previewTool.label || "视频预览"} className="max-h-[84vh] max-w-full bg-black" />
+                        <LazyVideoPlayer src={preview.src} title={previewTool.label || "视频预览"} className="max-h-[84vh] max-w-full bg-black" />
                     </AppModal>
                 ) : (
                     <CanvasImagePreview src={preview.src} alt={previewTool.label} onClose={() => setPreviewTool(null)} />

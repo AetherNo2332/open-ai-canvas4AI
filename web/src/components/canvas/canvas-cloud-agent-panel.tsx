@@ -5,6 +5,7 @@ import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, L
 import { saveAs } from "file-saver";
 import { buildAgentDebugExport } from "@/lib/canvas/agent-debug-export";
 import { markdownPlainText } from "@/lib/markdown-plain-text";
+import { sameJsonData } from "@/lib/same-json-data";
 import { applyAgentEvent, appendUniqueMessage } from "@/lib/canvas/cloud-agent-events";
 import { refreshCloudAgentConversations, mergeCloudAgentConversations } from "@/services/cloud-agent-history";
 import { agentPlanVisible, latestAgentPlanItems, latestAgentPlanTerminal, pendingAgentQuestion } from "@/lib/canvas/cloud-agent-plan";
@@ -691,6 +692,8 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 createdAt: existing?.createdAt || now,
                 updatedAt: now,
             };
+            // Only the timestamp would differ; rewriting it re-saves the whole history.
+            if (existing && current[0] === existing && sameJsonData({ ...existing, updatedAt: undefined }, { ...next, updatedAt: undefined })) return current;
             return [next, ...current.filter((conversation) => conversation.id !== activeConversationId)];
         });
     }, [activeConversationId, historyHydrated, messages, permissionMode, run, selectedModel, selectedSkillIds, contextUsage, prompt]);
@@ -722,7 +725,10 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 const merged = mergeCloudAgentConversations(local, remote);
                 // An unknown POST keeps both its request identity and local view
                 // until the original key is explicitly reconciled.
-                const next = protectedSubmission ? merged.map((conversation) => conversation.id === state.activeConversationId ? local.find((entry) => entry.id === conversation.id)! : conversation) : merged;
+                const refreshed = protectedSubmission ? merged.map((conversation) => conversation.id === state.activeConversationId ? local.find((entry) => entry.id === conversation.id)! : conversation) : merged;
+                // The 4s poll usually returns an unchanged history. Keeping the current
+                // references avoids re-rendering the chat and re-saving every message.
+                const next = sameJsonData(refreshed, conversationsRef.current) ? conversationsRef.current : refreshed;
                 conversationsRef.current = next;
                 setConversations(next);
                 const active = local.find((conversation) => conversation.id === state.activeConversationId);
@@ -744,12 +750,15 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                     if (changedRun) setContextUsage(selected.contextUsage || emptyAgentContextUsage(selected.run?.id || ""));
                     lastSeqRunIdRef.current = selected.run?.id || "";
                     lastSeqRef.current = Math.max(changedRun ? 0 : lastSeqRef.current, selected.lastEventSeq || 0);
-                    setRun(selected.run);
-                    setMessages(selected.messages);
+                    setRun((current) => (sameJsonData(current, selected.run) ? current : selected.run));
+                    setMessages((current) => (sameJsonData(current, selected.messages) ? current : selected.messages));
                     const snapshotApproval = selected.run?.approval;
-                    setApproval((current) => snapshotApproval && !snapshotApproval.decision
-                        ? { approvalId: snapshotApproval.approvalId, detail: snapshotApproval, reason: current?.approvalId === snapshotApproval.approvalId ? current.reason : snapshotApproval.reason || "" }
-                        : null);
+                    setApproval((current) => {
+                        const next = snapshotApproval && !snapshotApproval.decision
+                            ? { approvalId: snapshotApproval.approvalId, detail: snapshotApproval, reason: current?.approvalId === snapshotApproval.approvalId ? current.reason : snapshotApproval.reason || "" }
+                            : null;
+                        return sameJsonData(current, next) ? current : next;
+                    });
                 }
             } catch (cause) {
                 if (!controller.signal.aborted) setMessages((current) => appendAgentError(current, "cloud-history-error", cause, "云端对话同步失败，将保留本地记录并重试"));

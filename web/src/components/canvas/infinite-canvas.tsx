@@ -72,7 +72,9 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
     const pinchStateRef = useRef<PinchState>({ active: false, pointerIds: [-1, -1], initialDistance: 1, worldX: 0, worldY: 0, initialScale: viewport.k });
     const spacePressedRef = useRef(false);
     const [isSpacePressed, setIsSpacePressed] = useState(false);
-    const [isPanning, setIsPanning] = useState(false);
+    // 平移光标由独立覆盖层承担：给 body 或画布根写 cursor 会改动继承样式，
+    // 让整棵节点树在按下时同步重算样式；触摸没有光标，不渲染覆盖层。
+    const [panCursor, setPanCursor] = useState(false);
 
     useLayoutEffect(() => {
         if (interactive) return;
@@ -90,9 +92,8 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         syncTimerRef.current = null;
         nextViewportRef.current = null;
         delete container?.dataset.canvasViewportInteracting;
-        setIsPanning(false);
+        setPanCursor(false);
         setIsSpacePressed(false);
-        document.body.style.cursor = "default";
     }, [interactive, containerRef]);
 
     useLayoutEffect(() => {
@@ -116,7 +117,6 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
             if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
             delete containerRef.current?.dataset.canvasViewportInteracting;
-            document.body.style.cursor = "";
         },
         [containerRef],
     );
@@ -299,8 +299,6 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 hasMoved: false,
                 backgroundClick: true,
             };
-            setIsPanning(true);
-            document.body.style.cursor = "grabbing";
             return;
         }
 
@@ -319,8 +317,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 hasMoved: false,
                 backgroundClick: isBackgroundClick && event.button === 0 && !spacePressedRef.current && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey,
             };
-            setIsPanning(true);
-            document.body.style.cursor = "grabbing";
+            setPanCursor(true);
         }
 
     };
@@ -375,8 +372,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                 if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
                 delete containerRef.current?.dataset.canvasViewportInteracting;
                 syncViewport();
-                setIsPanning(false);
-                document.body.style.cursor = "";
+                setPanCursor(false);
                 return;
             }
 
@@ -393,8 +389,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
             delete containerRef.current?.dataset.canvasViewportInteracting;
             syncViewport();
-            setIsPanning(false);
-            document.body.style.cursor = "";
+            setPanCursor(false);
         };
 
         window.addEventListener("pointermove", handlePointerMove);
@@ -430,8 +425,8 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
         <div
             ref={containerRef}
             data-canvas-viewport
-            data-canvas-pan-state={isPanning ? "grabbing" : isSpacePressed || !boxSelectEnabled ? "grab" : undefined}
-            className={`relative h-full w-full select-none overflow-clip touch-none ${isPanning ? "cursor-grabbing" : isSpacePressed || !boxSelectEnabled ? "cursor-grab" : "canvas-cursor-select"}`}
+            data-canvas-pan-state={isSpacePressed || !boxSelectEnabled ? "grab" : undefined}
+            className={`relative h-full w-full select-none overflow-clip touch-none ${isSpacePressed || !boxSelectEnabled ? "cursor-grab" : "canvas-cursor-select"}`}
             style={{
                 background: resolvedAppearance.background,
                 overscrollBehavior: "none",
@@ -491,6 +486,7 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
                     {children}
                 </div>
             </div>
+            {panCursor ? <div aria-hidden data-canvas-pan-cursor className="absolute inset-0 cursor-grabbing" style={{ zIndex: "var(--z-node-toolbar)" }} /> : null}
         </div>
     );
 }

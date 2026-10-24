@@ -219,7 +219,8 @@ Pi 原生技能：`app/cloud_agent_native_skills.go` 负责命名、入口规范
 | 图片多角度、宫格切分与多选框 | `canvas-node-angle-dialog.tsx`、`canvas-angle-scene.tsx`、`canvas-grid-split-picker.tsx`、`web/src/lib/canvas/canvas-grid-split.ts`、`canvas-selection.ts` |
 | 生成 Composer | `web/src/components/canvas/canvas-node-prompt-panel.tsx`、`canvas-config-composer.tsx` |
 | 风格中心、用户风格编辑与项目快照 | `web/src/components/canvas/canvas-style-picker-modal.tsx`、`style-profile-editor-modal.tsx`、`style-asset-binding-modal.tsx`、`web/src/lib/canvas/style-profile.ts`、`web/src/services/api/style-profiles.ts` |
-| 分镜脚本节点 | `web/src/components/canvas/canvas-script-node.tsx` |
+| 分镜脚本节点 | `web/src/components/canvas/canvas-script-node.tsx`；卡片列表只挂载滚动窗口内的镜头行，窗口计算在 `web/src/lib/canvas/canvas-storyboard-layout.ts` |
+| 视频播放器按需加载 | `web/src/components/lazy-video-player.tsx`：首次播放时才加载 vidstack，避免其常驻 requestAnimationFrame 循环随画布启动 |
 | 分镜声明式引用与旧画布迁移 | `web/src/lib/canvas/canvas-reference-edits.ts`、`canvas-reference-projection.ts`、`canvas-reference-inputs.ts`、`canvas-reference-migration.ts`、`canvas-node-copy.ts`；`web/src/components/canvas/storyboard-assets-cell.tsx`、`canvas-reference-migration-panel.tsx` |
 | 节点生成上下文 | `web/src/components/canvas/canvas-node-generation.ts` |
 | 布局和连线算法 | `web/src/lib/canvas/canvas-layout.ts`、`canvas-frame.ts` |

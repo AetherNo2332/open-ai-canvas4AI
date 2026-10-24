@@ -951,3 +951,50 @@ test("restart recovers a journaled inflight task with its original wire while th
         restarted.close();
     }
 });
+test("idle reconnect polls leave the published state untouched until something changes", async () => {
+    let failing = false;
+    let events: Receipt[] = [];
+    let journalWrites = 0;
+    const journal = {
+        read: async () => [],
+        write: async () => {
+            journalWrites++;
+        },
+    };
+    const s = new CanvasCommandSession(
+        transport({
+            events: async (_canvasId, after) => {
+                if (failing) throw new Error("offline");
+                return events.filter((event) => event.eventSeq > after);
+            },
+        }),
+        "client",
+        journal,
+    );
+    await s.open("canvas");
+    await s.whenJournalDurable();
+    const published: string[] = [];
+    s.subscribe((state) => published.push(state.saveState));
+    published.length = 0;
+    const writes = journalWrites;
+    const idle = s.state;
+    for (let i = 0; i < 3; i++) await s.reconnect();
+    expect(published).toEqual([]);
+    expect(s.state).toBe(idle);
+    expect(journalWrites).toBe(writes);
+
+    failing = true;
+    await s.reconnect();
+    await s.reconnect();
+    expect(published).toEqual(["offline"]);
+
+    failing = false;
+    await s.reconnect();
+    expect(published).toEqual(["offline", "saved"]);
+
+    events = [receipt(1)];
+    await s.reconnect();
+    expect(published.length).toBeGreaterThan(2);
+    expect((s.state.projected.nodes as any[])[0].metadata.content).toBe("remote");
+    s.close();
+});

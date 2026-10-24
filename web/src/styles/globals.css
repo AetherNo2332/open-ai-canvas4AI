@@ -10031,10 +10031,6 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
         cursor: grab !important;
     }
 
-    [data-canvas-pan-state="grabbing"] [data-node-id] {
-        cursor: grabbing !important;
-    }
-
     /* 静止期用最终倍率重新排版 DOM，避免 Windows Chromium 复用交互期的低分辨率合成纹理。 */
     .canvas-world-layer {
         transform: translate(var(--canvas-live-x), var(--canvas-live-y)) scale(var(--canvas-live-scale-ratio));

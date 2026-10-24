@@ -109,7 +109,9 @@ export function CanvasLeaferGraphicsLayer(props: CanvasLeaferGraphicsLayerProps)
                     syncViewport(next, containerSizeRef.current.width, containerSizeRef.current.height, underlay, overlay, propsRef.current);
                     rasterViewportRef.current = next;
                     forceSceneRender(underlay, overlay);
-                    resetScenePreview(underlay, overlay);
+                    // Keep the hosts composited with an identity transform until the
+                    // gesture ends: toggling will-change mid-gesture re-layerizes the page.
+                    applyScenePreview(next, next, underlay, overlay);
                     return;
                 }
                 applyScenePreview(next, rasterViewportRef.current, underlay, overlay);

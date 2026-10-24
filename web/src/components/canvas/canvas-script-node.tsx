@@ -26,6 +26,7 @@ import {
     STORYBOARD_ROW_HEIGHT,
     storyboardCardGridTemplate,
     storyboardCardMinWidth,
+    storyboardCardRowWindow,
     storyboardEditorColumnsTotal,
     storyboardEditorColumnWidths,
     storyboardTableHeight,
@@ -240,10 +241,16 @@ export function CanvasScriptNodeContent({
         setComposerActive(false);
     };
     const [scrollTop, setScrollTop] = useState(0);
+    const [focusedRowId, setFocusedRowId] = useState<string | null>(null);
     const composerHeightChangeRef = useRef(onComposerHeightChange);
     const reportedComposerHeightRef = useRef<number | null>(null);
     const composerHeight = node.metadata?.storyboardComposerHeight || STORYBOARD_COMPOSER_MIN_HEIGHT;
     const tableHeight = storyboardTableHeight(node.height, composerHeight);
+    const rowWindow = storyboardCardRowWindow(rows.length, scrollTop, tableHeight);
+    // The row being edited stays mounted even after it scrolls out of the window.
+    const focusedRowIndex = focusedRowId ? rows.findIndex((row) => row.id === focusedRowId) : -1;
+    const firstMountedRow = focusedRowIndex >= 0 ? Math.min(rowWindow.start, focusedRowIndex) : rowWindow.start;
+    const endMountedRow = focusedRowIndex >= 0 ? Math.max(rowWindow.end, focusedRowIndex + 1) : rowWindow.end;
     const totalDuration = rows.reduce((sum, row) => sum + (Number(row.durationSeconds) || 0), 0);
     const shotDuration = node.metadata?.storyboardShotDuration || "auto";
     const shotCount = node.metadata?.storyboardShotCount || "auto";
@@ -413,6 +420,12 @@ export function CanvasScriptNodeContent({
                     setScrollTop(next);
                     onScrollTopChange(next);
                 }}
+                onFocus={(event) => setFocusedRowId(event.target instanceof HTMLElement ? (event.target.closest<HTMLElement>("[data-storyboard-row-id]")?.dataset.storyboardRowId ?? null) : null)}
+                onBlur={(event) => {
+                    // Switching windows keeps the edited row; focus returns to it later.
+                    if (event.relatedTarget === null && !document.hasFocus()) return;
+                    if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setFocusedRowId(null);
+                }}
                 onWheel={(event) => event.stopPropagation()}
             >
                 <div className="flex min-h-full flex-col" style={{ minWidth: cardMinWidth }}>
@@ -424,26 +437,30 @@ export function CanvasScriptNodeContent({
                         ))}
                     </div>
                     {rows.length ? (
-                        rows.map((row) => (
-                            <div key={row.id} className="relative grid border-b" style={{ height: STORYBOARD_ROW_HEIGHT, borderColor: theme.node.stroke, gridTemplateColumns: cardGridTemplate }}>
-                                {visibleColumns.map((column) => (
-                                    <ScriptCardCell
-                                        scriptNode={node}
-                                        key={column}
-                                        column={column}
-                                        row={row}
-                                        nodes={nodes}
-                                        borderColor={theme.node.stroke}
-                                        mutedColor={theme.node.muted}
-                                        batchItem={batchItemByRowId.get(row.id)}
-                                        canRemove={rows.length > 1}
-                                        onRemoveRow={onRemoveRow}
-                                        onUpdateRow={onUpdateRow}
-                                        onEditAssets={onEditAssets}
-                                    />
-                                ))}
-                            </div>
-                        ))
+                        <>
+                            {firstMountedRow > 0 ? <div aria-hidden className="shrink-0" style={{ height: firstMountedRow * STORYBOARD_ROW_HEIGHT }} /> : null}
+                            {rows.slice(firstMountedRow, endMountedRow).map((row) => (
+                                <div key={row.id} data-storyboard-row-id={row.id} className="relative grid border-b" style={{ height: STORYBOARD_ROW_HEIGHT, borderColor: theme.node.stroke, gridTemplateColumns: cardGridTemplate }}>
+                                    {visibleColumns.map((column) => (
+                                        <ScriptCardCell
+                                            scriptNode={node}
+                                            key={column}
+                                            column={column}
+                                            row={row}
+                                            nodes={nodes}
+                                            borderColor={theme.node.stroke}
+                                            mutedColor={theme.node.muted}
+                                            batchItem={batchItemByRowId.get(row.id)}
+                                            canRemove={rows.length > 1}
+                                            onRemoveRow={onRemoveRow}
+                                            onUpdateRow={onUpdateRow}
+                                            onEditAssets={onEditAssets}
+                                        />
+                                    ))}
+                                </div>
+                            ))}
+                            {endMountedRow < rows.length ? <div aria-hidden className="shrink-0" style={{ height: (rows.length - endMountedRow) * STORYBOARD_ROW_HEIGHT }} /> : null}
+                        </>
                     ) : (
                         <button
                             type="button"
