@@ -245,7 +245,7 @@ func TestCloudAgentPrevisColorSchemaRejectsNonHexInput(t *testing.T) {
 	}
 }
 
-func TestCloudAgentPrevisCatalogReadAndToolPermissions(t *testing.T) {
+func TestCloudAgentPrevisHistoricalCatalogRemainsReadable(t *testing.T) {
 	s, canvas := previsMutationFixture(t)
 	catalogCall := cloudAgentCall{ID: "catalog"}
 	catalogCall.Function.Name = "previs_scene_read"
@@ -259,18 +259,6 @@ func TestCloudAgentPrevisCatalogReadAndToolPermissions(t *testing.T) {
 		t.Fatalf("catalog did not return a usable canvasSnapshotHash: %#v", result)
 	}
 
-	readOnly := CloudAgentRequest{PermissionMode: "read_only", ContextScope: []string{"canvas"}}
-	if !cloudAgentToolAllowed(readOnly, "previs_scene_read") {
-		t.Fatal("read-only mode lost semantic Previs read")
-	}
-	if cloudAgentToolAllowed(readOnly, "previs_scene_create") || cloudAgentToolAllowed(readOnly, "previs_apply_patch") {
-		t.Fatal("read-only mode exposed Previs writes")
-	}
-	auto := CloudAgentRequest{PermissionMode: "auto", ContextScope: []string{"canvas"}}
-	if !cloudAgentToolAllowed(auto, "previs_scene_create") || !cloudAgentToolAllowed(auto, "previs_apply_patch") {
-		t.Fatal("auto mode did not expose Previs writes")
-	}
-	_ = s
 }
 
 func TestCloudAgentPrevisPatchLimitsAndClosedArguments(t *testing.T) {
@@ -453,7 +441,7 @@ func previsStringPtr(value string) *string { return &value }
 
 func vec3Ptr(value []float64) *[]float64 { return &value }
 
-func TestCloudAgentPrevisApprovalRoundTripUsesSharedAgentGate(t *testing.T) {
+func TestCloudAgentRetiredPrevisCallIsRejectedBeforeApproval(t *testing.T) {
 	s, db, _, _ := creationTestService(t)
 	canvas := model.CanvasProject{ID: "agent-canvas", UserID: "user", PayloadJSON: `{"nodes":[],"connections":[],"previsScenes":[]}`}
 	if err := db.Create(&canvas).Error; err != nil {
@@ -510,28 +498,20 @@ func TestCloudAgentPrevisApprovalRoundTripUsesSharedAgentGate(t *testing.T) {
 	}
 	advance()
 	advance()
-	waiting, state := load()
-	if waiting.Status != "waiting_approval" || state.Approval == nil {
-		t.Fatalf("Previs write did not enter approval: status=%s approval=%+v", waiting.Status, state.Approval)
+	run, state := load()
+	if run.Status == "waiting_approval" || state.Approval != nil {
+		t.Fatalf("retired Previs call entered approval: status=%s approval=%+v", run.Status, state.Approval)
 	}
-	if state.Approval.CallHash != cloudAgentApprovalCallHash(call) {
-		t.Fatalf("approval hash does not bind the original Previs call: got=%s want=%s", state.Approval.CallHash, cloudAgentApprovalCallHash(call))
+	payload, detail := lastAgentToolEvent(t, s, root.ID)
+	if payload["errorClass"] != cloudAgentToolErrorInvalidModelOutput || detail["admission"] != cloudAgentAdmissionInvalidOutput {
+		t.Fatalf("retired call must produce a rejected-tool receipt: payload=%+v detail=%+v", payload, detail)
 	}
-	before := canvas.PayloadJSON
-	if err := s.DecideCloudAgentApproval("user", root.ID, state.Approval.ID, "approve", "确认预演场景"); err != nil {
-		t.Fatal(err)
-	}
-	advance()
 	stored, err := s.repo.CanvasProjectForUser("user", canvas.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.PayloadJSON == before {
-		t.Fatal("approved Previs write did not persist")
-	}
-	storedDoc, _ := creationDocument(stored.PayloadJSON)
-	if _, ok := findPrevisScene(creationMaps(storedDoc["previsScenes"]), "approval-scene"); !ok {
-		t.Fatal("approved Previs scene missing")
+	if stored.PayloadJSON != canvas.PayloadJSON {
+		t.Fatal("rejected Previs call changed stored scene data")
 	}
 }
 

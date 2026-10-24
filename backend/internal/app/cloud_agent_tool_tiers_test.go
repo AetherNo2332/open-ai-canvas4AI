@@ -37,7 +37,7 @@ func TestCloudAgentToolTierEmptyCanvasKeepsL0AndHidesHeavyL1(t *testing.T) {
 			t.Fatalf("empty canvas Q&A missing L0 tool %q: %v", want, names)
 		}
 	}
-	for _, hidden := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table", "previs_scene_create", "director_design_shot"} {
+	for _, hidden := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table"} {
 		if containsToolName(names, hidden) {
 			t.Fatalf("empty canvas Q&A advertised heavy L1 tool %q: %v", hidden, names)
 		}
@@ -117,7 +117,7 @@ func TestCloudAgentToolTierInventoryScansFullPayloadPastCatalogTruncation(t *tes
 func TestCloudAgentToolTierAdvertisedIsSubsetOfEligibleCatalog(t *testing.T) {
 	req := tierAutoRequest()
 	eligible := cloudAgentToolNames(cloudAgentTools(req))
-	for _, want := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table", "previs_scene_create", "director_design_shot"} {
+	for _, want := range []string{"canvas_edit_storyboard", "canvas_edit_batch_table"} {
 		if !containsToolName(eligible, want) {
 			t.Fatalf("eligible catalog missing L1 tool %q: %v", want, eligible)
 		}
@@ -139,7 +139,7 @@ func TestCloudAgentToolTierAdvertisedIsSubsetOfEligibleCatalog(t *testing.T) {
 
 func TestCloudAgentPromptIntentFlagsUseClosedLexicon(t *testing.T) {
 	empty := cloudAgentPromptIntentFlags("现在画布有几个节点")
-	if empty.Storyboard || empty.BatchTable || empty.Previs {
+	if empty.Storyboard || empty.BatchTable {
 		t.Fatalf("plain node-count prompt must not set L1 intent: %+v", empty)
 	}
 	storyboard := cloudAgentPromptIntentFlags("帮我写分镜")

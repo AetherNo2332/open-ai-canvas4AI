@@ -56,11 +56,22 @@ func backgroundPrevisFixture(t *testing.T, permission string) (*Service, *model.
 	return s, run, latest
 }
 
-func TestBackgroundPrevisSubmissionWaitsForDurableTask(t *testing.T) {
-	s, run, state := backgroundPrevisFixture(t, "auto")
-	if err := s.executeCloudAgentToolCall(run, state); err != nil {
+// Seed work admitted before tool retirement so lifecycle tests continue covering
+// historical render recovery without exposing the retired tool to new runs.
+func submitHistoricalPrevis(t *testing.T, s *Service, run *model.CloudAgentExecution, state *cloudAgentRuntime) {
+	t.Helper()
+	policy, err := s.RuntimePolicy()
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s.advanceCloudAgentPrevis(run, state, state.Calls[state.CallIndex], policy); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBackgroundPrevisSubmissionWaitsForDurableTask(t *testing.T) {
+	s, run, state := backgroundPrevisFixture(t, "auto")
+	submitHistoricalPrevis(t, s, run, state)
 	run, state = reloadPiRun(t, s, run.ID)
 	if state.MediaTaskID == "" {
 		t.Fatal("previs_preview returned without creating a durable render task")
@@ -91,9 +102,7 @@ func TestBackgroundPrevisSubmissionWaitsForDurableTask(t *testing.T) {
 
 func TestBackgroundPrevisUsesFrozenSceneAfterSubmission(t *testing.T) {
 	s, run, state := backgroundPrevisFixture(t, "auto")
-	if err := s.executeCloudAgentToolCall(run, state); err != nil {
-		t.Fatal(err)
-	}
+	submitHistoricalPrevis(t, s, run, state)
 	_, state = reloadPiRun(t, s, run.ID)
 	if state.MediaTaskID == "" {
 		t.Fatal("missing durable previs task")
@@ -124,45 +133,36 @@ func TestBackgroundPrevisRejectsInvalidInheritedTiming(t *testing.T) {
 	}
 }
 
-func TestBackgroundPrevisApprovalWaitRejectAndStaleSource(t *testing.T) {
-	for _, decision := range []string{"reject", "stale"} {
-		t.Run(decision, func(t *testing.T) {
-			s, run, state := backgroundPrevisFixture(t, "request_approval")
+func TestRetiredPrevisCannotRequestApprovalOrSubmitTask(t *testing.T) {
+	for _, permission := range []string{"read_only", "request_approval", "auto"} {
+		t.Run(permission, func(t *testing.T) {
+			s, run, state := backgroundPrevisFixture(t, permission)
+			if err := s.executeCloudAgentMediaCall(run, state, state.Calls[0]); err == nil {
+				t.Fatal("completion path must not submit a retired preview")
+			}
 			if err := s.executeCloudAgentToolCall(run, state); err != nil {
 				t.Fatal(err)
 			}
 			run, state = reloadPiRun(t, s, run.ID)
-			if state.Approval == nil || state.MediaTaskID != "" {
-				t.Fatal("approval wait submitted work")
-			}
-			choice := "reject"
-			if decision == "stale" {
-				choice = "approve"
-			}
-			if err := s.DecideCloudAgentApproval(run.UserID, run.ID, state.Approval.ID, choice, ""); err != nil {
-				t.Fatal(err)
-			}
-			if decision == "stale" {
-				canvas, _ := s.repo.CanvasProjectForUser(run.UserID, run.CanvasID)
-				doc := mustCreationDocument(t, canvas.PayloadJSON)
-				creationMaps(creationMaps(doc["previsScenes"])[0]["cameras"])[0]["fov"] = 65
-				raw, _ := json.Marshal(doc)
-				canvas.PayloadJSON = string(raw)
-				s.repo.UpsertCanvasProject(canvas)
-			}
-			run, state = reloadPiRun(t, s, run.ID)
-			if err := s.executeCloudAgentToolCall(run, state); err != nil {
-				t.Fatal(err)
-			}
-			_, state = reloadPiRun(t, s, run.ID)
-			if state.MediaTaskID != "" {
-				t.Fatal("rejected or stale approval submitted")
+			if state.Approval != nil || state.MediaTaskID != "" || state.CallIndex != 1 {
+				t.Fatal("retired preview must be rejected without approval or work")
 			}
 			pending, err := s.repo.PendingPrevisForRun(run.UserID, run.ID)
 			if err != nil || len(pending) != 0 {
 				t.Fatal("unexpected render tasks")
 			}
 		})
+	}
+}
+
+func TestRetiredPrevisRecoveryRejectsTaskFromAnotherRun(t *testing.T) {
+	s, run, state := backgroundPrevisFixture(t, "auto")
+	submitHistoricalPrevis(t, s, run, state)
+	run, state = reloadPiRun(t, s, run.ID)
+	other := *run
+	other.ID = "another-run"
+	if resumed, err := s.resumeCloudAgentRetiredPrevis(&other, state, state.Calls[0]); !resumed || err == nil {
+		t.Fatal("historical recovery accepted a task owned by another run")
 	}
 }
 

@@ -267,6 +267,8 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 平移和缩放只持久化浏览器视口，内容 PUT 忽略客户端 `viewport` 和 `remoteContentHash`。前端遇到 409/428 会保留账号隔离的本地草稿、暂停该画布自动提交，并提供加载最新版和下载草稿入口；载入最新版前草稿写入失败时停止替换。其他画布仍可保存。
 
+命令会话中的版本冲突同样提供恢复入口。顶部保存状态会展开处理步骤：先重新同步以核对回执；仍有冲突时，用户确认后先保存包含冲突编辑和未提交内容的本地草稿，再读取并采用云端快照、清理已备份的待处理记录，并重置编辑基线。该恢复操作不会提交本地整份画布或重发生成任务。结果尚未确认的提交必须先核对，不能直接丢弃；本地备份或提交记录写入失败、期间继续编辑或切换账号时停止替换。本地草稿可下载后从画布列表导入为副本，保存范围限于当前浏览器和账号。
+
 单画布读取会先查询归属用户的版本元数据，再判断 `If-None-Match`；命中时不会读取大型画布正文。未命中时返回完整项目 JSON。正文达到 1 KiB 且客户端声明接受 gzip 时响应使用 gzip 压缩，并带 `Vary: Accept-Encoding`；因此客户端应以 HTTP 状态码区分 `200` 正文和 `304` 未变化，不要把 `304` 当作业务错误。
 
 云端 Agent 与创作任务的写入共用版本和历史事务；Agent `canvasPatch` 携带 `baseRevision`、`revision`，客户端只接受连续增量，跳过重复事件，缺口或同字段冲突时保留草稿并重新核对。删除、重排或顶层内容变化无法由增量完整表示时，事件携带 `requiresRefresh: true` 且不附 `canvasPatch`，客户端完整核对后才推进基线；撤销事件同样触发核对。保存日志仅记录请求/链路 ID、画布/用户 ID、版本、节点数量变化及 HTTP 状态，不记录正文、提示词或媒体 URL。
@@ -294,6 +296,12 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 - `model_list` 的分镜模式：传 `mode` + `storyboardNodeId` + `storyboardRowId`，按该行解析出的真实输入筛选模型，且不接受 `referenceNodeIds`。
 - Agent 引用合同：`connect_nodes`、`update_connection`、`delete_connection` 以及 `fromNodeId`／`toNodeId`／`fromHandleId`／`toHandleId` 统一被拒（`connection_ops_disabled`）；`update_node.patch` 不能写 `connections`、`metadata`、`managedBy`、`referenceOwnerNodeId`、`referenceBindingId`（`reference_field_reserved`）。
 
+## 生成参考校验与保存失败
+
+角色卡是 text 节点的 character 业务变体，其形象、声音和文字设定分别以 image、audio、text 媒体表示。保存生成配置、解析引用和 Agent 编辑预览共用后端引用规则，不要求业务类型与媒体类型同名；源节点权限、画布归属、引用角色、目标输入能力与真实角色素材可用性仍须通过校验。
+
+命令会话按机器原因区分版本冲突与明确拒绝。参数或权限错误、节点占用和请求身份复用不会被改写为版本冲突；明确拒绝的记录保留原错误与本地修改，刷新不自动重发。用户显式重试原请求时保持原身份；修正后的内容先备份，再以新身份替换已拒绝的纯编辑记录。存在任务副作用、真实冲突或结果不明时不做此替换，继续核对原回执。本地备份或日志替换失败、期间继续编辑或切换账号时保留原记录。
+
 ## 节点编辑租约与实时状态
 
 以下路径均带 `/api` 前缀并使用现有登录会话：
@@ -309,6 +317,8 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 持久写入的证明只放 `X-Canvas-Edit-Proofs` JSON数组header，最多128项、32KiB，不放URL、命令正文或journal。其他会话正在编辑时返回409 `node_locked`。所有writer都在持久边界验证作者字段；任务进度和媒体输出在作者内容不变时可以继续。Agent遇到租约冲突先回滚本次副作用，再保存可行动的业务拒绝回执。
 
 实时JSON帧要求 `protocolVersion:1`。ready/sync/invalidate只唤醒既有events/snapshot补读，不是保存ACK；peers是临时设备、光标与拖动快照。设备显示号1–64，15秒心跳、60秒租期；Redis故障时明确degraded/recovering并清除过期远端成员，号0不提供编辑授权。客户端入站限制32KiB，服务端快照上限512KiB；慢客户端断开后重连补读。代理必须允许该路径的HTTP升级、Cookie、Origin和外部Host；普通事件轮询仍是恢复基础。
+
+公开租约额外提供 nodeTitle、nodeType、nodeTypeLabel、nodeExists，名称从当前账号的同一画布解析，角色卡显示业务类型 character。重名和未命名条目带短标识，已删除节点不提供定位。前端根据控制器的 sessionId 标记当前窗口，sessionId 不代表用户姓名；完整节点 ID 仅作辅助详情。占用期限会随编辑自动续期，不代表到该时刻一定可编辑。响应继续排除 token 和 Agent 内部状态。
 
 ## 项目素材关联的条件同步
 
@@ -379,7 +389,7 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 - strict function calling：文本模型能力合同可声明 `text.strictTools=true`，声明后本步的每个工具定义会带上 `strict: true`（上游按 schema 约束采样）；上游返回"不认 strict"一类错误时自动去掉标记重发一次，并把该渠道模型记入进程内拒绝名单，后续请求不再尝试。**默认不下发 strict**（未声明即不发），因为多数 OpenAI 兼容上游不支持它；无论是否下发 strict，服务端的本地 schema 预检都照常执行，strict 只是额外一层。
 - 工具目录使用 `cloud-agent-tools/v6`。`pi-native` 保留受限 `read` 和 Pi 默认技能目录装配，不再注册传统技能搜索、读取工具。技能文件仅限本轮冻结白名单，不发现宿主机技能。
 - 工具批次预检：模型一次返回的多个工具调用在执行前先过一遍预检——工具必须在本轮工具表内、必须获本轮授权、参数必须满足**本轮下发的 JSON schema**（缺必填字段、类型不符、未定义字段、枚举/上下界越界、数组超限都在这里被拒），并且**每一步最多执行一个写入或生成调用**（只读工具不受限）。命中预检的调用不会进入业务代码：不读画布、不申请审批、不提交任务，回执按字段级参数错误（`reason=invalid_tool_arguments`、`field`、`issue`，并附本轮 `parameters`）交回模型自纠；同一批里第一个写入未通过校验时，后续写入整批取消，回执标 `errorClass=call_skipped`、`admission=batch_cancelled_after_write_failure`；同批第二个及以后的写入以 `admission=single_write_per_step` 跳过，提示下一步单独提交。批次策略跳过不算参数错、不消耗自动纠错名额，也不会改动画布。旧检查点里的批次没有预检结论时按原行为直接执行。
-- 当前共享目录共 43 个工具，L0 并集 25 个、L1 18 个；父子代理身份、权限、画布上下文及开关继续裁剪每轮实际目录。节点整理 `canvas_arrange_nodes` 属于 L0，在具备画布写权限时从首步披露。L1 包括分镜 3 个、批量表 2 个、素材和角色 3 个，以及预演和导演 10 个。预演/导演由已有有效 `previsScenes` 或明确的预演、白模、导演台意图解锁。绘图原生读写、拆图层、OCR 和标注专用工具已移除；图像分析走模型多模态，视觉修改走参考生图。画布写入要求 `contextScope: ["canvas"]`，禁止 shell、任意网络请求和外部 MCP。
+- 当前共享目录共 33 个工具，L0 并集 25 个、L1 8 个；父子代理身份、权限、画布上下文及开关继续裁剪每轮实际目录。节点整理 `canvas_arrange_nodes` 属于 L0，在具备画布写权限时从首步披露。L1 包括分镜 3 个、批量表 2 个、素材和角色 3 个。画布已移除预演和导演的 10 个工具，明确意图或历史场景不能重新开放；旧图片转导演工作流在创建任务前被拒绝，历史数据保留。绘图原生读写、拆图层、OCR 和标注专用工具已移除；图像分析走模型多模态，视觉修改走参考生图。画布写入要求 `contextScope: ["canvas"]`，禁止 shell、任意网络请求和外部 MCP。
 - 新压缩采用 Pi 0.87.1 原生 `compact()`：按 token 选择保留边界，长工具轮次可分别生成历史摘要与轮次前缀摘要。Go snapshot 的 `compactAtTokens` 与 Pi 触发设置一致；摘要输出上限独立计算。每个摘要子调用仍是 Go 的 `cloud_agent_context_compaction` 任务，按单步墙钟计时、不占模型步数，重启复用同任务。同一轮最多压缩 4 次。Pi 语义摘要写入检查点的 `historySummary`，执行和待办事实由 Go 提供；固定 JSON 合同仍为 version 1、最长 64 KiB。上下文由检查点帧、确认回执和 Pi 切点后的原文组成，保留完整工具调用与结果，不再固定最近两轮。旧在途压缩继续按原合同恢复。窗口未知时使用未配置的默认调度预算，不能将其当作真实能力。内部接口、存储与降级细节见[Agent 上下文压缩](/docs/backend/agent-context-compaction)。
 - 压缩过程对外只有两个事件：`context_compaction_requested` 带触发读数（`basis` 为 `tokens`／`bytes`、`projectedTokens`、`usableInputTokens`、`compactAtTokens`、`pressureRatio`、`budgetSource`、`sourceBytes`、`turnCount`），`context_compacted` 带 `mode`（`model` 为压缩模型输出，`fallback` 为服务端保底检查点）、`resume`、`historyMessages`、`compactedTurnCount`、`droppedTurns`，降级时附 `reason`。压缩模型失败、输出不合规、或本轮在压缩期间被取消／失败，服务端都落保底检查点并写 `mode=fallback`；终态轮次的收尾只落检查点与事件，不改写已经失败或已取消的状态。
 - **`context_pressure` 的读数契约**（上游 #601 的契约与我方 V2 读数的**并集**）：每次普通 Agent 步进的模型调用发出之前都会落一条 `context_pressure` 事件（`schemaVersion: 2`、`phase: "before_request"`），把"这次请求装了多少、离装不下还有多远"作为可观测读数下发，`requestId` 是本次请求的任务 ID。主读数是 `projectedNextInputTokens`：有可采信的上游实测锚点时等于"锚点实测 + 本地估算的有符号增量"（`tokenSource` / `measurementSource` 为 `provider`，`tokenScale` 给出实测÷估算的换算比例）；没有实测时退回纯本地估算（`tokenSource` 为 `estimate`）。两把尺子各有自己的名字、谁也**不覆盖**谁：`estimatedInputTokens`（`readingScope: "next_request"`、`estimateMethod: "local_v1"`）永远是本地下一次请求的估算，`pressureTokens` / `tokenUsage` / `providerUsage`（`providerMeasurementScope: "previous_request"`）永远是上游对**上一次**请求的实测，消费方不得把两者画成一条曲线（`tokenUsage` 是我方的对外名、`providerUsage` 是上游同义名，两者同时下发且数字一致）。本读数只增加可观测性：请求准入与正文裁剪的既有判据不变。

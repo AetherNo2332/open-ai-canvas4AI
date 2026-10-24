@@ -2,7 +2,7 @@ import { captureHTTP } from "./request";
 
 export type CanvasEditProof = { canvasId: string; nodeId: string; sessionId: string; token: string };
 export type CanvasEditLease = CanvasEditProof & { expiresAt: string };
-export type CanvasPublicEditLease = Omit<CanvasEditLease, "token">;
+export type CanvasPublicEditLease = Omit<CanvasEditLease, "token"> & { nodeTitle: string; nodeType: string; nodeTypeLabel: string; nodeExists: boolean };
 export type CanvasSyncActivity = {
     revision: number;
     documentEpoch: string;

@@ -31,7 +31,6 @@ type CanvasNodeContextMenuProps = {
     onAddNode: (type: CanvasNodeTypeId) => void;
     onAddFolder: () => void;
     onChooseStyle: () => void;
-    onOpenPrevis: (position: Position) => void;
     onUpload: () => void;
     onOpenAssets: () => void;
     onOpenProjectCharacters: () => void;
@@ -56,7 +55,6 @@ type CanvasNodeContextMenuProps = {
     onCopySelection?: () => void;
     onDeleteSelection?: () => void;
     onSendToAgent?: () => void;
-    onImageToDirector?: () => void;
 };
 
 export function CanvasNodeContextMenu({
@@ -72,7 +70,6 @@ export function CanvasNodeContextMenu({
     onAddNode,
     onAddFolder,
     onChooseStyle,
-    onOpenPrevis,
     onUpload,
     onOpenAssets,
     onOpenProjectCharacters,
@@ -97,7 +94,6 @@ export function CanvasNodeContextMenu({
     onCopySelection,
     onDeleteSelection,
     onSendToAgent,
-    onImageToDirector,
 }: CanvasNodeContextMenuProps) {
     const theme = canvasThemes[useActiveTheme()];
     const [addOpen, setAddOpen] = useState(false);
@@ -231,7 +227,6 @@ export function CanvasNodeContextMenu({
                                     <MenuDivider />
                                     <MenuSection label="节点" />
                                     <MenuButton icon={<AtSign />} label="发送到 Agent" disabled={!onSendToAgent} onClick={() => onSendToAgent && runAction(onSendToAgent)} />
-                                    <MenuButton icon={<ImageIcon />} label="根据此图生成 3D 导演预演台" disabled={!onImageToDirector || !hasNodeContent} onClick={() => onImageToDirector && runAction(onImageToDirector)} />
                                     <MenuButton icon={<Copy />} label="复制节点" shortcut="⌘C" onClick={() => runAction(onCopyNode)} />
                                     {isImage ? <MenuButton icon={<Clipboard />} label="复制图片" disabled={!hasNodeContent} onClick={() => runAction(onCopyContent)} /> : null}
                                     <MenuButton icon={<Link2 />} label={isImage ? "复制图片地址" : "复制视频地址"} disabled={!canCopyMediaUrl} onClick={() => runAction(onCopyMediaUrl)} />
@@ -276,7 +271,6 @@ export function CanvasNodeContextMenu({
                         onAddNode={(type) => runAction(() => onAddNode(type))}
                         onAddFolder={() => runAction(onAddFolder)}
                         onChooseStyle={() => runAction(onChooseStyle)}
-                        onOpenPrevis={() => runAction(() => onOpenPrevis(menu.position))}
                         onUpload={() => runAction(onUpload)}
                         onOpenAssets={() => runAction(onOpenAssets)}
                         onOpenProjectCharacters={() => runAction(onOpenProjectCharacters)}
@@ -287,7 +281,7 @@ export function CanvasNodeContextMenu({
     );
 }
 
-function AddNodeContextMenu({ parentPosition, workspaceMode, isProjectLinked, onAddNode, onAddFolder, onChooseStyle, onOpenPrevis, onUpload, onOpenAssets, onOpenProjectCharacters }: { parentPosition: { left: number; top: number }; workspaceMode: CanvasWorkspaceMode; isProjectLinked: boolean; onAddNode: (type: CanvasNodeTypeId) => void; onAddFolder: () => void; onChooseStyle: () => void; onOpenPrevis: () => void; onUpload: () => void; onOpenAssets: () => void; onOpenProjectCharacters: () => void }) {
+function AddNodeContextMenu({ parentPosition, workspaceMode, isProjectLinked, onAddNode, onAddFolder, onChooseStyle, onUpload, onOpenAssets, onOpenProjectCharacters }: { parentPosition: { left: number; top: number }; workspaceMode: CanvasWorkspaceMode; isProjectLinked: boolean; onAddNode: (type: CanvasNodeTypeId) => void; onAddFolder: () => void; onChooseStyle: () => void; onUpload: () => void; onOpenAssets: () => void; onOpenProjectCharacters: () => void }) {
     const theme = canvasThemes[useActiveTheme()];
     const installations = usePluginStore((state) => state.installations);
     const pluginStates = usePluginStore((state) => state.pluginStates);
@@ -308,7 +302,6 @@ function AddNodeContextMenu({ parentPosition, workspaceMode, isProjectLinked, on
             onAddExtensionNode: onAddNode,
             onAddWorkflow: () => onAddNode(CanvasNodeType.Config),
             onChooseStyle,
-            onOpenPrevis,
             onUpload,
             onOpenMyAssets: onOpenAssets,
             onOpenProjectCharacters,
