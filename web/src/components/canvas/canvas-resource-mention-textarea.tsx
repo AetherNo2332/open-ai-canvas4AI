@@ -35,6 +35,7 @@ type MentionTextPart =
       };
 
 type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "onSubmit" | "value"> & {
+    visible?: boolean;
     value: string;
     references: CanvasResourceReference[];
     onSelectReference?: (reference: CanvasResourceReference) => CanvasResourceReference | undefined;
@@ -61,7 +62,7 @@ function shouldSubmitOnEnter(event: { key: string; ctrlKey: boolean; metaKey: bo
 }
 
 export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea(
-    { value, references, onSelectReference, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 320, sendOnEnter = true, onContentSizeChange, includeAssetLibrary = false, activeDropReferenceId, onReferenceFilesDrop, autoLinkEnabled = false, ...props },
+    { visible = true, value, references, onSelectReference, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 320, sendOnEnter = true, onContentSizeChange, includeAssetLibrary = false, activeDropReferenceId, onReferenceFilesDrop, autoLinkEnabled = false, ...props },
     forwardedRef,
 ) {
     const rawTheme = useActiveTheme();
@@ -81,6 +82,16 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const [autoLinkPosition, setAutoLinkPosition] = useState<{ left: number; top: number } | null>(null);
     const [nativeDropReferenceId, setNativeDropReferenceId] = useState<string | null>(null);
     const [previewReference, setPreviewReference] = useState<CanvasResourceReference | null>(null);
+    const visibleRef = useRef(visible);
+    visibleRef.current = visible;
+    useLayoutEffect(() => {
+        if (visible) return;
+        setMention(null);
+        setActiveIndex(-1);
+        setAutoLinkCursor(null);
+        setPreviewReference(null);
+        setNativeDropReferenceId(null);
+    }, [visible]);
     const canvasReferences = useResolvedCanvasResourceReferences(references);
     const rawAssetReferences = useMemo(() => includeAssetLibrary ? buildAssetMentionReferences(assets) : [], [assets, includeAssetLibrary]);
     const assetReferences = useResolvedCanvasResourceReferences(rawAssetReferences);
@@ -197,6 +208,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     const focusEditor = (selectionStart?: number) => {
         requestAnimationFrame(() => {
+            if (!visibleRef.current) return;
             const editor = editorRef.current;
             if (editor) {
                 const scrollTop = editor.scrollTop;
@@ -273,7 +285,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         setAutoLinkCursor(match.start + insertText.length);
     };
 
-    const autoLinkSuggestion = autoLinkMatch ? createPortal(
+    const autoLinkSuggestion = visible && autoLinkMatch ? createPortal(
         <button
             ref={autoLinkSuggestionRef}
             type="button"
@@ -328,7 +340,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         caretColor: style?.color || theme.node.text,
     } as CSSProperties;
     const menuAnchor = useRichEditor ? editorRef.current : textareaRef.current;
-    const menu = mention && availableReferences.length && menuAnchor ? (
+    const menu = visible && mention && availableReferences.length && menuAnchor ? (
         <MentionMenu
             anchor={menuAnchor}
             connectedReferences={activeMentionCanvasReferences}
@@ -494,7 +506,7 @@ if (event.key === "Enter" && (event.nativeEvent.isComposing || composingRef.curr
                 </div>
                 {autoLinkSuggestion}
                 {menu}
-                {previewReference ? <InlineReferencePreview reference={previewReference} onClose={() => setPreviewReference(null)} /> : null}
+                {visible && previewReference ? <InlineReferencePreview reference={previewReference} onClose={() => setPreviewReference(null)} /> : null}
             </div>
         );
     }

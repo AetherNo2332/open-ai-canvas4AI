@@ -1,7 +1,8 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { CloudAgentConversation } from "@/services/cloud-agent-conversations";
-import type { AgentQueuedMessage } from "@/services/api/agent";
+import type { AgentEvent, AgentQueuedMessage } from "@/services/api/agent";
+import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 const dom = new Window({ url: "http://localhost/", width: 1440, height: 900 });
 for (const [key, value] of Object.entries({ window: dom, document: dom.document, navigator: dom.navigator, localStorage: dom.localStorage, HTMLElement: dom.HTMLElement, HTMLInputElement: dom.HTMLInputElement, HTMLTextAreaElement: dom.HTMLTextAreaElement, SVGElement: dom.SVGElement, Element: dom.Element, Node: dom.Node, Event: dom.Event, CustomEvent: dom.CustomEvent, ShadowRoot: dom.ShadowRoot, MutationObserver: dom.MutationObserver, ResizeObserver: dom.ResizeObserver, requestAnimationFrame: dom.requestAnimationFrame.bind(dom), cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom), getComputedStyle: dom.getComputedStyle.bind(dom), IS_REACT_ACT_ENVIRONMENT: true }))
@@ -18,6 +19,7 @@ const { useUserStore } = await import("@/stores/use-user-store");
 const { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } = await import("@/stores/use-config-store");
 let reducedMotion = false;
 let queueItems: AgentQueuedMessage[] = [];
+let receiveEvent: ((event: AgentEvent) => void) | undefined;
 const silent = () => {};
 // Retain DOM props, children and refs; expose the exact animation contract emitted by production.
 const motionTags = new Map<string, any>();
@@ -31,10 +33,9 @@ mock.module("motion/react", () => ({
 }));
 mock.module("file-saver", () => ({ saveAs: silent }));
 mock.module("@/components/ai/ai-message-markdown", () => ({ AIMessageMarkdown: ({ children, content }: any) => <div>{children || content}</div> }));
-mock.module("@/components/canvas/canvas-resource-mention-textarea", () => ({ CanvasResourceMentionTextarea: ({ value, onChange }: any) => <textarea value={value} onChange={onChange} /> }));
 mock.module("@/components/canvas/live2d-avatar", () => ({ Live2DAvatar: () => null }));
 mock.module("@/components/ui/fluid-orb", () => ({ FluidOrb: () => null }));
-mock.module("@/services/api/agent", () => ({ ...agent, getAgentUISettings: async () => ({ defaultSendMode: "queue", revision: 1 }), getAgentCapabilities: async () => ({ permissionModes: ["auto"], skills: true, availability: { configured: true } }), listAgentSkillDefaults: async () => ({ count: 0, skills: [] }), getAgentMessageQueue: async () => ({ conversationId: "test", canvasId: "canvas", revision: 1, paused: false, latestRunId: currentConversation.run?.id || "run-approval", items: queueItems }), subscribeAgentEvents: (_id: string, _receive: unknown, options: any) => { options.onConnectionChange("connected"); return silent; }, getAgentRun: async () => ({ run: currentConversation.run }) }));
+mock.module("@/services/api/agent", () => ({ ...agent, getAgentUISettings: async () => ({ defaultSendMode: "queue", revision: 1 }), getAgentCapabilities: async () => ({ permissionModes: ["auto"], skills: true, availability: { configured: true } }), listAgentSkillDefaults: async () => ({ count: 0, skills: [] }), getAgentMessageQueue: async () => ({ conversationId: "test", canvasId: "canvas", revision: 1, paused: false, latestRunId: currentConversation.run?.id || "run-approval", items: queueItems }), subscribeAgentEvents: (_id: string, receive: (event: AgentEvent) => void, options: any) => { receiveEvent = receive; options.onConnectionChange("connected"); return silent; }, getAgentRun: async () => ({ run: currentConversation.run }) }));
 mock.module("@/services/api/agent-subagent", () => ({ ...subagents, listAgentSubagents: async () => [] }));
 const savedConversation: CloudAgentConversation = { id: "conversation-one", title: "Test conversation", messages: [
     { id: "user-one", role: "user", text: "A user message" },
@@ -69,10 +70,13 @@ function toolbarVisibility(host: HTMLElement) {
     snapshot.remove();
     return visibility;
 }
-async function mount({ compact = false, floating = false, reduced = false, approval = false, queued = false } = {}) {
+async function mount({ compact = false, floating = false, reduced = false, approval = false, queued = false, streaming = false, references = [] as CanvasResourceReference[], draft = savedConversation.draft } = {}) {
     reducedMotion = reduced;
+    receiveEvent = undefined;
     currentConversation = approval ? { ...savedConversation, run: { id: "run-approval", canvasId: "canvas", conversationId: "test", status: "waiting_approval", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt, approval: { approvalId: "image-approval", reason: "Keep approval reason", call: { id: "image-call", function: { name: "generate_media", arguments: JSON.stringify({ mode: "image", size: "1:1", prompt: "An image", referenceNodeIds: [] }) } } } } } : savedConversation;
     if (queued) currentConversation = { ...savedConversation, run: { id: "run-queue", conversationId: "test", canvasId: "canvas", status: "completed", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt } };
+    if (streaming) currentConversation = { ...savedConversation, run: { id: "run-stream", conversationId: "test", canvasId: "canvas", status: "running", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt } };
+    currentConversation = { ...currentConversation, draft };
     queueItems = queued ? [1, 2].map((sequence) => ({ id: `queued-${sequence}`, conversationId: "test", canvasId: "canvas", sequence, revision: 1, mode: "queue", status: "queued", prompt: `Queued message ${sequence}`, createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt })) : [];
     dom.happyDOM.setWindowSize({ width: compact ? 700 : 1440, height: 900 });
     window.localStorage.clear();
@@ -85,13 +89,116 @@ async function mount({ compact = false, floating = false, reduced = false, appro
     document.body.append(host);
     const root = createRoot(host);
     const render = async (open: boolean) => act(async () => {
-        root.render(<><div className="canvas-main-toolbar">Toolbar</div><CanvasCloudAgentPanel canvasId="canvas" nodeCount={1} selectedNodeIds={[]} references={[]} open={open} floating={floating} launcher={false} onOpen={silent} onCollapse={silent} /></>);
+        root.render(<><div className="canvas-main-toolbar">Toolbar</div><CanvasCloudAgentPanel canvasId="canvas" nodeCount={1} selectedNodeIds={[]} references={references} open={open} floating={floating} launcher={false} onOpen={silent} onCollapse={silent} /></>);
         await settle();
     });
     await render(true);
     return { host, render, aside: () => (floating ? document.body : host).querySelector<HTMLElement>("aside.canvas-agent-panel")!, close: async () => { await act(async () => root.unmount()); host.remove(); } };
 }
 afterAll(() => dom.happyDOM.abort());
+
+const imageReference: CanvasResourceReference = { id: "image-one", nodeId: "image-one", kind: "image", label: "Image one", title: "Image one", active: true, previewUrl: "data:image/png;base64,iVBORw0KGgo=", mentionToken: "@[node:image-one]" };
+
+test("closing removes the real mention body portal while its search field is focused", async () => {
+    const mounted = await mount({ references: [imageReference] });
+    try {
+        const composer = mounted.aside().querySelector(".agent-composer-wrap");
+        const editor = mounted.aside().querySelector<HTMLElement>('[aria-label="Agent 输入"]')!;
+        await act(async () => {
+            editor.focus();
+            editor.textContent = "@";
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false);
+            window.getSelection()!.removeAllRanges();
+            window.getSelection()!.addRange(range);
+            editor.dispatchEvent(new Event("input", { bubbles: true }));
+            await settle();
+        });
+        const menu = document.body.querySelector<HTMLElement>("[data-canvas-resource-mention-menu]")!;
+        expect(menu).not.toBeNull();
+        expect(mounted.aside().contains(menu)).toBe(false);
+        const search = menu.querySelector<HTMLInputElement>('[aria-label="搜索引用素材"]')!;
+        await act(async () => search.focus());
+        expect(document.activeElement === search).toBe(true);
+        await mounted.render(false);
+        expect({ portalConnected: menu.isConnected, portalFocused: document.activeElement === search }).toEqual({ portalConnected: false, portalFocused: false });
+        await mounted.render(true);
+        expect(document.body.querySelector("[data-canvas-resource-mention-menu]")).toBeNull();
+        expect(mounted.aside().querySelector(".agent-composer-wrap") === composer).toBe(true);
+        expect(mounted.aside().querySelector('[aria-label="Agent 输入"]') === editor).toBe(true);
+        expect(editor.textContent).toBe("@");
+    } finally { await mounted.close(); }
+});
+
+test("closing removes the real inline image preview body portal without replacing the editor", async () => {
+    const mounted = await mount({ references: [imageReference], draft: "Review @[node:image-one] " });
+    try {
+        const editor = mounted.aside().querySelector<HTMLElement>('[aria-label="Agent 输入"]')!;
+        const chip = editor.querySelector<HTMLElement>('[data-mention-reference-id="image-one"]')!;
+        expect(chip).not.toBeNull();
+        await act(async () => { chip.dispatchEvent(new dom.MouseEvent("dblclick", { bubbles: true })); await settle(); });
+        const preview = document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="预览Image one"]')!;
+        expect(preview).not.toBeNull();
+        expect(mounted.aside().contains(preview)).toBe(false);
+        const close = preview.querySelector<HTMLButtonElement>('[aria-label="关闭图片预览"]')!;
+        await act(async () => close.focus());
+        await mounted.render(false);
+        expect({ portalConnected: preview.isConnected, portalFocused: document.activeElement === close }).toEqual({ portalConnected: false, portalFocused: false });
+        await mounted.render(true);
+        expect(document.body.querySelector('[role="dialog"][aria-label="预览Image one"]')).toBeNull();
+        expect(mounted.aside().querySelector('[aria-label="Agent 输入"]') === editor).toBe(true);
+        expect(editor.querySelector('[data-mention-reference-id="image-one"]') === chip).toBe(true);
+    } finally { await mounted.close(); }
+});
+
+test("closing cancels the real composer height drag while preserving height and draft", async () => {
+    const mounted = await mount();
+    try {
+        const composer = mounted.aside().querySelector<HTMLElement>(".agent-composer-wrap")!;
+        const handle = composer.querySelector<HTMLButtonElement>('[aria-label="调整提示词面板高度"]')!;
+        const captures = new Set<number>();
+        Object.assign(handle, { setPointerCapture: (id: number) => captures.add(id), hasPointerCapture: (id: number) => captures.has(id), releasePointerCapture: (id: number) => { captures.delete(id); handle.dispatchEvent(new dom.PointerEvent("lostpointercapture", { bubbles: true, pointerId: id })); } });
+        await act(async () => handle.dispatchEvent(new dom.PointerEvent("pointerdown", { bubbles: true, pointerId: 19, button: 0, clientY: 600 })));
+        await act(async () => handle.dispatchEvent(new dom.PointerEvent("pointermove", { bubbles: true, pointerId: 19, clientY: 540 })));
+        expect(handle.getAttribute("aria-valuenow")).toBe("120");
+        await mounted.render(false);
+        expect(captures.has(19)).toBe(false);
+        await mounted.render(true);
+        expect(mounted.aside().querySelector(".agent-composer-wrap") === composer).toBe(true);
+        await act(async () => handle.dispatchEvent(new dom.PointerEvent("pointermove", { bubbles: true, pointerId: 19, clientY: 500 })));
+        expect(handle.getAttribute("aria-valuenow")).toBe("120");
+        expect(composer.querySelector<HTMLTextAreaElement>('[aria-label="Agent 输入"]')!.value).toBe("A retained unsent draft");
+    } finally { await mounted.close(); }
+});
+
+for (const following of [false, true]) test(`hidden stream additions preserve ${following ? "bottom following" : "older-message reading"} through reopen`, async () => {
+    const mounted = await mount({ streaming: true });
+    try {
+        const conversation = mounted.aside().querySelector<HTMLElement>("[data-agent-conversation]")!;
+        let height = 1000;
+        let top = following ? 800 : 175;
+        // Happy DOM has no layout; model the browser's clamped scroll geometry at this boundary.
+        Object.defineProperties(conversation, { scrollHeight: { configurable: true, get: () => height }, clientHeight: { configurable: true, value: 200 }, scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, height - 200)); } } });
+        conversation.dispatchEvent(new Event("scroll", { bubbles: true }));
+        await mounted.render(false);
+        for (const seq of [1, 2]) {
+            height += 200;
+            await act(async () => {
+                receiveEvent!({ eventId: `stream-${seq}`, runId: "run-stream", seq, type: "assistant_delta", payload: { messageId: "answer-one", text: ` hidden-${seq}` }, createdAt: savedConversation.createdAt });
+                await settle();
+            });
+            for (let i = 0; i < 40 && !conversation.textContent?.includes(`hidden-${seq}`); i++) {
+                await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+            }
+            expect(conversation.textContent).toContain(`hidden-${seq}`);
+            expect(conversation.scrollTop).toBe(following ? height - 200 : 175);
+        }
+        await mounted.render(true);
+        expect(mounted.aside().querySelector("[data-agent-conversation]") === conversation).toBe(true);
+        expect(conversation.scrollTop).toBe(following ? 1200 : 175);
+    } finally { await mounted.close(); }
+});
 
 test("closing preserves the real composer and queue expansion with an unsaved edit draft", async () => {
     const mounted = await mount({ queued: true });
