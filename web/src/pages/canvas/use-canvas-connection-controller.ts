@@ -12,8 +12,9 @@ import { batchCellConnectionError, batchCellHandle, parseBatchCellHandle, type B
 import { connectedNodeCenterFromEdgeDrop } from "@/lib/canvas/canvas-connected-node-placement";
 import { canvasConnectionError } from "@/lib/canvas/canvas-connection-policy";
 import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, isHiddenBatchChild, normalizeConnection, storyboardHandleAtY, storyboardPromptTemplateMetadata, storyboardRowFromHandle } from "@/lib/canvas/canvas-project-domain";
-import { createCanvasDrawingFromImage } from "@/lib/canvas/canvas-drawing-storage";
-import { isDrawingEngineAvailable, type CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
+import { createCanvasDrawingFromImage, markCanvasDrawingPublished } from "@/lib/canvas/canvas-drawing-storage";
+import { publishCanvasDrawingDocument } from "@/lib/canvas/canvas-drawing-document-sync";
+import { canvasDrawingDocumentId, canvasDrawingDocumentMetadata, isDrawingEngineAvailable, type CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
 import { normalizeRunningHubCapability, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -417,7 +418,7 @@ export function useCanvasConnectionController({
             if (nodeType === CanvasNodeType.Drawing) {
                 const drawingSourceNode = nodesRef.current.find((node) => node.id === pending.connection.nodeId);
                 const sourceUrl = drawingSourceNode?.type === CanvasNodeType.Image ? drawingSourceNode.metadata?.content : "";
-                if (pending.connection.handleType !== "source" || !drawingSourceNode || !sourceUrl || !newNode.metadata?.drawingId) {
+                if (pending.connection.handleType !== "source" || !drawingSourceNode || !sourceUrl) {
                     message.error("只有已有图片内容的输出连线可以创建绘图");
                     closeConnectionCreateMenu();
                     setConnecting(null);
@@ -425,26 +426,27 @@ export function useCanvasConnectionController({
                 }
                 closeConnectionCreateMenu();
                 setConnecting(null);
-                try {
-                    const saved = await createCanvasDrawingFromImage(projectId, newNode.metadata.drawingId, defaultDrawingEngine, {
-                        url: sourceUrl,
-                        storageKey: drawingSourceNode.metadata?.storageKey,
-                        name: drawingSourceNode.title || "来源图片",
-                        mimeType: drawingSourceNode.metadata?.mimeType,
-                    });
-                    newNode.title = `${drawingSourceNode.title || "图片"} · 绘图`;
-                    newNode.metadata = {
-                        ...newNode.metadata,
-                        drawingEngine: saved.engine,
-                        drawingRevision: saved.revision,
-                        drawingUpdatedAt: saved.updatedAt,
-                        drawingShapeCount: saved.shapeCount,
-                        drawingPageCount: saved.pageCount,
-                    };
-                } catch (error) {
+                const drawingId = canvasDrawingDocumentId(newNode);
+                const saved = await createCanvasDrawingFromImage(projectId, drawingId, defaultDrawingEngine, {
+                    url: sourceUrl,
+                    storageKey: drawingSourceNode.metadata?.storageKey,
+                    name: drawingSourceNode.title || "来源图片",
+                    mimeType: drawingSourceNode.metadata?.mimeType,
+                }).catch((error: unknown) => {
                     message.error(error instanceof Error ? `创建绘图失败：${error.message}` : "创建绘图失败");
-                    return;
-                }
+                    return null;
+                });
+                if (!saved) return;
+                newNode.title = `${drawingSourceNode.title || "图片"} · 绘图`;
+                newNode.metadata = { ...newNode.metadata, drawingEngine: saved.engine };
+                // The image is real content: publish its native document with the node so it syncs
+                // like a saved drawing. If that fails, the local draft stays until the next save.
+                await publishCanvasDrawingDocument(saved)
+                    .then(async (published) => {
+                        await markCanvasDrawingPublished(projectId, drawingId, published);
+                        newNode.metadata = { ...newNode.metadata, ...canvasDrawingDocumentMetadata(newNode, published) };
+                    })
+                    .catch((error: unknown) => message.warning(`绘图已保存在本机，尚未同步：${error instanceof Error ? error.message : "请打开绘图后保存"}`));
             }
             const fromHandleId = connection.fromNodeId === pending.connection.nodeId ? pending.connection.handleId : undefined;
             const toHandleId = connection.toNodeId === pending.connection.nodeId ? pending.connection.handleId : undefined;

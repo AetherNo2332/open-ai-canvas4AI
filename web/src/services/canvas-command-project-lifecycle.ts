@@ -4,7 +4,24 @@ import type { CanvasCapabilities } from "../lib/canvas/canvas-editor-commands";
 import type { CanvasDocument } from "../lib/canvas/canvas-event-projection";
 import { applyCanvasDraftChanges, canvasDocumentChanges } from "../lib/canvas/canvas-event-projection";
 import { sameCanvasJsonValue } from "../lib/canvas/canvas-json-value";
+import type { SyncProjectProgress } from "../stores/use-sync-progress-store";
 type Viewport = { x: number; y: number; k: number };
+/** A local edit that cannot become host commands. Nothing was queued for it,
+ * so the session alone would still read as saved. */
+export const CANVAS_DRAFT_UNSUPPORTED = "editor_draft_unsupported";
+export type CanvasDraftFailure = { detail: string; backup?: "saved" | "failed" };
+export function canvasCommandSyncProgress(state: CommandSessionState, draftFailure?: CanvasDraftFailure): Partial<SyncProjectProgress> {
+    if (draftFailure && state.saveState !== "conflict") {
+        const backup = draftFailure.backup === "saved" ? "。当前内容已备份为本地草稿" : draftFailure.backup === "failed" ? "。本地草稿备份失败，请先下载当前内容，不要关闭页面" : "";
+        return { phase: "error", reason: CANVAS_DRAFT_UNSUPPORTED, message: `修改未保存，尚未提交到云端：${draftFailure.detail}${backup}` };
+    }
+    return {
+        phase: state.saveState === "conflict" ? "conflict" : state.saveState === "offline" || state.saveState === "error" ? "error" : state.saveState === "saved" ? "done" : "saving",
+        reason: state.rejections[0]?.reason,
+        draftCount: state.pending.length,
+        message: state.saveState === "conflict" ? "编辑草稿已保留，请处理冲突" : state.saveState === "error" ? state.rejections[0]?.message : state.saveState === "offline" ? "主机暂不可用，未确认编辑已保留" : undefined,
+    };
+}
 /** The real editor uses the same adapter as reconnect/close acceptance checks.
  * Personal view storage is independent of the shared document and its history. */
 export async function attachCanvasCommandProject<N, E>(deps: {
@@ -14,6 +31,7 @@ export async function attachCanvasCommandProject<N, E>(deps: {
     refs: { nodes: { current: N[] }; connections: { current: E[] } };
     read: () => CanvasDocument;
     present: (document: CanvasDocument, state: CommandSessionState) => void;
+    onDraftConversion?: (error?: unknown) => void;
     view: { read: (id: string) => Promise<Viewport | null>; write: (id: string, value: Viewport) => Promise<unknown> };
     readViewport: () => Viewport;
     presentViewport: (value: Viewport) => void;

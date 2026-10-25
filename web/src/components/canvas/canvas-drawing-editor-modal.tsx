@@ -4,7 +4,7 @@ import { AppModal } from "@/components/ui/product/app-modal";
 import { Check, Maximize2, X } from "lucide-react";
 
 import type { CanvasDrawingEditorHandle } from "@/components/canvas/canvas-drawing-editor-types";
-import { drawingEngineForNode, drawingEngineLabel, isDrawingEngineAvailable } from "@/lib/canvas/canvas-drawing-engine";
+import { canvasDrawingDocumentId, drawingEngineForNode, drawingEngineLabel, isDrawingEngineAvailable } from "@/lib/canvas/canvas-drawing-engine";
 import { markCanvasDrawingPublished, saveCanvasDrawing, type CanvasDrawingSnapshot } from "@/lib/canvas/canvas-drawing-storage";
 import { loadCanvasDrawingForNode, persistCanvasDrawingEditorSave } from "@/lib/canvas/canvas-drawing-document-sync";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -28,6 +28,7 @@ export function CanvasDrawingEditorModal({ open, projectId, node, onClose, onSav
     const colorScheme = useActiveTheme();
     const tldrawLicenseKey = useUserStore((state) => state.drawingEngine.tldrawLicenseKey);
     const engine = drawingEngineForNode(node);
+    const drawingId = node ? canvasDrawingDocumentId(node) : "";
     const currentRef = useRef<CanvasDrawingSnapshot | null>(null);
     const expectedDocumentRef = useRef<CanvasDrawingSnapshot | undefined>(undefined);
     const nodeRef = useRef(node);
@@ -42,14 +43,14 @@ export function CanvasDrawingEditorModal({ open, projectId, node, onClose, onSav
     const [loadError, setLoadError] = useState("");
 
     useEffect(() => {
-        if (!open || !node?.metadata?.drawingId) return;
+        if (!open || !node) return;
         let cancelled = false;
         setLoaded(false);
         setReady(false);
         setLoadError("");
         setSnapshot(null);
         currentRef.current = null;
-        expectedDocumentRef.current = node.metadata.drawingDocument;
+        expectedDocumentRef.current = node.metadata?.drawingDocument;
         void loadCanvasDrawingForNode(projectId, node).then((saved) => {
             if (cancelled) return;
             if (saved && saved.engine !== engine) throw new Error(`绘图节点标记为 ${drawingEngineLabel(engine)}，但文档属于 ${drawingEngineLabel(saved.engine)}`);
@@ -63,11 +64,11 @@ export function CanvasDrawingEditorModal({ open, projectId, node, onClose, onSav
             message.error(`绘图加载失败：${detail}`);
         });
         return () => { cancelled = true; };
-    }, [engine, message, node?.metadata?.drawingId, open, projectId]);
+    }, [drawingId, engine, message, open, projectId]);
 
     const handleSave = async () => {
         if (saveRef.current) return saveRef.current;
-        if (!node?.metadata?.drawingId || !ready || !editorRef.current) return false;
+        if (!node || !ready || !editorRef.current) return false;
         setSaving(true);
         let draftPreserved = false;
         const saving = (async () => {
@@ -76,14 +77,14 @@ export function CanvasDrawingEditorModal({ open, projectId, node, onClose, onSav
                     node, previous: currentRef.current, expectedDocument: expectedDocumentRef.current,
                     createSave: () => editorRef.current!.createSave(),
                     saveLocal: async (draft, previous) => {
-                        const local = await saveCanvasDrawing(projectId, node.metadata!.drawingId!, engine, draft.snapshot, previous, draft.preview, draft.render);
+                        const local = await saveCanvasDrawing(projectId, drawingId, engine, draft.snapshot, previous, draft.preview, draft.render);
                         currentRef.current = local;
                         draftPreserved = true;
                         return local;
                     },
                     currentNode: () => getCurrentNode ? getCurrentNode() : nodeRef.current,
                     onSaved: (document) => { expectedDocumentRef.current = document; onSaved(node.id, document); },
-                    markPublished: (document) => markCanvasDrawingPublished(projectId, node.metadata!.drawingId!, document),
+                    markPublished: (document) => markCanvasDrawingPublished(projectId, drawingId, document),
                 });
                 preservedDraftAfterFailureRef.current = false;
                 return true;

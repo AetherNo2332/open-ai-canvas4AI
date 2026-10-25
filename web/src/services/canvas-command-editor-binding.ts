@@ -32,7 +32,14 @@ function sharedDraft(base: CanvasDocument, live: CanvasDocument) {
 export function bindCanvasCommandEditor<N, E>(
     session: CanvasCommandSession,
     capabilities: CanvasCapabilities,
-    editor: { refs: { nodes: { current: N[] }; connections: { current: E[] } }; read: () => CanvasDocument; present: (document: CanvasDocument, state: CommandSessionState) => void },
+    editor: {
+        refs: { nodes: { current: N[] }; connections: { current: E[] } };
+        read: () => CanvasDocument;
+        present: (document: CanvasDocument, state: CommandSessionState) => void;
+        /** Conversion runs before anything is queued, so a failure here never reaches
+         * the session state; the error is undefined once the draft converts again. */
+        onDraftConversion?: (error?: unknown) => void;
+    },
 ) {
     let previous: CanvasDocument | null = null;
     let versions: Record<string, number> = {};
@@ -131,10 +138,21 @@ export function bindCanvasCommandEditor<N, E>(
             },
         };
     }
+    function prepare() {
+        let draft: ReturnType<typeof prepareCommit>;
+        try {
+            draft = prepareCommit();
+        } catch (error) {
+            if (!disposed) editor.onDraftConversion?.(error);
+            throw error;
+        }
+        editor.onDraftConversion?.();
+        return draft;
+    }
     return {
         readDraft: () => sharedDraft(session.state.projected, editor.read()),
         prepareRetry() {
-            const draft = prepareCommit();
+            const draft = prepare();
             return {
                 ...draft,
                 operations: mergeRejectedCanvasEdits([...session.state.pending.flatMap((p) => p.operations), ...draft.operations]),
@@ -146,7 +164,7 @@ export function bindCanvasCommandEditor<N, E>(
         },
         async commit() {
             if (disposed) return Promise.reject(new DOMException("画布编辑器已关闭", "AbortError"));
-            const draft = prepareCommit();
+            const draft = prepare();
             return draft.operations.length ? session.submit(draft.operations, draft.preconditions) : Promise.resolve(undefined);
         },
         dispose() {

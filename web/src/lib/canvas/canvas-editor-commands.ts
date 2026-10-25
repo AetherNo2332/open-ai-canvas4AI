@@ -2,11 +2,14 @@ import type { Operation } from "./command-contract.generated";
 import type { CanvasDocument } from "./canvas-event-projection";
 import { canvasTimelineCommands } from "./canvas-timeline-commands";
 import { canvasDrawingCommands } from "./canvas-drawing-commands";
+import { canvasDrawingDocumentId } from "./canvas-drawing-engine";
+import type { CanvasNodeData } from "@/types/canvas";
 import { buildCanvasReferenceEdit } from "./canvas-reference-edits";
 import { canvasPrevisCommands, type PrevisEditorFields } from "./canvas-previs-commands";
 import { sameCanvasJsonValue as same } from "./canvas-json-value";
 import { isolateCopiedNodeMetadata } from "./canvas-node-copy";
-import type { CanvasNodeData } from "@/types/canvas";
+import { generationSpecMirrors } from "./generation-contract";
+import type { GenerationSpec } from "./generation-contract.generated";
 export type CanvasCapabilities = {
     protocolVersion: number;
     nodes: Array<{ type: string; baseType?: string; workflowKind?: string; patchFields: Record<string, { path: string }> }>;
@@ -108,9 +111,18 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
                 claim(paths, field.path);
             }
         }
+        if (patch.generationSpec && typeof patch.generationSpec === "object") {
+            // The host rewrites these mirrors from the spec it applies: matching ones are
+            // part of that write, and a cleared one is implied rather than a null value.
+            for (const [key, value] of Object.entries(generationSpecMirrors(patch.generationSpec as GenerationSpec))) {
+                if (!same(node.metadata?.[key], value)) continue;
+                claim(paths, "metadata." + key);
+                for (const [alias, field] of Object.entries(descriptor.patchFields)) if (field.path === "metadata." + key && patch[alias] === null) delete patch[alias];
+            }
+        }
         if (Object.keys(patch).length) operations.push({ type: "update_node", id: node.id, patch });
         if (node.type === "drawing" && node.metadata?.drawingDocument) {
-            const drawing = canvasDrawingCommands(node.id, node.metadata.drawingId || "", previous?.metadata?.drawingDocument, node.metadata.drawingDocument);
+            const drawing = canvasDrawingCommands(node.id, canvasDrawingDocumentId(node as CanvasNodeData), previous?.metadata?.drawingDocument, node.metadata.drawingDocument);
             if (drawing) operations.push(drawing);
             for (const key of ["drawingDocument", "drawingRevision", "drawingUpdatedAt", "drawingShapeCount", "drawingPageCount", "drawingId"]) claim(paths, "metadata." + key);
         }
