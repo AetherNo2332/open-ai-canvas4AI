@@ -48,6 +48,42 @@ func TestCloudAgentFunctionSchemasAreWellFormed(t *testing.T) {
 
 func checkAgentSchemaNode(t *testing.T, path string, schema map[string]any, closeObject bool) {
 	t.Helper()
+	var types []string
+	switch value := schema["type"].(type) {
+	case []string:
+		types = value
+	case []any:
+		types = make([]string, 0, len(value))
+		for _, item := range value {
+			kind, ok := item.(string)
+			if !ok {
+				t.Fatalf("%s has nonstring type", path)
+			}
+			types = append(types, kind)
+		}
+	case string, nil:
+	default:
+		t.Fatalf("%s has malformed type", path)
+	}
+	if types != nil {
+		if len(types) == 0 {
+			t.Fatalf("%s has empty type union", path)
+		}
+		seen := map[string]bool{}
+		for _, kind := range types {
+			if kind == "" || seen[kind] {
+				t.Fatalf("%s has empty or repeated type %q", path, kind)
+			}
+			seen[kind] = true
+			branch := make(map[string]any, len(schema))
+			for key, value := range schema {
+				branch[key] = value
+			}
+			branch["type"] = kind
+			checkAgentSchemaNode(t, path, branch, closeObject)
+		}
+		return
+	}
 	kind, _ := schema["type"].(string)
 	switch kind {
 	case "object":
@@ -105,13 +141,27 @@ func checkAgentSchemaNode(t *testing.T, path string, schema map[string]any, clos
 			t.Fatalf("%s array has no item schema", path)
 		}
 		checkAgentSchemaNode(t, path+"[]", child, true)
-	case "string", "number", "integer", "boolean":
+	case "string", "number", "integer", "boolean", "null":
 	case "":
-		if len(schema) == 0 {
-			return
+		constraint := len(schema) == 0
+		for _, keyword := range []string{"const", "enum", "anyOf", "oneOf", "not", "required", "properties", "items", "minItems", "maxItems", "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum"} {
+			if _, exists := schema[keyword]; exists {
+				constraint = true
+			}
 		}
-		if _, ok := schema["const"]; !ok {
-			t.Fatalf("%s has no type or const", path)
+		if !constraint {
+			t.Fatalf("%s has no type or supported constraint", path)
+		}
+		// Combination branches can constrain a property from the enclosing
+		// object without redeclaring its type or all its sibling properties.
+		if properties, ok := schema["properties"].(map[string]any); ok {
+			for name, raw := range properties {
+				child, ok := raw.(map[string]any)
+				if !ok {
+					t.Fatalf("%s.%s is not a schema", path, name)
+				}
+				checkAgentSchemaNode(t, path+"."+name, child, true)
+			}
 		}
 	default:
 		t.Fatalf("%s has invalid JSON Schema type %q", path, kind)
@@ -127,6 +177,15 @@ func checkAgentSchemaNode(t *testing.T, path string, schema map[string]any, clos
 			}
 		}
 	}
+	if alternatives, ok := schema["anyOf"]; ok {
+		branches := agentSchemaAlternatives(alternatives)
+		if len(branches) == 0 {
+			t.Fatalf("%s has invalid anyOf", path)
+		}
+		for index, branch := range branches {
+			checkAgentSchemaNode(t, fmt.Sprintf("%s.anyOf[%d]", path, index), branch, closeObject)
+		}
+	}
 	for _, key := range []string{"minItems", "maxItems", "minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum"} {
 		if value, ok := schema[key]; ok {
 			if _, numeric := cloudAgentSchemaNumber(value); !numeric {
@@ -134,4 +193,38 @@ func checkAgentSchemaNode(t *testing.T, path string, schema map[string]any, clos
 			}
 		}
 	}
+}
+
+func agentSchemaAlternatives(value any) []map[string]any {
+	if branches, ok := value.([]map[string]any); ok {
+		return branches
+	}
+	var result []map[string]any
+	if branches, ok := value.([]any); ok {
+		for _, raw := range branches {
+			branch, ok := raw.(map[string]any)
+			if !ok {
+				return nil
+			}
+			result = append(result, branch)
+		}
+	}
+	return result
+}
+
+func agentSchemaDeclaresType(schema map[string]any, kind string) bool {
+	if schema["type"] == kind {
+		return true
+	}
+	for _, declared := range cloudAgentSchemaStrings(schema["type"]) {
+		if declared == kind {
+			return true
+		}
+	}
+	for _, branch := range agentSchemaAlternatives(schema["anyOf"]) {
+		if agentSchemaDeclaresType(branch, kind) {
+			return true
+		}
+	}
+	return false
 }

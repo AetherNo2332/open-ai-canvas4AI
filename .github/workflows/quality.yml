@@ -111,6 +111,8 @@ jobs:
             echo "ineffassign did not reject its fixture"
             exit 1
           fi
+      - name: Check Agent tool contracts before full suite
+        run: go test ./internal/app -run '^(TestCloudAgent(PatchSchema|ToolsFollowCanvasCapabilityRegistry|FunctionSchemasAreWellFormed|ToolArgumentValidation)|TestAgentToolSchemaArtifactMatchesRuntime)' -count=1 -timeout=1m
       - name: Run Go tests
         shell: bash
         run: |

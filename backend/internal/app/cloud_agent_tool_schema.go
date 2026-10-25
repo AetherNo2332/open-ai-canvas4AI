@@ -65,6 +65,24 @@ func validateCloudAgentSchemaValue(field string, schema map[string]any, value an
 	if path == "" {
 		path = "arguments"
 	}
+	if types := cloudAgentSchemaStrings(schema["type"]); len(types) > 0 {
+		// A nullable type is still typed. Check each alternative with all the
+		// original constraints, without mutating the advertised schema.
+		var firstError error
+		for _, kind := range types {
+			branch := make(map[string]any, len(schema))
+			for key, item := range schema {
+				branch[key] = item
+			}
+			branch["type"] = kind
+			if err := validateCloudAgentSchemaValue(field, branch, value, depth); err == nil {
+				return nil
+			} else if firstError == nil {
+				firstError = err
+			}
+		}
+		return firstError
+	}
 	if expected, ok := schema["type"].(string); ok && expected != "" {
 		switch expected {
 		case "object":
@@ -110,6 +128,10 @@ func validateCloudAgentSchemaValue(field string, schema map[string]any, value an
 		case "boolean":
 			if _, ok := value.(bool); !ok {
 				return cloudAgentSchemaTypeError(path, "布尔值")
+			}
+		case "null":
+			if value != nil {
+				return cloudAgentSchemaTypeError(path, "null")
 			}
 		}
 	} else if text, ok := value.(string); ok {
@@ -266,14 +288,11 @@ func validateCloudAgentSchemaOneOf(path string, schema map[string]any, value any
 		if len(branches) == 0 {
 			continue
 		}
-		object, ok := value.(map[string]any)
-		if !ok {
-			return nil
-		}
+		object, _ := value.(map[string]any)
 		matches := 0
 		var selectedError error
 		for _, branch := range branches {
-			err := validateCloudAgentSchemaValue(path, branch, object, depth+1)
+			err := validateCloudAgentSchemaValue(path, branch, value, depth+1)
 			if err == nil {
 				matches++
 				continue
