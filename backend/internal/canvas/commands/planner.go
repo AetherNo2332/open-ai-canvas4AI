@@ -89,6 +89,24 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 		if err != nil {
 			return result, err
 		}
+		if op.Type == "update_node" && editsFolderBinding(op) {
+			projectID, folderID := editedFolderBinding(next, op)
+			if (projectID != "" || folderID != "") && !ctx.FolderBindings[projectID+"\x00"+folderID] {
+				return result, failure("resource_not_owned", "项目素材文件夹未授权")
+			}
+		}
+		if op.Type == "update_node" {
+			for _, field := range []string{"imageToolData", "emotionEdit"} {
+				value, ok := op.Patch[field].(map[string]any)
+				if !ok {
+					continue
+				}
+				source := entity(next, "node:"+text(value["sourceNodeId"]))
+				if source == nil || text(source["type"]) != "image" || text(source["id"]) == op.ID {
+					return result, BadAuthRequest("图片编辑来源节点无效")
+				}
+			}
+		}
 		if err = validateManagedMedia(protected, next, []Operation{op}); err != nil {
 			return result, err
 		}
@@ -115,6 +133,13 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 			}
 		}
 		present = current
+	}
+	for _, op := range req.Operations {
+		if op.Type == "edit_batch_table" {
+			if _, _, _, _, err := p.batchTableNodeFromDocument(next, op.ID); err != nil {
+				return result, err
+			}
+		}
 	}
 	if err := validateManagedMedia(doc, next, req.Operations); err != nil {
 		return result, err
@@ -402,6 +427,19 @@ func relatedReadSet(doc Document, ops []Operation) map[string]bool {
 			}
 		}
 		walkNodeReferences(op.Patch, add)
+		if op.Type == "edit_image_batch" {
+			for _, id := range op.NodeIDs {
+				add(id)
+			}
+		}
+		if op.Type == "edit_batch_table" && op.Action == "configure" {
+			inputs, _ := op.Patch["referenceColumnInputs"].(map[string]any)
+			for _, ids := range inputs {
+				for _, id := range stringList(ids) {
+					add(id)
+				}
+			}
+		}
 		if op.Type == "edit_timeline" {
 			delete(reads, key)
 			reads["project:timeline"] = true
@@ -529,7 +567,7 @@ func resourceIDs(doc Document) []string {
 				walk(child, parent, prose)
 			}
 		case string:
-			locators := map[string]bool{"storageKey": true, "content": true, "previewContent": true, "drawingPreviewStorageKey": true, "drawingPreviewUrl": true, "url": true, "dataUrl": true, "dataURL": true, "src": true, "coverUrl": true, "imageUrl": true, "videoUrl": true, "audioUrl": true, "referenceUrl": true, "referenceUrls": true, "artifactRef": true, "providerArtifactRef": true}
+			locators := map[string]bool{"storageKey": true, "content": true, "previewContent": true, "drawingPreviewStorageKey": true, "drawingPreviewUrl": true, "url": true, "dataUrl": true, "dataURL": true, "src": true, "coverUrl": true, "characterCoverUrl": true, "imageUrl": true, "videoUrl": true, "audioUrl": true, "referenceUrl": true, "referenceUrls": true, "artifactRef": true, "providerArtifactRef": true}
 			if strings.HasSuffix(parent, "ResourceIds") || parent == "resourceIds" {
 				if id := assets.ValidID(x); id != "" {
 					found[id] = true

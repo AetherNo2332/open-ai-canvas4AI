@@ -19,6 +19,8 @@ export { logicalModelIDForConfig };
 export type BackendGenerationMode = "text" | "image" | "video" | "audio";
 
 export type BackendGenerationResult = {
+	/** Set locally after the command host has applied the image-tool result. */
+	canvasMaterialized?: boolean;
     mode?: BackendGenerationMode;
     images?: Array<{ dataUrl: string; assetId?: string; storageKey?: string; width?: number; height?: number; bytes?: number; mimeType?: string }>;
     video?: { dataUrl: string; assetId?: string; storageKey?: string; width?: number; height?: number; durationMs?: number; bytes?: number; mimeType?: string };

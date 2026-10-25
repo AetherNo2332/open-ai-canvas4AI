@@ -223,7 +223,7 @@ test("text copy commits fail closed before command chunking can split provenance
 
     expect(() => canvasEditorCommands(source, { ...source, nodes: [...source.nodes, ...copies] }, capabilities as any)).toThrow("canvas_editor_copy_batch_too_large:101");
 });
-test("new media copies remain fail-closed instead of being reinterpreted as generation prompts", () => {
+test("media copies carry provenance without reinterpreting media as generation prompts", () => {
     const mediaCapabilities = {
         ...capabilities,
         nodes: [...capabilities.nodes, { type: "image", patchFields: { generationResultPlacement: { path: "metadata.generationResultPlacement" } } }],
@@ -236,7 +236,9 @@ test("new media copies remain fail-closed instead of being reinterpreted as gene
     const copied = copyCanvasNodeGraph(source.nodes as any, [], "source", new Map([["source", "copy"]]), () => "edge").nodes[0];
     const next = { ...source, nodes: [...source.nodes, copied] };
 
-    expect(() => canvasEditorCommands(source, next, mediaCapabilities as any)).toThrow("canvas_editor_unmapped:node:copy:metadata.copiedFromNodeId");
+    expect(canvasEditorCommands(source, next, mediaCapabilities as any)).toEqual([expect.objectContaining({ type: "add_node", id: "copy", copiedFromNodeId: "source" })]);
+    copied.metadata.prompt = "altered copy";
+    expect(() => canvasEditorCommands(source, next, mediaCapabilities as any)).toThrow("canvas_editor_unmapped:node:copy:");
 });
 test("native anchors and structured output bindings travel through connection commands", () => {
     const source = before(),

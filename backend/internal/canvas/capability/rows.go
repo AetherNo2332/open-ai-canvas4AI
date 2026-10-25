@@ -27,7 +27,20 @@ func StoryboardRowFields() map[string]PatchField {
 }
 
 func BatchRowFields() map[string]PatchField {
-	return map[string]PatchField{"enabled": {Kind: patchKindBoolean}, "inputNodeIds": arrayField(stringField(120), 10), "textNodeIds": arrayField(stringField(120), 100), "prompt": stringField(20000), "cells": stringDictionaryField(20000, 100)}
+	return map[string]PatchField{"enabled": {Kind: patchKindBoolean}, "inputNodeIds": arrayField(stringField(120), 10), "referenceOverrides": arrayField(stringField(120), 10), "textNodeIds": arrayField(stringField(120), 100), "prompt": stringField(20000), "cells": stringDictionaryField(20000, 100)}
+}
+
+// Table configuration is separate from rows and generated output/task state.
+func BatchTableFields() map[string]PatchField {
+	column := objectField(map[string]PatchField{"id": stringField(120), "label": stringField(120), "type": enumString("image", "text")}, "id", "label")
+	inputs := arrayField(stringField(120), 500)
+	optional := func(field PatchField) PatchField { field.Nullable = true; return field }
+	return map[string]PatchField{
+		"operation": enumString("try_on", "creative"), "concurrency": integerField(1, 10),
+		"referenceColumns": arrayField(column, 10), "textColumns": optional(arrayField(column, 100)),
+		"globalPrompt": optional(stringField(20000)), "referenceMode": optional(enumString("cells")),
+		"referenceColumnInputs": optional(PatchField{Kind: patchKindObject, MapValues: &inputs, MaxProperties: 10}),
+	}
 }
 
 func stringDictionaryField(maxRunes, maxProperties int) PatchField {

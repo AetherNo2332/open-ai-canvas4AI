@@ -8,6 +8,7 @@ import { buildCanvasReferenceEdit } from "./canvas-reference-edits";
 import { canvasPrevisCommands, type PrevisEditorFields } from "./canvas-previs-commands";
 import { sameCanvasJsonValue as same } from "./canvas-json-value";
 import { isolateCopiedNodeMetadata } from "./canvas-node-copy";
+import { canvasPersistentEditorDraft } from "./canvas-editor-transient";
 import { generationSpecMirrors } from "./generation-contract";
 import type { GenerationSpec } from "./generation-contract.generated";
 export type CanvasCapabilities = {
@@ -33,32 +34,73 @@ function claim(paths: Set<string>, prefix: string) {
 function unmapped(id: string, paths: Set<string>) {
     if (paths.size) throw new Error("canvas_editor_unmapped:" + id + ":" + [...paths].sort().join(","));
 }
+function nodeResourceId(node: Entity | undefined): string | undefined {
+    const key = node?.metadata?.storageKey;
+    if (typeof key !== "string") return undefined;
+    return /^resource:([a-zA-Z0-9_-]{1,80})$/.exec(key)?.[1];
+}
+const characterFields = [
+    "workflowKind",
+    "assetId",
+    "characterAssetId",
+    "characterVersionId",
+    "characterVersionPolicy",
+    "characterName",
+    "characterPrompt",
+    "characterAliases",
+    "characterDefinition",
+    "characterCoverUrl",
+    "characterVisualStatus",
+    "characterVoiceStatus",
+    "characterVoiceName",
+    "characterVoiceProfile",
+    "characterVoiceInstructions",
+];
 
 /** Derive semantic operations from an editor commit, using paths published by
  * the host registry. Unknown unchanged extensions survive on the host; unknown
  * edits fail visibly until their actual domain operation has been migrated. */
 export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocument, capabilities: CanvasCapabilities): Operation[] {
     const operations: Operation[] = [];
+    const batchOperations: Operation[] = [];
+    const primarySelections = new Map<string, string>();
+    const imageBatches = new Map<string, string[]>();
     const referenceFields = after.referenceFieldsVersion === 1;
     const oldNodes = entities(before, "nodes"),
         nextNodes = entities(after, "nodes");
     const oldById = new Map(oldNodes.map((n) => [n.id, n])),
         nextById = new Map(nextNodes.map((n) => [n.id, n]));
+    for (const node of nextNodes) {
+        if (node.type !== "image") continue;
+        const previous = oldById.get(node.id);
+        if (node.metadata?.isBatchRoot === undefined && previous?.metadata?.isBatchRoot === undefined && node.metadata?.batchChildIds === undefined && previous?.metadata?.batchChildIds === undefined) continue;
+        const children: string[] = node.metadata?.batchChildIds || [];
+        imageBatches.set(node.id, children);
+        if (!same(previous?.metadata?.batchChildIds || [], children) || children.some((id) => oldById.get(id)?.metadata?.batchRootId !== node.id)) batchOperations.push({ type: "edit_image_batch", id: node.id, action: "set_children", nodeIds: children });
+        const primaryId = node.metadata?.primaryImageId;
+        if (primaryId && primaryId !== previous?.metadata?.primaryImageId && children.includes(primaryId)) {
+            const primary = nextById.get(primaryId);
+            if (primary && same(primary.metadata?.content, node.metadata?.content) && same(primary.metadata?.storageKey, node.metadata?.storageKey)) primarySelections.set(node.id, primaryId);
+        }
+    }
     const copiedNodeIds = new Map<string, string>();
     for (const node of nextNodes) {
         if (oldById.has(node.id) || typeof node.metadata?.copiedFromNodeId !== "string") continue;
         const source = oldById.get(node.metadata.copiedFromNodeId);
         if (source && source.type === node.type) copiedNodeIds.set(source.id, node.id);
     }
-    const copiedTextSourceIds = new Map<string, string>();
+    const copiedSourceIds = new Map<string, string>();
     for (const node of nextNodes) {
-        if (oldById.has(node.id) || node.type !== "text" || typeof node.metadata?.copiedFromNodeId !== "string") continue;
+        if (oldById.has(node.id) || !["text", "image", "video", "audio"].includes(node.type) || typeof node.metadata?.copiedFromNodeId !== "string") continue;
         const source = oldById.get(node.metadata.copiedFromNodeId);
-        if (source?.type !== "text") continue;
+        if (!source || source.type !== node.type) continue;
         const copyIDs = new Map(copiedNodeIds);
         copyIDs.set(source.id, node.id);
         const expected = isolateCopiedNodeMetadata(source as CanvasNodeData, copyIDs);
-        if (same(node.metadata, expected)) copiedTextSourceIds.set(node.id, source.id);
+        const normalized = entities(canvasPersistentEditorDraft({ nodes: [] }, { nodes: [{ ...node, metadata: expected }] }), "nodes")[0].metadata;
+        // A decoded preview URL may differ while the immutable resource is identical.
+        const candidate = node.type !== "text" && nodeResourceId(source) && nodeResourceId(node) === nodeResourceId(source) ? { ...node.metadata, content: expected.content } : node.metadata;
+        if (same(candidate, expected) || same(candidate, normalized)) copiedSourceIds.set(node.id, source.id);
     }
     // Managed edges are drawn from reference fields by the host (and previewed
     // by the editor before it does); they are never connection commands.
@@ -77,8 +119,8 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             if (node.position?.x !== undefined) add.x = node.position.x;
             if (node.position?.y !== undefined) add.y = node.position.y;
             if (node.title !== undefined) add.title = node.title;
-            if (node.metadata?.content !== undefined) add.content = node.metadata.content;
-            const copiedFromNodeId = copiedTextSourceIds.get(node.id);
+            if (node.metadata?.content !== undefined && !(["image", "video", "audio"].includes(node.type) && (nodeResourceId(node) || node.metadata?.assetId))) add.content = node.metadata.content;
+            const copiedFromNodeId = copiedSourceIds.get(node.id);
             if (copiedFromNodeId !== undefined) add.copiedFromNodeId = copiedFromNodeId;
             operations.push(add);
         }
@@ -92,13 +134,39 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             claim(paths, "position");
             claim(paths, "title");
             claim(paths, "metadata.content");
-            // The host reconstructs exact text-copy metadata from the source.
-            // Other types and altered copy payloads remain strict and fail closed.
-            if (copiedTextSourceIds.has(node.id)) claim(paths, "metadata");
+            // The host reconstructs exact copy metadata from the saved source.
+            if (copiedSourceIds.has(node.id)) claim(paths, "metadata");
             if (node.metadata?.status === "idle" || node.metadata?.status === "success") claim(paths, "metadata.status");
             if (node.type === "script" && same(node.metadata?.storyboard?.referenceNodeIds, [])) claim(paths, "metadata.storyboard.referenceNodeIds");
         }
         const patch: Record<string, unknown> = {};
+        if (imageBatches.has(node.id)) {
+            claim(paths, "metadata.isBatchRoot");
+            claim(paths, "metadata.batchChildIds");
+        }
+        const batchParent = node.metadata?.batchRootId,
+            oldBatchParent = previous?.metadata?.batchRootId;
+        if ((batchParent && imageBatches.get(batchParent)?.includes(node.id)) || (oldBatchParent && imageBatches.has(oldBatchParent) && !imageBatches.get(oldBatchParent)!.includes(node.id))) claim(paths, "metadata.batchRootId");
+        if (primarySelections.has(node.id)) for (const key of ["content", "storageKey", "assetId", "primaryImageId"]) claim(paths, "metadata." + key);
+        if (node.type === "text" && node.metadata?.workflowKind === "character" && !copiedSourceIds.has(node.id)) {
+            if (characterFields.some((key) => !same(previous?.metadata?.[key], node.metadata?.[key])) || !same(previous?.title, node.title)) {
+                operations.push({ type: "bind_character", id: node.id, assetId: node.metadata.characterAssetId, versionId: node.metadata.characterVersionId, action: node.metadata.characterVersionPolicy || "current" });
+            }
+            for (const key of characterFields) claim(paths, "metadata." + key);
+            claim(paths, "title");
+        } else if (["text", "image", "video", "audio"].includes(node.type) && !copiedSourceIds.has(node.id) && !primarySelections.has(node.id)) {
+            const resourceId = nodeResourceId(node);
+            const resourceChanged = resourceId && resourceId !== nodeResourceId(previous);
+            const assetId = node.metadata?.assetId;
+            const assetChanged = typeof assetId === "string" && assetId && assetId !== previous?.metadata?.assetId;
+            if (resourceChanged) operations.push({ type: "bind_resource", id: node.id, resourceId });
+            if (assetChanged) operations.push({ type: "bind_asset", id: node.id, assetId });
+            if (resourceId || assetChanged) {
+                claim(paths, "metadata.storageKey");
+                if (node.type !== "text") claim(paths, "metadata.content");
+            }
+            if (assetChanged || resourceChanged) claim(paths, "metadata.assetId");
+        }
         if (referenceFields && node.type === "script") {
             if (!same(previous?.metadata?.storyboard?.referenceNodeIds || [], node.metadata?.storyboard?.referenceNodeIds || []))
                 operations.push(...buildCanvasReferenceEdit(after, { kind: "set_board_references", nodeId: node.id, referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [] }));
@@ -129,6 +197,16 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
         if (node.type === "script" || node.type === "batch-table") {
             const kind = node.type === "script" ? "storyboard" : "batch",
                 key = kind === "storyboard" ? "storyboard" : "batchTable";
+            if (kind === "batch") {
+                const configuration: Record<string, unknown> = {};
+                for (const field of Object.keys(capabilities.structuredFields.batchTable || {})) {
+                    if (!same(previous?.metadata?.batchTable?.[field], node.metadata?.batchTable?.[field])) {
+                        configuration[field] = structuredClone(node.metadata?.batchTable?.[field] ?? null);
+                        claim(paths, "metadata.batchTable." + field);
+                    }
+                }
+                if (Object.keys(configuration).length) operations.push({ type: "edit_batch_table", id: node.id, action: "configure", patch: configuration });
+            }
             const oldRows = previous?.metadata?.[key]?.rows || [],
                 rows = node.metadata?.[key]?.rows || [];
             const nextIds = new Set(rows.map((r: Entity) => r.id));
@@ -162,7 +240,8 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
                         claim(rowPaths, field);
                     }
                 unmapped("row:" + row.id, rowPaths);
-                if (!old || Object.keys(rowPatch).length) operations.push({ type, id: node.id, action: old ? "update" : "append", rowId: row.id, patch: rowPatch });
+                if (!old || Object.keys(rowPatch).length)
+                    operations.push({ type, id: node.id, action: old ? "update" : kind === "storyboard" && !row.videoMotionPrompt?.trim() && !row.plotDescription?.trim() ? "append_draft" : "append", rowId: row.id, patch: rowPatch });
             }
             operations.push(...outputOperations);
             const previousOrder = oldRows.map((r: Entity) => r.id),
@@ -180,6 +259,7 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
         if (paths.has("metadata") && node.metadata && Object.keys(node.metadata).every((key) => key === "content" || key === "status" || Object.values(descriptor.patchFields).some((f) => f.path === "metadata." + key))) paths.delete("metadata");
         unmapped("node:" + node.id, paths);
     }
+    operations.push(...batchOperations, ...[...primarySelections].map(([id, sourceNodeId]): Operation => ({ type: "edit_image_batch", id, action: "select_primary", sourceNodeId })));
     for (const node of nextNodes) if ((oldById.get(node.id)?.parentId || "") !== (node.parentId || "")) operations.push({ type: "set_parent", id: node.id, parentId: node.parentId || "" });
     const edgeById = new Map(oldEdges.map((e) => [e.id, e]));
     for (const edge of nextEdges) {

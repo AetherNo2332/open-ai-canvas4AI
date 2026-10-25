@@ -1,0 +1,1337 @@
+{
+    "nodes": [
+        {
+            "patchFields": {
+                "assetTags": {
+                    "path": "metadata.assetTags"
+                },
+                "audioEmotionAfraid": {
+                    "path": "metadata.audioEmotionAfraid"
+                },
+                "audioEmotionAngry": {
+                    "path": "metadata.audioEmotionAngry"
+                },
+                "audioEmotionCalm": {
+                    "path": "metadata.audioEmotionCalm"
+                },
+                "audioEmotionControlMethod": {
+                    "path": "metadata.audioEmotionControlMethod"
+                },
+                "audioEmotionDisgusted": {
+                    "path": "metadata.audioEmotionDisgusted"
+                },
+                "audioEmotionHappy": {
+                    "path": "metadata.audioEmotionHappy"
+                },
+                "audioEmotionMelancholic": {
+                    "path": "metadata.audioEmotionMelancholic"
+                },
+                "audioEmotionRandom": {
+                    "path": "metadata.audioEmotionRandom"
+                },
+                "audioEmotionSad": {
+                    "path": "metadata.audioEmotionSad"
+                },
+                "audioEmotionSurprised": {
+                    "path": "metadata.audioEmotionSurprised"
+                },
+                "audioFormat": {
+                    "path": "metadata.audioFormat"
+                },
+                "audioInstructions": {
+                    "path": "metadata.audioInstructions"
+                },
+                "audioSpeed": {
+                    "path": "metadata.audioSpeed"
+                },
+                "audioVoice": {
+                    "path": "metadata.audioVoice"
+                },
+                "cameraControl": {
+                    "path": "metadata.cameraControl"
+                },
+                "content": {
+                    "path": "metadata.composerContent"
+                },
+                "count": {
+                    "path": "metadata.count"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "generateAudio": {
+                    "path": "metadata.generateAudio"
+                },
+                "generationMode": {
+                    "path": "metadata.generationMode"
+                },
+                "generationResultPlacement": {
+                    "path": "metadata.generationResultPlacement"
+                },
+                "generationSpec": {
+                    "path": "metadata.generationSpec"
+                },
+                "generationType": {
+                    "path": "metadata.generationType"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "model": {
+                    "path": "metadata.model"
+                },
+                "portraitTexture": {
+                    "path": "metadata.portraitTexture"
+                },
+                "prompt": {
+                    "path": "metadata.prompt"
+                },
+                "promptTemplateOperation": {
+                    "path": "metadata.promptTemplateOperation"
+                },
+                "quality": {
+                    "path": "metadata.quality"
+                },
+                "runningHubWorkflowId": {
+                    "path": "metadata.runningHubWorkflowId"
+                },
+                "runningHubWorkflowKind": {
+                    "path": "metadata.runningHubWorkflowKind"
+                },
+                "seconds": {
+                    "path": "metadata.seconds"
+                },
+                "size": {
+                    "path": "metadata.size"
+                },
+                "supersededByNodeId": {
+                    "path": "metadata.supersededByNodeId"
+                },
+                "textCount": {
+                    "path": "metadata.textCount"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "transparentBackground": {
+                    "path": "metadata.transparentBackground"
+                },
+                "usageNote": {
+                    "path": "metadata.usageNote"
+                },
+                "usageStatus": {
+                    "path": "metadata.usageStatus"
+                },
+                "videoCameraMoveId": {
+                    "path": "metadata.videoCameraMoveId"
+                },
+                "videoCameraMovePrompt": {
+                    "path": "metadata.videoCameraMovePrompt"
+                },
+                "vquality": {
+                    "path": "metadata.vquality"
+                },
+                "watermark": {
+                    "path": "metadata.watermark"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "workflowProvider": {
+                    "path": "metadata.workflowProvider"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "audio"
+        },
+        {
+            "patchFields": {
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "batch-table"
+        },
+        {
+            "baseType": "text",
+            "patchFields": {
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "character",
+            "workflowKind": "character"
+        },
+        {
+            "patchFields": {
+                "chartKind": {
+                    "path": "metadata.chartKind"
+                },
+                "content": {
+                    "path": "metadata.content"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "inputBindings": {
+                    "path": "metadata.inputBindings"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "chart"
+        },
+        {
+            "patchFields": {
+                "colorGrade": {
+                    "path": "metadata.colorGrade"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "inputBindings": {
+                    "path": "metadata.inputBindings"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "colorgrade"
+        },
+        {
+            "patchFields": {
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "inputBindings": {
+                    "path": "metadata.inputBindings"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "compare"
+        },
+        {
+            "patchFields": {
+                "audioEmotionAfraid": {
+                    "path": "metadata.audioEmotionAfraid"
+                },
+                "audioEmotionAngry": {
+                    "path": "metadata.audioEmotionAngry"
+                },
+                "audioEmotionCalm": {
+                    "path": "metadata.audioEmotionCalm"
+                },
+                "audioEmotionControlMethod": {
+                    "path": "metadata.audioEmotionControlMethod"
+                },
+                "audioEmotionDisgusted": {
+                    "path": "metadata.audioEmotionDisgusted"
+                },
+                "audioEmotionHappy": {
+                    "path": "metadata.audioEmotionHappy"
+                },
+                "audioEmotionMelancholic": {
+                    "path": "metadata.audioEmotionMelancholic"
+                },
+                "audioEmotionRandom": {
+                    "path": "metadata.audioEmotionRandom"
+                },
+                "audioEmotionSad": {
+                    "path": "metadata.audioEmotionSad"
+                },
+                "audioEmotionSurprised": {
+                    "path": "metadata.audioEmotionSurprised"
+                },
+                "audioFormat": {
+                    "path": "metadata.audioFormat"
+                },
+                "audioInstructions": {
+                    "path": "metadata.audioInstructions"
+                },
+                "audioSpeed": {
+                    "path": "metadata.audioSpeed"
+                },
+                "audioVoice": {
+                    "path": "metadata.audioVoice"
+                },
+                "cameraControl": {
+                    "path": "metadata.cameraControl"
+                },
+                "content": {
+                    "path": "metadata.composerContent"
+                },
+                "count": {
+                    "path": "metadata.count"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "generateAudio": {
+                    "path": "metadata.generateAudio"
+                },
+                "generationMode": {
+                    "path": "metadata.generationMode"
+                },
+                "generationResultPlacement": {
+                    "path": "metadata.generationResultPlacement"
+                },
+                "generationSpec": {
+                    "path": "metadata.generationSpec"
+                },
+                "generationType": {
+                    "path": "metadata.generationType"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "model": {
+                    "path": "metadata.model"
+                },
+                "portraitTexture": {
+                    "path": "metadata.portraitTexture"
+                },
+                "promptTemplateOperation": {
+                    "path": "metadata.promptTemplateOperation"
+                },
+                "quality": {
+                    "path": "metadata.quality"
+                },
+                "runningHubWorkflowId": {
+                    "path": "metadata.runningHubWorkflowId"
+                },
+                "runningHubWorkflowKind": {
+                    "path": "metadata.runningHubWorkflowKind"
+                },
+                "seconds": {
+                    "path": "metadata.seconds"
+                },
+                "size": {
+                    "path": "metadata.size"
+                },
+                "textCount": {
+                    "path": "metadata.textCount"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "transparentBackground": {
+                    "path": "metadata.transparentBackground"
+                },
+                "videoCameraMoveId": {
+                    "path": "metadata.videoCameraMoveId"
+                },
+                "videoCameraMovePrompt": {
+                    "path": "metadata.videoCameraMovePrompt"
+                },
+                "vquality": {
+                    "path": "metadata.vquality"
+                },
+                "watermark": {
+                    "path": "metadata.watermark"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "workflowProvider": {
+                    "path": "metadata.workflowProvider"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "config"
+        },
+        {
+            "patchFields": {
+                "drawingEngine": {
+                    "path": "metadata.drawingEngine"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "drawing"
+        },
+        {
+            "patchFields": {
+                "folderAssetFolderId": {
+                    "path": "metadata.folder.assetFolderId"
+                },
+                "folderCreatedAt": {
+                    "path": "metadata.folder.createdAt"
+                },
+                "folderProjectId": {
+                    "path": "metadata.folder.projectId"
+                },
+                "folderStyle": {
+                    "path": "metadata.folder.style"
+                },
+                "folderTheme": {
+                    "path": "metadata.folder.theme"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "frame": {
+                    "path": "metadata.frame"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "frame"
+        },
+        {
+            "patchFields": {
+                "content": {
+                    "path": "metadata.content"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "inputBindings": {
+                    "path": "metadata.inputBindings"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "html"
+        },
+        {
+            "patchFields": {
+                "assetTags": {
+                    "path": "metadata.assetTags"
+                },
+                "audioEmotionAfraid": {
+                    "path": "metadata.audioEmotionAfraid"
+                },
+                "audioEmotionAngry": {
+                    "path": "metadata.audioEmotionAngry"
+                },
+                "audioEmotionCalm": {
+                    "path": "metadata.audioEmotionCalm"
+                },
+                "audioEmotionControlMethod": {
+                    "path": "metadata.audioEmotionControlMethod"
+                },
+                "audioEmotionDisgusted": {
+                    "path": "metadata.audioEmotionDisgusted"
+                },
+                "audioEmotionHappy": {
+                    "path": "metadata.audioEmotionHappy"
+                },
+                "audioEmotionMelancholic": {
+                    "path": "metadata.audioEmotionMelancholic"
+                },
+                "audioEmotionRandom": {
+                    "path": "metadata.audioEmotionRandom"
+                },
+                "audioEmotionSad": {
+                    "path": "metadata.audioEmotionSad"
+                },
+                "audioEmotionSurprised": {
+                    "path": "metadata.audioEmotionSurprised"
+                },
+                "audioFormat": {
+                    "path": "metadata.audioFormat"
+                },
+                "audioInstructions": {
+                    "path": "metadata.audioInstructions"
+                },
+                "audioSpeed": {
+                    "path": "metadata.audioSpeed"
+                },
+                "audioVoice": {
+                    "path": "metadata.audioVoice"
+                },
+                "cameraControl": {
+                    "path": "metadata.cameraControl"
+                },
+                "content": {
+                    "path": "metadata.composerContent"
+                },
+                "count": {
+                    "path": "metadata.count"
+                },
+                "emotionEdit": {
+                    "path": "metadata.emotionEdit"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "freeResize": {
+                    "path": "metadata.freeResize"
+                },
+                "generateAudio": {
+                    "path": "metadata.generateAudio"
+                },
+                "generationMode": {
+                    "path": "metadata.generationMode"
+                },
+                "generationResultPlacement": {
+                    "path": "metadata.generationResultPlacement"
+                },
+                "generationSpec": {
+                    "path": "metadata.generationSpec"
+                },
+                "generationType": {
+                    "path": "metadata.generationType"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "imageBatchExpanded": {
+                    "path": "metadata.imageBatchExpanded"
+                },
+                "imageToolData": {
+                    "path": "metadata.pluginData"
+                },
+                "imageToolKind": {
+                    "path": "metadata.pluginNodeId"
+                },
+                "imageToolPlugin": {
+                    "path": "metadata.pluginId"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "model": {
+                    "path": "metadata.model"
+                },
+                "portraitTexture": {
+                    "path": "metadata.portraitTexture"
+                },
+                "prompt": {
+                    "path": "metadata.prompt"
+                },
+                "promptTemplateOperation": {
+                    "path": "metadata.promptTemplateOperation"
+                },
+                "quality": {
+                    "path": "metadata.quality"
+                },
+                "runningHubWorkflowId": {
+                    "path": "metadata.runningHubWorkflowId"
+                },
+                "runningHubWorkflowKind": {
+                    "path": "metadata.runningHubWorkflowKind"
+                },
+                "seconds": {
+                    "path": "metadata.seconds"
+                },
+                "size": {
+                    "path": "metadata.size"
+                },
+                "supersededByNodeId": {
+                    "path": "metadata.supersededByNodeId"
+                },
+                "textCount": {
+                    "path": "metadata.textCount"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "transparentBackground": {
+                    "path": "metadata.transparentBackground"
+                },
+                "usageNote": {
+                    "path": "metadata.usageNote"
+                },
+                "usageStatus": {
+                    "path": "metadata.usageStatus"
+                },
+                "videoCameraMoveId": {
+                    "path": "metadata.videoCameraMoveId"
+                },
+                "videoCameraMovePrompt": {
+                    "path": "metadata.videoCameraMovePrompt"
+                },
+                "vquality": {
+                    "path": "metadata.vquality"
+                },
+                "watermark": {
+                    "path": "metadata.watermark"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "workflowProvider": {
+                    "path": "metadata.workflowProvider"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "image"
+        },
+        {
+            "patchFields": {
+                "content": {
+                    "path": "metadata.content"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "markdown"
+        },
+        {
+            "patchFields": {
+                "conversionOperation": {
+                    "path": "metadata.mediaConversion.operation"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "inputBindings": {
+                    "path": "metadata.inputBindings"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "media-conversion"
+        },
+        {
+            "patchFields": {
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "inputBindings": {
+                    "path": "metadata.inputBindings"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "panoramaConfig": {
+                    "path": "metadata.panoramaConfig"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "panorama"
+        },
+        {
+            "patchFields": {
+                "chapterId": {
+                    "path": "metadata.chapterId"
+                },
+                "chapterTitle": {
+                    "path": "metadata.chapterTitle"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "storyboardShotCount": {
+                    "path": "metadata.storyboardShotCount"
+                },
+                "storyboardShotDuration": {
+                    "path": "metadata.storyboardShotDuration"
+                },
+                "storyboardVideoInputMode": {
+                    "path": "metadata.storyboardVideoInputMode"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "visibleColumns": {
+                    "path": "metadata.storyboard.visibleColumns"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "workflowDescription": {
+                    "path": "metadata.workflowDescription"
+                },
+                "workflowKind": {
+                    "path": "metadata.workflowKind"
+                },
+                "workflowTitle": {
+                    "path": "metadata.workflowTitle"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "script"
+        },
+        {
+            "patchFields": {
+                "content": {
+                    "path": "metadata.content"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "skill"
+        },
+        {
+            "patchFields": {
+                "content": {
+                    "path": "metadata.content"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "inputBindings": {
+                    "path": "metadata.inputBindings"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "svg"
+        },
+        {
+            "patchFields": {
+                "assetTags": {
+                    "path": "metadata.assetTags"
+                },
+                "audioEmotionAfraid": {
+                    "path": "metadata.audioEmotionAfraid"
+                },
+                "audioEmotionAngry": {
+                    "path": "metadata.audioEmotionAngry"
+                },
+                "audioEmotionCalm": {
+                    "path": "metadata.audioEmotionCalm"
+                },
+                "audioEmotionControlMethod": {
+                    "path": "metadata.audioEmotionControlMethod"
+                },
+                "audioEmotionDisgusted": {
+                    "path": "metadata.audioEmotionDisgusted"
+                },
+                "audioEmotionHappy": {
+                    "path": "metadata.audioEmotionHappy"
+                },
+                "audioEmotionMelancholic": {
+                    "path": "metadata.audioEmotionMelancholic"
+                },
+                "audioEmotionRandom": {
+                    "path": "metadata.audioEmotionRandom"
+                },
+                "audioEmotionSad": {
+                    "path": "metadata.audioEmotionSad"
+                },
+                "audioEmotionSurprised": {
+                    "path": "metadata.audioEmotionSurprised"
+                },
+                "audioFormat": {
+                    "path": "metadata.audioFormat"
+                },
+                "audioInstructions": {
+                    "path": "metadata.audioInstructions"
+                },
+                "audioSpeed": {
+                    "path": "metadata.audioSpeed"
+                },
+                "audioVoice": {
+                    "path": "metadata.audioVoice"
+                },
+                "cameraControl": {
+                    "path": "metadata.cameraControl"
+                },
+                "composerContent": {
+                    "path": "metadata.composerContent"
+                },
+                "content": {
+                    "path": "metadata.content"
+                },
+                "count": {
+                    "path": "metadata.count"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "generateAudio": {
+                    "path": "metadata.generateAudio"
+                },
+                "generationMode": {
+                    "path": "metadata.generationMode"
+                },
+                "generationResultPlacement": {
+                    "path": "metadata.generationResultPlacement"
+                },
+                "generationType": {
+                    "path": "metadata.generationType"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "listMode": {
+                    "path": "metadata.listMode"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "model": {
+                    "path": "metadata.model"
+                },
+                "portraitTexture": {
+                    "path": "metadata.portraitTexture"
+                },
+                "prompt": {
+                    "path": "metadata.prompt"
+                },
+                "promptTemplateOperation": {
+                    "path": "metadata.promptTemplateOperation"
+                },
+                "quality": {
+                    "path": "metadata.quality"
+                },
+                "richText": {
+                    "path": "metadata.richText"
+                },
+                "runningHubWorkflowId": {
+                    "path": "metadata.runningHubWorkflowId"
+                },
+                "runningHubWorkflowKind": {
+                    "path": "metadata.runningHubWorkflowKind"
+                },
+                "seconds": {
+                    "path": "metadata.seconds"
+                },
+                "size": {
+                    "path": "metadata.size"
+                },
+                "textCount": {
+                    "path": "metadata.textCount"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "transparentBackground": {
+                    "path": "metadata.transparentBackground"
+                },
+                "videoCameraMoveId": {
+                    "path": "metadata.videoCameraMoveId"
+                },
+                "videoCameraMovePrompt": {
+                    "path": "metadata.videoCameraMovePrompt"
+                },
+                "vquality": {
+                    "path": "metadata.vquality"
+                },
+                "watermark": {
+                    "path": "metadata.watermark"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "workflowProvider": {
+                    "path": "metadata.workflowProvider"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "text"
+        },
+        {
+            "patchFields": {
+                "assetTags": {
+                    "path": "metadata.assetTags"
+                },
+                "audioEmotionAfraid": {
+                    "path": "metadata.audioEmotionAfraid"
+                },
+                "audioEmotionAngry": {
+                    "path": "metadata.audioEmotionAngry"
+                },
+                "audioEmotionCalm": {
+                    "path": "metadata.audioEmotionCalm"
+                },
+                "audioEmotionControlMethod": {
+                    "path": "metadata.audioEmotionControlMethod"
+                },
+                "audioEmotionDisgusted": {
+                    "path": "metadata.audioEmotionDisgusted"
+                },
+                "audioEmotionHappy": {
+                    "path": "metadata.audioEmotionHappy"
+                },
+                "audioEmotionMelancholic": {
+                    "path": "metadata.audioEmotionMelancholic"
+                },
+                "audioEmotionRandom": {
+                    "path": "metadata.audioEmotionRandom"
+                },
+                "audioEmotionSad": {
+                    "path": "metadata.audioEmotionSad"
+                },
+                "audioEmotionSurprised": {
+                    "path": "metadata.audioEmotionSurprised"
+                },
+                "audioFormat": {
+                    "path": "metadata.audioFormat"
+                },
+                "audioInstructions": {
+                    "path": "metadata.audioInstructions"
+                },
+                "audioSpeed": {
+                    "path": "metadata.audioSpeed"
+                },
+                "audioVoice": {
+                    "path": "metadata.audioVoice"
+                },
+                "cameraControl": {
+                    "path": "metadata.cameraControl"
+                },
+                "content": {
+                    "path": "metadata.composerContent"
+                },
+                "count": {
+                    "path": "metadata.count"
+                },
+                "fontSize": {
+                    "path": "metadata.fontSize"
+                },
+                "generateAudio": {
+                    "path": "metadata.generateAudio"
+                },
+                "generationMode": {
+                    "path": "metadata.generationMode"
+                },
+                "generationResultPlacement": {
+                    "path": "metadata.generationResultPlacement"
+                },
+                "generationSpec": {
+                    "path": "metadata.generationSpec"
+                },
+                "generationType": {
+                    "path": "metadata.generationType"
+                },
+                "height": {
+                    "path": "height"
+                },
+                "locked": {
+                    "path": "metadata.locked"
+                },
+                "manualSize": {
+                    "path": "metadata.manualSize"
+                },
+                "model": {
+                    "path": "metadata.model"
+                },
+                "portraitTexture": {
+                    "path": "metadata.portraitTexture"
+                },
+                "prompt": {
+                    "path": "metadata.prompt"
+                },
+                "promptTemplateOperation": {
+                    "path": "metadata.promptTemplateOperation"
+                },
+                "quality": {
+                    "path": "metadata.quality"
+                },
+                "runningHubWorkflowId": {
+                    "path": "metadata.runningHubWorkflowId"
+                },
+                "runningHubWorkflowKind": {
+                    "path": "metadata.runningHubWorkflowKind"
+                },
+                "seconds": {
+                    "path": "metadata.seconds"
+                },
+                "size": {
+                    "path": "metadata.size"
+                },
+                "subtitleEntries": {
+                    "path": "metadata.subtitleEntries"
+                },
+                "subtitleHighlights": {
+                    "path": "metadata.subtitleHighlights"
+                },
+                "subtitleStyle": {
+                    "path": "metadata.subtitleStyle"
+                },
+                "supersededByNodeId": {
+                    "path": "metadata.supersededByNodeId"
+                },
+                "textCount": {
+                    "path": "metadata.textCount"
+                },
+                "title": {
+                    "path": "title"
+                },
+                "transparentBackground": {
+                    "path": "metadata.transparentBackground"
+                },
+                "usageNote": {
+                    "path": "metadata.usageNote"
+                },
+                "usageStatus": {
+                    "path": "metadata.usageStatus"
+                },
+                "videoCameraMoveId": {
+                    "path": "metadata.videoCameraMoveId"
+                },
+                "videoCameraMovePrompt": {
+                    "path": "metadata.videoCameraMovePrompt"
+                },
+                "vquality": {
+                    "path": "metadata.vquality"
+                },
+                "watermark": {
+                    "path": "metadata.watermark"
+                },
+                "width": {
+                    "path": "width"
+                },
+                "workflowProvider": {
+                    "path": "metadata.workflowProvider"
+                },
+                "x": {
+                    "path": "position.x"
+                },
+                "y": {
+                    "path": "position.y"
+                }
+            },
+            "type": "video"
+        }
+    ],
+    "protocolVersion": 1,
+    "structuredFields": {
+        "batch": {
+            "cells": {},
+            "enabled": {},
+            "inputNodeIds": {},
+            "prompt": {},
+            "referenceOverrides": {},
+            "textNodeIds": {}
+        },
+        "batchTable": {
+            "concurrency": {},
+            "globalPrompt": {},
+            "operation": {},
+            "referenceColumnInputs": {},
+            "referenceColumns": {},
+            "referenceMode": {},
+            "textColumns": {}
+        },
+        "storyboard": {
+            "assetBindings": {},
+            "audioEffects": {},
+            "camera": {},
+            "characters": {},
+            "continuityOut": {},
+            "dialogue": {},
+            "durationSeconds": {},
+            "emotion": {},
+            "imageGenerationPrompt": {},
+            "imagePromptTemplateVariables": {},
+            "keyframeTimeMs": {},
+            "lightingAndAtmosphere": {},
+            "motion": {},
+            "mustHave": {},
+            "narrativeIntent": {},
+            "negativePrompt": {},
+            "optionalDetails": {},
+            "performanceBlocking": {},
+            "plotDescription": {},
+            "shotSize": {},
+            "sourceEndMs": {},
+            "sourceStartMs": {},
+            "timeBeats": {},
+            "videoMotionPrompt": {},
+            "videoPromptTemplateVariables": {},
+            "viewerPOV": {}
+        }
+    }
+}

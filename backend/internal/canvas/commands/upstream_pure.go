@@ -115,8 +115,9 @@ func (p *planner) applyCanvasCanvasPlanInPlace(doc map[string]any, ops []Operati
 						source = nodes[sourceIndex]
 					}
 				}
-				if op.NodeType != "text" || source == nil || p.stringValue(source["type"]) != "text" {
-					return nil, BadAuthRequest("只有当前画布中的文本节点可通过 add_node 复制")
+				copyable := op.NodeType == "text" || op.NodeType == "image" || op.NodeType == "video" || op.NodeType == "audio"
+				if !copyable || source == nil || p.stringValue(source["type"]) != op.NodeType {
+					return nil, BadAuthRequest("复制来源必须是当前画布中同类型的文本或媒体节点")
 				}
 				sourceMetadata, _ := source["metadata"].(map[string]any)
 				if sourceMetadata == nil {
@@ -138,9 +139,12 @@ func (p *planner) applyCanvasCanvasPlanInPlace(doc map[string]any, ops []Operati
 				}
 				copiedNodeIDs[op.CopiedFromNodeID] = op.ID
 				p.canvasResetCopiedMetadata(metadata, op.ID, copiedNodeIDs)
-				p.canvasRemapCopiedTextReferences(metadata, copiedNodeIDs)
+				p.canvasRemapCopiedAddReferences(metadata, copiedNodeIDs)
+				if op.NodeType != "text" {
+					metadata["generationResultPlacement"] = "replace-node"
+				}
 				if op.Content != nil && content != p.stringValue(metadata["content"]) {
-					return nil, BadAuthRequest("文本副本正文与复制来源不一致")
+					return nil, BadAuthRequest("副本内容与复制来源不一致")
 				}
 				metadata["copiedFromNodeId"] = op.CopiedFromNodeID
 			}
@@ -418,7 +422,7 @@ func (p *planner) applyCanvasExtendedOp(nodes, edges []map[string]any, op Operat
 	return fail("不支持的画布操作")
 }
 
-func (p *planner) batchTableNodeFromDocument(doc map[string]any, nodeID string) (map[string]any, map[string]any, []map[string]any, []map[string]any, error) {
+func (p *planner) batchTableNodeFromDocument(doc map[string]any, nodeID string, pendingRows ...bool) (map[string]any, map[string]any, []map[string]any, []map[string]any, error) {
 	for _, node := range p.creationMaps(doc["nodes"]) {
 		if p.stringValue(node["id"]) != nodeID {
 			continue
@@ -463,6 +467,9 @@ func (p *planner) batchTableNodeFromDocument(doc map[string]any, nodeID string) 
 		rows := p.creationMaps(table["rows"])
 		if len(rows) > maxCanvasBatchRows {
 			return nil, nil, nil, nil, BadAuthRequest("单个批量创作表最多500行")
+		}
+		if len(pendingRows) > 0 && pendingRows[0] {
+			return node, table, rows, columns, nil
 		}
 		rowIDs := map[string]bool{}
 		for _, row := range rows {
@@ -2786,10 +2793,10 @@ func (p *planner) canvasRemapCopiedStoryboardRowReferences(row map[string]any, i
 	}
 }
 
-// Text add-copy accepts the exact metadata produced by isolateCopiedNodeMetadata.
+// Add-copy accepts the exact metadata produced by isolateCopiedNodeMetadata.
 // Only declared canvas references are remapped; opaque plugin and extension data
 // must remain byte-for-byte equivalent to the editor preview.
-func (p *planner) canvasRemapCopiedTextReferences(metadata map[string]any, idMap map[string]string) {
+func (p *planner) canvasRemapCopiedAddReferences(metadata map[string]any, idMap map[string]string) {
 	for _, key := range []string{"videoStartFrameNodeId", "videoEndFrameNodeId", "videoFrameSourceNodeId", "batchSourceNodeId"} {
 		p.canvasRemapCopiedReferenceID(metadata, key, idMap)
 	}
@@ -3822,6 +3829,19 @@ func (p *planner) validateCanvasBatchRowPatch(doc map[string]any, input map[stri
 				return nil, nil, err
 			}
 			patch[key], labels = ids, append(labels, "参考文本")
+		case "referenceOverrides":
+			known := map[string]bool{}
+			if len(tables) > 0 {
+				for _, column := range p.creationMaps(tables[0]["referenceColumns"]) {
+					known[p.stringValue(column["id"])] = true
+				}
+			}
+			for _, id := range p.canvasStrings(value) {
+				if !known[id] {
+					return nil, nil, BadAuthRequest("单元格覆盖引用了不存在的参考图列")
+				}
+			}
+			patch[key], labels = value, append(labels, "单元格覆盖")
 		case "cells":
 			if len(tables) > 0 {
 				if err := p.validateCanvasBatchCells(tables[0], value.(map[string]any)); err != nil {

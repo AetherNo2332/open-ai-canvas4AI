@@ -24,7 +24,7 @@ func Capabilities() map[string]any {
 	for _, kind := range []string{"settings", "object", "camera", "light", "shot"} {
 		previs[kind] = previsFields[kind]
 	}
-	for kind, fields := range map[string]map[string]capability.PatchField{"storyboard": capability.StoryboardRowFields(), "batch": capability.BatchRowFields()} {
+	for kind, fields := range map[string]map[string]capability.PatchField{"storyboard": capability.StoryboardRowFields(), "batch": capability.BatchRowFields(), "batchTable": capability.BatchTableFields()} {
 		schemas := map[string]any{}
 		for key, field := range fields {
 			schemas[key] = field.JSONSchema()

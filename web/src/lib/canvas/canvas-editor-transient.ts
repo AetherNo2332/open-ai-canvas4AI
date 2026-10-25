@@ -5,6 +5,9 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 // callbacks may display them locally, but they are never editor commands.
 export const canvasTaskDisplayFields = new Set([
     "mediaVersion",
+    "producedModel",
+    "producedModelCandidate",
+    "batchFailedCount",
     "status",
     "errorDetails",
     "generationErrorCode",
@@ -31,7 +34,8 @@ export const canvasTaskDisplayFields = new Set([
 ]);
 // Previews, decoded dimensions and duration describe host media or local rendering;
 // neither is an authored patch or a row progress field.
-const canvasNodeDisplayFields = new Set([...canvasTaskDisplayFields, "videoPreview", "naturalWidth", "naturalHeight", "durationMs"]);
+const canvasUploadDisplayFields = ["fileUpload", "fileUploadProgress"];
+const canvasNodeDisplayFields = new Set([...canvasTaskDisplayFields, ...canvasUploadDisplayFields, "videoPreview", "naturalWidth", "naturalHeight", "durationMs", "bytes", "mimeType", "hasAudio"]);
 const storyboardMeasuredFields = ["storyboardComposerHeight"];
 export function canvasPersistentEditorDraft(base: CanvasDocument, live: CanvasDocument): CanvasDocument {
     const next = structuredClone(live),
@@ -43,10 +47,16 @@ export function canvasPersistentEditorDraft(base: CanvasDocument, live: CanvasDo
             if (previous?.metadata && Object.hasOwn(previous.metadata, key)) node.metadata[key] = structuredClone(previous.metadata[key]);
             else delete node.metadata[key];
         }
+        if (["image", "video", "audio", "config"].includes(node.type)) {
+            for (const key of ["references", "styleProfileJson", "styleExecutionPlan", "batchUsesReferenceImages"]) {
+                if (previous?.metadata && Object.hasOwn(previous.metadata, key)) node.metadata[key] = structuredClone(previous.metadata[key]);
+                else delete node.metadata[key];
+            }
+        }
         for (const collection of ["storyboard", "batchTable"]) {
             const oldRows = new Map<string, Entity>((previous?.metadata?.[collection]?.rows || []).map((row: Entity) => [row.id, row]));
             for (const row of node.metadata?.[collection]?.rows || [])
-                for (const key of canvasTaskDisplayFields) {
+                for (const key of [...canvasTaskDisplayFields, "inputChanged", "generatedInputSignature"]) {
                     const old = oldRows.get(row.id);
                     if (old && Object.hasOwn(old, key)) row[key] = structuredClone(old[key]);
                     else delete row[key];
@@ -88,6 +98,15 @@ export function carryCanvasTaskDisplay(base: CanvasDocument, live: CanvasDocumen
         const old = oldNodes.get(node.id),
             local = liveNodes.get(node.id);
         carry(old?.metadata, local?.metadata, node.metadata);
+        // Upload callbacks may race with the placeholder's first host receipt.
+        // Retain local progress only while the canonical resource is unchanged.
+        if (local?.metadata && same(old?.metadata?.storageKey, node.metadata?.storageKey)) {
+            node.metadata ||= {};
+            for (const key of canvasUploadDisplayFields) {
+                if (Object.hasOwn(local.metadata, key)) node.metadata[key] = structuredClone(local.metadata[key]);
+                else delete node.metadata[key];
+            }
+        }
         for (const collection of ["storyboard", "batchTable"]) {
             const oldRows = new Map<string, Entity>((old?.metadata?.[collection]?.rows || []).map((row: Entity) => [row.id, row]));
             const liveRows = new Map<string, Entity>((local?.metadata?.[collection]?.rows || []).map((row: Entity) => [row.id, row]));

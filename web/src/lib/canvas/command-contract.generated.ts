@@ -19,10 +19,13 @@ export type OperationType =
     | "edit_storyboard"
     | "bind_storyboard_output"
     | "edit_batch_table"
+    | "edit_image_batch"
     | "create_previs_scene"
     | "edit_previs_scene"
     | "delete_previs_scene"
     | "bind_asset"
+    | "bind_resource"
+    | "bind_character"
     | "rename_canvas"
     | "delete_canvas"
     | "edit_canvas_settings"
@@ -176,6 +179,7 @@ export interface Operation {
     previsOperations?: Array<PrevisOperation>;
     previsEntityOperations?: Array<PrevisEntityOperation>;
     assetId?: string;
+    resourceId?: string;
     versionId?: string;
     timelineOperations?: Array<TimelineOperation>;
 }
