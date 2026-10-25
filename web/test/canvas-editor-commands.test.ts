@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { canvasEditorCommands } from "../src/lib/canvas/canvas-editor-commands";
+import { applyNodeConfigPatch } from "../src/lib/canvas/canvas-project-domain";
 const capabilities = {
     protocolVersion: 1,
     nodes: [
@@ -153,4 +154,75 @@ test("editor-drawn managed edges on a legacy canvas leave the field operation to
     const removed = structuredClone(next);
     removed.connections = [];
     expect(canvasEditorCommands(next, removed, capabilities as any)).toEqual([]);
+});
+// A generated image as the host stores it after applying its spec: flat mirrors included.
+const generatedImage = (): any => ({
+    id: "image",
+    type: "image",
+    title: "image",
+    position: { x: 0, y: 0 },
+    width: 720,
+    height: 405,
+    metadata: {
+        content: "/api/resources/result/file",
+        status: "success",
+        generationMode: "image",
+        prompt: "雨夜街道",
+        composerContent: "雨夜街道",
+        size: "16:9",
+        count: 1,
+        channelId: "relay",
+        channelModelKey: "image-a",
+        model: "relay::image-a",
+        generationSpec: {
+            version: 1,
+            mode: "image",
+            prompt: "雨夜街道",
+            modelSelection: { kind: "channel", channelId: "relay", modelKey: "image-a" },
+            options: { size: "16:9", count: 1 },
+            referenceBindings: [{ id: "node:character", nodeId: "character", mediaType: "image", role: "reference", order: 0, resolution: "latest" }],
+            textInputMode: "append-sources",
+        },
+    },
+});
+const imageCapabilities = {
+    protocolVersion: 1,
+    nodes: [
+        {
+            type: "image",
+            patchFields: {
+                content: { path: "metadata.composerContent" },
+                model: { path: "metadata.model" },
+                size: { path: "metadata.size" },
+                quality: { path: "metadata.quality" },
+                count: { path: "metadata.count" },
+                transparentBackground: { path: "metadata.transparentBackground" },
+                generationSpec: { path: "metadata.generationSpec" },
+            },
+        },
+    ],
+    structuredFields: {},
+};
+test("switching a generated image to another model sends the spec without its host-derived mirrors", () => {
+    const source = { id: "canvas", nodes: [generatedImage()], connections: [] };
+    const next = { ...source, nodes: [applyNodeConfigPatch(generatedImage(), { model: "relay::image-b", size: "16:9" })] };
+    const spec = { ...generatedImage().metadata.generationSpec, modelSelection: { kind: "channel", channelId: "relay", modelKey: "image-b" }, options: { size: "16:9" } };
+    // The host rewrites channel mirrors and drops the cleared count when it applies the spec.
+    expect(canvasEditorCommands(source, next, imageCapabilities as any)).toEqual([{ type: "update_node", id: "image", patch: { model: "relay::image-b", generationSpec: spec } }]);
+});
+test("generation mirrors that disagree with the applied spec still fail visibly", () => {
+    const source = { id: "canvas", nodes: [generatedImage()], connections: [] };
+    const erased = applyNodeConfigPatch(generatedImage(), { model: "other::image-b" });
+    delete erased.metadata.channelId;
+    delete erased.metadata.channelModelKey;
+    expect(() => canvasEditorCommands(source, { ...source, nodes: [erased] }, imageCapabilities as any)).toThrow("canvas_editor_unmapped:node:image:metadata.channelId,metadata.channelModelKey");
+    const mirrorOnly = generatedImage();
+    mirrorOnly.metadata.channelModelKey = "image-b";
+    expect(() => canvasEditorCommands(source, { ...source, nodes: [mirrorOnly] }, imageCapabilities as any)).toThrow("canvas_editor_unmapped:node:image:metadata.channelModelKey");
+    const cleared = generatedImage();
+    delete cleared.metadata.count;
+    cleared.metadata.generationSpec.prompt = "改写";
+    cleared.metadata.composerContent = "改写";
+    // The spec still carries count, so clearing its mirror is a real edit the host must judge.
+    expect(canvasEditorCommands(source, { ...source, nodes: [cleared] }, imageCapabilities as any)[0]).toMatchObject({ patch: { count: null } });
 });
