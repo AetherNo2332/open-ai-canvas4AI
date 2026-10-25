@@ -295,6 +295,16 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const [presetApplyingId, setPresetApplyingId] = useState("");
     const presetApplyingRef = useRef<string | null>(null);
     const panelLayout = useAgentPanelLayout();
+    const panelRef = useRef<HTMLElement>(null);
+    const resizeCaptureRef = useRef<{ element: HTMLDivElement; pointerId: number } | null>(null);
+    useLayoutEffect(() => {
+        if (open) return;
+        const capture = resizeCaptureRef.current;
+        if (capture?.element.hasPointerCapture(capture.pointerId)) capture.element.releasePointerCapture(capture.pointerId);
+        resizeCaptureRef.current = null;
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && panelRef.current?.contains(focused)) focused.blur();
+    }, [open]);
     const lastSeqRef = useRef(0);
     const lastSeqRunIdRef = useRef<string | null>(null);
     const canvasSyncRef = useRef<ReturnType<typeof createAgentCanvasSync> | null>(null);
@@ -1174,17 +1184,19 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const panel = (
         <>
             {!open && launcher ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
-            <AnimatePresence>
-                {open ? (
+            <div className="relative flex min-h-0 shrink-0" style={{ width: open && !floating ? panelLayout.width : 0, flexBasis: open && !floating ? panelLayout.width : 0 }}>
                     <motion.aside
-                        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
-                        animate={{ opacity: 1, width: panelLayout.width }}
-                        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
+                        ref={panelRef}
+                        initial={false}
+                        animate={{ opacity: open ? 1 : 0, x: open || reducedMotion ? 0 : "100%" }}
                         transition={{ duration: reducedMotion || panelLayout.resizing ? 0 : 0.42, ease: [0.22, 1, 0.36, 1] }}
-                        className="canvas-agent-panel relative flex min-h-0 min-w-0 shrink flex-col overflow-hidden"
+                        className="canvas-agent-panel absolute inset-y-0 right-0 flex min-h-0 min-w-0 flex-col overflow-hidden"
                         data-agent-floating={floating || undefined}
-                        style={{ "--agent-panel-width": `${panelLayout.width}px`, "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
+                        style={{ width: panelLayout.width, "--agent-panel-width": `${panelLayout.width}px`, "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
                         aria-label="Agent 工作台"
+                        aria-hidden={!open}
+                        inert={!open}
+                        data-agent-open={open}
                         data-agent-compact={panelLayout.compact || undefined}
                         data-canvas-no-zoom
                         data-canvas-wheel-scroll
@@ -1202,8 +1214,16 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                             title="拖动调整宽度，左右方向键微调，双击恢复默认"
                             className="canvas-agent-width-handle"
                             {...panelLayout.resizeHandlers}
+                            onPointerDown={(event) => {
+                                panelLayout.resizeHandlers.onPointerDown(event);
+                                if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeCaptureRef.current = { element: event.currentTarget, pointerId: event.pointerId };
+                            }}
+                            onLostPointerCapture={(event) => {
+                                resizeCaptureRef.current = null;
+                                panelLayout.resizeHandlers.onLostPointerCapture(event);
+                            }}
                         /> : null}
-                        {/* 内容宽度及容器查询不跟随外层动画；窄屏同样按最终宽度排版。 */}
+                        {/* 布局宽度即时切换，内容仅随侧栏平移；容器查询始终使用真实宽度。 */}
                         <div className="canvas-agent-panel-content flex min-h-0 flex-1 flex-col">
                             <AnimatePresence mode="wait" initial={false}>
                                 {view === "settings" ? (
@@ -1420,8 +1440,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                             </AnimatePresence>
                         </div>
                     </motion.aside>
-                ) : null}
-            </AnimatePresence>
+            </div>
             <CanvasAgentSkillLibraryModal
                 open={skillsOpen}
                 theme={theme}

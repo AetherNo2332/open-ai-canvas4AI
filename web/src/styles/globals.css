@@ -8133,7 +8133,7 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
     }
 }
 
-.canvas-editor-shell:has(.canvas-agent-panel[data-agent-compact]) .canvas-main-toolbar {
+.canvas-editor-shell:has(.canvas-agent-panel[data-agent-compact][data-agent-open="true"]) .canvas-main-toolbar {
     visibility: hidden;
     pointer-events: none;
 }
