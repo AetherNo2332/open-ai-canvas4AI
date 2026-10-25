@@ -293,6 +293,12 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 - 普通网页迁移在自动接入的命令工作区中使用上述快照与命令接口，无需桌面运行环境。提交前保留原编辑基线和本地草稿；若冲突来源已变化则要求重新确认，不能取新版号重发旧内容。成功后通过命令事件刷新画布。
 - Agent 的画布读取投影包含 `referenceMigration.required`；需要迁移时附带 `reason=reference_migration_required` 和面向画布的下一步说明。行 `characters` 中的 `characterImageNodeId` / `characterAssetId` 也受引用门禁约束。该错误回执为 `retryable=false`、`requiredAction=complete_reference_migration`，不会返回参数修复提示或消耗参数纠错次数。
 - `edit_storyboard` 新增 `set_references`：只接受表级 `referenceNodeIds`（`[]` 清空），不接受行或输出参数。
+- 手工编辑器的 `edit_storyboard.append_draft` 允许空白镜头草稿，仍校验时长、字段和引用；Agent 的 `append` 继续要求画面描述或视频提示词。
+- `bind_resource` 以节点 `id` 和上传完成的 `resourceId` 绑定同账号、ready 且类型匹配的资源。存储键、大小、MIME、尺寸和时长从服务端资源记录派生；文本文件保留节点正文。素材库插入沿用 `bind_asset` 校验素材及其资源归属，提示词与标签通过能力目录声明的字段保存。上传状态与进度仅在当前浏览器显示，不作为编辑命令。
+- 手工批量创作表通过 `edit_batch_table.configure` 提交已声明的表级配置：任务类型、1/5/10 并发、全局提示词、参考列、文本列及列输入快照。列输入校验画布来源节点并进入读取集；`referenceOverrides` 保留手动清空或覆盖的单元格。整批操作完成后校验列与行的最终一致性，任务身份和产物 ID 不属于配置字段。
+- `bind_character` 通过节点 `id`、角色 `assetId`、可选 `versionId` 和 `action=current|pinned` 绑定账号角色资产；服务端校验资产、版本及形象资源归属，再派生名称、设定、别名、封面和声音展示信息。客户端不提交角色快照补丁。文件夹创建时间通过 `folderCreatedAt` 保存；项目素材文件夹绑定通过 `folderProjectId`、`folderAssetFolderId` 保存并校验项目及目录归属。
+- `edit_image_batch` 的 `set_children` 以 `nodeIds` 建立图片组，`select_primary` 以 `sourceNodeId` 选取已有组成员；媒体信息从被选图片派生，拒绝循环、重复归属和未授权资源。折叠状态通过 `imageBatchExpanded` 保存。内置图片工具仅声明有界的标注、分层与表情编辑上下文，并校验来源图片。
+- 同画布文本、图片、视频和音频的 `add_node.copiedFromNodeId` 由服务端重建来源元数据、清理任务与批次身份并重映射明确引用，仍校验资源权限。蒙版、通用、标注与角度编辑完成后先消费服务端画布结果；表情与分层先取得中间产物，局部融合或展开图层后以资源绑定保存最终图片。文字识别使用只读文本任务，不为临时节点写画布结果。
 - 原生命令 `bind_storyboard_output`：`id` 是分镜表节点，`rowId` 为行 ID，`outputMode` 取 `image` | `video`，`sourceNodeId` 是产物节点 ID；传空串解除归属并保留媒体。行或产物仍有持久活跃任务时返回 `reference_busy`，产物已属于另一分镜行时拒绝。
 - 快照读投影新增可选 `referenceMigration`：只在文档缺少 `referenceFieldsVersion` 时出现（v1 文档为 `null` 或缺省），含 `required` 与 `conflicts[{ scopeKey, fieldNodeIds, edgeNodeIds }]`。它是只读预览：不改文档、不写回执、不推进版本；提交迁移后自行消失。
 - `generate_media` 的分镜模式：传 `storyboardNodeId` + `storyboardRowId` + `mode`（`image` | `video`），输入由服务端从该行解析；该模式与 `prompt`、`referenceNodeIds`、`sourceNodeId`、`referenceTransientIds`、`durationSeconds` 互斥，混传按字段返回 `storyboard_input_conflict`。

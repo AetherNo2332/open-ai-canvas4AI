@@ -22,6 +22,7 @@ for (const workspaceMode of ["simple", "professional"] as const) {
             };
             const commands = resolveAddNodeMenuCommands(context).filter((command) => command.id === "project-character");
             expect(commands).toHaveLength(1);
+            expect(commands[0].section).toBe("node");
             commands[0].run(context);
             expect(invoked).toEqual(["onOpenProjectCharacters"]);
         });

@@ -772,6 +772,7 @@ export function useCanvasMediaTools({
                         metadata: { sourceNodeId: node.id, edit: "mask", ...styleMetadata },
                         onTaskCreated: (task) => bindGenerationTask(targetId, task),
                     });
+                    if (result.canvasMaterialized) { hasSuccess = true; return; }
                     const image = result.images?.find((item) => item?.dataUrl);
                     if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
                     const uploaded = await uploadImage(image.dataUrl);
@@ -869,6 +870,7 @@ export function useCanvasMediaTools({
         const controller = startGenerationRequest(childId, node.id, childId);
         try {
             const result = await runBackendCanvasGenerationTask({ projectId, nodeId: childId, mode: "image", prompt, config: generationConfig, referenceImages: [source], signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "text", ...styleMetadata }, onTaskCreated: (task) => bindGenerationTask(childId, task) });
+            if (result.canvasMaterialized) return;
             const image = result.images?.find((item) => item?.dataUrl);
             if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
             const uploaded = await uploadImage(image.dataUrl);
@@ -962,6 +964,7 @@ export function useCanvasMediaTools({
         const controller = startGenerationRequest(childId, node.id, childId);
         try {
             const result = await runBackendCanvasGenerationTask({ projectId, nodeId: childId, mode: "image", prompt, config: generationConfig, referenceImages: [source, annotatedReference], signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "annotation", annotationReference: true }, onTaskCreated: (task) => bindGenerationTask(childId, task) });
+            if (result.canvasMaterialized) return;
             const image = result.images?.find((item) => item?.dataUrl);
             if (!image?.dataUrl) throw new Error("标注编辑任务没有返回图片");
             const uploaded = await uploadImage(image.dataUrl);
@@ -1106,6 +1109,7 @@ export function useCanvasMediaTools({
         const controller = startGenerationRequest(childId, node.id, childId);
         try {
             const result = await runBackendCanvasGenerationTask({ projectId, nodeId: childId, mode: "image", prompt: effectivePrompt, config: generationConfig, referenceImages: [source], signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "angle", ...styleMetadata }, onTaskCreated: (task) => bindGenerationTask(childId, task) });
+            if (result.canvasMaterialized) return;
             const image = result.images?.[0];
             if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
             const uploaded = await uploadImage(image.dataUrl);

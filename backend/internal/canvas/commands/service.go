@@ -264,6 +264,9 @@ func (s *Service) validation(ctx context.Context, tx *repository.Repository, p i
 	additionalResourcePolicy := v.ResourceAllowed
 	owned := map[string]bool{}
 	knownAssets := map[string]AssetMetadata{}
+	v.Resources = map[string]ResourceMetadata{}
+	v.CharacterBindings = map[string]map[string]any{}
+	v.FolderBindings = map[string]bool{}
 	loadAsset := func(id string) (AssetMetadata, error) {
 		a, err := tx.AssetForUser(p.OwnerID, id)
 		if err != nil {
@@ -306,6 +309,36 @@ func (s *Service) validation(ctx context.Context, tx *repository.Repository, p i
 		return result, nil
 	}
 	for _, op := range ops {
+		if op.Type == "update_node" && editsFolderBinding(op) {
+			projectID, folderID := editedFolderBinding(doc, op)
+			if projectID != "" || folderID != "" {
+				if _, err := tx.ProjectForUser(p.OwnerID, projectID); err != nil {
+					return v, failure("resource_not_owned", "文件夹来源项目不存在或未授权")
+				}
+				if _, err := tx.ProjectAssetFolder(projectID, folderID); err != nil {
+					return v, failure("resource_not_owned", "项目素材文件夹不存在或未授权")
+				}
+				v.FolderBindings[projectID+"\x00"+folderID] = true
+			}
+		}
+		if op.Type == "bind_character" {
+			metadata, err := loadCharacterBinding(tx, p.OwnerID, op)
+			if err != nil {
+				return v, err
+			}
+			v.CharacterBindings[characterBindingKey(op)] = metadata
+			if id := assets.ResourceID(text(metadata["characterCoverUrl"])); id != "" {
+				owned[id] = additionalResourcePolicy == nil || additionalResourcePolicy(id)
+			}
+		}
+		if op.Type == "bind_resource" {
+			resource, err := tx.ResourceForUser(p.OwnerID, op.ResourceID)
+			if err != nil || resource.Status != model.ResourceStatusReady {
+				return v, failure("resource_not_owned", "资源不存在、未就绪或未授权")
+			}
+			owned[resource.ID] = additionalResourcePolicy == nil || additionalResourcePolicy(resource.ID)
+			v.Resources[resource.ID] = ResourceMetadata{ID: resource.ID, Kind: resource.Kind, MimeType: resource.MimeType, Size: resource.Size, Width: resource.Width, Height: resource.Height, DurationMs: resource.DurationMs}
+		}
 		if op.Type == "use_media_version" {
 			canvasID := text(doc["id"])
 			if len(canvasIDs) > 0 {
@@ -543,7 +576,7 @@ func (s *Service) Execute(ctx context.Context, p identity.Principal, req Command
 			switch op.Type {
 			case "add_node":
 				present[op.ID] = true
-			case "update_node", "delete_node", "replace_text", "set_parent", "reorder_rows", "edit_drawing", "edit_storyboard", "edit_batch_table", "bind_asset", "bind_storyboard_output":
+			case "update_node", "delete_node", "replace_text", "set_parent", "reorder_rows", "edit_drawing", "edit_storyboard", "edit_batch_table", "edit_image_batch", "bind_asset", "bind_resource", "bind_character", "bind_storyboard_output":
 				if !present[op.ID] {
 					return failure("entity_deleted", "目标节点已删除")
 				}

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "cloud-agent-tools/v12",
+  "schemaVersion": "cloud-agent-tools/v13",
   "tools": [
     {
       "function": {
@@ -3133,6 +3133,14 @@
                   "maxLength": 20000,
                   "type": "string"
                 },
+                "referenceOverrides": {
+                  "items": {
+                    "maxLength": 120,
+                    "type": "string"
+                  },
+                  "maxItems": 10,
+                  "type": "array"
+                },
                 "textNodeIds": {
                   "items": {
                     "maxLength": 120,
@@ -3315,6 +3323,12 @@
                     "additionalProperties": false,
                     "minProperties": 1,
                     "properties": {
+                      "assetTags": {
+                        "description": "数组元素合同见 canvas_list_node_types(nodeType)",
+                        "items": {},
+                        "maxItems": 100,
+                        "type": "array"
+                      },
                       "audioEmotionAfraid": {
                         "maxLength": 16000,
                         "type": "string"
@@ -3395,6 +3409,10 @@
                         "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
                       },
+                      "composerContent": {
+                        "maxLength": 1048576,
+                        "type": "string"
+                      },
                       "content": {
                         "anyOf": [
                           {
@@ -3464,6 +3482,22 @@
                           "excalidraw"
                         ],
                         "maxLength": 240,
+                        "type": "string"
+                      },
+                      "emotionEdit": {
+                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
+                        "type": "object"
+                      },
+                      "folderAssetFolderId": {
+                        "maxLength": 128,
+                        "type": "string"
+                      },
+                      "folderCreatedAt": {
+                        "maxLength": 80,
+                        "type": "string"
+                      },
+                      "folderProjectId": {
+                        "maxLength": 128,
                         "type": "string"
                       },
                       "folderStyle": {
@@ -3565,6 +3599,28 @@
                         "minimum": 1,
                         "type": "number"
                       },
+                      "imageBatchExpanded": {
+                        "type": "boolean"
+                      },
+                      "imageToolData": {
+                        "description": "字段完整合同见 canvas_list_node_types(nodeType)",
+                        "type": "object"
+                      },
+                      "imageToolKind": {
+                        "enum": [
+                          "annotation-edit",
+                          "layer-decomposition"
+                        ],
+                        "maxLength": 240,
+                        "type": "string"
+                      },
+                      "imageToolPlugin": {
+                        "enum": [
+                          "image-tools"
+                        ],
+                        "maxLength": 240,
+                        "type": "string"
+                      },
                       "inputBindings": {
                         "description": "数组元素合同见 canvas_list_node_types(nodeType)",
                         "items": {},
@@ -3591,6 +3647,19 @@
                       "portraitTexture": {
                         "description": "字段完整合同见 canvas_list_node_types(nodeType)",
                         "type": "object"
+                      },
+                      "prompt": {
+                        "anyOf": [
+                          {
+                            "maxLength": 16000,
+                            "type": "string"
+                          },
+                          {
+                            "maxLength": 1048576,
+                            "type": "string"
+                          }
+                        ],
+                        "type": "string"
                       },
                       "promptTemplateOperation": {
                         "maxLength": 16000,

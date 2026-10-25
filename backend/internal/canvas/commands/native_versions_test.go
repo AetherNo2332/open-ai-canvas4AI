@@ -32,11 +32,24 @@ func TestAddNodeCarriesCopyProvenance(t *testing.T) {
 	}
 }
 
-func TestAddNodeRejectsCopyProvenanceForNonText(t *testing.T) {
+func TestAddNodeCarriesMediaCopyProvenance(t *testing.T) {
 	d := fixture(t, `{"id":"canvas","nodes":[{"id":"source","type":"image","title":"Image","position":{"x":0,"y":0},"metadata":{"content":"resource:image","status":"success"}}],"connections":[]}`)
 	content := "resource:image"
-	if _, err := Plan(d, command(Operation{Type: "add_node", ID: "copy", NodeType: "image", Content: &content, CopiedFromNodeID: "source"}), ownerContext()); err == nil {
-		t.Fatal("media copy provenance must not be accepted through add_node")
+	ctx := ownerContext()
+	ctx.ResourceAllowed = func(id string) bool { return id == "image" }
+	result, err := Plan(d, command(Operation{Type: "add_node", ID: "copy", NodeType: "image", Content: &content, CopiedFromNodeID: "source"}), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := entity(result.Document, "node:copy")["metadata"].(map[string]any)
+	if metadata["content"] != content || metadata["copiedFromNodeId"] != "source" || metadata["generationResultPlacement"] != "replace-node" {
+		t.Fatalf("media copy was not isolated: %#v", metadata)
+	}
+	if _, err := Plan(d, command(Operation{Type: "add_node", ID: "copy", NodeType: "video", CopiedFromNodeID: "source"}), ownerContext()); err == nil {
+		t.Fatal("copy accepted a mismatched source type")
+	}
+	if _, err := Plan(d, command(Operation{Type: "add_node", ID: "copy", NodeType: "image", CopiedFromNodeID: "source"}), ownerContext()); err == nil {
+		t.Fatal("copy accepted an unauthorized resource")
 	}
 }
 

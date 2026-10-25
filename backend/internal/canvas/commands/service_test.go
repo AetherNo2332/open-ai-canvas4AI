@@ -329,6 +329,80 @@ func TestAssetBindingRejectsMislabeledResource(t *testing.T) {
 		t.Fatal("audio resource bound to image node")
 	}
 }
+
+func TestEditorResourceServiceAuthorizesReadyResourcesAndPersistsMetadata(t *testing.T) {
+	svc, db, _, snapshot := commandFixture(t)
+	for _, resource := range []model.Resource{
+		{ID: "uploaded", UserID: "owner", Kind: "image", MimeType: "image/png", Size: 123, Width: 640, Height: 480, Status: model.ResourceStatusReady},
+		{ID: "foreign", UserID: "other", Kind: "image", MimeType: "image/png", Status: model.ResourceStatusReady},
+		{ID: "pending", UserID: "owner", Kind: "image", MimeType: "image/png", Status: model.ResourceStatusPending},
+	} {
+		if err := db.Create(&resource).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := edit(snapshot, "upload", "", "resource-save")
+	req.Operations = []Operation{{Type: "add_node", ID: "upload", NodeType: "image", X: num(0), Y: num(1000)}, {Type: "bind_resource", ID: "upload", ResourceID: "uploaded"}}
+	if _, err := svc.Execute(context.Background(), ownerContext().Principal, req); err != nil {
+		t.Fatal(err)
+	}
+	current, err := svc.ReadSnapshot(context.Background(), ownerContext().Principal, snapshot.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := entity(current.Document, "node:upload")["metadata"].(map[string]any)
+	if metadata["content"] != "/api/resources/uploaded/file" || metadata["storageKey"] != "resource:uploaded" || metadata["bytes"] != float64(123) || metadata["mimeType"] != "image/png" {
+		t.Fatalf("resource metadata did not persist: %#v", metadata)
+	}
+	for _, id := range []string{"foreign", "pending", "missing"} {
+		denied := edit(current, "upload", "", "denied-"+id)
+		denied.Operations = []Operation{{Type: "bind_resource", ID: "upload", ResourceID: id}}
+		if _, err := svc.Execute(context.Background(), ownerContext().Principal, denied); err == nil {
+			t.Fatalf("unauthorized resource %s accepted", id)
+		}
+	}
+	after, err := svc.ReadSnapshot(context.Background(), ownerContext().Principal, snapshot.CanvasID)
+	if err != nil || !reflect.DeepEqual(current.Document, after.Document) || current.Revision != after.Revision {
+		t.Fatalf("denied binding mutated canvas: %v", err)
+	}
+}
+
+func TestEditorCharacterServiceRebuildsAuthorizedAssetVersion(t *testing.T) {
+	svc, db, _, snapshot := commandFixture(t)
+	if err := db.AutoMigrate(&model.Asset{}, &model.AssetVersion{}, &model.AssetRepresentation{}, &model.CharacterVoiceBinding{}, &model.VoiceProfile{}); err != nil {
+		t.Fatal(err)
+	}
+	asset := model.Asset{ID: "hero", UserID: "owner", Kind: "entity", Category: model.AssetCategoryCharacter, Title: "Hero", Status: model.AssetVersionStatusConfirmed, PrimaryVersionID: "hero-v1", PayloadJSON: `{}`}
+	if err := db.Create(&asset).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []model.AssetVersion{{ID: "hero-v1", AssetID: "hero", Version: 1, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: `{"appearance":"Authoritative","aliases":["H"]}`}, {ID: "foreign-v1", AssetID: "foreign", Version: 1, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: `{}`}} {
+		if err := db.Create(&version).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := edit(snapshot, "character", "", "bind-character")
+	req.Operations = []Operation{{Type: "add_node", ID: "character", NodeType: "text", X: num(0), Y: num(1000)}, {Type: "bind_character", ID: "character", AssetID: "hero", VersionID: "hero-v1", Action: "current"}}
+	if _, err := svc.Execute(context.Background(), ownerContext().Principal, req); err != nil {
+		t.Fatal(err)
+	}
+	current, err := svc.ReadSnapshot(context.Background(), ownerContext().Principal, snapshot.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := entity(current.Document, "node:character")
+	meta := node["metadata"].(map[string]any)
+	if node["title"] != "Hero" || meta["characterAssetId"] != "hero" || meta["characterDefinition"].(map[string]any)["appearance"] != "Authoritative" || meta["characterVisualStatus"] != "missing" {
+		t.Fatalf("invalid character snapshot: %#v", node)
+	}
+	for _, op := range []Operation{{Type: "bind_character", ID: "character", AssetID: "foreign", Action: "current"}, {Type: "bind_character", ID: "character", AssetID: "hero", VersionID: "foreign-v1", Action: "pinned"}} {
+		denied := edit(current, "character", "", "denied-character-"+op.AssetID)
+		denied.Operations = []Operation{op}
+		if _, err := svc.Execute(context.Background(), ownerContext().Principal, denied); err == nil {
+			t.Fatal("foreign character or version accepted")
+		}
+	}
+}
 func assertReason(t *testing.T, err error, reason string) {
 	t.Helper()
 	var typed *Error

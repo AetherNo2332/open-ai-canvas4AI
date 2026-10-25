@@ -118,6 +118,10 @@ func (p *planner) applyOperation(doc Document, op Operation, ctx ValidationConte
 		if err := p.editBatchTable(doc, op); err != nil {
 			return nil, err
 		}
+	case "edit_image_batch":
+		if err := p.editImageBatch(doc, op); err != nil {
+			return nil, err
+		}
 	case "create_previs_scene", "edit_previs_scene", "delete_previs_scene":
 		var err error
 		if len(op.PrevisEntityOperations) > 0 || op.Action != "" {
@@ -130,6 +134,14 @@ func (p *planner) applyOperation(doc Document, op Operation, ctx ValidationConte
 		}
 	case "bind_asset":
 		if err := p.bindAsset(doc, op, ctx); err != nil {
+			return nil, err
+		}
+	case "bind_resource":
+		if err := p.bindResource(doc, op, ctx); err != nil {
+			return nil, err
+		}
+	case "bind_character":
+		if err := p.bindCharacter(doc, op, ctx); err != nil {
 			return nil, err
 		}
 	case OperationMigrateReferences:
@@ -158,7 +170,7 @@ func (p *planner) editStoryboard(doc Document, op Operation) error {
 	}
 	index := p.canvasNodeIndex(rows, op.RowID)
 	switch op.Action {
-	case "append", "update":
+	case "append", "append_draft", "update":
 		if err := validateCanvasID(op.RowID, "分镜行 ID", 120); err != nil {
 			return err
 		}
@@ -171,14 +183,14 @@ func (p *planner) editStoryboard(doc Document, op Operation) error {
 		if err := p.validateCanvasStoryboardReferences(doc, op.Patch); err != nil {
 			return err
 		}
-		if op.Action == "append" {
+		if op.Action == "append" || op.Action == "append_draft" {
 			if index >= 0 {
 				return BadAuthRequest("分镜行 ID 重复")
 			}
 			if len(rows) >= maxCanvasStoryboardRows {
 				return BadAuthRequest("单个分镜表最多 100 个镜头")
 			}
-			if err := p.validateCanvasStoryboardRow(op.Patch, true); err != nil {
+			if err := p.validateCanvasStoryboardRow(op.Patch, op.Action == "append"); err != nil {
 				return err
 			}
 			row := p.canvasStoryboardRowDefaults()
@@ -215,12 +227,46 @@ func (p *planner) editStoryboard(doc Document, op Operation) error {
 	return nil
 }
 func (p *planner) editBatchTable(doc Document, op Operation) error {
-	_, table, rows, columns, err := p.batchTableNodeFromDocument(doc, op.ID)
+	_, table, rows, columns, err := p.batchTableNodeFromDocument(doc, op.ID, true)
 	if err != nil {
 		return err
 	}
 	index := p.canvasNodeIndex(rows, op.RowID)
 	switch op.Action {
+	case "configure":
+		if op.RowID != "" || op.BatchOperation != "" || op.Concurrency != 0 {
+			return BadAuthRequest("表格配置不接受行级参数")
+		}
+		if err := capability.ValidateEditableFields(capability.BatchTableFields(), op.Patch); err != nil {
+			return BadAuthRequest(err.Error())
+		}
+		candidate := p.mergeCreationMaps(table, op.Patch)
+		for key, value := range op.Patch {
+			if value == nil {
+				delete(candidate, key)
+			}
+		}
+		if n, ok := p.canvasInteger(candidate["concurrency"]); !ok || !p.canvasBatchConcurrencyAllowed(n) {
+			return BadAuthRequest("并发数必须是 1、5 或 10")
+		}
+		// Rows may be resized in following operations; validate the final rows after the batch.
+		probe := map[string]any{}
+		for key, value := range candidate {
+			probe[key] = value
+		}
+		probe["rows"] = []any{}
+		if _, _, _, _, err := p.batchTableNodeFromDocument(Document{"nodes": []any{map[string]any{"id": op.ID, "type": "batch-table", "metadata": map[string]any{"batchTable": probe}}}}, op.ID); err != nil {
+			return err
+		}
+		if err := p.validateBatchConfigurationReferences(doc, candidate); err != nil {
+			return err
+		}
+		for key := range table {
+			delete(table, key)
+		}
+		for key, value := range candidate {
+			table[key] = value
+		}
 	case "append", "update":
 		if err := validateCanvasID(op.RowID, "批量创作行 ID", 120); err != nil {
 			return err

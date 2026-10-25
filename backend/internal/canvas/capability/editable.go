@@ -83,12 +83,16 @@ func completeBuiltinEditableFields(d *Descriptor) {
 	}
 	switch d.Type {
 	case "text":
+		add("composerContent", "metadata.composerContent", "文本生成提示词", stringField(maxAgentDocumentRunes))
 		add("listMode", "metadata.listMode", "列表模式", PatchField{Kind: patchKindBoolean})
 		add("richText", "metadata.richText", "富文本正文", richTextField())
 	case "frame":
 		add("frame", "metadata.frame", "背板折叠与展开尺寸", objectField(map[string]PatchField{"collapsed": {Kind: patchKindBoolean}, "expandedWidth": boundedNumber(1, 100000), "expandedHeight": boundedNumber(1, 100000)}, "collapsed", "expandedWidth", "expandedHeight"))
 		add("folderStyle", "metadata.folder.style", "背板样式", enumString("glass", "stacked", "midnight", "paper", "cinema", "compact"))
 		add("folderTheme", "metadata.folder.theme", "背板主题", enumString("aurora", "obsidian", "ember", "pearl"))
+		add("folderCreatedAt", "metadata.folder.createdAt", "文件夹创建时间", stringField(80))
+		add("folderProjectId", "metadata.folder.projectId", "文件夹来源项目", stringField(128))
+		add("folderAssetFolderId", "metadata.folder.assetFolderId", "项目素材文件夹", stringField(128))
 		d.DetailFields = append(d.DetailFields, "frame", "folder")
 	case "script":
 		add("workflowKind", "metadata.workflowKind", "分镜类型", enumString("script", "storyboard"))
@@ -117,6 +121,14 @@ func completeBuiltinEditableFields(d *Descriptor) {
 	if d.Type == "config" || d.Type == "image" || d.Type == "video" || d.Type == "audio" || d.Type == "text" {
 		addGenerationEditableFields(d, add)
 	}
+	if d.Type == "image" || d.Type == "video" || d.Type == "audio" || d.Type == "text" {
+		limit := maxAgentNodeContentRunes
+		if d.Type == "text" {
+			limit = maxAgentDocumentRunes
+		}
+		add("prompt", "metadata.prompt", "素材提示词", stringField(limit))
+		add("assetTags", "metadata.assetTags", "素材标签", arrayField(stringField(240), 100))
+	}
 	if d.Connection.CanReference {
 		add("usageStatus", "metadata.usageStatus", "素材用途状态", enumString("active", "archived"))
 		add("usageNote", "metadata.usageNote", "用途说明", stringField(500))
@@ -124,6 +136,11 @@ func completeBuiltinEditableFields(d *Descriptor) {
 	}
 	if d.Type == "image" {
 		add("freeResize", "metadata.freeResize", "自由调整尺寸", PatchField{Kind: patchKindBoolean})
+		add("imageBatchExpanded", "metadata.imageBatchExpanded", "展开图片批次", PatchField{Kind: patchKindBoolean})
+		add("imageToolPlugin", "metadata.pluginId", "图片工具来源", enumString("image-tools"))
+		add("imageToolKind", "metadata.pluginNodeId", "图片工具类型", enumString("annotation-edit", "layer-decomposition"))
+		add("imageToolData", "metadata.pluginData", "图层上下文", objectField(map[string]PatchField{"sourceNodeId": stringField(80), "layerIndex": integerField(1, 100)}, "sourceNodeId", "layerIndex"))
+		add("emotionEdit", "metadata.emotionEdit", "表情编辑区域", emotionEditField())
 	}
 	if d.Connection.CanTarget && d.Type != "batch-table" {
 		if _, hasGeneration := d.PatchFields["generationSpec"]; !hasGeneration {
@@ -147,6 +164,17 @@ func completeBuiltinEditableFields(d *Descriptor) {
 			d.DetailFields = append(d.DetailFields, field.Path[9:])
 		}
 	}
+}
+
+func emotionEditField() PatchField {
+	region := func(extra bool) PatchField {
+		fields := map[string]PatchField{"x": boundedNumber(0, 100000), "y": boundedNumber(0, 100000), "width": boundedNumber(0.000001, 100000), "height": boundedNumber(0.000001, 100000)}
+		if extra {
+			fields["id"], fields["source"], fields["confidence"] = stringField(120), enumString("detected", "manual"), boundedNumber(0, 1)
+		}
+		return objectField(fields, "x", "y", "width", "height")
+	}
+	return objectField(map[string]PatchField{"sourceNodeId": stringField(80), "characterName": stringField(240), "presetId": stringField(120), "intimacy": boundedNumber(-2, 2), "arousal": boundedNumber(-2, 2), "label": stringField(240), "faceBox": region(true), "editRegion": region(false), "sourceWidth": boundedNumber(1, 100000), "sourceHeight": boundedNumber(1, 100000), "providerSize": stringField(80), "editMode": enumString("provider-mask", "local-composite")}, "sourceNodeId", "faceBox", "editRegion")
 }
 
 func addGenerationEditableFields(d *Descriptor, add func(string, string, string, PatchField)) {
