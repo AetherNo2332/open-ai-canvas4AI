@@ -21,6 +21,10 @@
     box-shadow: none;
 }
 
+.canvas-agent-panel[data-agent-open="false"] {
+    pointer-events: none;
+}
+
 .canvas-agent-width-handle {
     position: absolute;
     inset: 0 auto 0 0;
@@ -35,7 +39,7 @@
     outline: none;
 }
 .canvas-agent-panel-content {
-    /* 查询断点与文字排版使用最终宽度，外层展开/收起只裁剪内容。 */
+    /* 查询断点与文字排版使用真实宽度，展开/收起只改变视觉位置。 */
     container-type: inline-size;
     width: calc(var(--agent-panel-width) - 1px);
     min-width: 0;

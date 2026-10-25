@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
+import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import { Button, Dropdown, Input, Popover } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
@@ -99,6 +99,7 @@ export type CanvasCloudAgentPanelHandle = {
     sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => Promise<"sent" | "queued" | false>;
 };
 type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[]; mode?: AgentSendMode; oppositeMode?: boolean; replyToQuestionId?: string };
+const AgentPanelVisibilityContext = createContext(true);
 
 type CloudAgentPanelProps = {
     ref?: Ref<CanvasCloudAgentPanelHandle>;
@@ -295,6 +296,17 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const [presetApplyingId, setPresetApplyingId] = useState("");
     const presetApplyingRef = useRef<string | null>(null);
     const panelLayout = useAgentPanelLayout();
+    const panelRef = useRef<HTMLElement>(null);
+    const resizeCaptureRef = useRef<{ element: HTMLDivElement; pointerId: number } | null>(null);
+    useLayoutEffect(() => {
+        if (open) return;
+        setSkillsOpen(false);
+        const capture = resizeCaptureRef.current;
+        if (capture?.element.hasPointerCapture(capture.pointerId)) capture.element.releasePointerCapture(capture.pointerId);
+        resizeCaptureRef.current = null;
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && panelRef.current?.contains(focused)) focused.blur();
+    }, [open]);
     const lastSeqRef = useRef(0);
     const lastSeqRunIdRef = useRef<string | null>(null);
     const canvasSyncRef = useRef<ReturnType<typeof createAgentCanvasSync> | null>(null);
@@ -1174,17 +1186,19 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const panel = (
         <>
             {!open && launcher ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
-            <AnimatePresence>
-                {open ? (
+            <div className="relative flex min-h-0 shrink-0" style={{ width: open && !floating ? panelLayout.width : 0, flexBasis: open && !floating ? panelLayout.width : 0 }}>
                     <motion.aside
-                        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
-                        animate={{ opacity: 1, width: panelLayout.width }}
-                        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, width: 0 }}
+                        ref={panelRef}
+                        initial={false}
+                        animate={{ opacity: open ? 1 : 0, x: open || reducedMotion ? 0 : "100%" }}
                         transition={{ duration: reducedMotion || panelLayout.resizing ? 0 : 0.42, ease: [0.22, 1, 0.36, 1] }}
-                        className="canvas-agent-panel relative flex min-h-0 min-w-0 shrink flex-col overflow-hidden"
+                        className="canvas-agent-panel absolute inset-y-0 right-0 flex min-h-0 min-w-0 flex-col overflow-hidden"
                         data-agent-floating={floating || undefined}
-                        style={{ "--agent-panel-width": `${panelLayout.width}px`, "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
+                        style={{ width: panelLayout.width, "--agent-panel-width": `${panelLayout.width}px`, "--agent-surface-base": theme.node.panel, "--agent-ink": theme.node.text, "--agent-accent": theme.accent.primary, "--agent-shadow-color": theme.spatial.shadow } as CSSProperties & Record<`--${string}`, string>}
                         aria-label="Agent 工作台"
+                        aria-hidden={!open}
+                        inert={!open}
+                        data-agent-open={open}
                         data-agent-compact={panelLayout.compact || undefined}
                         data-canvas-no-zoom
                         data-canvas-wheel-scroll
@@ -1202,14 +1216,22 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                             title="拖动调整宽度，左右方向键微调，双击恢复默认"
                             className="canvas-agent-width-handle"
                             {...panelLayout.resizeHandlers}
+                            onPointerDown={(event) => {
+                                panelLayout.resizeHandlers.onPointerDown(event);
+                                if (event.currentTarget.hasPointerCapture(event.pointerId)) resizeCaptureRef.current = { element: event.currentTarget, pointerId: event.pointerId };
+                            }}
+                            onLostPointerCapture={(event) => {
+                                resizeCaptureRef.current = null;
+                                panelLayout.resizeHandlers.onLostPointerCapture(event);
+                            }}
                         /> : null}
-                        {/* 内容宽度及容器查询不跟随外层动画；窄屏同样按最终宽度排版。 */}
+                        {/* 布局宽度即时切换，内容仅随侧栏平移；容器查询始终使用真实宽度。 */}
                         <div className="canvas-agent-panel-content flex min-h-0 flex-1 flex-col">
                             <AnimatePresence mode="wait" initial={false}>
                                 {view === "settings" ? (
                                     <motion.div key="settings" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
                                         <CanvasCloudAgentSettings
-                                            key={`${userId}:${canvasId}`}
+                                            key={`${userId}:${canvasId}:${open}`}
                                             sendMode={messageQueue.mode}
                                             sendModeSaving={messageQueue.savingMode}
                                             sendModeError={messageQueue.settingsError}
@@ -1378,7 +1400,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                             />
                                         ) : null}
                                         {pendingQuestion ? <AgentQuestionBar question={pendingQuestion} theme={theme} disabled={approvalSubmitting || busy || !messageQueue.queue?.awaitingQuestionId} onAnswer={(label) => void submit(label, { mode: "interject", replyToQuestionId: messageQueue.queue?.awaitingQuestionId })} /> : null}
+                                        {/* 只重置浮层控件；输入器及待发队列保留 DOM 和未提交的编辑。 */}
                                         <AgentChatComposer
+                                            visible={open}
                                             queuedMessages={<>
                                                 <AgentMessageQueueList key={conversationScope} queue={messageQueue.queue} error={messageQueue.queueError || messageQueue.settingsError} busy={busy || messageQueue.acting} onEdit={messageQueue.edit} onPromote={messageQueue.promote} onRemove={messageQueue.remove} onResume={messageQueue.resume} onRetry={messageQueue.retry} />
                                                 {pendingSubmission.current?.request && !busy ? <div className="agent-message-queue agent-message-queue-error"><span>发送结果待确认</span><button type="button" onClick={() => { const request = pendingSubmission.current?.request; if (request) void submit(request.prompt, { preserveDraft: true }); }}>重试发送</button></div> : null}
@@ -1399,9 +1423,10 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                             references={[...references, ...buildSkillMentionReferences(installedSkills)]}
                                             slashSkills={installedSkills}
                                             includeAssetLibrary={false}
-                                            submitAccessory={<AgentContextRing view={presentAgentContextUsage(contextUsage)} />}
+                                            submitAccessory={<AgentContextRing key={String(open)} view={presentAgentContextUsage(contextUsage)} />}
                                             left={
                                                 <ComposerControls
+                                                    key={String(open)}
                                                     reasoningMode={reasoningSupported ? reasoningMode : "off"}
                                                     onReasoningModeChange={(value) => {
                                                         if (reasoningSupported) setReasoningMode(value);
@@ -1420,9 +1445,8 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                             </AnimatePresence>
                         </div>
                     </motion.aside>
-                ) : null}
-            </AnimatePresence>
-            <CanvasAgentSkillLibraryModal
+            </div>
+            {open ? <CanvasAgentSkillLibraryModal
                 open={skillsOpen}
                 theme={theme}
                 installedSkills={installedSkills}
@@ -1446,10 +1470,11 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 }
                 onInstall={installSkill}
                 onLoadMore={loadMoreSkills}
-            />
+            /> : null}
         </>
     );
-    return floating ? createPortal(panel, document.body) : panel;
+    const scopedPanel = <AgentPanelVisibilityContext value={open}>{panel}</AgentPanelVisibilityContext>;
+    return floating ? createPortal(scopedPanel, document.body) : scopedPanel;
 }
 
 function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onOpen }: { theme: CanvasTheme; statusColor: string; approvalPending: boolean; reducedMotion: boolean; onOpen: () => void }) {
@@ -1951,6 +1976,7 @@ function ApprovalCard({
 }) {
     const [showReason, setShowReason] = useState(Boolean(approval.reason));
     const [mediaSettings, setMediaSettings] = useState<AgentMediaSettings>();
+    const panelOpen = useContext(AgentPanelVisibilityContext);
     const imageApproval = agentImageApproval(approval.detail);
     const action = agentApprovalPresentation(approval.detail);
     return (
@@ -1981,7 +2007,7 @@ function ApprovalCard({
                     无法确认具体目标，继续前请重新读取画布。
                 </div>
             )}
-            {imageApproval ? <CanvasAgentImageApprovalSettings initial={imageApproval} value={mediaSettings} onChange={setMediaSettings} theme={theme} disabled={submitting} /> : null}
+            {imageApproval ? <CanvasAgentImageApprovalSettings key={String(panelOpen)} initial={imageApproval} value={mediaSettings} onChange={setMediaSettings} theme={theme} disabled={submitting} /> : null}
             <button type="button" className="canvas-agent-approval-reason-toggle" aria-expanded={showReason} onClick={() => setShowReason((value) => !value)} disabled={submitting}>
                 {showReason ? "收起拒绝理由" : "填写拒绝理由（可选）"}
             </button>

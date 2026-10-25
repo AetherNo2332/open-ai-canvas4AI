@@ -1,7 +1,7 @@
 import { agentCanvasActions, agentCanvasActionLabel } from "@/lib/canvas/agent-canvas-actions";
 import { Button, Typography } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
@@ -908,6 +908,7 @@ export function AgentSceneCapsules({
 }
 
 export function AgentChatComposer({
+    visible = true,
     prompt,
     attachments = [],
     disabled,
@@ -931,6 +932,7 @@ export function AgentChatComposer({
     onSendModeSettings,
     queuedMessages,
 }: {
+    visible?: boolean;
     prompt: string;
     attachments?: CloudAgentChatAttachment[];
     disabled?: boolean;
@@ -963,7 +965,7 @@ export function AgentChatComposer({
     const [slashIndex, setSlashIndex] = useState(0);
     const [previewAttachment, setPreviewAttachment] = useState<CloudAgentChatAttachment | null>(null);
     const [promptHeight, setPromptHeight] = useState(MIN_AGENT_PROMPT_HEIGHT);
-    const promptResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
+    const promptResizeRef = useRef<{ startY: number; startHeight: number; element: HTMLButtonElement; pointerId: number } | null>(null);
     const manualPromptHeightRef = useRef<number | null>(null);
     const availableSlashSkills = slashSkills ?? [];
     const slashCandidates = useMemo(() => {
@@ -993,23 +995,32 @@ export function AgentChatComposer({
     }, [prompt]);
 
     const startPromptResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
-        if (disabled) return;
+        if (!visible || disabled || event.button !== 0) return;
         event.preventDefault();
         manualPromptHeightRef.current = promptHeight;
-        promptResizeRef.current = { startY: event.clientY, startHeight: promptHeight };
+        promptResizeRef.current = { startY: event.clientY, startHeight: promptHeight, element: event.currentTarget, pointerId: event.pointerId };
         event.currentTarget.setPointerCapture(event.pointerId);
     };
 
     const resizePrompt = (event: ReactPointerEvent<HTMLButtonElement>) => {
         const resize = promptResizeRef.current;
-        if (!resize) return;
+        if (!resize || resize.pointerId !== event.pointerId) return;
         setPromptHeight(clampAgentPromptHeight(resize.startHeight + resize.startY - event.clientY));
     };
 
     const finishPromptResize = (event?: ReactPointerEvent<HTMLButtonElement>) => {
+        const resize = promptResizeRef.current;
+        if (event && resize?.pointerId !== event.pointerId) return;
         promptResizeRef.current = null;
-        if (event?.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        if (resize?.element.hasPointerCapture(resize.pointerId)) resize.element.releasePointerCapture(resize.pointerId);
     };
+
+    useLayoutEffect(() => {
+        if (visible) return;
+        finishPromptResize();
+        setSlash(null);
+        setPreviewAttachment(null);
+    }, [visible]);
 
     const resizePromptByKeyboard = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
         if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
@@ -1139,12 +1150,14 @@ export function AgentChatComposer({
                         onPointerMove={resizePrompt}
                         onPointerUp={finishPromptResize}
                         onPointerCancel={finishPromptResize}
+                        onLostPointerCapture={finishPromptResize}
                         onKeyDown={resizePromptByKeyboard}
                     >
                         <span />
                     </button>
                     <div className="agent-composer-prompt-scroll" style={{ height: promptHeight }}>
                         <CanvasResourceMentionTextarea
+                            visible={visible}
                             value={prompt}
                             references={composerReferences}
                             includeAssetLibrary={includeAssetLibrary}
@@ -1162,7 +1175,7 @@ export function AgentChatComposer({
                             aria-label="Agent 输入"
                         />
                     </div>
-                    {slash && slashCandidates.length ? (
+                    {visible && slash && slashCandidates.length ? (
                         <div
                             data-agent-slash-menu
                             className="absolute bottom-full left-0 z-[var(--z-toolbar)] mb-2 w-full max-w-xs overflow-hidden rounded-2xl p-1.5 shadow-2xl"
@@ -1266,7 +1279,7 @@ export function AgentChatComposer({
                     </div>
                 </div>
             </div>
-            {previewAttachment ? <AgentImagePreview attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} /> : null}
+            {visible && previewAttachment ? <AgentImagePreview attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} /> : null}
         </div>
     );
 }

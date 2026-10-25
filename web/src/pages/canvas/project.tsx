@@ -43,6 +43,7 @@ import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-pa
 import { CanvasActiveTaskPanel } from "@/components/canvas/canvas-active-task-panel";
 import { CanvasProjectSidebar } from "@/components/canvas/canvas-project-sidebar";
 import { CanvasProjectAssetModal } from "@/components/canvas/canvas-project-asset-modal";
+import { CanvasCharacterLibraryModal } from "@/components/canvas/canvas-character-library-modal";
 import { CanvasCharacterReferenceNodeContent } from "@/components/canvas/canvas-character-reference-node";
 import { CanvasCharacterReferenceModal } from "@/components/canvas/canvas-character-reference-modal";
 import { WorkspaceState } from "@/components/layout/workspace-state";
@@ -165,6 +166,7 @@ import { useCanvasShortDrama } from "./use-canvas-short-drama";
 import { useCanvasStoryboard } from "./use-canvas-storyboard";
 import { useCanvasUpload } from "./use-canvas-upload";
 import { useCanvasTimelineAssetInsert } from "./use-canvas-timeline-asset-insert";
+import { useCanvasCharacterEntry } from "./use-canvas-character-entry";
 import { useCanvasViewportController } from "./use-canvas-viewport-controller";
 import {
     CanvasNodeType,
@@ -873,6 +875,12 @@ function InfiniteCanvasPage() {
         handleAssetsInsert,
         handleProjectAssetsInsert,
         openAssetsAtPosition,
+    });
+    const { characterLibraryOpen, openCharacters, closeCharacterLibrary, insertLibraryCharacters } = useCanvasCharacterEntry({
+        projectId: currentProject?.projectId,
+        shortDramaEnabled,
+        openProjectAssets,
+        handleProjectAssetsInsert,
     });
 
     useEffect(() => {
@@ -2722,7 +2730,7 @@ function InfiniteCanvasPage() {
             onChooseStyle: () => setStylePickerOpen(true),
             onUpload: () => handleUploadRequest(),
             onOpenMyAssets: () => openCanvasAssetLibrary(),
-            onOpenProjectCharacters: () => openProjectAssets("character"),
+            onOpenProjectCharacters: () => openCharacters(),
         },
     });
     const emptyStateKind = resolveCanvasEmptyStateKind({
@@ -3299,7 +3307,7 @@ function InfiniteCanvasPage() {
                                 onChooseStyle={() => setStylePickerOpen(true)}
                                 onUpload={(nodeId, position) => handleUploadRequest(nodeId, position)}
                                 onOpenAssets={openCanvasAssetLibrary}
-                                onOpenProjectCharacters={(position) => openProjectAssets("character", position)}
+                                onOpenProjectCharacters={openCharacters}
                                 onUndo={undoCanvas}
                                 onRedo={redoCanvas}
                                 onPaste={pasteAtPosition}
@@ -3645,6 +3653,7 @@ function InfiniteCanvasPage() {
                             <BatchGenerationSettingsDialog open={batchGenDialogOpen} config={batchGenDialogConfig} rowCount={batchGenDialogRowCount} concurrency={batchGenDialogConcurrency} onClose={closeBatchGenDialog} onConfirm={confirmBatchGenDialog} />
 
                             <AssetPickerModal open={assetPickerOpen} multiple={assetInsertScope === "canvas"} onInsert={handleLibraryAssetsInsert} onClose={closeAssetPicker} />
+                            <CanvasCharacterLibraryModal open={characterLibraryOpen} onClose={closeCharacterLibrary} onInsert={insertLibraryCharacters} />
                             <CanvasProjectAssetModal
                                 open={projectAssetOpen}
                                 detail={linkedProjectQuery.data}
@@ -3692,7 +3701,7 @@ function InfiniteCanvasPage() {
                                 onOpenMyAssets={() => {
                                     openCanvasAssetLibrary();
                                 }}
-                                onOpenProjectCharacters={() => openProjectAssets("character")}
+                                onOpenProjectCharacters={() => openCharacters()}
                             />
                         ) : null}
                         <div className={versions.open ? "hidden" : "contents"}>
