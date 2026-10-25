@@ -156,6 +156,9 @@ export class CanvasCommandSession {
         return completion;
     }
     private prepareBatch(operations: Operation[], preconditions: CommandPreconditions, effect?: CommandEffect, projected = this.state.projected) {
+        if (operations.length > 100 && operations.some((operation) => operation.type === "add_node" && operation.copiedFromNodeId)) {
+            throw new Error("canvas_editor_copy_batch_too_large:" + operations.length);
+        }
         if (operations.length <= 100) return [this.preparePending(operations, preconditions, effect, projected)];
         const entries: ReturnType<CanvasCommandSession["preparePending"]>[] = [];
         const finalDocument = preconditions.preview ? applyCanvasDraftChanges(projected, preconditions.preview) : undefined;

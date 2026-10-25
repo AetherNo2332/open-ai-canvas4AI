@@ -103,7 +103,48 @@ func (p *planner) applyCanvasCanvasPlanInPlace(doc map[string]any, ops []Operati
 					}
 				}
 			}
-			node := p.creationAddedNode(creationNodeSpec{Type: op.Type, ID: op.ID, NodeType: op.NodeType, Title: title, X: x, Y: y, Metadata: capability.Metadata(content)})
+			metadata := capability.Metadata(content)
+			if op.CopiedFromNodeID != "" {
+				if err := validateCanvasID(op.CopiedFromNodeID, "复制来源节点 ID", 80); err != nil {
+					return nil, err
+				}
+				source := p.copiedNodeSources[op.CopiedFromNodeID]
+				if source == nil {
+					sourceIndex := p.canvasNodeIndex(nodes, op.CopiedFromNodeID)
+					if sourceIndex >= 0 {
+						source = nodes[sourceIndex]
+					}
+				}
+				if op.NodeType != "text" || source == nil || p.stringValue(source["type"]) != "text" {
+					return nil, BadAuthRequest("只有当前画布中的文本节点可通过 add_node 复制")
+				}
+				sourceMetadata, _ := source["metadata"].(map[string]any)
+				if sourceMetadata == nil {
+					sourceMetadata = map[string]any{}
+				}
+				cloned, err := cloneDocument(Document(sourceMetadata))
+				if err != nil {
+					return nil, err
+				}
+				metadata = map[string]any(cloned)
+				copiedNodeIDs := make(map[string]string, len(p.copiedNodeIDs)+1)
+				for sourceID, copiedID := range p.copiedNodeIDs {
+					copiedNodeIDs[sourceID] = copiedID
+				}
+				for _, candidate := range ops {
+					if candidate.Type == "add_node" && candidate.CopiedFromNodeID != "" {
+						copiedNodeIDs[candidate.CopiedFromNodeID] = candidate.ID
+					}
+				}
+				copiedNodeIDs[op.CopiedFromNodeID] = op.ID
+				p.canvasResetCopiedMetadata(metadata, op.ID, copiedNodeIDs)
+				p.canvasRemapCopiedTextReferences(metadata, copiedNodeIDs)
+				if op.Content != nil && content != p.stringValue(metadata["content"]) {
+					return nil, BadAuthRequest("文本副本正文与复制来源不一致")
+				}
+				metadata["copiedFromNodeId"] = op.CopiedFromNodeID
+			}
+			node := p.creationAddedNode(creationNodeSpec{Type: op.Type, ID: op.ID, NodeType: op.NodeType, Title: title, X: x, Y: y, Metadata: metadata})
 			nodes = append(nodes, node)
 			nodeTitle := p.canvasApprovalNodeTitle(node, capability.Label)
 			items = append(items, OperationSummary{
@@ -2702,6 +2743,83 @@ func (p *planner) canvasPrevisVec3(value []float64) []any {
 	return []any{value[0], value[1], value[2]}
 }
 
+func (p *planner) canvasRemapCopiedReferenceID(object map[string]any, key string, idMap map[string]string) {
+	source := p.stringValue(object[key])
+	if copied := idMap[source]; source != "" && copied != "" {
+		object[key] = copied
+	}
+}
+
+func (p *planner) canvasRemapCopiedReferenceIDs(object map[string]any, key string, idMap map[string]string) {
+	if _, exists := object[key]; !exists {
+		return
+	}
+	next := []any{}
+	seen := map[string]bool{}
+	for _, source := range p.canvasStrings(object[key]) {
+		copied := idMap[source]
+		if copied == "" {
+			copied = source
+		}
+		if !seen[copied] {
+			next = append(next, copied)
+			seen[copied] = true
+		}
+	}
+	object[key] = next
+}
+
+func (p *planner) canvasRemapCopiedBindings(value any, idMap map[string]string) {
+	for _, binding := range p.creationMaps(value) {
+		p.canvasRemapCopiedReferenceID(binding, "nodeId", idMap)
+	}
+}
+
+func (p *planner) canvasRemapCopiedStoryboardRowReferences(row map[string]any, idMap map[string]string, remapOutputs bool) {
+	for _, character := range p.creationMaps(row["characters"]) {
+		p.canvasRemapCopiedReferenceID(character, "characterImageNodeId", idMap)
+	}
+	p.canvasRemapCopiedBindings(row["assetBindings"], idMap)
+	if remapOutputs {
+		p.canvasRemapCopiedReferenceID(row, "imageNodeId", idMap)
+		p.canvasRemapCopiedReferenceID(row, "videoNodeId", idMap)
+	}
+}
+
+// Text add-copy accepts the exact metadata produced by isolateCopiedNodeMetadata.
+// Only declared canvas references are remapped; opaque plugin and extension data
+// must remain byte-for-byte equivalent to the editor preview.
+func (p *planner) canvasRemapCopiedTextReferences(metadata map[string]any, idMap map[string]string) {
+	for _, key := range []string{"videoStartFrameNodeId", "videoEndFrameNodeId", "videoFrameSourceNodeId", "batchSourceNodeId"} {
+		p.canvasRemapCopiedReferenceID(metadata, key, idMap)
+	}
+	p.canvasRemapCopiedReferenceIDs(metadata, "batchInputNodeIds", idMap)
+	p.canvasRemapCopiedBindings(metadata["assetBindings"], idMap)
+	if emotion, ok := metadata["emotionEdit"].(map[string]any); ok {
+		p.canvasRemapCopiedReferenceID(emotion, "sourceNodeId", idMap)
+	}
+	if spec, ok := metadata["generationSpec"].(map[string]any); ok {
+		p.canvasRemapCopiedBindings(spec["referenceBindings"], idMap)
+	}
+	p.canvasRemapCopiedBindings(metadata["inputBindings"], idMap)
+	if board, ok := metadata["storyboard"].(map[string]any); ok {
+		p.canvasRemapCopiedReferenceIDs(board, "referenceNodeIds", idMap)
+		for _, row := range p.creationMaps(board["rows"]) {
+			p.canvasRemapCopiedStoryboardRowReferences(row, idMap, false)
+		}
+	}
+	if table, ok := metadata["batchTable"].(map[string]any); ok {
+		p.canvasRemapCopiedReferenceIDs(table, "storyboardSourceNodeIds", idMap)
+		for _, row := range p.creationMaps(table["rows"]) {
+			p.canvasRemapCopiedReferenceIDs(row, "inputNodeIds", idMap)
+			p.canvasRemapCopiedReferenceIDs(row, "textNodeIds", idMap)
+		}
+		for _, row := range p.creationMaps(table["storyboardRows"]) {
+			p.canvasRemapCopiedStoryboardRowReferences(row, idMap, true)
+		}
+	}
+}
+
 func (p *planner) canvasRemapCopiedReferences(object map[string]any, idMap map[string]string) {
 	for key, value := range object {
 		switch typed := value.(type) {
@@ -2785,7 +2903,7 @@ func (p *planner) canvasResetCopiedMetadata(meta map[string]any, nodeID string, 
 	if p.stringValue(meta["content"]) != "" {
 		meta["status"] = "success"
 	}
-	for _, key := range []string{"referenceSetId", "previsPreviewNodeId", "previsDepthNodeId", "previsNormalNodeId"} {
+	for _, key := range []string{"referenceSetId", "previsPreviewNodeId", "previsDepthNodeId", "previsNormalNodeId", "previsClayVideoNodeId"} {
 		if source := p.stringValue(meta[key]); source != "" {
 			if idMap[source] == "" {
 				delete(meta, key)
