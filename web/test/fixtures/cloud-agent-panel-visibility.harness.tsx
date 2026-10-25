@@ -1,6 +1,7 @@
 import { afterAll, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { CloudAgentConversation } from "@/services/cloud-agent-conversations";
+import type { AgentQueuedMessage } from "@/services/api/agent";
 
 const dom = new Window({ url: "http://localhost/", width: 1440, height: 900 });
 for (const [key, value] of Object.entries({ window: dom, document: dom.document, navigator: dom.navigator, localStorage: dom.localStorage, HTMLElement: dom.HTMLElement, HTMLInputElement: dom.HTMLInputElement, HTMLTextAreaElement: dom.HTMLTextAreaElement, SVGElement: dom.SVGElement, Element: dom.Element, Node: dom.Node, Event: dom.Event, CustomEvent: dom.CustomEvent, ShadowRoot: dom.ShadowRoot, MutationObserver: dom.MutationObserver, ResizeObserver: dom.ResizeObserver, requestAnimationFrame: dom.requestAnimationFrame.bind(dom), cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom), getComputedStyle: dom.getComputedStyle.bind(dom), IS_REACT_ACT_ENVIRONMENT: true }))
@@ -16,6 +17,7 @@ const { setActiveUserScope } = await import("@/lib/user-scope");
 const { useUserStore } = await import("@/stores/use-user-store");
 const { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigStore } = await import("@/stores/use-config-store");
 let reducedMotion = false;
+let queueItems: AgentQueuedMessage[] = [];
 const silent = () => {};
 // Retain DOM props, children and refs; expose the exact animation contract emitted by production.
 const motionTags = new Map<string, any>();
@@ -32,7 +34,7 @@ mock.module("@/components/ai/ai-message-markdown", () => ({ AIMessageMarkdown: (
 mock.module("@/components/canvas/canvas-resource-mention-textarea", () => ({ CanvasResourceMentionTextarea: ({ value, onChange }: any) => <textarea value={value} onChange={onChange} /> }));
 mock.module("@/components/canvas/live2d-avatar", () => ({ Live2DAvatar: () => null }));
 mock.module("@/components/ui/fluid-orb", () => ({ FluidOrb: () => null }));
-mock.module("@/services/api/agent", () => ({ ...agent, getAgentUISettings: async () => ({ defaultSendMode: "queue", revision: 1 }), getAgentCapabilities: async () => ({ permissionModes: ["auto"], skills: true, availability: { configured: true } }), listAgentSkillDefaults: async () => ({ count: 0, skills: [] }), getAgentMessageQueue: async () => ({ conversationId: "test", canvasId: "canvas", revision: 1, paused: false, latestRunId: "run-approval", items: [] }), subscribeAgentEvents: (_id: string, _receive: unknown, options: any) => { options.onConnectionChange("connected"); return silent; }, getAgentRun: async () => ({ run: currentConversation.run }) }));
+mock.module("@/services/api/agent", () => ({ ...agent, getAgentUISettings: async () => ({ defaultSendMode: "queue", revision: 1 }), getAgentCapabilities: async () => ({ permissionModes: ["auto"], skills: true, availability: { configured: true } }), listAgentSkillDefaults: async () => ({ count: 0, skills: [] }), getAgentMessageQueue: async () => ({ conversationId: "test", canvasId: "canvas", revision: 1, paused: false, latestRunId: currentConversation.run?.id || "run-approval", items: queueItems }), subscribeAgentEvents: (_id: string, _receive: unknown, options: any) => { options.onConnectionChange("connected"); return silent; }, getAgentRun: async () => ({ run: currentConversation.run }) }));
 mock.module("@/services/api/agent-subagent", () => ({ ...subagents, listAgentSubagents: async () => [] }));
 const savedConversation: CloudAgentConversation = { id: "conversation-one", title: "Test conversation", messages: [
     { id: "user-one", role: "user", text: "A user message" },
@@ -67,9 +69,11 @@ function toolbarVisibility(host: HTMLElement) {
     snapshot.remove();
     return visibility;
 }
-async function mount({ compact = false, floating = false, reduced = false, approval = false } = {}) {
+async function mount({ compact = false, floating = false, reduced = false, approval = false, queued = false } = {}) {
     reducedMotion = reduced;
     currentConversation = approval ? { ...savedConversation, run: { id: "run-approval", canvasId: "canvas", conversationId: "test", status: "waiting_approval", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt, approval: { approvalId: "image-approval", reason: "Keep approval reason", call: { id: "image-call", function: { name: "generate_media", arguments: JSON.stringify({ mode: "image", size: "1:1", prompt: "An image", referenceNodeIds: [] }) } } } } } : savedConversation;
+    if (queued) currentConversation = { ...savedConversation, run: { id: "run-queue", conversationId: "test", canvasId: "canvas", status: "completed", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt } };
+    queueItems = queued ? [1, 2].map((sequence) => ({ id: `queued-${sequence}`, conversationId: "test", canvasId: "canvas", sequence, revision: 1, mode: "queue", status: "queued", prompt: `Queued message ${sequence}`, createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt })) : [];
     dom.happyDOM.setWindowSize({ width: compact ? 700 : 1440, height: 900 });
     window.localStorage.clear();
     setActiveUserScope("visibility-user");
@@ -88,6 +92,39 @@ async function mount({ compact = false, floating = false, reduced = false, appro
     return { host, render, aside: () => (floating ? document.body : host).querySelector<HTMLElement>("aside.canvas-agent-panel")!, close: async () => { await act(async () => root.unmount()); host.remove(); } };
 }
 afterAll(() => dom.happyDOM.abort());
+
+test("closing preserves the real composer and queue expansion with an unsaved edit draft", async () => {
+    const mounted = await mount({ queued: true });
+    try {
+        const composer = mounted.aside().querySelector(".agent-composer-wrap")!;
+        const queue = composer.querySelector<HTMLElement>('.agent-message-queue[aria-label="待发消息"]')!;
+        expect(queue).not.toBeNull();
+        await act(async () => queue.querySelector<HTMLButtonElement>(".agent-message-queue-expand")!.click());
+        expect(queue.querySelector(".agent-message-queue-expand")!.getAttribute("aria-expanded")).toBe("true");
+        expect(queue.querySelectorAll("li")).toHaveLength(2);
+        await act(async () => queue.querySelectorAll<HTMLButtonElement>('[aria-label="编辑待发消息"]')[1].click());
+        const editor = queue.querySelector<HTMLTextAreaElement>('textarea[aria-label="编辑待发消息"]')!;
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(dom.HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "An unsaved queue edit draft");
+            editor.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await mounted.render(true);
+        expect(editor.value).toBe("An unsaved queue edit draft");
+        await mounted.render(false);
+        await mounted.render(true);
+        const reopenedComposer = mounted.aside().querySelector(".agent-composer-wrap")!;
+        const reopenedQueue = reopenedComposer.querySelector<HTMLElement>('.agent-message-queue[aria-label="待发消息"]')!;
+        const reopenedEditor = reopenedQueue.querySelector<HTMLTextAreaElement>('textarea[aria-label="编辑待发消息"]');
+        expect({
+            composerIdentity: reopenedComposer === composer,
+            queueIdentity: reopenedQueue === queue,
+            expanded: reopenedQueue.querySelector(".agent-message-queue-expand")!.getAttribute("aria-expanded"),
+            visibleItems: reopenedQueue.querySelectorAll("li").length,
+            editorIdentity: reopenedEditor === editor,
+            editDraft: reopenedEditor?.value,
+        }).toEqual({ composerIdentity: true, queueIdentity: true, expanded: "true", visibleItems: 2, editorIdentity: true, editDraft: "An unsaved queue edit draft" });
+    } finally { await mounted.close(); }
+});
 
 test("programmatic panel close dismisses the real context body portal and its focus", async () => {
     const mounted = await mount();
