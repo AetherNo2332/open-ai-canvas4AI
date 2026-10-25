@@ -1,6 +1,34 @@
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
+
+/** Replace media without carrying the previous result's generation settings. */
+export function uploadReplacementPatch(type: CanvasNodeData["type"]): Partial<CanvasNodeMetadata> {
+    return {
+        assetId: undefined,
+        taskId: undefined,
+        ...(type === CanvasNodeType.Image ? { freeResize: false } : {}),
+        isBatchRoot: undefined,
+        batchRootId: undefined,
+        batchChildIds: undefined,
+        batchFailedCount: undefined,
+        batchUsesReferenceImages: undefined,
+        generationType: undefined,
+        generationResultPlacement: undefined,
+        copiedFromNodeId: undefined,
+        versionOfNodeId: undefined,
+        model: undefined,
+        size: undefined,
+        quality: undefined,
+        transparentBackground: undefined,
+        count: undefined,
+        references: undefined,
+        primaryImageId: undefined,
+        imageBatchExpanded: undefined,
+        richText: undefined,
+        composerContent: undefined,
+    };
+}
 
 export const CANVAS_UPLOAD_ACCEPT = "image/*,video/*,audio/*,.mp3,.wav,text/plain,text/markdown,.txt,.md,.markdown";
 export function isTextUploadFile(file: Pick<File, "name" | "type">) {

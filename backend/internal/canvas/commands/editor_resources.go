@@ -34,8 +34,10 @@ func (p *planner) bindResource(doc Document, op Operation, ctx ValidationContext
 	case "loading", "running", "pending":
 		return BadAuthRequest("等待节点任务结束后替换资源")
 	}
+	p.canvasResetCopiedMetadata(metadata, "", nil)
+	delete(metadata, "assetId")
+	delete(metadata, "copiedFromNodeId")
 	if kind != "text" {
-		p.canvasResetCopiedMetadata(metadata, "", nil)
 		for _, key := range []string{"assetId", "copiedFromNodeId", "videoPreview", "previewContent", "previewStorageKey", "naturalWidth", "naturalHeight", "durationMs", "hasAudio", "producedModel", "generationContinuation", "generationSubmitted", "generationEffect", "generationEffects", "generationEffectKeys"} {
 			delete(metadata, key)
 		}

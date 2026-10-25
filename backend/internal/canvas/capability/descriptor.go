@@ -36,19 +36,23 @@ type PatchField struct {
 	Label string
 	Order int
 	// Limit > 0 时表示数值字段的绝对值上限（坐标用），避免模型写入离谱的几何值。
-	Limit         float64
-	Description   string
-	MaxRunes      int
-	Min           *float64
-	Max           *float64
-	Integer       bool
-	Enum          []string
-	Properties    map[string]PatchField
-	Required      []string
-	Items         *PatchField
-	MaxItems      int
-	Format        string
-	Nullable      bool
+	Limit       float64
+	Description string
+	MaxRunes    int
+	Min         *float64
+	Max         *float64
+	Integer     bool
+	Enum        []string
+	Properties  map[string]PatchField
+	Required    []string
+	Items       *PatchField
+	MaxItems    int
+	Format      string
+	Nullable    bool
+	// Resettable admits null only as an explicit removal of an optional node field.
+	// Unlike Nullable, ApplyPatch never stores that null in the document.
+	Resettable    bool
+	AnyOf         []PatchField
 	MapValues     *PatchField
 	MaxProperties int
 }
@@ -132,7 +136,7 @@ func (d Descriptor) ValidatePatch(patch map[string]any) error {
 			return fmt.Errorf("%s: %w", d.Label, err)
 		}
 	}
-	if rich, exists := patch["richText"]; exists {
+	if rich, exists := patch["richText"]; exists && rich != nil {
 		if text, also := patch["content"]; also && text != richTextPlainText(rich.(map[string]any)) {
 			return fmt.Errorf("富文本与正文不能冲突")
 		}
@@ -158,8 +162,16 @@ func (d Descriptor) ValidatePatch(patch map[string]any) error {
 }
 
 func (field PatchField) validateValue(value any, key string, depth int) error {
-	if value == nil && field.Nullable {
+	if value == nil && (field.Nullable || field.Resettable) {
 		return nil
+	}
+	if len(field.AnyOf) > 0 {
+		for _, choice := range field.AnyOf {
+			if choice.validateValue(value, key, depth+1) == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("字段 %s 的值不符合允许的类型", key)
 	}
 	if depth > 64 {
 		return fmt.Errorf("字段 %s 嵌套过深", key)
@@ -260,14 +272,21 @@ func (field PatchField) validateValue(value any, key string, depth int) error {
 // JSONSchema publishes the same closed, typed contract enforced by ValidatePatch.
 func (field PatchField) JSONSchema() map[string]any {
 	schema := map[string]any{"type": field.Kind}
-	if field.Nullable {
+	if len(field.AnyOf) > 0 {
+		choices := make([]any, 0, len(field.AnyOf))
+		for _, choice := range field.AnyOf {
+			choices = append(choices, choice.JSONSchema())
+		}
+		return map[string]any{"anyOf": choices}
+	}
+	if field.Nullable || field.Resettable {
 		schema["type"] = []string{field.Kind, "null"}
 	}
 	if field.MaxRunes > 0 {
 		schema["maxLength"] = field.MaxRunes
 	}
 	if len(field.Enum) > 0 {
-		if field.Nullable {
+		if field.Nullable || field.Resettable {
 			options := make([]any, 0, len(field.Enum)+1)
 			for _, item := range field.Enum {
 				options = append(options, item)
@@ -279,6 +298,10 @@ func (field PatchField) JSONSchema() map[string]any {
 	}
 	if field.Description != "" {
 		schema["description"] = field.Description
+	}
+	if field.Resettable {
+		schema["x-canvas-resettable"] = true
+		schema["description"] = strings.TrimSpace(field.Description + " null 清除该可选字段；正文与提示词恢复为空字符串。省略字段保持原值。")
 	}
 	if field.Format != "" {
 		schema["x-canvas-format"] = field.Format
@@ -369,9 +392,17 @@ func (d Descriptor) ApplyPatch(node map[string]any, patch map[string]any) error 
 			}
 			target = child
 		}
-		target[parts[len(parts)-1]] = clonePatchValue(value)
+		leaf := parts[len(parts)-1]
+		if value == nil && field.Resettable {
+			delete(target, leaf)
+			if key == "content" || key == "prompt" || key == "composerContent" {
+				target[leaf] = ""
+			}
+		} else {
+			target[leaf] = clonePatchValue(value)
+		}
 	}
-	if value, exists := patch["richText"]; exists {
+	if value, exists := patch["richText"]; exists && value != nil {
 		metadata, _ := node["metadata"].(map[string]any)
 		metadata["content"] = richTextPlainText(value.(map[string]any))
 	}
@@ -586,6 +617,21 @@ func normalizeFieldSchema(field PatchField, depth int) (PatchField, error) {
 	if field.MaxProperties < 0 {
 		return PatchField{}, fmt.Errorf("invalid object limit")
 	}
+	if len(field.AnyOf) > 0 {
+		if field.Kind != "" || len(field.AnyOf) > 4 {
+			return PatchField{}, fmt.Errorf("invalid field alternatives")
+		}
+		choices := make([]PatchField, len(field.AnyOf))
+		for i, choice := range field.AnyOf {
+			item, err := normalizeFieldSchema(choice, depth+1)
+			if err != nil {
+				return PatchField{}, err
+			}
+			choices[i] = item
+		}
+		field.AnyOf = choices
+		return clonePatchField(field), nil
+	}
 	switch field.Kind {
 	case patchKindString, patchKindNumber, patchKindBoolean:
 	case patchKindObject:
@@ -633,6 +679,13 @@ func normalizeFieldSchema(field PatchField, depth int) (PatchField, error) {
 }
 
 func clonePatchField(field PatchField) PatchField {
+	if field.AnyOf != nil {
+		choices := make([]PatchField, len(field.AnyOf))
+		for i, choice := range field.AnyOf {
+			choices[i] = clonePatchField(choice)
+		}
+		field.AnyOf = choices
+	}
 	field.Enum = append([]string(nil), field.Enum...)
 	field.Required = append([]string(nil), field.Required...)
 	if field.Min != nil {

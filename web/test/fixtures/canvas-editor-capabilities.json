@@ -2,6 +2,9 @@
     "nodes": [
         {
             "patchFields": {
+                "assetCategory": {
+                    "path": "metadata.assetCategory"
+                },
                 "assetTags": {
                     "path": "metadata.assetTags"
                 },
@@ -95,6 +98,9 @@
                 "promptTemplateOperation": {
                     "path": "metadata.promptTemplateOperation"
                 },
+                "promptTemplateVariables": {
+                    "path": "metadata.promptTemplateVariables"
+                },
                 "quality": {
                     "path": "metadata.quality"
                 },
@@ -142,6 +148,9 @@
                 },
                 "width": {
                     "path": "width"
+                },
+                "workflowParameters": {
+                    "path": "metadata.workflowParameters"
                 },
                 "workflowProvider": {
                     "path": "metadata.workflowProvider"
@@ -406,6 +415,9 @@
                 "promptTemplateOperation": {
                     "path": "metadata.promptTemplateOperation"
                 },
+                "promptTemplateVariables": {
+                    "path": "metadata.promptTemplateVariables"
+                },
                 "quality": {
                     "path": "metadata.quality"
                 },
@@ -445,8 +457,14 @@
                 "width": {
                     "path": "width"
                 },
+                "workflowParameters": {
+                    "path": "metadata.workflowParameters"
+                },
                 "workflowProvider": {
                     "path": "metadata.workflowProvider"
+                },
+                "workflowTitle": {
+                    "path": "metadata.workflowTitle"
                 },
                 "x": {
                     "path": "position.x"
@@ -505,6 +523,9 @@
                 },
                 "folderTheme": {
                     "path": "metadata.folder.theme"
+                },
+                "folderThemeCover": {
+                    "path": "metadata.folder.themeCover"
                 },
                 "fontSize": {
                     "path": "metadata.fontSize"
@@ -573,6 +594,9 @@
         },
         {
             "patchFields": {
+                "assetCategory": {
+                    "path": "metadata.assetCategory"
+                },
                 "assetTags": {
                     "path": "metadata.assetTags"
                 },
@@ -684,6 +708,9 @@
                 "promptTemplateOperation": {
                     "path": "metadata.promptTemplateOperation"
                 },
+                "promptTemplateVariables": {
+                    "path": "metadata.promptTemplateVariables"
+                },
                 "quality": {
                     "path": "metadata.quality"
                 },
@@ -731,6 +758,9 @@
                 },
                 "width": {
                     "path": "width"
+                },
+                "workflowParameters": {
+                    "path": "metadata.workflowParameters"
                 },
                 "workflowProvider": {
                     "path": "metadata.workflowProvider"
@@ -971,6 +1001,9 @@
         },
         {
             "patchFields": {
+                "assetCategory": {
+                    "path": "metadata.assetCategory"
+                },
                 "assetTags": {
                     "path": "metadata.assetTags"
                 },
@@ -1067,6 +1100,9 @@
                 "promptTemplateOperation": {
                     "path": "metadata.promptTemplateOperation"
                 },
+                "promptTemplateVariables": {
+                    "path": "metadata.promptTemplateVariables"
+                },
                 "quality": {
                     "path": "metadata.quality"
                 },
@@ -1109,6 +1145,9 @@
                 "width": {
                     "path": "width"
                 },
+                "workflowParameters": {
+                    "path": "metadata.workflowParameters"
+                },
                 "workflowProvider": {
                     "path": "metadata.workflowProvider"
                 },
@@ -1123,6 +1162,9 @@
         },
         {
             "patchFields": {
+                "assetCategory": {
+                    "path": "metadata.assetCategory"
+                },
                 "assetTags": {
                     "path": "metadata.assetTags"
                 },
@@ -1216,6 +1258,9 @@
                 "promptTemplateOperation": {
                     "path": "metadata.promptTemplateOperation"
                 },
+                "promptTemplateVariables": {
+                    "path": "metadata.promptTemplateVariables"
+                },
                 "quality": {
                     "path": "metadata.quality"
                 },
@@ -1272,6 +1317,9 @@
                 },
                 "width": {
                     "path": "width"
+                },
+                "workflowParameters": {
+                    "path": "metadata.workflowParameters"
                 },
                 "workflowProvider": {
                     "path": "metadata.workflowProvider"

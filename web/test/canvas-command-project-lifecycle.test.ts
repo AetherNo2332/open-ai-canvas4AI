@@ -62,12 +62,20 @@ test("editor lifecycle commits semantic changes, stores personal view and never 
     });
     expect(viewport).toEqual({ x: 100, y: 50, k: 0.8 });
     live.nodes[0].metadata.content = "edited";
+    expect(editor.hasLocalChanges()).toBe(true);
     viewport.x = 120;
     expect(await editor.flush()).toBe(true);
     expect(sent).toHaveLength(1);
     expect(sent[0].operations).toEqual([{ type: "update_node", id: "text", patch: { content: "edited" } }]);
     expect(views.at(-1)).toEqual({ id: "canvas", value: { x: 120, y: 50, k: 0.8 } });
     expect(legacy).toBe(0);
+    expect(editor.hasLocalChanges()).toBe(false);
+    expect(editor.needsLeaveProtection()).toBe(false);
+    // The page hydrates an absent scene list to []; the converter correctly
+    // emits no command for this presentation default.
+    live.previsScenes = [];
+    expect(editor.hasLocalChanges()).toBe(false);
+    expect(editor.needsLeaveProtection()).toBe(false);
     editor.dispose();
     session.close();
 });
@@ -198,6 +206,34 @@ test("a draft the host cannot express stays unsaved without any request and reco
         useSyncProgressStore.getState().setProjectProgress("canvas", progress);
         // The leave-page guard covers every phase other than done.
         expect(useSyncProgressStore.getState().isAnySyncing()).toBe(true);
+
+        const backups: CanvasDocument[] = [];
+        expect(editor.needsLeaveProtection()).toBe(true);
+        await expect(
+            editor.prepareLeave(async () => {
+                throw new Error("disk full");
+            }),
+        ).rejects.toThrow("disk full");
+        await editor.prepareLeave(async (document) => {
+            backups.push(structuredClone(document));
+        });
+        live.nodes[0].metadata.extension = "latest edit";
+        await editor.prepareLeave(async (document) => {
+            backups.push(structuredClone(document));
+        });
+        expect((backups.at(-1)!.nodes as any[])[0].metadata.extension).toBe("latest edit");
+        expect(sent).toHaveLength(0);
+        const durable = session.whenJournalDurable.bind(session);
+        session.whenJournalDurable = async () => {
+            await durable();
+            live.nodes[0].metadata.extension = "edited while journal settled";
+        };
+        await expect(
+            editor.prepareLeave(async (document) => {
+                backups.push(structuredClone(document));
+            }),
+        ).rejects.toThrow("画布仍在更新");
+        session.whenJournalDurable = durable;
 
         live = { ...live, nodes: [node] };
         await editor.commit();

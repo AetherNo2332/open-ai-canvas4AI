@@ -151,6 +151,19 @@ export function bindCanvasCommandEditor<N, E>(
     }
     return {
         readDraft: () => sharedDraft(session.state.projected, editor.read()),
+        hasLocalChanges() {
+            const base = session.state.projected;
+            const target = sharedDraft(base, editor.read());
+            if (sameCanvasJsonValue(base, target)) return false;
+            // Hydrated defaults (e.g. an absent scene list becoming []) may
+            // differ structurally without producing an authored command.
+            try {
+                return canvasEditorCommands(base, target, capabilities).length > 0;
+            } catch {
+                // Unsupported edits still require a visible failure and backup.
+                return true;
+            }
+        },
         prepareRetry() {
             const draft = prepare();
             return {

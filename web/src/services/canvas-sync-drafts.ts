@@ -20,18 +20,21 @@ export async function readCanvasSyncDrafts(projectId: string, scope = getActiveU
     return raw ? JSON.parse(raw) : [];
 }
 
-export async function preserveCanvasSyncDraft(project: CanvasProject, scope = getActiveUserScope()) {
+export async function preserveCanvasSyncDraft(project: CanvasProject, scope = getActiveUserScope(), draftId?: string) {
     // A separate record survives replacement of the active canvas and a browser reload.
     const snapshot = structuredClone(project);
     return withGenerationArtifactCommitLock(scope, () =>
         withCanvasStorePersistenceLock(scope, async () => {
             const drafts = await readCanvasSyncDrafts(snapshot.id, scope);
-            if (!drafts.some((draft) => sameCanvasContent(draft.project, snapshot))) {
+            const existing = draftId ? drafts.findIndex((draft) => draft.id === draftId) : -1;
+            if (existing >= 0 || !drafts.some((draft) => sameCanvasContent(draft.project, snapshot))) {
                 const storage = localForageStorageForScope(scope);
                 const rawIndex = await storage.getItem(draftIndexKey);
                 const ids: string[] = rawIndex ? JSON.parse(rawIndex) : [];
                 if (!ids.includes(snapshot.id)) await storage.setItem(draftIndexKey, JSON.stringify([...ids, snapshot.id]));
-                drafts.push({ id: nanoid(), savedAt: new Date().toISOString(), project: snapshot });
+                const draft = { id: draftId || nanoid(), savedAt: new Date().toISOString(), project: snapshot };
+                if (existing >= 0) drafts[existing] = draft;
+                else drafts.push(draft);
                 await storage.setItem(draftKey(snapshot.id), JSON.stringify(drafts));
             }
             return drafts.length;

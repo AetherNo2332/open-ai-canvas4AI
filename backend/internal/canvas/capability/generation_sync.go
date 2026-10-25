@@ -49,10 +49,10 @@ func updatedGenerationSpec(d Descriptor, node, patch map[string]any) (*contract.
 		return nil, err
 	}
 	if text, exists := patch["content"]; exists {
-		spec.Prompt = text.(string)
+		spec.Prompt, _ = text.(string)
 	}
 	if value, exists := patch["model"]; exists {
-		model := value.(string)
+		model, _ := value.(string)
 		spec.ModelSelection = nil
 		if separator := strings.Index(model, "::"); separator >= 0 {
 			spec.ModelSelection = &contract.ModelSelection{Kind: "channel", ChannelID: model[:separator], ModelKey: model[separator+2:]}
@@ -66,7 +66,7 @@ func updatedGenerationSpec(d Descriptor, node, patch map[string]any) (*contract.
 			continue
 		}
 		if value, exists := patch[field.Tag.Get("node")]; exists {
-			if value == "" {
+			if value == nil || value == "" {
 				delete(config, field.Tag.Get("task"))
 			} else {
 				config[field.Tag.Get("task")] = value

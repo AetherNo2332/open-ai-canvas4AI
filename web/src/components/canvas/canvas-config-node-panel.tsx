@@ -326,7 +326,10 @@ export function WorkflowParameterControls({ fields, node, theme, onConfigChange,
     const values = node.metadata?.workflowParameters || {};
     const update = (field: WorkflowVideoFieldLike, value: unknown) => {
         const key = workflowFieldKey(field);
-        onConfigChange(node.id, { workflowParameters: { ...values, [key]: value } });
+        const next = { ...values };
+        if (value == null) delete next[key];
+        else next[key] = value;
+        onConfigChange(node.id, { workflowParameters: next });
     };
     const updateRandom = (field: WorkflowVideoFieldLike, randomEnabled: boolean) => {
         const key = workflowFieldRandomKey(field);

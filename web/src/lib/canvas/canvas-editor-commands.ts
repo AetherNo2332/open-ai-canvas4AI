@@ -166,6 +166,11 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
                 if (node.type !== "text") claim(paths, "metadata.content");
             }
             if (assetChanged || resourceChanged) claim(paths, "metadata.assetId");
+            if (resourceChanged || (assetChanged && node.type !== "text")) {
+                // Binding a new resource retires old result provenance on the host.
+                // Only deletions are implied: arbitrary replacement values remain errors.
+                for (const key of ["copiedFromNodeId", "versionOfNodeId", "primaryImageId", "imageBatchExpanded", "batchRootId"]) if (node.metadata?.[key] === undefined) claim(paths, "metadata." + key);
+            }
         }
         if (referenceFields && node.type === "script") {
             if (!same(previous?.metadata?.storyboard?.referenceNodeIds || [], node.metadata?.storyboard?.referenceNodeIds || []))

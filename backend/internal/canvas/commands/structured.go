@@ -473,6 +473,7 @@ func (p *planner) bindAsset(doc Document, op Operation, ctx ValidationContext) e
 			return failure("resource_not_owned", "素材资源未授权")
 		}
 		p.canvasResetCopiedMetadata(metadata, "", nil)
+		delete(metadata, "copiedFromNodeId")
 		for _, field := range []string{"generationContinuation", "generationSubmitted", "generationEffect", "generationEffects", "generationEffectKeys", "producedModel", "previewContent", "previewStorageKey", "videoPreview", "durationMs", "hasAudio", "naturalWidth", "naturalHeight", "intrinsicWidth", "intrinsicHeight", "bytes", "mimeType", "taskId", "taskStatus", "taskProgress", "taskError", "generationAppliedKeys", "generationPersistence", "errorDetails"} {
 			delete(metadata, field)
 		}

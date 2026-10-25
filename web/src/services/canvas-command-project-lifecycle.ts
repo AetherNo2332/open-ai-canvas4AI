@@ -32,6 +32,7 @@ export async function attachCanvasCommandProject<N, E>(deps: {
     read: () => CanvasDocument;
     present: (document: CanvasDocument, state: CommandSessionState) => void;
     onDraftConversion?: (error?: unknown) => void;
+    preserveDraft?: (document: CanvasDocument) => Promise<unknown>;
     view: { read: (id: string) => Promise<Viewport | null>; write: (id: string, value: Viewport) => Promise<unknown> };
     readViewport: () => Viewport;
     presentViewport: (value: Viewport) => void;
@@ -44,6 +45,31 @@ export async function attachCanvasCommandProject<N, E>(deps: {
     let binding = bindCanvasCommandEditor(deps.session, deps.capabilities, deps);
     return {
         commit: () => binding.commit(),
+        hasLocalChanges: () => binding.hasLocalChanges(),
+        async preserveLocalDraft() {
+            if (binding.hasLocalChanges()) {
+                if (!deps.preserveDraft) throw new Error("本地编辑尚未备份，无法关闭画布会话");
+                const local = structuredClone(deps.read());
+                await deps.preserveDraft(local);
+                if (binding.hasLocalChanges() && !sameCanvasJsonValue(local, deps.read())) throw new Error("画布仍在更新，请稍后再离开");
+            }
+        },
+        needsLeaveProtection: () => binding.hasLocalChanges() || deps.session.state.pending.length > 0,
+        async prepareLeave(preserveDraft: (document: CanvasDocument) => Promise<unknown>) {
+            let retained: CanvasDocument | undefined;
+            if (binding.hasLocalChanges()) {
+                const local = structuredClone(deps.read());
+                await preserveDraft(local);
+                retained = local;
+                deps.signal?.throwIfAborted();
+                if (!sameCanvasJsonValue(local, deps.read())) throw new Error("画布仍在更新，请稍后再离开");
+                // Queuing is synchronous. Do not wait for a remote ACK when offline;
+                // the raw draft and command journal must be durable before leaving.
+                void binding.commit().catch(() => {});
+            }
+            await deps.session.whenJournalDurable();
+            if (binding.hasLocalChanges() && (!retained || !sameCanvasJsonValue(retained, deps.read()))) throw new Error("画布仍在更新，请稍后再离开");
+        },
         saveViewport: () => deps.view.write(deps.canvasId, structuredClone(deps.readViewport())),
         async flush() {
             let failed = false;

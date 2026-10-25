@@ -11,7 +11,7 @@ import { audioMetadata, imageMetadata, videoMetadata } from "@/lib/canvas/canvas
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { isAudioFile } from "@/lib/canvas/canvas-project-generation";
 import { fitNodeSize, VIDEO_NODE_MAX_SIZE } from "@/lib/canvas/canvas-node-size";
-import { CANVAS_UPLOAD_ACCEPT, createFileUploadPlaceholder, uploadNodeType, uploadPercent } from "@/lib/canvas/canvas-file-upload";
+import { CANVAS_UPLOAD_ACCEPT, createFileUploadPlaceholder, uploadNodeType, uploadPercent, uploadReplacementPatch } from "@/lib/canvas/canvas-file-upload";
 import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
 import { uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -195,17 +195,7 @@ export function useCanvasUpload({
                     ...currentNode.metadata, ...metadata,
                     fileUpload: undefined, fileUploadProgress: undefined, errorDetails: undefined,
                     producedModel: undefined, producedModelCandidate: undefined,
-                    ...(replaceId ? {
-                        assetId: undefined, taskId: undefined, freeResize: false,
-                        isBatchRoot: undefined, batchRootId: undefined, batchChildIds: undefined,
-                        batchFailedCount: undefined, batchUsesReferenceImages: undefined,
-                        generationType: undefined, generationResultPlacement: undefined,
-                        copiedFromNodeId: undefined, versionOfNodeId: undefined,
-                        model: undefined, size: undefined, quality: undefined,
-                        transparentBackground: undefined, count: undefined, references: undefined,
-                        primaryImageId: undefined, imageBatchExpanded: undefined,
-                        richText: undefined, composerContent: undefined,
-                    } : {}),
+                    ...(replaceId ? uploadReplacementPatch(placeholder.type) : {}),
                 },
             };
             setNodes((current) => current.map((item) => item.id === id ? { ...item, type: node.type, metadata: node.metadata } : item));

@@ -1,5 +1,5 @@
 import { App, Button, Dropdown, Popconfirm, Popover } from "antd";
-import { CloudCheck, CloudOff, LoaderCircle } from "lucide-react";
+import { ChevronRight, CloudCheck, CloudDownload, CloudOff, Download, FolderClock, History, LoaderCircle, RefreshCw, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { readAllCanvasSyncDrafts, readCanvasSyncDrafts, type CanvasSyncDraft } from "@/services/canvas-sync-drafts";
@@ -7,6 +7,9 @@ import { getActiveUserScope } from "@/lib/user-scope";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useSyncProgressStore } from "@/stores/use-sync-progress-store";
 import { useCanvasSyncActivity } from "@/components/canvas/use-canvas-edit-lease";
+
+const syncActionClass =
+    "flex min-h-10 w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-normal text-foreground/85 transition-colors hover:bg-foreground/[.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground";
 
 export function CanvasSyncStatus({
     projectId,
@@ -55,16 +58,31 @@ export function CanvasSyncStatus({
         <>
             <Popover
                 trigger="click"
-                placement="bottom"
+                placement="bottomLeft"
+                arrow={false}
+                styles={{ container: { padding: 0, overflow: "hidden" } }}
                 open={statusOpen}
                 onOpenChange={setStatusOpen}
                 content={
-                    <div className="w-80 max-w-[calc(100vw-2rem)] space-y-3" data-canvas-no-zoom>
-                        <p role="status" className="text-sm">
-                            {progress?.message || (phase === "done" ? "画布已同步到云端" : "尚未确认云端保存，请保留本地内容")}
-                        </p>
+                    <div className="w-80 max-w-[calc(100vw-2rem)] max-h-[min(40rem,80vh)] overflow-y-auto text-foreground" data-canvas-no-zoom>
+                        <div className="flex items-center gap-3 border-b border-border/60 px-4 py-4">
+                            <span
+                                className="grid size-10 shrink-0 place-items-center rounded-xl bg-foreground/[.04]"
+                                style={{ color: saving ? "var(--palette-status-loading)" : failed ? "var(--palette-status-warning)" : "var(--palette-status-success)" }}
+                                aria-hidden="true"
+                            >
+                                {saving ? <LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" /> : failed ? <CloudOff className="size-5" /> : <CloudCheck className="size-5" />}
+                            </span>
+                            <div className="min-w-0 space-y-1">
+                                <p role="status" className="text-sm font-medium leading-5">
+                                    {saving ? "正在保存修改" : conflict ? "有修改需要处理" : failed ? "尚未同步到云端" : "已同步到云端"}
+                                </p>
+                                <p className="text-xs leading-5 text-muted-foreground">{saving ? "请稍候" : failed ? "查看下方详情以继续" : "最新修改已保存"}</p>
+                            </div>
+                        </div>
+                        {progress?.message || failed ? <p className="border-b border-border/60 px-4 py-3 text-xs leading-5 break-words text-muted-foreground">{progress?.message || "尚未确认云端保存，请保留本地内容"}</p> : null}
                         {conflict ? (
-                            <div className="space-y-2 text-sm leading-6">
+                            <div className="space-y-2 border-b border-border/60 px-4 py-3 text-sm leading-6">
                                 <p>云端与本地修改不一致，部分编辑尚未保存。请按以下步骤处理：</p>
                                 <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
                                     <li>先点击「重新同步」，核对是否有已经保存的修改。</li>
@@ -75,14 +93,17 @@ export function CanvasSyncStatus({
                             </div>
                         ) : null}
                         {actionError ? (
-                            <p role="alert" className="text-sm leading-6">
+                            <p role="alert" className="px-4 py-3 text-sm leading-6 text-destructive">
                                 {actionError}
                             </p>
                         ) : null}
-                        {rejected ? <p className="text-sm leading-6">本地修改已保留。请修正上述问题后点击「重试保存」，无需先切换到云端版本。</p> : null}
+                        {rejected ? <p className="px-4 py-3 text-xs leading-5 text-muted-foreground">本地修改已保留。请修正上述问题后点击「重试保存」，无需先切换到云端版本。</p> : null}
                         {activity ? (
-                            <div className="space-y-1 text-xs text-muted-foreground">
-                                <p>{activity.leases.length ? `${activity.leases.length} 个节点正在编辑` : "暂无节点编辑占用"}</p>
+                            <div className="space-y-1 border-b border-border/60 px-4 py-3 text-xs text-muted-foreground">
+                                <p className="flex items-center gap-2 leading-5">
+                                    <Users className="size-3.5 shrink-0" aria-hidden="true" />
+                                    {activity.leases.length ? `${activity.leases.length} 个节点正在编辑` : "当前没有节点正在编辑"}
+                                </p>
                                 {activity.leases.map((lease) => (
                                     <div key={`${lease.nodeId}:${lease.sessionId}`} className="space-y-1 border-b border-border/60 py-2 last:border-b-0">
                                         <div className="flex items-start justify-between gap-2">
@@ -115,22 +136,27 @@ export function CanvasSyncStatus({
                                 ))}
                             </div>
                         ) : activityError ? (
-                            <p className="text-xs text-muted-foreground">编辑占用状态暂不可用，保存仍以回执为准</p>
+                            <p className="px-4 py-3 text-xs leading-5 text-muted-foreground">编辑状态暂不可用</p>
                         ) : null}
-                        <div className="flex flex-wrap gap-2">
+                        <div className="space-y-0.5 p-1.5">
                             {onRetrySync ? (
-                                <Button size="small" disabled={busy} onClick={() => void run(onRetrySync)}>
-                                    {rejected ? "重试保存" : "重新同步"}
-                                </Button>
+                                <button type="button" className={syncActionClass} disabled={busy} onClick={() => void run(onRetrySync)}>
+                                    <RefreshCw aria-hidden="true" />
+                                    <span>{rejected ? "重试保存" : "重新同步"}</span>
+                                </button>
                             ) : null}
                             <Popconfirm title="采用云端最新版本？" description="未同步修改会先备份为本地草稿。备份成功后，当前画布将显示云端内容。" okText="备份并加载" cancelText="暂不处理" disabled={busy} onConfirm={() => run(onLoadLatest)}>
-                                <Button size="small" type={conflict ? "primary" : "default"} loading={busy}>
-                                    {conflict ? "备份草稿并加载云端" : "加载云端最新版本"}
-                                </Button>
+                                <button type="button" className={syncActionClass} disabled={busy}>
+                                    {busy ? <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <CloudDownload aria-hidden="true" />}
+                                    <span>{conflict ? "备份草稿并加载云端" : "加载云端最新版本"}</span>
+                                </button>
                             </Popconfirm>
-                            <CanvasSyncDraftMenu projectId={projectId} disabled={busy} />
-                            <Button
-                                size="small"
+                        </div>
+                        <div className="space-y-0.5 border-t border-border/60 p-1.5">
+                            <CanvasSyncDraftMenu projectId={projectId} disabled={busy} menuRow />
+                            <button
+                                type="button"
+                                className={syncActionClass}
                                 disabled={busy}
                                 onClick={() =>
                                     void run(async () => {
@@ -139,18 +165,22 @@ export function CanvasSyncStatus({
                                     })
                                 }
                             >
-                                下载当前内容
-                            </Button>
+                                <Download aria-hidden="true" />
+                                <span>下载当前内容</span>
+                            </button>
                             {onOpenVersions ? (
-                                <Button
-                                    size="small"
+                                <button
+                                    type="button"
+                                    className={syncActionClass}
                                     onClick={() => {
                                         setStatusOpen(false);
                                         onOpenVersions();
                                     }}
                                 >
-                                    版本记录{progress?.draftCount ? ` · ${progress.draftCount} 份草稿` : ""}
-                                </Button>
+                                    <History aria-hidden="true" />
+                                    <span className="flex-1">版本记录</span>
+                                    <ChevronRight className="opacity-50" aria-hidden="true" />
+                                </button>
                             ) : null}
                         </div>
                     </div>
@@ -170,7 +200,7 @@ export function CanvasSyncStatus({
     );
 }
 
-export function CanvasSyncDraftMenu({ projectId, disabled }: { projectId?: string; disabled?: boolean }) {
+export function CanvasSyncDraftMenu({ projectId, disabled, menuRow = false }: { projectId?: string; disabled?: boolean; menuRow?: boolean }) {
     const { message } = App.useApp();
     const [drafts, setDrafts] = useState<CanvasSyncDraft[]>([]);
     const [draftScope, setDraftScope] = useState("");
@@ -213,9 +243,17 @@ export function CanvasSyncDraftMenu({ projectId, disabled }: { projectId?: strin
                     : [{ key: "empty", label: loading ? "正在读取草稿…" : "暂无本地草稿", disabled: true }],
             }}
         >
-            <Button size={projectId ? "small" : "middle"} loading={exporting} disabled={disabled}>
-                本地草稿
-            </Button>
+            {menuRow ? (
+                <button type="button" className={syncActionClass} disabled={disabled || exporting}>
+                    {exporting ? <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <FolderClock aria-hidden="true" />}
+                    <span className="flex-1">本地草稿</span>
+                    <ChevronRight className="opacity-50" aria-hidden="true" />
+                </button>
+            ) : (
+                <Button size={projectId ? "small" : "middle"} loading={exporting} disabled={disabled}>
+                    本地草稿
+                </Button>
+            )}
         </Dropdown>
     );
 }

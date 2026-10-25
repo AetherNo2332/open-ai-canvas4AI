@@ -278,6 +278,10 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 ## 画布命令与声明式引用
 
+节点能力目录以 `x-canvas-resettable: true` 显式披露可清空字段。`update_node.patch` 省略字段表示不修改；对已声明可清空的字段传 `null` 表示删除该可选字段，正文与提示词则规范化为空字符串，不把 null 存成正文。媒体节点的 `content` 别名仍映射到提示词草稿，不覆盖媒体资源。宽高、标题、生成合同与身份等未声明可清空的字段仍按原合同校验，未知字段不会被忽略。
+
+工作流 `workflowParameters` 是最多 200 项的标量字典，值允许字符串、有限范围数字或布尔值，不接受嵌套对象；`promptTemplateVariables` 是最多 100 项的字符串字典。更新字典为整体替换，清除某项应在新字典中省略该键。`folderThemeCover` 只允许清空旧封面，不提供任意 URL 写入口。资源替换通过授权的 `bind_resource` / `bind_asset` 完成，服务端同时清理旧复制/版本来源；不得以任意 metadata 补丁伪造这些字段。
+
 普通登录画布在远端基线就绪后启用命令工作区。连接前先归档未确认缓存；只有原epoch与版本一致，或已有确认内容基线与当前云端匹配时，才自动迁移缓存差异。无法确认来源的旧缓存保留为恢复草稿。已有未确认journal优先按原请求身份恢复；丢回执重试不修改命令正文、operationId或字段基线。连接尚未就绪时，显式画布保存返回错误，素材单独同步仍可继续。
 
 `update_node` 可选携带 `fieldBaselines: { nodeType, workflowKind?, generation?, fields: { [patchAlias]: { exists, value } } }`。路径由服务端能力目录解析；缺失字段为 `{exists:false,value:null}`，显式null为 `{exists:true,value:null}`。每个补丁别名及受保护的派生写都需原始基线，generation取编辑时快照的 `entityGenerations["node:" + id]`，0是有效值。只有纯节点更新批次才有条件合并不同字段；同字段、对象重建、真实引用输入和结构操作仍拒绝陈旧意图。缺少证明的旧客户端保持严格版本校验；权限、完整读取集和持久SQL CAS始终生效。

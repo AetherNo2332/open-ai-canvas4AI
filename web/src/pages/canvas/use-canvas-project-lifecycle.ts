@@ -1,7 +1,9 @@
 import { mergeAgentCanvasEditor } from "@/lib/canvas/agent-canvas-patch";
-import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { App } from "antd";
-import { useNavigate } from "react-router";
+import { useBlocker, useNavigate } from "react-router";
+import { nanoid } from "nanoid";
+import { sameCanvasJsonValue } from "@/lib/canvas/canvas-json-value";
 
 import { canvasAppearanceBaseTheme, canvasAppearanceForTheme, DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
@@ -114,7 +116,7 @@ export function useCanvasProjectLifecycle({
     const editorReadyRef = useRef(false);
     // An edit the converter rejects never reaches the session, which would still
     // read as saved; it stays visibly unsaved until a later draft converts again.
-    const commandDraftFailureRef = useRef<{ error: unknown; failure: CanvasDraftFailure } | null>(null);
+    const commandDraftFailureRef = useRef<{ error: unknown; failure: CanvasDraftFailure; draftId: string; snapshot?: CanvasDocument; version: number } | null>(null);
     const announcedDraftFailureRef = useRef("");
     useEffect(() => {
         if (commandBootstrapState === "failed") setLoadError(commandBootstrapError || "画布同步连接暂不可用，请重试");
@@ -141,7 +143,7 @@ export function useCanvasProjectLifecycle({
                 const settings = sharedSettingsRef.current;
                 return {
                     ...session.state.projected,
-                    ...(stored ? { previsScenes: stored.previsScenes, timeline: stored.timeline } : {}),
+                    ...(stored ? { previsScenes: stored.previsScenes, timeline: stored.timeline, starterMode: stored.starterMode } : {}),
                     nodes: nodesRef.current,
                     connections: connectionsRef.current,
                     appearance: settings.canvasAppearance,
@@ -162,6 +164,11 @@ export function useCanvasProjectLifecycle({
                     setViewport(value);
                 },
                 read,
+                preserveDraft: async (document) => {
+                    const cached = useCanvasStore.getState().projects.find((project) => project.id === projectId);
+                    if (!cached) throw new Error("本地草稿暂时无法保存，请保留当前页面");
+                    await preserveCanvasSyncDraft({ ...cached, ...document, viewport: viewportRef.current } as CanvasProject, commandScope, `leave:${projectId}`);
+                },
                 present: (document, state) => {
                     if (abort.signal.aborted) return;
                     const fallbackTheme = useCanvasThemeStore.getState().theme;
@@ -219,21 +226,25 @@ export function useCanvasProjectLifecycle({
                         return;
                     }
                     const detail = error instanceof Error ? error.message : String(error);
-                    const episode = active || { error, failure: { detail } };
+                    const episode = active || { error, failure: { detail }, draftId: nanoid(), version: 0 };
                     episode.error = error;
                     episode.failure = { ...episode.failure, detail };
                     commandDraftFailureRef.current = episode;
+                    const snapshot = structuredClone(read());
+                    const unchanged = sameCanvasJsonValue(episode.snapshot, snapshot);
+                    if (!unchanged) episode.failure = { detail };
                     useSyncProgressStore.getState().setProjectProgress(projectId, canvasCommandSyncProgress(session.state, episode.failure));
-                    if (active) return;
-                    // The rejected edit exists only in memory: keep one recoverable copy per failure.
+                    if (unchanged && episode.failure.backup !== "failed") return;
+                    episode.snapshot = snapshot;
+                    const version = ++episode.version;
+                    // Update one recovery record; an old write cannot certify a newer draft.
                     const record = (backup: CanvasDraftFailure["backup"], draftCount?: number) => {
-                        if (abort.signal.aborted || commandDraftFailureRef.current !== episode) return;
+                        if (abort.signal.aborted || commandDraftFailureRef.current !== episode || episode.version !== version) return;
                         episode.failure = { ...episode.failure, backup };
                         useSyncProgressStore.getState().setProjectProgress(projectId, { ...canvasCommandSyncProgress(session.state, episode.failure), ...(draftCount === undefined ? {} : { draftCount }) });
                     };
-                    const scope = getActiveUserScope();
                     const cached = useCanvasStore.getState().projects.find((project) => project.id === projectId);
-                    void (cached ? preserveCanvasSyncDraft({ ...cached, ...read(), id: projectId, viewport: viewportRef.current } as CanvasProject, scope) : Promise.reject(new Error("canvas_project_missing")))
+                    void (cached ? preserveCanvasSyncDraft({ ...cached, ...snapshot, id: projectId, viewport: viewportRef.current } as CanvasProject, commandScope, episode.draftId) : Promise.reject(new Error("canvas_project_missing")))
                         .then((draftCount) => record("saved", draftCount))
                         .catch(() => record("failed"));
                 },
@@ -448,10 +459,17 @@ export function useCanvasProjectLifecycle({
         });
     }, [commandScope, projectId, projectLoaded, nodesRef, connectionsRef, setNodes, setConnections]);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (!projectLoaded || historyPausedRef.current) return;
         if (!commandScope && commandBootstrapState !== "inactive") return;
         if (commandScope) {
+            if (!commandEditorRef.current) return;
+            if (!commandEditorRef.current.hasLocalChanges() && !commandDraftFailureRef.current) {
+                const session = canvasCommandSession(projectId);
+                if (session) useSyncProgressStore.getState().setProjectProgress(projectId, canvasCommandSyncProgress(session.state));
+                return;
+            }
+            if (!commandDraftFailureRef.current) useSyncProgressStore.getState().setProjectProgress(projectId, { phase: "pending", message: "正在保存修改" });
             const timer = setTimeout(() => {
                 void commitCanvasCommandEditor(projectId).catch((error) => {
                     const text = error instanceof Error ? error.message : "画布编辑未提交";
@@ -489,8 +507,48 @@ export function useCanvasProjectLifecycle({
         updateProject,
         currentProject?.previsScenes,
         currentProject?.timeline,
+        currentProject?.starterMode,
         message,
     ]);
+
+    const leaveBlocker = useBlocker(() => Boolean(commandEditorRef.current?.needsLeaveProtection()));
+    useEffect(() => {
+        if (leaveBlocker.state !== "blocked") return;
+        const editor = commandEditorRef.current;
+        if (!editor || !commandScope) {
+            leaveBlocker.proceed();
+            return;
+        }
+        let cancelled = false;
+        void editor
+            .prepareLeave(async (document) => {
+                const cached = useCanvasStore.getState().projects.find((project) => project.id === projectId);
+                if (!cached) throw new Error("本地草稿暂时无法保存，请保留当前页面");
+                await preserveCanvasSyncDraft({ ...cached, ...document, viewport: viewportRef.current } as CanvasProject, commandScope, `leave:${projectId}`);
+            })
+            .then(() => {
+                if (!cancelled) leaveBlocker.proceed();
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                message.error(error instanceof Error ? error.message : "修改尚未保存，请保留当前页面");
+                leaveBlocker.reset();
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [leaveBlocker, commandScope, projectId, message, viewportRef]);
+
+    useEffect(() => {
+        if (!commandScope) return;
+        const beforeUnload = (event: BeforeUnloadEvent) => {
+            if (!commandEditorRef.current?.needsLeaveProtection()) return;
+            event.preventDefault();
+            event.returnValue = "修改尚未保存";
+        };
+        window.addEventListener("beforeunload", beforeUnload);
+        return () => window.removeEventListener("beforeunload", beforeUnload);
+    }, [commandScope]);
 
     useEffect(() => {
         if (!projectLoaded) return;

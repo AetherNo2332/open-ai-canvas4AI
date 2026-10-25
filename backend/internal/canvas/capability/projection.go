@@ -41,6 +41,14 @@ func (field PatchField) projectValue(value any, textLimit, depth int) (any, bool
 	if value == nil {
 		return nil, false
 	}
+	if len(field.AnyOf) > 0 {
+		for _, choice := range field.AnyOf {
+			if choice.validateValue(value, "value", depth+1) == nil {
+				return choice.projectValue(value, textLimit, depth+1)
+			}
+		}
+		return nil, false
+	}
 	switch field.Kind {
 	case patchKindObject:
 		object, ok := value.(map[string]any)

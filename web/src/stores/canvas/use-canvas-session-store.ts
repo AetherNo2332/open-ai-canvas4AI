@@ -35,8 +35,9 @@ export function canvasPersonalViewStorage() {
 let generation = 0;
 const bindings = new Map<string, () => void>();
 const observers = new Map<string, Set<(state: CommandSessionState) => void>>();
-const editors = new Map<string, { commit: () => Promise<unknown>; flush?: () => Promise<boolean>; dispose: () => void }>();
-export function registerCanvasCommandEditor(canvasId: string, editor: { commit: () => Promise<unknown>; flush?: () => Promise<boolean>; dispose: () => void }) {
+type CommandEditor = { commit: () => Promise<unknown>; flush?: () => Promise<boolean>; preserveLocalDraft?: () => Promise<void>; dispose: () => void };
+const editors = new Map<string, CommandEditor>();
+export function registerCanvasCommandEditor(canvasId: string, editor: CommandEditor) {
     editors.get(canvasId)?.dispose();
     editors.set(canvasId, editor);
     return () => {
@@ -48,8 +49,13 @@ export function commitCanvasCommandEditor(canvasId: string) {
     return editors.get(canvasId)?.commit() || Promise.resolve();
 }
 
+export async function preserveCanvasCommandWorkspaceDrafts() {
+    await Promise.all([...editors.values()].map((editor) => editor.preserveLocalDraft?.()));
+}
+
 export async function connectCanvasCommandWorkspace(scope: string, boundClientId?: string) {
     if (workspace && useCanvasSessionStore.getState().scope === scope && useCanvasSessionStore.getState().connectionBaseURL === apiBaseURL) return;
+    await preserveCanvasCommandWorkspaceDrafts();
     cancelCanvasEditLeases();
     const current = ++generation;
     const previous = workspace;
@@ -183,6 +189,7 @@ export async function flushCanvasCommandWorkspace() {
     return current === workspace && editorsSaved.every(Boolean) && (await current.flush());
 }
 export async function disconnectCanvasCommandWorkspace() {
+    await preserveCanvasCommandWorkspaceDrafts();
     cancelCanvasEditLeases();
     generation++;
     creator?.close();

@@ -20,9 +20,11 @@ import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics
 import { cancelCanvasCommandBootstrap, installCanvasCommandBootstrap } from "@/services/canvas-command-bootstrap";
 import { cancelCanvasEditLeases } from "@/services/canvas-edit-leases";
 import { flushCanvasAuthorDrafts } from "@/services/canvas-author-drafts";
-import { disconnectCanvasCommandWorkspace } from "@/stores/canvas/use-canvas-session-store";
+import { disconnectCanvasCommandWorkspace, preserveCanvasCommandWorkspaceDrafts } from "@/stores/canvas/use-canvas-session-store";
 
 export async function switchUserStorageScope(userId?: string | null) {
+    // Capture editor-only changes before any await can unmount the old account UI.
+    await preserveCanvasCommandWorkspaceDrafts();
     cancelRemoteUserDataBootstrap();
     cancelCanvasCommandBootstrap();
     cancelCanvasEditLeases();

@@ -90,6 +90,9 @@ func completeBuiltinEditableFields(d *Descriptor) {
 		add("frame", "metadata.frame", "背板折叠与展开尺寸", objectField(map[string]PatchField{"collapsed": {Kind: patchKindBoolean}, "expandedWidth": boundedNumber(1, 100000), "expandedHeight": boundedNumber(1, 100000)}, "collapsed", "expandedWidth", "expandedHeight"))
 		add("folderStyle", "metadata.folder.style", "背板样式", enumString("glass", "stacked", "midnight", "paper", "cinema", "compact"))
 		add("folderTheme", "metadata.folder.theme", "背板主题", enumString("aurora", "obsidian", "ember", "pearl"))
+		coverReset := enumString("")
+		coverReset.Resettable = true
+		add("folderThemeCover", "metadata.folder.themeCover", "清除旧背板封面", coverReset)
 		add("folderCreatedAt", "metadata.folder.createdAt", "文件夹创建时间", stringField(80))
 		add("folderProjectId", "metadata.folder.projectId", "文件夹来源项目", stringField(128))
 		add("folderAssetFolderId", "metadata.folder.assetFolderId", "项目素材文件夹", stringField(128))
@@ -117,6 +120,8 @@ func completeBuiltinEditableFields(d *Descriptor) {
 		add("drawingEngine", "metadata.drawingEngine", "绘图引擎", enumString("tldraw", "excalidraw"))
 	case "batch-table":
 		d.Actions = append(d.Actions, "reorder_rows")
+	case "config":
+		add("workflowTitle", "metadata.workflowTitle", "工作流标题", stringField(240))
 	}
 	if d.Type == "config" || d.Type == "image" || d.Type == "video" || d.Type == "audio" || d.Type == "text" {
 		addGenerationEditableFields(d, add)
@@ -128,6 +133,7 @@ func completeBuiltinEditableFields(d *Descriptor) {
 		}
 		add("prompt", "metadata.prompt", "素材提示词", stringField(limit))
 		add("assetTags", "metadata.assetTags", "素材标签", arrayField(stringField(240), 100))
+		add("assetCategory", "metadata.assetCategory", "素材分类", enumString("character", "environment", "prop", "material", "other"))
 	}
 	if d.Connection.CanReference {
 		add("usageStatus", "metadata.usageStatus", "素材用途状态", enumString("active", "archived"))
@@ -151,6 +157,14 @@ func completeBuiltinEditableFields(d *Descriptor) {
 		add("subtitleEntries", "metadata.subtitleEntries", "字幕内容", subtitleEntriesField())
 		add("subtitleHighlights", "metadata.subtitleHighlights", "字幕重点", subtitleHighlightsField())
 		add("subtitleStyle", "metadata.subtitleStyle", "字幕样式", subtitleStyleField())
+	}
+	// Only optional author/configuration fields support deletion. Geometry,
+	// identities, reference contracts and generationSpec retain strict types.
+	for _, key := range []string{"content", "prompt", "composerContent", "richText", "model", "size", "quality", "transparentBackground", "seconds", "vquality", "generateAudio", "watermark", "count", "textCount", "generationType", "generationResultPlacement", "audioVoice", "audioFormat", "audioSpeed", "audioInstructions", "audioEmotionControlMethod", "audioEmotionRandom", "audioEmotionHappy", "audioEmotionAngry", "audioEmotionSad", "audioEmotionAfraid", "audioEmotionDisgusted", "audioEmotionMelancholic", "audioEmotionSurprised", "audioEmotionCalm", "videoCameraMoveId", "videoCameraMovePrompt", "promptTemplateOperation", "promptTemplateVariables", "runningHubWorkflowId", "runningHubWorkflowKind", "workflowTitle", "workflowParameters", "cameraControl", "portraitTexture", "assetCategory"} {
+		if field, ok := d.PatchFields[key]; ok {
+			field.Resettable = true
+			d.PatchFields[key] = field
+		}
 	}
 	// Detail projection is still an allow-list: only declared editable fields are exposed.
 	keys := make([]string, 0, len(d.PatchFields))
@@ -192,6 +206,10 @@ func addGenerationEditableFields(d *Descriptor, add func(string, string, string,
 	add("workflowProvider", "metadata.workflowProvider", "工作流来源", enumString("model", "runninghub"))
 	add("runningHubWorkflowId", "metadata.runningHubWorkflowId", "工作流编号", stringField(240))
 	add("runningHubWorkflowKind", "metadata.runningHubWorkflowKind", "工作流类型", enumString("workflow", "app"))
+	parameters := PatchField{AnyOf: []PatchField{stringField(maxAgentDocumentRunes), boundedNumber(-1e16, 1e16), {Kind: patchKindBoolean}}}
+	add("workflowParameters", "metadata.workflowParameters", "工作流参数", PatchField{Kind: patchKindObject, MapValues: &parameters, MaxProperties: 200})
+	variable := stringField(maxAgentDocumentRunes)
+	add("promptTemplateVariables", "metadata.promptTemplateVariables", "提示词模板变量", PatchField{Kind: patchKindObject, MapValues: &variable, MaxProperties: 100})
 	add("cameraControl", "metadata.cameraControl", "摄影机控制", cameraControlField())
 	add("portraitTexture", "metadata.portraitTexture", "人像质感", portraitTextureField())
 	if d.Type != "text" {

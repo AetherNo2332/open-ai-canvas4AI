@@ -3,8 +3,8 @@ import localforage from "localforage";
 import { apiClient, ApiError } from "@/services/api/request";
 import { ensureOrdinaryCanvasCommandWorkspace } from "@/services/canvas-command-bootstrap";
 import { associateCanvasProjectWithRemoteSync, createCanvasProjectWithRemoteSync, initializeRemoteUserDataSession, resetRemoteUserDataSync, saveRemoteUserDataNow } from "@/services/user-data-sync";
-import { readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
-import { disconnectCanvasCommandWorkspace, openCanvasCommandSession, useCanvasSessionStore } from "@/stores/canvas/use-canvas-session-store";
+import { preserveCanvasSyncDraft, readCanvasSyncDrafts } from "@/services/canvas-sync-drafts";
+import { disconnectCanvasCommandWorkspace, openCanvasCommandSession, registerCanvasCommandEditor, useCanvasSessionStore } from "@/stores/canvas/use-canvas-session-store";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType } from "@/types/canvas";
 import { canvasContentHash } from "@/lib/canvas/canvas-content";
@@ -29,6 +29,35 @@ afterEach(async () => {
     localforage.getItem = previous.get;
     localforage.setItem = previous.set;
     storage.clear();
+});
+
+test("a continuing save failure replaces its recovery draft with the latest edit", async () => {
+    setup();
+    const id = useCanvasStore.getState().importProject({ title: "First", nodes: [], connections: [] });
+    const project = useCanvasStore.getState().openProject(id)!;
+    await Promise.all([preserveCanvasSyncDraft(project, scope, "failure-episode"), preserveCanvasSyncDraft({ ...project, title: "Latest" }, scope, "failure-episode")]);
+    const drafts = await readCanvasSyncDrafts(id, scope);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].project.title).toBe("Latest");
+    expect(await readCanvasSyncDrafts(id, "other-user")).toHaveLength(0);
+});
+
+test("account disconnect retains unqueued editor changes before disposing the editor", async () => {
+    setup();
+    const order: string[] = [];
+    const unregister = registerCanvasCommandEditor("draft-canvas", {
+        commit: async () => {},
+        preserveLocalDraft: async () => {
+            await Promise.resolve();
+            order.push("durable");
+        },
+        dispose: () => {
+            order.push("disposed");
+        },
+    });
+    await disconnectCanvasCommandWorkspace();
+    expect(order).toEqual(["durable", "disposed"]);
+    unregister();
 });
 
 test("an imported revision-zero canvas is archived and created once with CAS before command open", async () => {

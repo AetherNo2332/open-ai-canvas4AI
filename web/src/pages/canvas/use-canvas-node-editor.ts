@@ -9,6 +9,7 @@ import { resolveCanvasMediaDownloadItems } from "@/lib/canvas/canvas-media-batch
 import type { CanvasMediaDownloadQueueResult } from "@/lib/canvas/canvas-media-download-queue";
 import { createCanvasMediaArchive } from "@/lib/canvas/canvas-media-archive";
 import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
+import { getActiveUserScope } from "@/lib/user-scope";
 import { applyBatchPrimaryImage, applyNodeConfigPatch } from "@/lib/canvas/canvas-project-domain";
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
@@ -35,6 +36,7 @@ export function useCanvasNodeEditor({ canvasId, canvasTitle, domainProjectId, no
     const [collapsingBatchIds, setCollapsingBatchIds] = useState<Set<string>>(new Set());
     const [openingBatchIds, setOpeningBatchIds] = useState<Set<string>>(new Set());
     const batchMotionTimers = useRef(new Map<string, number>());
+    const categoryWrites = useRef(new Map<string, number>());
     useEffect(
         () => () => {
             batchMotionTimers.current.forEach((timer) => window.clearTimeout(timer));
@@ -224,19 +226,32 @@ export function useCanvasNodeEditor({ canvasId, canvasTitle, domainProjectId, no
 
     const handleConfigNodeChange = useCallback(
         (nodeId: string, patch: Partial<CanvasNodeMetadata>) => {
-            const next = nodesRef.current.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node));
+            const source = nodesRef.current.find((node) => node.id === nodeId);
+            const category = patch.assetCategory;
+            const needsAsset = Boolean(category && source?.metadata?.content?.trim());
+            const { assetCategory: _category, ...configPatch } = patch;
+            const next = nodesRef.current.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, needsAsset ? configPatch : patch) : node));
             // Durable save/generation reads refs before a deferred React updater.
             nodesRef.current = next;
             setNodes(next);
-            if (!patch.assetCategory) return;
+            if (!needsAsset || !category) return;
             const node = nodesRef.current.find((item) => item.id === nodeId);
             if (!node?.metadata?.content?.trim()) return;
             const updatedNode = applyNodeConfigPatch(node, patch);
-            void ensureCanvasNodeAsset({ canvasId, domainProjectId, node: updatedNode, source: "canvas-manual", category: patch.assetCategory })
+            const scope = getActiveUserScope();
+            const version = (categoryWrites.current.get(nodeId) || 0) + 1;
+            categoryWrites.current.set(nodeId, version);
+            void ensureCanvasNodeAsset({ canvasId, domainProjectId, node: updatedNode, source: "canvas-manual", category })
                 .then(async (result) => {
-                    setNodes((current) => current.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item)));
+                    if (scope !== getActiveUserScope() || categoryWrites.current.get(nodeId) !== version) return;
+                    const current = nodesRef.current.find((item) => item.id === nodeId);
+                    if (!current || current.metadata?.storageKey !== node.metadata?.storageKey || current.metadata?.content !== node.metadata?.content) return;
+                    const updated = nodesRef.current.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, assetId: result.assetId, assetCategory: category } } : item));
+                    nodesRef.current = updated;
+                    setNodes(updated);
                     if (domainProjectId) await queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] });
-                    message.success("资产分类已更新");
+                    if (result.syncPending) message.info("分类已保留，正在同步素材");
+                    else message.success("资产分类已更新");
                 })
                 .catch((error) => message.error(error instanceof Error ? error.message : "资产分类更新失败"));
         },
