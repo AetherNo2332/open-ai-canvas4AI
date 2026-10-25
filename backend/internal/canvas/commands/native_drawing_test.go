@@ -26,4 +26,8 @@ func TestNativeDrawingInitializationAndOrdering(t *testing.T) {
 	if text(elements[0]["id"]) != "z" {
 		t.Fatal("native drawing layer order lost")
 	}
+	// The editor keys local drafts of an unnamed drawing by this same default name.
+	if entity(r.Document, "node:drawing")["metadata"].(map[string]any)["drawingId"] != "drawing-document" {
+		t.Fatal("unnamed drawing document did not take the node default name")
+	}
 }

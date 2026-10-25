@@ -12,6 +12,7 @@ import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { canvasTextFontSize } from "@/lib/canvas/canvas-text-scale";
 import { loadCanvasDrawingPreview } from "@/lib/canvas/canvas-drawing-storage";
 import { loadCanvasDrawingForNode } from "@/lib/canvas/canvas-drawing-document-sync";
+import { canvasDrawingDocumentId } from "@/lib/canvas/canvas-drawing-engine";
 import { canvasNodeVideoPreviewReference } from "@/lib/canvas/canvas-media-preview";
 import { producedModelLabel } from "@/lib/canvas/produced-model";
 import { useConfigStore } from "@/stores/use-config-store";
@@ -201,12 +202,12 @@ function DrawingContent({ node, theme, drawingProjectId }: CanvasNodeContentProp
     const shapeCount = node.metadata?.drawingDocument?.shapeCount ?? node.metadata?.drawingShapeCount ?? 0;
     const pageCount = node.metadata?.drawingDocument?.pageCount ?? node.metadata?.drawingPageCount ?? 1;
     const [previewUrl, setPreviewUrl] = useState(node.metadata?.drawingPreviewUrl || "");
+    const drawingId = canvasDrawingDocumentId(node);
 
     useEffect(() => {
-        const drawingId = node.metadata?.drawingId;
         const fallbackPreview = node.metadata?.drawingPreviewUrl || "";
         setPreviewUrl(fallbackPreview);
-        if (!drawingProjectId || !drawingId) return;
+        if (!drawingProjectId) return;
         let active = true;
         let objectUrl = "";
         void loadCanvasDrawingForNode(drawingProjectId, node)
@@ -225,7 +226,7 @@ function DrawingContent({ node, theme, drawingProjectId }: CanvasNodeContentProp
             active = false;
             if (objectUrl) URL.revokeObjectURL(objectUrl);
         };
-    }, [drawingProjectId, node.metadata?.drawingId, node.metadata?.drawingPreviewUrl, node.metadata?.drawingRevision, node.metadata?.drawingDocument]);
+    }, [drawingProjectId, drawingId, node.metadata?.drawingPreviewUrl, node.metadata?.drawingRevision, node.metadata?.drawingDocument]);
 
     return (
         <div className="relative h-full w-full overflow-hidden" style={{ background: theme.node.panel, color: theme.node.text }}>

@@ -20,6 +20,7 @@ import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { saveCanvasDrawing, type CanvasDrawingRenderDraft } from "@/lib/canvas/canvas-drawing-storage";
+import { canvasDrawingDocumentId } from "@/lib/canvas/canvas-drawing-engine";
 import { associateCanvasProjectWithRemoteSync, createCanvasProjectWithRemoteSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, scheduleRemoteUserDataSync } from "@/services/user-data-sync";
 import { listRemoteCanvasProjectsPage, type CanvasLibrarySummary } from "@/services/api/user-data";
 import { useUserStore } from "@/stores/use-user-store";
@@ -248,7 +249,7 @@ export default function CanvasPage() {
                                 ...(nextStorageKey !== undefined ? { storageKey: nextStorageKey } : {}),
                                 ...(content !== undefined ? { content } : {}),
                                 ...(previewContent !== undefined ? { previewContent } : {}),
-                                drawingEngine: node.type === "drawing" && node.metadata?.drawingId ? drawingEngineById.get(node.metadata.drawingId) || node.metadata.drawingEngine || "tldraw" : node.metadata?.drawingEngine,
+                                drawingEngine: node.type === "drawing" ? drawingEngineById.get(canvasDrawingDocumentId(node)) || node.metadata?.drawingEngine || "tldraw" : node.metadata?.drawingEngine,
                             },
                         };
                     };

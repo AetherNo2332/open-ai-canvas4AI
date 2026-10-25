@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { attachCanvasCommandProject } from "../src/services/canvas-command-project-lifecycle";
+import { CANVAS_DRAFT_UNSUPPORTED, attachCanvasCommandProject, canvasCommandSyncProgress } from "../src/services/canvas-command-project-lifecycle";
 import { CanvasCommandSession, type CommandTransport } from "../src/services/canvas-command-session";
+import { useSyncProgressStore } from "../src/stores/use-sync-progress-store";
 import { customCanvasAppearanceFromTheme, defaultCanvasAppearance, normalizeCanvasAppearance } from "../src/lib/canvas/canvas-appearance";
 import { canvasDocumentChanges, projectCanvasOperations, type CanvasDocument } from "../src/lib/canvas/canvas-event-projection";
 test("editor lifecycle commits semantic changes, stores personal view and never invokes whole-document save", async () => {
@@ -145,4 +146,76 @@ test.each(["preset", "custom"] as const)("normalized host %s appearance stays id
         editor.dispose();
         session.close();
     }
+});
+
+test("a draft the host cannot express stays unsaved without any request and recovers once undone", async () => {
+    const node = { id: "text", type: "text", position: { x: 0, y: 0 }, metadata: { content: "saved", extension: "keep" } };
+    const sent: any[] = [];
+    const session = new CanvasCommandSession(
+        {
+            snapshot: async () => ({ protocolVersion: 1, canvasId: "canvas", documentEpoch: "epoch", revision: 1, eventSeq: 0, document: { id: "canvas", nodes: [node], connections: [] }, entityVersions: { "node:text": 1 } }),
+            events: async () => [],
+            execute: async (command) => {
+                sent.push(command);
+                throw new Error("unexpected command");
+            },
+            receipt: async () => {
+                throw new Error("unexpected receipt lookup");
+            },
+        } as CommandTransport,
+        "client",
+    );
+    await session.open("canvas");
+    let live: any = {};
+    const reports: unknown[] = [];
+    const editor = await attachCanvasCommandProject({
+        canvasId: "canvas",
+        session,
+        capabilities: { protocolVersion: 1, nodes: [{ type: "text", patchFields: { content: { path: "metadata.content" } } }], structuredFields: {} },
+        refs: { nodes: { current: [] }, connections: { current: [] } },
+        read: () => live,
+        present: (document) => {
+            live = document;
+        },
+        onDraftConversion: (error) => reports.push(error),
+        view: { read: async () => null, write: async () => {} },
+        readViewport: () => ({ x: 0, y: 0, k: 1 }),
+        presentViewport: () => {},
+    });
+    try {
+        live = { ...live, nodes: [{ ...node, metadata: { ...node.metadata, extension: "changed" } }] };
+        await expect(editor.commit()).rejects.toThrow("canvas_editor_unmapped:node:text:metadata.extension");
+        expect(await editor.flush()).toBe(false);
+        // Nothing was queued, so the session alone still reads as saved.
+        expect(sent).toHaveLength(0);
+        expect(session.state.pending).toHaveLength(0);
+        expect(session.state.saveState).toBe("saved");
+        expect(reports.at(-1)).toBeInstanceOf(Error);
+        const progress = canvasCommandSyncProgress(session.state, { detail: (reports.at(-1) as Error).message });
+        expect(progress).toMatchObject({ phase: "error", reason: CANVAS_DRAFT_UNSUPPORTED });
+        expect(progress.message).toContain("canvas_editor_unmapped:node:text:metadata.extension");
+        expect(canvasCommandSyncProgress(session.state, { detail: "x", backup: "saved" }).message).toContain("本地草稿");
+        useSyncProgressStore.getState().setProjectProgress("canvas", progress);
+        // The leave-page guard covers every phase other than done.
+        expect(useSyncProgressStore.getState().isAnySyncing()).toBe(true);
+
+        live = { ...live, nodes: [node] };
+        await editor.commit();
+        expect(reports.at(-1)).toBeUndefined();
+        expect(sent).toHaveLength(0);
+        useSyncProgressStore.getState().setProjectProgress("canvas", canvasCommandSyncProgress(session.state));
+        expect(useSyncProgressStore.getState().syncingProjects.canvas).toMatchObject({ phase: "done", reason: undefined });
+        expect(useSyncProgressStore.getState().isAnySyncing()).toBe(false);
+    } finally {
+        useSyncProgressStore.getState().setProjectProgress("canvas", null);
+        editor.dispose();
+        session.close();
+    }
+});
+
+test("conflicts still take precedence over a local draft failure in the save status", () => {
+    const state = { saveState: "conflict", rejections: [], pending: [] } as any;
+    expect(canvasCommandSyncProgress(state, { detail: "canvas_editor_unmapped:node:a:metadata.x" })).toMatchObject({ phase: "conflict" });
+    expect(canvasCommandSyncProgress({ ...state, saveState: "saved" })).toMatchObject({ phase: "done" });
+    expect(canvasCommandSyncProgress({ ...state, saveState: "error", rejections: [{ reason: "node_locked", message: "其他窗口正在编辑" }] })).toMatchObject({ phase: "error", reason: "node_locked", message: "其他窗口正在编辑" });
 });
