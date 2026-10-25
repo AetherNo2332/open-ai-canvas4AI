@@ -1,4 +1,5 @@
 import { createBatchRow } from "@/lib/canvas/canvas-batch-table";
+import { canvasDrawingDocumentMetadata } from "@/lib/canvas/canvas-drawing-engine";
 import { createStoryboardRow } from "@/lib/canvas/canvas-project-domain";
 import { resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import type { ReferenceBinding } from "@/lib/canvas/generation-contract.generated";
@@ -188,6 +189,13 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     return metadata;
 }
 
+/** A copied drawing is a new document: it is named only together with copied
+ * content, and an empty copy stays a plain node until its first save. */
+export function resetCopiedDrawingMetadata(metadata: CanvasNodeMetadata, id: string) {
+    for (const key of ["drawingId", "drawingRevision", "drawingUpdatedAt", "drawingShapeCount", "drawingPageCount"] as const) delete metadata[key];
+    if (metadata.drawingDocument) Object.assign(metadata, canvasDrawingDocumentMetadata({ id, metadata }, { ...structuredClone(metadata.drawingDocument), revision: 1, updatedAt: new Date().toISOString() }));
+}
+
 export function copyCanvasNodeGraph(nodes: CanvasNodeData[], connections: CanvasConnection[], sourceId: string, idMap: ReadonlyMap<string, string>, connectionId: () => string, title?: string) {
     const source = nodes.find((node) => node.id === sourceId);
     if (!source) throw new Error("复制来源节点不存在");
@@ -199,21 +207,7 @@ export function copyCanvasNodeGraph(nodes: CanvasNodeData[], connections: Canvas
         const id = copiedMap.get(node.id);
         if (!id || nodes.some((item) => item.id === id)) throw new Error("复制节点 ID 缺失或重复");
         const metadata = isolateCopiedNodeMetadata(node, copiedMap, rowIds);
-        if (node.type === CanvasNodeType.Drawing) {
-            metadata.drawingId = `${id}-document`;
-            metadata.drawingRevision = 0;
-            metadata.drawingUpdatedAt = undefined;
-            metadata.drawingShapeCount = 0;
-            metadata.drawingPageCount = 1;
-            if (metadata.drawingDocument) {
-                metadata.drawingDocument = { ...structuredClone(metadata.drawingDocument), revision: 1, updatedAt: new Date().toISOString() };
-                metadata.drawingEngine = metadata.drawingDocument.engine;
-                metadata.drawingRevision = metadata.drawingDocument.revision;
-                metadata.drawingUpdatedAt = metadata.drawingDocument.updatedAt;
-                metadata.drawingShapeCount = metadata.drawingDocument.shapeCount;
-                metadata.drawingPageCount = metadata.drawingDocument.pageCount;
-            }
-        }
+        if (node.type === CanvasNodeType.Drawing) resetCopiedDrawingMetadata(metadata, id);
         return { ...node, id, title: node.id === source.id ? title ?? nextCopiedNodeTitle(source.title, nodes.map((item) => item.title)) : node.title, position: { x: node.position.x + 36, y: node.position.y + 36 }, parentId: node.parentId ? copiedMap.get(node.parentId) || node.parentId : undefined, metadata };
     });
     const copiedConnections = connections.filter((edge) => copiedIds.has(edge.fromNodeId) && copiedIds.has(edge.toNodeId) && !isManagedReferenceConnection(edge)).map((edge) => copiedConnection(edge, copiedMap.get(edge.fromNodeId)!, copiedMap.get(edge.toNodeId)!, connectionId(), rowIds));

@@ -9,11 +9,11 @@ import { alignCanvasNodes, layoutCanvasAuto, layoutCanvasFlow, layoutCanvasNodes
 import { applyCanvasConnectionPromptSync } from "@/lib/canvas/canvas-resource-references";
 import { deleteCanvasReferenceLine, type CanvasReferenceGraph } from "@/lib/canvas/canvas-reference-edits";
 import { createCanvasNode, isHiddenBatchChild, removeCanvasNodes } from "@/lib/canvas/canvas-project-domain";
-import { copyCanvasNodeGraph, isolateCopiedNodeMetadata, nextCopiedNodeTitle } from "@/lib/canvas/canvas-node-copy";
+import { copyCanvasNodeGraph, isolateCopiedNodeMetadata, nextCopiedNodeTitle, resetCopiedDrawingMetadata } from "@/lib/canvas/canvas-node-copy";
 import { loadCanvasDrawingForNode, persistCanvasDrawingEditorSave } from "@/lib/canvas/canvas-drawing-document-sync";
 import { CanvasNodeType, type CanvasConnection, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type ContextMenuState, type Position } from "@/types/canvas";
 import { cloneCanvasDrawing, markCanvasDrawingPublished } from "@/lib/canvas/canvas-drawing-storage";
-import { isDrawingEngineAvailable, type CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
+import { canvasDrawingDocumentId, canvasDrawingDocumentMetadata, isDrawingEngineAvailable, type CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { useUserStore } from "@/stores/use-user-store";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
@@ -102,9 +102,9 @@ export function useCanvasNodeOperations({
     }, [connectionsRef, setConnections]);
 
     const cloneDrawingForNode = useCallback((source: CanvasNodeData, target: CanvasNodeData, failureMessage: string) => {
-        const sourceDrawingId = source.metadata?.drawingId;
-        const targetDrawingId = target.metadata?.drawingId;
-        if (!projectId || !sourceDrawingId || !targetDrawingId) return;
+        const sourceDrawingId = canvasDrawingDocumentId(source);
+        const targetDrawingId = canvasDrawingDocumentId(target);
+        if (!projectId) return;
         void loadCanvasDrawingForNode(projectId, source).then((document) => cloneCanvasDrawing(projectId, sourceDrawingId, targetDrawingId, document)).then(async (saved) => {
             if (!saved) {
                 if (source.metadata?.drawingShapeCount) message.warning("原绘图内容未在本机找到，已创建空白副本");
@@ -116,18 +116,7 @@ export function useCanvasNodeOperations({
                 saveLocal: async () => saved,
                 currentNode: () => nodesRef.current.find((node) => node.id === target.id) || null,
                 markPublished: (document) => markCanvasDrawingPublished(projectId, targetDrawingId, document),
-                onSaved: (document) => commitNodes(nodesRef.current.map((node) => node.id === target.id ? {
-                    ...node,
-                    metadata: {
-                        ...node.metadata,
-                        drawingEngine: document.engine,
-                        drawingRevision: document.revision,
-                        drawingUpdatedAt: document.updatedAt,
-                        drawingShapeCount: document.shapeCount,
-                        drawingPageCount: document.pageCount,
-                        drawingDocument: document,
-                    },
-                } : node)),
+                onSaved: (document) => commitNodes(nodesRef.current.map((node) => node.id === target.id ? { ...node, metadata: { ...node.metadata, ...canvasDrawingDocumentMetadata(node, document) } } : node)),
             });
         }).catch(() => message.error(failureMessage));
     }, [commitNodes, message, nodesRef, projectId]);
@@ -514,13 +503,7 @@ export function useCanvasNodeOperations({
             const metadata = isolateCopiedNodeMetadata(node, idMap, rowIds);
             const title = nextCopiedNodeTitle(node.title, reservedTitles);
             reservedTitles.add(title);
-            if (node.type === CanvasNodeType.Drawing && metadata) {
-                metadata.drawingId = `${idMap.get(node.id)}-document`;
-                metadata.drawingRevision = 0;
-                metadata.drawingUpdatedAt = undefined;
-                metadata.drawingShapeCount = 0;
-                metadata.drawingPageCount = 1;
-            }
+            if (node.type === CanvasNodeType.Drawing && metadata) resetCopiedDrawingMetadata(metadata, idMap.get(node.id)!);
             return {
                 ...node,
                 id: idMap.get(node.id)!,
