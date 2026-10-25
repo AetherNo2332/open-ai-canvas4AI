@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"unicode"
@@ -531,7 +532,7 @@ func cloudAgentPatchSchema() map[string]any {
 			kind := values[0]["type"]
 			same := kind != nil
 			for _, value := range values {
-				if value["type"] != kind {
+				if !reflect.DeepEqual(value["type"], kind) {
 					same = false
 				}
 			}
