@@ -142,6 +142,7 @@ import { queryGenerationTask } from "@/services/api/task-center";
 import type { CanvasImageEmotionPayload } from "@/components/canvas/canvas-node-emotion-panel";
 import { CanvasEmotionWorkspace } from "@/components/canvas/canvas-emotion-workspace";
 import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
+import { canvasDrawingDocumentId, canvasDrawingDocumentMetadata } from "@/lib/canvas/canvas-drawing-engine";
 import { useCanvasConnectionController } from "./use-canvas-connection-controller";
 import { useCanvasOperationHistory } from "./use-canvas-operation-history";
 import { useCanvasAssistantVisibility } from "./use-canvas-assistant-visibility";
@@ -1112,7 +1113,7 @@ function InfiniteCanvasPage() {
             setMediaVersionNodeId(clearDeletedId);
             setScriptScrollTopById((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !removedIds.has(id))));
             setContextMenu((current) => (current?.type === "node" && removedIds.has(current.nodeId) ? null : current));
-            const removedDrawingIds = removedNodes.flatMap((node) => (node.type === CanvasNodeType.Drawing && node.metadata?.drawingId ? [node.metadata.drawingId] : []));
+            const removedDrawingIds = removedNodes.flatMap((node) => (node.type === CanvasNodeType.Drawing ? [canvasDrawingDocumentId(node)] : []));
             if (removedDrawingIds.length) {
                 void Promise.all(removedDrawingIds.map((drawingId) => removeCanvasDrawing(projectId, drawingId))).catch(() => message.warning("绘图节点已删除，但本地绘图缓存清理失败"));
             }
@@ -1859,7 +1860,7 @@ function InfiniteCanvasPage() {
     const shortDramaGuide = shortDramaEnabled && !currentProject?.projectId && shortDramaProgress.active ? { progress: shortDramaProgress, collapsed: shortDramaGuideCollapsed, onToggle: () => setShortDramaGuideCollapsed((value) => !value) } : undefined;
 
     const clearCanvas = useCallback(() => {
-        const drawingIds = nodesRef.current.flatMap((node) => (node.type === CanvasNodeType.Drawing && node.metadata?.drawingId ? [node.metadata.drawingId] : []));
+        const drawingIds = nodesRef.current.flatMap((node) => (node.type === CanvasNodeType.Drawing ? [canvasDrawingDocumentId(node)] : []));
         if (drawingIds.length) {
             void Promise.all(drawingIds.map((drawingId) => removeCanvasDrawing(projectId, drawingId))).catch(() => message.warning("画布已清空，但部分本地绘图缓存清理失败"));
         }
@@ -3452,20 +3453,7 @@ function InfiniteCanvasPage() {
                                         onSaved={(nodeId, summary) => {
                                             setNodes((current) =>
                                                 current.map((node) =>
-                                                    node.id === nodeId
-                                                        ? {
-                                                              ...node,
-                                                              metadata: {
-                                                                  ...node.metadata,
-                                                                  drawingEngine: summary.engine,
-                                                                  drawingDocument: summary,
-                                                                  drawingRevision: summary.revision,
-                                                                  drawingUpdatedAt: summary.updatedAt,
-                                                                  drawingShapeCount: summary.shapeCount,
-                                                                  drawingPageCount: summary.pageCount,
-                                                              },
-                                                          }
-                                                        : node,
+                                                    node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...canvasDrawingDocumentMetadata(node, summary) } } : node,
                                                 ),
                                             );
                                             message.success("绘图已保存到本地，画布正在同步至服务端");

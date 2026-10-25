@@ -1,3 +1,4 @@
+import { canvasDrawingDocumentId } from "@/lib/canvas/canvas-drawing-engine";
 import { isCanvasDrawingPublished, loadCanvasDrawing, restoreCanvasDrawingDocument, type CanvasDrawingSnapshot } from "@/lib/canvas/canvas-drawing-storage";
 import type { CanvasDrawingEditorHandle } from "@/components/canvas/canvas-drawing-editor-types";
 import { uploadResourceFile } from "@/services/api/resources";
@@ -90,12 +91,13 @@ export function selectCanvasDrawingDocument(local: CanvasDrawingSnapshot | null,
 }
 
 export async function loadCanvasDrawingForNode(projectId: string, node: CanvasNodeData) {
-    const local = await loadCanvasDrawing(projectId, node.metadata?.drawingId || "");
-    const localPublished = Boolean(local && (await isCanvasDrawingPublished(projectId, node.metadata?.drawingId || "", local)));
+    const drawingId = canvasDrawingDocumentId(node);
+    const local = await loadCanvasDrawing(projectId, drawingId);
+    const localPublished = Boolean(local && (await isCanvasDrawingPublished(projectId, drawingId, local)));
     const selected = selectCanvasDrawingDocument(local, node.metadata?.drawingDocument, localPublished);
     if (!selected || selected === local) return local;
     const hydrated = await hydrateCanvasDrawingDocument(selected);
-    return restoreCanvasDrawingDocument(projectId, node.metadata?.drawingId || "", hydrated);
+    return restoreCanvasDrawingDocument(projectId, drawingId, hydrated);
 }
 
 export async function persistCanvasDrawingEditorSave(options: {
@@ -114,7 +116,7 @@ export async function persistCanvasDrawingEditorSave(options: {
     const local = await options.saveLocal(draft, options.previous);
     const published = await (options.publish || publishCanvasDrawingDocument)(local);
     const current = options.currentNode();
-    if (!current || current.metadata?.drawingId !== options.node.metadata?.drawingId || JSON.stringify(current.metadata?.drawingDocument) !== expected) throw new Error("绘图保存与远端修改冲突，已保留本地草稿；请关闭后重新核对");
+    if (!current || canvasDrawingDocumentId(current) !== canvasDrawingDocumentId(options.node) || JSON.stringify(current.metadata?.drawingDocument) !== expected) throw new Error("绘图保存与远端修改冲突，已保留本地草稿；请关闭后重新核对");
     options.onSaved(published);
     await options.markPublished?.(published);
     return published;

@@ -40,7 +40,7 @@ export function createCanvasNode(type: CanvasNodeTypeId, position: Position, met
         height: spec.height,
         metadata: type === CanvasNodeType.Script
             ? { ...spec.metadata, ...metadata, storyboard: metadata?.storyboard || { rows: [1, 2, 3].map((shotNumber) => createStoryboardRow(shotNumber)), visibleColumns: [...DEFAULT_STORYBOARD_COLUMNS], referenceNodeIds: [] } }
-            : { ...spec.metadata, ...metadata, ...(type === CanvasNodeType.Drawing ? { drawingId: metadata?.drawingId || `${id}-document` } : {}) },
+            : { ...spec.metadata, ...metadata },
     };
 }
 

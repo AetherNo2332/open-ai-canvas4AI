@@ -2,9 +2,14 @@ import type { Operation } from "./command-contract.generated";
 import type { CanvasDocument } from "./canvas-event-projection";
 import { canvasTimelineCommands } from "./canvas-timeline-commands";
 import { canvasDrawingCommands } from "./canvas-drawing-commands";
+import { canvasDrawingDocumentId } from "./canvas-drawing-engine";
+import type { CanvasNodeData } from "@/types/canvas";
 import { buildCanvasReferenceEdit } from "./canvas-reference-edits";
 import { canvasPrevisCommands, type PrevisEditorFields } from "./canvas-previs-commands";
 import { sameCanvasJsonValue as same } from "./canvas-json-value";
+import { isolateCopiedNodeMetadata } from "./canvas-node-copy";
+import { generationSpecMirrors } from "./generation-contract";
+import type { GenerationSpec } from "./generation-contract.generated";
 export type CanvasCapabilities = {
     protocolVersion: number;
     nodes: Array<{ type: string; baseType?: string; workflowKind?: string; patchFields: Record<string, { path: string }> }>;
@@ -39,6 +44,22 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
         nextNodes = entities(after, "nodes");
     const oldById = new Map(oldNodes.map((n) => [n.id, n])),
         nextById = new Map(nextNodes.map((n) => [n.id, n]));
+    const copiedNodeIds = new Map<string, string>();
+    for (const node of nextNodes) {
+        if (oldById.has(node.id) || typeof node.metadata?.copiedFromNodeId !== "string") continue;
+        const source = oldById.get(node.metadata.copiedFromNodeId);
+        if (source && source.type === node.type) copiedNodeIds.set(source.id, node.id);
+    }
+    const copiedTextSourceIds = new Map<string, string>();
+    for (const node of nextNodes) {
+        if (oldById.has(node.id) || node.type !== "text" || typeof node.metadata?.copiedFromNodeId !== "string") continue;
+        const source = oldById.get(node.metadata.copiedFromNodeId);
+        if (source?.type !== "text") continue;
+        const copyIDs = new Map(copiedNodeIds);
+        copyIDs.set(source.id, node.id);
+        const expected = isolateCopiedNodeMetadata(source as CanvasNodeData, copyIDs);
+        if (same(node.metadata, expected)) copiedTextSourceIds.set(node.id, source.id);
+    }
     // Managed edges are drawn from reference fields by the host (and previewed
     // by the editor before it does); they are never connection commands.
     const commandEdges = (doc: CanvasDocument) => entities(doc, "connections").filter((e) => e.managedBy !== "reference-fields-v1");
@@ -57,6 +78,8 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             if (node.position?.y !== undefined) add.y = node.position.y;
             if (node.title !== undefined) add.title = node.title;
             if (node.metadata?.content !== undefined) add.content = node.metadata.content;
+            const copiedFromNodeId = copiedTextSourceIds.get(node.id);
+            if (copiedFromNodeId !== undefined) add.copiedFromNodeId = copiedFromNodeId;
             operations.push(add);
         }
     for (const node of nextNodes) {
@@ -69,6 +92,9 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             claim(paths, "position");
             claim(paths, "title");
             claim(paths, "metadata.content");
+            // The host reconstructs exact text-copy metadata from the source.
+            // Other types and altered copy payloads remain strict and fail closed.
+            if (copiedTextSourceIds.has(node.id)) claim(paths, "metadata");
             if (node.metadata?.status === "idle" || node.metadata?.status === "success") claim(paths, "metadata.status");
             if (node.type === "script" && same(node.metadata?.storyboard?.referenceNodeIds, [])) claim(paths, "metadata.storyboard.referenceNodeIds");
         }
@@ -85,9 +111,18 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
                 claim(paths, field.path);
             }
         }
+        if (patch.generationSpec && typeof patch.generationSpec === "object") {
+            // The host rewrites these mirrors from the spec it applies: matching ones are
+            // part of that write, and a cleared one is implied rather than a null value.
+            for (const [key, value] of Object.entries(generationSpecMirrors(patch.generationSpec as GenerationSpec))) {
+                if (!same(node.metadata?.[key], value)) continue;
+                claim(paths, "metadata." + key);
+                for (const [alias, field] of Object.entries(descriptor.patchFields)) if (field.path === "metadata." + key && patch[alias] === null) delete patch[alias];
+            }
+        }
         if (Object.keys(patch).length) operations.push({ type: "update_node", id: node.id, patch });
         if (node.type === "drawing" && node.metadata?.drawingDocument) {
-            const drawing = canvasDrawingCommands(node.id, node.metadata.drawingId || "", previous?.metadata?.drawingDocument, node.metadata.drawingDocument);
+            const drawing = canvasDrawingCommands(node.id, canvasDrawingDocumentId(node as CanvasNodeData), previous?.metadata?.drawingDocument, node.metadata.drawingDocument);
             if (drawing) operations.push(drawing);
             for (const key of ["drawingDocument", "drawingRevision", "drawingUpdatedAt", "drawingShapeCount", "drawingPageCount", "drawingId"]) claim(paths, "metadata." + key);
         }
@@ -210,6 +245,7 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
         )
     )
         operations.push({ type: "reorder_connections", id: String(after.id || before.id), nodeIds: nextEdges.map((e) => e.id) });
+    if (operations.length > 100 && operations.some((operation) => operation.type === "add_node" && operation.copiedFromNodeId)) throw new Error("canvas_editor_copy_batch_too_large:" + operations.length);
     return operations;
 }
 function editorValuePatch(before: unknown, after: unknown): unknown {

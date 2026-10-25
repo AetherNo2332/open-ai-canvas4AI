@@ -147,6 +147,7 @@ export interface Operation {
     fromNodeId?: string;
     toNodeId?: string;
     sourceNodeId?: string;
+    copiedFromNodeId?: string;
     parentId?: string;
     match?: string;
     replacement?: string;
