@@ -33,6 +33,7 @@ func TestEditorCapabilitiesFixture(t *testing.T) {
 		structured[kind] = fields
 	}
 	want := map[string]any{"protocolVersion": 1, "nodes": nodes, "structuredFields": structured}
+	want["previsFields"], want["timelineFields"] = capabilities["previsFields"], capabilities["timelineFields"]
 	path := "../../../../web/test/fixtures/canvas-editor-capabilities.json"
 	encoded, _ := json.MarshalIndent(want, "", "    ")
 	if os.Getenv("UPDATE_EDITOR_CAPABILITIES") == "1" {

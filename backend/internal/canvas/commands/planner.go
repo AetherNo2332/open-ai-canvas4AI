@@ -141,6 +141,9 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 			}
 		}
 	}
+	if err := validateEditorFeatureReferences(next, req.Operations); err != nil {
+		return result, err
+	}
 	if err := validateManagedMedia(doc, next, req.Operations); err != nil {
 		return result, err
 	}
@@ -427,6 +430,17 @@ func relatedReadSet(doc Document, ops []Operation) map[string]bool {
 			}
 		}
 		walkNodeReferences(op.Patch, add)
+		if op.Type == "update_node" {
+			if id, ok := op.Patch["referenceSetId"].(string); ok {
+				add(id)
+			}
+			if _, scene := op.Patch["previsSceneId"]; scene {
+				reads["project:previsScenes"] = true
+			}
+			if _, shot := op.Patch["previsShotId"]; shot {
+				reads["project:previsScenes"] = true
+			}
+		}
 		if op.Type == "edit_image_batch" {
 			for _, id := range op.NodeIDs {
 				add(id)

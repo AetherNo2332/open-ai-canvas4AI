@@ -19,12 +19,16 @@ func (p *planner) bindResource(doc Document, op Operation, ctx ValidationContext
 		return failure("resource_not_owned", "资源不存在、未就绪或未授权")
 	}
 	kind := text(node["type"])
-	if kind != "image" && kind != "video" && kind != "audio" && kind != "text" {
+	if kind != "image" && kind != "video" && kind != "audio" && kind != "text" && kind != "media-conversion" {
 		return BadAuthRequest("节点不支持资源绑定")
 	}
 	if kind == "text" {
 		if resource.Kind != "file" || (resource.MimeType != "text/plain" && resource.MimeType != "text/markdown") {
 			return BadAuthRequest("文本节点需要文本文件资源")
+		}
+	} else if kind == "media-conversion" {
+		if (resource.Kind != "image" && resource.Kind != "video") || !strings.HasPrefix(resource.MimeType, resource.Kind+"/") {
+			return BadAuthRequest("转换节点需要图片或视频资源")
 		}
 	} else if resource.Kind != kind || !strings.HasPrefix(resource.MimeType, kind+"/") {
 		return BadAuthRequest("资源类型与节点不匹配")

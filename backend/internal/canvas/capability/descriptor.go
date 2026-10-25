@@ -153,7 +153,9 @@ func (d Descriptor) ValidatePatch(patch map[string]any) error {
 		mirrors, _ := spec.NodeMetadata()
 		mirrors["generationMode"] = spec.Mode
 		for key, value := range patch {
-			if expected, exists := mirrors[key]; exists && key != "generationSpec" && fmt.Sprint(value) != fmt.Sprint(expected) {
+			// prompt describes the asset; content/composer carries reference tokens
+			// for the next generation and is already checked against spec.Prompt.
+			if expected, exists := mirrors[key]; exists && key != "generationSpec" && key != "prompt" && fmt.Sprint(value) != fmt.Sprint(expected) {
 				return fmt.Errorf("生成合同与字段 %s 不能冲突", key)
 			}
 		}

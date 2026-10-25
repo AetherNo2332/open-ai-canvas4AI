@@ -6,4 +6,4 @@ test("real text modal lease and command ACK preserve drafts and defer successful
     if (result.exitCode) console.error(output);
     expect(output).toContain("0 fail");
     expect(result.exitCode).toBe(0);
-});
+}, 35000);

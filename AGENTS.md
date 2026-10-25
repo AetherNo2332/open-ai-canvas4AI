@@ -54,7 +54,7 @@
 ### Agent、插件、CI 和文档
 
 - 修改 `docs/` 前确认内容属于专题文档，而不是把长篇说明重新复制到根 README。目录索引见 `docs/index.md`。
-- `.github/workflows/quality.yml` 是 PR 与推送门禁（`agent`、`backend`、`payment-plugins`、`web`、`changelog`、`production-agent-smoke`）。backend 显式运行 vet、依赖 AST baseline、公共 Agent 路由/OpenAPI 合同，并用锁定版本的 staticcheck/ineffassign 从受控包逐步扩大检查。生产 smoke 以临时覆盖运行 deploy+build 和确定性模型；保留四服务 parity 的隔离边界。`publish-images.yml` 在 main/tag 构建镜像，从根 VERSION 派生内部版本、正式版本和镜像 tag。新增门禁或脚本时同步更新本节和第 8 节。
+- `.github/workflows/quality.yml` 是 PR 与推送门禁（`agent`、`backend`、`payment-plugins`、`web`、`canvas-node-acceptance`、`changelog`、`production-agent-smoke`）。节点验收从真实前端工厂/编辑 hook 产生操作，再由 CGO SQLite 命令服务持久化、重开读回并核对重试回执；覆盖每类内置节点的创建、编辑、粘贴和删除，生成回调受控，不发收费任务。backend 显式运行 vet、依赖 AST baseline、公共 Agent 路由/OpenAPI 合同，并用锁定版本的 staticcheck/ineffassign 从受控包逐步扩大检查。生产 smoke 以临时覆盖运行 deploy+build 和确定性模型；保留四服务 parity 的隔离边界。`publish-images.yml` 在 main/tag 构建镜像，从根 VERSION 派生内部版本、正式版本和镜像 tag。新增门禁或脚本时同步更新本节和第 8 节。
 
 ## 4. 前端 API 和状态合同
 
@@ -157,6 +157,7 @@
 项目当前默认不自动运行语法检查、类型检查、测试或构建。用户明确要求验证，或改动风险需要验证时，按范围选择最小充分命令，并在交付中如实记录：
 
 - 前端：`cd web && bun run build`；专项测试用 `bun test ...`。UI 退场规则用 `bun run lint`（只禁 antd Empty 和静态 `Modal.confirm`，不是风格检查）。
+- 节点验收：在 `web/` 执行 `bun scripts/audit-canvas-node-save.tsx test/fixtures/canvas-editor-capabilities.json /tmp/node-functions.json`；随后在 `backend/` 设置 `CANVAS_NODE_ACCEPTANCE_FILE=/tmp/node-functions.json`、`CGO_ENABLED=1`，运行 `go test ./internal/canvas/commands -run '^TestNodeFunctionAcceptance$' -count=1`。能力目录先通过 `TestEditorCapabilitiesFixture`；不得放宽失败操作、遗漏类型或身份伪造的断言。
 - 后端：`cd backend && go test ./...`；涉及 PostgreSQL、资源、任务或权限时补对应集成/冒烟路径。
 - 增量治理：`go test ./internal/architecture` 与 handler 的 OpenAPI 合同测试；baseline 必须对应精确规则和位置，不能自动接纳新违规。CI 分别验证锁版本分析器拒绝负例，保留已有工具 AST/制品与 Pi 合同检查。
 - 部署脚本：`python -B -m unittest scripts.test_production_deployment scripts.test_agent_parity_container_commands scripts.test_production_agent_smoke scripts.test_install_agent_worker_id` 只检查隔离命令、配置和身份边界；真实跨进程入口是 `scripts/verify-production-agent-smoke.py`。运行容器前检查项目、挂载、端口和数据范围，不能把静态检查当成生产验收。
