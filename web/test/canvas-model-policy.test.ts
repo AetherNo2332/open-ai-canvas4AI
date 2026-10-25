@@ -114,6 +114,23 @@ describe("逻辑模型选择", () => {
         expect(edited.metadata?.generateAudio).toBe("true");
     });
 
+    test("切换模型时按新选择写入宿主派生的渠道镜像，重复选择不改动", () => {
+        const spec = { version: 1, mode: "image" as const, prompt: "p", options: {}, referenceBindings: [], textInputMode: "append-sources" as const };
+        const generated: CanvasNodeData = {
+            ...node("image", CanvasNodeType.Image),
+            metadata: { model: "relay::cinema-text", channelId: "relay", channelModelKey: "cinema-text", generationSpec: { ...spec, modelSelection: { kind: "channel", channelId: "relay", modelKey: "cinema-text" } } } as CanvasNodeData["metadata"],
+        };
+        const mirrors = (value: CanvasNodeData) => {
+            const metadata = value.metadata as Record<string, unknown>;
+            return { model: metadata.model, logicalModelId: metadata.logicalModelId, channelId: metadata.channelId, channelModelKey: metadata.channelModelKey };
+        };
+
+        expect(mirrors(synchronizeGenerationSpec(generated, { model: "other::cinema-image" }))).toEqual({ model: "other::cinema-image", logicalModelId: undefined, channelId: "other", channelModelKey: "cinema-image" });
+        expect(mirrors(synchronizeGenerationSpec(generated, { model: "relay::cinema-text" }))).toEqual(mirrors(generated));
+        const logical: CanvasNodeData = { ...generated, metadata: { logicalModelId: "cinema", generationSpec: { ...spec, modelSelection: { kind: "logical", logicalModelId: "cinema" } } } as CanvasNodeData["metadata"] };
+        expect(mirrors(synchronizeGenerationSpec(logical, { model: "relay::cinema-text" }))).toEqual({ model: "relay::cinema-text", logicalModelId: undefined, channelId: "relay", channelModelKey: "cinema-text" });
+    });
+
     test("逻辑模型合同不会被旧 metadata.model 覆盖", () => {
         const config = policyConfig();
         config.channels[0]!.modelCosts![0]!.logicalModelId = "cinema-logical";

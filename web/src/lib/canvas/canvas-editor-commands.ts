@@ -7,6 +7,8 @@ import type { CanvasNodeData } from "@/types/canvas";
 import { buildCanvasReferenceEdit } from "./canvas-reference-edits";
 import { canvasPrevisCommands, type PrevisEditorFields } from "./canvas-previs-commands";
 import { sameCanvasJsonValue as same } from "./canvas-json-value";
+import { generationSpecMirrors } from "./generation-contract";
+import type { GenerationSpec } from "./generation-contract.generated";
 export type CanvasCapabilities = {
     protocolVersion: number;
     nodes: Array<{ type: string; baseType?: string; workflowKind?: string; patchFields: Record<string, { path: string }> }>;
@@ -85,6 +87,15 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             if (!same(at(previous, field.path), at(node, field.path)) && [...paths].some((path) => path === field.path || path.startsWith(field.path + ".") || field.path.startsWith(path + "."))) {
                 patch[key] = structuredClone(at(node, field.path) ?? null);
                 claim(paths, field.path);
+            }
+        }
+        if (patch.generationSpec && typeof patch.generationSpec === "object") {
+            // The host rewrites these mirrors from the spec it applies: matching ones are
+            // part of that write, and a cleared one is implied rather than a null value.
+            for (const [key, value] of Object.entries(generationSpecMirrors(patch.generationSpec as GenerationSpec))) {
+                if (!same(node.metadata?.[key], value)) continue;
+                claim(paths, "metadata." + key);
+                for (const [alias, field] of Object.entries(descriptor.patchFields)) if (field.path === "metadata." + key && patch[alias] === null) delete patch[alias];
             }
         }
         if (Object.keys(patch).length) operations.push({ type: "update_node", id: node.id, patch });
