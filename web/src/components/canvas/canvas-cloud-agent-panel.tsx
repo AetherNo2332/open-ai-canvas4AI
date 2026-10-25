@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
+import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import { Button, Dropdown, Input, Popover } from "antd";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, Check, ChevronRight, CircleDot, Clock3, Download, History, LoaderCircle, MessageSquarePlus, Settings2, ShieldCheck, Trash2, Sparkles, X } from "lucide-react";
@@ -99,6 +99,7 @@ export type CanvasCloudAgentPanelHandle = {
     sendPrompt: (request: { canvasId: string; userScope: string; prompt: string; focusNodeIds?: string[] }) => Promise<"sent" | "queued" | false>;
 };
 type AgentSubmitOptions = { preserveDraft?: boolean; focusNodeIds?: string[]; mode?: AgentSendMode; oppositeMode?: boolean; replyToQuestionId?: string };
+const AgentPanelVisibilityContext = createContext(true);
 
 type CloudAgentPanelProps = {
     ref?: Ref<CanvasCloudAgentPanelHandle>;
@@ -299,6 +300,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     const resizeCaptureRef = useRef<{ element: HTMLDivElement; pointerId: number } | null>(null);
     useLayoutEffect(() => {
         if (open) return;
+        setSkillsOpen(false);
         const capture = resizeCaptureRef.current;
         if (capture?.element.hasPointerCapture(capture.pointerId)) capture.element.releasePointerCapture(capture.pointerId);
         resizeCaptureRef.current = null;
@@ -1229,7 +1231,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                 {view === "settings" ? (
                                     <motion.div key="settings" className="flex min-h-0 flex-1" initial={{ opacity: 0, x: 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 18 }} transition={{ duration: reducedMotion ? 0 : 0.18 }}>
                                         <CanvasCloudAgentSettings
-                                            key={`${userId}:${canvasId}`}
+                                            key={`${userId}:${canvasId}:${open}`}
                                             sendMode={messageQueue.mode}
                                             sendModeSaving={messageQueue.savingMode}
                                             sendModeError={messageQueue.settingsError}
@@ -1398,7 +1400,9 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                                             />
                                         ) : null}
                                         {pendingQuestion ? <AgentQuestionBar question={pendingQuestion} theme={theme} disabled={approvalSubmitting || busy || !messageQueue.queue?.awaitingQuestionId} onAnswer={(label) => void submit(label, { mode: "interject", replyToQuestionId: messageQueue.queue?.awaitingQuestionId })} /> : null}
+                                        {/* 重置临时浮层所有者以同步移除 body portal；草稿仍由面板状态保留。 */}
                                         <AgentChatComposer
+                                            key={String(open)}
                                             queuedMessages={<>
                                                 <AgentMessageQueueList key={conversationScope} queue={messageQueue.queue} error={messageQueue.queueError || messageQueue.settingsError} busy={busy || messageQueue.acting} onEdit={messageQueue.edit} onPromote={messageQueue.promote} onRemove={messageQueue.remove} onResume={messageQueue.resume} onRetry={messageQueue.retry} />
                                                 {pendingSubmission.current?.request && !busy ? <div className="agent-message-queue agent-message-queue-error"><span>发送结果待确认</span><button type="button" onClick={() => { const request = pendingSubmission.current?.request; if (request) void submit(request.prompt, { preserveDraft: true }); }}>重试发送</button></div> : null}
@@ -1441,7 +1445,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                         </div>
                     </motion.aside>
             </div>
-            <CanvasAgentSkillLibraryModal
+            {open ? <CanvasAgentSkillLibraryModal
                 open={skillsOpen}
                 theme={theme}
                 installedSkills={installedSkills}
@@ -1465,10 +1469,11 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 }
                 onInstall={installSkill}
                 onLoadMore={loadMoreSkills}
-            />
+            /> : null}
         </>
     );
-    return floating ? createPortal(panel, document.body) : panel;
+    const scopedPanel = <AgentPanelVisibilityContext value={open}>{panel}</AgentPanelVisibilityContext>;
+    return floating ? createPortal(scopedPanel, document.body) : scopedPanel;
 }
 
 function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onOpen }: { theme: CanvasTheme; statusColor: string; approvalPending: boolean; reducedMotion: boolean; onOpen: () => void }) {
@@ -1970,6 +1975,7 @@ function ApprovalCard({
 }) {
     const [showReason, setShowReason] = useState(Boolean(approval.reason));
     const [mediaSettings, setMediaSettings] = useState<AgentMediaSettings>();
+    const panelOpen = useContext(AgentPanelVisibilityContext);
     const imageApproval = agentImageApproval(approval.detail);
     const action = agentApprovalPresentation(approval.detail);
     return (
@@ -2000,7 +2006,7 @@ function ApprovalCard({
                     无法确认具体目标，继续前请重新读取画布。
                 </div>
             )}
-            {imageApproval ? <CanvasAgentImageApprovalSettings initial={imageApproval} value={mediaSettings} onChange={setMediaSettings} theme={theme} disabled={submitting} /> : null}
+            {imageApproval ? <CanvasAgentImageApprovalSettings key={String(panelOpen)} initial={imageApproval} value={mediaSettings} onChange={setMediaSettings} theme={theme} disabled={submitting} /> : null}
             <button type="button" className="canvas-agent-approval-reason-toggle" aria-expanded={showReason} onClick={() => setShowReason((value) => !value)} disabled={submitting}>
                 {showReason ? "收起拒绝理由" : "填写拒绝理由（可选）"}
             </button>
