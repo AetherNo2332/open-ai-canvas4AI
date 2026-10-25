@@ -5,7 +5,27 @@ import type { AgentEvent, AgentQueuedMessage } from "@/services/api/agent";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
 const dom = new Window({ url: "http://localhost/", width: 1440, height: 900 });
-for (const [key, value] of Object.entries({ window: dom, document: dom.document, navigator: dom.navigator, localStorage: dom.localStorage, HTMLElement: dom.HTMLElement, HTMLInputElement: dom.HTMLInputElement, HTMLTextAreaElement: dom.HTMLTextAreaElement, SVGElement: dom.SVGElement, Element: dom.Element, Node: dom.Node, Event: dom.Event, CustomEvent: dom.CustomEvent, ShadowRoot: dom.ShadowRoot, MutationObserver: dom.MutationObserver, ResizeObserver: dom.ResizeObserver, requestAnimationFrame: dom.requestAnimationFrame.bind(dom), cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom), getComputedStyle: dom.getComputedStyle.bind(dom), IS_REACT_ACT_ENVIRONMENT: true }))
+for (const [key, value] of Object.entries({
+    window: dom,
+    document: dom.document,
+    navigator: dom.navigator,
+    localStorage: dom.localStorage,
+    HTMLElement: dom.HTMLElement,
+    HTMLInputElement: dom.HTMLInputElement,
+    HTMLTextAreaElement: dom.HTMLTextAreaElement,
+    SVGElement: dom.SVGElement,
+    Element: dom.Element,
+    Node: dom.Node,
+    Event: dom.Event,
+    CustomEvent: dom.CustomEvent,
+    ShadowRoot: dom.ShadowRoot,
+    MutationObserver: dom.MutationObserver,
+    ResizeObserver: dom.ResizeObserver,
+    requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
+    cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom),
+    getComputedStyle: dom.getComputedStyle.bind(dom),
+    IS_REACT_ACT_ENVIRONMENT: true,
+}))
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 const React = await import("react");
 const { act } = React;
@@ -26,25 +46,59 @@ const motionTags = new Map<string, any>();
 mock.module("motion/react", () => ({
     AnimatePresence: ({ children }: any) => <>{children}</>,
     useReducedMotion: () => reducedMotion,
-    motion: new Proxy({}, { get: (_target, tag: string) => {
-        if (!motionTags.has(tag)) motionTags.set(tag, ({ initial, animate, exit, transition, whileHover, whileTap, layout, ...props }: any) => React.createElement(tag, { ...props, "data-motion-contract": JSON.stringify({ initial, animate, exit, transition, layout }) }));
-        return motionTags.get(tag);
-    } }),
+    motion: new Proxy(
+        {},
+        {
+            get: (_target, tag: string) => {
+                if (!motionTags.has(tag))
+                    motionTags.set(tag, ({ initial, animate, exit, transition, whileHover, whileTap, layout, ...props }: any) =>
+                        React.createElement(tag, { ...props, "data-motion-contract": JSON.stringify({ initial, animate, exit, transition, layout }) }),
+                    );
+                return motionTags.get(tag);
+            },
+        },
+    ),
 }));
 mock.module("file-saver", () => ({ saveAs: silent }));
 mock.module("@/components/ai/ai-message-markdown", () => ({ AIMessageMarkdown: ({ children, content }: any) => <div>{children || content}</div> }));
 mock.module("@/components/canvas/live2d-avatar", () => ({ Live2DAvatar: () => null }));
 mock.module("@/components/ui/fluid-orb", () => ({ FluidOrb: () => null }));
-mock.module("@/services/api/agent", () => ({ ...agent, getAgentUISettings: async () => ({ defaultSendMode: "queue", revision: 1 }), getAgentCapabilities: async () => ({ permissionModes: ["auto"], skills: true, availability: { configured: true } }), listAgentSkillDefaults: async () => ({ count: 0, skills: [] }), getAgentMessageQueue: async () => ({ conversationId: "test", canvasId: "canvas", revision: 1, paused: false, latestRunId: currentConversation.run?.id || "run-approval", items: queueItems }), subscribeAgentEvents: (_id: string, receive: (event: AgentEvent) => void, options: any) => { receiveEvent = receive; options.onConnectionChange("connected"); return silent; }, getAgentRun: async () => ({ run: currentConversation.run }) }));
+mock.module("@/services/api/agent", () => ({
+    ...agent,
+    getAgentUISettings: async () => ({ defaultSendMode: "queue", revision: 1 }),
+    getAgentCapabilities: async () => ({ permissionModes: ["auto"], skills: true, availability: { configured: true } }),
+    listAgentSkillDefaults: async () => ({ count: 0, skills: [] }),
+    getAgentMessageQueue: async () => ({ conversationId: "test", canvasId: "canvas", revision: 1, paused: false, latestRunId: currentConversation.run?.id || "run-approval", items: queueItems }),
+    subscribeAgentEvents: (_id: string, receive: (event: AgentEvent) => void, options: any) => {
+        receiveEvent = receive;
+        options.onConnectionChange("connected");
+        return silent;
+    },
+    getAgentRun: async () => ({ run: currentConversation.run }),
+}));
 mock.module("@/services/api/agent-subagent", () => ({ ...subagents, listAgentSubagents: async () => [] }));
-const savedConversation: CloudAgentConversation = { id: "conversation-one", title: "Test conversation", messages: [
-    { id: "user-one", role: "user", text: "A user message" },
-    { id: "reasoning-one", role: "assistant", text: "A retained reasoning detail", reasoning: true },
-    { id: "answer-one", role: "assistant", text: "An assistant message" },
-], run: null, draft: "A retained unsent draft", permissionMode: "auto", createdAt: "2026-10-25T00:00:00Z", updatedAt: "2026-10-25T00:00:00Z" };
+const savedConversation: CloudAgentConversation = {
+    id: "conversation-one",
+    title: "Test conversation",
+    messages: [
+        { id: "user-one", role: "user", text: "A user message" },
+        { id: "reasoning-one", role: "assistant", text: "A retained reasoning detail", reasoning: true },
+        { id: "answer-one", role: "assistant", text: "An assistant message" },
+    ],
+    run: null,
+    draft: "A retained unsent draft",
+    permissionMode: "auto",
+    createdAt: "2026-10-25T00:00:00Z",
+    updatedAt: "2026-10-25T00:00:00Z",
+};
 let currentConversation = savedConversation;
-mock.module("@/services/cloud-agent-conversations", () => ({ ...cache, loadCloudAgentConversations: async () => ({ version: 1, activeId: currentConversation.id, conversations: [currentConversation] }), saveCloudAgentConversations: async () => {}, loadCloudAgentPendingSubmission: async () => null }));
-mock.module("@/services/cloud-agent-history", () => ({ ...history, refreshCloudAgentConversations: async () => currentConversation.run ? [currentConversation] : [] }));
+mock.module("@/services/cloud-agent-conversations", () => ({
+    ...cache,
+    loadCloudAgentConversations: async () => ({ version: 1, activeId: currentConversation.id, conversations: [currentConversation] }),
+    saveCloudAgentConversations: async () => {},
+    loadCloudAgentPendingSubmission: async () => null,
+}));
+mock.module("@/services/cloud-agent-history", () => ({ ...history, refreshCloudAgentConversations: async () => (currentConversation.run ? [currentConversation] : []) }));
 mock.module("@/services/api/skills", () => ({ listSkillPresets: async () => ({ presets: [] }), listSkills: async () => ({ skills: [] }), listAddedSkills: async () => ({ skills: [] }), addSkill: silent }));
 mock.module("@/services/user-data-sync", () => ({ saveRemoteUserDataNow: async () => {}, applyAgentCanvasPatches: async () => {}, refreshCanvasAfterAgent: async () => {} }));
 const { CanvasCloudAgentPanel } = await import("@/components/canvas/canvas-cloud-agent-panel");
@@ -56,7 +110,9 @@ parse(await Bun.file(new URL("../../src/styles/globals.css", import.meta.url)).t
     if (rule.selector.includes(".canvas-editor-shell:has(")) styles.textContent += rule.toString();
 });
 document.head.append(styles);
-const settle = async () => { for (let i = 0; i < 4; i++) await new Promise((resolve) => setTimeout(resolve, 5)); };
+const settle = async () => {
+    for (let i = 0; i < 4; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+};
 function readOlderMessages(conversation: HTMLElement) {
     Object.defineProperties(conversation, { scrollHeight: { configurable: true, value: 1000 }, clientHeight: { configurable: true, value: 200 } });
     conversation.scrollTop = 175;
@@ -73,27 +129,88 @@ function toolbarVisibility(host: HTMLElement) {
 async function mount({ compact = false, floating = false, reduced = false, approval = false, queued = false, streaming = false, references = [] as CanvasResourceReference[], draft = savedConversation.draft } = {}) {
     reducedMotion = reduced;
     receiveEvent = undefined;
-    currentConversation = approval ? { ...savedConversation, run: { id: "run-approval", canvasId: "canvas", conversationId: "test", status: "waiting_approval", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt, approval: { approvalId: "image-approval", reason: "Keep approval reason", call: { id: "image-call", function: { name: "generate_media", arguments: JSON.stringify({ mode: "image", size: "1:1", prompt: "An image", referenceNodeIds: [] }) } } } } } : savedConversation;
-    if (queued) currentConversation = { ...savedConversation, run: { id: "run-queue", conversationId: "test", canvasId: "canvas", status: "completed", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt } };
-    if (streaming) currentConversation = { ...savedConversation, run: { id: "run-stream", conversationId: "test", canvasId: "canvas", status: "running", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt } };
+    currentConversation = approval
+        ? {
+              ...savedConversation,
+              run: {
+                  id: "run-approval",
+                  canvasId: "canvas",
+                  conversationId: "test",
+                  status: "waiting_approval",
+                  permissionMode: "auto",
+                  createdAt: savedConversation.createdAt,
+                  updatedAt: savedConversation.updatedAt,
+                  approval: {
+                      approvalId: "image-approval",
+                      reason: "Keep approval reason",
+                      call: { id: "image-call", function: { name: "generate_media", arguments: JSON.stringify({ mode: "image", size: "1:1", prompt: "An image", referenceNodeIds: [] }) } },
+                  },
+              },
+          }
+        : savedConversation;
+    if (queued)
+        currentConversation = { ...savedConversation, run: { id: "run-queue", conversationId: "test", canvasId: "canvas", status: "completed", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt } };
+    if (streaming)
+        currentConversation = { ...savedConversation, run: { id: "run-stream", conversationId: "test", canvasId: "canvas", status: "running", permissionMode: "auto", createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt } };
     currentConversation = { ...currentConversation, draft };
-    queueItems = queued ? [1, 2].map((sequence) => ({ id: `queued-${sequence}`, conversationId: "test", canvasId: "canvas", sequence, revision: 1, mode: "queue", status: "queued", prompt: `Queued message ${sequence}`, createdAt: savedConversation.createdAt, updatedAt: savedConversation.updatedAt })) : [];
+    queueItems = queued
+        ? [1, 2].map((sequence) => ({
+              id: `queued-${sequence}`,
+              conversationId: "test",
+              canvasId: "canvas",
+              sequence,
+              revision: 1,
+              mode: "queue",
+              status: "queued",
+              prompt: `Queued message ${sequence}`,
+              createdAt: savedConversation.createdAt,
+              updatedAt: savedConversation.updatedAt,
+          }))
+        : [];
     dom.happyDOM.setWindowSize({ width: compact ? 700 : 1440, height: 900 });
     window.localStorage.clear();
     setActiveUserScope("visibility-user");
     useUserStore.setState({ hydrated: true, user: { id: "visibility-user", username: "test", displayName: "test", role: "user", status: "active" }, features: { agentSubagentsEnabled: false, customChannelsEnabled: true } as any });
-    const channel = createModelChannel({ id: "test", scope: "user", apiKey: "test", models: ["deepseek-r1"], modelCosts: [{ model: "deepseek-r1", capability: "text", billingMode: "token", unitPriceMicrocredits: 0, capabilityConfig: { version: 1, text: { thinking: true, references: { promptMaxChars: 1000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 } } } }] });
+    const channel = createModelChannel({
+        id: "test",
+        scope: "user",
+        apiKey: "test",
+        models: ["deepseek-r1"],
+        modelCosts: [
+            {
+                model: "deepseek-r1",
+                capability: "text",
+                billingMode: "token",
+                unitPriceMicrocredits: 0,
+                capabilityConfig: { version: 1, text: { thinking: true, references: { promptMaxChars: 1000, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0 } } },
+            },
+        ],
+    });
     useConfigStore.setState({ config: normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel], model: "test::deepseek-r1", textModel: "test::deepseek-r1" } }).config });
     const host = document.createElement("div");
     host.className = "canvas-editor-shell";
     document.body.append(host);
     const root = createRoot(host);
-    const render = async (open: boolean) => act(async () => {
-        root.render(<><div className="canvas-main-toolbar">Toolbar</div><CanvasCloudAgentPanel canvasId="canvas" nodeCount={1} selectedNodeIds={[]} references={references} open={open} floating={floating} launcher={false} onOpen={silent} onCollapse={silent} /></>);
-        await settle();
-    });
+    const render = async (open: boolean) =>
+        act(async () => {
+            root.render(
+                <>
+                    <div className="canvas-main-toolbar">Toolbar</div>
+                    <CanvasCloudAgentPanel canvasId="canvas" nodeCount={1} selectedNodeIds={[]} references={references} open={open} floating={floating} launcher={false} onOpen={silent} onCollapse={silent} />
+                </>,
+            );
+            await settle();
+        });
     await render(true);
-    return { host, render, aside: () => (floating ? document.body : host).querySelector<HTMLElement>("aside.canvas-agent-panel")!, close: async () => { await act(async () => root.unmount()); host.remove(); } };
+    return {
+        host,
+        render,
+        aside: () => (floating ? document.body : host).querySelector<HTMLElement>("aside.canvas-agent-panel")!,
+        close: async () => {
+            await act(async () => root.unmount());
+            host.remove();
+        },
+    };
 }
 afterAll(() => dom.happyDOM.abort());
 
@@ -128,7 +245,9 @@ test("closing removes the real mention body portal while its search field is foc
         expect(mounted.aside().querySelector(".agent-composer-wrap") === composer).toBe(true);
         expect(mounted.aside().querySelector('[aria-label="Agent 输入"]') === editor).toBe(true);
         expect(editor.textContent).toBe("@");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("closing removes the real inline image preview body portal without replacing the editor", async () => {
@@ -137,7 +256,10 @@ test("closing removes the real inline image preview body portal without replacin
         const editor = mounted.aside().querySelector<HTMLElement>('[aria-label="Agent 输入"]')!;
         const chip = editor.querySelector<HTMLElement>('[data-mention-reference-id="image-one"]')!;
         expect(chip).not.toBeNull();
-        await act(async () => { chip.dispatchEvent(new dom.MouseEvent("dblclick", { bubbles: true })); await settle(); });
+        await act(async () => {
+            chip.dispatchEvent(new dom.MouseEvent("dblclick", { bubbles: true }));
+            await settle();
+        });
         const preview = document.body.querySelector<HTMLElement>('[role="dialog"][aria-label="预览Image one"]')!;
         expect(preview).not.toBeNull();
         expect(mounted.aside().contains(preview)).toBe(false);
@@ -149,7 +271,9 @@ test("closing removes the real inline image preview body portal without replacin
         expect(document.body.querySelector('[role="dialog"][aria-label="预览Image one"]')).toBeNull();
         expect(mounted.aside().querySelector('[aria-label="Agent 输入"]') === editor).toBe(true);
         expect(editor.querySelector('[data-mention-reference-id="image-one"]') === chip).toBe(true);
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("closing cancels the real composer height drag while preserving height and draft", async () => {
@@ -158,7 +282,14 @@ test("closing cancels the real composer height drag while preserving height and 
         const composer = mounted.aside().querySelector<HTMLElement>(".agent-composer-wrap")!;
         const handle = composer.querySelector<HTMLButtonElement>('[aria-label="调整提示词面板高度"]')!;
         const captures = new Set<number>();
-        Object.assign(handle, { setPointerCapture: (id: number) => captures.add(id), hasPointerCapture: (id: number) => captures.has(id), releasePointerCapture: (id: number) => { captures.delete(id); handle.dispatchEvent(new dom.PointerEvent("lostpointercapture", { bubbles: true, pointerId: id })); } });
+        Object.assign(handle, {
+            setPointerCapture: (id: number) => captures.add(id),
+            hasPointerCapture: (id: number) => captures.has(id),
+            releasePointerCapture: (id: number) => {
+                captures.delete(id);
+                handle.dispatchEvent(new dom.PointerEvent("lostpointercapture", { bubbles: true, pointerId: id }));
+            },
+        });
         await act(async () => handle.dispatchEvent(new dom.PointerEvent("pointerdown", { bubbles: true, pointerId: 19, button: 0, clientY: 600 })));
         await act(async () => handle.dispatchEvent(new dom.PointerEvent("pointermove", { bubbles: true, pointerId: 19, clientY: 540 })));
         expect(handle.getAttribute("aria-valuenow")).toBe("120");
@@ -169,36 +300,53 @@ test("closing cancels the real composer height drag while preserving height and 
         await act(async () => handle.dispatchEvent(new dom.PointerEvent("pointermove", { bubbles: true, pointerId: 19, clientY: 500 })));
         expect(handle.getAttribute("aria-valuenow")).toBe("120");
         expect(composer.querySelector<HTMLTextAreaElement>('[aria-label="Agent 输入"]')!.value).toBe("A retained unsent draft");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
-for (const following of [false, true]) test(`hidden stream additions preserve ${following ? "bottom following" : "older-message reading"} through reopen`, async () => {
-    const mounted = await mount({ streaming: true });
-    try {
-        const conversation = mounted.aside().querySelector<HTMLElement>("[data-agent-conversation]")!;
-        let height = 1000;
-        let top = following ? 800 : 175;
-        // Happy DOM has no layout; model the browser's clamped scroll geometry at this boundary.
-        Object.defineProperties(conversation, { scrollHeight: { configurable: true, get: () => height }, clientHeight: { configurable: true, value: 200 }, scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, height - 200)); } } });
-        conversation.dispatchEvent(new Event("scroll", { bubbles: true }));
-        await mounted.render(false);
-        for (const seq of [1, 2]) {
-            height += 200;
-            await act(async () => {
-                receiveEvent!({ eventId: `stream-${seq}`, runId: "run-stream", seq, type: "assistant_delta", payload: { messageId: "answer-one", text: ` hidden-${seq}` }, createdAt: savedConversation.createdAt });
-                await settle();
+for (const following of [false, true])
+    test(`hidden stream additions preserve ${following ? "bottom following" : "older-message reading"} through reopen`, async () => {
+        const mounted = await mount({ streaming: true });
+        try {
+            const conversation = mounted.aside().querySelector<HTMLElement>("[data-agent-conversation]")!;
+            let height = 1000;
+            let top = following ? 800 : 175;
+            // Happy DOM has no layout; model the browser's clamped scroll geometry at this boundary.
+            Object.defineProperties(conversation, {
+                scrollHeight: { configurable: true, get: () => height },
+                clientHeight: { configurable: true, value: 200 },
+                scrollTop: {
+                    configurable: true,
+                    get: () => top,
+                    set: (value: number) => {
+                        top = Math.max(0, Math.min(value, height - 200));
+                    },
+                },
             });
-            for (let i = 0; i < 40 && !conversation.textContent?.includes(`hidden-${seq}`); i++) {
-                await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+            conversation.dispatchEvent(new Event("scroll", { bubbles: true }));
+            await mounted.render(false);
+            for (const seq of [1, 2]) {
+                height += 200;
+                await act(async () => {
+                    receiveEvent!({ eventId: `stream-${seq}`, runId: "run-stream", seq, type: "assistant_delta", payload: { messageId: "answer-one", text: ` hidden-${seq}` }, createdAt: savedConversation.createdAt });
+                    await settle();
+                });
+                for (let i = 0; i < 40 && !conversation.textContent?.includes(`hidden-${seq}`); i++) {
+                    await act(async () => {
+                        await new Promise((resolve) => setTimeout(resolve, 50));
+                    });
+                }
+                expect(conversation.textContent).toContain(`hidden-${seq}`);
+                expect(conversation.scrollTop).toBe(following ? height - 200 : 175);
             }
-            expect(conversation.textContent).toContain(`hidden-${seq}`);
-            expect(conversation.scrollTop).toBe(following ? height - 200 : 175);
+            await mounted.render(true);
+            expect(mounted.aside().querySelector("[data-agent-conversation]") === conversation).toBe(true);
+            expect(conversation.scrollTop).toBe(following ? 1200 : 175);
+        } finally {
+            await mounted.close();
         }
-        await mounted.render(true);
-        expect(mounted.aside().querySelector("[data-agent-conversation]") === conversation).toBe(true);
-        expect(conversation.scrollTop).toBe(following ? 1200 : 175);
-    } finally { await mounted.close(); }
-});
+    });
 
 test("closing preserves the real composer and queue expansion with an unsaved edit draft", async () => {
     const mounted = await mount({ queued: true });
@@ -230,14 +378,19 @@ test("closing preserves the real composer and queue expansion with an unsaved ed
             editorIdentity: reopenedEditor === editor,
             editDraft: reopenedEditor?.value,
         }).toEqual({ composerIdentity: true, queueIdentity: true, expanded: "true", visibleItems: 2, editorIdentity: true, editDraft: "An unsaved queue edit draft" });
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("programmatic panel close dismisses the real context body portal and its focus", async () => {
     const mounted = await mount();
     try {
         const conversation = mounted.aside().querySelector("[data-agent-conversation]");
-        await act(async () => { mounted.aside().querySelector<HTMLButtonElement>(".agent-context-ring")!.click(); await settle(); });
+        await act(async () => {
+            mounted.aside().querySelector<HTMLButtonElement>(".agent-context-ring")!.click();
+            await settle();
+        });
         const portal = document.body.querySelector<HTMLElement>(".agent-context-popover")!;
         expect(portal).not.toBeNull();
         expect(mounted.aside().contains(portal)).toBe(false);
@@ -251,7 +404,9 @@ test("programmatic panel close dismisses the real context body portal and its fo
         expect(mounted.aside().querySelector("[data-agent-conversation]") === conversation).toBe(true);
         await mounted.render(true);
         expect(mounted.aside().querySelector(".agent-context-ring")!.getAttribute("aria-expanded")).toBe("false");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("closing retains approval state but removes its real model-picker portal", async () => {
@@ -260,7 +415,10 @@ test("closing retains approval state but removes its real model-picker portal", 
         const conversation = mounted.aside().querySelector("[data-agent-conversation]");
         const card = mounted.aside().querySelector(".canvas-agent-approval-card");
         expect(card).not.toBeNull();
-        await act(async () => { mounted.aside().querySelector<HTMLButtonElement>('[aria-label="选择生成模型"]')!.click(); await settle(); });
+        await act(async () => {
+            mounted.aside().querySelector<HTMLButtonElement>('[aria-label="选择生成模型"]')!.click();
+            await settle();
+        });
         const portal = document.body.querySelector<HTMLElement>(".canvas-model-picker-popover")!;
         expect(portal).not.toBeNull();
         const target = portal.querySelector<HTMLElement>('[role="listbox"]')!;
@@ -273,14 +431,19 @@ test("closing retains approval state but removes its real model-picker portal", 
         expect(mounted.aside().querySelector("[data-agent-conversation]") === conversation).toBe(true);
         expect(mounted.aside().querySelector(".canvas-agent-approval-card") === card).toBe(true);
         expect(mounted.aside().querySelector<HTMLTextAreaElement>(".canvas-agent-approval-reason")!.value).toBe("Keep approval reason");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("programmatic close removes the real Skills modal and clears its open state", async () => {
     const mounted = await mount();
     try {
         const conversation = mounted.aside().querySelector("[data-agent-conversation]");
-        await act(async () => { mounted.aside().querySelector<HTMLButtonElement>('[aria-label="打开 Skills 技能库"]')!.click(); await settle(); });
+        await act(async () => {
+            mounted.aside().querySelector<HTMLButtonElement>('[aria-label="打开 Skills 技能库"]')!.click();
+            await settle();
+        });
         const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
         expect(dialog).not.toBeNull();
         const target = document.body.querySelector<HTMLButtonElement>('[aria-label="关闭技能商店"]')!;
@@ -292,14 +455,22 @@ test("programmatic close removes the real Skills modal and clears its open state
         expect(document.body.querySelector('[role="dialog"]')).toBeNull();
         expect(mounted.aside().querySelector("[data-agent-conversation]") === conversation).toBe(true);
         expect(mounted.aside().querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("A retained unsent draft");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("programmatic close removes the settings model-picker portal", async () => {
     const mounted = await mount();
     try {
-        await act(async () => { mounted.aside().querySelector<HTMLButtonElement>('[aria-label="Agent 设置"]')!.click(); await settle(); });
-        await act(async () => { mounted.aside().querySelector<HTMLButtonElement>('[aria-label="选择文本模型"]')!.click(); await settle(); });
+        await act(async () => {
+            mounted.aside().querySelector<HTMLButtonElement>('[aria-label="Agent 设置"]')!.click();
+            await settle();
+        });
+        await act(async () => {
+            mounted.aside().querySelector<HTMLButtonElement>('[aria-label="选择文本模型"]')!.click();
+            await settle();
+        });
         const portal = document.body.querySelector<HTMLElement>(".canvas-model-picker-popover")!;
         expect(portal).not.toBeNull();
         const target = portal.querySelector<HTMLElement>('[role="listbox"]')!;
@@ -308,33 +479,41 @@ test("programmatic close removes the settings model-picker portal", async () => 
         await mounted.render(false);
         expect(portal.isConnected && getComputedStyle(portal).display !== "none").toBe(false);
         expect(document.activeElement === target).toBe(false);
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 for (const popup of [
     { label: "model picker", trigger: '[aria-label="选择文本模型"]', portal: ".canvas-model-picker-popover", focus: '[role="listbox"]' },
     { label: "permission dropdown", trigger: '[aria-label^="执行权限："]', portal: ".ant-dropdown", focus: '[role="menuitem"]' },
     { label: "reasoning dropdown", trigger: '[aria-label="选择 Agent 推理模式"]', portal: ".ant-dropdown", focus: '[role="menuitem"]' },
-]) test(`programmatic panel close dismisses the real ${popup.label} portal`, async () => {
-    const mounted = await mount();
-    try {
-        const trigger = mounted.aside().querySelector<HTMLButtonElement>(popup.trigger)!;
-        expect(trigger).not.toBeNull();
-        await act(async () => { trigger.click(); await settle(); });
-        const portal = document.body.querySelector<HTMLElement>(popup.portal)!;
-        expect(portal).not.toBeNull();
-        const target = portal.querySelector<HTMLElement>(popup.focus)!;
-        target.tabIndex = 0;
-        await act(async () => target.focus());
-        expect(document.activeElement === target).toBe(true);
-        await mounted.render(false);
-        expect(portal.isConnected && getComputedStyle(portal).display !== "none").toBe(false);
-        expect(document.activeElement === target).toBe(false);
-        await mounted.render(true);
-        const reopened = document.body.querySelector<HTMLElement>(popup.portal);
-        expect(Boolean(reopened && getComputedStyle(reopened).display !== "none")).toBe(false);
-    } finally { await mounted.close(); }
-});
+])
+    test(`programmatic panel close dismisses the real ${popup.label} portal`, async () => {
+        const mounted = await mount();
+        try {
+            const trigger = mounted.aside().querySelector<HTMLButtonElement>(popup.trigger)!;
+            expect(trigger).not.toBeNull();
+            await act(async () => {
+                trigger.click();
+                await settle();
+            });
+            const portal = document.body.querySelector<HTMLElement>(popup.portal)!;
+            expect(portal).not.toBeNull();
+            const target = portal.querySelector<HTMLElement>(popup.focus)!;
+            target.tabIndex = 0;
+            await act(async () => target.focus());
+            expect(document.activeElement === target).toBe(true);
+            await mounted.render(false);
+            expect(portal.isConnected && getComputedStyle(portal).display !== "none").toBe(false);
+            expect(document.activeElement === target).toBe(false);
+            await mounted.render(true);
+            const reopened = document.body.querySelector<HTMLElement>(popup.portal);
+            expect(Boolean(reopened && getComputedStyle(reopened).display !== "none")).toBe(false);
+        } finally {
+            await mounted.close();
+        }
+    });
 
 test("close retains the real conversation, message DOM, reading position and disclosure state", async () => {
     const mounted = await mount();
@@ -366,7 +545,9 @@ test("close retains the real conversation, message DOM, reading position and dis
         expect(conversation.scrollTop).toBe(175);
         expect(aside.hasAttribute("inert")).toBe(false);
         expect(aside.getAttribute("aria-hidden")).toBe("false");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("panel visibility animates only transform and opacity while dock width changes immediately", async () => {
@@ -389,7 +570,9 @@ test("panel visibility animates only transform and opacity while dock width chan
         expect(contract().animate.x).not.toBe(0);
         expect(Object.keys(contract().animate).every((key) => ["x", "opacity", "transform"].includes(key))).toBe(true);
         expect(aside.style.width).toBe("440px");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("reopening preserves the reading position without restoring to the end", async () => {
@@ -400,7 +583,9 @@ test("reopening preserves the reading position without restoring to the end", as
         await mounted.render(false);
         await mounted.render(true);
         expect(mounted.aside().querySelector<HTMLElement>("[data-agent-conversation]")!.scrollTop).toBe(175);
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("reopening preserves the real reasoning component's local disclosure state", async () => {
@@ -410,7 +595,9 @@ test("reopening preserves the real reasoning component's local disclosure state"
         await mounted.render(false);
         await mounted.render(true);
         expect(mounted.aside().querySelector(".agent-reasoning-summary")!.getAttribute("aria-expanded")).toBe("true");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("manual drag changes real dock width and closing releases an active pointer capture", async () => {
@@ -422,7 +609,10 @@ test("manual drag changes real dock width and closing releases an active pointer
         Object.assign(handle, {
             setPointerCapture: (id: number) => captures.add(id),
             hasPointerCapture: (id: number) => captures.has(id),
-            releasePointerCapture: (id: number) => { captures.delete(id); handle.dispatchEvent(new dom.PointerEvent("lostpointercapture", { bubbles: true, pointerId: id })); },
+            releasePointerCapture: (id: number) => {
+                captures.delete(id);
+                handle.dispatchEvent(new dom.PointerEvent("lostpointercapture", { bubbles: true, pointerId: id }));
+            },
         });
         await act(async () => {
             handle.dispatchEvent(new dom.PointerEvent("pointerdown", { bubbles: true, pointerId: 7, button: 0, clientX: 1000 }));
@@ -438,7 +628,9 @@ test("manual drag changes real dock width and closing releases an active pointer
         const contract = JSON.parse(mounted.aside().getAttribute("data-motion-contract")!);
         expect(contract.transition.duration).toBeGreaterThan(0);
         expect(window.localStorage.getItem("canvas-agent-panel-width")).toBe("500");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("compact toolbar hides only while the retained panel is open", async () => {
@@ -452,7 +644,9 @@ test("compact toolbar hides only while the retained panel is open", async () => 
         expect(toolbarVisibility(mounted.host)).not.toBe("hidden");
         await mounted.render(true);
         expect(toolbarVisibility(mounted.host)).toBe("hidden");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("new conversation still replaces the keyed conversation subtree", async () => {
@@ -461,10 +655,15 @@ test("new conversation still replaces the keyed conversation subtree", async () 
         const conversation = mounted.aside().querySelector("[data-agent-conversation]");
         const button = mounted.aside().querySelector<HTMLButtonElement>('[aria-label="新建对话"]')!;
         expect(button).not.toBeNull();
-        await act(async () => { button.click(); await settle(); });
+        await act(async () => {
+            button.click();
+            await settle();
+        });
         expect(mounted.aside().querySelector("[data-agent-conversation]")).not.toBe(conversation);
         expect(mounted.aside().textContent).not.toContain("A user message");
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });
 
 test("floating reduced-motion panel retains content and takes no dock space", async () => {
@@ -478,5 +677,7 @@ test("floating reduced-motion panel retains content and takes no dock space", as
         await mounted.render(false);
         expect(mounted.aside() === aside).toBe(true);
         expect(aside.hasAttribute("inert")).toBe(true);
-    } finally { await mounted.close(); }
+    } finally {
+        await mounted.close();
+    }
 });

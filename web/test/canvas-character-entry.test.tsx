@@ -28,10 +28,7 @@ for (const workspaceMode of ["simple", "professional"] as const) {
     }
 }
 
-async function withCharacterEntry(
-    options: { projectId?: string; shortDramaEnabled: boolean },
-    run: (entry: () => ReturnType<typeof useCanvasCharacterEntry>, host: HTMLElement, projectOpens: unknown[][], inserts: unknown[][]) => Promise<void>,
-) {
+async function withCharacterEntry(options: { projectId?: string; shortDramaEnabled: boolean }, run: (entry: () => ReturnType<typeof useCanvasCharacterEntry>, host: HTMLElement, projectOpens: unknown[][], inserts: unknown[][]) => Promise<void>) {
     const dom = new Window({ url: "https://canvas.test/" });
     const globals = {
         window: dom,
@@ -51,8 +48,13 @@ async function withCharacterEntry(
     function Harness() {
         entry = useCanvasCharacterEntry({
             ...options,
-            openProjectAssets: (...args) => { projectOpens.push(args); },
-            handleProjectAssetsInsert: async (...args) => { inserts.push(args); return []; },
+            openProjectAssets: (...args) => {
+                projectOpens.push(args);
+            },
+            handleProjectAssetsInsert: async (...args) => {
+                inserts.push(args);
+                return [];
+            },
         });
         return <output>{entry.characterLibraryOpen ? "account library open" : "account library closed"}</output>;
     }
@@ -60,10 +62,14 @@ async function withCharacterEntry(
     document.body.append(host);
     const root = createRoot(host);
     try {
-        await act(async () => { root.render(<Harness />); });
+        await act(async () => {
+            root.render(<Harness />);
+        });
         await run(() => entry!, host, projectOpens, inserts);
     } finally {
-        await act(async () => { root.unmount(); });
+        await act(async () => {
+            root.unmount();
+        });
         await dom.happyDOM.close();
         for (const [key, descriptor] of descriptors) {
             if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -79,10 +85,14 @@ for (const options of [
     test(`${options.projectId ? "disabled short drama" : "free canvas"} routes character entry to the account library`, async () => {
         await withCharacterEntry(options, async (entry, host, projectOpens) => {
             expect(host.textContent).toBe("account library closed");
-            await act(async () => { entry().openCharacters({ x: 120, y: 240 }); });
+            await act(async () => {
+                entry().openCharacters({ x: 120, y: 240 });
+            });
             expect(host.textContent).toBe("account library open");
             expect(projectOpens).toEqual([]);
-            await act(async () => { entry().closeCharacterLibrary(); });
+            await act(async () => {
+                entry().closeCharacterLibrary();
+            });
             expect(host.textContent).toBe("account library closed");
         });
     });
@@ -91,7 +101,9 @@ for (const options of [
 test("enabled linked project delegates character entry and its position to project assets", async () => {
     await withCharacterEntry({ projectId: "linked-project", shortDramaEnabled: true }, async (entry, host, projectOpens) => {
         const position: Position = { x: 120, y: 240 };
-        await act(async () => { entry().openCharacters(position); });
+        await act(async () => {
+            entry().openCharacters(position);
+        });
         expect(projectOpens).toEqual([["character", position]]);
         expect(host.textContent).toBe("account library closed");
     });
@@ -101,12 +113,18 @@ test("account insert preserves payload identity and right-click position, then c
     await withCharacterEntry({ shortDramaEnabled: true }, async (entry, _host, _projectOpens, inserts) => {
         const position: Position = { x: 120, y: 240 };
         const payloads: InsertAssetPayload[] = [{ kind: "character", title: "林夏", assetId: "asset-1", versionId: "version-1", prompt: "米色风衣", aliases: ["夏夏"], definition: { appearance: "短发" }, visualStatus: "ready", voiceStatus: "pending" }];
-        await act(async () => { entry().openCharacters(position); });
-        await act(async () => { await entry().insertLibraryCharacters(payloads); });
+        await act(async () => {
+            entry().openCharacters(position);
+        });
+        await act(async () => {
+            await entry().insertLibraryCharacters(payloads);
+        });
         expect(inserts).toEqual([[payloads, position]]);
         expect(inserts[0][0]).toBe(payloads);
         expect(inserts[0][1]).toBe(position);
-        await act(async () => { await entry().insertLibraryCharacters(payloads); });
+        await act(async () => {
+            await entry().insertLibraryCharacters(payloads);
+        });
         expect(inserts[1]).toEqual([payloads, undefined]);
     });
 });
@@ -114,10 +132,18 @@ test("account insert preserves payload identity and right-click position, then c
 test("closing the account library discards its old insertion position", async () => {
     await withCharacterEntry({ shortDramaEnabled: true }, async (entry, _host, _projectOpens, inserts) => {
         const payloads: InsertAssetPayload[] = [{ kind: "character", title: "林夏", assetId: "asset-1", versionId: "version-1", prompt: "米色风衣", aliases: ["夏夏"], definition: { appearance: "短发" }, visualStatus: "ready", voiceStatus: "pending" }];
-        await act(async () => { entry().openCharacters({ x: 120, y: 240 }); });
-        await act(async () => { entry().closeCharacterLibrary(); });
-        await act(async () => { entry().openCharacters(); });
-        await act(async () => { await entry().insertLibraryCharacters(payloads); });
+        await act(async () => {
+            entry().openCharacters({ x: 120, y: 240 });
+        });
+        await act(async () => {
+            entry().closeCharacterLibrary();
+        });
+        await act(async () => {
+            entry().openCharacters();
+        });
+        await act(async () => {
+            await entry().insertLibraryCharacters(payloads);
+        });
         expect(inserts).toEqual([[payloads, undefined]]);
     });
 });

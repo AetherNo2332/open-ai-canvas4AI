@@ -13,22 +13,28 @@ type CanvasCharacterEntryOptions = {
 export function useCanvasCharacterEntry({ projectId, shortDramaEnabled, openProjectAssets, handleProjectAssetsInsert }: CanvasCharacterEntryOptions) {
     const [characterLibraryOpen, setCharacterLibraryOpen] = useState(false);
     const [insertPosition, setInsertPosition] = useState<Position | undefined>();
-    const openCharacters = useCallback((position?: Position) => {
-        if (shortDramaEnabled && projectId) {
-            openProjectAssets("character", position);
-            return;
-        }
-        setInsertPosition(position);
-        setCharacterLibraryOpen(true);
-    }, [openProjectAssets, projectId, shortDramaEnabled]);
+    const openCharacters = useCallback(
+        (position?: Position) => {
+            if (shortDramaEnabled && projectId) {
+                openProjectAssets("character", position);
+                return;
+            }
+            setInsertPosition(position);
+            setCharacterLibraryOpen(true);
+        },
+        [openProjectAssets, projectId, shortDramaEnabled],
+    );
     const closeCharacterLibrary = useCallback(() => {
         setCharacterLibraryOpen(false);
         setInsertPosition(undefined);
     }, []);
-    const insertLibraryCharacters = useCallback(async (payloads: InsertAssetPayload[]) => {
-        await handleProjectAssetsInsert(payloads, insertPosition);
-        setInsertPosition(undefined);
-    }, [handleProjectAssetsInsert, insertPosition]);
+    const insertLibraryCharacters = useCallback(
+        async (payloads: InsertAssetPayload[]) => {
+            await handleProjectAssetsInsert(payloads, insertPosition);
+            setInsertPosition(undefined);
+        },
+        [handleProjectAssetsInsert, insertPosition],
+    );
 
     return {
         characterLibraryOpen,
