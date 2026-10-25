@@ -141,6 +141,67 @@ test("large edits persist all chunks before sending and retain the unconfirmed r
     session.close();
 });
 
+test("copy provenance batches fail closed before the session can split them", async () => {
+    const sent: Command[] = [];
+    const session = new CanvasCommandSession(
+        transport({
+            execute: async (command) => {
+                sent.push(command);
+                return { ...receipt(1), operationId: command.operationId, clientId: command.clientId };
+            },
+        }),
+        "client",
+    );
+    await session.open("canvas");
+    const operations = Array.from({ length: 101 }, (_, index) => ({
+        type: "add_node" as const,
+        id: `copy-${index}`,
+        nodeType: "text",
+        content: String(index),
+        copiedFromNodeId: index === 100 ? "a" : undefined,
+    }));
+
+    expect(() => session.submit(operations)).toThrow("canvas_editor_copy_batch_too_large:101");
+    expect(sent).toHaveLength(0);
+    expect(session.state.pending).toHaveLength(0);
+    session.close();
+});
+
+test("replacement retries recheck copy provenance batch atomicity", async () => {
+    let attempts = 0;
+    const session = new CanvasCommandSession(
+        transport({
+            execute: async () => {
+                attempts++;
+                throw Object.assign(new Error("invalid"), { status: 422, reason: "invalid_operation" });
+            },
+        }),
+        "client",
+    );
+    await session.open("canvas");
+    await session.submit([{ type: "update_node", id: "a", patch: { content: "rejected" } }]).catch(() => {});
+    const operations = Array.from({ length: 101 }, (_, index) => ({
+        type: "add_node" as const,
+        id: `retry-copy-${index}`,
+        nodeType: "text",
+        content: String(index),
+        copiedFromNodeId: index === 100 ? "a" : undefined,
+    }));
+
+    await expect(
+        session.replaceRejectedDraft(
+            operations,
+            {},
+            async () => {},
+            () => {},
+        ),
+    ).rejects.toThrow("canvas_editor_copy_batch_too_large:101");
+    expect(attempts).toBe(1);
+    expect(session.state.pending).toHaveLength(1);
+    expect(session.state.pending[0].status).toBe("rejected");
+    session.close();
+});
+
 test.each([1, 3])("receipt-only no-op at host cursor %i synchronizes real events before settling and allows the next real edit", async (cursor) => {
     const remoteEvents = Array.from({ length: cursor }, (_, index) => receipt(index + 1, "a", "REMOTE " + (index + 1)));
     const sent: Command[] = [];

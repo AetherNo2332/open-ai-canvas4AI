@@ -61,6 +61,7 @@ type Operation struct {
 	FromNodeID             string                  `json:"fromNodeId,omitempty"`
 	ToNodeID               string                  `json:"toNodeId,omitempty"`
 	SourceNodeID           string                  `json:"sourceNodeId,omitempty"`
+	CopiedFromNodeID       string                  `json:"copiedFromNodeId,omitempty"`
 	ParentID               string                  `json:"parentId,omitempty"`
 	Match                  string                  `json:"match,omitempty"`
 	Replacement            string                  `json:"replacement,omitempty"`
@@ -209,6 +210,8 @@ func validateCanvasID(value, label string, maximum int) error {
 type DrawingOperation = canvasDrawingOp
 type PrevisOperation = canvasPrevisPatchOperation
 type planner struct {
-	registry *capability.Registry
-	now      func() time.Time
+	registry          *capability.Registry
+	now               func() time.Time
+	copiedNodeIDs     map[string]string
+	copiedNodeSources map[string]map[string]any
 }

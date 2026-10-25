@@ -54,7 +54,27 @@ func Plan(doc Document, req Command, ctx ValidationContext) (PlanResult, error) 
 	if now.IsZero() {
 		now = time.Unix(0, 0).UTC()
 	}
-	p := &planner{registry: registry, now: func() time.Time { return now }}
+	copiedNodeIDs := map[string]string{}
+	copiedSourceIDs := map[string]bool{}
+	for _, op := range req.Operations {
+		if op.Type == "add_node" && op.CopiedFromNodeID != "" {
+			copiedNodeIDs[op.CopiedFromNodeID] = op.ID
+			copiedSourceIDs[op.CopiedFromNodeID] = true
+		}
+	}
+	copiedNodeSources := map[string]map[string]any{}
+	for _, node := range maps(next["nodes"]) {
+		id := text(node["id"])
+		if !copiedSourceIDs[id] {
+			continue
+		}
+		cloned, cloneErr := cloneDocument(Document(node))
+		if cloneErr != nil {
+			return result, cloneErr
+		}
+		copiedNodeSources[id] = map[string]any(cloned)
+	}
+	p := &planner{registry: registry, now: func() time.Time { return now }, copiedNodeIDs: copiedNodeIDs, copiedNodeSources: copiedNodeSources}
 	summary := []OperationSummary{}
 	present, removed, recreated := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, node := range maps(next["nodes"]) {
@@ -361,7 +381,7 @@ func relatedReadSet(doc Document, ops []Operation) map[string]bool {
 			delete(reads, key)
 			reads["project:_deleted"] = true
 		}
-		for _, id := range []string{op.FromNodeID, op.ToNodeID, op.SourceNodeID, op.ParentID} {
+		for _, id := range []string{op.FromNodeID, op.ToNodeID, op.SourceNodeID, op.CopiedFromNodeID, op.ParentID} {
 			if id != "" {
 				reads["node:"+id] = true
 			}
