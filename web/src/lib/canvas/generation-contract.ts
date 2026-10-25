@@ -1,5 +1,6 @@
 import { decodeChannelModel, encodeChannelModel, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
+import { sameCanvasJsonValue } from "./canvas-json-value";
 import { GENERATION_CONTRACT_VERSION, GENERATION_LIMITS, GENERATION_OPTION_FIELDS, type GenerationSpec, type ModelSelection, type Options, type ReferenceBinding } from "./generation-contract.generated";
 
 export type { GenerationSpec, ModelSelection, ReferenceBinding } from "./generation-contract.generated";
@@ -200,6 +201,23 @@ export function generationSpecMetadata(spec: GenerationSpec): CanvasNodeMetadata
     return result as CanvasNodeMetadata;
 }
 
+/** Flat fields the host rewrites from every spec it applies (contract NodeMetadata):
+ * selection mirrors and all option fields, absent ones as undefined. */
+export function generationSpecMirrors(spec: Pick<GenerationSpec, "modelSelection" | "options">): Record<string, unknown> {
+    const selection = spec.modelSelection;
+    const mirrors: Record<string, unknown> = {
+        logicalModelId: selection?.kind === "logical" ? selection.logicalModelId : undefined,
+        channelId: selection?.kind === "channel" ? selection.channelId : undefined,
+        channelModelKey: selection?.kind === "channel" ? selection.modelKey : undefined,
+        model: selection?.kind === "channel" ? encodeChannelModel(selection.channelId, selection.modelKey) : undefined,
+    };
+    for (const field of GENERATION_OPTION_FIELDS) {
+        const value = spec.options?.[field.name as keyof Options];
+        mirrors[field.node] = value === undefined ? undefined : field.node === "count" ? value : String(value);
+    }
+    return mirrors;
+}
+
 export function synchronizeGenerationSpec(node: CanvasNodeData, patch: Partial<CanvasNodeMetadata> = {}): CanvasNodeData {
     const metadata = { ...node.metadata, ...patch };
     if (!canvasGenerationMode(node.type)) return { ...node, metadata };
@@ -221,9 +239,12 @@ export function synchronizeGenerationSpec(node: CanvasNodeData, patch: Partial<C
     if (Object.prototype.hasOwnProperty.call(patch, "model")) {
         const model = patch.model ? decodeChannelModel(patch.model) : null;
         next.modelSelection = model ? { kind: "channel", channelId: model.channelId, modelKey: model.model } : undefined;
-        delete (metadata as Record<string, unknown>).logicalModelId;
-        delete (metadata as Record<string, unknown>).channelId;
-        delete (metadata as Record<string, unknown>).channelModelKey;
+        // The host re-mirrors a changed selection when it applies the spec; erasing the
+        // mirrors here would be an edit the command layer cannot express.
+        if (!sameCanvasJsonValue(current.modelSelection, next.modelSelection)) {
+            const mirrors = generationSpecMirrors(next);
+            for (const key of ["logicalModelId", "channelId", "channelModelKey"]) (metadata as Record<string, unknown>)[key] = mirrors[key];
+        }
     }
     return { ...node, metadata: { ...metadata, ...generationSpecMetadata(validateGenerationSpec(next)) } };
 }
