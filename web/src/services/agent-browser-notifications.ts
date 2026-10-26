@@ -67,7 +67,6 @@ export function showAgentBrowserNotification(attention: AgentAttention, onOpen: 
         const notification = runtime.create(copy.title, {
             body: copy.body,
             tag: "yingce-agent-attention",
-            renotify: false,
         });
         notification.onclick = () => {
             runtime.focusWindow();
