@@ -59,6 +59,8 @@ func Models() []any {
 		&model.PaymentNotification{},
 		&model.PaymentReconciliationRun{},
 		&model.PaymentReconciliationItem{},
+		&model.UserStorageGrant{},
+		&model.UserStorageState{},
 		&model.RedeemBatch{},
 		&model.RedeemCode{},
 		&model.AdminAuditEvent{},
@@ -124,6 +126,13 @@ func Models() []any {
 		&model.TaskLog{},
 		&model.Result{},
 		&model.UserFeedback{},
+		&model.DramaProduction{},
+		&model.DramaCast{},
+		&model.DramaEpisode{},
+		&model.DramaShot{},
+		&model.DramaTake{},
+		&model.DramaSegment{},
+		&model.DramaJob{},
 	}
 }
 
