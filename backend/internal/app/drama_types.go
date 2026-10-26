@@ -308,6 +308,8 @@ type DramaSegmentView struct {
 	Request   DramaSegmentRequest `json:"request"`
 	PromptJob *DramaJobView       `json:"promptJob,omitempty"`
 	VideoJob  *DramaJobView       `json:"videoJob,omitempty"`
+	// VideoWait 只在视频已请求（queued）但尚未提交时出现：调度实际卡住的原因，例如等待上一段或参考图。
+	VideoWait string `json:"videoWait,omitempty"`
 }
 
 // DramaSegmentRequest 是一段视频请求的预演，与提交时同一函数计算。
@@ -389,9 +391,16 @@ type DramaModelOption struct {
 	MaxVideoSeconds int `json:"maxVideoSeconds,omitempty"`
 }
 
+// DramaModelUnavailable 是平台目录里有、但短剧流水线无法使用的模型及原因，前端置灰展示而不是隐藏。
+type DramaModelUnavailable struct {
+	Choice DramaModelChoice `json:"choice"`
+	Reason string           `json:"reason"`
+}
+
 type DramaModelCatalog struct {
-	Defaults DramaModels                   `json:"defaults"`
-	Options  map[string][]DramaModelOption `json:"options"`
+	Defaults    DramaModels                        `json:"defaults"`
+	Options     map[string][]DramaModelOption      `json:"options"`
+	Unavailable map[string][]DramaModelUnavailable `json:"unavailable"`
 }
 
 type DramaEstimateRequest struct {

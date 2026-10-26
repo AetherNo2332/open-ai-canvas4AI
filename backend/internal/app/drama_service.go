@@ -604,6 +604,20 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 		}
 		detail.Segments[i].Request = request
 	}
+	lookup := func(id string) (model.DramaCast, bool) {
+		cast, ok := castByID[id]
+		return cast, ok
+	}
+	for i := range detail.Segments {
+		view := &detail.Segments[i]
+		if view.VideoStatus != model.DramaMediaQueued || i >= len(rows) {
+			continue
+		}
+		if job := view.VideoJob; job != nil && (job.Status == model.DramaJobQueued || job.Status == model.DramaJobRunning) {
+			continue
+		}
+		view.VideoWait = firstNonEmpty(dramaVideoWaitReason(settings, p, &detail.Episode, rows, i, detail.Shots, lookup), "排队中，等待调度提交")
+	}
 	return nil
 }
 
@@ -628,7 +642,7 @@ func buildDramaSegmentDrafts(settings DramaSettings, meta dramaBibleMeta, shots 
 	for position, group := range groups {
 		view := DramaSegmentView{Index: group[0].SegmentIndex, Title: firstNonEmpty(group[0].SegmentTitle, group[0].Scene, "剧情段"), ShotIDs: []string{}, Request: DramaSegmentRequest{References: []DramaSegmentReference{}}}
 		characterIDs, propIDs, sceneIDs := []string{}, []string{}, []string{}
-		input := production.SegmentPromptInput{Index: position, Count: len(groups), Title: view.Title, AspectRatio: settings.AspectRatio, Style: settings.StylePrompt, VisualRules: meta.VisualRules, Language: settings.Language}
+		input := production.SegmentPromptInput{Index: position, Count: len(groups), Title: view.Title, AspectRatio: settings.AspectRatio, Style: settings.StylePrompt, VisualRules: meta.VisualRules, Language: settings.Language, PauseMs: settings.Storyboard.DialoguePauseMs()}
 		for _, shot := range group {
 			view.ShotIDs = append(view.ShotIDs, shot.ID)
 			view.DurationMs += shot.DurationMs

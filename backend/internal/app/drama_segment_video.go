@@ -31,6 +31,64 @@ func dramaPromptReady(segment model.DramaSegment) bool {
 	return strings.TrimSpace(segment.VideoPromptOverride) != "" || (segment.PromptStatus == model.DramaMediaReady && strings.TrimSpace(segment.VideoPrompt) != "")
 }
 
+func dramaSegmentVideoDone(segment model.DramaSegment) bool {
+	return segment.VideoStatus == model.DramaMediaReady && segment.VideoResourceID != "" && segment.TailFrameResourceID != ""
+}
+
+// dramaVideoWaitReason 说明第 index 段视频为何还不能提交；空串表示调度会提交它。调度与详情页共用。
+func dramaVideoWaitReason(settings DramaSettings, p *model.DramaProduction, e *model.DramaEpisode, segments []model.DramaSegment, index int, shots []model.DramaShot, lookup func(string) (model.DramaCast, bool)) string {
+	switch {
+	case p.Status == model.DramaStatusPaused:
+		if reason := strings.TrimSpace(p.PauseReason); reason != "" {
+			return "制作已暂停：" + reason
+		}
+		return "制作已暂停"
+	case p.Status != model.DramaStatusRunning:
+		return "制作未在运行，点“继续制作”后开始"
+	case e.Stage == model.DramaEpisodeQueued || e.Stage == model.DramaEpisodeScript:
+		return "等待本集剧本完成"
+	case dramaMediaHeld(settings, e):
+		return "本集尚未放行生图"
+	case settings.ReviewMode == DramaReviewSample && !p.SampleApproved && e.Number != 1:
+		return "等待确认第 1 集样片"
+	}
+	if index > 0 && !dramaSegmentVideoDone(segments[index-1]) {
+		return "等待上一段视频生成（需要它的最后一帧）"
+	}
+	if !dramaPromptReady(segments[index]) {
+		return "等待本段视频提示词撰写完成"
+	}
+	// 未生成的参考图在自动生图或已放行时会被调度排队，同样要等。
+	requested := settings.MediaMode != DramaMediaManual || p.AssetsReleased
+	if names := dramaReferencesInProgress(segments[index].SegmentIndex, shots, lookup, requested); len(names) > 0 {
+		return "等待参考图生成：" + strings.Join(names, "、")
+	}
+	return ""
+}
+
+// dramaReferencesInProgress 返回本段引用、仍在生成的参考图名称。等它们能提升角色一致性；
+// 失败、锁定或从未请求的参考图不再等待，提交时改用文字设定（见 prepareDramaSegment）。
+func dramaReferencesInProgress(segmentIndex int, shots []model.DramaShot, lookup func(string) (model.DramaCast, bool), unrequestedQueued bool) []string {
+	names := []string{}
+	seen := map[string]bool{}
+	for _, shot := range shots {
+		if shot.SegmentIndex != segmentIndex {
+			continue
+		}
+		for _, id := range dramaShotCastIDs(shot) {
+			cast, ok := lookup(id)
+			if !ok || seen[id] || cast.Locked {
+				continue
+			}
+			seen[id] = true
+			if cast.ImageStatus == model.DramaMediaQueued || cast.ImageStatus == model.DramaMediaRunning || (cast.ImageStatus == "" && unrequestedQueued) {
+				names = append(names, cast.Name)
+			}
+		}
+	}
+	return names
+}
+
 func segmentVideoChoice(segment model.DramaSegment, fallback DramaModelChoice) DramaModelChoice {
 	var choice DramaModelChoice
 	if json.Unmarshal([]byte(segment.VideoModelJSON), &choice) == nil && !choice.Empty() {
@@ -136,7 +194,8 @@ func (r *dramaRun) submitSegmentVideo(job *model.DramaJob) (*model.Task, bool, e
 	if err != nil {
 		return nil, false, err
 	}
-	if episode.Stage != model.DramaEpisodeVideo || r.mediaHeld(episode) || r.sampleBlocked(episode) {
+	explicit := segment.VideoStatus == model.DramaMediaQueued && (episode.Stage == model.DramaEpisodePrompts || episode.Stage == model.DramaEpisodeReview)
+	if (episode.Stage != model.DramaEpisodeVideo && !explicit) || r.mediaHeld(episode) || r.sampleBlocked(episode) {
 		return nil, true, nil
 	}
 	if !dramaPromptReady(*segment) {

@@ -225,7 +225,7 @@ export default function DramaStudioPage() {
                     </div>
                 </header>
 
-                {view === "cast" ? <CastPanel projectId={projectId} cast={cast} focusId={castFocus} retrying={retry.isPending} assetsPending={production.settings.mediaMode === "manual" && !production.assetsReleased} releasing={release.isPending && release.variables?.target === "assets"} onReleaseAssets={() => release.mutate({ target: "assets" })} onFocus={(id) => setParams({ cast: id })} onRetry={() => retry.mutate()} onChanged={() => invalidate(episodeId)} />
+                {view === "cast" ? <CastPanel projectId={projectId} cast={cast} ratios={{ character: production.settings.assets.characterRatio }} focusId={castFocus} retrying={retry.isPending} assetsPending={production.settings.mediaMode === "manual" && !production.assetsReleased} releasing={release.isPending && release.variables?.target === "assets"} onReleaseAssets={() => release.mutate({ target: "assets" })} onFocus={(id) => setParams({ cast: id })} onRetry={() => retry.mutate()} onChanged={() => invalidate(episodeId)} />
                 : view === "inbox" ? <InboxPanel items={summary.inbox} castById={castById} retrying={retry.isPending} retryingGroup={retryingGroup} releasing={release.isPending} onRetryAll={() => retry.mutate()} onRetryGroup={(key, items) => retryGroup.mutate({ key, items })} onOpen={openInbox} onOpenSettings={() => openView("settings")} onReleaseAll={confirmReleaseAll} />
                 : view === "settings" ? <SettingsPanel projectId={projectId} summary={summary} cast={cast} onChanged={() => invalidate(episodeId)} />
                 : !episodes.length ? <StudioGenesis summary={summary} /> : (

@@ -11,7 +11,7 @@ import { dramaChoiceKey } from "@/lib/drama/model-choice";
 import { DramaModelPicker } from "../drama-model-picker";
 
 import { mediaBusy } from "../drama-shared";
-import { promptReady, secondsLabel, SegmentInputs, SegmentStatus, SegmentVideo } from "./segment-parts";
+import { promptReady, secondsLabel, SegmentInputs, SegmentStatus, SegmentVideo, videoWaitLabel } from "./segment-parts";
 
 const SHOT_SIZES = ["特写", "近景", "中景", "全景", "远景"];
 const CAMERAS = ["固定", "推", "拉", "摇", "跟", "环绕", "升降", "手持"];
@@ -97,6 +97,12 @@ export function SegmentDialog({ detail, segmentIndex, shotId, castById, aspectRa
                                     <span>{segment.videoError}</span>
                                 </div>
                             ) : null}
+                            {segment.videoStatus === "queued" && segment.videoWait ? (
+                                <div className="drama-sd-error is-wait" role="status">
+                                    <strong>视频尚未提交</strong>
+                                    <span>{segment.videoWait}</span>
+                                </div>
+                            ) : null}
                             <SegmentGenerate key={segment.id} segment={segment} busy={busy} defaultVideoModel={defaultVideoModel} onGenerate={(model) => onGenerate(segment, model)} />
                             <section className="drama-sd-block">
                                 <div className="drama-sd-label">
@@ -146,7 +152,7 @@ function SegmentGenerate({ segment, busy, defaultVideoModel, onGenerate }: { seg
         <div className="drama-sd-generate">
             <DramaModelPicker capability="video" size="sm" value={choice} onChange={setChoice} placeholder="视频模型" />
             <Button type="primary" icon={<Play className="size-4" />} disabled={busy || !promptReady(segment) || running} onClick={() => onGenerate(changed ? choice : undefined)}>
-                {running ? (segment.request.firstFramePending ? `排队中 · 等第 ${segment.index} 段` : "视频生成中") : segment.videoStatus === "ready" ? "重新生成本段视频" : "生成本段视频"}
+                {running ? (segment.videoStatus === "queued" && segment.videoWait ? videoWaitLabel(segment.videoWait) : segment.request.firstFramePending ? `排队中 · 等第 ${segment.index} 段` : "视频生成中") : segment.videoStatus === "ready" ? "重新生成本段视频" : "生成本段视频"}
             </Button>
         </div>
     );

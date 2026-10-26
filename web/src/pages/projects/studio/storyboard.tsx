@@ -366,7 +366,7 @@ export function Storyboard({ shots, segments, aspectRatio, castById, defaultVide
                                     title={!promptReady(segment) ? "先撰写或确认本段视频提示词" : undefined}
                                     onClick={() => onGenerate([segment.index])}
                                 >
-                                    {mediaBusy(segment.videoStatus) ? (segment.request.firstFramePending ? "等上一段" : "生成中") : segment.videoStatus === "ready" ? "重新生成" : "生成"}
+                                    {mediaBusy(segment.videoStatus) ? (segment.videoStatus === "queued" && segment.videoWait ? "等待中" : segment.request.firstFramePending ? "等上一段" : "生成中") : segment.videoStatus === "ready" ? "重新生成" : "生成"}
                                 </Button>
                             </footer>
                         </article>
