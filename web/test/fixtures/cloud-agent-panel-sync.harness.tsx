@@ -155,6 +155,7 @@ mock.module("@/components/canvas/canvas-cloud-agent-chat-ui", () => ({
 }));
 mock.module("@/components/canvas/canvas-cloud-agent-panel-parts", () => ({
     AgentLauncher: () => null,
+    ApprovalCard: () => null,
     AgentContextRing: () => null,
     ComposerControls: (props: any) => {
         controls = props;
