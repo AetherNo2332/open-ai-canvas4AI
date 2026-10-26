@@ -99,6 +99,32 @@ func TestNodeFunctionAcceptance(t *testing.T) {
 				if got == nil || got["type"] != want["type"] {
 					t.Fatalf("missing node %v", want["id"])
 				}
+				if strings.HasPrefix(c.Name, "image:") && strings.HasSuffix(c.Name, "-create") {
+					wantMeta, _ := want["metadata"].(map[string]any)
+					if wantMeta["generationType"] == "edit" {
+						meta, _ := got["metadata"].(map[string]any)
+						prompt, _ := wantMeta["composerContent"].(string)
+						if prompt == "" || meta["composerContent"] != prompt || !reflect.DeepEqual(meta["generationSpec"], wantMeta["generationSpec"]) {
+							t.Fatalf("image edit prompt or reference lost after reopening: %#v", meta)
+						}
+						bindings := maps(meta["generationSpec"].(map[string]any)["referenceBindings"])
+						if len(bindings) != 1 {
+							t.Fatalf("image edit requires its original image: %#v", bindings)
+						}
+						lines := 0
+						for _, edge := range maps(snap.Document["connections"]) {
+							if edge["fromNodeId"] == bindings[0]["nodeId"] && edge["toNodeId"] == got["id"] {
+								lines++
+								if edge["managedBy"] != "reference-fields-v1" {
+									t.Fatal("image edit source was saved as a visual line only")
+								}
+							}
+						}
+						if lines != 1 {
+							t.Fatalf("expected one source line, got %d", lines)
+						}
+					}
+				}
 			}
 			for _, op := range c.Ops {
 				if op.Type != "update_node" {

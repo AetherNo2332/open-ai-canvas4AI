@@ -24,7 +24,13 @@ const { useCanvasNodeOperations } = await import("../src/pages/canvas/use-canvas
 const { useCanvasPrevis } = await import("../src/pages/canvas/use-canvas-previs.ts");
 const { useCanvasBatchTable } = await import("../src/pages/canvas/use-canvas-batch-table.ts");
 const { useCanvasStyleWorkflow } = await import("../src/pages/canvas/use-canvas-style-workflow.ts");
-const { useConfigStore } = await import("../src/stores/use-config-store.ts");
+const { useCanvasMediaTools } = await import("../src/pages/canvas/use-canvas-media-tools.ts");
+const { buildAnglePrompt } = await import("../src/lib/canvas/canvas-project-domain.ts");
+const { buildNodeGenerationContext } = await import("../src/components/canvas/canvas-node-generation.ts");
+const { nodeGenerationPrompt } = await import("../src/lib/canvas/generation-contract.ts");
+const { buildGenerationConfig, runBackendCanvasGenerationTask } = await import("../src/lib/canvas/canvas-project-generation.ts");
+const { http } = await import("../src/services/api/request.ts");
+const { useConfigStore, defaultConfig, createModelChannel, encodeChannelModel } = await import("../src/stores/use-config-store.ts");
 const { createDefaultMediaConversionState } = await import("../src/lib/media-conversion/contracts.ts");
 const { canvasDrawingDocumentMetadata } = await import("../src/lib/canvas/canvas-drawing-engine.ts");
 const { summarizeCanvasContext } = await import("../src/lib/canvas/canvas-context-summary.ts");
@@ -128,6 +134,25 @@ function Harness() {
         }),
         batch: useCanvasBatchTable({ nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds: noop, enqueueGenerationBatch: () => "audit-only-no-worker" }),
         style: useCanvasStyleWorkflow({ canvasId: "audit", nodesRef, selectedNodeIdsRef, getCanvasCenter: () => ({ x: 0, y: 0 }), setNodes, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop, setStylePickerOpen: noop }),
+        media: useCanvasMediaTools({
+            projectId: "audit",
+            nodesRef,
+            connectionsRef,
+            selectedNodeIdsRef,
+            setNodes,
+            setConnections,
+            setSelectedNodeIds: noop,
+            setSelectedConnectionId: noop,
+            setDialogNodeId: noop,
+            setContextMenu: noop,
+            setHoveredNodeId: noop,
+            setToolbarNodeId: noop,
+            setRunningNodeId: noop,
+            startUploadStatus: noop as any,
+            startGenerationRequest: () => new AbortController(),
+            finishGenerationRequest: noop,
+            bindGenerationTask: noop,
+        }),
     };
     return null;
 }
@@ -274,6 +299,46 @@ await act(async () => {
     await hooks.batch.confirmBatchGenDialog({ imageModel: "audit-model", model: "audit-model", size: "1024x1024", quality: "standard", transparentBackground: "false", concurrency: 5 });
 });
 check("batch:generate-draft", batchBefore, { ...doc(nodesRef.current), connections: connectionsRef.current });
+const imageEdits: any[] = [];
+const requests: any[] = [];
+const originalPost = http.post;
+http.post = (async (path: string, request: any) => {
+    if (path !== "/tasks") throw Error("Unexpected audit request: " + path);
+    requests.push(structuredClone(request));
+    throw Error("audit: controlled generation failure; no provider was called");
+}) as typeof http.post;
+const channel = createModelChannel({ id: "audit-image", scope: "system", name: "Audit image", baseUrl: "https://example.test", interfaceType: "openai-image", models: ["image-model"] });
+const imageConfig = { ...defaultConfig, channels: [channel], model: encodeChannelModel(channel.id, "image-model"), imageModel: encodeChannelModel(channel.id, "image-model"), size: "1024x1024", count: "1" };
+await act(async () => useConfigStore.setState({ config: imageConfig }));
+for (const edit of ["angle", "lighting"]) {
+    const source = images[0];
+    const params = { horizontalAngle: -90, pitchAngle: 30, cameraDistance: 4.8, wideAngle: true };
+    const expectedPrompt = edit === "angle" ? buildAnglePrompt(params) : "Only change the lighting: blue rim light, preserve the original subject. [lighting azimuth:120° elevation:30° brightness:60%]";
+    requests.length = 0;
+    await run("image:" + edit + "-create", [source], () =>
+        edit === "angle" ? hooks.media.generateAngleNode(source, params) : hooks.media.generateLightingNode(source, { azimuth: 120, elevation: 30, brightness: 60, rimLight: true, lightColor: "#3366ff" }, expectedPrompt),
+    );
+    const child = nodesRef.current.find((node) => node.id !== source.id);
+    if (!child) throw Error(edit + " did not create an image node");
+    const context = buildNodeGenerationContext(child.id, nodesRef.current, connectionsRef.current, nodeGenerationPrompt(child), []);
+    // Retry the angle failure, or submit the lighting draft through the same task API.
+    try {
+        await runBackendCanvasGenerationTask({ projectId: "audit", nodeId: child.id, mode: "image", prompt: context.prompt, config: buildGenerationConfig(imageConfig, child, "image"), referenceImages: context.referenceImages });
+    } catch (error) {
+        if (!String(error).includes("audit: controlled generation failure")) throw error;
+    }
+    imageEdits.push({
+        edit,
+        nodeId: child.id,
+        sourceNodeId: source.id,
+        expectedPrompt,
+        metadata: child.metadata,
+        contextPrompt: context.prompt,
+        contextReferences: context.referenceImages.map((ref) => ref.storageKey),
+        requests: structuredClone(requests),
+    });
+}
+http.post = originalPost;
 await act(async () => root.unmount());
 const firstShot = createCanvasNode(CanvasNodeType.Video, { x: 0, y: 0 }, { workflowKind: "shot", shotIndex: 1 });
 const observations = [
@@ -285,7 +350,7 @@ const observations = [
         wrongNumberMatches: searchCanvasNodes([firstShot], "镜头 2").length,
     },
 ];
-writeFileSync(outputFile, JSON.stringify({ results, notices, observations }, null, 2));
+writeFileSync(outputFile, JSON.stringify({ results, notices, observations, imageEdits }, null, 2));
 console.log(
     JSON.stringify(
         results.map(({ name, status, error, ops }) => ({ name, status, error, ops: ops?.length })),

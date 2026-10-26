@@ -34,6 +34,20 @@ test("all registered node factories and feature producers produce host commands 
             expect(report.results.find((item: any) => item.name === name)?.status).toBe("converted");
         }
         expect(report.observations).toEqual([{ name: "shot-number-display", expected: "镜头 1", contextLabel: "镜头 1", searchDescription: "镜头 1", wrongNumberMatches: 0 }]);
+        expect(report.imageEdits.map((item: any) => item.edit)).toEqual(["angle", "lighting"]);
+        for (const item of report.imageEdits) {
+            expect(item.metadata.composerContent).toBe(item.expectedPrompt);
+            expect(item.metadata.generationSpec.prompt).toBe(item.expectedPrompt);
+            expect(item.metadata.generationSpec.referenceBindings).toEqual([expect.objectContaining({ nodeId: item.sourceNodeId, mediaType: "image", role: "reference" })]);
+            expect(item.contextPrompt).toBe(item.expectedPrompt);
+            expect(item.contextReferences).toEqual(["resource:local"]);
+            expect(item.requests).toHaveLength(item.edit === "angle" ? 2 : 1);
+            for (const request of item.requests) {
+                expect(request.prompt).toBe(item.expectedPrompt);
+                expect(request.input.prompt).toBe(item.expectedPrompt);
+                expect(request.input.referenceImages).toEqual([expect.objectContaining({ storageKey: "resource:local" })]);
+            }
+        }
     } finally {
         rmSync(directory, { recursive: true, force: true });
     }
