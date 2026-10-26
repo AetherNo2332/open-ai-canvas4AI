@@ -125,6 +125,7 @@ import { cancelGenerationTask } from "@/services/api/task-center";
 import { CanvasTopBar, type CanvasProjectView } from "./canvas-project-top-bar";
 import { CanvasAssetView } from "@/components/canvas/canvas-asset-view";
 import type { CanvasAssetVersion } from "@/lib/canvas/canvas-asset-catalog";
+import { canDownloadCanvasNodeMedia } from "@/lib/canvas/canvas-media-download";
 import { CanvasSyncStatus } from "./canvas-sync-status";
 import { LibTVImportDialog } from "./components/libtv-import-dialog";
 import { TapNowImportDialog } from "./components/tapnow-import-dialog";
@@ -1277,6 +1278,7 @@ function CanvasViewportPage() {
     const {
         collapsingBatchIds,
         downloadNodeImage,
+        downloadNodesMedia,
         handleConfigNodeChange,
         handleFolderStyleChange,
         handleFolderThemeChange,
@@ -3259,6 +3261,8 @@ function CanvasViewportPage() {
                                 onCopySelection={copySelectedNodes}
                                 onDeleteSelection={() => deleteNodes(selectedNodeIds)}
                                 onSendToAgent={() => sendSelectionToAgent(contextMenu?.type === "node" && selectedNodeIds.size <= 1 ? contextMenu.nodeId : undefined)}
+                                downloadableSelectionCount={contextMenu && selectedNodeIds.size > 1 ? nodes.filter((node) => selectedNodeIds.has(node.id) && canDownloadCanvasNodeMedia(node)).length : 0}
+                                onDownloadSelection={() => void downloadNodesMedia(nodesRef.current.filter((node) => selectedNodeIds.has(node.id)))}
                             />
 
                             <CanvasUploadModal open={uploadModalOpen} onClose={closeUploadModal} onUpload={handleUploadFiles} />
