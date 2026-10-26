@@ -120,7 +120,7 @@ export function ApiLogDetailDrawer({ logId, onClose, onLogUpdated }: { logId: st
                 <Activity className="size-[18px]" aria-hidden="true" />
             </div>
             <div className="min-w-0">
-                <div className="truncate text-[15px] font-semibold text-foreground">请求日志详情</div>
+                <div className="truncate text-[var(--fs-body)] font-semibold text-foreground">请求日志详情</div>
                 <div className="mt-0.5 truncate text-xs font-normal text-foreground/50">
                     {capabilityText(log.capability)} · {log.model || "未识别模型"} · {formatTime(log.startedAt || log.createdAt)}
                 </div>
@@ -192,7 +192,7 @@ function LogDetail({ log, providerRequestId, videoURL, resultText, querying, onP
             {mediaRecoverable ? (
                 <section className="api-log-detail-section api-log-recovery-section">
                     <div className="api-log-detail-section-heading">
-                        <div className="flex items-center gap-2.5">
+                        <div className="flex items-center gap-2">
                             <div className="grid size-8 place-items-center rounded-md bg-amber-500/12 text-amber-500">
                                 <HardDriveUpload className="size-4" aria-hidden="true" />
                             </div>
@@ -226,7 +226,7 @@ function LogDetail({ log, providerRequestId, videoURL, resultText, querying, onP
             {log.capability === "video" ? (
                 <section className="api-log-detail-section api-log-recovery-section">
                     <div className="api-log-detail-section-heading">
-                        <div className="flex items-center gap-2.5">
+                        <div className="flex items-center gap-2">
                             <div className="grid size-8 place-items-center rounded-md bg-violet-500/12 text-violet-500">
                                 <Video className="size-4" aria-hidden="true" />
                             </div>

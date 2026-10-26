@@ -359,7 +359,7 @@ function MediaResult({ log, onPreview }: { log: ApiCallLog; onPreview: (url: str
     if (!url || (kind !== "image" && kind !== "video")) return <span className="text-foreground/30">--</span>;
     const previewUnavailable = unavailableUrl === url;
     return (
-        <div className="flex w-[90px] items-center gap-1.5">
+        <div className="flex w-[90px] items-center gap-2">
             <button
                 type="button"
                 title={previewUnavailable ? "预览不可用，素材可能已删除" : `预览${kind === "video" ? "视频" : "图片"}`}
