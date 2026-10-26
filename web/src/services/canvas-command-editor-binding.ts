@@ -79,7 +79,7 @@ export function bindCanvasCommandEditor<N, E>(
         for (const [key, value] of Object.entries(base.fields)) if (!Object.hasOwn(draftFields, key)) Object.defineProperty(draftFields, key, { value: structuredClone(value), enumerable: true, configurable: true });
         return { changes, base };
     }
-    const unsubscribe = session.subscribe((state) => {
+    const unsubscribe = session.subscribe((state, advance) => {
         if (disposed || !state.acknowledged) return;
         let projected = structuredClone(state.projected);
         if (previous) {
@@ -89,6 +89,14 @@ export function bindCanvasCommandEditor<N, E>(
             projected = applyCanvasDraftChanges(projected, changes, base.entities, base.fields);
             carryCanvasTaskDisplay(previous, display, projected);
             carryCanvasMeasuredLayout(display, projected);
+        }
+        // Upload/resource/asset edits can still be local when their predecessor
+        // is acknowledged. They need the same causal version advancement as
+        // queued commands, without rebasing over an unrelated remote change.
+        if (advance) {
+            for (const [key, version] of Object.entries(advance.after)) {
+                if (Object.hasOwn(draftExpected, key) && draftExpected[key] === (advance.before[key] ?? 0)) draftExpected[key] = version;
+            }
         }
         previous = structuredClone(state.projected);
         versions = { ...state.acknowledged.entityVersions };

@@ -55,6 +55,10 @@ export type CommandPreconditions = {
     baseFields?: Record<string, unknown>;
     baseEntityGenerations?: Record<string, number>;
 };
+// An ordered ACK for a pending operation in this session, not a snapshot or
+// merely an event with the same client ID. Consumers may advance only matching
+// observations; a stale observation must retain its conflict protection.
+export type CommandVersionAdvance = { before: Record<string, number>; after: Record<string, number> };
 const copy = <T>(v: T): T => structuredClone(v);
 const errorStatus = (e: unknown) => (e && typeof e === "object" ? ("status" in e ? Number(e.status) : undefined) : undefined);
 const errorReason = (e: unknown) => (e && typeof e === "object" && "reason" in e ? String(e.reason) : undefined);
@@ -63,7 +67,7 @@ const aborted = () => new DOMException("画布会话已关闭", "AbortError");
 export class CanvasCommandSession {
     private acknowledged: Snapshot | null = null;
     private pending: Pending[] = [];
-    private listeners = new Set<(state: CommandSessionState) => void>();
+    private listeners = new Set<(state: CommandSessionState, advance?: CommandVersionAdvance) => void>();
     private buffer = new Map<number, Receipt>();
     private generation = 0;
     private abort = new AbortController();
@@ -78,7 +82,7 @@ export class CanvasCommandSession {
         readonly clientId: string,
         private journal?: CommandJournal,
     ) {}
-    subscribe(listener: (state: CommandSessionState) => void) {
+    subscribe(listener: (state: CommandSessionState, advance?: CommandVersionAdvance) => void) {
         this.listeners.add(listener);
         listener(this.state);
         return () => this.listeners.delete(listener);
@@ -247,6 +251,7 @@ export class CanvasCommandSession {
             const event = this.buffer.get(this.acknowledged.eventSeq + 1);
             if (!event) break;
             this.buffer.delete(event.eventSeq);
+            let advance: CommandVersionAdvance | undefined;
             if (event.reset) {
                 this.validateSnapshot(event.reset, event.canvasId);
                 this.settle(event);
@@ -263,7 +268,8 @@ export class CanvasCommandSession {
                     entityGenerations: { ...before.entityGenerations, ...event.entityGenerations },
                 };
                 this.acknowledged = next;
-                if (event.clientId === this.clientId && this.pending.some((p) => p.operationId === event.operationId)) {
+                if (event.clientId === this.clientId && this.pending.some((p) => p.operationId === event.operationId && p.documentEpoch === event.documentEpoch)) {
+                    advance = { before: before.entityVersions, after: event.entityVersions };
                     for (const p of this.pending) {
                         if (p.wire || !p.dependencies.includes(event.operationId)) continue;
                         for (const [key, version] of Object.entries(event.entityVersions)) {
@@ -273,7 +279,7 @@ export class CanvasCommandSession {
                 }
             }
             this.settle(event);
-            this.emit();
+            this.emit(true, advance);
         }
     }
     private settle(receipt: Receipt) {
@@ -484,7 +490,7 @@ export class CanvasCommandSession {
         }
         return [...keys];
     }
-    private emit(persist = true) {
+    private emit(persist = true, advance?: CommandVersionAdvance) {
         let projected = this.acknowledged ? copy(this.acknowledged.document) : {};
         const conflicts: CommandSessionState["conflicts"] = [];
         const rejections: CommandSessionState["rejections"] = [];
@@ -531,7 +537,7 @@ export class CanvasCommandSession {
             this.journalTail = this.journalTail.catch(() => {}).then(() => this.journal!.write(id, stored));
             void this.journalTail.catch(() => {});
         }
-        for (const listener of this.listeners) listener(this.state);
+        for (const listener of this.listeners) listener(this.state, advance);
     }
     async replaceRejectedDraft(operations: Operation[], preconditions: CommandPreconditions, preserveDraft: () => Promise<void>, validateLocalDraft: () => void): Promise<void> {
         if (!this.acknowledged) throw aborted();
