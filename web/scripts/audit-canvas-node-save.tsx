@@ -135,10 +135,23 @@ function Harness() {
         batch: useCanvasBatchTable({ nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds: noop, enqueueGenerationBatch: () => "audit-only-no-worker" }),
         style: useCanvasStyleWorkflow({ canvasId: "audit", nodesRef, selectedNodeIdsRef, getCanvasCenter: () => ({ x: 0, y: 0 }), setNodes, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop, setStylePickerOpen: noop }),
         media: useCanvasMediaTools({
-            projectId: "audit", nodesRef, connectionsRef, selectedNodeIdsRef, setNodes, setConnections,
-            setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop, setContextMenu: noop,
-            setHoveredNodeId: noop, setToolbarNodeId: noop, setRunningNodeId: noop, startUploadStatus: noop as any,
-            startGenerationRequest: () => new AbortController(), finishGenerationRequest: noop, bindGenerationTask: noop,
+            projectId: "audit",
+            nodesRef,
+            connectionsRef,
+            selectedNodeIdsRef,
+            setNodes,
+            setConnections,
+            setSelectedNodeIds: noop,
+            setSelectedConnectionId: noop,
+            setDialogNodeId: noop,
+            setContextMenu: noop,
+            setHoveredNodeId: noop,
+            setToolbarNodeId: noop,
+            setRunningNodeId: noop,
+            startUploadStatus: noop as any,
+            startGenerationRequest: () => new AbortController(),
+            finishGenerationRequest: noop,
+            bindGenerationTask: noop,
         }),
     };
     return null;
@@ -302,9 +315,9 @@ for (const edit of ["angle", "lighting"]) {
     const params = { horizontalAngle: -90, pitchAngle: 30, cameraDistance: 4.8, wideAngle: true };
     const expectedPrompt = edit === "angle" ? buildAnglePrompt(params) : "Only change the lighting: blue rim light, preserve the original subject. [lighting azimuth:120° elevation:30° brightness:60%]";
     requests.length = 0;
-    await run("image:" + edit + "-create", [source], () => edit === "angle"
-        ? hooks.media.generateAngleNode(source, params)
-        : hooks.media.generateLightingNode(source, { azimuth: 120, elevation: 30, brightness: 60, rimLight: true, lightColor: "#3366ff" }, expectedPrompt));
+    await run("image:" + edit + "-create", [source], () =>
+        edit === "angle" ? hooks.media.generateAngleNode(source, params) : hooks.media.generateLightingNode(source, { azimuth: 120, elevation: 30, brightness: 60, rimLight: true, lightColor: "#3366ff" }, expectedPrompt),
+    );
     const child = nodesRef.current.find((node) => node.id !== source.id);
     if (!child) throw Error(edit + " did not create an image node");
     const context = buildNodeGenerationContext(child.id, nodesRef.current, connectionsRef.current, nodeGenerationPrompt(child), []);
@@ -314,7 +327,16 @@ for (const edit of ["angle", "lighting"]) {
     } catch (error) {
         if (!String(error).includes("audit: controlled generation failure")) throw error;
     }
-    imageEdits.push({ edit, nodeId: child.id, sourceNodeId: source.id, expectedPrompt, metadata: child.metadata, contextPrompt: context.prompt, contextReferences: context.referenceImages.map((ref) => ref.storageKey), requests: structuredClone(requests) });
+    imageEdits.push({
+        edit,
+        nodeId: child.id,
+        sourceNodeId: source.id,
+        expectedPrompt,
+        metadata: child.metadata,
+        contextPrompt: context.prompt,
+        contextReferences: context.referenceImages.map((ref) => ref.storageKey),
+        requests: structuredClone(requests),
+    });
 }
 http.post = originalPost;
 await act(async () => root.unmount());
