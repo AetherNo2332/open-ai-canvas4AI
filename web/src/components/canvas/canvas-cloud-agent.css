@@ -1732,9 +1732,9 @@
     isolation: isolate;
 }
 
-.canvas-agent-attention-popover .ant-popover-inner {
-    width: min(420px, calc(100vw - var(--space-4)));
-    max-height: min(680px, calc(100dvh - var(--space-8)));
+.canvas-agent-attention-popover .ant-popover-container {
+    width: min(360px, calc(100vw - var(--space-4)));
+    max-height: min(600px, calc(100dvh - var(--space-8)));
     overflow: hidden;
     border: 1px solid color-mix(in srgb, var(--agent-ink) 10%, transparent);
     border-radius: var(--agent-radius-surface);
@@ -1743,8 +1743,8 @@
     box-shadow: var(--agent-material-shadow);
 }
 
-.canvas-agent-attention-popover .ant-popover-inner-content {
-    max-height: min(680px, calc(100dvh - var(--space-8)));
+.canvas-agent-attention-popover .ant-popover-content {
+    max-height: min(600px, calc(100dvh - var(--space-8)));
     overflow-y: auto;
     overscroll-behavior: contain;
 }

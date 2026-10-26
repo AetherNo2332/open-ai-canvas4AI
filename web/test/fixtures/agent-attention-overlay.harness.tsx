@@ -61,7 +61,7 @@ test("授权指引只通过明确按钮请求权限", async () => {
     }
 });
 
-test("收起态审批卡直接同意或拒绝当前审批", async () => {
+test("收起态审批卡只显示具体摘要并可直接同意或拒绝", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -71,9 +71,25 @@ test("收起态审批卡直接同意或拒绝当前审批", async () => {
             root.render(
                 <AgentCollapsedAttentionCard
                     theme={canvasThemes.light}
-                    approval={{ approvalId: "approval-1", detail: { toolName: "arrange_nodes", arguments: { nodeIds: ["node-1"] } }, reason: "" }}
+                    approval={{
+                        approvalId: "approval-1",
+                        detail: {
+                            toolName: "generate_media",
+                            arguments: {
+                                mode: "video",
+                                title: "镜头1视频",
+                                prompt: "雨夜街头的跟拍镜头",
+                                channelModelKey: "seedance-test",
+                                size: "9:16",
+                                quality: "720p",
+                                durationSeconds: 12,
+                                videoGenerateAudio: true,
+                                referenceNodeIds: ["image-1", "image-2"],
+                            },
+                        },
+                        reason: "",
+                    }}
                     approvalSubmitting={false}
-                    onApprovalReasonChange={() => undefined}
                     onApprove={() => decisions.push("approve")}
                     onReject={() => decisions.push("reject")}
                     onAnswer={() => undefined}
@@ -82,6 +98,17 @@ test("收起态审批卡直接同意或拒绝当前审批", async () => {
         );
         expect(host.getAttribute("role")).toBeNull();
         expect(host.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toContain("审批");
+        expect(host.querySelector(".canvas-agent-approval-card")).not.toBeNull();
+        expect(host.textContent).toContain("生成视频《镜头1视频》");
+        expect(host.textContent).toContain("模型：seedance-test");
+        expect(host.textContent).toContain("画幅：9:16");
+        expect(host.textContent).toContain("质量：720p");
+        expect(host.textContent).toContain("时长：12 秒");
+        expect(host.textContent).toContain("音频：开启");
+        expect(host.textContent).toContain("引用 2 个画布资产，并建立连线");
+        expect(host.textContent).not.toContain("视频草稿节点和引用连线已创建");
+        expect(host.textContent).not.toContain("填写拒绝理由（可选）");
+        expect(host.querySelector('[aria-label="视频生成设置"]')).toBeNull();
         await act(async () => button(host, "同意执行").click());
         await act(async () => button(host, "暂不执行").click());
         expect(decisions).toEqual(["approve", "reject"]);
@@ -91,7 +118,7 @@ test("收起态审批卡直接同意或拒绝当前审批", async () => {
     }
 });
 
-test("收起态表单提问保留现有校验和提交负载", async () => {
+test("收起态表单提问只保留完成回答所需的字段和按钮", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -126,9 +153,57 @@ test("收起态表单提问保留现有校验和提交负载", async () => {
                 />,
             ),
         );
+        expect(host.querySelector(".agent-question-form")).not.toBeNull();
+        expect(host.textContent).toContain("写实");
+        expect(host.textContent).toContain("动画");
+        expect(host.textContent).toContain("按推荐方案开始");
+        expect(host.textContent).toContain("确认并继续");
+        expect(host.textContent).not.toContain("已填入推荐值，可按需修改");
+        expect(host.textContent).not.toContain("补充说明");
+        expect(host.querySelector("#agent-question-additional-notes")).toBeNull();
         await act(async () => button(host, "动画").click());
         await act(async () => button(host, "确认并继续").click());
         expect(JSON.parse(answers[0]!)).toMatchObject({ questionId: "question-1", answers: { style: "anime" } });
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
+test("收起态选择提问只显示问题与可直接提交的答案", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const answers: string[] = [];
+    try {
+        await act(async () =>
+            root.render(
+                <AgentCollapsedAttentionCard
+                    theme={canvasThemes.dark}
+                    question={{
+                        kind: "choice",
+                        questionId: "question-2",
+                        question: "片头采用哪种视觉风格？",
+                        options: [
+                            { label: "电影写实", detail: "强调真实摄影质感与自然光影" },
+                            { label: "国风动画", detail: "强调水墨笔触与东方配色" },
+                        ],
+                    }}
+                    approvalSubmitting={false}
+                    onApprovalReasonChange={() => undefined}
+                    onApprove={() => undefined}
+                    onReject={() => undefined}
+                    onAnswer={(answer) => answers.push(answer)}
+                />,
+            ),
+        );
+        expect(host.textContent).toContain("片头采用哪种视觉风格？");
+        expect(host.textContent).toContain("电影写实");
+        expect(host.textContent).toContain("国风动画");
+        expect(host.textContent).not.toContain("强调真实摄影质感与自然光影");
+        expect(host.textContent).not.toContain("也可以在下方输入框里补充说明");
+        await act(async () => button(host, "国风动画").click());
+        expect(answers).toEqual(["国风动画"]);
     } finally {
         await act(async () => root.unmount());
         host.remove();

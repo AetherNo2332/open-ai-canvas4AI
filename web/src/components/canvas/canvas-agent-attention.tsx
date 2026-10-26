@@ -115,9 +115,9 @@ export function AgentCollapsedAttentionCard({
         >
             {guide}
             {approval ? (
-                <ApprovalCard approval={approval} theme={theme} submitting={approvalSubmitting} targetGenerating={approvalTargetGenerating} onFocusNode={onFocusNode} onReasonChange={onApprovalReasonChange} onApprove={onApprove} onReject={onReject} />
+                <ApprovalCard approval={approval} theme={theme} submitting={approvalSubmitting} summaryOnly targetGenerating={approvalTargetGenerating} onFocusNode={onFocusNode} onReasonChange={onApprovalReasonChange} onApprove={onApprove} onReject={onReject} />
             ) : question ? (
-                <AgentQuestionBar question={question} theme={theme} disabled={questionDisabled} onAnswer={onAnswer} />
+                <AgentQuestionBar question={question} theme={theme} compact disabled={questionDisabled} onAnswer={onAnswer} />
             ) : null}
         </div>
     );
