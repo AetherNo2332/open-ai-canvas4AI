@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"unicode"
@@ -174,7 +175,7 @@ func sortedCloudAgentIDs(ids []string) []string {
 
 const (
 	cloudAgentPromptCacheSchemaVersion = "cloud-agent-prompt-cache/v2"
-	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v13"
+	cloudAgentToolSchemaVersion        = "cloud-agent-tools/v14"
 )
 
 func cloudAgentPromptCacheIdentity(req CloudAgentRequest, policy cloudAgentPolicySnapshot) string {
@@ -501,17 +502,22 @@ func cloudAgentPatchSchema() map[string]any {
 		}
 		for key, field := range descriptor.PatchFields {
 			property := field.JSONSchema()
+			kind := property["type"]
 			// Rich native contracts are discovered per node type rather than
 			// repeated in every model request. The descriptor still validates
 			// the complete nested contract during preview and execution.
 			if field.Kind == "object" {
-				property = map[string]any{"type": "object", "description": "字段完整合同见 canvas_list_node_types(nodeType)"}
+				property = map[string]any{"type": kind, "description": "字段完整合同见 canvas_list_node_types(nodeType)"}
 			}
 			if field.Kind == "array" {
-				property = map[string]any{"type": "array", "maxItems": field.MaxItems, "items": map[string]any{}, "description": "数组元素合同见 canvas_list_node_types(nodeType)"}
+				property = map[string]any{"type": kind, "maxItems": field.MaxItems, "items": map[string]any{}, "description": "数组元素合同见 canvas_list_node_types(nodeType)"}
 				if field.MaxItems == 0 {
 					delete(property, "maxItems")
 				}
+			}
+			if field.Resettable && (field.Kind == "object" || field.Kind == "array") {
+				property["x-canvas-resettable"] = true
+				property["description"] = fmt.Sprint(property["description"]) + "；null 清除该可选字段，省略保持原值。"
 			}
 			encoded, _ := json.Marshal(property)
 			if seen[key] == nil {
@@ -531,7 +537,7 @@ func cloudAgentPatchSchema() map[string]any {
 			kind := values[0]["type"]
 			same := kind != nil
 			for _, value := range values {
-				if value["type"] != kind {
+				if !reflect.DeepEqual(value["type"], kind) {
 					same = false
 				}
 			}

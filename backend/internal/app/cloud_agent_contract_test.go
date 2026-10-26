@@ -172,8 +172,16 @@ func TestCloudAgentToolsFollowCanvasCapabilityRegistry(t *testing.T) {
 		}
 		for key, field := range descriptor.PatchFields {
 			property, ok := patch[key].(map[string]any)
-			if !ok || property["type"] != field.Kind {
+			if !ok || (field.Kind != "" && !agentSchemaDeclaresType(property, field.Kind)) {
 				t.Fatalf("patch field %s (%s) missing from tool schema", key, descriptor.Type)
+			}
+			for _, choice := range field.AnyOf {
+				if !agentSchemaDeclaresType(property, choice.Kind) {
+					t.Fatalf("patch field %s (%s) lost alternative %s", key, descriptor.Type, choice.Kind)
+				}
+			}
+			if field.Kind != "" && (field.Nullable || field.Resettable) && !agentSchemaDeclaresType(property, "null") {
+				t.Fatalf("patch field %s (%s) lost explicit clearing", key, descriptor.Type)
 			}
 			definitions, _ := nodeTypeDefinitions[descriptor.Type]["updateFields"].(map[string]any)
 			definition, _ := definitions[key].(map[string]any)

@@ -115,13 +115,15 @@ func (p *planner) applyCanvasCanvasPlanInPlace(doc map[string]any, ops []Operati
 						source = nodes[sourceIndex]
 					}
 				}
-				copyable := op.NodeType == "text" || op.NodeType == "image" || op.NodeType == "video" || op.NodeType == "audio"
-				if !copyable || source == nil || p.stringValue(source["type"]) != op.NodeType {
-					return nil, BadAuthRequest("复制来源必须是当前画布中同类型的文本或媒体节点")
+				if source == nil || p.stringValue(source["type"]) != op.NodeType {
+					return nil, BadAuthRequest("复制来源必须是当前画布中同类型的节点")
 				}
 				sourceMetadata, _ := source["metadata"].(map[string]any)
 				if sourceMetadata == nil {
 					sourceMetadata = map[string]any{}
+				}
+				if op.NodeType == "drawing" && p.stringValue(sourceMetadata["drawingId"]) != "" && sourceMetadata["drawingDocument"] == nil {
+					return nil, BadAuthRequest("绘图文档尚未同步，不能只复制预览节点")
 				}
 				cloned, err := cloneDocument(Document(sourceMetadata))
 				if err != nil {
@@ -140,8 +142,19 @@ func (p *planner) applyCanvasCanvasPlanInPlace(doc map[string]any, ops []Operati
 				copiedNodeIDs[op.CopiedFromNodeID] = op.ID
 				p.canvasResetCopiedMetadata(metadata, op.ID, copiedNodeIDs)
 				p.canvasRemapCopiedAddReferences(metadata, copiedNodeIDs)
-				if op.NodeType != "text" {
+				if op.NodeType == "image" || op.NodeType == "video" || op.NodeType == "audio" {
 					metadata["generationResultPlacement"] = "replace-node"
+				}
+				if op.NodeType == "drawing" {
+					for _, key := range []string{"drawingId", "drawingRevision", "drawingUpdatedAt", "drawingShapeCount", "drawingPageCount"} {
+						delete(metadata, key)
+					}
+					if document, ok := metadata["drawingDocument"].(map[string]any); ok {
+						document["revision"], document["updatedAt"] = float64(1), p.now().UTC().Format(time.RFC3339Nano)
+						metadata["drawingId"], metadata["drawingEngine"] = op.ID+"-document", document["engine"]
+						metadata["drawingRevision"], metadata["drawingUpdatedAt"] = document["revision"], document["updatedAt"]
+						metadata["drawingShapeCount"], metadata["drawingPageCount"] = document["shapeCount"], document["pageCount"]
+					}
 				}
 				if op.Content != nil && content != p.stringValue(metadata["content"]) {
 					return nil, BadAuthRequest("副本内容与复制来源不一致")

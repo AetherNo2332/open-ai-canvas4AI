@@ -158,6 +158,7 @@ func completeBuiltinEditableFields(d *Descriptor) {
 		add("subtitleHighlights", "metadata.subtitleHighlights", "字幕重点", subtitleHighlightsField())
 		add("subtitleStyle", "metadata.subtitleStyle", "字幕样式", subtitleStyleField())
 	}
+	addEditorFeatureFields(d, add)
 	// Only optional author/configuration fields support deletion. Geometry,
 	// identities, reference contracts and generationSpec retain strict types.
 	for _, key := range []string{"content", "prompt", "composerContent", "richText", "model", "size", "quality", "transparentBackground", "seconds", "vquality", "generateAudio", "watermark", "count", "textCount", "generationType", "generationResultPlacement", "audioVoice", "audioFormat", "audioSpeed", "audioInstructions", "audioEmotionControlMethod", "audioEmotionRandom", "audioEmotionHappy", "audioEmotionAngry", "audioEmotionSad", "audioEmotionAfraid", "audioEmotionDisgusted", "audioEmotionMelancholic", "audioEmotionSurprised", "audioEmotionCalm", "videoCameraMoveId", "videoCameraMovePrompt", "promptTemplateOperation", "promptTemplateVariables", "runningHubWorkflowId", "runningHubWorkflowKind", "workflowTitle", "workflowParameters", "cameraControl", "portraitTexture", "assetCategory"} {

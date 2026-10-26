@@ -104,6 +104,9 @@
                 "quality": {
                     "path": "metadata.quality"
                 },
+                "referenceSetId": {
+                    "path": "metadata.referenceSetId"
+                },
                 "runningHubWorkflowId": {
                     "path": "metadata.runningHubWorkflowId"
                 },
@@ -112,6 +115,9 @@
                 },
                 "seconds": {
                     "path": "metadata.seconds"
+                },
+                "shotIndex": {
+                    "path": "metadata.shotIndex"
                 },
                 "size": {
                     "path": "metadata.size"
@@ -149,11 +155,20 @@
                 "width": {
                     "path": "width"
                 },
+                "workflowDescription": {
+                    "path": "metadata.workflowDescription"
+                },
+                "workflowKind": {
+                    "path": "metadata.workflowKind"
+                },
                 "workflowParameters": {
                     "path": "metadata.workflowParameters"
                 },
                 "workflowProvider": {
                     "path": "metadata.workflowProvider"
+                },
+                "workflowTitle": {
+                    "path": "metadata.workflowTitle"
                 },
                 "x": {
                     "path": "position.x"
@@ -542,11 +557,29 @@
                 "manualSize": {
                     "path": "metadata.manualSize"
                 },
+                "referenceAssetNodeIds": {
+                    "path": "metadata.referenceAssetNodeIds"
+                },
+                "referenceSetId": {
+                    "path": "metadata.referenceSetId"
+                },
+                "shotIndex": {
+                    "path": "metadata.shotIndex"
+                },
                 "title": {
                     "path": "title"
                 },
                 "width": {
                     "path": "width"
+                },
+                "workflowDescription": {
+                    "path": "metadata.workflowDescription"
+                },
+                "workflowKind": {
+                    "path": "metadata.workflowKind"
+                },
+                "workflowTitle": {
+                    "path": "metadata.workflowTitle"
                 },
                 "x": {
                     "path": "position.x"
@@ -594,6 +627,12 @@
         },
         {
             "patchFields": {
+                "actionBoardColumns": {
+                    "path": "metadata.actionBoardColumns"
+                },
+                "actionBoardRows": {
+                    "path": "metadata.actionBoardRows"
+                },
                 "assetCategory": {
                     "path": "metadata.assetCategory"
                 },
@@ -641,6 +680,18 @@
                 },
                 "audioVoice": {
                     "path": "metadata.audioVoice"
+                },
+                "batchInputNodeIds": {
+                    "path": "metadata.batchInputNodeIds"
+                },
+                "batchOperation": {
+                    "path": "metadata.batchOperation"
+                },
+                "batchRowId": {
+                    "path": "metadata.batchRowId"
+                },
+                "batchSourceNodeId": {
+                    "path": "metadata.batchSourceNodeId"
                 },
                 "cameraControl": {
                     "path": "metadata.cameraControl"
@@ -714,6 +765,9 @@
                 "quality": {
                     "path": "metadata.quality"
                 },
+                "referenceSetId": {
+                    "path": "metadata.referenceSetId"
+                },
                 "runningHubWorkflowId": {
                     "path": "metadata.runningHubWorkflowId"
                 },
@@ -722,6 +776,9 @@
                 },
                 "seconds": {
                     "path": "metadata.seconds"
+                },
+                "shotIndex": {
+                    "path": "metadata.shotIndex"
                 },
                 "size": {
                     "path": "metadata.size"
@@ -759,11 +816,20 @@
                 "width": {
                     "path": "width"
                 },
+                "workflowDescription": {
+                    "path": "metadata.workflowDescription"
+                },
+                "workflowKind": {
+                    "path": "metadata.workflowKind"
+                },
                 "workflowParameters": {
                     "path": "metadata.workflowParameters"
                 },
                 "workflowProvider": {
                     "path": "metadata.workflowProvider"
+                },
+                "workflowTitle": {
+                    "path": "metadata.workflowTitle"
                 },
                 "x": {
                     "path": "position.x"
@@ -810,6 +876,9 @@
             "patchFields": {
                 "conversionOperation": {
                     "path": "metadata.mediaConversion.operation"
+                },
+                "conversionState": {
+                    "path": "metadata.mediaConversion"
                 },
                 "fontSize": {
                     "path": "metadata.fontSize"
@@ -1106,6 +1175,9 @@
                 "quality": {
                     "path": "metadata.quality"
                 },
+                "referenceSetId": {
+                    "path": "metadata.referenceSetId"
+                },
                 "richText": {
                     "path": "metadata.richText"
                 },
@@ -1118,8 +1190,17 @@
                 "seconds": {
                     "path": "metadata.seconds"
                 },
+                "shotIndex": {
+                    "path": "metadata.shotIndex"
+                },
                 "size": {
                     "path": "metadata.size"
+                },
+                "stylePresetId": {
+                    "path": "metadata.stylePresetId"
+                },
+                "styleProfileJson": {
+                    "path": "metadata.styleProfileJson"
                 },
                 "textCount": {
                     "path": "metadata.textCount"
@@ -1145,11 +1226,20 @@
                 "width": {
                     "path": "width"
                 },
+                "workflowDescription": {
+                    "path": "metadata.workflowDescription"
+                },
+                "workflowKind": {
+                    "path": "metadata.workflowKind"
+                },
                 "workflowParameters": {
                     "path": "metadata.workflowParameters"
                 },
                 "workflowProvider": {
                     "path": "metadata.workflowProvider"
+                },
+                "workflowTitle": {
+                    "path": "metadata.workflowTitle"
                 },
                 "x": {
                     "path": "position.x"
@@ -1252,6 +1342,24 @@
                 "portraitTexture": {
                     "path": "metadata.portraitTexture"
                 },
+                "previsClayVideoNodeId": {
+                    "path": "metadata.previsClayVideoNodeId"
+                },
+                "previsDepthNodeId": {
+                    "path": "metadata.previsDepthNodeId"
+                },
+                "previsNormalNodeId": {
+                    "path": "metadata.previsNormalNodeId"
+                },
+                "previsPreviewNodeId": {
+                    "path": "metadata.previsPreviewNodeId"
+                },
+                "previsSceneId": {
+                    "path": "metadata.previsSceneId"
+                },
+                "previsShotId": {
+                    "path": "metadata.previsShotId"
+                },
                 "prompt": {
                     "path": "metadata.prompt"
                 },
@@ -1264,6 +1372,9 @@
                 "quality": {
                     "path": "metadata.quality"
                 },
+                "referenceSetId": {
+                    "path": "metadata.referenceSetId"
+                },
                 "runningHubWorkflowId": {
                     "path": "metadata.runningHubWorkflowId"
                 },
@@ -1272,6 +1383,9 @@
                 },
                 "seconds": {
                     "path": "metadata.seconds"
+                },
+                "shotIndex": {
+                    "path": "metadata.shotIndex"
                 },
                 "size": {
                     "path": "metadata.size"
@@ -1309,6 +1423,18 @@
                 "videoCameraMovePrompt": {
                     "path": "metadata.videoCameraMovePrompt"
                 },
+                "videoEditOperation": {
+                    "path": "metadata.videoEditOperation"
+                },
+                "videoEndFrameNodeId": {
+                    "path": "metadata.videoEndFrameNodeId"
+                },
+                "videoFrameSourceNodeId": {
+                    "path": "metadata.videoFrameSourceNodeId"
+                },
+                "videoStartFrameNodeId": {
+                    "path": "metadata.videoStartFrameNodeId"
+                },
                 "vquality": {
                     "path": "metadata.vquality"
                 },
@@ -1318,11 +1444,20 @@
                 "width": {
                     "path": "width"
                 },
+                "workflowDescription": {
+                    "path": "metadata.workflowDescription"
+                },
+                "workflowKind": {
+                    "path": "metadata.workflowKind"
+                },
                 "workflowParameters": {
                     "path": "metadata.workflowParameters"
                 },
                 "workflowProvider": {
                     "path": "metadata.workflowProvider"
+                },
+                "workflowTitle": {
+                    "path": "metadata.workflowTitle"
                 },
                 "x": {
                     "path": "position.x"
@@ -1334,6 +1469,79 @@
             "type": "video"
         }
     ],
+    "previsFields": {
+        "camera": {
+            "aperture": "range:0.1:128",
+            "far": "range:0.00001:1000000",
+            "focalLength": "range:1:300",
+            "focusDistance": "range:0.001:1000000",
+            "fov": "range:0.1:179",
+            "keyframes": "array:keyframe",
+            "motionPath": "motionPath",
+            "name": "text",
+            "near": "range:0.00001:1000000",
+            "target": "vec3",
+            "transform": "transform"
+        },
+        "light": {
+            "angle": "range:0:6.29",
+            "castShadow": "bool",
+            "color": "color",
+            "intensity": "range:0:100",
+            "name": "text",
+            "penumbra": "range:0:1",
+            "transform": "transform",
+            "type": "enum:directional,point,spot,ambient"
+        },
+        "object": {
+            "activeMotionClipId": "id",
+            "actorProfile": "actorProfile",
+            "archetype": "enum:adult,child,elderly,man,woman,monster",
+            "assetId": "id",
+            "boneOverrides": "boneQuats",
+            "boneTracks": "array:boneTrack",
+            "castShadow": "bool",
+            "characterBinding": "binding",
+            "color": "color",
+            "keyframes": "array:keyframe",
+            "kind": "enum:primitive,model,actor,billboard",
+            "mimeType": "text",
+            "motionClips": "array:motionClip",
+            "motionPath": "motionPath",
+            "name": "text",
+            "pose": "pose",
+            "primitive": "enum:box,sphere,cylinder,plane,character",
+            "receiveShadow": "bool",
+            "rig": "rig",
+            "sourceNodeId": "id",
+            "storageKey": "locator",
+            "transform": "transform",
+            "url": "modelLocator",
+            "visible": "bool"
+        },
+        "settings": {
+            "activeShotId": "id",
+            "background": "color",
+            "environment": "environment",
+            "environmentIntensity": "range:0:100",
+            "gridVisible": "bool",
+            "title": "text"
+        },
+        "shot": {
+            "aspectRatio": "enum:9:16,16:9,2.39:1",
+            "cameraId": "id",
+            "cameraMove": "enum:static,push_in,pull_out,pan_left,pan_right,tilt_up,tilt_down,orbit_left,orbit_right,handheld",
+            "clayVideoNodeId": "id",
+            "depthNodeId": "id",
+            "duration": "range:0.1:60",
+            "fps": "enumNumber:24,25,30",
+            "name": "text",
+            "normalNodeId": "id",
+            "previewNodeId": "id",
+            "prompt": "prompt",
+            "shotSize": "enum:extreme_wide,wide,full,medium,close_up,extreme_close_up"
+        }
+    },
     "protocolVersion": 1,
     "structuredFields": {
         "batch": {
@@ -1380,6 +1588,47 @@
             "videoMotionPrompt": {},
             "videoPromptTemplateVariables": {},
             "viewerPOV": {}
+        }
+    },
+    "timelineFields": {
+        "clip": {
+            "directMedia": "media",
+            "durationMs": "positive",
+            "fadeInMs": "number",
+            "fadeOutMs": "number",
+            "kind": "kind",
+            "nodeId": "string",
+            "sourceDurationMs": "number",
+            "sourceStartMs": "number",
+            "startMs": "number",
+            "subtitleEntryIndex": "index",
+            "text": "string",
+            "title": "string",
+            "trackId": "string",
+            "volume": "volume"
+        },
+        "media": {
+            "assetId": "string",
+            "bytes": "number",
+            "content": "string",
+            "dataUrl": "locator",
+            "durationMs": "number",
+            "height": "positive",
+            "id": "string",
+            "kind": "mediaKind",
+            "mimeType": "string",
+            "storageKey": "locator",
+            "title": "string",
+            "url": "locator",
+            "width": "positive"
+        },
+        "track": {
+            "kind": "kind",
+            "label": "string",
+            "locked": "bool",
+            "muted": "bool",
+            "order": "number",
+            "visible": "bool"
         }
     }
 }

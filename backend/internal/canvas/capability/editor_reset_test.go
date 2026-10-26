@@ -2,6 +2,19 @@ package capability
 
 import "testing"
 
+func TestReferenceComposerDoesNotOverwriteAssetPrompt(t *testing.T) {
+	d, _ := BuiltinRegistry().Resolve("video")
+	spec := map[string]any{"version": 1.0, "mode": "video", "prompt": "参考 @图片1\n推进", "options": map[string]any{}, "referenceBindings": []any{}, "textInputMode": "prompt-only"}
+	patch := map[string]any{"generationSpec": spec, "prompt": "推进", "content": "参考 @图片1\n推进"}
+	if err := d.ValidatePatch(patch); err != nil {
+		t.Fatal(err)
+	}
+	patch["content"] = "conflict"
+	if err := d.ValidatePatch(patch); err == nil {
+		t.Fatal("accepted conflicting generation composer")
+	}
+}
+
 func TestEditorOptionalFieldReset(t *testing.T) {
 	for _, kind := range []string{"image", "video", "audio", "text", "config"} {
 		t.Run(kind, func(t *testing.T) {

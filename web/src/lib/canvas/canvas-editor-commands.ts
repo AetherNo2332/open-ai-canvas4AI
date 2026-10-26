@@ -7,7 +7,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import { buildCanvasReferenceEdit } from "./canvas-reference-edits";
 import { canvasPrevisCommands, type PrevisEditorFields } from "./canvas-previs-commands";
 import { sameCanvasJsonValue as same } from "./canvas-json-value";
-import { isolateCopiedNodeMetadata } from "./canvas-node-copy";
+import { isolateCopiedNodeMetadata, resetCopiedDrawingMetadata } from "./canvas-node-copy";
 import { canvasPersistentEditorDraft } from "./canvas-editor-transient";
 import { generationSpecMirrors } from "./generation-contract";
 import type { GenerationSpec } from "./generation-contract.generated";
@@ -91,12 +91,19 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
     }
     const copiedSourceIds = new Map<string, string>();
     for (const node of nextNodes) {
-        if (oldById.has(node.id) || !["text", "image", "video", "audio"].includes(node.type) || typeof node.metadata?.copiedFromNodeId !== "string") continue;
+        if (oldById.has(node.id) || typeof node.metadata?.copiedFromNodeId !== "string") continue;
         const source = oldById.get(node.metadata.copiedFromNodeId);
         if (!source || source.type !== node.type) continue;
         const copyIDs = new Map(copiedNodeIds);
         copyIDs.set(source.id, node.id);
         const expected = isolateCopiedNodeMetadata(source as CanvasNodeData, copyIDs);
+        if (node.type === "drawing") {
+            resetCopiedDrawingMetadata(expected, node.id);
+            if (expected.drawingDocument && node.metadata.drawingDocument) {
+                expected.drawingDocument.updatedAt = node.metadata.drawingDocument.updatedAt;
+                expected.drawingUpdatedAt = node.metadata.drawingUpdatedAt;
+            }
+        }
         const normalized = entities(canvasPersistentEditorDraft({ nodes: [] }, { nodes: [{ ...node, metadata: expected }] }), "nodes")[0].metadata;
         // A decoded preview URL may differ while the immutable resource is identical.
         const candidate = node.type !== "text" && nodeResourceId(source) && nodeResourceId(node) === nodeResourceId(source) ? { ...node.metadata, content: expected.content } : node.metadata;
@@ -119,7 +126,7 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             if (node.position?.x !== undefined) add.x = node.position.x;
             if (node.position?.y !== undefined) add.y = node.position.y;
             if (node.title !== undefined) add.title = node.title;
-            if (node.metadata?.content !== undefined && !(["image", "video", "audio"].includes(node.type) && (nodeResourceId(node) || node.metadata?.assetId))) add.content = node.metadata.content;
+            if (node.metadata?.content !== undefined && !(["image", "video", "audio", "media-conversion"].includes(node.type) && (nodeResourceId(node) || node.metadata?.assetId))) add.content = node.metadata.content;
             const copiedFromNodeId = copiedSourceIds.get(node.id);
             if (copiedFromNodeId !== undefined) add.copiedFromNodeId = copiedFromNodeId;
             operations.push(add);
@@ -154,7 +161,7 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             }
             for (const key of characterFields) claim(paths, "metadata." + key);
             claim(paths, "title");
-        } else if (["text", "image", "video", "audio"].includes(node.type) && !copiedSourceIds.has(node.id) && !primarySelections.has(node.id)) {
+        } else if (["text", "image", "video", "audio", "media-conversion"].includes(node.type) && !copiedSourceIds.has(node.id) && !primarySelections.has(node.id)) {
             const resourceId = nodeResourceId(node);
             const resourceChanged = resourceId && resourceId !== nodeResourceId(previous);
             const assetId = node.metadata?.assetId;
@@ -178,6 +185,7 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             claim(paths, "metadata.storyboard.referenceNodeIds");
         }
         for (const [key, field] of Object.entries(descriptor.patchFields)) {
+            if (key === "conversionOperation" && descriptor.patchFields.conversionState) continue;
             if (!field.path || !paths.size) continue;
             if (!same(at(previous, field.path), at(node, field.path)) && [...paths].some((path) => path === field.path || path.startsWith(field.path + ".") || field.path.startsWith(path + "."))) {
                 patch[key] = structuredClone(at(node, field.path) ?? null);
@@ -194,12 +202,12 @@ export function canvasEditorCommands(before: CanvasDocument, after: CanvasDocume
             }
         }
         if (Object.keys(patch).length) operations.push({ type: "update_node", id: node.id, patch });
-        if (node.type === "drawing" && node.metadata?.drawingDocument) {
+        if (node.type === "drawing" && node.metadata?.drawingDocument && !copiedSourceIds.has(node.id)) {
             const drawing = canvasDrawingCommands(node.id, canvasDrawingDocumentId(node as CanvasNodeData), previous?.metadata?.drawingDocument, node.metadata.drawingDocument);
             if (drawing) operations.push(drawing);
             for (const key of ["drawingDocument", "drawingRevision", "drawingUpdatedAt", "drawingShapeCount", "drawingPageCount", "drawingId"]) claim(paths, "metadata." + key);
         }
-        if (node.type === "script" || node.type === "batch-table") {
+        if ((node.type === "script" || node.type === "batch-table") && !copiedSourceIds.has(node.id)) {
             const kind = node.type === "script" ? "storyboard" : "batch",
                 key = kind === "storyboard" ? "storyboard" : "batchTable";
             if (kind === "batch") {
