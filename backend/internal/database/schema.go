@@ -80,6 +80,7 @@ func Models() []any {
 		&model.ToolFavorite{},
 		&model.Resource{},
 		&model.ResourceDeletionJob{},
+		&model.ResourceOffloadJob{},
 		&model.AnnouncementImageDraft{},
 		&model.Asset{},
 		&model.AssetFolder{},

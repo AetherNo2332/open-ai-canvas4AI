@@ -71,7 +71,7 @@ export type ApiCallLog = {
     source: string;
     capability: "text" | "image" | "video" | "audio" | "";
     operation?: string;
-    requestKind: "create" | "poll" | "download" | "upload" | "local_save" | "register" | "repair" | "";
+    requestKind: "create" | "poll" | "download" | "upload" | "local_save" | "local_fallback" | "offload" | "register" | "repair" | "";
     billable: boolean;
     apiFormat: string;
     method: string;
@@ -643,6 +643,10 @@ export function recoverAdminApiLogVideoByURL(id: string, url: string, providerRe
     return http.post<AdminProviderTaskQueryResult>(`/admin/api-logs/${encodeURIComponent(id)}/recover-url`, { url, providerRequestId }, { timeout: 120_000 });
 }
 
+/** 重新保存“作品已生成但保存失败”的任务。订单已退款时必须选择补扣（charge）或免除（waive）。 */
+export function recoverAdminApiLogTaskMedia(id: string, refundedBilling?: "charge" | "waive") {
+    return http.post<{ task: GenerationTask }>(`/admin/api-logs/${encodeURIComponent(id)}/recover-media`, refundedBilling ? { refundedBilling } : undefined);
+}
 export function batchRecoverAdminApiLogs(ids: string[]) {
     return http.post<{ items: Array<{ logId: string; recovered: boolean; providerStatus?: string; error?: string }>; success: number; failed: number; skipped: number }>("/admin/api-logs/recover-batch", { ids }, { timeout: 180_000 });
 }

@@ -186,6 +186,7 @@ func (s *Service) StartWorker() {
 	}
 	s.taskWorker().start(ctx)
 	s.startResourceDeletionWorker(ctx)
+	s.startResourceOffloadWorker()
 	s.startSkillSyncWorker(ctx)
 	s.startPaymentWorker(ctx)
 	s.startBillingAutoRefundWorker()

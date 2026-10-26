@@ -420,6 +420,7 @@ func migrations() []tableMigration {
 		migrateTable[model.BuiltinSkillTombstone]("builtin_skill_tombstones"),
 		migrateTable[model.Resource]("resources"),
 		migrateTable[model.ResourceDeletionJob]("resource_deletion_jobs"),
+		migrateTable[model.ResourceOffloadJob]("resource_offload_jobs"),
 		migrateTable[model.AnnouncementImageDraft]("announcement_image_drafts"),
 		migrateTable[model.Asset]("assets"),
 		migrateTable[model.AssetFolder]("asset_folders"),
