@@ -1080,7 +1080,19 @@ export function AgentPlanBar({
 
 const EMPTY_QUESTION_FIELDS: CloudAgentFormField[] = [];
 
-export function AgentQuestionBar({ question, theme, onAnswer, disabled = false, compact = false }: { question: CloudAgentUserQuestion; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onAnswer: (answer: string) => void; disabled?: boolean; compact?: boolean }) {
+export function AgentQuestionBar({
+    question,
+    theme,
+    onAnswer,
+    disabled = false,
+    compact = false,
+}: {
+    question: CloudAgentUserQuestion;
+    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    onAnswer: (answer: string) => void;
+    disabled?: boolean;
+    compact?: boolean;
+}) {
     const fields = question.fields || EMPTY_QUESTION_FIELDS;
     const isForm = question.kind === "form" || fields.length > 0;
     const fieldDefaultValue = (field: CloudAgentFormField): string | string[] => {

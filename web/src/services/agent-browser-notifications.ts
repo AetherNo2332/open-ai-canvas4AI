@@ -39,11 +39,7 @@ export function readAgentNotificationPermission(runtime: AgentNotificationRuntim
     return runtime.permission;
 }
 
-export function shouldSendAgentBrowserNotification(input: {
-    permission: AgentNotificationPermissionState;
-    panelOpen: boolean;
-    visibilityState: DocumentVisibilityState;
-}) {
+export function shouldSendAgentBrowserNotification(input: { permission: AgentNotificationPermissionState; panelOpen: boolean; visibilityState: DocumentVisibilityState }) {
     return input.permission === "granted" && (!input.panelOpen || input.visibilityState === "hidden");
 }
 
@@ -55,9 +51,7 @@ export async function requestAgentBrowserNotificationPermission(runtime: AgentNo
 }
 
 function notificationCopy(kind: AgentAttention["kind"]) {
-    return kind === "approval"
-        ? { title: "Agent 等待你的审批", body: "有一项操作等待确认，点击返回影策处理。" }
-        : { title: "Agent 正在等你回答", body: "有一个问题需要你的选择，点击返回影策处理。" };
+    return kind === "approval" ? { title: "Agent 等待你的审批", body: "有一项操作等待确认，点击返回影策处理。" } : { title: "Agent 正在等你回答", body: "有一个问题需要你的选择，点击返回影策处理。" };
 }
 
 export function showAgentBrowserNotification(attention: AgentAttention, onOpen: () => void, runtime: AgentNotificationRuntime = browserNotificationRuntime()): AgentNotificationHandle | null {

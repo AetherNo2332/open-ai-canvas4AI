@@ -43,7 +43,17 @@ describe("Agent browser notification capability", () => {
         expect(await requestAgentBrowserNotificationPermission(pending)).toBe("granted");
         expect(requests).toBe(1);
 
-        expect(await requestAgentBrowserNotificationPermission(runtime({ permission: "denied", requestPermission: async () => { requests += 1; return "granted"; } }))).toBe("denied");
+        expect(
+            await requestAgentBrowserNotificationPermission(
+                runtime({
+                    permission: "denied",
+                    requestPermission: async () => {
+                        requests += 1;
+                        return "granted";
+                    },
+                }),
+            ),
+        ).toBe("denied");
         expect(requests).toBe(1);
     });
 });
@@ -86,8 +96,19 @@ describe("Agent browser notification delivery policy", () => {
 
     test("uses separate generic question copy and refuses delivery without permission", () => {
         const created: string[] = [];
-        const granted = runtime({ create: (title) => { created.push(title); return { onclick: null, close: () => undefined }; } });
-        const denied = runtime({ permission: "denied", create: (title) => { created.push(title); return { onclick: null, close: () => undefined }; } });
+        const granted = runtime({
+            create: (title) => {
+                created.push(title);
+                return { onclick: null, close: () => undefined };
+            },
+        });
+        const denied = runtime({
+            permission: "denied",
+            create: (title) => {
+                created.push(title);
+                return { onclick: null, close: () => undefined };
+            },
+        });
 
         expect(showAgentBrowserNotification({ key: "question:q1", kind: "question" }, () => undefined, granted)).not.toBeNull();
         expect(showAgentBrowserNotification({ key: "question:q2", kind: "question" }, () => undefined, denied)).toBeNull();
