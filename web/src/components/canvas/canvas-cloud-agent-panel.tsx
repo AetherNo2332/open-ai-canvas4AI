@@ -184,11 +184,12 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const planVisible = agentPlanVisible(planItems);
     const pendingQuestion = useMemo(() => pendingAgentQuestion(messages), [messages]);
     const attention = useMemo(() => agentAttentionFromPending({ approval, question: pendingQuestion, conversationId: activeConversationId }), [activeConversationId, approval, pendingQuestion]);
+    const accountReady = historyHydrated && pendingHydrated && hydratedAccount.current === `${userId}:${accountScope}`;
     const openAttention = useCallback(() => {
         setView("chat");
         onOpen();
     }, [onOpen]);
-    const attentionNotifications = useAgentAttentionNotifications({ attention, enabled: historyHydrated && pendingHydrated, panelOpen: open, onOpen: openAttention });
+    const attentionNotifications = useAgentAttentionNotifications({ attention, enabled: accountReady, panelOpen: open, onOpen: openAttention });
     const [scenePresets, setScenePresets] = useState<SkillPreset[]>([]);
     const [presetApplyingId, setPresetApplyingId] = useState("");
     const presetApplyingRef = useRef<string | null>(null);
@@ -1283,7 +1284,7 @@ export const CanvasCloudAgentPanel = memo(function CanvasCloudAgentPanel() {
     const attentionGuide = attentionNotifications.showGuide ? (
         <AgentNotificationPermissionGuide permission={attentionNotifications.permission} requesting={attentionNotifications.requesting} onRequest={() => void attentionNotifications.requestPermission()} />
     ) : null;
-    const attentionContent = attention ? (
+    const attentionContent = accountReady && attention ? (
         <AgentCollapsedAttentionCard
             theme={theme}
             approval={approval}

@@ -1217,7 +1217,7 @@ export function AgentQuestionBar({ question, theme, onAnswer, disabled = false, 
                                                         aria-pressed={selected}
                                                         className={`agent-question-chip${selected ? " is-selected" : ""}`}
                                                         style={selected ? { background: theme.accent.primary, color: theme.accent.onPrimary } : { background: theme.toolbar.itemHover }}
-                                                        title={option.detail || option.label}
+                                                        title={compact ? option.label : option.detail || option.label}
                                                         onMouseDown={stop}
                                                         onPointerDown={stop}
                                                         onClick={(event) => {
@@ -1314,7 +1314,7 @@ export function AgentQuestionBar({ question, theme, onAnswer, disabled = false, 
                         key={option.label}
                         type="button"
                         disabled={disabled}
-                        title={option.detail || option.label}
+                        title={compact ? option.label : option.detail || option.label}
                         className="agent-question-choice max-w-full rounded-md border-0 px-3 py-2 text-left text-xs transition focus-visible:outline focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-50"
                         style={{ background: theme.toolbar.itemHover }}
                         onMouseDown={stop}

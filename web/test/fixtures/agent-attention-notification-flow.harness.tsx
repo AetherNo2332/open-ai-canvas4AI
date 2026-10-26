@@ -200,6 +200,23 @@ test("页面可见且 Agent 展开时不通知，隐藏页面后才通知", asyn
     }
 });
 
+test("待处理事项不再符合提醒条件时关闭现有系统通知", async () => {
+    visibilityState = "hidden";
+    const mounted = await mount({ attention: { key: "approval:a3", kind: "approval" }, enabled: true, panelOpen: false });
+    try {
+        expect(created).toHaveLength(1);
+        visibilityState = "visible";
+        await act(async () => {
+            document.dispatchEvent(new Event("visibilitychange"));
+            await settle();
+        });
+        await mounted.render({ attention: { key: "approval:a3", kind: "approval" }, enabled: true, panelOpen: true });
+        expect(created[0]?.closed).toBe(1);
+    } finally {
+        await mounted.close();
+    }
+});
+
 test("明确授权后仅在当前待处理事项仍需提醒时补发通知", async () => {
     permission = "default";
     let resolveRequest!: (value: NotificationPermission) => void;
@@ -238,6 +255,25 @@ test("明确授权后仅在当前待处理事项仍需提醒时补发通知", as
     } finally {
         await qualifying.close();
     }
+});
+
+test("通知授权等待期间组件卸载不会创建孤立通知", async () => {
+    permission = "default";
+    let resolveRequest!: (value: NotificationPermission) => void;
+    requestPermissionImpl = () => new Promise((resolve) => (resolveRequest = resolve));
+    const mounted = await mount({ attention: { key: "question:q4", kind: "question" }, enabled: true, panelOpen: false });
+    let request!: Promise<void>;
+    await act(async () => {
+        request = mounted.latest().requestPermission();
+        await Promise.resolve();
+    });
+    await mounted.close();
+    await act(async () => {
+        resolveRequest("granted");
+        await request;
+        await settle();
+    });
+    expect(created).toHaveLength(0);
 });
 
 test("禁用提醒时不展示授权指引也不创建通知", async () => {

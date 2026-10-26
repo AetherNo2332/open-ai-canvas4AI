@@ -201,6 +201,7 @@ test("收起态选择提问只显示问题与可直接提交的答案", async ()
         expect(host.textContent).toContain("电影写实");
         expect(host.textContent).toContain("国风动画");
         expect(host.textContent).not.toContain("强调真实摄影质感与自然光影");
+        expect(host.querySelector('[title="强调真实摄影质感与自然光影"]')).toBeNull();
         expect(host.textContent).not.toContain("也可以在下方输入框里补充说明");
         await act(async () => button(host, "国风动画").click());
         expect(answers).toEqual(["国风动画"]);

@@ -41,8 +41,16 @@ export function useAgentAttentionNotifications({ attention, enabled, panelOpen, 
     const deliverCurrentAttention = useCallback(
         (nextPermission = readAgentNotificationPermission(), nextVisibilityState = currentVisibilityState()) => {
             const current = attentionRef.current;
-            if (!enabledRef.current || !current || deliveredKeysRef.current.has(current.key)) return;
-            if (!shouldSendAgentBrowserNotification({ permission: nextPermission, panelOpen: panelOpenRef.current, visibilityState: nextVisibilityState })) return;
+            if (!mountedRef.current || !enabledRef.current || !current) return;
+            if (!shouldSendAgentBrowserNotification({ permission: nextPermission, panelOpen: panelOpenRef.current, visibilityState: nextVisibilityState })) {
+                const active = activeNotificationRef.current;
+                if (active?.key === current.key) {
+                    active.handle.close();
+                    activeNotificationRef.current = null;
+                }
+                return;
+            }
+            if (deliveredKeysRef.current.has(current.key)) return;
 
             let handle: AgentNotificationHandle | null = null;
             handle = showAgentBrowserNotification(current, () => {
@@ -99,7 +107,7 @@ export function useAgentAttentionNotifications({ attention, enabled, panelOpen, 
                 setPermission(nextPermission);
                 setVisibilityState(nextVisibilityState);
             }
-            if (nextPermission === "granted") deliverCurrentAttention(nextPermission, nextVisibilityState);
+            if (nextPermission === "granted" && mountedRef.current) deliverCurrentAttention(nextPermission, nextVisibilityState);
         } finally {
             requestingRef.current = false;
             if (mountedRef.current) setRequesting(false);
