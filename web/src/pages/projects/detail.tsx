@@ -6,7 +6,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState } from "@/components/layout/workspace-state";
-import { approveDramaEpisode, generateDramaSegments, pauseDrama, regenerateDramaCast, releaseDramaMedia, renameDramaEpisode, rescriptDramaEpisode, retryFailedDrama, startDrama, updateDramaSegment, writeDramaSegmentPrompts, updateDramaShot, type DramaInboxItem, type DramaJob, type DramaModelChoice, type DramaSegment, type DramaShot, type DramaShotPatch } from "@/services/api/drama";
+import { approveDramaEpisode, generateDramaSegments, pauseDrama, reprocessDramaSegmentVideo, regenerateDramaCast, releaseDramaMedia, renameDramaEpisode, rescriptDramaEpisode, retryFailedDrama, startDrama, updateDramaSegment, writeDramaSegmentPrompts, updateDramaShot, type DramaInboxItem, type DramaJob, type DramaModelChoice, type DramaSegment, type DramaShot, type DramaShotPatch } from "@/services/api/drama";
 
 import { formatCount, formatDuration, StagePips, STAGE_LABEL, STATUS_LABEL } from "./drama-shared";
 import { CastPanel, InboxPanel, SettingsPanel } from "./studio/panels";
@@ -113,6 +113,11 @@ export default function DramaStudioPage() {
             message.success(`${label}已加入队列，共 ${result.queued} 个段视频`);
         },
         onError: (error) => errorMessage(error, "生成失败"),
+    });
+    const reprocessSegment = useMutation({
+        mutationFn: (segmentIndex: number) => reprocessDramaSegmentVideo(projectId, episodeId, segmentIndex),
+        onSuccess: (_, segmentIndex) => { invalidate(episodeId); message.success(`正在重新处理第 ${segmentIndex + 1} 段视频`); },
+        onError: (error) => { invalidate(episodeId); errorMessage(error, "重新处理失败"); },
     });
     const rescript = useMutation({
         mutationFn: () => rescriptDramaEpisode(projectId, episodeId),
@@ -310,6 +315,8 @@ export default function DramaStudioPage() {
                                         keyboardEnabled={openSegmentIndex === undefined && view === "production"}
                                         onOpen={openSegment}
                                         onGenerate={(segments, videoModel) => generateSegments.mutate({ segments, videoModel })}
+                                        onReprocess={(index) => reprocessSegment.mutate(index)}
+                                        reprocessing={reprocessSegment.isPending ? reprocessSegment.variables : undefined}
                                         onWritePrompts={(indexes) => writeSegment.mutate(indexes)}
                                         empty={episodeEmpty}
                                     />
@@ -334,6 +341,8 @@ export default function DramaStudioPage() {
                             onSavePrompt={(segment, override) => saveSegment.mutate({ segment, override })}
                             onWritePrompt={(segment) => writeSegment.mutate([segment.index])}
                             onGenerate={(segment, videoModel) => generateSegments.mutate({ segments: [segment.index], videoModel })}
+                            reprocessing={reprocessSegment.isPending}
+                            onReprocess={(segment) => reprocessSegment.mutate(segment.index)}
                             defaultVideoModel={production.settings.models.video}
                             onOpenCast={(id) => openView("cast", { cast: id, segment: null, shot: null })}
                         />

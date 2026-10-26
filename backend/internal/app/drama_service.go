@@ -586,6 +586,7 @@ func (s *Service) fillDramaSegmentViews(projectID string, p *model.DramaProducti
 			}
 			if job.Kind == model.DramaJobSegmentVideo && view.VideoJob == nil {
 				view.VideoJob = &j
+				view.VideoReprocessable = view.VideoStatus == model.DramaMediaFailed && view.VideoResourceID != "" && dramaVideoJobReplayable(job)
 			}
 		}
 	}

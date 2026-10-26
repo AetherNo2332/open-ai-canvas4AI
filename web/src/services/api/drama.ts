@@ -263,6 +263,8 @@ export type DramaSegment = {
     videoResourceId?: string;
     tailFrameResourceId?: string;
     videoError?: string;
+    /** 视频已生成，只是后处理（如抽尾帧）失败；可重新处理已有视频，不重新生成。 */
+    videoReprocessable?: boolean;
     videoModel: DramaModelChoice;
     request: DramaSegmentRequest;
     promptJob?: DramaJob;
@@ -463,6 +465,11 @@ export function getDramaCastImpact(projectId: string, castId: string, signal?: A
 /** restyleSegments=true 时引用该设定的剧情段视频标记过期，需要重新生成；段提示词保持不变。 */
 export function regenerateDramaCast(projectId: string, castId: string, restyleSegments: boolean) {
     return http.post<{ affectedSegments: number }>(`${base(projectId)}/cast/${encodeURIComponent(castId)}/regenerate`, { restyleSegments });
+}
+
+/** 重新处理已生成但后处理失败的段视频：重放原任务结果，不重新生成、不扣费。 */
+export function reprocessDramaSegmentVideo(projectId: string, episodeId: string, segmentIndex: number) {
+    return http.post<{ reprocessing: boolean }>(`${base(projectId)}/episodes/${encodeURIComponent(episodeId)}/segments/${segmentIndex}/reprocess`);
 }
 
 /** 按剧情段生成视频；段会按顺序提交，第 2 段起等上一段最后一帧。可同时换视频模型。 */

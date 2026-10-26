@@ -4163,15 +4163,19 @@
     font-size: var(--fs-tiny);
     line-height: 1.55;
 }
-.drama-sd-error span {
+.drama-sd-error > span {
     color: color-mix(in oklab, var(--drama-err) 75%, var(--foreground));
     word-break: break-word;
+}
+.drama-sd-error-actions {
+    display: flex;
+    margin-top: 6px;
 }
 .drama-sd-error.is-wait {
     background: color-mix(in oklab, var(--drama-warn) 10%, transparent);
     color: var(--drama-warn);
 }
-.drama-sd-error.is-wait span {
+.drama-sd-error.is-wait > span {
     color: color-mix(in oklab, var(--drama-warn) 70%, var(--foreground));
 }
 
@@ -4694,10 +4698,15 @@
 .drama-sg-cover:hover {
     outline-color: var(--drama-line-strong);
 }
-.drama-sg-cover img {
+.drama-sg-cover img,
+.drama-sg-cover-media {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+.drama-sg-cover-media {
+    display: block;
+    pointer-events: none;
 }
 .drama-sg-cover-empty {
     position: absolute;
@@ -4840,6 +4849,11 @@
     font-size: var(--fs-micro);
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+.drama-sg-actions {
+    display: flex;
+    flex: none;
+    gap: 6px;
 }
 .drama-sd-generate {
     display: grid;

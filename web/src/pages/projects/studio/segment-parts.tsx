@@ -23,7 +23,8 @@ export function videoWaitLabel(wait: string) {
 export function segmentState(segment: DramaSegment): { tone: SegmentTone; label: string; detail?: string } {
     const writing = segment.promptStatus === "queued" || segment.promptStatus === "running";
     if (segment.promptStatus === "failed") return { tone: "failed", label: "提示词撰写失败" };
-    if (segment.videoStatus === "failed") return { tone: "failed", label: "视频生成失败" };
+    // 视频已入库但尾帧等后处理失败：视频本身可看，重试只重新处理已有视频。
+    if (segment.videoStatus === "failed") return segment.videoReprocessable ? { tone: "failed", label: "视频后处理失败" } : { tone: "failed", label: "视频生成失败" };
     if (writing) return { tone: "busy", label: "撰写提示词中" };
     if (segment.promptStatus === "none") return { tone: "idle", label: "待撰写提示词" };
     if (segment.promptStatus === "stale" && !segment.custom) return { tone: "stale", label: "提示词已过期" };
@@ -59,7 +60,8 @@ export function SegmentStatus({ segment }: { segment: DramaSegment }) {
 }
 
 export function SegmentVideo({ segment, aspectRatio, className = "" }: { segment: DramaSegment; aspectRatio: string; className?: string }) {
-    const url = useResourceMediaUrl(segment.videoStatus === "ready" || segment.videoStatus === "stale" ? segment.videoResourceId : undefined, "playback");
+    const viewable = segment.videoStatus === "ready" || segment.videoStatus === "stale" || segment.videoStatus === "failed";
+    const url = useResourceMediaUrl(viewable ? segment.videoResourceId : undefined, "playback");
     const state = segmentState(segment);
     return (
         <div className={`drama-sg-video ${className}`} style={{ aspectRatio: aspectRatioValue(aspectRatio) }}>

@@ -288,6 +288,73 @@ func (r *dramaRun) applySegmentVideo(job *model.DramaJob, task *model.Task) erro
 	return err
 }
 
+// dramaVideoJobReplayable 表示段视频作业的生成任务已成功，只是结果回写（如抽尾帧）失败；
+// 重新处理会重放同一任务结果，不再提交模型。
+func dramaVideoJobReplayable(job model.DramaJob) bool {
+	if job.Kind != model.DramaJobSegmentVideo || job.Status != model.DramaJobFailed || job.TaskID == "" {
+		return false
+	}
+	var attempts []DramaJobAttempt
+	_ = json.Unmarshal([]byte(job.AttemptsJSON), &attempts)
+	for _, attempt := range attempts {
+		if attempt.TaskID == job.TaskID && attempt.Status == string(model.TaskStatusSucceeded) {
+			return true
+		}
+	}
+	return false
+}
+
+// ReprocessDramaSegmentVideo 重新处理一段已生成、但后处理失败的视频：只重放原任务结果，不重新生成、不重复扣费。
+func (s *Service) ReprocessDramaSegmentVideo(userID, projectID, episodeID string, index int) (map[string]any, error) {
+	project, p, err := s.dramaForUser(userID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	episode, err := s.repo.DramaEpisode(project.ID, episodeID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.repo.DramaSegments(episode.ID)
+	if err != nil {
+		return nil, err
+	}
+	var segment *model.DramaSegment
+	for i := range rows {
+		if rows[i].SegmentIndex == index {
+			segment = &rows[i]
+			break
+		}
+	}
+	if segment == nil {
+		return nil, BadAuthRequest("剧情段不存在")
+	}
+	if segment.VideoStatus != model.DramaMediaFailed || segment.VideoResourceID == "" {
+		return nil, BadAuthRequest("本段没有需要重新处理的视频")
+	}
+	jobs, err := s.repo.RecentDramaSegmentJobs(project.ID, episode.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, job := range jobs {
+		if job.Kind != model.DramaJobSegmentVideo || job.ShotID != segment.ID {
+			continue
+		}
+		// 只看最近一次视频作业：更早的结果已被后续生成取代，不能拿来重放。
+		if !dramaVideoJobReplayable(job) {
+			break
+		}
+		reopened, err := s.repo.ReopenDramaSegmentVideoJob(job.ID, segment.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !reopened {
+			break
+		}
+		return map[string]any{"reprocessing": true}, s.requestDramaWork(p)
+	}
+	return nil, BadAuthRequest("找不到可重新处理的视频结果，请重新生成本段视频")
+}
+
 func (s *Service) extractDramaTailFrame(userID, resourceID string) (string, error) {
 	if s.dramaTailFrameHook != nil {
 		return s.dramaTailFrameHook(userID, resourceID)
@@ -299,6 +366,10 @@ func (s *Service) extractDramaTailFrame(userID, resourceID string) (string, erro
 	defer body.Close()
 	if !strings.HasPrefix(resource.MimeType, "video/") {
 		return "", errors.New("尾帧来源不是视频")
+	}
+	ffmpegBin, err := renderFfmpegBinary()
+	if err != nil {
+		return "", fmt.Errorf("抽取尾帧失败：%w", err)
 	}
 	dir, err := os.MkdirTemp("", "yingce-drama-tail-")
 	if err != nil {
@@ -322,9 +393,13 @@ func (s *Service) extractDramaTailFrame(userID, resourceID string) (string, erro
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	// Decode every remaining frame and update the same output, so the saved image is the actual final frame.
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-sseof", "-1", "-i", input, "-an", "-update", "1", "-y", output)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("抽取尾帧失败（可重试已有视频）：%w", err)
+	cmd := exec.CommandContext(ctx, ffmpegBin, "-hide_banner", "-loglevel", "error", "-sseof", "-1", "-i", input, "-an", "-update", "1", "-y", output)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return "", fmt.Errorf("抽取尾帧失败：%s", clipText(detail, 400))
 	}
 	image, err := os.Open(output)
 	if err != nil {

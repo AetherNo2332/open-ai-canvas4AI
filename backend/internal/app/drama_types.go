@@ -299,11 +299,13 @@ type DramaSegmentView struct {
 	PromptStatus string `json:"promptStatus"`
 	PromptError  string `json:"promptError,omitempty"`
 	// VideoStatus：空串待生成、running、ready、stale（提示词或上一段已变）、failed。
-	VideoStatus         string           `json:"videoStatus"`
-	VideoResourceID     string           `json:"videoResourceId,omitempty"`
-	TailFrameResourceID string           `json:"tailFrameResourceId,omitempty"`
-	VideoError          string           `json:"videoError,omitempty"`
-	VideoModel          DramaModelChoice `json:"videoModel"`
+	VideoStatus         string `json:"videoStatus"`
+	VideoResourceID     string `json:"videoResourceId,omitempty"`
+	TailFrameResourceID string `json:"tailFrameResourceId,omitempty"`
+	VideoError          string `json:"videoError,omitempty"`
+	// VideoReprocessable：视频已生成并入库，只是结果回写（如抽尾帧）失败；可重新处理已有视频，不重新生成。
+	VideoReprocessable bool             `json:"videoReprocessable,omitempty"`
+	VideoModel         DramaModelChoice `json:"videoModel"`
 	// Request 是生成本段视频时实际会发送的内容：生成方式、首帧、参考图、秒数与追加在提示词前的参考图说明。
 	Request   DramaSegmentRequest `json:"request"`
 	PromptJob *DramaJobView       `json:"promptJob,omitempty"`
