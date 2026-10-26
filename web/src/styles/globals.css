@@ -10071,10 +10071,6 @@ html:not(.dark) .canvas-generation-settings-trigger.ant-btn[aria-expanded="true"
         padding-inline: var(--space-1) var(--space-2);
     }
 
-    .canvas-node-composer-footer .canvas-node-composer-model-trigger .canvas-model-picker-trigger-icon {
-        border-radius: var(--r-full);
-    }
-
     .canvas-node-composer-settings-trigger {
         height: var(--space-8) !important;
         width: var(--canvas-composer-settings-width) !important;

@@ -287,6 +287,10 @@ html:not(.dark) .creation-model-picker.canvas-composer-model-picker[aria-expande
         justify-content: center;
         width: 22px;
     }
+    /* 提示词面板底栏的模型胶囊：图标随胶囊取全圆角。 */
+    .canvas-node-composer-footer .canvas-node-composer-model-trigger .canvas-model-picker-trigger-icon {
+        border-radius: var(--r-full);
+    }
 
     .canvas-model-picker-chevron {
         color: color-mix(in srgb, var(--foreground) 52%, transparent);
