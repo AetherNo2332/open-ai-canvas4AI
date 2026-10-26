@@ -237,7 +237,7 @@ jobs:
         env:
           CANVAS_NODE_ACCEPTANCE_FILE: ${{ runner.temp }}/node-functions.json
           CGO_ENABLED: "1"
-        run: go test -v ./internal/canvas/commands -run '^TestNodeFunctionAcceptance$' -count=1 -timeout=5m
+        run: go test -v ./internal/canvas/commands ./internal/canvas/tasks -run '^(TestNodeFunctionAcceptance|TestImageToolTaskAcceptance)$' -count=1 -timeout=5m
       - name: Upload node acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

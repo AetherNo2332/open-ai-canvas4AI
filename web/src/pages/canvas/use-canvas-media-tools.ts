@@ -23,6 +23,8 @@ import { audioMetadata, imageMetadata, videoMetadata } from "@/lib/canvas/canvas
 import { commitProducedModel } from "@/lib/canvas/produced-model";
 import { findAvailableGenerationGroupPosition, imageGenerationChildPosition, imageGenerationGroupSize } from "@/lib/canvas/canvas-generation-layout";
 import { canvasGenerationPromptMetadata } from "@/lib/canvas/canvas-generation-submission";
+import { bindingForNode, generationSpecMetadata, specFromConfig } from "@/lib/canvas/generation-contract";
+import { reconcileCanvasReferenceConnections } from "@/lib/canvas/canvas-reference-projection";
 import { cancelIncompleteImageBatch } from "@/lib/canvas/canvas-image-batch-retry";
 import { buildAngleLabel, buildAnglePrompt, createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { validateVideoSegmentBatch } from "@/lib/canvas/canvas-video-regeneration";
@@ -1095,15 +1097,31 @@ export function useCanvasMediaTools({
         const title = buildAngleLabel(params);
         const prompt = buildAnglePrompt(params);
         const source = nodeReferenceImage(node);
-        if (!source) return;
+        const binding = bindingForNode(node, 0);
+        if (!source || !binding) return;
         const styleExecution = resolveImageEditStyle(node, prompt, generationConfig);
         if (!styleExecution) return;
         const { prompt: effectivePrompt, metadata: styleMetadata } = styleExecution;
         const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [source]);
         setAngleNodeId(null);
         setRunningNodeId(childId);
-        setNodes((current) => [...current, { id: childId, type: CanvasNodeType.Image, title, position: { x: node.position.x + node.width + 96, y: node.position.y }, width: imageSpec.width, height: imageSpec.height, metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, ...generationMetadata, ...styleMetadata } }]);
-        setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+        const child: CanvasNodeData = {
+            id: childId,
+            type: CanvasNodeType.Image,
+            title,
+            position: { x: node.position.x + node.width + 96, y: node.position.y },
+            width: imageSpec.width,
+            height: imageSpec.height,
+            metadata: {
+                status: NODE_STATUS_LOADING,
+                ...generationMetadata,
+                ...generationSpecMetadata(specFromConfig("image", prompt, generationConfig, [binding])),
+                ...canvasGenerationPromptMetadata(prompt, effectivePrompt),
+                ...styleMetadata,
+            },
+        };
+        setNodes((current) => [...current, child]);
+        setConnections((current) => reconcileCanvasReferenceConnections([...nodesRef.current, child], current, [childId]));
         setSelectedNodeIds(new Set([childId]));
         setDialogNodeId(childId);
         const controller = startGenerationRequest(childId, node.id, childId);
@@ -1151,10 +1169,11 @@ export function useCanvasMediaTools({
         const imageSpec = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
         const title = buildLightingLabel(options);
         const source = nodeReferenceImage(node);
-        if (!source) return;
+        const binding = bindingForNode(node, 0);
+        if (!source || !binding) return;
         const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, [source]);
         setLightingNodeId(null);
-        setNodes((current) => [...current, {
+        const child: CanvasNodeData = {
             id: childId,
             type: CanvasNodeType.Image,
             title,
@@ -1162,17 +1181,19 @@ export function useCanvasMediaTools({
             width: imageSpec.width,
             height: imageSpec.height,
             metadata: {
-                prompt,
                 status: NODE_STATUS_IDLE,
                 generationMode: "image",
                 ...generationMetadata,
+                ...generationSpecMetadata(specFromConfig("image", prompt, generationConfig, [binding])),
+                ...canvasGenerationPromptMetadata(prompt, prompt),
             },
-        }]);
-        setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
+        };
+        setNodes((current) => [...current, child]);
+        setConnections((current) => reconcileCanvasReferenceConnections([...nodesRef.current, child], current, [childId]));
         setSelectedNodeIds(new Set([childId]));
         setSelectedConnectionId(null);
         setDialogNodeId(childId);
-    }, [effectiveConfig, setConnections, setDialogNodeId, setLightingNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [effectiveConfig, nodesRef, setConnections, setDialogNodeId, setLightingNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
 
     const generateEmotionNode = useCallback(async (node: CanvasNodeData, payload: CanvasImageEmotionPayload) => {
         if (!node.metadata?.content) return;

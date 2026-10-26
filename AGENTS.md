@@ -157,7 +157,7 @@
 项目当前默认不自动运行语法检查、类型检查、测试或构建。用户明确要求验证，或改动风险需要验证时，按范围选择最小充分命令，并在交付中如实记录：
 
 - 前端：`cd web && bun run build`；专项测试用 `bun test ...`。UI 退场规则用 `bun run lint`（只禁 antd Empty 和静态 `Modal.confirm`，不是风格检查）。
-- 节点验收：在 `web/` 执行 `bun scripts/audit-canvas-node-save.tsx test/fixtures/canvas-editor-capabilities.json /tmp/node-functions.json`；随后在 `backend/` 设置 `CANVAS_NODE_ACCEPTANCE_FILE=/tmp/node-functions.json`、`CGO_ENABLED=1`，运行 `go test ./internal/canvas/commands -run '^TestNodeFunctionAcceptance$' -count=1`。能力目录先通过 `TestEditorCapabilitiesFixture`；不得放宽失败操作、遗漏类型或身份伪造的断言。
+- 节点验收：在 `web/` 执行 `bun scripts/audit-canvas-node-save.tsx test/fixtures/canvas-editor-capabilities.json /tmp/node-functions.json`；随后在 `backend/` 设置 `CANVAS_NODE_ACCEPTANCE_FILE=/tmp/node-functions.json`、`CGO_ENABLED=1`，运行 `go test ./internal/canvas/commands ./internal/canvas/tasks -run '^(TestNodeFunctionAcceptance|TestImageToolTaskAcceptance)$' -count=1`。能力目录先通过 `TestEditorCapabilitiesFixture`；不得放宽失败操作、遗漏类型或身份伪造的断言。图片编辑验收另核对多视角/打光草稿与原图在重开后的保存结果、实际任务输入和幂等准入，供应商执行保持受控。
 - 后端：`cd backend && go test ./...`；涉及 PostgreSQL、资源、任务或权限时补对应集成/冒烟路径。
 - 增量治理：`go test ./internal/architecture` 与 handler 的 OpenAPI 合同测试；baseline 必须对应精确规则和位置，不能自动接纳新违规。CI 分别验证锁版本分析器拒绝负例，保留已有工具 AST/制品与 Pi 合同检查。
 - 部署脚本：`python -B -m unittest scripts.test_production_deployment scripts.test_agent_parity_container_commands scripts.test_production_agent_smoke scripts.test_install_agent_worker_id` 只检查隔离命令、配置和身份边界；真实跨进程入口是 `scripts/verify-production-agent-smoke.py`。运行容器前检查项目、挂载、端口和数据范围，不能把静态检查当成生产验收。
