@@ -113,8 +113,7 @@ export function projectCloudAgentConversation(conversationId: string, sourceRuns
  */
 function knownRunPrefix(run: AgentRun, cached: AgentRun | undefined) {
     const known = new Map<number, AgentEvent>();
-    for (const event of [...(cached?.id === run.id ? cached.events || [] : []), ...(run.events || [])])
-        if (event.runId === run.id && Number.isSafeInteger(event.seq) && event.seq > 0) known.set(event.seq, event);
+    for (const event of [...(cached?.id === run.id ? cached.events || [] : []), ...(run.events || [])]) if (event.runId === run.id && Number.isSafeInteger(event.seq) && event.seq > 0) known.set(event.seq, event);
     const events: AgentEvent[] = [];
     while (known.has(events.length + 1)) events.push(known.get(events.length + 1)!);
     // 本机前缀比服务端计数还长说明缓存与服务端不一致，丢弃后从第一条重新读。

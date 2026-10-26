@@ -11,16 +11,7 @@ describe("技能工作台文件树", () => {
         const collapsed = flattenTree(tree, new Set());
         expect(collapsed.map((row) => row.path)).toEqual(["empty", "references", "scripts", "SKILL.md", "README.md"]);
         const expanded = flattenTree(tree, new Set(["references", "references/zeta"]));
-        expect(expanded.map((row) => `${row.depth}:${row.path}`)).toEqual([
-            "0:empty",
-            "0:references",
-            "1:references/zeta",
-            "2:references/zeta/deep.md",
-            "1:references/camera.md",
-            "0:scripts",
-            "0:SKILL.md",
-            "0:README.md",
-        ]);
+        expect(expanded.map((row) => `${row.depth}:${row.path}`)).toEqual(["0:empty", "0:references", "1:references/zeta", "2:references/zeta/deep.md", "1:references/camera.md", "0:scripts", "0:SKILL.md", "0:README.md"]);
         expect(expanded.find((row) => row.path === "references/camera.md")?.parent).toBe("references");
     });
 
@@ -41,19 +32,7 @@ describe("技能工作台文件树", () => {
 });
 
 describe("技能路径校验与后端一致", () => {
-    test.each([
-        ["../x.md"],
-        ["/abs.md"],
-        ["a//b.md"],
-        ["./a.md"],
-        ["a\\b.md"],
-        [".git/config"],
-        ["__MACOSX/a"],
-        ["a/.DS_Store"],
-        ["1/2/3/4/5/6/7/8/9.md"],
-        [" padded.md"],
-        ["tab\tname.md"],
-    ])("拒绝 %p", (path) => {
+    test.each([["../x.md"], ["/abs.md"], ["a//b.md"], ["./a.md"], ["a\\b.md"], [".git/config"], ["__MACOSX/a"], ["a/.DS_Store"], ["1/2/3/4/5/6/7/8/9.md"], [" padded.md"], ["tab\tname.md"]])("拒绝 %p", (path) => {
         expect(validateSkillPath(path)).not.toBeNull();
     });
 
@@ -71,7 +50,11 @@ describe("技能路径校验与后端一致", () => {
 
 describe("保存操作折叠", () => {
     const basePaths = ["SKILL.md", "a.md", "b.md", "old.md", "logo.png"];
-    const baseContents = new Map([["SKILL.md", "# skill"], ["a.md", "A"], ["b.md", "B"]]);
+    const baseContents = new Map([
+        ["SKILL.md", "# skill"],
+        ["a.md", "A"],
+        ["b.md", "B"],
+    ]);
 
     test("顺序为删除 → 改名 → 写入，未改动文件不提交", () => {
         const entries: WorkbenchEntry[] = [
@@ -81,7 +64,11 @@ describe("保存操作折叠", () => {
             { path: "assets/logo.png", origin: "logo.png" },
             { path: "new.md", origin: null },
         ];
-        const buffers = new Map([["SKILL.md", "# skill v2"], ["a.md", "A"], ["docs/b.md", "B2"]]);
+        const buffers = new Map([
+            ["SKILL.md", "# skill v2"],
+            ["a.md", "A"],
+            ["docs/b.md", "B2"],
+        ]);
         expect(buildSaveOperations({ basePaths, entries, buffers, baseContents })).toEqual([
             { op: "delete", path: "old.md" },
             { op: "rename", path: "b.md", to: "docs/b.md" },
@@ -102,7 +89,11 @@ describe("保存操作折叠", () => {
         ];
         const operations = buildSaveOperations({ basePaths: ["SKILL.md", "a.md", "b.md"], entries, buffers: new Map(), baseContents });
         // 在内存中重放，结果必须与工作副本一致。
-        const files = new Map([["SKILL.md", "S"], ["a.md", "A"], ["b.md", "B"]]);
+        const files = new Map([
+            ["SKILL.md", "S"],
+            ["a.md", "A"],
+            ["b.md", "B"],
+        ]);
         for (const operation of operations) {
             if (operation.op !== "rename") throw new Error("unexpected op");
             expect(files.has(operation.to)).toBe(false);
@@ -113,7 +104,10 @@ describe("保存操作折叠", () => {
     });
 
     test("删除后在原路径新建文件", () => {
-        const entries: WorkbenchEntry[] = [{ path: "SKILL.md", origin: "SKILL.md" }, { path: "a.md", origin: null }];
+        const entries: WorkbenchEntry[] = [
+            { path: "SKILL.md", origin: "SKILL.md" },
+            { path: "a.md", origin: null },
+        ];
         expect(buildSaveOperations({ basePaths: ["SKILL.md", "a.md"], entries, buffers: new Map([["a.md", "fresh"]]), baseContents })).toEqual([
             { op: "delete", path: "a.md" },
             { op: "write", path: "a.md", content: "fresh" },

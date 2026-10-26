@@ -4,9 +4,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type 
 
 import { SKILL_ENTRY_PATH, fileExtension, type TreeRow } from "@/lib/skills/skill-workbench-model";
 
-export type ExplorerInput =
-    | { mode: "new-file" | "new-folder"; parent: string }
-    | { mode: "rename"; path: string; type: "file" | "folder" };
+export type ExplorerInput = { mode: "new-file" | "new-folder"; parent: string } | { mode: "rename"; path: string; type: "file" | "folder" };
 
 type ExplorerProps = {
     rows: TreeRow[];
@@ -144,12 +142,24 @@ export function SkillWorkbenchExplorer(props: ExplorerProps) {
             onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
                 switch (key) {
-                    case "open": onOpenFile(row.path); break;
-                    case "new-file": onStartInput({ mode: "new-file", parent }); break;
-                    case "new-folder": onStartInput({ mode: "new-folder", parent }); break;
-                    case "revert": onRevert(row.path); break;
-                    case "rename": onStartInput({ mode: "rename", path: row.path, type: row.type }); break;
-                    case "delete": onDelete(row); break;
+                    case "open":
+                        onOpenFile(row.path);
+                        break;
+                    case "new-file":
+                        onStartInput({ mode: "new-file", parent });
+                        break;
+                    case "new-folder":
+                        onStartInput({ mode: "new-folder", parent });
+                        break;
+                    case "revert":
+                        onRevert(row.path);
+                        break;
+                    case "rename":
+                        onStartInput({ mode: "rename", path: row.path, type: row.type });
+                        break;
+                    case "delete":
+                        onDelete(row);
+                        break;
                 }
             },
         };
@@ -157,7 +167,18 @@ export function SkillWorkbenchExplorer(props: ExplorerProps) {
 
     const newInputParent = input && input.mode !== "rename" ? input.parent : null;
     const newInputDepth = newInputParent === null ? 0 : newInputParent === "" ? 0 : (rows.find((row) => row.path === newInputParent)?.depth ?? -1) + 1;
-    const newInputRow = input && input.mode !== "rename" ? <InlineNameInput key={`new-${input.mode}-${input.parent}`} depth={newInputDepth} icon={input.mode === "new-folder" ? <Folder aria-hidden="true" className="size-4" /> : <File aria-hidden="true" className="size-4" />} initial="" ariaLabel={input.mode === "new-folder" ? "新文件夹名称" : "新文件名称"} onCancel={onCancelInput} onSubmit={onSubmitInput} /> : null;
+    const newInputRow =
+        input && input.mode !== "rename" ? (
+            <InlineNameInput
+                key={`new-${input.mode}-${input.parent}`}
+                depth={newInputDepth}
+                icon={input.mode === "new-folder" ? <Folder aria-hidden="true" className="size-4" /> : <File aria-hidden="true" className="size-4" />}
+                initial=""
+                ariaLabel={input.mode === "new-folder" ? "新文件夹名称" : "新文件名称"}
+                onCancel={onCancelInput}
+                onSubmit={onSubmitInput}
+            />
+        ) : null;
 
     return (
         <div className="skill-wb-explorer" aria-label="资源管理器">
@@ -167,11 +188,29 @@ export function SkillWorkbenchExplorer(props: ExplorerProps) {
                 <div className="skill-wb-explorer-tools">
                     {!readOnly ? (
                         <>
-                            <button type="button" className="skill-wb-icon-button" aria-label="新建文件" title="新建文件" onClick={() => onStartInput({ mode: "new-file", parent: focusedRow ? (focusedRow.type === "folder" ? focusedRow.path : focusedRow.parent) : "" })}><FilePlus className="size-4" /></button>
-                            <button type="button" className="skill-wb-icon-button" aria-label="新建文件夹" title="新建文件夹" onClick={() => onStartInput({ mode: "new-folder", parent: focusedRow ? (focusedRow.type === "folder" ? focusedRow.path : focusedRow.parent) : "" })}><FolderPlus className="size-4" /></button>
+                            <button
+                                type="button"
+                                className="skill-wb-icon-button"
+                                aria-label="新建文件"
+                                title="新建文件"
+                                onClick={() => onStartInput({ mode: "new-file", parent: focusedRow ? (focusedRow.type === "folder" ? focusedRow.path : focusedRow.parent) : "" })}
+                            >
+                                <FilePlus className="size-4" />
+                            </button>
+                            <button
+                                type="button"
+                                className="skill-wb-icon-button"
+                                aria-label="新建文件夹"
+                                title="新建文件夹"
+                                onClick={() => onStartInput({ mode: "new-folder", parent: focusedRow ? (focusedRow.type === "folder" ? focusedRow.path : focusedRow.parent) : "" })}
+                            >
+                                <FolderPlus className="size-4" />
+                            </button>
                         </>
                     ) : null}
-                    <button type="button" className="skill-wb-icon-button" aria-label="全部折叠" title="全部折叠" onClick={onCollapseAll}><ChevronsDownUp className="size-4" /></button>
+                    <button type="button" className="skill-wb-icon-button" aria-label="全部折叠" title="全部折叠" onClick={onCollapseAll}>
+                        <ChevronsDownUp className="size-4" />
+                    </button>
                 </div>
             </div>
             <label className="skill-wb-filter">
@@ -198,7 +237,11 @@ export function SkillWorkbenchExplorer(props: ExplorerProps) {
                         }
                     }}
                 />
-                {filter ? <button type="button" className="skill-wb-filter-clear" aria-label="清除筛选" onClick={() => onFilterChange("")}><X className="size-3" /></button> : null}
+                {filter ? (
+                    <button type="button" className="skill-wb-filter-clear" aria-label="清除筛选" onClick={() => onFilterChange("")}>
+                        <X className="size-3" />
+                    </button>
+                ) : null}
             </label>
             <div ref={treeRef} className="skill-wb-tree thin-scrollbar" role="tree" aria-label="技能文件" onKeyDown={handleTreeKeyDown}>
                 {newInputParent === "" ? newInputRow : null}
@@ -206,7 +249,7 @@ export function SkillWorkbenchExplorer(props: ExplorerProps) {
                     const renaming = input?.mode === "rename" && input.path === row.path;
                     const isFocused = row.path === focusedPath || (focusedIndex < 0 && index === 0);
                     const dirty = row.type === "file" ? dirtyPaths.has(row.path) : [...dirtyPaths].some((path) => path.startsWith(`${row.path}/`));
-                    const icon = row.type === "folder" ? (row.expanded ? <FolderOpen aria-hidden="true" className="size-4 skill-wb-icon-folder" /> : <Folder aria-hidden="true" className="size-4 skill-wb-icon-folder" />) : fileIconFor(row.path);
+                    const icon = row.type === "folder" ? row.expanded ? <FolderOpen aria-hidden="true" className="size-4 skill-wb-icon-folder" /> : <Folder aria-hidden="true" className="size-4 skill-wb-icon-folder" /> : fileIconFor(row.path);
                     const content = renaming ? (
                         <InlineNameInput key={`rename-${row.path}`} depth={row.depth} icon={icon} initial={row.name} ariaLabel={`重命名 ${row.name}`} onCancel={onCancelInput} onSubmit={onSubmitInput} />
                     ) : (
@@ -225,18 +268,40 @@ export function SkillWorkbenchExplorer(props: ExplorerProps) {
                                     if (row.type === "folder") onToggleFolder(row.path);
                                     else onOpenFile(row.path, { preview: true });
                                 }}
-                                onDoubleClick={() => { if (row.type === "file") onOpenFile(row.path); }}
-                                onFocus={() => { if (row.path !== focusedPath) onFocusPath(row.path); }}
+                                onDoubleClick={() => {
+                                    if (row.type === "file") onOpenFile(row.path);
+                                }}
+                                onFocus={() => {
+                                    if (row.path !== focusedPath) onFocusPath(row.path);
+                                }}
                             >
-                                <span className={`skill-wb-chevron${row.type === "folder" ? "" : " is-hidden"}${row.expanded ? " is-expanded" : ""}`} aria-hidden="true"><ChevronRight className="size-3.5" /></span>
+                                <span className={`skill-wb-chevron${row.type === "folder" ? "" : " is-hidden"}${row.expanded ? " is-expanded" : ""}`} aria-hidden="true">
+                                    <ChevronRight className="size-3.5" />
+                                </span>
                                 <span className="skill-wb-row-icon">{icon}</span>
                                 <span className={`skill-wb-row-name${dirty ? " is-dirty" : ""}`}>{row.name}</span>
                                 {dirty && row.type === "file" ? <span className="skill-wb-dirty-dot" aria-label="未保存" /> : null}
                                 {!readOnly ? (
                                     <span className="skill-wb-row-actions">
-                                        {row.path !== SKILL_ENTRY_PATH ? <button type="button" tabIndex={-1} className="skill-wb-row-action" aria-label={`重命名 ${row.name}`} title="重命名 (F2)" onClick={(event: MouseEvent) => { event.stopPropagation(); onStartInput({ mode: "rename", path: row.path, type: row.type }); }}><PencilLine className="size-3.5" /></button> : null}
+                                        {row.path !== SKILL_ENTRY_PATH ? (
+                                            <button
+                                                type="button"
+                                                tabIndex={-1}
+                                                className="skill-wb-row-action"
+                                                aria-label={`重命名 ${row.name}`}
+                                                title="重命名 (F2)"
+                                                onClick={(event: MouseEvent) => {
+                                                    event.stopPropagation();
+                                                    onStartInput({ mode: "rename", path: row.path, type: row.type });
+                                                }}
+                                            >
+                                                <PencilLine className="size-3.5" />
+                                            </button>
+                                        ) : null}
                                         <Dropdown trigger={["click"]} menu={menuFor(row)}>
-                                            <button type="button" tabIndex={-1} className="skill-wb-row-action" aria-label={`${row.name} 更多操作`} title="更多操作" onClick={(event: MouseEvent) => event.stopPropagation()}><MoreHorizontal className="size-3.5" /></button>
+                                            <button type="button" tabIndex={-1} className="skill-wb-row-action" aria-label={`${row.name} 更多操作`} title="更多操作" onClick={(event: MouseEvent) => event.stopPropagation()}>
+                                                <MoreHorizontal className="size-3.5" />
+                                            </button>
                                         </Dropdown>
                                     </span>
                                 ) : null}
@@ -300,8 +365,17 @@ function InlineNameInput({ depth, icon, initial, ariaLabel, onSubmit, onCancel }
                     aria-label={ariaLabel}
                     aria-invalid={Boolean(error)}
                     spellCheck={false}
-                    onChange={(event) => { setValue(event.target.value); setError(""); }}
-                    onBlur={() => { if (!error) commit(); else { doneRef.current = true; onCancel(); } }}
+                    onChange={(event) => {
+                        setValue(event.target.value);
+                        setError("");
+                    }}
+                    onBlur={() => {
+                        if (!error) commit();
+                        else {
+                            doneRef.current = true;
+                            onCancel();
+                        }
+                    }}
                     onKeyDown={(event) => {
                         event.stopPropagation();
                         if (event.key === "Enter") {
@@ -314,7 +388,11 @@ function InlineNameInput({ depth, icon, initial, ariaLabel, onSubmit, onCancel }
                         }
                     }}
                 />
-                {error ? <span className="skill-wb-name-error" role="alert">{error}</span> : null}
+                {error ? (
+                    <span className="skill-wb-name-error" role="alert">
+                        {error}
+                    </span>
+                ) : null}
             </span>
         </div>
     );

@@ -17,18 +17,42 @@ export function DramaStylePicker({ value, onChange }: { value: string; onChange:
             <div className="drama-styles-head">
                 <div className="min-w-0">
                     <h2>视觉风格</h2>
-                    <p>{selected ? <>已选 <b>{selected.name}</b> · {selected.description}</> : "决定全剧角色、场景和镜头的统一画风"}</p>
+                    <p>
+                        {selected ? (
+                            <>
+                                已选 <b>{selected.name}</b> · {selected.description}
+                            </>
+                        ) : (
+                            "决定全剧角色、场景和镜头的统一画风"
+                        )}
+                    </p>
                 </div>
                 <label className="drama-search drama-styles-search">
                     <Search className="size-3.5 shrink-0 opacity-40" />
                     <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题材，如 霸总、仙侠" aria-label="搜索风格" />
-                    {query ? <button type="button" onClick={() => setQuery("")} aria-label="清空搜索"><X className="size-3.5 opacity-40" /></button> : null}
+                    {query ? (
+                        <button type="button" onClick={() => setQuery("")} aria-label="清空搜索">
+                            <X className="size-3.5 opacity-40" />
+                        </button>
+                    ) : null}
                 </label>
             </div>
             <div className="drama-styles-tabs" role="tablist" aria-label="风格分类">
                 {DRAMA_STYLE_CATEGORIES.map((item) => (
-                    <button key={item.key} type="button" role="tab" aria-selected={!query && category === item.key} className="drama-styles-tab" onClick={() => { setQuery(""); setCategory(item.key); }}>
-                        {item.key === "hot" ? <Flame className="size-3.5" /> : null}{item.label}<span>{counts[item.key]}</span>
+                    <button
+                        key={item.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={!query && category === item.key}
+                        className="drama-styles-tab"
+                        onClick={() => {
+                            setQuery("");
+                            setCategory(item.key);
+                        }}
+                    >
+                        {item.key === "hot" ? <Flame className="size-3.5" /> : null}
+                        {item.label}
+                        <span>{counts[item.key]}</span>
                     </button>
                 ))}
             </div>
@@ -38,9 +62,21 @@ export function DramaStylePicker({ value, onChange }: { value: string; onChange:
                     return (
                         <button key={style.id} type="button" role="radio" aria-checked={active} className="drama-style" onClick={() => onChange(style.id)} title={style.description}>
                             <span className="drama-style-swatch" style={{ background: styleCoverBackground(style) }}>
-                                {!style.cover ? <span className="drama-style-glyph" aria-hidden>{style.name.replace(/^3D\s*/, "").slice(0, 2)}</span> : null}
-                                {style.hot ? <span className="drama-style-hot" title="爆款"><Flame className="size-2.5" /></span> : null}
-                                {active ? <span className="drama-style-check"><Check className="size-3" /></span> : null}
+                                {!style.cover ? (
+                                    <span className="drama-style-glyph" aria-hidden>
+                                        {style.name.replace(/^3D\s*/, "").slice(0, 2)}
+                                    </span>
+                                ) : null}
+                                {style.hot ? (
+                                    <span className="drama-style-hot" title="爆款">
+                                        <Flame className="size-2.5" />
+                                    </span>
+                                ) : null}
+                                {active ? (
+                                    <span className="drama-style-check">
+                                        <Check className="size-3" />
+                                    </span>
+                                ) : null}
                                 <span className="drama-style-overlay">
                                     <span className="drama-style-name">{style.name}</span>
                                     <span className="drama-style-tags">{style.tags.join(" · ")}</span>

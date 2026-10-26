@@ -108,13 +108,7 @@ export function CharacterImageLibrary({ currentResourceId, busyKey, canvasTitles
                             onClick={() => onPick(resourceId)}
                             className={`group relative aspect-[3/4] overflow-hidden rounded-lg bg-foreground/[.05] outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--workspace-accent)] disabled:cursor-default ${current ? "ring-2 ring-[var(--workspace-accent)] ring-offset-2 ring-offset-background" : ""}`}
                         >
-                            <CachedResourceImage
-                                storageKey={asset.data.storageKey}
-                                src={asset.coverUrl}
-                                variant="thumbnail"
-                                alt={title}
-                                className="h-full w-full object-cover"
-                            />
+                            <CachedResourceImage storageKey={asset.data.storageKey} src={asset.coverUrl} variant="thumbnail" alt={title} className="h-full w-full object-cover" />
                             <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-2 pb-2 pt-6 text-left text-[var(--fs-label)] text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100 motion-reduce:transition-none">
                                 <span className="block truncate">{title}</span>
                             </span>

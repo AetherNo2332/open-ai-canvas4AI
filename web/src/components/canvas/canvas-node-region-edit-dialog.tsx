@@ -51,10 +51,7 @@ type RegionEditorProps = {
     onConfirm: (payload: CanvasImageRegionEditPayload) => void;
 };
 
-type DragState =
-    | { kind: "create"; pointerId: number; start: RegionPoint }
-    | { kind: "move"; pointerId: number; index: number; origin: RegionPoint; initial: ImageEditRegion }
-    | { kind: "resize"; pointerId: number; index: number; anchor: RegionPoint };
+type DragState = { kind: "create"; pointerId: number; start: RegionPoint } | { kind: "move"; pointerId: number; index: number; origin: RegionPoint; initial: ImageEditRegion } | { kind: "resize"; pointerId: number; index: number; anchor: RegionPoint };
 
 type Corner = "nw" | "ne" | "sw" | "se";
 const CORNERS: Corner[] = ["nw", "ne", "sw", "se"];
@@ -146,16 +143,20 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
 
     const orderedRegions = useMemo(() => [...regions].sort((a, b) => a.index - b.index), [regions]);
     // 区域以画布引用的形式交给 @ 编辑器，提示词里显示成带缩略图的胶囊。
-    const mentionReferences = useMemo<CanvasResourceReference[]>(() => orderedRegions.map((region) => ({
-        id: `region-${region.index}`,
-        nodeId: "",
-        kind: "image",
-        label: regionMentionLabel(region.index),
-        title: `${regionMentionLabel(region.index)} · ${region.width}×${region.height}`,
-        previewUrl: thumbnails.get(region.index),
-        mentionToken: regionMentionToken(region.index),
-        active: true,
-    })), [orderedRegions, thumbnails]);
+    const mentionReferences = useMemo<CanvasResourceReference[]>(
+        () =>
+            orderedRegions.map((region) => ({
+                id: `region-${region.index}`,
+                nodeId: "",
+                kind: "image",
+                label: regionMentionLabel(region.index),
+                title: `${regionMentionLabel(region.index)} · ${region.width}×${region.height}`,
+                previewUrl: thumbnails.get(region.index),
+                mentionToken: regionMentionToken(region.index),
+                active: true,
+            })),
+        [orderedRegions, thumbnails],
+    );
     const trimmedPrompt = prompt.trim();
     const canSubmit = Boolean(size && regions.length && trimmedPrompt);
 
@@ -288,12 +289,15 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
         onConfirm({ prompt: trimmedPrompt, regions: orderedRegions, size, annotatedDataUrl, maskDataUrl, generationConfig: { model, imageModel: model, size: settings.size, quality, count, transparentBackground } });
     };
 
-    const percentStyle = (rect: Omit<ImageEditRegion, "index">): CSSProperties => size ? {
-        left: `${(rect.x / size.width) * 100}%`,
-        top: `${(rect.y / size.height) * 100}%`,
-        width: `${(rect.width / size.width) * 100}%`,
-        height: `${(rect.height / size.height) * 100}%`,
-    } : {};
+    const percentStyle = (rect: Omit<ImageEditRegion, "index">): CSSProperties =>
+        size
+            ? {
+                  left: `${(rect.x / size.width) * 100}%`,
+                  top: `${(rect.y / size.height) * 100}%`,
+                  width: `${(rect.width / size.width) * 100}%`,
+                  height: `${(rect.height / size.height) * 100}%`,
+              }
+            : {};
 
     return (
         <AppModal open centered flush closable={false} footer={null} width="min(1360px, calc(100vw - 48px))" onCancel={onClose} aria-label="区域标注">
@@ -338,13 +342,7 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
                                                 <span className="rgn-badge">{region.index}</span>
                                                 {active ? (
                                                     <>
-                                                        <button
-                                                            type="button"
-                                                            aria-label={`删除${regionMentionLabel(region.index)}`}
-                                                            className="rgn-box-delete"
-                                                            onPointerDown={(event) => event.stopPropagation()}
-                                                            onClick={() => removeRegion(region.index)}
-                                                        >
+                                                        <button type="button" aria-label={`删除${regionMentionLabel(region.index)}`} className="rgn-box-delete" onPointerDown={(event) => event.stopPropagation()} onClick={() => removeRegion(region.index)}>
                                                             <X className="size-3.5" strokeWidth={2.4} />
                                                         </button>
                                                         {CORNERS.map((corner) => (
@@ -375,13 +373,31 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
                         )}
                     </div>
                     <div className="rgn-dock" role="toolbar" aria-label="区域标注工具">
-                        <span className="rgn-dock-mode"><SquareDashed className="size-4" aria-hidden />框选</span>
+                        <span className="rgn-dock-mode">
+                            <SquareDashed className="size-4" aria-hidden />
+                            框选
+                        </span>
                         <span aria-hidden className="rgn-dock-divider" />
-                        <DockButton title="撤销 ⌘Z" disabled={!past.length} onClick={undo}><Undo2 className="size-4" /></DockButton>
-                        <DockButton title="重做 ⇧⌘Z" disabled={!future.length} onClick={redo}><Redo2 className="size-4" /></DockButton>
-                        <DockButton title="清空全部区域" disabled={!regions.length} onClick={() => { commit([]); setSelected(null); }}><RotateCcw className="size-4" /></DockButton>
+                        <DockButton title="撤销 ⌘Z" disabled={!past.length} onClick={undo}>
+                            <Undo2 className="size-4" />
+                        </DockButton>
+                        <DockButton title="重做 ⇧⌘Z" disabled={!future.length} onClick={redo}>
+                            <Redo2 className="size-4" />
+                        </DockButton>
+                        <DockButton
+                            title="清空全部区域"
+                            disabled={!regions.length}
+                            onClick={() => {
+                                commit([]);
+                                setSelected(null);
+                            }}
+                        >
+                            <RotateCcw className="size-4" />
+                        </DockButton>
                         <span aria-hidden className="rgn-dock-divider" />
-                        <span className="rgn-dock-count" aria-live="polite">已标记 <strong>{regions.length}</strong> 处</span>
+                        <span className="rgn-dock-count" aria-live="polite">
+                            已标记 <strong>{regions.length}</strong> 处
+                        </span>
                     </div>
                 </section>
 
@@ -391,7 +407,9 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
                             <h2>区域标注</h2>
                             <p>框选区域后，用 @区域N 分别描述要怎么改</p>
                         </div>
-                        <button type="button" className="rgn-close" aria-label="关闭" onClick={onClose}><X className="size-4" /></button>
+                        <button type="button" className="rgn-close" aria-label="关闭" onClick={onClose}>
+                            <X className="size-4" />
+                        </button>
                     </header>
 
                     <div className="rgn-body">
@@ -408,14 +426,18 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
                                                 <span className="rgn-tile-badge">{region.index}</span>
                                             </button>
                                             <span className="rgn-tile-name">{label}</span>
-                                            <button type="button" className="rgn-tile-remove" aria-label={`删除${label}`} onClick={() => removeRegion(region.index)}><X className="size-3" strokeWidth={2.4} /></button>
+                                            <button type="button" className="rgn-tile-remove" aria-label={`删除${label}`} onClick={() => removeRegion(region.index)}>
+                                                <X className="size-3" strokeWidth={2.4} />
+                                            </button>
                                         </div>
                                     );
                                 })}
                             </div>
                         ) : (
                             <div className="rgn-empty">
-                                <span className="rgn-empty-icon"><SquareDashed className="size-5" /></span>
+                                <span className="rgn-empty-icon">
+                                    <SquareDashed className="size-5" />
+                                </span>
                                 <div>
                                     <strong>还没有区域</strong>
                                     <span>在左侧图片上拖拽画框，每个框会自动编号，并在提示词里加一行引用。</span>
@@ -432,7 +454,10 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
                                 mentionMenuWidth={280}
                                 sendOnEnter={false}
                                 onSubmit={submit}
-                                onChange={(value) => { setPrompt(value); setError(""); }}
+                                onChange={(value) => {
+                                    setPrompt(value);
+                                    setError("");
+                                }}
                                 containerClassName="rgn-editor-input"
                                 className="thin-scrollbar h-full w-full resize-none border-none bg-transparent px-4 py-3 text-[var(--fs-body)] leading-7 !outline-none !ring-0 !shadow-none placeholder:text-current placeholder:opacity-40"
                                 style={{ color: "var(--foreground)", outline: "none", boxShadow: "none" }}
@@ -441,12 +466,18 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
                             />
                             <div className="rgn-editor-tip">
                                 <span>输入 @ 引用区域</span>
-                                <span><kbd>⌘</kbd> <kbd>Enter</kbd> 生成</span>
+                                <span>
+                                    <kbd>⌘</kbd> <kbd>Enter</kbd> 生成
+                                </span>
                             </div>
                         </div>
                     </div>
 
-                    {error || loadError ? <p role="alert" className="rgn-error">{error || loadError}</p> : null}
+                    {error || loadError ? (
+                        <p role="alert" className="rgn-error">
+                            {error || loadError}
+                        </p>
+                    ) : null}
                     <footer className="rgn-footer">
                         <ModelPicker
                             className="!h-9 !w-full !min-w-0 !justify-start !rounded-[var(--r-lg)] !text-[var(--fs-label)] !font-normal"
@@ -467,7 +498,9 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
                                 onConfigChange={(key, value) => setSettings((previous) => ({ ...previous, [key]: value }))}
                             />
                             <span className="rgn-footer-spacer" />
-                            <Button className="rgn-submit" type="primary" shape="round" icon={<ArrowUp className="size-4" strokeWidth={2.4} />} disabled={!canSubmit} onClick={submit}>生成</Button>
+                            <Button className="rgn-submit" type="primary" shape="round" icon={<ArrowUp className="size-4" strokeWidth={2.4} />} disabled={!canSubmit} onClick={submit}>
+                                生成
+                            </Button>
                         </div>
                     </footer>
                 </aside>
@@ -479,7 +512,9 @@ function RegionEditor({ image, config, onClose, onConfirm }: RegionEditorProps) 
 function DockButton({ title, disabled, onClick, children }: { title: string; disabled?: boolean; onClick: () => void; children: ReactNode }) {
     return (
         <Tooltip title={title}>
-            <button type="button" className="rgn-dock-button" aria-label={title} disabled={disabled} onClick={onClick}>{children}</button>
+            <button type="button" className="rgn-dock-button" aria-label={title} disabled={disabled} onClick={onClick}>
+                {children}
+            </button>
         </Tooltip>
     );
 }

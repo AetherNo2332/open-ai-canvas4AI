@@ -35,7 +35,6 @@ const REVIEW_MODES: Array<{ value: DramaReviewMode; title: string; detail: strin
 ];
 const CAPABILITY_LABEL: Record<DramaCapability, string> = { text: "改编与分镜", image: "角色与场景参考图", video: "剧情段视频" };
 
-
 export default function DramaCreatePage() {
     const navigate = useNavigate();
     const { message } = App.useApp();
@@ -72,7 +71,20 @@ export default function DramaCreatePage() {
     }, [catalogQuery.data, models]);
     const videoOption = catalogQuery.data?.options.video?.find((option) => dramaChoiceKey(option.choice) === dramaChoiceKey(resolvedModels?.video));
     const missingCapabilities = (Object.keys(CAPABILITY_LABEL) as DramaCapability[]).filter((capability) => catalogQuery.data && !dramaChoiceKey(resolvedModels?.[capability]));
-    const settings = { aspectRatio, episodeSeconds, stylePrompt: style?.prompt || "", styleName: style?.name || "", language, reviewMode, mediaMode, storyboard, ...(promptSkill ? { promptSkill } : {}), concurrency: 4, models: resolvedModels, ...(assets ? { assets } : {}) };
+    const settings = {
+        aspectRatio,
+        episodeSeconds,
+        stylePrompt: style?.prompt || "",
+        styleName: style?.name || "",
+        language,
+        reviewMode,
+        mediaMode,
+        storyboard,
+        ...(promptSkill ? { promptSkill } : {}),
+        concurrency: 4,
+        models: resolvedModels,
+        ...(assets ? { assets } : {}),
+    };
     const estimateQuery = useQuery({
         queryKey: ["drama-estimate", analysis?.chapters.length, analysis?.words, episodeSeconds, JSON.stringify(storyboard), dramaChoiceKey(resolvedModels?.text), dramaChoiceKey(resolvedModels?.image), dramaChoiceKey(resolvedModels?.video)],
         queryFn: ({ signal }) => estimateDrama({ chapterCount: analysis!.chapters.length, wordCount: analysis!.words, settings }, signal),
@@ -123,49 +135,95 @@ export default function DramaCreatePage() {
     };
 
     const create = useMutation({
-        mutationFn: () => createDrama({
-            name: name.trim(),
-            chapters: analysis!.chapters.map((chapter) => ({ title: chapter.title, text: chapter.text })),
-            settings: { ...settings, models: resolvedModels },
-            budgetMicrocredits: Math.max(0, Math.round((budgetCredits || 0) * 1_000_000)),
-            start: true,
-        }),
+        mutationFn: () =>
+            createDrama({
+                name: name.trim(),
+                chapters: analysis!.chapters.map((chapter) => ({ title: chapter.title, text: chapter.text })),
+                settings: { ...settings, models: resolvedModels },
+                budgetMicrocredits: Math.max(0, Math.round((budgetCredits || 0) * 1_000_000)),
+                start: true,
+            }),
         onSuccess: (summary) => navigate(`/projects/${summary.project.id}`, { replace: true }),
         onError: (error) => message.error(error instanceof ApiError || error instanceof Error ? error.message : "创建失败"),
     });
     const canStart = Boolean(analysis && name.trim() && resolvedModels && missingCapabilities.length === 0 && !create.isPending);
 
     const previewChapter = analysis?.chapters[previewIndex];
-    const reset = () => { setAnalysis(null); setPasteText(""); setName(""); setPreviewIndex(0); };
+    const reset = () => {
+        setAnalysis(null);
+        setPasteText("");
+        setName("");
+        setPreviewIndex(0);
+    };
 
     if (!analysis) {
         return (
             <WorkspacePage fluid scroll={false}>
                 <div className="drama-root drama-compose-empty">
                     <header className="drama-compose-head">
-                        <Link to="/projects"><Button type="text" shape="circle" icon={<ArrowLeft className="size-4" />} aria-label="返回作品列表" /></Link>
+                        <Link to="/projects">
+                            <Button type="text" shape="circle" icon={<ArrowLeft className="size-4" />} aria-label="返回作品列表" />
+                        </Link>
                         <h1>新建短剧</h1>
                     </header>
-                    <div className={`drama-drop ${dragOver ? "is-over" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={onDrop}>
+                    <div
+                        className={`drama-drop ${dragOver ? "is-over" : ""}`}
+                        onDragOver={(event) => {
+                            event.preventDefault();
+                            setDragOver(true);
+                        }}
+                        onDragLeave={() => setDragOver(false)}
+                        onDrop={onDrop}
+                    >
                         {pasteMode ? (
                             <div className="grid w-full max-w-[860px] gap-3">
-                                <Input.TextArea autoFocus value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder="粘贴小说正文。包含“第一章 / 第1章 / Chapter 1”这类标题时会自动拆章。" autoSize={{ minRows: 14, maxRows: 24 }} />
+                                <Input.TextArea
+                                    autoFocus
+                                    value={pasteText}
+                                    onChange={(event) => setPasteText(event.target.value)}
+                                    placeholder="粘贴小说正文。包含“第一章 / 第1章 / Chapter 1”这类标题时会自动拆章。"
+                                    autoSize={{ minRows: 14, maxRows: 24 }}
+                                />
                                 <div className="flex justify-end gap-2">
                                     <Button onClick={() => setPasteMode(false)}>取消</Button>
-                                    <Button type="primary" disabled={!pasteText.trim()} onClick={() => loadText(pasteText)}>解析正文</Button>
+                                    <Button type="primary" disabled={!pasteText.trim()} onClick={() => loadText(pasteText)}>
+                                        解析正文
+                                    </Button>
                                 </div>
                             </div>
                         ) : (
                             <>
-                                <span className="drama-drop-icon"><BookOpenText className="size-7" /></span>
+                                <span className="drama-drop-icon">
+                                    <BookOpenText className="size-7" />
+                                </span>
                                 <h2>拖入小说文件，剩下的交给流水线</h2>
                                 <p>TXT 或 Markdown，自动识别 GBK / UTF-8 编码与章节标题。确认几个选项后，系统自动改编、拆集、建角色、出分镜并合成成片。</p>
-                                <Button type="primary" size="large" icon={<FileUp className="size-4" />} onClick={() => fileInputRef.current?.click()}>选择小说文件</Button>
-                                <button type="button" className="drama-link inline-flex items-center gap-1" onClick={() => setPasteMode(true)}><ClipboardPaste className="size-3.5" />没有文件？直接粘贴正文</button>
+                                <Button type="primary" size="large" icon={<FileUp className="size-4" />} onClick={() => fileInputRef.current?.click()}>
+                                    选择小说文件
+                                </Button>
+                                <button type="button" className="drama-link inline-flex items-center gap-1" onClick={() => setPasteMode(true)}>
+                                    <ClipboardPaste className="size-3.5" />
+                                    没有文件？直接粘贴正文
+                                </button>
                                 <div className="drama-drop-steps">
-                                    {["解析章节", "建立角色、道具与场景", "分集改编与段提示词", "按剧情段生成视频", "合成成片"].map((step, index) => <span key={step}><b>{index + 1}</b>{step}</span>)}
+                                    {["解析章节", "建立角色、道具与场景", "分集改编与段提示词", "按剧情段生成视频", "合成成片"].map((step, index) => (
+                                        <span key={step}>
+                                            <b>{index + 1}</b>
+                                            {step}
+                                        </span>
+                                    ))}
                                 </div>
-                                <input ref={fileInputRef} type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void loadFile(file); event.target.value = ""; }} />
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept=".txt,.md,.markdown,text/plain,text/markdown"
+                                    className="hidden"
+                                    onChange={(event) => {
+                                        const file = event.target.files?.[0];
+                                        if (file) void loadFile(file);
+                                        event.target.value = "";
+                                    }}
+                                />
                             </>
                         )}
                     </div>
@@ -180,18 +238,36 @@ export default function DramaCreatePage() {
                 {/* 左：小说目录 */}
                 <aside className="drama-compose-novel">
                     <header className="drama-compose-head">
-                        <Link to="/projects"><Button type="text" shape="circle" icon={<ArrowLeft className="size-4" />} aria-label="返回作品列表" /></Link>
+                        <Link to="/projects">
+                            <Button type="text" shape="circle" icon={<ArrowLeft className="size-4" />} aria-label="返回作品列表" />
+                        </Link>
                         <h1>新建短剧</h1>
-                        <Button size="small" type="text" className="!ml-auto" onClick={reset}>换一本</Button>
+                        <Button size="small" type="text" className="!ml-auto" onClick={reset}>
+                            换一本
+                        </Button>
                     </header>
                     <div className="drama-stats">
-                        <div className="drama-stat"><div className="drama-stat-value">{formatCount(analysis.chapters.length)}</div><div className="drama-stat-label">章节</div></div>
-                        <div className="drama-stat"><div className="drama-stat-value">{formatCount(analysis.words)}</div><div className="drama-stat-label">字</div></div>
-                        <div className="drama-stat"><div className="drama-stat-value">{estimate ? `≈${estimate.episodes}` : "—"}</div><div className="drama-stat-label">集</div></div>
+                        <div className="drama-stat">
+                            <div className="drama-stat-value">{formatCount(analysis.chapters.length)}</div>
+                            <div className="drama-stat-label">章节</div>
+                        </div>
+                        <div className="drama-stat">
+                            <div className="drama-stat-value">{formatCount(analysis.words)}</div>
+                            <div className="drama-stat-label">字</div>
+                        </div>
+                        <div className="drama-stat">
+                            <div className="drama-stat-value">{estimate ? `≈${estimate.episodes}` : "—"}</div>
+                            <div className="drama-stat-label">集</div>
+                        </div>
                     </div>
                     {analysis.issues.length ? (
                         <div className="drama-issues">
-                            {analysis.issues.map((issue) => <div key={issue.kind} className="drama-issue"><AlertTriangle className="size-3.5" />{issue.message}</div>)}
+                            {analysis.issues.map((issue) => (
+                                <div key={issue.kind} className="drama-issue">
+                                    <AlertTriangle className="size-3.5" />
+                                    {issue.message}
+                                </div>
+                            ))}
                         </div>
                     ) : null}
                     <div className="drama-chapter-list thin-scrollbar" role="listbox" aria-label="章节">
@@ -210,32 +286,53 @@ export default function DramaCreatePage() {
                 <main className="drama-compose-main thin-scrollbar">
                     <DramaStylePicker value={styleId} onChange={setStyleId} />
                     <section>
-                        <div className="drama-section-title"><h2>角色参考图方案</h2><span>参考图是每个镜头保持人物一致的锚点，开工后也能在设置里改</span></div>
+                        <div className="drama-section-title">
+                            <h2>角色参考图方案</h2>
+                            <span>参考图是每个镜头保持人物一致的锚点，开工后也能在设置里改</span>
+                        </div>
                         <AssetSchemePicker value={assets} onChange={setAssetDraft} sample={{ style: style?.prompt || "", characterName: "主角", sceneName: "主场景" }} layout="compact" />
                     </section>
                     <section>
-                        <div className="drama-section-title"><h2>分镜规则</h2><span>决定剧情段多长、段内镜头节奏、台词密度与转场</span></div>
+                        <div className="drama-section-title">
+                            <h2>分镜规则</h2>
+                            <span>决定剧情段多长、段内镜头节奏、台词密度与转场</span>
+                        </div>
                         <StoryboardRules value={storyboard} onChange={setStoryboard} episodeSeconds={episodeSeconds} maxVideoSeconds={videoOption?.maxVideoSeconds} videoModelLabel={resolvedModels?.video?.label} />
                     </section>
                     <section>
-                        <div className="drama-section-title"><h2>视频提示词技能</h2><span>撰写每个剧情段的视频提示词时遵循的写作方法</span></div>
+                        <div className="drama-section-title">
+                            <h2>视频提示词技能</h2>
+                            <span>撰写每个剧情段的视频提示词时遵循的写作方法</span>
+                        </div>
                         <PromptSkillField value={promptSkill} onChange={setPromptSkill} />
                     </section>
                     <section>
-                        <div className="drama-section-title"><h2>审阅方式</h2><span>只在关键点打断你</span></div>
+                        <div className="drama-section-title">
+                            <h2>审阅方式</h2>
+                            <span>只在关键点打断你</span>
+                        </div>
                         <div className="drama-review-modes" role="radiogroup" aria-label="审阅方式">
                             {REVIEW_MODES.map((mode) => (
                                 <button key={mode.value} type="button" role="radio" aria-checked={reviewMode === mode.value} className="drama-review-mode" onClick={() => setReviewMode(mode.value)}>
                                     <span className="drama-radio" />
-                                    <span><strong>{mode.title}</strong><span>{mode.detail}</span></span>
+                                    <span>
+                                        <strong>{mode.title}</strong>
+                                        <span>{mode.detail}</span>
+                                    </span>
                                 </button>
                             ))}
                         </div>
                     </section>
                     {previewChapter ? (
                         <section className="drama-compose-preview">
-                            <div className="drama-section-title"><h2>{previewChapter.title}</h2><span>原文预览 · {formatCount(previewChapter.words)} 字</span></div>
-                            <div className="drama-compose-text thin-scrollbar">{previewChapter.text.slice(0, 6000)}{previewChapter.text.length > 6000 ? "……" : ""}</div>
+                            <div className="drama-section-title">
+                                <h2>{previewChapter.title}</h2>
+                                <span>原文预览 · {formatCount(previewChapter.words)} 字</span>
+                            </div>
+                            <div className="drama-compose-text thin-scrollbar">
+                                {previewChapter.text.slice(0, 6000)}
+                                {previewChapter.text.length > 6000 ? "……" : ""}
+                            </div>
                         </section>
                     ) : null}
                 </main>
@@ -252,7 +349,8 @@ export default function DramaCreatePage() {
                             <div className="drama-ratio-group" role="group" aria-label="画幅">
                                 {RATIOS.map((ratio) => (
                                     <button key={ratio.value} type="button" className="drama-ratio" aria-pressed={aspectRatio === ratio.value} onClick={() => setAspectRatio(ratio.value)}>
-                                        <span className="drama-ratio-shape" style={{ width: ratio.w, height: ratio.h }} />{ratio.label}
+                                        <span className="drama-ratio-shape" style={{ width: ratio.w, height: ratio.h }} />
+                                        {ratio.label}
                                     </button>
                                 ))}
                             </div>
@@ -273,7 +371,13 @@ export default function DramaCreatePage() {
                                 {(Object.keys(MEDIA_MODE_LABEL) as DramaMediaMode[]).map((mode) => (
                                     <button key={mode} type="button" role="radio" aria-checked={mediaMode === mode} className="drama-media-mode" onClick={() => setMediaMode(mode)}>
                                         <span className="drama-radio" />
-                                        <span><strong>{MEDIA_MODE_LABEL[mode].title}{mode === "manual" ? <em>推荐</em> : null}</strong><span>{MEDIA_MODE_LABEL[mode].detail}</span></span>
+                                        <span>
+                                            <strong>
+                                                {MEDIA_MODE_LABEL[mode].title}
+                                                {mode === "manual" ? <em>推荐</em> : null}
+                                            </strong>
+                                            <span>{MEDIA_MODE_LABEL[mode].detail}</span>
+                                        </span>
                                     </button>
                                 ))}
                             </div>
@@ -287,25 +391,55 @@ export default function DramaCreatePage() {
                             {(Object.keys(CAPABILITY_LABEL) as DramaCapability[]).map((capability) => (
                                 <div key={capability} className="drama-compose-model-row">
                                     <span>{CAPABILITY_LABEL[capability]}</span>
-                                    <DramaModelPicker capability={capability} size="sm" showPrice={false} value={resolvedModels?.[capability]} placeholder={`选择${CAPABILITY_LABEL[capability]}模型`} onChange={(choice) => setModels((current) => ({ ...current, [capability]: choice }))} />
+                                    <DramaModelPicker
+                                        capability={capability}
+                                        size="sm"
+                                        showPrice={false}
+                                        value={resolvedModels?.[capability]}
+                                        placeholder={`选择${CAPABILITY_LABEL[capability]}模型`}
+                                        onChange={(choice) => setModels((current) => ({ ...current, [capability]: choice }))}
+                                    />
                                 </div>
                             ))}
                         </section>
                         <div className="drama-field">
-                            <div className="drama-field-label"><span>预算上限</span><small>留空或 0 为不限，达到后自动暂停</small></div>
+                            <div className="drama-field-label">
+                                <span>预算上限</span>
+                                <small>留空或 0 为不限，达到后自动暂停</small>
+                            </div>
                             <InputNumber className="!w-full" min={0} precision={0} value={budgetCredits} onChange={(value) => setBudgetCredits(value ?? 0)} suffix="积分" aria-label="预算上限" />
                         </div>
-                        {missingCapabilities.length ? <p className="flex items-start gap-2 text-[var(--fs-tiny)] leading-5 text-[var(--status-error)]"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />还没有可用的{missingCapabilities.map((capability) => CAPABILITY_LABEL[capability]).join("、")}模型，请联系管理员在后台开通。</p> : null}
+                        {missingCapabilities.length ? (
+                            <p className="flex items-start gap-2 text-[var(--fs-tiny)] leading-5 text-[var(--status-error)]">
+                                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                                还没有可用的{missingCapabilities.map((capability) => CAPABILITY_LABEL[capability]).join("、")}模型，请联系管理员在后台开通。
+                            </p>
+                        ) : null}
                     </div>
                     <footer className="drama-compose-launch">
                         <div className="drama-compose-estimate">
-                            <div><b>{estimate ? `${estimate.episodes} 集` : "—"}</b><span>约 {estimate?.durationMinutes ?? "—"} 分钟</span></div>
-                            <div><b>{estimate ? formatCount(estimate.shots) : "—"}</b><span>镜头</span></div>
-                            <div><b>{estimate?.priced ? `${formatCredits(estimate.minMicrocredits)}–${formatCredits(estimate.maxMicrocredits)}` : "—"}</b><span>预计积分</span></div>
+                            <div>
+                                <b>{estimate ? `${estimate.episodes} 集` : "—"}</b>
+                                <span>约 {estimate?.durationMinutes ?? "—"} 分钟</span>
+                            </div>
+                            <div>
+                                <b>{estimate ? formatCount(estimate.shots) : "—"}</b>
+                                <span>镜头</span>
+                            </div>
+                            <div>
+                                <b>{estimate?.priced ? `${formatCredits(estimate.minMicrocredits)}–${formatCredits(estimate.maxMicrocredits)}` : "—"}</b>
+                                <span>预计积分</span>
+                            </div>
                         </div>
-                        {mediaMode === "manual" ? <div className="text-[var(--fs-tiny)] text-foreground/50">开工只消耗文本模型费用；剧本、设定与段提示词确认后，再逐集生成参考图与视频</div> : reviewMode === "sample" && estimate?.priced ? <div className="text-[var(--fs-tiny)] text-foreground/50">先做第 1 集样片，约 {formatCredits(estimate.sampleMicrocredits)} 积分，确认后再跑全剧</div> : null}
+                        {mediaMode === "manual" ? (
+                            <div className="text-[var(--fs-tiny)] text-foreground/50">开工只消耗文本模型费用；剧本、设定与段提示词确认后，再逐集生成参考图与视频</div>
+                        ) : reviewMode === "sample" && estimate?.priced ? (
+                            <div className="text-[var(--fs-tiny)] text-foreground/50">先做第 1 集样片，约 {formatCredits(estimate.sampleMicrocredits)} 积分，确认后再跑全剧</div>
+                        ) : null}
                         {estimate?.note ? <div className="text-[var(--fs-micro)] text-foreground/40">{estimate.note}</div> : null}
-                        <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} disabled={!canStart} loading={create.isPending} onClick={() => create.mutate()}>{mediaMode === "manual" ? "开始改编剧本与分镜" : "开始自动制作"}</Button>
+                        <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} disabled={!canStart} loading={create.isPending} onClick={() => create.mutate()}>
+                            {mediaMode === "manual" ? "开始改编剧本与分镜" : "开始自动制作"}
+                        </Button>
                     </footer>
                 </aside>
             </div>

@@ -115,10 +115,16 @@ export function SegmentedControl<V extends string = string>({ value, onChange, o
     };
 
     const itemBase =
-        "app-segmented-item relative z-10 inline-flex select-none items-center justify-center gap-2 whitespace-nowrap font-medium outline-none transition-colors motion-reduce:transition-none " + "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ";
+        "app-segmented-item relative z-10 inline-flex select-none items-center justify-center gap-2 whitespace-nowrap font-medium outline-none transition-colors motion-reduce:transition-none " +
+        "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ";
 
     return (
-        <div ref={trackRef} role="radiogroup" aria-label={ariaLabel} className={["app-segmented relative inline-flex bg-surface-tertiary", size === "sm" ? "is-sm" : "", SIZE_CLASS[size].track, block ? "flex w-full" : "", disabled ? "opacity-60" : "", className].join(" ")}>
+        <div
+            ref={trackRef}
+            role="radiogroup"
+            aria-label={ariaLabel}
+            className={["app-segmented relative inline-flex bg-surface-tertiary", size === "sm" ? "is-sm" : "", SIZE_CLASS[size].track, block ? "flex w-full" : "", disabled ? "opacity-60" : "", className].join(" ")}
+        >
             {thumb !== null && !disabled && (
                 <span
                     aria-hidden="true"

@@ -25,7 +25,10 @@
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: color 150ms var(--motion-ease-out), background-color 150ms var(--motion-ease-out), border-color 150ms var(--motion-ease-out);
+    transition:
+        color 150ms var(--motion-ease-out),
+        background-color 150ms var(--motion-ease-out),
+        border-color 150ms var(--motion-ease-out);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -52,7 +55,10 @@
     background: var(--wb-surface);
     color: var(--wb-text);
     overflow: hidden;
-    transition: color 150ms var(--motion-ease-out), background-color 150ms var(--motion-ease-out), border-color 150ms var(--motion-ease-out);
+    transition:
+        color 150ms var(--motion-ease-out),
+        background-color 150ms var(--motion-ease-out),
+        border-color 150ms var(--motion-ease-out);
     cursor: pointer;
 }
 .workbench-count-stepper:hover {

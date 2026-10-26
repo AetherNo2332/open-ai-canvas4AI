@@ -152,7 +152,6 @@ export function CanvasHistoryDrawer({ open, onClose }: { open: boolean; onClose:
                             const isDeleted = item.isDeleted;
                             return (
                                 <div key={item.id + (item.deletedAt || "")} className="group relative">
-
                                     <div
                                         className={cn(
                                             "rounded-xl border p-4 transition-colors duration-150 shadow-sm",

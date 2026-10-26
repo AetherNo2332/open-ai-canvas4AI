@@ -26,27 +26,50 @@ export function FinalView({ title, detail, aspectRatio, onOpenSegment }: { title
         <div className="drama-finalv">
             <div className="drama-finalv-stage">
                 <div className="drama-finalv-player" style={{ aspectRatio: aspectRatioValue(aspectRatio) }}>
-                    {url ? <video ref={videoRef} key={url} src={url} controls playsInline /> : (
-                        <div className="drama-finalv-empty"><Film className="size-6" aria-hidden /><span>{STAGE_LABEL[episode.stage]} · 全部段视频生成后自动合成</span></div>
+                    {url ? (
+                        <video ref={videoRef} key={url} src={url} controls playsInline />
+                    ) : (
+                        <div className="drama-finalv-empty">
+                            <Film className="size-6" aria-hidden />
+                            <span>{STAGE_LABEL[episode.stage]} · 全部段视频生成后自动合成</span>
+                        </div>
                     )}
                 </div>
                 <div className="drama-filmstrip thin-scrollbar">
                     {segments.map((segment, position) => (
-                        <button key={segment.id || segment.index} type="button" className="drama-filmstrip-item" title={segment.title} onClick={() => {
-                            if (videoRef.current) videoRef.current.currentTime = starts[position];
-                            onOpenSegment(segment.index);
-                        }}>
+                        <button
+                            key={segment.id || segment.index}
+                            type="button"
+                            className="drama-filmstrip-item"
+                            title={segment.title}
+                            onClick={() => {
+                                if (videoRef.current) videoRef.current.currentTime = starts[position];
+                                onOpenSegment(segment.index);
+                            }}
+                        >
                             <MediaThumb resourceId={segment.tailFrameResourceId} alt={segment.title} fallback={<span className="drama-filmstrip-empty" />} />
-                            <span>第 {segment.index + 1} 段 · {secondsLabel(segment.durationMs)}</span>
+                            <span>
+                                第 {segment.index + 1} 段 · {secondsLabel(segment.durationMs)}
+                            </span>
                         </button>
                     ))}
                 </div>
             </div>
             <aside className="drama-finalv-side">
-                <h2>第 {episode.number} 集 · {episode.title}</h2>
-                <p>{formatDuration(episode.durationMs)} · {segments.length} 个剧情段 · 对白与音效来自视频模型</p>
-                {episode.finalStale ? <p className="drama-finalv-stale" role="status">内容已修改，当前成片是修改前的版本，相关段重新生成后会自动重新合成。</p> : null}
-                <Button icon={<Download className="size-4" />} disabled={!episode.finalResourceId} onClick={download}>下载成片</Button>
+                <h2>
+                    第 {episode.number} 集 · {episode.title}
+                </h2>
+                <p>
+                    {formatDuration(episode.durationMs)} · {segments.length} 个剧情段 · 对白与音效来自视频模型
+                </p>
+                {episode.finalStale ? (
+                    <p className="drama-finalv-stale" role="status">
+                        内容已修改，当前成片是修改前的版本，相关段重新生成后会自动重新合成。
+                    </p>
+                ) : null}
+                <Button icon={<Download className="size-4" />} disabled={!episode.finalResourceId} onClick={download}>
+                    下载成片
+                </Button>
             </aside>
         </div>
     );

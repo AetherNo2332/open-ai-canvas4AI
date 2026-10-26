@@ -39,21 +39,40 @@ function locateQuote(text: string, quote: string) {
     return text.indexOf(needle.slice(0, 16));
 }
 
-export function ScriptView({ projectId, detail, storyboard, currentId, busy, onCurrent, onRescript, empty }: { projectId: string; detail: DramaEpisodeDetail; storyboard: DramaStoryboardSettings; currentId: string; busy: boolean; onCurrent: (id: string) => void; onRescript: () => void; empty: EpisodeEmpty }) {
+export function ScriptView({
+    projectId,
+    detail,
+    storyboard,
+    currentId,
+    busy,
+    onCurrent,
+    onRescript,
+    empty,
+}: {
+    projectId: string;
+    detail: DramaEpisodeDetail;
+    storyboard: DramaStoryboardSettings;
+    currentId: string;
+    busy: boolean;
+    onCurrent: (id: string) => void;
+    onRescript: () => void;
+    empty: EpisodeEmpty;
+}) {
     const [processOpen, setProcessOpen] = useState(false);
     const { modal } = App.useApp();
     const { episode, shots, chapters } = detail;
     const [sourceOpen, setSourceOpen] = useState(true);
     const current = shots.find((shot) => shot.id === currentId);
     const scenes = useMemo(() => groupScenes(shots), [shots]);
-    const confirmRescript = () => modal.confirm({
-        title: `重新改编第 ${episode.number} 集？`,
-        content: "会基于原文重新生成剧本、镜头与剧情段，各段视频提示词与视频都需要重新生成；已生成的段视频保留在版本记录中。",
-        okText: "重新改编",
-        cancelText: "取消",
-        centered: true,
-        onOk: onRescript,
-    });
+    const confirmRescript = () =>
+        modal.confirm({
+            title: `重新改编第 ${episode.number} 集？`,
+            content: "会基于原文重新生成剧本、镜头与剧情段，各段视频提示词与视频都需要重新生成；已生成的段视频保留在版本记录中。",
+            okText: "重新改编",
+            cancelText: "取消",
+            centered: true,
+            onOk: onRescript,
+        });
 
     return (
         <div className={`drama-scriptv ${sourceOpen ? "" : "is-source-hidden"}`}>
@@ -62,20 +81,43 @@ export function ScriptView({ projectId, detail, storyboard, currentId, busy, onC
                     <div className="drama-scriptv-brief-head">
                         <span className="drama-eyebrow">本集梗概</span>
                         <div className="ml-auto flex items-center gap-2">
-                            {detail.scriptJob ? <Button size="small" type="text" icon={<ScanSearch className="size-3.5" />} onClick={() => setProcessOpen(true)}>改编过程</Button> : null}
-                            <Button size="small" type="text" icon={<PenLine className="size-3.5" />} disabled={busy} onClick={confirmRescript}>重新改编</Button>
-                            <Tooltip title={sourceOpen ? "收起原文" : "对照原文"}><Button size="small" type="text" icon={sourceOpen ? <PanelRightClose className="size-3.5" /> : <PanelRightOpen className="size-3.5" />} aria-pressed={sourceOpen} aria-label={sourceOpen ? "收起原文" : "对照原文"} onClick={() => setSourceOpen((open) => !open)} /></Tooltip>
+                            {detail.scriptJob ? (
+                                <Button size="small" type="text" icon={<ScanSearch className="size-3.5" />} onClick={() => setProcessOpen(true)}>
+                                    改编过程
+                                </Button>
+                            ) : null}
+                            <Button size="small" type="text" icon={<PenLine className="size-3.5" />} disabled={busy} onClick={confirmRescript}>
+                                重新改编
+                            </Button>
+                            <Tooltip title={sourceOpen ? "收起原文" : "对照原文"}>
+                                <Button
+                                    size="small"
+                                    type="text"
+                                    icon={sourceOpen ? <PanelRightClose className="size-3.5" /> : <PanelRightOpen className="size-3.5" />}
+                                    aria-pressed={sourceOpen}
+                                    aria-label={sourceOpen ? "收起原文" : "对照原文"}
+                                    onClick={() => setSourceOpen((open) => !open)}
+                                />
+                            </Tooltip>
                         </div>
                     </div>
                     <p className="drama-scriptv-synopsis">{episode.synopsis || "改编完成后显示本集梗概。"}</p>
                     <div className="drama-scriptv-beats">
-                        <div><span>开场钩子</span><p>{episode.hook || "—"}</p></div>
-                        <div><span>结尾悬念</span><p>{episode.cliffhanger || "—"}</p></div>
+                        <div>
+                            <span>开场钩子</span>
+                            <p>{episode.hook || "—"}</p>
+                        </div>
+                        <div>
+                            <span>结尾悬念</span>
+                            <p>{episode.cliffhanger || "—"}</p>
+                        </div>
                     </div>
                     <div className="drama-scriptv-rules">
                         <span>分镜规则</span>
                         <b>{storyboardSummary(storyboard)}</b>
-                        <span>· 实际 {shots.length} 镜 · {(shots.reduce((sum, shot) => sum + shot.durationMs, 0) / 1000).toFixed(0)} 秒</span>
+                        <span>
+                            · 实际 {shots.length} 镜 · {(shots.reduce((sum, shot) => sum + shot.durationMs, 0) / 1000).toFixed(0)} 秒
+                        </span>
                     </div>
                 </section>
 
@@ -86,10 +128,22 @@ export function ScriptView({ projectId, detail, storyboard, currentId, busy, onC
                                 <header>
                                     <span className="drama-screenplay-scene-no">场 {sceneIndex + 1}</span>
                                     <strong>{group.scene || "未命名场景"}</strong>
-                                    <span className="drama-screenplay-scene-meta">{group.shots.length} 镜 · {(group.shots.reduce((sum, shot) => sum + shot.durationMs, 0) / 1000).toFixed(0)} 秒</span>
+                                    <span className="drama-screenplay-scene-meta">
+                                        {group.shots.length} 镜 · {(group.shots.reduce((sum, shot) => sum + shot.durationMs, 0) / 1000).toFixed(0)} 秒
+                                    </span>
                                 </header>
                                 {group.shots.map((shot) => (
-                                    <div key={shot.id} className="drama-screenplay-shot" role="button" tabIndex={0} aria-current={shot.id === currentId} onClick={() => onCurrent(shot.id)} onKeyDown={(event) => { if (event.key === "Enter") onCurrent(shot.id); }}>
+                                    <div
+                                        key={shot.id}
+                                        className="drama-screenplay-shot"
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-current={shot.id === currentId}
+                                        onClick={() => onCurrent(shot.id)}
+                                        onKeyDown={(event) => {
+                                            if (event.key === "Enter") onCurrent(shot.id);
+                                        }}
+                                    >
                                         <span className="drama-screenplay-index">{String(shot.position + 1).padStart(2, "0")}</span>
                                         <div className="min-w-0">
                                             <div className="drama-screenplay-tags">
@@ -97,7 +151,12 @@ export function ScriptView({ projectId, detail, storyboard, currentId, busy, onC
                                                 {shot.camera && shot.camera !== "固定" ? <span>{shot.camera}</span> : null}
                                                 <span>{(shot.durationMs / 1000).toFixed(1)}s</span>
                                                 {shot.transition && shot.transition !== "cut" ? <span className="is-transition">{TRANSITION_LABEL[shot.transition as keyof typeof TRANSITION_LABEL]}进入</span> : null}
-                                                {shot.sourceQuote ? <span className="is-source"><Quote className="size-3" />有原文出处</span> : null}
+                                                {shot.sourceQuote ? (
+                                                    <span className="is-source">
+                                                        <Quote className="size-3" />
+                                                        有原文出处
+                                                    </span>
+                                                ) : null}
                                             </div>
                                             {shot.action ? <p className="drama-screenplay-action">{shot.action}</p> : null}
                                             {shot.dialogue ? (
@@ -141,30 +200,51 @@ function SourcePane({ projectId, chapters, quote }: { projectId: string; chapter
     }, [hit, activeId]);
 
     if (!chapters.length) {
-        return <aside className="drama-source"><div className="drama-source-empty"><BookOpenText className="size-6" />本集还没有关联原文章节</div></aside>;
+        return (
+            <aside className="drama-source">
+                <div className="drama-source-empty">
+                    <BookOpenText className="size-6" />
+                    本集还没有关联原文章节
+                </div>
+            </aside>
+        );
     }
     return (
         <aside className="drama-source" aria-label="小说原文">
             <header className="drama-source-head">
-                <span className="drama-eyebrow"><BookOpen className="size-3.5" />原文对照</span>
+                <span className="drama-eyebrow">
+                    <BookOpen className="size-3.5" />
+                    原文对照
+                </span>
                 <div className="drama-source-tabs thin-scrollbar" role="tablist" aria-label="原文章节">
                     {chapters.map((chapter) => (
                         <button key={chapter.id} type="button" role="tab" aria-selected={chapter.id === activeId} onClick={() => setChapterId(chapter.id)}>
-                            {chapter.title}<span>{formatCount(chapter.wordCount)} 字</span>
+                            {chapter.title}
+                            <span>{formatCount(chapter.wordCount)} 字</span>
                         </button>
                     ))}
                 </div>
             </header>
             <div className="drama-source-text thin-scrollbar">
-                {query.isLoading ? <div className="drama-source-empty">正在读取原文…</div> : hit >= 0 ? (
+                {query.isLoading ? (
+                    <div className="drama-source-empty">正在读取原文…</div>
+                ) : hit >= 0 ? (
                     <>
                         {text.slice(0, hit)}
                         <mark ref={markRef}>{text.slice(hit, hit + needleLength)}</mark>
                         {text.slice(hit + needleLength)}
                     </>
-                ) : text}
+                ) : (
+                    text
+                )}
             </div>
-            {quote && hit < 0 && text ? <footer className="drama-source-foot">当前镜头的出处不在这一章，可切换章节查看</footer> : quote ? <footer className="drama-source-foot is-hit">已高亮当前镜头的原文出处</footer> : <footer className="drama-source-foot">点选左侧镜头，自动定位对应原文</footer>}
+            {quote && hit < 0 && text ? (
+                <footer className="drama-source-foot">当前镜头的出处不在这一章，可切换章节查看</footer>
+            ) : quote ? (
+                <footer className="drama-source-foot is-hit">已高亮当前镜头的原文出处</footer>
+            ) : (
+                <footer className="drama-source-foot">点选左侧镜头，自动定位对应原文</footer>
+            )}
         </aside>
     );
 }

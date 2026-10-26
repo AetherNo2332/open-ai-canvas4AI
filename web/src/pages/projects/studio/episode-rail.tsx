@@ -33,11 +33,15 @@ export function EpisodeRail({ episodes, currentId, planning, onSelect }: { episo
     const deferredQuery = useDeferredValue(query.trim());
     const listRef = useRef<HTMLDivElement>(null);
     const counts = useMemo(() => Object.fromEntries(FILTERS.map((item) => [item.key, episodes.filter((episode) => matchesFilter(episode, item.key)).length])) as Record<Filter, number>, [episodes]);
-    const visible = useMemo(() => episodes.filter((episode) => {
-        if (!matchesFilter(episode, filter)) return false;
-        if (!deferredQuery) return true;
-        return String(episode.number) === deferredQuery.replace(/^第|集$/g, "") || episode.title.includes(deferredQuery) || episode.synopsis.includes(deferredQuery);
-    }), [deferredQuery, episodes, filter]);
+    const visible = useMemo(
+        () =>
+            episodes.filter((episode) => {
+                if (!matchesFilter(episode, filter)) return false;
+                if (!deferredQuery) return true;
+                return String(episode.number) === deferredQuery.replace(/^第|集$/g, "") || episode.title.includes(deferredQuery) || episode.synopsis.includes(deferredQuery);
+            }),
+        [deferredQuery, episodes, filter],
+    );
     const virtualizer = useVirtualizer({ count: visible.length, getScrollElement: () => listRef.current, estimateSize: () => 62, overscan: 10 });
 
     useEffect(() => {
@@ -56,17 +60,32 @@ export function EpisodeRail({ episodes, currentId, planning, onSelect }: { episo
                 <div className="flex items-center gap-2">
                     <label className="drama-search flex-1">
                         <Search className="size-3.5 shrink-0 opacity-40" />
-                        <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && visible[0]) onSelect(visible[0].id); }} placeholder="集号或标题" aria-label="搜索分集" />
-                        {query ? <button type="button" onClick={() => setQuery("")} aria-label="清空搜索"><X className="size-3.5 opacity-40" /></button> : null}
+                        <input
+                            value={query}
+                            onChange={(event) => setQuery(event.target.value)}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter" && visible[0]) onSelect(visible[0].id);
+                            }}
+                            placeholder="集号或标题"
+                            aria-label="搜索分集"
+                        />
+                        {query ? (
+                            <button type="button" onClick={() => setQuery("")} aria-label="清空搜索">
+                                <X className="size-3.5 opacity-40" />
+                            </button>
+                        ) : null}
                     </label>
                     <Tooltip title={matrix ? "列表视图" : "矩阵视图：一屏看清全剧进度"}>
-                        <button type="button" className="drama-title-edit !h-8 !w-8" aria-pressed={matrix} aria-label="切换矩阵视图" onClick={() => setMatrix((value) => !value)}>{matrix ? <List className="size-4" /> : <Grid3x3 className="size-4" />}</button>
+                        <button type="button" className="drama-title-edit !h-8 !w-8" aria-pressed={matrix} aria-label="切换矩阵视图" onClick={() => setMatrix((value) => !value)}>
+                            {matrix ? <List className="size-4" /> : <Grid3x3 className="size-4" />}
+                        </button>
                     </Tooltip>
                 </div>
                 <div className="drama-filters" role="group" aria-label="筛选分集">
                     {FILTERS.filter((item) => item.key !== "ready" || counts.ready || filter === "ready").map((item) => (
                         <button key={item.key} type="button" className={`drama-filter ${item.key === "attention" && counts.attention ? "is-alert" : ""}`} aria-pressed={filter === item.key} onClick={() => setFilter(item.key)}>
-                            {item.label}<b>{counts[item.key]}</b>
+                            {item.label}
+                            <b>{counts[item.key]}</b>
                         </button>
                     ))}
                 </div>
@@ -75,16 +94,39 @@ export function EpisodeRail({ episodes, currentId, planning, onSelect }: { episo
                 <div className="drama-rail-list thin-scrollbar">
                     <div className="drama-matrix">
                         <div className="drama-matrix-legend">
-                            <span><i style={{ background: "var(--status-success)" }} />完成</span>
-                            <span><i style={{ background: "var(--workspace-accent)" }} />制作中</span>
-                            <span><i className="is-ready" />待生成</span>
-                            <span><i style={{ background: "var(--status-warning)" }} />待审阅</span>
-                            <span><i style={{ background: "var(--status-error)" }} />失败</span>
+                            <span>
+                                <i style={{ background: "var(--status-success)" }} />
+                                完成
+                            </span>
+                            <span>
+                                <i style={{ background: "var(--workspace-accent)" }} />
+                                制作中
+                            </span>
+                            <span>
+                                <i className="is-ready" />
+                                待生成
+                            </span>
+                            <span>
+                                <i style={{ background: "var(--status-warning)" }} />
+                                待审阅
+                            </span>
+                            <span>
+                                <i style={{ background: "var(--status-error)" }} />
+                                失败
+                            </span>
                         </div>
                         <div className="drama-matrix-grid">
                             {visible.map((episode) => (
                                 <Tooltip key={episode.id} title={`第 ${episode.number} 集 · ${episode.title} · ${episodeStatusText(episode)}`} mouseEnterDelay={0.25}>
-                                    <button type="button" className={`drama-cell is-${episodeTone(episode)}`} aria-current={episode.id === currentId} aria-label={`第 ${episode.number} 集 ${STAGE_LABEL[episode.stage]}`} onClick={() => onSelect(episode.id)}>{episode.number}</button>
+                                    <button
+                                        type="button"
+                                        className={`drama-cell is-${episodeTone(episode)}`}
+                                        aria-current={episode.id === currentId}
+                                        aria-label={`第 ${episode.number} 集 ${STAGE_LABEL[episode.stage]}`}
+                                        onClick={() => onSelect(episode.id)}
+                                    >
+                                        {episode.number}
+                                    </button>
                                 </Tooltip>
                             ))}
                         </div>
@@ -102,15 +144,22 @@ export function EpisodeRail({ episodes, currentId, planning, onSelect }: { episo
                                         <button type="button" className={`drama-ep is-${tone}`} aria-current={episode.id === currentId} onClick={() => onSelect(episode.id)}>
                                             <span className="drama-ep-num">{String(episode.number).padStart(episodes.length >= 100 ? 3 : 2, "0")}</span>
                                             <span className="min-w-0">
-                                                <span className="drama-ep-title block" title={episode.title}>{episode.title}</span>
-                                                <span className="drama-ep-meta"><span>{episodeStatusText(episode)}</span><StagePips episode={episode} /></span>
+                                                <span className="drama-ep-title block" title={episode.title}>
+                                                    {episode.title}
+                                                </span>
+                                                <span className="drama-ep-meta">
+                                                    <span>{episodeStatusText(episode)}</span>
+                                                    <StagePips episode={episode} />
+                                                </span>
                                             </span>
                                         </button>
                                     </div>
                                 );
                             })}
                         </div>
-                    ) : <div className="px-3 py-10 text-center text-[var(--fs-tiny)] text-foreground/40">没有符合条件的分集</div>}
+                    ) : (
+                        <div className="px-3 py-10 text-center text-[var(--fs-tiny)] text-foreground/40">没有符合条件的分集</div>
+                    )}
                     {planning ? <div className="px-3 py-3 text-center text-[var(--fs-micro)] text-foreground/40">后续章节正在分集…</div> : null}
                 </div>
             )}

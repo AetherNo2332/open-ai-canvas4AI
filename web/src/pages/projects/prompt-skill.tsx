@@ -22,16 +22,28 @@ export function PromptSkillField({ value, onChange }: { value?: DramaSkillRef; o
                         <strong>{value.skillName || value.skillId}</strong>
                         <span title={value.path}>{value.path}</span>
                     </div>
-                    <Button size="small" onClick={() => setOpen(true)}>更换</Button>
+                    <Button size="small" onClick={() => setOpen(true)}>
+                        更换
+                    </Button>
                     <Button size="small" type="text" icon={<X className="size-3.5" />} aria-label="不使用技能" onClick={() => onChange(undefined)} />
                 </div>
             ) : (
                 <div className="drama-pskill-current is-empty">
                     <span>未选择技能，按内置格式撰写（视觉与首帧、站位轴线、角色道具、光源声音、逐镜时间码）。</span>
-                    <Button size="small" icon={<BookMarked className="size-3.5" />} onClick={() => setOpen(true)}>选择技能</Button>
+                    <Button size="small" icon={<BookMarked className="size-3.5" />} onClick={() => setOpen(true)}>
+                        选择技能
+                    </Button>
                 </div>
             )}
-            <PromptSkillModal open={open} initial={value} onClose={() => setOpen(false)} onPick={(ref) => { onChange(ref); setOpen(false); }} />
+            <PromptSkillModal
+                open={open}
+                initial={value}
+                onClose={() => setOpen(false)}
+                onPick={(ref) => {
+                    onChange(ref);
+                    setOpen(false);
+                }}
+            />
         </div>
     );
 }
@@ -61,14 +73,25 @@ function PromptSkillModal({ open, initial, onClose, onPick }: { open: boolean; i
         <AppModal open={open} onCancel={onClose} footer={null} width={1080} flush title={null} centered>
             <div className="drama-skill-import">
                 <header className="drama-skill-import-head">
-                    <div><strong>选择视频提示词技能</strong><span>撰写每个剧情段的视频提示词时，会把所选文件全文交给文本模型，按其中的结构和写法输出。</span></div>
+                    <div>
+                        <strong>选择视频提示词技能</strong>
+                        <span>撰写每个剧情段的视频提示词时，会把所选文件全文交给文本模型，按其中的结构和写法输出。</span>
+                    </div>
                 </header>
                 <div className="drama-skill-import-body">
                     <aside>
                         <Input size="small" prefix={<Search className="size-3.5" />} allowClear placeholder="搜索已添加的技能" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
                         <div className="drama-skill-import-list thin-scrollbar">
                             {skills.map((item) => (
-                                <button key={item.skillId} type="button" aria-pressed={item.skillId === skillId} onClick={() => { setSkillId(item.skillId); setPath(""); }}>
+                                <button
+                                    key={item.skillId}
+                                    type="button"
+                                    aria-pressed={item.skillId === skillId}
+                                    onClick={() => {
+                                        setSkillId(item.skillId);
+                                        setPath("");
+                                    }}
+                                >
                                     <strong>{item.skillName}</strong>
                                     <span>{item.description || "—"}</span>
                                 </button>
@@ -81,7 +104,8 @@ function PromptSkillModal({ open, initial, onClose, onPick }: { open: boolean; i
                         <div className="drama-skill-import-list thin-scrollbar">
                             {files.map((file) => (
                                 <button key={file.path} type="button" className="is-file" aria-pressed={file.path === path} onClick={() => setPath(file.path)}>
-                                    <FileText className="size-3.5 shrink-0" /><span title={file.path}>{file.path}</span>
+                                    <FileText className="size-3.5 shrink-0" />
+                                    <span title={file.path}>{file.path}</span>
                                 </button>
                             ))}
                             {skillId && !filesQuery.isLoading && !files.length ? <div className="drama-skill-import-empty">这个技能没有文本文件。</div> : null}
@@ -89,14 +113,23 @@ function PromptSkillModal({ open, initial, onClose, onPick }: { open: boolean; i
                         </div>
                     </aside>
                     <section>
-                        <div className="drama-skill-import-caption">{path || "原文"}{content ? <span>{content.length.toLocaleString("zh-CN")} 字{content.length > 16000 ? " · 超过 16000 字的部分不会发送" : ""}</span> : null}</div>
+                        <div className="drama-skill-import-caption">
+                            {path || "原文"}
+                            {content ? (
+                                <span>
+                                    {content.length.toLocaleString("zh-CN")} 字{content.length > 16000 ? " · 超过 16000 字的部分不会发送" : ""}
+                                </span>
+                            ) : null}
+                        </div>
                         <pre className="drama-skill-import-content thin-scrollbar">{fileQuery.isLoading ? "正在读取…" : content || "选择文件后在这里查看全文。"}</pre>
                     </section>
                 </div>
                 <footer className="drama-skill-import-foot">
                     <span>修改后对之后撰写的剧情段生效；已写好的段可在分镜页多选后“重新撰写提示词”。</span>
                     <Button onClick={onClose}>取消</Button>
-                    <Button type="primary" disabled={!skill || !path || !content} onClick={() => skill && onPick({ skillId: skill.skillId, skillName: skill.skillName, path })}>使用这个文件</Button>
+                    <Button type="primary" disabled={!skill || !path || !content} onClick={() => skill && onPick({ skillId: skill.skillId, skillName: skill.skillName, path })}>
+                        使用这个文件
+                    </Button>
                 </footer>
             </div>
         </AppModal>

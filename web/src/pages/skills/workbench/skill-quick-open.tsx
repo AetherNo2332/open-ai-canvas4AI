@@ -19,11 +19,15 @@ export function SkillQuickOpen({ open, paths, onClose, onPick }: { open: boolean
         }
     }, [open]);
 
-    const results = useMemo(() => paths
-        .map((path) => ({ path, score: fuzzyScore(path, query) }))
-        .filter((item) => item.score >= 0)
-        .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
-        .slice(0, 60), [paths, query]);
+    const results = useMemo(
+        () =>
+            paths
+                .map((path) => ({ path, score: fuzzyScore(path, query) }))
+                .filter((item) => item.score >= 0)
+                .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+                .slice(0, 60),
+        [paths, query],
+    );
 
     useEffect(() => {
         listRef.current?.querySelector<HTMLElement>(`[data-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
@@ -50,7 +54,10 @@ export function SkillQuickOpen({ open, paths, onClose, onPick }: { open: boolean
                         aria-controls="skill-wb-quick-open-list"
                         aria-activedescendant={results[index] ? `skill-wb-quick-open-${index}` : undefined}
                         spellCheck={false}
-                        onChange={(event) => { setQuery(event.target.value); setIndex(0); }}
+                        onChange={(event) => {
+                            setQuery(event.target.value);
+                            setIndex(0);
+                        }}
                         onKeyDown={(event) => {
                             if (event.key === "ArrowDown") {
                                 event.preventDefault();
@@ -67,22 +74,26 @@ export function SkillQuickOpen({ open, paths, onClose, onPick }: { open: boolean
                     <Kbd>Esc</Kbd>
                 </label>
                 <div id="skill-wb-quick-open-list" ref={listRef} className="skill-wb-quick-open-list thin-scrollbar" role="listbox" aria-label="匹配的文件">
-                    {results.length ? results.map((item, itemIndex) => (
-                        <div
-                            key={item.path}
-                            id={`skill-wb-quick-open-${itemIndex}`}
-                            data-index={itemIndex}
-                            role="option"
-                            aria-selected={itemIndex === index}
-                            className={`skill-wb-quick-open-item${itemIndex === index ? " is-active" : ""}`}
-                            onMouseMove={() => setIndex(itemIndex)}
-                            onClick={() => pick(item.path)}
-                        >
-                            {fileIconFor(item.path)}
-                            <span className="skill-wb-quick-open-name">{baseName(item.path)}</span>
-                            <span className="skill-wb-quick-open-dir">{parentPath(item.path)}</span>
-                        </div>
-                    )) : <div className="skill-wb-quick-open-empty">没有匹配的文件</div>}
+                    {results.length ? (
+                        results.map((item, itemIndex) => (
+                            <div
+                                key={item.path}
+                                id={`skill-wb-quick-open-${itemIndex}`}
+                                data-index={itemIndex}
+                                role="option"
+                                aria-selected={itemIndex === index}
+                                className={`skill-wb-quick-open-item${itemIndex === index ? " is-active" : ""}`}
+                                onMouseMove={() => setIndex(itemIndex)}
+                                onClick={() => pick(item.path)}
+                            >
+                                {fileIconFor(item.path)}
+                                <span className="skill-wb-quick-open-name">{baseName(item.path)}</span>
+                                <span className="skill-wb-quick-open-dir">{parentPath(item.path)}</span>
+                            </div>
+                        ))
+                    ) : (
+                        <div className="skill-wb-quick-open-empty">没有匹配的文件</div>
+                    )}
                 </div>
             </div>
         </AppModal>

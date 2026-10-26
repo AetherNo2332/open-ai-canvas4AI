@@ -27,16 +27,18 @@ type SavedTab = { state: EditorState; scrollTop: number; scrollLeft: number };
 const externalChange = Annotation.define<boolean>();
 
 // 工作台配色走产品 token；高优先级覆盖 oneDark/light 主题的底色，语法色仍沿用主题。
-const tokenTheme = Prec.highest(EditorView.theme({
-    "&": { height: "100%", backgroundColor: "var(--skill-wb-editor-bg)", color: "var(--user-ink)" },
-    "&.cm-focused": { outline: "none" },
-    ".cm-scroller": { fontFamily: "var(--font-mono)", fontSize: "13px", lineHeight: "1.65" },
-    ".cm-gutters": { backgroundColor: "var(--skill-wb-editor-bg)", color: "var(--user-ink-soft)", border: "none" },
-    ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--user-ink)" },
-    ".cm-activeLine": { backgroundColor: "var(--skill-wb-active-line)" },
-    ".cm-content": { paddingBlock: "10px" },
-    ".cm-lineNumbers .cm-gutterElement": { paddingInline: "12px 10px", minWidth: "44px" },
-}));
+const tokenTheme = Prec.highest(
+    EditorView.theme({
+        "&": { height: "100%", backgroundColor: "var(--skill-wb-editor-bg)", color: "var(--user-ink)" },
+        "&.cm-focused": { outline: "none" },
+        ".cm-scroller": { fontFamily: "var(--font-mono)", fontSize: "13px", lineHeight: "1.65" },
+        ".cm-gutters": { backgroundColor: "var(--skill-wb-editor-bg)", color: "var(--user-ink-soft)", border: "none" },
+        ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--user-ink)" },
+        ".cm-activeLine": { backgroundColor: "var(--skill-wb-active-line)" },
+        ".cm-content": { paddingBlock: "10px" },
+        ".cm-lineNumbers .cm-gutterElement": { paddingInline: "12px 10px", minWidth: "44px" },
+    }),
+);
 
 function themeExtension(theme: "light" | "dark"): Extension {
     return theme === "dark" ? oneDark : defaultLightThemeOption;
@@ -76,25 +78,26 @@ export const SkillCodeEditor = forwardRef<SkillCodeEditorHandle, SkillCodeEditor
         callbacksRef.current.onCursor(line.number, head - line.from + 1);
     };
 
-    const createState = (filePath: string, doc: string) => EditorState.create({
-        doc,
-        extensions: [
-            ...getDefaultExtensions({ theme: "none", indentWithTab: true, basicSetup: { lineNumbers: true, foldGutter: true, highlightActiveLine: true, highlightActiveLineGutter: true, autocompletion: false, tabSize: 2 } }),
-            themeCompartment.of(themeExtension(configRef.current.theme)),
-            editableCompartment.of(editableExtension(configRef.current.readOnly)),
-            languageExtension(filePath),
-            tokenTheme,
-            EditorView.contentAttributes.of({ "aria-label": `编辑 ${filePath}`, spellcheck: "false" }),
-            EditorView.updateListener.of((update) => {
-                if (update.docChanged && !update.transactions.some((transaction) => transaction.annotation(externalChange))) {
-                    const text = update.state.doc.toString();
-                    lastEmittedRef.current = text;
-                    callbacksRef.current.onChange(currentPathRef.current, text);
-                }
-                if (update.docChanged || update.selectionSet) reportCursor(update.state);
-            }),
-        ],
-    });
+    const createState = (filePath: string, doc: string) =>
+        EditorState.create({
+            doc,
+            extensions: [
+                ...getDefaultExtensions({ theme: "none", indentWithTab: true, basicSetup: { lineNumbers: true, foldGutter: true, highlightActiveLine: true, highlightActiveLineGutter: true, autocompletion: false, tabSize: 2 } }),
+                themeCompartment.of(themeExtension(configRef.current.theme)),
+                editableCompartment.of(editableExtension(configRef.current.readOnly)),
+                languageExtension(filePath),
+                tokenTheme,
+                EditorView.contentAttributes.of({ "aria-label": `编辑 ${filePath}`, spellcheck: "false" }),
+                EditorView.updateListener.of((update) => {
+                    if (update.docChanged && !update.transactions.some((transaction) => transaction.annotation(externalChange))) {
+                        const text = update.state.doc.toString();
+                        lastEmittedRef.current = text;
+                        callbacksRef.current.onChange(currentPathRef.current, text);
+                    }
+                    if (update.docChanged || update.selectionSet) reportCursor(update.state);
+                }),
+            ],
+        });
 
     const syncConfiguration = (view: EditorView) => {
         view.dispatch({ effects: [themeCompartment.reconfigure(themeExtension(configRef.current.theme)), editableCompartment.reconfigure(editableExtension(configRef.current.readOnly))] });
@@ -148,24 +151,28 @@ export const SkillCodeEditor = forwardRef<SkillCodeEditorHandle, SkillCodeEditor
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [theme, readOnly]);
 
-    useImperativeHandle(ref, () => ({
-        focus() {
-            viewRef.current?.focus();
-        },
-        moveState(from, to) {
-            if (currentPathRef.current === from) currentPathRef.current = to;
-            const saved = tabsRef.current.get(from);
-            if (!saved) return;
-            tabsRef.current.delete(from);
-            tabsRef.current.set(to, saved);
-        },
-        forget(filePath) {
-            tabsRef.current.delete(filePath);
-        },
-        forgetAll() {
-            tabsRef.current.clear();
-        },
-    }), []);
+    useImperativeHandle(
+        ref,
+        () => ({
+            focus() {
+                viewRef.current?.focus();
+            },
+            moveState(from, to) {
+                if (currentPathRef.current === from) currentPathRef.current = to;
+                const saved = tabsRef.current.get(from);
+                if (!saved) return;
+                tabsRef.current.delete(from);
+                tabsRef.current.set(to, saved);
+            },
+            forget(filePath) {
+                tabsRef.current.delete(filePath);
+            },
+            forgetAll() {
+                tabsRef.current.clear();
+            },
+        }),
+        [],
+    );
 
     return <div ref={hostRef} className="skill-wb-code" />;
 });

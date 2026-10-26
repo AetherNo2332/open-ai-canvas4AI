@@ -65,11 +65,14 @@ export function Storyboard({ shots, segments, aspectRatio, castById, defaultVide
         return map;
     }, [shots]);
     const order = useMemo(() => segments.map((segment) => segment.index), [segments]);
-    const totals = useMemo(() => ({
-        durationMs: segments.reduce((sum, segment) => sum + segment.durationMs, 0),
-        prompts: segments.filter(promptReady).length,
-        videos: segments.filter((segment) => segment.videoStatus === "ready").length,
-    }), [segments]);
+    const totals = useMemo(
+        () => ({
+            durationMs: segments.reduce((sum, segment) => sum + segment.durationMs, 0),
+            prompts: segments.filter(promptReady).length,
+            videos: segments.filter((segment) => segment.videoStatus === "ready").length,
+        }),
+        [segments],
+    );
     const chosen = segments.filter((segment) => selected.has(segment.index));
     const toGenerate = chosen.filter(generatable).map((segment) => segment.index);
     const toWrite = chosen.filter(writable).map((segment) => segment.index);
@@ -179,21 +182,70 @@ export function Storyboard({ shots, segments, aspectRatio, castById, defaultVide
                 {selected.size ? (
                     <>
                         <b className="text-[var(--fs-label)]">已选 {selected.size} 段</b>
-                        <div className="drama-board-model"><DramaModelPicker capability="video" size="sm" value={batchModel || defaultVideoModel} onChange={setBatchModel} placeholder="视频模型" /></div>
+                        <div className="drama-board-model">
+                            <DramaModelPicker capability="video" size="sm" value={batchModel || defaultVideoModel} onChange={setBatchModel} placeholder="视频模型" />
+                        </div>
                         <Tooltip title={toGenerate.length < selected.size ? `${selected.size - toGenerate.length} 段提示词未就绪或正在生成，会跳过` : undefined}>
-                            <Button size="small" type="primary" icon={<Play className="size-3.5" />} disabled={busy || !toGenerate.length} onClick={() => { onGenerate(toGenerate, batchModel); setSelected(new Set()); }}>生成视频 · {toGenerate.length} 段</Button>
+                            <Button
+                                size="small"
+                                type="primary"
+                                icon={<Play className="size-3.5" />}
+                                disabled={busy || !toGenerate.length}
+                                onClick={() => {
+                                    onGenerate(toGenerate, batchModel);
+                                    setSelected(new Set());
+                                }}
+                            >
+                                生成视频 · {toGenerate.length} 段
+                            </Button>
                         </Tooltip>
-                        <Button size="small" icon={<Sparkles className="size-3.5" />} disabled={busy || !toWrite.length} onClick={() => { onWritePrompts(toWrite); setSelected(new Set()); }}>重新撰写提示词 · {toWrite.length} 段</Button>
-                        <Button size="small" type="text" onClick={() => setSelected(new Set(order))}>全选</Button>
-                        <Button size="small" type="text" icon={<X className="size-3.5" />} className="!ml-auto" onClick={() => setSelected(new Set())}>取消选择</Button>
+                        <Button
+                            size="small"
+                            icon={<Sparkles className="size-3.5" />}
+                            disabled={busy || !toWrite.length}
+                            onClick={() => {
+                                onWritePrompts(toWrite);
+                                setSelected(new Set());
+                            }}
+                        >
+                            重新撰写提示词 · {toWrite.length} 段
+                        </Button>
+                        <Button size="small" type="text" onClick={() => setSelected(new Set(order))}>
+                            全选
+                        </Button>
+                        <Button size="small" type="text" icon={<X className="size-3.5" />} className="!ml-auto" onClick={() => setSelected(new Set())}>
+                            取消选择
+                        </Button>
                     </>
                 ) : (
                     <>
-                        <span className="drama-board-stat"><b>{segments.length}</b>段</span>
-                        <span className="drama-board-stat"><b>{shots.length}</b>镜</span>
-                        <span className="drama-board-stat"><b>{formatClock(totals.durationMs)}</b>时长</span>
-                        <span className="drama-board-meter" aria-label={`提示词 ${totals.prompts}/${segments.length}`}>提示词<i><em style={progressFillStyle((totals.prompts / Math.max(segments.length, 1)) * 100)} /></i><b>{totals.prompts}/{segments.length}</b></span>
-                        <span className="drama-board-meter is-video" aria-label={`视频 ${totals.videos}/${segments.length}`}>视频<i><em style={progressFillStyle((totals.videos / Math.max(segments.length, 1)) * 100)} /></i><b>{totals.videos}/{segments.length}</b></span>
+                        <span className="drama-board-stat">
+                            <b>{segments.length}</b>段
+                        </span>
+                        <span className="drama-board-stat">
+                            <b>{shots.length}</b>镜
+                        </span>
+                        <span className="drama-board-stat">
+                            <b>{formatClock(totals.durationMs)}</b>时长
+                        </span>
+                        <span className="drama-board-meter" aria-label={`提示词 ${totals.prompts}/${segments.length}`}>
+                            提示词
+                            <i>
+                                <em style={progressFillStyle((totals.prompts / Math.max(segments.length, 1)) * 100)} />
+                            </i>
+                            <b>
+                                {totals.prompts}/{segments.length}
+                            </b>
+                        </span>
+                        <span className="drama-board-meter is-video" aria-label={`视频 ${totals.videos}/${segments.length}`}>
+                            视频
+                            <i>
+                                <em style={progressFillStyle((totals.videos / Math.max(segments.length, 1)) * 100)} />
+                            </i>
+                            <b>
+                                {totals.videos}/{segments.length}
+                            </b>
+                        </span>
                         <span className="ml-auto drama-board-hint">段按顺序生成，第 2 段起以上一段最后一帧为首帧</span>
                     </>
                 )}
@@ -214,44 +266,106 @@ export function Storyboard({ shots, segments, aspectRatio, castById, defaultVide
                             aria-label={`第 ${segment.index + 1} 段 ${segment.title}，${state.label}`}
                             className={`drama-sg is-${state.tone} ${isSelected ? "is-selected" : ""} ${focused === segment.index ? "is-focused" : ""}`}
                             onClick={(event) => handleCardClick(event, segment.index)}
-                            onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button, .ant-select")) onOpen(segment.index); }}
+                            onDoubleClick={(event) => {
+                                if (!(event.target as HTMLElement).closest("button, .ant-select")) onOpen(segment.index);
+                            }}
                         >
                             <header className="drama-sg-head">
-                                <Checkbox checked={isSelected} onChange={() => toggle(segment.index)} onClick={(event) => { if (event.shiftKey && anchor !== undefined) { event.preventDefault(); selectRange(anchor, segment.index, true); } }} aria-label={`选择第 ${segment.index + 1} 段`} />
+                                <Checkbox
+                                    checked={isSelected}
+                                    onChange={() => toggle(segment.index)}
+                                    onClick={(event) => {
+                                        if (event.shiftKey && anchor !== undefined) {
+                                            event.preventDefault();
+                                            selectRange(anchor, segment.index, true);
+                                        }
+                                    }}
+                                    aria-label={`选择第 ${segment.index + 1} 段`}
+                                />
                                 <span className="drama-seg-num">{segment.index + 1}</span>
-                                <button type="button" className="drama-sg-title" title={segment.title} onClick={() => onOpen(segment.index)}>{segment.title}</button>
-                                {error ? <Tooltip title={error}><AlertCircle className="size-3.5 flex-none text-[var(--drama-err)]" aria-label="失败原因" /></Tooltip> : segment.request.warning ? <Tooltip title={segment.request.warning}><TriangleAlert className="size-3.5 flex-none text-[var(--drama-warn)]" aria-label="提示" /></Tooltip> : null}
+                                <button type="button" className="drama-sg-title" title={segment.title} onClick={() => onOpen(segment.index)}>
+                                    {segment.title}
+                                </button>
+                                {error ? (
+                                    <Tooltip title={error}>
+                                        <AlertCircle className="size-3.5 flex-none text-[var(--drama-err)]" aria-label="失败原因" />
+                                    </Tooltip>
+                                ) : segment.request.warning ? (
+                                    <Tooltip title={segment.request.warning}>
+                                        <TriangleAlert className="size-3.5 flex-none text-[var(--drama-warn)]" aria-label="提示" />
+                                    </Tooltip>
+                                ) : null}
                             </header>
                             <div className="drama-sg-body">
                                 <button type="button" className="drama-sg-cover" style={{ aspectRatio: aspectRatioValue(aspectRatio) }} onClick={() => onOpen(segment.index)} aria-label={`打开第 ${segment.index + 1} 段`}>
-                                    {segment.tailFrameResourceId && segment.videoResourceId ? <MediaThumb resourceId={segment.tailFrameResourceId} alt="" /> : <span className={`drama-sg-cover-empty ${state.tone === "busy" ? "is-busy" : ""}`}><Film className="size-4" aria-hidden /></span>}
+                                    {segment.tailFrameResourceId && segment.videoResourceId ? (
+                                        <MediaThumb resourceId={segment.tailFrameResourceId} alt="" />
+                                    ) : (
+                                        <span className={`drama-sg-cover-empty ${state.tone === "busy" ? "is-busy" : ""}`}>
+                                            <Film className="size-4" aria-hidden />
+                                        </span>
+                                    )}
                                     <span className="drama-sg-cover-dur">{secondsLabel(segment.durationMs)}</span>
-                                    {segment.videoResourceId ? <span className="drama-sg-cover-play"><Play className="size-3" aria-hidden /></span> : null}
+                                    {segment.videoResourceId ? (
+                                        <span className="drama-sg-cover-play">
+                                            <Play className="size-3" aria-hidden />
+                                        </span>
+                                    ) : null}
                                 </button>
                                 <div className="drama-sg-main">
-                                    <div className="drama-sg-meta"><SegmentStatus segment={segment} /><span>{segmentShots.length} 镜{segment.request.maxVideoSeconds ? ` · 上限 ${segment.request.maxVideoSeconds}s` : ""}</span></div>
+                                    <div className="drama-sg-meta">
+                                        <SegmentStatus segment={segment} />
+                                        <span>
+                                            {segmentShots.length} 镜{segment.request.maxVideoSeconds ? ` · 上限 ${segment.request.maxVideoSeconds}s` : ""}
+                                        </span>
+                                    </div>
                                     <SegmentInputs segment={segment} castById={castById} compact />
                                     {segmentShots.length === 1 ? (
                                         <button type="button" className="drama-sg-single" onClick={() => onOpen(segment.index, segmentShots[0].id)}>
                                             <span className="drama-sg-single-action">{segmentShots[0].action || segmentShots[0].imagePrompt || "未描述画面"}</span>
-                                            {segmentShots[0].dialogue ? <span className="drama-sg-single-line"><em>{segmentShots[0].speaker || "旁白"}</em>{segmentShots[0].dialogue}</span> : null}
+                                            {segmentShots[0].dialogue ? (
+                                                <span className="drama-sg-single-line">
+                                                    <em>{segmentShots[0].speaker || "旁白"}</em>
+                                                    {segmentShots[0].dialogue}
+                                                </span>
+                                            ) : null}
                                         </button>
-                                    ) : <ol className="drama-sg-shots">
-                                        {segmentShots.slice(0, SHOT_PREVIEW).map((shot) => (
-                                            <li key={shot.id}>
-                                                <button type="button" onClick={() => onOpen(segment.index, shot.id)} title={shot.dialogue ? `${shot.speaker || "旁白"}：${shot.dialogue}` : shot.action}>
-                                                    <b>{shot.position + 1}</b>
-                                                    <span>{shot.dialogue ? <><em>{shot.speaker || "旁白"}</em>{shot.dialogue}</> : shot.action || shot.imagePrompt || "未描述画面"}</span>
-                                                </button>
-                                            </li>
-                                        ))}
-                                        {segmentShots.length > SHOT_PREVIEW ? <li className="drama-sg-more">还有 {segmentShots.length - SHOT_PREVIEW} 镜</li> : null}
-                                    </ol>}
+                                    ) : (
+                                        <ol className="drama-sg-shots">
+                                            {segmentShots.slice(0, SHOT_PREVIEW).map((shot) => (
+                                                <li key={shot.id}>
+                                                    <button type="button" onClick={() => onOpen(segment.index, shot.id)} title={shot.dialogue ? `${shot.speaker || "旁白"}：${shot.dialogue}` : shot.action}>
+                                                        <b>{shot.position + 1}</b>
+                                                        <span>
+                                                            {shot.dialogue ? (
+                                                                <>
+                                                                    <em>{shot.speaker || "旁白"}</em>
+                                                                    {shot.dialogue}
+                                                                </>
+                                                            ) : (
+                                                                shot.action || shot.imagePrompt || "未描述画面"
+                                                            )}
+                                                        </span>
+                                                    </button>
+                                                </li>
+                                            ))}
+                                            {segmentShots.length > SHOT_PREVIEW ? <li className="drama-sg-more">还有 {segmentShots.length - SHOT_PREVIEW} 镜</li> : null}
+                                        </ol>
+                                    )}
                                 </div>
                             </div>
                             <footer className="drama-sg-foot">
-                                <span className="drama-sg-model" title={segment.videoModel?.label}>{segment.videoModel?.label || defaultVideoModel?.label || "默认视频模型"}</span>
-                                <Button size="small" type={generatable(segment) && segment.videoStatus !== "ready" ? "primary" : "default"} icon={<Play className="size-3" />} disabled={busy || !generatable(segment)} title={!promptReady(segment) ? "先撰写或确认本段视频提示词" : undefined} onClick={() => onGenerate([segment.index])}>
+                                <span className="drama-sg-model" title={segment.videoModel?.label}>
+                                    {segment.videoModel?.label || defaultVideoModel?.label || "默认视频模型"}
+                                </span>
+                                <Button
+                                    size="small"
+                                    type={generatable(segment) && segment.videoStatus !== "ready" ? "primary" : "default"}
+                                    icon={<Play className="size-3" />}
+                                    disabled={busy || !generatable(segment)}
+                                    title={!promptReady(segment) ? "先撰写或确认本段视频提示词" : undefined}
+                                    onClick={() => onGenerate([segment.index])}
+                                >
                                     {mediaBusy(segment.videoStatus) ? (segment.request.firstFramePending ? "等上一段" : "生成中") : segment.videoStatus === "ready" ? "重新生成" : "生成"}
                                 </Button>
                             </footer>
@@ -260,13 +374,31 @@ export function Storyboard({ shots, segments, aspectRatio, castById, defaultVide
                 })}
             </div>
             <div className="drama-kbd-hint" aria-label="键盘快捷键">
-                <span><kbd>⌘</kbd><kbd>A</kbd>全选</span>
-                <span><kbd>⌘</kbd>单击 多选</span>
-                <span><kbd>⇧</kbd>单击 / <kbd>⇧</kbd><kbd>←</kbd><kbd>→</kbd> 连选</span>
-                <span><kbd>X</kbd>/<kbd>空格</kbd>选中当前</span>
-                <span><kbd>J</kbd><kbd>K</kbd>/方向键 切换</span>
-                <span><kbd>Enter</kbd>打开</span>
-                <span><kbd>Esc</kbd>取消选择</span>
+                <span>
+                    <kbd>⌘</kbd>
+                    <kbd>A</kbd>全选
+                </span>
+                <span>
+                    <kbd>⌘</kbd>单击 多选
+                </span>
+                <span>
+                    <kbd>⇧</kbd>单击 / <kbd>⇧</kbd>
+                    <kbd>←</kbd>
+                    <kbd>→</kbd> 连选
+                </span>
+                <span>
+                    <kbd>X</kbd>/<kbd>空格</kbd>选中当前
+                </span>
+                <span>
+                    <kbd>J</kbd>
+                    <kbd>K</kbd>/方向键 切换
+                </span>
+                <span>
+                    <kbd>Enter</kbd>打开
+                </span>
+                <span>
+                    <kbd>Esc</kbd>取消选择
+                </span>
             </div>
         </div>
     );

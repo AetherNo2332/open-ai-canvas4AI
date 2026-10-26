@@ -172,7 +172,7 @@ export default function SkillWorkbenchPage() {
                     const entry = files.has(SKILL_ENTRY_PATH) ? SKILL_ENTRY_PATH : list.files[0]?.path;
                     return entry ? [{ path: entry, preview: false }] : [];
                 });
-                setActivePath((current) => files.has(current) ? current : files.has(SKILL_ENTRY_PATH) ? SKILL_ENTRY_PATH : list.files[0]?.path || "");
+                setActivePath((current) => (files.has(current) ? current : files.has(SKILL_ENTRY_PATH) ? SKILL_ENTRY_PATH : list.files[0]?.path || ""));
                 setFocusedPath((current) => current || SKILL_ENTRY_PATH);
             })
             .catch((error) => {
@@ -202,20 +202,23 @@ export default function SkillWorkbenchPage() {
     const rows = useMemo(() => flattenTree(tree, expanded, filter), [expanded, filter, tree]);
     const dirtyPaths = useMemo(() => new Set(entries.filter((entry) => isEntryDirty(entry, buffers, baseContents)).map((entry) => entry.path)), [baseContents, buffers, entries]);
     const deletedCount = useMemo(() => {
-        const kept = new Set(entries.flatMap((entry) => entry.origin ? [entry.origin] : []));
+        const kept = new Set(entries.flatMap((entry) => (entry.origin ? [entry.origin] : [])));
         return [...baseFiles.keys()].filter((path) => !kept.has(path)).length;
     }, [baseFiles, entries]);
     const pendingCount = dirtyPaths.size + deletedCount;
     const sortedPaths = useMemo(() => [...filePaths].sort(), [filePaths]);
 
-    const textFor = useCallback((path: string): string | undefined => {
-        const buffer = buffers.get(path);
-        if (buffer !== undefined) return buffer;
-        const entry = entryByPath.get(path);
-        if (!entry) return undefined;
-        if (!entry.origin) return "";
-        return baseContents.get(entry.origin);
-    }, [baseContents, buffers, entryByPath]);
+    const textFor = useCallback(
+        (path: string): string | undefined => {
+            const buffer = buffers.get(path);
+            if (buffer !== undefined) return buffer;
+            const entry = entryByPath.get(path);
+            if (!entry) return undefined;
+            if (!entry.origin) return "";
+            return baseContents.get(entry.origin);
+        },
+        [baseContents, buffers, entryByPath],
+    );
 
     const activeEntry = entryByPath.get(activePath);
     const activeOrigin = activeEntry?.origin ?? null;
@@ -223,7 +226,7 @@ export default function SkillWorkbenchPage() {
     const activeText = activePath ? textFor(activePath) : undefined;
     const activeIsText = Boolean(activeEntry && activeText !== undefined && !activeState);
     const activeMeta = activeOrigin ? baseFiles.get(activeOrigin) : undefined;
-    const activeSize = activeIsText && activeText !== undefined ? utf8ByteLength(activeText) : activeMeta?.size ?? 0;
+    const activeSize = activeIsText && activeText !== undefined ? utf8ByteLength(activeText) : (activeMeta?.size ?? 0);
     const activeIsMarkdown = activeIsText && isMarkdownPath(activePath);
     const markdownMode: MarkdownMode = activeIsMarkdown ? layout.markdownMode : "edit";
 
@@ -233,41 +236,44 @@ export default function SkillWorkbenchPage() {
     }, [activeIsText, activePath, editorPath]);
 
     // ---------- 文件内容 ----------
-    const ensureContent = useCallback((path: string) => {
-        const entry = entryByPath.get(path);
-        if (!entry?.origin || !skill) return;
-        const origin = entry.origin;
-        if (baseContents.has(origin) || fileStates.has(origin)) return;
-        const meta = baseFiles.get(origin);
-        if (meta && (meta.kind === "image" || meta.kind === "video" || meta.kind === "audio")) {
-            setFileStates((current) => new Map(current).set(origin, { status: "binary" }));
-            return;
-        }
-        if (meta && meta.size > SKILL_TEXT_LIMIT_BYTES) {
-            setFileStates((current) => new Map(current).set(origin, { status: "error", message: "文件超过 512KB，无法在线编辑，请下载后查看。" }));
-            return;
-        }
-        const generation = generationRef.current;
-        setFileStates((current) => new Map(current).set(origin, { status: "loading" }));
-        getSkillFile(skill.skillId, origin)
-            .then((result) => {
-                if (generation !== generationRef.current) return;
-                if (result.file.binary) {
-                    setFileStates((current) => new Map(current).set(origin, { status: "binary" }));
-                    return;
-                }
-                setBaseContents((current) => new Map(current).set(origin, result.file.content));
-                setFileStates((current) => {
-                    const next = new Map(current);
-                    next.delete(origin);
-                    return next;
+    const ensureContent = useCallback(
+        (path: string) => {
+            const entry = entryByPath.get(path);
+            if (!entry?.origin || !skill) return;
+            const origin = entry.origin;
+            if (baseContents.has(origin) || fileStates.has(origin)) return;
+            const meta = baseFiles.get(origin);
+            if (meta && (meta.kind === "image" || meta.kind === "video" || meta.kind === "audio")) {
+                setFileStates((current) => new Map(current).set(origin, { status: "binary" }));
+                return;
+            }
+            if (meta && meta.size > SKILL_TEXT_LIMIT_BYTES) {
+                setFileStates((current) => new Map(current).set(origin, { status: "error", message: "文件超过 512KB，无法在线编辑，请下载后查看。" }));
+                return;
+            }
+            const generation = generationRef.current;
+            setFileStates((current) => new Map(current).set(origin, { status: "loading" }));
+            getSkillFile(skill.skillId, origin)
+                .then((result) => {
+                    if (generation !== generationRef.current) return;
+                    if (result.file.binary) {
+                        setFileStates((current) => new Map(current).set(origin, { status: "binary" }));
+                        return;
+                    }
+                    setBaseContents((current) => new Map(current).set(origin, result.file.content));
+                    setFileStates((current) => {
+                        const next = new Map(current);
+                        next.delete(origin);
+                        return next;
+                    });
+                })
+                .catch((error) => {
+                    if (generation !== generationRef.current) return;
+                    setFileStates((current) => new Map(current).set(origin, { status: "error", message: errorMessage(error, "文件读取失败") }));
                 });
-            })
-            .catch((error) => {
-                if (generation !== generationRef.current) return;
-                setFileStates((current) => new Map(current).set(origin, { status: "error", message: errorMessage(error, "文件读取失败") }));
-            });
-    }, [baseContents, baseFiles, entryByPath, fileStates, skill]);
+        },
+        [baseContents, baseFiles, entryByPath, fileStates, skill],
+    );
 
     useEffect(() => {
         if (activePath) ensureContent(activePath);
@@ -288,30 +294,33 @@ export default function SkillWorkbenchPage() {
         });
     }, []);
 
-    const openFile = useCallback((path: string, options: { preview?: boolean } = {}) => {
-        setTabs((current) => {
-            const existing = current.find((tab) => tab.path === path);
-            if (existing) return options.preview || !existing.preview ? current : current.map((tab) => tab.path === path ? { ...tab, preview: false } : tab);
-            // 单击打开为预览标签（会被下一次单击替换），双击或编辑后固定，和 VS Code 一致。
-            if (options.preview) {
-                const previewIndex = current.findIndex((tab) => tab.preview);
-                if (previewIndex >= 0) return current.map((tab, index) => index === previewIndex ? { path, preview: true } : tab);
-                return [...current, { path, preview: true }];
-            }
-            return [...current, { path, preview: false }];
-        });
-        setActivePath(path);
-        setFocusedPath(path);
-        revealPath(path);
-        if (window.matchMedia("(max-width: 767px)").matches) setExplorerOpen(false);
-    }, [revealPath]);
+    const openFile = useCallback(
+        (path: string, options: { preview?: boolean } = {}) => {
+            setTabs((current) => {
+                const existing = current.find((tab) => tab.path === path);
+                if (existing) return options.preview || !existing.preview ? current : current.map((tab) => (tab.path === path ? { ...tab, preview: false } : tab));
+                // 单击打开为预览标签（会被下一次单击替换），双击或编辑后固定，和 VS Code 一致。
+                if (options.preview) {
+                    const previewIndex = current.findIndex((tab) => tab.preview);
+                    if (previewIndex >= 0) return current.map((tab, index) => (index === previewIndex ? { path, preview: true } : tab));
+                    return [...current, { path, preview: true }];
+                }
+                return [...current, { path, preview: false }];
+            });
+            setActivePath(path);
+            setFocusedPath(path);
+            revealPath(path);
+            if (window.matchMedia("(max-width: 767px)").matches) setExplorerOpen(false);
+        },
+        [revealPath],
+    );
 
     const closeTab = useCallback((path: string) => {
         setTabs((current) => {
             const index = current.findIndex((tab) => tab.path === path);
             if (index < 0) return current;
             const next = current.filter((tab) => tab.path !== path);
-            setActivePath((active) => active === path ? next[Math.min(index, next.length - 1)]?.path || "" : active);
+            setActivePath((active) => (active === path ? next[Math.min(index, next.length - 1)]?.path || "" : active));
             return next;
         });
     }, []);
@@ -328,13 +337,13 @@ export default function SkillWorkbenchPage() {
 
     const handleChange = useCallback((path: string, value: string) => {
         setBuffers((current) => new Map(current).set(path, value));
-        setTabs((current) => current.some((tab) => tab.path === path && tab.preview) ? current.map((tab) => tab.path === path ? { ...tab, preview: false } : tab) : current);
+        setTabs((current) => (current.some((tab) => tab.path === path && tab.preview) ? current.map((tab) => (tab.path === path ? { ...tab, preview: false } : tab)) : current));
     }, []);
 
     // ---------- 结构操作（只改工作副本，保存时统一提交） ----------
     const renamePrefix = (from: string, to: string, folder: boolean) => {
-        const map = (path: string) => folder ? (isDescendantPath(path, from) ? to + path.slice(from.length) : path) : (path === from ? to : path);
-        const moved = entries.filter((entry) => folder ? isDescendantPath(entry.path, from) : entry.path === from).map((entry) => entry.path);
+        const map = (path: string) => (folder ? (isDescendantPath(path, from) ? to + path.slice(from.length) : path) : path === from ? to : path);
+        const moved = entries.filter((entry) => (folder ? isDescendantPath(entry.path, from) : entry.path === from)).map((entry) => entry.path);
         setEntries((current) => current.map((entry) => ({ ...entry, path: map(entry.path) })));
         setBuffers((current) => new Map([...current].map(([path, value]) => [map(path), value])));
         setTabs((current) => current.map((tab) => ({ ...tab, path: map(tab.path) })));
@@ -342,8 +351,8 @@ export default function SkillWorkbenchPage() {
         setEditorPath((current) => map(current));
         setFocusedPath(to);
         if (folder) {
-            setExplicitFolders((current) => new Set([...current].map((path) => path === from || isDescendantPath(path, from) ? to + path.slice(from.length) : path)));
-            setExpanded((current) => new Set([...current].map((path) => path === from || isDescendantPath(path, from) ? to + path.slice(from.length) : path)));
+            setExplicitFolders((current) => new Set([...current].map((path) => (path === from || isDescendantPath(path, from) ? to + path.slice(from.length) : path))));
+            setExpanded((current) => new Set([...current].map((path) => (path === from || isDescendantPath(path, from) ? to + path.slice(from.length) : path))));
         }
         for (const path of moved) editorRef.current?.moveState(path, map(path));
         revealPath(to);
@@ -357,7 +366,7 @@ export default function SkillWorkbenchPage() {
             const invalid = validateSkillPath(target);
             if (invalid) return invalid;
             if (target === SKILL_ENTRY_PATH) return "SKILL.md 是技能入口，不能被替换";
-            const ignore = (path: string) => input.type === "file" ? path === input.path : isDescendantPath(path, input.path);
+            const ignore = (path: string) => (input.type === "file" ? path === input.path : isDescendantPath(path, input.path));
             const conflict = pathConflict(target, filePaths, input.type === "folder" ? new Set([...folders].filter((path) => path !== input.path && !isDescendantPath(path, input.path))) : folders, ignore);
             if (conflict) return conflict;
             if (input.type === "folder" && isDescendantPath(target, input.path)) return "不能移动到自身内部";
@@ -410,7 +419,7 @@ export default function SkillWorkbenchPage() {
                 setEntries((current) => current.filter((entry) => !removed.has(entry.path)));
                 setBuffers((current) => new Map([...current].filter(([path]) => !removed.has(path))));
                 setTabs((current) => current.filter((tab) => !removed.has(tab.path)));
-                setActivePath((current) => removed.has(current) ? "" : current);
+                setActivePath((current) => (removed.has(current) ? "" : current));
                 if (row.type === "folder") setExplicitFolders((current) => new Set([...current].filter((path) => path !== row.path && !isDescendantPath(path, row.path))));
                 for (const path of affected) editorRef.current?.forget(path);
                 setFocusedPath(parentPath(row.path) || SKILL_ENTRY_PATH);
@@ -434,7 +443,7 @@ export default function SkillWorkbenchPage() {
         setBuffers(new Map());
         setExplicitFolders(new Set());
         setTabs((current) => current.filter((tab) => baseFiles.has(tab.path)));
-        setActivePath((current) => baseFiles.has(current) ? current : baseFiles.has(SKILL_ENTRY_PATH) ? SKILL_ENTRY_PATH : "");
+        setActivePath((current) => (baseFiles.has(current) ? current : baseFiles.has(SKILL_ENTRY_PATH) ? SKILL_ENTRY_PATH : ""));
         editorRef.current?.forgetAll();
     };
 
@@ -572,7 +581,7 @@ export default function SkillWorkbenchPage() {
         setAdding(true);
         try {
             const result = await addSkill(skill.skillId);
-            setSkill((current) => current ? { ...current, ...result.skill } : result.skill);
+            setSkill((current) => (current ? { ...current, ...result.skill } : result.skill));
             message.success("已加入我的技能");
         } catch (error) {
             message.error(errorMessage(error, "加入技能失败"));
@@ -607,7 +616,7 @@ export default function SkillWorkbenchPage() {
         const start = resizeRef.current;
         if (!start) return;
         const width = Math.min(MAX_EXPLORER, Math.max(MIN_EXPLORER, start.startWidth + event.clientX - start.startX));
-        setLayout((current) => current.width === width ? current : { ...current, width });
+        setLayout((current) => (current.width === width ? current : { ...current, width }));
     };
     const onResizeEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
         resizeRef.current = null;
@@ -624,7 +633,9 @@ export default function SkillWorkbenchPage() {
     if (loadError && !skill) {
         return (
             <WorkspacePage fluid scroll={false} className="skill-wb-page">
-                <div className="skill-wb-center"><WorkspaceErrorState description={loadError} onRetry={() => setReloadKey((value) => value + 1)} /></div>
+                <div className="skill-wb-center">
+                    <WorkspaceErrorState description={loadError} onRetry={() => setReloadKey((value) => value + 1)} />
+                </div>
             </WorkspacePage>
         );
     }
@@ -632,7 +643,10 @@ export default function SkillWorkbenchPage() {
     if (!skill) {
         return (
             <WorkspacePage fluid scroll={false} className="skill-wb-page">
-                <div className="skill-wb-center" role="status"><LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" aria-hidden="true" /><span>正在打开技能工作台…</span></div>
+                <div className="skill-wb-center" role="status">
+                    <LoaderCircle className="size-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    <span>正在打开技能工作台…</span>
+                </div>
             </WorkspacePage>
         );
     }
@@ -645,21 +659,39 @@ export default function SkillWorkbenchPage() {
         <WorkspacePage fluid scroll={false} className="skill-wb-page">
             <div className="skill-wb" style={{ "--skill-wb-explorer-width": `${layout.width}px` } as CSSProperties} data-explorer={explorerOpen ? "open" : "closed"}>
                 <header className="skill-wb-header">
-                    <Button type="text" className="skill-wb-back" icon={<ArrowLeft className="size-4" />} onClick={() => navigate("/skills")}>技能库</Button>
+                    <Button type="text" className="skill-wb-back" icon={<ArrowLeft className="size-4" />} onClick={() => navigate("/skills")}>
+                        技能库
+                    </Button>
                     <span className="skill-wb-header-divider" aria-hidden="true" />
-                    <button type="button" className="skill-wb-icon-button" aria-label={explorerOpen ? "隐藏资源管理器" : "显示资源管理器"} aria-pressed={explorerOpen} title={`资源管理器 (${modKey}+B)`} onClick={() => setExplorerOpen((value) => !value)}><PanelLeft className="size-4" /></button>
+                    <button type="button" className="skill-wb-icon-button" aria-label={explorerOpen ? "隐藏资源管理器" : "显示资源管理器"} aria-pressed={explorerOpen} title={`资源管理器 (${modKey}+B)`} onClick={() => setExplorerOpen((value) => !value)}>
+                        <PanelLeft className="size-4" />
+                    </button>
                     <div className="skill-wb-title">
                         <h1>{skill.skillName}</h1>
                         <span className="skill-wb-chip">v{skill.version || "1"}</span>
                         <span className="skill-wb-chip">{sourceLabel(skill.sourceType)}</span>
-                        {readOnly ? <span className="skill-wb-chip is-readonly"><Lock className="size-3" aria-hidden="true" />只读</span> : null}
+                        {readOnly ? (
+                            <span className="skill-wb-chip is-readonly">
+                                <Lock className="size-3" aria-hidden="true" />
+                                只读
+                            </span>
+                        ) : null}
                     </div>
                     <div className="skill-wb-header-actions">
                         <Button className="skill-wb-quick-trigger" icon={<Command className="size-4" />} onClick={() => setQuickOpen(true)}>
-                            <span>快速打开</span><Kbd>{modKey} P</Kbd>
+                            <span>快速打开</span>
+                            <Kbd>{modKey} P</Kbd>
                         </Button>
-                        {skill.isOwner ? <Button icon={<Info className="size-4" />} onClick={() => setInfoOpen(true)}>技能信息</Button> : null}
-                        {!readOnly && pendingCount ? <Button icon={<Undo2 className="size-4" />} onClick={discardAll}>放弃修改</Button> : null}
+                        {skill.isOwner ? (
+                            <Button icon={<Info className="size-4" />} onClick={() => setInfoOpen(true)}>
+                                技能信息
+                            </Button>
+                        ) : null}
+                        {!readOnly && pendingCount ? (
+                            <Button icon={<Undo2 className="size-4" />} onClick={discardAll}>
+                                放弃修改
+                            </Button>
+                        ) : null}
                         {!readOnly ? (
                             <Button type="primary" loading={saving} disabled={!pendingCount} icon={<Save className="size-4" />} onClick={() => void save()}>
                                 保存{pendingCount ? `（${pendingCount}）` : ""}
@@ -674,12 +706,20 @@ export default function SkillWorkbenchPage() {
                         {skill.isOwner && skill.sourceType === "github" ? (
                             <>
                                 <span>GitHub 技能以仓库内容为准，这里仅供浏览。请在仓库修改后执行同步。</span>
-                                <Button size="small" loading={syncing} icon={<RefreshCw className="size-3.5" />} onClick={() => void synchronize()}>同步</Button>
+                                <Button size="small" loading={syncing} icon={<RefreshCw className="size-3.5" />} onClick={() => void synchronize()}>
+                                    同步
+                                </Button>
                             </>
                         ) : (
                             <>
-                                <span>只读模式：这是{skill.effectiveUser.name ? `“${skill.effectiveUser.name}”` : "其他作者"}的{skill.sourceType === "builtin" ? "内置" : ""}技能，可以浏览全部文件，但不能修改。</span>
-                                {!skill.isAdded ? <Button size="small" loading={adding} icon={<Plus className="size-3.5" />} onClick={() => void joinSkill()}>加入我的技能</Button> : null}
+                                <span>
+                                    只读模式：这是{skill.effectiveUser.name ? `“${skill.effectiveUser.name}”` : "其他作者"}的{skill.sourceType === "builtin" ? "内置" : ""}技能，可以浏览全部文件，但不能修改。
+                                </span>
+                                {!skill.isAdded ? (
+                                    <Button size="small" loading={adding} icon={<Plus className="size-3.5" />} onClick={() => void joinSkill()}>
+                                        加入我的技能
+                                    </Button>
+                                ) : null}
                             </>
                         )}
                     </div>
@@ -735,20 +775,38 @@ export default function SkillWorkbenchPage() {
                                 const dirty = dirtyPaths.has(tab.path);
                                 const active = tab.path === activePath;
                                 return (
-                                    <div key={tab.path} className={`skill-wb-tab${active ? " is-active" : ""}${tab.preview ? " is-preview" : ""}${dirty ? " is-dirty" : ""}`} onMouseDown={(event) => { if (event.button === 1) { event.preventDefault(); closeTab(tab.path); } }}>
+                                    <div
+                                        key={tab.path}
+                                        className={`skill-wb-tab${active ? " is-active" : ""}${tab.preview ? " is-preview" : ""}${dirty ? " is-dirty" : ""}`}
+                                        onMouseDown={(event) => {
+                                            if (event.button === 1) {
+                                                event.preventDefault();
+                                                closeTab(tab.path);
+                                            }
+                                        }}
+                                    >
                                         <button
                                             type="button"
                                             role="tab"
                                             aria-selected={active}
                                             className="skill-wb-tab-main"
                                             title={tab.path}
-                                            onClick={() => { setActivePath(tab.path); setFocusedPath(tab.path); }}
+                                            onClick={() => {
+                                                setActivePath(tab.path);
+                                                setFocusedPath(tab.path);
+                                            }}
                                             onDoubleClick={() => openFile(tab.path)}
                                         >
                                             {fileIconFor(tab.path, "size-3.5")}
                                             <span>{baseName(tab.path)}</span>
                                         </button>
-                                        <button type="button" className="skill-wb-tab-close" aria-label={dirty ? `${baseName(tab.path)} 有未保存修改，关闭标签` : `关闭 ${baseName(tab.path)}`} title={dirty ? "未保存（关闭标签不会丢失修改）" : "关闭"} onClick={() => closeTab(tab.path)}>
+                                        <button
+                                            type="button"
+                                            className="skill-wb-tab-close"
+                                            aria-label={dirty ? `${baseName(tab.path)} 有未保存修改，关闭标签` : `关闭 ${baseName(tab.path)}`}
+                                            title={dirty ? "未保存（关闭标签不会丢失修改）" : "关闭"}
+                                            onClick={() => closeTab(tab.path)}
+                                        >
                                             <span className="skill-wb-tab-dot" aria-hidden="true" />
                                             <X className="size-3.5" aria-hidden="true" />
                                         </button>
@@ -765,9 +823,24 @@ export default function SkillWorkbenchPage() {
                                         const last = index === breadcrumbs.length - 1;
                                         return (
                                             <span key={path} className="skill-wb-crumb">
-                                                {index > 0 ? <span className="skill-wb-crumb-sep" aria-hidden="true">/</span> : null}
-                                                {last ? <span aria-current="page">{segment}</span> : (
-                                                    <button type="button" onClick={() => { setExplorerOpen(true); revealPath(joinPath(path, "_")); setFocusedPath(path); }}>{segment}</button>
+                                                {index > 0 ? (
+                                                    <span className="skill-wb-crumb-sep" aria-hidden="true">
+                                                        /
+                                                    </span>
+                                                ) : null}
+                                                {last ? (
+                                                    <span aria-current="page">{segment}</span>
+                                                ) : (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setExplorerOpen(true);
+                                                            revealPath(joinPath(path, "_"));
+                                                            setFocusedPath(path);
+                                                        }}
+                                                    >
+                                                        {segment}
+                                                    </button>
                                                 )}
                                             </span>
                                         );
@@ -787,7 +860,13 @@ export default function SkillWorkbenchPage() {
                                         ]}
                                     />
                                 ) : null}
-                                {rawURL ? <Tooltip title="打开已保存的原始文件"><a className="skill-wb-icon-button" href={rawURL} target="_blank" rel="noreferrer" aria-label="打开已保存的原始文件"><ExternalLink className="size-4" /></a></Tooltip> : null}
+                                {rawURL ? (
+                                    <Tooltip title="打开已保存的原始文件">
+                                        <a className="skill-wb-icon-button" href={rawURL} target="_blank" rel="noreferrer" aria-label="打开已保存的原始文件">
+                                            <ExternalLink className="size-4" />
+                                        </a>
+                                    </Tooltip>
+                                ) : null}
                             </div>
                         ) : null}
 
@@ -796,11 +875,11 @@ export default function SkillWorkbenchPage() {
                                 <SkillCodeEditor
                                     ref={editorRef}
                                     path={editorPath}
-                                    value={editorPath ? textFor(editorPath) ?? "" : ""}
+                                    value={editorPath ? (textFor(editorPath) ?? "") : ""}
                                     readOnly={readOnly}
                                     theme={theme}
                                     onChange={handleChange}
-                                    onCursor={(line, column) => setCursor((current) => current.line === line && current.column === column ? current : { line, column })}
+                                    onCursor={(line, column) => setCursor((current) => (current.line === line && current.column === column ? current : { line, column }))}
                                 />
                             </div>
                             {activeIsMarkdown && markdownMode !== "edit" ? (
@@ -814,37 +893,81 @@ export default function SkillWorkbenchPage() {
                                         icon={Code2}
                                         title="选择一个文件开始"
                                         description={readOnly ? "从左侧资源管理器选择文件浏览。" : "从左侧资源管理器选择文件，或新建文件。修改后统一保存为一个新版本。"}
-                                        action={<div className="skill-wb-shortcuts"><span><Kbd>{modKey} P</Kbd>快速打开</span>{!readOnly ? <span><Kbd>{modKey} S</Kbd>保存</span> : null}<span><Kbd>{modKey} B</Kbd>资源管理器</span></div>}
+                                        action={
+                                            <div className="skill-wb-shortcuts">
+                                                <span>
+                                                    <Kbd>{modKey} P</Kbd>快速打开
+                                                </span>
+                                                {!readOnly ? (
+                                                    <span>
+                                                        <Kbd>{modKey} S</Kbd>保存
+                                                    </span>
+                                                ) : null}
+                                                <span>
+                                                    <Kbd>{modKey} B</Kbd>资源管理器
+                                                </span>
+                                            </div>
+                                        }
                                     />
                                 </div>
                             ) : activeEntry && !activeIsText ? (
                                 <div className="skill-wb-placeholder">
                                     {activeState?.status === "binary" && isImagePath(activePath) && rawURL ? (
-                                        <figure className="skill-wb-media"><img src={rawURL} alt={activePath} /></figure>
+                                        <figure className="skill-wb-media">
+                                            <img src={rawURL} alt={activePath} />
+                                        </figure>
                                     ) : activeState?.status === "binary" && activeMeta?.kind === "video" && rawURL ? (
-                                        <figure className="skill-wb-media"><video src={rawURL} controls playsInline preload="metadata" /></figure>
+                                        <figure className="skill-wb-media">
+                                            <video src={rawURL} controls playsInline preload="metadata" />
+                                        </figure>
                                     ) : activeState?.status === "binary" && activeMeta?.kind === "audio" && rawURL ? (
-                                        <figure className="skill-wb-media"><audio src={rawURL} controls preload="metadata" /></figure>
+                                        <figure className="skill-wb-media">
+                                            <audio src={rawURL} controls preload="metadata" />
+                                        </figure>
                                     ) : activeState?.status === "binary" || activeState?.status === "error" ? (
                                         <EmptyState
                                             icon={FileWarning}
                                             title={activeState.status === "error" ? "无法在线编辑" : "二进制文件"}
                                             description={activeState.status === "error" ? activeState.message : "该文件不是文本，只能只读查看或下载。"}
-                                            action={rawURL ? <a className="skill-wb-link" href={rawURL} target="_blank" rel="noreferrer">打开原始文件<ExternalLink className="size-3.5" aria-hidden="true" /></a> : undefined}
+                                            action={
+                                                rawURL ? (
+                                                    <a className="skill-wb-link" href={rawURL} target="_blank" rel="noreferrer">
+                                                        打开原始文件
+                                                        <ExternalLink className="size-3.5" aria-hidden="true" />
+                                                    </a>
+                                                ) : undefined
+                                            }
                                         />
                                     ) : (
-                                        <div className="skill-wb-center" role="status"><LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /><span>正在读取 {baseName(activePath)}…</span></div>
+                                        <div className="skill-wb-center" role="status">
+                                            <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                                            <span>正在读取 {baseName(activePath)}…</span>
+                                        </div>
                                     )}
                                 </div>
                             ) : null}
                         </div>
 
                         <footer className="skill-wb-status">
-                            <span className={`skill-wb-status-item${pendingCount && !readOnly ? " is-dirty" : ""}`} role="status">{readOnly ? <Lock className="size-3" aria-hidden="true" /> : null}{statusText}</span>
-                            <span className="skill-wb-status-item" title={skill.versionId}>版本 v{skill.version || "1"}</span>
-                            {loading ? <span className="skill-wb-status-item"><LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />同步中</span> : null}
+                            <span className={`skill-wb-status-item${pendingCount && !readOnly ? " is-dirty" : ""}`} role="status">
+                                {readOnly ? <Lock className="size-3" aria-hidden="true" /> : null}
+                                {statusText}
+                            </span>
+                            <span className="skill-wb-status-item" title={skill.versionId}>
+                                版本 v{skill.version || "1"}
+                            </span>
+                            {loading ? (
+                                <span className="skill-wb-status-item">
+                                    <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                                    同步中
+                                </span>
+                            ) : null}
                             <span className="skill-wb-status-spacer" />
-                            {activeIsText ? <span className="skill-wb-status-item">行 {cursor.line}，列 {cursor.column}</span> : null}
+                            {activeIsText ? (
+                                <span className="skill-wb-status-item">
+                                    行 {cursor.line}，列 {cursor.column}
+                                </span>
+                            ) : null}
                             {activeEntry ? <span className="skill-wb-status-item">{formatSkillBytes(activeSize)}</span> : null}
                             {activeIsText ? <span className="skill-wb-status-item">UTF-8</span> : null}
                             {activeIsText ? <span className="skill-wb-status-item">空格：2</span> : null}
@@ -854,7 +977,15 @@ export default function SkillWorkbenchPage() {
                 </div>
             </div>
 
-            <SkillQuickOpen open={quickOpen} paths={sortedPaths} onClose={() => setQuickOpen(false)} onPick={(path) => { openFile(path); requestAnimationFrame(() => editorRef.current?.focus()); }} />
+            <SkillQuickOpen
+                open={quickOpen}
+                paths={sortedPaths}
+                onClose={() => setQuickOpen(false)}
+                onPick={(path) => {
+                    openFile(path);
+                    requestAnimationFrame(() => editorRef.current?.focus());
+                }}
+            />
             {skill.isOwner ? (
                 <SkillEditorDrawer
                     open={infoOpen}
@@ -864,7 +995,7 @@ export default function SkillWorkbenchPage() {
                         setInfoOpen(false);
                         // 单文件技能的抽屉会改写 SKILL.md 并生成新版本；有本地修改时保留工作副本，等待保存时由冲突检测兜底。
                         if (next.versionId !== skill.versionId && !pendingCount) setReloadKey((value) => value + 1);
-                        else setSkill((current) => current ? { ...current, ...next } : next);
+                        else setSkill((current) => (current ? { ...current, ...next } : next));
                     }}
                 />
             ) : null}

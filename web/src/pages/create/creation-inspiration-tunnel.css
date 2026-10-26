@@ -288,7 +288,9 @@
     border: 1px solid color-mix(in srgb, var(--user-ink, #fff) 16%, transparent);
     border-radius: var(--r-md, 8px);
     background: color-mix(in srgb, var(--user-surface, #101214) 86%, transparent);
-    box-shadow: 0 1px 2px color-mix(in srgb, color-mix(in srgb, #000 16%, transparent) 50%, transparent), 0 8px 24px color-mix(in srgb, #000 16%, transparent);
+    box-shadow:
+        0 1px 2px color-mix(in srgb, color-mix(in srgb, #000 16%, transparent) 50%, transparent),
+        0 8px 24px color-mix(in srgb, #000 16%, transparent);
     backdrop-filter: blur(10px);
     color: var(--user-ink, #fff);
     font-size: var(--fs-caption, 12px);

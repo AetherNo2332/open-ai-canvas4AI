@@ -6,10 +6,7 @@ export const SKILL_TEXT_LIMIT_BYTES = 512 * 1024;
 export const SKILL_MAX_PATH_DEPTH = 8;
 export const SKILL_MAX_FILES = 512;
 
-export type SkillFileOperation =
-    | { op: "write"; path: string; content: string }
-    | { op: "rename"; path: string; to: string }
-    | { op: "delete"; path: string };
+export type SkillFileOperation = { op: "write"; path: string; content: string } | { op: "rename"; path: string; to: string } | { op: "delete"; path: string };
 
 /** 工作副本中的一个文件；origin 是它在基线版本里的路径，新建文件为 null。 */
 export type WorkbenchEntry = { path: string; origin: string | null };
@@ -20,7 +17,42 @@ export type TreeNode = TreeFolderNode | TreeFileNode;
 
 export type TreeRow = { type: "folder" | "file"; path: string; name: string; depth: number; parent: string; expanded: boolean };
 
-const binaryExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif", "mp4", "webm", "mov", "mkv", "mp3", "wav", "m4a", "ogg", "flac", "zip", "gz", "tar", "rar", "7z", "pdf", "woff", "woff2", "ttf", "otf", "exe", "dll", "so", "dylib", "bin", "wasm"]);
+const binaryExtensions = new Set([
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "svg",
+    "bmp",
+    "ico",
+    "avif",
+    "mp4",
+    "webm",
+    "mov",
+    "mkv",
+    "mp3",
+    "wav",
+    "m4a",
+    "ogg",
+    "flac",
+    "zip",
+    "gz",
+    "tar",
+    "rar",
+    "7z",
+    "pdf",
+    "woff",
+    "woff2",
+    "ttf",
+    "otf",
+    "exe",
+    "dll",
+    "so",
+    "dylib",
+    "bin",
+    "wasm",
+]);
 const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
 
 export function fileExtension(filePath: string) {
@@ -146,7 +178,7 @@ export function buildFileTree(paths: Iterable<string>, explicitFolders: Iterable
 export function flattenTree(nodes: TreeNode[], expanded: Set<string>, filter = ""): TreeRow[] {
     const needle = filter.trim().toLowerCase();
     const rows: TreeRow[] = [];
-    const matches = (node: TreeNode): boolean => node.type === "file" ? node.path.toLowerCase().includes(needle) : node.children.some(matches) || (node.path.toLowerCase().includes(needle) && node.children.length === 0);
+    const matches = (node: TreeNode): boolean => (node.type === "file" ? node.path.toLowerCase().includes(needle) : node.children.some(matches) || (node.path.toLowerCase().includes(needle) && node.children.length === 0));
     const walk = (items: TreeNode[], depth: number, parent: string) => {
         for (const node of items) {
             if (needle && !matches(node)) continue;
@@ -190,17 +222,18 @@ function orderRenames(renames: Array<{ from: string; to: string }>, occupied: Se
  * 把工作副本与基线差异折叠为有序批量操作：先删除，再改名，最后写入内容。
  * contents 只需要包含已打开/编辑过的文件；新建且从未打开的文件按空文本写入。
  */
-export function buildSaveOperations(input: {
-    basePaths: Iterable<string>;
-    entries: WorkbenchEntry[];
-    buffers: Map<string, string>;
-    baseContents: Map<string, string>;
-}): SkillFileOperation[] {
+export function buildSaveOperations(input: { basePaths: Iterable<string>; entries: WorkbenchEntry[]; buffers: Map<string, string>; baseContents: Map<string, string> }): SkillFileOperation[] {
     const basePaths = new Set(input.basePaths);
-    const keptOrigins = new Set(input.entries.flatMap((entry) => entry.origin ? [entry.origin] : []));
-    const deletes: SkillFileOperation[] = [...basePaths].filter((filePath) => !keptOrigins.has(filePath)).sort().map((filePath) => ({ op: "delete", path: filePath }));
+    const keptOrigins = new Set(input.entries.flatMap((entry) => (entry.origin ? [entry.origin] : [])));
+    const deletes: SkillFileOperation[] = [...basePaths]
+        .filter((filePath) => !keptOrigins.has(filePath))
+        .sort()
+        .map((filePath) => ({ op: "delete", path: filePath }));
     const occupied = new Set([...basePaths].filter((filePath) => keptOrigins.has(filePath)));
-    const renames = orderRenames(input.entries.flatMap((entry) => entry.origin && entry.origin !== entry.path ? [{ from: entry.origin, to: entry.path }] : []), occupied);
+    const renames = orderRenames(
+        input.entries.flatMap((entry) => (entry.origin && entry.origin !== entry.path ? [{ from: entry.origin, to: entry.path }] : [])),
+        occupied,
+    );
     const writes: SkillFileOperation[] = [];
     for (const entry of input.entries) {
         const buffer = input.buffers.get(entry.path);
@@ -249,6 +282,25 @@ export function formatSkillBytes(value: number) {
 
 export function languageLabel(filePath: string) {
     const extension = fileExtension(filePath);
-    const labels: Record<string, string> = { md: "Markdown", mdx: "MDX", markdown: "Markdown", json: "JSON", yaml: "YAML", yml: "YAML", toml: "TOML", py: "Python", js: "JavaScript", jsx: "JavaScript", ts: "TypeScript", tsx: "TypeScript", sh: "Shell", go: "Go", html: "HTML", css: "CSS", txt: "纯文本", csv: "CSV" };
+    const labels: Record<string, string> = {
+        md: "Markdown",
+        mdx: "MDX",
+        markdown: "Markdown",
+        json: "JSON",
+        yaml: "YAML",
+        yml: "YAML",
+        toml: "TOML",
+        py: "Python",
+        js: "JavaScript",
+        jsx: "JavaScript",
+        ts: "TypeScript",
+        tsx: "TypeScript",
+        sh: "Shell",
+        go: "Go",
+        html: "HTML",
+        css: "CSS",
+        txt: "纯文本",
+        csv: "CSV",
+    };
     return labels[extension] || "纯文本";
 }

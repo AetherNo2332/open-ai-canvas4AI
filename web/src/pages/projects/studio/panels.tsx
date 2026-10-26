@@ -4,7 +4,20 @@ import { App, Button, Checkbox, Input, InputNumber, Select, Switch } from "antd"
 import { AlertCircle, ArrowRight, CheckCheck, Clapperboard, Film, Gem, Inbox, Lock, MapPinned, PauseCircle, RefreshCw, RotateCcw, ScrollText, Sparkles, UserRound, UsersRound, Wand2 } from "lucide-react";
 
 import { dramaChoiceKey } from "@/lib/drama/model-choice";
-import { getDramaCastImpact, regenerateDramaCast, regenerateDramaCasts, updateDramaCast, updateDramaSettings, type DramaCapability, type DramaCast, type DramaCastKind, type DramaInboxItem, type DramaMediaMode, type DramaReviewMode, type DramaSummary } from "@/services/api/drama";
+import {
+    getDramaCastImpact,
+    regenerateDramaCast,
+    regenerateDramaCasts,
+    updateDramaCast,
+    updateDramaSettings,
+    type DramaCapability,
+    type DramaCast,
+    type DramaCastKind,
+    type DramaInboxItem,
+    type DramaMediaMode,
+    type DramaReviewMode,
+    type DramaSummary,
+} from "@/services/api/drama";
 
 import { CAST_KIND_LABEL, formatCredits, MEDIA_MODE_LABEL, mediaBusy, MediaThumb, parseList } from "../drama-shared";
 import { AssetSchemePicker } from "../asset-scheme";
@@ -22,7 +35,29 @@ const CAST_KINDS: DramaCastKind[] = ["character", "prop", "scene"];
 
 type CastFilter = "all" | "failed" | "busy" | "locked";
 
-export function CastPanel({ projectId, cast, focusId, retrying, assetsPending, releasing, onFocus, onRetry, onChanged, onReleaseAssets }: { projectId: string; cast: DramaCast[]; focusId: string; retrying: boolean; assetsPending: boolean; releasing: boolean; onFocus: (id: string) => void; onRetry: () => void; onChanged: () => void; onReleaseAssets: () => void }) {
+export function CastPanel({
+    projectId,
+    cast,
+    focusId,
+    retrying,
+    assetsPending,
+    releasing,
+    onFocus,
+    onRetry,
+    onChanged,
+    onReleaseAssets,
+}: {
+    projectId: string;
+    cast: DramaCast[];
+    focusId: string;
+    retrying: boolean;
+    assetsPending: boolean;
+    releasing: boolean;
+    onFocus: (id: string) => void;
+    onRetry: () => void;
+    onChanged: () => void;
+    onReleaseAssets: () => void;
+}) {
     const [kind, setKind] = useState<DramaCastKind>("character");
     const [filter, setFilter] = useState<CastFilter>("all");
     const focused = cast.find((item) => item.id === focusId);
@@ -51,15 +86,25 @@ export function CastPanel({ projectId, cast, focusId, retrying, assetsPending, r
                 <div className="drama-view-head">
                     <div className="drama-tabs" role="tablist" aria-label="设定类型">
                         {CAST_KINDS.map((value) => (
-                            <button key={value} type="button" role="tab" className="drama-tab" aria-selected={kind === value} onClick={() => setKind(value)}>{CAST_KIND_LABEL[value]}<span className="drama-tab-count">{cast.filter((item) => item.kind === value).length}</span></button>
+                            <button key={value} type="button" role="tab" className="drama-tab" aria-selected={kind === value} onClick={() => setKind(value)}>
+                                {CAST_KIND_LABEL[value]}
+                                <span className="drama-tab-count">{cast.filter((item) => item.kind === value).length}</span>
+                            </button>
                         ))}
                     </div>
                     <div className="drama-filters" role="group" aria-label="筛选">
                         {filters.map(([key, label, value]) => (
-                            <button key={key} type="button" className={`drama-filter ${key === "failed" && value ? "is-alert" : ""}`} aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}<b>{value}</b></button>
+                            <button key={key} type="button" className={`drama-filter ${key === "failed" && value ? "is-alert" : ""}`} aria-pressed={filter === key} onClick={() => setFilter(key)}>
+                                {label}
+                                <b>{value}</b>
+                            </button>
                         ))}
                     </div>
-                    {failed ? <Button className="!ml-auto" icon={<RotateCcw className="size-4" />} loading={retrying} onClick={onRetry}>重试失败的 {failed} 个</Button> : null}
+                    {failed ? (
+                        <Button className="!ml-auto" icon={<RotateCcw className="size-4" />} loading={retrying} onClick={onRetry}>
+                            重试失败的 {failed} 个
+                        </Button>
+                    ) : null}
                 </div>
                 <div className="drama-view-scroll thin-scrollbar">
                     {assetsPending && cast.some((item) => item.imageStatus === "") ? (
@@ -69,7 +114,9 @@ export function CastPanel({ projectId, cast, focusId, retrying, assetsPending, r
                                 <strong>参考图还没有生成</strong>
                                 <span>先核对角色、道具与场景的名称和外观描述，满意后再生成参考图；也可以在右侧单独生成某一个。参考图会随剧情段视频请求一起发送，保持人物和道具一致。</span>
                             </div>
-                            <Button type="primary" icon={<Sparkles className="size-4" />} loading={releasing} onClick={onReleaseAssets}>生成全部参考图</Button>
+                            <Button type="primary" icon={<Sparkles className="size-4" />} loading={releasing} onClick={onReleaseAssets}>
+                                生成全部参考图
+                            </Button>
                         </div>
                     ) : null}
                     <div className={`drama-cast-grid ${kind !== "character" ? "is-scene" : ""}`}>
@@ -79,10 +126,25 @@ export function CastPanel({ projectId, cast, focusId, retrying, assetsPending, r
                                     {item.imageResourceId ? <MediaThumb resourceId={item.imageResourceId} alt={item.name} /> : null}
                                     {!item.imageResourceId || mediaBusy(item.imageStatus) || item.imageStatus === "failed" || item.imageStatus === "" ? (
                                         <div className={`drama-shot-placeholder ${mediaBusy(item.imageStatus) ? "is-busy" : ""}`}>
-                                            {item.imageStatus === "failed" ? <span className="drama-cast-card-failed"><AlertCircle className="size-3.5" />生成失败</span> : item.imageResourceId ? "更新中…" : CAST_KIND_ICON[item.kind]}
+                                            {item.imageStatus === "failed" ? (
+                                                <span className="drama-cast-card-failed">
+                                                    <AlertCircle className="size-3.5" />
+                                                    生成失败
+                                                </span>
+                                            ) : item.imageResourceId ? (
+                                                "更新中…"
+                                            ) : (
+                                                CAST_KIND_ICON[item.kind]
+                                            )}
                                         </div>
                                     ) : null}
-                                    {item.locked ? <span className="drama-shot-flags"><span className="drama-flag is-lock"><Lock className="size-3" /></span></span> : null}
+                                    {item.locked ? (
+                                        <span className="drama-shot-flags">
+                                            <span className="drama-flag is-lock">
+                                                <Lock className="size-3" />
+                                            </span>
+                                        </span>
+                                    ) : null}
                                 </div>
                                 <div className="drama-cast-card-body">
                                     <strong>{item.name}</strong>
@@ -91,11 +153,22 @@ export function CastPanel({ projectId, cast, focusId, retrying, assetsPending, r
                             </button>
                         ))}
                     </div>
-                    {!list.length ? <div className="drama-empty"><UserRound className="size-7" /><span>{ofKind.length ? "没有符合筛选的设定" : `作品圣经建立后，${CAST_KIND_LABEL[kind]}会出现在这里`}</span></div> : null}
+                    {!list.length ? (
+                        <div className="drama-empty">
+                            <UserRound className="size-7" />
+                            <span>{ofKind.length ? "没有符合筛选的设定" : `作品圣经建立后，${CAST_KIND_LABEL[kind]}会出现在这里`}</span>
+                        </div>
+                    ) : null}
                 </div>
             </section>
             <aside className="drama-view-side thin-scrollbar">
-                {active ? <CastEditor key={active.id} projectId={projectId} cast={active} onChanged={onChanged} /> : <div className="drama-empty is-compact"><span>选择一个设定查看详情</span></div>}
+                {active ? (
+                    <CastEditor key={active.id} projectId={projectId} cast={active} onChanged={onChanged} />
+                ) : (
+                    <div className="drama-empty is-compact">
+                        <span>选择一个设定查看详情</span>
+                    </div>
+                )}
             </aside>
         </div>
     );
@@ -113,7 +186,10 @@ function CastEditor({ projectId, cast, onChanged }: { projectId: string; cast: D
     const fields = { name, aliases, appearance, voiceInstructions };
     const save = useMutation({
         mutationFn: () => updateDramaCast(projectId, cast.id, fields),
-        onSuccess: () => { message.success("设定已保存"); onChanged(); },
+        onSuccess: () => {
+            message.success("设定已保存");
+            onChanged();
+        },
         onError: (error) => message.error(error instanceof Error ? error.message : "保存失败"),
     });
     const lock = useMutation({ mutationFn: (locked: boolean) => updateDramaCast(projectId, cast.id, { locked }), onSuccess: onChanged });
@@ -122,7 +198,10 @@ function CastEditor({ projectId, cast, onChanged }: { projectId: string; cast: D
             if (dirty) await updateDramaCast(projectId, cast.id, fields);
             return regenerateDramaCast(projectId, cast.id, restyle);
         },
-        onSuccess: (result) => { message.success(result.affectedSegments ? `正在重新生成参考图；${result.affectedSegments} 个剧情段的提示词与视频需重新生成` : "正在重新生成参考图"); onChanged(); },
+        onSuccess: (result) => {
+            message.success(result.affectedSegments ? `正在重新生成参考图；${result.affectedSegments} 个剧情段的提示词与视频需重新生成` : "正在重新生成参考图");
+            onChanged();
+        },
         onError: (error) => message.error(error instanceof Error ? error.message : "操作失败"),
     });
     const impact = impactQuery.data;
@@ -134,13 +213,26 @@ function CastEditor({ projectId, cast, onChanged }: { projectId: string; cast: D
                 {cast.imageResourceId ? <MediaThumb resourceId={cast.imageResourceId} alt={cast.name} /> : null}
                 {!cast.imageResourceId || mediaBusy(cast.imageStatus) || cast.imageStatus === "failed" ? (
                     <div className={`drama-shot-placeholder ${mediaBusy(cast.imageStatus) ? "is-busy" : ""}`}>
-                        {cast.imageStatus === "failed" ? <span className="drama-cast-card-failed"><AlertCircle className="size-4" />参考图生成失败</span> : mediaBusy(cast.imageStatus) ? "参考图生成中…" : "尚未生成参考图，确认描述后点下方生成"}
+                        {cast.imageStatus === "failed" ? (
+                            <span className="drama-cast-card-failed">
+                                <AlertCircle className="size-4" />
+                                参考图生成失败
+                            </span>
+                        ) : mediaBusy(cast.imageStatus) ? (
+                            "参考图生成中…"
+                        ) : (
+                            "尚未生成参考图，确认描述后点下方生成"
+                        )}
                     </div>
                 ) : null}
             </div>
             <div className="drama-editor-row">
                 <span className="drama-eyebrow">{kindLabel}设定</span>
-                <label className="drama-switch-label"><Lock className="size-3.5" />锁定形象<Switch size="small" checked={cast.locked} loading={lock.isPending} onChange={(checked) => lock.mutate(checked)} /></label>
+                <label className="drama-switch-label">
+                    <Lock className="size-3.5" />
+                    锁定形象
+                    <Switch size="small" checked={cast.locked} loading={lock.isPending} onChange={(checked) => lock.mutate(checked)} />
+                </label>
             </div>
             <Field label="名称">
                 <Input value={name} maxLength={60} onChange={(event) => setName(event.target.value)} aria-label="名称" />
@@ -159,12 +251,22 @@ function CastEditor({ projectId, cast, onChanged }: { projectId: string; cast: D
                 </Field>
             ) : null}
             <div className="drama-editor-impact">
-                <Checkbox checked={restyle} onChange={(event) => setRestyle(event.target.checked)}>重新生成引用它的剧情段</Checkbox>
-                {impact ? <span>{impact.episodes} 集 · {impact.segments} 段</span> : null}
+                <Checkbox checked={restyle} onChange={(event) => setRestyle(event.target.checked)}>
+                    重新生成引用它的剧情段
+                </Checkbox>
+                {impact ? (
+                    <span>
+                        {impact.episodes} 集 · {impact.segments} 段
+                    </span>
+                ) : null}
             </div>
             <div className="drama-editor-actions">
-                <Button disabled={!dirty} loading={save.isPending} onClick={() => save.mutate()}>保存设定</Button>
-                <Button type="primary" icon={<RefreshCw className="size-4" />} disabled={cast.locked || mediaBusy(cast.imageStatus)} loading={regenerate.isPending} onClick={() => regenerate.mutate()}>{cast.imageResourceId ? (dirty ? "保存并重新生成" : "重新生成") : dirty ? "保存并生成参考图" : "生成参考图"}</Button>
+                <Button disabled={!dirty} loading={save.isPending} onClick={() => save.mutate()}>
+                    保存设定
+                </Button>
+                <Button type="primary" icon={<RefreshCw className="size-4" />} disabled={cast.locked || mediaBusy(cast.imageStatus)} loading={regenerate.isPending} onClick={() => regenerate.mutate()}>
+                    {cast.imageResourceId ? (dirty ? "保存并重新生成" : "重新生成") : dirty ? "保存并生成参考图" : "生成参考图"}
+                </Button>
             </div>
             <p className="drama-editor-note">旧版本保留在版本记录中；锁定后参考图不会被重新生成。</p>
         </div>
@@ -176,7 +278,10 @@ const APPEARANCE_LABEL: Record<DramaCastKind, string> = { character: "外貌描�
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
     return (
         <div className="drama-field">
-            <div className="drama-field-label"><span>{label}</span>{hint ? <small>{hint}</small> : null}</div>
+            <div className="drama-field-label">
+                <span>{label}</span>
+                {hint ? <small>{hint}</small> : null}
+            </div>
             {children}
         </div>
     );
@@ -235,7 +340,18 @@ const MEDIA_ICON: Record<NonNullable<DramaInboxItem["media"]>, ReactNode> = {
 
 const CHIP_LIMIT = 24;
 
-export function InboxPanel({ items, castById, retrying, retryingGroup, releasing, onRetryAll, onRetryGroup, onOpen, onOpenSettings, onReleaseAll }: {
+export function InboxPanel({
+    items,
+    castById,
+    retrying,
+    retryingGroup,
+    releasing,
+    onRetryAll,
+    onRetryGroup,
+    onOpen,
+    onOpenSettings,
+    onReleaseAll,
+}: {
     items: DramaInboxItem[];
     castById: Map<string, DramaCast>;
     retrying: boolean;
@@ -257,12 +373,26 @@ export function InboxPanel({ items, castById, retrying, retryingGroup, releasing
                     <h2 className="drama-view-title">待处理</h2>
                     {items.length ? (
                         <div className="drama-inbox-summary">
-                            {failures ? <span className="is-err"><AlertCircle className="size-3.5" />{failures} 项失败</span> : null}
-                            {reviews ? <span className="is-info"><CheckCheck className="size-3.5" />{reviews} 集待审阅</span> : null}
+                            {failures ? (
+                                <span className="is-err">
+                                    <AlertCircle className="size-3.5" />
+                                    {failures} 项失败
+                                </span>
+                            ) : null}
+                            {reviews ? (
+                                <span className="is-info">
+                                    <CheckCheck className="size-3.5" />
+                                    {reviews} 集待审阅
+                                </span>
+                            ) : null}
                             <span>共 {groups.length} 类</span>
                         </div>
                     ) : null}
-                    {failures ? <Button className="!ml-auto" icon={<RotateCcw className="size-4" />} loading={retrying} onClick={onRetryAll}>全部重试</Button> : null}
+                    {failures ? (
+                        <Button className="!ml-auto" icon={<RotateCcw className="size-4" />} loading={retrying} onClick={onRetryAll}>
+                            全部重试
+                        </Button>
+                    ) : null}
                 </div>
                 <div className="drama-view-scroll thin-scrollbar">
                     {groups.length ? (
@@ -275,19 +405,49 @@ export function InboxPanel({ items, castById, retrying, retryingGroup, releasing
                                             <span className={`drama-inbox-icon is-${group.severity}`}>{GROUP_ICON[group.kind]}</span>
                                             <div className="min-w-0 flex-1">
                                                 <h3>{group.title}</h3>
-                                                {group.kind === "review" ? <p>核对各段视频提示词与参考图后继续生成视频</p> : group.kind === "cast_failed" ? <p>可修改外观描述后重新生成，或直接重试</p> : group.kind === "media_ready" ? <p>{group.items[0].detail}</p> : null}
+                                                {group.kind === "review" ? (
+                                                    <p>核对各段视频提示词与参考图后继续生成视频</p>
+                                                ) : group.kind === "cast_failed" ? (
+                                                    <p>可修改外观描述后重新生成，或直接重试</p>
+                                                ) : group.kind === "media_ready" ? (
+                                                    <p>{group.items[0].detail}</p>
+                                                ) : null}
                                             </div>
                                             <div className="drama-inbox-card-actions">
-                                                {group.kind === "paused" ? <Button size="small" onClick={onOpenSettings}>去设置</Button> : null}
-                                                {group.kind === "media_ready" ? <Button size="small" type="primary" icon={<Sparkles className="size-3.5" />} loading={releasing} onClick={onReleaseAll}>全部开始生成</Button> : null}
-                                                {retryable ? <Button size="small" icon={<RotateCcw className="size-3.5" />} loading={retryingGroup === group.key} onClick={() => onRetryGroup(group.key, group.items)}>重试{group.items.length > 1 ? ` ${group.items.length} 项` : ""}</Button> : null}
-                                                {group.items.length === 1 && group.kind !== "paused" && group.kind !== "media_ready" ? <Button size="small" type={group.kind === "review" ? "primary" : "default"} onClick={() => onOpen(group.items[0])}>{group.kind === "review" ? "去审阅" : "查看"}<ArrowRight className="size-3.5" /></Button> : null}
+                                                {group.kind === "paused" ? (
+                                                    <Button size="small" onClick={onOpenSettings}>
+                                                        去设置
+                                                    </Button>
+                                                ) : null}
+                                                {group.kind === "media_ready" ? (
+                                                    <Button size="small" type="primary" icon={<Sparkles className="size-3.5" />} loading={releasing} onClick={onReleaseAll}>
+                                                        全部开始生成
+                                                    </Button>
+                                                ) : null}
+                                                {retryable ? (
+                                                    <Button size="small" icon={<RotateCcw className="size-3.5" />} loading={retryingGroup === group.key} onClick={() => onRetryGroup(group.key, group.items)}>
+                                                        重试{group.items.length > 1 ? ` ${group.items.length} 项` : ""}
+                                                    </Button>
+                                                ) : null}
+                                                {group.items.length === 1 && group.kind !== "paused" && group.kind !== "media_ready" ? (
+                                                    <Button size="small" type={group.kind === "review" ? "primary" : "default"} onClick={() => onOpen(group.items[0])}>
+                                                        {group.kind === "review" ? "去审阅" : "查看"}
+                                                        <ArrowRight className="size-3.5" />
+                                                    </Button>
+                                                ) : null}
                                             </div>
                                         </header>
-                                        {group.reason && group.kind !== "media_ready" ? <div className="drama-inbox-reason" title={group.reason}><span>原因</span><code>{group.reason}</code></div> : null}
+                                        {group.reason && group.kind !== "media_ready" ? (
+                                            <div className="drama-inbox-reason" title={group.reason}>
+                                                <span>原因</span>
+                                                <code>{group.reason}</code>
+                                            </div>
+                                        ) : null}
                                         {group.items.length > 1 || group.kind === "cast_failed" ? (
                                             <div className="drama-inbox-chips">
-                                                {group.items.slice(0, CHIP_LIMIT).map((item) => <InboxChip key={item.id} item={item} cast={item.castId ? castById.get(item.castId) : undefined} onOpen={onOpen} />)}
+                                                {group.items.slice(0, CHIP_LIMIT).map((item) => (
+                                                    <InboxChip key={item.id} item={item} cast={item.castId ? castById.get(item.castId) : undefined} onOpen={onOpen} />
+                                                ))}
                                                 {group.items.length > CHIP_LIMIT ? <span className="drama-inbox-more">另有 {group.items.length - CHIP_LIMIT} 项</span> : null}
                                             </div>
                                         ) : null}
@@ -311,15 +471,33 @@ export function InboxPanel({ items, castById, retrying, retryingGroup, releasing
 function InboxChip({ item, cast, onOpen }: { item: DramaInboxItem; cast?: DramaCast; onOpen: (item: DramaInboxItem) => void }) {
     let content: ReactNode;
     if (item.kind === "cast_failed") {
-        content = <><span className="drama-avatar">{cast?.imageResourceId ? <MediaThumb resourceId={cast.imageResourceId} alt="" /> : item.title.slice(0, 1)}</span>{item.title}</>;
+        content = (
+            <>
+                <span className="drama-avatar">{cast?.imageResourceId ? <MediaThumb resourceId={cast.imageResourceId} alt="" /> : item.title.slice(0, 1)}</span>
+                {item.title}
+            </>
+        );
     } else if (item.kind === "segment_failed") {
-        content = <>{item.media ? MEDIA_ICON[item.media] : null}第 {item.episodeNumber} 集 · 第 {item.segmentIndex + 1} 段</>;
+        content = (
+            <>
+                {item.media ? MEDIA_ICON[item.media] : null}第 {item.episodeNumber} 集 · 第 {item.segmentIndex + 1} 段
+            </>
+        );
     } else if (item.kind === "review") {
-        content = <><Clapperboard className="size-3" />{item.title}</>;
+        content = (
+            <>
+                <Clapperboard className="size-3" />
+                {item.title}
+            </>
+        );
     } else {
         content = item.title;
     }
-    return <button type="button" className={`drama-inbox-chip ${item.kind === "cast_failed" ? "has-avatar" : ""}`} title={item.detail} onClick={() => onOpen(item)}>{content}</button>;
+    return (
+        <button type="button" className={`drama-inbox-chip ${item.kind === "cast_failed" ? "has-avatar" : ""}`} title={item.detail} onClick={() => onOpen(item)}>
+            {content}
+        </button>
+    );
 }
 
 // ===== 制作设置 =====
@@ -348,13 +526,19 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
     const dirty = useMemo(() => JSON.stringify(settings) !== JSON.stringify(current) || Math.round(budget * 1_000_000) !== summary.production.budgetMicrocredits, [budget, current, settings, summary.production.budgetMicrocredits]);
     const save = useMutation({
         mutationFn: () => updateDramaSettings(projectId, { settings, budgetMicrocredits: Math.max(0, Math.round((budget || 0) * 1_000_000)) }),
-        onSuccess: () => { message.success("设置已保存，新任务会使用新配置"); onChanged(); },
+        onSuccess: () => {
+            message.success("设置已保存，新任务会使用新配置");
+            onChanged();
+        },
         onError: (error) => message.error(error instanceof Error ? error.message : "保存失败"),
     });
     const [restyleSegments, setRestyleSegments] = useState(true);
     const regenerateAll = useMutation({
         mutationFn: (kind: DramaCastKind) => regenerateDramaCasts(projectId, kind, restyleSegments),
-        onSuccess: (result, kind) => { message.success(`已按当前方案重做 ${result.queued} 个${CAST_KIND_LABEL[kind]}参考图${result.skipped ? `，${result.skipped} 个已锁定或正在生成` : ""}${result.affectedSegments ? `，${result.affectedSegments} 个剧情段需重新生成` : ""}`); onChanged(); },
+        onSuccess: (result, kind) => {
+            message.success(`已按当前方案重做 ${result.queued} 个${CAST_KIND_LABEL[kind]}参考图${result.skipped ? `，${result.skipped} 个已锁定或正在生成` : ""}${result.affectedSegments ? `，${result.affectedSegments} 个剧情段需重新生成` : ""}`);
+            onChanged();
+        },
         onError: (error) => message.error(error instanceof Error ? error.message : "操作失败"),
     });
     const catalogQuery = useDramaModelCatalog();
@@ -372,8 +556,18 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
                     <h2 className="drama-view-title">制作设置</h2>
                     <span className="drama-view-sub">{dirty ? "有未保存的修改" : "修改只影响之后新开始的任务"}</span>
                     <div className="ml-auto flex gap-2">
-                        <Button disabled={!dirty} onClick={() => { setSettings(current); setBudget(summary.production.budgetMicrocredits / 1_000_000); }}>还原</Button>
-                        <Button type="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate()}>保存设置</Button>
+                        <Button
+                            disabled={!dirty}
+                            onClick={() => {
+                                setSettings(current);
+                                setBudget(summary.production.budgetMicrocredits / 1_000_000);
+                            }}
+                        >
+                            还原
+                        </Button>
+                        <Button type="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate()}>
+                            保存设置
+                        </Button>
                     </div>
                 </div>
                 <div className="drama-view-scroll thin-scrollbar">
@@ -405,11 +599,31 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
                                 <div className="drama-settings-regen">
                                     <div>
                                         <strong>按当前方案重做已有参考图</strong>
-                                        <span>{CAST_KINDS.map((kind) => `${countOf(kind)} 个${CAST_KIND_LABEL[kind]}`).join(" · ")}；锁定的设定不会变。{dirty ? "请先保存设置。" : ""}</span>
+                                        <span>
+                                            {CAST_KINDS.map((kind) => `${countOf(kind)} 个${CAST_KIND_LABEL[kind]}`).join(" · ")}；锁定的设定不会变。{dirty ? "请先保存设置。" : ""}
+                                        </span>
                                     </div>
-                                    <Checkbox checked={restyleSegments} onChange={(event) => setRestyleSegments(event.target.checked)}>同时重新生成引用它们的剧情段</Checkbox>
+                                    <Checkbox checked={restyleSegments} onChange={(event) => setRestyleSegments(event.target.checked)}>
+                                        同时重新生成引用它们的剧情段
+                                    </Checkbox>
                                     {CAST_KINDS.map((kind) => (
-                                        <Button key={kind} disabled={dirty || !countOf(kind)} loading={regenerateAll.isPending && regenerateAll.variables === kind} onClick={() => modal.confirm({ title: `按当前方案重做 ${countOf(kind)} 个${CAST_KIND_LABEL[kind]}参考图？`, content: `每张参考图都会重新生成并计费${restyleSegments ? "，引用它们的剧情段需要重新撰写提示词并生成视频" : ""}。旧版本保留在版本记录中。`, okText: "开始重做", cancelText: "取消", centered: true, onOk: () => regenerateAll.mutateAsync(kind) })}>重做{CAST_KIND_LABEL[kind]}</Button>
+                                        <Button
+                                            key={kind}
+                                            disabled={dirty || !countOf(kind)}
+                                            loading={regenerateAll.isPending && regenerateAll.variables === kind}
+                                            onClick={() =>
+                                                modal.confirm({
+                                                    title: `按当前方案重做 ${countOf(kind)} 个${CAST_KIND_LABEL[kind]}参考图？`,
+                                                    content: `每张参考图都会重新生成并计费${restyleSegments ? "，引用它们的剧情段需要重新撰写提示词并生成视频" : ""}。旧版本保留在版本记录中。`,
+                                                    okText: "开始重做",
+                                                    cancelText: "取消",
+                                                    centered: true,
+                                                    onOk: () => regenerateAll.mutateAsync(kind),
+                                                })
+                                            }
+                                        >
+                                            重做{CAST_KIND_LABEL[kind]}
+                                        </Button>
                                     ))}
                                 </div>
                             </section>
@@ -418,8 +632,16 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
                                 <div className="drama-cfg-models">
                                     {(Object.keys(CAPABILITY_META) as DramaCapability[]).map((capability) => (
                                         <div key={capability} className="drama-cfg-model">
-                                            <div className="drama-cfg-model-label"><strong>{CAPABILITY_META[capability].label}</strong><small>{CAPABILITY_META[capability].hint}</small></div>
-                                            <DramaModelPicker capability={capability} value={settings.models[capability]} placeholder={`选择${CAPABILITY_META[capability].label}模型`} onChange={(choice) => setSettings({ ...settings, models: { ...settings.models, [capability]: choice } })} />
+                                            <div className="drama-cfg-model-label">
+                                                <strong>{CAPABILITY_META[capability].label}</strong>
+                                                <small>{CAPABILITY_META[capability].hint}</small>
+                                            </div>
+                                            <DramaModelPicker
+                                                capability={capability}
+                                                value={settings.models[capability]}
+                                                placeholder={`选择${CAPABILITY_META[capability].label}模型`}
+                                                onChange={(choice) => setSettings({ ...settings, models: { ...settings.models, [capability]: choice } })}
+                                            />
                                         </div>
                                     ))}
                                 </div>
@@ -429,25 +651,46 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
                             <section className="drama-cfg-card">
                                 <SettingsTitle title="作品" detail="开工时确定" />
                                 <dl className="drama-cfg-kv">
-                                    <div><dt>画幅</dt><dd>{current.aspectRatio}</dd></div>
-                                    <div><dt>视觉风格</dt><dd title={current.styleName}>{current.styleName || "—"}</dd></div>
-                                    <div><dt>对白语言</dt><dd>{current.language}</dd></div>
+                                    <div>
+                                        <dt>画幅</dt>
+                                        <dd>{current.aspectRatio}</dd>
+                                    </div>
+                                    <div>
+                                        <dt>视觉风格</dt>
+                                        <dd title={current.styleName}>{current.styleName || "—"}</dd>
+                                    </div>
+                                    <div>
+                                        <dt>对白语言</dt>
+                                        <dd>{current.language}</dd>
+                                    </div>
                                 </dl>
                             </section>
                             <section className="drama-cfg-card">
                                 <SettingsTitle title="审阅方式" detail="只在关键点打断你" />
-                                <CompactRadios label="审阅方式" value={settings.reviewMode} options={(Object.keys(REVIEW_LABEL) as DramaReviewMode[]).map((mode) => ({ value: mode, ...REVIEW_LABEL[mode] }))} onChange={(reviewMode) => setSettings({ ...settings, reviewMode })} />
+                                <CompactRadios
+                                    label="审阅方式"
+                                    value={settings.reviewMode}
+                                    options={(Object.keys(REVIEW_LABEL) as DramaReviewMode[]).map((mode) => ({ value: mode, ...REVIEW_LABEL[mode] }))}
+                                    onChange={(reviewMode) => setSettings({ ...settings, reviewMode })}
+                                />
                             </section>
                             <section className="drama-cfg-card">
                                 <SettingsTitle title="生成节奏" detail={settings.mediaMode === "manual" ? `${summary.episodes.filter((episode) => episode.awaitingMedia).length} 集等待生成视频` : undefined} />
-                                <CompactRadios label="生成节奏" value={settings.mediaMode} options={(Object.keys(MEDIA_MODE_LABEL) as DramaMediaMode[]).map((mode) => ({ value: mode, ...MEDIA_MODE_LABEL[mode] }))} onChange={(mediaMode) => setSettings({ ...settings, mediaMode })} />
+                                <CompactRadios
+                                    label="生成节奏"
+                                    value={settings.mediaMode}
+                                    options={(Object.keys(MEDIA_MODE_LABEL) as DramaMediaMode[]).map((mode) => ({ value: mode, ...MEDIA_MODE_LABEL[mode] }))}
+                                    onChange={(mediaMode) => setSettings({ ...settings, mediaMode })}
+                                />
                                 {settings.mediaMode !== current.mediaMode && settings.mediaMode === "manual" ? <p className="drama-cfg-note">改为手动后，未放行的集停在当前阶段，已提交的任务会做完。</p> : null}
                             </section>
                             <section className="drama-cfg-card">
                                 <SettingsTitle title="同时生成数" detail="受账号并发上限约束" />
                                 <div className="drama-tabs drama-cfg-seg" role="radiogroup" aria-label="同时生成数">
                                     {CONCURRENCY.map((value) => (
-                                        <button key={value} type="button" role="radio" className="drama-tab" aria-checked={settings.concurrency === value} onClick={() => setSettings({ ...settings, concurrency: value })}>{value}</button>
+                                        <button key={value} type="button" role="radio" className="drama-tab" aria-checked={settings.concurrency === value} onClick={() => setSettings({ ...settings, concurrency: value })}>
+                                            {value}
+                                        </button>
                                     ))}
                                 </div>
                             </section>
@@ -455,8 +698,13 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
                                 <SettingsTitle title="预算上限" detail="0 表示不限，达到后自动暂停" />
                                 <InputNumber className="!w-full" min={0} precision={0} value={budget} onChange={(value) => setBudget(value || 0)} suffix="积分" aria-label="预算上限" />
                                 <div className="drama-budget-meter">
-                                    <div className="drama-budget-track"><span className={usage >= 0.9 ? "is-warn" : ""} style={progressFillStyle(budgetMicro ? Math.max(usage * 100, spent ? 2 : 0) : 0)} /></div>
-                                    <span>已花费 <b>{formatCredits(spent)}</b>{budgetMicro ? ` / ${formatCredits(budgetMicro)}` : " · 不限预算"}</span>
+                                    <div className="drama-budget-track">
+                                        <span className={usage >= 0.9 ? "is-warn" : ""} style={progressFillStyle(budgetMicro ? Math.max(usage * 100, spent ? 2 : 0) : 0)} />
+                                    </div>
+                                    <span>
+                                        已花费 <b>{formatCredits(spent)}</b>
+                                        {budgetMicro ? ` / ${formatCredits(budgetMicro)}` : " · 不限预算"}
+                                    </span>
                                 </div>
                             </section>
                         </aside>
@@ -474,7 +722,10 @@ function CompactRadios<V extends string>({ label, value, options, onChange }: { 
             {options.map((option) => (
                 <button key={option.value} type="button" role="radio" aria-checked={value === option.value} className="drama-cfg-radio" onClick={() => onChange(option.value)}>
                     <span className="drama-radio" aria-hidden />
-                    <span className="min-w-0"><strong>{option.title}</strong><small>{option.detail}</small></span>
+                    <span className="min-w-0">
+                        <strong>{option.title}</strong>
+                        <small>{option.detail}</small>
+                    </span>
                 </button>
             ))}
         </div>
@@ -484,7 +735,10 @@ function CompactRadios<V extends string>({ label, value, options, onChange }: { 
 function SettingsTitle({ title, detail, icon }: { title: string; detail?: string; icon?: ReactNode }) {
     return (
         <div className="drama-settings-title">
-            <h3>{icon}{title}</h3>
+            <h3>
+                {icon}
+                {title}
+            </h3>
             {detail ? <span>{detail}</span> : null}
         </div>
     );

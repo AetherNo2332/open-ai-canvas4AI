@@ -42,7 +42,9 @@
     cursor: pointer;
     border-radius: var(--r-sm);
     flex-shrink: 0;
-    transition: background-color 150ms var(--motion-ease-out), transform 150ms var(--motion-ease-out);
+    transition:
+        background-color 150ms var(--motion-ease-out),
+        transform 150ms var(--motion-ease-out);
 }
 
 .agent-connector-item > svg {
@@ -53,7 +55,6 @@
 .agent-connector-item:hover {
     background: color-mix(in srgb, var(--agent-ink) 6%, transparent);
 }
-
 
 .agent-connectors-close {
     width: 22px;
@@ -67,7 +68,10 @@
     place-items: center;
     cursor: pointer;
     flex-shrink: 0;
-    transition: opacity 150ms var(--motion-ease-out), background-color 150ms var(--motion-ease-out), transform 150ms var(--motion-ease-out);
+    transition:
+        opacity 150ms var(--motion-ease-out),
+        background-color 150ms var(--motion-ease-out),
+        transform 150ms var(--motion-ease-out);
     opacity: 0.6;
 }
 
@@ -80,7 +84,6 @@
     opacity: 1;
     background: color-mix(in srgb, var(--agent-ink) 6%, transparent);
 }
-
 
 @media (prefers-reduced-motion: reduce) {
     .agent-connector-item,

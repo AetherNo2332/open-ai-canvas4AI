@@ -38,7 +38,13 @@ function stripNoise(text: string) {
         if (noisy) removed++;
         return !noisy;
     });
-    return { text: lines.join("\n").replace(/\n{3,}/g, "\n\n").trim(), removed };
+    return {
+        text: lines
+            .join("\n")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim(),
+        removed,
+    };
 }
 
 /** 在段落边界把长文本切成约 target 字的块。 */
@@ -62,7 +68,10 @@ function chunkByParagraph(text: string, target: number) {
 }
 
 export function analyzeNovel(raw: string): NovelAnalysis {
-    const normalized = raw.replace(/\r\n?/g, "\n").replace(/\u3000/g, "  ").trim();
+    const normalized = raw
+        .replace(/\r\n?/g, "\n")
+        .replace(/\u3000/g, "  ")
+        .trim();
     const issues: NovelIssue[] = [];
     const cleaned = stripNoise(normalized);
     if (cleaned.removed > 0) issues.push({ kind: "noise", message: `已移除 ${cleaned.removed} 行网址、求票等平台插入语` });
@@ -113,9 +122,7 @@ function mergeShortChapters(chapters: ParsedChapter[]) {
     let carry: ParsedChapter | null = null;
     let count = 0;
     for (const chapter of chapters) {
-        const current: ParsedChapter = carry
-            ? { title: `${carry.title} · ${chapter.title}`, text: `${carry.text}\n\n${chapter.text}`, words: carry.words + chapter.words }
-            : chapter;
+        const current: ParsedChapter = carry ? { title: `${carry.title} · ${chapter.title}`, text: `${carry.text}\n\n${chapter.text}`, words: carry.words + chapter.words } : chapter;
         carry = null;
         if (current.words < SHORT_CHAPTER_WORDS) {
             carry = current;

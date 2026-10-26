@@ -54,32 +54,66 @@ export function SegmentDialog({ detail, segmentIndex, shotId, castById, aspectRa
     const shots = segment ? (detail?.shots || []).filter((shot) => shot.segmentIndex === segment.index) : [];
     const shot = shots.find((item) => item.id === shotId);
     return (
-        <AppModal open={Boolean(segment)} onCancel={onClose} footer={null} title={null} closable={false} flush centered width="min(1280px, calc(100vw - 48px))" rootClassName="drama-root drama-sd-root" aria-label={segment ? `第 ${segment.index + 1} 段` : "剧情段"}>
+        <AppModal
+            open={Boolean(segment)}
+            onCancel={onClose}
+            footer={null}
+            title={null}
+            closable={false}
+            flush
+            centered
+            width="min(1280px, calc(100vw - 48px))"
+            rootClassName="drama-root drama-sd-root"
+            aria-label={segment ? `第 ${segment.index + 1} 段` : "剧情段"}
+        >
             {segment && detail ? (
                 <div className="drama-sd">
                     <header className="drama-sd-head">
                         <div className="min-w-0">
-                            <div className="drama-eyebrow">第 {detail.episode.number} 集 · 第 {segment.index + 1} / {segments.length} 段 · {shots.length} 镜 · {secondsLabel(segment.durationMs)}</div>
-                            <div className="drama-sd-title"><h2>{segment.title}</h2><SegmentStatus segment={segment} /></div>
+                            <div className="drama-eyebrow">
+                                第 {detail.episode.number} 集 · 第 {segment.index + 1} / {segments.length} 段 · {shots.length} 镜 · {secondsLabel(segment.durationMs)}
+                            </div>
+                            <div className="drama-sd-title">
+                                <h2>{segment.title}</h2>
+                                <SegmentStatus segment={segment} />
+                            </div>
                         </div>
                         <div className="drama-sd-nav">
-                            <Tooltip title="上一段"><Button icon={<ChevronLeft className="size-4" />} aria-label="上一段" disabled={position <= 0} onClick={() => onNavigate(segments[position - 1].index)} /></Tooltip>
-                            <Tooltip title="下一段"><Button icon={<ChevronRight className="size-4" />} aria-label="下一段" disabled={position >= segments.length - 1} onClick={() => onNavigate(segments[position + 1].index)} /></Tooltip>
+                            <Tooltip title="上一段">
+                                <Button icon={<ChevronLeft className="size-4" />} aria-label="上一段" disabled={position <= 0} onClick={() => onNavigate(segments[position - 1].index)} />
+                            </Tooltip>
+                            <Tooltip title="下一段">
+                                <Button icon={<ChevronRight className="size-4" />} aria-label="下一段" disabled={position >= segments.length - 1} onClick={() => onNavigate(segments[position + 1].index)} />
+                            </Tooltip>
                             <Button type="text" icon={<X className="size-4" />} aria-label="关闭" onClick={onClose} />
                         </div>
                     </header>
                     <div className="drama-sd-body">
                         <aside className="drama-sd-side thin-scrollbar">
                             <SegmentVideo segment={segment} aspectRatio={aspectRatio} />
-                            {segment.videoStatus === "failed" && segment.videoError ? <div className="drama-sd-error"><strong>视频生成失败</strong><span>{segment.videoError}</span></div> : null}
+                            {segment.videoStatus === "failed" && segment.videoError ? (
+                                <div className="drama-sd-error">
+                                    <strong>视频生成失败</strong>
+                                    <span>{segment.videoError}</span>
+                                </div>
+                            ) : null}
                             <SegmentGenerate key={segment.id} segment={segment} busy={busy} defaultVideoModel={defaultVideoModel} onGenerate={(model) => onGenerate(segment, model)} />
                             <section className="drama-sd-block">
-                                <div className="drama-sd-label"><span>生成依据</span><small>{segment.request.seconds ? `生成 ${segment.request.seconds} 秒` : ""}{segment.videoModel?.label ? ` · ${segment.videoModel.label}` : ""}</small></div>
+                                <div className="drama-sd-label">
+                                    <span>生成依据</span>
+                                    <small>
+                                        {segment.request.seconds ? `生成 ${segment.request.seconds} 秒` : ""}
+                                        {segment.videoModel?.label ? ` · ${segment.videoModel.label}` : ""}
+                                    </small>
+                                </div>
                                 <SegmentInputs segment={segment} castById={castById} onOpenCast={onOpenCast} />
                                 {segment.request.warning ? <p className="drama-sg-note is-warn">{segment.request.warning}</p> : null}
                             </section>
                             <section className="drama-sd-block">
-                                <div className="drama-sd-label"><span>本段镜头</span><small>改动后本段提示词与视频需要重新生成</small></div>
+                                <div className="drama-sd-label">
+                                    <span>本段镜头</span>
+                                    <small>改动后本段提示词与视频需要重新生成</small>
+                                </div>
                                 <div className="drama-sd-shots">
                                     {shots.map((item) => (
                                         <button key={item.id} type="button" className="drama-sd-shot" aria-pressed={item.id === shot?.id} onClick={() => onNavigate(segment.index, item.id === shot?.id ? undefined : item.id)}>
@@ -140,9 +174,30 @@ function SegmentPrompt({ segment, writing, onSave, onWrite }: { segment: DramaSe
             <div className="drama-sd-pane-bar">
                 <span className="drama-sd-pane-caption">完整视频提示词{segment.custom ? <em>已改写</em> : null}</span>
                 <span className="drama-sd-pane-tools">
-                    {!busy && segment.promptStatus !== "none" ? <Button size="small" type="text" icon={<Sparkles className="size-3.5" />} loading={writing} onClick={onWrite}>重新撰写</Button> : null}
-                    {segment.custom ? <Button size="small" type="text" icon={<RotateCcw className="size-3.5" />} onClick={() => onSave("")}>恢复模型版本</Button> : null}
-                    <Button size="small" type="text" icon={<Copy className="size-3.5" />} disabled={!draft} onClick={() => void navigator.clipboard.writeText(sent).then(() => message.success("已复制发送全文"), () => message.error("复制失败"))}>复制发送全文</Button>
+                    {!busy && segment.promptStatus !== "none" ? (
+                        <Button size="small" type="text" icon={<Sparkles className="size-3.5" />} loading={writing} onClick={onWrite}>
+                            重新撰写
+                        </Button>
+                    ) : null}
+                    {segment.custom ? (
+                        <Button size="small" type="text" icon={<RotateCcw className="size-3.5" />} onClick={() => onSave("")}>
+                            恢复模型版本
+                        </Button>
+                    ) : null}
+                    <Button
+                        size="small"
+                        type="text"
+                        icon={<Copy className="size-3.5" />}
+                        disabled={!draft}
+                        onClick={() =>
+                            void navigator.clipboard.writeText(sent).then(
+                                () => message.success("已复制发送全文"),
+                                () => message.error("复制失败"),
+                            )
+                        }
+                    >
+                        复制发送全文
+                    </Button>
                 </span>
             </div>
             {notice && segment.videoPrompt ? <PromptNotice segment={segment} text={notice} /> : null}
@@ -174,10 +229,21 @@ function SegmentPrompt({ segment, writing, onSave, onWrite }: { segment: DramaSe
                 />
             ) : (
                 <div className="drama-sd-empty">
-                    {busy ? <><Loader2 className="size-5 animate-spin" aria-hidden /><span>{notice}</span><small>写好后自动显示</small></> : (
+                    {busy ? (
                         <>
-                            <span>{notice}{segment.promptStatus === "failed" && segment.promptError ? `：${segment.promptError}` : ""}</span>
-                            <Button type="primary" icon={<Sparkles className="size-4" />} loading={writing} onClick={onWrite}>{segment.promptStatus === "none" ? "撰写视频提示词" : "重新撰写"}</Button>
+                            <Loader2 className="size-5 animate-spin" aria-hidden />
+                            <span>{notice}</span>
+                            <small>写好后自动显示</small>
+                        </>
+                    ) : (
+                        <>
+                            <span>
+                                {notice}
+                                {segment.promptStatus === "failed" && segment.promptError ? `：${segment.promptError}` : ""}
+                            </span>
+                            <Button type="primary" icon={<Sparkles className="size-4" />} loading={writing} onClick={onWrite}>
+                                {segment.promptStatus === "none" ? "撰写视频提示词" : "重新撰写"}
+                            </Button>
                         </>
                     )}
                 </div>
@@ -195,7 +261,10 @@ function PromptNotice({ segment, text }: { segment: DramaSegment; text: ReactNod
     return (
         <div className={`drama-sd-notice is-${segment.promptStatus}`}>
             {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
-            <span>{text}{segment.promptStatus === "failed" && segment.promptError ? `：${segment.promptError}` : ""}</span>
+            <span>
+                {text}
+                {segment.promptStatus === "failed" && segment.promptError ? `：${segment.promptError}` : ""}
+            </span>
         </div>
     );
 }
@@ -207,33 +276,78 @@ function ShotEditor({ shot, onPatch }: { shot: DramaShot; onPatch: (patch: Drama
             <FieldText label="台词" value={shot.dialogue} placeholder="无台词" onSave={(value) => onPatch({ dialogue: value })} />
             <div className="drama-sd-row">
                 <label className="drama-sd-field">
-                    <span className="drama-sd-label"><span>说话人</span></span>
-                    <Input defaultValue={shot.speaker} key={`${shot.id}-speaker-${shot.speaker}`} placeholder="旁白" aria-label="说话人" onBlur={(event) => { if (event.target.value.trim() !== shot.speaker) onPatch({ speaker: event.target.value }); }} />
+                    <span className="drama-sd-label">
+                        <span>说话人</span>
+                    </span>
+                    <Input
+                        defaultValue={shot.speaker}
+                        key={`${shot.id}-speaker-${shot.speaker}`}
+                        placeholder="旁白"
+                        aria-label="说话人"
+                        onBlur={(event) => {
+                            if (event.target.value.trim() !== shot.speaker) onPatch({ speaker: event.target.value });
+                        }}
+                    />
                 </label>
                 <label className="drama-sd-field">
-                    <span className="drama-sd-label"><span>时长</span></span>
-                    <InputNumber key={`${shot.id}-${shot.durationMs}`} className="!w-full" min={1} max={60} step={0.5} precision={1} defaultValue={shot.durationMs / 1000} suffix="秒" aria-label="镜头时长"
-                        onBlur={(event) => { const seconds = Number(event.target.value); if (Number.isFinite(seconds) && Math.abs(seconds * 1000 - shot.durationMs) >= 50) onPatch({ durationSeconds: seconds }); }}
-                        onPressEnter={(event) => (event.target as HTMLInputElement).blur()} />
+                    <span className="drama-sd-label">
+                        <span>时长</span>
+                    </span>
+                    <InputNumber
+                        key={`${shot.id}-${shot.durationMs}`}
+                        className="!w-full"
+                        min={1}
+                        max={60}
+                        step={0.5}
+                        precision={1}
+                        defaultValue={shot.durationMs / 1000}
+                        suffix="秒"
+                        aria-label="镜头时长"
+                        onBlur={(event) => {
+                            const seconds = Number(event.target.value);
+                            if (Number.isFinite(seconds) && Math.abs(seconds * 1000 - shot.durationMs) >= 50) onPatch({ durationSeconds: seconds });
+                        }}
+                        onPressEnter={(event) => (event.target as HTMLInputElement).blur()}
+                    />
                 </label>
             </div>
             <div className="drama-sd-row is-three">
                 <label className="drama-sd-field">
-                    <span className="drama-sd-label"><span>景别</span></span>
+                    <span className="drama-sd-label">
+                        <span>景别</span>
+                    </span>
                     <Select className="w-full" value={shot.shotSize || undefined} placeholder="自动" aria-label="景别" options={SHOT_SIZES.map((value) => ({ value, label: value }))} onChange={(value) => onPatch({ shotSize: value })} />
                 </label>
                 <label className="drama-sd-field">
-                    <span className="drama-sd-label"><span>运镜</span></span>
+                    <span className="drama-sd-label">
+                        <span>运镜</span>
+                    </span>
                     <Select className="w-full" value={shot.camera || undefined} placeholder="自动" aria-label="运镜" options={CAMERAS.map((value) => ({ value, label: value }))} onChange={(value) => onPatch({ camera: value })} />
                 </label>
                 <label className="drama-sd-field">
-                    <span className="drama-sd-label"><span>转场</span></span>
-                    <Select className="w-full" value={(shot.transition || "cut") as DramaTransition} aria-label="转场" options={(Object.keys(TRANSITION_LABEL) as DramaTransition[]).map((value) => ({ value, label: TRANSITION_LABEL[value] }))} disabled={shot.position === 0} onChange={(value) => onPatch({ transition: value })} />
+                    <span className="drama-sd-label">
+                        <span>转场</span>
+                    </span>
+                    <Select
+                        className="w-full"
+                        value={(shot.transition || "cut") as DramaTransition}
+                        aria-label="转场"
+                        options={(Object.keys(TRANSITION_LABEL) as DramaTransition[]).map((value) => ({ value, label: TRANSITION_LABEL[value] }))}
+                        disabled={shot.position === 0}
+                        onChange={(value) => onPatch({ transition: value })}
+                    />
                 </label>
             </div>
             <FieldText label="动作" value={shot.action} rows={2} onSave={(value) => onPatch({ action: value })} />
             <FieldText label="起幅画面" value={shot.imagePrompt} rows={2} onSave={(value) => onPatch({ imagePrompt: value })} />
-            {shot.sourceQuote ? <div className="drama-sd-quote"><span className="drama-sd-label"><span>原文</span></span><p>「{shot.sourceQuote}」</p></div> : null}
+            {shot.sourceQuote ? (
+                <div className="drama-sd-quote">
+                    <span className="drama-sd-label">
+                        <span>原文</span>
+                    </span>
+                    <p>「{shot.sourceQuote}」</p>
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -243,8 +357,19 @@ function FieldText({ label, value, placeholder, rows = 1, onSave }: { label: str
     useEffect(() => setDraft(value), [value]);
     return (
         <label className="drama-sd-field">
-            <span className="drama-sd-label"><span>{label}</span>{draft !== value ? <small className="is-dirty">未保存</small> : null}</span>
-            <Input.TextArea value={draft} placeholder={placeholder} autoSize={{ minRows: rows, maxRows: 5 }} onChange={(event) => setDraft(event.target.value)} onBlur={() => { if (draft.trim() !== value.trim()) onSave(draft); }} />
+            <span className="drama-sd-label">
+                <span>{label}</span>
+                {draft !== value ? <small className="is-dirty">未保存</small> : null}
+            </span>
+            <Input.TextArea
+                value={draft}
+                placeholder={placeholder}
+                autoSize={{ minRows: rows, maxRows: 5 }}
+                onChange={(event) => setDraft(event.target.value)}
+                onBlur={() => {
+                    if (draft.trim() !== value.trim()) onSave(draft);
+                }}
+            />
         </label>
     );
 }

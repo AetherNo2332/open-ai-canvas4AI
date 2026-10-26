@@ -36,7 +36,15 @@ export function SegmentStatus({ segment }: { segment: DramaSegment }) {
     const state = segmentState(segment);
     return (
         <span className={`drama-sg-status is-${state.tone}`}>
-            {state.tone === "busy" ? <Loader2 className="size-3 animate-spin" aria-hidden /> : state.tone === "failed" ? <AlertCircle className="size-3" aria-hidden /> : state.tone === "ready" ? <Check className="size-3" aria-hidden /> : <i aria-hidden />}
+            {state.tone === "busy" ? (
+                <Loader2 className="size-3 animate-spin" aria-hidden />
+            ) : state.tone === "failed" ? (
+                <AlertCircle className="size-3" aria-hidden />
+            ) : state.tone === "ready" ? (
+                <Check className="size-3" aria-hidden />
+            ) : (
+                <i aria-hidden />
+            )}
             {state.label}
         </span>
     );
@@ -47,7 +55,9 @@ export function SegmentVideo({ segment, aspectRatio, className = "" }: { segment
     const state = segmentState(segment);
     return (
         <div className={`drama-sg-video ${className}`} style={{ aspectRatio: aspectRatioValue(aspectRatio) }}>
-            {url ? <video key={url} src={url} controls playsInline preload="metadata" /> : (
+            {url ? (
+                <video key={url} src={url} controls playsInline preload="metadata" />
+            ) : (
                 <span className={`drama-sg-video-empty ${state.tone === "busy" ? "is-busy" : ""}`}>
                     <Film className="size-5" aria-hidden />
                     <span>{state.label}</span>
@@ -93,14 +103,22 @@ export function SegmentInputs({ segment, castById, compact = false, onOpenCast }
                         {compact ? null : (
                             <span className="drama-sg-input-text">
                                 <b>{ref.name}</b>
-                                <small>{CAST_KIND_LABEL[ref.kind]} · {ref.sent ? "随请求发送" : `未附图：${reason}`}</small>
+                                <small>
+                                    {CAST_KIND_LABEL[ref.kind]} · {ref.sent ? "随请求发送" : `未附图：${reason}`}
+                                </small>
                             </span>
                         )}
                     </>
                 );
                 return (
                     <Tooltip key={ref.castId} title={`${ref.label} · ${CAST_KIND_LABEL[ref.kind]} · ${ref.name}${ref.sent ? "" : `（未附图：${reason}，按文字设定生成）`}`} mouseEnterDelay={0.3}>
-                        {onOpenCast ? <button type="button" className={`drama-sg-input ${ref.sent ? "" : "is-missing"}`} onClick={() => onOpenCast(ref.castId)}>{body}</button> : <span className={`drama-sg-input ${ref.sent ? "" : "is-missing"}`}>{body}</span>}
+                        {onOpenCast ? (
+                            <button type="button" className={`drama-sg-input ${ref.sent ? "" : "is-missing"}`} onClick={() => onOpenCast(ref.castId)}>
+                                {body}
+                            </button>
+                        ) : (
+                            <span className={`drama-sg-input ${ref.sent ? "" : "is-missing"}`}>{body}</span>
+                        )}
                     </Tooltip>
                 );
             })}

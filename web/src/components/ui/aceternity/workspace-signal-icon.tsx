@@ -34,15 +34,7 @@ export function WorkspaceSignalIcon({ variant, size = "md", className }: { varia
                     animate={{ pathLength: 1, opacity: 1 }}
                     transition={{ duration: 0.25, delay: 0.04, ease: [0.22, 1, 0.36, 1] }}
                 />
-                <motion.circle
-                    cx={signalDot(variant)[0]}
-                    cy={signalDot(variant)[1]}
-                    r="2.5"
-                    fill={dotColor}
-                    initial={reducedMotion ? false : { opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.15, delay: 0.15, ease: "easeOut" }}
-                />
+                <motion.circle cx={signalDot(variant)[0]} cy={signalDot(variant)[1]} r="2.5" fill={dotColor} initial={reducedMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15, delay: 0.15, ease: "easeOut" }} />
             </svg>
         </motion.span>
     );

@@ -11,18 +11,7 @@ export type AgentCanvasFocus = {
 };
 
 // 任务进度、阶段和计时每隔几秒都会刷新；把这些当成"操作"会让镜头追着进度条来回跳。
-const volatileMetadataKeys: (keyof CanvasNodeMetadata)[] = [
-    "taskProgress",
-    "taskStage",
-    "taskMediaStage",
-    "taskUpdatedAt",
-    "taskStartedAt",
-    "taskDurationMs",
-    "taskOfficialStatus",
-    "taskReceiptRecorded",
-    "taskProvider",
-    "taskCanRecoverMedia",
-];
+const volatileMetadataKeys: (keyof CanvasNodeMetadata)[] = ["taskProgress", "taskStage", "taskMediaStage", "taskUpdatedAt", "taskStartedAt", "taskDurationMs", "taskOfficialStatus", "taskReceiptRecorded", "taskProvider", "taskCanRecoverMedia"];
 
 function focusSignature(node: CanvasNodeData) {
     const { updatedAt: _updatedAt, createdAt: _createdAt, metadata, ...rest } = node;

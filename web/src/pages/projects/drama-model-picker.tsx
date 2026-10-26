@@ -15,7 +15,15 @@ export function useDramaModelCatalog() {
  * 短剧制作用的模型下拉：沿用创作端带品牌图标的通用 ModelPicker，
  * 只放行后端短剧目录里可无人值守执行的平台模型。
  */
-export function DramaModelPicker({ capability, value, onChange, placeholder, size = "md", showPrice = true, className }: {
+export function DramaModelPicker({
+    capability,
+    value,
+    onChange,
+    placeholder,
+    size = "md",
+    showPrice = true,
+    className,
+}: {
     capability: DramaCapability;
     value?: DramaModelChoice;
     onChange: (choice: DramaModelChoice) => void;
@@ -30,11 +38,14 @@ export function DramaModelPicker({ capability, value, onChange, placeholder, siz
         const options = catalogQuery.data?.options[capability] || [];
         return new Map(options.map((option) => [dramaChoiceKey(option.choice), option.choice]));
     }, [capability, catalogQuery.data]);
-    const modelFilter = useCallback((model: string) => {
-        const key = dramaChoiceKey(modelToDramaChoice(config, model));
-        // 目录未返回前只限制为平台模型；返回后与服务端可执行目录严格一致。
-        return Boolean(key) && (!catalogQuery.data || allowed.has(key));
-    }, [allowed, catalogQuery.data, config]);
+    const modelFilter = useCallback(
+        (model: string) => {
+            const key = dramaChoiceKey(modelToDramaChoice(config, model));
+            // 目录未返回前只限制为平台模型；返回后与服务端可执行目录严格一致。
+            return Boolean(key) && (!catalogQuery.data || allowed.has(key));
+        },
+        [allowed, catalogQuery.data, config],
+    );
     const current = dramaChoiceToModel(config, capability, value);
 
     return (

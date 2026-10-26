@@ -112,7 +112,9 @@ function MediaVersionPanel({ node, onClose, onAdopt, onDelete, onExtract }: Omit
             <header className="flex items-center gap-3 px-6 pb-4 pt-5">
                 <div className="flex min-w-0 flex-1 items-baseline gap-2">
                     <h2 className="m-0 shrink-0 text-[length:var(--fs-heading)] font-semibold text-foreground">版本历史</h2>
-                    <span className="truncate text-sm text-muted-foreground" title={node.title}>{node.title}</span>
+                    <span className="truncate text-sm text-muted-foreground" title={node.title}>
+                        {node.title}
+                    </span>
                 </div>
                 {isImage ? (
                     <Tooltip title={canCompare ? undefined : "选择一个非当前版本后可对比"}>
@@ -122,12 +124,20 @@ function MediaVersionPanel({ node, onClose, onAdopt, onDelete, onExtract }: Omit
                                 value={canCompare ? viewMode : "single"}
                                 disabled={!canCompare}
                                 onChange={setViewMode}
-                                options={[{ value: "single", label: "单张" }, { value: "compare", label: "对比当前" }]}
+                                options={[
+                                    { value: "single", label: "单张" },
+                                    { value: "compare", label: "对比当前" },
+                                ]}
                             />
                         </span>
                     </Tooltip>
                 ) : null}
-                <button type="button" aria-label="关闭" className="grid size-8 shrink-0 place-items-center rounded-[var(--r-md)] text-muted-foreground outline-none transition-colors hover:bg-[var(--control-selected-bg)] hover:text-foreground focus-visible:ring-2" onClick={onClose}>
+                <button
+                    type="button"
+                    aria-label="关闭"
+                    className="grid size-8 shrink-0 place-items-center rounded-[var(--r-md)] text-muted-foreground outline-none transition-colors hover:bg-[var(--control-selected-bg)] hover:text-foreground focus-visible:ring-2"
+                    onClick={onClose}
+                >
                     <X className="size-4" />
                 </button>
             </header>
@@ -145,7 +155,8 @@ function MediaVersionPanel({ node, onClose, onAdopt, onDelete, onExtract }: Omit
                     <span className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
                         悬停预览
                         <span aria-hidden>·</span>
-                        <Kbd>←</Kbd><Kbd>→</Kbd> 浏览
+                        <Kbd>←</Kbd>
+                        <Kbd>→</Kbd> 浏览
                         <span aria-hidden>·</span>
                         <Kbd>Enter</Kbd> 切换
                     </span>
@@ -196,9 +207,7 @@ function MediaVersionPanel({ node, onClose, onAdopt, onDelete, onExtract }: Omit
                         </Tooltip>
                     </Popconfirm>
                 </div>
-                <span className="min-w-0 flex-1 truncate text-center text-xs text-muted-foreground">
-                    {adoptBlock ? BLOCK_REASON[adoptBlock] : `切换只替换媒体，提示词与连线保持不变 · 保留最近 ${MEDIA_VERSION_LIMIT} 个版本`}
-                </span>
+                <span className="min-w-0 flex-1 truncate text-center text-xs text-muted-foreground">{adoptBlock ? BLOCK_REASON[adoptBlock] : `切换只替换媒体，提示词与连线保持不变 · 保留最近 ${MEDIA_VERSION_LIMIT} 个版本`}</span>
                 <div className="flex items-center gap-2">
                     <Button onClick={onClose}>取消</Button>
                     <Button type="primary" disabled={selectedIsCurrent || Boolean(adoptBlock)} onClick={adopt}>
@@ -220,8 +229,7 @@ function VersionStage({ node, version, current, comparing }: { node: CanvasNodeD
                 <>
                     <StageMedia node={node} version={version} />
                     <StageBadge className="left-3 top-3">
-                        {isCurrent ? <Check className="size-3" /> : null}
-                        V{version.number}
+                        {isCurrent ? <Check className="size-3" /> : null}V{version.number}
                         {isCurrent ? " · 当前" : " · 预览"}
                     </StageBadge>
                 </>
@@ -390,7 +398,9 @@ function VersionDetails({ node, version, current }: { node: CanvasNodeData; vers
                     {rows.map(([label, value]) => (
                         <div key={label} className="flex items-baseline justify-between gap-3">
                             <dt className="shrink-0 text-muted-foreground">{label}</dt>
-                            <dd className="m-0 min-w-0 truncate text-right text-foreground" title={value}>{value}</dd>
+                            <dd className="m-0 min-w-0 truncate text-right text-foreground" title={value}>
+                                {value}
+                            </dd>
                         </div>
                     ))}
                 </dl>
@@ -449,7 +459,16 @@ function VersionThumb({ node, version, selected, current, onHover, onSelect, onA
                 className={`relative block h-[72px] w-full overflow-hidden rounded-[var(--r-md)] bg-[var(--media-surface)] ring-offset-2 ring-offset-[var(--card-surface)] transition-shadow duration-[var(--motion-state)] group-focus-visible:ring-2 ${selected ? "ring-2 ring-[var(--foreground)]" : "ring-1 ring-[var(--workspace-border)] group-hover:ring-[var(--workspace-border-strong)]"}`}
             >
                 {node.type === CanvasNodeType.Image ? (
-                    <CachedResourceImage storageKey={version.media.storageKey} src={version.media.previewContent || version.media.content} variant="thumbnail" alt="" loading="lazy" draggable={false} className="block size-full object-cover" fallback={<ThumbFallback />} />
+                    <CachedResourceImage
+                        storageKey={version.media.storageKey}
+                        src={version.media.previewContent || version.media.content}
+                        variant="thumbnail"
+                        alt=""
+                        loading="lazy"
+                        draggable={false}
+                        className="block size-full object-cover"
+                        fallback={<ThumbFallback />}
+                    />
                 ) : node.type === CanvasNodeType.Video ? (
                     <CanvasVideoPreviewImage node={preview} alt="" loading="lazy" draggable={false} className="block size-full object-cover" fallback={<ThumbFallback />} />
                 ) : (
@@ -457,7 +476,8 @@ function VersionThumb({ node, version, selected, current, onHover, onSelect, onA
                 )}
                 {current ? (
                     <span className="absolute left-1.5 top-1.5 inline-flex h-5 items-center gap-0.5 rounded-[var(--r-xs)] bg-black/60 px-2 text-[length:var(--fs-tiny)] font-medium text-white backdrop-blur-md">
-                        <Check className="size-2.5" />当前
+                        <Check className="size-2.5" />
+                        当前
                     </span>
                 ) : null}
             </span>
@@ -521,7 +541,7 @@ function normalizePeaks(peaks: number[] | undefined, seed: string, count: number
     for (const char of seed) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
     return Array.from({ length: count }, (_, index) => {
         hash = (hash * 1103515245 + 12345) >>> 0;
-        return 0.25 + ((hash >>> 16) % 1000) / 1000 * 0.6 * Math.abs(Math.sin(index / 5));
+        return 0.25 + (((hash >>> 16) % 1000) / 1000) * 0.6 * Math.abs(Math.sin(index / 5));
     });
 }
 

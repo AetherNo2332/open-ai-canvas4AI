@@ -62,7 +62,11 @@ export function syncRegionPrompt(prompt: string, before: readonly ImageEditRegio
     for (const index of previous) {
         if (kept.has(index)) continue;
         const leading = new RegExp(`^\\s*@区域${index}(?!\\d)`);
-        next = next.split("\n").filter((line) => !leading.test(line)).join("\n").replace(new RegExp(`@区域${index}(?!\\d) ?`, "g"), "");
+        next = next
+            .split("\n")
+            .filter((line) => !leading.test(line))
+            .join("\n")
+            .replace(new RegExp(`@区域${index}(?!\\d) ?`, "g"), "");
     }
     const referenced = new Set(referencedRegionIndexes(next));
     for (const region of [...after].sort((a, b) => a.index - b.index)) {
@@ -91,9 +95,7 @@ export function describeRegionPosition(region: ImageEditRegion, size: PixelSize)
  */
 export function buildRegionEditPrompt(input: { prompt: string; regions: readonly ImageEditRegion[]; size: PixelSize; annotatedReference: boolean; mask: boolean }) {
     const regions = [...input.regions].sort((a, b) => a.index - b.index);
-    const intro = input.annotatedReference
-        ? "图片区域编辑。第一张参考图是原图；第二张参考图是在原图上画了蓝色编号矩形框的标注图，框线和编号只用于标示位置。"
-        : "图片区域编辑。参考图是原图。";
+    const intro = input.annotatedReference ? "图片区域编辑。第一张参考图是原图；第二张参考图是在原图上画了蓝色编号矩形框的标注图，框线和编号只用于标示位置。" : "图片区域编辑。参考图是原图。";
     const lines = [
         intro,
         ...(input.mask ? ["蒙版透明部分与全部框选区域一致。"] : []),

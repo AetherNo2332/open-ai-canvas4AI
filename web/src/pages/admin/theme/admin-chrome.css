@@ -1072,7 +1072,9 @@
 :root:not(.dark) :is(.admin-drawer, .admin-secondary-drawer) .ant-drawer-content,
 :root:not(.dark) :is(.admin-modal-root, .admin-channel-modal-root) .ant-modal-container {
     border: 0 !important;
-    box-shadow: 0 1px 2px color-mix(in srgb, rgb(15 23 42 / 0.1) 50%, transparent), 0 16px 40px rgb(15 23 42 / 0.1) !important;
+    box-shadow:
+        0 1px 2px color-mix(in srgb, rgb(15 23 42 / 0.1) 50%, transparent),
+        0 16px 40px rgb(15 23 42 / 0.1) !important;
 }
 
 :root:not(.dark) :is(.admin-drawer, .admin-secondary-drawer) :is(.ant-drawer-header, .ant-drawer-footer),
