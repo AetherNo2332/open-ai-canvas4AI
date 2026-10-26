@@ -138,7 +138,14 @@ export function MediaThumb({ resourceId, alt, className, fallback, loading, fail
     if (!resourceId) return <>{fallback ?? null}</>;
     const pending = loading ?? fallback ?? null;
     const delay = THUMB_RETRY_DELAYS_MS[attempt];
-    const failure = delay === undefined ? (failed ?? fallback ?? null) : <ThumbRetry delayMs={delay} onRetry={() => setRetry({ resourceId, attempt: attempt + 1 })}>{pending}</ThumbRetry>;
+    const failure =
+        delay === undefined ? (
+            (failed ?? fallback ?? null)
+        ) : (
+            <ThumbRetry delayMs={delay} onRetry={() => setRetry({ resourceId, attempt: attempt + 1 })}>
+                {pending}
+            </ThumbRetry>
+        );
     return <CachedResourceImage key={`${resourceId}:${attempt}`} storageKey={`resource:${resourceId}`} alt={alt} className={className} variant="thumbnail" fallback={failure} loadingFallback={pending} draggable={false} />;
 }
 

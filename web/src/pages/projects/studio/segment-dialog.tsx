@@ -164,7 +164,15 @@ function SegmentGenerate({ segment, busy, defaultVideoModel, onGenerate }: { seg
         <div className="drama-sd-generate">
             <DramaModelPicker capability="video" size="sm" value={choice} onChange={setChoice} placeholder="视频模型" />
             <Button type="primary" icon={<Play className="size-4" />} disabled={busy || !promptReady(segment) || running} onClick={() => onGenerate(changed ? choice : undefined)}>
-                {running ? (segment.videoStatus === "queued" && segment.videoWait ? videoWaitLabel(segment.videoWait) : segment.request.firstFramePending ? `排队中 · 等第 ${segment.index} 段` : "视频生成中") : segment.videoResourceId && segment.videoStatus !== "" ? "重新生成本段视频" : "生成本段视频"}
+                {running
+                    ? segment.videoStatus === "queued" && segment.videoWait
+                        ? videoWaitLabel(segment.videoWait)
+                        : segment.request.firstFramePending
+                          ? `排队中 · 等第 ${segment.index} 段`
+                          : "视频生成中"
+                    : segment.videoResourceId && segment.videoStatus !== ""
+                      ? "重新生成本段视频"
+                      : "生成本段视频"}
             </Button>
         </div>
     );

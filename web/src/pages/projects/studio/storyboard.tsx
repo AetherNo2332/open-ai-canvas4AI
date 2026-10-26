@@ -377,7 +377,15 @@ export function Storyboard({ shots, segments, aspectRatio, castById, defaultVide
                                 </span>
                                 <span className="drama-sg-actions">
                                     {segment.videoReprocessable ? (
-                                        <Button size="small" type="primary" icon={<RotateCcw className="size-3" />} disabled={busy} loading={reprocessing === segment.index} title="只重新处理已生成的视频，不重新生成、不扣费" onClick={() => onReprocess(segment.index)}>
+                                        <Button
+                                            size="small"
+                                            type="primary"
+                                            icon={<RotateCcw className="size-3" />}
+                                            disabled={busy}
+                                            loading={reprocessing === segment.index}
+                                            title="只重新处理已生成的视频，不重新生成、不扣费"
+                                            onClick={() => onReprocess(segment.index)}
+                                        >
                                             重新处理
                                         </Button>
                                     ) : null}
