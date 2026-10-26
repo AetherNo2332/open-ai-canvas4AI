@@ -6,6 +6,7 @@ import type { FeatureAvailability } from "@/stores/use-user-store";
 import { http, apiBaseURL } from "@/services/api/request";
 import type { OSSConnectionTestInput, OSSConnectionTestResult, OSSProvider, S3Preset } from "@/lib/oss-settings";
 import type { VerificationPolicy } from "./verification";
+import type { AccountFileStorageUsage } from "@/services/api/resources";
 
 let authSessionRequest: Promise<AuthSessionPayload> | null = null;
 let authSessionCache: { payload: AuthSessionPayload; expiresAt: number } | null = null;
@@ -141,6 +142,8 @@ export type AdminUserDetail = {
     storedFileBytes: number;
     dailyUploadBytes: number;
     quota: RuntimeResourcePolicy;
+    /** 包含已购扩容的有效容量与超额状态。 */
+    storageCapacity: AccountFileStorageUsage;
 };
 
 export type AdminUserTask = {
