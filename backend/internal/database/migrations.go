@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 72
+const CurrentSchemaVersion int64 = 74
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -257,6 +257,20 @@ var schemaMigrations = []migration{
 	}},
 	{version: 71, name: "drama_segment_mode", checksum: "sha256:drama-segment-mode-v71-20261026", apply: migrateDramaSegmentMode},
 	{version: 72, name: "referral_center", checksum: "sha256:referral-center-v72-20261027", apply: migrateReferralCenter},
+	{version: 73, name: "drama_episode_source_format", checksum: "sha256:drama-episode-source-format-v73-20261027", apply: func(tx *gorm.DB) error {
+		// 旧集没有素材类型，空串按小说原文处理。
+		if tx.Migrator().HasColumn(&model.DramaEpisode{}, "SourceFormat") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.DramaEpisode{}, "SourceFormat")
+	}},
+	{version: 74, name: "drama_segment_references", checksum: "sha256:drama-segment-references-v74-20261027", apply: func(tx *gorm.DB) error {
+		// 空串表示按镜头自动取参考图，旧段保持原行为。
+		if tx.Migrator().HasColumn(&model.DramaSegment{}, "ReferenceCastIDsJSON") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.DramaSegment{}, "ReferenceCastIDsJSON")
+	}},
 }
 
 // migrateReferralCenter 增加推广人标记和推广码、绑定、返佣三张表；旧用户默认不是推广人。
