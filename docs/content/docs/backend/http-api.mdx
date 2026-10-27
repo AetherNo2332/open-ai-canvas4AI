@@ -368,6 +368,14 @@ Token 报价的 `estimated` 为 `true`，`quantity` 是预留 Token 数。参考
 
 operations 的结构化配额在提交事务内实时统计账号的素材/画布数量和 JSON 字节数，不为画布保存扫描任务正文及 API 请求/响应日志。接口请求、响应、容量上限及错误语义均不变；性能排查应分别记录成功写入、同请求重放和冲突请求的耗时，冲突请求提前退出不能代表完整提交耗时。
 
+## 推广中心
+
+推广设置保存在 `system_settings` 的 `referral` 键，管理员通过 `GET/PATCH /admin/settings/referral` 读写 `{ enabled, mode, commissionRateBasisPoints }`，保存记录管理员审计。`mode` 为 `all`（全民推广）或 `assigned`（指定推广人）；返佣比例为万分比，范围 0–5000。推广人标记通过 `PATCH /admin/users/:id` 的可选布尔字段 `isPromoter` 修改，省略表示不变。
+
+`GET /auth/session` 的 `data.referralAvailable` 表示当前账号能否进入推广中心：推广已开启、账号正常，并且是全民模式或账号为推广人。用户接口 `GET /referral`、`GET /referral/invitees`、`GET /referral/commissions`（`page`、`pageSize`）在无资格时返回 403 `forbidden`；被邀请用户名称只返回首字加 `**`。`GET /admin/referral/commissions` 返回全站返佣，名称不脱敏。
+
+`POST /auth/register` 接受可选 `referralCode`（来自推广链接 `/register?ref=推广码`）。推广码无效、推广人当时无资格或绑定写入失败时注册照常成功，只是不记录归属。积分充值订单入账后按当时设置计算返佣：`floor(到账积分 × 比例 / 10000)`，以积分写入推广人账户，流水类型 `referral_commission`；同一订单只返佣一次，存储空间订单不返佣。
+
 ## 欢迎页开放配置
 
 `GET /public/welcome` 无需登录，信封 `data` 仅包含布尔值 `welcomeEnabled`，响应禁用缓存。读取失败按标准错误信封返回。

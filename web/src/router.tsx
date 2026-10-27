@@ -60,6 +60,8 @@ const ProjectsPage = lazy(loadProjectsPage);
 const ProjectDetailPage = lazy(loadProjectDetailPage);
 const ProjectCreatePage = lazy(loadProjectCreatePage);
 const SettingsPage = lazy(() => import("@/pages/settings"));
+const ReferralPage = lazy(() => import("@/pages/referral"));
+const AdminReferralPage = lazy(() => import("@/pages/admin/referral/referral-admin-page"));
 const TestVoiceRecording = lazy(() => import("@/pages/test-voice-recording"));
 const UserLayout = lazy(() => import("@/layouts/user-layout"));
 const RequireFeature = lazy(() => import("@/components/auth/require-feature").then((module) => ({ default: module.RequireFeature })));
@@ -170,6 +172,7 @@ export const router = createBrowserRouter([
                 element: <RequireAuth>{null}</RequireAuth>,
             },
             { path: "/settings", element: <RequireAuth>{deferred(<SettingsPage />)}</RequireAuth> },
+            { path: "/referral", element: <RequireAuth>{deferred(<ReferralPage />)}</RequireAuth> },
             { path: "/test-voice-recording", element: <RequireAuth>{deferred(<TestVoiceRecording />)}</RequireAuth> },
             {
                 path: "/projects",
@@ -242,6 +245,7 @@ export const router = createBrowserRouter([
                     { path: "resources", element: <StorageResourcesPage /> },
                     { path: "credit-operations", element: <CreditOperationsPage /> },
                     { path: "redemption-codes", element: <RedemptionCodesPage /> },
+                    { path: "referral", element: <AdminReferralPage /> },
                     { path: "logs", element: <LogsPage /> },
                     { path: "settings", element: <Navigate to="runtime-policy" replace /> },
                     { path: "settings/appearance", element: <AppearanceSettingsPage /> },
