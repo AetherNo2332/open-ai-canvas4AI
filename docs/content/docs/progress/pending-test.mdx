@@ -5,6 +5,15 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 画布同步：已应用目标值幂等收敛与瞬时并发重放
+
+- 已实现（后端）：`applyCanvasOperations` 对当前值已等于目标值的写入按已应用处理，不再因旧基线整笔返回 `canvas_field_conflict`。覆盖 `patch_node` 各补丁路径（不再限于任务围栏请求）、`set_field`、`update_connection`，以及同内容重复的 `create_node` / `create_connection`。`remove_node`、`update_connection`、`remove_connection` 的整对象基线忽略节点 `updatedAt`。只在 `before` 中的断言、第三值和内容不同的同 ID 对象仍冲突。
+- 已实现（前端）：`canvas_concurrent_write` 在同一次保存内按原 mutationId 原样重放 3 次（250 / 600 / 1200 毫秒），仍失败交给后台退避，进度标记为瞬时而不是冲突。`canvas_mutation_id_reused` 纳入可重建的明确拒绝，按 journal 基线三方合并后换新 ID 提交，不再永久卡在重放同一请求。
+- 已验证：`go test ./...` 通过（新增 `TestApplyCanvasOperationsConvergesAlreadyAppliedTargets`，调整两个旧用例：已删除时间的重复删除、目标值相同的无围栏补丁改为收敛）；前端同步相关 16 个测试文件 165 项通过（新增请求 ID 复用重建、瞬时并发原样重放、超过重放次数保留原请求），`bun run typecheck` 通过。未做浏览器与双端联调验证。
+- [ ] 双端联调：A、B 两个窗口打开同一画布，A 生成图片的同时 B 修改该节点标题并删除另一个刚被 Agent 改过的节点，两端最终一致，状态图标回到“已同步”，不出现长时间转圈。
+- [ ] 生成回写：生成完成时服务端回写与本机任务观察同时保存同一结果，服务端不再返回 `canvas_field_conflict`（可在 Network 中确认 operations 一次成功）。
+- [ ] PostgreSQL：并发创建同一画布或历史恢复期间提交 operations，`canvas_concurrent_write` 在 2 秒内自动重放成功。
+
 ## 推广中心
 
 - 已实现：系统设置 `referral` 控制推广开关、开放方式（全民 / 指定推广人）和返佣比例；`users.is_promoter` 标记推广人，后台用户编辑抽屉可切换，用户列表显示「推广人」标签。`/auth/session` 返回 `referralAvailable` 决定账户菜单是否显示「推广中心」入口。用户接口 `GET /api/referral`、`/api/referral/invitees`、`/api/referral/commissions`；后台接口 `GET/PATCH /api/admin/settings/referral`、`GET /api/admin/referral/commissions`。注册页读取 `?ref=` 并在会话内保留，注册成功后绑定归属。积分充值订单入账后（支付回调、主动查询、对账补发）按订单 ID 幂等发放返佣积分，流水类型 `referral_commission`。
