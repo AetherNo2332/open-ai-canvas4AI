@@ -110,12 +110,12 @@ export function VoiceRecordingInline({ onTranscribed, onCancel }: VoiceRecording
 
     return (
         <div
-            className="voice-recording-inline flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 py-1.5"
+            className="voice-recording-inline flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 py-2"
             style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}
         >
             {displayError ? (
                 <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <span className="truncate text-xs" style={{ color: "var(--palette-status-error)" }}>
+                    <span className="truncate text-xs" style={{ color: "#dc2626" }}>
                         {displayError}
                     </span>
                     {speechSupported ? (
@@ -145,7 +145,7 @@ export function VoiceRecordingInline({ onTranscribed, onCancel }: VoiceRecording
                     <span className="text-xs">正在转写...</span>
                 </div>
             ) : transcribeState === "done" ? (
-                <div className="flex items-center gap-2 px-2" style={{ color: "var(--palette-status-success)" }}>
+                <div className="flex items-center gap-2 px-2" style={{ color: "#16a34a" }}>
                     <Check className="size-4" />
                     <span className="text-xs">转写完成</span>
                 </div>

@@ -45,9 +45,6 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if task.Status == model.TaskStatusSubmissionUncertain {
 		return nil, BadAuthRequest("上游接单状态尚未确认，请核对原任务，不能重新生成")
 	}
-	if task.Type == model.TaskTypePrevisRender {
-		return nil, BadAuthRequest("预演重做需新任务；已保存产物请使用只回写恢复")
-	}
 	if task.CreationSubmissionID != nil {
 		return nil, creationConflict("智能创作重做需要新的报价批准，请回到创作会话继续")
 	}
@@ -142,7 +139,7 @@ func (w *taskLifecycleCoordinator) cancelTaskWithIntent(_ context.Context, userI
 	// 用户一旦看到任务进入上游提交/生成阶段，即使 request ID 尚未来得及写回，
 	// 也必须按“可能已经产生上游费用”处理。父任务失败和 worker context 属于
 	// 内部协调，仍需继续走下面的上游取消/对账流程，不能被这条 UI 规则截断。
-	if intent.Source == model.TaskCancellationUserRequest && (strings.TrimSpace(task.ProviderRequestID) != "" || task.MediaStage != "" || !taskStageAllowsUserCancellation(task.Status, task.Stage)) {
+	if intent.Source == model.TaskCancellationUserRequest && taskUpstreamSubmitted(task) {
 		return nil, BadAuthRequest("第三方请求已提交，任务不可取消")
 	}
 	originalStatus := task.Status
@@ -217,6 +214,12 @@ func (w *taskLifecycleCoordinator) cancelTaskWithIntent(_ context.Context, userI
 	}
 
 	return taskForOutput(*task), nil
+}
+
+// taskUpstreamSubmitted 表示任务已进入上游提交/生成阶段，可能已经产生上游费用。
+// 调用方应先 hydrateTaskProviderRequestID，避免 request ID 尚未写回时误判。
+func taskUpstreamSubmitted(task *model.Task) bool {
+	return strings.TrimSpace(task.ProviderRequestID) != "" || task.MediaStage != "" || !taskStageAllowsUserCancellation(task.Status, task.Stage)
 }
 
 func taskStageAllowsUserCancellation(status model.TaskStatus, stage string) bool {

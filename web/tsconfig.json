@@ -14,8 +14,7 @@
         "jsx": "react-jsx",
         "incremental": true,
         "paths": {
-            "@/*": ["./src/*"],
-            "@desk/*": ["../director-desk/src/*"]
+            "@/*": ["./src/*"]
         }
     },
     "include": ["vite.config.ts", "src/**/*.ts", "src/**/*.tsx"],

@@ -1,34 +1,6 @@
-import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
+import { fitImageNodeSize, fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
-
-/** Replace media without carrying the previous result's generation settings. */
-export function uploadReplacementPatch(type: CanvasNodeData["type"]): Partial<CanvasNodeMetadata> {
-    return {
-        assetId: undefined,
-        taskId: undefined,
-        ...(type === CanvasNodeType.Image ? { freeResize: false } : {}),
-        isBatchRoot: undefined,
-        batchRootId: undefined,
-        batchChildIds: undefined,
-        batchFailedCount: undefined,
-        batchUsesReferenceImages: undefined,
-        generationType: undefined,
-        generationResultPlacement: undefined,
-        copiedFromNodeId: undefined,
-        versionOfNodeId: undefined,
-        model: undefined,
-        size: undefined,
-        quality: undefined,
-        transparentBackground: undefined,
-        count: undefined,
-        references: undefined,
-        primaryImageId: undefined,
-        imageBatchExpanded: undefined,
-        richText: undefined,
-        composerContent: undefined,
-    };
-}
+import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 
 export const CANVAS_UPLOAD_ACCEPT = "image/*,video/*,audio/*,.mp3,.wav,text/plain,text/markdown,.txt,.md,.markdown";
 export function isTextUploadFile(file: Pick<File, "name" | "type">) {
@@ -47,6 +19,18 @@ export function uploadPercent(loaded: number, total: number): number | undefined
 }
 export function uploadVeilOpacity(percent = 0) {
     return 1 - Math.min(100, Math.max(0, percent)) / 100 * 0.9;
+}
+
+const UPLOAD_PREVIEW_MAX_BLUR_PX = 24;
+// 字节传完后服务端仍在保存，保留一点模糊，直到切换为正式节点才完全清晰。
+const UPLOAD_PREVIEW_SAVING_BLUR_PX = 2;
+
+/** 本地预览的磨砂程度随真实进度递减：刚上传时整张磨砂，传输完成时接近清晰。 */
+export function uploadPreviewBlur(percent?: number) {
+    const progress = Math.min(100, Math.max(0, percent ?? 0)) / 100;
+    const blur = UPLOAD_PREVIEW_SAVING_BLUR_PX + (UPLOAD_PREVIEW_MAX_BLUR_PX - UPLOAD_PREVIEW_SAVING_BLUR_PX) * (1 - progress);
+    // 模糊会让边缘透出底色，同步放大一点把虚边推出节点可视区。
+    return { blur, scale: 1 + blur / 300 };
 }
 
 export async function createFileUploadPlaceholder(id: string, file: File, position: Position) {
@@ -100,7 +84,7 @@ export async function readUploadImageSize(file: File): Promise<{ width: number; 
 }
 
 export function createImageUploadPlaceholder(id: string, file: Pick<File, "name" | "size" | "type">, position: Position, naturalSize: { width: number; height: number }): CanvasNodeData {
-    const size = fitNodeSize(naturalSize.width, naturalSize.height);
+    const size = fitImageNodeSize(naturalSize.width, naturalSize.height);
     return {
         id, type: CanvasNodeType.Image, title: file.name,
         position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },

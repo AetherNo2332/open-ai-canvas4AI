@@ -55,7 +55,7 @@ func agentMediaFixtureWithReferenceVersion(t *testing.T, version int) (*Service,
 		t.Fatal(err)
 	}
 	audio := true
-	a := cloudAgentMediaArgs{Mode: "video", Prompt: "镜头1，参考图1是英雄，参考图2是叮当猫", ChannelID: "channel", ChannelModelKey: "seedance-test", Duration: 12, Size: "9:16", VideoGenerateAudio: &audio, SnapshotHash: creationHash(doc), NodeID: "video-shot-1", Title: "镜头1视频", SourceNodeID: "shot-1", ReferenceNodeIDs: []string{"hero", "cat"}}
+	a := cloudAgentMediaArgs{Mode: "video", Prompt: "镜头1，参考图1是英雄，参考图2是叮当猫", ChannelID: "channel", ChannelModelKey: "seedance-test", Duration: 12, Size: "9:16", VideoGenerateAudio: &audio, SnapshotHash: cloudAgentCanvasHash(doc), NodeID: "video-shot-1", Title: "镜头1视频", SourceNodeID: "shot-1", ReferenceNodeIDs: []string{"hero", "cat"}}
 	return s, db, a
 }
 
@@ -302,7 +302,12 @@ func TestCloudAgentImageCreatesReferencedNode(t *testing.T) {
 	if err = json.Unmarshal([]byte(task.InputJSON), &input); err != nil {
 		t.Fatal(err)
 	}
-	if task.Operation != "image_to_image" || len(input.ReferenceImages) != 1 || input.Config.Count != "1" || input.Config.Quality != "2k" {
+	// 带分辨率档位的图片模型在 admission 时把 quality 归一为 imageResolution。
+	quality := input.Config.Quality
+	if quality == "" {
+		quality = input.Config.ImageResolution
+	}
+	if task.Operation != "image_to_image" || len(input.ReferenceImages) != 1 || input.Config.Count != "1" || quality != "2k" {
 		t.Fatal("image generation contract was lost")
 	}
 	canvas, _ := s.repo.CanvasProjectForUser("user", "agent-canvas")

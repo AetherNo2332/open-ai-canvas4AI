@@ -85,7 +85,7 @@ func (r *Repository) RecordUserActivity(userID string, event string, count int, 
 
 func (r *Repository) AnalyticsTasks(filter AnalyticsFilter) ([]model.Task, error) {
 	var tasks []model.Task
-	query := r.db.Select("id", "user_id", "type", "status", "operation", "provider", "model", "started_at", "completed_at", "created_at").Where("created_at >= ? AND created_at < ?", filter.From, filter.To)
+	query := whereTimeRange(r.db.Select("id", "user_id", "type", "status", "operation", "provider", "model", "started_at", "completed_at", "created_at"), "created_at", filter.From, filter.To)
 	if filter.UserID != "" {
 		query = query.Where("user_id = ?", filter.UserID)
 	}
@@ -106,21 +106,6 @@ func (r *Repository) AnalyticsAPICallLogs(filter AnalyticsFilter) ([]model.ApiCa
 	var logs []model.ApiCallLog
 	query := r.apiCallLogQuery(filter)
 	return logs, query.Omit("RequestBody", "ResponseBody").Find(&logs).Error
-}
-
-// whereTimeRange compares instants. SQLite stores time.Time as offset text, so a
-// lexicographic compare against a UTC bound hides records written after local
-// midnight until the UTC date rolls forward.
-func whereTimeRange(query *gorm.DB, column string, from, to time.Time) *gorm.DB {
-	switch column {
-	case "created_at", "api_call_logs.created_at":
-	default:
-		return query.Where("1 = 0")
-	}
-	if query.Dialector.Name() == "sqlite" {
-		return query.Where("unixepoch("+column+") >= ? AND unixepoch("+column+") < ?", from.Unix(), to.Unix())
-	}
-	return query.Where(column+" >= ? AND "+column+" < ?", from, to)
 }
 
 // PublicModelAvailabilityLogs returns the compact, user-facing create
@@ -207,7 +192,7 @@ func (r *Repository) filteredAPICallLogQuery(filter APICallLogFilter) *gorm.DB {
 		query = query.Where("api_call_logs.request_kind = ?", "download")
 	case "all":
 	default:
-		query = visibleAPICallLogQuery(query).Where("COALESCE(api_call_logs.request_kind, '') NOT IN ?", []string{"download", "upload", "local_save", "register"})
+		query = visibleAPICallLogQuery(query).Where("COALESCE(api_call_logs.request_kind, '') NOT IN ?", []string{"download", "upload", "local_save", "local_fallback", "offload", "register"})
 	}
 	if value := strings.TrimSpace(filter.Keyword); value != "" {
 		pattern := "%" + strings.ToLower(value) + "%"
@@ -292,6 +277,24 @@ func (r *Repository) APICallLogUsageForTask(userID, taskID string) (model.ApiCal
 	return log, true, nil
 }
 
+// LatestAPICallForTask 返回任务最近一次非轮询上游调用的失败摘要。
+func (r *Repository) LatestAPICallForTask(taskID string) (model.ApiCallLog, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return model.ApiCallLog{}, nil
+	}
+	var log model.ApiCallLog
+	err := r.db.Select("status,status_code,error_code,error").Where("task_id = ? AND request_kind <> ?", taskID, "poll").
+		Order("created_at DESC").Limit(1).Find(&log).Error
+	return log, err
+}
+
+// LatestAPICallStatusForTask 返回任务最近一次上游调用的 HTTP 状态码；
+// 任务没收到任何上游响应（例如网络错误）时返回 0。
+func (r *Repository) LatestAPICallStatusForTask(taskID string) (int, error) {
+	log, err := r.LatestAPICallForTask(taskID)
+	return log.StatusCode, err
+}
+
 func (r *Repository) HasAPICallLogForTask(taskID string) (bool, error) {
 	if strings.TrimSpace(taskID) == "" {
 		return false, nil
@@ -301,14 +304,27 @@ func (r *Repository) HasAPICallLogForTask(taskID string) (bool, error) {
 	return count > 0, err
 }
 
+// HasVisibleFailedAPICallLogForTask 判断管理端默认请求明细里是否已经有这条任务的失败记录。
+// 轮询、下载、上传和本地保存默认不出现在请求日志列表，不能据此认为用户可见的失败已经被记录。
+func (r *Repository) HasVisibleFailedAPICallLogForTask(taskID string) (bool, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return false, nil
+	}
+	var count int64
+	err := r.db.Model(&model.ApiCallLog{}).
+		Where("task_id = ? AND status = ? AND COALESCE(request_kind, '') NOT IN ?", taskID, model.ApiCallStatusFailed, []string{"poll", "download", "upload", "local_save", "local_fallback", "offload", "register"}).
+		Count(&count).Error
+	return count > 0, err
+}
+
 func visibleAPICallLogQuery(query *gorm.DB) *gorm.DB {
 	// 轮询属于一次生成调用的内部状态查询，管理端不单独展示。
 	return query.Where("api_call_logs.request_kind <> ?", "poll")
 }
 
-func (r *Repository) VideoAPICallRoot(log model.ApiCallLog) (*model.ApiCallLog, error) {
+func (r *Repository) AsyncMediaAPICallRoot(log model.ApiCallLog) (*model.ApiCallLog, error) {
 	var root model.ApiCallLog
-	query := r.db.Where("capability = ? AND request_kind = ?", "video", "create")
+	query := r.db.Where("capability = ? AND request_kind = ?", log.Capability, "create")
 	if log.TaskID != "" {
 		query = query.Where("task_id = ?", log.TaskID)
 	} else {
@@ -320,8 +336,30 @@ func (r *Repository) VideoAPICallRoot(log model.ApiCallLog) (*model.ApiCallLog, 
 	return &root, nil
 }
 
+// VideoAPICallRoot 保留旧调用面的兼容别名。
+func (r *Repository) VideoAPICallRoot(log model.ApiCallLog) (*model.ApiCallLog, error) {
+	log.Capability = "video"
+	return r.AsyncMediaAPICallRoot(log)
+}
+
+// whereTimeRange compares instants. SQLite stores time.Time as offset text, so a
+// lexicographic compare against a UTC bound hides records written after local
+// midnight until the UTC date rolls forward.
+func whereTimeRange(query *gorm.DB, column string, from, to time.Time) *gorm.DB {
+	switch column {
+	case "created_at", "api_call_logs.created_at":
+	default:
+		return query.Where("1 = 0")
+	}
+	if query.Dialector.Name() == "sqlite" {
+		epochColumn := column + "_epoch"
+		return query.Where(epochColumn+" >= ? AND "+epochColumn+" < ?", from.Unix(), to.Unix())
+	}
+	return query.Where(column+" >= ? AND "+column+" < ?", from, to)
+}
+
 func (r *Repository) apiCallLogQuery(filter AnalyticsFilter) *gorm.DB {
-	query := r.db.Where("api_call_logs.created_at >= ? AND api_call_logs.created_at < ?", filter.From, filter.To)
+	query := whereTimeRange(r.db, "api_call_logs.created_at", filter.From, filter.To)
 	if filter.UserID != "" {
 		query = query.Where("api_call_logs.user_id = ?", filter.UserID)
 	}

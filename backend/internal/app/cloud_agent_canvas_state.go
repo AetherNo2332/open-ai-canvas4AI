@@ -74,6 +74,9 @@ var (
 		"viewport": true, "updatedAt": true, "activeChatId": true, "chatSessions": true,
 		"showImageInfo": true, "starterMode": true,
 		"backgroundMode": true, "appearance": true,
+		// 行元数据：上游 operations 写入时以数据库列为准投影进正文（id/title/projectId/createdAt），
+		// 并去掉 revision/remoteContentHash。它们不是 Agent 可写内容，不能让投影本身变成"并发修改"。
+		"id": true, "title": true, "projectId": true, "createdAt": true, "revision": true, "remoteContentHash": true,
 	}
 	// Node fields stamped by the client on save, not authored by the Agent.
 	cloudAgentCanvasUINodeKeys = map[string]bool{"createdAt": true, "updatedAt": true}
@@ -95,6 +98,10 @@ func cloudAgentCanvasContent(doc map[string]any) map[string]any {
 			continue
 		}
 		content[key] = value
+	}
+	// 上游 operations 写回总会带上 connections；缺省与空列表是同一份内容。
+	if content["connections"] == nil {
+		content["connections"] = []any{}
 	}
 	nodes := creationMaps(doc["nodes"])
 	if len(nodes) == 0 {

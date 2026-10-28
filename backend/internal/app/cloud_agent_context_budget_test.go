@@ -143,23 +143,6 @@ func TestCloudAgentRouteIntersectionBudgetUsesPerRouteInputCapacity(t *testing.T
 	}
 }
 
-// TestCloudAgentRouteIntersectionBudgetSkipsUnknownWindows 保持既有规则：
-// 未声明窗口的路由不参与，也不能把预算放大。
-func TestCloudAgentRouteIntersectionBudgetSkipsUnknownWindows(t *testing.T) {
-	routes := []cachedLogicalRoute{
-		textRouteWithWindow(t, 0, 0),
-		textRouteWithWindow(t, 200_000, 20_000),
-	}
-	budget, ok := cloudAgentRouteIntersectionBudget(routes)
-	if !ok {
-		t.Fatal("the declared route must still produce a budget")
-	}
-	want := 200_000 - 20_000 - 8_000 // overhead(200k) = 200000/25
-	if budget.InputBudgetTokens != want {
-		t.Fatalf("input budget = %d, want %d from the only declared route", budget.InputBudgetTokens, want)
-	}
-}
-
 // TestCloudAgentRouteIntersectionBudgetOrderIndependent：结果不得依赖路由缓存顺序。
 func TestCloudAgentRouteIntersectionBudgetOrderIndependent(t *testing.T) {
 	forward := []cachedLogicalRoute{
@@ -174,21 +157,5 @@ func TestCloudAgentRouteIntersectionBudgetOrderIndependent(t *testing.T) {
 	}
 	if first != second {
 		t.Fatalf("route order changed the budget: %+v vs %+v", first, second)
-	}
-}
-
-// TestCloudAgentRouteIntersectionBudgetWithoutTextRouteFailsClosed：没有可用 text
-// 路由就是"未知"，调用方必须退回字节/条数兜底，而不是拿默认窗口冒充真实能力。
-func TestCloudAgentRouteIntersectionBudgetWithoutTextRouteFailsClosed(t *testing.T) {
-	if _, ok := cloudAgentRouteIntersectionBudget(nil); ok {
-		t.Fatal("no routes must not produce a budget")
-	}
-	imageOnly := cachedLogicalRoute{CapabilitySpec: CapabilitySpec{Version: 1, Capability: "image"}}
-	if _, ok := cloudAgentRouteIntersectionBudget([]cachedLogicalRoute{imageOnly}); ok {
-		t.Fatal("a non-text route must not produce a text budget")
-	}
-	undeclared := []cachedLogicalRoute{textRouteWithWindow(t, 0, 0)}
-	if _, ok := cloudAgentRouteIntersectionBudget(undeclared); ok {
-		t.Fatal("all-unknown windows must not produce a budget")
 	}
 }

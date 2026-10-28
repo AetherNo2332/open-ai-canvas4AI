@@ -85,12 +85,13 @@ import { AgentSubagentConversation } from "./canvas-agent-subagent-conversation"
 import { CanvasCloudAgentSettings, agentPermissionLabel, agentPermissionMenuItems, agentPermissionVisual, type AgentContextKey } from "./canvas-cloud-agent-settings";
 import { useAgentPanelLayout } from "./use-agent-panel-layout";
 import { AgentWelcome } from "./canvas-agent-welcome";
-import { DEFAULT_CANVAS_APPEARANCE, agentCopy } from "@/lib/canvas/agent-appearance";
-import { appearanceAssetURL, live2DModelURL } from "@/services/api/appearance";
+import { DEFAULT_CANVAS_APPEARANCE, agentAvatarClipForState, agentAvatarStateForRunStatus, agentCopy, isAgentAvatarBundleManifest, type AgentAvatarBundleManifest } from "@/lib/canvas/agent-appearance";
+import { agentAvatarBundleFileURL, live2DModelURL } from "@/services/api/appearance";
+import { AgentAvatarVideo } from "./agent-avatar-video";
 import { Live2DAvatar } from "./live2d-avatar";
 import { createPortal } from "react-dom";
 import "./canvas-cloud-agent.css";
-import { createUuid } from "@/lib/client-id";
+import { createClientUUID } from "@/lib/client-id";
 import { getAgentSubagentPolicy, listAgentSubagents, updateAgentSubagentPolicy, type AgentSubagentPolicy, type AgentSubagent } from "@/services/api/agent-subagent";
 import { useAgentMessageQueue } from "./use-agent-message-queue";
 import { AgentMessageQueueList } from "./canvas-agent-message-queue";
@@ -917,7 +918,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
                 const conversationMessage = run ? { conversationId: run.conversationId || run.id, mode, expectedRunId: run.id, ...(mode === "interject" && replyToQuestionId ? { replyToQuestionId } : {}) } : undefined;
                 const fingerprint = JSON.stringify({ scope, parent: run?.id, input, conversationMessage });
                 if (pending && pending.fingerprint !== fingerprint) throw new Error("上一条请求尚未确认，请恢复原消息与设置后核对，不能覆盖原幂等记录");
-                const key = pending?.key || createUuid();
+                const key = pending?.key || createClientUUID();
                 const next = { fingerprint, key, request: { ...input, idempotencyKey: key }, parentRunId: run?.id, messageId: `user-${key}`, ...(options.preserveDraft ? { composerDraft: prompt } : {}), ...(conversationMessage ? { conversationMessage } : {}) };
                 // Persist before sending. A failed local save must not submit a request
                 // whose recovery identity will disappear on reload.
@@ -1185,7 +1186,7 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
 
     const panel = (
         <>
-            {!open && launcher ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} onOpen={onOpen} /> : null}
+            {!open && launcher ? <AgentLauncher theme={theme} statusColor={statusColor} approvalPending={Boolean(approval)} reducedMotion={Boolean(reducedMotion)} status={status} onOpen={onOpen} /> : null}
             <div className="relative flex min-h-0 shrink-0" style={{ width: open && !floating ? panelLayout.width : 0, flexBasis: open && !floating ? panelLayout.width : 0 }}>
                     <motion.aside
                         ref={panelRef}
@@ -1477,25 +1478,59 @@ export function CanvasCloudAgentPanel({ canvasId, nodeCount, selectedNodeIds, re
     return floating ? createPortal(scopedPanel, document.body) : scopedPanel;
 }
 
-function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onOpen }: { theme: CanvasTheme; statusColor: string; approvalPending: boolean; reducedMotion: boolean; onOpen: () => void }) {
+function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, status, onOpen }: { theme: CanvasTheme; statusColor: string; approvalPending: boolean; reducedMotion: boolean; status: string; onOpen: () => void }) {
     const appearance = useAppearanceStore((state) => state.appearance.canvas) || DEFAULT_CANVAS_APPEARANCE;
+    const appearanceResolved = useAppearanceStore((state) => state.resolved);
     const appearanceRevision = useAppearanceStore((state) => state.appearance.revision);
     const live = appearance.avatarType === "live2d" && Boolean(appearance.live2dResourceId && appearance.live2dEntry);
-    const png = appearance.avatarType === "png" && Boolean(appearance.avatarResourceId);
+    // 动画包形象（avatar.json + 各状态 MP4）由后台「站点外观」配置，按 Agent 运行状态切换片段。
+    const avatarState = agentAvatarStateForRunStatus(status);
+    const bundleManifestURL = appearance.avatarBundleResourceId ? agentAvatarBundleFileURL(appearance.avatarBundleResourceId, "avatar.json", false, appearanceRevision) : "/doll/avatar.json";
+    const [bundleManifestState, setBundleManifestState] = useState<{ url: string; manifest: AgentAvatarBundleManifest | null } | null>(null);
+    useEffect(() => {
+        if (appearance.avatarType !== "bundle") {
+            setBundleManifestState(null);
+            return;
+        }
+        const controller = new AbortController();
+        void (async () => {
+            try {
+                const response = await fetch(bundleManifestURL, { credentials: "include", signal: controller.signal });
+                if (!response.ok) throw new Error(`无法读取 Agent 动画包（HTTP ${response.status}）`);
+                const manifest: unknown = await response.json();
+                if (!isAgentAvatarBundleManifest(manifest)) throw new Error("avatar.json 格式无效");
+                setBundleManifestState({ url: bundleManifestURL, manifest });
+            } catch {
+                if (!controller.signal.aborted) setBundleManifestState({ url: bundleManifestURL, manifest: null });
+            }
+        })();
+        return () => controller.abort();
+    }, [appearance.avatarType, bundleManifestURL]);
+    const currentBundleManifestState = bundleManifestState?.url === bundleManifestURL ? bundleManifestState : null;
+    const bundleManifest = currentBundleManifestState?.manifest ?? null;
+    const bundleManifestLoading = appearance.avatarType === "bundle" && currentBundleManifestState === null;
+    const clip = bundleManifest ? agentAvatarClipForState(appearance, avatarState, bundleManifest) : "";
+    const clipFile = bundleManifest?.clips[clip] || "";
+    const mediaURL = appearance.avatarType === "bundle" && clipFile ? (appearance.avatarBundleResourceId ? agentAvatarBundleFileURL(appearance.avatarBundleResourceId, clipFile, false, appearanceRevision) : `/doll/${encodeURIComponent(clipFile)}`) : "";
+    const [mediaError, setMediaError] = useState(false);
+    useEffect(() => setMediaError(false), [mediaURL]);
     const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
     useEffect(() => {
         const resize = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
         window.addEventListener("resize", resize);
         return () => window.removeEventListener("resize", resize);
     }, []);
-    const height = live || png ? Math.max(40, Math.min(appearance.avatarHeight, viewport.height - 60, (viewport.width - 40) / 0.75)) : 64;
-    const width = live || png ? Math.round(height * 0.75) : 64;
+    const media = Boolean(mediaURL && !mediaError);
+    const aspectRatio = live ? 0.75 : bundleManifest ? bundleManifest.width / bundleManifest.height : appearance.avatarType === "bundle" ? 480 / 432 : 1;
+    const largeAvatar = live || media || bundleManifestLoading;
+    const height = largeAvatar ? Math.max(40, Math.min(appearance.avatarHeight, viewport.height - 60, (viewport.width - 40) / aspectRatio)) : 64;
+    const width = largeAvatar ? Math.round(height * aspectRatio) : 64;
     return (
         <motion.button
             type="button"
             aria-label={`打开${appearance.agentName}`}
             title={approvalPending ? "Agent 等待你的审批" : "打开 Agent 助手"}
-            className={cn("canvas-agent-launcher fixed z-[var(--z-panel-floating)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/35", (live || png) && "canvas-agent-launcher-live2d")}
+            className={cn("canvas-agent-launcher fixed z-[var(--z-panel-floating)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current/35", live && "canvas-agent-launcher-live2d", media && "canvas-agent-launcher-media")}
             style={{ right: "var(--canvas-inset-x)", bottom: "var(--canvas-inset-y)", width, height, color: theme.node.text, "--canvas-agent-launcher-shadow": theme.spatial.shadow } as CSSProperties}
             data-canvas-no-zoom
             onClick={onOpen}
@@ -1503,10 +1538,15 @@ function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onO
             whileTap={reducedMotion ? undefined : { scale: 0.96 }}
             transition={{ duration: reducedMotion ? 0 : 0.18 }}
         >
-            {png ? (
-                <AgentPNGAvatar url={appearance.avatarResourceId.startsWith("/") ? appearance.avatarResourceId : appearanceAssetURL("agent-avatar", appearanceRevision)} width={width} height={height} fallback={<FluidOrb size={60} color="#7164f6" />} />
-            ) : live ? (
+            {live ? (
                 <Live2DAvatar url={live2DModelURL(appearance.live2dResourceId, appearance.live2dEntry)} width={width} height={height} reducedMotion={reducedMotion} fallback={<FluidOrb size={60} color="#7164f6" />} />
+            ) : media ? (
+                <AgentAvatarVideo src={mediaURL} loop={!["completed", "failed", "cancelled", "rejected"].includes(avatarState)} onError={() => setMediaError(true)} />
+            ) : bundleManifestLoading || !appearanceResolved ? (
+                <span role="status" aria-busy="true">
+                    <LoaderCircle className={reducedMotion ? "size-6" : "size-6 motion-safe:animate-spin"} aria-hidden="true" />
+                    <span className="sr-only">正在加载助手形象</span>
+                </span>
             ) : (
                 <FluidOrb size={60} color="#7164f6" />
             )}
@@ -1516,14 +1556,6 @@ function AgentLauncher({ theme, statusColor, approvalPending, reducedMotion, onO
         </motion.button>
     );
 }
-
-function AgentPNGAvatar({ url, width, height, fallback }: { url: string; width: number; height: number; fallback: ReactNode }) {
-    const [failed, setFailed] = useState(false);
-    useEffect(() => setFailed(false), [url]);
-    if (failed) return <>{fallback}</>;
-    return <img src={url} alt="" aria-hidden="true" draggable={false} width={width} height={height} className="pointer-events-none size-full object-contain" onError={() => setFailed(true)} />;
-}
-
 export function AgentHeader({
     theme,
     hasMessages,

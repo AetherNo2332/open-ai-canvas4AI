@@ -182,7 +182,7 @@ func rollbackDirectorWorkflowDraft(repo *repository.Repository, userID string, s
 		return err
 	}
 	doc, err := creationDocument(canvas.PayloadJSON)
-	if err != nil || creationHash(doc) != mutation.AfterSnapshotHash {
+	if err != nil || cloudAgentCanvasHash(doc) != mutation.AfterSnapshotHash {
 		return nil
 	}
 	before, err := creationDocument(mutation.BeforeJSON)

@@ -1,319 +1,148 @@
 package repository
 
 import (
-	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
 	"yingce/backend/internal/model"
 )
 
-const CanvasEditLeaseTTL = 30 * time.Second
-const CanvasEditProofHeader = "X-Canvas-Edit-Proofs"
+var ErrCanvasEditLease = errors.New("节点正在其他窗口编辑，或编辑权限已过期；本地草稿已保留")
 
-var ErrCanvasNodeLocked = errors.New("canvas node author fields are leased")
-var ErrCanvasEditProofInvalid = errors.New("canvas edit proof is invalid or expired")
-
-type CanvasEditLeaseError struct {
-	Reason   string
-	CanvasID string
-	NodeID   string
+func (r *Repository) WithCanvasEditProofs(proofs []model.CanvasEditProof) *Repository {
+	copy := *r
+	copy.canvasEditProofs = proofs
+	return &copy
 }
 
-func (e *CanvasEditLeaseError) Error() string { return e.Reason + ": " + e.CanvasID + "/" + e.NodeID }
-func (e *CanvasEditLeaseError) Unwrap() error {
-	if e.Reason == "node_locked" {
-		return ErrCanvasNodeLocked
-	}
-	return ErrCanvasEditProofInvalid
+func (r *Repository) CanvasEditLeases(userID, canvasID string, now time.Time) ([]model.CanvasEditLease, error) {
+	leases := []model.CanvasEditLease{}
+	err := r.db.Where("user_id = ? AND canvas_id = ? AND expires_at > ?", userID, canvasID, now).Find(&leases).Error
+	return leases, err
 }
 
-type CanvasEditProof struct {
-	CanvasID  string `json:"canvasId"`
-	NodeID    string `json:"nodeId"`
-	SessionID string `json:"sessionId"`
-	Token     string `json:"token"`
-}
-type CanvasEditLeaseGrant struct {
-	CanvasEditProof
-	ExpiresAt time.Time `json:"expiresAt"`
-}
-type canvasEditProofContextKey struct{}
-
-// WithCanvasEditProofs is request scoped; GORM transaction/savepoint contexts
-// and Repository copies preserve it without mutable service-level state.
-func WithCanvasEditProofs(ctx context.Context, proofs []CanvasEditProof) context.Context {
-	return context.WithValue(ctx, canvasEditProofContextKey{}, append([]CanvasEditProof(nil), proofs...))
-}
-func validLeaseID(s string) bool {
-	return len(s) > 0 && len(s) <= 128 && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "\x00\r\n")
-}
-func validLeaseToken(s string) bool {
-	if len(s) < 32 || len(s) > 128 {
-		return false
-	}
-	for _, c := range s {
-		if c < 33 || c > 126 {
-			return false
+// Call inside a transaction after locking the parent canvas, including renew/release.
+func (r *Repository) ChangeCanvasEditLease(userID, canvasID string, proof model.CanvasEditProof, action, newToken string, now time.Time) (lease *model.CanvasEditLease, resultErr error) {
+	defer func() {
+		if resultErr == nil {
+			r.canvasChanged(userID, canvasID)
 		}
-	}
-	return true
-}
-func ValidateCanvasEditProofs(proofs []CanvasEditProof) error {
-	if len(proofs) > 128 {
-		return fmt.Errorf("too many canvas edit proofs")
-	}
-	seen := map[string]bool{}
-	for _, p := range proofs {
-		key := p.CanvasID + "\x00" + p.NodeID
-		if !validLeaseID(p.CanvasID) || !validLeaseID(p.NodeID) || !validLeaseID(p.SessionID) || !validLeaseToken(p.Token) || seen[key] {
-			return fmt.Errorf("invalid canvas edit proof")
-		}
-		seen[key] = true
-	}
-	return nil
-}
-func leaseFailure(reason, canvas, node string) error {
-	return &CanvasEditLeaseError{Reason: reason, CanvasID: canvas, NodeID: node}
-}
-func matchingLease(row model.CanvasNodeEditLease, p CanvasEditProof) bool {
-	return row.CanvasID == p.CanvasID && row.NodeID == p.NodeID && row.SessionID == p.SessionID && subtle.ConstantTimeCompare([]byte(row.Token), []byte(p.Token)) == 1
-}
-func leaseGrant(row model.CanvasNodeEditLease) CanvasEditLeaseGrant {
-	return CanvasEditLeaseGrant{CanvasEditProof: CanvasEditProof{CanvasID: row.CanvasID, NodeID: row.NodeID, SessionID: row.SessionID, Token: row.Token}, ExpiresAt: row.ExpiresAt}
-}
-func (r *Repository) mutateCanvasEditLease(ownerID, canvasID string, proof CanvasEditProof, action string) (CanvasEditLeaseGrant, error) {
-	if proof.CanvasID != "" && proof.CanvasID != canvasID {
-		return CanvasEditLeaseGrant{}, leaseFailure("edit_proof_invalid", canvasID, proof.NodeID)
-	}
-	proof.CanvasID = canvasID
-	if err := ValidateCanvasEditProofs([]CanvasEditProof{proof}); err != nil {
-		return CanvasEditLeaseGrant{}, err
-	}
-	var out CanvasEditLeaseGrant
-	err := r.db.Transaction(func(db *gorm.DB) error {
-		tx := r.transactionRepository(db)
-		if err := tx.LockCanvasWrite(ownerID, canvasID); err != nil {
-			return err
-		}
-		canvas, err := tx.CanvasProjectForUser(ownerID, canvasID)
-		if err != nil {
-			return err
-		}
-		if action != "release" {
-			if _, err := tx.LiveCanvasEpoch(ownerID, canvasID); err != nil {
-				return err
-			}
-			nodes, err := canvasLeaseNodes(canvas.PayloadJSON)
-			if err != nil {
-				return err
-			}
-			if nodes[proof.NodeID] == nil {
-				return gorm.ErrRecordNotFound
-			}
-		}
-		var row model.CanvasNodeEditLease
-		err = db.Where("owner_id = ? AND canvas_id = ? AND node_id = ?", ownerID, canvasID, proof.NodeID).First(&row).Error
-		exists := err == nil
-		if err != nil && !tx.IsMissing(err) {
-			return err
-		}
-		now := time.Now().UTC()
-		active := exists && row.ExpiresAt.After(now)
-		switch action {
-		case "acquire":
-			if active && !matchingLease(row, proof) {
-				if row.SessionID == proof.SessionID {
-					return leaseFailure("edit_proof_invalid", canvasID, proof.NodeID)
-				}
-				return leaseFailure("node_locked", canvasID, proof.NodeID)
-			}
-			row = model.CanvasNodeEditLease{OwnerID: ownerID, CanvasID: canvasID, NodeID: proof.NodeID, SessionID: proof.SessionID, Token: proof.Token, ExpiresAt: now.Add(CanvasEditLeaseTTL)}
-			if err := db.Save(&row).Error; err != nil {
-				return err
-			}
-			out = leaseGrant(row)
-		case "renew", "release":
-			if !active || !matchingLease(row, proof) {
-				return leaseFailure("edit_proof_invalid", canvasID, proof.NodeID)
-			}
-			if action == "release" {
-				return db.Delete(&row).Error
-			}
-			row.ExpiresAt = now.Add(CanvasEditLeaseTTL)
-			if err := db.Save(&row).Error; err != nil {
-				return err
-			}
-			out = leaseGrant(row)
-		}
-		return nil
-	})
-	return out, err
-}
-func (r *Repository) AcquireCanvasEditLease(ownerID, canvasID string, proof CanvasEditProof) (CanvasEditLeaseGrant, error) {
-	return r.mutateCanvasEditLease(ownerID, canvasID, proof, "acquire")
-}
-func (r *Repository) RenewCanvasEditLease(ownerID, canvasID string, proof CanvasEditProof) (CanvasEditLeaseGrant, error) {
-	return r.mutateCanvasEditLease(ownerID, canvasID, proof, "renew")
-}
-func (r *Repository) ReleaseCanvasEditLease(ownerID, canvasID string, proof CanvasEditProof) error {
-	_, err := r.mutateCanvasEditLease(ownerID, canvasID, proof, "release")
-	return err
-}
-func (r *Repository) ActiveCanvasEditLeases(ownerID, canvasID string) ([]model.CanvasNodeEditLease, error) {
-	rows := []model.CanvasNodeEditLease{}
-	now := time.Now().UTC()
-	query := r.db.Select("canvas_id", "node_id", "session_id", "expires_at").Where("owner_id = ? AND canvas_id = ?", ownerID, canvasID)
-	// SQLite compares offset-bearing time strings lexically. Scoped Go filtering
-	// also handles the short-lived non-UTC rows written before normalization.
-	if r.Dialect() != "sqlite" {
-		query = query.Where("expires_at > ?", now)
-	}
-	if err := query.Order("node_id").Find(&rows).Error; err != nil {
+	}()
+	var current model.CanvasEditLease
+	err := r.db.First(&current, "user_id = ? AND canvas_id = ? AND node_id = ?", userID, canvasID, proof.NodeID).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	active := make([]model.CanvasNodeEditLease, 0, len(rows))
-	for _, row := range rows {
-		if row.ExpiresAt.After(now) {
-			row.ExpiresAt = row.ExpiresAt.UTC()
-			active = append(active, row)
+	active := err == nil && current.ExpiresAt.After(now)
+	matches := active && current.SessionID == proof.SessionID && current.Token == proof.Token
+	if action == "release" {
+		if !matches {
+			return nil, ErrCanvasEditLease
 		}
+		return nil, r.db.Delete(&current).Error
 	}
-	return active, nil
+	if action == "renew" && !matches {
+		return nil, ErrCanvasEditLease
+	}
+	if action == "acquire" && active && !matches {
+		return nil, ErrCanvasEditLease
+	}
+	if !active {
+		current = model.CanvasEditLease{UserID: userID, CanvasID: canvasID, NodeID: proof.NodeID, SessionID: proof.SessionID, Token: newToken}
+	}
+	current.ExpiresAt = now.Add(30 * time.Second)
+	return &current, r.db.Save(&current).Error
 }
 
-// Only explicit summary columns are read; StateJSON/transcripts are not needed
-// for synchronization and multiple concurrent Agent runs remain independent.
-func (r *Repository) CanvasActiveAgentSummaries(ownerID, canvasID string) ([]model.CloudAgentExecution, error) {
-	rows := []model.CloudAgentExecution{}
-	err := r.db.Select("id", "conversation_id", "title", "status", "updated_at").Where("user_id = ? AND canvas_id = ? AND status IN ?", ownerID, canvasID, []string{"queued", "running", "waiting_approval", "waiting_member"}).Order("updated_at DESC, id").Find(&rows).Error
-	return rows, err
-}
-func canvasLeaseNodes(payload string) (map[string]map[string]any, error) {
-	var doc map[string]any
-	if err := json.Unmarshal([]byte(payload), &doc); err != nil {
-		return nil, err
+// Authorization is checked in the same transaction as the revision CAS. Comparing
+// authored fields permits result/progress writes without granting text ownership.
+func (r *Repository) checkCanvasEditLeases(before *model.CanvasProject, after *model.CanvasProject) error {
+	leases, err := r.CanvasEditLeases(before.UserID, before.ID, time.Now().UTC())
+	if err != nil {
+		return err
 	}
-	if doc == nil {
-		return nil, fmt.Errorf("canvas document is null")
+	oldNodes, err := canvasLeaseNodes(before.PayloadJSON)
+	if err != nil {
+		return err
 	}
-	out := map[string]map[string]any{}
-	if doc["_deleted"] == true {
-		return out, nil
-	}
-	nodes, _ := doc["nodes"].([]any)
-	for _, raw := range nodes {
-		if n, ok := raw.(map[string]any); ok {
-			if id, ok := n["id"].(string); ok {
-				out[id] = n
-			}
-		}
-	}
-	return out, nil
-}
-func canvasAuthorFields(node map[string]any) map[string]any {
-	if node == nil {
-		return nil
-	}
-	out := map[string]any{"exists": true}
-	copyField := func(source map[string]any, name, path string) {
-		if value, exists := source[name]; exists {
-			out[path] = value
-		}
-	}
-	copyField(node, "title", "title")
-	metadata, _ := node["metadata"].(map[string]any)
-	for _, key := range []string{"prompt", "composerContent"} {
-		copyField(metadata, key, "metadata."+key)
-	}
-	spec, _ := metadata["generationSpec"].(map[string]any)
-	copyField(spec, "prompt", "metadata.generationSpec.prompt")
-	switch node["type"] {
-	case "image", "video", "audio":
-	default:
-		for _, key := range []string{"content", "richText"} {
-			copyField(metadata, key, "metadata."+key)
-		}
-	}
-	return out
-}
-
-// checkCanvasAuthorLeases runs only after the account/canvas lock and compares
-// actual persisted author data, regardless of caller (task, Agent or HTTP).
-func (r *Repository) checkCanvasAuthorLeases(before, after *model.CanvasProject) error {
-	identity := before
-	if identity == nil {
-		identity = after
-	}
-	if identity == nil {
-		return nil
-	}
-	prior := map[string]map[string]any{}
-	var err error
-	if before != nil {
-		prior, err = canvasLeaseNodes(before.PayloadJSON)
-		if err != nil {
-			return err
-		}
-	}
-	next := map[string]map[string]any{}
+	newNodes := map[string]map[string]any{}
 	if after != nil {
-		next, err = canvasLeaseNodes(after.PayloadJSON)
+		newNodes, err = canvasLeaseNodes(after.PayloadJSON)
 		if err != nil {
 			return err
 		}
 	}
-	proofs, _ := r.db.Statement.Context.Value(canvasEditProofContextKey{}).([]CanvasEditProof)
-	if err := ValidateCanvasEditProofs(proofs); err != nil {
-		return err
+	byNode := map[string]model.CanvasEditLease{}
+	for _, lease := range leases {
+		byNode[lease.NodeID] = lease
 	}
-	changed := []string{}
-	ids := map[string]bool{}
-	for id := range prior {
-		ids[id] = true
-	}
-	for id := range next {
-		ids[id] = true
-	}
-	for id := range ids {
-		node := prior[id]
-		if !reflect.DeepEqual(canvasAuthorFields(node), canvasAuthorFields(next[id])) {
-			changed = append(changed, id)
+	for _, proof := range r.canvasEditProofs {
+		if !canvasLeaseTextChanged(oldNodes[proof.NodeID], newNodes[proof.NodeID]) {
+			continue
+		}
+		lease, exists := byNode[proof.NodeID]
+		if !exists || lease.Token != proof.Token || lease.SessionID != proof.SessionID {
+			return ErrCanvasEditLease
 		}
 	}
-	if len(changed) == 0 {
-		return nil
-	}
-	rows := []model.CanvasNodeEditLease{}
-	if err := r.db.Where("owner_id = ? AND canvas_id = ? AND node_id IN ?", identity.UserID, identity.ID, changed).Find(&rows).Error; err != nil {
-		return err
-	}
-	leases := map[string]model.CanvasNodeEditLease{}
-	for _, row := range rows {
-		leases[row.NodeID] = row
-	}
-	for _, id := range changed {
-		row, exists := leases[id]
-		var proof *CanvasEditProof
-		for i := range proofs {
-			if proofs[i].CanvasID == identity.ID && proofs[i].NodeID == id {
-				proof = &proofs[i]
+	for _, lease := range leases {
+		if after != nil && !canvasLeaseTextChanged(oldNodes[lease.NodeID], newNodes[lease.NodeID]) {
+			continue
+		}
+		matched := false
+		for _, proof := range r.canvasEditProofs {
+			if proof.NodeID == lease.NodeID && proof.SessionID == lease.SessionID && proof.Token == lease.Token {
+				matched = true
 				break
 			}
 		}
-		active := exists && row.ExpiresAt.After(time.Now().UTC())
-		if proof != nil && (!active || !matchingLease(row, *proof)) {
-			return leaseFailure("edit_proof_invalid", identity.ID, id)
-		}
-		if active && proof == nil {
-			return leaseFailure("node_locked", identity.ID, id)
+		if !matched {
+			return ErrCanvasEditLease
 		}
 	}
 	return nil
+}
+
+func canvasLeaseNodes(raw string) (map[string]map[string]any, error) {
+	var document struct {
+		Nodes []map[string]any `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return nil, err
+	}
+	nodes := map[string]map[string]any{}
+	for _, node := range document.Nodes {
+		if id, ok := node["id"].(string); ok {
+			nodes[id] = node
+		}
+	}
+	return nodes, nil
+}
+
+func canvasLeaseTextChanged(before, after map[string]any) bool {
+	if before == nil || after == nil {
+		return !reflect.DeepEqual(before, after)
+	}
+	if !reflect.DeepEqual(before["title"], after["title"]) {
+		return true
+	}
+	b, _ := before["metadata"].(map[string]any)
+	a, _ := after["metadata"].(map[string]any)
+	for _, field := range []string{"content", "richText", "prompt", "composerContent"} {
+		if (field == "content" || field == "richText") && before["type"] != "text" && before["type"] != "markdown" && before["type"] != "script" {
+			continue
+		}
+		if !reflect.DeepEqual(b[field], a[field]) {
+			return true
+		}
+	}
+	bs, _ := b["generationSpec"].(map[string]any)
+	as, _ := a["generationSpec"].(map[string]any)
+	if !reflect.DeepEqual(bs["prompt"], as["prompt"]) {
+		return true
+	}
+	return false
 }

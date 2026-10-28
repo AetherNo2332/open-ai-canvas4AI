@@ -108,7 +108,7 @@ export function CanvasProjectAssetModal({
                         if (external) return externalAssetToInsertPayload(external);
                         const item = items.find((candidate) => candidate.id === id);
                         if (!item) throw new Error("所选资产已不存在，请重新选择");
-                        if (item.media || item.character || !item.project) return toInsertPayload(item);
+                        if (!item.project?.visual && (item.media || item.character || !item.project)) return toInsertPayload(item);
                         const { asset } = await getRemoteAsset(item.project.id);
                         return toInsertPayload({ ...item, media: asset });
                     }),
@@ -131,7 +131,6 @@ export function toInsertPayload(item: ProjectPickerItem): InsertAssetPayload {
     }
     const asset = item.media;
     const project = item.project;
-    // 项目资产带服务端 storageKey 时以项目记录为准；本地素材只在指向同一对象时补充尺寸等元数据。
     if (project && (!asset || project.storageKey)) {
         const resourceId = resourceIdFromStorageKey(project.storageKey);
         const remoteUrl = resourceId ? resourceFileUrl(resourceId) : "";

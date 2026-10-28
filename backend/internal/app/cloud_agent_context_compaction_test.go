@@ -131,42 +131,6 @@ func TestCloudAgentCompactionRequestsWhenTokenLineReached(t *testing.T) {
 	}
 }
 
-// 没有配模型上下文窗口时退回字节/条数兜底判据，且兜底判据同样必须"暂停而不是判死"。
-func TestCloudAgentCompactionFallsBackToBytesWithoutModelWindow(t *testing.T) {
-	s, db, run, state, _ := smallWindowCompactionFixture(t)
-	profile := DefaultModelCapabilityConfigForModel(string(model.ChannelInterfaceChatCompletion), "text-test")
-	profile.Text.ContextWindowTokens, profile.Text.MaxOutputTokens = 0, 0
-	if err := db.Model(&model.ChannelModel{}).Where("id = ?", "cm").Update("capability_config_json", mustEncodeModelCapabilityConfig(t, profile)).Error; err != nil {
-		t.Fatal(err)
-	}
-	budget := s.cloudAgentContextBudgetForRequest(state.Request)
-	if budget.Source != "default" {
-		t.Fatalf("unknown model window must use the bytes fallback: %+v", budget)
-	}
-	for index := len(state.Canonical.Messages); index < cloudAgentHistoryKeepRounds*2; index++ {
-		state.Canonical.Messages = append(state.Canonical.Messages, map[string]any{"role": "user", "content": "继续推进分镜"})
-	}
-	if !cloudAgentContextShouldCompact(len(state.Canonical.Messages), len([]byte(cloudAgentJSON(state.Canonical.Messages)))) {
-		t.Fatal("message-count threshold did not request semantic compaction")
-	}
-	// The Pi hook owns initiation. Unknown windows stay unknown in its snapshot;
-	// the Go endpoint nevertheless provides the original structured compactor.
-	revision, leaf := seedPiCompactionMessages(t, db, run, state.Canonical.Messages)
-	operation, err := s.PiBeginContextCompaction("user", run.ID, run.LeaseOwner,
-		PiContextCompactionStart{SessionRevision: revision, ActiveLeafID: leaf, Reason: "threshold"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	final, persisted := decodeCloudAgentCompactionState(t, s, run.ID)
-	if final.Status != "running" || persisted.ContextCompaction == nil || operation.TaskID == "" {
-		t.Fatalf("bytes-triggered Pi compaction did not keep the run active: status=%s operation=%+v", final.Status, operation)
-	}
-	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
-	if err != nil || snapshot.ModelLimits.Configured {
-		t.Fatalf("unknown window was replaced with a fake model limit: snapshot=%+v err=%v", snapshot, err)
-	}
-}
-
 // 压缩结果合法时：历史被换成「检查点 + 回执 + 最近 2 对」，并 Resume 继续本轮的步进。
 func TestCloudAgentCompactionResumesStepLoopWithCheckpoint(t *testing.T) {
 	s, db, run, state, _ := smallWindowCompactionFixture(t)

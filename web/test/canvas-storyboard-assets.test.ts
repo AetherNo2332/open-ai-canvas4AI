@@ -1,8 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { buildStoryboardAssetCatalog, storyboardAssetRoleForNode } from "@/lib/canvas/canvas-storyboard-assets";
-import { storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
-import { withStoryboardOutputDraft } from "@/lib/canvas/canvas-reference-edits";
+import { buildStoryboardAssetCatalog } from "@/lib/canvas/canvas-storyboard-assets";
+import { reconcileStoryboardTargetConnections, replaceStoryboardRowAssets, storyboardComposerContent, storyboardRowReferenceNodeIds } from "@/lib/canvas/canvas-storyboard-materializer";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type StoryboardRow } from "@/types/canvas";
 
 const node = (id: string, type: CanvasNodeType, metadata: CanvasNodeData["metadata"] = {}): CanvasNodeData => ({
@@ -44,11 +43,6 @@ const row: StoryboardRow = {
 };
 
 describe("storyboard asset catalog", () => {
-    it("includes character cards before version synchronization", () => {
-        const card = node("card", CanvasNodeType.Text, { workflowKind: "character", characterAssetId: "asset-1" });
-        expect(buildStoryboardAssetCatalog([card])).toEqual([expect.objectContaining({ id: "card", type: "character" })]);
-        expect(storyboardAssetRoleForNode(card)).toBe("character");
-    });
     it("sends reusable image, video, audio and character assets but excludes generated shots", () => {
         const assets = buildStoryboardAssetCatalog([
             node("image", CanvasNodeType.Image, { content: "data:image/png;base64,x", assetCategory: "environment" }),
@@ -84,17 +78,95 @@ describe("storyboard target materializer", () => {
 
     it("combines stable bindings and produces position mention tokens", () => {
         const references = storyboardRowReferenceNodeIds(script, row, nodes, connections, true);
-        expect(references).toEqual(["first-frame", "prop", "character", "project-style"]);
-        // 角色卡与普通图片共享图片编号：角色是第 3 个媒体输入，因此标记为 @角色3。
-        expect(storyboardComposerContent("快速跟拍", references, nodes)).toBe("参考资产：@图片1 @图片2 @角色3 @图片4\n快速跟拍");
+        expect(references).toEqual(["project-style", "prop", "character", "manual", "first-frame"]);
+        expect(storyboardComposerContent("快速跟拍", references, nodes)).toBe("参考资产：@图片1 @图片2 @角色3 @视频1 @图片4\n快速跟拍");
 
         const withDirectManualInput = storyboardRowReferenceNodeIds(script, row, nodes, [...connections, { id: "direct", fromNodeId: "direct-manual", toNodeId: "target" }], false, "target");
-        expect(withDirectManualInput).not.toContain("direct-manual");
+        expect(withDirectManualInput).toContain("direct-manual");
     });
 
-    it("captures output draft references from fields without adding connections", () => {
-        const result = withStoryboardOutputDraft(nodes, script, row, "target");
-        expect(result.find((node) => node.id === "target")?.metadata?.generationSpec?.referenceBindings.map((binding) => binding.nodeId)).toEqual(["prop", "character", "project-style"]);
-        expect(connections).toHaveLength(1);
+    it("reconciles managed edges without deleting manual connections", () => {
+        const manualTargetEdge: CanvasConnection = { id: "manual-target", fromNodeId: "manual", toNodeId: "target" };
+        const created = reconcileStoryboardTargetConnections([manualTargetEdge], script, row, "target", ["prop", "character"]);
+        expect(created.filter((edge) => edge.relation === "storyboard-output")).toHaveLength(1);
+        expect(
+            created
+                .filter((edge) => edge.relation === "storyboard-asset-reference")
+                .map((edge) => edge.fromNodeId)
+                .sort(),
+        ).toEqual(["character", "prop"]);
+
+        const reconciled = reconcileStoryboardTargetConnections(created, script, row, "target", ["character"]);
+        expect(reconciled.some((edge) => edge.id === "manual-target")).toBe(true);
+        expect(reconciled.some((edge) => edge.relation === "storyboard-asset-reference" && edge.fromNodeId === "prop")).toBe(false);
+    });
+
+    it("replaces a row selection and removes stale row and generated references without touching other rows", () => {
+        const previousRow = {
+            ...row,
+            videoNodeId: "target",
+            assetBindings: [
+                { nodeId: "prop", role: "prop" as const, priority: 80 },
+                { nodeId: "character", role: "character" as const, priority: 100 },
+            ],
+        };
+        const previousScript = { ...script, metadata: { ...script.metadata, storyboard: { ...script.metadata!.storyboard!, rows: [previousRow, { ...row, id: "other-row" }] } } };
+        const previousNodes = nodes.map((item) => (item.id === script.id ? previousScript : item));
+        const otherEdge: CanvasConnection = { id: "other", fromNodeId: "prop", toNodeId: "script", toHandleId: "row:other-row" };
+        const edges = reconcileStoryboardTargetConnections([...connections, otherEdge], previousScript, previousRow, "target", ["prop", "character"]);
+        const result = replaceStoryboardRowAssets(previousNodes, edges, "script", "row-1", [{ nodeId: "manual", role: "motion", priority: 70 }]);
+        const nextScript = result.nodes.find((item) => item.id === "script")!;
+        const nextRow = nextScript.metadata!.storyboard!.rows[0];
+        expect(nextRow.assetBindings).toEqual([{ nodeId: "manual", role: "motion", priority: 70 }]);
+        expect(nextRow.characters).toEqual([{ characterName: "林岚" }]);
+        expect(nextScript.metadata!.storyboard!.rows[1]).toEqual(previousScript.metadata!.storyboard!.rows[1]);
+        expect(result.connections).toContainEqual(otherEdge);
+        expect(storyboardRowReferenceNodeIds(nextScript, nextRow, result.nodes, result.connections, false, "target")).toEqual(["project-style", "manual"]);
+    });
+
+    it("allows clearing all assets while preserving shared references and existing output media", () => {
+        const result = replaceStoryboardRowAssets(nodes, connections, "script", "row-1", []);
+        const nextScript = result.nodes.find((item) => item.id === "script")!;
+        const nextRow = nextScript.metadata!.storyboard!.rows[0];
+        expect(nextRow.assetBindings).toEqual([]);
+        expect(storyboardRowReferenceNodeIds(nextScript, nextRow, result.nodes, result.connections, false)).toEqual(["project-style"]);
+        expect(result.nodes.find((item) => item.id === "first-frame")?.metadata?.content).toBe("frame");
+    });
+
+    it("rejects missing rows, locked storyboards and stale asset selections", () => {
+        expect(() => replaceStoryboardRowAssets(nodes, [], "script", "missing", [])).toThrow();
+        expect(() => replaceStoryboardRowAssets(nodes, [], "script", row.id, [{ nodeId: "missing", role: "prop", priority: 80 }])).toThrow();
+        const locked = nodes.map((item) => (item.id === "script" ? { ...item, metadata: { ...item.metadata, locked: true } } : item));
+        expect(() => replaceStoryboardRowAssets(locked, [], "script", row.id, [])).toThrow();
+    });
+    it("keeps only the explicitly selected node when the same character has multiple canvas versions", () => {
+        const a = node("character-a", CanvasNodeType.Text, { workflowKind: "character", characterAssetId: "character-asset", characterVersionId: "a" });
+        const b = node("character-b", CanvasNodeType.Text, { workflowKind: "character", characterAssetId: "character-asset", characterVersionId: "b" });
+        const result = replaceStoryboardRowAssets([script, a, b], [], script.id, row.id, [{ nodeId: a.id, role: "character", priority: 100 }]);
+        const nextScript = result.nodes[0];
+        expect(storyboardRowReferenceNodeIds(nextScript, nextScript.metadata!.storyboard!.rows[0], result.nodes, [], false)).toEqual([a.id]);
+    });
+    it("updates output draft mentions after removal and addition while preserving the generated result", () => {
+        const shot = { ...row, characters: [], imageNodeId: "output", videoNodeId: undefined };
+        const owner = node("owner", CanvasNodeType.Script, { storyboard: { rows: [shot], visibleColumns: [], referenceNodeIds: [] } });
+        const prop = node("prop", CanvasNodeType.Image, { content: "prop" });
+        const added = node("new", CanvasNodeType.Image, { content: "new" });
+        const output = node("output", CanvasNodeType.Image, {
+            content: "completed-image",
+            prompt: "已提交原文",
+            composerContent: "参考资产：@图片1\n用户修改后的正文，参考@图片1。",
+            promptTemplateOperation: "storyboard_image",
+            promptTemplateVariables: { prompt: "模板正文" },
+        });
+        const initial = [owner, prop, added, output];
+        const edges = reconcileStoryboardTargetConnections([], owner, shot, output.id, [prop.id]);
+        const result = replaceStoryboardRowAssets(initial, edges, owner.id, shot.id, [{ nodeId: added.id, role: "style", priority: 60 }]);
+        const changed = result.nodes.find((item) => item.id === output.id)!;
+        expect(changed.metadata?.composerContent).toBe("参考资产：@图片1\n用户修改后的正文，参考。");
+        expect(changed.metadata?.prompt).toBe("已提交原文");
+        expect(changed.metadata?.content).toBe("completed-image");
+        expect(changed.metadata?.promptTemplateOperation).toBe("storyboard_image");
+        expect(changed.metadata?.promptTemplateVariables).toEqual({ prompt: "模板正文" });
+        expect(result.connections.some((edge) => edge.fromNodeId === added.id && edge.toNodeId === output.id)).toBe(true);
     });
 });

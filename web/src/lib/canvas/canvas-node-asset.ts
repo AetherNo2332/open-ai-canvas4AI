@@ -90,6 +90,15 @@ export function canvasNodeToAsset(node: CanvasNodeData, options: CanvasNodeAsset
     return null;
 }
 
+export function requiresMaterializedCanvasAsset(node: CanvasNodeData, taskId?: string) {
+    const metadata = node.metadata;
+    if (!(taskId || metadata?.taskId) || !metadata?.storageKey?.startsWith("resource:")) return false;
+    // 图层组合成与情绪局部融合保存的是浏览器加工后的文件，不是模型原始输出。
+    if (metadata.imageLayerGroup || metadata.emotionEdit?.editRegion) return false;
+    const sourceKey = metadata.layerExtraction?.sourceResultStorageKey;
+    return !sourceKey || sourceKey === metadata.storageKey;
+}
+
 export function findCanvasNodeAsset(assets: Asset[], node: CanvasNodeData, canvasId: string, taskId?: string) {
     const explicitId = node.metadata?.assetId;
     if (explicitId) {
@@ -98,8 +107,7 @@ export function findCanvasNodeAsset(assets: Asset[], node: CanvasNodeData, canva
     }
     const generationTaskId = taskId || node.metadata?.taskId;
     return assets.find((asset) => {
-        const resourceKey = node.metadata?.storageKey;
-        if (generationTaskId && asset.metadata?.taskId === generationTaskId && resourceKey && assetStorageKey(asset) === resourceKey) return true;
+        if (generationTaskId && asset.metadata?.taskId === generationTaskId && asset.metadata?.nodeId === node.id) return sameAssetResource(asset, node);
         if (asset.metadata?.nodeId !== node.id) return false;
         const sourceCanvasId = asset.metadata?.canvasId;
         if (sourceCanvasId !== canvasId && (sourceCanvasId || asset.metadata?.source !== "canvas-generation")) return false;

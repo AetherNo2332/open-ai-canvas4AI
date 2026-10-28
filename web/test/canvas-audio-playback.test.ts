@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
-import { canvasAudioPlayback, getCanvasAudioPlaybackSnapshot, resetCanvasAudio, seekCanvasAudio, subscribeCanvasAudioNode, toggleCanvasAudio } from "../src/services/canvas-audio-playback";
+import { canvasAudioPlayback, getCanvasAudioPlaybackSnapshot, seekCanvasAudio, subscribeCanvasAudioNode, toggleCanvasAudio } from "../src/services/canvas-audio-playback";
 
 type AudioEventName = "loadedmetadata" | "timeupdate" | "playing" | "pause" | "ended" | "error" | "durationchange";
 
@@ -147,29 +147,5 @@ describe("canvas audio playback", () => {
         expect(getCanvasAudioPlaybackSnapshot("audio-b").phase).toBe("paused");
         expect(getCanvasAudioPlaybackSnapshot("audio-b").currentTimeMs).toBe(800);
         expect(FakeAudio.instances).toHaveLength(1);
-    });
-
-    test("changing a media version clears its decoded duration without stopping another node", async () => {
-        canvasAudioPlayback.stop();
-        await toggleCanvasAudio({ nodeId: "audio-version", content: "data:audio/mpeg;base64,old" });
-        expect(getCanvasAudioPlaybackSnapshot("audio-version").durationMs).toBe(3000);
-        resetCanvasAudio("audio-version");
-        expect(getCanvasAudioPlaybackSnapshot("audio-version")).toMatchObject({ phase: "idle", currentTimeMs: 0, durationMs: 0 });
-        expect(FakeAudio.instances[0]?.src).toBe("");
-        await toggleCanvasAudio({ nodeId: "audio-other", content: "data:audio/mpeg;base64,other" });
-        resetCanvasAudio("audio-version");
-        expect(getCanvasAudioPlaybackSnapshot("audio-other").phase).toBe("playing");
-    });
-
-    test("refreshing the URL of the same stored resource still pauses without restarting", async () => {
-        canvasAudioPlayback.stop();
-        const source = { nodeId: "audio-signed", storageKey: "legacy:audio", content: "data:audio/mpeg;base64,first" };
-        await toggleCanvasAudio(source);
-        const audio = FakeAudio.instances[0]!;
-        audio.currentTime = 1.25;
-        audio.emit("timeupdate");
-        await toggleCanvasAudio({ ...source, content: "data:audio/mpeg;base64,refreshed" });
-        expect(getCanvasAudioPlaybackSnapshot(source.nodeId)).toMatchObject({ phase: "paused", currentTimeMs: 1250 });
-        expect(audio.src).toBe(source.content);
     });
 });

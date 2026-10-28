@@ -2,165 +2,175 @@ package canvas
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"strings"
+	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
-func realtimeMessage(t *testing.T, s *RealtimeSession, kind string) RealtimeMessage {
+func waitPresenceEvent(t *testing.T, session *RealtimeSession, match func(RealtimeEvent) bool) RealtimeEvent {
 	t.Helper()
-	timer := time.NewTimer(2 * time.Second)
+	timer := time.NewTimer(3 * time.Second)
 	defer timer.Stop()
 	for {
 		select {
-		case data := <-s.Messages():
-			s.Consumed(data)
-			var msg RealtimeMessage
-			if err := json.Unmarshal(data, &msg); err != nil {
-				t.Fatal(err)
+		case event := <-session.Events:
+			if match(event) {
+				return event
 			}
-			if msg.Type == kind {
-				return msg
-			}
-		case <-s.Done():
-			t.Fatal("session closed")
 		case <-timer.C:
-			t.Fatalf("no %s message", kind)
+			t.Fatal("realtime event not delivered")
+			return RealtimeEvent{}
 		}
 	}
 }
 
-func TestRealtimeFullRoomFrameBudgetAndLeaseExpiry(t *testing.T) {
-	hub := NewRealtimeHub(RealtimeOptions{FlushInterval: time.Hour})
-	defer hub.Close()
-	key := RealtimeRoomKey{OwnerID: "owner", CanvasID: "canvas"}
-	var sessions []*RealtimeSession
-	for i := 0; i < 64; i++ {
-		s, err := hub.Join(context.Background(), key)
+func TestCanvasRealtimePresenceAndScopeIsolation(t *testing.T) {
+	hub := NewRealtimeHub(nil)
+	a, _, err := hub.Open(context.Background(), "user", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, peers, err := hub.Open(context.Background(), "user", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	foreign, _, _ := hub.Open(context.Background(), "other", "canvas")
+	defer foreign.Close()
+	other, _, _ := hub.Open(context.Background(), "user", "other")
+	defer other.Close()
+	if len(peers) != 2 || a.ID() == b.ID() {
+		t.Fatalf("unexpected roster: %+v", peers)
+	}
+	if err := a.Update(&PresencePoint{X: 12, Y: -3}, []PresenceNode{{ID: "node", PresencePoint: PresencePoint{X: 40, Y: 60}, Width: 240, Height: 160}}); err != nil {
+		t.Fatal(err)
+	}
+	event := waitPresenceEvent(t, b, func(e RealtimeEvent) bool { return e.Peer != nil && e.Peer.ID == a.ID() && e.Peer.Cursor != nil })
+	if event.Peer.Cursor.X != 12 || len(event.Peer.Drag) != 1 {
+		t.Fatalf("lost presence: %+v", event)
+	}
+	if err := a.Update(&PresencePoint{X: math.NaN()}, nil); err == nil {
+		t.Fatal("accepted non-finite position")
+	}
+	hub.Changed("user", "canvas")
+	waitPresenceEvent(t, b, func(e RealtimeEvent) bool { return e.Type == "invalidate" })
+	for _, isolated := range []*RealtimeSession{foreign, other} {
+		for len(isolated.Events) > 0 {
+			if event := <-isolated.Events; event.Type == "invalidate" || (event.Peer != nil && event.Peer.ID == a.ID()) {
+				t.Fatal("cross-scope presence leak")
+			}
+		}
+	}
+	a.Close()
+	waitPresenceEvent(t, b, func(e RealtimeEvent) bool { return e.Type == "leave" && e.PeerID == a.ID() })
+}
+
+func TestCanvasRealtimeAcrossRedisInstances(t *testing.T) {
+	binary, err := exec.LookPath("redis-server")
+	if err != nil {
+		t.Skip("redis-server unavailable")
+	}
+	dir, err := os.MkdirTemp("", "canvas-presence-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	socket := filepath.Join(dir, "r.sock")
+	cmd := exec.Command(binary, "--port", "0", "--unixsocket", socket, "--unixsocketperm", "700", "--save", "", "--appendonly", "no", "--dir", dir)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	client := redis.NewClient(&redis.Options{Network: "unix", Addr: socket, MaxRetries: -1, ContextTimeoutEnabled: true})
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for client.Ping(ctx).Err() != nil {
+		if ctx.Err() != nil {
+			t.Fatal("temporary Redis did not start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	hubA, hubB := NewRealtimeHub(client), NewRealtimeHub(client)
+	a, _, err := hubA.Open(ctx, "user", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, _, err := hubB.Open(ctx, "user", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if a.Snapshot().Number != 1 || b.Snapshot().Number != 2 {
+		t.Fatalf("instances assigned inconsistent device numbers: %d / %d", a.Snapshot().Number, b.Snapshot().Number)
+	}
+	waitPresenceEvent(t, b, func(e RealtimeEvent) bool { return e.Peer != nil && e.Peer.ID == a.ID() })
+	if err := a.Update(&PresencePoint{X: 88, Y: 99}, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitPresenceEvent(t, b, func(e RealtimeEvent) bool { return e.Peer != nil && e.Peer.Cursor != nil && e.Peer.Cursor.X == 88 })
+	hubA.Changed("user", "canvas")
+	waitPresenceEvent(t, b, func(e RealtimeEvent) bool { return e.Type == "invalidate" })
+	a.Close()
+	waitPresenceEvent(t, b, func(e RealtimeEvent) bool { return e.Type == "leave" && e.PeerID == a.ID() })
+	c, _, err := hubA.Open(ctx, "user", "canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if c.Snapshot().Number != 1 || b.Snapshot().Number != 2 {
+		t.Fatal("released number was not reused without renumbering another device")
+	}
+	if err := client.ZAdd(ctx, b.room+":devices", redis.Z{Score: 0, Member: b.deviceMember()}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	b.Heartbeat()
+	select {
+	case <-b.Done():
+	default:
+		t.Fatal("expired device number retained its connection")
+	}
+}
+
+func TestCanvasRealtimeDeviceNumbersStayConsistentAndReuseDepartedSlots(t *testing.T) {
+	hub := NewRealtimeHub(nil)
+	open := func() (*RealtimeSession, []CanvasPresence) {
+		t.Helper()
+		s, peers, err := hub.Open(context.Background(), "user", "canvas")
 		if err != nil {
 			t.Fatal(err)
 		}
-		sessions = append(sessions, s)
+		t.Cleanup(s.Close)
+		return s, peers
 	}
-	if _, err := hub.Join(context.Background(), key); err == nil {
-		t.Fatal("65th device accepted")
+	a, _ := open()
+	b, roster := open()
+	c, _ := open()
+	if a.Snapshot().Number != 1 || b.Snapshot().Number != 2 || c.Snapshot().Number != 3 {
+		t.Fatal("device numbers are not unique")
 	}
-	peers := make([]RealtimePeer, 64)
-	for i, s := range sessions {
-		peers[i] = s.peer
-		peers[i].DeviceLabel = strings.Repeat("界", 64)
-		peers[i].Cursor = &RealtimePoint{X: 1e7, Y: -1e7}
-		for j := 0; j < 32; j++ {
-			peers[i].Drag = append(peers[i].Drag, RealtimeDrag{NodeID: fmt.Sprintf("%03d", j) + strings.Repeat("<", 125), X: 1e7, Y: -1e7})
-		}
-	}
-	raw := realtimeFrame(RealtimeMessage{Type: "peers", Protocol: 1, Peers: peers})
-	if len(raw) > 512<<10 {
-		t.Fatalf("unbounded server frame %d", len(raw))
-	}
-	var msg RealtimeMessage
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.Peers) != 64 || msg.Peers[0].Cursor != nil || len(msg.Peers[0].Drag) != 0 {
-		t.Fatal("motion fallback lost membership or retained oversized motion")
-	}
-	// Encoding must not mutate the live presence used by the next frame.
-	if len(peers[0].Drag) != 32 || peers[0].Cursor == nil {
-		t.Fatal("encoding mutated presence")
-	}
-	hub.mu.Lock()
-	sessions[0].peer.ExpiresAt = time.Now().Add(-time.Second)
-	hub.pruneLocked(time.Now())
-	hub.mu.Unlock()
-	if sessions[0].CloseStatus() != 1008 {
-		t.Fatal("expired lease retained")
-	}
-	replacement, err := hub.Join(context.Background(), key)
-	if err != nil || replacement.DeviceNumber() != 1 {
-		t.Fatalf("expired number not reusable: %v", err)
-	}
-	if err = replacement.Receive([]byte(`{"type":"heartbeat","protocolVersion":1}`)); err != nil {
-		t.Fatal(err)
-	}
-}
-func TestRealtimeHubBoundsPresenceAndShutdown(t *testing.T) {
-	hub := NewRealtimeHub(RealtimeOptions{ObserveInterval: 10 * time.Millisecond, FlushInterval: time.Millisecond, SessionTTL: 50 * time.Millisecond, MaxSessions: 2})
-	defer hub.Close()
-	key := RealtimeRoomKey{OwnerID: "one", CanvasID: "canvas"}
-	a, err := hub.Join(context.Background(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := hub.Join(context.Background(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.DeviceNumber() == b.DeviceNumber() || a.DeviceNumber() < 1 || a.DeviceNumber() > 64 {
-		t.Fatal("duplicate local device numbers")
-	}
-	if _, err = hub.Join(context.Background(), RealtimeRoomKey{OwnerID: "other", CanvasID: "other"}); err == nil {
-		t.Fatal("process session limit ignored")
-	}
-	raw := `{"type":"presence","protocolVersion":1,"cursor":{"x":1,"y":2},"drag":[{"nodeId":"a","x":2,"y":3}],"deviceLabel":"Chrome"}`
-	if err = a.Receive([]byte(raw)); err != nil {
-		t.Fatal(err)
-	}
-	peers := realtimeMessage(t, b, "peers")
-	for len(peers.Peers) != 2 || peers.Peers[0].Cursor == nil && peers.Peers[1].Cursor == nil {
-		peers = realtimeMessage(t, b, "peers")
-	}
-	for _, invalid := range []string{`{"type":"heartbeat"}`, `{"type":"heartbeat","protocolVersion":2}`, `{"type":"presence","protocolVersion":1,"cursor":{"x":10000001,"y":0}}`, `{"type":"presence","protocolVersion":1,"unexpected":true}`, strings.Repeat("a", 32769)} {
-		if err = a.Receive([]byte(invalid)); err == nil {
-			t.Fatalf("invalid message accepted: %s", invalid)
+	for _, peer := range roster {
+		if peer.ID == a.ID() && peer.Number != 1 || peer.ID == b.ID() && peer.Number != 2 {
+			t.Fatalf("view-dependent numbering: %+v", roster)
 		}
 	}
 	b.Close()
-	a.Close()
-	next, err := hub.Join(context.Background(), key)
-	if err != nil {
+	d, _ := open()
+	if d.Snapshot().Number != 2 || c.Snapshot().Number != 3 {
+		t.Fatal("joining device changed existing numbers")
+	}
+	if err := c.Update(&PresencePoint{X: 30, Y: 40}, nil); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-next.Done():
-		t.Fatal("new lease immediately closed")
-	default:
-	}
-	hub.Close()
-	select {
-	case <-next.Done():
-	case <-time.After(time.Second):
-		t.Fatal("shutdown left session open")
-	}
-	if _, err = hub.Join(context.Background(), key); err == nil {
-		t.Fatal("join after shutdown")
-	}
-}
-
-func TestRealtimeHubRejectsRateAndSlowConsumer(t *testing.T) {
-	hub := NewRealtimeHub(RealtimeOptions{})
-	defer hub.Close()
-	s, err := hub.Join(context.Background(), RealtimeRoomKey{OwnerID: "owner", CanvasID: "canvas"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 80; i++ {
-		if err = s.Receive([]byte(`{"type":"heartbeat","protocolVersion":1}`)); err != nil {
-			t.Fatalf("early limit %d: %v", i, err)
-		}
-	}
-	if err = s.Receive([]byte(`{"type":"heartbeat","protocolVersion":1}`)); err == nil {
-		t.Fatal("message rate not bounded")
-	}
-	// Outbound queue is bounded; slow readers are disconnected and must resync.
-	for i := 0; i < 20; i++ {
-		hub.enqueue(s, RealtimeMessage{Type: "sync", Protocol: 1})
-	}
-	select {
-	case <-s.Done():
-	case <-time.After(time.Second):
-		t.Fatal("slow consumer retained indefinitely")
+	event := waitPresenceEvent(t, a, func(e RealtimeEvent) bool { return e.Peer != nil && e.Peer.ID == c.ID() && e.Peer.Cursor != nil })
+	if event.Peer.Number != 3 {
+		t.Fatal("broadcast changed device identity")
 	}
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
+import { isFrameNode, visibleCanvasMinimapNodes } from "@/lib/canvas/canvas-frame";
 import { subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
@@ -26,7 +26,7 @@ export function Minimap({ nodes, viewport, viewportSize, canvasContainerRef, onV
     const [isDragging, setIsDragging] = useState(false);
     const width = MINIMAP_WIDTH;
     const height = MINIMAP_HEIGHT;
-    const displayNodes = useMemo(() => nodes.filter((node) => !isNodeHiddenByCollapsedFrame(node, nodes)), [nodes]);
+    const displayNodes = useMemo(() => visibleCanvasMinimapNodes(nodes), [nodes]);
     const { worldBounds, scale, offset } = useMemo(() => {
         if (!displayNodes.length) return { worldBounds: { x: -500, y: -500, w: 1000, h: 1000 }, scale: 0.16, offset: { x: 40, y: 0 } };
         let minX = Infinity;
@@ -87,7 +87,7 @@ export function Minimap({ nodes, viewport, viewportSize, canvasContainerRef, onV
     };
 
     return (
-        <div className="canvas-workspace-minimap absolute bottom-[calc(var(--canvas-inset-y)+var(--space-16)+var(--space-10))] left-[var(--canvas-inset-x)] z-[var(--z-panel)] overflow-hidden rounded-lg shadow-2xl backdrop-blur-sm lg:bottom-[calc(var(--canvas-inset-y)+var(--space-12))]" style={{ width, height, background: theme.toolbar.panel }}>
+        <div className="absolute bottom-[calc(var(--canvas-inset-y)+var(--space-16)+var(--space-10))] left-6 z-[var(--z-panel)] overflow-hidden rounded-lg shadow-2xl backdrop-blur-sm lg:bottom-[calc(var(--canvas-inset-y)+var(--space-12))]" style={{ width, height, background: theme.toolbar.panel }}>
             <div
                 ref={containerRef}
                 className="relative h-full w-full cursor-crosshair"

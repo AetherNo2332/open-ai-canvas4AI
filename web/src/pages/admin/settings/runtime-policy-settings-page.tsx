@@ -61,6 +61,25 @@ const timeoutFields: PolicyField[] = [
 const agentFields: PolicyField[] = [
     {
         group: "task",
+        name: "agentStepMaxOutputTokens",
+        label: "单步输出上限",
+        extra: "画布 Agent 每次模型调用的输出上限，含思考、正文与工具调用参数。0 表示不限制，此时只有单步超时兜底；抬高可以避免长思考模型被截断后返回空内容。",
+        unit: "token",
+        min: 0,
+        max: 131_072,
+    },
+    {
+        group: "task",
+        name: "agentStepTimeoutSeconds",
+        label: "单步超时",
+        extra: "画布 Agent 单步模型调用的最长等待时间，到点会中止这一步并自动关思考重试一次。0 表示沿用“文本任务超时”，不再单独计时。",
+        unit: "秒",
+        min: 0,
+        max: 3_600,
+    },
+    // Agent 并发与常驻上限在「Agent（beta）」设置页的调度配置里维护。
+    {
+        group: "task",
         name: "agentMaxToolCallsPerStep",
         label: "单步工具调用上限",
         extra: "每次模型回复最多提交的工具数量，1–64 个，默认 8。保存后对新工具批次生效，已接受的批次仍可继续。",
@@ -88,24 +107,6 @@ const agentFields: PolicyField[] = [
     },
     { group: "task", name: "agentMaxQueuedMessagesPerConversation", label: "每会话待发消息上限", extra: "限制单个会话的待发消息数量。", unit: "条", min: 1, max: 9_999 },
     { group: "task", name: "agentMaxQueuedMessagesPerUser", label: "每账号待发消息上限", extra: "限制账号全部会话的待发消息总数。", unit: "条", min: 1, max: 9_999 },
-    {
-        group: "task",
-        name: "agentStepMaxOutputTokens",
-        label: "单步输出上限",
-        extra: "画布 Agent 每次模型调用的输出上限，含思考、正文与工具调用参数。0 表示不限制，此时只有单步超时兜底；抬高可以避免长思考模型被截断后返回空内容。",
-        unit: "token",
-        min: 0,
-        max: 131_072,
-    },
-    {
-        group: "task",
-        name: "agentStepTimeoutSeconds",
-        label: "单步超时",
-        extra: "画布 Agent 单步模型调用的最长等待时间，到点会终止本轮 Agent 并提示超时失败，不自动重试。0 表示沿用“文本任务超时”，不再单独计时。",
-        unit: "秒",
-        min: 0,
-        max: 3_600,
-    },
 ];
 
 const rateFields: PolicyField[] = [
@@ -157,9 +158,9 @@ const policySections: PolicySectionDefinition[] = [
     {
         id: "policy-agent",
         icon: <Bot className="size-4" aria-hidden="true" />,
-        title: "画布 Agent 执行限制",
-        shortTitle: "Agent 限制",
-        description: "工具调用次数、每轮模型调用预算，以及单步输出上限和等待时限。",
+        title: "画布 Agent 单步",
+        shortTitle: "Agent 单步",
+        description: "画布 Agent 每一步模型调用的输出上限与等待时限；两者一起决定单步最坏耗时。",
         fields: agentFields,
         status: <AdminStatusBadge label="保存后热更新" tone="info" />,
     },
@@ -306,7 +307,7 @@ export default function RuntimePolicySettingsPage() {
             title: "填入自用模式上限？",
             content: (
                 <div className="admin-runtime-policy-confirm-copy">
-                    <p>这会把全部 {allPolicyFields.length} 项策略填为自用模式，包括提高工具次数、取消模型步数限制，并把熔断等待缩短到 1 秒。</p>
+                    <p>这会把全部 42 项配额、并发、频控和超时填到允许范围的高值，并把熔断等待缩短到 1 秒。</p>
                     <p>{dirty ? `当前 ${dirtyFields.length} 项暂存调整会被覆盖。` : "只会改动本页草稿，点击保存修改后生效。"}</p>
                 </div>
             ),
@@ -342,7 +343,7 @@ export default function RuntimePolicySettingsPage() {
             title: "恢复全部系统默认策略？",
             content: (
                 <div className="admin-runtime-policy-confirm-copy">
-                    <p>确认后会删除管理员保存的自定义策略，全部 {allPolicyFields.length} 项立即恢复系统默认值。</p>
+                    <p>确认后会删除管理员保存的自定义策略，全部 42 项立即恢复系统默认值。</p>
                     {dirty ? <p>当前 {dirtyFields.length} 项未保存调整也会一并丢弃。</p> : null}
                 </div>
             ),

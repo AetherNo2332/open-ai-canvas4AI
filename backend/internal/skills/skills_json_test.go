@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"yingce/backend/internal/model"
 )
 
 func TestSkillItemJSONUsesCamelCaseAndRFC3339(t *testing.T) {
@@ -44,30 +42,6 @@ func TestSkillItemJSONUsesCamelCaseAndRFC3339(t *testing.T) {
 	}
 }
 
-func TestAddedSkillsPreservesPrivateVisibility(t *testing.T) {
-	svc, db := newSkillLibraryCategoryTestService(t)
-	for _, row := range []model.Skill{
-		{ID: "private", OwnerID: "owner", Name: "Private", Status: skillStatusEnabled, IsPrivate: true},
-		{ID: "public", OwnerID: "owner", Name: "Public", Status: skillStatusEnabled},
-	} {
-		if err := db.Create(&row).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	items, err := svc.AddedSkills("owner")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("catalog count = %d, want 2", len(items))
-	}
-	for _, item := range items {
-		if item.IsPrivate != (item.SkillID == "private") {
-			t.Fatalf("skill %s privacy = %v", item.SkillID, item.IsPrivate)
-		}
-	}
-}
-
 func TestParseShowcaseMediaAcceptsStoredSnakeCase(t *testing.T) {
 	items, err := parseShowcaseMedia(`[{"type":"image","showcase_uri":"uri-1","showcase_url":"https://example.com/a.png"}]`)
 	if err != nil {
@@ -99,7 +73,7 @@ func TestAddedSkillReferenceJSONExcludesEditorAndSyncPayload(t *testing.T) {
 			t.Fatalf("added skill reference contains %s: %s", key, text)
 		}
 	}
-	for _, key := range []string{"skillId", "skillName", "versionId", "tag", "isAdded", "isPrivate"} {
+	for _, key := range []string{"skillId", "skillName", "versionId", "tag", "isAdded"} {
 		if !strings.Contains(text, `"`+key+`"`) {
 			t.Fatalf("added skill reference misses %s: %s", key, text)
 		}

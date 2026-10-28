@@ -28,10 +28,6 @@ func fail(c *gin.Context, status int, err error) {
 }
 
 func failService(c *gin.Context, err error) {
-	if lease := service.CanvasEditLeaseAppError(err); lease != nil {
-		writeAppError(c, lease)
-		return
-	}
 	var cooldown *service.EmailCodeCooldownError
 	if errors.As(err, &cooldown) {
 		c.Header("Retry-After", strconv.Itoa(cooldown.Seconds))

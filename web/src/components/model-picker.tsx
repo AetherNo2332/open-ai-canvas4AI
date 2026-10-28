@@ -1,7 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { Check, ChevronDown, Coins } from "lucide-react";
 import { Popover } from "antd";
+import { usePopoverAnchorAlign } from "@/hooks/use-popover-anchor-align";
 
+import { imageQualityLabel } from "@/lib/image-quality";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor, videoDurationOptions } from "@/lib/model-capabilities";
 import { formatPriceRange, modelQuoteDescription, modelQuoteRequest, normalizeTierResolution, priceTierSummaryLabel, priceTiersForCurrentSelection } from "@/lib/model-pricing";
@@ -13,6 +15,7 @@ import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { ModelLogo } from "@/components/model-logo";
 import { ModelTags } from "@/components/model-tags";
+import { videoReferenceCapabilityTag } from "@/lib/model-tags";
 import { quoteModel, type LogicalModelQuote, type PublicChannelModelAvailability } from "@/services/api/logical-models";
 
 type ModelPickerProps = {
@@ -30,6 +33,9 @@ type ModelPickerProps = {
     variant?: "default" | "creation";
     requirements?: ModelRequirements;
     showConfiguredModelName?: boolean;
+    modelFilter?: (model: string) => boolean;
+    /** 调用方额外的不可选原因（例如短剧只能用平台模型）；返回非空串时选项置灰并显示原因。 */
+    modelDisabledReason?: (model: string) => string;
 };
 
 export function ModelPicker({
@@ -47,6 +53,8 @@ export function ModelPicker({
     variant = "creation",
     requirements,
     showConfiguredModelName = false,
+    modelFilter,
+    modelDisabledReason,
 }: ModelPickerProps) {
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const pickerId = useId();
@@ -54,11 +62,12 @@ export function ModelPicker({
     const rawTheme = useActiveTheme();
     const theme = (canvasThemes[rawTheme as keyof typeof canvasThemes] ?? canvasThemes.dark) as CanvasTheme;
     const [open, setOpen] = useState(false);
+    const popoverRef = usePopoverAnchorAlign(open);
+    const [availableHeight, setAvailableHeight] = useState(0);
     const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null);
-    const [triggerWidth, setTriggerWidth] = useState<number | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
-    const options = useMemo(() => Array.from(new Set(selectableModelsByCapability(config, capability).filter(Boolean))), [capability, config]);
+    const options = useMemo(() => Array.from(new Set(selectableModelsByCapability(config, capability).filter((model) => Boolean(model) && (!modelFilter || modelFilter(model))))), [capability, config, modelFilter]);
     const optionGroups = useMemo(() => groupModelsForPicker(config, options), [config, options]);
     const storedCurrent = value?.trim() || "";
     // 参数档位会在选中模型后由调用方归一到其能力配置，不能因为旧模型留下的参数而禁止切换。
@@ -70,16 +79,23 @@ export function ModelPicker({
     const quoteRequest = useMemo(() => modelQuoteRequest(config, current, capability, requirements), [capability, config, current, requirements]);
     const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | undefined>();
     const creationVariant = variant === "creation";
+    const currentChannel = current ? resolveModelChannel(config, current) : undefined;
+    const isCurrentCustomChannel = Boolean(current && currentChannel && currentChannel.scope !== "system");
 
     useLayoutEffect(() => {
-        const trigger = triggerRef.current;
-        if (!trigger) return;
-        const updateTriggerWidth = () => setTriggerWidth(Math.ceil(trigger.getBoundingClientRect().width));
-        updateTriggerWidth();
-        const observer = new ResizeObserver(updateTriggerWidth);
-        observer.observe(trigger);
-        return () => observer.disconnect();
-    }, [className, fullWidth, showSelectedPrice, variant, value]);
+        if (!open) return;
+        const updateAvailableHeight = () => {
+            const { top, bottom } = triggerRef.current!.getBoundingClientRect();
+            setAvailableHeight(Math.max(top, window.innerHeight - bottom));
+        };
+        updateAvailableHeight();
+        window.addEventListener("resize", updateAvailableHeight);
+        window.addEventListener("scroll", updateAvailableHeight, true);
+        return () => {
+            window.removeEventListener("resize", updateAvailableHeight);
+            window.removeEventListener("scroll", updateAvailableHeight, true);
+        };
+    }, [open]);
 
     useEffect(() => {
         if (!showSelectedPrice || !creditsEnabled || !quoteRequest) {
@@ -129,7 +145,7 @@ export function ModelPicker({
         window.requestAnimationFrame(() => {
             const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('[data-model-picker-item]:not(:disabled)');
             const target = last ? buttons?.item((buttons?.length || 1) - 1) : buttons?.item(0);
-            target?.focus();
+            focusPickerOption(target);
         });
     };
     const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -142,7 +158,7 @@ export function ModelPicker({
         if (event.key === "Escape") {
             event.preventDefault();
             setOpen(false);
-            triggerRef.current?.focus();
+            triggerRef.current?.focus({ preventScroll: true });
             return;
         }
         if (event.key === "ArrowLeft" && activeGroupKey !== null) {
@@ -157,7 +173,7 @@ export function ModelPicker({
         event.preventDefault();
         const activeIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
         const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : event.key === "ArrowUp" ? Math.max(0, activeIndex - 1) : Math.min(buttons.length - 1, activeIndex + 1);
-        buttons[nextIndex]?.focus();
+        focusPickerOption(buttons[nextIndex]);
     };
     const content = (
         <div
@@ -167,13 +183,7 @@ export function ModelPicker({
                 "canvas-model-picker-menu creation-model-picker-menu max-w-[calc(100vw-24px)]",
                 activeGroupKey === null ? "is-brand-list" : "is-model-list",
             )}
-            style={
-                {
-                    background: theme.node.panel,
-                    color: theme.node.text,
-                    "--canvas-model-picker-trigger-width": triggerWidth ? String(triggerWidth) + "px" : undefined,
-                } as CSSProperties
-            }
+            style={{ background: theme.node.panel, color: theme.node.text, "--canvas-model-picker-available-height": `${availableHeight}px` } as CSSProperties}
             role="listbox"
             aria-label={placeholder}
             onKeyDown={handleMenuKeyDown}
@@ -188,7 +198,14 @@ export function ModelPicker({
                             return <button key={group.key} type="button" data-model-picker-item className={cn("canvas-model-picker-brand", groupCurrent && "is-active")} aria-pressed={Boolean(groupCurrent)} onClick={() => { setActiveGroupKey(group.key); focusMenuOption(); }}>
                                 <span className="canvas-model-picker-brand-icon"><ModelLogo icon={group.icon} size={22} /></span>
                                 <span className="canvas-model-picker-brand-copy">
-                                    <strong>{group.label}</strong>
+                                    <span className="flex items-center gap-2 min-w-0">
+                                        <strong className="truncate">{group.label}</strong>
+                                        {group.scope === "我的模型" ? (
+                                            <span className="shrink-0 rounded px-2 py-0.5 text-[var(--fs-label)] font-medium leading-none bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/25">
+                                                个人渠道
+                                            </span>
+                                        ) : null}
+                                    </span>
                                     <small className="canvas-model-picker-brand-meta">
                                         <span className="canvas-model-picker-brand-subtext">{group.models.length} 个{group.kind === "product" ? "渠道" : "模型"}{group.scope ? ` · ${group.scope}` : ""}</span>
                                         <ModelRecentHealthTrack availability={groupAvailability(config, group)} />
@@ -204,7 +221,14 @@ export function ModelPicker({
                             return <button key={group.key} type="button" className={cn("canvas-model-picker-brand", activeGroupKey === group.key && "is-active")} aria-pressed={activeGroupKey === group.key} onClick={() => setActiveGroupKey(group.key)}>
                                 <span className="canvas-model-picker-brand-icon"><ModelLogo icon={group.icon} size={22} /></span>
                                 <span className="canvas-model-picker-brand-copy">
-                                    <strong>{group.label}</strong>
+                                    <span className="flex items-center gap-2 min-w-0">
+                                        <strong className="truncate">{group.label}</strong>
+                                        {group.scope === "我的模型" ? (
+                                            <span className="shrink-0 rounded px-2 py-0.5 text-[var(--fs-label)] font-medium leading-none bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/25">
+                                                个人渠道
+                                            </span>
+                                        ) : null}
+                                    </span>
                                     <small className="canvas-model-picker-brand-meta">
                                         <span className="canvas-model-picker-brand-subtext">{group.models.length} 个{group.kind === "product" ? "渠道" : "模型"}{group.scope ? ` · ${group.scope}` : ""}</span>
                                         <ModelRecentHealthTrack availability={groupAvailability(config, group)} />
@@ -214,13 +238,14 @@ export function ModelPicker({
                             </button>;
                         })}
                     </div>
-                    {optionGroups.filter((group) => group.key === activeGroupKey).map((group) => <section key={group.key} className="canvas-model-picker-group canvas-model-picker-model-pane min-w-0 overflow-hidden">
+                    {optionGroups.filter((group) => group.key === activeGroupKey).map((group) => <section key={group.key} className="canvas-model-picker-group canvas-model-picker-model-pane min-w-0">
                         <div className="grid min-w-0 gap-1">
                             {group.models.map((modelGroup) => {
                                 const selected = modelGroup.models.includes(current);
-                                const model = compatibleModelInGroup(config, modelGroup.models, selectionRequirements, selected ? current : undefined);
+                                const usable = modelDisabledReason ? modelGroup.models.filter((item) => !modelDisabledReason(item)) : modelGroup.models;
+                                const model = usable.length ? compatibleModelInGroup(config, usable, selectionRequirements, selected ? current : undefined) : undefined;
                                 const displayModel = model || (selected ? current : modelGroup.models[0]);
-                                const disabledReason = model ? "" : modelCompatibilityError(config, modelGroup.models[0], selectionRequirements) || "当前输入不符合该模型能力";
+                                const disabledReason = model ? "" : usable.length ? modelCompatibilityError(config, usable[0], selectionRequirements) || "当前输入不符合该模型能力" : modelDisabledReason?.(modelGroup.models[0]) || "该模型不可用";
                                 return (
                                     <button
                                         key={modelGroup.key}
@@ -268,11 +293,14 @@ export function ModelPicker({
     return (
         <div className={cn(fullWidth ? "w-full min-w-0" : "w-fit max-w-full")} onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
             <Popover
+                ref={popoverRef}
                 open={open}
                 onOpenChange={setPickerOpen}
                 trigger="click"
                 placement="bottomLeft"
+                align={{ overflow: { adjustY: true, shiftX: true } }}
                 arrow={false}
+                motion={{ motionName: "" }}
                 content={content}
                 classNames={{
                     root: cn("canvas-model-picker-popover", "creation-model-picker-popover", popoverClassName),
@@ -290,11 +318,16 @@ export function ModelPicker({
                     title={current ? pickerModelOptionLabel(config, current, showConfiguredModelName) : placeholder}
                     onKeyDown={handleTriggerKeyDown}
                 >
-                    <span className="canvas-model-picker-label flex min-w-0 items-center gap-1.5">
+                    <span className="canvas-model-picker-label flex min-w-0 items-center gap-2">
                         <span className="canvas-model-picker-trigger-icon" style={{ background: theme.toolbar.itemHover }}>
                             <ModelIcon config={config} model={current} />
                         </span>
                         <span className="min-w-0 flex-1 truncate">{current ? (creationVariant ? pickerModelDisplayName(config, current, showConfiguredModelName) : pickerModelOptionLabel(config, current, showConfiguredModelName)) : placeholder}</span>
+                        {isCurrentCustomChannel ? (
+                            <span className="shrink-0 rounded px-2 py-0.5 text-[var(--fs-label)] font-medium leading-none bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/25">
+                                个人
+                            </span>
+                        ) : null}
                         {showSelectedPrice && creditsEnabled ? <ModelPrice price={currentPrice} quote={routeQuote} compact /> : null}
                     </span>
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
@@ -302,6 +335,19 @@ export function ModelPicker({
             </Popover>
         </div>
     );
+}
+
+function focusPickerOption(target: HTMLButtonElement | null | undefined) {
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    // Only reveal the focused row inside its pane; scrolling portal ancestors moves the page.
+    const pane = target.closest<HTMLElement>(".canvas-model-picker-model-pane, .canvas-model-picker-menu");
+    if (!pane) return;
+    const row = target.getBoundingClientRect();
+    const top = pane.getBoundingClientRect().top + pane.clientTop;
+    const bottom = top + pane.clientHeight;
+    const delta = row.top < top ? row.top - top : row.bottom > bottom ? row.bottom - bottom : 0;
+    if (delta) pane.scrollTop += delta;
 }
 
 function emptyModelLabel(config: AiConfig, capability?: ModelCapability) {
@@ -340,33 +386,43 @@ export function ModelLabel({
     const logicalCost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     const logicalSpec = logicalCost?.logicalCapabilitySpec;
     const videoProfile = capability === "video" ? modelCapabilityConfigFor(config, model).video : undefined;
+    const videoSummary = videoProfile ? [videoProfile.durationSupported === false ? "" : formatDurationSummary(videoProfile), videoProfile.resolutions.map((item) => item.toUpperCase()).join("/")].filter(Boolean).join(" · ") : "";
+    const capabilityTag = videoReferenceCapabilityTag(videoProfile?.references);
+    const modelTags = capabilityTag ? [capabilityTag, ...(logicalCost?.tags || [])] : logicalCost?.tags;
     const capabilitySummary =
         disabledReason ||
         logicalCost?.description?.trim() ||
-        (isDirectSystemModel(config, model) ? "" : logicalSpec ? logicalCapabilitySummary(logicalSpec) : videoProfile ? `${formatDurationSummary(videoProfile)} · ${videoProfile.resolutions.map((item) => item.toUpperCase()).join("/")}` : meta.description);
+        (isDirectSystemModel(config, model) ? "" : logicalSpec ? logicalCapabilitySummary(logicalSpec) : videoProfile ? videoSummary : meta.description);
     return (
-        <span className="flex w-full min-w-0 items-center gap-1.5 overflow-hidden py-0">
+        <span className="flex w-full min-w-0 items-center gap-2 overflow-hidden py-0">
             <span className="grid size-6 shrink-0 place-items-center rounded-md" style={{ background: theme.toolbar.itemHover }}>
                 <ModelIcon config={config} model={model} />
             </span>
-            <span className="min-w-44 flex-1 overflow-hidden">
-                <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="min-w-0 flex-1 truncate text-[var(--fs-label)] font-medium leading-none">{label || pickerModelDisplayName(config, model, showConfiguredModelName)}</span>
+            <span className="min-w-0 flex-1 overflow-hidden">
+                <span className="canvas-model-picker-option-heading">
+                    <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+                        <span className="canvas-model-picker-option-name text-[var(--fs-label)] font-medium leading-none truncate !flex-initial max-w-full" title={label || pickerModelDisplayName(config, model, showConfiguredModelName)}>{label || pickerModelDisplayName(config, model, showConfiguredModelName)}</span>
+                        {channel.scope !== "system" ? (
+                            <span className="shrink-0 rounded px-2 py-0.5 text-[var(--fs-label)] font-medium leading-none bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/25">
+                                个人
+                            </span>
+                        ) : null}
+                    </span>
+                    {showPrice ? (
+                        <span className="canvas-model-picker-option-price">
+                            {/* 候选模型展示自身价目；当前参数的精确报价只在选中后的触发器显示。 */}
+                            <ModelPrice price={modelMenuPrice(config, model, capability, true, requirements)} />
+                        </span>
+                    ) : null}
                     <ModelAvailabilityBadge availability={modelAvailability(config, model)} available={logicalCost?.available ?? true} showAvailability={channel.scope === "system"} />
                 </span>
-                <span className={cn("canvas-model-picker-description mt-1 block truncate text-[var(--fs-tiny)]", showDescription && "is-visible")} style={{ color: theme.node.muted }}>
+                <span className={cn("canvas-model-picker-description mt-1 block", showDescription && "is-visible")} style={{ color: theme.node.muted }}>
                     {capabilitySummary}
                 </span>
-                <ModelTags tags={logicalCost?.tags} />
+                <ModelTags tags={modelTags} />
             </span>
-            {showPrice ? (
-                <span className="ml-auto shrink-0 pl-2">
-                    {/* 候选模型展示自身价目；当前参数的精确报价只在选中后的触发器显示。 */}
-                    <ModelPrice price={modelMenuPrice(config, model, capability, true, requirements)} />
-                </span>
-            ) : null}
             {!creationVariant && meta.time ? (
-                <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[var(--fs-tiny)] tabular-nums" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
+                <span className="shrink-0 rounded-full px-2 py-0.5 text-[var(--fs-tiny)] tabular-nums" style={{ background: theme.toolbar.itemHover, color: theme.node.muted }}>
                     {meta.time}
                 </span>
             ) : null}
@@ -497,7 +553,8 @@ function tierSpecificationLabel(tier: NonNullable<NonNullable<AiConfig["channels
     const operation = selector.operation && selector.operation !== "*" ? operationLabels[selector.operation] || selector.operation : "";
     const details = [
         operation,
-        selector.quality && selector.quality !== "*" ? selector.quality.toUpperCase() : "",
+        selector.quality && selector.quality !== "*" ? imageQualityLabel(selector.quality) : "",
+        selector.resolution && selector.resolution !== "*" ? imageQualityLabel(selector.resolution) : "",
         selector.size && selector.size !== "*" ? selector.size : "",
         tier.resolution !== "*" ? tierResolutionLabel(tier.resolution) : "",
         tier.videoSeconds ? tierDurationLabel(tier.videoSeconds) : "",
@@ -512,7 +569,7 @@ function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice |
         const amount = (quote.amountMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 6 });
         const label = quote.estimated ? `预估:${amount}` : `${amount}`;
         return (
-            <span className="model-picker-price inline-flex shrink-0 items-center gap-1 text-[var(--fs-tiny)] font-bold tabular-nums" aria-label={modelQuoteDescription(quote)}>
+            <span className="model-picker-price inline-flex shrink-0 items-center gap-1 text-[var(--fs-tiny)] font-semibold tabular-nums" aria-label={modelQuoteDescription(quote)}>
                 <Coins className="model-picker-price-icon" aria-hidden="true" />
                 {compact ? label : `${label} 积分`}
             </span>
@@ -522,7 +579,7 @@ function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice |
     if (price === null) return compact ? null : <span className="shrink-0 text-[var(--fs-tiny)] text-foreground/40">未配置</span>;
     if (price.kind === "tiers") {
         return (
-            <span className="model-picker-price inline-flex shrink-0 items-center gap-1 text-[var(--fs-tiny)] font-bold tabular-nums">
+            <span className="model-picker-price inline-flex shrink-0 items-center gap-1 text-[var(--fs-tiny)] font-semibold tabular-nums">
                 <Coins className="model-picker-price-icon" aria-hidden="true" />
                 {compact ? price.compactLabel : price.label}
             </span>
@@ -532,7 +589,7 @@ function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice |
         return <span className="model-picker-price inline-flex shrink-0 items-center text-[var(--fs-tiny)] font-semibold"><Coins className="model-picker-price-icon" aria-hidden="true" />{price.label || "按量预估"}</span>;
     }
     return (
-        <span className="model-picker-price inline-flex shrink-0 items-center gap-1 text-[var(--fs-tiny)] font-bold tabular-nums">
+        <span className="model-picker-price inline-flex shrink-0 items-center gap-1 text-[var(--fs-tiny)] font-semibold tabular-nums">
             <Coins className="model-picker-price-icon" aria-hidden="true" />
             {price.value.toLocaleString("zh-CN", { maximumFractionDigits: compact ? 3 : 6 })}{compact ? "/" : " 积分/"}{price.unit}
         </span>
@@ -583,6 +640,8 @@ export function ModelRecentHealthTrack({ availability, inPopover = false }: { av
 }
 
 function ModelAvailabilityBadge({ availability, available, showAvailability }: { availability?: PublicChannelModelAvailability; available: boolean; showAvailability: boolean }) {
+    const [open, setOpen] = useState(false);
+    const popoverRef = usePopoverAnchorAlign(open);
     if (!showAvailability) return null;
     const recentResults = availability?.recentResults ?? [];
     const successCount = recentResults.filter(Boolean).length;
@@ -631,7 +690,7 @@ function ModelAvailabilityBadge({ availability, available, showAvailability }: {
         </div>
     ) : null;
     return (
-        <Popover content={content} trigger={["hover", "focus"]} placement="topRight" arrow={false}>
+        <Popover ref={popoverRef} open={open} onOpenChange={setOpen} content={content} trigger={["hover", "focus"]} placement="topRight" arrow={false}>
             <span
                 className={`model-picker-availability is-${availability?.dataState || "unavailable"}`}
                 role="img"

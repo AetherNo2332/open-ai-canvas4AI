@@ -19,10 +19,10 @@ func newProjectDeleteTestService(t *testing.T) (*Service, *gorm.DB) {
 		t.Fatal(err)
 	}
 	if err := db.AutoMigrate(
-		&model.User{},
 		&model.Project{},
 		&model.ProjectUnit{},
 		&model.CanvasProject{},
+		&model.CanvasEditLease{},
 		&model.CanvasSnapshot{},
 		&model.CanvasSnapshotResource{},
 		&model.CanvasShare{},
@@ -43,16 +43,13 @@ func newProjectDeleteTestService(t *testing.T) (*Service, *gorm.DB) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.Create(&model.User{ID: "user-1", Status: model.UserStatusActive}).Error; err != nil {
-		t.Fatal(err)
-	}
 	return &Service{repo: repository.New(db)}, db
 }
 
 func TestDeleteProjectUnlinksCanvasAndKeepsIndependentRecords(t *testing.T) {
 	service, db := newProjectDeleteTestService(t)
 	project := model.Project{ID: "project-1", UserID: "user-1", Name: "短剧", Status: model.ProjectStatusActive}
-	canvas := model.CanvasProject{ID: "canvas-1", UserID: "user-1", ProjectID: project.ID, Revision: 1, Title: "分镜", PayloadJSON: `{"projectId":"project-1","nodes":[]}`}
+	canvas := model.CanvasProject{ID: "canvas-1", UserID: "user-1", ProjectID: project.ID, Title: "分镜", PayloadJSON: `{"projectId":"project-1","nodes":[]}`}
 	asset := model.Asset{ID: "asset-1", UserID: "user-1", Title: "角色", Status: model.AssetVersionStatusConfirmed}
 	task := model.Task{ID: "task-1", UserID: "user-1", ProjectID: project.ID, Status: model.TaskStatusSucceeded, Prompt: "已完成"}
 	canvasTask := model.Task{ID: "task-2", UserID: "user-1", ProjectID: canvas.ID, Status: model.TaskStatusSucceeded, Prompt: "画布任务"}
@@ -93,9 +90,6 @@ func TestDeleteProjectUnlinksCanvasAndKeepsIndependentRecords(t *testing.T) {
 	}
 	if storedCanvas.ProjectID != "" {
 		t.Fatalf("canvas project id = %q, want empty", storedCanvas.ProjectID)
-	}
-	if storedCanvas.UserID != canvas.UserID || storedCanvas.Revision != canvas.Revision+1 {
-		t.Fatalf("detached canvas lost owner or committed revision: %+v", storedCanvas)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(storedCanvas.PayloadJSON), &payload); err != nil {

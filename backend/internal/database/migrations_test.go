@@ -1,7 +1,6 @@
 package database
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -16,160 +15,55 @@ func TestCurrentSchemaVersionMatchesMigrationPlan(t *testing.T) {
 	if len(schemaMigrations) == 0 {
 		t.Fatal("migration plan is empty")
 	}
+	for index, item := range schemaMigrations {
+		if index > 0 && item.version <= schemaMigrations[index-1].version {
+			t.Fatalf("migration versions must be strictly increasing: %d after %d", item.version, schemaMigrations[index-1].version)
+		}
+	}
 	latest := schemaMigrations[len(schemaMigrations)-1].version
 	if CurrentSchemaVersion != latest {
 		t.Fatalf("supported schema version %d does not match latest migration %d", CurrentSchemaVersion, latest)
 	}
 }
 
-func TestMigrateSchemaV60UpgradesLegacySchedulerRow(t *testing.T) {
-	db, err := Open(Config{Driver: "sqlite", DSN: "file:agent-user-admission-upgrade?mode=memory&cache=shared"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := MigrateSchema(db); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.AgentSchedulerSetting{ID: 1, DispatchConcurrency: 4, MaxResidentSessions: 64, MaxResidentPerCanvas: 16, MaxResidentPerUser: 32}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Migrator().DropColumn(&model.AgentSchedulerSetting{}, "MaxResidentPerUser"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Migrator().DropTable(&model.AgentUserAdmission{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Where("version = ?", 60).Delete(&schemaMigration{}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := MigrateSchema(db); err != nil {
-		t.Fatal(err)
-	}
-	var setting model.AgentSchedulerSetting
-	if err := db.First(&setting, 1).Error; err != nil {
-		t.Fatal(err)
-	}
-	if setting.MaxResidentPerUser != model.DefaultAgentSchedulerSetting().MaxResidentPerUser || !db.Migrator().HasTable(&model.AgentUserAdmission{}) {
-		t.Fatalf("legacy scheduler did not acquire user quota: %+v", setting)
-	}
+type channelModelProtocolV58 struct {
+	ID       string `gorm:"primaryKey;size:36"`
+	Protocol string `gorm:"size:32;index"`
 }
 
-func TestPiConversationSessionMigrationBackfillsActiveRun(t *testing.T) {
-	db, err := Open(Config{Driver: "sqlite", DSN: "file:pi-session-backfill?mode=memory&cache=shared"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&model.CloudAgentExecution{}); err != nil {
-		t.Fatal(err)
-	}
-	run := model.CloudAgentExecution{
-		ID: "pi-active-run", UserID: "user-1", CanvasID: "canvas-1", ConversationID: "conversation-1",
-		Engine: "pi", Status: "running", Revision: 1, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
-	}
-	if err := db.Create(&run).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := migratePiAgentConversationSessions(db); err != nil {
-		t.Fatal(err)
-	}
-	var session model.CloudAgentPiSession
-	if err := db.First(&session, "user_id = ? AND conversation_id = ?", run.UserID, run.ConversationID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if session.ActiveRunID != run.ID {
-		t.Fatalf("backfilled active run = %q, want %q", session.ActiveRunID, run.ID)
-	}
-	if session.ID != model.PiSessionStorageID(run.UserID, run.ConversationID) {
-		t.Fatalf("backfilled session ID = %q, want owner-scoped ID", session.ID)
-	}
-}
+func (channelModelProtocolV58) TableName() string { return "channel_models" }
 
-func TestPiConversationSessionMigrationAllowsCrossOwnerConversationIDReuse(t *testing.T) {
-	db, err := Open(Config{Driver: "sqlite", DSN: "file:pi-session-cross-owner-migration?mode=memory&cache=shared"})
+func TestMigrateChannelModelProtocolLengthPreservesExistingRows(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-channel-protocol-length?mode=memory&cache=shared"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.CloudAgentExecution{}); err != nil {
+	if err := db.AutoMigrate(&channelModelProtocolV58{}); err != nil {
 		t.Fatal(err)
 	}
-	createdAt := time.Now().UTC()
-	runs := []model.CloudAgentExecution{
-		{ID: "pi-run-user-1", UserID: "user-1", CanvasID: "canvas-1", ConversationID: "shared-conversation", Engine: "pi", Status: "running", Revision: 1, CreatedAt: createdAt, UpdatedAt: createdAt},
-		{ID: "pi-run-user-2", UserID: "user-2", CanvasID: "canvas-2", ConversationID: "shared-conversation", Engine: "pi", Status: "running", Revision: 1, CreatedAt: createdAt, UpdatedAt: createdAt},
-	}
-	if err := db.Create(&runs).Error; err != nil {
+	legacy := channelModelProtocolV58{ID: "existing", Protocol: "chat-completion"}
+	if err := db.Create(&legacy).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := migratePiAgentConversationSessions(db); err != nil {
+	if err := migrateChannelModelProtocolLength(db); err != nil {
+		t.Fatalf("migrateChannelModelProtocolLength() error = %v", err)
+	}
+	statement := &gorm.Statement{DB: db}
+	if err := statement.Parse(&model.ChannelModel{}); err != nil {
 		t.Fatal(err)
 	}
-	var sessions []model.CloudAgentPiSession
-	if err := db.Where("conversation_id = ?", "shared-conversation").Find(&sessions).Error; err != nil {
+	protocolField := statement.Schema.LookUpField("Protocol")
+	if protocolField == nil || protocolField.Size != 64 {
+		t.Fatalf("protocol field size = %#v, want 64", protocolField)
+	}
+	var stored struct {
+		Protocol string
+	}
+	if err := db.Table("channel_models").Select("protocol").Where("id = ?", legacy.ID).Scan(&stored).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != len(runs) {
-		t.Fatalf("migrated sessions = %d, want %d", len(sessions), len(runs))
-	}
-	for _, run := range runs {
-		var session model.CloudAgentPiSession
-		if err := db.First(&session, "user_id = ? AND conversation_id = ?", run.UserID, run.ConversationID).Error; err != nil {
-			t.Fatal(err)
-		}
-		if session.ID != model.PiSessionStorageID(run.UserID, run.ConversationID) || session.ActiveRunID != run.ID {
-			t.Fatalf("migrated session for %s = %+v", run.UserID, session)
-		}
-	}
-}
-
-func TestPiSessionOwnerScopedIDMigrationUpdatesSessionAndEntries(t *testing.T) {
-	db, err := Open(Config{Driver: "sqlite", DSN: "file:pi-session-owner-key-migration?mode=memory&cache=shared"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&model.CloudAgentPiSession{}, &model.CloudAgentPiEntry{}); err != nil {
-		t.Fatal(err)
-	}
-	legacyID := "shared-conversation"
-	header, err := json.Marshal(map[string]any{"type": "session", "version": 3, "id": legacyID, "cwd": "canvas://canvas-1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := model.CloudAgentPiSession{ID: legacyID, UserID: "user-1", ConversationID: legacyID, CanvasID: "canvas-1",
-		FormatVersion: 3, HeaderJSON: string(header), Revision: 2, ActiveRunID: "run-1"}
-	if err := db.Create(&session).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.CloudAgentPiEntry{SessionID: legacyID, Sequence: 1, EntryID: "entry-1", UserID: session.UserID,
-		RunID: session.ActiveRunID, EntryJSON: `{"type":"message","id":"entry-1"}`}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := migratePiAgentOwnerScopedSessionIDs(db); err != nil {
-		t.Fatal(err)
-	}
-	if err := migratePiAgentOwnerScopedSessionIDs(db); err != nil {
-		t.Fatalf("idempotent rerun failed: %v", err)
-	}
-	wantID := model.PiSessionStorageID(session.UserID, session.ConversationID)
-	var migrated model.CloudAgentPiSession
-	if err := db.First(&migrated, "user_id = ? AND conversation_id = ?", session.UserID, session.ConversationID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if migrated.ID != wantID || migrated.ActiveRunID != session.ActiveRunID || migrated.Revision != session.Revision {
-		t.Fatalf("migrated session = %+v, want ID %q with state preserved", migrated, wantID)
-	}
-	var headerValue map[string]any
-	if err := json.Unmarshal([]byte(migrated.HeaderJSON), &headerValue); err != nil {
-		t.Fatal(err)
-	}
-	if headerValue["id"] != wantID {
-		t.Fatalf("migrated Pi header ID = %v, want %q", headerValue["id"], wantID)
-	}
-	var entries []model.CloudAgentPiEntry
-	if err := db.Where("session_id = ?", wantID).Find(&entries).Error; err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 1 || entries[0].EntryID != "entry-1" || entries[0].UserID != session.UserID {
-		t.Fatalf("migrated Pi entries = %+v", entries)
+	if stored.Protocol != legacy.Protocol {
+		t.Fatalf("existing protocol = %q, want %q", stored.Protocol, legacy.Protocol)
 	}
 }
 
@@ -188,6 +82,18 @@ func TestMigrateSchemaRecordsAndValidatesVersion(t *testing.T) {
 	if !status.Ready || status.Current != CurrentSchemaVersion {
 		t.Fatalf("unexpected schema status: %#v", status)
 	}
+	if !db.Migrator().HasTable(&model.UploadReservation{}) {
+		t.Fatal("upload reservation migration missing")
+	}
+	if !db.Migrator().HasTable(&model.WorkbenchTool{}) || !db.Migrator().HasTable(&model.WorkbenchPreset{}) {
+		t.Fatal("schema migration v54 did not create workbench tool and preset tables")
+	}
+	if !db.Migrator().HasIndex(&model.WorkbenchTool{}, "idx_workbench_tools_kind_enabled_sort") {
+		t.Fatal("schema migration v54 did not create the workbench catalog index")
+	}
+	if !db.Migrator().HasIndex(&model.WorkbenchPreset{}, "idx_workbench_presets_tool_enabled_sort") {
+		t.Fatal("schema migration v54 did not create the workbench preset index")
+	}
 	if !db.Migrator().HasIndex(&schemaMigration{}, "idx_schema_migrations_applied_at") {
 		t.Fatal("schema migration v2 did not create the applied_at index")
 	}
@@ -205,12 +111,6 @@ func TestMigrateSchemaRecordsAndValidatesVersion(t *testing.T) {
 	}
 	if !db.Migrator().HasTable(&model.AgentMemorySetting{}) {
 		t.Fatal("schema migration v18 did not create agent memory settings")
-	}
-	if !db.Migrator().HasTable(&model.CloudAgentPiSession{}) || !db.Migrator().HasTable(&model.CloudAgentPiEntry{}) {
-		t.Fatal("schema migration v42 did not create durable Pi conversation session tables")
-	}
-	if !db.Migrator().HasIndex(&model.CloudAgentPiSession{}, "idx_cloud_agent_pi_sessions_owner_conversation") {
-		t.Fatal("schema migration v42 did not create the user-scoped conversation uniqueness index")
 	}
 	if !db.Migrator().HasColumn(&model.PaymentProviderConfig{}, "plugin_version") || !db.Migrator().HasColumn(&model.PaymentOrder{}, "plugin_version") {
 		t.Fatal("schema migration v19 did not add payment plugin version columns")
@@ -241,6 +141,136 @@ func TestMigrateSchemaRecordsAndValidatesVersion(t *testing.T) {
 	}
 	if err := MigrateSchema(db); err != nil {
 		t.Fatalf("migration should be idempotent: %v", err)
+	}
+}
+
+func TestMigrateSchemaV56UpgradesProviderCatalogV55(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-sql-perf-v56?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var catalogMigration schemaMigration
+	if err := db.First(&catalogMigration, "version = ?", 55).Error; err != nil {
+		t.Fatal(err)
+	}
+	if catalogMigration.Name != "provider_catalog_source" || catalogMigration.Checksum != "sha256:provider-catalog-source-v55" {
+		t.Fatalf("provider catalog migration identity changed: %#v", catalogMigration)
+	}
+	for _, item := range []struct {
+		entity any
+		index  string
+	}{
+		{&model.ApiCallLog{}, "idx_api_logs_created_epoch"},
+		{&model.ApiCallLog{}, "idx_api_logs_user_created"},
+		{&model.Task{}, "idx_tasks_created_epoch"},
+		{&model.Task{}, "idx_tasks_user_project_created"},
+		{&model.CreditLedgerEntry{}, "idx_credit_ledger_user_type"},
+	} {
+		if err := db.Migrator().DropIndex(item.entity, item.index); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, entity := range []any{&model.ApiCallLog{}, &model.Task{}} {
+		if err := db.Migrator().DropColumn(entity, "CreatedAtEpoch"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Where("version = ?", 56).Delete(&schemaMigration{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 10, 15, 12, 30, 0, 0, time.UTC)
+	for _, table := range []string{"api_call_logs", "tasks"} {
+		if err := db.Table(table).Create(map[string]any{"id": "legacy-" + table, "created_at": createdAt}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("upgrade from provider catalog v55: %v", err)
+	}
+	for _, table := range []string{"api_call_logs", "tasks"} {
+		var epoch int64
+		if err := db.Table(table).Select("created_at_epoch").Where("id = ?", "legacy-"+table).Scan(&epoch).Error; err != nil {
+			t.Fatal(err)
+		}
+		if epoch != createdAt.Unix() {
+			t.Fatalf("%s legacy timestamp = %d, want %d", table, epoch, createdAt.Unix())
+		}
+	}
+	for _, item := range []struct {
+		entity any
+		index  string
+	}{
+		{&model.ApiCallLog{}, "idx_api_logs_user_created"},
+		{&model.Task{}, "idx_tasks_user_project_created"},
+		{&model.CreditLedgerEntry{}, "idx_credit_ledger_user_type"},
+	} {
+		if !db.Migrator().HasIndex(item.entity, item.index) {
+			t.Fatalf("v56 did not restore %s", item.index)
+		}
+	}
+	var after schemaMigration
+	if err := db.First(&after, "version = ?", 55).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after != catalogMigration {
+		t.Fatalf("v56 rewrote provider catalog migration: before=%#v after=%#v", catalogMigration, after)
+	}
+	if !db.Migrator().HasColumn(&model.ModelChannel{}, "CatalogProviderID") || !db.Migrator().HasColumn(&model.ChannelModel{}, "CatalogModelKey") {
+		t.Fatal("provider catalog columns missing after v56 upgrade")
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("v56 upgrade should be idempotent: %v", err)
+	}
+}
+
+func TestMigrateSchemaNormalizesLegacyWorkbenchMigrationV51(t *testing.T) {
+	db, err := Open(Config{Driver: "sqlite", DSN: "file:migration-legacy-workbench-v51?mode=memory&cache=shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	// 旧账本只到工作台迁移（记为 51），不包含之后新增的迁移。
+	if err := db.Where("version >= ? AND version <> ?", 51, workbenchToolsMigrationVersion).Delete(&schemaMigration{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&schemaMigration{}).Where("version = ?", 54).Updates(map[string]any{
+		"version":  51,
+		"name":     workbenchToolsMigrationName,
+		"checksum": legacyWorkbenchToolsMigrationChecksum,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MigrateSchema(db); err != nil {
+		t.Fatalf("legacy workbench migration should be normalized: %v", err)
+	}
+	status, err := ReadSchemaStatus(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Ready || status.Current != CurrentSchemaVersion {
+		t.Fatalf("unexpected normalized schema status: %#v", status)
+	}
+	var normalized schemaMigration
+	if err := db.First(&normalized, "version = ?", workbenchToolsMigrationVersion).Error; err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Name != workbenchToolsMigrationName || normalized.Checksum != workbenchToolsMigrationChecksum {
+		t.Fatalf("normalized workbench migration = %#v", normalized)
+	}
+	for _, item := range schemaMigrations {
+		var count int64
+		if err := db.Model(&schemaMigration{}).Where("version = ? AND name = ? AND checksum = ?", item.version, item.name, item.checksum).Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if item.version != workbenchToolsMigrationVersion && count != 1 {
+			t.Fatalf("migration %d was not restored: %#v", item.version, item)
+		}
 	}
 }
 

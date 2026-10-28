@@ -3,7 +3,6 @@
 .cursor
 .playwright-mcp
 .spec-workflow
-.superpowers
 .vscode
 ._*
 **/._*
@@ -15,18 +14,11 @@ data
 backend/data
 backend/*.db
 backend/cmd/server/server
-backend/server
 .serena
 .local
-backend/.local
 web/.next
 web/dist
-renderer/.local
 web/node_modules
-director-desk/node_modules
-director-desk/dist
-agent/node_modules
-agent/dist
 web/out
 *.log
 *.db

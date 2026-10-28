@@ -51,21 +51,30 @@ func errorBodyLimit(setting Settings) int64 {
 	return setting.Runtime.ErrorBodyLimit
 }
 func PutOSSObject(setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
+	return PutOSSObjectContext(context.Background(), setting, objectKey, mimeType, size, body)
+}
+
+// PutOSSObjectContext 与 PutOSSObject 相同，但整个写入（含 SDK 内部重试）受 ctx 约束。
+func PutOSSObjectContext(ctx context.Context, setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
 	setting = NormalizeSettings(setting)
 	if setting.Provider == tencentCOSProvider {
-		return PutCOSObject(setting, objectKey, mimeType, size, body)
+		return putCOSObject(ctx, setting, objectKey, mimeType, size, body)
 	}
 	if setting.Provider == qiniuKodoProvider {
-		return PutQiniuObject(setting, objectKey, mimeType, size, body)
+		return putQiniuObject(ctx, setting, objectKey, mimeType, size, body)
 	}
 	if setting.Provider == s3Provider {
-		return PutS3Object(setting, objectKey, mimeType, size, body)
+		return putS3Object(ctx, setting, objectKey, mimeType, size, body)
 	}
-	return PutAliyunOSSObject(setting, objectKey, mimeType, size, body)
+	return putAliyunOSSObject(ctx, setting, objectKey, mimeType, size, body)
 }
 
 // 阿里云 OSS 继续沿用原有 V1 签名和请求路径，避免已有部署行为发生变化。
 func PutAliyunOSSObject(setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
+	return putAliyunOSSObject(context.Background(), setting, objectKey, mimeType, size, body)
+}
+
+func putAliyunOSSObject(ctx context.Context, setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
@@ -73,6 +82,7 @@ func PutAliyunOSSObject(setting Settings, objectKey string, mimeType string, siz
 	if err != nil {
 		return "", err
 	}
+	req = req.WithContext(ctx)
 	if size > 0 {
 		req.ContentLength = size
 	}
@@ -83,7 +93,7 @@ func PutAliyunOSSObject(setting Settings, objectKey string, mimeType string, siz
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit(setting)))
-		return "", fmt.Errorf("OSS 上传失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
+		return "", newHTTPStatusError(setting.Provider, resp, detail)
 	}
 	return strings.Trim(resp.Header.Get("ETag"), `"`), nil
 }
@@ -194,23 +204,23 @@ func SignedOriginObjectURL(setting Settings, objectKey string, expiresAt time.Ti
 	return signedOriginObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt})
 }
 
-// SignedOriginObjectDisplayURL uses a caller-aligned signing window. Immutable
-// object keys let browsers retain bytes privately for the caller's conservative
-// window budget. A tight outer authorization limit disables HTTP caching.
-func SignedOriginObjectDisplayURL(setting Settings, objectKey string, signedAt, expiresAt time.Time, cacheFor time.Duration) (string, error) {
+// SignedOriginObjectDisplayURL 签发浏览器展示用的源站直连地址。
+//
+// 浏览器 HTTP 缓存以完整 URL 为键。调用方把签名起始时间对齐到固定时间窗后，同一对象在
+// 同一窗口内得到逐字节相同的地址：刷新画布、多标签页、多个后端实例都复用浏览器已缓存的字节，
+// 不再每次都从对象存储重新下载。对象键带随机 ID、内容不可变，因此同时让对象存储按签名
+// 剩余有效期回写 Cache-Control，浏览器在有效期内连条件请求都不必发出。
+func SignedOriginObjectDisplayURL(setting Settings, objectKey string, signedAt time.Time, expiresAt time.Time) (string, error) {
 	signing := objectURLSigning{SignedAt: signedAt, ExpiresAt: expiresAt}
-	if maximum := expiresAt.Sub(signingTime(signedAt)); cacheFor > maximum {
-		cacheFor = maximum
-	}
-	if seconds := int64(cacheFor / time.Second); seconds > 0 {
+	if seconds := int64(expiresAt.Sub(signingTime(signedAt)) / time.Second); seconds > 0 {
 		signing.CacheControl = "private, max-age=" + strconv.FormatInt(seconds, 10) + ", immutable"
-	} else {
-		signing.CacheControl = "private, no-store"
 	}
 	return signedOriginObjectURL(setting, objectKey, signing)
 }
 
+// objectURLSigning 描述一次预签名 GET 的可变部分。
 type objectURLSigning struct {
+	// SignedAt 为零值表示一次性地址（下载、服务端读取），按当前时间签名。
 	SignedAt           time.Time
 	ExpiresAt          time.Time
 	ContentDisposition string
@@ -235,6 +245,7 @@ func signedOriginObjectURL(setting Settings, objectKey string, signing objectURL
 	if setting.Provider == tencentCOSProvider {
 		return signedCOSObjectURL(setting, objectKey, signing)
 	}
+	// 阿里云 V1 签名只由绝对过期时间决定，过期时间对齐即可得到稳定地址。
 	return signedAliyunOSSObjectURL(setting, objectKey, signing)
 }
 
@@ -247,12 +258,14 @@ func SignedOriginObjectDownloadURL(setting Settings, objectKey string, expiresAt
 	return signedOriginObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt, ContentDisposition: disposition})
 }
 
-// PublicCDNObjectDownloadURL is only safe when operators have verified that the
-// CDN forwards this response override and varies its cache by that parameter.
-func PublicCDNObjectDownloadURL(setting Settings, objectKey, fileName string) (string, error) {
-	if setting.Delivery.CDNAuthMode != "public" || !setting.Delivery.CDNAttachmentQueryForwarding {
-		return "", errors.New("公开 CDN 未确认附件响应参数转发及缓存隔离合同")
-	}
+// PublicCDNObjectDownloadURL returns a public CDN URL that asks the object
+// storage origin to emit an attachment response. The query parameter keeps
+// ordinary display URLs inline while allowing a browser to download this one
+// without routing object bytes through the application server.
+//
+// Public CDN deployments must preserve response-content-disposition when
+// forwarding requests to the object store.
+func PublicCDNObjectDownloadURL(setting Settings, objectKey string, fileName string) (string, error) {
 	value, err := OssCDNObjectURL(setting.CDNBaseURL, objectKey)
 	if err != nil {
 		return "", err
@@ -294,11 +307,8 @@ func SignedAliyunOSSObjectURL(setting Settings, objectKey string, expiresAt time
 	return signedAliyunOSSObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt})
 }
 
-func SignedAliyunOSSObjectDownloadURL(setting Settings, objectKey string, expiresAt time.Time, disposition string) (string, error) {
-	return signedAliyunOSSObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt, ContentDisposition: disposition})
-}
-
 func signedAliyunOSSObjectURL(setting Settings, objectKey string, signing objectURLSigning) (string, error) {
+	expiresAt := signing.ExpiresAt
 	baseURL, err := OssBucketBaseURL(setting)
 	if err != nil {
 		return "", err
@@ -311,10 +321,10 @@ func signedAliyunOSSObjectURL(setting Settings, objectKey string, signing object
 		return "", errors.New("OSS 对象路径为空")
 	}
 	baseURL.Path = strings.TrimRight(baseURL.Path, "/") + "/" + strings.TrimLeft(objectKey, "/")
-	expires := strconv.FormatInt(signing.ExpiresAt.UTC().Unix(), 10)
+	expires := strconv.FormatInt(expiresAt.UTC().Unix(), 10)
 	canonicalResource := "/" + setting.Bucket + "/" + objectKey
 	query := baseURL.Query()
-	// OSS V1 response overrides are signed in lexical order, with raw values.
+	// V1 签名要求 response-* 覆盖参数按字典序写入 CanonicalizedResource，且值不做转义。
 	overrides := make([]string, 0, 2)
 	if signing.CacheControl != "" {
 		query.Set("response-cache-control", signing.CacheControl)
@@ -338,6 +348,10 @@ func signedAliyunOSSObjectURL(setting Settings, objectKey string, signing object
 }
 
 func PutCOSObject(setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
+	return putCOSObject(context.Background(), setting, objectKey, mimeType, size, body)
+}
+
+func putCOSObject(ctx context.Context, setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
 	setting = NormalizeSettings(setting)
 	client, err := NewCOSClient(setting, transferTimeout(setting))
 	if err != nil {
@@ -347,7 +361,7 @@ func PutCOSObject(setting Settings, objectKey string, mimeType string, size int6
 		mimeType = "application/octet-stream"
 	}
 	options := &cos.ObjectPutOptions{ObjectPutHeaderOptions: &cos.ObjectPutHeaderOptions{ContentType: mimeType, ContentLength: size}}
-	resp, err := client.Object.Put(context.Background(), objectKey, body, options)
+	resp, err := client.Object.Put(ctx, objectKey, body, options)
 	if err != nil {
 		return "", fmt.Errorf("COS 上传失败：%w", err)
 	}
@@ -355,6 +369,10 @@ func PutCOSObject(setting Settings, objectKey string, mimeType string, size int6
 }
 
 func PutQiniuObject(setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
+	return putQiniuObject(context.Background(), setting, objectKey, mimeType, size, body)
+}
+
+func putQiniuObject(ctx context.Context, setting Settings, objectKey string, mimeType string, size int64, body io.Reader) (string, error) {
 	setting = NormalizeSettings(setting)
 	if setting.AccessKeyID == "" || setting.AccessKeySecret == "" {
 		return "", errors.New("七牛云 Kodo 访问密钥不可用")
@@ -373,7 +391,7 @@ func PutQiniuObject(setting Settings, objectKey string, mimeType string, size in
 	if size < 0 {
 		size = 0
 	}
-	if err := uploader.Put(context.Background(), &ret, token, strings.TrimLeft(objectKey, "/"), body, size, extra); err != nil {
+	if err := uploader.Put(ctx, &ret, token, strings.TrimLeft(objectKey, "/"), body, size, extra); err != nil {
 		return "", fmt.Errorf("七牛云 Kodo 上传失败：%w", err)
 	}
 	return ret.Hash, nil
@@ -426,11 +444,8 @@ func SignedCOSObjectURL(setting Settings, objectKey string, expiresAt time.Time)
 	return signedCOSObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt})
 }
 
-func SignedCOSObjectDownloadURL(setting Settings, objectKey string, expiresAt time.Time, disposition string) (string, error) {
-	return signedCOSObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt, ContentDisposition: disposition})
-}
-
 func signedCOSObjectURL(setting Settings, objectKey string, signing objectURLSigning) (string, error) {
+	expiresAt := signing.ExpiresAt
 	setting = NormalizeSettings(setting)
 	if strings.TrimSpace(setting.AccessKeyID) == "" || strings.TrimSpace(setting.AccessKeySecret) == "" {
 		return "", errors.New("COS 访问密钥不可用")
@@ -439,7 +454,7 @@ func signedCOSObjectURL(setting Settings, objectKey string, signing objectURLSig
 	if objectKey == "" {
 		return "", errors.New("COS 对象路径为空")
 	}
-	if !signing.ExpiresAt.After(time.Now()) {
+	if !expiresAt.After(time.Now()) {
 		return "", errors.New("COS 签名有效期必须晚于当前时间")
 	}
 	client, err := NewCOSClient(setting, transferTimeout(setting))
@@ -454,8 +469,9 @@ func signedCOSObjectURL(setting Settings, objectKey string, signing objectURLSig
 	if signing.ContentDisposition != "" {
 		query.Set("response-content-disposition", signing.ContentDisposition)
 	}
-	options := &cos.PresignedURLOptions{Query: &query, AuthTime: &cos.AuthTime{SignStartTime: signedAt, SignEndTime: signing.ExpiresAt, KeyStartTime: signedAt, KeyEndTime: signing.ExpiresAt}}
-	signedURL, err := client.Object.GetPresignedURL(context.Background(), http.MethodGet, objectKey, setting.AccessKeyID, setting.AccessKeySecret, signing.ExpiresAt.Sub(signedAt), options)
+	// COS 默认用 time.Now 生成 q-sign-time；显式传入对齐后的时间窗，保证同一窗口内地址稳定。
+	options := &cos.PresignedURLOptions{Query: &query, AuthTime: &cos.AuthTime{SignStartTime: signedAt, SignEndTime: expiresAt, KeyStartTime: signedAt, KeyEndTime: expiresAt}}
+	signedURL, err := client.Object.GetPresignedURL(context.Background(), http.MethodGet, objectKey, setting.AccessKeyID, setting.AccessKeySecret, expiresAt.Sub(signedAt), options)
 	if err != nil {
 		return "", err
 	}
@@ -482,13 +498,9 @@ func SignedQiniuObjectURL(setting Settings, objectKey string, expiresAt time.Tim
 }
 
 // SignedQiniuS3ObjectURL 用七牛兼容 S3 的 AWS Signature V4 访问私有空间。
-// 浏览器按交付策略直连公网源站；只有明确允许的 provider-input 可代理私有源站。
+// 没有绑定域名时，浏览器不直接访问该地址，而是由后端代理读取并返回文件。
 func SignedQiniuS3ObjectURL(setting Settings, objectKey string, expiresAt time.Time) (string, error) {
 	return signedQiniuS3ObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt})
-}
-
-func SignedQiniuS3ObjectDownloadURL(setting Settings, objectKey string, expiresAt time.Time, disposition string) (string, error) {
-	return signedQiniuS3ObjectURL(setting, objectKey, objectURLSigning{ExpiresAt: expiresAt, ContentDisposition: disposition})
 }
 
 func signedQiniuS3ObjectURL(setting Settings, objectKey string, signing objectURLSigning) (string, error) {

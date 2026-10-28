@@ -4,7 +4,7 @@ import { CometCard } from "@/components/ui/aceternity/comet-card";
 
 import { welcomeContributors } from "./contributors";
 
-const githubContributors = "https://github.com/AetherNo2332/open-ai-canvas4AI/blob/main/CONTRIBUTORS.md";
+const githubContributors = "https://github.com/ddcat-ai/open-ai-canvas#贡献者与团队";
 
 export function WelcomeContributorsCard() {
     if (!welcomeContributors.length) return null;
@@ -19,9 +19,9 @@ export function WelcomeContributorsCard() {
                     </span>
                     <div>
                         <h3 id="welcome-contributors-title">一起把故事搬上银幕</h3>
-                        <p>致谢影策原项目的 {welcomeContributors.length} 位创作者与社区贡献者</p>
+                        <p>{welcomeContributors.length} 位创作者参与产品、开发、测试与社区建设</p>
                     </div>
-                    <a href={githubContributors} target="_blank" rel="noreferrer" aria-label="在 GitHub 查看影策贡献者名录">
+                    <a href={githubContributors} target="_blank" rel="noreferrer" aria-label="在 GitHub README 查看贡献者清单">
                         查看清单
                         <ArrowUpRight size={14} />
                     </a>

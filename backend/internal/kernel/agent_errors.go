@@ -1,0 +1,34 @@
+package kernel
+
+// Cloud Agent 专用的机器可读原因。Agent 运行时（Worker 租约、技能预算、默认技能与
+// Workspace 的 revision CAS）独立于通用错误码维护，前端按 reason 判断。
+const (
+	ReasonAgentLeaseLost                     ErrorReason = "agent_lease_lost"
+	ReasonAgentSkillBudgetExceeded           ErrorReason = "agent_skill_budget_exceeded"
+	ReasonAgentSkillDefaultsRevisionConflict ErrorReason = "agent_skill_defaults_revision_conflict"
+	ReasonAgentSkillDefaultsInvalid          ErrorReason = "agent_skill_defaults_invalid"
+	ReasonAgentWorkspaceRevisionConflict     ErrorReason = "agent_workspace_revision_conflict"
+)
+
+func AgentLeaseLost(message string) *AppError {
+	return &AppError{Status: CodeForbidden, Code: CodeForbidden, Reason: ReasonAgentLeaseLost, Message: message}
+}
+
+// AgentSkillBudgetExceeded 表示技能集合的文件数/字节数/上下文预算超限，details 携带预算名、上限与实际值。
+func AgentSkillBudgetExceeded(details map[string]any) *AppError {
+	return &AppError{Status: CodeInvalidArgument, Code: CodeInvalidArgument, Reason: ReasonAgentSkillBudgetExceeded, Message: "技能集合超出上下文预算", Details: details}
+}
+
+// AgentSkillDefaultsConflict 表示默认技能保存的 revision CAS 失败，details 携带服务端当前 revision。
+func AgentSkillDefaultsConflict(currentRevision int64) *AppError {
+	return &AppError{Status: CodeConflict, Code: CodeConflict, Reason: ReasonAgentSkillDefaultsRevisionConflict, Message: "默认技能配置已被其他管理员修改，请刷新后重试", Details: map[string]any{"currentRevision": currentRevision}}
+}
+
+func AgentWorkspaceConflict(currentRevision int64) *AppError {
+	return &AppError{Status: CodeConflict, Code: CodeConflict, Reason: ReasonAgentWorkspaceRevisionConflict, Message: "Workspace 已被其他页面修改，请刷新后重试", Details: map[string]any{"currentRevision": currentRevision}}
+}
+
+// AgentSkillDefaultsInvalid 表示默认技能集合引用了不存在、已禁用或私有的技能，message 含技能 ID。
+func AgentSkillDefaultsInvalid(message string, details map[string]any) *AppError {
+	return &AppError{Status: CodeInvalidArgument, Code: CodeInvalidArgument, Reason: ReasonAgentSkillDefaultsInvalid, Message: message, Details: details}
+}

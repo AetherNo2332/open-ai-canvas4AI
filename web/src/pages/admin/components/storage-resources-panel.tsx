@@ -1,4 +1,4 @@
-import { App, Button, Input, Modal } from "antd";
+import { Alert, App, Button, Input, Modal } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Download, Eye, Search, Trash2 } from "lucide-react";
 import { saveAs } from "file-saver";
@@ -10,6 +10,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { adminResourceFileUrl, deleteAdminResources, downloadAdminResource, getAdminStorageStats, listAdminResources, type AdminStorageResource, type AdminStorageStats } from "@/services/api/admin-storage";
 import { AdminBatchBar, AdminDataTable, AdminFilterChip, AdminStatTile, AdminStatusBadge, AdminTableEmpty } from "./admin-ui";
 import { Select } from "@/components/ui/base/select";
+import { AdminSearchInput } from "./admin-search-input";
 
 const pageSizes = [20, 50, 100];
 
@@ -198,10 +199,11 @@ export default function StorageResourcesPanel() {
                 <AdminStatTile label="实际可用体积" value={stats ? formatBytes(stats.physicalBytes) : "--"} detail="仅统计已就绪资源" />
                 <AdminStatTile label="存储分布" value={stats ? formatBytes(stats.remoteBytes) : "--"} detail={stats ? `本地 ${formatBytes(stats.localBytes)} · 远端` : undefined} />
             </div>
+            {stats?.offload && (stats.offload.pending > 0 || stats.offload.failed > 0) ? <OffloadAlert offload={stats.offload} /> : null}
             <AdminDataTable
                 toolbar={
                     <div className="admin-storage-resource-filters">
-                        <Input
+                        <AdminSearchInput
                             aria-label="搜索资源"
                             autoComplete="off"
                             allowClear
@@ -209,17 +211,9 @@ export default function StorageResourcesPanel() {
                             prefix={<Search className="size-4 text-foreground/40" />}
                             value={keyword}
                             placeholder="资源 ID 或对象路径"
-                            onChange={(event) => updateUrl({ filter: event.target.value, page: 1 }, true)}
+                            onValueChange={(value) => updateUrl({ filter: value, page: 1 }, true)}
                         />
-                        <Input
-                            aria-label="按用户名、昵称、邮箱或用户 ID 筛选"
-                            autoComplete="off"
-                            allowClear
-                            className="w-64"
-                            value={userQuery}
-                            placeholder="用户名 / 昵称 / 邮箱 / 用户 ID"
-                            onChange={(event) => updateUrl({ user: event.target.value, userId: "", page: 1 }, true)}
-                        />
+                        <AdminSearchInput aria-label="按用户名、昵称、邮箱或用户 ID 筛选" autoComplete="off" allowClear className="w-64" value={userQuery} placeholder="用户名 / 昵称 / 邮箱 / 用户 ID" onValueChange={(value) => updateUrl({ user: value, userId: "", page: 1 }, true)} />
                         <Select aria-label="筛选资源类型" className="w-32" value={kind} onChange={(value) => updateUrl({ kind: value, page: 1 })} options={kindOptions} />
                         <Select aria-label="筛选资源状态" className="w-32" value={status} onChange={(value) => updateUrl({ status: value, page: 1 })} options={statusOptions} />
                         <Select aria-label="筛选存储类型" className="w-36" value={provider} onChange={(value) => updateUrl({ provider: value, page: 1 })} options={providerOptions} />
@@ -396,4 +390,12 @@ function formatDuration(durationMs: number) {
     const seconds = Math.round(durationMs / 1000);
     const minutes = Math.floor(seconds / 60);
     return minutes > 0 ? `${minutes}:${String(seconds % 60).padStart(2, "0")}` : `${seconds} 秒`;
+}
+
+function OffloadAlert({ offload }: { offload: AdminStorageStats["offload"] }) {
+    const parts = [`${offload.pending.toLocaleString()} 个作品（${formatBytes(offload.pendingBytes)}）等待同步到对象存储`];
+    if (offload.oldestPending) parts.push(`最早一条保存于 ${new Date(offload.oldestPending).toLocaleString("zh-CN", { hour12: false })}`);
+    if (offload.lastErrorCode) parts.push(`最近错误 ${offload.lastErrorCode}`);
+    const failed = offload.failed > 0 ? `另有 ${offload.failed.toLocaleString()} 个作品的本地文件丢失，无法自动同步，请在请求日志中按任务排查。` : undefined;
+    return <Alert type={offload.failed > 0 ? "error" : "warning"} showIcon message="对象存储写入失败，部分作品暂存在服务器" description={[parts.join("；") + "。用户访问不受影响，存储恢复后会自动同步。", failed].filter(Boolean).join(" ")} />;
 }

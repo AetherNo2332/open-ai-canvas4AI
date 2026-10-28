@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,159 +9,106 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+	"yingce/backend/internal/auth"
+	"yingce/backend/internal/database"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 	"yingce/backend/internal/service"
 )
 
-func realtimeHTTPFixture(t *testing.T) (*httptest.Server, *service.Service, func()) {
-	_, svc, db := workspaceHTTPFixture(t)
-	if err := db.AutoMigrate(&model.CanvasDocumentEpoch{}); err != nil {
+func TestCanvasRealtimeHTTPAuthorizationBroadcastAndInvalidation(t *testing.T) {
+	t.Setenv("REDIS_URL", "")
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, row := range []any{&model.CanvasProject{ID: "deleted", UserID: "workspace-user", PayloadJSON: `{"nodes":[]}`}, &model.CanvasDocumentEpoch{CanvasID: "deleted", OwnerID: "workspace-user", Epoch: "deleted-epoch", Deleted: true}} {
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+	defer sqlDB.Close()
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []any{
+		&model.User{ID: "user", Username: "realtime", Role: model.UserRoleUser, Status: model.UserStatusActive},
+		&model.AuthSession{ID: "session", UserID: "user", TokenHash: auth.HashToken("test-token"), ExpiresAt: time.Now().Add(time.Hour)},
+		&model.CanvasProject{ID: "canvas", UserID: "user", Revision: 1, Title: "Canvas", PayloadJSON: `{"id":"canvas","title":"Canvas","nodes":[],"connections":[]}`},
+		&model.CanvasProject{ID: "foreign", UserID: "other", Revision: 1, PayloadJSON: `{}`},
+	} {
 		if err := db.Create(row).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
-	r := gin.New()
-	r.GET("/api/canvas-projects/:id/realtime", func(c *gin.Context) { serveCanvasRealtime(c, svc, 25*time.Millisecond) })
-	server := httptest.NewServer(r)
-	t.Cleanup(func() { svc.Close(); server.Close() })
-	return server, svc, func() {
-		if err := db.Delete(&model.AuthSession{}, "id = ?", "workspace-session").Error; err != nil {
-			t.Error(err)
-		}
-	}
-}
-func dialRealtime(t *testing.T, server *httptest.Server, path, origin string, authenticated bool) (*websocket.Conn, *http.Response, error) {
-	t.Helper()
-	headers := http.Header{}
-	headers.Set("Origin", origin)
-	if authenticated {
-		headers.Set("Cookie", service.SessionCookieName+"=workspace-session.token")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	svc := service.New(repository.New(db), t.TempDir())
+	router := gin.New()
+	RegisterCanvasRealtimeRoutes(router.Group("/api"), svc)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	conn, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/api/canvas-projects/"+path+"/realtime", &websocket.DialOptions{HTTPHeader: headers, CompressionMode: websocket.CompressionDisabled})
-	if conn != nil {
-		conn.SetReadLimit(512 << 10)
-		t.Cleanup(func() { conn.CloseNow() })
-	}
-	return conn, response, err
-}
-func readRealtimeType(t *testing.T, c *websocket.Conn, want string) map[string]any {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	for {
-		_, raw, err := c.Read(ctx)
-		if err != nil {
-			t.Fatal(err)
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/canvas-projects/"
+	options := &websocket.DialOptions{HTTPHeader: http.Header{"Cookie": {service.SessionCookieName + "=session.test-token"}}}
+	for _, item := range []struct {
+		id      string
+		options *websocket.DialOptions
+		status  int
+	}{{"canvas", nil, 401}, {"foreign", options, 404}} {
+		conn, response, err := websocket.Dial(ctx, endpoint+item.id+"/realtime", item.options)
+		if conn != nil {
+			conn.CloseNow()
 		}
-		var msg map[string]any
-		if err = json.Unmarshal(raw, &msg); err != nil {
-			t.Fatal(err)
-		}
-		if msg["type"] == want {
-			return msg
+		if err == nil || response == nil || response.StatusCode != item.status {
+			t.Fatalf("authorization: status=%v err=%v", response, err)
 		}
 	}
-}
-func TestRealtimeWebSocketAuthOriginProtocolAndRevocation(t *testing.T) {
-	server, _, revoke := realtimeHTTPFixture(t)
-	for _, tc := range []struct {
-		path, origin string
-		auth         bool
-		status       int
-	}{{"own", server.URL, false, 401}, {"foreign", server.URL, true, 404}, {"missing", server.URL, true, 404}, {"deleted", server.URL, true, 404}, {"own", "https://evil.invalid", true, 403}, {"own", "", true, 403}} {
-		conn, response, err := dialRealtime(t, server, tc.path, tc.origin, tc.auth)
-		if conn != nil || err == nil || response == nil || response.StatusCode != tc.status {
-			t.Fatalf("handshake %+v: %v %v", tc, response, err)
+	read := func(conn *websocket.Conn, match func(map[string]any) bool) map[string]any {
+		t.Helper()
+		for {
+			var event map[string]any
+			if err := wsjson.Read(ctx, conn, &event); err != nil {
+				t.Fatal(err)
+			}
+			if match(event) {
+				return event
+			}
 		}
 	}
-	conn, _, err := dialRealtime(t, server, "own", server.URL, true)
+	a, _, err := websocket.Dial(ctx, endpoint+"canvas/realtime", options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready := readRealtimeType(t, conn, "ready")
-	if ready["protocolVersion"] != float64(1) || ready["coordination"] != "local" || ready["deviceNumber"].(float64) < 1 {
-		t.Fatalf("ready: %+v", ready)
-	}
-	readRealtimeType(t, conn, "sync")
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"presence","protocolVersion":1,"cursor":{"x":1,"y":2},"drag":[],"deviceLabel":"HTTP test"}`)); err != nil {
-		t.Fatal(err)
-	}
-	for {
-		peers := readRealtimeType(t, conn, "peers")
-		list := peers["peers"].([]any)
-		if len(list) == 1 && list[0].(map[string]any)["deviceLabel"] == "HTTP test" {
-			break
-		}
-	}
-	revoke()
-	for {
-		_, _, err = conn.Read(ctx)
-		if err != nil {
-			break
-		}
-	}
-	if websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
-		t.Fatalf("revocation: %v", err)
-	}
-}
-func TestRealtimeWebSocketInvalidFramesAndShutdown(t *testing.T) {
-	server, svc, _ := realtimeHTTPFixture(t)
-	for _, tc := range []struct {
-		name string
-		kind websocket.MessageType
-		raw  string
-	}{{"version", websocket.MessageText, `{"type":"heartbeat"}`}, {"binary", websocket.MessageBinary, `{}`}, {"large", websocket.MessageText, strings.Repeat("a", 32769)}} {
-		t.Run(tc.name, func(t *testing.T) {
-			c, _, err := dialRealtime(t, server, "own", server.URL, true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			readRealtimeType(t, c, "ready")
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			if err = c.Write(ctx, tc.kind, []byte(tc.raw)); err != nil {
-				t.Fatal(err)
-			}
-			for {
-				_, _, err = c.Read(ctx)
-				if err != nil {
-					break
-				}
-			}
-			want := websocket.StatusPolicyViolation
-			if tc.name == "large" {
-				want = websocket.StatusMessageTooBig
-			}
-			if websocket.CloseStatus(err) != want {
-				t.Fatalf("close: %v", err)
-			}
-		})
-	}
-	c, _, err := dialRealtime(t, server, "own", server.URL, true)
+	defer a.CloseNow()
+	welcomeA := read(a, func(e map[string]any) bool { return e["type"] == "welcome" })
+	b, _, err := websocket.Dial(ctx, endpoint+"canvas/realtime", options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	readRealtimeType(t, c, "ready")
-	if err = svc.Close(); err != nil {
+	defer b.CloseNow()
+	welcomeB := read(b, func(e map[string]any) bool { return e["type"] == "welcome" })
+	if welcomeA["selfId"] == welcomeB["selfId"] || len(welcomeB["peers"].([]any)) != 2 {
+		t.Fatal("windows share an identity")
+	}
+	if err := wsjson.Write(ctx, a, map[string]any{"type": "presence", "cursor": map[string]any{"x": 25, "y": 45}, "drag": nil}); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	for {
-		_, _, err = c.Read(ctx)
-		if err != nil {
-			break
-		}
+	read(b, func(e map[string]any) bool {
+		peer, _ := e["peer"].(map[string]any)
+		return peer != nil && peer["id"] == welcomeA["selfId"] && peer["cursor"] != nil
+	})
+	var project model.CanvasProject
+	if err := db.First(&project, "id = ?", "canvas").Error; err != nil || project.Revision != 1 {
+		t.Fatalf("presence persisted: %+v err=%v", project, err)
 	}
-	if websocket.CloseStatus(err) != websocket.StatusGoingAway {
-		t.Fatalf("shutdown: %v", err)
+	_, err = svc.ChangeUserCanvasEditLease("user", "canvas", service.CanvasEditLeaseRequest{Action: "acquire", CanvasEditProof: model.CanvasEditProof{NodeID: "node", SessionID: "window"}})
+	if err != nil {
+		t.Fatal(err)
 	}
+	read(b, func(e map[string]any) bool { return e["type"] == "invalidate" })
+	_ = a.CloseNow()
+	read(b, func(e map[string]any) bool { return e["type"] == "leave" && e["peerId"] == welcomeA["selfId"] })
 }

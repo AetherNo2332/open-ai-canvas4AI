@@ -5,7 +5,6 @@ export function isCanvasNodeGenerating(node: CanvasNodeData | undefined, running
     if (!node) return false;
     if (runningNodeId === node.id) return true;
     const meta = node.metadata;
-    if (meta?.mediaVersion?.activeTaskId || meta?.mediaVersion?.pendingVersionId) return true;
     if (meta?.taskId && (meta.taskStatus === "queued" || meta.taskStatus === "running")) return true;
     if (["succeeded", "failed", "cancelled"].includes(meta?.taskStatus || "")) return false;
     return meta?.status === "loading" || Boolean(meta?.taskId && meta.status !== "success" && meta.status !== "error");

@@ -244,14 +244,24 @@ func cloudAgentPatchCoversDocument(before, after map[string]any) bool {
 	content := func(doc map[string]any) map[string]any {
 		result := map[string]any{}
 		for key, value := range doc {
-			if key != "nodes" && key != "connections" && key != "updatedAt" && key != "viewport" {
+			// 行元数据由上游 operations 写入时按数据库列投影，不属于增量遗漏的编辑。
+			if key != "nodes" && key != "connections" && key != "updatedAt" && key != "viewport" && !cloudAgentCanvasRowMetadataKeys[key] {
 				result[key] = value
 			}
 		}
+		delete(result, "title")
 		return result
+	}
+	// 上游投影会把数据库列里的标题写进正文：原先缺省标题的文档出现标题只是投影，
+	// 两边都有标题且不同才是增量遗漏的改名。
+	if beforeTitle, afterTitle := stringValue(before["title"]), stringValue(after["title"]); beforeTitle != "" && afterTitle != "" && beforeTitle != afterTitle {
+		return false
 	}
 	return reflect.DeepEqual(content(before), content(after))
 }
+
+// cloudAgentCanvasRowMetadataKeys 是上游画布投影以数据库列为准写入或移除的正文字段。
+var cloudAgentCanvasRowMetadataKeys = map[string]bool{"id": true, "projectId": true, "createdAt": true, "revision": true, "remoteContentHash": true}
 
 func cloudAgentValidKeyedCollection(value any) bool {
 	var items []map[string]any

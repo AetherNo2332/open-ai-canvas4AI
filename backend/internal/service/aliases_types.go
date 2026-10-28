@@ -2,38 +2,22 @@ package service
 
 import "yingce/backend/internal/app"
 
+type AgentAvatarBundleManifest = app.AgentAvatarBundleManifest
+type AgentAvatarBundleImport = app.AgentAvatarBundleImport
+
+const (
+	WorkbenchKindImage = app.WorkbenchKindImage
+	WorkbenchKindVideo = app.WorkbenchKindVideo
+)
+
 type (
-	AgentSystemPromptRequest               = app.AgentSystemPromptRequest
-	AgentWebSearchSettingRequest           = app.AgentWebSearchSettingRequest
-	AgentWorkspaceView                     = app.AgentWorkspaceView
-	AgentSchedulerUpdate                   = app.AgentSchedulerUpdate
+	BindProjectAssetImageRequest           = app.BindProjectAssetImageRequest
 	PaymentOrderQuery                      = app.PaymentOrderQuery
 	PaymentReconciliationQuery             = app.PaymentReconciliationQuery
 	CloudAgentRequest                      = app.CloudAgentRequest
 	CloudAgentRunViewOptions               = app.CloudAgentRunViewOptions
 	CloudAgentMediaSettings                = app.CloudAgentMediaSettings
 	CloudAgentCapabilitySet                = app.CloudAgentCapabilitySet
-	PiAgentSnapshot                        = app.PiAgentSnapshot
-	PiWorkerRecoveryRequest                = app.PiWorkerRecoveryRequest
-	PiModelStepRequest                     = app.PiModelStepRequest
-	PiModelStepView                        = app.PiModelStepView
-	PiToolBatchRequest                     = app.PiToolBatchRequest
-	PiMessageCheckpoint                    = app.PiMessageCheckpoint
-	PiContextCompactionStart               = app.PiContextCompactionStart
-	PiContextCompactionView                = app.PiContextCompactionView
-	PiContextCompactionCommit              = app.PiContextCompactionCommit
-	PiNativeCompactionModelRequest         = app.PiNativeCompactionModelRequest
-	PiNativeCompactionComplete             = app.PiNativeCompactionComplete
-	PiTurnDecision                         = app.PiTurnDecision
-	PiToolReceipt                          = app.PiToolReceipt
-	PiRuntimePhaseRequest                  = app.PiRuntimePhaseRequest
-	PiSkillSnapshot                        = app.PiSkillSnapshot
-	PiSkillReadPage                        = app.PiSkillReadPage
-	PiSkillFileRequest                     = app.PiSkillFileRequest
-	AgentSubagentPolicyRequest             = app.AgentSubagentPolicyRequest
-	AgentSubagentPolicyView                = app.AgentSubagentPolicyView
-	AgentSubagentView                      = app.AgentSubagentView
-	AgentSkillDefaultItem                  = app.AgentSkillDefaultItem
 	AgentLessonView                        = app.AgentLessonView
 	AgentLessonAdminView                   = app.AgentLessonAdminView
 	AgentMemoryRequest                     = app.AgentMemoryRequest
@@ -47,6 +31,8 @@ type (
 	APICallLogQuery                        = app.APICallLogQuery
 	AccountFileStorageUsage                = app.AccountFileStorageUsage
 	AdminAppearanceSetting                 = app.AdminAppearanceSetting
+	AdminStorageGrantRequest               = app.AdminStorageGrantRequest
+	AdminUserStorage                       = app.AdminUserStorage
 	AdminAuditPage                         = app.AdminAuditPage
 	AdminCacheClearGroupResult             = app.AdminCacheClearGroupResult
 	AdminCacheClearRequest                 = app.AdminCacheClearRequest
@@ -111,12 +97,13 @@ type (
 	BulkDisableUsersResult                 = app.BulkDisableUsersResult
 	CanvasLibraryPage                      = app.CanvasLibraryPage
 	CanvasLibrarySummary                   = app.CanvasLibrarySummary
+	CanvasOperationsRequest                = app.CanvasOperationsRequest
+	CanvasEditLeaseRequest                 = app.CanvasEditLeaseRequest
 	CanvasHistoryList                      = app.CanvasHistoryList
 	CanvasShareRequest                     = app.CanvasShareRequest
 	CanvasShareStatus                      = app.CanvasShareStatus
 	CapabilityMatch                        = app.CapabilityMatch
 	CapabilitySpec                         = app.CapabilitySpec
-	ChangePasswordRequest                  = app.ChangePasswordRequest
 	ChannelModelCatalogDefaultParameters   = app.ChannelModelCatalogDefaultParameters
 	ChannelModelCatalogItem                = app.ChannelModelCatalogItem
 	ChannelModelCatalogOption              = app.ChannelModelCatalogOption
@@ -130,9 +117,12 @@ type (
 	ChannelOrderItem                       = app.ChannelOrderItem
 	ChannelOrderRequest                    = app.ChannelOrderRequest
 	ChannelRequest                         = app.ChannelRequest
+	SystemChannelExport                    = app.SystemChannelExport
+	SystemChannelImportResult              = app.SystemChannelImportResult
+	ProviderCatalogVerifyRequest           = app.ProviderCatalogVerifyRequest
+	ProviderCatalogInstallRequest          = app.ProviderCatalogInstallRequest
 	CharacterAssetSummary                  = app.CharacterAssetSummary
 	CharacterCardSummary                   = app.CharacterCardSummary
-	CharacterListPage                      = app.CharacterListPage
 	CharacterRepresentationInput           = app.CharacterRepresentationInput
 	CharacterRepresentationSummary         = app.CharacterRepresentationSummary
 	CharacterVoiceSummary                  = app.CharacterVoiceSummary
@@ -144,8 +134,8 @@ type (
 	CreateAssetCandidatesRequest           = app.CreateAssetCandidatesRequest
 	CreateAssetFolderRequest               = app.CreateAssetFolderRequest
 	CreateAssetVersionRequest              = app.CreateAssetVersionRequest
-	CreateCharacterRequest                 = app.CreateCharacterRequest
 	CreatePaymentOrderRequest              = app.CreatePaymentOrderRequest
+	CreateCharacterRequest                 = app.CreateCharacterRequest
 	CreateProjectAssetFolderRequest        = app.CreateProjectAssetFolderRequest
 	CreateProjectCharacterRequest          = app.CreateProjectCharacterRequest
 	CreateProjectRequest                   = app.CreateProjectRequest
@@ -162,6 +152,7 @@ type (
 	CreationRunOutput                      = app.CreationRunOutput
 	CreationSubmissionOutput               = app.CreationSubmissionOutput
 	CreditPolicy                           = app.CreditPolicy
+	BillingAutoRefundSetting               = app.BillingAutoRefundSetting
 	DiagnosticBundle                       = app.DiagnosticBundle
 	DiagnosticClientEvent                  = app.DiagnosticClientEvent
 	DiagnosticExportRequest                = app.DiagnosticExportRequest
@@ -315,6 +306,9 @@ type (
 	SkillListRequest                       = app.SkillListRequest
 	SkillMutationRequest                   = app.SkillMutationRequest
 	SkillPackageBundle                     = app.SkillPackageBundle
+	SkillPackageEditRequest                = app.SkillPackageEditRequest
+	SkillPackageEditResult                 = app.SkillPackageEditResult
+	SkillPackageFileOperation              = app.SkillPackageFileOperation
 	SkillPackageBundleFile                 = app.SkillPackageBundleFile
 	SkillPackageFileContent                = app.SkillPackageFileContent
 	SkillPackageFileItem                   = app.SkillPackageFileItem
@@ -350,6 +344,7 @@ type (
 	TextReplayResult                       = app.TextReplayResult
 	TimelineRenderCreateRequest            = app.TimelineRenderCreateRequest
 	TimelineTranscriptionCreateRequest     = app.TimelineTranscriptionCreateRequest
+	RevokeStorageGrantRequest              = app.RevokeStorageGrantRequest
 	TopupProductRequest                    = app.TopupProductRequest
 	UpdateAnnouncementRequest              = app.UpdateAnnouncementRequest
 	UpdateBannerAnnouncementRequest        = app.UpdateBannerAnnouncementRequest
@@ -363,6 +358,11 @@ type (
 	UpdateProjectUnitRequest               = app.UpdateProjectUnitRequest
 	UpdateUserRequest                      = app.UpdateUserRequest
 	UpdateWorkflowStepRequest              = app.UpdateWorkflowStepRequest
+	WorkbenchToolInput                     = app.WorkbenchToolInput
+	WorkbenchPresetInput                   = app.WorkbenchPresetInput
+	WorkbenchToolView                      = app.WorkbenchToolView
+	WorkbenchPresetView                    = app.WorkbenchPresetView
+	WorkbenchTaskInput                     = app.WorkbenchTaskInput
 	UserAnnouncementFeed                   = app.UserAnnouncementFeed
 	UserAssetPage                          = app.UserAssetPage
 	UserAssetPageFilter                    = app.UserAssetPageFilter

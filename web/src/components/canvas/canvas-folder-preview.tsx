@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Dropdown } from "antd";
+import { CanvasAnchoredDropdown as Dropdown } from "./canvas-anchored-dropdown";
 import { FileAudio, FileText, MoreHorizontal, Pencil, Plus, SlidersHorizontal, Sparkles, Video } from "lucide-react";
 
 import { CanvasVideoPreviewImage } from "@/components/canvas/canvas-video-preview-image";
 import { CANVAS_FOLDER_THEME_OPTIONS, resolveCanvasFolderTheme, resolveCanvasFolderThemeCover } from "@/lib/canvas/canvas-folder-theme";
 import type { CanvasFolderStyle, CanvasFolderTheme, CanvasNodeData } from "@/types/canvas";
 import { CanvasNodeType } from "@/types/canvas";
-import { useCanvasInlineAuthorEdit } from "./use-canvas-inline-author-edit";
 
 const FOLDER_STYLE_OPTIONS: Array<{ key: CanvasFolderStyle; label: string }> = [
     { key: "glass", label: "流光玻璃" },
@@ -19,7 +18,6 @@ const FOLDER_STYLE_OPTIONS: Array<{ key: CanvasFolderStyle; label: string }> = [
 
 export const CanvasFolderPreview = React.memo(function CanvasFolderPreview({
     data,
-    canvasId = "",
     childNodes,
     active,
     isDropTarget,
@@ -30,7 +28,6 @@ export const CanvasFolderPreview = React.memo(function CanvasFolderPreview({
     onThemeChange,
 }: {
     data: CanvasNodeData;
-    canvasId?: string;
     childNodes: CanvasNodeData[];
     active: boolean;
     isDropTarget: boolean;
@@ -44,7 +41,6 @@ export const CanvasFolderPreview = React.memo(function CanvasFolderPreview({
     const theme = resolveCanvasFolderTheme(data.metadata?.folder?.theme);
     const [editing, setEditing] = useState(false);
     const [title, setTitle] = useState(data.title);
-    const author = useCanvasInlineAuthorEdit(canvasId, data, editing);
     const previewNodes = useMemo(() => childNodes.filter(canPreviewFolderNode).slice(0, 3), [childNodes]);
     const themeCover = resolveCanvasFolderThemeCover(theme, data.metadata?.folder?.themeCover);
     const showAdd = style === "glass" || childNodes.length === 0;
@@ -70,10 +66,11 @@ export const CanvasFolderPreview = React.memo(function CanvasFolderPreview({
 
     useEffect(() => setTitle(data.title), [data.title]);
 
-    const commitTitle = async () => {
+    const commitTitle = () => {
         const next = title.trim() || "未命名文件夹";
         setTitle(next);
-        if (await author.commit({ title: next }, () => onTitleChange(data.id, next))) setEditing(false);
+        setEditing(false);
+        onTitleChange(data.id, next);
     };
 
     return (
@@ -104,11 +101,7 @@ export const CanvasFolderPreview = React.memo(function CanvasFolderPreview({
                             autoFocus
                             className="canvas-folder-title-input"
                             value={title}
-                            readOnly={!author.canEdit}
-                            onChange={(event) => {
-                                setTitle(event.target.value);
-                                author.remember({ title: event.target.value });
-                            }}
+                            onChange={(event) => setTitle(event.target.value)}
                             onBlur={commitTitle}
                             onMouseDown={(event) => event.stopPropagation()}
                             onKeyDown={(event) => {
@@ -126,19 +119,11 @@ export const CanvasFolderPreview = React.memo(function CanvasFolderPreview({
                             title={readOnly ? data.title : `${data.title} · 点击重命名`}
                             onClick={(event) => {
                                 event.stopPropagation();
-                                if (!readOnly)
-                                    void author.enter((value) => {
-                                        setTitle(String(value.title || data.title));
-                                        setEditing(true);
-                                    });
+                                if (!readOnly) setEditing(true);
                             }}
                             onDoubleClick={(event) => {
                                 event.stopPropagation();
-                                if (!readOnly)
-                                    void author.enter((value) => {
-                                        setTitle(String(value.title || data.title));
-                                        setEditing(true);
-                                    });
+                                if (!readOnly) setEditing(true);
                             }}
                         >
                             <span>{data.title}</span>

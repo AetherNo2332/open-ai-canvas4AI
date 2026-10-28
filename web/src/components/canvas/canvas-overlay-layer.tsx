@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type CSSProperties, type MouseEventHandler, type PointerEventHandler, type ReactNode, type WheelEventHandler } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type MouseEventHandler, type PointerEventHandler, type ReactNode, type WheelEventHandler } from "react";
 
 type CanvasOverlayLayerContextValue = {
     activeOverlayId: string | null;
@@ -30,7 +30,6 @@ export function CanvasOverlayLayerContainer({
     overlayId,
     fallbackZIndex,
     className,
-    style,
     children,
     onMouseDown,
     onPointerDown,
@@ -39,7 +38,6 @@ export function CanvasOverlayLayerContainer({
     overlayId: string;
     fallbackZIndex: string;
     className?: string;
-    style?: CSSProperties;
     children: ReactNode;
     onMouseDown?: MouseEventHandler<HTMLDivElement>;
     onPointerDown?: PointerEventHandler<HTMLDivElement>;
@@ -48,7 +46,7 @@ export function CanvasOverlayLayerContainer({
     const { bringToFront, zIndex } = useCanvasOverlayLayer(overlayId, fallbackZIndex);
 
     return (
-        <div data-canvas-no-zoom className={className} style={{ ...style, zIndex }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront} onMouseDown={onMouseDown} onPointerDown={onPointerDown} onWheel={onWheel}>
+        <div data-canvas-no-zoom className={className} style={{ zIndex }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront} onMouseDown={onMouseDown} onPointerDown={onPointerDown} onWheel={onWheel}>
             {children}
         </div>
     );

@@ -67,22 +67,6 @@ export type CanvasOperationPostcondition = {
 };
 
 /**
- * update_node 的 metadata 按浅合并应用，但 storyboard 是嵌套结构：
- * Agent 只提交 visibleColumns 时不能覆盖掉未提交的 rows / referenceNodeIds。
- */
-function mergeCanvasNodeMetadata(current: CanvasNodeMetadata | undefined, patches: Array<CanvasNodeMetadata | undefined>): CanvasNodeMetadata {
-    const merged: CanvasNodeMetadata = { ...current };
-    for (const patch of patches) {
-        if (!patch) continue;
-        const baseStoryboard = merged.storyboard ?? { rows: [], visibleColumns: [], referenceNodeIds: [] };
-        const storyboard = patch.storyboard ? { ...baseStoryboard, ...patch.storyboard } : undefined;
-        Object.assign(merged, patch);
-        if (storyboard) merged.storyboard = storyboard;
-    }
-    return merged;
-}
-
-/**
  * Verify the observable postcondition after a batch has been applied.
  *
  * This is intentionally separate from validation: validation answers whether
@@ -140,7 +124,7 @@ export function verifyCanvasOperations(before: CanvasSnapshot, after: CanvasSnap
                     warnings.push(`节点「${afterNode.title || op.id}」的 ${key} 未达到预期`);
                 }
                 if ((patch.metadata && typeof patch.metadata === "object" && !Array.isArray(patch.metadata)) || op.metadata) {
-                    const expectedMetadata = mergeCanvasNodeMetadata(beforeNode.metadata, [patch.metadata as CanvasNodeMetadata | undefined, op.metadata]);
+                    const expectedMetadata = { ...beforeNode.metadata, ...(patch.metadata as Record<string, unknown> || {}), ...(op.metadata || {}) };
                     if (JSON.stringify(afterNode.metadata || {}) !== JSON.stringify(expectedMetadata)) {
                         failedPostconditions.add(`${op.id}:metadata`);
                         warnings.push(`节点「${afterNode.title || op.id}」的 metadata 未达到预期`);
@@ -361,7 +345,7 @@ export function applyCanvasOperations(snapshot: CanvasSnapshot, ops?: CanvasOper
             const dx = current?.type === CanvasNodeType.Frame && nextPosition ? nextPosition.x - current.position.x : 0;
             const dy = current?.type === CanvasNodeType.Frame && nextPosition ? nextPosition.y - current.position.y : 0;
             nodes = nodes.map((node) => {
-                if (node.id === op.id) return { ...node, ...op.patch, metadata: mergeCanvasNodeMetadata(node.metadata, [op.patch?.metadata, op.metadata]) };
+                if (node.id === op.id) return { ...node, ...op.patch, metadata: { ...node.metadata, ...op.patch?.metadata, ...op.metadata } };
                 if (node.parentId === op.id && (dx || dy)) return { ...node, position: { x: node.position.x + dx, y: node.position.y + dy } };
                 return node;
             });

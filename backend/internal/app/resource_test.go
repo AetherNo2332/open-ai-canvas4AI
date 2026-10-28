@@ -20,6 +20,7 @@ import (
 
 	"yingce/backend/internal/assets"
 	"yingce/backend/internal/model"
+	"yingce/backend/internal/outbound/outboundtest"
 	"yingce/backend/internal/repository"
 	"yingce/backend/internal/storage"
 
@@ -335,6 +336,7 @@ func TestAliyunOSSSettingKeepsCDNBaseURL(t *testing.T) {
 }
 
 func TestQiniuKodoSettingAllowsMissingCDNBaseURL(t *testing.T) {
+	outboundtest.PublicDNS(t, "up-z0.qiniup.com")
 	next, err := ossSettingFromRequest(OSSSettingRequest{
 		Enabled: true, Provider: qiniuKodoProvider, Region: "z0", Endpoint: "https://up-z0.qiniup.com",
 		Bucket: "private-bucket", AccessKeyID: "access-id", AccessKeySecret: "secret-value",
@@ -415,6 +417,7 @@ func TestArchivedProviderCredentialsAreEncryptedAtRest(t *testing.T) {
 }
 
 func TestResourceAccessChecksOwnershipAndSignsOSSResource(t *testing.T) {
+	outboundtest.PublicDNS(t, "s3.amazonaws.com")
 	svc := newResourceTestService(t)
 	settingJSON, _ := json.Marshal(ossSettingValue{
 		Enabled: true, Provider: "aliyun", Endpoint: "https://s3.amazonaws.com", Bucket: "private-bucket",
@@ -471,7 +474,42 @@ func TestPrepareResourceDeliveryPrefersConfiguredCDN(t *testing.T) {
 	}
 }
 
+func TestPrepareResourceDeliveryUsesPublicCDNForDownloadWhenOriginIsPrivate(t *testing.T) {
+	svc := newResourceTestService(t)
+	settingJSON, _ := json.Marshal(ossSettingValue{
+		Enabled: true, Provider: tencentCOSProvider, Endpoint: "http://storage.internal", CDNBaseURL: "https://media.example.com",
+		Bucket: "private-bucket-1250000000", AccessKeyID: "secret-id", AccessKeySecret: "secret-key",
+		Delivery: storage.DeliverySettings{CDNAuthMode: "public"},
+	})
+	if err := svc.repo.SaveSystemSetting(&model.SystemSetting{Key: ossSettingKey, ValueJSON: string(settingJSON)}); err != nil {
+		t.Fatal(err)
+	}
+	resource := model.Resource{
+		ID: "resource-public-cdn-download", UserID: "user-1", Kind: "image", Status: model.ResourceStatusReady,
+		Provider: tencentCOSProvider, Endpoint: "http://storage.internal", Bucket: "private-bucket-1250000000",
+		ObjectKey: "users/user-1/image/test image.png", MimeType: "image/png",
+	}
+	if err := svc.repo.CreateResource(&resource); err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := svc.PrepareResourceDelivery("user-1", resource.ID, ResourceAccessOptions{Purpose: assets.PurposeDownload, DownloadName: "下载图片.png"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivery.Access == nil || delivery.Access.Delivery != assets.DeliveryCDN || delivery.Access.ExpiresAt != nil {
+		t.Fatalf("PrepareResourceDelivery() = %#v", delivery)
+	}
+	parsed, err := url.Parse(delivery.Access.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Host != "media.example.com" || parsed.Path != "/users/user-1/image/test image.png" || !strings.HasPrefix(parsed.Query().Get("response-content-disposition"), "attachment") {
+		t.Fatalf("download URL = %q", delivery.Access.URL)
+	}
+}
+
 func TestPrepareResourceDeliveryFallsBackToOriginWhenCDNAuthIsMissing(t *testing.T) {
+	outboundtest.PublicDNS(t, "s3.amazonaws.com")
 	svc := newResourceTestService(t)
 	settingJSON, _ := json.Marshal(ossSettingValue{
 		Enabled: true, Provider: aliyunOSSProvider, Endpoint: "https://s3.amazonaws.com", CDNBaseURL: "https://media.example.com",
@@ -687,6 +725,7 @@ func TestHistoricalUserResourceWithoutStorageSettingIDKeepsItsProviderCDN(t *tes
 }
 
 func TestPrepareResourceDeliveryUsesSignedOriginWithoutCDN(t *testing.T) {
+	outboundtest.PublicDNS(t, "s3.amazonaws.com")
 	svc := newResourceTestService(t)
 	settingJSON, _ := json.Marshal(ossSettingValue{
 		Enabled: true, Provider: aliyunOSSProvider, Endpoint: "https://s3.amazonaws.com", Bucket: "private-bucket",
@@ -929,7 +968,7 @@ func newResourceTestService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.SystemSetting{}, &model.UserOSSSetting{}, &model.StorageLocation{}, &model.UserDailyUploadUsage{}, &model.Resource{}); err != nil {
+	if err := db.AutoMigrate(&model.SystemSetting{}, &model.UserOSSSetting{}, &model.StorageLocation{}, &model.UserDailyUploadUsage{}, &model.Resource{}, &model.ResourceOffloadJob{}, &model.UploadReservation{}, &model.UserStorageGrant{}, &model.UserStorageState{}); err != nil {
 		t.Fatal(err)
 	}
 	return &Service{repo: repository.New(db), dataDir: t.TempDir()}

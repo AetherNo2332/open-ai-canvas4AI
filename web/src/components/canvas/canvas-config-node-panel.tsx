@@ -8,10 +8,10 @@ import { Switch } from "@/components/ui/base/switch";
 import { configuredModelMatchesCapability, defaultConfig, modelOptionName, normalizeRunningHubCapability, resolveModelChannel, useEffectiveConfig, type AiConfig, type RunningHubCapability, type RunningHubWorkflow, type RunningHubWorkflowKind } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
-import { defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, workflowFieldChoiceValues, workflowFieldCurrentValue, workflowFieldKey, workflowFieldNumberBounds, workflowFieldRandomKey, workflowFieldSubmissionValue, workflowFieldValueError, workflowImageCapabilityConfig, workflowOutputSizeValue, workflowParameterFields, workflowVideoCapabilityConfig, workflowVideoFieldsFromJson, type WorkflowVideoFieldLike } from "@/lib/model-capabilities";
+import { defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, workflowFieldChoiceValues, workflowFieldCurrentValue, workflowFieldIsRatioChoices, workflowFieldKey, workflowFieldNumberBounds, workflowFieldOptionValue, workflowFieldRandomKey, workflowFieldSubmissionValue, workflowFieldValueError, workflowImageCapabilityConfig, workflowOutputSizeValue, workflowParameterFields, workflowVideoCapabilityConfig, workflowVideoFieldsFromJson, type WorkflowVideoFieldLike } from "@/lib/model-capabilities";
 import { defaultImageParamsForModel, modelCompatibilityError, modelRequestOptions, resolveCompatibleModel, resolveModelGenerationDefaults, type ModelRequirements } from "@/lib/model-selection";
 import { resolveCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
-import { canonicalGenerationMetadata } from "@/lib/canvas/generation-contract";
+import { canonicalGenerationMetadata, nodeGenerationPrompt } from "@/lib/canvas/generation-contract";
 import type { CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
@@ -87,9 +87,11 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
             vquality: node.metadata?.vquality || globalConfig.vquality,
             videoGenerateAudio: node.metadata?.generateAudio ?? globalConfig.videoGenerateAudio,
             videoWatermark: node.metadata?.watermark ?? globalConfig.videoWatermark,
-            audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice,
+            audioVoice: node.metadata?.audioVoice ?? globalConfig.audioVoice,
             audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat,
             audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed,
+            audioLanguage: node.metadata?.audioLanguage || globalConfig.audioLanguage,
+            audioDialect: node.metadata?.audioDialect || globalConfig.audioDialect,
         }, mode),
     };
     const config = buildNodeConfig(globalConfig, node, mode, requirements);
@@ -143,7 +145,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     ];
     const chipStyle = { background: theme.node.fill, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount || inputSummary.characterCount);
-    const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
+    const hasComposerContent = Boolean(nodeGenerationPrompt(node).trim());
     const workflowParameterError = firstWorkflowParameterError(dynamicWorkflowFields, node.metadata?.workflowParameters || {});
     const capabilityError = workflowParameterError || (workflowProvider === "runninghub"
         ? (!workflowProviderPluginEnabled(runtimeStatuses, "runninghub") ? "RunningHub 工作流插件未启用" : !globalConfig.runningHub.enabled ? "请先在设置中启用 RunningHub" : !node.metadata?.runningHubWorkflowId ? `请选择${capabilityLabel(workflowCapability)}工作流或 App` : !selectedRunningHubWorkflow ? "当前画布引用的 RunningHub 条目已不存在，请重新选择" : selectedRunningHubCapability !== workflowCapability ? `当前条目用途为${capabilityLabel(selectedRunningHubCapability || "image")}，请切换画布模式或重新选择条目` : undefined)
@@ -151,7 +153,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const canGenerate = (hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput)) && !capabilityError;
 
     return (
-        <div className="canvas-config-node-panel thin-scrollbar flex h-full w-full cursor-move flex-col gap-3.5 overflow-y-auto px-4 pb-4 pt-8 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
+        <div className="canvas-config-node-panel thin-scrollbar flex h-full w-full cursor-move flex-col gap-4 overflow-y-auto px-4 pb-4 pt-8 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
             <div className="flex min-h-9 items-center justify-between gap-3">
                 <div className="shrink-0 text-sm font-semibold">{simpleMode ? "快速生成" : workflowProvider === "model" ? "生成配置" : "工作流生成"}</div>
                 {simpleMode ? <span className="rounded-md px-2 py-1 text-[var(--fs-tiny)]" style={{ background: theme.node.fill, color: theme.node.muted }}>自动配置</span> : <div className="cursor-default" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
@@ -201,7 +203,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 {inputSummary.characterCount ? <InputChip label="角色卡" value={`${inputSummary.characterCount} 个`} style={chipStyle} /> : null}
             </div>
 
-            <button type="button" className="canvas-config-prompt-button group flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg px-3 text-left" style={{ background: theme.node.fill, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onComposerToggle}>
+            <button type="button" className="canvas-config-prompt-button group flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-lg px-3 text-left" style={{ background: theme.node.fill, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onComposerToggle}>
                 <span className="grid size-7 shrink-0 place-items-center rounded-md" style={{ background: theme.node.panel }}>
                     {simpleMode ? <MessageSquare className="size-3.5" /> : <Sparkles className="size-3.5" />}
                 </span>
@@ -209,7 +211,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                     <span className="block text-[var(--fs-label)] font-semibold">{simpleMode ? "编辑生成内容" : "组装提示词"}</span>
                     <span className="block truncate text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>{hasComposerContent ? "已填写，可继续编辑或引用素材" : "输入提示词，或用 @ 引用连接素材"}</span>
                 </span>
-                <ChevronDown className="size-3.5 -rotate-90 opacity-45 transition-transform group-hover:translate-x-0.5" />
+                <ChevronDown className="size-3.5 -rotate-90 opacity-45 transition-opacity duration-150 group-hover:opacity-80" />
             </button>
 
             {mode === "video" && !simpleMode ? (
@@ -223,7 +225,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
             ) : null}
 
             {simpleMode ? (
-                <div className="rounded-lg px-3 py-2.5 text-[var(--fs-label)]" style={{ background: theme.node.fill, color: theme.node.muted }}>将使用当前默认模型与生成参数</div>
+                <div className="rounded-lg px-3 py-2 text-[var(--fs-label)]" style={{ background: theme.node.fill, color: theme.node.muted }}>将使用当前默认模型与生成参数</div>
             ) : (
                 <div className="flex min-w-0 flex-col gap-3">
                     <div className="flex items-center gap-3" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
@@ -294,7 +296,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 onMouseDown={(event) => event.stopPropagation()}
                 onClick={() => onGenerate(node.id)}
             >
-                <span className="inline-flex items-center gap-1.5">
+                <span className="inline-flex items-center gap-2">
                         {isRunning ? (
                             <>
                                 <LoaderCircle className="size-4 animate-spin" />
@@ -326,10 +328,7 @@ export function WorkflowParameterControls({ fields, node, theme, onConfigChange,
     const values = node.metadata?.workflowParameters || {};
     const update = (field: WorkflowVideoFieldLike, value: unknown) => {
         const key = workflowFieldKey(field);
-        const next = { ...values };
-        if (value == null) delete next[key];
-        else next[key] = value;
-        onConfigChange(node.id, { workflowParameters: next });
+        onConfigChange(node.id, { workflowParameters: { ...values, [key]: value } });
     };
     const updateRandom = (field: WorkflowVideoFieldLike, randomEnabled: boolean) => {
         const key = workflowFieldRandomKey(field);
@@ -338,7 +337,7 @@ export function WorkflowParameterControls({ fields, node, theme, onConfigChange,
     return (
         <div className="flex min-w-0 flex-col gap-2 rounded-lg px-2 py-2" style={{ background: theme.node.fill }} data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
             <div className="flex h-7 min-w-0 items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-1.5 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
+                <div className="flex min-w-0 items-center gap-2 text-[var(--fs-tiny)]" style={{ color: theme.node.muted }}>
                     <span className="font-semibold">工作流参数</span>
                     <span>{fields.length} 项</span>
                 </div>
@@ -364,11 +363,20 @@ export function WorkflowParameterControls({ fields, node, theme, onConfigChange,
                 const fieldType = ["FLOAT", "INT", "INTEGER"].includes(rawFieldType) ? "NUMBER" : rawFieldType;
                 const options = workflowFieldChoiceValues(field);
                 const selectOptions = options.length ? options : fieldType === "SELECT" && value !== "" ? [value] : [];
+                const ratioOptions = workflowFieldIsRatioChoices(field, selectOptions);
                 const bounds = workflowFieldNumberBounds(field);
                 const numeric = fieldType === "NUMBER" || fieldType === "SLIDER" || typeof value === "number" || bounds.min !== undefined || bounds.max !== undefined || bounds.step !== undefined;
                 const numericValue = value === "" || !Number.isFinite(Number(value)) ? undefined : Number(value);
                 const valueError = randomEnabled ? "" : workflowFieldValueError(field, value);
-                const control = fieldType === "SELECT" || selectOptions.length ? (
+                const control = ratioOptions ? (
+                    <div className="flex min-w-0 flex-wrap gap-1">
+                        {selectOptions.map((option) => {
+                            const optionValue = workflowFieldOptionValue(option);
+                            const selected = optionValue === workflowFieldOptionValue(value);
+                            return <button key={optionValue} type="button" className="min-h-7 rounded-md px-2 py-1 text-[var(--fs-label)] font-medium transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1" style={{ background: selected ? theme.accent.primary : "transparent", color: selected ? theme.accent.onPrimary : theme.node.text, outlineColor: theme.node.muted }} aria-pressed={selected} onClick={() => update(field, optionValue)}>{optionValue}</button>;
+                        })}
+                    </div>
+                ) : fieldType === "SELECT" || selectOptions.length ? (
                     <Select status={valueError ? "error" : undefined} size="small" className="w-full" value={value === "" ? undefined : value as string | number} options={selectOptions.map((option) => ({ label: workflowParameterOptionLabel(option), value: workflowParameterOptionValue(option) }))} onChange={(next) => update(field, next)} />
                 ) : fieldType === "BOOLEAN" || typeof value === "boolean" ? (
                     <Switch size="sm" checked={value === true || value === "true"} onChange={(checked) => update(field, checked)} />
@@ -429,7 +437,7 @@ function workflowParameterOptionLabel(value: unknown) {
 
 function InputChip({ label, value, style }: { label: string; value: string; style: CSSProperties }) {
     return (
-        <div className="inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-[var(--fs-label)]" style={style}>
+        <div className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[var(--fs-label)]" style={style}>
             <span>{label}</span>
             <span className="font-medium">{value}</span>
         </div>
@@ -500,9 +508,11 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         vquality: String(node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality),
         videoGenerateAudio: videoProfile?.generateAudio.supported ? node.metadata?.generateAudio ?? globalConfig.videoGenerateAudio ?? String(videoProfile.generateAudio.default) : "false",
         videoWatermark: videoProfile?.watermark.supported ? node.metadata?.watermark ?? globalConfig.videoWatermark ?? String(videoProfile.watermark.default) : "false",
-        audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
+        audioVoice: node.metadata?.audioVoice ?? globalConfig.audioVoice ?? defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
+        audioLanguage: node.metadata?.audioLanguage || globalConfig.audioLanguage || defaultConfig.audioLanguage,
+        audioDialect: node.metadata?.audioDialect || globalConfig.audioDialect || defaultConfig.audioDialect,
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
         audioEmotionControlMethod: node.metadata?.audioEmotionControlMethod || globalConfig.audioEmotionControlMethod || defaultConfig.audioEmotionControlMethod,
         audioEmotionRandom: node.metadata?.audioEmotionRandom || globalConfig.audioEmotionRandom || defaultConfig.audioEmotionRandom,
@@ -532,6 +542,8 @@ function buildModelNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode
         mode === "image"
             ? {
                   size: node.metadata?.size,
+                  imageResolution: node.metadata?.imageResolution,
+                  imageParameters: node.metadata?.imageParameters,
                   quality: node.metadata?.quality,
                   transparentBackground: node.metadata?.transparentBackground,
                   count: String(node.metadata?.count || globalConfig.canvasImageCount || globalConfig.count || defaultConfig.count),
@@ -545,6 +557,8 @@ function buildModelNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode
               },
         {
             size: globalConfig.size || defaultConfig.size,
+            imageResolution: globalConfig.imageResolution || defaultConfig.imageResolution,
+            imageParameters: globalConfig.imageParameters ?? "{}",
             quality: globalConfig.quality || defaultConfig.quality,
             transparentBackground: globalConfig.transparentBackground || defaultConfig.transparentBackground,
             count: String(globalConfig.canvasImageCount || globalConfig.count || defaultConfig.count),
@@ -560,15 +574,19 @@ function buildModelNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode
         taskWorkflowProvider: "model",
         model,
         quality: generationDefaults.quality || globalConfig.quality || defaultConfig.quality,
+        imageResolution: generationDefaults.imageResolution || globalConfig.imageResolution || defaultConfig.imageResolution,
+        imageParameters: generationDefaults.imageParameters ?? globalConfig.imageParameters ?? "{}",
         size: generationDefaults.size ?? globalConfig.size ?? defaultConfig.size,
         transparentBackground: generationDefaults.transparentBackground || "false",
         videoSeconds: generationDefaults.videoSeconds ?? normalizeVideoDuration(globalConfig.videoSeconds || defaultConfig.videoSeconds),
         vquality: generationDefaults.vquality ?? normalizeVideoResolution(globalConfig.vquality || defaultConfig.vquality),
         videoGenerateAudio: videoProfile?.generateAudio.supported ? generationDefaults.videoGenerateAudio ?? String(videoProfile.generateAudio.default) : "false",
         videoWatermark: videoProfile?.watermark.supported ? generationDefaults.videoWatermark ?? String(videoProfile.watermark.default) : "false",
-        audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
+        audioVoice: node.metadata?.audioVoice ?? globalConfig.audioVoice ?? defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
+        audioLanguage: node.metadata?.audioLanguage || globalConfig.audioLanguage || defaultConfig.audioLanguage,
+        audioDialect: node.metadata?.audioDialect || globalConfig.audioDialect || defaultConfig.audioDialect,
         audioInstructions: node.metadata?.audioInstructions || globalConfig.audioInstructions || defaultConfig.audioInstructions,
         audioEmotionControlMethod: node.metadata?.audioEmotionControlMethod || globalConfig.audioEmotionControlMethod || defaultConfig.audioEmotionControlMethod,
         audioEmotionRandom: node.metadata?.audioEmotionRandom || globalConfig.audioEmotionRandom || defaultConfig.audioEmotionRandom,
@@ -596,6 +614,8 @@ function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {
     if (key === "audioVoice") return { audioVoice: value };
     if (key === "audioFormat") return { audioFormat: value };
     if (key === "audioSpeed") return { audioSpeed: value };
+    if (key === "audioLanguage") return { audioLanguage: value };
+    if (key === "audioDialect") return { audioDialect: value };
     if (key === "audioInstructions") return { audioInstructions: value };
     return { [key]: value };
 }

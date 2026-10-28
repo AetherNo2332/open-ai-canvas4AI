@@ -9,6 +9,7 @@ import { generationTaskShowsProgress, generationTaskStageLabel, generationTaskSt
 import type { GenerationTask } from "@/services/api/task-center";
 import { isTaskFailed, statusDotClassName, taskAttentionReason, TaskDate } from "./task-shared";
 import { TaskVideoThumbnail } from "./task-video-thumbnail";
+import { progressFillStyle } from "@/lib/progress-fill";
 
 export function TaskGridCard({ task, actingId, onOpen, onRetry }: { task: GenerationTask; actingId: string; onOpen: () => void; onRetry: () => void }) {
     const isActive = task.status === "queued" || task.status === "running";
@@ -34,7 +35,7 @@ export function TaskGridCard({ task, actingId, onOpen, onRetry }: { task: Genera
                     <Tooltip title="查看详情">
                         <IconButton size="sm" variant="ghost" icon={Eye} aria-label="查看详情" onClick={onOpen} />
                     </Tooltip>
-                    {isFailed && task.type !== "previs_render" ? (
+                    {isFailed ? (
                         <Tooltip title={retryDisabled ? "内容审核失败，无法自动重试" : task.canRecoverMedia ? "重试保存，不重新生成" : "重试任务"}>
                             <Button
                                 type="text"
@@ -66,7 +67,7 @@ export function TaskGridCard({ task, actingId, onOpen, onRetry }: { task: Genera
                     <div className="task-grid-progress" role="progressbar" aria-label={stageLabel} aria-valuemin={0} aria-valuemax={100} aria-valuenow={task.progress || 0}>
                         <span>{stageLabel}</span>
                         <strong>{task.progress || 0}%</strong>
-                        <i><b style={{ width: `${task.progress || 0}%` }} /></i>
+                        <i><b style={progressFillStyle(task.progress || 0)} /></i>
                     </div>
                 ) : null}
                 {isFailed ? <p className="task-grid-error" title={task.error || undefined}>{taskAttentionReason(task)}</p> : null}

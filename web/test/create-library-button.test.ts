@@ -3,13 +3,18 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { removeCreationAttachment } from "../src/pages/create/creation-assets";
+import { moduleGroupSource } from "./helpers/module-group-source";
 
 function compactSource(source: string) {
     return source.replace(/\s+/g, " ").trim();
 }
 
+function readCreateSource() {
+    return readFileSync(resolve(import.meta.dir, "../src/pages/create/index.tsx"), "utf8");
+}
+
 function readCreateWorkspaceSource() {
-    return readFileSync(resolve(import.meta.dir, "../src/pages/create/creation-workspace.tsx"), "utf8");
+    return moduleGroupSource("pages/create/creation-workspace.tsx");
 }
 
 describe("creation library button", () => {
@@ -33,9 +38,35 @@ describe("creation library button", () => {
         expect(source).toContain("creation-submit-cost");
     });
 
+    test("uploads from the library without adding a reference before confirmation", () => {
+        const source = readCreateSource();
+        const pickerSource = readFileSync(resolve(import.meta.dir, "../src/components/assets/asset-library-picker-modal.tsx"), "utf8");
+        const uploadStart = source.indexOf("const uploadLibraryAssets = async");
+        const uploadEnd = source.indexOf("const handleLibrarySelect", uploadStart);
+
+        expect(uploadStart).toBeGreaterThanOrEqual(0);
+        expect(uploadEnd).toBeGreaterThan(uploadStart);
+        expect(source.slice(uploadStart, uploadEnd)).not.toContain("setAttachments");
+        expect(source).toContain("onUpload: uploadLibraryAssets");
+        expect(source).not.toContain("onUpload={() => fileInputRef.current?.click()}");
+        expect(source).toContain("上传后保存到素材库");
+        expect(pickerSource).toContain("保存完成后会自动选中");
+        expect(source).toContain("个素材已上传到素材库并自动选中");
+    });
+
+    test("视频创作使用同名模型组的全部参考能力开放素材入口", () => {
+        const source = readCreateSource();
+        const workspace = readCreateWorkspaceSource();
+
+        expect(source).toContain('modelGroupReferenceLimits(config, preferredModel || selectedModel, "video")');
+        expect(source).toContain("reconcileCreationAttachmentLimits(attachments, mentionReferences, videoReferenceLimits)");
+        expect(workspace).toContain('props.mode !== "video" || props.maxReferences > 0');
+        expect(workspace).not.toContain('props.videoProfile.operations.includes("image_to_video")');
+    });
+
     test("previews prompt reference images without removing them", () => {
         const createSource = readCreateWorkspaceSource();
-        const canvasSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node-prompt-panel.tsx"), "utf8");
+        const canvasSource = moduleGroupSource("components/canvas/canvas-node-prompt-panel.tsx");
 
         expect(createSource).toContain('className="creation-user-message-attachments"');
         expect(createSource).toContain('setPreviewType(kind === "video" ? "video" : "image")');
@@ -100,7 +131,7 @@ describe("creation library button", () => {
         const createSource = readCreateWorkspaceSource();
 
         expect(assets).toContain("resolveResourceUrl(asset.data.storageKey");
-        expect(createSource).toContain("<CachedResourceImage storageKey={item.storageKey}");
+        expect(createSource.replace(/\s+/g, " ")).toContain("<CachedResourceImage storageKey={item.storageKey}");
         expect(createSource).toContain("resolveResourceUrl(item.storageKey, item.previewUrl)");
     });
 
@@ -123,6 +154,16 @@ describe("creation library button", () => {
         expect(source).toContain("onRemove(item.id)");
         expect(source).toContain("onClick={props.onOpenLibrary}");
         expect(source).not.toContain("onClick={() => props.fileInputRef.current?.click()}");
+    });
+});
+
+describe("creation homepage default mode", () => {
+    test("opens the empty homepage on image generation instead of video", () => {
+        const source = readCreateSource();
+        expect(source).toContain("import { defaultCreationMode, modeLabels,");
+        expect(source).toContain("initialComposerPreferences.mode || defaultCreationMode");
+        expect(source).toContain("saved.mode || defaultCreationMode");
+        expect(source).not.toContain('mode || "video"');
     });
 });
 

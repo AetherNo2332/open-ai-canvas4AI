@@ -39,6 +39,6 @@ Host Updater 更新三份镜像并保存临时和正式环境，迁移或回退�
 
 ## 运行观测
 
-内建管理 API 从已提交的 run、task、event 与新鲜 Worker 心跳派生队列、成功率、重试和恢复指标，反复读取不会重复累计。恢复次数是所选运行的持久化累计值；同一运行多次接管会产生频繁恢复告警。可用 Worker 只计 ready 且不在 draining 的实例。
+backend 在进程内聚合 Agent 运行与工具事件（`internal/observability`），本仓库不再提供后台观测页面或 Grafana 跳转。
 
-可选 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 填写完整 OTLP/HTTP traces 地址（如 collector 的 `/v1/traces`），`CANVAS_GRAFANA_URL` 仅提供管理跳转。collector 单独部署，不新增根 Compose。导出器有界排队，网络错误、429和5xx最多尝试三次；失败/丢弃/成功计数是 backend 进程内统计，重启后清零，不是持久化账务。关闭排空最多两秒并受调用者期限约束，超时记录未送达数量。未配置 collector 时继续使用内建观测。
+可选 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 填写完整 OTLP/HTTP traces 地址（如 collector 的 `/v1/traces`）。collector 单独部署，不新增根 Compose。导出器有界排队，网络错误、429和5xx最多尝试三次；失败/丢弃/成功计数是 backend 进程内统计，重启后清零，不是持久化账务。关闭排空最多两秒并受调用者期限约束，超时记录未送达数量。未配置 collector 时不导出。

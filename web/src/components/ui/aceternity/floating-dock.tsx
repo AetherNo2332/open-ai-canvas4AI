@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { forwardRef, useEffect, useState, type CSSProperties, type FocusEvent, type MouseEvent, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import { aceternityMotion } from "@/lib/aceternity-motion";
@@ -48,7 +48,6 @@ type FloatingDockProps = {
     style?: CSSProperties;
     ariaLabel?: string;
     showLabels?: boolean;
-    scrollOnOverflow?: boolean;
 };
 
 // `window` 存在不代表 `matchMedia` 存在：测试与 renderToString 下它可能是 undefined。
@@ -62,15 +61,11 @@ function coarsePointerQuery(): MediaQueryList | undefined {
  * getBoundingClientRect 并改变宽高，导致整条 dock 重排、相邻按钮抖动；这里改为
  * 固定格子 + 纯色 hover，只保留按压反馈与提示气泡。
  */
-export const FloatingDock = forwardRef<HTMLDivElement, FloatingDockProps>(function FloatingDock({ items, size = "default", embedded = false, className, style, ariaLabel = "画布工具", showLabels = false, scrollOnOverflow = false }, forwardedRef) {
-    const dockRef = useRef<HTMLDivElement>(null);
-    const [overflows, setOverflows] = useState(false);
+export const FloatingDock = forwardRef<HTMLDivElement, FloatingDockProps>(function FloatingDock({ items, size = "default", embedded = false, className, style, ariaLabel = "画布工具", showLabels = false }, forwardedRef) {
     const reducedMotion = useReducedMotion();
     const [coarsePointer, setCoarsePointer] = useState(() => coarsePointerQuery()?.matches ?? false);
     // 窄屏下允许横向滚动，保证按钮始终可达；此时自定义提示会被裁剪，改用原生 title。
     const [narrow, setNarrow] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 768 : false));
-
-    useImperativeHandle(forwardedRef, () => dockRef.current as HTMLDivElement);
 
     useEffect(() => {
         const media = coarsePointerQuery();
@@ -87,31 +82,13 @@ export const FloatingDock = forwardRef<HTMLDivElement, FloatingDockProps>(functi
         return () => window.removeEventListener("resize", update);
     }, []);
 
-    useEffect(() => {
-        if (!scrollOnOverflow) {
-            setOverflows(false);
-            return;
-        }
-        const dock = dockRef.current;
-        if (!dock) return;
-        const update = () => setOverflows(dock.scrollWidth > dock.clientWidth + 1);
-        update();
-        const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
-        observer?.observe(dock);
-        window.addEventListener("resize", update);
-        return () => {
-            observer?.disconnect();
-            window.removeEventListener("resize", update);
-        };
-    }, [items.length, scrollOnOverflow]);
-
-    const scrollable = coarsePointer || narrow || (scrollOnOverflow && overflows);
+    const scrollable = coarsePointer || narrow;
     const compact = size === "compact";
-    const itemSize = coarsePointer ? 48 : compact ? 28 : 32;
+    const itemSize = coarsePointer ? (compact ? 36 : 40) : compact ? 28 : 32;
 
     return (
         <div
-            ref={dockRef}
+            ref={forwardedRef}
             role="toolbar"
             aria-label={ariaLabel}
             data-dock-size={size}
@@ -119,7 +96,7 @@ export const FloatingDock = forwardRef<HTMLDivElement, FloatingDockProps>(functi
                 "aceternity-floating-dock flex items-center",
                 scrollable ? "overflow-x-auto" : "overflow-visible",
                 embedded ? "gap-0.5 px-0.5 shadow-none" : "gap-0.5 border backdrop-blur-2xl",
-                !embedded && (compact ? "rounded-[var(--r-lg)] p-1" : "rounded-[var(--r-xl)] p-1.5"),
+                !embedded && (compact ? "rounded-[var(--r-lg)] p-1" : "rounded-[var(--r-xl)] p-2"),
                 className,
             )}
             style={{ ...style, "--dock-item-size": `${itemSize}px` } as CSSProperties}
@@ -187,8 +164,8 @@ function DockTooltip({ show, label, compact }: { show: boolean; label: string; c
                     exit={{ opacity: 0, transition: { duration: 0 } }}
                     transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }}
                     className={cn(
-                        "aceternity-dock-tooltip pointer-events-none absolute bottom-full left-1/2 z-[var(--dock-tooltip-z)] mb-2 -translate-x-1/2 whitespace-nowrap rounded-[var(--overlay-radius)] border font-medium shadow-lg",
-                        compact ? "px-1.5 py-0.5 text-[var(--fs-micro)]" : "px-2 py-1 text-[var(--fs-tiny)]",
+                        "aceternity-dock-tooltip pointer-events-none absolute bottom-full left-1/2 z-[var(--dock-tooltip-z)] mb-2 -translate-x-1/2 whitespace-nowrap rounded-md border font-medium shadow-lg",
+                        compact ? "px-2 py-0.5 text-[var(--fs-micro)]" : "px-2 py-1 text-[var(--fs-tiny)]",
                     )}
                 >
                     {label}
@@ -229,7 +206,7 @@ function DockCommandButton({ command, compact, showLabel, nativeTitle, motionEna
                 aria-pressed={pressed}
                 disabled={command.disabled}
                 className={cn(
-                    "aceternity-dock-command is-labeled inline-flex h-[var(--dock-item-size)] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[var(--dock-item-radius)] border-0 px-2.5 outline-none",
+                    "aceternity-dock-command is-labeled inline-flex h-[var(--dock-item-size)] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-[var(--dock-item-radius)] border-0 px-2 outline-none",
                     command.active && "is-active",
                     command.danger && "is-danger",
                 )}
@@ -239,7 +216,7 @@ function DockCommandButton({ command, compact, showLabel, nativeTitle, motionEna
             >
                 <span className="grid size-3.5 shrink-0 place-items-center">{command.icon}</span>
                 <span className="inline-flex h-4 items-center text-[var(--fs-label)] font-medium leading-none">{command.displayLabel || command.label}</span>
-                {command.badge !== undefined ? <span className="aceternity-dock-command-badge inline-flex min-w-4 items-center justify-center rounded-[var(--button-radius)] px-1 text-[var(--fs-micro)] font-bold leading-4">{command.badge}</span> : null}
+                {command.badge !== undefined ? <span className="aceternity-dock-command-badge inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[var(--fs-micro)] font-semibold leading-4">{command.badge}</span> : null}
             </motion.button>
         );
     }
@@ -256,7 +233,7 @@ function DockCommandButton({ command, compact, showLabel, nativeTitle, motionEna
                 disabled={command.disabled}
                 className={cn(
                     "aceternity-dock-command relative grid h-[var(--dock-item-size)] place-items-center rounded-[var(--dock-item-radius)] border-0 outline-none",
-                    command.wide ? "min-w-[var(--dock-precision-width)] px-1.5" : "w-[var(--dock-item-size)]",
+                    command.wide ? "min-w-[var(--dock-precision-width)] px-2" : "w-[var(--dock-item-size)]",
                     command.quiet && "is-quiet",
                     command.active && "is-active",
                     command.danger && "is-danger",
@@ -273,19 +250,6 @@ function DockCommandButton({ command, compact, showLabel, nativeTitle, motionEna
     );
 }
 
-export function handleDockSwitchKeyDown(event: KeyboardEvent<HTMLElement>, entry: FloatingDockSwitch) {
-    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
-    event.preventDefault();
-    const selectedIndex = Math.max(0, entry.options.findIndex((option) => option.value === entry.value));
-    const direction = event.key === "ArrowRight" ? 1 : -1;
-    const nextIndex = (selectedIndex + direction + entry.options.length) % entry.options.length;
-    const next = entry.options[nextIndex];
-    if (next) {
-        entry.onChange(next.value);
-        event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="radio"]')[nextIndex]?.focus();
-    }
-}
-
 function DockSwitch({ entry, compact, showLabel, nativeTitle, motionEnabled }: { entry: FloatingDockSwitch } & DockItemRenderProps) {
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -295,8 +259,15 @@ function DockSwitch({ entry, compact, showLabel, nativeTitle, motionEnabled }: {
         <span
             role="radiogroup"
             aria-label={entry.label}
-            className={cn("aceternity-dock-switch relative inline-flex shrink-0 items-center gap-0.5 rounded-[var(--button-radius)] p-0.5", labeled && "is-labeled")}
-            onKeyDown={(event) => handleDockSwitchKeyDown(event, entry)}
+            className={cn("aceternity-dock-switch relative inline-flex shrink-0 items-center gap-0.5 rounded-[calc(var(--dock-item-radius)+2px)] p-0.5", labeled && "is-labeled")}
+            onKeyDown={(event) => {
+                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+                event.preventDefault();
+                const selectedIndex = Math.max(0, entry.options.findIndex((option) => option.value === entry.value));
+                const direction = event.key === "ArrowRight" ? 1 : -1;
+                const next = entry.options[(selectedIndex + direction + entry.options.length) % entry.options.length];
+                if (next) entry.onChange(next.value);
+            }}
         >
             {entry.options.map((option) => {
                 const checked = option.value === entry.value;

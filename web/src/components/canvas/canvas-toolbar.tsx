@@ -40,6 +40,7 @@ export function CanvasToolbar({
     onAddDrawing,
     onAddExtensionNode,
     onAddWorkflow,
+    onOpenPrevis,
     onUndo,
     onRedo,
     onUpload,
@@ -75,6 +76,7 @@ export function CanvasToolbar({
     onAddDrawing: () => void;
     onAddExtensionNode: (type: CanvasNodeTypeId) => void;
     onAddWorkflow: () => void;
+    onOpenPrevis: () => void;
     onUndo: () => void;
     onRedo: () => void;
     onUpload: () => void;
@@ -110,7 +112,6 @@ export function CanvasToolbar({
     }, [settingsOpen]);
 
     const placePanel = (event: ReactMouseEvent<HTMLElement>) => setPanelX(getPanelX(dockRef.current, event.currentTarget));
-
     const runAddAction = (action: () => void) => {
         action();
         setAddOpen(false);
@@ -149,6 +150,7 @@ export function CanvasToolbar({
         onAddExtensionNode,
         onAddWorkflow,
         onChooseStyle,
+        onOpenPrevis,
         onUpload,
         onOpenWorkspace,
     onOpenMyAssets,
@@ -163,7 +165,7 @@ export function CanvasToolbar({
         onAlign: () => {}, onArrange: () => {}, onCreateStoryboard: () => {}, onCreateReferenceGroup: () => {}, onBatchConnect: () => {}, onMergeVideos: () => {}, onSendSelectionToAgent: () => {},
         onNodeInfo: () => {}, onNodeDelete: () => {}, onNodeRetry: () => {}, onNodeEditText: () => {}, onNodeDecreaseFont: () => {}, onNodeIncreaseFont: () => {},
         onNodeToggleDialog: () => {}, onNodeAnnotate: () => {}, onNodeGenerateImage: () => {}, onNodeUpload: () => {}, onNodeDownload: () => {}, onNodeSaveAsset: () => {},
-        onNodeMaskEdit: () => {}, onNodeImageEdit: () => {}, onNodeRemoveBackground: () => {}, onNodeEmotion: () => {}, onNodePortraitTexture: () => {}, onNodeCrop: () => {}, onNodeSplit: () => {}, onNodeUpscale: () => {},
+        onNodeRegionEdit: () => {}, onNodeImageEdit: () => {}, onNodeRemoveBackground: () => {}, onNodeEmotion: () => {}, onNodePortraitTexture: () => {}, onNodeCrop: () => {}, onNodeSplit: () => {}, onNodeUpscale: () => {},
         onNodeSuperResolve: () => {}, onNodeAngle: () => {}, onNodeViewImage: () => {}, onNodeExtractVideoFrames: () => {}, onNodeExtractAudioFromVideo: () => {}, onNodeTrimVideoSegments: () => {}, onNodeSubtitles: () => {}, onNodeTimeline: () => {}, onNodeReversePrompt: () => {},
         onNodeToggleFreeResize: () => {}, onNodeToggleLocked: () => {}, onNodeCopyPrompt: () => {},
     } as ToolbarHandlers;
@@ -193,7 +195,7 @@ export function CanvasToolbar({
     const createCommands = useCanvasCreateCommands(ctx, runAddAction);
 
     return (
-        <div ref={rootRef} data-canvas-no-zoom className="canvas-main-toolbar pointer-events-none absolute bottom-[var(--canvas-inset-y)] -translate-x-1/2 flex" style={{ zIndex }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront}>
+        <div ref={rootRef} data-canvas-no-zoom className="canvas-main-toolbar pointer-events-none absolute inset-x-[var(--canvas-inset-x)] bottom-[var(--canvas-inset-y)] flex justify-center" style={{ zIndex }} onPointerDownCapture={bringToFront} onFocusCapture={bringToFront}>
             <AnimatePresence>
                 {addOpen ? (
                     <AddNodeMenu
@@ -204,16 +206,16 @@ export function CanvasToolbar({
                 ) : null}
             </AnimatePresence>
 
-            <FloatingDock ref={dockRef} items={items} scrollOnOverflow className="canvas-floating-dock pointer-events-auto min-w-0 max-w-full" style={canvasDockStyle(theme)} />
+            <FloatingDock ref={dockRef} items={items} className="canvas-floating-dock pointer-events-auto max-w-full" style={canvasDockStyle(theme)} />
 
             <AnimatePresence>
                 {appearanceOpen ? (
                     <motion.div initial={{ opacity: 0, scaleY: 0.9, y: 8 }} animate={{ opacity: 1, scaleY: 1, y: 0 }} exit={{ opacity: 0, scaleY: 0.92, y: 6 }} transition={{ duration: aceternityMotion.duration.panel, ease: aceternityMotion.easing.enter }} className="pointer-events-auto absolute bottom-[var(--canvas-dock-popover-offset)] z-[var(--dock-z-popover)] w-[296px] max-w-[calc(100vw-24px)]" style={{ left: panelX || "50%", transformOrigin: "bottom center", x: "-50%" }}>
-                        <SpotlightSurface role="region" aria-label="画布外观" spotlightColor={theme.toolbar.itemHover} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97, transition: { duration: 0 } }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="aceternity-floating-panel flex flex-col overflow-hidden rounded-[var(--panel-radius)] border p-2.5 backdrop-blur-2xl" contentClassName="relative z-[1] min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain thin-scrollbar" data-canvas-wheel-scroll style={{ maxHeight: "calc(100dvh - var(--canvas-inset-y) - var(--canvas-dock-popover-offset) - 12px)", background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.toolbar.item }} onWheel={(event) => event.stopPropagation()}>
+                        <SpotlightSurface role="region" aria-label="画布外观" spotlightColor={theme.toolbar.itemHover} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97, transition: { duration: 0 } }} transition={{ duration: aceternityMotion.duration.instant, ease: aceternityMotion.easing.enter }} className="aceternity-floating-panel flex flex-col overflow-hidden rounded-[var(--panel-radius)] border p-2 backdrop-blur-2xl" contentClassName="relative z-[1] min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain thin-scrollbar" data-canvas-wheel-scroll style={{ maxHeight: "calc(100dvh - var(--canvas-inset-y) - var(--canvas-dock-popover-offset) - 12px)", background: theme.spatial.elevated, borderColor: theme.toolbar.border, color: theme.toolbar.item }} onWheel={(event) => event.stopPropagation()}>
                             <PanelHeading icon={<Palette className="size-4" />} title="画布外观" subtitle="配色与网格" theme={theme} />
                             <CanvasAppearanceControls appearance={appearance} backgroundMode={backgroundMode} colorTheme={colorTheme} theme={theme} onAppearanceChange={onAppearanceChange} onSaveAppearanceDefault={onSaveAppearanceDefault} onBackgroundModeChange={onBackgroundModeChange} />
-                            <div className="mt-2.5 flex items-center justify-between gap-2 rounded-[var(--dock-item-radius-labeled)] border px-2.5 py-2" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>
-                                <span className="inline-flex min-w-0 items-center gap-1.5 text-[var(--fs-caption)] font-semibold"><Info className="size-3" />媒体信息</span>
+                            <div className="mt-2 flex items-center justify-between gap-2 rounded-[var(--dock-item-radius-labeled)] border px-2 py-2" style={{ background: theme.spatial.surface, borderColor: theme.toolbar.border }}>
+                                <span className="inline-flex min-w-0 items-center gap-2 text-[var(--fs-caption)] font-semibold"><Info className="size-3" />媒体信息</span>
                                 <Switch size="sm" checked={showImageInfo} onChange={onShowImageInfoChange} />
                             </div>
                         </SpotlightSurface>

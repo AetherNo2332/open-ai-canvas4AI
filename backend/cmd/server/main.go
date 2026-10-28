@@ -72,12 +72,6 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := database.MigrateCanvasCommands(db); err != nil {
-		return err
-	}
-	if err := database.MigrateCanvasTasks(db); err != nil {
-		return err
-	}
 
 	repo := repository.New(db)
 	addr := env("CANVAS_BACKEND_ADDR", ":8080")
@@ -89,10 +83,9 @@ func run(ctx context.Context) error {
 	if err := svc.ValidateRuntime(); err != nil {
 		return err
 	}
-	// Cloud Agent 运行一律 engine=pi（cloud_agent.go 不再读引擎开关），而 worker 协议只在
+	// Cloud Agent 运行一律 engine=pi，由 agent/ 的独立 Node worker 领取；worker 协议只在
 	// CANVAS_AGENT_INTERNAL_TOKEN 存在时挂载（handler.RegisterInternalAgentRoutes）。缺 token
-	// 时新运行会一直停在 queued、没有任何终态，所以这里必须显式可见，而不是靠已删除的
-	// CANVAS_AGENT_ENGINE 开关判断。
+	// 时新运行会一直停在 queued、没有终态，所以这里必须显式可见。
 	if strings.TrimSpace(os.Getenv("CANVAS_AGENT_INTERNAL_TOKEN")) == "" {
 		log.Printf("CANVAS_AGENT_INTERNAL_TOKEN is empty: /internal-agent is not mounted and Cloud Agent runs stay queued until a Pi worker is configured")
 	}
@@ -112,6 +105,9 @@ func run(ctx context.Context) error {
 		return err
 	}
 	if err := svc.EnsureBuiltinTools(); err != nil {
+		return err
+	}
+	if err := ensureBuiltinWorkbenchCatalog(svc); err != nil {
 		return err
 	}
 	if summary, err := svc.MigrateLegacyStorage(); err != nil {
@@ -134,6 +130,7 @@ func run(ctx context.Context) error {
 	registerSystemStatusRoutes(api, status)
 	handler.RegisterOAuthCallbackRoutes(r, svc)
 	handler.RegisterCanvasAPI(api, svc)
+	// Pi worker 桥接挂在 /api 之外，公网 web 代理不转发；仅 Compose 内网的 agent 服务访问。
 	handler.RegisterInternalAgentRoutes(r, svc)
 	r.NoRoute(handler.SystemProxyNoRouteHandler(svc))
 
@@ -185,6 +182,10 @@ func run(ctx context.Context) error {
 	}
 	slog.Info("backend stopped gracefully")
 	return nil
+}
+
+func ensureBuiltinWorkbenchCatalog(svc *service.Service) error {
+	return svc.EnsureBuiltinWorkbenchCatalog()
 }
 
 func redactCanvasSharePath(path string) string {

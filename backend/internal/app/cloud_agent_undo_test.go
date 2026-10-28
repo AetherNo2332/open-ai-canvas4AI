@@ -60,8 +60,10 @@ func TestUndoCloudAgentCanvasRestoresLatestMutationAndIsIdempotent(t *testing.T)
 	if result["accepted"] != true || result["snapshotHash"] != beforeHash {
 		t.Fatalf("unexpected undo result: %+v", result)
 	}
+	// 撤销经上游 operations 写回：行元数据（标题、更新时间等）按数据库列投影，内容快照必须一致。
 	restored, _ := s.repo.CanvasProjectForUser("user", "agent-canvas")
-	if restored.PayloadJSON != canvas.PayloadJSON {
+	restoredDoc, _ := creationDocument(restored.PayloadJSON)
+	if cloudAgentCanvasHash(restoredDoc) != beforeHash {
 		t.Fatal("undo did not restore the exact before snapshot")
 	}
 	result, err = s.UndoCloudAgentCanvas("user", run.ID, call.ID, beforeHash, "重复请求")

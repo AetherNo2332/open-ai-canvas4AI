@@ -21,10 +21,12 @@ const (
 	PurposeProvider AccessPurpose   = "provider-input"
 	VariantOriginal ResourceVariant = "original"
 	VariantPlayback ResourceVariant = "playback"
-	DeliveryCDN     DeliveryMode    = "cdn"
-	DeliveryOrigin  DeliveryMode    = "origin"
-	DeliveryLocal   DeliveryMode    = "platform-local"
-	DeliveryProxy   DeliveryMode    = "platform-proxy"
+	// VariantThumbnail 是画布展示档位；缩略图未生成前回落原件，保证请求不会因变体失败而退回平台重定向。
+	VariantThumbnail ResourceVariant = "thumbnail"
+	DeliveryCDN      DeliveryMode    = "cdn"
+	DeliveryOrigin   DeliveryMode    = "origin"
+	DeliveryLocal    DeliveryMode    = "platform-local"
+	DeliveryProxy    DeliveryMode    = "platform-proxy"
 )
 
 // AccessOptions contains use intent, never a client-controlled authorization or transport override.
@@ -76,7 +78,7 @@ func NormalizeAccessOptions(options AccessOptions, allowProvider bool) (AccessOp
 	default:
 		return options, kernel.BadAuthRequest("资源访问用途无效")
 	}
-	if options.Variant != VariantOriginal && options.Variant != VariantPlayback {
+	if options.Variant != VariantOriginal && options.Variant != VariantPlayback && options.Variant != VariantThumbnail {
 		return options, kernel.BadAuthRequest("资源变体无效")
 	}
 	if options.Purpose == PurposeCopy || options.Purpose == PurposeDownload || options.Purpose == PurposeProvider {
@@ -108,6 +110,8 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 	if options.Purpose == PurposeProvider {
 		ttl = runtime.ProviderAccessURLTTL
 	}
+	// 浏览器读取的签名地址按固定时间窗对齐：窗口内同一对象的签名地址逐字节相同，
+	// 刷新页面或多实例签发都能命中浏览器 HTTP 缓存，不会重复从对象存储拉取字节。
 	signedAt := time.Time{}
 	if browserCacheable(options.Purpose) {
 		signedAt = alignedSigningTime(now, ttl)
@@ -131,29 +135,32 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 			access.FallbackReason = "playback_not_ready"
 		}
 	}
+	if options.Variant == VariantThumbnail {
+		access.FallbackReason = "thumbnail_not_ready"
+	}
 	if resource.Provider == "local" {
 		access.Delivery = DeliveryLocal
-	} else if options.Purpose != PurposeProvider && (options.Purpose == PurposeDownload || !InlineMediaType(resource.MimeType)) {
-		// Browser attachment responses must be guaranteed by the actual byte
-		// endpoint. Never fall back to a platform proxy or an ordinary CDN URL.
-		if setting.Delivery.CDNAuthMode == "public" && storage.CDNEnabled(setting) && setting.Delivery.CDNAttachmentQueryForwarding {
-			access.URL, err = storage.PublicCDNObjectDownloadURL(setting, resource.ObjectKey, options.DownloadName)
-			access.Delivery = DeliveryCDN
-			access.ExpiresAt = nil
-		} else {
-			// Cross-origin `a[download]` is only advisory. A real browser download must
-			// therefore be enforced by the object store response itself. Downloads use
-			// a signed origin URL carrying Content-Disposition=attachment; media bytes
-			// never pass through the application server or a Blob relay.
-			if !storage.PublicOrigin(setting) {
-				if storage.CDNEnabled(setting) {
-					return nil, AccessError(503, "resource_attachment_unavailable", "CDN 未确认附件响应参数转发及缓存隔离合同，且源站不可直连；请检查存储分发设置")
-				}
-				return nil, AccessError(503, "resource_origin_private", "对象存储源站不可由浏览器直连，无法在不占用服务器带宽的前提下下载")
-			}
-			access.URL, err = storage.SignedOriginObjectDownloadURL(setting, resource.ObjectKey, expires, options.DownloadName)
-			access.Delivery = DeliveryOrigin
+	} else if !InlineMediaType(resource.MimeType) {
+		// A redirect cannot enforce our attachment and sandbox response headers.
+		access.Delivery = DeliveryProxy
+		access.FallbackReason = "attachment_required"
+	} else if options.Purpose == PurposeDownload && setting.Delivery.CDNAuthMode == "public" && storage.CDNEnabled(setting) {
+		// Public COS/OSS CDN deployments can forward this response override to
+		// their origin. Keeping it on the download-only URL lets images and
+		// videos continue to use their normal inline CDN URL for display.
+		access.URL, err = storage.PublicCDNObjectDownloadURL(setting, resource.ObjectKey, options.DownloadName)
+		access.Delivery = DeliveryCDN
+		access.ExpiresAt = nil
+	} else if options.Purpose == PurposeDownload {
+		// Cross-origin `a[download]` is only advisory. A real browser download must
+		// therefore be enforced by the object store response itself. Downloads use
+		// a signed origin URL carrying Content-Disposition=attachment; media bytes
+		// never pass through the application server or a Blob relay.
+		if !storage.PublicOrigin(setting) {
+			return nil, AccessError(503, "resource_origin_private", "对象存储源站不可由浏览器直连，无法在不占用服务器带宽的前提下下载")
 		}
+		access.URL, err = storage.SignedOriginObjectDownloadURL(setting, resource.ObjectKey, expires, options.DownloadName)
+		access.Delivery = DeliveryOrigin
 	} else if storage.CDNEnabled(setting) {
 		access.URL, err = storage.SignCDNURL(setting, resource.ObjectKey, expires)
 		access.Delivery = DeliveryCDN
@@ -166,11 +173,7 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 		if signedAt.IsZero() {
 			access.URL, err = storage.SignedOriginObjectURL(setting, resource.ObjectKey, expires)
 		} else {
-			// Signed response fields must stay constant across the window. The
-			// budget is bounded by its shortest remaining authorization, rather
-			// than using TTL or the moving now-relative remainder.
-			cacheFor := expires.Sub(signedAt.Add(ttl / 4))
-			access.URL, err = storage.SignedOriginObjectDisplayURL(setting, resource.ObjectKey, signedAt, expires, cacheFor)
+			access.URL, err = storage.SignedOriginObjectDisplayURL(setting, resource.ObjectKey, signedAt, expires)
 		}
 		access.Delivery = DeliveryOrigin
 		if setting.CDNBaseURL != "" {
@@ -199,11 +202,14 @@ func ResolveAccess(resource *model.Resource, setting storage.Settings, options A
 	return access, nil
 }
 
+// browserCacheable 标记浏览器直接读取字节、值得复用 HTTP 缓存的用途。
+// 下载地址携带一次性的 Content-Disposition，模型输入由上游服务读取，二者仍按当前时间签发。
 func browserCacheable(purpose AccessPurpose) bool {
-	return purpose == PurposeDisplay || purpose == PurposeCopy || purpose == PurposeProcess
+	return purpose == PurposeDisplay || purpose == PurposeProcess || purpose == PurposeCopy
 }
 
-// Align to ttl/4 so a URL has at least 3/4 of the administrator's TTL left.
+// alignedSigningTime 把签名起始时间对齐到 ttl/4 的时间窗（按 Unix 纪元对齐，多实例结果一致）。
+// 地址过期时间为「窗口起点 + ttl」，任何时刻签出的地址至少还剩 3/4 有效期，且总有效期不超过后台配置的 ttl。
 func alignedSigningTime(now time.Time, ttl time.Duration) time.Time {
 	window := ttl / 4
 	if window < time.Second {

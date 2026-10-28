@@ -117,8 +117,15 @@ func TestAgentParityDatabaseCanvasDeletionAndReorderEmitCompleteDelta(t *testing
 			t.Fatalf("missing %s deletion tombstone", key)
 		}
 	}
-	if !reflect.DeepEqual(cloudAgentStrings(patch["nodeOrder"]), []string{"c", "a"}) || !reflect.DeepEqual(cloudAgentStrings(patch["previousNodeOrder"]), []string{"a", "b", "c"}) {
-		t.Fatal("node-order delta lost its baseline or final order")
+	// 画布经上游 operations 写入：节点数组顺序不是持久内容（上游堆叠顺序只在浏览器本地），
+	// 增量里的顺序必须与真实落库的顺序一致，不能宣称一个没有保存的排序。
+	stored, err := s.repo.CanvasProjectForUser("user", canvas.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedDoc, _ := creationDocument(stored.PayloadJSON)
+	if order := patch["nodeOrder"]; order != nil && !reflect.DeepEqual(cloudAgentStrings(order), cloudAgentObjectOrder(storedDoc["nodes"])) {
+		t.Fatal("node-order delta disagrees with the persisted order")
 	}
 	if !reflect.DeepEqual(cloudAgentStrings(patch["connectionOrder"]), []string{"keep-edge"}) {
 		t.Fatal("connection-order delta lost its surviving edge")

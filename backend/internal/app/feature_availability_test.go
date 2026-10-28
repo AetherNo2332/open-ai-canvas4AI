@@ -23,7 +23,7 @@ func TestFeatureAvailabilityDefaultsToDisableFrontendModels(t *testing.T) {
 	if !setting.WelcomeEnabled {
 		t.Fatal("welcome should be enabled by default")
 	}
-	if setting.Configured || !setting.ShortDramaEnabled || !setting.TaskCenterEnabled || !setting.CreditsEnabled || !setting.CustomChannelsEnabled || setting.FrontendModelsEnabled || !setting.PluginCenterEnabled || !setting.SystemPluginsVisibleToUsers {
+	if setting.Configured || !setting.ShortDramaEnabled || !setting.TaskCenterEnabled || !setting.CreditsEnabled || !setting.CustomChannelsEnabled || setting.FrontendModelsEnabled || !setting.PluginCenterEnabled || !setting.SystemPluginsVisibleToUsers || !setting.InspirationSourcesVisible {
 		t.Fatalf("FeatureAvailability() = %#v", setting)
 	}
 }
@@ -44,29 +44,6 @@ func TestFeatureAvailabilityLegacySettingKeepsCustomChannelsEnabled(t *testing.T
 	}
 	if !setting.WelcomeEnabled {
 		t.Fatal("existing settings without welcomeEnabled should keep welcome enabled")
-	}
-}
-
-func TestFeatureAvailabilityDefaultsDirectorDeskToOffAndRejectsUnknownMode(t *testing.T) {
-	svc, db := newFeatureAvailabilityTestService(t)
-
-	defaultValue, err := svc.FeatureAvailability()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if defaultValue.DirectorDeskPrevisMode != platform.DirectorDeskPrevisOff {
-		t.Fatalf("default directorDeskPrevisMode = %q, want %q", defaultValue.DirectorDeskPrevisMode, platform.DirectorDeskPrevisOff)
-	}
-
-	if err := db.Create(&model.SystemSetting{Key: featureAvailabilitySettingKey, ValueJSON: `{"directorDeskPrevisMode":"unsafe"}`}).Error; err != nil {
-		t.Fatal(err)
-	}
-	value, err := svc.FeatureAvailability()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value.DirectorDeskPrevisMode != platform.DirectorDeskPrevisOff {
-		t.Fatalf("unknown directorDeskPrevisMode = %q, want %q", value.DirectorDeskPrevisMode, platform.DirectorDeskPrevisOff)
 	}
 }
 
@@ -98,7 +75,7 @@ func TestUpdateFeatureAvailabilityPersistsAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !setting.Configured || setting.ShortDramaEnabled || !setting.TaskCenterEnabled || setting.CreditsEnabled || !setting.CustomChannelsEnabled || setting.PluginCenterEnabled || setting.SystemPluginsVisibleToUsers {
+	if !setting.Configured || setting.ShortDramaEnabled || !setting.TaskCenterEnabled || setting.CreditsEnabled || !setting.CustomChannelsEnabled || setting.PluginCenterEnabled || setting.SystemPluginsVisibleToUsers || setting.InspirationSourcesVisible {
 		t.Fatalf("UpdateFeatureAvailability() = %#v", setting)
 	}
 	if enabled, err := svc.FeatureEnabled(FeaturePluginCenter); err != nil || enabled {
@@ -219,88 +196,6 @@ func TestTaskBillingOrderSkipsPricingWhenCreditsDisabled(t *testing.T) {
 	}
 	if order != nil {
 		t.Fatalf("taskBillingOrder() = %#v, want nil", order)
-	}
-}
-
-// 灰度分群全链路:管理员配置 canary 白名单/比例 → 用户视角按组解析,
-// 全局视角(管理端)保留原始分组参数,off/on 覆盖分组。
-func TestUserFeatureAvailabilityResolvesCanaryGrouping(t *testing.T) {
-	svc, db := newFeatureAvailabilityTestService(t)
-	admin := &model.User{ID: "admin-1", Role: model.UserRoleAdmin}
-	internalUser := &model.User{ID: "internal-1", Role: model.UserRoleUser}
-	otherUser := &model.User{ID: "other-1", Role: model.UserRoleUser}
-
-	value := FeatureAvailability{
-		ShortDramaEnabled: true, TaskCenterEnabled: true, CreditsEnabled: true,
-		CustomChannelsEnabled: true, PluginCenterEnabled: true, SystemPluginsVisibleToUsers: true,
-		DirectorDeskPrevisMode:        platform.DirectorDeskPrevisCanary,
-		DirectorDeskPrevisCanaryUsers: []string{"internal-1"},
-	}
-	if _, err := svc.UpdateFeatureAvailability(admin, value); err != nil {
-		t.Fatal(err)
-	}
-
-	global, err := svc.AdminFeatureAvailability(admin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if global.DirectorDeskPrevisMode != platform.DirectorDeskPrevisCanary || len(global.DirectorDeskPrevisCanaryUsers) != 1 || global.DirectorDeskPrevisCanaryUsers[0] != "internal-1" {
-		t.Fatalf("admin view lost canary grouping: %#v", global)
-	}
-
-	internal, err := svc.UserFeatureAvailability(internalUser)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if internal.DirectorDeskPrevisMode != platform.DirectorDeskPrevisCanary {
-		t.Fatalf("allowlisted user mode = %q, want canary", internal.DirectorDeskPrevisMode)
-	}
-	other, err := svc.UserFeatureAvailability(otherUser)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if other.DirectorDeskPrevisMode != platform.DirectorDeskPrevisOff {
-		t.Fatalf("unlisted user with zero ratio mode = %q, want off", other.DirectorDeskPrevisMode)
-	}
-
-	// 比例桶生效:10000 → 全体(有账号者)进 canary。
-	value.DirectorDeskPrevisCanaryBasisPoints = 10000
-	if _, err := svc.UpdateFeatureAvailability(admin, value); err != nil {
-		t.Fatal(err)
-	}
-	otherFull, err := svc.UserFeatureAvailability(otherUser)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if otherFull.DirectorDeskPrevisMode != platform.DirectorDeskPrevisCanary {
-		t.Fatalf("full-ratio user mode = %q, want canary", otherFull.DirectorDeskPrevisMode)
-	}
-
-	// 全局 on 覆盖分组;全局 off 关闭分组。
-	value.DirectorDeskPrevisMode = platform.DirectorDeskPrevisOn
-	if _, err := svc.UpdateFeatureAvailability(admin, value); err != nil {
-		t.Fatal(err)
-	}
-	onView, err := svc.UserFeatureAvailability(otherUser)
-	if err != nil || onView.DirectorDeskPrevisMode != platform.DirectorDeskPrevisOn {
-		t.Fatalf("mode=on view = %#v, %v", onView, err)
-	}
-	value.DirectorDeskPrevisMode = platform.DirectorDeskPrevisOff
-	if _, err := svc.UpdateFeatureAvailability(admin, value); err != nil {
-		t.Fatal(err)
-	}
-	offView, err := svc.UserFeatureAvailability(internalUser)
-	if err != nil || offView.DirectorDeskPrevisMode != platform.DirectorDeskPrevisOff {
-		t.Fatalf("mode=off view = %#v, %v", offView, err)
-	}
-
-	// 配置持久化保留分组字段。
-	var rows int64
-	if err := db.Model(&model.SystemSetting{}).Where("key = ?", featureAvailabilitySettingKey).Count(&rows).Error; err != nil {
-		t.Fatal(err)
-	}
-	if rows != 1 {
-		t.Fatalf("feature setting rows = %d, want 1", rows)
 	}
 }
 

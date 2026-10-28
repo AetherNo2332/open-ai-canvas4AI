@@ -8,8 +8,8 @@ import (
 	"yingce/backend/internal/model"
 )
 
-// clientAssetPayload 把数据库里的素材记录补齐为前端素材合同可消费的 JSON。
-// 工作流等内部写入路径可能绕过 UpsertUserAsset，导致 payload 缺少 coverUrl、tags 或时间戳。
+// ClientAssetPayload 将素材列与内部媒体 payload 组装为前端素材合同。
+// 项目上传和工作流写入不一定经过 UpsertUserAsset，身份字段以素材表为准。
 func ClientAssetPayload(asset model.Asset) json.RawMessage {
 	raw := strings.TrimSpace(asset.PayloadJSON)
 	if raw == "" {
@@ -19,18 +19,25 @@ func ClientAssetPayload(asset model.Asset) json.RawMessage {
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload == nil {
 		return json.RawMessage(raw)
 	}
-	if source, _ := payload["source"].(string); strings.TrimSpace(source) == "" {
-		if metadata, ok := payload["metadata"].(map[string]any); ok {
-			switch metadata["source"] {
-			case "generation-task":
-				payload["source"] = "生成任务"
-			case "canvas-generation":
-				payload["source"] = "画布生成"
-			case "canvas-upload":
-				payload["source"] = "画布上传"
-			case "canvas-manual":
-				payload["source"] = "画布素材"
-			}
+	if asset.ID != "" {
+		payload["id"] = asset.ID
+		payload["kind"] = asset.Kind
+		payload["title"] = asset.Title
+		if asset.Category != "" {
+			payload["category"] = asset.Category
+		}
+		if asset.Status != "" {
+			payload["status"] = asset.Status
+		}
+		if asset.FolderID != "" {
+			payload["folderId"] = asset.FolderID
+		} else {
+			delete(payload, "folderId")
+		}
+		if asset.PrimaryVersionID != "" {
+			payload["primaryVersionId"] = asset.PrimaryVersionID
+		} else {
+			delete(payload, "primaryVersionId")
 		}
 	}
 	if _, ok := payload["coverUrl"]; !ok {
@@ -47,6 +54,23 @@ func ClientAssetPayload(asset model.Asset) json.RawMessage {
 	}
 	if data, ok := payload["data"].(map[string]any); ok {
 		kind, _ := payload["kind"].(string)
+		if kind == "image" || kind == "video" || kind == "audio" || kind == "model" {
+			// 资源元数据使用 size；素材合同使用 bytes，直接使用已记录的真实大小。
+			if _, exists := data["bytes"]; !exists {
+				if size, valid := jsonNumberValue(data["size"]); valid && size >= 0 {
+					data["bytes"] = size
+				}
+			}
+			if storageKey, ok := data["storageKey"].(string); ok && strings.TrimSpace(storageKey) != "" {
+				locator := "url"
+				if kind == "image" {
+					locator = "dataUrl"
+				}
+				if _, exists := data[locator]; !exists {
+					data[locator] = ""
+				}
+			}
+		}
 		switch kind {
 		case "image", "video":
 			ensurePositiveAssetDimension(data, "width")
@@ -78,7 +102,7 @@ func ClientAssetListPayload(asset model.Asset) json.RawMessage {
 		// 列表只需要项目归属提示。canvasId 仍保留，避免列表卡片把画布素材
 		// 错显示成“未关联项目”；节点 ID、生成提示和其他同步上下文在详情路径读取。
 		for key := range metadata {
-			if key != "projectName" && key != "projectIds" && key != "canvasId" && key != "canvasName" {
+			if key != "projectName" && key != "projectIds" && key != "canvasId" {
 				delete(metadata, key)
 			}
 		}

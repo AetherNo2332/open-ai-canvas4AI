@@ -1,7 +1,7 @@
-import { GithubOutlined } from "@ant-design/icons";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Link, useLocation } from "react-router";
 
+import { TopbarFeedbackButton } from "@/components/feedback/topbar-feedback-button";
 import { SystemAnnouncementCenter } from "@/components/layout/system-announcement-center";
 import { WorkspaceAccountMenu } from "@/components/layout/workspace-account-menu";
 import { WorkspaceCreditGiftMark } from "@/components/layout/workspace-credit-gift-mark";
@@ -16,7 +16,7 @@ import { openWorkspaceWallet } from "@/lib/workspace-wallet";
 const PAGE_TITLES: Record<string, string> = {
     home: "创作",
     create: "创作",
-    projects: "短剧 Agent",
+    projects: "短剧制作",
     canvas: "自由画布",
     tasks: "创作历史",
     assets: "资产",
@@ -39,29 +39,23 @@ export function WorkspaceTopBar({ sidebarOpen, onToggleSidebar }: { sidebarOpen:
 
     return (
         <header className="app-workspace-topbar">
-            <button type="button" className="app-workspace-mobile-menu app-workspace-topbar-icon-button" aria-label={sidebarOpen ? "收起侧栏" : "展开侧栏"} aria-expanded={sidebarOpen} aria-controls="workspace-sidebar" onClick={onToggleSidebar}>
+            <button type="button" className="app-workspace-mobile-menu app-workspace-topbar-icon-button" aria-label={sidebarOpen ? "收起侧栏" : "展开侧栏"} onClick={onToggleSidebar}>
                 {sidebarOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
             </button>
             <nav className="app-workspace-topbar-breadcrumb" aria-label="当前位置">
-                <Link to="/" className="font-medium text-foreground/65 transition-colors hover:text-foreground">
-                    {brandName}
-                </Link>
+                <Link to="/" className="font-medium text-foreground/65 transition-colors hover:text-foreground">{brandName}</Link>
                 <span aria-hidden="true">/</span>
                 <span className="truncate font-medium text-foreground">{pageTitle}</span>
             </nav>
             <WorkspaceTopBarExtensionSlot />
             <div className="app-workspace-topbar-actions">
-                {creditsEnabled ? (
-                    <button type="button" className="app-workspace-topbar-credit-pill" aria-label={`打开积分中心，可用 ${balance} 积分`} onClick={() => openWorkspaceWallet()}>
-                        <WorkspaceCreditGiftMark />
-                        <span>积分</span>
-                        <strong>{balance}</strong>
-                    </button>
-                ) : null}
+                {user ? <TopbarFeedbackButton /> : null}
+                {creditsEnabled ? <button type="button" className="app-workspace-topbar-credit-pill" aria-label={`打开积分中心，可用 ${balance} 积分`} onClick={() => openWorkspaceWallet()}>
+                    <WorkspaceCreditGiftMark />
+                    <span>积分</span>
+                    <strong>{balance}</strong>
+                </button> : null}
                 {user ? <SystemAnnouncementCenter userId={user.id} className="app-workspace-topbar-icon-button" autoOpen /> : null}
-                <a href="https://github.com/AetherNo2332/open-ai-canvas4AI/tree/main" target="_blank" rel="noreferrer" className="app-workspace-topbar-icon-button" aria-label="打开 GitHub 仓库" title="GitHub 仓库">
-                    <GithubOutlined />
-                </a>
                 <AnimatedThemeToggler className="app-workspace-topbar-icon-button" theme={theme} onThemeChange={setTheme} aria-label="切换主题" />
                 <WorkspaceAccountMenu />
             </div>

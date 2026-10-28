@@ -58,28 +58,12 @@ export function CanvasWorkspacePanel({
     };
     const tasks = useCanvasWorkspaceTasks(projectId, open && (tab === "tasks" || history));
     const content = (
-        <div
-            className="canvas-workspace-panel relative flex h-full min-h-0 flex-col text-foreground"
-            style={{ "--canvas-workspace-base": theme.node.panel } as CSSProperties}
-            data-canvas-no-zoom
-            data-canvas-wheel-scroll
-            onWheel={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-        >
+        <div className="canvas-workspace-panel relative flex h-full min-h-0 flex-col text-foreground" style={{ "--canvas-workspace-base": theme.node.panel } as CSSProperties} data-canvas-no-zoom data-canvas-wheel-scroll onWheel={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
             <button className="canvas-workspace-close" type="button" aria-label="关闭工作区" onClick={onClose}>
                 <X className="size-4" />
             </button>
             {tab === "nodes" && (
-                <CanvasWorkspaceNodeListPanel
-                    nodes={nodes}
-                    config={config}
-                    results={searchCanvasNodes(nodes, deferredQuery, nodes.length, config)}
-                    query={query}
-                    deferredQuery={deferredQuery}
-                    selectedNodeIds={selectedNodeIds}
-                    onQueryChange={setQuery}
-                    onFocus={onFocus}
-                />
+                <CanvasWorkspaceNodeListPanel nodes={nodes} config={config} results={searchCanvasNodes(nodes, deferredQuery, nodes.length, config)} query={query} deferredQuery={deferredQuery} selectedNodeIds={selectedNodeIds} onQueryChange={setQuery} onFocus={onFocus} />
             )}
             {tab === "assets" && <CanvasWorkspaceAssetPanel onInsert={onInsertAssets} onManage={onAssets} onProjectAssets={onProjectAssets} />}
             {(tab === "tasks" || history) && (
@@ -106,18 +90,19 @@ export function CanvasWorkspacePanel({
     );
     const entries = [
         { id: "nodes", label: "节点", icon: Layers3 },
-        { id: "assets", label: "资产", icon: Images },
+        { id: "assets", label: "素材库", icon: Images },
         { id: "tasks", label: "任务", icon: ListChecks },
         { id: "history", label: "历史", icon: History },
     ];
     return (
         <>
-            <div className="canvas-workspace-shell" style={{ ...canvasDockStyle(theme), "--canvas-workspace-base": theme.node.panel, background: undefined } as CSSProperties}>
+            <div className={`canvas-workspace-shell ${open && screens.lg ? "is-expanded" : ""}`} style={{ ...canvasDockStyle(theme), "--canvas-workspace-base": theme.node.panel, background: undefined } as CSSProperties}>
                 <nav className="canvas-workspace-rail" aria-label="画布左侧菜单" data-canvas-no-zoom onWheel={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     <Link to="/" className="canvas-workspace-rail-button" aria-label="主页" title="返回主页">
                         <Home />
                         <span>主页</span>
                     </Link>
+                    <span className="canvas-workspace-rail-divider" aria-hidden />
                     <div className="canvas-workspace-rail-items">
                         {entries.map(({ id, label, icon: Icon }) => (
                             <button
@@ -141,6 +126,7 @@ export function CanvasWorkspacePanel({
                             </button>
                         ))}
                     </div>
+                    <span className="canvas-workspace-rail-divider is-end" aria-hidden />
                     <button
                         className="canvas-workspace-rail-button canvas-workspace-rail-toggle"
                         type="button"

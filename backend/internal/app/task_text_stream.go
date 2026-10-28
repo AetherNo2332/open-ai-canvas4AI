@@ -24,32 +24,10 @@ type taskTextStreamPublisher struct {
 	disabled bool
 	closed   bool
 	sink     func(string) error
-	// flushBytes / flushInterval 可按渠道覆盖：普通文本流要"打字机"式小批量，
-	// 而画布 Agent 的 delta 只是可回放留痕（SSE 本身就是 ~1s 批量下发），
-	// 每条 delta 一条事件的信封成本远大于文本本身。
-	flushBytes    int
-	flushInterval time.Duration
 }
 
 func newTaskTextStreamPublisher(service *Service, userID string, taskID string) *taskTextStreamPublisher {
-	return &taskTextStreamPublisher{
-		service: service, userID: userID, taskID: taskID,
-		flushBytes: taskTextStreamFlushBytes, flushInterval: taskTextStreamFlushInterval,
-	}
-}
-
-func (p *taskTextStreamPublisher) batchBytes() int {
-	if p.flushBytes > 0 {
-		return p.flushBytes
-	}
-	return taskTextStreamFlushBytes
-}
-
-func (p *taskTextStreamPublisher) batchInterval() time.Duration {
-	if p.flushInterval > 0 {
-		return p.flushInterval
-	}
-	return taskTextStreamFlushInterval
+	return &taskTextStreamPublisher{service: service, userID: userID, taskID: taskID}
 }
 
 func (p *taskTextStreamPublisher) Publish(delta string) {
@@ -62,12 +40,12 @@ func (p *taskTextStreamPublisher) Publish(delta string) {
 		return
 	}
 	p.buffer.WriteString(delta)
-	if p.buffer.Len() >= p.batchBytes() {
+	if p.buffer.Len() >= taskTextStreamFlushBytes {
 		p.flushLocked()
 		return
 	}
 	if p.timer == nil {
-		p.timer = time.AfterFunc(p.batchInterval(), p.flush)
+		p.timer = time.AfterFunc(taskTextStreamFlushInterval, p.flush)
 	}
 }
 

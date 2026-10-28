@@ -22,6 +22,7 @@ import (
 func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerChannelOrderRoutes(r, svc)
 	registerNotificationRoutes(r, svc)
+	registerAuthProfileRoutes(r, svc)
 	r.GET("/auth/settings", func(c *gin.Context) {
 		settings, err := svc.PublicAuthSettings()
 		if err != nil {
@@ -41,6 +42,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		if !available || !enforceRateLimit(c, "register:"+c.ClientIP(), policy.Request.RegisterPerHour, time.Hour) {
 			return
 		}
+		req.LoginContext = loginRequestContext(c)
 		result, err := svc.Register(req)
 		if err != nil {
 			failService(c, err)
@@ -113,28 +115,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"reset": true})
 	})
-	r.POST("/auth/password", func(c *gin.Context) {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-		var req service.ChangePasswordRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		if !enforceRateLimit(c, "change-password:"+user.ID, 10, time.Hour) {
-			return
-		}
-		if err := svc.ChangePassword(user, req, currentSessionID(c)); err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"changed": true})
-	})
-	r.POST("/auth/login", func(c *gin.Context) {
+	r.POST("/auth/login", rejectedLoginAudit(svc, "password"), func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 		var req service.LoginRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -145,9 +126,16 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		if !available || !enforceRateLimit(c, "login-ip:"+c.ClientIP(), policy.Request.LoginIPPerTenMinutes, 10*time.Minute) {
 			return
 		}
-		if !enforceRateLimit(c, "login:"+c.ClientIP()+":"+strings.ToLower(strings.TrimSpace(req.Username)), policy.Request.LoginAccountPerTenMinutes, 10*time.Minute) {
+		subject, err := svc.LoginRateLimitSubject(req.Username)
+		if err != nil {
+			failService(c, err)
 			return
 		}
+		if !enforceRateLimit(c, "login:"+c.ClientIP()+":"+subject, policy.Request.LoginAccountPerTenMinutes, 10*time.Minute) {
+			return
+		}
+		req.LoginContext = loginRequestContext(c)
+		c.Set("login_audit_handled", true)
 		result, err := svc.Login(req)
 		if err != nil {
 			failService(c, err)
@@ -168,9 +156,12 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		c.Redirect(http.StatusFound, target)
 	})
-	r.GET("/auth/linuxdo/callback", linuxDOCallbackHandler(svc))
+	r.GET("/auth/linuxdo/callback", rejectedLoginAudit(svc, "linuxdo"), linuxDOCallbackHandler(svc))
 	r.POST("/auth/logout", func(c *gin.Context) {
-		_ = svc.Logout(sessionCookie(c))
+		if err := svc.Logout(sessionCookie(c), loginRequestContext(c)); err != nil {
+			failService(c, err)
+			return
+		}
 		clearSessionCookie(c)
 		ok(c, gin.H{"ok": true})
 	})
@@ -195,12 +186,17 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		features, err := svc.UserFeatureAvailability(user)
+		features, err := svc.FeatureAvailability()
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"user": publicUser, "runtimeLimits": limits, "drawingEngine": drawingEngine, "features": features})
+		referralAvailable, err := svc.ReferralAvailable(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"user": publicUser, "runtimeLimits": limits, "drawingEngine": drawingEngine, "features": features, "referralAvailable": referralAvailable})
 	})
 	r.GET("/channels/system", func(c *gin.Context) {
 		actor, err := currentUser(c, svc)
@@ -223,7 +219,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 
 // 兼容已在 Linux.do OAuth 应用中登记的传统回调地址，处理逻辑与 /api/auth/linuxdo/callback 完全一致。
 func RegisterOAuthCallbackRoutes(r gin.IRoutes, svc *service.Service) {
-	r.GET("/oauth/linuxdo/callback", linuxDOCallbackHandler(svc))
+	r.GET("/oauth/linuxdo/callback", rejectedLoginAudit(svc, "linuxdo"), linuxDOCallbackHandler(svc))
 }
 
 func linuxDOCallbackHandler(svc *service.Service) gin.HandlerFunc {
@@ -231,12 +227,27 @@ func linuxDOCallbackHandler(svc *service.Service) gin.HandlerFunc {
 		if !enforceRateLimit(c, "linuxdo-callback:"+c.ClientIP(), 30, 10*time.Minute) {
 			return
 		}
-		result, err := svc.CompleteLinuxDOLogin(c.Query("state"), c.Query("code"))
+		reauthentication, stateErr := svc.LinuxDOReauthenticationState(c.Query("state"))
+		if stateErr != nil {
+			if err := svc.RecordRejectedLogin("linuxdo", loginRequestContext(c), 400); err != nil {
+				log.Printf("OAuth rejected login audit write failed: error=%v", err)
+			}
+			c.Redirect(http.StatusFound, "/login?oauth_error="+url.QueryEscape("无法读取身份验证状态，请重试"))
+			return
+		}
+		c.Set("login_audit_handled", true)
+		result, err := svc.CompleteLinuxDOLogin(c.Query("state"), c.Query("code"), sessionCookie(c), loginRequestContext(c))
 		if err != nil {
+			if reauthentication {
+				c.Redirect(http.StatusFound, "/settings?section=profile&reauth=error")
+				return
+			}
 			c.Redirect(http.StatusFound, "/login?oauth_error="+url.QueryEscape(err.Error()))
 			return
 		}
-		setSessionCookie(c, result.Session.Session, result.Session.MaxAgeSecs)
+		if !result.Reauthenticated {
+			setSessionCookie(c, result.Session.Session, result.Session.MaxAgeSecs)
+		}
 		c.Redirect(http.StatusFound, result.Next)
 	}
 }
@@ -244,567 +255,11 @@ func linuxDOCallbackHandler(svc *service.Service) gin.HandlerFunc {
 func RegisterAdminRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerAgentSchedulerAdminRoutes(r, svc)
 	registerAgentWebSearchAdminRoutes(r, svc)
-	r.GET("/admin/users", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		page, limit, err := parsePaginationQuery(c, 20)
-		if err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		users, err := svc.AdminUsers(user, service.AdminListQuery{Keyword: c.Query("keyword"), Type: c.Query("role"), Status: c.Query("status"), Page: page, Limit: limit})
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, users)
-	})
-	r.POST("/admin/users", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-		var req service.CreateAdminUserRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		created, err := svc.CreateAdminUser(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"user": created})
-	})
-	r.GET("/admin/references", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		data, err := svc.AdminReferences(user)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, data)
-	})
-	r.POST("/admin/users/bulk-disable", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-		var req service.BulkDisableUsersRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		result, err := svc.BulkDisableUsers(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, result)
-	})
-	r.GET("/admin/users/:id/detail", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		result, err := svc.AdminUserDetail(user, c.Param("id"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, result)
-	})
-	r.GET("/admin/users/:id/ledger", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		page, limit, err := parsePaginationQuery(c, 20)
-		if err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		result, err := svc.AdminUserLedger(user, c.Param("id"), c.Query("type"), page, limit)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, result)
-	})
-	r.GET("/admin/users/:id/tasks", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		page, limit, err := parsePaginationQuery(c, 20)
-		if err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		result, err := svc.AdminUserTasks(user, c.Param("id"), page, limit)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, result)
-	})
-	r.GET("/admin/users/:id/audit-events", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		page, limit, err := parsePaginationQuery(c, 20)
-		if err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		result, err := svc.AdminUserAuditEvents(user, c.Param("id"), page, limit)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, result)
-	})
-	r.PATCH("/admin/users/:id", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var req service.UpdateUserRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		updated, err := svc.UpdateUser(user, c.Param("id"), req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"user": updated})
-	})
-	r.DELETE("/admin/users/:id", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		if err := svc.DeleteUser(user, c.Param("id")); err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"ok": true})
-	})
-	r.GET("/admin/channels", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		page, limit, err := parsePaginationQuery(c, 20)
-		if err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		channels, err := svc.AdminSystemChannelPage(user, service.AdminListQuery{Keyword: c.Query("keyword"), Status: c.Query("status"), Page: page, Limit: limit})
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, channels)
-	})
-	r.POST("/admin/channels", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var req service.ChannelRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		channel, err := svc.CreateSystemChannel(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"channel": channel})
-	})
-	r.POST("/admin/channels/:id/duplicate", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		channel, err := svc.DuplicateSystemChannel(user, c.Param("id"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"channel": channel})
-	})
-	r.PATCH("/admin/channels/:id", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var req service.ChannelRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		channel, err := svc.UpdateSystemChannel(user, c.Param("id"), req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"channel": channel})
-	})
-	r.DELETE("/admin/channels/:id", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		if err := svc.DeleteSystemChannel(user, c.Param("id")); err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"ok": true})
-	})
-	r.GET("/admin/prompt-templates", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		templates, definitions, err := svc.AdminPromptTemplates(user)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"templates": templates, "definitions": definitions})
-	})
-	r.POST("/admin/prompt-templates", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-		var req service.PromptTemplateRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		template, err := svc.CreatePromptTemplate(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"template": template})
-	})
-	r.PATCH("/admin/prompt-templates/:id", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-		var req service.PromptTemplateRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		template, err := svc.UpdatePromptTemplate(user, c.Param("id"), req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"template": template})
-	})
-	r.DELETE("/admin/prompt-templates/:id", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		if err := svc.DeletePromptTemplate(user, c.Param("id")); err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"ok": true})
-	})
-	r.GET("/admin/settings/oss", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		setting, err := svc.AdminOSSSetting(user)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.PATCH("/admin/settings/oss", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-		var req service.OSSSettingRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		setting, err := svc.UpdateOSSSetting(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.POST("/admin/settings/oss/test", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		if !enforceRateLimit(c, "admin-storage-test:"+user.ID, 6, time.Minute) {
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-		var req service.OSSSettingRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		result, err := svc.TestAdminOSSSetting(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, result)
-	})
-	r.GET("/admin/settings/ark-private-assets", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		setting, err := svc.AdminArkPrivateAssetSetting(user)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.PATCH("/admin/settings/ark-private-assets", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var req service.ArkPrivateAssetSettingRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		setting, err := svc.UpdateArkPrivateAssetSetting(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.GET("/admin/settings/drawing-engine", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		setting, err := svc.AdminDrawingEngineSetting(user)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.PATCH("/admin/settings/drawing-engine", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var req service.DrawingEngineSetting
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		setting, err := svc.UpdateDrawingEngineSetting(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.GET("/admin/settings/runtime-policy", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		setting, err := svc.AdminRuntimePolicySetting(user)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.GET("/admin/settings/runtime-policy/self-use", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		setting, err := svc.AdminSelfUseRuntimePolicy(user)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.PUT("/admin/settings/runtime-policy", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-		var req service.RuntimePolicySetting
-		if err := c.ShouldBindJSON(&req); err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		setting, err := svc.UpdateRuntimePolicySetting(user, req)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.DELETE("/admin/settings/runtime-policy", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		setting, err := svc.ResetRuntimePolicySetting(user)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"setting": setting})
-	})
-	r.GET("/admin/api-logs", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		page, limit, err := parsePaginationQuery(c, 50)
-		if err != nil {
-			fail(c, http.StatusBadRequest, err)
-			return
-		}
-		logs, err := svc.AdminAPICallLogs(user, service.APICallLogQuery{AnalyticsQuery: analyticsQuery(c), RecordType: c.Query("recordType"), Keyword: c.Query("keyword"), Status: c.Query("status"), Page: page, Limit: limit})
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, logs)
-	})
-	r.GET("/admin/api-logs/:id/media", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		delivery, err := svc.PrepareAdminAPICallLogMediaDelivery(user, c.Param("id"), resourceAccessOptions(c), c.GetHeader("Range"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		var disposition string
-		if c.Query("download") == "1" {
-			disposition = "attachment"
-		}
-		serveResourceDelivery(c, delivery, "private, no-cache", disposition)
-	})
-	r.GET("/admin/api-logs/:id", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		log, err := svc.AdminAPICallLog(user, c.Param("id"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, gin.H{"log": log})
-	})
-	r.POST("/admin/api-logs/:id/query-task", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		result, err := svc.AdminQueryFailedVideoTask(c.Request.Context(), user, c.Param("id"))
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		ok(c, result)
-	})
-	r.GET("/admin/api-logs-export.csv", func(c *gin.Context) {
-		user, err := currentUser(c, svc)
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		selectedIDs := []string(nil)
-		if value := strings.TrimSpace(c.Query("ids")); value != "" {
-			selectedIDs = strings.Split(value, ",")
-		}
-		data, err := svc.AdminAPICallLogsCSV(user, service.APICallLogQuery{AnalyticsQuery: analyticsQuery(c), RecordType: c.Query("recordType"), Keyword: c.Query("keyword"), Status: c.Query("status"), IDs: selectedIDs})
-		if err != nil {
-			failService(c, err)
-			return
-		}
-		c.Header("Content-Disposition", "attachment; filename=api-calls-"+time.Now().UTC().Format("20060102-150405")+".csv")
-		c.Data(http.StatusOK, "text/csv; charset=utf-8", data)
-	})
+	registerAdminUserRoutes(r, svc)
+	registerAdminChannelRoutes(r, svc)
+	registerAdminSettingRoutes(r, svc)
+	registerAdminAPILogRoutes(r, svc)
+	registerAdminLoginLogRoutes(r, svc)
 }
 
 func RegisterSystemProxyRoutes(r *gin.RouterGroup, svc *service.Service) {
@@ -870,7 +325,7 @@ func shortSystemProxyPath(rawPath string) (string, string, bool) {
 // as a channel request when a business route returns 404.
 func isReservedAPIPathPrefix(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "admin", "agent", "ai", "announcements", "banner-announcements", "assets", "auth", "canvas-projects", "channels", "diagnostics", "features", "files", "model-catalog", "models", "oauth", "plugins", "projects", "public", "resources", "sessions", "settings", "skills", "style-profiles", "tasks", "timeline", "user-data", "voice-profiles", "wallet":
+	case "admin", "agent", "ai", "announcements", "banner-announcements", "assets", "auth", "canvas-projects", "channels", "diagnostics", "dramas", "features", "files", "model-catalog", "models", "oauth", "plugins", "projects", "public", "resources", "sessions", "settings", "skills", "style-profiles", "tasks", "timeline", "user-data", "voice-profiles", "wallet":
 		return true
 	default:
 		return false
@@ -1009,7 +464,7 @@ func proxySystemRequestPath(c *gin.Context, svc *service.Service, user *model.Us
 	status := model.ApiCallStatusSucceeded
 	statusCode := 0
 	errorText := ""
-	resp, err := svc.OutboundHTTPClientForChannel(35*time.Minute, validatedTarget).Do(upstreamReq)
+	resp, err := svc.OutboundHTTPClientForChannel(35*time.Minute, validatedTarget, channel.ProxyURL).Do(upstreamReq)
 	if err != nil {
 		status = model.ApiCallStatusFailed
 		errorText = err.Error()
@@ -1150,15 +605,6 @@ func currentUser(c *gin.Context, svc *service.Service) (*model.User, error) {
 func sessionCookie(c *gin.Context) string {
 	value, _ := c.Cookie(service.SessionCookieName)
 	return value
-}
-
-// currentSessionID 取出会话 Cookie 里的会话 ID，改密后保留当前会话时使用。
-func currentSessionID(c *gin.Context) string {
-	value := sessionCookie(c)
-	if index := strings.IndexByte(value, '.'); index > 0 {
-		return value[:index]
-	}
-	return ""
 }
 
 func passwordResetRateLimitSubject(value string) string {

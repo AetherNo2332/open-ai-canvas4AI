@@ -163,18 +163,6 @@ func TestPiAgentOutputReserveIsAutomaticAndPolicyBounded(t *testing.T) {
 	}
 }
 
-func TestPiAgentUndeclaredOutputUsesBoundedWindowReserve(t *testing.T) {
-	s, db, run := piAgentTestLeasedFixture(t)
-	declareTestChannelWindow(t, db, 32_000, 0)
-	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.ModelLimits.MaxOutputTokens != 4_000 || snapshot.ModelLimits.ReservedOutputTokens != 4_000 {
-		t.Fatalf("window-derived output budget mismatch: %+v", snapshot.ModelLimits)
-	}
-}
-
 func TestPiStreamPublisherUpdatesActiveDraft(t *testing.T) {
 	s, _, run := piAgentTestLeasedFixture(t)
 	snapshot, err := s.PiAgentSnapshot("user", run.ID, run.LeaseOwner)

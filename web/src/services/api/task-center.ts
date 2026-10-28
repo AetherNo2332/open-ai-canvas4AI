@@ -2,14 +2,11 @@ import { generationErrorMessage } from "@/lib/generation-error";
 import { http, apiBaseURL, type BackendEnvelope } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
+import { getActiveUserScope } from "@/lib/user-scope";
 
 export type { BackendEnvelope } from "@/services/api/request";
 
-export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "submission_uncertain";
-export class TaskSubmissionUncertainError extends Error {
-    readonly reason='submission_uncertain';
-    constructor(readonly taskId:string){super('上游可能已收到生成请求，请由主机核对后处理，暂不重复提交');this.name='TaskSubmissionUncertainError'}
-}
+export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type TaskBillingStatus = "reserved" | "running" | "settled" | "refunded" | "uncertain";
 export type ProviderCancelStatus = "requested" | "confirmed" | "uncertain";
 export type GenerationTaskResultState = "NOT_AVAILABLE" | "PENDING_MATERIALIZATION" | "MATERIALIZING" | "READY" | "FAILED_RETRYABLE" | "FAILED_PERMANENT";
@@ -214,8 +211,8 @@ export function queryGenerationTask(id: string, options?: { signal?: AbortSignal
 }
 
 type GenerationTaskSubscriptionDependencies = {
-    queryTask(id: string): Promise<GenerationTask>;
-    waitTask(id: string, options?: { initialTask?: GenerationTask; onTaskUpdate?: (task: GenerationTask) => void }): Promise<GenerationTask>;
+    queryTask(id: string, options?: { signal?: AbortSignal }): Promise<GenerationTask>;
+    waitTask(id: string, options?: { signal?: AbortSignal; initialTask?: GenerationTask; onTaskUpdate?: (task: GenerationTask) => void }): Promise<GenerationTask>;
 };
 
 export function createGenerationTaskSubscriptionService(dependencies: GenerationTaskSubscriptionDependencies) {
@@ -223,48 +220,92 @@ export function createGenerationTaskSubscriptionService(dependencies: Generation
         listeners: Set<(task: GenerationTask) => void>;
         latest?: GenerationTask;
         observation?: Promise<void>;
+        controller?: AbortController;
+        retry?: ReturnType<typeof setTimeout>;
+        failures: number;
+        scope: string;
     };
     const entries = new Map<string, Entry>();
     const publish = (entry: Entry, task: GenerationTask) => {
+        if (entry.scope !== getActiveUserScope() || !entry.listeners.size) return;
         entry.latest = task;
         for (const listener of entry.listeners) listener(task);
     };
     const observe = (id: string, entry: Entry) => {
-        if (entry.observation) return;
+        if (entry.observation || !entry.listeners.size || entry.scope !== getActiveUserScope()) return;
+        if (entry.latest && ["succeeded", "failed", "cancelled"].includes(entry.latest.status)) return;
+        if (entry.retry) clearTimeout(entry.retry);
+        entry.retry = undefined;
+        const controller = new AbortController();
+        entry.controller = controller;
         entry.observation = (async () => {
-            const initial = await dependencies.queryTask(id);
+            const initial = await dependencies.queryTask(id, { signal: controller.signal });
+            if (controller.signal.aborted) return;
             publish(entry, initial);
-            if (initial.status === "succeeded" || initial.status === "failed" || initial.status === "cancelled" || initial.status === "submission_uncertain") return;
+            if (initial.status === "succeeded" || initial.status === "failed" || initial.status === "cancelled") return;
             const terminal = await dependencies.waitTask(id, {
                 initialTask: initial,
-                onTaskUpdate: (task) => publish(entry, task),
+                signal: controller.signal,
+                onTaskUpdate: (task) => { entry.failures = 0; publish(entry, task); },
             });
             publish(entry, terminal);
         })().catch((error) => {
-            // 观察失败不能永久占住 entry，否则页面重新订阅时也不会再查询任务。
+            if (controller.signal.aborted) return;
+            console.warn("生成任务观察中断，将重连原任务", { taskId: id, error });
+        }).finally(() => {
             entry.observation = undefined;
-            console.warn("生成任务观察中断，后续订阅将重新建立连接", { taskId: id, error });
+            if (controller.signal.aborted || !entry.listeners.size || entry.scope !== getActiveUserScope()) return;
+            if (entry.latest && ["succeeded", "failed", "cancelled"].includes(entry.latest.status)) return;
+            const delayMs = Math.min(30_000, 2_000 * 2 ** Math.min(entry.failures++, 4));
+            entry.retry = setTimeout(() => observe(id, entry), delayMs);
         });
     };
+    const reconnect = () => {
+        for (const [id, entry] of entries) observe(id, entry);
+    };
+    let listening = false;
     return {
         subscribe(ids: readonly string[], listener: (task: GenerationTask) => void) {
+            if (!listening && typeof window !== "undefined") {
+                window.addEventListener("online", reconnect);
+                listening = true;
+            }
             const uniqueIds = [...new Set(ids)];
+            const ownedEntries = new Map<string, Entry>();
             for (const id of uniqueIds) {
-                const entry = entries.get(id) ?? { listeners: new Set<(task: GenerationTask) => void>() };
+                const old = entries.get(id);
+                if (old && old.scope !== getActiveUserScope()) {
+                    old.controller?.abort();
+                    if (old.retry) clearTimeout(old.retry);
+                    old.listeners.clear();
+                    entries.delete(id);
+                }
+                const entry = entries.get(id) ?? { listeners: new Set<(task: GenerationTask) => void>(), failures: 0, scope: getActiveUserScope() };
                 entries.set(id, entry);
+                ownedEntries.set(id, entry);
                 entry.listeners.add(listener);
                 if (entry.latest) listener(entry.latest);
                 observe(id, entry);
             }
             return () => {
-                for (const id of uniqueIds) entries.get(id)?.listeners.delete(listener);
+                for (const [id, entry] of ownedEntries) {
+                    entry.listeners.delete(listener);
+                    if (entry.listeners.size) continue;
+                    entry.controller?.abort();
+                    if (entry.retry) clearTimeout(entry.retry);
+                    if (entries.get(id) === entry) entries.delete(id);
+                }
+                if (!entries.size && listening) {
+                    window.removeEventListener("online", reconnect);
+                    listening = false;
+                }
             };
         },
     };
 }
 
 const generationTaskSubscriptionService = createGenerationTaskSubscriptionService({
-    queryTask: (id) => queryGenerationTask(id),
+    queryTask: (id, options) => queryGenerationTask(id, options),
     waitTask: (id, options) => waitForGenerationTask(id, options),
 });
 
@@ -290,10 +331,6 @@ export function retryGenerationTask(id: string) {
 
 export function recoverGenerationTaskMedia(id: string) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover-media`);
-}
-
-export function recoverPrevisWriteback(id: string, mode: "link" | "independent") {
-    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover-previs-writeback`, {mode});
 }
 
 export function cancelGenerationTask(id: string) {
@@ -397,7 +434,6 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
                 await delay(intervalMs, options?.signal);
                 continue;
             }
-            if (task.status === "submission_uncertain") throw new TaskSubmissionUncertainError(task.id);
             if (task.status === "succeeded") {
                 window.dispatchEvent(new CustomEvent("wallet:updated"));
                 return task;
@@ -432,7 +468,6 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
         options.onTaskUpdate?.(lastTask);
     }
     const timeoutMs = options.timeoutMs || taskWaitTimeoutMs(lastTask);
-    if (lastTask?.status === 'submission_uncertain') throw new TaskSubmissionUncertainError(lastTask.id);
     while (Date.now() - startedAt < timeoutMs) {
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         let terminalReceived = false;
@@ -499,7 +534,6 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             if (terminalReceived) {
                 const completed = await queryGenerationTask(id, { signal: options.signal });
                 options.onTaskUpdate?.(completed);
-                if (completed.status === 'submission_uncertain') throw new TaskSubmissionUncertainError(completed.id);
                 window.dispatchEvent(new CustomEvent("wallet:updated"));
                 if (completed.status === "succeeded") return completed;
                 if (completed.status === "failed" || completed.status === "cancelled") {
@@ -509,7 +543,7 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
             lastStreamError = new Error("任务文本流连接提前结束");
         } catch (error) {
             if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-            if (error instanceof TaskTextStreamFatalError || error instanceof TaskSubmissionUncertainError) throw error;
+            if (error instanceof TaskTextStreamFatalError) throw error;
             lastStreamError = error;
         }
         await delay(intervalMs, options.signal);
@@ -526,7 +560,7 @@ function numberValue(value: unknown) {
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus {
-    return value === "queued" || value === "running" || value === "succeeded" || value === "failed" || value === "cancelled" || value === "submission_uncertain";
+    return value === "queued" || value === "running" || value === "succeeded" || value === "failed" || value === "cancelled";
 }
 
 class TaskTextStreamFatalError extends Error {
@@ -548,8 +582,10 @@ async function taskTextStreamHTTPError(response: Response) {
 
 function taskWaitTimeoutMs(task?: GenerationTask) {
     const type = task?.type || "";
-    if (type.includes("storyboard")) return 13 * 60 * 1000;
-    if (type.includes("video")) return 32 * 60 * 1000;
+    // 等待上限必须不小于后端同类任务的执行超时（分镜 20 分钟、视频 120 分钟，见后台
+    // 资源与策略），否则长任务会在前端被判超时、消息显示失败，而后端其实还在跑并最终成功。
+    if (type.includes("storyboard")) return 25 * 60 * 1000;
+    if (type.includes("video")) return 125 * 60 * 1000;
     if (type.includes("image")) return 10 * 60 * 1000;
     if (type.includes("text") || type.includes("audio")) return 12 * 60 * 1000;
     return 10 * 60 * 1000;
@@ -557,15 +593,10 @@ function taskWaitTimeoutMs(task?: GenerationTask) {
 
 function delay(ms: number, signal?: AbortSignal) {
     return new Promise<void>((resolve, reject) => {
-        const timer = window.setTimeout(resolve, ms);
-        signal?.addEventListener(
-            "abort",
-            () => {
-                window.clearTimeout(timer);
-                reject(new DOMException("Aborted", "AbortError"));
-            },
-            { once: true },
-        );
+        if (signal?.aborted) { reject(new DOMException("Aborted", "AbortError")); return; }
+        const abort = () => { window.clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
+        const timer = window.setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, ms);
+        signal?.addEventListener("abort", abort, { once: true });
     });
 }
 

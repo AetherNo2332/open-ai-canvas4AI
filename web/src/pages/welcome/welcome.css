@@ -1,9 +1,9 @@
 .welcome-page {
-    --welcome-black: var(--site-canvas);
-    --welcome-paper: var(--site-text);
-    --welcome-muted: var(--site-surface);
-    --welcome-accent: var(--primary);
-    --welcome-border: color-mix(in srgb, var(--site-text) 14.12%, transparent);
+    --welcome-black: #080808;
+    --welcome-paper: #f3f2ef;
+    --welcome-muted: #aaa9a6;
+    --welcome-accent: #eee7d7;
+    --welcome-border: #ffffff24;
     --welcome-radius: 3px;
     --welcome-header-height: 88px;
     --welcome-content: 1380px;
@@ -14,7 +14,7 @@
     --welcome-z-copy: 3;
     background: var(--welcome-black);
     color: var(--welcome-paper);
-    font-family: var(--font-home);
+    font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
     font-size: 14px;
     line-height: 1.6;
     letter-spacing: 0;
@@ -22,7 +22,7 @@
 }
 body:has(.welcome-page) {
     margin: 0;
-    background: var(--site-canvas);
+    background: #080808;
 }
 .welcome-page *,
 .welcome-page *::before,
@@ -79,15 +79,15 @@ body:has(.welcome-page) {
     z-index: var(--welcome-z-navigation);
     display: flex;
     align-items: center;
-    gap: 42px;
+    gap: 40px;
     padding: 0 var(--welcome-gutter);
-    background: linear-gradient(color-mix(in srgb, var(--site-canvas) 80%, transparent), color-mix(in srgb, var(--site-canvas) 0%, transparent));
+    background: linear-gradient(#080808cc, #08080800);
 }
 .welcome-brand {
     display: flex;
     align-items: center;
     gap: 12px;
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 500;
     white-space: nowrap;
 }
@@ -106,12 +106,12 @@ body:has(.welcome-page) {
     margin-left: auto;
     display: flex;
     align-items: center;
-    gap: 34px;
+    gap: 32px;
 }
 .welcome-nav a {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     color: var(--welcome-paper);
     font-size: 13px;
     transition: opacity 180ms;
@@ -125,7 +125,7 @@ body:has(.welcome-page) {
     justify-content: center;
     gap: 24px;
     height: 40px;
-    padding: 0 19px;
+    padding: 0 20px;
     border-radius: var(--welcome-radius);
     color: var(--welcome-black) !important;
     font-size: 12px;
@@ -171,20 +171,20 @@ body:has(.welcome-page) {
     align-items: center;
     justify-content: flex-end;
     gap: 4px;
-    padding: 7px 0;
-    font-size: 10px;
+    padding: 8px 0;
+    font-size: 11px;
     color: var(--welcome-muted);
     text-shadow: 0 1px 4px var(--welcome-black);
 }
 .welcome-media-credit {
-    padding: 0 var(--welcome-gutter) 26px;
+    padding: 0 var(--welcome-gutter) 24px;
     color: var(--welcome-muted);
     font-size: 11px;
 }
 .welcome-media-credit a {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
 }
 .welcome-icon {
     display: grid;
@@ -196,7 +196,7 @@ body:has(.welcome-page) {
     border-radius: 50%;
 }
 .welcome-icon:hover {
-    background: color-mix(in srgb, var(--site-text) 7.06%, transparent);
+    background: #ffffff12;
 }
 .welcome-icon svg {
     width: 16px;
@@ -240,17 +240,10 @@ body:has(.welcome-page) {
     pointer-events: none;
     position: absolute;
     inset: 0;
-    background: linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--site-canvas) 18.82%, transparent) 0%,
-        transparent 23%,
-        transparent 50%,
-        color-mix(in srgb, var(--site-canvas) 26.67%, transparent) 70%,
-        color-mix(in srgb, var(--site-canvas) 90.98%, transparent) 100%
-    );
+    background: linear-gradient(180deg, #08080830 0%, transparent 23%, transparent 50%, #08080844 70%, #080808e8 100%);
 }
 .chapter-3 .welcome-stage-shade {
-    background: linear-gradient(180deg, color-mix(in srgb, var(--site-canvas) 43.92%, transparent) 0%, color-mix(in srgb, var(--site-canvas) 78.04%, transparent) 28%, transparent 50%, color-mix(in srgb, var(--site-canvas) 78.04%, transparent) 100%);
+    background: linear-gradient(180deg, #08080870 0%, #080808c7 28%, transparent 50%, #080808c7 100%);
 }
 .welcome-chapter {
     position: absolute;
@@ -262,8 +255,8 @@ body:has(.welcome-page) {
     transform: translateY(25px);
     pointer-events: none;
     transition:
-        opacity 0.6s,
-        transform 0.8s;
+        opacity 250ms,
+        transform 250ms;
     text-align: left;
     visibility: hidden;
 }
@@ -276,7 +269,7 @@ body:has(.welcome-page) {
     font-size: var(--welcome-display);
     font-weight: 400;
     line-height: 1.12;
-    margin-bottom: 26px;
+    margin-bottom: 24px;
 }
 .welcome-chapter h2 {
     font-size: var(--welcome-heading);
@@ -290,7 +283,7 @@ body:has(.welcome-page) {
     bottom: 15%;
 }
 .welcome-subtitle {
-    font-size: 19px;
+    font-size: 16px;
     color: var(--welcome-paper);
 }
 .chapter-1 .welcome-chapter {
@@ -319,9 +312,9 @@ body:has(.welcome-page) {
     bottom: 0;
     display: flex;
     align-items: center;
-    gap: 15px;
+    gap: 16px;
     height: auto;
-    padding: 10px 0 10px 16px;
+    padding: 8px 0 8px 16px;
     color: var(--welcome-paper);
     font-size: 12px;
     pointer-events: auto;
@@ -335,14 +328,14 @@ body:has(.welcome-page) {
     place-items: center;
     width: 64px;
     height: 64px;
-    border: 1px solid color-mix(in srgb, var(--site-text) 43.92%, transparent);
+    border: 1px solid #ffffff70;
     border-radius: 50%;
     transition:
         background 180ms,
         transform 180ms;
 }
 .welcome-film-link:hover .welcome-play-mark {
-    background: color-mix(in srgb, var(--site-text) 12.55%, transparent);
+    background: #ffffff20;
     transform: scale(1.06);
 }
 .welcome-stage-bottom {
@@ -361,8 +354,8 @@ body:has(.welcome-page) {
     height: 48px;
     padding: 0;
     color: var(--welcome-paper);
-    background: color-mix(in srgb, var(--site-text) 9.41%, transparent);
-    border: 1px solid color-mix(in srgb, var(--site-text) 30.2%, transparent);
+    background: #ffffff18;
+    border: 1px solid #ffffff4d;
     border-radius: 50%;
     backdrop-filter: blur(16px);
     transition:
@@ -371,8 +364,8 @@ body:has(.welcome-page) {
         transform 180ms;
 }
 .welcome-next:hover {
-    background: color-mix(in srgb, var(--site-text) 18.04%, transparent);
-    border-color: color-mix(in srgb, var(--site-text) 54.12%, transparent);
+    background: #ffffff2e;
+    border-color: #ffffff8a;
     transform: translateY(2px);
 }
 .welcome-next:active {
@@ -399,7 +392,7 @@ body:has(.welcome-page) {
     display: block;
     width: 22px;
     height: 1px;
-    background: color-mix(in srgb, var(--site-text) 28.24%, transparent);
+    background: #ffffff48;
     transition:
         background 0.2s,
         height 0.2s;
@@ -413,13 +406,13 @@ body:has(.welcome-page) {
 }
 .welcome-workbench {
     position: relative;
-    padding: 100px var(--welcome-gutter) 70px;
+    padding: 100px var(--welcome-gutter) 72px;
     max-width: calc(var(--welcome-content) + var(--welcome-gutter) * 2);
     margin: auto;
     scroll-margin-top: var(--welcome-header-height);
 }
 .welcome-section-heading {
-    margin-bottom: 50px;
+    margin-bottom: 48px;
 }
 .welcome-section-heading h2 {
     font-size: 56px;
@@ -430,7 +423,7 @@ body:has(.welcome-page) {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 26px;
+    margin-bottom: 24px;
 }
 .welcome-workbench-bar .ant-tabs,
 .welcome-workbench-bar .ant-tabs-nav {
@@ -456,7 +449,7 @@ body:has(.welcome-page) {
 }
 .welcome-workbench-bar > .ant-btn {
     display: flex;
-    gap: 9px;
+    gap: 8px;
     align-items: center;
     height: auto;
     padding: 0;
@@ -468,7 +461,7 @@ body:has(.welcome-page) {
 }
 .welcome-workbench-preview {
     aspect-ratio: 16/9;
-    background: var(--site-surface);
+    background: #141414;
     overflow: hidden;
     border-radius: var(--welcome-radius);
 }
@@ -486,21 +479,21 @@ body:has(.welcome-page) {
 }
 .welcome-ending {
     text-align: center;
-    padding: 120px 24px 125px;
+    padding: 120px 24px 124px;
 }
 .welcome-ending h2 {
     font-weight: 400;
     font-size: 92px;
     line-height: 1.2;
-    margin-bottom: 42px;
+    margin-bottom: 40px;
 }
 .welcome-primary.ant-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 42px;
+    gap: 40px;
     height: 52px;
-    padding: 0 27px;
+    padding: 0 28px;
     border-radius: var(--welcome-radius);
     color: var(--welcome-black) !important;
     font-size: 14px;
@@ -516,8 +509,8 @@ body:has(.welcome-page) {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    margin-top: 27px;
+    gap: 8px;
+    margin-top: 28px;
     font-size: 12px;
     color: var(--welcome-muted) !important;
 }
@@ -536,8 +529,8 @@ body:has(.welcome-page) {
     overflow: hidden;
     border: 1px solid var(--welcome-border);
     border-radius: 12px;
-    background: radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--site-text) 7.45%, transparent), transparent 36%), linear-gradient(135deg, var(--site-surface) 0%, var(--site-canvas) 68%);
-    box-shadow: 0 28px 80px color-mix(in srgb, var(--site-canvas) 36.08%, transparent);
+    background: radial-gradient(circle at 12% 0%, #ffffff13, transparent 36%), linear-gradient(135deg, #151515 0%, #0d0d0d 68%);
+    box-shadow: 0 28px 80px #0000005c;
     padding: 32px;
     transform-style: preserve-3d;
 }
@@ -554,12 +547,12 @@ body:has(.welcome-page) {
     align-items: center;
     gap: 8px;
     color: var(--welcome-muted);
-    font-size: 10px;
+    font-size: 11px;
     letter-spacing: 0.16em;
     text-transform: uppercase;
 }
 .welcome-contributors-heading h3 {
-    font-size: 24px;
+    font-size: 22px;
     font-weight: 500;
     line-height: 1.35;
 }
@@ -571,7 +564,7 @@ body:has(.welcome-page) {
 .welcome-contributors-heading > a {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     color: var(--welcome-muted);
     font-size: 12px;
     transition: color 180ms;
@@ -582,7 +575,7 @@ body:has(.welcome-page) {
 .welcome-contributors-list {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 18px 24px;
+    gap: 16px 24px;
     margin: 28px 0 0;
     padding: 0;
     list-style: none;
@@ -591,7 +584,7 @@ body:has(.welcome-page) {
     display: flex;
     min-width: 0;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     color: var(--welcome-muted);
     font-size: 12px;
     transition:
@@ -606,10 +599,10 @@ body:has(.welcome-page) {
     width: 42px;
     height: 42px;
     flex: none;
-    border: 1px solid color-mix(in srgb, var(--site-text) 14.12%, transparent);
+    border: 1px solid #ffffff24;
     border-radius: 50%;
     object-fit: cover;
-    background: var(--site-surface);
+    background: #1b1b1b;
 }
 .welcome-contributors-list span {
     min-width: 0;
@@ -621,21 +614,21 @@ body:has(.welcome-page) {
     grid-column: 1 / -1;
     align-items: flex-start;
     gap: 16px;
-    padding: 18px 20px;
-    border: 1px solid color-mix(in srgb, var(--primary) 40%, transparent);
-    border-radius: 10px;
-    background: linear-gradient(120deg, color-mix(in srgb, var(--primary) 7.06%, transparent), color-mix(in srgb, var(--site-text) 1.57%, transparent) 62%);
+    padding: 16px 20px;
+    border: 1px solid #eee7d766;
+    border-radius: 8px;
+    background: linear-gradient(120deg, #eee7d712, #ffffff04 62%);
     box-shadow:
-        inset 0 1px 0 color-mix(in srgb, var(--site-text) 7.06%, transparent),
-        0 14px 36px color-mix(in srgb, var(--site-canvas) 18.04%, transparent);
+        inset 0 1px 0 #ffffff12,
+        0 14px 36px #0000002e;
 }
 .welcome-contributors-list li.is-founder img {
     width: 68px;
     height: 68px;
     border: 2px solid var(--welcome-accent);
     box-shadow:
-        0 0 0 4px color-mix(in srgb, var(--primary) 10.98%, transparent),
-        0 8px 22px color-mix(in srgb, var(--site-canvas) 33.33%, transparent);
+        0 0 0 4px #eee7d71c,
+        0 8px 22px #00000055;
 }
 .welcome-contributor-content {
     flex: 1;
@@ -647,34 +640,34 @@ body:has(.welcome-page) {
     min-width: 0;
     align-items: center;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 8px;
 }
 .welcome-contributor-name {
     color: var(--welcome-paper);
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 500;
     letter-spacing: 0.01em;
 }
 .welcome-contributor-badge {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     padding: 4px 8px;
     color: var(--welcome-black);
     background: var(--welcome-accent);
     border-radius: 999px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.04em;
     white-space: nowrap;
 }
 .welcome-contributor-meta {
-    margin-top: 5px !important;
+    margin-top: 4px !important;
     color: var(--welcome-muted);
     font-size: 11px;
 }
 .welcome-contributor-signature {
-    margin-top: 9px !important;
+    margin-top: 8px !important;
     color: var(--welcome-paper);
     font-size: 12px;
     line-height: 1.7;
@@ -685,18 +678,18 @@ body:has(.welcome-page) {
     justify-content: space-between;
     gap: 20px;
     align-items: center;
-    padding: 25px var(--welcome-gutter);
+    padding: 24px var(--welcome-gutter);
     color: var(--welcome-muted);
     font-size: 11px;
 }
 .welcome-footer > a:first-child {
     color: var(--welcome-paper);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 500;
 }
 .welcome-footer a:last-child {
     display: flex;
-    gap: 5px;
+    gap: 4px;
     align-items: center;
 }
 .welcome-film-dialog {
@@ -704,13 +697,13 @@ body:has(.welcome-page) {
     padding: 0;
     max-width: min(1000px, 94%);
     width: 100%;
-    background: var(--site-canvas);
-    color: var(--site-text);
-    border-radius: 3px;
+    background: #111;
+    color: #f3f2ef;
+    border-radius: 4px;
     overflow: visible;
 }
 .welcome-film-dialog::backdrop {
-    background: color-mix(in srgb, var(--site-canvas) 86.67%, transparent);
+    background: #000d;
 }
 .welcome-film-dialog video {
     width: 100%;
@@ -718,7 +711,7 @@ body:has(.welcome-page) {
 }
 .welcome-film-dialog p {
     font-size: 12px;
-    padding: 14px 20px;
+    padding: 16px 20px;
 }
 .welcome-film-dialog .welcome-icon {
     position: absolute;
@@ -756,13 +749,13 @@ body:has(.welcome-page) {
         --welcome-heading: 44px;
     }
     .welcome-header {
-        gap: 14px;
+        gap: 16px;
     }
     .welcome-look-picker {
         width: 148px;
     }
     .welcome-brand {
-        font-size: 15px;
+        font-size: 14px;
         gap: 8px;
     }
     .welcome-brand-logo {
@@ -771,8 +764,8 @@ body:has(.welcome-page) {
     }
     .welcome-header-cta {
         margin-left: auto;
-        padding: 9px 12px;
-        gap: 10px;
+        padding: 8px 12px;
+        gap: 8px;
         font-size: 11px;
     }
     .mobile-menu {
@@ -786,7 +779,7 @@ body:has(.welcome-page) {
         top: var(--welcome-header-height);
         left: 0;
         right: 0;
-        padding: 25px;
+        padding: 24px;
         background: var(--welcome-black);
     }
     .welcome-nav.is-open {
@@ -821,7 +814,7 @@ body:has(.welcome-page) {
         left: 0;
         padding: 0;
         font-size: 11px !important;
-        gap: 10px;
+        gap: 8px;
     }
     .welcome-play-mark {
         width: 38px;
@@ -871,7 +864,7 @@ body:has(.welcome-page) {
         font-size: 32px;
     }
     .welcome-workbench-bar .ant-tabs-nav-list {
-        gap: 21px;
+        gap: 20px;
     }
     .welcome-workbench-bar .ant-tabs-tab {
         font-size: 12px;
@@ -886,11 +879,11 @@ body:has(.welcome-page) {
         font-size: 12px;
     }
     .welcome-ending {
-        padding: 65px 24px 70px;
+        padding: 64px 24px 72px;
     }
     .welcome-ending h2 {
         font-size: 58px;
-        margin-bottom: 30px;
+        margin-bottom: 32px;
     }
     .welcome-contributors {
         margin-top: 40px;
@@ -936,7 +929,7 @@ body:has(.welcome-page) {
     .welcome-footer {
         flex-wrap: wrap;
         gap: 12px;
-        font-size: 10px;
+        font-size: 11px;
     }
     .welcome-footer > span {
         display: none;

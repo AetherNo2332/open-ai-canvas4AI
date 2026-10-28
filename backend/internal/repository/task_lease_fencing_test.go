@@ -15,10 +15,7 @@ func TestTaskLeaseFencesExpiredAndReclaimedWriters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.User{}, &model.Task{}, &model.Result{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.User{ID: "user", Status: model.UserStatusActive}).Error; err != nil {
+	if err := db.AutoMigrate(&model.Task{}, &model.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&model.Task{ID: "task", UserID: "user", Status: model.TaskStatusQueued}).Error; err != nil {

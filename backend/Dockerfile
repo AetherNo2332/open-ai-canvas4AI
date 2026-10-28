@@ -59,8 +59,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build set -eu; \
     CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="$ldflags" -o /out/migrate-schema ./cmd/migrate-schema; \
     CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="$ldflags" -o /out/migrate-sqlite-postgres ./cmd/migrate-sqlite-postgres
 
+# 云端 Agent 由独立的 agent 服务（agent/Dockerfile）运行，backend 镜像不再携带 Node 运行时。
 FROM alpine:3.22
 
+# ffmpeg/ffprobe：短剧抽取剧情段视频最后一帧、时间线合成成片与视频播放转码。
 RUN apk add --no-cache ca-certificates tzdata wget ffmpeg \
     && addgroup -S app \
     && adduser -S app -G app

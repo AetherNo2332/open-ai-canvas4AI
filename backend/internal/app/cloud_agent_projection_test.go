@@ -435,10 +435,10 @@ func TestCloudAgentStaleSnapshotIsRecoverableToolFailure(t *testing.T) {
 	if waiting.Status != "waiting_approval" || waiting.Approval == nil {
 		t.Fatalf("write did not enter approval: %+v", waiting)
 	}
-	// 真实的并发内容编辑：画布标题被改（浏览器记的账不算，内容算）
+	// 真实的并发内容编辑：另一端新增了一个节点（浏览器记的账与画布标题这类行元数据不算，内容算）
 	stored, _ := s.repo.CanvasProjectForUser("user", canvas.ID)
 	edited, _ := creationDocument(stored.PayloadJSON)
-	edited["title"] = "并发编辑过的画布"
+	edited["nodes"] = append(creationMaps(edited["nodes"]), map[string]any{"id": "concurrent-note", "type": "text", "title": "并发新增", "position": map[string]any{"x": 900, "y": 900}, "metadata": map[string]any{"content": "另一端写入"}})
 	if err := saveCloudAgentDocument(s.repo, stored, edited, mustRuntimePolicy(t, s)); err != nil {
 		t.Fatal(err)
 	}

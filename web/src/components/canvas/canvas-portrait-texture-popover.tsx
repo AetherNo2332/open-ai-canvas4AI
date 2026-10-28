@@ -1,5 +1,7 @@
 import { Popover } from "antd";
 import { SlidersHorizontal } from "lucide-react";
+import { useState } from "react";
+import { usePopoverAnchorAlign } from "@/hooks/use-popover-anchor-align";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import {
@@ -17,6 +19,8 @@ type CanvasPortraitTexturePopoverProps = {
 };
 
 export function CanvasPortraitTexturePopover({ value, placement = "topLeft", onChange }: CanvasPortraitTexturePopoverProps) {
+    const [open, setOpen] = useState(false);
+    const popoverRef = usePopoverAnchorAlign(open);
     const theme = canvasThemes[useActiveTheme()];
     const settings = normalizePortraitTextureSettings(value);
 
@@ -25,8 +29,8 @@ export function CanvasPortraitTexturePopover({ value, placement = "topLeft", onC
     };
 
     const content = (
-        <div className="w-[min(350px,calc(100vw-32px))] p-2.5" style={{ color: theme.node.text }}>
-            <div className="mb-2 flex items-center gap-1.5 px-0.5">
+        <div className="w-[min(350px,calc(100vw-32px))] p-2" style={{ color: theme.node.text }}>
+            <div className="mb-2 flex items-center gap-2 px-0.5">
                 <SlidersHorizontal className="size-3.5" style={{ color: theme.accent.primary }} />
                 <span className="text-xs font-medium">质感调整</span>
             </div>
@@ -65,6 +69,9 @@ export function CanvasPortraitTexturePopover({ value, placement = "topLeft", onC
 
     return (
         <Popover
+            ref={popoverRef}
+            open={open}
+            onOpenChange={setOpen}
             trigger="click"
             placement={placement}
             arrow={false}
@@ -73,7 +80,7 @@ export function CanvasPortraitTexturePopover({ value, placement = "topLeft", onC
         >
             <button
                 type="button"
-                className="flex h-6 min-w-0 items-center gap-1 rounded-md px-1.5 transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 motion-reduce:transition-none"
+                className="flex h-6 min-w-0 items-center gap-1 rounded-md px-2 transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 motion-reduce:transition-none"
                 style={{ background: theme.accent.primarySoft, color: theme.accent.primary, outlineColor: theme.accent.primary }}
                 aria-label="打开质感调整面板"
             >

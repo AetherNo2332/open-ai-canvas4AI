@@ -38,21 +38,8 @@ export class ApiError extends Error {
 }
 
 // 所有后端 JSON 请求共用同一实例，避免认证、Base URL 和错误语义在模块间漂移。
-export let apiBaseURL = import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
+export const apiBaseURL = import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
 export const apiClient = axios.create({ baseURL: apiBaseURL, withCredentials: true });
-
-export function setAPIHost(endpoint: string) {
-    const url = new URL(endpoint);
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.origin !== endpoint) throw new Error("invalid_host_endpoint");
-    apiBaseURL = `${url.origin}/api`;
-    apiClient.defaults.baseURL = apiBaseURL;
-}
-
-/** 还原为环境变量/默认值（桌面 bootstrap 之前、测试隔离用）。 */
-export function resetAPIHost() {
-    apiBaseURL = import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
-    apiClient.defaults.baseURL = apiBaseURL;
-}
 
 /**
  * 解包后端业务信封的唯一边界。这里把非零业务 code 转成 ApiError，保留 reason、重试语义和 Retry-After；
@@ -67,7 +54,8 @@ export async function request<T>(promise: Promise<{ data: BackendEnvelope<T>; st
             throw new ApiError(response.data.msg || "请求失败", {
                 status: response.status,
                 code: response.data.code,
-                ...envelopeErrorFields(response.data),
+                reason: response.data.reason,
+                details: response.data.details,
                 retryable: isRetryableStatus(response.status) || isRetryableStatus(response.data.code),
                 retryAfterMs: retryAfterMilliseconds(response.headers),
             });
@@ -91,19 +79,16 @@ function unwrapTransportError(error: unknown): never {
         throw new ApiError(error.response?.data?.msg || transportFailureMessage(status, error.message), {
             status,
             code,
-            ...envelopeErrorFields(error.response?.data),
-            retryable: isRetryableStatus(status) || isRetryableStatus(code),
+            reason: error.response?.data?.reason,
+            details: error.response?.data?.details,
+            // 没有 response 的 AxiosError 代表请求没有拿到 HTTP 响应（断网、连接重置、DNS、超时等）。
+            // 这类错误不能靠 status 判断，但对保存来说通常是暂时性的，应交给上层有限退避重试。
+            retryable: status === undefined || isRetryableStatus(status) || isRetryableStatus(code),
             retryAfterMs: retryAfterMilliseconds(error.response?.headers),
             cause: error,
         });
     }
     throw error;
-}
-
-function envelopeErrorFields(envelope: BackendEnvelope<unknown> | undefined) {
-    const data = envelope?.data;
-    const nested = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : undefined;
-    return { reason: envelope?.reason || (typeof nested?.reason === "string" ? nested.reason : undefined), details: envelope?.details || (typeof nested?.field === "string" ? { field: nested.field } : undefined) };
 }
 
 function transportFailureMessage(status?: number, fallback?: string) {
@@ -156,7 +141,7 @@ export const http = {
     post: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("post", url, data, config),
     put: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("put", url, data, config),
     patch: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => send<T>("patch", url, data, config),
-    delete: <T>(url: string, config?: HttpRequestConfig & { data?: unknown }) => send<T>("delete", url, undefined, config),
+    delete: <T>(url: string, config?: HttpRequestConfig) => send<T>("delete", url, undefined, config),
     async raw<T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
         try {
             return await apiClient.request<T>(config);
@@ -165,20 +150,6 @@ export const http = {
         }
     },
 };
-
-/** A canvas session must keep its original host even if the global UI connects
- * elsewhere while an ACK or retry is pending. Same client, same error boundary. */
-export function captureHTTP(baseURL = apiBaseURL): Pick<typeof http, "get" | "post" | "put"> {
-    const sendCaptured = <T>(method: string, url: string, data: unknown, config?: HttpRequestConfig) => {
-        const { allowNotModified, ...axiosConfig } = config || {};
-        return request<T>(apiClient.request<BackendEnvelope<T>>({ ...axiosConfig, baseURL, method, url, data }), { allowNotModified });
-    };
-    return {
-        get: <T>(url: string, config?: HttpRequestConfig) => sendCaptured<T>("get", url, undefined, config),
-        post: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => sendCaptured<T>("post", url, data, config),
-        put: <T>(url: string, data?: unknown, config?: HttpRequestConfig) => sendCaptured<T>("put", url, data, config),
-    };
-}
 
 export function compactApiParams(params: ApiParams) {
     return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "" && value !== undefined && (!Array.isArray(value) || value.length > 0))) as ApiParams;

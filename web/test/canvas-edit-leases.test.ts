@@ -1,281 +1,382 @@
-import { afterEach, expect, test } from "bun:test";
-import { apiClient, ApiError } from "@/services/api/request";
-import { createCanvasEditLeaseAPI, type CanvasEditLease, type CanvasEditLeaseAPI } from "@/services/api/canvas-edit-leases";
-import { cancelCanvasEditLeases, captureCanvasEditProofProvider, createCanvasEditLeaseController } from "@/services/canvas-edit-leases";
-import { createCanvasCommandTransport } from "@/services/api/canvas-commands";
-import type { Command } from "@/lib/canvas/command-contract.generated";
+import { expect, test } from "bun:test";
+import { createCanvasEditLeaseClient } from "../src/services/canvas-edit-leases";
+import type { changeCanvasEditLease } from "../src/services/api/user-data";
+import { ApiError } from "../src/services/api/request";
 
-const previousAdapter = apiClient.defaults.adapter;
-const controllers: Array<ReturnType<typeof createCanvasEditLeaseController>> = [];
-afterEach(() => {
-    for (const controller of controllers.splice(0)) controller.close();
-    cancelCanvasEditLeases();
-    apiClient.defaults.adapter = previousAdapter;
-});
-const command: Command = { protocolVersion: 1, canvasId: "c", documentEpoch: "e", clientId: "client", operationId: "op", expectedEntityVersions: { "node:n": 1 }, operations: [{ type: "update_node", id: "n", patch: { content: "draft" } }] };
-
-test("activity marks this window's lease separately while retaining node names and types", async () => {
-    let ownSession = "";
-    const api: CanvasEditLeaseAPI = {
-        acquire: async (proof) => {
-            ownSession = proof.sessionId;
-            return { ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() };
-        },
-        renew: async (proof) => ({ ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }),
-        release: async () => ({ released: true }),
-        status: async () => ({
-            revision: 1,
-            documentEpoch: "e",
-            eventSeq: 0,
-            activeAgents: [],
-            leases: [ownSession, "another-window"].map((sessionId) => ({
-                canvasId: "c",
-                nodeId: sessionId === ownSession ? "n" : "other",
-                sessionId,
-                expiresAt: new Date(Date.now() + 30000).toISOString(),
-                nodeTitle: "镜头 A · 关键帧",
-                nodeType: "image",
-                nodeTypeLabel: "图片",
-                nodeExists: true,
-            })),
-        }),
-    };
-    const value = controller(api);
-    await value.begin("n");
-    await value.refreshStatus();
-    const leases = value.getState().activity!.leases;
-    expect(leases[0]).toMatchObject({ nodeTitle: "镜头 A · 关键帧", nodeTypeLabel: "图片", isCurrentWindow: true });
-    expect(leases[1].isCurrentWindow).toBe(false);
-    expect(JSON.stringify(leases)).not.toContain('"token"');
-});
-function controller(api: CanvasEditLeaseAPI, extras: Partial<Parameters<typeof createCanvasEditLeaseController>[0]> = {}) {
-    const value = createCanvasEditLeaseController({ scope: "owner", canvasId: "c", api, current: () => true, ...extras });
-    controllers.push(value);
-    return value;
-}
-
-test("actual lease API denies another tab, renews one owner, sends only header proof and releases after durable ACK", async () => {
-    let now = Date.now(),
-        remote: CanvasEditLease | undefined,
-        releaseCount = 0,
-        commandBody = "",
-        header = "";
-    let ack!: () => void;
-    const durable = new Promise<void>((resolve) => {
-        ack = resolve;
-    });
-    apiClient.defaults.adapter = async (config) => {
-        const body = config.data ? JSON.parse(config.data) : undefined;
-        let data: unknown;
-        if (config.url?.endsWith("/acquire")) {
-            if (remote && remote.sessionId !== body.sessionId) throw new ApiError("occupied", { status: 409, reason: "node_locked" });
-            remote = { canvasId: "c", ...body, expiresAt: new Date(now + 30000).toISOString() };
-            data = remote;
-        } else if (config.url?.endsWith("/renew")) {
-            remote = { ...remote!, expiresAt: new Date(now + 30000).toISOString() };
-            data = remote;
-        } else if (config.url?.endsWith("/release")) {
-            releaseCount++;
-            remote = undefined;
-            data = { released: true };
-        } else if (config.url?.endsWith("/commands")) {
-            commandBody = config.data;
-            header = String(config.headers.get("X-Canvas-Edit-Proofs"));
-            await durable;
-            data = {};
-        } else throw new Error(`unexpected ${config.url}`);
-        return { data: { code: 0, data, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
-    };
-    const scheduled: Array<() => void> = [];
-    const one = controller(createCanvasEditLeaseAPI(), {
+function fixture() {
+    let now = 0;
+    let scope = "account-a";
+    let fail = false;
+    let paused: (() => Promise<void>) | undefined;
+    let sequence = 0;
+    const calls: string[] = [];
+    const client = createCanvasEditLeaseClient({
         now: () => now,
-        schedule: (fn) => {
-            scheduled.push(fn);
-            return () => {};
+        scope: () => scope,
+        sessionId: () => `browser-${scope}`,
+        change: (async (_canvas, proof, action) => {
+            calls.push(action);
+            await paused?.();
+            if (fail) throw new Error("offline");
+            if (action === "release") return { serverTime: new Date(now).toISOString() };
+            return {
+                serverTime: new Date(now).toISOString(),
+                token: action === "acquire" ? `token-${++sequence}` : proof.token,
+                lease: {
+                    nodeId: proof.nodeId,
+                    sessionId: proof.sessionId,
+                    expiresAt: new Date(now + 30000).toISOString(),
+                },
+            };
+        }) as typeof changeCanvasEditLease,
+    });
+    return {
+        client,
+        calls,
+        time: (value: number) => {
+            now = value;
         },
+        scope: (value: string) => {
+            scope = value;
+        },
+        fail: (value = true) => {
+            fail = value;
+        },
+        pause: (value?: () => Promise<void>) => {
+            paused = value;
+        },
+    };
+}
+const settle = async () => {
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+};
+const nodes = new Set(["node"]);
+
+test("admission rejection immediately blocks a different run and an older poll cannot unlock it", () => {
+    const f = fixture();
+    const status = {
+        revision: 1,
+        serverTime: new Date(0).toISOString(),
+        leases: [],
+        agent: null,
+    };
+    const oldPoll = f.client.statusToken("canvas");
+    const activity = {
+        runId: "server-run",
+        status: "waiting_approval",
+        cleanupPending: false,
+    };
+    const rejection = new ApiError("busy", {
+        status: 409,
+        reason: "canvas_agent_busy",
+        details: { canvasId: "canvas", agent: activity },
     });
-    const two = controller(createCanvasEditLeaseAPI(), { now: () => now });
-    const detach = one.retain("n");
-    await one.begin("n");
-    expect(remote?.token).toHaveLength(48);
-    await expect(two.begin("n")).rejects.toMatchObject({ reason: "node_locked" });
-    expect(two.node("n").phase).toBe("denied");
-    now += 10000;
-    scheduled[0]();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(Date.parse(remote!.expiresAt)).toBe(now + 30000);
-    const transport = createCanvasCommandTransport(undefined, (wire) => one.proofHeaders(wire));
-    const save = one.save("n", async () => {
-        await transport.execute(command);
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(one.node("n").phase).toBe("saving");
-    expect(releaseCount).toBe(0);
-    let secondPersisted = false;
-    await expect(
-        one.save("n", async () => {
-            secondPersisted = true;
+    expect(rejection.retryable).toBe(false);
+    expect(f.client.agentRejected("canvas", rejection)).toBe(true);
+    expect(f.client.agent("canvas")).toEqual(activity);
+    f.client.status("canvas", status, oldPoll);
+    expect(f.client.agent("canvas")).toEqual(activity);
+    const freshPoll = f.client.statusToken("canvas");
+    f.client.status("canvas", status, freshPoll);
+    expect(f.client.agent("canvas")).toBeNull();
+    expect(f.calls).toEqual([]);
+});
+
+test("admission observations reject malformed or foreign data and invalidate across account reset", () => {
+    const f = fixture();
+    const activity = {
+        runId: "server-run",
+        status: "cancelled",
+        cleanupPending: true,
+    };
+    const error = {
+        reason: "canvas_agent_busy",
+        details: { canvasId: "canvas", agent: activity },
+    };
+    expect(f.client.agentRejected("other", error)).toBe(false);
+    expect(
+        f.client.agentRejected("canvas", {
+            ...error,
+            reason: "different_conflict",
         }),
-    ).rejects.toThrow("正在确认另一笔保存");
-    expect(secondPersisted).toBe(false);
-    expect(releaseCount).toBe(0);
-    expect(JSON.parse(header)[0]).toMatchObject({ canvasId: "c", nodeId: "n" });
-    expect(commandBody).not.toContain(remote!.token);
-    ack();
-    await save;
-    expect(releaseCount).toBe(1);
-    expect(one.node("n").phase).toBe("saved");
-    detach();
-});
-
-test("lost acquire ACK retries original token; expired retry refreshes proof without changing command wire", async () => {
-    let now = 100000,
-        first = true;
-    const tokens: string[] = [],
-        headers: string[] = [];
-    const api = {
-        acquire: async (proof) => {
-            tokens.push(proof.token);
-            if (first) {
-                first = false;
-                throw new Error("lost ACK");
-            }
-            return { ...proof, expiresAt: new Date(now + 30000).toISOString() };
-        },
-        renew: async (proof) => ({ ...proof, expiresAt: new Date(now + 30000).toISOString() }),
-        release: async () => ({ released: true }),
-        status: async () => ({ revision: 1, documentEpoch: "e", eventSeq: 1, leases: [], activeAgents: [] }),
-    } satisfies CanvasEditLeaseAPI;
-    const own = controller(api, { now: () => now });
-    await expect(own.begin("n")).rejects.toThrow("lost ACK");
-    await own.begin("n");
-    expect(tokens[0]).toBe(tokens[1]);
-    const body = JSON.stringify(command);
-    headers.push((await own.proofHeaders(command))["X-Canvas-Edit-Proofs"]!);
-    now += 31000;
-    headers.push((await own.proofHeaders(command))["X-Canvas-Edit-Proofs"]!);
-    expect(tokens[2]).not.toBe(tokens[1]);
-    expect(headers[1]).not.toBe(headers[0]);
-    expect(JSON.stringify(command)).toBe(body);
-    expect(JSON.stringify(own.getState())).not.toContain(tokens[2]);
-});
-
-test("one canvas status poll preserves multiple agents and canceled scope cannot supply proofs", async () => {
-    let reads = 0;
-    const scheduled: Array<() => void> = [];
-    const own = controller(
+    ).toBe(false);
+    expect(
+        f.client.agentRejected("canvas", {
+            ...error,
+            details: { canvasId: "canvas", agent: { runId: "invalid" } },
+        }),
+    ).toBe(false);
+    const oldPoll = f.client.statusToken("canvas");
+    f.client.agentRejected("canvas", error);
+    f.scope("account-b");
+    f.client.reset();
+    f.client.status(
+        "canvas",
         {
-            acquire: async (proof) => ({ ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }),
-            renew: async (proof) => ({ ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }),
-            release: async () => ({ released: true }),
-            status: async () => {
-                reads++;
-                return { revision: 1, documentEpoch: "e", eventSeq: 1, leases: [], activeAgents: ["a", "b"].map((id) => ({ id, conversationId: id, title: id, status: "running", updatedAt: "now" })) };
-            },
+            revision: 1,
+            serverTime: new Date(0).toISOString(),
+            leases: [],
+            agent: activity,
         },
-        {
-            schedule: (fn) => {
-                scheduled.push(fn);
-                return () => {};
-            },
-        },
+        oldPoll,
     );
-    const unwatch1 = own.watchStatus(),
-        unwatch2 = own.watchStatus();
-    await own.refreshStatus();
-    expect(reads).toBe(1);
-    expect(own.getState().activity?.activeAgents).toHaveLength(2);
-    unwatch1();
-    unwatch2();
-    const proof = captureCanvasEditProofProvider();
-    cancelCanvasEditLeases();
-    await expect(proof(command)).rejects.toMatchObject({ name: "AbortError" });
+    expect(f.client.agent("canvas")).toBeUndefined();
 });
 
-test("late renewal ACK cannot restore a lease or restart renewal after saved release", async () => {
-    let finishSave!: () => void,
-        finishRenew!: () => void,
-        acquired = 0;
-    const pendingSave = new Promise<void>((resolve) => {
-        finishSave = resolve;
+test("Agent occupancy follows server status, stays isolated per canvas and account, and clears on completion", () => {
+    const f = fixture();
+    const activity = {
+        runId: "run-a",
+        status: "waiting_approval",
+        cleanupPending: false,
+    };
+    const status = {
+        revision: 1,
+        serverTime: new Date(0).toISOString(),
+        leases: [],
+    };
+    f.client.status("canvas", { ...status, agent: activity });
+    expect(f.client.agent("canvas")).toEqual(activity);
+    expect(f.client.agent("different-canvas")).toBeUndefined();
+    f.time(600000);
+    expect(f.client.agent("canvas")).toEqual(activity);
+    f.client.status("canvas", {
+        ...status,
+        agent: { ...activity, status: "cancelled", cleanupPending: true },
     });
-    const pendingRenew = new Promise<void>((resolve) => {
-        finishRenew = resolve;
-    });
-    const scheduled: Array<() => void> = [];
-    const own = controller(
-        {
-            acquire: async (proof) => {
-                acquired++;
-                return { ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() };
-            },
-            renew: async (proof) => {
-                await pendingRenew;
-                return { ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() };
-            },
-            release: async () => ({ released: true }),
-            status: async () => ({ revision: 1, documentEpoch: "e", eventSeq: 1, leases: [], activeAgents: [] }),
-        },
-        {
-            schedule: (fn) => {
-                scheduled.push(fn);
-                return () => {};
-            },
-        },
-    );
-    const detach = own.retain("n");
-    await own.begin("n");
-    const saved = own.save("n", () => pendingSave);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    scheduled[0]();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    finishSave();
-    await saved;
-    const count = scheduled.length;
-    finishRenew();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(own.node("n").phase).toBe("saved");
-    expect(await own.proofHeaders(command)).toEqual({});
-    expect(scheduled).toHaveLength(count);
-    expect(acquired).toBe(1);
-    detach();
+    expect(f.client.agent("canvas")?.cleanupPending).toBe(true);
+    f.client.status("canvas", { ...status, agent: null });
+    expect(f.client.agent("canvas")).toBeNull();
+    f.client.status("canvas", { ...status, agent: activity });
+    f.scope("account-b");
+    expect(f.client.agent("canvas")).toBeUndefined();
+    f.client.status("other", status);
+    f.scope("account-a");
+    expect(f.client.agent("canvas")).toBeUndefined();
+    expect(f.calls).toEqual([]);
 });
 
-test("unchanged status polls keep the published snapshot so lease subscribers do not re-render", async () => {
-    let eventSeq = 1;
-    let failure: Error | null = null;
-    const own = controller({
-        acquire: async (proof) => ({ ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }),
-        renew: async (proof) => ({ ...proof, expiresAt: new Date(Date.now() + 30000).toISOString() }),
-        release: async () => ({ released: true }),
-        status: async () => {
-            if (failure) throw failure;
-            return { revision: 1, documentEpoch: "e", eventSeq, leases: [], activeAgents: [{ id: "a", conversationId: "a", title: "a", status: "running", updatedAt: "now" }] };
-        },
+test("viewing and polling do not acquire; pending drafts retain all input while saving waits for a grant", async () => {
+    const f = fixture();
+    f.client.state("canvas", "node");
+    await f.client.tick("canvas");
+    expect(f.calls).toEqual([]);
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+        finish = resolve;
     });
-    let notifications = 0;
-    own.subscribe(() => notifications++);
-    await own.refreshStatus();
-    expect(notifications).toBe(1);
-    const published = own.getState();
-    await own.refreshStatus();
-    await own.refreshStatus();
-    expect(notifications).toBe(1);
-    expect(own.getState()).toBe(published);
+    f.pause(() => gate);
+    expect(f.client.input("canvas", "node")).toBe(true);
+    expect(f.client.state("canvas", "node").acquiring).toBe(true);
+    for (let i = 0; i < 20; i++) expect(f.client.input("canvas", "node")).toBe(true);
+    let submitted = false;
+    const saving = f.client.proofs("canvas", nodes).then((proofs) => {
+        submitted = true;
+        return proofs;
+    });
+    await settle();
+    expect(submitted).toBe(false);
+    f.pause();
+    finish();
+    const proofs = await saving;
+    expect(f.calls).toEqual(["acquire"]);
+    expect(proofs[0].token).toBe("token-1");
+    expect(f.client.versions("canvas")).toEqual({ node: 21 });
+    expect(f.client.state("canvas", "node").blocked).toBe(false);
+    for (let i = 0; i < 20; i++) expect(f.client.input("canvas", "node")).toBe(true);
+    expect(f.calls).toEqual(["acquire"]);
+    expect(f.client.versions("canvas")).toEqual({ node: 41 });
+});
 
-    eventSeq = 2;
-    await own.refreshStatus();
-    expect(notifications).toBe(2);
-    expect(own.getState().activity?.eventSeq).toBe(2);
+test("renewal is throttled and stops after input stops even if save fails", async () => {
+    const f = fixture();
+    f.client.input("canvas", "node");
+    await settle();
+    f.time(4999);
+    await f.client.tick("canvas");
+    expect(f.calls).toEqual(["acquire"]);
+    f.time(5000);
+    f.client.input("canvas", "node");
+    await f.client.tick("canvas");
+    expect(f.calls).toEqual(["acquire", "renew"]);
+    f.time(15000);
+    await f.client.tick("canvas");
+    f.time(35001);
+    await f.client.tick("canvas");
+    expect(f.calls).toEqual(["acquire", "renew"]);
+    expect(f.client.state("canvas", "node").typing).toBe(false);
+    expect(f.client.pending("canvas", "node")).toBe(true);
+});
 
-    failure = new Error("占用状态暂不可用");
-    await own.refreshStatus();
-    await own.refreshStatus();
-    expect(notifications).toBe(3);
-    expect(own.getState().activityError).toBe("占用状态暂不可用");
+test("saving an older input version cannot release a newer draft", async () => {
+    const f = fixture();
+    f.client.input("canvas", "node");
+    await settle();
+    const saved = f.client.versions("canvas");
+    f.time(1000);
+    f.client.input("canvas", "node");
+    f.client.acknowledged("canvas", saved);
+    f.time(3000);
+    await f.client.tick("canvas");
+    expect(f.calls).toEqual(["acquire"]);
+    expect(f.client.pending("canvas", "node")).toBe(true);
+    f.client.acknowledged("canvas", f.client.versions("canvas"));
+    await f.client.tick("canvas");
+    expect(f.calls).toEqual(["acquire", "release"]);
+});
 
-    failure = null;
-    await own.refreshStatus();
-    expect(notifications).toBe(4);
-    expect(own.getState().activityError).toBeUndefined();
+test("input during release waits for a fresh server token before saving", async () => {
+    const f = fixture();
+    f.client.input("canvas", "node");
+    await settle();
+    f.client.acknowledged("canvas", f.client.versions("canvas"));
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+    });
+    f.pause(() => gate);
+    f.time(2000);
+    const ticking = f.client.tick("canvas");
+    f.client.input("canvas", "node");
+    const saving = f.client.proofs("canvas", nodes);
+    f.pause();
+    finish();
+    await ticking;
+    expect((await saving)[0].token).toBe("token-2");
+    expect(f.calls).toEqual(["acquire", "release", "acquire"]);
+    expect(f.client.pending("canvas", "node")).toBe(true);
+});
+
+test("failed acquisitions retain input without per-keystroke requests and recover on automatic save", async () => {
+    const f = fixture();
+    f.fail();
+    f.client.input("canvas", "node");
+    await settle();
+    for (let i = 0; i < 20; i++) expect(f.client.input("canvas", "node")).toBe(true);
+    await settle();
+    expect(f.calls).toEqual(["acquire"]);
+    expect(f.client.state("canvas", "node").blocked).toBe(false);
+    expect(f.client.versions("canvas")).toEqual({ node: 21 });
+    await expect(f.client.proofs("canvas", nodes)).rejects.toThrow("offline");
+    f.fail(false);
+    expect(f.client.input("canvas", "node")).toBe(true);
+    await settle();
+    expect(f.client.versions("canvas")).toEqual({ node: 22 });
+    expect((await f.client.proofs("canvas", nodes))[0].token).toBe("token-1");
+});
+
+test("remote ownership never blocks local input and scope changes discard grants", async () => {
+    const f = fixture();
+    f.client.status("canvas", {
+        revision: 1,
+        serverTime: new Date(0).toISOString(),
+        leases: [
+            {
+                nodeId: "node",
+                sessionId: "other-browser",
+                expiresAt: new Date(30000).toISOString(),
+            },
+        ],
+    });
+    expect(f.client.state("canvas", "node").blocked).toBe(false);
+    expect(f.client.state("canvas", "node").remote).toBe(true);
+    expect(f.client.input("canvas", "node")).toBe(true);
+    expect(f.calls).toEqual([]);
+    f.time(30000);
+    expect(f.client.state("canvas", "node").blocked).toBe(false);
+    f.client.input("canvas", "node");
+    await settle();
+    f.scope("account-b");
+    expect(await f.client.proofs("canvas", nodes)).toEqual([]);
+    expect(f.client.pending("canvas", "node")).toBe(false);
+});
+
+test("an unsaved expired grant cannot accept more edits or bypass another owner through retry", async () => {
+    const f = fixture();
+    f.client.input("canvas", "node");
+    await settle();
+    f.time(30001);
+    expect(f.client.state("canvas", "node").blocked).toBe(false);
+    f.client.status("canvas", {
+        revision: 1,
+        serverTime: new Date(30001).toISOString(),
+        leases: [
+            {
+                nodeId: "node",
+                sessionId: "other-browser",
+                expiresAt: new Date(60001).toISOString(),
+            },
+        ],
+    });
+    expect(await f.client.retry("canvas", "node")).toBe(false);
+    expect(f.calls).toEqual(["acquire"]);
+    f.time(60002);
+    expect(await f.client.retry("canvas", "node")).toBe(true);
+    expect(f.client.state("canvas", "node").blocked).toBe(false);
+    expect(f.client.versions("canvas")).toEqual({ node: 1 });
+});
+
+test("an open editor without further input does not renew after a confirmed save", async () => {
+    const f = fixture();
+    f.client.input("canvas", "node");
+    await settle();
+    f.client.acknowledged("canvas", f.client.versions("canvas"));
+    for (let time = 2000; time <= 60000; time += 2000) {
+        f.time(time);
+        f.client.state("canvas", "node");
+        await f.client.tick("canvas");
+    }
+    expect(f.calls).toEqual(["acquire", "release"]);
+    expect(f.client.state("canvas", "node").blocked).toBe(false);
+    expect(f.client.state("canvas", "node").typing).toBe(false);
+});
+
+test("server rejection invalidates the proof without discarding current input or other canvas leases", async () => {
+    const f = fixture();
+    f.client.input("canvas", "node");
+    f.client.input("other", "node");
+    await settle();
+    f.client.input("canvas", "node");
+    f.client.invalidate("canvas", nodes);
+    expect(f.client.pending("canvas", "node")).toBe(true);
+    expect(f.client.pending("other", "node")).toBe(true);
+    expect(f.client.versions("canvas")).toEqual({ node: 2 });
+    expect((await f.client.proofs("canvas", nodes))[0].token).toBe("token-3");
+});
+
+test("released grants are omitted from later movement or result saves", async () => {
+    const f = fixture();
+    f.client.input("canvas", "node");
+    await settle();
+    f.client.acknowledged("canvas", f.client.versions("canvas"));
+    f.time(2000);
+    await f.client.tick("canvas");
+    expect(f.calls).toEqual(["acquire", "release"]);
+    expect(await f.client.proofs("canvas", nodes)).toEqual([]);
+});
+
+test("save reacquires an expired lease without requiring another keystroke", async () => {
+    const f = fixture();
+    f.client.input("canvas", "node");
+    await settle();
+    f.time(30001);
+    expect((await f.client.proofs("canvas", nodes))[0].token).toBe("token-2");
+    expect(f.calls).toEqual(["acquire", "acquire"]);
+    expect(f.client.pending("canvas", "node")).toBe(true);
+});
+
+test("save recovers a failed acquisition after connectivity returns", async () => {
+    const f = fixture();
+    f.fail();
+    f.client.input("canvas", "node");
+    await settle();
+    f.fail(false);
+    expect((await f.client.proofs("canvas", nodes))[0].token).toBe("token-1");
+    expect(f.calls).toEqual(["acquire", "acquire"]);
+});
+
+test("replayed journal obtains this session's lease instead of reusing expired credentials", async () => {
+    const f = fixture();
+    const proofs = await f.client.proofs("canvas", nodes, [{ nodeId: "node", sessionId: "old-window", token: "expired" }]);
+    expect(proofs).toEqual([{ nodeId: "node", sessionId: "browser-account-a", token: "token-1" }]);
 });

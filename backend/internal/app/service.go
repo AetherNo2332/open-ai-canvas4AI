@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -23,21 +21,15 @@ import (
 	"yingce/backend/internal/payment"
 	"yingce/backend/internal/platform"
 	"yingce/backend/internal/prompts"
+	"yingce/backend/internal/providercatalog"
 	"yingce/backend/internal/repository"
 	"yingce/backend/internal/skills"
 	"yingce/backend/internal/sms"
 	"yingce/backend/internal/tools"
+	"yingce/backend/internal/workbench"
 )
 
 type Service struct {
-	realtimeMu               sync.Mutex
-	realtime                 *canvas.RealtimeHub
-	realtimeBase             *repository.Repository
-	realtimeClosed           bool
-	canvasCommands           *commands.Service
-	canvasTasks              *tasks.Service
-	canvasCommandMode        bool
-	agentWebSearchHTTPClient *http.Client
 	repo                     *repository.Repository
 	dataDir                  string
 	cancelMu                 sync.Mutex
@@ -46,18 +38,16 @@ type Service struct {
 	redeemBatchMu            sync.Mutex
 	storageMu                sync.Mutex
 	storageTestMu            sync.Mutex
-	agentSkillDefaultsMu     sync.Mutex
 	workerRuntimeMu          sync.Mutex
 	taskDispatcherWake       chan struct{}
-	agentToolWake            chan struct{}
-	agentMessageWake         chan struct{}
 	geminiCacheLockMu        sync.Mutex
-	agentEventPurgeAt        time.Time
 	agentConflictStreak      map[string]int
 	activeStorageTests       map[string]bool
 	characterTaskMu          sync.Mutex
 	activeCancels            map[string]context.CancelFunc
 	pendingStorage           map[string]int64
+	storageStatusMu          sync.Mutex
+	storageStatusCache       map[string]storageStatusEntry
 	coordinator              *platform.Coordinator
 	platform                 *platform.Service
 	taskBillingCoordinator   *taskBillingCoordinator
@@ -93,8 +83,31 @@ type Service struct {
 	auth                     *auth.Service
 	sms                      *sms.Service
 	canvas                   *canvas.Service
+	canvasRealtime           *canvas.RealtimeHub
+	workbench                *workbench.Service
+	// 以下为云端 Agent 运行时：独立 Node Worker（agent/）领取运行，后端负责调度、
+	// 画布命令、工具操作与消息队列。
+	agentSkillDefaultsMu     sync.Mutex
+	agentToolWake            chan struct{}
+	agentMessageWake         chan struct{}
+	agentEventPurgeAt        time.Time
+	agentWebSearchHTTPClient *http.Client
+	canvasCommands           *commands.Service
+	canvasTasks              *tasks.Service
+	canvasCommandMode        bool
 	observability            *observability.Aggregator
 	observabilityExporter    *observability.Exporter
+	providerCatalogOnce      sync.Once
+	providerCatalog          *providercatalog.Source
+	creditPolicyMu           sync.RWMutex
+	creditPolicyCache        *CreditPolicy
+	creditPolicyAt           time.Time
+	modelAvailabilityMu      sync.RWMutex
+	modelAvailabilityCache   map[publicModelAvailabilityKey]*PublicModelAvailability
+	modelAvailabilityAt      time.Time
+	// dramaTaskHook 只在测试中替换短剧调度的任务提交，生产路径始终走 CreateTask 准入。
+	dramaTailFrameHook func(userID, resourceID string) (string, error)
+	dramaTaskHook      func(userID string, req CreateTaskRequest, timeline *renderProject) (*model.Task, error)
 }
 
 const taskWorkerConcurrency = 3
@@ -103,22 +116,27 @@ const taskLogPayloadLimit = 4000
 type CreateTaskRequest struct {
 	creationPrepare *creationTaskPreparation
 	admission       *taskAdmission
-	ProjectID       string         `json:"projectId"`
-	Type            string         `json:"type"`
-	Operation       string         `json:"operation"`
-	Prompt          string         `json:"prompt"`
-	Provider        string         `json:"provider"`
-	Model           string         `json:"model"`
-	LogicalModelID  string         `json:"logicalModelId"`
-	Input           map[string]any `json:"input"`
-	TraceID         string         `json:"-"`
-	RequestID       string         `json:"-"`
+	workbenchKind   string
+	// callerHoldsStorageMu 只给已经持有 Service.storageMu 的内部调用设置。
+	// 文件容量检查不能再锁一次，否则审批改参数会自锁。
+	callerHoldsStorageMu bool
+	ProjectID            string         `json:"projectId"`
+	Type                 string         `json:"type"`
+	Operation            string         `json:"operation"`
+	Prompt               string         `json:"prompt"`
+	Provider             string         `json:"provider"`
+	Model                string         `json:"model"`
+	LogicalModelID       string         `json:"logicalModelId"`
+	Input                map[string]any `json:"input"`
+	TraceID              string         `json:"-"`
+	RequestID            string         `json:"-"`
 }
 
 type TaskListOptions struct {
-	Limit      int
-	ProjectID  string
-	ActiveOnly bool
+	Limit         int
+	ProjectID     string
+	ActiveOnly    bool
+	WorkbenchKind string
 }
 
 func New(repo *repository.Repository, dataDir string) *Service {
@@ -127,6 +145,8 @@ func New(repo *repository.Repository, dataDir string) *Service {
 
 func newService(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := platform.NewCoordinator(repo.Dialect())
+	canvasRealtime := canvas.NewRealtimeHub(coordinator.Redis())
+	repo = repo.WithCanvasChangeNotifier(canvasRealtime.Changed)
 	pluginRuntime, pluginRuntimeErr := newPluginRuntime(dataDir)
 	paymentRegistry, _ := payment.NewRegistry()
 	if pluginRuntime != nil {
@@ -137,9 +157,6 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 	service := &Service{repo: repo, dataDir: dataDir, activeStorageTests: make(map[string]bool), activeCancels: make(map[string]context.CancelFunc), agentConflictStreak: make(map[string]int), taskDispatcherWake: make(chan struct{}, 1), coordinator: coordinator, runtimeErr: err, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, paymentRegistry: paymentRegistry, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time), geminiCacheLocks: make(map[string]*geminiCacheKeyLock), observability: observability.NewAggregator(4096), observabilityExporter: observability.NewConfiguredExporter()}
 	service.agentToolWake = make(chan struct{}, 1)
 	service.agentMessageWake = make(chan struct{}, 1)
-	// Pin the observer to this base connection. Request/transaction facades
-	// cannot replace it with an uncommitted writer repository.
-	service.realtimeBase = repo
 	service.repo.SetStructuredWriteQuota(service.structuredWriteQuota)
 	service.taskBillingCoordinator = newTaskBillingCoordinator(service.repo)
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
@@ -153,42 +170,12 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 	service.sms = service.newSMSDomain()
 	service.auth.SetSMSDelivery(service.sms)
 	service.canvas = canvas.New(service.repo, canvasHost{svc: service})
+	service.canvasRealtime = canvasRealtime
+	service.workbench = workbench.New(service.repo, workbenchAdminGate{svc: service}, workbenchAdminGate{svc: service})
 	service.platform = platform.New(service.repo, coordinator, platformHost{svc: service})
+	// Agent 的画布命令与任务回写链路在构造期一次性建立，避免请求并发时惰性初始化竞争。
+	service.CanvasCommandServices()
 	return service
-}
-
-func (s *Service) RecordObservability(event observability.Event) {
-	if s == nil {
-		return
-	}
-	if s.observability == nil {
-		s.observability = observability.NewAggregator(4096)
-	}
-	s.observability.Record(event)
-	if s.observabilityExporter != nil {
-		_ = s.observabilityExporter.Emit(event)
-	}
-}
-
-func (s *Service) AdminObservabilitySnapshot(window time.Duration) observability.Snapshot {
-	if s == nil || s.observability == nil {
-		return observability.Snapshot{Available: false, GeneratedAt: time.Now().UTC(), Window: window}
-	}
-	snapshot := s.observability.Snapshot(window)
-	snapshot.GrafanaURL = configuredGrafanaURL()
-	return snapshot
-}
-
-func configuredGrafanaURL() string {
-	raw := strings.TrimSpace(os.Getenv("CANVAS_GRAFANA_URL"))
-	if raw == "" {
-		return ""
-	}
-	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
-		return ""
-	}
-	return strings.TrimRight(u.String(), "/")
 }
 
 func (s *Service) taskBilling() *taskBillingCoordinator {
@@ -206,26 +193,39 @@ func (s *Service) StartWorker() {
 		return
 	}
 	s.taskWorker().start(ctx)
+	s.startResourceDeletionWorker(ctx)
+	s.startResourceOffloadWorker()
+	s.startSkillSyncWorker(ctx)
+	s.startPaymentWorker(ctx)
+	s.startBillingAutoRefundWorker()
+	s.startDramaScheduler()
 	if s.canvasTasks != nil {
 		s.startCanvasMaterializer()
 	}
-	s.startResourceDeletionWorker(ctx)
-	s.startSkillSyncWorker(ctx)
-	s.startPaymentWorker(ctx)
+}
+
+// RecordObservability 记录 Agent 运行时的结构化观测事件（内存聚合 + 可选导出）。
+func (s *Service) RecordObservability(event observability.Event) {
+	if s == nil {
+		return
+	}
+	if s.observability == nil {
+		s.observability = observability.NewAggregator(4096)
+	}
+	s.observability.Record(event)
+	if s.observabilityExporter != nil {
+		_ = s.observabilityExporter.Emit(event)
+	}
 }
 
 func (s *Service) BeginDrain() { s.backgroundWorkers().BeginDrain() }
 
 func (s *Service) StopWorker(ctx context.Context) error {
-	realtimeErr := s.closeCanvasRealtime()
 	err := s.backgroundWorkers().Stop(ctx)
 	if s.observabilityExporter != nil {
 		s.observabilityExporter.CloseContext(ctx)
 	}
-	if err != nil {
-		return err
-	}
-	return realtimeErr
+	return err
 }
 
 func (s *Service) IsDraining() bool { return s.backgroundWorkers().IsDraining() }
@@ -260,7 +260,7 @@ func (s *Service) Tasks(userID string, limit int) ([]TaskSummary, error) {
 }
 
 func (s *Service) TasksWithOptions(userID string, options TaskListOptions) ([]TaskSummary, error) {
-	tasks, err := s.repo.Tasks(userID, options.Limit, options.ProjectID, options.ActiveOnly)
+	tasks, err := s.repo.TasksWithWorkbenchKind(userID, options.Limit, options.ProjectID, options.ActiveOnly, options.WorkbenchKind)
 	if err != nil {
 		return nil, err
 	}
@@ -299,9 +299,6 @@ func (s *Service) Task(userID string, id string) (*model.Task, error) {
 		return nil, err
 	}
 	s.hydrateTaskProviderRequestID(task)
-	if err := s.bindRegisteredTaskAssets(task); err != nil {
-		return nil, err
-	}
 	return taskForOutput(*task), nil
 }
 

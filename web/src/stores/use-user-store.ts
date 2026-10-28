@@ -6,8 +6,13 @@ export type LocalUser = {
     id: string;
     username: string;
     email?: string;
+    phone?: string;
+    emailVerifiedAt?: string;
+    phoneVerifiedAt?: string;
     displayName: string;
     avatarUrl?: string;
+    avatarMode?: "custom" | "default" | "";
+    avatarPreset?: string;
     identityProvider?: string;
     identityId?: string;
     identityUsername?: string;
@@ -24,8 +29,6 @@ export type RuntimeLimits = {
     recycleBinRetentionDays?: number;
 };
 
-export type DirectorDeskPrevisMode = "off" | "canary" | "on";
-
 export type FeatureAvailability = {
     welcomeEnabled: boolean;
     shortDramaEnabled: boolean;
@@ -35,11 +38,11 @@ export type FeatureAvailability = {
     frontendModelsEnabled: boolean;
     pluginCenterEnabled: boolean;
     systemPluginsVisibleToUsers: boolean;
+    inspirationSourcesVisible: boolean;
+    imageWorkbenchEnabled: boolean;
+    videoWorkbenchEnabled: boolean;
+    // 云端 Agent 动态子代理平台开关，默认关闭。
     agentSubagentsEnabled: boolean;
-    directorDeskPrevisMode: DirectorDeskPrevisMode;
-    /** canary 灰度分组:内部账号白名单 + 稳定哈希比例(万分比 0-10000)。服务端按用户解析。 */
-    directorDeskPrevisCanaryUsers?: string[];
-    directorDeskPrevisCanaryBasisPoints?: number;
     configured?: boolean;
     updatedBy?: string;
     updatedAt?: string;
@@ -54,8 +57,10 @@ export const defaultFeatureAvailability: FeatureAvailability = {
     frontendModelsEnabled: false,
     pluginCenterEnabled: true,
     systemPluginsVisibleToUsers: true,
+    inspirationSourcesVisible: true,
+    imageWorkbenchEnabled: false,
+    videoWorkbenchEnabled: false,
     agentSubagentsEnabled: false,
-    directorDeskPrevisMode: "off",
 };
 
 type UserStore = {
@@ -64,10 +69,12 @@ type UserStore = {
     runtimeLimits: RuntimeLimits;
     drawingEngine: CanvasDrawingEngineSetting;
     features: FeatureAvailability;
+    referralAvailable: boolean;
     setUser: (user: LocalUser | null) => void;
     setRuntimeLimits: (limits?: RuntimeLimits) => void;
     setDrawingEngine: (setting?: CanvasDrawingEngineSetting) => void;
     setFeatures: (features?: FeatureAvailability) => void;
+    setReferralAvailable: (available?: boolean) => void;
     setHydrated: (hydrated: boolean) => void;
     clearSession: () => void;
 };
@@ -78,10 +85,12 @@ export const useUserStore = create<UserStore>()((set) => ({
     runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 },
     drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE },
     features: defaultFeatureAvailability,
+    referralAvailable: false,
     setUser: (user) => set({ user }),
     setRuntimeLimits: (runtimeLimits) => set({ runtimeLimits: runtimeLimits || { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 } }),
     setDrawingEngine: (drawingEngine) => set({ drawingEngine: drawingEngine || { defaultEngine: DEFAULT_DRAWING_ENGINE } }),
     setFeatures: (features) => set({ features: features ? { ...defaultFeatureAvailability, ...features } : defaultFeatureAvailability }),
+    setReferralAvailable: (available) => set({ referralAvailable: Boolean(available) }),
     setHydrated: (hydrated) => set({ hydrated }),
-    clearSession: () => set({ user: null, runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 }, drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE }, features: defaultFeatureAvailability }),
+    clearSession: () => set({ user: null, runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 }, drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE }, features: defaultFeatureAvailability, referralAvailable: false }),
 }));

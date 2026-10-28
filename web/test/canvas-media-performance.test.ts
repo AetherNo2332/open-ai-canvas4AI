@@ -3,47 +3,35 @@ import { resolve } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { canvasNodeRenderPadding, resolveActiveCanvasMediaNodeId } from "../src/lib/canvas/canvas-performance-mode";
+import { canvasNodeRenderPadding } from "../src/lib/canvas/canvas-render-budget";
 import { videoMetadata } from "../src/lib/canvas/canvas-generation-task-sync";
 import { canvasNodeVideoPreviewReference, canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "../src/lib/canvas/canvas-media-preview";
 import { collectImageStorageKeys } from "../src/services/image-storage";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import { detectVideoAudioTrack, detectVideoAudioTrackFromBlob, detectVideoAudioTrackFromUrl } from "../src/lib/video-poster";
+import { moduleGroupSource } from "./helpers/module-group-source";
 
-const canvasNodeContentSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node-content.tsx"), "utf8").replace(/\r\n/g, "\n");
+const canvasNodeContentSource = moduleGroupSource("components/canvas/canvas-node-content.tsx");
 const canvasAudioPlayerSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-audio-player.tsx"), "utf8");
-const canvasMentionSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-resource-mention-textarea.tsx"), "utf8");
+const canvasMentionSource = moduleGroupSource("components/canvas/canvas-resource-mention-textarea.tsx");
 const canvasNodeSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node.tsx"), "utf8");
 const canvasVideoPreviewSource = readFileSync(resolve(import.meta.dir, "../src/services/canvas-video-preview.ts"), "utf8");
+const fileStorageSource = readFileSync(resolve(import.meta.dir, "../src/services/file-storage.ts"), "utf8");
+const canvasGenerationTaskSource = readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-generation-task-sync.ts"), "utf8");
+const canvasProjectGenerationSource = readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-project-generation.ts"), "utf8");
 const browserDownloadSource = readFileSync(resolve(import.meta.dir, "../src/services/browser-download.ts"), "utf8");
 const canvasNodeEditorSource = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-node-editor.ts"), "utf8");
-const assetLibrarySource = readFileSync(resolve(import.meta.dir, "../src/pages/assets/index.tsx"), "utf8");
-const projectAssetsSource = readFileSync(resolve(import.meta.dir, "../src/pages/projects/detail/assets.tsx"), "utf8");
-const workflowProductionSource = readFileSync(resolve(import.meta.dir, "../src/pages/projects/detail/workflow-production-workbench.tsx"), "utf8");
+const assetLibrarySource = moduleGroupSource("pages/assets/index.tsx");
+const dramaSharedSource = readFileSync(resolve(import.meta.dir, "../src/pages/projects/drama-shared.tsx"), "utf8");
 const videoPlayerSource = readFileSync(resolve(import.meta.dir, "../src/components/video-player.tsx"), "utf8");
-const canvasProjectSource = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
+const canvasProjectSource = moduleGroupSource("pages/canvas/project.tsx");
 const globalStylesSource = readFileSync(resolve(import.meta.dir, "../src/styles/globals.css"), "utf8");
+const resourceBlobCacheSource = readFileSync(resolve(import.meta.dir, "../src/services/resource-blob-cache.ts"), "utf8");
+const resourceApiSource = readFileSync(resolve(import.meta.dir, "../src/services/api/resources.ts"), "utf8");
 
 function node(id: string, type: CanvasNodeType): CanvasNodeData {
     return { id, type, title: id, position: { x: 0, y: 0 }, width: 320, height: 180, metadata: {} };
 }
-
-describe("canvas media activation", () => {
-    const nodes = [node("video", CanvasNodeType.Video), node("audio", CanvasNodeType.Audio), node("image", CanvasNodeType.Image)];
-    const nodeById = new Map(nodes.map((item) => [item.id, item]));
-
-    test("activates exactly one selected video or audio node", () => {
-        expect(resolveActiveCanvasMediaNodeId(new Set(["video"]), nodeById)).toBe("video");
-        expect(resolveActiveCanvasMediaNodeId(new Set(["audio"]), nodeById)).toBe("audio");
-    });
-
-    test("keeps media inactive for empty, multi-selection, and non-media selection", () => {
-        expect(resolveActiveCanvasMediaNodeId(new Set(), nodeById)).toBeNull();
-        expect(resolveActiveCanvasMediaNodeId(new Set(["video", "audio"]), nodeById)).toBeNull();
-        expect(resolveActiveCanvasMediaNodeId(new Set(["image"]), nodeById)).toBeNull();
-        expect(resolveActiveCanvasMediaNodeId(new Set(["missing"]), nodeById)).toBeNull();
-    });
-});
 
 describe("canvas dimension header rendering", () => {
     test("tracks live viewport scale without React width commits", () => {
@@ -54,9 +42,8 @@ describe("canvas dimension header rendering", () => {
 
 describe("large canvas media rendering", () => {
     test("keeps rendered nodes mounted longer than newly entering nodes", () => {
-        expect(canvasNodeRenderPadding(true, false)).toBe(128);
-        expect(canvasNodeRenderPadding(true, true)).toBe(640);
-        expect(canvasNodeRenderPadding(false, true)).toBeGreaterThan(canvasNodeRenderPadding(false, false));
+        expect(canvasNodeRenderPadding(false)).toBe(192);
+        expect(canvasNodeRenderPadding(true)).toBe(384);
     });
 
     test("does not eagerly load or resize LibTV thumbnails", () => {
@@ -70,32 +57,45 @@ describe("large canvas media rendering", () => {
         expect(canvasProjectSource).toContain("<CanvasNodeActionContext.Provider value={canvasNodeActions}>");
     });
 
+    test("decodes canvas images synchronously so zoom re-rasterization never paints blank frames", () => {
+        const retainedImageSource = canvasNodeContentSource.match(/export function RetainedCanvasImage[\s\S]*?\n}\n/)?.[0] || "";
+        expect(retainedImageSource).toContain('decoding="sync"');
+        expect(retainedImageSource).not.toContain('decoding="async"');
+    });
+
     test("keeps node shells visible while panning and zooming", () => {
         expect(globalStylesSource).not.toMatch(/\[data-canvas-viewport-interacting="true"\]\s+\.canvas-node-shell\s*\{[^}]*content-visibility:\s*hidden/);
     });
 
     test("keeps inactive video nodes on a viewport-gated static first frame", () => {
-        const inactivePreviewSource = canvasNodeContentSource.match(/function InactiveVideoPreview[\s\S]*?\n}\n\nfunction VideoPreviewPlayButton/)?.[0] || "";
-        expect(canvasNodeContentSource).toContain("if (hasPersistedPreview || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey))");
+        const inactivePreviewSource = canvasNodeContentSource.match(/function InactiveVideoPreview[\s\S]*?\n}\n\n(?:export )?function VideoPreviewPlayButton/)?.[0] || "";
+        expect(canvasNodeContentSource).toContain("if (hasPersistedPreview || !nearViewport || (!node.metadata?.content && !node.metadata?.storageKey) || !updateMetadataRef.current)");
         expect(canvasNodeContentSource).not.toContain("hydrateMediaPreview");
         expect(inactivePreviewSource).toContain("hasPersistedPreview || !nearViewport");
         expect(inactivePreviewSource).toContain("URL.revokeObjectURL(localPreviewUrlRef.current)");
-        // OSS may allow playback while denying canvas extraction; the fallback
-        // decodes one frame only near the viewport and never starts playback.
-        expect(inactivePreviewSource).toContain("hasPersistedPreview || localPreviewUrl || !nearViewport");
-        expect(inactivePreviewSource).toContain("src={passiveVideoUrl}");
-        expect(inactivePreviewSource).toContain('preload="auto"');
-        expect(inactivePreviewSource).toContain("video.currentTime = Math.min(0.001, video.duration / 2)");
-        expect(inactivePreviewSource).not.toContain("<VideoPlayer");
+        expect(inactivePreviewSource).not.toContain("<video");
         expect(inactivePreviewSource).toContain("hydrateCanvasVideoPreview(node, controller.signal)");
         expect(canvasVideoPreviewSource).toContain("captureVideoPoster(source, { signal, maxWidth: 400 })");
-        expect(inactivePreviewSource).not.toContain("updateMetadata");
+        expect(inactivePreviewSource).toContain("hydrated.persisted.then");
         expect(inactivePreviewSource).not.toContain("autoPlay");
         expect(inactivePreviewSource).toContain("<VideoPreviewPlayButton");
         expect(canvasNodeContentSource).toContain("useVideoPlaybackUrl(node, mediaActive)");
         expect(canvasNodeContentSource).toContain("onMediaPlayRequest?.(node.id)");
         expect(canvasNodeContentSource).toMatch(/autoPlay\s+preload="metadata"/);
-        expect(canvasNodeContentSource).toContain("resolveMediaUrl(storageKey, fallback)");
+        expect(canvasNodeContentSource).toContain("resolveVideoMediaUrl(storageKey, fallback)");
+        expect(canvasNodeContentSource).toContain("refreshResource(resourceId)");
+        expect(canvasNodeContentSource).toContain('getResourceAccess(storageKey, "display", "playback", "", { forceRefresh: true })');
+        expect(canvasNodeContentSource).toContain('status === "none" || status === "failed"');
+    });
+
+    test("routes resource-backed video playback through a browser-compatible variant", () => {
+        expect(fileStorageSource).toContain('getResourceAccess(storageKey, "display", variant)');
+        expect(fileStorageSource).toContain('return resolveMediaUrl(storageKey, fallback, "playback");');
+        expect(canvasNodeContentSource).toContain("resolveVideoMediaUrl(node.metadata?.storageKey, fallback)");
+        expect(canvasNodeContentSource).toContain("resolveVideoMediaUrl(storageKey, fallback)");
+        expect(canvasVideoPreviewSource).toContain('resolveVideoMediaUrl(node.metadata?.storageKey, node.metadata?.content || "")');
+        expect(canvasGenerationTaskSource).toContain('resolveVideoMediaUrl(result.storageKey, result.dataUrl || "")');
+        expect(canvasProjectGenerationSource).toContain("node.type === CanvasNodeType.Video ? await resolveVideoMediaUrl");
     });
 
     test("downloads OSS media by browser navigation without fetching it into a Blob", () => {
@@ -106,15 +106,31 @@ describe("large canvas media rendering", () => {
         expect(browserDownloadSource).not.toContain("new Blob(");
         expect(canvasNodeEditorSource).toContain("downloadBrowserMedia({ storageKey, url: content, fileName: downloadName })");
         expect(assetLibrarySource).toContain("downloadBrowserMedia({ storageKey: asset.data.storageKey");
-        expect(projectAssetsSource).toContain("downloadBrowserMedia({ storageKey: personal.data.storageKey");
-        expect(workflowProductionSource).toContain("storageKey: resourceStorageKey(artifact.resourceId)");
-        expect(workflowProductionSource).not.toContain("await response.blob()");
+        // 短剧成片下载走授权下载地址，不把大视频读进 Blob。
+        expect(dramaSharedSource).toContain('getResourceAccess(`resource:${resourceId}`, "download"');
+        expect(dramaSharedSource).not.toContain("response.blob()");
     });
 
-    test("shows a captured first frame locally without uploading display-only posters", () => {
-        expect(canvasVideoPreviewSource).toContain("const localUrl = URL.createObjectURL(captured.poster)");
-        expect(canvasVideoPreviewSource).toContain("return { localUrl }");
-        expect(canvasVideoPreviewSource).not.toContain("uploadImage");
+    test("merges concurrent full Blob consumers before starting the download", () => {
+        expect(resourceBlobCacheSource).toContain("const blobInFlight = new Map<string, Promise<Blob | null>>();");
+        expect(resourceBlobCacheSource).toContain("const pending = blobInFlight.get(target.key);");
+        expect(resourceBlobCacheSource).toContain("return pending;");
+        expect(resourceBlobCacheSource).toContain("getOrDownloadResourceBlob(storageKey, target)");
+    });
+
+    test("coalesces forced access refreshes already in flight", () => {
+        expect(resourceApiSource).toContain("const inFlightRefresh = accessRequests.get(key);");
+        expect(resourceApiSource).toContain("if (inFlightRefresh) return inFlightRefresh;");
+    });
+
+    test("reuses a cached full video Blob for poster capture before requesting playback access", () => {
+        expect(canvasVideoPreviewSource).toContain("peekCachedResourceObjectUrl(storageKey)");
+        expect(canvasVideoPreviewSource).toContain("getCachedResourceObjectUrl(storageKey)");
+    });
+
+    test("shows a captured first frame before its OSS poster upload finishes and allows later retries", () => {
+        expect(canvasVideoPreviewSource).toContain("const localUrl = URL.createObjectURL(result.poster)");
+        expect(canvasVideoPreviewSource).toContain("persisted: result.persisted");
         expect(canvasVideoPreviewSource).not.toContain("previewRequests");
     });
 });
@@ -127,7 +143,7 @@ describe("audio canvas interaction", () => {
         expect(canvasNodeContentSource.match(/function AudioNodeContent[\s\S]*?\n}\n/)?.[0] || "").not.toContain("useNodeResourceUrl");
         expect(canvasAudioPlayerSource).not.toContain("播放结束，点击重新播放");
         expect(canvasAudioPlayerSource).not.toContain("pr-24");
-        expect(canvasAudioPlayerSource).toContain('formatAudioTime(snapshot.currentTimeMs)}/{durationMs ? formatAudioTime(durationMs) : "--:--"');
+        expect(canvasAudioPlayerSource).toContain('formatAudioTime(snapshot.currentTimeMs)} / ${durationMs ? formatAudioTime(durationMs) : "00:00"');
     });
 
     test("isolates player controls from canvas gestures", () => {

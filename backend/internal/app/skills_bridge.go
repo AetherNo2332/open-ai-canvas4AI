@@ -10,6 +10,7 @@ import (
 )
 
 const SkillPackageUploadMaxBytes = skills.SkillPackageUploadMaxBytes
+const SkillPackageEditMaxBytes = skills.SkillPackageEditMaxBytes
 
 var ErrNotBuiltinSkill = skills.ErrNotBuiltinSkill
 
@@ -33,6 +34,9 @@ type (
 	SkillPackageBundleFile                = skills.SkillPackageBundleFile
 	SkillPackageBundle                    = skills.SkillPackageBundle
 	SkillFileSearchResult                 = skills.SkillFileSearchResult
+	SkillPackageFileOperation             = skills.SkillPackageFileOperation
+	SkillPackageEditRequest               = skills.SkillPackageEditRequest
+	SkillPackageEditResult                = skills.SkillPackageEditResult
 	SkillPreset                           = skills.SkillPreset
 )
 
@@ -138,16 +142,8 @@ func (s *Service) SkillPackageFiles(userID string, skillID string) ([]SkillPacka
 	return s.skillDomain().SkillPackageFiles(userID, skillID)
 }
 
-func (s *Service) SkillPackageFilesAtVersion(userID, skillID, versionID, contentHash string) ([]SkillPackageFileItem, error) {
-	return s.skillDomain().SkillPackageFilesAtVersion(userID, skillID, versionID, contentHash)
-}
-
 func (s *Service) SkillPackageFile(userID string, skillID string, filePath string) (*SkillPackageFileContent, error) {
 	return s.skillDomain().SkillPackageFile(userID, skillID, filePath)
-}
-
-func (s *Service) SkillPackageFileAtVersion(userID, skillID, versionID, contentHash, filePath string) (*SkillPackageFileContent, error) {
-	return s.skillDomain().SkillPackageFileAtVersion(userID, skillID, versionID, contentHash, filePath)
 }
 
 func (s *Service) SkillPackageRawFile(userID string, skillID string, filePath string) ([]byte, string, string, error) {
@@ -158,6 +154,10 @@ func (s *Service) SkillPackageBundle(userID string, skillID string) (*SkillPacka
 	return s.skillDomain().SkillPackageBundle(userID, skillID)
 }
 
+// EditSkillPackageFiles 由作者批量修改技能包文本文件并生成新版本（乐观锁基于 baseVersionId）。
+func (s *Service) EditSkillPackageFiles(userID string, skillID string, req SkillPackageEditRequest) (*SkillPackageEditResult, error) {
+	return s.skillDomain().EditSkillPackageFiles(userID, skillID, req)
+}
 func (s *Service) SearchSkillPackage(userID string, skillID string, query string) ([]SkillFileSearchResult, error) {
 	return s.skillDomain().SearchSkillPackage(userID, skillID, query)
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"sync"
 	"testing"
-	"time"
 
 	"yingce/backend/internal/database"
 	"yingce/backend/internal/model"
@@ -35,31 +34,6 @@ func TestMigrationListCoversSchemaModels(t *testing.T) {
 		if !covered {
 			t.Errorf("migration list is missing table %q", table)
 		}
-	}
-}
-
-func TestAgentWorkerMigrationPreservesScopedRevokedIdentity(t *testing.T) {
-	source, err := database.Open(database.Config{Driver: "sqlite", DSN: "file:worker-migration-source?mode=memory&cache=shared"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	target, err := database.Open(database.Config{Driver: "sqlite", DSN: "file:worker-migration-target?mode=memory&cache=shared"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, db := range []*gorm.DB{source, target} {
-		if err := db.AutoMigrate(&model.AgentWorker{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
-	worker := model.AgentWorker{ID: "scoped-revoked", SecretHash: "secret-hash", UserID: "user-1", RevokedAt: &now, CreatedAt: now.Add(-time.Hour), UpdatedAt: now}
-	if err := source.Create(&worker).Error; err != nil {
-		t.Fatal(err)
-	}
-	count, err := migrateTable[model.AgentWorker]("agent_workers").run(source, target, true)
-	if err != nil || count != 1 {
-		t.Fatalf("worker row not copied and verified: %d %v", count, err)
 	}
 }
 

@@ -2,7 +2,7 @@ package app
 
 import "testing"
 
-func TestNormalizeImagePriceQualitySupportsSeedream15k(t *testing.T) {
+func TestImageResolutionFromSizeSupportsSeedream15k(t *testing.T) {
 	cases := map[string]string{
 		"1024x1024": "1k",
 		"1424x800":  "1k",
@@ -14,8 +14,8 @@ func TestNormalizeImagePriceQualitySupportsSeedream15k(t *testing.T) {
 		"3840x2160": "4k",
 	}
 	for size, want := range cases {
-		if got := normalizeImagePriceQuality("", size); got != want {
-			t.Fatalf("normalizeImagePriceQuality(%q) = %q, want %q", size, got, want)
+		if got := imageResolutionFromSize(size); got != want {
+			t.Fatalf("imageResolutionFromSize(%q) = %q, want %q", size, got, want)
 		}
 	}
 }
@@ -29,22 +29,20 @@ func TestNormalizeImagePriceQualityKeepsSeedream15k(t *testing.T) {
 	}
 }
 
-func TestImageResolutionTierAccepts15k(t *testing.T) {
-	if got := imageResolutionTier("1.5K"); got != "1.5k" {
-		t.Fatalf("imageResolutionTier(1.5K) = %q, want 1.5k", got)
+func TestIsImageResolutionTierAccepts15k(t *testing.T) {
+	if !isImageResolutionTier("1.5K") {
+		t.Fatal("isImageResolutionTier(1.5K) = false, want true")
 	}
 }
 
 func TestMatchSKUSelectorMatchesSeedream15kFallback(t *testing.T) {
 	// 只配置了 1K / 2K 的存量价格档，仍应命中 1.5K 请求。
 	for _, expected := range []string{"1k", "2k"} {
-		for _, key := range []string{"quality", "imageResolution"} {
-			tier := map[string]string{key: expected}
-			requested := map[string]string{key: "1.5k"}
-			matched, _ := matchSKUSelector(tier, requested)
-			if !matched {
-				t.Fatalf("matchSKUSelector(%v, 1.5k on %s) = false, want true", tier, key)
-			}
+		tier := map[string]string{"imageResolution": expected}
+		requested := map[string]string{"imageResolution": "1.5k"}
+		matched, _ := matchSKUSelector(tier, requested)
+		if !matched {
+			t.Fatalf("matchSKUSelector(%v, 1.5k) = false, want true", tier)
 		}
 	}
 	// 精确命中 1.5K 档，且 4K 档不参与回退。

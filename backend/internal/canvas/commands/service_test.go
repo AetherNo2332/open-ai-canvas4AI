@@ -29,7 +29,7 @@ func commandFixture(t *testing.T) (*Service, *gorm.DB, string, Snapshot) {
 func seedCommandFixture(t *testing.T, db *gorm.DB, path string) (*Service, *gorm.DB, string, Snapshot) {
 	t.Helper()
 	var err error
-	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.CanvasNodeEditLease{}, &model.Resource{}, &model.Task{}); err != nil {
+	if err = db.AutoMigrate(&model.User{}, &model.CanvasProject{}, &model.CanvasEditLease{}, &model.Resource{}, &model.Task{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = database.MigrateCanvasCommands(db); err != nil {

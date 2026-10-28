@@ -1,14 +1,16 @@
 # 影策 · AI 文档索引
 
-面向 AI 的短索引。详细文档维护规则见 [AGENTS.md](../AGENTS.md) 第 10 节「文档同步」。
+面向 AI 的短索引。详细文档维护规则见 [AGENTS.md](../AGENTS.md) 第 9 节「文档与交付」。
+
+## 部署与更新入口
+
+用户要求部署服务器时，默认使用官方 Release 镜像、`docker-compose.deploy.yml` 和 Host Updater。本地 SQLite 构建与自定义 Compose 不属于后台在线更新管理范围。
+
+- [Docker 部署](content/docs/overview/docker.mdx)：默认服务器方案、Compose 选择与已有部署核对。
+- [在线更新与安全回退](content/docs/backend/system-update.mdx)：受管部署条件、安装、备份、迁移和回退。
+- [本地开发](content/docs/backend/local-development.mdx)：宿主机与热更新开发环境。
 
 ## 设计沉淀
-
-- [工程治理与交接](content/docs/backend/engineering-governance.mdx)：增量边界、上游采纳、发布证据与维护者演练。
-- [上游采纳台账](design/upstream-adoption-ledger.md)：固定两端提交、候选修复与采纳决策。
-- [工程过程归档](archive/engineering/README.md)：根目录迁出的历史计划、状态和交接记录。
-
-- [Pi worker 错误恢复](design/agent-worker-recovery.md)：技能准入后重试错误的本地复现、历史工具隔离与检查点队列修复、UTF-8 日志修复，以及持久化恢复控制器设计（控制器未实施，未部署生产）。
 
 - [资源访问与 OSS/CDN 分发架构重构](design/resource-delivery-architecture.md)：资源身份、场景授权与分发策略分离，统一访问合同、全入口迁移、旧实现退场及流量/安全验收门槛（核心代码已实施，待真实 OSS/CDN 链路验收）。
 
@@ -25,6 +27,8 @@
 - [插件平台与市场演进调研](design/plugin-platform-and-marketplace-research.md)：插件机制代码审计、对外回应、外部 SDK 与隔离运行时、独立插件验收、受控目录到公开市场的分阶段方案（调研建议，未实施）。
 
 - [站点及外观与皮肤主题设计合同](design/site-appearance-and-skins.mdx)：品牌一致性、登录页与邮件、SEO/备案、三层皮肤令牌、无闪屏启动顺序和验收边界。
+
+- [UI 皮肤库架构设计](design/ui-skin-library.mdx)：Foundation 固定尺度与可换肤层分离、皮肤清单格式、OKLCH 颜色推导、校验规则和分步迁移（提案，未实施）。
 
 - [工作区外壳设计沉淀](design/workspace-shell-design.mdx)：侧栏（260px 可折叠导航 + 分组折叠）、主区卡片、顶部栏（账户/公告/主题）的设计决策与样式约束。
 

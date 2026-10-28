@@ -226,20 +226,20 @@ func TestAgentSchedulerMigration49PreservesHistoricalAgentRows(t *testing.T) {
 
 	var migration49 *migration
 	for index := range schemaMigrations {
-		if schemaMigrations[index].version == 49 {
+		if schemaMigrations[index].version == forkAgentRuntimeMigrationVersion {
 			migration49 = &schemaMigrations[index]
 			break
 		}
 	}
 	if migration49 == nil {
-		t.Fatal("migration 49 is not registered")
+		t.Fatal("fork Agent runtime migration is not registered")
 	}
 	if err := migration49.apply(db); err != nil {
-		t.Fatalf("apply migration 49: %v", err)
+		t.Fatalf("apply fork Agent runtime migration: %v", err)
 	}
 	for _, value := range []any{&model.AgentEventCounter{}, &model.AgentWakeEvent{}, &model.AgentToolOperation{}, &model.AgentRuntimeInstance{}} {
 		if !db.Migrator().HasTable(value) {
-			t.Fatalf("migration 49 did not create %T", value)
+			t.Fatalf("fork Agent runtime migration did not create %T", value)
 		}
 	}
 	var gotRun model.CloudAgentExecution

@@ -16,6 +16,7 @@ const (
 	CodeUnavailable         = kernel.CodeUnavailable
 	CodeTimeout             = kernel.CodeTimeout
 	CodeQuotaExceeded       = kernel.CodeQuotaExceeded
+	CodeStorageReadOnly     = kernel.CodeStorageReadOnly
 	CodeIdempotencyConflict = kernel.CodeIdempotencyConflict
 	CodeRateLimited         = kernel.CodeRateLimited
 )
@@ -23,19 +24,22 @@ const (
 type ErrorReason = kernel.ErrorReason
 
 const (
-	ReasonInvalidArgument    = kernel.ReasonInvalidArgument
-	ReasonUnauthorized       = kernel.ReasonUnauthorized
-	ReasonForbidden          = kernel.ReasonForbidden
-	ReasonNotFound           = kernel.ReasonNotFound
-	ReasonConflict           = kernel.ReasonConflict
-	ReasonFailedPrecondition = kernel.ReasonFailedPrecondition
-	ReasonQuotaExceeded      = kernel.ReasonQuotaExceeded
-	ReasonRateLimited        = kernel.ReasonRateLimited
-	ReasonUnavailable        = kernel.ReasonUnavailable
-	ReasonTimeout            = kernel.ReasonTimeout
-	ReasonInternal           = kernel.ReasonInternal
-	ReasonBadGateway         = kernel.ReasonBadGateway
-	ReasonUpstreamDNSFailed  = kernel.ReasonUpstreamDNSFailed
+	ReasonInvalidArgument     = kernel.ReasonInvalidArgument
+	ReasonUnauthorized        = kernel.ReasonUnauthorized
+	ReasonForbidden           = kernel.ReasonForbidden
+	ReasonNotFound            = kernel.ReasonNotFound
+	ReasonConflict            = kernel.ReasonConflict
+	ReasonProjectNameConflict = kernel.ReasonProjectNameConflict
+	ReasonFailedPrecondition  = kernel.ReasonFailedPrecondition
+	ReasonQuotaExceeded       = kernel.ReasonQuotaExceeded
+	ReasonStorageCapacity     = kernel.ReasonStorageCapacityExceeded
+	ReasonStorageReadOnly     = kernel.ReasonStorageReadOnly
+	ReasonRateLimited         = kernel.ReasonRateLimited
+	ReasonUnavailable         = kernel.ReasonUnavailable
+	ReasonTimeout             = kernel.ReasonTimeout
+	ReasonInternal            = kernel.ReasonInternal
+	ReasonBadGateway          = kernel.ReasonBadGateway
+	ReasonUpstreamDNSFailed   = kernel.ReasonUpstreamDNSFailed
 )
 
 func ReasonForStatus(status int) ErrorReason {

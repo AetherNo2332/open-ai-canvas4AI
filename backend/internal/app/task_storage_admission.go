@@ -20,10 +20,42 @@ func taskTypeProducesStoredFile(taskType string) bool {
 // 账号文件容量此前只在产物回存时校验，上游调用已经发出并扣费，失败只能表现为
 // 媒体无法入库。生成任务必须在扣费前确认账号还有可用容量，容量已满时直接拒绝。
 func (s *Service) requireStoredFileCapacityForTask(userID string, taskType string, policy RuntimePolicySetting) error {
+	// 本仓库的云端 Agent 在已持有 storageMu 的审批与入队事务里也会调用 CreateTask，
+	// 并非每条路径都能标记 callerHoldsStorageMu。拿不到锁时退化为只按已存储字节复核：
+	// 该任务的容量已在未持锁的干跑 admission 阶段校验过，pending 计数由持锁方继续维护。
+	if !s.storageMu.TryLock() {
+		return s.requireStoredFileCapacityWithoutPending(userID, taskType, policy)
+	}
+	defer s.storageMu.Unlock()
+	return s.requireStoredFileCapacityWhileLocked(userID, taskType, policy)
+}
+
+func (s *Service) requireStoredFileCapacityWithoutPending(userID string, taskType string, policy RuntimePolicySetting) error {
 	if !taskTypeProducesStoredFile(taskType) {
 		return nil
 	}
-	storedLimit := gigabytes(policy.Resource.StoredFileGB)
+	storedLimit, err := s.storedFileLimit(userID, policy)
+	if err != nil || storedLimit <= 0 {
+		return err
+	}
+	storedBytes, err := s.repo.UserStoredFileBytes(userID)
+	if err != nil {
+		return err
+	}
+	return validateStoredFileCapacity(storedBytes, 0, storedLimit)
+}
+
+// requireStoredFileCapacityWhileLocked 与上面相同，但调用方必须已经持有 storageMu。
+// sync.Mutex 不可重入；审批改参数的干跑 admission 发生在 DecideCloudAgentApproval
+// 的临界区内，再次加锁会把测试和线上审批一起卡死。
+func (s *Service) requireStoredFileCapacityWhileLocked(userID string, taskType string, policy RuntimePolicySetting) error {
+	if !taskTypeProducesStoredFile(taskType) {
+		return nil
+	}
+	storedLimit, err := s.storedFileLimit(userID, policy)
+	if err != nil {
+		return err
+	}
 	if storedLimit <= 0 {
 		return nil
 	}
@@ -31,21 +63,12 @@ func (s *Service) requireStoredFileCapacityForTask(userID string, taskType strin
 	if err != nil {
 		return err
 	}
-	// CreateTask 也会在已持有 storageMu 的 Agent 审批与入队事务内被调用
-	// （DecideCloudAgentApproval / enqueueCloudAgentTask 持锁跨 CreateTask，而
-	// sync.Mutex 不可重入）。TryLock 拿不到锁说明处于这类路径：该任务的容量已在
-	// 未持锁的 dry admission 阶段校验过，此处退化为只按已存储字节复核，pending
-	// 计数由持锁方在同一临界区内继续维护。
-	if !s.storageMu.TryLock() {
-		return validateStoredFileCapacity(storedBytes, 0, storedLimit)
-	}
-	defer s.storageMu.Unlock()
 	return validateStoredFileCapacity(storedBytes, s.pendingStorage[userID], storedLimit)
 }
 
 func validateStoredFileCapacity(storedBytes int64, pendingBytes int64, storedLimit int64) error {
 	if storedLimit > 0 && storedBytes+pendingBytes >= storedLimit {
-		return QuotaExceeded(fmt.Sprintf("账号文件容量已达到 %s 上限，请先清理素材后再生成", formatStorageLimit(storedLimit)))
+		return StorageCapacityExceeded(fmt.Sprintf("账号文件容量已达到 %s 上限，请清理素材或购买存储空间后再生成", formatStorageLimit(storedLimit)))
 	}
 	return nil
 }

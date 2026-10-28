@@ -1,25 +1,80 @@
 ---
 title: 本地开发
-description: 前后端与 Agent 的开发入口、数据隔离和定向检查
+description: 在宿主机启动影策前后端开发服务
 ---
 
-## 选择入口
+# 本地开发
 
-完整本地运行使用 `docker compose -f docker-compose.local.yml up -d --build`；它构建 web、backend、Agent，配置准备见根 README。根 `docker-compose.yml` 的 Agent 在 `pi` profile 下，需显式使用 `--profile pi`。生产部署使用 deploy 配合 build 或 server，不能把开发数据目录当作生产目录。
+## 云端 Agent Worker
 
-热更新编排 `docker-compose.dev.yml` 仅包含 backend 和 web。先创建它要求的三个宿主机目录：
+云端 Agent 是独立的 Node Pi Worker（`agent/`），只经后端 `/internal-agent` 领取运行；模型调用、工具执行、审批、计费与画布写入都回到 Go 后端校验。后端只在 `CANVAS_AGENT_INTERNAL_TOKEN`（至少 32 字符）存在时挂载 `/internal-agent`，Worker 另用 `CANVAS_AGENT_WORKER_ID` / `CANVAS_AGENT_WORKER_TOKEN` 认证，变量含义见 `.env.example`。
+
+- `docker-compose.local.yml` 同时构建 web、backend 与 agent；根 `docker-compose.yml` 的 agent 在 `pi` profile 下，需显式 `--profile pi`；`docker-compose.dev.yml` 不含 Agent，需要 Agent 验收时改用 local 编排。
+- 宿主机单独运行 Worker：Node 22.19.0 或更新的兼容版本，`cd agent && npm ci --ignore-scripts && npm run build && npm start`，`CANVAS_BACKEND_INTERNAL_URL`、Worker 身份与 harness 目录按 `.env.example` 和对应 Compose 设置；不要复制生产凭据到开发目录。Worker 不需要数据库或公开端口。
+- 定向检查：`cd agent && npm test`；改工具合同时补 `go test ./internal/app -run 'TestAgentToolSchemaArtifactMatchesRuntime' -count=1`。
+
+## SMTP 邮件故障日志
+
+注册、登录、绑定邮箱和密码找回的邮件投递失败统一输出 `ERROR` 级别的 `smtp email delivery failed` 后端日志。日志包含 `host`、`port`、`encryption`、脱敏 `recipient` 和 `error`，默认 `CANVAS_LOG_LEVEL=info` 即可看到，无需开启 debug。
+
+`error` 保留 SMTP 状态码和服务器错误说明，并标记失败步骤：`connect` / `connect_tls`（连接）、`greeting`（服务器欢迎响应）、`starttls`、`auth`、`mail_from`、`rcpt_to`、`data`、`write_body`、`finish_data` 或 `quit`。日志不主动记录账号、密码、邮件标题、正文或验证码，并对错误中回显的这些值及其 Base64 编码做脱敏。对外 API 继续使用原有通用错误响应。
+
+宿主机开发查看运行后端的终端；Docker 查看实际使用的 Compose 文件中的 `backend` 服务，例如：
+
+```bash
+docker compose -f docker-compose.deploy.yml logs --since=15m -f backend
+```
+
+本地构建和热更新开发分别将文件名换成 `docker-compose.local.yml` 或 `docker-compose.dev.yml`。代码修改后需要运行新构建的后端，旧容器不会自动增加这些日志。
+
+## Compose 公网资源地址
+
+`docker-compose.yml`、`docker-compose.dev.yml`、`docker-compose.local.yml`、`docker-compose.server.yml` 和 `docker-compose.deploy.yml` 均将 `.env` 中的 `CANVAS_PUBLIC_BASE_URL` 传入后端。使用本地文件存储且上游模型需要读取参考素材时，将它设为上游能访问的 HTTPS 站点根地址（例如 `https://canvas.example.com`，不要附加 `/api`）；存储设置中的公网访问地址优先于该环境变量。
+
+修改后需要重新创建后端容器，单纯重启旧容器不会更新环境变量。未配置时保持空值并由资源请求强校验，不会自动采用容器内网地址；这项设置不放宽出站 SSRF 校验，也不应为此开放数据库或后端端口。只做本地界面开发且不向模型提交资源时可以不设置。部署后仍需验证真实资源 URL 能被目标供应商读取，健康检查不能替代该验证。
+
+## 一键启动（Windows PowerShell）
+
+在仓库根目录执行：
+
+```powershell
+.\scripts\start-local.ps1
+```
+
+脚本会：
+
+- 使用 `.local/project-workbench-debug` 作为后端 SQLite 开发数据目录；
+- 创建 `.local/cache/go-build` 和 `.local/cache/go-mod` 缓存目录；
+- 首次启动时，如果 `web/node_modules` 不存在，执行 `bun install --frozen-lockfile`；
+- 打开两个 PowerShell 窗口，分别运行后端和前端；
+- 将前端 `/api` 请求代理到 `http://127.0.0.1:8080`。
+
+启动后访问 [http://localhost:3000](http://localhost:3000)。后端健康检查地址是 [http://127.0.0.1:8080/api/health](http://127.0.0.1:8080/api/health)。
+
+脚本使用固定的本地开发端口：前端 `3000`，后端 `8080`。如果端口被占用，脚本会先退出，不会关闭已有进程。请分别在两个开发窗口中按 `Ctrl+C` 停止服务。
+
+如果 PowerShell 的执行策略阻止脚本运行，可以只对当前进程临时放行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\start-local.ps1
+```
+
+## 手工启动
+
+后端：
 
 ```bash
 mkdir -p .local/project-workbench-debug .local/cache/go-build .local/cache/go-mod
-docker compose -f docker-compose.dev.yml config
-docker compose -f docker-compose.dev.yml up -d --build
+cd backend
+CANVAS_BACKEND_ADDR=127.0.0.1:8080 \
+CANVAS_BACKEND_DATA_DIR=../.local/project-workbench-debug \
+GOCACHE=../.local/cache/go-build \
+GOMODCACHE=../.local/cache/go-mod \
+go run ./cmd/server
 ```
 
-数据位于 `.local/project-workbench-debug`，不与其他编排的卷自动共享。该文件有独立项目名，但同机端口仍可能冲突；启动前检查实际映射，按需设置 `CANVAS_BACKEND_HOST_PORT`、`CANVAS_WEB_HOST_PORT`。它没有 Agent 服务；需要完整 Agent 验收时改用 local 编排。
-
-## 宿主机开发
-
-前端使用 Bun 和 `web/bun.lock`，Agent 使用 Node 22.19.0 或更新的兼容版本及 `agent/package-lock.json`。不要给 web 引入 npm/yarn 锁文件。后端使用 Go 1.25，SQLite 路径需要支持 CGO 的 C 编译器。
+前端另开终端：
 
 ```bash
 cd web
@@ -27,19 +82,66 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-前端代理由 `VITE_API_PROXY_TARGET` 指向后端。后端在另一个终端启动，明确指定隔离数据目录和 CORS：
+`web/` 只使用 `bun.lock`。不要用 pnpm 或 npm 往同一套 `node_modules` 里再装一遍。
+
+前端默认监听 `0.0.0.0:3000`，Vite 将 `/api` 和 OAuth 回调代理到 `127.0.0.1:8080`。如需修改代理目标，可设置 `VITE_API_PROXY_TARGET`。
+
+## 时间线字幕转写（whisper.cpp）
+
+时间线“字幕转写”由**本地 whisper.cpp server** 执行：后端将片段音频预处理为 16k mono wav 后，POST 到 `CANVAS_WHISPER_BASE_URL/inference`（whisper server 原生接口，`response_format=verbose_json`）。未配置该地址时，转写任务会立即明确失败，提示“撰写失败未配置本地转写服务”。
+
+### 安装 whisper-server
+
+```bash
+brew install whisper-cpp
+```
+
+### 下载模型
+
+仓库脚本将模型放在 `.local/whisper-models/`（已被 `.gitignore` 忽略）。多语言模型（含中文）用 `ggml-base.bin`（约 141MB）；网络受限时可用 aifasthub 镜像：
+
+```bash
+mkdir -p .local/whisper-models
+curl -fL -o .local/whisper-models/ggml-base.bin \
+  https://aifasthub.com/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+```
+
+### 启动服务
+
+```bash
+scripts/start-whisper-local.sh
+```
+
+脚本默认以 `ggml-base.bin` 监听 `127.0.0.1:8082`（`-l auto` 自动识别语言）。需要换模型或端口时：`WHISPER_MODEL=ggml-small.bin WHISPER_PORT=8083 scripts/start-whisper-local.sh`。
+
+### 让后端指向该服务
+
+后端不读取 `.env` 文件，环境变量必须由启动 shell 注入（在手工启动命令基础上追加）：
 
 ```bash
 cd backend
-CANVAS_BACKEND_DATA_DIR=../.local/host-dev CANVAS_CORS_ORIGINS=http://localhost:3000 go run ./cmd/server
+CANVAS_BACKEND_DATA_DIR=../.local/project-workbench-debug \
+CANVAS_WHISPER_BASE_URL=http://127.0.0.1:8082 \
+go run ./cmd/server
 ```
 
-Agent 构建使用 `cd agent && npm ci --ignore-scripts && npm run build`。启动前准备与 backend 一致的内部连接配置及 harness，配置项以 `.env.example` 和当前编排为准；不要复制生产凭据到开发目录。Agent 本身不需要数据库或公开监听端口。
+### 验证
 
-## 验证范围
+```bash
+# 服务就绪：返回 200/404 即可
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8082/
+# 冒烟：20 秒语音 → verbose_json 字幕段
+curl -s -X POST http://127.0.0.1:8082/inference \
+  -F 'file=@sample.wav' -F 'response_format=verbose_json'
+```
 
-优先运行改动模块的测试。示例：前端 `bun test test/<相关文件>`，Agent 在 build 后使用 `node --test dist/test/<相关文件>.test.js`，后端 `go test ./internal/<模块> -run '<相关用例>' -count=1`。Agent 测试引用相邻组件时以真实构建为准。`CGO_ENABLED=0` 只能用于不需要 SQLite 的纯函数测试，不能证明数据库验收通过。
+## Docker 开发
 
-部署脚本的隔离检查是 `python -B -m unittest scripts.test_production_deployment scripts.test_agent_parity_container_commands`。这些测试通过 Docker 替身或配置解析检查合同，不启动完整服务，不能代替真实安装和跨进程验收。依赖 PostgreSQL/Redis 的测试准备见 CONTRIBUTING；测试库必须允许建删临时 schema，不能使用生产 DSN。
+需要容器化热更新时，在仓库根目录执行：
 
-首次管理员、注册开关、模型渠道与私网模型地址仍受真实后端策略约束。不要通过默认用户、放开全部私网或跳过归属校验让开发请求通过。下载失败时先判断网络、可用镜像，再检查本机代理；日志和报告不得包含凭据。
+```bash
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+  docker compose -f docker-compose.dev.yml up --build
+```
+
+Docker 开发编排也使用 `.local/project-workbench-debug`，并默认暴露前端 `3000` 和后端 `8080`。端口冲突时，可通过 `CANVAS_WEB_HOST_PORT` 和 `CANVAS_BACKEND_HOST_PORT` 调整宿主机端口。

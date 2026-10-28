@@ -11,19 +11,38 @@ import {
     createBatchRowsFromColumns,
     createBatchRowsFromInputs,
     createInheritedBatchRow,
+    insertBatchRow,
     moveBatchReferenceCell,
     promoteLegacyBatchTableSize,
     removeLastBatchReferenceColumn,
     reorderBatchReferenceColumns,
     BATCH_REFERENCE_HANDLE_GAP,
     BATCH_REFERENCE_HANDLE_TOP,
-    MAX_BATCH_REFERENCE_COLUMNS,
     TRY_ON_BATCH_PROMPT,
 } from "@/lib/canvas/canvas-batch-table";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { CanvasNodeType } from "@/types/canvas";
 
 describe("batch creation table", () => {
+    test("insertion preserves existing task identity and results, inheriting only preceding references", () => {
+        const first = { id: "first", enabled: true, inputNodeIds: ["person", "outfit"], prompt: "custom", outputNodeId: "result", cells: { detail: "old detail" } };
+        const second = { ...first, id: "second", inputNodeIds: ["other"] };
+        const table = { operation: "try_on" as const, concurrency: 1, aiGenerated: true, rows: [first, second] };
+        const inserted = insertBatchRow(table, first.id)!;
+        expect(inserted.rows[0]).toBe(first);
+        expect(inserted.rows[2]).toBe(second);
+        expect(inserted.rows[1]).toBe(inserted.row);
+        expect(inserted.row.id).not.toBe(first.id);
+        expect(inserted.row.inputNodeIds).toEqual(first.inputNodeIds);
+        expect(inserted.row.inputNodeIds).not.toBe(first.inputNodeIds);
+        expect(inserted.row.prompt).toBe(TRY_ON_BATCH_PROMPT);
+        expect(inserted.row.outputNodeId).toBeUndefined();
+        expect(inserted.row.cells).toBeUndefined();
+        expect(table.rows).toEqual([first, second]);
+        expect(insertBatchRow(table)?.row.inputNodeIds).toEqual(second.inputNodeIds);
+        expect(insertBatchRow(table, "deleted-row")).toBeUndefined();
+        expect(insertBatchRow({ ...table, rows: [] })?.row.inputNodeIds).toEqual([]);
+    });
     test("bulk skips persisted results while explicit regeneration remains available", () => {
         const input = createCanvasNode(CanvasNodeType.Image, { x: 0, y: 0 }, { storageKey: "input" });
         const output = createCanvasNode(CanvasNodeType.Image, { x: 0, y: 0 }, { storageKey: "output" });
@@ -106,7 +125,7 @@ describe("batch creation table", () => {
         expect(node.title).toBe("批量创作表");
         expect(node.width).toBe(1280);
         expect(node.height).toBe(560);
-        expect(node.metadata?.batchTable).toEqual({ operation: "try_on", concurrency: 10, referenceColumns: [{ id: "reference-1", label: "参考图 1" }, { id: "reference-2", label: "参考图 2" }, { id: "reference-3", label: "参考图 3" }], rows: [] });
+        expect(node.metadata?.batchTable).toEqual({ operation: "try_on", concurrency: 10, referenceMode: "cells", referenceColumns: [{ id: "reference-1", label: "参考图 1" }, { id: "reference-2", label: "参考图 2" }, { id: "reference-3", label: "参考图 3" }], rows: [] });
     });
 
     test("promotes the previous 900-wide default without touching resized tables", () => {
@@ -197,13 +216,5 @@ describe("batch creation table", () => {
         const table = { operation: "creative" as const, concurrency: 10, globalPrompt: " 全局覆盖 ", rows: [{ id: "row-1", enabled: true, inputNodeIds: ["a"], prompt: "行提示词" }] };
         expect(batchPromptForRow(table, table.rows[0])).toBe("全局覆盖");
         expect(batchPromptForRow({ ...table, globalPrompt: "   " }, table.rows[0])).toBe("行提示词");
-    });
-});
-
-describe("batch reference column contract", () => {
-    // 与后端 `internal/app/cloud_agent_batch_table.go` 的 maxCloudAgentBatchReferences 成对：
-    // 前端能建 10 列，云端 Agent 的入参校验也必须是 10，否则 Agent 读写 7-10 列的表会 400。
-    test("allows the same reference column count as the Agent tool contract", () => {
-        expect(MAX_BATCH_REFERENCE_COLUMNS).toBe(10);
     });
 });

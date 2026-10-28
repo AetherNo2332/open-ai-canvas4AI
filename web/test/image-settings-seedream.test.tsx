@@ -3,9 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ImageSettingsPanel } from "../src/components/image-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { defaultImageCapabilityConfig } from "../src/lib/model-capabilities";
-import { imageResolutionTiers } from "../src/lib/image-size-presets";
 import { priceTierToForm, skuSelectorFromForm } from "../src/pages/admin/components/channel-model-price-tier-form";
-import type { ChannelModelPriceTier } from "../src/services/api/wallet";
 import type { AiConfig } from "../src/stores/use-config-store";
 
 function seedreamConfig(model: string): AiConfig {
@@ -35,7 +33,7 @@ function seedreamConfig(model: string): AiConfig {
 }
 
 describe("ImageSettingsPanel with km-kemei-seedream", () => {
-    test("Pro/Flash 只显示 1K / 1.5K / 2K，不显示 4K，且分辨率分段只有一个", () => {
+    test("Pro/Flash 只显示 1K / 1.5K / 2K，不显示 4K，且分辨率分段只有一处", () => {
         for (const model of ["doubao-seedream-5-0-pro-260628", "doubao-seedream-5-0-flash-260915"]) {
             const html = renderToStaticMarkup(<ImageSettingsPanel config={seedreamConfig(model)} onConfigChange={() => {}} theme={canvasThemes.dark} />);
             expect((html.match(/分辨率/g) || []).length).toBe(1);
@@ -46,21 +44,25 @@ describe("ImageSettingsPanel with km-kemei-seedream", () => {
         }
     });
 
-    test("档位集合是 1K / 1.5K / 2K，且存量质量档位 1k/1.5k/2k 生成互不冲突的选择器", () => {
+    test("存量 Seedream 价格档 quality=1k/1.5k/2k 安全迁移为 imageResolution，无冲突", () => {
         const profile = defaultImageCapabilityConfig("km-kemei-seedream", "doubao-seedream-5-0-pro-260628");
-        expect(imageResolutionTiers(profile)).toEqual(["1k", "1.5k", "2k"]);
+        expect(profile.resolution).toEqual({ supported: true, values: ["1k", "1.5k", "2k"], default: "2k" });
 
         const rawTiers = [
-            { selector: { quality: "1k" }, billingMode: "fixed_request", unitPriceMicrocredits: 20000000, priceConfigured: true, enabled: true },
-            { selector: { quality: "1.5k" }, billingMode: "fixed_request", unitPriceMicrocredits: 40000000, priceConfigured: true, enabled: true },
-            { selector: { quality: "2k" }, billingMode: "fixed_request", unitPriceMicrocredits: 40000000, priceConfigured: true, enabled: true },
-        ] as unknown as ChannelModelPriceTier[];
+            { id: "t1", selector: { quality: "1k" }, billingMode: "fixed_request", unitPriceMicrocredits: 20000000, priceConfigured: true, enabled: true },
+            { id: "t2", selector: { quality: "1.5k" }, billingMode: "fixed_request", unitPriceMicrocredits: 40000000, priceConfigured: true, enabled: true },
+            { id: "t3", selector: { quality: "2k" }, billingMode: "fixed_request", unitPriceMicrocredits: 40000000, priceConfigured: true, enabled: true },
+        ];
 
-        const formValues = rawTiers.map((tier) => priceTierToForm(tier));
-        expect(formValues.map((values) => values.quality)).toEqual(["1k", "1.5k", "2k"]);
+        const formValues = rawTiers.map((tier) => priceTierToForm(tier, profile, "km-kemei-seedream"));
+        expect(formValues[0].imageResolution).toBe("1k");
+        expect(formValues[1].imageResolution).toBe("1.5k");
+        expect(formValues[2].imageResolution).toBe("2k");
 
-        const selectors = formValues.map((values) => skuSelectorFromForm("image", values));
-        expect(selectors).toEqual([{ quality: "1k" }, { quality: "1.5k" }, { quality: "2k" }]);
+        const selectors = formValues.map((values) => skuSelectorFromForm("image", values, { image: profile }));
+        expect(selectors[0]).toEqual({ imageResolution: "1k" });
+        expect(selectors[1]).toEqual({ imageResolution: "1.5k" });
+        expect(selectors[2]).toEqual({ imageResolution: "2k" });
         expect(new Set(selectors.map((selector) => JSON.stringify(selector))).size).toBe(3);
     });
 });

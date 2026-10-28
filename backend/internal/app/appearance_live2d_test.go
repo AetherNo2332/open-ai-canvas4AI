@@ -192,7 +192,7 @@ func TestLive2DAppearanceImportPublishAndDetach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Public.Canvas.AgentName != "小鱼" || saved.Public.BrandName != "ArrowFX" || saved.Public.Canvas.Live2DEntry != imported.Entry {
+	if saved.Public.Canvas.AgentName != "小鱼" || saved.Public.BrandName != "影策" || saved.Public.Canvas.Live2DEntry != imported.Entry {
 		t.Fatalf("bad public setting: %+v", saved.Public)
 	}
 	if _, _, err := svc.Live2DAsset(nil, imported.ResourceID, "avatar/texture.png"); err != nil {
@@ -248,60 +248,5 @@ func TestCanvasAppearanceValidation(t *testing.T) {
 		if _, err := normalizeCanvasAppearance(value); err == nil {
 			t.Fatalf("invalid value accepted: %+v", value)
 		}
-	}
-}
-
-func TestPNGAgentAvatarUploadPublishAndDetach(t *testing.T) {
-	svc, _, _, admin := newAppearanceTestService(t)
-	if _, err := svc.UploadAppearanceAsset(admin, AppearanceAssetAgentAvatar, multipartFileHeader(t, "agent.png", "image/png", []byte("not a PNG"))); err == nil {
-		t.Fatal("invalid PNG avatar accepted")
-	}
-	var data bytes.Buffer
-	if err := png.Encode(&data, image.NewNRGBA(image.Rect(0, 0, 4, 4))); err != nil {
-		t.Fatal(err)
-	}
-	uploaded, err := svc.UploadAppearanceAsset(admin, AppearanceAssetAgentAvatar, multipartFileHeader(t, "agent.png", "image/png", data.Bytes()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if uploaded.Kind != "image" || uploaded.MimeType != "image/png" || uploaded.Provider != "local" {
-		t.Fatalf("unexpected avatar resource: %+v", uploaded)
-	}
-	value := defaultAppearanceSetting()
-	value.Canvas.AvatarType = "png"
-	value.Canvas.AvatarResourceID = uploaded.ID
-	saved, err := svc.UpdateAppearance(admin, value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if saved.Public.Canvas.AvatarType != "png" || saved.Public.Canvas.AvatarResourceID != uploaded.ID {
-		t.Fatalf("avatar was not published: %+v", saved.Public.Canvas)
-	}
-	refs := svc.appearanceResourceReferences([]string{uploaded.ID})
-	if len(refs[uploaded.ID]) != 1 || refs[uploaded.ID][0].Title != "画布 Agent PNG 形象" {
-		t.Fatalf("missing PNG deletion protection: %+v", refs)
-	}
-	value.Canvas.AvatarType = "orb"
-	if _, err := svc.UpdateAppearance(admin, value); err != nil {
-		t.Fatal(err)
-	}
-	if len(svc.appearanceResourceReferences([]string{uploaded.ID})[uploaded.ID]) != 1 {
-		t.Fatal("disabled PNG avatar lost resource reference")
-	}
-	value.Canvas.AvatarResourceID = ""
-	if _, err := svc.UpdateAppearance(admin, value); err != nil {
-		t.Fatal(err)
-	}
-	if len(svc.appearanceResourceReferences([]string{uploaded.ID})[uploaded.ID]) != 0 {
-		t.Fatal("detached PNG avatar still referenced")
-	}
-}
-
-func TestCanvasAppearancePNGValidationRequiresResource(t *testing.T) {
-	value := defaultCanvasAppearance()
-	value.AvatarType = "png"
-	value.AvatarResourceID = ""
-	if _, err := normalizeCanvasAppearance(value); err == nil {
-		t.Fatal("PNG avatar without a resource was accepted")
 	}
 }

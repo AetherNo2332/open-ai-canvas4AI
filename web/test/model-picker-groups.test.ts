@@ -11,17 +11,10 @@ import { CanvasNodeType } from "../src/types/canvas";
 
 function model(label = "", price = 300000, modelKey = "seedance-2.0", displayName = modelKey === "seedance-2.0" ? "Seedance 2.0" : modelKey): PublicChannelModel {
     return {
-        id: `${modelKey}-${label || "default"}`,
-        modelKey,
-        displayName,
-        channelLabel: label,
+        id: `${modelKey}-${label || "default"}`, modelKey, displayName, channelLabel: label,
         description: label ? `${label}的使用说明` : "",
-        icon: "ByteDance",
-        capability: "video",
-        protocol: "seedance",
-        available: true,
-        pricingMode: "provider",
-        priceLabel: "",
+        icon: "ByteDance", capability: "video", protocol: "seedance", available: true,
+        pricingMode: "provider", priceLabel: "",
         capabilityConfig: defaultModelCapabilityConfig("seedance", "seedance-2.0"),
         priceTiers: [{ id: "tier", selector: {}, resolution: "*", videoSeconds: 0, billingMode: "per_second", unitPriceMicrocredits: price, inputTokenPriceMicrocredits: 0, outputTokenPriceMicrocredits: 0, cachedTokenPriceMicrocredits: 0 }],
     };
@@ -42,15 +35,7 @@ test("same model display name groups all channels and preserves their prices", (
     expect(groups).toHaveLength(1);
     expect(config.channels.map((channel) => channel.modelCosts![0].description)).toEqual(["", "优惠渠道-993的使用说明", "特惠渠道-730的使用说明"]);
     expect(groups.map((group) => [group.label, group.kind, group.models.map((item) => [item.label, item.models])])).toEqual([
-        [
-            "Seedance 2.0",
-            "product",
-            [
-                ["正常渠道", ["a::seedance-2.0"]],
-                ["优惠渠道-993", ["b::seedance-2.0"]],
-                ["特惠渠道-730", ["c::seedance-2.0"]],
-            ],
-        ],
+        ["Seedance 2.0", "product", [["seedance-2.0", ["a::seedance-2.0"]], ["优惠渠道-993", ["b::seedance-2.0"]], ["特惠渠道-730", ["c::seedance-2.0"]]]],
     ]);
     expect(config.channels.map((channel) => priceTierSummaryLabel(priceTiersForCurrentSelection(channel.modelCosts![0].logicalPriceTiers!, "video", config)))).toEqual(["0.3 积分/秒", "0.3 积分/秒", "0.2 积分/秒"]);
 });
@@ -90,7 +75,10 @@ test("selection and quote keep the chosen channel even when another channel is c
 });
 
 function sameChannelVariants() {
-    const channels = systemChannelModelChannels([{ id: "comfy", name: "Comfy", displayName: "Comfy", models: [model("高速版", 100_000, "h3-fast", "MiniMax H3"), model("多图一致性", 200_000, "h3-multi", "MiniMax H3")] }]);
+    const channels = systemChannelModelChannels([{ id: "comfy", name: "Comfy", displayName: "Comfy", models: [
+        model("高速版", 100_000, "h3-fast", "MiniMax H3"),
+        model("多图一致性", 200_000, "h3-multi", "MiniMax H3"),
+    ] }]);
     return normalizeConfigSnapshot({ config: { ...defaultConfig, channels, model: "comfy::h3-multi", videoModel: "comfy::h3-multi" } }).config;
 }
 
@@ -101,19 +89,10 @@ test("same-channel system variants retain explicit model identity through select
     expect(groupModelsByDisplayName(config, options).map((group) => group.models)).toEqual(options.map((value) => [value]));
     for (const value of options) {
         expect(resolveCompatibleModel(config, value, { capability: "video" })).toBe(value);
-        const generation = buildGenerationConfig(
-            config,
-            {
-                id: "video",
-                type: CanvasNodeType.Video,
-                title: "Video",
-                position: { x: 0, y: 0 },
-                width: 100,
-                height: 100,
-                metadata: { model: value, generationMode: "video" },
-            },
-            "video",
-        );
+        const generation = buildGenerationConfig(config, {
+            id: "video", type: CanvasNodeType.Video, title: "Video", position: { x: 0, y: 0 }, width: 100, height: 100,
+            metadata: { model: value, generationMode: "video" },
+        }, "video");
         expect(generation.model).toBe(value);
         expect(resolveModelRequestConfig(generation, generation.model)).toMatchObject({ channelId: "comfy", model: value.split("::")[1] });
         expect(modelQuoteRequest(config, value, "video")).toMatchObject({ channelId: "comfy", modelKey: value.split("::")[1] });
@@ -133,14 +112,11 @@ test("same-channel system variants do not borrow capabilities or reroute incompa
 
 test("different display names in one channel create distinct first-level groups", () => {
     const config = fixture();
-    const extra = systemChannelModelChannels([
-        {
-            id: "volc",
-            name: "火山引擎",
-            displayName: "火山引擎",
-            models: [model("Seedance 2 Mini", 300000, "seedance-2-mini", "Seedance 2 Mini"), model("Seedance 2.0 Fast", 300000, "seedance-2-fast", "Seedance 2.0 Fast"), model("Seedance 2.0", 300000, "seedance-2", "Seedance 2.0")],
-        },
-    ]);
+    const extra = systemChannelModelChannels([{ id: "volc", name: "火山引擎", displayName: "火山引擎", models: [
+        model("Seedance 2 Mini", 300000, "seedance-2-mini", "Seedance 2 Mini"),
+        model("Seedance 2.0 Fast", 300000, "seedance-2-fast", "Seedance 2.0 Fast"),
+        model("Seedance 2.0", 300000, "seedance-2", "Seedance 2.0"),
+    ] }]);
     const groups = groupModelsForPicker({ ...config, channels: extra }, selectableModelsByCapability({ ...config, channels: extra }, "video"));
     expect(groups).toHaveLength(3);
     expect(groups.map((group) => group.label)).toEqual(["Seedance 2 Mini", "Seedance 2.0 Fast", "Seedance 2.0"]);
@@ -178,4 +154,19 @@ test("managed logical models and personal channels never become system product r
     expect(groups.map((item) => item.kind)).toEqual(["product", "channel", "channel"]);
     expect(groups[0].models).toHaveLength(1);
     expect(groupModelsForPicker(config, [])).toEqual([]);
+});
+
+test("new models share 未分类 while explicit groups equal to model IDs remain intact", () => {
+    const channels = systemChannelModelChannels([{ id: "upstream", name: "Provider", displayName: "Provider", models: [
+        model("upstream-a", 300000, "a", "未分类"),
+        model("upstream-b", 300000, "b", "未分类"),
+        model("upstream-c", 300000, "c", "c"),
+    ] }]);
+    const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels } }).config;
+    const groups = groupModelsForPicker(config, selectableModelsByCapability(config, "video"));
+    expect(groups.map((group) => group.label)).toEqual(["未分类", "c"]);
+    expect(groups[0].models.map((item) => [item.label, item.models])).toEqual([
+        ["upstream-a", ["upstream::a"]], ["upstream-b", ["upstream::b"]],
+    ]);
+    expect(groups[1].models[0].models).toEqual(["upstream::c"]);
 });

@@ -48,6 +48,22 @@ type taskOutputLifecycle interface {
 	RegisterTaskOutputFromTask(task model.Task) error
 }
 
+type audioDurationTaskBilling interface {
+	SettleBillingWithAudioDuration(orderID string, providerRequestID string, durationMs int64) error
+}
+
+type billingOrderReader interface {
+	BillingOrder(orderID string) (*model.BillingOrder, error)
+}
+
+type audioDurationTaskOutput interface {
+	AudioOutputDurationMs(task model.Task) (int64, error)
+}
+
+type videoProcessingTaskSettlement interface {
+	settleVideoProcessingBilling(task model.Task, providerRequestID string) (bool, error)
+}
+
 func newTaskTerminalCoordinator(s *Service) *taskTerminalCoordinator {
 	return &taskTerminalCoordinator{
 		repo:              s.repo,
@@ -212,6 +228,12 @@ func (c *taskTerminalCoordinator) ensureFailedAttemptLogged(task *model.Task, er
 }
 
 func (c *taskTerminalCoordinator) handleSuccess(task *model.Task) error {
+	return c.handleSuccessWithSettlement(task, nil)
+}
+
+// handleSuccessWithSettlement 与 handleSuccess 相同；settle 非 nil 时替换常规结算，
+// 用于订单已退款后再交付作品的场景。
+func (c *taskTerminalCoordinator) handleSuccessWithSettlement(task *model.Task, settle func() error) error {
 	c.finalizeReplay(task, model.TaskStatusSucceeded, "文本回放窗口更新失败")
 	var completionErr error
 	completedTask, fetchErr := c.repo.Task(task.ID)
@@ -225,7 +247,45 @@ func (c *taskTerminalCoordinator) handleSuccess(task *model.Task) error {
 			completionErr = fmt.Errorf("任务成功后的项目产物登记失败：%w", registerErr)
 		}
 	}
-	if err := c.billing.SettleBilling(task.BillingOrderID, ""); err != nil {
+	settleBilling := func() error {
+		// 视频处理（画质增强等）按秒订单按实际输出时长结算；拿不到时长时返回错误进入待核对。
+		if processing, ok := c.outputs.(videoProcessingTaskSettlement); ok && completedTask != nil && capabilityFromTaskType(task.Type) == "video" {
+			if handled, err := processing.settleVideoProcessingBilling(*completedTask, ""); handled || err != nil {
+				return err
+			}
+		}
+		if audioBilling, ok := c.billing.(audioDurationTaskBilling); ok && capabilityFromTaskType(task.Type) == "audio" {
+			orderReader, readerOK := c.billing.(billingOrderReader)
+			if readerOK {
+				order, err := orderReader.BillingOrder(task.BillingOrderID)
+				if err != nil {
+					return err
+				}
+				// Only audio orders priced per second need measured output duration.
+				// Fixed-request audio must retain the ordinary settlement path even
+				// when the stored resource has no duration metadata.
+				if order == nil || order.Capability != "audio" || order.BillingMode != "per_second" {
+					return c.billing.SettleBilling(task.BillingOrderID, "")
+				}
+			}
+			output, outputOK := c.outputs.(audioDurationTaskOutput)
+			if outputOK {
+				if completedTask == nil {
+					return errors.New("任务成功后无法读取音频产物")
+				}
+				durationMs, err := output.AudioOutputDurationMs(*completedTask)
+				if err != nil {
+					return err
+				}
+				return audioBilling.SettleBillingWithAudioDuration(task.BillingOrderID, "", durationMs)
+			}
+		}
+		return c.billing.SettleBilling(task.BillingOrderID, "")
+	}
+	if settle != nil {
+		settleBilling = settle
+	}
+	if err := settleBilling(); err != nil {
 		uncertainErr := c.billing.MarkBillingUncertain(task.BillingOrderID, "生成成功但积分结算失败："+err.Error())
 		_ = c.logger.log(task.UserID, task.ID, "error", "积分结算失败，已进入待核对", err.Error())
 		completionErr = errors.Join(completionErr, fmt.Errorf("积分结算失败：%w", err))

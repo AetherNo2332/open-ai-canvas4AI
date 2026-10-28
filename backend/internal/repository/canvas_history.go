@@ -54,31 +54,12 @@ func (r *Repository) CanvasSnapshot(userID, canvasID, id string) (*model.CanvasS
 // Snapshot creation, reference protection and retention commit with the content.
 func (r *Repository) SaveCanvasWithSnapshot(project *model.CanvasProject, snapshot *model.CanvasSnapshot, resourceIDs, currentResourceIDs []string, cutoff time.Time, limit int, force bool) error {
 	next := *project
-	err := r.db.Transaction(func(tx *gorm.DB) error {
-		writer := r.transactionRepository(tx)
-		if err := writer.LockCanvasWrite(next.UserID, next.ID); err != nil {
+	err := r.Transaction(func(repo *Repository) error {
+		// 历史恢复整体替换文档，Agent 命令流以新纪元重置，不能和旧纪元的实体版本混用。
+		if err := repo.upsertCanvasProjectProjected(&next, snapshot != nil && snapshot.Reason == "before_restore"); err != nil {
 			return err
 		}
-		before, err := writer.CanvasProjectForUser(next.UserID, next.ID)
-		if err != nil && !writer.IsMissing(err) {
-			return err
-		}
-		if err := checkCanvasRevision(before, &next); err != nil {
-			return err
-		}
-		if err := writer.checkCanvasWriteQuota(before, &next); err != nil {
-			return err
-		}
-		if err := writer.upsertCanvasProject(&next); err != nil {
-			return err
-		}
-		if err := writer.syncLegacyCanvasWrite(before, &next, snapshot != nil && snapshot.Reason == "before_restore"); err != nil {
-			return err
-		}
-		if err = writer.CaptureCanvasSnapshot(&next, snapshot, resourceIDs, currentResourceIDs, cutoff, limit, force); err != nil {
-			return err
-		}
-		return writer.PruneCanvasMediaVersions(next.UserID, next.ID)
+		return repo.CaptureCanvasSnapshot(project, snapshot, resourceIDs, currentResourceIDs, cutoff, limit, force)
 	})
 	if err == nil {
 		*project = next
@@ -86,8 +67,8 @@ func (r *Repository) SaveCanvasWithSnapshot(project *model.CanvasProject, snapsh
 	return err
 }
 
-// CaptureCanvasSnapshot composes with an existing document transaction after
-// its account/canvas locks. It never writes the canvas, epoch or command identity.
+// CaptureCanvasSnapshot 在调用方事务里按保留策略记录一份画布历史快照，不写画布本身。
+// Agent 画布命令先以 revision CAS 落库，再在同一事务里调用它。
 func (r *Repository) CaptureCanvasSnapshot(project *model.CanvasProject, snapshot *model.CanvasSnapshot, resourceIDs, currentResourceIDs []string, cutoff time.Time, limit int, force bool) error {
 	tx := r.db
 	capture := false
@@ -192,6 +173,7 @@ func (r *Repository) CanvasHistoryReferencesObject(resource *model.Resource) (bo
 	err := r.db.Model(&model.CanvasSnapshotResource{}).
 		Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).
 		Count(&count).Error
+	// Agent 画布命令历史、已提交任务输入与媒体版本族也持有物理对象，别名资源同样受保护。
 	if err == nil && count == 0 && r.db.Migrator().HasTable(&model.CanvasCommandResource{}) {
 		err = r.db.Model(&model.CanvasCommandResource{}).Where("resource_id = ? OR resource_id IN (?)", resource.ID, aliases).Count(&count).Error
 	}

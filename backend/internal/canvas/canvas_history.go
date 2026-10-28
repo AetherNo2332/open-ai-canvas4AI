@@ -23,26 +23,13 @@ import (
 const canvasHistoryLimit = 20
 const canvasHistoryInterval = 5 * time.Minute
 
-// CaptureDocumentHistory shares the ordinary version UI policy with command
-// writes, without entering the legacy document writer or starting a transaction.
-func CaptureDocumentHistory(repo *repository.Repository, before *model.CanvasProject, after model.CanvasProject, reason string) error {
-	snapshot, resourceIDs, err := buildCanvasSnapshot(before, after, reason)
-	if err != nil {
-		return err
-	}
-	current := map[string]struct{}{}
-	if err := assets.CollectOwnedDocumentReferences(after.PayloadJSON, current); err != nil {
-		return err
-	}
-	return repo.CaptureCanvasSnapshot(&after, snapshot, resourceIDs, assets.SortedIDs(current), after.UpdatedAt.Add(-canvasHistoryInterval), canvasHistoryLimit, reason == "before_restore" || reason == "before_resource_repair")
-}
-
 // 浏览器、云端 Agent 和创作任务共用此入口；外层事务仍负责任务和画布的一致性。
 func SaveDocumentWithHistory(repo *repository.Repository, before *model.CanvasProject, after *model.CanvasProject, reason string) error {
 	var candidate map[string]any
 	if err := json.Unmarshal([]byte(after.PayloadJSON), &candidate); err != nil {
 		return err
 	}
+	// Agent 写入的声明式引用文档由服务端派生连线；整份保存时同样重算，避免引用与连线漂移。
 	if references.Enabled(candidate) {
 		var previous map[string]any
 		if before != nil {
@@ -78,7 +65,7 @@ func (s *Service) RepairUserCanvasProject(userID string, raw json.RawMessage) (U
 }
 
 func canvasRevisionConflict() error {
-	return kernel.NewAppError(http.StatusConflict, "云端画布已有更新，已停止覆盖；请保留本地草稿并加载最新版本")
+	return kernel.NewAppError(http.StatusConflict, "云端画布已有更新，未确认操作会保留并按原请求自动重放")
 }
 
 type CanvasHistoryList struct {
@@ -170,6 +157,7 @@ func canvasHistoryContent(project model.CanvasProject) ([]byte, error) {
 
 func buildCanvasSnapshot(before *model.CanvasProject, after model.CanvasProject, reason string) (*model.CanvasSnapshot, []string, error) {
 	if before == nil {
+		// Agent 命令带初始操作创建画布时，把创建结果记为第一个历史版本。
 		if reason != "initial" {
 			return nil, nil, nil
 		}

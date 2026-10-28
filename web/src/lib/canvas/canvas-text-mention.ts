@@ -1,6 +1,4 @@
 import { applyCanvasConnectionPromptSync, buildCanvasNodeMentionReferenceMap, buildCanvasResourceReferences } from "./canvas-resource-references";
-import { applyCanvasReferenceGraphEdit, canvasReferenceIntentForConnection } from "./canvas-reference-edits";
-import { canvasDeclaredInputNodeIds } from "./canvas-reference-inputs";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
 export function connectCanvasTextMention(nodes: CanvasNodeData[], connections: CanvasConnection[], targetId: string, sourceId: string, connectionId: string) {
@@ -20,16 +18,8 @@ export function connectCanvasTextMention(nodes: CanvasNodeData[], connections: C
         visited.add(id);
         pending.push(...connections.filter((edge) => edge.fromNodeId === id).map((edge) => edge.toNodeId));
     }
-    const candidate = { id: connectionId, fromNodeId: sourceId, toNodeId: receiverId };
-    // A declared receiver reads its inputs only from the field; a bare line would not create the reference.
-    const intent = canvasDeclaredInputNodeIds(receiverId, nodes) === undefined ? undefined : canvasReferenceIntentForConnection(nodes, candidate, false, connections);
-    let nextNodes: CanvasNodeData[];
-    let nextConnections: CanvasConnection[];
-    if (intent) ({ nodes: nextNodes, connections: nextConnections } = applyCanvasReferenceGraphEdit({ nodes, connections }, intent));
-    else {
-        nextConnections = connections.some((edge) => edge.fromNodeId === sourceId && edge.toNodeId === receiverId) ? connections : [...connections, candidate];
-        nextNodes = applyCanvasConnectionPromptSync(nodes, connections, nodes, nextConnections);
-    }
+    const nextConnections = connections.some((edge) => edge.fromNodeId === sourceId && edge.toNodeId === receiverId) ? connections : [...connections, { id: connectionId, fromNodeId: sourceId, toNodeId: receiverId }];
+    const nextNodes = applyCanvasConnectionPromptSync(nodes, connections, nodes, nextConnections);
     const reference = buildCanvasNodeMentionReferenceMap(nextNodes, nextConnections).get(targetId)?.find((item) => item.nodeId === sourceId);
     if (!reference) throw new Error("文本引用未建立");
     return { nodes: nextNodes, connections: nextConnections, reference };

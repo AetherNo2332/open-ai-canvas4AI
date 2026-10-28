@@ -4,7 +4,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 	"yingce/backend/internal/auth"
@@ -60,16 +59,6 @@ func TestTaskMediaRecoveryHTTPAuthenticationAndOwnership(t *testing.T) {
 		router.ServeHTTP(w, r)
 		if w.Code != tc.want {
 			t.Fatalf("%s auth=%v: %d %s", tc.id, tc.auth, w.Code, w.Body.String())
-		}
-		repairRequest := httptest.NewRequest(http.MethodPost, "/api/tasks/"+tc.id+"/recover-previs-writeback", strings.NewReader(`{"mode":"link"}`))
-		repairRequest.Header.Set("Content-Type", "application/json")
-		if tc.auth {
-			repairRequest.AddCookie(&http.Cookie{Name: service.SessionCookieName, Value: "media-session.test-token"})
-		}
-		repairResponse := httptest.NewRecorder()
-		router.ServeHTTP(repairResponse, repairRequest)
-		if repairResponse.Code != tc.want {
-			t.Fatalf("previs repair %s auth=%v: %d %s", tc.id, tc.auth, repairResponse.Code, repairResponse.Body.String())
 		}
 	}
 }

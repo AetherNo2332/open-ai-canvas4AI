@@ -21,6 +21,10 @@ func QuotaExceeded(message string) *AppError {
 	return kernel.QuotaExceeded(message)
 }
 
+func StorageCapacityExceeded(message string) *AppError {
+	return kernel.StorageCapacityExceeded(message)
+}
+
 // AuthError 保留为兼容别名。
 type AuthError = AppError
 
@@ -65,8 +69,6 @@ type ModelError struct {
 	ErrorCode ModelErrorCode
 	Details   map[string]any
 }
-
-func (e *ModelError) Unwrap() error { return e.AppError }
 
 func (e *ModelError) Error() string {
 	if e.AppError != nil {

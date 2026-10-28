@@ -70,10 +70,6 @@ func (r *Repository) CreateCreationRun(run *model.CreationRun) error {
 // All submission consumption and task reservation use the returned transaction repository.
 func (r *Repository) MutateCreationRun(userID, id string, fn func(*model.CreationRun, *Repository) error) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		scoped := r.transactionRepository(tx)
-		if err := scoped.LockCanvasWrite(userID, ""); err != nil {
-			return err
-		}
 		result := tx.Model(&model.CreationRun{}).Where("id = ? AND user_id = ?", id, userID).UpdateColumn("revision", gorm.Expr("revision"))
 		if result.Error != nil {
 			return result.Error
@@ -81,6 +77,7 @@ func (r *Repository) MutateCreationRun(userID, id string, fn func(*model.Creatio
 		if result.RowsAffected != 1 {
 			return gorm.ErrRecordNotFound
 		}
+		scoped := New(tx)
 		run, err := scoped.CreationRun(userID, id)
 		if err != nil {
 			return err

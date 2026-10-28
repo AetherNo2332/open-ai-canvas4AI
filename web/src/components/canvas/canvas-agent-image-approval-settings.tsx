@@ -32,7 +32,8 @@ export function CanvasAgentImageApprovalSettings({ initial, value, onChange, the
         const normalized = normalizeImageValue(profile, settings);
         onChange({ ...agentApprovalModelSelection(config, next), size: normalized.size, quality: profile.quality.supported ? normalized.quality : "" });
     };
-    const changeOption = (key: "quality" | "size" | "transparentBackground" | "count", next: string) => {
+    // Agent 审批只允许调整尺寸与质量；面板的其他参数（分辨率档、声明式参数等）按审批合同忽略。
+    const changeOption = (key: "quality" | "imageResolution" | "size" | "transparentBackground" | "count" | "imageParameters", next: string) => {
         if (disabled || (key !== "size" && key !== "quality")) return;
         const options = { size: settings.size, quality: settings.quality, [key]: next };
         const selected = resolveCompatibleModel(config, model, { ...requirements, imageSize: options.size, options: { ...options, count: 1 } });

@@ -2,7 +2,6 @@
     overflow: hidden;
 }
 
-/* 缩略图铺满预览按钮，避免图片外壳按原始尺寸撑开单元格。 */
 .storyboard-asset-thumbnail {
     position: absolute;
     inset: 0;

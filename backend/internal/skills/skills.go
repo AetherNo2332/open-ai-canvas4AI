@@ -100,7 +100,6 @@ type AddedSkillReference struct {
 	IsLike      bool   `json:"isLike"`
 	IsAdded     bool   `json:"isAdded"`
 	IsOwner     bool   `json:"isOwner"`
-	IsPrivate   bool   `json:"isPrivate"`
 }
 
 type SkillCategory struct {
@@ -109,14 +108,17 @@ type SkillCategory struct {
 }
 
 type SkillListRequest struct {
-	Page                 int
-	PageSize             int
-	Scope                string
-	Search               string
-	Tag                  string
-	LibraryCategoryID    string
-	LibraryUncategorized bool
-	Sort                 string
+	PlatformRootID        string
+	PlatformCategoryID    string
+	PlatformUncategorized bool
+	Page                  int
+	PageSize              int
+	Scope                 string
+	Search                string
+	Tag                   string
+	LibraryCategoryID     string
+	LibraryUncategorized  bool
+	Sort                  string
 }
 
 type SkillList struct {
@@ -142,6 +144,14 @@ type SkillMutationRequest struct {
 
 func (s *Service) Skills(userID string, req SkillListRequest) (*SkillList, error) {
 	req = normalizeSkillListRequest(req)
+	categoryID, uncategorized, err := s.curationFilter(req)
+	if err != nil {
+		return nil, err
+	}
+	rootID, err := s.curationRootFilter(req.PlatformRootID)
+	if err != nil {
+		return nil, err
+	}
 	if req.LibraryCategoryID != "" && req.LibraryUncategorized {
 		return nil, kernel.BadAuthRequest("技能库分类与未分类筛选不能同时使用")
 	}
@@ -151,6 +161,8 @@ func (s *Service) Skills(userID string, req SkillListRequest) (*SkillList, error
 		}
 	}
 	rows, total, err := s.repo.Skills(repository.SkillListFilter{
+		PlatformRootID:     rootID,
+		PlatformCategoryID: categoryID, PlatformUncategorized: uncategorized,
 		UserID:               userID,
 		Scope:                req.Scope,
 		Search:               req.Search,
@@ -197,7 +209,7 @@ func (s *Service) AddedSkills(userID string) ([]AddedSkillReference, error) {
 		references = append(references, AddedSkillReference{
 			SkillID: item.SkillID, SkillName: item.SkillName, Description: item.Description,
 			VersionID: item.VersionID, Version: item.Version, Tag: item.Tag,
-			IsLike: item.IsLike, IsAdded: item.IsAdded, IsOwner: item.IsOwner, IsPrivate: item.IsPrivate,
+			IsLike: item.IsLike, IsAdded: item.IsAdded, IsOwner: item.IsOwner,
 		})
 	}
 	return references, nil
@@ -420,7 +432,7 @@ func (s *Service) visibleSkill(userID string, id string) (*model.Skill, error) {
 	}
 	skill, err := s.repo.Skill(id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, kernel.NotFound("技能不存在或已删除")
+		return nil, kernel.BadAuthRequest("技能不存在或已删除")
 	}
 	if err != nil {
 		return nil, err

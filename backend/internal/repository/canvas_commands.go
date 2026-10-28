@@ -171,6 +171,9 @@ func (r *Repository) PersistCommandCanvas(row *model.CanvasProject, expected int
 	if before.Revision != expected {
 		return ErrCanvasRevisionConflict
 	}
+	if err = r.checkAgentCanvasEditLeases(before, row); err != nil {
+		return err
+	}
 	if err = r.checkCanvasWriteQuota(before, row); err != nil {
 		return err
 	}
@@ -181,6 +184,8 @@ func (r *Repository) PersistCommandCanvas(row *model.CanvasProject, expected int
 	if result.RowsAffected != 1 {
 		return ErrCanvasRevisionConflict
 	}
+	// 浏览器的多端同步依赖画布变更通知；Agent 命令写入同样要触发，否则打开的画布感知不到。
+	r.canvasChanged(row.UserID, row.ID)
 	return nil
 }
 func (r *Repository) IsMissing(err error) bool { return errors.Is(err, gorm.ErrRecordNotFound) }

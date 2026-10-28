@@ -1,9 +1,0 @@
-/* Mona Sans / Source Han Sans SC 的 @font-face 与 --font-home token 已上移到
-   styles/globals.css 全局生效；此处仅保留首页工作区的作用域排版微调。 */
-.app-home-workspace,
-body.app-home-overlays {
-    --font-sans: var(--font-home);
-    --font-heading: var(--font-home);
-    font-family: var(--font-home);
-    font-optical-sizing: auto;
-}

@@ -2695,7 +2695,7 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 	}
 	id = run.ID
 	if run.Status == "completed" || ((run.Status == "failed" || run.Status == "cancelled") && !run.CleanupPending) {
-		return s.cancelRunPrevis(ctx, userID, id)
+		return nil
 	}
 	if run.Status != "failed" && run.Status != "cancelled" {
 		// Persist intent independently of the transcript. Retrying also repairs
@@ -2752,9 +2752,6 @@ func (s *Service) CancelCloudAgent(ctx context.Context, userID, id string) error
 		return err
 	}
 	// Persist the run stop first so concurrent tool calls cannot enqueue new work.
-	if err := s.cancelRunPrevis(ctx, userID, id); err != nil {
-		return err
-	}
 	if err := s.cancelDynamicSubagents(ctx, userID, id); err != nil {
 		return err
 	}
