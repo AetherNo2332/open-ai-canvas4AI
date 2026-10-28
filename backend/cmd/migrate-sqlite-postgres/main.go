@@ -370,6 +370,8 @@ func migrations() []tableMigration {
 		migrateTable[model.Tool]("tools"),
 		migrateTable[model.ToolFavorite]("tool_favorites"),
 		migrateTable[model.User]("users"),
+		migrateTable[model.UserGroup]("user_groups"),
+		migrateTable[model.UserGroupChannel]("user_group_channels"),
 		migrateTable[model.UserAvatar]("user_avatars"),
 		migrateTable[model.UserFeedback]("user_feedbacks"),
 		migrateTable[model.DramaProduction]("drama_productions"),
