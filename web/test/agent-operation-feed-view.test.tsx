@@ -20,7 +20,8 @@ test("consecutive reasoning messages share one collapsed entry", () => {
     expect(segments[0]?.kind === "reasoning" ? segments[0].items : []).toHaveLength(2);
 
     const html = renderToStaticMarkup(<AgentReasoningFeed items={messages.slice(0, 2)} theme={canvasThemes.light} />);
-    expect(html).toContain("2 段 · 点击查看");
+    expect(html).toContain("2 段");
+    expect(html).not.toContain("点击查看");
     expect(html).toContain('class="agent-reasoning-card"');
     expect(html).not.toContain("agent-reasoning-icon");
     expect(html).not.toContain("lucide-brain-circuit");
