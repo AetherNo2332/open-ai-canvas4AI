@@ -42,21 +42,28 @@ func commandResourceTestDB(t *testing.T) (*gorm.DB, *Repository) {
 
 func TestResourceReferenceSnapshotIncludesCommandResources(t *testing.T) {
 	db, repo := commandResourceTestDB(t)
-	if err := db.Create(&model.CanvasCommandResource{OwnerID: "user", CanvasID: "canvas-1", Epoch: "e1", OperationID: "op-1", Kind: "history", ResourceID: "r1"}).Error; err != nil {
-		t.Fatal(err)
+	for _, row := range []any{
+		&model.CanvasProject{ID: "canvas-1", UserID: "user", Title: "分镜画布", PayloadJSON: `{}`},
+		&model.CanvasCommandResource{OwnerID: "user", CanvasID: "canvas-1", Epoch: "e1", OperationID: "op-1", Kind: "history", ResourceID: "r1"},
+		&model.CanvasCommandResource{OwnerID: "user", CanvasID: "canvas-1", Epoch: "e1", OperationID: "", Kind: "current", ResourceID: "r2"},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
-	snapshot, err := repo.ResourceReferenceSnapshotExcludingAssets("user", nil, []string{"r1"})
+	snapshot, err := repo.ResourceReferenceSnapshotExcludingAssets("user", nil, []string{"r1", "r2"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	kinds := map[string]ResourceDirectReference{}
 	for _, ref := range snapshot.Direct {
-		if ref.Kind == "Agent 画布历史" && ref.ResourceID == "r1" && ref.ID == "canvas-1" {
-			found = true
-		}
+		kinds[ref.ResourceID] = ref
 	}
-	if !found {
-		t.Fatalf("snapshot must list the Agent command history reference: %#v", snapshot.Direct)
+	if ref := kinds["r1"]; ref.Kind != "Agent 画布历史" || ref.ID != "canvas-1" || ref.Title != "分镜画布" {
+		t.Fatalf("history row must be labelled Agent 画布历史: %#v", snapshot.Direct)
+	}
+	if ref := kinds["r2"]; ref.Kind != "画布当前内容" || ref.ID != "canvas-1" {
+		t.Fatalf("current row must be labelled 画布当前内容: %#v", snapshot.Direct)
 	}
 }
 
@@ -93,28 +100,5 @@ func TestRequireNoCanvasHistoryReferencesIncludesCommandResources(t *testing.T) 
 	err := db.Transaction(func(tx *gorm.DB) error { return New(tx).RequireNoCanvasHistoryReferences([]string{"r1"}) })
 	if !errors.Is(err, ErrCanvasHistoryResourceReferenced) {
 		t.Fatalf("RequireNoCanvasHistoryReferences() = %v, want referenced", err)
-	}
-}
-
-func TestOtherAssetResourceReferencesReportsAgentReferences(t *testing.T) {
-	db, repo := commandResourceTestDB(t)
-	for _, row := range []any{
-		&model.CanvasCommandResource{OwnerID: "user", CanvasID: "canvas-1", Epoch: "e1", OperationID: "op-1", Kind: "history", ResourceID: "r-command"},
-		&model.CanvasTaskResource{OwnerID: "user", TaskID: "task-1", ResourceID: "r-task"},
-	} {
-		if err := db.Create(row).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	snapshot, err := repo.OtherAssetResourceReferences("user", []string{"asset-being-purged"}, []string{"r-command", "r-task", "r-free"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	kinds := map[string]string{}
-	for _, ref := range snapshot.Direct {
-		kinds[ref.ResourceID] = ref.Kind
-	}
-	if kinds["r-command"] != "Agent 画布历史" || kinds["r-task"] != "画布任务输入" || kinds["r-free"] != "" {
-		t.Fatalf("purge references must name Agent sources: %#v", snapshot.Direct)
 	}
 }

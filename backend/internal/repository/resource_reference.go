@@ -59,16 +59,9 @@ func (r *Repository) AssetsResourceRecords(assetIDs []string) ([]model.AssetVers
 	return versions, representations, nil
 }
 
-// OtherAssetResourceReferences 服务彻底删除：查询整批删除范围之外的素材（这些资源保留），
-// 并列出 Agent 画布历史、画布任务输入与媒体版本这些不能被彻底删除绕过的引用来源。
-// 不扫描任务正文和画布正文。
-func (r *Repository) OtherAssetResourceReferences(userID string, excludedAssetIDs []string, resourceIDs []string) (ResourceReferenceSnapshot, error) {
+// OtherAssetResourceReferences 只查询整批删除范围之外的素材，不扫描任务和画布。
+func (r *Repository) OtherAssetResourceReferences(userID string, excludedAssetIDs []string) (ResourceReferenceSnapshot, error) {
 	snapshot := ResourceReferenceSnapshot{}
-	agentRefs, err := r.agentResourceReferences(userID, resourceIDs)
-	if err != nil {
-		return snapshot, err
-	}
-	snapshot.Direct = append(snapshot.Direct, agentRefs...)
 	var assets []model.Asset
 	if err := r.db.Where("user_id = ? AND id NOT IN ?", userID, excludedAssetIDs).Find(&assets).Error; err != nil {
 		return snapshot, err
@@ -95,19 +88,32 @@ func (r *Repository) OtherAssetResourceReferences(userID string, excludedAssetID
 	return snapshot, nil
 }
 
-// CanvasCommandResourceReferences 列出 Agent 画布命令（current / history）持有的资源。
+// CanvasCommandResourceReferences 列出 Agent 画布命令持有的资源：kind=current 是画布当前内容
+// （每次保存由投影写入），kind=history 是撤销所需的命令历史。
 // 不按 owner 过滤：物理删除检查同样全局计数，资源归属由调用方先行校验。
 func (r *Repository) CanvasCommandResourceReferences(resourceIDs []string) ([]ResourceDirectReference, error) {
 	refs := []ResourceDirectReference{}
 	if len(resourceIDs) == 0 || !r.db.Migrator().HasTable(&model.CanvasCommandResource{}) {
 		return refs, nil
 	}
-	var rows []model.CanvasCommandResource
-	if err := r.db.Select("canvas_id", "resource_id").Where("resource_id IN ?", resourceIDs).Distinct().Find(&rows).Error; err != nil {
+	var rows []struct {
+		CanvasID   string
+		Kind       string
+		ResourceID string
+		Title      string
+	}
+	if err := r.db.Table("canvas_command_resources AS refs").
+		Select("refs.canvas_id, refs.kind, refs.resource_id, canvas_projects.title").
+		Joins("LEFT JOIN canvas_projects ON canvas_projects.id = refs.canvas_id").
+		Where("refs.resource_id IN ?", resourceIDs).Distinct().Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
-		refs = append(refs, ResourceDirectReference{Kind: "Agent 画布历史", ID: row.CanvasID, Title: "Agent 画布命令历史", ResourceID: row.ResourceID})
+		kind := "Agent 画布历史"
+		if row.Kind == "current" {
+			kind = "画布当前内容"
+		}
+		refs = append(refs, ResourceDirectReference{Kind: kind, ID: row.CanvasID, Title: row.Title, ResourceID: row.ResourceID})
 	}
 	return refs, nil
 }
@@ -126,24 +132,6 @@ func (r *Repository) CanvasTaskResourceReferences(userID string, resourceIDs []s
 		refs = append(refs, ResourceDirectReference{Kind: "画布任务输入", ID: guard.TaskID, Title: "已提交的任务输入", ResourceID: guard.ResourceID})
 	}
 	return refs, nil
-}
-
-// agentResourceReferences 汇总 Agent 侧持久引用：命令历史、任务输入与媒体版本。
-func (r *Repository) agentResourceReferences(userID string, resourceIDs []string) ([]ResourceDirectReference, error) {
-	refs, err := r.CanvasCommandResourceReferences(resourceIDs)
-	if err != nil {
-		return nil, err
-	}
-	taskRefs, err := r.CanvasTaskResourceReferences(userID, resourceIDs)
-	if err != nil {
-		return nil, err
-	}
-	refs = append(refs, taskRefs...)
-	versionRefs, err := r.MediaVersionResourceReferences(userID, resourceIDs)
-	if err != nil {
-		return nil, err
-	}
-	return append(refs, versionRefs...), nil
 }
 
 func (r *Repository) ResourcesForUserIDs(userID string, resourceIDs []string) ([]model.Resource, error) {
@@ -541,17 +529,18 @@ func (r *Repository) DeleteAssetsAndResources(userID string, assetIDs []string, 
 						return err
 					}
 				}
-				// 彻底删除只解除画布历史快照索引；Agent 命令历史、任务输入与媒体版本仍持有对象，
-				// 预检之后新挂上的引用也必须在锁内拒绝，否则记录删除后对象永远删不掉。
-				agentRefs, err := New(tx).agentResourceReferences(userID, resourceIDs)
-				if err != nil {
-					return err
-				}
-				if len(agentRefs) > 0 {
-					return ErrAgentResourceReferenced
-				}
 				if err := tx.Where("resource_id IN ?", resourceIDs).Delete(&model.CanvasSnapshotResource{}).Error; err != nil {
 					return err
+				}
+				// 彻底删除不受引用拦截（产品约定）。Agent 命令（current / history）与已提交任务输入的
+				// 索引同样被物理删除检查计数，必须在同一事务里一起解除，否则对象删除任务永远重试。
+				for _, guard := range []any{&model.CanvasCommandResource{}, &model.CanvasTaskResource{}} {
+					if !tx.Migrator().HasTable(guard) {
+						continue
+					}
+					if err := tx.Where("resource_id IN ?", resourceIDs).Delete(guard).Error; err != nil {
+						return err
+					}
 				}
 			}
 		} else if err := New(tx).RequireNoCanvasHistoryReferences(resourceIDs); err != nil {

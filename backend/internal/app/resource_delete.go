@@ -109,8 +109,8 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 		var snapshot repository.ResourceReferenceSnapshot
 		var snapshotErr error
 		if deleteReferencedResources {
-			// 彻底删除只需要知道哪些资源仍被「其他素材」复用（这些资源要保留）与 Agent 持久引用，不扫描任务和画布正文。
-			snapshot, snapshotErr = s.repo.OtherAssetResourceReferences(userID, assetIDs, ownedIDs)
+			// 彻底删除只需要知道哪些资源仍被「其他素材」复用（这些资源要保留），不扫描任务和画布。
+			snapshot, snapshotErr = s.repo.OtherAssetResourceReferences(userID, assetIDs)
 		} else {
 			snapshot, snapshotErr = s.repo.ResourceReferenceSnapshotExcludingAssets(userID, assetIDs, ownedIDs)
 		}
@@ -124,9 +124,9 @@ func (s *Service) deleteUserAssetsWithResources(userID string, ids []string, pur
 					sharedAssetResourceIDs[reference.ResourceID] = struct{}{}
 					continue
 				}
-				// 彻底删除的快照只额外带 Agent 画布历史、任务输入与媒体版本：它们由物理删除检查保护，
-				// 放行只会删掉记录而对象永远删不掉，所以两种删除都拒绝并返回来源。
-				usages = append(usages, resourceUsage{Kind: reference.Kind, ID: reference.ID, Title: reference.Title})
+				if !deleteReferencedResources {
+					usages = append(usages, resourceUsage{Kind: reference.Kind, ID: reference.ID, Title: reference.Title})
+				}
 			}
 		}
 		for _, document := range snapshot.Documents {
