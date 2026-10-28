@@ -27,5 +27,5 @@ func (s *Service) cloudAgentParentCanBeSuperseded(userID, parentID string) bool 
 	if err != nil {
 		return true
 	}
-	return task.Status != model.TaskStatusQueued && task.Status != model.TaskStatusRunning
+	return !model.TaskStatusActive(task.Status)
 }

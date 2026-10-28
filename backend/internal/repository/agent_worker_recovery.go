@@ -95,7 +95,7 @@ func (r *Repository) WorkerRecoveryProtectedWait(run model.CloudAgentExecution) 
 		return false, nil
 	}
 	var count int64
-	err := r.db.Model(&model.Task{}).Where("user_id = ? AND id IN ? AND status IN ?", run.UserID, []string{run.ActiveTaskID, run.MediaTaskID, run.WaitID}, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusQueued}).Count(&count).Error
+	err := r.db.Model(&model.Task{}).Where("user_id = ? AND id IN ? AND status IN ?", run.UserID, []string{run.ActiveTaskID, run.MediaTaskID, run.WaitID}, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusQueued, model.TaskStatusSubmissionUncertain}).Count(&count).Error
 	return count > 0, err
 }
 

@@ -9,3 +9,9 @@ const (
 	// 或由终态清理退还预留。
 	TaskStatusHolding TaskStatus = "holding"
 )
+
+// TaskStatusActive 判断任务是否仍占用执行：queued、running 与 submission_uncertain。
+// 待核对的提交可能已被上游接单并计费，在核对前不能当作已结束去接新轮、判卡死或回收 worker。
+func TaskStatusActive(s TaskStatus) bool {
+	return s == TaskStatusQueued || s == TaskStatusRunning || s == TaskStatusSubmissionUncertain
+}

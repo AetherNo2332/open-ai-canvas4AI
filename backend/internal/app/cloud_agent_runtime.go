@@ -2499,6 +2499,11 @@ func (s *Service) executeCloudAgentMediaCall(run *model.CloudAgentExecution, sta
 				result["generationError"] = generationMessage
 				toolErr = BadAuthRequest("媒体任务未成功：" + generationMessage + "；请在任务中心查看任务详情，不会自动重试收费生成")
 				result["summary"] = "媒体任务未成功；任务记录保留在任务中心"
+				if task.Status == model.TaskStatusSubmissionUncertain {
+					// 上游可能已接单并计费：回执归类为不可重试，要求先核对原提交，不能重新生成。
+					toolErr = &cloudAgentMediaAdmissionError{error: BadAuthRequest("上游接单状态尚未确认，请核对原任务；不会自动重试收费生成"), Reason: "submission_uncertain", NodeID: target.NodeID, TaskID: task.ID}
+					result["summary"] = "上游接单状态待核对；任务记录保留在任务中心"
+				}
 			}
 			if writeErr != nil {
 				writebackMessage = truncateRunes(cloudAgentSafeToolError(writeErr), 60)

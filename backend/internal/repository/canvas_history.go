@@ -16,6 +16,9 @@ import (
 var ErrCanvasHistoryResourceMissing = errors.New("画布历史引用的资源不存在")
 var ErrCanvasHistoryResourceReferenced = errors.New("资源仍被画布历史引用，无法删除")
 
+// ErrAgentResourceReferenced 包装 ErrCanvasHistoryResourceReferenced，已有调用方的 errors.Is 判断继续生效。
+var ErrAgentResourceReferenced = fmt.Errorf("%w：Agent 画布历史、任务输入或媒体版本仍持有资源", ErrCanvasHistoryResourceReferenced)
+
 type CanvasHistoryResourceMissingError struct {
 	ResourceIDs []string
 	References  []assets.DocumentResourceReference
@@ -241,6 +244,13 @@ func (r *Repository) RequireNoCanvasHistoryReferences(resourceIDs []string) erro
 	}
 	if len(refs) > 0 {
 		return ErrCanvasHistoryResourceReferenced
+	}
+	commandRefs, err := r.CanvasCommandResourceReferences(resourceIDs)
+	if err != nil {
+		return err
+	}
+	if len(commandRefs) > 0 {
+		return ErrAgentResourceReferenced
 	}
 	return nil
 }

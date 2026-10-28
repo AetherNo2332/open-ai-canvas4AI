@@ -48,7 +48,7 @@ func (s *Service) cloudAgentHasLiveWork(run *model.CloudAgentExecution, state *c
 		if err != nil {
 			return true
 		}
-		if task.Status == model.TaskStatusQueued || task.Status == model.TaskStatusRunning {
+		if model.TaskStatusActive(task.Status) {
 			return true
 		}
 	}
